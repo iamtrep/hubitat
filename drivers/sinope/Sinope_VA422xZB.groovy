@@ -61,7 +61,7 @@ metadata {
             input(name: "prefBatteryAlarmSchedule", type: "number", title: "Battery alarm state poll rate (in hours)", required: true, defaultValue: 1)
             input(name: "prefEnableFlowSensor", type: "bool", title: "Flow rate sensor", description: "Enable Sinope FS422x flow rate sensor", defaultValue: false, required: true, submitOnChange: true)
             if (prefEnableFlowSensor) {
-                input(name: "prefMinVolumeChange", type: "number", title: "Flow", description: "Minimum water volume delivery to trigger flow auto reporting", defaultValue: 1)
+                input(name: "prefMinVolumeChange", type: "number", title: "Flow", description: "Minimum water volume change (in mL) to trigger flow auto reporting", defaultValue: 100)
             }
             input(name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true)
             input(name: "debugEnable", type: "bool", title: "Enable debug logging info", defaultValue: false, required: true, submitOnChange: true)
@@ -139,12 +139,12 @@ def configure() {
 
     // Configure device attribute self-reporting
     def cmds = []
-    cmds += zigbee.configureReporting(0x0000, 0x0007, DataType.ENUM8, 3600, 7200)                         // power source
-    cmds += zigbee.configureReporting(0x0001, 0x0020, DataType.UINT8, 300, 3600, 1)                       // battery voltage
-    cmds += zigbee.configureReporting(0x0001, 0x0021, DataType.UINT8, 300, 3600, 1)                       // battery level (apparently not supported by device, always returns 0)
-    cmds += zigbee.configureReporting(0x0001, 0x003E, DataType.BITMAP32, 3600, 7200, 1)                   // battery alarm states (TODO)
-    cmds += zigbee.configureReporting(0x0006, 0x0000, DataType.BOOLEAN, 0, 3600)                          // valve state
-    cmds += zigbee.configureReporting(0x0402, 0x0000, DataType.INT16, 0, 3600, 1)                         // (device) temperature (in 1/100ths C)
+    cmds += zigbee.configureReporting(0x0000, 0x0007, DataType.ENUM8, 3600, 7200)            // power source
+    cmds += zigbee.configureReporting(0x0001, 0x0020, DataType.UINT8, 300, 3600, 1)          // battery voltage
+    cmds += zigbee.configureReporting(0x0001, 0x0021, DataType.UINT8, 300, 3600, 1)          // battery level (apparently not supported by device, always returns 0)
+    cmds += zigbee.configureReporting(0x0001, 0x003E, DataType.BITMAP32, 3600, 7200, 1)      // battery alarm states (tbc)
+    cmds += zigbee.configureReporting(0x0006, 0x0000, DataType.BOOLEAN, 0, 3600)             // valve state
+    cmds += zigbee.configureReporting(0x0402, 0x0000, DataType.INT16, 0, 3600, 1)            // (device) temperature (in 1/100ths C)
 
     if (prefEnableFlowSensor) {
         // Support for FS422x (if attached)
@@ -152,8 +152,8 @@ def configure() {
         // The built-in Hubitat driver appears to compute flow from volume (cluster 0x0702, attribute 0x0000)
         // The built-in Hubitat driver however has a setting for the pipe size (3/4" or 1"), which this driver doesn't have.
         //
-        //cmds += zigbee.configureReporting(0x0702, 0x0000, DataType.UINT48, 59, 1799, (int) prefMinVolumeChange)  // volume delivered (in ml?)
-        cmds += zigbee.configureReporting(0x0702, 0x0400, DataType.INT24, 0, 300, 1)                      // flow rate via InstantaneousDemand - ZCL 10.4.2.2.5
+        cmds += zigbee.configureReporting(0x0702, 0x0000, DataType.UINT48, 5, 1800, (int)prefMinVolumeChange) // volume delivered (in ml)
+        cmds += zigbee.configureReporting(0x0702, 0x0400, DataType.INT24, 0, 300, 1)                          // flow rate in mL/h (see InstantaneousDemand - ZCL 10.4.2.2.5)
     } else {
         // turn off reporting?
     }
@@ -190,8 +190,8 @@ def refresh() {
     cmds += zigbee.readAttribute(0x0402, 0x0000) // (device) temperature
 
     if (prefEnableFlowSensor) {
-        cmds += zigbee.readAttribute(0x0702, 0x0000) // volume delivered
-        cmds += zigbee.readAttribute(0x0702, 0x0400) // flow rate
+        cmds += zigbee.readAttribute(0x0702, 0x0000) // total volume delivered in mL
+        cmds += zigbee.readAttribute(0x0702, 0x0400) // flow rate in mL/h
     }
 
     sendZigbeeCommands(cmds)
@@ -231,8 +231,8 @@ def testMeteringConfig() {
         cmds += zigbee.readAttribute(0x0702, 0x0300) // "07" (L and L/h)
         cmds += zigbee.readAttribute(0x0702, 0x0301) // "000001"
         cmds += zigbee.readAttribute(0x0702, 0x0302) // "0003E8" (1000, meaning summation is in mL, not L)
-        cmds += zigbee.readAttribute(0x0702, 0x0303) // "F8" (low 3 bits are clear - no decimal, all digits = volume reported in mL)
-        cmds += zigbee.readAttribute(0x0702, 0x0304) // "FB" (low 2 bits are set = flow report in 1/100 of mL)
+        cmds += zigbee.readAttribute(0x0702, 0x0303) // "F8" (low 3 bits are clear = volume report in mL)
+        cmds += zigbee.readAttribute(0x0702, 0x0304) // "FB" (low 2 bits are set = flow report in mL/h)
         cmds += zigbee.readAttribute(0x0702, 0x0305) // no response
         cmds += zigbee.readAttribute(0x0702, 0x0306) // "02" (water)
     }
@@ -475,9 +475,9 @@ private getPowerSource(value) {
 
 private getFlowRate(value) {
     if (value != null) {
-        // Capability unit is LPM, device apparently reports in hundredths of ml
-        // Round to two decimal places
-        return Math.round(100 * Integer.parseInt(value, 16) / 100000) / 100
+        // Capability unit is LPM, device reports in ml/hour
+        // Convert and round to two decimal places
+        return Math.round(100 * Integer.parseInt(value, 16) / (60 * 1000)) / 100
     }
 }
 
