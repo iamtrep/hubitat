@@ -182,10 +182,10 @@ def initialize() {
 def refresh() {
     def cmds = []
 
-	cmds += zigbee.readAttribute(0x0000, 0x0007) // power source
-	cmds += zigbee.readAttribute(0x0001, 0x0020) // battery voltage
-	cmds += zigbee.readAttribute(0x0001, 0x0021) // battery level (apparently not supported by device, appears to always return 0)
-	cmds += zigbee.readAttribute(0x0001, 0x003E) // battery alarm state
+    cmds += zigbee.readAttribute(0x0000, 0x0007) // power source
+    cmds += zigbee.readAttribute(0x0001, 0x0020) // battery voltage
+    cmds += zigbee.readAttribute(0x0001, 0x0021) // battery level (apparently not supported by device, appears to always return 0)
+    cmds += zigbee.readAttribute(0x0001, 0x003E) // battery alarm state
     cmds += zigbee.readAttribute(0x0006, 0x0000) // valve state
     cmds += zigbee.readAttribute(0x0402, 0x0000) // (device) temperature
 
