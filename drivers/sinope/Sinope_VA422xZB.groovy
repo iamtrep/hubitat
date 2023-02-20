@@ -21,6 +21,7 @@
  *
  * TODO
  * - validate the volumes and flow rates are OK (pipe size? check for any difference between 0x0702 attr 0x0000 and attr 0x0400?)
+ * - figure out proper/standard way of reporting battery alarm states
  * - (maybe) keep volume as an integer internally
  * - Keep VoltageMeasurement or move to custom batteryVoltage attribute ?
  *
@@ -52,6 +53,8 @@ metadata {
         attribute "batteryAlt", "number"
         attribute "batteryAlarmState", "string"
         attribute "rateAlt", "number"
+
+        command "testMeteringConfig"
 
 		preferences {
             input(name: "prefPowerSourceSchedule", type: "number", title: "Power source poll rate (in minutes)", required: true, defaultValue: 5)
@@ -149,11 +152,6 @@ def configure() {
         // The built-in Hubitat driver appears to compute flow from volume (cluster 0x0702, attribute 0x0000)
         // The built-in Hubitat driver however has a setting for the pipe size (3/4" or 1"), which this driver doesn't have.
         //
-        // See also Table 10-71. Formatting Attribute Set in ZCL. Mandatory attributes of 0x0702 include:
-        //   0x0300 Unit of Measure (enum8) should be 0x07 (L and L/h)
-        //   0x0303 Summation Formatting (map8) (see 10.4.2.2.4.4)
-        //   0x0306 Metering device type (map8) should be 2 (water)
-        //
         //cmds += zigbee.configureReporting(0x0702, 0x0000, DataType.UINT48, 59, 1799, (int) prefMinVolumeChange)  // volume delivered (in ml?)
         cmds += zigbee.configureReporting(0x0702, 0x0400, DataType.INT24, 0, 300, 1)                      // flow rate via InstantaneousDemand - ZCL 10.4.2.2.5
     } else {
@@ -211,6 +209,34 @@ def close() {
     cmds += zigbee.command(0x0006, 0x00)
     sendZigbeeCommands(cmds)
     state.switchTypeDigital = true
+}
+
+// Custom commands
+
+def testMeteringConfig() {
+    def cmds = []
+    if (prefEnableFlowSensor) {
+        // For driver test/development purposes (enable debug logs to use).
+        //
+        // Metering cluster includes a Formatting attribute set, among which:
+        //   0x0300 UnitofMeasure (enum8) (MANDATORY)
+        //   0x0301 Multiplier
+        //   0x0302 Divisor
+        //   0x0303 SummationFormatting (map8) (see 10.4.2.2.4.4) (MANDATORY)
+        //   0x0304 DemandFormatting (map8)
+        //   0x0305 HistoricalConsumptionFormatting (map8)
+        //   0x0306 MeteringDeviceType (map8) (MANDATORY)
+        //
+        // See "Table 10-71. Formatting Attribute Set" in ZCL for details
+        cmds += zigbee.readAttribute(0x0702, 0x0300) // "07" (L and L/h)
+        cmds += zigbee.readAttribute(0x0702, 0x0301) // "000001"
+        cmds += zigbee.readAttribute(0x0702, 0x0302) // "0003E8" (1000, meaning summation is in mL, not L)
+        cmds += zigbee.readAttribute(0x0702, 0x0303) // "F8" (low 3 bits are clear - no decimal, all digits = volume reported in mL)
+        cmds += zigbee.readAttribute(0x0702, 0x0304) // "FB" (low 2 bits are set = flow report in 1/100 of mL)
+        cmds += zigbee.readAttribute(0x0702, 0x0305) // no response
+        cmds += zigbee.readAttribute(0x0702, 0x0306) // "02" (water)
+    }
+    sendZigbeeCommands(cmds)
 }
 
 // Device Event Parsing
