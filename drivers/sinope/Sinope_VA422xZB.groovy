@@ -22,8 +22,7 @@
  * TODO
  * - validate the volumes and flow rates are OK (pipe size? check for any difference between 0x0702 attr 0x0000 and attr 0x0400?)
  * - figure out proper/standard way of reporting battery alarm states
- * - (maybe) keep volume as an integer internally
- * - Keep VoltageMeasurement or move to custom batteryVoltage attribute ?
+ * - keep battery volage as VoltageMeasurement capability or move to custom batteryVoltage attribute ?
  *
  * v0.0.1 Initial version
  *
@@ -54,7 +53,7 @@ metadata {
         attribute "batteryAlarmState", "string"
         attribute "rateAlt", "number"
 
-        command "testMeteringConfig"
+        command "devGetMeteringConfig" // (driver dev use only) Get Metering cluster config
 
         preferences {
             input(name: "prefPowerSourceSchedule", type: "number", title: "Power source poll rate (in minutes)", required: true, defaultValue: 5)
@@ -170,9 +169,8 @@ def initialize() {
 
     // state.clear()
     state.switchTypeDigital = false
-    state.volumeSinceLastEvent = 0f
-    state.remove("lastVolumeRecorded")
-    state.remove("lastVolumeRecordedTime")
+    state.remove("lastVolumeRecorded")     // built-in driver uses lastValue
+    state.remove("lastVolumeRecordedTime") // built-in driver uses lastSample
     state.remove("volumeSinceLastEvent")
 
     configure()
@@ -213,7 +211,7 @@ def close() {
 
 // Custom commands
 
-def testMeteringConfig() {
+def devGetMeteringConfig() {
     def cmds = []
     if (prefEnableFlowSensor) {
         // For driver test/development purposes (enable debug logs to use).
@@ -367,7 +365,7 @@ private createCustomMap(descMap){
                     map.value = getVolume(descMap.value)
                     map.unit = "L"
                     map.descriptionText = "Cumulative water volume delivered is ${map.value} ${map.unit}"
-                    computeFlowRate(map.value)
+                    computeFlowRate(descMap.value)
                     break
 
                 case "0400":
@@ -408,11 +406,12 @@ def computeBatteryLevel() {
     logInfo(eventDescriptionText)
 }
 
-def computeFlowRate(currentVolume) {
+def computeFlowRate(volumeAttr) {
     def volumeDiff = 0
     def sampleTimeDiff = 0
     def sampleTimeNow = new Date().time  // TODO: find out if there a way to get a timestamp from the zigbee attribute report
 
+    def currentVolume = new BigInteger(volumeAttr,16)
     if (state.lastVolumeRecorded) {
         volumeDiff = currentVolume - state.lastVolumeRecorded
     }
@@ -427,9 +426,9 @@ def computeFlowRate(currentVolume) {
         }
 
         if (sampleTimeDiff > constMinSampleTimeDiff) {
-            // We have a volume difference in L, and a time difference in ms
+            // We have a volume difference in mL, and a time difference in ms
             // We want flow rate in LPM, two decimal places (probably should be 1 decimal place, tbd)
-            computedFlowRate = Math.round( 100 * (volumeDiff * 60f) / (sampleTimeDiff / 1000)) / 100
+            computedFlowRate = Math.round( 100 * (volumeDiff * 60f) / sampleTimeDiff )  / 100
         } else {
             logDebug("positive but instantaneous volume change ?!?")
             return
