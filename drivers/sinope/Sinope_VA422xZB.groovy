@@ -476,10 +476,10 @@ private getBatteryLevel(value) {
 
 private getBatteryLevelFromVoltage() {
     def voltage = device.currentValue("voltage")
-    if(voltage <= constBatteryMin)
+    if(voltage <= constBatteryVoltageMin)
         return 0
 
-    output = ((voltage - constBatteryMin) / (constBatteryVoltageMax - constBatteryVoltageMin)) * 100 as int
+    output = 100 * (voltage - constBatteryVoltageMin) / (constBatteryVoltageMax - constBatteryVoltageMin) as int
     return output < 100 ? output : 100
 }
 
