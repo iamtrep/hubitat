@@ -12,7 +12,7 @@
  *
  *  Specs for this device : https://support.sinopetech.com/en/1.5.7.3/
  *
- *  Source: https://github.com/iamtrep/hubitat/blob/main/drivers/Sinope_VA422xZB.groovy
+ *  Source: https://github.com/iamtrep/hubitat/blob/main/drivers/sinope/Sinope_VA422xZB.groovy
  *
  *  Portions derived/inspired from:
  *    (sacua) Sinope drivers (https://github.com/sacua/SinopeDriverHubitat)
@@ -20,7 +20,7 @@
  *    (thebearmay) Hubitat zigbee drivers (https://github.com/thebearmay/hubitat)
  *
  * TODO
- * - validate the volumes and flow rates are OK (pipe size? any difference between 0x0702 attr 0x0000 and attr 0x0400?)
+ * - validate the volumes and flow rates are OK (pipe size? check for any difference between 0x0702 attr 0x0000 and attr 0x0400?)
  * - (maybe) keep volume as an integer internally
  * - Keep VoltageMeasurement or move to custom batteryVoltage attribute ?
  *
@@ -33,7 +33,7 @@ metadata {
         name: "Sinope Water Valve (VA422xZB)",
         namespace: "iamtrep",
         author: "PJ Tremblay",
-        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/Sinope_VA422xZB.groovy"
+        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/sinope/Sinope_VA422xZB.groovy"
     ) {
 		capability "Configuration"
         capability "Initialize"
