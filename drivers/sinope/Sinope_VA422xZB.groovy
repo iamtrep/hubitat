@@ -30,24 +30,24 @@
  */
 
 metadata {
-	definition(
+    definition(
         name: "Sinope Water Valve (VA422xZB)",
         namespace: "iamtrep",
         author: "PJ Tremblay",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/sinope/Sinope_VA422xZB.groovy"
     ) {
-		capability "Configuration"
+        capability "Configuration"
         capability "Initialize"
         capability "Refresh"
 
         capability "Valve"
-		capability "LiquidFlowRate"  // when using the optional FS422x flow sensor
+        capability "LiquidFlowRate"  // when using the optional FS422x flow sensor
         capability "Battery"
         capability "PowerSource"
         capability "VoltageMeasurement"
         capability "TemperatureMeasurement"
 
-		attribute "volume", "number"  // no standard capability for volume measurement
+        attribute "volume", "number"  // no standard capability for volume measurement
 
         // for development purposes - do not use
         attribute "batteryAlt", "number"
@@ -56,19 +56,19 @@ metadata {
 
         command "testMeteringConfig"
 
-		preferences {
+        preferences {
             input(name: "prefPowerSourceSchedule", type: "number", title: "Power source poll rate (in minutes)", required: true, defaultValue: 5)
             input(name: "prefBatteryAlarmSchedule", type: "number", title: "Battery alarm state poll rate (in hours)", required: true, defaultValue: 1)
             input(name: "prefEnableFlowSensor", type: "bool", title: "Flow rate sensor", description: "Enable Sinope FS422x flow rate sensor", defaultValue: false, required: true, submitOnChange: true)
             if (prefEnableFlowSensor) {
-			    input(name: "prefMinVolumeChange", type: "number", title: "Flow", description: "Minimum water volume delivery to trigger flow auto reporting", defaultValue: 1)
+                input(name: "prefMinVolumeChange", type: "number", title: "Flow", description: "Minimum water volume delivery to trigger flow auto reporting", defaultValue: 1)
             }
-			input(name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true)
-		    input(name: "debugEnable", type: "bool", title: "Enable debug logging info", defaultValue: false, required: true, submitOnChange: true)
+            input(name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true)
+            input(name: "debugEnable", type: "bool", title: "Enable debug logging info", defaultValue: false, required: true, submitOnChange: true)
             if (debugEnable) {
                 input(name: "traceEnable", type: "bool", title: "Enable trace logging info (for development purposes)", defaultValue: false)
             }
-		}
+        }
 
         // VA4220ZB is the 3/4 inch valve
         fingerprint profileId: "0104", endpointId:"01", inClusters: "0000,0001,0003,0004,0005,0006,0008,0402,0500,0702,0B05,FF01", outClusters: "0003,0006,0019", manufacturer: "Sinope Technologies", model: "VA4220ZB", deviceJoinName: "Sinope Water Valve VA4220ZB"
@@ -76,7 +76,7 @@ metadata {
         // VA4221ZB is the 1 inch valve (seemingly identical to VA4220ZB other than pipe diameter)
         fingerprint profileId: "0104", endpointId:"01", inClusters: "0000,0001,0003,0004,0005,0006,0008,0402,0500,0702,0B05,FF01", outClusters: "0003,0006,0019", manufacturer: "Sinope Technologies", model: "VA4221ZB", deviceJoinName: "Sinope Water Valve VA4221ZB"
 
-	}
+    }
 }
 
 // Constants
@@ -104,23 +104,23 @@ import groovy.transform.Field
 
 def installed() {
     // called when device is first created with this driver
-	initialize()
+    initialize()
 }
 
 def updated() {
     // called when preferences are saved.
-	configure()
+    configure()
 }
 
 def uninstalled() {
     // called when device is removed
-	try {
-		unschedule()
-	}
+    try {
+        unschedule()
+    }
     catch (e)
     {
-		logError "unschedule() threw an exception ${e}"
-	}
+        logError "unschedule() threw an exception ${e}"
+    }
 }
 
 // Capabilities
@@ -139,7 +139,7 @@ def configure() {
 
     // Configure device attribute self-reporting
     def cmds = []
-	cmds += zigbee.configureReporting(0x0000, 0x0007, DataType.ENUM8, 3600, 7200)                         // power source
+    cmds += zigbee.configureReporting(0x0000, 0x0007, DataType.ENUM8, 3600, 7200)                         // power source
     cmds += zigbee.configureReporting(0x0001, 0x0020, DataType.UINT8, 300, 3600, 1)                       // battery voltage
     cmds += zigbee.configureReporting(0x0001, 0x0021, DataType.UINT8, 300, 3600, 1)                       // battery level (apparently not supported by device, always returns 0)
     cmds += zigbee.configureReporting(0x0001, 0x003E, DataType.BITMAP32, 3600, 7200, 1)                   // battery alarm states (TODO)
@@ -175,8 +175,8 @@ def initialize() {
     state.remove("lastVolumeRecordedTime")
     state.remove("volumeSinceLastEvent")
 
-	configure()
-	refresh()
+    configure()
+    refresh()
 }
 
 def refresh() {
@@ -242,32 +242,32 @@ def testMeteringConfig() {
 // Device Event Parsing
 
 def parse(String description) {
-	def descMap = zigbee.parseDescriptionAsMap(description)
+    def descMap = zigbee.parseDescriptionAsMap(description)
     logTrace("parse() - description = ${descMap}")
 
-	def result = []
+    def result = []
 
     if (descMap.attrId != null) {
         // device attribute report
-		result += createCustomMap(descMap)
-		if (descMap.additionalAttrs) {
-			def mapAdditionnalAttrs = descMap.additionalAttrs
-			mapAdditionnalAttrs.each{add ->
-			    add.cluster = descMap.cluster
-			    result += createCustomMap(add)
-			}
-		}
+        result += createCustomMap(descMap)
+        if (descMap.additionalAttrs) {
+            def mapAdditionnalAttrs = descMap.additionalAttrs
+            mapAdditionnalAttrs.each{add ->
+                add.cluster = descMap.cluster
+                result += createCustomMap(add)
+            }
+        }
     } else if (descMap.profileId == "0000") {
         // ZigBee Device Object (ZDO) command
         //logTrace("Unhandled ZDO command: clusterId=${descMap.clusterId} attrId=${descMap.attrId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
-	} else if (descMap.profileId == "0104" && descMap.clusterId != null) {
+    } else if (descMap.profileId == "0104" && descMap.clusterId != null) {
         // ZigBee Home Automation (ZHA) global command
         //logTrace("Unhandled ZHA global command: clusterId=${descMap.clusterId} attrId=${descMap.attrId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     } else {
         logWarn("Unhandled unknown command: clusterId=${descMap.clusterId} attrId=${descMap.attrId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     }
 
-	return result
+    return result
 }
 
 private createCustomMap(descMap){
@@ -363,7 +363,7 @@ private createCustomMap(descMap){
         case "0702": // Metering cluster
             switch (descMap.attrId) {
                 case "0000":
-	                map.name = "volume"
+                    map.name = "volume"
                     map.value = getVolume(descMap.value)
                     map.unit = "L"
                     map.descriptionText = "Cumulative water volume delivered is ${map.value} ${map.unit}"
@@ -371,7 +371,7 @@ private createCustomMap(descMap){
                     break
 
                 case "0400":
-	                map.name = "rateAlt"
+                map.name = "rateAlt"
                     map.value = getFlowRate(descMap.value)
                     map.unit = "LPM"
                     map.descriptionText = "Water flow (alt) rate is ${map.value} ${map.unit}"
@@ -449,14 +449,14 @@ def computeFlowRate(currentVolume) {
 
 def requestPowerSourceReport() {
     def cmds = []
-	cmds += zigbee.readAttribute(0x0000, 0x0007)
+    cmds += zigbee.readAttribute(0x0000, 0x0007)
     sendZigbeeCommands(cmds)
     runIn(prefPowerSourceSchedule*60, requestPowerSourceReport, [overwrite: true, misfire: "ignore"])
 }
 
 def requestBatteryAlarmReport() {
     def cmds = []
-	cmds += zigbee.readAttribute(0x0001, 0x003E)
+    cmds += zigbee.readAttribute(0x0001, 0x003E)
     sendZigbeeCommands(cmds)
     runIn(prefBatteryAlarmSchedule*3600, requestBatteryAlarmReport, [overwrite: true, misfire: "ignore"])
 }
@@ -484,14 +484,14 @@ private getFlowRate(value) {
 private getBatteryVoltage(value) {
     if (value != null) {
         // Capability units are V, device reports in tenths of V
-	    return Integer.parseInt(value, 16) / 10
+        return Integer.parseInt(value, 16) / 10
     }
 }
 
 private getBatteryLevel(value) {
     if (value != null) {
         // from the ZCL: 0x00 = 0%, 0x64 (100) = 50%, 0xC8 (200) = 100%, 0xFF (255) = invalid/unknown
-	    def battLevel = Integer.parseInt(value, 16)
+        def battLevel = Integer.parseInt(value, 16)
 
         if (battLevel == 255)
             return "unknown"
@@ -520,13 +520,13 @@ private getVolume(value) {
 private getTemperature(value) {
     if (value != null) {
         // ZCL spec says temperature is in hundredths of C
-		def celsius = Integer.parseInt(value, 16) / 100
-		if (getTemperatureScale() == "C") {
+        def celsius = Integer.parseInt(value, 16) / 100
+        if (getTemperatureScale() == "C") {
             return celsius
-		} else {
+        } else {
             return Math.round(celsiusToFahrenheit(celsius))
-		}
-	}
+        }
+    }
 }
 
 // Logging helpers
