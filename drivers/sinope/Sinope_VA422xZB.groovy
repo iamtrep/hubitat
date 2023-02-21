@@ -246,28 +246,28 @@ def parse(String description) {
 
     if (descMap.attrId != null) {
         // device attribute report
-        result += createCustomMap(descMap)
+        result += parseAttributeReport(descMap)
         if (descMap.additionalAttrs) {
             def mapAdditionnalAttrs = descMap.additionalAttrs
             mapAdditionnalAttrs.each{add ->
                 add.cluster = descMap.cluster
-                result += createCustomMap(add)
+                result += parseAttributeReport(add)
             }
         }
     } else if (descMap.profileId == "0000") {
         // ZigBee Device Object (ZDO) command
-        //logTrace("Unhandled ZDO command: cluster=${descMap.cluster} attrId=${descMap.attrId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
-    } else if (descMap.profileId == "0104" && descMap.cluster != null) {
+        //logTrace("Unhandled ZDO command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
+    } else if (descMap.profileId == "0104" && descMap.clusterId != null) {
         // ZigBee Home Automation (ZHA) global command
-        //logTrace("Unhandled ZHA global command: cluster=${descMap.cluster} attrId=${descMap.attrId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
+        //logTrace("Unhandled ZHA global command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     } else {
-        logWarn("Unhandled unknown command: cluster=${descMap.cluster} attrId=${descMap.attrId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
+        logWarn("Unhandled unknown command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     }
 
     return result
 }
 
-private createCustomMap(descMap){
+private parseAttributeReport(descMap){
     def map = [: ]
 
     // Main switch over all available cluster IDs
