@@ -49,9 +49,8 @@ metadata {
         attribute "volume", "number"  // no standard capability for volume measurement
 
         // for development purposes - do not use
-        attribute "batteryAlt", "number"
         attribute "batteryAlarmState", "string"
-        attribute "rateAlt", "number"
+        attribute "rateFromVolume", "number"
 
         command "devGetMeteringConfig" // (driver dev use only) Get Metering cluster config
 
@@ -257,12 +256,12 @@ def parse(String description) {
         }
     } else if (descMap.profileId == "0000") {
         // ZigBee Device Object (ZDO) command
-        //logTrace("Unhandled ZDO command: clusterId=${descMap.clusterId} attrId=${descMap.attrId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
-    } else if (descMap.profileId == "0104" && descMap.clusterId != null) {
+        //logTrace("Unhandled ZDO command: cluster=${descMap.cluster} attrId=${descMap.attrId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
+    } else if (descMap.profileId == "0104" && descMap.cluster != null) {
         // ZigBee Home Automation (ZHA) global command
-        //logTrace("Unhandled ZHA global command: clusterId=${descMap.clusterId} attrId=${descMap.attrId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
+        //logTrace("Unhandled ZHA global command: cluster=${descMap.cluster} attrId=${descMap.attrId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     } else {
-        logWarn("Unhandled unknown command: clusterId=${descMap.clusterId} attrId=${descMap.attrId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
+        logWarn("Unhandled unknown command: cluster=${descMap.cluster} attrId=${descMap.attrId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     }
 
     return result
@@ -295,11 +294,11 @@ private createCustomMap(descMap){
                     break
 
                 case "0021":
-                    // TODO - ignore for now.  Will get trace-logged at end of this function.
-                    map.name = "batteryAlt"
-                    map.value = getBatteryLevel(descMap.value)
-                    map.unit = "%"
-                    map.descriptionText = "Battery (alt) percentage remaining is ${map.value} ${map.unit}"
+                    // TODO - ignore for now, as the report is always zero.  Will get trace-logged at end of this function.
+                    //map.name = "batteryAlt"
+                    //map.value = getBatteryLevel(descMap.value)
+                    //map.unit = "%"
+                    //map.descriptionText = "Battery (alt) percentage remaining is ${map.value} ${map.unit}"
                     break
 
                 case "003E":
@@ -369,10 +368,10 @@ private createCustomMap(descMap){
                     break
 
                 case "0400":
-                map.name = "rateAlt"
+                    map.name = "rate"
                     map.value = getFlowRate(descMap.value)
                     map.unit = "LPM"
-                    map.descriptionText = "Water flow (alt) rate is ${map.value} ${map.unit}"
+                    map.descriptionText = "Water flow rate is ${map.value} ${map.unit}"
                     break
 
                 default:
@@ -418,7 +417,6 @@ def computeFlowRate(volumeAttr) {
     state.volumeSinceLastEvent = volumeDiff  // keep track for now.
 
     // Compute flow
-    // TODO : validate for correctness
     def computedFlowRate = 0f
     if (volumeDiff > constMinVolumeDiff) {
         if (state.lastVolumeRecordedTime) {
@@ -435,8 +433,8 @@ def computeFlowRate(volumeAttr) {
         }
     }
 
-    def eventDescriptionText = "Water flow rate is ${computedFlowRate} LPM"
-    sendEvent(name: "rate", value: computedFlowRate, unit: "LPM", descriptionText: eventDescriptionText)
+    def eventDescriptionText = "Water flow rate avg since last volume event is ${computedFlowRate} LPM"
+    sendEvent(name: "rateFromVolume", value: computedFlowRate, unit: "LPM", descriptionText: eventDescriptionText)
     logInfo(eventDescriptionText)
 
     // cleanup
