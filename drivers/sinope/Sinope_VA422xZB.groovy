@@ -59,8 +59,8 @@ metadata {
             input(name: "prefBatteryAlarmSchedule", type: "number", title: "Battery alarm state poll rate (in hours)", required: true, defaultValue: 1)
             input(name: "prefEnableFlowSensor", type: "bool", title: "Flow rate sensor", description: "Enable Sinope FS422x flow rate sensor", defaultValue: false, required: true, submitOnChange: true)
             if (prefEnableFlowSensor) {
-                input(name: "prefMinVolumeChange", type: "number", title: "Flow", description: "Minimum change (in mL) to trigger water volume auto reporting", defaultValue: 100, range: "0..1000")
-                input(name: "prefMinRateChange", type: "number", title: "Flow", description: "Minimum change (in mL/h) to trigger flow rate auto reporting", defaultValue: 1, range: "0..1000")
+                input(name: "prefMinVolumeChange", type: "number", title: "Volume", description: "Minimum change (in mL) to trigger water volume auto reporting", defaultValue: 100, range: "0..1000")
+                input(name: "prefMinRateChange", type: "number", title: "Flow Rate", description: "Minimum change (in mL/h) to trigger flow rate auto reporting", defaultValue: 1, range: "0..1000")
             }
             input(name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true)
             input(name: "debugEnable", type: "bool", title: "Enable debug logging info", defaultValue: false, required: true, submitOnChange: true)
