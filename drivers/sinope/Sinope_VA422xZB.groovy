@@ -20,7 +20,7 @@
  *    (thebearmay) Hubitat zigbee drivers (https://github.com/thebearmay/hubitat)
  *
  * TODO
- * - validate the volumes and flow rates are OK (pipe size? check for any difference between 0x0702 attr 0x0000 and attr 0x0400?)
+ * - validate the volumes and flow rates are OK for all valve models (pipe size? check for any difference between 0x0702 attr 0x0000 and attr 0x0400?)
  * - figure out proper/standard way of reporting battery alarm states
  * - keep battery volage as VoltageMeasurement capability or move to custom batteryVoltage attribute ?
  *
@@ -59,7 +59,8 @@ metadata {
             input(name: "prefBatteryAlarmSchedule", type: "number", title: "Battery alarm state poll rate (in hours)", required: true, defaultValue: 1)
             input(name: "prefEnableFlowSensor", type: "bool", title: "Flow rate sensor", description: "Enable Sinope FS422x flow rate sensor", defaultValue: false, required: true, submitOnChange: true)
             if (prefEnableFlowSensor) {
-                input(name: "prefMinVolumeChange", type: "number", title: "Flow", description: "Minimum water volume change (in mL) to trigger flow auto reporting", defaultValue: 100)
+                input(name: "prefMinVolumeChange", type: "number", title: "Flow", description: "Minimum change (in mL) to trigger water volume auto reporting", defaultValue: 100, range: "0..1000")
+                input(name: "prefMinRateChange", type: "number", title: "Flow", description: "Minimum change (in mL/h) to trigger flow rate auto reporting", defaultValue: 1, range: "0..1000")
             }
             input(name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true)
             input(name: "debugEnable", type: "bool", title: "Enable debug logging info", defaultValue: false, required: true, submitOnChange: true)
@@ -151,7 +152,7 @@ def configure() {
         // The built-in Hubitat driver however has a setting for the pipe size (3/4" or 1"), which this driver doesn't have.
         //
         cmds += zigbee.configureReporting(0x0702, 0x0000, DataType.UINT48, 5, 1800, (int)prefMinVolumeChange) // volume delivered (in ml)
-        cmds += zigbee.configureReporting(0x0702, 0x0400, DataType.INT24, 0, 300, 1)                          // flow rate in mL/h (see InstantaneousDemand - ZCL 10.4.2.2.5)
+        cmds += zigbee.configureReporting(0x0702, 0x0400, DataType.INT24, 0, 300, (int)prefMinRateChange)     // flow rate in mL/h (see InstantaneousDemand - ZCL 10.4.2.2.5)
     } else {
         // turn off reporting?
     }
