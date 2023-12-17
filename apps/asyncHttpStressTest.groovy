@@ -13,7 +13,7 @@ preferences {
     page(name: "mainPage", title: "App parameters", install: true, uninstall: true) {
         section("Call parameters") {
             input name: "iterations", type: "number", title: "Number of iterations to run", defaultValue: 30, required: true
-            input name: "pacing", type: "number", title: "Number of milliseconds between iterations", defaultValue: 500, required: true
+            input name: "pacing", type: "number", title: "Number of milliseconds between iterations", defaultValue: 1, required: true
             input name: "httpTimeout", type: "number", title: "HTTP timeout in seconds", defaultValue: 30, required: true
         }
     }
