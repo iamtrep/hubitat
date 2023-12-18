@@ -15,6 +15,7 @@ preferences {
             input name: "iterations", type: "number", title: "Number of iterations to run", defaultValue: 30, required: true
             input name: "pacing", type: "number", title: "Number of milliseconds between iterations", defaultValue: 1, required: true
             input name: "httpTimeout", type: "number", title: "HTTP timeout in seconds", defaultValue: 30, required: true
+            input name: "requestURL", type: "string", title: "Request URL", defaultValue: "https://httpstat.us/200?sleep=60000", required: true
         }
     }
 }
@@ -47,7 +48,7 @@ def httpStressTest() {
 def apiGet(i, n) {
     Map requestParams =
 	[
-        uri: "https://httpstat.us/200?sleep=60000",
+        uri: requestURL,
         headers: [
             requestContentType: 'application/json',
 		    contentType: 'application/json'
