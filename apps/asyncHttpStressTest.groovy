@@ -49,10 +49,9 @@ def apiGet(i, n) {
     Map requestParams =
 	[
         uri: requestURL,
-        headers: [
-            requestContentType: 'application/json',
-		    contentType: 'application/json'
-        ],
+        requestContentType: 'application/json',
+		contentType: 'application/json',
+        headers: [:], // [ X-HttpStatus-Sleep: 60000 ],
         timeout: httpTimeout
 	]
 
