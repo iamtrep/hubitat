@@ -63,7 +63,7 @@ def getApi(resp, data){
         log.debug "$resp.properties - (${data.iteration+1}/$data.total ${(now()-data.timestamp)/1000}) - ${resp.getStatus()}"
         if (data.iteration + 1 == data.total) {
             // start a new batch
-            httpStressTest()
+            runIn(1,"httpStressTest")
         }
     } catch (Exception e) {
         log.error "getApi - $e.message"
