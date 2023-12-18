@@ -50,9 +50,9 @@ def apiGet(i, n) {
         uri: "https://httpstat.us/200?sleep=60000",
         headers: [
             requestContentType: 'application/json',
-		    contentType: 'application/json',
-            timeout: httpTimeout
-        ]
+		    contentType: 'application/json'
+        ],
+        timeout: httpTimeout
 	]
 
     asynchttpGet("getApi", requestParams, [iteration: i, total: n, timestamp: now()])
