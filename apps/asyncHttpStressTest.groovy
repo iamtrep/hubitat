@@ -40,7 +40,7 @@ import groovy.transform.Field
 
 def httpStressTest() {
     currentIteration++
-    if (currentIteration >= iterations) {
+    if (currentIteration > iterations) {
         currentIteration = 0
         return
     }
@@ -49,7 +49,7 @@ def httpStressTest() {
     def timeStart = now()
     for(int i = 0;i<numCalls;i++) {
         apiGet(i, numCalls)
-        pauseExecution(pacing)
+        if (pacing) pauseExecution(pacing)
     }
     def timeStop = now()
     log.debug("Initiated $numCalls async HTTP GET calls in ${(timeStop-timeStart)} ms (iteration $currentIteration)")
@@ -70,7 +70,7 @@ def apiGet(i, n) {
 
 def getApi(resp, data){
     try {
-        log.debug "$resp.properties - (${data.call+1}/$data.total ${(now()-data.timestamp)/1000}) ($currentIteration) - ${resp.getStatus()}"
+        log.debug "${resp.properties["data"]} - (${data.call+1}/$data.total ${(now()-data.timestamp)/1000}) ($currentIteration) - ${resp.getStatus()}"
         if (data.call + 1 == data.total) {
             // start a new batch
             runIn(1,"httpStressTest")
