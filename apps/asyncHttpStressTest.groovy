@@ -46,6 +46,7 @@ def httpStressTest() {
     }
 
     // overlapped async http get
+    log.debug("Initiating $numCalls async HTTP GET calls - pacing: $pacing ms timeout: $httpTimeout (iteration $currentIteration)")
     def timeStart = now()
     for(int i = 0;i<numCalls;i++) {
         apiGet(i, numCalls)
@@ -70,7 +71,8 @@ def apiGet(i, n) {
 
 def getApi(resp, data){
     try {
-        log.debug "${resp.properties["data"]} - (${data.call+1}/$data.total ${(now()-data.timestamp)/1000}) ($currentIteration) - ${resp.getStatus()}"
+        //log.debug "${resp.properties["data"]} - (${data.call+1}/$data.total ${(now()-data.timestamp)/1000}) ($currentIteration) - ${resp.getStatus()}"
+        log.debug "${resp.properties["status"]} - (${data.call+1}/$data.total ${(now()-data.timestamp)/1000}) ($currentIteration)"
         if (data.call + 1 == data.total) {
             // start a new batch
             runIn(1,"httpStressTest")
