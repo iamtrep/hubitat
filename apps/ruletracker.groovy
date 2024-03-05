@@ -169,6 +169,7 @@ def readAppStatus(int appId) {
 
                     def tableData = extractEventSubscriptions(rawHtml)
                     log.info("App $appId event subscriptions (${tableData.size()}) : $tableData")
+
                     tableData = extractScheduledJobs(rawHtml)
                     log.info("App $appId scheduled jobs (${tableData.size()}) : $tableData")
                 }
@@ -184,8 +185,8 @@ def readAppStatusFromFile(String fileName) {
     def html = new String(contents)
 
     def tableData = extractEventSubscriptions(html)
-    log.debug("Event subscriptions : $tableData")
+    log.info("$fileName event subscriptions (${tableData.size()}) : $tableData")
 
     tableData = extractScheduledJobs(html)
-    log.debug("Scheduled jobs : $tableData")
+    log.info("$fileName scheduled jobs (${tableData.size()}) : $tableData")
 }
