@@ -17,6 +17,13 @@ preferences {
             input name: "scheduleCheck", type: "number", title: "Run check every N minutes", defaultValue: 5, required: true, submitOnChange: true
             input name: "debugLogs", type: "bool", title: "Enable debug logging?", defaultValue: false, required: true, submitOnChange: true
             input name: "traceLogs", type: "bool", title: "Enable trace logging?", defaultValue: false, required: true, submitOnChange: true
+            input("hubSecurity", "bool", title: "Hub Security Enabled", defaultValue: false, submitOnChange: true, width:4)
+            if (hubSecurity) {
+                input("hubSecurityUsername", "string", title: "Hub Security Username", required: false, width:4)
+                input("hubSecurityPassword", "password", title: "Hub Security Password", required: false, width:4)
+            }
+        }
+        section("Actions") {
             input name: "refreshButton", type: "button", title: "Refresh now"
             input name: "stopButton", type: "button", title: "Remove schedule"
             input name: "testButton", type: "button", title: "Run App Tests"
@@ -27,10 +34,7 @@ preferences {
 def appButtonHandler(btn) {
     switch(btn) {
         case "refreshButton":
-            appIdsToTrack.each {
-                if (debugLogs) log.debug("checking app $it status")
-                readAppStatus(it.toInteger())
-            }
+            runRuleTracker()
             break
 
         case "testButton":
@@ -57,7 +61,16 @@ def installed() {
 def updated() {
     if (debugLogs) log.debug "updated()"
 
-    // TODO
+    // TODO: consider the refresh rate input
+    unschedule()
+    runEvery5Minutes("runRuleTracker")
+}
+
+def runRuleTracker() {
+    appIdsToTrack.each {
+        if (debugLogs) log.debug("checking app $it status")
+        readAppStatus(it.toInteger())
+    }
 }
 
 def testRuleTracker() {
@@ -86,6 +99,32 @@ def uninstalled() {}
 @Field static final String eventsTableId = 'event-table'
 @Field static final String appStateTableId = null
 @Field static final String scheduledJobsTableId = null
+
+String getCookie(){
+    if (!hubSecurity) return ""
+
+    try{
+  	  httpPost(
+		[
+		uri: "http://127.0.0.1:8080",
+		path: "/login",
+		query: [ loginRedirect: "/" ],
+		body: [
+			username: hubSecurityUsername,
+			password: hubSecurityPassword,
+			submit: "Login"
+			]
+		]
+	  ) { resp ->
+		cookie = ((List)((String)resp?.headers?.'Set-Cookie')?.split(';'))?.getAt(0)
+        if(traceLogs) log.trace "$cookie"
+	  }
+    } catch (e){
+        cookie = ""
+    }
+    return "$cookie"
+}
+
 
 String extractTable(String html, int startIndex = 1, String tableId = null)
 {
@@ -166,7 +205,6 @@ def extractEventSubscriptions(String html)
 }
 
 
-
 def parseTable(String tableHtml)
 {
     //def parser = new XmlSlurper(false,false,true)
@@ -183,28 +221,32 @@ def parseTable(String tableHtml)
     return tableData
 }
 
+
 def readAppStatus(int appId) {
 
     def params = [
         uri: "$app_status_url/$appId",
         contentType: "text/html",
         textParser: true
+        headers: [
+            "Cookie": getCookie()
+        ]
     ]
 
     try {
-        httpGet(
-            params, { resp ->
-                if (resp.success) {
-                    def rawHtml = resp.data.text
+        httpGet(params,
+                { resp ->
+                    if (resp.success) {
+                        def rawHtml = resp.data.text
 
-                    def tableData = extractEventSubscriptions(rawHtml)
-                    log.info("App $appId event subscriptions (${tableData.size()}) : $tableData")
+                        def tableData = extractEventSubscriptions(rawHtml)
+                        log.info("App $appId event subscriptions (${tableData.size()}) : $tableData")
 
-                    tableData = extractScheduledJobs(rawHtml)
-                    log.info("App $appId scheduled jobs (${tableData.size()}) : $tableData")
+                        tableData = extractScheduledJobs(rawHtml)
+                        log.info("App $appId scheduled jobs (${tableData.size()}) : $tableData")
+                    }
                 }
-            }
-        )
+               )
     } catch (Exception e) {
         log.warn "Call failed: $e"
     }
