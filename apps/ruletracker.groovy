@@ -1,7 +1,21 @@
+/*
+
+ Rule Tracker
+
+ A debugging tool to track rule event subscriptions and schedules
+
+ TODO
+ - Capture rule settings and use as a reference
+ - keep track of subs/schedules in a Map, per app ID
+ - send a (location?) event when a rule's subscriptions or schedules change
+
+ */
+
+
 definition(
     name: "Rule Tracker",
-    namespace: "Example",
-    author: "iamtrep",
+    namespace: "iamtrep",
+    author: "PJ",
     description: "Track RM rule subscriptions and schedules",
     category: "debugging",
     iconUrl: "",
