@@ -205,6 +205,7 @@ def extractEventSubscriptions(String html)
 }
 
 
+
 def parseTable(String tableHtml)
 {
     //def parser = new XmlSlurper(false,false,true)
@@ -221,32 +222,28 @@ def parseTable(String tableHtml)
     return tableData
 }
 
-
 def readAppStatus(int appId) {
 
     def params = [
         uri: "$app_status_url/$appId",
         contentType: "text/html",
         textParser: true
-        headers: [
-            "Cookie": getCookie()
-        ]
     ]
 
     try {
-        httpGet(params,
-                { resp ->
-                    if (resp.success) {
-                        def rawHtml = resp.data.text
+        httpGet(
+            params, { resp ->
+                if (resp.success) {
+                    def rawHtml = resp.data.text
 
-                        def tableData = extractEventSubscriptions(rawHtml)
-                        log.info("App $appId event subscriptions (${tableData.size()}) : $tableData")
+                    def tableData = extractEventSubscriptions(rawHtml)
+                    log.info("App $appId event subscriptions (${tableData.size()}) : $tableData")
 
-                        tableData = extractScheduledJobs(rawHtml)
-                        log.info("App $appId scheduled jobs (${tableData.size()}) : $tableData")
-                    }
+                    tableData = extractScheduledJobs(rawHtml)
+                    log.info("App $appId scheduled jobs (${tableData.size()}) : $tableData")
                 }
-               )
+            }
+        )
     } catch (Exception e) {
         log.warn "Call failed: $e"
     }
