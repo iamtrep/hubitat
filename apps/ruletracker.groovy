@@ -16,9 +16,9 @@ import groovy.transform.Field
 
 preferences {
     page(name: "mainPage", title: "App parameters", install: true, uninstall: true) {
-        section("Apps to track") {
+        section("Rule settings to track") {
             def rules = RMUtils.getRuleList("5.0")
-            input name: "appIdsToTrack", type: "enum", options: rules, required: true, multiple: true, submitOnChange: true
+            input name: "appIdsToTrack", type: "enum", title: "Select rules to monitor", options: rules, required: true, multiple: true, submitOnChange: true
         }
 
         section(hideable:true, hidden:true, "Operational parameters") {
