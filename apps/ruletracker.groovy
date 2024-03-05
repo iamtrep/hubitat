@@ -8,6 +8,40 @@ definition(
     iconX2Url: "")
 
 preferences {
+    page(name: "mainPage", title: "App parameters", install: true, uninstall: true) {
+        section("Apps to track") {
+            def rules = RMUtils.getRuleList("5.0")
+            input name: "appIdsToTrack", type: "enum", options: rules, required: true, multiple: true, submitOnChange: true
+        }
+        section("Operational parameters") {
+            input name: "scheduleCheck", type: "number", title: "Run check every N minutes", defaultValue: 5, required: true, submitOnChange: true
+            input name: "debugLogs", type: "bool", title: "Enable debug logging?", defaultValue: false, required: true, submitOnChange: true
+            input name: "traceLogs", type: "bool", title: "Enable trace logging?", defaultValue: false, required: true, submitOnChange: true
+            input name: "refreshButton", type: "button", title: "Refresh now"
+            input name: "stopButton", type: "button", title: "Remove schedule"
+            input name: "testButton", type: "button", title: "Run App Tests"
+        }
+    }
+}
+
+def appButtonHandler(btn) {
+    switch(btn) {
+        case "refreshButton":
+            appIdsToTrack.each {
+                if (debugLogs) log.debug("checking app $it status")
+                readAppStatus(it.toInteger())
+            }
+            break
+
+        case "testButton":
+            testRuleTracker()
+            break
+
+        case "stopButton":
+        default:
+            unschedule()
+            break
+      }
 }
 
 import hubitat.helper.RMUtils
@@ -15,29 +49,28 @@ import groovy.util.XmlSlurper
 import groovy.transform.Field
 
 def installed() {
-    log.debug "installed()"
+    if (debugLogs) log.debug "installed()"
 }
 
 @Field static final String app_status_url = "http://127.0.0.1:8080/installedapp/status"
 
 def updated() {
-    log.debug "updated()"
-    def rules = RMUtils.getRuleList("5.0")
+    if (debugLogs) log.debug "updated()"
 
-    // TODO - create a rule selector
+    // TODO
+}
 
-    //log.debug(rules)
-    //log.debug(getObjectClassName(rules[0]))
+def testRuleTracker() {
 
     // For now, hardcode apps to track
-    def appIdsToTrack = [167,412]
+    def testAppIdsToTrack = [167,412]
 
     def fileToParse = 'response2.html'
-    //log.debug("checking file $fileToParse")
+    if (debugLogs) log.debug("checking file $fileToParse")
     //readAppStatusFromFile(fileToParse)
 
-    appIdsToTrack.each {
-        //log.debug("checking app $it status")
+    testAppIdsToTrack.each {
+        if (debugLogs) log.debug("checking app $it status")
         readAppStatus(it)
     }
 }
@@ -60,7 +93,7 @@ String extractTable(String html, int startIndex = 1, String tableId = null)
     if (tableId != null) {
         startTag = '<table id="' + tableId + '"'
     }
-    log.trace groovy.xml.XmlUtil.escapeXml("looking for table ($startTag) at startIndex=$startIndex")
+    if (traceLogs) log.trace groovy.xml.XmlUtil.escapeXml("looking for table ($startTag) at startIndex=$startIndex")
 
     def endTag = '</table>'
 
@@ -78,7 +111,7 @@ String extractTable(String html, int startIndex = 1, String tableId = null)
 
     // Extract the table from the HTML string
     def String tableHtml = html.substring(tableIndex, endIndex)
-    //log.trace("tableHtml=" + tableHtml)
+    if (traceLogs) log.trace("tableHtml=" + tableHtml)
 
     return tableHtml
 }
@@ -140,16 +173,13 @@ def parseTable(String tableHtml)
     def parser = new XmlSlurper()
     def parsedHtml = parser.parseText(tableHtml)
 
-    //log.trace("parsedHtml type = " + getObjectClassName(parsedHtml))
-    //log.trace("parsedHtml=" + parsedHtml.text())
-
     def tableData = parsedHtml.tbody.tr.collect {
         tr -> tr.td.collect {
             td -> td.text()
         }
     }
 
-    //log.debug("table data: $tableData")
+    if (traceLogs) log.trace("table data: $tableData")
     return tableData
 }
 
