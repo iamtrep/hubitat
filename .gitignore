@@ -1,3 +1,4 @@
 
 *.groovy~
 apps/\#udpStressTest.groovy\#
+*.groovy#
