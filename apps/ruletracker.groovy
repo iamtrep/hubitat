@@ -19,7 +19,9 @@ definition(
     description: "Track RM rule subscriptions and schedules",
     category: "debugging",
     iconUrl: "",
-    iconX2Url: "")
+    iconX2Url: "",
+    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/apps/ruletracker.groovy"
+)
 
 import hubitat.helper.RMUtils
 import groovy.util.XmlSlurper
@@ -33,11 +35,20 @@ preferences {
         section("Rule settings to track") {
             def rules = RMUtils.getRuleList("5.0")
             input name: "appIdsToTrack", type: "enum", title: "Select rules to monitor", options: rules, required: true, multiple: true, submitOnChange: true
+            def scheduleOptions = [[0:"disabled"],[1:"1 min"],[5:"5 min"], [15:"15 min"], [30:"30 min"], [60: "1 hour"], [180:"3 hours"]]
+            input name: "scheduledCheck", type: "enum", title: "Rule check frequency", defaultValue: 5, options: scheduleOptions, required: true, submitOnChange: true
+        }
+
+        section("Actions") {
+            input name: "refreshButton", type: "button", title: "Run check now"
+            input name: "stopButton", type: "button", title: "Remove schedule"
+        }
+
+        section(hideable:true, "Rule Status Check - Results") {
+            paragraph(state.checkResults)
         }
 
         section(hideable:true, hidden:true, "Operational parameters") {
-            def scheduleOptions = [[0:"disabled"],[1:"1 min"],[5:"5 min"], [15:"15 min"], [30:"30 min"], [60: "1 hour"], [180:"3 hours"]]
-            input name: "scheduledCheck", type: "enum", title: "Rule check frequency", defaultValue: 5, options: scheduleOptions, required: true, submitOnChange: true
             input name: "debugLogs", type: "bool", title: "Enable debug logging?", defaultValue: false, required: true, submitOnChange: true
             input name: "traceLogs", type: "bool", title: "Enable trace logging?", defaultValue: false, required: true, submitOnChange: true
             input("hubSecurity", "bool", title: "Hub Security Enabled", defaultValue: false, submitOnChange: true, width:4)
@@ -45,16 +56,7 @@ preferences {
                 input("hubSecurityUsername", "string", title: "Hub Security Username", required: false, width:4)
                 input("hubSecurityPassword", "password", title: "Hub Security Password", required: false, width:4)
             }
-        }
-
-        section("Actions") {
-            input name: "refreshButton", type: "button", title: "Run check now"
-            input name: "stopButton", type: "button", title: "Remove schedule"
             input name: "testButton", type: "button", title: "Run App Tests"
-        }
-
-        section(hideable:true, "Rule Status Check - Results") {
-            paragraph(state.checkResults)
         }
 
         section(hideable:true, hidden:true, "App Name") {
