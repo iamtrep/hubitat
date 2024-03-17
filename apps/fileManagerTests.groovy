@@ -8,16 +8,44 @@ definition(
     iconX2Url: "")
 
 preferences {
+    page(name: "mainPage", title: "App parameters", install: true, uninstall: true) {
+        section("Call parameters") {
+            input name: "numCalls", type: "number", title: "Number of calls", defaultValue: 30, required: true
+            input "startButton", "button", title: "Start a new run", disabled: state.isRunning
+        }
+    }
 }
 
 def installed() {
     log.debug "installed()"
+    state.isRunning = false
 }
 
 def updated() {
     log.debug "updated()"
+}
 
-    def iterations = 30
+def uninstalled() {
+    log.debug "uninstalled()"
+}
+
+
+def appButtonHandler(btn) {
+    switch(btn) {
+        case "startButton":
+        default:
+            if (state.isRunning == false) {
+                runIn(1, "fileManagerTest")
+            }
+            break
+    }
+}
+
+
+def fileManagerTest() {
+    state.isRunning = true
+
+    def iterations = numCalls
 
     def fileList
     def timeStart = now()
@@ -28,11 +56,13 @@ def updated() {
     log.debug("File List API call took ${(timeStop-timeStart)/iterations} ms on average")
 
     printFileList(fileList)
+    def downloadTestFile = fileList[0]["name"]
+    log.debug("Using $downloadTestFile for download tests")
 
     def buffer
     timesStart = now()
     for(int i = 0;i<iterations;i++) {
-       buffer = downloadHubFile(fileList[0]["name"])
+       buffer = downloadHubFile(downloadTestFile)
     }
     timeStop = now()
     log.debug("File download API took ${(timeStop-timeStart)/iterations} ms on average")
@@ -48,13 +78,13 @@ def updated() {
     def buffer2
     timesStart = now()
     for(int i = 0;i<iterations;i++) {
-       buffer2 = readFile(fileList[0]["name"])
+       buffer2 = readFile(downloadTestFile)
     }
     timeStop = now()
     log.debug("File HTTP download took ${(timeStop-timeStart)/iterations} ms on average")
-}
 
-def uninstalled() {}
+    state.isRunning = false
+}
 
 
 def printFileList(fileList) {
@@ -68,7 +98,7 @@ def printFileList(fileList) {
 }
 
 
-// From https://raw.githubusercontent.com/thebearmay/hubitat/main/libraries/templateProcessing.groovy
+// The following methods are taken from https://raw.githubusercontent.com/thebearmay/hubitat/main/libraries/templateProcessing.groovy
 
 @SuppressWarnings('unused')
 String readFile(fName){
