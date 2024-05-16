@@ -38,7 +38,7 @@ metadata {
         name: "Stelpro Ki ZigBee Thermostat",
         namespace: "PhilC",
         author: "PhilC",
-        importUrl: ""
+        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/stelpro/StelproKi.groovy"
     ) {
         capability "Configuration"
         capability "Refresh"
