@@ -10,9 +10,9 @@
 definition(
     name: "Sensor Aggregator",
     namespace: "iamtrep",
-    author: "PJ",
+    author: "pj",
     description: "Aggregate sensor values and save to a single virtual device",
-    category: "",
+    category: "Convenience",
     iconUrl: "",
     iconX2Url: "",
     importUrl: ""
@@ -20,7 +20,23 @@ definition(
 
 import groovy.transform.Field
 
-@Field static final String app_version = "0.0.1"
+@Field static final String app_version = "0.0.2"
+
+@Field static final Map<String, String> CAPABILITY_ATTRIBUTE_MAP = [
+    "capability.carbonDioxideMeasurement"   : "carbonDioxide",
+    "capability.illuminanceMeasurement"     : "illuminance",
+    "capability.relativeHumidityMeasurement": "humidity",
+    "capability.temperatureMeasurement"     : "temperature"
+]
+
+@Field static final Map<String, String> CAPABILITY_DRIVER_MAP = [
+    "capability.carbonDioxideMeasurement"   : "Virtual Omni Sensor",
+    "capability.illuminanceMeasurement"     : "Virtual Illuminance Sensor",
+    "capability.relativeHumidityMeasurement": "Virtual Humidity Sensor",
+    "capability.temperatureMeasurement"     : "Virtual Temperature Sensor"
+]
+
+
 
 preferences {
 	page(name: "mainPage")
@@ -28,14 +44,23 @@ preferences {
 
 def mainPage() {
 	dynamicPage(name: "mainPage", title: " ", install: true, uninstall: true) {
-        section("Sensors") {
-		    input "appName", "text", title: "Name this humidity sensor aggregator", submitOnChange: true
+        section("Configuration") {
+            input "appName", "text", title: "Name this sensor aggregator app", submitOnChange: true
 		    if(appName) app.updateLabel("$appName")
-            input name: "humiditySensors", type: "capability.relativeHumidityMeasurement", title: "Humidity sensors to aggregate", multiple:true, required: true, showFilter: true, submitOnChange: true
-            input name: "outputSensor", type: "capability.relativeHumidityMeasurement", title: "Virtual Humidity sensor to update", required: true, submitOnChange: true
-            if (outputSensor) {
-                def commands = outputSensor.getSupportedCommands().collect { it.name }
-                input name: "outputSensorUpdateCommand", type: "enum", options: commands, title: "Select command to update virtual device", required: true
+        }
+        section("Sensors") {
+            input name: "selectedSensorCapability", type: "enum", options: CAPABILITY_ATTRIBUTE_MAP.keySet(), title: "Select sensor capability to aggregate", required: true, submitOnChange:true
+            if (selectedSensorCapability) {
+                input name: "inputSensors", type: selectedSensorCapability, title: "Sensors to aggregate", multiple:true, required: true, showFilter: true, submitOnChange: true
+                input name: "outputSensor", type: selectedSensorCapability, title: "Virtual sensor to set as aggregation output", multiple: false, required: false, submitOnChange: true
+                if (outputSensor) {
+                    def commands = outputSensor.getSupportedCommands().collect { it.name }
+                    input name: "outputSensorUpdateCommand", type: "enum", options: commands, title: "Select command to update virtual device", required: true
+                }
+                input "createChildDevice", "bool", title: "Create Child Device if no Output Device selected", defaultValue: false, required: true, submitOnChange: true
+                if (createChildDevice) {
+                    outputSensor = null
+                }
             }
         }
         section("Aggregation") {
@@ -44,11 +69,13 @@ def mainPage() {
         }
         section("Operation") {
             input name: "forceUpdate", type: "button", title: "Force update all sensors"
-            //if(humiditySensors) paragraph "Current $aggregationMethod value is ${state.averageHumidity}%" // (included: ${state.includedSensors.collect { it.getLabel() }} excluded: ${state.excludedSensors.collect {it.getLabel()}})"
-            if(humiditySensors) paragraph "Current $aggregationMethod value is ${state.averageHumidity}% (included: ${state.includedSensors.collect { it.getLabel() }} excluded: ${state.excludedSensors.collect { it.getLabel() }})"
+            if(inputSensors) {
+                paragraph "Current $aggregationMethod value is ${state.aggregateValue}"
+            }
         }
         section("Logging") {
             input name: "logEnable", type: "bool", title: "Enable logging?", defaultValue: false, required: true, submitOnChange: true
+            if (logEnable) log.debug("debug logging enabled") else log.debug("debug logging disabled")
         }
     }
 }
@@ -60,72 +87,131 @@ def installed() {
 def updated() {
     log.debug "updated()"
     unsubscribe()
-    subscribe(humiditySensors, "humidity", "humidityHandler")
+    initialize()
+}
 
+def initialize() {
     if (state.includedSensors == null) { state.includedSensors = [] }
     if (state.excludedSensors == null) { state.excludedSensors = [] }
-    if (state.averageHumidity == null) { state.averageHumidity = 0 }
-    if (state.minHumidity == null) { state.minHumidity = 0 }
-    if (state.maxHumidity == null) { state.maxHumidity = 0 }
-    if (state.medianHumidity == null) { state.medianHumidity = 0 }
 
-    humidityHandler()
+    if (state.aggregateValue == null) { state.aggregateValue = 0 }
+    if (state.avgSensorValue == null) { state.avgSensorValue = 0 }
+    if (state.minSensorValue == null) { state.minSensorValue = 0 }
+    if (state.maxSensorValue == null) { state.maxSensorValue = 0 }
+    if (state.medianSensorValue == null) { state.medianSensorValue = 0 }
+
+    if (!outputSensor && createChildDevice) {
+        createChildDevice()
+    }
+
+    if (inputSensors && selectedSensorCapability) {
+        def attributeName = CAPABILITY_ATTRIBUTE_MAP[selectedSensorCapability]
+        if (attributeName) {
+            subscribe(inputSensors, attributeName, sensorEventHandler)
+            if (logEnable) log.debug "Subscribed to ${attributeName} events for ${inputSensors.collect { it.displayName}}."
+        }
+    }
+
+    sensorEventHandler()
 }
 
 def uninstalled() {
 }
 
 
-def humidityHandler(evt=null) {
-    if (logEnable && evt != null) log.debug "humidityHandler() called: ${evt?.name} ${evt?.source} ${evt?.value} ${evt?.descriptionText}"
-	if (computeAggregateHumidity()) {
-        outputSensor."${outputSensorUpdateCommand}"(state.averageHumidity)
+def createChildDevice() {
+    if (!getChildDevice("childDevice")) {
+        def driverName = CAPABILITY_DRIVER_MAP[selectedSensorCapability]
+        if (driverName) {
+            addChildDevice("hubitat", driverName, "childDevice", [name: "Child Output Sensor Device", label: "Child Output Sensor Device"])
+            log.debug "Child device created with driver: ${driverName}."
+        } else {
+            log.error "No driver found for capability: ${selectedSensorCapability}"
+        }
+    }
+}
+
+def sensorEventHandler(evt=null) {
+    if (logEnable && evt != null) log.debug "sensorEventHandler() called: ${evt?.name} ${evt?.source} ${evt?.value} ${evt?.descriptionText}"
+	if (computeAggregateSensorValue()) {
+        if (outputSensor) {
+            outputSensor."${outputSensorUpdateCommand}"((state.aggregateValue + 0.5) as int)
+        } else {
+            def child = getChildDevice("childDevice")
+            if (child) {
+                child.sendEvent(name: CAPABILITY_ATTRIBUTE_MAP[selectedSensorCapability], value: (state.aggregateValue + 0.5) as int, descriptionText:"${child.displayName} was set to ${(state.aggregateValue + 0.5) as int} ")
+            }
+        }
     }
 }
 
 
-def computeAggregateHumidity() {
+def computeAggregateSensorValue() {
     state.includedSensors.clear()
     state.excludedSensors.clear()
 
     def now = new Date()
     def timeAgo = new Date(now.time - excludeAfter * 60 * 1000)
+    def attributeName = CAPABILITY_ATTRIBUTE_MAP[selectedSensorCapability]
 
-    humiditySensors.each {
+    inputSensors.each {
         def events = it.eventsSince(timeAgo, [max:1])
         if (events.size() > 0) {
-            state.includedSensors << it
-            if (logEnable) log.debug("Including sensor ${it.getLabel()} (${it.currentHumidity}%) - last event ${events[0].date}) to aggregate computation")
+            if (it.currentValue(attributeName) != null) {
+                state.includedSensors << it
+                if (logEnable) log.debug("Including sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - last event ${events[0].date}) to aggregate computation")
+            }
         } else {
             state.excludedSensors << it
-            if (logEnable) log.debug("Excluding sensor ${it.getLabel()} (${it.currentHumidity}%) - last event ${it.events([max:1])[0].date}) to aggregate computation")
+            if (logEnable) log.debug("Excluding sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - last event ${it.events([max:1])[0].date}) to aggregate computation")
         }
     }
 
     def n = state.includedSensors.size()
     if (n<1) {
         // For now, simply don't update the app state
-        log.error "No sensors available for agregation... aggregate humidity not updated (${state.averageHumidity})"
+        log.error "No sensors available for agregation... aggregate value not updated (${state.aggregateValue})"
         return false
     }
 
-    def sensorValues = state.includedSensors.collect { it.currentValue("humidity") }
-    state.minHumidity = sensorValues.min()
-    state.maxHumidity = sensorValues.max()
+    def sensorValues = state.includedSensors.collect { it.currentValue(attributeName) }
+    state.minSensorValue = sensorValues.min()
+    state.maxSensorValue = sensorValues.max()
     def sum = sensorValues.sum()
-    state.averageHumidity = ((sum * 10 / sensorValues.size()).toDouble().round(1) ) / 10
+    state.avgSensorValue = sum / sensorValues.size()
 
-    def variance = sensorValues.collect { (it - state.averageHumidity) ** 2 }.sum() / n
-    state.standardDeviation = (Math.sqrt(variance) * 10).round(1) / 10
+    def variance = sensorValues.collect { (it - state.avgSensorValue) ** 2 }.sum() / n
+    state.standardDeviation = Math.sqrt(variance)
 
     sensorValues.sort()
     if (logEnable) log.debug "sorted values: $sensorValues"
     if (n % 2 == 0) {
         // Even number of elements, average the two middle values
-        state.medianHumidity = (sensorValues[(n / 2 - 1) as int] + sensorValues[(n / 2) as int]) / 2.0
+        state.medianSensorValue = (sensorValues[(n / 2 - 1) as int] + sensorValues[(n / 2) as int]) / 2.0
     } else {
         // Odd number of elements, take the middle value
-        state.medianHumidity = sensorValues[(n / 2) as int]
+        state.medianSensorValue = sensorValues[(n / 2) as int]
+    }
+
+
+    //aggregationMethod", type: "enum", options: ["average", "median", "min", "max"
+    switch (aggregationMethod) {
+        case "min":
+            state.aggregateValue = state.minSensorValue
+            break
+
+        case "max":
+            state.aggregateValue = state.maxSensorValue
+            break
+
+        case "median":
+            state.aggregateValue = state.medianSensorValue
+            break
+
+        case "average":
+        default:
+            state.aggregateValue = state.avgSensorValue
+            break
     }
 
     logStatistics()
@@ -136,17 +222,20 @@ def appButtonHandler(String buttonName) {
     switch (buttonName) {
         case "forceUpdate":
         default:
-            humidityHandler()
+            //sensorEventHandler()
+            updated()
             break
     }
 }
 
 def logStatistics() {
-    log.info("Aggregate humidity across ${state.includedSensors.size()}/${humiditySensors.size()} sensors (${state.includedSensors})")
-    log.info("${aggregationMethod}: ${state.averageHumidity}%")
-    if (logEnable) log.debug("Stdev: ${state.standardDeviation}")
-    if (logEnable) log.debug("Min: ${state.minHumidity}% Max: ${state.maxHumidity}%")
-    if (logEnable) log.debug("Median: ${state.medianHumidity}%")
-    //if (logEnable && state.excludedSensors.size()) log.debug("Rejected sensors with last update older than $excludeAfter minutes: ${state.excludedSensors.collect { it.getLabel()} }")
+    log.info("Aggregate sensor value across ${state.includedSensors.size()}/${inputSensors.size()} sensors (${state.includedSensors})")
+    log.info("Method: ${aggregationMethod}: ${state.aggregateValue}")
+    log.info("Avg: ${state.avgSensorValue} Stdev: ${state.standardDeviation} Min: ${state.minSensorValue} Max: ${state.maxSensorValue} Median: ${state.medianSensorValue}")
     if (logEnable) log.debug("Rejected sensors with last update older than $excludeAfter minutes: ${state.excludedSensors.collect { it.getLabel()} }")
+}
+
+def roundToDecimalPlaces(decimalNumber, decimalPlaces) {
+    def scale = Math.pow(10, decimalPlaces as Double)
+    return Math.round((decimalNumber as Double) * scale) / scale
 }
