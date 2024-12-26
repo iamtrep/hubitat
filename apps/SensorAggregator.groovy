@@ -19,8 +19,9 @@ definition(
 )
 
 import groovy.transform.Field
+import groovy.transform.CompileStatic
 
-@Field static final String app_version = "0.0.2"
+@Field static final String app_version = "0.0.3"
 
 @Field static final Map<String, String> CAPABILITY_ATTRIBUTE_MAP = [
     "capability.carbonDioxideMeasurement"   : "carbonDioxide",
@@ -35,7 +36,6 @@ import groovy.transform.Field
     "capability.relativeHumidityMeasurement": "Virtual Humidity Sensor",
     "capability.temperatureMeasurement"     : "Virtual Temperature Sensor"
 ]
-
 
 
 preferences {
@@ -74,18 +74,18 @@ def mainPage() {
             }
         }
         section("Logging") {
-            input name: "logEnable", type: "bool", title: "Enable logging?", defaultValue: false, required: true, submitOnChange: true
-            if (logEnable) log.debug("debug logging enabled") else log.debug("debug logging disabled")
+            input name: "logLevel", type: "enum", options: ["warn","info","debug","trace"], title: "Enable logging?", defaultValue: "info", required: true, submitOnChange: true
+            log.info("${logLevel} logging enabled")
         }
     }
 }
 
 def installed() {
-    log.debug "installed()"
+    logDebug "installed()"
 }
 
 def updated() {
-    log.debug "updated()"
+    logDebug "updated()"
     unsubscribe()
     initialize()
 }
@@ -108,7 +108,7 @@ def initialize() {
         def attributeName = CAPABILITY_ATTRIBUTE_MAP[selectedSensorCapability]
         if (attributeName) {
             subscribe(inputSensors, attributeName, sensorEventHandler)
-            if (logEnable) log.debug "Subscribed to ${attributeName} events for ${inputSensors.collect { it.displayName}}."
+            logDebug "Subscribed to ${attributeName} events for ${inputSensors.collect { it.displayName}}."
         }
     }
 
@@ -119,20 +119,20 @@ def uninstalled() {
 }
 
 
-def createChildDevice() {
+private void createChildDevice() {
     if (!getChildDevice("childDevice")) {
         def driverName = CAPABILITY_DRIVER_MAP[selectedSensorCapability]
         if (driverName) {
             addChildDevice("hubitat", driverName, "childDevice", [name: "Child Output Sensor Device", label: "Child Output Sensor Device"])
-            log.debug "Child device created with driver: ${driverName}."
+            logDebug "Child device created with driver: ${driverName}."
         } else {
-            log.error "No driver found for capability: ${selectedSensorCapability}"
+            logError "No driver found for capability: ${selectedSensorCapability}"
         }
     }
 }
 
 def sensorEventHandler(evt=null) {
-    if (logEnable && evt != null) log.debug "sensorEventHandler() called: ${evt?.name} ${evt?.source} ${evt?.value} ${evt?.descriptionText}"
+    if (evt != null) logTrace "sensorEventHandler() called: ${evt?.name} ${evt?.getDevice().getLabel()} ${evt?.value} ${evt?.descriptionText}"
 	if (computeAggregateSensorValue()) {
         if (outputSensor) {
             outputSensor."${outputSensorUpdateCommand}"((state.aggregateValue + 0.5) as int)
@@ -159,32 +159,33 @@ def computeAggregateSensorValue() {
         if (events.size() > 0) {
             if (it.currentValue(attributeName) != null) {
                 state.includedSensors << it
-                if (logEnable) log.debug("Including sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - last event ${events[0].date}) to aggregate computation")
+                logTrace("Including sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - last event ${events[0].date}")
             }
         } else {
             state.excludedSensors << it
-            if (logEnable) log.debug("Excluding sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - last event ${it.events([max:1])[0].date}) to aggregate computation")
+            logTrace("Excluding sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - last event ${it.events([max:1])[0].date}")
         }
     }
 
     def n = state.includedSensors.size()
     if (n<1) {
         // For now, simply don't update the app state
-        log.error "No sensors available for agregation... aggregate value not updated (${state.aggregateValue})"
+        logError "No sensors available for agregation... aggregate value not updated (${state.aggregateValue})"
         return false
     }
 
     def sensorValues = state.includedSensors.collect { it.currentValue(attributeName) }
-    state.minSensorValue = sensorValues.min()
-    state.maxSensorValue = sensorValues.max()
+    state.minSensorValue = roundToDecimalPlaces(sensorValues.min())
+    state.maxSensorValue = roundToDecimalPlaces(sensorValues.max())
+
     def sum = sensorValues.sum()
-    state.avgSensorValue = sum / sensorValues.size()
+    state.avgSensorValue = roundToDecimalPlaces(sum / sensorValues.size(),1)
 
     def variance = sensorValues.collect { (it - state.avgSensorValue) ** 2 }.sum() / n
-    state.standardDeviation = Math.sqrt(variance)
+    state.standardDeviation = roundToDecimalPlaces(Math.sqrt(variance),1)
 
     sensorValues.sort()
-    if (logEnable) log.debug "sorted values: $sensorValues"
+    logDebug "sorted values: $sensorValues"
     if (n % 2 == 0) {
         // Even number of elements, average the two middle values
         state.medianSensorValue = (sensorValues[(n / 2 - 1) as int] + sensorValues[(n / 2) as int]) / 2.0
@@ -192,7 +193,6 @@ def computeAggregateSensorValue() {
         // Odd number of elements, take the middle value
         state.medianSensorValue = sensorValues[(n / 2) as int]
     }
-
 
     //aggregationMethod", type: "enum", options: ["average", "median", "min", "max"
     switch (aggregationMethod) {
@@ -229,13 +229,42 @@ def appButtonHandler(String buttonName) {
 }
 
 def logStatistics() {
-    log.info("Aggregate sensor value across ${state.includedSensors.size()}/${inputSensors.size()} sensors (${state.includedSensors})")
-    log.info("Method: ${aggregationMethod}: ${state.aggregateValue}")
-    log.info("Avg: ${state.avgSensorValue} Stdev: ${state.standardDeviation} Min: ${state.minSensorValue} Max: ${state.maxSensorValue} Median: ${state.medianSensorValue}")
-    if (logEnable) log.debug("Rejected sensors with last update older than $excludeAfter minutes: ${state.excludedSensors.collect { it.getLabel()} }")
+    logInfo("${CAPABILITY_ATTRIBUTE_MAP[selectedSensorCapability]} ${aggregationMethod} (${state.includedSensors.size()}/${inputSensors.size()}): ${state.aggregateValue}")
+    logInfo("Avg: ${state.avgSensorValue} Stdev: ${state.standardDeviation} Min: ${state.minSensorValue} Max: ${state.maxSensorValue} Median: ${state.medianSensorValue}")
+    logDebug("Aggregated sensors (${state.includedSensors})")
+    if (state.excludedSensors.size() > 0) logDebug("Rejected sensors with last update older than $excludeAfter minutes: ${state.excludedSensors.collect { it.getLabel()} }")
 }
 
-def roundToDecimalPlaces(decimalNumber, decimalPlaces) {
-    def scale = Math.pow(10, decimalPlaces as Double)
-    return Math.round((decimalNumber as Double) * scale) / scale
+
+@CompileStatic
+private double roundToDecimalPlaces(double decimalNumber, int decimalPlaces = 2) {
+    double scale = Math.pow(10, decimalPlaces)
+    return (Math.round(decimalNumber * scale) as double) / scale
+}
+
+private void logError(Object... args)
+{
+    //if (logLevel in ["info","debug","trace"])
+    log.error args
+}
+
+private void logWarn(Object... args)
+{
+    //if (logLevel in ["warn", "info","debug","trace"])
+    log.warn args
+}
+
+private void logInfo(Object... args)
+{
+    if (logLevel in ["info","debug","trace"]) log.info args
+}
+
+private void logDebug(Object... args)
+{
+    if (logLevel in ["debug","trace"]) log.debug args
+}
+
+private void logTrace(Object... args)
+{
+    if (logLevel in ["trace"]) log.trace args
 }
