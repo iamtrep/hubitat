@@ -44,8 +44,8 @@ def mainPage() {
         }
         section("Operation") {
             input name: "forceUpdate", type: "button", title: "Force update all sensors"
-            if(humiditySensors) paragraph "Current $aggregationMethod value is ${state.averageHumidity}%" // (included: ${state.includedSensors.collect { it.getLabel() }} excluded: ${state.excludedSensors.collect {it.getLabel()}})"
-//            if(humiditySensors) paragraph "Current $aggregationMethod value is ${state.averageHumidity}% (included: ${state.includedSensors.collect { it.getLabel() }}" excluded: ${state.excludedSensors.collect { it.getLabel() }})"
+            //if(humiditySensors) paragraph "Current $aggregationMethod value is ${state.averageHumidity}%" // (included: ${state.includedSensors.collect { it.getLabel() }} excluded: ${state.excludedSensors.collect {it.getLabel()}})"
+            if(humiditySensors) paragraph "Current $aggregationMethod value is ${state.averageHumidity}% (included: ${state.includedSensors.collect { it.getLabel() }} excluded: ${state.excludedSensors.collect { it.getLabel() }})"
         }
         section("Logging") {
             input name: "logEnable", type: "bool", title: "Enable logging?", defaultValue: false, required: true, submitOnChange: true
@@ -128,11 +128,7 @@ def computeAggregateHumidity() {
         state.medianHumidity = sensorValues[(n / 2) as int]
     }
 
-    log.info("Average humidity across $n/${humiditySensors.size()} sensors (${state.includedSensors}) : ${state.averageHumidity}%")
-    if (logEnable) log.debug("Stdev: ${state.standardDeviation}")
-    if (logEnable) log.debug("Min: ${state.minHumidity}% Max: ${state.maxHumidity}%")
-    if (logEnable) log.debug("Median: ${state.medianHumidity}%")
-    if (logEnable) log.debug("Rejected sensors with last update older than $excludeAfter minutes: ${state.excludedSensors}")
+    logStatistics()
     return true
 }
 
@@ -143,4 +139,14 @@ def appButtonHandler(String buttonName) {
             humidityHandler()
             break
     }
+}
+
+def logStatistics() {
+    log.info("Aggregate humidity across ${state.includedSensors.size()}/${humiditySensors.size()} sensors (${state.includedSensors})")
+    log.info("${aggregationMethod}: ${state.averageHumidity}%")
+    if (logEnable) log.debug("Stdev: ${state.standardDeviation}")
+    if (logEnable) log.debug("Min: ${state.minHumidity}% Max: ${state.maxHumidity}%")
+    if (logEnable) log.debug("Median: ${state.medianHumidity}%")
+    //if (logEnable && state.excludedSensors.size()) log.debug("Rejected sensors with last update older than $excludeAfter minutes: ${state.excludedSensors.collect { it.getLabel()} }")
+    if (logEnable) log.debug("Rejected sensors with last update older than $excludeAfter minutes: ${state.excludedSensors.collect { it.getLabel()} }")
 }
