@@ -146,6 +146,7 @@ def fetchChildDevice() {
     if (!cd) {
         cd = addChildDevice("hubitat", driverName, deviceName, [name: "${app.label} ${driverName}"])
         if (cd) logDebug("Child device ${cd.id} created with driver: ${driverName}.") else logError("could not create child device")
+        app.updateSetting("outputSensor", [type: selectedSensorCapability, value: cd.id])
     }
 }
 
