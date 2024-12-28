@@ -65,15 +65,9 @@ def mainPage() {
             if (selectedSensorCapability) {
                 input name: "inputSensors", type: selectedSensorCapability, title: "Sensors to aggregate", multiple:true, required: true, showFilter: true, submitOnChange: true
                 input name: "outputSensor", type: selectedSensorCapability, title: "Virtual sensor to set as aggregation output", multiple: false, required: false, submitOnChange: true
-                if (outputSensor) {
-                    def commands = outputSensor.getSupportedCommands().collect { it.name }
-                    input name: "outputSensorUpdateCommand", type: "enum", options: commands, title: "Select command to update virtual device", required: true
-                }
                 if (!outputSensor) {
-                    input "createChildSensorDevice", "bool", title: "Create Child Device if no Output Device selected", defaultValue: true, required: true, submitOnChange: true
-                    if (createChildSensorDevice) {
-                        outputSensor = null
-                    }
+                    input "createChildSensorDevice", "bool", title: "Create Child Device if no Output Device selected", defaultValue: state.createChild, required: true, submitOnChange: true
+                    state.createChild = createChildSensorDevice
                 }
             }
         }
@@ -82,12 +76,10 @@ def mainPage() {
             input name: "excludeAfter", type: "number", title: "Exclude sensor value when sensor is inactive for this many minutes:", defaultValue: 60, range: "0..3600"
         }
         section("Operation") {
-            input name: "forceUpdate", type: "button", title: "Force update all sensors"
+            input name: "forceUpdate", type: "button", title: "Force update aggregate value"
             if(inputSensors) {
                 paragraph "Current $aggregationMethod value is ${state.aggregateValue} ${CAPABILITY_ATTRIBUTE_UNITS[selectedSensorCapability]}"
             }
-        }
-        section("Logging") {
             input name: "logLevel", type: "enum", options: ["warn","info","debug","trace"], title: "Enable logging?", defaultValue: "info", required: true, submitOnChange: true
             log.info("${logLevel} logging enabled")
         }
@@ -113,10 +105,11 @@ def initialize() {
     if (state.minSensorValue == null) { state.minSensorValue = 0 }
     if (state.maxSensorValue == null) { state.maxSensorValue = 0 }
     if (state.medianSensorValue == null) { state.medianSensorValue = 0 }
+    if (state.createChild == null) { state.createChild = false }
 
     if (CAPABILITY_ATTRIBUTE_UNITS["capability.temperatureMeasurement"] == null) CAPABILITY_ATTRIBUTE_UNITS["capability.temperatureMeasurement"] = getTemperatureScale()
 
-    if (!outputSensor && createChildSensorDevice) {
+    if (!outputSensor && state.createChild) {
         fetchChildDevice()
     }
 
@@ -124,7 +117,7 @@ def initialize() {
         def attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]
         if (attributeName) {
             subscribe(inputSensors, attributeName, sensorEventHandler)
-            logDebug "Subscribed to ${attributeName} events for ${inputSensors.collect { it.displayName}}."
+            logTrace "Subscribed to ${attributeName} events for ${inputSensors.collect { it.displayName}}."
         }
     }
 
@@ -139,7 +132,7 @@ def fetchChildDevice() {
     def driverName = CAPABILITY_DRIVERS[selectedSensorCapability]
     if (!driverName) {
         logError "No driver found for capability: ${selectedSensorCapability}"
-        return
+        return null
     }
     String deviceName = "${app.id}-${driverName}"
     def cd = getChildDevice(deviceName)
@@ -148,19 +141,26 @@ def fetchChildDevice() {
         if (cd) logDebug("Child device ${cd.id} created with driver: ${driverName}.") else logError("could not create child device")
         app.updateSetting("outputSensor", [type: selectedSensorCapability, value: cd.id])
     }
+    return cd
 }
 
 def sensorEventHandler(evt=null) {
     if (evt != null) logTrace "sensorEventHandler() called: ${evt?.name} ${evt?.getDevice().getLabel()} ${evt?.value} ${evt?.descriptionText}"
+
 	if (computeAggregateSensorValue()) {
-        if (outputSensor) {
-            outputSensor."${outputSensorUpdateCommand}"((state.aggregateValue + 0.5) as int)
-        } else {
-            def child = fetchChildDevice()
-            if (child) {
-                child.sendEvent(name: CAPABILITY_ATTRIBUTES[selectedSensorCapability], value: (state.aggregateValue + 0.5) as int, descriptionText:"${child.displayName} was set to ${(state.aggregateValue + 0.5) as int} ")
-            }
+        def sensorDevice = outputSensor
+        if (!sensorDevice) {
+            sensorDevice = fetchChildDevice()
         }
+        if (!sensorDevice) {
+            logError("No output device to update")
+            return
+        }
+        sensorDevice.sendEvent(name: CAPABILITY_ATTRIBUTES[selectedSensorCapability],
+                               value: state.aggregateValue,
+                               unit: CAPABILITY_ATTRIBUTE_UNITS[selectedSensorCapability],
+                               descriptionText:"${sensorDevice.displayName} was set to ${state.aggregateValue}${CAPABILITY_ATTRIBUTE_UNITS[selectedSensorCapability]}"
+                               /* , isStateChange: true // let platform filter this event as needed */)
     }
 }
 
