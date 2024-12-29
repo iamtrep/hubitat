@@ -34,7 +34,7 @@ import groovy.transform.Field
 
 metadata {
     definition(
-        name: "Sinope Water Valve (VA422xZB) dev",
+        name: "Sinope Water Valve (VA422xZB)",
         namespace: "iamtrep",
         author: "PJ Tremblay",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/sinope/Sinope_VA422xZB.groovy"
