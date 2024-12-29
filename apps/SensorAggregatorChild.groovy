@@ -166,34 +166,34 @@ def sensorEventHandler(evt=null) {
 
 
 def computeAggregateSensorValue() {
-    state.includedSensors.clear()
-    state.excludedSensors.clear()
-
     def now = new Date()
     def timeAgo = new Date(now.time - excludeAfter * 60 * 1000)
     def attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]
+
+    def includedSensors = []
+    def excludedSensors = []
 
     inputSensors.each {
         def events = it.eventsSince(timeAgo, [max:1])
         if (events.size() > 0) {
             if (it.currentValue(attributeName) != null) {
-                state.includedSensors << it
+                includedSensors << it
                 logTrace("Including sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - last event ${events[0].date}")
             }
         } else {
-            state.excludedSensors << it
+            excludedSensors << it
             logTrace("Excluding sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - last event ${it.events([max:1])[0].date}")
         }
     }
 
-    def n = state.includedSensors.size()
+    def n = includedSensors.size()
     if (n<1) {
         // For now, simply don't update the app state
         logError "No sensors available for agregation... aggregate value not updated (${state.aggregateValue})"
         return false
     }
 
-    def sensorValues = state.includedSensors.collect { it.currentValue(attributeName) }
+    def sensorValues = includedSensors.collect { it.currentValue(attributeName) }
     state.minSensorValue = roundToDecimalPlaces(sensorValues.min())
     state.maxSensorValue = roundToDecimalPlaces(sensorValues.max())
 
@@ -233,6 +233,9 @@ def computeAggregateSensorValue() {
             break
     }
 
+    state.includedSensors = includedSensors.collect { it.getLabel() }
+    state.excludedSensors = excludedSensors.collect { it.getLabel() }
+
     logStatistics()
     return true
 }
@@ -255,7 +258,7 @@ def logStatistics() {
     } else {
         logDebug("No aggregated sensors!")
     }
-    if (state.excludedSensors.size() > 0) logDebug("Rejected sensors with last update older than $excludeAfter minutes: ${state.excludedSensors.collect { it.getLabel()} }")
+    if (state.excludedSensors.size() > 0) logDebug("Rejected sensors with last update older than $excludeAfter minutes: ${state.excludedSensors} }")
 }
 
 
