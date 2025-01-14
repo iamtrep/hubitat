@@ -1,8 +1,9 @@
+
 definition(
     name: "Device and App Enumerator",
     namespace: "iamtrep",
     author: "pj",
-    description: "Enumerates the apps using each selected device",
+    description: "Enumerates the apps using each device",
     category: "Convenience",
     iconUrl: "",
     iconX2Url: ""
@@ -13,7 +14,13 @@ preferences {
         input "devices", "capability.*", title: "Select Devices", multiple: true, required: true
     }
     section("Options") {
-        input "onlyChildDevices", "bool", title: "Process and output only child devices?", defaultValue: false
+        input "onlyChildDevices", "bool", title: "Process and output only child devices?", defaultValue: false, submitOnChange: true
+    }
+    section("Actions") {
+        input "generateReport", "button", title: "Generate Report"
+    }
+    section("Report") {
+        paragraph state.reportOutput ?: "No report generated yet."
     }
 }
 
@@ -28,10 +35,17 @@ def updated() {
 
 def initialize() {
     log.debug "Initializing..."
-    listDevicesAndApps()
 }
 
-def listDevicesAndApps() {
+def appButtonHandler(evt) {
+    if (evt == "generateReport") {
+    	state.reportOutput = "Generating report..."
+        runIn(1, "generateReport")
+        //generateReport()
+    }
+}
+
+def generateReport() {
     def deviceAppMap = [:]
 
     devices.each { device ->
@@ -42,9 +56,15 @@ def listDevicesAndApps() {
     }
 
     def sortedDevices = deviceAppMap.sort { -it.value.apps.size() }
+    def reportHtml = "<table><tr><th>Device</th><th>Total Apps</th><th>Apps</th><th>Is Child Device</th></tr>"
+
     sortedDevices.each { device, info ->
-        log.debug "Device: ${device}, Total Apps: ${info.apps.size()}, Apps: ${info.apps}, Is Child Device: ${info.isChild}"
+        reportHtml += "<tr><td>${device}</td><td>${info.apps.size()}</td><td>${info.apps.join(', ')}</td><td>${info.isChild}</td></tr>"
     }
+
+    reportHtml += "</table>"
+    state.reportOutput = reportHtml
+    log.debug "Report generated"
 }
 
 def getDeviceInfo(device) {
