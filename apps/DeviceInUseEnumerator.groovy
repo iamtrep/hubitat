@@ -38,12 +38,12 @@ preferences {
 
 def mainPage() {
     dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
-        section("Settings", hideable:true, hidden: true){
-            input "debugEnabled", "bool", title: "Enable Debug Logs", defaultValue: false, submitOnChange:true
+        section("Settings", hideable: true, hidden: true) {
+            input "debugEnabled", "bool", title: "Enable Debug Logs", defaultValue: false, submitOnChange: true
             input "appName", "text", title: "Rename this app", defaultValue: app.getLabel(), multiple: false, required: false, submitOnChange: true
-            if(appName != app.getLabel()) app.updateLabel(appName)
+            if (appName != app.getLabel()) app.updateLabel(appName)
         }
-		section("") {
+        section("") {
             input "devices", "capability.*", title: "Select Devices", multiple: true, required: true, submitOnChange: true
         }
         section("Options") {
@@ -93,12 +93,13 @@ def generateReport() {
     }
 
     def sortedDevices = deviceAppMap.sort { -it.value.info.apps.size() }
-    def reportHtml = "<table><tr><th>Device</th><th>Total Apps</th><th>Apps</th><th>Is Child Device</th></tr>"
+    def reportHtml = "<table><tr><th>Device</th><th>Total Apps</th><th>Apps</th><th>Is Child Device</th><th>Parent</th></tr>"
 
     sortedDevices.each { deviceId, deviceData ->
         def deviceUrl = getDeviceDetailsUrl(deviceId)
         def appLinks = deviceData.info.apps.collect { app -> "<a href='${getAppConfigUrl(app.id)}' target='_blank'>${app.label}</a>" }
-        reportHtml += "<tr><td><a href='${deviceUrl}' target='_blank'>${deviceData.name}</a></td><td>${deviceData.info.apps.size()}</td><td>${appLinks.join(', ')}</td><td>${deviceData.info.isChild}</td></tr>"
+        def parentLink = deviceData.info.parent ? "<a href='${deviceData.info.parent.url}' target='_blank'>${deviceData.info.parent.label}</a>" : "N/A"
+        reportHtml += "<tr><td><a href='${deviceUrl}' target='_blank'>${deviceData.name}</a></td><td>${deviceData.info.apps.size()}</td><td>${appLinks.join(', ')}</td><td>${deviceData.info.isChild}</td><td>${parentLink}</td></tr>"
     }
 
     reportHtml += "</table>"
@@ -109,6 +110,7 @@ def generateReport() {
 def getDeviceInfo(device) {
     def apps = []
     def isChildDevice = false
+    def parent = null
     def url = "http://127.0.0.1:8080/device/fullJson/${device.id}"
     try {
         httpGet(url) { response ->
@@ -116,6 +118,11 @@ def getDeviceInfo(device) {
                 def json = response.data
                 apps = json.appsUsing.findAll { it.id != app.id }.collect { [id: it.id, label: it.label] }
                 isChildDevice = json.device.parentAppId != null || json.device.parentDeviceId != null
+                if (json.device.parentDeviceId) {
+                    parent = getParentDeviceInfo(json.device.parentDeviceId)
+                } else if (json.device.parentAppId) {
+                    parent = getParentAppInfo(json.device.parentAppId)
+                }
             } else {
                 log.error "Failed to retrieve data for device ${device.displayName}. HTTP status: ${response.status}"
             }
@@ -123,7 +130,43 @@ def getDeviceInfo(device) {
     } catch (Exception e) {
         log.error "Error making HTTP request: ${e.message}"
     }
-    return [apps: apps, isChild: isChildDevice]
+    return [apps: apps, isChild: isChildDevice, parent: parent]
+}
+
+def getParentDeviceInfo(parentDeviceId) {
+    def parent = null
+    def url = "http://127.0.0.1:8080/device/fullJson/${parentDeviceId}"
+    try {
+        httpGet(url) { response ->
+            if (response.status == 200) {
+                def json = response.data
+                parent = [label: json.device.label, url: getDeviceDetailsUrl(parentDeviceId)]
+            } else {
+                log.error "Failed to retrieve data for parent device. HTTP status: ${response.status}"
+            }
+        }
+    } catch (Exception e) {
+        log.error "Error making HTTP request: ${e.message}"
+    }
+    return parent
+}
+
+def getParentAppInfo(parentAppId) {
+    def parent = null
+    def url = "http://127.0.0.1:8080/installedapp/statusJson/${parentAppId}"
+    try {
+        httpGet(url) { response ->
+            if (response.status == 200) {
+                def json = response.data
+                parent = [label: json.installedApp.label, url: getAppConfigUrl(parentAppId)]
+            } else {
+                log.error "Failed to retrieve data for parent app. HTTP status: ${response.status}"
+            }
+        }
+    } catch (Exception e) {
+        log.error "Error making HTTP request: ${e.message}"
+    }
+    return parent
 }
 
 def getHubBaseLocalUrl() {
