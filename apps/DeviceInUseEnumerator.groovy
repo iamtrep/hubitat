@@ -142,7 +142,8 @@ def getParentDeviceInfo(parentDeviceId) {
         httpGet(url) { response ->
             if (response.status == 200) {
                 def json = response.data
-                parent = [label: json.device.label, url: getDeviceDetailsUrl(parentDeviceId)]
+                def label = json.device.label ?: json.device.name
+                parent = [label: label, url: getDeviceDetailsUrl(parentDeviceId)]
             } else {
                 log.error "Failed to retrieve data for parent device. HTTP status: ${response.status}"
             }
@@ -160,7 +161,8 @@ def getParentAppInfo(parentAppId, appMap) {
         httpGet(url) { response ->
             if (response.status == 200) {
                 def json = response.data
-                parent = [label: json.installedApp.label, url: getAppConfigUrl(parentAppId)]
+                def label = json.installedApp.label ?: json.installedApp.name
+                parent = [label: label, url: getAppConfigUrl(parentAppId)]
                 appMap[parentAppId] = parent
             } else {
                 log.error "Failed to retrieve data for parent app. HTTP status: ${response.status}"
