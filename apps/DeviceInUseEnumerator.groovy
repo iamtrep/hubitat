@@ -83,23 +83,25 @@ def appButtonHandler(evt) {
 }
 
 def generateReport() {
+    log.debug "Generating report"
     def deviceAppMap = [:]
+    def appMap = [:]
 
     devices.each { device ->
-        def deviceInfo = getDeviceInfo(device)
+        def deviceInfo = getDeviceInfo(device, appMap)
         if (!onlyChildDevices || deviceInfo.isChild) {
             deviceAppMap[device.id] = [name: device.displayName, info: deviceInfo]
         }
     }
 
     def sortedDevices = deviceAppMap.sort { -it.value.info.apps.size() }
-    def reportHtml = "<table><tr><th>Device</th><th>Total Apps</th><th>Apps</th><th>Is Child Device</th><th>Parent</th></tr>"
+    def reportHtml = "<table><tr><th>Device</th><th>Total Apps</th><th>Apps</th><th>Parent</th></tr>"
 
     sortedDevices.each { deviceId, deviceData ->
         def deviceUrl = getDeviceDetailsUrl(deviceId)
         def appLinks = deviceData.info.apps.collect { app -> "<a href='${getAppConfigUrl(app.id)}' target='_blank'>${app.label}</a>" }
         def parentLink = deviceData.info.parent ? "<a href='${deviceData.info.parent.url}' target='_blank'>${deviceData.info.parent.label}</a>" : "N/A"
-        reportHtml += "<tr><td><a href='${deviceUrl}' target='_blank'>${deviceData.name}</a></td><td>${deviceData.info.apps.size()}</td><td>${appLinks.join(', ')}</td><td>${deviceData.info.isChild}</td><td>${parentLink}</td></tr>"
+        reportHtml += "<tr><td><a href='${deviceUrl}' target='_blank'>${deviceData.name}</a></td><td>${deviceData.info.apps.size()}</td><td>${appLinks.join(', ')}</td><td>${parentLink}</td></tr>"
     }
 
     reportHtml += "</table>"
@@ -107,7 +109,7 @@ def generateReport() {
     return reportHtml
 }
 
-def getDeviceInfo(device) {
+def getDeviceInfo(device, appMap) {
     def apps = []
     def isChildDevice = false
     def parent = null
@@ -121,7 +123,7 @@ def getDeviceInfo(device) {
                 if (json.device.parentDeviceId) {
                     parent = getParentDeviceInfo(json.device.parentDeviceId)
                 } else if (json.device.parentAppId) {
-                    parent = getParentAppInfo(json.device.parentAppId)
+                    parent = appMap[json.device.parentAppId] ?: getParentAppInfo(json.device.parentAppId, appMap)
                 }
             } else {
                 log.error "Failed to retrieve data for device ${device.displayName}. HTTP status: ${response.status}"
@@ -151,7 +153,7 @@ def getParentDeviceInfo(parentDeviceId) {
     return parent
 }
 
-def getParentAppInfo(parentAppId) {
+def getParentAppInfo(parentAppId, appMap) {
     def parent = null
     def url = "http://127.0.0.1:8080/installedapp/statusJson/${parentAppId}"
     try {
@@ -159,6 +161,7 @@ def getParentAppInfo(parentAppId) {
             if (response.status == 200) {
                 def json = response.data
                 parent = [label: json.installedApp.label, url: getAppConfigUrl(parentAppId)]
+                appMap[parentAppId] = parent
             } else {
                 log.error "Failed to retrieve data for parent app. HTTP status: ${response.status}"
             }
