@@ -35,13 +35,6 @@ import groovy.transform.CompileStatic
     "capability.temperatureMeasurement"     : "temperature"
 ]
 
-@Field static final Map<String, String> CAPABILITY_ATTRIBUTE_UNITS = [
-    "capability.carbonDioxideMeasurement"   : "ppm",
-    "capability.illuminanceMeasurement"     : "lux",
-    "capability.relativeHumidityMeasurement": "%",
-    "capability.temperatureMeasurement"     : null,
-]
-
 @Field static final Map<String, String> CAPABILITY_DRIVERS = [
     "capability.carbonDioxideMeasurement"   : "Virtual Omni Sensor",
     "capability.illuminanceMeasurement"     : "Virtual Illuminance Sensor",
@@ -78,7 +71,7 @@ def mainPage() {
         section("Operation") {
             input name: "forceUpdate", type: "button", title: "Force update aggregate value"
             if(inputSensors) {
-                paragraph "Current $aggregationMethod value is ${state.aggregateValue} ${CAPABILITY_ATTRIBUTE_UNITS[selectedSensorCapability]}"
+                paragraph "Current $aggregationMethod value is ${state.aggregateValue} ${getAttributeUnits(selectedSensorCapability)}"
             }
             input name: "logLevel", type: "enum", options: ["warn","info","debug","trace"], title: "Enable logging?", defaultValue: "info", required: true, submitOnChange: true
             log.info("${logLevel} logging enabled")
@@ -96,6 +89,23 @@ def updated() {
     initialize()
 }
 
+
+String getAttributeUnits(String capability) {
+    switch ( capability) {
+        case "capability.carbonDioxideMeasurement":
+        	return "ppm"
+    case "capability.illuminanceMeasurement":
+        return "lux"
+    case "capability.relativeHumidityMeasurement":
+        return "%"
+        case "capability.temperatureMeasurement":
+        return getTemperatureScale()
+        default:
+            break
+    }
+    return null
+}
+
 def initialize() {
     if (state.includedSensors == null) { state.includedSensors = [] }
     if (state.excludedSensors == null) { state.excludedSensors = [] }
@@ -106,8 +116,6 @@ def initialize() {
     if (state.maxSensorValue == null) { state.maxSensorValue = 0 }
     if (state.medianSensorValue == null) { state.medianSensorValue = 0 }
     if (state.createChild == null) { state.createChild = false }
-
-    if (CAPABILITY_ATTRIBUTE_UNITS["capability.temperatureMeasurement"] == null) CAPABILITY_ATTRIBUTE_UNITS["capability.temperatureMeasurement"] = getTemperatureScale()
 
     if (!outputSensor && state.createChild) {
         fetchChildDevice()
@@ -158,8 +166,8 @@ def sensorEventHandler(evt=null) {
         }
         sensorDevice.sendEvent(name: CAPABILITY_ATTRIBUTES[selectedSensorCapability],
                                value: state.aggregateValue,
-                               unit: CAPABILITY_ATTRIBUTE_UNITS[selectedSensorCapability],
-                               descriptionText:"${sensorDevice.displayName} was set to ${state.aggregateValue}${CAPABILITY_ATTRIBUTE_UNITS[selectedSensorCapability]}"
+                               unit: getAttributeUnits(selectedSensorCapability),
+                               descriptionText:"${sensorDevice.displayName} was set to ${state.aggregateValue}${getAttributeUnits(selectedSensorCapability)}"
                                /* , isStateChange: true // let platform filter this event as needed */)
     }
 }
@@ -251,7 +259,7 @@ def appButtonHandler(String buttonName) {
 }
 
 def logStatistics() {
-    logInfo("${CAPABILITY_ATTRIBUTES[selectedSensorCapability]} ${aggregationMethod} (${state.includedSensors.size()}/${inputSensors.size()}): ${state.aggregateValue} ${CAPABILITY_ATTRIBUTE_UNITS[selectedSensorCapability]}")
+    logInfo("${CAPABILITY_ATTRIBUTES[selectedSensorCapability]} ${aggregationMethod} (${state.includedSensors.size()}/${inputSensors.size()}): ${state.aggregateValue} ${getAttributeUnits(selectedSensorCapability)}")
     logInfo("Avg: ${state.avgSensorValue} Stdev: ${state.standardDeviation} Min: ${state.minSensorValue} Max: ${state.maxSensorValue} Median: ${state.medianSensorValue}")
     if (state.includedSensors.size() > 0) {
         logDebug("Aggregated sensors (${state.includedSensors})")
