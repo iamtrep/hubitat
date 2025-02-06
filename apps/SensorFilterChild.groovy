@@ -66,6 +66,10 @@ def mainPage() {
                   options: windowSizes,
                   required: true,
                   defaultValue: "5"
+
+            input "decay", "number",
+                  title: "Window decay in minutes",
+                  defaultValue: 10
         }
 
         section("Logging") {
@@ -118,8 +122,8 @@ def updated() {
 }
 
 def initialize() {
-    if (logEnable) log.debug "Initializing with settings: ${settings}"
-    state.valueWindow = []
+    if (state.valueWindow == null) state.valueWindow = []
+    if (logEnable) log.debug "Initializing with settings: ${settings} and window ${state.valueWindow}"
 
     if (sourceDevice && attributeToFilter) {
         subscribe(sourceDevice, attributeToFilter, handleNewValue)
@@ -130,14 +134,16 @@ def initialize() {
 def handleNewValue(evt) {
     def value = evt.value
 
-    try {
+    if (isInteger(value)) {
+        value = value.toInteger()
+    } else if (isDecimal(value)) {
         value = value.toBigDecimal()
-    } catch (Exception e) {
+    } else {
         if (logEnable) log.debug "Value ${value} is not numeric, keeping as string"
     }
 
-    if (traceEnable) log.trace "Adding value ${value} to window ${state.valueWindow}"
     state.valueWindow.add(value)
+    if (traceEnable) log.trace "Added value ${value} of type ${getObjectClassName(value)} to window ${state.valueWindow}"
 
     def windowSizeInt = settings.windowSize.toInteger()
 
@@ -146,51 +152,113 @@ def handleNewValue(evt) {
         state.valueWindow.remove(0)
     }
 
-    if (state.valueWindow.size() == windowSizeInt) {
-        if (traceEnable) log.trace "Window is full: ${state.valueWindow}"
-        def filteredValue
+    if (traceEnable) log.trace "Window: ${state.valueWindow}"
+    def filteredValue = updateFilteredValue()
 
-        if (value instanceof BigDecimal) {
-            if (settings.filterType == "median") {
-                filteredValue = calculateMedian(state.valueWindow)
-                if (traceEnable) log.trace "Calculated median: ${filteredValue}"
-            } else {
-                filteredValue = calculateAverage(state.valueWindow)
-                if (traceEnable) log.trace "Calculated average: ${filteredValue}"
-            }
-        } else {
-            filteredValue = calculateMedian(state.valueWindow)
-            if (traceEnable) log.trace "Calculated median for non-numeric: ${filteredValue}"
-        }
-
-        if (logEnable) {
-            log.debug "Raw value: ${value}, Filtered value: ${filteredValue}"
-        }
-
-        try {
-            targetDevice.parse([[name: attributeToFilter, value: filteredValue, unit: evt.unit]])
-            if (traceEnable) log.trace "Updated target device ${targetDevice.displayName} with value ${filteredValue}"
-        } catch (Exception e) {
-            log.warn "Error updating target device: ${e}"
-        }
+    if (logEnable) {
+        log.debug "Raw value: ${value}, Filtered value: ${filteredValue}"
     }
+
+    runIn(settings.decay*60, "decayWindow")
+}
+
+def updateFilteredValue() {
+    def filteredValue
+
+    if (settings.filterType == "median") {
+        filteredValue = calculateMedian(state.valueWindow)
+        if (traceEnable) log.trace "Calculated median: ${filteredValue}"
+    } else {
+        filteredValue = calculateAverage(state.valueWindow)
+        if (traceEnable) log.trace "Calculated average: ${filteredValue}"
+    }
+
+    try {
+        targetDevice.sendEvent(name: attributeToFilter, value: filteredValue, unit: sourceDevice.currentState(attributeToFilter)?.unit)
+        if (traceEnable) log.trace "Updated target device ${targetDevice.displayName} with value ${filteredValue}"
+    } catch (Exception e) {
+        log.warn "Error updating target device: ${e}"
+    }
+
+    return filteredValue
+}
+
+def decayWindow() {
+    if (state.valueWindow.size() > 1) {
+        if (traceEnable) log.trace "Removing oldest value ${state.valueWindow[0]} from window"
+        state.valueWindow.remove(0)
+        updateFilteredValue()
+    }
+
+    if (state.valueWindow.size() > 1) runIn(settings.decay*60, "decayWindow")
 }
 
 def calculateMedian(values) {
-    def sortedValues = values.sort()
-    def middle = (int)(sortedValues.size() / 2)
-    return sortedValues[middle]
+    def isInteger = values.every { it instanceof Integer }
+    def sortedValues = values.clone().sort()
+    if (traceEnable) log.trace "Sorted values: ${sortedValues} (isInteger=$isInteger)"
+
+    def size = sortedValues.size()
+    if (size == 0) return null
+
+    def midpoint = (int)(size / 2)
+    BigDecimal medianValue
+
+    if (size % 2 == 0) {
+        // Even number of elements - average the middle two
+        medianValue = (sortedValues[midpoint - 1] + sortedValues[midpoint]) / 2.0
+    } else {
+        // Odd number of elements - return middle value
+        medianValue = sortedValues[midpoint]
+    }
+
+    if (isInteger) {
+        return medianValue.setScale(0, BigDecimal.ROUND_HALF_UP).intValue()
+    } else {
+        return medianValue.setScale(2, BigDecimal.ROUND_HALF_UP)
+    }
 }
 
 def calculateAverage(values) {
-    if (values[0] instanceof BigDecimal) {
-        return (values.sum() / values.size()).setScale(2, BigDecimal.ROUND_HALF_UP)
+    if (traceEnable) log.trace "Values: ${values}"
+
+    def sum = 0
+    def count = values.size()
+    def isInteger = values.every { it instanceof Integer }
+
+    values.each { value ->
+        if (value instanceof BigDecimal) {
+            sum += value
+        } else if (value instanceof Integer) {
+            sum += value.toBigDecimal()
+        } else {
+            sum += value.toString().toBigDecimal()
+        }
     }
-    return values[values.size() - 1]
+
+    def average = sum / count
+
+    if (isInteger) {
+        return average.setScale(0, BigDecimal.ROUND_HALF_UP).intValue()
+    } else {
+        return average.setScale(2, BigDecimal.ROUND_HALF_UP)
+    }
 }
 
 def disableLogging() {
     log.warn "Disabling logging"
     app.updateSetting("logEnable", [value: "false", type: "bool"])
     app.updateSetting("traceEnable", [value: "false", type: "bool"])
+}
+
+def isNumeric(value) {
+    return value ==~ /^-?\d+(\.\d+)?$/
+}
+
+def isInteger(value) {
+    return value ==~ /^-?\d+$/
+}
+
+def isDecimal(value) {
+    return value ==~ /^-?\d*\.\d+$/
 }
