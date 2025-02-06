@@ -6,7 +6,7 @@ definition(
     category: "Utility",
     iconUrl: "",
     iconX2Url: "",
-    importUrl: "",
+    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/SensorFilterManager.groovy",
     singleInstance: true
 )
 
