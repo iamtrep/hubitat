@@ -69,7 +69,7 @@ def mainPage() {
 
             input "decay", "number",
                   title: "Window decay in minutes",
-                  defaultValue: 10
+                  defaultValue: 1
         }
 
         section("Logging") {
