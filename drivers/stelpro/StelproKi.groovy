@@ -29,7 +29,7 @@
  *      Updates/refactoring by iamtrep
  *      Operating state bug fix code from https://github.com/SmartThingsCommunity/SmartThingsPublic (author unknown)
  *
- *  URL for this file : TBD
+ *  URL for this file : https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/stelpro/StelproKi.groovy
  *
  */
 
