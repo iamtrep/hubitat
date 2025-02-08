@@ -77,6 +77,8 @@ def updated() {
         state.pendingChanges = false
         state.previousDeviceId = selectedDevice?.id
         state.previousAttributes = selectedAttributes
+    	def header = "timestamp," + selectedAttributes.join(',') + "\n"
+	    uploadHubFile(logFileName, header.bytes)
     }
     unsubscribe()
     initialize()
@@ -105,7 +107,9 @@ def writeFile(data) {
     } catch (Exception e) {
         log.warn "Could not read existing data: ${e.message}"
     }
-    if (existingData = "") existingData = "timestamp," + selectedAttributes.join(',') + "\n"
+    if (existingData == "") {
+        existingData = "timestamp," + selectedAttributes.join(',') + "\n"
+    }
     def newData = existingData + data
     uploadHubFile(logFileName, newData.bytes)
 }
