@@ -36,7 +36,7 @@ definition(
     iconUrl: "",
     iconX2Url: "",
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/AttributeLoggerChild.groovy",
-    parentApp: "iamtrep:AttributeLogger",
+    parent: "iamtrep:Attribute Logger",
     singleThreaded: true
 )
 
@@ -77,7 +77,6 @@ def updated() {
         state.pendingChanges = false
         state.previousDeviceId = selectedDevice?.id
         state.previousAttributes = selectedAttributes
-        createNewFileWithHeader()
     }
     unsubscribe()
     initialize()
@@ -87,11 +86,6 @@ def initialize() {
     selectedAttributes.each { attribute ->
         subscribe(selectedDevice, attribute, handleEvent)
     }
-}
-
-def createNewFileWithHeader() {
-    def header = "timestamp," + selectedAttributes.join(',') + "\n"
-    uploadHubFile(logFileName, header.bytes)
 }
 
 def handleEvent(evt) {
@@ -111,6 +105,7 @@ def writeFile(data) {
     } catch (Exception e) {
         log.warn "Could not read existing data: ${e.message}"
     }
+    if (existingData = "") existingData = "timestamp," + selectedAttributes.join(',') + "\n"
     def newData = existingData + data
     uploadHubFile(logFileName, newData.bytes)
 }
