@@ -22,6 +22,11 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+import groovy.transform.Field
+import groovy.transform.CompileStatic
+
+@Field static final String app_version = "0.0.1"
+
 definition(
     name: "Device \"in use by\" Enumerator",
     namespace: "iamtrep",
