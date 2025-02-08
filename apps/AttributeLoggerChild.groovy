@@ -35,7 +35,7 @@ definition(
     category: "Convenience",
     iconUrl: "",
     iconX2Url: "",
-    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/AttributeLogger.groovy",
+    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/AttributeLoggerChild.groovy",
     parentApp: "iamtrep:AttributeLogger",
     singleThreaded: true
 )
