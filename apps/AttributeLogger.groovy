@@ -44,9 +44,9 @@ preferences {
 }
 
 def mainPage() {
-    dynamicPage(name: "mainPage", title: "Attribute Logger", install: true, uninstall: true) {
+    dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
         section {
-            paragraph "Manage your loggers here"
+            paragraph "Manage your device attribute loggers here"
             app(name: "attributeLoggerChild",
                 appName: "Attribute Logger Child",
                 namespace: "iamtrep",

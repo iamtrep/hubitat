@@ -44,7 +44,7 @@ preferences {
 }
 
 def mainPage() {
-    dynamicPage(name: "mainPage", title: "Sensor Filter Manager", install: true, uninstall: true) {
+    dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
         section {
             paragraph "Manage your sensor filters here"
             app(name: "sensorFilters",
