@@ -78,7 +78,7 @@ def updated() {
         state.previousDeviceId = selectedDevice?.id
         state.previousAttributes = selectedAttributes
     	def header = "timestamp," + selectedAttributes.join(',') + "\n"
-	    uploadHubFile(logFileName, header.bytes)
+	    //uploadHubFile(logFileName, header.bytes)
     }
     unsubscribe()
     initialize()
@@ -111,7 +111,29 @@ def writeFile(data) {
         existingData = "timestamp," + selectedAttributes.join(',') + "\n"
     }
     def newData = existingData + data
-    uploadHubFile(logFileName, newData.bytes)
+    safeUploadHubFile(logFileName, newData.bytes)
+}
+
+def safeUploadHubFile(fileName, bytes) {
+    int maxRetries = 3
+    int retryCount = 0
+    boolean success = false
+
+    while (retryCount < maxRetries && !success) {
+        try {
+            uploadHubFile(fileName, bytes)
+            success = true
+        } catch (Exception e) {
+            retryCount++
+            if (retryCount < maxRetries) {
+                log.warn "Retrying upload of $fileName... Attempt ${retryCount}"
+                pauseExecution(500)
+            } else {
+                log.error "Failed to upload $fileName after ${maxRetries} attempts"
+                throw e
+            }
+        }
+    }
 }
 
 def getDeviceAttributes(device) {
