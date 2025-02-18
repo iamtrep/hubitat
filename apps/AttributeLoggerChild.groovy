@@ -129,7 +129,7 @@ def safeUploadHubFile(fileName, bytes) {
                 log.warn "Retrying upload of $fileName... Attempt ${retryCount}"
                 pauseExecution(500)
             } else {
-                log.error "Failed to upload $fileName after ${maxRetries} attempts"
+                log.error "Failed to upload $fileName after ${maxRetries} attempts - possible data loss"
                 throw e
             }
         }
