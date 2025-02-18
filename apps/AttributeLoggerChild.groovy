@@ -102,7 +102,7 @@ def handleEvent(evt) {
 def writeFile(data) {
     def existingData = ""
     try {
-        def byteArray = downloadHubFile(logFileName)
+        def byteArray = safeDownloadHubFile(logFileName)
         existingData = new String(byteArray)
     } catch (Exception e) {
         log.warn "Could not read existing data: ${e.message}"
@@ -113,6 +113,34 @@ def writeFile(data) {
     def newData = existingData + data
     safeUploadHubFile(logFileName, newData.bytes)
 }
+
+
+def safeDownloadHubFile(fileName) {
+    int maxRetries = 3
+    int retryCount = 0
+    boolean success = false
+
+    def byteArray = null
+
+    while (retryCount < maxRetries && !success) {
+        try {
+            byteArray = uploadHubFile(fileName)
+            success = true
+        } catch (Exception e) {
+            retryCount++
+            if (retryCount < maxRetries) {
+                log.warn "Retrying download of $fileName... Attempt ${retryCount}"
+                pauseExecution(500)
+            } else {
+                log.error "Failed to download $fileName after ${maxRetries} attempts"
+                throw e
+            }
+        }
+    }
+
+    return byteArray
+}
+
 
 def safeUploadHubFile(fileName, bytes) {
     int maxRetries = 3
