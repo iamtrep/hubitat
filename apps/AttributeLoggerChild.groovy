@@ -124,7 +124,7 @@ def safeDownloadHubFile(fileName) {
 
     while (retryCount < maxRetries && !success) {
         try {
-            byteArray = uploadHubFile(fileName)
+            byteArray = downloadHubFile(fileName)
             success = true
         } catch (Exception e) {
             retryCount++
