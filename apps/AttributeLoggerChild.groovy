@@ -120,7 +120,7 @@ def safeDownloadHubFile(fileName) {
     int retryCount = 0
     boolean success = false
 
-    def byteArray = null
+    byte[] byteArray
 
     while (retryCount < maxRetries && !success) {
         try {
