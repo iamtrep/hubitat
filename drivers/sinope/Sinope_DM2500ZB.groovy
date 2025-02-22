@@ -372,6 +372,7 @@ private parseAttributeReport(descMap){
                 default:
                     break
             }
+            break
 
         case "0702": // Metering cluster
             switch (descMap.attrId) {
@@ -517,11 +518,14 @@ private void sendZigbeeCommands(cmds) {
     sendHubCommand(hubAction)
 }
 
-private long getEnergy(value) {
+private Integer getEnergy(value) {
     if (value != null) {
-        def energy = new BigInteger(value,16)
-        return energy / 1000 // energy in kWh
+        Integer energy = Integer.parseInt(value, 16)
+        Integer kWh = (energy.toDouble() / 1000).round()
+        logTrace("getEnergy($value) = $energy => $kWh")
+        return kWh
     }
+    return 0
 }
 
 private long getTemperature(value) {
