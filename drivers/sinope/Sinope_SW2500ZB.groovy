@@ -12,8 +12,6 @@
  *
  *  Specs for this device : https://support.sinopetech.com/en/
  *
- *  Source: https://github.com/iamtrep/hubitat/blob/main/drivers/sinope/Sinope_DM2500ZB.groovy
- *
  */
 
 import groovy.transform.Field
@@ -26,7 +24,7 @@ metadata {
         name: "Sinope Switch (SW2500ZB)",
         namespace: "iamtrep",
         author: "pj",
-        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/sinope/Sinope_SW2500ZB.groovy"
+        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/sinope/Sinope_SW2500ZB.groovy"
     ) {
 		capability "Actuator"
 		capability "Configuration"

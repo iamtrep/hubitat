@@ -12,15 +12,11 @@
  *
  *  Specs for this device : https://support.sinopetech.com/en/
  *
- *  Source: https://github.com/iamtrep/hubitat/blob/main/drivers/sinope/Sinope_DM2500ZB.groovy
- *
- * v0.0.1 Initial version
- *
  */
 
 import groovy.transform.Field
 
-@Field static final String version = "0.0.1"
+@Field static final String version = "0.0.2"
 
 
 metadata {
