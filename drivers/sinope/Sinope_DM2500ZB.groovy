@@ -45,7 +45,25 @@ metadata {
         capability "SwitchLevel"
         capability "TemperatureMeasurement"
 
+        command "keypadLock"
+        command "keypadUnlock"
+
+        command "setOnIntensity", [[name: "onIntensity", type: "NUMBER", description: "Dimmer intensity when switch is turned ON", constraints: ["NUMBER"]]]
+
+        command "setOnLedIntensity", [[name: "onLedIntensity", type: "NUMBER", description: "LED intensity when switch is ON", constraints: ["NUMBER"]]]
+        command "setOnLedColor", [[name:"On LED Color*", type:"ENUM", description:"Color of the LED when the device is off", constraints:["Amber","Fuchsia","Lime","Pearl","Blue"]]]
+        command "setOffLedIntensity", [[name: "offLedIntensity", type: "NUMBER", description: "LED intensity when switch is OFF", constraints: ["NUMBER"]]]
+        command "setOffLedColor", [[name:"Off LED Color*", type:"ENUM", description:"Color of the LED when the device is off", constraints:["Amber","Fuchsia","Lime","Pearl","Blue"]]]
+
         preferences {
+            input(name: "prefKeypadLock", title: "Disconnect paddle from relay", type: "bool", defaultValue: false)
+
+            input(name: "prefOnLedColor", title: "On LED Color", type: "enum", defaultValue: 4, options: constLedColorPrefMap)
+            input(name: "prefOnLedIntensity", title: "LED intensity when ON", type: "number", defaultValue: 48, range: "0..100")
+
+            input(name: "prefOffLedColor", title: "Off LED Color", type: "enum", defaultValue: 1, options: constLedColorPrefMap)
+            input(name: "prefOffLedIntensity", title: "LED intensity when OFF", type: "number", defaultValue: 48, range: "0..100")
+
             input(name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true)
             input(name: "debugEnable", type: "bool", title: "Enable debug logging info", defaultValue: false, required: true, submitOnChange: true)
             if (debugEnable) {
@@ -59,6 +77,17 @@ metadata {
 }
 
 // Constants
+@Field static final Map constLedColorMap = ["0AFFDC": "Lime", "Lime": "0AFFDC",
+                                            "000A4B": "Amber", "Amber" : "000A4B",
+                                            "0100A5": "Fuchsia", "Fuchsia": "0100A5",
+                                            "64FFFF": "Pearl", "Pearl": "64FFFF",
+                                            "FFFF00": "Blue", "Blue": "FFFF00"]
+
+@Field static final Map constLedColorPrefMap = [0: "Lime", "Lime": 0,
+                                                1: "Amber", "Amber": 1,
+                                                2: "Fuchsia", "Fuchsia": 2,
+                                                3: "Pearl", "Pearl": 3,
+                                                4: "Blue", "Blue": 4]
 
 // Driver installation
 
@@ -69,7 +98,27 @@ void installed() {
 
 void updated() {
     // called when preferences are saved.
-    configure()
+    if (settings.prefKeypadLock != null) {
+        settings.prefKeypadLock ? keypadLock() : keypadUnlock()
+    }
+
+    if (settings.prefOnLedColor != null) {
+        setOnLedColor(constLedColorPrefMap[settings.prefOnLedColor as int])
+    }
+
+    if (settings.prefOffLedColor != null) {
+        setOffLedColor(constLedColorPrefMap[settings.prefOffLedColor as int])
+    }
+
+    if (settings.prefOnLedIntensity != null) {
+        setOnLedIntensity(settings.prefOnLedIntensity)
+    }
+
+    if (settings.prefOffLedIntensity != null) {
+        setOffLedIntensity(settings.prefOffLedIntensity)
+    }
+
+    //configure()
 }
 
 void uninstalled() {
@@ -128,6 +177,11 @@ void refresh() {
     cmds += zigbee.readAttribute(0x0008, 0x0000) // switch level
     cmds += zigbee.readAttribute(0x0702, 0x0000) // energy
 
+    cmds += zigbee.readAttribute(0xFF01, 0x0050, [mfgCode: "0x119C"])
+    cmds += zigbee.readAttribute(0xFF01, 0x0051, [mfgCode: "0x119C"])
+    cmds += zigbee.readAttribute(0xFF01, 0x0052, [mfgCode: "0x119C"])
+    cmds += zigbee.readAttribute(0xFF01, 0x0053, [mfgCode: "0x119C"])
+
     sendZigbeeCommands(cmds)
 }
 
@@ -145,21 +199,11 @@ void off() {
     state.switchTypeDigital = true
 }
 
-// some code borrowed from https://raw.githubusercontent.com/birdslikewires/hubitat/master/aurora/drivers/aurora_dimmer_a1zb2wdm.groovy
-// TODO: rewrite
 void setLevel(BigDecimal level, BigDecimal duration = 1) {
-	BigDecimal safeLevel = level > 100 ? 100 : level
-	safeLevel = safeLevel < 0 ? 0 : safeLevel
-	String hexLevel = percentageToHex(safeLevel.intValue())
-
-	BigDecimal safeDuration = duration <= 25 ? (duration*10) : 255
-	String hexDuration = Integer.toHexString(safeDuration.intValue())
-
-	logTrace("setLevel requested '${level}' (${safeLevel}%) [${hexLevel}] over '${duration}' (${safeDuration} 10ths of a second) [${hexDuration}].")
-
-	// The command data is made up of three hex values, the first byte is the level, second is duration, third always seems to be '00'.
-	sendZigbeeCommands(["he cmd 0x${device.deviceNetworkId} 0x01 0x0008 0x04 {${hexLevel} ${hexDuration} 00}"])
     state.levelTypeDigital = true
+    def cmds = []
+    cmds += zigbee.setLevel(level)
+    sendZigbeeCommands(cmds)
 }
 
 void push(buttonNumber) {
@@ -184,6 +228,54 @@ void doubleTap(buttonNumber) {
     String buttonName = buttonNumber == 0 ? "Up" : "Down"
     String desc = "$buttonName was double-tapped"
 	sendEvent(name:"doubleTapped", value: buttonNumber, type: "digital", descriptionText: desc) //, isStateChange:true)
+}
+
+// Custom commands
+
+void keypadLock() {
+    def cmds = []
+    cmds += zigbee.writeAttribute(0xFF01, 0x0002, DataType.ENUM8, 1, [mfgCode: "0x119C"])
+    sendZigbeeCommands(cmds)
+}
+
+void keypadUnlock() {
+    def cmds = []
+    cmds += zigbee.writeAttribute(0xFF01, 0x0002, DataType.ENUM8, 0, [mfgCode: "0x119C"])
+    sendZigbeeCommands(cmds)
+}
+
+void setOnIntensity(intensity) {
+    // todo
+}
+
+void setOnLedColor(String color) {
+    def attrHex = constLedColorMap[color]
+    logDebug("Setting ON led color to $color (${attrHex as String})")
+    def cmds = []
+    cmds += zigbee.writeAttribute(0xFF01, 0x0050, DataType.UINT24, attrHex, [mfgCode: "0x119C"])
+    sendZigbeeCommands(cmds)
+}
+
+void setOnLedIntensity(intensity) {
+    String hexIntensity = percentToHex(intensity as Integer)
+    def cmds = []
+    cmds += zigbee.writeAttribute(0xFF01, 0x0052, DataType.UINT8, hexIntensity, [mfgCode: "0x119C"])
+    sendZigbeeCommands(cmds)
+}
+
+void setOffLedColor(String color) {
+    def attrHex = constLedColorMap[color]
+    logDebug("Setting OFF led color to $color ($attrHex)")
+    def cmds = []
+    cmds += zigbee.writeAttribute(0xFF01, 0x0051, DataType.UINT24, attrHex, [mfgCode: "0x119C"])
+    sendZigbeeCommands(cmds)
+}
+
+void setOffLedIntensity(intensity) {
+    String hexIntensity = percentToHex(intensity as Integer)
+    def cmds = []
+    cmds += zigbee.writeAttribute(0xFF01, 0x0053, DataType.UINT8, hexIntensity, [mfgCode: "0x119C"])
+    sendZigbeeCommands(cmds)
 }
 
 // Device Event Parsing
@@ -293,6 +385,35 @@ private parseAttributeReport(descMap){
 
         case "FF01": // Manufacturer-specific cluster
             switch (descMap.attrId) {
+                case "0002": // keypad lock
+                    boolean locked = descMap.value > 0
+                    map.name = "keypadLock"
+                    map.value = locked
+                    map.descriptionText = locked ? "Keypad was locked" : "Keypad was unlocked"
+                    break
+
+                case "0050": // on LED color
+                    String color = constLedColorMap[descMap.value]
+                    device.updateSetting('prefOnLedColor', [value: constLedColorPrefMap[color], type: 'enum'])
+                	logDebug("On LED color was set to $color (${descMap.value})")
+                    return null // return directly, no event to generate
+
+                case "0051": // off LED color
+                    String color = constLedColorMap[descMap.value]
+                    device.updateSetting('prefOffLedColor', [value: constLedColorPrefMap[color], type: 'enum'])
+                    logDebug("Off LED color was set to $color (${descMap.value})")
+                    return null // return directly, no event to generate
+
+                case "0052": // on LED intensity
+                    device.updateSetting('prefOnLedIntensity', descMap.value)
+                    logDebug("On LED intensity was set to $descMap.value")
+                    return null // return directly, no event to generate
+
+                case "0053": // off LED intensity
+                    device.updateSetting('prefOffLedIntensity', descMap.value)
+                    logDebug("Off LED intensity was set to $descMap.value")
+                    return null // return directly, no event to generate
+
                 case "0054": // action report (pushed/released/double tapped)
                     // TODO - simplify code below
                     switch (descMap.value) {
@@ -351,12 +472,7 @@ private parseAttributeReport(descMap){
                     break
 
                     // TODO - expose as prefs and custom commands
-                case "0002": // keypad lock
                 case "0010": // on intensity
-                case "0050": // on LED color
-                case "0051": // off LED color
-                case "0052": // on LED intensity
-                case "0053": // off LED intensity
 
                 case "0055": // minimum intensity (0 - 3000)
                 case "0058": // double-up = full (0=off, 1=on)

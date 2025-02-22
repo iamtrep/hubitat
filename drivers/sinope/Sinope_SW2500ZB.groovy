@@ -14,8 +14,6 @@
  *
  *  Source: https://github.com/iamtrep/hubitat/blob/main/drivers/sinope/Sinope_DM2500ZB.groovy
  *
- * v0.0.1 Initial version
- *
  */
 
 import groovy.transform.Field
@@ -35,7 +33,7 @@ metadata {
         capability "Initialize"
         capability "Refresh"
 
-        capability "DoubleTapableButton"  // doesn't appear to work on SW2500ZB
+        capability "DoubleTapableButton"
         capability "EnergyMeter"
         capability "HoldableButton"
         capability "Light"
