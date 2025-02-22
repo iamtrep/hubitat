@@ -15,6 +15,7 @@
  */
 
 import groovy.transform.Field
+import java.math.RoundingMode
 
 @Field static final String version = "0.0.2"
 
@@ -144,6 +145,7 @@ void configure() {
     cmds += zigbee.configureReporting(0x0006, 0x0000, DataType.BOOLEAN, 0, 3600)  // switch state
     cmds += zigbee.configureReporting(0x0702, 0x0000, DataType.UINT48, 0, 1800)   // energy consumed
     cmds += zigbee.configureReporting(0xFF01, 0x0054, DataType.ENUM8, 0, 3600, null, [mfgCode: "0x119C"])  // action report (pushed/released/double tap)
+    //cmds += zigbee.configureReporting(0xFF01, 0x0090, DataType.UINT32, 0, 3600, null, [mfgCode: "0x119C"]) // energy
 
     sendZigbeeCommands(cmds)
 
@@ -174,6 +176,8 @@ void refresh() {
     cmds += zigbee.readAttribute(0xFF01, 0x0051, [mfgCode: "0x119C"])
     cmds += zigbee.readAttribute(0xFF01, 0x0052, [mfgCode: "0x119C"])
     cmds += zigbee.readAttribute(0xFF01, 0x0053, [mfgCode: "0x119C"])
+
+    //cmds += zigbee.readAttribute(0xFF01, 0x0090, [mfgCode: "0x119C"]) // energy delivered
 
     sendZigbeeCommands(cmds)
 }
@@ -479,11 +483,15 @@ private void sendZigbeeCommands(cmds) {
     sendHubCommand(hubAction)
 }
 
-private long getEnergy(value) {
+private double getEnergy(value) {
     if (value != null) {
-        def energy = new BigInteger(value,16)
-        return energy / 1000 // energy in kWh
+        Integer energy = Integer.parseInt(value, 16)
+        BigDecimal kWh = new BigDecimal(energy.toDouble() / 1000.0)
+        kWh = kWh.setScale(3, RoundingMode.HALF_UP)
+        logTrace("getEnergy($value) = $energy => $kWh")
+        return kWh.doubleValue()
     }
+    return 0
 }
 
 private long getTemperature(value) {
