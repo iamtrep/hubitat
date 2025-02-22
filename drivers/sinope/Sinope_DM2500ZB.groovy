@@ -195,10 +195,15 @@ void off() {
     state.switchTypeDigital = true
 }
 
-void setLevel(BigDecimal level, BigDecimal duration = 1) {
+void setLevel(String level, String duration = '0') {
+    setLevel(Integer.parseInt(level), Integer.parseInt(duration))
+}
+
+void setLevel(BigDecimal level, BigDecimal duration = 0) {
     state.levelTypeDigital = true
     def cmds = []
-    cmds += zigbee.setLevel(level)
+    cmds += zigbee.setLevel(level, duration)
+    //logTrace("zigbee.setLevel($level,$duration) = $cmds")
     sendZigbeeCommands(cmds)
 }
 
@@ -348,17 +353,23 @@ private parseAttributeReport(descMap){
         case "0008": // Level Control cluster
             switch (descMap.attrId) {
                 case "0000":
-                    // Current level
+                    // Current level (0-255)
+                    Integer dimmerLevel = (Integer.parseInt(descMap.value, 16).toDouble() * 100.0 / 255.0).round()
                     map.name = "level"
-                    map.value = (descMap.value.toDouble() * 100.0 / 255.0).round()
+                    map.value = dimmerLevel
                     map.unit = "%"
-                    map.descriptionText = "Dimmer level is ${map.value}%"
+                    map.descriptionText = "Dimmer level was set to ${map.value}${map.unit}"
                     map.type = state.levelTypeDigital ? "digital" : "physical"
                     state.levelTypeDigital = false
-                   break
+                    break
+
                 case "0011":
-                    // "On" level (preset)
-                    // TODO
+                    // "On" level (preset) - TODO
+                    Integer dimmerLevel = (Integer.parseInt(descMap.value, 16).toDouble() * 100.0 / 255.0).round()
+                    logDebug("On level preset = $dimmerLevel - IGNORED")
+                    break
+
+                default:
                     break
             }
 
