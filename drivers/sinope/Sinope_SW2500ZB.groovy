@@ -367,24 +367,26 @@ private parseAttributeReport(descMap){
 
                 case "0050": // on LED color
                     String color = constLedColorMap[descMap.value]
-                    device.updateSetting('prefOnLedColor', [value: constLedColorPrefMap[color], type: 'enum'])
-                	logDebug("On LED color was set to $color (${descMap.value})")
+                    device.updateSetting('prefOnLedColor', [value: "${constLedColorPrefMap[color]}", type: 'enum'])
+                    logDebug("On LED color was set to $color => ${constLedColorPrefMap[color]} (${descMap.value})")
                     return null // return directly, no event to generate
 
                 case "0051": // off LED color
                     String color = constLedColorMap[descMap.value]
-                    device.updateSetting('prefOffLedColor', [value: constLedColorPrefMap[color], type: 'enum'])
-                    logDebug("Off LED color was set to $color (${descMap.value})")
+                    device.updateSetting('prefOffLedColor', [value: "${constLedColorPrefMap[color]}", type: 'enum'])
+                    logDebug("Off LED color was set to $color => ${constLedColorPrefMap[color]} (${descMap.value})")
                     return null // return directly, no event to generate
 
                 case "0052": // on LED intensity
-                    device.updateSetting('prefOnLedIntensity', descMap.value)
-                    logDebug("On LED intensity was set to $descMap.value")
+                    Integer ledIntensity = (Integer.parseInt(descMap.value, 16).toDouble() * 100.0 / 255.0).round()
+                    device.updateSetting('prefOnLedIntensity', ledIntensity.toString())
+                    logDebug("On LED intensity was set to $ledIntensity% (0x${descMap.value})")
                     return null // return directly, no event to generate
 
                 case "0053": // off LED intensity
-                    device.updateSetting('prefOffLedIntensity', descMap.value)
-                    logDebug("Off LED intensity was set to $descMap.value")
+                    Integer ledIntensity = (Integer.parseInt(descMap.value, 16).toDouble() * 100.0 / 255.0).round()
+                    device.updateSetting('prefOffLedIntensity', ledIntensity.toString())
+                    logDebug("Off LED intensity was set to $ledIntensity% (0x${descMap.value})")
                     return null // return directly, no event to generate
 
                 case "0054": // action report (pushed/released/double tapped)
