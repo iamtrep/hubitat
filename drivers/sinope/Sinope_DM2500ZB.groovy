@@ -55,6 +55,8 @@ metadata {
         preferences {
             input(name: "prefKeypadLock", title: "Disconnect paddle from relay", type: "bool", defaultValue: false)
 
+            input(name: "prefAutoOffTimer", title: "Auto-off timer", type: "enum", defaultValue: 0, options: constTimerPrefMap)
+
             input(name: "prefOnLedColor", title: "On LED Color", type: "enum", defaultValue: 4, options: constLedColorPrefMap)
             input(name: "prefOnLedIntensity", title: "LED intensity when ON", type: "number", defaultValue: 48, range: "0..100")
 
@@ -86,7 +88,29 @@ metadata {
                                                 3: "Pearl", "Pearl": 3,
                                                 4: "Blue", "Blue": 4]
 
-// Driver installation
+@Field static final Map constTimerPrefMap = [0: "disabled",
+                                             1: "1 min",
+                                             2: "2 min",
+                                             3: "5 min",
+                                             4: "10 min",
+                                             5: "15 min",
+                                             6: "30 min",
+                                             7: "1h",
+                                             8: "2h",
+                                             9: "3h"]
+
+@Field static final Map constTimerValueMap = [0: 0,
+                                              1: 60,
+                                              2: 120,
+                                              3: 300,
+                                              4: 600,
+                                              5: 900,
+                                              6: 1800,
+                                              7: 3600,
+                                              8: 7200,
+                                              9: 10800]
+
+// Driver installation, device config & update
 
 void installed() {
     // called when device is first created with this driver
@@ -97,6 +121,10 @@ void updated() {
     // called when preferences are saved.
     if (settings.prefKeypadLock != null) {
         settings.prefKeypadLock ? keypadLock() : keypadUnlock()
+    }
+
+    if (settings.prefAutoOffTimer != null) {
+        setAutoOffTimer(constTimerValueMap[settings.prefAutoOffTimer as int])
     }
 
     if (settings.prefOnLedColor != null) {
@@ -246,6 +274,13 @@ void keypadLock() {
 void keypadUnlock() {
     def cmds = []
     cmds += zigbee.writeAttribute(0xFF01, 0x0002, DataType.ENUM8, 0, [mfgCode: "0x119C"])
+    sendZigbeeCommands(cmds)
+}
+
+void setAutoOffTimer(duration) {
+    def cmds = []
+    cmds += zigbee.writeAttribute(0xFF01, 0x00A0, DataType.UINT32, duration as int, [mfgCode: "0x119C"])
+    logTrace("setAutoOffTimer($duration) => $cmds")
     sendZigbeeCommands(cmds)
 }
 
