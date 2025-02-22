@@ -15,6 +15,7 @@
  */
 
 import groovy.transform.Field
+import java.math.RoundingMode
 
 @Field static final String version = "0.0.2"
 
@@ -145,7 +146,8 @@ void configure() {
     cmds += zigbee.configureReporting(0x0006, 0x0000, DataType.BOOLEAN, 0, 3600)  // switch state
     cmds += zigbee.configureReporting(0x0008, 0x0000, DataType.UINT8, 0, 3600)    // switch level
     cmds += zigbee.configureReporting(0x0702, 0x0000, DataType.UINT48, 0, 1800)   // energy consumed
-    cmds += zigbee.configureReporting(0xFF01, 0x0054, DataType.ENUM8, 0, 3600, null, [mfgCode: "0x119C"])  // action report (single/double tap)
+    cmds += zigbee.configureReporting(0xFF01, 0x0054, DataType.ENUM8, 0, 3600, null, [mfgCode: "0x119C"])  // action report (pushed/held/released/double tap)
+    //cmds += zigbee.configureReporting(0xFF01, 0x0090, DataType.UINT32, 0, 3600, null, [mfgCode: "0x119C"]) // energy
 
     sendZigbeeCommands(cmds)
 
@@ -173,10 +175,12 @@ void refresh() {
     cmds += zigbee.readAttribute(0x0008, 0x0000) // switch level
     cmds += zigbee.readAttribute(0x0702, 0x0000) // energy
 
-    cmds += zigbee.readAttribute(0xFF01, 0x0050, [mfgCode: "0x119C"])
-    cmds += zigbee.readAttribute(0xFF01, 0x0051, [mfgCode: "0x119C"])
-    cmds += zigbee.readAttribute(0xFF01, 0x0052, [mfgCode: "0x119C"])
-    cmds += zigbee.readAttribute(0xFF01, 0x0053, [mfgCode: "0x119C"])
+    cmds += zigbee.readAttribute(0xFF01, 0x0050, [mfgCode: "0x119C"]) // LED on colour
+    cmds += zigbee.readAttribute(0xFF01, 0x0051, [mfgCode: "0x119C"]) // LED off colour
+    cmds += zigbee.readAttribute(0xFF01, 0x0052, [mfgCode: "0x119C"]) // LED on intensity
+    cmds += zigbee.readAttribute(0xFF01, 0x0053, [mfgCode: "0x119C"]) // LED off intensity
+
+    //cmds += zigbee.readAttribute(0xFF01, 0x0090, [mfgCode: "0x119C"]) // energy delivered
 
     sendZigbeeCommands(cmds)
 }
@@ -479,9 +483,8 @@ private parseAttributeReport(descMap){
                     }
                     break
 
-                    // TODO - expose as prefs and custom commands
+                    // TODO - expose these as prefs and/or custom commands
                 case "0010": // on intensity
-
                 case "0055": // minimum intensity (0 - 3000)
                 case "0058": // double-up = full (0=off, 1=on)
                 case "0090": // watt-hours delivered
@@ -518,12 +521,13 @@ private void sendZigbeeCommands(cmds) {
     sendHubCommand(hubAction)
 }
 
-private Integer getEnergy(value) {
+private double getEnergy(value) {
     if (value != null) {
         Integer energy = Integer.parseInt(value, 16)
-        Integer kWh = (energy.toDouble() / 1000).round()
+        BigDecimal kWh = new BigDecimal(energy.toDouble() / 1000.0)
+        kWh = kWh.setScale(3, RoundingMode.HALF_UP)
         logTrace("getEnergy($value) = $energy => $kWh")
-        return kWh
+        return kWh.doubleValue()
     }
     return 0
 }
