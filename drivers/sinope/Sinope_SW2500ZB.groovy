@@ -451,7 +451,7 @@ private parseAttributeReport(descMap){
                 case "0090": // watt-hours delivered
                     state.energyDelivered = getEnergy(descMap.value)
                     logInfo("Energy report: ${state.energyDelivered}")
-                    break
+                    return null // no event to generate
 
                     // TODO
                 case "0010": // on intensity
