@@ -354,6 +354,17 @@ def parse(String description) {
 }
 
 
+@Field static final Map<String, Map<String, Object>> buttonActionMap = [
+    "01": [buttonEvent: "pushed", buttonIndex: 0, description: "Up was pushed"],
+    "02": [buttonEvent: "released", buttonIndex: 0, description: "Up was released"],
+    "03": [buttonEvent: "held", buttonIndex: 0, description: "Up was held"],
+    "04": [buttonEvent: "doubleTapped", buttonIndex: 0, description: "Up was double-tapped"],
+    "11": [buttonEvent: "pushed", buttonIndex: 1, description: "Down was pushed"],
+    "12": [buttonEvent: "released", buttonIndex: 1, description: "Down was released"],
+    "13": [buttonEvent: "held", buttonIndex: 1, description: "Down was held"],
+    "14": [buttonEvent: "doubleTapped", buttonIndex: 1, description: "Down was double-tapped"]
+]
+
 private parseAttributeReport(descMap){
     def map = [: ]
 
@@ -393,7 +404,7 @@ private parseAttributeReport(descMap){
             switch (descMap.attrId) {
                 case "0000":
                     // Current level (0-255)
-                    Integer dimmerLevel = (Integer.parseInt(descMap.value, 16).toDouble() * 100.0 / 255.0).round()
+                    Integer dimmerLevel = scaleHexValue(descMap.value)
                     map.name = "level"
                     map.value = dimmerLevel
                     map.unit = "%"
@@ -404,7 +415,7 @@ private parseAttributeReport(descMap){
 
                 case "0011":
                     // "On" level (preset) - TODO
-                    Integer dimmerLevel = (Integer.parseInt(descMap.value, 16).toDouble() * 100.0 / 255.0).round()
+                    Integer dimmerLevel = scaleHexValue(descMap.value)
                     logDebug("On level preset = $dimmerLevel - IGNORED")
                     break
 
@@ -452,85 +463,47 @@ private parseAttributeReport(descMap){
                     return null // return directly, no event to generate
 
                 case "0052": // on LED intensity
-                    Integer ledIntensity = (Integer.parseInt(descMap.value, 16).toDouble() * 100.0 / 255.0).round()
+                    Integer ledIntensity = scaleHexValue(descMap.value)
                     device.updateSetting('prefOnLedIntensity', ledIntensity.toString())
                     logDebug("On LED intensity was set to $ledIntensity% (0x${descMap.value})")
                     return null // return directly, no event to generate
 
                 case "0053": // off LED intensity
-                    Integer ledIntensity = (Integer.parseInt(descMap.value, 16).toDouble() * 100.0 / 255.0).round()
+                    Integer ledIntensity = scaleHexValue(descMap.value)
                     device.updateSetting('prefOffLedIntensity', ledIntensity.toString())
                     logDebug("Off LED intensity was set to $ledIntensity% (0x${descMap.value})")
                     return null // return directly, no event to generate
 
                 case "0054": // action report (pushed/released/double tapped)
-                    // TODO - simplify code below
-                    switch (descMap.value) {
-                        case "01": // up pressed
-                            map.name = "pushed"
-                            map.value = 0
-                            map.descriptionText = "Up was pushed"
-                            map.type = "physical"
-                            break
-                        case "02": // up released
-                            map.name = "released"
-                            map.value = 0
-                            map.descriptionText = "Up was released"
-                            map.type = "physical"
-                            break
-                        case "03": // up held
-                            map.name = "held"
-                            map.value = 0
-                            map.descriptionText = "Up was held"
-                            map.type = "physical"
-                            break
-                        case "04": // up double-tapped
-                            map.name = "doubleTapped"
-                            map.value = 0
-                            map.descriptionText = "Up was double-tapped"
-                            map.type = "physical"
-                            break
-                        case "11": // down pressed
-                            map.name = "pushed"
-                            map.value = 1
-                            map.descriptionText = "Down was pushed"
-                            map.type = "physical"
-                            break
-                        case "12": // down released
-                            map.name = "released"
-                            map.value = 1
-                            map.descriptionText = "Down was released"
-                            map.type = "physical"
-                            break
-                        case "13": // down held
-                            map.name = "held"
-                            map.value = 1
-                            map.descriptionText = "Down was held"
-                            map.type = "physical"
-                            break
-                        case "14": // down double-tapped
-                            map.name = "doubleTapped"
-                            map.value = 1
-                            map.descriptionText = "Down was double-tapped"
-                            map.type = "physical"
-                            break
-                        default:
-                            logDebug("Unknown button action report ${descMap}")
-                            break
+                    def action = buttonActionMap[descMap.value]
+                    if (action) {
+                        map.name = action.buttonEvent
+                        map.value = action.buttonIndex
+                        map.descriptionText = action.description
+                        map.type = "physical"
+                    } else {
+                        logDebug("Unknown button action report ${descMap}")
                     }
                     break
 
-                    // TODO - expose these as prefs and/or custom commands
+                case "0090": // watt-hours delivered
+                    state.energyDelivered = getEnergy(descMap.value)
+                    logInfo("Energy report: ${state.energyDelivered}")
+                    break
+
+                    // TODO
                 case "0010": // on intensity
                 case "0055": // minimum intensity (0 - 3000)
                 case "0058": // double-up = full (0=off, 1=on)
-                case "0090": // watt-hours delivered
                 case "00A0": // auto-off timer setting
                 case "00A1": // current remaining timer seconds
                 case "0119": // connected load (in watts, always zero)
                 case "0200": // status (always zero)
+                    logDebug("Unhandled manufacturer-specific attribute report: ${descMap}")
+                    break
+
                 default:
-                    logDebug("Unknown manufacturer specific attribute report: ${descMap}")
+                    logDebug("Unknown manufacturer-specific attribute report: ${descMap}")
                     break
             }
             break
@@ -594,6 +567,10 @@ private String percentToHex(Integer percentValue) {
 	hexValue = hexValue < 0 ? 0 : hexValue
 	hexValue = hexValue > 255 ? 255 : hexValue
 	return Integer.toHexString(hexValue.intValue())
+}
+
+private Integer scaleHexValue(String hexValue, Double scale = 100.0, Double max = 255.0) {
+    return (Integer.parseInt(hexValue, 16).toDouble() * scale / max).round()
 }
 
 
