@@ -175,7 +175,7 @@ void configure() {
     cmds += zigbee.configureReporting(0x0008, 0x0000, DataType.UINT8, 0, 3600)    // switch level
     cmds += zigbee.configureReporting(0x0702, 0x0000, DataType.UINT48, 0, 1800)   // energy consumed
     cmds += zigbee.configureReporting(0xFF01, 0x0054, DataType.ENUM8, 0, 3600, null, [mfgCode: "0x119C"])  // action report (pushed/held/released/double tap)
-    //cmds += zigbee.configureReporting(0xFF01, 0x0090, DataType.UINT32, 0, 3600, null, [mfgCode: "0x119C"]) // energy
+    cmds += zigbee.configureReporting(0xFF01, 0x0090, DataType.UINT32, 0, 3600, null, [mfgCode: "0x119C"]) // energy
 
     sendZigbeeCommands(cmds)
 
@@ -208,7 +208,7 @@ void refresh() {
     cmds += zigbee.readAttribute(0xFF01, 0x0052, [mfgCode: "0x119C"]) // LED on intensity
     cmds += zigbee.readAttribute(0xFF01, 0x0053, [mfgCode: "0x119C"]) // LED off intensity
 
-    //cmds += zigbee.readAttribute(0xFF01, 0x0090, [mfgCode: "0x119C"]) // energy delivered
+    cmds += zigbee.readAttribute(0xFF01, 0x0090, [mfgCode: "0x119C"]) // energy delivered
 
     sendZigbeeCommands(cmds)
 }
