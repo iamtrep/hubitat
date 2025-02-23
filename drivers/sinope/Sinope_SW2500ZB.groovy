@@ -17,7 +17,7 @@
 import groovy.transform.Field
 import java.math.RoundingMode
 
-@Field static final String version = "0.0.2"
+@Field static final String version = "0.0.3"
 
 
 metadata {
