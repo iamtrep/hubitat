@@ -7,6 +7,7 @@
  TODO
  - Capture rule settings and use as a reference
  - keep track of subs/schedules in a Map, per app ID
+ - subscribe to rule events / schedules and perform check before/after
  - send a (location?) event when a rule's subscriptions or schedules change
 
  */

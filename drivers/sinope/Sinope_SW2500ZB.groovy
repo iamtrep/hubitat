@@ -10,15 +10,14 @@
  *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
  *  for the specific language governing permissions and limitations under the License.
  *
- *  Specs for this device : https://support.sinopetech.com/en/
+ *  Specs for this device : https://support.sinopetech.com/en/1.2.2.5/
  *
  */
 
 import groovy.transform.Field
 import java.math.RoundingMode
 
-@Field static final String version = "0.0.3"
-
+@Field static final String version = "0.0.5"
 
 metadata {
     definition(
@@ -170,11 +169,11 @@ void configure() {
     def cmds = []
 
     // Configure device attribute self-reporting
-    cmds += zigbee.configureReporting(0x0002, 0x0000, DataType.INT16, 0, 3600)    // device temperature
-    cmds += zigbee.configureReporting(0x0006, 0x0000, DataType.BOOLEAN, 0, 3600)  // switch state
-    cmds += zigbee.configureReporting(0x0702, 0x0000, DataType.UINT48, 0, 1800)   // energy consumed
-    cmds += zigbee.configureReporting(0xFF01, 0x0054, DataType.ENUM8, 0, 3600, null, [mfgCode: "0x119C"])  // action report (pushed/released/double tap)
-    cmds += zigbee.configureReporting(0xFF01, 0x0090, DataType.UINT32, 0, 3600, null, [mfgCode: "0x119C"]) // energy
+    cmds += zigbee.configureReporting(0x0002, 0x0000, DataType.INT16, 0, 0xFFFF)    // device temperature
+    cmds += zigbee.configureReporting(0x0006, 0x0000, DataType.BOOLEAN, 0, 0xFFFF)  // switch state
+    cmds += zigbee.configureReporting(0x0702, 0x0000, DataType.UINT48, 0, 1800)     // energy consumed
+    cmds += zigbee.configureReporting(0xFF01, 0x0054, DataType.ENUM8, 0, 0xFFFF, null, [mfgCode: "0x119C"])  // action report (pushed/released/double tap)
+    cmds += zigbee.configureReporting(0xFF01, 0x0090, DataType.UINT32, 0, 3600, null, [mfgCode: "0x119C"])   // energy
 
     sendZigbeeCommands(cmds)
 
