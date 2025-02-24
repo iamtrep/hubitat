@@ -40,8 +40,8 @@ metadata {
         capability "Switch"
         capability "TemperatureMeasurement"
 
-        command "keypadLock"
-        command "keypadUnlock"
+        command "keypadLock", [[name: "Disconnect paddle from relay so it no longer operates the load (a.k.a. smart bulb mode - button events are still sent when the paddle is operated)"]]
+        command "keypadUnlock", [[name: "Connect paddle to relay so that the paddle will operate the load."]]
 
         command "setOnIntensity", [[name: "onIntensity", type: "NUMBER", description: "Dimmer intensity when switch is turned ON", constraints: ["NUMBER"]]]
 
@@ -51,20 +51,23 @@ metadata {
         command "setOffLedColor", [[name:"Off LED Color*", type:"ENUM", description:"Color of the LED when the device is off", constraints:["Amber","Fuchsia","Lime","Pearl","Blue"]]]
 
         preferences {
-            input(name: "prefKeypadLock", title: "Disconnect paddle from relay", type: "bool", defaultValue: false)
+            input(name: "prefKeypadLock", title: "Disconnect paddle from relay", type: "bool", defaultValue: false,
+                  description: "When true, the switch paddle will no longer control the load but button events will be sent (a.k.a. smart bulb mode).")
 
-            input(name: "prefAutoOffTimer", title: "Auto-off timer", type: "enum", defaultValue: 0, options: constTimerPrefMap)
+            input(name: "prefAutoOffTimer", title: "Auto-off timer", type: "enum", defaultValue: 0, options: constTimerPrefMap,
+                  description: "Set the dimmer to turn off automatically after specified amount of time")
 
-            input(name: "prefOnLedColor", title: "On LED Color", type: "enum", defaultValue: 4, options: constLedColorPrefMap)
+            input(name: "prefOnLedColor", title: "LED color when ON", type: "enum", defaultValue: 4, options: constLedColorPrefMap)
             input(name: "prefOnLedIntensity", title: "LED intensity when ON", type: "number", defaultValue: 48, range: "0..100")
 
-            input(name: "prefOffLedColor", title: "Off LED Color", type: "enum", defaultValue: 1, options: constLedColorPrefMap)
+            input(name: "prefOffLedColor", title: "LED color when OFF", type: "enum", defaultValue: 1, options: constLedColorPrefMap)
             input(name: "prefOffLedIntensity", title: "LED intensity when OFF", type: "number", defaultValue: 48, range: "0..100")
 
             input(name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true)
             input(name: "debugEnable", type: "bool", title: "Enable debug logging info", defaultValue: false, required: true, submitOnChange: true)
             if (debugEnable) {
-                input(name: "traceEnable", type: "bool", title: "Enable trace logging info (for development purposes)", defaultValue: false)
+                input(name: "traceEnable", type: "bool", title: "Enable trace logging info", defaultValue: false,
+                      description: "For driver development/troubleshooting purposes")
             }
         }
 
