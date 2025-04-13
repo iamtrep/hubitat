@@ -1,7 +1,14 @@
 import hubitat.helper.NetworkUtils
 
 metadata {
-    definition (name: "Device Ping", namespace: "iamtrep", author: "pj", singleThreaded: true) {
+    definition (
+        name: "Device Ping",
+        namespace: "iamtrep",
+        author: "pj",
+        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/DevicePing.groovy",
+        singleThreaded: true  // avoid overlapping pings
+    )
+    {
         capability "ContactSensor"
         capability "Initialize"
         capability "Refresh"
@@ -98,12 +105,12 @@ def ping() {
 
     if (deviceIP) {
         pingSuccess = sendPingRequest()
-        sendEvent(name: "pingStatus", value: pingSuccess ? "success" : "failed")
+        sendEvent(name: "pingStatus", value: pingSuccess ? "success" : "failed", descriptionText: "Ping ${deviceIP} ${pingSuccess}")
     }
 
     if (httpURL) {
         httpSuccess = sendHttpRequest()
-        sendEvent(name: "httpStatus", value: httpSuccess ? "success" : "failed")
+        sendEvent(name: "httpStatus", value: httpSuccess ? "success" : "failed", descriptionText: "HTTP GET ${httpURL} ${httpSuccess}")
     }
 
     updateDeviceStatus(pingSuccess && httpSuccess)
