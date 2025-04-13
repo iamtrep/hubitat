@@ -15,6 +15,7 @@ metadata {
 
         command "ping"
         command "resetRetryCount"
+        command "setRetryThreshold", ["number"]
 
         attribute "status", "enum", ["online", "offline"]
         attribute "pingStatus", "enum", ["success", "failed"]
@@ -28,6 +29,7 @@ metadata {
         input "retryInterval", "number", title: "Initial Retry Interval (seconds)", description: "How long to wait before first retry after a failed ping", defaultValue: 30, required: true
         input "maxRetries", "number", title: "Maximum Retry Count", description: "Maximum number of retry attempts before backing off to regular schedule", defaultValue: 5, required: true
         input "maxBackoffFactor", "number", title: "Maximum Backoff Multiplier", description: "Maximum multiplier for retry interval (prevents extremely long waits)", defaultValue: 10, required: true
+        input "retryThreshold", "number", title: "Retry Threshold for Status Update", description: "Number of retries before updating status to offline", defaultValue: 3, required: true
         input "txtEnable", "bool", title: "Enable info logging", defaultValue: true
         input "logEnable", "bool", title: "Enable debug logging", defaultValue: true
     }
@@ -38,6 +40,7 @@ def installed() {
     state.isPinging = false
     state.currentRetryCount = 0
     state.lastCheckin = null
+    state.retryThreshold = settings.retryThreshold ?: 3
     initialize()
 }
 
@@ -46,6 +49,7 @@ def updated() {
     if (state.currentRetryCount == null) state.currentRetryCount = 0
     if (state.isPinging == null) state.isPinging = false
     if (state.lastCheckin == null) state.lastCheckin = null
+    if (state.retryThreshold == null) state.retryThreshold = settings.retryThreshold ?: 3
     unschedule()
     initialize()
 }
@@ -160,7 +164,7 @@ def updateDeviceStatus(boolean online) {
     // Update timestamp
     state.lastCheckin = new Date().format("yyyy-MM-dd HH:mm:ss")
 
-    if (currentStatus != newStatus) {
+    if ((currentStatus != newStatus) && (online || state.currentRetryCount >= state.retryThreshold)) {
         logInfo "Device ${device.getLabel()} status changed from ${currentStatus} to ${newStatus}"
         String newStatusDescription = "${device.getLabel()} status is ${newStatus}"
         sendEvent(name: "status", value: newStatus, descriptionText: newStatusDescription)
@@ -202,6 +206,11 @@ def handleRetry() {
 def resetRetryCount() {
     state.currentRetryCount = 0
     logDebug "Reset retry count to 0"
+}
+
+def setRetryThreshold(threshold) {
+    state.retryThreshold = threshold
+    logDebug "Set retry threshold to ${threshold}"
 }
 
 def refresh() {
