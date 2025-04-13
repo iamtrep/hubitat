@@ -65,7 +65,7 @@ def initialize() {
         log.warn "No device IP or HTTP URL specified. Pings will not be scheduled."
     }
 
-    if (logDebug) runIn(1800, "logsOff")
+    if (logEnable) runIn(1800, "logsOff")
 }
 
 def logsOff() {
