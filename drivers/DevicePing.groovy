@@ -89,7 +89,7 @@ def updated() {
 def initialize() {
     logDebug("initialize()")
     if (state.version != driver_version) {
-        log.warn("New driver version installed ${driver_version} (previous: ${state.version}")
+        log.warn("New driver version installed ${driver_version} (previous: ${state.version})")
         state.version = driver_version
     }
 
@@ -112,7 +112,7 @@ def initialize() {
 
 def logsOff() {
     logDebug("Debug logging turned off")
-    updateSetting("logDebug", "false")
+    device.updateSetting("logEnable", false)
 }
 
 def parse(String description) {
