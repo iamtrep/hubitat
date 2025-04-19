@@ -202,15 +202,19 @@ def updateDeviceStatus(boolean online) {
     // Update timestamp
     state.lastCheckin = new Date().format("yyyy-MM-dd HH:mm:ss")
 
-    if ((currentStatus != newStatus) && (online || state.currentRetryCount >= state.retryThreshold)) {
-        logInfo "Device ${device.getLabel()} status changed from ${currentStatus} to ${newStatus}"
-        String newStatusDescription = "${device.getLabel()} status is ${newStatus}"
-        sendEvent(name: "status", value: newStatus, descriptionText: newStatusDescription)
-        sendEvent(name: "contact", value: contactValue, descriptionText: newStatusDescription)
+    if (currentStatus != newStatus) {
+        logInfo "Device ${device.getLabel()} - tracking state change to ${newStatus}"
 
-        // Reset retry count if device comes back online
-        if (online) {
-            resetRetryCount()
+        if (online || state.currentRetryCount >= state.retryThreshold) {
+            String newStatusDescription = "${device.getLabel()} status is ${newStatus}"
+            sendEvent(name: "status", value: newStatus, descriptionText: newStatusDescription)
+            sendEvent(name: "contact", value: contactValue, descriptionText: newStatusDescription)
+            logInfo "Device ${device.getLabel()} status changed from ${currentStatus} to ${newStatus}"
+
+            // Reset retry count if device comes back online
+            if (online) {
+                resetRetryCount()
+            }
         }
     }
 
