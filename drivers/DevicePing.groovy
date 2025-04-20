@@ -31,8 +31,7 @@ metadata {
         name: "Device Ping",
         namespace: "iamtrep",
         author: "pj",
-        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/DevicePing.groovy",
-        singleThreaded: true  // avoid overlapping pings
+        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/DevicePing.groovy"
     )
     {
         capability "ContactSensor"
@@ -78,11 +77,10 @@ def installed() {
 
 def updated() {
     logDebug "Updated with settings: ${settings}"
+    if (atomicState.isPinging == null) atomicState.isPinging = false
     if (state.currentRetryCount == null) state.currentRetryCount = 0
-    if (state.isPinging == null) state.isPinging = false
     if (state.lastCheckin == null) state.lastCheckin = null
     if (state.retryThreshold == null) state.retryThreshold = settings.retryThreshold ?: 3
-    unschedule()
     initialize()
 }
 
@@ -93,21 +91,25 @@ def initialize() {
         state.version = driver_version
     }
 
-    unschedule(scheduledPing)
+    reschedulePing(true)
+
+    if (logEnable) runIn(1800, "logsOff")
+}
+
+def reschedulePing(init = false) {
+    unschedule("ping")
 
     if (deviceIP || httpURL) {
         // Schedule regular ping based on user preference
         if (pingInterval) {
-            schedule("0 */${pingInterval} * ? * *", scheduledPing)
+            schedule("0 */${pingInterval} * ? * *", "ping")
         }
 
         // Do an initial ping
-        runIn(2, "ping")
+        if (init) runIn(2, "ping")
     } else {
         log.warn "No device IP or HTTP URL specified. Pings will not be scheduled."
     }
-
-    if (logEnable) runIn(1800, "logsOff")
 }
 
 def logsOff() {
@@ -119,17 +121,9 @@ def parse(String description) {
     logDebug "parse: ${description}"
 }
 
-def scheduledPing() {
-    if (state.isPinging) {
-        logDebug "Skipping scheduled ping because a ping is already in progress"
-        return
-    }
-    ping()
-}
-
 def ping() {
     // Prevent multiple concurrent pings
-    if (state.isPinging) {
+    if (atomicState.isPinging) {
         logDebug "Ping already in progress, skipping"
         return
     }
@@ -140,7 +134,7 @@ def ping() {
         return
     }
 
-    state.isPinging = true
+    atomicState.isPinging = true
 
     def pingSuccess = true
     def httpSuccess = true
@@ -160,14 +154,16 @@ def ping() {
 
 def sendPingRequest() {
     try {
-        def pingData = NetworkUtils.ping(deviceIP, 3)
-        logDebug "Ping $deviceIP result: ${pingData.packetLoss == 100 ? 'Failed' : 'Success'}"
+        def timeBefore = now()
+        def pingData = NetworkUtils.ping(deviceIP, 1)
+        def timeAfter = now()
+        logDebug "Ping $deviceIP result: ${pingData.packetLoss == 100 ? 'Failed' : 'Success'} in ${timeAfter-timeBefore} ms"
         return pingData.packetLoss != 100
     } catch (Exception e) {
         log.error "Error during ping: ${e.message}"
         return false
     } finally {
-        state.isPinging = false
+        atomicState.isPinging = false
     }
 }
 
@@ -190,7 +186,7 @@ def sendHttpRequest() {
         log.error "Error sending HTTP request: ${e.message}"
         return false
     } finally {
-        state.isPinging = false
+        atomicState.isPinging = false
     }
 }
 
@@ -242,6 +238,7 @@ def handleRetry() {
     } else {
         logDebug "Maximum retry count (${maxRetries}) reached. Falling back to regular schedule."
         // We'll let the regular schedule take over now
+        reschedulePing()
     }
 }
 
@@ -257,8 +254,6 @@ def setRetryThreshold(threshold) {
 
 def refresh() {
     logDebug "refresh() - manually refreshing status"
-    // Cancel any pending pings to avoid conflicts
-    unschedule("ping")
     ping()
 }
 
