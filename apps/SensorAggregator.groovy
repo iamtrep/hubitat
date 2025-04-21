@@ -68,5 +68,5 @@ def updated() {
 }
 
 def initialize() {
-    log.debug "there are ${saChildApps.size()} sensor aggregators : ${saChildApps.collect { it.label } }"
+    log.debug "there are ${getChildApps().size()} sensor aggregators : ${getChildApps().collect { it.label } }"
 }
