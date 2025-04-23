@@ -80,8 +80,8 @@ metadata
         input name: 'prefBacklightMode', type: 'enum', title: 'Display backlight', options: ['off': 'On Demand', 'adaptive': 'Adaptive (default)', 'on': 'Always On'], defaultValue: 'adaptive', required: true
         input name: 'prefSecondTempDisplay', type: 'enum', title: 'Secondary Temp. Display', options:['auto': 'Auto (default)', 'setpoint': 'Setpoint', 'outdoor': 'Outdoor'], defaultValue: 'auto', required: true
         input name: 'prefTimeFormatParam', type: 'enum', title: 'Time Format', options:['24h', '12h AM/PM'], defaultValue: '24h', multiple: false, required: true
-        input name: 'prefAirFloorModeParam', type: 'enum', title: 'Control mode (Floor or Ambient temperature)', options: ['Ambient', 'Floor'], defaultValue: 'Floor', multiple: false, required: false
-        input name: 'prefFloorSensorTypeParam', type: 'enum', title: 'Probe type (Default: 10k)', options: ['10k', '12k'], defaultValue: '10k', multiple: false, required: false
+        input name: 'prefAirFloorModeParam', type: 'enum', title: 'Control mode (Floor or Ambient temperature)', options: ['Ambient', 'Floor'], defaultValue: 'Floor', multiple: false, required: true
+        input name: 'prefFloorSensorTypeParam', type: 'enum', title: 'Probe type (Default: 10k)', options: ['10k', '12k'], defaultValue: '10k', multiple: false, required: true
         input name: 'prefMaxAirTemperature', type: 'number', title:'Ambient high limit (5C to 36C / 41F to 97F)', description: 'The maximum ambient temperature limit when in floor control mode.', range: '5..97', required: false
         input name: 'prefMinFloorTemperature', type: 'number', title:'Floor low limit (5C to 36C / 41F to 97F)', description: 'The minimum temperature limit of the floor when in ambient control mode.', range:'5..97', required: false
         input name: 'prefMaxFloorTemperature', type: 'number', title:'Floor high limit (5C to 36C / 41F to 97F)', description: 'The maximum temperature limit of the floor when in ambient control mode.', range:'5..97', required: false
@@ -110,8 +110,6 @@ metadata
                                                  0: 'OK', 1: 'floorLimitLowReached', 2: 'floorAirLimitMaxReached', 3: 'floorAirLimitMaxReached']
 
 @Field static final Map constKeypadLockoutMap = [ '00': 'unlocked ', '01': 'locked ' ]
-
-@Field static final Map constSwitchMap = [ '00': 'off', '01': 'on' ]
 
 
 //-- Capabilities -----------------------------------------------------------------------------------------
@@ -288,13 +286,14 @@ def installed() {
 
 def initialize() {
     logInfo('initialize()')
-    //TODO
-    configure()
+    //configure()  // initialize() is run on system startup, no need to configure()
     refresh()
 }
 
 def updated() {
     logInfo('updated()')
+
+    // preferences have changed.
     if (!state.updatedLastRanAt || now() >= state.updatedLastRanAt + 5000) {
         state.updatedLastRanAt = now()
         configure()
@@ -448,20 +447,15 @@ def parse(String description) {
 private parseAttributeReport(descMap) {
     def map = [: ]
 
+    logTrace("Parsing attribute report: cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
+
     // Main switch over all available cluster IDs inClusters: '0000,0003,0004,0005,0201,0204,0402,0702,0B04,0B05,FF01'
     //
     switch (descMap.clusterInt) {
-        case 0x0000:  // Basic cluster
-            break
-
-        case 0x0006:  // On/Off cluster
-            if (descMap.attrInt == 0x0000) {
-                map.name = 'switch'
-                map.value = constSwitchMap[descMap.value]
-                map.type = state.switchTypeDigital ? 'digital' : 'physical'
-                state.switchTypeDigital = false
-                map.descriptionText = "${device.displayName} is ${map.value} [${map.type}]"
-            }
+        case 0x0000: // Basic cluster
+        case 0x0003: // Identify cluster
+        case 0x0004: // Groups cluster
+        case 0x0005: // Scenes cluster
             break
 
         case 0x0201: // Thermostat cluster
@@ -734,7 +728,7 @@ def setOutdoorTemperature(outdoorTemperature) {
             outdoorTemp = fahrenheitToCelsius(outdoorTemp).toDouble()
         }
 
-        def int outdoorTempDevice = outdoorTemp * 100  // device expects hundredths
+        int outdoorTempDevice = outdoorTemp * 100  // device expects hundredths
         def cmds = []
         cmds += zigbee.writeAttribute(0xFF01, 0x0010, 0x29, outdoorTempDevice, [mfgCode: '0x119C']) //set the outdoor temperature as integer
         sendZigbeeCommands(cmds)
