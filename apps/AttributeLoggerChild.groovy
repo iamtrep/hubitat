@@ -63,6 +63,9 @@ def mainPage() {
                 state.pendingChanges = false
             }
         }
+        section("Logging") {
+            input "debugEnable", "bool", title: "Enable Debug Logging", defaultValue: true, required: false
+        }
     }
 }
 
@@ -129,6 +132,7 @@ def safeDownloadHubFile(fileName) {
         } catch (Exception e) {
             retryCount++
             if (retryCount < maxRetries) {
+                if (debugEnable) log.debug "Could not read from $fileName: ${e.message}"
                 log.warn "Retrying download of $fileName... Attempt ${retryCount}"
                 pauseExecution(500)
             } else {
@@ -154,6 +158,7 @@ def safeUploadHubFile(fileName, bytes) {
         } catch (Exception e) {
             retryCount++
             if (retryCount < maxRetries) {
+                if (debugEnable) log.debug "Could not write to $fileName: ${e.message}"
                 log.warn "Retrying upload of $fileName... Attempt ${retryCount}"
                 pauseExecution(500)
             } else {
