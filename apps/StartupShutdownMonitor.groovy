@@ -54,7 +54,8 @@ preferences {
 def mainPage() {
     dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
         section("Select Virtual Contact Sensor") {
-            input "contactSensor", "capability.contactSensor", title: "Contact Sensor", multiple:false, required:true, showFilter:true
+            input("contactSensor", "capability.contactSensor", title: "Virtual Contact Sensor", multiple:false, required:true, showFilter:true)
+            paragraph("<a href='${getHubBaseLocalUrl()}/device/addDevice' target='_blank'>Create new virtual contact sensor</a>")
         }
         section("Logging") {
             input name: "logLevel", type: "enum", options: ["warn","info","debug","trace"], title: "Enable logging?", defaultValue: "info", required: true, submitOnChange: true
@@ -93,11 +94,14 @@ def eventHandler(evt) {
         case "manualReboot":
         case "manualShutdown":
         case "update":
-        case "systemStart":
             openContact(evt.descriptionText)
+            break
+        case "systemStart":
+            closeContact(evt.descriptionText)
             break
         default:
             logWarn "Unhandled event: ${evt.name}"
+            break
     }
 }
 
@@ -111,6 +115,10 @@ def closeContact(message) {
     contactSensor?.close()
 }
 
+
+private String getHubBaseLocalUrl() {
+    return "http://${location.hubs[0].getDataValue("localIP")}"
+}
 
 private void logError(Object... args)
 {
