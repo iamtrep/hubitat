@@ -82,16 +82,10 @@ def eventHandler(evt) {
 
     switch(evt.name) {
         case "manualReboot":
-            openContact("Manual reboot detected")
-            break
         case "manualShutdown":
-            openContact("Manual shutdown detected")
-            break
         case "update":
-            openContact("System update detected")
-            break
         case "systemStart":
-            closeContact("System start detected")
+            openContact(evt.descriptionText)
             break
         default:
             log.debug "Unhandled event: ${evt.name}"
