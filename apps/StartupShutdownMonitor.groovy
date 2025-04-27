@@ -28,7 +28,6 @@ SOFTWARE.
  *  - Opens contact on: manualReboot, manualShutdown, update
  *  - Closes contact on: systemStart
  *
- *  Mostly AI generated. Copy & distribute.
  */
 
 import groovy.transform.Field
@@ -44,7 +43,8 @@ definition(
     category: "Utility",
     iconUrl: "",
     iconX2Url: "",
-    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/StartupShutdownMonitor.groovy"
+    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/StartupShutdownMonitor.groovy",
+    singleInstance: true
 )
 
 preferences {
@@ -52,33 +52,42 @@ preferences {
 }
 
 def mainPage() {
-    dynamicPage(name: "mainPage", title: "Setup", install: true, uninstall: true) {
+    dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
         section("Select Virtual Contact Sensor") {
-            input "contactSensor", "capability.contactSensor", title: "Contact Sensor", required: true
+            input "contactSensor", "capability.contactSensor", title: "Contact Sensor", multiple:false, required:true, showFilter:true
+        }
+        section("Logging") {
+            input name: "logLevel", type: "enum", options: ["warn","info","debug","trace"], title: "Enable logging?", defaultValue: "info", required: true, submitOnChange: true
+            if (logLevel != null) logInfo("${app.getLabel()}: ${logLevel} logging enabled")
         }
     }
 }
 
+// runs when the app is first installed
 def installed() {
     initialize()
+    logDebug "${app.getLabel()} installed"
 }
 
+// runs whenever app preferences are saved (click Done on app config page)
 def updated() {
     unsubscribe()
     initialize()
+    logDebug "${app.getLabel()} updated"
 }
 
+// runs at hub starts up
 def initialize() {
     subscribe(location, "manualReboot", eventHandler)
     subscribe(location, "manualShutdown", eventHandler)
     subscribe(location, "update", eventHandler)
     subscribe(location, "systemStart", eventHandler)
 
-    log.debug "${app.getLabel()} initialized"
+    logDebug "${app.getLabel()} initialized"
 }
 
 def eventHandler(evt) {
-    log.debug "System event detected: ${evt.name}"
+    logDebug "System event detected: ${evt.name}"
 
     switch(evt.name) {
         case "manualReboot":
@@ -88,16 +97,44 @@ def eventHandler(evt) {
             openContact(evt.descriptionText)
             break
         default:
-            log.debug "Unhandled event: ${evt.name}"
+            logWarn "Unhandled event: ${evt.name}"
     }
 }
 
 def openContact(message) {
-    log.debug "${message} - Opening contact"
+    logInfo "${message} - Opening contact"
     contactSensor?.open()
 }
 
 def closeContact(message) {
-    log.debug "${message} - Closing contact"
+    logInfo "${message} - Closing contact"
     contactSensor?.close()
+}
+
+
+private void logError(Object... args)
+{
+    //if (logLevel in ["info","debug","trace"])
+    log.error(args)
+}
+
+private void logWarn(Object... args)
+{
+    //if (logLevel in ["warn", "info","debug","trace"])
+    log.warn(args)
+}
+
+private void logInfo(Object... args)
+{
+    if (loglevel == null || logLevel in ["info","debug","trace"]) log.info(args)
+}
+
+private void logDebug(Object... args)
+{
+    if (logLevel == null || logLevel in ["debug","trace"]) log.debug(args)
+}
+
+private void logTrace(Object... args)
+{
+    if (logLevel == null || logLevel in ["trace"]) log.trace(args)
 }
