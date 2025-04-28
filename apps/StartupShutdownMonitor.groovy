@@ -77,7 +77,6 @@ def updated() {
     logDebug "${app.getLabel()} updated"
 }
 
-// runs at hub starts up
 def initialize() {
     subscribe(location, "manualReboot", eventHandler)
     subscribe(location, "manualShutdown", eventHandler)
@@ -85,6 +84,7 @@ def initialize() {
     subscribe(location, "systemStart", eventHandler)
 
     logDebug "${app.getLabel()} initialized"
+    logDebug "${app.getLabel()} ${contactSensor?.getDisplayName()} ${contactSensor?.currentValue('contact')}"
 }
 
 def eventHandler(evt) {
@@ -106,11 +106,19 @@ def eventHandler(evt) {
 }
 
 def openContact(message) {
+    if (contactSensor?.currentValue('contact') == 'open') {
+        logWarn("${message} - ${contactSensor?.getDisplayName()} already open - missed systemStart event?")
+    }
+
     logInfo "${message} - Opening contact"
     contactSensor?.open()
 }
 
 def closeContact(message) {
+    if (contactSensor?.currentValue('contact') == 'closed') {
+        logWarn("${message} - ${contactSensor?.getDisplayName()} already closed - missed shutdown/reboot event?")
+    }
+
     logInfo "${message} - Closing contact"
     contactSensor?.close()
 }
