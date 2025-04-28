@@ -1,6 +1,6 @@
 /**
 
- MIT License
+MIT License
 
 Copyright (c) 2025 pj
 
@@ -22,16 +22,20 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
- *  Startup and Shutdown Monitor
- *
- *  Description: This app monitors system events and controls a virtual contact sensor.
- *  - Opens contact on: manualReboot, manualShutdown, update
- *  - Closes contact on: systemStart
- *
+Startup and Shutdown Monitor
+
+Description: This app monitors system events to detect when the hub is shutting down/starting up.
+ - Opens the selected virtual contact sensor on: manualReboot, manualShutdown, update
+ - Closes the selected virtual contact sensor on: systemStart
+
+The virtual contact sensor can be used in automations (e.g. Rule Machine - can be
+used as a Required Expression or condtion for triggers).
+
  */
 
 import groovy.transform.Field
-import groovy.transform.CompileStatic
+
+import com.hubitat.hub.domain.Event
 
 @Field static final String app_version = "0.0.1"
 
@@ -51,11 +55,11 @@ preferences {
     page(name: "mainPage")
 }
 
-def mainPage() {
-    dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
+Map mainPage() {
+    dynamicPage(name: "mainPage", title: "${app.getLabel()} Setup", install: true, uninstall: true) {
         section("Select Virtual Contact Sensor") {
             input("contactSensor", "capability.contactSensor", title: "Virtual Contact Sensor", multiple:false, required:true, showFilter:true)
-            paragraph("<a href='/device/addDevice' target='_blank'>Create new virtual contact sensor</a>")
+            paragraph("<a href='/device/addDevice' target='_blank'>Click here</a> to create a new Virtual Contact Sensor for use with this app")
         }
         section("Logging") {
             input name: "logLevel", type: "enum", options: ["warn","info","debug","trace"], title: "Enable logging?", defaultValue: "info", required: true, submitOnChange: true
@@ -65,29 +69,29 @@ def mainPage() {
 }
 
 // runs when the app is first installed
-def installed() {
+void installed() {
     initialize()
     logDebug "${app.getLabel()} installed"
 }
 
 // runs whenever app preferences are saved (click Done on app config page)
-def updated() {
+void updated() {
     unsubscribe()
     initialize()
     logDebug "${app.getLabel()} updated"
 }
 
-def initialize() {
-    subscribe(location, "manualReboot", eventHandler)
-    subscribe(location, "manualShutdown", eventHandler)
-    subscribe(location, "update", eventHandler)
-    subscribe(location, "systemStart", eventHandler)
+void initialize() {
+    subscribe(location, "manualReboot", "eventHandler")
+    subscribe(location, "manualShutdown", "eventHandler")
+    subscribe(location, "update", "eventHandler")
+    subscribe(location, "systemStart", "eventHandler")
 
     logDebug "${app.getLabel()} initialized"
     logDebug "${app.getLabel()} ${contactSensor?.getDisplayName()} ${contactSensor?.currentValue('contact')}"
 }
 
-def eventHandler(evt) {
+void eventHandler(Event evt) {
     logDebug "System event detected: ${evt.name}"
 
     switch(evt.name) {
@@ -105,7 +109,7 @@ def eventHandler(evt) {
     }
 }
 
-def openContact(message) {
+void openContact(String message) {
     if (contactSensor?.currentValue('contact') == 'open') {
         logWarn("${message} - ${contactSensor?.getDisplayName()} already open - missed systemStart event?")
     }
@@ -114,7 +118,7 @@ def openContact(message) {
     contactSensor?.open()
 }
 
-def closeContact(message) {
+void closeContact(String message) {
     if (contactSensor?.currentValue('contact') == 'closed') {
         logWarn("${message} - ${contactSensor?.getDisplayName()} already closed - missed shutdown/reboot event?")
     }
