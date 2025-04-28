@@ -55,7 +55,7 @@ def mainPage() {
     dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
         section("Select Virtual Contact Sensor") {
             input("contactSensor", "capability.contactSensor", title: "Virtual Contact Sensor", multiple:false, required:true, showFilter:true)
-            paragraph("<a href='${getHubBaseLocalUrl()}/device/addDevice' target='_blank'>Create new virtual contact sensor</a>")
+            paragraph("<a href='/device/addDevice' target='_blank'>Create new virtual contact sensor</a>")
         }
         section("Logging") {
             input name: "logLevel", type: "enum", options: ["warn","info","debug","trace"], title: "Enable logging?", defaultValue: "info", required: true, submitOnChange: true
@@ -123,10 +123,6 @@ def closeContact(message) {
     contactSensor?.close()
 }
 
-
-private String getHubBaseLocalUrl() {
-    return "http://${location.hubs[0].getDataValue("localIP")}"
-}
 
 private void logError(Object... args)
 {
