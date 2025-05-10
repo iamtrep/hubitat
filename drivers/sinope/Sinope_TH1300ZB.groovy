@@ -492,14 +492,14 @@ private parseAttributeReport(descMap) {
                     map.unit = getTemperatureScale()
                     map.type = state.setTemperatureTypeDigital ? 'digital' : 'physical'
                     state.setTemperatureTypeDigital = false
-                    map.descriptionText = "The heating set point of ${device.displayName} is set at ${map.value}${map.unit} [${map.type}]"
+                    map.descriptionText = "${device.displayName} heating setpoint is ${map.value}${map.unit} [${map.type}]"
                     sendEvent(name: 'thermostatSetpoint', value: map.value, unit: getTemperatureScale()) // For interoperability with SharpTools
                     break
 
                 case 0x001C:
                     map.name = 'thermostatMode'
                     map.value = constThermostatModes[descMap.value]
-                    map.descriptionText = "The mode of ${device.displayName} is set at ${map.value}"
+                    map.descriptionText = "${device.displayName} mode is set to ${map.value}"
                     break
 
                 case 0x0401: // thermostat cycle

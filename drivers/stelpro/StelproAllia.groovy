@@ -48,12 +48,12 @@ metadata {
                                            type: "ENUM",
                                            description: "Lock/unlock the thermostat's keypad",
                                            constraints:["lock","unlock"]] ]
-        command "setOutdoorTemperature", [[name:"Temperature", type:"NUMBER"]]
+        command "setOutdoorTemperature", [[name:"Temperature", type:"NUMBER", description: "Set the outdoor temperature display to this value"]]
 
         command "increaseHeatSetpoint"
         command "decreaseHeatSetpoint"
 
-        fingerprint profileId: "0104", endpointId: "19", inClusters: "0000,0003,0004,0201,0204", outClusters: "0003,000A,0402", manufacturer: 'Stello', model: 'HT402', deviceJoinName: 'Stelpro Hilo HT402 Thermostat'
+        fingerprint profileId: "0104", endpointId: "19", inClusters: "0000,0003,0004,0201,0204", outClusters: "0003,000A,0402", manufacturer: 'Stello', model: 'HT402', deviceJoinName: '(Stelpro Allia) Hilo HT402 Thermostat'
     }
 
     preferences {
@@ -81,9 +81,9 @@ import groovy.json.JsonOutput
 ]
 
 
-@Field static final Map constThermostatModeMap = [ "00":"off", "04":"heat", "05":"eco" ]
-@Field static final Map constFanModeMap = [ "00":"off" ]
-@Field static final Map constTempDisplayModeMap = [ "00":"C", "01":"F" ]
+@Field static final Map constThermostatModes = [ "00":"off", "04":"heat", "05":"eco" ]
+@Field static final Map constFanModes = [ "00":"off" ]
+@Field static final Map constTempDisplayModes = [ "00":"C", "01":"F" ]
 @Field static final Map constKeypadLockoutMap = [ "00":"unlocked", "01":"locked" ]
 
 
@@ -126,14 +126,14 @@ def configure(){
     // Set unused default values (for Google Home Integration)
     sendEvent(name: "coolingSetpoint", value:getTemperature("0BB8")) // 0x0BB8 =  30 Celsius
     sendEvent(name: "thermostatFanMode", value:"auto")
+	sendEvent(name: "supportedThermostatFanModes", value: JsonOutput.toJson(["auto"]), descriptionText: getDescriptionText("supportedThermostatFanModes set to ${fanModes}"))
+	sendEvent(name: "supportedThermostatModes", value: JsonOutput.toJson(["heat", "off"]), descriptionText: getDescriptionText("supportedThermostatModes set to ${modes}"))
     setThermostatMode("heat")
-    //setSupportedThermostatFanModes(JsonOutput.toJson(["auto"]))
-	//setSupportedThermostatModes(JsonOutput.toJson(["heat", "off"]))
+
     def cmds = []
 
-
     //bindings
-    cmds += "zdo bind 0x${device.deviceNetworkId} 1 0x019 0x201 {${device.zigbeeId}} {}" // why is this needed?
+    cmds += "zdo bind 0x${device.deviceNetworkId} 1 0x019 0x201 {${device.zigbeeId}} {}" // TODO: why is this needed?
     cmds += "delay 200"
 
     //reporting
@@ -158,14 +158,16 @@ def refresh() {
     cmds += zigbee.readAttribute(0x201, 0x0008) // PI Heating State
     cmds += zigbee.readAttribute(0x201, 0x0012) // Heat Setpoint
 
-    cmds += zigbee.readAttribute(0x204, 0x0000) // Temperature Display Mode
-    cmds += zigbee.readAttribute(0x204, 0x0001) // Keypad Lockout
 
+    // missing a few vendor-specific attributes (see https://www.zigbee2mqtt.io/devices/HT402.html)
     cmds += zigbee.readAttribute(0x201, 0x4001) // Outdoor temperature
 //    cmds += zigbee.readAttribute(0x201, 0x4002) // unknown vendor-specific
 //    cmds += zigbee.readAttribute(0x201, 0x4004) // unknown vendor-specific
     cmds += zigbee.readAttribute(0x201, 0x4008) // power
     cmds += zigbee.readAttribute(0x201, 0x4009) // energy
+
+    cmds += zigbee.readAttribute(0x204, 0x0000) // Temperature Display Mode
+    cmds += zigbee.readAttribute(0x204, 0x0001) // Keypad Lockout
 
     logTrace "refresh cmds:${cmds}"
     return cmds
@@ -206,21 +208,35 @@ def setCoolingSetpoint(degrees) {
 
 
 def heat() {
-    // TODO - find cluster attribute to turn on thermostat
-    setHeatingSetpoint(device.currentValue("temperature")+0.5)
+    // This model does not appear to honor cluster 0x0201 attribute 0x001C for setting the system mode.
+    setThermostatMode("heat")
+    Integer setpoint = state.lastHeatingSetpoint ?: device.currentValue("temperature") as int
+    logDebug("heat() setpoint will be ${setpoint}")
+    setHeatingSetpoint(setpoint)
+}
+
+def eco() {
+    logWarn("eco mode is not available for this device")
 }
 
 def off() {
-    // TODO - find cluster attribute to turn off thermostat
+    // This model does not appear to honor cluster 0x0201 attribute 0x001C for setting the system mode.
+    setThermostatMode("off")
     setHeatingSetpoint(5)
 }
 
-def setThermostatFanMode(mode) {
-     sendEvent(name:"thermostatFanMode", "off")
-}
 
-def setThermostatMode(mode) {
-     sendEvent(name:"thermostatMode", value:mode)
+def setThermostatMode(String thermostatMode) {
+    switch (thermostatMode) {
+        case "heat":
+        case "off":
+            sendEvent(name:"thermostatMode", value:thermostatMode, descriptionText: "${device.displayName} thermostat mode set to ${thermostatMode}")
+            break
+
+        default:
+            logWarn("invalid thermostat mode requested (${thermostatMode})")
+            break
+    }
 }
 
 def setHeatingSetpoint(preciseDegrees) {
@@ -231,9 +247,15 @@ def setHeatingSetpoint(preciseDegrees) {
         logDebug "setHeatingSetpoint(${degrees} ${temperatureScale})"
 
         def celsius = (temperatureScale == "C") ? degrees as Float : (fahrenheitToCelsius(degrees) as Float).round(2)
-        int celsius100 = Math.round(celsius * 100)
 
-        zigbee.writeAttribute(0x201, 0x0012, 0x29, celsius100) //Write Heat Setpoint
+        if (device.currentValue("thermostatMode") == "heat") {
+            cmds = []
+            cmds += zigbee.writeAttribute(0x201, 0x0012, 0x29, Math.round(celsius * 100) as int)
+            sendZigbeeCommands(cmds)
+        } else {
+            // remember it, will be used when heat mode is turned back on.
+            state.lastHeatingSetpoint = celsius
+        }
     }
 }
 
@@ -299,7 +321,7 @@ def setKeypadLockoutMode(lockoutMode) {
             return
     }
 
-    return cmds
+    sendZigbeeCommands(cmds)
 }
 
 
@@ -314,7 +336,9 @@ def setOutdoorTemperature(preciseDegrees) {
         def celsius = (temperatureScale == "C") ? degrees as Float : (fahrenheitToCelsius(degrees) as Float).round(2)
         int celsius100 = Math.round(celsius * 100)
 
-        zigbee.writeAttribute(0x201, 0x4001, 0x29, celsius100) //, ["mfgCode": "0x1185"])
+        cmds = []
+        cmds += zigbee.writeAttribute(0x201, 0x4001, 0x29, celsius100) //, ["mfgCode": "0x1185"])
+        sendZigbeeCommands(cmds)
     }
 }
 
@@ -356,101 +380,141 @@ def parse(String description) {
 private parseAttributeReport(descMap) {
     def map = [:]
 
-    if (descMap.cluster == "0201" && descMap.attrId == "0000")
-        {
-        map.name = "temperature"
-        map.value = getTemperature(descMap.value)
-        if (descMap.value == "7FFD") {       //0x7FFD
-            map.value = "low"
-        }
-        else if (descMap.value == "7FFF") {  //0x7FFF
-            map.value = "high"
-        }
-        else if (descMap.value == "8000") {  //0x8000
-            map.value = "--"
-        }
+    // inClusters: "0000,0003,0004,0201,0204"
 
-        else if (descMap.value > "8000") {
-            map.value = -(Math.round(2*(655.36 - map.value))/2)
-        }
+    switch (descMap.cluster) {
+        case 0x0000: // Basic cluster
+        case 0x0003: // Identify cluster
+        case 0x0004: // Groups cluster
+            break
 
-        map.unit = getTemperatureScale()
-        map.descriptionText = "${device.displayName} temperature is ${map.value}${map.unit}"
-    }
-    else if (descMap.cluster == "0201" && descMap.attrId == "0012") {
-        map.name = "heatingSetpoint"
-        map.value = getTemperature(descMap.value)
-        if (descMap.value == "8000") {        //0x8000
-            map.value = getTemperature("01F4")  // 5 Celsius (minimum setpoint)
-        }
-        map.unit = getTemperatureScale()
-        map.descriptionText = "${device.displayName} heating setpoint is ${map.value}${map.unit}"
+        case "0201":
+            switch (descMap.attrId) {
+                case "0000":
+                    map.name = "temperature"
+                    map.value = getTemperature(descMap.value)
+                    if (descMap.value == "7FFD") {       //0x7FFD
+                        map.value = "low"
+                    }
+                    else if (descMap.value == "7FFF") {  //0x7FFF
+                        map.value = "high"
+                    }
+                    else if (descMap.value == "8000") {  //0x8000
+                        map.value = "--"
+                    }
+                    else if (descMap.value > "8000") {
+                        map.value = -(Math.round(2*(655.36 - map.value))/2)
+                    }
+                    map.unit = getTemperatureScale()
+                    map.descriptionText = "${device.displayName} temperature is ${map.value}${map.unit}"
+                    break
 
-        // also send separate thermostatSetpoint event
-        sendEvent(name:"thermostatSetpoint", value:map.value, unit:map.unit, descriptionText: map.descriptionText)
-    }
-    else if (descMap.cluster == "0201" && descMap.attrId == "0008") {
-        map.name = "thermostatOperatingState"
-        //map.value = constThermostatModeMap[descMap.value]
-        if (descMap.value < "10") {
-            map.value = "idle"
-            final int interval = (settings.refreshScheduleIdle as Integer) ?: 0
-            if (interval > 0 && map.value != device.currentValue("thermostatOperatingState")) {
-                log.info "${device} scheduling refresh every ${interval} minutes"
-                scheduleRefresh(interval)
-                runIn(5, 'refresh')
+                case "0008":
+                    map.name = "thermostatOperatingState"
+                    //map.value = constThermostatModes[descMap.value]
+                    if (descMap.value < "10") {
+                        map.value = "idle"
+                        final int interval = (settings.refreshScheduleIdle as Integer) ?: 0
+                        if (interval > 0 && map.value != device.currentValue("thermostatOperatingState")) {
+                            log.info "${device} scheduling refresh every ${interval} minutes"
+                            scheduleRefresh(interval)
+                            runIn(5, 'refresh')
+                        }
+                    } else {
+                        map.value = "heating"
+                        final int interval = (settings.refreshScheduleHeating as Integer) ?: 0
+                        if (interval > 0 && map.value != device.currentValue("thermostatOperatingState")) {
+                            log.info "${device} scheduling refresh every ${interval} minutes"
+                            scheduleRefresh(interval)
+                            runIn(5, 'refresh')
+                        }
+                    }
+                    map.descriptionText = "thermostat operating state is ${map.value}"
+                    break
+
+                case "0012":
+                    if (device.currentValue("thermostatMode") == "heat") {
+                        map.name = "heatingSetpoint"
+                        map.value = getTemperature(descMap.value)
+                        if (descMap.value == "8000") {        //0x8000
+                            map.value = getTemperature("01F4")  // 5 Celsius (minimum setpoint)
+                        }
+                        map.unit = getTemperatureScale()
+                        map.descriptionText = "${device.displayName} heating setpoint is ${map.value}${map.unit}"
+
+                        // also send separate thermostatSetpoint event
+                        sendEvent(name:"thermostatSetpoint", value:map.value, unit:map.unit, descriptionText: map.descriptionText)
+
+                        // remember last heating setpoint
+                        state.lastHeatingSetpoint = map.value
+                    }
+                    break
+
+                case "001C": // system mode - not used on this model
+                    break
+
+                case "4001":
+                    map.name = "outdoor_temperature"
+                    map.value = getTemperature(descMap.value)
+                    if (map.value > 100) {
+                        map.value = map.value - 655.36 // handle negative temperatures
+                    }
+                    map.unit = getTemperatureScale()
+                    map.descriptionText = "${device.displayName} outdoor temperature is ${map.value}${map.unit}"
+                    break
+
+                case "4002":
+                case "4004":
+                case "4006":
+                    logDebug "Unknown vendor-specific attribute report 0x4004: ${descMap}"
+                    break
+
+                case "4008":
+                    map.name = "power"
+                    map.value = getPower(descMap.value)
+                    map.unit = 'W'
+                    map.descriptionText = "${device.displayName} power is ${map.value}${map.unit}"
+                    break
+
+                case "4009":
+                    map.name = "energy"
+                    map.value = getEnergy(descMap.value)
+                    map.unit = "Wh"
+                    map.descriptionText = "${device.displayName} energy delivered is ${map.value}${map.unit}"
+                    break
+
+                case "401C": // vendor-specific system mode - not used on this unit
+                    break
+
+                default:
+                    logTrace("Unhandled thermostat cluster attribute report - attribute ${descMap.attrId} value ${descMap.value}")
+                    break
             }
-        }
-        else {
-            map.value = "heating"
-            final int interval = (settings.refreshScheduleHeating as Integer) ?: 0
-            if (interval > 0 && map.value != device.currentValue("thermostatOperatingState")) {
-                log.info "${device} scheduling refresh every ${interval} minutes"
-                scheduleRefresh(interval)
-                runIn(5, 'refresh')
+            break
+
+        case "0204":
+            switch (descMap.attrId) {
+                case "0000":
+                    map.name = "temperature_display_mode"
+                    map.value = constTempDisplayModes[descMap.value]
+                    map.descriptionText = "${device.displayName} temperature display mode is ${map.value}"
+                    break
+
+                case "0001":
+                    map.name = "keypad_lockout"
+                    map.value = constKeypadLockoutMap[descMap.value]
+                    map.descriptionText = "${device.displayName} keypad lockout state is ${map.value}"
+                    break
+
+                default:
+                    logTrace("Unhandled thermostat control attribute report - attribute ${descMap.attrId} value ${descMap.value}")
+                    break
             }
-        }
-        map.descriptionText = "thermostat operating state is ${map.value}"
-    }
-    else if (descMap.cluster == "0204" && descMap.attrId == "0000") {
-        map.name = "temperature_display_mode"
-        map.value = constTempDisplayModeMap[descMap.value]
-        map.descriptionText = "${device.displayName} temperature display mode is ${map.value}"
-    }
-    else if (descMap.cluster == "0204" && descMap.attrId == "0001") {
-        map.name = "keypad_lockout"
-        map.value = constKeypadLockoutMap[descMap.value]
-        map.descriptionText = "${device.displayName} keypad lockout state is ${map.value}"
-    }
-    else if (descMap.cluster == "0201" && descMap.attrId == "4001") {
-        map.name = "outdoor_temperature"
-        map.value = getTemperature(descMap.value)
-        if (map.value > 100) {
-            map.value = map.value - 655.36 // handle negative temperatures
-        }
-        map.unit = getTemperatureScale()
-        map.descriptionText = "${device.displayName} outdoor temperature is ${map.value}${map.unit}"
-    }
-    else if (descMap.cluster == "0201" && descMap.attrId == "4004") {
-        logDebug "Unknown vendor-specific attribute report 0x4004: ${descMap}"
-    }
-    else if (descMap.cluster == "0201" && descMap.attrId == "4008") {
-        map.name = "power"
-        map.value = getPower(descMap.value)
-        map.unit = 'W'
-        map.descriptionText = "${device.displayName} power is ${map.value}${map.unit}"
-    }
-    else if (descMap.cluster == "0201" && descMap.attrId == "4009") {
-        map.name = "energy"
-        map.value = getEnergy(descMap.value)
-        map.unit = "Wh"
-        map.descriptionText = "${device.displayName} energy delivered is ${map.value}${map.unit}"
-    }
-    else if (descMap.cluster == "0201" && descMap.attrId == "4002") {
-        logDebug "Unknown vendor-specific attribute report 0x4002: ${descMap}"
-    }
-    else {
-        logDebug "Unknown attribute report: $descMap"
+            break
+
+        default:
+            logTrace("Unhandled attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
+            break
     }
 
     def result = null
@@ -510,6 +574,11 @@ private Integer getTemperature(String value) {
 
         return Math.round(celsiusToFahrenheit(celsius))
     }
+}
+
+private void sendZigbeeCommands(cmds) {
+    def hubAction = new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE)
+    sendHubCommand(hubAction)
 }
 
 // logging helpers
