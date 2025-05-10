@@ -886,8 +886,7 @@ private roundToTwoDecimalPlaces(val) {
 // Logging helpers
 
 private void logTrace(message) {
-    // No trace facility.  Use debug.
-    if (traceEnable) log.debug("${device} : ${message}")
+    if (traceEnable) log.trace("${device} : ${message}")
 }
 
 private logDebug(message) {
