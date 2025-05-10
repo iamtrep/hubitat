@@ -12,12 +12,15 @@
  *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
  *  for the specific language governing permissions and limitations under the License.
  *
- *  Stelpro Maestro Thermostat Hubitat Driver
+ *  Stelpro Allia Thermostat driver for Hubitat Elevtion
  *
- *  Notice: This file is a modified version of the SmartThings Device Handler, found in this repository:
- *.          https://github.com/Philippe-Charette/Hubitat-Stelpro-Maestro-Thermostat
- *.          which itself came from this repository:
- *           https://github.com/stelpro/maestro-thermostat
+ *  Notice: The code in this driver was initially derived from Maxime Boissonault's code found here:
+ *          https://github.com/mboisson/Hubitat-Stelpro-Allia-Thermostat
+ *
+ *          which is itself a derivative of:
+ *             https://github.com/Philippe-Charette/Hubitat-Stelpro-Maestro-Thermostat
+ *          which itself was derived from:
+ *             https://github.com/stelpro/maestro-thermostat
  *
  *  Author: Maxime Boissonneault
  *  Author: Philippe Charette
@@ -27,8 +30,8 @@
 
 metadata {
     definition (name: "Stelpro Allia Zigbee Thermostat",
-                namespace: "Mboisson",
-                author: "Mboisson",
+                namespace: "iamtrep",
+                author: "pj",
                 importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/stelpro/StelproAllia.groovy"
     ) {
         capability 'Actuator'
@@ -86,6 +89,8 @@ import groovy.json.JsonOutput
 @Field static final Map constTempDisplayModes = [ "00":"C", "01":"F" ]
 @Field static final Map constKeypadLockoutMap = [ "00":"unlocked", "01":"locked" ]
 
+@Field static final Integer constHeatOffSetpoint = 5
+
 
 // Install/Configure/Refresh
 
@@ -137,14 +142,14 @@ def configure(){
     cmds += "delay 200"
 
     //reporting
-    cmds += zigbee.configureReporting(0x201, 0x0000, 0x29, 10, Integer.parseInt(reportingSeconds), (int) tempChange)   //Attribute ID 0x0000 = local temperature, Data Type: S16BIT
-    cmds += zigbee.configureReporting(0x201, 0x0008, 0x20, 10, 900, 5)   //Attribute ID 0x0008 = pi heating demand, Data Type: U8BIT
-    cmds += zigbee.configureReporting(0x201, 0x0012, 0x29, 10, 300, 1)     //Attribute ID 0x0012 = occupied heat setpoint, Data Type: S16BIT
-    cmds += zigbee.configureReporting(0x201, 0x4008, 0x29, 10, Integer.parseInt(reportingSeconds), (int) powerReport)     //Attribute ID 0x4008 = power usage, Data Type: S16BIT
-    cmds += zigbee.configureReporting(0x201, 0x4009, 0x29, 10, Integer.parseInt(reportingSeconds), 10)     //Attribute ID 0x4009 = energy usage, Data Type: S16BIT
+    cmds += zigbee.configureReporting(0x201, 0x0000, 0x29, 0, (int)reportingSeconds, (int) tempChange)   //Attribute ID 0x0000 = local temperature, Data Type: S16BIT
+    cmds += zigbee.configureReporting(0x201, 0x0008, 0x20, 0, (int)reportingSeconds, 5)   //Attribute ID 0x0008 = pi heating demand, Data Type: U8BIT
+    cmds += zigbee.configureReporting(0x201, 0x0012, 0x29, 0, (int)reportingSeconds, 1)     //Attribute ID 0x0012 = occupied heat setpoint, Data Type: S16BIT
+    cmds += zigbee.configureReporting(0x201, 0x4008, 0x29, 0, (int)reportingSeconds, (int) powerReport)     //Attribute ID 0x4008 = power usage, Data Type: S16BIT
+    cmds += zigbee.configureReporting(0x201, 0x4009, 0x29, 0, (int)reportingSeconds, 10)     //Attribute ID 0x4009 = energy usage, Data Type: S16BIT
 
-    cmds += zigbee.configureReporting(0x204, 0x0000, 0x30, 10, 900)         //Attribute ID 0x0000 = temperature display mode, Data Type: 8 bits enum
-    cmds += zigbee.configureReporting(0x204, 0x0001, 0x30, 10, 900)         //Attribute ID 0x0001 = keypad lockout, Data Type: 8 bits enum
+    cmds += zigbee.configureReporting(0x204, 0x0000, 0x30, 0, (int)reportingSeconds)         //Attribute ID 0x0000 = temperature display mode, Data Type: 8 bits enum
+    cmds += zigbee.configureReporting(0x204, 0x0001, 0x30, 0, (int)reportingSeconds)         //Attribute ID 0x0001 = keypad lockout, Data Type: 8 bits enum
 
     logTrace "cmds:${cmds}"
     return cmds + refresh()
@@ -222,7 +227,7 @@ def eco() {
 def off() {
     // This model does not appear to honor cluster 0x0201 attribute 0x001C for setting the system mode.
     setThermostatMode("off")
-    setHeatingSetpoint(5)
+    setHeatingSetpoint(constHeatOffSetpoint)
 }
 
 
@@ -241,6 +246,7 @@ def setThermostatMode(String thermostatMode) {
 
 def setHeatingSetpoint(preciseDegrees) {
     if (preciseDegrees != null) {
+
         def temperatureScale = getTemperatureScale()
         def degrees = new BigDecimal(preciseDegrees).setScale(1, BigDecimal.ROUND_HALF_UP)
 
@@ -429,15 +435,16 @@ private parseAttributeReport(descMap) {
                             runIn(5, 'refresh')
                         }
                     }
-                    map.descriptionText = "thermostat operating state is ${map.value}"
+                    map.descriptionText = "${device.displayName} operating state is ${map.value}"
                     break
 
                 case "0012":
-                    if (device.currentValue("thermostatMode") == "heat") {
+                    if (getTemperature(descMap.value) != constHeatOffSetpoint) {
                         map.name = "heatingSetpoint"
-                        map.value = getTemperature(descMap.value)
-                        if (descMap.value == "8000") {        //0x8000
+                        if (descMap.value == "8000") {        //0x8000  TODO
                             map.value = getTemperature("01F4")  // 5 Celsius (minimum setpoint)
+                        } else {
+                            map.value = getTemperature(descMap.value)
                         }
                         map.unit = getTemperatureScale()
                         map.descriptionText = "${device.displayName} heating setpoint is ${map.value}${map.unit}"
