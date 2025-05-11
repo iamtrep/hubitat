@@ -28,6 +28,13 @@
  *
  */
 
+import java.math.RoundingMode
+import groovy.transform.CompileStatic
+import groovy.transform.Field
+import groovy.json.JsonOutput
+
+@Field static final String constDriverVersion = "0.0.1"
+
 metadata {
     definition (name: "Stelpro Allia Zigbee Thermostat",
                 namespace: "iamtrep",
@@ -56,7 +63,7 @@ metadata {
         command "increaseHeatSetpoint"
         command "decreaseHeatSetpoint"
 
-        fingerprint profileId: "0104", endpointId: "19", inClusters: "0000,0003,0004,0201,0204", outClusters: "0003,000A,0402", manufacturer: 'Stello', model: 'HT402', deviceJoinName: '(Stelpro Allia) Hilo HT402 Thermostat'
+        fingerprint profileId: "0104", endpointId: "19", inClusters: "0000,0003,0004,0201,0204", outClusters: "0003,000A,0402", manufacturer: 'Stello', model: 'HT402', deviceJoinName: '(Stelpro/Hilo) Stello HT402 Thermostat'
     }
 
     preferences {
@@ -74,8 +81,7 @@ metadata {
     }
 }
 
-import groovy.transform.Field
-import groovy.json.JsonOutput
+@Field static final Map<String,Integer> constZigbeeManufacturerCodes = [ "Stelpro": 0x1185, "Stello": 0x1297 ]
 
 @Field static final Map constRefreshIntervalOpts = [
     defaultValueIdle: 00,
@@ -96,12 +102,16 @@ import groovy.json.JsonOutput
 
 def installed() {
     logInfo('installed()')
+    state.driverVersion = constDriverVersion
     configure()
-    refresh() // TODO
+    refresh() // TODO - shouldn't be needed
 }
 
 def initialize() {
     logInfo('initialize()')
+    if (state.driverVersion != constDriverVersion) {
+        logWarn "New/different driver installed since last configure()"
+    }
     refresh()
 }
 
@@ -116,6 +126,8 @@ def uninstalled() {
 
 def configure(){
     log.warn "configure..."
+    state.driverVersion = constDriverVersion
+
     unschedule()
     runIn(1800,debugLogsOff)
 
@@ -126,6 +138,8 @@ def configure(){
         powerReport = 30 as int
     if (reportingSeconds == null)
         reportingSeconds = "60"
+    if (state.thermostatIsOn == null)
+        state.thermostatIsOn = true
 
 
     // Set unused default values (for Google Home Integration)
@@ -166,8 +180,6 @@ def refresh() {
 
     // missing a few vendor-specific attributes (see https://www.zigbee2mqtt.io/devices/HT402.html)
     cmds += zigbee.readAttribute(0x201, 0x4001) // Outdoor temperature
-//    cmds += zigbee.readAttribute(0x201, 0x4002) // unknown vendor-specific
-//    cmds += zigbee.readAttribute(0x201, 0x4004) // unknown vendor-specific
     cmds += zigbee.readAttribute(0x201, 0x4008) // power
     cmds += zigbee.readAttribute(0x201, 0x4009) // energy
 
@@ -182,17 +194,14 @@ def refresh() {
 
 def auto() {
     logWarn('auto(): mode is not available for this device. => Defaulting to heat mode instead.')
-    //heat()
 }
 
 def cool() {
     logWarn('cool(): mode is not available for this device. => Defaulting to heat mode instead.')
-    //heat()
 }
 
 def emergencyHeat() {
     logWarn('emergencyHeat(): mode is not available for this device. => Defaulting to heat mode instead.')
-    //heat()
 }
 
 def fanAuto() {
@@ -211,7 +220,6 @@ def setCoolingSetpoint(degrees) {
     logWarn("setCoolingSetpoint(${degrees}): is not available for this device")
 }
 
-
 def heat() {
     setThermostatMode("heat")
 }
@@ -226,15 +234,22 @@ def off() {
 
 
 def setThermostatMode(String thermostatMode) {
+    // This thermostat model does not honor cluster 0x0201 attribute 0x001C (or vendor-specific 0x401C) for setting the system mode,
+    // therefore the off state is faked by setting the thermostat's setpoint to constHeatOffSetpoint (5 degrees C)
+    // The driver's setpoint attributes remain unchanged while the thermostat is "off", so when turned back to "heat" mode,
+    // the thermostat device will be set back to its last known heating setpoint, mimicking the typical thermostat behaviour.
+
     switch (thermostatMode) {
         case "heat":
-            // This model does not appear to honor cluster 0x0201 attribute 0x001C for setting the system mode.
             if (state.thermostatIsOn == false) {
                 state.thermostatIsOn = true
+
                 Integer setpoint = state.lastHeatingSetpoint ?: device.currentValue("temperature") as int
                 logDebug("heat() setpoint will be ${setpoint}")
                 setHeatingSetpoint(setpoint)
+
                 sendEvent(name:"thermostatMode", value:thermostatMode, descriptionText: "${device.displayName} thermostat mode set to ${thermostatMode}")
+
             }
             break
 
@@ -243,6 +258,7 @@ def setThermostatMode(String thermostatMode) {
             if (state.thermostatIsOn) {
                 logDebug("off() setpoint will be ${constHeatOffSetpoint}")
                 setHeatingSetpoint(constHeatOffSetpoint)
+
                 state.thermostatIsOn = false
                 sendEvent(name:"thermostatMode", value:thermostatMode, descriptionText: "${device.displayName} thermostat mode set to ${thermostatMode}")
             }
@@ -255,19 +271,19 @@ def setThermostatMode(String thermostatMode) {
     logDebug("th state ${state.thermostatIsOn} mode ${device.currentValue("thermostatMode")}")
 }
 
-def setHeatingSetpoint(preciseDegrees) {
+void setHeatingSetpoint(BigDecimal preciseDegrees) {
     if (preciseDegrees != null) {
+        BigDecimal degrees = preciseDegrees.setScale(1, BigDecimal.ROUND_HALF_UP)
 
-        def temperatureScale = getTemperatureScale()
-        def degrees = new BigDecimal(preciseDegrees).setScale(1, BigDecimal.ROUND_HALF_UP)
+        logDebug "setHeatingSetpoint(${degrees} ${location.temperatureScale})"
 
-        logDebug "setHeatingSetpoint(${degrees} ${temperatureScale})"
-
-        def celsius = (temperatureScale == "C") ? degrees as Float : (fahrenheitToCelsius(degrees) as Float).round(2)
+        Float celsius = temperatureScaleIsCelsius() ? degrees as Float : (fahrenheitToCelsius(degrees) as Float).round(2)
 
         if (state.thermostatIsOn) {
-            cmds = []
+            // Thermostat is "on".  Update the thermostat device's setpoint.
+            def cmds = []
             cmds += zigbee.writeAttribute(0x201, 0x0012, 0x29, Math.round(celsius * 100) as int)
+            cmds += zigbee.readAttribute(0x201, 0x0012)
             sendZigbeeCommands(cmds)
         } else {
             // Thermostat is "off".  Remember requested setpoint, will be used when heat mode is turned back on.
@@ -278,44 +294,20 @@ def setHeatingSetpoint(preciseDegrees) {
 
 // Custom commands
 
-def increaseHeatSetpoint() {
-    def currentSetpoint = device.currentValue("heatingSetpoint")
-    def locationScale = getTemperatureScale()
-    def maxSetpoint
-    def step
+void increaseHeatSetpoint() {
+    BigDecimal currentSetpoint = device.currentValue("heatingSetpoint")
 
-    if (locationScale == "C") {
-        maxSetpoint = 30;
-        step = 0.5
-    }
-    else {
-        maxSetpoint = 86
-        step = 1
-    }
-
-    if (currentSetpoint < maxSetpoint) {
-        currentSetpoint = currentSetpoint + step
+    if (currentSetpoint < (temperatureScaleIsCelsius() ? 30 : 86)) {
+        currentSetpoint = currentSetpoint + (temperatureScaleIsCelsius() ? 0.5 : 1)
         setHeatingSetpoint(currentSetpoint)
     }
 }
 
-def decreaseHeatSetpoint() {
-    def currentSetpoint = device.currentValue("heatingSetpoint")
-    def locationScale = getTemperatureScale()
-    def minSetpoint
-    def step
+void decreaseHeatSetpoint() {
+    BigDecimal currentSetpoint = device.currentValue("heatingSetpoint")
 
-    if (locationScale == "C") {
-        minSetpoint = 5;
-        step = 0.5
-    }
-    else {
-        minSetpoint = 41
-        step = 1
-    }
-
-    if (currentSetpoint > minSetpoint) {
-        currentSetpoint = currentSetpoint - step
+    if (currentSetpoint > (temperatureScaleIsCelsius() ? 5 : 41)) {
+        currentSetpoint = currentSetpoint - (temperatureScaleIsCelsius() ? 0.5 : 1)
         setHeatingSetpoint(currentSetpoint)
     }
 }
@@ -342,19 +334,18 @@ def setKeypadLockoutMode(lockoutMode) {
 }
 
 
-
-def setOutdoorTemperature(preciseDegrees) {
+def setOutdoorTemperature(BigDecimal preciseDegrees) {
     if (preciseDegrees != null) {
-        def temperatureScale = getTemperatureScale()
-        def degrees = new BigDecimal(preciseDegrees).setScale(1, BigDecimal.ROUND_HALF_UP)
+        BigDecimal degrees = preciseDegrees.setScale(1, BigDecimal.ROUND_HALF_UP)
 
-        logDebug "setOutdoorTemperature(${degrees} ${temperatureScale})"
+        logDebug "setOutdoorTemperature(${degrees} ${location.temperatureScale})"
 
-        def celsius = (temperatureScale == "C") ? degrees as Float : (fahrenheitToCelsius(degrees) as Float).round(2)
-        int celsius100 = Math.round(celsius * 100)
+        Float celsius = temperatureScaleIsCelsius() ? degrees as Float : (fahrenheitToCelsius(degrees) as Float).round(2)
+        int celsiusHundredths = Math.round(celsius * 100)
 
-        cmds = []
-        cmds += zigbee.writeAttribute(0x201, 0x4001, 0x29, celsius100) //, ["mfgCode": "0x1185"])
+        def cmds = []
+        cmds += zigbee.writeAttribute(0x201, 0x4001, 0x29, celsiusHundredths)
+        cmds += zigbee.readAttribute(0x201, 0x4001)
         sendZigbeeCommands(cmds)
     }
 }
@@ -422,7 +413,7 @@ private parseAttributeReport(descMap) {
                     else if (descMap.value > "8000") {
                         map.value = -(Math.round(2*(655.36 - map.value))/2)
                     }
-                    map.unit = getTemperatureScale()
+                    map.unit = location.temperatureScale
                     map.descriptionText = "${device.displayName} temperature is ${map.value}${map.unit}"
                     break
 
@@ -450,22 +441,21 @@ private parseAttributeReport(descMap) {
                     break
 
                 case "0012":
-                    if (state.thermostatIsOn) {
-                        map.name = "heatingSetpoint"
-                        if (descMap.value == "8000") {        //0x8000  TODO
-                            map.value = getTemperature("01F4")  // 5 Celsius (minimum setpoint)
-                        } else {
-                            map.value = getTemperature(descMap.value)
-                        }
-                        map.unit = getTemperatureScale()
-                        map.descriptionText = "${device.displayName} heating setpoint is ${map.value}${map.unit}"
-
-                        // also send separate thermostatSetpoint event
-                        sendEvent(name:"thermostatSetpoint", value:map.value, unit:map.unit, descriptionText: map.descriptionText)
-
-                        // remember last heating setpoint
-                        state.lastHeatingSetpoint = map.value
+                    if (!state.thermostatIsOn) return
+                    map.name = "heatingSetpoint"
+                    if (descMap.value == "8000") {        //0x8000  TODO
+                        map.value = getTemperature("01F4")  // 5 Celsius (minimum setpoint)
+                    } else {
+                        map.value = getTemperature(descMap.value)
                     }
+                    map.unit = location.temperatureScale
+                    map.descriptionText = "${device.displayName} heating setpoint is ${map.value}${map.unit}"
+
+                    // also send separate thermostatSetpoint event
+                    sendEvent(name:"thermostatSetpoint", value:map.value, unit:map.unit, descriptionText: map.descriptionText)
+
+                    // remember last heating setpoint
+                    state.lastHeatingSetpoint = map.value
                     break
 
                 case "001C": // system mode - not used on this model
@@ -477,7 +467,7 @@ private parseAttributeReport(descMap) {
                     if (map.value > 100) {
                         map.value = map.value - 655.36 // handle negative temperatures
                     }
-                    map.unit = getTemperatureScale()
+                    map.unit = location.temperatureScale
                     map.descriptionText = "${device.displayName} outdoor temperature is ${map.value}${map.unit}"
                     break
 
@@ -582,11 +572,16 @@ private Integer getEnergy(String value)
     }
 }
 
+//@CompileStatic
+private boolean temperatureScaleIsCelsius() {
+    return location.temperatureScale == "C"
+}
+
 private Integer getTemperature(String value) {
     if (value != null) {
         logTrace("getTemperature: value $value")
         def celsius = Integer.parseInt(value, 16) / 100
-        if (getTemperatureScale() == "C") {
+        if (temperatureScaleIsCelsius()) {
             return celsius
         }
 
@@ -631,3 +626,132 @@ void debugLogsOff() {
         device.updateSetting("traceEnable",[value:"false",type:"bool"])
     }
 }
+
+
+/*
+
+ ================================================================================================
+Node Descriptor
+------------------------------------------------------------------------------------------------
+▸ Logical Type                              = Zigbee Router
+▸ Complex Descriptor Available              = No
+▸ User Descriptor Available                 = No
+▸ Fragmentation Supported (R23)             = No
+▸ Frequency Band                            = Reserved
+▸ Alternate PAN Coordinator                 = No
+▸ Device Type                               = Full Function Device (FFD)
+▸ Mains Power Source                        = Yes
+▸ Receiver On When Idle                     = Yes (always on)
+▸ Security Capability                       = No
+▸ Allocate Address                          = Yes
+▸ Manufacturer Code                         = 0x1297
+▸ Maximum Buffer Size                       = 82 bytes
+▸ Maximum Incoming Transfer Size            = 82 bytes
+▸ Primary Trust Center                      = No
+▸ Backup Trust Center                       = No
+▸ Primary Binding Table Cache               = Yes
+▸ Backup Binding Table Cache                = No
+▸ Primary Discovery Cache                   = Yes
+▸ Backup Discovery Cache                    = Yes
+▸ Network Manager                           = Yes
+▸ Maximum Outgoing Transfer Size            = 82 bytes
+▸ Extended Active Endpoint List Available   = No
+▸ Extended Simple Descriptor List Available = No
+================================================================================================
+Power Descriptor
+------------------------------------------------------------------------------------------------
+▸ Current Power Mode         = Same as "Receiver On When Idle" from "Node Descriptor" section above
+▸ Available Power Sources    = [Constant (mains) power]
+▸ Current Power Sources      = [Constant (mains) power]
+▸ Current Power Source Level = 100%
+================================================================================================
+Endpoint 0x19
+================================================================================================
+Out Cluster: 0x0003 (Identify Cluster)
+------------------------------------------------------------------------------------------------
+▸ 0x00 | Identify | req
+================================================================================================
+Out Cluster: 0x000A (Time Cluster)
+------------------------------------------------------------------------------------------------
+▸ No generated commands
+================================================================================================
+Out Cluster: 0x0402 (Temperature Measurement Cluster)
+------------------------------------------------------------------------------------------------
+▸ No generated commands
+================================================================================================
+In Cluster: 0x0000 (Basic Cluster)
+------------------------------------------------------------------------------------------------
+▸ 0x0000 | ZCL Version          | req | r-- | uint8  | 03 = 3          | --
+▸ 0x0001 | Application Version  | opt | r-- | uint8  | 21 = 33         | --
+▸ 0x0002 | Stack Version        | opt | r-- | uint8  | 22 = 34         | --
+▸ 0x0003 | HW Version           | opt | r-- | uint8  | 01 = 1          | --
+▸ 0x0004 | Manufacturer Name    | opt | r-- | string | Stello          | --
+▸ 0x0005 | Model Identifier     | opt | r-- | string | HT402           | --
+▸ 0x0006 | Date Code            | req | r-- | string | 20000000 00000 | --
+▸ 0x0007 | Power Source         | opt | r-- | enum8  | 00 = Unknown    | --
+▸ 0x0010 | Location Description | opt | rw- | string | Thermostat      | --
+▸ 0x0011 | Physical Environment | opt | rw- | enum8  | 00              | --
+▸ 0xFFFD | Cluster Revision     | req | r-- | uint16 | 0001 = 1        | --
+------------------------------------------------------------------------------------------------
+▸ No received commands
+================================================================================================
+In Cluster: 0x0003 (Identify Cluster)
+------------------------------------------------------------------------------------------------
+▸ 0x0000 | Identify Time    | req | rw- | uint16 | 0000 = 0 seconds | --
+▸ 0xFFFD | Cluster Revision | req | r-- | uint16 | 0001 = 1         | --
+------------------------------------------------------------------------------------------------
+▸ 0x00 | Identify       | req
+▸ 0x01 | Identify Query | req
+================================================================================================
+In Cluster: 0x0004 (Groups Cluster)
+------------------------------------------------------------------------------------------------
+▸ 0x0000 | Name Support     | req | r-- | map8   | 00 = 00000000 | --
+▸ 0xFFFD | Cluster Revision | req | r-- | uint16 | 0001 = 1      | --
+------------------------------------------------------------------------------------------------
+▸ 0x00 | Add Group                | req
+▸ 0x01 | View Group               | req
+▸ 0x02 | Get Group Membership     | req
+▸ 0x03 | Remove Group             | req
+▸ 0x04 | Remove All Groups        | req
+▸ 0x05 | Add Group If Identifying | req
+================================================================================================
+In Cluster: 0x0201 (Thermostat Cluster)
+------------------------------------------------------------------------------------------------
+▸ 0x0000 | Local Temperature              | req | r-p | int16 | 0866 = 21.5°C | 0..21600
+▸ 0x0001 | Outdoor Temperature            | opt | r-- | int16 | 8000 = 0°C    | --
+▸ 0x0002 | Occupancy                      | opt | r-- | map8  | 00 = 00000000 | --
+▸ 0x0003 | Abs Min Heat Setpoint Limit    | opt | r-- | int16 | 01F4 = 5°C    | --
+▸ 0x0004 | Abs Max Heat Setpoint Limit    | opt | r-- | int16 | 0BB8 = 30°C   | --
+▸ 0x0005 | Abs Min Cool Setpoint Limit    | opt | r-- | int16 | 02BC = 7°C    | --
+▸ 0x0006 | Abs Max Cool Setpoint Limit    | opt | r-- | int16 | 1194 = 45°C   | --
+▸ 0x0008 | PI Heating Demand              | opt | r-p | uint8 | 00 = 0        | 0..21600
+▸ 0x0009 | HVAC System Type Configuration | opt | rw- | map8  | 00 = 00000000 | --
+▸ 0x0010 | Local Temperature Calibration  | opt | rw- | int8  | 00 = Infinity | --
+▸ 0x0011 | Occupied Cooling Setpoint      | req | rw- | int16 | 1194 = 45°C   | --
+▸ 0x0012 | Occupied Heating Setpoint      | req | rws | int16 | 07D0 = 20°C   | --
+▸ 0x0013 | Unoccupied Cooling Setpoint    | opt | rw- | int16 | 1194 = 45°C   | --
+▸ 0x0014 | Unoccupied Heating Setpoint    | opt | rw- | int16 | 06A4 = 17°C   | --
+▸ 0x0015 | Min Heat Setpoint Limit        | opt | rw- | int16 | 01F4 = 5°C    | --
+▸ 0x0016 | Max Heat Setpoint Limit        | opt | rw- | int16 | 0BB8 = 30°C   | --
+▸ 0x0017 | Min Cool Setpoint Limit        | opt | rw- | int16 | 02BC = 7°C    | --
+▸ 0x0018 | Max Cool Setpoint Limit        | opt | rw- | int16 | 1194 = 45°C   | --
+▸ 0x0019 | Min Setpoint Dead Band         | opt | rw- | int8  | 19 = 25       | --
+------------------------------------------------------------------------------------------------
+▸ 0x00 | Setpoint Raise/Lower | req
+================================================================================================
+In Cluster: 0x0204 (Thermostat User Interface Configuration Cluster)
+------------------------------------------------------------------------------------------------
+▸ 0x0000 | Temperature Display Mode | req | r-- | enum8  | 00       | --
+▸ 0x0001 | Keypad Lockout           | req | rw- | enum8  | 00       | --
+▸ 0xFFFD | Cluster Revision         | req | r-- | uint16 | 0001 = 1 | --
+------------------------------------------------------------------------------------------------
+▸ No received commands
+================================================================================================
+Endpoint 0xF2
+================================================================================================
+Out Cluster: 0x0021 (Green Power Cluster)
+------------------------------------------------------------------------------------------------
+▸ No generated commands
+================================================================================================
+
+ */
