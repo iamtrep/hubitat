@@ -131,9 +131,9 @@ def configure(){
     // Set unused default values (for Google Home Integration)
     sendEvent(name: "coolingSetpoint", value:getTemperature("0BB8")) // 0x0BB8 =  30 Celsius
     sendEvent(name: "thermostatFanMode", value:"auto")
-	sendEvent(name: "supportedThermostatFanModes", value: JsonOutput.toJson(["auto"]), descriptionText: getDescriptionText("supportedThermostatFanModes set to ${fanModes}"))
-	sendEvent(name: "supportedThermostatModes", value: JsonOutput.toJson(["heat", "off"]), descriptionText: getDescriptionText("supportedThermostatModes set to ${modes}"))
-    setThermostatMode("heat")
+	sendEvent(name: "supportedThermostatFanModes", value: JsonOutput.toJson(["auto"]))
+	sendEvent(name: "supportedThermostatModes", value: JsonOutput.toJson(["heat", "off"]))
+    //setThermostatMode("heat")
 
     def cmds = []
 
@@ -142,14 +142,14 @@ def configure(){
     cmds += "delay 200"
 
     //reporting
-    cmds += zigbee.configureReporting(0x201, 0x0000, 0x29, 0, (int)reportingSeconds, (int) tempChange)   //Attribute ID 0x0000 = local temperature, Data Type: S16BIT
-    cmds += zigbee.configureReporting(0x201, 0x0008, 0x20, 0, (int)reportingSeconds, 5)   //Attribute ID 0x0008 = pi heating demand, Data Type: U8BIT
-    cmds += zigbee.configureReporting(0x201, 0x0012, 0x29, 0, (int)reportingSeconds, 1)     //Attribute ID 0x0012 = occupied heat setpoint, Data Type: S16BIT
-    cmds += zigbee.configureReporting(0x201, 0x4008, 0x29, 0, (int)reportingSeconds, (int) powerReport)     //Attribute ID 0x4008 = power usage, Data Type: S16BIT
-    cmds += zigbee.configureReporting(0x201, 0x4009, 0x29, 0, (int)reportingSeconds, 10)     //Attribute ID 0x4009 = energy usage, Data Type: S16BIT
+    cmds += zigbee.configureReporting(0x201, 0x0000, 0x29, 0, reportingSeconds as int, tempChange as int)   //Attribute ID 0x0000 = local temperature, Data Type: S16BIT
+    cmds += zigbee.configureReporting(0x201, 0x0008, 0x20, 0, reportingSeconds as int, 5)   //Attribute ID 0x0008 = pi heating demand, Data Type: U8BIT
+    cmds += zigbee.configureReporting(0x201, 0x0012, 0x29, 0, reportingSeconds as int, 1)     //Attribute ID 0x0012 = occupied heat setpoint, Data Type: S16BIT
+    cmds += zigbee.configureReporting(0x201, 0x4008, 0x29, 0, reportingSeconds as int, powerReport as int)     //Attribute ID 0x4008 = power usage, Data Type: S16BIT
+    cmds += zigbee.configureReporting(0x201, 0x4009, 0x29, 0, reportingSeconds as int, 10)     //Attribute ID 0x4009 = energy usage, Data Type: S16BIT
 
-    cmds += zigbee.configureReporting(0x204, 0x0000, 0x30, 0, (int)reportingSeconds)         //Attribute ID 0x0000 = temperature display mode, Data Type: 8 bits enum
-    cmds += zigbee.configureReporting(0x204, 0x0001, 0x30, 0, (int)reportingSeconds)         //Attribute ID 0x0001 = keypad lockout, Data Type: 8 bits enum
+    cmds += zigbee.configureReporting(0x204, 0x0000, 0x30, 0, reportingSeconds as int)         //Attribute ID 0x0000 = temperature display mode, Data Type: 8 bits enum
+    cmds += zigbee.configureReporting(0x204, 0x0001, 0x30, 0, reportingSeconds as int)         //Attribute ID 0x0001 = keypad lockout, Data Type: 8 bits enum
 
     logTrace "cmds:${cmds}"
     return cmds + refresh()
@@ -213,11 +213,7 @@ def setCoolingSetpoint(degrees) {
 
 
 def heat() {
-    // This model does not appear to honor cluster 0x0201 attribute 0x001C for setting the system mode.
     setThermostatMode("heat")
-    Integer setpoint = state.lastHeatingSetpoint ?: device.currentValue("temperature") as int
-    logDebug("heat() setpoint will be ${setpoint}")
-    setHeatingSetpoint(setpoint)
 }
 
 def eco() {
@@ -225,23 +221,38 @@ def eco() {
 }
 
 def off() {
-    // This model does not appear to honor cluster 0x0201 attribute 0x001C for setting the system mode.
     setThermostatMode("off")
-    setHeatingSetpoint(constHeatOffSetpoint)
 }
 
 
 def setThermostatMode(String thermostatMode) {
     switch (thermostatMode) {
         case "heat":
+            // This model does not appear to honor cluster 0x0201 attribute 0x001C for setting the system mode.
+            if (state.thermostatIsOn == false) {
+                state.thermostatIsOn = true
+                Integer setpoint = state.lastHeatingSetpoint ?: device.currentValue("temperature") as int
+                logDebug("heat() setpoint will be ${setpoint}")
+                setHeatingSetpoint(setpoint)
+                sendEvent(name:"thermostatMode", value:thermostatMode, descriptionText: "${device.displayName} thermostat mode set to ${thermostatMode}")
+            }
+            break
+
         case "off":
-            sendEvent(name:"thermostatMode", value:thermostatMode, descriptionText: "${device.displayName} thermostat mode set to ${thermostatMode}")
+            // This model does not appear to honor cluster 0x0201 attribute 0x001C for setting the system mode.
+            if (state.thermostatIsOn) {
+                logDebug("off() setpoint will be ${constHeatOffSetpoint}")
+                setHeatingSetpoint(constHeatOffSetpoint)
+                state.thermostatIsOn = false
+                sendEvent(name:"thermostatMode", value:thermostatMode, descriptionText: "${device.displayName} thermostat mode set to ${thermostatMode}")
+            }
             break
 
         default:
             logWarn("invalid thermostat mode requested (${thermostatMode})")
             break
     }
+    logDebug("th state ${state.thermostatIsOn} mode ${device.currentValue("thermostatMode")}")
 }
 
 def setHeatingSetpoint(preciseDegrees) {
@@ -254,12 +265,12 @@ def setHeatingSetpoint(preciseDegrees) {
 
         def celsius = (temperatureScale == "C") ? degrees as Float : (fahrenheitToCelsius(degrees) as Float).round(2)
 
-        if (device.currentValue("thermostatMode") == "heat") {
+        if (state.thermostatIsOn) {
             cmds = []
             cmds += zigbee.writeAttribute(0x201, 0x0012, 0x29, Math.round(celsius * 100) as int)
             sendZigbeeCommands(cmds)
         } else {
-            // remember it, will be used when heat mode is turned back on.
+            // Thermostat is "off".  Remember requested setpoint, will be used when heat mode is turned back on.
             state.lastHeatingSetpoint = celsius
         }
     }
@@ -439,7 +450,7 @@ private parseAttributeReport(descMap) {
                     break
 
                 case "0012":
-                    if (getTemperature(descMap.value) != constHeatOffSetpoint) {
+                    if (state.thermostatIsOn) {
                         map.name = "heatingSetpoint"
                         if (descMap.value == "8000") {        //0x8000  TODO
                             map.value = getTemperature("01F4")  // 5 Celsius (minimum setpoint)
