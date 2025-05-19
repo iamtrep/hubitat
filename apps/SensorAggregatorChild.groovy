@@ -1,32 +1,32 @@
 /*
 
-MIT License
+ MIT License
 
-Copyright (c) 2025 pj
+ Copyright (c) 2025 pj
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
+ in the Software without restriction, including without limitation the rights
+ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the Software, and to permit persons to whom the Software is
+ furnished to do so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+ The above copyright notice and this permission notice shall be included in all
+ copies or substantial portions of the Software.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ SOFTWARE.
 
-Sensor Aggregator Child
+ Sensor Aggregator Child
 
-An app that allows aggregating sensor values and saving the result to a virtual device
+ An app that allows aggregating sensor values and saving the result to a virtual device
 
-TODO:
+ TODO:
  - More device types
  - Figure out Generic Component devices for when child devices are selected
 
@@ -42,13 +42,16 @@ definition(
     category: "Convenience",
     iconUrl: "",
     iconX2Url: "",
-    importUrl: ""
+    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/SensorAggregatorChild.groovy"
 )
 
 import groovy.transform.Field
 import groovy.transform.CompileStatic
+import com.hubitat.app.DeviceWrapper
+import com.hubitat.app.ChildDeviceWrapper
+import com.hubitat.hub.domain.Event
 
-@Field static final String child_app_version = "0.0.5"
+@Field static final String child_app_version = "0.0.6"
 
 @Field static final Map<String, String> CAPABILITY_ATTRIBUTES = [
     "capability.carbonDioxideMeasurement"   : "carbonDioxide",
@@ -69,7 +72,7 @@ preferences {
 	page(name: "mainPage")
 }
 
-def mainPage() {
+Map mainPage() {
 	dynamicPage(name: "mainPage", title: " ", install: true, uninstall: true) {
         section("Configuration") {
             input "appName", "text", title: "Name this sensor aggregator app", submitOnChange: true
@@ -101,34 +104,14 @@ def mainPage() {
     }
 }
 
-def installed() {
+void installed() {
     logDebug "installed()"
 }
 
-def updated() {
+void updated() {
     logDebug "updated()"
     unsubscribe()
-    initialize()
-}
 
-
-String getAttributeUnits(String capability) {
-    switch ( capability) {
-        case "capability.carbonDioxideMeasurement":
-        	return "ppm"
-    case "capability.illuminanceMeasurement":
-        return "lux"
-    case "capability.relativeHumidityMeasurement":
-        return "%"
-        case "capability.temperatureMeasurement":
-        return getTemperatureScale()
-        default:
-            break
-    }
-    return null
-}
-
-def initialize() {
     if (state.includedSensors == null) { state.includedSensors = [] }
     if (state.excludedSensors == null) { state.excludedSensors = [] }
 
@@ -154,27 +137,25 @@ def initialize() {
     sensorEventHandler()
 }
 
-def uninstalled() {
+void initialize() {
+    logDebug "initialize()"
 }
 
-
-def fetchChildDevice() {
-    def driverName = CAPABILITY_DRIVERS[selectedSensorCapability]
-    if (!driverName) {
-        logError "No driver found for capability: ${selectedSensorCapability}"
-        return null
-    }
-    String deviceName = "${app.id}-${driverName}"
-    def cd = getChildDevice(deviceName)
-    if (!cd) {
-        cd = addChildDevice("hubitat", driverName, deviceName, [name: "${app.label} ${driverName}"])
-        if (cd) logDebug("Child device ${cd.id} created with driver: ${driverName}.") else logError("could not create child device")
-        app.updateSetting("outputSensor", [type: selectedSensorCapability, value: cd.id])
-    }
-    return cd
+void uninstalled() {
+    logDebug "uninstalled()"
 }
 
-def sensorEventHandler(evt=null) {
+void appButtonHandler(String buttonName) {
+    switch (buttonName) {
+        case "forceUpdate":
+        default:
+            //sensorEventHandler()
+            updated()
+            break
+    }
+}
+
+void sensorEventHandler(Event evt=null) {
     if (evt != null) logTrace "sensorEventHandler() called: ${evt?.name} ${evt?.getDevice().getLabel()} ${evt?.value} ${evt?.descriptionText}"
 
 	if (computeAggregateSensorValue()) {
@@ -194,8 +175,39 @@ def sensorEventHandler(evt=null) {
     }
 }
 
+private String getAttributeUnits(String capability) {
+    switch ( capability) {
+        case "capability.carbonDioxideMeasurement":
+        	return "ppm"
+    case "capability.illuminanceMeasurement":
+        return "lux"
+    case "capability.relativeHumidityMeasurement":
+        return "%"
+        case "capability.temperatureMeasurement":
+        return getTemperatureScale()
+        default:
+            break
+    }
+    return null
+}
 
-def computeAggregateSensorValue() {
+private ChildDeviceWrapper fetchChildDevice() {
+    def driverName = CAPABILITY_DRIVERS[selectedSensorCapability]
+    if (!driverName) {
+        logError "No driver found for capability: ${selectedSensorCapability}"
+        return null
+    }
+    String deviceName = "${app.id}-${driverName}"
+    def cd = getChildDevice(deviceName)
+    if (!cd) {
+        cd = addChildDevice("hubitat", driverName, deviceName, [name: "${app.label} ${driverName}"])
+        if (cd) logDebug("Child device ${cd.id} created with driver: ${driverName}.") else logError("could not create child device")
+        app.updateSetting("outputSensor", [type: selectedSensorCapability, value: cd.id])
+    }
+    return cd
+}
+
+private boolean computeAggregateSensorValue() {
     def now = new Date()
     def timeAgo = new Date(now.time - excludeAfter * 60 * 1000)
     def attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]
@@ -270,17 +282,7 @@ def computeAggregateSensorValue() {
     return true
 }
 
-def appButtonHandler(String buttonName) {
-    switch (buttonName) {
-        case "forceUpdate":
-        default:
-            //sensorEventHandler()
-            updated()
-            break
-    }
-}
-
-def logStatistics() {
+private void logStatistics() {
     logInfo("${CAPABILITY_ATTRIBUTES[selectedSensorCapability]} ${aggregationMethod} (${state.includedSensors.size()}/${inputSensors.size()}): ${state.aggregateValue} ${getAttributeUnits(selectedSensorCapability)}")
     logInfo("Avg: ${state.avgSensorValue} Stdev: ${state.standardDeviation} Min: ${state.minSensorValue} Max: ${state.maxSensorValue} Median: ${state.medianSensorValue}")
     if (state.includedSensors.size() > 0) {
@@ -298,29 +300,31 @@ private double roundToDecimalPlaces(double decimalNumber, int decimalPlaces = 2)
     return (Math.round(decimalNumber * scale) as double) / scale
 }
 
-private void logError(Object... args)
+// logging helpers
+
+private void logError(String msg)
 {
     //if (logLevel in ["info","debug","trace"])
-    log.error(args)
+    log.error(app.getLabel() + ': ' + msg)
 }
 
-private void logWarn(Object... args)
+private void logWarn(String msg)
 {
     //if (logLevel in ["warn", "info","debug","trace"])
-    log.warn(args)
+    log.warn(app.getLabel() + ': ' + msg)
 }
 
-private void logInfo(Object... args)
+private void logInfo(String msg)
 {
-    if (logLevel in ["info","debug","trace"]) log.info(args)
+    if (logLevel == null || logLevel in ["info","debug","trace"]) log.info(app.getLabel() + ': ' + msg)
 }
 
-private void logDebug(Object... args)
+private void logDebug(String msg)
 {
-    if (logLevel in ["debug","trace"]) log.debug(args)
+    if (logLevel == null || logLevel in ["debug","trace"]) log.debug(app.getLabel() + ': ' + msg)
 }
 
-private void logTrace(Object... args)
+private void logTrace(String msg)
 {
-    if (logLevel in ["trace"]) log.trace(args)
+    if (logLevel == null || logLevel in ["trace"]) log.trace(app.getLabel() + ': ' + msg)
 }
