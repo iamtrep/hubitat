@@ -37,6 +37,7 @@ definition(
     author: "pj",
     description: "For each device, enumerates the apps referencing them",
     category: "Utility",
+    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/DeviceInUseEnumerator.groovy",
     iconUrl: "",
     iconX2Url: ""
 )
