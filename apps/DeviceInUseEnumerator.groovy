@@ -48,7 +48,7 @@ def mainPage() {
             input "appName", "text", title: "Rename this app", defaultValue: app.getLabel(), multiple: false, required: false, submitOnChange: true
             if (appName != app.getLabel()) app.updateLabel(appName)
         }
-        section("") {
+        section("(Optional) Report only on these devices") {
             input "devices", "capability.*", title: "Select Devices", multiple: true, required: true, submitOnChange: true
         }
         section("Options") {
@@ -88,42 +88,11 @@ def appButtonHandler(evt) {
 }
 
 def generateReport() {
-    //generateReport1()
-    def device_ids = getDevicesList()
-    generateReport2(device_ids)
-}
-
-def generateReport1() {
     log.debug "Generating report"
     def deviceAppMap = [:]
     def appMap = [:]
 
-    devices.each { device ->
-        def deviceInfo = getDeviceInfo(device.id, appMap)
-        if (!onlyChildDevices || deviceInfo.isChild) {
-            deviceAppMap[device.id] = [name: deviceInfo.name, info: deviceInfo]
-        }
-    }
-
-    def sortedDevices = deviceAppMap.sort { -it.value.info.apps.size() }
-    def reportHtml = "<table><tr><th>Device</th><th>Total Apps</th><th>Apps</th><th>Parent</th></tr>"
-
-    sortedDevices.each { deviceId, deviceData ->
-        def deviceUrl = getDeviceDetailsUrl(deviceId)
-        def appLinks = deviceData.info.apps.collect { app -> "<a href='${getAppConfigUrl(app.id)}' target='_blank'>${app.label}</a>" }
-        def parentLink = deviceData.info.parent ? "<a href='${deviceData.info.parent.url}' target='_blank'>${deviceData.info.parent.label}</a>" : "N/A"
-        reportHtml += "<tr><td><a href='${deviceUrl}' target='_blank'>${deviceData.name}</a></td><td>${deviceData.info.apps.size()}</td><td>${appLinks.join(', ')}</td><td>${parentLink}</td></tr>"
-    }
-
-    reportHtml += "</table>"
-    log.debug "Report generated"
-    return reportHtml
-}
-
-def generateReport2(devicesList) {
-    log.debug "Generating report"
-    def deviceAppMap = [:]
-    def appMap = [:]
+    def devicesList = getDevicesList()
 
     devicesList.each { deviceId ->
         def deviceInfo = getDeviceInfo(deviceId, appMap)
@@ -148,6 +117,12 @@ def generateReport2(devicesList) {
 }
 
 def getDevicesList() {
+    if (devices?.size() > 0) {
+        log.info("Generating report for specified devices only")
+        return devices.collect { device -> device.id }
+    }
+
+    log.info("Generating report for all devices")
     def url = "http://127.0.0.1:8080/hub2/devicesList"
     try {
         httpGet(url) { response ->
