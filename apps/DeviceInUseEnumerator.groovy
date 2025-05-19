@@ -55,7 +55,7 @@ Map mainPage() {
     dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
         section("Settings", hideable: true, hidden: true) {
             input name: "logLevel", type: "enum", options: ["warn","info","debug","trace"], title: "Enable logging?", defaultValue: "info", required: true, submitOnChange: true
-            if (logLevel != null) logInfo("${app.getLabel()}: ${logLevel} logging enabled")
+            if (logLevel != null) logInfo("${logLevel} logging enabled")
             input "appName", "text", title: "Rename this app", defaultValue: app.getLabel(), multiple: false, required: false, submitOnChange: true
             if (appName != app.getLabel()) app.updateLabel(appName)
         }
@@ -146,7 +146,7 @@ private List getDevicesList() {
             }
         }
     } catch (Exception e) {
-        logError "Error making HTTP request: ${e.message}"
+        logError "Error making HTTP request for devices list: ${e.message}"
     }
 }
 
@@ -173,7 +173,7 @@ private Map getDeviceInfo(Integer device_id, Map appMap) {
             }
         }
     } catch (Exception e) {
-        logError "Error making HTTP request: ${e.message}"
+        logError "Error making HTTP request for device id ${device_id}: ${e.message}"
     }
     return [name: displayName, apps: apps, isChild: isChildDevice, parent: parent]
 }
@@ -188,11 +188,11 @@ private Map getParentDeviceInfo(Integer parentDeviceId) {
                 def label = json.device.label ?: json.device.name
                 parent = [label: label, url: getDeviceDetailsUrl(parentDeviceId)]
             } else {
-                logError "Failed to retrieve data for parent device. HTTP status: ${response.status}"
+                logError "Failed to retrieve data for parent device id ${parentDeviceId}. HTTP status: ${response.status}"
             }
         }
     } catch (Exception e) {
-        logError "Error making HTTP request: ${e.message}"
+        logError "Error making HTTP request for parent device id ${parentDeviceid}: ${e.message}"
     }
     return parent
 }
@@ -208,11 +208,11 @@ private Map getParentAppInfo(Integer parentAppId, Map appMap) {
                 parent = [label: label, url: getAppConfigUrl(parentAppId)]
                 appMap[parentAppId] = parent
             } else {
-                logError "Failed to retrieve data for parent app. HTTP status: ${response.status}"
+                logError "Failed to retrieve data for parent app id ${parentAppId}. HTTP status: ${response.status}"
             }
         }
     } catch (Exception e) {
-        logError "Error making HTTP request: ${e.message}"
+        logError "Error making HTTP request for parent app id ${parentAppid}: ${e.message}"
     }
     return parent
 }
@@ -236,29 +236,29 @@ private String getAppConfigUrl(Integer appId) {
 
 // logging helpers
 
-private void logError(Object... args)
+private void logError(String msg)
 {
     //if (logLevel in ["info","debug","trace"])
-    log.error(*args)
+    log.error(app.getLabel() + ': ' + msg)
 }
 
-private void logWarn(Object... args)
+private void logWarn(String msg)
 {
     //if (logLevel in ["warn", "info","debug","trace"])
-    log.warn(*args)
+    log.warn(app.getLabel() + ': ' + msg)
 }
 
-private void logInfo(Object... args)
+private void logInfo(String msg)
 {
-    if (logLevel == null || logLevel in ["info","debug","trace"]) log.info(*args)
+    if (logLevel == null || logLevel in ["info","debug","trace"]) log.info(app.getLabel() + ': ' + msg)
 }
 
-private void logDebug(Object... args)
+private void logDebug(String msg)
 {
-    if (logLevel == null || logLevel in ["debug","trace"]) log.debug(*args)
+    if (logLevel == null || logLevel in ["debug","trace"]) log.debug(app.getLabel() + ': ' + msg)
 }
 
-private void logTrace(Object... args)
+private void logTrace(String msg)
 {
-    if (logLevel == null || logLevel in ["trace"]) log.trace(*args)
+    if (logLevel == null || logLevel in ["trace"]) log.trace(app.getLabel() + ': ' + msg)
 }
