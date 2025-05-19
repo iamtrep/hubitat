@@ -1,29 +1,33 @@
 /*
-MIT License
+ MIT License
 
-Copyright (c) 2025 pj
+ Copyright (c) 2025 pj
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
+ in the Software without restriction, including without limitation the rights
+ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the Software, and to permit persons to whom the Software is
+ furnished to do so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+ The above copyright notice and this permission notice shall be included in all
+ copies or substantial portions of the Software.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ SOFTWARE.
+
+ An app that tracks down which apps use given devices, with special attention to child devices.
+
 */
 
 import groovy.transform.Field
 import groovy.transform.CompileStatic
+import com.hubitat.app.DeviceWrapper
 
 @Field static final String app_version = "0.0.1"
 
@@ -31,8 +35,8 @@ definition(
     name: "Device \"in use by\" Enumerator",
     namespace: "iamtrep",
     author: "pj",
-    description: "Enumerates the apps using each device",
-    category: "Convenience",
+    description: "For each device, enumerates the apps referencing them",
+    category: "Utility",
     iconUrl: "",
     iconX2Url: ""
 )
@@ -41,7 +45,12 @@ preferences {
     page(name: "mainPage")
 }
 
-def mainPage() {
+@Field static final constDevicesListURL = "http://127.0.0.1:8080/hub2/devicesList"
+@Field static final constDeviceFullJsonURL = "http://127.0.0.1:8080/device/fullJson/"
+@Field static final constAppStatusURL = "http://127.0.0.1:8080/installedapp/statusJson/"
+
+
+Map mainPage() {
     dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
         section("Settings", hideable: true, hidden: true) {
             input name: "logLevel", type: "enum", options: ["warn","info","debug","trace"], title: "Enable logging?", defaultValue: "info", required: true, submitOnChange: true
@@ -49,18 +58,15 @@ def mainPage() {
             input "appName", "text", title: "Rename this app", defaultValue: app.getLabel(), multiple: false, required: false, submitOnChange: true
             if (appName != app.getLabel()) app.updateLabel(appName)
         }
-        section("(Optional) Report only on these devices") {
-            input "devices", "capability.*", title: "Select Devices", multiple: true, required: true, submitOnChange: true
-        }
         section("Options") {
+            input "devices", "capability.*", title: "Only report on these specific devices", multiple: true, required: false, submitOnChange: true
             input "onlyChildDevices", "bool", title: "Process and output only child devices?", defaultValue: false, submitOnChange: true
         }
         section("") {
             input "generateReport", "button", title: "Generate Report", submitOnChange: true
             if (state.generateReport) {
                 state.generateReport = false
-                def report = generateReport()
-                paragraph report
+                paragraph generateReport()
             } else {
                 paragraph "No report generated yet."
             }
@@ -68,32 +74,38 @@ def mainPage() {
     }
 }
 
-def installed() {
+void installed() {
+    logTrace("installed()")
     initialize()
 }
 
-def updated() {
+void updated() {
+    logTrace("updated()")
     unsubscribe()
     initialize()
 }
 
-def initialize() {
-    logDebug "Initializing..."
+void initialize() {
+    logTrace "initialize()"
     state.reportOutput = null
 }
 
-def appButtonHandler(evt) {
+void uninstalled() {
+    logTrace("uninstalled()")
+}
+
+void appButtonHandler(evt) {
     if (evt == "generateReport") {
         state.generateReport = true
     }
 }
 
-def generateReport() {
-    logDebug "Generating report"
-    def deviceAppMap = [:]
-    def appMap = [:]
+String generateReport() {
+    logInfo "Generating report"
+    Map deviceAppMap = [:]
+    Map appMap = [:]
 
-    def devicesList = getDevicesList()
+    List devicesList = getDevicesList()
 
     devicesList.each { deviceId ->
         def deviceInfo = getDeviceInfo(deviceId, appMap)
@@ -113,20 +125,19 @@ def generateReport() {
     }
 
     reportHtml += "</table>"
-    logDebug "Report generated"
+    logInfo "Report generated"
     return reportHtml
 }
 
-def getDevicesList() {
+private List getDevicesList() {
     if (devices?.size() > 0) {
         logInfo("Generating report for specified devices only")
-        return devices.collect { device -> device.id }
+        return devices.collect { device -> device.id.toInteger() }
     }
 
     logInfo("Generating report for all devices")
-    def url = "http://127.0.0.1:8080/hub2/devicesList"
     try {
-        httpGet(url) { response ->
+        httpGet(constDevicesListURL) { response ->
             if (response.status == 200) {
                 return response.data.devices?.collect { device -> device.data?.id }?.findAll { it != null } ?: []
             } else {
@@ -138,14 +149,14 @@ def getDevicesList() {
     }
 }
 
-def getDeviceInfo(device_id, appMap) {
-    def displayName = ""
-    def apps = []
-    def isChildDevice = false
-    def parent = null
-    def url = "http://127.0.0.1:8080/device/fullJson/${device_id}"
+private Map getDeviceInfo(Integer device_id, Map appMap) {
+    String displayName = ""
+    List apps = []
+    boolean isChildDevice = false
+    Map parent = null
+
     try {
-        httpGet(url) { response ->
+        httpGet(constDeviceFullJsonURL + device_id) { response ->
             if (response.status == 200) {
                 def json = response.data
                 displayName = json.device.displayName
@@ -166,9 +177,9 @@ def getDeviceInfo(device_id, appMap) {
     return [name: displayName, apps: apps, isChild: isChildDevice, parent: parent]
 }
 
-def getParentDeviceInfo(parentDeviceId) {
-    def parent = null
-    def url = "http://127.0.0.1:8080/device/fullJson/${parentDeviceId}"
+private Map getParentDeviceInfo(Integer parentDeviceId) {
+    Map parent = null
+    String url = constDeviceFullJsonURL + parentDeviceId
     try {
         httpGet(url) { response ->
             if (response.status == 200) {
@@ -185,14 +196,14 @@ def getParentDeviceInfo(parentDeviceId) {
     return parent
 }
 
-def getParentAppInfo(parentAppId, appMap) {
-    def parent = null
-    def url = "http://127.0.0.1:8080/installedapp/statusJson/${parentAppId}"
+private Map getParentAppInfo(Integer parentAppId, Map appMap) {
+    Map parent = null
+    String url = constAppStatusURL + parentAppId
     try {
         httpGet(url) { response ->
             if (response.status == 200) {
                 def json = response.data
-                def label = json.installedApp.label ?: json.installedApp.name
+                String label = json.installedApp.label ?: json.installedApp.name
                 parent = [label: label, url: getAppConfigUrl(parentAppId)]
                 appMap[parentAppId] = parent
             } else {
@@ -205,44 +216,48 @@ def getParentAppInfo(parentAppId, appMap) {
     return parent
 }
 
-def getHubBaseLocalUrl() {
+private DeviceWrapper getDeviceWrapper(Integer deviceId) {
+    app.updateSetting("tempDeviceWrapper", [value:deviceId, type:"capability.*"])
+    return tempDeviceWrapper
+}
+
+private String getHubBaseLocalUrl() {
     return "http://${location.hubs[0].getDataValue("localIP")}"
 }
 
-def getDeviceDetailsUrl(id) {
-    return "${getHubBaseLocalUrl()}/device/edit/$id"
+private String getDeviceDetailsUrl(Integer deviceId) {
+    return "${getHubBaseLocalUrl()}/device/edit/$deviceId"
 }
 
-def getAppConfigUrl(id) {
-    return "${getHubBaseLocalUrl()}/installedapp/configure/$id"
+private String getAppConfigUrl(Integer appId) {
+    return "${getHubBaseLocalUrl()}/installedapp/configure/$appId"
 }
-
 
 // logging helpers
 
 private void logError(Object... args)
 {
     //if (logLevel in ["info","debug","trace"])
-    log.error args
+    log.error(*args)
 }
 
 private void logWarn(Object... args)
 {
     //if (logLevel in ["warn", "info","debug","trace"])
-    log.warn args
+    log.warn(*args)
 }
 
 private void logInfo(Object... args)
 {
-    if (loglevel == null || logLevel in ["info","debug","trace"]) log.info args
+    if (logLevel == null || logLevel in ["info","debug","trace"]) log.info(*args)
 }
 
 private void logDebug(Object... args)
 {
-    if (logLevel == null || logLevel in ["debug","trace"]) log.debug args
+    if (logLevel == null || logLevel in ["debug","trace"]) log.debug(*args)
 }
 
 private void logTrace(Object... args)
 {
-    if (logLevel == null || logLevel in ["trace"]) log.trace args
+    if (logLevel == null || logLevel in ["trace"]) log.trace(*args)
 }
