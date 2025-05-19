@@ -44,7 +44,8 @@ preferences {
 def mainPage() {
     dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
         section("Settings", hideable: true, hidden: true) {
-            input "debugEnabled", "bool", title: "Enable Debug Logs", defaultValue: false, submitOnChange: true
+            input name: "logLevel", type: "enum", options: ["warn","info","debug","trace"], title: "Enable logging?", defaultValue: "info", required: true, submitOnChange: true
+            if (logLevel != null) logInfo("${app.getLabel()}: ${logLevel} logging enabled")
             input "appName", "text", title: "Rename this app", defaultValue: app.getLabel(), multiple: false, required: false, submitOnChange: true
             if (appName != app.getLabel()) app.updateLabel(appName)
         }
@@ -77,7 +78,7 @@ def updated() {
 }
 
 def initialize() {
-    log.debug "Initializing..."
+    logDebug "Initializing..."
     state.reportOutput = null
 }
 
@@ -88,7 +89,7 @@ def appButtonHandler(evt) {
 }
 
 def generateReport() {
-    log.debug "Generating report"
+    logDebug "Generating report"
     def deviceAppMap = [:]
     def appMap = [:]
 
@@ -112,28 +113,28 @@ def generateReport() {
     }
 
     reportHtml += "</table>"
-    log.debug "Report generated"
+    logDebug "Report generated"
     return reportHtml
 }
 
 def getDevicesList() {
     if (devices?.size() > 0) {
-        log.info("Generating report for specified devices only")
+        logInfo("Generating report for specified devices only")
         return devices.collect { device -> device.id }
     }
 
-    log.info("Generating report for all devices")
+    logInfo("Generating report for all devices")
     def url = "http://127.0.0.1:8080/hub2/devicesList"
     try {
         httpGet(url) { response ->
             if (response.status == 200) {
                 return response.data.devices?.collect { device -> device.data?.id }?.findAll { it != null } ?: []
             } else {
-                log.error "Failed to retrieve data for device ${device.displayName}. HTTP status: ${response.status}"
+                logError "Failed to retrieve data for device ${device.displayName}. HTTP status: ${response.status}"
             }
         }
     } catch (Exception e) {
-        log.error "Error making HTTP request: ${e.message}"
+        logError "Error making HTTP request: ${e.message}"
     }
 }
 
@@ -156,11 +157,11 @@ def getDeviceInfo(device_id, appMap) {
                     parent = appMap[json.device.parentAppId] ?: getParentAppInfo(json.device.parentAppId, appMap)
                 }
             } else {
-                log.error "Failed to retrieve data for device id ${device_id}. HTTP status: ${response.status}"
+                logError "Failed to retrieve data for device id ${device_id}. HTTP status: ${response.status}"
             }
         }
     } catch (Exception e) {
-        log.error "Error making HTTP request: ${e.message}"
+        logError "Error making HTTP request: ${e.message}"
     }
     return [name: displayName, apps: apps, isChild: isChildDevice, parent: parent]
 }
@@ -175,11 +176,11 @@ def getParentDeviceInfo(parentDeviceId) {
                 def label = json.device.label ?: json.device.name
                 parent = [label: label, url: getDeviceDetailsUrl(parentDeviceId)]
             } else {
-                log.error "Failed to retrieve data for parent device. HTTP status: ${response.status}"
+                logError "Failed to retrieve data for parent device. HTTP status: ${response.status}"
             }
         }
     } catch (Exception e) {
-        log.error "Error making HTTP request: ${e.message}"
+        logError "Error making HTTP request: ${e.message}"
     }
     return parent
 }
@@ -195,11 +196,11 @@ def getParentAppInfo(parentAppId, appMap) {
                 parent = [label: label, url: getAppConfigUrl(parentAppId)]
                 appMap[parentAppId] = parent
             } else {
-                log.error "Failed to retrieve data for parent app. HTTP status: ${response.status}"
+                logError "Failed to retrieve data for parent app. HTTP status: ${response.status}"
             }
         }
     } catch (Exception e) {
-        log.error "Error making HTTP request: ${e.message}"
+        logError "Error making HTTP request: ${e.message}"
     }
     return parent
 }
@@ -214,4 +215,34 @@ def getDeviceDetailsUrl(id) {
 
 def getAppConfigUrl(id) {
     return "${getHubBaseLocalUrl()}/installedapp/configure/$id"
+}
+
+
+// logging helpers
+
+private void logError(Object... args)
+{
+    //if (logLevel in ["info","debug","trace"])
+    log.error args
+}
+
+private void logWarn(Object... args)
+{
+    //if (logLevel in ["warn", "info","debug","trace"])
+    log.warn args
+}
+
+private void logInfo(Object... args)
+{
+    if (loglevel == null || logLevel in ["info","debug","trace"]) log.info args
+}
+
+private void logDebug(Object... args)
+{
+    if (logLevel == null || logLevel in ["debug","trace"]) log.debug args
+}
+
+private void logTrace(Object... args)
+{
+    if (logLevel == null || logLevel in ["trace"]) log.trace args
 }
