@@ -12,19 +12,19 @@
  *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
  *  for the specific language governing permissions and limitations under the License.
  *
- *  Stelpro Allia Thermostat driver for Hubitat Elevtion
+ *  Stelpro Allia/Stello Hilo HT402 Thermostat driver for Hubitat Elevation
  *
- *  Notice: The code in this driver was initially derived from Maxime Boissonault's code found here:
- *          https://github.com/mboisson/Hubitat-Stelpro-Allia-Thermostat
+ *  https://www.stelpro.com/wp-content/uploads/produits/documents/INS/INS_SAT402ZB_EN.pdf
  *
+ *  Notice: some of the code in this driver was initially derived from code found here:
+ *             https://github.com/mboisson/Hubitat-Stelpro-Allia-Thermostat
+ *             Author: Maxime Boissonneault
  *          which is itself a derivative of:
  *             https://github.com/Philippe-Charette/Hubitat-Stelpro-Maestro-Thermostat
+ *             Author: Philippe Charette
  *          which itself was derived from:
  *             https://github.com/stelpro/maestro-thermostat
- *
- *  Author: Maxime Boissonneault
- *  Author: Philippe Charette
- *  Author: Stelpro
+ *             Author: Stelpro
  *
  */
 
@@ -50,9 +50,9 @@ metadata {
         capability 'TemperatureMeasurement'
         capability 'Thermostat'
 
-        attribute "temperature_display_mode", "string"
-        attribute "keypad_lockout", "string"
-        attribute "outdoor_temperature", "number"
+        attribute "temperatureScale", "string"
+        attribute "keypadLockout", "string"
+        attribute "outdoorTemperature", "number"
 
         command 'setKeypadLockoutMode', [ [name: "lockoutMode*",
                                            type: "ENUM",
@@ -268,7 +268,6 @@ def setThermostatMode(String thermostatMode) {
             logWarn("invalid thermostat mode requested (${thermostatMode})")
             break
     }
-    logDebug("th state ${state.thermostatIsOn} mode ${device.currentValue("thermostatMode")}")
 }
 
 void setHeatingSetpoint(BigDecimal preciseDegrees) {
@@ -441,12 +440,10 @@ private parseAttributeReport(descMap) {
                     break
 
                 case "0012":
-                    if (!state.thermostatIsOn) return
                     map.name = "heatingSetpoint"
-                    if (descMap.value == "8000") {        //0x8000  TODO
+                    map.value = getTemperature(descMap.value)
+                    if (descMap.value == "8000") {        //0x8000  TODO - why?
                         map.value = getTemperature("01F4")  // 5 Celsius (minimum setpoint)
-                    } else {
-                        map.value = getTemperature(descMap.value)
                     }
                     map.unit = location.temperatureScale
                     map.descriptionText = "${device.displayName} heating setpoint is ${map.value}${map.unit}"
@@ -455,14 +452,16 @@ private parseAttributeReport(descMap) {
                     sendEvent(name:"thermostatSetpoint", value:map.value, unit:map.unit, descriptionText: map.descriptionText)
 
                     // remember last heating setpoint
-                    state.lastHeatingSetpoint = map.value
+                    if (descMap.value != "01F4") {
+                        state.lastHeatingSetpoint = map.value
+                    }
                     break
 
                 case "001C": // system mode - not used on this model
                     break
 
                 case "4001":
-                    map.name = "outdoor_temperature"
+                    map.name = "outdoorTemperature"
                     map.value = getTemperature(descMap.value)
                     if (map.value > 100) {
                         map.value = map.value - 655.36 // handle negative temperatures
@@ -503,13 +502,13 @@ private parseAttributeReport(descMap) {
         case "0204":
             switch (descMap.attrId) {
                 case "0000":
-                    map.name = "temperature_display_mode"
+                    map.name = "temperatureScale"
                     map.value = constTempDisplayModes[descMap.value]
                     map.descriptionText = "${device.displayName} temperature display mode is ${map.value}"
                     break
 
                 case "0001":
-                    map.name = "keypad_lockout"
+                    map.name = "keypadLockout"
                     map.value = constKeypadLockoutMap[descMap.value]
                     map.descriptionText = "${device.displayName} keypad lockout state is ${map.value}"
                     break
