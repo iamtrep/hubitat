@@ -34,7 +34,6 @@
  */
 
 import groovy.transform.Field
-
 import com.hubitat.hub.domain.Event
 
 @Field static final String app_version = "0.0.1"
