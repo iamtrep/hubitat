@@ -1,31 +1,38 @@
 /*
-MIT License
+ MIT License
 
-Copyright (c) 2025 pj
+ Copyright (c) 2025 pj
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
+ in the Software without restriction, including without limitation the rights
+ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the Software, and to permit persons to whom the Software is
+ furnished to do so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+ The above copyright notice and this permission notice shall be included in all
+ copies or substantial portions of the Software.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-*/
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ SOFTWARE.
+
+ An app to log device attributes to a file
+
+ Can be used with Watchtower app.
+
+ */
 
 import groovy.transform.Field
 import groovy.transform.CompileStatic
+import com.hubitat.app.DeviceWrapper
+import com.hubitat.hub.domain.Event
 
-@Field static final String child_app_version = "0.0.1"
+@Field static final String child_app_version = "0.0.2"
 
 definition(
     name: "Attribute Logger Child",
@@ -37,18 +44,20 @@ definition(
     iconX2Url: "",
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/AttributeLoggerChild.groovy",
     parent: "iamtrep:Attribute Logger",
-    singleThreaded: true
+    singleThreaded: true  // to avoid concurrent file access
 )
 
 preferences {
     page(name: "mainPage")
 }
 
-def mainPage() {
+Map mainPage() {
     dynamicPage(name: "mainPage", title: "Attribute Logger", install: true, uninstall: true) {
-        section("App Settings") {
+        section("App Settings", hideable: true, hidden: false) {
             label title: "Set App Label", required: false
             input "logFileName", "text", title: "Log File Name", description: "Enter the name of the log file (e.g., log.csv)", defaultValue: "log.csv", required: true
+            input name: "logLevel", type: "enum", options: ["warn","info","debug","trace"], title: "Enable logging?", defaultValue: "info", required: true, submitOnChange: true
+            if (logLevel != null) logInfo("${logLevel} logging enabled")
         }
         section("Select Device and Attributes") {
             input "selectedDevice", "capability.*", title: "Select Device", multiple: false, required: true, submitOnChange: true
@@ -63,80 +72,78 @@ def mainPage() {
                 state.pendingChanges = false
             }
         }
-        section("Logging") {
-            input "debugEnable", "bool", title: "Enable Debug Logging", defaultValue: true, required: false
+        section("") {
+            paragraph "Version ${child_app_version}"
         }
     }
 }
 
-def installed() {
+void installed() {
     state.previousDeviceId = selectedDevice?.id
     state.previousAttributes = selectedAttributes
     initialize()
 }
 
-def updated() {
+void updated() {
     if (state.pendingChanges && confirmChanges) {
         state.pendingChanges = false
         state.previousDeviceId = selectedDevice?.id
         state.previousAttributes = selectedAttributes
-    	def header = "timestamp," + selectedAttributes.join(',') + "\n"
+    	String header = "timestamp," + selectedAttributes.join(',') + "\n"
 	    //uploadHubFile(logFileName, header.bytes)
     }
-    unsubscribe()
     initialize()
 }
 
-def initialize() {
+void uninstalled() {
+}
+
+void initialize() {
+    unsubscribe()
     selectedAttributes.each { attribute ->
         subscribe(selectedDevice, attribute, handleEvent)
     }
 }
 
-def handleEvent(evt) {
-    def timestamp = new Date().getTime() / 1000
-    def attributeValues = selectedAttributes.collect { attribute ->
+void handleEvent(Event evt) {
+    Integer timestamp = new Date().getTime() / 1000
+    List attributeValues = selectedAttributes.collect { attribute ->
         selectedDevice.currentValue(attribute)
     }
-    def csvLine = "${timestamp},${attributeValues.join(',')}\n"
+    String csvLine = "${timestamp},${attributeValues.join(',')}\n"
+    logTrace("new data ${csvLine}")
     writeFile(csvLine)
 }
 
-def writeFile(data) {
-    def existingData = ""
+void writeFile(String data) {
+    String existingData = null
     try {
-        def byteArray = safeDownloadHubFile(logFileName)
+        byte[] byteArray = safeDownloadHubFile(logFileName)
         existingData = new String(byteArray)
     } catch (Exception e) {
-        log.warn "Could not read existing data: ${e.message}"
+        logWarn "Could not read existing data: ${e.message}"
     }
-    if (existingData == "") {
+    if (existingData == null) {
         existingData = "timestamp," + selectedAttributes.join(',') + "\n"
     }
-    def newData = existingData + data
+    String newData = existingData + data
     safeUploadHubFile(logFileName, newData.bytes)
 }
 
 
-def safeDownloadHubFile(fileName) {
+byte[] safeDownloadHubFile(String fileName) {
     int maxRetries = 3
-    int retryCount = 0
-    boolean success = false
 
-    byte[] byteArray
-
-    while (retryCount < maxRetries && !success) {
+    for (int retryCount in 0..<maxRetries) {
         try {
-            byteArray = downloadHubFile(fileName)
-            success = true
+            return downloadHubFile(fileName)
         } catch (Exception e) {
-            retryCount++
             if (retryCount < maxRetries) {
-                if (debugEnable) log.debug "Could not read from $fileName: ${e.message}"
-                log.warn "Retrying download of $fileName... Attempt ${retryCount}"
+                logDebug "Could not read from $fileName: ${e.message}"
+                logWarn "Retrying download of $fileName... Attempt ${retryCount}"
                 pauseExecution(500)
             } else {
-                log.error "Failed to download $fileName after ${maxRetries} attempts"
+                logError "Failed to download $fileName after ${maxRetries} attempts"
                 throw e
             }
         }
@@ -146,42 +153,68 @@ def safeDownloadHubFile(fileName) {
 }
 
 
-def safeUploadHubFile(fileName, bytes) {
+void safeUploadHubFile(String fileName, byte[] bytes) {
     int maxRetries = 3
-    int retryCount = 0
-    boolean success = false
 
-    while (retryCount < maxRetries && !success) {
+    for (int retryCount in 0..<maxRetries) {
         try {
             uploadHubFile(fileName, bytes)
-            success = true
+            return
         } catch (Exception e) {
-            retryCount++
             if (retryCount < maxRetries) {
-                if (debugEnable) log.debug "Could not write to $fileName: ${e.message}"
-                log.warn "Retrying upload of $fileName... Attempt ${retryCount}"
+                logDebug "Could not write to $fileName: ${e.message}"
+                logWarn "Retrying upload of $fileName... Attempt ${retryCount}"
                 pauseExecution(500)
             } else {
-                log.error "Failed to upload $fileName after ${maxRetries} attempts - possible data loss"
+                logError "Failed to upload $fileName after ${maxRetries} attempts - possible data loss"
                 throw e
             }
         }
     }
 }
 
-def getDeviceAttributes(device) {
+List getDeviceAttributes(DeviceWrapper device) {
     if (!device) {
-        log.warn "No device selected"
+        logWarn "No device selected"
         return []
     }
-    def attributes = []
+    List attributes = []
     device.getCapabilities().each { capability ->
         capability.attributes.each { attribute ->
             attributes << attribute.name
-            log.debug "Capability: ${capability.name}, Attribute: ${attribute.name}"
+            logDebug "Capability: ${capability.name}, Attribute: ${attribute.name}"
         }
     }
-    def uniqueAttributes = attributes.unique()
-    log.debug "Unique attributes: ${uniqueAttributes}"
+    List uniqueAttributes = attributes.unique()
+    logDebug "Unique attributes: ${uniqueAttributes}"
     return uniqueAttributes ?: ["No supported attributes found"]
+}
+
+// logging helpers
+
+private void logError(String msg)
+{
+    //if (logLevel in ["info","debug","trace"])
+    log.error(app.getLabel() + ': ' + msg)
+}
+
+private void logWarn(String msg)
+{
+    //if (logLevel in ["warn", "info","debug","trace"])
+    log.warn(app.getLabel() + ': ' + msg)
+}
+
+private void logInfo(String msg)
+{
+    if (logLevel == null || logLevel in ["info","debug","trace"]) log.info(app.getLabel() + ': ' + msg)
+}
+
+private void logDebug(String msg)
+{
+    if (logLevel == null || logLevel in ["debug","trace"]) log.debug(app.getLabel() + ': ' + msg)
+}
+
+private void logTrace(String msg)
+{
+    if (logLevel == null || logLevel in ["trace"]) log.trace(app.getLabel() + ': ' + msg)
 }
