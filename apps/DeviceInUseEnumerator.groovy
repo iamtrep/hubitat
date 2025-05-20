@@ -217,7 +217,7 @@ private Map getParentAppInfo(Integer parentAppId, Map appMap) {
     return parent
 }
 
-private DeviceWrapper getDeviceWrapper(Integer deviceId) {
+private DeviceWrapper getDeviceById(Integer deviceId) {
     app.updateSetting("tempDeviceWrapper", [value:deviceId, type:"capability.*"])
     return tempDeviceWrapper
 }
