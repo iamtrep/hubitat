@@ -127,7 +127,7 @@ void updated() {
     }
 
     if (inputSensors && selectedSensorCapability) {
-        def attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]
+        String attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]
         if (attributeName) {
             subscribe(inputSensors, attributeName, sensorEventHandler)
             logTrace "Subscribed to ${attributeName} events for ${inputSensors.collect { it.displayName}}."
@@ -159,7 +159,7 @@ void sensorEventHandler(Event evt=null) {
     if (evt != null) logTrace "sensorEventHandler() called: ${evt?.name} ${evt?.getDevice().getLabel()} ${evt?.value} ${evt?.descriptionText}"
 
 	if (computeAggregateSensorValue()) {
-        def sensorDevice = outputSensor
+        DeviceWrapper sensorDevice = outputSensor
         if (!sensorDevice) {
             sensorDevice = fetchChildDevice()
         }
@@ -192,13 +192,13 @@ private String getAttributeUnits(String capability) {
 }
 
 private ChildDeviceWrapper fetchChildDevice() {
-    def driverName = CAPABILITY_DRIVERS[selectedSensorCapability]
+    String driverName = CAPABILITY_DRIVERS[selectedSensorCapability]
     if (!driverName) {
         logError "No driver found for capability: ${selectedSensorCapability}"
         return null
     }
     String deviceName = "${app.id}-${driverName}"
-    def cd = getChildDevice(deviceName)
+    ChildDeviceWrapper cd = getChildDevice(deviceName)
     if (!cd) {
         cd = addChildDevice("hubitat", driverName, deviceName, [name: "${app.label} ${driverName}"])
         if (cd) logDebug("Child device ${cd.id} created with driver: ${driverName}.") else logError("could not create child device")
@@ -210,13 +210,13 @@ private ChildDeviceWrapper fetchChildDevice() {
 private boolean computeAggregateSensorValue() {
     def now = new Date()
     def timeAgo = new Date(now.time - excludeAfter * 60 * 1000)
-    def attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]
+    String attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]
 
-    def includedSensors = []
-    def excludedSensors = []
+    List includedSensors = []
+    List excludedSensors = []
 
     inputSensors.each {
-        def events = it.eventsSince(timeAgo, [max:1])
+        List<Event> events = it.eventsSince(timeAgo, [max:1])
         if (events.size() > 0) {
             if (it.currentValue(attributeName) != null) {
                 includedSensors << it
@@ -228,14 +228,14 @@ private boolean computeAggregateSensorValue() {
         }
     }
 
-    def n = includedSensors.size()
+    Integer n = includedSensors.size()
     if (n<1) {
         // For now, simply don't update the app state
         logError "No sensors available for agregation... aggregate value not updated (${state.aggregateValue})"
         return false
     }
 
-    def sensorValues = includedSensors.collect { it.currentValue(attributeName) }
+    List sensorValues = includedSensors.collect { it.currentValue(attributeName) }
     state.minSensorValue = roundToDecimalPlaces(sensorValues.min())
     state.maxSensorValue = roundToDecimalPlaces(sensorValues.max())
 
