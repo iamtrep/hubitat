@@ -1,11 +1,34 @@
 /*
 
- Sensor Aggregator Discrete Child
+ MIT License
+
+ Copyright (c) 2025 pj
+
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
+ in the Software without restriction, including without limitation the rights
+ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the Software, and to permit persons to whom the Software is
+ furnished to do so, subject to the following conditions:
+
+ The above copyright notice and this permission notice shall be included in all
+ copies or substantial portions of the Software.
+
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ SOFTWARE.
+
+ Sensor Aggregator Child
 
  An app that allows aggregating sensor values and saving the result to a virtual device
 
  TODO:
- - Figure out what aggregation means for discrete sensors (motion, contact, tilt, etc)
+ - More device types
+ - Figure out Generic Component devices for when child devices are selected
 
  */
 
@@ -15,7 +38,7 @@ definition(
     namespace: "iamtrep",
     parent: "iamtrep:Sensor Aggregator",
     author: "pj",
-    description: "Aggregate sensor values and save to a single virtual device",
+    description: "Aggregate discrete sensor values (contact, motion, tilt, etc) and save to a single virtual device",
     category: "Convenience",
     iconUrl: "",
     iconX2Url: "",
@@ -28,24 +51,12 @@ import groovy.transform.CompileStatic
 @Field static final String child_app_version = "0.0.1"
 
 @Field static final Map<String, String> CAPABILITY_ATTRIBUTES = [
-    "capability.carbonDioxideMeasurement"   : "carbonDioxide",
-    "capability.illuminanceMeasurement"     : "illuminance",
-    "capability.relativeHumidityMeasurement": "humidity",
-    "capability.temperatureMeasurement"     : "temperature"
-]
-
-@Field static final Map<String, String> CAPABILITY_ATTRIBUTE_UNITS = [
-    "capability.carbonDioxideMeasurement"   : "ppm",
-    "capability.illuminanceMeasurement"     : "lux",
-    "capability.relativeHumidityMeasurement": "%",
-    "capability.temperatureMeasurement"     : null,
-]
-
-@Field static final Map<String, String> CAPABILITY_DRIVERS = [
-    "capability.carbonDioxideMeasurement"   : "Virtual Omni Sensor",
-    "capability.illuminanceMeasurement"     : "Virtual Illuminance Sensor",
-    "capability.relativeHumidityMeasurement": "Virtual Humidity Sensor",
-    "capability.temperatureMeasurement"     : "Virtual Temperature Sensor"
+    "capability.accelerationSensor"  : [ attribute: "acceleration", values: ["inactive", "active"], driver: "Virtual Acceleration Sensor" ],
+    "capability.contactSensor"       : [ attribute: "contact", values: ["open","closed"], driver: "Virtual Contact Sensor" ],
+    "capability.motionSensor"        : [ attribute: "motion", values: ["inactive","active"], driver: "Virtual Motion Sensor" ],
+    "capability.presenceSensor"      : [ attribute: "presence", values: ["not present","present"], driver: "Virtual Presence Sensor" ],
+    "capability.shockSensor"         : [ attribute: "shock", values: ["clear", "detected"], driver: "Virtual Shock Sensor" ],
+    "capability.waterSensor"         : [ attribute: "water", values: ["wet", "dry"], driver: "Virtual Moisture Sensor" ]
 ]
 
 
@@ -63,6 +74,13 @@ def mainPage() {
             input name: "selectedSensorCapability", type: "enum", options: CAPABILITY_ATTRIBUTES.keySet(), title: "Select sensor capability to aggregate", required: true, submitOnChange:true
             if (selectedSensorCapability) {
                 input name: "inputSensors", type: selectedSensorCapability, title: "Sensors to aggregate", multiple:true, required: true, showFilter: true, submitOnChange: true
+                if (inputSensors) {
+                    def capabilities = inputSensors[0].getCapabilities()
+                    def targetCapability = capabilities.find { it.name == selectedSensorCapability }
+                    def targetAttribute = targetCapability.attributes[0]
+                    log.debug "possible Values: ${targetAttribute.possibleValues}"
+                    input name: "attributeValue", type: "enum", options: targetAttribute.possibleValues, title: "Attribute value", multiple:false, required:true
+                }
                 input name: "outputSensor", type: selectedSensorCapability, title: "Virtual sensor to set as aggregation output", multiple: false, required: false, submitOnChange: true
                 if (!outputSensor) {
                     input "createChildSensorDevice", "bool", title: "Create Child Device if no Output Device selected", defaultValue: state.createChild, required: true, submitOnChange: true
@@ -71,13 +89,13 @@ def mainPage() {
             }
         }
         section("Aggregation") {
-            input name: "aggregationMethod", type: "enum", options: ["average", "median", "min", "max"], title: "Select aggregation method", defaultValue: "average", required: true, submitOnChange: true
-            input name: "excludeAfter", type: "number", title: "Exclude sensor value when sensor is inactive for this many minutes:", defaultValue: 60, range: "0..3600"
+            input name: "aggregationMethod", type: "enum", options: ["any", "all"], title: "Select aggregation method", defaultValue: "any", required: true, submitOnChange: true
+            input name: "excludeAfter", type: "number", title: "Exclude sensor value when sensor has no updates for this many minutes:", defaultValue: 60, range: "0..1440"
         }
         section("Operation") {
             input name: "forceUpdate", type: "button", title: "Force update aggregate value"
             if(inputSensors) {
-                paragraph "Current $aggregationMethod value is ${state.aggregateValue} ${CAPABILITY_ATTRIBUTE_UNITS[selectedSensorCapability]}"
+                paragraph "Current $aggregationMethod value is ${state.aggregateValue} ${getAttributeUnits(selectedSensorCapability)}"
             }
             input name: "logLevel", type: "enum", options: ["warn","info","debug","trace"], title: "Enable logging?", defaultValue: "info", required: true, submitOnChange: true
             log.info("${logLevel} logging enabled")
@@ -99,21 +117,17 @@ def initialize() {
     if (state.includedSensors == null) { state.includedSensors = [] }
     if (state.excludedSensors == null) { state.excludedSensors = [] }
 
-    if (state.aggregateValue == null) { state.aggregateValue = 0 }
-    if (state.avgSensorValue == null) { state.avgSensorValue = 0 }
-    if (state.minSensorValue == null) { state.minSensorValue = 0 }
-    if (state.maxSensorValue == null) { state.maxSensorValue = 0 }
-    if (state.medianSensorValue == null) { state.medianSensorValue = 0 }
-    if (state.createChild == null) { state.createChild = false }
+    if (state.anyValue == null) { state.anyValue = "" }
+    if (state.allValue == null) { state.allValue = "" }
 
-    if (CAPABILITY_ATTRIBUTE_UNITS["capability.temperatureMeasurement"] == null) CAPABILITY_ATTRIBUTE_UNITS["capability.temperatureMeasurement"] = getTemperatureScale()
+    if (state.createChild == null) { state.createChild = false }
 
     if (!outputSensor && state.createChild) {
         fetchChildDevice()
     }
 
     if (inputSensors && selectedSensorCapability) {
-        def attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]
+        def attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute
         if (attributeName) {
             subscribe(inputSensors, attributeName, sensorEventHandler)
             logTrace "Subscribed to ${attributeName} events for ${inputSensors.collect { it.displayName}}."
@@ -128,7 +142,7 @@ def uninstalled() {
 
 
 def fetchChildDevice() {
-    def driverName = CAPABILITY_DRIVERS[selectedSensorCapability]
+    def driverName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.driver
     if (!driverName) {
         logError "No driver found for capability: ${selectedSensorCapability}"
         return null
@@ -155,82 +169,59 @@ def sensorEventHandler(evt=null) {
             logError("No output device to update")
             return
         }
-        sensorDevice.sendEvent(name: CAPABILITY_ATTRIBUTES[selectedSensorCapability],
+        sensorDevice.sendEvent(name: CAPABILITY_ATTRIBUTES[selectedSensorCapability].attribute,
                                value: state.aggregateValue,
-                               unit: CAPABILITY_ATTRIBUTE_UNITS[selectedSensorCapability],
-                               descriptionText:"${sensorDevice.displayName} was set to ${state.aggregateValue}${CAPABILITY_ATTRIBUTE_UNITS[selectedSensorCapability]}"
+                               descriptionText:"${sensorDevice.displayName} was set to ${state.aggregateValue}"
                                /* , isStateChange: true // let platform filter this event as needed */)
     }
 }
 
 
 def computeAggregateSensorValue() {
-    state.includedSensors.clear()
-    state.excludedSensors.clear()
-
     def now = new Date()
     def timeAgo = new Date(now.time - excludeAfter * 60 * 1000)
-    def attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]
+    def attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute
+
+    def includedSensors = []
+    def excludedSensors = []
 
     inputSensors.each {
         def events = it.eventsSince(timeAgo, [max:1])
         if (events.size() > 0) {
             if (it.currentValue(attributeName) != null) {
-                state.includedSensors << it
+                includedSensors << it
                 logTrace("Including sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - last event ${events[0].date}")
             }
         } else {
-            state.excludedSensors << it
+            excludedSensors << it
             logTrace("Excluding sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - last event ${it.events([max:1])[0].date}")
         }
     }
 
-    def n = state.includedSensors.size()
+    def n = includedSensors.size()
     if (n<1) {
         // For now, simply don't update the app state
         logError "No sensors available for agregation... aggregate value not updated (${state.aggregateValue})"
         return false
     }
 
-    def sensorValues = state.includedSensors.collect { it.currentValue(attributeName) }
-    state.minSensorValue = roundToDecimalPlaces(sensorValues.min())
-    state.maxSensorValue = roundToDecimalPlaces(sensorValues.max())
+    def sensorValues = includedSensors.collect { it.currentValue(attributeName) }
+    def targetValue = attributeValue
 
-    def sum = sensorValues.sum()
-    state.avgSensorValue = roundToDecimalPlaces(sum / sensorValues.size(),1)
-
-    def variance = sensorValues.collect { (it - state.avgSensorValue) ** 2 }.sum() / n
-    state.standardDeviation = roundToDecimalPlaces(Math.sqrt(variance),1)
-
-    sensorValues.sort()
-    logDebug "sorted values: $sensorValues"
-    if (n % 2 == 0) {
-        // Even number of elements, average the two middle values
-        state.medianSensorValue = (sensorValues[(n / 2 - 1) as int] + sensorValues[(n / 2) as int]) / 2.0
-    } else {
-        // Odd number of elements, take the middle value
-        state.medianSensorValue = sensorValues[(n / 2) as int]
-    }
-
-    //aggregationMethod", type: "enum", options: ["average", "median", "min", "max"
+    //aggregationMethod", type: "enum", options: ["any", "all"]
     switch (aggregationMethod) {
-        case "min":
-            state.aggregateValue = state.minSensorValue
+        case "all":
+            state.aggregateValue = sensorValues.every { it == targetValue } ? targetValue : ""
             break
 
-        case "max":
-            state.aggregateValue = state.maxSensorValue
-            break
-
-        case "median":
-            state.aggregateValue = state.medianSensorValue
-            break
-
-        case "average":
+        case "any":
         default:
-            state.aggregateValue = state.avgSensorValue
+            state.aggregateValue = sensorValues.any { it == targetValue } ? targetValue : ""
             break
     }
+
+    state.includedSensors = includedSensors.collect { it.getLabel() }
+    state.excludedSensors = excludedSensors.collect { it.getLabel() }
 
     logStatistics()
     return true
@@ -247,14 +238,14 @@ def appButtonHandler(String buttonName) {
 }
 
 def logStatistics() {
-    logInfo("${CAPABILITY_ATTRIBUTES[selectedSensorCapability]} ${aggregationMethod} (${state.includedSensors.size()}/${inputSensors.size()}): ${state.aggregateValue} ${CAPABILITY_ATTRIBUTE_UNITS[selectedSensorCapability]}")
-    logInfo("Avg: ${state.avgSensorValue} Stdev: ${state.standardDeviation} Min: ${state.minSensorValue} Max: ${state.maxSensorValue} Median: ${state.medianSensorValue}")
+    logInfo("${CAPABILITY_ATTRIBUTES[selectedSensorCapability].attribute} ${aggregationMethod} (${state.includedSensors.size()}/${inputSensors.size()}): ${state.aggregateValue}")
+    logInfo("Any: ${state.avgSensorValue} Stdev: ${state.standardDeviation} Min: ${state.minSensorValue} Max: ${state.maxSensorValue} Median: ${state.medianSensorValue}")
     if (state.includedSensors.size() > 0) {
         logDebug("Aggregated sensors (${state.includedSensors})")
     } else {
         logDebug("No aggregated sensors!")
     }
-    if (state.excludedSensors.size() > 0) logDebug("Rejected sensors with last update older than $excludeAfter minutes: ${state.excludedSensors.collect { it.getLabel()} }")
+    if (state.excludedSensors.size() > 0) logDebug("Rejected sensors with last update older than $excludeAfter minutes: ${state.excludedSensors} }")
 }
 
 
