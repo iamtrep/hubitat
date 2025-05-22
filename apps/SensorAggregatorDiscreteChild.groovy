@@ -75,11 +75,21 @@ def mainPage() {
             if (selectedSensorCapability) {
                 input name: "inputSensors", type: selectedSensorCapability, title: "Sensors to aggregate", multiple:true, required: true, showFilter: true, submitOnChange: true
                 if (inputSensors) {
+                    inputSensors.each { dev ->
+                        def  attrList = dev.getSupportedAttributes()
+                        attrList.each { attr ->
+                            logObjectProperties(attr)
+                            //log.debug “Current value ${dev.currentValue(attr.name, true)}”
+                        }
+                    }
+
                     def capabilities = inputSensors[0].getCapabilities()
-                    def targetCapability = capabilities.find { it.name == selectedSensorCapability }
-                    def targetAttribute = targetCapability.attributes[0]
-                    log.debug "possible Values: ${targetAttribute.possibleValues}"
-                    input name: "attributeValue", type: "enum", options: targetAttribute.possibleValues, title: "Attribute value", multiple:false, required:true
+                    def targetCapability = capabilities.find { it.name.toLowerCase() == selectedSensorCapability.substring("capability.".length()).toLowerCase() }
+                    logObjectProperties(targetCapability)
+                    def targetAttribute = inputSensors[0].getSupportedAttributes().find { it.name == targetCapability.attributes[0].name }
+                    //def targetAttribute = targetCapability.attributes[0]
+                    logObjectProperties(targetAttribute)
+                    input name: "attributeValue", type: "enum", options: targetAttribute.getValues(), title: "Attribute value", multiple:false, required:true
                 }
                 input name: "outputSensor", type: selectedSensorCapability, title: "Virtual sensor to set as aggregation output", multiple: false, required: false, submitOnChange: true
                 if (!outputSensor) {
@@ -95,12 +105,21 @@ def mainPage() {
         section("Operation") {
             input name: "forceUpdate", type: "button", title: "Force update aggregate value"
             if(inputSensors) {
-                paragraph "Current $aggregationMethod value is ${state.aggregateValue} ${getAttributeUnits(selectedSensorCapability)}"
+                paragraph "Current $aggregationMethod value is ${state.aggregateValue}"  // TODO units ?!
             }
             input name: "logLevel", type: "enum", options: ["warn","info","debug","trace"], title: "Enable logging?", defaultValue: "info", required: true, submitOnChange: true
             log.info("${logLevel} logging enabled")
         }
     }
+}
+
+private void logObjectProperties(obj) {
+    if (obj == null) return
+    log.debug "${getObjectClassName(obj)} BEGIN"
+    obj.properties.each { property, value ->
+        log.debug "${property}=${value}"
+    }
+    log.debug "${getObjectClassName(obj)} END"
 }
 
 def installed() {

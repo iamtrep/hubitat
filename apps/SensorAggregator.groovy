@@ -53,7 +53,22 @@ preferences {
 Map mainPage(){
     dynamicPage(name: "mainPage", title: " ", install: true, uninstall: true) {
         section ("Set up or manage Sensor Aggregator instances"){
-            app(name: "saChildApps", appName: "Sensor Aggregator Child", namespace: "iamtrep", title: "Create New Sensor Aggregator", submitOnChange: true, multiple: true)
+            app(name: "saChildApps",
+                appName: "Sensor Aggregator Child",
+                namespace: "iamtrep",
+                title: "Create New Continuous Sensor Aggregator",
+                description: "Continuous sensors include humidity, temperature, power, etc.",
+                submitOnChange: true,
+                multiple: true
+            )
+            app(name: "saDiscreteChildApps",
+                appName: "Sensor Aggregator Discrete Child",
+                namespace: "iamtrep",
+                title: "Create New Discrete Sensor Aggregator",
+                description: "Discrete sensors include switch, contact, motion, etc.",
+                submitOnChange: true,
+                multiple: true
+            )
         }
     }
 }
