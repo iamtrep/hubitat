@@ -75,19 +75,10 @@ def mainPage() {
             if (selectedSensorCapability) {
                 input name: "inputSensors", type: selectedSensorCapability, title: "Sensors to aggregate", multiple:true, required: true, showFilter: true, submitOnChange: true
                 if (inputSensors) {
-                    inputSensors.each { dev ->
-                        def  attrList = dev.getSupportedAttributes()
-                        attrList.each { attr ->
-                            logObjectProperties(attr)
-                            //log.debug “Current value ${dev.currentValue(attr.name, true)}”
-                        }
-                    }
-
                     def capabilities = inputSensors[0].getCapabilities()
                     def targetCapability = capabilities.find { it.name.toLowerCase() == selectedSensorCapability.substring("capability.".length()).toLowerCase() }
-                    logObjectProperties(targetCapability)
                     def targetAttribute = inputSensors[0].getSupportedAttributes().find { it.name == targetCapability.attributes[0].name }
-                    //def targetAttribute = targetCapability.attributes[0]
+                    logObjectProperties(targetCapability)
                     logObjectProperties(targetAttribute)
                     input name: "attributeValue", type: "enum", options: targetAttribute.getValues(), title: "Attribute value", multiple:false, required:true
                 }
