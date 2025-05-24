@@ -47,6 +47,9 @@ definition(
 
 import groovy.transform.Field
 import groovy.transform.CompileStatic
+import com.hubitat.app.DeviceWrapper
+import com.hubitat.app.ChildDeviceWrapper
+import com.hubitat.hub.domain.Event
 
 @Field static final String child_app_version = "0.0.1"
 
@@ -64,7 +67,7 @@ preferences {
 	page(name: "mainPage")
 }
 
-def mainPage() {
+Map mainPage() {
 	dynamicPage(name: "mainPage", title: " ", install: true, uninstall: true) {
         section("Configuration") {
             input "appName", "text", title: "Name this sensor aggregator app", submitOnChange: true
@@ -75,12 +78,8 @@ def mainPage() {
             if (selectedSensorCapability) {
                 input name: "inputSensors", type: selectedSensorCapability, title: "Sensors to aggregate", multiple:true, required: true, showFilter: true, submitOnChange: true
                 if (inputSensors) {
-                    def capabilities = inputSensors[0].getCapabilities()
-                    def targetCapability = capabilities.find { it.name.toLowerCase() == selectedSensorCapability.substring("capability.".length()).toLowerCase() }
-                    def targetAttribute = inputSensors[0].getSupportedAttributes().find { it.name == targetCapability.attributes[0].name }
-                    logObjectProperties(targetCapability)
-                    logObjectProperties(targetAttribute)
-                    input name: "attributeValue", type: "enum", options: targetAttribute.getValues(), title: "Attribute value", multiple:false, required:true
+                    def attributePOssibleValues = getAttributePossibleValues(inputSensors[0], selectedSensorCapability)
+                    input name: "attributeValue", type: "enum", options: attributePOssibleValues, title: "Attribute value", multiple:false, required:true
                 }
                 input name: "outputSensor", type: selectedSensorCapability, title: "Virtual sensor to set as aggregation output", multiple: false, required: false, submitOnChange: true
                 if (!outputSensor) {
@@ -104,26 +103,21 @@ def mainPage() {
     }
 }
 
-private void logObjectProperties(obj) {
-    if (obj == null) return
-    log.debug "${getObjectClassName(obj)} BEGIN"
-    obj.properties.each { property, value ->
-        log.debug "${property}=${value}"
-    }
-    log.debug "${getObjectClassName(obj)} END"
-}
-
-def installed() {
+void installed() {
     logDebug "installed()"
 }
 
-def updated() {
+void updated() {
     logDebug "updated()"
     unsubscribe()
     initialize()
 }
 
-def initialize() {
+void uninstalled() {
+    logDebug "uninstalled()"
+}
+
+void initialize() {
     if (state.includedSensors == null) { state.includedSensors = [] }
     if (state.excludedSensors == null) { state.excludedSensors = [] }
 
@@ -137,7 +131,7 @@ def initialize() {
     }
 
     if (inputSensors && selectedSensorCapability) {
-        def attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute
+        String attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute
         if (attributeName) {
             subscribe(inputSensors, attributeName, sensorEventHandler)
             logTrace "Subscribed to ${attributeName} events for ${inputSensors.collect { it.displayName}}."
@@ -147,18 +141,14 @@ def initialize() {
     sensorEventHandler()
 }
 
-def uninstalled() {
-}
-
-
-def fetchChildDevice() {
-    def driverName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.driver
+ChildDeviceWrapper fetchChildDevice() {
+    String driverName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.driver
     if (!driverName) {
         logError "No driver found for capability: ${selectedSensorCapability}"
         return null
     }
     String deviceName = "${app.id}-${driverName}"
-    def cd = getChildDevice(deviceName)
+    ChildDeviceWrapper cd = getChildDevice(deviceName)
     if (!cd) {
         cd = addChildDevice("hubitat", driverName, deviceName, [name: "${app.label} ${driverName}"])
         if (cd) logDebug("Child device ${cd.id} created with driver: ${driverName}.") else logError("could not create child device")
@@ -167,11 +157,11 @@ def fetchChildDevice() {
     return cd
 }
 
-def sensorEventHandler(evt=null) {
+void sensorEventHandler(Event evt=null) {
     if (evt != null) logTrace "sensorEventHandler() called: ${evt?.name} ${evt?.getDevice().getLabel()} ${evt?.value} ${evt?.descriptionText}"
 
 	if (computeAggregateSensorValue()) {
-        def sensorDevice = outputSensor
+        DeviceWrapper sensorDevice = outputSensor
         if (!sensorDevice) {
             sensorDevice = fetchChildDevice()
         }
@@ -187,16 +177,16 @@ def sensorEventHandler(evt=null) {
 }
 
 
-def computeAggregateSensorValue() {
-    def now = new Date()
-    def timeAgo = new Date(now.time - excludeAfter * 60 * 1000)
-    def attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute
+boolean computeAggregateSensorValue() {
+    Date now = new Date()
+    Date timeAgo = new Date(now.time - excludeAfter * 60 * 1000)
+    String attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute
 
-    def includedSensors = []
-    def excludedSensors = []
+    List<DeviceWrapper> includedSensors = []
+    List<DeviceWrapper> excludedSensors = []
 
     inputSensors.each {
-        def events = it.eventsSince(timeAgo, [max:1])
+        List<Event> events = it.eventsSince(timeAgo, [max:1])
         if (events.size() > 0) {
             if (it.currentValue(attributeName) != null) {
                 includedSensors << it
@@ -208,7 +198,7 @@ def computeAggregateSensorValue() {
         }
     }
 
-    def n = includedSensors.size()
+    int n = includedSensors.size()
     if (n<1) {
         // For now, simply don't update the app state
         logError "No sensors available for agregation... aggregate value not updated (${state.aggregateValue})"
@@ -237,7 +227,7 @@ def computeAggregateSensorValue() {
     return true
 }
 
-def appButtonHandler(String buttonName) {
+void appButtonHandler(String buttonName) {
     switch (buttonName) {
         case "forceUpdate":
         default:
@@ -247,9 +237,9 @@ def appButtonHandler(String buttonName) {
     }
 }
 
-def logStatistics() {
+void logStatistics() {
     logInfo("${CAPABILITY_ATTRIBUTES[selectedSensorCapability].attribute} ${aggregationMethod} (${state.includedSensors.size()}/${inputSensors.size()}): ${state.aggregateValue}")
-    logInfo("Any: ${state.avgSensorValue} Stdev: ${state.standardDeviation} Min: ${state.minSensorValue} Max: ${state.maxSensorValue} Median: ${state.medianSensorValue}")
+
     if (state.includedSensors.size() > 0) {
         logDebug("Aggregated sensors (${state.includedSensors})")
     } else {
@@ -258,6 +248,23 @@ def logStatistics() {
     if (state.excludedSensors.size() > 0) logDebug("Rejected sensors with last update older than $excludeAfter minutes: ${state.excludedSensors} }")
 }
 
+private List<String> getAttributePossibleValues(deviceWrapper, capability) {
+    List capabilities = deviceWrapper.getCapabilities()
+    def targetCapability = capabilities.find { it.name.toLowerCase() == capability.substring("capability.".length()).toLowerCase() }
+    def targetAttribute = deviceWrapper.getSupportedAttributes().find { it.name == targetCapability.attributes[0].name }
+    //logObjectProperties(targetCapability)
+    //logObjectProperties(targetAttribute)
+    return targetAttribute.getValues()
+}
+
+private void logObjectProperties(obj) {
+    if (obj == null) return
+    log.debug "${getObjectClassName(obj)} BEGIN"
+    obj.properties.each { property, value ->
+        log.debug "${property}=${value}"
+    }
+    log.debug "${getObjectClassName(obj)} END"
+}
 
 @CompileStatic
 private double roundToDecimalPlaces(double decimalNumber, int decimalPlaces = 2) {
