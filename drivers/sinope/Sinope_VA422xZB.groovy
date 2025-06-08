@@ -662,7 +662,7 @@ private reverseHexString(hexString) {
 
 private logTrace(message) {
     // No trace facility.  Use debug.
-    if (traceEnable) log.debug("${device} : ${message}")
+    if (traceEnable) log.trace("${device} : ${message}")
 }
 
 private logDebug(message) {
