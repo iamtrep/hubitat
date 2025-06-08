@@ -1,28 +1,28 @@
 /*
 
-MIT License
+ MIT License
 
-Copyright (c) 2025
+ Copyright (c) 2025
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
+ in the Software without restriction, including without limitation the rights
+ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the Software, and to permit persons to whom the Software is
+ furnished to do so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+ The above copyright notice and this permission notice shall be included in all
+ copies or substantial portions of the Software.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ SOFTWARE.
 
-Hubitat Elevation driver to ping devices
+ Hubitat Elevation driver to ping devices
 
  */
 
@@ -37,6 +37,7 @@ metadata {
         capability "ContactSensor"
         capability "Initialize"
         capability "Refresh"
+        capability "Sensor"
 
         command "ping"
         command "resetRetryCount"
@@ -55,8 +56,12 @@ metadata {
         input "maxRetries", "number", title: "Maximum Retry Count", description: "Maximum number of retry attempts before backing off to regular schedule", defaultValue: 5, required: true
         input "maxBackoffFactor", "number", title: "Maximum Backoff Multiplier", description: "Maximum multiplier for retry interval (prevents extremely long waits)", defaultValue: 10, required: true
         input "retryThreshold", "number", title: "Retry Threshold for Status Update", description: "Number of retries before updating status to offline", defaultValue: 3, required: true
-        input "txtEnable", "bool", title: "Enable info logging", defaultValue: true
-        input "logEnable", "bool", title: "Enable debug logging", defaultValue: true
+
+        input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: false
+        input name: "debugEnable", type: "bool", title: "Enable debug logging info", defaultValue: false, required: true, submitOnChange: true
+        if (debugEnable) {
+            input name: "traceEnable", type: "bool", title: "Enable trace logging info (for development purposes)", defaultValue: false
+        }
     }
 }
 
@@ -65,7 +70,7 @@ import groovy.transform.Field
 
 @Field static final String driver_version = "0.0.1"
 
-def installed() {
+void installed() {
     logDebug "Installed with settings: ${settings}"
     state.isPinging = false
     state.currentRetryCount = 0
@@ -75,7 +80,7 @@ def installed() {
     initialize()
 }
 
-def updated() {
+void updated() {
     logDebug "Updated with settings: ${settings}"
     if (atomicState.isPinging == null) atomicState.isPinging = false
     if (state.currentRetryCount == null) state.currentRetryCount = 0
@@ -84,7 +89,7 @@ def updated() {
     initialize()
 }
 
-def initialize() {
+void initialize() {
     logDebug("initialize()")
     if (state.version != driver_version) {
         log.warn("New driver version installed ${driver_version} (previous: ${state.version})")
@@ -93,10 +98,15 @@ def initialize() {
 
     reschedulePing(true)
 
-    if (logEnable) runIn(1800, "logsOff")
+    if (debugEnable) runIn(1800, "logsOff")
 }
 
-def reschedulePing(init = false) {
+void refresh() {
+    logDebug "refresh() - manually refreshing status"
+    ping()
+}
+
+void reschedulePing(init = false) {
     unschedule("ping")
 
     if (deviceIP || httpURL) {
@@ -112,16 +122,17 @@ def reschedulePing(init = false) {
     }
 }
 
-def logsOff() {
+void logsOff() {
     logDebug("Debug logging turned off")
-    device.updateSetting("logEnable", false)
+    device.updateSetting("debugEnable", false)
+    device.updateSetting("traceEnable", false)
 }
 
 def parse(String description) {
     logDebug "parse: ${description}"
 }
 
-def ping() {
+void ping() {
     // Prevent multiple concurrent pings
     if (atomicState.isPinging) {
         logDebug "Ping already in progress, skipping"
@@ -152,7 +163,7 @@ def ping() {
     updateDeviceStatus(pingSuccess && httpSuccess)
 }
 
-def sendPingRequest() {
+void sendPingRequest() {
     try {
         def timeBefore = now()
         def pingData = NetworkUtils.ping(deviceIP, 1)
@@ -167,7 +178,7 @@ def sendPingRequest() {
     }
 }
 
-def sendHttpRequest() {
+boolean sendHttpRequest() {
     try {
         def params = [
             uri: httpURL,
@@ -190,7 +201,7 @@ def sendHttpRequest() {
     }
 }
 
-def updateDeviceStatus(boolean online) {
+void updateDeviceStatus(boolean online) {
     def currentStatus = device.currentValue("status")
     def newStatus = online ? "online" : "offline"
     def contactValue = online ? "closed" : "open"
@@ -220,7 +231,7 @@ def updateDeviceStatus(boolean online) {
     }
 }
 
-def handleRetry() {
+void handleRetry() {
     // Increment retry counter
     state.currentRetryCount++
 
@@ -242,25 +253,34 @@ def handleRetry() {
     }
 }
 
-def resetRetryCount() {
+void resetRetryCount() {
     state.currentRetryCount = 0
     logDebug "Reset retry count to 0"
 }
 
-def setRetryThreshold(threshold) {
+void setRetryThreshold(threshold) {
     state.retryThreshold = threshold
     logDebug "Set retry threshold to ${threshold}"
 }
 
-def refresh() {
-    logDebug "refresh() - manually refreshing status"
-    ping()
+// Logging helpers
+
+private logTrace(message) {
+    if (traceEnable) log.trace("${device} : ${message}")
 }
 
-private logDebug(msg) {
-    if (logEnable) log.debug msg
+private logDebug(message) {
+    if (debugEnable) log.debug("${device} : ${message}")
 }
 
-private logInfo(msg) {
-    if (txtEnable) log.info msg
+private logInfo(message) {
+    if (txtEnable) log.info("${device} : ${message}")
+}
+
+private logWarn(message) {
+    log.warn("${device} : ${message}")
+}
+
+private logError(message) {
+    log.error("${device} : ${message}")
 }
