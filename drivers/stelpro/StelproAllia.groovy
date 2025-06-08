@@ -390,9 +390,9 @@ private parseAttributeReport(descMap) {
     // inClusters: "0000,0003,0004,0201,0204"
 
     switch (descMap.cluster) {
-        case 0x0000: // Basic cluster
-        case 0x0003: // Identify cluster
-        case 0x0004: // Groups cluster
+        case "0000": // Basic cluster
+        case "0003": // Identify cluster
+        case "0004": // Groups cluster
             break
 
         case "0201":
