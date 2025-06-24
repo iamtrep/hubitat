@@ -21,7 +21,7 @@ metadata {
         author: "PJ Tremblay",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/visiblair/visiblair.groovy"
     ) {
-        capability "Battery" /* TODO - not available yet */
+        capability "Battery"
         capability "CarbonDioxideMeasurement"
         capability "Initialize"
         capability "Polling"
@@ -160,16 +160,19 @@ void refreshSensorData(retData){
                 updateDeviceAttribute("calibration", it.value, unit)
 		        break
             case "model":
-                state.model = model
+                state.model = it.value
                 break
             case "modelVersion":
-                state.modelVersion = modelVersion
+                state.modelVersion = it.value
                 break
             case "modelVariant":
-                state.modelVariant = modelVariant
+                state.modelVariant = it.value
                 break
             case "sampleRate":
-                state.sampleRate = sampleRate // in s
+                state.sampleRate = it.value // in s
+                break
+            case "temperatureUnit":
+                state.temperatureUnit = it.value
                 break
             default:
                 logDebug "attribute not handled : ${it.key}=${it.value}${unit}"
