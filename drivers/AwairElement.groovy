@@ -193,7 +193,7 @@ private void processAwairData(response, data) {
         def currAqi = calculateAqi()
         processEvent("airQualityIndex", currAqi, "", "Current calculated AQI is ${currAqi}")
 
-        // AIQ Score
+        // AIQ Score - https://support.getawair.com/hc/en-us/articles/19504367520023-Understanding-Awair-Score-and-Air-Quality-Factors-Measured-By-Awair-Element
         processAirQualityMetric("airQuality", awairData.score, "", AIQ_THRESHOLDS, "poor", "aiq_desc")
 
         // Temperature
@@ -294,7 +294,6 @@ private double calculateRawAqi(Map<String, Object> aqiTier, double avgPM25) {
 // Logging helpers
 
 private logTrace(message) {
-    // No trace facility.  Use debug.
     if (traceEnable) log.trace("${device} : ${message}")
 }
 
