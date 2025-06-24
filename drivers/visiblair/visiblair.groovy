@@ -103,8 +103,11 @@ def updated() {
     //log.warn "debug logging is: ${debugEnable == true}"
 }
 
+void poll() {
+    refresh()
+}
+
 void refresh() {
-    //parent.updateChild(device.data.deviceId)
     getDeviceValuesFromAPI("sensor?uuid=${uuid}&viewToken=${token}")
 
     unschedule("refresh")
