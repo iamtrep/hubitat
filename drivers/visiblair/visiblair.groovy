@@ -36,13 +36,10 @@ metadata {
         command "reboot"
         command "calibrate"
         command "updateFirmware"
-        command "resetWifiSettings"   // after this command, sensor will be unreachable until a WiFi network is joined.
+        //command "resetWifiSettings"   // after this command, sensor will be unreachable until a WiFi network is joined.
 
-        command "setBatteryLevel", ["number"] // for debug purposes
-        command "arbitraryGet", ["string"] // for debug purposes
-
-        // example
-        //command "refreshSlot", [[name:"slotNumber*", type:"NUMBER", range:"1..10", description:"HTML attribute number to refresh"]]
+        //command "setBatteryLevel", ["number"] // for debug purposes
+        //command "arbitraryGet", ["string"] // for debug purposes
     }
 }
 
@@ -127,7 +124,10 @@ void refreshSensorData(retData){
         unit=""
 
         switch (it.key){
-            case("lastSampleTemperature"):
+            case "firmwareVersion":
+                state.firmwareVersion = it.value
+                break
+            case "lastSampleTemperature":
                 unit="¡C"
                 /* if(useFahrenheit){
                     it.value = celsiusToFahrenheit(it.value)
@@ -135,30 +135,42 @@ void refreshSensorData(retData){
                 } */
                 updateDeviceAttribute("temperature", it.value, unit, "Temperature is ${it.value}${unit}")
                 break
-            case("lastSampleHumidity"):
+            case "lastSampleHumidity":
                 unit="%"
                 updateDeviceAttribute("humidity", it.value, unit, "Humidity is ${it.value}${unit}")
                 break
-            case("lastSampleCo2"):
+            case "lastSampleCo2":
                 unit="ppm"
                 updateDeviceAttribute("carbonDioxide", it.value, unit, "CO2 is ${it.value}${unit}")
                 break
-            case("lastSamplePressure"):
+            case "lastSamplePressure":
                 unit="mBar"
                 updateDeviceAttribute("pressure", it.value, unit, "Pressure is ${it.value}${unit}")
                 break
-            case("battery"):    // TODO - not yet available
+            case "lastSampleBattPct":
                 unit="%"
                 updateDeviceAttribute("battery", it.value, unit, "Battery level is ${it.value}${unit}")
                 break
-            case("lastSampleTimeStamp"):
+            case "lastSampleTimeStamp":
                 unit=""
                 updateDeviceAttribute("timestamp", it.value, unit)
-		break
-            case("lastCalibration"):
+		        break
+            case "lastCalibration":
                 unit=""
                 updateDeviceAttribute("calibration", it.value, unit)
-		break
+		        break
+            case "model":
+                state.model = model
+                break
+            case "modelVersion":
+                state.modelVersion = modelVersion
+                break
+            case "modelVariant":
+                state.modelVariant = modelVariant
+                break
+            case "sampleRate":
+                state.sampleRate = sampleRate // in s
+                break
             default:
                 logDebug "attribute not handled : ${it.key}=${it.value}${unit}"
                 break
