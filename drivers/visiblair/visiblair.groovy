@@ -1,23 +1,33 @@
 /*
- * Basic driver for CO2.Click sensor - https://www.co2.click/
+ * Basic driver for VisiblAir sensor (formerly CO2.click) - https://visiblair.com/
  *
- * Currently requires instantiating one device per CO2.Click sensor, by inputting user id, device id
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License. You may obtain a copy of the License at:
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed
+ * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
+ * for the specific language governing permissions and limitations under the License.
+ *
+ * NOTE: this driver requires instantiating one device per sensor, by inputting user id, device id
  * and access token in the settings page.
  *
- * TODO : enumerate the devices linked to user id and automatically create child devices as needed.
  */
 metadata {
-    definition(name: "VisiblAir Sensor", namespace: "hubitrep", author: "PJ Tremblay", importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/co2click/co2clickDevice.groovy") {
-        capability "Initialize"
+    definition(
+        name: "VisiblAir Sensor",
+        namespace: "iamtrep",
+        author: "PJ Tremblay",
+        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/visiblair/visiblair.groovy"
+    ) {
         capability "Battery" /* TODO - not available yet */
         capability "CarbonDioxideMeasurement"
+        capability "Initialize"
+        capability "Polling"
         capability "RelativeHumidityMeasurement"
+        capability "Sensor"
         capability "TemperatureMeasurement"
-
-        attribute "carbonDioxide", "number"  // lastSampleCo2
-        attribute "humidity", "number"       // lastSampleHumidity
-        attribute "temperature", "number"    // lastSampleTemp
-        attribute "battery", "number"        // not available
 
         attribute "timestamp", "date" // lastSampleTimeStamp
         attribute "calibration", "date" // lastCalibration
