@@ -145,15 +145,15 @@ void refreshSensorData(retData){
                 break
             case "lastSamplePressure":
                 unit="mBar"
-                updateDeviceAttribute("pressure", it.value, unit, "Pressure is ${it.value}${unit}")
+                updateDeviceAttribute("pressure", it.value.Float64, unit, "Pressure is ${it.value.Float64}${unit}")
                 break
             case "lastSampleBattPct":
                 unit="%"
-                updateDeviceAttribute("battery", it.value, unit, "Battery level is ${it.value}${unit}")
+                updateDeviceAttribute("battery", it.value.Float64, unit, "Battery level is ${it.value.Float64}${unit}")
                 break
             case "lastSampleTimeStamp":
                 unit=""
-                updateDeviceAttribute("timestamp", it.value, unit)
+                updateDeviceAttribute("timestamp", it.value, unit, "Timestamp of last sample is ${it.value}")
 		        break
             case "lastCalibration":
                 unit=""
