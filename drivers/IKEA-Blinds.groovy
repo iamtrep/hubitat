@@ -1,6 +1,6 @@
 /**
  *
- *  IKEA Window Blinds driver
+ *  IKEA Window Blind driver for Hubitat Elevation
  *
  *  Inspired from driver found here:
  *    https://github.com/a4refillpad/hubitat-IKEA-window-blinds/blob/master/IKEA-window-blind-driver-code
@@ -60,12 +60,12 @@ metadata {
     preferences {
         input name: "openThreshold", type: "number", defaultValue: 97, range: "95..100", title: "Shade Open Threshold",
             description: "Threshold beyond which shade is considered open (%)"
-        input name: "openLimit", type: "number", defaultValue: 0, range: "0..100", title: "Max open level",
-            description: "Max percentage open when Open function is called\n(delete or set value to 0 to disable)"
+        input name: "openLimit", type: "number", defaultValue: 100, range: "0..100", title: "Max open level",
+            description: "Max percentage open when Open function is called\n(delete or set value to 100 to disable)"
         input name: "closedThreshold", type: "number", defaultValue: 3, range: "0..5", title: "Shade Closed Threshold",
             description: "Threshold beyond which shade is considered closed (%)"
-        input name: "closeLimit", type: "number", defaultValue: 100, range: "0..100", title: "Max close level",
-            description: "Max percentage closed when Close function is called\n(delete or set value to 100 to disable)"
+        input name: "closeLimit", type: "number", defaultValue: 0, range: "0..100", title: "Min close level",
+            description: "Min percentage closed when Close function is called\n(delete or set value to 0 to disable)"
 
         input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: false
         input name: "debugEnable", type: "bool", title: "Enable debug logging info", defaultValue: false, required: true, submitOnChange: true
@@ -103,12 +103,12 @@ List<String> refresh() {
 
 void updated() {
 	unschedule()
-	if (debugEable || traceEnable) runIn(1800,logsOff)
+	if (debugEable || traceEnable) runIn(1800,"logsOff")
 }
 
 def close() {
     logDebug "close()"
-    if (closeLimit < 100) {
+    if (closeLimit > 0) {
         setLevel(closeLimit)
     } else {
         fullyClose()
@@ -126,7 +126,7 @@ def off() {
 
 def open() {
     logDebug "open()"
-    if (openLimit) {
+    if (openLimit < 100) {
         setLevel(openLimit)
     } else {
         fullyOpen()
@@ -250,7 +250,6 @@ private parseAttributeReport(descMap){
                     return
 
                 case "0008":
-                    // TODO - rewrite
                     handleLevelEvent(descMap)
                     return
 
@@ -279,33 +278,31 @@ private parseAttributeReport(descMap){
 
 private void handleLevelEvent(descMap) {
     def currentLevel = 100 - zigbee.convertHexToInt(descMap.value)
-    def lastLevel = device.currentValue("level")
+    def lastLevel = device.currentValue("level") as Integer
 
     logDebug "levelEventHandle - currentLevel: ${currentLevel} lastLevel: ${lastLevel}"
 
-    if (lastLevel == "undefined" || currentLevel == lastLevel) {
-        runIn(3, "updateFinalState", [overwrite:true])
+    if (lastLevel == "undefined" || lastLevel == null || currentLevel == lastLevel) {
+        runIn(3, "updateFinalState", [overwrite: true])
+        return
+    }
+
+    updateDeviceAttribute(name: "level", value: currentLevel)
+    updateDeviceAttribute(name: "position", value: currentLevel)
+
+    if (currentLevel > openThreshold) {
+        updateDeviceAttribute(name: "windowShade", value: "open")
+        updateDeviceAttribute(name: "switch", value: "on")
+    } else if (currentLevel < closedThreshold) {
+        updateDeviceAttribute(name: "windowShade", value: "closed")
+        updateDeviceAttribute(name: "switch", value: "off")
     } else {
-        updateDeviceAttribute(name: "level", value: currentLevel)
-        updateDeviceAttribute(name: "position", value: currentLevel)
-
-        if (currentLevel > openThreshold || currentLevel < closedThreshold) {
-            updateDeviceAttribute(name: "windowShade", value: currentLevel < closedThreshold ? "closed" : "open")
-            updateDeviceAttribute(name: "switch", value: currentLevel < closedThreshold ? "off" : "on")
-        } else {
-            if (lastLevel < currentLevel) {
-                updateDeviceAttribute([name:"windowShade", value: "opening"])
-            } else if (lastLevel > currentLevel) {
-                updateDeviceAttribute([name:"windowShade", value: "closing"])
-            }
-        }
+        def direction = (lastLevel < currentLevel) ? "opening" : "closing"
+        updateDeviceAttribute(name: "windowShade", value: direction)
     }
 
-    if (lastLevel != currentLevel) {
-        logTrace "newlevel: ${newLevel} currentlevel: ${currentLevel} lastlevel: ${lastLevel}"
-        // ensure we eventually get to a currentLevel == lastLevel situation
-        runIn(5, refresh)
-    }
+    logTrace "newlevel: ${currentLevel} currentlevel: ${currentLevel} lastlevel: ${lastLevel}"
+    runIn(5, "refresh")
 }
 
 private void updateFinalState() {
@@ -330,6 +327,16 @@ private void updateFinalState() {
         updateDeviceAttribute(name: "windowShade", value: "partially open")
         updateDeviceAttribute(name: "switch", value: "off")
     }
+}
+
+private void updateDeviceAttribute(Map evt) {
+    if (evt.descriptionText == null) {
+        String descText = "${evt.name} is ${evt.value}"
+        if (evt.unit != null) descText += "${evt.unit}"
+        evt.descriptionText = descText
+    }
+    sendEvent(evt)
+    logInfo(evt.descriptionText)
 }
 
 private void handleConfigStatus(Map descMap) {
@@ -373,19 +380,9 @@ private void handleConfigStatus(Map descMap) {
     }
 }
 
-private void updateDeviceAttribute(Map evt) {
-    if (evt.descriptionText == null) {
-        String descText = "${evt.name} is ${evt.value}"
-        if (evt.unit != null) descText += "${evt.unit}"
-        evt.descriptionText = descText
-    }
-    sendEvent(evt)
-    logInfo(evt.descriptionText)
-}
-
 // Logging helpers
 
-private void logsOff(){
+void logsOff(){
 	logWarn "debug logging disabled..."
 	device.updateSetting("debugEnable",[value:"false",type:"bool"])
 	device.updateSetting("traceEnable",[value:"false",type:"bool"])
