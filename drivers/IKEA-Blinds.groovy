@@ -15,12 +15,11 @@
  *	on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
  *	for the specific language governing permissions and limitations under the License.
  *
- *
- *
  */
 
 import groovy.transform.Field
 import hubitat.zigbee.zcl.DataType
+import com.hubitat.hub.domain.Event
 
 @Field static final String version = "0.0.1"
 
@@ -59,12 +58,14 @@ metadata {
     }
 
     preferences {
+        input name: "openThreshold", type: "number", defaultValue: 3, range: "0..5", title: "Shade Open Threshold",
+            description: "Threshold beyond which shade is considered open (%)"
         input name: "openLimit", type: "number", defaultValue: 0, range: "0..100", title: "Max open level",
-            description: "Max percentage open when Open function is called\n" +
-            "(delete or set value to 0 to disable this)"
+            description: "Max percentage open when Open function is called\n(delete or set value to 0 to disable)"
+        input name: "closedThreshold", type: "number", defaultValue: 97, range: "95..100", title: "Shade Closed Threshold",
+            description: "Threshold beyond which shade is considered closed (%)"
         input name: "closeLimit", type: "number", defaultValue: 100, range: "0..100", title: "Max close level",
-            description: "Max percentage closed when Close function is called\n" +
-            "(delete or set value to 100 to disable this)"
+            description: "Max percentage closed when Close function is called\n(delete or set value to 100 to disable)"
 
         input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: false
         input name: "debugEnable", type: "bool", title: "Enable debug logging info", defaultValue: false, required: true, submitOnChange: true
@@ -77,7 +78,7 @@ metadata {
 
 // capabilities
 
-def configure() {
+List<String> configure() {
     state.codeVersion = version
 
     logDebug "Configuring Reporting and Bindings."
@@ -90,17 +91,17 @@ def configure() {
     return refresh() + cmds
 }
 
-def refresh() {
+List<String> refresh() {
     logDebug "refresh()"
 
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.readAttribute(0x0001, 0x0021) // battery level
     cmds += zigbee.readAttribute(0x0102, 0x0008) // window covering lift position
 
     return cmds
 }
 
-def updated() {
+void updated() {
 	unschedule()
 	if (debugEable || traceEnable) runIn(1800,logsOff)
 }
@@ -249,31 +250,9 @@ private parseAttributeReport(descMap){
             break
 
         case "0020": // Poll Control cluster
-            /*
-         0x0000 Check-inInterval uint32 0x0 to 0x6E0000 RW 0x3840 (1 hr.) M
-         0x0001 LongPoll Interval uint32 0x04 to 0x6E0000 R 0x14 (5 sec) M
-         0x0002 ShortPollInterval uint16 0x01 to 0xffff R 0x02 (2 qs) M
-         0x0003 FastPollTimeout uint16 0x01 to 0xffff RW 0x28 (10 sec.) M
-         0x0004 Check-inIntervalMin uint32 - R 0 O
-         0x0005 LongPollIntervalMin uint32 - R 0 O
-         0x0006 FastPollTimeoutMax uint16 - R 0 O
-         */
             break
 
         case "0102": // Window Covering cluster
-            /*
-         Id Name Type Range Acc Default M/O
-         0x0000 WindowCoveringType enum8 desc R 0 M
-         0x0001 PhysicalClosedLimit – Lift uint16 0x0000 – 0xffff R 0 O
-         0x0002 PhysicalClosedLimit – Tilt uint16 0x0000 – 0xffff R 0 O
-         0x0003 CurrentPosition – Lift uint16 0x0000 – 0xffff R 0 O
-         0x0004 Current Position – Tilt uint16 0x0000 – 0xffff R 0 O
-         0x0005 Number of Actuations – Lift uint16 0x0000 – 0xffff R 0 O
-         0x0006 Number of Actuations – Tilt uint16 0x0000 – 0xffff R 0 O
-         0x0007 Config/Status map8 desc R desc M
-         0x0008 Current Position Lift Percentage uint8 0-100 RSP FF136 M*
-         0x0009 Current Position Tilt Percentage uint8 0-100 RSP FF M*
-         */
             switch (descMap.attrId) {
                 case "0007":
                     handleConfigStatus(descMap)
@@ -309,7 +288,7 @@ private parseAttributeReport(descMap){
 
 
 // TODO - rewrite
-def handleLevelEvent(descMap) {
+private void handleLevelEvent(descMap) {
     def currentLevel = 100 - zigbee.convertHexToInt(descMap.value)
     def lastLevel = device.currentValue("level")
 
@@ -319,16 +298,16 @@ def handleLevelEvent(descMap) {
         logDebug "undefined lastLevel"
         runIn(3, "updateFinalState", [overwrite:true])
     } else {
-        sendEvent(name: "level", value: currentLevel)
-        sendEvent(name: "position", value: currentLevel)
-        if (currentLevel < 3 || currentLevel > 97) {
-            sendEvent(name: "windowShade", value: currentLevel == 0 ? "closed" : "open")
-            sendEvent(name: "switch", value: level == 0 ? "off" : "on", displayed: false)
+        updateDeviceAttribute(name: "level", value: currentLevel)
+        updateDeviceAttribute(name: "position", value: currentLevel)
+        if (currentLevel < openThreshold || currentLevel > closedThreshold) {
+            updateDeviceAttribute(name: "windowShade", value: currentLevel == 0 ? "closed" : "open")
+            updateDeviceAttribute(name: "switch", value: level == 0 ? "off" : "on")
         } else {
             if (lastLevel < currentLevel) {
-                sendEvent([name:"windowShade", value: "opening"])
+                updateDeviceAttribute([name:"windowShade", value: "opening"])
             } else if (lastLevel > currentLevel) {
-                sendEvent([name:"windowShade", value: "closing"])
+                updateDeviceAttribute([name:"windowShade", value: "closing"])
             }
         }
     }
@@ -340,20 +319,18 @@ def handleLevelEvent(descMap) {
     }
 }
 
-
 // TODO - rewrite
-def updateFinalState() {
+private void updateFinalState() {
     def level = device.currentValue("level")
     logDebug "updateFinalState: ${level}"
-    sendEvent(name: "windowShade", value: level == 0 ? "closed" : "open")
-    sendEvent(name: "switch", value: level == 0 ? "off" : "on", displayed: false)
+    updateDeviceAttribute(name: "windowShade", value: level == 0 ? "closed" : "open")
+    updateDeviceAttribute(name: "switch", value: level == 0 ? "off" : "on")
 }
 
-
-def handleConfigStatus(Map descMap) {
+private void handleConfigStatus(Map descMap) {
     if (descMap.value) {
         Integer configStatus = Integer.parseInt(descMap.value, 16)
-        logInfo "ConfigStatus: 0x${descMap.value} (${configStatus})"
+        logDebug "ConfigStatus: 0x${descMap.value} (${configStatus})"
 
         // Parse common ConfigStatus bits (vendor-specific implementation may vary)
         // Bit 0: Operational (0=Not Operational, 1=Operational)
@@ -381,17 +358,25 @@ def handleConfigStatus(Map descMap) {
 
         // Update shade state based on operational status
         if (!operational) {
-            //sendEvent(name: "shadeState", value: "unknown")
+            //updateDeviceAttribute(name: "shadeState", value: "unknown")
             logWarn "Shade reports as not operational"
         }
 
-        // You can store these flags as device data for use in other methods
         device.updateDataValue("operational", operational.toString())
         device.updateDataValue("commandsReversed", commandsReversed.toString())
         device.updateDataValue("liftClosedLoop", liftClosedLoop.toString())
     }
 }
 
+private void updateDeviceAttribute(Event evt) {
+    if (evt.descriptionText == null) {
+        String descText = "${evt.name} is ${evt.value}"
+        if (evt.unit != null) descText += "${evt.unit}"
+        evt.descriptionText = descText
+    }
+    sendEvent(evt)
+    logInfo(evt)
+}
 
 // Logging helpers
 
@@ -420,3 +405,41 @@ private void logWarn(message) {
 private void logError(message) {
     log.error("${device} : ${message}")
 }
+
+
+/*
+
+ ZCL reference info for clusters used by this device driver
+
+ "0001": // Power Config
+
+ Id Name Type Range Acc Def M/O
+ 0x0020 BatteryVoltage uint8 0x00 to 0xff R non O
+ 0x0021 BatteryPercentageRemaining uint8 0x00 to 0xff RP 0 O
+
+ "0020": // Poll Control cluster
+
+ Id Name Type Range Acc Default M/O
+ 0x0000 Check-inInterval uint32 0x0 to 0x6E0000 RW 0x3840 (1 hr.) M
+ 0x0001 LongPoll Interval uint32 0x04 to 0x6E0000 R 0x14 (5 sec) M
+ 0x0002 ShortPollInterval uint16 0x01 to 0xffff R 0x02 (2 qs) M
+ 0x0003 FastPollTimeout uint16 0x01 to 0xffff RW 0x28 (10 sec.) M
+ 0x0004 Check-inIntervalMin uint32 - R 0 O
+ 0x0005 LongPollIntervalMin uint32 - R 0 O
+ 0x0006 FastPollTimeoutMax uint16 - R 0 O
+
+ "0102": // Window Covering cluster
+
+ Id Name Type Range Acc Default M/O
+ 0x0000 WindowCoveringType enum8 desc R 0 M
+ 0x0001 PhysicalClosedLimit – Lift uint16 0x0000 – 0xffff R 0 O
+ 0x0002 PhysicalClosedLimit – Tilt uint16 0x0000 – 0xffff R 0 O
+ 0x0003 CurrentPosition – Lift uint16 0x0000 – 0xffff R 0 O
+ 0x0004 Current Position – Tilt uint16 0x0000 – 0xffff R 0 O
+ 0x0005 Number of Actuations – Lift uint16 0x0000 – 0xffff R 0 O
+ 0x0006 Number of Actuations – Tilt uint16 0x0000 – 0xffff R 0 O
+ 0x0007 Config/Status map8 desc R desc M
+ 0x0008 Current Position Lift Percentage uint8 0-100 RSP FF136 M*
+ 0x0009 Current Position Tilt Percentage uint8 0-100 RSP FF M*
+
+ */
