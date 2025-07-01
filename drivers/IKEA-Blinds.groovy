@@ -92,9 +92,9 @@ def configure() {
 
     logDebug "Configuring Reporting and Bindings."
 
-    def cmds = []
-    cmds += zigbee.configureReporting(0x0001, 0x0021, DataType.UINT8, 600, 21600) // battery level
-    cmds += zigbee.configureReporting(0x0102, 0x0008, DataType.UINT8, 3, 600)     // window covering lift position
+    List<String> cmds = []
+    cmds += zigbee.configureReporting(0x0001, 0x0021, DataType.UINT8, 600, 21600, 1) // battery level
+    cmds += zigbee.configureReporting(0x0102, 0x0008, DataType.UINT8, 2, 600, 1)     // window covering lift position
     cmds += zigbee.readAttribute(0x0102, 0x0007)                                  // window covering config/status
 
     return refresh() + cmds
@@ -126,7 +126,7 @@ def close() {
 
 def fullyClose() {
     logDebug "fullyClose()"
-    zigbee.command(CLUSTER_WINDOW_COVERING, COMMAND_CLOSE)
+    zigbee.command(0x0102, 0x01)
 }
 
 def open() {
@@ -140,7 +140,7 @@ def open() {
 
 def fullyOpen() {
     logDebug "fullyOpen()"
-    zigbee.command(CLUSTER_WINDOW_COVERING, COMMAND_OPEN)
+    zigbee.command(0x0102, 0x00)
 
 }
 
@@ -159,7 +159,7 @@ def setLevel(data, rate = null) {
         open()
     } else {
         def cmd
-        cmd = zigbee.command(CLUSTER_WINDOW_COVERING, COMMAND_GOTO_LIFT_PERCENTAGE, zigbee.convertToHexString(100 - data, 2))
+        cmd = zigbee.command(0x0102, 0x05, zigbee.convertToHexString(100 - data, 2))
         return cmd
     }
 }
@@ -186,7 +186,7 @@ def startPositionChange(direction) {
 
 def stopPositionChange() {
     logDebug "stopPositionChange()"
-    zigbee.command(CLUSTER_WINDOW_COVERING, COMMAND_PAUSE)
+    zigbee.command(0x0102, 0x02)
 }
 
 def updateFirmware() {
@@ -285,9 +285,13 @@ private parseAttributeReport(descMap){
          0x0009 Current Position Tilt Percentage uint8 0-100 RSP FF M*
          */
             switch (descMap.attrId) {
+                case "0007":
+                    handleConfigStatus(descMap)
+                    return
+
                 case "0008":
                     // TODO - rewrite
-                    levelEventHandler(100 - zigbee.convertHexToInt(descMap.value))
+                    handleLevelEvent(descMap)
                     return
 
                 default:
@@ -315,16 +319,19 @@ private parseAttributeReport(descMap){
 
 
 // TODO - rewrite
-def levelEventHandler(currentLevel) {
+def handleLevelEvent(descMap) {
+    def currentLevel = 100 - zigbee.convertHexToInt(descMap.value)
     def lastLevel = device.currentValue("level")
+
     logDebug "levelEventHandle - currentLevel: ${currentLevel} lastLevel: ${lastLevel}"
+
     if (lastLevel == "undefined" || currentLevel == lastLevel) { //Ignore invalid reports
         logDebug "undefined lastLevel"
         runIn(3, "updateFinalState", [overwrite:true])
     } else {
         sendEvent(name: "level", value: currentLevel)
         sendEvent(name: "position", value: currentLevel)
-        if (currentLevel == 0 || currentLevel >= 97) {
+        if (currentLevel < 3 || currentLevel > 97) {
             sendEvent(name: "windowShade", value: currentLevel == 0 ? "closed" : "open")
             sendEvent(name: "switch", value: level == 0 ? "off" : "on", displayed: false)
         } else {
@@ -335,8 +342,10 @@ def levelEventHandler(currentLevel) {
             }
         }
     }
+
     if (lastLevel != currentLevel) {
         logDebug "newlevel: ${newLevel} currentlevel: ${currentLevel} lastlevel: ${lastLevel}"
+        // why is refresh() needed if we have configureReporting on that attr?
         runIn(5, refresh)
     }
 }
@@ -348,6 +357,49 @@ def updateFinalState() {
     logDebug "updateFinalState: ${level}"
     sendEvent(name: "windowShade", value: level == 0 ? "closed" : "open")
     sendEvent(name: "switch", value: level == 0 ? "off" : "on", displayed: false)
+}
+
+
+def handleConfigStatus(Map descMap) {
+    if (descMap.value) {
+        Integer configStatus = Integer.parseInt(descMap.value, 16)
+        logInfo "ConfigStatus: 0x${descMap.value} (${configStatus})"
+
+        // Parse common ConfigStatus bits (vendor-specific implementation may vary)
+        // Bit 0: Operational (0=Not Operational, 1=Operational)
+        Boolean operational = (configStatus & 0x01) != 0
+
+        // Bit 1: OnLine (0=Not Online, 1=Online)
+        Boolean online = (configStatus & 0x02) != 0
+
+        // Bit 2: Commands Reversed (0=Normal, 1=Reversed)
+        Boolean commandsReversed = (configStatus & 0x04) != 0
+
+        // Bit 3: Lift control is closed loop (0=Open Loop, 1=Closed Loop)
+        Boolean liftClosedLoop = (configStatus & 0x08) != 0
+
+        // Bit 4: Tilt control is closed loop (0=Open Loop, 1=Closed Loop)
+        Boolean tiltClosedLoop = (configStatus & 0x10) != 0
+
+        // Bit 5: Lift encoder controlled (0=Timer, 1=Encoder)
+        Boolean liftEncoderControlled = (configStatus & 0x20) != 0
+
+        // Bit 6: Tilt encoder controlled (0=Timer, 1=Encoder)
+        Boolean tiltEncoderControlled = (configStatus & 0x40) != 0
+
+        logDebug "ConfigStatus decoded - Operational: ${operational}, Online: ${online}, CommandsReversed: ${commandsReversed}, LiftClosedLoop: ${liftClosedLoop}"
+
+        // Update shade state based on operational status
+        if (!operational) {
+            //sendEvent(name: "shadeState", value: "unknown")
+            logWarn "Shade reports as not operational"
+        }
+
+        // You can store these flags as device data for use in other methods
+        device.updateDataValue("operational", operational.toString())
+        device.updateDataValue("commandsReversed", commandsReversed.toString())
+        device.updateDataValue("liftClosedLoop", liftClosedLoop.toString())
+    }
 }
 
 
