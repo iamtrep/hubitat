@@ -17,6 +17,7 @@
  *
  */
 
+import groovy.transform.CompileStatic
 import groovy.transform.Field
 import hubitat.zigbee.zcl.DataType
 import com.hubitat.hub.domain.Event
@@ -76,17 +77,34 @@ metadata {
 
 }
 
+@Field static final Integer WINDOW_COVERING_CLUSTER = 0x0102
+@Field static final Integer LIFT_POSITION_ATTR = 0x0008
+@Field static final Integer CONFIG_STATUS_ATTR = 0x0007
+@Field static final Integer WC_OPEN_COMMAND = 0x00
+@Field static final Integer WC_CLOSE_COMMAND = 0x01
+@Field static final Integer WC_STOP_COMMAND = 0x02
+@Field static final Integer WC_SET_POSITION_COMMAND = 0x05
+
+
+@Field static final Integer POWER_CONFIG_CLUSTER = 0x0001
+@Field static final Integer BATTERY_PERCENTAGE_ATTR = 0x0021
+
 // capabilities
 
 List<String> configure() {
     state.codeVersion = version
 
+    state.batteryDivisor = 1.0
+    if (getDataValue("softwareBuild") > "23079631") {
+        state.batteryDivisor = 2.0
+    }
+
     logDebug "Configuring Reporting and Bindings."
 
     List<String> cmds = []
-    cmds += zigbee.configureReporting(0x0001, 0x0021, DataType.UINT8, 600, 21600, 1) // battery level
-    cmds += zigbee.configureReporting(0x0102, 0x0008, DataType.UINT8, 2, 600, 1)     // window covering lift position
-    cmds += zigbee.readAttribute(0x0102, 0x0007)                                     // window covering config/status
+    cmds += zigbee.configureReporting(POWER_CONFIG_CLUSTER, BATTERY_PERCENTAGE_ATTR, DataType.UINT8, 600, 21600, 1) // battery level
+    cmds += zigbee.configureReporting(WINDOW_COVERING_CLUSTER, LIFT_POSITION_ATTR, DataType.UINT8, 2, 600, 1)       // window covering lift position
+    cmds += zigbee.readAttribute(WINDOW_COVERING_CLUSTER, CONFIG_STATUS_ATTR)                                       // window covering config/status
 
     return refresh() + cmds
 }
@@ -95,8 +113,8 @@ List<String> refresh() {
     logDebug "refresh()"
 
     List<String> cmds = []
-    cmds += zigbee.readAttribute(0x0001, 0x0021) // battery level
-    cmds += zigbee.readAttribute(0x0102, 0x0008) // window covering lift position
+    cmds += zigbee.readAttribute(POWER_CONFIG_CLUSTER, BATTERY_PERCENTAGE_ATTR) // battery level
+    cmds += zigbee.readAttribute(WINDOW_COVERING_CLUSTER, LIFT_POSITION_ATTR) // window covering lift position
 
     return cmds
 }
@@ -106,74 +124,83 @@ void updated() {
 	if (debugEable || traceEnable) runIn(1800,"logsOff")
 }
 
-def close() {
-    logDebug "close()"
-    if (closeLimit > 0) {
-        setLevel(closeLimit)
-    } else {
-        fullyClose()
-    }
-}
-
-def fullyClose() {
-    logDebug "fullyClose()"
-    zigbee.command(0x0102, 0x01)
-}
-
-def off() {
-    close()
-}
-
-def open() {
+List<String> open() {
     logDebug "open()"
     if (openLimit < 100) {
-        setLevel(openLimit)
-    } else {
-        fullyOpen()
+        return setLevel(openLimit)
     }
+
+    return fullyOpen()
 }
 
-def fullyOpen() {
+List<String> fullyOpen() {
     logDebug "fullyOpen()"
-    zigbee.command(0x0102, 0x00)
+    return zigbee.command(WINDOW_COVERING_CLUSTER, WC_OPEN_COMMAND)
 }
 
-def on() {
-    open()
+List<String> on() {
+    return open()
 }
 
-def setLevel(data, rate = null) {
-    logDebug "setLevel()"
-    data = data.toInteger()
-    return zigbee.command(0x0102, 0x05, zigbee.convertToHexString(100 - data, 2))
+List<String> close() {
+    logDebug "close()"
+    if (closeLimit > 0) {
+        return setLevel(closeLimit)
+    }
+    return fullyClose()
 }
 
-def setPosition(value){
-	setLevel(value)
+List<String> fullyClose() {
+    logDebug "fullyClose()"
+    return zigbee.command(WINDOW_COVERING_CLUSTER, WC_CLOSE_COMMAND)
 }
 
-def startPositionChange(direction) {
-    // direction required (ENUM) - Direction for position change request ["open", "close"]
-    logDebug "startPositionChange()"
+List<String> off() {
+    return close()
+}
+
+List<String> setLevel(BigDecimal level, Integer rate = 0xFFFF) {
+    return setLevel(level as Integer, rate)
+}
+
+List<String> setLevel(Integer level, Integer rate = 0xFFFF) {
+    logTrace "setLevel(${level})"
+    return zigbee.command(WINDOW_COVERING_CLUSTER, WC_SET_POSITION_COMMAND, zigbee.convertToHexString(100 - (level), 2))
+}
+
+List<String> setPosition(BigDecimal value){
+	return setLevel(value)
+}
+
+List<String> setPosition(Integer value){
+	return setLevel(value)
+}
+
+List<String> startPositionChange(String direction) {
+    logTrace "startPositionChange(${direction})"
     switch (direction) {
         case "open":
-            open()
-            break
+            return open()
+
         case "close":
-            close()
-            break
+            return close()
+
         default:
-            logError "invalide position change direction ${direction}"
+            logError "invalid position change direction ${direction}"
             break
     }
 }
 
-def stopPositionChange() {
+List<String> stopPositionChange() {
     logDebug "stopPositionChange()"
-    zigbee.command(0x0102, 0x02)
+    return zigbee.command(WINDOW_COVERING_CLUSTER, WC_STOP_COMMAND)
 }
 
-def updateFirmware() {
+List<String> setTiltLevel(BigDecimal tilt) {
+    logWarn("setTiltLevel(${tilt}) unsupported on this device")
+}
+
+List<String> updateFirmware() {
     logInfo 'Looking for firmware updates ...'
     logWarn '[IMPORTANT] Click the "Update Firmware" button immediately after pushing any button on the device in order to first wake it up!'
     return zigbee.updateFirmware()
@@ -181,19 +208,19 @@ def updateFirmware() {
 
 // device message parsing
 
-def parse(String description) {
+List parse(String description) {
     state.lastCheckin = now()
 
-    def descMap = zigbee.parseDescriptionAsMap(description)
+    Map descMap = zigbee.parseDescriptionAsMap(description)
     logTrace("parse() - description = ${descMap}")
 
-    def result = []
+    List result = []
 
     if (descMap.attrId != null) {
         // device attribute report
         result += parseAttributeReport(descMap)
         if (descMap.additionalAttrs) {
-            def mapAdditionnalAttrs = descMap.additionalAttrs
+            Map mapAdditionnalAttrs = descMap.additionalAttrs
             mapAdditionnalAttrs.each{add ->
                 add.cluster = descMap.cluster
                 result += parseAttributeReport(add)
@@ -216,8 +243,8 @@ def parse(String description) {
     return result
 }
 
-private parseAttributeReport(descMap){
-    def map = [: ]
+private Map parseAttributeReport(Map descMap){
+    Map map = [: ]
 
     // Main switch over all available cluster IDs
     //
@@ -228,9 +255,8 @@ private parseAttributeReport(descMap){
             break
 
         case "0001": // Power Configuration cluster
-            logTrace "attr: ${descMap?.attrInt}, value: ${descMap?.value}, descValue: ${Integer.parseInt(descMap.value, 16)}"
             map.name = "battery"
-            map.value = Integer.parseInt(descMap.value, 16)
+            map.value = roundToDecimalPlaces(Integer.parseInt(descMap.value, 16) / state.batteryDivisor, 1)
             map.unit = "%"
             map.descriptionText = "battery is ${map.value}${map.unit}"
             break
@@ -247,11 +273,11 @@ private parseAttributeReport(descMap){
             switch (descMap.attrId) {
                 case "0007":
                     handleConfigStatus(descMap)
-                    return
+                    return null
 
                 case "0008":
                     handleLevelEvent(descMap)
-                    return
+                    return null
 
                 default:
                     break
@@ -264,7 +290,7 @@ private parseAttributeReport(descMap){
             break
     }
 
-    def result = null
+    Map result = null
 
     if (map) {
         if (map.descriptionText) logInfo("${map.descriptionText}")
@@ -276,9 +302,9 @@ private parseAttributeReport(descMap){
     return result
 }
 
-private void handleLevelEvent(descMap) {
-    def currentLevel = 100 - zigbee.convertHexToInt(descMap.value)
-    def lastLevel = device.currentValue("level") as Integer
+private void handleLevelEvent(Map descMap) {
+    int currentLevel = 100 - zigbee.convertHexToInt(descMap.value)
+    int lastLevel = device.currentValue("level") as int
 
     logDebug "levelEventHandle - currentLevel: ${currentLevel} lastLevel: ${lastLevel}"
 
@@ -297,7 +323,7 @@ private void handleLevelEvent(descMap) {
         updateDeviceAttribute(name: "windowShade", value: "closed")
         updateDeviceAttribute(name: "switch", value: "off")
     } else {
-        def direction = (lastLevel < currentLevel) ? "opening" : "closing"
+        String direction = (lastLevel < currentLevel) ? "opening" : "closing"
         updateDeviceAttribute(name: "windowShade", value: direction)
     }
 
@@ -306,7 +332,7 @@ private void handleLevelEvent(descMap) {
 }
 
 private void updateFinalState() {
-    def level = device.currentValue("level")
+    int level = device.currentValue("level") as int
     logDebug "updateFinalState: ${level}"
 
     // windowShade - ENUM ["opening", "partially open", "closed", "open", "closing", "unknown"]
@@ -380,6 +406,12 @@ private void handleConfigStatus(Map descMap) {
     }
 }
 
+@CompileStatic
+private double roundToDecimalPlaces(double decimalNumber, int decimalPlaces = 2) {
+    double scale = Math.pow(10, decimalPlaces)
+    return (Math.round(decimalNumber * scale) as double) / scale
+}
+
 // Logging helpers
 
 void logsOff(){
@@ -388,23 +420,23 @@ void logsOff(){
 	device.updateSetting("traceEnable",[value:"false",type:"bool"])
 }
 
-private void logTrace(message) {
+private void logTrace(String message) {
     if (traceEnable) log.trace("${device} : ${message}")
 }
 
-private void logDebug(message) {
+private void logDebug(String message) {
     if (debugEnable) log.debug("${device} : ${message}")
 }
 
-private void logInfo(message) {
+private void logInfo(String message) {
     if (txtEnable) log.info("${device} : ${message}")
 }
 
-private void logWarn(message) {
+private void logWarn(String message) {
     log.warn("${device} : ${message}")
 }
 
-private void logError(message) {
+private void logError(String message) {
     log.error("${device} : ${message}")
 }
 
