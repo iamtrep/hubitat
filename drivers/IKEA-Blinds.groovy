@@ -44,12 +44,18 @@ metadata {
 
         command 'updateFirmware'
 
-        fingerprint profileId:'0104', endpointId:'01', inClusters: "0000,0001,0003,0004",
-            manufacturer: "IKEA of Sweden", model: "FYRTUR block-out roller blind", controllerType:'ZGB'
-        fingerprint profileId:'0104', endpointId:'01', inClusters: "0000,0001,0003,0004",
-            manufacturer: "IKEA of Sweden", model: "TREDANSEN block-out cellul blind", controllerType:'ZGB'
+        fingerprint profileId:'0104', endpointId:'01', inClusters: "0000,0001,0003,0004,0005,0020,0102", outClusters: "0019",
+            manufacturer: "IKEA of Sweden", model: "FYRTUR block-out roller blind", deviceJoinName: "IKEA FYRTUR Roller Blind E1757", controllerType:'ZGB'
+
+        fingerprint profileId: "0104", inClusters: "0000,0001,0003,0004,0005,0020,0102", outClusters: "0019",
+            manufacturer: "IKEA of Sweden", model: "KADRILJ roller blind", deviceJoinName: "IKEA KADRILJ Roller Blind E1926", controllerType:'ZGB'
+
         fingerprint profileId:'0104', endpointId:'01', inClusters: "0000,0001,0003,0004,0005,0020,0102,1000,FC7C", outClusters: "0019,1000",
-            manufacturer: "IKEA of Sweden", model: "PRAKTLYSING cellular blind", controllerType:'ZGB'
+            manufacturer: "IKEA of Sweden", model: "PRAKTLYSING cellular blind", deviceJoinName: "IKEA PRAKTLYSING Cellular Shade E2102", controllerType:'ZGB'
+
+        fingerprint profileId:'0104', endpointId:'01', inClusters: "0000,0001,0003,0004,0005,0020,0102", outClusters: "0019",
+            manufacturer: "IKEA of Sweden", model: "TREDANSEN block-out cellul blind", deviceJoinName: "IKEA TREDANSEN Cellular Shade E2103", controllerType:'ZGB'
+
     }
 
     preferences {
@@ -71,31 +77,15 @@ metadata {
 
 // capabilities
 
-private void exploreDataType(dataTypeClass) {
-    log.info "Exploring DataType class..."
-
-    // Try to access the class directly
-    log.info "Class: ${dataTypeClass}"
-
-    // Try to get properties
-    try {
-        def props = dataTypeClass.properties
-        log.info "Properties: ${props}"
-    } catch (Exception e) {
-        log.warn "Cannot access properties: ${e.message}"
-    }
-}
-
 def configure() {
     state.codeVersion = version
-    //exploreDataType(hubitat.zigbee.zcl)
 
     logDebug "Configuring Reporting and Bindings."
 
     List<String> cmds = []
     cmds += zigbee.configureReporting(0x0001, 0x0021, DataType.UINT8, 600, 21600, 1) // battery level
     cmds += zigbee.configureReporting(0x0102, 0x0008, DataType.UINT8, 2, 600, 1)     // window covering lift position
-    cmds += zigbee.readAttribute(0x0102, 0x0007)                                  // window covering config/status
+    cmds += zigbee.readAttribute(0x0102, 0x0007)                                     // window covering config/status
 
     return refresh() + cmds
 }
