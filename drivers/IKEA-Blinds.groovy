@@ -58,11 +58,11 @@ metadata {
     }
 
     preferences {
-        input name: "openThreshold", type: "number", defaultValue: 3, range: "0..5", title: "Shade Open Threshold",
+        input name: "openThreshold", type: "number", defaultValue: 97, range: "95..100", title: "Shade Open Threshold",
             description: "Threshold beyond which shade is considered open (%)"
         input name: "openLimit", type: "number", defaultValue: 0, range: "0..100", title: "Max open level",
             description: "Max percentage open when Open function is called\n(delete or set value to 0 to disable)"
-        input name: "closedThreshold", type: "number", defaultValue: 97, range: "95..100", title: "Shade Closed Threshold",
+        input name: "closedThreshold", type: "number", defaultValue: 3, range: "0..5", title: "Shade Closed Threshold",
             description: "Threshold beyond which shade is considered closed (%)"
         input name: "closeLimit", type: "number", defaultValue: 100, range: "0..100", title: "Max close level",
             description: "Max percentage closed when Close function is called\n(delete or set value to 100 to disable)"
@@ -120,6 +120,10 @@ def fullyClose() {
     zigbee.command(0x0102, 0x01)
 }
 
+def off() {
+    close()
+}
+
 def open() {
     logDebug "open()"
     if (openLimit) {
@@ -132,27 +136,16 @@ def open() {
 def fullyOpen() {
     logDebug "fullyOpen()"
     zigbee.command(0x0102, 0x00)
-
 }
 
 def on() {
     open()
 }
 
-def off() {
-    close()
-}
-
 def setLevel(data, rate = null) {
     logDebug "setLevel()"
     data = data.toInteger()
-    if (data == 100) {
-        open()
-    } else {
-        def cmd
-        cmd = zigbee.command(0x0102, 0x05, zigbee.convertToHexString(100 - data, 2))
-        return cmd
-    }
+    return zigbee.command(0x0102, 0x05, zigbee.convertToHexString(100 - data, 2))
 }
 
 def setPosition(value){
@@ -166,7 +159,7 @@ def startPositionChange(direction) {
         case "open":
             open()
             break
-        case "closed":
+        case "close":
             close()
             break
         default:
@@ -186,9 +179,7 @@ def updateFirmware() {
     return zigbee.updateFirmware()
 }
 
-
 // device message parsing
-
 
 def parse(String description) {
     state.lastCheckin = now()
@@ -286,23 +277,21 @@ private parseAttributeReport(descMap){
     return result
 }
 
-
-// TODO - rewrite
 private void handleLevelEvent(descMap) {
     def currentLevel = 100 - zigbee.convertHexToInt(descMap.value)
     def lastLevel = device.currentValue("level")
 
     logDebug "levelEventHandle - currentLevel: ${currentLevel} lastLevel: ${lastLevel}"
 
-    if (lastLevel == "undefined" || currentLevel == lastLevel) { //Ignore invalid reports
-        logDebug "undefined lastLevel"
+    if (lastLevel == "undefined" || currentLevel == lastLevel) {
         runIn(3, "updateFinalState", [overwrite:true])
     } else {
         updateDeviceAttribute(name: "level", value: currentLevel)
         updateDeviceAttribute(name: "position", value: currentLevel)
-        if (currentLevel < openThreshold || currentLevel > closedThreshold) {
-            updateDeviceAttribute(name: "windowShade", value: currentLevel == 0 ? "closed" : "open")
-            updateDeviceAttribute(name: "switch", value: level == 0 ? "off" : "on")
+
+        if (currentLevel > openThreshold || currentLevel < closedThreshold) {
+            updateDeviceAttribute(name: "windowShade", value: currentLevel < closedThreshold ? "closed" : "open")
+            updateDeviceAttribute(name: "switch", value: currentLevel < closedThreshold ? "off" : "on")
         } else {
             if (lastLevel < currentLevel) {
                 updateDeviceAttribute([name:"windowShade", value: "opening"])
@@ -313,18 +302,34 @@ private void handleLevelEvent(descMap) {
     }
 
     if (lastLevel != currentLevel) {
-        logDebug "newlevel: ${newLevel} currentlevel: ${currentLevel} lastlevel: ${lastLevel}"
-        // why is refresh() needed if we have configureReporting on that attr?
+        logTrace "newlevel: ${newLevel} currentlevel: ${currentLevel} lastlevel: ${lastLevel}"
+        // ensure we eventually get to a currentLevel == lastLevel situation
         runIn(5, refresh)
     }
 }
 
-// TODO - rewrite
 private void updateFinalState() {
     def level = device.currentValue("level")
     logDebug "updateFinalState: ${level}"
-    updateDeviceAttribute(name: "windowShade", value: level == 0 ? "closed" : "open")
-    updateDeviceAttribute(name: "switch", value: level == 0 ? "off" : "on")
+
+    // windowShade - ENUM ["opening", "partially open", "closed", "open", "closing", "unknown"]
+
+    if (level == "unknown") {
+        // TODO
+        logWarn "Shade level unknown"
+    } else if (level > openThreshold) {
+        // open
+        updateDeviceAttribute(name: "windowShade", value: "open")
+        updateDeviceAttribute(name: "switch", value: "on")
+    } else if (level < closedThreshold) {
+        // closed
+        updateDeviceAttribute(name: "windowShade", value: "closed")
+        updateDeviceAttribute(name: "switch", value: "off")
+    } else {
+        // partially open
+        updateDeviceAttribute(name: "windowShade", value: "partially open")
+        updateDeviceAttribute(name: "switch", value: "off")
+    }
 }
 
 private void handleConfigStatus(Map descMap) {
@@ -368,14 +373,14 @@ private void handleConfigStatus(Map descMap) {
     }
 }
 
-private void updateDeviceAttribute(Event evt) {
+private void updateDeviceAttribute(Map evt) {
     if (evt.descriptionText == null) {
         String descText = "${evt.name} is ${evt.value}"
         if (evt.unit != null) descText += "${evt.unit}"
         evt.descriptionText = descText
     }
     sendEvent(evt)
-    logInfo(evt)
+    logInfo(evt.descriptionText)
 }
 
 // Logging helpers
