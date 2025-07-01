@@ -276,7 +276,7 @@ private Map parseAttributeReport(Map descMap){
                     return null
 
                 case "0008":
-                    handleLevelEvent(descMap)
+                    handleLiftPositionEvent(descMap)
                     return null
 
                 default:
@@ -302,11 +302,11 @@ private Map parseAttributeReport(Map descMap){
     return result
 }
 
-private void handleLevelEvent(Map descMap) {
+private void handleLiftPositionEvent(Map descMap) {
     int currentLevel = 100 - zigbee.convertHexToInt(descMap.value)
     int lastLevel = device.currentValue("level") as int
 
-    logDebug "levelEventHandle - currentLevel: ${currentLevel} lastLevel: ${lastLevel}"
+    logDebug "handleLiftPositionEvent - currentLevel: ${currentLevel} lastLevel: ${lastLevel}"
 
     if (lastLevel == "undefined" || lastLevel == null || currentLevel == lastLevel) {
         runIn(3, "updateFinalState", [overwrite: true])
@@ -327,7 +327,6 @@ private void handleLevelEvent(Map descMap) {
         updateDeviceAttribute(name: "windowShade", value: direction)
     }
 
-    logTrace "newlevel: ${currentLevel} currentlevel: ${currentLevel} lastlevel: ${lastLevel}"
     runIn(5, "refresh")
 }
 
