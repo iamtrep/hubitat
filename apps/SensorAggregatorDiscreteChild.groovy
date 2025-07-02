@@ -42,7 +42,7 @@ definition(
     category: "Convenience",
     iconUrl: "",
     iconX2Url: "",
-    importUrl: ""
+    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/SensorAggregatorDiscreteChild.groovy"
 )
 
 import groovy.transform.Field
@@ -194,7 +194,7 @@ boolean computeAggregateSensorValue() {
             }
         } else {
             excludedSensors << it
-            logTrace("Excluding sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - last event ${it.events([max:1])[0].date}")
+            logTrace("Excluding sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - no events since $timeAgo")
         }
     }
 
