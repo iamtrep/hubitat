@@ -85,13 +85,13 @@ metadata {
 @Field static final Integer WC_STOP_COMMAND = 0x02
 @Field static final Integer WC_SET_POSITION_COMMAND = 0x05
 
-
 @Field static final Integer POWER_CONFIG_CLUSTER = 0x0001
 @Field static final Integer BATTERY_PERCENTAGE_ATTR = 0x0021
 
 // capabilities
 
 List<String> configure() {
+    logTrace "configure()"
     state.codeVersion = version
 
     state.batteryDivisor = 1.0
@@ -99,18 +99,16 @@ List<String> configure() {
         state.batteryDivisor = 2.0
     }
 
-    logDebug "Configuring Reporting and Bindings."
-
     List<String> cmds = []
     cmds += zigbee.configureReporting(POWER_CONFIG_CLUSTER, BATTERY_PERCENTAGE_ATTR, DataType.UINT8, 600, 21600, 1) // battery level
     cmds += zigbee.configureReporting(WINDOW_COVERING_CLUSTER, LIFT_POSITION_ATTR, DataType.UINT8, 2, 600, 1)       // window covering lift position
     cmds += zigbee.readAttribute(WINDOW_COVERING_CLUSTER, CONFIG_STATUS_ATTR)                                       // window covering config/status
 
-    return refresh() + cmds
+    return cmds + refresh()
 }
 
 List<String> refresh() {
-    logDebug "refresh()"
+    logTrace "refresh()"
 
     List<String> cmds = []
     cmds += zigbee.readAttribute(POWER_CONFIG_CLUSTER, BATTERY_PERCENTAGE_ATTR) // battery level
@@ -121,12 +119,12 @@ List<String> refresh() {
 
 void updated() {
 	unschedule()
-	if (debugEable || traceEnable) runIn(1800,"logsOff")
+	if (debugEnable || traceEnable) runIn(1800,"logsOff")
 }
 
 List<String> open() {
-    logDebug "open()"
-    if (openLimit < 100) {
+    logTrace "open()"
+    if (openLimit < openThreshold) {
         return setLevel(openLimit)
     }
 
@@ -134,7 +132,7 @@ List<String> open() {
 }
 
 List<String> fullyOpen() {
-    logDebug "fullyOpen()"
+    logTrace "fullyOpen()"
     return zigbee.command(WINDOW_COVERING_CLUSTER, WC_OPEN_COMMAND)
 }
 
@@ -143,15 +141,15 @@ List<String> on() {
 }
 
 List<String> close() {
-    logDebug "close()"
-    if (closeLimit > 0) {
+    logTrace "close()"
+    if (closeLimit > closedThreshold) {
         return setLevel(closeLimit)
     }
     return fullyClose()
 }
 
 List<String> fullyClose() {
-    logDebug "fullyClose()"
+    logTrace "fullyClose()"
     return zigbee.command(WINDOW_COVERING_CLUSTER, WC_CLOSE_COMMAND)
 }
 
@@ -192,7 +190,7 @@ List<String> startPositionChange(String direction) {
 }
 
 List<String> stopPositionChange() {
-    logDebug "stopPositionChange()"
+    logTrace "stopPositionChange()"
     return zigbee.command(WINDOW_COVERING_CLUSTER, WC_STOP_COMMAND)
 }
 
@@ -209,6 +207,7 @@ List<String> updateFirmware() {
 // device message parsing
 
 List parse(String description) {
+    logTrace "parse()"
     state.lastCheckin = now()
 
     Map descMap = zigbee.parseDescriptionAsMap(description)
