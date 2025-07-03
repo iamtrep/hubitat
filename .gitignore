@@ -3,3 +3,4 @@
 *.groovy#
 .#*.groovy
 #*.groovy
+.DS_Store
