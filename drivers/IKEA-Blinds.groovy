@@ -303,7 +303,7 @@ private Map parseAttributeReport(Map descMap){
 
 private void handleLiftPositionEvent(Map descMap) {
     int currentLevel = 100 - zigbee.convertHexToInt(descMap.value)
-    int lastLevel = device.currentValue("level") as int
+    int lastLevel = (device.currentValue("level") ?: 0) as int
 
     logDebug "handleLiftPositionEvent - currentLevel: ${currentLevel} lastLevel: ${lastLevel}"
 
