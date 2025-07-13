@@ -22,7 +22,7 @@ import groovy.transform.Field
 import hubitat.zigbee.zcl.DataType
 import com.hubitat.hub.domain.Event
 
-@Field static final String version = "0.0.2"
+@Field static final String version = "0.0.3"
 
 metadata {
     definition(
@@ -83,10 +83,13 @@ metadata {
 
 // capabilities
 
-List<String> configure() {
+void configure() {
     logTrace "configure()"
-    state.codeVersion = version
 
+    state.clear()
+    state.lastTx = 0
+    state.lastRx = 0
+    state.codeVersion = version
     state.batteryDivisor = 1.0
     if (getDataValue("softwareBuild") > "23079631") {
         state.batteryDivisor = 2.0
@@ -96,18 +99,19 @@ List<String> configure() {
     cmds += zigbee.configureReporting(POWER_CONFIG_CLUSTER, BATTERY_PERCENTAGE_ATTR, DataType.UINT8, 600, 21600, 1) // battery level
     cmds += zigbee.configureReporting(WINDOW_COVERING_CLUSTER, LIFT_POSITION_ATTR, DataType.UINT8, 2, 600, 1)       // window covering lift position
     cmds += zigbee.readAttribute(WINDOW_COVERING_CLUSTER, CONFIG_STATUS_ATTR)                                       // window covering config/status
+    sendZigbeeCommands(cmds)
 
-    return cmds + refresh()
+    refresh()
 }
 
-List<String> refresh() {
+void refresh() {
     logTrace "refresh()"
 
     List<String> cmds = []
     cmds += zigbee.readAttribute(POWER_CONFIG_CLUSTER, BATTERY_PERCENTAGE_ATTR) // battery level
     cmds += zigbee.readAttribute(WINDOW_COVERING_CLUSTER, LIFT_POSITION_ATTR) // window covering lift position
 
-    return cmds
+    sendZigbeeCommands(cmds)
 }
 
 void updated() {
@@ -115,49 +119,49 @@ void updated() {
 	if (debugEnable || traceEnable) runIn(1800,"logsOff")
 }
 
-List<String> open() {
+void open() {
     logTrace "open()"
-    return zigbee.command(WINDOW_COVERING_CLUSTER, WC_OPEN_COMMAND)
+    sendZigbeeCommands(zigbee.command(WINDOW_COVERING_CLUSTER, WC_OPEN_COMMAND))
 }
 
 List<String> on() {
-    return open()
+    open()
 }
 
-List<String> close() {
+void close() {
     logTrace "close()"
-    return zigbee.command(WINDOW_COVERING_CLUSTER, WC_CLOSE_COMMAND)
+    sendZigbeeCommands(zigbee.command(WINDOW_COVERING_CLUSTER, WC_CLOSE_COMMAND))
 }
 
-List<String> off() {
-    return close()
+void off() {
+    close()
 }
 
-List<String> setLevel(BigDecimal level, Integer rate = 0xFFFF) {
-    return setLevel(level as Integer, rate)
+void setLevel(BigDecimal level, Integer rate = 0xFFFF) {
+    setLevel(level as Integer, rate)
 }
 
-List<String> setLevel(Integer level, Integer rate = 0xFFFF) {
+void setLevel(Integer level, Integer rate = 0xFFFF) {
     logTrace "setLevel(${level})"
-    return zigbee.command(WINDOW_COVERING_CLUSTER, WC_SET_POSITION_COMMAND, zigbee.convertToHexString(100 - (level), 2))
+    sendZigbeeCommands(zigbee.command(WINDOW_COVERING_CLUSTER, WC_SET_POSITION_COMMAND, zigbee.convertToHexString(100 - (level), 2)))
 }
 
-List<String> setPosition(BigDecimal value){
-	return setLevel(value)
+void setPosition(BigDecimal value){
+	setLevel(value)
 }
 
-List<String> setPosition(Integer value){
-	return setLevel(value)
+void setPosition(Integer value){
+	setLevel(value)
 }
 
-List<String> startPositionChange(String direction) {
+void startPositionChange(String direction) {
     logTrace "startPositionChange(${direction})"
     switch (direction) {
         case "open":
-            return open()
+            open()
 
         case "close":
-            return close()
+            close()
 
         default:
             logError "invalid position change direction ${direction}"
@@ -165,12 +169,12 @@ List<String> startPositionChange(String direction) {
     }
 }
 
-List<String> stopPositionChange() {
+void stopPositionChange() {
     logTrace "stopPositionChange()"
-    return zigbee.command(WINDOW_COVERING_CLUSTER, WC_STOP_COMMAND)
+    sendZigbeeCommands(zigbee.command(WINDOW_COVERING_CLUSTER, WC_STOP_COMMAND))
 }
 
-List<String> setTiltLevel(BigDecimal tilt) {
+void setTiltLevel(BigDecimal tilt) {
     logWarn("setTiltLevel(${tilt}) unsupported on this device")
 }
 
@@ -183,11 +187,16 @@ List<String> updateFirmware() {
 // device message parsing
 
 List parse(String description) {
-    logTrace "parse()"
-    state.lastCheckin = now()
 
+    // Auto-Configure device: configure() was not called for this driver version
+    if (state.codeVersion != version) {
+        state.codeVersion = version
+        runInMillis 1500, 'autoConfigure'
+    }
+
+    state.lastRx = now()
     Map descMap = zigbee.parseDescriptionAsMap(description)
-    logTrace("parse() - description = ${descMap}")
+    logTrace "Receiving Zigbee message️ ⬅️ device: ${descMap}"
 
     List result = []
 
@@ -329,6 +338,14 @@ private void updateFinalState() {
     }
 }
 
+
+// private methods
+
+private void autoConfigure() {
+    logWarn "Detected driver version change"
+    configure()
+}
+
 private void updateDeviceAttribute(Map evt) {
     if (evt.descriptionText == null) {
         String descText = "${evt.name} is ${evt.value}"
@@ -384,6 +401,14 @@ private void handleConfigStatus(Map descMap) {
 private double roundToDecimalPlaces(double decimalNumber, int decimalPlaces = 2) {
     double scale = Math.pow(10, decimalPlaces)
     return (Math.round(decimalNumber * scale) as double) / scale
+}
+
+private void sendZigbeeCommands(List<String> cmds) {
+    if (cmds.empty) return
+    List<String> send = delayBetween(cmds.findAll { !it.startsWith('delay') }, 1000)
+    logTrace "Sending Zigbee messages ➡️ device: ${send}"
+    state.lastTx = now()
+    sendHubCommand(new hubitat.device.HubMultiAction(send, hubitat.device.Protocol.ZIGBEE))
 }
 
 // Logging helpers
