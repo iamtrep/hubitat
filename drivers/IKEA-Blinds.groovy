@@ -22,7 +22,7 @@ import groovy.transform.Field
 import hubitat.zigbee.zcl.DataType
 import com.hubitat.hub.domain.Event
 
-@Field static final String version = "0.0.1"
+@Field static final String version = "0.0.2"
 
 metadata {
     definition(
@@ -38,9 +38,6 @@ metadata {
 	    capability "Switch"
 	    capability "Switch Level"
         capability "Window Shade"
-
-        command "fullyOpen" // see openLimit preference
-        command "fullyClose" // see closeLimit preference
 
         command 'updateFirmware'
 
@@ -61,12 +58,8 @@ metadata {
     preferences {
         input name: "openThreshold", type: "number", defaultValue: 97, range: "95..100", title: "Shade Open Threshold",
             description: "Threshold beyond which shade is considered open (%)"
-        input name: "openLimit", type: "number", defaultValue: 100, range: "0..100", title: "Max open level",
-            description: "Max percentage open when Open function is called\n(delete or set value to 100 to disable)"
         input name: "closedThreshold", type: "number", defaultValue: 3, range: "0..5", title: "Shade Closed Threshold",
             description: "Threshold beyond which shade is considered closed (%)"
-        input name: "closeLimit", type: "number", defaultValue: 0, range: "0..100", title: "Min close level",
-            description: "Min percentage closed when Close function is called\n(delete or set value to 0 to disable)"
 
         input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: false
         input name: "debugEnable", type: "bool", title: "Enable debug logging info", defaultValue: false, required: true, submitOnChange: true
@@ -124,15 +117,6 @@ void updated() {
 
 List<String> open() {
     logTrace "open()"
-    if (openLimit < openThreshold) {
-        return setLevel(openLimit)
-    }
-
-    return fullyOpen()
-}
-
-List<String> fullyOpen() {
-    logTrace "fullyOpen()"
     return zigbee.command(WINDOW_COVERING_CLUSTER, WC_OPEN_COMMAND)
 }
 
@@ -142,14 +126,6 @@ List<String> on() {
 
 List<String> close() {
     logTrace "close()"
-    if (closeLimit > closedThreshold) {
-        return setLevel(closeLimit)
-    }
-    return fullyClose()
-}
-
-List<String> fullyClose() {
-    logTrace "fullyClose()"
     return zigbee.command(WINDOW_COVERING_CLUSTER, WC_CLOSE_COMMAND)
 }
 
