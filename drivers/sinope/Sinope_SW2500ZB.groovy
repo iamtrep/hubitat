@@ -21,7 +21,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String version = "0.0.5"
+@Field static final String version = "0.0.6"
 
 metadata {
     definition(
@@ -321,8 +321,8 @@ void setOffLedIntensity(intensity) {
 
 // Device Event Parsing
 
-def parse(String description) {
-    def descMap = zigbee.parseDescriptionAsMap(description)
+List parse(String description) {
+    Map descMap = zigbee.parseDescriptionAsMap(description)
     logTrace("parse() - description = ${descMap}")
 
     List result = []
@@ -538,7 +538,6 @@ private long getTemperature(String value) {
     }
 }
 
-// Reverses order of bytes in hex string
 @CompileStatic
 private String reverseHexString(String hexString) {
 	String reversed = ""

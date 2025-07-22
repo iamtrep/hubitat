@@ -17,7 +17,7 @@
 import groovy.transform.Field
 import java.math.RoundingMode
 
-@Field static final String version = "0.0.5"
+@Field static final String version = "0.0.6"
 
 metadata {
     definition(
@@ -169,7 +169,7 @@ void configure() {
         logError("unschedule() threw an exception ${e}")
     }
 
-    def cmds = []
+    List<String> cmds = []
 
     // Configure device attribute self-reporting
     cmds += zigbee.configureReporting(0x0002, 0x0000, DataType.INT16, 0, 43200)   // device temperature
@@ -198,7 +198,7 @@ void initialize() {
 }
 
 void refresh() {
-    def cmds = []
+    List<String> cmds = []
 
     cmds += zigbee.readAttribute(0x0002, 0x0000) // device temperature
     cmds += zigbee.readAttribute(0x0006, 0x0000) // switch state
@@ -216,14 +216,14 @@ void refresh() {
 }
 
 void on() {
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.command(0x0006, 0x01)
     sendZigbeeCommands(cmds)
     state.switchTypeDigital = true
 }
 
 void off() {
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.command(0x0006, 0x00)
     sendZigbeeCommands(cmds)
     state.switchTypeDigital = true
@@ -235,7 +235,7 @@ void setLevel(String level, String duration = '0') {
 
 void setLevel(BigDecimal level, BigDecimal duration = 0) {
     state.levelTypeDigital = true
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.setLevel(level, duration)
     //logTrace("zigbee.setLevel($level,$duration) = $cmds")
     sendZigbeeCommands(cmds)
@@ -268,19 +268,19 @@ void doubleTap(buttonNumber) {
 // Custom commands
 
 void keypadLock() {
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.writeAttribute(0xFF01, 0x0002, DataType.ENUM8, 1, [mfgCode: "0x119C"])
     sendZigbeeCommands(cmds)
 }
 
 void keypadUnlock() {
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.writeAttribute(0xFF01, 0x0002, DataType.ENUM8, 0, [mfgCode: "0x119C"])
     sendZigbeeCommands(cmds)
 }
 
 void setAutoOffTimer(duration) {
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.writeAttribute(0xFF01, 0x00A0, DataType.UINT32, duration as int, [mfgCode: "0x119C"])
     logTrace("setAutoOffTimer($duration) => $cmds")
     sendZigbeeCommands(cmds)
@@ -291,42 +291,42 @@ void setOnIntensity(intensity) {
 }
 
 void setOnLedColor(String color) {
-    def attrHex = constLedColorMap[color]
-    logDebug("Setting ON led color to $color (${attrHex as String})")
-    def cmds = []
+    String attrHex = constLedColorMap[color]
+    logDebug("Setting ON led color to $color ($attrHex)")
+    List<String> cmds = []
     cmds += zigbee.writeAttribute(0xFF01, 0x0050, DataType.UINT24, attrHex, [mfgCode: "0x119C"])
     sendZigbeeCommands(cmds)
 }
 
 void setOnLedIntensity(intensity) {
     String hexIntensity = percentToHex(intensity as Integer)
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.writeAttribute(0xFF01, 0x0052, DataType.UINT8, hexIntensity, [mfgCode: "0x119C"])
     sendZigbeeCommands(cmds)
 }
 
 void setOffLedColor(String color) {
-    def attrHex = constLedColorMap[color]
+    String attrHex = constLedColorMap[color]
     logDebug("Setting OFF led color to $color ($attrHex)")
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.writeAttribute(0xFF01, 0x0051, DataType.UINT24, attrHex, [mfgCode: "0x119C"])
     sendZigbeeCommands(cmds)
 }
 
 void setOffLedIntensity(intensity) {
     String hexIntensity = percentToHex(intensity as Integer)
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.writeAttribute(0xFF01, 0x0053, DataType.UINT8, hexIntensity, [mfgCode: "0x119C"])
     sendZigbeeCommands(cmds)
 }
 
 // Device Event Parsing
 
-def parse(String description) {
-    def descMap = zigbee.parseDescriptionAsMap(description)
+List parse(String description) {
+    Map descMap = zigbee.parseDescriptionAsMap(description)
     logTrace("parse() - description = ${descMap}")
 
-    def result = []
+    List result = []
 
     if (descMap.attrId != null) {
         // device attribute report
@@ -367,8 +367,8 @@ def parse(String description) {
     "14": [buttonEvent: "doubleTapped", buttonIndex: 1, description: "Down was double-tapped"]
 ]
 
-private parseAttributeReport(descMap){
-    def map = [: ]
+private Map parseAttributeReport(descMap){
+    Map map = [: ]
 
     // Main switch over all available cluster IDs
     //
@@ -477,7 +477,7 @@ private parseAttributeReport(descMap){
                     return null // return directly, no event to generate
 
                 case "0054": // action report (pushed/released/double tapped)
-                    def action = buttonActionMap[descMap.value]
+                    Map<String, Object> action = buttonActionMap[descMap.value]
                     if (action) {
                         map.name = action.buttonEvent
                         map.value = action.buttonIndex
@@ -514,7 +514,7 @@ private parseAttributeReport(descMap){
             break
     }
 
-    def result = null
+    Map result = null
 
     if (map) {
         if (map.descriptionText) logInfo("${map.descriptionText}")
@@ -533,10 +533,11 @@ private void sendZigbeeCommands(cmds) {
     sendHubCommand(hubAction)
 }
 
-private double getEnergy(value) {
+@CompileStatic
+private double getEnergy(String value) {
     if (value != null) {
         Integer energy = Integer.parseInt(value, 16)
-        BigDecimal kWh = new BigDecimal(energy.toDouble() / 1000.0)
+        BigDecimal kWh = new BigDecimal(energy.toDouble() / 1000.0 as double)
         kWh = kWh.setScale(3, RoundingMode.HALF_UP)
         logTrace("getEnergy($value) = $energy => $kWh")
         return kWh.doubleValue()
@@ -555,15 +556,16 @@ private long getTemperature(value) {
     }
 }
 
-// Reverses order of bytes in hex string
-private String reverseHexString(hexString) {
-	def reversed = ""
+@CompileStatic
+private String reverseHexString(String hexString) {
+	String reversed = ""
 	for (int i = hexString.length(); i > 0; i -= 2) {
 		reversed += hexString.substring(i - 2, i )
 	}
 	return reversed
 }
 
+@CompileStatic
 private String percentToHex(Integer percentValue) {
 	BigDecimal hexValue = (percentValue * 255) / 100
 	hexValue = hexValue < 0 ? 0 : hexValue
@@ -571,30 +573,29 @@ private String percentToHex(Integer percentValue) {
 	return Integer.toHexString(hexValue.intValue())
 }
 
-private Integer scaleHexValue(String hexValue, Double scale = 100.0, Double max = 255.0) {
-    return (Integer.parseInt(hexValue, 16).toDouble() * scale / max).round()
+@CompileStatic
+private Integer scaleHexValue(String hexValue, double scale = 100.0, double max = 255.0) {
+    return Math.round(Integer.parseInt(hexValue, 16).toDouble() * scale / max) as Integer
 }
-
 
 // Logging helpers
 
-private void logTrace(message) {
-    // No trace facility.  Use debug.
-    if (traceEnable) log.debug("${device} : ${message}")
+private void logTrace(String message) {
+    if (traceEnable) log.trace("${device} : ${message}")
 }
 
-private void logDebug(message) {
+private void logDebug(String message) {
     if (debugEnable) log.debug("${device} : ${message}")
 }
 
-private void logInfo(message) {
+private void logInfo(String message) {
     if (txtEnable) log.info("${device} : ${message}")
 }
 
-private void logWarn(message) {
+private void logWarn(String message) {
     log.warn("${device} : ${message}")
 }
 
-private void logError(message) {
+private void logError(String message) {
     log.error("${device} : ${message}")
 }
