@@ -181,6 +181,9 @@ void configure() {
 
     sendZigbeeCommands(cmds)
 
+    unschedule("refreshEnergyReport")
+    runIn(1800, "refreshEnergyReport")
+
     // Read some attributes right away
     refresh()
 }
@@ -213,6 +216,12 @@ void refresh() {
     cmds += zigbee.readAttribute(0xFF01, 0x0090, [mfgCode: "0x119C"]) // energy delivered
 
     sendZigbeeCommands(cmds)
+}
+
+void refreshEnergyReport() {
+    cmds += zigbee.readAttribute(0xFF01, 0x0090, [mfgCode: "0x119C"]) // energy delivered
+    sendZigbeeCommands(cmds)
+    runIn(1800, "refreshEnergyReport")
 }
 
 void on() {
@@ -429,6 +438,7 @@ private Map parseAttributeReport(descMap){
         case "0702": // Metering cluster
             switch (descMap.attrId) {
                 case "0000":
+                    return null // energy report is in mfg-specific cluster/attr
                     map.name = "energy"
                     map.value = getEnergy(descMap.value)
                     map.unit = "kWh"
@@ -490,8 +500,13 @@ private Map parseAttributeReport(descMap){
 
                 case "0090": // watt-hours delivered
                     state.energyDelivered = getEnergy(descMap.value)
-                    logInfo("Energy report: ${state.energyDelivered}")
-                    return null // return directly, no event to generate
+                    //logInfo("Energy report: ${state.energyDelivered}")
+                    //return null // return directly, no event to generate
+                    map.name = "energy"
+                    map.value = getEnergy(descMap.value)
+                    map.unit = "kWh"
+                    map.descriptionText = "Cumulative energy delivered is ${map.value} ${map.unit}"
+                    break
 
                     // TODO
                 case "0010": // on intensity

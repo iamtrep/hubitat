@@ -182,10 +182,11 @@ void configure() {
     cmds += zigbee.configureReporting(0xFF01, 0x0054, DataType.ENUM8, 0, 43200, null, [mfgCode: "0x119C"])  // button action report
     // device accepts this report configuration but does not appear to honor it
     cmds += zigbee.configureReporting(0xFF01, 0x0090, DataType.UINT32, 0, 1800, null, [mfgCode: "0x119C"])  // energy
-    unschedule("refreshEnergyReport")
-    runIn(1800, "refreshEnergyReport")
 
     sendZigbeeCommands(cmds)
+
+    unschedule("refreshEnergyReport")
+    runIn(1800, "refreshEnergyReport")
 
     // Read some attributes right away
     refresh()
