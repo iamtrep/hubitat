@@ -15,6 +15,10 @@
  */
 
 import groovy.transform.Field
+import groovy.transform.CompileStatic
+import com.hubitat.app.DeviceWrapper
+import com.hubitat.app.ChildDeviceWrapper
+import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
 @Field static final String version = "0.0.6"
