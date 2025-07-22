@@ -173,7 +173,7 @@ void configure() {
         logError("unschedule() threw an exception ${e}")
     }
 
-    def cmds = []
+    List<String> cmds = []
 
     // Configure device attribute self-reporting
     cmds += zigbee.configureReporting(0x0002, 0x0000, DataType.INT16, 0, 43200)    // device temperature
@@ -204,7 +204,7 @@ void initialize() {
 }
 
 void refresh() {
-    def cmds = []
+    List<String> cmds = []
 
     cmds += zigbee.readAttribute(0x0002, 0x0000) // device temperature
     cmds += zigbee.readAttribute(0x0006, 0x0000) // switch state
@@ -227,14 +227,14 @@ void refreshEnergyReport() {
 }
 
 void on() {
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.command(0x0006, 0x01)
     sendZigbeeCommands(cmds)
     state.switchTypeDigital = true
 }
 
 void off() {
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.command(0x0006, 0x00)
     sendZigbeeCommands(cmds)
     state.switchTypeDigital = true
@@ -267,19 +267,19 @@ void doubleTap(buttonNumber) {
 // Custom commands
 
 void keypadLock() {
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.writeAttribute(0xFF01, 0x0002, DataType.ENUM8, 1, [mfgCode: "0x119C"])
     sendZigbeeCommands(cmds)
 }
 
 void keypadUnlock() {
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.writeAttribute(0xFF01, 0x0002, DataType.ENUM8, 0, [mfgCode: "0x119C"])
     sendZigbeeCommands(cmds)
 }
 
 void setAutoOffTimer(duration) {
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.writeAttribute(0xFF01, 0x00A0, DataType.UINT32, duration as int, [mfgCode: "0x119C"])
     logTrace("setAutoOffTimer($duration) => $cmds")
     sendZigbeeCommands(cmds)
@@ -290,16 +290,16 @@ void setOnIntensity(intensity) {
 }
 
 void setOnLedColor(String color) {
-    def attrHex = constLedColorMap[color]
-    logDebug("Setting ON led color to $color (${attrHex as String})")
-    def cmds = []
+    String attrHex = constLedColorMap[color]
+    logDebug("Setting ON led color to $color ($attrHex)")
+    List<String> cmds = []
     cmds += zigbee.writeAttribute(0xFF01, 0x0050, DataType.UINT24, attrHex, [mfgCode: "0x119C"])
     sendZigbeeCommands(cmds)
 }
 
 void setOnLedIntensity(intensity) {
     String hexIntensity = percentToHex(intensity as Integer)
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.writeAttribute(0xFF01, 0x0052, DataType.UINT8, hexIntensity, [mfgCode: "0x119C"])
     sendZigbeeCommands(cmds)
 }
@@ -307,7 +307,7 @@ void setOnLedIntensity(intensity) {
 void setOffLedColor(String color) {
     def attrHex = constLedColorMap[color]
     logDebug("Setting OFF led color to $color ($attrHex)")
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.writeAttribute(0xFF01, 0x0051, DataType.UINT24, attrHex, [mfgCode: "0x119C"])
     sendZigbeeCommands(cmds)
 }
@@ -511,14 +511,15 @@ private Map parseAttributeReport(descMap){
 // Private methods
 
 private void sendZigbeeCommands(cmds) {
-    def hubAction = new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE)
+    hubitat.device.HubMultiAction hubAction = new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE)
     sendHubCommand(hubAction)
 }
 
-private double getEnergy(value) {
+@CompileStatic
+private double getEnergy(String value) {
     if (value != null) {
         Integer energy = Integer.parseInt(value, 16)
-        BigDecimal kWh = new BigDecimal(energy.toDouble() / 1000.0)
+        BigDecimal kWh = new BigDecimal(energy.toDouble() / 1000.0 as double)
         kWh = kWh.setScale(3, RoundingMode.HALF_UP)
         logTrace("getEnergy($value) = $energy => $kWh")
         return kWh.doubleValue()
@@ -526,9 +527,9 @@ private double getEnergy(value) {
     return 0
 }
 
-private long getTemperature(value) {
+private long getTemperature(String value) {
     if (value != null) {
-        def celsius = Integer.parseInt(value, 16)
+        Integer celsius = Integer.parseInt(value, 16)
         if (getTemperatureScale() == "C") {
             return celsius
         } else {
@@ -538,14 +539,16 @@ private long getTemperature(value) {
 }
 
 // Reverses order of bytes in hex string
-private String reverseHexString(hexString) {
-	def reversed = ""
+@CompileStatic
+private String reverseHexString(String hexString) {
+	String reversed = ""
 	for (int i = hexString.length(); i > 0; i -= 2) {
 		reversed += hexString.substring(i - 2, i )
 	}
 	return reversed
 }
 
+@CompileStatic
 private String percentToHex(Integer percentValue) {
 	BigDecimal hexValue = (percentValue * 255) / 100
 	hexValue = hexValue < 0 ? 0 : hexValue
@@ -553,15 +556,15 @@ private String percentToHex(Integer percentValue) {
 	return Integer.toHexString(hexValue.intValue())
 }
 
-private Integer scaleHexValue(String hexValue, Double scale = 100.0, Double max = 255.0) {
-    return (Integer.parseInt(hexValue, 16).toDouble() * scale / max).round()
+@CompileStatic
+private Integer scaleHexValue(String hexValue, double scale = 100.0, double max = 255.0) {
+    return Math.round(Integer.parseInt(hexValue, 16).toDouble() * scale / max) as Integer
 }
 
 // Logging helpers
 
 private void logTrace(message) {
-    // No trace facility.  Use debug.
-    if (traceEnable) log.debug("${device} : ${message}")
+    if (traceEnable) log.trace("${device} : ${message}")
 }
 
 private void logDebug(message) {
