@@ -15,6 +15,10 @@
  */
 
 import groovy.transform.Field
+import groovy.transform.CompileStatic
+import com.hubitat.app.DeviceWrapper
+import com.hubitat.app.ChildDeviceWrapper
+import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
 @Field static final String version = "0.0.5"
@@ -176,7 +180,10 @@ void configure() {
     cmds += zigbee.configureReporting(0x0006, 0x0000, DataType.BOOLEAN, 0, 43200)  // switch state
     cmds += zigbee.configureReporting(0x0702, 0x0000, DataType.UINT48, 0, 1800)     // energy consumed
     cmds += zigbee.configureReporting(0xFF01, 0x0054, DataType.ENUM8, 0, 43200, null, [mfgCode: "0x119C"])  // button action report
+    // device accepts this report configuration but does not appear to honor it
     cmds += zigbee.configureReporting(0xFF01, 0x0090, DataType.UINT32, 0, 1800, null, [mfgCode: "0x119C"])  // energy
+    unschedule("refreshEnergyReport")
+    runIn(1800, "refreshEnergyReport")
 
     sendZigbeeCommands(cmds)
 
@@ -211,6 +218,12 @@ void refresh() {
     cmds += zigbee.readAttribute(0xFF01, 0x0090, [mfgCode: "0x119C"]) // energy delivered
 
     sendZigbeeCommands(cmds)
+}
+
+void refreshEnergyReport() {
+    cmds += zigbee.readAttribute(0xFF01, 0x0090, [mfgCode: "0x119C"]) // energy delivered
+    sendZigbeeCommands(cmds)
+    runIn(1800, "refreshEnergyReport")
 }
 
 void on() {
@@ -312,7 +325,7 @@ def parse(String description) {
     def descMap = zigbee.parseDescriptionAsMap(description)
     logTrace("parse() - description = ${descMap}")
 
-    def result = []
+    List result = []
 
     if (descMap.attrId != null) {
         // device attribute report
@@ -353,8 +366,8 @@ def parse(String description) {
     "14": [buttonEvent: "doubleTapped", buttonIndex: 1, description: "Down was double-tapped"]
 ]
 
-private parseAttributeReport(descMap){
-    def map = [: ]
+private Map parseAttributeReport(descMap){
+    Map map = [: ]
 
     // Main switch over all available cluster IDs
     //
@@ -384,13 +397,14 @@ private parseAttributeReport(descMap){
                 map.value = descMap.value == "00" ? "off" : "on"
                 map.type = state.switchTypeDigital ? "digital" : "physical"
                 state.switchTypeDigital = false
-                map.descriptionText = "Switch is ${map.value} [${map.type}]"
+                map.descriptionText = "Switch ${descMap.commandInt == 0x0A ? 'is' : 'was turned'} ${map.value} [${map.type}]"
             }
             break
 
         case "0702": // Metering cluster
             switch (descMap.attrId) {
                 case "0000":
+                    return null // energy report is in mfg-specific cluster/attr
                     map.name = "energy"
                     map.value = getEnergy(descMap.value)
                     map.unit = "kWh"
@@ -411,7 +425,7 @@ private parseAttributeReport(descMap){
                     boolean locked = descMap.value > 0
                     map.name = "keypadLock"
                     map.value = locked
-                    map.descriptionText = locked ? "Keypad was locked" : "Keypad was unlocked"
+                    map.descriptionText = "Keypad ${descMap.commandInt == 0x0A ? 'is' : 'was'} ${locked ? 'locked' : 'unlocked'}"
                     break
 
                 case "0050": // on LED color
@@ -452,8 +466,13 @@ private parseAttributeReport(descMap){
 
                 case "0090": // watt-hours delivered
                     state.energyDelivered = getEnergy(descMap.value)
-                    logInfo("Energy report: ${state.energyDelivered}")
-                    return null // return directly, no event to generate
+                    //logInfo("Energy report: ${state.energyDelivered}")
+                    //return null // return directly, no event to generate
+                    map.name = "energy"
+                    map.value = getEnergy(descMap.value)
+                    map.unit = "kWh"
+                    map.descriptionText = "Cumulative energy delivered is ${map.value} ${map.unit}"
+                    break
 
                     // TODO
                 case "0010": // on intensity
@@ -465,7 +484,7 @@ private parseAttributeReport(descMap){
                 case "0119": // connected load (in watts, always zero)
                 case "0200": // status (always zero)
                     logDebug("Unhandled manufacturer-specific attribute report: ${descMap}")
-                    break
+                    return null
 
                 default:
                     logDebug("Unknown manufacturer-specific attribute report: ${descMap}")
@@ -477,7 +496,7 @@ private parseAttributeReport(descMap){
             break
     }
 
-    def result = null
+    Map result = null
 
     if (map) {
         if (map.descriptionText) logInfo("${map.descriptionText}")
