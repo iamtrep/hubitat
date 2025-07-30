@@ -222,6 +222,7 @@ void refresh() {
 }
 
 void refreshEnergyReport() {
+    List<String> cmds = []
     cmds += zigbee.readAttribute(0xFF01, 0x0090, [mfgCode: "0x119C"]) // energy delivered
     sendZigbeeCommands(cmds)
     runIn(1800, "refreshEnergyReport")
@@ -479,7 +480,6 @@ private Map parseAttributeReport(descMap){
                 case "0010": // on intensity
                 case "0055": // minimum intensity (0 - 3000)
                 case "0058": // double-up = full (0=off, 1=on)
-                case "0090": // watt-hours delivered
                 case "00A0": // auto-off timer setting
                 case "00A1": // current remaining timer seconds
                 case "0119": // connected load (in watts, always zero)

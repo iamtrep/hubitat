@@ -223,6 +223,7 @@ void refresh() {
 }
 
 void refreshEnergyReport() {
+    List<String> cmds = []
     cmds += zigbee.readAttribute(0xFF01, 0x0090, [mfgCode: "0x119C"]) // energy delivered
     sendZigbeeCommands(cmds)
     runIn(1800, "refreshEnergyReport")
