@@ -33,7 +33,7 @@ import com.hubitat.app.DeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.nio.file.AccessDeniedException
 
-@Field static final String child_app_version = "0.0.2"
+@Field static final String child_app_version = "0.0.3"
 
 definition(
     name: "Attribute Logger Child",
