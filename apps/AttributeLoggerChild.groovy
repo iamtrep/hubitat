@@ -31,6 +31,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import com.hubitat.app.DeviceWrapper
 import com.hubitat.hub.domain.Event
+import java.nio.file.AccessDeniedException
 
 @Field static final String child_app_version = "0.0.2"
 
@@ -132,45 +133,46 @@ void writeFile(String data) {
 
 
 byte[] safeDownloadHubFile(String fileName) {
-    int maxRetries = 3
-
-    for (int retryCount in 0..<maxRetries) {
+    for (int i = 1; i <= 3; i++) {
         try {
             return downloadHubFile(fileName)
-        } catch (Exception e) {
-            if (retryCount < maxRetries) {
-                logDebug "Could not read from $fileName: ${e.message}"
-                logWarn "Retrying download of $fileName... Attempt ${retryCount}"
-                pauseExecution(500)
-            } else {
-                logError "Failed to download $fileName after ${maxRetries} attempts"
-                throw e
-            }
+        } catch (AccessDeniedException ex) {
+            log.warn "Failed to download ${fileName}: ${ex.message}. Retrying (${i} / 3) ..."
+            pauseExecution(500)
         }
     }
 
-    return byteArray
+    log.error "Failed to download ${fileName} after 3 attempts"
+    return null
 }
 
 
 void safeUploadHubFile(String fileName, byte[] bytes) {
-    int maxRetries = 3
-
-    for (int retryCount in 0..<maxRetries) {
+    for (int i = 1; i <= 3; i++) {
         try {
             uploadHubFile(fileName, bytes)
             return
-        } catch (Exception e) {
-            if (retryCount < maxRetries) {
-                logDebug "Could not write to $fileName: ${e.message}"
-                logWarn "Retrying upload of $fileName... Attempt ${retryCount}"
-                pauseExecution(500)
-            } else {
-                logError "Failed to upload $fileName after ${maxRetries} attempts - possible data loss"
-                throw e
-            }
+        } catch (AccessDeniedException ex) {
+            log.warn "Failed to upload ${fileName}: ${ex.message}. Retrying (${i} / 3) ..."
+            pauseExecution(500)
         }
     }
+
+    log.error "Failed to upload ${fileName} after 3 attempts - possible data loss"
+}
+
+void safeDeleteHubFile(String fileName) {
+    for (int i = 1; i <= 3; i++) {
+        try {
+            deleteHubFile(fileName)
+            return
+        } catch (AccessDeniedException ex) {
+            log.warn "Failed to delete ${fileName}: ${ex.message}. Retrying (${i} / 3) ..."
+            pauseExecution(500)
+        }
+    }
+
+    log.error "Failed to delete ${fileName} after 3 attempts"
 }
 
 List getDeviceAttributes(DeviceWrapper device) {
