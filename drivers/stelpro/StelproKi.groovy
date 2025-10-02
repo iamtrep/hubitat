@@ -48,8 +48,10 @@ metadata {
         command "eco"
         command "testPowerConfigReport"
 
-        fingerprint profileId: "0104", endpointId: "19", inClusters: "0000, 0003, 0004, 0201, 0204", outClusters: "0402", manufacturer: "Stelpro", model: "STZB402+", deviceJoinName: "Stelpro Ki ZigBee Thermostat"
-        fingerprint profileId: "0104", endpointId: "19", inClusters: "0000, 0003, 0004, 0201, 0204", outClusters: "0402", manufacturer: "Stelpro", model: "ST218", deviceJoinName: "Stelpro ORLÉANS Convector"
+        fingerprint profileId: "0104", endpointId: "19", inClusters: "0000, 0003, 0004, 0201, 0204", outClusters: "0402",
+            manufacturer: "Stelpro", model: "STZB402+", deviceJoinName: "Stelpro Ki ZigBee Thermostat"
+        fingerprint profileId: "0104", endpointId: "19", inClusters: "0000, 0003, 0004, 0201, 0204", outClusters: "0402",
+            manufacturer: "Stelpro", model: "ST218", deviceJoinName: "Stelpro ORLÉANS Convector"
     }
 
     preferences {
@@ -74,8 +76,8 @@ import groovy.transform.Field
 @Field static final Map constKeypadLockoutModes = [ "Yes": 0x01, "No": 0x00 ]
 
 
-def testPowerConfigReport() {
-    def cmds = []
+List<String> testPowerConfigReport() {
+    List<String> cmds = []
     cmds += zigbee.configureReporting(0x0B04, 0x050B, DataType.INT16, 1, 3600, 30) // Active power reporting
     logWarn(cmds)
 }
@@ -83,11 +85,11 @@ def testPowerConfigReport() {
 
 // Device installation
 
-def installed() {
+void installed() {
     // called when device is first created with this driver
 }
 
-def updated() {
+List<String> updated() {
     // called when preferences are saved.
     def lockmode = constKeypadLockoutModes[prefKeypadLockout]
     if (lockmode != null) {
@@ -102,7 +104,7 @@ def updated() {
     runIn(1800, logsOff, [overwrite: true, misfire: "ignore"])
 }
 
-def uninstalled() {
+void uninstalled() {
     // called when device is removed
     try {
         unschedule()
@@ -110,6 +112,158 @@ def uninstalled() {
     catch (e)
     {
         logError "unschedule() threw an exception ${e}"
+    }
+}
+
+// Capabilities
+
+void configure() {
+    // automatically turn off debug logs after 30 minutes
+    runIn(1800,logsOff, [overwrite: true, misfire: "ignore"])
+
+    // Set supported modes
+    sendEvent(name: "supportedThermostatFanModes", value: constSupportedFanModes)
+    sendEvent(name: "supportedThermostatModes", value: constSupportedThermostatModes)
+
+    // Set unused default values (for Google Home Integration)
+    sendEvent(name: "coolingSetpoint", value:getTemperature("0BB8")) // 0x0BB8 =  30 Celsius
+    sendEvent(name: "thermostatFanMode", value:"auto")
+    updateDataValue("lastRunningMode", "heat") // heat is the only compatible mode for this device
+
+     //reporting: cluster, attribute, DataType, minReportInterval (s), maxReportInterval (s), minChange (int)
+    def cmds = []
+
+    // From original ST driver. Binding to Thermostat cluster with endpoints reversed.   Not clear why this is needed.
+    cmds += "zdo bind 0x${device.deviceNetworkId} 1 0x019 0x201 {${device.zigbeeId}} {}"
+    cmds += "delay 200"
+
+    // Thermostat cluster
+    cmds += zigbee.configureReporting(0x201, 0x0000, DataType.INT16, 10, 600, 50)                  // local temperature
+    cmds += zigbee.configureReporting(0x201, 0x0008, DataType.UINT8, 10, 900, 5)                   // PI heating demand
+    cmds += zigbee.configureReporting(0x201, 0x0012, DataType.INT16, 1, 0, 50)                     // occupied heat setpoint
+    cmds += zigbee.configureReporting(0x201, 0x001C, DataType.ENUM8, 1, 0, 1)                      // system mode
+    cmds += zigbee.configureReporting(0x201, 0x401C, DataType.ENUM8, 1, 0, 1, [mfgCode: "0x1185"]) // manufacturer specific setpoint mode
+
+    // Thermostat UI Config cluster
+    cmds += zigbee.configureReporting(0x204, 0x0000, DataType.ENUM8, 1, 0)                         // temperature display mode
+    cmds += zigbee.configureReporting(0x204, 0x0001, DataType.ENUM8, 1, 0)                         // keypad lockout
+
+    sendZigbeeCommands(cmds) // Submit zigbee commands
+
+    refresh()
+}
+
+void refresh() {
+    logWarn "refresh called"
+    def cmds = []
+
+    cmds += zigbee.readAttribute(0x201, 0x0000)                      // Local Temperature
+    cmds += zigbee.readAttribute(0x201, 0x0008)                      // PI Heating State
+    cmds += zigbee.readAttribute(0x201, 0x0012)                      // Heat Setpoint
+    cmds += zigbee.readAttribute(0x201, 0x001C)                      // System Mode
+    cmds += zigbee.readAttribute(0x201, 0x401C, [mfgCode: "0x1185"]) // Manufacturer-specific System Mode
+
+    cmds += zigbee.readAttribute(0x204, 0x0000)                      // Temperature Display Mode
+    cmds += zigbee.readAttribute(0x204, 0x0001)                      // Keypad Lockout
+
+    sendZigbeeCommands(cmds) // Submit zigbee commands
+}
+
+void off() {
+    def cmds = []
+    cmds += zigbee.writeAttribute(0x201, 0x001C, 0x30, 0)
+    sendZigbeeCommands(cmds)
+}
+
+void heat() {
+    def cmds = []
+    cmds += zigbee.writeAttribute(0x201, 0x001C, 0x30, 04, [:], 1000) // MODE
+    cmds += zigbee.writeAttribute(0x201, 0x401C, 0x30, 04, [mfgCode: "0x1185"]) // SETPOINT MODE
+    sendZigbeeCommands(cmds)
+}
+
+void eco() {
+    def cmds = []
+    cmds += zigbee.writeAttribute(0x201, 0x001C, 0x30, 04, [:], 1000) // MODE
+    cmds += zigbee.writeAttribute(0x201, 0x401C, 0x30, 05, [mfgCode: "0x1185"]) // SETPOINT MODE
+    sendZigbeeCommands(cmds)
+}
+
+void cool() {
+    logInfo "cool mode is not available for this device. => Defaulting to off mode instead."
+    off()
+}
+
+void auto() {
+    logInfo "auto mode is not available for this device. => Defaulting to heat mode instead."
+    heat()
+}
+
+void emergencyHeat() {
+    eco()
+}
+
+void fanAuto() {
+    logInfo "fanAuto mode is not available for this device"
+}
+
+void fanCirculate(){
+    logInfo "fanCirculate mode is not available for this device"
+}
+
+void fanOn(){
+    logInfo "fanOn mode is not available for this device"
+}
+
+void setSchedule(JSON_OBJECT){
+    logInfo "setSchedule is not available for this device"
+}
+
+void setThermostatFanMode(fanmode){
+    logInfo "setThermostatFanMode is not available for this device"
+}
+
+void setHeatingSetpoint(preciseDegrees) {
+    if (preciseDegrees == null) {
+        logError("setHeatingSetpoint() called with null value")
+        return
+    }
+
+    def temperatureScale = getTemperatureScale()
+    def degrees = new BigDecimal(preciseDegrees).setScale(1, BigDecimal.ROUND_HALF_UP)
+
+    logDebug "setHeatingSetpoint(${degrees} ${temperatureScale})"
+
+    def celsius = (temperatureScale == "C") ? degrees as Float : (fahrenheitToCelsius(degrees) as Float).round(2)
+    int celsius100 = Math.round(celsius * 100)
+
+    def cmds = []
+    cmds += zigbee.writeAttribute(0x201, 0x0012, 0x29, celsius100) // Write Heat Setpoint
+    cmds += refresh()
+    sendZigbeeCommands(cmds)
+}
+
+void setCoolingSetpoint(degrees) {
+    logInfo "setCoolingSetpoint is not available for this device"
+}
+
+void setThermostatMode(String value) {
+    switch (value) {
+        case "heat":
+        case "auto":
+            heat()
+            break
+
+        case "emergency heat":
+        case "eco":
+            eco()
+            break
+
+        case "cool":
+        case "off":
+        default:
+            off()
+            break
     }
 }
 
@@ -279,156 +433,9 @@ private parseAttributeReport(descMap) {
     return result
 }
 
-// Capabilities
-
-def configure() {
-    // automatically turn off debug logs after 30 minutes
-    runIn(1800,logsOff, [overwrite: true, misfire: "ignore"])
-
-    // Set supported modes
-    sendEvent(name: "supportedThermostatFanModes", value: constSupportedFanModes)
-    sendEvent(name: "supportedThermostatModes", value: constSupportedThermostatModes)
-
-    // Set unused default values (for Google Home Integration)
-    sendEvent(name: "coolingSetpoint", value:getTemperature("0BB8")) // 0x0BB8 =  30 Celsius
-    sendEvent(name: "thermostatFanMode", value:"auto")
-    updateDataValue("lastRunningMode", "heat") // heat is the only compatible mode for this device
-
-     //reporting: cluster, attribute, DataType, minReportInterval (s), maxReportInterval (s), minChange (int)
-    def cmds = []
-
-    // From original ST driver. Binding to Thermostat cluster with endpoints reversed.   Not clear why this is needed.
-    cmds += "zdo bind 0x${device.deviceNetworkId} 1 0x019 0x201 {${device.zigbeeId}} {}"
-    cmds += "delay 200"
-
-    // Thermostat cluster
-    cmds += zigbee.configureReporting(0x201, 0x0000, DataType.INT16, 10, 600, 50)                  // local temperature
-    cmds += zigbee.configureReporting(0x201, 0x0008, DataType.UINT8, 10, 900, 5)                   // PI heating demand
-    cmds += zigbee.configureReporting(0x201, 0x0012, DataType.INT16, 1, 0, 50)                     // occupied heat setpoint
-    cmds += zigbee.configureReporting(0x201, 0x001C, DataType.ENUM8, 1, 0, 1)                      // system mode
-    cmds += zigbee.configureReporting(0x201, 0x401C, DataType.ENUM8, 1, 0, 1, [mfgCode: "0x1185"]) // manufacturer specific setpoint mode
-
-    // Thermostat UI Config cluster
-    cmds += zigbee.configureReporting(0x204, 0x0000, DataType.ENUM8, 1, 0)                         // temperature display mode
-    cmds += zigbee.configureReporting(0x204, 0x0001, DataType.ENUM8, 1, 0)                         // keypad lockout
-
-    if (cmds)
-        sendZigbeeCommands(cmds) // Submit zigbee commands
-
-    refresh()
-}
-
-def refresh() {
-    logWarn "refresh called"
-    def cmds = []
-
-    cmds += zigbee.readAttribute(0x201, 0x0000)                      // Local Temperature
-    cmds += zigbee.readAttribute(0x201, 0x0008)                      // PI Heating State
-    cmds += zigbee.readAttribute(0x201, 0x0012)                      // Heat Setpoint
-    cmds += zigbee.readAttribute(0x201, 0x001C)                      // System Mode
-    cmds += zigbee.readAttribute(0x201, 0x401C, [mfgCode: "0x1185"]) // Manufacturer-specific System Mode
-
-    cmds += zigbee.readAttribute(0x204, 0x0000)                      // Temperature Display Mode
-    cmds += zigbee.readAttribute(0x204, 0x0001)                      // Keypad Lockout
-
-    if (cmds)
-        sendZigbeeCommands(cmds) // Submit zigbee commands
-}
-
-def off() {
-    def cmds = []
-    cmds += zigbee.writeAttribute(0x201, 0x001C, 0x30, 0)
-    sendZigbeeCommands(cmds)
-}
-
-def heat() {
-    def cmds = []
-    cmds += zigbee.writeAttribute(0x201, 0x001C, 0x30, 04, [:], 1000) // MODE
-    cmds += zigbee.writeAttribute(0x201, 0x401C, 0x30, 04, [mfgCode: "0x1185"]) // SETPOINT MODE
-    sendZigbeeCommands(cmds)
-}
-
-def eco() {
-    def cmds = []
-    cmds += zigbee.writeAttribute(0x201, 0x001C, 0x30, 04, [:], 1000) // MODE
-    cmds += zigbee.writeAttribute(0x201, 0x401C, 0x30, 05, [mfgCode: "0x1185"]) // SETPOINT MODE
-    sendZigbeeCommands(cmds)
-}
-
-def cool() {
-    logInfo "cool mode is not available for this device. => Defaulting to off mode instead."
-    return off()
-}
-
-def auto() {
-    logInfo "auto mode is not available for this device. => Defaulting to heat mode instead."
-    return heat()
-}
-
-def emergencyHeat() {
-    return eco()
-}
-
-def fanAuto() {
-    logInfo "fanAuto mode is not available for this device"
-}
-
-def fanCirculate(){
-    logInfo "fanCirculate mode is not available for this device"
-}
-
-def fanOn(){
-    logInfo "fanOn mode is not available for this device"
-}
-
-def setSchedule(JSON_OBJECT){
-    logInfo "setSchedule is not available for this device"
-}
-
-def setThermostatFanMode(fanmode){
-    logInfo "setThermostatFanMode is not available for this device"
-}
-
-def setHeatingSetpoint(preciseDegrees) {
-    if (preciseDegrees != null) {
-        def temperatureScale = getTemperatureScale()
-        def degrees = new BigDecimal(preciseDegrees).setScale(1, BigDecimal.ROUND_HALF_UP)
-
-        logDebug "setHeatingSetpoint(${degrees} ${temperatureScale})"
-
-        def celsius = (temperatureScale == "C") ? degrees as Float : (fahrenheitToCelsius(degrees) as Float).round(2)
-        int celsius100 = Math.round(celsius * 100)
-
-        def cmds = []
-        cmds += zigbee.writeAttribute(0x201, 0x0012, 0x29, celsius100) //Write Heat Setpoint
-        sendZigbeeCommands(cmds)
-    }
-}
-
-def setCoolingSetpoint(degrees) {
-    logInfo "setCoolingSetpoint is not available for this device"
-}
-
-def setThermostatMode(String value) {
-    switch (value) {
-        case "heat":
-        case "auto":
-            return heat()
-
-        case "emergency heat":
-        case "eco":
-            return eco()
-
-        case "cool":
-        case "off":
-        default:
-            return off()
-    }
-}
-
 // Callback helpers
 
-def logsOff() {
+void logsOff() {
     logWarn "debug logging disabled..."
     device.updateSetting("logEnable",[value:"false",type:"bool"])
     device.updateSetting("traceEnable",[value:"false",type:"bool"])
@@ -453,7 +460,6 @@ private getTemperature(value) {
     }
 }
 
-
 // Due to a bug in this model's firmware, sometimes we don't get
 // an updated operating state; so we need some special logic to verify the accuracy.
 // TODO: Add firmware version check when change versions are known
@@ -475,7 +481,7 @@ private getTemperature(value) {
 /**
  * Check if we should request the operating state, and request it if so
  */
-private handleOperatingStateBugFix() {
+private void handleOperatingStateBugFix() {
     if (device.currentValue("thermostatMode") == "off")
         return
 
@@ -528,23 +534,23 @@ private validateOperatingStateBugFix(map) {
 
 // Logging helpers
 
-private logTrace(message) {
+private void logTrace(String message) {
     // No trace facility.  Use debug.
     if (traceEnable) log.debug("${device} : ${message}")
 }
 
-private logDebug(message) {
+private void logDebug(String message) {
     if (logEnable) log.debug("${device} : ${message}")
 }
 
-private logInfo(message) {
+private void logInfo(String message) {
     if (txtEnable) log.info("${device} : ${message}")
 }
 
-private logWarn(message) {
+private void logWarn(String message) {
     log.warn("${device} : ${message}")
 }
 
-private logError(message) {
+private void logError(String message) {
     log.error("${device} : ${message}")
 }
