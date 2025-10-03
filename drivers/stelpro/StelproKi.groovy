@@ -98,7 +98,7 @@ List<String> updated() {
         cmds+= refresh()
         return cmds
     } else {
-        logInfo "invalid lock mode ${settings.lock}"
+        logWarn "invalid lock mode ${prefKeypadLockout}"
     }
 
     runIn(1800, logsOff, [overwrite: true, misfire: "ignore"])
@@ -154,7 +154,8 @@ void configure() {
 }
 
 void refresh() {
-    logWarn "refresh called"
+    logDebug "refresh()"
+
     def cmds = []
 
     cmds += zigbee.readAttribute(0x201, 0x0000)                      // Local Temperature
@@ -190,12 +191,12 @@ void eco() {
 }
 
 void cool() {
-    logInfo "cool mode is not available for this device. => Defaulting to off mode instead."
+    logWarn "cool mode is not available for this device. => Defaulting to off mode instead."
     off()
 }
 
 void auto() {
-    logInfo "auto mode is not available for this device. => Defaulting to heat mode instead."
+    logWarn "auto mode is not available for this device. => Defaulting to heat mode instead."
     heat()
 }
 
@@ -204,23 +205,23 @@ void emergencyHeat() {
 }
 
 void fanAuto() {
-    logInfo "fanAuto mode is not available for this device"
+    logWarn "fanAuto mode is not available for this device"
 }
 
 void fanCirculate(){
-    logInfo "fanCirculate mode is not available for this device"
+    logWarn "fanCirculate mode is not available for this device"
 }
 
 void fanOn(){
-    logInfo "fanOn mode is not available for this device"
+    logWarn "fanOn mode is not available for this device"
 }
 
 void setSchedule(JSON_OBJECT){
-    logInfo "setSchedule is not available for this device"
+    logWarn "setSchedule is not available for this device"
 }
 
 void setThermostatFanMode(fanmode){
-    logInfo "setThermostatFanMode is not available for this device"
+    logWarn "setThermostatFanMode is not available for this device"
 }
 
 void setHeatingSetpoint(preciseDegrees) {
@@ -244,7 +245,7 @@ void setHeatingSetpoint(preciseDegrees) {
 }
 
 void setCoolingSetpoint(degrees) {
-    logInfo "setCoolingSetpoint is not available for this device"
+    logWarn "setCoolingSetpoint is not available for this device"
 }
 
 void setThermostatMode(String value) {
@@ -436,7 +437,7 @@ private parseAttributeReport(descMap) {
 // Callback helpers
 
 void logsOff() {
-    logWarn "debug logging disabled..."
+    logInfo "debug logging disabled..."
     device.updateSetting("logEnable",[value:"false",type:"bool"])
     device.updateSetting("traceEnable",[value:"false",type:"bool"])
 }
