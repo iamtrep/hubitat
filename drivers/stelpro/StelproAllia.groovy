@@ -100,14 +100,12 @@ metadata {
 
 // Install/Configure/Refresh
 
-def installed() {
+List<String> installed() {
     logInfo('installed()')
-    state.driverVersion = constDriverVersion
     configure()
-    refresh() // TODO - shouldn't be needed
 }
 
-def initialize() {
+List<String> initialize() {
     logInfo('initialize()')
     if (state.driverVersion != constDriverVersion) {
         logWarn "New/different driver installed since last configure()"
@@ -115,16 +113,16 @@ def initialize() {
     refresh()
 }
 
-def updated() {
+List<String> updated() {
     logInfo('updated()')
     configure()
 }
 
-def uninstalled() {
+void uninstalled() {
     logInfo('uninstalled()')
 }
 
-def configure(){
+List<String> configure(){
     log.warn "configure..."
     state.driverVersion = constDriverVersion
 
@@ -149,7 +147,7 @@ def configure(){
 	sendEvent(name: "supportedThermostatModes", value: JsonOutput.toJson(["heat", "off"]))
     //setThermostatMode("heat")
 
-    def cmds = []
+    List<String> cmds = []
 
     //bindings
     cmds += "zdo bind 0x${device.deviceNetworkId} 1 0x019 0x201 {${device.zigbeeId}} {}" // TODO: why is this needed?
@@ -171,7 +169,7 @@ def configure(){
 
 def refresh() {
     log.info("refresh")
-    def cmds = []
+    List<String> cmds = []
 
     cmds += zigbee.readAttribute(0x201, 0x0000) // Local Temperature
     cmds += zigbee.readAttribute(0x201, 0x0008) // PI Heating State
@@ -192,48 +190,48 @@ def refresh() {
 
 // Capabilities
 
-def auto() {
+void auto() {
     logWarn('auto(): mode is not available for this device. => Defaulting to heat mode instead.')
 }
 
-def cool() {
+void cool() {
     logWarn('cool(): mode is not available for this device. => Defaulting to heat mode instead.')
 }
 
-def emergencyHeat() {
+void emergencyHeat() {
     logWarn('emergencyHeat(): mode is not available for this device. => Defaulting to heat mode instead.')
 }
 
-def fanAuto() {
+void fanAuto() {
     logWarn('fanAuto(): mode is not available for this device')
 }
 
-def fanCirculate() {
+void fanCirculate() {
     logWarn('fanCirculate(): mode is not available for this device')
 }
 
-def fanOn() {
+void fanOn() {
     logWarn('fanOn(): mode is not available for this device')
 }
 
-def setCoolingSetpoint(degrees) {
+void setCoolingSetpoint(degrees) {
     logWarn("setCoolingSetpoint(${degrees}): is not available for this device")
 }
 
-def heat() {
+void heat() {
     setThermostatMode("heat")
 }
 
-def eco() {
+void eco() {
     logWarn("eco mode is not available for this device")
 }
 
-def off() {
+void off() {
     setThermostatMode("off")
 }
 
 
-def setThermostatMode(String thermostatMode) {
+void setThermostatMode(String thermostatMode) {
     // This thermostat model does not honor cluster 0x0201 attribute 0x001C (or vendor-specific 0x401C) for setting the system mode,
     // therefore the off state is faked by setting the thermostat's setpoint to constHeatOffSetpoint (5 degrees C)
     // The driver's setpoint attributes remain unchanged while the thermostat is "off", so when turned back to "heat" mode,
@@ -280,7 +278,7 @@ void setHeatingSetpoint(BigDecimal preciseDegrees) {
 
         if (state.thermostatIsOn) {
             // Thermostat is "on".  Update the thermostat device's setpoint.
-            def cmds = []
+            List<String> cmds = []
             cmds += zigbee.writeAttribute(0x201, 0x0012, 0x29, Math.round(celsius * 100) as int)
             cmds += zigbee.readAttribute(0x201, 0x0012)
             sendZigbeeCommands(cmds)
@@ -312,8 +310,8 @@ void decreaseHeatSetpoint() {
 }
 
 
-def setKeypadLockoutMode(lockoutMode) {
-    def cmds = []
+void setKeypadLockoutMode(String lockoutMode) {
+    List<String> cmds = []
 
     switch (lockoutMode) {
         case 'lock':
@@ -334,7 +332,7 @@ def setKeypadLockoutMode(lockoutMode) {
 }
 
 
-def setOutdoorTemperature(BigDecimal preciseDegrees) {
+void setOutdoorTemperature(BigDecimal preciseDegrees) {
     if (preciseDegrees != null) {
         BigDecimal degrees = preciseDegrees.setScale(1, BigDecimal.ROUND_HALF_UP)
 
@@ -343,7 +341,7 @@ def setOutdoorTemperature(BigDecimal preciseDegrees) {
         Float celsius = temperatureScaleIsCelsius() ? degrees as Float : (fahrenheitToCelsius(degrees) as Float).round(2)
         int celsiusHundredths = Math.round(celsius * 100)
 
-        def cmds = []
+        List<String> cmds = []
         cmds += zigbee.writeAttribute(0x201, 0x4001, 0x29, celsiusHundredths)
         cmds += zigbee.readAttribute(0x201, 0x4001)
         sendZigbeeCommands(cmds)
@@ -590,29 +588,28 @@ private Integer getTemperature(String value) {
 }
 
 private void sendZigbeeCommands(cmds) {
-    def hubAction = new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE)
-    sendHubCommand(hubAction)
+    sendHubCommand(new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE))
 }
 
 // logging helpers
 
-private void logTrace(message) {
+private void logTrace(String message) {
     if (traceEnable) log.trace("${device} : ${message}")
 }
 
-private logDebug(message) {
+private void logDebug(String message) {
     if (debugEnable) log.debug("${device.displayName} : ${message}")
 }
 
-private logInfo(message) {
+private void logInfo(String message) {
     if (infoEnable) log.info("${device.displayName} : ${message}")
 }
 
-private logWarn(message) {
+private void logWarn(String message) {
     log.warn("${device.displayName} : ${message}")
 }
 
-private logError(message) {
+private void logError(String message) {
     log.error("${device.displayName} : ${message}")
 }
 
