@@ -29,8 +29,6 @@
  *      Updates/refactoring by iamtrep
  *      Operating state bug fix code from https://github.com/SmartThingsCommunity/SmartThingsPublic (author unknown)
  *
- *  URL for this file : TBD
- *
  */
 
 metadata {
@@ -38,7 +36,7 @@ metadata {
         name: "Stelpro Ki ZigBee Thermostat",
         namespace: "PhilC",
         author: "PhilC",
-        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/stelpro/StelproKi.groovy"
+        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/stelpro/StelproKi.groovy"
     ) {
         capability "Configuration"
         capability "Refresh"
