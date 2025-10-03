@@ -53,11 +53,12 @@ metadata {
     }
 
     preferences {
-        input("prefKeypadLockout", "enum", title: "Do you want to lock your thermostat's physical keypad?", options: ["No", "Yes"], defaultValue: "No", required: true, displayDuringSetup: false)
+        input name: "prefKeypadLockout", type: "enum", title: "Do you want to lock your thermostat's physical keypad?",
+            options: ["No", "Yes"], defaultValue: "No", required: true
         input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
         input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: false, required: true
         if (logEnable) {
-            input(name: "traceEnable", type: "bool", title: "Enable trace logging info (for development purposes)", defaultValue: false)
+            input name: "traceEnable", type: "bool", title: "Enable trace logging info (for development purposes)", defaultValue: false
         }
     }
 }
@@ -78,6 +79,7 @@ List<String> testPowerConfigReport() {
     List<String> cmds = []
     cmds += zigbee.configureReporting(0x0B04, 0x050B, DataType.INT16, 1, 3600, 30) // Active power reporting
     logWarn(cmds)
+    return cmds
 }
 
 
@@ -91,7 +93,7 @@ List<String> updated() {
     // called when preferences are saved.
     def lockmode = constKeypadLockoutModes[prefKeypadLockout]
     if (lockmode != null) {
-        def cmds = []
+        List<String> cmds = []
         cmds+= zigbee.writeAttribute(0x204, 0x01, 0x30, lockmode)   //Write Lock Mode
         cmds+= refresh()
         return cmds
@@ -121,7 +123,7 @@ void configure() {
     updateDataValue("lastRunningMode", "heat") // heat is the only compatible mode for this device
 
      //reporting: cluster, attribute, DataType, minReportInterval (s), maxReportInterval (s), minChange (int)
-    def cmds = []
+    List<String> cmds = []
 
     // From original ST driver. Binding to Thermostat cluster with endpoints reversed.   Not clear why this is needed.
     cmds += "zdo bind 0x${device.deviceNetworkId} 1 0x019 0x201 {${device.zigbeeId}} {}"
@@ -146,7 +148,7 @@ void configure() {
 void refresh() {
     logDebug "refresh()"
 
-    def cmds = []
+    List<String> cmds = []
 
     cmds += zigbee.readAttribute(0x201, 0x0000)                      // Local Temperature
     cmds += zigbee.readAttribute(0x201, 0x0008)                      // PI Heating State
@@ -161,20 +163,20 @@ void refresh() {
 }
 
 void off() {
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.writeAttribute(0x201, 0x001C, 0x30, 0)
     sendZigbeeCommands(cmds)
 }
 
 void heat() {
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.writeAttribute(0x201, 0x001C, 0x30, 04, [:], 1000) // MODE
     cmds += zigbee.writeAttribute(0x201, 0x401C, 0x30, 04, [mfgCode: "0x1185"]) // SETPOINT MODE
     sendZigbeeCommands(cmds)
 }
 
 void eco() {
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.writeAttribute(0x201, 0x001C, 0x30, 04, [:], 1000) // MODE
     cmds += zigbee.writeAttribute(0x201, 0x401C, 0x30, 05, [mfgCode: "0x1185"]) // SETPOINT MODE
     sendZigbeeCommands(cmds)
@@ -220,15 +222,15 @@ void setHeatingSetpoint(preciseDegrees) {
         return
     }
 
-    def temperatureScale = getTemperatureScale()
-    def degrees = new BigDecimal(preciseDegrees).setScale(1, BigDecimal.ROUND_HALF_UP)
+    String temperatureScale = getTemperatureScale()
+    BigDecimal degrees = new BigDecimal(preciseDegrees).setScale(1, BigDecimal.ROUND_HALF_UP)
 
     logDebug "setHeatingSetpoint(${degrees} ${temperatureScale})"
 
-    def celsius = (temperatureScale == "C") ? degrees as Float : (fahrenheitToCelsius(degrees) as Float).round(2)
+    Float celsius = (temperatureScale == "C") ? degrees as Float : (fahrenheitToCelsius(degrees) as Float).round(2)
     int celsius100 = Math.round(celsius * 100)
 
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.writeAttribute(0x201, 0x0012, 0x29, celsius100) // Write Heat Setpoint
     cmds += refresh()
     sendZigbeeCommands(cmds)
@@ -338,7 +340,7 @@ private parseAttributeReport(descMap) {
                     map = validateOperatingStateBugFix(map)
 				    // Check to see if this was changed, if so make sure we have the correct heating setpoint
 				    if (map.data?.correctedValue) {
-                        def cmds = []
+                        List<String> cmds = []
                         cmds += zigbee.readAttribute(0x0201, 0x0012)
 					    sendZigbeeCommands(cmds)
 				    }
@@ -437,8 +439,7 @@ void logsOff() {
 // Private methods
 
 private void sendZigbeeCommands(cmds) {
-    def hubAction = new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE)
-    sendHubCommand(hubAction)
+    sendHubCommand(new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE))
 }
 
 private getTemperature(value) {
@@ -478,8 +479,8 @@ private void handleOperatingStateBugFix() {
     if (device.currentValue("thermostatMode") == "off")
         return
 
-    def currOpState = device.currentValue("thermostatOperatingState")
-    def cmds = []
+    String currOpState = device.currentValue("thermostatOperatingState")
+    List<String> cmds = []
     cmds += zigbee.readAttribute(0x0204, 0x0008) // PI heat demand
 
     if (state.rawSetpoint != null && state.rawTemp != null) {
