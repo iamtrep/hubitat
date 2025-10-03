@@ -105,14 +105,6 @@ List<String> updated() {
 }
 
 void uninstalled() {
-    // called when device is removed
-    try {
-        unschedule()
-    }
-    catch (e)
-    {
-        logError "unschedule() threw an exception ${e}"
-    }
 }
 
 // Capabilities
@@ -371,6 +363,7 @@ private parseAttributeReport(descMap) {
                 case "001C": // mode
                     if (descMap.value == "04") {
                         logDebug "descMap.value == \"04\". Ignore and wait for SETPOINT MODE"
+                        return null
                     } else {
                         map.name = "thermostatMode"
                         map.value = constModeMap[descMap.value]
@@ -381,6 +374,7 @@ private parseAttributeReport(descMap) {
                 case "401C": // setpoint mode
                     if (descMap.value == "00") {
                         logDebug "descMap.value == \"00\". Ignore and wait for MODE"
+                        return null
                     } else {
                         map.name = "thermostatMode"
                         map.value = constModeMap[descMap.value]
