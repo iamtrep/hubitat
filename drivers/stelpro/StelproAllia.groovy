@@ -329,6 +329,7 @@ def setKeypadLockoutMode(lockoutMode) {
             return
     }
 
+    cmds += zigbee.readAttribute(0x0204, 0x0001)
     sendZigbeeCommands(cmds)
 }
 

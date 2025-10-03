@@ -94,8 +94,8 @@ List<String> updated() {
     def lockmode = constKeypadLockoutModes[prefKeypadLockout]
     if (lockmode != null) {
         List<String> cmds = []
-        cmds+= zigbee.writeAttribute(0x204, 0x01, 0x30, lockmode)   //Write Lock Mode
-        cmds+= refresh()
+        cmds+= zigbee.writeAttribute(0x204, 0x01, 0x30, lockmode)   // Write Lock Mode
+        cmds+= zigbee.readAttribute(0x204, 0x01)
         return cmds
     } else {
         logWarn "invalid lock mode ${prefKeypadLockout}"
@@ -232,7 +232,7 @@ void setHeatingSetpoint(preciseDegrees) {
 
     List<String> cmds = []
     cmds += zigbee.writeAttribute(0x201, 0x0012, 0x29, celsius100) // Write Heat Setpoint
-    cmds += refresh()
+    cmds += zigbee.readAttribute(0x201, 0x0012)
     sendZigbeeCommands(cmds)
 }
 
