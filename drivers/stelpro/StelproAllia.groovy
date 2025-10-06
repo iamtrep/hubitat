@@ -530,7 +530,7 @@ private parseAttributeReport(descMap) {
         result = createEvent(map)
     } else {
         logDebug("Unhandled attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
-        logTrace(descMap)
+        logTrace("descMap: ${descMap}")
     }
 
     return result
