@@ -48,7 +48,6 @@ metadata {
         capability "Thermostat"
 
         command "eco"
-        command "testPowerConfigReport"
 
         fingerprint profileId: "0104", endpointId: "19", inClusters: "0000, 0003, 0004, 0201, 0204", outClusters: "0402",
             manufacturer: "Stelpro", model: "STZB402+", deviceJoinName: "Stelpro Ki ZigBee Thermostat"
@@ -613,13 +612,4 @@ private void logWarn(String message) {
 
 private void logError(String message) {
     log.error("${device} : ${message}")
-}
-
-// Test methods
-
-void testPowerConfigReport() {
-    List<String> cmds = []
-    cmds += zigbee.configureReporting(0x0B04, 0x050B, DataType.INT16, 1, 3600, 30) // Active power reporting
-    logWarn("${cmds}")
-    sendZigbeeCommands(cmds)
 }
