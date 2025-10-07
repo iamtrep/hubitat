@@ -91,8 +91,9 @@ void installed() {
 
 List<String> updated() {
     // called when preferences are saved.
-    def lockmode = constKeypadLockoutModes[prefKeypadLockout]
+    String lockmode = constKeypadLockoutModes[prefKeypadLockout]
     if (lockmode != null) {
+        logDebug("setting keypad lock mode to $lockmode (current value is ${device.currentValue("keypadLockout")})")
         List<String> cmds = []
         cmds+= zigbee.writeAttribute(0x204, 0x01, 0x30, lockmode)   // Write Lock Mode
         cmds+= zigbee.readAttribute(0x204, 0x01)
@@ -125,21 +126,26 @@ void configure() {
      //reporting: cluster, attribute, DataType, minReportInterval (s), maxReportInterval (s), minChange (int)
     List<String> cmds = []
 
-    // From original ST driver. Binding to Thermostat cluster with endpoints reversed.   Not clear why this is needed.
-    cmds += "zdo bind 0x${device.deviceNetworkId} 1 0x019 0x201 {${device.zigbeeId}} {}"
+    // From original ST driver. Binding to Thermostat cluster with endpoints reversed.   Not clear why this is needed,
+    // but the bind response is successful so let's leave it in.
+    cmds += "zdo bind 0x${device.deviceNetworkId} 0x01 0x19 0x201 {${device.zigbeeId}} {}"
     cmds += "delay 200"
 
     // Thermostat cluster
     cmds += zigbee.configureReporting(0x201, 0x0000, DataType.INT16, 10, 600, 50)                  // local temperature
     cmds += zigbee.configureReporting(0x201, 0x0008, DataType.UINT8, 10, 900, 5)                   // PI heating demand
     cmds += zigbee.configureReporting(0x201, 0x0012, DataType.INT16, 1, 0, 50)                     // occupied heat setpoint
-    cmds += zigbee.configureReporting(0x201, 0x001C, DataType.ENUM8, 1, 0, 1)                      // system mode
-    cmds += zigbee.configureReporting(0x201, 0x401C, DataType.ENUM8, 1, 0, 1, [mfgCode: "0x1185"]) // manufacturer specific setpoint mode
+
+//    cmds += zigbee.configureReporting(0x201, 0x001C, DataType.ENUM8, 1, 0, 1)                      // system mode
+//    cmds += zigbee.configureReporting(0x201, 0x401C, DataType.ENUM8, 1, 0, 1, [mfgCode: "0x1185"]) // manufacturer specific setpoint mode
+    cmds += zigbee.configureReporting(0x201, 0x001C, DataType.ENUM8, 1, 0)                      // system mode
+    cmds += zigbee.configureReporting(0x201, 0x401C, DataType.ENUM8, 1, 0, null, [mfgCode: "0x1185"]) // manufacturer specific setpoint mode
 
     // Thermostat UI Config cluster
     cmds += zigbee.configureReporting(0x204, 0x0000, DataType.ENUM8, 1, 0)                         // temperature display mode
     cmds += zigbee.configureReporting(0x204, 0x0001, DataType.ENUM8, 1, 0)                         // keypad lockout
 
+    logTrace("${cmds}")
     sendZigbeeCommands(cmds) // Submit zigbee commands
 
     refresh()
@@ -163,22 +169,30 @@ void refresh() {
 }
 
 void off() {
+    logDebug("thermostat commanded off (current value is ${device.currentValue("thermostatMode")})")
     List<String> cmds = []
     cmds += zigbee.writeAttribute(0x201, 0x001C, 0x30, 0)
+    cmds += zigbee.readAttribute(0x201, 0x001C)
     sendZigbeeCommands(cmds)
 }
 
 void heat() {
+    logDebug("thermostat commanded to heat (current value is ${device.currentValue("thermostatMode")})")
     List<String> cmds = []
     cmds += zigbee.writeAttribute(0x201, 0x001C, 0x30, 04, [:], 1000) // MODE
     cmds += zigbee.writeAttribute(0x201, 0x401C, 0x30, 04, [mfgCode: "0x1185"]) // SETPOINT MODE
+    cmds += zigbee.readAttribute(0x201, 0x001C)
+    cmds += zigbee.readAttribute(0x201, 0x401C, [mfgCode: "0x1185"])
     sendZigbeeCommands(cmds)
 }
 
 void eco() {
+    logDebug("thermostat commanded to eco (current value is ${device.currentValue("thermostatMode")})")
     List<String> cmds = []
     cmds += zigbee.writeAttribute(0x201, 0x001C, 0x30, 04, [:], 1000) // MODE
     cmds += zigbee.writeAttribute(0x201, 0x401C, 0x30, 05, [mfgCode: "0x1185"]) // SETPOINT MODE
+    cmds += zigbee.readAttribute(0x201, 0x001C)
+    cmds += zigbee.readAttribute(0x201, 0x401C, [mfgCode: "0x1185"])
     sendZigbeeCommands(cmds)
 }
 
@@ -225,7 +239,7 @@ void setHeatingSetpoint(preciseDegrees) {
     String temperatureScale = getTemperatureScale()
     BigDecimal degrees = new BigDecimal(preciseDegrees).setScale(1, BigDecimal.ROUND_HALF_UP)
 
-    logDebug "setHeatingSetpoint(${degrees} ${temperatureScale})"
+    logDebug "setHeatingSetpoint(${degrees} ${temperatureScale}) - current value is ${device.currentValue("heatingSetpoint")}"
 
     Float celsius = (temperatureScale == "C") ? degrees as Float : (fahrenheitToCelsius(degrees) as Float).round(2)
     int celsius100 = Math.round(celsius * 100)
@@ -283,7 +297,11 @@ def parse(String description) {
         logTrace("Unhandled ZDO command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     } else if (descMap.profileId == "0104" && descMap.clusterId != null) {
         // ZigBee Home Automation (ZHA) global command
-        logTrace("Unhandled ZHA global command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
+        if (true) { //descMap.commandInt == 0x04) {
+            parseAttributeResponse(descMap)
+        } else {
+            logTrace("Unhandled ZHA global command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
+        }
     } else {
         logWarn("Unhandled unknown command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     }
@@ -299,6 +317,11 @@ private parseAttributeReport(descMap) {
     // fingerprint : inClusters: "0000, 0003, 0004, 0201, 0204"
     //
     switch (descMap.cluster) {
+        case "0000": // Basic cluster
+        case "0003": // Identify cluster
+        case "0004": // Groups cluster
+			break
+
         case "0201":
             // Thermostat cluster
             switch (descMap.attrId) {
@@ -324,7 +347,7 @@ private parseAttributeReport(descMap) {
                             break
                     }
                     map.unit = getTemperatureScale()
-                    map.descriptionText = "Temperature is ${map.value}"
+                    map.descriptionText = "Temperature is ${map.value}${map.unit}"
                     handleOperatingStateBugFix()
                     break
 
@@ -355,7 +378,7 @@ private parseAttributeReport(descMap) {
                         map.value = getTemperature("01F4")  // 5 Celsius (minimum setpoint)
                     }
                     map.unit = getTemperatureScale()
-                    map.descriptionText = "Heating setpoint is ${map.value}"
+                    map.descriptionText = "Heating setpoint is ${map.value}${map.unit}"
                     sendEvent(name:"thermostatSetpoint", value:map.value, unit:map.unit, descriptionText:map.descriptionText)
                     handleOperatingStateBugFix()
                     break
@@ -363,23 +386,21 @@ private parseAttributeReport(descMap) {
                 case "001C": // mode
                     if (descMap.value == "04") {
                         logDebug "descMap.value == \"04\". Ignore and wait for SETPOINT MODE"
-                        return null
-                    } else {
-                        map.name = "thermostatMode"
-                        map.value = constModeMap[descMap.value]
-                        map.descriptionText = "Thermostat mode is set to ${map.value}"
+                        //return null // TODO why?
                     }
+                    map.name = "thermostatMode"
+                    map.value = constModeMap[descMap.value]
+                    map.descriptionText = "Thermostat mode is set to ${map.value}"
                     break
 
                 case "401C": // setpoint mode
                     if (descMap.value == "00") {
                         logDebug "descMap.value == \"00\". Ignore and wait for MODE"
-                        return null
-                    } else {
-                        map.name = "thermostatMode"
-                        map.value = constModeMap[descMap.value]
-                        map.descriptionText = "Thermostat mode is set to ${map.value}"
+                        //return null // TODO why?
                     }
+                    map.name = "thermostatMode"
+                    map.value = constModeMap[descMap.value]
+                    map.descriptionText = "Thermostat mode is set to ${map.value}"
                     break
 
                 default:
@@ -408,9 +429,6 @@ private parseAttributeReport(descMap) {
             }
             break
 
-        case "0000": // Basic cluster
-        case "0003": // Identify cluster
-        case "0004": // Groups cluster
         default:
             logTrace "Unhandled attribute report : cluster=${descMap.cluster} attrId=${descMap.attrId} value=${descMap.value}"
             break
@@ -421,6 +439,7 @@ private parseAttributeReport(descMap) {
     if (map) {
         result = createEvent(map)
         if (map.descriptionText && txtEnable) logInfo("${map.descriptionText}")
+        logDebug("event created: ${result}")
     } else {
         logTrace("Unhandled attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
     }
@@ -428,12 +447,28 @@ private parseAttributeReport(descMap) {
     return result
 }
 
+void parseAttributeResponse(descMap) {
+    switch (descMap.clusterInt) {
+        case 0x0201:
+        	logDebug("Received response for Thermostat cluster (${descMap.data}) ${descMap}")
+            break
+
+        case 0x0204:
+        	logDebug("Received response for Thermostat UI cluster (${descMap.data}) ${descMap}")
+            break
+
+        default:
+            logTrace("Unhandled response: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
+            break
+    }
+}
+
 // Callback helpers
 
 void logsOff() {
-    logInfo "debug logging disabled..."
-    device.updateSetting("logEnable",[value:"false",type:"bool"])
-    device.updateSetting("traceEnable",[value:"false",type:"bool"])
+    //logInfo "debug logging disabled..."
+    //device.updateSetting("logEnable",[value:"false",type:"bool"])
+    //device.updateSetting("traceEnable",[value:"false",type:"bool"])
 }
 
 // Private methods
