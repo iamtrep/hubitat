@@ -89,7 +89,7 @@ void uninstalled() {
 
 void updated() {
     // called when preferences are saved.
-    String lockmode = constKeypadLockoutModes[prefKeypadLockout]
+    Integer lockmode = constKeypadLockoutModes[prefKeypadLockout]
     if (lockmode != null) {
         logDebug("setting keypad lock mode to $lockmode (current value is ${device.currentValue("keypadLockout")})")
         List<String> cmds = []
