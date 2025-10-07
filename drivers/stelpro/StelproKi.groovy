@@ -93,7 +93,7 @@ void updated() {
     if (lockmode != null) {
         logDebug("setting keypad lock mode to $lockmode (current value is ${device.currentValue("keypadLockout")})")
         List<String> cmds = []
-        cmds+= zigbee.writeAttribute(0x204, 0x01, 0x30, lockmode)   // Write Lock Mode
+        cmds+= zigbee.writeAttribute(0x204, 0x01, 0x30, lockmode, [:], constReadbackDelay)   // Write Lock Mode
         cmds+= zigbee.readAttribute(0x204, 0x01)
         sendZigbeeCommands(cmds)
     } else {
@@ -175,7 +175,7 @@ void refresh() {
 void off() {
     logDebug("thermostat commanded off (current value is ${device.currentValue("thermostatMode")})")
     List<String> cmds = []
-    cmds += zigbee.writeAttribute(0x201, 0x001C, 0x30, 0)
+    cmds += zigbee.writeAttribute(0x201, 0x001C, 0x30, 0, [:], constReadbackDelay)
     cmds += zigbee.readAttribute(0x201, 0x001C)
     sendZigbeeCommands(cmds)
 }
