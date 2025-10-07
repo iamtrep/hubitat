@@ -31,6 +31,10 @@
  *
  */
 
+import groovy.transform.Field
+
+@Field static final String constCodeVersion = "0.0.5"
+
 metadata {
     definition (
         name: "Stelpro Ki ZigBee Thermostat",
@@ -66,21 +70,13 @@ metadata {
 
 // Constants
 
-import groovy.transform.Field
-
 @Field static final constSupportedFanModes = ["\"auto\""]
 @Field static final constSupportedThermostatModes = ["\"emergency heat\"", "\"heat\"", "\"off\""]
 
 @Field static final Map constModeMap = [ "00": "off", "04": "heat", "05": "eco" ]
 @Field static final Map constKeypadLockoutModes = [ "Yes": 0x01, "No": 0x00 ]
 
-
-List<String> testPowerConfigReport() {
-    List<String> cmds = []
-    cmds += zigbee.configureReporting(0x0B04, 0x050B, DataType.INT16, 1, 3600, 30) // Active power reporting
-    logWarn(cmds)
-    return cmds
-}
+@Field static final int constReadbackDelay = 500
 
 
 // Device installation
@@ -89,7 +85,10 @@ void installed() {
     // called when device is first created with this driver
 }
 
-List<String> updated() {
+void uninstalled() {
+}
+
+void updated() {
     // called when preferences are saved.
     String lockmode = constKeypadLockoutModes[prefKeypadLockout]
     if (lockmode != null) {
@@ -97,22 +96,31 @@ List<String> updated() {
         List<String> cmds = []
         cmds+= zigbee.writeAttribute(0x204, 0x01, 0x30, lockmode)   // Write Lock Mode
         cmds+= zigbee.readAttribute(0x204, 0x01)
-        return cmds
+        sendZigbeeCommands(cmds)
     } else {
         logWarn "invalid lock mode ${prefKeypadLockout}"
     }
 
-    runIn(1800, logsOff, [overwrite: true, misfire: "ignore"])
+    //runIn(1800, logsOff, [overwrite: true, misfire: "ignore"])
 }
 
-void uninstalled() {
+void deviceTypeUpdated() {
+    logWarn("device type change detected")
+    configure()
 }
 
 // Capabilities
 
 void configure() {
+    logTrace("configure()")
+
+    state.clear()
+    state.lastTx = 0
+    state.lastRx = 0
+    state.codeVersion = constCodeVersion
+
     // automatically turn off debug logs after 30 minutes
-    runIn(1800,logsOff, [overwrite: true, misfire: "ignore"])
+    //runIn(1800,logsOff, [overwrite: true, misfire: "ignore"])
 
     // Set supported modes
     sendEvent(name: "supportedThermostatFanModes", value: constSupportedFanModes)
@@ -135,9 +143,6 @@ void configure() {
     cmds += zigbee.configureReporting(0x201, 0x0000, DataType.INT16, 10, 600, 50)                  // local temperature
     cmds += zigbee.configureReporting(0x201, 0x0008, DataType.UINT8, 10, 900, 5)                   // PI heating demand
     cmds += zigbee.configureReporting(0x201, 0x0012, DataType.INT16, 1, 0, 50)                     // occupied heat setpoint
-
-//    cmds += zigbee.configureReporting(0x201, 0x001C, DataType.ENUM8, 1, 0, 1)                      // system mode
-//    cmds += zigbee.configureReporting(0x201, 0x401C, DataType.ENUM8, 1, 0, 1, [mfgCode: "0x1185"]) // manufacturer specific setpoint mode
     cmds += zigbee.configureReporting(0x201, 0x001C, DataType.ENUM8, 1, 0)                      // system mode
     cmds += zigbee.configureReporting(0x201, 0x401C, DataType.ENUM8, 1, 0, null, [mfgCode: "0x1185"]) // manufacturer specific setpoint mode
 
@@ -180,8 +185,8 @@ void heat() {
     logDebug("thermostat commanded to heat (current value is ${device.currentValue("thermostatMode")})")
     List<String> cmds = []
     cmds += zigbee.writeAttribute(0x201, 0x001C, 0x30, 04, [:], 1000) // MODE
-    cmds += zigbee.writeAttribute(0x201, 0x401C, 0x30, 04, [mfgCode: "0x1185"]) // SETPOINT MODE
-    cmds += zigbee.readAttribute(0x201, 0x001C)
+    cmds += zigbee.writeAttribute(0x201, 0x401C, 0x30, 04, [mfgCode: "0x1185"], constReadbackDelay) // SETPOINT MODE
+    cmds += zigbee.readAttribute(0x201, 0x001C, [:], constReadbackDelay)
     cmds += zigbee.readAttribute(0x201, 0x401C, [mfgCode: "0x1185"])
     sendZigbeeCommands(cmds)
 }
@@ -190,8 +195,8 @@ void eco() {
     logDebug("thermostat commanded to eco (current value is ${device.currentValue("thermostatMode")})")
     List<String> cmds = []
     cmds += zigbee.writeAttribute(0x201, 0x001C, 0x30, 04, [:], 1000) // MODE
-    cmds += zigbee.writeAttribute(0x201, 0x401C, 0x30, 05, [mfgCode: "0x1185"]) // SETPOINT MODE
-    cmds += zigbee.readAttribute(0x201, 0x001C)
+    cmds += zigbee.writeAttribute(0x201, 0x401C, 0x30, 05, [mfgCode: "0x1185"], constReadbackDelay) // SETPOINT MODE
+    cmds += zigbee.readAttribute(0x201, 0x001C, [:], constReadbackDelay)
     cmds += zigbee.readAttribute(0x201, 0x401C, [mfgCode: "0x1185"])
     sendZigbeeCommands(cmds)
 }
@@ -230,14 +235,19 @@ void setThermostatFanMode(fanmode){
     logWarn "setThermostatFanMode is not available for this device"
 }
 
-void setHeatingSetpoint(preciseDegrees) {
+void setHeatingSetpoint(Integer preciseDegrees) {
+    setHeatingSetpoint(new BigDecimal(preciseDegrees))
+}
+
+void setHeatingSetpoint(BigDecimal preciseDegrees) {
     if (preciseDegrees == null) {
         logError("setHeatingSetpoint() called with null value")
         return
     }
 
+    logDebug "setHeatingSetpoint(${preciseDegrees})"
     String temperatureScale = getTemperatureScale()
-    BigDecimal degrees = new BigDecimal(preciseDegrees).setScale(1, BigDecimal.ROUND_HALF_UP)
+    BigDecimal degrees = preciseDegrees.setScale(1, BigDecimal.ROUND_HALF_UP)
 
     logDebug "setHeatingSetpoint(${degrees} ${temperatureScale}) - current value is ${device.currentValue("heatingSetpoint")}"
 
@@ -245,7 +255,7 @@ void setHeatingSetpoint(preciseDegrees) {
     int celsius100 = Math.round(celsius * 100)
 
     List<String> cmds = []
-    cmds += zigbee.writeAttribute(0x201, 0x0012, 0x29, celsius100) // Write Heat Setpoint
+    cmds += zigbee.writeAttribute(0x201, 0x0012, 0x29, celsius100, [:], constReadbackDelay) // Write Heat Setpoint
     cmds += zigbee.readAttribute(0x201, 0x0012)
     sendZigbeeCommands(cmds)
 }
@@ -276,11 +286,18 @@ void setThermostatMode(String value) {
 
 // Event parsing
 
-def parse(String description) {
-    def descMap = zigbee.parseDescriptionAsMap(description)
+List parse(String description) {
+    if (state.codeVersion != constCodeVersion) {
+        state.codeVersion = constCodeVersion
+        runInMillis 1500, 'autoConfigure'
+    }
+
+    state.lastRx = now()
+
+    Map descMap = zigbee.parseDescriptionAsMap(description)
     logTrace("parse() - description = ${descMap}")
 
-    def result = []
+    List result = []
 
     if (descMap.attrId != null) {
         // device attribute report
@@ -297,11 +314,15 @@ def parse(String description) {
         logTrace("Unhandled ZDO command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     } else if (descMap.profileId == "0104" && descMap.clusterId != null) {
         // ZigBee Home Automation (ZHA) global command
-        if (true) { //descMap.commandInt == 0x04) {
-            parseAttributeResponse(descMap)
+        if (descMap.command == "04" || descMap.command == "07") {
+            parseResponse(descMap)
         } else {
             logTrace("Unhandled ZHA global command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
         }
+    } else if (description?.startsWith('enroll request')) {
+        logDebug "Received enroll request"
+    } else if (description?.startsWith('zone status')  || description?.startsWith('zone report')) {
+        logDebug "Zone status: $description"
     } else {
         logWarn("Unhandled unknown command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     }
@@ -309,8 +330,8 @@ def parse(String description) {
     return result
 }
 
-private parseAttributeReport(descMap) {
-    def map = [:]
+private Map parseAttributeReport(Map descMap) {
+    Map map = [:]
 
     // Main switch over all available cluster IDs
     //
@@ -434,7 +455,7 @@ private parseAttributeReport(descMap) {
             break
     }
 
-    def result = null
+    Map result = null
 
     if (map) {
         result = createEvent(map)
@@ -447,7 +468,7 @@ private parseAttributeReport(descMap) {
     return result
 }
 
-void parseAttributeResponse(descMap) {
+void parseResponse(Map descMap) {
     switch (descMap.clusterInt) {
         case 0x0201:
         	logDebug("Received response for Thermostat cluster (${descMap.data}) ${descMap}")
@@ -458,7 +479,7 @@ void parseAttributeResponse(descMap) {
             break
 
         default:
-            logTrace("Unhandled response: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
+            logTrace("Unhandled response: ${descMap}")
             break
     }
 }
@@ -466,27 +487,37 @@ void parseAttributeResponse(descMap) {
 // Callback helpers
 
 void logsOff() {
-    //logInfo "debug logging disabled..."
-    //device.updateSetting("logEnable",[value:"false",type:"bool"])
-    //device.updateSetting("traceEnable",[value:"false",type:"bool"])
+    logInfo "debug logging disabled..."
+    device.updateSetting("logEnable",[value:"false",type:"bool"])
+    device.updateSetting("traceEnable",[value:"false",type:"bool"])
 }
 
 // Private methods
 
-private void sendZigbeeCommands(cmds) {
+private void autoConfigure() {
+    logWarn "Detected driver version change"
+    configure()
+}
+
+private void sendZigbeeCommands(List<String> cmds) {
+    logTrace "Sending Zigbee messages ➡️ device: ${send}"
+    state.lastTx = now()
     sendHubCommand(new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE))
 }
 
-private getTemperature(value) {
-    if (value != null) {
-        def celsius = Integer.parseInt(value, 16) / 100
-        if (getTemperatureScale() == "C") {
-            return celsius
-        }
-        else {
-            return Math.round(celsiusToFahrenheit(celsius))
-        }
+private BigDecimal getTemperature(String value) {
+    if (value == null) {
+        return null
     }
+
+    BigDecimal celsius = new BigDecimal(Integer.parseInt(value, 16)) / 100
+
+    if (getTemperatureScale() == "C") {
+        return celsius.setScale(1, BigDecimal.ROUND_HALF_UP)
+    }
+
+    BigDecimal fahrenheit = celsiusToFahrenheit(celsius)
+    return fahrenheit.setScale(1, BigDecimal.ROUND_HALF_UP)
 }
 
 // Due to a bug in this model's firmware, sometimes we don't get
@@ -540,11 +571,11 @@ private void handleOperatingStateBugFix() {
  * @param map An operating state to validate
  * @return The passed map if valid, or a corrected map and a new param data.correctedValue if invalid
  */
-private validateOperatingStateBugFix(map) {
+private Map validateOperatingStateBugFix(Map map) {
     // If we don't have historical data, we will take the value we get,
     // otherwise validate if the difference is > 1
     if (state.rawSetpoint != null && state.rawTemp != null) {
-        def oldVal = map.value
+        String oldVal = map.value
 
         if (state.rawSetpoint <= state.rawTemp || device.currentValue("thermostatMode") == "off") {
             map.value = "idle"
@@ -582,4 +613,13 @@ private void logWarn(String message) {
 
 private void logError(String message) {
     log.error("${device} : ${message}")
+}
+
+// Test methods
+
+void testPowerConfigReport() {
+    List<String> cmds = []
+    cmds += zigbee.configureReporting(0x0B04, 0x050B, DataType.INT16, 1, 3600, 30) // Active power reporting
+    logWarn("${cmds}")
+    sendZigbeeCommands(cmds)
 }
