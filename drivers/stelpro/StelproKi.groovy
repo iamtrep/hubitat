@@ -505,18 +505,19 @@ private void sendZigbeeCommands(List<String> cmds) {
 }
 
 private BigDecimal getTemperature(String value) {
-    if (value == null) {
+    try {
+        BigDecimal celsius = new BigDecimal(Integer.parseInt(value, 16)) / 100
+
+        if (getTemperatureScale() == "C") {
+            return celsius.setScale(1, BigDecimal.ROUND_HALF_UP)
+        }
+
+        BigDecimal fahrenheit = celsiusToFahrenheit(celsius)
+        return fahrenheit.setScale(1, BigDecimal.ROUND_HALF_UP)
+    } catch (Exception e) {
+        log.error "getTemperature: Cannot parse '${value}' as hex", e
         return null
     }
-
-    BigDecimal celsius = new BigDecimal(Integer.parseInt(value, 16)) / 100
-
-    if (getTemperatureScale() == "C") {
-        return celsius.setScale(1, BigDecimal.ROUND_HALF_UP)
-    }
-
-    BigDecimal fahrenheit = celsiusToFahrenheit(celsius)
-    return fahrenheit.setScale(1, BigDecimal.ROUND_HALF_UP)
 }
 
 // Due to a bug in this model's firmware, sometimes we don't get
@@ -541,26 +542,22 @@ private BigDecimal getTemperature(String value) {
  * Check if we should request the operating state, and request it if so
  */
 private void handleOperatingStateBugFix() {
-    if (device.currentValue("thermostatMode") == "off")
+    if (state.rawSetpoint == null || state.rawTemp == null || device.currentValue("thermostatMode") == "off")
         return
 
     String currOpState = device.currentValue("thermostatOperatingState")
     List<String> cmds = []
     cmds += zigbee.readAttribute(0x0204, 0x0008) // PI heat demand
 
-    if (state.rawSetpoint != null && state.rawTemp != null) {
-        if (state.rawSetpoint <= state.rawTemp) {
-            if (currOpState != "idle")
-            {
-                //logWarn "handleOperatingStateBugFix sending readAttribute command on 0x0204"
-                sendZigbeeCommands(cmds)
-            }
-        } else {
-            if (currOpState != "heating")
-            {
-                //logWarn "handleOperatingStateBugFix sending readAttribute command on 0x0204"
-                sendZigbeeCommands(cmds)
-            }
+    if (state.rawSetpoint <= state.rawTemp) {
+        if (currOpState != "idle") {
+            //logWarn "handleOperatingStateBugFix sending readAttribute command on 0x0204"
+            sendZigbeeCommands(cmds)
+        }
+    } else {  // state.rawSetpoint > state.rawTemp
+        if (currOpState != "heating") {
+            //logWarn "handleOperatingStateBugFix sending readAttribute command on 0x0204"
+            sendZigbeeCommands(cmds)
         }
     }
 }
