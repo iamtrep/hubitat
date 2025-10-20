@@ -26,10 +26,6 @@
 
  An app that allows aggregating sensor values and saving the result to a virtual device
 
- TODO:
- - More device types
- - Figure out Generic Component devices for when child devices are selected
-
  */
 
 
@@ -51,15 +47,15 @@ import com.hubitat.app.DeviceWrapper
 import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 
-@Field static final String child_app_version = "0.0.1"
+@Field static final String child_app_version = "0.1.0"
 
 @Field static final Map<String, String> CAPABILITY_ATTRIBUTES = [
     "capability.accelerationSensor"  : [ attribute: "acceleration", values: ["inactive", "active"], driver: "Virtual Acceleration Sensor" ],
-    "capability.contactSensor"       : [ attribute: "contact", values: ["open","closed"], driver: "Virtual Contact Sensor" ],
+    "capability.contactSensor"       : [ attribute: "contact", values: ["closed", "open"], driver: "Virtual Contact Sensor" ],
     "capability.motionSensor"        : [ attribute: "motion", values: ["inactive","active"], driver: "Virtual Motion Sensor" ],
     "capability.presenceSensor"      : [ attribute: "presence", values: ["not present","present"], driver: "Virtual Presence Sensor" ],
     "capability.shockSensor"         : [ attribute: "shock", values: ["clear", "detected"], driver: "Virtual Shock Sensor" ],
-    "capability.waterSensor"         : [ attribute: "water", values: ["wet", "dry"], driver: "Virtual Moisture Sensor" ]
+    "capability.waterSensor"         : [ attribute: "water", values: ["dry", "wet"], driver: "Virtual Moisture Sensor" ]
 ]
 
 
@@ -78,8 +74,8 @@ Map mainPage() {
             if (selectedSensorCapability) {
                 input name: "inputSensors", type: selectedSensorCapability, title: "Sensors to aggregate", multiple:true, required: true, showFilter: true, submitOnChange: true
                 if (inputSensors) {
-                    def attributePOssibleValues = getAttributePossibleValues(inputSensors[0], selectedSensorCapability)
-                    input name: "attributeValue", type: "enum", options: attributePOssibleValues, title: "Attribute value", multiple:false, required:true
+                    def attributePossibleValues = getAttributePossibleValues(inputSensors[0], selectedSensorCapability)
+                    input name: "attributeValue", type: "enum", options: attributePossibleValues, title: "Attribute value to monitor", multiple:false, required:true
                 }
                 input name: "outputSensor", type: selectedSensorCapability, title: "Virtual sensor to set as aggregation output", multiple: false, required: false, submitOnChange: true
                 if (!outputSensor) {
@@ -89,13 +85,27 @@ Map mainPage() {
             }
         }
         section("Aggregation") {
-            input name: "aggregationMethod", type: "enum", options: ["any", "all"], title: "Select aggregation method", defaultValue: "any", required: true, submitOnChange: true
+            input name: "aggregationMethod", type: "enum", options: ["any", "all", "majority", "threshold"], title: "Select aggregation method", defaultValue: "any", required: true, submitOnChange: true
+            if (aggregationMethod == "threshold") {
+                input name: "thresholdPercent", type: "number", title: "Threshold percentage (1-100)", defaultValue: 50, range: "1..100", required: true
+            }
             input name: "excludeAfter", type: "number", title: "Exclude sensor value when sensor has no updates for this many minutes:", defaultValue: 60, range: "0..1440"
+        }
+        section("Notifications") {
+            input name: "notificationDevice", type: "capability.notification", title: "Send notifications to:", multiple: false, required: false
+            input name: "notifyOnAllExcluded", type: "bool", title: "Notify when all sensors are excluded", defaultValue: true
+            input name: "notifyOnFirstExcluded", type: "bool", title: "Notify when any sensor is excluded", defaultValue: false
+            input name: "notifyOnValueChange", type: "bool", title: "Notify when aggregate value changes", defaultValue: false
         }
         section("Operation") {
             input name: "forceUpdate", type: "button", title: "Force update aggregate value"
-            if(inputSensors) {
-                paragraph "Current $aggregationMethod value is ${state.aggregateValue}"  // TODO units ?!
+            if(inputSensors && state.aggregateValue != null) {
+                def possibleValues = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.values
+                paragraph "Current aggregate value: <b>${state.aggregateValue}</b>"
+                paragraph "Included sensors: ${state.includedSensors?.size() ?: 0} of ${inputSensors.size()}"
+                if (state.excludedSensors?.size() > 0) {
+                    paragraph "<span style='color:orange'>Excluded sensors: ${state.excludedSensors.join(', ')}</span>"
+                }
             }
             input name: "logLevel", type: "enum", options: ["warn","info","debug","trace"], title: "Enable logging?", defaultValue: "info", required: true, submitOnChange: true
             log.info("${logLevel} logging enabled")
@@ -105,26 +115,49 @@ Map mainPage() {
 
 void installed() {
     logDebug "installed()"
+    initialize()
 }
 
 void updated() {
     logDebug "updated()"
+
+    // Validate settings
+    if (!selectedSensorCapability) {
+        logError("No sensor capability selected")
+        return
+    }
+    if (!inputSensors || inputSensors.size() == 0) {
+        logError("No input sensors selected")
+        return
+    }
+    if (!attributeValue) {
+        logError("No attribute value selected")
+        return
+    }
+
     unsubscribe()
     initialize()
 }
 
 void uninstalled() {
     logDebug "uninstalled()"
+    // Clean up child devices
+    getChildDevices()?.each {
+        try {
+            deleteChildDevice(it.deviceNetworkId)
+            logDebug("Deleted child device: ${it.deviceNetworkId}")
+        } catch (Exception e) {
+            logError("Failed to delete child device ${it.deviceNetworkId}: ${e.message}")
+        }
+    }
 }
 
 void initialize() {
     if (state.includedSensors == null) { state.includedSensors = [] }
     if (state.excludedSensors == null) { state.excludedSensors = [] }
-
-    if (state.anyValue == null) { state.anyValue = "" }
-    if (state.allValue == null) { state.allValue = "" }
-
+    if (state.aggregateValue == null) { state.aggregateValue = "" }
     if (state.createChild == null) { state.createChild = false }
+    if (state.previousExcludedSensors == null) { state.previousExcludedSensors = [] }
 
     if (!outputSensor && state.createChild) {
         fetchChildDevice()
@@ -138,6 +171,7 @@ void initialize() {
         }
     }
 
+    // Perform initial calculation
     sensorEventHandler()
 }
 
@@ -150,9 +184,17 @@ ChildDeviceWrapper fetchChildDevice() {
     String deviceName = "${app.id}-${driverName}"
     ChildDeviceWrapper cd = getChildDevice(deviceName)
     if (!cd) {
-        cd = addChildDevice("hubitat", driverName, deviceName, [name: "${app.label} ${driverName}"])
-        if (cd) logDebug("Child device ${cd.id} created with driver: ${driverName}.") else logError("could not create child device")
-        app.updateSetting("outputSensor", [type: selectedSensorCapability, value: cd.id])
+        try {
+            cd = addChildDevice("hubitat", driverName, deviceName, [name: "${app.label} ${driverName}"])
+            if (cd) {
+                logDebug("Child device ${cd.id} created with driver: ${driverName}.")
+                app.updateSetting("outputSensor", [type: selectedSensorCapability, value: cd.id])
+            } else {
+                logError("Could not create child device")
+            }
+        } catch (Exception e) {
+            logError("Failed to create child device: ${e.message}")
+        }
     }
     return cd
 }
@@ -169,10 +211,14 @@ void sensorEventHandler(Event evt=null) {
             logError("No output device to update")
             return
         }
-        sensorDevice.sendEvent(name: CAPABILITY_ATTRIBUTES[selectedSensorCapability].attribute,
-                               value: state.aggregateValue,
-                               descriptionText:"${sensorDevice.displayName} was set to ${state.aggregateValue}"
-                               /* , isStateChange: true // let platform filter this event as needed */)
+
+        String attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability].attribute
+        sensorDevice.sendEvent(
+            name: attributeName,
+            value: state.aggregateValue,
+            descriptionText: "${sensorDevice.displayName} was set to ${state.aggregateValue}"
+        )
+        logDebug("Updated ${sensorDevice.displayName} ${attributeName} to ${state.aggregateValue}")
     }
 }
 
@@ -181,6 +227,7 @@ boolean computeAggregateSensorValue() {
     Date now = new Date()
     Date timeAgo = new Date(now.time - excludeAfter * 60 * 1000)
     String attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute
+    def possibleValues = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.values
 
     List<DeviceWrapper> includedSensors = []
     List<DeviceWrapper> excludedSensors = []
@@ -199,61 +246,113 @@ boolean computeAggregateSensorValue() {
     }
 
     int n = includedSensors.size()
-    if (n<1) {
-        // For now, simply don't update the app state
-        logError "No sensors available for agregation... aggregate value not updated (${state.aggregateValue})"
+
+    // Store previous values for comparison
+    String previousValue = state.aggregateValue
+    List<String> previouslyExcludedLabels = state.excludedSensors ?: []
+    List<String> currentlyExcludedLabels = excludedSensors.collect { it.getLabel() }
+
+    // Check for newly excluded sensors
+    List<String> newlyExcluded = currentlyExcludedLabels - previouslyExcludedLabels
+    if (newlyExcluded.size() > 0 && notificationDevice && notifyOnFirstExcluded) {
+        String message = "Sensor Aggregator '${app.label}': Sensors excluded due to inactivity: ${newlyExcluded.join(', ')}"
+        notificationDevice.deviceNotification(message)
+        logWarn(message)
+    }
+
+    if (n < 1) {
+        if (notificationDevice && notifyOnAllExcluded && previouslyExcludedLabels.size() < currentlyExcludedLabels.size()) {
+            String message = "Sensor Aggregator '${app.label}': All sensors excluded due to inactivity"
+            notificationDevice.deviceNotification(message)
+            logWarn(message)
+        }
+        logError "No sensors available for aggregation... aggregate value not updated (${state.aggregateValue})"
+        state.excludedSensors = currentlyExcludedLabels
         return false
     }
 
     def sensorValues = includedSensors.collect { it.currentValue(attributeName) }
     def targetValue = attributeValue
+    def oppositeValue = possibleValues.find { it != targetValue }
 
-    //aggregationMethod", type: "enum", options: ["any", "all"]
+    // Compute aggregate value based on method
     switch (aggregationMethod) {
         case "all":
-            state.aggregateValue = sensorValues.every { it == targetValue } ? targetValue : ""
+            state.aggregateValue = sensorValues.every { it == targetValue } ? targetValue : oppositeValue
+            break
+
+        case "majority":
+            int countTarget = sensorValues.count { it == targetValue }
+            state.aggregateValue = (countTarget > n / 2) ? targetValue : oppositeValue
+            break
+
+        case "threshold":
+            int countTarget = sensorValues.count { it == targetValue }
+            double percentage = (countTarget / (double)n) * 100.0
+            state.aggregateValue = (percentage >= thresholdPercent) ? targetValue : oppositeValue
+            logDebug("Threshold check: ${countTarget}/${n} = ${roundToDecimalPlaces(percentage, 1)}% (threshold: ${thresholdPercent}%)")
             break
 
         case "any":
         default:
-            state.aggregateValue = sensorValues.any { it == targetValue } ? targetValue : ""
+            state.aggregateValue = sensorValues.any { it == targetValue } ? targetValue : oppositeValue
             break
     }
 
     state.includedSensors = includedSensors.collect { it.getLabel() }
-    state.excludedSensors = excludedSensors.collect { it.getLabel() }
+    state.excludedSensors = currentlyExcludedLabels
+
+    // Check if value changed
+    boolean valueChanged = (previousValue != state.aggregateValue)
+    if (valueChanged) {
+        logInfo("Aggregate value changed: ${previousValue} → ${state.aggregateValue}")
+        if (notificationDevice && notifyOnValueChange) {
+            String message = "Sensor Aggregator '${app.label}': Value changed from ${previousValue} to ${state.aggregateValue}"
+            notificationDevice.deviceNotification(message)
+        }
+    }
 
     logStatistics()
-    return true
+    return valueChanged
 }
 
 void appButtonHandler(String buttonName) {
     switch (buttonName) {
         case "forceUpdate":
         default:
-            //sensorEventHandler()
+            logInfo("Force update triggered")
             updated()
             break
     }
 }
 
 void logStatistics() {
-    logInfo("${CAPABILITY_ATTRIBUTES[selectedSensorCapability].attribute} ${aggregationMethod} (${state.includedSensors.size()}/${inputSensors.size()}): ${state.aggregateValue}")
+    String attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability].attribute
+    int includedCount = state.includedSensors?.size() ?: 0
+    int totalCount = inputSensors?.size() ?: 0
 
-    if (state.includedSensors.size() > 0) {
-        logDebug("Aggregated sensors (${state.includedSensors})")
+    String methodDisplay = aggregationMethod
+    if (aggregationMethod == "threshold") {
+        methodDisplay = "${aggregationMethod} (${thresholdPercent}%)"
+    }
+
+    logInfo("${attributeName} ${methodDisplay} (${includedCount}/${totalCount}): ${state.aggregateValue}")
+
+    if (includedCount > 0) {
+        logDebug("Aggregated sensors: ${state.includedSensors.join(', ')}")
     } else {
         logDebug("No aggregated sensors!")
     }
-    if (state.excludedSensors.size() > 0) logDebug("Rejected sensors with last update older than $excludeAfter minutes: ${state.excludedSensors} }")
+
+    if (state.excludedSensors?.size() > 0) {
+        logDebug("Excluded sensors (no updates for ${excludeAfter} min): ${state.excludedSensors.join(', ')}")
+    }
 }
 
 private List<String> getAttributePossibleValues(deviceWrapper, capability) {
     List capabilities = deviceWrapper.getCapabilities()
     def targetCapability = capabilities.find { it.name.toLowerCase() == capability.substring("capability.".length()).toLowerCase() }
     def targetAttribute = deviceWrapper.getSupportedAttributes().find { it.name == targetCapability.attributes[0].name }
-    //logObjectProperties(targetCapability)
-    //logObjectProperties(targetAttribute)
     return targetAttribute.getValues()
 }
 
@@ -272,29 +371,22 @@ private double roundToDecimalPlaces(double decimalNumber, int decimalPlaces = 2)
     return (Math.round(decimalNumber * scale) as double) / scale
 }
 
-private void logError(Object... args)
-{
-    //if (logLevel in ["info","debug","trace"])
+private void logError(Object... args) {
     log.error(args)
 }
 
-private void logWarn(Object... args)
-{
-    //if (logLevel in ["warn", "info","debug","trace"])
+private void logWarn(Object... args) {
     log.warn(args)
 }
 
-private void logInfo(Object... args)
-{
+private void logInfo(Object... args) {
     if (logLevel in ["info","debug","trace"]) log.info(args)
 }
 
-private void logDebug(Object... args)
-{
+private void logDebug(Object... args) {
     if (logLevel in ["debug","trace"]) log.debug(args)
 }
 
-private void logTrace(Object... args)
-{
+private void logTrace(Object... args) {
     if (logLevel in ["trace"]) log.trace(args)
 }
