@@ -47,7 +47,7 @@ import com.hubitat.app.DeviceWrapper
 import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 
-@Field static final String child_app_version = "0.1.0"
+@Field static final String child_app_version = "0.2.0"
 
 @Field static final Map<String, String> CAPABILITY_ATTRIBUTES = [
     "capability.accelerationSensor"  : [ attribute: "acceleration", values: ["inactive", "active"], driver: "Virtual Acceleration Sensor" ],
@@ -97,6 +97,25 @@ Map mainPage() {
             input name: "notifyOnFirstExcluded", type: "bool", title: "Notify when any sensor is excluded", defaultValue: false
             input name: "notifyOnValueChange", type: "bool", title: "Notify when aggregate value changes", defaultValue: false
         }
+        section("Testing") {
+            paragraph "<b>Automated Testing</b>"
+            paragraph "Run automated tests to verify the aggregation logic. This will create test devices, run tests, and clean up automatically."
+            input name: "runSmokeTests", type: "button", title: "Run Quick Smoke Tests (3 tests)"
+            input name: "runAllTests", type: "button", title: "Run Full Test Suite (11 tests)"
+            input name: "cleanupTestDevices", type: "button", title: "Cleanup Test Devices Only"
+
+            if (state.lastTestRun) {
+                paragraph "<hr>"
+                paragraph "<b>Last Test Run:</b> ${state.lastTestRun}"
+                paragraph "<b>Results:</b> ${state.testsPassed} / ${state.testsTotal} passed"
+                if (state.testsFailed > 0) {
+                    paragraph "<span style='color:red'><b>Failed:</b> ${state.testsFailed}</span>"
+                    paragraph "<b>Failed Tests:</b><br>${state.failedTests?.join('<br>')}"
+                } else if (state.testsTotal > 0) {
+                    paragraph "<span style='color:green'><b>All tests passed!</b></span>"
+                }
+            }
+        }
         section("Operation") {
             input name: "forceUpdate", type: "button", title: "Force update aggregate value"
             if(inputSensors && state.aggregateValue != null) {
@@ -121,18 +140,20 @@ void installed() {
 void updated() {
     logDebug "updated()"
 
-    // Validate settings
-    if (!selectedSensorCapability) {
-        logError("No sensor capability selected")
-        return
-    }
-    if (!inputSensors || inputSensors.size() == 0) {
-        logError("No input sensors selected")
-        return
-    }
-    if (!attributeValue) {
-        logError("No attribute value selected")
-        return
+    // Validate settings (skip validation during testing)
+    if (!state.testingInProgress) {
+        if (!selectedSensorCapability) {
+            logError("No sensor capability selected")
+            return
+        }
+        if (!inputSensors || inputSensors.size() == 0) {
+            logError("No input sensors selected")
+            return
+        }
+        if (!attributeValue) {
+            logError("No attribute value selected")
+            return
+        }
     }
 
     unsubscribe()
@@ -159,7 +180,7 @@ void initialize() {
     if (state.createChild == null) { state.createChild = false }
     if (state.previousExcludedSensors == null) { state.previousExcludedSensors = [] }
 
-    if (!outputSensor && state.createChild) {
+    if (!outputSensor && state.createChild && !state.testingInProgress) {
         fetchChildDevice()
     }
 
@@ -172,7 +193,9 @@ void initialize() {
     }
 
     // Perform initial calculation
-    sensorEventHandler()
+    if (!state.testingInProgress) {
+        sensorEventHandler()
+    }
 }
 
 ChildDeviceWrapper fetchChildDevice() {
@@ -319,9 +342,17 @@ boolean computeAggregateSensorValue() {
 void appButtonHandler(String buttonName) {
     switch (buttonName) {
         case "forceUpdate":
-        default:
             logInfo("Force update triggered")
             updated()
+            break
+        case "runSmokeTests":
+            runSmokeTests()
+            break
+        case "runAllTests":
+            runAllTests()
+            break
+        case "cleanupTestDevices":
+            cleanupTestDevices()
             break
     }
 }
@@ -389,4 +420,527 @@ private void logDebug(Object... args) {
 
 private void logTrace(Object... args) {
     if (logLevel in ["trace"]) log.trace(args)
+}
+
+// ============================================================================
+// TESTING FRAMEWORK
+// ============================================================================
+
+void runSmokeTests() {
+    logInfo "=" * 60
+    logInfo "STARTING SMOKE TESTS"
+    logInfo "=" * 60
+
+    if (!setupTestEnvironment()) {
+        logError "Failed to setup test environment"
+        return
+    }
+
+    initializeTestRun()
+
+    // Run essential tests
+    test_ANY_OneOpen()
+    test_ALL_AllMatch()
+    test_Majority_60Percent()
+
+    finalizeTestRun("SMOKE TESTS")
+    teardownTestEnvironment()
+}
+
+void runAllTests() {
+    logInfo "=" * 60
+    logInfo "STARTING FULL TEST SUITE"
+    logInfo "=" * 60
+
+    if (!setupTestEnvironment()) {
+        logError "Failed to setup test environment"
+        return
+    }
+
+    initializeTestRun()
+
+    // Suite 1: Basic Aggregation
+    logInfo ""
+    logInfo "-" * 60
+    logInfo "TEST SUITE 1: Basic Aggregation Methods"
+    logInfo "-" * 60
+    test_ANY_AllClosed()
+    test_ANY_OneOpen()
+    test_ALL_NotAll()
+    test_ALL_AllMatch()
+
+    // Suite 2: Voting Methods
+    logInfo ""
+    logInfo "-" * 60
+    logInfo "TEST SUITE 2: Voting Methods"
+    logInfo "-" * 60
+    test_Majority_60Percent()
+    test_Majority_40Percent()
+    test_Threshold_AtThreshold()
+    test_Threshold_Below()
+
+    // Suite 3: Value Changes
+    logInfo ""
+    logInfo "-" * 60
+    logInfo "TEST SUITE 3: Value Change Detection"
+    logInfo "-" * 60
+    test_ValueChanges()
+
+    finalizeTestRun("FULL TEST SUITE")
+    teardownTestEnvironment()
+}
+
+boolean setupTestEnvironment() {
+    logInfo "Setting up test environment..."
+
+    state.testingInProgress = true
+
+    // Save current configuration
+    state.savedConfig = [
+        selectedSensorCapability: selectedSensorCapability,
+        inputSensors: inputSensors?.collect { it.id },
+        outputSensor: outputSensor?.id,
+        attributeValue: attributeValue,
+        aggregationMethod: aggregationMethod,
+        thresholdPercent: thresholdPercent,
+        excludeAfter: excludeAfter
+    ]
+
+    // Create test devices
+    if (!createTestDevices()) {
+        return false
+    }
+
+    // Configure app for testing
+    app.updateSetting("selectedSensorCapability", [type: "enum", value: "capability.contactSensor"])
+    app.updateSetting("attributeValue", [type: "enum", value: "open"])
+    app.updateSetting("excludeAfter", [type: "number", value: 60])
+
+    // Set input sensors to the test devices
+    List<String> testInputIds = []
+    for (int i = 1; i <= 5; i++) {
+        String dni = "test-input-${app.id}-${i}"
+        def device = getChildDevice(dni)
+        if (device) {
+            testInputIds << device.id.toString()
+        }
+    }
+
+    if (testInputIds.size() != 5) {
+        logError "Failed to get all test input device IDs"
+        return false
+    }
+
+    app.updateSetting("inputSensors", [type: "capability.contactSensor", value: testInputIds])
+
+    // Create test output device
+    String outputDni = "test-output-${app.id}"
+    def existingOutput = getChildDevice(outputDni)
+    if (existingOutput) {
+        deleteChildDevice(outputDni)
+        pauseExecution(500)
+    }
+
+    def outputDevice = addChildDevice("hubitat", "Virtual Contact Sensor", outputDni,
+                                      [name: "Test Output", label: "Test Output"])
+    if (!outputDevice) {
+        logError "Failed to create test output device"
+        return false
+    }
+
+    outputDevice.close()
+    app.updateSetting("outputSensor", [type: "capability.contactSensor", value: outputDevice.id.toString()])
+
+    state.testOutputDeviceId = outputDevice.id
+
+    pauseExecution(1000)
+
+    logInfo "Test environment setup complete"
+    return true
+}
+
+void teardownTestEnvironment() {
+    logInfo "Tearing down test environment..."
+
+    // Restore original configuration
+    if (state.savedConfig) {
+        app.updateSetting("selectedSensorCapability", [type: "enum", value: state.savedConfig.selectedSensorCapability])
+
+        if (state.savedConfig.inputSensors) {
+            app.updateSetting("inputSensors", [type: state.savedConfig.selectedSensorCapability,
+                                                value: state.savedConfig.inputSensors])
+        }
+
+        if (state.savedConfig.outputSensor) {
+            app.updateSetting("outputSensor", [type: state.savedConfig.selectedSensorCapability,
+                                                value: state.savedConfig.outputSensor])
+        }
+
+        if (state.savedConfig.attributeValue) {
+            app.updateSetting("attributeValue", [type: "enum", value: state.savedConfig.attributeValue])
+        }
+
+        if (state.savedConfig.aggregationMethod) {
+            app.updateSetting("aggregationMethod", [type: "enum", value: state.savedConfig.aggregationMethod])
+        }
+
+        if (state.savedConfig.thresholdPercent) {
+            app.updateSetting("thresholdPercent", [type: "number", value: state.savedConfig.thresholdPercent])
+        }
+
+        if (state.savedConfig.excludeAfter) {
+            app.updateSetting("excludeAfter", [type: "number", value: state.savedConfig.excludeAfter])
+        }
+    }
+
+    // Clean up test devices
+    cleanupTestDevices()
+
+    state.testingInProgress = false
+    state.remove('savedConfig')
+    state.remove('testOutputDeviceId')
+
+    // Reinitialize with original config
+    updated()
+
+    logInfo "Test environment teardown complete"
+}
+
+boolean createTestDevices() {
+    logInfo "Creating test devices..."
+
+    try {
+        // Create 5 test input sensors
+        for (int i = 1; i <= 5; i++) {
+            String dni = "test-input-${app.id}-${i}"
+            def existingDevice = getChildDevice(dni)
+
+            if (!existingDevice) {
+                def newDevice = addChildDevice(
+                    "hubitat",
+                    "Virtual Contact Sensor",
+                    dni,
+                    [name: "Test Input ${i}", label: "Test Input ${i}"]
+                )
+
+                if (newDevice) {
+                    newDevice.close() // Initialize to closed
+                    logInfo "Created: Test Input ${i}"
+                } else {
+                    logError "Failed to create Test Input ${i}"
+                    return false
+                }
+            } else {
+                existingDevice.close()
+                logInfo "Using existing: Test Input ${i}"
+            }
+        }
+
+        pauseExecution(1000)
+        logInfo "Test device creation complete"
+        return true
+
+    } catch (Exception e) {
+        logError "Failed to create test devices: ${e.message}"
+        e.printStackTrace()
+        return false
+    }
+}
+
+void cleanupTestDevices() {
+    logInfo "Cleaning up test devices..."
+
+    try {
+        // Delete input sensors
+        for (int i = 1; i <= 5; i++) {
+            String dni = "test-input-${app.id}-${i}"
+            def testDevice = getChildDevice(dni)
+
+            if (testDevice) {
+                deleteChildDevice(dni)
+                logInfo "Deleted: Test Input ${i}"
+            }
+        }
+
+        // Delete output sensor
+        String outputDni = "test-output-${app.id}"
+        def outputDevice = getChildDevice(outputDni)
+        if (outputDevice) {
+            deleteChildDevice(outputDni)
+            logInfo "Deleted: Test Output"
+        }
+
+        logInfo "Test device cleanup complete"
+
+    } catch (Exception e) {
+        logError "Failed to cleanup test devices: ${e.message}"
+    }
+}
+
+void initializeTestRun() {
+    state.testsPassed = 0
+    state.testsFailed = 0
+    state.testsTotal = 0
+    state.failedTests = []
+    state.testResults = [:]
+}
+
+void finalizeTestRun(String suiteName) {
+    logInfo "=" * 60
+    logInfo "${suiteName} COMPLETE"
+    logInfo "Total Tests: ${state.testsTotal}"
+    logInfo "Passed: ${state.testsPassed}"
+    logInfo "Failed: ${state.testsFailed}"
+
+    if (state.testsFailed > 0) {
+        logWarn "Failed Tests:"
+        state.failedTests.each { logWarn "  - ${it}" }
+    }
+
+    logInfo "=" * 60
+
+    state.lastTestRun = new Date().format("yyyy-MM-dd HH:mm:ss")
+}
+
+void configureForTest(Map config) {
+    if (config.aggregationMethod) {
+        app.updateSetting("aggregationMethod", [type: "enum", value: config.aggregationMethod])
+    }
+    if (config.thresholdPercent != null) {
+        app.updateSetting("thresholdPercent", [type: "number", value: config.thresholdPercent])
+    }
+
+    pauseExecution(500)
+    initialize()
+    pauseExecution(500)
+}
+
+void setTestInputSensors(List<Integer> openIndices) {
+    List<ChildDeviceWrapper> devices = []
+
+    for (int i = 1; i <= 5; i++) {
+        String dni = "test-input-${app.id}-${i}"
+        def device = getChildDevice(dni)
+        if (device) {
+            devices << device
+        }
+    }
+
+    if (devices.size() != 5) {
+        logError "Could not find all test input devices"
+        return
+    }
+
+    // Set all to closed first
+    devices.each { it.close() }
+    pauseExecution(500)
+
+    // Open specified sensors
+    openIndices.each { index ->
+        if (index >= 0 && index < devices.size()) {
+            devices[index].open()
+        }
+    }
+
+    pauseExecution(1500) // Allow events to propagate and aggregation to compute
+}
+
+boolean assertAggregateValue(String expected, String testName, boolean countAsTest = true) {
+    pauseExecution(500)
+
+    def outputDevice = getChildDevice("test-output-${app.id}")
+    if (!outputDevice) {
+        logError "Test output device not found!"
+        if (countAsTest) {
+            state.testsFailed++
+            state.failedTests << testName
+        }
+        return false
+    }
+
+    String actual = outputDevice.currentValue("contact")
+    boolean passed = (actual == expected)
+
+    if (countAsTest) {
+        state.testsTotal++
+        if (passed) {
+            state.testsPassed++
+            logInfo "✓ PASS: ${testName} - Output: ${actual}"
+        } else {
+            state.testsFailed++
+            state.failedTests << testName
+            logError "✗ FAIL: ${testName} - Expected: ${expected}, Got: ${actual}"
+            logDebug "  State aggregateValue: ${state.aggregateValue}"
+            logDebug "  Aggregation method: ${aggregationMethod}"
+        }
+
+        state.testResults[testName] = [
+            passed: passed,
+            expected: expected,
+            actual: actual
+        ]
+    } else {
+        // Pre-condition check
+        if (passed) {
+            logDebug "Pre-condition verified: Output is '${actual}' as expected"
+        } else {
+            logWarn "Pre-condition check failed: Expected '${expected}', got '${actual}'"
+        }
+    }
+
+    return passed
+}
+
+void verifyInitialCondition(List<Integer> sensorConfig, String expectedValue) {
+    setTestInputSensors(sensorConfig)
+    assertAggregateValue(expectedValue, "Pre-condition", false)
+}
+
+// ============================================================================
+// INDIVIDUAL TEST CASES
+// ============================================================================
+
+void test_ANY_AllClosed() {
+    String testName = "Test 1.1: ANY Method - All Closed"
+    logInfo ""
+    logInfo "Running: ${testName}"
+
+    configureForTest([aggregationMethod: "any"])
+
+    // Verify initial condition should give opposite result
+    verifyInitialCondition([0], "open")
+
+    // Now test the actual condition
+    setTestInputSensors([])
+    assertAggregateValue("closed", testName)
+}
+
+void test_ANY_OneOpen() {
+    String testName = "Test 1.2: ANY Method - One Open"
+    logInfo ""
+    logInfo "Running: ${testName}"
+
+    configureForTest([aggregationMethod: "any"])
+
+    // Verify initial condition should give opposite result
+    verifyInitialCondition([], "closed")
+
+    // Now test the actual condition
+    setTestInputSensors([0])
+    assertAggregateValue("open", testName)
+}
+
+void test_ALL_NotAll() {
+    String testName = "Test 1.3: ALL Method - Not All Match"
+    logInfo ""
+    logInfo "Running: ${testName}"
+
+    configureForTest([aggregationMethod: "all"])
+
+    // Verify initial condition should give opposite result
+    verifyInitialCondition([0, 1, 2, 3, 4], "open")
+
+    // Now test the actual condition
+    setTestInputSensors([0, 1, 2, 3])
+    assertAggregateValue("closed", testName)
+}
+
+void test_ALL_AllMatch() {
+    String testName = "Test 1.4: ALL Method - All Match"
+    logInfo ""
+    logInfo "Running: ${testName}"
+
+    configureForTest([aggregationMethod: "all"])
+
+    // Verify initial condition should give opposite result
+    verifyInitialCondition([0, 1, 2], "closed")
+
+    // Now test the actual condition
+    setTestInputSensors([0, 1, 2, 3, 4])
+    assertAggregateValue("open", testName)
+}
+
+void test_Majority_60Percent() {
+    String testName = "Test 2.1: MAJORITY - 3 of 5 Open (60%)"
+    logInfo ""
+    logInfo "Running: ${testName}"
+
+    configureForTest([aggregationMethod: "majority"])
+
+    // Verify initial condition (minority)
+    verifyInitialCondition([0, 1], "closed")
+
+    // Now test the actual condition (majority)
+    setTestInputSensors([0, 1, 2])
+    assertAggregateValue("open", testName)
+}
+
+void test_Majority_40Percent() {
+    String testName = "Test 2.2: MAJORITY - 2 of 5 Open (40%)"
+    logInfo ""
+    logInfo "Running: ${testName}"
+
+    configureForTest([aggregationMethod: "majority"])
+
+    // Verify initial condition (majority)
+    verifyInitialCondition([0, 1, 2], "open")
+
+    // Now test the actual condition (minority)
+    setTestInputSensors([0, 1])
+    assertAggregateValue("closed", testName)
+}
+
+void test_Threshold_AtThreshold() {
+    String testName = "Test 2.3: THRESHOLD - At 60% Threshold"
+    logInfo ""
+    logInfo "Running: ${testName}"
+
+    configureForTest([aggregationMethod: "threshold", thresholdPercent: 60])
+
+    // Verify initial condition (below threshold)
+    verifyInitialCondition([0, 1], "closed")
+
+    // Now test the actual condition (at threshold)
+    setTestInputSensors([0, 1, 2])
+    assertAggregateValue("open", testName)
+}
+
+void test_Threshold_Below() {
+    String testName = "Test 2.4: THRESHOLD - Below 80% Threshold"
+    logInfo ""
+    logInfo "Running: ${testName}"
+
+    configureForTest([aggregationMethod: "threshold", thresholdPercent: 80])
+
+    // Verify initial condition (at threshold)
+    verifyInitialCondition([0, 1, 2, 3], "open")
+
+    // Now test the actual condition (below threshold)
+    setTestInputSensors([0, 1, 2])
+    assertAggregateValue("closed", testName)
+}
+
+void test_ValueChanges() {
+    String testName = "Test 3.1: Value Changes"
+    logInfo ""
+    logInfo "Running: ${testName}"
+
+    configureForTest([aggregationMethod: "any"])
+
+    // Verify initial condition
+    verifyInitialCondition([0], "open")
+
+    // Test transitions
+    setTestInputSensors([])
+    boolean step1 = assertAggregateValue("closed", "${testName} - Change to Closed")
+
+    setTestInputSensors([0])
+    boolean step2 = assertAggregateValue("open", "${testName} - Change to Open")
+
+    setTestInputSensors([])
+    boolean step3 = assertAggregateValue("closed", "${testName} - Change to Closed Again")
+
+    if (!step1 || !step2 || !step3) {
+        logWarn "Overall test had failures in one or more steps"
+    }
 }
