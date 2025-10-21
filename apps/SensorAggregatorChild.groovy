@@ -93,12 +93,9 @@ Map mainPage() {
                 paragraph "Current aggregate value: <b>${state.aggregateValue}</b>"
                 paragraph "Included sensors: ${state.includedSensors?.size() ?: 0} of ${inputSensors.size()}"
                 if (state.excludedSensors?.size() > 0) {
-                    // Build links to excluded sensor device pages
-                    List<String> excludedLinks = []
-                    inputSensors.each { sensor ->
-                        if (state.excludedSensors?.contains(sensor.getLabel())) {
-                            excludedLinks << "<a href='/device/edit/${sensor.id}' target='_blank'>${sensor.getLabel()}</a>"
-                        }
+                    Map<String, Long> sensorMap = inputSensors.collectEntries { [(it.getLabel()): it.id] }
+                    List<String> excludedLinks = state.excludedSensors.collect { label ->
+                        "<a href='/device/edit/${sensorMap[label]}' target='_blank'>${label}</a>"
                     }
                     paragraph "<span style='color:orange'><b>Excluded sensors:</b> ${excludedLinks.join(', ')}</span>"
                 }
@@ -225,7 +222,7 @@ private ChildDeviceWrapper fetchChildDevice() {
     return cd
 }
 
-private List<DeviceWrapper> refreshIncludedSensorsList() {
+private List<DeviceWrapper> refreshIncludedSensors() {
     Date now = new Date()
     Date timeAgo = new Date(now.time - excludeAfter * 60 * 1000)
     String attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute
@@ -252,16 +249,18 @@ private List<DeviceWrapper> refreshIncludedSensorsList() {
 
     // Check for newly excluded sensors
     List<String> newlyExcluded = currentlyExcludedLabels - previouslyExcludedLabels
-    if (newlyExcluded.size() > 0 && notificationDevice && notifyOnFirstExcluded) {
+    if (newlyExcluded.size() > 0) {
         String message = "Sensor Aggregator '${app.label}': Sensors excluded due to inactivity: ${newlyExcluded.join(', ')}"
-        notificationDevice.deviceNotification(message)
+        if (notificationDevice && notifyOnFirstExcluded) {
+            notificationDevice.deviceNotification(message)
+        }
         logWarn(message)
     }
 
     // Notify if all sensors excluded
     if (includedSensors.size() < 1) {
+        String message = "Sensor Aggregator '${app.label}': All sensors excluded due to inactivity"
         if (notificationDevice && notifyOnAllExcluded && previouslyExcludedLabels.size() < currentlyExcludedLabels.size()) {
-            String message = "Sensor Aggregator '${app.label}': All sensors excluded due to inactivity"
             notificationDevice.deviceNotification(message)
         }
         logWarn(message)
@@ -275,7 +274,7 @@ private List<DeviceWrapper> refreshIncludedSensorsList() {
 }
 
 private boolean computeAggregateSensorValue() {
-    List<DeviceWrapper> includedSensors = refreshIncludedSensorsList()
+    List<DeviceWrapper> includedSensors = refreshIncludedSensors()
 
     Integer n = includedSensors.size()
 

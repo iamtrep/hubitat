@@ -45,6 +45,8 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import com.hubitat.app.DeviceWrapper
 import com.hubitat.app.ChildDeviceWrapper
+//import com.hubitat.hub.domain.Attribute
+//import com.hubitat.hub.domain.Capability // not allowed
 import com.hubitat.hub.domain.Event
 
 @Field static final String child_app_version = "0.3.1"
@@ -74,7 +76,7 @@ Map mainPage() {
             if (selectedSensorCapability) {
                 input name: "inputSensors", type: selectedSensorCapability, title: "Sensors to aggregate", multiple:true, required: true, showFilter: true, submitOnChange: true
                 if (inputSensors) {
-                    def attributePossibleValues = getAttributePossibleValues(inputSensors[0], selectedSensorCapability)
+                    List<String> attributePossibleValues = getAttributePossibleValues(inputSensors[0], selectedSensorCapability)
                     input name: "attributeValue", type: "enum", options: attributePossibleValues, title: "Attribute value to monitor", multiple:false, required:true
                 }
                 input name: "outputSensor", type: selectedSensorCapability, title: "Virtual sensor to set as aggregation output", multiple: false, required: false, submitOnChange: true
@@ -98,12 +100,9 @@ Map mainPage() {
                 paragraph "Current aggregate value: <b>${state.aggregateValue}</b>"
                 paragraph "Included sensors: ${state.includedSensors?.size() ?: 0} of ${inputSensors.size()}"
                 if (state.excludedSensors?.size() > 0) {
-                    // Build links to excluded sensor device pages
-                    List<String> excludedLinks = []
-                    inputSensors.each { sensor ->
-                        if (state.excludedSensors?.contains(sensor.getLabel())) {
-                            excludedLinks << "<a href='/device/edit/${sensor.id}' target='_blank'>${sensor.getLabel()}</a>"
-                        }
+                    Map<String, Long> sensorMap = inputSensors.collectEntries { [(it.getLabel()): it.id] }
+                    List<String> excludedLinks = state.excludedSensors.collect { label ->
+                        "<a href='/device/edit/${sensorMap[label]}' target='_blank'>${label}</a>"
                     }
                     paragraph "<span style='color:orange'><b>Excluded sensors:</b> ${excludedLinks.join(', ')}</span>"
                 }
@@ -252,7 +251,7 @@ void sensorEventHandler(Event evt=null) {
     }
 }
 
-private List<DeviceWrapper> refreshIncludedSensorsList() {
+private List<DeviceWrapper> refreshIncludedSensors() {
     Date now = new Date()
     Date timeAgo = new Date(now.time - excludeAfter * 60 * 1000)
     String attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute
@@ -279,16 +278,18 @@ private List<DeviceWrapper> refreshIncludedSensorsList() {
 
     // Check for newly excluded sensors
     List<String> newlyExcluded = currentlyExcludedLabels - previouslyExcludedLabels
-    if (newlyExcluded.size() > 0 && notificationDevice && notifyOnFirstExcluded) {
+    if (newlyExcluded.size() > 0) {
         String message = "Sensor Aggregator '${app.label}': Sensors excluded due to inactivity: ${newlyExcluded.join(', ')}"
-        notificationDevice.deviceNotification(message)
+        if (notificationDevice && notifyOnFirstExcluded) {
+            notificationDevice.deviceNotification(message)
+        }
         logWarn(message)
     }
 
     // Notify if all sensors excluded
     if (includedSensors.size() < 1) {
+        String message = "Sensor Aggregator '${app.label}': All sensors excluded due to inactivity"
         if (notificationDevice && notifyOnAllExcluded && previouslyExcludedLabels.size() < currentlyExcludedLabels.size()) {
-            String message = "Sensor Aggregator '${app.label}': All sensors excluded due to inactivity"
             notificationDevice.deviceNotification(message)
         }
         logWarn(message)
@@ -302,7 +303,7 @@ private List<DeviceWrapper> refreshIncludedSensorsList() {
 }
 
 private boolean computeAggregateSensorValue() {
-    List<DeviceWrapper> includedSensors = refreshIncludedSensorsList()
+    List<DeviceWrapper> includedSensors = refreshIncludedSensors()
 
     Integer n = includedSensors.size()
 
@@ -536,7 +537,7 @@ boolean setupTestEnvironment() {
     List<String> testInputIds = []
     for (int i = 1; i <= 5; i++) {
         String dni = "test-input-${app.id}-${i}"
-        def device = getChildDevice(dni)
+        ChildDeviceWrapper device = getChildDevice(dni)
         if (device) {
             testInputIds << device.id.toString()
         }
@@ -551,14 +552,14 @@ boolean setupTestEnvironment() {
 
     // Create test output device
     String outputDni = "test-output-${app.id}"
-    def existingOutput = getChildDevice(outputDni)
+    ChildDeviceWrapper existingOutput = getChildDevice(outputDni)
     if (existingOutput) {
         deleteChildDevice(outputDni)
         pauseExecution(500)
     }
 
-    def outputDevice = addChildDevice("hubitat", "Virtual Contact Sensor", outputDni,
-                                      [name: "Test Output", label: "Test Output"])
+    ChildDeviceWrapper outputDevice = addChildDevice("hubitat", "Virtual Contact Sensor", outputDni,
+                                                     [name: "Test Output", label: "Test Output"])
     if (!outputDevice) {
         logError "Failed to create test output device"
         return false
@@ -629,10 +630,10 @@ boolean createTestDevices() {
         // Create 5 test input sensors
         for (int i = 1; i <= 5; i++) {
             String dni = "test-input-${app.id}-${i}"
-            def existingDevice = getChildDevice(dni)
+            ChildDeviceWrapper existingDevice = getChildDevice(dni)
 
             if (!existingDevice) {
-                def newDevice = addChildDevice(
+                ChildDeviceWrapper newDevice = addChildDevice(
                     "hubitat",
                     "Virtual Contact Sensor",
                     dni,
@@ -670,7 +671,7 @@ void cleanupTestDevices() {
         // Delete input sensors
         for (int i = 1; i <= 5; i++) {
             String dni = "test-input-${app.id}-${i}"
-            def testDevice = getChildDevice(dni)
+            ChildDeviceWrapper testDevice = getChildDevice(dni)
 
             if (testDevice) {
                 deleteChildDevice(dni)
@@ -680,7 +681,7 @@ void cleanupTestDevices() {
 
         // Delete output sensor
         String outputDni = "test-output-${app.id}"
-        def outputDevice = getChildDevice(outputDni)
+        ChildDeviceWrapper outputDevice = getChildDevice(outputDni)
         if (outputDevice) {
             deleteChildDevice(outputDni)
             logInfo "Deleted: Test Output"
@@ -736,7 +737,7 @@ void setTestInputSensors(List<Integer> openIndices) {
 
     for (int i = 1; i <= 5; i++) {
         String dni = "test-input-${app.id}-${i}"
-        def device = getChildDevice(dni)
+        ChildDeviceWrapper device = getChildDevice(dni)
         if (device) {
             devices << device
         }
@@ -764,7 +765,7 @@ void setTestInputSensors(List<Integer> openIndices) {
 boolean assertAggregateValue(String expected, String testName, boolean countAsTest = true) {
     pauseExecution(500)
 
-    def outputDevice = getChildDevice("test-output-${app.id}")
+    ChildDeviceWrapper outputDevice = getChildDevice("test-output-${app.id}")
     if (!outputDevice) {
         logError "Test output device not found!"
         if (countAsTest) {
