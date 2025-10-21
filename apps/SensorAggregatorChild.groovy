@@ -284,6 +284,7 @@ private boolean computeAggregateSensorValue() {
         return false
     }
 
+    String attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute
     List sensorValues = includedSensors.collect { it.currentValue(attributeName) }
     state.minSensorValue = roundToDecimalPlaces(sensorValues.min())
     state.maxSensorValue = roundToDecimalPlaces(sensorValues.max())
