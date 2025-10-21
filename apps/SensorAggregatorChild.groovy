@@ -216,7 +216,7 @@ private boolean computeAggregateSensorValue() {
     List excludedSensors = []
 
     inputSensors.each {
-        Date lastActivty = it.getLastActivity()
+        Date lastActivity = it.getLastActivity()
         if (lastActivity > timeAgo) {
             if (it.currentValue(attributeName) != null) {
                 includedSensors << it
@@ -224,7 +224,7 @@ private boolean computeAggregateSensorValue() {
             }
         } else {
             excludedSensors << it
-            logTrace("Excluding sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - no activity since $timeAgo")
+            logTrace("Excluding sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - no activity since $timeAgo (last active ${lastActivity})")
         }
     }
 

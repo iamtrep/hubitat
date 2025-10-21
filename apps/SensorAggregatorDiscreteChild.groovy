@@ -22,9 +22,9 @@
  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  SOFTWARE.
 
- Sensor Aggregator Child
+ Sensor Aggregator Discrete Child
 
- An app that allows aggregating sensor values and saving the result to a virtual device
+ An app that allows aggregating discrete sensor values and saving the result to a virtual device
 
  */
 
@@ -91,13 +91,26 @@ Map mainPage() {
             }
             input name: "excludeAfter", type: "number", title: "Exclude sensor value when sensor has no updates for this many minutes:", defaultValue: 60, range: "0..1440"
         }
+        section("Operation") {
+            input name: "forceUpdate", type: "button", title: "Force update aggregate value"
+            if(inputSensors && state.aggregateValue != null) {
+                def possibleValues = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.values
+                paragraph "Current aggregate value: <b>${state.aggregateValue}</b>"
+                paragraph "Included sensors: ${state.includedSensors?.size() ?: 0} of ${inputSensors.size()}"
+                if (state.excludedSensors?.size() > 0) {
+                    paragraph "<span style='color:orange'>Excluded sensors: ${state.excludedSensors.join(', ')}</span>"
+                }
+            }
+            input name: "logLevel", type: "enum", options: ["warn","info","debug","trace"], title: "Enable logging?", defaultValue: "info", required: true, submitOnChange: true
+            log.info("${logLevel} logging enabled")
+        }
         section("Notifications") {
             input name: "notificationDevice", type: "capability.notification", title: "Send notifications to:", multiple: false, required: false
             input name: "notifyOnAllExcluded", type: "bool", title: "Notify when all sensors are excluded", defaultValue: true
             input name: "notifyOnFirstExcluded", type: "bool", title: "Notify when any sensor is excluded", defaultValue: false
             input name: "notifyOnValueChange", type: "bool", title: "Notify when aggregate value changes", defaultValue: false
         }
-        section("Testing") {
+        section(title: "Testing", hideable: true, hidden: true) {
             paragraph "<b>Automated Testing</b>"
             paragraph "Run automated tests to verify the aggregation logic. This will create test devices, run tests, and clean up automatically."
             input name: "runSmokeTests", type: "button", title: "Run Quick Smoke Tests (3 tests)"
@@ -115,19 +128,6 @@ Map mainPage() {
                     paragraph "<span style='color:green'><b>All tests passed!</b></span>"
                 }
             }
-        }
-        section("Operation") {
-            input name: "forceUpdate", type: "button", title: "Force update aggregate value"
-            if(inputSensors && state.aggregateValue != null) {
-                def possibleValues = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.values
-                paragraph "Current aggregate value: <b>${state.aggregateValue}</b>"
-                paragraph "Included sensors: ${state.includedSensors?.size() ?: 0} of ${inputSensors.size()}"
-                if (state.excludedSensors?.size() > 0) {
-                    paragraph "<span style='color:orange'>Excluded sensors: ${state.excludedSensors.join(', ')}</span>"
-                }
-            }
-            input name: "logLevel", type: "enum", options: ["warn","info","debug","trace"], title: "Enable logging?", defaultValue: "info", required: true, submitOnChange: true
-            log.info("${logLevel} logging enabled")
         }
     }
 }
@@ -256,7 +256,7 @@ boolean computeAggregateSensorValue() {
     List<DeviceWrapper> excludedSensors = []
 
     inputSensors.each {
-        Date lastActivty = it.getLastActivity()
+        Date lastActivity = it.getLastActivity()
         if (lastActivity > timeAgo) {
             if (it.currentValue(attributeName) != null) {
                 includedSensors << it
@@ -264,7 +264,7 @@ boolean computeAggregateSensorValue() {
             }
         } else {
             excludedSensors << it
-            logTrace("Excluding sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - no activity since $timeAgo")
+            logTrace("Excluding sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - no activity since $timeAgo (last active ${lastActivity})")
         }
     }
 
