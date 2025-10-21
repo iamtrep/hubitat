@@ -51,7 +51,7 @@ import com.hubitat.app.DeviceWrapper
 import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 
-@Field static final String child_app_version = "0.3.1"
+@Field static final String child_app_version = "0.3.2"
 
 @Field static final Map<String, String> CAPABILITY_ATTRIBUTES = [
     "capability.carbonDioxideMeasurement"   : [ attribute: "carbonDioxide", driver: "Virtual Omni Sensor" ],
@@ -122,11 +122,11 @@ void updated() {
     if (state.includedSensors == null) { state.includedSensors = [] }
     if (state.excludedSensors == null) { state.excludedSensors = [] }
 
-    if (state.aggregateValue == null) { state.aggregateValue = 0 }
-    if (state.avgSensorValue == null) { state.avgSensorValue = 0 }
-    if (state.minSensorValue == null) { state.minSensorValue = 0 }
-    if (state.maxSensorValue == null) { state.maxSensorValue = 0 }
-    if (state.medianSensorValue == null) { state.medianSensorValue = 0 }
+    if (state.aggregateValue == null) { state.aggregateValue = 0.0 }
+    if (state.avgSensorValue == null) { state.avgSensorValue = 0.0 }
+    if (state.minSensorValue == null) { state.minSensorValue = 0.0 }
+    if (state.maxSensorValue == null) { state.maxSensorValue = 0.0 }
+    if (state.medianSensorValue == null) { state.medianSensorValue = 0.0 }
     if (state.createChild == null) { state.createChild = false }
 
     if (!outputSensor && state.createChild) {
@@ -195,7 +195,7 @@ private String getAttributeUnits(String capability) {
         default:
             break
     }
-    return null
+    return ""
 }
 
 private ChildDeviceWrapper fetchChildDevice() {

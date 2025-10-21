@@ -49,7 +49,7 @@ import com.hubitat.app.ChildDeviceWrapper
 //import com.hubitat.hub.domain.Capability // not allowed
 import com.hubitat.hub.domain.Event
 
-@Field static final String child_app_version = "0.3.1"
+@Field static final String child_app_version = "0.3.2"
 
 @Field static final Map<String, String> CAPABILITY_ATTRIBUTES = [
     "capability.accelerationSensor"  : [ attribute: "acceleration", values: ["inactive", "active"], driver: "Virtual Acceleration Sensor" ],
@@ -114,7 +114,6 @@ Map mainPage() {
             input name: "notificationDevice", type: "capability.notification", title: "Send notifications to:", multiple: false, required: false
             input name: "notifyOnAllExcluded", type: "bool", title: "Notify when all sensors are excluded", defaultValue: true
             input name: "notifyOnFirstExcluded", type: "bool", title: "Notify when any sensor is excluded", defaultValue: false
-            input name: "notifyOnValueChange", type: "bool", title: "Notify when aggregate value changes", defaultValue: false
         }
         section(title: "Testing", hideable: true, hidden: true) {
             paragraph "<b>Automated Testing</b>"
@@ -314,8 +313,6 @@ private boolean computeAggregateSensorValue() {
 
     String attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute
     List<String> possibleValues = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.values
-    String previousValue = state.aggregateValue
-
     List<Object> sensorValues = includedSensors.collect { it.currentValue(attributeName) }
     String targetValue = attributeValue
     String oppositeValue = possibleValues.find { it != targetValue }
@@ -341,18 +338,8 @@ private boolean computeAggregateSensorValue() {
             break
     }
 
-    // Check if value changed
-    boolean valueChanged = (previousValue != state.aggregateValue)
-    if (valueChanged) {
-        logInfo("Aggregate value changed: ${previousValue} → ${state.aggregateValue}")
-        if (notificationDevice && notifyOnValueChange) {
-            String message = "Sensor Aggregator '${app.label}': Value changed from ${previousValue} to ${state.aggregateValue}"
-            notificationDevice.deviceNotification(message)
-        }
-    }
-
     logStatistics()
-    return valueChanged
+    return true
 }
 
 
