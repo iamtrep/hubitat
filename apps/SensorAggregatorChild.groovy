@@ -216,19 +216,20 @@ private boolean computeAggregateSensorValue() {
     List excludedSensors = []
 
     inputSensors.each {
-        List<Event> events = it.eventsSince(timeAgo, [max:1])
-        if (events.size() > 0) {
+        Date lastActivty = it.getLastActivity()
+        if (lastActivity > timeAgo) {
             if (it.currentValue(attributeName) != null) {
                 includedSensors << it
-                logTrace("Including sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - last event ${events[0].date}")
+                logTrace("Including sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - last activity ${lastActivity}")
             }
         } else {
             excludedSensors << it
-            logTrace("Excluding sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - no events since ${timeAgo}")
+            logTrace("Excluding sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - no activity since $timeAgo")
         }
     }
 
     Integer n = includedSensors.size()
+
     if (n<1) {
         // For now, simply don't update the app state
         logError "No sensors available for agregation... aggregate value not updated (${state.aggregateValue})"

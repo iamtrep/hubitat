@@ -256,15 +256,15 @@ boolean computeAggregateSensorValue() {
     List<DeviceWrapper> excludedSensors = []
 
     inputSensors.each {
-        List<Event> events = it.eventsSince(timeAgo, [max:1])
-        if (events.size() > 0) {
+        Date lastActivty = it.getLastActivity()
+        if (lastActivity > timeAgo) {
             if (it.currentValue(attributeName) != null) {
                 includedSensors << it
-                logTrace("Including sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - last event ${events[0].date}")
+                logTrace("Including sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - last activity ${lastActivity}")
             }
         } else {
             excludedSensors << it
-            logTrace("Excluding sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - no events since $timeAgo")
+            logTrace("Excluding sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - no activity since $timeAgo")
         }
     }
 
@@ -376,7 +376,7 @@ void logStatistics() {
     }
 
     if (state.excludedSensors?.size() > 0) {
-        logDebug("Excluded sensors (no updates for ${excludeAfter} min): ${state.excludedSensors.join(', ')}")
+        logDebug("Excluded sensors (no activity in last ${excludeAfter} min): ${state.excludedSensors.join(', ')}")
     }
 }
 
