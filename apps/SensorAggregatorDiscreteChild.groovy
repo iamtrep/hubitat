@@ -89,7 +89,7 @@ Map mainPage() {
             if (aggregationMethod == "threshold") {
                 input name: "thresholdPercent", type: "number", title: "Threshold percentage (1-100)", defaultValue: 50, range: "1..100", required: true
             }
-            input name: "excludeAfter", type: "number", title: "Exclude sensor value when sensor has no updates for this many minutes:", defaultValue: 60, range: "0..1440"
+            input name: "excludeAfter", type: "number", title: "Exclude sensor when inactive for this many minutes:", defaultValue: 60, range: "0..1440", submitOnChange: true
         }
         section("Operation") {
             input name: "forceUpdate", type: "button", title: "Force update aggregate value"
@@ -98,7 +98,14 @@ Map mainPage() {
                 paragraph "Current aggregate value: <b>${state.aggregateValue}</b>"
                 paragraph "Included sensors: ${state.includedSensors?.size() ?: 0} of ${inputSensors.size()}"
                 if (state.excludedSensors?.size() > 0) {
-                    paragraph "<span style='color:orange'>Excluded sensors: ${state.excludedSensors.join(', ')}</span>"
+                    // Build links to excluded sensor device pages
+                    List<String> excludedLinks = []
+                    inputSensors.each { sensor ->
+                        if (state.excludedSensors?.contains(sensor.getLabel())) {
+                            excludedLinks << "<a href='/device/edit/${sensor.id}' target='_blank'>${sensor.getLabel()}</a>"
+                        }
+                    }
+                    paragraph "<span style='color:orange'><b>Excluded sensors:</b> ${excludedLinks.join(', ')}</span>"
                 }
             }
             input name: "logLevel", type: "enum", options: ["warn","info","debug","trace"], title: "Enable logging?", defaultValue: "info", required: true, submitOnChange: true

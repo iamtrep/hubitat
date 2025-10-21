@@ -91,12 +91,24 @@ Map mainPage() {
         }
         section("Aggregation") {
             input name: "aggregationMethod", type: "enum", options: ["average", "median", "min", "max"], title: "Select aggregation method", defaultValue: "average", required: true, submitOnChange: true
-            input name: "excludeAfter", type: "number", title: "Exclude sensor value when sensor is inactive for this many minutes:", defaultValue: 60, range: "0..3600"
+            input name: "excludeAfter", type: "number", title: "Exclude sensor when inactive for this many minutes:", defaultValue: 60, range: "0..1440", submitOnchange: true
         }
         section("Operation") {
             input name: "forceUpdate", type: "button", title: "Force update aggregate value"
-            if(inputSensors) {
-                paragraph "Current $aggregationMethod value is ${state.aggregateValue} ${getAttributeUnits(selectedSensorCapability)}"
+            if(inputSensors && state.aggregateValue != null) {
+                def possibleValues = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.values
+                paragraph "Current aggregate value: <b>${state.aggregateValue}</b>"
+                paragraph "Included sensors: ${state.includedSensors?.size() ?: 0} of ${inputSensors.size()}"
+                if (state.excludedSensors?.size() > 0) {
+                    // Build links to excluded sensor device pages
+                    List<String> excludedLinks = []
+                    inputSensors.each { sensor ->
+                        if (state.excludedSensors?.contains(sensor.getLabel())) {
+                            excludedLinks << "<a href='/device/edit/${sensor.id}' target='_blank'>${sensor.getLabel()}</a>"
+                        }
+                    }
+                    paragraph "<span style='color:orange'><b>Excluded sensors:</b> ${excludedLinks.join(', ')}</span>"
+                }
             }
             input name: "logLevel", type: "enum", options: ["warn","info","debug","trace"], title: "Enable logging?", defaultValue: "info", required: true, submitOnChange: true
             log.info("${logLevel} logging enabled")
