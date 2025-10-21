@@ -81,6 +81,7 @@ Map mainPage() {
                 if (!outputSensor) {
                     input "createChildSensorDevice", "bool", title: "Create Child Device if no Output Device selected", defaultValue: state.createChild, required: true, submitOnChange: true
                     state.createChild = createChildSensorDevice
+                    paragraph "<a href='/device/addDevice' target='_blank'>Create a new virtual device</a>"
                 }
             }
         }
@@ -94,7 +95,6 @@ Map mainPage() {
         section("Operation") {
             input name: "forceUpdate", type: "button", title: "Force update aggregate value"
             if(inputSensors && state.aggregateValue != null) {
-                def possibleValues = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.values
                 paragraph "Current aggregate value: <b>${state.aggregateValue}</b>"
                 paragraph "Included sensors: ${state.includedSensors?.size() ?: 0} of ${inputSensors.size()}"
                 if (state.excludedSensors?.size() > 0) {
