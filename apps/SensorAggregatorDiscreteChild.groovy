@@ -47,7 +47,7 @@ import com.hubitat.app.DeviceWrapper
 import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 
-@Field static final String child_app_version = "0.2.0"
+@Field static final String child_app_version = "0.3.0"
 
 @Field static final Map<String, String> CAPABILITY_ATTRIBUTES = [
     "capability.accelerationSensor"  : [ attribute: "acceleration", values: ["inactive", "active"], driver: "Virtual Acceleration Sensor" ],
