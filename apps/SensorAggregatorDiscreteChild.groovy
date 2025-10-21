@@ -252,12 +252,10 @@ void sensorEventHandler(Event evt=null) {
     }
 }
 
-
-boolean computeAggregateSensorValue() {
+private List<DeviceWrapper> refreshIncludedSensorsList() {
     Date now = new Date()
     Date timeAgo = new Date(now.time - excludeAfter * 60 * 1000)
     String attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute
-    def possibleValues = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.values
 
     List<DeviceWrapper> includedSensors = []
     List<DeviceWrapper> excludedSensors = []
@@ -275,10 +273,7 @@ boolean computeAggregateSensorValue() {
         }
     }
 
-    int n = includedSensors.size()
-
     // Store previous values for comparison
-    String previousValue = state.aggregateValue
     List<String> previouslyExcludedLabels = state.excludedSensors ?: []
     List<String> currentlyExcludedLabels = excludedSensors.collect { it.getLabel() }
 
@@ -290,47 +285,60 @@ boolean computeAggregateSensorValue() {
         logWarn(message)
     }
 
-    if (n < 1) {
+    // Notify if all sensors excluded
+    if (includedSensors.size() < 1) {
         if (notificationDevice && notifyOnAllExcluded && previouslyExcludedLabels.size() < currentlyExcludedLabels.size()) {
             String message = "Sensor Aggregator '${app.label}': All sensors excluded due to inactivity"
             notificationDevice.deviceNotification(message)
-            logWarn(message)
         }
+        logWarn(message)
+    }
+
+    // Update state
+    state.includedSensors = includedSensors.collect { it.getLabel() }
+    state.excludedSensors = currentlyExcludedLabels
+
+    return includedSensors
+}
+
+private boolean computeAggregateSensorValue() {
+    List<DeviceWrapper> includedSensors = refreshIncludedSensorsList()
+
+    Integer n = includedSensors.size()
+
+    if (n < 1) {
         logError "No sensors available for aggregation... aggregate value not updated (${state.aggregateValue})"
-        state.excludedSensors = currentlyExcludedLabels
         return false
     }
 
-    def sensorValues = includedSensors.collect { it.currentValue(attributeName) }
-    def targetValue = attributeValue
-    def oppositeValue = possibleValues.find { it != targetValue }
+    String attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute
+    List<String> possibleValues = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.values
+    String previousValue = state.aggregateValue
+
+    List<Object> sensorValues = includedSensors.collect { it.currentValue(attributeName) }
+    String targetValue = attributeValue
+    String oppositeValue = possibleValues.find { it != targetValue }
 
     // Compute aggregate value based on method
     switch (aggregationMethod) {
         case "all":
             state.aggregateValue = sensorValues.every { it == targetValue } ? targetValue : oppositeValue
             break
-
         case "majority":
             int countTarget = sensorValues.count { it == targetValue }
             state.aggregateValue = (countTarget > n / 2) ? targetValue : oppositeValue
             break
-
         case "threshold":
             int countTarget = sensorValues.count { it == targetValue }
             double percentage = (countTarget / (double)n) * 100.0
             state.aggregateValue = (percentage >= thresholdPercent) ? targetValue : oppositeValue
             logDebug("Threshold check: ${countTarget}/${n} = ${roundToDecimalPlaces(percentage, 1)}% (threshold: ${thresholdPercent}%)")
             break
-
         case "any":
         default:
             state.aggregateValue = sensorValues.any { it == targetValue } ? targetValue : oppositeValue
             break
     }
-
-    state.includedSensors = includedSensors.collect { it.getLabel() }
-    state.excludedSensors = currentlyExcludedLabels
 
     // Check if value changed
     boolean valueChanged = (previousValue != state.aggregateValue)
@@ -345,6 +353,7 @@ boolean computeAggregateSensorValue() {
     logStatistics()
     return valueChanged
 }
+
 
 void appButtonHandler(String buttonName) {
     switch (buttonName) {
