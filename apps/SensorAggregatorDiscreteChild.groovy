@@ -45,8 +45,8 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import com.hubitat.app.DeviceWrapper
 import com.hubitat.app.ChildDeviceWrapper
-//import com.hubitat.hub.domain.Attribute
-//import com.hubitat.hub.domain.Capability // not allowed
+//import com.hubitat.hub.domain.Attribute // only available from 2.4.3.148 onward
+//import com.hubitat.hub.domain.Capability // only available from 2.4.3.148 onward
 import com.hubitat.hub.domain.Event
 
 @Field static final String child_app_version = "0.3.2"
@@ -282,7 +282,7 @@ private List<DeviceWrapper> refreshIncludedSensors() {
         if (notificationDevice && notifyOnFirstExcluded) {
             notificationDevice.deviceNotification(message)
         }
-        logWarn(message)
+        logDebug(message)
     }
 
     // Notify if all sensors excluded
