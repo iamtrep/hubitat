@@ -14,23 +14,56 @@ definition(
     iconX2Url: ""
 )
 
+import groovy.transform.CompileStatic
+import groovy.transform.Field
+
+@Field static final String APP_NAME = "Hydro-Québec Peak Period Manager"
+@Field static final String APP_VERSION = "0.0.1"
+
+@Field static final Map API_PARAMS = [
+    uri: "https://donnees.hydroquebec.com",
+    path: "/api/explore/v2.1/catalog/datasets/evenements-pointe/records",
+    query: [
+        order_by: "datedebut",
+        limit: 100,
+        timezone: "America/New_York",
+        refine: "offre:\"CPC-D\""
+    ],
+    contentType: "application/json"
+]
+
+@Field static final Map API_TEST_PARAMS = [
+    uri: "http://127.0.0.1:8080",
+    path: "/local/testPeakPeriods.json",
+    contentType: "application/json"
+]
+
+@Field static final Integer REFETCH_DELAY_SECONDS = 5
+@Field static final String DATE_FORMAT_ISO8601 = "yyyy-MM-dd'T'HH:mm:ssXXX"
+
+@Field static final Integer DEFAULT_UPDATE_INTERVAL_HOURS = 1
+@Field static final Integer DEFAULT_PRE_EVENT_MINUTES = 60
+
+@Field static final Boolean testMode = false
+
 preferences {
     page(name: "mainPage")
 }
 
 Map mainPage() {
-    dynamicPage(name: "mainPage", title: "Hydro-Québec Peak Period Manager", install: true, uninstall: true) {
+    dynamicPage(name: "mainPage", title: "${APP_NAME} v${APP_VERSION}", install: true, uninstall: true) {
         section("Peak Period Switches") {
             input "eventSwitch", "capability.switch", title: "Event Switch (ON during peak period)", required: true
             input "preEventSwitch", "capability.switch", title: "Pre-Event Switch (ON before peak period)", required: false
+            input "upcomingEventSwitch", "capability.switch", title: "Upcoming Event Switch (ON when any event is scheduled)", required: false
         }
 
         section("Pre-Event Warning") {
-            input "preEventMinutes", "number", title: "Minutes before peak to turn on pre-event switch", defaultValue: 60, required: true
+            input "preEventMinutes", "number", title: "Minutes before peak to turn on pre-event switch", defaultValue: DEFAULT_PRE_EVENT_MINUTES, required: true
         }
 
         section("Update Schedule") {
-            input "updateInterval", "number", title: "Check for updates every X hours", defaultValue: 1, required: true, range: "1..24"
+            input "updateInterval", "number", title: "Check for updates every X hours", defaultValue: DEFAULT_UPDATE_INTERVAL_HOURS, required: true, range: "1..24"
         }
 
         section("Debug") {
@@ -69,26 +102,14 @@ void initialize() {
 void fetchPeakPeriods() {
     logDebug("Fetching peak period data...")
 
-    Map params = [
-        uri: "https://donnees.hydroquebec.com",
-        path: "/api/explore/v2.1/catalog/datasets/evenements-pointe/records",
-        query: [
-            order_by: "datedebut",
-            limit: 100,
-            timezone: "America/New_York",
-            refine: "offre:\"CPC-D\""
-        ],
-        contentType: "application/json"
-    ]
-
     try {
-        asynchttpGet(handlePeakPeriodsResponse, params)
+        asynchttpGet(handlePeakPeriodsResponse, testMode ? API_TEST_PARAMS : API_PARAMS)
     } catch (Exception e) {
         log.error("Error initiating fetch of peak periods: ${e.message}")
     }
 }
 
-void handlePeakPeriodsResponse(hubitat.scheduling.AsyncResponse response, Map data) {
+private void handlePeakPeriodsResponse(hubitat.scheduling.AsyncResponse response, Map data) {
     try {
         if (response.status == 200) {
             logDebug("Successfully fetched data")
@@ -103,7 +124,7 @@ void handlePeakPeriodsResponse(hubitat.scheduling.AsyncResponse response, Map da
     }
 }
 
-void processPeakPeriods(Map data) {
+private void processPeakPeriods(Map data) {
     List records = data.results ?: []
     logDebug("Processing ${records.size()} peak period records")
 
@@ -118,6 +139,7 @@ void processPeakPeriods(Map data) {
     unschedule(endPeakPeriod)
     unschedule(startPreEvent)
     unschedule(endPreEvent)
+    unschedule(clearUpcomingEvent)
 
     records.each { Map record ->
         String dateDebut = record.datedebut
@@ -154,6 +176,22 @@ void processPeakPeriods(Map data) {
             }
         } catch (Exception e) {
             log.error("Error parsing dates for record: ${e.message}")
+        }
+    }
+
+    // Handle upcoming event switch
+    if (upcomingEventSwitch) {
+        if (upcomingStarts.size() > 0) {
+            logDebug("Upcoming events detected - turning on upcoming event switch")
+            upcomingEventSwitch.on()
+
+            // Schedule to turn off at the start of the earliest event
+            Date earliestStart = upcomingStarts.min()
+            runOnce(earliestStart, clearUpcomingEvent)
+            logDebug("Scheduled to clear upcoming event switch at ${earliestStart}")
+        } else {
+            logDebug("No upcoming events - turning off upcoming event switch")
+            upcomingEventSwitch.off()
         }
     }
 
@@ -221,9 +259,12 @@ void processPeakPeriods(Map data) {
             preEventSwitch.off()
         }
     }
+
+    // Update app label based on current state
+    updateAppLabel()
 }
 
-void startPeakPeriod() {
+private void startPeakPeriod() {
     log.info("Peak period starting - turning on event switch")
     eventSwitch.on()
 
@@ -232,38 +273,80 @@ void startPeakPeriod() {
         preEventSwitch.off()
     }
 
+    // Update label
+    updateAppLabel()
+
     // Fetch fresh data to reschedule
-    runIn(5, fetchPeakPeriods)
+    runIn(REFETCH_DELAY_SECONDS, fetchPeakPeriods)
 }
 
-void endPeakPeriod() {
+private void endPeakPeriod() {
     log.info("Peak period ending - turning off event switch")
     eventSwitch.off()
 
+    // Update label
+    updateAppLabel()
+
     // Fetch fresh data to reschedule
-    runIn(5, fetchPeakPeriods)
+    runIn(REFETCH_DELAY_SECONDS, fetchPeakPeriods)
 }
 
-void startPreEvent() {
+private void startPreEvent() {
     log.info("Pre-event period starting - turning on pre-event switch")
     if (preEventSwitch) {
         preEventSwitch.on()
     }
+
+    // Update label
+    updateAppLabel()
 }
 
-void endPreEvent() {
+private void endPreEvent() {
     logDebug("Pre-event period ending - turning off pre-event switch")
     if (preEventSwitch) {
         preEventSwitch.off()
     }
+
+    // Update label
+    updateAppLabel()
 }
 
-Date parseIsoDate(String isoTimestamp) {
-    // Parse ISO 8601 format: "2025-01-06T11:00:00+00:00"
-    return Date.parse("yyyy-MM-dd'T'HH:mm:ssXXX", isoTimestamp)
+private void clearUpcomingEvent() {
+    logDebug("Peak period starting - clearing upcoming event switch")
+    if (upcomingEventSwitch) {
+        upcomingEventSwitch.off()
+    }
+
+    // Update label
+    updateAppLabel()
+
+    // Fetch fresh data to reschedule
+    runIn(REFETCH_DELAY_SECONDS, fetchPeakPeriods)
 }
 
-void logDebug(String msg) {
+private void updateAppLabel() {
+    String label = APP_NAME
+
+    // Determine current state and add colored status
+    if (eventSwitch?.currentValue("switch") == "on") {
+        label = "${label} <span style='color:red'>⚡ PEAK EVENT IN PROGRESS</span>"
+    } else if (preEventSwitch?.currentValue("switch") == "on") {
+        label = "${label} <span style='color:orange'>⏰ Pre-Event Warning</span>"
+    } else if (upcomingEventSwitch?.currentValue("switch") == "on") {
+        label = "${label} <span style='color:blue'>📅 Event Scheduled</span>"
+    } else {
+        label = "${label} <span style='color:green'>✓ No Events</span>"
+    }
+
+    app.updateLabel(label)
+}
+
+@CompileStatic
+private Date parseIsoDate(String isoTimestamp) {
+    return Date.parse(DATE_FORMAT_ISO8601, isoTimestamp)
+}
+
+private void logDebug(String msg) {
     if (settings.enableDebug) {
         log.debug(msg)
     }
