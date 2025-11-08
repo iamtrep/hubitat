@@ -163,7 +163,7 @@ void ping() {
     updateDeviceStatus(pingSuccess && httpSuccess)
 }
 
-void sendPingRequest() {
+boolean sendPingRequest() {
     try {
         def timeBefore = now()
         def pingData = NetworkUtils.ping(deviceIP, 1)
