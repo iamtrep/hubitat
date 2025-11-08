@@ -68,7 +68,7 @@ metadata {
 import hubitat.helper.NetworkUtils
 import groovy.transform.Field
 
-@Field static final String driver_version = "0.0.1"
+@Field static final String driver_version = "0.0.2"
 
 void installed() {
     logDebug "Installed with settings: ${settings}"
@@ -95,6 +95,8 @@ void initialize() {
         log.warn("New driver version installed ${driver_version} (previous: ${state.version})")
         state.version = driver_version
     }
+
+    state.supportsPingTimeout = supportsPingTimeout()
 
     reschedulePing(true)
 
@@ -128,7 +130,7 @@ void logsOff() {
     device.updateSetting("traceEnable", false)
 }
 
-def parse(String description) {
+void parse(String description) {
     logDebug "parse: ${description}"
 }
 
@@ -147,8 +149,8 @@ void ping() {
 
     atomicState.isPinging = true
 
-    def pingSuccess = true
-    def httpSuccess = true
+    boolean pingSuccess = true
+    boolean httpSuccess = true
 
     if (deviceIP) {
         pingSuccess = sendPingRequest()
@@ -165,9 +167,9 @@ void ping() {
 
 boolean sendPingRequest() {
     try {
-        def timeBefore = now()
-        def pingData = NetworkUtils.ping(deviceIP, 1)
-        def timeAfter = now()
+        long timeBefore = now()
+        NetworkUtils.PingData pingData = state.supportsPingTimeout ? NetworkUtils.ping(deviceIP,1,1) : NetworkUtils.ping(deviceIP, 1)
+        long timeAfter = now()
         logDebug "Ping $deviceIP result: ${pingData.packetLoss == 100 ? 'Failed' : 'Success'} in ${timeAfter-timeBefore} ms"
         return pingData.packetLoss != 100
     } catch (Exception e) {
@@ -180,7 +182,7 @@ boolean sendPingRequest() {
 
 boolean sendHttpRequest() {
     try {
-        def params = [
+        Map params = [
             uri: httpURL,
             timeout: 15
         ]
@@ -202,9 +204,9 @@ boolean sendHttpRequest() {
 }
 
 void updateDeviceStatus(boolean online) {
-    def currentStatus = device.currentValue("status")
-    def newStatus = online ? "online" : "offline"
-    def contactValue = online ? "closed" : "open"
+    String currentStatus = device.currentValue("status")
+    String newStatus = online ? "online" : "offline"
+    String contactValue = online ? "closed" : "open"
 
     // Update timestamp
     state.lastCheckin = new Date().format("yyyy-MM-dd HH:mm:ss")
@@ -262,6 +264,17 @@ void setRetryThreshold(threshold) {
     state.retryThreshold = threshold
     logDebug "Set retry threshold to ${threshold}"
 }
+
+private boolean supportsPingTimeout() {
+    // Check if firmware version supports 3-parameter ping (adjust version as needed)
+    String firmwareVersion = location.hub.firmwareVersionString
+    List<String> versionParts = firmwareVersion.tokenize('.')
+
+    // Timeout parameter was added after 2.4.3.149
+    if (versionParts[0] > 2 || versionParts[1] > 4 || versionParts[2] > 3 || versionParts[3] > 149) return true
+    return false
+}
+
 
 // Logging helpers
 
