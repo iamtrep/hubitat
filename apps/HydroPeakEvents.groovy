@@ -2,6 +2,11 @@
  *  Hydro-Québec Peak Period Manager
  *
  *  Manages thermostats and appliances during Hydro-Québec peak periods
+ *  Implemented as a state machine with four states:
+ *  - NO_EVENTS: No upcoming events
+ *  - EVENT_SCHEDULED: Event scheduled but not imminent
+ *  - PRE_EVENT: Within warning period before event
+ *  - EVENT_ACTIVE: Event is currently happening
  */
 
 import groovy.transform.CompileStatic
@@ -9,7 +14,7 @@ import groovy.transform.Field
 import groovy.json.JsonOutput
 
 @Field static final String APP_NAME = "Hydro-Québec Peak Period Manager"
-@Field static final String APP_VERSION = "0.0.1"
+@Field static final String APP_VERSION = "0.1.0"
 
 definition(
     name: APP_NAME,
@@ -47,6 +52,12 @@ definition(
 
 @Field static final Integer DEFAULT_UPDATE_INTERVAL_HOURS = 1
 @Field static final Integer DEFAULT_PRE_EVENT_MINUTES = 60
+
+// State machine states
+@Field static final String STATE_NO_EVENTS = "NO_EVENTS"
+@Field static final String STATE_EVENT_SCHEDULED = "EVENT_SCHEDULED"
+@Field static final String STATE_PRE_EVENT = "PRE_EVENT"
+@Field static final String STATE_EVENT_ACTIVE = "EVENT_ACTIVE"
 
 preferences {
     page(name: "mainPage")
@@ -94,15 +105,23 @@ void updated() {
 
 void initialize() {
     logDebug("Initializing...")
-
-    // Clear any existing schedules
     unschedule()
+
+    // Initialize state if needed
+    if (!state.currentState) {
+        state.currentState = STATE_NO_EVENTS
+    }
+
+    // Generate test file once if in test mode
+    if (settings.testMode) {
+        generateTestFile()
+    }
 
     // Fetch data immediately
     fetchPeakPeriods()
 
     // Schedule periodic updates
-    String cronExpression = "7 13 */${settings.updateInterval} * * ?" // Every X hours
+    String cronExpression = "7 13 */${settings.updateInterval} * * ?"
     schedule(cronExpression, fetchPeakPeriods)
 
     logDebug("Scheduled to check every ${settings.updateInterval} hour(s)")
@@ -110,11 +129,6 @@ void initialize() {
 
 void fetchPeakPeriods() {
     logDebug("Fetching peak period data...")
-
-    // In test mode, regenerate test file before fetching to keep it current
-    if (settings.testMode) {
-        generateTestFile()
-    }
 
     try {
         asynchttpGet(handlePeakPeriodsResponse, settings.testMode ? API_TEST_PARAMS : API_PARAMS)
@@ -143,29 +157,15 @@ private void processPeakPeriods(Map data) {
     logDebug("Processing ${records.size()} peak period records")
 
     Date now = new Date()
-    Date activePeriodStart = null
-    Date activePeriodEnd = null
-    List<Date> upcomingStarts = []
-    List<Date> upcomingEnds = []
+    Date nextEventStart = null
+    Date nextEventEnd = null
 
-    // Clear existing peak-related schedules
-    unschedule(startPeakPeriod)
-    unschedule(endPeakPeriod)
-    unschedule(startPreEvent)
-    unschedule(endPreEvent)
-    unschedule(clearUpcomingEvent)
-
-    // Clear stored schedule times
-    state.scheduledPeakEnd = null
-    state.scheduledPeakStart = null
-    state.scheduledPreEventStart = null
-
+    // Find the next relevant event (active or upcoming)
     records.each { Map record ->
         String dateDebut = record.datedebut
         String dateFin = record.datefin
 
         if (!dateDebut || !dateFin) {
-            logDebug("Skipping record with missing dates")
             return
         }
 
@@ -173,209 +173,251 @@ private void processPeakPeriods(Map data) {
             Date startTime = parseIsoDate(dateDebut)
             Date endTime = parseIsoDate(dateFin)
 
-            logDebug("Period: ${startTime} to ${endTime}")
-
-            // Skip if period is entirely in the past
+            // Skip if entirely in the past
             if (endTime.before(now)) {
-                logDebug("Skipping past period ending at ${endTime}")
                 return
             }
 
-            // Check if we're currently in a peak period
-            if (startTime.before(now) && endTime.after(now)) {
-                activePeriodStart = startTime
-                activePeriodEnd = endTime
-                logDebug("Found active period: ${startTime} to ${endTime}")
-            }
-            // Check if period is in the future
-            else if (startTime.after(now)) {
-                upcomingStarts << startTime
-                upcomingEnds << endTime
-                logDebug("Found upcoming period: ${startTime} to ${endTime}")
+            // This is the next relevant event
+            if (nextEventStart == null) {
+                nextEventStart = startTime
+                nextEventEnd = endTime
             }
         } catch (Exception e) {
-            log.error("Error parsing dates for record: ${e.message}")
+            log.error("Error parsing dates: ${e.message}")
         }
     }
 
-    // Handle upcoming event switch
-    if (upcomingEventSwitch) {
-        if (upcomingStarts.size() > 0) {
-            logDebug("Upcoming events detected - turning on upcoming event switch")
-            if (upcomingEventSwitch.currentValue("switch") == "off") upcomingEventSwitch.on()
+    // Determine what state we should be in
+    String targetState = determineTargetState(now, nextEventStart, nextEventEnd)
 
-            // Schedule to turn off at the start of the earliest event
-            Date earliestStart = upcomingStarts.min()
-            runOnce(earliestStart, clearUpcomingEvent)
-            logDebug("Scheduled to clear upcoming event switch at ${earliestStart}")
-        } else {
-            logDebug("No upcoming events - turning off upcoming event switch")
-            if (upcomingEventSwitch.currentValue("switch") == "on") upcomingEventSwitch.off()
-        }
-    }
-
-    // Handle active period
-    if (activePeriodEnd != null) {
-        log.info("Currently in peak period until ${activePeriodEnd}")
-        if (eventSwitch.currentValue("switch") == "off") eventSwitch.on()
-
-        // Turn off pre-event switch if it's on
-        if (preEventSwitch?.currentValue("switch") == "on") preEventSwitch.off()
-
-        // Schedule end of current period
-        runOnce(activePeriodEnd, endPeakPeriod)
-        state.scheduledPeakEnd = activePeriodEnd.time
-        logDebug("Scheduled end of peak period at ${activePeriodEnd}")
+    // Transition to target state if needed
+    if (targetState != state.currentState) {
+        transitionToState(targetState, nextEventStart, nextEventEnd)
     } else {
-        // No active period, ensure event switch is off
-        if (eventSwitch.currentValue("switch") == "on") eventSwitch.off()
+        logDebug("Already in correct state: ${targetState}")
     }
 
-    // Schedule upcoming periods
-    if (upcomingStarts.size() > 0) {
-        // Find the earliest upcoming period
-        Date nextStart = upcomingStarts.min()
-        int index = upcomingStarts.indexOf(nextStart)
-        Date nextEnd = upcomingEnds[index]
-
-        log.info("Next peak period: ${nextStart} to ${nextEnd}")
-
-        // Schedule start of peak period
-        runOnce(nextStart, startPeakPeriod)
-        state.scheduledPeakStart = nextStart.time
-        logDebug("Scheduled start of peak period at ${nextStart}")
-
-        // Schedule end of peak period
-        runOnce(nextEnd, endPeakPeriod)
-        if (state.scheduledPeakEnd == null) {
-            state.scheduledPeakEnd = nextEnd.time
-        }
-        logDebug("Scheduled end of peak period at ${nextEnd}")
-
-        // Schedule pre-event if configured
-        if (preEventSwitch && settings.preEventMinutes > 0) {
-            Integer preEventMins = settings.preEventMinutes as Integer
-            long preEventMs = nextStart.time - (preEventMins * 60 * 1000)
-            Date preEventTime = new Date(preEventMs)
-
-            if (preEventTime.after(now)) {
-                runOnce(preEventTime, startPreEvent)
-                state.scheduledPreEventStart = preEventTime.time
-                logDebug("Scheduled pre-event at ${preEventTime}")
-
-                // Schedule to turn off pre-event switch at peak start
-                runOnce(nextStart, endPreEvent)
-            } else {
-                // Pre-event time is in the past but peak hasn't started yet
-                // Turn on pre-event switch now
-                logDebug("Pre-event time passed, turning on pre-event switch now")
-                if (preEventSwitch?.currentValue("switch") == "off") preEventSwitch.on()
-
-                // Schedule to turn it off at peak start
-                runOnce(nextStart, endPreEvent)
-            }
-        }
-    } else {
-        log.info("No upcoming peak periods found")
-        // Turn off pre-event switch if no upcoming periods
-        if (preEventSwitch?.currentValue("switch") == "on") preEventSwitch.off()
-    }
-
-    // Update app label based on current state
-    updateAppLabel()
-
-    // Track last update time
     state.lastUpdate = now.time
+    updateAppLabel()
 }
 
-void startPeakPeriod() {
-    log.info("Peak period starting - turning on event switch")
-    eventSwitch.on()
-
-    // Turn off pre-event switch
-    if (preEventSwitch?.currentValue("switch") == "on") {
-        log.info("Peak period starting - turning off pre-event switch")
-        preEventSwitch.off()
+private String determineTargetState(Date now, Date eventStart, Date eventEnd) {
+    if (eventStart == null) {
+        return STATE_NO_EVENTS
     }
 
-    // Update label
-    updateAppLabel()
+    // Check if event is currently active
+    if (eventStart.before(now) && eventEnd.after(now)) {
+        return STATE_EVENT_ACTIVE
+    }
 
-    // Fetch fresh data to reschedule
-    runIn(REFETCH_DELAY_SECONDS, fetchPeakPeriods)
+    // Check if we're in pre-event period
+    if (preEventSwitch && settings.preEventMinutes > 0) {
+        Integer preEventMins = settings.preEventMinutes as Integer
+        long preEventMs = eventStart.time - (preEventMins * 60 * 1000)
+        Date preEventTime = new Date(preEventMs)
+
+        if (preEventTime.before(now) && eventStart.after(now)) {
+            return STATE_PRE_EVENT
+        }
+    }
+
+    // Event is in the future
+    if (eventStart.after(now)) {
+        return STATE_EVENT_SCHEDULED
+    }
+
+    return STATE_NO_EVENTS
 }
 
-void endPeakPeriod() {
-    log.info("Peak period ending - turning off event switch")
-    eventSwitch.off()
+private void transitionToState(String newState, Date eventStart, Date eventEnd) {
+    log.info("State transition: ${state.currentState} -> ${newState}")
 
-    // Update label
-    updateAppLabel()
+    // Exit current state
+    exitState(state.currentState)
 
-    // Fetch fresh data to reschedule
-    runIn(REFETCH_DELAY_SECONDS, fetchPeakPeriods)
+    // Enter new state
+    enterState(newState, eventStart, eventEnd)
+
+    state.currentState = newState
 }
 
-void startPreEvent() {
-    log.info("Pre-event period starting - turning on pre-event switch")
+private void exitState(String oldState) {
+    logDebug("Exiting state: ${oldState}")
+
+    // Clear all scheduled transitions
+    unschedule(transitionToPreEvent)
+    unschedule(transitionToEventActive)
+    unschedule(transitionToNoEvents)
+
+    // Clear state data
+    state.remove('eventStart')
+    state.remove('eventEnd')
+    state.remove('preEventStart')
+}
+
+private void enterState(String newState, Date eventStart, Date eventEnd) {
+    logDebug("Entering state: ${newState}")
+
+    switch (newState) {
+        case STATE_NO_EVENTS:
+            enterNoEventsState()
+            break
+
+        case STATE_EVENT_SCHEDULED:
+            enterEventScheduledState(eventStart, eventEnd)
+            break
+
+        case STATE_PRE_EVENT:
+            enterPreEventState(eventStart, eventEnd)
+            break
+
+        case STATE_EVENT_ACTIVE:
+            enterEventActiveState(eventEnd)
+            break
+    }
+}
+
+private void enterNoEventsState() {
+    log.info("STATE: No events scheduled")
+
+    // Turn off all switches
+    if (eventSwitch?.currentValue("switch") == "on") eventSwitch.off()
+    if (preEventSwitch?.currentValue("switch") == "on") preEventSwitch.off()
+    if (upcomingEventSwitch?.currentValue("switch") == "on") upcomingEventSwitch.off()
+}
+
+private void enterEventScheduledState(Date eventStart, Date eventEnd) {
+    log.info("STATE: Event scheduled from ${eventStart} to ${eventEnd}")
+
+    // Store event times
+    state.eventStart = eventStart.time
+    state.eventEnd = eventEnd.time
+
+    // Set switches
+    if (preEventSwitch?.currentValue("switch") == "on") preEventSwitch.off()
+    if (eventSwitch?.currentValue("switch") == "on") eventSwitch.off()
+    if (upcomingEventSwitch?.currentValue("switch") == "off") upcomingEventSwitch.on()
+
+    // Schedule transition to pre-event or event active
+    if (preEventSwitch && settings.preEventMinutes > 0) {
+        Integer preEventMins = settings.preEventMinutes as Integer
+        Date preEventTime = new Date(eventStart.time - (preEventMins * 60 * 1000))
+        state.preEventStart = preEventTime.time
+
+        runOnce(preEventTime, transitionToPreEvent)
+        logDebug("Scheduled transition to PRE_EVENT at ${preEventTime}")
+    } else {
+        runOnce(eventStart, transitionToEventActive)
+        logDebug("Scheduled transition to EVENT_ACTIVE at ${eventStart}")
+    }
+}
+
+private void enterPreEventState(Date eventStart, Date eventEnd) {
+    log.info("STATE: Pre-event period, event starts at ${eventStart}")
+
+    // Store event times
+    state.eventStart = eventStart.time
+    state.eventEnd = eventEnd.time
+
+    // Set switches
+    if (eventSwitch?.currentValue("switch") == "on") eventSwitch.off()
+    if (upcomingEventSwitch?.currentValue("switch") == "on") upcomingEventSwitch.off()
     if (preEventSwitch?.currentValue("switch") == "off") preEventSwitch.on()
 
-    // Update label
-    updateAppLabel()
+    // Schedule transition to event active
+    runOnce(eventStart, transitionToEventActive)
+    logDebug("Scheduled transition to EVENT_ACTIVE at ${eventStart}")
 }
 
-void endPreEvent() {
-    logDebug("Pre-event period ending - turning off pre-event switch")
-    if (preEventSwitch?.currentValue("switch") == "on") preEventSwitch.off()
+private void enterEventActiveState(Date eventEnd) {
+    log.info("STATE: Event active until ${eventEnd}")
 
-    // Update label
-    updateAppLabel()
-}
+    // Store event end time
+    state.eventEnd = eventEnd.time
 
-void clearUpcomingEvent() {
-    logDebug("Peak period starting - clearing upcoming event switch")
+    // Set switches
     if (upcomingEventSwitch?.currentValue("switch") == "on") upcomingEventSwitch.off()
+    if (preEventSwitch?.currentValue("switch") == "on") preEventSwitch.off()
+    if (eventSwitch?.currentValue("switch") == "off") eventSwitch.on()
 
-    // Update label
+    // Schedule transition back to no events (or refetch will find next event)
+    runOnce(eventEnd, transitionToNoEvents)
+    logDebug("Scheduled transition to NO_EVENTS at ${eventEnd}")
+}
+
+// State transition handlers (called by scheduler)
+void transitionToPreEvent() {
+    log.info("Transition handler: Moving to PRE_EVENT")
+
+    Date eventStart = state.eventStart ? new Date(state.eventStart as Long) : null
+    Date eventEnd = state.eventEnd ? new Date(state.eventEnd as Long) : null
+
+    if (eventStart && eventEnd) {
+        transitionToState(STATE_PRE_EVENT, eventStart, eventEnd)
+        updateAppLabel()
+    } else {
+        log.warn("Missing event data during transition to PRE_EVENT, refetching")
+        fetchPeakPeriods()
+    }
+}
+
+void transitionToEventActive() {
+    log.info("Transition handler: Moving to EVENT_ACTIVE")
+
+    Date eventEnd = state.eventEnd ? new Date(state.eventEnd as Long) : null
+
+    if (eventEnd) {
+        transitionToState(STATE_EVENT_ACTIVE, null, eventEnd)
+        updateAppLabel()
+    } else {
+        log.warn("Missing event data during transition to EVENT_ACTIVE, refetching")
+        fetchPeakPeriods()
+    }
+}
+
+void transitionToNoEvents() {
+    log.info("Transition handler: Moving to NO_EVENTS")
+    transitionToState(STATE_NO_EVENTS, null, null)
     updateAppLabel()
 
-    // Fetch fresh data to reschedule
+    // Refetch to see if there are more events
     runIn(REFETCH_DELAY_SECONDS, fetchPeakPeriods)
 }
 
-// private helpers
+// Helper methods
 
 private void generateTestFile() {
     try {
         Date now = new Date()
 
-        // Create event starting 5 minutes from now, lasting 5 minutes
         Date eventStart = new Date(now.time + (5 * 60 * 1000))
         Date eventEnd = new Date(eventStart.time + (5 * 60 * 1000))
 
-        // Format dates in ISO 8601 format with timezone
-        String startStr = eventStart.format("yyyy-MM-dd'T'HH:mm:ssXXX")
-        String endStr = eventEnd.format("yyyy-MM-dd'T'HH:mm:ssXXX")
+        Date nextEventStart = new Date(eventEnd.time + (24 * 60 * 60 * 1000))
+        Date nextEventEnd = new Date(nextEventStart.time + (5 * 60 * 1000))
 
-        // Create test data structure matching Hydro-Québec API format
         Map testData = [
-            total_count: 1,
+            total_count: 2,
             results: [
                 [
-                    datedebut: startStr,
-                    datefin: endStr,
+                    datedebut: eventStart.format("yyyy-MM-dd'T'HH:mm:ssXXX"),
+                    datefin: eventEnd.format("yyyy-MM-dd'T'HH:mm:ssXXX"),
+                    offre: "CPC-D"
+                ],
+                [
+                    datedebut: nextEventStart.format("yyyy-MM-dd'T'HH:mm:ssXXX"),
+                    datefin: nextEventEnd.format("yyyy-MM-dd'T'HH:mm:ssXXX"),
                     offre: "CPC-D"
                 ]
             ]
         ]
 
-        // Convert to JSON
         String jsonContent = JsonOutput.toJson(testData)
-
-        // Upload to hub
         uploadHubFile(API_TEST_FILE_NAME, jsonContent.bytes)
 
-        logDebug("Generated test file: event from ${startStr} to ${endStr}")
+        logDebug("Generated test file")
     } catch (Exception e) {
         log.error("Error generating test file: ${e}")
     }
@@ -384,37 +426,38 @@ private void generateTestFile() {
 private String getStatusText() {
     StringBuilder status = new StringBuilder()
 
-    // Check event switch
-    if (eventSwitch?.currentValue("switch") == "on") {
-        status.append("<b style='color:red'>⚡ PEAK EVENT IN PROGRESS</b><br/>")
-        if (state.scheduledPeakEnd) {
-            status.append("Event ends at: ${new Date(state.scheduledPeakEnd as Long).format('yyyy-MM-dd HH:mm:ss')}<br/>")
-        }
-    } else if (preEventSwitch?.currentValue("switch") == "on") {
-        status.append("<b style='color:orange'>⏰ Pre-Event Warning Active</b><br/>")
-        if (state.scheduledPeakStart) {
-            status.append("Peak event starts at: ${new Date(state.scheduledPeakStart as Long).format('yyyy-MM-dd HH:mm:ss')}<br/>")
-        }
-    } else if (upcomingEventSwitch?.currentValue("switch") == "on") {
-        status.append("<b style='color:blue'>📅 Event Scheduled</b><br/>")
-        Long nextEventTime = null
-        if (state.scheduledPreEventStart) {
-            nextEventTime = state.scheduledPreEventStart as Long
-        }
-        if (state.scheduledPeakStart) {
-            Long peakStart = state.scheduledPeakStart as Long
-            if (nextEventTime == null || peakStart < nextEventTime) {
-                nextEventTime = peakStart
+    String currentState = state.currentState ?: STATE_NO_EVENTS
+
+    switch (currentState) {
+        case STATE_EVENT_ACTIVE:
+            status.append("<b style='color:red'>⚡ PEAK EVENT IN PROGRESS</b><br/>")
+            if (state.eventEnd) {
+                status.append("Event ends at: ${new Date(state.eventEnd as Long).format('yyyy-MM-dd HH:mm:ss')}<br/>")
             }
-        }
-        if (nextEventTime) {
-            status.append("Next event activity at: ${new Date(nextEventTime).format('yyyy-MM-dd HH:mm:ss')}<br/>")
-        }
-    } else {
-        status.append("<b style='color:green'>✓ No Events Scheduled</b><br/>")
+            break
+
+        case STATE_PRE_EVENT:
+            status.append("<b style='color:orange'>⏰ Pre-Event Warning Active</b><br/>")
+            if (state.eventStart) {
+                status.append("Peak event starts at: ${new Date(state.eventStart as Long).format('yyyy-MM-dd HH:mm:ss')}<br/>")
+            }
+            break
+
+        case STATE_EVENT_SCHEDULED:
+            status.append("<b style='color:blue'>📅 Event Scheduled</b><br/>")
+            if (state.preEventStart) {
+                status.append("Pre-event warning at: ${new Date(state.preEventStart as Long).format('yyyy-MM-dd HH:mm:ss')}<br/>")
+            } else if (state.eventStart) {
+                status.append("Event starts at: ${new Date(state.eventStart as Long).format('yyyy-MM-dd HH:mm:ss')}<br/>")
+            }
+            break
+
+        case STATE_NO_EVENTS:
+        default:
+            status.append("<b style='color:green'>✓ No Events Scheduled</b><br/>")
+            break
     }
 
-    // Add last update time
     if (state.lastUpdate) {
         status.append("<br/><small>Last checked: ${new Date(state.lastUpdate as Long).format('yyyy-MM-dd HH:mm:ss')}</small>")
     }
@@ -423,20 +466,30 @@ private String getStatusText() {
 }
 
 private void updateAppLabel() {
+	app.updateLabel(getAppLabelFromState(state.currentState))
+}
+
+@CompileStatic
+private String getAppLabelFromState(String currentState) {
     String label = APP_NAME
 
-    // Determine current state and add colored status
-    if (eventSwitch?.currentValue("switch") == "on") {
-        label = "${label} <span style='color:red'>⚡ PEAK EVENT IN PROGRESS</span>"
-    } else if (preEventSwitch?.currentValue("switch") == "on") {
-        label = "${label} <span style='color:orange'>⏰ Pre-Event Warning</span>"
-    } else if (upcomingEventSwitch?.currentValue("switch") == "on") {
-        label = "${label} <span style='color:blue'>📅 Event Scheduled</span>"
-    } else {
-        label = "${label} <span style='color:green'>✓ No Events</span>"
+    switch (currentState) {
+        case STATE_EVENT_ACTIVE:
+            label = "${label} <span style='color:red'>⚡ PEAK EVENT IN PROGRESS</span>"
+            break
+        case STATE_PRE_EVENT:
+            label = "${label} <span style='color:orange'>⏰ Pre-Event Warning</span>"
+            break
+        case STATE_EVENT_SCHEDULED:
+            label = "${label} <span style='color:blue'>📅 Event Scheduled</span>"
+            break
+        case STATE_NO_EVENTS:
+        default:
+            label = "${label} <span style='color:green'>✓ No Events</span>"
+            break
     }
 
-    app.updateLabel(label)
+    return label
 }
 
 @CompileStatic
