@@ -80,6 +80,8 @@ definition(
 @Field static final String STATE_PRE_EVENT = "PRE_EVENT"
 @Field static final String STATE_EVENT_ACTIVE = "EVENT_ACTIVE"
 
+@Field static final String PEAK_EVENT_TYPE = 'CPC-D'
+
 preferences {
     page(name: "mainPage")
 }
@@ -90,31 +92,28 @@ Map mainPage() {
             paragraph getStatusText()
         }
 
-        section("Peak Period Switches") {
+        section("Peak Period Switches", hideable: true, hidden: false) {
             input "eventSwitch", "capability.switch", title: "Event Switch (ON during peak period)", required: true
             input "preEventSwitch", "capability.switch", title: "Pre-Event Switch (ON before peak period)", required: false
+            input "preEventMinutes", "number", title: "Minutes before peak to turn on pre-event switch", defaultValue: DEFAULT_PRE_EVENT_MINUTES, required: true
             input "upcomingEventSwitch", "capability.switch", title: "Upcoming Event Switch (ON when any event is scheduled)", required: false
         }
 
-        section("Pre-Event Warning") {
-            input "preEventMinutes", "number", title: "Minutes before peak to turn on pre-event switch", defaultValue: DEFAULT_PRE_EVENT_MINUTES, required: true
-        }
-
-        section("Update Schedule") {
-            input "updateInterval", "number", title: "Check for updates every X hours", defaultValue: DEFAULT_UPDATE_INTERVAL_HOURS, required: true, range: "1..24"
-        }
-
-        section("Hub Variables") {
+        section("Event Hub Variables", hideable: true, hidden: false) {
+            paragraph "Select Hub Variables to be set to the next schdeduled event begin and end times"
             input "eventStartVariableName", "enum", title: "Hub variable for next event start time (dateDebut)",
                 options: getGlobalVarsByType("datetime").keySet().sort(), required: false
             input "eventEndVariableName", "enum", title: "Hub variable for next event end time (dateFin)",
                 options: getGlobalVarsByType("datetime").keySet().sort(), required: false
-            paragraph "<small>Variables will be set to datetime strings in Hubitat format</small>"
-            paragraph "<small>Variables will be cleared (set to empty string) when no events are scheduled</small>"
             paragraph "<small>Note: Create datetime hub variables in Settings → Hub Variables if none appear above</small>"
         }
 
-        section("Debug") {
+        section("Update Schedule") {
+            input "updateInterval", "number", title: "Check for event schedule updates every X hours", defaultValue: DEFAULT_UPDATE_INTERVAL_HOURS, required: true, range: "1..24"
+            paragraph "<small>Fetching schedule from ${settings.testMode ? API_TEST_PARAMS : API_PARAMS}</small>"
+        }
+
+        section("Debug", hideable: true, hidden: true) {
             input "testMode", "bool", title: "Enable test mode (uses local test file)", defaultValue: false
             paragraph "<small>When enabled, creates a test event 5 minutes from now</small>"
 
@@ -494,39 +493,52 @@ void renameVariable(String oldName, String newName) {
     }
 }
 
+
 private void generateTestFile() {
     try {
-        Date now = new Date()
-
-        Date eventStart = new Date(now.time + (5 * 60 * 1000))
-        Date eventEnd = new Date(eventStart.time + (5 * 60 * 1000))
-
-        Date nextEventStart = new Date(eventEnd.time + (24 * 60 * 60 * 1000))
-        Date nextEventEnd = new Date(nextEventStart.time + (5 * 60 * 1000))
-
-        Map testData = [
-            total_count: 2,
-            results: [
-                [
-                    datedebut: eventStart.format(DATE_FORMAT_ISO8601),
-                    datefin: eventEnd.format(DATE_FORMAT_ISO8601),
-                    offre: "CPC-D"
-                ],
-                [
-                    datedebut: nextEventStart.format(DATE_FORMAT_ISO8601),
-                    datefin: nextEventEnd.format(DATE_FORMAT_ISO8601),
-                    offre: "CPC-D"
-                ]
-            ]
-        ]
-
-        String jsonContent = JsonOutput.toJson(testData)
+        String jsonContent = generateTestFileContents()
         uploadHubFile(API_TEST_FILE_NAME, jsonContent.bytes)
-
         logDebug("Generated test file")
     } catch (Exception e) {
         log.error("Error generating test file: ${e}")
     }
+}
+
+@CompileStatic
+private String generateTestFileContents() {
+    Date now = new Date()
+
+    Date eventStart = new Date(now.time + (5 * 60 * 1000))
+    Date eventEnd = new Date(eventStart.time + (5 * 60 * 1000))
+
+    Date nextEventStart = new Date(eventEnd.time + (5 * 60 * 1000))
+    Date nextEventEnd = new Date(nextEventStart.time + (5 * 60 * 1000))
+
+    Date lastEventStart = new Date(nextEventEnd.time + (24 * 60 * 60 * 1000))
+    Date lastEventEnd = new Date(lastEventStart.time + (5 * 60 * 1000))
+
+    Map testData = [
+        total_count: 3,
+        results: [
+            [
+                datedebut: eventStart.format(DATE_FORMAT_ISO8601),
+                datefin: eventEnd.format(DATE_FORMAT_ISO8601),
+                offre: PEAK_EVENT_TYPE
+            ],
+            [
+                datedebut: nextEventStart.format(DATE_FORMAT_ISO8601),
+                datefin: nextEventEnd.format(DATE_FORMAT_ISO8601),
+                offre: PEAK_EVENT_TYPE
+            ],
+            [
+                datedebut: lastEventStart.format(DATE_FORMAT_ISO8601),
+                datefin: lastEventEnd.format(DATE_FORMAT_ISO8601),
+                offre: PEAK_EVENT_TYPE
+            ]
+        ]
+    ]
+
+    return JsonOutput.toJson(testData)
 }
 
 private String getStatusText() {
@@ -537,25 +549,22 @@ private String getStatusText() {
     switch (currentState) {
         case STATE_EVENT_ACTIVE:
             status.append("<b style='color:red'>⚡ PEAK EVENT IN PROGRESS</b><br/>")
-            if (state.eventEnd) {
-                status.append("Event ends at: ${new Date(state.eventEnd as Long).format(DATE_FORMAT_DISPLAY)}<br/>")
-            }
+            status.append("Peak event ends at: ${new Date(state.eventEnd as Long).format(DATE_FORMAT_DISPLAY)}<br/>")
             break
 
         case STATE_PRE_EVENT:
             status.append("<b style='color:orange'>⏰ Pre-Event Warning Active</b><br/>")
-            if (state.eventStart) {
-                status.append("Peak event starts at: ${new Date(state.eventStart as Long).format(DATE_FORMAT_DISPLAY)}<br/>")
-            }
+            status.append("Peak event starts at: ${new Date(state.eventStart as Long).format(DATE_FORMAT_DISPLAY)}<br/>")
+            status.append("Peak event ends at: ${new Date(state.eventEnd as Long).format(DATE_FORMAT_DISPLAY)}<br/>")
             break
 
         case STATE_EVENT_SCHEDULED:
             status.append("<b style='color:blue'>📅 Event Scheduled</b><br/>")
             if (state.preEventStart) {
                 status.append("Pre-event warning at: ${new Date(state.preEventStart as Long).format(DATE_FORMAT_DISPLAY)}<br/>")
-            } else if (state.eventStart) {
-                status.append("Event starts at: ${new Date(state.eventStart as Long).format(DATE_FORMAT_DISPLAY)}<br/>")
             }
+            status.append("Peak event starts at: ${new Date(state.eventStart as Long).format(DATE_FORMAT_DISPLAY)}<br/>")
+            status.append("Peak event ends at: ${new Date(state.eventEnd as Long).format(DATE_FORMAT_DISPLAY)}<br/>")
             break
 
         case STATE_NO_EVENTS:
