@@ -30,6 +30,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 import groovy.json.JsonOutput
+import java.text.SimpleDateFormat
 
 @Field static final String APP_NAME = "Hydro-Québec Peak Period Manager"
 @Field static final String APP_VERSION = "0.2.0"
@@ -67,6 +68,8 @@ definition(
 
 @Field static final Integer REFETCH_DELAY_SECONDS = 5
 @Field static final String DATE_FORMAT_ISO8601 = "yyyy-MM-dd'T'HH:mm:ssXXX"
+@Field static final String DATE_FORMAT_HUBITAT = "yyyy-MM-dd'T'HH:mm:ss.sssXX"
+@Field static final String DATE_FORMAT_DISPLAY = 'yyyy-MM-dd HH:mm:ss'
 
 @Field static final Integer DEFAULT_UPDATE_INTERVAL_HOURS = 1
 @Field static final Integer DEFAULT_PRE_EVENT_MINUTES = 60
@@ -106,7 +109,7 @@ Map mainPage() {
                 options: getGlobalVarsByType("datetime").keySet().sort(), required: false
             input "eventEndVariableName", "enum", title: "Hub variable for next event end time (dateFin)",
                 options: getGlobalVarsByType("datetime").keySet().sort(), required: false
-            paragraph "<small>Variables will be set to Date objects representing the event times</small>"
+            paragraph "<small>Variables will be set to datetime strings in Hubitat format</small>"
             paragraph "<small>Variables will be cleared (set to empty string) when no events are scheduled</small>"
             paragraph "<small>Note: Create datetime hub variables in Settings → Hub Variables if none appear above</small>"
         }
@@ -240,8 +243,9 @@ private void updateHubVariables(Date eventStart, Date eventEnd) {
     try {
         if (settings.eventStartVariableName) {
             if (eventStart) {
-                setGlobalVar(settings.eventStartVariableName, eventStart)
-                logDebug("Set hub variable '${settings.eventStartVariableName}' to: ${eventStart}")
+                String formattedDate = formatDateForHubitat(eventStart)
+                setGlobalVar(settings.eventStartVariableName, formattedDate)
+                logDebug("Set hub variable '${settings.eventStartVariableName}' to: ${formattedDate}")
             } else {
                 setGlobalVar(settings.eventStartVariableName, "")
                 logDebug("Cleared hub variable '${settings.eventStartVariableName}'")
@@ -250,8 +254,9 @@ private void updateHubVariables(Date eventStart, Date eventEnd) {
 
         if (settings.eventEndVariableName) {
             if (eventEnd) {
-                setGlobalVar(settings.eventEndVariableName, eventEnd)
-                logDebug("Set hub variable '${settings.eventEndVariableName}' to: ${eventEnd}")
+                String formattedDate = formatDateForHubitat(eventEnd)
+                setGlobalVar(settings.eventEndVariableName, formattedDate)
+                logDebug("Set hub variable '${settings.eventEndVariableName}' to: ${formattedDate}")
             } else {
                 setGlobalVar(settings.eventEndVariableName, "")
                 logDebug("Cleared hub variable '${settings.eventEndVariableName}'")
@@ -260,6 +265,13 @@ private void updateHubVariables(Date eventStart, Date eventEnd) {
     } catch (Exception e) {
         log.error("Error updating hub variables: ${e.message}")
     }
+}
+
+@CompileStatic
+private String formatDateForHubitat(Date date) {
+    SimpleDateFormat sdf = new SimpleDateFormat(DATE_FORMAT_HUBITAT)
+    sdf.setTimeZone(TimeZone.getTimeZone("America/Montreal"))
+    return sdf.format(date)
 }
 
 private String determineTargetState(Date now, Date eventStart, Date eventEnd) {
@@ -526,23 +538,23 @@ private String getStatusText() {
         case STATE_EVENT_ACTIVE:
             status.append("<b style='color:red'>⚡ PEAK EVENT IN PROGRESS</b><br/>")
             if (state.eventEnd) {
-                status.append("Event ends at: ${new Date(state.eventEnd as Long).format('yyyy-MM-dd HH:mm:ss')}<br/>")
+                status.append("Event ends at: ${new Date(state.eventEnd as Long).format(DATE_FORMAT_DISPLAY)}<br/>")
             }
             break
 
         case STATE_PRE_EVENT:
             status.append("<b style='color:orange'>⏰ Pre-Event Warning Active</b><br/>")
             if (state.eventStart) {
-                status.append("Peak event starts at: ${new Date(state.eventStart as Long).format('yyyy-MM-dd HH:mm:ss')}<br/>")
+                status.append("Peak event starts at: ${new Date(state.eventStart as Long).format(DATE_FORMAT_DISPLAY)}<br/>")
             }
             break
 
         case STATE_EVENT_SCHEDULED:
             status.append("<b style='color:blue'>📅 Event Scheduled</b><br/>")
             if (state.preEventStart) {
-                status.append("Pre-event warning at: ${new Date(state.preEventStart as Long).format('yyyy-MM-dd HH:mm:ss')}<br/>")
+                status.append("Pre-event warning at: ${new Date(state.preEventStart as Long).format(DATE_FORMAT_DISPLAY)}<br/>")
             } else if (state.eventStart) {
-                status.append("Event starts at: ${new Date(state.eventStart as Long).format('yyyy-MM-dd HH:mm:ss')}<br/>")
+                status.append("Event starts at: ${new Date(state.eventStart as Long).format(DATE_FORMAT_DISPLAY)}<br/>")
             }
             break
 
@@ -553,7 +565,7 @@ private String getStatusText() {
     }
 
     if (state.lastUpdate) {
-        status.append("<br/><small>Last checked: ${new Date(state.lastUpdate as Long).format('yyyy-MM-dd HH:mm:ss')}</small>")
+        status.append("<br/><small>Last checked: ${new Date(state.lastUpdate as Long).format(DATE_FORMAT_DISPLAY)}</small>")
     }
 
     return status.toString()
