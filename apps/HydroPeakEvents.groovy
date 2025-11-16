@@ -574,7 +574,7 @@ private String getStatusText() {
     }
 
     if (state.lastUpdate) {
-        status.append("<br/><small>Last checked: ${new Date(state.lastUpdate as Long).format(DATE_FORMAT_DISPLAY)}</small>")
+        status.append("<br/><small>Event schedule last checked: ${new Date(state.lastUpdate as Long).format(DATE_FORMAT_DISPLAY)}</small>")
     }
 
     return status.toString()
