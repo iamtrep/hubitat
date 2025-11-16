@@ -32,7 +32,7 @@ import groovy.transform.Field
 import groovy.json.JsonOutput
 
 @Field static final String APP_NAME = "Hydro-Québec Peak Period Manager"
-@Field static final String APP_VERSION = "0.1.0"
+@Field static final String APP_VERSION = "0.2.0"
 
 definition(
     name: APP_NAME,
@@ -101,6 +101,16 @@ Map mainPage() {
             input "updateInterval", "number", title: "Check for updates every X hours", defaultValue: DEFAULT_UPDATE_INTERVAL_HOURS, required: true, range: "1..24"
         }
 
+        section("Hub Variables") {
+            input "eventStartVariableName", "enum", title: "Hub variable for next event start time (dateDebut)",
+                options: getGlobalVarsByType("datetime").keySet().sort(), required: false
+            input "eventEndVariableName", "enum", title: "Hub variable for next event end time (dateFin)",
+                options: getGlobalVarsByType("datetime").keySet().sort(), required: false
+            paragraph "<small>Variables will be set to Date objects representing the event times</small>"
+            paragraph "<small>Variables will be cleared (set to empty string) when no events are scheduled</small>"
+            paragraph "<small>Note: Create datetime hub variables in Settings → Hub Variables if none appear above</small>"
+        }
+
         section("Debug") {
             input "testMode", "bool", title: "Enable test mode (uses local test file)", defaultValue: false
             paragraph "<small>When enabled, creates a test event 5 minutes from now</small>"
@@ -129,6 +139,9 @@ void initialize() {
     if (!state.currentState) {
         state.currentState = STATE_NO_EVENTS
     }
+
+    // Register hub variables as in use
+    registerHubVariables()
 
     // Generate test file once if in test mode
     if (settings.testMode) {
@@ -206,6 +219,9 @@ private void processPeakPeriods(Map data) {
         }
     }
 
+    // Update hub variables with next event times
+    updateHubVariables(nextEventStart, nextEventEnd)
+
     // Determine what state we should be in
     String targetState = determineTargetState(now, nextEventStart, nextEventEnd)
 
@@ -218,6 +234,32 @@ private void processPeakPeriods(Map data) {
 
     state.lastUpdate = now.time
     updateAppLabel()
+}
+
+private void updateHubVariables(Date eventStart, Date eventEnd) {
+    try {
+        if (settings.eventStartVariableName) {
+            if (eventStart) {
+                setGlobalVar(settings.eventStartVariableName, eventStart)
+                logDebug("Set hub variable '${settings.eventStartVariableName}' to: ${eventStart}")
+            } else {
+                setGlobalVar(settings.eventStartVariableName, "")
+                logDebug("Cleared hub variable '${settings.eventStartVariableName}'")
+            }
+        }
+
+        if (settings.eventEndVariableName) {
+            if (eventEnd) {
+                setGlobalVar(settings.eventEndVariableName, eventEnd)
+                logDebug("Set hub variable '${settings.eventEndVariableName}' to: ${eventEnd}")
+            } else {
+                setGlobalVar(settings.eventEndVariableName, "")
+                logDebug("Cleared hub variable '${settings.eventEndVariableName}'")
+            }
+        }
+    } catch (Exception e) {
+        log.error("Error updating hub variables: ${e.message}")
+    }
 }
 
 private String determineTargetState(Date now, Date eventStart, Date eventEnd) {
@@ -406,6 +448,40 @@ void transitionToNoEvents() {
 
 // Helper methods
 
+private void registerHubVariables() {
+    // Remove all previously registered variables
+    removeAllInUseGlobalVar()
+
+    // Register currently configured variables
+    List<String> varsInUse = []
+    if (settings.eventStartVariableName) {
+        varsInUse.add(settings.eventStartVariableName)
+    }
+    if (settings.eventEndVariableName) {
+        varsInUse.add(settings.eventEndVariableName)
+    }
+
+    if (varsInUse) {
+        addInUseGlobalVar(varsInUse)
+        logDebug("Registered hub variables as in use: ${varsInUse}")
+    }
+}
+
+void renameVariable(String oldName, String newName) {
+    logDebug("Hub variable renamed: ${oldName} -> ${newName}")
+
+    // Update settings if one of our variables was renamed
+    if (settings.eventStartVariableName == oldName) {
+        app.updateSetting("eventStartVariableName", newName)
+        log.info("Updated eventStartVariableName setting to: ${newName}")
+    }
+
+    if (settings.eventEndVariableName == oldName) {
+        app.updateSetting("eventEndVariableName", newName)
+        log.info("Updated eventEndVariableName setting to: ${newName}")
+    }
+}
+
 private void generateTestFile() {
     try {
         Date now = new Date()
@@ -420,13 +496,13 @@ private void generateTestFile() {
             total_count: 2,
             results: [
                 [
-                    datedebut: eventStart.format("yyyy-MM-dd'T'HH:mm:ssXXX"),
-                    datefin: eventEnd.format("yyyy-MM-dd'T'HH:mm:ssXXX"),
+                    datedebut: eventStart.format(DATE_FORMAT_ISO8601),
+                    datefin: eventEnd.format(DATE_FORMAT_ISO8601),
                     offre: "CPC-D"
                 ],
                 [
-                    datedebut: nextEventStart.format("yyyy-MM-dd'T'HH:mm:ssXXX"),
-                    datefin: nextEventEnd.format("yyyy-MM-dd'T'HH:mm:ssXXX"),
+                    datedebut: nextEventStart.format(DATE_FORMAT_ISO8601),
+                    datefin: nextEventEnd.format(DATE_FORMAT_ISO8601),
                     offre: "CPC-D"
                 ]
             ]
