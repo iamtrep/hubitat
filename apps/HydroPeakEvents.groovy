@@ -230,9 +230,23 @@ private void processPeakPeriods(Map data) {
     // Determine what state we should be in
     String targetState = determineTargetState(now, nextEventStart, nextEventEnd)
 
+    // Check if event times have changed
+    boolean eventTimesChanged = false
+    if (nextEventStart != null) {
+        eventTimesChanged = (state.eventStart != nextEventStart.time) || (state.eventEnd != nextEventEnd.time)
+    } else {
+        eventTimesChanged = (state.eventStart != null)
+    }
+
     // Transition to target state if needed
     if (targetState != state.currentState) {
         transitionToState(targetState, nextEventStart, nextEventEnd)
+    } else if (eventTimesChanged) {
+        // Same state but event times changed - re-enter to reschedule
+        logDebug("Event times changed while in state ${targetState}, re-entering to reschedule")
+        exitState(state.currentState)
+        enterState(targetState, nextEventStart, nextEventEnd)
+        state.currentState = targetState
     } else {
         logDebug("Already in correct state: ${targetState}")
     }
@@ -288,7 +302,7 @@ private String determineTargetState(Date now, Date eventStart, Date eventEnd) {
 
     // Check if we're in pre-event period
     if (preEventSwitch && settings.preEventMinutes > 0) {
-        Integer preEventMins = settings.preEventMinutes as Integer
+        Integer preEventMins = settings.testMode ? 2 : settings.preEventMinutes as Integer
         long preEventMs = eventStart.time - (preEventMins * 60 * 1000)
         Date preEventTime = new Date(preEventMs)
 
@@ -376,7 +390,7 @@ private void enterEventScheduledState(Date eventStart, Date eventEnd) {
 
     // Schedule transition to pre-event or event active
     if (preEventSwitch && settings.preEventMinutes > 0) {
-        Integer preEventMins = settings.preEventMinutes as Integer
+        Integer preEventMins = settings.testMode ? 2 : settings.preEventMinutes as Integer
         Date preEventTime = new Date(eventStart.time - (preEventMins * 60 * 1000))
         state.preEventStart = preEventTime.time
 
