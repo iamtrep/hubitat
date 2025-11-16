@@ -87,7 +87,7 @@ preferences {
 }
 
 Map mainPage() {
-    dynamicPage(name: "mainPage", title: "${APP_NAME} v${APP_VERSION}", install: true, uninstall: true) {
+    dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
         section("Current Status") {
             paragraph getStatusText()
         }
@@ -118,6 +118,9 @@ Map mainPage() {
             paragraph "<small>When enabled, creates a test event 5 minutes from now</small>"
 
             input "enableDebug", "bool", title: "Enable debug logging", defaultValue: true
+        }
+        section("") {
+            paragraph "<small>${APP_NAME} v${APP_VERSION}</small>"
         }
     }
 }
