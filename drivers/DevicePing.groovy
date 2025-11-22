@@ -68,7 +68,7 @@ metadata {
 import hubitat.helper.NetworkUtils
 import groovy.transform.Field
 
-@Field static final String driver_version = "0.0.2"
+@Field static final String driver_version = "0.0.3"
 
 void installed() {
     logDebug "Installed with settings: ${settings}"
