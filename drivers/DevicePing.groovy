@@ -96,7 +96,8 @@ void initialize() {
         state.version = driver_version
     }
 
-    state.supportsPingTimeout = supportsPingTimeout()
+    // Checks if firmware version supports 3-parameter ping (adjust version as needed)
+    state.supportsPingTimeout = supportsPingTimeout(location.hub.firmwareVersionString)
 
     reschedulePing(true)
 
@@ -265,13 +266,11 @@ void setRetryThreshold(threshold) {
     logDebug "Set retry threshold to ${threshold}"
 }
 
-private boolean supportsPingTimeout() {
-    // Check if firmware version supports 3-parameter ping (adjust version as needed)
-    String firmwareVersion = location.hub.firmwareVersionString
-    List<String> versionParts = firmwareVersion.tokenize('.')
-
-    // Timeout parameter was added after 2.4.3.149
-    if (versionParts[0] > 2 || versionParts[1] > 4 || versionParts[2] > 3 || versionParts[3] > 149) return true
+@CompileStatic
+private boolean supportsPingTimeout(String versionString) {
+    // NetworkUtils.ping Timeout parameter was added after 2.4.3.149
+    List<String> versionParts = versionString.tokenize('.')
+    if (versionParts >= [2, 4, 3, 150]) return true
     return false
 }
 
