@@ -43,6 +43,8 @@ metadata {
         command "resetRetryCount"
         command "setRetryThreshold", ["number"]
 
+        command "resetIsPinging"
+
         attribute "status", "enum", ["online", "offline"]
         attribute "pingStatus", "enum", ["success", "failed"]
         attribute "httpStatus", "enum", ["success", "failed"]
@@ -110,8 +112,13 @@ void refresh() {
     ping()
 }
 
+void resetIsPinging() {
+	atomicState.isPinging = false
+}
+
 void reschedulePing(init = false) {
     unschedule("ping")
+    resetIsPinging()
 
     if (deviceIP || httpURL) {
         // Schedule regular ping based on user preference
@@ -137,19 +144,17 @@ void parse(String description) {
 }
 
 void ping() {
-    // Prevent multiple concurrent pings
-    if (atomicState.isPinging) {
-        logDebug "Ping already in progress, skipping"
-        return
-    }
-
     // Ensure at least one of deviceIP or httpURL is set before attempting a ping
     if (!deviceIP && !httpURL) {
         log.warn "No device IP or HTTP URL specified. Ping aborted."
         return
     }
 
-    atomicState.isPinging = true
+    // Prevent multiple concurrent pings
+    if (atomicState.isPinging) {
+        logDebug "Ping already in progress, skipping"
+        return
+    }
 
     boolean pingSuccess = true
     boolean httpSuccess = true
@@ -169,6 +174,7 @@ void ping() {
 
 boolean sendPingRequest() {
     try {
+	    atomicState.isPinging = true
         long timeBefore = now()
         NetworkUtils.PingData pingData = state.supportsPingTimeout ? NetworkUtils.ping(deviceIP,1,1) : NetworkUtils.ping(deviceIP, 1)
         long timeAfter = now()
@@ -184,6 +190,7 @@ boolean sendPingRequest() {
 
 boolean sendHttpRequest() {
     try {
+	    atomicState.isPinging = true
         Map params = [
             uri: httpURL,
             timeout: 15
@@ -267,16 +274,15 @@ void setRetryThreshold(threshold) {
     logDebug "Set retry threshold to ${threshold}"
 }
 
-// Ping had only a two-parameter version until 2.4.3.149
-@Field static List<Integer> constLastOldPingVersion = [2, 4, 3, 149]
+@Field static List<Integer> constNewPingVersion = [2, 4, 3, 149]
 
 @CompileStatic
 private boolean supportsPingTimeout(String versionString) {
     List<Integer> v = versionString.tokenize('.').collect { it as Integer }
 
     for (int i = 0; i < 4; i++) {
-        if (v[i] != constLastOldPingVersion[i]) {
-            return v[i] > constLastOldPingVersion[i]
+        if (v[i] != constNewPingVersion[i]) {
+            return v[i] > constNewPingVersion[i]
         }
     }
     return false
