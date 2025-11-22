@@ -31,7 +31,8 @@ metadata {
         name: "Device Ping",
         namespace: "iamtrep",
         author: "pj",
-        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/DevicePing.groovy"
+        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/DevicePing.groovy",
+        singleThreaded: true
     )
     {
         capability "ContactSensor"
@@ -42,8 +43,6 @@ metadata {
         command "ping"
         command "resetRetryCount"
         command "setRetryThreshold", ["number"]
-
-        command "resetIsPinging"
 
         attribute "status", "enum", ["online", "offline"]
         attribute "pingStatus", "enum", ["success", "failed"]
@@ -71,11 +70,11 @@ import hubitat.helper.NetworkUtils
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String driver_version = "0.0.3"
+@Field static final String driver_version = "0.0.4"
 
 void installed() {
     logDebug "Installed with settings: ${settings}"
-    state.isPinging = false
+    state.clear()
     state.currentRetryCount = 0
     state.lastCheckin = null
     state.version = driver_version
@@ -85,7 +84,6 @@ void installed() {
 
 void updated() {
     logDebug "Updated with settings: ${settings}"
-    if (atomicState.isPinging == null) atomicState.isPinging = false
     if (state.currentRetryCount == null) state.currentRetryCount = 0
     if (state.lastCheckin == null) state.lastCheckin = null
     if (state.retryThreshold == null) state.retryThreshold = settings.retryThreshold ?: 3
@@ -98,6 +96,8 @@ void initialize() {
         log.warn("New driver version installed ${driver_version} (previous: ${state.version})")
         state.version = driver_version
     }
+
+    state.remove('isPinging')
 
     // Checks if firmware version supports 3-parameter ping (adjust version as needed)
     state.supportsPingTimeout = supportsPingTimeout(location.hub.firmwareVersionString)
@@ -112,13 +112,8 @@ void refresh() {
     ping()
 }
 
-void resetIsPinging() {
-	atomicState.isPinging = false
-}
-
 void reschedulePing(init = false) {
     unschedule("ping")
-    resetIsPinging()
 
     if (deviceIP || httpURL) {
         // Schedule regular ping based on user preference
@@ -150,47 +145,44 @@ void ping() {
         return
     }
 
-    // Prevent multiple concurrent pings
-    if (atomicState.isPinging) {
-        logDebug "Ping already in progress, skipping"
-        return
+    try {
+        boolean pingSuccess = true
+
+        if (deviceIP) {
+            pingSuccess = sendPingRequest()
+            sendEvent(name: "pingStatus", value: pingSuccess ? "success" : "failed", descriptionText: "Ping ${deviceIP} ${pingSuccess}")
+        }
+
+        boolean httpSuccess = true
+
+        if (httpURL) {
+            httpSuccess = sendHttpRequest()
+            sendEvent(name: "httpStatus", value: httpSuccess ? "success" : "failed", descriptionText: "HTTP GET ${httpURL} ${httpSuccess}")
+        }
+
+        updateDeviceStatus(pingSuccess && httpSuccess)
+    } catch (Exception e) {
+        log.error "Error during ping: ${e.message}"
     }
-
-    boolean pingSuccess = true
-    boolean httpSuccess = true
-
-    if (deviceIP) {
-        pingSuccess = sendPingRequest()
-        sendEvent(name: "pingStatus", value: pingSuccess ? "success" : "failed", descriptionText: "Ping ${deviceIP} ${pingSuccess}")
-    }
-
-    if (httpURL) {
-        httpSuccess = sendHttpRequest()
-        sendEvent(name: "httpStatus", value: httpSuccess ? "success" : "failed", descriptionText: "HTTP GET ${httpURL} ${httpSuccess}")
-    }
-
-    updateDeviceStatus(pingSuccess && httpSuccess)
 }
 
 boolean sendPingRequest() {
     try {
-	    atomicState.isPinging = true
         long timeBefore = now()
         NetworkUtils.PingData pingData = state.supportsPingTimeout ? NetworkUtils.ping(deviceIP,1,1) : NetworkUtils.ping(deviceIP, 1)
         long timeAfter = now()
         logDebug "Ping $deviceIP result: ${pingData.packetLoss == 100 ? 'Failed' : 'Success'} in ${timeAfter-timeBefore} ms"
-        return pingData.packetLoss != 100
+        boolean success = pingData.packetLoss != 100
+        return success
     } catch (Exception e) {
         log.error "Error during ping: ${e.message}"
         return false
-    } finally {
-        atomicState.isPinging = false
     }
 }
 
 boolean sendHttpRequest() {
+    boolean result = false
     try {
-	    atomicState.isPinging = true
         Map params = [
             uri: httpURL,
             timeout: 15
@@ -198,17 +190,16 @@ boolean sendHttpRequest() {
         httpGet(params) { response ->
             if (response.status == 200) {
                 logDebug "HTTP GET $httpURL successful"
-                return true
+                result = true
             } else {
                 logInfo "HTTP GET $httpURL failed with status ${response.status}"
-                return false
+                result = false
             }
         }
+        return result
     } catch (Exception e) {
         log.error "Error sending HTTP request: ${e.message}"
         return false
-    } finally {
-        atomicState.isPinging = false
     }
 }
 
