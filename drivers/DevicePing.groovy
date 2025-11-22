@@ -267,15 +267,16 @@ void setRetryThreshold(threshold) {
     logDebug "Set retry threshold to ${threshold}"
 }
 
-@Field static List<Integer> constNewPingVersion = [2, 4, 3, 149]
+// Ping had only a two-parameter version until 2.4.3.149
+@Field static List<Integer> constLastOldPingVersion = [2, 4, 3, 149]
 
 @CompileStatic
 private boolean supportsPingTimeout(String versionString) {
     List<Integer> v = versionString.tokenize('.').collect { it as Integer }
 
     for (int i = 0; i < 4; i++) {
-        if (v[i] != constNewPingVersion[i]) {
-            return v[i] > constNewPingVersion[i]
+        if (v[i] != constLastOldPingVersion[i]) {
+            return v[i] > constLastOldPingVersion[i]
         }
     }
     return false
