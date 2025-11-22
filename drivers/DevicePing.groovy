@@ -67,6 +67,7 @@ metadata {
 
 import hubitat.helper.NetworkUtils
 import groovy.transform.Field
+import groovy.transform.CompileStatic
 
 @Field static final String driver_version = "0.0.3"
 
@@ -266,10 +267,18 @@ void setRetryThreshold(threshold) {
     logDebug "Set retry threshold to ${threshold}"
 }
 
+@Field static List<Integer> constNewPingVersion = [2, 4, 3, 149]
+
+@CompileStatic
 private boolean supportsPingTimeout(String versionString) {
-    // NetworkUtils.ping Timeout parameter was added after 2.4.3.149
-    List<Integer> versionParts = versionString.tokenize('.').collect { it as Integer }
-    return (versionParts <=> [2, 4, 3, 149]) > 0
+    List<Integer> v = versionString.tokenize('.').collect { it as Integer }
+
+    for (int i = 0; i < 4; i++) {
+        if (v[i] != constNewPingVersion[i]) {
+            return v[i] > constNewPingVersion[i]
+        }
+    }
+    return false
 }
 
 
