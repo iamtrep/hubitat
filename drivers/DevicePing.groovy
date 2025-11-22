@@ -266,12 +266,10 @@ void setRetryThreshold(threshold) {
     logDebug "Set retry threshold to ${threshold}"
 }
 
-@CompileStatic
 private boolean supportsPingTimeout(String versionString) {
     // NetworkUtils.ping Timeout parameter was added after 2.4.3.149
-    List<String> versionParts = versionString.tokenize('.')
-    if (versionParts >= [2, 4, 3, 150]) return true
-    return false
+    List<Integer> versionParts = versionString.tokenize('.').collect { it as Integer }
+    return versionParts >= [2, 4, 3, 150]
 }
 
 
