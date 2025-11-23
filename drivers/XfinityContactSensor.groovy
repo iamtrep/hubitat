@@ -92,12 +92,12 @@ void deviceTypeUpdated() {
     configure()
 }
 
-List<String> refresh() {
+void refresh() {
 	logDebug "refresh()"
     List<String> cmds = []
     cmds += zigbee.readAttribute(0x0402, 0x0000, [:], constDefaultDelay) // temperature
     cmds += zigbee.readAttribute(zigbee.POWER_CONFIGURATION_CLUSTER, 0x0020, [:], constDefaultDelay)
-    return cmds
+    sendZigbeeCommands(cmds)
 }
 
 void configure() {
@@ -114,9 +114,9 @@ void configure() {
     cmds += zigbee.enrollResponse(1200) // Enroll in IAS Zone
     cmds += zigbee.configureReporting(zigbee.POWER_CONFIGURATION_CLUSTER, 0x0020, DataType.UINT8, 0, reportInterval, 1, [:], constDefaultDelay) //Battery Voltage Reporting
     cmds += zigbee.temperatureConfig(3600,((tempInterval != null ? tempInterval : 12).toInteger() * 60)) // Temperature Reporting
-    cmds += refresh()
 
     sendZigbeeCommands(cmds)
+    refresh()
 }
 
 void setBatteryReplacementDate(Date date) {
@@ -274,6 +274,7 @@ private void sendZigbeeCommands(List<String> cmds) {
     List<String> send = delayBetween(cmds.findAll { !it.startsWith('delay') }, constDefaultDelay)
     logTrace "Sending Zigbee messages ➡️ device: ${send}"
     sendHubCommand(new hubitat.device.HubMultiAction(send, hubitat.device.Protocol.ZIGBEE))
+    state.lastTx = now()
 }
 
 
@@ -286,23 +287,23 @@ void logsOff(){
 }
 
 private void logTrace(String message) {
-    if (traceEnable) log.trace("${device} : ${message}")
+    if (traceEnable) log.trace("${device.displayName} : ${message}")
 }
 
 private void logDebug(String message) {
-    if (debugEnable) log.debug("${device} : ${message}")
+    if (debugEnable) log.debug("${device.displayName} : ${message}")
 }
 
 private void logInfo(String message) {
-    if (txtEnable) log.info("${device} : ${message}")
+    if (txtEnable) log.info("${device.displayName} : ${message}")
 }
 
 private void logWarn(String message) {
-    log.warn("${device} : ${message}")
+    log.warn("${device.displayName} : ${message}")
 }
 
 private void logError(String message) {
-    log.error("${device} : ${message}")
+    log.error("${device.displayName} : ${message}")
 }
 
 
