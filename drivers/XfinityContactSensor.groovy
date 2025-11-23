@@ -41,6 +41,7 @@ metadata {
         capability "Refresh"
 
         attribute "lowBattery", "enum", ["true","false"]
+        attribute "batteryDefect", "enum", ["detected","clear"]
 
         command "setBatteryReplacementDate", [[name: "Date Changed", type: "DATE", description: "Enter the date the battery was last changed. If blank will use current date."]]
 
@@ -67,9 +68,9 @@ metadata {
   }
 }
 
-@Field static Double constMinBatteryVoltage = 2.3
-@Field static Double constMaxBatteryVoltage = 3.0
-@Field static Integer constDefaultDelay = 333
+@Field static final Double constMinBatteryVoltage = 2.3
+@Field static final Double constMaxBatteryVoltage = 3.0
+@Field static final Integer constDefaultDelay = 333
 
 
 void installed(){
@@ -174,50 +175,66 @@ List parse(String description) {
     return result
 }
 
+@Field static final Map ATTRIBUTE_CONFIG = [
+    'tamper': [
+        trueValue: 'detected',
+        falseValue: 'clear',
+        trueDesc: 'tamper detected',
+        falseDesc: 'tamper cleared'
+    ],
+    'contact': [
+        trueValue: 'open',
+        falseValue: 'closed',
+        trueDesc: 'contact opened',
+        falseDesc: 'contact closed'
+    ],
+    'lowBattery': [
+        trueValue: 'true',
+        falseValue: 'false',
+        trueDesc: 'battery low',
+        falseDesc: 'battery ok'
+    ],
+    'batteryDefect': [
+        trueValue: 'detected',
+        falseValue: 'clear',
+        trueDesc: 'battery defect detected',
+        falseDesc: 'battery defect cleared'
+    ]
+]
+
 private void parseIasMessage(String description) {
     ZoneStatus zs = zigbee.parseZoneStatus(description)
-    logTrace "Zone Status Change Notification: alarm1=${zs.alarm1Set} alarm2=${zs.alarm2Set} tamper=${zs.tamperSet} lowBattery=${zs.batterySet} supervisionReports=${zs.supervisionReportsSet} restoreReports=${zs.restoreReportsSet} trouble=${zs.troubleSet} mainsFault=${zs.acSet} testMode=${zs.testSet} batteryDefect=${zs.batteryDefectSet}"
+    //logTrace "Zone Status: ${zs.properties}"
 
-    if (zs.tamper) {
-        if(device.currentValue('tamper') != "detected") {
-            logInfo "tamper detected"
-            sendEvent(name:'tamper', value: 'detected', descriptionText: "${device.displayName} tamper detected.", type: 'physical')
-        }
-    } else {
-        if(device.currentValue('tamper') != "clear") {
-            logInfo "tamper cleared"
-            sendEvent(name:'tamper', value: 'clear', descriptionText: "${device.displayName} tamper is cleared.", type: 'physical')
-        }
+    updateIfChanged('contact', zs.alarm1)
+    updateIfChanged('tamper', zs.tamper) {
+        state.lastTamperClear = now()
     }
-
-    if (zs.alarm1) {
-        if(device.currentValue('contact') != "open") {
-            logInfo "contact opened"
-            sendEvent(name:'contact', value: 'open', descriptionText: "${device.displayName} is open.", type: 'physical')
-        }
-    } else {
-        if(device.currentValue('contact') != "closed") {
-            logInfo "contact closed"
-            sendEvent(name:'contact', value: 'closed', descriptionText: "${device.displayName} is closed.", type: 'physical')
-        }
+    updateIfChanged('lowBattery', zs.batterySet) {
+        state.lastBatteryOk = now()
     }
-
-    if (zs.batterySet) {
-        if (device.currentValue('lowBattery') != "true") {
-            logInfo "battery low"
-            sendEvent(name:'lowBattery', value: "true", descriptionText: "${device.displayName} battery low", type: 'physical')
-        }
-    } else {
-        if (device.currentValue('lowBattery') != "false") {
-            logInfo "battery ok"
-            sendEvent(name:'lowBattery', value: "false", descriptionText: "${device.displayName} battery ok", type: 'physical')
-            state.lastBatteryOk = now()
-        }
+    updateIfChanged('batteryDefect', zs.batteryDefectSet) {
+        state.lastBatteryDefectClear = now()
     }
+}
 
-    if (zs.batteryDefectSet) {
-        // TODO
-        logWarn("received battery defective zone alarm")
+private void updateIfChanged(String attribute, boolean isTrue, Closure onClear = null) {
+    Map config = ATTRIBUTE_CONFIG[attribute]
+    String newValue = isTrue ? config.trueValue : config.falseValue
+
+    if (device.currentValue(attribute) != newValue) {
+        String action = isTrue ? config.trueDesc : config.falseDesc
+        logInfo action
+        sendEvent(
+            name: attribute,
+            value: newValue,
+            descriptionText: "${device.displayName} ${action}",
+            type: 'physical'
+        )
+
+        if (!isTrue && onClear) {
+            onClear()
+        }
     }
 }
 
@@ -287,3 +304,20 @@ private void logWarn(String message) {
 private void logError(String message) {
     log.error("${device} : ${message}")
 }
+
+
+
+/*
+
+ Coding references
+
+ hubitat.zigbee.clusters.iaszone.ZoneStatus properties map:
+
+ [
+ supervisionReportsSet:false, alarm1Set:false, alarm1:0, testSet:false, batteryDefect:0, restoreReports:1,
+ acSet:false, ac:0, batterySet:false, troubleSet:false, tamperSet:false, tamper:0, test:0, supervisionReports:0,
+ alarm2Set:false, class:class hubitat.zigbee.clusters.iaszone.ZoneStatus, battery:0, restoreReportsSet:true,
+ alarm2:0, batteryDefectSet:false, trouble:0
+ ]
+
+ */
