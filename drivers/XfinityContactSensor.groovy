@@ -23,7 +23,7 @@ import hubitat.zigbee.zcl.DataType
 import hubitat.zigbee.clusters.iaszone.ZoneStatus
 import com.hubitat.hub.domain.Event
 
-@Field static final String version = "0.1.0"
+@Field static final String version = "0.1.1"
 
 metadata {
 	definition (
@@ -119,7 +119,7 @@ void configure() {
     refresh()
 }
 
-void setBatteryReplacementDate(Date date) {
+void setBatteryReplacementDate(Date date = null) {
     if (date == null) date = new Date()
     String dateStr = date.format('yyyy-MM-dd')
 	device.updateDataValue("batteryReplacementDate", dateStr)
@@ -206,8 +206,8 @@ private void parseIasMessage(String description) {
     ZoneStatus zs = zigbee.parseZoneStatus(description)
     //logTrace "Zone Status: ${zs.properties}"
 
-    updateIfChanged('contact', zs.alarm1)
-    updateIfChanged('tamper', zs.tamper) {
+    updateIfChanged('contact', zs.alarm1Set)
+    updateIfChanged('tamper', zs.tamperSet) {
         state.lastTamperClear = now()
     }
     updateIfChanged('lowBattery', zs.batterySet) {
@@ -218,7 +218,7 @@ private void parseIasMessage(String description) {
     }
 }
 
-private void updateIfChanged(String attribute, boolean isTrue, Closure onClear = null) {
+private void updateIfChanged(String attribute, Boolean isTrue, Closure onClear = null) {
     Map config = ATTRIBUTE_CONFIG[attribute]
     String newValue = isTrue ? config.trueValue : config.falseValue
 
