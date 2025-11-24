@@ -196,13 +196,11 @@ List getDeviceAttributes(DeviceWrapper device) {
 
 private void logError(String msg)
 {
-    //if (logLevel in ["info","debug","trace"])
     log.error(app.getLabel() + ': ' + msg)
 }
 
 private void logWarn(String msg)
 {
-    //if (logLevel in ["warn", "info","debug","trace"])
     log.warn(app.getLabel() + ': ' + msg)
 }
 
