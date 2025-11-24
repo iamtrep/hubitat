@@ -240,7 +240,7 @@ private Map parseAttributeReport(Map descMap){
 
         case "0001": // Power Configuration cluster
             map.name = "battery"
-            map.value = roundToDecimalPlaces(Integer.parseInt(descMap.value, 16) / state.batteryDivisor, 1)
+            map.value = roundToDecimalPlaces(Integer.parseInt(descMap.value, 16) / state.batteryDivisor, 0) as int
             map.unit = "%"
             map.descriptionText = "battery is ${map.value}${map.unit}"
             break
