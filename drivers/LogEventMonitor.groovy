@@ -3,7 +3,7 @@
  * Monitors system logs via WebSocket and exposes events for automations
  *
  * Author: PJ
- * Version: 1.6.0
+ * Version: 1.8.0
  */
 
 import groovy.json.JsonSlurper
@@ -63,11 +63,11 @@ metadata {
         input name: "dedupeWindow", type: "number",
             title: "Dedupe window (seconds) - ignore identical messages within this time",
             defaultValue: 5, range: "0..300"
-        input name: "preventSelfMonitoring", type: "bool",
-            title: "Prevent monitoring own log messages (recommended)",
-            defaultValue: true
 
         // Advanced Settings
+        input name: "maxEventsPerMinute", type: "number",
+            title: "Max events per minute",
+            defaultValue: 30, range: "1..60"
         input name: "maxEventHistory", type: "number",
             title: "Max events to remember (for deduplication)",
             defaultValue: 100, range: "10..1000"
@@ -103,6 +103,9 @@ def initialize() {
     state.reconnectAttempts = 0
     state.eventsMatched = 0
     state.totalLogsReceived = 0
+    state.eventsThisMinute = 0
+    state.lastMinuteReset = now()
+    state.rateLimitWarningShown = false
 
     // Update connection status
     sendEvent(name: "connectionStatus", value: "initializing")
@@ -112,6 +115,9 @@ def initialize() {
 
     // Health check every 5 minutes
     runEvery5Minutes("healthCheck")
+
+    // Reset rate limit counter every minute
+    runEvery1Minute("resetRateLimitCounter")
 }
 
 // ============================================================================
@@ -183,6 +189,17 @@ def healthCheck() {
     }
 }
 
+def resetRateLimitCounter() {
+    def oldCount = state.eventsThisMinute ?: 0
+    state.eventsThisMinute = 0
+    state.lastMinuteReset = now()
+    state.rateLimitWarningShown = false
+
+    if (oldCount > 0) {
+        logDebug "Rate limit counter reset. Previous minute: ${oldCount} events"
+    }
+}
+
 // ============================================================================
 // WebSocket Event Handlers
 // ============================================================================
@@ -230,12 +247,10 @@ def parse(String message) {
             return
         }
 
-        // FIRST: Check for self-monitoring BEFORE any logging to prevent infinite loops
-        // Compare device ID and type (only filter our own device logs, not apps with same name)
-        if (preventSelfMonitoring && logEntry.type == "dev") {
-            if (logEntry.id?.toString() == device.id?.toString()) {
-                return  // Exit silently, this is from us
-            }
+        // FIRST: Check for self-monitoring to prevent infinite loops
+        // Always filter our own device logs
+        if (logEntry.type == "dev" && logEntry.id?.toString() == device.id?.toString()) {
+            return  // Exit silently, this is from us
         }
 
         // NOW safe to log (but only trace, and truncated to prevent loops)
@@ -385,6 +400,22 @@ def isDuplicate(Map logEntry) {
 }
 
 def triggerLogEvent(Map logEntry) {
+    // Check rate limiting
+    state.eventsThisMinute = (state.eventsThisMinute ?: 0) + 1
+
+    // Warn at 80% of limit
+    def warningThreshold = (maxEventsPerMinute * 0.8).toInteger()
+    if (state.eventsThisMinute == warningThreshold && !state.rateLimitWarningShown) {
+        logWarn "Approaching event rate limit: ${state.eventsThisMinute}/${maxEventsPerMinute} events this minute. Consider refining filters."
+        state.rateLimitWarningShown = true
+    }
+
+    // Enforce limit
+    if (state.eventsThisMinute > maxEventsPerMinute) {
+        logWarn "Event rate limit exceeded (${maxEventsPerMinute}/min). Event suppressed: [${logEntry.type}/${logEntry.level}] ${logEntry.name}"
+        return
+    }
+
     state.eventsMatched = (state.eventsMatched ?: 0) + 1
 
     logInfo "Log event matched [${state.eventsMatched}]: [${logEntry.type}/${logEntry.level}] ${logEntry.name}: ${logEntry.msg}"
@@ -407,6 +438,8 @@ def clearStats() {
     state.eventsMatched = 0
     state.totalLogsReceived = 0
     state.processedEvents = []
+    state.eventsThisMinute = 0
+    state.rateLimitWarningShown = false
     logInfo "Statistics cleared"
 }
 
