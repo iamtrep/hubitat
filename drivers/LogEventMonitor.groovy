@@ -3,7 +3,7 @@
  * Monitors system logs via WebSocket and exposes events for automations
  *
  * Author: PJ
- * Version: 1.3.0
+ * Version: 1.5.0
  */
 
 import groovy.json.JsonSlurper
@@ -19,14 +19,7 @@ metadata {
 
         // Main event attribute - fires whenever a matching log entry is found
         attribute "logEvent", "string"
-        attribute "lastLogMessage", "string"
-        attribute "lastLogLevel", "string"
-        attribute "lastLogDevice", "string"
-        attribute "lastLogType", "string"
-        attribute "lastLogTime", "string"
         attribute "connectionStatus", "string"
-        attribute "eventsMatched", "number"
-        attribute "totalLogsReceived", "number"
 
         // Commands
         command "connect"
@@ -116,9 +109,7 @@ def initialize() {
     state.eventsMatched = 0
     state.totalLogsReceived = 0
 
-    // Update attributes
-    sendEvent(name: "eventsMatched", value: state.eventsMatched ?: 0)
-    sendEvent(name: "totalLogsReceived", value: state.totalLogsReceived ?: 0)
+    // Update connection status
     sendEvent(name: "connectionStatus", value: "initializing")
 
     // Connect to WebSocket
@@ -230,11 +221,8 @@ def webSocketStatus(String message) {
 def parse(String message) {
     // Called when WebSocket receives data
 
-    // Increment total logs received counter (silently)
+    // Increment total logs received counter (silently, state only)
     state.totalLogsReceived = (state.totalLogsReceived ?: 0) + 1
-    if (state.totalLogsReceived % 100 == 0) {
-        sendEvent(name: "totalLogsReceived", value: state.totalLogsReceived)
-    }
 
     try {
         // Use JsonSlurper instead of parseJson
@@ -258,9 +246,15 @@ def parse(String message) {
         // NOW safe to log (but only trace, and truncated to prevent loops)
         logTrace "Rcv: [${logEntry.type}/${logEntry.level}] ${logEntry.name}"
 
-        processLogEntry(logEntry)
+        try {
+            processLogEntry(logEntry)
+        } catch (Exception e) {
+            logDebug "Error in processLogEntry: ${e.class.simpleName}: ${e.message}"
+        }
+    } catch (NullPointerException e) {
+        logDebug "NPE in parse: ${e.message} | Stack: ${e.stackTrace?.take(3)}"
     } catch (Exception e) {
-        logDebug "Parse error for message: ${message?.take(100)} - ${e.message}"
+        logDebug "Parse error (${e.class.simpleName}): ${e.message} | Msg: ${message?.take(150)}"
     }
 }
 
@@ -400,27 +394,14 @@ def triggerLogEvent(Map logEntry) {
 
     logInfo "Log event matched [${state.eventsMatched}]: [${logEntry.type}/${logEntry.level}] ${logEntry.name}: ${logEntry.msg}"
 
-    // Update attributes
-    // Use the ID as the value and type as the unit
-    sendEvent(name: "logEvent", value: logEntry.id?.toString() ?: "unknown",
+    // Send the main event
+    sendEvent(
+        name: "logEvent",
+        value: logEntry.id?.toString() ?: "unknown",
         unit: logEntry.type,
         descriptionText: "${logEntry.name}: ${logEntry.msg}",
-        isStateChange: true,
-        data: [
-            id: logEntry.id,
-            type: logEntry.type,
-            level: logEntry.level,
-            name: logEntry.name,
-            message: logEntry.msg,
-            time: logEntry.time
-        ])
-
-    sendEvent(name: "lastLogMessage", value: logEntry.msg)
-    sendEvent(name: "lastLogLevel", value: logEntry.level)
-    sendEvent(name: "lastLogType", value: logEntry.type)
-    sendEvent(name: "lastLogDevice", value: logEntry.name)
-    sendEvent(name: "lastLogTime", value: new Date(logEntry.time).format('yyyy-MM-dd HH:mm:ss'))
-    sendEvent(name: "eventsMatched", value: state.eventsMatched)
+        isStateChange: true
+    )
 }
 
 // ============================================================================
@@ -431,13 +412,6 @@ def clearStats() {
     state.eventsMatched = 0
     state.totalLogsReceived = 0
     state.processedEvents = []
-    sendEvent(name: "eventsMatched", value: 0)
-    sendEvent(name: "totalLogsReceived", value: 0)
-    sendEvent(name: "lastLogMessage", value: "")
-    sendEvent(name: "lastLogLevel", value: "")
-    sendEvent(name: "lastLogType", value: "")
-    sendEvent(name: "lastLogDevice", value: "")
-    sendEvent(name: "lastLogTime", value: "")
     logInfo "Statistics cleared"
 }
 
