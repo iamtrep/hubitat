@@ -3,7 +3,7 @@
  * Monitors system logs via WebSocket and exposes events for automations
  *
  * Author: PJ
- * Version: 1.5.0
+ * Version: 1.6.0
  */
 
 import groovy.json.JsonSlurper
@@ -29,57 +29,52 @@ metadata {
     }
 
     preferences {
-        section("Connection") {
-            input name: "autoReconnect", type: "bool", title: "Auto-reconnect on disconnect",
-                defaultValue: true
-            input name: "pingInterval", type: "number", title: "WebSocket ping interval (seconds)",
-                defaultValue: 30, range: "10..300"
-        }
+        // Connection Settings
+        input name: "autoReconnect", type: "bool", title: "Auto-reconnect on disconnect",
+            defaultValue: true
+        input name: "pingInterval", type: "number", title: "WebSocket ping interval (seconds)",
+            defaultValue: 30, range: "10..300"
 
-        section("Log Types to Monitor") {
-            input name: "monitorDevLogs", type: "bool", title: "Device logs", defaultValue: true
-            input name: "monitorAppLogs", type: "bool", title: "App logs", defaultValue: true
-            input name: "monitorSysLogs", type: "bool", title: "System logs", defaultValue: true
-        }
+        // Log Types to Monitor
+        input name: "monitorDevLogs", type: "bool", title: "Device logs", defaultValue: true
+        input name: "monitorAppLogs", type: "bool", title: "App logs", defaultValue: true
+        input name: "monitorSysLogs", type: "bool", title: "System logs", defaultValue: true
 
-        section("Log Levels to Monitor") {
-            input name: "monitorTrace", type: "bool", title: "Trace", defaultValue: false
-            input name: "monitorDebug", type: "bool", title: "Debug", defaultValue: false
-            input name: "monitorInfo", type: "bool", title: "Info", defaultValue: false
-            input name: "monitorWarn", type: "bool", title: "Warning", defaultValue: true
-            input name: "monitorError", type: "bool", title: "Error", defaultValue: true
-        }
+        // Log Levels to Monitor
+        input name: "monitorTrace", type: "bool", title: "Trace", defaultValue: false
+        input name: "monitorDebug", type: "bool", title: "Debug", defaultValue: false
+        input name: "monitorInfo", type: "bool", title: "Info", defaultValue: false
+        input name: "monitorWarn", type: "bool", title: "Warning", defaultValue: true
+        input name: "monitorError", type: "bool", title: "Error", defaultValue: true
 
-        section("Additional Filters (Optional)") {
-            input name: "monitoredDeviceIds", type: "text",
-                title: "Monitor specific device IDs (comma-separated, optional)",
-                required: false, description: "e.g., 123,456,789"
-            input name: "monitoredAppIds", type: "text",
-                title: "Monitor specific app IDs (comma-separated, optional)",
-                required: false, description: "e.g., 42,87,154"
-            input name: "includePattern", type: "text",
-                title: "Include Pattern (regex, optional)",
-                required: false, description: "e.g., (?i)offline|battery|error"
-            input name: "excludePattern", type: "text",
-                title: "Exclude Pattern (regex, optional)",
-                required: false, description: "e.g., (?i)heartbeat|poll"
-            input name: "dedupeWindow", type: "number",
-                title: "Dedupe window (seconds) - ignore identical messages within this time",
-                defaultValue: 5, range: "0..300"
-            input name: "preventSelfMonitoring", type: "bool",
-                title: "Prevent monitoring own log messages (recommended)",
-                defaultValue: true
-        }
+        // Additional Filters
+        input name: "monitoredDeviceIds", type: "text",
+            title: "Monitor specific device IDs (comma-separated, optional)",
+            required: false, description: "e.g., 123,456,789"
+        input name: "monitoredAppIds", type: "text",
+            title: "Monitor specific app IDs (comma-separated, optional)",
+            required: false, description: "e.g., 42,87,154"
+        input name: "includePattern", type: "text",
+            title: "Include Pattern (regex, optional)",
+            required: false, description: "e.g., (?i)offline|battery|failed"
+        input name: "excludePattern", type: "text",
+            title: "Exclude Pattern (regex, optional)",
+            required: false, description: "e.g., (?i)heartbeat|poll"
+        input name: "dedupeWindow", type: "number",
+            title: "Dedupe window (seconds) - ignore identical messages within this time",
+            defaultValue: 5, range: "0..300"
+        input name: "preventSelfMonitoring", type: "bool",
+            title: "Prevent monitoring own log messages (recommended)",
+            defaultValue: true
 
-        section("Advanced") {
-            input name: "maxEventHistory", type: "number",
-                title: "Max events to remember (for deduplication)",
-                defaultValue: 100, range: "10..1000"
-            input name: "enableDebug", type: "bool",
-                title: "Enable Debug Logging", defaultValue: false
-            input name: "enableTrace", type: "bool",
-                title: "Enable Trace Logging (very verbose)", defaultValue: false
-        }
+        // Advanced Settings
+        input name: "maxEventHistory", type: "number",
+            title: "Max events to remember (for deduplication)",
+            defaultValue: 100, range: "10..1000"
+        input name: "enableDebug", type: "bool",
+            title: "Enable Debug Logging", defaultValue: false
+        input name: "enableTrace", type: "bool",
+            title: "Enable Trace Logging (very verbose)", defaultValue: false
     }
 }
 
@@ -321,7 +316,7 @@ def processLogEntry(Map logEntry) {
     // Check include pattern
     if (includePattern) {
         try {
-            if (!(logEntry.msg ==~ includePattern)) {
+            if (!(logEntry.msg =~ includePattern)) {
                 logTrace "Filtered out: doesn't match include pattern"
                 return
             }
@@ -334,7 +329,7 @@ def processLogEntry(Map logEntry) {
     // Check exclude pattern
     if (excludePattern) {
         try {
-            if (logEntry.msg ==~ excludePattern) {
+            if (logEntry.msg =~ excludePattern) {
                 logTrace "Filtered out: matches exclude pattern"
                 return
             }
