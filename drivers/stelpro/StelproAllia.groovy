@@ -123,7 +123,7 @@ void uninstalled() {
 }
 
 List<String> configure(){
-    log.warn "configure..."
+    logWarn "configure..."
     state.driverVersion = constDriverVersion
 
     unschedule()
@@ -168,7 +168,7 @@ List<String> configure(){
 }
 
 def refresh() {
-    log.info("refresh")
+    logInfo("refresh")
     List<String> cmds = []
 
     cmds += zigbee.readAttribute(0x201, 0x0000) // Local Temperature
@@ -422,7 +422,7 @@ private parseAttributeReport(descMap) {
                         map.value = "idle"
                         final int interval = (settings.refreshScheduleIdle as Integer) ?: 0
                         if (interval > 0 && map.value != device.currentValue("thermostatOperatingState")) {
-                            log.info "${device} scheduling refresh every ${interval} minutes"
+                            logInfo "${device} scheduling refresh every ${interval} minutes"
                             scheduleRefresh(interval)
                             runIn(5, 'refresh')
                         }
@@ -430,7 +430,7 @@ private parseAttributeReport(descMap) {
                         map.value = "heating"
                         final int interval = (settings.refreshScheduleHeating as Integer) ?: 0
                         if (interval > 0 && map.value != device.currentValue("thermostatOperatingState")) {
-                            log.info "${device} scheduling refresh every ${interval} minutes"
+                            logInfo "${device} scheduling refresh every ${interval} minutes"
                             scheduleRefresh(interval)
                             runIn(5, 'refresh')
                         }
@@ -526,7 +526,7 @@ private parseAttributeReport(descMap) {
     def result = null
 
     if (map) {
-        if (map.descriptionText) log.info("${map.descriptionText}")
+        if (map.descriptionText) logInfo("${map.descriptionText}")
         result = createEvent(map)
     } else {
         logDebug("Unhandled attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
@@ -550,7 +550,7 @@ private String getDescriptionText(String msg) {
 private void scheduleRefresh(final int intervalMin) {
     final Random rnd = new Random()
     unschedule('refresh')
-    log.info "${rnd.nextInt(59)} ${rnd.nextInt(intervalMin)}-59/${intervalMin} * ? * * *"
+    logInfo "${rnd.nextInt(59)} ${rnd.nextInt(intervalMin)}-59/${intervalMin} * ? * * *"
     schedule("${rnd.nextInt(59)} ${rnd.nextInt(intervalMin)}-59/${intervalMin} * ? * * *", 'refresh')
 }
 
