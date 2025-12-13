@@ -4,3 +4,4 @@
 .#*.groovy
 #*.groovy
 .DS_Store
+*.py~
