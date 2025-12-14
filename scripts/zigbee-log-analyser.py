@@ -25,9 +25,41 @@ CLUSTER_NAMES = {
     '0500': 'IAS Zone', '0702': 'Simple Metering', '0B04': 'Electrical Measurement',
     'FF01': 'Manufacturer-specific', 'FFF1': 'Manufacturer-specific',
 }
-ZDO_NAMES = {'0000':'NWK Address Req','8000':'NWK Address Rsp','0001':'IEEE Address Req','8001':'IEEE Address Rsp','0002':'Node Descriptor Req','8002':'Node Descriptor Rsp','0003':'Power Descriptor Req','8003':'Power Descriptor Rsp','0004':'Simple Descriptor Req','8004':'Simple Descriptor Rsp','0005':'Active Endpoints Req','8005':'Active Endpoints Rsp','0006':'Match Descriptors Req','8006':'Match Descriptors Rsp','0031':'Mgmt LQI Req','8031':'Mgmt LQI Rsp','0032':'Mgmt Routing Req','8032':'Mgmt Routing Rsp'}
-GLOBAL_COMMANDS = {0x00:'Read Attributes',0x01:'Read Attributes Response',0x02:'Write Attributes',0x04:'Write Attributes Response',0x06:'Configure Reporting',0x07:'Configure Reporting Response',0x08:'Read Reporting Configuration',0x09:'Read Reporting Configuration Response',0x0A:'Report Attributes',0x0B:'Default Response',0x0C:'Discover Attributes',0x0D:'Discover Attributes Response',0x11:'Discover Commands Received',0x12:'Discover Commands Received Response',0x13:'Discover Commands Generated',0x14:'Discover Commands Generated Response',0x15:'Discover Attributes Extended',0x16:'Discover Attributes Extended Response'}
-OTA_COMMANDS = {0x00:'Image Notify',0x01:'Query Next Image Request',0x02:'Query Next Image Response',0x03:'Image Block Request',0x04:'Image Page Request',0x05:'Image Block Response',0x06:'Upgrade End Request',0x07:'Upgrade End Response',0x08:'Query Specific File'}
+ZDO_NAMES = {
+    '0000': 'NWK Address Req', '8000': 'NWK Address Rsp',
+    '0001': 'IEEE Address Req', '8001': 'IEEE Address Rsp',
+    '0002': 'Node Descriptor Req', '8002': 'Node Descriptor Rsp',
+    '0003': 'Power Descriptor Req', '8003': 'Power Descriptor Rsp',
+    '0004': 'Simple Descriptor Req', '8004': 'Simple Descriptor Rsp',
+    '0005': 'Active Endpoints Req', '8005': 'Active Endpoints Rsp',
+    '0006': 'Match Descriptors Req', '8006': 'Match Descriptors Rsp',
+    '0031': 'Mgmt LQI Req', '8031': 'Mgmt LQI Rsp',
+    '0032': 'Mgmt Routing Req', '8032': 'Mgmt Routing Rsp',
+}
+
+GLOBAL_COMMANDS = {
+    0x00: 'Read Attributes', 0x01: 'Read Attributes Response',
+    0x02: 'Write Attributes', 0x04: 'Write Attributes Response',
+    0x06: 'Configure Reporting', 0x07: 'Configure Reporting Response',
+    0x08: 'Read Reporting Configuration', 0x09: 'Read Reporting Configuration Response',
+    0x0A: 'Report Attributes', 0x0B: 'Default Response',
+    0x0C: 'Discover Attributes', 0x0D: 'Discover Attributes Response',
+    0x11: 'Discover Commands Received', 0x12: 'Discover Commands Received Response',
+    0x13: 'Discover Commands Generated', 0x14: 'Discover Commands Generated Response',
+    0x15: 'Discover Attributes Extended', 0x16: 'Discover Attributes Extended Response',
+}
+
+OTA_COMMANDS = {
+    0x00: 'Image Notify',
+    0x01: 'Query Next Image Request',
+    0x02: 'Query Next Image Response',
+    0x03: 'Image Block Request',
+    0x04: 'Image Page Request',
+    0x05: 'Image Block Response',
+    0x06: 'Upgrade End Request',
+    0x07: 'Upgrade End Response',
+    0x08: 'Query Specific File',
+}
 
 # Normalization helper
 def normalize_mfr_code(code) -> str:
@@ -43,21 +75,14 @@ def normalize_mfr_code(code) -> str:
     except Exception:
         return s[:4]
 
-# Minimal stub; will be merged with full list below
-KNOWN_MANUFACTURERS = {'119C':'Sinopé Technologies','10D0':'Qorvo','10F6':'Invensys Controls','104E':'Centralite','1049':'Silicon Labs'}
-
-# Full manufacturer map - comprehensive Zigbee Alliance manufacturer codes
-KNOWN_MANUFACTURERS_FULL = {'0000':'Matter Standard','0001':'Panasonic','0002':'Sony','0003':'Samsung','0004':'Philips RF4CE','0005':'Freescale RF4CE','0006':'OKI Semiconductors RF4CE','0007':'Texas Instruments','007B':'Perenio (custom)','1000':'Cirronet','1001':'Chipcon','1002':'Ember','1003':'NTS','1004':'Freescale','1005':'IP-Com','1006':'San Juan Software','1007':'TUV','1008':'Integration','1009':'BM SpA','100A':'Awarepoint','100B':'Signify (Philips)','100C':'Luxoft','100D':'Korwin','100E':'One RF Technology','100F':'Software Technologies Group','1010':'Telegesis','1011':'Visonic','1012':'Insta','1013':'Atalum','1014':'Atmel','1015':'Develco','1016':'Honeywell','1017':'RadioPulse','1018':'Renesas','1019':'Xanadu Wireless','101A':'NEC Engineering','101B':'Yamatake','101C':'Tendril Networks','101D':'Assa Abloy','101E':'MaxStream','101F':'Neurocom','1020':'III (Taiwan)','1021':'Legrand','1022':'iControl','1023':'Raymarine','1024':'LS Research','1025':'Onity','1026':'Mono Products','1027':'RF Technologies','1028':'Itron','1029':'Tritech','102A':'Embedit','102B':'S3C','102C':'Siemens','102D':'Mindtech','102E':'LG Electronics','102F':'Mitsubishi Electric','1030':'Johnson Controls','1031':'Secure Meters UK','1032':'Knick','1033':'Viconics','1034':'Flexipanel','1035':'Piasim','1036':'Trane','1037':'NXP','1038':'Living Independently','1039':'AlertMe','103A':'Daintree','103B':'Aiji System','103C':'Telecom Italia','103D':'Mikrokrets','103E':'OKI Semiconductor','103F':'Newport Electronics','1040':'Control4','1041':'STMicroelectronics','1042':'Ad-Sol Nissin','1043':'DCSI','1044':'France Telecom','1045':'muNet','1046':'Autani','1047':'Colorado vNet','1048':'Aerocomm','1049':'Silicon Labs','104A':'Inncom','104B':'Cooper Power','104C':'Synapse','104D':'Fisher-Pierce','104E':'Centralite','104F':'Crane Wireless','1050':'Mobilarm','1051':'iMonitor','1052':'Bartech','1053':'Meshnetics','1054':'LS Industrial','1055':'Cason','1056':'Wireless Glue','1057':'Elster','1058':'SMS Tecnologia','1059':'Onset Computer','105A':'Riga Development','105B':'Energate','105C':'ConMed Linvatec','105D':'PowerMand','105E':'Schneider Electric','105F':'Eaton','1060':'Telular','1061':'Delphi Medical','1062':'EpiSensor','1063':'Landis+Gyr','1064':'Kaba Group','1065':'Shure','1066':'Comverge','1067':'DBS Lodging','1068':'Energy Aware','1069':'Hidalgo','106A':'Air2App','106B':'AMX','106C':'EDMI','106D':'Cyan','106E':'System SPA','106F':'Telit','1070':'Kaga Electronics','1071':'Astrel Group','1072':'Certicom','1073':'Gridpoint','1074':'Profile Systems','1075':'Compacta','1076':'Freestyle Technology','1077':'Alektrona','1078':'Computime','1079':'Remote Technologies','107A':'Wavecom','107B':'Energy Optimizers','107C':'GE','107D':'Jetlun','107E':'Cipher Systems','107F':'Corporate Systems Eng','1080':'Ecobee','1081':'SMK','1082':'Meshworks Wireless','1083':'Ellips','1084':'Secure Electrans','1085':'CEDO','1086':'Toshiba','1087':'Digi International','1088':'Ubilogix','1089':'Echelon','1090':'Green Energy Options','1091':'Silver Spring Networks','1092':'Black & Decker','1093':'Aztech Associates','1094':'A&D Co','1095':'Rainforest Automation','1096':'Carrier Electronics','1097':'SyChip/Murata','1098':'OpenPeak','1099':'PassiveSystems','109A':'MMB Research','109B':'Leviton','109C':'KEPCO','109D':'Comcast','109E':'NEC Electronics','109F':'Netvox','10A0':'U-Control','10A1':'Embedia','10A2':'Sensus','10A3':'SunRise Technologies','10A4':'Memtech','10A5':'Freebox','10A6':'M2 Labs','10A7':'British Gas','10A8':'Sentec','10A9':'Navetas','10AA':'Lightspeed Technologies','10AB':'OKI Electric','10AC':'S.I. Sistemas','10AD':'Dometic','10AE':'Alps','10AF':'EnergyHub','10B0':'Kamstrup','10B1':'EchoStar','10B2':'EnerNOC','10B3':'Eltav','10B4':'Belkin','10B5':'XstreamHD','10B6':'Saturn South','10B7':'GreenTrap','10B8':'SmartSynch','10B9':'Nyce Control','10BA':'ICM Controls','10BB':'Millennium Electronics','10BC':'Motorola','10BD':'Emerson White-Rodgers','10BE':'Radio Thermostat','10BF':'Omron','10C0':'GiiNii','10C1':'Fujitsu General','10C2':'Peel Technologies','10C3':'Accent','10C4':'ByteSnap','10C5':'NEC Tokin','10C6':'G4S Justice Services','10C7':'Trilliant Networks','10C8':'Electrolux Italia','10C9':'OnZo','10CA':'EnTek Systems','10CB':'Philips','10CD':'Indesit','10CE':'ThinkEco','10CF':'2D2C','10D0':'Qorvo','10D1':'InterCel','10D2':'LG Electronics 2','10D3':'Mitsumi Electric','10D4':'Mitsumi Electric 2','10D5':'ZMDI','10D6':'Nest Labs','10D7':'Exegin Technologies','10D8':'Honeywell 2','10D9':'Takahata Precision','10DA':'Sumitomo Electric','10DB':'GE Energy','10DC':'GE Appliances','10DD':'Radiocrafts','10DE':'Ceiva','10DF':'TEC&CO','10E0':'Chameleon Technology','10E1':'Samsung 2','10E2':'Ruwido Austria','10E3':'Huawei','10E4':'Huawei 2','10E5':'Greenwave Reality','10E6':'BGlobal Metering','10E7':'Mindteck','10E8':'Ingersoll Rand','10E9':'Dius Computing','10EA':'Embedded Automation','10EB':'ABB','10EC':'Sony 2','10ED':'Genus Power','10EE':'Universal Electronics','10EF':'Universal Electronics 2','10F0':'Metrum Technologies','10F1':'Cisco','10F2':'Ubisys','10F3':'Consert','10F4':'Crestron','10F5':'Enphase Energy','10F6':'Invensys Controls','10F7':'Mueller Systems','10F8':'AAC Technologies','10F9':'U-NEXT','10FA':'Steelcase','10FB':'Telematics Wireless','10FC':'Samil Power','10FD':'Pace','10FE':'Osborne Coinage','10FF':'Powerwatch','1100':'Candeled','1101':'FlexGrid','1102':'Humax','1103':'Universal Devices','1104':'Advanced Energy','1105':'BEGA','1106':'Brunel University','1107':'Panasonic R&D Singapore','1108':'eSystems Research','1109':'Panamax','110A':'SmartThings','110B':'EM-Lite','110C':'OSRAM Sylvania','110D':'2 Save Energy','110E':'Planet Innovation','110F':'Ambient Devices','1110':'Profalux','1111':'Billion Electric (BEC)','1112':'Embertec','1113':'IT Watchdogs','1114':'Reloc','1115':'Intel','1116':'Trend Electronics','1117':'Moxa','1118':'QEES','1119':'SAYME Wireless','111A':'Pentair Aquatic','111B':'Orbit Irrigation','111C':'California Eastern Labs','111D':'Comcast 2','111E':'IDT Technology','111F':'Pixela','1120':'TiVo','1121':'Fidure','1122':'Marvell Semiconductor','1123':'Wasion Group','1124':'Jasco Products','1125':'Shenzhen Kaifa','1126':'NetComm Wireless','1127':'Define Instruments','1128':'In Home Displays','1129':'Miele','112A':'Televes','112B':'Labelec','112C':'China Electronics Standard','112D':'Vectorform','112E':'Busch-Jaeger','112F':'Redpine Signals','1130':'Bridges Electronic','1131':'Sercomm','1132':'WSH (wirsindheller)','1133':'Bosch Security','1134':'EZEX','1135':'Dresden Elektronik','1136':'Meazon','1137':'Crow Electronic','1138':'Harvard Engineering','1139':'Andson (Beijing)','113A':'Adhoco','113B':'Waxman Consumer','113C':'Owon Technology','113D':'Hitron Technologies','113E':'Scemtec','113F':'Webee','1140':'Grid2Home','1141':'Telink Micro','1142':'Jasmine Systems','1143':'Bidgely','1144':'Lutron','1145':'IJENKO','1146':'Starfield Electronic','1147':'TCP','1148':'Rogers Communications','1149':'Cree','114A':'Robert Bosch LLC','114B':'Ibis Networks','114C':'Quirky','114D':'Efergy Technologies','114E':'Smartlabs','114F':'Everspring Industry','1150':'Swann Communications','1151':'Soneter','1152':'Samsung SDS','1153':'Uniband Electronic','1154':'Accton Technology','1155':'Bosch Thermotechnik','1156':'Wincor Nixdorf','1157':'Ohsung Electronics','1158':'Zen Within','1159':'Tech4Home','115A':'Nanoleaf','115B':'Keen Home','115C':'Poly-Control','115D':'Eastfield Lighting','115E':'IP Datatel','115F':'Lumi United (Aqara)','1160':'Sengled','1161':'Remote Solution','1162':'ABB Genway Xiamen','1163':'Zhejiang Rexense','1164':'ForEE Technology','1165':'Open Access Technology','1166':'Innr Lighting','1167':'Techworld Industries','1168':'Leedarson Lighting','1169':'Arzel Zoning','116A':'Holley Technology','116B':'Beldon Technologies','116C':'Flextronics','116D':'Shenzhen Meian','116E':'Lowes','116F':'Sigma Connectivity','1171':'Wulian','1172':'Plugwise','1173':'Titan Products','1174':'Ecospectral','1175':'D-Link','1176':'Technicolor Home USA','1177':'Opple Lighting','1178':'Wistron NeWeb','1179':'QMotion Shades','117A':'Insta GmbH','117B':'Shanghai Vancount','117C':'IKEA','117D':'RT-RK','117E':'Shenzhen Feibit','117F':'EuControls','1180':'Telkonet','1181':'Thermal Solution Resources','1182':'POMCube','1183':'Ei Electronics','1184':'Optoga','1185':'Stelpro','1186':'Lynxus Technologies','1187':'Semiconductor Components','1188':'TP-Link','1189':'LEDVANCE','118A':'Nortek','118B':'iRevo (Assa Abloy Korea)','118C':'Midea','118D':'ZF Friedrichshafen','118E':'Checkit','118F':'Aclara','1190':'Nokia','1191':'Goldcard High-Tech','1192':'George Wilson Industries','1193':'Easy Saver','1194':'ZTE','1195':'Arris','1196':'Reliance Big TV','1197':'Insight Energy (Powerley)','1198':'Thomas Research (Hubbell)','1199':'Li Seng Technology','119A':'System Level Solutions','119B':'Matrix Labs','119C':'Sinopé Technologies','119D':'Jiuzhou Greeble','119E':'Guangzhou Lanvee','119F':'Venstar','1200':'SLV','1201':'Halo Smart Labs','1202':'Scout Security','1203':'Alibaba China','1204':'Resolution Products','1205':'Smartlok','1206':'Lux Products','1207':'Vimar','1208':'Universal Lighting Tech','1209':'Robert Bosch GmbH','120A':'Accenture','120B':'Heiman Technology','120C':'Shenzhen Homa','120D':'Vision Electronics','120E':'Lenovo','120F':'Presciense R&D','1210':'Shenzhen Seastar','1211':'Sensative','1212':'SolarEdge','1213':'Zipato','1214':'China Fire & Security (iHorn)','1215':'Quby','1216':'Hangzhou Roombanker','1217':'Amazon Lab126','1218':'Paulmann Licht','1219':'Shenzhen Orvibo','121A':'TCI Telecommunications','121B':'Müller-Licht','121C':'Aurora Limited','121D':'SmartDCC','121E':'Shanghai Umeinfo','121F':'CarbonTrack','1220':'Somfy','1221':'Viessmann Elektronik','1222':'Hildebrand Technology','1223':'Onkyo Technology','1224':'Shenzhen Sunricher','1225':'Xiu Xiu Technology','1226':'Zumtobel Group','1227':'Shenzhen Kaadas','1228':'Shanghai Xiaoyan','1229':'Cypress Semiconductor','122A':'XAL GmbH','122B':'Inergy Systems','122C':'Alfred Kärcher','122D':'Adurolight','122E':'Groupe Muller','122F':'V-Mark Enterprises','1230':'Lead Energy','1231':'Ultimate IoT (Henan)','1232':'Axxess Industries','1233':'ThirdReality','1234':'DSR Corporation','1235':'Guangzhou Vensi','1236':'Schlage Lock (Allegion)','1237':'Net2Grid','1238':'Airam Electric','1239':'Immax WPB CZ','123A':'ZIV Automation','123B':'Hangzhou Imagic','123C':'Xiamen Leelen','123D':'Overkiz','123E':'Flonidan','123F':'HDL Automation','1240':'Ardomus Networks','1241':'Samjin','1242':'FireAngel Safety','1243':'Indra Sistemas','1244':'Shenzhen JBT','1245':'GE Lighting (Current)','1246':'Danfoss','1247':'Niviss PHP','1248':'Shenzhen Fengliyuan','1249':'Nexelec','124A':'Sichuan Behome','124B':'Fujian Star-net','124C':'Toshiba Visual Solutions','124D':'Latchable','124E':'L&S Deutschland','124F':'Gledopto','1250':'The Home Depot','1251':'Neonlite Distribution','1252':'Arlo Technologies','1253':'Xingluo Technology','1254':'Simon Electric China','1255':'Hangzhou Greatstar','1256':'Sequentric Energy','1257':'Solum','1258':'Eaglerise Electric','1259':'Fantem Technologies','125A':'Yunding Network (Beijing)','125B':'Atlantic Group','125C':'Xiamen Intretech','125D':'Tuya','125E':'DNAKE (Xiamen)','125F':'Niko','1260':'Emporia Energy','1261':'Sikom','1262':'Axis Labs','1263':'Current Products','1264':'Metersit','1265':'Hornbach Baumarkt','1266':'Diceworld','1267':'ARC Technology','1268':'Hangzhou Konke','1269':'Salto Systems','126A':'Shenzhen Shyugj','126B':'Brayden Automation','126C':'Environexus','126D':'Eltra','126E':'Xiaomi Communications','126F':'Shanghai Shuncom','1270':'Voltalis','1271':'Feelux','1272':'SmartPlus','1273':'Halemeier','1274':'Trust International','1275':'Duke Energy','1276':'Calix','1277':'Adeo','1278':'Connected Response','1279':'StroyEnergoKom','127A':'Lumitech Lighting','127B':'Verdant Environmental','127C':'Alfred International','127D':'Sansi LED','127E':'Mindtree','127F':'Nordic Semiconductor','1280':'Siterwell Electronics','1281':'Briloner Leuchten','1282':'Shenzhen SEI Technology','1283':'Copper Labs','1284':'Delta Dore','1285':'Hager Group','1286':'Shenzhen Coolkit (Sonoff)','1287':'Hangzhou Sky-Lighting','1288':'E.ON','1289':'Lidl','128A':'Sichuan Changhong','128B':'NodOn','128C':'Jiangxi Innotech','128D':'Mercator','128E':'Beijing Ruying','128F':'Eglo Leuchten','1290':'Pietro Fiorentini','1291':'Zehnder Group','1292':'BRK Brands','1293':'Askey Computer','1294':'PassiveBolt','1295':'AVM (Fritz)','1296':'Ningbo Suntech','1297':'Stello','1298':'Vivint Smart Home','1299':'Namron','129A':'Rademacher','129B':'OMO Systems','129C':'Siglis','129D':'Imhotep Creation','129E':'iCasa','129F':'Level Home','1300':'TIS Control','1301':'Radisys India','1302':'Veea','1303':'Fell Technology','1304':'Sowilo Design','1305':'Lexi Devices','1306':'LIFX','1307':'Grundfos','1308':'Sourcing & Creation','1309':'Kraken Technologies','130A':'Eve Systems','130B':'Lite-On Technology','130C':'Focalcrest','130D':'Bouffalo Lab','130E':'Wyze Labs','130F':'Z-Wave Europe','1310':'Aeotec','1311':'NGSTB','1312':'Qingdao Yeelink (Yeelight)','1313':'E-Smart Home','1314':'Fibaro','1315':'Prolitech','1316':'Pankore IC','1317':'Logitech','1318':'Piaro','1319':'Mitsubishi Electric US','131A':'Resideo Technologies','131B':'Espressif Systems','131C':'Hella','131D':'Geberit International','131E':'Came SpA','131F':'Guangzhou Elite Education','1320':'PhyPlus Microelectronics','1321':'Shenzhen Sonoff (ITEAD)','1322':'Safe4 Security','1323':'Shanghai MXCHIP','1324':'HDC i-Controls','1325':'Zuma Array','1326':'Decelect','1327':'Mill International','1328':'HomeWizard','1329':'Shenzhen Topband','132A':'Pressac Communications','132B':'Origin Wireless','132C':'Connecte','132D':'Yokis','132E':'Xiamen Yankon','132F':'Yandex','1330':'Critical Software','1331':'Nortek Control','1332':'BrightAI','1333':'Becker Antriebe','1334':'Shenzhen TCL New Technology','1335':'Dexatek Technology','1336':'Elelabs International','1337':'Datek Wireless','1338':'Aldes','1339':'Savant','133A':'Ariston Thermo','133B':'Warema Renkhoff','133C':'VTech Holdings','133D':'Futurehome','133E':'Cognitive Systems','133F':'ASR Microelectronics','1340':'Airios','1341':'Guangdong Oppo Mobile','1342':'Beken','1343':'Corsair','1344':'Eltako','1345':'Chengdu Meross','1346':'Rafael Microelectronics','1347':'Aug. Winkhaus','1348':'Qingdao Haier','1349':'Apple','134A':'Rollease Acmeda','134B':'Nabu Casa','134C':'Simon Holding','134D':'KD Navien','134E':'tado','134F':'Mediola','1350':'PolynHome','1351':'Hoorii Technology','1353':'Kimin Electronics','1354':'Zyax','1355':'Baracoda','1356':'Lennox International','1357':'Teledatics','1358':'Top Victory Investments','1359':'GoQual','135A':'Siegenia-Aubi','135B':'Virtual Connected (Singapore)','135C':'Gigaset Communications','135D':'Nuki Home Solutions','135E':'DeviceBook','135F':'Consumer 2.0 (Rently)','1360':'Edison Labs (Orro)','1361':'Inovelli','1362':'Deveritec','1363':'Charter Communications','1364':'Monolithic Power Systems','1365':'Ningbo Dooya','1366':'Shenzhen SDMC','1367':'HP','1368':'Mui Lab','1369':'BHTronics','136A':'Akuvox (Xiamen)','1490':'Shelly','152F':'SberDevices','1994':'Gewiss','1AD2':'Livolo (custom)','2794':'Climax Technology','6006':'Google','6666':'Sprut.device (custom)','7777':'Lytko (custom)'}
-
-# Merge full list into main dictionary
-try:
-    for k, v in list(KNOWN_MANUFACTURERS_FULL.items()):
-        key = normalize_mfr_code(k)
-        KNOWN_MANUFACTURERS_FULL.pop(k)
-        KNOWN_MANUFACTURERS_FULL[key] = v
-    KNOWN_MANUFACTURERS.update(KNOWN_MANUFACTURERS_FULL)
-except Exception as e:
-    print('[WARNING] Could not merge full manufacturer table:', e, file=sys.stderr)
+# Minimal stub; will be merged with full list at bottom of file
+KNOWN_MANUFACTURERS = {
+    '119C': 'Sinopé Technologies',
+    '10D0': 'Qorvo',
+    '10F6': 'Invensys Controls',
+    '104E': 'Centralite',
+    '1049': 'Silicon Labs',
+}
 
 _text_re = re.compile(r"^name\s+(?P<name>.*?)\s+id\s+(?P<id>\d+)\s+profileId\s+(?P<profile>[0-9A-Fa-f]{4})\s+clusterId\s+(?P<cluster>[0-9A-Fa-f]{4})\s+sourceEndpoint\s+(?P<se>[0-9A-Fa-f]{2})\s+destinationEndpoint\s+(?P<de>[0-9A-Fa-f]{2}|FF)\s+groupId\s+(?P<group>[0-9A-Fa-f]{4})\s+sequence\s+(?P<seq>[0-9A-Fa-f]+)\s+lastHopLqi\s+(?P<lqi>\d+)\s+lastHopRssi\s+(?P<rssi>-?\d+)\s+time\s+(?P<time>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+type\s+(?P<type>\w+)\s+deviceId\s+(?P<device>\d+)\s+payload\s+(?P<payload>(?:[0-9A-Fa-f]{2}(?:\s+[0-9A-Fa-f]{2})*))$")
 
@@ -449,5 +474,208 @@ def main():
     if args.csv: print_csv(devices, manufacturer_db)
     else: print_table(devices, time_range, filters, manufacturer_db, global_summary)
     if args.heatmap: generate_heatmaps(devices, top_n=args.top_talkers, prefix=args.heatmap_prefix)
+
+# =============================================================================
+# Full Zigbee Alliance Manufacturer Codes Database
+# =============================================================================
+# Comprehensive list of manufacturer codes from the Zigbee Alliance
+# Special codes: 'FFFF' = All/Match-All, '0000' = Unknown/Matter Standard
+# =============================================================================
+KNOWN_MANUFACTURERS_FULL = {
+    '0000': 'Matter Standard', '0001': 'Panasonic', '0002': 'Sony', '0003': 'Samsung',
+    '0004': 'Philips RF4CE', '0005': 'Freescale RF4CE', '0006': 'OKI Semiconductors RF4CE',
+    '0007': 'Texas Instruments', '007B': 'Perenio (custom)', '1000': 'Cirronet', '1001': 'Chipcon',
+    '1002': 'Ember', '1003': 'NTS', '1004': 'Freescale', '1005': 'IP-Com', '1006': 'San Juan Software',
+    '1007': 'TUV', '1008': 'Integration', '1009': 'BM SpA', '100A': 'Awarepoint',
+    '100B': 'Signify (Philips)', '100C': 'Luxoft', '100D': 'Korwin', '100E': 'One RF Technology',
+    '100F': 'Software Technologies Group', '1010': 'Telegesis', '1011': 'Visonic', '1012': 'Insta',
+    '1013': 'Atalum', '1014': 'Atmel', '1015': 'Develco', '1016': 'Honeywell', '1017': 'RadioPulse',
+    '1018': 'Renesas', '1019': 'Xanadu Wireless', '101A': 'NEC Engineering', '101B': 'Yamatake',
+    '101C': 'Tendril Networks', '101D': 'Assa Abloy', '101E': 'MaxStream', '101F': 'Neurocom',
+    '1020': 'III (Taiwan)', '1021': 'Legrand', '1022': 'iControl', '1023': 'Raymarine',
+    '1024': 'LS Research', '1025': 'Onity', '1026': 'Mono Products', '1027': 'RF Technologies',
+    '1028': 'Itron', '1029': 'Tritech', '102A': 'Embedit', '102B': 'S3C', '102C': 'Siemens',
+    '102D': 'Mindtech', '102E': 'LG Electronics', '102F': 'Mitsubishi Electric', '1030': 'Johnson Controls',
+    '1031': 'Secure Meters UK', '1032': 'Knick', '1033': 'Viconics', '1034': 'Flexipanel',
+    '1035': 'Piasim', '1036': 'Trane', '1037': 'NXP', '1038': 'Living Independently', '1039': 'AlertMe',
+    '103A': 'Daintree', '103B': 'Aiji System', '103C': 'Telecom Italia', '103D': 'Mikrokrets',
+    '103E': 'OKI Semiconductor', '103F': 'Newport Electronics', '1040': 'Control4',
+    '1041': 'STMicroelectronics', '1042': 'Ad-Sol Nissin', '1043': 'DCSI', '1044': 'France Telecom',
+    '1045': 'muNet', '1046': 'Autani', '1047': 'Colorado vNet', '1048': 'Aerocomm',
+    '1049': 'Silicon Labs', '104A': 'Inncom', '104B': 'Cooper Power', '104C': 'Synapse',
+    '104D': 'Fisher-Pierce', '104E': 'Centralite', '104F': 'Crane Wireless', '1050': 'Mobilarm',
+    '1051': 'iMonitor', '1052': 'Bartech', '1053': 'Meshnetics', '1054': 'LS Industrial',
+    '1055': 'Cason', '1056': 'Wireless Glue', '1057': 'Elster', '1058': 'SMS Tecnologia',
+    '1059': 'Onset Computer', '105A': 'Riga Development', '105B': 'Energate', '105C': 'ConMed Linvatec',
+    '105D': 'PowerMand', '105E': 'Schneider Electric', '105F': 'Eaton', '1060': 'Telular',
+    '1061': 'Delphi Medical', '1062': 'EpiSensor', '1063': 'Landis+Gyr', '1064': 'Kaba Group',
+    '1065': 'Shure', '1066': 'Comverge', '1067': 'DBS Lodging', '1068': 'Energy Aware',
+    '1069': 'Hidalgo', '106A': 'Air2App', '106B': 'AMX', '106C': 'EDMI', '106D': 'Cyan',
+    '106E': 'System SPA', '106F': 'Telit', '1070': 'Kaga Electronics', '1071': 'Astrel Group',
+    '1072': 'Certicom', '1073': 'Gridpoint', '1074': 'Profile Systems', '1075': 'Compacta',
+    '1076': 'Freestyle Technology', '1077': 'Alektrona', '1078': 'Computime', '1079': 'Remote Technologies',
+    '107A': 'Wavecom', '107B': 'Energy Optimizers', '107C': 'GE', '107D': 'Jetlun',
+    '107E': 'Cipher Systems', '107F': 'Corporate Systems Eng', '1080': 'Ecobee', '1081': 'SMK',
+    '1082': 'Meshworks Wireless', '1083': 'Ellips', '1084': 'Secure Electrans', '1085': 'CEDO',
+    '1086': 'Toshiba', '1087': 'Digi International', '1088': 'Ubilogix', '1089': 'Echelon',
+    '1090': 'Green Energy Options', '1091': 'Silver Spring Networks', '1092': 'Black & Decker',
+    '1093': 'Aztech Associates', '1094': 'A&D Co', '1095': 'Rainforest Automation',
+    '1096': 'Carrier Electronics', '1097': 'SyChip/Murata', '1098': 'OpenPeak', '1099': 'PassiveSystems',
+    '109A': 'MMB Research', '109B': 'Leviton', '109C': 'KEPCO', '109D': 'Comcast',
+    '109E': 'NEC Electronics', '109F': 'Netvox', '10A0': 'U-Control', '10A1': 'Embedia',
+    '10A2': 'Sensus', '10A3': 'SunRise Technologies', '10A4': 'Memtech', '10A5': 'Freebox',
+    '10A6': 'M2 Labs', '10A7': 'British Gas', '10A8': 'Sentec', '10A9': 'Navetas',
+    '10AA': 'Lightspeed Technologies', '10AB': 'OKI Electric', '10AC': 'S.I. Sistemas',
+    '10AD': 'Dometic', '10AE': 'Alps', '10AF': 'EnergyHub', '10B0': 'Kamstrup', '10B1': 'EchoStar',
+    '10B2': 'EnerNOC', '10B3': 'Eltav', '10B4': 'Belkin', '10B5': 'XstreamHD', '10B6': 'Saturn South',
+    '10B7': 'GreenTrap', '10B8': 'SmartSynch', '10B9': 'Nyce Control', '10BA': 'ICM Controls',
+    '10BB': 'Millennium Electronics', '10BC': 'Motorola', '10BD': 'Emerson White-Rodgers',
+    '10BE': 'Radio Thermostat', '10BF': 'Omron', '10C0': 'GiiNii', '10C1': 'Fujitsu General',
+    '10C2': 'Peel Technologies', '10C3': 'Accent', '10C4': 'ByteSnap', '10C5': 'NEC Tokin',
+    '10C6': 'G4S Justice Services', '10C7': 'Trilliant Networks', '10C8': 'Electrolux Italia',
+    '10C9': 'OnZo', '10CA': 'EnTek Systems', '10CB': 'Philips', '10CD': 'Indesit', '10CE': 'ThinkEco',
+    '10CF': '2D2C', '10D0': 'Qorvo', '10D1': 'InterCel', '10D2': 'LG Electronics 2',
+    '10D3': 'Mitsumi Electric', '10D4': 'Mitsumi Electric 2', '10D5': 'ZMDI', '10D6': 'Nest Labs',
+    '10D7': 'Exegin Technologies', '10D8': 'Honeywell 2', '10D9': 'Takahata Precision',
+    '10DA': 'Sumitomo Electric', '10DB': 'GE Energy', '10DC': 'GE Appliances', '10DD': 'Radiocrafts',
+    '10DE': 'Ceiva', '10DF': 'TEC&CO', '10E0': 'Chameleon Technology', '10E1': 'Samsung 2',
+    '10E2': 'Ruwido Austria', '10E3': 'Huawei', '10E4': 'Huawei 2', '10E5': 'Greenwave Reality',
+    '10E6': 'BGlobal Metering', '10E7': 'Mindteck', '10E8': 'Ingersoll Rand', '10E9': 'Dius Computing',
+    '10EA': 'Embedded Automation', '10EB': 'ABB', '10EC': 'Sony 2', '10ED': 'Genus Power',
+    '10EE': 'Universal Electronics', '10EF': 'Universal Electronics 2', '10F0': 'Metrum Technologies',
+    '10F1': 'Cisco', '10F2': 'Ubisys', '10F3': 'Consert', '10F4': 'Crestron', '10F5': 'Enphase Energy',
+    '10F6': 'Invensys Controls', '10F7': 'Mueller Systems', '10F8': 'AAC Technologies', '10F9': 'U-NEXT',
+    '10FA': 'Steelcase', '10FB': 'Telematics Wireless', '10FC': 'Samil Power', '10FD': 'Pace',
+    '10FE': 'Osborne Coinage', '10FF': 'Powerwatch', '1100': 'Candeled', '1101': 'FlexGrid',
+    '1102': 'Humax', '1103': 'Universal Devices', '1104': 'Advanced Energy', '1105': 'BEGA',
+    '1106': 'Brunel University', '1107': 'Panasonic R&D Singapore', '1108': 'eSystems Research',
+    '1109': 'Panamax', '110A': 'SmartThings', '110B': 'EM-Lite', '110C': 'OSRAM Sylvania',
+    '110D': '2 Save Energy', '110E': 'Planet Innovation', '110F': 'Ambient Devices', '1110': 'Profalux',
+    '1111': 'Billion Electric (BEC)', '1112': 'Embertec', '1113': 'IT Watchdogs', '1114': 'Reloc',
+    '1115': 'Intel', '1116': 'Trend Electronics', '1117': 'Moxa', '1118': 'QEES',
+    '1119': 'SAYME Wireless', '111A': 'Pentair Aquatic', '111B': 'Orbit Irrigation',
+    '111C': 'California Eastern Labs', '111D': 'Comcast 2', '111E': 'IDT Technology', '111F': 'Pixela',
+    '1120': 'TiVo', '1121': 'Fidure', '1122': 'Marvell Semiconductor', '1123': 'Wasion Group',
+    '1124': 'Jasco Products', '1125': 'Shenzhen Kaifa', '1126': 'NetComm Wireless',
+    '1127': 'Define Instruments', '1128': 'In Home Displays', '1129': 'Miele', '112A': 'Televes',
+    '112B': 'Labelec', '112C': 'China Electronics Standard', '112D': 'Vectorform', '112E': 'Busch-Jaeger',
+    '112F': 'Redpine Signals', '1130': 'Bridges Electronic', '1131': 'Sercomm',
+    '1132': 'WSH (wirsindheller)', '1133': 'Bosch Security', '1134': 'EZEX', '1135': 'Dresden Elektronik',
+    '1136': 'Meazon', '1137': 'Crow Electronic', '1138': 'Harvard Engineering', '1139': 'Andson (Beijing)',
+    '113A': 'Adhoco', '113B': 'Waxman Consumer', '113C': 'Owon Technology', '113D': 'Hitron Technologies',
+    '113E': 'Scemtec', '113F': 'Webee', '1140': 'Grid2Home', '1141': 'Telink Micro',
+    '1142': 'Jasmine Systems', '1143': 'Bidgely', '1144': 'Lutron', '1145': 'IJENKO',
+    '1146': 'Starfield Electronic', '1147': 'TCP', '1148': 'Rogers Communications', '1149': 'Cree',
+    '114A': 'Robert Bosch LLC', '114B': 'Ibis Networks', '114C': 'Quirky', '114D': 'Efergy Technologies',
+    '114E': 'Smartlabs', '114F': 'Everspring Industry', '1150': 'Swann Communications', '1151': 'Soneter',
+    '1152': 'Samsung SDS', '1153': 'Uniband Electronic', '1154': 'Accton Technology',
+    '1155': 'Bosch Thermotechnik', '1156': 'Wincor Nixdorf', '1157': 'Ohsung Electronics',
+    '1158': 'Zen Within', '1159': 'Tech4Home', '115A': 'Nanoleaf', '115B': 'Keen Home',
+    '115C': 'Poly-Control', '115D': 'Eastfield Lighting', '115E': 'IP Datatel',
+    '115F': 'Lumi United (Aqara)', '1160': 'Sengled', '1161': 'Remote Solution', '1162': 'ABB Genway Xiamen',
+    '1163': 'Zhejiang Rexense', '1164': 'ForEE Technology', '1165': 'Open Access Technology',
+    '1166': 'Innr Lighting', '1167': 'Techworld Industries', '1168': 'Leedarson Lighting',
+    '1169': 'Arzel Zoning', '116A': 'Holley Technology', '116B': 'Beldon Technologies',
+    '116C': 'Flextronics', '116D': 'Shenzhen Meian', '116E': 'Lowes', '116F': 'Sigma Connectivity',
+    '1171': 'Wulian', '1172': 'Plugwise', '1173': 'Titan Products', '1174': 'Ecospectral',
+    '1175': 'D-Link', '1176': 'Technicolor Home USA', '1177': 'Opple Lighting', '1178': 'Wistron NeWeb',
+    '1179': 'QMotion Shades', '117A': 'Insta GmbH', '117B': 'Shanghai Vancount', '117C': 'IKEA',
+    '117D': 'RT-RK', '117E': 'Shenzhen Feibit', '117F': 'EuControls', '1180': 'Telkonet',
+    '1181': 'Thermal Solution Resources', '1182': 'POMCube', '1183': 'Ei Electronics', '1184': 'Optoga',
+    '1185': 'Stelpro', '1186': 'Lynxus Technologies', '1187': 'Semiconductor Components', '1188': 'TP-Link',
+    '1189': 'LEDVANCE', '118A': 'Nortek', '118B': 'iRevo (Assa Abloy Korea)', '118C': 'Midea',
+    '118D': 'ZF Friedrichshafen', '118E': 'Checkit', '118F': 'Aclara', '1190': 'Nokia',
+    '1191': 'Goldcard High-Tech', '1192': 'George Wilson Industries', '1193': 'Easy Saver',
+    '1194': 'ZTE', '1195': 'Arris', '1196': 'Reliance Big TV', '1197': 'Insight Energy (Powerley)',
+    '1198': 'Thomas Research (Hubbell)', '1199': 'Li Seng Technology', '119A': 'System Level Solutions',
+    '119B': 'Matrix Labs', '119C': 'Sinopé Technologies', '119D': 'Jiuzhou Greeble',
+    '119E': 'Guangzhou Lanvee', '119F': 'Venstar', '1200': 'SLV', '1201': 'Halo Smart Labs',
+    '1202': 'Scout Security', '1203': 'Alibaba China', '1204': 'Resolution Products', '1205': 'Smartlok',
+    '1206': 'Lux Products', '1207': 'Vimar', '1208': 'Universal Lighting Tech', '1209': 'Robert Bosch GmbH',
+    '120A': 'Accenture', '120B': 'Heiman Technology', '120C': 'Shenzhen Homa', '120D': 'Vision Electronics',
+    '120E': 'Lenovo', '120F': 'Presciense R&D', '1210': 'Shenzhen Seastar', '1211': 'Sensative',
+    '1212': 'SolarEdge', '1213': 'Zipato', '1214': 'China Fire & Security (iHorn)', '1215': 'Quby',
+    '1216': 'Hangzhou Roombanker', '1217': 'Amazon Lab126', '1218': 'Paulmann Licht',
+    '1219': 'Shenzhen Orvibo', '121A': 'TCI Telecommunications', '121B': 'Müller-Licht',
+    '121C': 'Aurora Limited', '121D': 'SmartDCC', '121E': 'Shanghai Umeinfo', '121F': 'CarbonTrack',
+    '1220': 'Somfy', '1221': 'Viessmann Elektronik', '1222': 'Hildebrand Technology',
+    '1223': 'Onkyo Technology', '1224': 'Shenzhen Sunricher', '1225': 'Xiu Xiu Technology',
+    '1226': 'Zumtobel Group', '1227': 'Shenzhen Kaadas', '1228': 'Shanghai Xiaoyan',
+    '1229': 'Cypress Semiconductor', '122A': 'XAL GmbH', '122B': 'Inergy Systems',
+    '122C': 'Alfred Kärcher', '122D': 'Adurolight', '122E': 'Groupe Muller', '122F': 'V-Mark Enterprises',
+    '1230': 'Lead Energy', '1231': 'Ultimate IoT (Henan)', '1232': 'Axxess Industries',
+    '1233': 'ThirdReality', '1234': 'DSR Corporation', '1235': 'Guangzhou Vensi',
+    '1236': 'Schlage Lock (Allegion)', '1237': 'Net2Grid', '1238': 'Airam Electric',
+    '1239': 'Immax WPB CZ', '123A': 'ZIV Automation', '123B': 'Hangzhou Imagic', '123C': 'Xiamen Leelen',
+    '123D': 'Overkiz', '123E': 'Flonidan', '123F': 'HDL Automation', '1240': 'Ardomus Networks',
+    '1241': 'Samjin', '1242': 'FireAngel Safety', '1243': 'Indra Sistemas', '1244': 'Shenzhen JBT',
+    '1245': 'GE Lighting (Current)', '1246': 'Danfoss', '1247': 'Niviss PHP',
+    '1248': 'Shenzhen Fengliyuan', '1249': 'Nexelec', '124A': 'Sichuan Behome', '124B': 'Fujian Star-net',
+    '124C': 'Toshiba Visual Solutions', '124D': 'Latchable', '124E': 'L&S Deutschland',
+    '124F': 'Gledopto', '1250': 'The Home Depot', '1251': 'Neonlite Distribution',
+    '1252': 'Arlo Technologies', '1253': 'Xingluo Technology', '1254': 'Simon Electric China',
+    '1255': 'Hangzhou Greatstar', '1256': 'Sequentric Energy', '1257': 'Solum',
+    '1258': 'Eaglerise Electric', '1259': 'Fantem Technologies', '125A': 'Yunding Network (Beijing)',
+    '125B': 'Atlantic Group', '125C': 'Xiamen Intretech', '125D': 'Tuya', '125E': 'DNAKE (Xiamen)',
+    '125F': 'Niko', '1260': 'Emporia Energy', '1261': 'Sikom', '1262': 'Axis Labs',
+    '1263': 'Current Products', '1264': 'Metersit', '1265': 'Hornbach Baumarkt', '1266': 'Diceworld',
+    '1267': 'ARC Technology', '1268': 'Hangzhou Konke', '1269': 'Salto Systems', '126A': 'Shenzhen Shyugj',
+    '126B': 'Brayden Automation', '126C': 'Environexus', '126D': 'Eltra', '126E': 'Xiaomi Communications',
+    '126F': 'Shanghai Shuncom', '1270': 'Voltalis', '1271': 'Feelux', '1272': 'SmartPlus',
+    '1273': 'Halemeier', '1274': 'Trust International', '1275': 'Duke Energy', '1276': 'Calix',
+    '1277': 'Adeo', '1278': 'Connected Response', '1279': 'StroyEnergoKom', '127A': 'Lumitech Lighting',
+    '127B': 'Verdant Environmental', '127C': 'Alfred International', '127D': 'Sansi LED',
+    '127E': 'Mindtree', '127F': 'Nordic Semiconductor', '1280': 'Siterwell Electronics',
+    '1281': 'Briloner Leuchten', '1282': 'Shenzhen SEI Technology', '1283': 'Copper Labs',
+    '1284': 'Delta Dore', '1285': 'Hager Group', '1286': 'Shenzhen Coolkit (Sonoff)',
+    '1287': 'Hangzhou Sky-Lighting', '1288': 'E.ON', '1289': 'Lidl', '128A': 'Sichuan Changhong',
+    '128B': 'NodOn', '128C': 'Jiangxi Innotech', '128D': 'Mercator', '128E': 'Beijing Ruying',
+    '128F': 'Eglo Leuchten', '1290': 'Pietro Fiorentini', '1291': 'Zehnder Group', '1292': 'BRK Brands',
+    '1293': 'Askey Computer', '1294': 'PassiveBolt', '1295': 'AVM (Fritz)', '1296': 'Ningbo Suntech',
+    '1297': 'Stello', '1298': 'Vivint Smart Home', '1299': 'Namron', '129A': 'Rademacher',
+    '129B': 'OMO Systems', '129C': 'Siglis', '129D': 'Imhotep Creation', '129E': 'iCasa',
+    '129F': 'Level Home', '1300': 'TIS Control', '1301': 'Radisys India', '1302': 'Veea',
+    '1303': 'Fell Technology', '1304': 'Sowilo Design', '1305': 'Lexi Devices', '1306': 'LIFX',
+    '1307': 'Grundfos', '1308': 'Sourcing & Creation', '1309': 'Kraken Technologies', '130A': 'Eve Systems',
+    '130B': 'Lite-On Technology', '130C': 'Focalcrest', '130D': 'Bouffalo Lab', '130E': 'Wyze Labs',
+    '130F': 'Z-Wave Europe', '1310': 'Aeotec', '1311': 'NGSTB', '1312': 'Qingdao Yeelink (Yeelight)',
+    '1313': 'E-Smart Home', '1314': 'Fibaro', '1315': 'Prolitech', '1316': 'Pankore IC',
+    '1317': 'Logitech', '1318': 'Piaro', '1319': 'Mitsubishi Electric US', '131A': 'Resideo Technologies',
+    '131B': 'Espressif Systems', '131C': 'Hella', '131D': 'Geberit International', '131E': 'Came SpA',
+    '131F': 'Guangzhou Elite Education', '1320': 'PhyPlus Microelectronics',
+    '1321': 'Shenzhen Sonoff (ITEAD)', '1322': 'Safe4 Security', '1323': 'Shanghai MXCHIP',
+    '1324': 'HDC i-Controls', '1325': 'Zuma Array', '1326': 'Decelect', '1327': 'Mill International',
+    '1328': 'HomeWizard', '1329': 'Shenzhen Topband', '132A': 'Pressac Communications',
+    '132B': 'Origin Wireless', '132C': 'Connecte', '132D': 'Yokis', '132E': 'Xiamen Yankon',
+    '132F': 'Yandex', '1330': 'Critical Software', '1331': 'Nortek Control', '1332': 'BrightAI',
+    '1333': 'Becker Antriebe', '1334': 'Shenzhen TCL New Technology', '1335': 'Dexatek Technology',
+    '1336': 'Elelabs International', '1337': 'Datek Wireless', '1338': 'Aldes', '1339': 'Savant',
+    '133A': 'Ariston Thermo', '133B': 'Warema Renkhoff', '133C': 'VTech Holdings', '133D': 'Futurehome',
+    '133E': 'Cognitive Systems', '133F': 'ASR Microelectronics', '1340': 'Airios',
+    '1341': 'Guangdong Oppo Mobile', '1342': 'Beken', '1343': 'Corsair', '1344': 'Eltako',
+    '1345': 'Chengdu Meross', '1346': 'Rafael Microelectronics', '1347': 'Aug. Winkhaus',
+    '1348': 'Qingdao Haier', '1349': 'Apple', '134A': 'Rollease Acmeda', '134B': 'Nabu Casa',
+    '134C': 'Simon Holding', '134D': 'KD Navien', '134E': 'tado', '134F': 'Mediola',
+    '1350': 'PolynHome', '1351': 'Hoorii Technology', '1353': 'Kimin Electronics', '1354': 'Zyax',
+    '1355': 'Baracoda', '1356': 'Lennox International', '1357': 'Teledatics',
+    '1358': 'Top Victory Investments', '1359': 'GoQual', '135A': 'Siegenia-Aubi',
+    '135B': 'Virtual Connected (Singapore)', '135C': 'Gigaset Communications', '135D': 'Nuki Home Solutions',
+    '135E': 'DeviceBook', '135F': 'Consumer 2.0 (Rently)', '1360': 'Edison Labs (Orro)',
+    '1361': 'Inovelli', '1362': 'Deveritec', '1363': 'Charter Communications',
+    '1364': 'Monolithic Power Systems', '1365': 'Ningbo Dooya', '1366': 'Shenzhen SDMC', '1367': 'HP',
+    '1368': 'Mui Lab', '1369': 'BHTronics', '136A': 'Akuvox (Xiamen)', '1490': 'Shelly',
+    '152F': 'SberDevices', '1994': 'Gewiss', '1AD2': 'Livolo (custom)', '2794': 'Climax Technology',
+    '6006': 'Google', '6666': 'Sprut.device (custom)', '7777': 'Lytko (custom)',
+}
+
+# Merge full manufacturer database into main dictionary
+try:
+    for k, v in list(KNOWN_MANUFACTURERS_FULL.items()):
+        key = normalize_mfr_code(k)
+        KNOWN_MANUFACTURERS_FULL.pop(k)
+        KNOWN_MANUFACTURERS_FULL[key] = v
+    KNOWN_MANUFACTURERS.update(KNOWN_MANUFACTURERS_FULL)
+except Exception as e:
+    print('[WARNING] Could not merge full manufacturer table:', e, file=sys.stderr)
 
 if __name__=='__main__': main()
