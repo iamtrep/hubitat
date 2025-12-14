@@ -93,18 +93,18 @@ Map mainPage() {
         }
 
         section("Peak Period Switches", hideable: true, hidden: false) {
-            input "eventSwitch", "capability.switch", title: "Event Switch (ON during peak period)", required: true
-            input "preEventSwitch", "capability.switch", title: "Pre-Event Switch (ON before peak period)", required: false
+            input "eventSwitch", "capability.switch", title: "Event Switch (ON during peak period)", required: false, multiple: true, submitOnChange: true
+            input "preEventSwitch", "capability.switch", title: "Pre-Event Switch (ON before peak period)", required: false, multiple: true, submitOnChange: true
             input "preEventMinutes", "number", title: "Minutes before peak to turn on pre-event switch", defaultValue: DEFAULT_PRE_EVENT_MINUTES, required: true
-            input "upcomingEventSwitch", "capability.switch", title: "Upcoming Event Switch (ON when any event is scheduled)", required: false
+            input "upcomingEventSwitch", "capability.switch", title: "Upcoming Event Switch (ON when any event is scheduled)", required: false, multiple: true, submitOnChange: true
         }
 
         section("Event Hub Variables", hideable: true, hidden: false) {
             paragraph "Select Hub Variables to be set to the next schdeduled event begin and end times"
             input "eventStartVariableName", "enum", title: "Hub variable for next event start time (dateDebut)",
-                options: getGlobalVarsByType("datetime").keySet().sort(), required: false
+                options: getGlobalVarsByType("datetime").keySet().sort(), required: false, submitOnChange: true
             input "eventEndVariableName", "enum", title: "Hub variable for next event end time (dateFin)",
-                options: getGlobalVarsByType("datetime").keySet().sort(), required: false
+                options: getGlobalVarsByType("datetime").keySet().sort(), required: false, submitOnChange: true
             paragraph "<small>Note: Create datetime hub variables in Settings → Hub Variables if none appear above</small>"
         }
 
@@ -152,6 +152,9 @@ void initialize() {
     if (settings.testMode) {
         generateTestFile()
     }
+
+    // Update switch states based on current state (in case switches were changed in config)
+    updateSwitchStates()
 
     // Fetch data immediately
     fetchPeakPeriods()
@@ -252,6 +255,10 @@ private void processPeakPeriods(Map data) {
     }
 
     state.lastUpdate = now.time
+
+    // Ensure switch states are correct for current state
+    updateSwitchStates()
+
     updateAppLabel()
 }
 
@@ -371,9 +378,9 @@ private void enterNoEventsState() {
     log.info("STATE: No events scheduled")
 
     // Turn off all switches
-    if (eventSwitch?.currentValue("switch") == "on") eventSwitch.off()
-    if (preEventSwitch?.currentValue("switch") == "on") preEventSwitch.off()
-    if (upcomingEventSwitch?.currentValue("switch") == "on") upcomingEventSwitch.off()
+    eventSwitch?.each { if (it.currentValue("switch") == "on") it.off() }
+    preEventSwitch?.each { if (it.currentValue("switch") == "on") it.off() }
+    upcomingEventSwitch?.each { if (it.currentValue("switch") == "on") it.off() }
 }
 
 private void enterEventScheduledState(Date eventStart, Date eventEnd) {
@@ -384,9 +391,9 @@ private void enterEventScheduledState(Date eventStart, Date eventEnd) {
     state.eventEnd = eventEnd.time
 
     // Set switches
-    if (preEventSwitch?.currentValue("switch") == "on") preEventSwitch.off()
-    if (eventSwitch?.currentValue("switch") == "on") eventSwitch.off()
-    if (upcomingEventSwitch?.currentValue("switch") == "off") upcomingEventSwitch.on()
+    preEventSwitch?.each { if (it.currentValue("switch") == "on") it.off() }
+    eventSwitch?.each { if (it.currentValue("switch") == "on") it.off() }
+    upcomingEventSwitch?.each { if (it.currentValue("switch") == "off") it.on() }
 
     // Schedule transition to pre-event or event active
     if (preEventSwitch && settings.preEventMinutes > 0) {
@@ -410,9 +417,9 @@ private void enterPreEventState(Date eventStart, Date eventEnd) {
     state.eventEnd = eventEnd.time
 
     // Set switches
-    if (eventSwitch?.currentValue("switch") == "on") eventSwitch.off()
-    if (upcomingEventSwitch?.currentValue("switch") == "on") upcomingEventSwitch.off()
-    if (preEventSwitch?.currentValue("switch") == "off") preEventSwitch.on()
+    eventSwitch?.each { if (it.currentValue("switch") == "on") it.off() }
+    upcomingEventSwitch?.each { if (it.currentValue("switch") == "on") it.off() }
+    preEventSwitch?.each { if (it.currentValue("switch") == "off") it.on() }
 
     // Schedule transition to event active
     runOnce(eventStart, transitionToEventActive)
@@ -426,9 +433,9 @@ private void enterEventActiveState(Date eventEnd) {
     state.eventEnd = eventEnd.time
 
     // Set switches
-    if (upcomingEventSwitch?.currentValue("switch") == "on") upcomingEventSwitch.off()
-    if (preEventSwitch?.currentValue("switch") == "on") preEventSwitch.off()
-    if (eventSwitch?.currentValue("switch") == "off") eventSwitch.on()
+    upcomingEventSwitch?.each { if (it.currentValue("switch") == "on") it.off() }
+    preEventSwitch?.each { if (it.currentValue("switch") == "on") it.off() }
+    eventSwitch?.each { if (it.currentValue("switch") == "off") it.on() }
 
     // Schedule transition back to no events (or refetch will find next event)
     runOnce(eventEnd, transitionToNoEvents)
@@ -475,6 +482,37 @@ void transitionToNoEvents() {
 }
 
 // Helper methods
+
+private void updateSwitchStates() {
+    String currentState = state.currentState ?: STATE_NO_EVENTS
+    logDebug("Updating switch states for current state: ${currentState}")
+
+    switch (currentState) {
+        case STATE_NO_EVENTS:
+            eventSwitch?.each { if (it.currentValue("switch") == "on") it.off() }
+            preEventSwitch?.each { if (it.currentValue("switch") == "on") it.off() }
+            upcomingEventSwitch?.each { if (it.currentValue("switch") == "on") it.off() }
+            break
+
+        case STATE_EVENT_SCHEDULED:
+            eventSwitch?.each { if (it.currentValue("switch") == "on") it.off() }
+            preEventSwitch?.each { if (it.currentValue("switch") == "on") it.off() }
+            upcomingEventSwitch?.each { if (it.currentValue("switch") == "off") it.on() }
+            break
+
+        case STATE_PRE_EVENT:
+            eventSwitch?.each { if (it.currentValue("switch") == "on") it.off() }
+            upcomingEventSwitch?.each { if (it.currentValue("switch") == "on") it.off() }
+            preEventSwitch?.each { if (it.currentValue("switch") == "off") it.on() }
+            break
+
+        case STATE_EVENT_ACTIVE:
+            upcomingEventSwitch?.each { if (it.currentValue("switch") == "on") it.off() }
+            preEventSwitch?.each { if (it.currentValue("switch") == "on") it.off() }
+            eventSwitch?.each { if (it.currentValue("switch") == "off") it.on() }
+            break
+    }
+}
 
 private void registerHubVariables() {
     // Remove all previously registered variables
