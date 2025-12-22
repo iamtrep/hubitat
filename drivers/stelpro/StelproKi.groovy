@@ -49,9 +49,11 @@ metadata {
 
         command "eco"
 
-        fingerprint profileId: "0104", endpointId: "19", inClusters: "0000, 0003, 0004, 0201, 0204", outClusters: "0402",
+        fingerprint profileId: "0104", endpointId: "19", inClusters: "0000,0003,0004,0201,0204", outClusters: "0402",
             manufacturer: "Stelpro", model: "STZB402+", deviceJoinName: "Stelpro Ki ZigBee Thermostat"
-        fingerprint profileId: "0104", endpointId: "19", inClusters: "0000, 0003, 0004, 0201, 0204", outClusters: "0402",
+        fingerprint profileId: "0104", endpointId: "19", inClusters: "0000,0003,0004,0201,0204", outClusters: "0402",
+            manufacturer: "Stelpro", model: "ST218", deviceJoinName: "Stelpro ORLÉANS Convector"
+        fingerprint profileId: "0104", endpointId: "19", inClusters: "0000,0003,0201,0204,0004", outClusters: "0402",
             manufacturer: "Stelpro", model: "ST218", deviceJoinName: "Stelpro ORLÉANS Convector"
     }
 
