@@ -72,7 +72,6 @@ metadata {
 
         // Custom attributes (not provided by standard capabilities)
         attribute "connectionStatus", "string"
-        attribute "lastUpdate", "string"
         attribute "currentProgram", "string"
         attribute "holdStatus", "string"
         attribute "holdClimate", "string"
@@ -432,7 +431,7 @@ void setComfortTemperature(String comfortName, heatTemp, coolTemp = null) {
 
     if (updateThermostat([program: thermostat.program])) {
         log.info "Updated ${comfortName}: Heat ${heatTemp}°C" + (coolTemp ? ", Cool ${coolTemp}°C" : "")
-        sendEvent(name: "lastUpdate", value: new Date().format("yyyy-MM-dd HH:mm:ss"))
+        state.lastUpdate = new Date().format("yyyy-MM-dd HH:mm:ss")
     } else {
         log.error "Failed to update ${comfortName}"
     }
@@ -522,7 +521,7 @@ void createVacation(String name, String startDateTime, String endDateTime, heatT
 
     if (sendFunction([type: "createVacation", params: vacation])) {
         log.info "Created vacation '${name}'"
-        sendEvent(name: "lastUpdate", value: new Date().format("yyyy-MM-dd HH:mm:ss"))
+        state.lastUpdate = new Date().format("yyyy-MM-dd HH:mm:ss")
     } else {
         log.error "Failed to create vacation '${name}'"
     }
@@ -636,7 +635,7 @@ void setThermostatScheduleTime(String day, String comfortName, String currentTim
     Map updateData = [program: program]
     if (updateThermostat(updateData)) {
         log.info "Moved ${comfortName} on ${day} from ${currentTime} to ${newTime}"
-        sendEvent(name: "lastUpdate", value: new Date().format("yyyy-MM-dd HH:mm:ss"))
+        state.lastUpdate = new Date().format("yyyy-MM-dd HH:mm:ss")
     } else {
         log.error "Failed to update schedule"
     }
@@ -676,10 +675,10 @@ void getCurrentState() {
     sendEvent(name: "coolingSetpoint", value: coolC, unit: "°C")
 
     // Update HVAC mode
-    sendEvent(name: "hvacMode", value: thermostat.settings?.hvacMode ?: "unknown")
+    sendEvent(name: "hvacMode", value: thermostat.settings?.hvacMode?.toString() ?: "unknown")
 
     // Update current program
-    sendEvent(name: "currentProgram", value: thermostat.program?.currentClimateRef ?: "unknown")
+    sendEvent(name: "currentProgram", value: thermostat.program?.currentClimateRef?.toString() ?: "unknown")
 
     // Determine operating state
     String operatingState = "idle"
@@ -700,16 +699,16 @@ void getCurrentState() {
         Map current = weather.forecasts[0]
         BigDecimal outdoorTempC = ecobeeToCelsius(current.temperature)
         sendEvent(name: "outdoorTemperature", value: outdoorTempC, unit: "°C")
-        sendEvent(name: "weatherCondition", value: current.condition)
+        sendEvent(name: "weatherCondition", value: current.condition?.toString() ?: "")
     }
 
     // Update hold status
     Map activeHold = thermostat.events?.find { it.type == "hold" && it.running == true }
     if (activeHold) {
         sendEvent(name: "holdStatus", value: "active")
-        sendEvent(name: "holdClimate", value: activeHold.holdClimateRef ?: "temperature")
+        sendEvent(name: "holdClimate", value: activeHold.holdClimateRef?.toString() ?: "temperature")
         sendEvent(name: "holdEndTime", value: (activeHold.endDate && activeHold.endTime) ?
-            "${activeHold.endDate} ${activeHold.endTime}" : "indefinite")
+            "${activeHold.endDate} ${activeHold.endTime}".toString() : "indefinite")
     } else {
         sendEvent(name: "holdStatus", value: "none")
         sendEvent(name: "holdClimate", value: "")
@@ -719,7 +718,7 @@ void getCurrentState() {
     // Concise log summary
     log.info "State: ${tempC}°C, ${runtime.actualHumidity}%, Heat ${heatC}°C, Cool ${coolC}°C, ${operatingState}, ${activeHold ? 'Hold active' : 'No hold'}"
 
-    sendEvent(name: "lastUpdate", value: new Date().format("yyyy-MM-dd HH:mm:ss"))
+    state.lastUpdate = new Date().format("yyyy-MM-dd HH:mm:ss")
 }
 
 // ========================================
