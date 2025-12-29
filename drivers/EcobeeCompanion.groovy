@@ -26,7 +26,7 @@ metadata {
         name: "Ecobee Companion",
         namespace: "iamtrep",
         author: "pj",
-        importUrl: ""
+        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/EcobeeCompanion.groovy"
     ) {
         capability "Actuator"
         capability "Configuration"
