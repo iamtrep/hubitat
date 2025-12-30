@@ -78,6 +78,7 @@ metadata {
         attribute "holdEndTime", "string"
         attribute "outdoorTemperature", "number"
         attribute "weatherCondition", "string"
+        attribute "hvacMode", "string"
     }
 
     preferences {
@@ -538,7 +539,7 @@ void deleteVacation(String name) {
 
     if (sendFunction([type: "deleteVacation", params: [name: name]])) {
         log.info "Deleted vacation '${name}'"
-        sendEvent(name: "lastUpdate", value: new Date().format("yyyy-MM-dd HH:mm:ss"))
+        state.lastUpdate = new Date().format("yyyy-MM-dd HH:mm:ss")
     } else {
         log.error "Failed to delete vacation '${name}'"
     }
@@ -675,7 +676,8 @@ void getCurrentState() {
     sendEvent(name: "coolingSetpoint", value: coolC, unit: "°C")
 
     // Update HVAC mode
-    sendEvent(name: "hvacMode", value: thermostat.settings?.hvacMode?.toString() ?: "unknown")
+    String hvacModeValue = thermostat.settings?.hvacMode?.toString() ?: "unknown"
+    sendEvent(name: "hvacMode", value: hvacModeValue)
 
     // Update current program
     sendEvent(name: "currentProgram", value: thermostat.program?.currentClimateRef?.toString() ?: "unknown")
