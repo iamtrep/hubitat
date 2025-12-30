@@ -89,13 +89,13 @@ metadata {
     }
 }
 
-@Field static final String version = "0.0.3"
+@Field static final String version = "0.0.4"
 
 // OAuth and API endpoints
 @Field static final String constEcobeeApiBase= "https://api.ecobee.com"
 
 // Static mappings
-@Field static final Map<String, Integer> DAY_NAME_TO_INDEX = [
+@Field static final Map<String, Integer> constScheduleDaysIndex = [
     monday: 0,
     tuesday: 1,
     wednesday: 2,
@@ -105,8 +105,8 @@ metadata {
     sunday: 6
 ].asImmutable()
 
-@Field static final int BLOCKS_PER_DAY = 48
-@Field static final int MINUTES_PER_BLOCK = 30
+@Field static final int SCHEDULE_BLOCKS_PER_DAY = 48
+@Field static final int SCHEDULE_MINUTES_PER_BLOCK = 30
 
 @Field static final Map constConnectionStatus = [
     connected: "connected",
@@ -116,7 +116,7 @@ metadata {
 ]
 
 // Token and timeout configuration
-@Field static final long TOKEN_REFRESH_BUFFER_MS = 300000L  // Refresh 5 minutes before expiry
+@Field static final long TOKEN_REFRESH_BUFFER_MS = 325782L  // Refresh 5.5 minutes before expiry
 @Field static final int DEBUG_LOG_TIMEOUT_SECONDS = 3600    // Auto-disable debug logging after 1 hour
 
 
@@ -132,10 +132,6 @@ metadata {
     auto: "auto",
     off: "off",
     auxHeatOnly: "auxHeatOnly"
-]
-
-@Field static final List<String> constScheduleDays = [
-    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"
 ]
 
 // ========================================
@@ -267,6 +263,7 @@ Boolean refreshToken() {
         contentType: "application/json"
     ]
 
+    Boolean success = false
     try {
         httpPost(params) { response ->
             if (response.status == 200) {
@@ -277,14 +274,14 @@ Boolean refreshToken() {
 
                 logDebug "Token refreshed"
                 sendEvent(name: "connectionStatus", value: "connected", descriptionText: "${device.displayName} is connected")
-                return true
+                success = true
             }
         }
     } catch (e) {
         log.error "Token refresh error: ${e.message}"
         sendEvent(name: "connectionStatus", value: "error", descriptionText: "${device.displayName} Token refresh failed")
     }
-    return false
+    return success
 }
 
 Boolean checkAndRefreshToken() {
@@ -938,8 +935,8 @@ private boolean validateToken() {
 }
 
 private boolean validateDayParameter(String day) {
-    if (!constScheduleDays.contains(day?.toLowerCase())) {
-        log.error "Invalid day: ${day}. Must be one of: ${constScheduleDays}"
+    if (!constScheduleDays.keySet().contains(day?.toLowerCase())) {
+        log.error "Invalid day: ${day}. Must be one of: ${constScheduleDays.keySet()}"
         return false
     }
     return true
@@ -1076,7 +1073,7 @@ String minutesToTime(Integer minutes) {
 
 @CompileStatic
 Integer dayNameToIndex(String day) {
-    return DAY_NAME_TO_INDEX[day.toLowerCase()]
+    return constScheduleDaysIndex[day.toLowerCase()]
 }
 
 @CompileStatic
