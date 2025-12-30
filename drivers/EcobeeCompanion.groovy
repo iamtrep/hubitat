@@ -89,7 +89,7 @@ metadata {
     }
 }
 
-@Field static final String version = "0.0.2"
+@Field static final String version = "0.0.3"
 
 // OAuth and API endpoints
 @Field static final String constEcobeeApiBase= "https://api.ecobee.com"
@@ -107,6 +107,13 @@ metadata {
 
 @Field static final int BLOCKS_PER_DAY = 48
 @Field static final int MINUTES_PER_BLOCK = 30
+
+@Field static final Map constConnectionStatus = [
+    connected: "connected",
+    disconnected: "disconnected",
+    pending: "pending",
+    error: "error"
+]
 
 // Token and timeout configuration
 @Field static final long TOKEN_REFRESH_BUFFER_MS = 300000L  // Refresh 5 minutes before expiry
@@ -137,7 +144,7 @@ metadata {
 
 void installed() {
     if (state.version != version) state.version = version
-    sendEvent(name: "connectionStatus", value: "Not Connected")
+    sendEvent(name: "connectionStatus", value: "disonnected", descriptionText: "${device.displayName} is disconnected")
     configure()
 }
 
@@ -165,7 +172,7 @@ void refresh() {
 void connect() {
     if (!apiKey) {
         log.error "API Key not configured"
-        sendEvent(name: "connectionStatus", value: "Error: No API Key")
+        sendEvent(name: "connectionStatus", value: "error", descriptionText: "${device.displayName} Error: No API Key")
         return
     }
 
@@ -190,12 +197,12 @@ void connect() {
                 log.info "PIN: ${data.ecobeePin} (expires in ${data.expires_in / 60} min)"
                 log.info "Authorize at ecobee.com, then run authorize() to complete setup"
 
-                sendEvent(name: "connectionStatus", value: "Waiting for PIN authorization: ${data.ecobeePin}")
+                sendEvent(name: "connectionStatus", value: "pending", descriptionText: "${device.displayName} Waiting for PIN authorization: ${data.ecobeePin}")
             }
         }
     } catch (e) {
         log.error "Error initiating OAuth: ${e.message}"
-        sendEvent(name: "connectionStatus", value: "Error: ${e.message}")
+        sendEvent(name: "connectionStatus", value: "error", descriptionText: "${device.displayName} Error: ${e.message}")
     }
 }
 
@@ -207,7 +214,7 @@ void authorize() {
 
     if (now() > state.pinExpires) {
         log.error "PIN expired. Call connect() again"
-        sendEvent(name: "connectionStatus", value: "Error: PIN expired")
+        sendEvent(name: "connectionStatus", value: "error", descriptionText: "${device.displayName} Error: PIN expired")
         return
     }
 
@@ -234,19 +241,19 @@ void authorize() {
                 state.remove('pinExpires')
 
                 log.info "Authorization successful"
-                sendEvent(name: "connectionStatus", value: "Connected")
+                sendEvent(name: "connectionStatus", value: "connected")
             }
         }
     } catch (e) {
         log.error "Authorization error: ${e.message}"
-        sendEvent(name: "connectionStatus", value: "Error: ${e.message}")
+        sendEvent(name: "connectionStatus", value: "error", descriptionText: "${device.displayName} Error: ${e.message}")
     }
 }
 
 Boolean refreshToken() {
     if (!state.refreshToken) {
         log.error "No refresh token available"
-        sendEvent(name: "connectionStatus", value: "Error: Not authorized")
+        sendEvent(name: "connectionStatus", "error", descriptionText: "${device.displayName} Error: Not authorized")
         return false
     }
 
@@ -269,13 +276,13 @@ Boolean refreshToken() {
                 state.tokenExpiry = now() + (data.expires_in * 1000)
 
                 logDebug "Token refreshed"
-                sendEvent(name: "connectionStatus", value: "Connected")
+                sendEvent(name: "connectionStatus", value: "connected", descriptionText: "${device.displayName} is connected")
                 return true
             }
         }
     } catch (e) {
         log.error "Token refresh error: ${e.message}"
-        sendEvent(name: "connectionStatus", value: "Error: Token refresh failed")
+        sendEvent(name: "connectionStatus", value: "error", descriptionText: "${device.displayName} Token refresh failed")
     }
     return false
 }
@@ -662,25 +669,28 @@ void getCurrentState() {
     if (!thermostat) return
 
     Map runtime = thermostat.runtime
+    state.thermostatRuntime = runtime
     Map weather = thermostat.weather
+    state.thermostatWeather = weather
 
     // Update temperature and humidity
     BigDecimal tempC = ecobeeToCelsius(runtime.actualTemperature)
-    sendEvent(name: "temperature", value: tempC, unit: "°C")
-    sendEvent(name: "humidity", value: runtime.actualHumidity, unit: "%")
+    sendEvent(name: "temperature", value: tempC, unit: "°C", descriptionText: "${device.displayName} temperature is ${tempC}°C")
+    sendEvent(name: "humidity", value: runtime.actualHumidity, unit: "%", descriptionText: "${device.displayName} humidity is ${runtime.actualHumidity}%")
 
     // Update setpoints
     BigDecimal heatC = ecobeeToCelsius(runtime.desiredHeat)
     BigDecimal coolC = ecobeeToCelsius(runtime.desiredCool)
-    sendEvent(name: "heatingSetpoint", value: heatC, unit: "°C")
-    sendEvent(name: "coolingSetpoint", value: coolC, unit: "°C")
+    sendEvent(name: "heatingSetpoint", value: heatC, unit: "°C", descriptionText: "${device.displayName} heating setpoint is ${heatC}°C")
+    sendEvent(name: "coolingSetpoint", value: coolC, unit: "°C", descriptionText: "${device.displayName} cooling setpoint is ${coolC}°C")
 
     // Update HVAC mode
     String hvacModeValue = thermostat.settings?.hvacMode?.toString() ?: "unknown"
-    sendEvent(name: "hvacMode", value: hvacModeValue)
+    sendEvent(name: "hvacMode", value: hvacModeValue, descriptionText: "${device.displayName} HVAC mode is set to ${hvacMode}")
 
     // Update current program
-    sendEvent(name: "currentProgram", value: thermostat.program?.currentClimateRef?.toString() ?: "unknown")
+    String currentProgramValue = thermostat.program?.currentClimateRef?.toString() ?: "unknown"
+    sendEvent(name: "currentProgram", value: currentProgramValue, descriptionText: "${device.displayName} current program is ${currentProgramValue}")
 
     // Determine operating state
     String operatingState = "idle"
@@ -694,14 +704,15 @@ void getCurrentState() {
             operatingState = "fan only"
         }
     }
-    sendEvent(name: "thermostatOperatingState", value: operatingState)
+    sendEvent(name: "thermostatOperatingState", value: operatingState, descriptionText: "${device.displayName} thermostat operating state is ${operatingState}")
 
     // Update weather
     if (weather?.forecasts?.size() > 0) {
         Map current = weather.forecasts[0]
         BigDecimal outdoorTempC = ecobeeToCelsius(current.temperature)
-        sendEvent(name: "outdoorTemperature", value: outdoorTempC, unit: "°C")
-        sendEvent(name: "weatherCondition", value: current.condition?.toString() ?: "")
+        sendEvent(name: "outdoorTemperature", value: outdoorTempC, unit: "°C", descriptionText: "${device.displayName} outdoor temperature is ${outdoorTempC}°C")
+        String weatherValue = current.condition?.toString() ?: ""
+        sendEvent(name: "weatherCondition", value: weatherValue, descriptionText: "${device.displayName} weather is ${weatherValue}")
     }
 
     // Update hold status
