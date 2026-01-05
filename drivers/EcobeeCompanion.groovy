@@ -935,8 +935,8 @@ private boolean validateToken() {
 }
 
 private boolean validateDayParameter(String day) {
-    if (!constScheduleDays.keySet().contains(day?.toLowerCase())) {
-        log.error "Invalid day: ${day}. Must be one of: ${constScheduleDays.keySet()}"
+    if (!constScheduleDaysIndex.keySet().contains(day?.toLowerCase())) {
+        log.error "Invalid day: ${day}. Must be one of: ${constScheduleDaysIndex.keySet()}"
         return false
     }
     return true
