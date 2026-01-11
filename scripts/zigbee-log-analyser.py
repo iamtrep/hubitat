@@ -19,11 +19,64 @@ def _ensure_plotting_libs():
         return None, None
 
 CLUSTER_NAMES = {
-    '0000': 'Basic', '0001': 'Power Configuration', '0006': 'On/Off', '0019': 'OTA Upgrade',
-    '0201': 'Thermostat', '0400': 'Illuminance Measurement', '0402': 'Temperature Measurement',
+    '0000': 'Basic', '0001': 'Power Configuration', '0006': 'On/Off', '0008': 'Level Control',
+    '0019': 'OTA Upgrade', '0102': 'Window Covering', '0201': 'Thermostat', '0300': 'Color Control',
+    '0400': 'Illuminance Measurement', '0402': 'Temperature Measurement',
     '0403': 'Pressure Measurement', '0405': 'Relative Humidity', '0406': 'Occupancy Sensing',
     '0500': 'IAS Zone', '0702': 'Simple Metering', '0B04': 'Electrical Measurement',
     'FF01': 'Manufacturer-specific', 'FFF1': 'Manufacturer-specific',
+}
+
+# Common attribute names (Cluster:Attribute -> Name)
+ATTRIBUTE_NAMES = {
+    # On/Off (0006)
+    '0006:0000': 'OnOff',
+    # Level Control (0008)
+    '0008:0000': 'CurrentLevel',
+    # Color Control (0300)
+    '0300:0000': 'CurrentHue',
+    '0300:0001': 'CurrentSaturation',
+    '0300:0003': 'CurrentX',
+    '0300:0004': 'CurrentY',
+    '0300:0007': 'ColorTemperature',
+    '0300:0008': 'ColorMode',
+    # Window Covering (0102)
+    '0102:0000': 'WindowCoveringType',
+    '0102:0008': 'CurrentPositionLiftPercentage',
+    '0102:0009': 'CurrentPositionTiltPercentage',
+    # Thermostat (0201)
+    '0201:0000': 'LocalTemperature',
+    '0201:0008': 'PIHeatingDemand',
+    '0201:0012': 'OccupiedHeatingSetpoint',
+    # Temperature (0402)
+    '0402:0000': 'MeasuredValue',
+    # Pressure (0403)
+    '0403:0000': 'MeasuredValue',
+    '0403:0010': 'ScaledValue',
+    '0403:0014': 'ScaledTolerance',
+    # Humidity (0405)
+    '0405:0000': 'MeasuredValue',
+    # Illuminance (0400)
+    '0400:0000': 'MeasuredValue',
+    # Occupancy (0406)
+    '0406:0000': 'Occupancy',
+    # IAS Zone (0500)
+    '0500:0000': 'ZoneState',
+    '0500:0001': 'ZoneType',
+    '0500:0002': 'ZoneStatus',
+    # Metering (0702)
+    '0702:0000': 'CurrentSummationDelivered',
+    '0702:0400': 'InstantaneousDemand',
+    # Electrical Measurement (0B04)
+    '0B04:0505': 'RMSVoltage',
+    '0B04:0508': 'RMSCurrent',
+    '0B04:050B': 'ActivePower',
+    '0B04:050D': 'ApparentPower',
+    '0B04:050F': 'PowerFactor',
+    '0B04:0510': 'AverageRMSVoltageMeasurementPeriod',
+    # Power Configuration (0001)
+    '0001:0020': 'BatteryVoltage',
+    '0001:0021': 'BatteryPercentageRemaining',
 }
 ZDO_NAMES = {
     '0000': 'NWK Address Req', '8000': 'NWK Address Rsp',
@@ -97,6 +150,11 @@ def parse_text_line(line:str)->Optional[dict]:
 
 def parse_json_line(line:str)->Optional[dict]:
     """Parse a JSON-format Zigbee log line."""
+    # Strip timestamp prefix if present (format: "YYYY-MM-DD HH:MM:SS {...}")
+    line = line.strip()
+    json_start = line.find('{')
+    if json_start > 0:
+        line = line[json_start:]
     try: d=json.loads(line)
     except json.JSONDecodeError: return None
     payload=d.get('payload', [])
@@ -124,6 +182,87 @@ def parse_zcl(payload_hex:List[str])->dict:
     if len(payload_hex)<idx+2: return res
     res['sequence']=int(payload_hex[idx],16); res['command_id']=int(payload_hex[idx+1],16)
     return res
+
+def parse_attributes(payload_hex:List[str], zcl_header:dict)->List[str]:
+    """Parse attribute IDs from Report Attributes (0x0A) or Read Attributes Response (0x01) commands."""
+    cmd_id = zcl_header.get('command_id')
+    if cmd_id not in [0x01, 0x0A]:  # Read Attributes Response or Report Attributes
+        return []
+
+    # Calculate starting position after ZCL header
+    start = 1  # Frame control
+    if zcl_header.get('manuf_specific'):
+        start += 2  # Manufacturer code
+    start += 2  # Sequence + Command ID
+
+    if len(payload_hex) <= start:
+        return []
+
+    attributes = []
+    data = payload_hex[start:]
+    idx = 0
+
+    try:
+        while idx < len(data) - 1:
+            # Attribute ID is 2 bytes (little-endian)
+            if idx + 1 >= len(data):
+                break
+            attr_lo = int(data[idx], 16)
+            attr_hi = int(data[idx + 1], 16)
+            attr_id = f"{(attr_hi << 8) | attr_lo:04X}"
+            attributes.append(attr_id)
+            idx += 2
+
+            if cmd_id == 0x01:  # Read Attributes Response
+                # Has status byte
+                if idx >= len(data):
+                    break
+                status = int(data[idx], 16)
+                idx += 1
+                if status != 0x00:  # Not success, skip to next attribute
+                    continue
+
+            # Data type byte
+            if idx >= len(data):
+                break
+            data_type = int(data[idx], 16)
+            idx += 1
+
+            # Skip attribute value based on data type
+            # Common types and their sizes
+            type_sizes = {
+                0x10: 1,   # Boolean
+                0x18: 1,   # 8-bit bitmap
+                0x20: 1,   # Uint8
+                0x21: 2,   # Uint16
+                0x22: 3,   # Uint24
+                0x23: 4,   # Uint32
+                0x25: 5,   # Uint40
+                0x28: 1,   # Int8
+                0x29: 2,   # Int16
+                0x2A: 3,   # Int24
+                0x2B: 4,   # Int32
+                0x30: 1,   # Enum8
+                0x31: 2,   # Enum16
+            }
+
+            if data_type in type_sizes:
+                idx += type_sizes[data_type]
+            elif data_type == 0x42:  # Character string
+                if idx < len(data):
+                    str_len = int(data[idx], 16)
+                    idx += 1 + str_len
+            elif data_type == 0x41:  # Octet string
+                if idx < len(data):
+                    str_len = int(data[idx], 16)
+                    idx += 1 + str_len
+            else:
+                # Unknown type, can't continue parsing safely
+                break
+    except (ValueError, IndexError):
+        pass
+
+    return attributes
 
 # OTA request parsing
 _u16=lambda lo,hi: (int(hi,16)<<8)|int(lo,16)
@@ -217,8 +356,8 @@ def analyze_log(filepath:str,mfr_filter:Optional[str],device_id_filter:Optional[
             except IOError as e:
                 print('[WARNING] Could not write cache:', e, file=sys.stderr)
 
-    devices=defaultdict(lambda:{'count':0,'lqis':[],'rssis':[],'mfr_code':None,'device_id':None,'network_id':None,'times':[],'per_cluster':Counter(),'per_cmd':Counter(),'per_global_cmd':Counter(),'per_zdo':Counter(),'per_ota_cmd':Counter(),'ota_req_mfr':None,'ota_req_image_type':None,'ota_req_current_version':None,'ota_last_offset':None,'ota_max_block_size':None,'ota_blocks_count':None,'ota_completed_download':None,'ota_phase':None})
-    global_summary={'zdo':Counter(),'global_cmds':Counter(),'ota_cmds':Counter()}
+    devices=defaultdict(lambda:{'count':0,'lqis':[],'rssis':[],'mfr_code':None,'device_id':None,'network_id':None,'times':[],'per_cluster':Counter(),'per_cmd':Counter(),'per_global_cmd':Counter(),'per_zdo':Counter(),'per_ota_cmd':Counter(),'per_attribute':Counter(),'ota_req_mfr':None,'ota_req_image_type':None,'ota_req_current_version':None,'ota_last_offset':None,'ota_max_block_size':None,'ota_blocks_count':None,'ota_completed_download':None,'ota_phase':None})
+    global_summary={'zdo':Counter(),'global_cmds':Counter(),'ota_cmds':Counter(),'attributes':Counter(),'attributes_by_device':defaultdict(lambda: Counter())}
     all_times=[]; out=open(output_file,'w') if output_file else None
 
     with open(filepath,'r') as f:
@@ -259,6 +398,14 @@ def analyze_log(filepath:str,mfr_filter:Optional[str],device_id_filter:Optional[
                 if z['frame_type']=='global' and show_global and z['command_id'] is not None:
                     gname=GLOBAL_COMMANDS.get(z['command_id'], f"Global 0x{z['command_id']:02X}")
                     dev['per_global_cmd'][gname]+=1; global_summary['global_cmds'][gname]+=1
+                    # Parse attributes for Report Attributes and Read Attributes Response
+                    if z['command_id'] in [0x01, 0x0A]:
+                        attrs = parse_attributes(rec['payload'], z)
+                        for attr_id in attrs:
+                            attr_key = f"{rec['clusterId']}:{attr_id}"
+                            dev['per_attribute'][attr_key]+=1
+                            global_summary['attributes'][attr_key]+=1
+                            global_summary['attributes_by_device'][attr_key][name]+=1
                 elif z['command_id'] is not None:
                     dev['per_cmd'][z['command_id']]+=1
                 if ota_details and rec['clusterId']=='0019' and z['command_id'] is not None:
@@ -288,7 +435,7 @@ def analyze_log(filepath:str,mfr_filter:Optional[str],device_id_filter:Optional[
     time_range=(min(all_times), max(all_times)) if all_times else (None,None)
     return devices, time_range, dni_mfr_index, global_summary
 
-def print_table(devices:dict, time_range:Tuple[Optional[str],Optional[str]], filters:dict, manufacturer_db:Dict[str,str], global_summary:dict):
+def print_table(devices:dict, time_range:Tuple[Optional[str],Optional[str]], filters:dict, manufacturer_db:Dict[str,str], global_summary:dict, show_attributes:bool=False):
     print('Zigbee Analysis — Unsolicited frames (and OTA)')
     print('='*118)
     if time_range[0] and time_range[1]:
@@ -320,6 +467,10 @@ def print_table(devices:dict, time_range:Tuple[Optional[str],Optional[str]], fil
         top=info['per_cluster'].most_common(3)
         top_str=', '.join([f"{CLUSTER_NAMES.get(c,c)}({n})" for c,n in top])
         print(f"{name:<34} {mfr_code:<6} {mfr_name:<28} {info['count']:>6} {med_lqi:>7.0f} {med_rssi:>8.0f}  {top_str}")
+        if show_attributes and info['per_attribute']:
+            for attr,cnt in info['per_attribute'].most_common(10):
+                attr_name = ATTRIBUTE_NAMES.get(attr, attr)
+                print(f"  {'':>88} ↳ {attr_name} ({cnt})")
         total+=info['count']
     print('-'*118)
     print(f"{'TOTAL':<34} {'':<6} {'':<28} {total:>6}")
@@ -333,6 +484,18 @@ def print_table(devices:dict, time_range:Tuple[Optional[str],Optional[str]], fil
     if global_summary['ota_cmds']:
         print('\nTop OTA Commands:')
         for oc,n in global_summary['ota_cmds'].most_common(10): print(f"  {oc:<36} {n:>6}")
+    if show_attributes and global_summary['attributes']:
+        print('\nTop Reported Attributes (Cluster:Attribute):')
+        for attr,n in global_summary['attributes'].most_common(20):
+            cluster_id, attr_id = attr.split(':')
+            cluster_name = CLUSTER_NAMES.get(cluster_id, cluster_id)
+            attr_name = ATTRIBUTE_NAMES.get(attr, attr_id)
+            display = f"{cluster_name}:{attr_name} ({cluster_id}:{attr_id})"
+            print(f"  {display:<60} {n:>6}")
+            # Show top 3 devices reporting this attribute
+            top_devices = global_summary['attributes_by_device'][attr].most_common(3)
+            for dev_name, dev_count in top_devices:
+                print(f"    {'':>58} ↳ {dev_name:<30} {dev_count:>4}")
     phases=Counter()
     for _, info in devices.items():
         if info.get('ota_phase'): phases[info['ota_phase']]+=1
@@ -451,6 +614,7 @@ def main():
     parser.add_argument('--heatmap-prefix', default='charts'); parser.add_argument('--include-zdo', action='store_true')
     parser.add_argument('--exclude-zdo', action='store_true'); parser.add_argument('--show-global', action='store_true'); parser.add_argument('--no-global', action='store_true')
     parser.add_argument('--ota-details', action='store_true')
+    parser.add_argument('--show-attributes', action='store_true', help='Show per-device attribute reporting frequency')
     args=parser.parse_args()
 
     dni_filter=None
@@ -472,7 +636,7 @@ def main():
 
     filters={'manufacturer':args.manufacturer,'dni':dni_filter,'device_id':args.device_id,'device_name':args.device_name,'clusters':args.clusters}
     if args.csv: print_csv(devices, manufacturer_db)
-    else: print_table(devices, time_range, filters, manufacturer_db, global_summary)
+    else: print_table(devices, time_range, filters, manufacturer_db, global_summary, show_attributes=args.show_attributes)
     if args.heatmap: generate_heatmaps(devices, top_n=args.top_talkers, prefix=args.heatmap_prefix)
 
 # =============================================================================
