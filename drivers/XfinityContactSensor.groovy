@@ -109,6 +109,8 @@ void configure() {
 
     int reportInterval = (batteryInterval == null ? 12 : batteryInterval).toInteger() * 60 * 60
     List<String> cmds = []
+
+    // IAS Zone binding and enrollment
     cmds += "zdo bind 0x${device.deviceNetworkId} 1 1 0x0500 {${device.zigbeeId}} {}"  // IAS Zone
     cmds += "delay $constDefaultDelay"
     cmds += zigbee.enrollResponse(1200) // Enroll in IAS Zone
