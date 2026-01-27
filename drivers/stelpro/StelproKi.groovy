@@ -48,6 +48,8 @@ metadata {
         capability "Thermostat"
 
         command "eco"
+        command "increaseHeatSetpoint"
+        command "decreaseHeatSetpoint"
 
         fingerprint profileId: "0104", endpointId: "19", inClusters: "0000,0003,0004,0201,0204", outClusters: "0402",
             manufacturer: "Stelpro", model: "STZB402+", deviceJoinName: "Stelpro Ki ZigBee Thermostat"
@@ -268,6 +270,30 @@ void setHeatingSetpoint(BigDecimal preciseDegrees) {
 
 void setCoolingSetpoint(degrees) {
     logWarn "setCoolingSetpoint is not available for this device"
+}
+
+void increaseHeatSetpoint() {
+    BigDecimal currentSetpoint = device.currentValue("heatingSetpoint")
+    String temperatureScale = getTemperatureScale()
+
+    BigDecimal maxSetpoint = (temperatureScale == "C") ? 30 : 86
+    BigDecimal increment = (temperatureScale == "C") ? 0.5 : 1
+
+    if (currentSetpoint < maxSetpoint) {
+        setHeatingSetpoint(currentSetpoint + increment)
+    }
+}
+
+void decreaseHeatSetpoint() {
+    BigDecimal currentSetpoint = device.currentValue("heatingSetpoint")
+    String temperatureScale = getTemperatureScale()
+
+    BigDecimal minSetpoint = (temperatureScale == "C") ? 5 : 41
+    BigDecimal decrement = (temperatureScale == "C") ? 0.5 : 1
+
+    if (currentSetpoint > minSetpoint) {
+        setHeatingSetpoint(currentSetpoint - decrement)
+    }
 }
 
 void setThermostatMode(String value) {

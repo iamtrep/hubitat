@@ -33,7 +33,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import groovy.json.JsonOutput
 
-@Field static final String constDriverVersion = "0.0.1"
+@Field static final String constDriverVersion = "0.0.2"
 
 metadata {
     definition (name: "Stelpro Allia Zigbee Thermostat",
@@ -351,6 +351,11 @@ void setOutdoorTemperature(BigDecimal preciseDegrees) {
 // Zigbee message parsing
 
 def parse(String description) {
+    if (state.driverVersion != constDriverVersion) {
+        state.driverVersion = constDriverVersion
+        runInMillis 1500, 'autoConfigure'
+    }
+
     def descMap = zigbee.parseDescriptionAsMap(description)
     logTrace("parse() - description = ${descMap}")
 
@@ -398,18 +403,23 @@ private parseAttributeReport(descMap) {
             switch (descMap.attrId) {
                 case "0000":
                     map.name = "temperature"
-                    map.value = getTemperature(descMap.value)
-                    if (descMap.value == "7FFD") {       //0x7FFD
-                        map.value = "low"
-                    }
-                    else if (descMap.value == "7FFF") {  //0x7FFF
-                        map.value = "high"
-                    }
-                    else if (descMap.value == "8000") {  //0x8000
-                        map.value = "--"
-                    }
-                    else if (descMap.value > "8000") {
-                        map.value = -(Math.round(2*(655.36 - map.value))/2)
+                    switch (descMap.value) {
+                        case "7FFD":
+                            map.value = "low"
+                            break
+                        case "7FFF":
+                            map.value = "high"
+                            break
+                        case "8000":
+                            map.value = "--"
+                            break
+                        default:
+                            if (descMap.value > "8000") {
+                                map.value = -(Math.round(2*(655.36 - Integer.parseInt(descMap.value, 16)))/2)
+                            } else {
+                                map.value = getTemperature(descMap.value)
+                            }
+                            break
                     }
                     map.unit = location.temperatureScale
                     map.descriptionText = "${device.displayName} temperature is ${map.value}${map.unit}"
@@ -538,6 +548,11 @@ private parseAttributeReport(descMap) {
 
 // private methods
 
+private void autoConfigure() {
+    logWarn "Detected driver version change"
+    configure()
+}
+
 private String getDescriptionText(String msg) {
     logInfo(msg)
     return "${device.displayName} : ${msg}"
@@ -575,15 +590,17 @@ private boolean temperatureScaleIsCelsius() {
     return location.temperatureScale == "C"
 }
 
-private Integer getTemperature(String value) {
+private BigDecimal getTemperature(String value) {
     if (value != null) {
         logTrace("getTemperature: value $value")
-        def celsius = Integer.parseInt(value, 16) / 100
+        BigDecimal celsius = new BigDecimal(Integer.parseInt(value, 16)) / 100
+
         if (temperatureScaleIsCelsius()) {
-            return celsius
+            return celsius.setScale(1, BigDecimal.ROUND_HALF_UP)
         }
 
-        return Math.round(celsiusToFahrenheit(celsius))
+        BigDecimal fahrenheit = celsiusToFahrenheit(celsius)
+        return fahrenheit.setScale(1, BigDecimal.ROUND_HALF_UP)
     }
 }
 
