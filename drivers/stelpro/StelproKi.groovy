@@ -78,6 +78,7 @@ metadata {
 @Field static final Map constKeypadLockoutModes = [ "Yes": 0x01, "No": 0x00 ]
 
 @Field static final int constReadbackDelay = 500
+@Field static final int constOperatingStateCooldownMs = 30000  // 30 seconds between operating state requests
 
 
 // Device installation
@@ -118,6 +119,7 @@ void configure() {
     state.clear()
     state.lastTx = 0
     state.lastRx = 0
+    state.lastOperatingStateRequest = 0
     state.codeVersion = constCodeVersion
 
     // automatically turn off debug logs after 30 minutes
@@ -550,20 +552,21 @@ private void handleOperatingStateBugFix() {
     if (state.rawSetpoint == null || state.rawTemp == null || device.currentValue("thermostatMode") == "off")
         return
 
-    String currOpState = device.currentValue("thermostatOperatingState")
-    List<String> cmds = []
-    cmds += zigbee.readAttribute(0x0201, 0x0008) // PI heat demand
+    // Rate limit: don't request more than once per cooldown period
+    long nowMs = now()
+    if (state.lastOperatingStateRequest && (nowMs - state.lastOperatingStateRequest) < constOperatingStateCooldownMs)
+        return
 
-    if (state.rawSetpoint <= state.rawTemp) {
-        if (currOpState != "idle") {
-            //logWarn "handleOperatingStateBugFix sending readAttribute command on 0x0204"
-            sendZigbeeCommands(cmds)
-        }
-    } else {  // state.rawSetpoint > state.rawTemp
-        if (currOpState != "heating") {
-            //logWarn "handleOperatingStateBugFix sending readAttribute command on 0x0204"
-            sendZigbeeCommands(cmds)
-        }
+    String currOpState = device.currentValue("thermostatOperatingState")
+    boolean shouldBeIdle = (state.rawSetpoint <= state.rawTemp)
+    boolean isInconsistent = (shouldBeIdle && currOpState != "idle") || (!shouldBeIdle && currOpState != "heating")
+
+    if (isInconsistent) {
+        state.lastOperatingStateRequest = nowMs
+        List<String> cmds = []
+        cmds += zigbee.readAttribute(0x0201, 0x0008) // PI heat demand
+        logDebug "Operating state inconsistent (current: ${currOpState}, expected: ${shouldBeIdle ? 'idle' : 'heating'}), requesting update"
+        sendZigbeeCommands(cmds)
     }
 }
 
