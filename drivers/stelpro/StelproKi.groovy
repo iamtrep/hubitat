@@ -33,7 +33,7 @@
 
 import groovy.transform.Field
 
-@Field static final String constCodeVersion = "0.0.5"
+@Field static final String constCodeVersion = "0.0.6"
 
 metadata {
     definition (
@@ -213,6 +213,9 @@ void auto() {
 }
 
 void emergencyHeat() {
+    // Hubitat's Thermostat capability doesn't include "eco" mode, so we map
+    // eco to "emergency heat" for compatibility with dashboards and integrations.
+    // Both modes set the thermostat to Stelpro's eco/setback temperature.
     eco()
 }
 
@@ -360,8 +363,8 @@ private Map parseAttributeReport(Map descMap) {
                             map.value = "--"
                             break
                         default:
-                            if (map.value > "8000") {
-                                map.value = -(Math.round(2*(655.36 - map.value))/2)
+                            if (descMap.value > "8000") {
+                                map.value = -(Math.round(2*(655.36 - Integer.parseInt(descMap.value, 16)))/2)
                             } else {
                                 map.value = getTemperature(descMap.value)
                                 state.rawTemp = map.value
@@ -501,7 +504,7 @@ private void autoConfigure() {
 }
 
 private void sendZigbeeCommands(List<String> cmds) {
-    logTrace "Sending Zigbee messages ➡️ device: ${send}"
+    logTrace "Sending Zigbee messages ➡️ device: ${cmds}"
     state.lastTx = now()
     sendHubCommand(new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE))
 }
@@ -549,7 +552,7 @@ private void handleOperatingStateBugFix() {
 
     String currOpState = device.currentValue("thermostatOperatingState")
     List<String> cmds = []
-    cmds += zigbee.readAttribute(0x0204, 0x0008) // PI heat demand
+    cmds += zigbee.readAttribute(0x0201, 0x0008) // PI heat demand
 
     if (state.rawSetpoint <= state.rawTemp) {
         if (currOpState != "idle") {
