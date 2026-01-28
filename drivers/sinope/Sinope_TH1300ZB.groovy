@@ -22,6 +22,8 @@
  */
 
 import groovy.transform.Field
+import groovy.transform.CompileStatic
+import java.math.RoundingMode
 
 @Field static final String version = "0.0.1"
 
@@ -114,7 +116,7 @@ metadata
 
 //-- Capabilities -----------------------------------------------------------------------------------------
 
-def configure() {
+void configure() {
     logInfo('configure()')
 
     // Set unused default values
@@ -142,7 +144,7 @@ def configure() {
         prefMinEnergyChange = 10 as int
     }
 
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.configureReporting(0x0201, 0x0000, 0x29, 30, 580, (int) prefMinTempChange)           // local temperature
     cmds += zigbee.configureReporting(0x0201, 0x0008, 0x20, 59, 590, (int) prefMinPIChange)             // PI heating demand
     cmds += zigbee.configureReporting(0x0201, 0x0012, 0x29, 15, 302, 40)                                // occupied heating setpoint
@@ -259,10 +261,10 @@ def configure() {
     sendZigbeeCommands(cmds) // Submit zigbee commands
 }
 
-def refresh() {
+void refresh() {
     logInfo('refresh()')
 
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.readAttribute(0x0201, 0x0000)    // Read Local Temperature
     cmds += zigbee.readAttribute(0x0201, 0x0008)    // Read PI Heating State
     cmds += zigbee.readAttribute(0x0201, 0x0012)    // Read Heat Setpoint
@@ -278,19 +280,19 @@ def refresh() {
     sendZigbeeCommands(cmds) // Submit zigbee commands
 }
 
-def installed() {
+void installed() {
     logInfo('installed()')
     configure()
     refresh() // TODO
 }
 
-def initialize() {
+void initialize() {
     logInfo('initialize()')
     //configure()  // initialize() is run on system startup, no need to configure()
     refresh()
 }
 
-def updated() {
+void updated() {
     logInfo('updated()')
 
     // preferences have changed.
@@ -301,15 +303,15 @@ def updated() {
     }
 }
 
-def uninstalled() {
+void uninstalled() {
     logInfo('uninstalled()')
 }
 
 
-def heat() {
+void heat() {
     logInfo('heat(): mode set')
 
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.writeAttribute(0x0201, 0x001C, 0x30, 04, [:], 1000) // MODE
     cmds += zigbee.writeAttribute(0x0201, 0x401C, 0x30, 04, [mfgCode: '0x1185']) // SETPOINT MODE
     cmds += zigbee.readAttribute(0x0201, 0x001C)
@@ -317,10 +319,10 @@ def heat() {
     sendZigbeeCommands(cmds)
 }
 
-def off() {
+void off() {
     logInfo('off(): mode set')
 
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.writeAttribute(0x0201, 0x001C, 0x30, 0)
     //cmds += zigbee.readAttribute(0x0201, 0x0008)
     cmds += zigbee.readAttribute(0x0201, 0x001C)
@@ -328,38 +330,38 @@ def off() {
     sendZigbeeCommands(cmds)
 }
 
-def auto() {
+void auto() {
     logWarn('auto(): mode is not available for this device. => Defaulting to heat mode instead.')
     heat()
 }
 
-def cool() {
+void cool() {
     logWarn('cool(): mode is not available for this device. => Defaulting to heat mode instead.')
     heat()
 }
 
-def emergencyHeat() {
+void emergencyHeat() {
     logWarn('emergencyHeat(): mode is not available for this device. => Defaulting to heat mode instead.')
     heat()
 }
 
-def fanAuto() {
+void fanAuto() {
     logWarn('fanAuto(): mode is not available for this device')
 }
 
-def fanCirculate() {
+void fanCirculate() {
     logWarn('fanCirculate(): mode is not available for this device')
 }
 
-def fanOn() {
+void fanOn() {
     logWarn('fanOn(): mode is not available for this device')
 }
 
-def setCoolingSetpoint(degrees) {
+void setCoolingSetpoint(BigDecimal degrees) {
     logWarn("setCoolingSetpoint(${degrees}): is not available for this device")
 }
 
-def setHeatingSetpoint(preciseDegrees) {
+void setHeatingSetpoint(BigDecimal preciseDegrees) {
     if (preciseDegrees != null) {
         unschedule('setThermostatSetpoint')
         state.setPoint = preciseDegrees
@@ -367,29 +369,29 @@ def setHeatingSetpoint(preciseDegrees) {
     }
 }
 
-def setThermostatSetpoint() {
+void setThermostatSetpoint() {
     if (state.setPoint != device.currentValue('heatingSetpoint')) {
         // To make sure that set point temperature is always received by the device.
         // Pacing of 30 seconds to not overload in case of power outage when device is not responding
         // TODO
         runIn(30, 'setThermostatSetpoint')
 
-        def temperatureScale = getTemperatureScale()
-        def degrees = state.setPoint
+        String temperatureScale = getTemperatureScale()
+        BigDecimal degrees = state.setPoint as BigDecimal
 
         logInfo("setHeatingSetpoint(${degrees}:${temperatureScale})")
         state.setTemperatureTypeDigital = true
 
-        def celsius = (temperatureScale == 'C') ? degrees as Float : (fahrenheitToCelsius(degrees) as Float).round(2)
+        Float celsius = (temperatureScale == 'C') ? degrees.floatValue() : (fahrenheitToCelsius(degrees) as Float).round(2)
         int celsius100 = Math.round(celsius * 100)
 
-        def cmds = []
+        List<String> cmds = []
         cmds += zigbee.writeAttribute(0x0201, 0x0012, 0x29, celsius100) //Write Heat Setpoint
         sendZigbeeCommands(cmds)
     }
 }
 
-def setThermostatFanMode(fanmode) {
+void setThermostatFanMode(String fanmode) {
     logWarn("setThermostatFanMode(${fanmode}): is not available for this device")
 }
 
@@ -411,11 +413,11 @@ def setThermostatMode(String value) {
 
 // Zigbee message parsing
 
-def parse(String description) {
-    def descMap = zigbee.parseDescriptionAsMap(description)
+List parse(String description) {
+    Map descMap = zigbee.parseDescriptionAsMap(description)
     logTrace("parse() - description = ${descMap}")
 
-    def result = []
+    List result = []
 
     if (descMap.attrId != null) {
         // device attribute report
@@ -444,8 +446,8 @@ def parse(String description) {
     return result
 }
 
-private parseAttributeReport(descMap) {
-    def map = [: ]
+private Map parseAttributeReport(Map descMap) {
+    Map map = [:]
 
     logTrace("Parsing attribute report: cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
 
@@ -545,7 +547,7 @@ private parseAttributeReport(descMap) {
         case 0x0702: // Metering cluster
             if (descMap.attrInt == 0x0000) {
                 map.name = 'energy'
-                map.value = getEnergy(descMap.value) as BigInteger
+                map.value = getEnergy(descMap.value)
                 map.unit = "kWh"
                 map.descriptionText = "${device.displayName} cumulative energy consumed is ${map.value} ${map.unit}"
             }
@@ -662,19 +664,19 @@ private parseAttributeReport(descMap) {
 
 // Custom commands
 
-def setClockTime() {
-    def thermostatDate = new Date()
-    def thermostatTimeSec = thermostatDate.getTime() / 1000
-    def thermostatTimezoneOffsetSec = thermostatDate.getTimezoneOffset() * 60   // TODO check this against ZonedDateTime.now() ?
+void setClockTime() {
+    Date thermostatDate = new Date()
+    long thermostatTimeSec = thermostatDate.getTime() / 1000
+    int thermostatTimezoneOffsetSec = thermostatDate.getTimezoneOffset() * 60
     int currentTimeToDisplay = Math.round(thermostatTimeSec - thermostatTimezoneOffsetSec - 946684800) //time from 2000-01-01 00:00
 
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.writeAttribute(0xFF01, 0x0020, 0x23, currentTimeToDisplay, [mfgCode: '0x119C'])
     sendZigbeeCommands(cmds)
 }
 
-def setDynamicRatingMode(drState) {
-    def cmds = []
+void setDynamicRatingMode(String drState) {
+    List<String> cmds = []
 
     switch (drState) {
         case 'on':
@@ -690,15 +692,15 @@ def setDynamicRatingMode(drState) {
             cmds += zigbee.writeAttribute(0xFF01, 0x0073, 0x20, (int) 255)
             break
         default:
-            logError "Invalid DR state ${drState}"
+            logError("Invalid DR state ${drState}")
             return
     }
 
     sendZigbeeCommands(cmds)
 }
 
-def setKeypadLockoutMode(lockoutMode) {
-    def cmds = []
+void setKeypadLockoutMode(String lockoutMode) {
+    List<String> cmds = []
 
     switch (lockoutMode) {
         case 'lock':
@@ -717,10 +719,10 @@ def setKeypadLockoutMode(lockoutMode) {
     sendZigbeeCommands(cmds)
 }
 
-def setOutdoorTemperature(outdoorTemperature) {
+void setOutdoorTemperature(BigDecimal outdoorTemperature) {
     if (outdoorTemperature != null) {
         double outdoorTemp = outdoorTemperature.toDouble()
-        def updateDescriptionText = "Received outdoor weather report : ${outdoorTemp} ${getTemperatureScale()}"
+        String updateDescriptionText = "Received outdoor weather report : ${outdoorTemp} ${getTemperatureScale()}"
         logInfo(updateDescriptionText)
 
         // the value sent to the thermostat must be in C
@@ -728,21 +730,19 @@ def setOutdoorTemperature(outdoorTemperature) {
             outdoorTemp = fahrenheitToCelsius(outdoorTemp).toDouble()
         }
 
-        int outdoorTempDevice = outdoorTemp * 100  // device expects hundredths
-        def cmds = []
+        int outdoorTempDevice = (int)(outdoorTemp * 100)  // device expects hundredths
+        List<String> cmds = []
         cmds += zigbee.writeAttribute(0xFF01, 0x0010, 0x29, outdoorTempDevice, [mfgCode: '0x119C']) //set the outdoor temperature as integer
         sendZigbeeCommands(cmds)
     }
 }
 
-def setBacklightMode(String mode = prefBacklightMode) {
-    def backlightModeAttr = null
+void setBacklightMode(String mode = prefBacklightMode) {
+    Integer backlightModeAttr = null
     if (isG2Model()) {
-        backlightModeAttr = constBacklightModesG2[mode]
-    }
-    else
-        {
-        backlightModeAttr = constBacklightModes[mode]
+        backlightModeAttr = constBacklightModesG2[mode] as Integer
+    } else {
+        backlightModeAttr = constBacklightModes[mode] as Integer
     }
 
     if (backlightModeAttr == null) {
@@ -752,155 +752,164 @@ def setBacklightMode(String mode = prefBacklightMode) {
 
     logDebug("setting display backlight to ${mode} (${backlightModeAttr})")
 
-    def cmds = []
+    List<String> cmds = []
     cmds += zigbee.writeAttribute(0x0201, 0x0402, 0x30, backlightModeAttr, [mfgCode: '0x119C'])
-    sendZigbeeCommands(cmds) // Submit zigbee commands
+    sendZigbeeCommands(cmds)
 }
 
 
 // Private methods
 
-private refreshClockTime() {
+private void refreshClockTime() {
     setClockTime()
     runIn(3*3600, 'refreshClockTime')
 }
 
-private refreshSecondTemp() {
-    def cmds = []
+private void refreshSecondTemp() {
+    List<String> cmds = []
     cmds += zigbee.readAttribute(0xFF01, 0x0107)  // Read Floor Temperature
     cmds += zigbee.readAttribute(0xFF01, 0x010D)  // Read Room Temperature
     sendZigbeeCommands(cmds)
 }
 
-private refreshMaxPower() {
-    def cmds = []
+private void refreshMaxPower() {
+    List<String> cmds = []
     cmds += zigbee.readAttribute(0x0B04, 0x050D)  //Read highest power delivered
     sendZigbeeCommands(cmds)
     runIn(12*3600, 'refreshMaxPower')
 }
 
-private setSecondTempDisplay(mode = prefSecondTempDisplay) {
-    def BigInteger secondDisplaySetting = constSecondTempDisplayModes[mode]
+private void setSecondTempDisplay(String mode = prefSecondTempDisplay) {
+    Integer secondDisplaySetting = constSecondTempDisplayModes[mode] as Integer
 
     if (secondDisplaySetting != null) {
         logDebug("setting secondary temperature display to ${mode} (${secondDisplaySetting})")
 
-        def cmds = []
+        List<String> cmds = []
         cmds += zigbee.writeAttribute(0xFF01, 0x0012, 0x30, secondDisplaySetting, [mfgCode: '0x119C'])
-        sendZigbeeCommands(cmds) // Submit zigbee commands
+        sendZigbeeCommands(cmds)
     } else {
         logWarn("invalid secondary temperature display mode ${mode}")
     }
 }
 
-private isG2Model() {
-    device.getDataValue('model')?.contains('-G2')
+private boolean isG2Model() {
+    return device.getDataValue('model')?.contains('-G2')
 }
 
-private setThermostatCycle(cycle = prefCycleLength) {
-    def int shortCycleAttr = constThermostatCycles[cycle]
+private void setThermostatCycle(String cycle = prefCycleLength) {
+    Integer shortCycleAttr = constThermostatCycles[cycle] as Integer
 
     if (shortCycleAttr != null) {
         logDebug("setting thermostat cycle to ${cycle} (${shortCycleAttr})")
 
-        def cmds = []
+        List<String> cmds = []
         cmds += zigbee.writeAttribute(0x0201, 0x0401, 0x21, shortCycleAttr, [mfgCode: '0x119C'])
         sendZigbeeCommands(cmds)
     }
 }
 
-private getTemperature(value) {
-    if (value != null) {
-        def celsius = Integer.parseInt(value, 16) / 100
-        if (getTemperatureScale() == 'C') {
-            return celsius
-        }
-        else
-            {
-            return roundToTwoDecimalPlaces(celsiusToFahrenheit(celsius))
-        }
+@CompileStatic
+private Double getTemperature(String value) {
+    if (value == null) {
+        return null
+    }
+    double celsius = Integer.parseInt(value, 16) / 100.0
+    if (getTemperatureScale() == 'C') {
+        return celsius
+    } else {
+        return roundToTwoDecimalPlaces(celsiusToFahrenheit(celsius))
     }
 }
 
-private getTemperatureOffset(value) {
-    if (value != null) {
-        def celsius = Integer.parseInt(value, 16) / 10
-        if (getTemperatureScale() == 'C') {
-            return celsius
-        }
-        else
-            {
-            return roundToTwoDecimalPlaces(celsiusToFahrenheit(celsius))
-        }
+@CompileStatic
+private Double getTemperatureOffset(String value) {
+    if (value == null) {
+        return null
+    }
+    double celsius = Integer.parseInt(value, 16) / 10.0
+    if (getTemperatureScale() == 'C') {
+        return celsius
+    } else {
+        return roundToTwoDecimalPlaces(celsiusToFahrenheit(celsius))
     }
 }
 
-private getActivePower(value) {
-    if (value != null) {
-        if (state.powerDivider == null) {
-            state.powerDivider = 1 as Integer
-        }
-        return Integer.parseInt(value, 16) / state.powerDivider
+private Integer getActivePower(String value) {
+    if (value == null) {
+        return null
     }
+    if (state.powerDivider == null) {
+        state.powerDivider = 1 as Integer
+    }
+    return Integer.parseInt(value, 16) / (state.powerDivider as Integer)
 }
 
-private getRMSVoltage(attributeReportValue) {
-    if (attributeReportValue != null) {
-        if (state.voltageDivider == null) {
-            state.voltageDivider = 1 as Integer
-        }
-        return Integer.parseInt(attributeReportValue, 16) / state.voltageDivider
+private Double getRMSVoltage(String attributeReportValue) {
+    if (attributeReportValue == null) {
+        return null
     }
+    if (state.voltageDivider == null) {
+        state.voltageDivider = 1 as Integer
+    }
+    return Integer.parseInt(attributeReportValue, 16) / (state.voltageDivider as Double)
 }
 
-private getRMSCurrent(attributeReportValue) {
+@CompileStatic
+private Double getRMSCurrent(String attributeReportValue) {
     // attribute report is in mA
-    if (attributeReportValue != null) {
-        return Integer.parseInt(attributeReportValue, 16) / 1000
+    if (attributeReportValue == null) {
+        return null
     }
+    return Integer.parseInt(attributeReportValue, 16) / 1000.0
 }
 
-private getEnergy(value) {
-    if (value != null) {
-        BigInteger energySum = new BigInteger(value, 16)
-        return energySum
+@CompileStatic
+private Double getEnergy(String value) {
+    if (value == null) {
+        return null
     }
+    BigInteger energyWh = new BigInteger(value, 16)
+    BigDecimal kWh = new BigDecimal(energyWh).divide(new BigDecimal(1000), 3, RoundingMode.HALF_UP)
+    return kWh.doubleValue()
 }
 
-private getHeatingDemand(value) {
-    if (value != null) {
-        def demand = Integer.parseInt(value, 16)
-        return demand
+@CompileStatic
+private Integer getHeatingDemand(String value) {
+    if (value == null) {
+        return null
     }
+    return Integer.parseInt(value, 16)
 }
 
-private void sendZigbeeCommands(cmds) {
-    def hubAction = new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE)
+private void sendZigbeeCommands(List cmds) {
+    hubitat.device.HubMultiAction hubAction = new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE)
     sendHubCommand(hubAction)
 }
 
-private roundToTwoDecimalPlaces(val) {
-    return Math.round(val * 100) / 100
+@CompileStatic
+private Double roundToTwoDecimalPlaces(Double val) {
+    return Math.round(val * 100) / 100.0
 }
 
 // Logging helpers
 
-private void logTrace(message) {
+private void logTrace(String message) {
     if (traceEnable) log.trace("${device} : ${message}")
 }
 
-private logDebug(message) {
-    if (debugEnable) log.debug("${device.displayName} : ${message}")
+private void logDebug(String message) {
+    if (debugEnable) log.debug("${device} : ${message}")
 }
 
-private logInfo(message) {
-    if (infoEnable) log.info("${device.displayName} : ${message}")
+private void logInfo(String message) {
+    if (infoEnable) log.info("${device} : ${message}")
 }
 
-private logWarn(message) {
-    log.warn("${device.displayName} : ${message}")
+private void logWarn(String message) {
+    log.warn("${device} : ${message}")
 }
 
-private logError(message) {
-    log.error("${device.displayName} : ${message}")
+private void logError(String message) {
+    log.error("${device} : ${message}")
 }
