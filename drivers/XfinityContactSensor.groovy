@@ -114,6 +114,13 @@ void configure() {
     cmds += "zdo bind 0x${device.deviceNetworkId} 1 1 0x0500 {${device.zigbeeId}} {}"  // IAS Zone
     cmds += "delay $constDefaultDelay"
     cmds += zigbee.enrollResponse(1200) // Enroll in IAS Zone
+
+    // Poll Control binding and configuration
+    cmds += "zdo bind 0x${device.deviceNetworkId} 1 1 0x0020 {${device.zigbeeId}} {}"  // Poll Control
+    cmds += "delay $constDefaultDelay"
+    cmds += zigbee.writeAttribute(0x0020, 0x0000, DataType.UINT32, 14400, [:], constDefaultDelay)
+
+    // Configure attribute reports
     cmds += zigbee.configureReporting(zigbee.POWER_CONFIGURATION_CLUSTER, 0x0020, DataType.UINT8, 0, reportInterval, 1, [:], constDefaultDelay) //Battery Voltage Reporting
     cmds += zigbee.temperatureConfig(3600,((tempInterval != null ? tempInterval : 12).toInteger() * 60)) // Temperature Reporting
 
