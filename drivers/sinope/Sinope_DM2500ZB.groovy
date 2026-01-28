@@ -562,7 +562,6 @@ private double getEnergy(String value) {
     return 0
 }
 
-@CompileStatic
 private Long getTemperature(String value) {
     if (value == null) {
         return null
