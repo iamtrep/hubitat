@@ -23,7 +23,7 @@ import hubitat.zigbee.zcl.DataType
 import hubitat.zigbee.clusters.iaszone.ZoneStatus
 import com.hubitat.hub.domain.Event
 
-@Field static final String version = "0.1.1"
+@Field static final String version = "0.1.2"
 
 metadata {
 	definition (
@@ -152,17 +152,13 @@ List parse(String description) {
 
     if (descMap.attrId != null) {
         // device attribute report
-        //result += parseAttributeReport(descMap)
-        //parseAttributeReport(descMap)
-        parseAttributeReport(description)
-        //if (descMap.additionalAttrs) {
-        //    Map mapAdditionnalAttrs = descMap.additionalAttrs
-        //    mapAdditionnalAttrs.each{add ->
-        //        add.cluster = descMap.cluster
-        //        result += parseAttributeReport(add)
-        //        //parseAttributeReport(add)
-        //    }
-        //}
+        result += parseAttributeReport(descMap)
+        if (descMap.additionalAttrs) {
+            descMap.additionalAttrs.each { add ->
+                add.cluster = descMap.cluster
+                result += parseAttributeReport(add)
+            }
+        }
     } else if (descMap.profileId == "0000") {
         // ZigBee Device Object (ZDO) command
         logTrace("Unhandled ZDO command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
@@ -247,30 +243,61 @@ private void updateIfChanged(String attribute, Boolean isTrue, Closure onClear =
     }
 }
 
-private void parseAttributeReport(String description) {
-    Map event = zigbee.getEvent(description)
-    logDebug "event message: ${event}"
-    if(event) {
-        switch(event.name) {
-            case 'batteryVoltage':
-                def pct = (event.value - constMinBatteryVoltage) / (constMaxBatteryVoltage - constMinBatteryVoltage)
-                def roundedPct = Math.round(pct * 100)
-                if (roundedPct <= 0) roundedPct = 1
-                def descriptionText = "${device.displayName} battery was ${Math.min(100, roundedPct)}%"
-                logInfo "${descriptionText}"
-                sendEvent(name: 'battery', value: Math.min(100, roundedPct), unit: "%", descriptionText: descriptionText, type: 'physical')
-                state.lastBatteryVoltage = event.value
+private Map parseAttributeReport(Map descMap) {
+    Map map = [:]
+
+    switch (descMap.cluster) {
+        case "0001": // Power Configuration cluster
+            if (descMap.attrId == "0020") {
+                // Battery voltage (in 100mV units)
+                Double voltage = Integer.parseInt(descMap.value, 16) / 10.0
+                Double pct = (voltage - constMinBatteryVoltage) / (constMaxBatteryVoltage - constMinBatteryVoltage)
+                Integer roundedPct = Math.round(pct * 100)
+                roundedPct = Math.max(1, Math.min(100, roundedPct))
+
+                map.name = 'battery'
+                map.value = roundedPct
+                map.unit = '%'
+                map.descriptionText = "${device.displayName} battery is ${roundedPct}%"
+
+                state.lastBatteryVoltage = voltage
                 state.lastBatteryDate = (new Date()).format('yyyy-MM-dd')
-                break
-            case 'temperature':
-                logInfo "${event.descriptionText}"
-                sendEvent(name: event.name, value: event.value, unit: "°${event.unit}", descriptionText: event.descriptionText, type: 'physical')
-                break
-            default:
-                logDebug "unexpected attribute report ${event.name} ${event.descriptionText}"
-                break
-        }
+            }
+            break
+
+        case "0402": // Temperature Measurement cluster
+            if (descMap.attrId == "0000") {
+                // Temperature in hundredths of degrees Celsius
+                Double tempC = Integer.parseInt(descMap.value, 16) / 100.0
+                Double tempValue = (getTemperatureScale() == "C") ? tempC : celsiusToFahrenheit(tempC)
+                tempValue = Math.round(tempValue * 10) / 10.0  // round to 1 decimal
+
+                // Apply calibration offset
+                if (tempOffset) {
+                    tempValue = tempValue + tempOffset
+                }
+
+                map.name = 'temperature'
+                map.value = tempValue
+                map.unit = getTemperatureScale()
+                map.descriptionText = "${device.displayName} temperature is ${tempValue}°${map.unit}"
+            }
+            break
+
+        case "0500": // IAS Zone cluster - handled by parseIasMessage
+            break
+
+        default:
+            logDebug "Unhandled cluster ${descMap.cluster} attrId ${descMap.attrId} value ${descMap.value}"
+            break
     }
+
+    if (map.name) {
+        logInfo "${map.descriptionText}"
+        return createEvent(map)
+    }
+
+    return null
 }
 
 private void autoConfigure() {
