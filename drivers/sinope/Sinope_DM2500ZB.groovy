@@ -21,7 +21,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String version = "0.0.6"
+@Field static final String version = "0.0.7"
 
 metadata {
     definition(
@@ -494,6 +494,7 @@ private Map parseAttributeReport(Map descMap) {
                         map.value = action.buttonIndex
                         map.descriptionText = action.description
                         map.type = "physical"
+                        map.isStateChange = true
                     } else {
                         logDebug("Unknown button action report ${descMap}")
                     }

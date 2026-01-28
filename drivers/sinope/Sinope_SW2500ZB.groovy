@@ -21,7 +21,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String version = "0.0.6"
+@Field static final String version = "0.0.7"
 
 metadata {
     definition(
