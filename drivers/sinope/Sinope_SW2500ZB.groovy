@@ -176,7 +176,7 @@ void configure() {
     cmds += zigbee.configureReporting(0x0002, 0x0000, DataType.INT16, 0, 43200)    // device temperature
     cmds += zigbee.configureReporting(0x0006, 0x0000, DataType.BOOLEAN, 0, 43200)  // switch state
     cmds += zigbee.configureReporting(0x0702, 0x0000, DataType.UINT48, 0, 1800)     // energy consumed
-    cmds += zigbee.configureReporting(0xFF01, 0x0054, DataType.ENUM8, 0, 43200, null, [mfgCode: "0x119C"])  // button action report
+    cmds += zigbee.configureReporting(0xFF01, 0x0054, DataType.ENUM8, 0, 0, null, [mfgCode: "0x119C"])  // button action report
     // device accepts this report configuration but does not appear to honor it
     cmds += zigbee.configureReporting(0xFF01, 0x0090, DataType.UINT32, 0, 1800, null, [mfgCode: "0x119C"])  // energy
 
