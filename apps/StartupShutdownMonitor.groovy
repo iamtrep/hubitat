@@ -60,7 +60,7 @@ preferences {
     "deviceJoin",
     "lowMemory",
     "manualReboot",
-    "manualShutdown"
+    "manualShutdown",
     "severeLoad",
     "sunrise",
     "sunriseSunsetUpdated",

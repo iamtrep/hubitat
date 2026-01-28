@@ -6,7 +6,7 @@
 
 
 definition(
-    name: "Sticky Motion Sensor Aggregation"
+    name: "Sticky Motion Sensor Aggregation",
     namespace: "iamtrep",
     //parent: "iamtrep:Sensor Aggregator",
     author: "pj",

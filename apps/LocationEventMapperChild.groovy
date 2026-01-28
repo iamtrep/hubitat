@@ -128,7 +128,7 @@ void eventHandler(Event evt) {
         closeContact(evt.descriptionText)
     }
 
-    logTrace("Unhandled location event: ${evt.name}")
+    //logTrace("Unhandled location event: ${evt.name}")
 }
 
 void openContact(String message) {
