@@ -128,10 +128,10 @@ void refreshSensorData(retData){
                 state.firmwareVersion = it.value
                 break
             case "lastSampleTemperature":
-                unit="¡C"
+                unit="°C"
                 /* if(useFahrenheit){
                     it.value = celsiusToFahrenheit(it.value)
-                    unit = "¡F"
+                    unit = "°F"
                 } */
                 updateDeviceAttribute("temperature", it.value, unit, "Temperature is ${it.value}${unit}")
                 break

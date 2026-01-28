@@ -159,9 +159,11 @@ void startPositionChange(String direction) {
     switch (direction) {
         case "open":
             open()
+            break
 
         case "close":
             close()
+            break
 
         default:
             logError "invalid position change direction ${direction}"

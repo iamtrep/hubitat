@@ -111,7 +111,7 @@ metadata
 @Field static final Map constThermostatModes = [ '00': 'off', '04': 'heat' ]
 
 @Field static final Map constFloorLimitStatus = [ 'OK': 0, 'floorLimitLowReached': 1, 'floorLimitMaxReached': 2, 'floorAirLimitMaxReached': 3,
-                                                 0: 'OK', 1: 'floorLimitLowReached', 2: 'floorAirLimitMaxReached', 3: 'floorAirLimitMaxReached']
+                                                 0: 'OK', 1: 'floorLimitLowReached', 2: 'floorLimitMaxReached', 3: 'floorAirLimitMaxReached']
 
 @Field static final Map constKeypadLockoutMap = [ '00': 'unlocked ', '01': 'locked ' ]
 
@@ -178,7 +178,7 @@ void configure() {
 
     //Configure Clock Format
     if (prefTimeFormatParam == null) {
-        prefTimeFormatParam == '24h' as String
+        prefTimeFormatParam = '24h' as String
     }
     if (prefTimeFormatParam == '12h AM/PM') { //12h AM/PM "24h"
         logInfo('Set to 12h AM/PM')
@@ -568,28 +568,28 @@ private Map parseAttributeReport(Map descMap) {
                     map.name = 'voltage'
                     map.value = getRMSVoltage(descMap.value)
                     map.unit = 'V'
-                    map.descriptionText = "Voltage of ${device.displayName} is ${value} ${unit}"
+                    map.descriptionText = "Voltage of ${device.displayName} is ${map.value} ${map.unit}"
                     break
 
                 case 0x0508:
                     map.name = 'amperage'
                     map.value = getRMSCurrent(descMap.value)
                     map.unit = 'A'
-                    map.descriptionText = "Current of ${device.displayName} is ${value} ${unit}"
+                    map.descriptionText = "Current of ${device.displayName} is ${map.value} ${map.unit}"
                     break
 
                 case 0x050B:
                     map.name = 'power'
                     map.value = getActivePower(descMap.value)
                     map.unit = 'W'
-                    map.descriptionText = "${device.displayName} is delivering ${value}${unit}"
+                    map.descriptionText = "${device.displayName} is delivering ${map.value}${map.unit}"
                     break
 
                 case 0x050D:
                     map.name = 'maxPower'
                     map.value = getActivePower(descMap.value)
                     map.unit = 'W'
-                    map.descriptionText = "The max heating power of ${device.displayName} is ${value}${unit}"
+                    map.descriptionText = "The max heating power of ${device.displayName} is ${map.value}${map.unit}"
                     break
 
                 default:

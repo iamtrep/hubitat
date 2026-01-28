@@ -495,7 +495,7 @@ private parseAttributeReport(descMap) {
                 case "4009":
                     map.name = "energy"
                     map.value = getEnergy(descMap.value)
-                    map.unit = "Wh"
+                    map.unit = "kWh"
                     map.descriptionText = "${device.displayName} energy delivered is ${map.value}${map.unit}"
                     break
 

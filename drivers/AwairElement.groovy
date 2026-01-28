@@ -57,6 +57,7 @@ import groovy.transform.Field
 // Runs when the driver is installed
 void installed() {
     logDebug "installed..."
+    resetAttributes()
     runIn(2, "poll")
 }
 

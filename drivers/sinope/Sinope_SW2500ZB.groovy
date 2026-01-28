@@ -160,7 +160,6 @@ void configure() {
     logTrace("configure()")
 
     state.codeVersion = constDriverVersion
-    state.debugMode = debugMode
 
     try
     {
