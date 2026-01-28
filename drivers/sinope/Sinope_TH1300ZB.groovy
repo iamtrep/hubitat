@@ -80,6 +80,7 @@ metadata
 
     preferences {
         input name: 'prefBacklightMode', type: 'enum', title: 'Display backlight', options: ['off': 'On Demand', 'adaptive': 'Adaptive (default)', 'on': 'Always On'], defaultValue: 'adaptive', required: true
+        input name: 'prefDisplayOutdoorTemp', type: 'bool', title: 'Display outdoor temperature', defaultValue: true
         input name: 'prefSecondTempDisplay', type: 'enum', title: 'Secondary Temp. Display', options:['auto': 'Auto (default)', 'setpoint': 'Setpoint', 'outdoor': 'Outdoor'], defaultValue: 'auto', required: true
         input name: 'prefTimeFormatParam', type: 'enum', title: 'Time Format', options:['24h', '12h AM/PM'], defaultValue: '24h', multiple: false, required: true
         input name: 'prefAirFloorModeParam', type: 'enum', title: 'Control mode (Floor or Ambient temperature)', options: ['Ambient', 'Floor'], defaultValue: 'Floor', multiple: false, required: true
@@ -185,6 +186,13 @@ void configure() {
     } else { //24h
         logInfo('Set to 24h')
         cmds += zigbee.writeAttribute(0xFF01, 0x0114, 0x30, 0x0000)
+    }
+
+    // Configure outdoor temperature display timeout
+    if (prefDisplayOutdoorTemp) {
+        cmds += zigbee.writeAttribute(0xFF01, 0x0011, 0x21, 10800)  // 3 hour timeout
+    } else {
+        cmds += zigbee.writeAttribute(0xFF01, 0x0011, 0x21, 10)     // 10 second timeout (effectively disabled)
     }
 
     //Set the control heating mode
@@ -722,23 +730,25 @@ void setKeypadLockoutMode(String lockoutMode) {
 }
 
 void setOutdoorTemperature(BigDecimal outdoorTemperature) {
-    if (outdoorTemperature != null) {
-        double outdoorTemp = outdoorTemperature.toDouble()
-        String tempScale = getTemperatureScale()
-        logInfo("Received outdoor weather report : ${outdoorTemp} ${tempScale}")
-
-        sendEvent(name: 'outdoorTemperature', value: outdoorTemp, unit: tempScale, descriptionText: "${device.displayName} outdoor temperature set to ${outdoorTemp}${tempScale}")
-
-        // the value sent to the thermostat must be in C
-        if (tempScale == 'F') {
-            outdoorTemp = fahrenheitToCelsius(outdoorTemp).toDouble()
-        }
-
-        int outdoorTempDevice = (int)(outdoorTemp * 100)  // device expects hundredths
-        List<String> cmds = []
-        cmds += zigbee.writeAttribute(0xFF01, 0x0010, 0x29, outdoorTempDevice, [mfgCode: '0x119C']) //set the outdoor temperature as integer
-        sendZigbeeCommands(cmds)
+    if (outdoorTemperature == null) {
+        return
     }
+
+    double outdoorTemp = outdoorTemperature.toDouble()
+    String tempScale = getTemperatureScale()
+    logInfo("Received outdoor weather report : ${outdoorTemp} ${tempScale}")
+
+    sendEvent(name: 'outdoorTemperature', value: outdoorTemp, unit: tempScale, descriptionText: "${device.displayName} outdoor temperature set to ${outdoorTemp}${tempScale}")
+
+    // the value sent to the thermostat must be in C
+    if (tempScale == 'F') {
+        outdoorTemp = fahrenheitToCelsius(outdoorTemp).toDouble()
+    }
+
+    int outdoorTempDevice = (int)(outdoorTemp * 100)  // device expects hundredths
+    List<String> cmds = []
+    cmds += zigbee.writeAttribute(0xFF01, 0x0010, 0x29, outdoorTempDevice, [mfgCode: '0x119C'])
+    sendZigbeeCommands(cmds)
 }
 
 void setBacklightMode(String mode = prefBacklightMode) {
