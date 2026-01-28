@@ -21,7 +21,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String version = "0.0.7"
+@Field static final String constDriverVersion = "0.0.8"
 
 metadata {
     definition(
@@ -161,7 +161,7 @@ void uninstalled() {
 void configure() {
     logTrace("configure()")
 
-    state.codeVersion = version
+    state.codeVersion = constDriverVersion
     state.debugMode = debugMode
 
     try
@@ -180,7 +180,7 @@ void configure() {
     cmds += zigbee.configureReporting(0x0006, 0x0000, DataType.BOOLEAN, 0, 43200) // switch state
     cmds += zigbee.configureReporting(0x0008, 0x0000, DataType.UINT8, 0, 43200)   // switch level
     cmds += zigbee.configureReporting(0x0702, 0x0000, DataType.UINT48, 0, 1800)   // energy
-    cmds += zigbee.configureReporting(0xFF01, 0x0054, DataType.ENUM8, 0, 0xFFFF, null, [mfgCode: "0x119C"])  // button action report
+    cmds += zigbee.configureReporting(0xFF01, 0x0054, DataType.ENUM8, 0, 43200, null, [mfgCode: "0x119C"])  // button action report
     cmds += zigbee.configureReporting(0xFF01, 0x0090, DataType.UINT32, 0, 1800, null, [mfgCode: "0x119C"])  // energy
 
     sendZigbeeCommands(cmds)
@@ -258,25 +258,25 @@ void setLevel(BigDecimal level, BigDecimal duration = 0) {
 void push(Integer buttonNumber) {
     String buttonName = buttonNumber == 0 ? "Up" : "Down"
     String desc = "$buttonName was pushed"
-	sendEvent(name:"pushed", value: buttonNumber, type: "digital", descriptionText: desc)
+	sendEvent(name:"pushed", value: buttonNumber, type: "digital", descriptionText: desc, isStateChange: true)
 }
 
 void hold(Integer buttonNumber) {
     String buttonName = buttonNumber == 0 ? "Up" : "Down"
     String desc = "$buttonName was held"
-	sendEvent(name:"held", value: buttonNumber, type: "digital", descriptionText: desc)
+	sendEvent(name:"held", value: buttonNumber, type: "digital", descriptionText: desc, isStateChange: true)
 }
 
 void release(Integer buttonNumber) {
     String buttonName = buttonNumber == 0 ? "Up" : "Down"
     String desc = "$buttonName was released"
-	sendEvent(name:"released", value: buttonNumber, type: "digital", descriptionText: desc)
+	sendEvent(name:"released", value: buttonNumber, type: "digital", descriptionText: desc, isStateChange: true)
 }
 
 void doubleTap(Integer buttonNumber) {
     String buttonName = buttonNumber == 0 ? "Up" : "Down"
     String desc = "$buttonName was double-tapped"
-	sendEvent(name:"doubleTapped", value: buttonNumber, type: "digital", descriptionText: desc)
+	sendEvent(name:"doubleTapped", value: buttonNumber, type: "digital", descriptionText: desc, isStateChange: true)
 }
 
 // Custom commands
@@ -337,6 +337,11 @@ void setOffLedIntensity(Integer intensity) {
 // Device Event Parsing
 
 List parse(String description) {
+    if (state.codeVersion != constDriverVersion) {
+        state.codeVersion = constDriverVersion
+        runInMillis 1500, 'autoConfigure'
+    }
+
     Map descMap = zigbee.parseDescriptionAsMap(description)
     logTrace("parse() - description = ${descMap}")
 
@@ -544,6 +549,11 @@ private Map parseAttributeReport(Map descMap) {
 }
 
 // Private methods
+
+private void autoConfigure() {
+    logWarn "Detected driver version change"
+    configure()
+}
 
 private void sendZigbeeCommands(List cmds) {
     hubitat.device.HubMultiAction hubAction = new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE)
