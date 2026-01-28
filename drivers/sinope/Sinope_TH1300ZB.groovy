@@ -91,6 +91,7 @@ metadata
 
         input name: 'prefMinTempChange', type: 'number', title: 'Temperature change', description: 'Minumum change of temperature reading to trigger report in Celsius/100, 5..50', range: '5..50', defaultValue: 50
         input name: 'prefMinPIChange', type: 'number', title: 'Heating change', description: 'Minimum change in the PI heating in % to trigger power and PI heating reporting, 1..25', range: '1..25', defaultValue: 5
+        input name: 'prefMinEnergyChange', type: 'number', title: 'Energy increment', description: 'Minimum increment of the energy meter in Wh to trigger energy reporting, 10..', range: '10..', defaultValue: 10
         input name: 'infoEnable', type: 'bool', title: 'Enable info level logging', defaultValue: true
         input name: 'debugEnable', type: 'bool', title: 'Enable debug level logging', defaultValue: true //false
         input name: 'traceEnable', type: 'bool', title: 'Enable trace level logging', description: "For driver development", defaultValue: true //false
@@ -478,7 +479,7 @@ private Map parseAttributeReport(Map descMap) {
                 case 0x0008:
                     map.name = 'thermostatOperatingState'
                     map.value = getHeatingDemand(descMap.value)
-                    map.descriptionText = "${device.displayName} is ${value}"
+                    map.descriptionText = "${device.displayName} is at ${map.value}% heating demand"
                     if (device.currentValue('maxPower') != null) {
                         def maxPowerValue = device.currentValue('maxPower').toInteger()
                         def powerValue = Math.round(maxPowerValue * map.value / 100)
@@ -602,7 +603,7 @@ private Map parseAttributeReport(Map descMap) {
                 case 0x010C: // Floor limit status
                     map.name = 'floorLimitStatus'
                     map.value = constFloorLimitStatus[descMap.value.toInteger()]
-                    map.descriptionText = "${device.displayName} floor limit status is ${value}}"
+                    map.descriptionText = "${device.displayName} floor limit status is ${map.value}"
                     break
 
                 case 0x010D:
@@ -613,8 +614,9 @@ private Map parseAttributeReport(Map descMap) {
                     break
 
                 case 0x0012: // secondary temperature display update
-                    logTrace("Secondary temp display mode is ${descMap.value}")
-                    device.updateSetting('prefSecondTempDisplay', [value: mode, type: 'enum'])
+                    String secondTempMode = constSecondTempDisplayModes[descMap.value.toInteger()]
+                    logTrace("Secondary temp display mode is ${secondTempMode}")
+                    device.updateSetting('prefSecondTempDisplay', [value: secondTempMode, type: 'enum'])
                     // no event needed
                     break
 
@@ -722,11 +724,13 @@ void setKeypadLockoutMode(String lockoutMode) {
 void setOutdoorTemperature(BigDecimal outdoorTemperature) {
     if (outdoorTemperature != null) {
         double outdoorTemp = outdoorTemperature.toDouble()
-        String updateDescriptionText = "Received outdoor weather report : ${outdoorTemp} ${getTemperatureScale()}"
-        logInfo(updateDescriptionText)
+        String tempScale = getTemperatureScale()
+        logInfo("Received outdoor weather report : ${outdoorTemp} ${tempScale}")
+
+        sendEvent(name: 'outdoorTemperature', value: outdoorTemp, unit: tempScale, descriptionText: "${device.displayName} outdoor temperature set to ${outdoorTemp}${tempScale}")
 
         // the value sent to the thermostat must be in C
-        if (getTemperatureScale() == 'F') {
+        if (tempScale == 'F') {
             outdoorTemp = fahrenheitToCelsius(outdoorTemp).toDouble()
         }
 
