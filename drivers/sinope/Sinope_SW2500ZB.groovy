@@ -1,5 +1,5 @@
 /*
- *  Sinope Dimmer SW2500ZB Device Driver for Hubitat Elevation
+ *  Sinope Switch SW2500ZB Device Driver for Hubitat Elevation
  *
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -46,8 +46,6 @@ metadata {
 
         command "keypadLock", [[name: "Disconnect paddle from relay so it no longer operates the load (a.k.a. smart bulb mode - button events are still sent when the paddle is operated)"]]
         command "keypadUnlock", [[name: "Connect paddle to relay so that the paddle will operate the load."]]
-
-        command "setOnIntensity", [[name: "onIntensity", type: "NUMBER", description: "Dimmer intensity when switch is turned ON", constraints: ["NUMBER"]]]
 
         command "setOnLedIntensity", [[name: "onLedIntensity", type: "NUMBER", description: "LED intensity when switch is ON", constraints: ["NUMBER"]]]
         command "setOnLedColor", [[name:"On LED Color*", type:"ENUM", description:"Color of the LED when the device is off", constraints:["Amber","Fuchsia","Lime","Pearl","Blue"]]]
@@ -197,7 +195,6 @@ void initialize() {
 
     // state.clear()
     state.switchTypeDigital = false
-    state.levelTypeDigital = false
 
     sendEvent(name:"numberOfButtons", value: 2, isStateChange: true)
 
@@ -242,28 +239,28 @@ void off() {
     state.switchTypeDigital = true
 }
 
-void push(buttonNumber) {
+void push(Integer buttonNumber) {
     String buttonName = buttonNumber == 0 ? "Up" : "Down"
     String desc = "$buttonName was pushed"
-	sendEvent(name:"pushed", value: buttonNumber, type: "digital", descriptionText: desc) //, isStateChange:true)
+	sendEvent(name:"pushed", value: buttonNumber, type: "digital", descriptionText: desc)
 }
 
-void hold(buttonNumber) {
+void hold(Integer buttonNumber) {
     String buttonName = buttonNumber == 0 ? "Up" : "Down"
     String desc = "$buttonName was held"
-	sendEvent(name:"held", value: buttonNumber, type: "digital", descriptionText: desc) //, isStateChange:true)
+	sendEvent(name:"held", value: buttonNumber, type: "digital", descriptionText: desc)
 }
 
-void release(buttonNumber) {
+void release(Integer buttonNumber) {
     String buttonName = buttonNumber == 0 ? "Up" : "Down"
     String desc = "$buttonName was released"
-	sendEvent(name:"released", value: buttonNumber, type: "digital", descriptionText: desc) //, isStateChange:true)
+	sendEvent(name:"released", value: buttonNumber, type: "digital", descriptionText: desc)
 }
 
-void doubleTap(buttonNumber) {
+void doubleTap(Integer buttonNumber) {
     String buttonName = buttonNumber == 0 ? "Up" : "Down"
     String desc = "$buttonName was double-tapped"
-	sendEvent(name:"doubleTapped", value: buttonNumber, type: "digital", descriptionText: desc) //, isStateChange:true)
+	sendEvent(name:"doubleTapped", value: buttonNumber, type: "digital", descriptionText: desc)
 }
 
 // Custom commands
@@ -280,15 +277,11 @@ void keypadUnlock() {
     sendZigbeeCommands(cmds)
 }
 
-void setAutoOffTimer(duration) {
+void setAutoOffTimer(Integer duration) {
     List<String> cmds = []
-    cmds += zigbee.writeAttribute(0xFF01, 0x00A0, DataType.UINT32, duration as int, [mfgCode: "0x119C"])
+    cmds += zigbee.writeAttribute(0xFF01, 0x00A0, DataType.UINT32, duration, [mfgCode: "0x119C"])
     logTrace("setAutoOffTimer($duration) => $cmds")
     sendZigbeeCommands(cmds)
-}
-
-void setOnIntensity(intensity) {
-    // todo
 }
 
 void setOnLedColor(String color) {
@@ -299,24 +292,24 @@ void setOnLedColor(String color) {
     sendZigbeeCommands(cmds)
 }
 
-void setOnLedIntensity(intensity) {
-    String hexIntensity = percentToHex(intensity as Integer)
+void setOnLedIntensity(Integer intensity) {
+    String hexIntensity = percentToHex(intensity)
     List<String> cmds = []
     cmds += zigbee.writeAttribute(0xFF01, 0x0052, DataType.UINT8, hexIntensity, [mfgCode: "0x119C"])
     sendZigbeeCommands(cmds)
 }
 
 void setOffLedColor(String color) {
-    def attrHex = constLedColorMap[color]
+    String attrHex = constLedColorMap[color]
     logDebug("Setting OFF led color to $color ($attrHex)")
     List<String> cmds = []
     cmds += zigbee.writeAttribute(0xFF01, 0x0051, DataType.UINT24, attrHex, [mfgCode: "0x119C"])
     sendZigbeeCommands(cmds)
 }
 
-void setOffLedIntensity(intensity) {
-    String hexIntensity = percentToHex(intensity as Integer)
-    def cmds = []
+void setOffLedIntensity(Integer intensity) {
+    String hexIntensity = percentToHex(intensity)
+    List<String> cmds = []
     cmds += zigbee.writeAttribute(0xFF01, 0x0053, DataType.UINT8, hexIntensity, [mfgCode: "0x119C"])
     sendZigbeeCommands(cmds)
 }
@@ -368,8 +361,8 @@ List parse(String description) {
     "14": [buttonEvent: "doubleTapped", buttonIndex: 1, description: "Down was double-tapped"]
 ]
 
-private Map parseAttributeReport(descMap){
-    Map map = [: ]
+private Map parseAttributeReport(Map descMap) {
+    Map map = [:]
 
     // Main switch over all available cluster IDs
     //
@@ -406,12 +399,8 @@ private Map parseAttributeReport(descMap){
         case "0702": // Metering cluster
             switch (descMap.attrId) {
                 case "0000":
-                    return null // energy report is in mfg-specific cluster/attr
-                    map.name = "energy"
-                    map.value = getEnergy(descMap.value)
-                    map.unit = "kWh"
-                    map.descriptionText = "Cumulative energy consumed is ${map.value} ${map.unit}"
-                    break
+                    // Energy report is in manufacturer-specific cluster/attr (0xFF01/0x0090), ignore standard metering
+                    return null
 
                 default:
                     break
@@ -455,7 +444,7 @@ private Map parseAttributeReport(descMap){
                     return null // return directly, no event to generate
 
                 case "0054": // action report (pushed/released/double tapped)
-                    def action = buttonActionMap[descMap.value]
+                    Map<String, Object> action = buttonActionMap[descMap.value]
                     if (action) {
                         map.name = action.buttonEvent
                         map.value = action.buttonIndex
@@ -511,7 +500,7 @@ private Map parseAttributeReport(descMap){
 
 // Private methods
 
-private void sendZigbeeCommands(cmds) {
+private void sendZigbeeCommands(List cmds) {
     hubitat.device.HubMultiAction hubAction = new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE)
     sendHubCommand(hubAction)
 }
@@ -528,14 +517,16 @@ private double getEnergy(String value) {
     return 0
 }
 
-private long getTemperature(String value) {
-    if (value != null) {
-        Integer celsius = Integer.parseInt(value, 16)
-        if (getTemperatureScale() == "C") {
-            return celsius
-        } else {
-            return Math.round(celsiusToFahrenheit(celsius))
-        }
+@CompileStatic
+private Long getTemperature(String value) {
+    if (value == null) {
+        return null
+    }
+    int celsius = Integer.parseInt(value, 16)
+    if (getTemperatureScale() == "C") {
+        return (long) celsius
+    } else {
+        return Math.round(celsiusToFahrenheit(celsius))
     }
 }
 
@@ -563,22 +554,22 @@ private Integer scaleHexValue(String hexValue, double scale = 100.0, double max 
 
 // Logging helpers
 
-private void logTrace(message) {
+private void logTrace(String message) {
     if (traceEnable) log.trace("${device} : ${message}")
 }
 
-private void logDebug(message) {
+private void logDebug(String message) {
     if (debugEnable) log.debug("${device} : ${message}")
 }
 
-private void logInfo(message) {
+private void logInfo(String message) {
     if (txtEnable) log.info("${device} : ${message}")
 }
 
-private void logWarn(message) {
+private void logWarn(String message) {
     log.warn("${device} : ${message}")
 }
 
-private void logError(message) {
+private void logError(String message) {
     log.error("${device} : ${message}")
 }
