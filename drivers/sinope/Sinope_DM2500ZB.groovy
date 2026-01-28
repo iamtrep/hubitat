@@ -21,7 +21,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String constDriverVersion = "0.0.8"
+@Field static final String constDriverVersion = "0.0.9"
 
 metadata {
     definition(
