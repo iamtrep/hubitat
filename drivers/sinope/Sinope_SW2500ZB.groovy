@@ -177,7 +177,7 @@ void configure() {
     cmds += zigbee.configureReporting(0x0002, 0x0000, DataType.INT16, 0, 43200)    // device temperature
     cmds += zigbee.configureReporting(0x0006, 0x0000, DataType.BOOLEAN, 0, 43200)  // switch state
     cmds += zigbee.configureReporting(0x0702, 0x0000, DataType.UINT48, 0, 1800)     // energy consumed
-    cmds += zigbee.configureReporting(0xFF01, 0x0054, DataType.ENUM8, 0, 43200, null, [mfgCode: "0x119C"])  // button action report
+    cmds += zigbee.configureReporting(0xFF01, 0x0054, DataType.ENUM8, 0, 0xFFFF, null, [mfgCode: "0x119C"])  // button action report
     // device accepts this report configuration but does not appear to honor it
     cmds += zigbee.configureReporting(0xFF01, 0x0090, DataType.UINT32, 0, 1800, null, [mfgCode: "0x119C"])  // energy
 
@@ -242,25 +242,25 @@ void off() {
 void push(Integer buttonNumber) {
     String buttonName = buttonNumber == 0 ? "Up" : "Down"
     String desc = "$buttonName was pushed"
-	sendEvent(name:"pushed", value: buttonNumber, type: "digital", descriptionText: desc)
+	sendEvent(name:"pushed", value: buttonNumber, type: "digital", descriptionText: desc, isStateChange: true)
 }
 
 void hold(Integer buttonNumber) {
     String buttonName = buttonNumber == 0 ? "Up" : "Down"
     String desc = "$buttonName was held"
-	sendEvent(name:"held", value: buttonNumber, type: "digital", descriptionText: desc)
+	sendEvent(name:"held", value: buttonNumber, type: "digital", descriptionText: desc, isStateChange: true)
 }
 
 void release(Integer buttonNumber) {
     String buttonName = buttonNumber == 0 ? "Up" : "Down"
     String desc = "$buttonName was released"
-	sendEvent(name:"released", value: buttonNumber, type: "digital", descriptionText: desc)
+	sendEvent(name:"released", value: buttonNumber, type: "digital", descriptionText: desc, isStateChange: true)
 }
 
 void doubleTap(Integer buttonNumber) {
     String buttonName = buttonNumber == 0 ? "Up" : "Down"
     String desc = "$buttonName was double-tapped"
-	sendEvent(name:"doubleTapped", value: buttonNumber, type: "digital", descriptionText: desc)
+	sendEvent(name:"doubleTapped", value: buttonNumber, type: "digital", descriptionText: desc, isStateChange: true)
 }
 
 // Custom commands
@@ -450,6 +450,7 @@ private Map parseAttributeReport(Map descMap) {
                         map.value = action.buttonIndex
                         map.descriptionText = action.description
                         map.type = "physical"
+                        map.isStateChange = true
                     } else {
                         logDebug("Unknown button action report ${descMap}")
                     }

@@ -180,7 +180,7 @@ void configure() {
     cmds += zigbee.configureReporting(0x0006, 0x0000, DataType.BOOLEAN, 0, 43200) // switch state
     cmds += zigbee.configureReporting(0x0008, 0x0000, DataType.UINT8, 0, 43200)   // switch level
     cmds += zigbee.configureReporting(0x0702, 0x0000, DataType.UINT48, 0, 1800)   // energy
-    cmds += zigbee.configureReporting(0xFF01, 0x0054, DataType.ENUM8, 0, 43200, null, [mfgCode: "0x119C"])  // button action report
+    cmds += zigbee.configureReporting(0xFF01, 0x0054, DataType.ENUM8, 0, 0xFFFF, null, [mfgCode: "0x119C"])  // button action report
     cmds += zigbee.configureReporting(0xFF01, 0x0090, DataType.UINT32, 0, 1800, null, [mfgCode: "0x119C"])  // energy
 
     sendZigbeeCommands(cmds)
