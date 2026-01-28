@@ -28,6 +28,7 @@
  */
 
 import groovy.transform.Field
+import groovy.transform.CompileStatic
 
 @Field static final String version = "0.0.2"
 
@@ -106,45 +107,42 @@ metadata {
 
 // Driver installation
 
-def installed() {
+void installed() {
     // called when device is first created with this driver
     initialize()
 }
 
-def updated() {
+void updated() {
     // called when preferences are saved.
     configure()
 }
 
-def uninstalled() {
+void uninstalled() {
     // called when device is removed
     try {
         unschedule()
     }
-    catch (e)
-    {
-        logError "unschedule() threw an exception ${e}"
+    catch (e) {
+        logError("unschedule() threw an exception ${e}")
     }
 }
 
 // Capabilities
 
-def configure() {
+void configure() {
     logTrace("configure()")
 
     state.codeVersion = version
     state.debugMode = debugMode
 
-    try
-    {
+    try {
         unschedule()
     }
-    catch (e)
-    {
+    catch (e) {
         logError("unschedule() threw an exception ${e}")
     }
 
-    def cmds = []
+    List<String> cmds = []
 
     // Configure device attribute self-reporting
     cmds += zigbee.configureReporting(0x0000, 0x0007, DataType.ENUM8, 0, 7200)               // power source
@@ -165,7 +163,7 @@ def configure() {
     runIn(prefBatteryAlarmSchedule*3600, requestBatteryAlarmReport, [overwrite: true, misfire: "ignore"])
 }
 
-def initialize() {
+void initialize() {
     logTrace("initialize()")
 
     // state.clear()
@@ -178,8 +176,8 @@ def initialize() {
     refresh()
 }
 
-def refresh() {
-    def cmds = []
+void refresh() {
+    List<String> cmds = []
 
     cmds += zigbee.readAttribute(0x0000, 0x0007) // power source
     cmds += zigbee.readAttribute(0x0001, 0x0020) // battery voltage
@@ -196,15 +194,15 @@ def refresh() {
     sendZigbeeCommands(cmds)
 }
 
-def open() {
-    def cmds = []
+void open() {
+    List<String> cmds = []
     cmds += zigbee.command(0x0006, 0x01)
     sendZigbeeCommands(cmds)
     state.switchTypeDigital = true
 }
 
-def close() {
-    def cmds = []
+void close() {
+    List<String> cmds = []
     cmds += zigbee.command(0x0006, 0x00)
     sendZigbeeCommands(cmds)
     state.switchTypeDigital = true
@@ -212,11 +210,11 @@ def close() {
 
 // Device Event Parsing
 
-def parse(String description) {
-    def descMap = zigbee.parseDescriptionAsMap(description)
+List parse(String description) {
+    Map descMap = zigbee.parseDescriptionAsMap(description)
     logTrace("parse() - description = ${descMap}")
 
-    def result = []
+    List result = []
 
     if (descMap.attrId != null) {
         // device attribute report
@@ -250,7 +248,7 @@ def parse(String description) {
 }
 
 
-private parseIASMessage(String description) {
+private void parseIASMessage(String description) {
     Map zs = zigbee.parseZoneStatusChange(description)
     logDebug("parseIASMessage zs = $zs")
     if (zs.alarm1Set) {
@@ -266,8 +264,8 @@ private parseIASMessage(String description) {
 }
 
 
-private parseAttributeReport(descMap){
-    def map = [: ]
+private Map parseAttributeReport(Map descMap) {
+    Map map = [:]
 
     // Main switch over all available cluster IDs
     //
@@ -455,42 +453,42 @@ private parseAttributeReport(descMap){
     return result
 }
 
-def computeBatteryLevel() {
-    def computedLevel = getBatteryLevelFromVoltage()
-    def eventDescriptionText = "Battery percentage remaining is ${computedLevel} %"
+void computeBatteryLevel() {
+    Integer computedLevel = getBatteryLevelFromVoltage()
+    String eventDescriptionText = "Battery percentage remaining is ${computedLevel} %"
     sendEvent(name: "battery", value: computedLevel, unit: "%", descriptionText: eventDescriptionText)
     logInfo(eventDescriptionText)
 }
 
-def computeFlowRate(volumeAttr) {
-    def volumeDiff = 0
-    def sampleTimeDiff = 0
-    def sampleTimeNow = new Date().time  // TODO: find out if there a way to get a timestamp from the zigbee attribute report
+void computeFlowRate(String volumeAttr) {
+    BigInteger volumeDiff = 0
+    long sampleTimeDiff = 0
+    long sampleTimeNow = new Date().time  // TODO: find out if there a way to get a timestamp from the zigbee attribute report
 
-    def currentVolume = new BigInteger(volumeAttr,16)
+    BigInteger currentVolume = new BigInteger(volumeAttr, 16)
     if (state.lastVolumeRecorded) {
-        volumeDiff = currentVolume - state.lastVolumeRecorded
+        volumeDiff = currentVolume - (state.lastVolumeRecorded as BigInteger)
     }
     state.volumeSinceLastEvent = volumeDiff  // keep track for now.
 
     // Compute flow
-    def computedFlowRate = 0f
+    float computedFlowRate = 0f
     if (volumeDiff > constMinVolumeDiff) {
         if (state.lastVolumeRecordedTime) {
-            sampleTimeDiff = (sampleTimeNow - state.lastVolumeRecordedTime)
+            sampleTimeDiff = (sampleTimeNow - (state.lastVolumeRecordedTime as long))
         }
 
         if (sampleTimeDiff > constMinSampleTimeDiff) {
             // We have a volume difference in mL, and a time difference in ms
             // We want flow rate in LPM, two decimal places (probably should be 1 decimal place, tbd)
-            computedFlowRate = Math.round( 100 * (volumeDiff * 60f) / sampleTimeDiff )  / 100
+            computedFlowRate = Math.round(100 * (volumeDiff.floatValue() * 60f) / sampleTimeDiff) / 100f
         } else {
             logDebug("positive but instantaneous volume change ?!?")
             return
         }
     }
 
-    def eventDescriptionText = "Water flow rate avg since last volume event is ${computedFlowRate} LPM"
+    String eventDescriptionText = "Water flow rate avg since last volume event is ${computedFlowRate} LPM"
     sendEvent(name: "rateFromVolume", value: computedFlowRate, unit: "LPM", descriptionText: eventDescriptionText)
     logInfo(eventDescriptionText)
 
@@ -501,15 +499,15 @@ def computeFlowRate(volumeAttr) {
 
 // Scheduled callbacks
 
-def requestPowerSourceReport() {
-    def cmds = []
+void requestPowerSourceReport() {
+    List<String> cmds = []
     cmds += zigbee.readAttribute(0x0000, 0x0007)
     sendZigbeeCommands(cmds)
     runIn(prefPowerSourceSchedule*60, requestPowerSourceReport, [overwrite: true, misfire: "ignore"])
 }
 
-def requestBatteryAlarmReport() {
-    def cmds = []
+void requestBatteryAlarmReport() {
+    List<String> cmds = []
     cmds += zigbee.readAttribute(0x0001, 0x003E)
     sendZigbeeCommands(cmds)
     runIn(prefBatteryAlarmSchedule*3600, requestBatteryAlarmReport, [overwrite: true, misfire: "ignore"])
@@ -517,73 +515,88 @@ def requestBatteryAlarmReport() {
 
 // Private methods
 
-private void sendZigbeeCommands(cmds) {
-    def hubAction = new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE)
+private void sendZigbeeCommands(List cmds) {
+    hubitat.device.HubMultiAction hubAction = new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE)
     sendHubCommand(hubAction)
 }
 
-private getPowerSource(value) {
-    source = constPowerSources[value]
+private String getPowerSource(String value) {
+    if (value == null) {
+        return "unknown"
+    }
+    String source = constPowerSources[value]
     return source ? source : "unknown"
 }
 
-private getFlowRate(value) {
-    if (value != null) {
-        // Capability unit is LPM, device reports in ml/hour
-        // Convert and round to two decimal places
-        return Math.round(100 * Integer.parseInt(value, 16) / (60 * 1000)) / 100
+@CompileStatic
+private Double getFlowRate(String value) {
+    if (value == null) {
+        return null
     }
+    // Capability unit is LPM, device reports in ml/hour
+    // Convert and round to two decimal places
+    return Math.round(100.0 * Integer.parseInt(value, 16) / (60.0 * 1000.0)) / 100.0
 }
 
-private getBatteryVoltage(value) {
-    if (value != null) {
-        // Capability units are V, device reports in tenths of V
-        return Integer.parseInt(value, 16) / 10
+@CompileStatic
+private Double getBatteryVoltage(String value) {
+    if (value == null) {
+        return null
     }
+    // Capability units are V, device reports in tenths of V
+    return Integer.parseInt(value, 16) / 10.0
 }
 
-private getBatteryLevel(value) {
-    if (value != null) {
-        // from the ZCL: 0x00 = 0%, 0x64 (100) = 50%, 0xC8 (200) = 100%, 0xFF (255) = invalid/unknown
-        def battLevel = Integer.parseInt(value, 16)
-
-        if (battLevel == 255)
-            return "unknown"
-
-        return Math.round(battLevel / 2)
+@CompileStatic
+private Object getBatteryLevel(String value) {
+    if (value == null) {
+        return null
     }
+    // from the ZCL: 0x00 = 0%, 0x64 (100) = 50%, 0xC8 (200) = 100%, 0xFF (255) = invalid/unknown
+    int battLevel = Integer.parseInt(value, 16)
+
+    if (battLevel == 255) {
+        return "unknown"
+    }
+
+    return Math.round(battLevel / 2.0) as Integer
 }
 
-private getBatteryLevelFromVoltage() {
+private Integer getBatteryLevelFromVoltage() {
     def voltage = device.currentValue("voltage")
-    if(voltage <= constBatteryVoltageMin)
+    if (voltage == null || voltage <= constBatteryVoltageMin) {
         return 0
+    }
 
-    output = 100 * (voltage - constBatteryVoltageMin) / (constBatteryVoltageMax - constBatteryVoltageMin) as int
+    int output = (100 * (voltage - constBatteryVoltageMin) / (constBatteryVoltageMax - constBatteryVoltageMin)) as int
     return output < 100 ? output : 100
 }
 
-private getVolume(value) {
-    if (value != null) {
-        // TODO : check volume factor
-        def volume = new BigInteger(value,16)
-        return volume / 1000 // capability is in L
+@CompileStatic
+private Double getVolume(String value) {
+    if (value == null) {
+        return null
+    }
+    // Device reports in mL, capability is in L
+    BigInteger volumeMl = new BigInteger(value, 16)
+    return volumeMl.doubleValue() / 1000.0
+}
+
+@CompileStatic
+private Double getTemperature(String value) {
+    if (value == null) {
+        return null
+    }
+    // ZCL spec says temperature is in hundredths of C
+    double celsius = Integer.parseInt(value, 16) / 100.0
+    if (getTemperatureScale() == "C") {
+        return celsius
+    } else {
+        return Math.round(celsiusToFahrenheit(celsius)) as Double
     }
 }
 
-private getTemperature(value) {
-    if (value != null) {
-        // ZCL spec says temperature is in hundredths of C
-        def celsius = Integer.parseInt(value, 16) / 100
-        if (getTemperatureScale() == "C") {
-            return celsius
-        } else {
-            return Math.round(celsiusToFahrenheit(celsius))
-        }
-    }
-}
-
-private isFlowSensorEnabled() {
+private boolean isFlowSensorEnabled() {
     return prefFlowSensorType != "off"
 }
 
@@ -611,19 +624,19 @@ private isFlowSensorEnabled() {
                                                   "off" : "200C00000000000000000001000000"] //  [ "multiplier": 0,    "offset": 0,     "divisor" : 1 ]
 
 
-private configureFlowSensor(String flowSensorDiameter) {
-    def cmds = []
+private List<String> configureFlowSensor(String flowSensorDiameter) {
+    List<String> cmds = []
 
     // Support for FS422x (if attached)
-    def flowSensorConfigMsg = constFlowSensorConfigs[flowSensorDiameter]
+    String flowSensorConfigMsg = constFlowSensorConfigs[flowSensorDiameter]
     if (flowSensorConfigMsg == null) {
         logError("Invalid Flow Sensor selection - ${flowSensorDiameter}")
-        return
+        return cmds
     }
 
-    def testCmd = zigbee.writeAttribute(0xFF01, 0x0240, DataType.ARRAY, flowSensorConfigMsg, [mfgCode: "0x119C"])
     //logDebug("Flow Sensor diameter config - ${testCmd}")
-    cmds += testCmd
+    List<String> configCmd = zigbee.writeAttribute(0xFF01, 0x0240, DataType.ARRAY, flowSensorConfigMsg, [mfgCode: "0x119C"])
+    cmds += configCmd
 
     if (flowSensorDiameter != "off") {
         // The built-in Hubitat driver appears to compute flow from volume (cluster 0x0702, attribute 0x0000)
@@ -650,33 +663,33 @@ private configureFlowSensor(String flowSensorDiameter) {
 }
 
 // Reverses order of bytes in hex string
-private reverseHexString(hexString) {
-	def reversed = ""
+@CompileStatic
+private String reverseHexString(String hexString) {
+	String reversed = ""
 	for (int i = hexString.length(); i > 0; i -= 2) {
-		reversed += hexString.substring(i - 2, i )
+		reversed += hexString.substring(i - 2, i)
 	}
 	return reversed
 }
 
 // Logging helpers
 
-private logTrace(message) {
-    // No trace facility.  Use debug.
+private void logTrace(String message) {
     if (traceEnable) log.trace("${device} : ${message}")
 }
 
-private logDebug(message) {
+private void logDebug(String message) {
     if (debugEnable) log.debug("${device} : ${message}")
 }
 
-private logInfo(message) {
+private void logInfo(String message) {
     if (txtEnable) log.info("${device} : ${message}")
 }
 
-private logWarn(message) {
+private void logWarn(String message) {
     log.warn("${device} : ${message}")
 }
 
-private logError(message) {
+private void logError(String message) {
     log.error("${device} : ${message}")
 }
