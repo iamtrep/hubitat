@@ -113,6 +113,7 @@ definition(
     description: "Controls a bathroom extractor fan based on humidity levels compared to a reference sensor",
     category: "Convenience",
     singleInstance: false,
+    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/HumidityFanController.groovy",
     iconUrl: "",
     iconX2Url: "",
     iconX3Url: ""
