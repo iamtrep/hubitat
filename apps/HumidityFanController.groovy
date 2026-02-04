@@ -50,10 +50,10 @@
       │          drops below               │                            │
       │       activation threshold         │                            │
       └────────────────────────────────────┘                            │
-                                                                        │
-                  deactivation delay                below deactivation  │
-                      expires                           threshold       │
-    NORMAL <─────────────────────── PENDING_NORMAL <────────────────────┘
+      │                                                                 │
+      │           deactivation delay                below deactivation  │
+      │               expires                           threshold       │
+      └──────────────────────────── PENDING_NORMAL <────────────────────┘
                                          │      ▲
                                          │      │ rises above
                                          │      │ deactivation threshold
@@ -191,22 +191,10 @@ void initialize() {
     if (state.humidityState == null) {
         state.humidityState = HUMIDITY_NORMAL
     }
-    if (state.referenceHumiditySnapshot == null) {
-        state.referenceHumiditySnapshot = null
-    }
-    if (state.pendingStateSince == null) {
-        state.pendingStateSince = null
-    }
 
     // Initialize fan control state (only if not already set)
     if (state.fanTurnedOnByApp == null) {
         state.fanTurnedOnByApp = false
-    }
-    if (state.pendingCommand == null) {
-        state.pendingCommand = null
-    }
-    if (state.lastHumidityEventTime == null) {
-        state.lastHumidityEventTime = null
     }
 
     // Sync high humidity switch with current state
@@ -229,6 +217,14 @@ void initialize() {
 
     // Reschedule pending timers if we're in a pending state (timers were cleared by unschedule())
     reschedulePendingTimers()
+
+    // Consistency check: if in HIGH/PENDING_NORMAL but snapshot is missing, reset to NORMAL
+    if ((state.humidityState == HUMIDITY_HIGH || state.humidityState == HUMIDITY_PENDING_NORMAL)
+            && state.referenceHumiditySnapshot == null) {
+        log.warn("Inconsistent state: ${state.humidityState} with no reference snapshot. Resetting to NORMAL.")
+        state.humidityState = HUMIDITY_NORMAL
+        state.pendingStateSince = null
+    }
 
     // Consistency check: if humidity is NORMAL but we think we control the fan, turn it off
     if (state.humidityState == HUMIDITY_NORMAL && state.fanTurnedOnByApp) {
@@ -569,6 +565,7 @@ private void onHumidityBecameNormal() {
 private void turnOnFan() {
     log.info("Turning on fan")
 
+    state.fanTurnedOnByApp = true
     state.pendingCommand = "on"
     fanSwitch.on()
 
@@ -583,10 +580,10 @@ void verifyFanOn() {
 
     if (switchState == "on") {
         log.info("Fan verified ON")
-        state.fanTurnedOnByApp = true
         state.pendingCommand = null
     } else {
         log.error("Fan failed to turn on after ${switchVerificationTimeout} seconds")
+        state.fanTurnedOnByApp = false
         sendNotification("ERROR: ${fanSwitch.displayName} failed to turn on!")
         state.pendingCommand = null
     }
@@ -761,8 +758,8 @@ private String getStatusText() {
     }
 
     // Current readings with sensor health
-    Map bathroomStatus = getSensorStatus(bathroomHumiditySensors, "Bathroom")
-    Map referenceStatus = getSensorStatus(referenceHumiditySensors, "Reference")
+    Map bathroomStatus = getSensorStatus(bathroomHumiditySensors)
+    Map referenceStatus = getSensorStatus(referenceHumiditySensors)
 
     if (bathroomStatus.median != null) {
         status.append("Bathroom: ${bathroomStatus.median}%")
@@ -872,14 +869,25 @@ private BigDecimal computeMedianHumidity(List sensors) {
     }
 }
 
-private Map getSensorStatus(List sensors, String label) {
+private Map getSensorStatus(List sensors) {
     if (!sensors) {
         return [active: 0, total: 0, excluded: [], median: null]
     }
 
     List activeSensors = getActiveSensors(sensors)
     List excludedNames = sensors.findAll { !activeSensors.contains(it) }.collect { it.displayName }
-    BigDecimal median = computeMedianHumidity(sensors)
+
+    BigDecimal median = null
+    if (activeSensors.size() > 0) {
+        List<BigDecimal> values = activeSensors.collect { it.currentValue("humidity") as BigDecimal }
+        values.sort()
+        Integer n = values.size()
+        if (n % 2 == 0) {
+            median = (values[(n / 2 - 1) as int] + values[(n / 2) as int]) / 2.0
+        } else {
+            median = values[(n / 2) as int]
+        }
+    }
 
     return [
         active: activeSensors.size(),
