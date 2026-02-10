@@ -151,6 +151,11 @@ void updated() {
     schedulePolling()
 }
 
+void deviceTypeUpdated() {
+    logWarn "driver change detected"
+    configure()
+}
+
 void configure() {
     sendEvent(name: "supportedThermostatFanModes", value: JsonOutput.toJson(constValidFanModes.values()))
     sendEvent(name: "supportedThermostatModes", value: JsonOutput.toJson(constValidThermostatModes.values()))
@@ -1102,11 +1107,23 @@ private void schedulePolling() {
     logDebug "Polling: every ${interval} min"
 }
 
-void logDebug(String msg) {
-    if (logEnable) log.debug msg
+private void logDebug(String message) {
+    if (logEnable) log.debug("${device.displayName} : ${message}")
+}
+
+private void logInfo(String message) {
+    log.info("${device.displayName} : ${message}")
+}
+
+private void logWarn(String message) {
+    log.warn("${device.displayName} : ${message}")
+}
+
+private void logError(String message) {
+    log.error("${device.displayName} : ${message}")
 }
 
 void logsOff() {
-    log.warn "Debug logging disabled"
+    logWarn "Debug logging disabled"
     device.updateSetting("logEnable", [value: "false", type: "bool"])
 }

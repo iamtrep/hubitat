@@ -122,6 +122,11 @@ void uninstalled() {
     logInfo('uninstalled()')
 }
 
+void deviceTypeUpdated() {
+    logWarn "driver change detected"
+    configure()
+}
+
 void configure(){
     logWarn "configure..."
     state.driverVersion = constDriverVersion

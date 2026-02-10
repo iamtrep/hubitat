@@ -67,6 +67,11 @@ void updated() {
     runIn(2, "poll")
 }
 
+void deviceTypeUpdated() {
+    logWarn "driver change detected"
+    configure()
+}
+
 // Runs when the hub starts up
 void initialize() {
     runIn(2, "poll")

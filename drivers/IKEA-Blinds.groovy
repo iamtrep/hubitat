@@ -119,6 +119,11 @@ void updated() {
 	if (debugEnable || traceEnable) runIn(1800,"logsOff")
 }
 
+void deviceTypeUpdated() {
+    logWarn "driver change detected"
+    configure()
+}
+
 void open() {
     logTrace "open()"
     sendZigbeeCommands(zigbee.command(WINDOW_COVERING_CLUSTER, WC_OPEN_COMMAND))

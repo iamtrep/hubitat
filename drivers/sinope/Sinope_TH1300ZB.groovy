@@ -316,6 +316,11 @@ void uninstalled() {
     logInfo('uninstalled()')
 }
 
+void deviceTypeUpdated() {
+    logWarn "driver change detected"
+    configure()
+}
+
 
 void heat() {
     logInfo('heat(): mode set')

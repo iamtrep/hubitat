@@ -109,7 +109,7 @@ void updated() {
 }
 
 void deviceTypeUpdated() {
-    logWarn("device type change detected")
+    logWarn "driver change detected"
     configure()
 }
 

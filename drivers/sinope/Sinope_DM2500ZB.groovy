@@ -156,6 +156,11 @@ void uninstalled() {
     // called when device is removed
 }
 
+void deviceTypeUpdated() {
+    logWarn "driver change detected"
+    configure()
+}
+
 // Capabilities
 
 void configure() {

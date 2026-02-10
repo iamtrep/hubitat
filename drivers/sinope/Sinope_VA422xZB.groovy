@@ -127,6 +127,11 @@ void uninstalled() {
     }
 }
 
+void deviceTypeUpdated() {
+    logWarn "driver change detected"
+    configure()
+}
+
 // Capabilities
 
 void configure() {
