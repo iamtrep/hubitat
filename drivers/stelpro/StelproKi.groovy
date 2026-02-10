@@ -33,7 +33,7 @@
 
 import groovy.transform.Field
 
-@Field static final String constCodeVersion = "0.0.6"
+@Field static final String constCodeVersion = "0.0.7"
 
 metadata {
     definition (

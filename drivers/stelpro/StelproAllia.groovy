@@ -33,7 +33,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import groovy.json.JsonOutput
 
-@Field static final String constDriverVersion = "0.0.2"
+@Field static final String constDriverVersion = "0.0.3"
 
 metadata {
     definition (name: "Stelpro Allia Zigbee Thermostat",
@@ -100,12 +100,12 @@ metadata {
 
 // Install/Configure/Refresh
 
-List<String> installed() {
+void installed() {
     logInfo('installed()')
     configure()
 }
 
-List<String> initialize() {
+void initialize() {
     logInfo('initialize()')
     if (state.driverVersion != constDriverVersion) {
         logWarn "New/different driver installed since last configure()"
@@ -113,7 +113,7 @@ List<String> initialize() {
     refresh()
 }
 
-List<String> updated() {
+void updated() {
     logInfo('updated()')
     configure()
 }
@@ -122,7 +122,7 @@ void uninstalled() {
     logInfo('uninstalled()')
 }
 
-List<String> configure(){
+void configure(){
     logWarn "configure..."
     state.driverVersion = constDriverVersion
 
@@ -164,10 +164,12 @@ List<String> configure(){
     cmds += zigbee.configureReporting(0x204, 0x0001, 0x30, 0, reportingSeconds as int)         //Attribute ID 0x0001 = keypad lockout, Data Type: 8 bits enum
 
     logTrace "cmds:${cmds}"
-    return cmds + refresh()
+    sendZigbeeCommands(cmds)
+
+    refresh()
 }
 
-def refresh() {
+void refresh() {
     logInfo("refresh")
     List<String> cmds = []
 
@@ -185,7 +187,7 @@ def refresh() {
     cmds += zigbee.readAttribute(0x204, 0x0001) // Keypad Lockout
 
     logTrace "refresh cmds:${cmds}"
-    return cmds
+    sendZigbeeCommands(cmds)
 }
 
 // Capabilities
