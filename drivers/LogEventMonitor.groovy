@@ -7,6 +7,9 @@
  */
 
 import groovy.json.JsonSlurper
+import groovy.transform.Field
+
+@Field static int STARTUP_DELAY_SECS = 60
 
 metadata {
     definition(
@@ -111,7 +114,7 @@ def initialize() {
     sendEvent(name: "connectionStatus", value: "initializing")
 
     // Connect to WebSocket
-    runIn(2, "connect")
+    runIn(location.hub.uptime < STARTUP_DELAY_SECS ? STARTUP_DELAY_SECS : 2, "connect")
 
     // Health check every 5 minutes
     runEvery5Minutes("healthCheck")
