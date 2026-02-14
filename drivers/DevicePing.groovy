@@ -256,11 +256,9 @@ private void scheduleNextPing() {
         delay = retryInterval * backoffFactor
         logDebug "Scheduling retry ${state.currentRetryCount}/${maxRetries} in ${delay} seconds (backoff factor: ${backoffFactor})"
     } else {
-        // Normal mode: pingInterval with ~20% jitter
+        // Normal mode: pingInterval with ±7s jitter to desynchronize devices
         int intervalSecs = (pingInterval ?: 5) * 60
-        int jitterWindow = intervalSecs / 5
-        int offset = intervalSecs / 10
-        delay = intervalSecs - offset + new Random().nextInt(jitterWindow + 1)
+        delay = intervalSecs - 7 + new Random().nextInt(15)
         logDebug "Scheduling next ping in ${delay} seconds"
     }
     runIn(delay, "ping")
