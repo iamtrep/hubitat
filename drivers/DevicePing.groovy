@@ -75,7 +75,7 @@ import hubitat.helper.NetworkUtils
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String driver_version = "0.0.5"
+@Field static final String driver_version = "0.0.6"
 @Field static final int RESPONSE_HISTORY_SIZE = 21
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int INITIAL_PING_DELAY = 2
@@ -102,7 +102,7 @@ void initialize() {
     // Checks if firmware version supports 3-parameter ping (adjust version as needed)
     state.supportsPingTimeout = supportsPingTimeout(location.hub.firmwareVersionString)
 
-    reschedulePing(true)
+    reschedulePing()
 
     if (debugEnable) runIn(DEBUG_LOG_TIMEOUT, "logsOff")
 }
@@ -110,6 +110,7 @@ void initialize() {
 private void initState() {
     if (state.version != driver_version) {
         log.warn("New driver version detected: ${driver_version} (previous: ${state.version})")
+        unschedule("ping")
         state.version = driver_version
     }
     if (state.currentRetryCount == null) state.currentRetryCount = 0
@@ -123,17 +124,11 @@ void refresh() {
     ping()
 }
 
-void reschedulePing(init = false) {
+void reschedulePing() {
     unschedule("ping")
 
     if (deviceIP || httpURL) {
-        // Schedule regular ping based on user preference
-        if (pingInterval) {
-            schedule("0 */${pingInterval} * ? * *", "ping")
-        }
-
-        // Do an initial ping
-        if (init) runIn(INITIAL_PING_DELAY, "ping")
+        runIn(INITIAL_PING_DELAY, "ping")
     } else {
         log.warn "No device IP or HTTP URL specified. Pings will not be scheduled."
     }
@@ -176,6 +171,8 @@ void ping() {
         updateLastResponseTime(pingRT, httpRT)
     } catch (Exception e) {
         log.error "Error during ping: ${e.message}"
+    } finally {
+        scheduleNextPing()
     }
 }
 
@@ -238,10 +235,9 @@ void updateDeviceStatus(boolean online) {
             sendEvent(name: "contact", value: contactValue, descriptionText: newStatusDescription)
             logInfo "Device ${device.getLabel()} status changed from ${currentStatus} to ${newStatus}"
 
-            // Reset retry count and restore cron schedule if device comes back online
+            // Reset retry count so scheduleNextPing() uses normal interval
             if (online) {
                 resetRetryCount()
-                reschedulePing()
             }
         }
     }
@@ -252,26 +248,27 @@ void updateDeviceStatus(boolean online) {
     }
 }
 
-void handleRetry() {
-    // Increment retry counter
-    state.currentRetryCount++
-
-    // Check if we should continue retrying
-    if (state.currentRetryCount <= maxRetries) {
-        // Calculate backoff time using exponential backoff strategy
+private void scheduleNextPing() {
+    int delay
+    if (state.currentRetryCount > 0 && state.currentRetryCount <= maxRetries) {
+        // Retry mode: exponential backoff
         def backoffFactor = Math.min(Math.pow(2, state.currentRetryCount - 1), maxBackoffFactor).toInteger()
-        def nextRetryInterval = retryInterval * backoffFactor
-
-        logDebug "Scheduling retry ${state.currentRetryCount}/${maxRetries} in ${nextRetryInterval} seconds (backoff factor: ${backoffFactor})"
-
-        // Cancel any existing retry and schedule a new one
-        unschedule("ping")
-        runIn(nextRetryInterval, "ping")
+        delay = retryInterval * backoffFactor
+        logDebug "Scheduling retry ${state.currentRetryCount}/${maxRetries} in ${delay} seconds (backoff factor: ${backoffFactor})"
     } else {
-        logDebug "Maximum retry count (${maxRetries}) reached. Falling back to regular schedule."
-        // We'll let the regular schedule take over now
-        reschedulePing()
+        // Normal mode: pingInterval with ~20% jitter
+        int intervalSecs = (pingInterval ?: 5) * 60
+        int jitterWindow = intervalSecs / 5
+        int offset = intervalSecs / 10
+        delay = intervalSecs - offset + new Random().nextInt(jitterWindow + 1)
+        logDebug "Scheduling next ping in ${delay} seconds"
     }
+    runIn(delay, "ping")
+}
+
+void handleRetry() {
+    state.currentRetryCount++
+    logDebug "Retry count incremented to ${state.currentRetryCount}/${maxRetries}"
 }
 
 void resetRetryCount() {
