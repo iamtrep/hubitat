@@ -5,3 +5,4 @@
 #*.groovy
 .DS_Store
 *.py~
+.hubitat.json
