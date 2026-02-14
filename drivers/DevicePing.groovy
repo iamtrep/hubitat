@@ -49,6 +49,7 @@ metadata {
         attribute "httpStatus", "enum", ["success", "failed"]
         attribute "lastPingResponseTime", "number"
         attribute "lastHttpResponseTime", "number"
+        attribute "lastResponseTime", "number"
     }
 
     preferences {
@@ -157,41 +158,46 @@ void ping() {
     }
 
     try {
-        boolean pingSuccess = true
+        long pingRT = -1
 
         if (deviceIP) {
-            pingSuccess = sendPingRequest()
-            sendEvent(name: "pingStatus", value: pingSuccess ? "success" : "failed", descriptionText: "Ping ${deviceIP} ${pingSuccess}")
+            pingRT = sendPingRequest()
+            sendEvent(name: "pingStatus", value: pingRT >= 0 ? "success" : "failed", descriptionText: "Ping ${deviceIP} ${pingRT >= 0}")
         }
 
-        boolean httpSuccess = true
+        long httpRT = -1
 
         if (httpURL) {
-            httpSuccess = sendHttpRequest()
-            sendEvent(name: "httpStatus", value: httpSuccess ? "success" : "failed", descriptionText: "HTTP GET ${httpURL} ${httpSuccess}")
+            httpRT = sendHttpRequest()
+            sendEvent(name: "httpStatus", value: httpRT >= 0 ? "success" : "failed", descriptionText: "HTTP GET ${httpURL} ${httpRT >= 0}")
         }
 
-        updateDeviceStatus(pingSuccess && httpSuccess)
+        updateDeviceStatus((deviceIP ? pingRT >= 0 : true) && (httpURL ? httpRT >= 0 : true))
+        updateLastResponseTime(pingRT, httpRT)
     } catch (Exception e) {
         log.error "Error during ping: ${e.message}"
     }
 }
 
-boolean sendPingRequest() {
+long sendPingRequest() {
     try {
         NetworkUtils.PingData pingData = state.supportsPingTimeout ? NetworkUtils.ping(deviceIP,1,1) : NetworkUtils.ping(deviceIP, 1)
         boolean success = pingData.packetLoss != 100
         logDebug "Ping $deviceIP result: ${success ? 'Success' : 'Failed'} rttAvg: ${pingData.rttAvg} ms"
-        if (success) recordResponseTime("ping", Math.round(pingData.rttAvg) as long)
-        return success
+        if (success) {
+            long elapsed = Math.round(pingData.rttAvg) as long
+            recordResponseTime("ping", elapsed)
+            return elapsed
+        }
+        return -1
     } catch (Exception e) {
         log.error "Error during ping: ${e.message}"
-        return false
+        return -1
     }
 }
 
-boolean sendHttpRequest() {
-    boolean result = false
+long sendHttpRequest() {
+    long result = -1
     try {
         Map params = [
             uri: httpURL,
@@ -203,16 +209,15 @@ boolean sendHttpRequest() {
                 long elapsed = now() - timeBefore
                 logDebug "HTTP GET $httpURL successful in ${elapsed} ms"
                 recordResponseTime("http", elapsed)
-                result = true
+                result = elapsed
             } else {
                 logInfo "HTTP GET $httpURL failed with status ${response.status}"
-                result = false
             }
         }
         return result
     } catch (Exception e) {
         log.error "Error sending HTTP request: ${e.message}"
-        return false
+        return -1
     }
 }
 
@@ -233,9 +238,10 @@ void updateDeviceStatus(boolean online) {
             sendEvent(name: "contact", value: contactValue, descriptionText: newStatusDescription)
             logInfo "Device ${device.getLabel()} status changed from ${currentStatus} to ${newStatus}"
 
-            // Reset retry count if device comes back online
+            // Reset retry count and restore cron schedule if device comes back online
             if (online) {
                 resetRetryCount()
+                reschedulePing()
             }
         }
     }
@@ -294,6 +300,13 @@ private boolean supportsPingTimeout(String versionString) {
 
 
 // Response time tracking
+
+private void updateLastResponseTime(long pingRT, long httpRT) {
+    Long maxRT = [pingRT, httpRT].findAll { it >= 0 }.max()
+    if (maxRT != null) {
+        sendEvent(name: "lastResponseTime", value: maxRT, unit: "ms")
+    }
+}
 
 private void recordResponseTime(String name, long elapsed) {
     String capitalName = name.capitalize()
