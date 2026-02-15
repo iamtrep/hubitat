@@ -115,7 +115,7 @@ void resetAttributes() {
 void configure() {
     unschedule("poll")
     try {
-        def httpParams = [
+        Map<String, String> httpParams = [
                 uri        : "http://${ip}",
                 path       : constLocalPathToConfig,
                 contentType: "application/json"
@@ -131,7 +131,7 @@ void configure() {
 
 void poll() {
     try {
-        def httpParams = [
+        Map<String, String> httpParams = [
                 uri        : "http://${ip}",
                 path       : constLocalPathToAirData,
                 contentType: "application/json"
@@ -154,7 +154,7 @@ private void parseConfig(response, data) {
         return
     }
     if (response.getStatus() == 200 || response.getStatus() == 207) {
-        def awairConfig = parseJson(response.data)
+        Map awairConfig = parseJson(response.data)
         logTrace "parseConfig(): ${awairConfig}"
 
         //Awair UUID
@@ -172,8 +172,8 @@ private void parseConfig(response, data) {
 }
 
 
-private void processEvent(name, value, unit = null, description = null) {
-    def evt = [
+private void processEvent(String name, Object value, String unit = null, String description = null) {
+    Map evt = [
         name : name,
         value: value
     ]
@@ -204,7 +204,7 @@ private void processAwairData(response, data) {
         return
     }
     if (response.getStatus() == 200 || response.getStatus() == 207) {
-        def awairData = parseJson(response.data)
+        Map awairData = parseJson(response.data)
         logTrace "processAwairData(): ${awairData}"
 
         // VOC
@@ -217,17 +217,17 @@ private void processAwairData(response, data) {
         processAirQualityMetric("pm25", awairData.pm25, "ug/m3", PM25_THRESHOLDS, "good", "pm25_desc")
 
         // EPA AQI calculation
-        def readings = (state.pm25readings ?: []) as List
+        List readings = (state.pm25readings ?: []) as List
         readings << awairData.pm25
         state.pm25readings = readings
-        def currAqi = calculateAqi()
+        int currAqi = calculateAqi()
         processEvent("airQualityIndex", currAqi, "", "Current calculated AQI is ${currAqi}")
 
         // AIQ Score - https://support.getawair.com/hc/en-us/articles/19504367520023-Understanding-Awair-Score-and-Air-Quality-Factors-Measured-By-Awair-Element
         processAirQualityMetric("airQuality", awairData.score, "", AIQ_THRESHOLDS, "poor", "aiq_desc")
 
         // Temperature
-        def temperature = convertTemperatureIfNeeded(awairData.temp, "c", 1)
+        BigDecimal temperature = convertTemperatureIfNeeded(awairData.temp, "c", 1)
         processEvent("temperature", temperature, "°${location.temperatureScale}", "Temperature is ${temperature}°${location.temperatureScale}")
 
         // CO2
@@ -241,7 +241,7 @@ private void processAwairData(response, data) {
     }
 }
 
-private void processAirQualityMetric(String metricName, def level, String unit,
+private void processAirQualityMetric(String metricName, Number level, String unit,
                                      Map<Integer, String> thresholds, String defaultDesc, String descAttribute) {
     processEvent(metricName, level, unit, "${metricName} is ${level} ${unit}")
 
@@ -273,7 +273,7 @@ private void processAirQualityMetric(String metricName, def level, String unit,
 
 // Calculate the AQI based on the stored PM2.5 Values
 private int calculateAqi() {
-    def readings = (state.pm25readings ?: []) as List
+    List readings = (state.pm25readings ?: []) as List
 
     // Maintain rolling window of PM2.5 readings
     while (readings.size() > MAX_PM25_READINGS) {
@@ -323,22 +323,22 @@ private double calculateRawAqi(Map<String, Object> aqiTier, double avgPM25) {
 
 // Logging helpers
 
-private logTrace(message) {
+private void logTrace(String message) {
     if (traceEnable) log.trace("${device} : ${message}")
 }
 
-private logDebug(message) {
+private void logDebug(String message) {
     if (debugEnable) log.debug("${device} : ${message}")
 }
 
-private logInfo(message) {
+private void logInfo(String message) {
     if (txtEnable) log.info("${device} : ${message}")
 }
 
-private logWarn(message) {
+private void logWarn(String message) {
     log.warn("${device} : ${message}")
 }
 
-private logError(message) {
+private void logError(String message) {
     log.error("${device} : ${message}")
 }
