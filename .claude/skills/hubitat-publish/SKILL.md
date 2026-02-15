@@ -1,13 +1,13 @@
 ---
 name: hubitat-publish
-description: Publish a driver to other Hubitat hubs on the same account
-argument-hint: "[driver name or ID]"
+description: Publish a driver or app to other Hubitat hubs on the same account
+argument-hint: "[driver/app name, filepath, or ID]"
 allowed-tools: Bash, Read, Glob, Grep
 ---
 
 # Hubitat Publish Skill
 
-Publish a driver's code to all other Hubitat hubs linked to the same account, and report distribution status.
+Publish a driver or app's code to all other Hubitat hubs linked to the same account, and report distribution status.
 
 ## Instructions
 
@@ -17,33 +17,37 @@ Follow these steps exactly:
 
 Read `.hubitat.json` from the project root to get `hub_ip`.
 
-### Step 2: Identify the Driver
+### Step 2: Identify the Code and Type
 
 Check `$ARGUMENTS`:
 
-- **If a numeric ID** — use it directly as the driver ID.
-- **If a name or filepath** — resolve it to a driver ID:
-  1. Query `curl -s "http://{hub_ip}/hub2/userDeviceTypes"` to get the list of user drivers.
-  2. If a filepath was given, extract the `name` from the file's `definition()` block and match it against the list.
-  3. If a name was given, find the entry where `name` matches (case-insensitive).
-  4. Get the `id` field from the matching entry.
-- **If no argument** — find the most recently modified `.groovy` file in `drivers/` using `ls -t drivers/**/*.groovy 2>/dev/null | head -1`, extract its `name` from the `definition()` block, and resolve to a driver ID as above.
+- **If a numeric ID** — use it directly. You'll need to determine the type (driver or app) by checking both `userDeviceTypes` and `userAppTypes`.
+- **If a filepath** — determine the type from the path:
+  - Path contains `drivers/` → it's a **driver**
+  - Path contains `apps/` → it's an **app**
+  - Extract the `name` from the file's `definition()` block and resolve to an ID.
+- **If a name** — search both `userDeviceTypes` and `userAppTypes` for a case-insensitive match. Get the `id` and determine the type from which list matched.
+- **If no argument** — find the most recently modified `.groovy` file using `ls -t apps/*.groovy drivers/**/*.groovy 2>/dev/null | head -1`, then resolve as above.
 
-If no matching driver is found on the hub, report the error and stop.
+To resolve names to IDs:
+- **Drivers**: `curl -s "http://{hub_ip}/hub2/userDeviceTypes"`
+- **Apps**: `curl -s "http://{hub_ip}/hub2/userAppTypes"`
 
-### Step 3: Publish the Driver
+If no match is found on the hub, report the error and stop.
+
+### Step 3: Publish the Code
 
 Initiate publishing by calling:
 
 ```bash
-curl -s "http://{hub_ip}/hub/publishCode/driver/{driverId}"
+curl -s "http://{hub_ip}/hub/publishCode/{type}/{id}"
 ```
 
-Note the path includes `driver` as the code type between `publishCode` and the ID.
+Where `{type}` is `driver` or `app`.
 
 Report the initial response to the user. The response is JSON like:
 ```json
-{"success":true,"completed":false,"hubs":[{"id":"...","name":"Chalet","status":"Pending"},...]}"
+{"success":true,"completed":false,"hubs":[{"id":"...","name":"Chalet","status":"Pending"},...]}
 ```
 
 ### Step 4: Check Distribution Status
@@ -66,6 +70,6 @@ The response is JSON:
 
 Summarize what happened:
 
-- Driver name and ID that was published
+- Name, type (driver/app), and ID that was published
 - A markdown table of target hubs with columns: **Hub Name**, **Status**
 - Any errors encountered
