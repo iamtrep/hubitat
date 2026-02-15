@@ -10,6 +10,8 @@
  *
  */
 
+import groovy.transform.Field
+
 metadata {
     definition(name: "Awair Element",
                namespace: "iamtrep",
@@ -20,7 +22,7 @@ metadata {
         capability "CarbonDioxideMeasurement"
         capability "Configuration"
         capability "Initialize"
-        capability "Polling"
+        capability "Refresh"
         capability "RelativeHumidityMeasurement"
         capability "Sensor"
         capability "TemperatureMeasurement"
@@ -49,8 +51,6 @@ metadata {
     }
 }
 
-import groovy.transform.Field
-
 @Field static final String constLocalPathToAirData = "/air-data/latest"
 @Field static final String constLocalPathToConfig = "/settings/config/data"
 
@@ -63,6 +63,10 @@ void installed() {
 
 // Runs when the driver preferences are saved/updated
 void updated() {
+    if (pollingInterval != null && (pollingInterval as int) < 10) {
+        logWarn "pollingInterval too low, using 10 seconds"
+        device.updateSetting("pollingInterval", [type: "number", value: 10])
+    }
     configure()
     runIn(2, "poll")
 }
@@ -70,11 +74,20 @@ void updated() {
 void deviceTypeUpdated() {
     logWarn "driver change detected"
     configure()
+    runIn(2, "poll")
 }
 
 // Runs when the hub starts up
 void initialize() {
     runIn(2, "poll")
+}
+
+void refresh() {
+    poll()
+}
+
+void uninstalled() {
+    unschedule()
 }
 
 void resetAttributes() {
@@ -90,7 +103,7 @@ void resetAttributes() {
     processEvent("temperature", -1, "°${location.temperatureScale}", "Temperature is ${-1}°${location.temperatureScale}")
     processEvent("carbonDioxide", -1, "ppm", "carbonDioxide is ${-1} ppm")
     processEvent("humidity", -1, "%", "humidity is ${-1}")
-    processEvent("airQualityIndex", 0, "", "Current calculated AQI is 0")
+    processEvent("airQualityIndex", -1, "", "Current calculated AQI is -1")
 
     processEvent("aiq_desc", "unknown")
     processEvent("voc_desc", "unknown")
@@ -100,9 +113,10 @@ void resetAttributes() {
 }
 
 void configure() {
+    unschedule("poll")
     try {
         def httpParams = [
-                uri        : "http://" + ip,
+                uri        : "http://${ip}",
                 path       : constLocalPathToConfig,
                 contentType: "application/json"
         ]
@@ -112,31 +126,35 @@ void configure() {
         logError "configure(): ${e}"
     }
 
-    runIn(pollingInterval, "poll")
+    runIn((pollingInterval ?: 300) as int, "poll")
 }
 
 void poll() {
     try {
         def httpParams = [
-                uri        : "http://" + ip,
+                uri        : "http://${ip}",
                 path       : constLocalPathToAirData,
                 contentType: "application/json"
         ]
 
         asynchttpGet('processAwairData', httpParams)
     } catch (Exception e) {
-        logError "error occured in poll(): ${e}"
+        logError "error occurred in poll(): ${e}"
     }
 
-    runIn(pollingInterval, poll)
+    runIn((pollingInterval ?: 300) as int, "poll")
 }
 
 
 // private methods
 
 private void parseConfig(response, data) {
+    if (response.hasError()) {
+        logError "HTTP error in parseConfig(): ${response.getErrorMessage()}"
+        return
+    }
     if (response.getStatus() == 200 || response.getStatus() == 207) {
-        awairConfig = parseJson(response.data)
+        def awairConfig = parseJson(response.data)
         logTrace "parseConfig(): ${awairConfig}"
 
         //Awair UUID
@@ -149,13 +167,13 @@ private void parseConfig(response, data) {
         updateDataValue("Firmware", awairConfig.fw_version)
 
     } else {
-        logError "http response error - STATUS ${response.getStatus()}"
+        logError "HTTP response error in parseConfig() - STATUS ${response.getStatus()}"
     }
 }
 
 
 private void processEvent(name, value, unit = null, description = null) {
-    evt = [
+    def evt = [
         name : name,
         value: value
     ]
@@ -181,6 +199,10 @@ private void processEvent(name, value, unit = null, description = null) {
 @Field static final Map<Integer, String> AIQ_THRESHOLDS = [80: "good", 60: "fair"]
 
 private void processAwairData(response, data) {
+    if (response.hasError()) {
+        logError "HTTP error in processAwairData(): ${response.getErrorMessage()}"
+        return
+    }
     if (response.getStatus() == 200 || response.getStatus() == 207) {
         def awairData = parseJson(response.data)
         logTrace "processAwairData(): ${awairData}"
@@ -195,7 +217,9 @@ private void processAwairData(response, data) {
         processAirQualityMetric("pm25", awairData.pm25, "ug/m3", PM25_THRESHOLDS, "good", "pm25_desc")
 
         // EPA AQI calculation
-        state.pm25readings << awairData.pm25
+        def readings = (state.pm25readings ?: []) as List
+        readings << awairData.pm25
+        state.pm25readings = readings
         def currAqi = calculateAqi()
         processEvent("airQualityIndex", currAqi, "", "Current calculated AQI is ${currAqi}")
 
@@ -210,10 +234,10 @@ private void processAwairData(response, data) {
         processAirQualityMetric("carbonDioxide", awairData.co2, "ppm", CO2_THRESHOLDS, "good", "co2_desc")
 
         // Humidity
-        processEvent("humidity", (int) awairData.humid, "%", "humidity is ${awairData.humid}")
+        processEvent("humidity", Math.round(awairData.humid as double) as int, "%", "humidity is ${awairData.humid}")
 
     } else {
-        logError "http response error in receiveData() - STATUS ${response.getStatus()}"
+        logError "HTTP response error in processAwairData() - STATUS ${response.getStatus()}"
     }
 }
 
@@ -221,7 +245,7 @@ private void processAirQualityMetric(String metricName, def level, String unit,
                                      Map<Integer, String> thresholds, String defaultDesc, String descAttribute) {
     processEvent(metricName, level, unit, "${metricName} is ${level} ${unit}")
 
-    String newDesc = thresholds.sort { -it.key }.find { threshold, desc ->
+    String newDesc = thresholds.find { threshold, desc ->
         level > threshold
     }?.value ?: defaultDesc
 
@@ -249,17 +273,22 @@ private void processAirQualityMetric(String metricName, def level, String unit,
 
 // Calculate the AQI based on the stored PM2.5 Values
 private int calculateAqi() {
+    def readings = (state.pm25readings ?: []) as List
+
     // Maintain rolling window of PM2.5 readings
-    while (state.pm25readings.size() > MAX_PM25_READINGS) {
-        state.pm25readings.removeAt(0)
+    while (readings.size() > MAX_PM25_READINGS) {
+        readings.removeAt(0)
     }
+    state.pm25readings = readings
+
+    if (readings.isEmpty()) return 0
 
     // Calculate average PM2.5
     double totalPM25 = 0.0d
-    for (Double reading : state.pm25readings) {
+    for (Double reading : readings) {
         totalPM25 += reading
     }
-    double avgPM25 = totalPM25 / state.pm25readings.size()
+    double avgPM25 = totalPM25 / readings.size()
     state.avgPM25 = avgPM25
 
     // Find appropriate AQI breakpoint tier
@@ -274,17 +303,12 @@ private int calculateAqi() {
 }
 
 private Map<String, Object> findAqiTier(double avgPM25) {
-    for (Map<String, Object> breakpoint : AQI_BREAKPOINTS) {
-        double bpLow = breakpoint.bpLow as double
-        double bpHigh = breakpoint.bpHigh as double
-
-        if (avgPM25 >= bpLow && avgPM25 <= bpHigh) {
-            return breakpoint
+    for (int i = AQI_BREAKPOINTS.size() - 1; i >= 0; i--) {
+        if (avgPM25 >= (AQI_BREAKPOINTS[i].bpLow as double)) {
+            return AQI_BREAKPOINTS[i]
         }
     }
-
-    // Fallback to highest tier if no match found
-    return AQI_BREAKPOINTS.last()
+    return AQI_BREAKPOINTS.first()
 }
 
 private double calculateRawAqi(Map<String, Object> aqiTier, double avgPM25) {
