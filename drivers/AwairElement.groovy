@@ -30,7 +30,7 @@ metadata {
         attribute "pm10", "number"
         attribute "pm25", "number"
         attribute "voc", "number"
-        attribute "airQuality", "number"
+        attribute "awairScore", "number"
 
         attribute "aiq_desc", "ENUM", ["unknown", "poor", "fair", "good"]
         attribute "pm10_desc", "ENUM", ["unknown", "hazardous", "bad", "poor", "fair", "good"]
@@ -51,6 +51,7 @@ metadata {
     }
 }
 
+@Field static final String driver_version = "0.1.0"
 @Field static final String constLocalPathToAirData = "/air-data/latest"
 @Field static final String constLocalPathToConfig = "/settings/config/data"
 
@@ -58,6 +59,7 @@ metadata {
 void installed() {
     logDebug "installed..."
     resetAttributes()
+    initState()
     runIn(2, "poll")
 }
 
@@ -79,6 +81,7 @@ void deviceTypeUpdated() {
 
 // Runs when the hub starts up
 void initialize() {
+    initState()
     runIn(2, "poll")
 }
 
@@ -90,6 +93,15 @@ void uninstalled() {
     unschedule()
 }
 
+private void initState() {
+    if (state.version != driver_version) {
+        logWarn "New driver version detected: ${driver_version} (previous: ${state.version})"
+        unschedule("poll")
+        state.version = driver_version
+    }
+    if (state.pm25readings == null) state.pm25readings = []
+}
+
 void resetAttributes() {
     //Clear and initialize any state variables
     state.clear()
@@ -99,7 +111,7 @@ void resetAttributes() {
     processEvent("voc", -1, "ppb", "voc is ${-1} ppb")
     processEvent("pm10", -1, "ug/m3", "pm10 is ${-1} ug/m3")
     processEvent("pm25", -1, "ug/m3", "pm25 is ${-1} ug/m3")
-    processEvent("airQuality", -1, "", "airQuality is ${-1}")
+    processEvent("awairScore", -1, "", "awairScore is ${-1}")
     processEvent("temperature", -1, "°${location.temperatureScale}", "Temperature is ${-1}°${location.temperatureScale}")
     processEvent("carbonDioxide", -1, "ppm", "carbonDioxide is ${-1} ppm")
     processEvent("humidity", -1, "%", "humidity is ${-1}")
@@ -224,7 +236,7 @@ private void processAwairData(response, data) {
         processEvent("airQualityIndex", currAqi, "", "Current calculated AQI is ${currAqi}")
 
         // AIQ Score - https://support.getawair.com/hc/en-us/articles/19504367520023-Understanding-Awair-Score-and-Air-Quality-Factors-Measured-By-Awair-Element
-        processAirQualityMetric("airQuality", awairData.score, "", AIQ_THRESHOLDS, "poor", "aiq_desc")
+        processAirQualityMetric("awairScore", awairData.score, "", AIQ_THRESHOLDS, "poor", "aiq_desc")
 
         // Temperature
         BigDecimal temperature = convertTemperatureIfNeeded(awairData.temp, "c", 1)
