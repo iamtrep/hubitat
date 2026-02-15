@@ -10,6 +10,7 @@
  *
  */
 
+import groovy.transform.CompileStatic
 import groovy.transform.Field
 
 metadata {
@@ -102,7 +103,7 @@ private void initState() {
     if (state.pm25readings == null) state.pm25readings = []
 }
 
-void resetAttributes() {
+private void resetAttributes() {
     //Clear and initialize any state variables
     state.clear()
     state.pm25readings = []
@@ -134,6 +135,8 @@ void configure() {
         ]
 
         asynchttpGet('parseConfig', httpParams)
+    } catch (URISyntaxException e) {
+        logError "Invalid URI in configure() (check IP address setting): http://${ip} - ${e.message}"
     } catch (Exception e) {
         logError "configure(): ${e}"
     }
@@ -150,6 +153,8 @@ void poll() {
         ]
 
         asynchttpGet('processAwairData', httpParams)
+    } catch (URISyntaxException e) {
+        logError "Invalid URI in poll() (check IP address setting): http://${ip} - ${e.message}"
     } catch (Exception e) {
         logError "error occurred in poll(): ${e}"
     }
@@ -166,18 +171,23 @@ private void parseConfig(response, data) {
         return
     }
     if (response.getStatus() == 200 || response.getStatus() == 207) {
-        Map awairConfig = parseJson(response.data)
-        logTrace "parseConfig(): ${awairConfig}"
+        try {
+            Map awairConfig = parseJson(response.data)
+            logTrace "parseConfig(): ${awairConfig}"
 
-        //Awair UUID
-        updateDataValue("Device UUID", awairConfig.device_uuid)
+            //Awair UUID
+            updateDataValue("Device UUID", awairConfig.device_uuid)
 
-        //Awair MAC
-        updateDataValue("MAC Address", awairConfig.wifi_mac)
+            //Awair MAC
+            updateDataValue("MAC Address", awairConfig.wifi_mac)
 
-        //Awair Firmware Version
-        updateDataValue("Firmware", awairConfig.fw_version)
-
+            //Awair Firmware Version
+            updateDataValue("Firmware", awairConfig.fw_version)
+        } catch (groovy.json.JsonException e) {
+            logError "Malformed JSON from config endpoint: ${e.message} - raw: ${response.data}"
+        } catch (Exception e) {
+            logError "Failed to process config response: ${e}"
+        }
     } else {
         logError "HTTP response error in parseConfig() - STATUS ${response.getStatus()}"
     }
@@ -216,38 +226,43 @@ private void processAwairData(response, data) {
         return
     }
     if (response.getStatus() == 200 || response.getStatus() == 207) {
-        Map awairData = parseJson(response.data)
-        logTrace "processAwairData(): ${awairData}"
+        try {
+            Map awairData = parseJson(response.data)
+            logTrace "processAwairData(): ${awairData}"
 
-        // VOC
-        processAirQualityMetric("voc", awairData.voc, "ppb", VOC_THRESHOLDS, "good", "voc_desc")
+            // VOC
+            processAirQualityMetric("voc", awairData.voc, "ppb", VOC_THRESHOLDS, "good", "voc_desc")
 
-        // PM 10
-        processAirQualityMetric("pm10", awairData.pm10_est, "ug/m3", PM10_THRESHOLDS, "good", "pm10_desc")
+            // PM 10
+            processAirQualityMetric("pm10", awairData.pm10_est, "ug/m3", PM10_THRESHOLDS, "good", "pm10_desc")
 
-        // PM 2.5
-        processAirQualityMetric("pm25", awairData.pm25, "ug/m3", PM25_THRESHOLDS, "good", "pm25_desc")
+            // PM 2.5
+            processAirQualityMetric("pm25", awairData.pm25, "ug/m3", PM25_THRESHOLDS, "good", "pm25_desc")
 
-        // EPA AQI calculation
-        List readings = (state.pm25readings ?: []) as List
-        readings << awairData.pm25
-        state.pm25readings = readings
-        int currAqi = calculateAqi()
-        processEvent("airQualityIndex", currAqi, "", "Current calculated AQI is ${currAqi}")
+            // EPA AQI calculation
+            List readings = (state.pm25readings ?: []) as List
+            readings << awairData.pm25
+            state.pm25readings = readings
+            int currAqi = calculateAqi()
+            processEvent("airQualityIndex", currAqi, "", "Current calculated AQI is ${currAqi}")
 
-        // AIQ Score - https://support.getawair.com/hc/en-us/articles/19504367520023-Understanding-Awair-Score-and-Air-Quality-Factors-Measured-By-Awair-Element
-        processAirQualityMetric("awairScore", awairData.score, "", AIQ_THRESHOLDS, "poor", "aiq_desc")
+            // AIQ Score - https://support.getawair.com/hc/en-us/articles/19504367520023-Understanding-Awair-Score-and-Air-Quality-Factors-Measured-By-Awair-Element
+            processAirQualityMetric("awairScore", awairData.score, "", AIQ_THRESHOLDS, "poor", "aiq_desc")
 
-        // Temperature
-        BigDecimal temperature = convertTemperatureIfNeeded(awairData.temp, "c", 1)
-        processEvent("temperature", temperature, "°${location.temperatureScale}", "Temperature is ${temperature}°${location.temperatureScale}")
+            // Temperature
+            String temperature = convertTemperatureIfNeeded(awairData.temp, "c", 1)
+            processEvent("temperature", temperature, "°${location.temperatureScale}", "Temperature is ${temperature}°${location.temperatureScale}")
 
-        // CO2
-        processAirQualityMetric("carbonDioxide", awairData.co2, "ppm", CO2_THRESHOLDS, "good", "co2_desc")
+            // CO2
+            processAirQualityMetric("carbonDioxide", awairData.co2, "ppm", CO2_THRESHOLDS, "good", "co2_desc")
 
-        // Humidity
-        processEvent("humidity", Math.round(awairData.humid as double) as int, "%", "humidity is ${awairData.humid}")
-
+            // Humidity
+            processEvent("humidity", Math.round(awairData.humid as double) as int, "%", "humidity is ${awairData.humid}")
+        } catch (groovy.json.JsonException e) {
+            logError "Malformed JSON from air-data endpoint: ${e.message} - raw: ${response.data}"
+        } catch (Exception e) {
+            logError "Failed to process air data response: ${e}"
+        }
     } else {
         logError "HTTP response error in processAwairData() - STATUS ${response.getStatus()}"
     }
@@ -314,20 +329,22 @@ private int calculateAqi() {
     return Math.round(rawAqi) as int
 }
 
+@CompileStatic
 private Map<String, Object> findAqiTier(double avgPM25) {
     for (int i = AQI_BREAKPOINTS.size() - 1; i >= 0; i--) {
-        if (avgPM25 >= (AQI_BREAKPOINTS[i].bpLow as double)) {
+        if (avgPM25 >= (AQI_BREAKPOINTS[i]['bpLow'] as double)) {
             return AQI_BREAKPOINTS[i]
         }
     }
     return AQI_BREAKPOINTS.first()
 }
 
+@CompileStatic
 private double calculateRawAqi(Map<String, Object> aqiTier, double avgPM25) {
-    int aqiHigh = aqiTier.aqiHigh as int
-    int aqiLow = aqiTier.aqiLow as int
-    double bpHigh = aqiTier.bpHigh as double
-    double bpLow = aqiTier.bpLow as double
+    int aqiHigh = aqiTier['aqiHigh'] as int
+    int aqiLow = aqiTier['aqiLow'] as int
+    double bpHigh = aqiTier['bpHigh'] as double
+    double bpLow = aqiTier['bpLow'] as double
 
     return ((aqiHigh - aqiLow) / (bpHigh - bpLow)) * (avgPM25 - bpLow) + aqiLow
 }
