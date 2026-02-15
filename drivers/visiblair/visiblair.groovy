@@ -24,7 +24,8 @@ metadata {
         capability "Battery"
         capability "CarbonDioxideMeasurement"
         capability "Initialize"
-        capability "Polling"
+        capability "PressureMeasurement"
+        capability "Refresh"
         capability "RelativeHumidityMeasurement"
         capability "Sensor"
         capability "TemperatureMeasurement"
@@ -32,7 +33,6 @@ metadata {
         attribute "timestamp", "date" // lastSampleTimeStamp
         attribute "calibration", "date" // lastCalibration
 
-        command "refresh"
         command "reboot"
         command "calibrate"
         command "updateFirmware"
@@ -43,10 +43,14 @@ metadata {
     }
 }
 
+import groovy.transform.CompileStatic
 import groovy.transform.Field
 
+@Field static final String driver_version = "0.1.0"
 @Field static final String constCO2ClickURL = 'https://environment-monitor-01.co2.click:11000/api/v1'
 @Field static final String constVisiblairURL = 'https://api.visiblair.com:11000/api/v1'
+@Field static final int DEBUG_LOG_TIMEOUT = 1800
+@Field static final int HTTP_TIMEOUT = 15
 
 preferences {
     section("API parameters") {
@@ -54,7 +58,7 @@ preferences {
         input "token", "text", title: "Access Token", required: true
         /* TODO: enumerate sensors and add child devices */
         input "uuid", "text", title: "Sensor UUID", required: true
-        input("pollRate", "number", title: "Sensor Polling Rate (minutes)\nZero for no polling:", defaultValue:0)
+        input("pollRate", "number", title: "Sensor Polling Rate (minutes)\nZero for no polling:", defaultValue:0, range: "0..*")
     }
     section("Logging") {
         input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: false
@@ -67,37 +71,49 @@ preferences {
 
 // Utility functions
 
-def turnOffDebugLogging() {
+void turnOffDebugLogging() {
     logWarn "debug logging disabled..."
     device.updateSetting("debugEnable", [value: "false", type: "bool"])
     device.updateSetting("traceEnable", [value: "false", type: "bool"])
 }
 
-void updateDeviceAttribute(String aKey, aValue, String aUnit = "", String aDescription = ""){
-    sendEvent(name:aKey, value:aValue, unit:aUnit, descriptionText:aDescription)
+private void updateDeviceAttribute(String aKey, aValue, String aUnit = "", String aDescription = "") {
+    sendEvent(name: aKey, value: aValue, unit: aUnit, descriptionText: aDescription)
     if (aDescription != "") logInfo(aDescription)
 }
 
 // driver methods
 
-def initialize(){
-    updateDeviceAttribute("battery", "100", "%")
+void installed() {
+    logDebug "installed..."
+    state.version = driver_version
+    initialize()
+}
+
+void uninstalled() {
+    unschedule()
+}
+
+void initialize() {
+    if (state.version != driver_version) {
+        logWarn "New driver version detected: ${driver_version} (previous: ${state.version})"
+        state.version = driver_version
+    }
+    updateDeviceAttribute("battery", 100, "%")
     updated()
 }
 
-def updated() {
-    if (debugEnable) runIn(1800, turnOffDebugLogging)
+void updated() {
+    if (debugEnable) runIn(DEBUG_LOG_TIMEOUT, turnOffDebugLogging)
 
-    if(pollRate == null)
-        device.updateSetting("pollRate",[value:0,type:"number"])
+    if (pollRate == null)
+        device.updateSetting("pollRate", [value: 0, type: "number"])
 
     unschedule("refresh")
-    if(pollRate > 0)
-        runIn(pollRate*60,"refresh")
+    if (pollRate > 0)
+        runIn(pollRate * 60, "refresh")
 
     refresh()
-
-    //log.warn "debug logging is: ${debugEnable == true}"
 }
 
 void poll() {
@@ -105,60 +121,58 @@ void poll() {
 }
 
 void refresh() {
+    if (!uuid || !token) {
+        logWarn "Sensor UUID and Access Token must be configured before polling"
+        return
+    }
+
     getDeviceValuesFromAPI("sensor?uuid=${uuid}&viewToken=${token}")
 
     unschedule("refresh")
-    if(pollRate > 0)
-        runIn(pollRate*60,"refresh")
+    if (pollRate > 0)
+        runIn(pollRate * 60, "refresh")
 }
 
 // for debug purposes only
-def setBatteryLevel(level) {
-	logDebug "setBatteryLevel(${level}) was called"
+void setBatteryLevel(Number level) {
+    logDebug "setBatteryLevel(${level}) was called"
     updateDeviceAttribute("battery", level)
 }
 
 // translate JSON keys to device attributes
-void refreshSensorData(retData){
-    retData.each{
-        unit=""
+void refreshSensorData(Map retData) {
+    if (!retData) return
 
-        switch (it.key){
+    retData.each {
+        switch (it.key) {
             case "firmwareVersion":
                 state.firmwareVersion = it.value
                 break
             case "lastSampleTemperature":
-                unit="°C"
-                /* if(useFahrenheit){
-                    it.value = celsiusToFahrenheit(it.value)
-                    unit = "°F"
-                } */
-                updateDeviceAttribute("temperature", it.value, unit, "Temperature is ${it.value}${unit}")
+                String temp = convertTemperatureIfNeeded(it.value, "c", 1)
+                String unit = "°${location.temperatureScale}"
+                updateDeviceAttribute("temperature", temp, unit, "Temperature is ${temp}${unit}")
                 break
             case "lastSampleHumidity":
-                unit="%"
-                updateDeviceAttribute("humidity", it.value, unit, "Humidity is ${it.value}${unit}")
+                updateDeviceAttribute("humidity", it.value, "%", "Humidity is ${it.value}%")
                 break
             case "lastSampleCo2":
-                unit="ppm"
-                updateDeviceAttribute("carbonDioxide", it.value, unit, "CO2 is ${it.value}${unit}")
+                updateDeviceAttribute("carbonDioxide", it.value, "ppm", "CO2 is ${it.value}ppm")
                 break
             case "lastSamplePressure":
-                unit="mBar"
-                updateDeviceAttribute("pressure", it.value.Float64, unit, "Pressure is ${it.value.Float64}${unit}")
+                Number pressure = (it.value instanceof Map) ? it.value.Float64 : it.value
+                updateDeviceAttribute("pressure", pressure, "mBar", "Pressure is ${pressure}mBar")
                 break
             case "lastSampleBattPct":
-                unit="%"
-                updateDeviceAttribute("battery", it.value.Float64, unit, "Battery level is ${it.value.Float64}${unit}")
+                Number battery = (it.value instanceof Map) ? it.value.Float64 : it.value
+                updateDeviceAttribute("battery", battery, "%", "Battery level is ${battery}%")
                 break
             case "lastSampleTimeStamp":
-                unit=""
-                updateDeviceAttribute("timestamp", it.value, unit, "Timestamp of last sample is ${it.value}")
-		        break
+                updateDeviceAttribute("timestamp", it.value, "", "Timestamp of last sample is ${it.value}")
+                break
             case "lastCalibration":
-                unit=""
-                updateDeviceAttribute("calibration", it.value, unit)
-		        break
+                updateDeviceAttribute("calibration", it.value, "")
+                break
             case "model":
                 state.model = it.value
                 break
@@ -175,47 +189,50 @@ void refreshSensorData(retData){
                 state.temperatureUnit = it.value
                 break
             default:
-                logDebug "attribute not handled : ${it.key}=${it.value}${unit}"
+                logDebug "attribute not handled: ${it.key}=${it.value}"
                 break
         }
     }
 }
 
 
-def getDeviceValuesFromAPI (command){
- 	Map requestParams =
-	[
-        uri: "$constVisiblairURL/$command",
+void getDeviceValuesFromAPI(String command) {
+    Map requestParams = [
+        uri: "${constVisiblairURL}/${command}",
         headers: [
             requestContentType: 'application/json',
-		    contentType: 'application/json'
-        ]
-	]
+            contentType: 'application/json'
+        ],
+        timeout: HTTP_TIMEOUT
+    ]
 
-    asynchttpGet("getDeviceValuesFromAPI_async", requestParams, [cmd:"${command}"])
+    asynchttpGet("getDeviceValuesFromAPI_async", requestParams, [cmd: command])
 }
 
-def getDeviceValuesFromAPI_async(resp, data){
+void getDeviceValuesFromAPI_async(resp, data) {
     try {
-        logDebug "$resp.properties - $data.cmd - ${resp.getStatus()}"
+        if (resp.hasError()) {
+            logError "HTTP error: ${resp.getErrorMessage()}"
+            return
+        }
 
-        if(resp.getStatus() == 200 || resp.getStatus() == 207){
-            if(resp.data) {
-                cmd = data.cmd
-                end = cmd.indexOf('?')
+        logDebug "${resp.properties} - ${data.cmd} - ${resp.getStatus()}"
+
+        if (resp.getStatus() == 200 || resp.getStatus() == 207) {
+            if (resp.data) {
+                String cmd = data.cmd
+                int end = cmd.indexOf('?')
                 if (end >= 0) {
-                    cmd = data.cmd.substring(0,end)
+                    cmd = data.cmd.substring(0, end)
                 }
-                if(cmd == "sensor") {
-                    jsonData = (HashMap) resp.json
-                    //cd = getChildDevice("${app.id}-$devId")
-                    //cd.refreshSensorData(jsonData)
+                if (cmd == "sensor") {
+                    Map jsonData = (HashMap) resp.json
                     refreshSensorData(jsonData)
                 } else if (cmd == "sensors/getForUser") {
-                    nSensors = resp.json.size
+                    int nSensors = resp.json.size
                     logDebug "found ${nSensors} sensors for this user"
                     for (sensorJson in resp.json) {
-                        sensorData = (HashMap) sensorJson
+                        Map sensorData = (HashMap) sensorJson
                         logTrace sensorData
                         refreshSensorData(sensorData)
                     }
@@ -223,8 +240,10 @@ def getDeviceValuesFromAPI_async(resp, data){
                     logWarn "Unhandled Command: '${data.cmd}'"
                 }
             }
-        } else if(resp.getStatus() == 401) {
-            getDeviceValuesFromAPI("${data.cmd}")
+        } else if (resp.getStatus() == 401) {
+            logError "HTTP 401 Unauthorized for '${data.cmd}' - check access token"
+        } else {
+            logWarn "HTTP ${resp.getStatus()} for '${data.cmd}'"
         }
     } catch (Exception e) {
         logError "getDeviceValuesFromAPI_async - ${e.message}"
@@ -232,83 +251,85 @@ def getDeviceValuesFromAPI_async(resp, data){
 }
 
 
-def arbitraryGet(command) {
+void arbitraryGet(String command) {
     getDeviceValuesFromAPI(command)
 }
 
 
-def processPutRequest_async(response, data) {
+void processPutRequest_async(response, data) {
     try {
+        if (response.hasError()) {
+            logError "HTTP error in PUT: ${response.getErrorMessage()}"
+            return
+        }
+
         logTrace "${response.properties} - ${data} - ${response.getStatus()}"
 
-        if(response.getStatus() == 200){
+        if (response.getStatus() == 200) {
             logDebug "Command successful: '${data}'"
+        } else {
+            logWarn "PUT command '${data.cmd}' returned HTTP ${response.getStatus()}"
         }
     } catch (Exception e) {
         logError "processPutRequest_async - ${e.message}"
     }
 }
 
-def callPutRequest(command, callback) {
+void callPutRequest(String command) {
+    String target = "firmware/${command}?uuid=${uuid}"  // no security!  (no token required)
 
-    target = "firmware/${command}?uuid=${uuid}"  // no security!  (no token required)
-
- 	Map requestParams =
-	[
-        uri: "$constVisiblairURL/$target",
+    Map requestParams = [
+        uri: "${constVisiblairURL}/${target}",
         headers: [
             requestContentType: 'application/json',
-		    contentType: 'application/json'
-        ]
-	]
+            contentType: 'application/json'
+        ],
+        timeout: HTTP_TIMEOUT
+    ]
 
-    asynchttpPut( "processPutRequest_async", requestParams, [ cmd: "$command" ] )
+    asynchttpPut("processPutRequest_async", requestParams, [cmd: command])
 }
 
 void reboot() {
     logDebug "Reboot requested"
-
-    callPutRequest("flagRebootRequested","processPutRequest_async")
+    callPutRequest("flagRebootRequested")
 }
 
 void calibrate() {
     logDebug "Calibration requested"
-
-    callPutRequest("flagCalibrationRequested","processPutRequest_async")
+    callPutRequest("flagCalibrationRequested")
 }
 
 void updateFirmware() {
     logDebug "Firmware update check requested"
-
-    callPutRequest("flagFirmwareUpdate","processPutRequest_async")
+    callPutRequest("flagFirmwareUpdate")
 }
 
 void resetWifiSettings() {
     logDebug "Factory reset requested"
-
-    callPutRequest("flagFactoryReset","processPutRequest_async")
+    callPutRequest("flagFactoryReset")
 }
 
 
 // Logging helpers
 
-private logTrace(message) {
+private void logTrace(String message) {
     if (traceEnable) log.trace("${device} : ${message}")
 }
 
-private logDebug(message) {
+private void logDebug(String message) {
     if (debugEnable) log.debug("${device} : ${message}")
 }
 
-private logInfo(message) {
+private void logInfo(String message) {
     if (txtEnable) log.info("${device} : ${message}")
 }
 
-private logWarn(message) {
+private void logWarn(String message) {
     log.warn("${device} : ${message}")
 }
 
-private logError(message) {
+private void logError(String message) {
     log.error("${device} : ${message}")
 }
 
