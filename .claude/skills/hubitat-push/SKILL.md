@@ -54,23 +54,7 @@ Query the hub for the list of user code to find the matching ID:
 
 The response is a JSON array. Find the entry where `name` matches the name extracted in Step 4. Get the `id` field. Also note the `usedBy` field for later.
 
-If no match is found, **create it** on the hub:
-
-```bash
-python3 -c "
-import json
-with open('{FILEPATH}') as f:
-    source = f.read()
-payload = json.dumps({'source': source, 'version': 1})
-with open('/tmp/hubitat_payload.json', 'w') as f:
-    f.write(payload)
-"
-curl -s -X POST "http://{hub_ip}/{type}/saveOrUpdateJson" \
-  -H "Content-Type: application/json" \
-  -d @/tmp/hubitat_payload.json
-```
-
-Where `{type}` is `app` or `driver`. The response is `{"success":true,"message":"","id":..., "version":1}`. Use the returned `id` and `version` and skip to Step 8.
+If no match is found, the code is not yet on the hub. **Use the `/hubitat-install` skill** to create it, then stop (install will handle creation and report the result). Tell the user you are invoking `/hubitat-install`.
 
 ### Step 6: Get Current Version
 
@@ -83,7 +67,7 @@ Extract the `version` field from the JSON response.
 
 ### Step 7: Push the Code
 
-Read the source file content. URL-encode it, then POST to the hub:
+POST the updated source to the hub:
 
 - **Drivers**: `POST http://{hub_ip}/driver/ajax/update`
 - **Apps**: `POST http://{hub_ip}/app/ajax/update`
@@ -96,6 +80,8 @@ curl -s -X POST "http://{hub_ip}/{type}/ajax/update" \
   --data-urlencode "version={VERSION}" \
   --data-urlencode "source@{FILEPATH}"
 ```
+
+Where `{type}` is `driver` or `app`.
 
 Note: `--data-urlencode "source@{FILEPATH}"` reads and URL-encodes the file contents automatically.
 
