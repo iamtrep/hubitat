@@ -60,7 +60,7 @@ metadata {
 void installed() {
     logDebug "installed..."
     resetAttributes()
-    initState()
+    state.version = driver_version
     runIn(2, "poll")
 }
 
@@ -210,7 +210,7 @@ private void processEvent(String name, Object value, String unit = null, String 
     }
 
     sendEvent(evt)
-    logDebug "event: " + evt
+    logDebug "event: ${evt}"
 }
 
 // Air Quality Thresholds
@@ -241,8 +241,10 @@ private void processAwairData(response, data) {
 
             // EPA AQI calculation
             List readings = (state.pm25readings ?: []) as List
-            readings << awairData.pm25
-            state.pm25readings = readings
+            if (awairData.pm25 != null) {
+                readings << awairData.pm25
+                state.pm25readings = readings
+            }
             int currAqi = calculateAqi()
             processEvent("airQualityIndex", currAqi, "", "Current calculated AQI is ${currAqi}")
 
@@ -279,7 +281,7 @@ private void processAirQualityMetric(String metricName, Number level, String uni
     processEvent(descAttribute, newDesc)
 }
 
-// AQI calculatons
+// AQI calculations
 
 // AQI PM2.5 Breakpoints
 // From data at https://aqs.epa.gov/aqsweb/documents/codetables/aqi_breakpoints.html
