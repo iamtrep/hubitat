@@ -178,6 +178,11 @@ void fetchPeakPeriods() {
 
 void handlePeakPeriodsResponse(hubitat.scheduling.AsyncResponse response, Map data) {
     try {
+        if (response.hasError()) {
+            log.error("HTTP error fetching peak periods: ${response.getErrorMessage()}")
+            return
+        }
+
         if (response.status == 200) {
             logDebug("Successfully fetched data")
             String jsonText = response.data
