@@ -184,6 +184,7 @@ void handlePollResponse(resp, data) {
         state.discoveredSensors = discovered
 
         syncChildDevices(discovered)
+        storeSensorConfigs(realSensors)
         dispatchSensorData(realSensors)
 
     } catch (Exception e) {
@@ -318,6 +319,81 @@ void handleFirmwareResponse(resp, data) {
 void refreshSensor(String dni) {
     logDebug "refresh requested by ${dni}, triggering bulk poll"
     pollSensors()
+}
+
+// --- Sensor Configuration ---
+
+// Fields from the API that are configurable via PUT /sensors/assign
+@Field static final List<String> CONFIG_FIELDS = [
+    "description", "co2Offset", "temperatureOffset", "humidityOffset",
+    "sampleRate", "displayRefresh", "audibleAlertLevel", "calibrationCO2Level",
+    "displaySleepTimeout", "temperatureUnit"
+]
+
+private void storeSensorConfigs(List sensorList) {
+    Map<String, Map> configs = (state.sensorConfigs ?: [:]) as Map
+    sensorList.each { Map sensor ->
+        String uuid = sensor.uuid as String
+        Map config = [:]
+        CONFIG_FIELDS.each { String field ->
+            if (sensor.containsKey(field)) {
+                config[field] = sensor[field]
+            }
+        }
+        configs[uuid] = config
+    }
+    state.sensorConfigs = configs
+}
+
+void updateSensorConfig(String uuid, Map overrides) {
+    if (!uuid || !overrides) return
+
+    // Merge overrides into stored config
+    Map<String, Map> configs = (state.sensorConfigs ?: [:]) as Map
+    Map config = (configs[uuid] ?: [:]) as Map
+    overrides.each { String key, value ->
+        config[key] = value
+    }
+    configs[uuid] = config
+    state.sensorConfigs = configs
+
+    // Build query string
+    StringBuilder query = new StringBuilder()
+    query.append("enc=true&uuid=${URLEncoder.encode(uuid, 'UTF-8')}")
+    query.append("&associatedUserID=${userId}")
+    config.each { String key, value ->
+        String encoded = URLEncoder.encode(value?.toString() ?: "", "UTF-8")
+        query.append("&${key}=${encoded}")
+    }
+
+    logDebug "updating sensor config for ${uuid}: ${overrides}"
+
+    Map requestParams = [
+        uri: "${VISIBLAIR_API}/sensors/assign?${query}",
+        headers: [
+            requestContentType: "application/json",
+            contentType: "application/json"
+        ],
+        timeout: HTTP_TIMEOUT
+    ]
+
+    asynchttpPut("handleConfigResponse", requestParams, [uuid: uuid, overrides: overrides])
+}
+
+void handleConfigResponse(resp, data) {
+    try {
+        if (resp.hasError()) {
+            logError "config update for ${data.uuid} failed: ${resp.getErrorMessage()}"
+            return
+        }
+        if (resp.getStatus() == 200) {
+            logInfo "config updated for ${data.uuid}: ${data.overrides}"
+        } else {
+            logWarn "config update for ${data.uuid} returned HTTP ${resp.getStatus()}"
+        }
+    } catch (Exception e) {
+        logError "handleConfigResponse: ${e.message}"
+    }
 }
 
 // --- Logging ---
