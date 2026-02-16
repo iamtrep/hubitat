@@ -7,6 +7,7 @@
  * Licensed under the Apache License, Version 2.0
  */
 
+import groovy.json.JsonOutput
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
@@ -135,10 +136,8 @@ void pollSensors() {
 
     Map requestParams = [
         uri: "${VISIBLAIR_API}/sensors/getForUser?enc=true&userID=${userId}",
-        headers: [
-            requestContentType: "application/json",
-            contentType: "application/json"
-        ],
+        requestContentType: "application/json",
+        contentType: "application/json",
         timeout: HTTP_TIMEOUT
     ]
 
@@ -288,10 +287,9 @@ void sendFirmwareCommand(String uuid, String command) {
 
     Map requestParams = [
         uri: "${VISIBLAIR_API}/firmware/${command}?uuid=${uuid}",
-        headers: [
-            requestContentType: "application/json",
-            contentType: "application/json"
-        ],
+        requestContentType: "application/json",
+        contentType: "application/json",
+        body: "",
         timeout: HTTP_TIMEOUT
     ]
 
@@ -324,21 +322,38 @@ void refreshSensor(String dni) {
 // --- Sensor Configuration ---
 
 // Fields from the API that are configurable via PUT /sensors/assign
-@Field static final List<String> CONFIG_FIELDS = [
-    "description", "co2Offset", "temperatureOffset", "humidityOffset",
-    "sampleRate", "displayRefresh", "audibleAlertLevel", "calibrationCO2Level",
-    "displaySleepTimeout", "temperatureUnit"
+// PUT /sensors/assign requires the full config — map API response field names to PUT param names
+@Field static final Map<String, String> CONFIG_FIELD_MAP = [
+    "description": "description", "co2Offset": "co2Offset",
+    "temperatureOffset": "temperatureOffset", "humidityOffset": "humidityOffset",
+    "sampleRate": "sampleRate", "displayRefresh": "displayRefresh",
+    "audibleAlertLevel": "audibleAlertLevel", "calibrationCO2Level": "calibrationCO2Level",
+    "displaySleepTimeout": "displaySleepTimeout", "temperatureUnit": "temperatureUnit",
+    "publicOnMap": "publicOnMap", "latitude": "latitude", "longitude": "longitude",
+    "location": "location", "publicViewLinkOnMap": "publicViewLinkOnMap",
+    "publicMapDescription": "publicMapDescription", "tz": "tz",
+    "MQTTEndpoint": "mqttenpoint", "MQTTPort": "mqttport",
+    "MQTTUsername": "mqttusername", "MQTTPassword": "mqttpassword",
+    "MQTTCert": "mqttcert", "MQTTTopic": "mqtttopic",
+    "alertThresholds": "alertThresholds", "config": "config"
 ]
+
+// portalView is not returned by getForUser — provide default
+@Field static final Map PORTAL_VIEW_DEFAULT = [CO2: "on", T: "on", H: "on", AQI_METHOD: "us"]
 
 private void storeSensorConfigs(List sensorList) {
     Map<String, Map> configs = (state.sensorConfigs ?: [:]) as Map
     sensorList.each { Map sensor ->
         String uuid = sensor.uuid as String
         Map config = [:]
-        CONFIG_FIELDS.each { String field ->
-            if (sensor.containsKey(field)) {
-                config[field] = sensor[field]
+        CONFIG_FIELD_MAP.each { String apiField, String putParam ->
+            if (sensor.containsKey(apiField)) {
+                config[putParam] = sensor[apiField]
             }
+        }
+        // portalView not returned by getForUser — use default
+        if (!config.containsKey("portalView")) {
+            config.portalView = PORTAL_VIEW_DEFAULT
         }
         configs[uuid] = config
     }
@@ -357,23 +372,67 @@ void updateSensorConfig(String uuid, Map overrides) {
     configs[uuid] = config
     state.sensorConfigs = configs
 
-    // Build query string
-    StringBuilder query = new StringBuilder()
-    query.append("enc=true&uuid=${URLEncoder.encode(uuid, 'UTF-8')}")
-    query.append("&associatedUserID=${userId}")
-    config.each { String key, value ->
-        String encoded = URLEncoder.encode(value?.toString() ?: "", "UTF-8")
-        query.append("&${key}=${encoded}")
+    // API requires full config — if we don't have MQTT fields yet, fetch them first
+    if (!config.containsKey("mqttenpoint")) {
+        logDebug "stored config incomplete for ${uuid}, fetching full config first"
+        fetchAndUpdateConfig(uuid, overrides)
+        return
     }
 
-    logDebug "updating sensor config for ${uuid}: ${overrides}"
+    sendConfigUpdate(uuid, config, overrides)
+}
+
+private void fetchAndUpdateConfig(String uuid, Map overrides) {
+    Map requestParams = [
+        uri: "${VISIBLAIR_API}/sensors/getForUser?enc=true&userID=${userId}",
+        requestContentType: "application/json",
+        contentType: "application/json",
+        timeout: HTTP_TIMEOUT
+    ]
+    try {
+        httpGet(requestParams) { resp ->
+            if (resp.status == 200) {
+                List jsonList = resp.data as List
+                List realSensors = jsonList.findAll { Map sensor -> isRealSensor(sensor) }
+                storeSensorConfigs(realSensors)
+                Map<String, Map> configs = (state.sensorConfigs ?: [:]) as Map
+                Map config = (configs[uuid] ?: [:]) as Map
+                overrides.each { String key, value ->
+                    config[key] = value
+                }
+                configs[uuid] = config
+                state.sensorConfigs = configs
+                sendConfigUpdate(uuid, config, overrides)
+            } else {
+                logError "failed to fetch config for ${uuid}: HTTP ${resp.status}"
+            }
+        }
+    } catch (Exception e) {
+        logError "fetchAndUpdateConfig: ${e.message}"
+    }
+}
+
+private void sendConfigUpdate(String uuid, Map config, Map overrides) {
+    // Build query string — API requires full config or it drops the connection
+    StringBuilder query = new StringBuilder()
+    query.append("enc=true&uuid=${uuid}&associatedUserID=${userId}")
+    config.each { String key, value ->
+        String strVal
+        if (value instanceof Map || value instanceof List) {
+            strVal = JsonOutput.toJson(value)
+        } else {
+            strVal = value?.toString() ?: ""
+        }
+        query.append("&${key}=${URLEncoder.encode(strVal, 'UTF-8')}")
+    }
+
+    String url = "${VISIBLAIR_API}/sensors/assign?${query}"
+    logDebug "updating sensor config for ${uuid}: ${overrides} (${config.size()} fields, URL length: ${url.length()})"
 
     Map requestParams = [
-        uri: "${VISIBLAIR_API}/sensors/assign?${query}",
-        headers: [
-            requestContentType: "application/json",
-            contentType: "application/json"
-        ],
+        uri: url,
+        requestContentType: "application/json",
+        contentType: "application/json",
         timeout: HTTP_TIMEOUT
     ]
 
