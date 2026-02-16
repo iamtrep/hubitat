@@ -36,6 +36,9 @@ metadata {
         attribute "pm50", "number"
         attribute "pm100", "number"
 
+        attribute "lastSeen", "date"
+        attribute "firmwareUpdateAvailable", "enum", ["true", "false"]
+
         command "reboot"
         command "calibrate"
         command "updateFirmware"
@@ -59,10 +62,16 @@ metadata {
 
 preferences {
     section("Sensor Settings") {
+        input name: "sensorDescription", type: "text", title: "Sensor description"
         input name: "co2Offset", type: "number", title: "CO2 offset (ppm)"
         input name: "temperatureOffset", type: "decimal", title: "Temperature offset (\u00B0C)"
         input name: "humidityOffset", type: "number", title: "Humidity offset (%)"
+        input name: "calibrationCO2Level", type: "number", title: "CO2 calibration baseline (ppm)"
         input name: "sampleRatePref", type: "number", title: "Sample rate (seconds)", range: "60..3600"
+        input name: "audibleAlertLevel", type: "number", title: "Audible alert CO2 level (0 = off)"
+        input name: "displayRefresh", type: "number", title: "Display refresh (seconds)"
+        input name: "displaySleepTimeout", type: "number", title: "Display sleep timeout (0 = always on)"
+        input name: "temperatureUnit", type: "enum", title: "Temperature unit on sensor display", options: ["C", "F"]
     }
     section("Logging") {
         input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: false
@@ -88,10 +97,16 @@ private void pushConfigChanges() {
     if (!uuid) return
 
     Map overrides = [:]
+    if (sensorDescription != null) overrides.description = sensorDescription
     if (co2Offset != null) overrides.co2Offset = co2Offset
     if (temperatureOffset != null) overrides.temperatureOffset = temperatureOffset
     if (humidityOffset != null) overrides.humidityOffset = humidityOffset
+    if (calibrationCO2Level != null) overrides.calibrationCO2Level = calibrationCO2Level
     if (sampleRatePref != null) overrides.sampleRate = sampleRatePref
+    if (audibleAlertLevel != null) overrides.audibleAlertLevel = audibleAlertLevel
+    if (displayRefresh != null) overrides.displayRefresh = displayRefresh
+    if (displaySleepTimeout != null) overrides.displaySleepTimeout = displaySleepTimeout
+    if (temperatureUnit != null) overrides.temperatureUnit = temperatureUnit
 
     if (overrides.size() > 0) {
         logDebug "pushing config changes: ${overrides}"
@@ -199,14 +214,27 @@ void updateSensorData(Map data) {
                 Number pm100 = unwrapNumeric(value)
                 if (pm100 != null) sendEvent(name: "pm100", value: pm100, unit: "ug/m3")
                 break
+            // --- Timestamps ---
             case "lastSampleTimeStamp":
                 sendEvent(name: "timestamp", value: value)
                 break
             case "lastCalibration":
                 sendEvent(name: "calibration", value: value)
                 break
+            case "lastSeenTimeStamp":
+                sendEvent(name: "lastSeen", value: value)
+                break
+
+            // --- Device info ---
             case "firmwareVersion":
                 state.firmwareVersion = value
+                break
+            case "latestFirmwareVersion":
+                state.latestFirmwareVersion = value
+                String current = state.firmwareVersion ?: ""
+                String latest = (value ?: "") as String
+                boolean updateAvail = latest != "" && latest != current
+                sendEvent(name: "firmwareUpdateAvailable", value: updateAvail ? "true" : "false")
                 break
             case "model":
                 state.model = value
@@ -214,6 +242,8 @@ void updateSensorData(Map data) {
             case "modelVersion":
                 state.modelVersion = value
                 break
+
+            // --- Config sync to preferences ---
             case "sampleRate":
                 state.sampleRate = value
                 device.updateSetting("sampleRatePref", [value: value as int, type: "number"])
@@ -226,6 +256,24 @@ void updateSensorData(Map data) {
                 break
             case "humidityOffset":
                 device.updateSetting("humidityOffset", [value: value as int, type: "number"])
+                break
+            case "description":
+                device.updateSetting("sensorDescription", [value: value as String, type: "text"])
+                break
+            case "calibrationCO2Level":
+                device.updateSetting("calibrationCO2Level", [value: value as int, type: "number"])
+                break
+            case "audibleAlertLevel":
+                device.updateSetting("audibleAlertLevel", [value: value as int, type: "number"])
+                break
+            case "displayRefresh":
+                device.updateSetting("displayRefresh", [value: value as int, type: "number"])
+                break
+            case "displaySleepTimeout":
+                device.updateSetting("displaySleepTimeout", [value: value as int, type: "number"])
+                break
+            case "temperatureUnit":
+                device.updateSetting("temperatureUnit", [value: value as String, type: "enum"])
                 break
             default:
                 logTrace "unhandled field: ${key}=${value}"

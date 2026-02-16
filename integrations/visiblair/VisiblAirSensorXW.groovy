@@ -24,6 +24,8 @@ metadata {
         attribute "windSpeed", "number"
         attribute "windDirection", "number"
         attribute "windDirectionName", "string"
+        attribute "lastSeen", "date"
+        attribute "firmwareUpdateAvailable", "enum", ["true", "false"]
 
         command "reboot"
         command "calibrate"
@@ -40,7 +42,11 @@ metadata {
 
 preferences {
     section("Sensor Settings") {
+        input name: "sensorDescription", type: "text", title: "Sensor description"
         input name: "sampleRatePref", type: "number", title: "Sample rate (seconds)", range: "60..3600"
+        input name: "audibleAlertLevel", type: "number", title: "Audible alert CO2 level (0 = off)"
+        input name: "displayRefresh", type: "number", title: "Display refresh (seconds)"
+        input name: "displaySleepTimeout", type: "number", title: "Display sleep timeout (0 = always on)"
     }
     section("Logging") {
         input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: false
@@ -65,7 +71,11 @@ private void pushConfigChanges() {
     if (!uuid) return
 
     Map overrides = [:]
+    if (sensorDescription != null) overrides.description = sensorDescription
     if (sampleRatePref != null) overrides.sampleRate = sampleRatePref
+    if (audibleAlertLevel != null) overrides.audibleAlertLevel = audibleAlertLevel
+    if (displayRefresh != null) overrides.displayRefresh = displayRefresh
+    if (displaySleepTimeout != null) overrides.displaySleepTimeout = displaySleepTimeout
 
     if (overrides.size() > 0) {
         logDebug "pushing config changes: ${overrides}"
@@ -114,14 +124,27 @@ void updateSensorData(Map data) {
                     logInfo "Wind direction is ${degrees}\u00B0 (${compass})"
                 }
                 break
+            // --- Timestamps ---
             case "lastSampleTimeStamp":
                 sendEvent(name: "timestamp", value: value)
                 break
             case "lastCalibration":
                 sendEvent(name: "calibration", value: value)
                 break
+            case "lastSeenTimeStamp":
+                sendEvent(name: "lastSeen", value: value)
+                break
+
+            // --- Device info ---
             case "firmwareVersion":
                 state.firmwareVersion = value
+                break
+            case "latestFirmwareVersion":
+                state.latestFirmwareVersion = value
+                String current = state.firmwareVersion ?: ""
+                String latest = (value ?: "") as String
+                boolean updateAvail = latest != "" && latest != current
+                sendEvent(name: "firmwareUpdateAvailable", value: updateAvail ? "true" : "false")
                 break
             case "model":
                 state.model = value
@@ -129,9 +152,23 @@ void updateSensorData(Map data) {
             case "modelVersion":
                 state.modelVersion = value
                 break
+
+            // --- Config sync to preferences ---
             case "sampleRate":
                 state.sampleRate = value
                 device.updateSetting("sampleRatePref", [value: value as int, type: "number"])
+                break
+            case "description":
+                device.updateSetting("sensorDescription", [value: value as String, type: "text"])
+                break
+            case "audibleAlertLevel":
+                device.updateSetting("audibleAlertLevel", [value: value as int, type: "number"])
+                break
+            case "displayRefresh":
+                device.updateSetting("displayRefresh", [value: value as int, type: "number"])
+                break
+            case "displaySleepTimeout":
+                device.updateSetting("displaySleepTimeout", [value: value as int, type: "number"])
                 break
             default:
                 logTrace "unhandled field: ${key}=${value}"
