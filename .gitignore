@@ -6,3 +6,5 @@
 .DS_Store
 *.py~
 .hubitat.json
+*.har
+*.log
