@@ -14,7 +14,8 @@ metadata {
     definition(
         name: "VisiblAir Sensor E",
         namespace: "iamtrep",
-        author: "pj"
+        author: "pj",
+        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/integrations/visiblair/VisiblAirSensorE.groovy"
     ) {
         capability "AirQuality"
         capability "Battery"

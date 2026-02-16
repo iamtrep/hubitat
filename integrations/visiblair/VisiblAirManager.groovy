@@ -18,6 +18,7 @@ definition(
     description: "Auto-discovers VisiblAir sensors and creates child devices with model-specific drivers",
     category: "Convenience",
     singleInstance: true,
+    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/integrations/visiblair/VisiblAirManager.groovy",
     iconUrl: "",
     iconX2Url: ""
 )
