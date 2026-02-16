@@ -198,11 +198,12 @@ long sendHttpRequest() {
     try {
         Map params = [
             uri: httpURL,
-            timeout: httpTimeout ?: DEFAULT_HTTP_TIMEOUT
+            timeout: httpTimeout ?: DEFAULT_HTTP_TIMEOUT,
+            ignoreSSLIssues: true
         ]
         long timeBefore = now()
         httpGet(params) { response ->
-            if (response.status == 200) {
+            if (response.status >= 200 && response.status < 300) {
                 long elapsed = now() - timeBefore
                 logDebug "HTTP GET $httpURL successful in ${elapsed} ms"
                 recordResponseTime("http", elapsed)
