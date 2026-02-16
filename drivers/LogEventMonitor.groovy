@@ -10,6 +10,7 @@ import groovy.json.JsonSlurper
 import groovy.transform.Field
 
 @Field static int STARTUP_DELAY_SECS = 60
+@Field static Map<String, Long> totalLogsReceived = [:].asSynchronized()
 
 metadata {
     definition(
@@ -18,6 +19,7 @@ metadata {
         author: "PJ"
     ) {
         capability "Actuator"
+        capability "Initialize"
         capability "Sensor"
 
         // Main event attribute - fires whenever a matching log entry is found
@@ -102,10 +104,10 @@ def initialize() {
     logDebug "initialize()"
 
     // Initialize state
+    atomicState.intentionalDisconnect = false
     state.processedEvents = state.processedEvents ?: []
     state.reconnectAttempts = 0
     state.eventsMatched = 0
-    state.totalLogsReceived = 0
     state.eventsThisMinute = 0
     state.lastMinuteReset = now()
     state.rateLimitWarningShown = false
@@ -130,19 +132,21 @@ def initialize() {
 def connect() {
     logDebug "Connecting to log event WebSocket..."
 
+    // Cancel any pending scheduled reconnect to avoid duplicate connections
+    unschedule("connect")
+
     try {
-        def uri = "ws://127.0.0.1:8080/logsocket"
+        atomicState.intentionalDisconnect = false
+        sendEvent(name: "connectionStatus", value: "connecting")
+
+        String uri = "ws://127.0.0.1:8080/logsocket"
         interfaces.webSocket.connect(
             uri,
             pingInterval: (pingInterval ?: 30).toInteger()
         )
 
-        state.wsConnected = true
-        state.reconnectAttempts = 0
-        state.lastConnectionTime = now()
-
-        sendEvent(name: "connectionStatus", value: "connected")
-        logInfo "WebSocket connected successfully"
+        // Connection is async — webSocketStatus() will set connected state
+        logDebug "WebSocket connect initiated"
     } catch (e) {
         state.wsConnected = false
         sendEvent(name: "connectionStatus", value: "error")
@@ -156,6 +160,9 @@ def connect() {
 
 def disconnect() {
     logDebug "Disconnecting WebSocket..."
+
+    atomicState.intentionalDisconnect = true
+    unschedule("connect")
 
     try {
         interfaces.webSocket.close()
@@ -186,9 +193,9 @@ def scheduleReconnect() {
 }
 
 def healthCheck() {
-    if (!state.wsConnected && autoReconnect) {
+    if (!state.wsConnected && autoReconnect && !atomicState.intentionalDisconnect) {
         logWarn "WebSocket disconnected, attempting reconnect"
-        connect()
+        scheduleReconnect()
     }
 }
 
@@ -201,6 +208,9 @@ def resetRateLimitCounter() {
     if (oldCount > 0) {
         logDebug "Rate limit counter reset. Previous minute: ${oldCount} events"
     }
+
+    // Snapshot in-memory counter to state for visibility in device UI
+    state.totalLogsReceived = totalLogsReceived[device.id.toString()] ?: 0L
 }
 
 // ============================================================================
@@ -215,19 +225,20 @@ def webSocketStatus(String message) {
         sendEvent(name: "connectionStatus", value: "error")
         logWarn "WebSocket error: ${message}"
 
-        if (autoReconnect) {
+        if (autoReconnect && !atomicState.intentionalDisconnect) {
             scheduleReconnect()
         }
     } else if (message.contains("status: open")) {
         state.wsConnected = true
         state.reconnectAttempts = 0
+        state.lastConnectionTime = now()
         sendEvent(name: "connectionStatus", value: "connected")
-        logInfo "WebSocket opened"
+        logInfo "WebSocket connected"
     } else if (message.contains("status: closing") || message.contains("status: closed")) {
         state.wsConnected = false
         sendEvent(name: "connectionStatus", value: "disconnected")
 
-        if (autoReconnect) {
+        if (autoReconnect && !atomicState.intentionalDisconnect) {
             scheduleReconnect()
         }
     }
@@ -235,9 +246,8 @@ def webSocketStatus(String message) {
 
 def parse(String message) {
     // Called when WebSocket receives data
-
-    // Increment total logs received counter (silently, state only)
-    state.totalLogsReceived = (state.totalLogsReceived ?: 0) + 1
+    String devId = device.id.toString()
+    totalLogsReceived[devId] = (totalLogsReceived[devId] ?: 0L) + 1
 
     try {
         // Use JsonSlurper instead of parseJson
@@ -386,10 +396,10 @@ def isDuplicate(Map logEntry) {
 
     if (!duplicate) {
         // Add to processed list
-        state.processedEvents << [
+        state.processedEvents = state.processedEvents + [[
             signature: signature,
             timestamp: now
-        ]
+        ]]
 
         // Trim to max size
         if (state.processedEvents.size() > (maxEventHistory ?: 100)) {
@@ -439,10 +449,10 @@ def triggerLogEvent(Map logEntry) {
 
 def clearStats() {
     state.eventsMatched = 0
-    state.totalLogsReceived = 0
     state.processedEvents = []
     state.eventsThisMinute = 0
     state.rateLimitWarningShown = false
+    totalLogsReceived[device.id.toString()] = 0L
     logInfo "Statistics cleared"
 }
 
