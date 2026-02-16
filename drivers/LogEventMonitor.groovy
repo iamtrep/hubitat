@@ -16,17 +16,17 @@
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String driver_version = "1.8.1"
-
-@Field static int STARTUP_DELAY_SECS = 60
-@Field static Map<String, Long> totalLogsReceived = [:].asSynchronized()
+@Field static final String DRIVER_VERSION = "1.9.0"
+@Field static final int STARTUP_DELAY_SECS = 60
+@Field static final JsonSlurper JSON_SLURPER = new JsonSlurper()
+@Field static final Map<String, Long> totalLogsReceived = [:].asSynchronized()
 
 metadata {
     definition(
         name: "Log Event Monitor",
         namespace: "iamtrep",
         author: "pj",
-        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/XfinityContactSensor.groovy"
+        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/LogEventMonitor.groovy"
     ) {
         capability "Actuator"
         capability "Initialize"
@@ -93,27 +93,27 @@ metadata {
     }
 }
 
-def installed() {
+void installed() {
     logDebug "installed()"
     initialize()
 }
 
-def updated() {
+void updated() {
     logDebug "updated()"
     disconnect()
     unschedule()
     initialize()
 }
 
-def uninstalled() {
+void uninstalled() {
     logDebug "uninstalled()"
     disconnect()
 }
 
-def initialize() {
+void initialize() {
     logDebug "initialize()"
 
-    state.codeVersion = version
+    state.codeVersion = DRIVER_VERSION
 
     // Initialize state
     atomicState.intentionalDisconnect = false
@@ -141,7 +141,7 @@ def initialize() {
 // WebSocket Connection Management
 // ============================================================================
 
-def connect() {
+void connect() {
     logDebug "Connecting to log event WebSocket..."
 
     // Cancel any pending scheduled reconnect to avoid duplicate connections
@@ -159,7 +159,7 @@ def connect() {
 
         // Connection is async — webSocketStatus() will set connected state
         logDebug "WebSocket connect initiated"
-    } catch (e) {
+    } catch (Exception e) {
         state.wsConnected = false
         sendEvent(name: "connectionStatus", value: "error")
         logError "WebSocket connection failed: ${e.message}"
@@ -170,7 +170,7 @@ def connect() {
     }
 }
 
-def disconnect() {
+void disconnect() {
     logDebug "Disconnecting WebSocket..."
 
     atomicState.intentionalDisconnect = true
@@ -181,38 +181,39 @@ def disconnect() {
         state.wsConnected = false
         sendEvent(name: "connectionStatus", value: "disconnected")
         logInfo "WebSocket disconnected"
-    } catch (e) {
+    } catch (Exception e) {
         logError "Error disconnecting WebSocket: ${e.message}"
     }
 }
 
-def reconnect() {
+void reconnect() {
     logDebug "Manual reconnect triggered"
     disconnect()
     runIn(2, "connect")
 }
 
-def scheduleReconnect() {
-    state.reconnectAttempts = (state.reconnectAttempts ?: 0) + 1
+void scheduleReconnect() {
+    int attempts = (state.reconnectAttempts ?: 0) + 1
+    state.reconnectAttempts = attempts
 
     // Exponential backoff: 5s, 10s, 20s, 40s, max 60s
-    def delay = Math.min(60, 5 * (2 ** Math.min(state.reconnectAttempts - 1, 3)))
+    int delay = Math.min(60, 5 * (2 ** Math.min(attempts - 1, 3)))
 
-    logInfo "Scheduling reconnect in ${delay}s (attempt ${state.reconnectAttempts})"
+    logInfo "Scheduling reconnect in ${delay}s (attempt ${attempts})"
     sendEvent(name: "connectionStatus", value: "reconnecting")
 
     runIn(delay, "connect")
 }
 
-def healthCheck() {
+void healthCheck() {
     if (!state.wsConnected && autoReconnect && !atomicState.intentionalDisconnect) {
         logWarn "WebSocket disconnected, attempting reconnect"
         scheduleReconnect()
     }
 }
 
-def resetRateLimitCounter() {
-    def oldCount = state.eventsThisMinute ?: 0
+void resetRateLimitCounter() {
+    int oldCount = state.eventsThisMinute ?: 0
     state.eventsThisMinute = 0
     state.lastMinuteReset = now()
     state.rateLimitWarningShown = false
@@ -229,7 +230,7 @@ def resetRateLimitCounter() {
 // WebSocket Event Handlers
 // ============================================================================
 
-def webSocketStatus(String message) {
+void webSocketStatus(String message) {
     logTrace "WebSocket status: ${message}"
 
     if (message.contains("failure") || message.contains("error")) {
@@ -256,15 +257,12 @@ def webSocketStatus(String message) {
     }
 }
 
-def parse(String message) {
-    // Called when WebSocket receives data
+void parse(String message) {
     String devId = device.id.toString()
     totalLogsReceived[devId] = (totalLogsReceived[devId] ?: 0L) + 1
 
     try {
-        // Use JsonSlurper instead of parseJson
-        def slurper = new JsonSlurper()
-        def logEntry = slurper.parseText(message)
+        Map logEntry = JSON_SLURPER.parseText(message)
 
         // Validate we got a proper log entry with required fields
         if (!logEntry || !logEntry.type) {
@@ -272,13 +270,11 @@ def parse(String message) {
             return
         }
 
-        // FIRST: Check for self-monitoring to prevent infinite loops
-        // Always filter our own device logs
-        if (logEntry.type == "dev" && logEntry.id?.toString() == device.id?.toString()) {
-            return  // Exit silently, this is from us
+        // Check for self-monitoring to prevent infinite loops
+        if (logEntry.type == "dev" && logEntry.id?.toString() == devId) {
+            return
         }
 
-        // NOW safe to log (but only trace, and truncated to prevent loops)
         logTrace "Rcv: [${logEntry.type}/${logEntry.level}] ${logEntry.name}"
 
         try {
@@ -297,14 +293,11 @@ def parse(String message) {
 // Log Processing
 // ============================================================================
 
-def processLogEntry(Map logEntry) {
-    // logEntry structure: [id, time, level, type, name, msg]
-    // Note: self-monitoring check already done in parse() before this is called
-
+void processLogEntry(Map logEntry) {
     logTrace "Processing: [${logEntry.type}/${logEntry.level}] ${logEntry.name}"
 
     // Check log type filter (dev/app/sys)
-    def typeAllowed = false
+    boolean typeAllowed = false
     if (logEntry.type == "dev" && monitorDevLogs) typeAllowed = true
     if (logEntry.type == "app" && monitorAppLogs) typeAllowed = true
     if (logEntry.type == "sys" && monitorSysLogs) typeAllowed = true
@@ -315,7 +308,7 @@ def processLogEntry(Map logEntry) {
     }
 
     // Check log level filter
-    def levelAllowed = false
+    boolean levelAllowed = false
     if (logEntry.level == "trace" && monitorTrace) levelAllowed = true
     if (logEntry.level == "debug" && monitorDebug) levelAllowed = true
     if (logEntry.level == "info" && monitorInfo) levelAllowed = true
@@ -329,11 +322,11 @@ def processLogEntry(Map logEntry) {
 
     // Check device/app ID filter (if either is specified, at least one must match)
     if (monitoredDeviceIds || monitoredAppIds) {
-        def idMatch = false
+        boolean idMatch = false
 
         // Check device IDs (only if this is a device log)
         if (monitoredDeviceIds && logEntry.type == "dev") {
-            def deviceIdList = monitoredDeviceIds.split(',').collect { it.trim() }
+            List<String> deviceIdList = monitoredDeviceIds.split(',').collect { it.trim() }
             if (deviceIdList.contains(logEntry.id?.toString())) {
                 idMatch = true
             }
@@ -341,7 +334,7 @@ def processLogEntry(Map logEntry) {
 
         // Check app IDs (only if this is an app log)
         if (monitoredAppIds && logEntry.type == "app") {
-            def appIdList = monitoredAppIds.split(',').collect { it.trim() }
+            List<String> appIdList = monitoredAppIds.split(',').collect { it.trim() }
             if (appIdList.contains(logEntry.id?.toString())) {
                 idMatch = true
             }
@@ -360,7 +353,7 @@ def processLogEntry(Map logEntry) {
                 logTrace "Filtered out: doesn't match include pattern"
                 return
             }
-        } catch (e) {
+        } catch (Exception e) {
             logError "Invalid include pattern: ${e.message}"
             return
         }
@@ -373,7 +366,7 @@ def processLogEntry(Map logEntry) {
                 logTrace "Filtered out: matches exclude pattern"
                 return
             }
-        } catch (e) {
+        } catch (Exception e) {
             logError "Invalid exclude pattern: ${e.message}"
             return
         }
@@ -389,34 +382,35 @@ def processLogEntry(Map logEntry) {
     triggerLogEvent(logEntry)
 }
 
-def isDuplicate(Map logEntry) {
+boolean isDuplicate(Map logEntry) {
     if (!dedupeWindow || dedupeWindow == 0) {
         return false
     }
 
-    def now = now()
-    def windowMs = (dedupeWindow ?: 5) * 1000
-    def signature = "${logEntry.type}:${logEntry.level}:${logEntry.name}:${logEntry.msg}"
+    long ts = now()
+    long windowMs = (dedupeWindow ?: 5) * 1000
+    String signature = "${logEntry.type}:${logEntry.level}:${logEntry.name}:${logEntry.msg}"
 
     // Clean old entries
     state.processedEvents = state.processedEvents?.findAll {
-        (now - it.timestamp) < windowMs
+        (ts - it.timestamp) < windowMs
     } ?: []
 
     // Check if we've seen this recently
-    def duplicate = state.processedEvents?.find { it.signature == signature }
+    Map duplicate = state.processedEvents?.find { it.signature == signature }
 
     if (!duplicate) {
         // Add to processed list
         state.processedEvents = state.processedEvents + [[
             signature: signature,
-            timestamp: now
+            timestamp: ts
         ]]
 
         // Trim to max size
-        if (state.processedEvents.size() > (maxEventHistory ?: 100)) {
+        int maxHistory = maxEventHistory ?: 100
+        if (state.processedEvents.size() > maxHistory) {
             state.processedEvents = state.processedEvents.drop(
-                state.processedEvents.size() - maxEventHistory
+                state.processedEvents.size() - maxHistory
             )
         }
     }
@@ -424,12 +418,12 @@ def isDuplicate(Map logEntry) {
     return duplicate != null
 }
 
-def triggerLogEvent(Map logEntry) {
+void triggerLogEvent(Map logEntry) {
     // Check rate limiting
     state.eventsThisMinute = (state.eventsThisMinute ?: 0) + 1
 
     // Warn at 80% of limit
-    def warningThreshold = (maxEventsPerMinute * 0.8).toInteger()
+    int warningThreshold = (maxEventsPerMinute * 0.8).toInteger()
     if (state.eventsThisMinute == warningThreshold && !state.rateLimitWarningShown) {
         logWarn "Approaching event rate limit: ${state.eventsThisMinute}/${maxEventsPerMinute} events this minute. Consider refining filters."
         state.rateLimitWarningShown = true
@@ -459,7 +453,7 @@ def triggerLogEvent(Map logEntry) {
 // Commands
 // ============================================================================
 
-def clearStats() {
+void clearStats() {
     state.eventsMatched = 0
     state.processedEvents = []
     state.eventsThisMinute = 0
@@ -472,26 +466,26 @@ def clearStats() {
 // Logging
 // ============================================================================
 
-def logDebug(msg) {
+void logDebug(String msg) {
     if (enableDebug) {
         log.debug "${device.displayName}: ${msg}"
     }
 }
 
-def logTrace(msg) {
+void logTrace(String msg) {
     if (enableTrace) {
         log.trace "${device.displayName}: ${msg}"
     }
 }
 
-def logInfo(msg) {
+void logInfo(String msg) {
     log.info "${device.displayName}: ${msg}"
 }
 
-def logWarn(msg) {
+void logWarn(String msg) {
     log.warn "${device.displayName}: ${msg}"
 }
 
-def logError(msg) {
+void logError(String msg) {
     log.error "${device.displayName}: ${msg}"
 }
