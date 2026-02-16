@@ -39,6 +39,9 @@ metadata {
 ]
 
 preferences {
+    section("Sensor Settings") {
+        input name: "sampleRatePref", type: "number", title: "Sample rate (seconds)", range: "60..3600"
+    }
     section("Logging") {
         input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: false
         input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
@@ -54,6 +57,20 @@ void installed() {
 
 void updated() {
     if (debugEnable) runIn(DEBUG_LOG_TIMEOUT, turnOffDebugLogging)
+    pushConfigChanges()
+}
+
+private void pushConfigChanges() {
+    String uuid = device.getDataValue("uuid")
+    if (!uuid) return
+
+    Map overrides = [:]
+    if (sampleRatePref != null) overrides.sampleRate = sampleRatePref
+
+    if (overrides.size() > 0) {
+        logDebug "pushing config changes: ${overrides}"
+        parent.updateSensorConfig(uuid, overrides)
+    }
 }
 
 void refresh() {
@@ -114,6 +131,7 @@ void updateSensorData(Map data) {
                 break
             case "sampleRate":
                 state.sampleRate = value
+                device.updateSetting("sampleRatePref", [value: value as int, type: "number"])
                 break
             default:
                 logTrace "unhandled field: ${key}=${value}"
