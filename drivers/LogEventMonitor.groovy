@@ -45,6 +45,9 @@ metadata {
 
     preferences {
         // Connection Settings
+        input name: "hubAddress", type: "text",
+            title: "Hub IP address (leave blank for local hub)",
+            required: false, description: "e.g., 192.168.1.100"
         input name: "autoReconnect", type: "bool", title: "Auto-reconnect on disconnect",
             defaultValue: true
         input name: "pingInterval", type: "number", title: "WebSocket ping interval (seconds)",
@@ -59,7 +62,7 @@ metadata {
         input name: "monitorTrace", type: "bool", title: "Trace", defaultValue: false
         input name: "monitorDebug", type: "bool", title: "Debug", defaultValue: false
         input name: "monitorInfo", type: "bool", title: "Info", defaultValue: false
-        input name: "monitorWarn", type: "bool", title: "Warning", defaultValue: true
+        input name: "monitorWarn", type: "bool", title: "Warning", defaultValue: false
         input name: "monitorError", type: "bool", title: "Error", defaultValue: true
 
         // Additional Filters
@@ -151,7 +154,8 @@ void connect() {
         atomicState.intentionalDisconnect = false
         sendEvent(name: "connectionStatus", value: "connecting")
 
-        String uri = "ws://127.0.0.1:8080/logsocket"
+        String host = hubAddress ? "${hubAddress}" : "127.0.0.1:8080"
+        String uri = "ws://${host}/logsocket"
         interfaces.webSocket.connect(
             uri,
             pingInterval: (pingInterval ?: 30).toInteger()
