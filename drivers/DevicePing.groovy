@@ -170,7 +170,7 @@ void ping() {
         updateDeviceStatus((deviceIP ? pingRT >= 0 : true) && (httpURL ? httpRT >= 0 : true))
         updateLastResponseTime(pingRT, httpRT)
     } catch (Exception e) {
-        log.error "Error during ping: ${e.message}"
+        logInfo "Error during ping: ${e}"
     } finally {
         scheduleNextPing()
     }
@@ -188,7 +188,7 @@ long sendPingRequest() {
         }
         return -1
     } catch (Exception e) {
-        log.error "Error during ping: ${e.message}"
+        logInfo "Error during ping: ${e}"
         return -1
     }
 }
@@ -214,7 +214,7 @@ long sendHttpRequest() {
         }
         return result
     } catch (Exception e) {
-        log.error "Error sending HTTP request: ${e.message}"
+        logInfo "Error sending HTTP request: ${e}"
         return -1
     }
 }
