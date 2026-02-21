@@ -37,9 +37,10 @@ Map mainPage() {
                 title: "Battery increase threshold (%)",
                 description: "Treat a battery level increase of at least this amount as a replacement",
                 required: true, defaultValue: 20, range: "1..99"
+            paragraph "<span style='color:red'>EXPERIMENTAL</span>"
             input "updateDeviceNotes", "bool",
                 title: "Update device notes on replacement",
-                description: "<span style='color:red'>EXPERIMENTAL</span> Append a timestamped entry to the device's Notes field when a replacement is detected",
+                description: "Append a timestamped entry to the device's Notes field when a replacement is detected",
                 defaultValue: true, required: false
         }
         section("Notifications") {
@@ -63,19 +64,34 @@ Map mainPage() {
                 String dateB = ((history[b] as List).max { it.date })?.date ?: ""
                 dateB <=> dateA
             }
-            deviceIds.each { String deviceId ->
-                List entries = ((history[deviceId] ?: []) as List).sort { a, b -> b.date <=> a.date }
-                if (!entries) return
-                String deviceLabel = (entries[0].label ?: deviceId) as String
-                section("History: ${deviceLabel}") {
+            section("Replacement History") {
+                String td = "style='border:1px solid #999;padding:4px 8px'"
+                String tdC = "style='border:1px solid #999;padding:4px 8px;text-align:center'"
+                String table = "<table style='border-collapse:collapse;width:100%'>" +
+                    "<thead><tr style='background:#ddd'>" +
+                    "<th ${td}>Date</th><th ${td}>Device</th>" +
+                    "<th ${tdC}>Prev</th><th ${tdC}>New</th><th ${tdC}>Notes</th>" +
+                    "</tr></thead><tbody>"
+                deviceIds.each { String deviceId ->
+                    List entries = ((history[deviceId] ?: []) as List).sort { a, b -> b.date <=> a.date }
+                    if (!entries) return
+                    String deviceLabel = (entries[0].label ?: deviceId) as String
                     entries.each { entry ->
-                        String notesStatus = ""
+                        String notesCell = ""
                         if ((entry as Map).containsKey("notesUpdated")) {
-                            notesStatus = entry.notesUpdated ? "  [notes updated]" : "  [notes not saved]"
+                            notesCell = entry.notesUpdated ? "&#10003;" : "&#10007;"
                         }
-                        paragraph "${entry.oldLevel}% -> ${entry.newLevel}% on ${entry.date}${notesStatus}"
+                        table += "<tr>" +
+                            "<td ${td}>${entry.date}</td>" +
+                            "<td ${td}>${deviceLabel}</td>" +
+                            "<td ${tdC}>${entry.oldLevel}%</td>" +
+                            "<td ${tdC}>${entry.newLevel}%</td>" +
+                            "<td ${tdC}>${notesCell}</td>" +
+                            "</tr>"
                     }
                 }
+                table += "</tbody></table>"
+                paragraph table
             }
         }
 
