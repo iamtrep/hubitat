@@ -198,14 +198,18 @@ void batteryHandler(evt) {
 // Uses entry.id (epoch ms from now()) for the interval — no timezone-sensitive parsing needed.
 private void checkIntervalAndNotify(String deviceId, String deviceLabel, int oldLevel, int newLevel, int thresholdDays) {
     List entries = (state.replacementHistory?.get(deviceId) ?: []) as List
-    if (!entries) {
+    boolean hasHistory = !entries.isEmpty()
+    if (!hasHistory && thresholdDays != 0) {
         logDebug "${deviceLabel}: no previous replacement on record, skipping interval check"
         return
     }
-    Map lastEntry = entries.last() as Map
-    long elapsedMs = now() - (lastEntry.id as long)
-    int elapsedDays = (elapsedMs / (1000L * 60 * 60 * 24)) as int
-    logDebug "${deviceLabel}: ${elapsedDays}d since last replacement (notify threshold: ${thresholdDays}d)"
+    int elapsedDays = 0
+    if (hasHistory) {
+        Map lastEntry = entries.last() as Map
+        long elapsedMs = now() - (lastEntry.id as long)
+        elapsedDays = (elapsedMs / (1000L * 60 * 60 * 24)) as int
+    }
+    logDebug "${deviceLabel}: ${hasHistory ? "${elapsedDays}d since last replacement" : "no prior history"} (notify threshold: ${thresholdDays}d)"
     if (thresholdDays == 0 || elapsedDays < thresholdDays) {
         String msg = thresholdDays == 0
             ? "Battery changed: ${deviceLabel} ${oldLevel}% -> ${newLevel}%"
