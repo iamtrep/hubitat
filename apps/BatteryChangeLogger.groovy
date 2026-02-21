@@ -23,6 +23,7 @@ definition(
 
 preferences {
     page(name: "mainPage")
+    page(name: "historyPage")
 }
 
 Map mainPage() {
@@ -57,7 +58,7 @@ Map mainPage() {
 
         Map history = state.replacementHistory
         if (history) {
-            // Sort device groups by most recent entry date, newest first
+            // Sort devices by most recent entry date, newest first
             List<String> deviceIds = history.keySet().toList()
             deviceIds.sort { String a, String b ->
                 String dateA = ((history[a] as List).max { it.date })?.date ?: ""
@@ -65,33 +66,34 @@ Map mainPage() {
                 dateB <=> dateA
             }
             section("Replacement History") {
+                // Summary table: one row per device, latest entry only
                 String td = "style='border:1px solid #999;padding:4px 8px'"
                 String tdC = "style='border:1px solid #999;padding:4px 8px;text-align:center'"
                 String table = "<table style='border-collapse:collapse;width:100%'>" +
                     "<thead><tr style='background:#ddd'>" +
-                    "<th ${td}>Date</th><th ${td}>Device</th>" +
+                    "<th ${td}>Device</th><th ${td}>Last Changed</th>" +
                     "<th ${tdC}>Prev</th><th ${tdC}>New</th><th ${tdC}>Notes</th>" +
                     "</tr></thead><tbody>"
                 deviceIds.each { String deviceId ->
                     List entries = ((history[deviceId] ?: []) as List).sort { a, b -> b.date <=> a.date }
                     if (!entries) return
-                    String deviceLabel = (entries[0].label ?: deviceId) as String
-                    entries.each { entry ->
-                        String notesCell = ""
-                        if ((entry as Map).containsKey("notesUpdated")) {
-                            notesCell = entry.notesUpdated ? "&#10003;" : "&#10007;"
-                        }
-                        table += "<tr>" +
-                            "<td ${td}>${entry.date}</td>" +
-                            "<td ${td}>${deviceLabel}</td>" +
-                            "<td ${tdC}>${entry.oldLevel}%</td>" +
-                            "<td ${tdC}>${entry.newLevel}%</td>" +
-                            "<td ${tdC}>${notesCell}</td>" +
-                            "</tr>"
+                    Map latest = entries[0] as Map
+                    String deviceLabel = (latest.label ?: deviceId) as String
+                    String notesCell = ""
+                    if (latest.containsKey("notesUpdated")) {
+                        notesCell = latest.notesUpdated ? "&#10003;" : "&#10007;"
                     }
+                    table += "<tr>" +
+                        "<td ${td}><a href='/device/edit/${deviceId}'>${deviceLabel}</a></td>" +
+                        "<td ${td}>${latest.date}</td>" +
+                        "<td ${tdC}>${latest.oldLevel}%</td>" +
+                        "<td ${tdC}>${latest.newLevel}%</td>" +
+                        "<td ${tdC}>${notesCell}</td>" +
+                        "</tr>"
                 }
                 table += "</tbody></table>"
                 paragraph table
+                href "historyPage", title: "View full history", description: "All entries per device"
             }
         }
 
@@ -100,6 +102,50 @@ Map mainPage() {
                 title: "Log level",
                 options: ["warn", "info", "debug"],
                 defaultValue: "info", required: true
+        }
+    }
+}
+
+Map historyPage() {
+    dynamicPage(name: "historyPage", title: "Full Replacement History") {
+        Map history = state.replacementHistory
+        if (!history) {
+            section { paragraph "No replacement history recorded yet." }
+            return
+        }
+        List<String> deviceIds = history.keySet().toList()
+        deviceIds.sort { String a, String b ->
+            String dateA = ((history[a] as List).max { it.date })?.date ?: ""
+            String dateB = ((history[b] as List).max { it.date })?.date ?: ""
+            dateB <=> dateA
+        }
+        deviceIds.each { String deviceId ->
+            List entries = ((history[deviceId] ?: []) as List).sort { a, b -> b.date <=> a.date }
+            if (!entries) return
+            String deviceLabel = (entries[0].label ?: deviceId) as String
+            section(deviceLabel) {
+                paragraph "<a href='/device/edit/${deviceId}'>Open device page</a>"
+                String td = "style='border:1px solid #999;padding:4px 8px'"
+                String tdC = "style='border:1px solid #999;padding:4px 8px;text-align:center'"
+                String table = "<table style='border-collapse:collapse;width:100%'>" +
+                    "<thead><tr style='background:#ddd'>" +
+                    "<th ${td}>Date</th><th ${tdC}>Prev</th><th ${tdC}>New</th><th ${tdC}>Notes</th>" +
+                    "</tr></thead><tbody>"
+                entries.each { entry ->
+                    String notesCell = ""
+                    if ((entry as Map).containsKey("notesUpdated")) {
+                        notesCell = entry.notesUpdated ? "&#10003;" : "&#10007;"
+                    }
+                    table += "<tr>" +
+                        "<td ${td}>${entry.date}</td>" +
+                        "<td ${tdC}>${entry.oldLevel}%</td>" +
+                        "<td ${tdC}>${entry.newLevel}%</td>" +
+                        "<td ${tdC}>${notesCell}</td>" +
+                        "</tr>"
+                }
+                table += "</tbody></table>"
+                paragraph table
+            }
         }
     }
 }
