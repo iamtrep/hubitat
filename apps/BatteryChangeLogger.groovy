@@ -37,19 +37,44 @@ Map mainPage() {
                 title: "Battery increase threshold (%)",
                 description: "Treat a battery level increase of at least this amount as a replacement",
                 required: true, defaultValue: 20, range: "1..99"
+            input "updateDeviceNotes", "bool",
+                title: "Update device notes on replacement",
+                description: "<span style='color:red'>EXPERIMENTAL</span> Append a timestamped entry to the device's Notes field when a replacement is detected",
+                defaultValue: true, required: false
+        }
+        section("Notifications") {
+            input "notifyDevice", "capability.notification",
+                title: "Notification device (optional)",
+                required: false, multiple: false
+            if (notifyDevice) {
+                input "notifyIntervalDays", "number",
+                    title: "Notify if battery lasted fewer than (days)",
+                    description: "Send a notification when the interval since the previous replacement is shorter than this many days. Use 0 to always notify (useful for testing).",
+                    required: false, range: "0..3650"
+            }
         }
 
         Map history = state.replacementHistory
         if (history) {
-            List allEntries = []
-            history.each { deviceId, entries -> allEntries.addAll(entries) }
-            allEntries.sort { a, b -> b.date <=> a.date }
-            section("Replacement History") {
-                allEntries.take(20).each { entry ->
-                    String notesStatus = ""
-                    if (entry.notesUpdated == true)       notesStatus = "  [notes updated]"
-                    else if (entry.notesUpdated == false) notesStatus = "  [notes not saved — update manually]"
-                    paragraph "${entry.label}: ${entry.oldLevel}% -> ${entry.newLevel}% on ${entry.date}${notesStatus}"
+            // Sort device groups by most recent entry date, newest first
+            List<String> deviceIds = history.keySet().toList()
+            deviceIds.sort { String a, String b ->
+                String dateA = ((history[a] as List).max { it.date })?.date ?: ""
+                String dateB = ((history[b] as List).max { it.date })?.date ?: ""
+                dateB <=> dateA
+            }
+            deviceIds.each { String deviceId ->
+                List entries = ((history[deviceId] ?: []) as List).sort { a, b -> b.date <=> a.date }
+                if (!entries) return
+                String deviceLabel = (entries[0].label ?: deviceId) as String
+                section("History: ${deviceLabel}") {
+                    entries.each { entry ->
+                        String notesStatus = ""
+                        if ((entry as Map).containsKey("notesUpdated")) {
+                            notesStatus = entry.notesUpdated ? "  [notes updated]" : "  [notes not saved]"
+                        }
+                        paragraph "${entry.oldLevel}% -> ${entry.newLevel}% on ${entry.date}${notesStatus}"
+                    }
                 }
             }
         }
@@ -130,9 +155,17 @@ void batteryHandler(evt) {
             long entryId = now()
             String timestamp = new Date().format("yyyy-MM-dd HH:mm", location.timeZone)
             // Persist to history immediately — authoritative record, no API dependency.
+            // Check interval against the previous entry before the new one is appended
+            if (notifyDevice && settings.notifyIntervalDays != null) {
+                checkIntervalAndNotify(deviceId, deviceLabel, lastLevel, newLevel, settings.notifyIntervalDays as int)
+            }
+
             addToHistory(deviceId, deviceLabel, lastLevel, newLevel, entryId, timestamp)
+
             // Best-effort: also append the entry to device notes via the internal API.
-            fetchDeviceAndLog(deviceId, deviceLabel, lastLevel, newLevel, entryId, timestamp)
+            if (updateDeviceNotes != false) {
+                fetchDeviceAndLog(deviceId, deviceLabel, lastLevel, newLevel, entryId, timestamp)
+            }
         }
     } else {
         logDebug "${deviceLabel}: first reading, seeding at ${newLevel}%"
@@ -143,8 +176,32 @@ void batteryHandler(evt) {
     state.batteryLevels = levels
 }
 
+// Compare the current replacement against the previous one for this device and notify if
+// the interval is shorter than thresholdDays. Called before addToHistory so the last
+// entry in the list is still the previous replacement, not the current one.
+// Uses entry.id (epoch ms from now()) for the interval — no timezone-sensitive parsing needed.
+private void checkIntervalAndNotify(String deviceId, String deviceLabel, int oldLevel, int newLevel, int thresholdDays) {
+    List entries = (state.replacementHistory?.get(deviceId) ?: []) as List
+    if (!entries) {
+        logDebug "${deviceLabel}: no previous replacement on record, skipping interval check"
+        return
+    }
+    Map lastEntry = entries.last() as Map
+    long elapsedMs = now() - (lastEntry.id as long)
+    int elapsedDays = (elapsedMs / (1000L * 60 * 60 * 24)) as int
+    logDebug "${deviceLabel}: ${elapsedDays}d since last replacement (notify threshold: ${thresholdDays}d)"
+    if (thresholdDays == 0 || elapsedDays < thresholdDays) {
+        String msg = "Short battery life: ${deviceLabel} replaced after only ${elapsedDays} day${elapsedDays == 1 ? '' : 's'} " +
+                     "(threshold: ${thresholdDays}d). ${oldLevel}% -> ${newLevel}%"
+        notifyDevice.deviceNotification(msg)
+        logInfo "Interval notification sent for ${deviceLabel}: ${elapsedDays}d since last replacement"
+    }
+}
+
 // Write a new entry to state.replacementHistory with no notesUpdated key (outcome pending).
 // notesUpdated is set to true/false by updateNotesStatus() once the async POST completes.
+// When updateDeviceNotes is false the key is never added, so the history display omits
+// the notes status for that entry.
 private void addToHistory(String deviceId, String deviceLabel, int oldLevel, int newLevel, long entryId, String timestamp) {
     Map history = state.replacementHistory ?: [:]
     List entries = (history[deviceId] ?: []) as List
