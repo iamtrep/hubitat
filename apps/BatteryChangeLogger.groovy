@@ -49,7 +49,7 @@ Map mainPage() {
                 required: false, multiple: false
             if (notifyDevice) {
                 input "notifyIntervalDays", "number",
-                    title: "Notify if battery lasted fewer than (days)",
+                    title: "Notify if battery lasted fewer than (days) - 0 to always notify",
                     description: "Send a notification when the interval since the previous replacement is shorter than this many days. Use 0 to always notify (useful for testing).",
                     required: false, range: "0..3650"
             }
@@ -207,8 +207,10 @@ private void checkIntervalAndNotify(String deviceId, String deviceLabel, int old
     int elapsedDays = (elapsedMs / (1000L * 60 * 60 * 24)) as int
     logDebug "${deviceLabel}: ${elapsedDays}d since last replacement (notify threshold: ${thresholdDays}d)"
     if (thresholdDays == 0 || elapsedDays < thresholdDays) {
-        String msg = "Short battery life: ${deviceLabel} replaced after only ${elapsedDays} day${elapsedDays == 1 ? '' : 's'} " +
-                     "(threshold: ${thresholdDays}d). ${oldLevel}% -> ${newLevel}%"
+        String msg = thresholdDays == 0
+            ? "Battery changed: ${deviceLabel} ${oldLevel}% -> ${newLevel}%"
+            : "Short battery life: ${deviceLabel} replaced after only ${elapsedDays} day${elapsedDays == 1 ? '' : 's'} " +
+              "(threshold: ${thresholdDays}d). ${oldLevel}% -> ${newLevel}%"
         notifyDevice.deviceNotification(msg)
         logInfo "Interval notification sent for ${deviceLabel}: ${elapsedDays}d since last replacement"
     }
