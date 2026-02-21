@@ -1,3 +1,16 @@
+import groovy.transform.Field
+
+// Maximum replacement entries retained per device in state.replacementHistory
+@Field static final int HISTORY_LIMIT = 20
+
+// Fields that must be present in the /device/fullJson response before we attempt
+// the /device/update POST. If any are missing it likely means a firmware change
+// broke the field mapping; we skip the notes update and warn rather than send
+// a malformed request.
+@Field static final List<String> REQUIRED_DEVICE_FIELDS = [
+    "id", "version", "name", "label", "deviceNetworkId", "deviceTypeId", "locationId", "hubId"
+]
+
 definition(
     name: "Battery Change Logger",
     namespace: "dragons",
@@ -25,6 +38,22 @@ Map mainPage() {
                 description: "Treat a battery level increase of at least this amount as a replacement",
                 required: true, defaultValue: 20, range: "1..99"
         }
+
+        Map history = state.replacementHistory
+        if (history) {
+            List allEntries = []
+            history.each { deviceId, entries -> allEntries.addAll(entries) }
+            allEntries.sort { a, b -> b.date <=> a.date }
+            section("Replacement History") {
+                allEntries.take(20).each { entry ->
+                    String notesStatus = ""
+                    if (entry.notesUpdated == true)       notesStatus = "  [notes updated]"
+                    else if (entry.notesUpdated == false) notesStatus = "  [notes not saved — update manually]"
+                    paragraph "${entry.label}: ${entry.oldLevel}% -> ${entry.newLevel}% on ${entry.date}${notesStatus}"
+                }
+            }
+        }
+
         section("Logging") {
             input "logLevel", "enum",
                 title: "Log level",
@@ -53,6 +82,9 @@ void initialize() {
     logDebug "initialize()"
     if (state.batteryLevels == null) {
         state.batteryLevels = [:]
+    }
+    if (state.replacementHistory == null) {
+        state.replacementHistory = [:]
     }
     subscribe(batteryDevices, "battery", "batteryHandler")
     seedInitialLevels()
@@ -93,7 +125,14 @@ void batteryHandler(evt) {
         logDebug "${deviceLabel}: ${lastLevel}% -> ${newLevel}% (delta: ${delta}%)"
         if (delta >= (settings.threshold as Integer)) {
             logInfo "Battery replacement detected on ${deviceLabel}: ${lastLevel}% -> ${newLevel}%"
-            fetchDeviceAndLog(deviceId, deviceLabel, lastLevel, newLevel)
+            // Use now() as a unique entry ID so the async callback can find and update
+            // this exact entry when the notes POST result comes back.
+            long entryId = now()
+            String timestamp = new Date().format("yyyy-MM-dd HH:mm", location.timeZone)
+            // Persist to history immediately — authoritative record, no API dependency.
+            addToHistory(deviceId, deviceLabel, lastLevel, newLevel, entryId, timestamp)
+            // Best-effort: also append the entry to device notes via the internal API.
+            fetchDeviceAndLog(deviceId, deviceLabel, lastLevel, newLevel, entryId, timestamp)
         }
     } else {
         logDebug "${deviceLabel}: first reading, seeding at ${newLevel}%"
@@ -104,29 +143,69 @@ void batteryHandler(evt) {
     state.batteryLevels = levels
 }
 
+// Write a new entry to state.replacementHistory with no notesUpdated key (outcome pending).
+// notesUpdated is set to true/false by updateNotesStatus() once the async POST completes.
+private void addToHistory(String deviceId, String deviceLabel, int oldLevel, int newLevel, long entryId, String timestamp) {
+    Map history = state.replacementHistory ?: [:]
+    List entries = (history[deviceId] ?: []) as List
+    entries << [id: entryId, date: timestamp, label: deviceLabel, oldLevel: oldLevel, newLevel: newLevel]
+    if (entries.size() > HISTORY_LIMIT) {
+        entries = entries.drop(entries.size() - HISTORY_LIMIT)
+    }
+    history[deviceId] = entries
+    state.replacementHistory = history
+}
+
+// Find the history entry by ID and stamp the notes outcome.
+// Called from every success and failure path in the async chain.
+private void updateNotesStatus(String deviceId, long entryId, boolean success) {
+    Map history = state.replacementHistory ?: [:]
+    List entries = (history[deviceId] ?: []) as List
+    int idx = entries.findIndexOf { (it.id as long) == entryId }
+    if (idx >= 0) {
+        // Map + Map merges entries, right side wins on duplicate keys
+        entries[idx] = entries[idx] + [notesUpdated: success]
+        history[deviceId] = entries
+        state.replacementHistory = history
+    }
+}
+
 // Step 1: fetch the current device JSON so we can echo all fields back in the POST
-void fetchDeviceAndLog(String deviceId, String deviceLabel, int oldLevel, int newLevel) {
+void fetchDeviceAndLog(String deviceId, String deviceLabel, int oldLevel, int newLevel, long entryId, String timestamp) {
     Map params = [
         uri        : "http://127.0.0.1:8080",
         path       : "/device/fullJson/${deviceId}",
         contentType: "application/json"
     ]
-    Map callbackData = [deviceId: deviceId, deviceLabel: deviceLabel, oldLevel: oldLevel, newLevel: newLevel]
+    Map callbackData = [
+        deviceId   : deviceId,
+        deviceLabel: deviceLabel,
+        oldLevel   : oldLevel,
+        newLevel   : newLevel,
+        entryId    : entryId,
+        timestamp  : timestamp
+    ]
     try {
         asynchttpGet("handleFullJsonResponse", params, callbackData)
     } catch (Exception e) {
-        logError "Error fetching device data for ${deviceLabel}: ${e.message}"
+        logError "(notes) Error fetching device data for ${deviceLabel}: ${e.message}"
+        updateNotesStatus(deviceId, entryId, false)
     }
 }
 
-// Step 2: append the note entry and POST all device fields back
+// Step 2: validate the response, append the note entry, and POST all device fields back
 void handleFullJsonResponse(resp, data) {
+    String deviceId = data.deviceId
+    long entryId = data.entryId as long
+
     if (resp.hasError()) {
-        logError "Error fetching device data for ${data.deviceLabel}: ${resp.getErrorMessage()}"
+        logWarn "(notes) Error fetching device data for ${data.deviceLabel}: ${resp.getErrorMessage()} — replacement recorded in app history"
+        updateNotesStatus(deviceId, entryId, false)
         return
     }
     if (resp.status != 200) {
-        logError "HTTP ${resp.status} fetching device data for ${data.deviceLabel}"
+        logWarn "(notes) HTTP ${resp.status} fetching device data for ${data.deviceLabel} — replacement recorded in app history"
+        updateNotesStatus(deviceId, entryId, false)
         return
     }
 
@@ -134,10 +213,20 @@ void handleFullJsonResponse(resp, data) {
         Map json = resp.json
         Map device = json.device
 
-        String timestamp = new Date().format("yyyy-MM-dd HH:mm", location.timeZone)
-        String newEntry = "[${timestamp}] Battery replaced: ${data.oldLevel}% -> ${data.newLevel}%"
+        // Guard: if required fields are missing the /device/fullJson contract has changed.
+        // Skip the POST rather than send a malformed request.
+        List<String> missing = REQUIRED_DEVICE_FIELDS.findAll { device[it] == null }
+        if (!missing.isEmpty()) {
+            logWarn "(notes) /device/fullJson missing expected fields: ${missing.join(', ')} — Hubitat firmware may have changed the API. Notes update skipped; replacement is recorded in app history."
+            updateNotesStatus(deviceId, entryId, false)
+            return
+        }
+
+        // Use the timestamp generated in batteryHandler so the note entry matches what's
+        // stored in state.replacementHistory exactly.
+        String newEntry = "[${data.timestamp}] Battery replaced: ${data.oldLevel}% -> ${data.newLevel}%"
         String existingNotes = ((device.notes ?: "") as String).trim()
-        String updatedNotes = existingNotes ? "${existingNotes}\n${newEntry}" : newEntry
+        String updatedNotes = existingNotes ? "${newEntry}\n${existingNotes}" : newEntry
 
         // /device/update expects selected dashboard IDs as a comma-separated string
         List dashboards = (json.dashboards ?: []) as List
@@ -186,23 +275,34 @@ void handleFullJsonResponse(resp, data) {
             body              : body,
             textParser        : true   // don't try to JSON-parse the redirect response
         ]
-        asynchttpPost("handleUpdateResponse", postParams, [deviceLabel: data.deviceLabel, notes: updatedNotes])
+        asynchttpPost("handleUpdateResponse", postParams, [
+            deviceId   : deviceId,
+            deviceLabel: data.deviceLabel,
+            entryId    : entryId,
+            notes      : updatedNotes
+        ])
     } catch (Exception e) {
-        logError "Error processing device data for ${data.deviceLabel}: ${e.message}"
+        logError "(notes) Error processing device data for ${data.deviceLabel}: ${e.message}"
+        updateNotesStatus(deviceId, entryId, false)
     }
 }
 
-// Step 3: confirm the update succeeded
+// Step 3: confirm the update succeeded and stamp the history entry.
 // POST /device/update returns 302 (redirect to device edit page) on success;
 // the async HTTP client may follow it and deliver 200, so accept both.
 void handleUpdateResponse(resp, data) {
     int status = resp.status
-    if (status == 200 || status == 302) {
-        logInfo "Battery replacement logged for ${data.deviceLabel}"
+    boolean success = (status == 200 || status == 302)
+    updateNotesStatus(data.deviceId, data.entryId as long, success)
+    if (success) {
+        logInfo "Battery replacement logged to device notes for ${data.deviceLabel}"
         logDebug "Notes: ${data.notes}"
     } else {
-        logError "Failed to update device notes for ${data.deviceLabel}: HTTP ${status}"
-        if (resp.hasError()) logError resp.getErrorMessage()
+        logWarn "(notes) Failed to update device notes for ${data.deviceLabel}: HTTP ${status} — replacement is recorded in app history"
+        if (resp.hasError()) logWarn "(notes) ${resp.getErrorMessage()}"
+        // Log response body at debug level to aid diagnosis of future API changes
+        String responseBody = resp.data?.toString()
+        if (responseBody) logDebug "(notes) Response body: ${responseBody}"
     }
 }
 
