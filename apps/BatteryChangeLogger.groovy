@@ -1,7 +1,36 @@
-import groovy.transform.Field
+/*
+MIT License
 
-// Maximum replacement entries retained per device in state.replacementHistory
-@Field static final int HISTORY_LIMIT = 20
+Copyright (c) 2025 pj
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
+import groovy.transform.Field
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+
+@Field static final String app_version = "0.0.1"
+
+// File name used by uploadHubFile / downloadHubFile for durable history storage.
+// The file survives app reinstall and can be inspected/downloaded from File Manager.
+@Field static final String HISTORY_FILE = "battery-change-logger.json"
 
 // Fields that must be present in the /device/fullJson response before we attempt
 // the /device/update POST. If any are missing it likely means a firmware change
@@ -13,9 +42,9 @@ import groovy.transform.Field
 
 definition(
     name: "Battery Change Logger",
-    namespace: "dragons",
-    author: "slayer",
-    description: "Monitors battery levels and appends a timestamped note to device notes when a replacement is detected",
+    namespace: "iamtrep",
+    author: "pj",
+    description: "Monitors battery levels and logs replacements to app history and an on-hub JSON file",
     category: "Utility",
     iconUrl: "",
     iconX2Url: ""
@@ -27,13 +56,16 @@ preferences {
 }
 
 Map mainPage() {
-    dynamicPage(name: "mainPage", title: "Battery Change Logger", install: true, uninstall: true) {
-        section("Devices") {
+    dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
+        section("App Name", hideable: true, hidden: true) {
+            label title: "Set App Label", required: false
+        }
+        section("Devices", hideable: true, hidden: false) {
             input "batteryDevices", "capability.battery",
                 title: "Devices to monitor",
                 required: true, multiple: true
         }
-        section("Settings") {
+        section("Settings", hideable: true, hidden: false) {
             input "threshold", "number",
                 title: "Battery increase threshold (%)",
                 description: "Treat a battery level increase of at least this amount as a replacement",
@@ -44,7 +76,7 @@ Map mainPage() {
                 description: "Append a timestamped entry to the device's Notes field when a replacement is detected",
                 defaultValue: true, required: false
         }
-        section("Notifications") {
+        section("Notifications", hideable: true, hidden: false) {
             input "notifyDevice", "capability.notification",
                 title: "Notification device (optional)",
                 required: false, multiple: false
@@ -65,7 +97,7 @@ Map mainPage() {
                 String dateB = ((history[b] as List).max { it.date })?.date ?: ""
                 dateB <=> dateA
             }
-            section("Replacement History") {
+            section("Replacement History", hideable: true, hidden: false) {
                 // Summary table: one row per device, latest entry only
                 String td = "style='border:1px solid #999;padding:4px 8px'"
                 String tdC = "style='border:1px solid #999;padding:4px 8px;text-align:center'"
@@ -97,12 +129,17 @@ Map mainPage() {
             }
         }
 
-        section("Logging") {
+        section("Logging", hideable: true, hidden: true) {
             input "logLevel", "enum",
                 title: "Log level",
                 options: ["warn", "info", "debug"],
                 defaultValue: "info", required: true
         }
+        
+        section("") {
+            paragraph "Version ${app_version}"
+        }
+        
     }
 }
 
@@ -170,9 +207,20 @@ void initialize() {
     if (state.batteryLevels == null) {
         state.batteryLevels = [:]
     }
-    if (state.replacementHistory == null) {
-        state.replacementHistory = [:]
+    // If state history is absent (e.g., after reinstall), attempt to restore from file.
+    // This makes the file the authoritative long-term record.
+    if (!state.replacementHistory) {
+        Map fileHistory = loadHistoryFromFile()
+        if (fileHistory != null) {
+            state.replacementHistory = fileHistory
+            logInfo "Restored replacement history from ${HISTORY_FILE} (${fileHistory.size()} device(s))"
+        } else {
+            state.replacementHistory = [:]
+        }
     }
+    // Always sync state to file on init so the file is created/updated whenever
+    // the app is installed or settings are saved, even if no battery events have fired yet.
+    saveHistoryToFile(state.replacementHistory as Map)
     subscribe(batteryDevices, "battery", "batteryHandler")
     seedInitialLevels()
 }
@@ -216,14 +264,12 @@ void batteryHandler(evt) {
             // this exact entry when the notes POST result comes back.
             long entryId = now()
             String timestamp = new Date().format("yyyy-MM-dd HH:mm", location.timeZone)
-            // Persist to history immediately — authoritative record, no API dependency.
             // Check interval against the previous entry before the new one is appended
             if (notifyDevice && settings.notifyIntervalDays != null) {
                 checkIntervalAndNotify(deviceId, deviceLabel, lastLevel, newLevel, settings.notifyIntervalDays as int)
             }
-
+            // Persist to history (state + file) — authoritative record, no API dependency.
             addToHistory(deviceId, deviceLabel, lastLevel, newLevel, entryId, timestamp)
-
             // Best-effort: also append the entry to device notes via the internal API.
             if (updateDeviceNotes != false) {
                 fetchDeviceAndLog(deviceId, deviceLabel, lastLevel, newLevel, entryId, timestamp)
@@ -266,23 +312,21 @@ private void checkIntervalAndNotify(String deviceId, String deviceLabel, int old
     }
 }
 
-// Write a new entry to state.replacementHistory with no notesUpdated key (outcome pending).
-// notesUpdated is set to true/false by updateNotesStatus() once the async POST completes.
-// When updateDeviceNotes is false the key is never added, so the history display omits
-// the notes status for that entry.
+// Append a new entry to state.replacementHistory and persist to file.
+// No notesUpdated key is set here — it is stamped later by updateNotesStatus()
+// once the async notes POST completes (or fails). Entries accumulate without a cap;
+// the file is the authoritative long-term store.
 private void addToHistory(String deviceId, String deviceLabel, int oldLevel, int newLevel, long entryId, String timestamp) {
     Map history = state.replacementHistory ?: [:]
     List entries = (history[deviceId] ?: []) as List
     entries << [id: entryId, date: timestamp, label: deviceLabel, oldLevel: oldLevel, newLevel: newLevel]
-    if (entries.size() > HISTORY_LIMIT) {
-        entries = entries.drop(entries.size() - HISTORY_LIMIT)
-    }
     history[deviceId] = entries
     state.replacementHistory = history
+    saveHistoryToFile(history)
 }
 
-// Find the history entry by ID and stamp the notes outcome.
-// Called from every success and failure path in the async chain.
+// Find the history entry by ID, stamp the notes outcome, and persist to file.
+// Called from every success and failure path in the async notes-update chain.
 private void updateNotesStatus(String deviceId, long entryId, boolean success) {
     Map history = state.replacementHistory ?: [:]
     List entries = (history[deviceId] ?: []) as List
@@ -292,8 +336,43 @@ private void updateNotesStatus(String deviceId, long entryId, boolean success) {
         entries[idx] = entries[idx] + [notesUpdated: success]
         history[deviceId] = entries
         state.replacementHistory = history
+        saveHistoryToFile(history)
     }
 }
+
+// ---- File persistence ----
+
+// Serialize the history map to a versioned JSON document and upload to hub file storage.
+// Best-effort: logs a warning on failure but does not throw — state is already updated.
+private void saveHistoryToFile(Map history) {
+    try {
+        String json = JsonOutput.toJson([version: 1, devices: history])
+        uploadHubFile(HISTORY_FILE, json.getBytes("UTF-8"))
+        logDebug "History persisted to ${HISTORY_FILE}"
+    } catch (Exception e) {
+        logWarn "Could not save history to ${HISTORY_FILE}: ${e.message}"
+    }
+}
+
+// Download and parse the history file. Returns the devices map, or null if the file
+// does not exist, is empty, or cannot be parsed.
+private Map loadHistoryFromFile() {
+    try {
+        byte[] data = downloadHubFile(HISTORY_FILE)
+        if (!data) return null
+        Map doc = new JsonSlurper().parseText(new String(data, "UTF-8")) as Map
+        if ((doc.version as int) != 1) {
+            logWarn "History file has unrecognised version ${doc.version} — skipping restore"
+            return null
+        }
+        return doc.devices as Map
+    } catch (Exception e) {
+        logWarn "Could not load history from ${HISTORY_FILE}: ${e.message}"
+        return null
+    }
+}
+
+// ---- Device notes update (Steps 1-3) ----
 
 // Step 1: fetch the current device JSON so we can echo all fields back in the POST
 void fetchDeviceAndLog(String deviceId, String deviceLabel, int oldLevel, int newLevel, long entryId, String timestamp) {
