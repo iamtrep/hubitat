@@ -241,6 +241,15 @@ Map previewPage() {
                 key.contains(sourceIdStr) || val.contains(sourceIdStr)
             }
 
+            // Extract subscribed attributes for the source device
+            List eventSubs = (statusData.eventSubscriptions ?: []) as List
+            List<String> subscribedAttrs = eventSubs.findAll { sub ->
+                Map s = sub as Map
+                (s.typeId as int) == sourceId && s.type == "DEVICE"
+            }.collect { sub ->
+                (sub as Map).name as String
+            }.unique().sort()
+
             // Get configure/json to check if inputs are on the main config page
             Map configData = null
             try {
@@ -309,6 +318,7 @@ Map previewPage() {
                     multiple: inputMatch.multiple,
                     currentDeviceIds: inputMatch.deviceIds,
                     targetAlreadyPresent: targetAlreadyPresent,
+                    subscribedAttrs: subscribedAttrs,
                     capWarning: capWarning,
                     targetWarning: targetWarning,
                     singleSelectWarning: singleSelectWarning,
@@ -349,7 +359,7 @@ Map previewPage() {
                     "<div style='overflow-x:auto'><table class='mdl-data-table swap-tbl' style='border:2px solid black;width:100%'>" +
                     "<thead><tr style='border-bottom:2px solid black'>" +
                     "<th style='text-align:center;border-right:2px solid black'><strong>Swap</strong></th>" +
-                    "<th><strong>App</strong></th><th><strong>Type</strong></th><th><strong>Input</strong></th><th><strong>Capability</strong></th><th><strong>Warnings</strong></th>" +
+                    "<th><strong>App</strong></th><th><strong>Type</strong></th><th><strong>Input</strong></th><th><strong>Capability</strong></th><th><strong>Subscriptions</strong></th><th><strong>Warnings</strong></th>" +
                     "</tr></thead><tbody>"
                 swappable.eachWithIndex { Map entry, int idx ->
                     List<String> entryWarnings = []
@@ -358,6 +368,8 @@ Map previewPage() {
                     if (entry.singleSelectWarning) entryWarnings << (entry.singleSelectWarning as String)
                     if (entry.stateWarning) entryWarnings << (entry.stateWarning as String)
                     String warningCell = entryWarnings ? "<span style='color:orange'>${entryWarnings.join('<br>')}</span>" : "<span style='color:green'>&#10003;</span>"
+                    List<String> attrs = (entry.subscribedAttrs ?: []) as List<String>
+                    String subsCell = attrs ? attrs.join(", ") : "<span style='color:gray'>-</span>"
                     boolean selected = state.swapSelections[idx.toString()] != "off"
                     table += "<tr>" +
                         "<td style='text-align:center;border-right:2px solid black'>${buttonLink("btnSwapSel:${idx}", selected ? X : O, "#1A77C9")}</td>" +
@@ -365,6 +377,7 @@ Map previewPage() {
                         "<td>${entry.appType}</td>" +
                         "<td>${entry.inputName}</td>" +
                         "<td>${entry.inputType}</td>" +
+                        "<td>${subsCell}</td>" +
                         "<td>${warningCell}</td>" +
                         "</tr>"
                 }
@@ -377,13 +390,16 @@ Map previewPage() {
             section("Manual Swap Required (${manual.size()})") {
                 String table = "<table style='border-collapse:collapse;width:100%'>" +
                     "<thead><tr style='background:#ddd'>" +
-                    "<th ${td}>App</th><th ${td}>Type</th><th ${td}>Input</th><th ${td}>Reason</th>" +
+                    "<th ${td}>App</th><th ${td}>Type</th><th ${td}>Input</th><th ${td}>Subscriptions</th><th ${td}>Reason</th>" +
                     "</tr></thead><tbody>"
                 manual.each { Map entry ->
+                    List<String> attrs = (entry.subscribedAttrs ?: []) as List<String>
+                    String subsCell = attrs ? attrs.join(", ") : "<span style='color:gray'>-</span>"
                     table += "<tr>" +
                         "<td ${td}><a href='/installedapp/configure/${entry.appId}' target='_blank'>${entry.appLabel}</a></td>" +
                         "<td ${td}>${entry.appType}</td>" +
                         "<td ${td}>${entry.inputName}</td>" +
+                        "<td ${td}>${subsCell}</td>" +
                         "<td ${td}>${entry.reason}</td>" +
                         "</tr>"
                 }
@@ -411,6 +427,7 @@ Map previewPage() {
             }
             if (selectedCount > 0) {
                 section {
+                    paragraph "<span style='color:red'><b>&#9888; Recommended:</b> <a href='/hub/backup' target='_blank'>Create a local hub backup</a> before executing the swap.</span>"
                     href "resultsPage", title: "Execute Swap", description: "Swap ${sourceDevice.displayName} → ${targetDevice.displayName} in ${selectedCount} of ${swappable.size()} app(s)"
                 }
             }
