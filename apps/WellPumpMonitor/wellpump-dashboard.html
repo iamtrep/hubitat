@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Well Pump Monitor</title>
+    <style>
+        :root {
+            --bg: #f4f6f9;
+            --card-bg: #fff;
+            --border: #dde1e6;
+            --text: #1a1a2e;
+            --text-muted: #6b7280;
+            --primary: #2563eb;
+            --primary-light: #dbeafe;
+            --success: #16a34a;
+            --success-light: #dcfce7;
+            --danger: #dc2626;
+            --danger-light: #fee2e2;
+            --info: #0891b2;
+            --info-light: #cffafe;
+            --warn: #d97706;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+
+        header { background: var(--card-bg); border-bottom: 1px solid var(--border); padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+        header h1 { font-size: 1.25rem; font-weight: 600; }
+        .header-right { display: flex; align-items: center; gap: 12px; font-size: 0.85rem; }
+        .status-badge { padding: 3px 10px; border-radius: 12px; font-weight: 600; font-size: 0.75rem; text-transform: uppercase; }
+        .badge-idle { background: var(--success-light); color: var(--success); }
+        .badge-running { background: var(--danger-light); color: var(--danger); animation: pulse 1.5s infinite; }
+        .badge-flowing { background: var(--info-light); color: var(--info); }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+
+        nav { background: var(--card-bg); border-bottom: 1px solid var(--border); display: flex; overflow-x: auto; }
+        nav button { background: none; border: none; padding: 12px 20px; font-size: 0.9rem; cursor: pointer; color: var(--text-muted); border-bottom: 2px solid transparent; white-space: nowrap; transition: all 0.15s; }
+        nav button:hover { color: var(--text); background: var(--bg); }
+        nav button.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 500; }
+
+        main { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+        .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+        .card-label { font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+        .card-value { font-size: 1.5rem; font-weight: 700; }
+        .card-sub { font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; }
+
+        .chart-container { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 24px; }
+        .chart-container h3 { font-size: 0.95rem; font-weight: 600; margin-bottom: 12px; }
+        .chart-wrap { position: relative; height: 220px; }
+        .chart-wrap.tall { height: 250px; }
+        .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+        th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+        th { background: var(--bg); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.3px; color: var(--text-muted); cursor: pointer; user-select: none; white-space: nowrap; }
+        th:hover { color: var(--text); }
+        th.sort-asc::after { content: ' \u25B2'; font-size: 0.65rem; }
+        th.sort-desc::after { content: ' \u25BC'; font-size: 0.65rem; }
+        td.num { text-align: right; font-variant-numeric: tabular-nums; }
+        th.num { text-align: right; }
+        tr:hover { background: var(--bg); }
+        .table-wrap { overflow-x: auto; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; }
+
+        .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+        .stats-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+        .stats-card h3 { font-size: 0.95rem; font-weight: 600; margin-bottom: 12px; color: var(--primary); }
+        .stat-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 0.85rem; }
+        .stat-label { color: var(--text-muted); }
+        .stat-value { font-weight: 600; }
+
+        .btn { background: var(--primary); color: #fff; border: none; padding: 8px 16px; border-radius: 6px; font-size: 0.85rem; cursor: pointer; transition: opacity 0.15s; }
+        .btn:hover { opacity: 0.85; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-sm { padding: 4px 12px; font-size: 0.8rem; }
+        .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+
+        .loading { text-align: center; padding: 40px; color: var(--text-muted); }
+        .error { background: var(--danger-light); color: var(--danger); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; }
+
+        @media (max-width: 768px) {
+            .chart-row { grid-template-columns: 1fr; }
+            .stats-grid { grid-template-columns: 1fr; }
+            .cards { grid-template-columns: repeat(2, 1fr); }
+            main { padding: 12px; }
+        }
+        @media (max-width: 480px) {
+            .cards { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body data-version="0.2.0">
+
+<header>
+    <h1>Well Pump Monitor</h1>
+    <div class="header-right">
+        <span id="pumpBadge" class="status-badge badge-idle">Pump Idle</span>
+        <span id="flowBadge" class="status-badge" style="display:none"></span>
+        <span id="powerDisplay" style="font-size:0.8rem;color:var(--text-muted)"></span>
+    </div>
+</header>
+
+<nav id="tabNav">
+    <button class="active" data-tab="overview">Overview</button>
+    <button data-tab="cycles">Cycles</button>
+    <button data-tab="flow">Flow</button>
+    <button data-tab="stats">Statistics</button>
+</nav>
+
+<main>
+    <!-- Overview Tab -->
+    <div id="tab-overview" class="tab-content active">
+        <div class="cards" id="overviewCards"></div>
+        <div class="chart-row">
+            <div class="chart-container">
+                <h3>Daily Water Consumption (Pump Cycles)</h3>
+                <div class="chart-wrap"><canvas id="dailyChart"></canvas></div>
+            </div>
+            <div class="chart-container">
+                <h3>Pump Activity by Hour of Day</h3>
+                <div class="chart-wrap"><canvas id="hourlyChart"></canvas></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cycles Tab -->
+    <div id="tab-cycles" class="tab-content">
+        <div class="toolbar">
+            <button class="btn btn-sm" id="loadCsvCycles">Load Full CSV History</button>
+            <span id="cycleCountLabel" style="font-size:0.8rem;color:var(--text-muted)"></span>
+        </div>
+        <div class="table-wrap">
+            <table id="cyclesTable">
+                <thead>
+                    <tr>
+                        <th data-col="date" data-type="string">Date/Time</th>
+                        <th data-col="durationS" data-type="number" class="num">Duration (s)</th>
+                        <th data-col="volumeL" data-type="number" class="num">Volume (L)</th>
+                        <th data-col="avgLpm" data-type="number" class="num">Avg Flow (LPM)</th>
+                        <th data-col="tankUsageL" data-type="number" class="num">Tank Usage (L)</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Flow Tab -->
+    <div id="tab-flow" class="tab-content">
+        <div class="toolbar">
+            <button class="btn btn-sm" id="loadCsvFlow">Load Full CSV History</button>
+            <span id="flowCountLabel" style="font-size:0.8rem;color:var(--text-muted)"></span>
+        </div>
+        <div class="table-wrap">
+            <table id="flowTable">
+                <thead>
+                    <tr>
+                        <th data-col="date" data-type="string">Date/Time</th>
+                        <th data-col="durationS" data-type="number" class="num">Duration (s)</th>
+                        <th data-col="volumeL" data-type="number" class="num">Volume (L)</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Statistics Tab -->
+    <div id="tab-stats" class="tab-content">
+        <div class="stats-grid" id="statsGrid"></div>
+        <div class="chart-container">
+            <h3>Pump Cycle Duration Trend</h3>
+            <div class="chart-wrap tall"><canvas id="trendChart"></canvas></div>
+        </div>
+        <div class="chart-container" style="margin-top:24px">
+            <h3>Daily Pump Cycle Summaries</h3>
+            <div class="table-wrap">
+                <table id="dailySummaryTable">
+                    <thead>
+                        <tr>
+                            <th data-col="date" data-type="string">Date</th>
+                            <th data-col="count" data-type="number" class="num">Cycles</th>
+                            <th data-col="totalVolumeL" data-type="number" class="num">Volume (L)</th>
+                            <th data-col="totalDurationS" data-type="number" class="num">Duration (s)</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</main>
+
+<script>
+(function() {
+    'use strict';
+
+    const ACCESS_TOKEN = '${access_token}';
+    const BASE_URL = window.location.pathname.replace(/\/dashboard\/?$/, '');
+
+    // ==================== Helpers ====================
+
+    function apiUrl(path) {
+        return BASE_URL + path + '?access_token=' + ACCESS_TOKEN;
+    }
+
+    async function fetchJson(path) {
+        const resp = await fetch(apiUrl(path));
+        if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+        return resp.json();
+    }
+
+    function fmtDec(v) {
+        if (v == null || isNaN(v)) return '—';
+        return (Math.round(v * 10) / 10).toFixed(1);
+    }
+
+    function fmtVol(v) { return fmtDec(v); }
+
+    function fmtInt(v) {
+        if (v == null || isNaN(v)) return '—';
+        return Math.round(v).toLocaleString();
+    }
+
+    // ==================== Tab Switching ====================
+
+    const tabNav = document.getElementById('tabNav');
+    tabNav.addEventListener('click', function(e) {
+        if (e.target.tagName !== 'BUTTON') return;
+        tabNav.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+        e.target.classList.add('active');
+        document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+        document.getElementById('tab-' + e.target.dataset.tab).classList.add('active');
+    });
+
+    // ==================== Table Sorting ====================
+
+    function makeSortable(table) {
+        const headers = table.querySelectorAll('th[data-col]');
+        headers.forEach(function(th) {
+            th.addEventListener('click', function() {
+                const col = th.dataset.col;
+                const type = th.dataset.type;
+                const tbody = table.querySelector('tbody');
+                const rows = Array.from(tbody.rows);
+                const asc = !th.classList.contains('sort-asc');
+
+                // Clear other headers
+                headers.forEach(function(h) { h.classList.remove('sort-asc', 'sort-desc'); });
+                th.classList.add(asc ? 'sort-asc' : 'sort-desc');
+
+                rows.sort(function(a, b) {
+                    let va = a.dataset[col];
+                    let vb = b.dataset[col];
+                    if (type === 'number') {
+                        va = parseFloat(va) || 0;
+                        vb = parseFloat(vb) || 0;
+                    }
+                    if (va < vb) return asc ? -1 : 1;
+                    if (va > vb) return asc ? 1 : -1;
+                    return 0;
+                });
+                rows.forEach(function(r) { tbody.appendChild(r); });
+            });
+        });
+    }
+
+    // ==================== Chart Helpers ====================
+
+    const chartColors = {
+        blue: 'rgba(37, 99, 235, 0.7)',
+        blueBg: 'rgba(37, 99, 235, 0.15)',
+        teal: 'rgba(8, 145, 178, 0.7)',
+        tealBg: 'rgba(8, 145, 178, 0.15)',
+        green: 'rgba(22, 163, 74, 0.7)',
+        orange: 'rgba(217, 119, 6, 0.7)',
+    };
+
+    let dailyChartInstance = null;
+    let hourlyChartInstance = null;
+    let trendChartInstance = null;
+
+    function renderDailyChart(dailySummaries) {
+        const ctx = document.getElementById('dailyChart').getContext('2d');
+        const data = dailySummaries.slice(0, 14).reverse();
+        if (dailyChartInstance) dailyChartInstance.destroy();
+        dailyChartInstance = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: data.map(function(d) { return d.date.substring(5); }),
+                datasets: [{
+                    label: 'Volume (L)',
+                    data: data.map(function(d) { return d.totalVolumeL; }),
+                    backgroundColor: chartColors.blue,
+                    borderRadius: 4,
+                }, {
+                    label: 'Cycles',
+                    data: data.map(function(d) { return d.count; }),
+                    backgroundColor: chartColors.teal,
+                    borderRadius: 4,
+                    yAxisID: 'y1',
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } } },
+                scales: {
+                    y: { beginAtZero: true, title: { display: true, text: 'Volume (L)' } },
+                    y1: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, title: { display: true, text: 'Cycles' } }
+                }
+            }
+        });
+    }
+
+    function renderHourlyChart(hourlyDist) {
+        const ctx = document.getElementById('hourlyChart').getContext('2d');
+        const labels = [];
+        const values = [];
+        for (let h = 0; h < 24; h++) {
+            labels.push(h.toString().padStart(2, '0'));
+            values.push(hourlyDist[h] || 0);
+        }
+        if (hourlyChartInstance) hourlyChartInstance.destroy();
+        hourlyChartInstance = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Pump Cycles',
+                    data: values,
+                    backgroundColor: chartColors.teal,
+                    borderRadius: 3,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: { beginAtZero: true, ticks: { stepSize: 1 } },
+                    x: { title: { display: true, text: 'Hour of Day' } }
+                }
+            }
+        });
+    }
+
+    function renderTrendChart(cycles) {
+        const ctx = document.getElementById('trendChart').getContext('2d');
+        const data = cycles.slice().reverse();
+        if (trendChartInstance) trendChartInstance.destroy();
+        trendChartInstance = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.map(function(c, i) { return c.date ? c.date.substring(5, 16) : i; }),
+                datasets: [{
+                    label: 'Duration (s)',
+                    data: data.map(function(c) { return c.durationS; }),
+                    borderColor: chartColors.blue,
+                    backgroundColor: chartColors.blueBg,
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 3,
+                }, {
+                    label: 'Volume (L)',
+                    data: data.map(function(c) { return c.volumeL; }),
+                    borderColor: chartColors.teal,
+                    backgroundColor: chartColors.tealBg,
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 3,
+                    yAxisID: 'y1',
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } } },
+                scales: {
+                    x: { ticks: { maxTicksLimit: 15, maxRotation: 45 } },
+                    y: { beginAtZero: true, title: { display: true, text: 'Duration (s)' } },
+                    y1: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, title: { display: true, text: 'Volume (L)' } }
+                }
+            }
+        });
+    }
+
+    // ==================== Rendering ====================
+
+    function renderOverview(status, stats) {
+        const at = stats.allTime || {};
+        const html = `
+            <div class="card">
+                <div class="card-label">Total Cycles</div>
+                <div class="card-value">${fmtInt(at.totalCycles || 0)}</div>
+                <div class="card-sub">${fmtDec(at.cyclesPerDay || 0)} / day</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Total Volume Pumped</div>
+                <div class="card-value">${fmtVol(at.totalVolumeL || 0)}L</div>
+                <div class="card-sub">since ${at.firstCycleDate ? at.firstCycleDate.substring(0, 10) : '—'}</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Total Tank Usage</div>
+                <div class="card-value">${fmtVol(at.totalTankUsageL || 0)}L</div>
+                <div class="card-sub">between-cycle consumption</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Avg Cycle Duration</div>
+                <div class="card-value">${fmtDec(at.meanDurationS || 0)}s</div>
+                <div class="card-sub">\u00b1 ${fmtDec(at.stddevDurationS || 0)}s</div>
+            </div>
+        `;
+        document.getElementById('overviewCards').innerHTML = html;
+
+        renderDailyChart(stats.dailyCycleSummaries || []);
+        renderHourlyChart(stats.hourlyDistribution || {});
+    }
+
+    function renderCyclesTable(cycles) {
+        const tbody = document.querySelector('#cyclesTable tbody');
+        tbody.innerHTML = '';
+        cycles.forEach(function(c) {
+            const tr = document.createElement('tr');
+            tr.dataset.date = c.date || '';
+            tr.dataset.durationS = c.durationS || 0;
+            tr.dataset.volumeL = c.volumeL || 0;
+            tr.dataset.avgLpm = c.avgLpm || 0;
+            tr.dataset.tankUsageL = c.tankUsageL != null ? c.tankUsageL : -1;
+            tr.innerHTML = `
+                <td>${c.date || '—'}</td>
+                <td class="num">${fmtDec(c.durationS)}</td>
+                <td class="num">${fmtVol(c.volumeL)}</td>
+                <td class="num">${fmtDec(c.avgLpm)}</td>
+                <td class="num">${c.tankUsageL != null ? fmtVol(c.tankUsageL) : '—'}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+        document.getElementById('cycleCountLabel').textContent = cycles.length + ' cycles';
+    }
+
+    function renderFlowTable(flows) {
+        const tbody = document.querySelector('#flowTable tbody');
+        tbody.innerHTML = '';
+        flows.forEach(function(f) {
+            const tr = document.createElement('tr');
+            tr.dataset.date = f.date || '';
+            tr.dataset.durationS = f.durationS || 0;
+            tr.dataset.volumeL = f.volumeL || 0;
+            tr.innerHTML = `
+                <td>${f.date || '—'}</td>
+                <td class="num">${fmtDec(f.durationS)}</td>
+                <td class="num">${fmtVol(f.volumeL)}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+        document.getElementById('flowCountLabel').textContent = flows.length + ' events';
+    }
+
+    function renderStatistics(stats) {
+        const at = stats.allTime || {};
+        const rw = stats.recentWindow || {};
+        const grid = document.getElementById('statsGrid');
+
+        let html = '';
+
+        // All-time card
+        if (at.totalCycles) {
+            html += `<div class="stats-card"><h3>All-Time Statistics</h3>`;
+            html += statRow('Total Cycles', fmtInt(at.totalCycles));
+            html += statRow('Cycles / Day', fmtDec(at.cyclesPerDay));
+            html += statRow('Total Volume', fmtVol(at.totalVolumeL) + 'L');
+            if (at.totalTankUsageL > 0) html += statRow('Total Tank Usage', fmtVol(at.totalTankUsageL) + 'L');
+            if (at.totalFlowEvents > 0) {
+                html += statRow('Total Flow Events', fmtInt(at.totalFlowEvents));
+                html += statRow('Total Flow Volume', fmtVol(at.totalFlowVolumeL) + 'L');
+            }
+            html += statRow('Total Pump Time', fmtDec(at.totalPumpDurationS) + 's');
+            html += statRow('Mean Duration', fmtDec(at.meanDurationS) + 's \u00b1 ' + fmtDec(at.stddevDurationS) + 's');
+            html += statRow('Mean Volume', fmtVol(at.meanVolumeL) + 'L \u00b1 ' + fmtVol(at.stddevVolumeL) + 'L');
+            html += statRow('Longest Run', fmtDec(at.longestRunS) + 's (' + (at.longestRunDate || '—') + ')');
+            html += statRow('Shortest Run', fmtDec(at.shortestRunS) + 's (' + (at.shortestRunDate || '—') + ')');
+            html += statRow('First Cycle', at.firstCycleDate || '—');
+            html += `</div>`;
+        }
+
+        // Recent window card
+        if (rw.recentCount) {
+            html += `<div class="stats-card"><h3>Recent ${rw.recentCount} Cycles</h3>`;
+            html += statRow('Median Duration', fmtDec(rw.medianDurationS) + 's');
+            html += statRow('Mean Duration', fmtDec(rw.meanDurationS) + 's \u00b1 ' + fmtDec(rw.stddevDurationS) + 's');
+            html += statRow('Median Volume', fmtVol(rw.medianVolumeL) + 'L');
+            html += statRow('Mean Volume', fmtVol(rw.meanVolumeL) + 'L \u00b1 ' + fmtVol(rw.stddevVolumeL) + 'L');
+            html += `</div>`;
+        }
+
+        grid.innerHTML = html || '<p style="color:var(--text-muted)">No statistics available yet.</p>';
+
+        // Daily summary table
+        const daily = stats.dailyCycleSummaries || [];
+        const dtbody = document.querySelector('#dailySummaryTable tbody');
+        dtbody.innerHTML = '';
+        daily.forEach(function(d) {
+            const tr = document.createElement('tr');
+            tr.dataset.date = d.date;
+            tr.dataset.count = d.count;
+            tr.dataset.totalVolumeL = d.totalVolumeL;
+            tr.dataset.totalDurationS = d.totalDurationS;
+            tr.innerHTML = `
+                <td>${d.date}</td>
+                <td class="num">${d.count}</td>
+                <td class="num">${fmtVol(d.totalVolumeL)}</td>
+                <td class="num">${fmtDec(d.totalDurationS)}</td>
+            `;
+            dtbody.appendChild(tr);
+        });
+
+        // Trend chart
+        renderTrendChart(stats._cycles || []);
+    }
+
+    function statRow(label, value) {
+        return `<div class="stat-row"><span class="stat-label">${label}</span><span class="stat-value">${value}</span></div>`;
+    }
+
+    // ==================== Status Updates ====================
+
+    function updateStatus(status) {
+        const pumpBadge = document.getElementById('pumpBadge');
+        const flowBadge = document.getElementById('flowBadge');
+        const powerDisplay = document.getElementById('powerDisplay');
+
+        if (status.pumpRunning) {
+            pumpBadge.textContent = 'Pump Running';
+            pumpBadge.className = 'status-badge badge-running';
+        } else {
+            pumpBadge.textContent = 'Pump Idle';
+            pumpBadge.className = 'status-badge badge-idle';
+        }
+
+        if (status.flowTrackingEnabled) {
+            flowBadge.style.display = '';
+            if (status.flowActive) {
+                flowBadge.textContent = 'Water Flowing';
+                flowBadge.className = 'status-badge badge-flowing';
+            } else {
+                flowBadge.textContent = 'No Flow';
+                flowBadge.className = 'status-badge';
+                flowBadge.style.color = 'var(--text-muted)';
+                flowBadge.style.background = 'var(--bg)';
+            }
+        }
+
+        if (status.currentPowerW != null) {
+            powerDisplay.textContent = fmtDec(status.currentPowerW) + 'W';
+        }
+    }
+
+    // ==================== CSV Loading ====================
+
+    async function loadCsvCycles() {
+        const btn = document.getElementById('loadCsvCycles');
+        btn.disabled = true;
+        btn.textContent = 'Loading...';
+        try {
+            const resp = await fetch(apiUrl('/csv/cycles'));
+            const text = await resp.text();
+            const lines = text.trim().split('\n');
+            if (lines.length < 2) { btn.textContent = 'No CSV data'; return; }
+            const cycles = [];
+            for (let i = 1; i < lines.length; i++) {
+                const cols = lines[i].split(',');
+                if (cols.length < 4) continue;
+                const entry = {
+                    date: cols[0],
+                    durationS: parseFloat(cols[1]) || 0,
+                    volumeL: parseFloat(cols[2]) || 0,
+                    avgLpm: parseFloat(cols[3]) || 0,
+                    tankUsageL: null
+                };
+                // Derive tank usage from adjacent rows if vol_at_start/vol_at_end present
+                if (cols.length >= 6 && cols[4] && cols[5]) {
+                    entry._volAtStart = parseFloat(cols[4]);
+                    entry._volAtEnd = parseFloat(cols[5]);
+                }
+                cycles.push(entry);
+            }
+            // Derive tank usage (CSV is chronological, newest last)
+            for (let i = 1; i < cycles.length; i++) {
+                if (cycles[i]._volAtStart != null && cycles[i-1]._volAtEnd != null) {
+                    const gap = cycles[i]._volAtStart - cycles[i-1]._volAtEnd;
+                    if (gap >= 0) cycles[i].tankUsageL = gap;
+                }
+            }
+            // Reverse to newest-first for display
+            cycles.reverse();
+            renderCyclesTable(cycles);
+            btn.textContent = 'CSV Loaded (' + cycles.length + ' rows)';
+        } catch (e) {
+            btn.textContent = 'Error loading CSV';
+            console.error(e);
+        }
+    }
+
+    async function loadCsvFlow() {
+        const btn = document.getElementById('loadCsvFlow');
+        btn.disabled = true;
+        btn.textContent = 'Loading...';
+        try {
+            const resp = await fetch(apiUrl('/csv/flow'));
+            const text = await resp.text();
+            const lines = text.trim().split('\n');
+            if (lines.length < 2) { btn.textContent = 'No CSV data'; return; }
+            const flows = [];
+            for (let i = 1; i < lines.length; i++) {
+                const cols = lines[i].split(',');
+                if (cols.length < 3) continue;
+                flows.push({
+                    date: cols[0],
+                    durationS: parseFloat(cols[1]) || 0,
+                    volumeL: parseFloat(cols[2]) || 0
+                });
+            }
+            flows.reverse();
+            renderFlowTable(flows);
+            btn.textContent = 'CSV Loaded (' + flows.length + ' rows)';
+        } catch (e) {
+            btn.textContent = 'Error loading CSV';
+            console.error(e);
+        }
+    }
+
+    document.getElementById('loadCsvCycles').addEventListener('click', loadCsvCycles);
+    document.getElementById('loadCsvFlow').addEventListener('click', loadCsvFlow);
+
+    // ==================== Init ====================
+
+    function loadScript(url) {
+        return new Promise(function(resolve, reject) {
+            var s = document.createElement('script');
+            s.src = url;
+            s.onload = resolve;
+            s.onerror = function() { reject(new Error('Failed to load ' + url)); };
+            document.head.appendChild(s);
+        });
+    }
+
+    async function init() {
+        try {
+            // Load Chart.js from the app's own mapping endpoint
+            await loadScript(apiUrl('/chart.js'));
+
+            const [status, cycles, flow, stats] = await Promise.all([
+                fetchJson('/api/status'),
+                fetchJson('/api/cycles'),
+                fetchJson('/api/flow'),
+                fetchJson('/api/stats')
+            ]);
+
+            updateStatus(status);
+            renderOverview(status, stats);
+            renderCyclesTable(cycles);
+            renderFlowTable(flow);
+
+            // Pass cycles to stats for trend chart
+            stats._cycles = cycles;
+            renderStatistics(stats);
+
+            // Make tables sortable
+            makeSortable(document.getElementById('cyclesTable'));
+            makeSortable(document.getElementById('flowTable'));
+            makeSortable(document.getElementById('dailySummaryTable'));
+
+            // Auto-refresh status every 10s
+            setInterval(function() {
+                fetchJson('/api/status').then(updateStatus).catch(function() {});
+            }, 10000);
+
+        } catch (e) {
+            document.querySelector('main').innerHTML = `<div class="error">Failed to load data: ${e.message}. Check that the app is running and OAuth is enabled.</div>`;
+            console.error(e);
+        }
+    }
+
+    init();
+})();
+</script>
+</body>
+</html>

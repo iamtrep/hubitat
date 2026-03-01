@@ -31,12 +31,15 @@
 
 import groovy.transform.CompileStatic
 import groovy.transform.Field
+import groovy.json.JsonOutput
 import com.hubitat.app.DeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.nio.file.AccessDeniedException
 
 @Field static final String APP_NAME = "Well Pump Monitor"
-@Field static final String APP_VERSION = "0.1.0"
+@Field static final String APP_VERSION = "0.2.0"
+@Field static final String DASHBOARD_FILE = "wellpump-dashboard.html"
+@Field static final String CHARTJS_FILE = "wellpump-chart.min.js"
 
 definition(
     name: APP_NAME,
@@ -47,8 +50,20 @@ definition(
     iconUrl: "",
     iconX2Url: "",
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/WellPumpMonitor.groovy",
+    oauth: true,
     singleThreaded: true
 )
+
+mappings {
+    path('/dashboard')  { action: [GET: 'getDashboardHtml'] }
+    path('/chart.js')   { action: [GET: 'getChartJs'] }
+    path('/api/status') { action: [GET: 'getStatusJson'] }
+    path('/api/cycles') { action: [GET: 'getCyclesJson'] }
+    path('/api/flow')   { action: [GET: 'getFlowJson'] }
+    path('/api/stats')  { action: [GET: 'getStatsJson'] }
+    path('/csv/cycles') { action: [GET: 'getCyclesCsv'] }
+    path('/csv/flow')   { action: [GET: 'getFlowCsv'] }
+}
 
 preferences {
     page(name: "mainPage")
@@ -62,6 +77,15 @@ Map mainPage() {
     dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
         section("Current Status") {
             paragraph getStatusText()
+        }
+
+        section("Dashboard") {
+            if (state.accessToken) {
+                String dashboardUrl = "${getFullLocalApiServerUrl()}/dashboard?access_token=${state.accessToken}"
+                paragraph "<a href='${dashboardUrl}' target='_blank' rel='noopener' style='font-size:1.1em;font-weight:500'>Open Dashboard &#8599;</a><br><small style='color:#888'>Charts, statistics, and full history</small>"
+            } else {
+                paragraph "<i>Dashboard not available. Enable OAuth in the app code editor and click Done to reinitialize.</i>"
+            }
         }
 
         section("App Name", hideable: true, hidden: true) {
@@ -247,43 +271,48 @@ Map historyPage() {
 
         section("Statistics") {
             StringBuilder stats = new StringBuilder()
-            if (state.pumpTimeMax && (state.pumpTimeMax as long) > 0) {
-                stats.append("Longest run: <b>${fmtDec((state.pumpTimeMax as long) / 1000.0)}s</b> on ${state.pumpTimeMaxDate}<br/>")
+
+            // All-time stats from running counters
+            Map allTime = computeAllTimeStats()
+            if (allTime) {
+                stats.append("Total cycles: <b>${allTime.totalCycles}</b>")
+                if (allTime.cyclesPerDay) {
+                    stats.append(" (${fmtDec(allTime.cyclesPerDay)}/day)")
+                }
+                stats.append("<br/>")
+                if (allTime.totalVolumeL) {
+                    stats.append("Total volume: <b>${fmtVol(allTime.totalVolumeL)}L</b><br/>")
+                }
+                if (allTime.totalTankUsageL && (allTime.totalTankUsageL as BigDecimal) > 0) {
+                    stats.append("Total tank usage: <b>${fmtVol(allTime.totalTankUsageL)}L</b><br/>")
+                }
+                stats.append("Duration: mean <b>${fmtDec(allTime.meanDurationS)}s</b> \u00b1 ${fmtDec(allTime.stddevDurationS)}s<br/>")
+                stats.append("Volume/cycle: mean <b>${fmtVol(allTime.meanVolumeL)}L</b> \u00b1 ${fmtVol(allTime.stddevVolumeL)}L<br/>")
+                if (allTime.longestRunS) {
+                    stats.append("Longest: <b>${fmtDec(allTime.longestRunS)}s</b> (${allTime.longestRunDate})<br/>")
+                }
+                if (allTime.shortestRunS) {
+                    stats.append("Shortest: <b>${fmtDec(allTime.shortestRunS)}s</b> (${allTime.shortestRunDate})<br/>")
+                }
             }
-            if (state.pumpTimeMin && (state.pumpTimeMin as long) > 0) {
-                stats.append("Shortest run: <b>${fmtDec((state.pumpTimeMin as long) / 1000.0)}s</b> on ${state.pumpTimeMinDate}<br/>")
+
+            // Recent window stats (median, etc.)
+            Map recent = computeCycleStats()
+            if (recent) {
+                stats.append("<br/><b>Recent ${recent.recentCount} cycles:</b><br/>")
+                stats.append("Duration: median <b>${fmtDec(recent.medianDurationS)}s</b>, mean ${fmtDec(recent.meanDurationS)}s \u00b1 ${fmtDec(recent.stddevDurationS)}s<br/>")
+                stats.append("Volume: median <b>${fmtVol(recent.medianVolumeL)}L</b>, mean ${fmtVol(recent.meanVolumeL)}L \u00b1 ${fmtVol(recent.stddevVolumeL)}L<br/>")
             }
-            if (state.totalVolume) {
-                stats.append("Total volume tracked: <b>${fmtVol(state.totalVolume)}L</b><br/>")
+
+            if (allTime.firstCycleDate) {
+                stats.append("<br/><small>First recorded cycle: ${allTime.firstCycleDate}</small>")
             }
-            if (state.totalTankUsage && (state.totalTankUsage as BigDecimal) > 0) {
-                stats.append("Total tank usage: <b>${fmtVol(state.totalTankUsage)}L</b><br/>")
-            }
-            stats.append("Total cycles recorded: <b>${cycleHistory.size()}</b>")
+
             paragraph stats.toString()
         }
 
-        section("All Cycles") {
-            String td = "style='border:1px solid #999;padding:4px 8px'"
-            String tdR = "style='border:1px solid #999;padding:4px 8px;text-align:right'"
-            String table = "<table style='border-collapse:collapse;width:100%'>" +
-                "<thead><tr style='background:#ddd'>" +
-                "<th ${td}>Date/Time</th><th ${tdR}>Duration</th>" +
-                "<th ${tdR}>Volume</th><th ${tdR}>Avg Flow</th><th ${tdR}>Tank Usage</th>" +
-                "</tr></thead><tbody>"
-            for (int i = 0; i < cycleHistory.size(); i++) {
-                Map e = cycleHistory[i] as Map
-                String tankUsage = deriveTankUsage(e, i + 1 < cycleHistory.size() ? cycleHistory[i + 1] as Map : null)
-                table += "<tr>" +
-                    "<td ${td}>${e.date}</td>" +
-                    "<td ${tdR}>${fmtDec(e.durationS)}s</td>" +
-                    "<td ${tdR}>${fmtVol(e.volumeL)}L</td>" +
-                    "<td ${tdR}>${fmtDec(e.avgLpm)} LPM</td>" +
-                    "<td ${tdR}>${tankUsage}</td>" +
-                    "</tr>"
-            }
-            table += "</tbody></table>"
-            paragraph table
+        section("") {
+            paragraph "View the <b>Dashboard</b> for full history, charts, and detailed analysis."
         }
     }
 }
@@ -298,31 +327,15 @@ Map flowHistoryPage() {
 
         section("Statistics") {
             StringBuilder stats = new StringBuilder()
+            stats.append("Total flow events: <b>${(state.totalFlowEventCount ?: flowHistory.size())}</b><br/>")
             if (state.totalFlowVolume) {
-                stats.append("Total volume tracked: <b>${fmtVol(state.totalFlowVolume)}L</b><br/>")
+                stats.append("Total volume: <b>${fmtVol(state.totalFlowVolume)}L</b><br/>")
             }
-            stats.append("Total flow events recorded: <b>${flowHistory.size()}</b>")
             paragraph stats.toString()
         }
 
-        section("All Flow Events") {
-            String td = "style='border:1px solid #999;padding:4px 8px'"
-            String tdR = "style='border:1px solid #999;padding:4px 8px;text-align:right'"
-            String table = "<table style='border-collapse:collapse;width:100%'>" +
-                "<thead><tr style='background:#ddd'>" +
-                "<th ${td}>Date/Time</th><th ${tdR}>Duration</th>" +
-                "<th ${tdR}>Volume</th>" +
-                "</tr></thead><tbody>"
-            flowHistory.each { entry ->
-                Map e = entry as Map
-                table += "<tr>" +
-                    "<td ${td}>${e.date}</td>" +
-                    "<td ${tdR}>${fmtDec(e.durationS)}s</td>" +
-                    "<td ${tdR}>${fmtVol(e.volumeL)}L</td>" +
-                    "</tr>"
-            }
-            table += "</tbody></table>"
-            paragraph table
+        section("") {
+            paragraph "View the <b>Dashboard</b> for full flow history and charts."
         }
     }
 }
@@ -362,6 +375,14 @@ void initialize() {
     // state.lastCycleVolumeAtEnd: raw meter reading at end of previous cycle (null until first cycle completes)
     if (state.cycleHistory == null) state.cycleHistory = []
 
+    // Running counters for aggregate statistics
+    if (state.totalCycleCount == null) state.totalCycleCount = 0
+    if (state.totalPumpDurationS == null) state.totalPumpDurationS = 0.0
+    if (state.totalPumpDurationSqS == null) state.totalPumpDurationSqS = 0.0
+    if (state.totalVolumeSq == null) state.totalVolumeSq = 0.0
+    if (state.firstCycleDate == null) state.firstCycleDate = ""
+    if (state.firstCycleTimestamp == null) state.firstCycleTimestamp = 0
+
     // Flow tracking state
     if (state.flowActive == null) state.flowActive = false
     if (state.flowBeginTime == null) state.flowBeginTime = 0
@@ -370,6 +391,20 @@ void initialize() {
     if (state.lastFlowVolume == null) state.lastFlowVolume = 0.0
     if (state.flowHistory == null) state.flowHistory = []
     if (state.totalFlowVolume == null) state.totalFlowVolume = 0.0
+    if (state.totalFlowEventCount == null) state.totalFlowEventCount = 0
+
+    // Create access token for dashboard API endpoints
+    if (!state.accessToken) {
+        try {
+            createAccessToken()
+            logInfo("Access token created for dashboard API")
+        } catch (Exception e) {
+            logError("Failed to create access token: ${e.message}. Enable OAuth in the app code editor.")
+        }
+    }
+
+    // One-time migration of running counters from existing history
+    migrateRunningCounters()
 
     // Subscribe to power events from pump switch
     subscribe(pumpSwitch, "power", powerHandler)
@@ -506,6 +541,16 @@ private void handlePumpStopped(long currentTime) {
     state.totalVolume = ((state.totalVolume ?: 0.0) as BigDecimal) + volumeDuringRun
     state.lastCycleVolumeAtEnd = volumeEnd
 
+    // Update running counters for aggregate statistics
+    state.totalCycleCount = ((state.totalCycleCount ?: 0) as int) + 1
+    state.totalPumpDurationS = ((state.totalPumpDurationS ?: 0.0) as BigDecimal) + durationSeconds
+    state.totalPumpDurationSqS = ((state.totalPumpDurationSqS ?: 0.0) as BigDecimal) + (durationSeconds * durationSeconds)
+    state.totalVolumeSq = ((state.totalVolumeSq ?: 0.0) as BigDecimal) + (volumeDuringRun * volumeDuringRun)
+    if (!state.firstCycleDate) {
+        state.firstCycleDate = formatDate(currentTime)
+        state.firstCycleTimestamp = currentTime
+    }
+
     logInfo("Pump stopped: ${fmtDec(durationSeconds)}s, ${fmtVol(volumeDuringRun)}L, ${fmtDec(avgLpm)} LPM")
 
     // Append to CSV log
@@ -629,6 +674,7 @@ void rateHandler(Event evt) {
         state.lastFlowDuration = durationSeconds
         state.lastFlowVolume = volumeDelivered
         state.totalFlowVolume = ((state.totalFlowVolume ?: 0.0) as BigDecimal) + volumeDelivered
+        state.totalFlowEventCount = ((state.totalFlowEventCount ?: 0) as int) + 1
 
         logInfo("Water flow stopped: ${fmtVol(volumeDelivered)}L in ${fmtDec(durationSeconds)}s")
 
@@ -721,6 +767,310 @@ private void updateStatistics(long durationMs, long currentTime) {
         state.pumpTimeMin = durationMs
         state.pumpTimeMinDate = dateStr
         logInfo("New minimum pump run time: ${fmtDec(durationMs / 1000.0)}s")
+    }
+}
+
+/**
+ * Compute statistics from the recent 100-entry cycle history window.
+ * Returns median/mean/stddev for duration and volume.
+ */
+private Map computeCycleStats() {
+    List<Map> history = (state.cycleHistory ?: []) as List<Map>
+    int n = history.size()
+    if (n == 0) return [:]
+
+    List<BigDecimal> durations = history.collect { ((it as Map).durationS ?: 0) as BigDecimal }
+    List<BigDecimal> volumes = history.collect { ((it as Map).volumeL ?: 0) as BigDecimal }
+
+    // Median duration (SensorAggregatorChild pattern)
+    List<BigDecimal> sortedDurations = new ArrayList<BigDecimal>(durations)
+    Collections.sort(sortedDurations)
+    BigDecimal medianDuration
+    if (n % 2 == 0) {
+        medianDuration = (sortedDurations[(n / 2 - 1) as int] + sortedDurations[(n / 2) as int]) / 2.0
+    } else {
+        medianDuration = sortedDurations[(n / 2) as int]
+    }
+
+    // Median volume
+    List<BigDecimal> sortedVolumes = new ArrayList<BigDecimal>(volumes)
+    Collections.sort(sortedVolumes)
+    BigDecimal medianVolume
+    if (n % 2 == 0) {
+        medianVolume = (sortedVolumes[(n / 2 - 1) as int] + sortedVolumes[(n / 2) as int]) / 2.0
+    } else {
+        medianVolume = sortedVolumes[(n / 2) as int]
+    }
+
+    // Mean and stddev for duration
+    BigDecimal sumDuration = 0.0
+    durations.each { sumDuration += it }
+    BigDecimal meanDuration = sumDuration / n
+    BigDecimal varianceDuration = 0.0
+    durations.each { varianceDuration += (it - meanDuration) * (it - meanDuration) }
+    varianceDuration = varianceDuration / n
+    BigDecimal stddevDuration = Math.sqrt(varianceDuration as double) as BigDecimal
+
+    // Mean and stddev for volume
+    BigDecimal sumVolume = 0.0
+    volumes.each { sumVolume += it }
+    BigDecimal meanVolume = sumVolume / n
+    BigDecimal varianceVolume = 0.0
+    volumes.each { varianceVolume += (it - meanVolume) * (it - meanVolume) }
+    varianceVolume = varianceVolume / n
+    BigDecimal stddevVolume = Math.sqrt(varianceVolume as double) as BigDecimal
+
+    return [
+        recentCount: n,
+        medianDurationS: medianDuration,
+        meanDurationS: meanDuration,
+        stddevDurationS: stddevDuration,
+        medianVolumeL: medianVolume,
+        meanVolumeL: meanVolume,
+        stddevVolumeL: stddevVolume,
+    ]
+}
+
+/**
+ * Compute all-time statistics from running counters.
+ */
+private Map computeAllTimeStats() {
+    int totalCycles = (state.totalCycleCount ?: 0) as int
+    if (totalCycles == 0) return [:]
+
+    BigDecimal totalDuration = (state.totalPumpDurationS ?: 0.0) as BigDecimal
+    BigDecimal totalDurationSq = (state.totalPumpDurationSqS ?: 0.0) as BigDecimal
+    BigDecimal totalVol = (state.totalVolume ?: 0.0) as BigDecimal
+    BigDecimal totalVolSq = (state.totalVolumeSq ?: 0.0) as BigDecimal
+
+    BigDecimal meanDuration = totalDuration / totalCycles
+    BigDecimal varianceDuration = (totalDurationSq / totalCycles) - (meanDuration * meanDuration)
+    if (varianceDuration < 0) varianceDuration = 0.0
+    BigDecimal stddevDuration = Math.sqrt(varianceDuration as double) as BigDecimal
+
+    BigDecimal meanVolume = totalVol / totalCycles
+    BigDecimal varianceVolume = (totalVolSq / totalCycles) - (meanVolume * meanVolume)
+    if (varianceVolume < 0) varianceVolume = 0.0
+    BigDecimal stddevVolume = Math.sqrt(varianceVolume as double) as BigDecimal
+
+    BigDecimal cyclesPerDay = 0.0
+    if (state.firstCycleTimestamp && (state.firstCycleTimestamp as long) > 0) {
+        long elapsed = (now() - (state.firstCycleTimestamp as long)) / 86400000 as long
+        long daysSinceFirst = elapsed > 1 ? elapsed : 1
+        cyclesPerDay = (totalCycles as BigDecimal) / (daysSinceFirst as BigDecimal)
+    }
+
+    return [
+        totalCycles: totalCycles,
+        totalFlowEvents: (state.totalFlowEventCount ?: 0) as int,
+        totalVolumeL: totalVol,
+        totalTankUsageL: (state.totalTankUsage ?: 0.0) as BigDecimal,
+        totalFlowVolumeL: (state.totalFlowVolume ?: 0.0) as BigDecimal,
+        totalPumpDurationS: totalDuration,
+        meanDurationS: meanDuration,
+        stddevDurationS: stddevDuration,
+        meanVolumeL: meanVolume,
+        stddevVolumeL: stddevVolume,
+        cyclesPerDay: cyclesPerDay,
+        longestRunS: ((state.pumpTimeMax ?: 0) as long) / 1000.0 as BigDecimal,
+        longestRunDate: state.pumpTimeMaxDate ?: "",
+        shortestRunS: ((state.pumpTimeMin ?: 0) as long) / 1000.0 as BigDecimal,
+        shortestRunDate: state.pumpTimeMinDate ?: "",
+        firstCycleDate: state.firstCycleDate ?: "",
+    ]
+}
+
+/**
+ * Group history entries by day for daily summaries.
+ */
+private List<Map> computeDailySummaries(List<Map> history, String volumeKey) {
+    if (!history) return []
+    Map<String, Map> byDay = [:]
+    history.each { Map entry ->
+        String day = (entry.date as String)?.substring(0, 10)
+        if (!day) return
+        Map daySummary = byDay.get(day)
+        if (!daySummary) {
+            daySummary = [date: day, count: 0, totalVolumeL: 0.0 as BigDecimal, totalDurationS: 0.0 as BigDecimal]
+            byDay[day] = daySummary
+        }
+        daySummary.count = (daySummary.count as int) + 1
+        daySummary.totalVolumeL = (daySummary.totalVolumeL as BigDecimal) + ((entry[volumeKey] ?: 0) as BigDecimal)
+        daySummary.totalDurationS = (daySummary.totalDurationS as BigDecimal) + ((entry.durationS ?: 0) as BigDecimal)
+    }
+    return byDay.values().toList().sort { a, b -> (b as Map).date <=> (a as Map).date }
+}
+
+/**
+ * Bucket pump cycles by hour-of-day (0-23) for peak usage analysis.
+ */
+private Map<Integer, Integer> computeHourlyDistribution() {
+    List<Map> history = (state.cycleHistory ?: []) as List<Map>
+    Map<Integer, Integer> hourCounts = [:]
+    for (int h = 0; h < 24; h++) { hourCounts[h] = 0 }
+    history.each { Map entry ->
+        String dateStr = entry.date as String
+        if (dateStr?.length() >= 13) {
+            try {
+                int hour = (dateStr.substring(11, 13)) as int
+                hourCounts[hour] = (hourCounts[hour] ?: 0) + 1
+            } catch (Exception ignored) {}
+        }
+    }
+    return hourCounts
+}
+
+/**
+ * One-time migration: seed running counters from existing history.
+ */
+private void migrateRunningCounters() {
+    int currentVersion = (state.statsVersion ?: 0) as int
+    if (currentVersion >= 1) return
+
+    List<Map> history = (state.cycleHistory ?: []) as List<Map>
+    if (history) {
+        int count = history.size()
+        BigDecimal totalDur = 0.0
+        BigDecimal totalDurSq = 0.0
+        BigDecimal totalVolSq = 0.0
+
+        history.each { Map entry ->
+            BigDecimal dur = (entry.durationS ?: 0) as BigDecimal
+            BigDecimal vol = (entry.volumeL ?: 0) as BigDecimal
+            totalDur += dur
+            totalDurSq += (dur * dur)
+            totalVolSq += (vol * vol)
+        }
+
+        if ((state.totalCycleCount ?: 0) as int == 0) {
+            state.totalCycleCount = count
+            state.totalPumpDurationS = totalDur
+            state.totalPumpDurationSqS = totalDurSq
+            state.totalVolumeSq = totalVolSq
+        }
+
+        if (!state.firstCycleDate && history.size() > 0) {
+            Map oldest = history.last() as Map
+            state.firstCycleDate = oldest.date as String
+            try {
+                state.firstCycleTimestamp = Date.parse("yyyy-MM-dd HH:mm:ss", oldest.date as String).getTime()
+            } catch (Exception e) {
+                state.firstCycleTimestamp = 0
+            }
+        }
+    }
+
+    List<Map> flowHistory = (state.flowHistory ?: []) as List<Map>
+    if (flowHistory && ((state.totalFlowEventCount ?: 0) as int) == 0) {
+        state.totalFlowEventCount = flowHistory.size()
+    }
+
+    state.statsVersion = 1
+    logInfo("Running counters migrated from history (${history?.size() ?: 0} cycles, ${flowHistory?.size() ?: 0} flow events)")
+}
+
+// ==================== API Endpoints ====================
+
+Map getDashboardHtml() {
+    String html
+    try {
+        byte[] bytes = safeDownloadHubFile(DASHBOARD_FILE)
+        html = bytes ? new String(bytes, 'UTF-8') : '<html><body>Dashboard file not found. Upload <code>wellpump-dashboard.html</code> to the hub File Manager.</body></html>'
+    } catch (Exception e) {
+        html = "<html><body>Error loading dashboard: ${e.message}</body></html>"
+    }
+    html = html.replaceAll('\\$\\{access_token\\}', state.accessToken ?: '')
+    return render(status: 200, contentType: 'text/html', data: html)
+}
+
+Map getChartJs() {
+    try {
+        byte[] bytes = safeDownloadHubFile(CHARTJS_FILE)
+        if (bytes) {
+            return render(status: 200, contentType: 'application/javascript', data: new String(bytes, 'UTF-8'))
+        }
+    } catch (Exception ignored) {}
+    return render(status: 404, contentType: 'text/plain', data: "Chart.js not found. Upload ${CHARTJS_FILE} to File Manager.")
+}
+
+Map getStatusJson() {
+    Map status = [
+        pumpRunning: state.pumpRunning ?: false,
+        flowActive: state.flowActive ?: false,
+        currentPowerW: pumpSwitch?.currentValue("power"),
+        currentVolumeL: waterMeter?.currentValue(waterMeterAttribute ?: "volume"),
+        pumpBeginTimestamp: state.pumpRunning ? (state.pumpBegin as long) : null,
+        lastRunDurationS: state.lastRunDuration,
+        lastRunVolumeL: state.lastRunVolume,
+        lastRunAvgLpm: state.lastRunAvgLpm,
+        lastFlowDurationS: state.lastFlowDuration,
+        lastFlowVolumeL: state.lastFlowVolume,
+        pumpDeviceName: pumpSwitch?.displayName ?: "",
+        meterDeviceName: waterMeter?.displayName ?: "",
+        flowTrackingEnabled: enableFlowTracking != false,
+        appVersion: APP_VERSION,
+        timestamp: now()
+    ]
+    return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson(status))
+}
+
+Map getCyclesJson() {
+    List<Map> history = (state.cycleHistory ?: []) as List<Map>
+    List<Map> enriched = []
+    for (int i = 0; i < history.size(); i++) {
+        Map entry = history[i] as Map
+        Map nextEntry = (i + 1 < history.size()) ? history[i + 1] as Map : null
+        BigDecimal tankUsage = null
+        if (nextEntry != null && entry.volumeAtStart != null && nextEntry.volumeAtEnd != null) {
+            BigDecimal gap = (entry.volumeAtStart as BigDecimal) - (nextEntry.volumeAtEnd as BigDecimal)
+            if (gap >= 0) tankUsage = gap
+        }
+        enriched.add(entry + [tankUsageL: tankUsage])
+    }
+    return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson(enriched))
+}
+
+Map getFlowJson() {
+    return render(status: 200, contentType: 'application/json',
+        data: JsonOutput.toJson(state.flowHistory ?: []))
+}
+
+Map getStatsJson() {
+    Map allTime = computeAllTimeStats()
+    Map recentCycle = computeCycleStats()
+    List<Map> dailyCycles = computeDailySummaries((state.cycleHistory ?: []) as List<Map>, 'volumeL')
+    List<Map> dailyFlow = computeDailySummaries((state.flowHistory ?: []) as List<Map>, 'volumeL')
+    Map<Integer, Integer> hourly = computeHourlyDistribution()
+
+    Map stats = [
+        allTime: allTime,
+        recentWindow: recentCycle,
+        dailyCycleSummaries: dailyCycles,
+        dailyFlowSummaries: dailyFlow,
+        hourlyDistribution: hourly
+    ]
+    return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson(stats))
+}
+
+Map getCyclesCsv() {
+    String fileName = csvFileName ?: "pumpCycles.csv"
+    try {
+        byte[] bytes = safeDownloadHubFile(fileName)
+        String csv = bytes ? new String(bytes, 'UTF-8') : "datetime,duration_s,volume_L,avg_lpm,vol_at_start,vol_at_end\n"
+        return render(status: 200, contentType: 'text/csv', data: csv)
+    } catch (Exception e) {
+        return render(status: 500, contentType: 'text/plain', data: "Error: ${e.message}")
+    }
+}
+
+Map getFlowCsv() {
+    String fileName = flowCsvFileName ?: "waterFlow.csv"
+    try {
+        byte[] bytes = safeDownloadHubFile(fileName)
+        String csv = bytes ? new String(bytes, 'UTF-8') : "datetime,duration_s,volume_L\n"
+        return render(status: 200, contentType: 'text/csv', data: csv)
+    } catch (Exception e) {
+        return render(status: 500, contentType: 'text/plain', data: "Error: ${e.message}")
     }
 }
 
