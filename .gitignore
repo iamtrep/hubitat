@@ -5,6 +5,7 @@
 #*.groovy
 .DS_Store
 *.py~
+*.json~
 .hubitat.json
 *.har
 *.log
