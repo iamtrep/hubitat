@@ -9,3 +9,4 @@
 .hubitat.json
 *.har
 *.log
+.claude/worktrees
