@@ -33,7 +33,7 @@
 
 import groovy.transform.Field
 
-@Field static final String constCodeVersion = "0.0.7"
+@Field static final String constCodeVersion = "0.0.8"
 
 metadata {
     definition (
@@ -381,22 +381,18 @@ private Map parseAttributeReport(Map descMap) {
                 case "0000":
                     map.name = "temperature"
                     switch (descMap.value) {
-                        case "7FFD":
-                            map.value = "low"
-                            break
-                        case "7FFF":
-                            map.value = "high"
-                            break
-                        case "8000":
-                            map.value = "--"
-                            break
+                        case "7FFD": // sensor low error
+                        case "7FFF": // sensor high error
+                        case "8000": // sensor unavailable
+                            logWarn "Temperature sensor error (raw value: 0x${descMap.value})"
+                            return [:]
                         default:
                             if (descMap.value > "8000") {
                                 map.value = -(Math.round(2*(655.36 - Integer.parseInt(descMap.value, 16)))/2)
                             } else {
                                 map.value = getTemperature(descMap.value)
-                                state.rawTemp = map.value
                             }
+                            state.rawTemp = map.value
                             break
                     }
                     map.unit = getTemperatureScale()
