@@ -10,7 +10,6 @@ Hubitat Elevation device drivers for Zigbee devices, BLE sensors, and cloud APIs
 | **BTHome v2 Motion/Occupancy Sensor** | BLE motion/occupancy sensor via BTHome v2 |
 | **Device Ping** | Pings a device and reports connectivity as a contact sensor |
 | **Ecobee Companion** | Advanced Ecobee thermostat control via OAuth API |
-| **Generic WebSocket Test** | Development driver for testing WebSocket connections |
 | **IKEA Window Blinds** | Zigbee driver for IKEA window blinds |
 | **Log Event Monitor** | Monitors the hub log stream and fires events on pattern matches |
 | **Xfinity Contact Sensor** | Zigbee contact sensor with battery, tamper, and temperature |
@@ -30,6 +29,14 @@ Hubitat Elevation device drivers for Zigbee devices, BLE sensors, and cloud APIs
 |---|---|
 | **Stelpro Allia Zigbee Thermostat** | Zigbee thermostat for Allia / Stello Hilo HT402 |
 | **Stelpro Ki ZigBee Thermostat** | Zigbee thermostat for Stelpro Ki |
+
+## Tests & Utilities
+
+| Driver | Description |
+|---|---|
+| **Device Inspector** | Diagnostic driver that dumps DeviceWrapper properties to logs |
+| **Generic WebSocket Test** | Development driver for testing WebSocket connections |
+| **Log Event Monitor Test** | Companion test device for Log Event Monitor |
 
 ## VisiblAir
 
