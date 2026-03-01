@@ -15,11 +15,20 @@ Follow these steps exactly:
 
 ### Step 1: Read Configuration
 
-Read `.hubitat.json` from the project root to get `hub_ip` and check if `maker_api` credentials are configured (both `app_id` and `token` must be non-null).
+Read `.hubitat.json` from the project root. Parse the multi-hub config:
+
+1. Check if `$ARGUMENTS` starts with `@hubname` (e.g., `@chalet 42 on`). If so, use that hub name and strip the `@hubname` from arguments before further parsing. Otherwise, use `default_hub`.
+2. Look up the hub in `hubs[hubname]` to get `hub_ip` and check if `maker_api` credentials are configured (both `app_id` and `token` must be non-null).
+3. If the hub has `username` and `password` (non-null), it has hub security enabled. Authenticate first:
+   ```bash
+   curl -s -c /tmp/hubitat_cookies_{hubname} -X POST "http://{hub_ip}/login" \
+     -d "username={username}&password={password}"
+   ```
+   Then add `-b /tmp/hubitat_cookies_{hubname}` to **all** subsequent curl commands for this hub.
 
 ### Step 2: Parse Arguments
 
-`$ARGUMENTS` can be one of:
+`$ARGUMENTS` (after stripping any `@hubname`) can be one of:
 
 1. **`{device_id} {command}`** — a numeric device ID and a command to send (e.g., `42 on`, `42 off`, `42 setLevel 50`)
 2. **`{device_id}`** — just a device ID to show its current status

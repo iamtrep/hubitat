@@ -17,11 +17,20 @@ A single POST to `/installedapp/update/json` with `_action_update=Done` saves th
 
 ### Step 1: Read Configuration
 
-Read `.hubitat.json` from the project root to get `hub_ip` and `maker_api.app_id`.
+Read `.hubitat.json` from the project root. Parse the multi-hub config:
+
+1. Check if `$ARGUMENTS` starts with `@hubname` (e.g., `@chalet add 42`). If so, use that hub name and strip the `@hubname` from arguments before further parsing. Otherwise, use `default_hub`.
+2. Look up the hub in `hubs[hubname]` to get `hub_ip` and `maker_api.app_id`.
+3. If the hub has `username` and `password` (non-null), it has hub security enabled. Authenticate first:
+   ```bash
+   curl -s -c /tmp/hubitat_cookies_{hubname} -X POST "http://{hub_ip}/login" \
+     -d "username={username}&password={password}"
+   ```
+   Then add `-b /tmp/hubitat_cookies_{hubname}` to **all** subsequent curl commands for this hub.
 
 ### Step 2: Parse Arguments
 
-Parse `$ARGUMENTS`:
+Parse `$ARGUMENTS` (after stripping any `@hubname`):
 
 - **`add {device_id}`** — add device to Maker API (uses `maker_api.app_id`)
 - **`remove {device_id}`** — remove device from Maker API
