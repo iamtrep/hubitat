@@ -182,16 +182,18 @@ Map mainPage() {
                 String table = "<table style='border-collapse:collapse;width:100%'>" +
                     "<thead><tr style='background:#ddd'>" +
                     "<th ${td}>Date/Time</th><th ${tdR}>Duration</th>" +
-                    "<th ${tdR}>Volume</th><th ${tdR}>Avg Flow</th>" +
+                    "<th ${tdR}>Volume</th><th ${tdR}>Avg Flow</th><th ${tdR}>Tank Usage</th>" +
                     "</tr></thead><tbody>"
                 int count = Math.min(cycleHistory.size(), 10)
                 for (int i = 0; i < count; i++) {
                     Map entry = cycleHistory[i] as Map
+                    String tankUsage = deriveTankUsage(entry, i + 1 < cycleHistory.size() ? cycleHistory[i + 1] as Map : null)
                     table += "<tr>" +
                         "<td ${td}>${entry.date}</td>" +
                         "<td ${tdR}>${fmtDec(entry.durationS)}s</td>" +
                         "<td ${tdR}>${fmtVol(entry.volumeL)}L</td>" +
                         "<td ${tdR}>${fmtDec(entry.avgLpm)} LPM</td>" +
+                        "<td ${tdR}>${tankUsage}</td>" +
                         "</tr>"
                 }
                 table += "</tbody></table>"
@@ -254,6 +256,9 @@ Map historyPage() {
             if (state.totalVolume) {
                 stats.append("Total volume tracked: <b>${fmtVol(state.totalVolume)}L</b><br/>")
             }
+            if (state.totalTankUsage && (state.totalTankUsage as BigDecimal) > 0) {
+                stats.append("Total tank usage: <b>${fmtVol(state.totalTankUsage)}L</b><br/>")
+            }
             stats.append("Total cycles recorded: <b>${cycleHistory.size()}</b>")
             paragraph stats.toString()
         }
@@ -264,15 +269,17 @@ Map historyPage() {
             String table = "<table style='border-collapse:collapse;width:100%'>" +
                 "<thead><tr style='background:#ddd'>" +
                 "<th ${td}>Date/Time</th><th ${tdR}>Duration</th>" +
-                "<th ${tdR}>Volume</th><th ${tdR}>Avg Flow</th>" +
+                "<th ${tdR}>Volume</th><th ${tdR}>Avg Flow</th><th ${tdR}>Tank Usage</th>" +
                 "</tr></thead><tbody>"
-            cycleHistory.each { entry ->
-                Map e = entry as Map
+            for (int i = 0; i < cycleHistory.size(); i++) {
+                Map e = cycleHistory[i] as Map
+                String tankUsage = deriveTankUsage(e, i + 1 < cycleHistory.size() ? cycleHistory[i + 1] as Map : null)
                 table += "<tr>" +
                     "<td ${td}>${e.date}</td>" +
                     "<td ${tdR}>${fmtDec(e.durationS)}s</td>" +
                     "<td ${tdR}>${fmtVol(e.volumeL)}L</td>" +
                     "<td ${tdR}>${fmtDec(e.avgLpm)} LPM</td>" +
+                    "<td ${tdR}>${tankUsage}</td>" +
                     "</tr>"
             }
             table += "</tbody></table>"
@@ -351,6 +358,8 @@ void initialize() {
     if (state.pumpTimeMin == null) state.pumpTimeMin = 0
     if (state.pumpTimeMinDate == null) state.pumpTimeMinDate = ""
     if (state.totalVolume == null) state.totalVolume = 0.0
+    if (state.totalTankUsage == null) state.totalTankUsage = 0.0
+    // state.lastCycleVolumeAtEnd: raw meter reading at end of previous cycle (null until first cycle completes)
     if (state.cycleHistory == null) state.cycleHistory = []
 
     // Flow tracking state
@@ -439,12 +448,23 @@ void powerHandler(Event evt) {
 // ==================== Pump State Logic ====================
 
 private void handlePumpStarted(long currentTime) {
-    logInfo("Pump started")
-
     state.pumpRunning = true
     state.pumpBegin = currentTime
     state.volumeBegin = readVolume()
     state.pumpCurrentDuration = 0
+
+    // Compute tank usage since last cycle ended
+    if (state.lastCycleVolumeAtEnd != null) {
+        BigDecimal tankUsage = (state.volumeBegin as BigDecimal) - (state.lastCycleVolumeAtEnd as BigDecimal)
+        if (tankUsage >= 0) {
+            state.totalTankUsage = ((state.totalTankUsage ?: 0.0) as BigDecimal) + tankUsage
+            logInfo("Pump started (tank usage since last cycle: ${fmtVol(tankUsage)}L)")
+        } else {
+            logInfo("Pump started")
+        }
+    } else {
+        logInfo("Pump started")
+    }
 
     if (pumpActiveSwitch) pumpActiveSwitch.on()
 
@@ -484,12 +504,13 @@ private void handlePumpStopped(long currentTime) {
     state.lastRunVolume = volumeDuringRun
     state.lastRunAvgLpm = avgLpm
     state.totalVolume = ((state.totalVolume ?: 0.0) as BigDecimal) + volumeDuringRun
+    state.lastCycleVolumeAtEnd = volumeEnd
 
     logInfo("Pump stopped: ${fmtDec(durationSeconds)}s, ${fmtVol(volumeDuringRun)}L, ${fmtDec(avgLpm)} LPM")
 
     // Append to CSV log
     if (enableCsvLogging != false) {
-        appendToCsvLog(currentTime, durationSeconds, volumeDuringRun, avgLpm)
+        appendToCsvLog(currentTime, durationSeconds, volumeDuringRun, avgLpm, volumeBegin, volumeEnd)
     }
 
     // Add to cycle history (newest first, capped at 100)
@@ -498,8 +519,10 @@ private void handlePumpStopped(long currentTime) {
     history.add(0, [
         date: dateStr,
         durationS: durationSeconds,
-        volumeL: state.lastRunVolume,
-        avgLpm: avgLpm
+        volumeL: volumeDuringRun,
+        avgLpm: avgLpm,
+        volumeAtStart: volumeBegin,
+        volumeAtEnd: volumeEnd
     ])
     if (history.size() > 100) {
         history = history.subList(0, 100)
@@ -703,10 +726,11 @@ private void updateStatistics(long durationMs, long currentTime) {
 
 // ==================== CSV Logging ====================
 
-private void appendToCsvLog(long timestamp, BigDecimal durationSeconds, BigDecimal volume, BigDecimal avgLpm) {
+private void appendToCsvLog(long timestamp, BigDecimal durationSeconds, BigDecimal volume, BigDecimal avgLpm,
+                             BigDecimal volumeAtStart, BigDecimal volumeAtEnd) {
     String fileName = csvFileName ?: "pumpCycles.csv"
     String dateStr = formatDate(timestamp)
-    String csvLine = "${dateStr},${durationSeconds},${volume},${avgLpm}\n"
+    String csvLine = "${dateStr},${durationSeconds},${volume},${avgLpm},${volumeAtStart},${volumeAtEnd}\n"
 
     String existingData = null
     try {
@@ -717,7 +741,7 @@ private void appendToCsvLog(long timestamp, BigDecimal durationSeconds, BigDecim
     }
 
     if (existingData == null) {
-        existingData = "datetime,duration_s,volume_L,avg_lpm\n"
+        existingData = "datetime,duration_s,volume_L,avg_lpm,vol_at_start,vol_at_end\n"
     }
 
     String newData = existingData + csvLine
@@ -779,7 +803,13 @@ private String getStatusText() {
 
     // Last pump run details
     if (state.lastRunDuration && (state.lastRunDuration as BigDecimal) > 0) {
-        status.append("<br/><b>Last Pump Run:</b> ${fmtDec(state.lastRunDuration)}s, ${fmtVol(state.lastRunVolume)}L, ${fmtDec(state.lastRunAvgLpm)} LPM<br/>")
+        List<Map> history = state.cycleHistory as List<Map>
+        String tankInfo = ""
+        if (history?.size() >= 2) {
+            String tu = deriveTankUsage(history[0] as Map, history[1] as Map)
+            if (tu != "—") tankInfo = " (tank: ${tu})"
+        }
+        status.append("<br/><b>Last Pump Run:</b> ${fmtDec(state.lastRunDuration)}s, ${fmtVol(state.lastRunVolume)}L, ${fmtDec(state.lastRunAvgLpm)} LPM${tankInfo}<br/>")
     }
 
     // Last flow event details
@@ -794,6 +824,9 @@ private String getStatusText() {
         status.append("Shortest: ${fmtDec((state.pumpTimeMin as long) / 1000.0)}s (${state.pumpTimeMinDate})<br/>")
         if (state.totalVolume) {
             status.append("Total volume: ${fmtVol(state.totalVolume)}L<br/>")
+        }
+        if (state.totalTankUsage && (state.totalTankUsage as BigDecimal) > 0) {
+            status.append("Total tank usage: ${fmtVol(state.totalTankUsage)}L<br/>")
         }
     }
 
@@ -832,6 +865,19 @@ private void sendNotification(String message) {
 }
 
 // ==================== Utilities ====================
+
+/**
+ * Derive tank usage (between-cycle consumption) from adjacent history entries.
+ * History is newest-first, so prevEntry is the chronologically earlier cycle.
+ * Returns formatted string or "—" if not computable.
+ */
+private String deriveTankUsage(Map currentEntry, Map prevEntry) {
+    if (prevEntry == null || currentEntry.volumeAtStart == null || prevEntry.volumeAtEnd == null) {
+        return "—"
+    }
+    BigDecimal gap = (currentEntry.volumeAtStart as BigDecimal) - (prevEntry.volumeAtEnd as BigDecimal)
+    return gap >= 0 ? "${fmtVol(gap)}L" : "—"
+}
 
 private String formatDate(long timestamp) {
     return new Date(timestamp).format("yyyy-MM-dd HH:mm:ss", location.timeZone)
