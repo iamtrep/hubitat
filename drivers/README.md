@@ -37,6 +37,7 @@ Hubitat Elevation device drivers for Zigbee devices, BLE sensors, and cloud APIs
 | **Device Inspector** | Diagnostic driver that dumps DeviceWrapper properties to logs |
 | **Generic WebSocket Test** | Development driver for testing WebSocket connections |
 | **Log Event Monitor Test** | Companion test device for Log Event Monitor |
+| **Virtual Switch + PowerSource** | Virtual device with synced Switch and PowerSource capabilities for testing power outage detection |
 
 ## VisiblAir
 
