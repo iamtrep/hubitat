@@ -30,6 +30,7 @@
 
  == Flow ==
 
+ Event-driven (normal operation):
  1. A monitored switch turns off
  2. Wait the grace period (default 5 minutes)
  3. If still off: notify "turned off — turning back on", send on() command
@@ -38,6 +39,18 @@
     - If still off: notify "did not turn back on!", wait retry interval,
       then go back to step 3
  5. Give up after max retries (or loop forever if set to 0)
+
+ State-based (startup / preferences saved):
+ 1. Refresh all switches that support it (startup only)
+ 2. For each off switch, look up event history timestamp
+ 3. If off longer than the grace period (or no event found): recover immediately
+ 4. If off less than the grace period: schedule a delayed check for remaining time
+
+ Power outage awareness (optional):
+ - A switch (ON = outage) or PowerSource device (not mains = outage) signals an outage
+ - A user-selected subset of monitored switches is suspended during the outage
+ - Suspended switches are excluded from recovery and notifications while outage is active
+ - When power is restored: refresh suspended switches, then re-evaluate with grace period logic
 
  */
 
@@ -51,6 +64,7 @@ import groovy.transform.Field
 @Field static final Integer DEFAULT_VERIFY_DELAY_SECONDS = 10
 @Field static final Integer DEFAULT_MAX_RETRIES = 10
 @Field static final Integer STARTUP_REFRESH_DELAY_SECONDS = 5
+@Field static final Integer POST_OUTAGE_REFRESH_DELAY_SECONDS = 5
 
 definition(
     name: APP_NAME,
@@ -89,6 +103,13 @@ Map mainPage() {
             input "notifyOnFailure", "bool", title: "Notify when a switch fails to turn back on", defaultValue: true
         }
 
+        section("Power Outage", hideable: true, hidden: true) {
+            paragraph "Optionally suspend monitoring for selected switches during a power outage. Choose a switch (ON = outage) or a device with the PowerSource capability (outage when not on mains)."
+            input "outageIndicatorSwitch", "capability.switch", title: "Outage indicator switch (ON = outage)", required: false
+            input "outageIndicatorPower", "capability.powerSource", title: "Power source device (outage when not on mains)", required: false
+            input "outageSuspendSwitches", "capability.switch", title: "Switches to suspend during outage", description: "Subset of the monitored switches above", multiple: true, required: false
+        }
+
         section("Timing", hideable: true, hidden: true) {
             input "staysOffMinutes", "number", title: "Minutes to wait before taking action", defaultValue: DEFAULT_STAYS_OFF_MINUTES, required: true, range: "0..60"
             input "retryInterval", "number", title: "Seconds between retries", defaultValue: DEFAULT_RETRY_INTERVAL_SECONDS, required: true, range: "5..300"
@@ -121,22 +142,18 @@ void uninstalled() {
 void initialize() {
     state.recoveryActive = false
     state.retryCount = 0
+    state.powerOutage = isOutageActive()
     subscribe(switches, "switch.off", switchOffHandler)
     subscribe(switches, "switch.on", switchOnHandler)
     subscribe(location, "systemStart", systemStartHandler)
-    logDebug "Initialized — monitoring ${switches.size()} switch(es)"
-
-    // Check for any switches currently off
-    List offSwitches = switches.findAll { it.currentSwitch == "off" }
-    if (offSwitches) {
-        String names = offSwitches.collect { it.displayName }.join(", ")
-        log.warn "Found ${names} currently off — starting recovery"
-        if (notifyOnTurnOn) {
-            sendNotification("${names} found off — turning back on")
-        }
-        state.recoveryActive = true
-        attemptRecovery()
+    if (outageIndicatorSwitch) {
+        subscribe(outageIndicatorSwitch, "switch", outageIndicatorSwitchHandler)
     }
+    if (outageIndicatorPower) {
+        subscribe(outageIndicatorPower, "powerSource", outageIndicatorPowerHandler)
+    }
+    logDebug "Initialized — monitoring ${switches.size()} switch(es)${state.powerOutage ? ' (power outage active)' : ''}"
+    evaluateOffSwitches("Preferences saved")
 }
 
 // ── Event Handlers ───────────────────────────────────────────────────────────
@@ -152,23 +169,15 @@ void systemStartHandler(evt) {
 }
 
 void startupCheck() {
-    List offSwitches = switches.findAll { it.currentSwitch == "off" }
-    if (offSwitches.isEmpty()) {
-        log.info "Startup check: all monitored switches are on"
-        return
-    }
-    String names = offSwitches.collect { it.displayName }.join(", ")
-    log.warn "Startup check: ${names} found off after hub restart — starting recovery"
-    if (notifyOnTurnOn) {
-        sendNotification("${names} found off after hub restart — turning back on")
-    }
-    state.recoveryActive = true
-    state.retryCount = 0
-    attemptRecovery()
+    evaluateOffSwitches("Startup check")
 }
 
 void switchOffHandler(evt) {
     log.info "${evt.displayName} turned off"
+    if (isSuspendedDuringOutage(evt.device)) {
+        logDebug "${evt.displayName} suspended during power outage — ignoring"
+        return
+    }
     if (state.recoveryActive) {
         logDebug "Recovery already active — will be handled in current loop"
         return
@@ -179,9 +188,25 @@ void switchOffHandler(evt) {
     runIn(delaySecs, "startRecovery", [overwrite: false])
 }
 
+void outageIndicatorSwitchHandler(evt) {
+    if (evt.value == "on") {
+        powerOutageStarted()
+    } else {
+        powerOutageEnded()
+    }
+}
+
+void outageIndicatorPowerHandler(evt) {
+    if (evt.value != "mains") {
+        powerOutageStarted()
+    } else {
+        powerOutageEnded()
+    }
+}
+
 void switchOnHandler(evt) {
     log.warn "${evt.displayName} turned back on"
-    List offSwitches = switches.findAll { it.currentSwitch == "off" }
+    List offSwitches = getActionableOffSwitches()
     if (!offSwitches.isEmpty()) return
 
     // All switches are back on — cancel everything
@@ -195,10 +220,52 @@ void switchOnHandler(evt) {
     state.retryCount = 0
 }
 
+// ── Power Outage Logic ───────────────────────────────────────────────────────
+
+private void powerOutageStarted() {
+    if (state.powerOutage) return
+    state.powerOutage = true
+    String names = outageSuspendSwitches?.collect { it.displayName }?.join(", ") ?: "none"
+    log.warn "Power outage detected — suspending monitoring for: ${names}"
+
+    // If recovery is active, check if all remaining actionable switches are on
+    if (state.recoveryActive) {
+        List actionable = getActionableOffSwitches()
+        if (actionable.isEmpty()) {
+            log.info "No actionable off switches remaining — canceling recovery"
+            unschedule("startRecovery")
+            unschedule("attemptRecovery")
+            unschedule("verifyRecovery")
+            state.recoveryActive = false
+            state.retryCount = 0
+        }
+    }
+}
+
+private void powerOutageEnded() {
+    if (!state.powerOutage) return
+    state.powerOutage = false
+    log.warn "Power restored — refreshing and re-evaluating suspended switches"
+
+    // Refresh suspended switches that support it
+    if (outageSuspendSwitches) {
+        List refreshable = outageSuspendSwitches.findAll { it.hasCommand("refresh") }
+        if (refreshable) {
+            logDebug "Refreshing ${refreshable.size()} suspended switch(es)"
+            refreshable.each { it.refresh() }
+        }
+    }
+    runIn(POST_OUTAGE_REFRESH_DELAY_SECONDS, "postOutageCheck")
+}
+
+void postOutageCheck() {
+    evaluateOffSwitches("Power restored")
+}
+
 // ── Recovery Logic ───────────────────────────────────────────────────────────
 
 void startRecovery() {
-    List offSwitches = switches.findAll { it.currentSwitch == "off" }
+    List offSwitches = getActionableOffSwitches()
     if (offSwitches.isEmpty()) {
         logDebug "All switches are on — no recovery needed"
         return
@@ -221,7 +288,7 @@ void startRecovery() {
 }
 
 void attemptRecovery() {
-    List offSwitches = switches.findAll { it.currentSwitch == "off" }
+    List offSwitches = getActionableOffSwitches()
     if (offSwitches.isEmpty()) {
         log.info "All switches are on — recovery complete"
         state.recoveryActive = false
@@ -253,7 +320,7 @@ void attemptRecovery() {
 }
 
 void verifyRecovery() {
-    List offSwitches = switches.findAll { it.currentSwitch == "off" }
+    List offSwitches = getActionableOffSwitches()
     if (offSwitches.isEmpty()) {
         log.info "All switches verified on — recovery complete"
         state.recoveryActive = false
@@ -272,6 +339,83 @@ void verifyRecovery() {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Evaluate all off switches using event history to respect the grace period.
+ * Switches off longer than the grace period (or with no off event in history)
+ * are recovered immediately. Switches off for less than the grace period are
+ * scheduled for a delayed check.
+ */
+private void evaluateOffSwitches(String context) {
+    List offSwitches = getActionableOffSwitches()
+    if (offSwitches.isEmpty()) {
+        log.info "${context}: all monitored switches are on"
+        return
+    }
+
+    int graceMinutes = getIntSetting("staysOffMinutes", DEFAULT_STAYS_OFF_MINUTES)
+    long gracePeriodMs = graceMinutes * 60 * 1000L
+    long nowMs = now()
+
+    List immediate = []
+    int soonestDelaySecs = Integer.MAX_VALUE
+
+    offSwitches.each { dev ->
+        Long offSinceMs = dev.currentState("switch")?.date?.time
+        if (offSinceMs) {
+            long offDurationMs = nowMs - offSinceMs
+            long remainingMs = gracePeriodMs - offDurationMs
+            if (remainingMs <= 0) {
+                immediate << dev
+            } else {
+                int remainingSecs = (int) Math.ceil(remainingMs / 1000.0)
+                logDebug "${context}: ${dev.displayName} turned off ${(int)(offDurationMs / 1000)}s ago — scheduling check in ${remainingSecs}s"
+                if (remainingSecs < soonestDelaySecs) {
+                    soonestDelaySecs = remainingSecs
+                }
+            }
+        } else {
+            // No event timestamp available — act immediately
+            immediate << dev
+        }
+    }
+
+    if (immediate) {
+        String names = immediate.collect { it.displayName }.join(", ")
+        log.warn "${context}: ${names} off past grace period — starting recovery"
+        if (notifyOnTurnOn) {
+            sendNotification("${names} found off — turning back on")
+        }
+        state.recoveryActive = true
+        state.retryCount = 0
+        attemptRecovery()
+    }
+
+    if (soonestDelaySecs < Integer.MAX_VALUE) {
+        logDebug "${context}: scheduling delayed check in ${soonestDelaySecs}s for recently turned-off switches"
+        runIn(soonestDelaySecs, "startRecovery", [overwrite: false])
+    }
+}
+
+private List getActionableOffSwitches() {
+    List offSwitches = switches.findAll { it.currentSwitch == "off" }
+    if (state.powerOutage && outageSuspendSwitches) {
+        Set suspendedIds = outageSuspendSwitches.collect { it.id } as Set
+        offSwitches = offSwitches.findAll { !(it.id in suspendedIds) }
+    }
+    return offSwitches
+}
+
+private boolean isSuspendedDuringOutage(device) {
+    if (!state.powerOutage || !outageSuspendSwitches) return false
+    return outageSuspendSwitches.any { it.id == device.id }
+}
+
+private boolean isOutageActive() {
+    if (outageIndicatorSwitch?.currentSwitch == "on") return true
+    if (outageIndicatorPower && outageIndicatorPower.currentValue("powerSource") != "mains") return true
+    return false
+}
 
 private int getIntSetting(String name, int defaultValue) {
     Object val = settings[name]
@@ -294,6 +438,10 @@ private String getStatusText() {
         sb.append(" — all on")
     } else {
         sb.append(" — <b>${offSwitches.size()} OFF</b>: ${offSwitches.collect { it.displayName }.join(', ')}")
+    }
+    if (state.powerOutage) {
+        int suspended = outageSuspendSwitches?.size() ?: 0
+        sb.append("<br/><b>Power outage active</b> — ${suspended} switch(es) suspended")
     }
     if (state.recoveryActive) {
         sb.append("<br/>Recovery in progress (attempt ${state.retryCount})")
