@@ -48,9 +48,8 @@
 
  Power outage awareness (optional):
  - A switch (ON = outage) or PowerSource device (not mains = outage) signals an outage
- - A user-selected subset of monitored switches is suspended during the outage
- - Suspended switches are excluded from recovery and notifications while outage is active
- - When power is restored: refresh suspended switches, then re-evaluate with grace period logic
+ - Active recovery is cancelled during the outage (unpowered switches can't send events)
+ - When power is restored: refresh all monitored switches, then re-evaluate with grace period logic
 
  */
 
@@ -104,10 +103,9 @@ Map mainPage() {
         }
 
         section("Power Outage", hideable: true, hidden: true) {
-            paragraph "Optionally suspend monitoring for selected switches during a power outage. Choose a switch (ON = outage) or a device with the PowerSource capability (outage when not on mains)."
+            paragraph "Optionally pause recovery during a power outage. Choose a switch (ON = outage) or a device with the PowerSource capability (outage when not on mains). When power is restored, all monitored switches are refreshed and re-evaluated."
             input "outageIndicatorSwitch", "capability.switch", title: "Outage indicator switch (ON = outage)", required: false
             input "outageIndicatorPower", "capability.powerSource", title: "Power source device (outage when not on mains)", required: false
-            input "outageSuspendSwitches", "capability.switch", title: "Switches to suspend during outage", description: "Subset of the monitored switches above", multiple: true, required: false
         }
 
         section("Timing", hideable: true, hidden: true) {
@@ -174,10 +172,6 @@ void startupCheck() {
 
 void switchOffHandler(evt) {
     log.info "${evt.displayName} turned off"
-    if (isSuspendedDuringOutage(evt.device)) {
-        logDebug "${evt.displayName} suspended during power outage — ignoring"
-        return
-    }
     if (state.recoveryActive) {
         logDebug "Recovery already active — will be handled in current loop"
         return
@@ -225,35 +219,25 @@ void switchOnHandler(evt) {
 private void powerOutageStarted() {
     if (state.powerOutage) return
     state.powerOutage = true
-    String names = outageSuspendSwitches?.collect { it.displayName }?.join(", ") ?: "none"
-    log.warn "Power outage detected — suspending monitoring for: ${names}"
-
-    // If recovery is active, check if all remaining actionable switches are on
+    log.warn "Power outage detected — pausing recovery"
     if (state.recoveryActive) {
-        List actionable = getActionableOffSwitches()
-        if (actionable.isEmpty()) {
-            log.info "No actionable off switches remaining — canceling recovery"
-            unschedule("startRecovery")
-            unschedule("attemptRecovery")
-            unschedule("verifyRecovery")
-            state.recoveryActive = false
-            state.retryCount = 0
-        }
+        unschedule("startRecovery")
+        unschedule("attemptRecovery")
+        unschedule("verifyRecovery")
+        state.recoveryActive = false
+        state.retryCount = 0
     }
 }
 
 private void powerOutageEnded() {
     if (!state.powerOutage) return
     state.powerOutage = false
-    log.warn "Power restored — refreshing and re-evaluating suspended switches"
+    log.warn "Power restored — refreshing and re-evaluating monitored switches"
 
-    // Refresh suspended switches that support it
-    if (outageSuspendSwitches) {
-        List refreshable = outageSuspendSwitches.findAll { it.hasCommand("refresh") }
-        if (refreshable) {
-            logDebug "Refreshing ${refreshable.size()} suspended switch(es)"
-            refreshable.each { it.refresh() }
-        }
+    List refreshable = switches.findAll { it.hasCommand("refresh") }
+    if (refreshable) {
+        logDebug "Refreshing ${refreshable.size()} switch(es)"
+        refreshable.each { it.refresh() }
     }
     runIn(POST_OUTAGE_REFRESH_DELAY_SECONDS, "postOutageCheck")
 }
@@ -398,17 +382,7 @@ private void evaluateOffSwitches(String context) {
 }
 
 private List getActionableOffSwitches() {
-    List offSwitches = switches.findAll { it.currentSwitch == "off" }
-    if (state.powerOutage && outageSuspendSwitches) {
-        Set suspendedIds = outageSuspendSwitches.collect { it.id } as Set
-        offSwitches = offSwitches.findAll { !(it.id in suspendedIds) }
-    }
-    return offSwitches
-}
-
-private boolean isSuspendedDuringOutage(device) {
-    if (!state.powerOutage || !outageSuspendSwitches) return false
-    return outageSuspendSwitches.any { it.id == device.id }
+    return switches.findAll { it.currentSwitch == "off" }
 }
 
 private boolean isOutageActive() {
@@ -440,10 +414,9 @@ private String getStatusText() {
         sb.append(" — <b>${offSwitches.size()} OFF</b>: ${offSwitches.collect { it.displayName }.join(', ')}")
     }
     if (state.powerOutage) {
-        int suspended = outageSuspendSwitches?.size() ?: 0
-        sb.append("<br/><b>Power outage active</b> — ${suspended} switch(es) suspended")
+        sb.append("<br/><b>Power outage active</b> — recovery paused")
     }
-    if (state.recoveryActive) {
+    if (state.recoveryActive && !offSwitches.isEmpty()) {
         sb.append("<br/>Recovery in progress (attempt ${state.retryCount})")
     }
     return sb.toString()
