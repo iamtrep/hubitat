@@ -172,6 +172,10 @@ void startupCheck() {
 
 void switchOffHandler(evt) {
     log.info "${evt.displayName} turned off"
+    if (state.powerOutage) {
+        logDebug "Power outage active — skipping recovery scheduling"
+        return
+    }
     if (state.recoveryActive) {
         logDebug "Recovery already active — will be handled in current loop"
         return
@@ -249,6 +253,10 @@ void postOutageCheck() {
 // ── Recovery Logic ───────────────────────────────────────────────────────────
 
 void startRecovery() {
+    if (state.powerOutage) {
+        logDebug "Power outage active — deferring recovery"
+        return
+    }
     List offSwitches = getActionableOffSwitches()
     if (offSwitches.isEmpty()) {
         logDebug "All switches are on — no recovery needed"
@@ -272,6 +280,12 @@ void startRecovery() {
 }
 
 void attemptRecovery() {
+    if (state.powerOutage) {
+        logDebug "Power outage active — suspending recovery"
+        state.recoveryActive = false
+        state.retryCount = 0
+        return
+    }
     List offSwitches = getActionableOffSwitches()
     if (offSwitches.isEmpty()) {
         log.info "All switches are on — recovery complete"
