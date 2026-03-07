@@ -42,7 +42,7 @@ definition(
     category: "Convenience",
     iconUrl: "",
     iconX2Url: "",
-    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/SensorAggregatorChild.groovy"
+    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/sensors/SensorAggregatorChild.groovy"
 )
 
 import groovy.transform.Field

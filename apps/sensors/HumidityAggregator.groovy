@@ -8,7 +8,7 @@
 
 
 definition(
-    name: "Sensor Aggregator",
+    name: "Humidity Aggregator",
     namespace: "iamtrep",
     author: "PJ",
     description: "Aggregate sensor values and save to a single virtual device",
