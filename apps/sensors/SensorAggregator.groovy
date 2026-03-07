@@ -34,7 +34,7 @@ definition(
     singleInstance: true,
     description: "Manage sensor aggregators - apps that aggregate sensor values and save the result to a single virtual device",
     category: "Convenience",
-    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/SensorAggregator.groovy",
+    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/sensors/SensorAggregator.groovy",
     iconUrl: "",
     iconX2Url: ""
 )
