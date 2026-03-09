@@ -333,12 +333,14 @@ List parse(String description) {
 
     if (descMap.attrId != null) {
         // device attribute report
-        result += parseAttributeReport(descMap)
+        Map event = parseAttributeReport(descMap)
+        if (event) result << event
         if (descMap.additionalAttrs) {
             def mapAdditionnalAttrs = descMap.additionalAttrs
             mapAdditionnalAttrs.each{add ->
                 add.cluster = descMap.cluster
-                result += parseAttributeReport(add)
+                Map addEvent = parseAttributeReport(add)
+                if (addEvent) result << addEvent
             }
         }
     } else if (descMap.profileId == "0000") {
@@ -402,7 +404,6 @@ private Map parseAttributeReport(Map descMap) {
 
                 case "0008": // PI heat demand
                     map.name = "thermostatOperatingState"
-                    map.value = constModeMap[descMap.value]
                     if (descMap.value < "10") {
                         map.value = "idle"
                     }
