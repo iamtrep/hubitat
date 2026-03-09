@@ -288,7 +288,7 @@ void parseObservationResponse(resp) {
 // ---------- Forecast ----------
 
 void fetchForecast(String sid) {
-    String url = "${API_BASE}/aqhi-forecasts-realtime/items?f=json&location_id=${sid}&limit=48"
+    String url = "${API_BASE}/aqhi-forecasts-realtime/items?f=json&location_id=${sid}&sortby=-forecast_datetime&limit=48"
     logDebug "Fetching forecast: ${url}"
 
     Map params = [
@@ -644,7 +644,9 @@ static int aqhiToAQI(int aqhi) {
 
 long parseISO8601(String dt) {
     try {
-        return Date.parse("yyyy-MM-dd'T'HH:mm:ss'Z'", dt).getTime()
+        java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'")
+        sdf.setTimeZone(TimeZone.getTimeZone("UTC"))
+        return sdf.parse(dt).getTime()
     } catch (Exception e) {
         return 0
     }
