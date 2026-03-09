@@ -402,7 +402,6 @@ private Map parseAttributeReport(Map descMap) {
 
                 case "0008": // PI heat demand
                     map.name = "thermostatOperatingState"
-                    map.value = constModeMap[descMap.value]
                     if (descMap.value < "10") {
                         map.value = "idle"
                     }
@@ -421,11 +420,13 @@ private Map parseAttributeReport(Map descMap) {
 
                 case "0012": // heating setpoint
                     map.name = "heatingSetpoint"
-                    map.value = getTemperature(descMap.value)
-                    state.rawSetpoint = map.value
-                    if (descMap.value == "8000") {      //0x8000
+                    if (descMap.value == "8000") {
                         map.value = getTemperature("01F4")  // 5 Celsius (minimum setpoint)
                     }
+                    else {
+                        map.value = getTemperature(descMap.value)
+                    }
+                    state.rawSetpoint = map.value
                     map.unit = getTemperatureScale()
                     map.descriptionText = "Heating setpoint is ${map.value}${map.unit}"
                     sendEvent(name:"thermostatSetpoint", value:map.value, unit:map.unit, descriptionText:map.descriptionText)
@@ -587,8 +588,8 @@ private void handleOperatingStateBugFix() {
         state.lastOperatingStateRequest = nowMs
         List<String> cmds = []
         cmds += zigbee.readAttribute(0x0201, 0x0008) // PI heat demand
-        logDebug "Operating state inconsistent (current: ${currOpState}, expected: ${shouldBeIdle ? 'idle' : 'heating'}), requesting update"
         sendZigbeeCommands(cmds)
+        logDebug "Operating state inconsistent (current: ${currOpState}, expected: ${shouldBeIdle ? 'idle' : 'heating'}), requesting update"
     }
 }
 
