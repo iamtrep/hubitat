@@ -253,10 +253,8 @@ void setHeatingSetpoint(BigDecimal preciseDegrees) {
         return
     }
 
-    logDebug "setHeatingSetpoint(${preciseDegrees})"
     String temperatureScale = getTemperatureScale()
     BigDecimal degrees = preciseDegrees.setScale(1, BigDecimal.ROUND_HALF_UP)
-
     logDebug "setHeatingSetpoint(${degrees} ${temperatureScale}) - current value is ${device.currentValue("heatingSetpoint")}"
 
     Float celsius = (temperatureScale == "C") ? degrees as Float : (fahrenheitToCelsius(degrees) as Float).round(2)
