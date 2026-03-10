@@ -265,7 +265,7 @@ void setThermostatMode(String thermostatMode) {
                 logDebug("heat() setpoint will be ${setpoint}")
                 setHeatingSetpoint(setpoint)
 
-                sendEvent(name:"thermostatMode", value:thermostatMode, descriptionText: "${device.displayName} thermostat mode set to ${thermostatMode}")
+                sendEvent(name:"thermostatMode", value:thermostatMode, descriptionText: "Thermostat mode set to ${thermostatMode}")
 
             }
             break
@@ -277,7 +277,7 @@ void setThermostatMode(String thermostatMode) {
                 setHeatingSetpoint(constHeatOffSetpoint)
 
                 state.thermostatIsOn = false
-                sendEvent(name:"thermostatMode", value:thermostatMode, descriptionText: "${device.displayName} thermostat mode set to ${thermostatMode}")
+                sendEvent(name:"thermostatMode", value:thermostatMode, descriptionText: "Thermostat mode set to ${thermostatMode}")
             }
             break
 
@@ -460,7 +460,7 @@ private Map parseAttributeReport(Map descMap) {
                                 map.value = getTemperature(descMap.value)
                             }
                             map.unit = location.temperatureScale
-                            map.descriptionText = "${device.displayName} temperature is ${map.value}${map.unit}"
+                            map.descriptionText = "Temperature is ${map.value}${map.unit}"
                             updateTemperatureAlarm(map.value, map.unit)
                             break
                     }
@@ -486,7 +486,7 @@ private Map parseAttributeReport(Map descMap) {
                             runIn(5, 'refresh')
                         }
                     }
-                    map.descriptionText = "${device.displayName} operating state is ${map.value}"
+                    map.descriptionText = "Operating state is ${map.value}"
                     break
 
                 case "0012":
@@ -496,10 +496,10 @@ private Map parseAttributeReport(Map descMap) {
                         map.value = getTemperature("01F4")  // 5 Celsius (minimum setpoint)
                     }
                     map.unit = location.temperatureScale
-                    map.descriptionText = "${device.displayName} heating setpoint is ${map.value}${map.unit}"
+                    map.descriptionText = "Heating setpoint is ${map.value}${map.unit}"
 
                     // also send separate thermostatSetpoint event
-                    sendEvent(name:"thermostatSetpoint", value:map.value, unit:map.unit, descriptionText: map.descriptionText)
+                    sendEvent(name:"thermostatSetpoint", value:map.value, unit:map.unit, descriptionText: "Thermostat setpoint is ${map.value}${map.unit}")
 
                     // remember last heating setpoint
                     if (descMap.value != "01F4") {
@@ -517,7 +517,7 @@ private Map parseAttributeReport(Map descMap) {
                         map.value = map.value - 655.36 // handle negative temperatures
                     }
                     map.unit = location.temperatureScale
-                    map.descriptionText = "${device.displayName} outdoor temperature is ${map.value}${map.unit}"
+                    map.descriptionText = "Outdoor temperature is ${map.value}${map.unit}"
                     break
 
                 case "4002":
@@ -530,14 +530,14 @@ private Map parseAttributeReport(Map descMap) {
                     map.name = "power"
                     map.value = getPower(descMap.value)
                     map.unit = 'W'
-                    map.descriptionText = "${device.displayName} power is ${map.value}${map.unit}"
+                    map.descriptionText = "Power is ${map.value}${map.unit}"
                     break
 
                 case "4009":
                     map.name = "energy"
                     map.value = getEnergy(descMap.value)
                     map.unit = "kWh"
-                    map.descriptionText = "${device.displayName} energy delivered is ${map.value}${map.unit}"
+                    map.descriptionText = "Energy delivered is ${map.value}${map.unit}"
                     break
 
                 case "401C": // vendor-specific system mode - not used on this unit
@@ -554,13 +554,13 @@ private Map parseAttributeReport(Map descMap) {
                 case "0000":
                     map.name = "temperatureScale"
                     map.value = constTempDisplayModes[descMap.value]
-                    map.descriptionText = "${device.displayName} temperature display mode is ${map.value}"
+                    map.descriptionText = "Temperature display mode is ${map.value}"
                     break
 
                 case "0001":
                     map.name = "keypadLockout"
                     map.value = constKeypadLockoutMap[descMap.value]
-                    map.descriptionText = "${device.displayName} keypad lockout state is ${map.value}"
+                    map.descriptionText = "Keypad lockout state is ${map.value}"
                     break
 
                 default:
@@ -577,7 +577,7 @@ private Map parseAttributeReport(Map descMap) {
     Map result = null
 
     if (map) {
-        if (map.descriptionText) logInfo("${map.descriptionText}")
+        if (map.descriptionText) logInfo(map.descriptionText)
         result = createEvent(map)
     } else {
         logDebug("Unhandled attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
