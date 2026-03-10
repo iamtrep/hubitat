@@ -244,10 +244,6 @@ void fanOn(){
     logWarn "fanOn mode is not available for this device"
 }
 
-void setSchedule(JSON_OBJECT){
-    logWarn "setSchedule is not available for this device"
-}
-
 void setThermostatFanMode(fanmode){
     logWarn "setThermostatFanMode is not available for this device"
 }
@@ -411,25 +407,7 @@ private Map parseAttributeReport(Map descMap) {
                     }
                     map.unit = getTemperatureScale()
                     map.descriptionText = "Temperature is ${map.value}${map.unit}"
-
-                    // Proactive temperature alarm thresholds
-                    BigDecimal celsiusValue = (map.unit == "C") ? map.value : fahrenheitToCelsius(map.value)
-                    String currentAlarm = device.currentValue("temperatureAlarm")
-                    if (celsiusValue <= constFreezeThresholdCelsius) {
-                        if (currentAlarm != constTemperatureAlarm.freeze) {
-                            logWarn "Freeze alarm at ${map.value}${map.unit}"
-                            sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.freeze)
-                        }
-                    } else if (celsiusValue >= constHeatThresholdCelsius) {
-                        if (currentAlarm != constTemperatureAlarm.heat) {
-                            logWarn "Overheat alarm at ${map.value}${map.unit}"
-                            sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.heat)
-                        }
-                    } else if (currentAlarm != null && currentAlarm != constTemperatureAlarm.cleared) {
-                        logInfo "Temperature alarm cleared at ${map.value}${map.unit}"
-                        sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.cleared)
-                    }
-
+                    updateTemperatureAlarm(map.value, map.unit)
                     handleOperatingStateBugFix()
                     break
 
@@ -565,6 +543,29 @@ void logsOff() {
 }
 
 // Private methods
+
+/**
+ * Evaluate temperature against alarm thresholds and update the temperatureAlarm attribute if needed.
+ */
+private void updateTemperatureAlarm(BigDecimal temperature, String unit) {
+    BigDecimal celsiusValue = (unit == "C") ? temperature : fahrenheitToCelsius(temperature)
+    String currentAlarm = device.currentValue("temperatureAlarm")
+
+    if (celsiusValue <= constFreezeThresholdCelsius) {
+        if (currentAlarm != constTemperatureAlarm.freeze) {
+            logWarn "Freeze alarm at ${temperature}${unit}"
+            sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.freeze)
+        }
+    } else if (celsiusValue >= constHeatThresholdCelsius) {
+        if (currentAlarm != constTemperatureAlarm.heat) {
+            logWarn "Overheat alarm at ${temperature}${unit}"
+            sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.heat)
+        }
+    } else if (currentAlarm != null && currentAlarm != constTemperatureAlarm.cleared) {
+        logInfo "Temperature alarm cleared at ${temperature}${unit}"
+        sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.cleared)
+    }
+}
 
 private void autoConfigure() {
     logWarn "Detected driver version change"
