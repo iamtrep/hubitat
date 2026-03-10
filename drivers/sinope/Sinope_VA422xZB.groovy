@@ -24,6 +24,7 @@
  *
  * v0.0.1 Initial version
  * v0.0.2 Added IAS Zone enrollment to enable leak detection
+ * v0.0.3 custom attribute for battery voltage, code cleanup
  *
  */
 
@@ -48,12 +49,12 @@ metadata {
         capability "LiquidFlowRate"  // when using the optional FS422x flow sensor
         capability "Battery"
         capability "PowerSource"
-        capability "VoltageMeasurement"
         capability "TemperatureMeasurement"
         capability "WaterSensor"
 
         attribute "volume", "number"  // no standard capability for volume measurement
         attribute "batteryAlarm", "enum", ["clear", "detected"]
+        attribute "batteryVoltage", "number"
 
         // for development purposes - do not use
         attribute "rateFromVolume", "number"
@@ -287,7 +288,7 @@ private Map parseAttributeReport(Map descMap) {
         case "0001":  // Power configuration cluster
             switch (descMap.attrId) {
                 case "0020":
-                    map.name = "voltage"
+                    map.name = "batteryVoltage"
                     map.value = getBatteryVoltage(descMap.value)
                     map.unit = "V"
                     map.descriptionText = "Battery voltage is ${map.value} ${map.unit}"
@@ -567,7 +568,7 @@ private Object getBatteryLevel(String value) {
 }
 
 private Integer getBatteryLevelFromVoltage() {
-    def voltage = device.currentValue("voltage")
+    def voltage = device.currentValue("batteryVoltage")
     if (voltage == null || voltage <= constBatteryVoltageMin) {
         return 0
     }
