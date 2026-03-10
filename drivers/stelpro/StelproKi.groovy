@@ -333,13 +333,10 @@ List parse(String description) {
         // device attribute report
         Map event = parseAttributeReport(descMap)
         if (event) result << event
-        if (descMap.additionalAttrs) {
-            def mapAdditionnalAttrs = descMap.additionalAttrs
-            mapAdditionnalAttrs.each{add ->
-                add.cluster = descMap.cluster
-                Map addEvent = parseAttributeReport(add)
-                if (addEvent) result << addEvent
-            }
+        descMap.additionalAttrs?.each { add ->
+            add.cluster = descMap.cluster
+            Map addEvent = parseAttributeReport(add)
+            if (addEvent) result << addEvent
         }
     } else if (descMap.profileId == "0000") {
         // ZigBee Device Object (ZDO) command
