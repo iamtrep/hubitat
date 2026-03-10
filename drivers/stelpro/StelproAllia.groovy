@@ -51,6 +51,7 @@ metadata {
         capability 'Thermostat'
 
         attribute "temperatureScale", "string"
+        attribute "temperatureAlarm", "enum", ["cleared", "freeze", "heat"]
         attribute "keypadLockout", "string"
         attribute "outdoorTemperature", "number"
 
@@ -94,6 +95,12 @@ metadata {
 @Field static final Map constFanModes = [ "00":"off" ]
 @Field static final Map constTempDisplayModes = [ "00":"C", "01":"F" ]
 @Field static final Map constKeypadLockoutMap = [ "00":"unlocked", "01":"locked" ]
+
+@Field static final Map constSetpointRange = [ "C": [min: 5, max: 30, step: 0.5], "F": [min: 41, max: 86, step: 1.0] ]
+
+@Field static final Map constTemperatureAlarm = [ cleared: "cleared", freeze: "freeze", heat: "heat" ]
+@Field static final int constFreezeThresholdCelsius = 0
+@Field static final int constHeatThresholdCelsius = 50
 
 @Field static final Integer constHeatOffSetpoint = 5
 
@@ -148,6 +155,7 @@ void configure(){
     // Set unused default values (for Google Home Integration)
     sendEvent(name: "coolingSetpoint", value:getTemperature("0BB8")) // 0x0BB8 =  30 Celsius
     sendEvent(name: "thermostatFanMode", value:"auto")
+    sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.cleared, displayed: false)
 	sendEvent(name: "supportedThermostatFanModes", value: JsonOutput.toJson(["auto"]))
 	sendEvent(name: "supportedThermostatModes", value: JsonOutput.toJson(["heat", "off"]))
     //setThermostatMode("heat")
@@ -225,6 +233,10 @@ void setCoolingSetpoint(degrees) {
     logWarn("setCoolingSetpoint(${degrees}): is not available for this device")
 }
 
+void setThermostatFanMode(fanmode) {
+    logWarn "setThermostatFanMode is not available for this device"
+}
+
 void heat() {
     setThermostatMode("heat")
 }
@@ -275,13 +287,28 @@ void setThermostatMode(String thermostatMode) {
     }
 }
 
+void setHeatingSetpoint(Integer preciseDegrees) {
+    setHeatingSetpoint(new BigDecimal(preciseDegrees))
+}
+
 void setHeatingSetpoint(BigDecimal preciseDegrees) {
-    if (preciseDegrees != null) {
-        BigDecimal degrees = preciseDegrees.setScale(1, BigDecimal.ROUND_HALF_UP)
+    if (preciseDegrees == null) {
+        logError("setHeatingSetpoint() called with null value")
+        return
+    }
 
-        logDebug "setHeatingSetpoint(${degrees} ${location.temperatureScale})"
+    String temperatureScale = getTemperatureScale()
+    Map range = constSetpointRange[temperatureScale]
+    BigDecimal degrees = preciseDegrees.setScale(1, BigDecimal.ROUND_HALF_UP)
 
-        Float celsius = temperatureScaleIsCelsius() ? degrees as Float : (fahrenheitToCelsius(degrees) as Float).round(2)
+    if (degrees < range.min || degrees > range.max) {
+        logWarn "setHeatingSetpoint(${degrees}${temperatureScale}) out of range (${range.min}-${range.max}${temperatureScale})"
+        return
+    }
+
+    logDebug "setHeatingSetpoint(${degrees} ${temperatureScale})"
+
+    Float celsius = temperatureScaleIsCelsius() ? degrees as Float : (fahrenheitToCelsius(degrees) as Float).round(2)
 
         if (state.thermostatIsOn) {
             // Thermostat is "on".  Update the thermostat device's setpoint.
@@ -300,19 +327,19 @@ void setHeatingSetpoint(BigDecimal preciseDegrees) {
 
 void increaseHeatSetpoint() {
     BigDecimal currentSetpoint = device.currentValue("heatingSetpoint")
+    Map range = constSetpointRange[getTemperatureScale()]
 
-    if (currentSetpoint < (temperatureScaleIsCelsius() ? 30 : 86)) {
-        currentSetpoint = currentSetpoint + (temperatureScaleIsCelsius() ? 0.5 : 1)
-        setHeatingSetpoint(currentSetpoint)
+    if (currentSetpoint < range.max) {
+        setHeatingSetpoint(currentSetpoint + range.step)
     }
 }
 
 void decreaseHeatSetpoint() {
     BigDecimal currentSetpoint = device.currentValue("heatingSetpoint")
+    Map range = constSetpointRange[getTemperatureScale()]
 
-    if (currentSetpoint > (temperatureScaleIsCelsius() ? 5 : 41)) {
-        currentSetpoint = currentSetpoint - (temperatureScaleIsCelsius() ? 0.5 : 1)
-        setHeatingSetpoint(currentSetpoint)
+    if (currentSetpoint > range.min) {
+        setHeatingSetpoint(currentSetpoint - range.step)
     }
 }
 
@@ -357,16 +384,16 @@ void setOutdoorTemperature(BigDecimal preciseDegrees) {
 
 // Zigbee message parsing
 
-def parse(String description) {
+List parse(String description) {
     if (state.driverVersion != constDriverVersion) {
         state.driverVersion = constDriverVersion
         runInMillis 1500, 'autoConfigure'
     }
 
-    def descMap = zigbee.parseDescriptionAsMap(description)
+    Map descMap = zigbee.parseDescriptionAsMap(description)
     logTrace("parse() - description = ${descMap}")
 
-    def result = []
+    List result = []
 
     if (descMap.attrId != null) {
         // device attribute report
@@ -394,8 +421,8 @@ def parse(String description) {
     return result
 }
 
-private parseAttributeReport(descMap) {
-    def map = [:]
+private Map parseAttributeReport(Map descMap) {
+    Map map = [:]
 
     // inClusters: "0000,0003,0004,0201,0204"
 
@@ -408,27 +435,31 @@ private parseAttributeReport(descMap) {
         case "0201":
             switch (descMap.attrId) {
                 case "0000":
-                    map.name = "temperature"
-                    switch (descMap.value) {
-                        case "7FFD":
-                            map.value = "low"
-                            break
-                        case "7FFF":
-                            map.value = "high"
-                            break
-                        case "8000":
-                            map.value = "--"
-                            break
+                    int intVal = Integer.parseInt(descMap.value, 16)
+                    switch (intVal) {
+                        case 0x7FFD: // freeze alarm
+                            logWarn "Freeze alarm triggered by sensor"
+                            sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.freeze)
+                            return null
+                        case 0x7FFF: // overheat alarm
+                            logWarn "Overheat alarm triggered by sensor"
+                            sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.heat)
+                            return null
+                        case 0x8000: // sensor unavailable
+                            logWarn "Temperature sensor unavailable"
+                            return null
                         default:
-                            if (descMap.value > "8000") {
-                                map.value = -(Math.round(2*(655.36 - Integer.parseInt(descMap.value, 16)))/2)
+                            map.name = "temperature"
+                            if (intVal > 0x8000) {
+                                map.value = -(Math.round(2 * (655.36 - intVal)) / 2)
                             } else {
                                 map.value = getTemperature(descMap.value)
                             }
+                            map.unit = location.temperatureScale
+                            map.descriptionText = "${device.displayName} temperature is ${map.value}${map.unit}"
+                            updateTemperatureAlarm(map.value, map.unit)
                             break
                     }
-                    map.unit = location.temperatureScale
-                    map.descriptionText = "${device.displayName} temperature is ${map.value}${map.unit}"
                     break
 
                 case "0008":
@@ -539,7 +570,7 @@ private parseAttributeReport(descMap) {
             break
     }
 
-    def result = null
+    Map result = null
 
     if (map) {
         if (map.descriptionText) logInfo("${map.descriptionText}")
@@ -553,6 +584,29 @@ private parseAttributeReport(descMap) {
 }
 
 // private methods
+
+/**
+ * Evaluate temperature against alarm thresholds and update the temperatureAlarm attribute if needed.
+ */
+private void updateTemperatureAlarm(BigDecimal temperature, String unit) {
+    BigDecimal celsiusValue = (unit == "C") ? temperature : fahrenheitToCelsius(temperature)
+    String currentAlarm = device.currentValue("temperatureAlarm")
+
+    if (celsiusValue <= constFreezeThresholdCelsius) {
+        if (currentAlarm != constTemperatureAlarm.freeze) {
+            logWarn "Freeze alarm at ${temperature}${unit}"
+            sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.freeze)
+        }
+    } else if (celsiusValue >= constHeatThresholdCelsius) {
+        if (currentAlarm != constTemperatureAlarm.heat) {
+            logWarn "Overheat alarm at ${temperature}${unit}"
+            sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.heat)
+        }
+    } else if (currentAlarm != null && currentAlarm != constTemperatureAlarm.cleared) {
+        logInfo "Temperature alarm cleared at ${temperature}${unit}"
+        sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.cleared)
+    }
+}
 
 private void autoConfigure() {
     logWarn "Detected driver version change"
