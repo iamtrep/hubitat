@@ -386,27 +386,29 @@ private Map parseAttributeReport(Map descMap) {
             // Thermostat cluster
             switch (descMap.attrId) {
                 case "0000":
-                    int intVal = Integer.parseInt(descMap.value, 16)
-                    if (intVal == 0x7FFD) {
-                        logWarn "Freeze alarm triggered by sensor"
-                        sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.freeze)
-                        return [:]
-                    } else if (intVal == 0x7FFF) {
-                        logWarn "Overheat alarm triggered by sensor"
-                        sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.heat)
-                        return [:]
-                    } else if (intVal == 0x8000) {
-                        logWarn "Temperature sensor unavailable"
-                        return [:]
-                    }
-
                     map.name = "temperature"
-                    if (intVal > 0x8000) {
-                        map.value = -(Math.round(2 * (655.36 - intVal)) / 2)
-                    } else {
-                        map.value = getTemperature(descMap.value)
+                    int intVal = Integer.parseInt(descMap.value, 16)
+                    switch (intVal) {
+                        case 0x7FFD: // freeze alarm
+                            logWarn "Freeze alarm triggered by sensor"
+                            sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.freeze)
+                            return null
+                        case 0x7FFF: // overheat alarm
+                            logWarn "Overheat alarm triggered by sensor"
+                            sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.heat)
+                            return null
+                        case 0x8000: // sensor unavailable
+                            logWarn "Temperature sensor unavailable"
+                            return null
+                        default:
+                            if (intVal > 0x8000) {
+                                map.value = -(Math.round(2 * (655.36 - intVal)) / 2)
+                            } else {
+                                map.value = getTemperature(descMap.value)
+                            }
+                            state.rawTemp = map.value
+                            break
                     }
-                    state.rawTemp = map.value
                     map.unit = getTemperatureScale()
                     map.descriptionText = "Temperature is ${map.value}${map.unit}"
 
@@ -476,7 +478,7 @@ private Map parseAttributeReport(Map descMap) {
                         state.storedSystemMode = constModeMap[descMap.value]
                         logDebug "System mode is ${descMap.value} (${state.storedSystemMode}), requesting setpoint mode"
                         sendZigbeeCommands(zigbee.readAttribute(0x201, 0x401C, [mfgCode: "0x1185"]))
-                        return [:]
+                        return null
                     }
                     break
 
@@ -490,7 +492,7 @@ private Map parseAttributeReport(Map descMap) {
                     } else {
                         // System was off — ignore the setpoint mode
                         logDebug "Ignoring setpoint mode ${descMap.value} because system mode is ${state.storedSystemMode}"
-                        return [:]
+                        return null
                     }
                     break
 
