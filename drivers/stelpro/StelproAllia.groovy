@@ -51,7 +51,7 @@ metadata {
         capability 'Thermostat'
 
         attribute "temperatureScale", "string"
-        attribute "temperatureAlarm", "enum", ["cleared", "freeze", "heat"]
+        attribute "temperatureAlarm", "enum", ["cleared", "freeze", "heat", "sensor"]
         attribute "keypadLockout", "string"
         attribute "outdoorTemperature", "number"
 
@@ -98,7 +98,7 @@ metadata {
 
 @Field static final Map constSetpointRange = [ "C": [min: 5, max: 30, step: 0.5], "F": [min: 41, max: 86, step: 1.0] ]
 
-@Field static final Map constTemperatureAlarm = [ cleared: "cleared", freeze: "freeze", heat: "heat" ]
+@Field static final Map constTemperatureAlarm = [ cleared: "cleared", freeze: "freeze", heat: "heat", sensor: "sensor" ]
 @Field static final int constFreezeThresholdCelsius = 0
 @Field static final int constHeatThresholdCelsius = 50
 
@@ -433,24 +433,29 @@ private Map parseAttributeReport(Map descMap) {
 
         case "0201":
             switch (descMap.attrId) {
-                case "0000":
+                case "0000": // temperature
                     int intVal = Integer.parseInt(descMap.value, 16)
                     switch (intVal) {
                         case 0x7FFD: // freeze alarm
-                            logWarn "Freeze alarm triggered by sensor"
-                            sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.freeze)
-                            return null
+                            map.name = "temperatureAlarm"
+                            map.value = constTemperatureAlarm.freeze
+                            map.descriptionText = "Freeze alarm triggered by sensor"
+                            break
                         case 0x7FFF: // overheat alarm
-                            logWarn "Overheat alarm triggered by sensor"
-                            sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.heat)
-                            return null
+                            map.name = "temperatureAlarm"
+                            map.value = constTemperatureAlarm.heat
+                            map.descriptionText = "Overheat alarm triggered by sensor"
+                            break
                         case 0x8000: // sensor unavailable
-                            logWarn "Temperature sensor unavailable"
-                            return null
+                            map.name = "temperatureAlarm"
+                            map.value = constTemperatureAlarm.sensor
+                            map.descriptionText = "Temperature sensor unavailable"
+                            break
                         default:
                             map.name = "temperature"
                             if (intVal > 0x8000) {
-                                map.value = -(Math.round(2 * (655.36 - intVal)) / 2)
+                                // Two's complement: unsigned int16 to signed, then hundredths to degrees
+                                map.value = new BigDecimal(intVal - 65536).divide(100).setScale(1, BigDecimal.ROUND_HALF_UP)
                             } else {
                                 map.value = getTemperature(descMap.value)
                             }
