@@ -619,8 +619,7 @@ private Map validateOperatingStateBugFix(Map map) {
 // Logging helpers
 
 private void logTrace(String message) {
-    // No trace facility.  Use debug.
-    if (traceEnable) log.debug("${device} : ${message}")
+    if (traceEnable) log.trace("${device} : ${message}")
 }
 
 private void logDebug(String message) {
