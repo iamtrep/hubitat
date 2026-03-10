@@ -558,17 +558,14 @@ private void updateTemperatureAlarm(BigDecimal temperature, String unit) {
 
     if (celsiusValue <= constFreezeThresholdCelsius) {
         if (currentAlarm != constTemperatureAlarm.freeze) {
-            logWarn "Freeze alarm at ${temperature}${unit}"
-            sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.freeze)
+            sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.freeze, descriptionText: "Freeze alarm at ${temperature}${unit}")
         }
     } else if (celsiusValue >= constHeatThresholdCelsius) {
-        if (currentAlarm != constTemperatureAlarm.heat) {
-            logWarn "Overheat alarm at ${temperature}${unit}"
-            sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.heat)
+        if (currentAlarm != constTemperatureAlarm.heat) {            
+            sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.heat, descriptionText: "Overheat alarm at ${temperature}${unit}")
         }
     } else if (currentAlarm != null && currentAlarm != constTemperatureAlarm.cleared) {
-        logInfo "Temperature alarm cleared at ${temperature}${unit}"
-        sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.cleared)
+        sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.cleared, descriptionText: "Temperature alarm cleared at ${temperature}${unit}")
     }
 }
 
