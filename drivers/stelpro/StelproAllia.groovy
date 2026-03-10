@@ -310,16 +310,15 @@ void setHeatingSetpoint(BigDecimal preciseDegrees) {
 
     Float celsius = temperatureScaleIsCelsius() ? degrees as Float : (fahrenheitToCelsius(degrees) as Float).round(2)
 
-        if (state.thermostatIsOn) {
-            // Thermostat is "on".  Update the thermostat device's setpoint.
-            List<String> cmds = []
-            cmds += zigbee.writeAttribute(0x201, 0x0012, 0x29, Math.round(celsius * 100) as int)
-            cmds += zigbee.readAttribute(0x201, 0x0012)
-            sendZigbeeCommands(cmds)
-        } else {
-            // Thermostat is "off".  Remember requested setpoint, will be used when heat mode is turned back on.
-            state.lastHeatingSetpoint = celsius
-        }
+    if (state.thermostatIsOn) {
+        // Thermostat is "on".  Update the thermostat device's setpoint.
+        List<String> cmds = []
+        cmds += zigbee.writeAttribute(0x201, 0x0012, 0x29, Math.round(celsius * 100) as int)
+        cmds += zigbee.readAttribute(0x201, 0x0012)
+        sendZigbeeCommands(cmds)
+    } else {
+        // Thermostat is "off".  Remember requested setpoint, will be used when heat mode is turned back on.
+        state.lastHeatingSetpoint = celsius
     }
 }
 
