@@ -382,7 +382,7 @@ private Map parseAttributeReport(Map descMap) {
                         case "7FFF": // sensor high error
                         case "8000": // sensor unavailable
                             logWarn "Temperature sensor error (raw value: 0x${descMap.value})"
-                            return [:]
+                            return null
                         default:
                             if (descMap.value > "8000") {
                                 map.value = -(Math.round(2*(655.36 - Integer.parseInt(descMap.value, 16)))/2)
@@ -432,8 +432,8 @@ private Map parseAttributeReport(Map descMap) {
 
                 case "001C": // mode
                     if (descMap.value == "04") {
-                        logDebug "descMap.value == \"04\". Ignore and wait for SETPOINT MODE"
-                        //return null // TODO why?
+                        logDebug "descMap.value == \"04\". Ignore and wait for SETPOINT mode report"
+                        return null // could be "heat" or "eco"; report on 401C will tell us
                     }
                     map.name = "thermostatMode"
                     map.value = constModeMap[descMap.value]
@@ -442,8 +442,8 @@ private Map parseAttributeReport(Map descMap) {
 
                 case "401C": // setpoint mode
                     if (descMap.value == "00") {
-                        logDebug "descMap.value == \"00\". Ignore and wait for MODE"
-                        //return null // TODO why?
+                        logDebug "descMap.value == \"00\". Ignore and wait for SYSTEM mode report"
+                        return null // wait for system mode reporting "off" to send event, avoid duplicate
                     }
                     map.name = "thermostatMode"
                     map.value = constModeMap[descMap.value]
@@ -638,3 +638,36 @@ private void logWarn(String message) {
 private void logError(String message) {
     log.error("${device} : ${message}")
 }
+
+
+/*
+
+ The Stelpro Ki thermostat uses two separate ZigBee attributes to represent the mode:                                        
+                  
+  - 001C (System Mode) — standard ZigBee thermostat cluster attribute. Values: "00" = off, "04" = heat.                                               
+  - 401C (Setpoint Mode) — manufacturer-specific attribute (Stelpro 0x1185). Values: "00" = (no specific setpoint mode), "04" = heat, "05" = eco.     
+                                                                                                                                                      
+  The key insight is that heat and eco both require System Mode 04. The difference between them is only visible in the Setpoint Mode attribute. Look  
+  at how modes are commanded (lines 191–206):
+
+  - heat(): writes 001C = 04, then 401C = 04
+  - eco(): writes 001C = 04, then 401C = 05
+
+  So when a mode change happens, we get two attribute reports in sequence. The original return null logic was trying to avoid emitting a
+  premature/incorrect thermostatMode event:
+
+  Case 001C (System Mode) — value "04":
+
+  When System Mode reports "04" (heat), we don't yet know if the actual mode is "heat" or "eco" — that depends on the Setpoint Mode (401C) report
+  that follows. So the code returns early to wait for the 401C report to determine the real mode. Without this, we'd emit thermostatMode =
+  "heat" and then immediately overwrite it with "eco" a moment later.
+
+  Case 401C (Setpoint Mode) — value "00":
+
+  When Setpoint Mode reports "00", it means the thermostat is in "off" mode (no active setpoint mode). The 001C report will carry the actual mode
+  ("00" = off). So returning early here avoids emitting an event with constModeMap["00"] = "off" from 401C, deferring to the 001C report instead.
+
+  In short: the two attributes arrive as a pair, and each return null was skipping the "less informative" half to avoid emitting a redundant or wrong
+  intermediate event.
+
+ */
