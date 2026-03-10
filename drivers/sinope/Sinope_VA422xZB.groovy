@@ -30,7 +30,7 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String version = "0.0.2"
+@Field static final String version = "0.0.3"
 
 
 metadata {
@@ -539,7 +539,7 @@ private Double getFlowRate(String value) {
     }
     // Capability unit is LPM, device reports in ml/hour
     // Convert and round to two decimal places
-    return Math.round(100.0 * Integer.parseInt(value, 16) / (60.0 * 1000.0)) / 100.0
+    return Math.round(100.0d * Integer.parseInt(value, 16) / (60.0d * 1000.0d)) / 100.0d
 }
 
 @CompileStatic
@@ -548,7 +548,7 @@ private Double getBatteryVoltage(String value) {
         return null
     }
     // Capability units are V, device reports in tenths of V
-    return Integer.parseInt(value, 16) / 10.0
+    return Integer.parseInt(value, 16) / 10.0d
 }
 
 @CompileStatic
@@ -563,7 +563,7 @@ private Object getBatteryLevel(String value) {
         return "unknown"
     }
 
-    return Math.round(battLevel / 2.0) as Integer
+    return Math.round(battLevel / 2.0d) as Integer
 }
 
 private Integer getBatteryLevelFromVoltage() {
@@ -586,13 +586,12 @@ private Double getVolume(String value) {
     return volumeMl.doubleValue() / 1000.0
 }
 
-@CompileStatic
 private Double getTemperature(String value) {
     if (value == null) {
         return null
     }
     // ZCL spec says temperature is in hundredths of C
-    double celsius = Integer.parseInt(value, 16) / 100.0
+    double celsius = Integer.parseInt(value, 16) / 100.0d
     if (getTemperatureScale() == "C") {
         return celsius
     } else {
