@@ -410,7 +410,11 @@ private Map parseAttributeReport(Map descMap) {
                             state.rawTemp = map.value
                             map.unit = getTemperatureScale()
                             map.descriptionText = "Temperature is ${map.value}${map.unit}"
+
+                            // also update temperature alarm state
                             updateTemperatureAlarm(map.value, map.unit)
+
+                            // ensure operating state stays in sync
                             handleOperatingStateBugFix()
                             break
                     }
@@ -445,7 +449,11 @@ private Map parseAttributeReport(Map descMap) {
                     state.rawSetpoint = map.value
                     map.unit = getTemperatureScale()
                     map.descriptionText = "Heating setpoint is ${map.value}${map.unit}"
-                    sendEvent(name:"thermostatSetpoint", value:map.value, unit:map.unit, descriptionText:map.descriptionText)
+
+                    // also send separate thermostatSetpoint event
+                    sendEvent(name:"thermostatSetpoint", value:map.value, unit:map.unit, descriptionText:"Thermostat setpoint is ${map.value}${map.unit}")
+
+                    // ensure operating state is in sync
                     handleOperatingStateBugFix()
                     break
 
