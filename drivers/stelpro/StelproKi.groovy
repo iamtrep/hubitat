@@ -33,7 +33,7 @@
 
 import groovy.transform.Field
 
-@Field static final String constCodeVersion = "0.0.9"
+@Field static final String constCodeVersion = "0.1.0"
 
 metadata {
     definition (
@@ -46,6 +46,8 @@ metadata {
         capability "Refresh"
         capability "TemperatureMeasurement"
         capability "Thermostat"
+
+        attribute "temperatureAlarm", "enum", ["cleared", "freeze", "heat"]
 
         command "eco"
         command "increaseHeatSetpoint"
@@ -78,6 +80,12 @@ metadata {
 
 @Field static final Map constModeMap = [ "00": "off", "04": "heat", "05": "eco" ]
 @Field static final Map constKeypadLockoutModes = [ "Yes": 0x01, "No": 0x00 ]
+
+@Field static final Map constSetpointRange = [ "C": [min: 5, max: 30, step: 0.5], "F": [min: 41, max: 86, step: 1.0] ]
+
+@Field static final Map constTemperatureAlarm = [ cleared: "cleared", freeze: "freeze", heat: "heat" ]
+@Field static final int constFreezeThresholdCelsius = 0
+@Field static final int constHeatThresholdCelsius = 50
 
 @Field static final int constReadbackDelay = 500
 @Field static final int constOperatingStateCooldownMs = 30000  // 30 seconds between operating state requests
@@ -130,6 +138,7 @@ void configure() {
     // Set supported modes
     sendEvent(name: "supportedThermostatFanModes", value: constSupportedFanModes)
     sendEvent(name: "supportedThermostatModes", value: constSupportedThermostatModes)
+    sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.cleared, displayed: false)
 
     // Set unused default values (for Google Home Integration)
     sendEvent(name: "coolingSetpoint", value:getTemperature("0BB8")) // 0x0BB8 =  30 Celsius
@@ -254,7 +263,14 @@ void setHeatingSetpoint(BigDecimal preciseDegrees) {
     }
 
     String temperatureScale = getTemperatureScale()
+    Map range = constSetpointRange[temperatureScale]
     BigDecimal degrees = preciseDegrees.setScale(1, BigDecimal.ROUND_HALF_UP)
+
+    if (degrees < range.min || degrees > range.max) {
+        logWarn "setHeatingSetpoint(${degrees}${temperatureScale}) out of range (${range.min}-${range.max}${temperatureScale})"
+        return
+    }
+
     logDebug "setHeatingSetpoint(${degrees} ${temperatureScale}) - current value is ${device.currentValue("heatingSetpoint")}"
 
     Float celsius = (temperatureScale == "C") ? degrees as Float : (fahrenheitToCelsius(degrees) as Float).round(2)
@@ -272,25 +288,19 @@ void setCoolingSetpoint(degrees) {
 
 void increaseHeatSetpoint() {
     BigDecimal currentSetpoint = device.currentValue("heatingSetpoint")
-    String temperatureScale = getTemperatureScale()
+    Map range = constSetpointRange[getTemperatureScale()]
 
-    BigDecimal maxSetpoint = (temperatureScale == "C") ? 30 : 86
-    BigDecimal increment = (temperatureScale == "C") ? 0.5 : 1
-
-    if (currentSetpoint < maxSetpoint) {
-        setHeatingSetpoint(currentSetpoint + increment)
+    if (currentSetpoint < range.max) {
+        setHeatingSetpoint(currentSetpoint + range.step)
     }
 }
 
 void decreaseHeatSetpoint() {
     BigDecimal currentSetpoint = device.currentValue("heatingSetpoint")
-    String temperatureScale = getTemperatureScale()
+    Map range = constSetpointRange[getTemperatureScale()]
 
-    BigDecimal minSetpoint = (temperatureScale == "C") ? 5 : 41
-    BigDecimal decrement = (temperatureScale == "C") ? 0.5 : 1
-
-    if (currentSetpoint > minSetpoint) {
-        setHeatingSetpoint(currentSetpoint - decrement)
+    if (currentSetpoint > range.min) {
+        setHeatingSetpoint(currentSetpoint - range.step)
     }
 }
 
@@ -376,24 +386,48 @@ private Map parseAttributeReport(Map descMap) {
             // Thermostat cluster
             switch (descMap.attrId) {
                 case "0000":
-                    map.name = "temperature"
-                    switch (descMap.value) {
-                        case "7FFD": // sensor low error
-                        case "7FFF": // sensor high error
-                        case "8000": // sensor unavailable
-                            logWarn "Temperature sensor error (raw value: 0x${descMap.value})"
-                            return null
-                        default:
-                            if (descMap.value > "8000") {
-                                map.value = -(Math.round(2*(655.36 - Integer.parseInt(descMap.value, 16)))/2)
-                            } else {
-                                map.value = getTemperature(descMap.value)
-                            }
-                            state.rawTemp = map.value
-                            break
+                    int intVal = Integer.parseInt(descMap.value, 16)
+                    if (intVal == 0x7FFD) {
+                        logWarn "Freeze alarm triggered by sensor"
+                        sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.freeze)
+                        return [:]
+                    } else if (intVal == 0x7FFF) {
+                        logWarn "Overheat alarm triggered by sensor"
+                        sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.heat)
+                        return [:]
+                    } else if (intVal == 0x8000) {
+                        logWarn "Temperature sensor unavailable"
+                        return [:]
                     }
+
+                    map.name = "temperature"
+                    if (intVal > 0x8000) {
+                        map.value = -(Math.round(2 * (655.36 - intVal)) / 2)
+                    } else {
+                        map.value = getTemperature(descMap.value)
+                    }
+                    state.rawTemp = map.value
                     map.unit = getTemperatureScale()
                     map.descriptionText = "Temperature is ${map.value}${map.unit}"
+
+                    // Proactive temperature alarm thresholds
+                    BigDecimal celsiusValue = (map.unit == "C") ? map.value : fahrenheitToCelsius(map.value)
+                    String currentAlarm = device.currentValue("temperatureAlarm")
+                    if (celsiusValue <= constFreezeThresholdCelsius) {
+                        if (currentAlarm != constTemperatureAlarm.freeze) {
+                            logWarn "Freeze alarm at ${map.value}${map.unit}"
+                            sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.freeze)
+                        }
+                    } else if (celsiusValue >= constHeatThresholdCelsius) {
+                        if (currentAlarm != constTemperatureAlarm.heat) {
+                            logWarn "Overheat alarm at ${map.value}${map.unit}"
+                            sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.heat)
+                        }
+                    } else if (currentAlarm != null && currentAlarm != constTemperatureAlarm.cleared) {
+                        logInfo "Temperature alarm cleared at ${map.value}${map.unit}"
+                        sendEvent(name: "temperatureAlarm", value: constTemperatureAlarm.cleared)
+                    }
+
                     handleOperatingStateBugFix()
                     break
 
@@ -430,24 +464,34 @@ private Map parseAttributeReport(Map descMap) {
                     handleOperatingStateBugFix()
                     break
 
-                case "001C": // mode
-                    if (descMap.value == "04") {
-                        logDebug "descMap.value == \"04\". Ignore and wait for SETPOINT mode report"
-                        return null // could be "heat" or "eco"; report on 401C will tell us
+                case "001C": // system mode
+                    if (descMap.value == "00") {
+                        // Off is unambiguous — emit immediately
+                        map.name = "thermostatMode"
+                        map.value = "off"
+                        map.descriptionText = "Thermostat mode is set to ${map.value}"
+                    } else {
+                        // System mode "04" (heat) could be heat or eco — need setpoint mode to decide.
+                        // Store and request the manufacturer-specific setpoint mode attribute.
+                        state.storedSystemMode = constModeMap[descMap.value]
+                        logDebug "System mode is ${descMap.value} (${state.storedSystemMode}), requesting setpoint mode"
+                        sendZigbeeCommands(zigbee.readAttribute(0x201, 0x401C, [mfgCode: "0x1185"]))
+                        return [:]
                     }
-                    map.name = "thermostatMode"
-                    map.value = constModeMap[descMap.value]
-                    map.descriptionText = "Thermostat mode is set to ${map.value}"
                     break
 
-                case "401C": // setpoint mode
-                    if (descMap.value == "00") {
-                        logDebug "descMap.value == \"00\". Ignore and wait for SYSTEM mode report"
-                        return null // wait for system mode reporting "off" to send event, avoid duplicate
+                case "401C": // manufacturer-specific setpoint mode
+                    if (state.storedSystemMode == "heat" || state.storedSystemMode == null) {
+                        // Setpoint mode determines the real mode (heat vs eco)
+                        map.name = "thermostatMode"
+                        map.value = constModeMap[descMap.value]
+                        map.descriptionText = "Thermostat mode is set to ${map.value}"
+                        logDebug "Setpoint mode ${descMap.value} resolved final mode to ${map.value}"
+                    } else {
+                        // System was off — ignore the setpoint mode
+                        logDebug "Ignoring setpoint mode ${descMap.value} because system mode is ${state.storedSystemMode}"
+                        return [:]
                     }
-                    map.name = "thermostatMode"
-                    map.value = constModeMap[descMap.value]
-                    map.descriptionText = "Thermostat mode is set to ${map.value}"
                     break
 
                 default:
