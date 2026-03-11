@@ -38,8 +38,8 @@ import groovy.transform.Field
 metadata {
     definition (
         name: "Stelpro Ki ZigBee Thermostat",
-        namespace: "PhilC",
-        author: "PhilC",
+        namespace: "iamtrep",
+        author: "pj",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/stelpro/StelproKi.groovy"
     ) {
         capability "Configuration"
