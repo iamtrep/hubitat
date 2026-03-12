@@ -281,6 +281,23 @@ void parse(String message) {
 
         logTrace "Rcv: [${logEntry.type}/${logEntry.level}] ${logEntry.name}"
 
+        // Unescape HTML entities at the source — logsocket sends HTML-encoded text.
+        // Remote hub connections via port 80 often double-encode entities (e.g. &amp;quot;).
+        if (logEntry.msg) {
+            String msg = org.apache.commons.lang3.StringEscapeUtils.unescapeHtml4(logEntry.msg as String)
+            if (msg.contains("&")) {
+                msg = org.apache.commons.lang3.StringEscapeUtils.unescapeHtml4(msg)
+            }
+            logEntry.msg = msg
+        }
+        if (logEntry.name) {
+            String name = org.apache.commons.lang3.StringEscapeUtils.unescapeHtml4(logEntry.name as String)
+            if (name.contains("&")) {
+                name = org.apache.commons.lang3.StringEscapeUtils.unescapeHtml4(name)
+            }
+            logEntry.name = name
+        }
+
         try {
             processLogEntry(logEntry)
         } catch (Exception e) {
