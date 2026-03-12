@@ -61,7 +61,7 @@ Map mainPage() {
                     def dev = getChildDevice(br.dni)
                     String status = dev?.currentValue("connectionStatus") ?: "unknown"
                     String ip = br.hubAddress ?: "local"
-                    long received = dev?.currentValue("logsReceived") ?: 0
+                    long received = dev?.getLogsReceivedCount() ?: 0
                     href(name: "editBridge${i}", page: "bridgePage",
                         title: "<b>${br.label}</b>",
                         description: "${ip} — <b>${status}</b> (${received} logs)",
