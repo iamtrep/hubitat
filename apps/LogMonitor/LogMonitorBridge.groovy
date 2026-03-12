@@ -34,11 +34,11 @@ metadata {
         capability "Initialize"
 
         attribute "connectionStatus", "string"
-        attribute "logsReceived", "number"
 
         command "connect"
         command "disconnect"
         command "reconnect"
+        command "getLogsReceivedCount"
     }
 
     preferences {
@@ -84,13 +84,11 @@ void initialize() {
 
     atomicState.intentionalDisconnect = false
     state.reconnectAttempts = 0
-    state.logsReceived = 0
+    atomicState.logsReceived = 0
 
     sendEvent(name: "connectionStatus", value: "initializing")
 
     runIn(location.hub.uptime < STARTUP_DELAY_SECS ? STARTUP_DELAY_SECS : 2, "connect")
-    runEvery5Minutes("healthCheck")
-    runEvery1Minute("updateLogsReceivedAttribute")
 }
 
 // ============================================================================
@@ -154,17 +152,6 @@ private void scheduleReconnect() {
     runIn(delay, "connect")
 }
 
-void healthCheck() {
-    if (!state.wsConnected && autoReconnect && !atomicState.intentionalDisconnect) {
-        logWarn "WebSocket disconnected, attempting reconnect"
-        scheduleReconnect()
-    }
-}
-
-void updateLogsReceivedAttribute() {
-    sendEvent(name: "logsReceived", value: state.logsReceived ?: 0)
-}
-
 // ============================================================================
 // WebSocket Event Handlers
 // ============================================================================
@@ -197,7 +184,7 @@ void webSocketStatus(String message) {
 }
 
 void parse(String message) {
-    state.logsReceived = (state.logsReceived ?: 0) + 1
+    atomicState.logsReceived = (atomicState.logsReceived ?: 0) + 1
 
     try {
         Map logEntry = JSON_SLURPER.parseText(message)
@@ -230,6 +217,14 @@ void parse(String message) {
     } catch (Exception e) {
         logDebug "Parse error: ${e.message}"
     }
+}
+
+/**
+ * Returns the total count of logs received by this bridge.
+ * Can be called by the parent app to display status without attribute overhead.
+ */
+long getLogsReceivedCount() {
+    return (atomicState.logsReceived ?: 0) as long
 }
 
 // ============================================================================
