@@ -652,7 +652,9 @@ private Map executeOutputs(Map logEntry, Map filter, String bridgeDni) {
     if (filter.outputLog && filter.logFile) {
         try {
             String timestamp = new Date().format("yyyy-MM-dd HH:mm:ss")
-            String line = "${timestamp},${bridgeLabel},${logEntry.type},${logEntry.level},${logEntry.name},\"${logEntry.msg}\"\n"
+            String escapedName = (logEntry.name as String ?: "").replace('"', '""')
+            String escapedMsg = (logEntry.msg as String ?: "").replace('"', '""')
+            String line = "${timestamp},${bridgeLabel},${logEntry.type},${logEntry.level},\"${escapedName}\",\"${escapedMsg}\"\n"
             appendToFile(filter.logFile as String, line)
         } catch (Exception e) {
             logDebug "Log file error for ${filter.label}: ${e.message}"
