@@ -272,17 +272,25 @@ void referenceHumidityHandler(evt) {
 void fanSwitchHandler(evt) {
     logDebug("Fan switch changed to ${evt.value}")
 
-    if (evt.value == "off" && state.fanTurnedOnByApp) {
-        if (state.pendingCommand != "off") {
-            // We didn't send this off command - someone else turned it off
-            log.info("Fan turned off externally - clearing app control flag")
-            state.fanTurnedOnByApp = false
+    if (evt.value == "on") {
+        unschedule("verifyFanOn")
+        if (state.pendingCommand == "on") {
+            log.info("Fan verified ON")
+            state.pendingCommand = null
         }
-    }
-
-    // Clear pending command if it matches what happened
-    if (state.pendingCommand == evt.value) {
-        state.pendingCommand = null
+    } else if (evt.value == "off") {
+        unschedule("verifyFanOff")
+        if (state.fanTurnedOnByApp) {
+            if (state.pendingCommand != "off") {
+                // We didn't send this off command - someone else turned it off
+                log.info("Fan turned off externally - clearing app control flag")
+                state.fanTurnedOnByApp = false
+            } else {
+                log.info("Fan verified OFF")
+                state.fanTurnedOnByApp = false
+                state.pendingCommand = null
+            }
+        }
     }
 }
 
@@ -569,6 +577,8 @@ private void turnOnFan() {
     state.pendingCommand = "on"
     fanSwitch.on()
 
+    // Cancel any pending verification for the opposite state
+    unschedule("verifyFanOff")
     runIn(switchVerificationTimeout as Integer, "verifyFanOn")
 
     // Start max fan run timer
@@ -579,7 +589,7 @@ void verifyFanOn() {
     String switchState = fanSwitch.currentValue("switch")
 
     if (switchState == "on") {
-        log.info("Fan verified ON")
+        log.info("Fan verified ON (timeout check)")
         state.pendingCommand = null
     } else {
         log.error("Fan failed to turn on after ${switchVerificationTimeout} seconds")
@@ -595,8 +605,9 @@ private void turnOffFan() {
     state.pendingCommand = "off"
     fanSwitch.off()
 
-    // Cancel max fan run timer
+    // Cancel max fan run timer and any pending verification for the opposite state
     unschedule("maxFanRunTimeExpired")
+    unschedule("verifyFanOn")
 
     runIn(switchVerificationTimeout as Integer, "verifyFanOff")
 }
@@ -605,7 +616,7 @@ void verifyFanOff() {
     String switchState = fanSwitch.currentValue("switch")
 
     if (switchState == "off") {
-        log.info("Fan verified OFF")
+        log.info("Fan verified OFF (timeout check)")
         state.fanTurnedOnByApp = false
         state.pendingCommand = null
     } else {
