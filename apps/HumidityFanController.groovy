@@ -369,7 +369,7 @@ private void evaluateNormalState(BigDecimal bathroomHumidity, BigDecimal referen
         log.info("Humidity above activation threshold: ${reason} - starting ${activationDelay}s delay")
 
         // Snapshot the reference humidity at activation time
-        state.referenceHumiditySnapshot = referenceHumidity ?: absoluteLowThreshold
+        state.referenceHumiditySnapshot = referenceHumidity
         state.pendingStateSince = now()
 
         transitionHumidityState(HUMIDITY_PENDING_HIGH)
@@ -529,9 +529,13 @@ private Boolean isAboveActivationThreshold(BigDecimal bathroomHumidity, BigDecim
     return bathroomHumidity > highThreshold
 }
 
+private BigDecimal getEffectiveReferenceSnapshot() {
+    return (state.referenceHumiditySnapshot ?: absoluteLowThreshold) as BigDecimal
+}
+
 private Boolean isBelowDeactivationThreshold(BigDecimal bathroomHumidity) {
     // Use the snapshot reference for deactivation calculation
-    BigDecimal effectiveReference = (state.referenceHumiditySnapshot ?: absoluteLowThreshold) as BigDecimal
+    BigDecimal effectiveReference = getEffectiveReferenceSnapshot()
     BigDecimal normalThreshold = effectiveReference + normalHumidityOffset
 
     // Deactivate if below absolute low threshold - tolerance
@@ -557,7 +561,7 @@ private String getDeactivationReason(BigDecimal bathroomHumidity) {
     if (bathroomHumidity < deactivationFloor) {
         return "bathroom ${bathroomHumidity}% < deactivation floor ${deactivationFloor}%"
     }
-    BigDecimal effectiveReference = (state.referenceHumiditySnapshot ?: absoluteLowThreshold) as BigDecimal
+    BigDecimal effectiveReference = getEffectiveReferenceSnapshot()
     BigDecimal normalThreshold = effectiveReference + normalHumidityOffset
     return "bathroom ${bathroomHumidity}% < (snapshot ${effectiveReference}% + ${normalHumidityOffset}%) = ${normalThreshold}%"
 }
@@ -643,10 +647,12 @@ void verifyFanOff() {
 
 // ==================== Max Fan Run Time ====================
 
+private Boolean isMaxFanRunTimeEnabled() {
+    return maxFanRunTime && (maxFanRunTime as Integer) > 0
+}
+
 private void scheduleMaxFanRunTimer() {
-    if (!maxFanRunTime || (maxFanRunTime as Integer) <= 0) {
-        return
-    }
+    if (!isMaxFanRunTimeEnabled()) return
 
     Integer delaySeconds = (maxFanRunTime as Integer) * 60
     runIn(delaySeconds, "maxFanRunTimeExpired")
@@ -654,9 +660,7 @@ private void scheduleMaxFanRunTimer() {
 }
 
 private void resetMaxFanRunTimer() {
-    if (!maxFanRunTime || (maxFanRunTime as Integer) <= 0) {
-        return
-    }
+    if (!isMaxFanRunTimeEnabled()) return
 
     unschedule("maxFanRunTimeExpired")
     scheduleMaxFanRunTimer()
@@ -664,9 +668,7 @@ private void resetMaxFanRunTimer() {
 }
 
 private void rescheduleMaxFanRunTimer() {
-    if (!maxFanRunTime || (maxFanRunTime as Integer) <= 0) {
-        return
-    }
+    if (!isMaxFanRunTimeEnabled()) return
 
     if (!state.lastHumidityEventTime) {
         scheduleMaxFanRunTimer()
@@ -820,7 +822,7 @@ private String getStatusText() {
     if (state.fanTurnedOnByApp) {
         status.append(" (controlled by app)")
         // Show max run timer status
-        if (maxFanRunTime && (maxFanRunTime as Integer) > 0 && state.lastHumidityEventTime) {
+        if (isMaxFanRunTimeEnabled() && state.lastHumidityEventTime) {
             Long elapsedMin = (now() - (state.lastHumidityEventTime as Long)) / 60000
             Long remainingMin = (maxFanRunTime as Integer) - elapsedMin
             if (remainingMin > 0) {
@@ -911,23 +913,11 @@ private Map getSensorStatus(List sensors) {
     List activeSensors = getActiveSensors(sensors)
     List excludedNames = sensors.findAll { !activeSensors.contains(it) }.collect { it.displayName }
 
-    BigDecimal median = null
-    if (activeSensors.size() > 0) {
-        List<BigDecimal> values = activeSensors.collect { it.currentValue("humidity") as BigDecimal }
-        values.sort()
-        Integer n = values.size()
-        if (n % 2 == 0) {
-            median = (values[(n / 2 - 1) as int] + values[(n / 2) as int]) / 2.0
-        } else {
-            median = values[(n / 2) as int]
-        }
-    }
-
     return [
         active: activeSensors.size(),
         total: sensors.size(),
         excluded: excludedNames,
-        median: median
+        median: computeMedianHumidity(sensors)
     ]
 }
 
