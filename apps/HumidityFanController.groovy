@@ -232,10 +232,15 @@ void initialize() {
         turnOffFan()
     }
 
-    // Consistency check: if humidity is HIGH and we should control the fan but don't, turn it on
+    // Consistency check: if humidity is HIGH and we should control the fan but don't
     if (isHumidityHigh() && !state.fanTurnedOnByApp && !isRestricted()) {
         String fanState = fanSwitch.currentValue("switch")
-        if (fanState != "on") {
+        if (fanState == "on") {
+            // Fan is already on (e.g. turned on manually or by another app) - adopt control
+            log.info("Humidity is HIGH and fan is already ON - adopting control of fan")
+            state.fanTurnedOnByApp = true
+            if (!state.lastHumidityEventTime) state.lastHumidityEventTime = now()
+        } else {
             log.warn("Inconsistent state detected: humidity HIGH, not restricted, but fan not on. Turning on fan.")
             turnOnFan()
         }
@@ -245,6 +250,9 @@ void initialize() {
     if (state.fanTurnedOnByApp && state.lastHumidityEventTime) {
         rescheduleMaxFanRunTimer()
     }
+
+    // Initial evaluation to sync state
+    evaluateHumidityStateMachine()
 
     log.info("${APP_NAME} initialized. Humidity: ${state.humidityState}, Fan controlled by app: ${state.fanTurnedOnByApp}")
 }
@@ -260,13 +268,13 @@ void bathroomHumidityHandler(evt) {
         resetMaxFanRunTimer()
     }
 
-    evaluateHumidityStateMachine()
+    evaluateHumidityStateMachine(evt.device)
 }
 
 void referenceHumidityHandler(evt) {
     logDebug("Reference humidity event from ${evt.device}: ${evt.value}%")
     // Reference sensor events don't reset the max fan timer, but we still evaluate
-    evaluateHumidityStateMachine()
+    evaluateHumidityStateMachine(evt.device)
 }
 
 void fanSwitchHandler(evt) {
@@ -312,17 +320,12 @@ void restrictionSwitchHandler(evt) {
 
 // ==================== Humidity State Machine ====================
 
-private void evaluateHumidityStateMachine() {
-    BigDecimal bathroomHumidity = computeMedianHumidity(bathroomHumiditySensors)
-    BigDecimal referenceHumidity = computeMedianHumidity(referenceHumiditySensors)
+private void evaluateHumidityStateMachine(reportingDevice = null) {
+    BigDecimal bathroomHumidity = computeMedianHumidity(bathroomHumiditySensors, reportingDevice)
+    BigDecimal referenceHumidity = computeMedianHumidity(referenceHumiditySensors, reportingDevice)
 
     if (bathroomHumidity == null) {
         log.warn("No active bathroom sensors - skipping humidity evaluation")
-        return
-    }
-
-    if (referenceHumidity == null) {
-        log.warn("No active reference sensors - skipping humidity evaluation")
         return
     }
 
@@ -331,10 +334,22 @@ private void evaluateHumidityStateMachine() {
 
     switch (state.humidityState) {
         case HUMIDITY_NORMAL:
-            evaluateNormalState(bathroomHumidity, referenceHumidity)
+            if (referenceHumidity == null && bathroomHumidity <= absoluteHighThreshold) {
+                log.warn("No active reference sensors - cannot evaluate activation threshold")
+                return
+            }
+            evaluateNormalState(bathroomHumidity, referenceHumidity ?: absoluteLowThreshold)
             break
         case HUMIDITY_PENDING_HIGH:
-            evaluatePendingHighState(bathroomHumidity, referenceHumidity)
+            if (referenceHumidity == null && bathroomHumidity <= absoluteHighThreshold) {
+                log.info("Reference sensors lost during activation delay - returning to NORMAL")
+                unschedule("delayedTransitionToHigh")
+                state.pendingStateSince = null
+                state.referenceHumiditySnapshot = null
+                transitionHumidityState(HUMIDITY_NORMAL)
+                return
+            }
+            evaluatePendingHighState(bathroomHumidity, referenceHumidity ?: absoluteLowThreshold)
             break
         case HUMIDITY_HIGH:
             evaluateHighState(bathroomHumidity)
@@ -354,7 +369,7 @@ private void evaluateNormalState(BigDecimal bathroomHumidity, BigDecimal referen
         log.info("Humidity above activation threshold: ${reason} - starting ${activationDelay}s delay")
 
         // Snapshot the reference humidity at activation time
-        state.referenceHumiditySnapshot = referenceHumidity
+        state.referenceHumiditySnapshot = referenceHumidity ?: absoluteLowThreshold
         state.pendingStateSince = now()
 
         transitionHumidityState(HUMIDITY_PENDING_HIGH)
@@ -516,7 +531,7 @@ private Boolean isAboveActivationThreshold(BigDecimal bathroomHumidity, BigDecim
 
 private Boolean isBelowDeactivationThreshold(BigDecimal bathroomHumidity) {
     // Use the snapshot reference for deactivation calculation
-    BigDecimal effectiveReference = state.referenceHumiditySnapshot as BigDecimal
+    BigDecimal effectiveReference = (state.referenceHumiditySnapshot ?: absoluteLowThreshold) as BigDecimal
     BigDecimal normalThreshold = effectiveReference + normalHumidityOffset
 
     // Deactivate if below absolute low threshold - tolerance
@@ -542,7 +557,7 @@ private String getDeactivationReason(BigDecimal bathroomHumidity) {
     if (bathroomHumidity < deactivationFloor) {
         return "bathroom ${bathroomHumidity}% < deactivation floor ${deactivationFloor}%"
     }
-    BigDecimal effectiveReference = state.referenceHumiditySnapshot as BigDecimal
+    BigDecimal effectiveReference = (state.referenceHumiditySnapshot ?: absoluteLowThreshold) as BigDecimal
     BigDecimal normalThreshold = effectiveReference + normalHumidityOffset
     return "bathroom ${bathroomHumidity}% < (snapshot ${effectiveReference}% + ${normalHumidityOffset}%) = ${normalThreshold}%"
 }
@@ -833,7 +848,7 @@ private String getStatusText() {
 
 // ==================== Sensor Aggregation ====================
 
-private List getActiveSensors(List sensors) {
+private List getActiveSensors(List sensors, reportingDevice = null) {
     if (!sensors) {
         return []
     }
@@ -845,6 +860,14 @@ private List getActiveSensors(List sensors) {
     List inactiveSensors = []
 
     sensors.each { sensor ->
+        // If this sensor just reported, it's definitely active
+        if (reportingDevice && sensor.id == reportingDevice.id) {
+            if (sensor.currentValue("humidity") != null) {
+                activeSensors << sensor
+                return
+            }
+        }
+
         Date lastActivity = sensor.getLastActivity()
         if (lastActivity && lastActivity > cutoff) {
             if (sensor.currentValue("humidity") != null) {
@@ -862,8 +885,8 @@ private List getActiveSensors(List sensors) {
     return activeSensors
 }
 
-private BigDecimal computeMedianHumidity(List sensors) {
-    List activeSensors = getActiveSensors(sensors)
+private BigDecimal computeMedianHumidity(List sensors, reportingDevice = null) {
+    List activeSensors = getActiveSensors(sensors, reportingDevice)
 
     if (activeSensors.size() == 0) {
         return null
