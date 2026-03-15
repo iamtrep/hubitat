@@ -197,6 +197,9 @@ void initialize() {
         state.fanTurnedOnByApp = false
     }
 
+    // Clear stale pending command (verification timers were killed by unschedule())
+    state.pendingCommand = null
+
     // Sync high humidity switch with current state
     syncHighHumiditySwitch()
 
