@@ -23,51 +23,48 @@
 
  Switch Monitor
 
- Monitors switches that must remain on (or off) at all times. If any monitored
- switch deviates from its target state and stays that way for a configurable
- grace period, the app automatically corrects it. It retries in a loop until
- the switch responds or the maximum number of attempts is reached, and
- optionally notifies the user.
+ Monitors switches that must remain on (or off) at all times. Switches are
+ organized into groups, each with its own target state, devices, timing,
+ notification, and load monitoring configuration.
 
- For must-stay-on switches with power metering, the app can also monitor the
+ If any monitored switch deviates from its group's target state and stays
+ that way for a configurable grace period, the app automatically corrects it.
+ It retries in a loop until the switch responds or the maximum number of
+ attempts is reached, and optionally notifies the user.
+
+ For must-stay-on groups with power metering, the app can also monitor the
  connected load and notify the user if power drops below a per-device minimum
  watt threshold (e.g., a freezer compressor failing).
 
- == Flow (must-stay-on) ==
+ == Flow (per group) ==
 
  Event-driven (normal operation):
- 1. A monitored switch turns off
- 2. Wait the grace period (default 5 minutes)
- 3. If still off: notify "turned off — turning back on", send on() command
- 4. Wait verification delay (default 10 seconds), then check:
-    - If on: recovery complete
-    - If still off: notify "did not turn back on!", wait retry interval,
-      then go back to step 3
+ 1. A monitored switch deviates from its target state
+ 2. Wait the grace period (configurable per group)
+ 3. If still wrong: notify and send corrective command
+ 4. Wait verification delay, then check:
+    - If correct: recovery complete
+    - If still wrong: notify, wait retry interval, go back to step 3
  5. Give up after max retries (or loop forever if set to 0)
 
- == Flow (must-stay-off) ==
-
- Same as above but inverted: if a switch turns on, wait the grace period,
- then send off() command with the same retry/verify logic.
-
- == Load monitoring (must-stay-on only) ==
+ == Load monitoring (must-stay-on groups only) ==
 
  1. A power event arrives below the per-device minimum watt threshold
- 2. Wait the load grace period (default 2 minutes)
+ 2. Wait the load grace period
  3. If still below threshold and switch is on: notify user
  4. Re-notify at the configured reminder interval until power recovers
 
  == State-based (startup / preferences saved) ==
 
  1. Refresh all switches that support it (startup only)
- 2. For each switch in the wrong state, look up event history timestamp
- 3. If wrong longer than the grace period (or no event found): recover immediately
+ 2. For each group, find switches in the wrong state
+ 3. If wrong longer than the grace period: recover immediately
  4. If wrong for less than the grace period: schedule a delayed check
 
- == Power outage awareness (optional) ==
+ == Power outage awareness (optional, global) ==
 
  - A switch (ON = outage) or PowerSource device (not mains = outage) signals an outage
- - Active recovery is cancelled during the outage for must-stay-on switches
+ - Active recovery is cancelled during the outage for must-stay-on groups
  - Load monitoring alerts are cleared during outage
  - When power is restored: refresh all monitored switches, then re-evaluate
 
@@ -77,7 +74,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Switch Monitor"
-@Field static final String APP_VERSION = "2.0.0"
+@Field static final String APP_VERSION = "3.0.0"
 
 @Field static final Integer DEFAULT_GRACE_MINUTES = 5
 @Field static final Integer DEFAULT_GRACE_SECONDS = 0
@@ -93,10 +90,10 @@ definition(
     name: APP_NAME,
     namespace: "iamtrep",
     author: "pj",
-    description: "Monitors switches that must remain on or off. Automatically corrects deviations with configurable retry logic, optional notifications, and load monitoring for power-reporting devices.",
+    description: "Monitors switches that must remain on or off, organized in groups with independent timing, notifications, and load monitoring.",
     category: "Convenience",
     singleInstance: false,
-    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/AlwaysOnSwitchMonitor.groovy",
+    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/SwitchMonitor.groovy",
     iconUrl: "",
     iconX2Url: "",
     iconX3Url: ""
@@ -104,10 +101,27 @@ definition(
 
 preferences {
     page(name: "mainPage")
+    page(name: "groupPage")
+    page(name: "removeGroupPage")
     page(name: "checkNowPage")
 }
 
+// ── Pages ────────────────────────────────────────────────────────────────────
+
 Map mainPage() {
+    // Process pending group deletion
+    if (state.removeSettingsForGroupNumber) {
+        Integer groupNum = state.removeSettingsForGroupNumber as Integer
+        state.remove("removeSettingsForGroupNumber")
+        removeSettingsForGroup(groupNum)
+        List<Integer> groups = (List<Integer>)(state.groups ?: [])
+        groups.remove((Integer) groupNum)
+        state.groups = groups
+        Map allGroupState = (Map)(state.groupState ?: [:])
+        allGroupState.remove(groupNum.toString())
+        state.groupState = allGroupState
+    }
+
     dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
         section("Current Status") {
             paragraph getStatusText()
@@ -118,36 +132,22 @@ Map mainPage() {
             label title: "Name this instance", required: false
         }
 
-        section("Switches") {
-            if (switches && !switchesOn) {
-                paragraph "<b>Note:</b> This app was upgraded from v1. Please re-select your switches below — the previous selection ('switches') is no longer used."
-            }
-            input "switchesOn", "capability.switch", title: "Switches that must stay ON", multiple: true, required: false, submitOnChange: true
-            input "switchesOff", "capability.switch", title: "Switches that must stay OFF", multiple: true, required: false
-        }
-
-        section("Notifications") {
-            input "notifyDevices", "capability.notification", title: "Notification devices", multiple: true, required: false
-            input "notifyOnRecovery", "bool", title: "Notify when correcting a switch", defaultValue: true
-            input "notifyOnFailure", "bool", title: "Notify when a switch fails to recover", defaultValue: true
-            input "notifyOnLowLoad", "bool", title: "Notify when load drops below minimum", defaultValue: true
-        }
-
-        section("Load Monitoring", hideable: true, hidden: true) {
-            paragraph "Monitor connected load on must-stay-on switches that report power. Set a minimum watt threshold per device. If the load drops below the threshold while the switch is on, you will be notified."
-            input "enableLoadMonitoring", "bool", title: "Enable load monitoring", defaultValue: false, submitOnChange: true
-            if (enableLoadMonitoring && switchesOn) {
-                List powerDevices = switchesOn.findAll { it.hasCapability("PowerMeter") }
-                if (powerDevices) {
-                    powerDevices.each { dev ->
-                        input "minLoadWatts_${dev.id}", "decimal", title: "${dev.displayName} — minimum load (watts)", defaultValue: 0, required: false, range: "0..10000"
-                    }
-                    input "loadGraceMinutes", "number", title: "Minutes to wait before alerting on low load", defaultValue: DEFAULT_LOAD_GRACE_MINUTES, required: true, range: "1..60"
-                    input "loadReminderMinutes", "number", title: "Minutes between repeat notifications", defaultValue: DEFAULT_LOAD_REMINDER_MINUTES, required: true, range: "5..1440"
-                } else {
-                    paragraph "None of the selected must-stay-on switches support power reporting."
+        section("Device Groups") {
+            List<Integer> groups = (List<Integer>)(state.groups ?: [])
+            if (groups.isEmpty()) {
+                paragraph "No groups configured. Add a group to start monitoring switches."
+            } else {
+                groups.eachWithIndex { Integer groupNum, int idx ->
+                    String groupLabel = getGroupLabel(groupNum)
+                    String targetState = getGroupTargetState(groupNum).toUpperCase()
+                    List devices = getGroupDevices(groupNum)
+                    int devCount = devices?.size() ?: 0
+                    String summary = "Must stay ${targetState}, ${devCount} device(s)"
+                    href "groupPage", title: groupLabel, description: summary,
+                        params: [groupNum: groupNum]
                 }
             }
+            input "btnNewGroup", "button", title: "Add new group"
         }
 
         section("Power Outage", hideable: true, hidden: true) {
@@ -156,35 +156,129 @@ Map mainPage() {
             input "outageIndicatorPower", "capability.powerSource", title: "Power source device (outage when not on mains)", required: false
         }
 
-        section("Timing", hideable: true, hidden: true) {
-            input "graceMinutes", "number", title: "Minutes to wait before taking action", defaultValue: DEFAULT_GRACE_MINUTES, required: true, range: "0..60"
-            input "graceSeconds", "number", title: "Additional seconds to wait", defaultValue: DEFAULT_GRACE_SECONDS, required: true, range: "0..59"
-            input "retryInterval", "number", title: "Seconds between retries", defaultValue: DEFAULT_RETRY_INTERVAL_SECONDS, required: true, range: "5..300"
-            input "verifyDelay", "number", title: "Seconds to wait before verifying switch state", defaultValue: DEFAULT_VERIFY_DELAY_SECONDS, required: true, range: "1..60"
-            input "maxRetries", "number", title: "Maximum retry attempts (0 = unlimited)", defaultValue: DEFAULT_MAX_RETRIES, required: true, range: "0..100"
-        }
-
         section("Logging", hideable: true, hidden: true) {
             input "enableDebug", "bool", title: "Enable debug logging", defaultValue: false
         }
     }
 }
 
+Map groupPage(params) {
+    Integer groupNum
+    if (params?.groupNum) {
+        state.currGroupNum = params.groupNum as Integer
+        groupNum = params.groupNum as Integer
+    } else {
+        groupNum = state.currGroupNum as Integer
+    }
+    String g = "group${groupNum}"
+    String groupLabel = getGroupLabel(groupNum)
+
+    dynamicPage(name: "groupPage", title: groupLabel, nextPage: "mainPage") {
+        section("Target State") {
+            input "${g}.targetState", "enum", title: "Switches must stay", options: ["on": "ON", "off": "OFF"],
+                defaultValue: "on", required: true, submitOnChange: true
+        }
+
+        section("Devices") {
+            input "${g}.devices", "capability.switch", title: "Switches to monitor", multiple: true, required: false, submitOnChange: true
+        }
+
+        section("Group Label") {
+            input "${g}.label", "text", title: "Name this group", required: false
+        }
+
+        section("Notifications") {
+            input "${g}.notifyDevices", "capability.notification", title: "Notification devices", multiple: true, required: false
+            input "${g}.notifyOnRecovery", "bool", title: "Notify when correcting a switch", defaultValue: true
+            input "${g}.notifyOnFailure", "bool", title: "Notify when a switch fails to recover", defaultValue: true
+            input "${g}.notifyOnLowLoad", "bool", title: "Notify when load drops below minimum", defaultValue: true
+        }
+
+        String targetState = (String)(settings["${g}.targetState"] ?: "on")
+        List devices = settings["${g}.devices"]
+
+        if (targetState == "on" && devices) {
+            section("Load Monitoring", hideable: true, hidden: true) {
+                paragraph "Monitor connected load on switches that report power. Set a minimum watt threshold per device."
+                input "${g}.enableLoadMonitoring", "bool", title: "Enable load monitoring", defaultValue: false, submitOnChange: true
+                if (settings["${g}.enableLoadMonitoring"]) {
+                    List powerDevices = devices.findAll { it.hasCapability("PowerMeter") }
+                    if (powerDevices) {
+                        powerDevices.each { dev ->
+                            input "${g}.minLoadWatts_${dev.id}", "decimal",
+                                title: "${dev.displayName} — minimum load (watts)",
+                                defaultValue: 0, required: false, range: "0..10000"
+                        }
+                        input "${g}.loadGraceMinutes", "number", title: "Minutes to wait before alerting on low load",
+                            defaultValue: DEFAULT_LOAD_GRACE_MINUTES, required: true, range: "1..60"
+                        input "${g}.loadReminderMinutes", "number", title: "Minutes between repeat notifications",
+                            defaultValue: DEFAULT_LOAD_REMINDER_MINUTES, required: true, range: "5..1440"
+                    } else {
+                        paragraph "None of the selected devices support power reporting."
+                    }
+                }
+            }
+        }
+
+        section("Timing", hideable: true, hidden: true) {
+            input "${g}.graceMinutes", "number", title: "Minutes to wait before taking action",
+                defaultValue: DEFAULT_GRACE_MINUTES, required: true, range: "0..60"
+            input "${g}.graceSeconds", "number", title: "Additional seconds to wait",
+                defaultValue: DEFAULT_GRACE_SECONDS, required: true, range: "0..59"
+            input "${g}.retryInterval", "number", title: "Seconds between retries",
+                defaultValue: DEFAULT_RETRY_INTERVAL_SECONDS, required: true, range: "5..300"
+            input "${g}.verifyDelay", "number", title: "Seconds to wait before verifying switch state",
+                defaultValue: DEFAULT_VERIFY_DELAY_SECONDS, required: true, range: "1..60"
+            input "${g}.maxRetries", "number", title: "Maximum retry attempts (0 = unlimited)",
+                defaultValue: DEFAULT_MAX_RETRIES, required: true, range: "0..100"
+        }
+
+        section("") {
+            href "removeGroupPage", title: "Delete this group", description: "Remove this group and all its settings",
+                params: [groupNum: groupNum]
+        }
+    }
+}
+
+Map removeGroupPage(params) {
+    Integer groupNum
+    if (params?.groupNum) {
+        state.currGroupNum = params.groupNum as Integer
+        groupNum = params.groupNum as Integer
+    } else {
+        groupNum = state.currGroupNum as Integer
+    }
+    String groupLabel = getGroupLabel(groupNum)
+
+    dynamicPage(name: "removeGroupPage", title: "Delete ${groupLabel}?", nextPage: "mainPage") {
+        section {
+            paragraph "Are you sure you want to delete <b>${groupLabel}</b> and all its settings?"
+            input "btnConfirmDelete_${groupNum}", "button", title: "Yes, delete this group"
+            href "groupPage", title: "Cancel — go back", params: [groupNum: groupNum]
+        }
+    }
+}
+
+void appButtonHandler(String btn) {
+    if (btn == "btnNewGroup") {
+        List<Integer> groups = (List<Integer>)(state.groups ?: [])
+        Integer newNum = groups ? (groups.max() + 1) : 1
+        groups << newNum
+        state.groups = groups
+    } else if (btn.startsWith("btnConfirmDelete_")) {
+        int groupNum = (btn - "btnConfirmDelete_") as int
+        state.removeSettingsForGroupNumber = groupNum
+    }
+}
+
 Map checkNowPage() {
-    // Refresh all devices that support it
     List allSwitches = getAllMonitoredSwitches()
     List refreshable = allSwitches.findAll { it.hasCommand("refresh") }
     if (refreshable) {
         refreshable.each { it.refresh() }
     }
 
-    // Run switch evaluation
-    evaluateSwitches("Manual check")
-
-    // Run load evaluation
-    if (enableLoadMonitoring && switchesOn && !state.powerOutage) {
-        evaluateCurrentLoad()
-    }
+    evaluateGroups("Manual check")
 
     dynamicPage(name: "checkNowPage", title: "Check All Devices", install: false, uninstall: false) {
         section {
@@ -211,32 +305,61 @@ void uninstalled() {
 }
 
 void initialize() {
-    state.recoveryActiveOn = false
-    state.retryCountOn = 0
-    state.recoveryActiveOff = false
-    state.retryCountOff = 0
+    migrateFromV2IfNeeded()
+
+    List<Integer> groups = (List<Integer>)(state.groups ?: [])
     state.powerOutage = isOutageActive()
 
-    // Preserve low-load tracking across preference saves; prune devices no longer monitored or with threshold 0
-    Map lowLoadDevices = (Map)(state.lowLoadDevices ?: [:])
-    if (enableLoadMonitoring && switchesOn) {
-        Set activeIds = switchesOn.findAll { it.hasCapability("PowerMeter") }
-            .findAll { getDecimalSetting("minLoadWatts_${it.id}", 0) > 0 }
-            .collect { it.id.toString() } as Set
-        lowLoadDevices.keySet().retainAll(activeIds)
-    } else {
-        lowLoadDevices.clear()
-    }
-    state.lowLoadDevices = lowLoadDevices
+    // Initialize per-group state and subscriptions
+    Map allGroupState = (Map)(state.groupState ?: [:])
+    groups.each { Integer groupNum ->
+        String key = groupNum.toString()
+        if (!allGroupState.containsKey(key)) {
+            allGroupState[key] = [recoveryActive: false, retryCount: 0, lowLoadDevices: [:]]
+        } else {
+            Map gs = (Map) allGroupState[key]
+            gs.recoveryActive = false
+            gs.retryCount = 0
+            // Prune low-load devices no longer monitored
+            String targetState = getGroupTargetState(groupNum)
+            if (targetState == "on" && getBoolGroupSetting(groupNum, "enableLoadMonitoring")) {
+                List devices = getGroupDevices(groupNum)
+                Set activeIds = (devices ?: []).findAll { it.hasCapability("PowerMeter") }
+                    .findAll { getDecimalGroupSetting(groupNum, "minLoadWatts_${it.id}", 0) > 0 }
+                    .collect { it.id.toString() } as Set
+                Map lowLoad = (Map)(gs.lowLoadDevices ?: [:])
+                lowLoad.keySet().retainAll(activeIds)
+                gs.lowLoadDevices = lowLoad
+            } else {
+                gs.lowLoadDevices = [:]
+            }
+            allGroupState[key] = gs
+        }
 
-    if (switchesOn) {
-        subscribe(switchesOn, "switch.off", mustStayOnTurnedOffHandler)
-        subscribe(switchesOn, "switch.on", mustStayOnTurnedOnHandler)
+        List devices = getGroupDevices(groupNum)
+        if (!devices) return
+        String targetState = getGroupTargetState(groupNum)
+
+        if (targetState == "on") {
+            subscribe(devices, "switch.off", switchDeviatedHandler)
+            subscribe(devices, "switch.on", switchRestoredHandler)
+        } else {
+            subscribe(devices, "switch.on", switchDeviatedHandler)
+            subscribe(devices, "switch.off", switchRestoredHandler)
+        }
+
+        // Load monitoring subscriptions
+        if (targetState == "on" && getBoolGroupSetting(groupNum, "enableLoadMonitoring")) {
+            devices.findAll { it.hasCapability("PowerMeter") }.each { dev ->
+                BigDecimal threshold = getDecimalGroupSetting(groupNum, "minLoadWatts_${dev.id}", 0)
+                if (threshold > 0) {
+                    subscribe(dev, "power", powerHandler)
+                }
+            }
+        }
     }
-    if (switchesOff) {
-        subscribe(switchesOff, "switch.on", mustStayOffTurnedOnHandler)
-        subscribe(switchesOff, "switch.off", mustStayOffTurnedOffHandler)
-    }
+    state.groupState = allGroupState
+
     subscribe(location, "systemStart", systemStartHandler)
 
     if (outageIndicatorSwitch) {
@@ -246,25 +369,18 @@ void initialize() {
         subscribe(outageIndicatorPower, "powerSource", outageIndicatorPowerHandler)
     }
 
-    // Load monitoring subscriptions
-    if (enableLoadMonitoring && switchesOn) {
-        List powerDevices = switchesOn.findAll { it.hasCapability("PowerMeter") }
-        powerDevices.each { dev ->
-            BigDecimal threshold = getDecimalSetting("minLoadWatts_${dev.id}", 0)
-            if (threshold > 0) {
-                subscribe(dev, "power", powerHandler)
+    // Evaluate current load for all groups
+    if (!state.powerOutage) {
+        groups.each { Integer groupNum ->
+            if (getGroupTargetState(groupNum) == "on" && getBoolGroupSetting(groupNum, "enableLoadMonitoring")) {
+                evaluateGroupLoad(groupNum)
             }
         }
     }
 
-    // Evaluate current load and re-schedule if needed (unschedule() in updated() kills timers)
-    if (enableLoadMonitoring && switchesOn && !state.powerOutage) {
-        evaluateCurrentLoad()
-    }
-
-    int totalCount = (switchesOn?.size() ?: 0) + (switchesOff?.size() ?: 0)
-    logDebug "Initialized — monitoring ${totalCount} switch(es)${state.powerOutage ? ' (power outage active)' : ''}"
-    evaluateSwitches("Preferences saved")
+    int totalDevices = groups.sum { Integer gn -> getGroupDevices(gn)?.size() ?: 0 } ?: 0
+    logDebug "Initialized — ${groups.size()} group(s), ${totalDevices} device(s)${state.powerOutage ? ' (power outage active)' : ''}"
+    evaluateGroups("Preferences saved")
 }
 
 // ── Event Handlers ───────────────────────────────────────────────────────────
@@ -281,59 +397,54 @@ void systemStartHandler(evt) {
 }
 
 void startupCheck() {
-    evaluateSwitches("Startup check")
+    evaluateGroups("Startup check")
 }
 
-// ── Must-Stay-On Handlers ────────────────────────────────────────────────────
+void switchDeviatedHandler(evt) {
+    String devId = evt.device.id.toString()
+    // Determine which target state this event deviates FROM
+    String deviatedTarget = (evt.value == "off") ? "on" : "off"
+    List<Integer> groups = findGroupsForDevice(devId, deviatedTarget)
 
-void mustStayOnTurnedOffHandler(evt) {
-    log.info "${evt.displayName} turned off (must stay on)"
-    if (state.powerOutage) {
-        logDebug "Power outage active — skipping recovery scheduling"
-        return
+    groups.each { Integer groupNum ->
+        String groupLabel = getGroupLabel(groupNum)
+        String targetState = getGroupTargetState(groupNum)
+        log.info "[${groupLabel}] ${evt.displayName} turned ${evt.value} (must stay ${targetState})"
+
+        if (state.powerOutage && targetState == "on") {
+            logDebug "[${groupLabel}] Power outage active — skipping recovery scheduling"
+            return
+        }
+
+        int delaySecs = getGroupGracePeriodSeconds(groupNum)
+        logDebug "[${groupLabel}] Scheduling recovery check in ${getGroupGracePeriodLabel(groupNum)}"
+        runIn(delaySecs, "startRecovery", [data: [groupNum: groupNum], overwrite: false])
     }
-    int delaySecs = getGracePeriodSeconds()
-    logDebug "Scheduling stay-on recovery check in ${getGracePeriodLabel()}"
-    runIn(delaySecs, "startRecoveryOn", [overwrite: false])
 }
 
-void mustStayOnTurnedOnHandler(evt) {
-    log.warn "${evt.displayName} turned back on"
-    List actionable = getActionableSwitches(switchesOn, "on")
-    if (!actionable.isEmpty()) return
+void switchRestoredHandler(evt) {
+    String devId = evt.device.id.toString()
+    // Determine which target state this event restores TO
+    String restoredTarget = evt.value
+    List<Integer> groups = findGroupsForDevice(devId, restoredTarget)
 
-    if (state.recoveryActiveOn) {
-        log.info "All must-stay-on switches are back on — recovery complete"
+    groups.each { Integer groupNum ->
+        String groupLabel = getGroupLabel(groupNum)
+        log.warn "[${groupLabel}] ${evt.displayName} turned back ${evt.value}"
+
+        List devices = getGroupDevices(groupNum)
+        String targetState = getGroupTargetState(groupNum)
+        List actionable = getActionableSwitches(devices, targetState)
+        if (!actionable.isEmpty()) return
+
+        Map gs = getGroupState(groupNum)
+        if (gs.recoveryActive) {
+            log.info "[${groupLabel}] All switches are back ${targetState} — recovery complete"
+        }
+        gs.recoveryActive = false
+        gs.retryCount = 0
+        saveGroupState(groupNum, gs)
     }
-    unschedule("startRecoveryOn")
-    unschedule("attemptRecoveryOn")
-    unschedule("verifyRecoveryOn")
-    state.recoveryActiveOn = false
-    state.retryCountOn = 0
-}
-
-// ── Must-Stay-Off Handlers ───────────────────────────────────────────────────
-
-void mustStayOffTurnedOnHandler(evt) {
-    log.info "${evt.displayName} turned on (must stay off)"
-    int delaySecs = getGracePeriodSeconds()
-    logDebug "Scheduling stay-off recovery check in ${getGracePeriodLabel()}"
-    runIn(delaySecs, "startRecoveryOff", [overwrite: false])
-}
-
-void mustStayOffTurnedOffHandler(evt) {
-    log.warn "${evt.displayName} turned back off"
-    List actionable = getActionableSwitches(switchesOff, "off")
-    if (!actionable.isEmpty()) return
-
-    if (state.recoveryActiveOff) {
-        log.info "All must-stay-off switches are back off — recovery complete"
-    }
-    unschedule("startRecoveryOff")
-    unschedule("attemptRecoveryOff")
-    unschedule("verifyRecoveryOff")
-    state.recoveryActiveOff = false
-    state.retryCountOff = 0
 }
 
 // ── Power Outage Handlers ────────────────────────────────────────────────────
@@ -361,18 +472,20 @@ private void powerOutageStarted() {
     state.powerOutage = true
     log.warn "Power outage detected — pausing stay-on recovery and load monitoring"
 
-    // Cancel stay-on recovery (stay-off is unaffected — switches are already off during outage)
-    if (state.recoveryActiveOn) {
-        unschedule("startRecoveryOn")
-        unschedule("attemptRecoveryOn")
-        unschedule("verifyRecoveryOn")
-        state.recoveryActiveOn = false
-        state.retryCountOn = 0
+    // Mark all must-stay-on groups as not recovering and clear load state
+    List<Integer> groups = (List<Integer>)(state.groups ?: [])
+    Map allGroupState = (Map)(state.groupState ?: [:])
+    groups.each { Integer groupNum ->
+        if (getGroupTargetState(groupNum) == "on") {
+            String key = groupNum.toString()
+            Map gs = (Map)(allGroupState[key] ?: [:])
+            gs.recoveryActive = false
+            gs.retryCount = 0
+            gs.lowLoadDevices = [:]
+            allGroupState[key] = gs
+        }
     }
-
-    // Clear load monitoring state
-    state.lowLoadDevices = [:]
-    unschedule("checkLowLoad")
+    state.groupState = allGroupState
 }
 
 private void powerOutageEnded() {
@@ -390,259 +503,231 @@ private void powerOutageEnded() {
 }
 
 void postOutageCheck() {
-    evaluateSwitches("Power restored")
+    evaluateGroups("Power restored")
 }
 
-// ── Recovery Logic (Must-Stay-On) ────────────────────────────────────────────
+// ── Recovery Logic (Unified) ─────────────────────────────────────────────────
 
-void startRecoveryOn() {
-    if (state.powerOutage) {
-        logDebug "Power outage active — deferring stay-on recovery"
+void startRecovery(Map data) {
+    int groupNum = data.groupNum as int
+    String targetState = getGroupTargetState(groupNum)
+    String groupLabel = getGroupLabel(groupNum)
+
+    if (state.powerOutage && targetState == "on") {
+        logDebug "[${groupLabel}] Power outage active — deferring recovery"
         return
     }
-    List actionable = getActionableSwitches(switchesOn, "on")
+
+    List devices = getGroupDevices(groupNum)
+    List actionable = getActionableSwitches(devices, targetState)
     if (actionable.isEmpty()) {
-        logDebug "All must-stay-on switches are on — no recovery needed"
-        state.recoveryActiveOn = false
-        state.retryCountOn = 0
+        logDebug "[${groupLabel}] All switches are ${targetState} — no recovery needed"
+        Map gs = getGroupState(groupNum)
+        gs.recoveryActive = false
+        gs.retryCount = 0
+        saveGroupState(groupNum, gs)
         return
     }
 
     String names = actionable.collect { it.displayName }.join(", ")
-    log.info "${names} stayed off for ${getGracePeriodLabel()} — starting recovery"
-    if (notifyOnRecovery) {
-        sendNotification("${names} turned off — turning back on")
+    log.info "[${groupLabel}] ${names} stayed ${targetState == 'on' ? 'off' : 'on'} for ${getGroupGracePeriodLabel(groupNum)} — starting recovery"
+    if (getBoolGroupSetting(groupNum, "notifyOnRecovery", true)) {
+        sendGroupNotification(groupNum, "${names} turned ${targetState == 'on' ? 'off' : 'on'} — turning back ${targetState}")
     }
 
-    state.recoveryActiveOn = true
-    state.retryCountOn = 0
-    attemptRecoveryOn()
+    Map gs = getGroupState(groupNum)
+    gs.recoveryActive = true
+    gs.retryCount = 0
+    saveGroupState(groupNum, gs)
+    attemptRecovery(data)
 }
 
-void attemptRecoveryOn() {
-    if (state.powerOutage) {
-        logDebug "Power outage active — suspending stay-on recovery"
-        state.recoveryActiveOn = false
-        state.retryCountOn = 0
-        return
-    }
-    List actionable = getActionableSwitches(switchesOn, "on")
-    if (actionable.isEmpty()) {
-        log.info "All must-stay-on switches are on — recovery complete"
-        state.recoveryActiveOn = false
-        state.retryCountOn = 0
+void attemptRecovery(Map data) {
+    int groupNum = data.groupNum as int
+    String targetState = getGroupTargetState(groupNum)
+    String groupLabel = getGroupLabel(groupNum)
+
+    if (state.powerOutage && targetState == "on") {
+        logDebug "[${groupLabel}] Power outage active — suspending recovery"
+        Map gs = getGroupState(groupNum)
+        gs.recoveryActive = false
+        gs.retryCount = 0
+        saveGroupState(groupNum, gs)
         return
     }
 
-    int count = ((int)(state.retryCountOn ?: 0)) + 1
-    state.retryCountOn = count
-    int max = getIntSetting("maxRetries", DEFAULT_MAX_RETRIES)
+    List devices = getGroupDevices(groupNum)
+    List actionable = getActionableSwitches(devices, targetState)
+    if (actionable.isEmpty()) {
+        log.info "[${groupLabel}] All switches are ${targetState} — recovery complete"
+        Map gs = getGroupState(groupNum)
+        gs.recoveryActive = false
+        gs.retryCount = 0
+        saveGroupState(groupNum, gs)
+        return
+    }
+
+    Map gs = getGroupState(groupNum)
+    int count = ((int)(gs.retryCount ?: 0)) + 1
+    gs.retryCount = count
+    saveGroupState(groupNum, gs)
+
+    int max = getIntGroupSetting(groupNum, "maxRetries", DEFAULT_MAX_RETRIES)
 
     if (max > 0 && count > max) {
         String names = actionable.collect { it.displayName }.join(", ")
-        String msg = "Giving up on turning on ${names} after ${max} attempt(s)"
-        log.warn msg
-        if (notifyOnFailure) sendNotification(msg)
-        state.recoveryActiveOn = false
-        state.retryCountOn = 0
+        String msg = "Giving up on turning ${targetState} ${names} after ${max} attempt(s)"
+        log.warn "[${groupLabel}] ${msg}"
+        if (getBoolGroupSetting(groupNum, "notifyOnFailure", true)) {
+            sendGroupNotification(groupNum, msg)
+        }
+        gs.recoveryActive = false
+        gs.retryCount = 0
+        saveGroupState(groupNum, gs)
         return
     }
 
     String names = actionable.collect { it.displayName }.join(", ")
     String countStr = max > 0 ? "${count}/${max}" : "${count}"
-    logDebug "Turning on: ${names} (attempt ${countStr})"
-    actionable.each { it.on() }
+    logDebug "[${groupLabel}] Turning ${targetState}: ${names} (attempt ${countStr})"
+    actionable.each { targetState == "on" ? it.on() : it.off() }
 
-    int delay = getIntSetting("verifyDelay", DEFAULT_VERIFY_DELAY_SECONDS)
-    runIn(delay, "verifyRecoveryOn")
+    int delay = getIntGroupSetting(groupNum, "verifyDelay", DEFAULT_VERIFY_DELAY_SECONDS)
+    runIn(delay, "verifyRecovery", [data: data, overwrite: false])
 }
 
-void verifyRecoveryOn() {
-    List actionable = getActionableSwitches(switchesOn, "on")
+void verifyRecovery(Map data) {
+    int groupNum = data.groupNum as int
+    String targetState = getGroupTargetState(groupNum)
+    String groupLabel = getGroupLabel(groupNum)
+
+    List devices = getGroupDevices(groupNum)
+    List actionable = getActionableSwitches(devices, targetState)
     if (actionable.isEmpty()) {
-        log.info "All must-stay-on switches verified on — recovery complete"
-        state.recoveryActiveOn = false
-        state.retryCountOn = 0
+        log.info "[${groupLabel}] All switches verified ${targetState} — recovery complete"
+        Map gs = getGroupState(groupNum)
+        gs.recoveryActive = false
+        gs.retryCount = 0
+        saveGroupState(groupNum, gs)
         return
     }
 
+    Map gs = getGroupState(groupNum)
     String names = actionable.collect { it.displayName }.join(", ")
-    log.warn "${names} did not turn back on (attempt ${state.retryCountOn})"
-    if (notifyOnFailure) {
-        sendNotification("${names} did not turn back on!")
+    log.warn "[${groupLabel}] ${names} did not turn back ${targetState} (attempt ${gs.retryCount})"
+    if (getBoolGroupSetting(groupNum, "notifyOnFailure", true)) {
+        sendGroupNotification(groupNum, "${names} did not turn back ${targetState}!")
     }
 
-    int interval = getIntSetting("retryInterval", DEFAULT_RETRY_INTERVAL_SECONDS)
-    runIn(interval, "attemptRecoveryOn")
-}
-
-// ── Recovery Logic (Must-Stay-Off) ───────────────────────────────────────────
-
-void startRecoveryOff() {
-    List actionable = getActionableSwitches(switchesOff, "off")
-    if (actionable.isEmpty()) {
-        logDebug "All must-stay-off switches are off — no recovery needed"
-        state.recoveryActiveOff = false
-        state.retryCountOff = 0
-        return
-    }
-
-    String names = actionable.collect { it.displayName }.join(", ")
-    log.info "${names} stayed on for ${getGracePeriodLabel()} — starting recovery"
-    if (notifyOnRecovery) {
-        sendNotification("${names} turned on — turning back off")
-    }
-
-    state.recoveryActiveOff = true
-    state.retryCountOff = 0
-    attemptRecoveryOff()
-}
-
-void attemptRecoveryOff() {
-    List actionable = getActionableSwitches(switchesOff, "off")
-    if (actionable.isEmpty()) {
-        log.info "All must-stay-off switches are off — recovery complete"
-        state.recoveryActiveOff = false
-        state.retryCountOff = 0
-        return
-    }
-
-    int count = ((int)(state.retryCountOff ?: 0)) + 1
-    state.retryCountOff = count
-    int max = getIntSetting("maxRetries", DEFAULT_MAX_RETRIES)
-
-    if (max > 0 && count > max) {
-        String names = actionable.collect { it.displayName }.join(", ")
-        String msg = "Giving up on turning off ${names} after ${max} attempt(s)"
-        log.warn msg
-        if (notifyOnFailure) sendNotification(msg)
-        state.recoveryActiveOff = false
-        state.retryCountOff = 0
-        return
-    }
-
-    String names = actionable.collect { it.displayName }.join(", ")
-    String countStr = max > 0 ? "${count}/${max}" : "${count}"
-    logDebug "Turning off: ${names} (attempt ${countStr})"
-    actionable.each { it.off() }
-
-    int delay = getIntSetting("verifyDelay", DEFAULT_VERIFY_DELAY_SECONDS)
-    runIn(delay, "verifyRecoveryOff")
-}
-
-void verifyRecoveryOff() {
-    List actionable = getActionableSwitches(switchesOff, "off")
-    if (actionable.isEmpty()) {
-        log.info "All must-stay-off switches verified off — recovery complete"
-        state.recoveryActiveOff = false
-        state.retryCountOff = 0
-        return
-    }
-
-    String names = actionable.collect { it.displayName }.join(", ")
-    log.warn "${names} did not turn back off (attempt ${state.retryCountOff})"
-    if (notifyOnFailure) {
-        sendNotification("${names} did not turn back off!")
-    }
-
-    int interval = getIntSetting("retryInterval", DEFAULT_RETRY_INTERVAL_SECONDS)
-    runIn(interval, "attemptRecoveryOff")
+    int interval = getIntGroupSetting(groupNum, "retryInterval", DEFAULT_RETRY_INTERVAL_SECONDS)
+    runIn(interval, "attemptRecovery", [data: data, overwrite: false])
 }
 
 // ── Load Monitoring ──────────────────────────────────────────────────────────
 
 void powerHandler(evt) {
     if (state.powerOutage) return
-    if (!enableLoadMonitoring) return
 
     String devId = evt.device.id.toString()
-    BigDecimal threshold = getDecimalSetting("minLoadWatts_${devId}", 0)
-    if (threshold <= 0) return
+    List<Integer> groups = findLoadMonitoringGroupsForDevice(devId)
 
-    // Ignore if switch is currently off — power is naturally 0
-    if (evt.device.currentSwitch == "off") return
+    groups.each { Integer groupNum ->
+        String groupLabel = getGroupLabel(groupNum)
+        BigDecimal threshold = getDecimalGroupSetting(groupNum, "minLoadWatts_${devId}", 0)
+        if (threshold <= 0) return
 
-    BigDecimal power = evt.numberValue
-    Map lowLoadDevices = (Map)(state.lowLoadDevices ?: [:])
+        if (evt.device.currentSwitch == "off") return
 
-    if (power < threshold) {
-        if (!lowLoadDevices.containsKey(devId)) {
-            logDebug "${evt.displayName} load ${power}W below threshold ${threshold}W — starting grace period"
-            lowLoadDevices[devId] = now()
-            state.lowLoadDevices = lowLoadDevices
-            int graceMinutes = getIntSetting("loadGraceMinutes", DEFAULT_LOAD_GRACE_MINUTES)
-            runIn(graceMinutes * 60, "checkLowLoad", [overwrite: false])
-        }
-    } else {
-        if (lowLoadDevices.containsKey(devId)) {
-            logDebug "${evt.displayName} load recovered to ${power}W (threshold ${threshold}W)"
-            lowLoadDevices.remove(devId)
-            state.lowLoadDevices = lowLoadDevices
-            if (lowLoadDevices.isEmpty()) {
-                unschedule("checkLowLoad")
+        BigDecimal power = evt.numberValue
+        Map gs = getGroupState(groupNum)
+        Map lowLoad = (Map)(gs.lowLoadDevices ?: [:])
+
+        if (power < threshold) {
+            if (!lowLoad.containsKey(devId)) {
+                logDebug "[${groupLabel}] ${evt.displayName} load ${power}W below threshold ${threshold}W — starting grace period"
+                lowLoad[devId] = now()
+                gs.lowLoadDevices = lowLoad
+                saveGroupState(groupNum, gs)
+                int graceMinutes = getIntGroupSetting(groupNum, "loadGraceMinutes", DEFAULT_LOAD_GRACE_MINUTES)
+                runIn(graceMinutes * 60, "checkLowLoad", [data: [groupNum: groupNum], overwrite: false])
+            }
+        } else {
+            if (lowLoad.containsKey(devId)) {
+                logDebug "[${groupLabel}] ${evt.displayName} load recovered to ${power}W (threshold ${threshold}W)"
+                lowLoad.remove(devId)
+                gs.lowLoadDevices = lowLoad
+                saveGroupState(groupNum, gs)
             }
         }
     }
 }
 
-/**
- * Scan current power levels for all load-monitored devices. Seed or update
- * state.lowLoadDevices and schedule checkLowLoad if any are below threshold.
- */
-private void evaluateCurrentLoad() {
-    Map lowLoad = (Map)(state.lowLoadDevices ?: [:])
+private void evaluateGroupLoad(int groupNum) {
+    List devices = getGroupDevices(groupNum)
+    if (!devices) return
+
+    Map gs = getGroupState(groupNum)
+    Map lowLoad = (Map)(gs.lowLoadDevices ?: [:])
     long nowMs = now()
-    switchesOn.findAll { it.hasCapability("PowerMeter") }.each { dev ->
+
+    devices.findAll { it.hasCapability("PowerMeter") }.each { dev ->
         String devId = dev.id.toString()
-        BigDecimal threshold = getDecimalSetting("minLoadWatts_${devId}", 0)
+        BigDecimal threshold = getDecimalGroupSetting(groupNum, "minLoadWatts_${devId}", 0)
         if (threshold <= 0) return
         if (dev.currentSwitch == "off") return
         BigDecimal currentPower = dev.currentValue("power") as BigDecimal
         if (currentPower != null && currentPower < threshold) {
             if (!lowLoad.containsKey(devId)) {
-                logDebug "${dev.displayName} load ${currentPower}W below threshold ${threshold}W"
+                logDebug "[${getGroupLabel(groupNum)}] ${dev.displayName} load ${currentPower}W below threshold ${threshold}W"
                 lowLoad[devId] = nowMs
             }
         } else {
             lowLoad.remove(devId)
         }
     }
-    state.lowLoadDevices = lowLoad
+    gs.lowLoadDevices = lowLoad
+    saveGroupState(groupNum, gs)
 
     if (!lowLoad.isEmpty()) {
-        int delaySecs = getIntSetting("loadGraceMinutes", DEFAULT_LOAD_GRACE_MINUTES) * 60
-        logDebug "Scheduling low-load check — ${lowLoad.size()} device(s) tracked"
-        runIn(delaySecs, "checkLowLoad")
+        int delaySecs = getIntGroupSetting(groupNum, "loadGraceMinutes", DEFAULT_LOAD_GRACE_MINUTES) * 60
+        logDebug "[${getGroupLabel(groupNum)}] Scheduling low-load check — ${lowLoad.size()} device(s) tracked"
+        runIn(delaySecs, "checkLowLoad", [data: [groupNum: groupNum], overwrite: false])
     }
 }
 
-void checkLowLoad() {
+void checkLowLoad(Map data) {
+    int groupNum = data.groupNum as int
+    String groupLabel = getGroupLabel(groupNum)
+
     if (state.powerOutage) {
-        state.lowLoadDevices = [:]
+        Map gs = getGroupState(groupNum)
+        gs.lowLoadDevices = [:]
+        saveGroupState(groupNum, gs)
         return
     }
-    if (!enableLoadMonitoring) return
+    if (!getBoolGroupSetting(groupNum, "enableLoadMonitoring")) return
 
-    Map lowLoadDevices = (Map)(state.lowLoadDevices ?: [:])
+    Map gs = getGroupState(groupNum)
+    Map lowLoadDevices = (Map)(gs.lowLoadDevices ?: [:])
     if (lowLoadDevices.isEmpty()) return
 
+    List devices = getGroupDevices(groupNum)
     List lowNames = []
     List recovered = []
 
     lowLoadDevices.each { String devId, timestamp ->
-        def dev = switchesOn?.find { it.id.toString() == devId }
+        def dev = devices?.find { it.id.toString() == devId }
         if (!dev) {
             recovered << devId
             return
         }
 
-        // If switch is off, don't alert about load
         if (dev.currentSwitch == "off") {
             recovered << devId
             return
         }
 
-        BigDecimal threshold = getDecimalSetting("minLoadWatts_${devId}", 0)
+        BigDecimal threshold = getDecimalGroupSetting(groupNum, "minLoadWatts_${devId}", 0)
         if (threshold <= 0) {
             recovered << devId
             return
@@ -652,54 +737,48 @@ void checkLowLoad() {
         if (currentPower != null && currentPower < threshold) {
             lowNames << "${dev.displayName} (${currentPower}W < ${threshold}W)"
         } else {
-            logDebug "${dev.displayName} load recovered to ${currentPower}W"
+            logDebug "[${groupLabel}] ${dev.displayName} load recovered to ${currentPower}W"
             recovered << devId
         }
     }
 
     recovered.each { lowLoadDevices.remove(it) }
-    state.lowLoadDevices = lowLoadDevices
+    gs.lowLoadDevices = lowLoadDevices
+    saveGroupState(groupNum, gs)
 
     if (lowNames) {
         String msg = "Low load detected: ${lowNames.join(', ')}"
-        log.warn msg
-        if (notifyOnLowLoad) sendNotification(msg)
-
-        int reminderMinutes = getIntSetting("loadReminderMinutes", DEFAULT_LOAD_REMINDER_MINUTES)
-        runIn(reminderMinutes * 60, "checkLowLoad")
+        log.warn "[${groupLabel}] ${msg}"
+        if (getBoolGroupSetting(groupNum, "notifyOnLowLoad", true)) {
+            sendGroupNotification(groupNum, msg)
+        }
+        int reminderMinutes = getIntGroupSetting(groupNum, "loadReminderMinutes", DEFAULT_LOAD_REMINDER_MINUTES)
+        runIn(reminderMinutes * 60, "checkLowLoad", [data: [groupNum: groupNum], overwrite: false])
     } else if (lowLoadDevices.isEmpty()) {
-        logDebug "All loads recovered — load monitoring clear"
-        unschedule("checkLowLoad")
+        logDebug "[${groupLabel}] All loads recovered — load monitoring clear"
     }
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Evaluation ───────────────────────────────────────────────────────────────
 
-/**
- * Returns switches that are NOT in the desired target state.
- * For must-stay-on: targetState="on" returns switches that are currently off.
- * For must-stay-off: targetState="off" returns switches that are currently on.
- */
-private List getActionableSwitches(List devices, String targetState) {
-    if (!devices) return []
-    String wrongState = (targetState == "on") ? "off" : "on"
-    return devices.findAll { it.currentSwitch == wrongState }
-}
-
-/**
- * Evaluate all switches using event history to respect the grace period.
- * Handles both must-stay-on and must-stay-off sets.
- */
-private void evaluateSwitches(String context) {
+private void evaluateGroups(String context) {
+    List<Integer> groups = (List<Integer>)(state.groups ?: [])
     boolean anyActionable = false
 
-    if (switchesOn) {
-        anyActionable |= evaluateSwitchSet(switchesOn, "on", "startRecoveryOn",
-            "recoveryActiveOn", "retryCountOn", context)
+    groups.each { Integer groupNum ->
+        List devices = getGroupDevices(groupNum)
+        if (!devices) return
+        String targetState = getGroupTargetState(groupNum)
+        anyActionable |= evaluateGroupSwitches(groupNum, devices, targetState, context)
     }
-    if (switchesOff) {
-        anyActionable |= evaluateSwitchSet(switchesOff, "off", "startRecoveryOff",
-            "recoveryActiveOff", "retryCountOff", context)
+
+    // Evaluate load for all applicable groups
+    if (!state.powerOutage) {
+        groups.each { Integer groupNum ->
+            if (getGroupTargetState(groupNum) == "on" && getBoolGroupSetting(groupNum, "enableLoadMonitoring")) {
+                evaluateGroupLoad(groupNum)
+            }
+        }
     }
 
     if (!anyActionable) {
@@ -707,17 +786,13 @@ private void evaluateSwitches(String context) {
     }
 }
 
-/**
- * Evaluate a set of switches against their target state. Returns true if any
- * switches were found in the wrong state.
- */
-private boolean evaluateSwitchSet(List devices, String targetState, String recoveryMethod,
-                                  String recoveryActiveKey, String retryCountKey, String context) {
+private boolean evaluateGroupSwitches(int groupNum, List devices, String targetState, String context) {
     List actionable = getActionableSwitches(devices, targetState)
     if (actionable.isEmpty()) return false
 
+    String groupLabel = getGroupLabel(groupNum)
     String wrongState = (targetState == "on") ? "off" : "on"
-    long gracePeriodMs = getGracePeriodSeconds() * 1000L
+    long gracePeriodMs = getGroupGracePeriodSeconds(groupNum) * 1000L
     long nowMs = now()
 
     List immediate = []
@@ -732,7 +807,7 @@ private boolean evaluateSwitchSet(List devices, String targetState, String recov
                 immediate << dev
             } else {
                 int remainingSecs = (int) Math.ceil(remainingMs / 1000.0)
-                logDebug "${context}: ${dev.displayName} turned ${wrongState} ${(int)(durationMs / 1000)}s ago — scheduling check in ${remainingSecs}s"
+                logDebug "[${groupLabel}] ${context}: ${dev.displayName} turned ${wrongState} ${(int)(durationMs / 1000)}s ago — scheduling check in ${remainingSecs}s"
                 if (remainingSecs < soonestDelaySecs) {
                     soonestDelaySecs = remainingSecs
                 }
@@ -745,31 +820,152 @@ private boolean evaluateSwitchSet(List devices, String targetState, String recov
     if (immediate) {
         String names = immediate.collect { it.displayName }.join(", ")
         String action = (targetState == "on") ? "turning back on" : "turning back off"
-        log.warn "${context}: ${names} ${wrongState} past grace period — starting recovery"
-        if (notifyOnRecovery) {
-            sendNotification("${names} found ${wrongState} — ${action}")
+        log.warn "[${groupLabel}] ${context}: ${names} ${wrongState} past grace period — starting recovery"
+        if (getBoolGroupSetting(groupNum, "notifyOnRecovery", true)) {
+            sendGroupNotification(groupNum, "${names} found ${wrongState} — ${action}")
         }
-        state[recoveryActiveKey] = true
-        state[retryCountKey] = 0
-        if (targetState == "on") {
-            attemptRecoveryOn()
-        } else {
-            attemptRecoveryOff()
-        }
+        Map gs = getGroupState(groupNum)
+        gs.recoveryActive = true
+        gs.retryCount = 0
+        saveGroupState(groupNum, gs)
+        attemptRecovery([groupNum: groupNum])
     }
 
     if (soonestDelaySecs < Integer.MAX_VALUE) {
-        logDebug "${context}: scheduling delayed check in ${soonestDelaySecs}s for recently changed switches"
-        runIn(soonestDelaySecs, recoveryMethod, [overwrite: false])
+        logDebug "[${groupLabel}] ${context}: scheduling delayed check in ${soonestDelaySecs}s for recently changed switches"
+        runIn(soonestDelaySecs, "startRecovery", [data: [groupNum: groupNum], overwrite: false])
     }
 
     return true
 }
 
+// ── Migration ────────────────────────────────────────────────────────────────
+
+private void migrateFromV2IfNeeded() {
+    if (state.groups != null) return
+    if (!settings.switchesOn && !settings.switchesOff && !settings.switches) {
+        state.groups = []
+        state.groupState = [:]
+        return
+    }
+
+    log.info "Migrating from v2 to v3 multi-group format"
+    List<Integer> groups = []
+    int nextGroup = 1
+
+    if (settings.switchesOn) {
+        int g = nextGroup
+        groups << g
+        app.updateSetting("group${g}.targetState", [type: "enum", value: "on"])
+        app.updateSetting("group${g}.devices", [type: "capability.switch", value: settings.switchesOn])
+        app.updateSetting("group${g}.label", [type: "text", value: "Must Stay On"])
+        migrateTimingSettings(g)
+        migrateNotificationSettings(g)
+        migrateLoadMonitoringSettings(g, settings.switchesOn)
+        nextGroup++
+    }
+
+    if (settings.switchesOff) {
+        int g = nextGroup
+        groups << g
+        app.updateSetting("group${g}.targetState", [type: "enum", value: "off"])
+        app.updateSetting("group${g}.devices", [type: "capability.switch", value: settings.switchesOff])
+        app.updateSetting("group${g}.label", [type: "text", value: "Must Stay Off"])
+        migrateTimingSettings(g)
+        migrateNotificationSettings(g)
+        nextGroup++
+    }
+
+    state.groups = groups
+    state.groupState = [:]
+
+    // Clean up old flat settings
+    ["switchesOn", "switchesOff", "switches", "graceMinutes", "graceSeconds", "retryInterval",
+     "verifyDelay", "maxRetries", "notifyDevices", "notifyOnRecovery", "notifyOnFailure",
+     "notifyOnLowLoad", "enableLoadMonitoring", "loadGraceMinutes", "loadReminderMinutes"].each {
+        app.removeSetting(it)
+    }
+    settings.keySet().findAll { ((String) it).startsWith("minLoadWatts_") }.each {
+        app.removeSetting(it)
+    }
+
+    // Clean old state
+    state.remove("recoveryActiveOn")
+    state.remove("retryCountOn")
+    state.remove("recoveryActiveOff")
+    state.remove("retryCountOff")
+    state.remove("lowLoadDevices")
+
+    log.info "Migration complete: created ${groups.size()} group(s)"
+}
+
+private void migrateTimingSettings(int g) {
+    String prefix = "group${g}"
+    if (settings.graceMinutes != null) app.updateSetting("${prefix}.graceMinutes", [type: "number", value: settings.graceMinutes])
+    if (settings.graceSeconds != null) app.updateSetting("${prefix}.graceSeconds", [type: "number", value: settings.graceSeconds])
+    if (settings.retryInterval != null) app.updateSetting("${prefix}.retryInterval", [type: "number", value: settings.retryInterval])
+    if (settings.verifyDelay != null) app.updateSetting("${prefix}.verifyDelay", [type: "number", value: settings.verifyDelay])
+    if (settings.maxRetries != null) app.updateSetting("${prefix}.maxRetries", [type: "number", value: settings.maxRetries])
+}
+
+private void migrateNotificationSettings(int g) {
+    String prefix = "group${g}"
+    if (settings.notifyDevices != null) app.updateSetting("${prefix}.notifyDevices", [type: "capability.notification", value: settings.notifyDevices])
+    if (settings.notifyOnRecovery != null) app.updateSetting("${prefix}.notifyOnRecovery", [type: "bool", value: settings.notifyOnRecovery])
+    if (settings.notifyOnFailure != null) app.updateSetting("${prefix}.notifyOnFailure", [type: "bool", value: settings.notifyOnFailure])
+    if (settings.notifyOnLowLoad != null) app.updateSetting("${prefix}.notifyOnLowLoad", [type: "bool", value: settings.notifyOnLowLoad])
+}
+
+private void migrateLoadMonitoringSettings(int g, List devices) {
+    String prefix = "group${g}"
+    if (settings.enableLoadMonitoring != null) app.updateSetting("${prefix}.enableLoadMonitoring", [type: "bool", value: settings.enableLoadMonitoring])
+    if (settings.loadGraceMinutes != null) app.updateSetting("${prefix}.loadGraceMinutes", [type: "number", value: settings.loadGraceMinutes])
+    if (settings.loadReminderMinutes != null) app.updateSetting("${prefix}.loadReminderMinutes", [type: "number", value: settings.loadReminderMinutes])
+    devices.each { dev ->
+        String key = "minLoadWatts_${dev.id}"
+        if (settings[key] != null) {
+            app.updateSetting("${prefix}.${key}", [type: "decimal", value: settings[key]])
+        }
+    }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+private List getActionableSwitches(List devices, String targetState) {
+    if (!devices) return []
+    String wrongState = (targetState == "on") ? "off" : "on"
+    return devices.findAll { it.currentSwitch == wrongState }
+}
+
+private List<Integer> findGroupsForDevice(String deviceId, String targetState) {
+    List<Integer> groups = (List<Integer>)(state.groups ?: [])
+    return groups.findAll { Integer groupNum ->
+        if (getGroupTargetState(groupNum) != targetState) return false
+        List devices = getGroupDevices(groupNum)
+        return devices?.any { it.id.toString() == deviceId }
+    }
+}
+
+private List<Integer> findLoadMonitoringGroupsForDevice(String deviceId) {
+    List<Integer> groups = (List<Integer>)(state.groups ?: [])
+    return groups.findAll { Integer groupNum ->
+        if (getGroupTargetState(groupNum) != "on") return false
+        if (!getBoolGroupSetting(groupNum, "enableLoadMonitoring")) return false
+        List devices = getGroupDevices(groupNum)
+        return devices?.any { it.id.toString() == deviceId }
+    }
+}
+
 private List getAllMonitoredSwitches() {
+    List<Integer> groups = (List<Integer>)(state.groups ?: [])
+    Set seen = [] as Set
     List all = []
-    if (switchesOn) all.addAll(switchesOn)
-    if (switchesOff) all.addAll(switchesOff)
+    groups.each { Integer groupNum ->
+        List devices = getGroupDevices(groupNum)
+        devices?.each { dev ->
+            if (seen.add(dev.id)) all << dev
+        }
+    }
     return all
 }
 
@@ -779,87 +975,141 @@ private boolean isOutageActive() {
     return false
 }
 
-private int getIntSetting(String name, int defaultValue) {
-    Object val = settings[name]
+private void removeSettingsForGroup(int groupNum) {
+    String prefix = "group${groupNum}."
+    List<String> toRemove = settings.keySet().findAll { ((String) it).startsWith(prefix) }
+    logDebug "Removing ${toRemove.size()} settings for group ${groupNum}"
+    toRemove.each { app.removeSetting(it) }
+}
+
+// ── Group Setting Accessors ──────────────────────────────────────────────────
+
+private List getGroupDevices(int groupNum) {
+    return (List) settings["group${groupNum}.devices"]
+}
+
+private String getGroupTargetState(int groupNum) {
+    return (String)(settings["group${groupNum}.targetState"] ?: "on")
+}
+
+private String getGroupLabel(int groupNum) {
+    String label = settings["group${groupNum}.label"]
+    return label ?: "Group ${groupNum}"
+}
+
+private int getIntGroupSetting(int groupNum, String name, int defaultValue) {
+    Object val = settings["group${groupNum}.${name}"]
     return val != null ? val as int : defaultValue
 }
 
-private int getGracePeriodSeconds() {
-    int minutes = getIntSetting("graceMinutes", DEFAULT_GRACE_MINUTES)
-    int seconds = getIntSetting("graceSeconds", DEFAULT_GRACE_SECONDS)
+private BigDecimal getDecimalGroupSetting(int groupNum, String name, BigDecimal defaultValue) {
+    Object val = settings["group${groupNum}.${name}"]
+    return val != null ? val as BigDecimal : defaultValue
+}
+
+private boolean getBoolGroupSetting(int groupNum, String name, boolean defaultValue = false) {
+    Object val = settings["group${groupNum}.${name}"]
+    return val != null ? val as boolean : defaultValue
+}
+
+private int getGroupGracePeriodSeconds(int groupNum) {
+    int minutes = getIntGroupSetting(groupNum, "graceMinutes", DEFAULT_GRACE_MINUTES)
+    int seconds = getIntGroupSetting(groupNum, "graceSeconds", DEFAULT_GRACE_SECONDS)
     return Math.max(minutes * 60 + seconds, 1)
 }
 
-private String getGracePeriodLabel() {
-    int minutes = getIntSetting("graceMinutes", DEFAULT_GRACE_MINUTES)
-    int seconds = getIntSetting("graceSeconds", DEFAULT_GRACE_SECONDS)
+private String getGroupGracePeriodLabel(int groupNum) {
+    int minutes = getIntGroupSetting(groupNum, "graceMinutes", DEFAULT_GRACE_MINUTES)
+    int seconds = getIntGroupSetting(groupNum, "graceSeconds", DEFAULT_GRACE_SECONDS)
     if (minutes > 0 && seconds > 0) return "${minutes}m ${seconds}s"
     if (minutes > 0) return "${minutes} minute(s)"
     return "${seconds} second(s)"
 }
 
-private BigDecimal getDecimalSetting(String name, BigDecimal defaultValue) {
-    Object val = settings[name]
-    return val != null ? val as BigDecimal : defaultValue
+// ── Group State Accessors ────────────────────────────────────────────────────
+
+private Map getGroupState(int groupNum) {
+    Map allGroupState = (Map)(state.groupState ?: [:])
+    String key = groupNum.toString()
+    if (!allGroupState.containsKey(key)) {
+        allGroupState[key] = [recoveryActive: false, retryCount: 0, lowLoadDevices: [:]]
+        state.groupState = allGroupState
+    }
+    return (Map) allGroupState[key]
 }
 
-private void sendNotification(String msg) {
+private void saveGroupState(int groupNum, Map gs) {
+    Map allGroupState = (Map)(state.groupState ?: [:])
+    allGroupState[groupNum.toString()] = gs
+    state.groupState = allGroupState
+}
+
+// ── Notification ─────────────────────────────────────────────────────────────
+
+private void sendGroupNotification(int groupNum, String msg) {
+    List notifyDevices = (List) settings["group${groupNum}.notifyDevices"]
     if (notifyDevices) {
-        notifyDevices.each { it.deviceNotification(msg) }
+        String prefix = getGroupLabel(groupNum)
+        notifyDevices.each { it.deviceNotification("[${prefix}] ${msg}") }
     }
 }
 
+// ── Status Display ───────────────────────────────────────────────────────────
+
 private String getStatusText() {
-    int onCount = switchesOn?.size() ?: 0
-    int offCount = switchesOff?.size() ?: 0
-    if (onCount == 0 && offCount == 0) return "No switches configured"
+    List<Integer> groups = (List<Integer>)(state.groups ?: [])
+    if (groups.isEmpty()) return "No groups configured"
 
-    Map lowLoadDevices = (Map)(state.lowLoadDevices ?: [:])
+    int totalDevices = groups.sum { Integer gn -> getGroupDevices(gn)?.size() ?: 0 } ?: 0
+    if (totalDevices == 0) return "No devices configured in any group"
+
     StringBuilder sb = new StringBuilder()
+    long nowMs = now()
 
-    // Summary line
     if (state.powerOutage) {
         sb.append("<b>Power outage active</b> — stay-on recovery paused<br/><br/>")
     }
-    if (state.recoveryActiveOn) {
-        sb.append("Stay-on recovery in progress (attempt ${state.retryCountOn})<br/>")
-    }
-    if (state.recoveryActiveOff) {
-        sb.append("Stay-off recovery in progress (attempt ${state.retryCountOff})<br/>")
-    }
 
-    // Device status table
-    long nowMs = now()
-    sb.append('<table style="width:100%;border-collapse:collapse;font-size:14px">')
-    sb.append('<tr style="border-bottom:2px solid #ccc;text-align:left">')
-    sb.append('<th style="padding:4px 8px">Device</th>')
-    sb.append('<th style="padding:4px 8px">Target</th>')
-    sb.append('<th style="padding:4px 8px">State</th>')
-    sb.append('<th style="padding:4px 8px">Min Load</th>')
-    sb.append('<th style="padding:4px 8px">Load</th>')
-    sb.append('<th style="padding:4px 8px">Since</th>')
-    sb.append('</tr>')
+    groups.each { Integer groupNum ->
+        List devices = getGroupDevices(groupNum)
+        if (!devices) return
 
-    if (switchesOn) {
-        switchesOn.each { dev ->
+        String groupLabel = getGroupLabel(groupNum)
+        String targetState = getGroupTargetState(groupNum)
+        Map gs = getGroupState(groupNum)
+        boolean loadMonitoring = (targetState == "on" && getBoolGroupSetting(groupNum, "enableLoadMonitoring"))
+
+        sb.append("<b>${groupLabel}</b> — must stay ${targetState.toUpperCase()}")
+        if (gs.recoveryActive) {
+            sb.append(" <span style=\"color:red\">(recovery in progress, attempt ${gs.retryCount})</span>")
+        }
+        sb.append("<br/>")
+
+        sb.append('<table style="width:100%;border-collapse:collapse;font-size:14px">')
+        sb.append('<tr style="border-bottom:2px solid #ccc;text-align:left">')
+        sb.append('<th style="padding:4px 8px">Device</th>')
+        sb.append('<th style="padding:4px 8px">State</th>')
+        if (loadMonitoring) {
+            sb.append('<th style="padding:4px 8px">Min Load</th>')
+            sb.append('<th style="padding:4px 8px">Load</th>')
+        }
+        sb.append('<th style="padding:4px 8px">Since</th>')
+        sb.append('</tr>')
+
+        Map lowLoadDevices = (Map)(gs.lowLoadDevices ?: [:])
+
+        devices.each { dev ->
             String devId = dev.id.toString()
-            boolean isWrong = (dev.currentSwitch == "off")
+            boolean isWrong = (dev.currentSwitch != targetState)
             boolean hasPower = dev.hasCapability("PowerMeter")
-            BigDecimal threshold = enableLoadMonitoring ? getDecimalSetting("minLoadWatts_${devId}", 0) : 0
+            BigDecimal threshold = loadMonitoring ? getDecimalGroupSetting(groupNum, "minLoadWatts_${devId}", 0) : 0
             BigDecimal power = hasPower ? dev.currentValue("power") as BigDecimal : null
             boolean isLowLoad = lowLoadDevices.containsKey(devId)
 
-            String stateCell = isWrong ? '<span style="color:red"><b>OFF</b></span>' : '<span style="color:green">on</span>'
+            String stateCell = isWrong ?
+                "<span style=\"color:red\"><b>${dev.currentSwitch.toUpperCase()}</b></span>" :
+                "<span style=\"color:green\">${dev.currentSwitch}</span>"
 
-            String loadCell = ""
-            if (hasPower && power != null) {
-                loadCell = isLowLoad ? "<span style=\"color:red\"><b>${power}W</b></span>" : "${power}W"
-            } else if (hasPower) {
-                loadCell = "—"
-            }
-            String minLoadCell = (threshold > 0) ? "${threshold}W" : ""
-
-            // Duration in wrong state (switch or load)
             String sinceCell = ""
             if (isWrong) {
                 Long sinceMs = dev.currentState("switch")?.date?.time
@@ -872,40 +1122,26 @@ private String getStatusText() {
             String rowStyle = (isWrong || isLowLoad) ? ' style="background:#fff0f0"' : ''
             sb.append("<tr${rowStyle}>")
             sb.append("<td style=\"padding:4px 8px\"><a href=\"/device/edit/${dev.id}\" target=\"_blank\">${dev.displayName}</a></td>")
-            sb.append('<td style="padding:4px 8px">ON</td>')
             sb.append("<td style=\"padding:4px 8px\">${stateCell}</td>")
-            sb.append("<td style=\"padding:4px 8px\">${minLoadCell}</td>")
-            sb.append("<td style=\"padding:4px 8px\">${loadCell}</td>")
-            sb.append("<td style=\"padding:4px 8px\">${sinceCell}</td>")
-            sb.append('</tr>')
-        }
-    }
-
-    if (switchesOff) {
-        switchesOff.each { dev ->
-            boolean isWrong = (dev.currentSwitch == "on")
-            String stateCell = isWrong ? '<span style="color:red"><b>ON</b></span>' : '<span style="color:green">off</span>'
-
-            String sinceCell = ""
-            if (isWrong) {
-                Long sinceMs = dev.currentState("switch")?.date?.time
-                if (sinceMs) sinceCell = "<span style=\"color:red\">${formatDuration(nowMs - sinceMs)}</span>"
+            if (loadMonitoring) {
+                String minLoadCell = (threshold > 0) ? "${threshold}W" : ""
+                String loadCell = ""
+                if (hasPower && power != null) {
+                    loadCell = isLowLoad ? "<span style=\"color:red\"><b>${power}W</b></span>" : "${power}W"
+                } else if (hasPower) {
+                    loadCell = "\u2014"
+                }
+                sb.append("<td style=\"padding:4px 8px\">${minLoadCell}</td>")
+                sb.append("<td style=\"padding:4px 8px\">${loadCell}</td>")
             }
-
-            String rowStyle = isWrong ? ' style="background:#fff0f0"' : ''
-            sb.append("<tr${rowStyle}>")
-            sb.append("<td style=\"padding:4px 8px\"><a href=\"/device/edit/${dev.id}\" target=\"_blank\">${dev.displayName}</a></td>")
-            sb.append('<td style="padding:4px 8px">OFF</td>')
-            sb.append("<td style=\"padding:4px 8px\">${stateCell}</td>")
-            sb.append('<td style="padding:4px 8px"></td>')
-            sb.append('<td style="padding:4px 8px"></td>')
             sb.append("<td style=\"padding:4px 8px\">${sinceCell}</td>")
             sb.append('</tr>')
         }
+
+        sb.append('</table><br/>')
     }
 
-    sb.append('</table>')
-    sb.append("<br/><i style=\"font-size:12px\">Last updated: ${new Date().format('yyyy-MM-dd HH:mm:ss')}</i>")
+    sb.append("<i style=\"font-size:12px\">Last updated: ${new Date().format('yyyy-MM-dd HH:mm:ss')}</i>")
     return sb.toString()
 }
 
