@@ -6,7 +6,7 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 
 | App | Description |
 |---|---|
-| **Always-On Switch Monitor** | Monitors switches that must remain on at all times. Auto-restores switches that turn off after a configurable grace period, with retries and optional notifications. |
+| **Switch Monitor** | Monitors switches that must remain on or off, organized in device groups with independent target state, timing, notifications, and load monitoring. Auto-corrects deviations after a configurable grace period with retry logic, and optionally monitors connected load on power-reporting devices. Supports power outage awareness to pause recovery during outages. |
 | **Attribute Logger** | Parent/child app that logs device attribute changes. Create multiple logger instances to track different devices and attributes. |
 | **Battery Change Logger** | Monitors battery levels across devices and logs replacement history to an on-hub JSON file. |
 | **Humidity Fan Controller** | Controls a bathroom extractor fan using a state machine that compares bathroom humidity against a reference sensor, with debounced transitions and configurable thresholds. |
