@@ -50,6 +50,8 @@ Aggregation methods:
 
 The discrete child also includes a built-in **test framework** (smoke tests and a full 11-test suite) that creates temporary virtual devices, runs aggregation assertions, and cleans up automatically.
 
+**Motion Fusion Child:** `MotionFusionChild.groovy` — combines PIR and mmWave motion inputs from a dual-sensor device (e.g. Aqara FP300) into a single motion output using configurable fusion algorithms.
+
 ---
 
 ### Sensor Filters (parent/child)
