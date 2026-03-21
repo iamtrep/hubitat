@@ -47,6 +47,7 @@ metadata {
         capability "Switch"
         capability "SwitchLevel"
         capability "ColorControl"
+        capability "ColorMode"
         capability "ChangeLevel"
 
         attribute "tvoc", "number"
@@ -163,10 +164,9 @@ void refresh() {
     cmds += zigbee.readAttribute(0x0400, 0x0000)  // Illuminance
     cmds += zigbee.readAttribute(0x0006, 0x0000)  // OnOff
     cmds += zigbee.readAttribute(0x0008, 0x0000)  // Level
-    cmds += zigbee.readAttribute(0x0300, 0x0003)  // Color X
-    cmds += zigbee.readAttribute(0x0300, 0x0004)  // Color Y
-    cmds += zigbee.readAttribute(0x0300, 0x0000)  // Current Hue
-    cmds += zigbee.readAttribute(0x0300, 0x0001)  // Current Saturation
+    cmds += zigbee.readAttribute(0x0300, 0x0000)  // Hue
+    cmds += zigbee.readAttribute(0x0300, 0x0001)  // Saturation
+    cmds += zigbee.readAttribute(0x0300, 0x0008)  // Color Mode
     cmds += zigbee.readAttribute(CLUSTER_RADAR, 0x0000, [mfgCode: MFG_CODE])  // TVOC
     cmds += zigbee.readAttribute(CLUSTER_RADAR, 0xF002, [mfgCode: MFG_CODE])  // Sensitivity readback
     cmds += zigbee.readAttribute(CLUSTER_RADAR, 0xF003, [mfgCode: MFG_CODE])  // Threshold readback
@@ -224,7 +224,7 @@ private Map parseAttributeReport(Map descMap) {
         case "0008":  // Level Control
             if (descMap.attrId == "0000") {
                 int rawLevel = Integer.parseInt(descMap.value, 16)
-                int level = Math.round(rawLevel * 100.0 / 254.0) as int
+                int level = Math.round(rawLevel / 2.55) as int
                 level = Math.max(0, Math.min(100, level))
                 map.name = "level"
                 map.value = level
@@ -277,52 +277,35 @@ private Map parseAttributeReport(Map descMap) {
 
 private Map parseColorAttribute(Map descMap) {
     Map map = [:]
+    int rawValue = Integer.parseInt(descMap.value, 16)
 
     switch (descMap.attrId) {
         case "0000":  // Current Hue (0-254 → 0-100)
-            int rawHue = Integer.parseInt(descMap.value, 16)
-            int hue = Math.round(rawHue * 100.0 / 254.0) as int
+            int hue = Math.round(rawValue / 254 * 100) as int
             map.name = "hue"
             map.value = hue
-            map.descriptionText = "${device.displayName} hue is ${hue}"
+            map.descriptionText = "${device.displayName} hue is ${hue}%"
+            state.lastHue = descMap.value
             break
 
         case "0001":  // Current Saturation (0-254 → 0-100)
-            int rawSat = Integer.parseInt(descMap.value, 16)
-            int saturation = Math.round(rawSat * 100.0 / 254.0) as int
+            int saturation = Math.round(rawValue / 254 * 100) as int
             map.name = "saturation"
             map.value = saturation
-            map.descriptionText = "${device.displayName} saturation is ${saturation}"
+            map.unit = "%"
+            map.descriptionText = "${device.displayName} saturation is ${saturation}%"
+            state.lastSaturation = descMap.value
             break
 
-        case "0003":  // CurrentX
-            state.colorX = Integer.parseInt(descMap.value, 16)
-            updateColorFromXY()
-            break
-
-        case "0004":  // CurrentY
-            state.colorY = Integer.parseInt(descMap.value, 16)
-            updateColorFromXY()
-            break
-
-        case "0007":  // Color Temperature (if reported)
-            break
-
-        case "0008":  // Color Mode
+        case "0008":  // Color Mode (0=HSV, 2=CT)
+            String colorMode = rawValue == 2 ? "CT" : "RGB"
+            map.name = "colorMode"
+            map.value = colorMode
+            map.descriptionText = "${device.displayName} color mode is ${colorMode}"
             break
     }
 
     return map
-}
-
-private void updateColorFromXY() {
-    if (state.colorX == null || state.colorY == null) return
-
-    // CIE 1931 XY to approximate RGB name — just store the raw XY for now
-    // Hubitat's color control primarily uses hue/saturation which come from attrs 0x0000/0x0001
-    double x = (state.colorX as int) / 65535.0
-    double y = (state.colorY as int) / 65535.0
-    logDebug "Color XY updated: x=${x}, y=${y}"
 }
 
 private Map parseRadarCluster(Map descMap) {
@@ -391,7 +374,7 @@ void off() {
 
 void setLevel(BigDecimal level, BigDecimal duration = 0) {
     logDebug "setLevel(${level}, ${duration})"
-    sendZigbeeCommands(zigbee.setLevel(level as int, duration as int))
+    sendZigbeeCommands(zigbee.setLevel(level.intValue(), duration.intValue()))
 }
 
 void setLevel(Number level, Number duration = 0) {
@@ -400,8 +383,9 @@ void setLevel(Number level, Number duration = 0) {
 
 void startLevelChange(String direction) {
     logDebug "startLevelChange(${direction})"
-    int moveMode = direction == "up" ? 0x00 : 0x01
-    sendZigbeeCommands(zigbee.command(0x0008, 0x01, "0x${zigbee.convertToHexString(moveMode, 2)}${zigbee.convertToHexString(50, 2)}"))
+    int upDown = direction == "down" ? 1 : 0
+    // Move command (0x01): direction + rate (units per second)
+    sendZigbeeCommands(zigbee.command(0x0008, 0x01, zigbee.convertToHexString(upDown, 2) + zigbee.convertToHexString(100, 2)))
 }
 
 void stopLevelChange() {
@@ -409,34 +393,57 @@ void stopLevelChange() {
     sendZigbeeCommands(zigbee.command(0x0008, 0x03, ""))
 }
 
-void setColor(Map colorMap) {
-    logDebug "setColor(${colorMap})"
+void setColor(Map value) {
+    logDebug "setColor(${value})"
+    if (value.hue == null || value.saturation == null) return
 
-    int hue = colorMap.hue != null ? colorMap.hue as int : device.currentValue("hue") as int ?: 0
-    int saturation = colorMap.saturation != null ? colorMap.saturation as int : device.currentValue("saturation") as int ?: 100
-    int level = colorMap.level != null ? colorMap.level as int : device.currentValue("level") as int ?: 100
+    String hexHue = zigbee.convertToHexString(Math.round(value.hue * 254 / 100).toInteger(), 2)
+    String hexSat = zigbee.convertToHexString(Math.round(value.saturation.toInteger() * 254 / 100).toInteger(), 2)
 
-    // Hubitat hue is 0-100, Zigbee enhanced hue is 0-65535
-    int zigbeeHue = Math.round(hue * 254.0 / 100.0) as int
-    int zigbeeSat = Math.round(saturation * 254.0 / 100.0) as int
-
+    // moveToHueAndSaturation (command 0x06): hue (1 byte) + saturation (1 byte) + transition time (2 bytes LE)
     List<String> cmds = []
-    cmds += zigbee.command(0x0300, 0x06, zigbee.swapOctets(zigbee.convertToHexString(zigbeeHue * 256, 4)) + zigbee.convertToHexString(zigbeeSat, 2) + "0000")
-    if (level != null) {
-        cmds += zigbee.setLevel(level, 0)
+    cmds += zigbee.command(0x0300, 0x06, hexHue + hexSat + "0001")
+
+    if (value.level) {
+        cmds += zigbee.setLevel(value.level.toInteger(), 0)
     }
 
+    // Read back attributes
+    cmds += zigbee.readAttribute(0x0300, 0x0000)  // Hue
+    cmds += zigbee.readAttribute(0x0300, 0x0001)  // Saturation
+    cmds += zigbee.readAttribute(0x0300, 0x0008)  // Color Mode
+
+    state.lastHue = hexHue
+    state.lastSaturation = hexSat
     sendZigbeeCommands(cmds)
 }
 
-void setHue(Number hue) {
-    logDebug "setHue(${hue})"
-    setColor([hue: hue, saturation: device.currentValue("saturation") ?: 100])
+void setHue(Number value) {
+    logDebug "setHue(${value})"
+    String hexHue = zigbee.convertToHexString(Math.round(value * 254 / 100).toInteger(), 2)
+    String hexSat = state.lastSaturation ?: "FE"
+
+    List<String> cmds = []
+    cmds += zigbee.command(0x0300, 0x06, hexHue + hexSat + "0001")
+    cmds += zigbee.readAttribute(0x0300, 0x0000)
+    cmds += zigbee.readAttribute(0x0300, 0x0008)
+
+    state.lastHue = hexHue
+    sendZigbeeCommands(cmds)
 }
 
-void setSaturation(Number saturation) {
-    logDebug "setSaturation(${saturation})"
-    setColor([hue: device.currentValue("hue") ?: 0, saturation: saturation])
+void setSaturation(Number value) {
+    logDebug "setSaturation(${value})"
+    String hexSat = zigbee.convertToHexString(Math.round(value * 254 / 100).toInteger(), 2)
+    String hexHue = state.lastHue ?: "00"
+
+    List<String> cmds = []
+    cmds += zigbee.command(0x0300, 0x06, hexHue + hexSat + "0001")
+    cmds += zigbee.readAttribute(0x0300, 0x0001)
+    cmds += zigbee.readAttribute(0x0300, 0x0008)
+
+    state.lastSaturation = hexSat
+    sendZigbeeCommands(cmds)
 }
 
 // Custom Commands
