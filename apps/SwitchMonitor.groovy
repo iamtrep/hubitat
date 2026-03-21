@@ -125,6 +125,14 @@ Map mainPage() {
     dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
         section("Current Status") {
             paragraph getStatusText()
+            List wrongDevices = getWrongStateDevices()
+            if (wrongDevices) {
+                wrongDevices.each { Map entry ->
+                    String cmd = entry.targetState == "on" ? "Turn on" : "Turn off"
+                    input "btnFix_${entry.deviceId}_${entry.targetState}", "button",
+                        title: "${cmd} ${entry.displayName}"
+                }
+            }
             href "checkNowPage", title: "Check all devices now", description: "Run a full evaluation of all switches and load levels"
         }
 
@@ -270,6 +278,15 @@ void appButtonHandler(String btn) {
     } else if (btn.startsWith("btnConfirmDelete_")) {
         int groupNum = (btn - "btnConfirmDelete_") as int
         state.removeSettingsForGroupNumber = groupNum
+    } else if (btn.startsWith("btnFix_")) {
+        List parts = (btn - "btnFix_").split("_") as List
+        String deviceId = parts[0]
+        String targetState = parts[1]
+        def dev = getAllMonitoredSwitches().find { it.id.toString() == deviceId }
+        if (dev) {
+            log.info "Manual command: turning ${targetState} ${dev.displayName}"
+            targetState == "on" ? dev.on() : dev.off()
+        }
     }
 }
 
@@ -956,6 +973,22 @@ private List<Integer> findLoadMonitoringGroupsForDevice(String deviceId) {
         List devices = getGroupDevices(groupNum)
         return devices?.any { it.id.toString() == deviceId }
     }
+}
+
+private List<Map> getWrongStateDevices() {
+    List<Integer> groups = (List<Integer>)(state.groups ?: [])
+    Set seen = [] as Set
+    List<Map> result = []
+    groups.each { Integer groupNum ->
+        String targetState = getGroupTargetState(groupNum)
+        List devices = getGroupDevices(groupNum)
+        devices?.each { dev ->
+            if (dev.currentSwitch != targetState && seen.add(dev.id)) {
+                result << [deviceId: dev.id.toString(), displayName: dev.displayName, targetState: targetState]
+            }
+        }
+    }
+    return result
 }
 
 private List getAllMonitoredSwitches() {
