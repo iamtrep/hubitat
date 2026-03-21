@@ -170,6 +170,7 @@ Map mainPage() {
 
         section("Logging", hideable: true, hidden: true) {
             input "enableDebug", "bool", title: "Enable debug logging", defaultValue: false
+            input "enableTrace", "bool", title: "Enable trace logging (verbose)", defaultValue: false
         }
     }
 }
@@ -360,30 +361,30 @@ void initialize() {
         String targetState = getGroupTargetState(groupNum)
 
         if (targetState == "on") {
-            subscribe(devices, "switch.off", switchDeviatedHandler)
-            subscribe(devices, "switch.on", switchRestoredHandler)
+            subscribe(devices, "switch.off", "switchDeviatedHandler")
+            subscribe(devices, "switch.on", "switchRestoredHandler")
         } else {
-            subscribe(devices, "switch.on", switchDeviatedHandler)
-            subscribe(devices, "switch.off", switchRestoredHandler)
+            subscribe(devices, "switch.on", "switchDeviatedHandler")
+            subscribe(devices, "switch.off", "switchRestoredHandler")
         }
 
         // Load monitoring subscriptions
         if (targetState == "on" && getBoolGroupSetting(groupNum, "enableLoadMonitoring")
                 && getDecimalGroupSetting(groupNum, "minLoadWatts", 0) > 0) {
             devices.findAll { it.hasCapability("PowerMeter") }.each { dev ->
-                subscribe(dev, "power", powerHandler)
+                subscribe(dev, "power", "powerHandler")
             }
         }
     }
     state.groupState = allGroupState
 
-    subscribe(location, "systemStart", systemStartHandler)
+    subscribe(location, "systemStart", "systemStartHandler")
 
     if (outageIndicatorSwitch) {
-        subscribe(outageIndicatorSwitch, "switch", outageIndicatorSwitchHandler)
+        subscribe(outageIndicatorSwitch, "switch", "outageIndicatorSwitchHandler")
     }
     if (outageIndicatorPower) {
-        subscribe(outageIndicatorPower, "powerSource", outageIndicatorPowerHandler)
+        subscribe(outageIndicatorPower, "powerSource", "outageIndicatorPowerHandler")
     }
 
     // Evaluate current load for all groups
@@ -407,7 +408,7 @@ void systemStartHandler(evt) {
     List allSwitches = getAllMonitoredSwitches()
     List refreshable = allSwitches.findAll { it.hasCommand("refresh") }
     if (refreshable) {
-        logDebug "Refreshing ${refreshable.size()} switch(es): ${refreshable.collect { it.displayName }.join(', ')}"
+        logTrace "Refreshing ${refreshable.size()} switch(es): ${refreshable.collect { it.displayName }.join(', ')}"
         refreshable.each { it.refresh() }
     }
     runIn(STARTUP_REFRESH_DELAY_SECONDS, "startupCheck")
@@ -418,10 +419,12 @@ void startupCheck() {
 }
 
 void switchDeviatedHandler(evt) {
+    logTrace "switchDeviatedHandler fired: ${evt.displayName} (${evt.device.id}) -> ${evt.value}"
     String devId = evt.device.id.toString()
     // Determine which target state this event deviates FROM
     String deviatedTarget = (evt.value == "off") ? "on" : "off"
     List<Integer> groups = findGroupsForDevice(devId, deviatedTarget)
+    logTrace "Found ${groups.size()} matching group(s) for device ${devId} with target ${deviatedTarget}"
 
     groups.each { Integer groupNum ->
         String groupLabel = getGroupLabel(groupNum)
@@ -513,7 +516,7 @@ private void powerOutageEnded() {
     List allSwitches = getAllMonitoredSwitches()
     List refreshable = allSwitches.findAll { it.hasCommand("refresh") }
     if (refreshable) {
-        logDebug "Refreshing ${refreshable.size()} switch(es)"
+        logTrace "Refreshing ${refreshable.size()} switch(es)"
         refreshable.each { it.refresh() }
     }
     runIn(POST_OUTAGE_REFRESH_DELAY_SECONDS, "postOutageCheck")
@@ -661,7 +664,7 @@ void powerHandler(evt) {
 
         if (power < threshold) {
             if (!lowLoad.containsKey(devId)) {
-                logDebug "[${groupLabel}] ${evt.displayName} load ${power}W below threshold ${threshold}W — starting grace period"
+                logTrace "[${groupLabel}] ${evt.displayName} load ${power}W below threshold ${threshold}W — starting grace period"
                 lowLoad[devId] = now()
                 gs.lowLoadDevices = lowLoad
                 saveGroupState(groupNum, gs)
@@ -670,7 +673,7 @@ void powerHandler(evt) {
             }
         } else {
             if (lowLoad.containsKey(devId)) {
-                logDebug "[${groupLabel}] ${evt.displayName} load recovered to ${power}W (threshold ${threshold}W)"
+                logTrace "[${groupLabel}] ${evt.displayName} load recovered to ${power}W (threshold ${threshold}W)"
                 lowLoad.remove(devId)
                 gs.lowLoadDevices = lowLoad
                 saveGroupState(groupNum, gs)
@@ -696,7 +699,7 @@ private void evaluateGroupLoad(int groupNum) {
         BigDecimal currentPower = dev.currentValue("power") as BigDecimal
         if (currentPower != null && currentPower < threshold) {
             if (!lowLoad.containsKey(devId)) {
-                logDebug "[${getGroupLabel(groupNum)}] ${dev.displayName} load ${currentPower}W below threshold ${threshold}W"
+                logTrace "[${getGroupLabel(groupNum)}] ${dev.displayName} load ${currentPower}W below threshold ${threshold}W"
                 lowLoad[devId] = nowMs
             }
         } else {
@@ -708,7 +711,7 @@ private void evaluateGroupLoad(int groupNum) {
 
     if (!lowLoad.isEmpty()) {
         int delaySecs = getIntGroupSetting(groupNum, "loadGraceMinutes", DEFAULT_LOAD_GRACE_MINUTES) * 60
-        logDebug "[${getGroupLabel(groupNum)}] Scheduling low-load check — ${lowLoad.size()} device(s) tracked"
+        logTrace "[${getGroupLabel(groupNum)}] Scheduling low-load check — ${lowLoad.size()} device(s) tracked"
         runIn(delaySecs, "checkLowLoad", [data: [groupNum: groupNum], overwrite: false])
     }
 }
@@ -750,7 +753,7 @@ void checkLowLoad(Map data) {
         if (currentPower != null && currentPower < threshold) {
             lowNames << "${dev.displayName} (${currentPower}W < ${threshold}W)"
         } else {
-            logDebug "[${groupLabel}] ${dev.displayName} load recovered to ${currentPower}W"
+            logTrace "[${groupLabel}] ${dev.displayName} load recovered to ${currentPower}W"
             recovered << devId
         }
     }
@@ -768,7 +771,7 @@ void checkLowLoad(Map data) {
         int reminderMinutes = getIntGroupSetting(groupNum, "loadReminderMinutes", DEFAULT_LOAD_REMINDER_MINUTES)
         runIn(reminderMinutes * 60, "checkLowLoad", [data: [groupNum: groupNum], overwrite: false])
     } else if (lowLoadDevices.isEmpty()) {
-        logDebug "[${groupLabel}] All loads recovered — load monitoring clear"
+        logTrace "[${groupLabel}] All loads recovered — load monitoring clear"
     }
 }
 
@@ -820,7 +823,7 @@ private boolean evaluateGroupSwitches(int groupNum, List devices, String targetS
                 immediate << dev
             } else {
                 int remainingSecs = (int) Math.ceil(remainingMs / 1000.0)
-                logDebug "[${groupLabel}] ${context}: ${dev.displayName} turned ${wrongState} ${(int)(durationMs / 1000)}s ago — scheduling check in ${remainingSecs}s"
+                logTrace "[${groupLabel}] ${context}: ${dev.displayName} turned ${wrongState} ${(int)(durationMs / 1000)}s ago — scheduling check in ${remainingSecs}s"
                 if (remainingSecs < soonestDelaySecs) {
                     soonestDelaySecs = remainingSecs
                 }
@@ -845,7 +848,7 @@ private boolean evaluateGroupSwitches(int groupNum, List devices, String targetS
     }
 
     if (soonestDelaySecs < Integer.MAX_VALUE) {
-        logDebug "[${groupLabel}] ${context}: scheduling delayed check in ${soonestDelaySecs}s for recently changed switches"
+        logTrace "[${groupLabel}] ${context}: scheduling delayed check in ${soonestDelaySecs}s for recently changed switches"
         runIn(soonestDelaySecs, "startRecovery", [data: [groupNum: groupNum], overwrite: false])
     }
 
@@ -1195,4 +1198,8 @@ private static String formatDuration(long ms) {
 
 private void logDebug(String msg) {
     if (enableDebug) log.debug msg
+}
+
+private void logTrace(String msg) {
+    if (enableTrace) log.trace msg
 }
