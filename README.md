@@ -8,7 +8,7 @@ Automation apps for humidity control, peak energy management, device monitoring,
 
 ## Drivers
 
-Zigbee, BLE, and cloud API device drivers — including families for Sinopé, Stelpro, and standalone devices like Awair Element and Ecobee. See [`drivers/`](drivers/README.md) for the full list.
+Zigbee, BLE, and cloud API device drivers — including families for Sinopé, Stelpro, ThirdReality, and standalone devices like Awair Element, Ecobee, and Environment Canada AQHI. See [`drivers/`](drivers/README.md) for the full list.
 
 ## Integrations
 

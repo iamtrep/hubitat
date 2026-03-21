@@ -10,8 +10,10 @@ Hubitat Elevation device drivers for Zigbee devices, BLE sensors, and cloud APIs
 | **BTHome v2 Motion/Occupancy Sensor** | BLE motion/occupancy sensor via BTHome v2 |
 | **Device Ping** | Pings a device and reports connectivity as a contact sensor |
 | **Ecobee Companion** | Advanced Ecobee thermostat control via OAuth API |
+| **Environment Canada AQHI** | Air Quality Health Index driver using the Environment Canada GeoMet OGC API — current observations, hourly forecasts, and alerts |
 | **IKEA Window Blinds** | Zigbee driver for IKEA window blinds |
 | **Log Event Monitor** | Monitors the hub log stream and fires events on pattern matches |
+| **ThirdReality Presence Sensor R3** | 60 GHz mmWave presence sensor with RGB night light, illuminance, and TVOC air quality (Zigbee 3.0) |
 | **Xfinity Contact Sensor** | Zigbee contact sensor with battery, tamper, and temperature |
 
 ## Sinopé
