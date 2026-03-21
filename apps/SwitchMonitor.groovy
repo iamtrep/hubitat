@@ -80,6 +80,7 @@ import groovy.transform.Field
 @Field static final String APP_VERSION = "2.0.0"
 
 @Field static final Integer DEFAULT_GRACE_MINUTES = 5
+@Field static final Integer DEFAULT_GRACE_SECONDS = 0
 @Field static final Integer DEFAULT_RETRY_INTERVAL_SECONDS = 30
 @Field static final Integer DEFAULT_VERIFY_DELAY_SECONDS = 10
 @Field static final Integer DEFAULT_MAX_RETRIES = 10
@@ -157,6 +158,7 @@ Map mainPage() {
 
         section("Timing", hideable: true, hidden: true) {
             input "graceMinutes", "number", title: "Minutes to wait before taking action", defaultValue: DEFAULT_GRACE_MINUTES, required: true, range: "0..60"
+            input "graceSeconds", "number", title: "Additional seconds to wait", defaultValue: DEFAULT_GRACE_SECONDS, required: true, range: "0..59"
             input "retryInterval", "number", title: "Seconds between retries", defaultValue: DEFAULT_RETRY_INTERVAL_SECONDS, required: true, range: "5..300"
             input "verifyDelay", "number", title: "Seconds to wait before verifying switch state", defaultValue: DEFAULT_VERIFY_DELAY_SECONDS, required: true, range: "1..60"
             input "maxRetries", "number", title: "Maximum retry attempts (0 = unlimited)", defaultValue: DEFAULT_MAX_RETRIES, required: true, range: "0..100"
@@ -290,9 +292,8 @@ void mustStayOnTurnedOffHandler(evt) {
         logDebug "Power outage active — skipping recovery scheduling"
         return
     }
-    int minutes = getIntSetting("graceMinutes", DEFAULT_GRACE_MINUTES)
-    int delaySecs = Math.max(minutes * 60, 1)
-    logDebug "Scheduling stay-on recovery check in ${minutes} minute(s)"
+    int delaySecs = getGracePeriodSeconds()
+    logDebug "Scheduling stay-on recovery check in ${getGracePeriodLabel()}"
     runIn(delaySecs, "startRecoveryOn", [overwrite: false])
 }
 
@@ -315,9 +316,8 @@ void mustStayOnTurnedOnHandler(evt) {
 
 void mustStayOffTurnedOnHandler(evt) {
     log.info "${evt.displayName} turned on (must stay off)"
-    int minutes = getIntSetting("graceMinutes", DEFAULT_GRACE_MINUTES)
-    int delaySecs = Math.max(minutes * 60, 1)
-    logDebug "Scheduling stay-off recovery check in ${minutes} minute(s)"
+    int delaySecs = getGracePeriodSeconds()
+    logDebug "Scheduling stay-off recovery check in ${getGracePeriodLabel()}"
     runIn(delaySecs, "startRecoveryOff", [overwrite: false])
 }
 
@@ -409,8 +409,7 @@ void startRecoveryOn() {
     }
 
     String names = actionable.collect { it.displayName }.join(", ")
-    int minutes = getIntSetting("graceMinutes", DEFAULT_GRACE_MINUTES)
-    log.info "${names} stayed off for ${minutes} minute(s) — starting recovery"
+    log.info "${names} stayed off for ${getGracePeriodLabel()} — starting recovery"
     if (notifyOnRecovery) {
         sendNotification("${names} turned off — turning back on")
     }
@@ -489,8 +488,7 @@ void startRecoveryOff() {
     }
 
     String names = actionable.collect { it.displayName }.join(", ")
-    int minutes = getIntSetting("graceMinutes", DEFAULT_GRACE_MINUTES)
-    log.info "${names} stayed on for ${minutes} minute(s) — starting recovery"
+    log.info "${names} stayed on for ${getGracePeriodLabel()} — starting recovery"
     if (notifyOnRecovery) {
         sendNotification("${names} turned on — turning back off")
     }
@@ -719,8 +717,7 @@ private boolean evaluateSwitchSet(List devices, String targetState, String recov
     if (actionable.isEmpty()) return false
 
     String wrongState = (targetState == "on") ? "off" : "on"
-    int graceMinutes = getIntSetting("graceMinutes", DEFAULT_GRACE_MINUTES)
-    long gracePeriodMs = graceMinutes * 60 * 1000L
+    long gracePeriodMs = getGracePeriodSeconds() * 1000L
     long nowMs = now()
 
     List immediate = []
@@ -785,6 +782,20 @@ private boolean isOutageActive() {
 private int getIntSetting(String name, int defaultValue) {
     Object val = settings[name]
     return val != null ? val as int : defaultValue
+}
+
+private int getGracePeriodSeconds() {
+    int minutes = getIntSetting("graceMinutes", DEFAULT_GRACE_MINUTES)
+    int seconds = getIntSetting("graceSeconds", DEFAULT_GRACE_SECONDS)
+    return Math.max(minutes * 60 + seconds, 1)
+}
+
+private String getGracePeriodLabel() {
+    int minutes = getIntSetting("graceMinutes", DEFAULT_GRACE_MINUTES)
+    int seconds = getIntSetting("graceSeconds", DEFAULT_GRACE_SECONDS)
+    if (minutes > 0 && seconds > 0) return "${minutes}m ${seconds}s"
+    if (minutes > 0) return "${minutes} minute(s)"
+    return "${seconds} second(s)"
 }
 
 private BigDecimal getDecimalSetting(String name, BigDecimal defaultValue) {
