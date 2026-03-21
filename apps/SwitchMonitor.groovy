@@ -143,6 +143,10 @@ Map mainPage() {
                     List devices = getGroupDevices(groupNum)
                     int devCount = devices?.size() ?: 0
                     String summary = "Must stay ${targetState}, ${devCount} device(s)"
+                    if (getBoolGroupSetting(groupNum, "enableLoadMonitoring")) {
+                        BigDecimal minLoad = getDecimalGroupSetting(groupNum, "minLoadWatts", 0)
+                        if (minLoad > 0) summary += ", min load ${minLoad}W"
+                    }
                     href "groupPage", title: groupLabel, description: summary,
                         params: [groupNum: groupNum]
                 }
@@ -189,6 +193,7 @@ Map groupPage(params) {
 
         section("Notifications") {
             input "${g}.notifyDevices", "capability.notification", title: "Notification devices", multiple: true, required: false
+            input "${g}.notifyPrefix", "text", title: "Notification prefix (e.g. for Pushover title)", required: false
             input "${g}.notifyOnRecovery", "bool", title: "Notify when correcting a switch", defaultValue: true
             input "${g}.notifyOnFailure", "bool", title: "Notify when a switch fails to recover", defaultValue: true
             input "${g}.notifyOnLowLoad", "bool", title: "Notify when load drops below minimum", defaultValue: true
@@ -199,16 +204,13 @@ Map groupPage(params) {
 
         if (targetState == "on" && devices) {
             section("Load Monitoring", hideable: true, hidden: true) {
-                paragraph "Monitor connected load on switches that report power. Set a minimum watt threshold per device."
+                paragraph "Monitor connected load on switches that report power. If load drops below the minimum, you will be notified. Use separate groups for devices that need different thresholds."
                 input "${g}.enableLoadMonitoring", "bool", title: "Enable load monitoring", defaultValue: false, submitOnChange: true
                 if (settings["${g}.enableLoadMonitoring"]) {
                     List powerDevices = devices.findAll { it.hasCapability("PowerMeter") }
                     if (powerDevices) {
-                        powerDevices.each { dev ->
-                            input "${g}.minLoadWatts_${dev.id}", "decimal",
-                                title: "${dev.displayName} — minimum load (watts)",
-                                defaultValue: 0, required: false, range: "0..10000"
-                        }
+                        input "${g}.minLoadWatts", "decimal", title: "Minimum load (watts)",
+                            defaultValue: 0, required: true, range: "0..10000"
                         input "${g}.loadGraceMinutes", "number", title: "Minutes to wait before alerting on low load",
                             defaultValue: DEFAULT_LOAD_GRACE_MINUTES, required: true, range: "1..60"
                         input "${g}.loadReminderMinutes", "number", title: "Minutes between repeat notifications",
@@ -322,10 +324,10 @@ void initialize() {
             gs.retryCount = 0
             // Prune low-load devices no longer monitored
             String targetState = getGroupTargetState(groupNum)
-            if (targetState == "on" && getBoolGroupSetting(groupNum, "enableLoadMonitoring")) {
+            if (targetState == "on" && getBoolGroupSetting(groupNum, "enableLoadMonitoring")
+                    && getDecimalGroupSetting(groupNum, "minLoadWatts", 0) > 0) {
                 List devices = getGroupDevices(groupNum)
                 Set activeIds = (devices ?: []).findAll { it.hasCapability("PowerMeter") }
-                    .findAll { getDecimalGroupSetting(groupNum, "minLoadWatts_${it.id}", 0) > 0 }
                     .collect { it.id.toString() } as Set
                 Map lowLoad = (Map)(gs.lowLoadDevices ?: [:])
                 lowLoad.keySet().retainAll(activeIds)
@@ -349,12 +351,10 @@ void initialize() {
         }
 
         // Load monitoring subscriptions
-        if (targetState == "on" && getBoolGroupSetting(groupNum, "enableLoadMonitoring")) {
+        if (targetState == "on" && getBoolGroupSetting(groupNum, "enableLoadMonitoring")
+                && getDecimalGroupSetting(groupNum, "minLoadWatts", 0) > 0) {
             devices.findAll { it.hasCapability("PowerMeter") }.each { dev ->
-                BigDecimal threshold = getDecimalGroupSetting(groupNum, "minLoadWatts_${dev.id}", 0)
-                if (threshold > 0) {
-                    subscribe(dev, "power", powerHandler)
-                }
+                subscribe(dev, "power", powerHandler)
             }
         }
     }
@@ -633,7 +633,7 @@ void powerHandler(evt) {
 
     groups.each { Integer groupNum ->
         String groupLabel = getGroupLabel(groupNum)
-        BigDecimal threshold = getDecimalGroupSetting(groupNum, "minLoadWatts_${devId}", 0)
+        BigDecimal threshold = getDecimalGroupSetting(groupNum, "minLoadWatts", 0)
         if (threshold <= 0) return
 
         if (evt.device.currentSwitch == "off") return
@@ -670,10 +670,11 @@ private void evaluateGroupLoad(int groupNum) {
     Map lowLoad = (Map)(gs.lowLoadDevices ?: [:])
     long nowMs = now()
 
+    BigDecimal threshold = getDecimalGroupSetting(groupNum, "minLoadWatts", 0)
+    if (threshold <= 0) return
+
     devices.findAll { it.hasCapability("PowerMeter") }.each { dev ->
         String devId = dev.id.toString()
-        BigDecimal threshold = getDecimalGroupSetting(groupNum, "minLoadWatts_${devId}", 0)
-        if (threshold <= 0) return
         if (dev.currentSwitch == "off") return
         BigDecimal currentPower = dev.currentValue("power") as BigDecimal
         if (currentPower != null && currentPower < threshold) {
@@ -712,6 +713,7 @@ void checkLowLoad(Map data) {
     if (lowLoadDevices.isEmpty()) return
 
     List devices = getGroupDevices(groupNum)
+    BigDecimal threshold = getDecimalGroupSetting(groupNum, "minLoadWatts", 0)
     List lowNames = []
     List recovered = []
 
@@ -723,12 +725,6 @@ void checkLowLoad(Map data) {
         }
 
         if (dev.currentSwitch == "off") {
-            recovered << devId
-            return
-        }
-
-        BigDecimal threshold = getDecimalGroupSetting(groupNum, "minLoadWatts_${devId}", 0)
-        if (threshold <= 0) {
             recovered << devId
             return
         }
@@ -921,11 +917,17 @@ private void migrateLoadMonitoringSettings(int g, List devices) {
     if (settings.enableLoadMonitoring != null) app.updateSetting("${prefix}.enableLoadMonitoring", [type: "bool", value: settings.enableLoadMonitoring])
     if (settings.loadGraceMinutes != null) app.updateSetting("${prefix}.loadGraceMinutes", [type: "number", value: settings.loadGraceMinutes])
     if (settings.loadReminderMinutes != null) app.updateSetting("${prefix}.loadReminderMinutes", [type: "number", value: settings.loadReminderMinutes])
+    // Consolidate per-device thresholds into a single group threshold (use the max)
+    BigDecimal maxThreshold = 0
     devices.each { dev ->
         String key = "minLoadWatts_${dev.id}"
         if (settings[key] != null) {
-            app.updateSetting("${prefix}.${key}", [type: "decimal", value: settings[key]])
+            BigDecimal val = settings[key] as BigDecimal
+            if (val > maxThreshold) maxThreshold = val
         }
+    }
+    if (maxThreshold > 0) {
+        app.updateSetting("${prefix}.minLoadWatts", [type: "decimal", value: maxThreshold])
     }
 }
 
@@ -1049,8 +1051,9 @@ private void saveGroupState(int groupNum, Map gs) {
 private void sendGroupNotification(int groupNum, String msg) {
     List notifyDevices = (List) settings["group${groupNum}.notifyDevices"]
     if (notifyDevices) {
-        String prefix = getGroupLabel(groupNum)
-        notifyDevices.each { it.deviceNotification("[${prefix}] ${msg}") }
+        String prefix = (String) settings["group${groupNum}.notifyPrefix"]
+        String text = prefix ? "${prefix} ${msg}" : msg
+        notifyDevices.each { it.deviceNotification(text) }
     }
 }
 
@@ -1079,7 +1082,11 @@ private String getStatusText() {
         Map gs = getGroupState(groupNum)
         boolean loadMonitoring = (targetState == "on" && getBoolGroupSetting(groupNum, "enableLoadMonitoring"))
 
+        BigDecimal threshold = loadMonitoring ? getDecimalGroupSetting(groupNum, "minLoadWatts", 0) : 0
         sb.append("<b>${groupLabel}</b> — must stay ${targetState.toUpperCase()}")
+        if (loadMonitoring && threshold > 0) {
+            sb.append(" (min load: ${threshold}W)")
+        }
         if (gs.recoveryActive) {
             sb.append(" <span style=\"color:red\">(recovery in progress, attempt ${gs.retryCount})</span>")
         }
@@ -1090,7 +1097,6 @@ private String getStatusText() {
         sb.append('<th style="padding:4px 8px">Device</th>')
         sb.append('<th style="padding:4px 8px">State</th>')
         if (loadMonitoring) {
-            sb.append('<th style="padding:4px 8px">Min Load</th>')
             sb.append('<th style="padding:4px 8px">Load</th>')
         }
         sb.append('<th style="padding:4px 8px">Since</th>')
@@ -1102,7 +1108,6 @@ private String getStatusText() {
             String devId = dev.id.toString()
             boolean isWrong = (dev.currentSwitch != targetState)
             boolean hasPower = dev.hasCapability("PowerMeter")
-            BigDecimal threshold = loadMonitoring ? getDecimalGroupSetting(groupNum, "minLoadWatts_${devId}", 0) : 0
             BigDecimal power = hasPower ? dev.currentValue("power") as BigDecimal : null
             boolean isLowLoad = lowLoadDevices.containsKey(devId)
 
@@ -1124,14 +1129,12 @@ private String getStatusText() {
             sb.append("<td style=\"padding:4px 8px\"><a href=\"/device/edit/${dev.id}\" target=\"_blank\">${dev.displayName}</a></td>")
             sb.append("<td style=\"padding:4px 8px\">${stateCell}</td>")
             if (loadMonitoring) {
-                String minLoadCell = (threshold > 0) ? "${threshold}W" : ""
                 String loadCell = ""
                 if (hasPower && power != null) {
                     loadCell = isLowLoad ? "<span style=\"color:red\"><b>${power}W</b></span>" : "${power}W"
                 } else if (hasPower) {
                     loadCell = "\u2014"
                 }
-                sb.append("<td style=\"padding:4px 8px\">${minLoadCell}</td>")
                 sb.append("<td style=\"padding:4px 8px\">${loadCell}</td>")
             }
             sb.append("<td style=\"padding:4px 8px\">${sinceCell}</td>")
