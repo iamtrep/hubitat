@@ -69,6 +69,14 @@ Map mainPage(){
                 submitOnChange: true,
                 multiple: true
             )
+            app(name: "mfChildApps",
+                appName: "Motion Fusion Child",
+                namespace: "iamtrep",
+                title: "Create New Motion Fusion",
+                description: "Combine PIR and mmWave inputs into a single motion output using configurable fusion algorithms",
+                submitOnChange: true,
+                multiple: true
+            )
         }
     }
 }
