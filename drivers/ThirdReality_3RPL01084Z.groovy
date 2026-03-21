@@ -42,7 +42,7 @@ metadata {
         capability "Configuration"
         capability "Refresh"
 
-        capability "PresenceSensor"
+        capability "MotionSensor"
         capability "IlluminanceMeasurement"
         capability "Switch"
         capability "SwitchLevel"
@@ -251,10 +251,10 @@ private Map parseAttributeReport(Map descMap) {
         case "0406":  // Occupancy Sensing
             if (descMap.attrId == "0000") {
                 int occupancy = Integer.parseInt(descMap.value, 16)
-                String presence = (occupancy & 0x01) ? "present" : "not present"
-                map.name = "presence"
-                map.value = presence
-                map.descriptionText = "${device.displayName} is ${presence}"
+                String motion = (occupancy & 0x01) ? "active" : "inactive"
+                map.name = "motion"
+                map.value = motion
+                map.descriptionText = "${device.displayName} motion is ${motion}"
             }
             break
 
