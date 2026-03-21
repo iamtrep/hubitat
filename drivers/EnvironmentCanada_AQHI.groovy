@@ -18,7 +18,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String DRIVER_VERSION = "0.2.0"
+@Field static final String DRIVER_VERSION = "0.3.0"
 @Field static final String API_BASE = "https://api.weather.gc.ca/collections"
 @Field static final String ALERT_API_BASE = "https://weather.gc.ca/api/app/v3"
 @Field static final int HTTP_TIMEOUT = 15
@@ -129,6 +129,8 @@ metadata {
         // Meta
         attribute "stationName", "string"
         attribute "lastUpdated", "string"
+        attribute "dataSource", "enum", ["observation", "forecast"]
+        attribute "observationAge", "string"
 
         command "findNearestStation"
     }
@@ -139,6 +141,7 @@ preferences {
         input "stationId", "text", title: "Station ID", description: "Leave blank to auto-detect from hub location (e.g. EHHUN for Montréal)", required: false
         input "alertZoneCode", "text", title: "Alert Zone Code", description: "Auto-detected from station; override here if needed (e.g. QCAQ-001)", required: false
         input("pollRate", "number", title: "Polling interval (minutes)\nZero for no polling:", defaultValue: 60, range: "0..*")
+        input("staleThreshold", "number", title: "Observation staleness threshold (hours)\nWarn and fall back to forecast after this many hours without observations:", defaultValue: 6, range: "1..168")
     }
     section("Logging") {
         input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
@@ -257,7 +260,7 @@ void parseObservationResponse(resp) {
     Map data = resp.data as Map
     List features = data?.features as List
     if (!features || features.isEmpty()) {
-        logDebug "No current observation available"
+        checkObservationStaleness()
         return
     }
 
@@ -267,14 +270,20 @@ void parseObservationResponse(resp) {
     BigDecimal aqhi = props.aqhi as BigDecimal
     String locationName = props.location_name_en as String
     String obsTime = props.observation_datetime_text_en as String
+    String obsDt = props.observation_datetime as String
 
     int rounded = Math.round(aqhi) as int
     String risk = riskCategory(rounded)
+
+    state.lastObservationMillis = obsDt ? parseISO8601(obsDt) : now()
+    state.observationStale = false
 
     sendEvent(name: "aqhi", value: aqhi, unit: "AQHI")
     sendEvent(name: "airQualityIndex", value: aqhiToAQI(rounded))
     sendEvent(name: "aqhiRisk", value: risk)
     sendEvent(name: "observationTime", value: obsTime ?: "")
+    sendEvent(name: "dataSource", value: "observation")
+    sendEvent(name: "observationAge", value: "current")
     if (locationName) {
         sendEvent(name: "stationName", value: locationName)
     }
@@ -282,6 +291,37 @@ void parseObservationResponse(resp) {
 
     if (txtEnable) {
         logInfo "AQHI ${aqhi} (${risk}) observed at ${obsTime}"
+    }
+}
+
+private void checkObservationStaleness() {
+    long lastObs = state.lastObservationMillis != null ? state.lastObservationMillis as long : 0
+    if (lastObs == 0) {
+        logDebug "No observation available (no previous observation on record)"
+        state.observationStale = true
+        return
+    }
+
+    int thresholdHours = (staleThreshold != null) ? staleThreshold as int : 6
+    long ageMillis = now() - lastObs
+    long ageHours = (long)(ageMillis / 3600000)
+
+    String ageText
+    if (ageHours < 24) {
+        ageText = "${ageHours}h"
+    } else {
+        long days = (long)(ageHours / 24)
+        ageText = "${days}d ${ageHours % 24}h"
+    }
+
+    sendEvent(name: "observationAge", value: ageText)
+
+    if (ageHours >= thresholdHours) {
+        state.observationStale = true
+        logWarn "No observation data for ${ageText} (threshold: ${thresholdHours}h) — will use forecast as fallback"
+    } else {
+        state.observationStale = false
+        logDebug "No new observation; last observation ${ageText} ago (within threshold)"
     }
 }
 
@@ -416,17 +456,22 @@ void parseForecastResponse(resp) {
     // HTML tile
     buildForecastHtml(futureForecasts)
 
-    // If no current observation, use first forecast as primary value
-    if (device.currentValue("aqhi") == null && !futureForecasts.isEmpty()) {
+    // Fall back to forecast when observation is missing or stale
+    boolean useForecastFallback = (device.currentValue("aqhi") == null) || state.observationStale
+    if (useForecastFallback && !futureForecasts.isEmpty()) {
         BigDecimal aqhi = futureForecasts[0].aqhi as BigDecimal
         int rounded = Math.round(aqhi) as int
         sendEvent(name: "aqhi", value: aqhi, unit: "AQHI")
         sendEvent(name: "airQualityIndex", value: aqhiToAQI(rounded))
         sendEvent(name: "aqhiRisk", value: riskCategory(rounded))
+        sendEvent(name: "dataSource", value: "forecast")
         if (locationName) {
             sendEvent(name: "stationName", value: locationName)
         }
         sendEvent(name: "lastUpdated", value: new Date().format("yyyy-MM-dd HH:mm:ss"))
+        if (txtEnable) {
+            logInfo "AQHI ${aqhi} (${riskCategory(rounded)}) from forecast fallback — observations unavailable"
+        }
     }
 }
 
