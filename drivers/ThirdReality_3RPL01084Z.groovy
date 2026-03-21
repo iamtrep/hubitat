@@ -32,6 +32,13 @@ import groovy.transform.CompileStatic
 @Field static final int AQ_GOOD_MAX = 500
 @Field static final int AQ_MODERATE_MAX = 1500
 
+// Hue value (0-100) to color name mapping
+@Field static final Map colorRGBName = [
+    4: "Red", 13: "Orange", 21: "Yellow", 29: "Chartreuse",
+    38: "Green", 46: "Spring", 54: "Cyan", 63: "Azure",
+    71: "Blue", 79: "Violet", 88: "Magenta", 96: "Rose", 101: "Red"
+]
+
 metadata {
     definition(
         name: "ThirdReality Presence Sensor R3 (3RPL01084Z)",
@@ -47,8 +54,9 @@ metadata {
         capability "Switch"
         capability "SwitchLevel"
         capability "ColorControl"
-        capability "ColorMode"
         capability "ChangeLevel"
+
+        attribute "colorName", "string"
 
         attribute "tvoc", "number"
         attribute "airQuality", "enum", ["good", "moderate", "unhealthy"]
@@ -166,7 +174,6 @@ void refresh() {
     cmds += zigbee.readAttribute(0x0008, 0x0000)  // Level
     cmds += zigbee.readAttribute(0x0300, 0x0000)  // Hue
     cmds += zigbee.readAttribute(0x0300, 0x0001)  // Saturation
-    cmds += zigbee.readAttribute(0x0300, 0x0008)  // Color Mode
     cmds += zigbee.readAttribute(CLUSTER_RADAR, 0x0000, [mfgCode: MFG_CODE])  // TVOC
     cmds += zigbee.readAttribute(CLUSTER_RADAR, 0xF002, [mfgCode: MFG_CODE])  // Sensitivity readback
     cmds += zigbee.readAttribute(CLUSTER_RADAR, 0xF003, [mfgCode: MFG_CODE])  // Threshold readback
@@ -284,8 +291,10 @@ private Map parseColorAttribute(Map descMap) {
             int hue = Math.round(rawValue / 254 * 100) as int
             map.name = "hue"
             map.value = hue
+            map.unit = "%"
             map.descriptionText = "${device.displayName} hue is ${hue}%"
             state.lastHue = descMap.value
+            sendColorNameEvent(hue)
             break
 
         case "0001":  // Current Saturation (0-254 → 0-100)
@@ -295,17 +304,26 @@ private Map parseColorAttribute(Map descMap) {
             map.unit = "%"
             map.descriptionText = "${device.displayName} saturation is ${saturation}%"
             state.lastSaturation = descMap.value
-            break
-
-        case "0008":  // Color Mode (0=HSV, 2=CT)
-            String colorMode = rawValue == 2 ? "CT" : "RGB"
-            map.name = "colorMode"
-            map.value = colorMode
-            map.descriptionText = "${device.displayName} color mode is ${colorMode}"
+            sendColorNameEvent(null, saturation)
             break
     }
 
     return map
+}
+
+private void sendColorNameEvent(Integer hue, Integer sat = null) {
+    String colorName
+    if (sat == 0 || (sat == null && device.currentValue("saturation") == 0)) {
+        colorName = "White"
+    } else if (hue == null) {
+        return
+    } else {
+        colorName = colorRGBName.find { k, v -> hue < k }?.value ?: "Red"
+    }
+    if (colorName == device.currentValue("colorName")) return
+    String descriptionText = "${device.displayName} color is ${colorName}"
+    logInfo descriptionText
+    sendEvent(name: "colorName", value: colorName, descriptionText: descriptionText)
 }
 
 private Map parseRadarCluster(Map descMap) {
@@ -411,7 +429,6 @@ void setColor(Map value) {
     // Read back attributes
     cmds += zigbee.readAttribute(0x0300, 0x0000)  // Hue
     cmds += zigbee.readAttribute(0x0300, 0x0001)  // Saturation
-    cmds += zigbee.readAttribute(0x0300, 0x0008)  // Color Mode
 
     state.lastHue = hexHue
     state.lastSaturation = hexSat
@@ -426,7 +443,6 @@ void setHue(Number value) {
     List<String> cmds = []
     cmds += zigbee.command(0x0300, 0x06, hexHue + hexSat + "0001")
     cmds += zigbee.readAttribute(0x0300, 0x0000)
-    cmds += zigbee.readAttribute(0x0300, 0x0008)
 
     state.lastHue = hexHue
     sendZigbeeCommands(cmds)
@@ -440,7 +456,6 @@ void setSaturation(Number value) {
     List<String> cmds = []
     cmds += zigbee.command(0x0300, 0x06, hexHue + hexSat + "0001")
     cmds += zigbee.readAttribute(0x0300, 0x0001)
-    cmds += zigbee.readAttribute(0x0300, 0x0008)
 
     state.lastSaturation = hexSat
     sendZigbeeCommands(cmds)
