@@ -56,7 +56,7 @@ Where `{type}` is `driver` or `app`.
 
 Report the initial response to the user. The response is JSON like:
 ```json
-{"success":true,"completed":false,"hubs":[{"id":"...","name":"Chalet","status":"Pending"},...]}
+{"success":true,"completed":false,"hubs":[{"id":"...","name":"MyHub","status":"Pending"},...]}
 ```
 
 ### Step 4: Check Distribution Status
@@ -69,7 +69,7 @@ curl -s "http://{hub_ip}/hub/publishCode/status"
 
 The response is JSON:
 ```json
-{"success":true,"completed":false,"hubs":[{"id":"...","name":"Chalet","status":"Pending"},{"id":"...","name":"Maison","status":"Done"}]}
+{"success":true,"completed":false,"hubs":[{"id":"...","name":"MyHub","status":"Pending"},{"id":"...","name":"MyOtherHub","status":"Done"}]}
 ```
 
 - If `completed` is `false`, wait 2 seconds and poll again (up to 15 attempts).

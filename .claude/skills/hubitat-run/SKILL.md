@@ -17,7 +17,7 @@ Follow these steps exactly:
 
 Read `.hubitat.json` from the project root. Parse the multi-hub config:
 
-1. Check if `$ARGUMENTS` starts with `@hubname` (e.g., `@chalet 42 on`). If so, use that hub name and strip the `@hubname` from arguments before further parsing. Otherwise, use `default_hub`.
+1. Check if `$ARGUMENTS` starts with `@hubname` (e.g., `@myhub 42 on`). If so, use that hub name and strip the `@hubname` from arguments before further parsing. Otherwise, use `default_hub`.
 2. Look up the hub in `hubs[hubname]` to get `hub_ip` and check if `maker_api` credentials are configured (both `app_id` and `token` must be non-null).
 3. If the hub has `username` and `password` (non-null), it has hub security enabled. Authenticate first:
    ```bash
