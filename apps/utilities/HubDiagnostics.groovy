@@ -2,13 +2,13 @@
  * Hub Diagnostics
  *
  * Comprehensive hub diagnostics: inventory, performance tracking, network analysis,
- * health scoring, snapshot comparison, and exportable reports.
+ * snapshot comparison, and exportable reports.
  *
  * Consolidates Hub Diagnostic Analyzer, Hub Performance Analyzer, and
  * Hub Configuration Analyzer into a single unified app.
  *
  * Author: PJ
- * Version: 3.0.0
+ * Version: 3.1.0
  */
 
 import groovy.transform.Field
@@ -29,6 +29,38 @@ import groovy.transform.CompileStatic
 @Field static final String STATE_COMPRESSION_URL = "http://127.0.0.1:8080/hub/advanced/stateCompressionStatus"
 @Field static final String FREE_MEMORY_URL = "http://127.0.0.1:8080/hub/advanced/freeOSMemoryLast"
 @Field static final String RUNTIME_STATS_URL = "http://127.0.0.1:8080/logs/json"
+@Field static final String DATABASE_SIZE_URL = "http://127.0.0.1:8080/hub/advanced/databaseSize"
+@Field static final String INTERNAL_TEMP_URL = "http://127.0.0.1:8080/hub/advanced/internalTempCelsius"
+@Field static final String ZIGBEE_CHILD_ROUTE_URL = "http://127.0.0.1:8080/hub/zigbee/getChildAndRouteInfo"
+@Field static final String ZWAVE_VERSION_URL = "http://127.0.0.1:8080/hub/zwaveVersion"
+@Field static final String EVENT_LIMIT_URL = "http://127.0.0.1:8080/hub/advanced/event/limit"
+@Field static final String MAX_EVENT_AGE_URL = "http://127.0.0.1:8080/hub/advanced/maxEventAgeDays"
+@Field static final String MAX_STATE_AGE_URL = "http://127.0.0.1:8080/hub/advanced/maxDeviceStateAgeDays"
+@Field static final String MEMORY_HISTORY_URL = "http://127.0.0.1:8080/hub/advanced/freeOSMemoryHistory"
+
+// Zigbee channels recommended to avoid WiFi interference
+@Field static final List RECOMMENDED_ZIGBEE_CHANNELS = [15, 20, 25]
+
+// Hub alert flag display names
+@Field static final Map ALERT_DISPLAY_NAMES = [
+    hubLoadElevated: "Hub Load Elevated",
+    hubLoadSevere: "Hub Load Severe",
+    hubHighLoad: "Hub High Load",
+    hubLowMemory: "Hub Low Memory",
+    hubZwaveCrashed: "Z-Wave Radio Crashed",
+    zwaveMigrateFailed: "Z-Wave Migration Failed",
+    hubLargeishDatabase: "Database Growing Large",
+    hubLargeDatabase: "Database Large",
+    hubHugeDatabase: "Database Very Large",
+    spammyDevices: "Spammy Devices Detected",
+    zwaveOffline: "Z-Wave Offline",
+    zigbeeOffline: "Zigbee Offline",
+    cloudDisconnected: "Cloud Disconnected",
+    localBackupFailed: "Local Backup Failed",
+    cloudBackupFailed: "Cloud Backup Failed",
+    weakZigbee: "Weak Zigbee Channel",
+    platformUpdateAvailable: "Platform Update Available"
+]
 
 // Protocol constants
 @Field static final String PROTOCOL_ZIGBEE = "zigbee"
@@ -64,7 +96,7 @@ definition(
     name: "Hub Diagnostics",
     namespace: "iamtrep",
     author: "PJ",
-    description: "Comprehensive hub diagnostics: inventory, performance tracking, network analysis, health scoring, and snapshot comparison",
+    description: "Comprehensive hub diagnostics: inventory, performance tracking, network analysis, and snapshot comparison",
     category: "Utility",
     singleInstance: true,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/utilities/HubDiagnostics.groovy",
@@ -96,8 +128,8 @@ Map dashboardPage() {
             href "devicesPage", title: "Devices", description: "Device inventory and protocol analysis"
             href "appsPage", title: "Applications", description: "App inventory and parent/child hierarchy"
             href "networkPage", title: "Network & Wireless", description: "Z-Wave, Zigbee, Matter, Hub Mesh"
-            href "performancePage", title: "Performance", description: "Runtime stats and checkpoint comparison"
-            href "systemHealthPage", title: "System Health", description: "Resources, health score, and alerts"
+            href "performancePage", title: "Performance", description: "Runtime stats, top resource consumers, and checkpoint comparison"
+            href "systemHealthPage", title: "System Health", description: "Hub info, platform alerts, resources, and database"
             href "snapshotsPage", title: "Snapshots", description: "Configuration snapshots and diff"
             href "settingsPage", title: "Settings", description: "Thresholds, auto-scheduling, and options"
         }
@@ -139,23 +171,40 @@ Map devicesPage() {
                 [label: "Name", field: "name", type: "string"],
                 [label: "Type", field: "type", type: "string"],
                 [label: "Protocol", field: "protocol", type: "string"],
+                [label: "Room", field: "room", type: "string"],
                 [label: "Status", field: "status", type: "string"],
                 [label: "Last Activity", field: "lastActivity", type: "string"],
                 [label: "Battery", field: "battery", type: "number"],
-                [label: "Parent App", field: "parentApp", type: "string"],
-                [label: "Room", field: "room", type: "string"]
+                [label: "Parent", field: "parent", type: "string"]
             ], deviceStats.allDevices.collect { Map dev ->
+                // Device name links to device page
+                String nameLink = "<a href='/device/edit/${dev.id}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(dev.name as String)}</a>"
+                // Type links to code page if user driver
+                String typeDisplay = escapeHtml(dev.type as String)
+                if (dev.userType && dev.deviceTypeId) {
+                    typeDisplay = "<a href='/driver/editor/${dev.deviceTypeId}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${typeDisplay}</a>"
+                }
+                // Parent: link to app or device
+                String parentDisplay = "-"
+                if (dev.parentAppName) {
+                    parentDisplay = "<a href='/installedapp/configure/${dev.parentAppId}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(dev.parentAppName as String)}</a>"
+                } else if (dev.parentDeviceName) {
+                    parentDisplay = "<a href='/device/edit/${dev.parentDeviceId}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(dev.parentDeviceName as String)}</a>"
+                }
+
                 Map row = [
-                    name: dev.name ?: "",
-                    type: dev.type ?: "",
+                    name: nameLink,
+                    _nameSort: dev.name,
+                    type: typeDisplay,
+                    _typeSort: dev.type,
                     protocol: PROTOCOL_DISPLAY[dev.protocol] ?: (dev.protocol ?: "").toString().capitalize(),
+                    room: dev.room ?: "-",
                     status: dev.status ?: "",
                     lastActivity: dev.lastActivity ?: "Never",
                     battery: dev.battery != null ? dev.battery : "",
-                    parentApp: dev.parentApp ?: "-",
-                    room: dev.room ?: "-"
+                    parent: parentDisplay,
+                    _parentSort: dev.parentAppName ?: dev.parentDeviceName ?: ""
                 ]
-                // Color overrides
                 if (dev.status == "Active") row._statusColor = "#388e3c"
                 else if (dev.status == "Disabled") row._statusColor = "#d32f2f"
                 else if (dev.status == "Inactive") row._statusColor = "#ff9800"
@@ -168,30 +217,12 @@ Map devicesPage() {
             })
         }
 
-        if (deviceStats.byParentApp && deviceStats.byParentApp.size() > 0) {
-            section("Devices by Parent App") {
-                paragraph formatSimpleTable(deviceStats.byParentApp, "Parent App", "Count")
-            }
-        }
-
         if (deviceStats.lowBatteryDevices && deviceStats.lowBatteryDevices.size() > 0) {
             section("Low Battery Alerts") {
                 String batteryHtml = deviceStats.lowBatteryDevices.collect { Map dev ->
-                    "<span style='color: #d32f2f;'>${dev.name}: ${dev.battery}%</span>"
+                    "<span style='color: #d32f2f;'><a href='/device/edit/${dev.id}' target='_blank' style='color: #d32f2f;'>${dev.name}</a>: ${dev.battery}%</span>"
                 }.join("<br>")
                 paragraph batteryHtml
-            }
-        }
-
-        if (deviceStats.inactiveDevicesList && deviceStats.inactiveDevicesList.size() > 0) {
-            section("Inactive Devices (Last ${settings.inactivityDays ?: 7} Days)") {
-                String inactiveHtml = deviceStats.inactiveDevicesList.take(20).collect { Map dev ->
-                    "${dev.name} - Last Activity: ${dev.lastActivity ?: 'Never'}"
-                }.join("<br>")
-                if (deviceStats.inactiveDevicesList.size() > 20) {
-                    inactiveHtml += "<br><i>Showing 20 of ${deviceStats.inactiveDevicesList.size()} inactive devices</i>"
-                }
-                paragraph inactiveHtml
             }
         }
     }
@@ -231,23 +262,31 @@ Map appsPage() {
 
 Map networkPage() {
     Map networkData = analyzeNetwork()
+    Map zigbeeMesh = fetchZigbeeMeshInfo()
+    String zwaveVersion = fetchZwaveVersion()
 
     dynamicPage(name: "networkPage", title: "Network & Wireless Analysis") {
         section("Network Configuration") {
             if (networkData.network && !networkData.network.error) {
                 Map net = networkData.network
-                paragraph "<b>IP Address:</b> ${net.lanAddr ?: 'N/A'}"
-                paragraph "<b>Connection Type:</b> ${net.usingStaticIP ? 'Static IP' : 'DHCP'}"
+                List netMetrics = [
+                    ["IP Address", net.lanAddr ?: "N/A"],
+                    ["Connection Type", net.usingStaticIP ? "Static IP" : "DHCP"],
+                    ["Gateway", net.staticGateway ?: "N/A"],
+                    ["Subnet Mask", net.staticSubnetMask ?: "N/A"]
+                ]
                 if (net.usingStaticIP && net.staticIP) {
-                    paragraph "<b>Static IP:</b> ${net.staticIP}"
+                    netMetrics << ["Static IP", net.staticIP]
                 }
-                paragraph "<b>Gateway:</b> ${net.staticGateway ?: 'N/A'}"
-                paragraph "<b>Subnet Mask:</b> ${net.staticSubnetMask ?: 'N/A'}"
                 if (net.dnsServers && net.dnsServers.size() > 0) {
-                    paragraph "<b>DNS Servers:</b> ${net.dnsServers.join(', ')}"
+                    netMetrics << ["DNS Servers", net.dnsServers.join(", ")]
                 }
-                paragraph "<b>WiFi Available:</b> ${net.hasWiFi ? 'Yes' : 'No'}"
-                paragraph "<b>Ethernet:</b> ${net.hasEthernet ? 'Connected' : 'Not Connected'}"
+                netMetrics << ["Ethernet", net.hasEthernet ? "Connected" : "Not Connected"]
+                netMetrics << ["WiFi Available", net.hasWiFi ? "Yes" : "No"]
+                if (net.hasWiFi && net.wifiNetwork) {
+                    netMetrics << ["WiFi Network", net.wifiNetwork]
+                }
+                paragraph formatMetricsTable(netMetrics)
             } else {
                 paragraph "<i>Network configuration unavailable</i>"
             }
@@ -256,14 +295,43 @@ Map networkPage() {
         section("Z-Wave Network") {
             if (networkData.zwave && !networkData.zwave.error) {
                 Map zw = networkData.zwave
-                paragraph "<b>Enabled:</b> ${zw.enabled ? 'Yes' : 'No'}"
-                paragraph "<b>Healthy:</b> ${zw.healthy ? 'Yes' : 'No'}"
-                paragraph "<b>Region:</b> ${zw.region ?: 'N/A'}"
-                paragraph "<b>Node Count:</b> ${zw.nodes ? zw.nodes.size() : 0}"
-                paragraph "<b>Z-Wave JS Available:</b> ${zw.zwaveJSAvailable ? 'Yes' : 'No'}"
-                paragraph "<b>Z-Wave JS Enabled:</b> ${zw.zwaveJS ? 'Yes' : 'No'}"
+                String healthyColor = zw.healthy ? "#388e3c" : "#d32f2f"
+                List zwMetrics = [
+                    ["Enabled", zw.enabled ? "Yes" : "No"],
+                    ["Healthy", "<span style='color: ${healthyColor};'>${zw.healthy ? 'Yes' : 'No'}</span>"],
+                    ["Region", zw.region ?: "N/A"],
+                    ["Node Count", zw.nodes ? zw.nodes.size() : 0],
+                    ["Z-Wave JS", zw.zwaveJS ? "Enabled" : (zw.zwaveJSAvailable ? "Available" : "N/A")]
+                ]
+                if (zwaveVersion) {
+                    zwMetrics << ["Firmware", zwaveVersion]
+                }
+                paragraph formatMetricsTable(zwMetrics)
+
                 if (zw.isRadioUpdateNeeded) {
-                    paragraph "<b style='color: #ff9800;'>Radio Update Recommended</b>"
+                    paragraph "<span style='color: #ff9800;'>\u26A0 Radio firmware update recommended</span>"
+                }
+
+                // Ghost/failed node detection
+                if (zw.zwDevices) {
+                    List ghostNodes = []
+                    zw.zwDevices.each { nodeId, nodeData ->
+                        if (nodeData instanceof Map) {
+                            boolean isFailed = nodeData.status == "FAILED" || nodeData.failed == true
+                            boolean noRoute = nodeData.route == null || nodeData.route == "" || nodeData.route == "No route"
+                            boolean noName = !nodeData.name || nodeData.name == "Unknown" || nodeData.name == ""
+                            if (isFailed || (noRoute && noName)) {
+                                ghostNodes << [id: nodeId, name: nodeData.name ?: "Unknown", status: nodeData.status ?: "No route"]
+                            }
+                        }
+                    }
+                    if (ghostNodes) {
+                        paragraph "<b style='color: #d32f2f;'>Possible Ghost Nodes (${ghostNodes.size()}):</b>"
+                        ghostNodes.each { Map ghost ->
+                            paragraph "&nbsp;&nbsp;<span style='color: #d32f2f;'>Node ${ghost.id}: ${ghost.name} (${ghost.status})</span>"
+                        }
+                        paragraph "<i>Ghost nodes can cause Z-Wave mesh instability. Remove them from Settings > Z-Wave Details.</i>"
+                    }
                 }
             } else {
                 paragraph "<i>Z-Wave details unavailable</i>"
@@ -273,38 +341,77 @@ Map networkPage() {
         section("Zigbee Network") {
             if (networkData.zigbee && !networkData.zigbee.error) {
                 Map zb = networkData.zigbee
-                paragraph "<b>Enabled:</b> ${zb.enabled ? 'Yes' : 'No'}"
-                paragraph "<b>Healthy:</b> ${zb.healthy ? 'Yes' : 'No'}"
-                paragraph "<b>Network State:</b> ${zb.networkState ?: 'Unknown'}"
-                paragraph "<b>Channel:</b> ${zb.channel ?: 'N/A'}"
-                paragraph "<b>PAN ID:</b> ${zb.panId ?: 'N/A'}"
-                paragraph "<b>Extended PAN ID:</b> ${zb.extendedPanId ?: 'N/A'}"
-                paragraph "<b>Device Count:</b> ${zb.devices ? zb.devices.size() : 0}"
-                paragraph "<b>Join Mode:</b> ${zb.inJoinMode ? 'Active' : 'Inactive'}"
-                if (zb.weakChannel) {
-                    paragraph "<b style='color: #d32f2f;'>Weak Channel Detected</b>"
+                String healthyColor = zb.healthy ? "#388e3c" : "#d32f2f"
+                String channelDisplay = zb.channel ? zb.channel.toString() : "N/A"
+                if (zb.channel && !(zb.channel in RECOMMENDED_ZIGBEE_CHANNELS)) {
+                    channelDisplay = "<span style='color: #ff9800;'>${zb.channel}</span> (may overlap WiFi — recommended: ${RECOMMENDED_ZIGBEE_CHANNELS.join(', ')})"
                 }
+                if (zb.weakChannel) {
+                    channelDisplay += " <span style='color: #d32f2f;'>[Weak]</span>"
+                }
+
+                paragraph formatMetricsTable([
+                    ["Enabled", zb.enabled ? "Yes" : "No"],
+                    ["Healthy", "<span style='color: ${healthyColor};'>${zb.healthy ? 'Yes' : 'No'}</span>"],
+                    ["Network State", zb.networkState ?: "Unknown"],
+                    ["Channel", channelDisplay],
+                    ["PAN ID", zb.panId ?: "N/A"],
+                    ["Extended PAN ID", zb.extendedPanId ?: "N/A"],
+                    ["Device Count", zb.devices ? zb.devices.size() : 0],
+                    ["Join Mode", zb.inJoinMode ? "Active" : "Inactive"]
+                ])
             } else {
                 paragraph "<i>Zigbee details unavailable</i>"
+            }
+        }
+
+        if (zigbeeMesh && zigbeeMesh.neighbors) {
+            section("Zigbee Mesh Quality") {
+                List meshMetrics = [
+                    ["Repeater Neighbors", zigbeeMesh.neighbors.size()],
+                    ["End Devices (Direct)", zigbeeMesh.childDevices?.size() ?: 0],
+                    ["Routes", zigbeeMesh.routes?.size() ?: 0]
+                ]
+                if (zigbeeMesh.avgLqi != null) {
+                    String lqiColor = zigbeeMesh.avgLqi >= 200 ? "#388e3c" : (zigbeeMesh.avgLqi >= 150 ? "#ff9800" : "#d32f2f")
+                    meshMetrics << ["Average LQI", "<span style='color: ${lqiColor};'>${zigbeeMesh.avgLqi}</span> (min: ${zigbeeMesh.minLqi}, max: ${zigbeeMesh.maxLqi})"]
+                }
+                if (zigbeeMesh.weakNeighbors) {
+                    meshMetrics << ["Weak Neighbors (LQI < 150)", "<span style='color: #d32f2f;'>${zigbeeMesh.weakNeighbors.size()}</span>"]
+                }
+                if (zigbeeMesh.staleNeighbors) {
+                    meshMetrics << ["Stale Neighbors (age > 6)", "<span style='color: #ff9800;'>${zigbeeMesh.staleNeighbors.size()}</span>"]
+                }
+                paragraph formatMetricsTable(meshMetrics)
+
+                if (zigbeeMesh.weakNeighbors && zigbeeMesh.weakNeighbors.size() > 0) {
+                    paragraph "<b style='color: #d32f2f;'>Weak Neighbor Details:</b>"
+                    zigbeeMesh.weakNeighbors.each { Map n ->
+                        paragraph "&nbsp;&nbsp;${n.shortId ?: 'Unknown'} — LQI: ${n.lqi}"
+                    }
+                    paragraph "<i>Low LQI indicates poor signal quality. Consider adding Zigbee repeaters near these devices.</i>"
+                }
             }
         }
 
         section("Matter Network") {
             if (networkData.matter && !networkData.matter.error) {
                 Map mt = networkData.matter
-                paragraph "<b>Enabled:</b> ${mt.enabled ? 'Yes' : 'No'}"
-                paragraph "<b>Installed:</b> ${mt.installed ? 'Yes' : 'No'}"
-                paragraph "<b>Network State:</b> ${mt.networkState ?: 'Unknown'}"
-                paragraph "<b>Fabric ID:</b> ${mt.fabricId ?: 'N/A'}"
-                paragraph "<b>Device Count:</b> ${mt.devices ? mt.devices.size() : 0}"
+                List mtMetrics = [
+                    ["Enabled", mt.enabled ? "Yes" : "No"],
+                    ["Installed", mt.installed ? "Yes" : "No"],
+                    ["Network State", mt.networkState ?: "Unknown"],
+                    ["Fabric ID", mt.fabricId ?: "N/A"],
+                    ["Device Count", mt.devices ? mt.devices.size() : 0]
+                ]
                 if (mt.ipAddresses && mt.ipAddresses.size() > 0) {
-                    paragraph "<b>IPv6 Addresses:</b>"
                     mt.ipAddresses.each { addr ->
-                        paragraph "&nbsp;&nbsp;${addr.interface}: ${addr.address}"
+                        mtMetrics << ["IPv6 (${addr.interface})", addr.address]
                     }
                 }
+                paragraph formatMetricsTable(mtMetrics)
                 if (mt.rebootRequired) {
-                    paragraph "<b style='color: #d32f2f;'>Reboot Required</b>"
+                    paragraph "<span style='color: #d32f2f;'>\u26A0 Reboot required for Matter changes</span>"
                 }
             } else {
                 paragraph "<i>Matter details unavailable or no Matter devices</i>"
@@ -314,25 +421,25 @@ Map networkPage() {
         section("Hub Mesh") {
             if (networkData.hubMesh && !networkData.hubMesh.error) {
                 Map hm = networkData.hubMesh
-                paragraph "<b>Status:</b> ${hm.hubMeshEnabled ? 'Enabled' : 'Disabled'}"
+                List hmMetrics = [
+                    ["Status", hm.hubMeshEnabled ? "Enabled" : "Disabled"],
+                    ["Shared Devices from this Hub", hm.sharedDevices ? hm.sharedDevices.size() : 0],
+                    ["Devices Linked from Other Hubs", hm.localLinkedDevices ? hm.localLinkedDevices.size() : 0],
+                    ["Shared Hub Variables", hm.sharedHubVariables ? hm.sharedHubVariables.size() : 0],
+                    ["Linked Hub Variables", hm.localLinkedHubVariables ? hm.localLinkedHubVariables.size() : 0]
+                ]
+                paragraph formatMetricsTable(hmMetrics)
 
                 if (hm.hubList && hm.hubList.size() > 0) {
-                    paragraph "<b>Linked Hubs:</b> ${hm.hubList.size()}"
+                    paragraph "<b>Linked Hubs (${hm.hubList.size()}):</b>"
                     hm.hubList.each { hub ->
-                        String status = hub.offline ? 'Offline' : 'Online'
-                        String statusColor = hub.offline ? '#d32f2f' : '#388e3c'
-                        paragraph "<span style='color: ${statusColor};'><b>${hub.name}</b> (${hub.ipAddress}) ${status}</span>"
-                        paragraph "&nbsp;&nbsp;Shared Devices: ${hub.deviceIds ? hub.deviceIds.size() : 0}"
-                        paragraph "&nbsp;&nbsp;Shared Variables: ${hub.hubVarNames ? hub.hubVarNames.size() : 0}"
+                        String status = hub.offline ? "Offline" : "Online"
+                        String statusColor = hub.offline ? "#d32f2f" : "#388e3c"
+                        int sharedDevCount = hub.deviceIds ? hub.deviceIds.size() : 0
+                        int sharedVarCount = hub.hubVarNames ? hub.hubVarNames.size() : 0
+                        paragraph "&nbsp;&nbsp;<span style='color: ${statusColor};'><b>${hub.name}</b></span> (${hub.ipAddress}) — ${status} | ${sharedDevCount} devices, ${sharedVarCount} variables"
                     }
-                } else {
-                    paragraph "<i>No linked hubs</i>"
                 }
-
-                paragraph "<b>Shared Devices from this Hub:</b> ${hm.sharedDevices ? hm.sharedDevices.size() : 0}"
-                paragraph "<b>Devices Linked from Other Hubs:</b> ${hm.localLinkedDevices ? hm.localLinkedDevices.size() : 0}"
-                paragraph "<b>Shared Hub Variables:</b> ${hm.sharedHubVariables ? hm.sharedHubVariables.size() : 0}"
-                paragraph "<b>Linked Hub Variables:</b> ${hm.localLinkedHubVariables ? hm.localLinkedHubVariables.size() : 0}"
             } else {
                 paragraph "<i>Hub Mesh details unavailable</i>"
             }
@@ -341,9 +448,98 @@ Map networkPage() {
 }
 
 Map performancePage() {
+    Map stats = fetchCurrentStats()
+    Map resources = fetchSystemResources()
+
     dynamicPage(name: "performancePage", title: "Performance Analysis") {
         section("Current Runtime Stats") {
-            paragraph getCurrentStatsSummary()
+            paragraph generateRuntimeSummary(stats, resources)
+        }
+
+        if (stats?.deviceStats) {
+            section("Top Resource Consumers — Devices") {
+                paragraph "<i>Devices consuming the most CPU time since last hub restart</i>"
+                List topDevices = ((List) stats.deviceStats)
+                    .findAll { it.pctTotal != null }
+                    .sort { -((it.pctTotal ?: 0) as float) }
+                    .take(10)
+
+                if (topDevices) {
+                    paragraph generateSortableTable("topDevices", [
+                        [label: "Device", field: "name", type: "string"],
+                        [label: "CPU %", field: "pctTotal", type: "number"],
+                        [label: "Exec Count", field: "count", type: "number"],
+                        [label: "Avg (ms)", field: "average", type: "number"],
+                        [label: "State Size", field: "stateSize", type: "number"],
+                        [label: "Events", field: "events", type: "number"],
+                        [label: "States", field: "states", type: "number"]
+                    ], topDevices.collect { Map dev ->
+                        float pct = (dev.pctTotal ?: 0) as float
+                        String pctColor = pct > 1.0 ? "#d32f2f" : (pct > 0.5 ? "#ff9800" : "")
+                        int eventsCount = (dev.customAttributes?.eventsCount ?: 0) as int
+                        int statesCount = (dev.customAttributes?.statesCount ?: 0) as int
+                        boolean eventsAlert = dev.customAttributes?.eventsCountAlert == true
+                        boolean statesAlert = dev.customAttributes?.statesCountAlert == true
+
+                        Map row = [
+                            name: "<a href='/device/edit/${dev.id}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(dev.name as String)}</a>",
+                            _nameSort: dev.name,
+                            pctTotal: String.format('%.3f', pct) + "%",
+                            _pctTotalSort: pct,
+                            count: dev.count ?: 0,
+                            average: String.format('%.1f', (dev.average ?: 0) as float),
+                            _averageSort: (dev.average ?: 0) as float,
+                            stateSize: dev.stateSize ?: 0,
+                            events: eventsCount,
+                            states: statesCount
+                        ]
+                        if (pctColor) row._pctTotalColor = pctColor
+                        if (eventsAlert) row._eventsColor = "#d32f2f"
+                        if (statesAlert) row._statesColor = "#d32f2f"
+                        return row
+                    })
+                } else {
+                    paragraph "<i>No device runtime data available</i>"
+                }
+            }
+
+            section("Top Resource Consumers — Apps") {
+                paragraph "<i>Apps consuming the most CPU time since last hub restart</i>"
+                List topApps = ((List) stats.appStats)
+                    .findAll { it.pctTotal != null }
+                    .sort { -((it.pctTotal ?: 0) as float) }
+                    .take(10)
+
+                if (topApps) {
+                    paragraph generateSortableTable("topApps", [
+                        [label: "App", field: "name", type: "string"],
+                        [label: "CPU %", field: "pctTotal", type: "number"],
+                        [label: "Exec Count", field: "count", type: "number"],
+                        [label: "Avg (ms)", field: "average", type: "number"],
+                        [label: "State Size", field: "stateSize", type: "number"],
+                        [label: "Cloud Calls", field: "cloudCalls", type: "number"]
+                    ], topApps.collect { Map app ->
+                        float pct = (app.pctTotal ?: 0) as float
+                        String pctColor = pct > 1.0 ? "#d32f2f" : (pct > 0.5 ? "#ff9800" : "")
+
+                        Map row = [
+                            name: "<a href='/installedapp/configure/${app.id}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(app.name as String)}</a>",
+                            _nameSort: app.name,
+                            pctTotal: String.format('%.3f', pct) + "%",
+                            _pctTotalSort: pct,
+                            count: app.count ?: 0,
+                            average: String.format('%.1f', (app.average ?: 0) as float),
+                            _averageSort: (app.average ?: 0) as float,
+                            stateSize: app.stateSize ?: 0,
+                            cloudCalls: app.cloudCallCount ?: 0
+                        ]
+                        if (pctColor) row._pctTotalColor = pctColor
+                        return row
+                    })
+                } else {
+                    paragraph "<i>No app runtime data available</i>"
+                }
+            }
         }
 
         List checkpoints = loadCheckpoints()
@@ -421,75 +617,79 @@ Map systemHealthPage() {
         section("Hub Information") {
             if (location.hubs && location.hubs.size() > 0) {
                 def hub = location.hubs[0]
-                paragraph "<b>Hub Name:</b> ${hubInfo.name}"
-                paragraph "<b>Hub ID:</b> ${hub.id ?: 'N/A'}"
-                paragraph "<b>Firmware Version:</b> ${hubInfo.firmware}"
-                paragraph "<b>Hardware Model:</b> ${hubInfo.hardware}"
-                paragraph "<b>Zigbee ID:</b> ${hub.zigbeeId ?: 'N/A'}"
-                paragraph "<b>Local IP:</b> ${hubInfo.ip}"
+                List hubMetrics = [
+                    ["Hub Name", hubInfo.name],
+                    ["Hub ID", hub.id ?: "N/A"],
+                    ["Hardware Model", hubInfo.hardware],
+                    ["Firmware Version", hubInfo.firmware],
+                    ["Local IP", hubInfo.ip],
+                    ["Zigbee ID", hub.zigbeeId ?: "N/A"],
+                    ["Location", location.name ?: "N/A"],
+                    ["Mode", location.currentMode ?: "N/A"],
+                    ["Time Zone", location.timeZone?.ID ?: "N/A"]
+                ]
+                paragraph formatMetricsTable(hubMetrics)
             } else {
                 paragraph "<span style='color: red;'>Hub information not available</span>"
+            }
+        }
+
+        if (systemHealth.alerts && systemHealth.alerts.size() > 0) {
+            section("Alerts & Warnings") {
+                systemHealth.alerts.each { String alert ->
+                    paragraph "\u26A0 ${alert}"
+                }
             }
         }
 
         section("System Resources") {
             if (systemHealth.memory) {
                 Map mem = systemHealth.memory
-                paragraph "<b>Free OS Memory:</b> ${formatMemory(mem.freeOSMemory ?: 0)}"
-                paragraph "<b>CPU Average (5m):</b> ${String.format('%.2f', (mem.cpuAvg5min ?: 0) as float)}%"
-                paragraph "<b>Total Java Memory:</b> ${formatMemory(mem.totalJavaMemory ?: 0)}"
-                paragraph "<b>Free Java Memory:</b> ${formatMemory(mem.freeJavaMemory ?: 0)}"
-                paragraph "<b>Direct Java Memory:</b> ${formatMemory(mem.directJavaMemory ?: 0)}"
+                String memColor = (mem.freeOSMemory ?: 0) < 76800 ? "#d32f2f" : ((mem.freeOSMemory ?: 0) < 102400 ? "#ff9800" : "#388e3c")
+                String cpuColor = (mem.cpuAvg5min ?: 0) > 80 ? "#d32f2f" : ((mem.cpuAvg5min ?: 0) > 30 ? "#ff9800" : "#388e3c")
 
-                if (mem.freeOSMemory && mem.freeOSMemory < 102400) {
-                    paragraph "<span style='color: #d32f2f;'><b>Warning: Low OS memory</b></span>"
+                List resourceMetrics = [
+                    ["Free OS Memory", "<span style='color: ${memColor};'>${formatMemory(mem.freeOSMemory ?: 0)}</span>"],
+                    ["CPU Average (5m)", "<span style='color: ${cpuColor};'>${String.format('%.2f', (mem.cpuAvg5min ?: 0) as float)}%</span>"],
+                    ["Total Java Memory", formatMemory(mem.totalJavaMemory ?: 0)],
+                    ["Free Java Memory", formatMemory(mem.freeJavaMemory ?: 0)],
+                    ["Direct Java Memory", formatMemory(mem.directJavaMemory ?: 0)]
+                ]
+                if (systemHealth.temperature != null) {
+                    Float temp = systemHealth.temperature
+                    String tempColor = temp > 77 ? "#d32f2f" : (temp > 50 ? "#ff9800" : "#388e3c")
+                    String tempF = String.format("%.1f", temp * 9.0 / 5.0 + 32.0)
+                    resourceMetrics << ["Hub Temperature", "<span style='color: ${tempColor};'>${String.format('%.1f', temp)}\u00B0C (${tempF}\u00B0F)</span>"]
                 }
+                paragraph formatMetricsTable(resourceMetrics)
             } else {
                 paragraph "<i>Memory information unavailable</i>"
             }
         }
 
-        section("Runtime Statistics") {
-            if (systemHealth.runtime) {
-                Map rt = systemHealth.runtime
-                paragraph "<b>Hub Uptime:</b> ${rt.uptime ?: 'N/A'}"
-                paragraph "<b>Devices Runtime:</b> ${rt.totalDevicesRuntime ?: 'N/A'} (${rt.devicePct ?: 'N/A'})"
-                paragraph "<b>Apps Runtime:</b> ${rt.totalAppsRuntime ?: 'N/A'} (${rt.appPct ?: 'N/A'})"
-            } else {
-                paragraph "<i>Runtime statistics unavailable</i>"
-            }
-        }
-
         section("Database & Storage") {
+            List dbMetrics = []
+            if (systemHealth.databaseSize != null) {
+                String dbColor = "#388e3c"
+                if (systemHealth.hubAlerts?.alerts?.hubHugeDatabase) dbColor = "#d32f2f"
+                else if (systemHealth.hubAlerts?.alerts?.hubLargeDatabase) dbColor = "#d32f2f"
+                else if (systemHealth.hubAlerts?.alerts?.hubLargeishDatabase) dbColor = "#ff9800"
+                dbMetrics << ["Database Size", "<span style='color: ${dbColor};'>${systemHealth.databaseSize} MB</span>"]
+            }
             if (systemHealth.stateCompression) {
-                Map sc = systemHealth.stateCompression
-                paragraph "<b>State Compression:</b> ${sc.enabled ? 'Enabled' : 'Disabled'}"
-                if (sc.size) {
-                    paragraph "<b>Database Size:</b> ${sc.size}"
-                }
+                dbMetrics << ["State Compression", systemHealth.stateCompression.enabled ? "Enabled" : "<span style='color: #ff9800;'>Disabled</span>"]
             }
-        }
-
-        section("Health Score") {
-            int score = calculateHealthScore(systemHealth)
-            String scoreColor = score >= 80 ? "#388e3c" : (score >= 60 ? "#ff9800" : "#d32f2f")
-            paragraph "<div style='text-align: center; font-size: 48px; color: ${scoreColor};'><b>${score}</b></div>"
-            paragraph "<div style='text-align: center;'>Overall Health Score (0-100)</div>"
-
-            if (systemHealth.alerts && systemHealth.alerts.size() > 0) {
-                paragraph "<b style='color: #d32f2f;'>Alerts:</b>"
-                systemHealth.alerts.each { String alert ->
-                    paragraph alert
-                }
+            if (systemHealth.eventStateLimits) {
+                Map lim = systemHealth.eventStateLimits
+                if (lim.maxEvents) dbMetrics << ["Max Events per Device", lim.maxEvents]
+                if (lim.maxEventAgeDays) dbMetrics << ["Max Event Age", "${lim.maxEventAgeDays} days"]
+                if (lim.maxStateAgeDays) dbMetrics << ["Max Device State Age", "${lim.maxStateAgeDays} days"]
             }
-        }
-
-        section("Location Information") {
-            paragraph "<b>Location Name:</b> ${location.name ?: 'N/A'}"
-            paragraph "<b>Current Mode:</b> ${location.currentMode ?: 'N/A'}"
-            paragraph "<b>Available Modes:</b> ${location.modes?.collect { it.name }?.join(', ') ?: 'N/A'}"
-            paragraph "<b>Temperature Scale:</b> ${location.temperatureScale ?: 'N/A'}"
-            paragraph "<b>Time Zone:</b> ${location.timeZone?.ID ?: 'N/A'}"
+            if (dbMetrics) {
+                paragraph formatMetricsTable(dbMetrics)
+            } else {
+                paragraph "<i>Database information unavailable</i>"
+            }
         }
     }
 }
@@ -698,6 +898,129 @@ Map fetchStateCompression() {
     }
 }
 
+String fetchPlainText(String url, String name, int timeout = 10) {
+    try {
+        Map params = [
+            uri: url,
+            contentType: "text/plain",
+            timeout: timeout
+        ]
+        String result = null
+        httpGet(params) { resp ->
+            if (resp.success) {
+                result = resp.data?.text?.trim() ?: resp.data?.toString()?.trim()
+            }
+        }
+        return result
+    } catch (Exception e) {
+        if (debugLogging) log.debug "Error fetching ${name}: ${e.message}"
+        return null
+    }
+}
+
+Integer fetchDatabaseSize() {
+    String text = fetchPlainText(DATABASE_SIZE_URL, "database size")
+    if (text) {
+        try { return text.toInteger() } catch (Exception e) { /* ignore */ }
+    }
+    return null
+}
+
+Float fetchTemperature() {
+    String text = fetchPlainText(INTERNAL_TEMP_URL, "internal temperature")
+    if (text) {
+        try { return text.toFloat() } catch (Exception e) { /* ignore */ }
+    }
+    return null
+}
+
+Map fetchHubAlerts() {
+    Map hubData = fetchEndpoint(HUB_DATA_URL, "hub data", 10)
+    if (!hubData || hubData.error) return [:]
+
+    Map result = [
+        alerts: hubData.alerts ?: [:],
+        databaseSize: hubData.alerts?.databaseSize,
+        spammyDevicesMessage: hubData.spammyDevicesMessage,
+        devMode: hubData.baseModel?.devMode ?: false
+    ]
+    return result
+}
+
+Map fetchEventStateLimits() {
+    String eventLimit = fetchPlainText(EVENT_LIMIT_URL, "event limit")
+    String maxEventAge = fetchPlainText(MAX_EVENT_AGE_URL, "max event age")
+    String maxStateAge = fetchPlainText(MAX_STATE_AGE_URL, "max state age")
+
+    Map limits = [:]
+
+    // Event limit comes as "Maximum event count: [11]"
+    if (eventLimit) {
+        java.util.regex.Matcher m = (eventLimit =~ /\[(\d+)\]/)
+        if (m.find()) limits.maxEvents = m.group(1).toInteger()
+    }
+    if (maxEventAge) {
+        try { limits.maxEventAgeDays = maxEventAge.toInteger() } catch (Exception e) { /* ignore */ }
+    }
+    if (maxStateAge) {
+        try { limits.maxStateAgeDays = maxStateAge.toInteger() } catch (Exception e) { /* ignore */ }
+    }
+    return limits
+}
+
+Map fetchZigbeeMeshInfo() {
+    String text = fetchPlainText(ZIGBEE_CHILD_ROUTE_URL, "zigbee child/route info", 15)
+    if (!text) return [:]
+
+    Map result = [childDevices: [], neighbors: [], routes: [], raw: text]
+
+    String currentSection = ""
+    text.split('\n').each { String line ->
+        line = line.trim()
+        if (!line) return
+
+        if (line.startsWith("Child Table")) {
+            currentSection = "child"
+        } else if (line.startsWith("Neighbor Table")) {
+            currentSection = "neighbor"
+        } else if (line.startsWith("Route Table")) {
+            currentSection = "route"
+        } else if (currentSection == "neighbor" && line.contains("LQI:")) {
+            // Parse neighbor entries like: "0xABCD (Name) LQI: 255 age: 3 inCost: 1 outCost: 1"
+            Map neighbor = [raw: line]
+            java.util.regex.Matcher lqiMatch = (line =~ /LQI:\s*(\d+)/)
+            java.util.regex.Matcher ageMatch = (line =~ /age:\s*(\d+)/)
+            java.util.regex.Matcher idMatch = (line =~ /^(0x[0-9A-Fa-f]+)/)
+            if (lqiMatch.find()) neighbor.lqi = lqiMatch.group(1).toInteger()
+            if (ageMatch.find()) neighbor.age = ageMatch.group(1).toInteger()
+            if (idMatch.find()) neighbor.shortId = idMatch.group(1)
+            result.neighbors << neighbor
+        } else if (currentSection == "child") {
+            result.childDevices << [raw: line]
+        } else if (currentSection == "route") {
+            result.routes << [raw: line]
+        }
+    }
+
+    // Compute mesh stats
+    if (result.neighbors) {
+        List lqiValues = result.neighbors.findAll { it.lqi != null }.collect { it.lqi }
+        if (lqiValues) {
+            result.avgLqi = (lqiValues.sum() / lqiValues.size()).toInteger()
+            result.minLqi = lqiValues.min()
+            result.maxLqi = lqiValues.max()
+            result.weakNeighbors = result.neighbors.findAll { it.lqi != null && it.lqi < 150 }
+            result.staleNeighbors = result.neighbors.findAll { it.age != null && it.age > 6 }
+        }
+    }
+
+    return result
+}
+
+String fetchZwaveVersion() {
+    return fetchPlainText(ZWAVE_VERSION_URL, "Z-Wave version")
+}
+
 Map fetchCurrentStats() {
     try {
         Map params = [
@@ -739,14 +1062,12 @@ Map analyzeDevices() {
         linkedDevices: 0,
         batteryDevices: 0,
         lowBatteryDevices: [],
-        inactiveDevicesList: [],
         allDevices: [],
         byType: [:],
         byProtocol: [(PROTOCOL_ZIGBEE): 0, (PROTOCOL_ZWAVE): 0, (PROTOCOL_MATTER): 0,
                      (PROTOCOL_LAN): 0, (PROTOCOL_VIRTUAL): 0, (PROTOCOL_MAKER): 0,
                      (PROTOCOL_CLOUD): 0, (PROTOCOL_HUBMESH): 0, (PROTOCOL_OTHER): 0],
-        byStatus: [active: 0, inactive: 0, disabled: 0],
-        byParentApp: [:]
+        byStatus: [active: 0, inactive: 0, disabled: 0]
     ]
 
     long inactivityThresholdMs = now() - ((settings.inactivityDays ?: 7) * ONE_DAY_MS)
@@ -780,10 +1101,6 @@ Map analyzeDevices() {
             } else {
                 stats.inactiveDevices++
                 stats.byStatus.inactive++
-                stats.inactiveDevicesList << [
-                    name: device.name ?: "Unknown",
-                    lastActivity: lastActivity ? new Date(lastActivity).format("yyyy-MM-dd HH:mm:ss") : "Never"
-                ]
             }
 
             // Parent/child tracking
@@ -807,14 +1124,18 @@ Map analyzeDevices() {
             }
             stats.byProtocol[protocol] = (stats.byProtocol[protocol] ?: 0) + 1
 
-            // Battery tracking
+            // Battery tracking — battery level is in currentStates, not a top-level field
             Integer batteryLevel = null
-            if (device.battery != null) {
-                stats.batteryDevices++
-                batteryLevel = device.battery instanceof Number ? device.battery.intValue() : 100
-                if (batteryLevel <= (settings.lowBatteryThreshold ?: 20)) {
-                    stats.lowBatteryDevices << [name: device.name ?: "Unknown", battery: batteryLevel]
-                }
+            List currentStates = device.currentStates ?: []
+            Map batteryState = currentStates.find { it.key == "battery" }
+            if (batteryState?.value != null) {
+                try {
+                    batteryLevel = batteryState.value.toString().toFloat().toInteger()
+                    stats.batteryDevices++
+                    if (batteryLevel <= (settings.lowBatteryThreshold ?: 20)) {
+                        stats.lowBatteryDevices << [id: device.id, name: device.name ?: "Unknown", battery: batteryLevel]
+                    }
+                } catch (Exception e) { /* non-numeric battery value */ }
             }
 
             // Add to full device list
@@ -823,75 +1144,78 @@ Map analyzeDevices() {
                 name: device.name ?: "Unknown",
                 label: device.label ?: device.name ?: "Unknown",
                 type: typeName,
+                userType: device.user ?: false,
+                deviceTypeId: device.deviceTypeId,
                 protocol: protocol,
                 status: device.disabled ? "Disabled" : (lastActivity && lastActivity > inactivityThresholdMs ? "Active" : "Inactive"),
                 lastActivity: lastActivity ? new Date(lastActivity).format("yyyy-MM-dd HH:mm") : "Never",
                 battery: batteryLevel,
-                parent: deviceEntry.parent ?: false,
-                child: deviceEntry.child ?: false,
+                isParent: deviceEntry.parent ?: false,
+                isChild: deviceEntry.child ?: false,
                 linked: device.linked ?: false,
-                room: device.room ?: "",
-                parentApp: ""
+                room: device.roomName ?: "",
+                parentAppId: null,
+                parentAppName: null,
+                parentDeviceId: null,
+                parentDeviceName: null
             ]
         } catch (Exception e) {
             log.warn "Error processing device ${deviceEntry.key}: ${e.message}"
         }
     }
 
-    // Second pass: fetch full data for protocol detection and parent app tracking
-    if (devicesNeedingFullData.size() > 0) {
-        if (debugLogging) log.debug "Fetching full data for ${devicesNeedingFullData.size()} devices"
-        devicesNeedingFullData.each { deviceId ->
+    // Second pass: fetch full data for protocol detection and parent tracking
+    // Build set of all device IDs needing full data: protocol-unknown + child devices
+    Set allNeedingFullData = new HashSet(devicesNeedingFullData)
+    devicesList.each { deviceEntry ->
+        if (deviceEntry.child == true && deviceEntry.data?.id) {
+            allNeedingFullData << deviceEntry.data.id
+        }
+    }
+
+    // Also check system devices that might have a parent app
+    devicesList.each { deviceEntry ->
+        Map device = deviceEntry.data
+        if (device?.id && device.source == "System" && !device.linked &&
+            deviceEntry.parent == false && deviceEntry.child == false) {
+            allNeedingFullData << device.id
+        }
+    }
+
+    if (allNeedingFullData.size() > 0) {
+        if (debugLogging) log.debug "Fetching full data for ${allNeedingFullData.size()} devices"
+        allNeedingFullData.each { deviceId ->
             try {
                 Map fullDevice = fetchEndpoint(DEVICE_FULL_JSON_URL + deviceId, "device ${deviceId}", 10)
-                if (fullDevice && !fullDevice.error) {
+                if (!fullDevice || fullDevice.error) return
+                Map deviceRecord = stats.allDevices.find { it.id == deviceId }
+                if (!deviceRecord) return
+
+                // Protocol detection
+                if (deviceRecord.protocol == PROTOCOL_OTHER) {
                     String newProtocol = determineProtocolFromFullData(fullDevice)
                     if (newProtocol != PROTOCOL_OTHER) {
                         stats.byProtocol[PROTOCOL_OTHER]--
                         stats.byProtocol[newProtocol] = (stats.byProtocol[newProtocol] ?: 0) + 1
-
-                        Map deviceRecord = stats.allDevices.find { it.id == deviceId }
-                        if (deviceRecord) deviceRecord.protocol = newProtocol
+                        deviceRecord.protocol = newProtocol
                     }
+                }
 
-                    if (fullDevice.device && fullDevice.device.parentAppId) {
-                        String parentAppName = fullDevice.parentApp?.label ?: fullDevice.parentApp?.name ?: "Unknown App"
-                        stats.byParentApp[parentAppName] = (stats.byParentApp[parentAppName] ?: 0) + 1
+                // Parent app tracking
+                if (fullDevice.device?.parentAppId) {
+                    deviceRecord.parentAppId = fullDevice.device.parentAppId
+                    deviceRecord.parentAppName = fullDevice.parentApp?.label ?: fullDevice.parentApp?.name ?: "App ${fullDevice.device.parentAppId}"
+                }
 
-                        Map deviceRecord = stats.allDevices.find { it.id == deviceId }
-                        if (deviceRecord) deviceRecord.parentApp = parentAppName
-                    }
+                // Parent device tracking
+                if (fullDevice.device?.parentDeviceId) {
+                    deviceRecord.parentDeviceId = fullDevice.device.parentDeviceId
+                    deviceRecord.parentDeviceName = fullDevice.parentDevice?.label ?: fullDevice.parentDevice?.name ?: "Device ${fullDevice.device.parentDeviceId}"
                 }
             } catch (Exception e) {
                 log.warn "Error fetching full data for device ${deviceId}: ${e.message}"
             }
         }
-    }
-
-    // Third pass: system devices parent app tracking
-    List systemDevicesToCheck = devicesList.findAll { deviceEntry ->
-        Map device = deviceEntry.data
-        device.source == "System" && !device.linked && deviceEntry.parent == false && deviceEntry.child == false
-    }.take(50)
-
-    systemDevicesToCheck.each { deviceEntry ->
-        try {
-            def deviceId = deviceEntry.data.id
-            Map fullDevice = fetchEndpoint(DEVICE_FULL_JSON_URL + deviceId, "device ${deviceId}", 10)
-            if (fullDevice && !fullDevice.error && fullDevice.device && fullDevice.device.parentAppId) {
-                String parentAppName = fullDevice.parentApp?.label ?: fullDevice.parentApp?.name ?: "Unknown App"
-                stats.byParentApp[parentAppName] = (stats.byParentApp[parentAppName] ?: 0) + 1
-
-                Map deviceRecord = stats.allDevices.find { it.id == deviceId }
-                if (deviceRecord) deviceRecord.parentApp = parentAppName
-            }
-        } catch (Exception e) {
-            log.warn "Error fetching parent app for device ${deviceEntry.data.id}: ${e.message}"
-        }
-    }
-
-    stats.inactiveDevicesList = stats.inactiveDevicesList.sort { a, b ->
-        (a.lastActivity ?: "0") <=> (b.lastActivity ?: "0")
     }
 
     return stats
@@ -1011,51 +1335,54 @@ Map analyzeNetwork() {
 
 Map analyzeSystemHealth() {
     Map memory = fetchSystemResources()
-    Map runtime = fetchCurrentStats()
     Map stateCompression = fetchStateCompression()
+    Map hubAlerts = fetchHubAlerts()
+    Integer databaseSize = fetchDatabaseSize()
+    Float temperature = fetchTemperature()
+    Map eventStateLimits = fetchEventStateLimits()
 
     Map health = [
         memory: memory,
-        runtime: runtime,
         stateCompression: stateCompression,
+        hubAlerts: hubAlerts,
+        databaseSize: databaseSize,
+        temperature: temperature,
+        eventStateLimits: eventStateLimits,
         alerts: []
     ]
 
-    if (memory && memory.freeOSMemory < 102400) {
-        health.alerts << "Low OS memory: ${formatMemory(memory.freeOSMemory)}"
+    // Generate alerts from observed data
+    if (memory && memory.freeOSMemory < 76800) {
+        health.alerts << "<span style='color: #d32f2f;'>Critical: OS memory critically low (${formatMemory(memory.freeOSMemory)}) — hub may become unresponsive</span>"
+    } else if (memory && memory.freeOSMemory < 102400) {
+        health.alerts << "<span style='color: #ff9800;'>Warning: Low OS memory (${formatMemory(memory.freeOSMemory)})</span>"
     }
     if (memory && memory.cpuAvg5min > 80) {
-        health.alerts << "High CPU usage: ${String.format('%.1f', memory.cpuAvg5min as float)}%"
+        health.alerts << "<span style='color: #d32f2f;'>Critical: Very high CPU usage (${String.format('%.1f', memory.cpuAvg5min as float)}%)</span>"
+    } else if (memory && memory.cpuAvg5min > 30) {
+        health.alerts << "<span style='color: #ff9800;'>Warning: Elevated CPU usage (${String.format('%.1f', memory.cpuAvg5min as float)}%)</span>"
+    }
+    if (temperature != null && temperature > 77) {
+        health.alerts << "<span style='color: #d32f2f;'>Critical: Hub temperature very high (${String.format('%.1f', temperature)}\u00B0C)</span>"
+    } else if (temperature != null && temperature > 50) {
+        health.alerts << "<span style='color: #ff9800;'>Warning: Hub temperature elevated (${String.format('%.1f', temperature)}\u00B0C)</span>"
+    }
+
+    // Incorporate platform alerts
+    if (hubAlerts.alerts) {
+        Map platformAlerts = hubAlerts.alerts
+        ALERT_DISPLAY_NAMES.each { String key, String displayName ->
+            if (platformAlerts[key] == true) {
+                String severity = (key in ["hubLoadSevere", "hubZwaveCrashed", "hubHugeDatabase", "zwaveOffline", "zigbeeOffline"]) ? "#d32f2f" : "#ff9800"
+                health.alerts << "<span style='color: ${severity};'>${displayName}</span>"
+            }
+        }
+    }
+    if (hubAlerts.spammyDevicesMessage) {
+        health.alerts << "<span style='color: #ff9800;'>Spammy Devices: ${hubAlerts.spammyDevicesMessage}</span>"
     }
 
     return health
-}
-
-int calculateHealthScore(Map systemHealth) {
-    int score = 100
-
-    // Memory health (20 points)
-    if (systemHealth.memory) {
-        int freeOS = (systemHealth.memory.freeOSMemory ?: 0) as int
-        if (freeOS < 51200) score -= 20
-        else if (freeOS < 102400) score -= 10
-        else if (freeOS < 204800) score -= 5
-    }
-
-    // CPU health (20 points)
-    if (systemHealth.memory) {
-        float cpu = (systemHealth.memory.cpuAvg5min ?: 0) as float
-        if (cpu > 90) score -= 20
-        else if (cpu > 70) score -= 10
-        else if (cpu > 50) score -= 5
-    }
-
-    // Alert count (20 points)
-    if (systemHealth.alerts) {
-        score -= Math.min(20, ((List) systemHealth.alerts).size() * 10)
-    }
-
-    return Math.max(0, score)
 }
 
 // ===== PROTOCOL DETECTION =====
@@ -1541,14 +1868,6 @@ String generateSnapshotDiff(Map older, Map newer) {
     String appSign = appCountDelta > 0 ? "+" : ""
     sb.append("&nbsp;&nbsp;Total: ${older.apps?.totalApps ?: 0} -> ${newer.apps?.totalApps ?: 0} (${appSign}${appCountDelta})<br>")
 
-    // Health score delta
-    int olderHealth = calculateHealthScore(older.systemHealth ?: [:])
-    int newerHealth = calculateHealthScore(newer.systemHealth ?: [:])
-    int healthDelta = newerHealth - olderHealth
-    String healthSign = healthDelta > 0 ? "+" : ""
-    String healthColor = healthDelta > 0 ? "#388e3c" : (healthDelta < 0 ? "#d32f2f" : "#666")
-    sb.append("<br><b>Health Score:</b> ${olderHealth} -> ${newerHealth} (<span style='color: ${healthColor};'>${healthSign}${healthDelta}</span>)<br>")
-
     // Memory delta
     if (older.systemHealth?.memory && newer.systemHealth?.memory) {
         int olderMem = (older.systemHealth.memory.freeOSMemory ?: 0) as int
@@ -1620,7 +1939,6 @@ void generateFullReport() {
         <h2>Executive Summary</h2>
         <div class="metric"><div class="metric-label">Total Devices</div><div class="metric-value">${deviceStats.totalDevices}</div></div>
         <div class="metric"><div class="metric-label">Total Apps</div><div class="metric-value">${appStats.totalApps}</div></div>
-        <div class="metric"><div class="metric-label">Health Score</div><div class="metric-value">${calculateHealthScore(systemHealth)}/100</div></div>
 
         <h2>Device Analysis</h2>
         <table>
@@ -1663,7 +1981,7 @@ void generateFullReport() {
             '</ul></div>' :
             '<p>No system alerts</p>'}
 
-        <h3>Memory & Resources</h3>
+        <h3>Resources</h3>
         <table>
             <tr><th>Resource</th><th>Value</th></tr>
             ${systemHealth.memory ? """
@@ -1671,10 +1989,12 @@ void generateFullReport() {
             <tr><td>CPU Average (5m)</td><td>${String.format('%.2f', (systemHealth.memory.cpuAvg5min ?: 0) as float)}%</td></tr>
             <tr><td>Free Java Memory</td><td>${formatMemory(systemHealth.memory.freeJavaMemory ?: 0)}</td></tr>
             """ : '<tr><td colspan="2">Memory data unavailable</td></tr>'}
+            ${systemHealth.temperature != null ? "<tr><td>Hub Temperature</td><td>${String.format('%.1f', systemHealth.temperature)}\u00B0C</td></tr>" : ""}
+            ${systemHealth.databaseSize != null ? "<tr><td>Database Size</td><td>${systemHealth.databaseSize} MB</td></tr>" : ""}
         </table>
 
         <div class="footer">
-            <p>Generated by Hub Diagnostics v3.0.0</p>
+            <p>Generated by Hub Diagnostics v3.1.0</p>
             <p>Hubitat Elevation - ${hubInfo.name}</p>
         </div>
     </div>
@@ -1693,24 +2013,25 @@ String generateHtmlReportDeviceTable(List allDevices) {
 
     StringBuilder sb = new StringBuilder()
     sb.append("<table><thead><tr>")
-    sb.append("<th>Name</th><th>Type</th><th>Protocol</th><th>Status</th>")
-    sb.append("<th>Last Activity</th><th>Battery</th><th>Parent App</th><th>Room</th>")
+    sb.append("<th>Name</th><th>Type</th><th>Protocol</th><th>Room</th><th>Status</th>")
+    sb.append("<th>Last Activity</th><th>Battery</th><th>Parent</th>")
     sb.append("</tr></thead><tbody>")
 
     List sorted = allDevices.sort { it.name }
     sorted.each { Map device ->
         String statusColor = device.status == "Disabled" ? "#d32f2f" : (device.status == "Active" ? "#388e3c" : "#ff9800")
         String protocolDisplay = PROTOCOL_DISPLAY[device.protocol] ?: (device.protocol ?: "").toString().capitalize()
+        String parentDisplay = device.parentAppName ?: device.parentDeviceName ?: "-"
 
         sb.append("<tr>")
         sb.append("<td><strong>${device.name}</strong></td>")
         sb.append("<td style='font-size: 0.9em;'>${device.type}</td>")
         sb.append("<td>${protocolDisplay}</td>")
+        sb.append("<td>${device.room ?: '-'}</td>")
         sb.append("<td style='color: ${statusColor};'><strong>${device.status}</strong></td>")
         sb.append("<td>${device.lastActivity ?: 'Never'}</td>")
         sb.append("<td>${device.battery != null ? device.battery + '%' : '-'}</td>")
-        sb.append("<td>${device.parentApp ?: '-'}</td>")
-        sb.append("<td>${device.room ?: '-'}</td>")
+        sb.append("<td>${parentDisplay}</td>")
         sb.append("</tr>")
     }
 
@@ -1807,21 +2128,34 @@ String generateQuickSummary() {
         Map appStats = analyzeAppsQuick()
         Map hubInfo = getHubInfo()
 
-        // Lightweight health: just memory + CPU
+        // Lightweight health: memory, CPU, hub alerts
         Map resources = fetchSystemResources()
-        String memoryLine = ""
-        int healthScore = 100
+        Map hubAlerts = fetchHubAlerts()
+        Float temperature = fetchTemperature()
+        Integer databaseSize = fetchDatabaseSize()
+
+        String resourceLine = ""
         if (resources) {
-            memoryLine = "\n<b>Resources:</b> ${formatMemory(resources.freeOSMemory ?: 0)} free | CPU: ${String.format('%.1f', (resources.cpuAvg5min ?: 0) as float)}%"
-            int freeOS = resources.freeOSMemory ?: 0
-            float cpu = (resources.cpuAvg5min ?: 0) as float
-            if (freeOS < 51200) healthScore -= 20
-            else if (freeOS < 102400) healthScore -= 10
-            else if (freeOS < 204800) healthScore -= 5
-            if (cpu > 90) healthScore -= 20
-            else if (cpu > 70) healthScore -= 10
-            else if (cpu > 50) healthScore -= 5
+            String memColor = (resources.freeOSMemory ?: 0) < 76800 ? "#d32f2f" : ((resources.freeOSMemory ?: 0) < 102400 ? "#ff9800" : "#388e3c")
+            String cpuColor = (resources.cpuAvg5min ?: 0) > 80 ? "#d32f2f" : ((resources.cpuAvg5min ?: 0) > 30 ? "#ff9800" : "#388e3c")
+            resourceLine = "\n<b>Resources:</b> <span style='color: ${memColor};'>${formatMemory(resources.freeOSMemory ?: 0)} free</span> | CPU: <span style='color: ${cpuColor};'>${String.format('%.1f', (resources.cpuAvg5min ?: 0) as float)}%</span>"
+            if (temperature != null) {
+                String tempColor = temperature > 77 ? "#d32f2f" : (temperature > 50 ? "#ff9800" : "#388e3c")
+                resourceLine += " | Temp: <span style='color: ${tempColor};'>${String.format('%.1f', temperature)}\u00B0C</span>"
+            }
+            if (databaseSize != null) {
+                resourceLine += " | DB: ${databaseSize} MB"
+            }
         }
+
+        // Count active platform alerts
+        int alertCount = 0
+        if (hubAlerts.alerts) {
+            ALERT_DISPLAY_NAMES.each { String key, String name ->
+                if (hubAlerts.alerts[key] == true) alertCount++
+            }
+        }
+        String alertLine = alertCount > 0 ? "\n<span style='color: #d32f2f;'><b>Platform Alerts:</b> ${alertCount} active — check System Health for details</span>" : ""
 
         return """<b>Hub Diagnostics Summary</b>
 <b>Hub:</b> ${hubInfo.name} | Firmware: ${hubInfo.firmware} | Hardware: ${hubInfo.hardware}
@@ -1832,8 +2166,7 @@ String generateQuickSummary() {
   Hub Mesh: ${deviceStats.byProtocol[PROTOCOL_HUBMESH]} | Virtual: ${deviceStats.byProtocol[PROTOCOL_VIRTUAL]} | LAN: ${deviceStats.byProtocol[PROTOCOL_LAN]}
 
 <b>Applications:</b> ${appStats.totalApps} total (System: ${appStats.builtInApps} | User: ${appStats.userApps})
-${memoryLine}
-<b>Health Score:</b> ${healthScore}/100"""
+${resourceLine}${alertLine}"""
     } catch (Exception e) {
         log.error "Error generating summary: ${getObjectClassName(e)}: ${e.message}"
         return "Error generating summary. Please check logs."
@@ -1918,27 +2251,37 @@ Map analyzeAppsQuick() {
     return [totalApps: totalApps, userApps: userApps, builtInApps: builtInApps]
 }
 
-String getCurrentStatsSummary() {
-    Map stats = fetchCurrentStats()
+String generateRuntimeSummary(Map stats, Map resources) {
     if (!stats) {
         return "Unable to fetch current runtime stats"
     }
 
-    Map resources = fetchSystemResources()
+    String devPctColor = "#388e3c"
+    String appPctColor = "#388e3c"
+    try {
+        float devPct = (stats.devicePct ?: "0%").toString().replace('%', '').toFloat()
+        float appPct = (stats.appPct ?: "0%").toString().replace('%', '').toFloat()
+        if (devPct + appPct > 10) { devPctColor = "#d32f2f"; appPctColor = "#d32f2f" }
+        else if (devPct + appPct > 6) { devPctColor = "#ff9800"; appPctColor = "#ff9800" }
+    } catch (Exception e) { /* ignore */ }
 
-    String resourceInfo = ""
+    List metrics = [
+        ["Hub Uptime", stats.uptime ?: "N/A"],
+        ["Devices Runtime", "${stats.totalDevicesRuntime ?: 'N/A'} (<span style='color: ${devPctColor};'>${stats.devicePct ?: 'N/A'}</span>)"],
+        ["Apps Runtime", "${stats.totalAppsRuntime ?: 'N/A'} (<span style='color: ${appPctColor};'>${stats.appPct ?: 'N/A'}</span>)"],
+        ["Total Devices", stats.deviceStats?.size() ?: 0],
+        ["Total Apps", stats.appStats?.size() ?: 0],
+        ["Scheduled Jobs", stats.jobs?.size() ?: 0]
+    ]
+
     if (resources) {
-        resourceInfo = """<br><b>Free OS Memory:</b> ${formatMemory(resources.freeOSMemory ?: 0)}
-<br><b>CPU Average (5m):</b> ${String.format('%.2f', (resources.cpuAvg5min ?: 0) as float)}%
-<br><b>Free Java Memory:</b> ${formatMemory(resources.freeJavaMemory ?: 0)}"""
+        String memColor = (resources.freeOSMemory ?: 0) < 76800 ? "#d32f2f" : ((resources.freeOSMemory ?: 0) < 102400 ? "#ff9800" : "#388e3c")
+        String cpuColor = (resources.cpuAvg5min ?: 0) > 80 ? "#d32f2f" : ((resources.cpuAvg5min ?: 0) > 30 ? "#ff9800" : "#388e3c")
+        metrics << ["Free OS Memory", "<span style='color: ${memColor};'>${formatMemory(resources.freeOSMemory ?: 0)}</span>"]
+        metrics << ["CPU Average (5m)", "<span style='color: ${cpuColor};'>${String.format('%.2f', (resources.cpuAvg5min ?: 0) as float)}%</span>"]
     }
 
-    return """<b>Uptime:</b> ${stats.uptime}<br>
-<b>Devices Runtime:</b> ${stats.totalDevicesRuntime} (${stats.devicePct})<br>
-<b>Apps Runtime:</b> ${stats.totalAppsRuntime} (${stats.appPct})<br>
-<b>Total Devices:</b> ${stats.deviceStats?.size() ?: 0}<br>
-<b>Total Apps:</b> ${stats.appStats?.size() ?: 0}<br>
-<b>Scheduled Jobs:</b> ${stats.jobs?.size() ?: 0}${resourceInfo}"""
+    return formatMetricsTable(metrics)
 }
 
 String generateCheckpointTable(List checkpoints) {
@@ -1979,20 +2322,22 @@ String generateSnapshotsTable(List snapshots) {
     sb.append("<th style='padding: 8px; text-align: left; border: 1px solid #ddd;'>Timestamp</th>")
     sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Devices</th>")
     sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Apps</th>")
-    sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Health</th>")
+    sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Memory</th>")
     sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd; width: 80px;'>Action</th>")
     sb.append('</tr></thead><tbody>')
 
     snapshots.eachWithIndex { Map snap, int idx ->
         String rowColor = idx % 2 == 0 ? "#f9f9f9" : "#ffffff"
-        int health = calculateHealthScore(snap.systemHealth ?: [:])
-        String healthColor = health >= 80 ? "#388e3c" : (health >= 60 ? "#ff9800" : "#d32f2f")
+        String memDisplay = "N/A"
+        if (snap.systemHealth?.memory?.freeOSMemory) {
+            memDisplay = formatMemory(snap.systemHealth.memory.freeOSMemory as int)
+        }
 
         sb.append("<tr style='background-color: ${rowColor};'>")
         sb.append("<td style='padding: 8px; border: 1px solid #ddd;'>${snap.timestamp}</td>")
         sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${snap.devices?.totalDevices ?: 0}</td>")
         sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${snap.apps?.totalApps ?: 0}</td>")
-        sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd; color: ${healthColor};'><b>${health}</b></td>")
+        sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${memDisplay}</td>")
         sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>")
         sb.append("<input type='button' name='btnDeleteSnapshot_${idx}' value='Delete' class='mdl-button' style='font-size: 10px;' />")
         sb.append("</td></tr>")
@@ -2146,13 +2491,12 @@ Map getEmptyDeviceStats() {
     return [
         totalDevices: 0, activeDevices: 0, inactiveDevices: 0, disabledDevices: 0,
         parentDevices: 0, childDevices: 0, linkedDevices: 0, batteryDevices: 0,
-        lowBatteryDevices: [], inactiveDevicesList: [], allDevices: [],
+        lowBatteryDevices: [], allDevices: [],
         byType: [:],
         byProtocol: [(PROTOCOL_ZIGBEE): 0, (PROTOCOL_ZWAVE): 0, (PROTOCOL_MATTER): 0,
                      (PROTOCOL_LAN): 0, (PROTOCOL_VIRTUAL): 0, (PROTOCOL_MAKER): 0,
                      (PROTOCOL_CLOUD): 0, (PROTOCOL_HUBMESH): 0, (PROTOCOL_OTHER): 0],
-        byStatus: [active: 0, inactive: 0, disabled: 0],
-        byParentApp: [:]
+        byStatus: [active: 0, inactive: 0, disabled: 0]
     ]
 }
 
