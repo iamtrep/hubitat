@@ -3150,6 +3150,13 @@ String renderExportSection(String title, String body) {
     return "<div class='section-block'><h2>${title}</h2>${body ?: '<p>No data available</p>'}</div>"
 }
 
+String renderExportCollapsible(String title, String body, int itemCount, int collapseThreshold = 10) {
+    if (!body) return ""
+    boolean shouldCollapse = itemCount > collapseThreshold
+    String openAttr = shouldCollapse ? "" : " open"
+    return "<details${openAttr}><summary style='cursor: pointer; font-weight: bold; margin: 8px 0;'>${title}</summary>${body}</details>"
+}
+
 String renderExportMetricTable(List metrics) {
     return formatMetricsTable(metrics ?: [])
 }
@@ -3195,8 +3202,12 @@ String renderExportPerformance(Map reportData) {
     sb.append("<p><i>Create perf checkpoints to compare activity over a specific time window. By default, the tables below show all activity since the last reboot.</i></p>")
     sb.append("<p>Current checkpoints: ${pageModel.checkpointCount ?: 0}/${settings.maxCheckpoints ?: 10}</p>")
     if (checkpoints) {
-        sb.append("<h3>Saved Checkpoints</h3>")
-        sb.append(stripDeleteButtons(generateCheckpointTable(checkpoints)))
+        sb.append(renderExportCollapsible(
+            "Saved Checkpoints (${checkpoints.size()})",
+            stripDeleteButtons(generateCheckpointTable(checkpoints)),
+            checkpoints.size(),
+            10
+        ))
     }
 
     if (pageModel.comparisonHtml) {
@@ -3277,15 +3288,20 @@ String renderExportNetwork(Map reportData) {
             ["Nodes with Packet Errors", zwaveMesh.nodesWithErrors ?: 0],
             ["Total Route Changes", zwaveMesh.totalRouteChanges ?: 0]
         ]))
-        sb.append(renderExportSortableTable("exportZwaveMesh", [
-            [label: "Device", field: "name", type: "string"],
-            [label: "RSSI", field: "rssi", type: "number"],
-            [label: "PER %", field: "per", type: "number"],
-            [label: "Neighbors", field: "neighbors", type: "number"],
-            [label: "Route", field: "route", type: "string"],
-            [label: "Route Changes", field: "routeChanges", type: "number"],
-            [label: "State", field: "state", type: "string"]
-        ], nodeRows))
+        sb.append(renderExportCollapsible(
+            "Z-Wave Mesh Nodes (${nodeRows.size()})",
+            renderExportSortableTable("exportZwaveMesh", [
+                [label: "Device", field: "name", type: "string"],
+                [label: "RSSI", field: "rssi", type: "number"],
+                [label: "PER %", field: "per", type: "number"],
+                [label: "Neighbors", field: "neighbors", type: "number"],
+                [label: "Route", field: "route", type: "string"],
+                [label: "Route Changes", field: "routeChanges", type: "number"],
+                [label: "State", field: "state", type: "string"]
+            ], nodeRows),
+            nodeRows.size(),
+            10
+        ))
 
         List problemNodes = zwaveMesh.nodes.findAll { Map n -> n.state != "OK" || n.per > 1 }
         if (problemNodes) {
@@ -3391,17 +3407,22 @@ String renderExportDevices(Map reportData) {
     sb.append(renderExportMetricTable(buildDeviceSummaryMetrics(deviceStats)))
     sb.append("<h3>Protocol Distribution</h3>")
     sb.append(formatProtocolTable(deviceStats.byProtocol ?: [:], deviceStats.idsByProtocol ?: [:]))
-    sb.append("<h3>All Devices</h3>")
-    sb.append(renderExportSortableTable("exportDevices", [
-        [label: "Name", field: "name", type: "string"],
-        [label: "Type", field: "type", type: "string"],
-        [label: "Protocol", field: "protocol", type: "string"],
-        [label: "Room", field: "room", type: "string"],
-        [label: "Status", field: "status", type: "string"],
-        [label: "Last Activity", field: "lastActivity", type: "string"],
-        [label: "Battery", field: "battery", type: "number"],
-        [label: "Parent", field: "parent", type: "string"]
-    ], pageModel.deviceRows ?: []))
+    List deviceRows = pageModel.deviceRows ?: []
+    sb.append(renderExportCollapsible(
+        "All Devices (${deviceRows.size()})",
+        renderExportSortableTable("exportDevices", [
+            [label: "Name", field: "name", type: "string"],
+            [label: "Type", field: "type", type: "string"],
+            [label: "Protocol", field: "protocol", type: "string"],
+            [label: "Room", field: "room", type: "string"],
+            [label: "Status", field: "status", type: "string"],
+            [label: "Last Activity", field: "lastActivity", type: "string"],
+            [label: "Battery", field: "battery", type: "number"],
+            [label: "Parent", field: "parent", type: "string"]
+        ], deviceRows),
+        deviceRows.size(),
+        20
+    ))
     if (pageModel.lowBatteryHtml) {
         sb.append("<h3>Low Battery Alerts</h3>")
         sb.append(pageModel.lowBatteryHtml)
@@ -3415,28 +3436,44 @@ String renderExportApps(Map reportData) {
     StringBuilder sb = new StringBuilder()
     sb.append(renderExportMetricTable(buildAppSummaryMetrics(appStats)))
     if (pageModel.appTypeCount > 0) {
-        sb.append("<h3>App Types</h3>")
-        sb.append(formatAppsByTypeTable(appStats))
+        sb.append(renderExportCollapsible(
+            "App Types (${pageModel.appTypeCount})",
+            formatAppsByTypeTable(appStats),
+            pageModel.appTypeCount,
+            10
+        ))
     }
     if (pageModel.hierarchyCount > 0) {
-        sb.append("<h3>Parent/Child Hierarchy</h3>")
-        sb.append(formatParentChildHierarchy(appStats.parentChildHierarchy))
+        sb.append(renderExportCollapsible(
+            "Parent/Child Hierarchy (${pageModel.hierarchyCount})",
+            formatParentChildHierarchy(appStats.parentChildHierarchy),
+            pageModel.hierarchyCount,
+            10
+        ))
     }
     if (appStats.userAppsList) {
-        sb.append("<h3>User App Instances</h3>")
-        sb.append(renderExportUserAppsTable(appStats.userAppsList ?: []))
+        sb.append(renderExportCollapsible(
+            "User App Instances (${appStats.userAppsList.size()})",
+            renderExportUserAppsTable(appStats.userAppsList ?: []),
+            appStats.userAppsList.size(),
+            10
+        ))
     }
     if (pageModel.platformAppCount > 0) {
-        sb.append("<h3>Platform Apps</h3>")
-        sb.append(renderExportSortableTable("exportPlatformApps", [
-            [label: "Name", field: "name", type: "string"],
-            [label: "State Size", field: "stateSize", type: "number"],
-            [label: "CPU %", field: "pctTotal", type: "number"],
-            [label: "Exec Count", field: "count", type: "number"],
-            [label: "Avg (ms)", field: "average", type: "number"],
-            [label: "Hub Actions", field: "hubActions", type: "number"],
-            [label: "Cloud Calls", field: "cloudCalls", type: "number"]
-        ], pageModel.platformRows ?: []))
+        sb.append(renderExportCollapsible(
+            "Platform Apps (${pageModel.platformAppCount})",
+            renderExportSortableTable("exportPlatformApps", [
+                [label: "Name", field: "name", type: "string"],
+                [label: "State Size", field: "stateSize", type: "number"],
+                [label: "CPU %", field: "pctTotal", type: "number"],
+                [label: "Exec Count", field: "count", type: "number"],
+                [label: "Avg (ms)", field: "average", type: "number"],
+                [label: "Hub Actions", field: "hubActions", type: "number"],
+                [label: "Cloud Calls", field: "cloudCalls", type: "number"]
+            ], pageModel.platformRows ?: []),
+            pageModel.platformAppCount,
+            10
+        ))
     }
     return sb.toString()
 }
