@@ -235,15 +235,17 @@ Map appsPage() {
         section("Application Summary") {
             int runtimeTotal = appStats.runtimeTotalApps ?: 0
             int apiTotal = appStats.totalApps
+            int platformCount = appStats.platformApps?.size() ?: 0
             List metrics = [
-                ["App Instances (from API)", apiTotal],
+                ["Visible App Instances", apiTotal],
                 ["System Apps", appStats.builtInApps],
                 ["User Apps", appStats.userApps],
                 ["Parent Apps", appStats.parentApps],
                 ["Child Apps", appStats.childApps]
             ]
-            if (runtimeTotal > apiTotal) {
-                metrics.add(0, ["Total Apps (incl. platform)", runtimeTotal])
+            if (platformCount > 0) {
+                metrics << ["Platform Apps (hidden)", platformCount]
+                metrics << ["Total (from runtime)", runtimeTotal]
             }
             paragraph formatMetricsTable(metrics)
         }
@@ -257,6 +259,47 @@ Map appsPage() {
         section("App Instances by Type") {
             paragraph formatAppsByTypeTable(appStats)
         }
+
+        if (appStats.platformApps && appStats.platformApps.size() > 0) {
+            section("Platform Apps (${appStats.platformApps.size()})") {
+                paragraph "<i>Apps not exposed in the Apps list API but tracked by runtime stats. Includes dashboard room views, mode setters, and internal platform services. Monitor state size for unbounded growth.</i>"
+
+                // Flag any with concerning state size
+                List largeStateApps = appStats.platformApps.findAll { (it.stateSize as int) > 5000 }
+                if (largeStateApps) {
+                    paragraph "<span style='color: #ff9800;'>\u26A0 ${largeStateApps.size()} platform app${largeStateApps.size() > 1 ? 's' : ''} with state size > 5 KB — monitor for unbounded growth</span>"
+                }
+
+                List platformRows = appStats.platformApps.collect { Map app ->
+                    int stateSize = app.stateSize as int
+                    String stateSizeColor = stateSize > 10000 ? "#d32f2f" : (stateSize > 5000 ? "#ff9800" : "")
+                    Map row = [
+                        name: app.name,
+                        stateSize: stateSize,
+                        pctTotal: String.format('%.3f', (app.pctTotal as Number).floatValue()) + "%",
+                        _pctTotalSort: app.pctTotal,
+                        count: app.count,
+                        average: app.count > 0 ? String.format('%.1f', (app.average as Number).floatValue()) : "0",
+                        _averageSort: app.average,
+                        hubActions: app.hubActionCount,
+                        cloudCalls: app.cloudCallCount
+                    ]
+                    if (stateSizeColor) row._stateSizeColor = stateSizeColor
+                    if (app.largeState) row._stateSizeColor = "#d32f2f"
+                    return row
+                }
+
+                paragraph generateSortableTable("platformApps", [
+                    [label: "Name", field: "name", type: "string"],
+                    [label: "State Size", field: "stateSize", type: "number"],
+                    [label: "CPU %", field: "pctTotal", type: "number"],
+                    [label: "Exec Count", field: "count", type: "number"],
+                    [label: "Avg (ms)", field: "average", type: "number"],
+                    [label: "Hub Actions", field: "hubActions", type: "number"],
+                    [label: "Cloud Calls", field: "cloudCalls", type: "number"]
+                ], platformRows)
+            }
+        }
     }
 }
 
@@ -264,6 +307,7 @@ Map networkPage() {
     Map networkData = analyzeNetwork()
     Map zigbeeMesh = fetchZigbeeMeshInfo()
     String zwaveVersion = fetchZwaveVersion()
+    Map zwaveMesh = extractZwaveMeshQuality(networkData.zwave ?: [:])
 
     dynamicPage(name: "networkPage", title: "Network & Wireless Analysis") {
         section("Network Configuration") {
@@ -321,20 +365,89 @@ Map networkPage() {
                             boolean noRoute = nodeData.route == null || nodeData.route == "" || nodeData.route == "No route"
                             boolean noName = !nodeData.name || nodeData.name == "Unknown" || nodeData.name == ""
                             if (isFailed || (noRoute && noName)) {
-                                ghostNodes << [id: nodeId, name: nodeData.name ?: "Unknown", status: nodeData.status ?: "No route"]
+                                ghostNodes << [id: nodeId, deviceId: nodeData.deviceId, name: nodeData.name ?: "Unknown", status: nodeData.status ?: "No route"]
                             }
                         }
                     }
                     if (ghostNodes) {
                         paragraph "<b style='color: #d32f2f;'>Possible Ghost Nodes (${ghostNodes.size()}):</b>"
                         ghostNodes.each { Map ghost ->
-                            paragraph "&nbsp;&nbsp;<span style='color: #d32f2f;'>Node ${ghost.id}: ${ghost.name} (${ghost.status})</span>"
+                            String ghostNameHtml = ghost.deviceId ? "<a href='/device/edit/${ghost.deviceId}' target='_blank' style='color: #d32f2f; text-decoration: underline;'>${ghost.name}</a>" : ghost.name
+                            paragraph "&nbsp;&nbsp;<span style='color: #d32f2f;'>Node ${ghost.id}: ${ghostNameHtml} (${ghost.status})</span>"
                         }
                         paragraph "<i>Ghost nodes can cause Z-Wave mesh instability. Remove them from Settings > Z-Wave Details.</i>"
                     }
                 }
             } else {
                 paragraph "<i>Z-Wave details unavailable</i>"
+            }
+        }
+
+        if (zwaveMesh && zwaveMesh.nodes) {
+            section("Z-Wave Mesh Quality") {
+                String avgPerColor = zwaveMesh.avgPer == 0 ? "#388e3c" : (zwaveMesh.avgPer <= 1 ? "#ff9800" : "#d32f2f")
+                String errColor = zwaveMesh.nodesWithErrors == 0 ? "#388e3c" : "#d32f2f"
+                List meshMetrics = [
+                    ["Node Count", zwaveMesh.nodeCount],
+                    ["Average PER", "<span style='color: ${avgPerColor};'>${String.format('%.1f', zwaveMesh.avgPer as float)}%</span>"],
+                    ["Nodes with Packet Errors", "<span style='color: ${errColor};'>${zwaveMesh.nodesWithErrors}</span>"],
+                    ["Total Route Changes", zwaveMesh.totalRouteChanges]
+                ]
+                if (zwaveMesh.avgRssi != null) {
+                    String rssiColor = zwaveMesh.avgRssi >= -60 ? "#388e3c" : (zwaveMesh.avgRssi >= -80 ? "#ff9800" : "#d32f2f")
+                    meshMetrics << ["Average RSSI", "<span style='color: ${rssiColor};'>${zwaveMesh.avgRssi} dBm</span>"]
+                }
+                paragraph formatMetricsTable(meshMetrics)
+
+                // Per-node table
+                List nodeRows = zwaveMesh.nodes.collect { Map n ->
+                    String stateColor = n.state == "OK" ? "" : "#d32f2f"
+                    String perColor = n.per > 1 ? "#d32f2f" : (n.per > 0 ? "#ff9800" : "")
+                    String rssiColor = ""
+                    if (n.rssi != null) {
+                        rssiColor = n.rssi >= -60 ? "#388e3c" : (n.rssi >= -80 ? "#ff9800" : "#d32f2f")
+                    }
+                    String nameHtml = n.deviceId ? "<a href='/device/edit/${n.deviceId}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(n.name as String)}</a>" : n.name
+                    Map row = [
+                        name: nameHtml,
+                        _nameSort: n.name,
+                        rssi: n.rssiStr ?: "N/A",
+                        _rssiSort: n.rssi ?: -999,
+                        per: n.per,
+                        neighbors: n.neighbors,
+                        route: n.route ?: "None",
+                        routeChanges: n.routeChanges,
+                        state: n.state
+                    ]
+                    if (stateColor) row["_stateColor"] = stateColor
+                    if (perColor) row["_perColor"] = perColor
+                    if (rssiColor) row["_rssiColor"] = rssiColor
+                    return row
+                }
+
+                paragraph generateSortableTable("zwMesh", [
+                    [label: "Device", field: "name", type: "string"],
+                    [label: "RSSI", field: "rssi", type: "number"],
+                    [label: "PER %", field: "per", type: "number"],
+                    [label: "Neighbors", field: "neighbors", type: "number"],
+                    [label: "Route", field: "route", type: "string"],
+                    [label: "Route Changes", field: "routeChanges", type: "number"],
+                    [label: "State", field: "state", type: "string"]
+                ], nodeRows)
+
+                // Problem node callout
+                List problemNodes = zwaveMesh.nodes.findAll { Map n -> n.state != "OK" || n.per > 1 }
+                if (problemNodes) {
+                    paragraph "<b style='color: #d32f2f;'>Problem Nodes (${problemNodes.size()}):</b>"
+                    problemNodes.each { Map n ->
+                        List issues = []
+                        if (n.state != "OK") issues << "State: ${n.state}"
+                        if (n.per > 1) issues << "PER: ${n.per}%"
+                        String probNameHtml = n.deviceId ? "<a href='/device/edit/${n.deviceId}' target='_blank' style='color: #d32f2f; text-decoration: underline;'>${escapeHtml(n.name as String)}</a>" : escapeHtml(n.name as String)
+                        paragraph "&nbsp;&nbsp;<span style='color: #d32f2f;'>${probNameHtml} — ${issues.join(', ')}</span>"
+                    }
+                    paragraph "<i>High PER (Packet Error Rate) indicates unreliable communication. Check device distance, interference, or replace failed nodes.</i>"
+                }
             }
         }
 
@@ -350,7 +463,7 @@ Map networkPage() {
                     channelDisplay += " <span style='color: #d32f2f;'>[Weak]</span>"
                 }
 
-                paragraph formatMetricsTable([
+                List zbMetrics = [
                     ["Enabled", zb.enabled ? "Yes" : "No"],
                     ["Healthy", "<span style='color: ${healthyColor};'>${zb.healthy ? 'Yes' : 'No'}</span>"],
                     ["Network State", zb.networkState ?: "Unknown"],
@@ -359,7 +472,22 @@ Map networkPage() {
                     ["Extended PAN ID", zb.extendedPanId ?: "N/A"],
                     ["Device Count", zb.devices ? zb.devices.size() : 0],
                     ["Join Mode", zb.inJoinMode ? "Active" : "Inactive"]
-                ])
+                ]
+                if (zb.devices) {
+                    int totalDevices = zb.devices.size()
+                    int activeDevices = zb.devices.count { it.active == true }
+                    int inactiveDevices = totalDevices - activeDevices
+                    String respColor = inactiveDevices == 0 ? "#388e3c" : (inactiveDevices > 3 ? "#d32f2f" : "#ff9800")
+                    zbMetrics << ["Responsive", "<span style='color: ${respColor};'>${activeDevices} / ${totalDevices}</span>"]
+                    if (inactiveDevices > 0) {
+                        List nonResponsive = zb.devices.findAll { it.active != true }.collect { Map d ->
+                            String dName = d.name ?: "Device ${d.id}"
+                            d.id ? "<a href='/device/edit/${d.id}' target='_blank' style='color: #d32f2f;'>${dName}</a>" : dName
+                        }
+                        zbMetrics << ["Non-Responsive", nonResponsive.join(', ')]
+                    }
+                }
+                paragraph formatMetricsTable(zbMetrics)
             } else {
                 paragraph "<i>Zigbee details unavailable</i>"
             }
@@ -542,6 +670,53 @@ Map performancePage() {
             }
         }
 
+        // Radio Activity — current message counts since reboot
+        Map zwaveData = fetchEndpoint(ZWAVE_DETAILS_URL, "Z-Wave details", 20)
+        Map zigbeeData = fetchEndpoint(ZIGBEE_DETAILS_URL, "Zigbee details", 20)
+        List zwaveMessages = extractZwaveMessageCounts(zwaveData)
+        List zigbeeMessages = extractZigbeeMessageCounts(zigbeeData)
+
+        if (zwaveMessages || zigbeeMessages) {
+            section("Radio Activity (Since Reboot)") {
+                paragraph "<i>Messages sent/received per radio device since the last hub reboot. Sorted by message count.</i>"
+
+                List allRadio = []
+                zwaveMessages.each { Map n ->
+                    allRadio << [name: n.name, deviceId: n.deviceId, protocol: "Z-Wave", messages: n.msgCount, routeChanges: n.routeChanges]
+                }
+                zigbeeMessages.each { Map d ->
+                    allRadio << [name: d.name, deviceId: d.id, protocol: "Zigbee", messages: d.msgCount, routeChanges: 0]
+                }
+
+                allRadio.sort { -it.messages }
+
+                float avgMsgs = allRadio.size() > 0 ? (allRadio.sum { it.messages } / allRadio.size()) as float : 0
+
+                List radioRows = allRadio.collect { Map item ->
+                    String radioNameHtml = item.deviceId ? "<a href='/device/edit/${item.deviceId}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(item.name as String)}</a>" : escapeHtml(item.name as String)
+                    Map row = [
+                        name: radioNameHtml,
+                        _nameSort: item.name,
+                        protocol: item.protocol,
+                        messages: item.messages,
+                        routeChanges: item.routeChanges
+                    ]
+                    if (item.messages > avgMsgs * 3 && item.messages > 100) row._messagesColor = "#d32f2f"
+                    else if (item.messages > avgMsgs * 2 && item.messages > 50) row._messagesColor = "#ff9800"
+                    if (item.routeChanges > 5) row._routeChangesColor = "#d32f2f"
+                    else if (item.routeChanges > 0) row._routeChangesColor = "#ff9800"
+                    return row
+                }
+
+                paragraph generateSortableTable("radioActivity", [
+                    [label: "Device", field: "name", type: "string"],
+                    [label: "Protocol", field: "protocol", type: "string"],
+                    [label: "Messages", field: "messages", type: "number"],
+                    [label: "Route Changes", field: "routeChanges", type: "number"]
+                ], radioRows)
+            }
+        }
+
         List checkpoints = loadCheckpoints()
 
         section("Checkpoint Management") {
@@ -646,11 +821,11 @@ Map systemHealthPage() {
             if (systemHealth.memory) {
                 Map mem = systemHealth.memory
                 String memColor = (mem.freeOSMemory ?: 0) < 76800 ? "#d32f2f" : ((mem.freeOSMemory ?: 0) < 102400 ? "#ff9800" : "#388e3c")
-                String cpuColor = (mem.cpuAvg5min ?: 0) > 80 ? "#d32f2f" : ((mem.cpuAvg5min ?: 0) > 30 ? "#ff9800" : "#388e3c")
+                String cpuColor = (mem.cpuAvg5min ?: 0) > 8.0 ? "#d32f2f" : ((mem.cpuAvg5min ?: 0) > 4.0 ? "#ff9800" : "#388e3c")
 
                 List resourceMetrics = [
                     ["Free OS Memory", "<span style='color: ${memColor};'>${formatMemory(mem.freeOSMemory ?: 0)}</span>"],
-                    ["CPU Average (5m)", "<span style='color: ${cpuColor};'>${String.format('%.2f', (mem.cpuAvg5min ?: 0) as float)}%</span>"],
+                    ["CPU Load Avg (5m)", "<span style='color: ${cpuColor};'>${String.format('%.2f', (mem.cpuAvg5min ?: 0) as float)}</span>"],
                     ["Total Java Memory", formatMemory(mem.totalJavaMemory ?: 0)],
                     ["Free Java Memory", formatMemory(mem.freeJavaMemory ?: 0)],
                     ["Direct Java Memory", formatMemory(mem.directJavaMemory ?: 0)]
@@ -770,6 +945,8 @@ Map settingsPage() {
         section("Device Monitoring") {
             input "inactivityDays", "number", title: "Device inactivity threshold (days)", defaultValue: 7, range: "1..90", required: true
             input "lowBatteryThreshold", "number", title: "Low battery threshold (%)", defaultValue: 20, range: "1..50", required: true
+            input "chattyDeviceThreshold", "number", title: "Chatty device threshold (msgs/min)", defaultValue: 10, range: "1..1000", required: true
+            paragraph "<i>Devices exceeding this message rate between checkpoints will be flagged as chatty.</i>"
         }
 
         section("Logging") {
@@ -1021,6 +1198,79 @@ String fetchZwaveVersion() {
     return fetchPlainText(ZWAVE_VERSION_URL, "Z-Wave version")
 }
 
+Map extractZwaveMeshQuality(Map zwaveData) {
+    if (!zwaveData || zwaveData.error || !zwaveData.nodes) return [:]
+
+    List nodes = []
+    int totalPer = 0
+    int nodesWithErrors = 0
+    int totalRouteChanges = 0
+    int rssiCount = 0
+    int rssiSum = 0
+
+    zwaveData.nodes.each { Map node ->
+        int per = (node.per ?: 0) as int
+        int neighborCount = (node.neighbors ?: 0) as int
+        int routeChanges = (node.routeChanges ?: 0) as int
+        String rssiStr = node.lwrRssi ?: ""
+        Integer rssiVal = null
+        if (rssiStr) {
+            java.util.regex.Matcher m = (rssiStr =~ /(-?\d+)/)
+            if (m.find()) {
+                rssiVal = m.group(1).toInteger()
+                rssiSum += rssiVal
+                rssiCount++
+            }
+        }
+
+        totalPer += per
+        if (per > 0) nodesWithErrors++
+        totalRouteChanges += routeChanges
+
+        nodes << [
+            nodeId: node.nodeId,
+            deviceId: node.deviceId,
+            name: node.deviceName ?: "Node ${node.nodeId}",
+            msgCount: (node.msgCount ?: 0) as int,
+            rssi: rssiVal,
+            rssiStr: rssiStr,
+            per: per,
+            neighbors: neighborCount,
+            route: node.route ?: "",
+            routeChanges: routeChanges,
+            state: node.nodeState ?: "Unknown",
+            lastTime: node.lastTime ?: "",
+            listening: node.listening ?: false,
+            security: node.security ?: ""
+        ]
+    }
+
+    return [
+        nodes: nodes,
+        nodeCount: nodes.size(),
+        avgPer: nodes.size() > 0 ? (totalPer / nodes.size()).toFloat() : 0,
+        nodesWithErrors: nodesWithErrors,
+        totalRouteChanges: totalRouteChanges,
+        avgRssi: rssiCount > 0 ? (rssiSum / rssiCount).toInteger() : null
+    ]
+}
+
+List extractZwaveMessageCounts(Map zwaveData) {
+    if (!zwaveData || zwaveData.error || !zwaveData.nodes) return []
+    return zwaveData.nodes.collect { Map node ->
+        [id: node.nodeId, deviceId: node.deviceId, name: node.deviceName ?: "Node ${node.nodeId}",
+         msgCount: (node.msgCount ?: 0) as int, routeChanges: (node.routeChanges ?: 0) as int]
+    }
+}
+
+List extractZigbeeMessageCounts(Map zigbeeData) {
+    if (!zigbeeData || zigbeeData.error || !zigbeeData.devices) return []
+    return zigbeeData.devices.collect { Map device ->
+        [id: device.id, name: device.name ?: "Device ${device.id}",
+         msgCount: (device.messageCount ?: 0) as int]
+    }
+}
+
 Map fetchCurrentStats() {
     try {
         Map params = [
@@ -1051,7 +1301,19 @@ Map analyzeDevices() {
         return getEmptyDeviceStats()
     }
 
-    List devicesList = response.devices
+    // Flatten the device list — child devices are nested inside parent entries' 'children' arrays
+    List devicesList = []
+    Closure flattenDevices
+    flattenDevices = { List entries ->
+        entries.each { entry ->
+            devicesList << entry
+            if (entry.children) {
+                flattenDevices(entry.children as List)
+            }
+        }
+    }
+    flattenDevices(response.devices as List)
+
     Map stats = [
         totalDevices: 0,
         activeDevices: 0,
@@ -1306,12 +1568,43 @@ Map analyzeApps() {
 
     processAppList(appsList, false, stats.parentChildHierarchy)
 
-    // Supplement with runtime stats total for apps not exposed by appsList
+    // Identify platform-only apps by comparing runtime stats against appsList
+    stats.platformApps = []
     try {
         Map runtimeResponse = fetchEndpoint(RUNTIME_STATS_URL, "runtime stats")
         if (runtimeResponse && !runtimeResponse.error) {
-            List appStats = runtimeResponse.appStats ?: []
-            stats.runtimeTotalApps = appStats.size()
+            List runtimeAppStats = runtimeResponse.appStats ?: []
+            stats.runtimeTotalApps = runtimeAppStats.size()
+
+            // Collect all IDs from appsList (including nested children)
+            Set apiIds = new HashSet()
+            Closure collectIds
+            collectIds = { List entries ->
+                entries.each { entry ->
+                    if (entry.data?.id) apiIds << entry.data.id
+                    if (entry.children) collectIds(entry.children as List)
+                }
+            }
+            collectIds(appsList)
+
+            // Platform apps = in runtime stats but not in appsList
+            runtimeAppStats.each { Map app ->
+                if (!apiIds.contains(app.id)) {
+                    stats.platformApps << [
+                        id: app.id,
+                        name: app.name ?: "App ${app.id}",
+                        stateSize: (app.stateSize ?: 0) as int,
+                        largeState: app.largeState ?: false,
+                        pctTotal: (app.pctTotal ?: 0) as float,
+                        count: (app.count ?: 0) as int,
+                        total: (app.total ?: 0) as long,
+                        average: (app.average ?: 0) as float,
+                        hubActionCount: (app.hubActionCount ?: 0) as int,
+                        cloudCallCount: (app.cloudCallCount ?: 0) as int
+                    ]
+                }
+            }
+            stats.platformApps = stats.platformApps.sort { -(it.stateSize as int) }
         }
     } catch (Exception e) {
         log.debug "Could not fetch runtime stats for app count: ${e.message}"
@@ -1357,10 +1650,10 @@ Map analyzeSystemHealth() {
     } else if (memory && memory.freeOSMemory < 102400) {
         health.alerts << "<span style='color: #ff9800;'>Warning: Low OS memory (${formatMemory(memory.freeOSMemory)})</span>"
     }
-    if (memory && memory.cpuAvg5min > 80) {
-        health.alerts << "<span style='color: #d32f2f;'>Critical: Very high CPU usage (${String.format('%.1f', memory.cpuAvg5min as float)}%)</span>"
-    } else if (memory && memory.cpuAvg5min > 30) {
-        health.alerts << "<span style='color: #ff9800;'>Warning: Elevated CPU usage (${String.format('%.1f', memory.cpuAvg5min as float)}%)</span>"
+    if (memory && memory.cpuAvg5min > 8.0) {
+        health.alerts << "<span style='color: #d32f2f;'>Critical: Very high CPU load (${String.format('%.2f', memory.cpuAvg5min as float)} — 4 cores)</span>"
+    } else if (memory && memory.cpuAvg5min > 4.0) {
+        health.alerts << "<span style='color: #ff9800;'>Warning: Elevated CPU load (${String.format('%.2f', memory.cpuAvg5min as float)} — 4 cores fully saturated)</span>"
     }
     if (temperature != null && temperature > 77) {
         health.alerts << "<span style='color: #d32f2f;'>Critical: Hub temperature very high (${String.format('%.1f', temperature)}\u00B0C)</span>"
@@ -1458,11 +1751,21 @@ void createCheckpoint() {
 
     Map resources = fetchSystemResources()
 
+    // Capture radio message counts for Z-Wave and Zigbee
+    Map zwaveData = fetchEndpoint(ZWAVE_DETAILS_URL, "Z-Wave details", 20)
+    Map zigbeeData = fetchEndpoint(ZIGBEE_DETAILS_URL, "Zigbee details", 20)
+    List zwaveRadio = extractZwaveMessageCounts(zwaveData)
+    List zigbeeRadio = extractZigbeeMessageCounts(zigbeeData)
+
     Map checkpoint = [
         timestamp: new Date().format("yyyy-MM-dd HH:mm:ss"),
         timestampMs: now(),
         stats: stats,
-        resources: resources
+        resources: resources,
+        radioStats: [
+            zwave: zwaveRadio,
+            zigbee: zigbeeRadio
+        ]
     ]
 
     List checkpoints = loadCheckpoints()
@@ -1502,6 +1805,14 @@ void performComparisonWithNow(String baseline) {
     Map currentResources = fetchSystemResources()
     currentStats.resources = currentResources
 
+    // Fetch current radio stats for "now" comparison
+    Map zwaveData = fetchEndpoint(ZWAVE_DETAILS_URL, "Z-Wave details", 20)
+    Map zigbeeData = fetchEndpoint(ZIGBEE_DETAILS_URL, "Zigbee details", 20)
+    currentStats.radioStats = [
+        zwave: extractZwaveMessageCounts(zwaveData),
+        zigbee: extractZigbeeMessageCounts(zigbeeData)
+    ]
+
     if (baseline == "startup") {
         Map zeroBaseline = buildZeroBaseline(currentStats, currentResources)
         state.lastPerformanceComparison = generateComparison(zeroBaseline, currentStats,
@@ -1517,6 +1828,7 @@ void performComparisonWithNow(String baseline) {
         Map baselineCp = checkpoints[baselineIdx]
         Map baselineStats = baselineCp.stats
         baselineStats.resources = baselineCp.resources
+        baselineStats.radioStats = baselineCp.radioStats
 
         state.lastPerformanceComparison = generateComparison(baselineStats, currentStats,
             baselineCp.timestamp, "Now (${new Date().format('yyyy-MM-dd HH:mm:ss')})")
@@ -1536,8 +1848,10 @@ void performComparison(int baselineIdx, int checkpointIdx) {
 
     Map baselineStats = baselineCp.stats
     baselineStats.resources = baselineCp.resources
+    baselineStats.radioStats = baselineCp.radioStats
     Map checkpointStats = checkpointCp.stats
     checkpointStats.resources = checkpointCp.resources
+    checkpointStats.radioStats = checkpointCp.radioStats
 
     state.lastPerformanceComparison = generateComparison(baselineStats, checkpointStats,
         baselineCp.timestamp, checkpointCp.timestamp)
@@ -1552,9 +1866,12 @@ void performComparisonSinceStartup(int checkpointIdx) {
     }
 
     Map checkpointCp = checkpoints[checkpointIdx]
-    Map zeroBaseline = buildZeroBaseline(checkpointCp.stats, checkpointCp.resources)
+    Map checkpointStats = checkpointCp.stats
+    checkpointStats.resources = checkpointCp.resources
+    checkpointStats.radioStats = checkpointCp.radioStats
+    Map zeroBaseline = buildZeroBaseline(checkpointStats, checkpointCp.resources)
 
-    state.lastPerformanceComparison = generateComparison(zeroBaseline, checkpointCp.stats,
+    state.lastPerformanceComparison = generateComparison(zeroBaseline, checkpointStats,
         "Startup (0:00:00)", checkpointCp.timestamp)
 }
 
@@ -1582,7 +1899,15 @@ Map buildZeroBaseline(Map stats, Map resources) {
         appStats: (stats.appStats ?: []).collect { app ->
             [id: app.id, name: app.name, total: 0, pct: 0, count: 0, average: 0,
              stateSize: 0, hubActionCount: 0, cloudCallCount: 0]
-        }
+        },
+        radioStats: [
+            zwave: (stats.radioStats?.zwave ?: []).collect { node ->
+                [id: node.id, deviceId: node.deviceId, name: node.name, msgCount: 0, routeChanges: 0]
+            },
+            zigbee: (stats.radioStats?.zigbee ?: []).collect { dev ->
+                [id: dev.id, name: dev.name, msgCount: 0]
+            }
+        ]
     ]
 }
 
@@ -1622,7 +1947,7 @@ String generateComparison(Map baselineStats, Map checkpointStats, String baselin
         float cpuDelta = ((checkpointResources.cpuAvg5min ?: 0) as float) - ((baselineResources.cpuAvg5min ?: 0) as float)
         String cpuSign = cpuDelta > 0 ? "+" : ""
         String cpuColor = cpuDelta > 0 ? "#d32f2f" : "#388e3c"
-        sb.append("&nbsp;&nbsp;CPU Average (5m): ${String.format('%.2f', (baselineResources.cpuAvg5min ?: 0) as float)}% -> ${String.format('%.2f', (checkpointResources.cpuAvg5min ?: 0) as float)}% (<span style='color: ${cpuColor};'>${cpuSign}${String.format('%.2f', cpuDelta)}%</span>)<br>")
+        sb.append("&nbsp;&nbsp;CPU Load Avg (5m): ${String.format('%.2f', (baselineResources.cpuAvg5min ?: 0) as float)} -> ${String.format('%.2f', (checkpointResources.cpuAvg5min ?: 0) as float)} (<span style='color: ${cpuColor};'>${cpuSign}${String.format('%.2f', cpuDelta)}</span>)<br>")
 
         int freeJavaDelta = (checkpointResources.freeJavaMemory ?: 0) - (baselineResources.freeJavaMemory ?: 0)
         String freeJavaSign = freeJavaDelta > 0 ? "+" : ""
@@ -1644,6 +1969,49 @@ String generateComparison(Map baselineStats, Map checkpointStats, String baselin
     sb.append("&nbsp;&nbsp;Total Runtime: ${formatDuration(appTimeDiff)}<br>")
     sb.append("<i>Click column headers to sort. % Busy is calculated for the period between checkpoints.</i><br><br>")
     sb.append(generateComparisonTable(baselineStats.appStats as List, checkpointStats.appStats as List, "app", (appTimeDiff * 1000L)))
+
+    // Radio message activity
+    Map baselineRadio = baselineStats.radioStats ?: [:]
+    Map checkpointRadio = checkpointStats.radioStats ?: [:]
+    long periodMinutes = uptimeDiff > 0 ? Math.max(1, (uptimeDiff / 60) as long) : 1
+
+    if (baselineRadio.zwave || checkpointRadio.zwave || baselineRadio.zigbee || checkpointRadio.zigbee) {
+        sb.append("<br><br><b>Radio Message Activity:</b><br>")
+        sb.append("<i>Message counts reset on hub reboot. If counts went backwards, a reboot occurred between checkpoints.</i><br><br>")
+
+        sb.append(generateRadioComparisonTable(baselineRadio.zwave ?: [], checkpointRadio.zwave ?: [], "zwave", periodMinutes))
+        sb.append("<br><br>")
+        sb.append(generateRadioComparisonTable(baselineRadio.zigbee ?: [], checkpointRadio.zigbee ?: [], "zigbee", periodMinutes))
+
+        // Chatty device detection
+        float threshold = (settings.chattyDeviceThreshold ?: 10) as float
+        List chattyDevices = []
+        [baselineRadio.zwave ?: [], baselineRadio.zigbee ?: []].eachWithIndex { List baseList, int protoIdx ->
+            String proto = protoIdx == 0 ? "Z-Wave" : "Zigbee"
+            List cpList = protoIdx == 0 ? (checkpointRadio.zwave ?: []) : (checkpointRadio.zigbee ?: [])
+            Map baseMap = baseList.collectEntries { [(it.id): it] }
+            cpList.each { Map cpItem ->
+                Map blItem = baseMap[cpItem.id]
+                int delta = ((cpItem.msgCount ?: 0) as int) - ((blItem?.msgCount ?: 0) as int)
+                if (delta > 0) {
+                    float msgsPerMin = periodMinutes > 0 ? (delta / (float) periodMinutes) : 0
+                    if (msgsPerMin >= threshold) {
+                        chattyDevices << [name: cpItem.name, deviceId: cpItem.deviceId ?: cpItem.id, protocol: proto, msgsPerMin: msgsPerMin, total: delta]
+                    }
+                }
+            }
+        }
+
+        if (chattyDevices) {
+            chattyDevices.sort { -it.msgsPerMin }
+            sb.append("<br><br><b style='color: #d32f2f;'>\u26A0 Chatty Devices Detected (>${threshold.intValue()} msgs/min):</b><br>")
+            chattyDevices.each { Map dev ->
+                String chattyNameHtml = dev.deviceId ? "<a href='/device/edit/${dev.deviceId}' target='_blank' style='color: #d32f2f; text-decoration: underline;'>${dev.name}</a>" : dev.name
+                sb.append("&nbsp;&nbsp;<span style='color: #d32f2f;'><b>${chattyNameHtml}</b> (${dev.protocol}) — ${String.format('%.1f', dev.msgsPerMin)} msgs/min (${dev.total} total)</span><br>")
+            }
+            sb.append("<i>Chatty devices can degrade hub performance. Check if device polling intervals are too aggressive or if the device is malfunctioning.</i><br>")
+        }
+    }
 
     return sb.toString()
 }
@@ -1721,6 +2089,103 @@ String generateComparisonTable(List baselineItems, List checkpointItems, String 
     }
 
     return generateSortableTable(tableId, columns, rows)
+}
+
+String generateRadioComparisonTable(List baselineItems, List checkpointItems, String protocol, long periodMinutes) {
+    String label = protocol == "zwave" ? "Z-Wave" : "Zigbee"
+    if (!checkpointItems || checkpointItems.size() == 0) {
+        return "<b>${label} Messages:</b> No data"
+    }
+
+    Map baselineMap = (baselineItems ?: []).collectEntries { [(it.id): it] }
+
+    List comparisonData = []
+    boolean rebootDetected = false
+
+    checkpointItems.each { Map cpItem ->
+        Map blItem = baselineMap[cpItem.id]
+        int cpMsgCount = (cpItem.msgCount ?: 0) as int
+        int blMsgCount = (blItem?.msgCount ?: 0) as int
+        int delta = cpMsgCount - blMsgCount
+
+        if (delta < 0) {
+            rebootDetected = true
+            return
+        }
+
+        float msgsPerMin = periodMinutes > 0 ? (delta / (float) periodMinutes) : 0
+
+        if (protocol == "zwave") {
+            int cpRouteChanges = (cpItem.routeChanges ?: 0) as int
+            int blRouteChanges = (blItem?.routeChanges ?: 0) as int
+            int routeDelta = cpRouteChanges - blRouteChanges
+            if (routeDelta < 0) routeDelta = 0
+
+            if (delta > 0 || routeDelta > 0) {
+                comparisonData << [
+                    name: cpItem.name, id: cpItem.deviceId ?: cpItem.id,
+                    messages: delta, msgsPerMin: msgsPerMin,
+                    routeChanges: routeDelta
+                ]
+            }
+        } else {
+            if (delta > 0) {
+                comparisonData << [
+                    name: cpItem.name, id: cpItem.id,
+                    messages: delta, msgsPerMin: msgsPerMin
+                ]
+            }
+        }
+    }
+
+    if (rebootDetected) {
+        return "<b>${label} Messages:</b> <i>Reboot detected between checkpoints — message counts reset, comparison not available.</i>"
+    }
+
+    if (comparisonData.size() == 0) {
+        return "<b>${label} Messages:</b> No activity detected"
+    }
+
+    // Sort by messages descending
+    comparisonData.sort { -it.messages }
+
+    String tableId = "${protocol}RadioComp"
+    List columns = [
+        [label: "Device", field: "name", type: "string"],
+        [label: "Messages", field: "messages", type: "number"],
+        [label: "Msgs/min", field: "msgsPerMin", type: "number"]
+    ]
+    if (protocol == "zwave") {
+        columns << [label: "Route Changes", field: "routeChanges", type: "number"]
+    }
+
+    // Calculate average for color coding
+    float avgMsgs = comparisonData.sum { it.messages } / comparisonData.size()
+
+    List rows = comparisonData.collect { Map item ->
+        String rcNameHtml = item.id ? "<a href='/device/edit/${item.id}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(item.name as String)}</a>" : escapeHtml(item.name as String)
+        Map row = [
+            name: rcNameHtml,
+            _nameSort: item.name,
+            messages: item.messages,
+            msgsPerMin: String.format('%.1f', (item.msgsPerMin as Number).floatValue()),
+            _msgsPerMinSort: item.msgsPerMin
+        ]
+        if (protocol == "zwave") {
+            row.routeChanges = item.routeChanges
+            if (item.routeChanges > 5) row._routeChangesColor = "#d32f2f"
+            else if (item.routeChanges > 0) row._routeChangesColor = "#ff9800"
+        }
+        // Highlight devices significantly above average
+        if (item.messages > avgMsgs * 3) row._messagesColor = "#d32f2f"
+        else if (item.messages > avgMsgs * 2) row._messagesColor = "#ff9800"
+        return row
+    }
+
+    StringBuilder sb = new StringBuilder()
+    sb.append("<b>${label} Messages (${comparisonData.size()} active devices):</b><br>")
+    sb.append(generateSortableTable(tableId, columns, rows))
+    return sb.toString()
 }
 
 void deleteCheckpoint(int index) {
@@ -1820,7 +2285,7 @@ String generateSnapshotDiff(Map older, Map newer) {
             List changes = []
             if (dev.status != olderDev.status) changes << "status: ${olderDev.status} -> ${dev.status}"
             if (dev.protocol != olderDev.protocol) changes << "protocol: ${olderDev.protocol} -> ${dev.protocol}"
-            if (changes) changed << [name: dev.name, changes: changes.join(", ")]
+            if (changes) changed << [id: dev.id, name: dev.name, changes: changes.join(", ")]
         }
     }
 
@@ -1831,15 +2296,15 @@ String generateSnapshotDiff(Map older, Map newer) {
 
     if (added) {
         sb.append("<br>&nbsp;&nbsp;<span style='color: #388e3c;'><b>Added (${added.size()}):</b></span><br>")
-        added.each { sb.append("&nbsp;&nbsp;&nbsp;&nbsp;+ ${it.name} (${PROTOCOL_DISPLAY[it.protocol] ?: it.protocol})<br>") }
+        added.each { sb.append("&nbsp;&nbsp;&nbsp;&nbsp;+ <a href='/device/edit/${it.id}' target='_blank' style='color: #388e3c;'>${it.name}</a> (${PROTOCOL_DISPLAY[it.protocol] ?: it.protocol})<br>") }
     }
     if (removed) {
         sb.append("<br>&nbsp;&nbsp;<span style='color: #d32f2f;'><b>Removed (${removed.size()}):</b></span><br>")
-        removed.each { sb.append("&nbsp;&nbsp;&nbsp;&nbsp;- ${it.name} (${PROTOCOL_DISPLAY[it.protocol] ?: it.protocol})<br>") }
+        removed.each { sb.append("&nbsp;&nbsp;&nbsp;&nbsp;- <a href='/device/edit/${it.id}' target='_blank' style='color: #d32f2f;'>${it.name}</a> (${PROTOCOL_DISPLAY[it.protocol] ?: it.protocol})<br>") }
     }
     if (changed) {
         sb.append("<br>&nbsp;&nbsp;<span style='color: #ff9800;'><b>Changed (${changed.size()}):</b></span><br>")
-        changed.each { sb.append("&nbsp;&nbsp;&nbsp;&nbsp;~ ${it.name}: ${it.changes}<br>") }
+        changed.each { sb.append("&nbsp;&nbsp;&nbsp;&nbsp;~ <a href='/device/edit/${it.id}' target='_blank' style='color: #ff9800;'>${it.name}</a>: ${it.changes}<br>") }
     }
     if (!added && !removed && !changed) {
         sb.append("&nbsp;&nbsp;<i>No device changes detected</i><br>")
@@ -1986,7 +2451,7 @@ void generateFullReport() {
             <tr><th>Resource</th><th>Value</th></tr>
             ${systemHealth.memory ? """
             <tr><td>Free OS Memory</td><td>${formatMemory(systemHealth.memory.freeOSMemory ?: 0)}</td></tr>
-            <tr><td>CPU Average (5m)</td><td>${String.format('%.2f', (systemHealth.memory.cpuAvg5min ?: 0) as float)}%</td></tr>
+            <tr><td>CPU Load Avg (5m)</td><td>${String.format('%.2f', (systemHealth.memory.cpuAvg5min ?: 0) as float)}</td></tr>
             <tr><td>Free Java Memory</td><td>${formatMemory(systemHealth.memory.freeJavaMemory ?: 0)}</td></tr>
             """ : '<tr><td colspan="2">Memory data unavailable</td></tr>'}
             ${systemHealth.temperature != null ? "<tr><td>Hub Temperature</td><td>${String.format('%.1f', systemHealth.temperature)}\u00B0C</td></tr>" : ""}
@@ -2024,7 +2489,7 @@ String generateHtmlReportDeviceTable(List allDevices) {
         String parentDisplay = device.parentAppName ?: device.parentDeviceName ?: "-"
 
         sb.append("<tr>")
-        sb.append("<td><strong>${device.name}</strong></td>")
+        sb.append("<td><strong><a href='/device/edit/${device.id}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${device.name}</a></strong></td>")
         sb.append("<td style='font-size: 0.9em;'>${device.type}</td>")
         sb.append("<td>${protocolDisplay}</td>")
         sb.append("<td>${device.room ?: '-'}</td>")
@@ -2137,8 +2602,8 @@ String generateQuickSummary() {
         String resourceLine = ""
         if (resources) {
             String memColor = (resources.freeOSMemory ?: 0) < 76800 ? "#d32f2f" : ((resources.freeOSMemory ?: 0) < 102400 ? "#ff9800" : "#388e3c")
-            String cpuColor = (resources.cpuAvg5min ?: 0) > 80 ? "#d32f2f" : ((resources.cpuAvg5min ?: 0) > 30 ? "#ff9800" : "#388e3c")
-            resourceLine = "\n<b>Resources:</b> <span style='color: ${memColor};'>${formatMemory(resources.freeOSMemory ?: 0)} free</span> | CPU: <span style='color: ${cpuColor};'>${String.format('%.1f', (resources.cpuAvg5min ?: 0) as float)}%</span>"
+            String cpuColor = (resources.cpuAvg5min ?: 0) > 8.0 ? "#d32f2f" : ((resources.cpuAvg5min ?: 0) > 4.0 ? "#ff9800" : "#388e3c")
+            resourceLine = "\n<b>Resources:</b> <span style='color: ${memColor};'>${formatMemory(resources.freeOSMemory ?: 0)} free</span> | CPU Load: <span style='color: ${cpuColor};'>${String.format('%.2f', (resources.cpuAvg5min ?: 0) as float)}</span>"
             if (temperature != null) {
                 String tempColor = temperature > 77 ? "#d32f2f" : (temperature > 50 ? "#ff9800" : "#388e3c")
                 resourceLine += " | Temp: <span style='color: ${tempColor};'>${String.format('%.1f', temperature)}\u00B0C</span>"
@@ -2181,7 +2646,19 @@ Map analyzeDevicesQuick() {
         return getEmptyDeviceStats()
     }
 
-    List devicesList = response.devices
+    // Flatten the device list — child devices are nested inside parent entries' 'children' arrays
+    List devicesList = []
+    Closure flattenDevices
+    flattenDevices = { List entries ->
+        entries.each { entry ->
+            devicesList << entry
+            if (entry.children) {
+                flattenDevices(entry.children as List)
+            }
+        }
+    }
+    flattenDevices(response.devices as List)
+
     Map stats = [
         totalDevices: 0, activeDevices: 0, inactiveDevices: 0, disabledDevices: 0,
         byProtocol: [(PROTOCOL_ZIGBEE): 0, (PROTOCOL_ZWAVE): 0, (PROTOCOL_MATTER): 0,
@@ -2276,9 +2753,9 @@ String generateRuntimeSummary(Map stats, Map resources) {
 
     if (resources) {
         String memColor = (resources.freeOSMemory ?: 0) < 76800 ? "#d32f2f" : ((resources.freeOSMemory ?: 0) < 102400 ? "#ff9800" : "#388e3c")
-        String cpuColor = (resources.cpuAvg5min ?: 0) > 80 ? "#d32f2f" : ((resources.cpuAvg5min ?: 0) > 30 ? "#ff9800" : "#388e3c")
+        String cpuColor = (resources.cpuAvg5min ?: 0) > 8.0 ? "#d32f2f" : ((resources.cpuAvg5min ?: 0) > 4.0 ? "#ff9800" : "#388e3c")
         metrics << ["Free OS Memory", "<span style='color: ${memColor};'>${formatMemory(resources.freeOSMemory ?: 0)}</span>"]
-        metrics << ["CPU Average (5m)", "<span style='color: ${cpuColor};'>${String.format('%.2f', (resources.cpuAvg5min ?: 0) as float)}%</span>"]
+        metrics << ["CPU Load Avg (5m)", "<span style='color: ${cpuColor};'>${String.format('%.2f', (resources.cpuAvg5min ?: 0) as float)}</span>"]
     }
 
     return formatMetricsTable(metrics)
@@ -2458,7 +2935,7 @@ String formatParentChildHierarchy(List hierarchy) {
             sb.append("<td colspan='2' style='padding: 8px 8px 8px 30px; border: 1px solid #ddd; font-size: 11px;'>")
             parent.children.each { Map child ->
                 String disabledText = child.disabled ? " <span style='color: #d32f2f;'>(Disabled)</span>" : ""
-                sb.append("<b>${child.name}</b>${disabledText}<br>")
+                sb.append("<b><a href='/installedapp/configure/${child.id}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${child.name}</a></b>${disabledText}<br>")
                 sb.append("&nbsp;&nbsp;<small style='color: #666;'>Type: ${child.type} | ID: ${child.id}</small><br>")
             }
             sb.append("</td></tr>")
