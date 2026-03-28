@@ -19,7 +19,6 @@ import groovy.transform.CompileStatic
 
 // API Endpoint URLs (localhost access)
 @Field static final String DEVICES_LIST_URL = "http://127.0.0.1:8080/hub2/devicesList"
-@Field static final String DEVICE_FULL_JSON_URL = "http://127.0.0.1:8080/device/fullJson/"
 @Field static final String APPS_LIST_URL = "http://127.0.0.1:8080/hub2/appsList"
 @Field static final String APP_FULL_JSON_URL = "http://127.0.0.1:8080/app/fullJson/"
 @Field static final String NETWORK_CONFIG_URL = "http://127.0.0.1:8080/hub2/networkConfiguration"
@@ -844,8 +843,11 @@ List buildPlatformAppRows(List platformApps) {
     return platformApps.collect { Map app ->
         int stateSize = app.stateSize as int
         String stateSizeColor = stateSize > 10000 ? "#d32f2f" : (stateSize > 5000 ? "#ff9800" : "")
+        String appName = escapeHtml(app.name as String)
+        String nameDisplay = app.id ? "<a href='/installedapp/status/${app.id}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${appName}</a>" : appName
         Map row = [
-            name: app.name,
+            name: nameDisplay,
+            _nameSort: app.name,
             stateSize: stateSize,
             pctTotal: String.format('%.3f', (app.pctTotal as Number).floatValue()) + "%",
             _pctTotalSort: app.pctTotal,
@@ -1617,14 +1619,26 @@ Map analyzeDevices() {
         return getEmptyDeviceStats()
     }
 
-    // Flatten the device list — child devices are nested inside parent entries' 'children' arrays
+    // Flatten the device list while preserving parent device context from nested child entries
     List devicesList = []
     Closure flattenDevices
-    flattenDevices = { List entries ->
+    flattenDevices = { List entries, Object parentDeviceId = null, String parentDeviceName = null ->
         entries.each { entry ->
-            devicesList << entry
+            devicesList << [
+                data: entry.data,
+                key: entry.key,
+                parent: entry.parent,
+                child: entry.child,
+                linked: entry.linked,
+                parentDeviceId: parentDeviceId,
+                parentDeviceName: parentDeviceName
+            ]
+
+            Map entryDevice = entry.data instanceof Map ? (Map) entry.data : null
+            Object entryDeviceId = entryDevice?.id
+            String entryDeviceName = entryDevice?.label ?: entryDevice?.name ?: (entryDeviceId != null ? "Device ${entryDeviceId}" : null)
             if (entry.children) {
-                flattenDevices(entry.children as List)
+                flattenDevices(entry.children as List, entryDeviceId, entryDeviceName)
             }
         }
     }
@@ -1658,10 +1672,10 @@ Map analyzeDevices() {
     ]
 
     long inactivityThresholdMs = now() - ((settings.inactivityDays ?: 7) * ONE_DAY_MS)
-    List devicesNeedingFullData = []
     Map radioProtocols = buildRadioProtocolMap()
+    Map appLookup = buildAppLookupMap()
 
-    // First pass: analyze basic data
+    // Single bulk-backed pass: analyze basic data, protocol, and parent tracking
     devicesList.each { deviceEntry ->
         try {
             Map device = deviceEntry.data
@@ -1703,7 +1717,7 @@ Map analyzeDevices() {
             String typeName = safeToString(device.type, "Unknown")
             stats.byType[typeName] = (stats.byType[typeName] ?: 0) + 1
 
-            // Protocol detection — radio map first, then heuristic, then fullData fallback
+            // Protocol detection — radio map first, then heuristic fallback
             String protocol = PROTOCOL_OTHER
             if (device.linked == true) {
                 protocol = PROTOCOL_HUBMESH
@@ -1711,13 +1725,6 @@ Map analyzeDevices() {
                 protocol = radioProtocols[device.id]
             } else {
                 protocol = determineProtocolQuick(device)
-                // If heuristic says radio protocol but radio endpoints disagree, defer to fullData
-                if (protocol in [PROTOCOL_ZIGBEE, PROTOCOL_ZWAVE, PROTOCOL_MATTER]) {
-                    if (device.id) devicesNeedingFullData << device.id
-                    protocol = PROTOCOL_OTHER  // will be corrected by fullData pass
-                } else if (protocol == PROTOCOL_OTHER && device.id) {
-                    devicesNeedingFullData << device.id
-                }
             }
             stats.byProtocol[protocol] = (stats.byProtocol[protocol] ?: 0) + 1
             if (stats.idsByProtocol[protocol] != null) stats.idsByProtocol[protocol] << device.id
@@ -1737,6 +1744,10 @@ Map analyzeDevices() {
                 } catch (Exception e) { /* non-numeric battery value */ }
             }
 
+            Object parentAppId = extractParentAppId(device)
+            String normalizedParentAppId = normalizeAppLookupId(parentAppId)
+            String parentAppName = normalizedParentAppId ? (appLookup[normalizedParentAppId] ?: "App ${normalizedParentAppId}") : null
+
             // Add to full device list
             stats.allDevices << [
                 id: device.id,
@@ -1753,67 +1764,13 @@ Map analyzeDevices() {
                 isChild: deviceEntry.child ?: false,
                 linked: device.linked ?: false,
                 room: device.roomName ?: "",
-                parentAppId: null,
-                parentAppName: null,
-                parentDeviceId: null,
-                parentDeviceName: null
+                parentAppId: normalizedParentAppId,
+                parentAppName: parentAppName,
+                parentDeviceId: deviceEntry.parentDeviceId,
+                parentDeviceName: deviceEntry.parentDeviceName
             ]
         } catch (Exception e) {
             log.warn "Error processing device ${deviceEntry.key}: ${e.message}"
-        }
-    }
-
-    // Second pass: fetch full data for protocol detection and parent tracking
-    // Build set of all device IDs needing full data: protocol-unknown + child devices
-    Set allNeedingFullData = new HashSet(devicesNeedingFullData)
-    devicesList.each { deviceEntry ->
-        if (deviceEntry.child == true && deviceEntry.data?.id) {
-            allNeedingFullData << deviceEntry.data.id
-        }
-    }
-
-    // Also check system devices that might have a parent app
-    devicesList.each { deviceEntry ->
-        Map device = deviceEntry.data
-        if (device?.id && device.source == "System" && !device.linked &&
-            deviceEntry.parent == false && deviceEntry.child == false) {
-            allNeedingFullData << device.id
-        }
-    }
-
-    if (allNeedingFullData.size() > 0) {
-        if (debugLogging) log.debug "Fetching full data for ${allNeedingFullData.size()} devices"
-        allNeedingFullData.each { deviceId ->
-            try {
-                Map fullDevice = fetchEndpoint(DEVICE_FULL_JSON_URL + deviceId, "device ${deviceId}", 10)
-                if (!fullDevice || fullDevice.error) return
-                Map deviceRecord = stats.allDevices.find { it.id == deviceId }
-                if (!deviceRecord) return
-
-                // Protocol detection
-                if (deviceRecord.protocol == PROTOCOL_OTHER) {
-                    String newProtocol = determineProtocolFromFullData(fullDevice)
-                    if (newProtocol != PROTOCOL_OTHER) {
-                        stats.byProtocol[PROTOCOL_OTHER]--
-                        stats.byProtocol[newProtocol] = (stats.byProtocol[newProtocol] ?: 0) + 1
-                        deviceRecord.protocol = newProtocol
-                    }
-                }
-
-                // Parent app tracking
-                if (fullDevice.device?.parentAppId) {
-                    deviceRecord.parentAppId = fullDevice.device.parentAppId
-                    deviceRecord.parentAppName = fullDevice.parentApp?.label ?: fullDevice.parentApp?.name ?: "App ${fullDevice.device.parentAppId}"
-                }
-
-                // Parent device tracking
-                if (fullDevice.device?.parentDeviceId) {
-                    deviceRecord.parentDeviceId = fullDevice.device.parentDeviceId
-                    deviceRecord.parentDeviceName = fullDevice.parentDevice?.label ?: fullDevice.parentDevice?.name ?: "Device ${fullDevice.device.parentDeviceId}"
-                }
-            } catch (Exception e) {
-                log.warn "Error fetching full data for device ${deviceId}: ${e.message}"
-            }
         }
     }
 
@@ -2044,6 +2001,56 @@ Map buildRadioProtocolMap() {
     return protocols
 }
 
+Map buildAppLookupMap() {
+    Map response = fetchEndpoint(APPS_LIST_URL, "apps list", 20)
+    if (!response || response.error || !response.apps) {
+        return [:]
+    }
+
+    Map appLookup = [:]
+    Closure visitApps
+    visitApps = { List entries ->
+        (entries ?: []).each { Map appEntry ->
+            Map app = appEntry?.data instanceof Map ? (Map) appEntry.data : null
+            String appId = normalizeAppLookupId(appEntry?.key ?: app?.id)
+            if (appId) {
+                appLookup[appId] = app?.label ?: app?.name ?: "App ${appId}"
+            }
+            if (appEntry?.children) {
+                visitApps(appEntry.children as List)
+            }
+        }
+    }
+    visitApps(response.apps as List)
+    return appLookup
+}
+
+String normalizeAppLookupId(Object value) {
+    if (value == null) return null
+    String appId = value.toString().trim()
+    if (!appId) return null
+    appId = appId.replaceFirst(/^APP-/, "")
+    return appId
+}
+
+Object extractParentAppId(Map device) {
+    if (!device) return null
+    List candidateKeys = [
+        "parentAppId",
+        "parentApp",
+        "parentInstalledAppId",
+        "appId",
+        "installedAppId"
+    ]
+    for (String key in candidateKeys) {
+        Object value = device[key]
+        if (value != null && safeToString(value, "")) {
+            return value
+        }
+    }
+    return null
+}
+
 String determineProtocolQuick(Map device) {
     if (device.protocol) {
         String protocol = safeToString(device.protocol, "").toLowerCase()
@@ -2081,23 +2088,6 @@ String determineProtocolQuick(Map device) {
         typeName.contains("shelly")) {
         return PROTOCOL_LAN
     }
-
-    return PROTOCOL_OTHER
-}
-
-String determineProtocolFromFullData(Map fullDevice) {
-    Map device = fullDevice.device
-    if (!device) return PROTOCOL_OTHER
-
-    if (device.zigbee == true) return PROTOCOL_ZIGBEE
-    if (device.ZWave == true) return PROTOCOL_ZWAVE
-    if (device.matter == true) return PROTOCOL_MATTER
-    if (device.virtual == true) return PROTOCOL_VIRTUAL
-
-    String dni = safeToString(device.deviceNetworkId, "").toUpperCase()
-    if (dni.matches(/^[0-9A-F]{4}$/)) return PROTOCOL_ZIGBEE
-    if (dni.matches(/^[0-9A-F]{1,2}$/)) return PROTOCOL_ZWAVE
-    if (dni.contains(":") || dni.contains(".")) return PROTOCOL_LAN
 
     return PROTOCOL_OTHER
 }
@@ -2966,8 +2956,10 @@ String renderSnapshotView(Map snap) {
             int stateSize = (app.stateSize ?: 0) as int
             String stateSizeColor = stateSize > 10000 ? "#d32f2f" : (stateSize > 5000 ? "#ff9800" : "")
             String stateSizeHtml = stateSizeColor ? "<span style='color: ${stateSizeColor};'>${stateSize}</span>" : "${stateSize}"
+            String appName = escapeHtml(app.name as String)
+            String appNameHtml = app.id ? "<a href='/installedapp/status/${app.id}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${appName}</a>" : appName
             sb.append("<tr style='background-color: ${rowBg};'>")
-            sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${escapeHtml(app.name as String)}</td>")
+            sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${appNameHtml}</td>")
             sb.append("<td style='padding: 4px 8px; text-align: center; border: 1px solid #ddd;'>${stateSizeHtml}</td>")
             sb.append("</tr>")
         }
