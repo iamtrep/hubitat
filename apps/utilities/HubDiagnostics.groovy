@@ -1004,7 +1004,7 @@ Map apiNetwork() {
         ] : null,
         matter: networkData.matter && !networkData.matter.error ? networkData.matter : null,
         hubMesh: networkData.hubMesh && !networkData.hubMesh.error ? [
-            enabled: hubMeshRaw.enabled,
+            enabled: hubMeshRaw.hubMeshEnabled != null ? hubMeshRaw.hubMeshEnabled : hubMeshRaw.enabled,
             sharedDevices: hubMeshRaw.sharedDevices?.size() ?: 0,
             linkedDevices: hubMeshRaw.linkedDevices?.size() ?: 0,
             sharedVars: hubMeshRaw.sharedVars?.size() ?: 0,
@@ -1059,7 +1059,8 @@ Map apiPerformance() {
             resources: cp.resources,
             radioStats: cp.radioStats
         ]},
-        savedComparison: savedComparison
+        savedComparison: savedComparison,
+        savedComparisonHtml: renderPerformanceComparisonPayload(savedComparison)
     ])
 }
 
@@ -1126,7 +1127,9 @@ Map apiPerformanceCompare() {
         baselineLabel: baselineLabel,
         checkpointLabel: checkpointLabel,
         baselineStats: baselineStats,
-        checkpointStats: checkpointStats
+        checkpointStats: checkpointStats,
+        comparisonHtml: renderPerformanceComparisonPayload(buildPerformanceComparisonPayload(
+            baselineStats, checkpointStats, baselineLabel, checkpointLabel))
     ])
 }
 
