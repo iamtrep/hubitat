@@ -1102,7 +1102,7 @@ void appButtonHandler(String btn) {
                 int idx = btn.replace("btnDeleteSnapshot_", "").toInteger()
                 deleteSnapshot(idx)
             } else {
-                log.warn "Unknown button: ${btn}"
+                logWarn "Unknown button: ${btn}"
             }
     }
 }
@@ -1124,7 +1124,7 @@ Map fetchEndpoint(String url, String name, int timeout = 30) {
         }
         return result ?: [:]
     } catch (Exception e) {
-        log.error "Error fetching ${name}: ${getObjectClassName(e)}: ${e.message}"
+        logError "Error fetching ${name}: ${getObjectClassName(e)}: ${e.message}"
         return [error: true, message: e.message]
     }
 }
@@ -1157,7 +1157,7 @@ Map fetchSystemResources() {
         }
         return resourceData
     } catch (Exception e) {
-        log.error "Error fetching system resources: ${e.message}"
+        logError "Error fetching system resources: ${e.message}"
         return null
     }
 }
@@ -1192,7 +1192,7 @@ List fetchMemoryHistory() {
         }
         return dataPoints
     } catch (Exception e) {
-        log.error "Error fetching memory history: ${e.message}"
+        logError "Error fetching memory history: ${e.message}"
         return []
     }
 }
@@ -1388,7 +1388,7 @@ Map fetchStateCompression() {
         }
         return result ?: [enabled: false, status: "unknown"]
     } catch (Exception e) {
-        log.error "Error fetching state compression: ${e.message}"
+        logError "Error fetching state compression: ${e.message}"
         return [enabled: false, status: "unavailable"]
     }
 }
@@ -1408,7 +1408,7 @@ String fetchPlainText(String url, String name, int timeout = 10) {
         }
         return result
     } catch (Exception e) {
-        if (debugLogging) log.debug "Error fetching ${name}: ${e.message}"
+        logDebug "Error fetching ${name}: ${e.message}"
         return null
     }
 }
@@ -1604,7 +1604,7 @@ Map fetchCurrentStats() {
         }
         return stats
     } catch (Exception e) {
-        log.error "Error fetching runtime stats: ${e.message}"
+        logError "Error fetching runtime stats: ${e.message}"
         return null
     }
 }
@@ -1615,7 +1615,7 @@ Map analyzeDevices() {
     Map response = fetchEndpoint(DEVICES_LIST_URL, "devices list")
 
     if (!response || response.error || !response.devices) {
-        if (debugLogging) log.warn "Failed to fetch devices list"
+        logWarn "Failed to fetch devices list"
         return getEmptyDeviceStats()
     }
 
@@ -1770,7 +1770,7 @@ Map analyzeDevices() {
                 parentDeviceName: deviceEntry.parentDeviceName
             ]
         } catch (Exception e) {
-            log.warn "Error processing device ${deviceEntry.key}: ${e.message}"
+            logWarn "Error processing device ${deviceEntry.key}: ${e.message}"
         }
     }
 
@@ -1855,7 +1855,7 @@ Map analyzeApps() {
                     ]
                 }
             } catch (Exception e) {
-                log.warn "Error processing app ${appEntry.key}: ${e.message}"
+                logWarn "Error processing app ${appEntry.key}: ${e.message}"
             }
         }
     }
@@ -1901,7 +1901,7 @@ Map analyzeApps() {
             stats.platformApps = stats.platformApps.sort { -(it.stateSize as int) }
         }
     } catch (Exception e) {
-        log.debug "Could not fetch runtime stats for app count: ${e.message}"
+        logDebug "Could not fetch runtime stats for app count: ${e.message}"
     }
 
     stats.userAppsList = stats.userAppsList.sort { it.name }
@@ -1996,7 +1996,7 @@ Map buildRadioProtocolMap() {
             matterData.devices.each { Map d -> if (d.id) protocols[d.id] = PROTOCOL_MATTER }
         }
     } catch (Exception e) {
-        log.debug "Error building radio protocol map: ${e.message}"
+        logDebug "Error building radio protocol map: ${e.message}"
     }
     return protocols
 }
@@ -2095,11 +2095,11 @@ String determineProtocolQuick(Map device) {
 // ===== PERFORMANCE CHECKPOINT SYSTEM =====
 
 void createCheckpoint() {
-    log.info "Creating perf checkpoint..."
+    logInfo "Creating perf checkpoint..."
 
     Map stats = fetchCurrentStats()
     if (!stats) {
-        log.error "Failed to fetch current stats"
+        logError "Failed to fetch current stats"
         return
     }
 
@@ -2131,12 +2131,12 @@ void createCheckpoint() {
     }
 
     saveCheckpoints(checkpoints)
-    log.info "Perf checkpoint created successfully"
+    logInfo "Perf checkpoint created successfully"
 }
 
 void executePerformanceComparison() {
     if (compareBaseline == null || compareCheckpoint == null) {
-        log.warn "compareBaseline or compareCheckpoint is null"
+        logWarn "compareBaseline or compareCheckpoint is null"
         return
     }
 
@@ -2152,7 +2152,7 @@ void executePerformanceComparison() {
 void performComparisonWithNow(String baseline) {
     Map currentStats = fetchCurrentStats()
     if (!currentStats) {
-        log.error "Failed to fetch current stats"
+        logError "Failed to fetch current stats"
         return
     }
 
@@ -2179,7 +2179,7 @@ void performComparisonWithNow(String baseline) {
         List checkpoints = loadCheckpoints()
         int baselineIdx = baseline.toInteger()
         if (baselineIdx >= checkpoints.size()) {
-            log.error "Invalid baseline index"
+            logError "Invalid baseline index"
             return
         }
 
@@ -2201,7 +2201,7 @@ void performComparison(int baselineIdx, int checkpointIdx) {
     List checkpoints = loadCheckpoints()
 
     if (baselineIdx >= checkpoints.size() || checkpointIdx >= checkpoints.size()) {
-        log.error "Invalid checkpoint indices"
+        logError "Invalid checkpoint indices"
         return
     }
 
@@ -2227,7 +2227,7 @@ void performComparisonSinceStartup(int checkpointIdx) {
     List checkpoints = loadCheckpoints()
 
     if (checkpointIdx >= checkpoints.size()) {
-        log.error "Invalid checkpoint index"
+        logError "Invalid checkpoint index"
         return
     }
 
@@ -2645,7 +2645,7 @@ String generateRadioComparisonTable(List baselineItems, List checkpointItems, St
 void deleteCheckpoint(int index) {
     List checkpoints = loadCheckpoints()
     if (index >= 0 && index < checkpoints.size()) {
-        log.info "Deleting checkpoint at index ${index}"
+        logInfo "Deleting checkpoint at index ${index}"
         checkpoints.remove(index)
         saveCheckpoints(checkpoints)
     }
@@ -2654,13 +2654,13 @@ void deleteCheckpoint(int index) {
 void clearAllCheckpoints() {
     deleteFile(CHECKPOINTS_FILE)
     clearPerformanceComparison()
-    log.info "All perf checkpoints cleared"
+    logInfo "All perf checkpoints cleared"
 }
 
 // ===== SNAPSHOT SYSTEM =====
 
 void createSnapshot() {
-    log.info "Creating config snapshot..."
+    logInfo "Creating config snapshot..."
 
     Map snapshot = [
         timestamp: new Date().format("yyyy-MM-dd HH:mm:ss"),
@@ -2688,19 +2688,19 @@ void createSnapshot() {
     }
 
     saveSnapshots(snapshots)
-    log.info "Config snapshot created successfully (${snapshots.size()} total)"
+    logInfo "Config snapshot created successfully (${snapshots.size()} total)"
 }
 
 void executeSnapshotDiff() {
     if (diffOlder == null || diffNewer == null || diffOlder == diffNewer) {
-        log.warn "Invalid snapshot selection for diff"
+        logWarn "Invalid snapshot selection for diff"
         return
     }
 
     List snapshots = loadSnapshots()
     int olderIdx = parseSnapshotSelectionIndex(diffOlder, "diff_")
     if (olderIdx < 0) {
-        log.error "Invalid older snapshot selection"
+        logError "Invalid older snapshot selection"
         return
     }
 
@@ -2712,18 +2712,18 @@ void executeSnapshotDiff() {
     } else {
         int newerIdx = parseSnapshotSelectionIndex(diffNewer, "diff_")
         if (newerIdx < 0) {
-            log.error "Invalid newer snapshot selection"
+            logError "Invalid newer snapshot selection"
             return
         }
         if (newerIdx >= snapshots.size()) {
-            log.error "Invalid snapshot index"
+            logError "Invalid snapshot index"
             return
         }
         newer = snapshots[newerIdx]
     }
 
     if (olderIdx >= snapshots.size()) {
-        log.error "Invalid snapshot index"
+        logError "Invalid snapshot index"
         return
     }
     Map older = snapshots[olderIdx]
@@ -2972,7 +2972,7 @@ String renderSnapshotView(Map snap) {
 void deleteSnapshot(int index) {
     List snapshots = loadSnapshots()
     if (index >= 0 && index < snapshots.size()) {
-        log.info "Deleting snapshot at index ${index}"
+        logInfo "Deleting snapshot at index ${index}"
         snapshots.remove(index)
         saveSnapshots(snapshots)
     }
@@ -2981,13 +2981,13 @@ void deleteSnapshot(int index) {
 void clearAllSnapshots() {
     deleteFile(SNAPSHOTS_FILE)
     clearSnapshotDiff()
-    log.info "All config snapshots cleared"
+    logInfo "All config snapshots cleared"
 }
 
 // ===== REPORT GENERATION =====
 
 void generateFullReport() {
-    log.info "Generating full configuration report..."
+    logInfo "Generating full configuration report..."
 
     String timestamp = new Date().format("yyyy-MM-dd HH:mm:ss")
     Map deviceStats = analyzeDevices()
@@ -3078,7 +3078,7 @@ ${FULL_REPORT_STYLES}
 
     String filename = "hub_report_${new Date().format('yyyyMMdd_HHmmss')}.html"
     writeFile(filename, html)
-    log.info "Report generated: ${filename}"
+    logInfo "Report generated: ${filename}"
 }
 
 String generateHtmlReportDeviceTable(List allDevices) {
@@ -3234,7 +3234,7 @@ String generateQuickSummary() {
 <b>Applications:</b> ${appStats.totalApps} total (System: ${appStats.builtInApps} | User: ${appStats.userApps})
 ${resourceLine}${alertLine}"""
     } catch (Exception e) {
-        log.error "Error generating summary: ${getObjectClassName(e)}: ${e.message}"
+        logError "Error generating summary: ${getObjectClassName(e)}: ${e.message}"
         return "Error generating summary. Please check logs."
     }
 }
@@ -3579,6 +3579,26 @@ String formatParentChildHierarchy(List hierarchy) {
 
 // ===== UTILITY METHODS =====
 
+private String logPrefix() {
+    return app?.label ?: app?.name ?: "Hub Diagnostics"
+}
+
+private void logDebug(String message) {
+    if (debugLogging) log.debug "${logPrefix()} : ${message}"
+}
+
+private void logInfo(String message) {
+    log.info "${logPrefix()} : ${message}"
+}
+
+private void logWarn(String message) {
+    log.warn "${logPrefix()} : ${message}"
+}
+
+private void logError(String message) {
+    log.error "${logPrefix()} : ${message}"
+}
+
 Map getHubInfo() {
     Map info = [name: location.name ?: "Unknown", firmware: "Unknown", hardware: "Unknown", ip: "Unknown"]
     if (location.hubs && location.hubs.size() > 0) {
@@ -3716,7 +3736,7 @@ List loadCheckpoints() {
         def data = readFile(CHECKPOINTS_FILE)
         if (data) return data
     } catch (Exception e) {
-        if (debugLogging) log.debug "No existing checkpoints: ${e.message}"
+        logDebug "No existing checkpoints: ${e.message}"
     }
     return []
 }
@@ -3726,7 +3746,7 @@ void saveCheckpoints(List checkpoints) {
         String json = groovy.json.JsonOutput.toJson(checkpoints)
         writeFile(CHECKPOINTS_FILE, json)
     } catch (Exception e) {
-        log.error "Error saving checkpoints: ${e}"
+        logError "Error saving checkpoints: ${e}"
     }
 }
 
@@ -3735,7 +3755,7 @@ List loadSnapshots() {
         def data = readFile(SNAPSHOTS_FILE)
         if (data) return data
     } catch (Exception e) {
-        if (debugLogging) log.debug "No existing snapshots: ${e.message}"
+        logDebug "No existing snapshots: ${e.message}"
     }
     return []
 }
@@ -3745,7 +3765,7 @@ void saveSnapshots(List snapshots) {
         String json = groovy.json.JsonOutput.toJson(snapshots)
         writeFile(SNAPSHOTS_FILE, json)
     } catch (Exception e) {
-        log.error "Error saving snapshots: ${e}"
+        logError "Error saving snapshots: ${e}"
     }
 }
 
@@ -3795,7 +3815,7 @@ def readFile(String fileName) {
             return new groovy.json.JsonSlurper().parseText(jsonString)
         }
     } catch (Exception e) {
-        if (debugLogging) log.debug "File not found or error reading ${fileName}: ${e.message}"
+        logDebug "File not found or error reading ${fileName}: ${e.message}"
     }
     return null
 }
@@ -3804,7 +3824,7 @@ void writeFile(String fileName, String data) {
     try {
         uploadHubFile(fileName, data.getBytes("UTF-8"))
     } catch (Exception e) {
-        log.error "Error writing file ${fileName}: ${e}"
+        logError "Error writing file ${fileName}: ${e}"
     }
 }
 
@@ -3812,19 +3832,19 @@ void deleteFile(String fileName) {
     try {
         deleteHubFile(fileName)
     } catch (Exception e) {
-        log.error "Error deleting file ${fileName}: ${e}"
+        logError "Error deleting file ${fileName}: ${e}"
     }
 }
 
 // ===== LIFECYCLE METHODS =====
 
 void installed() {
-    log.info "Hub Diagnostics installed"
+    logInfo "Hub Diagnostics installed"
     initialize()
 }
 
 void updated() {
-    log.info "Hub Diagnostics updated"
+    logInfo "Hub Diagnostics updated"
     unsubscribe()
     unschedule()
     initialize()
@@ -3833,17 +3853,17 @@ void updated() {
 void uninstalled() {
     unschedule()
     unsubscribe()
-    log.info "Hub Diagnostics uninstalled"
+    logInfo "Hub Diagnostics uninstalled"
 }
 
 void initialize() {
-    log.info "Hub Diagnostics initialized"
+    logInfo "Hub Diagnostics initialized"
     migrateStorageIfNeeded()
 
     if (settings.autoSnapshot) {
         int interval = (settings.snapshotInterval ?: "24").toInteger()
         schedule("0 0 */${interval} * * ?", "createSnapshot")
-        log.info "Automatic config snapshots scheduled every ${interval} hour(s)"
+        logInfo "Automatic config snapshots scheduled every ${interval} hour(s)"
     }
 
     if (settings.autoCheckpoint) {
@@ -3854,7 +3874,7 @@ void initialize() {
             int hours = (interval / 60).toInteger()
             schedule("0 0 */${hours} * * ?", "createCheckpoint")
         }
-        log.info "Automatic perf checkpoints scheduled every ${interval} minute(s)"
+        logInfo "Automatic perf checkpoints scheduled every ${interval} minute(s)"
     }
 }
 
@@ -3876,6 +3896,6 @@ void migrateStorageIfNeeded() {
 
     state.storageSchemaVersion = STORAGE_SCHEMA_VERSION
     if (migratedLegacyState) {
-        log.info "Migrated legacy comparison state to file-backed storage for v${APP_VERSION}"
+        logInfo "Migrated legacy comparison state to file-backed storage for v${APP_VERSION}"
     }
 }
