@@ -166,7 +166,8 @@ Map devicesPage() {
             paragraph formatProtocolTable(deviceStats.byProtocol, deviceStats.idsByProtocol)
         }
 
-        section("All Devices") {
+        int allDeviceCount = deviceStats.allDevices.size()
+        section("All Devices (${allDeviceCount})", hideable: true, hidden: allDeviceCount > 10) {
             paragraph generateSortableTable("devTable", [
                 [label: "Name", field: "name", type: "string"],
                 [label: "Type", field: "type", type: "string"],
@@ -251,17 +252,20 @@ Map appsPage() {
         }
 
         if (appStats.parentChildHierarchy && appStats.parentChildHierarchy.size() > 0) {
-            section("Parent/Child App Hierarchy") {
+            int hierarchyCount = appStats.parentChildHierarchy?.size() ?: 0
+            section("Parent/Child App Hierarchy (${hierarchyCount})", hideable: true, hidden: hierarchyCount > 10) {
                 paragraph formatParentChildHierarchy(appStats.parentChildHierarchy)
             }
         }
 
-        section("App Instances by Type") {
+        int appTypeCount = appStats.byNamespace?.size() ?: 0
+        section("App Instances by Type (${appTypeCount})", hideable: true, hidden: appTypeCount > 10) {
             paragraph formatAppsByTypeTable(appStats)
         }
 
         if (appStats.platformApps && appStats.platformApps.size() > 0) {
-            section("Platform Apps (${appStats.platformApps.size()})") {
+            int platformAppCount = appStats.platformApps.size()
+            section("Platform Apps (${platformAppCount})", hideable: true, hidden: platformAppCount > 10) {
                 paragraph "<i>Apps not exposed in the Apps list API but tracked by runtime stats. Includes dashboard room views, mode setters, and internal platform services. Monitor state size for unbounded growth.</i>"
 
                 // Flag any with concerning state size
@@ -384,7 +388,8 @@ Map networkPage() {
         }
 
         if (zwaveMesh && zwaveMesh.nodes) {
-            section("Z-Wave Mesh Quality") {
+            int zwNodeCount = zwaveMesh.nodeCount ?: 0
+            section("Z-Wave Mesh Quality (${zwNodeCount} nodes)", hideable: true, hidden: zwNodeCount > 10) {
                 String avgPerColor = zwaveMesh.avgPer == 0 ? "#388e3c" : (zwaveMesh.avgPer <= 1 ? "#ff9800" : "#d32f2f")
                 String errColor = zwaveMesh.nodesWithErrors == 0 ? "#388e3c" : "#d32f2f"
                 List meshMetrics = [
@@ -676,8 +681,9 @@ Map performancePage() {
         List zwaveMessages = extractZwaveMessageCounts(zwaveData)
         List zigbeeMessages = extractZigbeeMessageCounts(zigbeeData)
 
+        int radioDeviceCount = (zwaveMessages?.size() ?: 0) + (zigbeeMessages?.size() ?: 0)
         if (zwaveMessages || zigbeeMessages) {
-            section("Radio Activity (Since Reboot)") {
+            section("Radio Activity (${radioDeviceCount} devices, Since Reboot)", hideable: true, hidden: radioDeviceCount > 10) {
                 paragraph "<i>Messages sent/received per radio device since the last hub reboot. Sorted by message count.</i>"
 
                 List allRadio = []
