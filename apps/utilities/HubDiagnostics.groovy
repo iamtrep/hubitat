@@ -151,19 +151,19 @@ Map devicesPage() {
     dynamicPage(name: "devicesPage", title: "Device Analysis") {
         section("Device Summary") {
             paragraph formatMetricsTable([
-                ["Total Devices", deviceStats.totalDevices],
-                ["Active Devices", "${deviceStats.activeDevices} (${settings.inactivityDays ?: 7} days)"],
-                ["Inactive Devices", deviceStats.inactiveDevices],
-                ["Disabled Devices", deviceStats.disabledDevices],
-                ["Parent Devices", deviceStats.parentDevices],
-                ["Child Devices", deviceStats.childDevices],
-                ["Hub Mesh Linked", deviceStats.linkedDevices],
-                ["Battery-Powered", deviceStats.batteryDevices]
+                ["Total Devices", "<a href='/device/list' target='_blank' style='color: #1A77C9; text-decoration: none;'>${deviceStats.totalDevices}</a>"],
+                ["Active Devices", "${deviceListLink(deviceStats.activeDevices, deviceStats.idsByStatus.active)} (${settings.inactivityDays ?: 7} days)"],
+                ["Inactive Devices", deviceListLink(deviceStats.inactiveDevices, deviceStats.idsByStatus.inactive + deviceStats.idsByStatus.disabled)],
+                ["Disabled Devices", deviceListLink(deviceStats.disabledDevices, deviceStats.idsByStatus.disabled)],
+                ["Parent Devices", deviceListLink(deviceStats.parentDevices, deviceStats.parentIds)],
+                ["Child Devices", deviceListLink(deviceStats.childDevices, deviceStats.parentIds)],
+                ["Hub Mesh Linked", deviceListLink(deviceStats.linkedDevices, deviceStats.linkedIds)],
+                ["Battery-Powered", deviceListLink(deviceStats.batteryDevices, deviceStats.batteryIds)]
             ])
         }
 
         section("Protocol Distribution") {
-            paragraph formatProtocolTable(deviceStats.byProtocol)
+            paragraph formatProtocolTable(deviceStats.byProtocol, deviceStats.idsByProtocol)
         }
 
         section("All Devices") {
@@ -1582,7 +1582,16 @@ Map analyzeDevices() {
         byProtocol: [(PROTOCOL_ZIGBEE): 0, (PROTOCOL_ZWAVE): 0, (PROTOCOL_MATTER): 0,
                      (PROTOCOL_LAN): 0, (PROTOCOL_VIRTUAL): 0, (PROTOCOL_MAKER): 0,
                      (PROTOCOL_CLOUD): 0, (PROTOCOL_HUBMESH): 0, (PROTOCOL_OTHER): 0],
-        byStatus: [active: 0, inactive: 0, disabled: 0]
+        byStatus: [active: 0, inactive: 0, disabled: 0],
+        // ID lists for device list links
+        idsByStatus: [active: [], inactive: [], disabled: []],
+        idsByProtocol: [(PROTOCOL_ZIGBEE): [], (PROTOCOL_ZWAVE): [], (PROTOCOL_MATTER): [],
+                        (PROTOCOL_LAN): [], (PROTOCOL_VIRTUAL): [], (PROTOCOL_MAKER): [],
+                        (PROTOCOL_CLOUD): [], (PROTOCOL_HUBMESH): [], (PROTOCOL_OTHER): []],
+        parentIds: [],
+        childIds: [],
+        linkedIds: [],
+        batteryIds: []
     ]
 
     long inactivityThresholdMs = now() - ((settings.inactivityDays ?: 7) * ONE_DAY_MS)
@@ -1610,19 +1619,22 @@ Map analyzeDevices() {
             if (device.disabled) {
                 stats.disabledDevices++
                 stats.byStatus.disabled++
+                stats.idsByStatus.disabled << device.id
                 stats.inactiveDevices++
             } else if (lastActivity && lastActivity > inactivityThresholdMs) {
                 stats.activeDevices++
                 stats.byStatus.active++
+                stats.idsByStatus.active << device.id
             } else {
                 stats.inactiveDevices++
                 stats.byStatus.inactive++
+                stats.idsByStatus.inactive << device.id
             }
 
             // Parent/child tracking
-            if (deviceEntry.parent == true) stats.parentDevices++
-            if (deviceEntry.child == true) stats.childDevices++
-            if (device.linked == true) stats.linkedDevices++
+            if (deviceEntry.parent == true) { stats.parentDevices++; stats.parentIds << device.id }
+            if (deviceEntry.child == true) { stats.childDevices++; stats.childIds << device.id }
+            if (device.linked == true) { stats.linkedDevices++; stats.linkedIds << device.id }
 
             // Device type
             String typeName = safeToString(device.type, "Unknown")
@@ -1641,6 +1653,7 @@ Map analyzeDevices() {
                 }
             }
             stats.byProtocol[protocol] = (stats.byProtocol[protocol] ?: 0) + 1
+            if (stats.idsByProtocol[protocol] != null) stats.idsByProtocol[protocol] << device.id
 
             // Battery tracking — battery level is in currentStates, not a top-level field
             Integer batteryLevel = null
@@ -1650,6 +1663,7 @@ Map analyzeDevices() {
                 try {
                     batteryLevel = batteryState.value.toString().toFloat().toInteger()
                     stats.batteryDevices++
+                    stats.batteryIds << device.id
                     if (batteryLevel <= (settings.lowBatteryThreshold ?: 20)) {
                         stats.lowBatteryDevices << [id: device.id, name: device.name ?: "Unknown", battery: batteryLevel]
                     }
@@ -1935,6 +1949,12 @@ Map analyzeSystemHealth() {
 }
 
 // ===== PROTOCOL DETECTION =====
+
+String deviceListLink(Object count, List ids) {
+    if (!ids || ids.size() == 0) return count.toString()
+    String idStr = ids.collect { it.toString() }.join(',')
+    return "<a href='/device/list?ids=${idStr}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${count}</a>"
+}
 
 Map buildRadioProtocolMap() {
     Map protocols = [:]
@@ -2899,13 +2919,16 @@ String generateQuickSummary() {
         }
         String alertLine = alertCount > 0 ? "\n<span style='color: #d32f2f;'><b>Platform Alerts:</b> ${alertCount} active — check System Health for details</span>" : ""
 
+        Map idsByP = deviceStats.idsByProtocol ?: [:]
+        Map idsByS = deviceStats.idsByStatus ?: [:]
+
         return """<b>Hub Diagnostics Summary</b>
 <b>Hub:</b> ${hubInfo.name} | Firmware: ${hubInfo.firmware} | Hardware: ${hubInfo.hardware}
 
-<b>Devices:</b> ${deviceStats.totalDevices} total
-  Active: ${deviceStats.activeDevices} | Inactive: ${deviceStats.inactiveDevices} | Disabled: ${deviceStats.disabledDevices}
-  Z-Wave: ${deviceStats.byProtocol[PROTOCOL_ZWAVE]} | Zigbee: ${deviceStats.byProtocol[PROTOCOL_ZIGBEE]} | Matter: ${deviceStats.byProtocol[PROTOCOL_MATTER]}
-  Hub Mesh: ${deviceStats.byProtocol[PROTOCOL_HUBMESH]} | Virtual: ${deviceStats.byProtocol[PROTOCOL_VIRTUAL]} | LAN: ${deviceStats.byProtocol[PROTOCOL_LAN]}
+<b>Devices:</b> <a href='/device/list' target='_blank' style='color: #1A77C9; text-decoration: none;'>${deviceStats.totalDevices}</a> total
+  Active: ${deviceListLink(deviceStats.activeDevices, idsByS.active)} | Inactive: ${deviceListLink(deviceStats.inactiveDevices, (idsByS.inactive ?: []) + (idsByS.disabled ?: []))} | Disabled: ${deviceListLink(deviceStats.disabledDevices, idsByS.disabled)}
+  Z-Wave: ${deviceListLink(deviceStats.byProtocol[PROTOCOL_ZWAVE], idsByP[PROTOCOL_ZWAVE])} | Zigbee: ${deviceListLink(deviceStats.byProtocol[PROTOCOL_ZIGBEE], idsByP[PROTOCOL_ZIGBEE])} | Matter: ${deviceListLink(deviceStats.byProtocol[PROTOCOL_MATTER], idsByP[PROTOCOL_MATTER])}
+  Hub Mesh: ${deviceListLink(deviceStats.byProtocol[PROTOCOL_HUBMESH], idsByP[PROTOCOL_HUBMESH])} | Virtual: ${deviceListLink(deviceStats.byProtocol[PROTOCOL_VIRTUAL], idsByP[PROTOCOL_VIRTUAL])} | LAN: ${deviceListLink(deviceStats.byProtocol[PROTOCOL_LAN], idsByP[PROTOCOL_LAN])}
 
 <b>Applications:</b> ${appStats.totalApps} total (System: ${appStats.builtInApps} | User: ${appStats.userApps})
 ${resourceLine}${alertLine}"""
@@ -2940,7 +2963,12 @@ Map analyzeDevicesQuick() {
         totalDevices: 0, activeDevices: 0, inactiveDevices: 0, disabledDevices: 0,
         byProtocol: [(PROTOCOL_ZIGBEE): 0, (PROTOCOL_ZWAVE): 0, (PROTOCOL_MATTER): 0,
                      (PROTOCOL_LAN): 0, (PROTOCOL_VIRTUAL): 0, (PROTOCOL_MAKER): 0,
-                     (PROTOCOL_CLOUD): 0, (PROTOCOL_HUBMESH): 0, (PROTOCOL_OTHER): 0]
+                     (PROTOCOL_CLOUD): 0, (PROTOCOL_HUBMESH): 0, (PROTOCOL_OTHER): 0],
+        allIds: [],
+        idsByStatus: [active: [], inactive: [], disabled: []],
+        idsByProtocol: [(PROTOCOL_ZIGBEE): [], (PROTOCOL_ZWAVE): [], (PROTOCOL_MATTER): [],
+                        (PROTOCOL_LAN): [], (PROTOCOL_VIRTUAL): [], (PROTOCOL_MAKER): [],
+                        (PROTOCOL_CLOUD): [], (PROTOCOL_HUBMESH): [], (PROTOCOL_OTHER): []]
     ]
 
     // Build definitive protocol sets from radio detail endpoints (3 fast bulk calls)
@@ -2954,6 +2982,7 @@ Map analyzeDevicesQuick() {
             if (!device || !(device instanceof Map)) return
 
             stats.totalDevices++
+            stats.allIds << device.id
 
             Long lastActivity = null
             try {
@@ -2965,10 +2994,13 @@ Map analyzeDevicesQuick() {
             if (device.disabled) {
                 stats.disabledDevices++
                 stats.inactiveDevices++
+                stats.idsByStatus.disabled << device.id
             } else if (lastActivity && lastActivity > inactivityThresholdMs) {
                 stats.activeDevices++
+                stats.idsByStatus.active << device.id
             } else {
                 stats.inactiveDevices++
+                stats.idsByStatus.inactive << device.id
             }
 
             // Protocol: check radio map first, then fall back to heuristic
@@ -2981,6 +3013,7 @@ Map analyzeDevicesQuick() {
                 protocol = determineProtocolQuick(device)
             }
             stats.byProtocol[protocol] = (stats.byProtocol[protocol] ?: 0) + 1
+            stats.idsByProtocol[protocol] << device.id
         } catch (Exception e) { /* skip */ }
     }
 
@@ -3132,7 +3165,7 @@ String formatMetricsTable(List metrics) {
     return sb.toString()
 }
 
-String formatProtocolTable(Map protocolMap) {
+String formatProtocolTable(Map protocolMap, Map idsByProtocol = [:]) {
     if (!protocolMap || protocolMap.isEmpty()) {
         return "No protocol data available"
     }
@@ -3145,8 +3178,10 @@ String formatProtocolTable(Map protocolMap) {
     PROTOCOL_DISPLAY.each { String key, String displayName ->
         int count = (protocolMap[key] ?: 0) as int
         if (count > 0) {
+            List ids = idsByProtocol[key] ?: []
+            String countDisplay = ids ? deviceListLink(count, ids) : count.toString()
             sb.append("<tr><td style='padding: 4px;'>${displayName}</td>")
-            sb.append("<td style='text-align:right; padding: 4px;'>${count}</td></tr>")
+            sb.append("<td style='text-align:right; padding: 4px;'>${countDisplay}</td></tr>")
         }
     }
     sb.append("</table>")
