@@ -177,6 +177,11 @@ hr.addEventListener('mouseleave',function(){
         .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; text-align: center; color: #999; font-size: 0.9em; }
 '''
 
+@Field static final String DEFAULT_LINK_STYLE = "color: #1A77C9; text-decoration: none;"
+@Field static final String DEFAULT_LINK_STYLE_UNDERLINE = "color: #1A77C9; text-decoration: underline;"
+@Field static final String DANGER_LINK_STYLE = "color: #d32f2f;"
+@Field static final String DANGER_LINK_STYLE_UNDERLINE = "color: #d32f2f; text-decoration: underline;"
+
 @Field static final String EXPORT_SORT_SCRIPT = '''<script>
 function sortExportTable(tableId, colIdx, dataType) {
     var table = document.getElementById(tableId);
@@ -423,27 +428,14 @@ Map networkPage() {
                     paragraph "<span style='color: #ff9800;'>\u26A0 Radio firmware update recommended</span>"
                 }
 
-                // Ghost/failed node detection
-                if (zw.zwDevices) {
-                    List ghostNodes = []
-                    zw.zwDevices.each { nodeId, nodeData ->
-                        if (nodeData instanceof Map) {
-                            boolean isFailed = nodeData.status == "FAILED" || nodeData.failed == true
-                            boolean noRoute = nodeData.route == null || nodeData.route == "" || nodeData.route == "No route"
-                            boolean noName = !nodeData.name || nodeData.name == "Unknown" || nodeData.name == ""
-                            if (isFailed || (noRoute && noName)) {
-                                ghostNodes << [id: nodeId, deviceId: nodeData.deviceId, name: nodeData.name ?: "Unknown", status: nodeData.status ?: "No route"]
-                            }
-                        }
+                List ghostNodes = buildZwaveGhostNodes(zw)
+                if (ghostNodes) {
+                    paragraph "<b style='color: #d32f2f;'>Possible Ghost Nodes (${ghostNodes.size()}):</b>"
+                    ghostNodes.each { Map ghost ->
+                        String ghostNameHtml = ghost.deviceId ? deviceEditLink(ghost.deviceId, ghost.name as String, DANGER_LINK_STYLE_UNDERLINE) : escapeHtml(ghost.name as String)
+                        paragraph "&nbsp;&nbsp;<span style='color: #d32f2f;'>Node ${ghost.id}: ${ghostNameHtml} (${ghost.status})</span>"
                     }
-                    if (ghostNodes) {
-                        paragraph "<b style='color: #d32f2f;'>Possible Ghost Nodes (${ghostNodes.size()}):</b>"
-                        ghostNodes.each { Map ghost ->
-                            String ghostNameHtml = ghost.deviceId ? "<a href='/device/edit/${ghost.deviceId}' target='_blank' style='color: #d32f2f; text-decoration: underline;'>${ghost.name}</a>" : ghost.name
-                            paragraph "&nbsp;&nbsp;<span style='color: #d32f2f;'>Node ${ghost.id}: ${ghostNameHtml} (${ghost.status})</span>"
-                        }
-                        paragraph "<i>Ghost nodes can cause Z-Wave mesh instability. Remove them from Settings > Z-Wave Details.</i>"
-                    }
+                    paragraph "<i>Ghost nodes can cause Z-Wave mesh instability. Remove them from Settings > Z-Wave Details.</i>"
                 }
             } else {
                 paragraph "<i>Z-Wave details unavailable</i>"
@@ -475,7 +467,7 @@ Map networkPage() {
                     if (n.rssi != null) {
                         rssiColor = n.rssi >= -60 ? "#388e3c" : (n.rssi >= -80 ? "#ff9800" : "#d32f2f")
                     }
-                    String nameHtml = n.deviceId ? "<a href='/device/edit/${n.deviceId}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(n.name as String)}</a>" : n.name
+                    String nameHtml = n.deviceId ? deviceEditLink(n.deviceId, n.name as String) : escapeHtml(n.name as String)
                     Map row = [
                         name: nameHtml,
                         _nameSort: n.name,
@@ -504,15 +496,11 @@ Map networkPage() {
                 ], nodeRows)
 
                 // Problem node callout
-                List problemNodes = zwaveMesh.nodes.findAll { Map n -> n.state != "OK" || n.per > 1 }
+                List problemNodes = buildZwaveProblemNodes(zwaveMesh.nodes)
                 if (problemNodes) {
                     paragraph "<b style='color: #d32f2f;'>Problem Nodes (${problemNodes.size()}):</b>"
                     problemNodes.each { Map n ->
-                        List issues = []
-                        if (n.state != "OK") issues << "State: ${n.state}"
-                        if (n.per > 1) issues << "PER: ${n.per}%"
-                        String probNameHtml = n.deviceId ? "<a href='/device/edit/${n.deviceId}' target='_blank' style='color: #d32f2f; text-decoration: underline;'>${escapeHtml(n.name as String)}</a>" : escapeHtml(n.name as String)
-                        paragraph "&nbsp;&nbsp;<span style='color: #d32f2f;'>${probNameHtml} — ${issues.join(', ')}</span>"
+                        paragraph "&nbsp;&nbsp;<span style='color: #d32f2f;'>${n.nameHtml} — ${n.issues}</span>"
                     }
                     paragraph "<i>High PER (Packet Error Rate) indicates unreliable communication. Check device distance, interference, or replace failed nodes.</i>"
                 }
@@ -548,11 +536,8 @@ Map networkPage() {
                     String respColor = inactiveDevices == 0 ? "#388e3c" : (inactiveDevices > 3 ? "#d32f2f" : "#ff9800")
                     zbMetrics << ["Responsive", "<span style='color: ${respColor};'>${activeDevices} / ${totalDevices}</span>"]
                     if (inactiveDevices > 0) {
-                        List nonResponsive = zb.devices.findAll { it.active != true }.collect { Map d ->
-                            String dName = d.name ?: "Device ${d.id}"
-                            d.id ? "<a href='/device/edit/${d.id}' target='_blank' style='color: #d32f2f;'>${dName}</a>" : dName
-                        }
-                        zbMetrics << ["Non-Responsive", nonResponsive.join(', ')]
+                        List nonResponsive = buildZigbeeNonResponsiveItems(zb.devices)
+                        zbMetrics << ["Non-Responsive", nonResponsive.collect { it.html }.join(', ')]
                     }
                 }
                 paragraph formatMetricsTable(zbMetrics)
@@ -580,10 +565,11 @@ Map networkPage() {
                 }
                 paragraph formatMetricsTable(meshMetrics)
 
-                if (zigbeeMesh.weakNeighbors && zigbeeMesh.weakNeighbors.size() > 0) {
+                List weakNeighborLines = buildZigbeeWeakNeighborLines(zigbeeMesh.weakNeighbors)
+                if (weakNeighborLines) {
                     paragraph "<b style='color: #d32f2f;'>Weak Neighbor Details:</b>"
-                    zigbeeMesh.weakNeighbors.each { Map n ->
-                        paragraph "&nbsp;&nbsp;${n.shortId ?: 'Unknown'} — LQI: ${n.lqi}"
+                    weakNeighborLines.each { String line ->
+                        paragraph "&nbsp;&nbsp;${line}"
                     }
                     paragraph "<i>Low LQI indicates poor signal quality. Consider adding Zigbee repeaters near these devices.</i>"
                 }
@@ -626,14 +612,11 @@ Map networkPage() {
                 ]
                 paragraph formatMetricsTable(hmMetrics)
 
-                if (hm.hubList && hm.hubList.size() > 0) {
+                List linkedHubLines = buildHubMeshLinkedHubLines(hm.hubList)
+                if (linkedHubLines) {
                     paragraph "<b>Linked Hubs (${hm.hubList.size()}):</b>"
-                    hm.hubList.each { hub ->
-                        String status = hub.offline ? "Offline" : "Online"
-                        String statusColor = hub.offline ? "#d32f2f" : "#388e3c"
-                        int sharedDevCount = hub.deviceIds ? hub.deviceIds.size() : 0
-                        int sharedVarCount = hub.hubVarNames ? hub.hubVarNames.size() : 0
-                        paragraph "&nbsp;&nbsp;<span style='color: ${statusColor};'><b>${hub.name}</b></span> (${hub.ipAddress}) — ${status} | ${sharedDevCount} devices, ${sharedVarCount} variables"
+                    linkedHubLines.each { String line ->
+                        paragraph "&nbsp;&nbsp;${line}"
                     }
                 }
             } else {
@@ -830,17 +813,17 @@ List buildDeviceSummaryMetrics(Map deviceStats) {
 
 List buildDeviceTableRows(List allDevices) {
     return allDevices.collect { Map dev ->
-        String nameLink = "<a href='/device/edit/${dev.id}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(dev.name as String)}</a>"
+        String nameLink = deviceEditLink(dev.id, dev.name as String)
         String typeDisplay = escapeHtml(dev.type as String)
         if (dev.userType && dev.deviceTypeId) {
-            typeDisplay = "<a href='/driver/editor/${dev.deviceTypeId}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${typeDisplay}</a>"
+            typeDisplay = deviceTypeEditorLink(dev.deviceTypeId, dev.type as String)
         }
 
         String parentDisplay = "-"
         if (dev.parentAppName) {
-            parentDisplay = "<a href='/installedapp/configure/${dev.parentAppId}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(dev.parentAppName as String)}</a>"
+            parentDisplay = installedAppLink(dev.parentAppId, dev.parentAppName as String)
         } else if (dev.parentDeviceName) {
-            parentDisplay = "<a href='/device/edit/${dev.parentDeviceId}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(dev.parentDeviceName as String)}</a>"
+            parentDisplay = deviceEditLink(dev.parentDeviceId, dev.parentDeviceName as String)
         }
 
         Map row = [
@@ -871,7 +854,7 @@ List buildDeviceTableRows(List allDevices) {
 String renderLowBatteryAlerts(List lowBatteryDevices) {
     if (!lowBatteryDevices) return null
     return lowBatteryDevices.collect { Map dev ->
-        "<span style='color: #d32f2f;'><a href='/device/edit/${dev.id}' target='_blank' style='color: #d32f2f;'>${dev.name}</a>: ${dev.battery}%</span>"
+        "<span style='color: #d32f2f;'>${deviceEditLink(dev.id, dev.name as String, DANGER_LINK_STYLE)}: ${dev.battery}%</span>"
     }.join("<br>")
 }
 
@@ -907,8 +890,7 @@ List buildPlatformAppRows(List platformApps) {
     return platformApps.collect { Map app ->
         int stateSize = app.stateSize as int
         String stateSizeColor = stateSize > 10000 ? "#d32f2f" : (stateSize > 5000 ? "#ff9800" : "")
-        String appName = escapeHtml(app.name as String)
-        String nameDisplay = app.id ? "<a href='/installedapp/status/${app.id}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${appName}</a>" : appName
+        String nameDisplay = platformAppStatusLink(app.id, app.name as String)
         Map row = [
             name: nameDisplay,
             _nameSort: app.name,
@@ -924,6 +906,17 @@ List buildPlatformAppRows(List platformApps) {
         if (stateSizeColor) row._stateSizeColor = stateSizeColor
         if (app.largeState) row._stateSizeColor = "#d32f2f"
         return row
+    }
+}
+
+List buildUserAppRows(List userApps) {
+    return (userApps ?: []).sort { (it.label ?: it.name ?: "").toString().toLowerCase() }.collect { Map app ->
+        String label = safeToString(app.label ?: app.name, "Unknown")
+        String appId = normalizeAppLookupId(app.id)
+        return [
+            labelHtml: appId ? installedAppLink(appId, label) : escapeHtml(label),
+            type: escapeHtml(app.name as String)
+        ]
     }
 }
 
@@ -1691,29 +1684,7 @@ Map analyzeDevices() {
     }
 
     // Flatten the device list while preserving parent device context from nested child entries
-    List devicesList = []
-    Closure flattenDevices
-    flattenDevices = { List entries, Object parentDeviceId = null, String parentDeviceName = null ->
-        entries.each { entry ->
-            devicesList << [
-                data: entry.data,
-                key: entry.key,
-                parent: entry.parent,
-                child: entry.child,
-                linked: entry.linked,
-                parentDeviceId: parentDeviceId,
-                parentDeviceName: parentDeviceName
-            ]
-
-            Map entryDevice = entry.data instanceof Map ? (Map) entry.data : null
-            Object entryDeviceId = entryDevice?.id
-            String entryDeviceName = entryDevice?.label ?: entryDevice?.name ?: (entryDeviceId != null ? "Device ${entryDeviceId}" : null)
-            if (entry.children) {
-                flattenDevices(entry.children as List, entryDeviceId, entryDeviceName)
-            }
-        }
-    }
-    flattenDevices(response.devices as List)
+    List devicesList = flattenDeviceEntries(response.devices as List, true)
 
     Map stats = [
         totalDevices: 0,
@@ -1869,7 +1840,7 @@ Map analyzeApps() {
         runtimeTotalApps: 0
     ]
 
-    // Recursive closure to count and catalog all apps at any nesting depth
+    // Dedicated recursion remains here because hierarchy generation mutates nested child lists
     Closure processAppList
     processAppList = { List entries, boolean isChildLevel, List parentHierarchyList ->
         entries.each { appEntry ->
@@ -1911,13 +1882,10 @@ Map analyzeApps() {
                         children: []
                     ]
 
-                    // Recursively process children
                     processAppList(children, true, parentInfo.children)
                     parentInfo.childCount = parentInfo.children.size()
-
                     parentHierarchyList << parentInfo
                 } else if (isChildLevel) {
-                    // Leaf child — add to parent's hierarchy children list
                     parentHierarchyList << [
                         id: app.id,
                         type: appType,
@@ -1930,7 +1898,6 @@ Map analyzeApps() {
             }
         }
     }
-
     processAppList(appsList, false, stats.parentChildHierarchy)
 
     // Identify platform-only apps by comparing runtime stats against appsList
@@ -1943,14 +1910,9 @@ Map analyzeApps() {
 
             // Collect all IDs from appsList (including nested children)
             Set apiIds = new HashSet()
-            Closure collectIds
-            collectIds = { List entries ->
-                entries.each { entry ->
-                    if (entry.data?.id) apiIds << entry.data.id
-                    if (entry.children) collectIds(entry.children as List)
-                }
+            visitAppEntries(appsList) { Map appEntry, Map app, boolean isChildLevel, List parentHierarchyList ->
+                if (app?.id) apiIds << app.id
             }
-            collectIds(appsList)
 
             // Platform apps = in runtime stats but not in appsList
             runtimeAppStats.each { Map app ->
@@ -2045,10 +2007,137 @@ Map analyzeSystemHealth() {
 
 // ===== PROTOCOL DETECTION =====
 
+String hubLink(String path, String label, String style = DEFAULT_LINK_STYLE) {
+    if (!path) return escapeHtml(label ?: "")
+    return "<a href='${path}' target='_blank' style='${style}'>${escapeHtml(label ?: "")}</a>"
+}
+
+String deviceEditLink(Object deviceId, String label, String style = DEFAULT_LINK_STYLE) {
+    return deviceId ? hubLink("/device/edit/${deviceId}", label, style) : escapeHtml(label ?: "")
+}
+
+String installedAppLink(Object appId, String label, String style = DEFAULT_LINK_STYLE) {
+    String normalizedId = normalizeAppLookupId(appId)
+    return normalizedId ? hubLink("/installedapp/configure/${normalizedId}", label, style) : escapeHtml(label ?: "")
+}
+
+String platformAppStatusLink(Object appId, String label, String style = DEFAULT_LINK_STYLE) {
+    String normalizedId = normalizeAppLookupId(appId)
+    return normalizedId ? hubLink("/installedapp/status/${normalizedId}", label, style) : escapeHtml(label ?: "")
+}
+
+String deviceTypeEditorLink(Object deviceTypeId, String label, String style = DEFAULT_LINK_STYLE) {
+    return deviceTypeId ? hubLink("/driver/editor/${deviceTypeId}", label, style) : escapeHtml(label ?: "")
+}
+
 String deviceListLink(Object count, List ids) {
     if (!ids || ids.size() == 0) return count.toString()
     String idStr = ids.collect { it.toString() }.join(',')
-    return "<a href='/device/list?ids=${idStr}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${count}</a>"
+    return hubLink("/device/list?ids=${idStr}", count?.toString())
+}
+
+List flattenDeviceEntries(List entries, boolean includeParentContext = false) {
+    List flattened = []
+    Closure visitEntries
+    visitEntries = { List currentEntries, Object parentDeviceId = null, String parentDeviceName = null ->
+        (currentEntries ?: []).each { Map entry ->
+            if (includeParentContext) {
+                flattened << [
+                    data: entry.data,
+                    key: entry.key,
+                    parent: entry.parent,
+                    child: entry.child,
+                    linked: entry.linked,
+                    parentDeviceId: parentDeviceId,
+                    parentDeviceName: parentDeviceName
+                ]
+            } else {
+                flattened << entry
+            }
+
+            Map entryDevice = entry?.data instanceof Map ? (Map) entry.data : null
+            Object entryId = entryDevice?.id
+            String entryName = entryDevice?.label ?: entryDevice?.name ?: (entryId != null ? "Device ${entryId}" : null)
+            if (entry?.children) {
+                visitEntries(entry.children as List, includeParentContext ? entryId : null, includeParentContext ? entryName : null)
+            }
+        }
+    }
+    visitEntries(entries ?: [])
+    return flattened
+}
+
+void visitAppEntries(List entries, Closure visitor, boolean isChildLevel = false, List parentHierarchyList = []) {
+    (entries ?: []).each { Map appEntry ->
+        Map app = appEntry?.data instanceof Map ? (Map) appEntry.data : null
+        visitor(appEntry, app, isChildLevel, parentHierarchyList)
+        List children = appEntry?.children ?: []
+        if (children) {
+            List nextParents = parentHierarchyList
+            if (app) nextParents = parentHierarchyList + [app]
+            visitAppEntries(children as List, visitor, true, nextParents)
+        }
+    }
+}
+
+List buildZwaveGhostNodes(Map zwaveDetails) {
+    List ghostNodes = []
+    (zwaveDetails?.zwDevices ?: [:]).each { nodeId, nodeData ->
+        if (nodeData instanceof Map) {
+            boolean isFailed = nodeData.status == "FAILED" || nodeData.failed == true
+            boolean noRoute = nodeData.route == null || nodeData.route == "" || nodeData.route == "No route"
+            boolean noName = !nodeData.name || nodeData.name == "Unknown" || nodeData.name == ""
+            if (isFailed || (noRoute && noName)) {
+                ghostNodes << [
+                    id: nodeId,
+                    deviceId: nodeData.deviceId,
+                    name: nodeData.name ?: "Unknown",
+                    status: nodeData.status ?: "No route"
+                ]
+            }
+        }
+    }
+    return ghostNodes
+}
+
+List buildZwaveProblemNodes(List nodes) {
+    return (nodes ?: []).findAll { Map n -> n.state != "OK" || (n.per ?: 0) > 1 }.collect { Map n ->
+        List issues = []
+        if (n.state != "OK") issues << "State: ${n.state}"
+        if ((n.per ?: 0) > 1) issues << "PER: ${n.per}%"
+        return [
+            nameHtml: deviceEditLink(n.deviceId, safeToString(n.name, "Unknown"), DANGER_LINK_STYLE_UNDERLINE),
+            plainName: escapeHtml(safeToString(n.name, "Unknown")),
+            issues: issues.join(", ")
+        ]
+    }
+}
+
+List buildZigbeeNonResponsiveItems(List devices) {
+    return (devices ?: []).findAll { Map d -> d.active != true }.collect { Map d ->
+        String name = safeToString(d.name, d.id != null ? "Device ${d.id}" : "Unknown")
+        return [
+            id: d.id,
+            name: name,
+            html: d.id ? deviceEditLink(d.id, name, DANGER_LINK_STYLE) : escapeHtml(name)
+        ]
+    }
+}
+
+List buildZigbeeWeakNeighborLines(List weakNeighbors) {
+    return (weakNeighbors ?: []).collect { Map n ->
+        "${n.shortId ?: 'Unknown'} — LQI: ${n.lqi}"
+    }
+}
+
+List buildHubMeshLinkedHubLines(List hubList) {
+    return (hubList ?: []).collect { Map hub ->
+        String status = hub.offline ? "Offline" : "Online"
+        String statusColor = hub.offline ? "#d32f2f" : "#388e3c"
+        int sharedDevCount = hub.deviceIds ? hub.deviceIds.size() : 0
+        int sharedVarCount = hub.hubVarNames ? hub.hubVarNames.size() : 0
+        return "<span style='color: ${statusColor};'><b>${escapeHtml(safeToString(hub.name, 'Unknown'))}</b></span> (${escapeHtml(safeToString(hub.ipAddress, 'N/A'))}) — ${status} | ${sharedDevCount} devices, ${sharedVarCount} variables"
+    }
 }
 
 Map buildRadioProtocolMap() {
@@ -2079,20 +2168,12 @@ Map buildAppLookupMap() {
     }
 
     Map appLookup = [:]
-    Closure visitApps
-    visitApps = { List entries ->
-        (entries ?: []).each { Map appEntry ->
-            Map app = appEntry?.data instanceof Map ? (Map) appEntry.data : null
-            String appId = normalizeAppLookupId(appEntry?.key ?: app?.id)
-            if (appId) {
-                appLookup[appId] = app?.label ?: app?.name ?: "App ${appId}"
-            }
-            if (appEntry?.children) {
-                visitApps(appEntry.children as List)
-            }
+    visitAppEntries(response.apps as List) { Map appEntry, Map app, boolean isChildLevel, List parentHierarchyList ->
+        String appId = normalizeAppLookupId(appEntry?.key ?: app?.id)
+        if (appId) {
+            appLookup[appId] = app?.label ?: app?.name ?: "App ${appId}"
         }
     }
-    visitApps(response.apps as List)
     return appLookup
 }
 
@@ -2480,7 +2561,7 @@ String generateComparison(Map baselineStats, Map checkpointStats, String baselin
             chattyDevices.sort { -it.msgsPerMin }
             sb.append("<br><br><b style='color: #d32f2f;'>\u26A0 Chatty Devices Detected (>${threshold.intValue()} msgs/min):</b><br>")
             chattyDevices.each { Map dev ->
-                String chattyNameHtml = dev.deviceId ? "<a href='/device/edit/${dev.deviceId}' target='_blank' style='color: #d32f2f; text-decoration: underline;'>${dev.name}</a>" : dev.name
+                String chattyNameHtml = dev.deviceId ? deviceEditLink(dev.deviceId, dev.name as String, DANGER_LINK_STYLE_UNDERLINE) : escapeHtml(dev.name as String)
                 sb.append("&nbsp;&nbsp;<span style='color: #d32f2f;'><b>${chattyNameHtml}</b> (${dev.protocol}) — ${String.format('%.1f', dev.msgsPerMin)} msgs/min (${dev.total} total)</span><br>")
             }
             sb.append("<i>Chatty devices can degrade hub performance. Check if device polling intervals are too aggressive or if the device is malfunctioning.</i><br>")
@@ -2688,7 +2769,7 @@ String generateRadioComparisonTable(List baselineItems, List checkpointItems, St
     float avgMsgs = comparisonData.sum { it.messages } / comparisonData.size()
 
     List rows = comparisonData.collect { Map item ->
-        String rcNameHtml = item.id ? "<a href='/device/edit/${item.id}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(item.name as String)}</a>" : escapeHtml(item.name as String)
+        String rcNameHtml = item.id ? deviceEditLink(item.id, item.name as String) : escapeHtml(item.name as String)
         Map row = [
             name: rcNameHtml,
             _nameSort: item.name,
@@ -2859,15 +2940,15 @@ String generateSnapshotDiff(Map older, Map newer) {
 
     if (added) {
         sb.append("<br>&nbsp;&nbsp;<span style='color: #388e3c;'><b>Added (${added.size()}):</b></span><br>")
-        added.each { sb.append("&nbsp;&nbsp;&nbsp;&nbsp;+ <a href='/device/edit/${it.id}' target='_blank' style='color: #388e3c;'>${it.name}</a> (${PROTOCOL_DISPLAY[it.protocol] ?: it.protocol})<br>") }
+        added.each { sb.append("&nbsp;&nbsp;&nbsp;&nbsp;+ ${deviceEditLink(it.id, it.name as String, 'color: #388e3c;')} (${PROTOCOL_DISPLAY[it.protocol] ?: it.protocol})<br>") }
     }
     if (removed) {
         sb.append("<br>&nbsp;&nbsp;<span style='color: #d32f2f;'><b>Removed (${removed.size()}):</b></span><br>")
-        removed.each { sb.append("&nbsp;&nbsp;&nbsp;&nbsp;- <a href='/device/edit/${it.id}' target='_blank' style='color: #d32f2f;'>${it.name}</a> (${PROTOCOL_DISPLAY[it.protocol] ?: it.protocol})<br>") }
+        removed.each { sb.append("&nbsp;&nbsp;&nbsp;&nbsp;- ${deviceEditLink(it.id, it.name as String, DANGER_LINK_STYLE)} (${PROTOCOL_DISPLAY[it.protocol] ?: it.protocol})<br>") }
     }
     if (changed) {
         sb.append("<br>&nbsp;&nbsp;<span style='color: #ff9800;'><b>Changed (${changed.size()}):</b></span><br>")
-        changed.each { sb.append("&nbsp;&nbsp;&nbsp;&nbsp;~ <a href='/device/edit/${it.id}' target='_blank' style='color: #ff9800;'>${it.name}</a>: ${it.changes}<br>") }
+        changed.each { sb.append("&nbsp;&nbsp;&nbsp;&nbsp;~ ${deviceEditLink(it.id, it.name as String, 'color: #ff9800;')} : ${it.changes}<br>") }
     }
     if (!added && !removed && !changed) {
         sb.append("&nbsp;&nbsp;<i>No device changes detected</i><br>")
@@ -2958,7 +3039,7 @@ String renderSnapshotView(Map snap) {
         allDevs.sort { (it.name ?: "").toString().toLowerCase() }.eachWithIndex { Map dev, int idx ->
             String rowBg = idx % 2 == 0 ? "#f9f9f9" : "#ffffff"
             String statusColor = dev.status == "Active" ? "#388e3c" : (dev.status == "Disabled" ? "#d32f2f" : "#ff9800")
-            String nameLink = "<a href='/device/edit/${dev.id}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(dev.name as String)}</a>"
+            String nameLink = deviceEditLink(dev.id, dev.name as String)
             sb.append("<tr style='background-color: ${rowBg};'>")
             sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${nameLink}</td>")
             sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${dev.type ?: ''}</td>")
@@ -3001,13 +3082,11 @@ String renderSnapshotView(Map snap) {
         sb.append("<th style='padding: 4px 8px; text-align: left; border: 1px solid #ddd;'>Label</th>")
         sb.append("<th style='padding: 4px 8px; text-align: left; border: 1px solid #ddd;'>Type</th>")
         sb.append("</tr></thead><tbody>")
-        userApps.sort { (it.label ?: it.name ?: "").toString().toLowerCase() }.eachWithIndex { Map app, int idx ->
+        buildUserAppRows(userApps).eachWithIndex { Map app, int idx ->
             String rowBg = idx % 2 == 0 ? "#f9f9f9" : "#ffffff"
-            String appId = (app.id ?: "").toString().replace("APP-", "")
-            String nameLink = appId ? "<a href='/installedapp/configure/${appId}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml((app.label ?: app.name) as String)}</a>" : escapeHtml((app.label ?: app.name) as String)
             sb.append("<tr style='background-color: ${rowBg};'>")
-            sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${nameLink}</td>")
-            sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${escapeHtml(app.name as String)}</td>")
+            sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${app.labelHtml}</td>")
+            sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${app.type}</td>")
             sb.append("</tr>")
         }
         sb.append("</tbody></table><br>")
@@ -3027,8 +3106,7 @@ String renderSnapshotView(Map snap) {
             int stateSize = (app.stateSize ?: 0) as int
             String stateSizeColor = stateSize > 10000 ? "#d32f2f" : (stateSize > 5000 ? "#ff9800" : "")
             String stateSizeHtml = stateSizeColor ? "<span style='color: ${stateSizeColor};'>${stateSize}</span>" : "${stateSize}"
-            String appName = escapeHtml(app.name as String)
-            String appNameHtml = app.id ? "<a href='/installedapp/status/${app.id}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${appName}</a>" : appName
+            String appNameHtml = platformAppStatusLink(app.id, app.name as String)
             sb.append("<tr style='background-color: ${rowBg};'>")
             sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${appNameHtml}</td>")
             sb.append("<td style='padding: 4px 8px; text-align: center; border: 1px solid #ddd;'>${stateSizeHtml}</td>")
@@ -3256,26 +3334,14 @@ String renderExportNetwork(Map reportData) {
             sb.append("<p><span style='color: #ff9800;'>\u26A0 Radio firmware update recommended</span></p>")
         }
 
-        if (zw.zwDevices) {
-            List ghostNodes = []
-            zw.zwDevices.each { nodeId, nodeData ->
-                if (nodeData instanceof Map) {
-                    boolean isFailed = nodeData.status == "FAILED" || nodeData.failed == true
-                    boolean noRoute = nodeData.route == null || nodeData.route == "" || nodeData.route == "No route"
-                    boolean noName = !nodeData.name || nodeData.name == "Unknown" || nodeData.name == ""
-                    if (isFailed || (noRoute && noName)) {
-                        ghostNodes << [id: nodeId, deviceId: nodeData.deviceId, name: nodeData.name ?: "Unknown", status: nodeData.status ?: "No route"]
-                    }
-                }
+        List ghostNodes = buildZwaveGhostNodes(zw)
+        if (ghostNodes) {
+            sb.append("<p><b style='color: #d32f2f;'>Possible Ghost Nodes (${ghostNodes.size()}):</b></p>")
+            ghostNodes.each { Map ghost ->
+                String ghostNameHtml = ghost.deviceId ? deviceEditLink(ghost.deviceId, ghost.name as String, DANGER_LINK_STYLE_UNDERLINE) : escapeHtml(ghost.name as String)
+                sb.append("<p>&nbsp;&nbsp;<span style='color: #d32f2f;'>Node ${ghost.id}: ${ghostNameHtml} (${ghost.status})</span></p>")
             }
-            if (ghostNodes) {
-                sb.append("<p><b style='color: #d32f2f;'>Possible Ghost Nodes (${ghostNodes.size()}):</b></p>")
-                ghostNodes.each { Map ghost ->
-                    String ghostNameHtml = ghost.deviceId ? "<a href='/device/edit/${ghost.deviceId}' target='_blank' style='color: #d32f2f; text-decoration: underline;'>${ghost.name}</a>" : ghost.name
-                    sb.append("<p>&nbsp;&nbsp;<span style='color: #d32f2f;'>Node ${ghost.id}: ${ghostNameHtml} (${ghost.status})</span></p>")
-                }
-                sb.append("<p><i>Ghost nodes can cause Z-Wave mesh instability. Remove them from Settings > Z-Wave Details.</i></p>")
-            }
+            sb.append("<p><i>Ghost nodes can cause Z-Wave mesh instability. Remove them from Settings > Z-Wave Details.</i></p>")
         }
     }
 
@@ -3303,15 +3369,11 @@ String renderExportNetwork(Map reportData) {
             10
         ))
 
-        List problemNodes = zwaveMesh.nodes.findAll { Map n -> n.state != "OK" || n.per > 1 }
+        List problemNodes = buildZwaveProblemNodes(zwaveMesh.nodes)
         if (problemNodes) {
             sb.append("<p><b style='color: #d32f2f;'>Problem Nodes (${problemNodes.size()}):</b></p>")
             problemNodes.each { Map n ->
-                List issues = []
-                if (n.state != "OK") issues << "State: ${n.state}"
-                if (n.per > 1) issues << "PER: ${n.per}%"
-                String probNameHtml = n.deviceId ? "<a href='/device/edit/${n.deviceId}' target='_blank' style='color: #d32f2f; text-decoration: underline;'>${escapeHtml(n.name as String)}</a>" : escapeHtml(n.name as String)
-                sb.append("<p>&nbsp;&nbsp;<span style='color: #d32f2f;'>${probNameHtml} — ${issues.join(', ')}</span></p>")
+                sb.append("<p>&nbsp;&nbsp;<span style='color: #d32f2f;'>${n.nameHtml} — ${n.issues}</span></p>")
             }
             sb.append("<p><i>High PER (Packet Error Rate) indicates unreliable communication. Check device distance, interference, or replace failed nodes.</i></p>")
         }
@@ -3334,11 +3396,8 @@ String renderExportNetwork(Map reportData) {
             int activeDevices = zb.devices.count { it.active == true }
             int inactiveDevices = totalDevices - activeDevices
             if (inactiveDevices > 0) {
-                List nonResponsive = zb.devices.findAll { it.active != true }.collect { Map d ->
-                    String dName = d.name ?: "Device ${d.id}"
-                    d.id ? "<a href='/device/edit/${d.id}' target='_blank' style='color: #d32f2f;'>${dName}</a>" : dName
-                }
-                sb.append("<p><b style='color: #d32f2f;'>Non-Responsive Devices:</b> ${nonResponsive.join(', ')}</p>")
+                List nonResponsive = buildZigbeeNonResponsiveItems(zb.devices)
+                sb.append("<p><b style='color: #d32f2f;'>Non-Responsive Devices:</b> ${nonResponsive.collect { it.html }.join(', ')}</p>")
             }
         }
     }
@@ -3352,10 +3411,11 @@ String renderExportNetwork(Map reportData) {
         if (zigbeeMesh.avgLqi != null) zigbeeMetrics << ["Average LQI", zigbeeMesh.avgLqi]
         sb.append("<h3>Zigbee Mesh</h3>")
         sb.append(renderExportMetricTable(zigbeeMetrics))
-        if (zigbeeMesh.weakNeighbors && zigbeeMesh.weakNeighbors.size() > 0) {
+        List weakNeighborLines = buildZigbeeWeakNeighborLines(zigbeeMesh.weakNeighbors)
+        if (weakNeighborLines) {
             sb.append("<p><b style='color: #d32f2f;'>Weak Neighbor Details:</b></p>")
-            zigbeeMesh.weakNeighbors.each { Map n ->
-                sb.append("<p>&nbsp;&nbsp;${n.shortId ?: 'Unknown'} — LQI: ${n.lqi}</p>")
+            weakNeighborLines.each { String line ->
+                sb.append("<p>&nbsp;&nbsp;${line}</p>")
             }
             sb.append("<p><i>Low LQI indicates poor signal quality. Consider adding Zigbee repeaters near these devices.</i></p>")
         }
@@ -3385,14 +3445,11 @@ String renderExportNetwork(Map reportData) {
         ]
         sb.append("<h3>Hub Mesh</h3>")
         sb.append(renderExportMetricTable(hubMeshMetrics))
-        if (hubMesh.hubList && hubMesh.hubList.size() > 0) {
+        List linkedHubLines = buildHubMeshLinkedHubLines(hubMesh.hubList)
+        if (linkedHubLines) {
             sb.append("<p><b>Linked Hubs (${hubMesh.hubList.size()}):</b></p>")
-            hubMesh.hubList.each { hub ->
-                String status = hub.offline ? "Offline" : "Online"
-                String statusColor = hub.offline ? "#d32f2f" : "#388e3c"
-                int sharedDevCount = hub.deviceIds ? hub.deviceIds.size() : 0
-                int sharedVarCount = hub.hubVarNames ? hub.hubVarNames.size() : 0
-                sb.append("<p>&nbsp;&nbsp;<span style='color: ${statusColor};'><b>${hub.name}</b></span> (${hub.ipAddress}) — ${status} | ${sharedDevCount} devices, ${sharedVarCount} variables</p>")
+            linkedHubLines.each { String line ->
+                sb.append("<p>&nbsp;&nbsp;${line}</p>")
             }
         }
     }
@@ -3487,13 +3544,11 @@ String renderExportUserAppsTable(List userApps) {
     sb.append("<th style='padding: 4px 8px; text-align: left; border: 1px solid #ddd;'>Label</th>")
     sb.append("<th style='padding: 4px 8px; text-align: left; border: 1px solid #ddd;'>Type</th>")
     sb.append("</tr></thead><tbody>")
-    userApps.sort { (it.label ?: it.name ?: "").toString().toLowerCase() }.eachWithIndex { Map app, int idx ->
+    buildUserAppRows(userApps).eachWithIndex { Map app, int idx ->
         String rowBg = idx % 2 == 0 ? "#f9f9f9" : "#ffffff"
-        String appId = (app.id ?: "").toString().replace("APP-", "")
-        String nameLink = appId ? "<a href='/installedapp/configure/${appId}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml((app.label ?: app.name) as String)}</a>" : escapeHtml((app.label ?: app.name) as String)
         sb.append("<tr style='background-color: ${rowBg};'>")
-        sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${nameLink}</td>")
-        sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${escapeHtml(app.name as String)}</td>")
+        sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${app.labelHtml}</td>")
+        sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${app.type}</td>")
         sb.append("</tr>")
     }
     sb.append("</tbody></table>")
@@ -3513,7 +3568,7 @@ List buildExportZwaveMeshRows(List nodes) {
         if (n.rssi != null) {
             rssiColor = n.rssi >= -60 ? "#388e3c" : (n.rssi >= -80 ? "#ff9800" : "#d32f2f")
         }
-        String nameHtml = n.deviceId ? "<a href='/device/edit/${n.deviceId}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(n.name as String)}</a>" : escapeHtml(n.name as String)
+        String nameHtml = n.deviceId ? deviceEditLink(n.deviceId, n.name as String) : escapeHtml(n.name as String)
         Map row = [
             name: nameHtml,
             _nameSort: n.name,
@@ -3788,17 +3843,7 @@ Map analyzeDevicesQuick() {
     }
 
     // Flatten the device list — child devices are nested inside parent entries' 'children' arrays
-    List devicesList = []
-    Closure flattenDevices
-    flattenDevices = { List entries ->
-        entries.each { entry ->
-            devicesList << entry
-            if (entry.children) {
-                flattenDevices(entry.children as List)
-            }
-        }
-    }
-    flattenDevices(response.devices as List)
+    List devicesList = flattenDeviceEntries(response.devices as List, false)
 
     Map stats = [
         totalDevices: 0, activeDevices: 0, inactiveDevices: 0, disabledDevices: 0,
@@ -3877,19 +3922,12 @@ Map analyzeAppsQuick() {
     int userApps = 0
     int builtInApps = 0
 
-    Closure countApps
-    countApps = { List appList ->
-        appList.each { appEntry ->
-            Map app = appEntry.data
-            if (!app || !(app instanceof Map)) return
-            totalApps++
-            if (app.user) userApps++
-            else builtInApps++
-            List children = appEntry.children ?: []
-            if (children) countApps(children)
-        }
+    visitAppEntries(response.apps as List) { Map appEntry, Map app, boolean isChildLevel, List parentHierarchyList ->
+        if (!app) return
+        totalApps++
+        if (app.user) userApps++
+        else builtInApps++
     }
-    countApps(response.apps)
 
     return [totalApps: totalApps, userApps: userApps, builtInApps: builtInApps]
 }
@@ -4106,7 +4144,7 @@ String formatParentChildHierarchy(List hierarchy) {
             sb.append("<td colspan='2' style='padding: 8px 8px 8px 30px; border: 1px solid #ddd; font-size: 11px;'>")
             parent.children.each { Map child ->
                 String disabledText = child.disabled ? " <span style='color: #d32f2f;'>(Disabled)</span>" : ""
-                sb.append("<b><a href='/installedapp/configure/${child.id}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${child.name}</a></b>${disabledText}<br>")
+                sb.append("<b>${installedAppLink(child.id, child.name as String)}</b>${disabledText}<br>")
                 sb.append("&nbsp;&nbsp;<small style='color: #666;'>Type: ${child.type} | ID: ${child.id}</small><br>")
             }
             sb.append("</td></tr>")
