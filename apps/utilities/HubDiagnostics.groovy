@@ -128,15 +128,15 @@ Map dashboardPage() {
             href "devicesPage", title: "Devices", description: "Device inventory and protocol analysis"
             href "appsPage", title: "Applications", description: "App inventory and parent/child hierarchy"
             href "networkPage", title: "Network & Wireless", description: "Z-Wave, Zigbee, Matter, Hub Mesh"
-            href "performancePage", title: "Performance", description: "Runtime stats, top resource consumers, and checkpoint comparison"
+            href "performancePage", title: "Performance", description: "Runtime stats, resource consumers, and perf checkpoint comparison"
             href "systemHealthPage", title: "System Health", description: "Hub info, platform alerts, resources, and database"
-            href "snapshotsPage", title: "Snapshots", description: "Configuration snapshots and diff"
+            href "snapshotsPage", title: "Config Snapshots", description: "Configuration snapshots and diff"
             href "settingsPage", title: "Settings", description: "Thresholds, auto-scheduling, and options"
         }
 
         section("Actions") {
-            input "btnDashSnapshot", "button", title: "Create Snapshot"
-            input "btnDashCheckpoint", "button", title: "Create Checkpoint"
+            input "btnDashSnapshot", "button", title: "Create Config Snapshot"
+            input "btnDashCheckpoint", "button", title: "Create Perf Checkpoint"
         }
 
         section("Installation") {
@@ -589,165 +589,32 @@ Map performancePage() {
             paragraph generateRuntimeSummary(stats, resources)
         }
 
-        if (stats?.deviceStats) {
-            section("Top Resource Consumers — Devices") {
-                paragraph "<i>Devices consuming the most CPU time since last hub restart</i>"
-                List topDevices = ((List) stats.deviceStats)
-                    .findAll { it.pctTotal != null }
-                    .sort { -((it.pctTotal ?: 0) as float) }
-                    .take(10)
-
-                if (topDevices) {
-                    paragraph generateSortableTable("topDevices", [
-                        [label: "Device", field: "name", type: "string"],
-                        [label: "CPU %", field: "pctTotal", type: "number"],
-                        [label: "Exec Count", field: "count", type: "number"],
-                        [label: "Avg (ms)", field: "average", type: "number"],
-                        [label: "State Size", field: "stateSize", type: "number"],
-                        [label: "Events", field: "events", type: "number"],
-                        [label: "States", field: "states", type: "number"]
-                    ], topDevices.collect { Map dev ->
-                        float pct = (dev.pctTotal ?: 0) as float
-                        String pctColor = pct > 1.0 ? "#d32f2f" : (pct > 0.5 ? "#ff9800" : "")
-                        int eventsCount = (dev.customAttributes?.eventsCount ?: 0) as int
-                        int statesCount = (dev.customAttributes?.statesCount ?: 0) as int
-                        boolean eventsAlert = dev.customAttributes?.eventsCountAlert == true
-                        boolean statesAlert = dev.customAttributes?.statesCountAlert == true
-
-                        Map row = [
-                            name: "<a href='/device/edit/${dev.id}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(dev.name as String)}</a>",
-                            _nameSort: dev.name,
-                            pctTotal: String.format('%.3f', pct) + "%",
-                            _pctTotalSort: pct,
-                            count: dev.count ?: 0,
-                            average: String.format('%.1f', (dev.average ?: 0) as float),
-                            _averageSort: (dev.average ?: 0) as float,
-                            stateSize: dev.stateSize ?: 0,
-                            events: eventsCount,
-                            states: statesCount
-                        ]
-                        if (pctColor) row._pctTotalColor = pctColor
-                        if (eventsAlert) row._eventsColor = "#d32f2f"
-                        if (statesAlert) row._statesColor = "#d32f2f"
-                        return row
-                    })
-                } else {
-                    paragraph "<i>No device runtime data available</i>"
-                }
-            }
-
-            section("Top Resource Consumers — Apps") {
-                paragraph "<i>Apps consuming the most CPU time since last hub restart</i>"
-                List topApps = ((List) stats.appStats)
-                    .findAll { it.pctTotal != null }
-                    .sort { -((it.pctTotal ?: 0) as float) }
-                    .take(10)
-
-                if (topApps) {
-                    paragraph generateSortableTable("topApps", [
-                        [label: "App", field: "name", type: "string"],
-                        [label: "CPU %", field: "pctTotal", type: "number"],
-                        [label: "Exec Count", field: "count", type: "number"],
-                        [label: "Avg (ms)", field: "average", type: "number"],
-                        [label: "State Size", field: "stateSize", type: "number"],
-                        [label: "Cloud Calls", field: "cloudCalls", type: "number"]
-                    ], topApps.collect { Map app ->
-                        float pct = (app.pctTotal ?: 0) as float
-                        String pctColor = pct > 1.0 ? "#d32f2f" : (pct > 0.5 ? "#ff9800" : "")
-
-                        Map row = [
-                            name: "<a href='/installedapp/configure/${app.id}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(app.name as String)}</a>",
-                            _nameSort: app.name,
-                            pctTotal: String.format('%.3f', pct) + "%",
-                            _pctTotalSort: pct,
-                            count: app.count ?: 0,
-                            average: String.format('%.1f', (app.average ?: 0) as float),
-                            _averageSort: (app.average ?: 0) as float,
-                            stateSize: app.stateSize ?: 0,
-                            cloudCalls: app.cloudCallCount ?: 0
-                        ]
-                        if (pctColor) row._pctTotalColor = pctColor
-                        return row
-                    })
-                } else {
-                    paragraph "<i>No app runtime data available</i>"
-                }
-            }
-        }
-
-        // Radio Activity — current message counts since reboot
-        Map zwaveData = fetchEndpoint(ZWAVE_DETAILS_URL, "Z-Wave details", 20)
-        Map zigbeeData = fetchEndpoint(ZIGBEE_DETAILS_URL, "Zigbee details", 20)
-        List zwaveMessages = extractZwaveMessageCounts(zwaveData)
-        List zigbeeMessages = extractZigbeeMessageCounts(zigbeeData)
-
-        int radioDeviceCount = (zwaveMessages?.size() ?: 0) + (zigbeeMessages?.size() ?: 0)
-        if (zwaveMessages || zigbeeMessages) {
-            section("Radio Activity (${radioDeviceCount} devices, Since Reboot)", hideable: true, hidden: radioDeviceCount > 10) {
-                paragraph "<i>Messages sent/received per radio device since the last hub reboot. Sorted by message count.</i>"
-
-                List allRadio = []
-                zwaveMessages.each { Map n ->
-                    allRadio << [name: n.name, deviceId: n.deviceId, protocol: "Z-Wave", messages: n.msgCount, routeChanges: n.routeChanges]
-                }
-                zigbeeMessages.each { Map d ->
-                    allRadio << [name: d.name, deviceId: d.id, protocol: "Zigbee", messages: d.msgCount, routeChanges: 0]
-                }
-
-                allRadio.sort { -it.messages }
-
-                float avgMsgs = allRadio.size() > 0 ? (allRadio.sum { it.messages } / allRadio.size()) as float : 0
-
-                List radioRows = allRadio.collect { Map item ->
-                    String radioNameHtml = item.deviceId ? "<a href='/device/edit/${item.deviceId}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(item.name as String)}</a>" : escapeHtml(item.name as String)
-                    Map row = [
-                        name: radioNameHtml,
-                        _nameSort: item.name,
-                        protocol: item.protocol,
-                        messages: item.messages,
-                        routeChanges: item.routeChanges
-                    ]
-                    if (item.messages > avgMsgs * 3 && item.messages > 100) row._messagesColor = "#d32f2f"
-                    else if (item.messages > avgMsgs * 2 && item.messages > 50) row._messagesColor = "#ff9800"
-                    if (item.routeChanges > 5) row._routeChangesColor = "#d32f2f"
-                    else if (item.routeChanges > 0) row._routeChangesColor = "#ff9800"
-                    return row
-                }
-
-                paragraph generateSortableTable("radioActivity", [
-                    [label: "Device", field: "name", type: "string"],
-                    [label: "Protocol", field: "protocol", type: "string"],
-                    [label: "Messages", field: "messages", type: "number"],
-                    [label: "Route Changes", field: "routeChanges", type: "number"]
-                ], radioRows)
-            }
-        }
-
+        // Perf checkpoint management and custom comparison picker
         List checkpoints = loadCheckpoints()
 
-        section("Checkpoint Management") {
+        section("Perf Checkpoints") {
+            paragraph "<i>Create perf checkpoints to compare activity over a specific time window. By default, the tables below show all activity since the last reboot.</i>"
             paragraph "Current checkpoints: ${checkpoints.size()}/${settings.maxCheckpoints ?: 10}"
-            input "btnCreateCheckpoint", "button", title: "Create Checkpoint Now"
+            input "btnCreateCheckpoint", "button", title: "Create Perf Checkpoint Now"
             if (checkpoints.size() > 0) {
-                input "btnClearCheckpoints", "button", title: "Clear All Checkpoints"
+                input "btnClearCheckpoints", "button", title: "Clear All Perf Checkpoints"
             }
         }
 
         if (checkpoints.size() > 0) {
-            section("Saved Checkpoints") {
+            section("Saved Checkpoints", hideable: true, hidden: checkpoints.size() > 10) {
                 paragraph generateCheckpointTable(checkpoints)
             }
 
-            section("Compare Performance") {
-                // Build baseline options including "Since Startup"
-                Map baselineOptions = ["startup": "Since Startup (all zeros)"]
+            section("Compare Perf Checkpoints") {
+                Map baselineOptions = ["startup": "Since Startup (default)"]
                 checkpoints.eachWithIndex { cp, idx ->
                     baselineOptions["${idx}"] = "Checkpoint ${idx + 1} - ${cp.timestamp}"
                 }
                 input "compareBaseline", "enum", title: "Baseline (earlier)", options: baselineOptions, required: false, submitOnChange: true
 
                 if (compareBaseline != null) {
-                    Map checkpointOptions = ["now": "Now"]
+                    Map checkpointOptions = ["now": "Now (default)"]
 
                     if (compareBaseline == "startup") {
                         checkpoints.eachWithIndex { cp, idx ->
@@ -772,18 +639,38 @@ Map performancePage() {
                     if (checkpointOptions.size() <= 1) {
                         paragraph "<span style='color: #ff9800;'>No valid checkpoints for comparison with selected baseline (reboot may have occurred). Select 'Now' to compare current state.</span>"
                     }
-                    input "compareCheckpoint", "enum", title: "Checkpoint (later)", options: checkpointOptions, required: false, submitOnChange: true
+                    input "compareCheckpoint", "enum", title: "Compare to (later)", options: checkpointOptions, required: false, submitOnChange: true
 
                     if (compareBaseline != null && compareCheckpoint != null) {
                         input "btnCompare", "button", title: "Compare Selected"
                     }
                 }
+                if (state.lastPerformanceComparison) {
+                    input "btnClearComparison", "button", title: "Reset to Since Startup"
+                }
+            }
+        }
+
+        // Performance comparison — custom if set, otherwise startup→now
+        if (stats) {
+            String comparisonHtml
+            if (state.lastPerformanceComparison) {
+                comparisonHtml = state.lastPerformanceComparison
+            } else {
+                stats.resources = resources
+                Map zwaveData = fetchEndpoint(ZWAVE_DETAILS_URL, "Z-Wave details", 20)
+                Map zigbeeData = fetchEndpoint(ZIGBEE_DETAILS_URL, "Zigbee details", 20)
+                stats.radioStats = [
+                    zwave: extractZwaveMessageCounts(zwaveData),
+                    zigbee: extractZigbeeMessageCounts(zigbeeData)
+                ]
+                Map zeroBaseline = buildZeroBaseline(stats, resources)
+                comparisonHtml = generateComparison(zeroBaseline, stats,
+                    "Startup (0:00:00)", "Now (${new Date().format('yyyy-MM-dd HH:mm:ss')})")
             }
 
-            if (state.lastPerformanceComparison) {
-                section("Comparison Results") {
-                    paragraph state.lastPerformanceComparison
-                }
+            section("Performance Breakdown") {
+                paragraph comparisonHtml
             }
         }
     }
@@ -887,16 +774,16 @@ Map systemHealthPage() {
 Map snapshotsPage() {
     List snapshots = loadSnapshots()
 
-    dynamicPage(name: "snapshotsPage", title: "Snapshots & Reports") {
-        section("Snapshot Management") {
-            paragraph "Snapshots capture the complete hub configuration for historical tracking and comparison."
+    dynamicPage(name: "snapshotsPage", title: "Config Snapshots & Reports") {
+        section("Config Snapshot Management") {
+            paragraph "Config snapshots capture the complete hub configuration (devices, apps, settings) for historical tracking and comparison."
             paragraph "<b>Current Snapshots:</b> ${snapshots.size()} / ${settings.maxSnapshots ?: 10}"
         }
 
         section("Actions") {
-            input "btnCreateSnapshot", "button", title: "Create Snapshot Now"
+            input "btnCreateSnapshot", "button", title: "Create Config Snapshot Now"
             if (snapshots.size() > 0) {
-                input "btnClearSnapshots", "button", title: "Clear All Snapshots"
+                input "btnClearSnapshots", "button", title: "Clear All Config Snapshots"
             }
             input "btnFullReport", "button", title: "Generate Full Report"
         }
@@ -907,15 +794,16 @@ Map snapshotsPage() {
             }
         } else {
             section {
-                paragraph "<i>No snapshots available. Create your first snapshot to get started.</i>"
+                paragraph "<i>No config snapshots available. Create your first snapshot to get started.</i>"
             }
         }
 
         if (snapshots.size() >= 2) {
-            section("Compare Snapshots") {
+            section("Compare Config Snapshots") {
                 Map olderOptions = [:]
                 snapshots.eachWithIndex { snap, idx ->
-                    olderOptions["${idx}"] = "${snap.timestamp} (${snap.devices?.totalDevices ?: 0} devices)"
+                    String fw = snap.hubInfo?.firmware ? " | fw ${snap.hubInfo.firmware}" : ""
+                    olderOptions["${idx}"] = "${snap.timestamp} (${snap.devices?.totalDevices ?: 0} devices${fw})"
                 }
                 input "diffOlder", "enum", title: "Older snapshot", options: olderOptions, required: false, submitOnChange: true
                 input "diffNewer", "enum", title: "Newer snapshot", options: olderOptions, required: false, submitOnChange: true
@@ -926,7 +814,7 @@ Map snapshotsPage() {
             }
 
             if (state.lastSnapshotDiff) {
-                section("Snapshot Comparison Results") {
+                section("Config Snapshot Comparison Results") {
                     paragraph state.lastSnapshotDiff
                 }
             }
@@ -936,32 +824,32 @@ Map snapshotsPage() {
 
 Map settingsPage() {
     dynamicPage(name: "settingsPage", title: "Settings") {
-        section("Automatic Snapshots") {
-            input "autoSnapshot", "bool", title: "Enable automatic snapshots", defaultValue: false, submitOnChange: true
+        section("Automatic Config Snapshots") {
+            input "autoSnapshot", "bool", title: "Enable automatic config snapshots", defaultValue: false, submitOnChange: true
             if (autoSnapshot) {
-                input "snapshotInterval", "enum", title: "Snapshot interval",
+                input "snapshotInterval", "enum", title: "Config snapshot interval",
                     options: ["1": "1 hour", "6": "6 hours", "12": "12 hours", "24": "24 hours"],
                     defaultValue: "24", required: true
             }
-            input "maxSnapshots", "number", title: "Maximum snapshots to retain", defaultValue: 10, range: "1..50", required: true
+            input "maxSnapshots", "number", title: "Maximum config snapshots to retain", defaultValue: 10, range: "1..50", required: true
         }
 
-        section("Automatic Performance Checkpoints") {
-            input "autoCheckpoint", "bool", title: "Enable automatic checkpoints", defaultValue: false, submitOnChange: true
+        section("Automatic Perf Checkpoints") {
+            input "autoCheckpoint", "bool", title: "Enable automatic perf checkpoints", defaultValue: false, submitOnChange: true
             if (autoCheckpoint) {
-                input "checkpointInterval", "enum", title: "Checkpoint interval",
+                input "checkpointInterval", "enum", title: "Perf checkpoint interval",
                     options: ["5": "5 minutes", "15": "15 minutes", "30": "30 minutes",
                              "60": "1 hour", "360": "6 hours", "720": "12 hours", "1440": "24 hours"],
                     defaultValue: "60", required: true
             }
-            input "maxCheckpoints", "number", title: "Maximum checkpoints to keep", defaultValue: 10, range: "1..50", required: true
+            input "maxCheckpoints", "number", title: "Maximum perf checkpoints to keep", defaultValue: 10, range: "1..50", required: true
         }
 
         section("Device Monitoring") {
             input "inactivityDays", "number", title: "Device inactivity threshold (days)", defaultValue: 7, range: "1..90", required: true
             input "lowBatteryThreshold", "number", title: "Low battery threshold (%)", defaultValue: 20, range: "1..50", required: true
             input "chattyDeviceThreshold", "number", title: "Chatty device threshold (msgs/min)", defaultValue: 10, range: "1..1000", required: true
-            paragraph "<i>Devices exceeding this message rate between checkpoints will be flagged as chatty.</i>"
+            paragraph "<i>Devices exceeding this message rate between perf checkpoints will be flagged as chatty.</i>"
         }
 
         section("Logging") {
@@ -997,6 +885,9 @@ void appButtonHandler(String btn) {
             break
         case "btnCompare":
             executePerformanceComparison()
+            break
+        case "btnClearComparison":
+            state.lastPerformanceComparison = null
             break
         case "btnDiffSnapshots":
             executeSnapshotDiff()
@@ -2044,7 +1935,7 @@ String determineProtocolFromFullData(Map fullDevice) {
 // ===== PERFORMANCE CHECKPOINT SYSTEM =====
 
 void createCheckpoint() {
-    log.info "Creating performance checkpoint..."
+    log.info "Creating perf checkpoint..."
 
     Map stats = fetchCurrentStats()
     if (!stats) {
@@ -2080,7 +1971,7 @@ void createCheckpoint() {
     }
 
     saveCheckpoints(checkpoints)
-    log.info "Checkpoint created successfully"
+    log.info "Perf checkpoint created successfully"
 }
 
 void executePerformanceComparison() {
@@ -2218,7 +2109,7 @@ String generateComparison(Map baselineStats, Map checkpointStats, String baselin
     StringBuilder sb = new StringBuilder()
     sb.append("<b>Comparison: Activity Since Baseline</b><br>")
     sb.append("<b>Baseline:</b> ${baselineLabel}<br>")
-    sb.append("<b>Checkpoint:</b> ${checkpointLabel}<br><br>")
+    sb.append("<b>Current:</b> ${checkpointLabel}<br><br>")
 
     // Time comparison
     int baselineUptime = parseUptime(baselineStats.uptime as String)
@@ -2261,17 +2152,20 @@ String generateComparison(Map baselineStats, Map checkpointStats, String baselin
     }
 
     // Device activity
-    sb.append("<b>Device Activity Since Baseline:</b><br>")
-    sb.append("&nbsp;&nbsp;Total Runtime: ${formatDuration(devTimeDiff)}<br>")
-    sb.append("<i>Click column headers to sort. % Busy is calculated for the period between checkpoints.</i><br><br>")
+    int devCount = countComparisonRows(baselineStats.deviceStats as List, checkpointStats.deviceStats as List)
+    String devOpen = devCount <= 10 ? " open" : ""
+    sb.append("<details${devOpen}><summary style='cursor: pointer; font-weight: bold; margin: 8px 0;'>Device Activity (${devCount} active) — Total Runtime: ${formatDuration(devTimeDiff)}</summary>")
+    sb.append("<i>Click column headers to sort. % Busy is calculated for the selected period.</i><br><br>")
     sb.append(generateComparisonTable(baselineStats.deviceStats as List, checkpointStats.deviceStats as List, "device", (devTimeDiff * 1000L)))
-    sb.append("<br><br>")
+    sb.append("</details><br>")
 
     // App activity
-    sb.append("<b>App Activity Since Baseline:</b><br>")
-    sb.append("&nbsp;&nbsp;Total Runtime: ${formatDuration(appTimeDiff)}<br>")
-    sb.append("<i>Click column headers to sort. % Busy is calculated for the period between checkpoints.</i><br><br>")
+    int appCount = countComparisonRows(baselineStats.appStats as List, checkpointStats.appStats as List)
+    String appOpen = appCount <= 10 ? " open" : ""
+    sb.append("<details${appOpen}><summary style='cursor: pointer; font-weight: bold; margin: 8px 0;'>App Activity (${appCount} active) — Total Runtime: ${formatDuration(appTimeDiff)}</summary>")
+    sb.append("<i>Click column headers to sort. % Busy is calculated for the selected period.</i><br><br>")
     sb.append(generateComparisonTable(baselineStats.appStats as List, checkpointStats.appStats as List, "app", (appTimeDiff * 1000L)))
+    sb.append("</details>")
 
     // Radio message activity
     Map baselineRadio = baselineStats.radioStats ?: [:]
@@ -2279,8 +2173,12 @@ String generateComparison(Map baselineStats, Map checkpointStats, String baselin
     long periodMinutes = uptimeDiff > 0 ? Math.max(1, (uptimeDiff / 60) as long) : 1
 
     if (baselineRadio.zwave || checkpointRadio.zwave || baselineRadio.zigbee || checkpointRadio.zigbee) {
-        sb.append("<br><br><b>Radio Message Activity:</b><br>")
-        sb.append("<i>Message counts reset on hub reboot. If counts went backwards, a reboot occurred between checkpoints.</i><br><br>")
+        int zwRadioCount = countRadioRows(checkpointRadio.zwave ?: [], baselineRadio.zwave ?: [])
+        int zbRadioCount = countRadioRows(checkpointRadio.zigbee ?: [], baselineRadio.zigbee ?: [])
+        int totalRadioCount = zwRadioCount + zbRadioCount
+        String radioOpen = totalRadioCount <= 10 ? " open" : ""
+        sb.append("<br><details${radioOpen}><summary style='cursor: pointer; font-weight: bold; margin: 8px 0;'>Radio Message Activity (${totalRadioCount} active devices)</summary>")
+        sb.append("<i>Message counts reset on hub reboot. If counts went backwards, a reboot occurred between the two points in time.</i><br><br>")
 
         sb.append(generateRadioComparisonTable(baselineRadio.zwave ?: [], checkpointRadio.zwave ?: [], "zwave", periodMinutes))
         sb.append("<br><br>")
@@ -2314,9 +2212,40 @@ String generateComparison(Map baselineStats, Map checkpointStats, String baselin
             }
             sb.append("<i>Chatty devices can degrade hub performance. Check if device polling intervals are too aggressive or if the device is malfunctioning.</i><br>")
         }
+        sb.append("</details>")
     }
 
     return sb.toString()
+}
+
+int countComparisonRows(List baselineItems, List checkpointItems) {
+    if (!baselineItems || !checkpointItems) return 0
+    Map cpMap = checkpointItems.collectEntries { [(it.id): it] }
+    int count = 0
+    baselineItems.each { bl ->
+        Map cp = cpMap[bl.id]
+        if (cp) {
+            long totalMs = ((cp.total ?: 0) as long) - ((bl.total ?: 0) as long)
+            long cnt = ((cp.count ?: 0) as long) - ((bl.count ?: 0) as long)
+            int stateSize = (cp.stateSize ?: 0) as int
+            long hubActions = ((cp.hubActionCount ?: 0) as long) - ((bl.hubActionCount ?: 0) as long)
+            long cloudCalls = ((cp.cloudCallCount ?: 0) as long) - ((bl.cloudCallCount ?: 0) as long)
+            if (totalMs != 0 || cnt != 0 || stateSize != 0 || hubActions != 0 || cloudCalls != 0) count++
+        }
+    }
+    return count
+}
+
+int countRadioRows(List checkpointItems, List baselineItems) {
+    if (!checkpointItems) return 0
+    Map blMap = (baselineItems ?: []).collectEntries { [(it.id): it] }
+    int count = 0
+    checkpointItems.each { Map cpItem ->
+        int cpMsg = (cpItem.msgCount ?: 0) as int
+        int blMsg = (blMap[cpItem.id]?.msgCount ?: 0) as int
+        if (cpMsg - blMsg > 0) count++
+    }
+    return count
 }
 
 String generateComparisonTable(List baselineItems, List checkpointItems, String type, long overallDeltaMs) {
@@ -2442,7 +2371,7 @@ String generateRadioComparisonTable(List baselineItems, List checkpointItems, St
     }
 
     if (rebootDetected) {
-        return "<b>${label} Messages:</b> <i>Reboot detected between checkpoints — message counts reset, comparison not available.</i>"
+        return "<b>${label} Messages:</b> <i>Reboot detected — message counts reset, comparison not available.</i>"
     }
 
     if (comparisonData.size() == 0) {
@@ -2503,13 +2432,13 @@ void deleteCheckpoint(int index) {
 void clearAllCheckpoints() {
     deleteFile(CHECKPOINTS_FILE)
     state.lastPerformanceComparison = null
-    log.info "All checkpoints cleared"
+    log.info "All perf checkpoints cleared"
 }
 
 // ===== SNAPSHOT SYSTEM =====
 
 void createSnapshot() {
-    log.info "Creating configuration snapshot..."
+    log.info "Creating config snapshot..."
 
     Map snapshot = [
         timestamp: new Date().format("yyyy-MM-dd HH:mm:ss"),
@@ -2537,7 +2466,7 @@ void createSnapshot() {
     }
 
     saveSnapshots(snapshots)
-    log.info "Snapshot created successfully (${snapshots.size()} total)"
+    log.info "Config snapshot created successfully (${snapshots.size()} total)"
 }
 
 void executeSnapshotDiff() {
@@ -2564,9 +2493,18 @@ void executeSnapshotDiff() {
 
 String generateSnapshotDiff(Map older, Map newer) {
     StringBuilder sb = new StringBuilder()
-    sb.append("<b>Snapshot Comparison</b><br>")
+    sb.append("<b>Config Snapshot Comparison</b><br>")
     sb.append("<b>Older:</b> ${older.timestamp}<br>")
     sb.append("<b>Newer:</b> ${newer.timestamp}<br><br>")
+
+    // Firmware change
+    String olderFw = older.hubInfo?.firmware ?: "Unknown"
+    String newerFw = newer.hubInfo?.firmware ?: "Unknown"
+    if (olderFw != newerFw) {
+        sb.append("<b>Firmware:</b> <span style='color: #1A77C9;'>${olderFw} \u2192 ${newerFw}</span><br><br>")
+    } else {
+        sb.append("<b>Firmware:</b> ${newerFw}<br><br>")
+    }
 
     // Device changes
     List olderDevices = older.devices?.allDevices ?: []
@@ -2661,7 +2599,7 @@ void deleteSnapshot(int index) {
 void clearAllSnapshots() {
     deleteFile(SNAPSHOTS_FILE)
     state.lastSnapshotDiff = null
-    log.info "All snapshots cleared"
+    log.info "All config snapshots cleared"
 }
 
 // ===== REPORT GENERATION =====
@@ -3117,13 +3055,14 @@ String generateCheckpointTable(List checkpoints) {
 
 String generateSnapshotsTable(List snapshots) {
     if (!snapshots || snapshots.size() == 0) {
-        return "No snapshots available"
+        return "No config snapshots available"
     }
 
     StringBuilder sb = new StringBuilder()
     sb.append("<table style='width:100%; border-collapse: collapse; font-size: 12px;'>")
     sb.append('<thead><tr style="background-color: #1A77C9; color: white;">')
     sb.append("<th style='padding: 8px; text-align: left; border: 1px solid #ddd;'>Timestamp</th>")
+    sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Firmware</th>")
     sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Devices</th>")
     sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Apps</th>")
     sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Memory</th>")
@@ -3138,7 +3077,9 @@ String generateSnapshotsTable(List snapshots) {
         }
 
         sb.append("<tr style='background-color: ${rowColor};'>")
+        String firmware = snap.hubInfo?.firmware ?: "N/A"
         sb.append("<td style='padding: 8px; border: 1px solid #ddd;'>${snap.timestamp}</td>")
+        sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${firmware}</td>")
         sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${snap.devices?.totalDevices ?: 0}</td>")
         sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${snap.apps?.totalApps ?: 0}</td>")
         sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${memDisplay}</td>")
@@ -3486,7 +3427,7 @@ void initialize() {
     if (settings.autoSnapshot) {
         int interval = (settings.snapshotInterval ?: "24").toInteger()
         schedule("0 0 */${interval} * * ?", "createSnapshot")
-        log.info "Automatic snapshots scheduled every ${interval} hour(s)"
+        log.info "Automatic config snapshots scheduled every ${interval} hour(s)"
     }
 
     if (settings.autoCheckpoint) {
@@ -3497,6 +3438,6 @@ void initialize() {
             int hours = (interval / 60).toInteger()
             schedule("0 0 */${hours} * * ?", "createCheckpoint")
         }
-        log.info "Automatic checkpoints scheduled every ${interval} minute(s)"
+        log.info "Automatic perf checkpoints scheduled every ${interval} minute(s)"
     }
 }
