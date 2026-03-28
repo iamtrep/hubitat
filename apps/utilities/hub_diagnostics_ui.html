@@ -160,7 +160,7 @@ function renderChart(pts,cid){
   function yCPU(v){return mt+ch-(v/maxCpu)*ch}
   function x(i){return ml+i*ppx}
   let osLine='',javaLine='',cpuLine='';
-  pts.forEach((p,i)=>{const px=x(i);osLine+=(i?'L':'M')+px+','+yOS(p.freeOS);javaLine+=(i?'L':'M')+px+','+yOS(p.freeJava);cpuLine+=(i?'L':'M')+px+','+yCPU(p.cpuLoad)});
+  pts.forEach((p,i)=>{const px=x(i);osLine+=(i?' ':'')+px+','+yOS(p.freeOS);javaLine+=(i?' ':'')+px+','+yOS(p.freeJava);cpuLine+=(i?' ':'')+px+','+yCPU(p.cpuLoad)});
   // Threshold lines
   const warnY=yOS(102400),critY=yOS(76800);
   // Time labels
@@ -314,9 +314,9 @@ async function rApps(){const P='p-apps';loading(P);try{
   if(d.parentChildHierarchy&&d.parentChildHierarchy.length){
     o+='<div class="card"><div class="card-h">Parent/Child Hierarchy ('+d.parentChildHierarchy.length+')</div><div class="card-b">';
     d.parentChildHierarchy.forEach(p=>{
-      o+='<details'+(d.parentChildHierarchy.length<=10?' open':'')+'><summary>'+h(p.parentType||p.parentName||'Unknown')+' <span style="color:var(--muted);font-weight:normal">('+((p.children||[]).length)+' children)</span></summary>';
+      o+='<details'+(d.parentChildHierarchy.length<=10?' open':'')+'><summary>'+alink(p.id,p.label||p.type||'Unknown')+' <span style="color:var(--muted);font-weight:normal">('+((p.children||[]).length)+' children)</span></summary>';
       o+='<div style="padding-left:20px;margin:6px 0">';
-      (p.children||[]).forEach(c=>{o+='<div style="margin:3px 0">'+alink(c.id,c.label||c.name)+(c.disabled?' <span style="color:var(--crit)">(Disabled)</span>':'')+'</div>'});
+      (p.children||[]).forEach(c=>{o+='<div style="margin:3px 0">'+alink(c.id,c.label||c.name||c.type||('App '+c.id))+(c.disabled?' <span style="color:var(--crit)">(Disabled)</span>':'')+'</div>'});
       o+='</div></details>'});o+='</div></div>'}
   // Namespace breakdown
   if(d.byNamespace&&Object.keys(d.byNamespace).length){
@@ -451,10 +451,15 @@ async function rHealth(){const P='p-health';loading(P);try{
     o+=ni('Location',d.hub.location);o+=ni('Mode',d.hub.mode);o+=ni('Time Zone',d.hub.timeZone);
     o+='</div></div></div>'}
   // Alerts
-  const allAlerts=[...(d.alerts||[])];
-  (d.platformAlerts||[]).forEach(a=>{allAlerts.push({severity:a.severity,message:a.name})});
+  const allAlerts=[];
+  (d.alerts||[]).forEach(a=>{
+    if(!a)return;
+    if(typeof a==='string')allAlerts.push({severity:'warning',message:a});
+    else if(a.message||a.name)allAlerts.push({severity:a.severity||'warning',message:a.message||a.name});
+  });
+  (d.platformAlerts||[]).forEach(a=>{if(a&&(a.message||a.name))allAlerts.push({severity:a.severity||'warning',message:a.message||a.name})});
   if(allAlerts.length){o+='<div class="card"><div class="card-h">Alerts ('+allAlerts.length+')</div><div class="card-b">';
-    allAlerts.forEach(a=>{o+='<div class="alert a-'+(a.severity==='critical'?'crit':'warn')+'">'+(a.severity==='critical'?'\u26D4':'\u26A0')+' '+h(a.message||a.name)+'</div>'});o+='</div></div>'}
+    allAlerts.forEach(a=>{o+='<div class="alert a-'+(a.severity==='critical'?'crit':'warn')+'">'+(a.severity==='critical'?'\u26D4':'\u26A0')+' '+a.message+'</div>'});o+='</div></div>'}
   else o+='<div class="alert a-ok">\u2705 No active alerts</div>';
   // Resources
   if(d.resources){const r=d.resources;
@@ -515,7 +520,7 @@ async function rPerf(){const P='p-performance';loading(P);try{
     o+='</select><button class="btn btn-p" id="btnCompare" style="margin-left:8px">Compare</button></div>';
     o+='<div id="compResult"></div></div></div>'}
   // Saved comparison
-  if(d.savedComparison){o+='<div class="card"><div class="card-h">Last Comparison</div><div class="card-b"><div id="savedComp"></div></div></div>'}
+  if(d.savedComparison||d.savedComparisonHtml){o+='<div class="card"><div class="card-h">Last Comparison</div><div class="card-b"><div id="savedComp"></div></div></div>'}
   // Runtime detail tables
   if(d.stats&&d.stats.deviceStats&&d.stats.deviceStats.length){
     o+='<div class="card"><div class="card-h">Device Runtime Detail</div><div class="card-b"><div id="devStatsTbl"></div></div></div>'}
@@ -546,7 +551,7 @@ async function rPerf(){const P='p-performance';loading(P);try{
       {l:'State Size',f:'stateSize',t:'n'},{l:'Hub Actions',f:'hubActionCount',t:'n'},{l:'Cloud Calls',f:'cloudCallCount',t:'n'}
     ],d.stats.appStats,{sc:1,sd:'desc',filter:true,collapse:10,collapseLabel:'App Runtime Detail'});
   // Saved comparison render
-  if(d.savedComparison)renderComparison(d.savedComparison,'savedComp');
+  if(d.savedComparison||d.savedComparisonHtml)renderComparison({comparisonHtml:d.savedComparisonHtml,...(d.savedComparison||{})},'savedComp');
   // Button bindings
   const btnCp=document.getElementById('btnCp');
   if(btnCp)btnCp.onclick=async()=>{btnCp.disabled=true;btnCp.textContent='Creating...';await post('checkpoint/create');drop('performance');rPerf()};
@@ -564,6 +569,7 @@ async function delCp(idx){if(!confirm('Delete checkpoint '+(idx+1)+'?'))return;a
 
 function renderComparison(data,elId){
   const el=document.getElementById(elId);if(!el)return;
+  if(data&&data.comparisonHtml){el.innerHTML=data.comparisonHtml;return}
   const b=data.baselineStats||{},c=data.checkpointStats||{};
   let o='<div><b>Baseline:</b> '+h(data.baselineLabel)+' &rarr; <b>Current:</b> '+h(data.checkpointLabel)+'</div>';
   // Resources delta
