@@ -2240,21 +2240,7 @@ String generateComparison(Map baselineStats, Map checkpointStats, String baselin
 }
 
 int countComparisonRows(List baselineItems, List checkpointItems) {
-    if (!baselineItems || !checkpointItems) return 0
-    Map cpMap = checkpointItems.collectEntries { [(it.id): it] }
-    int count = 0
-    baselineItems.each { bl ->
-        Map cp = cpMap[bl.id]
-        if (cp) {
-            long totalMs = ((cp.total ?: 0) as long) - ((bl.total ?: 0) as long)
-            long cnt = ((cp.count ?: 0) as long) - ((bl.count ?: 0) as long)
-            int stateSize = (cp.stateSize ?: 0) as int
-            long hubActions = ((cp.hubActionCount ?: 0) as long) - ((bl.hubActionCount ?: 0) as long)
-            long cloudCalls = ((cp.cloudCallCount ?: 0) as long) - ((bl.cloudCallCount ?: 0) as long)
-            if (totalMs != 0 || cnt != 0 || stateSize != 0 || hubActions != 0 || cloudCalls != 0) count++
-        }
-    }
-    return count
+    return buildComparisonData(baselineItems, checkpointItems, 0L).size()
 }
 
 int countRadioRows(List checkpointItems, List baselineItems) {
@@ -2270,35 +2256,11 @@ int countRadioRows(List checkpointItems, List baselineItems) {
 }
 
 String generateComparisonTable(List baselineItems, List checkpointItems, String type, long overallDeltaMs) {
-    if (!baselineItems || baselineItems.size() == 0) {
+    if ((!baselineItems || baselineItems.size() == 0) && (!checkpointItems || checkpointItems.size() == 0)) {
         return "No ${type} data available"
     }
 
-    Map checkpointItemMap = checkpointItems.collectEntries { [(it.id): it] }
-
-    List comparisonData = []
-    baselineItems.each { baselineItem ->
-        Map checkpointItem = checkpointItemMap[baselineItem.id]
-        if (checkpointItem) {
-            long totalMs = ((checkpointItem.total ?: 0) as long) - ((baselineItem.total ?: 0) as long)
-            long count = ((checkpointItem.count ?: 0) as long) - ((baselineItem.count ?: 0) as long)
-            float avgMs = count > 0 ? (totalMs / count) as float : 0
-            int stateSize = (checkpointItem.stateSize ?: 0) as int
-            long hubActions = ((checkpointItem.hubActionCount ?: 0) as long) - ((baselineItem.hubActionCount ?: 0) as long)
-            long cloudCalls = ((checkpointItem.cloudCallCount ?: 0) as long) - ((baselineItem.cloudCallCount ?: 0) as long)
-
-            float periodPctBusy = overallDeltaMs > 0 ? ((totalMs / (float) overallDeltaMs) * 100) : 0
-
-            if (totalMs != 0 || count != 0 || stateSize != 0 || hubActions != 0 || cloudCalls != 0) {
-                comparisonData << [
-                    name: baselineItem.name, id: baselineItem.id,
-                    totalMs: totalMs, periodPctBusy: periodPctBusy,
-                    count: count, avgMs: avgMs, stateSize: stateSize,
-                    hubActions: hubActions, cloudCalls: cloudCalls
-                ]
-            }
-        }
-    }
+    List comparisonData = buildComparisonData(baselineItems, checkpointItems, overallDeltaMs)
 
     if (comparisonData.size() == 0) {
         return "No changes detected for ${type}s"
@@ -2342,6 +2304,64 @@ String generateComparisonTable(List baselineItems, List checkpointItems, String 
     }
 
     return generateSortableTable(tableId, columns, rows)
+}
+
+Map normalizeComparisonItem(Map item, Object fallbackId = null) {
+    Map source = item ?: [:]
+    Object itemId = source.id != null ? source.id : fallbackId
+    return [
+        id: itemId,
+        name: source.name ?: (itemId != null ? "${itemId}" : "Unknown"),
+        total: (source.total ?: 0) as long,
+        count: (source.count ?: 0) as long,
+        stateSize: (source.stateSize ?: 0) as int,
+        hubActionCount: (source.hubActionCount ?: 0) as long,
+        cloudCallCount: (source.cloudCallCount ?: 0) as long
+    ]
+}
+
+Map buildComparisonItemMap(List items) {
+    Map result = [:]
+    (items ?: []).each { Map item ->
+        if (item?.id != null) {
+            result[item.id] = normalizeComparisonItem(item, item.id)
+        }
+    }
+    return result
+}
+
+List buildComparisonData(List baselineItems, List checkpointItems, long overallDeltaMs) {
+    Map baselineMap = buildComparisonItemMap(baselineItems)
+    Map checkpointMap = buildComparisonItemMap(checkpointItems)
+
+    List comparisonData = []
+    checkpointMap.each { Object itemId, Map checkpointItem ->
+        Map baselineItem = baselineMap[itemId] ?: normalizeComparisonItem([id: itemId, name: checkpointItem.name], itemId)
+
+        long totalMs = checkpointItem.total - baselineItem.total
+        long count = checkpointItem.count - baselineItem.count
+        int stateSize = checkpointItem.stateSize
+        long hubActions = checkpointItem.hubActionCount - baselineItem.hubActionCount
+        long cloudCalls = checkpointItem.cloudCallCount - baselineItem.cloudCallCount
+        float avgMs = count > 0 ? (totalMs / count) as float : 0
+        float periodPctBusy = overallDeltaMs > 0 ? ((totalMs / (float) overallDeltaMs) * 100) : 0
+
+        if (totalMs != 0 || count != 0 || stateSize != 0 || hubActions != 0 || cloudCalls != 0) {
+            comparisonData << [
+                name: checkpointItem.name ?: baselineItem.name,
+                id: itemId,
+                totalMs: totalMs,
+                periodPctBusy: periodPctBusy,
+                count: count,
+                avgMs: avgMs,
+                stateSize: stateSize,
+                hubActions: hubActions,
+                cloudCalls: cloudCalls
+            ]
+        }
+    }
+
+    return comparisonData
 }
 
 String generateRadioComparisonTable(List baselineItems, List checkpointItems, String protocol, long periodMinutes) {
@@ -2627,6 +2647,7 @@ String generateSnapshotDiff(Map older, Map newer) {
 
 String renderSnapshotView(Map snap) {
     StringBuilder sb = new StringBuilder()
+    Map snapshotHealth = normalizeSnapshotSystemHealth(snap.systemHealth)
 
     // Header
     Map info = snap.hubInfo ?: [:]
@@ -2634,16 +2655,16 @@ String renderSnapshotView(Map snap) {
     sb.append("<b>Hub:</b> ${info.name ?: 'Unknown'} | Firmware: ${info.firmware ?: 'Unknown'} | Hardware: ${info.hardware ?: 'Unknown'}<br><br>")
 
     // System health
-    if (snap.systemHealth?.memory) {
-        Map mem = snap.systemHealth.memory
+    if (snapshotHealth.memory) {
+        Map mem = snapshotHealth.memory
         sb.append("<b>System Resources:</b><br>")
         if (mem.freeOSMemory) sb.append("&nbsp;&nbsp;Free OS Memory: ${formatMemory(mem.freeOSMemory as int)}<br>")
         if (mem.cpuAvg5min != null) sb.append("&nbsp;&nbsp;CPU Load Avg (5m): ${String.format('%.2f', (mem.cpuAvg5min ?: 0) as float)}<br>")
         if (mem.freeJavaMemory) sb.append("&nbsp;&nbsp;Free Java Memory: ${formatMemory(mem.freeJavaMemory as int)}<br>")
         sb.append("<br>")
     }
-    if (snap.systemHealth?.database?.databaseSize) {
-        sb.append("<b>Database:</b> ${snap.systemHealth.database.databaseSize} MB<br><br>")
+    if (snapshotHealth.databaseSize != null) {
+        sb.append("<b>Database:</b> ${snapshotHealth.databaseSize} MB<br><br>")
     }
 
     // Device summary
@@ -3413,7 +3434,23 @@ Map getEmptyDeviceStats() {
         byProtocol: [(PROTOCOL_ZIGBEE): 0, (PROTOCOL_ZWAVE): 0, (PROTOCOL_MATTER): 0,
                      (PROTOCOL_LAN): 0, (PROTOCOL_VIRTUAL): 0, (PROTOCOL_MAKER): 0,
                      (PROTOCOL_CLOUD): 0, (PROTOCOL_HUBMESH): 0, (PROTOCOL_OTHER): 0],
-        byStatus: [active: 0, inactive: 0, disabled: 0]
+        byStatus: [active: 0, inactive: 0, disabled: 0],
+        idsByStatus: [active: [], inactive: [], disabled: []],
+        idsByProtocol: [(PROTOCOL_ZIGBEE): [], (PROTOCOL_ZWAVE): [], (PROTOCOL_MATTER): [],
+                        (PROTOCOL_LAN): [], (PROTOCOL_VIRTUAL): [], (PROTOCOL_MAKER): [],
+                        (PROTOCOL_CLOUD): [], (PROTOCOL_HUBMESH): [], (PROTOCOL_OTHER): []],
+        parentIds: [],
+        childIds: [],
+        linkedIds: [],
+        batteryIds: []
+    ]
+}
+
+Map normalizeSnapshotSystemHealth(Map health) {
+    Map source = health ?: [:]
+    return [
+        memory: source.memory instanceof Map ? source.memory : null,
+        databaseSize: source.databaseSize != null ? source.databaseSize : source.database?.databaseSize
     ]
 }
 
