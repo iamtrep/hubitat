@@ -8,11 +8,14 @@
  * Hub Configuration Analyzer into a single unified app.
  *
  * Author: PJ
- * Version: 3.1.0
+ * Version: 3.2.0
  */
 
 import groovy.transform.Field
 import groovy.transform.CompileStatic
+
+@Field static final String APP_VERSION = "3.2.0"
+@Field static final String STORAGE_SCHEMA_VERSION = "3.2.0"
 
 // API Endpoint URLs (localhost access)
 @Field static final String DEVICES_LIST_URL = "http://127.0.0.1:8080/hub2/devicesList"
@@ -91,6 +94,89 @@ import groovy.transform.CompileStatic
 // File names for persistence
 @Field static final String SNAPSHOTS_FILE = "hub_diagnostics_snapshots.json"
 @Field static final String CHECKPOINTS_FILE = "hub_diagnostics_checkpoints.json"
+@Field static final String PERFORMANCE_COMPARISON_FILE = "hub_diagnostics_performance_comparison.json"
+@Field static final String SNAPSHOT_DIFF_FILE = "hub_diagnostics_snapshot_diff.json"
+
+@Field static final String SORTABLE_TABLE_SCRIPT_TEMPLATE = '''<script>
+function sortTable___UNIQUE_ID__(colIdx, dataType) {
+    var table = document.getElementById('__UNIQUE_ID__');
+    var tbody = table.getElementsByTagName('tbody')[0];
+    var trs = Array.from(tbody.getElementsByTagName('tr'));
+    var curCol = table.getAttribute('data-sort-col');
+    var curOrd = table.getAttribute('data-sort-order');
+    var newOrd = (curCol == colIdx && curOrd == 'desc') ? 'asc' : 'desc';
+    trs.sort(function(a, b) {
+        var aV = a.cells[colIdx].getAttribute('data-value');
+        var bV = b.cells[colIdx].getAttribute('data-value');
+        if (dataType == 'number') { aV = parseFloat(aV) || 0; bV = parseFloat(bV) || 0; }
+        else { aV = aV.toLowerCase(); bV = bV.toLowerCase(); }
+        if (aV < bV) return newOrd == 'asc' ? -1 : 1;
+        if (aV > bV) return newOrd == 'asc' ? 1 : -1;
+        return 0;
+    });
+    trs.forEach(function(r, i) { r.style.backgroundColor = i % 2 == 0 ? '#f9f9f9' : '#fff'; tbody.appendChild(r); });
+    table.setAttribute('data-sort-col', colIdx);
+    table.setAttribute('data-sort-order', newOrd);
+    var ths = table.getElementsByTagName('th');
+    for (var i = 0; i < ths.length; i++) {
+        var arrow = ths[i].getElementsByClassName('sort-arrow')[0];
+        if (arrow) arrow.innerHTML = (i == colIdx) ? (newOrd == 'desc' ? ' \\u25BC' : ' \\u25B2') : ' \\u21C5';
+    }
+}
+</script>'''
+
+@Field static final String MEMORY_CHART_TOOLTIP_SCRIPT_TEMPLATE = '''<script>
+(function(){
+var d=[__TOOLTIP_DATA__];
+var svg=document.getElementById('__SVG_ID__');
+var container=document.getElementById('__CONTAINER_ID__');
+var hr=document.getElementById('__SVG_ID___hover');
+var vl=document.getElementById('__SVG_ID___vline');
+var tb=document.getElementById('__SVG_ID___tipbg');
+var tt=document.getElementById('__SVG_ID___tip');
+var ml=__MARGIN_LEFT__,pw=__PLOT_WIDTH__,mt=__MARGIN_TOP__,sw=__SVG_WIDTH__;
+container.scrollLeft=container.scrollWidth;
+hr.addEventListener('mousemove',function(e){
+  var rect=svg.getBoundingClientRect();
+  var scaleX=sw/rect.width;
+  var mx=(e.clientX-rect.left)*scaleX-ml;
+  var idx=Math.round(mx/pw*(d.length-1));
+  if(idx<0)idx=0;if(idx>=d.length)idx=d.length-1;
+  var x=ml+idx/(d.length-1)*pw;
+  vl.setAttribute('x1',x);vl.setAttribute('x2',x);vl.setAttribute('visibility','visible');
+  var p=d[idx];
+  var mem=(p.m/1024).toFixed(0);
+  var txt=p.t+' | OS: '+mem+' MB | CPU: '+p.c.toFixed(2)+' | Java: '+(p.j/1024).toFixed(0)+' MB';
+  tt.textContent=txt;
+  var tw=txt.length*5.5+10;
+  var tx=x+10;if(tx+tw>sw-10)tx=x-tw-10;
+  tt.setAttribute('x',tx+5);tt.setAttribute('y',mt+14);tt.setAttribute('visibility','visible');
+  tb.setAttribute('x',tx);tb.setAttribute('y',mt+2);tb.setAttribute('width',tw);tb.setAttribute('height',18);tb.setAttribute('visibility','visible');
+});
+hr.addEventListener('mouseleave',function(){
+  vl.setAttribute('visibility','hidden');
+  tt.setAttribute('visibility','hidden');
+  tb.setAttribute('visibility','hidden');
+});
+})();
+</script>'''
+
+@Field static final String FULL_REPORT_STYLES = '''
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background-color: white; padding: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h1 { color: #1A77C9; border-bottom: 3px solid #1A77C9; padding-bottom: 10px; }
+        h2 { color: #333; border-bottom: 2px solid #ddd; padding-bottom: 8px; margin-top: 30px; }
+        table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+        th { background-color: #1A77C9; color: white; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        tr:hover { background-color: #e3f2fd; }
+        .metric { display: inline-block; margin: 10px 20px 10px 0; }
+        .metric-label { font-weight: bold; color: #555; }
+        .metric-value { color: #1A77C9; font-size: 1.2em; }
+        .warning { background-color: #f8d7da; border-left: 4px solid #d32f2f; padding: 10px; margin: 10px 0; }
+        .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; text-align: center; color: #999; font-size: 0.9em; }
+'''
 
 definition(
     name: "Hub Diagnostics",
@@ -147,27 +233,18 @@ Map dashboardPage() {
 
 Map devicesPage() {
     Map deviceStats = analyzeDevices()
+    Map pageModel = buildDevicesPageModel(deviceStats)
 
     dynamicPage(name: "devicesPage", title: "Device Analysis") {
         section("Device Summary") {
-            paragraph formatMetricsTable([
-                ["Total Devices", "<a href='/device/list' target='_blank' style='color: #1A77C9; text-decoration: none;'>${deviceStats.totalDevices}</a>"],
-                ["Active Devices", "${deviceListLink(deviceStats.activeDevices, deviceStats.idsByStatus.active)} (${settings.inactivityDays ?: 7} days)"],
-                ["Inactive Devices", deviceListLink(deviceStats.inactiveDevices, deviceStats.idsByStatus.inactive + deviceStats.idsByStatus.disabled)],
-                ["Disabled Devices", deviceListLink(deviceStats.disabledDevices, deviceStats.idsByStatus.disabled)],
-                ["Parent Devices", deviceListLink(deviceStats.parentDevices, deviceStats.parentIds)],
-                ["Child Devices", deviceListLink(deviceStats.childDevices, deviceStats.parentIds)],
-                ["Hub Mesh Linked", deviceListLink(deviceStats.linkedDevices, deviceStats.linkedIds)],
-                ["Battery-Powered", deviceListLink(deviceStats.batteryDevices, deviceStats.batteryIds)]
-            ])
+            paragraph formatMetricsTable(pageModel.summaryMetrics)
         }
 
         section("Protocol Distribution") {
             paragraph formatProtocolTable(deviceStats.byProtocol, deviceStats.idsByProtocol)
         }
 
-        int allDeviceCount = deviceStats.allDevices.size()
-        section("All Devices (${allDeviceCount})", hideable: true, hidden: allDeviceCount > 10) {
+        section("All Devices (${pageModel.allDeviceCount})", hideable: true, hidden: pageModel.allDeviceCount > 10) {
             paragraph generateSortableTable("devTable", [
                 [label: "Name", field: "name", type: "string"],
                 [label: "Type", field: "type", type: "string"],
@@ -177,53 +254,12 @@ Map devicesPage() {
                 [label: "Last Activity", field: "lastActivity", type: "string"],
                 [label: "Battery", field: "battery", type: "number"],
                 [label: "Parent", field: "parent", type: "string"]
-            ], deviceStats.allDevices.collect { Map dev ->
-                // Device name links to device page
-                String nameLink = "<a href='/device/edit/${dev.id}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(dev.name as String)}</a>"
-                // Type links to code page if user driver
-                String typeDisplay = escapeHtml(dev.type as String)
-                if (dev.userType && dev.deviceTypeId) {
-                    typeDisplay = "<a href='/driver/editor/${dev.deviceTypeId}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${typeDisplay}</a>"
-                }
-                // Parent: link to app or device
-                String parentDisplay = "-"
-                if (dev.parentAppName) {
-                    parentDisplay = "<a href='/installedapp/configure/${dev.parentAppId}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(dev.parentAppName as String)}</a>"
-                } else if (dev.parentDeviceName) {
-                    parentDisplay = "<a href='/device/edit/${dev.parentDeviceId}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(dev.parentDeviceName as String)}</a>"
-                }
-
-                Map row = [
-                    name: nameLink,
-                    _nameSort: dev.name,
-                    type: typeDisplay,
-                    _typeSort: dev.type,
-                    protocol: PROTOCOL_DISPLAY[dev.protocol] ?: (dev.protocol ?: "").toString().capitalize(),
-                    room: dev.room ?: "-",
-                    status: dev.status ?: "",
-                    lastActivity: dev.lastActivity ?: "Never",
-                    battery: dev.battery != null ? dev.battery : "",
-                    parent: parentDisplay,
-                    _parentSort: dev.parentAppName ?: dev.parentDeviceName ?: ""
-                ]
-                if (dev.status == "Active") row._statusColor = "#388e3c"
-                else if (dev.status == "Disabled") row._statusColor = "#d32f2f"
-                else if (dev.status == "Inactive") row._statusColor = "#ff9800"
-                if (dev.battery != null) {
-                    if (dev.battery <= 20) row._batteryColor = "#d32f2f"
-                    else if (dev.battery <= 50) row._batteryColor = "#ff9800"
-                    else row._batteryColor = "#388e3c"
-                }
-                return row
-            })
+            ], pageModel.deviceRows)
         }
 
-        if (deviceStats.lowBatteryDevices && deviceStats.lowBatteryDevices.size() > 0) {
+        if (pageModel.lowBatteryHtml) {
             section("Low Battery Alerts") {
-                String batteryHtml = deviceStats.lowBatteryDevices.collect { Map dev ->
-                    "<span style='color: #d32f2f;'><a href='/device/edit/${dev.id}' target='_blank' style='color: #d32f2f;'>${dev.name}</a>: ${dev.battery}%</span>"
-                }.join("<br>")
-                paragraph batteryHtml
+                paragraph pageModel.lowBatteryHtml
             }
         }
     }
@@ -231,66 +267,29 @@ Map devicesPage() {
 
 Map appsPage() {
     Map appStats = analyzeApps()
+    Map pageModel = buildAppsPageModel(appStats)
 
     dynamicPage(name: "appsPage", title: "Application Analysis") {
         section("Application Summary") {
-            int runtimeTotal = appStats.runtimeTotalApps ?: 0
-            int apiTotal = appStats.totalApps
-            int platformCount = appStats.platformApps?.size() ?: 0
-            List metrics = [
-                ["Visible App Instances", apiTotal],
-                ["System Apps", appStats.builtInApps],
-                ["User Apps", appStats.userApps],
-                ["Parent Apps", appStats.parentApps],
-                ["Child Apps", appStats.childApps]
-            ]
-            if (platformCount > 0) {
-                metrics << ["Platform Apps (hidden)", platformCount]
-                metrics << ["Total (from runtime)", runtimeTotal]
-            }
-            paragraph formatMetricsTable(metrics)
+            paragraph formatMetricsTable(pageModel.summaryMetrics)
         }
 
-        if (appStats.parentChildHierarchy && appStats.parentChildHierarchy.size() > 0) {
-            int hierarchyCount = appStats.parentChildHierarchy?.size() ?: 0
-            section("Parent/Child App Hierarchy (${hierarchyCount})", hideable: true, hidden: hierarchyCount > 10) {
+        if (pageModel.hierarchyCount > 0) {
+            section("Parent/Child App Hierarchy (${pageModel.hierarchyCount})", hideable: true, hidden: pageModel.hierarchyCount > 10) {
                 paragraph formatParentChildHierarchy(appStats.parentChildHierarchy)
             }
         }
 
-        int appTypeCount = appStats.byNamespace?.size() ?: 0
-        section("App Instances by Type (${appTypeCount})", hideable: true, hidden: appTypeCount > 10) {
+        section("App Instances by Type (${pageModel.appTypeCount})", hideable: true, hidden: pageModel.appTypeCount > 10) {
             paragraph formatAppsByTypeTable(appStats)
         }
 
-        if (appStats.platformApps && appStats.platformApps.size() > 0) {
-            int platformAppCount = appStats.platformApps.size()
-            section("Platform Apps (${platformAppCount})", hideable: true, hidden: platformAppCount > 10) {
+        if (pageModel.platformAppCount > 0) {
+            section("Platform Apps (${pageModel.platformAppCount})", hideable: true, hidden: pageModel.platformAppCount > 10) {
                 paragraph "<i>Apps not exposed in the Apps list API but tracked by runtime stats. Includes dashboard room views, mode setters, and internal platform services. Monitor state size for unbounded growth.</i>"
 
-                // Flag any with concerning state size
-                List largeStateApps = appStats.platformApps.findAll { (it.stateSize as int) > 5000 }
-                if (largeStateApps) {
-                    paragraph "<span style='color: #ff9800;'>\u26A0 ${largeStateApps.size()} platform app${largeStateApps.size() > 1 ? 's' : ''} with state size > 5 KB — monitor for unbounded growth</span>"
-                }
-
-                List platformRows = appStats.platformApps.collect { Map app ->
-                    int stateSize = app.stateSize as int
-                    String stateSizeColor = stateSize > 10000 ? "#d32f2f" : (stateSize > 5000 ? "#ff9800" : "")
-                    Map row = [
-                        name: app.name,
-                        stateSize: stateSize,
-                        pctTotal: String.format('%.3f', (app.pctTotal as Number).floatValue()) + "%",
-                        _pctTotalSort: app.pctTotal,
-                        count: app.count,
-                        average: app.count > 0 ? String.format('%.1f', (app.average as Number).floatValue()) : "0",
-                        _averageSort: app.average,
-                        hubActions: app.hubActionCount,
-                        cloudCalls: app.cloudCallCount
-                    ]
-                    if (stateSizeColor) row._stateSizeColor = stateSizeColor
-                    if (app.largeState) row._stateSizeColor = "#d32f2f"
-                    return row
+                if (pageModel.largeStateCount > 0) {
+                    paragraph "<span style='color: #ff9800;'>\u26A0 ${pageModel.largeStateCount} platform app${pageModel.largeStateCount > 1 ? 's' : ''} with state size > 5 KB — monitor for unbounded growth</span>"
                 }
 
                 paragraph generateSortableTable("platformApps", [
@@ -301,7 +300,7 @@ Map appsPage() {
                     [label: "Avg (ms)", field: "average", type: "number"],
                     [label: "Hub Actions", field: "hubActions", type: "number"],
                     [label: "Cloud Calls", field: "cloudCalls", type: "number"]
-                ], platformRows)
+                ], pageModel.platformRows)
             }
         }
     }
@@ -583,69 +582,42 @@ Map networkPage() {
 Map performancePage() {
     Map stats = fetchCurrentStats()
     Map resources = fetchSystemResources()
+    List checkpoints = loadCheckpoints()
+    Map pageModel = buildPerformancePageModel(stats, resources, checkpoints)
 
     dynamicPage(name: "performancePage", title: "Performance Analysis") {
         section("Current Runtime Stats") {
             paragraph generateRuntimeSummary(stats, resources)
         }
 
-        // Perf checkpoint management and custom comparison picker
-        List checkpoints = loadCheckpoints()
-
         section("Perf Checkpoints") {
             paragraph "<i>Create perf checkpoints to compare activity over a specific time window. By default, the tables below show all activity since the last reboot.</i>"
-            paragraph "Current checkpoints: ${checkpoints.size()}/${settings.maxCheckpoints ?: 10}"
+            paragraph "Current checkpoints: ${pageModel.checkpointCount}/${settings.maxCheckpoints ?: 10}"
             input "btnCreateCheckpoint", "button", title: "Create Perf Checkpoint Now"
-            if (checkpoints.size() > 0) {
+            if (pageModel.checkpointCount > 0) {
                 input "btnClearCheckpoints", "button", title: "Clear All Perf Checkpoints"
             }
         }
 
-        if (checkpoints.size() > 0) {
-            section("Saved Checkpoints", hideable: true, hidden: checkpoints.size() > 10) {
+        if (pageModel.checkpointCount > 0) {
+            section("Saved Checkpoints", hideable: true, hidden: pageModel.checkpointCount > 10) {
                 paragraph generateCheckpointTable(checkpoints)
             }
 
             section("Compare Perf Checkpoints") {
-                Map baselineOptions = ["startup": "Since Startup (default)"]
-                checkpoints.eachWithIndex { cp, idx ->
-                    baselineOptions["${idx}"] = "Checkpoint ${idx + 1} - ${cp.timestamp}"
-                }
-                input "compareBaseline", "enum", title: "Baseline (earlier)", options: baselineOptions, required: false, submitOnChange: true
+                input "compareBaseline", "enum", title: "Baseline (earlier)", options: pageModel.baselineOptions, required: false, submitOnChange: true
 
                 if (compareBaseline != null) {
-                    Map checkpointOptions = ["now": "Now (default)"]
-
-                    if (compareBaseline == "startup") {
-                        checkpoints.eachWithIndex { cp, idx ->
-                            checkpointOptions["${idx}"] = "Checkpoint ${idx + 1} - ${cp.timestamp}"
-                        }
-                    } else {
-                        int baselineIdx = compareBaseline.toInteger()
-                        Map baselineCp = checkpoints[baselineIdx]
-
-                        checkpoints.eachWithIndex { cp, idx ->
-                            if (idx < baselineIdx) {
-                                long baselineDevTotal = baselineCp.stats.deviceStats.sum { it.total ?: 0 } ?: 0
-                                long checkpointDevTotal = cp.stats.deviceStats.sum { it.total ?: 0 } ?: 0
-
-                                if (checkpointDevTotal >= baselineDevTotal) {
-                                    checkpointOptions["${idx}"] = "Checkpoint ${idx + 1} - ${cp.timestamp}"
-                                }
-                            }
-                        }
-                    }
-
-                    if (checkpointOptions.size() <= 1) {
+                    if (pageModel.checkpointOptions.size() <= 1) {
                         paragraph "<span style='color: #ff9800;'>No valid checkpoints for comparison with selected baseline (reboot may have occurred). Select 'Now' to compare current state.</span>"
                     }
-                    input "compareCheckpoint", "enum", title: "Compare to (later)", options: checkpointOptions, required: false, submitOnChange: true
+                    input "compareCheckpoint", "enum", title: "Compare to (later)", options: pageModel.checkpointOptions, required: false, submitOnChange: true
 
                     if (compareBaseline != null && compareCheckpoint != null) {
                         input "btnCompare", "button", title: "Compare Selected"
                     }
                 }
-                if (state.lastPerformanceComparison) {
+                if (hasSavedPerformanceComparison()) {
                     input "btnClearComparison", "button", title: "Reset to Since Startup"
                 }
             }
@@ -653,24 +625,8 @@ Map performancePage() {
 
         // Performance comparison — custom if set, otherwise startup→now
         if (stats) {
-            String comparisonHtml
-            if (state.lastPerformanceComparison) {
-                comparisonHtml = state.lastPerformanceComparison
-            } else {
-                stats.resources = resources
-                Map zwaveData = fetchEndpoint(ZWAVE_DETAILS_URL, "Z-Wave details", 20)
-                Map zigbeeData = fetchEndpoint(ZIGBEE_DETAILS_URL, "Zigbee details", 20)
-                stats.radioStats = [
-                    zwave: extractZwaveMessageCounts(zwaveData),
-                    zigbee: extractZigbeeMessageCounts(zigbeeData)
-                ]
-                Map zeroBaseline = buildZeroBaseline(stats, resources)
-                comparisonHtml = generateComparison(zeroBaseline, stats,
-                    "Startup (0:00:00)", "Now (${new Date().format('yyyy-MM-dd HH:mm:ss')})")
-            }
-
             section("Performance Breakdown") {
-                paragraph comparisonHtml
+                paragraph pageModel.comparisonHtml
             }
         }
     }
@@ -678,25 +634,14 @@ Map performancePage() {
 
 Map systemHealthPage() {
     Map systemHealth = analyzeSystemHealth()
-
     Map hubInfo = getHubInfo()
+    Map pageModel = buildSystemHealthPageModel(systemHealth, hubInfo)
 
     dynamicPage(name: "systemHealthPage", title: "System Health") {
         section("Hub Information") {
             if (location.hubs && location.hubs.size() > 0) {
                 def hub = location.hubs[0]
-                List hubMetrics = [
-                    ["Hub Name", hubInfo.name],
-                    ["Hub ID", hub.id ?: "N/A"],
-                    ["Hardware Model", hubInfo.hardware],
-                    ["Firmware Version", hubInfo.firmware],
-                    ["Local IP", hubInfo.ip],
-                    ["Zigbee ID", hub.zigbeeId ?: "N/A"],
-                    ["Location", location.name ?: "N/A"],
-                    ["Mode", location.currentMode ?: "N/A"],
-                    ["Time Zone", location.timeZone?.ID ?: "N/A"]
-                ]
-                paragraph formatMetricsTable(hubMetrics)
+                paragraph formatMetricsTable(pageModel.hubMetrics)
             } else {
                 paragraph "<span style='color: red;'>Hub information not available</span>"
             }
@@ -711,25 +656,8 @@ Map systemHealthPage() {
         }
 
         section("System Resources") {
-            if (systemHealth.memory) {
-                Map mem = systemHealth.memory
-                String memColor = (mem.freeOSMemory ?: 0) < 76800 ? "#d32f2f" : ((mem.freeOSMemory ?: 0) < 102400 ? "#ff9800" : "#388e3c")
-                String cpuColor = (mem.cpuAvg5min ?: 0) > 8.0 ? "#d32f2f" : ((mem.cpuAvg5min ?: 0) > 4.0 ? "#ff9800" : "#388e3c")
-
-                List resourceMetrics = [
-                    ["Free OS Memory", "<span style='color: ${memColor};'>${formatMemory(mem.freeOSMemory ?: 0)}</span>"],
-                    ["CPU Load Avg (5m)", "<span style='color: ${cpuColor};'>${String.format('%.2f', (mem.cpuAvg5min ?: 0) as float)}</span>"],
-                    ["Total Java Memory", formatMemory(mem.totalJavaMemory ?: 0)],
-                    ["Free Java Memory", formatMemory(mem.freeJavaMemory ?: 0)],
-                    ["Direct Java Memory", formatMemory(mem.directJavaMemory ?: 0)]
-                ]
-                if (systemHealth.temperature != null) {
-                    Float temp = systemHealth.temperature
-                    String tempColor = temp > 77 ? "#d32f2f" : (temp > 50 ? "#ff9800" : "#388e3c")
-                    String tempF = String.format("%.1f", temp * 9.0 / 5.0 + 32.0)
-                    resourceMetrics << ["Hub Temperature", "<span style='color: ${tempColor};'>${String.format('%.1f', temp)}\u00B0C (${tempF}\u00B0F)</span>"]
-                }
-                paragraph formatMetricsTable(resourceMetrics)
+            if (pageModel.resourceMetrics) {
+                paragraph formatMetricsTable(pageModel.resourceMetrics)
             } else {
                 paragraph "<i>Memory information unavailable</i>"
             }
@@ -745,25 +673,8 @@ Map systemHealthPage() {
         }
 
         section("Database & Storage") {
-            List dbMetrics = []
-            if (systemHealth.databaseSize != null) {
-                String dbColor = "#388e3c"
-                if (systemHealth.hubAlerts?.alerts?.hubHugeDatabase) dbColor = "#d32f2f"
-                else if (systemHealth.hubAlerts?.alerts?.hubLargeDatabase) dbColor = "#d32f2f"
-                else if (systemHealth.hubAlerts?.alerts?.hubLargeishDatabase) dbColor = "#ff9800"
-                dbMetrics << ["Database Size", "<span style='color: ${dbColor};'>${systemHealth.databaseSize} MB</span>"]
-            }
-            if (systemHealth.stateCompression) {
-                dbMetrics << ["State Compression", systemHealth.stateCompression.enabled ? "Enabled" : "<span style='color: #ff9800;'>Disabled</span>"]
-            }
-            if (systemHealth.eventStateLimits) {
-                Map lim = systemHealth.eventStateLimits
-                if (lim.maxEvents) dbMetrics << ["Max Events per Device", lim.maxEvents]
-                if (lim.maxEventAgeDays) dbMetrics << ["Max Event Age", "${lim.maxEventAgeDays} days"]
-                if (lim.maxStateAgeDays) dbMetrics << ["Max Device State Age", "${lim.maxStateAgeDays} days"]
-            }
-            if (dbMetrics) {
-                paragraph formatMetricsTable(dbMetrics)
+            if (pageModel.databaseMetrics) {
+                paragraph formatMetricsTable(pageModel.databaseMetrics)
             } else {
                 paragraph "<i>Database information unavailable</i>"
             }
@@ -773,11 +684,12 @@ Map systemHealthPage() {
 
 Map snapshotsPage() {
     List snapshots = loadSnapshots()
+    Map pageModel = buildSnapshotsPageModel(snapshots)
 
     dynamicPage(name: "snapshotsPage", title: "Config Snapshots & Reports") {
         section("Config Snapshot Management") {
             paragraph "Config snapshots capture the complete hub configuration (devices, apps, settings) for historical tracking and comparison."
-            paragraph "<b>Current Snapshots:</b> ${snapshots.size()} / ${settings.maxSnapshots ?: 10}"
+            paragraph "<b>Current Snapshots:</b> ${pageModel.snapshotCount} / ${settings.maxSnapshots ?: 10}"
         }
 
         section("Actions") {
@@ -793,16 +705,11 @@ Map snapshotsPage() {
                 paragraph generateSnapshotsTable(snapshots)
             }
 
-            section("View Snapshot", hideable: true, hidden: viewSnapshotIdx == null) {
-                Map viewOptions = [:]
-                snapshots.eachWithIndex { snap, idx ->
-                    String fw = snap.hubInfo?.firmware ? " | fw ${snap.hubInfo.firmware}" : ""
-                    viewOptions["${idx}"] = "${snap.timestamp} (${snap.devices?.totalDevices ?: 0} devices${fw})"
-                }
-                input "viewSnapshotIdx", "enum", title: "Select snapshot to view", options: viewOptions, required: false, submitOnChange: true
+            section("View Snapshot", hideable: true, hidden: true) {
+                input "viewSnapshotIdx", "enum", title: "Select snapshot to view", options: pageModel.viewSnapshotOptions, required: false, submitOnChange: true
 
                 if (viewSnapshotIdx != null) {
-                    int viewIdx = (viewSnapshotIdx as String).toInteger()
+                    int viewIdx = parseSnapshotSelectionIndex(viewSnapshotIdx, "view_")
                     if (viewIdx >= 0 && viewIdx < snapshots.size()) {
                         paragraph renderSnapshotView(snapshots[viewIdx])
                     }
@@ -816,27 +723,303 @@ Map snapshotsPage() {
 
         if (snapshots.size() > 0) {
             section("Compare Config Snapshots") {
-                Map olderOptions = [:]
-                snapshots.eachWithIndex { snap, idx ->
-                    String fw = snap.hubInfo?.firmware ? " | fw ${snap.hubInfo.firmware}" : ""
-                    olderOptions["${idx}"] = "${snap.timestamp} (${snap.devices?.totalDevices ?: 0} devices${fw})"
-                }
-                Map newerOptions = ["now": "Now (create new snapshot)"] + olderOptions
-                input "diffOlder", "enum", title: "Older snapshot", options: olderOptions, required: false, submitOnChange: true
-                input "diffNewer", "enum", title: "Newer snapshot", options: newerOptions, required: false, submitOnChange: true
+                input "diffOlder", "enum", title: "Older snapshot", options: pageModel.diffOlderOptions, required: false, submitOnChange: true
+                input "diffNewer", "enum", title: "Newer snapshot", options: pageModel.newerSnapshotOptions, required: false, submitOnChange: true
 
                 if (diffOlder != null && diffNewer != null && diffOlder != diffNewer) {
                     input "btnDiffSnapshots", "button", title: "Compare Selected"
                 }
             }
 
-            if (state.lastSnapshotDiff) {
+            if (hasSavedSnapshotDiff()) {
                 section("Config Snapshot Comparison Results") {
-                    paragraph state.lastSnapshotDiff
+                    paragraph buildSnapshotDiffHtml()
                 }
             }
         }
     }
+}
+
+// ===== PAGE VIEW MODELS =====
+
+Map buildDevicesPageModel(Map deviceStats) {
+    return [
+        summaryMetrics: buildDeviceSummaryMetrics(deviceStats),
+        allDeviceCount: deviceStats.allDevices?.size() ?: 0,
+        deviceRows: buildDeviceTableRows(deviceStats.allDevices ?: []),
+        lowBatteryHtml: renderLowBatteryAlerts(deviceStats.lowBatteryDevices ?: [])
+    ]
+}
+
+List buildDeviceSummaryMetrics(Map deviceStats) {
+    Map idsByStatus = deviceStats.idsByStatus ?: [active: [], inactive: [], disabled: []]
+    return [
+        ["Total Devices", "<a href='/device/list' target='_blank' style='color: #1A77C9; text-decoration: none;'>${deviceStats.totalDevices}</a>"],
+        ["Active Devices", "${deviceListLink(deviceStats.activeDevices, idsByStatus.active)} (${settings.inactivityDays ?: 7} days)"],
+        ["Inactive Devices", deviceListLink(deviceStats.inactiveDevices, (idsByStatus.inactive ?: []) + (idsByStatus.disabled ?: []))],
+        ["Disabled Devices", deviceListLink(deviceStats.disabledDevices, idsByStatus.disabled)],
+        ["Parent Devices", deviceListLink(deviceStats.parentDevices, deviceStats.parentIds)],
+        ["Child Devices", deviceListLink(deviceStats.childDevices, deviceStats.parentIds)],
+        ["Hub Mesh Linked", deviceListLink(deviceStats.linkedDevices, deviceStats.linkedIds)],
+        ["Battery-Powered", deviceListLink(deviceStats.batteryDevices, deviceStats.batteryIds)]
+    ]
+}
+
+List buildDeviceTableRows(List allDevices) {
+    return allDevices.collect { Map dev ->
+        String nameLink = "<a href='/device/edit/${dev.id}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(dev.name as String)}</a>"
+        String typeDisplay = escapeHtml(dev.type as String)
+        if (dev.userType && dev.deviceTypeId) {
+            typeDisplay = "<a href='/driver/editor/${dev.deviceTypeId}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${typeDisplay}</a>"
+        }
+
+        String parentDisplay = "-"
+        if (dev.parentAppName) {
+            parentDisplay = "<a href='/installedapp/configure/${dev.parentAppId}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(dev.parentAppName as String)}</a>"
+        } else if (dev.parentDeviceName) {
+            parentDisplay = "<a href='/device/edit/${dev.parentDeviceId}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(dev.parentDeviceName as String)}</a>"
+        }
+
+        Map row = [
+            name: nameLink,
+            _nameSort: dev.name,
+            type: typeDisplay,
+            _typeSort: dev.type,
+            protocol: PROTOCOL_DISPLAY[dev.protocol] ?: (dev.protocol ?: "").toString().capitalize(),
+            room: dev.room ?: "-",
+            status: dev.status ?: "",
+            lastActivity: dev.lastActivity ?: "Never",
+            battery: dev.battery != null ? dev.battery : "",
+            parent: parentDisplay,
+            _parentSort: dev.parentAppName ?: dev.parentDeviceName ?: ""
+        ]
+        if (dev.status == "Active") row._statusColor = "#388e3c"
+        else if (dev.status == "Disabled") row._statusColor = "#d32f2f"
+        else if (dev.status == "Inactive") row._statusColor = "#ff9800"
+        if (dev.battery != null) {
+            if (dev.battery <= 20) row._batteryColor = "#d32f2f"
+            else if (dev.battery <= 50) row._batteryColor = "#ff9800"
+            else row._batteryColor = "#388e3c"
+        }
+        return row
+    }
+}
+
+String renderLowBatteryAlerts(List lowBatteryDevices) {
+    if (!lowBatteryDevices) return null
+    return lowBatteryDevices.collect { Map dev ->
+        "<span style='color: #d32f2f;'><a href='/device/edit/${dev.id}' target='_blank' style='color: #d32f2f;'>${dev.name}</a>: ${dev.battery}%</span>"
+    }.join("<br>")
+}
+
+Map buildAppsPageModel(Map appStats) {
+    List platformApps = appStats.platformApps ?: []
+    return [
+        summaryMetrics: buildAppSummaryMetrics(appStats),
+        hierarchyCount: appStats.parentChildHierarchy?.size() ?: 0,
+        appTypeCount: appStats.byNamespace?.size() ?: 0,
+        platformAppCount: platformApps.size(),
+        largeStateCount: platformApps.count { (it.stateSize as int) > 5000 },
+        platformRows: buildPlatformAppRows(platformApps)
+    ]
+}
+
+List buildAppSummaryMetrics(Map appStats) {
+    int platformCount = appStats.platformApps?.size() ?: 0
+    List metrics = [
+        ["Visible App Instances", appStats.totalApps],
+        ["System Apps", appStats.builtInApps],
+        ["User Apps", appStats.userApps],
+        ["Parent Apps", appStats.parentApps],
+        ["Child Apps", appStats.childApps]
+    ]
+    if (platformCount > 0) {
+        metrics << ["Platform Apps (hidden)", platformCount]
+        metrics << ["Total (from runtime)", appStats.runtimeTotalApps ?: 0]
+    }
+    return metrics
+}
+
+List buildPlatformAppRows(List platformApps) {
+    return platformApps.collect { Map app ->
+        int stateSize = app.stateSize as int
+        String stateSizeColor = stateSize > 10000 ? "#d32f2f" : (stateSize > 5000 ? "#ff9800" : "")
+        Map row = [
+            name: app.name,
+            stateSize: stateSize,
+            pctTotal: String.format('%.3f', (app.pctTotal as Number).floatValue()) + "%",
+            _pctTotalSort: app.pctTotal,
+            count: app.count,
+            average: app.count > 0 ? String.format('%.1f', (app.average as Number).floatValue()) : "0",
+            _averageSort: app.average,
+            hubActions: app.hubActionCount,
+            cloudCalls: app.cloudCallCount
+        ]
+        if (stateSizeColor) row._stateSizeColor = stateSizeColor
+        if (app.largeState) row._stateSizeColor = "#d32f2f"
+        return row
+    }
+}
+
+Map buildPerformancePageModel(Map stats, Map resources, List checkpoints) {
+    return [
+        checkpointCount: checkpoints?.size() ?: 0,
+        baselineOptions: buildPerformanceBaselineOptions(checkpoints),
+        checkpointOptions: buildPerformanceCheckpointOptions(checkpoints, compareBaseline),
+        comparisonHtml: buildPerformanceComparisonHtml(stats, resources)
+    ]
+}
+
+Map buildPerformanceBaselineOptions(List checkpoints) {
+    Map baselineOptions = ["startup": "Since Startup (default)"]
+    (checkpoints ?: []).eachWithIndex { Map cp, int idx ->
+        baselineOptions["${idx}"] = "Checkpoint ${idx + 1} - ${cp.timestamp}"
+    }
+    return baselineOptions
+}
+
+Map buildPerformanceCheckpointOptions(List checkpoints, Object selectedBaseline) {
+    if (selectedBaseline == null) return [:]
+
+    Map checkpointOptions = ["now": "Now (default)"]
+    if (selectedBaseline == "startup") {
+        (checkpoints ?: []).eachWithIndex { Map cp, int idx ->
+            checkpointOptions["${idx}"] = "Checkpoint ${idx + 1} - ${cp.timestamp}"
+        }
+        return checkpointOptions
+    }
+
+    int baselineIdx = selectedBaseline.toString().toInteger()
+    if (baselineIdx < 0 || baselineIdx >= (checkpoints?.size() ?: 0)) return checkpointOptions
+
+    Map baselineCp = checkpoints[baselineIdx]
+    checkpoints.eachWithIndex { Map cp, int idx ->
+        if (idx < baselineIdx) {
+            long baselineDevTotal = baselineCp.stats.deviceStats.sum { it.total ?: 0 } ?: 0
+            long checkpointDevTotal = cp.stats.deviceStats.sum { it.total ?: 0 } ?: 0
+            if (checkpointDevTotal >= baselineDevTotal) {
+                checkpointOptions["${idx}"] = "Checkpoint ${idx + 1} - ${cp.timestamp}"
+            }
+        }
+    }
+    return checkpointOptions
+}
+
+String buildPerformanceComparisonHtml(Map stats, Map resources) {
+    if (!stats) return null
+    Map savedPayload = loadPerformanceComparisonPayload()
+    if (savedPayload) return renderPerformanceComparisonPayload(savedPayload)
+
+    stats.resources = resources
+    Map zwaveData = fetchEndpoint(ZWAVE_DETAILS_URL, "Z-Wave details", 20)
+    Map zigbeeData = fetchEndpoint(ZIGBEE_DETAILS_URL, "Zigbee details", 20)
+    stats.radioStats = [
+        zwave: extractZwaveMessageCounts(zwaveData),
+        zigbee: extractZigbeeMessageCounts(zigbeeData)
+    ]
+    Map zeroBaseline = buildZeroBaseline(stats, resources)
+    return generateComparison(zeroBaseline, stats,
+        "Startup (0:00:00)", "Now (${new Date().format('yyyy-MM-dd HH:mm:ss')})")
+}
+
+Map buildSystemHealthPageModel(Map systemHealth, Map hubInfo) {
+    return [
+        hubMetrics: buildHubMetrics(hubInfo),
+        resourceMetrics: buildSystemResourceMetrics(systemHealth),
+        databaseMetrics: buildDatabaseMetrics(systemHealth)
+    ]
+}
+
+List buildHubMetrics(Map hubInfo) {
+    def hub = (location.hubs && location.hubs.size() > 0) ? location.hubs[0] : null
+    return [
+        ["Hub Name", hubInfo.name],
+        ["Hub ID", hub?.id ?: "N/A"],
+        ["Hardware Model", hubInfo.hardware],
+        ["Firmware Version", hubInfo.firmware],
+        ["Local IP", hubInfo.ip],
+        ["Zigbee ID", hub?.zigbeeId ?: "N/A"],
+        ["Location", location.name ?: "N/A"],
+        ["Mode", location.currentMode ?: "N/A"],
+        ["Time Zone", location.timeZone?.ID ?: "N/A"]
+    ]
+}
+
+List buildSystemResourceMetrics(Map systemHealth) {
+    if (!systemHealth.memory) return null
+
+    Map mem = systemHealth.memory
+    String memColor = (mem.freeOSMemory ?: 0) < 76800 ? "#d32f2f" : ((mem.freeOSMemory ?: 0) < 102400 ? "#ff9800" : "#388e3c")
+    String cpuColor = (mem.cpuAvg5min ?: 0) > 8.0 ? "#d32f2f" : ((mem.cpuAvg5min ?: 0) > 4.0 ? "#ff9800" : "#388e3c")
+    List resourceMetrics = [
+        ["Free OS Memory", "<span style='color: ${memColor};'>${formatMemory(mem.freeOSMemory ?: 0)}</span>"],
+        ["CPU Load Avg (5m)", "<span style='color: ${cpuColor};'>${String.format('%.2f', (mem.cpuAvg5min ?: 0) as float)}</span>"],
+        ["Total Java Memory", formatMemory(mem.totalJavaMemory ?: 0)],
+        ["Free Java Memory", formatMemory(mem.freeJavaMemory ?: 0)],
+        ["Direct Java Memory", formatMemory(mem.directJavaMemory ?: 0)]
+    ]
+    if (systemHealth.temperature != null) {
+        Float temp = systemHealth.temperature
+        String tempColor = temp > 77 ? "#d32f2f" : (temp > 50 ? "#ff9800" : "#388e3c")
+        String tempF = String.format("%.1f", temp * 9.0 / 5.0 + 32.0)
+        resourceMetrics << ["Hub Temperature", "<span style='color: ${tempColor};'>${String.format('%.1f', temp)}\u00B0C (${tempF}\u00B0F)</span>"]
+    }
+    return resourceMetrics
+}
+
+List buildDatabaseMetrics(Map systemHealth) {
+    List dbMetrics = []
+    if (systemHealth.databaseSize != null) {
+        String dbColor = "#388e3c"
+        if (systemHealth.hubAlerts?.alerts?.hubHugeDatabase) dbColor = "#d32f2f"
+        else if (systemHealth.hubAlerts?.alerts?.hubLargeDatabase) dbColor = "#d32f2f"
+        else if (systemHealth.hubAlerts?.alerts?.hubLargeishDatabase) dbColor = "#ff9800"
+        dbMetrics << ["Database Size", "<span style='color: ${dbColor};'>${systemHealth.databaseSize} MB</span>"]
+    }
+    if (systemHealth.stateCompression) {
+        dbMetrics << ["State Compression", systemHealth.stateCompression.enabled ? "Enabled" : "<span style='color: #ff9800;'>Disabled</span>"]
+    }
+    if (systemHealth.eventStateLimits) {
+        Map lim = systemHealth.eventStateLimits
+        if (lim.maxEvents) dbMetrics << ["Max Events per Device", lim.maxEvents]
+        if (lim.maxEventAgeDays) dbMetrics << ["Max Event Age", "${lim.maxEventAgeDays} days"]
+        if (lim.maxStateAgeDays) dbMetrics << ["Max Device State Age", "${lim.maxStateAgeDays} days"]
+    }
+    return dbMetrics ?: null
+}
+
+Map buildSnapshotsPageModel(List snapshots) {
+    Map snapshotOptions = buildSnapshotOptions(snapshots)
+    return [
+        snapshotCount      : snapshots?.size() ?: 0,
+        viewSnapshotOptions: prefixSnapshotOptions(snapshotOptions, "view_"),
+        diffOlderOptions   : prefixSnapshotOptions(snapshotOptions, "diff_"),
+        newerSnapshotOptions: ["now": "Now (create new snapshot)"] + prefixSnapshotOptions(snapshotOptions, "diff_")
+    ]
+}
+
+Map buildSnapshotOptions(List snapshots) {
+    Map options = [:]
+    (snapshots ?: []).eachWithIndex { Map snap, int idx ->
+        String fw = snap.hubInfo?.firmware ? " | fw ${snap.hubInfo.firmware}" : ""
+        options["${idx}"] = "${snap.timestamp} (${snap.devices?.totalDevices ?: 0} devices${fw})"
+    }
+    return options
+}
+
+Map prefixSnapshotOptions(Map options, String prefix) {
+    Map prefixed = [:]
+    (options ?: [:]).each { String key, String value ->
+        prefixed["${prefix}${key}"] = value
+    }
+    return prefixed
+}
+
+int parseSnapshotSelectionIndex(Object selection, String prefix) {
+    if (selection == null) return -1
+    String value = selection as String
+    if (!value.startsWith(prefix)) return -1
+    return value.substring(prefix.length()).toInteger()
 }
 
 Map settingsPage() {
@@ -904,7 +1087,7 @@ void appButtonHandler(String btn) {
             executePerformanceComparison()
             break
         case "btnClearComparison":
-            state.lastPerformanceComparison = null
+            clearPerformanceComparison()
             break
         case "btnDiffSnapshots":
             executeSnapshotDiff()
@@ -1175,41 +1358,7 @@ String generateResourceChart(List dataPoints) {
         "{t:'${pt.time}',m:${pt.freeOS},c:${pt.cpuLoad},j:${pt.freeJava}}"
     }
 
-    svg.append("""<script>
-(function(){
-var d=[${tooltipData.join(',')}];
-var svg=document.getElementById('${uniqueId}');
-var container=document.getElementById('${containerId}');
-var hr=document.getElementById('${uniqueId}_hover');
-var vl=document.getElementById('${uniqueId}_vline');
-var tb=document.getElementById('${uniqueId}_tipbg');
-var tt=document.getElementById('${uniqueId}_tip');
-var ml=${marginLeft},pw=${plotW},mt=${marginTop},sw=${svgWidth};
-container.scrollLeft=container.scrollWidth;
-hr.addEventListener('mousemove',function(e){
-  var rect=svg.getBoundingClientRect();
-  var scaleX=sw/rect.width;
-  var mx=(e.clientX-rect.left)*scaleX-ml;
-  var idx=Math.round(mx/pw*(d.length-1));
-  if(idx<0)idx=0;if(idx>=d.length)idx=d.length-1;
-  var x=ml+idx/(d.length-1)*pw;
-  vl.setAttribute('x1',x);vl.setAttribute('x2',x);vl.setAttribute('visibility','visible');
-  var p=d[idx];
-  var mem=(p.m/1024).toFixed(0);
-  var txt=p.t+' | OS: '+mem+' MB | CPU: '+p.c.toFixed(2)+' | Java: '+(p.j/1024).toFixed(0)+' MB';
-  tt.textContent=txt;
-  var tw=txt.length*5.5+10;
-  var tx=x+10;if(tx+tw>sw-10)tx=x-tw-10;
-  tt.setAttribute('x',tx+5);tt.setAttribute('y',mt+14);tt.setAttribute('visibility','visible');
-  tb.setAttribute('x',tx);tb.setAttribute('y',mt+2);tb.setAttribute('width',tw);tb.setAttribute('height',18);tb.setAttribute('visibility','visible');
-});
-hr.addEventListener('mouseleave',function(){
-  vl.setAttribute('visibility','hidden');
-  tt.setAttribute('visibility','hidden');
-  tb.setAttribute('visibility','hidden');
-});
-})();
-</script>""")
+    svg.append(renderMemoryChartTooltipScript(uniqueId, containerId, tooltipData.join(','), marginLeft, plotW, marginTop, svgWidth))
 
     svg.append("</div>")
 
@@ -2030,8 +2179,12 @@ void performComparisonWithNow(String baseline) {
 
     if (baseline == "startup") {
         Map zeroBaseline = buildZeroBaseline(currentStats, currentResources)
-        state.lastPerformanceComparison = generateComparison(zeroBaseline, currentStats,
-            "Startup (0:00:00)", "Now (${new Date().format('yyyy-MM-dd HH:mm:ss')})")
+        savePerformanceComparisonPayload(buildPerformanceComparisonPayload(
+            zeroBaseline,
+            currentStats,
+            "Startup (0:00:00)",
+            "Now (${new Date().format('yyyy-MM-dd HH:mm:ss')})"
+        ))
     } else {
         List checkpoints = loadCheckpoints()
         int baselineIdx = baseline.toInteger()
@@ -2045,8 +2198,12 @@ void performComparisonWithNow(String baseline) {
         baselineStats.resources = baselineCp.resources
         baselineStats.radioStats = baselineCp.radioStats
 
-        state.lastPerformanceComparison = generateComparison(baselineStats, currentStats,
-            baselineCp.timestamp, "Now (${new Date().format('yyyy-MM-dd HH:mm:ss')})")
+        savePerformanceComparisonPayload(buildPerformanceComparisonPayload(
+            baselineStats,
+            currentStats,
+            baselineCp.timestamp,
+            "Now (${new Date().format('yyyy-MM-dd HH:mm:ss')})"
+        ))
     }
 }
 
@@ -2068,8 +2225,12 @@ void performComparison(int baselineIdx, int checkpointIdx) {
     checkpointStats.resources = checkpointCp.resources
     checkpointStats.radioStats = checkpointCp.radioStats
 
-    state.lastPerformanceComparison = generateComparison(baselineStats, checkpointStats,
-        baselineCp.timestamp, checkpointCp.timestamp)
+    savePerformanceComparisonPayload(buildPerformanceComparisonPayload(
+        baselineStats,
+        checkpointStats,
+        baselineCp.timestamp,
+        checkpointCp.timestamp
+    ))
 }
 
 void performComparisonSinceStartup(int checkpointIdx) {
@@ -2086,8 +2247,12 @@ void performComparisonSinceStartup(int checkpointIdx) {
     checkpointStats.radioStats = checkpointCp.radioStats
     Map zeroBaseline = buildZeroBaseline(checkpointStats, checkpointCp.resources)
 
-    state.lastPerformanceComparison = generateComparison(zeroBaseline, checkpointStats,
-        "Startup (0:00:00)", checkpointCp.timestamp)
+    savePerformanceComparisonPayload(buildPerformanceComparisonPayload(
+        zeroBaseline,
+        checkpointStats,
+        "Startup (0:00:00)",
+        checkpointCp.timestamp
+    ))
 }
 
 Map buildZeroBaseline(Map stats, Map resources) {
@@ -2124,6 +2289,32 @@ Map buildZeroBaseline(Map stats, Map resources) {
             }
         ]
     ]
+}
+
+Map buildPerformanceComparisonPayload(Map baselineStats, Map checkpointStats, String baselineLabel, String checkpointLabel) {
+    return [
+        generatedAt     : new Date().format("yyyy-MM-dd HH:mm:ss"),
+        baselineLabel   : baselineLabel,
+        checkpointLabel : checkpointLabel,
+        baselineStats   : baselineStats ?: [:],
+        checkpointStats : checkpointStats ?: [:]
+    ]
+}
+
+String renderPerformanceComparisonPayload(Map payload) {
+    if (!payload) return null
+    return generateComparison(
+        payload.baselineStats ?: [:],
+        payload.checkpointStats ?: [:],
+        payload.baselineLabel ?: "Baseline",
+        payload.checkpointLabel ?: "Current"
+    )
+}
+
+String buildSnapshotDiffHtml() {
+    Map payload = loadSnapshotDiffPayload()
+    if (!payload) return null
+    return generateSnapshotDiff(payload.older ?: [:], payload.newer ?: [:])
 }
 
 String generateComparison(Map baselineStats, Map checkpointStats, String baselineLabel, String checkpointLabel) {
@@ -2472,7 +2663,7 @@ void deleteCheckpoint(int index) {
 
 void clearAllCheckpoints() {
     deleteFile(CHECKPOINTS_FILE)
-    state.lastPerformanceComparison = null
+    clearPerformanceComparison()
     log.info "All perf checkpoints cleared"
 }
 
@@ -2517,7 +2708,11 @@ void executeSnapshotDiff() {
     }
 
     List snapshots = loadSnapshots()
-    int olderIdx = (diffOlder as String).toInteger()
+    int olderIdx = parseSnapshotSelectionIndex(diffOlder, "diff_")
+    if (olderIdx < 0) {
+        log.error "Invalid older snapshot selection"
+        return
+    }
 
     Map newer
     if (diffNewer == "now") {
@@ -2525,7 +2720,11 @@ void executeSnapshotDiff() {
         snapshots = loadSnapshots()
         newer = snapshots[0]  // createSnapshot adds at index 0
     } else {
-        int newerIdx = (diffNewer as String).toInteger()
+        int newerIdx = parseSnapshotSelectionIndex(diffNewer, "diff_")
+        if (newerIdx < 0) {
+            log.error "Invalid newer snapshot selection"
+            return
+        }
         if (newerIdx >= snapshots.size()) {
             log.error "Invalid snapshot index"
             return
@@ -2546,7 +2745,11 @@ void executeSnapshotDiff() {
         newer = temp
     }
 
-    state.lastSnapshotDiff = generateSnapshotDiff(older, newer)
+    saveSnapshotDiffPayload([
+        generatedAt: new Date().format("yyyy-MM-dd HH:mm:ss"),
+        older      : older,
+        newer      : newer
+    ])
 }
 
 String generateSnapshotDiff(Map older, Map newer) {
@@ -2785,7 +2988,7 @@ void deleteSnapshot(int index) {
 
 void clearAllSnapshots() {
     deleteFile(SNAPSHOTS_FILE)
-    state.lastSnapshotDiff = null
+    clearSnapshotDiff()
     log.info "All config snapshots cleared"
 }
 
@@ -2806,20 +3009,7 @@ void generateFullReport() {
     <meta charset="UTF-8">
     <title>Hub Diagnostics Report - ${timestamp}</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
-        .container { max-width: 1200px; margin: 0 auto; background-color: white; padding: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        h1 { color: #1A77C9; border-bottom: 3px solid #1A77C9; padding-bottom: 10px; }
-        h2 { color: #333; border-bottom: 2px solid #ddd; padding-bottom: 8px; margin-top: 30px; }
-        table { width: 100%; border-collapse: collapse; margin: 15px 0; }
-        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
-        th { background-color: #1A77C9; color: white; }
-        tr:nth-child(even) { background-color: #f9f9f9; }
-        tr:hover { background-color: #e3f2fd; }
-        .metric { display: inline-block; margin: 10px 20px 10px 0; }
-        .metric-label { font-weight: bold; color: #555; }
-        .metric-value { color: #1A77C9; font-size: 1.2em; }
-        .warning { background-color: #f8d7da; border-left: 4px solid #d32f2f; padding: 10px; margin: 10px 0; }
-        .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; text-align: center; color: #999; font-size: 0.9em; }
+${FULL_REPORT_STYLES}
     </style>
 </head>
 <body>
@@ -2887,7 +3077,7 @@ void generateFullReport() {
         </table>
 
         <div class="footer">
-            <p>Generated by Hub Diagnostics v3.1.0</p>
+            <p>Generated by Hub Diagnostics v${APP_VERSION}</p>
             <p>Hubitat Elevation - ${hubInfo.name}</p>
         </div>
     </div>
@@ -2934,6 +3124,21 @@ String generateHtmlReportDeviceTable(List allDevices) {
 
 // ===== SHARED TABLE GENERATION =====
 
+String renderSortableTableScript(String uniqueId) {
+    return SORTABLE_TABLE_SCRIPT_TEMPLATE.replace("__UNIQUE_ID__", uniqueId)
+}
+
+String renderMemoryChartTooltipScript(String uniqueId, String containerId, String tooltipData, int marginLeft, int plotW, int marginTop, int svgWidth) {
+    return MEMORY_CHART_TOOLTIP_SCRIPT_TEMPLATE
+        .replace("__TOOLTIP_DATA__", tooltipData)
+        .replace("__SVG_ID__", uniqueId)
+        .replace("__CONTAINER_ID__", containerId)
+        .replace("__MARGIN_LEFT__", "${marginLeft}")
+        .replace("__PLOT_WIDTH__", "${plotW}")
+        .replace("__MARGIN_TOP__", "${marginTop}")
+        .replace("__SVG_WIDTH__", "${svgWidth}")
+}
+
 String generateSortableTable(String tableId, List columns, List rows) {
     if (!rows || rows.size() == 0) {
         return "No data available"
@@ -2943,34 +3148,7 @@ String generateSortableTable(String tableId, List columns, List rows) {
 
     StringBuilder sb = new StringBuilder()
 
-    // Sort script
-    sb.append("""<script>
-function sortTable_${uniqueId}(colIdx, dataType) {
-    var table = document.getElementById('${uniqueId}');
-    var tbody = table.getElementsByTagName('tbody')[0];
-    var trs = Array.from(tbody.getElementsByTagName('tr'));
-    var curCol = table.getAttribute('data-sort-col');
-    var curOrd = table.getAttribute('data-sort-order');
-    var newOrd = (curCol == colIdx && curOrd == 'desc') ? 'asc' : 'desc';
-    trs.sort(function(a, b) {
-        var aV = a.cells[colIdx].getAttribute('data-value');
-        var bV = b.cells[colIdx].getAttribute('data-value');
-        if (dataType == 'number') { aV = parseFloat(aV) || 0; bV = parseFloat(bV) || 0; }
-        else { aV = aV.toLowerCase(); bV = bV.toLowerCase(); }
-        if (aV < bV) return newOrd == 'asc' ? -1 : 1;
-        if (aV > bV) return newOrd == 'asc' ? 1 : -1;
-        return 0;
-    });
-    trs.forEach(function(r, i) { r.style.backgroundColor = i % 2 == 0 ? '#f9f9f9' : '#fff'; tbody.appendChild(r); });
-    table.setAttribute('data-sort-col', colIdx);
-    table.setAttribute('data-sort-order', newOrd);
-    var ths = table.getElementsByTagName('th');
-    for (var i = 0; i < ths.length; i++) {
-        var arrow = ths[i].getElementsByClassName('sort-arrow')[0];
-        if (arrow) arrow.innerHTML = (i == colIdx) ? (newOrd == 'desc' ? ' \\u25BC' : ' \\u25B2') : ' \\u21C5';
-    }
-}
-</script>""")
+    sb.append(renderSortableTableScript(uniqueId))
 
     sb.append("<div style='overflow-x: auto;'>")
     sb.append("<table id='${uniqueId}' data-sort-col='-1' data-sort-order='desc' style='width:100%; border-collapse: collapse; font-size: 11px;'>")
@@ -3579,6 +3757,44 @@ void saveSnapshots(List snapshots) {
     }
 }
 
+Map loadPerformanceComparisonPayload() {
+    def data = readFile(PERFORMANCE_COMPARISON_FILE)
+    return data instanceof Map ? (Map) data : null
+}
+
+void savePerformanceComparisonPayload(Map payload) {
+    if (payload) {
+        writeFile(PERFORMANCE_COMPARISON_FILE, groovy.json.JsonOutput.toJson(payload))
+    }
+}
+
+void clearPerformanceComparison() {
+    deleteFile(PERFORMANCE_COMPARISON_FILE)
+}
+
+boolean hasSavedPerformanceComparison() {
+    return loadPerformanceComparisonPayload() != null
+}
+
+Map loadSnapshotDiffPayload() {
+    def data = readFile(SNAPSHOT_DIFF_FILE)
+    return data instanceof Map ? (Map) data : null
+}
+
+void saveSnapshotDiffPayload(Map payload) {
+    if (payload) {
+        writeFile(SNAPSHOT_DIFF_FILE, groovy.json.JsonOutput.toJson(payload))
+    }
+}
+
+void clearSnapshotDiff() {
+    deleteFile(SNAPSHOT_DIFF_FILE)
+}
+
+boolean hasSavedSnapshotDiff() {
+    return loadSnapshotDiffPayload() != null
+}
+
 def readFile(String fileName) {
     try {
         byte[] fileData = downloadHubFile(fileName)
@@ -3630,6 +3846,7 @@ void uninstalled() {
 
 void initialize() {
     log.info "Hub Diagnostics initialized"
+    migrateStorageIfNeeded()
 
     if (settings.autoSnapshot) {
         int interval = (settings.snapshotInterval ?: "24").toInteger()
@@ -3646,5 +3863,27 @@ void initialize() {
             schedule("0 0 */${hours} * * ?", "createCheckpoint")
         }
         log.info "Automatic perf checkpoints scheduled every ${interval} minute(s)"
+    }
+}
+
+void migrateStorageIfNeeded() {
+    String currentSchema = (state.storageSchemaVersion ?: "") as String
+    if (currentSchema == STORAGE_SCHEMA_VERSION) {
+        return
+    }
+
+    boolean migratedLegacyState = false
+    if (state.lastPerformanceComparison != null) {
+        state.remove("lastPerformanceComparison")
+        migratedLegacyState = true
+    }
+    if (state.lastSnapshotDiff != null) {
+        state.remove("lastSnapshotDiff")
+        migratedLegacyState = true
+    }
+
+    state.storageSchemaVersion = STORAGE_SCHEMA_VERSION
+    if (migratedLegacyState) {
+        log.info "Migrated legacy comparison state to file-backed storage for v${APP_VERSION}"
     }
 }
