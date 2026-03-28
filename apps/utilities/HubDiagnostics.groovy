@@ -1562,7 +1562,11 @@ Map analyzeDevices() {
                 protocol = radioProtocols[device.id]
             } else {
                 protocol = determineProtocolQuick(device)
-                if (protocol == PROTOCOL_OTHER && device.id) {
+                // If heuristic says radio protocol but radio endpoints disagree, defer to fullData
+                if (protocol in [PROTOCOL_ZIGBEE, PROTOCOL_ZWAVE, PROTOCOL_MATTER]) {
+                    if (device.id) devicesNeedingFullData << device.id
+                    protocol = PROTOCOL_OTHER  // will be corrected by fullData pass
+                } else if (protocol == PROTOCOL_OTHER && device.id) {
                     devicesNeedingFullData << device.id
                 }
             }
@@ -3110,6 +3114,7 @@ Map analyzeDevicesQuick() {
             }
 
             // Protocol: check radio map first, then fall back to heuristic
+            // If heuristic says radio but device isn't in radio endpoints, classify as OTHER
             String protocol
             if (device.linked == true) {
                 protocol = PROTOCOL_HUBMESH
@@ -3117,6 +3122,9 @@ Map analyzeDevicesQuick() {
                 protocol = radioProtocols[device.id]
             } else {
                 protocol = determineProtocolQuick(device)
+                if (protocol in [PROTOCOL_ZIGBEE, PROTOCOL_ZWAVE, PROTOCOL_MATTER]) {
+                    protocol = PROTOCOL_OTHER
+                }
             }
             stats.byProtocol[protocol] = (stats.byProtocol[protocol] ?: 0) + 1
             stats.idsByProtocol[protocol] << device.id
