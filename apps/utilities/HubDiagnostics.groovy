@@ -842,6 +842,15 @@ Map systemHealthPage() {
             }
         }
 
+        section("Resource History") {
+            List memHistory = fetchMemoryHistory()
+            if (memHistory && memHistory.size() >= 2) {
+                paragraph generateResourceChart(memHistory)
+            } else {
+                paragraph "<i>Resource history not available</i>"
+            }
+        }
+
         section("Database & Storage") {
             List dbMetrics = []
             if (systemHealth.databaseSize != null) {
@@ -1052,6 +1061,250 @@ Map fetchSystemResources() {
         log.error "Error fetching system resources: ${e.message}"
         return null
     }
+}
+
+List fetchMemoryHistory() {
+    try {
+        Map params = [
+            uri: MEMORY_HISTORY_URL,
+            contentType: "text/plain",
+            timeout: 30
+        ]
+        List dataPoints = []
+        httpGet(params) { resp ->
+            if (resp.success) {
+                String[] lines = resp.data.text.split('\n')
+                // Skip header line
+                for (int i = 1; i < lines.length; i++) {
+                    String line = lines[i].trim()
+                    if (!line) continue
+                    String[] parts = line.split(',')
+                    if (parts.length >= 6) {
+                        dataPoints << [
+                            time: parts[0].trim(),
+                            freeOS: parts[1].trim().toInteger(),
+                            cpuLoad: parts[2].trim().toFloat(),
+                            freeJava: parts[4].trim().toInteger(),
+                            directJava: parts[5].trim().toInteger()
+                        ]
+                    }
+                }
+            }
+        }
+        return dataPoints
+    } catch (Exception e) {
+        log.error "Error fetching memory history: ${e.message}"
+        return []
+    }
+}
+
+String generateResourceChart(List dataPoints) {
+    if (!dataPoints || dataPoints.size() < 2) return "<i>Insufficient history data for chart</i>"
+
+    // Fixed density: pixels per data point — gives ~7 days at 5-min intervals in 800px viewport
+    float pxPerPoint = 4.0
+    int viewportWidth = 800
+    int height = 300
+    int marginLeft = 65
+    int marginRight = 65
+    int marginTop = 25
+    int marginBottom = 50
+    int plotH = height - marginTop - marginBottom
+
+    int numPoints = dataPoints.size()
+    int plotW = Math.max(viewportWidth - marginLeft - marginRight, (numPoints * pxPerPoint) as int)
+    int svgWidth = plotW + marginLeft + marginRight
+
+    // Calculate value ranges across ALL data (not just viewport)
+    int maxFreeOS = dataPoints.collect { it.freeOS }.max()
+    float maxCpu = dataPoints.collect { it.cpuLoad }.max()
+
+    // Pad max to nice round numbers, both axes start at zero
+    maxFreeOS = (Math.ceil(maxFreeOS / 50000.0) * 50000) as int
+    int minFreeOS = 0
+    maxCpu = Math.ceil(maxCpu)
+    if (maxCpu < 1) maxCpu = 1
+
+    int freeOSRange = maxFreeOS - minFreeOS
+    if (freeOSRange == 0) freeOSRange = 1
+
+    // Build polyline points
+    StringBuilder freeOSPath = new StringBuilder()
+    StringBuilder cpuPath = new StringBuilder()
+    StringBuilder freeJavaPath = new StringBuilder()
+
+    dataPoints.eachWithIndex { Map pt, int idx ->
+        float x = marginLeft + (idx / (float)(numPoints - 1)) * plotW
+        float yFreeOS = marginTop + plotH - ((pt.freeOS - minFreeOS) / (float) freeOSRange) * plotH
+        float yCpu = marginTop + plotH - (pt.cpuLoad / maxCpu) * plotH
+        float yFreeJava = marginTop + plotH - ((pt.freeJava - minFreeOS) / (float) freeOSRange) * plotH
+
+        // Clamp to plot area
+        if (yFreeJava < marginTop) yFreeJava = marginTop
+        if (yFreeJava > marginTop + plotH) yFreeJava = marginTop + plotH
+
+        String sep = idx == 0 ? "" : " "
+        freeOSPath.append("${sep}${String.format('%.1f', x)},${String.format('%.1f', yFreeOS)}")
+        cpuPath.append("${sep}${String.format('%.1f', x)},${String.format('%.1f', yCpu)}")
+        freeJavaPath.append("${sep}${String.format('%.1f', x)},${String.format('%.1f', yFreeJava)}")
+    }
+
+    // Threshold lines
+    float warningY = marginTop + plotH - ((102400 - minFreeOS) / (float) freeOSRange) * plotH
+    boolean showWarningLine = warningY > marginTop && warningY < (marginTop + plotH)
+    float criticalY = marginTop + plotH - ((76800 - minFreeOS) / (float) freeOSRange) * plotH
+    boolean showCriticalLine = criticalY > marginTop && criticalY < (marginTop + plotH)
+
+    // Y-axis labels
+    int ySteps = 4
+    int yStepVal = freeOSRange / ySteps
+    int cpuSteps = 4
+
+    // Time axis: label every ~6 hours of data (72 points at 5-min intervals)
+    int labelEvery = Math.max(1, 72)
+    // Detect day boundaries for date labels
+    String prevDay = ""
+
+    String uniqueId = "resChart_${now()}"
+    String containerId = "resChartDiv_${now()}"
+
+    StringBuilder svg = new StringBuilder()
+
+    // Scrollable container — viewport is fixed width, SVG may be wider
+    svg.append("<div id='${containerId}' style='overflow-x: auto; max-width: 100%; border: 1px solid #e0e0e0; border-radius: 4px;'>")
+    svg.append("<svg id='${uniqueId}' width='${svgWidth}' height='${height}' style='font-family: sans-serif; font-size: 10px; display: block;'>")
+
+    // Background
+    svg.append("<rect width='${svgWidth}' height='${height}' fill='#fafafa'/>")
+
+    // Horizontal grid lines + left Y-axis labels
+    for (int i = 0; i <= ySteps; i++) {
+        float y = marginTop + (i / (float) ySteps) * plotH
+        svg.append("<line x1='${marginLeft}' y1='${y}' x2='${marginLeft + plotW}' y2='${y}' stroke='#e0e0e0' stroke-width='0.5'/>")
+        int memVal = maxFreeOS - (i * yStepVal)
+        svg.append("<text x='${marginLeft - 5}' y='${y + 3}' text-anchor='end' fill='#1565C0' font-size='9'>${(memVal / 1024) as int} MB</text>")
+    }
+
+    // Right Y-axis labels (CPU Load) — fixed to right side of SVG
+    for (int i = 0; i <= cpuSteps; i++) {
+        float y = marginTop + (i / (float) cpuSteps) * plotH
+        float cpuVal = maxCpu - (i / (float) cpuSteps) * maxCpu
+        svg.append("<text x='${marginLeft + plotW + 5}' y='${y + 3}' text-anchor='start' fill='#E65100' font-size='9'>${String.format('%.1f', cpuVal)}</text>")
+    }
+
+    // Time axis labels — show time every labelEvery points, date on day changes
+    for (int i = 0; i < numPoints; i++) {
+        String timeStr = dataPoints[i].time
+        String day = timeStr.substring(0, 5)
+        float x = marginLeft + (i / (float)(numPoints - 1)) * plotW
+
+        if (day != prevDay) {
+            // Day boundary — draw date label and vertical separator
+            svg.append("<line x1='${x}' y1='${marginTop}' x2='${x}' y2='${marginTop + plotH}' stroke='#bbb' stroke-width='0.5' stroke-dasharray='4,4'/>")
+            svg.append("<text x='${x + 3}' y='${marginTop + plotH + 28}' text-anchor='start' fill='#333' font-size='9' font-weight='bold'>${day}</text>")
+            prevDay = day
+        } else if (i % labelEvery == 0) {
+            // Time tick
+            String timeOnly = timeStr.length() > 6 ? timeStr.substring(6, 11) : timeStr
+            svg.append("<line x1='${x}' y1='${marginTop + plotH}' x2='${x}' y2='${marginTop + plotH + 4}' stroke='#999'/>")
+            svg.append("<text x='${x}' y='${marginTop + plotH + 16}' text-anchor='middle' fill='#666' font-size='9'>${timeOnly}</text>")
+        }
+    }
+
+    // Threshold lines (span full plot width)
+    if (showWarningLine) {
+        svg.append("<line x1='${marginLeft}' y1='${warningY}' x2='${marginLeft + plotW}' y2='${warningY}' stroke='#ff9800' stroke-width='1' stroke-dasharray='6,3' opacity='0.7'/>")
+    }
+    if (showCriticalLine) {
+        svg.append("<line x1='${marginLeft}' y1='${criticalY}' x2='${marginLeft + plotW}' y2='${criticalY}' stroke='#d32f2f' stroke-width='1' stroke-dasharray='6,3' opacity='0.7'/>")
+    }
+
+    // Plot area border
+    svg.append("<rect x='${marginLeft}' y='${marginTop}' width='${plotW}' height='${plotH}' fill='none' stroke='#ccc' stroke-width='1'/>")
+
+    // Data lines
+    svg.append("<polyline points='${freeJavaPath}' fill='none' stroke='#66BB6A' stroke-width='1.2' opacity='0.7'/>")
+    svg.append("<polyline points='${freeOSPath}' fill='none' stroke='#1565C0' stroke-width='1.8'/>")
+    svg.append("<polyline points='${cpuPath}' fill='none' stroke='#E65100' stroke-width='1.2' opacity='0.8'/>")
+
+    // Axis labels
+    svg.append("<text x='${marginLeft - 5}' y='${marginTop - 8}' text-anchor='end' fill='#1565C0' font-size='10' font-weight='bold'>Memory</text>")
+    svg.append("<text x='${marginLeft + plotW + 5}' y='${marginTop - 8}' text-anchor='start' fill='#E65100' font-size='10' font-weight='bold'>CPU Load</text>")
+
+    // Legend (positioned near top-right of current viewport via JS)
+    int legendX = marginLeft + plotW - 90
+    int legendY = marginTop + 12
+    svg.append("<g id='${uniqueId}_legend'>")
+    svg.append("<rect x='${legendX}' y='${legendY - 9}' width='85' height='52' fill='white' fill-opacity='0.9' stroke='#ddd' rx='3'/>")
+    svg.append("<line x1='${legendX + 4}' y1='${legendY}' x2='${legendX + 18}' y2='${legendY}' stroke='#1565C0' stroke-width='2'/>")
+    svg.append("<text x='${legendX + 22}' y='${legendY + 3}' fill='#333' font-size='9'>Free OS</text>")
+    svg.append("<line x1='${legendX + 4}' y1='${legendY + 13}' x2='${legendX + 18}' y2='${legendY + 13}' stroke='#66BB6A' stroke-width='1.5'/>")
+    svg.append("<text x='${legendX + 22}' y='${legendY + 16}' fill='#333' font-size='9'>Free Java</text>")
+    svg.append("<line x1='${legendX + 4}' y1='${legendY + 26}' x2='${legendX + 18}' y2='${legendY + 26}' stroke='#E65100' stroke-width='1.5'/>")
+    svg.append("<text x='${legendX + 22}' y='${legendY + 29}' fill='#333' font-size='9'>CPU Load</text>")
+    if (showWarningLine) {
+        svg.append("<line x1='${legendX + 4}' y1='${legendY + 39}' x2='${legendX + 18}' y2='${legendY + 39}' stroke='#ff9800' stroke-width='1' stroke-dasharray='4,2'/>")
+        svg.append("<text x='${legendX + 22}' y='${legendY + 42}' fill='#ff9800' font-size='8'>100 / 75 MB</text>")
+    }
+    svg.append("</g>")
+
+    // Hover tooltip elements
+    svg.append("<rect id='${uniqueId}_hover' x='0' y='0' width='${plotW}' height='${plotH}' transform='translate(${marginLeft},${marginTop})' fill='transparent'/>")
+    svg.append("<line id='${uniqueId}_vline' x1='0' y1='${marginTop}' x2='0' y2='${marginTop + plotH}' stroke='#999' stroke-width='0.5' stroke-dasharray='3,3' visibility='hidden'/>")
+    svg.append("<rect id='${uniqueId}_tipbg' x='0' y='0' width='1' height='1' fill='white' stroke='#ccc' rx='3' visibility='hidden'/>")
+    svg.append("<text id='${uniqueId}_tip' x='0' y='0' font-size='10' fill='#333' visibility='hidden'></text>")
+
+    svg.append("</svg>")
+
+    // Tooltip JS + scroll-to-end
+    List tooltipData = dataPoints.collect { Map pt ->
+        "{t:'${pt.time}',m:${pt.freeOS},c:${pt.cpuLoad},j:${pt.freeJava}}"
+    }
+
+    svg.append("""<script>
+(function(){
+var d=[${tooltipData.join(',')}];
+var svg=document.getElementById('${uniqueId}');
+var container=document.getElementById('${containerId}');
+var hr=document.getElementById('${uniqueId}_hover');
+var vl=document.getElementById('${uniqueId}_vline');
+var tb=document.getElementById('${uniqueId}_tipbg');
+var tt=document.getElementById('${uniqueId}_tip');
+var ml=${marginLeft},pw=${plotW},mt=${marginTop},sw=${svgWidth};
+container.scrollLeft=container.scrollWidth;
+hr.addEventListener('mousemove',function(e){
+  var rect=svg.getBoundingClientRect();
+  var scaleX=sw/rect.width;
+  var mx=(e.clientX-rect.left)*scaleX-ml;
+  var idx=Math.round(mx/pw*(d.length-1));
+  if(idx<0)idx=0;if(idx>=d.length)idx=d.length-1;
+  var x=ml+idx/(d.length-1)*pw;
+  vl.setAttribute('x1',x);vl.setAttribute('x2',x);vl.setAttribute('visibility','visible');
+  var p=d[idx];
+  var mem=(p.m/1024).toFixed(0);
+  var txt=p.t+' | OS: '+mem+' MB | CPU: '+p.c.toFixed(2)+' | Java: '+(p.j/1024).toFixed(0)+' MB';
+  tt.textContent=txt;
+  var tw=txt.length*5.5+10;
+  var tx=x+10;if(tx+tw>sw-10)tx=x-tw-10;
+  tt.setAttribute('x',tx+5);tt.setAttribute('y',mt+14);tt.setAttribute('visibility','visible');
+  tb.setAttribute('x',tx);tb.setAttribute('y',mt+2);tb.setAttribute('width',tw);tb.setAttribute('height',18);tb.setAttribute('visibility','visible');
+});
+hr.addEventListener('mouseleave',function(){
+  vl.setAttribute('visibility','hidden');
+  tt.setAttribute('visibility','hidden');
+  tb.setAttribute('visibility','hidden');
+});
+})();
+</script>""")
+
+    svg.append("</div>")
+
+    // Summary line
+    String firstTimeStr = dataPoints[0].time
+    String lastTimeStr = dataPoints[-1].time
+    svg.append("<div style='font-size: 11px; color: #666; margin-top: 4px;'>${numPoints} samples from ${firstTimeStr} to ${lastTimeStr} (since last reboot)</div>")
+
+    return svg.toString()
 }
 
 Map fetchStateCompression() {
@@ -1334,6 +1587,7 @@ Map analyzeDevices() {
 
     long inactivityThresholdMs = now() - ((settings.inactivityDays ?: 7) * ONE_DAY_MS)
     List devicesNeedingFullData = []
+    Map radioProtocols = buildRadioProtocolMap()
 
     // First pass: analyze basic data
     devicesList.each { deviceEntry ->
@@ -1374,10 +1628,12 @@ Map analyzeDevices() {
             String typeName = safeToString(device.type, "Unknown")
             stats.byType[typeName] = (stats.byType[typeName] ?: 0) + 1
 
-            // Protocol detection
+            // Protocol detection — radio map first, then heuristic, then fullData fallback
             String protocol = PROTOCOL_OTHER
             if (device.linked == true) {
                 protocol = PROTOCOL_HUBMESH
+            } else if (radioProtocols.containsKey(device.id)) {
+                protocol = radioProtocols[device.id]
             } else {
                 protocol = determineProtocolQuick(device)
                 if (protocol == PROTOCOL_OTHER && device.id) {
@@ -1679,6 +1935,27 @@ Map analyzeSystemHealth() {
 }
 
 // ===== PROTOCOL DETECTION =====
+
+Map buildRadioProtocolMap() {
+    Map protocols = [:]
+    try {
+        Map zigbeeData = fetchEndpoint(ZIGBEE_DETAILS_URL, "Zigbee details", 20)
+        if (zigbeeData && !zigbeeData.error && zigbeeData.devices) {
+            zigbeeData.devices.each { Map d -> if (d.id) protocols[d.id] = PROTOCOL_ZIGBEE }
+        }
+        Map zwaveData = fetchEndpoint(ZWAVE_DETAILS_URL, "Z-Wave details", 20)
+        if (zwaveData && !zwaveData.error && zwaveData.nodes) {
+            zwaveData.nodes.each { Map n -> if (n.deviceId) protocols[n.deviceId] = PROTOCOL_ZWAVE }
+        }
+        Map matterData = fetchEndpoint(MATTER_DETAILS_URL, "Matter details", 15)
+        if (matterData && !matterData.error && matterData.devices) {
+            matterData.devices.each { Map d -> if (d.id) protocols[d.id] = PROTOCOL_MATTER }
+        }
+    } catch (Exception e) {
+        log.debug "Error building radio protocol map: ${e.message}"
+    }
+    return protocols
+}
 
 String determineProtocolQuick(Map device) {
     if (device.protocol) {
@@ -2666,6 +2943,9 @@ Map analyzeDevicesQuick() {
                      (PROTOCOL_CLOUD): 0, (PROTOCOL_HUBMESH): 0, (PROTOCOL_OTHER): 0]
     ]
 
+    // Build definitive protocol sets from radio detail endpoints (3 fast bulk calls)
+    Map radioProtocols = buildRadioProtocolMap()
+
     long inactivityThresholdMs = now() - ((settings.inactivityDays ?: 7) * ONE_DAY_MS)
 
     devicesList.each { deviceEntry ->
@@ -2691,7 +2971,15 @@ Map analyzeDevicesQuick() {
                 stats.inactiveDevices++
             }
 
-            String protocol = (device.linked == true) ? PROTOCOL_HUBMESH : determineProtocolQuick(device)
+            // Protocol: check radio map first, then fall back to heuristic
+            String protocol
+            if (device.linked == true) {
+                protocol = PROTOCOL_HUBMESH
+            } else if (radioProtocols.containsKey(device.id)) {
+                protocol = radioProtocols[device.id]
+            } else {
+                protocol = determineProtocolQuick(device)
+            }
             stats.byProtocol[protocol] = (stats.byProtocol[protocol] ?: 0) + 1
         } catch (Exception e) { /* skip */ }
     }
