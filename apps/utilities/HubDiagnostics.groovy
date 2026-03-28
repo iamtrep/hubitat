@@ -793,9 +793,19 @@ Map snapshotsPage() {
                 paragraph generateSnapshotsTable(snapshots)
             }
 
-            if (state.viewedSnapshotHtml) {
-                section("Snapshot Details", hideable: true, hidden: false) {
-                    paragraph state.viewedSnapshotHtml
+            section("View Snapshot", hideable: true, hidden: viewSnapshotIdx == null) {
+                Map viewOptions = [:]
+                snapshots.eachWithIndex { snap, idx ->
+                    String fw = snap.hubInfo?.firmware ? " | fw ${snap.hubInfo.firmware}" : ""
+                    viewOptions["${idx}"] = "${snap.timestamp} (${snap.devices?.totalDevices ?: 0} devices${fw})"
+                }
+                input "viewSnapshotIdx", "enum", title: "Select snapshot to view", options: viewOptions, required: false, submitOnChange: true
+
+                if (viewSnapshotIdx != null) {
+                    int viewIdx = (viewSnapshotIdx as String).toInteger()
+                    if (viewIdx >= 0 && viewIdx < snapshots.size()) {
+                        paragraph renderSnapshotView(snapshots[viewIdx])
+                    }
                 }
             }
         } else {
@@ -906,9 +916,6 @@ void appButtonHandler(String btn) {
             } else if (btn.startsWith("btnDeleteSnapshot_")) {
                 int idx = btn.replace("btnDeleteSnapshot_", "").toInteger()
                 deleteSnapshot(idx)
-            } else if (btn.startsWith("btnViewSnapshot_")) {
-                int idx = btn.replace("btnViewSnapshot_", "").toInteger()
-                viewSnapshot(idx)
             } else {
                 log.warn "Unknown button: ${btn}"
             }
@@ -2614,15 +2621,6 @@ String generateSnapshotDiff(Map older, Map newer) {
     return sb.toString()
 }
 
-void viewSnapshot(int index) {
-    List snapshots = loadSnapshots()
-    if (index < 0 || index >= snapshots.size()) {
-        log.error "Invalid snapshot index: ${index}"
-        return
-    }
-    state.viewedSnapshotHtml = renderSnapshotView(snapshots[index])
-}
-
 String renderSnapshotView(Map snap) {
     StringBuilder sb = new StringBuilder()
 
@@ -2685,6 +2683,68 @@ String renderSnapshotView(Map snap) {
     // App summary
     Map apps = snap.apps ?: [:]
     sb.append("<b>Apps:</b> ${apps.totalApps ?: 0} total (System: ${apps.builtInApps ?: 0} | User: ${apps.userApps ?: 0})<br>")
+
+    // App type breakdown
+    Map byNs = apps.byNamespace ?: [:]
+    if (byNs) {
+        sb.append("<br><b>App Types (${byNs.size()}):</b><br>")
+        sb.append("<table style='width:100%; border-collapse: collapse; font-size: 11px;'>")
+        sb.append("<thead><tr style='background-color: #1A77C9; color: white;'>")
+        sb.append("<th style='padding: 4px 8px; text-align: left; border: 1px solid #ddd;'>App Type</th>")
+        sb.append("<th style='padding: 4px 8px; text-align: center; border: 1px solid #ddd;'>Instances</th>")
+        sb.append("</tr></thead><tbody>")
+        byNs.sort { -it.value }.eachWithIndex { entry, int idx ->
+            String rowBg = idx % 2 == 0 ? "#f9f9f9" : "#ffffff"
+            sb.append("<tr style='background-color: ${rowBg};'>")
+            sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${escapeHtml(entry.key as String)}</td>")
+            sb.append("<td style='padding: 4px 8px; text-align: center; border: 1px solid #ddd;'>${entry.value}</td>")
+            sb.append("</tr>")
+        }
+        sb.append("</tbody></table><br>")
+    }
+
+    // User app instances
+    List userApps = apps.userAppsList ?: []
+    if (userApps) {
+        sb.append("<b>User App Instances (${userApps.size()}):</b><br>")
+        sb.append("<table style='width:100%; border-collapse: collapse; font-size: 11px;'>")
+        sb.append("<thead><tr style='background-color: #1A77C9; color: white;'>")
+        sb.append("<th style='padding: 4px 8px; text-align: left; border: 1px solid #ddd;'>Label</th>")
+        sb.append("<th style='padding: 4px 8px; text-align: left; border: 1px solid #ddd;'>Type</th>")
+        sb.append("</tr></thead><tbody>")
+        userApps.sort { (it.label ?: it.name ?: "").toString().toLowerCase() }.eachWithIndex { Map app, int idx ->
+            String rowBg = idx % 2 == 0 ? "#f9f9f9" : "#ffffff"
+            String appId = (app.id ?: "").toString().replace("APP-", "")
+            String nameLink = appId ? "<a href='/installedapp/configure/${appId}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml((app.label ?: app.name) as String)}</a>" : escapeHtml((app.label ?: app.name) as String)
+            sb.append("<tr style='background-color: ${rowBg};'>")
+            sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${nameLink}</td>")
+            sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${escapeHtml(app.name as String)}</td>")
+            sb.append("</tr>")
+        }
+        sb.append("</tbody></table><br>")
+    }
+
+    // Platform apps
+    List platformApps = apps.platformApps ?: []
+    if (platformApps) {
+        sb.append("<b>Platform Apps (${platformApps.size()}):</b><br>")
+        sb.append("<table style='width:100%; border-collapse: collapse; font-size: 11px;'>")
+        sb.append("<thead><tr style='background-color: #1A77C9; color: white;'>")
+        sb.append("<th style='padding: 4px 8px; text-align: left; border: 1px solid #ddd;'>Name</th>")
+        sb.append("<th style='padding: 4px 8px; text-align: center; border: 1px solid #ddd;'>State Size</th>")
+        sb.append("</tr></thead><tbody>")
+        platformApps.sort { (it.name ?: "").toString().toLowerCase() }.eachWithIndex { Map app, int idx ->
+            String rowBg = idx % 2 == 0 ? "#f9f9f9" : "#ffffff"
+            int stateSize = (app.stateSize ?: 0) as int
+            String stateSizeColor = stateSize > 10000 ? "#d32f2f" : (stateSize > 5000 ? "#ff9800" : "")
+            String stateSizeHtml = stateSizeColor ? "<span style='color: ${stateSizeColor};'>${stateSize}</span>" : "${stateSize}"
+            sb.append("<tr style='background-color: ${rowBg};'>")
+            sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${escapeHtml(app.name as String)}</td>")
+            sb.append("<td style='padding: 4px 8px; text-align: center; border: 1px solid #ddd;'>${stateSizeHtml}</td>")
+            sb.append("</tr>")
+        }
+        sb.append("</tbody></table><br>")
+    }
 
     return sb.toString()
 }
@@ -3136,7 +3196,7 @@ String generateCheckpointTable(List checkpoints) {
     sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Uptime</th>")
     sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Device Runtime</th>")
     sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>App Runtime</th>")
-    sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd; width: 80px;'>Action</th>")
+    sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'></th>")
     sb.append('</tr></thead><tbody>')
 
     checkpoints.eachWithIndex { Map cp, int idx ->
@@ -3147,7 +3207,7 @@ String generateCheckpointTable(List checkpoints) {
         sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${cp.stats?.totalDevicesRuntime ?: 'N/A'}</td>")
         sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${cp.stats?.totalAppsRuntime ?: 'N/A'}</td>")
         sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>")
-        sb.append("<input type='button' name='btnDeleteCheckpoint_${idx}' value='Delete' class='mdl-button' style='font-size: 10px;' />")
+        sb.append("<input type='button' name='btnDeleteCheckpoint_${idx}' value='\uD83D\uDDD1' title='Delete checkpoint' style='font-size: 14px; background: none; border: none; cursor: pointer; padding: 2px 6px;' />")
         sb.append("</td></tr>")
     }
 
@@ -3168,7 +3228,7 @@ String generateSnapshotsTable(List snapshots) {
     sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Devices</th>")
     sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Apps</th>")
     sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Memory</th>")
-    sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd; width: 80px;'>Action</th>")
+    sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'></th>")
     sb.append('</tr></thead><tbody>')
 
     snapshots.eachWithIndex { Map snap, int idx ->
@@ -3186,8 +3246,7 @@ String generateSnapshotsTable(List snapshots) {
         sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${snap.apps?.totalApps ?: 0}</td>")
         sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${memDisplay}</td>")
         sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd; white-space: nowrap;'>")
-        sb.append("<input type='button' name='btnViewSnapshot_${idx}' value='View' class='mdl-button' style='font-size: 10px;' /> ")
-        sb.append("<input type='button' name='btnDeleteSnapshot_${idx}' value='Delete' class='mdl-button' style='font-size: 10px;' />")
+        sb.append("<input type='button' name='btnDeleteSnapshot_${idx}' value='\uD83D\uDDD1' title='Delete snapshot' style='font-size: 14px; background: none; border: none; cursor: pointer; padding: 2px 6px;' />")
         sb.append("</td></tr>")
     }
 
