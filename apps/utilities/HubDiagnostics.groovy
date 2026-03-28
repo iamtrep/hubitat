@@ -792,21 +792,28 @@ Map snapshotsPage() {
             section("Available Snapshots") {
                 paragraph generateSnapshotsTable(snapshots)
             }
+
+            if (state.viewedSnapshotHtml) {
+                section("Snapshot Details", hideable: true, hidden: false) {
+                    paragraph state.viewedSnapshotHtml
+                }
+            }
         } else {
             section {
                 paragraph "<i>No config snapshots available. Create your first snapshot to get started.</i>"
             }
         }
 
-        if (snapshots.size() >= 2) {
+        if (snapshots.size() > 0) {
             section("Compare Config Snapshots") {
                 Map olderOptions = [:]
                 snapshots.eachWithIndex { snap, idx ->
                     String fw = snap.hubInfo?.firmware ? " | fw ${snap.hubInfo.firmware}" : ""
                     olderOptions["${idx}"] = "${snap.timestamp} (${snap.devices?.totalDevices ?: 0} devices${fw})"
                 }
+                Map newerOptions = ["now": "Now (create new snapshot)"] + olderOptions
                 input "diffOlder", "enum", title: "Older snapshot", options: olderOptions, required: false, submitOnChange: true
-                input "diffNewer", "enum", title: "Newer snapshot", options: olderOptions, required: false, submitOnChange: true
+                input "diffNewer", "enum", title: "Newer snapshot", options: newerOptions, required: false, submitOnChange: true
 
                 if (diffOlder != null && diffNewer != null && diffOlder != diffNewer) {
                     input "btnDiffSnapshots", "button", title: "Compare Selected"
@@ -899,6 +906,9 @@ void appButtonHandler(String btn) {
             } else if (btn.startsWith("btnDeleteSnapshot_")) {
                 int idx = btn.replace("btnDeleteSnapshot_", "").toInteger()
                 deleteSnapshot(idx)
+            } else if (btn.startsWith("btnViewSnapshot_")) {
+                int idx = btn.replace("btnViewSnapshot_", "").toInteger()
+                viewSnapshot(idx)
             } else {
                 log.warn "Unknown button: ${btn}"
             }
@@ -2477,16 +2487,33 @@ void executeSnapshotDiff() {
 
     List snapshots = loadSnapshots()
     int olderIdx = (diffOlder as String).toInteger()
-    int newerIdx = (diffNewer as String).toInteger()
 
-    if (olderIdx >= snapshots.size() || newerIdx >= snapshots.size()) {
-        log.error "Invalid snapshot indices"
-        return
+    Map newer
+    if (diffNewer == "now") {
+        createSnapshot()
+        snapshots = loadSnapshots()
+        newer = snapshots[0]  // createSnapshot adds at index 0
+    } else {
+        int newerIdx = (diffNewer as String).toInteger()
+        if (newerIdx >= snapshots.size()) {
+            log.error "Invalid snapshot index"
+            return
+        }
+        newer = snapshots[newerIdx]
     }
 
-    // Ensure older is actually older
-    Map older = olderIdx > newerIdx ? snapshots[olderIdx] : snapshots[newerIdx]
-    Map newer = olderIdx > newerIdx ? snapshots[newerIdx] : snapshots[olderIdx]
+    if (olderIdx >= snapshots.size()) {
+        log.error "Invalid snapshot index"
+        return
+    }
+    Map older = snapshots[olderIdx]
+
+    // Ensure older is actually older by timestamp
+    if ((older.timestampMs ?: 0) > (newer.timestampMs ?: 0)) {
+        Map temp = older
+        older = newer
+        newer = temp
+    }
 
     state.lastSnapshotDiff = generateSnapshotDiff(older, newer)
 }
@@ -2583,6 +2610,81 @@ String generateSnapshotDiff(Map older, Map newer) {
         String memColor = memDelta < 0 ? "#d32f2f" : "#388e3c"
         sb.append("<b>Free OS Memory:</b> ${formatMemory(olderMem)} -> ${formatMemory(newerMem)} (<span style='color: ${memColor};'>${memSign}${formatMemory(memDelta)}</span>)<br>")
     }
+
+    return sb.toString()
+}
+
+void viewSnapshot(int index) {
+    List snapshots = loadSnapshots()
+    if (index < 0 || index >= snapshots.size()) {
+        log.error "Invalid snapshot index: ${index}"
+        return
+    }
+    state.viewedSnapshotHtml = renderSnapshotView(snapshots[index])
+}
+
+String renderSnapshotView(Map snap) {
+    StringBuilder sb = new StringBuilder()
+
+    // Header
+    Map info = snap.hubInfo ?: [:]
+    sb.append("<b>Config Snapshot — ${snap.timestamp}</b><br>")
+    sb.append("<b>Hub:</b> ${info.name ?: 'Unknown'} | Firmware: ${info.firmware ?: 'Unknown'} | Hardware: ${info.hardware ?: 'Unknown'}<br><br>")
+
+    // System health
+    if (snap.systemHealth?.memory) {
+        Map mem = snap.systemHealth.memory
+        sb.append("<b>System Resources:</b><br>")
+        if (mem.freeOSMemory) sb.append("&nbsp;&nbsp;Free OS Memory: ${formatMemory(mem.freeOSMemory as int)}<br>")
+        if (mem.cpuAvg5min != null) sb.append("&nbsp;&nbsp;CPU Load Avg (5m): ${String.format('%.2f', (mem.cpuAvg5min ?: 0) as float)}<br>")
+        if (mem.freeJavaMemory) sb.append("&nbsp;&nbsp;Free Java Memory: ${formatMemory(mem.freeJavaMemory as int)}<br>")
+        sb.append("<br>")
+    }
+    if (snap.systemHealth?.database?.databaseSize) {
+        sb.append("<b>Database:</b> ${snap.systemHealth.database.databaseSize} MB<br><br>")
+    }
+
+    // Device summary
+    Map devs = snap.devices ?: [:]
+    sb.append("<b>Devices:</b> ${devs.totalDevices ?: 0} total<br>")
+    sb.append("&nbsp;&nbsp;Active: ${devs.activeDevices ?: 0} | Inactive: ${devs.inactiveDevices ?: 0} | Disabled: ${devs.disabledDevices ?: 0}<br>")
+
+    Map byProto = devs.byProtocol ?: [:]
+    List protoItems = []
+    byProto.each { String key, val ->
+        if ((val as int) > 0) protoItems << "${PROTOCOL_DISPLAY[key] ?: key}: ${val}"
+    }
+    if (protoItems) sb.append("&nbsp;&nbsp;${protoItems.join(' | ')}<br>")
+    sb.append("<br>")
+
+    // Device list
+    List allDevs = devs.allDevices ?: []
+    if (allDevs) {
+        sb.append("<b>Device List (${allDevs.size()}):</b><br>")
+        sb.append("<table style='width:100%; border-collapse: collapse; font-size: 11px;'>")
+        sb.append("<thead><tr style='background-color: #1A77C9; color: white;'>")
+        sb.append("<th style='padding: 4px 8px; text-align: left; border: 1px solid #ddd;'>Name</th>")
+        sb.append("<th style='padding: 4px 8px; text-align: left; border: 1px solid #ddd;'>Type</th>")
+        sb.append("<th style='padding: 4px 8px; text-align: center; border: 1px solid #ddd;'>Protocol</th>")
+        sb.append("<th style='padding: 4px 8px; text-align: center; border: 1px solid #ddd;'>Status</th>")
+        sb.append("</tr></thead><tbody>")
+        allDevs.sort { (it.name ?: "").toString().toLowerCase() }.eachWithIndex { Map dev, int idx ->
+            String rowBg = idx % 2 == 0 ? "#f9f9f9" : "#ffffff"
+            String statusColor = dev.status == "Active" ? "#388e3c" : (dev.status == "Disabled" ? "#d32f2f" : "#ff9800")
+            String nameLink = "<a href='/device/edit/${dev.id}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(dev.name as String)}</a>"
+            sb.append("<tr style='background-color: ${rowBg};'>")
+            sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${nameLink}</td>")
+            sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${dev.type ?: ''}</td>")
+            sb.append("<td style='padding: 4px 8px; text-align: center; border: 1px solid #ddd;'>${PROTOCOL_DISPLAY[dev.protocol] ?: dev.protocol ?: ''}</td>")
+            sb.append("<td style='padding: 4px 8px; text-align: center; border: 1px solid #ddd;'><span style='color: ${statusColor};'>${dev.status ?: ''}</span></td>")
+            sb.append("</tr>")
+        }
+        sb.append("</tbody></table><br>")
+    }
+
+    // App summary
+    Map apps = snap.apps ?: [:]
+    sb.append("<b>Apps:</b> ${apps.totalApps ?: 0} total (System: ${apps.builtInApps ?: 0} | User: ${apps.userApps ?: 0})<br>")
 
     return sb.toString()
 }
@@ -3083,7 +3185,8 @@ String generateSnapshotsTable(List snapshots) {
         sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${snap.devices?.totalDevices ?: 0}</td>")
         sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${snap.apps?.totalApps ?: 0}</td>")
         sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${memDisplay}</td>")
-        sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>")
+        sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd; white-space: nowrap;'>")
+        sb.append("<input type='button' name='btnViewSnapshot_${idx}' value='View' class='mdl-button' style='font-size: 10px;' /> ")
         sb.append("<input type='button' name='btnDeleteSnapshot_${idx}' value='Delete' class='mdl-button' style='font-size: 10px;' />")
         sb.append("</td></tr>")
     }
