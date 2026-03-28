@@ -96,11 +96,35 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
   <div class="panel" id="p-snapshots"></div>
 </div>
 <script>
+// ===== CONFIG & MOCKS =====
+const WORKBENCH = false; // Set to true for local development without a hub
+const MOCK_DATA = {
+  'dashboard': {"hub":{"name":"Maison-pro","firmware":"2.4.4.155","hardware":"C-8 Pro","ip":"192.168.1.86"},"devices":{"total":124,"active":75,"inactive":49,"disabled":3,"byProtocol":{"zigbee":8,"zwave":0,"matter":2,"lan":25,"virtual":35,"maker":0,"cloud":1,"hubmesh":21,"other":32},"idsByProtocol":{"zigbee":[120,50,53,134,211,135,12,51],"zwave":[],"matter":[149,148],"lan":[106,110,95,96,131,92,108,113,107,93,11,101,100,111,102,114,99,94,103,109,105,104,112,97,98],"virtual":[28,26,70,47,20,63,41,40,18,19,57,16,90,201,210,46,175,117,119,118,22,212,177,205,202,203,15,204,56,55,14,58,130,128,129],"maker":[],"cloud":[139],"hubmesh":[1,2,3,4,5,6,7,8,9,62,48,59,61,60,30,29,126,127,77,31,32],"other":[49,206,137,132,133,36,10,17,13,209,199,124,136,208,180,116,153,122,37,23,24,25,179,178,198,200,152,176,43,45,151,52]},"idsByStatus":{"active":[120,106,110,1,2,3,4,5,6,7,8,9,95,96,131,206,92,108,113,107,93,11,139,10,101,100,111,102,209,199,124,136,114,208,99,94,103,109,50,62,180,53,105,104,116,153,122,59,134,61,211,23,149,198,112,12,97,98,60,41,18,19,148,90,30,29,126,46,212,127,77,31,32,14,58],"inactive":[137,132,133,36,17,13,28,26,70,37,24,25,179,178,200,152,47,20,63,176,43,40,45,51,57,16,201,210,151,175,117,119,118,22,177,205,202,203,15,204,56,55,130,128,129,52],"disabled":[49,48,135]}},"apps":{"total":125,"builtIn":89,"user":36},"resources":{"timestamp":"03-28 18:34:06","freeOSMemory":1116192,"cpuAvg5min":0.26,"totalJavaMemory":206840,"freeJavaMemory":31351,"directJavaMemory":4973},"temperature":35.8,"databaseSize":26,"alerts":[{"key":"platformUpdateAvailable","name":"Platform Update Available","severity":"warning"}],"inactivityDays":7},
+  'devices': {"summary":{"totalDevices":124,"activeDevices":75,"inactiveDevices":49,"disabledDevices":3,"parentDevices":0,"childDevices":0,"linkedDevices":21,"batteryDevices":10},"byProtocol":{"zigbee":11,"zwave":0,"matter":3,"lan":25,"virtual":35,"maker":0,"cloud":1,"hubmesh":21,"other":28},"idsByProtocol":{"zigbee":[120,136,50,53,134,211,135,12,152,51,52],"zwave":[],"matter":[149,148,151],"lan":[106,110,95,96,131,92,108,113,107,93,11,101,100,111,102,114,99,94,103,109,105,104,112,97,98],"virtual":[28,26,70,47,20,63,41,40,18,19,57,16,90,201,210,46,175,117,119,118,22,212,177,205,202,203,15,204,56,55,14,58,130,128,129],"maker":[],"cloud":[139],"hubmesh":[1,2,3,4,5,6,7,8,9,62,48,59,61,60,30,29,126,127,77,31,32],"other":[49,206,137,132,133,36,10,17,13,209,199,124,208,180,116,153,122,37,23,24,25,179,178,198,200,176,43,45]},"idsByStatus":{"active":[120,106,110,1,2,3,4,5,6,7,8,9,95,96,131,206,92,108,113,107,93,11,139,10,101,100,111,102,209,199,124,136,114,208,99,94,103,109,50,62,180,53,105,104,116,153,122,59,134,61,211,23,149,198,112,12,97,98,60,41,18,19,148,90,30,29,126,46,212,127,77,31,32,14,58],"inactive":[137,132,133,36,17,13,28,26,70,37,24,25,179,178,200,152,47,20,63,176,43,40,45,51,57,16,201,210,151,175,117,119,118,22,177,205,202,203,15,204,56,55,130,128,129,52],"disabled":[49,48,135]},"deviceRows":[],"lowBatteryDevices":[],"inactivityDays":7},
+  'apps': {"summary":{"totalApps":125,"builtInApps":89,"userApps":36,"parentApps":11,"childApps":25,"runtimeTotalApps":111},"byNamespace":{},"platformApps":[],"userApps":[],"parentChildHierarchy":[]},
+  'network': {"network":{"lanAddr":"192.168.1.86","usingStaticIP":false,"staticGateway":"192.168.1.130","staticSubnetMask":"255.255.255.0","hasEthernet":true,"hasWiFi":false},"zwave":{"enabled":true,"healthy":true,"region":"USLR","nodeCount":0,"mesh":{},"ghostNodes":[],"problemNodes":[]},"zigbee":{"enabled":true,"healthy":true,"channel":21,"deviceCount":8,"responsiveCount":8,"totalCount":8,"nonResponsive":[]},"matter":{"enabled":true,"installed":true,"devices":[]},"hubMesh":{"enabled":null,"sharedDevices":5,"linkedDevices":0,"peers":[]}},
+  'health': {"hub":{"name":"Maison-pro","firmware":"2.4.4.155","hardware":"C-8 Pro","ip":"192.168.1.86"},"resources":{"freeOSMemory":1116192,"cpuAvg5min":0.26},"alerts":[]},
+  'health/history': {"dataPoints":[]},
+  'performance': {"checkpointCount":4,"maxCheckpoints":10,"checkpoints":[],"stats":{"uptime":"1d 18h 54m 52s","deviceStats":[],"appStats":[]}},
+  'snapshots': {"snapshotCount":5,"maxSnapshots":10,"snapshots":[]},
+  'reports': {"lastReport":"hub_diagnostics_report_20260328_142000.html","reports":[{"name":"hub_diagnostics_report_20260328_142000.html","size":"498717","date":"1774722000536"}]}
+};
+
 const T='${access_token}', B='${api_base}', REPORT=window.REPORT_DATA||null, cache={};
-let curTab='dashboard';
+let curTab = localStorage.getItem('hub_diag_tab') || 'dashboard';
 
 // ===== API =====
-async function api(ep){if(REPORT&&REPORT[ep])return REPORT[ep];if(cache[ep])return cache[ep];const sep=ep.includes('?')?'&':'?';const r=await fetch(B+'/api/'+ep+sep+'access_token='+T);if(!r.ok)throw new Error('API '+r.status);const d=await r.json();cache[ep]=d;return d}
+async function api(ep){
+  if(WORKBENCH && MOCK_DATA[ep]) return MOCK_DATA[ep];
+  if(REPORT&&REPORT[ep])return REPORT[ep];
+  if(cache[ep])return cache[ep];
+  const sep=ep.includes('?')?'&':'?';
+  const r=await fetch(B+'/api/'+ep+sep+'access_token='+T);
+  if(!r.ok)throw new Error('API '+r.status);
+  const d=await r.json();
+  cache[ep]=d;
+  return d
+}
 async function post(ep,p){const q=new URLSearchParams(p||{});q.set('access_token',T);const r=await fetch(B+'/api/'+ep+'?'+q.toString(),{method:'POST'});if(!r.ok)throw new Error('API '+r.status);return r.json()}
 function drop(ep){if(ep)delete cache[ep];else Object.keys(cache).forEach(k=>delete cache[k])}
 
@@ -131,7 +155,17 @@ function tbl(cid,cols,rows,opts={}){
     o+='<div class="tbl-wrap"><table id="t_'+cid+'"><thead><tr>';
     cols.forEach((c,i)=>{const ar=i===sc?(sd==='asc'?' \u25B2':' \u25BC'):' \u21C5';o+='<th data-c="'+i+'">'+h(c.l)+'<span class="arr">'+ar+'</span></th>'});
     o+='</tr></thead><tbody>';
-    rs.forEach(r=>{o+='<tr>';cols.forEach(c=>{const v=c.r?c.r(r):h(r[c.f]??'');const sv=r[c.sf]??r[c.f]??'';o+='<td data-v="'+h(String(sv))+'">'+v+'</td>'});o+='</tr>'});
+    rs.forEach(r=>{
+      o+='<tr>';
+      cols.forEach(c=>{
+        const v=c.r?c.r(r):h(r[c.f]??'');
+        const sv=r[c.sf]??r[c.f]??'';
+        const color = r['_' + c.f + 'Color'] || '';
+        const style = color ? ' style="color:' + color + ';font-weight:600"' : '';
+        o+='<td data-v="'+h(String(sv))+'"'+style+'>'+v+'</td>'
+      });
+      o+='</tr>'
+    });
     o+='</tbody></table></div>';if(ct>0&&cl)o+='</details>';return o}
   filt=sf(filt,sc,sd);el.innerHTML=bld(filt);
   function bind(){
@@ -726,11 +760,16 @@ function renderDiff(d,elId){
 
 // ===== TAB MANAGEMENT =====
 const R={dashboard:rDashboard,devices:rDevices,apps:rApps,network:rNetwork,health:rHealth,performance:rPerf,snapshots:rSnap};
-function go(t){curTab=t;document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active',e.dataset.tab===t));
+function go(t){
+  curTab=t;
+  localStorage.setItem('hub_diag_tab', t);
+  document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active',e.dataset.tab===t));
   document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active',p.id==='p-'+t));
-  const p=document.getElementById('p-'+t);if(!p.children.length||p.querySelector('.loading')||p.querySelector('.err'))R[t]()}
+  const p=document.getElementById('p-'+t);
+  if(!p.children.length||p.querySelector('.loading')||p.querySelector('.err'))R[t]();
+}
 document.getElementById('tabs').addEventListener('click',e=>{if(e.target.dataset.tab)go(e.target.dataset.tab)});
-rDashboard();
+go(curTab);
 </script>
 </body>
 </html>
