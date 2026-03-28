@@ -3061,6 +3061,10 @@ void generateFullReport() {
     logInfo "Generating full configuration report..."
 
     String timestamp = new Date().format("yyyy-MM-dd HH:mm:ss")
+    Map stats = fetchCurrentStats()
+    Map resources = fetchSystemResources()
+    List checkpoints = loadCheckpoints()
+    Map performancePageModel = buildPerformancePageModel(stats, resources, checkpoints)
     Map deviceStats = analyzeDevices()
     Map appStats = analyzeApps()
     Map networkData = analyzeNetwork()
@@ -3072,6 +3076,10 @@ void generateFullReport() {
     Map reportData = [
         timestamp  : timestamp,
         hubInfo    : hubInfo,
+        stats      : stats,
+        resources  : resources,
+        checkpoints: checkpoints,
+        performancePageModel: performancePageModel,
         deviceStats: deviceStats,
         appStats   : appStats,
         networkData: networkData,
@@ -3090,6 +3098,7 @@ void generateFullReport() {
             ["Hardware", hubInfo.hardware]
         ])))
         .append(renderExportSection("System Health", renderExportSystemHealth(reportData)))
+        .append(renderExportSection("Performance", renderExportPerformance(reportData)))
         .append(renderExportSection("Network", renderExportNetwork(reportData)))
         .append(renderExportSection("Devices", renderExportDevices(reportData)))
         .append(renderExportSection("Applications", renderExportApps(reportData)))
@@ -3172,6 +3181,32 @@ String renderExportSystemHealth(Map reportData) {
     return sb.toString()
 }
 
+String renderExportPerformance(Map reportData) {
+    Map stats = reportData.stats
+    Map resources = reportData.resources
+    List checkpoints = reportData.checkpoints ?: []
+    Map pageModel = reportData.performancePageModel ?: [:]
+    StringBuilder sb = new StringBuilder()
+
+    sb.append("<h3>Current Runtime Stats</h3>")
+    sb.append(generateRuntimeSummary(stats, resources))
+
+    sb.append("<h3>Perf Checkpoints</h3>")
+    sb.append("<p><i>Create perf checkpoints to compare activity over a specific time window. By default, the tables below show all activity since the last reboot.</i></p>")
+    sb.append("<p>Current checkpoints: ${pageModel.checkpointCount ?: 0}/${settings.maxCheckpoints ?: 10}</p>")
+    if (checkpoints) {
+        sb.append("<h3>Saved Checkpoints</h3>")
+        sb.append(stripDeleteButtons(generateCheckpointTable(checkpoints)))
+    }
+
+    if (pageModel.comparisonHtml) {
+        sb.append("<h3>Performance Breakdown</h3>")
+        sb.append(pageModel.comparisonHtml)
+    }
+
+    return sb.toString()
+}
+
 String renderExportNetwork(Map reportData) {
     Map networkData = reportData.networkData ?: [:]
     Map zwaveMesh = reportData.zwaveMesh ?: [:]
@@ -3206,6 +3241,31 @@ String renderExportNetwork(Map reportData) {
         if (zwaveVersion) zwMetrics << ["Firmware", zwaveVersion]
         sb.append("<h3>Z-Wave</h3>")
         sb.append(renderExportMetricTable(zwMetrics))
+        if (zw.isRadioUpdateNeeded) {
+            sb.append("<p><span style='color: #ff9800;'>\u26A0 Radio firmware update recommended</span></p>")
+        }
+
+        if (zw.zwDevices) {
+            List ghostNodes = []
+            zw.zwDevices.each { nodeId, nodeData ->
+                if (nodeData instanceof Map) {
+                    boolean isFailed = nodeData.status == "FAILED" || nodeData.failed == true
+                    boolean noRoute = nodeData.route == null || nodeData.route == "" || nodeData.route == "No route"
+                    boolean noName = !nodeData.name || nodeData.name == "Unknown" || nodeData.name == ""
+                    if (isFailed || (noRoute && noName)) {
+                        ghostNodes << [id: nodeId, deviceId: nodeData.deviceId, name: nodeData.name ?: "Unknown", status: nodeData.status ?: "No route"]
+                    }
+                }
+            }
+            if (ghostNodes) {
+                sb.append("<p><b style='color: #d32f2f;'>Possible Ghost Nodes (${ghostNodes.size()}):</b></p>")
+                ghostNodes.each { Map ghost ->
+                    String ghostNameHtml = ghost.deviceId ? "<a href='/device/edit/${ghost.deviceId}' target='_blank' style='color: #d32f2f; text-decoration: underline;'>${ghost.name}</a>" : ghost.name
+                    sb.append("<p>&nbsp;&nbsp;<span style='color: #d32f2f;'>Node ${ghost.id}: ${ghostNameHtml} (${ghost.status})</span></p>")
+                }
+                sb.append("<p><i>Ghost nodes can cause Z-Wave mesh instability. Remove them from Settings > Z-Wave Details.</i></p>")
+            }
+        }
     }
 
     if (zwaveMesh?.nodes) {
@@ -3226,6 +3286,19 @@ String renderExportNetwork(Map reportData) {
             [label: "Route Changes", field: "routeChanges", type: "number"],
             [label: "State", field: "state", type: "string"]
         ], nodeRows))
+
+        List problemNodes = zwaveMesh.nodes.findAll { Map n -> n.state != "OK" || n.per > 1 }
+        if (problemNodes) {
+            sb.append("<p><b style='color: #d32f2f;'>Problem Nodes (${problemNodes.size()}):</b></p>")
+            problemNodes.each { Map n ->
+                List issues = []
+                if (n.state != "OK") issues << "State: ${n.state}"
+                if (n.per > 1) issues << "PER: ${n.per}%"
+                String probNameHtml = n.deviceId ? "<a href='/device/edit/${n.deviceId}' target='_blank' style='color: #d32f2f; text-decoration: underline;'>${escapeHtml(n.name as String)}</a>" : escapeHtml(n.name as String)
+                sb.append("<p>&nbsp;&nbsp;<span style='color: #d32f2f;'>${probNameHtml} — ${issues.join(', ')}</span></p>")
+            }
+            sb.append("<p><i>High PER (Packet Error Rate) indicates unreliable communication. Check device distance, interference, or replace failed nodes.</i></p>")
+        }
     }
 
     Map zb = networkData.zigbee ?: [:]
@@ -3240,6 +3313,18 @@ String renderExportNetwork(Map reportData) {
         ]
         sb.append("<h3>Zigbee</h3>")
         sb.append(renderExportMetricTable(zbMetrics))
+        if (zb.devices) {
+            int totalDevices = zb.devices.size()
+            int activeDevices = zb.devices.count { it.active == true }
+            int inactiveDevices = totalDevices - activeDevices
+            if (inactiveDevices > 0) {
+                List nonResponsive = zb.devices.findAll { it.active != true }.collect { Map d ->
+                    String dName = d.name ?: "Device ${d.id}"
+                    d.id ? "<a href='/device/edit/${d.id}' target='_blank' style='color: #d32f2f;'>${dName}</a>" : dName
+                }
+                sb.append("<p><b style='color: #d32f2f;'>Non-Responsive Devices:</b> ${nonResponsive.join(', ')}</p>")
+            }
+        }
     }
 
     if (zigbeeMesh?.neighbors) {
@@ -3251,6 +3336,13 @@ String renderExportNetwork(Map reportData) {
         if (zigbeeMesh.avgLqi != null) zigbeeMetrics << ["Average LQI", zigbeeMesh.avgLqi]
         sb.append("<h3>Zigbee Mesh</h3>")
         sb.append(renderExportMetricTable(zigbeeMetrics))
+        if (zigbeeMesh.weakNeighbors && zigbeeMesh.weakNeighbors.size() > 0) {
+            sb.append("<p><b style='color: #d32f2f;'>Weak Neighbor Details:</b></p>")
+            zigbeeMesh.weakNeighbors.each { Map n ->
+                sb.append("<p>&nbsp;&nbsp;${n.shortId ?: 'Unknown'} — LQI: ${n.lqi}</p>")
+            }
+            sb.append("<p><i>Low LQI indicates poor signal quality. Consider adding Zigbee repeaters near these devices.</i></p>")
+        }
     }
 
     Map matter = networkData.matter ?: [:]
@@ -3261,16 +3353,32 @@ String renderExportNetwork(Map reportData) {
         ]
         sb.append("<h3>Matter</h3>")
         sb.append(renderExportMetricTable(matterMetrics))
+        if (matter.rebootRequired) {
+            sb.append("<p><span style='color: #d32f2f;'>\u26A0 Reboot required for Matter changes</span></p>")
+        }
     }
 
     Map hubMesh = networkData.hubMesh ?: [:]
     if (hubMesh && !hubMesh.error) {
         List hubMeshMetrics = [
-            ["Linked Devices", hubMesh.linkedDevices ? hubMesh.linkedDevices.size() : 0],
-            ["Source Hubs", hubMesh.hubs ? hubMesh.hubs.size() : 0]
+            ["Status", hubMesh.hubMeshEnabled ? "Enabled" : "Disabled"],
+            ["Shared Devices from this Hub", hubMesh.sharedDevices ? hubMesh.sharedDevices.size() : 0],
+            ["Devices Linked from Other Hubs", hubMesh.localLinkedDevices ? hubMesh.localLinkedDevices.size() : 0],
+            ["Shared Hub Variables", hubMesh.sharedHubVariables ? hubMesh.sharedHubVariables.size() : 0],
+            ["Linked Hub Variables", hubMesh.localLinkedHubVariables ? hubMesh.localLinkedHubVariables.size() : 0]
         ]
         sb.append("<h3>Hub Mesh</h3>")
         sb.append(renderExportMetricTable(hubMeshMetrics))
+        if (hubMesh.hubList && hubMesh.hubList.size() > 0) {
+            sb.append("<p><b>Linked Hubs (${hubMesh.hubList.size()}):</b></p>")
+            hubMesh.hubList.each { hub ->
+                String status = hub.offline ? "Offline" : "Online"
+                String statusColor = hub.offline ? "#d32f2f" : "#388e3c"
+                int sharedDevCount = hub.deviceIds ? hub.deviceIds.size() : 0
+                int sharedVarCount = hub.hubVarNames ? hub.hubVarNames.size() : 0
+                sb.append("<p>&nbsp;&nbsp;<span style='color: ${statusColor};'><b>${hub.name}</b></span> (${hub.ipAddress}) — ${status} | ${sharedDevCount} devices, ${sharedVarCount} variables</p>")
+            }
+        }
     }
 
     return sb.toString()
@@ -3314,6 +3422,10 @@ String renderExportApps(Map reportData) {
         sb.append("<h3>Parent/Child Hierarchy</h3>")
         sb.append(formatParentChildHierarchy(appStats.parentChildHierarchy))
     }
+    if (appStats.userAppsList) {
+        sb.append("<h3>User App Instances</h3>")
+        sb.append(renderExportUserAppsTable(appStats.userAppsList ?: []))
+    }
     if (pageModel.platformAppCount > 0) {
         sb.append("<h3>Platform Apps</h3>")
         sb.append(renderExportSortableTable("exportPlatformApps", [
@@ -3327,6 +3439,33 @@ String renderExportApps(Map reportData) {
         ], pageModel.platformRows ?: []))
     }
     return sb.toString()
+}
+
+String renderExportUserAppsTable(List userApps) {
+    if (!userApps) return "<p>No user app instances</p>"
+
+    StringBuilder sb = new StringBuilder()
+    sb.append("<table style='width:100%; border-collapse: collapse; font-size: 11px;'>")
+    sb.append("<thead><tr style='background-color: #1A77C9; color: white;'>")
+    sb.append("<th style='padding: 4px 8px; text-align: left; border: 1px solid #ddd;'>Label</th>")
+    sb.append("<th style='padding: 4px 8px; text-align: left; border: 1px solid #ddd;'>Type</th>")
+    sb.append("</tr></thead><tbody>")
+    userApps.sort { (it.label ?: it.name ?: "").toString().toLowerCase() }.eachWithIndex { Map app, int idx ->
+        String rowBg = idx % 2 == 0 ? "#f9f9f9" : "#ffffff"
+        String appId = (app.id ?: "").toString().replace("APP-", "")
+        String nameLink = appId ? "<a href='/installedapp/configure/${appId}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml((app.label ?: app.name) as String)}</a>" : escapeHtml((app.label ?: app.name) as String)
+        sb.append("<tr style='background-color: ${rowBg};'>")
+        sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${nameLink}</td>")
+        sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${escapeHtml(app.name as String)}</td>")
+        sb.append("</tr>")
+    }
+    sb.append("</tbody></table>")
+    return sb.toString()
+}
+
+String stripDeleteButtons(String html) {
+    if (!html) return html
+    return html.replaceAll(/<input type='button' name='btnDeleteCheckpoint_[^>]+>/, "")
 }
 
 List buildExportZwaveMeshRows(List nodes) {
