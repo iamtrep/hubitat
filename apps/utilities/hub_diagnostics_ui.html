@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hub Diagnostics</title>
+<style>
+:root { --primary:#1A77C9; --ok:#388e3c; --warn:#ff9800; --crit:#d32f2f; --bg:#f5f5f5; --card:#fff; --border:#ddd; --text:#333; --muted:#777; --alt:#f9f9f9; --hover:#e3f2fd; }
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:14px}
+a{color:var(--primary);text-decoration:none} a:hover{text-decoration:underline}
+
+.hdr{background:var(--primary);color:#fff;padding:10px 20px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:100;box-shadow:0 2px 4px rgba(0,0,0,.15)}
+.hdr h1{font-size:17px;font-weight:600} .hdr .info{margin-left:auto;font-size:12px;opacity:.85}
+
+.tabs{display:flex;background:#fff;border-bottom:2px solid var(--border);overflow-x:auto;position:sticky;top:42px;z-index:99}
+.tab{padding:9px 16px;cursor:pointer;font-size:13px;font-weight:500;border-bottom:3px solid transparent;white-space:nowrap;color:var(--muted);transition:all .15s}
+.tab:hover{color:var(--text);background:var(--alt)} .tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+
+.content{max-width:1400px;margin:0 auto;padding:16px}
+.panel{display:none} .panel.active{display:block}
+
+.card{background:var(--card);border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:14px;overflow:hidden}
+.card-h{padding:10px 14px;font-size:13px;font-weight:600;border-bottom:1px solid var(--border);background:var(--alt)}
+.card-b{padding:14px}
+
+.metrics{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
+.m{padding:10px;border-radius:6px;background:var(--alt)}
+.m-l{font-size:11px;color:var(--muted);margin-bottom:2px} .m-v{font-size:18px;font-weight:600}
+
+.pills{display:flex;flex-wrap:wrap;gap:6px}
+.pill{padding:5px 12px;border-radius:14px;font-size:12px;font-weight:500;background:var(--hover)}
+.pill b{color:var(--primary);margin-left:4px}
+
+.tbl-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:var(--primary);color:#fff;padding:7px 9px;text-align:left;cursor:pointer;white-space:nowrap;user-select:none;position:sticky;top:0}
+th:hover{background:#1565a7} th .arr{font-size:9px;margin-left:3px;opacity:.6}
+td{padding:6px 9px;border-bottom:1px solid #eee}
+tr:nth-child(even){background:var(--alt)} tr:hover{background:var(--hover)}
+
+.badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
+.b-ok{background:#e8f5e9;color:var(--ok)} .b-warn{background:#fff3e0;color:var(--warn)} .b-crit{background:#ffebee;color:var(--crit)}
+
+.alert{padding:8px 12px;border-radius:6px;margin-bottom:6px;font-size:13px;display:flex;align-items:center;gap:6px}
+.a-crit{background:#ffebee;border-left:4px solid var(--crit);color:var(--crit)}
+.a-warn{background:#fff3e0;border-left:4px solid var(--warn);color:#e65100}
+.a-ok{background:#e8f5e9;border-left:4px solid var(--ok);color:var(--ok)}
+
+.loading{text-align:center;padding:50px 20px;color:var(--muted)}
+.spinner{display:inline-block;width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .8s linear infinite;margin-bottom:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.err{text-align:center;padding:30px;color:var(--crit)}
+.err button{margin-top:10px;padding:7px 18px;background:var(--primary);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px}
+
+.btn{display:inline-block;padding:7px 14px;border-radius:4px;border:none;cursor:pointer;font-size:13px;font-weight:500;transition:background .15s}
+.btn-p{background:var(--primary);color:#fff} .btn-p:hover{background:#1565a7} .btn-p:disabled{background:#90caf9;cursor:not-allowed}
+.btn-d{background:#ffebee;color:var(--crit)} .btn-d:hover{background:#ffcdd2}
+.actions{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+
+.filter input{padding:7px 11px;border:1px solid var(--border);border-radius:4px;font-size:13px;width:280px;max-width:100%;margin-bottom:10px}
+
+.ng{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px}
+.ni{padding:7px 10px;background:var(--alt);border-radius:4px}
+.ni .nl{font-size:11px;color:var(--muted)} .ni .nv{font-size:13px;font-weight:500}
+
+.chart-wrap{overflow-x:auto;margin:8px 0}
+
+details{margin:8px 0} summary{cursor:pointer;font-weight:600;font-size:13px;padding:6px 0;color:var(--primary)}
+
+select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-size:13px;margin-right:8px}
+
+.diff-add{color:var(--ok)} .diff-rem{color:var(--crit)} .diff-chg{color:var(--warn)}
+
+@media(max-width:600px){.metrics{grid-template-columns:repeat(2,1fr)}.tab{padding:7px 10px;font-size:12px}.filter input{width:100%}}
+</style>
+</head>
+<body>
+<div class="hdr"><h1>Hub Diagnostics</h1><span class="info" id="hubInfo">Loading...</span></div>
+<div class="tabs" id="tabs">
+  <div class="tab active" data-tab="dashboard">Dashboard</div>
+  <div class="tab" data-tab="devices">Devices</div>
+  <div class="tab" data-tab="apps">Apps</div>
+  <div class="tab" data-tab="network">Network</div>
+  <div class="tab" data-tab="health">Health</div>
+  <div class="tab" data-tab="performance">Performance</div>
+  <div class="tab" data-tab="snapshots">Snapshots</div>
+</div>
+<div class="content">
+  <div class="panel active" id="p-dashboard"></div>
+  <div class="panel" id="p-devices"></div>
+  <div class="panel" id="p-apps"></div>
+  <div class="panel" id="p-network"></div>
+  <div class="panel" id="p-health"></div>
+  <div class="panel" id="p-performance"></div>
+  <div class="panel" id="p-snapshots"></div>
+</div>
+<script>
+const T='${access_token}', B='${api_base}', REPORT=window.REPORT_DATA||null, cache={};
+let curTab='dashboard';
+
+// ===== API =====
+async function api(ep){if(REPORT&&REPORT[ep])return REPORT[ep];if(cache[ep])return cache[ep];const sep=ep.includes('?')?'&':'?';const r=await fetch(B+'/api/'+ep+sep+'access_token='+T);if(!r.ok)throw new Error('API '+r.status);const d=await r.json();cache[ep]=d;return d}
+async function post(ep,p){const q=new URLSearchParams(p||{});q.set('access_token',T);const r=await fetch(B+'/api/'+ep+'?'+q.toString(),{method:'POST'});if(!r.ok)throw new Error('API '+r.status);return r.json()}
+function drop(ep){if(ep)delete cache[ep];else Object.keys(cache).forEach(k=>delete cache[k])}
+
+// ===== HELPERS =====
+function h(s){const d=document.createElement('div');d.textContent=s??'';return d.innerHTML}
+function fmem(kb){if(kb==null)return'N/A';if(kb>=1048576)return(kb/1048576).toFixed(2)+' GB';if(kb>=1024)return(kb/1024).toFixed(0)+' MB';return kb+' KB'}
+function sev(v,w,c,inv){if(v==null)return'';if(inv)return v<c?'var(--crit)':v<w?'var(--warn)':'var(--ok)';return v>c?'var(--crit)':v>w?'var(--warn)':'var(--ok)'}
+function sbadge(s){return'<span class="badge '+(s==='Active'?'b-ok':s==='Disabled'?'b-crit':'b-warn')+'">'+h(s)+'</span>'}
+function bat(v){if(v==null||v==='')return'';const c=v<=20?'var(--crit)':v<=50?'var(--warn)':'var(--ok)';return'<span style="color:'+c+';font-weight:600">'+v+'%</span>'}
+function dlink(id,n){return'<a href="/device/edit/'+id+'" target="_blank">'+h(n)+'</a>'}
+function alink(id,n){return'<a href="/installedapp/configure/'+id+'" target="_blank">'+h(n)+'</a>'}
+function dlistlink(count,ids){if(!ids||!ids.length)return String(count??0);return'<a href="/device/list?ids='+ids.join(',')+'" target="_blank">'+count+'</a>'}
+const PD={zigbee:'Zigbee',zwave:'Z-Wave',matter:'Matter',lan:'LAN/IP',virtual:'Virtual',cloud:'Cloud',maker:'Maker API',hubmesh:'Hub Mesh',other:'Other'};
+function mc(l,v,c){const s=c?' style="color:'+c+'"':'';return'<div class="m"><div class="m-l">'+h(l)+'</div><div class="m-v"'+s+'>'+(v??'N/A')+'</div></div>'}
+function ni(l,v,c){const s=c?' style="color:'+c+';font-weight:600"':'';return'<div class="ni"><div class="nl">'+h(l)+'</div><div class="nv"'+s+'>'+h(String(v??'N/A'))+'</div></div>'}
+
+// ===== SORTABLE TABLE ENGINE =====
+function tbl(cid,cols,rows,opts={}){
+  const el=document.getElementById(cid);if(!el)return;
+  if(!rows||!rows.length){el.innerHTML='<p style="color:var(--muted);padding:16px">No data</p>';return}
+  let filt=[...rows],sc=opts.sc??0,sd=opts.sd??'asc';
+  const ct=opts.collapse??0,cl=opts.collapseLabel;
+  function sf(r,ci,d){const c=cols[ci];return r.sort((a,b)=>{let x=a[c.sf]??a[c.f]??'',y=b[c.sf]??b[c.f]??'';if(c.t==='n'){x=parseFloat(x)||0;y=parseFloat(y)||0}else{x=String(x).toLowerCase();y=String(y).toLowerCase()};if(x<y)return d==='asc'?-1:1;if(x>y)return d==='asc'?1:-1;return 0})}
+  function bld(rs){
+    let o='';
+    if(opts.filter)o+='<div class="filter"><input type="text" placeholder="Filter..." id="flt_'+cid+'"></div>';
+    if(ct>0&&cl){const open=rows.length<=ct?' open':'';o+='<details'+open+'><summary style="cursor:pointer;font-weight:600;margin:4px 0">'+cl+' ('+rows.length+')</summary>'}
+    o+='<div class="tbl-wrap"><table id="t_'+cid+'"><thead><tr>';
+    cols.forEach((c,i)=>{const ar=i===sc?(sd==='asc'?' \u25B2':' \u25BC'):' \u21C5';o+='<th data-c="'+i+'">'+h(c.l)+'<span class="arr">'+ar+'</span></th>'});
+    o+='</tr></thead><tbody>';
+    rs.forEach(r=>{o+='<tr>';cols.forEach(c=>{const v=c.r?c.r(r):h(r[c.f]??'');const sv=r[c.sf]??r[c.f]??'';o+='<td data-v="'+h(String(sv))+'">'+v+'</td>'});o+='</tr>'});
+    o+='</tbody></table></div>';if(ct>0&&cl)o+='</details>';return o}
+  filt=sf(filt,sc,sd);el.innerHTML=bld(filt);
+  function bind(){
+    const t=document.getElementById('t_'+cid);if(!t)return;
+    t.querySelectorAll('th').forEach(th=>{th.onclick=()=>{const ci=+th.dataset.c;if(ci===sc)sd=sd==='asc'?'desc':'asc';else{sc=ci;sd='desc'};filt=sf(filt,sc,sd);el.innerHTML=bld(filt);bind()}});
+    const fi=document.getElementById('flt_'+cid);
+    if(fi){fi.addEventListener('input',()=>{const q=fi.value.toLowerCase();filt=rows.filter(r=>cols.some(c=>String(r[c.f]??'').toLowerCase().includes(q)));filt=sf(filt,sc,sd);const tb=t.querySelector('tbody');if(tb){let h='';filt.forEach(r=>{h+='<tr>';cols.forEach(c=>{const v=c.r?c.r(r):el.textContent;const sv=r[c.sf]??r[c.f]??'';h+='<td data-v="">'+( c.r?c.r(r):el.textContent)+'</td>'});h+='</tr>'});tb.innerHTML=h}else{el.innerHTML=bld(filt);bind()}});fi.focus()}
+  }bind()
+}
+
+// ===== LOADING / ERROR =====
+function loading(id){document.getElementById(id).innerHTML='<div class="loading"><div class="spinner"></div><div>Loading...</div></div>'}
+function err(id,e,fn){document.getElementById(id).innerHTML='<div class="err"><div>'+h(e.message||String(e))+'</div><button onclick="('+fn.name+')()">Retry</button></div>'}
+
+// ===== RESOURCE CHART (SVG) =====
+function renderChart(pts,cid){
+  if(!pts||pts.length<2)return;
+  const el=document.getElementById(cid);if(!el)return;
+  const ppx=4,ml=55,mr=50,mt=30,mb=30,ch=200;
+  const w=ml+pts.length*ppx+mr,svgH=mt+ch+mb;
+  let maxOS=0,maxCpu=0;
+  pts.forEach(p=>{if(p.freeOS>maxOS)maxOS=p.freeOS;if(p.cpuLoad>maxCpu)maxCpu=p.cpuLoad});
+  maxOS=Math.ceil(maxOS/51200)*51200;if(maxOS<204800)maxOS=204800;
+  maxCpu=Math.ceil(maxCpu);if(maxCpu<2)maxCpu=2;
+  function yOS(v){return mt+ch-(v/maxOS)*ch}
+  function yCPU(v){return mt+ch-(v/maxCpu)*ch}
+  function x(i){return ml+i*ppx}
+  let osLine='',javaLine='',cpuLine='';
+  pts.forEach((p,i)=>{const px=x(i);osLine+=(i?'L':'M')+px+','+yOS(p.freeOS);javaLine+=(i?'L':'M')+px+','+yOS(p.freeJava);cpuLine+=(i?'L':'M')+px+','+yCPU(p.cpuLoad)});
+  // Threshold lines
+  const warnY=yOS(102400),critY=yOS(76800);
+  // Time labels
+  let timeLabels='',lastDate='';
+  pts.forEach((p,i)=>{
+    const px=x(i);const parts=p.time.split(' ');const date=parts[0]||'';const time=parts[1]||'';
+    if(date!==lastDate&&lastDate){timeLabels+=`<line x1="${px}" y1="${mt}" x2="${px}" y2="${mt+ch}" stroke="#ccc" stroke-dasharray="4"/><text x="${px}" y="${mt+ch+14}" font-size="9" fill="#999" text-anchor="middle">${date}</text>`}
+    lastDate=date;
+    if(i%(Math.floor(pts.length/8)||1)===0){timeLabels+=`<text x="${px}" y="${mt+ch+24}" font-size="8" fill="#bbb" text-anchor="middle">${time}</text>`}
+  });
+  // Y-axis labels
+  let yLabels='';const steps=5;
+  for(let i=0;i<=steps;i++){
+    const v=maxOS*i/steps;const y=yOS(v);
+    yLabels+=`<line x1="${ml}" y1="${y}" x2="${w-mr}" y2="${y}" stroke="#eee"/><text x="${ml-4}" y="${y+4}" font-size="9" fill="#999" text-anchor="end">${(v/1024).toFixed(0)}</text>`;
+    const cv=maxCpu*i/steps;const cy=yCPU(cv);
+    yLabels+=`<text x="${w-mr+4}" y="${cy+4}" font-size="9" fill="#999">${cv.toFixed(1)}</text>`;
+  }
+  const svg=`<div class="chart-wrap" id="${cid}_wrap"><svg width="${w}" height="${svgH}" viewBox="0 0 ${w} ${svgH}" style="min-width:${w}px">
+    ${yLabels}${timeLabels}
+    <line x1="${ml}" y1="${warnY}" x2="${w-mr}" y2="${warnY}" stroke="var(--warn)" stroke-dasharray="6" opacity=".5"/>
+    <line x1="${ml}" y1="${critY}" x2="${w-mr}" y2="${critY}" stroke="var(--crit)" stroke-dasharray="6" opacity=".5"/>
+    <polyline points="${osLine}" fill="none" stroke="#1A77C9" stroke-width="2"/>
+    <polyline points="${javaLine}" fill="none" stroke="var(--ok)" stroke-width="1.5" opacity=".7"/>
+    <polyline points="${cpuLine}" fill="none" stroke="var(--warn)" stroke-width="1.5" opacity=".7"/>
+    <text x="${ml+8}" y="${mt+12}" font-size="10" fill="#1A77C9">Free OS (MB)</text>
+    <text x="${ml+120}" y="${mt+12}" font-size="10" fill="var(--ok)">Free Java</text>
+    <text x="${ml+210}" y="${mt+12}" font-size="10" fill="var(--warn)">CPU Load</text>
+    <text x="${ml-4}" y="${mt-4}" font-size="9" fill="#999" text-anchor="end">MB</text>
+    <text x="${w-mr+4}" y="${mt-4}" font-size="9" fill="#999">CPU</text>
+    <rect x="${ml}" y="${mt}" width="${(w-ml-mr)}" height="${ch}" fill="transparent" id="${cid}_hover" style="cursor:crosshair"/>
+  </svg></div>
+  <div style="font-size:11px;color:var(--muted);margin-top:4px">${pts.length} samples from ${pts[0].time} to ${pts[pts.length-1].time}</div>`;
+  el.innerHTML=svg;
+  // Scroll to right (most recent)
+  const wrap=document.getElementById(cid+'_wrap');if(wrap)wrap.scrollLeft=wrap.scrollWidth;
+  // Tooltip
+  const svgEl=el.querySelector('svg');const hover=document.getElementById(cid+'_hover');
+  if(hover&&svgEl){
+    const tip=document.createElementNS('http://www.w3.org/2000/svg','text');tip.setAttribute('visibility','hidden');tip.setAttribute('font-size','10');tip.setAttribute('fill','#333');svgEl.appendChild(tip);
+    const vline=document.createElementNS('http://www.w3.org/2000/svg','line');vline.setAttribute('y1',mt);vline.setAttribute('y2',mt+ch);vline.setAttribute('stroke','#666');vline.setAttribute('visibility','hidden');svgEl.appendChild(vline);
+    hover.addEventListener('mousemove',e=>{
+      const rect=svgEl.getBoundingClientRect();const sx=w/rect.width;const mx=(e.clientX-rect.left)*sx-ml;
+      const idx=Math.round(mx/((pts.length-1)*ppx)*(pts.length-1));const ci=Math.max(0,Math.min(pts.length-1,idx));
+      const px=x(ci);vline.setAttribute('x1',px);vline.setAttribute('x2',px);vline.setAttribute('visibility','visible');
+      const p=pts[ci];tip.textContent=`${p.time} | OS: ${(p.freeOS/1024).toFixed(0)} MB | CPU: ${p.cpuLoad.toFixed(2)} | Java: ${(p.freeJava/1024).toFixed(0)} MB`;
+      const tw=tip.textContent.length*5.5+10;let tx=px+8;if(tx+tw>w-10)tx=px-tw-8;
+      tip.setAttribute('x',tx);tip.setAttribute('y',mt+14);tip.setAttribute('visibility','visible');
+    });
+    hover.addEventListener('mouseleave',()=>{vline.setAttribute('visibility','hidden');tip.setAttribute('visibility','hidden')});
+  }
+}
+
+// ===== TAB: DASHBOARD =====
+async function rDashboard(){const P='p-dashboard';loading(P);try{
+  const d=await api('dashboard');
+  document.getElementById('hubInfo').textContent=d.hub.name+' | '+d.hub.hardware+' | fw '+d.hub.firmware;
+  let o='';
+  // Overview
+  const bp=d.devices.byProtocol||{},ip=d.devices.idsByProtocol||{},is=d.devices.idsByStatus||{};
+  o+='<div class="card"><div class="card-h">Overview</div><div class="card-b"><div class="metrics">';
+  o+=mc('Total Devices',dlistlink(d.devices.total,null));
+  o+=mc('Active',dlistlink(d.devices.active,is.active),'var(--ok)');
+  o+=mc('Inactive',dlistlink(d.devices.inactive,(is.inactive||[]).concat(is.disabled||[])),(d.devices.inactive>0?'var(--warn)':''));
+  o+=mc('Disabled',dlistlink(d.devices.disabled,is.disabled),(d.devices.disabled>0?'var(--crit)':''));
+  o+=mc('Applications',d.apps.total);o+=mc('User Apps',d.apps.user);
+  o+='</div></div></div>';
+  // Resources
+  if(d.resources){const r=d.resources;
+    o+='<div class="card"><div class="card-h">Resources</div><div class="card-b"><div class="metrics">';
+    o+=mc('Free OS Memory',fmem(r.freeOSMemory),sev(r.freeOSMemory,102400,76800,true));
+    o+=mc('CPU Load (5m)',r.cpuAvg5min?.toFixed(2)??'N/A',sev(r.cpuAvg5min,4.0,8.0,false));
+    if(d.temperature!=null)o+=mc('Temperature',d.temperature.toFixed(1)+'\u00B0C',sev(d.temperature,50,77,false));
+    if(d.databaseSize!=null)o+=mc('Database',d.databaseSize+' MB');
+    o+='</div></div></div>'}
+  // Protocols
+  o+='<div class="card"><div class="card-h">Protocols</div><div class="card-b"><div class="pills">';
+  Object.entries(bp).forEach(([k,v])=>{if(v>0)o+='<div class="pill">'+dlistlink(v,ip[k])+' '+(PD[k]||k)+'</div>'});
+  o+='</div></div></div>';
+  // Alerts
+  if(d.alerts&&d.alerts.length){o+='<div class="card"><div class="card-h">Platform Alerts</div><div class="card-b">';
+    d.alerts.forEach(a=>{o+='<div class="alert a-'+(a.severity==='critical'?'crit':'warn')+'">'+(a.severity==='critical'?'\u26D4':'\u26A0')+' '+h(a.name)+'</div>'});o+='</div></div>'}
+  // Reports
+  const rpts=await api('reports');
+  o+='<div class="card"><div class="card-h">Reports</div><div class="card-b">';
+  o+='<div class="actions" style="margin-bottom:10px"><button class="btn btn-p" id="btnReport">Generate Full Report</button></div>';
+  if(rpts.lastReport)o+='<p><a href="/local/'+h(rpts.lastReport)+'" target="_blank" style="color:var(--link)">Open latest report: '+h(rpts.lastReport)+'</a></p>';
+  if(rpts.reports&&rpts.reports.length>0){
+    o+='<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--muted)">All reports ('+rpts.reports.length+')</summary><div style="margin-top:6px">';
+    rpts.reports.forEach(r=>{
+      const sz=r.size?(Number(r.size)>=1048576?(Number(r.size)/1048576).toFixed(1)+' MB':(Number(r.size)/1024).toFixed(0)+' KB'):'';
+      const dt=r.date?new Date(Number(r.date)).toLocaleString():'';
+      o+='<div style="display:flex;gap:12px;padding:3px 0"><a href="/local/'+h(r.name)+'" target="_blank" style="color:var(--link)">'+h(r.name)+'</a><span style="color:var(--muted)">'+sz+'</span><span style="color:var(--muted)">'+dt+'</span></div>'});
+    o+='</div></details>'}
+  o+='</div></div>';
+  document.getElementById(P).innerHTML=o;
+  const btnReport=document.getElementById('btnReport');
+  if(btnReport)btnReport.onclick=async()=>{
+    btnReport.disabled=true;btnReport.textContent='Generating...';
+    try{const res=await post('report/generate');drop('reports');
+      const rp=await api('reports');
+      const link=rp.lastReport?'<p style="margin-top:8px"><a href="/local/'+h(rp.lastReport)+'" target="_blank" style="color:var(--link)">Open: '+h(rp.lastReport)+'</a></p>':'';
+      btnReport.insertAdjacentHTML('afterend',link);
+      btnReport.textContent='Done!';setTimeout(()=>{btnReport.disabled=false;btnReport.textContent='Generate Full Report'},2000)}
+    catch(e){btnReport.disabled=false;btnReport.textContent='Generate Full Report';alert('Report generation failed: '+e.message)}};
+}catch(e){err(P,e,rDashboard)}}
+
+// ===== TAB: DEVICES =====
+async function rDevices(){const P='p-devices';loading(P);try{
+  const d=await api('devices'),s=d.summary,bp=d.byProtocol||{},ip=d.idsByProtocol||{},is=d.idsByStatus||{};
+  let o='';
+  o+='<div class="card"><div class="card-h">Device Summary</div><div class="card-b"><div class="metrics">';
+  o+=mc('Total',dlistlink(s.totalDevices,null));o+=mc('Active',dlistlink(s.activeDevices,is.active)+' ('+d.inactivityDays+'d)','var(--ok)');
+  o+=mc('Inactive',dlistlink(s.inactiveDevices,(is.inactive||[]).concat(is.disabled||[])),(s.inactiveDevices>0?'var(--warn)':''));
+  o+=mc('Disabled',dlistlink(s.disabledDevices,is.disabled),(s.disabledDevices>0?'var(--crit)':''));
+  o+=mc('Parent',dlistlink(s.parentDevices,[]));o+=mc('Child',dlistlink(s.childDevices,[]));
+  o+=mc('Hub Mesh',dlistlink(s.linkedDevices,[]));o+=mc('Battery',dlistlink(s.batteryDevices,[]));
+  o+='</div></div></div>';
+  // Protocol distribution
+  o+='<div class="card"><div class="card-h">Protocol Distribution</div><div class="card-b"><div class="tbl-wrap"><table><thead><tr><th>Protocol</th><th>Count</th></tr></thead><tbody>';
+  Object.entries(bp).forEach(([k,v])=>{if(v>0)o+='<tr><td>'+(PD[k]||k)+'</td><td>'+dlistlink(v,ip[k])+'</td></tr>'});
+  o+='</tbody></table></div></div></div>';
+  // Low battery
+  if(d.lowBatteryDevices&&d.lowBatteryDevices.length){o+='<div class="card"><div class="card-h">Low Battery Alerts</div><div class="card-b">';
+    d.lowBatteryDevices.forEach(dev=>{o+='<div class="alert a-warn">'+dlink(dev.id,dev.name)+': <b>'+dev.battery+'%</b></div>'});o+='</div></div>'}
+  // Device table
+  o+='<div class="card"><div class="card-h">All Devices ('+d.deviceRows.length+')</div><div class="card-b"><div id="devTbl"></div></div></div>';
+  document.getElementById(P).innerHTML=o;
+  tbl('devTbl',[
+    {l:'Name',f:'name',r:r=>dlink(r.id,r.name)},
+    {l:'Type',f:'type',r:r=>r.userType&&r.deviceTypeId?'<a href="/driver/editor/'+r.deviceTypeId+'" target="_blank">'+h(r.type)+'</a>':h(r.type)},
+    {l:'Protocol',f:'protocolDisplay'},
+    {l:'Room',f:'room',r:r=>h(r.room||'-')},
+    {l:'Status',f:'status',r:r=>sbadge(r.status)},
+    {l:'Last Activity',f:'lastActivity'},
+    {l:'Battery',f:'battery',t:'n',r:r=>bat(r.battery)},
+    {l:'Parent',f:'parentAppName',r:r=>r.parentAppName?alink(r.parentAppId,r.parentAppName):r.parentDeviceName?dlink(r.parentDeviceId,r.parentDeviceName):'-',sf:'parentAppName'}
+  ],d.deviceRows,{filter:true,sc:0,sd:'asc',collapse:10,collapseLabel:'All Devices'});
+}catch(e){err(P,e,rDevices)}}
+
+// ===== TAB: APPS =====
+async function rApps(){const P='p-apps';loading(P);try{
+  const d=await api('apps'),s=d.summary;
+  let o='';
+  o+='<div class="card"><div class="card-h">Application Summary</div><div class="card-b"><div class="metrics">';
+  o+=mc('Total Apps',s.totalApps);o+=mc('System',s.builtInApps);o+=mc('User',s.userApps);
+  o+=mc('Parent',s.parentApps);o+=mc('Child',s.childApps);
+  if(s.runtimeTotalApps)o+=mc('Platform Total',s.runtimeTotalApps);
+  o+='</div></div></div>';
+  // Parent/Child hierarchy
+  if(d.parentChildHierarchy&&d.parentChildHierarchy.length){
+    o+='<div class="card"><div class="card-h">Parent/Child Hierarchy ('+d.parentChildHierarchy.length+')</div><div class="card-b">';
+    d.parentChildHierarchy.forEach(p=>{
+      o+='<details'+(d.parentChildHierarchy.length<=10?' open':'')+'><summary>'+h(p.parentType||p.parentName||'Unknown')+' <span style="color:var(--muted);font-weight:normal">('+((p.children||[]).length)+' children)</span></summary>';
+      o+='<div style="padding-left:20px;margin:6px 0">';
+      (p.children||[]).forEach(c=>{o+='<div style="margin:3px 0">'+alink(c.id,c.label||c.name)+(c.disabled?' <span style="color:var(--crit)">(Disabled)</span>':'')+'</div>'});
+      o+='</div></details>'});o+='</div></div>'}
+  // Namespace breakdown
+  if(d.byNamespace&&Object.keys(d.byNamespace).length){
+    const ns=Object.entries(d.byNamespace).map(([k,v])=>({name:k,count:v})).sort((a,b)=>b.count-a.count);
+    o+='<div class="card"><div class="card-h">App Types ('+ns.length+')</div><div class="card-b"><div id="nsTbl"></div></div></div>'}
+  // Platform apps
+  if(d.platformApps&&d.platformApps.length){
+    const big=d.platformApps.filter(a=>a.stateSize>5000);
+    o+='<div class="card"><div class="card-h">Platform Apps ('+d.platformApps.length+')</div><div class="card-b">';
+    if(big.length)o+='<div class="alert a-warn">\u26A0 '+big.length+' app(s) with state size > 5 KB</div>';
+    o+='<div id="platTbl"></div></div></div>'}
+  document.getElementById(P).innerHTML=o;
+  // Render tables
+  if(d.byNamespace&&Object.keys(d.byNamespace).length){
+    const ns=Object.entries(d.byNamespace).map(([k,v])=>({name:k,count:v})).sort((a,b)=>b.count-a.count);
+    tbl('nsTbl',[{l:'App Type',f:'name'},{l:'Instances',f:'count',t:'n'}],ns,{sc:1,sd:'desc',collapse:10,collapseLabel:'App Types'})}
+  if(d.platformApps&&d.platformApps.length)
+    tbl('platTbl',[
+      {l:'Name',f:'name',r:r=>'<a href="/installedapp/status/'+r.id+'" target="_blank">'+h(r.name)+'</a>'},
+      {l:'State Size',f:'stateSize',t:'n',r:r=>{const c=r.stateSize>10000?'var(--crit)':r.stateSize>5000?'var(--warn)':'';return c?'<span style="color:'+c+'">'+r.stateSize+'</span>':String(r.stateSize)}},
+      {l:'CPU %',f:'pctTotal',t:'n',r:r=>(r.pctTotal*100).toFixed(3)+'%'},
+      {l:'Exec Count',f:'count',t:'n'},
+      {l:'Avg (ms)',f:'average',t:'n',r:r=>r.count>0?Number(r.average).toFixed(1):'0'},
+      {l:'Hub Actions',f:'hubActionCount',t:'n'},
+      {l:'Cloud Calls',f:'cloudCallCount',t:'n'}
+    ],d.platformApps,{sc:3,sd:'desc',filter:true,collapse:10,collapseLabel:'Platform Apps'});
+}catch(e){err(P,e,rApps)}}
+
+// ===== TAB: NETWORK =====
+async function rNetwork(){const P='p-network';loading(P);try{
+  const d=await api('network');let o='';
+  // Network config
+  if(d.network){const n=d.network;
+    o+='<div class="card"><div class="card-h">Network Configuration</div><div class="card-b"><div class="ng">';
+    o+=ni('IP Address',n.lanAddr);o+=ni('Connection',n.usingStaticIP?'Static IP':'DHCP');
+    o+=ni('Gateway',n.staticGateway);o+=ni('Subnet',n.staticSubnetMask);
+    if(n.usingStaticIP&&n.staticIP)o+=ni('Static IP',n.staticIP);
+    if(n.dnsServers&&n.dnsServers.length)o+=ni('DNS',n.dnsServers.join(', '));
+    o+=ni('Ethernet',n.hasEthernet?'Connected':'Not Connected');o+=ni('WiFi',n.hasWiFi?'Available':'No');
+    if(n.hasWiFi&&n.wifiNetwork)o+=ni('WiFi Network',n.wifiNetwork);
+    o+='</div></div></div>'}
+  // Z-Wave
+  if(d.zwave){const z=d.zwave;
+    o+='<div class="card"><div class="card-h">Z-Wave Network</div><div class="card-b"><div class="ng">';
+    o+=ni('Enabled',z.enabled?'Yes':'No');o+=ni('Healthy',z.healthy?'Yes':'No',z.healthy?'var(--ok)':'var(--crit)');
+    o+=ni('Version',z.version||'N/A');o+=ni('Region',z.region||'N/A');o+=ni('Nodes',z.nodeCount);
+    if(z.isRadioUpdateNeeded)o+='</div><div class="alert a-warn" style="margin-top:8px">\u26A0 Z-Wave radio firmware update available</div><div class="ng">';
+    o+='</div>';
+    // Ghost nodes
+    if(z.ghostNodes&&z.ghostNodes.length){
+      o+='<div style="margin-top:10px"><div class="alert a-crit">\u26D4 Ghost Nodes: '+z.ghostNodes.length+'</div>';
+      z.ghostNodes.forEach(g=>{o+='<div style="margin:4px 0;color:var(--crit)">'+(g.deviceId?dlink(g.deviceId,'Node '+g.id):h('Node '+g.id))+' &mdash; '+h(g.name||'Unknown')+' ('+h(g.status)+')</div>'});o+='</div>'}
+    // Mesh quality
+    if(z.mesh&&z.mesh.nodes&&z.mesh.nodes.length){const m=z.mesh;
+      o+='<div style="margin-top:10px"><div class="ng">';
+      o+=ni('Nodes',m.nodeCount);
+      o+=ni('Avg PER',m.avgPer!=null?m.avgPer.toFixed(1)+'%':'N/A',m.avgPer>1?'var(--crit)':m.avgPer>0?'var(--warn)':'var(--ok)');
+      o+=ni('Nodes w/ Errors',m.nodesWithErrors,m.nodesWithErrors>0?'var(--crit)':'var(--ok)');
+      o+=ni('Route Changes',m.totalRouteChanges);
+      if(m.avgRssi!=null)o+=ni('Avg RSSI',m.avgRssi+' dBm',m.avgRssi<-80?'var(--crit)':m.avgRssi<-60?'var(--warn)':'var(--ok)');
+      o+='</div><div id="zwMeshTbl" style="margin-top:8px"></div></div>'}
+    // Problem nodes
+    if(z.problemNodes&&z.problemNodes.length){
+      o+='<div style="margin-top:10px"><div class="alert a-warn">\u26A0 Problem Nodes: '+z.problemNodes.length+'</div>';
+      z.problemNodes.forEach(n=>{o+='<div style="margin:4px 0;color:var(--crit)">'+(n.deviceId?dlink(n.deviceId,n.name):h(n.name))+' &mdash; '+h(n.issues)+'</div>'});o+='</div>'}
+    o+='</div></div>'}
+  // Zigbee
+  if(d.zigbee){const z=d.zigbee;
+    o+='<div class="card"><div class="card-h">Zigbee Network</div><div class="card-b"><div class="ng">';
+    o+=ni('Enabled',z.enabled?'Yes':'No');o+=ni('Healthy',z.healthy?'Yes':'No',z.healthy?'var(--ok)':'var(--crit)');
+    o+=ni('Channel',z.channel,([15,20,25].includes(z.channel)?'var(--ok)':'var(--warn)'));
+    o+=ni('PAN ID',z.panId);o+=ni('Extended PAN ID',z.extendedPanId);
+    o+=ni('Devices',z.deviceCount);o+=ni('Join Mode',z.joinMode?'Active':'Inactive');
+    if(z.powerLevel!=null)o+=ni('Power Level',z.powerLevel);
+    const rColor=z.responsiveCount===z.totalCount?'var(--ok)':z.responsiveCount<z.totalCount*0.8?'var(--crit)':'var(--warn)';
+    o+=ni('Responsive',z.responsiveCount+' / '+z.totalCount,rColor);
+    o+='</div>';
+    if(z.nonResponsive&&z.nonResponsive.length){o+='<div style="margin-top:8px"><b style="color:var(--warn)">Non-Responsive:</b> ';
+      o+=z.nonResponsive.map(d=>dlink(d.id,d.name)).join(', ');o+='</div>'}
+    // Zigbee mesh
+    if(z.mesh){const m=z.mesh;
+      o+='<div style="margin-top:10px"><div class="ng">';
+      o+=ni('Neighbors',m.neighbors);o+=ni('Routes',m.routes);o+=ni('End Devices',m.childDevices);
+      if(m.avgLqi!=null)o+=ni('Avg LQI',m.avgLqi+' (min: '+m.minLqi+', max: '+m.maxLqi+')',m.avgLqi<150?'var(--crit)':m.avgLqi<200?'var(--warn)':'var(--ok)');
+      if(m.weakNeighbors&&m.weakNeighbors.length)o+=ni('Weak Neighbors',m.weakNeighbors.length,'var(--crit)');
+      if(m.staleNeighbors&&m.staleNeighbors.length)o+=ni('Stale Neighbors',m.staleNeighbors.length,'var(--warn)');
+      o+='</div>';
+      if(m.weakNeighbors&&m.weakNeighbors.length){o+='<details style="margin-top:6px"><summary>Weak Neighbor Details</summary>';
+        m.weakNeighbors.forEach(n=>{o+='<div style="margin:3px 0;color:var(--crit)">'+h(n.shortId)+' &mdash; LQI: '+n.lqi+'</div>'});o+='</details>'}
+      o+='</div>'}
+    o+='</div></div>'}
+  // Matter
+  if(d.matter){const m=d.matter;
+    o+='<div class="card"><div class="card-h">Matter</div><div class="card-b"><div class="ng">';
+    o+=ni('Enabled',m.enabled!=null?(m.enabled?'Yes':'No'):'N/A');
+    o+=ni('Installed',m.installed!=null?(m.installed?'Yes':'No'):'N/A');
+    if(m.networkState)o+=ni('Network State',m.networkState);
+    if(m.fabricId)o+=ni('Fabric ID',m.fabricId);
+    if(m.devices)o+=ni('Devices',m.devices.length);
+    if(m.rebootRequired)o+='</div><div class="alert a-warn" style="margin-top:8px">\u26A0 Reboot required for Matter changes</div><div class="ng">';
+    o+='</div></div></div>'}
+  // Hub Mesh
+  if(d.hubMesh){const hm=d.hubMesh;
+    o+='<div class="card"><div class="card-h">Hub Mesh</div><div class="card-b"><div class="ng">';
+    o+=ni('Status',hm.enabled?'Enabled':'Disabled',hm.enabled?'var(--ok)':'var(--warn)');
+    o+=ni('Shared Devices',hm.sharedDevices);o+=ni('Linked Devices',hm.linkedDevices);
+    o+=ni('Shared Variables',hm.sharedVars);o+=ni('Linked Variables',hm.linkedVars);
+    o+='</div>';
+    if(hm.peers&&hm.peers.length){o+='<div style="margin-top:10px"><b>Linked Hubs ('+hm.peers.length+')</b>';
+      hm.peers.forEach(p=>{const st=p.offline?'Offline':'Online';const sc=p.offline?'var(--crit)':'var(--ok)';
+        o+='<div style="margin:4px 0"><b>'+h(p.name)+'</b> ('+h(p.ip)+') &mdash; <span style="color:'+sc+'">'+st+'</span> | '+p.deviceCount+' devices, '+p.varCount+' variables</div>'});o+='</div>'}
+    o+='</div></div>'}
+  document.getElementById(P).innerHTML=o;
+  // Render Z-Wave mesh table
+  if(d.zwave&&d.zwave.mesh&&d.zwave.mesh.nodes&&d.zwave.mesh.nodes.length)
+    tbl('zwMeshTbl',[
+      {l:'Device',f:'name',r:r=>r.deviceId?dlink(r.deviceId,r.name):h(r.name)},
+      {l:'RSSI',f:'rssi',t:'n',r:r=>r.rssi!=null?'<span style="color:'+(r.rssi<-80?'var(--crit)':r.rssi<-60?'var(--warn)':'var(--ok)')+'">'+r.rssi+' dBm</span>':'N/A'},
+      {l:'PER %',f:'per',t:'n',r:r=>'<span style="color:'+(r.per>1?'var(--crit)':r.per>0?'var(--warn)':'var(--ok)')+'">'+r.per+'%</span>'},
+      {l:'Neighbors',f:'neighbors',t:'n'},{l:'Route',f:'route'},{l:'Route Changes',f:'routeChanges',t:'n'},
+      {l:'State',f:'state',r:r=>'<span style="color:'+(r.state==='OK'?'var(--ok)':'var(--crit)')+'">'+h(r.state)+'</span>'}
+    ],d.zwave.mesh.nodes,{sc:0,sd:'asc',collapse:10,collapseLabel:'Z-Wave Mesh Nodes'});
+}catch(e){err(P,e,rNetwork)}}
+
+// ===== TAB: HEALTH =====
+async function rHealth(){const P='p-health';loading(P);try{
+  const d=await api('health');let o='';
+  // Hub info
+  if(d.hub){o+='<div class="card"><div class="card-h">Hub Information</div><div class="card-b"><div class="ng">';
+    o+=ni('Hub Name',d.hub.name);o+=ni('Hub ID',d.hub.hubId);o+=ni('Hardware',d.hub.hardware);
+    o+=ni('Firmware',d.hub.firmware);o+=ni('IP Address',d.hub.ip);o+=ni('Zigbee ID',d.hub.zigbeeId);
+    o+=ni('Location',d.hub.location);o+=ni('Mode',d.hub.mode);o+=ni('Time Zone',d.hub.timeZone);
+    o+='</div></div></div>'}
+  // Alerts
+  const allAlerts=[...(d.alerts||[])];
+  (d.platformAlerts||[]).forEach(a=>{allAlerts.push({severity:a.severity,message:a.name})});
+  if(allAlerts.length){o+='<div class="card"><div class="card-h">Alerts ('+allAlerts.length+')</div><div class="card-b">';
+    allAlerts.forEach(a=>{o+='<div class="alert a-'+(a.severity==='critical'?'crit':'warn')+'">'+(a.severity==='critical'?'\u26D4':'\u26A0')+' '+h(a.message||a.name)+'</div>'});o+='</div></div>'}
+  else o+='<div class="alert a-ok">\u2705 No active alerts</div>';
+  // Resources
+  if(d.resources){const r=d.resources;
+    o+='<div class="card"><div class="card-h">System Resources</div><div class="card-b"><div class="metrics">';
+    o+=mc('Free OS Memory',fmem(r.freeOSMemory),sev(r.freeOSMemory,102400,76800,true));
+    o+=mc('CPU Load (5m)',r.cpuAvg5min?.toFixed(2),sev(r.cpuAvg5min,4.0,8.0,false));
+    o+=mc('Total Java Memory',fmem(r.totalJavaMemory));o+=mc('Free Java Memory',fmem(r.freeJavaMemory));
+    o+=mc('Direct Java Memory',fmem(r.directJavaMemory));
+    if(d.temperature!=null){const tf=d.temperature*9/5+32;o+=mc('Temperature',d.temperature.toFixed(1)+'\u00B0C ('+tf.toFixed(1)+'\u00B0F)',sev(d.temperature,50,77,false))}
+    o+='</div></div></div>'}
+  // Memory chart placeholder
+  o+='<div class="card"><div class="card-h">Resource History</div><div class="card-b"><div id="memChart"><div class="loading"><div class="spinner"></div><div>Loading history...</div></div></div></div></div>';
+  // Database
+  o+='<div class="card"><div class="card-h">Database & Storage</div><div class="card-b"><div class="metrics">';
+  if(d.databaseSize!=null)o+=mc('Database Size',d.databaseSize+' MB');
+  if(d.stateCompression)o+=mc('State Compression',d.stateCompression.enabled?'Enabled':'Disabled',d.stateCompression.enabled?'var(--ok)':'var(--warn)');
+  if(d.eventStateLimits){const l=d.eventStateLimits;
+    if(l.maxEvents)o+=mc('Max Events/Device',l.maxEvents);
+    if(l.maxEventAgeDays)o+=mc('Max Event Age',l.maxEventAgeDays+' days');
+    if(l.maxStateAgeDays)o+=mc('Max State Age',l.maxStateAgeDays+' days')}
+  o+='</div></div></div>';
+  document.getElementById(P).innerHTML=o;
+  // Fetch and render chart async
+  api('health/history').then(h=>{renderChart(h.dataPoints,'memChart')}).catch(()=>{document.getElementById('memChart').innerHTML='<i style="color:var(--muted)">Unable to load history</i>'});
+}catch(e){err(P,e,rHealth)}}
+
+// ===== TAB: PERFORMANCE =====
+async function rPerf(){const P='p-performance';loading(P);try{
+  const d=await api('performance');let o='';
+  // Actions
+  o+='<div class="actions">';
+  o+='<button class="btn btn-p" id="btnCp">Create Checkpoint</button>';
+  if(d.checkpointCount>0)o+='<button class="btn btn-d" id="btnClrCp">Clear All</button>';
+  o+='</div>';
+  // Runtime stats
+  if(d.stats){const s=d.stats;
+    o+='<div class="card"><div class="card-h">Current Runtime</div><div class="card-b"><div class="metrics">';
+    if(s.uptime)o+=mc('Hub Uptime',s.uptime);
+    if(s.totalDevicesRuntime)o+=mc('Devices Runtime',s.totalDevicesRuntime);
+    if(s.totalAppsRuntime)o+=mc('Apps Runtime',s.totalAppsRuntime);
+    o+='</div></div></div>'}
+  if(d.resources){o+='<div class="card"><div class="card-h">Resources</div><div class="card-b"><div class="metrics">';
+    o+=mc('Free OS Memory',fmem(d.resources.freeOSMemory),sev(d.resources.freeOSMemory,102400,76800,true));
+    o+=mc('CPU Load (5m)',d.resources.cpuAvg5min?.toFixed(2),sev(d.resources.cpuAvg5min,4.0,8.0,false));
+    o+='</div></div></div>'}
+  // Checkpoints
+  o+='<div class="card"><div class="card-h">Checkpoints ('+d.checkpointCount+' / '+d.maxCheckpoints+')</div><div class="card-b">';
+  if(d.checkpoints&&d.checkpoints.length){o+='<div id="cpTbl"></div>'}
+  else o+='<p style="color:var(--muted)">No checkpoints. Create one to start tracking.</p>';
+  o+='</div></div>';
+  // Comparison controls
+  if(d.checkpointCount>0){
+    o+='<div class="card"><div class="card-h">Compare Performance</div><div class="card-b">';
+    o+='<div style="margin-bottom:10px"><label>Baseline: </label><select id="selBase"><option value="startup">Since Startup</option>';
+    d.checkpoints.forEach((cp,i)=>{o+='<option value="'+i+'">Checkpoint '+(i+1)+' - '+h(cp.timestamp)+'</option>'});
+    o+='</select><label>Compare to: </label><select id="selCp"><option value="now">Now</option>';
+    d.checkpoints.forEach((cp,i)=>{o+='<option value="'+i+'">Checkpoint '+(i+1)+' - '+h(cp.timestamp)+'</option>'});
+    o+='</select><button class="btn btn-p" id="btnCompare" style="margin-left:8px">Compare</button></div>';
+    o+='<div id="compResult"></div></div></div>'}
+  // Saved comparison
+  if(d.savedComparison){o+='<div class="card"><div class="card-h">Last Comparison</div><div class="card-b"><div id="savedComp"></div></div></div>'}
+  // Runtime detail tables
+  if(d.stats&&d.stats.deviceStats&&d.stats.deviceStats.length){
+    o+='<div class="card"><div class="card-h">Device Runtime Detail</div><div class="card-b"><div id="devStatsTbl"></div></div></div>'}
+  if(d.stats&&d.stats.appStats&&d.stats.appStats.length){
+    o+='<div class="card"><div class="card-h">App Runtime Detail</div><div class="card-b"><div id="appStatsTbl"></div></div></div>'}
+  document.getElementById(P).innerHTML=o;
+  // Render checkpoint table
+  if(d.checkpoints&&d.checkpoints.length){
+    const cpRows=d.checkpoints.map((cp,i)=>({idx:i+1,timestamp:cp.timestamp,
+      uptime:cp.stats?.uptime||'N/A',devRuntime:cp.stats?.totalDevicesRuntime||'N/A',appRuntime:cp.stats?.totalAppsRuntime||'N/A',_idx:i}));
+    tbl('cpTbl',[
+      {l:'#',f:'idx',t:'n'},{l:'Timestamp',f:'timestamp'},{l:'Uptime',f:'uptime'},
+      {l:'Dev Runtime',f:'devRuntime'},{l:'App Runtime',f:'appRuntime'},
+      {l:'',f:'_idx',r:r=>'<button class="btn btn-d" onclick="delCp('+r._idx+')">\u{1F5D1}</button>'}
+    ],cpRows,{sc:0,sd:'desc'})}
+  // Runtime tables
+  if(d.stats&&d.stats.deviceStats)
+    tbl('devStatsTbl',[
+      {l:'Name',f:'name',r:r=>r.id?dlink(r.id,r.name):h(r.name)},{l:'Total (ms)',f:'total',t:'n'},
+      {l:'Count',f:'count',t:'n'},{l:'Avg (ms)',f:'average',t:'n',r:r=>Number(r.average||0).toFixed(1)},
+      {l:'State Size',f:'stateSize',t:'n'},{l:'Hub Actions',f:'hubActionCount',t:'n'},{l:'Cloud Calls',f:'cloudCallCount',t:'n'}
+    ],d.stats.deviceStats,{sc:1,sd:'desc',filter:true,collapse:10,collapseLabel:'Device Runtime Detail'});
+  if(d.stats&&d.stats.appStats)
+    tbl('appStatsTbl',[
+      {l:'Name',f:'name',r:r=>r.id?'<a href="/installedapp/status/'+r.id+'" target="_blank">'+h(r.name)+'</a>':h(r.name)},
+      {l:'Total (ms)',f:'total',t:'n'},{l:'Count',f:'count',t:'n'},
+      {l:'Avg (ms)',f:'average',t:'n',r:r=>Number(r.average||0).toFixed(1)},
+      {l:'State Size',f:'stateSize',t:'n'},{l:'Hub Actions',f:'hubActionCount',t:'n'},{l:'Cloud Calls',f:'cloudCallCount',t:'n'}
+    ],d.stats.appStats,{sc:1,sd:'desc',filter:true,collapse:10,collapseLabel:'App Runtime Detail'});
+  // Saved comparison render
+  if(d.savedComparison)renderComparison(d.savedComparison,'savedComp');
+  // Button bindings
+  const btnCp=document.getElementById('btnCp');
+  if(btnCp)btnCp.onclick=async()=>{btnCp.disabled=true;btnCp.textContent='Creating...';await post('checkpoint/create');drop('performance');rPerf()};
+  const btnClr=document.getElementById('btnClrCp');
+  if(btnClr)btnClr.onclick=async()=>{if(!confirm('Clear all checkpoints?'))return;await post('checkpoints/clear');drop('performance');rPerf()};
+  const btnComp=document.getElementById('btnCompare');
+  if(btnComp)btnComp.onclick=async()=>{btnComp.disabled=true;btnComp.textContent='Comparing...';
+    const b=document.getElementById('selBase').value,c=document.getElementById('selCp').value;
+    const r=await post('performance/compare','baseline='+b+'&checkpoint='+c);
+    if(r.success){renderComparison(r,'compResult')}else{document.getElementById('compResult').innerHTML='<div class="alert a-warn">'+h(r.error)+'</div>'}
+    btnComp.disabled=false;btnComp.textContent='Compare'};
+}catch(e){err(P,e,rPerf)}}
+
+async function delCp(idx){if(!confirm('Delete checkpoint '+(idx+1)+'?'))return;await post('checkpoint/delete','index='+idx);drop('performance');rPerf()}
+
+function renderComparison(data,elId){
+  const el=document.getElementById(elId);if(!el)return;
+  const b=data.baselineStats||{},c=data.checkpointStats||{};
+  let o='<div><b>Baseline:</b> '+h(data.baselineLabel)+' &rarr; <b>Current:</b> '+h(data.checkpointLabel)+'</div>';
+  // Resources delta
+  if(b.resources&&c.resources){
+    o+='<div style="margin-top:10px"><b>System Resources:</b></div><div class="ng" style="margin-top:6px">';
+    const br=b.resources,cr=c.resources;
+    if(cr.freeOSMemory!=null&&br.freeOSMemory!=null){const d=cr.freeOSMemory-br.freeOSMemory;o+=ni('Free OS Memory',fmem(cr.freeOSMemory)+' ('+(d>=0?'+':'')+fmem(d)+')',d<0?'var(--crit)':'var(--ok)')}
+    if(cr.cpuAvg5min!=null&&br.cpuAvg5min!=null){const d=cr.cpuAvg5min-br.cpuAvg5min;o+=ni('CPU Load',cr.cpuAvg5min.toFixed(2)+' ('+(d>=0?'+':'')+d.toFixed(2)+')',d>0?'var(--warn)':'var(--ok)')}
+    o+='</div>'}
+  el.innerHTML=o;
+}
+
+// ===== TAB: SNAPSHOTS =====
+async function rSnap(){const P='p-snapshots';loading(P);try{
+  const d=await api('snapshots');let o='';
+  o+='<div class="actions">';
+  o+='<button class="btn btn-p" id="btnSnap">Create Snapshot</button>';
+  if(d.snapshotCount>0)o+='<button class="btn btn-d" id="btnClrSnap">Clear All</button>';
+  o+='</div>';
+  // Snapshot table
+  o+='<div class="card"><div class="card-h">Config Snapshots ('+d.snapshotCount+' / '+d.maxSnapshots+')</div><div class="card-b">';
+  if(d.snapshots&&d.snapshots.length){o+='<div id="snapTbl"></div>'}
+  else o+='<p style="color:var(--muted)">No snapshots. Create one to start tracking.</p>';
+  o+='</div></div>';
+  // View snapshot
+  if(d.snapshotCount>0){
+    o+='<div class="card"><div class="card-h">View Snapshot</div><div class="card-b">';
+    o+='<select id="selView"><option value="">Select a snapshot...</option>';
+    d.snapshots.forEach((s,i)=>{o+='<option value="'+i+'">'+h(s.timestamp)+' ('+s.devices.totalDevices+' devices, fw '+h(s.hubInfo?.firmware||'?')+')</option>'});
+    o+='</select><div id="snapView" style="margin-top:10px"></div></div></div>';
+    // Compare
+    o+='<div class="card"><div class="card-h">Compare Snapshots</div><div class="card-b">';
+    o+='<label>Older: </label><select id="selOlder"><option value="">Select...</option>';
+    d.snapshots.forEach((s,i)=>{o+='<option value="'+i+'">'+h(s.timestamp)+'</option>'});
+    o+='</select><label style="margin-left:8px">Newer: </label><select id="selNewer"><option value="">Select...</option><option value="now">Now (create new)</option>';
+    d.snapshots.forEach((s,i)=>{o+='<option value="'+i+'">'+h(s.timestamp)+'</option>'});
+    o+='</select><button class="btn btn-p" id="btnDiff" style="margin-left:8px">Compare</button>';
+    o+='<div id="diffResult" style="margin-top:10px"></div></div></div>'}
+  document.getElementById(P).innerHTML=o;
+  // Render table
+  if(d.snapshots&&d.snapshots.length){
+    const rows=d.snapshots.map((s,i)=>({idx:i+1,timestamp:s.timestamp,firmware:s.hubInfo?.firmware||'N/A',
+      devices:s.devices.totalDevices,apps:s.apps.totalApps,memory:s.memory!=null?fmem(s.memory):'N/A',_idx:i}));
+    tbl('snapTbl',[
+      {l:'#',f:'idx',t:'n'},{l:'Timestamp',f:'timestamp'},{l:'Firmware',f:'firmware'},
+      {l:'Devices',f:'devices',t:'n'},{l:'Apps',f:'apps',t:'n'},{l:'Memory',f:'memory'},
+      {l:'',f:'_idx',r:r=>'<button class="btn btn-d" onclick="delSnap('+r._idx+')">\u{1F5D1}</button>'}
+    ],rows,{sc:0,sd:'desc'})}
+  // View snapshot handler
+  const selView=document.getElementById('selView');
+  if(selView)selView.onchange=async()=>{
+    const v=selView.value;if(!v){document.getElementById('snapView').innerHTML='';return}
+    document.getElementById('snapView').innerHTML='<div class="loading"><div class="spinner"></div></div>';
+    try{const snap=await api('snapshot/view?index='+v);renderSnapshotView(snap,'snapView')}
+    catch(e){document.getElementById('snapView').innerHTML='<div class="alert a-crit">Failed to load snapshot: '+h(e.message)+'</div>'}};
+  // Buttons
+  const btnSnap=document.getElementById('btnSnap');
+  if(btnSnap)btnSnap.onclick=async()=>{btnSnap.disabled=true;btnSnap.textContent='Creating...';await post('snapshot/create');drop('snapshots');rSnap()};
+  const btnClr=document.getElementById('btnClrSnap');
+  if(btnClr)btnClr.onclick=async()=>{if(!confirm('Clear all snapshots?'))return;await post('snapshots/clear');drop('snapshots');rSnap()};
+  // Diff handler
+  const btnDiff=document.getElementById('btnDiff');
+  if(btnDiff)btnDiff.onclick=async()=>{
+    const o=document.getElementById('selOlder').value,n=document.getElementById('selNewer').value;
+    if(!o||!n||o===n){alert('Select two different snapshots');return}
+    btnDiff.disabled=true;btnDiff.textContent='Comparing...';
+    document.getElementById('diffResult').innerHTML='<div class="loading"><div class="spinner"></div></div>';
+    try{const r=await api('snapshot/diff?older='+o+'&newer='+n);
+    drop('snapshot/diff?older='+o+'&newer='+n);
+    renderDiff(r,'diffResult')}
+    catch(e){document.getElementById('diffResult').innerHTML='<div class="alert a-crit">Failed to compare: '+h(e.message)+'</div>'}
+    btnDiff.disabled=false;btnDiff.textContent='Compare'};
+}catch(e){err(P,e,rSnap)}}
+
+async function delSnap(idx){if(!confirm('Delete snapshot '+(idx+1)+'?'))return;await post('snapshot/delete','index='+idx);drop('snapshots');rSnap()}
+
+function renderSnapshotView(s,elId){
+  const el=document.getElementById(elId);if(!el)return;let o='';
+  o+='<h3 style="margin-bottom:8px">Config Snapshot &mdash; '+h(s.timestamp)+'</h3>';
+  if(s.hubInfo)o+='<div style="margin-bottom:8px;color:var(--muted)">'+h(s.hubInfo.name)+' | fw '+h(s.hubInfo.firmware)+' | '+h(s.hubInfo.hardware)+'</div>';
+  // System resources
+  if(s.systemHealth){const sh=s.systemHealth;
+    o+='<div class="ng" style="margin-bottom:10px">';
+    if(sh.freeOSMemory!=null)o+=ni('Free OS Memory',fmem(sh.freeOSMemory));
+    if(sh.cpuAvg5min!=null)o+=ni('CPU Load',sh.cpuAvg5min.toFixed(2));
+    if(sh.freeJavaMemory!=null)o+=ni('Free Java',fmem(sh.freeJavaMemory));
+    if(sh.databaseSize!=null)o+=ni('Database',sh.databaseSize+' MB');
+    o+='</div>'}
+  // Devices
+  const dv=s.devices||{};
+  o+='<div style="margin-bottom:6px"><b>Devices:</b> '+dv.totalDevices+' total | Active: '+dv.activeDevices+' | Inactive: '+dv.inactiveDevices+' | Disabled: '+dv.disabledDevices+'</div>';
+  if(dv.byProtocol){o+='<div style="margin-bottom:8px">'+Object.entries(dv.byProtocol).filter(([,v])=>v>0).map(([k,v])=>(PD[k]||k)+': '+v).join(' | ')+'</div>'}
+  if(dv.allDevices&&dv.allDevices.length){o+='<details><summary>Device List ('+dv.allDevices.length+')</summary><div id="snapDevTbl" style="margin-top:6px"></div></details>'}
+  // Apps
+  const ap=s.apps||{};
+  o+='<div style="margin:8px 0"><b>Apps:</b> '+ap.totalApps+' total (System: '+ap.builtInApps+' | User: '+ap.userApps+')</div>';
+  if(ap.byNamespace&&Object.keys(ap.byNamespace).length){
+    o+='<details><summary>App Types ('+Object.keys(ap.byNamespace).length+')</summary><div id="snapAppTbl" style="margin-top:6px"></div></details>'}
+  if(ap.userAppsList&&ap.userAppsList.length){
+    o+='<details><summary>User App Instances ('+ap.userAppsList.length+')</summary><div id="snapUserAppTbl" style="margin-top:6px"></div></details>'}
+  if(ap.parentChildHierarchy&&ap.parentChildHierarchy.length){
+    o+='<details><summary>Parent/Child Hierarchy ('+ap.parentChildHierarchy.length+' parents)</summary><div style="margin-top:6px">';
+    ap.parentChildHierarchy.forEach(p=>{
+      o+='<div style="margin-bottom:8px"><b>'+alink(p.id,p.label||p.type)+'</b> <span style="color:var(--muted)">('+p.childCount+' children)</span>';
+      if(p.children&&p.children.length){o+='<ul style="margin:4px 0 0 16px;list-style:none;padding:0">';
+        p.children.forEach(c=>{o+='<li style="padding:2px 0">'+alink(c.id,c.name||c.type)+(c.disabled?' <span style="color:var(--crit)">[disabled]</span>':'')+'</li>'});
+        o+='</ul>'}
+      o+='</div>'});
+    o+='</div></details>'}
+  el.innerHTML=o;
+  // Render sub-tables
+  if(dv.allDevices&&dv.allDevices.length)
+    tbl('snapDevTbl',[
+      {l:'Name',f:'name',r:r=>dlink(r.id,r.name)},{l:'Type',f:'type'},{l:'Protocol',f:'protocol',r:r=>h(PD[r.protocol]||r.protocol||'')},
+      {l:'Status',f:'status',r:r=>sbadge(r.status)}
+    ],dv.allDevices,{sc:0,sd:'asc'});
+  if(ap.byNamespace){
+    const ns=Object.entries(ap.byNamespace).map(([k,v])=>({name:k,count:v})).sort((a,b)=>b.count-a.count);
+    tbl('snapAppTbl',[{l:'App Type',f:'name'},{l:'Instances',f:'count',t:'n'}],ns,{sc:1,sd:'desc'})}
+  if(ap.userAppsList&&ap.userAppsList.length)
+    tbl('snapUserAppTbl',[
+      {l:'Name',f:'label',r:r=>alink(r.id,r.label)},{l:'Type',f:'name'}
+    ],ap.userAppsList,{sc:0,sd:'asc'});
+}
+
+function renderDiff(d,elId){
+  const el=document.getElementById(elId);if(!el)return;
+  if(d.error){el.innerHTML='<div class="alert a-warn">'+h(d.error)+'</div>';return}
+  let o='<h3>Config Snapshot Comparison</h3>';
+  o+='<div style="margin:6px 0"><b>Older:</b> '+h(d.older.timestamp)+' &rarr; <b>Newer:</b> '+h(d.newer.timestamp)+'</div>';
+  // Firmware
+  if(d.older.firmware!==d.newer.firmware)o+='<div style="color:var(--primary);margin:4px 0"><b>Firmware:</b> '+h(d.older.firmware)+' &rarr; '+h(d.newer.firmware)+'</div>';
+  // Device changes
+  const dc=d.deviceChanges;const dd=dc.newerTotal-dc.olderTotal;
+  o+='<div style="margin:8px 0"><b>Devices:</b> '+dc.olderTotal+' &rarr; '+dc.newerTotal+(dd!==0?' <span style="color:'+(dd>0?'var(--ok)':'var(--crit)')+'">('+( dd>0?'+':'')+dd+')</span>':'')+'</div>';
+  if(dc.added.length){o+='<div class="diff-add" style="margin:4px 0"><b>Added ('+dc.added.length+'):</b></div>';
+    dc.added.forEach(d=>{o+='<div style="margin:2px 0 2px 16px" class="diff-add">+ '+dlink(d.id,d.name)+' ('+h(d.protocol)+')</div>'})}
+  if(dc.removed.length){o+='<div class="diff-rem" style="margin:4px 0"><b>Removed ('+dc.removed.length+'):</b></div>';
+    dc.removed.forEach(d=>{o+='<div style="margin:2px 0 2px 16px" class="diff-rem">- '+dlink(d.id,d.name)+' ('+h(d.protocol)+')</div>'})}
+  if(dc.changed.length){o+='<div class="diff-chg" style="margin:4px 0"><b>Changed ('+dc.changed.length+'):</b></div>';
+    dc.changed.forEach(d=>{const ch=d.changes.map(c=>c.field+': '+c.from+' \u2192 '+c.to).join(', ');
+      o+='<div style="margin:2px 0 2px 16px" class="diff-chg">~ '+dlink(d.id,d.name)+' &mdash; '+h(ch)+'</div>'})}
+  // Protocol changes
+  if(d.protocolChanges&&d.protocolChanges.length){o+='<div style="margin:8px 0"><b>Protocol Changes:</b></div>';
+    d.protocolChanges.forEach(p=>{const dd=p.to-p.from;o+='<div style="margin:2px 0 2px 16px">'+h(p.protocol)+': '+p.from+' \u2192 '+p.to+' <span style="color:'+(dd>0?'var(--ok)':'var(--crit)')+'">('+( dd>0?'+':'')+dd+')</span></div>'})}
+  // App changes
+  const ac=d.appChanges;const ad=ac.newerTotal-ac.olderTotal;
+  o+='<div style="margin:8px 0"><b>Apps:</b> '+ac.olderTotal+' \u2192 '+ac.newerTotal+(ad!==0?' <span style="color:'+(ad>0?'var(--ok)':'var(--crit)')+'">('+( ad>0?'+':'')+ad+')</span>':'')+'</div>';
+  // Memory
+  if(d.memoryDelta){const md=d.memoryDelta;const dd=md.to-md.from;
+    o+='<div style="margin:8px 0"><b>Free OS Memory:</b> '+fmem(md.from)+' \u2192 '+fmem(md.to)+' <span style="color:'+(dd>=0?'var(--ok)':'var(--crit)')+'">('+( dd>=0?'+':'')+fmem(dd)+')</span></div>'}
+  el.innerHTML=o;
+}
+
+// ===== TAB MANAGEMENT =====
+const R={dashboard:rDashboard,devices:rDevices,apps:rApps,network:rNetwork,health:rHealth,performance:rPerf,snapshots:rSnap};
+function go(t){curTab=t;document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active',e.dataset.tab===t));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active',p.id==='p-'+t));
+  const p=document.getElementById('p-'+t);if(!p.children.length||p.querySelector('.loading')||p.querySelector('.err'))R[t]()}
+document.getElementById('tabs').addEventListener('click',e=>{if(e.target.dataset.tab)go(e.target.dataset.tab)});
+rDashboard();
+</script>
+</body>
+</html>

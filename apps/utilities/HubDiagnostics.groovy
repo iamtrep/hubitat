@@ -13,6 +13,7 @@
 
 import groovy.transform.Field
 import groovy.transform.CompileStatic
+import groovy.json.JsonOutput
 
 @Field static final String APP_VERSION = "3.2.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "3.2.0"
@@ -228,6 +229,7 @@ definition(
     category: "Utility",
     singleInstance: true,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/utilities/HubDiagnostics.groovy",
+    oauth: true,
     iconUrl: "",
     iconX2Url: "",
     iconX3Url: ""
@@ -244,12 +246,50 @@ preferences {
     page(name: "settingsPage")
 }
 
+// ===== API MAPPINGS =====
+
+mappings {
+    // Frontend asset serving
+    path('/ui.html') { action: [GET: 'serveUI'] }
+
+    // Data API endpoints
+    path('/api/dashboard')        { action: [GET: 'apiDashboard'] }
+    path('/api/devices')          { action: [GET: 'apiDevices'] }
+    path('/api/apps')             { action: [GET: 'apiApps'] }
+    path('/api/network')          { action: [GET: 'apiNetwork'] }
+    path('/api/health')           { action: [GET: 'apiHealth'] }
+    path('/api/health/history')   { action: [GET: 'apiHealthHistory'] }
+    path('/api/performance')      { action: [GET: 'apiPerformance'] }
+    path('/api/snapshots')        { action: [GET: 'apiSnapshots'] }
+    path('/api/snapshot/view')    { action: [GET: 'apiSnapshotView'] }
+    path('/api/snapshot/diff')    { action: [GET: 'apiSnapshotDiff'] }
+
+    // Actions
+    path('/api/snapshot/create')    { action: [POST: 'apiCreateSnapshot'] }
+    path('/api/snapshot/delete')    { action: [POST: 'apiDeleteSnapshot'] }
+    path('/api/checkpoint/create')  { action: [POST: 'apiCreateCheckpoint'] }
+    path('/api/checkpoint/delete')  { action: [POST: 'apiDeleteCheckpoint'] }
+    path('/api/checkpoints/clear')  { action: [POST: 'apiClearCheckpoints'] }
+    path('/api/snapshots/clear')    { action: [POST: 'apiClearSnapshots'] }
+    path('/api/performance/compare') { action: [POST: 'apiPerformanceCompare'] }
+    path('/api/reports')              { action: [GET: 'apiReports'] }
+    path('/api/report/generate')      { action: [POST: 'apiGenerateReport'] }
+}
+
 // ===== PAGE METHODS =====
 
 Map dashboardPage() {
+    if (!state.accessToken) createAccessToken()
+
     dynamicPage(name: "dashboardPage", title: "Hub Diagnostics", install: true, uninstall: true) {
         section("Quick Summary") {
             paragraph generateQuickSummary()
+        }
+
+        section("Live Dashboard") {
+            String dashboardUrl = "${fullLocalApiServerUrl}/ui.html?access_token=${state.accessToken}"
+            href url: dashboardUrl, title: "Open Live Dashboard", style: "external",
+                 description: "Interactive diagnostic dashboard (opens in new tab)"
         }
 
         section("Navigation") {
@@ -784,6 +824,515 @@ Map snapshotsPage() {
             }
         }
     }
+}
+
+// ===== API ENDPOINT METHODS =====
+
+Map jsonResponse(Map data) {
+    return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson(data))
+}
+
+Map serveUI() {
+    if (!state.accessToken) createAccessToken()
+    String html = new String(downloadHubFile('hub_diagnostics_ui.html'), 'UTF-8')
+    String apiBase = fullLocalApiServerUrl
+    html = html.replace('${access_token}', state.accessToken)
+        .replace('${api_base}', apiBase)
+    return render(status: 200, contentType: 'text/html', data: html)
+}
+
+Map apiDashboard() {
+    Map deviceStats = analyzeDevicesQuick()
+    Map appStats = analyzeAppsQuick()
+    Map hubInfo = getHubInfo()
+    Map resources = fetchSystemResources()
+    Map hubAlerts = fetchHubAlerts()
+    Float temperature = fetchTemperature()
+    Integer databaseSize = fetchDatabaseSize()
+
+    List activeAlerts = []
+    if (hubAlerts.alerts) {
+        ALERT_DISPLAY_NAMES.each { String key, String name ->
+            if (hubAlerts.alerts[key] == true) {
+                String severity = (key in ["hubLoadSevere", "hubZwaveCrashed", "hubHugeDatabase", "zwaveOffline", "zigbeeOffline"]) ? "critical" : "warning"
+                activeAlerts << [key: key, name: name, severity: severity]
+            }
+        }
+    }
+
+    return jsonResponse([
+        hub: hubInfo,
+        devices: [
+            total: deviceStats.totalDevices,
+            active: deviceStats.activeDevices,
+            inactive: deviceStats.inactiveDevices,
+            disabled: deviceStats.disabledDevices,
+            byProtocol: deviceStats.byProtocol,
+            idsByProtocol: deviceStats.idsByProtocol,
+            idsByStatus: deviceStats.idsByStatus
+        ],
+        apps: [total: appStats.totalApps, builtIn: appStats.builtInApps, user: appStats.userApps],
+        resources: resources,
+        temperature: temperature,
+        databaseSize: databaseSize,
+        alerts: activeAlerts,
+        inactivityDays: settings.inactivityDays ?: 7
+    ])
+}
+
+Map apiDevices() {
+    Map deviceStats = analyzeDevices()
+    List deviceRows = (deviceStats.allDevices ?: []).collect { Map dev ->
+        [
+            id: dev.id, name: dev.name, type: dev.type,
+            protocol: dev.protocol,
+            protocolDisplay: PROTOCOL_DISPLAY[dev.protocol] ?: (dev.protocol ?: "").toString().capitalize(),
+            room: dev.room,
+            status: dev.status ?: "",
+            lastActivity: dev.lastActivity ?: "Never",
+            battery: dev.battery,
+            parentAppId: dev.parentAppId, parentAppName: dev.parentAppName,
+            parentDeviceId: dev.parentDeviceId, parentDeviceName: dev.parentDeviceName,
+            userType: dev.userType ?: false, deviceTypeId: dev.deviceTypeId
+        ]
+    }
+    List lowBattery = (deviceStats.lowBatteryDevices ?: []).collect { Map dev ->
+        [id: dev.id, name: dev.name, battery: dev.battery]
+    }
+    return jsonResponse([
+        summary: [
+            totalDevices: deviceStats.totalDevices, activeDevices: deviceStats.activeDevices,
+            inactiveDevices: deviceStats.inactiveDevices, disabledDevices: deviceStats.disabledDevices,
+            parentDevices: deviceStats.parentDevices, childDevices: deviceStats.childDevices,
+            linkedDevices: deviceStats.linkedDevices, batteryDevices: deviceStats.batteryDevices
+        ],
+        byProtocol: deviceStats.byProtocol,
+        idsByProtocol: deviceStats.idsByProtocol,
+        idsByStatus: deviceStats.idsByStatus,
+        deviceRows: deviceRows,
+        lowBatteryDevices: lowBattery,
+        inactivityDays: settings.inactivityDays ?: 7
+    ])
+}
+
+Map apiApps() {
+    Map appStats = analyzeApps()
+    List platformRows = (appStats.platformApps ?: []).collect { Map app ->
+        [id: app.id, name: app.name, stateSize: app.stateSize as int, pctTotal: app.pctTotal,
+         count: app.count, average: app.average, hubActionCount: app.hubActionCount, cloudCallCount: app.cloudCallCount]
+    }
+    List userAppRows = (appStats.userAppsList ?: [])
+        .sort { (it.label ?: it.name ?: "").toString().toLowerCase() }
+        .collect { Map app ->
+            [id: app.id, label: app.label ?: app.name, type: app.name,
+             parentId: app.parentAppId, disabled: app.state == "disabled"]
+        }
+    return jsonResponse([
+        summary: [
+            totalApps: appStats.totalApps, builtInApps: appStats.builtInApps, userApps: appStats.userApps,
+            parentApps: appStats.parentApps, childApps: appStats.childApps,
+            runtimeTotalApps: appStats.runtimeTotalApps
+        ],
+        byNamespace: appStats.byNamespace,
+        platformApps: platformRows,
+        userApps: userAppRows,
+        parentChildHierarchy: appStats.parentChildHierarchy
+    ])
+}
+
+Map apiNetwork() {
+    Map networkData = analyzeNetwork()
+    Map zigbeeMesh = fetchZigbeeMeshInfo()
+    String zwaveVersion = fetchZwaveVersion()
+    Map zwaveMesh = extractZwaveMeshQuality(networkData.zwave ?: [:])
+    List ghostNodes = buildZwaveGhostNodes(networkData.zwave ?: [:])
+    List problemNodes = (zwaveMesh?.nodes ?: []).findAll { Map n -> n.state != "OK" || (n.per ?: 0) > 1 }.collect { Map n ->
+        List issues = []
+        if (n.state != "OK") issues << "State: ${n.state}"
+        if ((n.per ?: 0) > 1) issues << "PER: ${n.per}%"
+        [name: n.name, deviceId: n.deviceId, nodeId: n.nodeId, issues: issues.join(", ")]
+    }
+
+    Map zigbeeRaw = networkData.zigbee ?: [:]
+    List nonResponsive = []
+    if (zigbeeRaw.devices) {
+        nonResponsive = zigbeeRaw.devices.findAll { it.active != true }.collect { dev ->
+            [id: dev.id, name: dev.name ?: "Device ${dev.id}"]
+        }
+    }
+
+    Map hubMeshRaw = networkData.hubMesh ?: [:]
+    List hubMeshPeers = []
+    if (hubMeshRaw.hubList) {
+        hubMeshPeers = hubMeshRaw.hubList.collect { Map hub ->
+            [name: hub.name, ip: hub.ipAddress, offline: hub.offline,
+             deviceCount: hub.deviceIds?.size() ?: 0, varCount: hub.hubVarNames?.size() ?: 0]
+        }
+    }
+
+    return jsonResponse([
+        network: networkData.network && !networkData.network.error ? networkData.network : null,
+        zwave: networkData.zwave && !networkData.zwave.error ? [
+            enabled: networkData.zwave.enabled, healthy: networkData.zwave.healthy,
+            region: networkData.zwave.region,
+            nodeCount: (networkData.zwave.zwDevices ?: [:]).size(),
+            isRadioUpdateNeeded: networkData.zwave.isRadioUpdateNeeded,
+            zwaveJs: networkData.zwave.zwaveJs,
+            version: zwaveVersion,
+            mesh: zwaveMesh,
+            ghostNodes: ghostNodes,
+            problemNodes: problemNodes
+        ] : null,
+        zigbee: networkData.zigbee && !networkData.zigbee.error ? [
+            enabled: zigbeeRaw.enabled, healthy: zigbeeRaw.healthy,
+            networkState: zigbeeRaw.networkState, channel: zigbeeRaw.channel,
+            panId: zigbeeRaw.panId, extendedPanId: zigbeeRaw.extendedPanId,
+            deviceCount: (zigbeeRaw.devices ?: []).size(),
+            joinMode: zigbeeRaw.inJoinMode,
+            powerLevel: zigbeeRaw.powerLevel,
+            responsiveCount: zigbeeRaw.devices ? zigbeeRaw.devices.count { it.active == true } : 0,
+            totalCount: (zigbeeRaw.devices ?: []).size(),
+            nonResponsive: nonResponsive,
+            mesh: zigbeeMesh ? [
+                neighbors: zigbeeMesh.neighbors?.size() ?: 0,
+                routes: zigbeeMesh.routes?.size() ?: 0,
+                avgLqi: zigbeeMesh.avgLqi, minLqi: zigbeeMesh.minLqi, maxLqi: zigbeeMesh.maxLqi,
+                weakNeighbors: (zigbeeMesh.weakNeighbors ?: []).collect { [shortId: it.shortId, lqi: it.lqi] },
+                staleNeighbors: (zigbeeMesh.staleNeighbors ?: []).collect { [shortId: it.shortId, age: it.age] },
+                childDevices: zigbeeMesh.childDevices?.size() ?: 0
+            ] : null
+        ] : null,
+        matter: networkData.matter && !networkData.matter.error ? networkData.matter : null,
+        hubMesh: networkData.hubMesh && !networkData.hubMesh.error ? [
+            enabled: hubMeshRaw.enabled,
+            sharedDevices: hubMeshRaw.sharedDevices?.size() ?: 0,
+            linkedDevices: hubMeshRaw.linkedDevices?.size() ?: 0,
+            sharedVars: hubMeshRaw.sharedVars?.size() ?: 0,
+            linkedVars: hubMeshRaw.linkedVars?.size() ?: 0,
+            peers: hubMeshPeers
+        ] : null
+    ])
+}
+
+Map apiHealth() {
+    Map systemHealth = analyzeSystemHealth()
+    Map hubInfo = getHubInfo()
+    def hub = (location.hubs && location.hubs.size() > 0) ? location.hubs[0] : null
+    Map mem = systemHealth.memory ?: [:]
+
+    return jsonResponse([
+        hub: [
+            name: hubInfo.name, hubId: hub?.id, hardware: hubInfo.hardware,
+            firmware: hubInfo.firmware, ip: hubInfo.ip, zigbeeId: hub?.zigbeeId,
+            location: location.name, mode: location.currentMode?.toString(),
+            timeZone: location.timeZone?.ID
+        ],
+        resources: mem ?: null,
+        temperature: systemHealth.temperature,
+        databaseSize: systemHealth.databaseSize,
+        stateCompression: systemHealth.stateCompression,
+        eventStateLimits: systemHealth.eventStateLimits,
+        alerts: systemHealth.alerts ?: [],
+        platformAlerts: buildPlatformAlertsApi(systemHealth.hubAlerts)
+    ])
+}
+
+Map apiHealthHistory() {
+    List memHistory = fetchMemoryHistory()
+    return jsonResponse([dataPoints: memHistory ?: []])
+}
+
+Map apiPerformance() {
+    Map stats = fetchCurrentStats()
+    Map resources = fetchSystemResources()
+    List checkpoints = loadCheckpoints()
+    Map savedComparison = loadPerformanceComparisonPayload()
+
+    return jsonResponse([
+        stats: stats,
+        resources: resources,
+        checkpointCount: checkpoints?.size() ?: 0,
+        maxCheckpoints: (settings.maxCheckpoints ?: 10) as int,
+        checkpoints: (checkpoints ?: []).collect { Map cp -> [
+            timestamp: cp.timestamp,
+            stats: cp.stats,
+            resources: cp.resources,
+            radioStats: cp.radioStats
+        ]},
+        savedComparison: savedComparison
+    ])
+}
+
+Map apiPerformanceCompare() {
+    String baseline = params.baseline
+    String checkpoint = params.checkpoint
+    if (!baseline || !checkpoint) {
+        return jsonResponse([success: false, error: "Missing baseline or checkpoint parameter"])
+    }
+
+    List checkpoints = loadCheckpoints()
+    Map baselineStats
+    String baselineLabel
+    Map checkpointStats
+    String checkpointLabel
+
+    // Resolve baseline
+    if (baseline == "startup") {
+        // Will build zero baseline after resolving checkpoint
+        baselineLabel = "Startup (0:00:00)"
+    } else {
+        int bIdx = baseline.toInteger()
+        if (bIdx < 0 || bIdx >= checkpoints.size()) return jsonResponse([success: false, error: "Invalid baseline index"])
+        Map bCp = checkpoints[bIdx]
+        baselineStats = bCp.stats
+        baselineStats.resources = bCp.resources
+        baselineStats.radioStats = bCp.radioStats
+        baselineLabel = bCp.timestamp
+    }
+
+    // Resolve checkpoint
+    if (checkpoint == "now") {
+        checkpointStats = fetchCurrentStats()
+        Map currentResources = fetchSystemResources()
+        checkpointStats.resources = currentResources
+        Map zwaveData = fetchEndpoint(ZWAVE_DETAILS_URL, "Z-Wave details", 20)
+        Map zigbeeData = fetchEndpoint(ZIGBEE_DETAILS_URL, "Zigbee details", 20)
+        checkpointStats.radioStats = [
+            zwave: extractZwaveMessageCounts(zwaveData),
+            zigbee: extractZigbeeMessageCounts(zigbeeData)
+        ]
+        checkpointLabel = "Now (${new Date().format('yyyy-MM-dd HH:mm:ss')})"
+    } else {
+        int cIdx = checkpoint.toInteger()
+        if (cIdx < 0 || cIdx >= checkpoints.size()) return jsonResponse([success: false, error: "Invalid checkpoint index"])
+        Map cCp = checkpoints[cIdx]
+        checkpointStats = cCp.stats
+        checkpointStats.resources = cCp.resources
+        checkpointStats.radioStats = cCp.radioStats
+        checkpointLabel = cCp.timestamp
+    }
+
+    // Build zero baseline if startup
+    if (baseline == "startup") {
+        baselineStats = buildZeroBaseline(checkpointStats, checkpointStats.resources)
+    }
+
+    // Save for persistence
+    savePerformanceComparisonPayload(buildPerformanceComparisonPayload(
+        baselineStats, checkpointStats, baselineLabel, checkpointLabel))
+
+    return jsonResponse([
+        success: true,
+        baselineLabel: baselineLabel,
+        checkpointLabel: checkpointLabel,
+        baselineStats: baselineStats,
+        checkpointStats: checkpointStats
+    ])
+}
+
+Map apiSnapshots() {
+    List snapshots = loadSnapshots()
+    return jsonResponse([
+        snapshotCount: snapshots?.size() ?: 0,
+        maxSnapshots: (settings.maxSnapshots ?: 10) as int,
+        snapshots: (snapshots ?: []).collect { Map snap -> [
+            timestamp: snap.timestamp,
+            hubInfo: snap.hubInfo,
+            devices: [
+                totalDevices: snap.devices?.totalDevices ?: 0,
+                activeDevices: snap.devices?.activeDevices ?: 0,
+                inactiveDevices: snap.devices?.inactiveDevices ?: 0,
+                disabledDevices: snap.devices?.disabledDevices ?: 0
+            ],
+            apps: [totalApps: snap.apps?.totalApps ?: 0, builtInApps: snap.apps?.builtInApps ?: 0, userApps: snap.apps?.userApps ?: 0],
+            memory: snap.systemHealth?.memory?.freeOSMemory
+        ]}
+    ])
+}
+
+Map apiSnapshotView() {
+    int idx = (params.index ?: "-1").toInteger()
+    List snapshots = loadSnapshots()
+    if (idx < 0 || idx >= snapshots.size()) return jsonResponse([error: "Invalid snapshot index"])
+    Map snap = snapshots[idx]
+
+    return jsonResponse([
+        timestamp: snap.timestamp,
+        hubInfo: snap.hubInfo,
+        systemHealth: snap.systemHealth ? [
+            freeOSMemory: snap.systemHealth.memory?.freeOSMemory,
+            cpuAvg5min: snap.systemHealth.memory?.cpuAvg5min,
+            freeJavaMemory: snap.systemHealth.memory?.freeJavaMemory,
+            databaseSize: snap.systemHealth.databaseSize
+        ] : null,
+        devices: [
+            totalDevices: snap.devices?.totalDevices ?: 0,
+            activeDevices: snap.devices?.activeDevices ?: 0,
+            inactiveDevices: snap.devices?.inactiveDevices ?: 0,
+            disabledDevices: snap.devices?.disabledDevices ?: 0,
+            byProtocol: snap.devices?.byProtocol,
+            allDevices: (snap.devices?.allDevices ?: []).collect { Map dev ->
+                [id: dev.id, name: dev.name, type: dev.type, protocol: dev.protocol, status: dev.status]
+            }
+        ],
+        apps: [
+            totalApps: snap.apps?.totalApps ?: 0,
+            builtInApps: snap.apps?.builtInApps ?: 0,
+            userApps: snap.apps?.userApps ?: 0,
+            byNamespace: snap.apps?.byNamespace,
+            builtInInstances: snap.apps?.builtInInstances,
+            userAppsList: snap.apps?.userAppsList,
+            parentChildHierarchy: snap.apps?.parentChildHierarchy
+        ]
+    ])
+}
+
+Map apiSnapshotDiff() {
+    int olderIdx = (params.older ?: "-1").toInteger()
+    boolean newerIsNow = params.newer == "now"
+    int newerIdx = newerIsNow ? -1 : (params.newer ?: "-1").toInteger()
+
+    List snapshots = loadSnapshots()
+    if (olderIdx < 0 || olderIdx >= snapshots.size()) return jsonResponse([error: "Invalid older snapshot index"])
+
+    Map newer
+    if (newerIsNow) {
+        createSnapshot()
+        snapshots = loadSnapshots()
+        newer = snapshots[0]
+    } else {
+        if (newerIdx < 0 || newerIdx >= snapshots.size()) return jsonResponse([error: "Invalid newer snapshot index"])
+        newer = snapshots[newerIdx]
+    }
+    Map older = snapshots[olderIdx + (newerIsNow ? 1 : 0)]
+
+    // Ensure chronological order
+    if ((older.timestampMs ?: 0) > (newer.timestampMs ?: 0)) {
+        Map temp = older; older = newer; newer = temp
+    }
+
+    // Compute diff
+    List olderDevices = older.devices?.allDevices ?: []
+    List newerDevices = newer.devices?.allDevices ?: []
+    Set olderIds = olderDevices.collect { it.id }.toSet()
+    Set newerIds = newerDevices.collect { it.id }.toSet()
+
+    List added = newerDevices.findAll { !olderIds.contains(it.id) }.collect {
+        [id: it.id, name: it.name, protocol: PROTOCOL_DISPLAY[it.protocol] ?: it.protocol]
+    }
+    List removed = olderDevices.findAll { !newerIds.contains(it.id) }.collect {
+        [id: it.id, name: it.name, protocol: PROTOCOL_DISPLAY[it.protocol] ?: it.protocol]
+    }
+    Map olderById = olderDevices.collectEntries { [(it.id): it] }
+    List changed = newerDevices.findAll { olderIds.contains(it.id) }.findAll { Map dev ->
+        Map old = olderById[dev.id]
+        old && (old.status != dev.status || old.protocol != dev.protocol)
+    }.collect { Map dev ->
+        Map old = olderById[dev.id]
+        Map change = [id: dev.id, name: dev.name, changes: []]
+        if (old.status != dev.status) change.changes << [field: "status", from: old.status, to: dev.status]
+        if (old.protocol != dev.protocol) change.changes << [field: "protocol", from: PROTOCOL_DISPLAY[old.protocol] ?: old.protocol, to: PROTOCOL_DISPLAY[dev.protocol] ?: dev.protocol]
+        return change
+    }
+
+    // Protocol changes
+    Map olderProto = older.devices?.byProtocol ?: [:]
+    Map newerProto = newer.devices?.byProtocol ?: [:]
+    Set allProtoKeys = (olderProto.keySet() + newerProto.keySet())
+    List protocolChanges = allProtoKeys.findAll { (olderProto[it] ?: 0) != (newerProto[it] ?: 0) }.collect { String key ->
+        [protocol: PROTOCOL_DISPLAY[key] ?: key, from: olderProto[key] ?: 0, to: newerProto[key] ?: 0]
+    }
+
+    // Memory delta
+    Long olderMem = older.systemHealth?.memory?.freeOSMemory
+    Long newerMem = newer.systemHealth?.memory?.freeOSMemory
+
+    // Save diff for persistence
+    saveSnapshotDiffPayload([generatedAt: new Date().format("yyyy-MM-dd HH:mm:ss"), older: older, newer: newer])
+
+    return jsonResponse([
+        older: [timestamp: older.timestamp, firmware: older.hubInfo?.firmware],
+        newer: [timestamp: newer.timestamp, firmware: newer.hubInfo?.firmware],
+        deviceChanges: [
+            olderTotal: older.devices?.totalDevices ?: 0,
+            newerTotal: newer.devices?.totalDevices ?: 0,
+            added: added, removed: removed, changed: changed
+        ],
+        protocolChanges: protocolChanges,
+        appChanges: [
+            olderTotal: older.apps?.totalApps ?: 0,
+            newerTotal: newer.apps?.totalApps ?: 0
+        ],
+        memoryDelta: olderMem != null && newerMem != null ? [from: olderMem, to: newerMem] : null
+    ])
+}
+
+Map apiCreateSnapshot() {
+    createSnapshot()
+    List snapshots = loadSnapshots()
+    return jsonResponse([success: true, snapshotCount: snapshots?.size() ?: 0])
+}
+
+Map apiDeleteSnapshot() {
+    int idx = (params.index ?: "-1").toInteger()
+    if (idx < 0) return jsonResponse([success: false, error: "Invalid index"])
+    deleteSnapshot(idx)
+    return jsonResponse([success: true])
+}
+
+Map apiCreateCheckpoint() {
+    createCheckpoint()
+    List checkpoints = loadCheckpoints()
+    return jsonResponse([success: true, checkpointCount: checkpoints?.size() ?: 0])
+}
+
+Map apiDeleteCheckpoint() {
+    int idx = (params.index ?: "-1").toInteger()
+    if (idx < 0) return jsonResponse([success: false, error: "Invalid index"])
+    deleteCheckpoint(idx)
+    return jsonResponse([success: true])
+}
+
+Map apiClearCheckpoints() {
+    clearAllCheckpoints()
+    return jsonResponse([success: true])
+}
+
+Map apiClearSnapshots() {
+    clearAllSnapshots()
+    return jsonResponse([success: true])
+}
+
+Map apiReports() {
+    List reportFiles = listHubFiles("hub_diagnostics_report_")
+    String lastReport = safeToString(state.lastReportFile, "")
+    return jsonResponse([
+        lastReport: lastReport ?: null,
+        reports: reportFiles.collect { Map f ->
+            [name: f.name, size: f.size, date: f.date]
+        }
+    ])
+}
+
+Map apiGenerateReport() {
+    generateFullReport()
+    return jsonResponse([success: true, filename: safeToString(state.lastReportFile, "")])
+}
+
+List buildPlatformAlertsApi(Map hubAlerts) {
+    List alerts = []
+    if (hubAlerts?.alerts) {
+        ALERT_DISPLAY_NAMES.each { String key, String displayName ->
+            if (hubAlerts.alerts[key] == true) {
+                String severity = (key in ["hubLoadSevere", "hubZwaveCrashed", "hubHugeDatabase", "zwaveOffline", "zigbeeOffline"]) ? "critical" : "warning"
+                alerts << [key: key, name: displayName, severity: severity]
+            }
+        }
+    }
+    if (hubAlerts?.spammyDevicesMessage) {
+        alerts << [key: "spammyDevices", name: "Spammy Devices", severity: "warning", message: hubAlerts.spammyDevicesMessage]
+    }
+    return alerts
 }
 
 // ===== PAGE VIEW MODELS =====
@@ -4371,6 +4920,7 @@ void deleteFile(String fileName) {
 
 void installed() {
     logInfo "Hub Diagnostics installed"
+    if (!state.accessToken) createAccessToken()
     initialize()
 }
 
