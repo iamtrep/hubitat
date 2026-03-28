@@ -920,6 +920,35 @@ List buildUserAppRows(List userApps) {
     }
 }
 
+List buildSnapshotDeviceRows(List allDevices) {
+    return (allDevices ?: []).sort { (it.name ?: "").toString().toLowerCase() }.collect { Map dev ->
+        [
+            name: deviceEditLink(dev.id, dev.name as String),
+            type: escapeHtml(safeToString(dev.type, "")),
+            protocol: escapeHtml(safeToString(PROTOCOL_DISPLAY[dev.protocol] ?: dev.protocol, "")),
+            status: escapeHtml(safeToString(dev.status, "")),
+            _statusColor: dev.status == "Active" ? "#388e3c" : (dev.status == "Disabled" ? "#d32f2f" : "#ff9800")
+        ]
+    }
+}
+
+List buildSnapshotAppTypeRows(Map byNamespace) {
+    return ((Map) (byNamespace ?: [:])).sort { -it.value }.collect { entry ->
+        [appType: escapeHtml(entry.key as String), instances: entry.value]
+    }
+}
+
+List buildSnapshotPlatformRows(List platformApps) {
+    return (platformApps ?: []).sort { (it.name ?: "").toString().toLowerCase() }.collect { Map app ->
+        int stateSize = (app.stateSize ?: 0) as int
+        [
+            name: platformAppStatusLink(app.id, app.name as String),
+            stateSize: stateSize,
+            _stateSizeColor: stateSize > 10000 ? "#d32f2f" : (stateSize > 5000 ? "#ff9800" : "")
+        ]
+    }
+}
+
 Map buildPerformancePageModel(Map stats, Map resources, List checkpoints) {
     return [
         checkpointCount: checkpoints?.size() ?: 0,
@@ -3029,25 +3058,17 @@ String renderSnapshotView(Map snap) {
     List allDevs = devs.allDevices ?: []
     if (allDevs) {
         sb.append("<b>Device List (${allDevs.size()}):</b><br>")
-        sb.append("<table style='width:100%; border-collapse: collapse; font-size: 11px;'>")
-        sb.append("<thead><tr style='background-color: #1A77C9; color: white;'>")
-        sb.append("<th style='padding: 4px 8px; text-align: left; border: 1px solid #ddd;'>Name</th>")
-        sb.append("<th style='padding: 4px 8px; text-align: left; border: 1px solid #ddd;'>Type</th>")
-        sb.append("<th style='padding: 4px 8px; text-align: center; border: 1px solid #ddd;'>Protocol</th>")
-        sb.append("<th style='padding: 4px 8px; text-align: center; border: 1px solid #ddd;'>Status</th>")
-        sb.append("</tr></thead><tbody>")
-        allDevs.sort { (it.name ?: "").toString().toLowerCase() }.eachWithIndex { Map dev, int idx ->
-            String rowBg = idx % 2 == 0 ? "#f9f9f9" : "#ffffff"
-            String statusColor = dev.status == "Active" ? "#388e3c" : (dev.status == "Disabled" ? "#d32f2f" : "#ff9800")
-            String nameLink = deviceEditLink(dev.id, dev.name as String)
-            sb.append("<tr style='background-color: ${rowBg};'>")
-            sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${nameLink}</td>")
-            sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${dev.type ?: ''}</td>")
-            sb.append("<td style='padding: 4px 8px; text-align: center; border: 1px solid #ddd;'>${PROTOCOL_DISPLAY[dev.protocol] ?: dev.protocol ?: ''}</td>")
-            sb.append("<td style='padding: 4px 8px; text-align: center; border: 1px solid #ddd;'><span style='color: ${statusColor};'>${dev.status ?: ''}</span></td>")
-            sb.append("</tr>")
-        }
-        sb.append("</tbody></table><br>")
+        sb.append(renderHtmlTable(
+            [
+                [label: "Name", field: "name"],
+                [label: "Type", field: "type"],
+                [label: "Protocol", field: "protocol", align: "center"],
+                [label: "Status", field: "status", align: "center"]
+            ],
+            buildSnapshotDeviceRows(allDevs),
+            [fontSize: 11, padding: "4px 8px"]
+        ))
+        sb.append("<br>")
     }
 
     // App summary
@@ -3058,61 +3079,38 @@ String renderSnapshotView(Map snap) {
     Map byNs = apps.byNamespace ?: [:]
     if (byNs) {
         sb.append("<br><b>App Types (${byNs.size()}):</b><br>")
-        sb.append("<table style='width:100%; border-collapse: collapse; font-size: 11px;'>")
-        sb.append("<thead><tr style='background-color: #1A77C9; color: white;'>")
-        sb.append("<th style='padding: 4px 8px; text-align: left; border: 1px solid #ddd;'>App Type</th>")
-        sb.append("<th style='padding: 4px 8px; text-align: center; border: 1px solid #ddd;'>Instances</th>")
-        sb.append("</tr></thead><tbody>")
-        byNs.sort { -it.value }.eachWithIndex { entry, int idx ->
-            String rowBg = idx % 2 == 0 ? "#f9f9f9" : "#ffffff"
-            sb.append("<tr style='background-color: ${rowBg};'>")
-            sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${escapeHtml(entry.key as String)}</td>")
-            sb.append("<td style='padding: 4px 8px; text-align: center; border: 1px solid #ddd;'>${entry.value}</td>")
-            sb.append("</tr>")
-        }
-        sb.append("</tbody></table><br>")
+        sb.append(renderHtmlTable(
+            [
+                [label: "App Type", field: "appType"],
+                [label: "Instances", field: "instances", align: "center"]
+            ],
+            buildSnapshotAppTypeRows(byNs),
+            [fontSize: 11, padding: "4px 8px"]
+        ))
+        sb.append("<br>")
     }
 
     // User app instances
     List userApps = apps.userAppsList ?: []
     if (userApps) {
         sb.append("<b>User App Instances (${userApps.size()}):</b><br>")
-        sb.append("<table style='width:100%; border-collapse: collapse; font-size: 11px;'>")
-        sb.append("<thead><tr style='background-color: #1A77C9; color: white;'>")
-        sb.append("<th style='padding: 4px 8px; text-align: left; border: 1px solid #ddd;'>Label</th>")
-        sb.append("<th style='padding: 4px 8px; text-align: left; border: 1px solid #ddd;'>Type</th>")
-        sb.append("</tr></thead><tbody>")
-        buildUserAppRows(userApps).eachWithIndex { Map app, int idx ->
-            String rowBg = idx % 2 == 0 ? "#f9f9f9" : "#ffffff"
-            sb.append("<tr style='background-color: ${rowBg};'>")
-            sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${app.labelHtml}</td>")
-            sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${app.type}</td>")
-            sb.append("</tr>")
-        }
-        sb.append("</tbody></table><br>")
+        sb.append(renderExportUserAppsTable(userApps))
+        sb.append("<br>")
     }
 
     // Platform apps
     List platformApps = apps.platformApps ?: []
     if (platformApps) {
         sb.append("<b>Platform Apps (${platformApps.size()}):</b><br>")
-        sb.append("<table style='width:100%; border-collapse: collapse; font-size: 11px;'>")
-        sb.append("<thead><tr style='background-color: #1A77C9; color: white;'>")
-        sb.append("<th style='padding: 4px 8px; text-align: left; border: 1px solid #ddd;'>Name</th>")
-        sb.append("<th style='padding: 4px 8px; text-align: center; border: 1px solid #ddd;'>State Size</th>")
-        sb.append("</tr></thead><tbody>")
-        platformApps.sort { (it.name ?: "").toString().toLowerCase() }.eachWithIndex { Map app, int idx ->
-            String rowBg = idx % 2 == 0 ? "#f9f9f9" : "#ffffff"
-            int stateSize = (app.stateSize ?: 0) as int
-            String stateSizeColor = stateSize > 10000 ? "#d32f2f" : (stateSize > 5000 ? "#ff9800" : "")
-            String stateSizeHtml = stateSizeColor ? "<span style='color: ${stateSizeColor};'>${stateSize}</span>" : "${stateSize}"
-            String appNameHtml = platformAppStatusLink(app.id, app.name as String)
-            sb.append("<tr style='background-color: ${rowBg};'>")
-            sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${appNameHtml}</td>")
-            sb.append("<td style='padding: 4px 8px; text-align: center; border: 1px solid #ddd;'>${stateSizeHtml}</td>")
-            sb.append("</tr>")
-        }
-        sb.append("</tbody></table><br>")
+        sb.append(renderHtmlTable(
+            [
+                [label: "Name", field: "name"],
+                [label: "State Size", field: "stateSize", align: "center"]
+            ],
+            buildSnapshotPlatformRows(platformApps),
+            [fontSize: 11, padding: "4px 8px"]
+        ))
+        sb.append("<br>")
     }
 
     return sb.toString()
@@ -3537,22 +3535,14 @@ String renderExportApps(Map reportData) {
 
 String renderExportUserAppsTable(List userApps) {
     if (!userApps) return "<p>No user app instances</p>"
-
-    StringBuilder sb = new StringBuilder()
-    sb.append("<table style='width:100%; border-collapse: collapse; font-size: 11px;'>")
-    sb.append("<thead><tr style='background-color: #1A77C9; color: white;'>")
-    sb.append("<th style='padding: 4px 8px; text-align: left; border: 1px solid #ddd;'>Label</th>")
-    sb.append("<th style='padding: 4px 8px; text-align: left; border: 1px solid #ddd;'>Type</th>")
-    sb.append("</tr></thead><tbody>")
-    buildUserAppRows(userApps).eachWithIndex { Map app, int idx ->
-        String rowBg = idx % 2 == 0 ? "#f9f9f9" : "#ffffff"
-        sb.append("<tr style='background-color: ${rowBg};'>")
-        sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${app.labelHtml}</td>")
-        sb.append("<td style='padding: 4px 8px; border: 1px solid #ddd;'>${app.type}</td>")
-        sb.append("</tr>")
-    }
-    sb.append("</tbody></table>")
-    return sb.toString()
+    return renderHtmlTable(
+        [
+            [label: "Label", field: "labelHtml"],
+            [label: "Type", field: "type"]
+        ],
+        buildUserAppRows(userApps),
+        [fontSize: 11, padding: "4px 8px"]
+    )
 }
 
 String stripDeleteButtons(String html) {
@@ -3588,39 +3578,7 @@ List buildExportZwaveMeshRows(List nodes) {
 }
 
 String renderExportSortableTable(String tableId, List columns, List rows) {
-    if (!rows || rows.size() == 0) {
-        return "<p>No data available</p>"
-    }
-
-    StringBuilder sb = new StringBuilder()
-    sb.append("<div style='overflow-x: auto;'>")
-    sb.append("<table id='${tableId}' data-sort-col='-1' data-sort-order='desc' style='width:100%; border-collapse: collapse; font-size: 11px;'>")
-    sb.append('<thead><tr style="background-color: #1A77C9; color: white;">')
-    columns.eachWithIndex { Map col, int idx ->
-        String align = col.type == "number" ? "right" : "left"
-        sb.append("<th class='sortable' onclick='sortExportTable(\"${tableId}\", ${idx}, \"${col.type}\")' style='padding: 6px; text-align: ${align}; border: 1px solid #ddd;'>${col.label}<span class='sort-arrow'> \u21C5</span></th>")
-    }
-    sb.append("</tr></thead><tbody>")
-
-    rows.eachWithIndex { Map row, int rowIdx ->
-        String rowColor = rowIdx % 2 == 0 ? "#f9f9f9" : "#ffffff"
-        sb.append("<tr style='background-color: ${rowColor};'>")
-        columns.each { Map col ->
-            String field = col.field
-            def value = row[field]
-            String displayValue = value != null ? value.toString() : ""
-            def sortValue = row["_${field}Sort"] ?: value
-            String sortStr = sortValue != null ? sortValue.toString() : ""
-            String color = row["_${field}Color"] ?: ""
-            String colorStyle = color ? " color: ${color};" : ""
-            String align = col.type == "number" ? "right" : "left"
-            sb.append("<td data-value='${escapeAttr(sortStr)}' style='padding: 6px; text-align: ${align}; border: 1px solid #ddd;${colorStyle}'>${displayValue}</td>")
-        }
-        sb.append("</tr>")
-    }
-
-    sb.append("</tbody></table></div>")
-    return sb.toString()
+    return renderSortableTableHtml(tableId, columns, rows, "sortExportTable")
 }
 
 String absolutizeReportLinks(String html, Map hubInfo) {
@@ -3668,32 +3626,23 @@ List<Map> listHubFilesByNames(List<String> names) {
 
 String renderHubFileTable(List<Map> files, String actionLabel = "Open") {
     if (!files) return "No files available"
-
-    StringBuilder sb = new StringBuilder()
-    sb.append("<table style='width:100%; border-collapse: collapse; font-size: 12px;'>")
-    sb.append("<thead><tr style='background-color: #1A77C9; color: white;'>")
-    sb.append("<th style='padding: 8px; text-align: left; border: 1px solid #ddd;'>File</th>")
-    sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Size</th>")
-    sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Date</th>")
-    sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Action</th>")
-    sb.append("</tr></thead><tbody>")
-
-    files.eachWithIndex { Map file, int idx ->
-        String rowColor = idx % 2 == 0 ? "#f9f9f9" : "#ffffff"
-        String fileName = escapeHtml(file.name as String)
-        String fileUrl = "/local/${file.name}"
-        String sizeDisplay = formatFileSize(file.size)
-        String dateDisplay = escapeHtml(safeToString(file.date, ""))
-        sb.append("<tr style='background-color: ${rowColor};'>")
-        sb.append("<td style='padding: 8px; border: 1px solid #ddd;'>${fileName}</td>")
-        sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${sizeDisplay}</td>")
-        sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${dateDisplay ?: '-'}</td>")
-        sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'><a href='${fileUrl}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${actionLabel}</a></td>")
-        sb.append("</tr>")
+    List rows = files.collect { Map file ->
+        [
+            file: escapeHtml(file.name as String),
+            size: formatFileSize(file.size),
+            date: escapeHtml(safeToString(file.date, "")) ?: "-",
+            action: hubLink("/local/${file.name}", actionLabel)
+        ]
     }
-
-    sb.append("</tbody></table>")
-    return sb.toString()
+    return renderHtmlTable(
+        [
+            [label: "File", field: "file"],
+            [label: "Size", field: "size", align: "center"],
+            [label: "Date", field: "date", align: "center"],
+            [label: "Action", field: "action", align: "center"]
+        ],
+        rows
+    )
 }
 
 String formatFileSize(Object sizeValue) {
@@ -3711,6 +3660,50 @@ String formatFileSize(Object sizeValue) {
 
 // ===== SHARED TABLE GENERATION =====
 
+String renderHtmlTable(List columns, List rows, Map options = [:]) {
+    if (!rows || rows.size() == 0) {
+        return options.emptyText ?: "No data available"
+    }
+
+    String fontSize = options.fontSize != null ? "${options.fontSize}px" : "12px"
+    String padding = options.padding ?: "8px"
+    String tableStyle = options.tableStyle ?: "width:100%; border-collapse: collapse; font-size: ${fontSize};"
+    String headerStyle = options.headerStyle ?: "background-color: #1A77C9; color: white;"
+    boolean useThead = options.containsKey("useThead") ? (options.useThead as boolean) : true
+    StringBuilder sb = new StringBuilder()
+
+    sb.append("<table style='${tableStyle}'>")
+    if (useThead) sb.append("<thead>")
+    sb.append("<tr style='${headerStyle}'>")
+    columns.each { Map col ->
+        String align = col.headerAlign ?: col.align ?: "left"
+        String extra = col.headerStyle ?: ""
+        sb.append("<th style='padding: ${padding}; text-align: ${align}; border: 1px solid #ddd;${extra}'>${col.label}</th>")
+    }
+    sb.append("</tr>")
+    if (useThead) sb.append("</thead><tbody>")
+
+    rows.eachWithIndex { Map row, int idx ->
+        String rowColor = row.__rowColor ?: (idx % 2 == 0 ? "#f9f9f9" : "#ffffff")
+        String rowStyle = row.__rowStyle ?: ""
+        sb.append("<tr style='background-color: ${rowColor};${rowStyle}'>")
+        columns.each { Map col ->
+            String field = col.field
+            String align = col.align ?: "left"
+            String color = row["_${field}Color"] ?: ""
+            String extra = row["_${field}Style"] ?: (col.cellStyle ?: "")
+            String colorStyle = color ? " color: ${color};" : ""
+            String value = row[field] != null ? row[field].toString() : ""
+            sb.append("<td style='padding: ${padding}; text-align: ${align}; border: 1px solid #ddd;${colorStyle}${extra}'>${value}</td>")
+        }
+        sb.append("</tr>")
+    }
+
+    if (useThead) sb.append("</tbody>")
+    sb.append("</table>")
+    return sb.toString()
+}
+
 String renderSortableTableScript(String uniqueId) {
     return SORTABLE_TABLE_SCRIPT_TEMPLATE.replace("__UNIQUE_ID__", uniqueId)
 }
@@ -3726,55 +3719,54 @@ String renderMemoryChartTooltipScript(String uniqueId, String containerId, Strin
         .replace("__SVG_WIDTH__", "${svgWidth}")
 }
 
+String renderSortableTableHtml(String tableId, List columns, List rows, String sortFunctionName) {
+    if (!rows || rows.size() == 0) {
+        return "No data available"
+    }
+
+    StringBuilder sb = new StringBuilder()
+    sb.append("<div style='overflow-x: auto;'>")
+    sb.append("<table id='${tableId}' data-sort-col='-1' data-sort-order='desc' style='width:100%; border-collapse: collapse; font-size: 11px;'>")
+    sb.append('<thead><tr style="background-color: #1A77C9; color: white;">')
+    columns.eachWithIndex { Map col, int idx ->
+        String align = col.type == "number" ? "right" : "left"
+        String onclick = sortFunctionName == "sortExportTable"
+            ? "sortExportTable(\"${tableId}\", ${idx}, \"${col.type}\")"
+            : "${sortFunctionName}(${idx}, \"${col.type}\")"
+        String classAttr = sortFunctionName == "sortExportTable" ? " class='sortable'" : ""
+        String cursor = sortFunctionName == "sortExportTable" ? "" : " cursor: pointer;"
+        sb.append("<th${classAttr} onclick='${onclick}' style='padding: 6px; text-align: ${align}; border: 1px solid #ddd;${cursor}'>${col.label}<span class='sort-arrow'> \u21C5</span></th>")
+    }
+    sb.append('</tr></thead><tbody>')
+
+    rows.eachWithIndex { Map row, int rowIdx ->
+        String rowColor = rowIdx % 2 == 0 ? "#f9f9f9" : "#ffffff"
+        sb.append("<tr style='background-color: ${rowColor};'>")
+        columns.each { Map col ->
+            String field = col.field
+            def value = row[field]
+            String displayValue = value != null ? value.toString() : ""
+            def sortValue = row["_${field}Sort"] ?: value
+            String sortStr = sortValue != null ? sortValue.toString() : ""
+            String color = row["_${field}Color"] ?: ""
+            String colorStyle = color ? " color: ${color};" : ""
+            String align = col.type == "number" ? "right" : "left"
+            sb.append("<td data-value='${escapeAttr(sortStr)}' style='padding: 6px; text-align: ${align}; border: 1px solid #ddd;${colorStyle}'>${displayValue}</td>")
+        }
+        sb.append('</tr>')
+    }
+
+    sb.append('</tbody></table></div>')
+    return sb.toString()
+}
+
 String generateSortableTable(String tableId, List columns, List rows) {
     if (!rows || rows.size() == 0) {
         return "No data available"
     }
 
     String uniqueId = "${tableId}_${now()}"
-
-    StringBuilder sb = new StringBuilder()
-
-    sb.append(renderSortableTableScript(uniqueId))
-
-    sb.append("<div style='overflow-x: auto;'>")
-    sb.append("<table id='${uniqueId}' data-sort-col='-1' data-sort-order='desc' style='width:100%; border-collapse: collapse; font-size: 11px;'>")
-
-    // Header
-    sb.append('<thead><tr style="background-color: #1A77C9; color: white;">')
-    columns.eachWithIndex { Map col, int idx ->
-        String align = col.type == "number" ? "right" : "left"
-        sb.append("<th onclick='sortTable_${uniqueId}(${idx}, \"${col.type}\")' style='padding: 6px; text-align: ${align}; border: 1px solid #ddd; cursor: pointer;'>${col.label}<span class='sort-arrow'> \u21C5</span></th>")
-    }
-    sb.append('</tr></thead><tbody>')
-
-    // Rows
-    rows.eachWithIndex { Map row, int rowIdx ->
-        String rowColor = rowIdx % 2 == 0 ? "#f9f9f9" : "#ffffff"
-        sb.append("<tr style='background-color: ${rowColor};'>")
-
-        columns.each { Map col ->
-            String field = col.field
-            def value = row[field]
-            String displayValue = value != null ? value.toString() : ""
-
-            // Check for sort override value
-            def sortValue = row["_${field}Sort"] ?: value
-            String sortStr = sortValue != null ? sortValue.toString() : ""
-
-            // Check for color override
-            String color = row["_${field}Color"] ?: ""
-            String colorStyle = color ? " color: ${color};" : ""
-
-            String align = col.type == "number" ? "right" : "left"
-            sb.append("<td data-value='${escapeAttr(sortStr)}' style='padding: 6px; text-align: ${align}; border: 1px solid #ddd;${colorStyle}'>${displayValue}</td>")
-        }
-
-        sb.append('</tr>')
-    }
-
-    sb.append('</tbody></table></div>')
-    return sb.toString()
+    return renderSortableTableScript(uniqueId) + renderSortableTableHtml(uniqueId, columns, rows, "sortTable_${uniqueId}")
 }
 
 // ===== FORMATTING HELPERS =====
@@ -3966,30 +3958,26 @@ String generateRuntimeSummary(Map stats, Map resources) {
 }
 
 String generateCheckpointTable(List checkpoints) {
-    StringBuilder sb = new StringBuilder()
-    sb.append("<table style='width:100%; border-collapse: collapse; font-size: 12px;'>")
-    sb.append('<thead><tr style="background-color: #1A77C9; color: white;">')
-    sb.append("<th style='padding: 8px; text-align: left; border: 1px solid #ddd;'>Timestamp</th>")
-    sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Uptime</th>")
-    sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Device Runtime</th>")
-    sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>App Runtime</th>")
-    sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'></th>")
-    sb.append('</tr></thead><tbody>')
-
+    List rows = []
     checkpoints.eachWithIndex { Map cp, int idx ->
-        String rowColor = idx % 2 == 0 ? "#f9f9f9" : "#ffffff"
-        sb.append("<tr style='background-color: ${rowColor};'>")
-        sb.append("<td style='padding: 8px; border: 1px solid #ddd;'>${cp.timestamp}</td>")
-        sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${cp.stats?.uptime ?: 'N/A'}</td>")
-        sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${cp.stats?.totalDevicesRuntime ?: 'N/A'}</td>")
-        sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${cp.stats?.totalAppsRuntime ?: 'N/A'}</td>")
-        sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>")
-        sb.append("<input type='button' name='btnDeleteCheckpoint_${idx}' value='\uD83D\uDDD1' title='Delete checkpoint' style='font-size: 14px; background: none; border: none; cursor: pointer; padding: 2px 6px;' />")
-        sb.append("</td></tr>")
+        rows << [
+            timestamp: cp.timestamp,
+            uptime: cp.stats?.uptime ?: "N/A",
+            deviceRuntime: cp.stats?.totalDevicesRuntime ?: "N/A",
+            appRuntime: cp.stats?.totalAppsRuntime ?: "N/A",
+            actions: "<input type='button' name='btnDeleteCheckpoint_${idx}' value='\uD83D\uDDD1' title='Delete checkpoint' style='font-size: 14px; background: none; border: none; cursor: pointer; padding: 2px 6px;' />"
+        ]
     }
-
-    sb.append('</tbody></table>')
-    return sb.toString()
+    return renderHtmlTable(
+        [
+            [label: "Timestamp", field: "timestamp"],
+            [label: "Uptime", field: "uptime", align: "center"],
+            [label: "Device Runtime", field: "deviceRuntime", align: "center"],
+            [label: "App Runtime", field: "appRuntime", align: "center"],
+            [label: "", field: "actions", align: "center", cellStyle: " white-space: nowrap;"]
+        ],
+        rows
+    )
 }
 
 String generateSnapshotsTable(List snapshots) {
@@ -3997,58 +3985,41 @@ String generateSnapshotsTable(List snapshots) {
         return "No config snapshots available"
     }
 
-    StringBuilder sb = new StringBuilder()
-    sb.append("<table style='width:100%; border-collapse: collapse; font-size: 12px;'>")
-    sb.append('<thead><tr style="background-color: #1A77C9; color: white;">')
-    sb.append("<th style='padding: 8px; text-align: left; border: 1px solid #ddd;'>Timestamp</th>")
-    sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Firmware</th>")
-    sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Devices</th>")
-    sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Apps</th>")
-    sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Memory</th>")
-    sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'></th>")
-    sb.append('</tr></thead><tbody>')
-
+    List rows = []
     snapshots.eachWithIndex { Map snap, int idx ->
-        String rowColor = idx % 2 == 0 ? "#f9f9f9" : "#ffffff"
-        String memDisplay = "N/A"
-        if (snap.systemHealth?.memory?.freeOSMemory) {
-            memDisplay = formatMemory(snap.systemHealth.memory.freeOSMemory as int)
-        }
-
-        sb.append("<tr style='background-color: ${rowColor};'>")
-        String firmware = snap.hubInfo?.firmware ?: "N/A"
-        sb.append("<td style='padding: 8px; border: 1px solid #ddd;'>${snap.timestamp}</td>")
-        sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${firmware}</td>")
-        sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${snap.devices?.totalDevices ?: 0}</td>")
-        sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${snap.apps?.totalApps ?: 0}</td>")
-        sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${memDisplay}</td>")
-        sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd; white-space: nowrap;'>")
-        sb.append("<input type='button' name='btnDeleteSnapshot_${idx}' value='\uD83D\uDDD1' title='Delete snapshot' style='font-size: 14px; background: none; border: none; cursor: pointer; padding: 2px 6px;' />")
-        sb.append("</td></tr>")
+        rows << [
+            timestamp: snap.timestamp,
+            firmware: snap.hubInfo?.firmware ?: "N/A",
+            devices: snap.devices?.totalDevices ?: 0,
+            apps: snap.apps?.totalApps ?: 0,
+            memory: snap.systemHealth?.memory?.freeOSMemory ? formatMemory(snap.systemHealth.memory.freeOSMemory as int) : "N/A",
+            actions: "<input type='button' name='btnDeleteSnapshot_${idx}' value='\uD83D\uDDD1' title='Delete snapshot' style='font-size: 14px; background: none; border: none; cursor: pointer; padding: 2px 6px;' />"
+        ]
     }
-
-    sb.append('</tbody></table>')
-    return sb.toString()
+    return renderHtmlTable(
+        [
+            [label: "Timestamp", field: "timestamp"],
+            [label: "Firmware", field: "firmware", align: "center"],
+            [label: "Devices", field: "devices", align: "center"],
+            [label: "Apps", field: "apps", align: "center"],
+            [label: "Memory", field: "memory", align: "center"],
+            [label: "", field: "actions", align: "center", cellStyle: " white-space: nowrap;"]
+        ],
+        rows
+    )
 }
 
 String formatMetricsTable(List metrics) {
-    StringBuilder sb = new StringBuilder()
-    sb.append("<table style='width:100%; border-collapse: collapse; font-size: 12px;'>")
-    sb.append("<thead><tr style='background-color: #1A77C9; color: white;'>")
-    sb.append("<th style='padding: 8px; text-align: left; border: 1px solid #ddd;'>Metric</th>")
-    sb.append("<th style='padding: 8px; text-align: right; border: 1px solid #ddd;'>Value</th>")
-    sb.append("</tr></thead><tbody>")
-
-    metrics.eachWithIndex { List metric, int idx ->
-        String rowColor = idx % 2 == 0 ? "#f9f9f9" : "#ffffff"
-        sb.append("<tr style='background-color: ${rowColor};'>")
-        sb.append("<td style='padding: 8px; border: 1px solid #ddd;'><b>${metric[0]}</b></td>")
-        sb.append("<td style='padding: 8px; text-align: right; border: 1px solid #ddd;'>${metric[1]}</td>")
-        sb.append("</tr>")
+    List rows = (metrics ?: []).collect { List metric ->
+        [metric: "<b>${metric[0]}</b>", value: metric[1]]
     }
-
-    sb.append("</tbody></table>")
-    return sb.toString()
+    return renderHtmlTable(
+        [
+            [label: "Metric", field: "metric"],
+            [label: "Value", field: "value", align: "right"]
+        ],
+        rows
+    )
 }
 
 String formatProtocolTable(Map protocolMap, Map idsByProtocol = [:]) {
@@ -4056,69 +4027,42 @@ String formatProtocolTable(Map protocolMap, Map idsByProtocol = [:]) {
         return "No protocol data available"
     }
 
-    StringBuilder sb = new StringBuilder()
-    sb.append("<table style='width:100%; border-collapse: collapse;'>")
-    sb.append("<tr><th style='text-align:left; border-bottom: 1px solid #ddd; padding: 4px;'>Protocol</th>")
-    sb.append("<th style='text-align:right; border-bottom: 1px solid #ddd; padding: 4px;'>Count</th></tr>")
-
+    List rows = []
     PROTOCOL_DISPLAY.each { String key, String displayName ->
         int count = (protocolMap[key] ?: 0) as int
         if (count > 0) {
             List ids = idsByProtocol[key] ?: []
-            String countDisplay = ids ? deviceListLink(count, ids) : count.toString()
-            sb.append("<tr><td style='padding: 4px;'>${displayName}</td>")
-            sb.append("<td style='text-align:right; padding: 4px;'>${countDisplay}</td></tr>")
+            rows << [protocol: displayName, count: ids ? deviceListLink(count, ids) : count.toString()]
         }
     }
-    sb.append("</table>")
-    return sb.toString()
-}
-
-String formatSimpleTable(Map dataMap, String header1, String header2) {
-    if (!dataMap || dataMap.isEmpty()) {
-        return "No data available"
-    }
-
-    Map sorted = dataMap.sort { -it.value }
-    StringBuilder sb = new StringBuilder()
-    sb.append("<table style='width:100%; border-collapse: collapse;'>")
-    sb.append("<tr><th style='text-align:left; border-bottom: 1px solid #ddd; padding: 4px;'>${header1}</th>")
-    sb.append("<th style='text-align:right; border-bottom: 1px solid #ddd; padding: 4px;'>${header2}</th></tr>")
-
-    sorted.each { key, value ->
-        if (value > 0 || dataMap.size() < 20) {
-            sb.append("<tr><td style='padding: 4px;'>${key.toString().capitalize()}</td>")
-            sb.append("<td style='text-align:right; padding: 4px;'>${value}</td></tr>")
-        }
-    }
-    sb.append("</table>")
-    return sb.toString()
+    return renderHtmlTable(
+        [
+            [label: "Protocol", field: "protocol", headerStyle: " border-bottom: 1px solid #ddd;", cellStyle: " border: none;"],
+            [label: "Count", field: "count", align: "right", headerStyle: " border-bottom: 1px solid #ddd;", cellStyle: " border: none;"]
+        ],
+        rows,
+        [padding: "4px", useThead: false, tableStyle: "width:100%; border-collapse: collapse;"]
+    )
 }
 
 String formatAppsByTypeTable(Map appStats) {
-    StringBuilder sb = new StringBuilder()
-    sb.append("<table style='width:100%; border-collapse: collapse; font-size: 12px;'>")
-    sb.append("<thead><tr style='background-color: #1A77C9; color: white;'>")
-    sb.append("<th style='padding: 8px; text-align: left; border: 1px solid #ddd;'>App Type</th>")
-    sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Instances</th>")
-    sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>User/System</th>")
-    sb.append("</tr></thead><tbody>")
-
-    Map sorted = ((Map) appStats.byNamespace).sort { -it.value }
-    sorted.eachWithIndex { entry, int idx ->
-        String rowColor = idx % 2 == 0 ? "#f9f9f9" : "#ffffff"
+    Set userAppTypes = ((List) appStats.userAppsList ?: []).collect { it.name } as Set
+    List rows = ((Map) (appStats.byNamespace ?: [:])).sort { -it.value }.collect { entry ->
         String appType = entry.key
-        boolean userApp = ((List) appStats.userAppsList).any { it.name == appType }
-
-        sb.append("<tr style='background-color: ${rowColor};'>")
-        sb.append("<td style='padding: 8px; border: 1px solid #ddd;'>${appType}</td>")
-        sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${entry.value}</td>")
-        sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${userApp ? 'User' : 'System'}</td>")
-        sb.append("</tr>")
+        [
+            appType: escapeHtml(appType),
+            instances: entry.value,
+            owner: userAppTypes.contains(appType) ? "User" : "System"
+        ]
     }
-
-    sb.append("</tbody></table>")
-    return sb.toString()
+    return renderHtmlTable(
+        [
+            [label: "App Type", field: "appType"],
+            [label: "Instances", field: "instances", align: "center"],
+            [label: "User/System", field: "owner", align: "center"]
+        ],
+        rows
+    )
 }
 
 String formatParentChildHierarchy(List hierarchy) {
