@@ -177,6 +177,44 @@ hr.addEventListener('mouseleave',function(){
         .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; text-align: center; color: #999; font-size: 0.9em; }
 '''
 
+@Field static final String EXPORT_SORT_SCRIPT = '''<script>
+function sortExportTable(tableId, colIdx, dataType) {
+    var table = document.getElementById(tableId);
+    if (!table) return;
+    var tbody = table.getElementsByTagName('tbody')[0];
+    if (!tbody) return;
+    var rows = Array.from(tbody.getElementsByTagName('tr'));
+    var curCol = table.getAttribute('data-sort-col');
+    var curOrd = table.getAttribute('data-sort-order');
+    var newOrd = (curCol == String(colIdx) && curOrd == 'desc') ? 'asc' : 'desc';
+    rows.sort(function(a, b) {
+        var aV = a.cells[colIdx].getAttribute('data-value');
+        var bV = b.cells[colIdx].getAttribute('data-value');
+        if (dataType == 'number') {
+            aV = parseFloat(aV) || 0;
+            bV = parseFloat(bV) || 0;
+        } else {
+            aV = (aV || '').toLowerCase();
+            bV = (bV || '').toLowerCase();
+        }
+        if (aV < bV) return newOrd == 'asc' ? -1 : 1;
+        if (aV > bV) return newOrd == 'asc' ? 1 : -1;
+        return 0;
+    });
+    rows.forEach(function(row, idx) {
+        row.style.backgroundColor = idx % 2 === 0 ? '#f9f9f9' : '#ffffff';
+        tbody.appendChild(row);
+    });
+    table.setAttribute('data-sort-col', String(colIdx));
+    table.setAttribute('data-sort-order', newOrd);
+    var headers = table.getElementsByTagName('th');
+    for (var i = 0; i < headers.length; i++) {
+        var arrow = headers[i].getElementsByClassName('sort-arrow')[0];
+        if (arrow) arrow.innerHTML = (i === colIdx) ? (newOrd === 'desc' ? ' \\u25BC' : ' \\u25B2') : ' \\u21C5';
+    }
+}
+</script>'''
+
 definition(
     name: "Hub Diagnostics",
     namespace: "iamtrep",
@@ -222,6 +260,33 @@ Map dashboardPage() {
         section("Actions") {
             input "btnDashSnapshot", "button", title: "Create Config Snapshot"
             input "btnDashCheckpoint", "button", title: "Create Perf Checkpoint"
+        }
+
+        section("Export & Utilities") {
+            input "btnFullReport", "button", title: "Generate Full Report"
+            String lastReportLink = buildLastReportLinkHtml()
+            if (lastReportLink) {
+                paragraph lastReportLink
+            }
+        }
+
+        List reportFiles = listHubFiles("hub_diagnostics_report_")
+        if (reportFiles) {
+            section("Existing Reports", hideable: true, hidden: true) {
+                paragraph renderHubFileTable(reportFiles, "Open")
+            }
+        }
+
+        List dataFiles = listHubFilesByNames([
+            SNAPSHOTS_FILE,
+            CHECKPOINTS_FILE,
+            PERFORMANCE_COMPARISON_FILE,
+            SNAPSHOT_DIFF_FILE
+        ])
+        if (dataFiles) {
+            section("Data Files", hideable: true, hidden: true) {
+                paragraph renderHubFileTable(dataFiles, "Download")
+            }
         }
 
         section("Installation") {
@@ -696,7 +761,6 @@ Map snapshotsPage() {
             if (snapshots.size() > 0) {
                 input "btnClearSnapshots", "button", title: "Clear All Config Snapshots"
             }
-            input "btnFullReport", "button", title: "Generate Full Report"
         }
 
         if (snapshots.size() > 0) {
@@ -1056,6 +1120,13 @@ Map settingsPage() {
 
         section("Logging") {
             input "debugLogging", "bool", title: "Enable debug logging", defaultValue: false
+        }
+
+        section("Export") {
+            input "reportLinkMode", "enum", title: "Full report link mode",
+                options: ["relative": "Relative (recommended)", "absoluteLocal": "Absolute local IP"],
+                defaultValue: "relative", required: true
+            paragraph "<i>Relative links work best when opening reports from the hub's /local/ endpoint or through Remote Admin.</i>"
         }
 
         section("Installation") {
@@ -2992,126 +3063,419 @@ void generateFullReport() {
     String timestamp = new Date().format("yyyy-MM-dd HH:mm:ss")
     Map deviceStats = analyzeDevices()
     Map appStats = analyzeApps()
+    Map networkData = analyzeNetwork()
     Map systemHealth = analyzeSystemHealth()
     Map hubInfo = getHubInfo()
+    Map zigbeeMesh = fetchZigbeeMeshInfo()
+    String zwaveVersion = fetchZwaveVersion()
+    Map zwaveMesh = extractZwaveMeshQuality(networkData.zwave ?: [:])
+    Map reportData = [
+        timestamp  : timestamp,
+        hubInfo    : hubInfo,
+        deviceStats: deviceStats,
+        appStats   : appStats,
+        networkData: networkData,
+        systemHealth: systemHealth,
+        zigbeeMesh : zigbeeMesh,
+        zwaveVersion: zwaveVersion,
+        zwaveMesh  : zwaveMesh
+    ]
 
-    String html = """<!DOCTYPE html>
+    String body = new StringBuilder()
+        .append(renderExportHeader(reportData))
+        .append(renderExportSection("Executive Summary", renderExportMetricTable([
+            ["Total Devices", deviceStats.totalDevices],
+            ["Total Apps", appStats.totalApps],
+            ["Firmware", hubInfo.firmware],
+            ["Hardware", hubInfo.hardware]
+        ])))
+        .append(renderExportSection("System Health", renderExportSystemHealth(reportData)))
+        .append(renderExportSection("Network", renderExportNetwork(reportData)))
+        .append(renderExportSection("Devices", renderExportDevices(reportData)))
+        .append(renderExportSection("Applications", renderExportApps(reportData)))
+        .append("<div class='footer'><p>Generated by Hub Diagnostics v${APP_VERSION}</p><p>Hubitat Elevation - ${hubInfo.name}</p></div>")
+        .toString()
+
+    String html = renderExportShell("Hub Diagnostics Report - ${timestamp}", body, EXPORT_SORT_SCRIPT)
+    if ((settings.reportLinkMode ?: "relative") == "absoluteLocal") {
+        html = absolutizeReportLinks(html, hubInfo)
+    }
+
+    String filename = "hub_diagnostics_report_${new Date().format('yyyyMMdd_HHmmss')}.html"
+    writeFile(filename, html)
+    state.lastReportFile = filename
+    logInfo "Report generated: ${filename}"
+}
+
+String renderExportShell(String title, String body, String scripts = "") {
+    return """<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Hub Diagnostics Report - ${timestamp}</title>
+    <title>${title}</title>
     <style>
 ${FULL_REPORT_STYLES}
+    th.sortable { cursor: pointer; }
+    .section-block { margin-top: 28px; }
+    .section-block > h2 { margin-bottom: 12px; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Hub Diagnostics Report</h1>
-        <p><strong>Generated:</strong> ${timestamp}</p>
-        <p><strong>Hub:</strong> ${hubInfo.name}</p>
-        <p><strong>Firmware:</strong> ${hubInfo.firmware}</p>
-
-        <h2>Executive Summary</h2>
-        <div class="metric"><div class="metric-label">Total Devices</div><div class="metric-value">${deviceStats.totalDevices}</div></div>
-        <div class="metric"><div class="metric-label">Total Apps</div><div class="metric-value">${appStats.totalApps}</div></div>
-
-        <h2>Device Analysis</h2>
-        <table>
-            <thead><tr><th>Metric</th><th>Count</th></tr></thead>
-            <tbody>
-                <tr><td>Total Devices</td><td>${deviceStats.totalDevices}</td></tr>
-                <tr><td>Active Devices</td><td>${deviceStats.activeDevices}</td></tr>
-                <tr><td>Inactive Devices</td><td>${deviceStats.inactiveDevices}</td></tr>
-                <tr><td>Disabled Devices</td><td>${deviceStats.disabledDevices}</td></tr>
-                <tr><td>Parent Devices</td><td>${deviceStats.parentDevices}</td></tr>
-                <tr><td>Child Devices</td><td>${deviceStats.childDevices}</td></tr>
-                <tr><td>Hub Mesh Linked</td><td>${deviceStats.linkedDevices}</td></tr>
-                <tr><td>Battery-Powered</td><td>${deviceStats.batteryDevices}</td></tr>
-            </tbody>
-        </table>
-
-        <h3>All Devices</h3>
-        ${generateHtmlReportDeviceTable(deviceStats.allDevices)}
-
-        <h3>Protocol Distribution</h3>
-        <table>
-            <thead><tr><th>Protocol</th><th>Count</th></tr></thead>
-            <tbody>
-                ${deviceStats.byProtocol.collect { k, v -> v > 0 ? "<tr><td>${PROTOCOL_DISPLAY[k] ?: k.capitalize()}</td><td>${v}</td></tr>" : "" }.join('\n')}
-            </tbody>
-        </table>
-
-        <h2>Application Analysis</h2>
-        <table>
-            <tr><th>Metric</th><th>Count</th></tr>
-            <tr><td>Total Apps</td><td>${appStats.totalApps}</td></tr>
-            <tr><td>User Apps</td><td>${appStats.userApps}</td></tr>
-            <tr><td>Built-in Apps</td><td>${appStats.builtInApps}</td></tr>
-        </table>
-
-        <h2>System Health</h2>
-        ${systemHealth.alerts && systemHealth.alerts.size() > 0 ?
-            '<div class="warning"><strong>Alerts:</strong><ul>' +
-            systemHealth.alerts.collect { "<li>${it}</li>" }.join('') +
-            '</ul></div>' :
-            '<p>No system alerts</p>'}
-
-        <h3>Resources</h3>
-        <table>
-            <tr><th>Resource</th><th>Value</th></tr>
-            ${systemHealth.memory ? """
-            <tr><td>Free OS Memory</td><td>${formatMemory(systemHealth.memory.freeOSMemory ?: 0)}</td></tr>
-            <tr><td>CPU Load Avg (5m)</td><td>${String.format('%.2f', (systemHealth.memory.cpuAvg5min ?: 0) as float)}</td></tr>
-            <tr><td>Free Java Memory</td><td>${formatMemory(systemHealth.memory.freeJavaMemory ?: 0)}</td></tr>
-            """ : '<tr><td colspan="2">Memory data unavailable</td></tr>'}
-            ${systemHealth.temperature != null ? "<tr><td>Hub Temperature</td><td>${String.format('%.1f', systemHealth.temperature)}\u00B0C</td></tr>" : ""}
-            ${systemHealth.databaseSize != null ? "<tr><td>Database Size</td><td>${systemHealth.databaseSize} MB</td></tr>" : ""}
-        </table>
-
-        <div class="footer">
-            <p>Generated by Hub Diagnostics v${APP_VERSION}</p>
-            <p>Hubitat Elevation - ${hubInfo.name}</p>
-        </div>
+${body}
     </div>
+${scripts ?: ""}
 </body>
 </html>"""
-
-    String filename = "hub_report_${new Date().format('yyyyMMdd_HHmmss')}.html"
-    writeFile(filename, html)
-    logInfo "Report generated: ${filename}"
 }
 
-String generateHtmlReportDeviceTable(List allDevices) {
-    if (!allDevices || allDevices.isEmpty()) {
-        return "<p>No devices found</p>"
+String renderExportHeader(Map reportData) {
+    Map hubInfo = reportData.hubInfo ?: [:]
+    return """<h1>Hub Diagnostics Report</h1>
+<p><strong>Generated:</strong> ${reportData.timestamp}</p>
+<p><strong>Hub:</strong> ${hubInfo.name}</p>
+<p><strong>Firmware:</strong> ${hubInfo.firmware}</p>"""
+}
+
+String renderExportSection(String title, String body) {
+    return "<div class='section-block'><h2>${title}</h2>${body ?: '<p>No data available</p>'}</div>"
+}
+
+String renderExportMetricTable(List metrics) {
+    return formatMetricsTable(metrics ?: [])
+}
+
+String renderExportSystemHealth(Map reportData) {
+    Map systemHealth = reportData.systemHealth ?: [:]
+    StringBuilder sb = new StringBuilder()
+
+    if (systemHealth.alerts && systemHealth.alerts.size() > 0) {
+        sb.append("<div class='warning'><strong>Alerts:</strong><ul>")
+        systemHealth.alerts.each { String alert -> sb.append("<li>${alert}</li>") }
+        sb.append("</ul></div>")
+    } else {
+        sb.append("<p>No system alerts</p>")
+    }
+
+    List resourceMetrics = buildSystemResourceMetrics(systemHealth)
+    if (resourceMetrics) {
+        sb.append("<h3>Resources</h3>")
+        sb.append(renderExportMetricTable(resourceMetrics))
+    }
+
+    List dbMetrics = buildDatabaseMetrics(systemHealth)
+    if (dbMetrics) {
+        sb.append("<h3>Database & Limits</h3>")
+        sb.append(renderExportMetricTable(dbMetrics))
+    }
+
+    return sb.toString()
+}
+
+String renderExportNetwork(Map reportData) {
+    Map networkData = reportData.networkData ?: [:]
+    Map zwaveMesh = reportData.zwaveMesh ?: [:]
+    Map zigbeeMesh = reportData.zigbeeMesh ?: [:]
+    String zwaveVersion = reportData.zwaveVersion
+    StringBuilder sb = new StringBuilder()
+
+    Map net = networkData.network ?: [:]
+    if (net && !net.error) {
+        List netMetrics = [
+            ["IP Address", net.lanAddr ?: "N/A"],
+            ["Connection Type", net.usingStaticIP ? "Static IP" : "DHCP"],
+            ["Gateway", net.staticGateway ?: "N/A"],
+            ["Subnet Mask", net.staticSubnetMask ?: "N/A"],
+            ["Ethernet", net.hasEthernet ? "Connected" : "Not Connected"],
+            ["WiFi Available", net.hasWiFi ? "Yes" : "No"]
+        ]
+        if (net.hasWiFi && net.wifiNetwork) netMetrics << ["WiFi Network", net.wifiNetwork]
+        sb.append("<h3>Network Configuration</h3>")
+        sb.append(renderExportMetricTable(netMetrics))
+    }
+
+    Map zw = networkData.zwave ?: [:]
+    if (zw && !zw.error) {
+        String healthyColor = zw.healthy ? "#388e3c" : "#d32f2f"
+        List zwMetrics = [
+            ["Enabled", zw.enabled ? "Yes" : "No"],
+            ["Healthy", "<span style='color: ${healthyColor};'>${zw.healthy ? 'Yes' : 'No'}</span>"],
+            ["Region", zw.region ?: "N/A"],
+            ["Node Count", zw.nodes ? zw.nodes.size() : 0]
+        ]
+        if (zwaveVersion) zwMetrics << ["Firmware", zwaveVersion]
+        sb.append("<h3>Z-Wave</h3>")
+        sb.append(renderExportMetricTable(zwMetrics))
+    }
+
+    if (zwaveMesh?.nodes) {
+        List nodeRows = buildExportZwaveMeshRows(zwaveMesh.nodes ?: [])
+        sb.append("<h3>Z-Wave Mesh</h3>")
+        sb.append(renderExportMetricTable([
+            ["Node Count", zwaveMesh.nodeCount ?: 0],
+            ["Average PER", String.format('%.1f%%', (zwaveMesh.avgPer ?: 0) as float)],
+            ["Nodes with Packet Errors", zwaveMesh.nodesWithErrors ?: 0],
+            ["Total Route Changes", zwaveMesh.totalRouteChanges ?: 0]
+        ]))
+        sb.append(renderExportSortableTable("exportZwaveMesh", [
+            [label: "Device", field: "name", type: "string"],
+            [label: "RSSI", field: "rssi", type: "number"],
+            [label: "PER %", field: "per", type: "number"],
+            [label: "Neighbors", field: "neighbors", type: "number"],
+            [label: "Route", field: "route", type: "string"],
+            [label: "Route Changes", field: "routeChanges", type: "number"],
+            [label: "State", field: "state", type: "string"]
+        ], nodeRows))
+    }
+
+    Map zb = networkData.zigbee ?: [:]
+    if (zb && !zb.error) {
+        String healthyColor = zb.healthy ? "#388e3c" : "#d32f2f"
+        List zbMetrics = [
+            ["Enabled", zb.enabled ? "Yes" : "No"],
+            ["Healthy", "<span style='color: ${healthyColor};'>${zb.healthy ? 'Yes' : 'No'}</span>"],
+            ["Network State", zb.networkState ?: "Unknown"],
+            ["Channel", zb.channel ?: "N/A"],
+            ["Device Count", zb.devices ? zb.devices.size() : 0]
+        ]
+        sb.append("<h3>Zigbee</h3>")
+        sb.append(renderExportMetricTable(zbMetrics))
+    }
+
+    if (zigbeeMesh?.neighbors) {
+        List zigbeeMetrics = [
+            ["Repeater Neighbors", zigbeeMesh.neighbors.size()],
+            ["End Devices (Direct)", zigbeeMesh.childDevices?.size() ?: 0],
+            ["Routes", zigbeeMesh.routes?.size() ?: 0]
+        ]
+        if (zigbeeMesh.avgLqi != null) zigbeeMetrics << ["Average LQI", zigbeeMesh.avgLqi]
+        sb.append("<h3>Zigbee Mesh</h3>")
+        sb.append(renderExportMetricTable(zigbeeMetrics))
+    }
+
+    Map matter = networkData.matter ?: [:]
+    if (matter && !matter.error) {
+        List matterMetrics = [
+            ["Devices", matter.devices ? matter.devices.size() : 0],
+            ["Fabrics", matter.fabrics ? matter.fabrics.size() : "N/A"]
+        ]
+        sb.append("<h3>Matter</h3>")
+        sb.append(renderExportMetricTable(matterMetrics))
+    }
+
+    Map hubMesh = networkData.hubMesh ?: [:]
+    if (hubMesh && !hubMesh.error) {
+        List hubMeshMetrics = [
+            ["Linked Devices", hubMesh.linkedDevices ? hubMesh.linkedDevices.size() : 0],
+            ["Source Hubs", hubMesh.hubs ? hubMesh.hubs.size() : 0]
+        ]
+        sb.append("<h3>Hub Mesh</h3>")
+        sb.append(renderExportMetricTable(hubMeshMetrics))
+    }
+
+    return sb.toString()
+}
+
+String renderExportDevices(Map reportData) {
+    Map deviceStats = reportData.deviceStats ?: [:]
+    Map pageModel = buildDevicesPageModel(deviceStats)
+    StringBuilder sb = new StringBuilder()
+    sb.append(renderExportMetricTable(buildDeviceSummaryMetrics(deviceStats)))
+    sb.append("<h3>Protocol Distribution</h3>")
+    sb.append(formatProtocolTable(deviceStats.byProtocol ?: [:], deviceStats.idsByProtocol ?: [:]))
+    sb.append("<h3>All Devices</h3>")
+    sb.append(renderExportSortableTable("exportDevices", [
+        [label: "Name", field: "name", type: "string"],
+        [label: "Type", field: "type", type: "string"],
+        [label: "Protocol", field: "protocol", type: "string"],
+        [label: "Room", field: "room", type: "string"],
+        [label: "Status", field: "status", type: "string"],
+        [label: "Last Activity", field: "lastActivity", type: "string"],
+        [label: "Battery", field: "battery", type: "number"],
+        [label: "Parent", field: "parent", type: "string"]
+    ], pageModel.deviceRows ?: []))
+    if (pageModel.lowBatteryHtml) {
+        sb.append("<h3>Low Battery Alerts</h3>")
+        sb.append(pageModel.lowBatteryHtml)
+    }
+    return sb.toString()
+}
+
+String renderExportApps(Map reportData) {
+    Map appStats = reportData.appStats ?: [:]
+    Map pageModel = buildAppsPageModel(appStats)
+    StringBuilder sb = new StringBuilder()
+    sb.append(renderExportMetricTable(buildAppSummaryMetrics(appStats)))
+    if (pageModel.appTypeCount > 0) {
+        sb.append("<h3>App Types</h3>")
+        sb.append(formatAppsByTypeTable(appStats))
+    }
+    if (pageModel.hierarchyCount > 0) {
+        sb.append("<h3>Parent/Child Hierarchy</h3>")
+        sb.append(formatParentChildHierarchy(appStats.parentChildHierarchy))
+    }
+    if (pageModel.platformAppCount > 0) {
+        sb.append("<h3>Platform Apps</h3>")
+        sb.append(renderExportSortableTable("exportPlatformApps", [
+            [label: "Name", field: "name", type: "string"],
+            [label: "State Size", field: "stateSize", type: "number"],
+            [label: "CPU %", field: "pctTotal", type: "number"],
+            [label: "Exec Count", field: "count", type: "number"],
+            [label: "Avg (ms)", field: "average", type: "number"],
+            [label: "Hub Actions", field: "hubActions", type: "number"],
+            [label: "Cloud Calls", field: "cloudCalls", type: "number"]
+        ], pageModel.platformRows ?: []))
+    }
+    return sb.toString()
+}
+
+List buildExportZwaveMeshRows(List nodes) {
+    return (nodes ?: []).collect { Map n ->
+        String stateColor = n.state == "OK" ? "" : "#d32f2f"
+        String perColor = n.per > 1 ? "#d32f2f" : (n.per > 0 ? "#ff9800" : "")
+        String rssiColor = ""
+        if (n.rssi != null) {
+            rssiColor = n.rssi >= -60 ? "#388e3c" : (n.rssi >= -80 ? "#ff9800" : "#d32f2f")
+        }
+        String nameHtml = n.deviceId ? "<a href='/device/edit/${n.deviceId}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${escapeHtml(n.name as String)}</a>" : escapeHtml(n.name as String)
+        Map row = [
+            name: nameHtml,
+            _nameSort: n.name,
+            rssi: n.rssiStr ?: "N/A",
+            _rssiSort: n.rssi ?: -999,
+            per: n.per,
+            neighbors: n.neighbors,
+            route: n.route ?: "None",
+            routeChanges: n.routeChanges,
+            state: n.state
+        ]
+        if (stateColor) row._stateColor = stateColor
+        if (perColor) row._perColor = perColor
+        if (rssiColor) row._rssiColor = rssiColor
+        return row
+    }
+}
+
+String renderExportSortableTable(String tableId, List columns, List rows) {
+    if (!rows || rows.size() == 0) {
+        return "<p>No data available</p>"
     }
 
     StringBuilder sb = new StringBuilder()
-    sb.append("<table><thead><tr>")
-    sb.append("<th>Name</th><th>Type</th><th>Protocol</th><th>Room</th><th>Status</th>")
-    sb.append("<th>Last Activity</th><th>Battery</th><th>Parent</th>")
+    sb.append("<div style='overflow-x: auto;'>")
+    sb.append("<table id='${tableId}' data-sort-col='-1' data-sort-order='desc' style='width:100%; border-collapse: collapse; font-size: 11px;'>")
+    sb.append('<thead><tr style="background-color: #1A77C9; color: white;">')
+    columns.eachWithIndex { Map col, int idx ->
+        String align = col.type == "number" ? "right" : "left"
+        sb.append("<th class='sortable' onclick='sortExportTable(\"${tableId}\", ${idx}, \"${col.type}\")' style='padding: 6px; text-align: ${align}; border: 1px solid #ddd;'>${col.label}<span class='sort-arrow'> \u21C5</span></th>")
+    }
     sb.append("</tr></thead><tbody>")
 
-    List sorted = allDevices.sort { it.name }
-    sorted.each { Map device ->
-        String statusColor = device.status == "Disabled" ? "#d32f2f" : (device.status == "Active" ? "#388e3c" : "#ff9800")
-        String protocolDisplay = PROTOCOL_DISPLAY[device.protocol] ?: (device.protocol ?: "").toString().capitalize()
-        String parentDisplay = device.parentAppName ?: device.parentDeviceName ?: "-"
+    rows.eachWithIndex { Map row, int rowIdx ->
+        String rowColor = rowIdx % 2 == 0 ? "#f9f9f9" : "#ffffff"
+        sb.append("<tr style='background-color: ${rowColor};'>")
+        columns.each { Map col ->
+            String field = col.field
+            def value = row[field]
+            String displayValue = value != null ? value.toString() : ""
+            def sortValue = row["_${field}Sort"] ?: value
+            String sortStr = sortValue != null ? sortValue.toString() : ""
+            String color = row["_${field}Color"] ?: ""
+            String colorStyle = color ? " color: ${color};" : ""
+            String align = col.type == "number" ? "right" : "left"
+            sb.append("<td data-value='${escapeAttr(sortStr)}' style='padding: 6px; text-align: ${align}; border: 1px solid #ddd;${colorStyle}'>${displayValue}</td>")
+        }
+        sb.append("</tr>")
+    }
 
-        sb.append("<tr>")
-        sb.append("<td><strong><a href='/device/edit/${device.id}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${device.name}</a></strong></td>")
-        sb.append("<td style='font-size: 0.9em;'>${device.type}</td>")
-        sb.append("<td>${protocolDisplay}</td>")
-        sb.append("<td>${device.room ?: '-'}</td>")
-        sb.append("<td style='color: ${statusColor};'><strong>${device.status}</strong></td>")
-        sb.append("<td>${device.lastActivity ?: 'Never'}</td>")
-        sb.append("<td>${device.battery != null ? device.battery + '%' : '-'}</td>")
-        sb.append("<td>${parentDisplay}</td>")
+    sb.append("</tbody></table></div>")
+    return sb.toString()
+}
+
+String absolutizeReportLinks(String html, Map hubInfo) {
+    String ip = safeToString(hubInfo?.ip, "")
+    if (!ip || ip == "Unknown") return html
+    return html.replace("href='/", "href='http://${ip}/")
+}
+
+String buildLastReportLinkHtml() {
+    String fileName = safeToString(state.lastReportFile, "")
+    if (!fileName) return null
+    if (!fileExists(fileName)) {
+        state.remove("lastReportFile")
+        return null
+    }
+    return "<a href='/local/${fileName}' target='_blank' style='color: #1A77C9; text-decoration: none;'>Open latest full report</a>"
+}
+
+List<Map> listHubFiles(String nameContains = null) {
+    try {
+        List<Map<String, String>> hubFiles = getHubFiles() ?: []
+        List<Map> fileList = []
+        hubFiles.each { Map<String, String> rec ->
+            String name = safeToString(rec.name, "")
+            if (!name) return
+            if (nameContains && !name.contains(nameContains)) return
+            fileList << [
+                name: name,
+                size: rec.size,
+                date: rec.date ?: rec.lastModified ?: rec.modified ?: ""
+            ]
+        }
+        return fileList.sort { a, b -> (b.name ?: "") <=> (a.name ?: "") }
+    } catch (Exception e) {
+        logDebug "Unable to list hub files: ${e.message}"
+        return []
+    }
+}
+
+List<Map> listHubFilesByNames(List<String> names) {
+    Set<String> wanted = (names ?: []).findAll { it } as Set<String>
+    if (!wanted) return []
+    return listHubFiles().findAll { Map rec -> wanted.contains(rec.name) }
+}
+
+String renderHubFileTable(List<Map> files, String actionLabel = "Open") {
+    if (!files) return "No files available"
+
+    StringBuilder sb = new StringBuilder()
+    sb.append("<table style='width:100%; border-collapse: collapse; font-size: 12px;'>")
+    sb.append("<thead><tr style='background-color: #1A77C9; color: white;'>")
+    sb.append("<th style='padding: 8px; text-align: left; border: 1px solid #ddd;'>File</th>")
+    sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Size</th>")
+    sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Date</th>")
+    sb.append("<th style='padding: 8px; text-align: center; border: 1px solid #ddd;'>Action</th>")
+    sb.append("</tr></thead><tbody>")
+
+    files.eachWithIndex { Map file, int idx ->
+        String rowColor = idx % 2 == 0 ? "#f9f9f9" : "#ffffff"
+        String fileName = escapeHtml(file.name as String)
+        String fileUrl = "/local/${file.name}"
+        String sizeDisplay = formatFileSize(file.size)
+        String dateDisplay = escapeHtml(safeToString(file.date, ""))
+        sb.append("<tr style='background-color: ${rowColor};'>")
+        sb.append("<td style='padding: 8px; border: 1px solid #ddd;'>${fileName}</td>")
+        sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${sizeDisplay}</td>")
+        sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>${dateDisplay ?: '-'}</td>")
+        sb.append("<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'><a href='${fileUrl}' target='_blank' style='color: #1A77C9; text-decoration: none;'>${actionLabel}</a></td>")
         sb.append("</tr>")
     }
 
     sb.append("</tbody></table>")
     return sb.toString()
+}
+
+String formatFileSize(Object sizeValue) {
+    if (sizeValue == null) return "-"
+    long bytes
+    try {
+        bytes = sizeValue.toString().toLong()
+    } catch (Exception e) {
+        return escapeHtml(sizeValue.toString())
+    }
+    if (bytes < 1024) return "${bytes} B"
+    if (bytes < 1024L * 1024L) return String.format('%.1f KB', bytes / 1024.0)
+    return String.format('%.1f MB', bytes / (1024.0 * 1024.0))
 }
 
 // ===== SHARED TABLE GENERATION =====
@@ -3818,6 +4182,15 @@ def readFile(String fileName) {
         logDebug "File not found or error reading ${fileName}: ${e.message}"
     }
     return null
+}
+
+boolean fileExists(String fileName) {
+    try {
+        return downloadHubFile(fileName) != null
+    } catch (Exception e) {
+        logDebug "File not found or error checking ${fileName}: ${e.message}"
+        return false
+    }
 }
 
 void writeFile(String fileName, String data) {
