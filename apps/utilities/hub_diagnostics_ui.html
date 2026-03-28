@@ -154,7 +154,11 @@ function tbl(cid,cols,rows,opts={}){
     if(ct>0&&cl){const open=rows.length<=ct?' open':'';o+='<details'+open+'><summary style="cursor:pointer;font-weight:600;margin:4px 0">'+cl+' ('+rows.length+')</summary>'}
     o+='<div class="tbl-wrap"><table id="t_'+cid+'"><thead><tr>';
     cols.forEach((c,i)=>{const ar=i===sc?(sd==='asc'?' \u25B2':' \u25BC'):' \u21C5';o+='<th data-c="'+i+'">'+h(c.l)+'<span class="arr">'+ar+'</span></th>'});
-    o+='</tr></thead><tbody>';
+    o+='</tr></thead><tbody>'+bldRows(rs)+'</tbody></table></div>';
+    if(ct>0&&cl)o+='</details>';return o
+  }
+  function bldRows(rs){
+    let o='';
     rs.forEach(r=>{
       o+='<tr>';
       cols.forEach(c=>{
@@ -166,13 +170,21 @@ function tbl(cid,cols,rows,opts={}){
       });
       o+='</tr>'
     });
-    o+='</tbody></table></div>';if(ct>0&&cl)o+='</details>';return o}
+    return o;
+  }
   filt=sf(filt,sc,sd);el.innerHTML=bld(filt);
   function bind(){
     const t=document.getElementById('t_'+cid);if(!t)return;
     t.querySelectorAll('th').forEach(th=>{th.onclick=()=>{const ci=+th.dataset.c;if(ci===sc)sd=sd==='asc'?'desc':'asc';else{sc=ci;sd='desc'};filt=sf(filt,sc,sd);el.innerHTML=bld(filt);bind()}});
     const fi=document.getElementById('flt_'+cid);
-    if(fi){fi.addEventListener('input',()=>{const q=fi.value.toLowerCase();filt=rows.filter(r=>cols.some(c=>String(r[c.f]??'').toLowerCase().includes(q)));filt=sf(filt,sc,sd);const tb=t.querySelector('tbody');if(tb){let h='';filt.forEach(r=>{h+='<tr>';cols.forEach(c=>{const v=c.r?c.r(r):el.textContent;const sv=r[c.sf]??r[c.f]??'';h+='<td data-v="">'+( c.r?c.r(r):el.textContent)+'</td>'});h+='</tr>'});tb.innerHTML=h}else{el.innerHTML=bld(filt);bind()}});fi.focus()}
+    if(fi){fi.addEventListener('input',()=>{
+      const q=fi.value.toLowerCase();
+      filt=rows.filter(r=>cols.some(c=>String(r[c.f]??'').toLowerCase().includes(q)));
+      filt=sf(filt,sc,sd);
+      const tb=t.querySelector('tbody');
+      if(tb) tb.innerHTML=bldRows(filt);
+      else { el.innerHTML=bld(filt);bind() }
+    });fi.focus()}
   }bind()
 }
 
