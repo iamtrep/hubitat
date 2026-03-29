@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "4.3.2"
+@Field static final String APP_VERSION = "4.3.3"
 @Field static final String STORAGE_SCHEMA_VERSION = "3.2.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -147,6 +147,7 @@ mappings {
     path('/api/checkpoints/clear')  { action: [POST: 'apiClearCheckpoints'] }
     path('/api/snapshots/clear')    { action: [POST: 'apiClearSnapshots'] }
     path('/api/performance/compare') { action: [POST: 'apiPerformanceCompare'] }
+    path('/api/ui/sync')              { action: [POST: 'apiSyncUI'] }
     path('/api/reports')              { action: [GET: 'apiReports'] }
     path('/api/report/generate')      { action: [POST: 'apiGenerateReport'] }
 }
@@ -233,11 +234,25 @@ Map jsonResponse(Map data) {
 
 Map serveUI() {
     if (!state.accessToken) createAccessToken()
+    
+    // Background sync check (Option 5: once every 24h)
+    long lastCheck = state.lastUIUpdateCheck ?: 0
+    if (now() - lastCheck > 86400000) {
+        logDebug "Auto-checking for UI updates from GitHub (24h period)..."
+        syncUI(false)
+    }
+
     String html = new String(downloadHubFile('hub_diagnostics_ui.html'), 'UTF-8')
     String apiBase = fullLocalApiServerUrl
     html = html.replace('${access_token}', state.accessToken)
         .replace('${api_base}', apiBase)
     return render(status: 200, contentType: 'text/html', data: html)
+}
+
+Map apiSyncUI() {
+    logInfo "Manual UI sync requested via API..."
+    boolean success = syncUI(true)
+    return jsonResponse([success: success])
 }
 
 Map apiDashboard() {
@@ -2400,28 +2415,37 @@ void uninstalled() {
     logInfo "Hub Diagnostics uninstalled"
 }
 
-void updateUIIfNeeded() {
-    if (state.lastInstalledVersion == APP_VERSION) return
+boolean syncUI(boolean force = false) {
+    if (!force && state.lastInstalledVersion == APP_VERSION) {
+        long lastCheck = state.lastUIUpdateCheck ?: 0
+        if (now() - lastCheck < 86400000) return true
+    }
+    
     try {
-        logInfo "App version changed (${state.lastInstalledVersion ?: 'none'} → ${APP_VERSION}), downloading UI..."
+        logInfo "Hub Diagnostics: Syncing UI from GitHub..."
         Map params = [uri: IMPORT_URL_WEB, contentType: "text/plain", timeout: 30]
+        boolean success = false
         httpGet(params) { resp ->
             if (resp.success) {
                 byte[] htmlBytes = resp.data.text.getBytes("UTF-8")
                 uploadHubFile("hub_diagnostics_ui.html", htmlBytes)
                 state.lastInstalledVersion = APP_VERSION
-                logInfo "UI updated to version ${APP_VERSION} (${htmlBytes.length} bytes)"
+                state.lastUIUpdateCheck = now()
+                logInfo "UI updated from GitHub (${htmlBytes.length} bytes)"
+                success = true
             }
         }
+        return success
     } catch (Exception e) {
-        logWarn "Failed to auto-download UI from GitHub: ${e.message}"
+        logWarn "Failed to sync UI from GitHub: ${e.message}"
+        return false
     }
 }
 
 void initialize() {
     logInfo "Hub Diagnostics initialized"
     migrateStorageIfNeeded()
-    updateUIIfNeeded()
+    syncUI(false)
 
     if (settings.autoSnapshot) {
         int interval = (settings.snapshotInterval ?: "24").toInteger()
