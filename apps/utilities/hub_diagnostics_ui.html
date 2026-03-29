@@ -74,8 +74,9 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 .diff-add{color:var(--ok)} .diff-rem{color:var(--crit)} .diff-chg{color:var(--warn)}
 
 @media(max-width:600px){.metrics{grid-template-columns:repeat(2,1fr)}.tab{padding:7px 10px;font-size:12px}.filter input{width:100%}}
-.report-mode .actions{display:none}
-.report-banner{background:#fff3cd;color:#856404;padding:8px 20px;font-size:13px;text-align:center;border-bottom:1px solid #ffc107}
+.report-mode .actions,.report-mode .live-only{display:none}
+.report-banner{background:#fff3cd;color:#856404;padding:8px 20px;font-size:13px;text-align:center;border-bottom:1px solid #ffc107;position:sticky;top:0;z-index:101}
+.report-mode .hdr{top:33px}
 </style>
 </head>
 <body>
@@ -561,13 +562,13 @@ async function rPerf(){const P='p-performance';loading(P);try{
   o+='</div></div>';
   // Comparison controls
   if(d.checkpointCount>0){
-    o+='<div class="card"><div class="card-h">Compare Performance</div><div class="card-b">';
+    o+='<div class="live-only"><div class="card"><div class="card-h">Compare Performance</div><div class="card-b">';
     o+='<div style="margin-bottom:10px"><label>Baseline: </label><select id="selBase"><option value="startup">Since Startup</option>';
     d.checkpoints.forEach((cp,i)=>{o+='<option value="'+i+'">Checkpoint '+(i+1)+' - '+h(cp.timestamp)+'</option>'});
     o+='</select><label>Compare to: </label><select id="selCp"><option value="now">Now</option>';
     d.checkpoints.forEach((cp,i)=>{o+='<option value="'+i+'">Checkpoint '+(i+1)+' - '+h(cp.timestamp)+'</option>'});
     o+='</select><button class="btn btn-p" id="btnCompare" style="margin-left:8px">Compare</button></div>';
-    o+='<div id="compResult"></div></div></div>'}
+    o+='<div id="compResult"></div></div></div></div>'}
   // Saved comparison
   if(d.savedComparison||d.savedComparisonHtml){o+='<div class="card"><div class="card-h">Last Comparison</div><div class="card-b"><div id="savedComp"></div></div></div>'}
   // Runtime detail tables
@@ -645,7 +646,7 @@ async function rSnap(){const P='p-snapshots';loading(P);try{
   o+='</div></div>';
   // View snapshot
   if(d.snapshotCount>0){
-    o+='<div class="card"><div class="card-h">View Snapshot</div><div class="card-b">';
+    o+='<div class="live-only"><div class="card"><div class="card-h">View Snapshot</div><div class="card-b">';
     o+='<select id="selView"><option value="">Select a snapshot...</option>';
     d.snapshots.forEach((s,i)=>{o+='<option value="'+i+'">'+h(s.timestamp)+' ('+s.devices.totalDevices+' devices, fw '+h(s.hubInfo?.firmware||'?')+')</option>'});
     o+='</select><div id="snapView" style="margin-top:10px"></div></div></div>';
@@ -656,7 +657,7 @@ async function rSnap(){const P='p-snapshots';loading(P);try{
     o+='</select><label style="margin-left:8px">Newer: </label><select id="selNewer"><option value="">Select...</option><option value="now">Now (create new)</option>';
     d.snapshots.forEach((s,i)=>{o+='<option value="'+i+'">'+h(s.timestamp)+'</option>'});
     o+='</select><button class="btn btn-p" id="btnDiff" style="margin-left:8px">Compare</button>';
-    o+='<div id="diffResult" style="margin-top:10px"></div></div></div>'}
+    o+='<div id="diffResult" style="margin-top:10px"></div></div></div></div>'}
   document.getElementById(P).innerHTML=o;
   // Render table
   if(d.snapshots&&d.snapshots.length){
