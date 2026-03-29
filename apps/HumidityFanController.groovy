@@ -81,6 +81,11 @@
     Turned ON when humidity state is HIGH or PENDING_NORMAL.
     Turned OFF when humidity state is NORMAL or PENDING_HIGH.
 
+ == BUGS ==
+
+    - Ensure state goes to high and fan starts when humidity above max - unless restricted
+    - transitionHumidityState() should call appropriate handler directly
+ 
  */
 
 import groovy.transform.Field
