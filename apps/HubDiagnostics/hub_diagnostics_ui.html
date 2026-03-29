@@ -146,6 +146,95 @@ const PD={zigbee:'Zigbee',zwave:'Z-Wave',matter:'Matter',lan:'LAN/IP',virtual:'V
 function mc(l,v,c){const s=c?' style="color:'+c+'"':'';return'<div class="m"><div class="m-l">'+h(l)+'</div><div class="m-v"'+s+'>'+(v??'N/A')+'</div></div>'}
 function ni(l,v,c){const s=c?' style="color:'+c+';font-weight:600"':'';return'<div class="ni"><div class="nl">'+h(l)+'</div><div class="nv"'+s+'>'+h(String(v??'N/A'))+'</div></div>'}
 
+// ===== ZIGBEE-WIFI SPECTRUM CHART =====
+function renderZigbeeWifiChart(zbCh,containerId){
+  if(!zbCh)return;
+  const W=700,H=180,PAD=50,PB=40,GW=W-PAD*2;
+  // Frequency range: 2400-2485 MHz
+  const fMin=2400,fMax=2485;
+  const x=f=>PAD+(f-fMin)/(fMax-fMin)*GW;
+  // WiFi channels: center freq = 2412+5*(ch-1), 22 MHz bandwidth
+  const wifiChs=[1,2,3,4,5,6,7,8,9,10,11,12,13];
+  // Zigbee channels: center = 2405+5*(ch-11), 2 MHz bandwidth
+  const zbCenter=2405+5*(zbCh-11);
+  const zbLo=zbCenter-1,zbHi=zbCenter+1;
+  // Find overlapping WiFi channels
+  const overlapping=new Set();
+  wifiChs.forEach(ch=>{const c=2412+5*(ch-1);if(c+11>zbLo&&c-11<zbHi)overlapping.add(ch)});
+  let svg=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:${W}px;font-family:inherit;font-size:11px">`;
+  // WiFi channel bars
+  wifiChs.forEach(ch=>{const c=2412+5*(ch-1);const x1=x(c-11),x2=x(c+11);
+    const ol=overlapping.has(ch);const std=[1,6,11].includes(ch);
+    const fill=ol?'rgba(220,60,60,0.25)':std?'rgba(60,180,80,0.12)':'rgba(130,130,130,0.10)';
+    const stroke=ol?'rgba(220,60,60,0.6)':std?'rgba(60,180,80,0.4)':'rgba(130,130,130,0.25)';
+    svg+=`<rect x="${x1}" y="20" width="${x2-x1}" height="${H-PB-20}" rx="3" fill="${fill}" stroke="${stroke}" stroke-width="0.7"/>`;
+    svg+=`<text x="${(x1+x2)/2}" y="14" text-anchor="middle" fill="${ol?'#dc3c3c':std?'#3cb44c':'#888'}" font-size="10" font-weight="${ol||std?'600':'400'}">W${ch}</text>`});
+  // All Zigbee channel markers
+  for(let ch=11;ch<=26;ch++){const c=2405+5*(ch-11);const cx=x(c);const isCur=ch===zbCh;
+    const rec=[15,20,25].includes(ch);
+    const fill=isCur?'#2196f3':rec?'rgba(60,180,80,0.7)':'rgba(100,100,100,0.5)';
+    const w=isCur?6:3;const ht=isCur?(H-PB-24):rec?(H-PB-34):(H-PB-42);
+    svg+=`<rect x="${cx-w/2}" y="${H-PB-ht}" width="${w}" height="${ht}" rx="1" fill="${fill}" opacity="${isCur?1:0.8}"/>`;
+    if(isCur||rec||ch===11||ch===26)svg+=`<text x="${cx}" y="${H-PB+12}" text-anchor="middle" fill="${isCur?'#2196f3':rec?'#3cb44c':'#888'}" font-size="${isCur?'11':'9'}" font-weight="${isCur?'700':'400'}">${ch}</text>`}
+  // Frequency axis
+  svg+=`<line x1="${PAD}" y1="${H-PB}" x2="${PAD+GW}" y2="${H-PB}" stroke="#666" stroke-width="0.5"/>`;
+  for(let f=2400;f<=2480;f+=10){svg+=`<text x="${x(f)}" y="${H-PB+26}" text-anchor="middle" fill="#888" font-size="9">${f}</text>`}
+  svg+=`<text x="${W/2}" y="${H-2}" text-anchor="middle" fill="#999" font-size="9">MHz</text>`;
+  // Legend
+  svg+=`<rect x="${PAD}" y="${H-PB+30}" width="8" height="8" rx="1" fill="#2196f3"/><text x="${PAD+12}" y="${H-PB+38}" fill="#aaa" font-size="9">Current (${zbCh})</text>`;
+  svg+=`<rect x="${PAD+90}" y="${H-PB+30}" width="8" height="8" rx="1" fill="rgba(60,180,80,0.7)"/><text x="${PAD+102}" y="${H-PB+38}" fill="#aaa" font-size="9">Recommended</text>`;
+  svg+=`<rect x="${PAD+195}" y="${H-PB+30}" width="8" height="8" rx="1" fill="rgba(220,60,60,0.25)" stroke="rgba(220,60,60,0.6)" stroke-width="0.7"/><text x="${PAD+207}" y="${H-PB+38}" fill="#aaa" font-size="9">WiFi overlap</text>`;
+  svg+='</svg>';
+  // Summary text
+  const avoid=overlapping.size?[...overlapping].sort((a,b)=>a-b).join(', '):'none';
+  const safe=[1,6,11].filter(ch=>!overlapping.has(ch));
+  svg+=`<div style="margin-top:6px;font-size:13px">`;
+  if(overlapping.size)svg+=`<span style="color:var(--warn)">\u26A0 Zigbee ch ${zbCh} overlaps WiFi ch ${avoid}</span> &mdash; avoid these WiFi channels (20 MHz)`;
+  else svg+=`<span style="color:var(--ok)">\u2714 Zigbee ch ${zbCh} has no overlap with standard WiFi channels</span>`;
+  if(safe.length)svg+=`<br><span style="color:var(--ok)">Safe WiFi channels: ${safe.join(', ')}</span>`;
+  svg+=`</div>`;
+  document.getElementById(containerId).innerHTML=svg;
+}
+
+// ===== HORIZONTAL BAR CHART =====
+// Build id→parentType map from parentChildHierarchy
+function buildParentTypeMap(pch){
+  const m={};
+  if(!pch)return m;
+  pch.forEach(p=>{const t=p.label||p.type||'Unknown';m[p.id]=t;(p.children||[]).forEach(c=>{m[c.id]=t})});
+  return m}
+
+// Aggregate values by type using parent-type map, return sorted top-10 + Other
+function aggregateByType(items,typeMap,idKey,valKey){
+  const byType={};
+  items.forEach(item=>{const t=typeMap[item[idKey]]||item.name||'Unknown';byType[t]=(byType[t]||0)+(item[valKey]||0)});
+  const sorted=Object.entries(byType).map(([k,v])=>({label:k,value:v})).sort((a,b)=>b.value-a.value);
+  const top=sorted.slice(0,10);
+  const otherVal=sorted.slice(10).reduce((s,e)=>s+e.value,0);
+  if(otherVal>0)top.push({label:'Other ('+sorted.slice(10).length+')',value:otherVal});
+  return top}
+
+function renderBarChart(data,containerId,opts={}){
+  if(!data||!data.length)return;
+  const maxVal=Math.max(...data.map(d=>d.value));
+  const total=data.reduce((s,d)=>s+d.value,0);
+  if(!total)return;
+  const colors=['#2196f3','#4caf50','#ff9800','#e91e63','#9c27b0','#00bcd4','#ff5722','#607d8b','#795548','#3f51b5','#888'];
+  let html='<div style="display:flex;flex-direction:column;gap:4px">';
+  data.forEach((d,i)=>{
+    const pct=(d.value/total*100).toFixed(1);
+    const barW=maxVal>0?(d.value/maxVal*100):0;
+    const c=colors[Math.min(i,colors.length-1)];
+    html+=`<div style="display:flex;align-items:center;gap:8px;font-size:12px">`;
+    html+=`<div style="width:${opts.labelWidth||140}px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${h(d.label)}">${h(d.label)}</div>`;
+    html+=`<div style="flex:1;height:18px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden">`;
+    html+=`<div style="width:${barW}%;height:100%;background:${c};border-radius:3px;transition:width 0.3s"></div></div>`;
+    html+=`<div style="width:80px;font-size:11px;color:#aaa">${opts.format?opts.format(d.value):d.value} (${pct}%)</div>`;
+    html+=`</div>`});
+  html+='</div>';
+  document.getElementById(containerId).innerHTML=html;
+}
+
 // ===== SORTABLE TABLE ENGINE =====
 function tbl(cid,cols,rows,opts={}){
   const el=document.getElementById(cid);if(!el)return;
@@ -342,12 +431,25 @@ async function rDevices(){const P='p-devices';loading(P);try{
   // Low battery
   if(d.lowBatteryDevices&&d.lowBatteryDevices.length){o+='<div class="card"><div class="card-h">Low Battery Alerts</div><div class="card-b">';
     d.lowBatteryDevices.forEach(dev=>{o+='<div class="alert a-warn">'+dlink(dev.id,dev.name)+': <b>'+dev.battery+'%</b></div>'});o+='</div></div>'}
+  // Stale devices (inactive > 2x threshold)
+  {const threshold=2*(d.inactivityDays||7)*86400000,cutoff=Date.now()-threshold;
+   const stale=d.deviceRows.filter(r=>{if(r.lastActivity==='Never')return true;const t=new Date(r.lastActivity).getTime();return !isNaN(t)&&t<cutoff});
+   if(stale.length){o+='<div class="card"><div class="card-h">Stale Devices ('+stale.length+')</div><div class="card-b">';
+     o+='<div class="alert a-warn">\u26A0 Devices with no activity in '+2*(d.inactivityDays||7)+'+ days (2\u00D7 inactivity threshold)</div>';
+     o+='<div id="staleTbl"></div></div></div>'}}
   // Device table
   o+='<div class="card"><div class="card-h">All Devices ('+d.deviceRows.length+')</div><div class="card-b"><div id="devTbl"></div></div></div>';
   document.getElementById(P).innerHTML=o;
   if(Object.keys(bt).length){
     const dt=Object.entries(bt).map(([k,v])=>({name:k,count:v,ids:it[k]||[]})).sort((a,b)=>b.count-a.count);
     tbl('dtTbl',[{l:'Device Type',f:'name'},{l:'Devices',f:'count',t:'n',r:r=>dlistlink(r.count,r.ids)}],dt,{sc:1,sd:'desc',filter:true,collapse:10,collapseLabel:'Device Types'})}
+  // Stale devices table
+  {const threshold=2*(d.inactivityDays||7)*86400000,cutoff=Date.now()-threshold;
+   const stale=d.deviceRows.filter(r=>{if(r.lastActivity==='Never')return true;const t=new Date(r.lastActivity).getTime();return !isNaN(t)&&t<cutoff});
+   if(stale.length)tbl('staleTbl',[
+     {l:'Name',f:'name',r:r=>dlink(r.id,r.name)},{l:'Type',f:'type'},{l:'Protocol',f:'protocolDisplay'},
+     {l:'Last Activity',f:'lastActivity'},{l:'Room',f:'room',r:r=>h(r.room||'-')}
+   ],stale,{sc:3,sd:'asc',collapse:10,collapseLabel:'Stale Devices'})}
   tbl('devTbl',[
     {l:'Name',f:'name',r:r=>dlink(r.id,r.name)},
     {l:'Type',f:'type',r:r=>r.userType&&r.deviceTypeId?'<a href="/driver/editor/'+r.deviceTypeId+'" target="_blank">'+h(r.type)+'</a>':h(r.type)},
@@ -386,7 +488,14 @@ async function rApps(){const P='p-apps';loading(P);try{
     const big=d.platformApps.filter(a=>a.stateSize>5000);
     o+='<div class="card"><div class="card-h">Platform Apps ('+d.platformApps.length+')</div><div class="card-b">';
     if(big.length)o+='<div class="alert a-warn">\u26A0 '+big.length+' app(s) with state size > 5 KB</div>';
-    o+='<div id="platTbl"></div></div></div>'}
+    o+='<div id="platTbl"></div></div></div>';
+    o+='<div class="card"><div class="card-h">CPU by App Type</div><div class="card-b"><div id="appCpuChart"></div></div></div>'}
+  // Problem apps (large state + high CPU)
+  if(d.platformApps&&d.platformApps.length){
+    const prob=d.platformApps.filter(a=>a.stateSize>5000&&a.pctTotal>0.02);
+    if(prob.length){o+='<div class="card"><div class="card-h">Problem Apps ('+prob.length+')</div><div class="card-b">';
+      o+='<div class="alert a-crit">\u26D4 Apps with both large state (&gt;5 KB) and high CPU (&gt;2%)</div>';
+      o+='<div id="probAppsTbl"></div></div></div>'}}
   document.getElementById(P).innerHTML=o;
   // Render tables
   if(d.byNamespace&&Object.keys(d.byNamespace).length){
@@ -402,6 +511,19 @@ async function rApps(){const P='p-apps';loading(P);try{
       {l:'Hub Actions',f:'hubActionCount',t:'n'},
       {l:'Cloud Calls',f:'cloudCallCount',t:'n'}
     ],d.platformApps,{sc:3,sd:'desc',filter:true,collapse:10,collapseLabel:'Platform Apps'});
+  // CPU by app type chart (aggregated by parent type)
+  if(d.platformApps&&d.platformApps.length){
+    const ptm=buildParentTypeMap(d.parentChildHierarchy);
+    renderBarChart(aggregateByType(d.platformApps,ptm,'id','total'),'appCpuChart',{format:v=>v.toFixed(0)+' ms'})}
+  // Problem apps table
+  if(d.platformApps&&d.platformApps.length){
+    const prob=d.platformApps.filter(a=>a.stateSize>5000&&a.pctTotal>0.02);
+    if(prob.length)tbl('probAppsTbl',[
+      {l:'Name',f:'name',r:r=>'<a href="/installedapp/status/'+r.id+'" target="_blank">'+h(r.name)+'</a>'},
+      {l:'State Size',f:'stateSize',t:'n',r:r=>'<span style="color:var(--crit)">'+r.stateSize+'</span>'},
+      {l:'CPU %',f:'pctTotal',t:'n',r:r=>'<span style="color:var(--crit)">'+(r.pctTotal*100).toFixed(3)+'%</span>'},
+      {l:'Exec Count',f:'count',t:'n'},{l:'Avg (ms)',f:'average',t:'n',r:r=>Number(r.average).toFixed(1)}
+    ],prob,{sc:2,sd:'desc'})}
 }catch(e){err(P,e,rApps)}}
 
 // ===== TAB: NETWORK =====
@@ -466,6 +588,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
       if(m.weakNeighbors&&m.weakNeighbors.length){o+='<details style="margin-top:6px"><summary>Weak Neighbor Details</summary>';
         m.weakNeighbors.forEach(n=>{o+='<div style="margin:3px 0;color:var(--crit)">'+h(n.shortId)+' &mdash; LQI: '+n.lqi+'</div>'});o+='</details>'}
       o+='</div>'}
+    o+='<div id="zbWifiChart" style="margin-top:10px"></div>';
     o+='</div></div>'}
   // Matter
   if(d.matter){const m=d.matter;
@@ -489,6 +612,8 @@ async function rNetwork(){const P='p-network';loading(P);try{
         o+='<div style="margin:4px 0"><b>'+h(p.name)+'</b> ('+h(p.ip)+') &mdash; <span style="color:'+sc+'">'+st+'</span> | '+p.deviceCount+' devices, '+p.varCount+' variables</div>'});o+='</div>'}
     o+='</div></div>'}
   document.getElementById(P).innerHTML=o;
+  // Render Zigbee-WiFi interference chart
+  if(d.zigbee&&d.zigbee.channel)renderZigbeeWifiChart(d.zigbee.channel,'zbWifiChart');
   // Render Z-Wave mesh table
   if(d.zwave&&d.zwave.mesh&&d.zwave.mesh.nodes&&d.zwave.mesh.nodes.length)
     tbl('zwMeshTbl',[
@@ -580,6 +705,10 @@ async function rPerf(){const P='p-performance';loading(P);try{
   // Saved comparison
   if(d.savedComparison||d.savedComparisonHtml){o+='<div class="card"><div class="card-h">Last Comparison</div><div class="card-b"><div id="savedComp"></div></div></div>'}
   // Runtime detail tables
+  if(d.stats&&d.stats.appStats&&d.stats.appStats.length){
+    o+='<div class="card"><div class="card-h">CPU by App Type</div><div class="card-b"><div id="perfAppCpuChart"></div></div></div>'}
+  if(d.stats&&d.stats.deviceStats&&d.stats.deviceStats.length){
+    o+='<div class="card"><div class="card-h">CPU by Device Type</div><div class="card-b"><div id="perfDevCpuChart"></div></div></div>'}
   if(d.stats&&d.stats.deviceStats&&d.stats.deviceStats.length){
     o+='<div class="card"><div class="card-h">Device Runtime Detail</div><div class="card-b"><div id="devStatsTbl"></div></div></div>'}
   if(d.stats&&d.stats.appStats&&d.stats.appStats.length){
@@ -608,6 +737,19 @@ async function rPerf(){const P='p-performance';loading(P);try{
       {l:'Avg (ms)',f:'average',t:'n',r:r=>Number(r.average||0).toFixed(1)},
       {l:'State Size',f:'stateSize',t:'n'},{l:'Hub Actions',f:'hubActionCount',t:'n'},{l:'Cloud Calls',f:'cloudCallCount',t:'n'}
     ],d.stats.appStats,{sc:1,sd:'desc',filter:true,collapse:10,collapseLabel:'App Runtime Detail'});
+  // CPU by app type chart (Performance tab, aggregated by parent type)
+  if(d.stats&&d.stats.appStats&&d.stats.appStats.length){
+    api('apps').then(appData=>{
+      const ptm=buildParentTypeMap(appData.parentChildHierarchy);
+      renderBarChart(aggregateByType(d.stats.appStats,ptm,'id','total'),'perfAppCpuChart',{format:v=>v.toFixed(0)+' ms'})
+    }).catch(()=>{})}
+  // CPU by device type chart (client-side join with devices endpoint)
+  if(d.stats&&d.stats.deviceStats&&d.stats.deviceStats.length){
+    api('devices').then(devData=>{
+      const typeById={};
+      if(devData.deviceRows)devData.deviceRows.forEach(r=>{typeById[r.id]=r.type||'Unknown'});
+      renderBarChart(aggregateByType(d.stats.deviceStats,typeById,'id','total'),'perfDevCpuChart',{format:v=>v.toFixed(0)+' ms'})
+    }).catch(()=>{})}
   // Saved comparison render
   if(d.savedComparison||d.savedComparisonHtml)renderComparison({comparisonHtml:d.savedComparisonHtml,...(d.savedComparison||{})},'savedComp');
   // Button bindings
