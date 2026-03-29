@@ -15,7 +15,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 CONFIG_FILE="$PROJECT_ROOT/.hubitat.json"
 COOKIE_JAR="/tmp/hubitat_test_cookies"
 
@@ -347,6 +347,33 @@ else:
         ok(f"Protocol counts sum to total ({proto_sum})")
     else:
         fail(f"Protocol counts sum {proto_sum} != {gt_devices}")
+
+    # Device type breakdown
+    bt = devs.get("byType", {})
+    if bt and isinstance(bt, dict):
+        ok(f"byType present ({len(bt)} types)")
+        type_sum = sum(bt.values())
+        if type_sum == gt_devices:
+            ok(f"byType counts sum to total ({type_sum})")
+        else:
+            fail(f"byType counts sum {type_sum} != {gt_devices}")
+    else:
+        fail("Missing or empty byType")
+
+    it = devs.get("idsByType", {})
+    if it and isinstance(it, dict):
+        ok(f"idsByType present ({len(it)} types)")
+        id_sum = sum(len(v) for v in it.values())
+        if id_sum == gt_devices:
+            ok(f"idsByType IDs sum to total ({id_sum})")
+        else:
+            fail(f"idsByType IDs sum {id_sum} != {gt_devices}")
+        if set(bt.keys()) == set(it.keys()):
+            ok("idsByType keys match byType keys")
+        else:
+            fail(f"idsByType keys mismatch: {set(bt.keys()) - set(it.keys())} / {set(it.keys()) - set(bt.keys())}")
+    else:
+        fail("Missing or empty idsByType")
 
     # Summary
     s = devs.get("summary", {})

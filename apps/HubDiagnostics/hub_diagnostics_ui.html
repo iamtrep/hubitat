@@ -334,12 +334,20 @@ async function rDevices(){const P='p-devices';loading(P);try{
   o+='<div class="card"><div class="card-h">Protocol Distribution</div><div class="card-b"><div class="tbl-wrap"><table><thead><tr><th>Protocol</th><th>Count</th></tr></thead><tbody>';
   Object.entries(bp).forEach(([k,v])=>{if(v>0)o+='<tr><td>'+(PD[k]||k)+'</td><td>'+dlistlink(v,ip[k])+'</td></tr>'});
   o+='</tbody></table></div></div></div>';
+  // Device types
+  const bt=d.byType||{},it=d.idsByType||{};
+  if(Object.keys(bt).length){
+    const dt=Object.entries(bt).map(([k,v])=>({name:k,count:v,ids:it[k]||[]})).sort((a,b)=>b.count-a.count);
+    o+='<div class="card"><div class="card-h">Device Types ('+dt.length+')</div><div class="card-b"><div id="dtTbl"></div></div></div>'}
   // Low battery
   if(d.lowBatteryDevices&&d.lowBatteryDevices.length){o+='<div class="card"><div class="card-h">Low Battery Alerts</div><div class="card-b">';
     d.lowBatteryDevices.forEach(dev=>{o+='<div class="alert a-warn">'+dlink(dev.id,dev.name)+': <b>'+dev.battery+'%</b></div>'});o+='</div></div>'}
   // Device table
   o+='<div class="card"><div class="card-h">All Devices ('+d.deviceRows.length+')</div><div class="card-b"><div id="devTbl"></div></div></div>';
   document.getElementById(P).innerHTML=o;
+  if(Object.keys(bt).length){
+    const dt=Object.entries(bt).map(([k,v])=>({name:k,count:v,ids:it[k]||[]})).sort((a,b)=>b.count-a.count);
+    tbl('dtTbl',[{l:'Device Type',f:'name'},{l:'Devices',f:'count',t:'n',r:r=>dlistlink(r.count,r.ids)}],dt,{sc:1,sd:'desc',filter:true,collapse:10,collapseLabel:'Device Types'})}
   tbl('devTbl',[
     {l:'Name',f:'name',r:r=>dlink(r.id,r.name)},
     {l:'Type',f:'type',r:r=>r.userType&&r.deviceTypeId?'<a href="/driver/editor/'+r.deviceTypeId+'" target="_blank">'+h(r.type)+'</a>':h(r.type)},
