@@ -10,7 +10,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "4.2.0"
+@Field static final String APP_VERSION = "4.3.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "3.2.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -317,7 +317,7 @@ Map apiApps() {
     Map appStats = analyzeApps()
     List platformRows = (appStats.platformApps ?: []).collect { Map app ->
         [id: app.id, name: app.name, stateSize: app.stateSize as int, pctTotal: app.pctTotal,
-         count: app.count, average: app.average, hubActionCount: app.hubActionCount, cloudCallCount: app.cloudCallCount]
+         total: app.total, count: app.count, average: app.average, hubActionCount: app.hubActionCount, cloudCallCount: app.cloudCallCount]
     }
     List userAppRows = (appStats.userAppsList ?: [])
         .sort { (it.label ?: it.name ?: "").toString().toLowerCase() }
@@ -792,7 +792,7 @@ Map apiGenerateReport() {
         byNamespace: appStats.byNamespace,
         platformApps: (appStats.platformApps ?: []).collect { Map app ->
             [id: app.id, name: app.name, stateSize: app.stateSize as int, pctTotal: app.pctTotal,
-             count: app.count, average: app.average, hubActionCount: app.hubActionCount, cloudCallCount: app.cloudCallCount]
+             total: app.total, count: app.count, average: app.average, hubActionCount: app.hubActionCount, cloudCallCount: app.cloudCallCount]
         },
         userApps: (appStats.userAppsList ?: []).sort { (it.label ?: it.name ?: "").toString().toLowerCase() }
             .collect { [id: it.id, label: it.label ?: it.name, type: it.name, parentId: it.parentAppId, disabled: it.state == "disabled"] },
