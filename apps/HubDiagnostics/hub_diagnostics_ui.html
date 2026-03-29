@@ -488,8 +488,7 @@ async function rApps(){const P='p-apps';loading(P);try{
     const big=d.platformApps.filter(a=>a.stateSize>5000);
     o+='<div class="card"><div class="card-h">Platform Apps ('+d.platformApps.length+')</div><div class="card-b">';
     if(big.length)o+='<div class="alert a-warn">\u26A0 '+big.length+' app(s) with state size > 5 KB</div>';
-    o+='<div id="platTbl"></div></div></div>';
-    o+='<div class="card"><div class="card-h">CPU by App Type</div><div class="card-b"><div id="appCpuChart"></div></div></div>'}
+    o+='<div id="platTbl"></div></div></div>'}
   // Problem apps (large state + high CPU)
   if(d.platformApps&&d.platformApps.length){
     const prob=d.platformApps.filter(a=>a.stateSize>5000&&a.pctTotal>0.02);
@@ -511,10 +510,6 @@ async function rApps(){const P='p-apps';loading(P);try{
       {l:'Hub Actions',f:'hubActionCount',t:'n'},
       {l:'Cloud Calls',f:'cloudCallCount',t:'n'}
     ],d.platformApps,{sc:3,sd:'desc',filter:true,collapse:10,collapseLabel:'Platform Apps'});
-  // CPU by app type chart (aggregated by parent type)
-  if(d.platformApps&&d.platformApps.length){
-    const ptm=buildParentTypeMap(d.parentChildHierarchy);
-    renderBarChart(aggregateByType(d.platformApps,ptm,'id','total'),'appCpuChart',{format:v=>v.toFixed(0)+' ms'})}
   // Problem apps table
   if(d.platformApps&&d.platformApps.length){
     const prob=d.platformApps.filter(a=>a.stateSize>5000&&a.pctTotal>0.02);
@@ -723,26 +718,6 @@ async function rPerf(){const P='p-performance';loading(P);try{
       {l:'Dev Runtime',f:'devRuntime'},{l:'App Runtime',f:'appRuntime'},
       {l:'',f:'_idx',r:r=>'<button class="btn btn-d" onclick="delCp('+r._idx+')">\u{1F5D1}</button>'}
     ],cpRows,{sc:0,sd:'desc'})}
-  // Runtime tables
-  if(d.stats&&d.stats.deviceStats)
-    tbl('devStatsTbl',[
-      {l:'Name',f:'name',r:r=>r.id?dlink(r.id,r.name):h(r.name)},{l:'Total (ms)',f:'total',t:'n'},
-      {l:'Count',f:'count',t:'n'},{l:'Avg (ms)',f:'average',t:'n',r:r=>Number(r.average||0).toFixed(1)},
-      {l:'State Size',f:'stateSize',t:'n'},{l:'Hub Actions',f:'hubActionCount',t:'n'},{l:'Cloud Calls',f:'cloudCallCount',t:'n'}
-    ],d.stats.deviceStats,{sc:1,sd:'desc',filter:true,collapse:10,collapseLabel:'Device Runtime Detail'});
-  if(d.stats&&d.stats.appStats)
-    tbl('appStatsTbl',[
-      {l:'Name',f:'name',r:r=>r.id?'<a href="/installedapp/status/'+r.id+'" target="_blank">'+h(r.name)+'</a>':h(r.name)},
-      {l:'Total (ms)',f:'total',t:'n'},{l:'Count',f:'count',t:'n'},
-      {l:'Avg (ms)',f:'average',t:'n',r:r=>Number(r.average||0).toFixed(1)},
-      {l:'State Size',f:'stateSize',t:'n'},{l:'Hub Actions',f:'hubActionCount',t:'n'},{l:'Cloud Calls',f:'cloudCallCount',t:'n'}
-    ],d.stats.appStats,{sc:1,sd:'desc',filter:true,collapse:10,collapseLabel:'App Runtime Detail'});
-  // CPU by app type chart (Performance tab, aggregated by parent type)
-  if(d.stats&&d.stats.appStats&&d.stats.appStats.length){
-    api('apps').then(appData=>{
-      const ptm=buildParentTypeMap(appData.parentChildHierarchy);
-      renderBarChart(aggregateByType(d.stats.appStats,ptm,'id','total'),'perfAppCpuChart',{format:v=>v.toFixed(0)+' ms'})
-    }).catch(()=>{})}
   // CPU by device type chart (client-side join with devices endpoint)
   if(d.stats&&d.stats.deviceStats&&d.stats.deviceStats.length){
     api('devices').then(devData=>{
@@ -750,6 +725,27 @@ async function rPerf(){const P='p-performance';loading(P);try{
       if(devData.deviceRows)devData.deviceRows.forEach(r=>{typeById[r.id]=r.type||'Unknown'});
       renderBarChart(aggregateByType(d.stats.deviceStats,typeById,'id','total'),'perfDevCpuChart',{format:v=>v.toFixed(0)+' ms'})
     }).catch(()=>{})}
+  // Device Runtime table
+  if(d.stats&&d.stats.deviceStats)
+    tbl('devStatsTbl',[
+      {l:'Name',f:'name',r:r=>r.id?dlink(r.id,r.name):h(r.name)},{l:'Total (ms)',f:'total',t:'n'},
+      {l:'Count',f:'count',t:'n'},{l:'Avg (ms)',f:'average',t:'n',r:r=>Number(r.average||0).toFixed(1)},
+      {l:'State Size',f:'stateSize',t:'n'},{l:'Hub Actions',f:'hubActionCount',t:'n'},{l:'Cloud Calls',f:'cloudCallCount',t:'n'}
+    ],d.stats.deviceStats,{sc:1,sd:'desc',filter:true,collapse:10,collapseLabel:'Device Runtime Detail'});
+  // CPU by app type chart (Performance tab, aggregated by parent type)
+  if(d.stats&&d.stats.appStats&&d.stats.appStats.length){
+    api('apps').then(appData=>{
+      const ptm=buildParentTypeMap(appData.parentChildHierarchy);
+      renderBarChart(aggregateByType(d.stats.appStats,ptm,'id','total'),'perfAppCpuChart',{format:v=>v.toFixed(0)+' ms'})
+    }).catch(()=>{})}
+  // App Runtime table
+  if(d.stats&&d.stats.appStats)
+    tbl('appStatsTbl',[
+      {l:'Name',f:'name',r:r=>r.id?'<a href="/installedapp/status/'+r.id+'" target="_blank">'+h(r.name)+'</a>':h(r.name)},
+      {l:'Total (ms)',f:'total',t:'n'},{l:'Count',f:'count',t:'n'},
+      {l:'Avg (ms)',f:'average',t:'n',r:r=>Number(r.average||0).toFixed(1)},
+      {l:'State Size',f:'stateSize',t:'n'},{l:'Hub Actions',f:'hubActionCount',t:'n'},{l:'Cloud Calls',f:'cloudCallCount',t:'n'}
+    ],d.stats.appStats,{sc:1,sd:'desc',filter:true,collapse:10,collapseLabel:'App Runtime Detail'});
   // Saved comparison render
   if(d.savedComparison||d.savedComparisonHtml)renderComparison({comparisonHtml:d.savedComparisonHtml,...(d.savedComparison||{})},'savedComp');
   // Button bindings
