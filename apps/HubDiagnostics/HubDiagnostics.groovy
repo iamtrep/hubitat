@@ -241,16 +241,29 @@ Map serveUI() {
     
     // Background sync check (Option 5: once every 24h)
     long lastCheck = state.lastUIUpdateCheck ?: 0
-    if (now() - lastCheck > 86400000) {
-        logDebug "Auto-checking for UI updates from GitHub (24h period)..."
-        syncUI(false)
+    String uiVer = getUIVersion()
+    if (now() - lastCheck > 86400000 || uiVer == "Unknown") {
+        logDebug "Auto-syncing UI (Unknown version or >24h)..."
+        syncUI(uiVer == "Unknown")
     }
 
-    String html = new String(downloadHubFile('hub_diagnostics_ui.html'), 'UTF-8')
-    String apiBase = fullLocalApiServerUrl
-    html = html.replace('${access_token}', state.accessToken)
-        .replace('${api_base}', apiBase)
-    return render(status: 200, contentType: 'text/html', data: html)
+    try {
+        byte[] hubFile = downloadHubFile('hub_diagnostics_ui.html')
+        if (!hubFile) {
+            logError "hub_diagnostics_ui.html missing from hub. Attempting emergency sync..."
+            if (syncUI(true)) hubFile = downloadHubFile('hub_diagnostics_ui.html')
+        }
+        if (!hubFile) return render(status: 404, contentType: 'text/plain', data: 'UI file not found. Check hub logs.')
+        
+        String html = new String(hubFile, 'UTF-8')
+        String apiBase = fullLocalApiServerUrl
+        html = html.replace('${access_token}', state.accessToken)
+            .replace('${api_base}', apiBase)
+        return render(status: 200, contentType: 'text/html', data: html)
+    } catch (Exception e) {
+        logError "Error serving UI: ${e.message}"
+        return render(status: 500, contentType: 'text/plain', data: "Error serving UI: ${e.message}")
+    }
 }
 
 Map apiSyncUI() {
@@ -295,9 +308,12 @@ Map apiDashboard() {
 
 String getUIVersion() {
     try {
-        String html = new String(downloadHubFile('hub_diagnostics_ui.html'), 'UTF-8')
-        java.util.regex.Matcher m = (html =~ /const UI_VERSION = "([^"]+)"/)
-        if (m.find()) return m.group(1)
+        byte[] htmlBytes = downloadHubFile('hub_diagnostics_ui.html')
+        if (htmlBytes) {
+            String html = new String(htmlBytes, 'UTF-8')
+            java.util.regex.Matcher m = (html =~ /const UI_VERSION = "([^"]+)"/)
+            if (m.find()) return m.group(1)
+        }
     } catch (Exception e) {
         logDebug "Error reading UI version: ${e.message}"
     }
@@ -2423,6 +2439,7 @@ void updated() {
     logInfo "Hub Diagnostics updated"
     unsubscribe()
     unschedule()
+    syncUI(true)
     initialize()
 }
 
@@ -2442,14 +2459,25 @@ boolean syncUI(boolean force = false) {
         logInfo "Hub Diagnostics: Syncing UI from GitHub..."
         Map params = [uri: IMPORT_URL_WEB, contentType: "text/plain", timeout: 30]
         boolean success = false
+        // Use synchronous httpGet by not providing a closure to params
         httpGet(params) { resp ->
-            if (resp.success) {
-                byte[] htmlBytes = resp.data.text.getBytes("UTF-8")
-                uploadHubFile("hub_diagnostics_ui.html", htmlBytes)
-                state.lastInstalledVersion = APP_VERSION
-                state.lastUIUpdateCheck = now()
-                logInfo "UI updated from GitHub (${htmlBytes.length} bytes)"
-                success = true
+            if (resp.success && resp.data) {
+                String htmlText = resp.data.text ?: resp.data.toString()
+                if (htmlText && htmlText.contains("Hub Diagnostics")) {
+                    // Enforce version sync: downloaded HTML must contain the same version string as the App
+                    if (htmlText.contains("const UI_VERSION = \"${APP_VERSION}\"")) {
+                        byte[] htmlBytes = htmlText.getBytes("UTF-8")
+                        uploadHubFile("hub_diagnostics_ui.html", htmlBytes)
+                        state.lastInstalledVersion = APP_VERSION
+                        state.lastUIUpdateCheck = now()
+                        logInfo "UI updated from GitHub to match App v${APP_VERSION} (${htmlBytes.length} bytes)"
+                        success = true
+                    } else {
+                        logWarn "Sync failed: GitHub UI version does not match App v${APP_VERSION}"
+                    }
+                } else {
+                    logWarn "Sync failed: Downloaded content appears invalid"
+                }
             }
         }
         return success
@@ -2462,7 +2490,6 @@ boolean syncUI(boolean force = false) {
 void initialize() {
     logInfo "Hub Diagnostics initialized"
     migrateStorageIfNeeded()
-    syncUI(false)
 
     if (settings.autoSnapshot) {
         int interval = (settings.snapshotInterval ?: "24").toInteger()
