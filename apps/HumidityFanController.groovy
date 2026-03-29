@@ -432,6 +432,7 @@ private void evaluateHighState(BigDecimal bathroomHumidity) {
         // Schedule the delayed transition to NORMAL
         runIn(deactivationDelay as Integer, "delayedTransitionToNormal")
     }
+    // always evaluate high state ICYMI ?  BUG
 }
 
 private void evaluatePendingNormalState(BigDecimal bathroomHumidity) {
