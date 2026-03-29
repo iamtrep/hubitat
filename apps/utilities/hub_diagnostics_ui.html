@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Hub Diagnostics</title>
+<script>if(window.REPORT_DATA)document.documentElement.classList.add('report-mode')</script>
 <style>
 :root { --primary:#1A77C9; --ok:#388e3c; --warn:#ff9800; --crit:#d32f2f; --bg:#f5f5f5; --card:#fff; --border:#ddd; --text:#333; --muted:#777; --alt:#f9f9f9; --hover:#e3f2fd; }
 *{box-sizing:border-box;margin:0;padding:0}
@@ -73,9 +74,12 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 .diff-add{color:var(--ok)} .diff-rem{color:var(--crit)} .diff-chg{color:var(--warn)}
 
 @media(max-width:600px){.metrics{grid-template-columns:repeat(2,1fr)}.tab{padding:7px 10px;font-size:12px}.filter input{width:100%}}
+.report-mode .actions{display:none}
+.report-banner{background:#fff3cd;color:#856404;padding:8px 20px;font-size:13px;text-align:center;border-bottom:1px solid #ffc107}
 </style>
 </head>
 <body>
+<script>if(window.REPORT_DATA){document.write('<div class="report-banner">Offline Report &mdash; Generated '+(window.REPORT_DATA._generated||'')+'</div>')}</script>
 <div class="hdr"><h1>Hub Diagnostics</h1><span class="info" id="hubInfo">Loading...</span></div>
 <div class="tabs" id="tabs">
   <div class="tab active" data-tab="dashboard">Dashboard</div>
@@ -125,7 +129,7 @@ async function api(ep){
   cache[ep]=d;
   return d
 }
-async function post(ep,p){const q=new URLSearchParams(p||{});q.set('access_token',T);const r=await fetch(B+'/api/'+ep+'?'+q.toString(),{method:'POST'});if(!r.ok)throw new Error('API '+r.status);return r.json()}
+async function post(ep,p){if(REPORT)return{};const q=new URLSearchParams(p||{});q.set('access_token',T);const r=await fetch(B+'/api/'+ep+'?'+q.toString(),{method:'POST'});if(!r.ok)throw new Error('API '+r.status);return r.json()}
 function drop(ep){if(ep)delete cache[ep];else Object.keys(cache).forEach(k=>delete cache[k])}
 
 // ===== HELPERS =====
@@ -501,11 +505,10 @@ async function rHealth(){const P='p-health';loading(P);try{
   (d.alerts||[]).forEach(a=>{
     if(!a)return;
     if(typeof a==='string')allAlerts.push({severity:'warning',message:a});
-    else if(a.message||a.name)allAlerts.push({severity:a.severity||'warning',message:a.message||a.name});
+    else if(a.name||a.message)allAlerts.push({severity:a.severity||'warning',message:a.name||a.message});
   });
-  (d.platformAlerts||[]).forEach(a=>{if(a&&(a.message||a.name))allAlerts.push({severity:a.severity||'warning',message:a.message||a.name})});
   if(allAlerts.length){o+='<div class="card"><div class="card-h">Alerts ('+allAlerts.length+')</div><div class="card-b">';
-    allAlerts.forEach(a=>{o+='<div class="alert a-'+(a.severity==='critical'?'crit':'warn')+'">'+(a.severity==='critical'?'\u26D4':'\u26A0')+' '+a.message+'</div>'});o+='</div></div>'}
+    allAlerts.forEach(a=>{o+='<div class="alert a-'+(a.severity==='critical'?'crit':'warn')+'">'+(a.severity==='critical'?'\u26D4':'\u26A0')+' '+h(a.message)+'</div>'});o+='</div></div>'}
   else o+='<div class="alert a-ok">\u2705 No active alerts</div>';
   // Resources
   if(d.resources){const r=d.resources;
