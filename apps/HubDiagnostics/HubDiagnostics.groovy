@@ -158,6 +158,10 @@ Map dashboardPage() {
     if (!state.accessToken) createAccessToken()
 
     dynamicPage(name: "dashboardPage", title: "Hub Diagnostics", install: true, uninstall: true) {
+        section("Versions") {
+            paragraph "<b>App Version:</b> ${APP_VERSION}\n<b>UI Version:</b> ${getUIVersion()}"
+        }
+
         section("Quick Summary") {
             paragraph generateQuickSummary()
         }
@@ -269,6 +273,8 @@ Map apiDashboard() {
     recordApiTiming("dashboard", elapsed)
     return jsonResponse([
         hub: hubInfo,
+        appVersion: APP_VERSION,
+        uiVersion: getUIVersion(),
         devices: [
             total: deviceStats.totalDevices,
             active: deviceStats.activeDevices,
@@ -285,6 +291,17 @@ Map apiDashboard() {
         alerts: getStructuredAlerts(),
         inactivityDays: settings.inactivityDays ?: 7
     ])
+}
+
+String getUIVersion() {
+    try {
+        String html = new String(downloadHubFile('hub_diagnostics_ui.html'), 'UTF-8')
+        java.util.regex.Matcher m = (html =~ /const UI_VERSION = "([^"]+)"/)
+        if (m.find()) return m.group(1)
+    } catch (Exception e) {
+        logDebug "Error reading UI version: ${e.message}"
+    }
+    return "Unknown"
 }
 
 Map apiDevices() {

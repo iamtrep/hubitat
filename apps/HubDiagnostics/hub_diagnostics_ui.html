@@ -101,6 +101,9 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
   <div class="panel" id="p-snapshots"></div>
 </div>
 <script>
+// ===== VERSION =====
+const UI_VERSION = "4.3.3";
+
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
 const MOCK_DATA = {
@@ -396,6 +399,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   o+=mc('Inactive',dlistlink(d.devices.inactive,(is.inactive||[]).concat(is.disabled||[])),(d.devices.inactive>0?'var(--warn)':''));
   o+=mc('Disabled',dlistlink(d.devices.disabled,is.disabled),(d.devices.disabled>0?'var(--crit)':''));
   o+=mc('Applications',d.apps.total);o+=mc('User Apps',d.apps.user);
+  o+=mc('App Version',d.appVersion);o+=mc('UI Version',UI_VERSION);
   o+='</div></div></div>';
   // Resources
   if(d.resources){const r=d.resources;
