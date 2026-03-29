@@ -612,7 +612,29 @@ elif snaps.get("snapshotCount", 0) == 1:
 else:
     warn("No snapshots for diff — skipping")
 
-# ── Test 12: GET /api/reports ─────────────────────────────────────────
+# ── Test 12: GET /api/stats ──────────────────────────────────────────
+section("GET /api/stats")
+
+stats_data = api_get("stats")
+if "_error" in stats_data:
+    fail(f"Request failed: {stats_data['_error']}")
+else:
+    ok("Endpoint responds")
+    timings = stats_data.get("timings", {})
+    if timings and isinstance(timings, dict):
+        ok(f"Timings present ({len(timings)} endpoints)")
+        # After calling dashboard/devices/apps/etc above, we should have data
+        for ep in ["dashboard", "devices", "apps"]:
+            if ep in timings:
+                t = timings[ep]
+                if "median" in t and "count" in t:
+                    ok(f"{ep}: median={t['median']}ms, count={t['count']}")
+                else:
+                    fail(f"{ep} timing missing median/count fields")
+    else:
+        warn("No timings yet (may be expected on first run)")
+
+# ── Test 13: GET /api/reports ─────────────────────────────────────────
 section("GET /api/reports")
 
 rpts = api_get("reports")

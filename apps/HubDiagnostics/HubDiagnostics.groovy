@@ -10,7 +10,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "4.1.0"
+@Field static final String APP_VERSION = "4.2.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "3.2.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -73,6 +73,10 @@ import groovy.json.JsonOutput
 @Field static final String PROTOCOL_OTHER = "other"
 
 @Field static final long ONE_DAY_MS = 86400000
+@Field static final int API_TIMING_WINDOW = 20
+
+// In-memory API response time tracking (reset on hub reboot)
+@Field static Map apiTimings = [:]
 
 // Protocol display names
 @Field static final Map PROTOCOL_DISPLAY = [
@@ -132,6 +136,7 @@ mappings {
     path('/api/snapshots')        { action: [GET: 'apiSnapshots'] }
     path('/api/snapshot/view')    { action: [GET: 'apiSnapshotView'] }
     path('/api/snapshot/diff')    { action: [GET: 'apiSnapshotDiff'] }
+    path('/api/stats')            { action: [GET: 'apiStats'] }
 
     // Actions
     path('/api/snapshot/create')    { action: [POST: 'apiCreateSnapshot'] }
@@ -243,7 +248,9 @@ Map apiDashboard() {
     Float temperature = fetchTemperature()
     Integer databaseSize = fetchDatabaseSize()
 
-    logDebug "apiDashboard completed in ${now() - start}ms"
+    long elapsed = now() - start
+    logDebug "apiDashboard completed in ${elapsed}ms"
+    recordApiTiming("dashboard", elapsed)
     return jsonResponse([
         hub: hubInfo,
         devices: [
@@ -284,7 +291,9 @@ Map apiDevices() {
     List lowBattery = (deviceStats.lowBatteryDevices ?: []).collect { Map dev ->
         [id: dev.id, name: dev.name, battery: dev.battery]
     }
-    logDebug "apiDevices completed in ${now() - start}ms"
+    long elapsed = now() - start
+    logDebug "apiDevices completed in ${elapsed}ms"
+    recordApiTiming("devices", elapsed)
     return jsonResponse([
         summary: [
             totalDevices: deviceStats.totalDevices, activeDevices: deviceStats.activeDevices,
@@ -316,7 +325,9 @@ Map apiApps() {
             [id: app.id, label: app.label ?: app.name, type: app.name,
              parentId: app.parentAppId, disabled: app.state == "disabled"]
         }
-    logDebug "apiApps completed in ${now() - start}ms"
+    long elapsed = now() - start
+    logDebug "apiApps completed in ${elapsed}ms"
+    recordApiTiming("apps", elapsed)
     return jsonResponse([
         summary: [
             totalApps: appStats.totalApps, builtInApps: appStats.builtInApps, userApps: appStats.userApps,
@@ -361,7 +372,9 @@ Map apiNetwork() {
         }
     }
 
-    logDebug "apiNetwork completed in ${now() - start}ms"
+    long elapsed = now() - start
+    logDebug "apiNetwork completed in ${elapsed}ms"
+    recordApiTiming("network", elapsed)
     return jsonResponse([
         network: networkData.network && !networkData.network.error ? networkData.network : null,
         zwave: networkData.zwave && !networkData.zwave.error ? [
@@ -413,7 +426,9 @@ Map apiHealth() {
     def hub = (location.hubs && location.hubs.size() > 0) ? location.hubs[0] : null
     Map mem = systemHealth.memory ?: [:]
 
-    logDebug "apiHealth completed in ${now() - start}ms"
+    long elapsed = now() - start
+    logDebug "apiHealth completed in ${elapsed}ms"
+    recordApiTiming("health", elapsed)
     return jsonResponse([
         hub: [
             name: hubInfo.name, hubId: hub?.id, hardware: hubInfo.hardware,
@@ -442,7 +457,9 @@ Map apiPerformance() {
     List checkpoints = loadCheckpoints()
     Map savedComparison = loadPerformanceComparisonPayload()
 
-    logDebug "apiPerformance completed in ${now() - start}ms"
+    long elapsed = now() - start
+    logDebug "apiPerformance completed in ${elapsed}ms"
+    recordApiTiming("performance", elapsed)
     return jsonResponse([
         stats: stats,
         resources: resources,
@@ -455,7 +472,6 @@ Map apiPerformance() {
             radioStats: cp.radioStats
         ]},
         savedComparison: savedComparison
-        //savedComparisonHtml: renderPerformanceComparisonPayload(savedComparison)
     ])
 }
 
@@ -514,8 +530,11 @@ Map apiPerformanceCompare() {
     }
 
     // Save for persistence
-    savePerformanceComparisonPayload(buildPerformanceComparisonPayload(
-        baselineStats, checkpointStats, baselineLabel, checkpointLabel))
+    savePerformanceComparisonPayload([
+        generatedAt: new Date().format("yyyy-MM-dd HH:mm:ss"),
+        baselineLabel: baselineLabel, checkpointLabel: checkpointLabel,
+        baselineStats: baselineStats ?: [:], checkpointStats: checkpointStats ?: [:]
+    ])
 
     return jsonResponse([
         success: true,
@@ -523,8 +542,6 @@ Map apiPerformanceCompare() {
         checkpointLabel: checkpointLabel,
         baselineStats: baselineStats,
         checkpointStats: checkpointStats
-        //comparisonHtml: renderPerformanceComparisonPayload(buildPerformanceComparisonPayload(
-          //  baselineStats, checkpointStats, baselineLabel, checkpointLabel))
     ])
 }
 
@@ -932,12 +949,40 @@ List getStructuredAlerts() {
 
 // ===== BUTTON HANDLER =====
 
-void appButtonHandler(String btn) {
-    switch (btn) {
-        default:
-            logWarn "Unknown button: ${btn}"
-            break
+// ===== API TIMING =====
+
+void recordApiTiming(String endpoint, long elapsedMs) {
+    synchronized (apiTimings) {
+        Map entry = apiTimings[endpoint]
+        if (!entry) {
+            entry = [samples: [], median: 0, count: 0]
+            apiTimings[endpoint] = entry
+        }
+        List samples = entry.samples
+        samples << elapsedMs
+        if (samples.size() > API_TIMING_WINDOW) {
+            samples.remove(0)
+        }
+        entry.count = (entry.count as int) + 1
+        List sorted = samples.collect().sort()
+        int mid = sorted.size() / 2
+        entry.median = sorted.size() % 2 == 0 ? ((sorted[mid - 1] + sorted[mid]) / 2) as long : sorted[mid]
     }
+}
+
+Map apiStats() {
+    Map stats = [:]
+    synchronized (apiTimings) {
+        apiTimings.each { String endpoint, Map entry ->
+            stats[endpoint] = [
+                median: entry.median,
+                count: entry.count,
+                recent: entry.samples.size(),
+                lastSamples: entry.samples.collect()
+            ]
+        }
+    }
+    return jsonResponse([timings: stats])
 }
 
 // ===== DATA COLLECTION =====
@@ -1878,16 +1923,6 @@ Map buildZeroBaseline(Map stats, Map resources) {
     ]
 }
 
-Map buildPerformanceComparisonPayload(Map baselineStats, Map checkpointStats, String baselineLabel, String checkpointLabel) {
-    return [
-        generatedAt     : new Date().format("yyyy-MM-dd HH:mm:ss"),
-        baselineLabel   : baselineLabel,
-        checkpointLabel : checkpointLabel,
-        baselineStats   : baselineStats ?: [:],
-        checkpointStats : checkpointStats ?: [:]
-    ]
-}
-
 void deleteCheckpoint(int index) {
     List checkpoints = loadCheckpoints()
     if (index >= 0 && index < checkpoints.size()) {
@@ -1899,7 +1934,7 @@ void deleteCheckpoint(int index) {
 
 void clearAllCheckpoints() {
     deleteFile(CHECKPOINTS_FILE)
-    clearPerformanceComparison()
+    deleteFile(PERFORMANCE_COMPARISON_FILE)
     logInfo "All perf checkpoints cleared"
 }
 
@@ -1948,7 +1983,7 @@ void deleteSnapshot(int index) {
 
 void clearAllSnapshots() {
     deleteFile(SNAPSHOTS_FILE)
-    clearSnapshotDiff()
+    deleteFile(SNAPSHOT_DIFF_FILE)
     logInfo "All config snapshots cleared"
 }
 
@@ -1995,6 +2030,14 @@ String generateQuickSummary() {
         summary += "Apps: ${appStats.totalApps} total (System: ${appStats.builtInApps} | User: ${appStats.userApps})"
         if (resources) {
             summary += "\nResources: ${formatMemory(resources.freeOSMemory ?: 0)} free | CPU: ${String.format('%.2f', (resources.cpuAvg5min ?: 0) as float)}"
+        }
+        synchronized (apiTimings) {
+            if (apiTimings) {
+                List timingParts = apiTimings.collect { String ep, Map entry ->
+                    "${ep}: ${entry.median}ms"
+                }.sort()
+                summary += "\nAPI medians: ${timingParts.join(' | ')}"
+            }
         }
         return summary
     } catch (Exception e) {
@@ -2286,14 +2329,6 @@ void savePerformanceComparisonPayload(Map payload) {
     }
 }
 
-void clearPerformanceComparison() {
-    deleteFile(PERFORMANCE_COMPARISON_FILE)
-}
-
-boolean hasSavedPerformanceComparison() {
-    return loadPerformanceComparisonPayload() != null
-}
-
 Map loadSnapshotDiffPayload() {
     def data = readFile(SNAPSHOT_DIFF_FILE)
     return data instanceof Map ? (Map) data : null
@@ -2303,14 +2338,6 @@ void saveSnapshotDiffPayload(Map payload) {
     if (payload) {
         writeFile(SNAPSHOT_DIFF_FILE, groovy.json.JsonOutput.toJson(payload))
     }
-}
-
-void clearSnapshotDiff() {
-    deleteFile(SNAPSHOT_DIFF_FILE)
-}
-
-boolean hasSavedSnapshotDiff() {
-    return loadSnapshotDiffPayload() != null
 }
 
 def readFile(String fileName) {
@@ -2372,9 +2399,28 @@ void uninstalled() {
     logInfo "Hub Diagnostics uninstalled"
 }
 
+void updateUIIfNeeded() {
+    if (state.lastInstalledVersion == APP_VERSION) return
+    try {
+        logInfo "App version changed (${state.lastInstalledVersion ?: 'none'} → ${APP_VERSION}), downloading UI..."
+        Map params = [uri: IMPORT_URL_WEB, contentType: "text/plain", timeout: 30]
+        httpGet(params) { resp ->
+            if (resp.success) {
+                byte[] htmlBytes = resp.data.text.getBytes("UTF-8")
+                uploadHubFile("hub_diagnostics_ui.html", htmlBytes)
+                state.lastInstalledVersion = APP_VERSION
+                logInfo "UI updated to version ${APP_VERSION} (${htmlBytes.length} bytes)"
+            }
+        }
+    } catch (Exception e) {
+        logWarn "Failed to auto-download UI from GitHub: ${e.message}"
+    }
+}
+
 void initialize() {
     logInfo "Hub Diagnostics initialized"
     migrateStorageIfNeeded()
+    updateUIIfNeeded()
 
     if (settings.autoSnapshot) {
         int interval = (settings.snapshotInterval ?: "24").toInteger()
