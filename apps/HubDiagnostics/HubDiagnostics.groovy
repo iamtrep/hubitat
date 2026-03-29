@@ -92,15 +92,17 @@ import groovy.json.JsonOutput
 @Field static final String PERFORMANCE_COMPARISON_FILE = "hub_diagnostics_performance_comparison.json"
 @Field static final String SNAPSHOT_DIFF_FILE = "hub_diagnostics_snapshot_diff.json"
 
+@Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/hubitrep/hubitat/refs/heads/main/HubDiagnostics/HubDiagnostics.groovy"
+@Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/hubitrep/hubitat/refs/heads/main/HubDiagnostics/hub_diagnostics_ui.html"
 
 definition(
     name: "Hub Diagnostics",
-    namespace: "iamtrep",
-    author: "PJ",
+    namespace: "hubitrep",
+    author: "hubitrep",
     description: "Comprehensive hub diagnostics: inventory, performance tracking, network analysis, and snapshot comparison",
     category: "Utility",
     singleInstance: true,
-    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/utilities/HubDiagnostics.groovy",
+    importUrl: IMPORT_URL_AP,
     oauth: true,
     iconUrl: "",
     iconX2Url: "",
