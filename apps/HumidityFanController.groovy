@@ -436,6 +436,9 @@ private void evaluatePendingNormalState(BigDecimal bathroomHumidity) {
         unschedule("delayedTransitionToNormal")
         state.pendingStateSince = null
         transitionHumidityState(HUMIDITY_HIGH)
+
+        // React to state change: turn on fan if not restricted - no delayed activation
+        onHumidityBecameHigh()
         return
     }
 
