@@ -414,8 +414,9 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
     d.alerts.forEach(a=>{o+='<div class="alert a-'+(a.severity==='critical'?'crit':'warn')+'">'+(a.severity==='critical'?'\u26D4':'\u26A0')+' '+h(a.name)+'</div>'});o+='</div></div>'}
   // Reports
   const rpts=await api('reports');
-  o+='<div class="card"><div class="card-h">Reports</div><div class="card-b">';
-  o+='<div class="actions" style="margin-bottom:10px"><button class="btn btn-p" id="btnReport">Generate Full Report</button></div>';
+  o+='<div class="card"><div class="card-h">Reports & UI</div><div class="card-b">';
+  o+='<div class="actions" style="margin-bottom:10px"><button class="btn btn-p" id="btnReport">Generate Full Report</button>';
+  o+='<button class="btn btn-p" id="btnSyncUI">Update UI from GitHub</button></div>';
   if(rpts.lastReport)o+='<p><a href="/local/'+h(rpts.lastReport)+'" target="_blank" style="color:var(--link)">Open latest report: '+h(rpts.lastReport)+'</a></p>';
   if(rpts.reports&&rpts.reports.length>0){
     o+='<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--muted)">All reports ('+rpts.reports.length+')</summary><div style="margin-top:6px">';
@@ -426,6 +427,18 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
     o+='</div></details>'}
   o+='</div></div>';
   document.getElementById(P).innerHTML=o;
+  
+  const btnSyncUI=document.getElementById('btnSyncUI');
+  if(btnSyncUI)btnSyncUI.onclick=async()=>{
+    if(!confirm('Download latest UI from GitHub? This will overwrite the local HTML file and refresh the page.'))return;
+    btnSyncUI.disabled=true;btnSyncUI.textContent='Syncing...';
+    try{
+      const res=await post('ui/sync');
+      if(res.success){ btnSyncUI.textContent='Reloading...'; location.reload() }
+      else { alert('Sync failed. Check hub logs.'); btnSyncUI.disabled=false; btnSyncUI.textContent='Update UI from GitHub'; }
+    } catch(e) { alert('Sync failed: '+e.message); btnSyncUI.disabled=false; btnSyncUI.textContent='Update UI from GitHub'; }
+  };
+
   const btnReport=document.getElementById('btnReport');
   if(btnReport)btnReport.onclick=async()=>{
     btnReport.disabled=true;btnReport.textContent='Generating...';
