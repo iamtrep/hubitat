@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "4.4.1"
+@Field static final String APP_VERSION = "4.4.2"
 @Field static final String STORAGE_SCHEMA_VERSION = "3.2.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -155,7 +155,38 @@ mappings {
 // ===== PAGE METHODS =====
 
 Map dashboardPage() {
-    if (!state.accessToken) createAccessToken()
+    boolean oauthOk = checkOAuth()
+    boolean isFirstRun = (state.installed != true)
+
+    if (!oauthOk) {
+        return dynamicPage(name: "dashboardPage", title: "OAuth Required", install: true, uninstall: true) {
+            section("Step 1: Enable OAuth") {
+                paragraph "<span style='color:red; font-weight:bold;'>Critical: OAuth is required for Hub Diagnostics to function.</span>"
+                paragraph "Hubitat requires OAuth to be manually enabled for user apps that provide a web interface."
+                paragraph "<b>How to fix:</b>"
+                paragraph "1. Exit this app by clicking 'Done'.\n" +
+                          "2. Go to the <b>Apps Code</b> section of your hub.\n" +
+                          "3. Find <b>Hub Diagnostics</b> in the list.\n" +
+                          "4. Click on <b>OAuth</b> (top right button).\n" +
+                          "5. Click <b>Update</b> to enable it (no other changes needed).\n" +
+                          "6. Return here and try again."
+            }
+        }
+    }
+
+    if (isFirstRun) {
+        return dynamicPage(name: "dashboardPage", title: "Welcome to Hub Diagnostics", install: true, uninstall: true) {
+            section("Step 2: Finalize Installation") {
+                paragraph "Thank you for installing Hub Diagnostics! To finish the setup, please click <b>Done</b> at the bottom of this page."
+                paragraph "This will initialize the database, sync the user interface, and schedule performance tracking."
+                paragraph "<b>Once you click Done, re-open Hub Diagnostics from your Apps list to access the full dashboard.</b>"
+            }
+            section("Initial Check") {
+                paragraph "<b>OAuth Status:</b> <span style='color:green; font-weight:bold;'>Enabled (OK)</span>"
+                paragraph "<b>UI Component:</b> ${getUIVersion() == "Unknown" ? "Pending download..." : "Ready"}"
+            }
+        }
+    }
 
     dynamicPage(name: "dashboardPage", title: "Hub Diagnostics", install: true, uninstall: true) {
         section("Versions") {
@@ -237,7 +268,9 @@ Map jsonResponse(Map data) {
 }
 
 Map serveUI() {
-    if (!state.accessToken) createAccessToken()
+    if (!checkOAuth()) {
+        return render(status: 403, contentType: 'text/plain', data: 'OAuth is not enabled for this app. Please enable it in the Hubitat App Settings.')
+    }
     
     // Background sync check (Option 5: once every 24h)
     long lastCheck = state.lastUIUpdateCheck ?: 0
@@ -2067,12 +2100,15 @@ void deleteFile(String fileName) {
 
 void installed() {
     logInfo "Hub Diagnostics installed"
-    if (!state.accessToken) createAccessToken()
+    state.installed = true
+    if (!state.accessToken) checkOAuth()
+    syncUI(true)
     initialize()
 }
 
 void updated() {
     logInfo "Hub Diagnostics updated"
+    state.installed = true
     unsubscribe()
     unschedule()
     syncUI(true)
@@ -2083,6 +2119,17 @@ void uninstalled() {
     unschedule()
     unsubscribe()
     logInfo "Hub Diagnostics uninstalled"
+}
+
+private boolean checkOAuth() {
+    if (state.accessToken) return true
+    try {
+        createAccessToken()
+        return (state.accessToken != null)
+    } catch (e) {
+        logDebug "OAuth not enabled yet: ${e.message}"
+        return false
+    }
 }
 
 boolean syncUI(boolean force = false) {
