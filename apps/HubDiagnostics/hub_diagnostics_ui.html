@@ -117,6 +117,7 @@ const MOCK_DATA = {
 
 const T='${access_token}', B='${api_base}', REPORT=window.REPORT_DATA||null, cache={};
 let curTab = localStorage.getItem('hub_diag_tab') || 'dashboard';
+let activePerfComp = null;
 
 // ===== API =====
 async function api(ep){
@@ -134,6 +135,34 @@ async function post(ep,p){if(REPORT)return{};const q=new URLSearchParams(p||{});
 function drop(ep){if(ep)delete cache[ep];else Object.keys(cache).forEach(k=>delete cache[k])}
 
 // ===== HELPERS =====
+function diffStats(base, comp) {
+  if (!base || !comp) return comp;
+  const res = JSON.parse(JSON.stringify(comp));
+  ['deviceStats', 'appStats'].forEach(key => {
+    if (comp[key] && base[key]) {
+      const baseMap = {};
+      base[key].forEach(item => { if (item.id) baseMap[item.id] = item; });
+      res[key] = comp[key].map(item => {
+        const bItem = baseMap[item.id];
+        if (!bItem) return item;
+        const diffed = JSON.parse(JSON.stringify(item));
+        ['total', 'count', 'hubActionCount', 'cloudCallCount', 'stateSize'].forEach(field => {
+          if (typeof item[field] === 'number' && typeof bItem[field] === 'number') {
+            diffed[field] = item[field] - bItem[field];
+          }
+        });
+        diffed.average = diffed.count > 0 ? (diffed.total / diffed.count) : 0;
+        return diffed;
+      });
+    }
+  });
+  // Handle top-level numeric diffs if they exist
+  ['totalDevicesRuntime', 'totalAppsRuntime'].forEach(key => {
+    const cv = parseInt(comp[key]) || 0, bv = parseInt(base[key]) || 0;
+    if (cv || bv) res[key] = (cv - bv) + 'ms';
+  });
+  return res;
+}
 function h(s){const d=document.createElement('div');d.textContent=s??'';return d.innerHTML}
 function fmem(kb){if(kb==null)return'N/A';if(kb>=1048576)return(kb/1048576).toFixed(2)+' GB';if(kb>=1024)return(kb/1024).toFixed(0)+' MB';return kb+' KB'}
 function sev(v,w,c,inv){if(v==null)return'';if(inv)return v<c?'var(--crit)':v<w?'var(--warn)':'var(--ok)';return v>c?'var(--crit)':v>w?'var(--warn)':'var(--ok)'}
@@ -667,22 +696,43 @@ async function rHealth(){const P='p-health';loading(P);try{
 // ===== TAB: PERFORMANCE =====
 async function rPerf(){const P='p-performance';loading(P);try{
   const d=await api('performance');let o='';
+  // Logic to determine which stats to show
+  let s = d.stats;
+  let res = d.resources;
+  let title = 'Current Runtime';
+  if(activePerfComp) {
+    s = activePerfComp.diff;
+    res = activePerfComp.diffResources;
+    title = 'Comparison: ' + h(activePerfComp.baselineLabel) + ' \u2192 ' + h(activePerfComp.checkpointLabel);
+  }
+
   // Actions
   o+='<div class="actions">';
   o+='<button class="btn btn-p" id="btnCp">Create Checkpoint</button>';
   if(d.checkpointCount>0)o+='<button class="btn btn-d" id="btnClrCp">Clear All</button>';
+  if(activePerfComp) o+='<button class="btn btn-p" id="btnClearComp">Clear Comparison</button>';
   o+='</div>';
+
   // Runtime stats
-  if(d.stats){const s=d.stats;
-    o+='<div class="card"><div class="card-h">Current Runtime</div><div class="card-b"><div class="metrics">';
-    if(s.uptime)o+=mc('Hub Uptime',s.uptime);
+  if(s){
+    o+='<div class="card"><div class="card-h">'+title+'</div><div class="card-b"><div class="metrics">';
+    if(s.uptime)o+=mc('Interval/Uptime',s.uptime);
     if(s.totalDevicesRuntime)o+=mc('Devices Runtime',s.totalDevicesRuntime);
     if(s.totalAppsRuntime)o+=mc('Apps Runtime',s.totalAppsRuntime);
     o+='</div></div></div>'}
-  if(d.resources){o+='<div class="card"><div class="card-h">Resources</div><div class="card-b"><div class="metrics">';
-    o+=mc('Free OS Memory',fmem(d.resources.freeOSMemory),sev(d.resources.freeOSMemory,102400,76800,true));
-    o+=mc('CPU Load (5m)',d.resources.cpuAvg5min?.toFixed(2),sev(d.resources.cpuAvg5min,4.0,8.0,false));
+  
+  if(res){
+    const isDiff = activePerfComp != null;
+    o+='<div class="card"><div class="card-h">Resources '+(isDiff?'(Delta)':'')+'</div><div class="card-b"><div class="metrics">';
+    if(isDiff) {
+      o+=mc('Free OS Memory',fmem(res.freeOSMemory),res.freeOSMemory<0?'var(--crit)':'var(--ok)');
+      o+=mc('CPU Load',res.cpuAvg5min?.toFixed(2),res.cpuAvg5min>0?'var(--warn)':'var(--ok)');
+    } else {
+      o+=mc('Free OS Memory',fmem(res.freeOSMemory),sev(res.freeOSMemory,102400,76800,true));
+      o+=mc('CPU Load (5m)',res.cpuAvg5min?.toFixed(2),sev(res.cpuAvg5min,4.0,8.0,false));
+    }
     o+='</div></div></div>'}
+
   // Checkpoints
   o+='<div class="card"><div class="card-h">Checkpoints ('+d.checkpointCount+' / '+d.maxCheckpoints+')</div><div class="card-b">';
   if(d.checkpoints&&d.checkpoints.length){o+='<div id="cpTbl"></div>'}
@@ -698,17 +748,19 @@ async function rPerf(){const P='p-performance';loading(P);try{
     o+='</select><button class="btn btn-p" id="btnCompare" style="margin-left:8px">Compare</button></div>';
     o+='<div id="compResult"></div></div></div></div>'}
   // Saved comparison
-  if(d.savedComparison||d.savedComparisonHtml){o+='<div class="card"><div class="card-h">Last Comparison</div><div class="card-b"><div id="savedComp"></div></div></div>'}
+  if(!activePerfComp && (d.savedComparison||d.savedComparisonHtml)){o+='<div class="card"><div class="card-h">Last Comparison</div><div class="card-b"><div id="savedComp"></div></div></div>'}
+  
   // Runtime detail tables
-  if(d.stats&&d.stats.appStats&&d.stats.appStats.length){
+  if(s&&s.appStats&&s.appStats.length){
     o+='<div class="card"><div class="card-h">CPU by App Type</div><div class="card-b"><div id="perfAppCpuChart"></div></div></div>'}
-  if(d.stats&&d.stats.deviceStats&&d.stats.deviceStats.length){
+  if(s&&s.deviceStats&&s.deviceStats.length){
     o+='<div class="card"><div class="card-h">CPU by Device Type</div><div class="card-b"><div id="perfDevCpuChart"></div></div></div>'}
-  if(d.stats&&d.stats.deviceStats&&d.stats.deviceStats.length){
+  if(s&&s.deviceStats&&s.deviceStats.length){
     o+='<div class="card"><div class="card-h">Device Runtime Detail</div><div class="card-b"><div id="devStatsTbl"></div></div></div>'}
-  if(d.stats&&d.stats.appStats&&d.stats.appStats.length){
+  if(s&&s.appStats&&s.appStats.length){
     o+='<div class="card"><div class="card-h">App Runtime Detail</div><div class="card-b"><div id="appStatsTbl"></div></div></div>'}
   document.getElementById(P).innerHTML=o;
+  
   // Render checkpoint table
   if(d.checkpoints&&d.checkpoints.length){
     const cpRows=d.checkpoints.map((cp,i)=>({idx:i+1,timestamp:cp.timestamp,
@@ -718,46 +770,63 @@ async function rPerf(){const P='p-performance';loading(P);try{
       {l:'Dev Runtime',f:'devRuntime'},{l:'App Runtime',f:'appRuntime'},
       {l:'',f:'_idx',r:r=>'<button class="btn btn-d" onclick="delCp('+r._idx+')">\u{1F5D1}</button>'}
     ],cpRows,{sc:0,sd:'desc'})}
-  // CPU by device type chart (client-side join with devices endpoint)
-  if(d.stats&&d.stats.deviceStats&&d.stats.deviceStats.length){
+
+  // CPU by device type chart
+  if(s&&s.deviceStats&&s.deviceStats.length){
     api('devices').then(devData=>{
       const typeById={};
       if(devData.deviceRows)devData.deviceRows.forEach(r=>{typeById[r.id]=r.type||'Unknown'});
-      renderBarChart(aggregateByType(d.stats.deviceStats,typeById,'id','total'),'perfDevCpuChart',{format:v=>v.toFixed(0)+' ms'})
+      renderBarChart(aggregateByType(s.deviceStats,typeById,'id','total'),'perfDevCpuChart',{format:v=>v.toFixed(0)+' ms'})
     }).catch(()=>{})}
   // Device Runtime table
-  if(d.stats&&d.stats.deviceStats)
+  if(s&&s.deviceStats)
     tbl('devStatsTbl',[
       {l:'Name',f:'name',r:r=>r.id?dlink(r.id,r.name):h(r.name)},{l:'Total (ms)',f:'total',t:'n'},
       {l:'Count',f:'count',t:'n'},{l:'Avg (ms)',f:'average',t:'n',r:r=>Number(r.average||0).toFixed(1)},
       {l:'State Size',f:'stateSize',t:'n'},{l:'Hub Actions',f:'hubActionCount',t:'n'},{l:'Cloud Calls',f:'cloudCallCount',t:'n'}
-    ],d.stats.deviceStats,{sc:1,sd:'desc',filter:true,collapse:10,collapseLabel:'Device Runtime Detail'});
-  // CPU by app type chart (Performance tab, aggregated by parent type)
-  if(d.stats&&d.stats.appStats&&d.stats.appStats.length){
+    ],s.deviceStats,{sc:1,sd:'desc',filter:true,collapse:10,collapseLabel:'Device Runtime Detail'});
+  // CPU by app type chart
+  if(s&&s.appStats&&s.appStats.length){
     api('apps').then(appData=>{
       const ptm=buildParentTypeMap(appData.parentChildHierarchy);
-      renderBarChart(aggregateByType(d.stats.appStats,ptm,'id','total'),'perfAppCpuChart',{format:v=>v.toFixed(0)+' ms'})
+      renderBarChart(aggregateByType(s.appStats,ptm,'id','total'),'perfAppCpuChart',{format:v=>v.toFixed(0)+' ms'})
     }).catch(()=>{})}
   // App Runtime table
-  if(d.stats&&d.stats.appStats)
+  if(s&&s.appStats)
     tbl('appStatsTbl',[
       {l:'Name',f:'name',r:r=>r.id?'<a href="/installedapp/status/'+r.id+'" target="_blank">'+h(r.name)+'</a>':h(r.name)},
       {l:'Total (ms)',f:'total',t:'n'},{l:'Count',f:'count',t:'n'},
       {l:'Avg (ms)',f:'average',t:'n',r:r=>Number(r.average||0).toFixed(1)},
       {l:'State Size',f:'stateSize',t:'n'},{l:'Hub Actions',f:'hubActionCount',t:'n'},{l:'Cloud Calls',f:'cloudCallCount',t:'n'}
-    ],d.stats.appStats,{sc:1,sd:'desc',filter:true,collapse:10,collapseLabel:'App Runtime Detail'});
+    ],s.appStats,{sc:1,sd:'desc',filter:true,collapse:10,collapseLabel:'App Runtime Detail'});
   // Saved comparison render
-  if(d.savedComparison||d.savedComparisonHtml)renderComparison({comparisonHtml:d.savedComparisonHtml,...(d.savedComparison||{})},'savedComp');
+  if(!activePerfComp && (d.savedComparison||d.savedComparisonHtml))renderComparison({comparisonHtml:d.savedComparisonHtml,...(d.savedComparison||{})},'savedComp');
+
   // Button bindings
   const btnCp=document.getElementById('btnCp');
   if(btnCp)btnCp.onclick=async()=>{btnCp.disabled=true;btnCp.textContent='Creating...';await post('checkpoint/create');drop('performance');rPerf()};
   const btnClr=document.getElementById('btnClrCp');
   if(btnClr)btnClr.onclick=async()=>{if(!confirm('Clear all checkpoints?'))return;await post('checkpoints/clear');drop('performance');rPerf()};
+  const btnClearComp=document.getElementById('btnClearComp');
+  if(btnClearComp)btnClearComp.onclick=()=>{activePerfComp=null;rPerf()};
   const btnComp=document.getElementById('btnCompare');
   if(btnComp)btnComp.onclick=async()=>{btnComp.disabled=true;btnComp.textContent='Comparing...';
     const b=document.getElementById('selBase').value,c=document.getElementById('selCp').value;
-    const r=await post('performance/compare','baseline='+b+'&checkpoint='+c);
-    if(r.success){renderComparison(r,'compResult')}else{document.getElementById('compResult').innerHTML='<div class="alert a-warn">'+h(r.error)+'</div>'}
+    try {
+      const r=await post('performance/compare','baseline='+b+'&checkpoint='+c);
+      if(r.success){
+        activePerfComp = {
+          baselineLabel: r.baselineLabel,
+          checkpointLabel: r.checkpointLabel,
+          diff: diffStats(r.baselineStats, r.checkpointStats),
+          diffResources: r.baselineStats.resources && r.checkpointStats.resources ? {
+            freeOSMemory: r.checkpointStats.resources.freeOSMemory - r.baselineStats.resources.freeOSMemory,
+            cpuAvg5min: r.checkpointStats.resources.cpuAvg5min - r.baselineStats.resources.cpuAvg5min
+          } : null
+        };
+        rPerf();
+      }else{document.getElementById('compResult').innerHTML='<div class="alert a-warn">'+h(r.error)+'</div>'}
+    } catch(e) { alert('Comparison failed: '+e.message); }
     btnComp.disabled=false;btnComp.textContent='Compare'};
 }catch(e){err(P,e,rPerf)}}
 
