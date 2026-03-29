@@ -102,7 +102,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "4.4.0";
+const UI_VERSION = "4.4.1";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -767,10 +767,17 @@ async function rPerf(){const P='p-performance';loading(P);try{
   // Comparison controls
   if(d.checkpointCount>0){
     o+='<div class="live-only"><div class="card"><div class="card-h">Compare Performance</div><div class="card-b">';
-    o+='<div style="margin-bottom:10px"><label>Baseline: </label><select id="selBase"><option value="startup">Since Startup</option>';
-    d.checkpoints.forEach((cp,i)=>{o+='<option value="'+i+'">Checkpoint '+(i+1)+' - '+h(cp.timestamp)+'</option>'});
-    o+='</select><label>Compare to: </label><select id="selCp"><option value="now">Now</option>';
-    d.checkpoints.forEach((cp,i)=>{o+='<option value="'+i+'">Checkpoint '+(i+1)+' - '+h(cp.timestamp)+'</option>'});
+    o+='<div style="margin-bottom:10px"><label>Baseline: </label><select id="selBase"><option value="startup" '+(activePerfComp?.baseIdx==='startup'?'selected':'')+'>Since Startup</option>';
+    d.checkpoints.forEach((cp,i)=>{
+      const sel = activePerfComp?.baseIdx == i ? 'selected' : '';
+      o+='<option value="'+i+'" '+sel+'>Checkpoint '+(i+1)+' - '+h(cp.timestamp)+'</option>';
+    });
+    o+='</select><label>Compare to: </label><select id="selCp">';
+    o+='<option value="now" '+(activePerfComp?.compIdx==='now'?'selected':'')+'>Now</option>';
+    d.checkpoints.forEach((cp,i)=>{
+      const sel = activePerfComp?.compIdx == i ? 'selected' : '';
+      o+='<option value="'+i+'" '+sel+'>Checkpoint '+(i+1)+' - '+h(cp.timestamp)+'</option>';
+    });
     o+='</select><button class="btn btn-p" id="btnCompare" style="margin-left:8px">Compare</button></div>';
     o+='<div id="compResult"></div></div></div></div>'}
   // Saved comparison
@@ -842,6 +849,8 @@ async function rPerf(){const P='p-performance';loading(P);try{
       const r=await post('performance/compare','baseline='+b+'&checkpoint='+c);
       if(r.success){
         activePerfComp = {
+          baseIdx: b === 'startup' ? 'startup' : parseInt(b),
+          compIdx: c === 'now' ? 'now' : parseInt(c),
           baselineLabel: r.baselineLabel,
           checkpointLabel: r.checkpointLabel,
           diff: diffStats(r.baselineStats, r.checkpointStats),
