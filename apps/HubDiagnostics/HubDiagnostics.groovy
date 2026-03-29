@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "4.3.3"
+@Field static final String APP_VERSION = "4.4.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "3.2.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -248,17 +248,15 @@ Map serveUI() {
     }
 
     try {
-        byte[] hubFile = downloadHubFile('hub_diagnostics_ui.html')
-        if (!hubFile) {
+        String html = loadUITemplate()
+        if (!html) {
             logError "hub_diagnostics_ui.html missing from hub. Attempting emergency sync..."
-            if (syncUI(true)) hubFile = downloadHubFile('hub_diagnostics_ui.html')
+            if (syncUI(true)) html = loadUITemplate()
         }
-        if (!hubFile) return render(status: 404, contentType: 'text/plain', data: 'UI file not found. Check hub logs.')
-        
-        String html = new String(hubFile, 'UTF-8')
-        String apiBase = fullLocalApiServerUrl
+        if (!html) return render(status: 404, contentType: 'text/plain', data: 'UI file not found. Check hub logs.')
+
         html = html.replace('${access_token}', state.accessToken)
-            .replace('${api_base}', apiBase)
+            .replace('${api_base}', fullLocalApiServerUrl)
         return render(status: 200, contentType: 'text/html', data: html)
     } catch (Exception e) {
         logError "Error serving UI: ${e.message}"
@@ -274,36 +272,11 @@ Map apiSyncUI() {
 
 Map apiDashboard() {
     long start = now()
-    Map deviceStats = analyzeDevicesQuick()
-    Map appStats = analyzeAppsQuick()
-    Map hubInfo = getHubInfo()
-    Map resources = fetchSystemResources()
-    Float temperature = fetchTemperature()
-    Integer databaseSize = fetchDatabaseSize()
-
+    Map data = getDashboardData()
     long elapsed = now() - start
     logDebug "apiDashboard completed in ${elapsed}ms"
     recordApiTiming("dashboard", elapsed)
-    return jsonResponse([
-        hub: hubInfo,
-        appVersion: APP_VERSION,
-        uiVersion: getUIVersion(),
-        devices: [
-            total: deviceStats.totalDevices,
-            active: deviceStats.activeDevices,
-            inactive: deviceStats.inactiveDevices,
-            disabled: deviceStats.disabledDevices,
-            byProtocol: deviceStats.byProtocol,
-            idsByProtocol: deviceStats.idsByProtocol,
-            idsByStatus: deviceStats.idsByStatus
-        ],
-        apps: [total: appStats.totalApps, builtIn: appStats.builtInApps, user: appStats.userApps],
-        resources: resources,
-        temperature: temperature,
-        databaseSize: databaseSize,
-        alerts: getStructuredAlerts(),
-        inactivityDays: settings.inactivityDays ?: 7
-    ])
+    return jsonResponse(data)
 }
 
 String getUIVersion() {
@@ -322,176 +295,38 @@ String getUIVersion() {
 
 Map apiDevices() {
     long start = now()
-    Map deviceStats = analyzeDevices()
-    List deviceRows = (deviceStats.allDevices ?: []).collect { Map dev ->
-        [
-            id: dev.id, name: dev.name, type: dev.type,
-            protocol: dev.protocol,
-            protocolDisplay: PROTOCOL_DISPLAY[dev.protocol] ?: (dev.protocol ?: "").toString().capitalize(),
-            room: dev.room,
-            status: dev.status ?: "",
-            lastActivity: dev.lastActivity ?: "Never",
-            battery: dev.battery,
-            parentAppId: dev.parentAppId, parentAppName: dev.parentAppName,
-            parentDeviceId: dev.parentDeviceId, parentDeviceName: dev.parentDeviceName,
-            userType: dev.userType ?: false, deviceTypeId: dev.deviceTypeId
-        ]
-    }
-    List lowBattery = (deviceStats.lowBatteryDevices ?: []).collect { Map dev ->
-        [id: dev.id, name: dev.name, battery: dev.battery]
-    }
+    Map data = getDevicesData()
     long elapsed = now() - start
     logDebug "apiDevices completed in ${elapsed}ms"
     recordApiTiming("devices", elapsed)
-    return jsonResponse([
-        summary: [
-            totalDevices: deviceStats.totalDevices, activeDevices: deviceStats.activeDevices,
-            inactiveDevices: deviceStats.inactiveDevices, disabledDevices: deviceStats.disabledDevices,
-            parentDevices: deviceStats.parentDevices, childDevices: deviceStats.childDevices,
-            linkedDevices: deviceStats.linkedDevices, batteryDevices: deviceStats.batteryDevices
-        ],
-        byProtocol: deviceStats.byProtocol,
-        idsByProtocol: deviceStats.idsByProtocol,
-        byType: deviceStats.byType,
-        idsByType: deviceStats.idsByType,
-        idsByStatus: deviceStats.idsByStatus,
-        deviceRows: deviceRows,
-        lowBatteryDevices: lowBattery,
-        inactivityDays: settings.inactivityDays ?: 7
-    ])
+    return jsonResponse(data)
 }
 
 Map apiApps() {
     long start = now()
-    Map appStats = analyzeApps()
-    List platformRows = (appStats.platformApps ?: []).collect { Map app ->
-        [id: app.id, name: app.name, stateSize: app.stateSize as int, pctTotal: app.pctTotal,
-         total: app.total, count: app.count, average: app.average, hubActionCount: app.hubActionCount, cloudCallCount: app.cloudCallCount]
-    }
-    List userAppRows = (appStats.userAppsList ?: [])
-        .sort { (it.label ?: it.name ?: "").toString().toLowerCase() }
-        .collect { Map app ->
-            [id: app.id, label: app.label ?: app.name, type: app.name,
-             parentId: app.parentAppId, disabled: app.state == "disabled"]
-        }
+    Map data = getAppsData()
     long elapsed = now() - start
     logDebug "apiApps completed in ${elapsed}ms"
     recordApiTiming("apps", elapsed)
-    return jsonResponse([
-        summary: [
-            totalApps: appStats.totalApps, builtInApps: appStats.builtInApps, userApps: appStats.userApps,
-            parentApps: appStats.parentApps, childApps: appStats.childApps,
-            runtimeTotalApps: appStats.runtimeTotalApps
-        ],
-        byNamespace: appStats.byNamespace,
-        platformApps: platformRows,
-        userApps: userAppRows,
-        parentChildHierarchy: appStats.parentChildHierarchy
-    ])
+    return jsonResponse(data)
 }
 
 Map apiNetwork() {
     long start = now()
-    Map networkData = analyzeNetwork()
-    Map zigbeeMesh = fetchZigbeeMeshInfo()
-    String zwaveVersion = fetchZwaveVersion()
-    Map zwaveMesh = extractZwaveMeshQuality(networkData.zwave ?: [:])
-    List ghostNodes = buildZwaveGhostNodes(networkData.zwave ?: [:])
-    List problemNodes = (zwaveMesh?.nodes ?: []).findAll { Map n -> n.state != "OK" || (n.per ?: 0) > 1 }.collect { Map n ->
-        List issues = []
-        if (n.state != "OK") issues << "State: ${n.state}"
-        if ((n.per ?: 0) > 1) issues << "PER: ${n.per}%"
-        [name: n.name, deviceId: n.deviceId, nodeId: n.nodeId, issues: issues.join(", ")]
-    }
-
-    Map zigbeeRaw = networkData.zigbee ?: [:]
-    List nonResponsive = []
-    if (zigbeeRaw.devices) {
-        nonResponsive = zigbeeRaw.devices.findAll { it.active != true }.collect { dev ->
-            [id: dev.id, name: dev.name ?: "Device ${dev.id}"]
-        }
-    }
-
-    Map hubMeshRaw = networkData.hubMesh ?: [:]
-    List hubMeshPeers = []
-    if (hubMeshRaw.hubList) {
-        hubMeshPeers = hubMeshRaw.hubList.collect { Map hub ->
-            [name: hub.name, ip: hub.ipAddress, offline: hub.offline,
-             deviceCount: hub.deviceIds?.size() ?: 0, varCount: hub.hubVarNames?.size() ?: 0]
-        }
-    }
-
+    Map data = getNetworkData()
     long elapsed = now() - start
     logDebug "apiNetwork completed in ${elapsed}ms"
     recordApiTiming("network", elapsed)
-    return jsonResponse([
-        network: networkData.network && !networkData.network.error ? networkData.network : null,
-        zwave: networkData.zwave && !networkData.zwave.error ? [
-            enabled: networkData.zwave.enabled, healthy: networkData.zwave.healthy,
-            region: networkData.zwave.region,
-            nodeCount: (networkData.zwave.zwDevices ?: [:]).size(),
-            isRadioUpdateNeeded: networkData.zwave.isRadioUpdateNeeded,
-            zwaveJs: networkData.zwave.zwaveJs,
-            version: zwaveVersion,
-            mesh: zwaveMesh,
-            ghostNodes: ghostNodes,
-            problemNodes: problemNodes
-        ] : null,
-        zigbee: networkData.zigbee && !networkData.zigbee.error ? [
-            enabled: zigbeeRaw.enabled, healthy: zigbeeRaw.healthy,
-            networkState: zigbeeRaw.networkState, channel: zigbeeRaw.channel,
-            panId: zigbeeRaw.panId, extendedPanId: zigbeeRaw.extendedPanId,
-            deviceCount: (zigbeeRaw.devices ?: []).size(),
-            joinMode: zigbeeRaw.inJoinMode,
-            powerLevel: zigbeeRaw.powerLevel,
-            responsiveCount: zigbeeRaw.devices ? zigbeeRaw.devices.count { it.active == true } : 0,
-            totalCount: (zigbeeRaw.devices ?: []).size(),
-            nonResponsive: nonResponsive,
-            mesh: zigbeeMesh ? [
-                neighbors: zigbeeMesh.neighbors?.size() ?: 0,
-                routes: zigbeeMesh.routes?.size() ?: 0,
-                avgLqi: zigbeeMesh.avgLqi, minLqi: zigbeeMesh.minLqi, maxLqi: zigbeeMesh.maxLqi,
-                weakNeighbors: (zigbeeMesh.weakNeighbors ?: []).collect { [shortId: it.shortId, lqi: it.lqi] },
-                staleNeighbors: (zigbeeMesh.staleNeighbors ?: []).collect { [shortId: it.shortId, age: it.age] },
-                childDevices: zigbeeMesh.childDevices?.size() ?: 0
-            ] : null
-        ] : null,
-        matter: networkData.matter && !networkData.matter.error ? networkData.matter : null,
-        hubMesh: networkData.hubMesh && !networkData.hubMesh.error ? [
-            enabled: hubMeshRaw.hubMeshEnabled != null ? hubMeshRaw.hubMeshEnabled : hubMeshRaw.enabled,
-            sharedDevices: hubMeshRaw.sharedDevices?.size() ?: 0,
-            linkedDevices: hubMeshRaw.linkedDevices?.size() ?: 0,
-            sharedVars: hubMeshRaw.sharedVars?.size() ?: 0,
-            linkedVars: hubMeshRaw.linkedVars?.size() ?: 0,
-            peers: hubMeshPeers
-        ] : null
-    ])
+    return jsonResponse(data)
 }
 
 Map apiHealth() {
     long start = now()
-    Map systemHealth = analyzeSystemHealth()
-    Map hubInfo = getHubInfo()
-    def hub = (location.hubs && location.hubs.size() > 0) ? location.hubs[0] : null
-    Map mem = systemHealth.memory ?: [:]
-
+    Map data = getHealthData()
     long elapsed = now() - start
     logDebug "apiHealth completed in ${elapsed}ms"
     recordApiTiming("health", elapsed)
-    return jsonResponse([
-        hub: [
-            name: hubInfo.name, hubId: hub?.id, hardware: hubInfo.hardware,
-            firmware: hubInfo.firmware, ip: hubInfo.ip, zigbeeId: hub?.zigbeeId,
-            location: location.name, mode: location.currentMode?.toString(),
-            timeZone: location.timeZone?.ID
-        ],
-        resources: mem ?: null,
-        temperature: systemHealth.temperature,
-        databaseSize: systemHealth.databaseSize,
-        stateCompression: systemHealth.stateCompression,
-        eventStateLimits: systemHealth.eventStateLimits,
-        alerts: getStructuredAlerts()
-    ])
+    return jsonResponse(data)
 }
 
 Map apiHealthHistory() {
@@ -501,27 +336,11 @@ Map apiHealthHistory() {
 
 Map apiPerformance() {
     long start = now()
-    Map stats = fetchCurrentStats()
-    Map resources = fetchSystemResources()
-    List checkpoints = loadCheckpoints()
-    Map savedComparison = loadPerformanceComparisonPayload()
-
+    Map data = getPerformanceData()
     long elapsed = now() - start
     logDebug "apiPerformance completed in ${elapsed}ms"
     recordApiTiming("performance", elapsed)
-    return jsonResponse([
-        stats: stats,
-        resources: resources,
-        checkpointCount: checkpoints?.size() ?: 0,
-        maxCheckpoints: (settings.maxCheckpoints ?: 10) as int,
-        checkpoints: (checkpoints ?: []).collect { Map cp -> [
-            timestamp: cp.timestamp,
-            stats: cp.stats,
-            resources: cp.resources,
-            radioStats: cp.radioStats
-        ]},
-        savedComparison: savedComparison
-    ])
+    return jsonResponse(data)
 }
 
 Map apiPerformanceCompare() {
@@ -553,11 +372,11 @@ Map apiPerformanceCompare() {
 
     // Resolve checkpoint
     if (checkpoint == "now") {
-        checkpointStats = fetchCurrentStats()
+        checkpointStats = (Map) hubRequest(RUNTIME_STATS_PATH, "runtime stats")
         Map currentResources = fetchSystemResources()
         checkpointStats.resources = currentResources
-        Map zwaveData = fetchEndpoint(ZWAVE_DETAILS_PATH, "Z-Wave details", 20)
-        Map zigbeeData = fetchEndpoint(ZIGBEE_DETAILS_PATH, "Zigbee details", 20)
+        Map zwaveData = (Map) hubRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", "json", 20)
+        Map zigbeeData = (Map) hubRequest(ZIGBEE_DETAILS_PATH, "Zigbee details", "json", 20)
         checkpointStats.radioStats = [
             zwave: extractZwaveMessageCounts(zwaveData),
             zigbee: extractZigbeeMessageCounts(zigbeeData)
@@ -595,23 +414,7 @@ Map apiPerformanceCompare() {
 }
 
 Map apiSnapshots() {
-    List snapshots = loadSnapshots()
-    return jsonResponse([
-        snapshotCount: snapshots?.size() ?: 0,
-        maxSnapshots: (settings.maxSnapshots ?: 10) as int,
-        snapshots: (snapshots ?: []).collect { Map snap -> [
-            timestamp: snap.timestamp,
-            hubInfo: snap.hubInfo,
-            devices: [
-                totalDevices: snap.devices?.totalDevices ?: 0,
-                activeDevices: snap.devices?.activeDevices ?: 0,
-                inactiveDevices: snap.devices?.inactiveDevices ?: 0,
-                disabledDevices: snap.devices?.disabledDevices ?: 0
-            ],
-            apps: [totalApps: snap.apps?.totalApps ?: 0, builtInApps: snap.apps?.builtInApps ?: 0, userApps: snap.apps?.userApps ?: 0],
-            memory: snap.systemHealth?.memory?.freeOSMemory
-        ]}
-    ])
+    return jsonResponse(getSnapshotsData())
 }
 
 Map apiSnapshotView() {
@@ -779,30 +582,50 @@ Map apiReports() {
 }
 
 Map apiGenerateReport() {
-    logInfo "Generating zero-bloat report..."
+    logInfo "Generating report..."
     String timestamp = new Date().format("yyyy-MM-dd HH:mm:ss")
+    List memHistory = fetchMemoryHistory()
 
-    // Collect all diagnostic data (reuse same analysis calls as API endpoints)
-    Map deviceStats = analyzeDevices()
-    Map appStats = analyzeApps()
+    Map reportData = [
+        _generated: timestamp,
+        dashboard: getDashboardData(),
+        devices: getDevicesData(),
+        apps: getAppsData(),
+        network: getNetworkData(),
+        health: getHealthData(),
+        "health/history": [dataPoints: memHistory ?: []],
+        performance: getPerformanceData(),
+        snapshots: getSnapshotsData(),
+        reports: [lastReport: null, reports: []]
+    ]
+
+    String html = loadUITemplate()
+    if (!html) return jsonResponse([success: false, error: "SPA template not found in File Manager"])
+
+    String dataJson = JsonOutput.toJson(reportData)
+    html = html.replace("</head>", "<script>window.REPORT_DATA=${dataJson}</script>\n</head>")
+    html = html.replace('${access_token}', '').replace('${api_base}', '')
+
+    String filename = "hub_diagnostics_report_${new Date().format('yyyyMMdd_HHmmss')}.html"
+    writeFile(filename, html)
+    state.lastReportFile = filename
+    logInfo "Report generated: ${filename} (${(dataJson.length() / 1024).intValue()} KB data)"
+
+    return jsonResponse([success: true, filename: filename])
+}
+
+// ===== DATA GATHERERS =====
+// Each returns a plain Map suitable for both jsonResponse() and report embedding.
+
+Map getDashboardData() {
+    Map deviceStats = analyzeDevices(false)
+    Map appStats = analyzeApps(false)
     Map hubInfo = getHubInfo()
     Map resources = fetchSystemResources()
     Float temperature = fetchTemperature()
     Integer databaseSize = fetchDatabaseSize()
-    Map systemHealth = analyzeSystemHealth()
-    Map networkData = analyzeNetwork()
-    Map zigbeeMesh = fetchZigbeeMeshInfo()
-    String zwaveVersion = fetchZwaveVersion()
-    Map zwaveMesh = extractZwaveMeshQuality(networkData.zwave ?: [:])
-    List ghostNodes = buildZwaveGhostNodes(networkData.zwave ?: [:])
-    Map stats = fetchCurrentStats()
-    List checkpoints = loadCheckpoints()
-    List snapshots = loadSnapshots()
-    List memHistory = fetchMemoryHistory()
-
-    // Build dashboard data (same structure as apiDashboard)
-    Map dashboardData = [
-        hub: hubInfo,
+    return [
+        hub: hubInfo, appVersion: APP_VERSION, uiVersion: getUIVersion(),
         devices: [
             total: deviceStats.totalDevices, active: deviceStats.activeDevices,
             inactive: deviceStats.inactiveDevices, disabled: deviceStats.disabledDevices,
@@ -813,8 +636,10 @@ Map apiGenerateReport() {
         resources: resources, temperature: temperature, databaseSize: databaseSize,
         alerts: getStructuredAlerts(), inactivityDays: settings.inactivityDays ?: 7
     ]
+}
 
-    // Build devices data (same structure as apiDevices)
+Map getDevicesData() {
+    Map deviceStats = analyzeDevices()
     List deviceRows = (deviceStats.allDevices ?: []).collect { Map dev ->
         [id: dev.id, name: dev.name, type: dev.type, protocol: dev.protocol,
          protocolDisplay: PROTOCOL_DISPLAY[dev.protocol] ?: (dev.protocol ?: "").toString().capitalize(),
@@ -823,32 +648,47 @@ Map apiGenerateReport() {
          parentDeviceId: dev.parentDeviceId, parentDeviceName: dev.parentDeviceName,
          userType: dev.userType ?: false, deviceTypeId: dev.deviceTypeId]
     }
-    Map devicesData = [
+    List lowBattery = (deviceStats.lowBatteryDevices ?: []).collect { Map dev ->
+        [id: dev.id, name: dev.name, battery: dev.battery]
+    }
+    return [
         summary: [totalDevices: deviceStats.totalDevices, activeDevices: deviceStats.activeDevices,
                   inactiveDevices: deviceStats.inactiveDevices, disabledDevices: deviceStats.disabledDevices,
                   parentDevices: deviceStats.parentDevices, childDevices: deviceStats.childDevices,
                   linkedDevices: deviceStats.linkedDevices, batteryDevices: deviceStats.batteryDevices],
         byProtocol: deviceStats.byProtocol, idsByProtocol: deviceStats.idsByProtocol,
-        idsByStatus: deviceStats.idsByStatus, deviceRows: deviceRows,
-        lowBatteryDevices: (deviceStats.lowBatteryDevices ?: []).collect { [id: it.id, name: it.name, battery: it.battery] },
+        byType: deviceStats.byType, idsByType: deviceStats.idsByType, idsByStatus: deviceStats.idsByStatus,
+        deviceRows: deviceRows, lowBatteryDevices: lowBattery,
         inactivityDays: settings.inactivityDays ?: 7
     ]
+}
 
-    // Build apps data (same structure as apiApps)
-    Map appsData = [
+Map getAppsData() {
+    Map appStats = analyzeApps()
+    List platformRows = (appStats.platformApps ?: []).collect { Map app ->
+        [id: app.id, name: app.name, stateSize: app.stateSize as int, pctTotal: app.pctTotal,
+         total: app.total, count: app.count, average: app.average,
+         hubActionCount: app.hubActionCount, cloudCallCount: app.cloudCallCount]
+    }
+    List userAppRows = (appStats.userAppsList ?: [])
+        .sort { (it.label ?: it.name ?: "").toString().toLowerCase() }
+        .collect { [id: it.id, label: it.label ?: it.name, type: it.name,
+                    parentId: it.parentAppId, disabled: it.state == "disabled"] }
+    return [
         summary: [totalApps: appStats.totalApps, builtInApps: appStats.builtInApps, userApps: appStats.userApps,
-                  parentApps: appStats.parentApps, childApps: appStats.childApps, runtimeTotalApps: appStats.runtimeTotalApps],
-        byNamespace: appStats.byNamespace,
-        platformApps: (appStats.platformApps ?: []).collect { Map app ->
-            [id: app.id, name: app.name, stateSize: app.stateSize as int, pctTotal: app.pctTotal,
-             total: app.total, count: app.count, average: app.average, hubActionCount: app.hubActionCount, cloudCallCount: app.cloudCallCount]
-        },
-        userApps: (appStats.userAppsList ?: []).sort { (it.label ?: it.name ?: "").toString().toLowerCase() }
-            .collect { [id: it.id, label: it.label ?: it.name, type: it.name, parentId: it.parentAppId, disabled: it.state == "disabled"] },
-        parentChildHierarchy: appStats.parentChildHierarchy
+                  parentApps: appStats.parentApps, childApps: appStats.childApps,
+                  runtimeTotalApps: appStats.runtimeTotalApps],
+        byNamespace: appStats.byNamespace, platformApps: platformRows,
+        userApps: userAppRows, parentChildHierarchy: appStats.parentChildHierarchy
     ]
+}
 
-    // Build network data (same structure as apiNetwork — inline to avoid calling render())
+Map getNetworkData() {
+    Map networkData = analyzeNetwork()
+    Map zigbeeMesh = fetchZigbeeMeshInfo()
+    String zwaveVersion = fetchZwaveVersion()
+    Map zwaveMesh = extractZwaveMeshQuality(networkData.zwave ?: [:])
+    List ghostNodes = buildZwaveGhostNodes(networkData.zwave ?: [:])
     List problemNodes = (zwaveMesh?.nodes ?: []).findAll { Map n -> n.state != "OK" || (n.per ?: 0) > 1 }.collect { Map n ->
         List issues = []
         if (n.state != "OK") issues << "State: ${n.state}"
@@ -859,100 +699,90 @@ Map apiGenerateReport() {
     List nonResponsive = zigbeeRaw.devices ? zigbeeRaw.devices.findAll { it.active != true }.collect { [id: it.id, name: it.name ?: "Device ${it.id}"] } : []
     Map hubMeshRaw = networkData.hubMesh ?: [:]
     List hubMeshPeers = hubMeshRaw.hubList ? hubMeshRaw.hubList.collect { Map hub ->
-        [name: hub.name, ip: hub.ipAddress, offline: hub.offline, deviceCount: hub.deviceIds?.size() ?: 0, varCount: hub.hubVarNames?.size() ?: 0]
+        [name: hub.name, ip: hub.ipAddress, offline: hub.offline,
+         deviceCount: hub.deviceIds?.size() ?: 0, varCount: hub.hubVarNames?.size() ?: 0]
     } : []
-    Map networkApiData = [
+    return [
         network: networkData.network && !networkData.network.error ? networkData.network : null,
         zwave: networkData.zwave && !networkData.zwave.error ? [
-            enabled: networkData.zwave.enabled, healthy: networkData.zwave.healthy, region: networkData.zwave.region,
-            nodeCount: (networkData.zwave.zwDevices ?: [:]).size(), isRadioUpdateNeeded: networkData.zwave.isRadioUpdateNeeded,
-            zwaveJs: networkData.zwave.zwaveJs, version: zwaveVersion, mesh: zwaveMesh, ghostNodes: ghostNodes, problemNodes: problemNodes
+            enabled: networkData.zwave.enabled, healthy: networkData.zwave.healthy,
+            region: networkData.zwave.region, nodeCount: (networkData.zwave.zwDevices ?: [:]).size(),
+            isRadioUpdateNeeded: networkData.zwave.isRadioUpdateNeeded,
+            zwaveJs: networkData.zwave.zwaveJs, version: zwaveVersion,
+            mesh: zwaveMesh, ghostNodes: ghostNodes, problemNodes: problemNodes
         ] : null,
         zigbee: networkData.zigbee && !networkData.zigbee.error ? [
-            enabled: zigbeeRaw.enabled, healthy: zigbeeRaw.healthy, networkState: zigbeeRaw.networkState,
-            channel: zigbeeRaw.channel, panId: zigbeeRaw.panId, extendedPanId: zigbeeRaw.extendedPanId,
-            deviceCount: (zigbeeRaw.devices ?: []).size(), joinMode: zigbeeRaw.inJoinMode, powerLevel: zigbeeRaw.powerLevel,
+            enabled: zigbeeRaw.enabled, healthy: zigbeeRaw.healthy,
+            networkState: zigbeeRaw.networkState, channel: zigbeeRaw.channel,
+            panId: zigbeeRaw.panId, extendedPanId: zigbeeRaw.extendedPanId,
+            deviceCount: (zigbeeRaw.devices ?: []).size(), joinMode: zigbeeRaw.inJoinMode,
+            powerLevel: zigbeeRaw.powerLevel,
             responsiveCount: zigbeeRaw.devices ? zigbeeRaw.devices.count { it.active == true } : 0,
             totalCount: (zigbeeRaw.devices ?: []).size(), nonResponsive: nonResponsive,
-            mesh: zigbeeMesh ? [neighbors: zigbeeMesh.neighbors?.size() ?: 0, routes: zigbeeMesh.routes?.size() ?: 0,
+            mesh: zigbeeMesh ? [
+                neighbors: zigbeeMesh.neighbors?.size() ?: 0, routes: zigbeeMesh.routes?.size() ?: 0,
                 avgLqi: zigbeeMesh.avgLqi, minLqi: zigbeeMesh.minLqi, maxLqi: zigbeeMesh.maxLqi,
                 weakNeighbors: (zigbeeMesh.weakNeighbors ?: []).collect { [shortId: it.shortId, lqi: it.lqi] },
                 staleNeighbors: (zigbeeMesh.staleNeighbors ?: []).collect { [shortId: it.shortId, age: it.age] },
-                childDevices: zigbeeMesh.childDevices?.size() ?: 0] : null
+                childDevices: zigbeeMesh.childDevices?.size() ?: 0
+            ] : null
         ] : null,
         matter: networkData.matter && !networkData.matter.error ? networkData.matter : null,
         hubMesh: networkData.hubMesh && !networkData.hubMesh.error ? [
             enabled: hubMeshRaw.hubMeshEnabled != null ? hubMeshRaw.hubMeshEnabled : hubMeshRaw.enabled,
-            sharedDevices: hubMeshRaw.sharedDevices?.size() ?: 0, linkedDevices: hubMeshRaw.linkedDevices?.size() ?: 0,
-            sharedVars: hubMeshRaw.sharedVars?.size() ?: 0, linkedVars: hubMeshRaw.linkedVars?.size() ?: 0, peers: hubMeshPeers
+            sharedDevices: hubMeshRaw.sharedDevices?.size() ?: 0,
+            linkedDevices: hubMeshRaw.linkedDevices?.size() ?: 0,
+            sharedVars: hubMeshRaw.sharedVars?.size() ?: 0, linkedVars: hubMeshRaw.linkedVars?.size() ?: 0,
+            peers: hubMeshPeers
         ] : null
     ]
+}
 
-    // Build health data
+Map getHealthData() {
+    Map systemHealth = analyzeSystemHealth()
+    Map hubInfo = getHubInfo()
     def hub = (location.hubs && location.hubs.size() > 0) ? location.hubs[0] : null
     Map mem = systemHealth.memory ?: [:]
-    Map healthData = [
-        hub: [name: hubInfo.name, hubId: hub?.id, hardware: hubInfo.hardware, firmware: hubInfo.firmware,
-              ip: hubInfo.ip, zigbeeId: hub?.zigbeeId, location: location.name,
-              mode: location.currentMode?.toString(), timeZone: location.timeZone?.ID],
-        resources: mem ?: null, temperature: systemHealth.temperature, databaseSize: systemHealth.databaseSize,
-        stateCompression: systemHealth.stateCompression, eventStateLimits: systemHealth.eventStateLimits,
-        alerts: getStructuredAlerts()
+    return [
+        hub: [name: hubInfo.name, hubId: hub?.id, hardware: hubInfo.hardware,
+              firmware: hubInfo.firmware, ip: hubInfo.ip, zigbeeId: hub?.zigbeeId,
+              location: location.name, mode: location.currentMode?.toString(),
+              timeZone: location.timeZone?.ID],
+        resources: mem ?: null, temperature: systemHealth.temperature,
+        databaseSize: systemHealth.databaseSize, stateCompression: systemHealth.stateCompression,
+        eventStateLimits: systemHealth.eventStateLimits, alerts: getStructuredAlerts()
     ]
+}
 
-    // Assemble full report data
-    Map reportData = [
-        _generated: timestamp,
-        dashboard: dashboardData,
-        devices: devicesData,
-        apps: appsData,
-        network: networkApiData,
-        health: healthData,
-        "health/history": [dataPoints: memHistory ?: []],
-        performance: [
-            stats: stats, resources: resources, checkpointCount: checkpoints?.size() ?: 0,
-            maxCheckpoints: (settings.maxCheckpoints ?: 10) as int,
-            checkpoints: (checkpoints ?: []).collect { Map cp -> [timestamp: cp.timestamp, stats: cp.stats, resources: cp.resources, radioStats: cp.radioStats] },
-            savedComparison: loadPerformanceComparisonPayload()
-        ],
-        snapshots: [
-            snapshotCount: snapshots?.size() ?: 0, maxSnapshots: (settings.maxSnapshots ?: 10) as int,
-            snapshots: (snapshots ?: []).collect { Map snap -> [
-                timestamp: snap.timestamp, hubInfo: snap.hubInfo,
-                devices: [totalDevices: snap.devices?.totalDevices ?: 0, activeDevices: snap.devices?.activeDevices ?: 0,
-                          inactiveDevices: snap.devices?.inactiveDevices ?: 0, disabledDevices: snap.devices?.disabledDevices ?: 0,
-                          byProtocol: snap.devices?.byProtocol],
-                apps: [totalApps: snap.apps?.totalApps ?: 0, builtInApps: snap.apps?.builtInApps ?: 0, userApps: snap.apps?.userApps ?: 0],
-                memory: snap.systemHealth?.memory?.freeOSMemory
-            ]}
-        ],
-        reports: [lastReport: null, reports: []]
+Map getPerformanceData() {
+    Map stats = (Map) hubRequest(RUNTIME_STATS_PATH, "runtime stats")
+    Map resources = fetchSystemResources()
+    List checkpoints = loadCheckpoints()
+    return [
+        stats: stats, resources: resources,
+        checkpointCount: checkpoints?.size() ?: 0,
+        maxCheckpoints: (settings.maxCheckpoints ?: 10) as int,
+        checkpoints: (checkpoints ?: []).collect { Map cp -> [
+            timestamp: cp.timestamp, stats: cp.stats,
+            resources: cp.resources, radioStats: cp.radioStats
+        ]},
+        savedComparison: loadPerformanceComparisonPayload()
     ]
+}
 
-    // Read SPA template from File Manager
-    String html
-    try {
-        html = new String(downloadHubFile("hub_diagnostics_ui.html"), "UTF-8")
-    } catch (Exception e) {
-        logError "Could not read hub_diagnostics_ui.html from File Manager: ${e.message}"
-        return jsonResponse([success: false, error: "SPA template not found in File Manager"])
-    }
-
-    // Inject REPORT_DATA before </head>
-    String dataJson = JsonOutput.toJson(reportData)
-    html = html.replace("</head>", "<script>window.REPORT_DATA=${dataJson}</script>\n</head>")
-
-    // Clear token placeholders (report doesn't need API access)
-    html = html.replace('${access_token}', '')
-    html = html.replace('${api_base}', '')
-
-    // Save to File Manager
-    String filename = "hub_diagnostics_report_${new Date().format('yyyyMMdd_HHmmss')}.html"
-    writeFile(filename, html)
-    state.lastReportFile = filename
-    logInfo "Zero-bloat report generated: ${filename} (${(dataJson.length() / 1024).intValue()} KB data)"
-
-    return jsonResponse([success: true, filename: filename])
+Map getSnapshotsData() {
+    List snapshots = loadSnapshots()
+    return [
+        snapshotCount: snapshots?.size() ?: 0,
+        maxSnapshots: (settings.maxSnapshots ?: 10) as int,
+        snapshots: (snapshots ?: []).collect { Map snap -> [
+            timestamp: snap.timestamp, hubInfo: snap.hubInfo,
+            devices: [totalDevices: snap.devices?.totalDevices ?: 0, activeDevices: snap.devices?.activeDevices ?: 0,
+                      inactiveDevices: snap.devices?.inactiveDevices ?: 0, disabledDevices: snap.devices?.disabledDevices ?: 0],
+            apps: [totalApps: snap.apps?.totalApps ?: 0, builtInApps: snap.apps?.builtInApps ?: 0, userApps: snap.apps?.userApps ?: 0],
+            memory: snap.systemHealth?.memory?.freeOSMemory
+        ]}
+    ]
 }
 
 List getStructuredAlerts() {
@@ -1036,198 +866,140 @@ Map apiStats() {
 
 // ===== DATA COLLECTION =====
 
-Map fetchEndpoint(String path, String name, int timeout = 30) {
+/**
+ * Unified HTTP request to the local hub. Replaces fetchEndpoint, fetchPlainText, etc.
+ * @param path    URL path (e.g., DEVICES_LIST_PATH)
+ * @param name    Human-readable label for logging
+ * @param type    "json" returns parsed Map, "text" returns raw String
+ * @param timeout Request timeout in seconds
+ * @return For json: Map (or [error:true, message:...] on failure). For text: String (or null on failure).
+ */
+private Object hubRequest(String path, String name, String type = "json", int timeout = 30) {
     long start = now()
     try {
         Map params = [
-            uri: HUB_BASE,
-            path: path,
-            contentType: "application/json",
+            uri: HUB_BASE, path: path,
+            contentType: type == "json" ? "application/json" : "text/plain",
             timeout: timeout
         ]
-        Map result = null
+        Object result = null
         httpGet(params) { resp ->
-            if (resp.success && resp.data) {
-                result = resp.data
+            if (resp.success) {
+                if (type == "json") {
+                    result = resp.data
+                } else {
+                    result = resp.data?.text?.trim() ?: resp.data?.toString()?.trim()
+                }
             }
         }
         logDebug "Fetched ${name} in ${now() - start}ms"
-        return result ?: [:]
+        return type == "json" ? (result ?: [:]) : result
     } catch (Exception e) {
-        logError "Error fetching ${name} (${now() - start}ms): ${getObjectClassName(e)}: ${e.message}"
-        return [error: true, message: e.message]
+        if (type == "json") {
+            logError "Error fetching ${name} (${now() - start}ms): ${getObjectClassName(e)}: ${e.message}"
+            return [error: true, message: e.message]
+        } else {
+            logDebug "Error fetching ${name}: ${e.message}"
+            return null
+        }
     }
 }
 
 Map fetchSystemResources() {
-    long start = now()
+    String text = (String) hubRequest(FREE_MEMORY_PATH, "system resources", "text", 15)
+    if (!text) return null
     try {
-        Map params = [
-            uri: HUB_BASE,
-            path: FREE_MEMORY_PATH,
-            contentType: "text/plain",
-            timeout: 15
-        ]
-        Map resourceData = null
-        httpGet(params) { resp ->
-            if (resp.success) {
-                String[] lines = resp.data.text.split('\n')
-                if (lines.size() > 1) {
-                    String[] values = lines[1].split(',')
-                    if (values.size() >= 6) {
-                        resourceData = [
-                            timestamp: values[0].trim(),
-                            freeOSMemory: values[1].trim().toInteger(),
-                            cpuAvg5min: values[2].trim().toFloat(),
-                            totalJavaMemory: values[3].trim().toInteger(),
-                            freeJavaMemory: values[4].trim().toInteger(),
-                            directJavaMemory: values[5].trim().toInteger()
-                        ]
-                    }
-                }
+        String[] lines = text.split('\n')
+        if (lines.size() > 1) {
+            String[] values = lines[1].split(',')
+            if (values.size() >= 6) {
+                return [
+                    timestamp: values[0].trim(),
+                    freeOSMemory: values[1].trim().toInteger(),
+                    cpuAvg5min: values[2].trim().toFloat(),
+                    totalJavaMemory: values[3].trim().toInteger(),
+                    freeJavaMemory: values[4].trim().toInteger(),
+                    directJavaMemory: values[5].trim().toInteger()
+                ]
             }
         }
-        logDebug "Fetched system resources in ${now() - start}ms"
-        return resourceData
     } catch (Exception e) {
-        logError "Error fetching system resources (${now() - start}ms): ${e.message}"
-        return null
+        logError "Error parsing system resources: ${e.message}"
     }
+    return null
 }
 
 List fetchMemoryHistory() {
+    String text = (String) hubRequest(MEMORY_HISTORY_PATH, "memory history", "text", 30)
+    if (!text) return []
+    List dataPoints = []
     try {
-        Map params = [
-            uri: HUB_BASE,
-            path: MEMORY_HISTORY_PATH,
-            contentType: "text/plain",
-            timeout: 30
-        ]
-        List dataPoints = []
-        httpGet(params) { resp ->
-            if (resp.success) {
-                String[] lines = resp.data.text.split('\n')
-                // Skip header line
-                for (int i = 1; i < lines.length; i++) {
-                    String line = lines[i].trim()
-                    if (!line) continue
-                    String[] parts = line.split(',')
-                    if (parts.length >= 6) {
-                        dataPoints << [
-                            time: parts[0].trim(),
-                            freeOS: parts[1].trim().toInteger(),
-                            cpuLoad: parts[2].trim().toFloat(),
-                            freeJava: parts[4].trim().toInteger(),
-                            directJava: parts[5].trim().toInteger()
-                        ]
-                    }
-                }
+        String[] lines = text.split('\n')
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i].trim()
+            if (!line) continue
+            String[] parts = line.split(',')
+            if (parts.length >= 6) {
+                dataPoints << [
+                    time: parts[0].trim(),
+                    freeOS: parts[1].trim().toInteger(),
+                    cpuLoad: parts[2].trim().toFloat(),
+                    freeJava: parts[4].trim().toInteger(),
+                    directJava: parts[5].trim().toInteger()
+                ]
             }
         }
-        return dataPoints
     } catch (Exception e) {
-        logError "Error fetching memory history: ${e.message}"
-        return []
+        logError "Error parsing memory history: ${e.message}"
     }
+    return dataPoints
 }
 
 Map fetchStateCompression() {
-    try {
-        Map params = [
-            uri: HUB_BASE,
-            path: STATE_COMPRESSION_PATH,
-            contentType: "text/plain",
-            timeout: 10
-        ]
-        Map result = null
-        httpGet(params) { resp ->
-            if (resp.success) {
-                String text = resp.data?.text?.trim() ?: resp.data?.toString()?.trim() ?: ""
-                result = [enabled: text.toLowerCase() == "enabled", status: text]
-            }
-        }
-        return result ?: [enabled: false, status: "unknown"]
-    } catch (Exception e) {
-        logError "Error fetching state compression: ${e.message}"
-        return [enabled: false, status: "unavailable"]
-    }
-}
-
-String fetchPlainText(String path, String name, int timeout = 10) {
-    long start = now()
-    try {
-        Map params = [
-            uri: HUB_BASE,
-            path: path,
-            contentType: "text/plain",
-            timeout: timeout
-        ]
-        String result = null
-        httpGet(params) { resp ->
-            if (resp.success) {
-                result = resp.data?.text?.trim() ?: resp.data?.toString()?.trim()
-            }
-        }
-        logDebug "Fetched ${name} in ${now() - start}ms"
-        return result
-    } catch (Exception e) {
-        logDebug "Error fetching ${name}: ${e.message}"
-        return null
-    }
+    String text = (String) hubRequest(STATE_COMPRESSION_PATH, "state compression", "text", 10)
+    if (!text) return [enabled: false, status: "unavailable"]
+    return [enabled: text.toLowerCase() == "enabled", status: text]
 }
 
 Integer fetchDatabaseSize() {
-    String text = fetchPlainText(DATABASE_SIZE_PATH, "database size")
-    if (text) {
-        try { return text.toInteger() } catch (Exception e) { /* ignore */ }
-    }
+    String text = (String) hubRequest(DATABASE_SIZE_PATH, "database size", "text")
+    if (text) { try { return text.toInteger() } catch (Exception e) { /* ignore */ } }
     return null
 }
 
 Float fetchTemperature() {
-    String text = fetchPlainText(INTERNAL_TEMP_PATH, "internal temperature")
-    if (text) {
-        try { return text.toFloat() } catch (Exception e) { /* ignore */ }
-    }
+    String text = (String) hubRequest(INTERNAL_TEMP_PATH, "internal temperature", "text")
+    if (text) { try { return text.toFloat() } catch (Exception e) { /* ignore */ } }
     return null
 }
 
 Map fetchHubAlerts() {
-    Map hubData = fetchEndpoint(HUB_DATA_PATH, "hub data", 10)
+    Map hubData = (Map) hubRequest(HUB_DATA_PATH, "hub data", "json", 10)
     if (!hubData || hubData.error) return [:]
-
-    Map result = [
+    return [
         alerts: hubData.alerts ?: [:],
         databaseSize: hubData.alerts?.databaseSize,
         spammyDevicesMessage: hubData.spammyDevicesMessage,
         devMode: hubData.baseModel?.devMode ?: false
     ]
-    return result
 }
 
 Map fetchEventStateLimits() {
-    String eventLimit = fetchPlainText(EVENT_LIMIT_PATH, "event limit")
-    String maxEventAge = fetchPlainText(MAX_EVENT_AGE_PATH, "max event age")
-    String maxStateAge = fetchPlainText(MAX_STATE_AGE_PATH, "max state age")
-
+    String eventLimit = (String) hubRequest(EVENT_LIMIT_PATH, "event limit", "text")
+    String maxEventAge = (String) hubRequest(MAX_EVENT_AGE_PATH, "max event age", "text")
+    String maxStateAge = (String) hubRequest(MAX_STATE_AGE_PATH, "max state age", "text")
     Map limits = [:]
-
-    // Event limit comes as "Maximum event count: [11]"
     if (eventLimit) {
         java.util.regex.Matcher m = (eventLimit =~ /\[(\d+)\]/)
         if (m.find()) limits.maxEvents = m.group(1).toInteger()
     }
-    if (maxEventAge) {
-        try { limits.maxEventAgeDays = maxEventAge.toInteger() } catch (Exception e) { /* ignore */ }
-    }
-    if (maxStateAge) {
-        try { limits.maxStateAgeDays = maxStateAge.toInteger() } catch (Exception e) { /* ignore */ }
-    }
+    if (maxEventAge) { try { limits.maxEventAgeDays = maxEventAge.toInteger() } catch (Exception e) { /* ignore */ } }
+    if (maxStateAge) { try { limits.maxStateAgeDays = maxStateAge.toInteger() } catch (Exception e) { /* ignore */ } }
     return limits
 }
 
 Map fetchZigbeeMeshInfo() {
-    String text = fetchPlainText(ZIGBEE_CHILD_ROUTE_PATH, "zigbee child/route info", 15)
+    String text = (String) hubRequest(ZIGBEE_CHILD_ROUTE_PATH, "zigbee child/route info", "text", 15)
     if (!text) return [:]
 
     Map result = [childDevices: [], neighbors: [], routes: [], raw: text]
@@ -1276,7 +1048,7 @@ Map fetchZigbeeMeshInfo() {
 }
 
 String fetchZwaveVersion() {
-    String raw = fetchPlainText(ZWAVE_VERSION_PATH, "Z-Wave version")
+    String raw = (String) hubRequest(ZWAVE_VERSION_PATH, "Z-Wave version", "text")
     return parseZWaveVersion(raw)
 }
 
@@ -1368,73 +1140,24 @@ List extractZigbeeMessageCounts(Map zigbeeData) {
     }
 }
 
-Map fetchCurrentStats() {
-    try {
-        Map params = [
-            uri: HUB_BASE,
-            path: RUNTIME_STATS_PATH,
-            contentType: "application/json",
-            timeout: 30
-        ]
-        Map stats = null
-        httpGet(params) { resp ->
-            if (resp.success) {
-                stats = resp.data
-            }
-        }
-        return stats
-    } catch (Exception e) {
-        logError "Error fetching runtime stats: ${e.message}"
-        return null
-    }
-}
-
 // ===== ANALYSIS MODULES =====
 
-Map analyzeDevices() {
-    Map response = fetchEndpoint(DEVICES_LIST_PATH, "devices list")
+Map analyzeDevices(boolean deep = true) {
+    Map response = (Map) hubRequest(DEVICES_LIST_PATH, "devices list")
 
     if (!response || response.error || !response.devices) {
         logWarn "Failed to fetch devices list"
         return getEmptyDeviceStats()
     }
 
-    // Flatten the device list while preserving parent device context from nested child entries
-    List devicesList = flattenDeviceEntries(response.devices as List, true)
+    List devicesList = flattenDeviceEntries(response.devices as List, deep)
 
-    Map stats = [
-        totalDevices: 0,
-        activeDevices: 0,
-        inactiveDevices: 0,
-        disabledDevices: 0,
-        parentDevices: 0,
-        childDevices: 0,
-        linkedDevices: 0,
-        batteryDevices: 0,
-        lowBatteryDevices: [],
-        allDevices: [],
-        byType: [:],
-        idsByType: [:],
-        byProtocol: [(PROTOCOL_ZIGBEE): 0, (PROTOCOL_ZWAVE): 0, (PROTOCOL_MATTER): 0,
-                     (PROTOCOL_LAN): 0, (PROTOCOL_VIRTUAL): 0, (PROTOCOL_MAKER): 0,
-                     (PROTOCOL_CLOUD): 0, (PROTOCOL_HUBMESH): 0, (PROTOCOL_OTHER): 0],
-        byStatus: [active: 0, inactive: 0, disabled: 0],
-        // ID lists for device list links
-        idsByStatus: [active: [], inactive: [], disabled: []],
-        idsByProtocol: [(PROTOCOL_ZIGBEE): [], (PROTOCOL_ZWAVE): [], (PROTOCOL_MATTER): [],
-                        (PROTOCOL_LAN): [], (PROTOCOL_VIRTUAL): [], (PROTOCOL_MAKER): [],
-                        (PROTOCOL_CLOUD): [], (PROTOCOL_HUBMESH): [], (PROTOCOL_OTHER): []],
-        parentIds: [],
-        childIds: [],
-        linkedIds: [],
-        batteryIds: []
-    ]
+    Map stats = getEmptyDeviceStats()
 
     long inactivityThresholdMs = now() - ((settings.inactivityDays ?: 7) * ONE_DAY_MS)
     Map radioProtocols = buildRadioProtocolMap()
-    Map appLookup = buildAppLookupMap()
+    Map appLookup = deep ? buildAppLookupMap() : [:]
 
-    // Single bulk-backed pass: analyze basic data, protocol, and parent tracking
     devicesList.each { deviceEntry ->
         try {
             Map device = deviceEntry.data
@@ -1442,41 +1165,24 @@ Map analyzeDevices() {
 
             stats.totalDevices++
 
-            // Activity status
             Long lastActivity = null
             try {
                 if (device.lastActivity && !(device.lastActivity instanceof Boolean)) {
                     lastActivity = parseDate(device.lastActivity)
                 }
-            } catch (Exception e) {
-                // Ignore parse errors
-            }
+            } catch (Exception e) { /* ignore */ }
 
             if (device.disabled) {
                 stats.disabledDevices++
-                stats.byStatus.disabled++
                 stats.idsByStatus.disabled << device.id
                 stats.inactiveDevices++
             } else if (lastActivity && lastActivity > inactivityThresholdMs) {
                 stats.activeDevices++
-                stats.byStatus.active++
                 stats.idsByStatus.active << device.id
             } else {
                 stats.inactiveDevices++
-                stats.byStatus.inactive++
                 stats.idsByStatus.inactive << device.id
             }
-
-            // Parent/child tracking
-            if (deviceEntry.parent == true) { stats.parentDevices++; stats.parentIds << device.id }
-            if (deviceEntry.child == true) { stats.childDevices++; stats.childIds << device.id }
-            if (device.linked == true) { stats.linkedDevices++; stats.linkedIds << device.id }
-
-            // Device type
-            String typeName = safeToString(device.type, "Unknown")
-            stats.byType[typeName] = (stats.byType[typeName] ?: 0) + 1
-            if (!stats.idsByType.containsKey(typeName)) stats.idsByType[typeName] = []
-            stats.idsByType[typeName] << device.id
 
             // Protocol detection — radio map first, then heuristic fallback
             String protocol = PROTOCOL_OTHER
@@ -1486,50 +1192,57 @@ Map analyzeDevices() {
                 protocol = radioProtocols[device.id]
             } else {
                 protocol = determineProtocolQuick(device)
+                // In quick mode, don't trust heuristic for radio protocols if not in radio map
+                if (!deep && protocol in [PROTOCOL_ZIGBEE, PROTOCOL_ZWAVE, PROTOCOL_MATTER]) {
+                    protocol = PROTOCOL_OTHER
+                }
             }
             stats.byProtocol[protocol] = (stats.byProtocol[protocol] ?: 0) + 1
             if (stats.idsByProtocol[protocol] != null) stats.idsByProtocol[protocol] << device.id
 
-            // Battery tracking — battery level is in currentStates, not a top-level field
-            Integer batteryLevel = null
-            List currentStates = device.currentStates ?: []
-            Map batteryState = currentStates.find { it.key == "battery" }
-            if (batteryState?.value != null) {
-                try {
-                    batteryLevel = batteryState.value.toString().toFloat().toInteger()
-                    stats.batteryDevices++
-                    stats.batteryIds << device.id
-                    if (batteryLevel <= (settings.lowBatteryThreshold ?: 20)) {
-                        stats.lowBatteryDevices << [id: device.id, name: device.name ?: "Unknown", battery: batteryLevel]
-                    }
-                } catch (Exception e) { /* non-numeric battery value */ }
+            // Deep-only: parent/child, battery, type breakdown, full device list
+            if (deep) {
+                if (deviceEntry.parent == true) { stats.parentDevices++; stats.parentIds << device.id }
+                if (deviceEntry.child == true) { stats.childDevices++; stats.childIds << device.id }
+                if (device.linked == true) { stats.linkedDevices++; stats.linkedIds << device.id }
+
+                String typeName = safeToString(device.type, "Unknown")
+                stats.byType[typeName] = (stats.byType[typeName] ?: 0) + 1
+                if (!stats.idsByType.containsKey(typeName)) stats.idsByType[typeName] = []
+                stats.idsByType[typeName] << device.id
+
+                Integer batteryLevel = null
+                List currentStates = device.currentStates ?: []
+                Map batteryState = currentStates.find { it.key == "battery" }
+                if (batteryState?.value != null) {
+                    try {
+                        batteryLevel = batteryState.value.toString().toFloat().toInteger()
+                        stats.batteryDevices++
+                        stats.batteryIds << device.id
+                        if (batteryLevel <= (settings.lowBatteryThreshold ?: 20)) {
+                            stats.lowBatteryDevices << [id: device.id, name: device.name ?: "Unknown", battery: batteryLevel]
+                        }
+                    } catch (Exception e) { /* non-numeric battery value */ }
+                }
+
+                Object parentAppId = extractParentAppId(device)
+                String normalizedParentAppId = normalizeAppLookupId(parentAppId)
+                String parentAppName = normalizedParentAppId ? (appLookup[normalizedParentAppId] ?: "App ${normalizedParentAppId}") : null
+
+                stats.allDevices << [
+                    id: device.id, name: device.name ?: "Unknown",
+                    label: device.label ?: device.name ?: "Unknown",
+                    type: typeName, userType: device.user ?: false, deviceTypeId: device.deviceTypeId,
+                    protocol: protocol,
+                    status: device.disabled ? "Disabled" : (lastActivity && lastActivity > inactivityThresholdMs ? "Active" : "Inactive"),
+                    lastActivity: lastActivity ? new Date(lastActivity).format("yyyy-MM-dd HH:mm") : "Never",
+                    battery: batteryLevel,
+                    isParent: deviceEntry.parent ?: false, isChild: deviceEntry.child ?: false,
+                    linked: device.linked ?: false, room: device.roomName ?: "",
+                    parentAppId: normalizedParentAppId, parentAppName: parentAppName,
+                    parentDeviceId: deviceEntry.parentDeviceId, parentDeviceName: deviceEntry.parentDeviceName
+                ]
             }
-
-            Object parentAppId = extractParentAppId(device)
-            String normalizedParentAppId = normalizeAppLookupId(parentAppId)
-            String parentAppName = normalizedParentAppId ? (appLookup[normalizedParentAppId] ?: "App ${normalizedParentAppId}") : null
-
-            // Add to full device list
-            stats.allDevices << [
-                id: device.id,
-                name: device.name ?: "Unknown",
-                label: device.label ?: device.name ?: "Unknown",
-                type: typeName,
-                userType: device.user ?: false,
-                deviceTypeId: device.deviceTypeId,
-                protocol: protocol,
-                status: device.disabled ? "Disabled" : (lastActivity && lastActivity > inactivityThresholdMs ? "Active" : "Inactive"),
-                lastActivity: lastActivity ? new Date(lastActivity).format("yyyy-MM-dd HH:mm") : "Never",
-                battery: batteryLevel,
-                isParent: deviceEntry.parent ?: false,
-                isChild: deviceEntry.child ?: false,
-                linked: device.linked ?: false,
-                room: device.roomName ?: "",
-                parentAppId: normalizedParentAppId,
-                parentAppName: parentAppName,
-                parentDeviceId: deviceEntry.parentDeviceId,
-                parentDeviceName: deviceEntry.parentDeviceName
-            ]
         } catch (Exception e) {
             logWarn "Error processing device ${deviceEntry.key}: ${e.message}"
         }
@@ -1538,11 +1251,23 @@ Map analyzeDevices() {
     return stats
 }
 
-Map analyzeApps() {
-    Map response = fetchEndpoint(APPS_LIST_PATH, "apps list")
+Map analyzeApps(boolean deep = true) {
+    Map response = (Map) hubRequest(APPS_LIST_PATH, "apps list")
 
     if (!response || response.error || !response.apps) {
-        return getEmptyAppStats()
+        return deep ? getEmptyAppStats() : [totalApps: 0, userApps: 0, builtInApps: 0]
+    }
+
+    // Quick mode: just count apps
+    if (!deep) {
+        int totalApps = 0, userApps = 0, builtInApps = 0
+        visitAppEntries(response.apps as List) { Map appEntry, Map app, boolean isChildLevel, List parentHierarchyList ->
+            if (!app) return
+            totalApps++
+            if (app.user) userApps++
+            else builtInApps++
+        }
+        return [totalApps: totalApps, userApps: userApps, builtInApps: builtInApps]
     }
 
     List appsList = response.apps
@@ -1622,7 +1347,7 @@ Map analyzeApps() {
     // Identify platform-only apps by comparing runtime stats against appsList
     stats.platformApps = []
     try {
-        Map runtimeResponse = fetchEndpoint(RUNTIME_STATS_PATH, "runtime stats")
+        Map runtimeResponse = (Map) hubRequest(RUNTIME_STATS_PATH, "runtime stats")
         if (runtimeResponse && !runtimeResponse.error) {
             List runtimeAppStats = runtimeResponse.appStats ?: []
             stats.runtimeTotalApps = runtimeAppStats.size()
@@ -1664,11 +1389,11 @@ Map analyzeApps() {
 
 Map analyzeNetwork() {
     return [
-        network: fetchEndpoint(NETWORK_CONFIG_PATH, "network configuration", 15),
-        zwave: fetchEndpoint(ZWAVE_DETAILS_PATH, "Z-Wave details", 20),
-        zigbee: fetchEndpoint(ZIGBEE_DETAILS_PATH, "Zigbee details", 20),
-        matter: fetchEndpoint(MATTER_DETAILS_PATH, "Matter details", 15),
-        hubMesh: fetchEndpoint(HUB_MESH_PATH, "Hub Mesh", 15)
+        network: (Map) hubRequest(NETWORK_CONFIG_PATH, "network configuration", "json", 15),
+        zwave: (Map) hubRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", "json", 20),
+        zigbee: (Map) hubRequest(ZIGBEE_DETAILS_PATH, "Zigbee details", "json", 20),
+        matter: (Map) hubRequest(MATTER_DETAILS_PATH, "Matter details", "json", 15),
+        hubMesh: (Map) hubRequest(HUB_MESH_PATH, "Hub Mesh", "json", 15)
     ]
 }
 
@@ -1793,15 +1518,15 @@ List buildZwaveGhostNodes(Map zwaveDetails) {
 Map buildRadioProtocolMap() {
     Map protocols = [:]
     try {
-        Map zigbeeData = fetchEndpoint(ZIGBEE_DETAILS_PATH, "Zigbee details", 20)
+        Map zigbeeData = (Map) hubRequest(ZIGBEE_DETAILS_PATH, "Zigbee details", "json", 20)
         if (zigbeeData && !zigbeeData.error && zigbeeData.devices) {
             zigbeeData.devices.each { Map d -> if (d.id) protocols[d.id] = PROTOCOL_ZIGBEE }
         }
-        Map zwaveData = fetchEndpoint(ZWAVE_DETAILS_PATH, "Z-Wave details", 20)
+        Map zwaveData = (Map) hubRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", "json", 20)
         if (zwaveData && !zwaveData.error && zwaveData.nodes) {
             zwaveData.nodes.each { Map n -> if (n.deviceId) protocols[n.deviceId] = PROTOCOL_ZWAVE }
         }
-        Map matterData = fetchEndpoint(MATTER_DETAILS_PATH, "Matter details", 15)
+        Map matterData = (Map) hubRequest(MATTER_DETAILS_PATH, "Matter details", "json", 15)
         if (matterData && !matterData.error && matterData.devices) {
             matterData.devices.each { Map d -> if (d.id) protocols[d.id] = PROTOCOL_MATTER }
         }
@@ -1812,7 +1537,7 @@ Map buildRadioProtocolMap() {
 }
 
 Map buildAppLookupMap() {
-    Map response = fetchEndpoint(APPS_LIST_PATH, "apps list", 20)
+    Map response = (Map) hubRequest(APPS_LIST_PATH, "apps list", "json", 20)
     if (!response || response.error || !response.apps) {
         return [:]
     }
@@ -1899,7 +1624,7 @@ String determineProtocolQuick(Map device) {
 void createCheckpoint() {
     logInfo "Creating perf checkpoint..."
 
-    Map stats = fetchCurrentStats()
+    Map stats = (Map) hubRequest(RUNTIME_STATS_PATH, "runtime stats")
     if (!stats) {
         logError "Failed to fetch current stats"
         return
@@ -1908,8 +1633,8 @@ void createCheckpoint() {
     Map resources = fetchSystemResources()
 
     // Capture radio message counts for Z-Wave and Zigbee
-    Map zwaveData = fetchEndpoint(ZWAVE_DETAILS_PATH, "Z-Wave details", 20)
-    Map zigbeeData = fetchEndpoint(ZIGBEE_DETAILS_PATH, "Zigbee details", 20)
+    Map zwaveData = (Map) hubRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", "json", 20)
+    Map zigbeeData = (Map) hubRequest(ZIGBEE_DETAILS_PATH, "Zigbee details", "json", 20)
     List zwaveRadio = extractZwaveMessageCounts(zwaveData)
     List zigbeeRadio = extractZigbeeMessageCounts(zigbeeData)
 
@@ -2069,8 +1794,8 @@ List<Map> listHubFilesByNames(List<String> names) {
 
 String generateQuickSummary() {
     try {
-        Map deviceStats = analyzeDevicesQuick()
-        Map appStats = analyzeAppsQuick()
+        Map deviceStats = analyzeDevices(false)
+        Map appStats = analyzeApps(false)
         Map hubInfo = getHubInfo()
         Map resources = fetchSystemResources()
 
@@ -2094,105 +1819,6 @@ String generateQuickSummary() {
         return "Error generating summary. Please check logs."
     }
 }
-
-Map analyzeDevicesQuick() {
-    // Fast single-pass device analysis — one API call, heuristic-only protocol detection
-    Map response = fetchEndpoint(DEVICES_LIST_PATH, "devices list")
-
-    if (!response || response.error || !response.devices) {
-        return getEmptyDeviceStats()
-    }
-
-    // Flatten the device list — child devices are nested inside parent entries' 'children' arrays
-    List devicesList = flattenDeviceEntries(response.devices as List, false)
-
-    Map stats = [
-        totalDevices: 0, activeDevices: 0, inactiveDevices: 0, disabledDevices: 0,
-        byProtocol: [(PROTOCOL_ZIGBEE): 0, (PROTOCOL_ZWAVE): 0, (PROTOCOL_MATTER): 0,
-                     (PROTOCOL_LAN): 0, (PROTOCOL_VIRTUAL): 0, (PROTOCOL_MAKER): 0,
-                     (PROTOCOL_CLOUD): 0, (PROTOCOL_HUBMESH): 0, (PROTOCOL_OTHER): 0],
-        allIds: [],
-        idsByStatus: [active: [], inactive: [], disabled: []],
-        idsByProtocol: [(PROTOCOL_ZIGBEE): [], (PROTOCOL_ZWAVE): [], (PROTOCOL_MATTER): [],
-                        (PROTOCOL_LAN): [], (PROTOCOL_VIRTUAL): [], (PROTOCOL_MAKER): [],
-                        (PROTOCOL_CLOUD): [], (PROTOCOL_HUBMESH): [], (PROTOCOL_OTHER): []]
-    ]
-
-    // Build definitive protocol sets from radio detail endpoints (3 fast bulk calls)
-    Map radioProtocols = buildRadioProtocolMap()
-
-    long inactivityThresholdMs = now() - ((settings.inactivityDays ?: 7) * ONE_DAY_MS)
-
-    devicesList.each { deviceEntry ->
-        try {
-            Map device = deviceEntry.data
-            if (!device || !(device instanceof Map)) return
-
-            stats.totalDevices++
-            stats.allIds << device.id
-
-            Long lastActivity = null
-            try {
-                if (device.lastActivity && !(device.lastActivity instanceof Boolean)) {
-                    lastActivity = parseDate(device.lastActivity)
-                }
-            } catch (Exception e) { /* ignore */ }
-
-            if (device.disabled) {
-                stats.disabledDevices++
-                stats.inactiveDevices++
-                stats.idsByStatus.disabled << device.id
-            } else if (lastActivity && lastActivity > inactivityThresholdMs) {
-                stats.activeDevices++
-                stats.idsByStatus.active << device.id
-            } else {
-                stats.inactiveDevices++
-                stats.idsByStatus.inactive << device.id
-            }
-
-            // Protocol: check radio map first, then fall back to heuristic
-            // If heuristic says radio but device isn't in radio endpoints, classify as OTHER
-            String protocol
-            if (device.linked == true) {
-                protocol = PROTOCOL_HUBMESH
-            } else if (radioProtocols.containsKey(device.id)) {
-                protocol = radioProtocols[device.id]
-            } else {
-                protocol = determineProtocolQuick(device)
-                if (protocol in [PROTOCOL_ZIGBEE, PROTOCOL_ZWAVE, PROTOCOL_MATTER]) {
-                    protocol = PROTOCOL_OTHER
-                }
-            }
-            stats.byProtocol[protocol] = (stats.byProtocol[protocol] ?: 0) + 1
-            stats.idsByProtocol[protocol] << device.id
-        } catch (Exception e) { /* skip */ }
-    }
-
-    return stats
-}
-
-Map analyzeAppsQuick() {
-    // Fast app count — single API call, counts children recursively
-    Map response = fetchEndpoint(APPS_LIST_PATH, "apps list")
-
-    if (!response || response.error || !response.apps) {
-        return [totalApps: 0, userApps: 0, builtInApps: 0]
-    }
-
-    int totalApps = 0
-    int userApps = 0
-    int builtInApps = 0
-
-    visitAppEntries(response.apps as List) { Map appEntry, Map app, boolean isChildLevel, List parentHierarchyList ->
-        if (!app) return
-        totalApps++
-        if (app.user) userApps++
-        else builtInApps++
-    }
-
-    return [totalApps: totalApps, userApps: userApps, builtInApps: builtInApps]
-}
-
 
 // ===== UTILITY METHODS =====
 
@@ -2225,7 +1851,7 @@ Map getHubInfo() {
         info.ip = hub.localIP ?: "Unknown"
     }
     // Fetch model from hubData for accurate hardware name (e.g. "C-7", "C-8 Pro")
-    Map hubData = fetchEndpoint(HUB_DATA_PATH, "hub data", 10)
+    Map hubData = (Map) hubRequest(HUB_DATA_PATH, "hub data", "json", 10)
     if (hubData && !hubData.error && hubData.model) {
         info.hardware = hubData.model
     }
@@ -2387,6 +2013,16 @@ void saveSnapshotDiffPayload(Map payload) {
     if (payload) {
         writeFile(SNAPSHOT_DIFF_FILE, groovy.json.JsonOutput.toJson(payload))
     }
+}
+
+String loadUITemplate() {
+    try {
+        byte[] hubFile = downloadHubFile('hub_diagnostics_ui.html')
+        if (hubFile) return new String(hubFile, 'UTF-8')
+    } catch (Exception e) {
+        logError "Error reading hub_diagnostics_ui.html: ${e.message}"
+    }
+    return null
 }
 
 def readFile(String fileName) {
