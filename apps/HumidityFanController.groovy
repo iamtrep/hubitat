@@ -81,11 +81,6 @@
     Turned ON when humidity state is HIGH or PENDING_NORMAL.
     Turned OFF when humidity state is NORMAL or PENDING_HIGH.
 
- == BUGS ==
-
-    - Ensure state goes to high and fan starts when humidity above max - unless restricted
-    - transitionHumidityState() should call appropriate handler directly
- 
  */
 
 import groovy.transform.Field
@@ -398,6 +393,16 @@ private void evaluatePendingHighState(BigDecimal bathroomHumidity, BigDecimal re
         return
     }
 
+    // Above absolute high - bypass activation delay, go straight to HIGH
+    if (bathroomHumidity > absoluteHighThreshold) {
+        log.info("Humidity ${bathroomHumidity}% above absolute high ${absoluteHighThreshold}% - bypassing activation delay")
+        unschedule("delayedTransitionToHigh")
+        state.pendingStateSince = null
+        transitionHumidityState(HUMIDITY_HIGH)
+        onHumidityBecameHigh()
+        return
+    }
+
     // Still above threshold - wait for timer
     Long elapsedSeconds = (now() - (state.pendingStateSince as Long)) / 1000
     Long remainingSeconds = (activationDelay as Integer) - elapsedSeconds
@@ -432,7 +437,6 @@ private void evaluateHighState(BigDecimal bathroomHumidity) {
         // Schedule the delayed transition to NORMAL
         runIn(deactivationDelay as Integer, "delayedTransitionToNormal")
     }
-    // always evaluate high state ICYMI ?  BUG
 }
 
 private void evaluatePendingNormalState(BigDecimal bathroomHumidity) {
@@ -546,6 +550,11 @@ private BigDecimal getEffectiveReferenceSnapshot() {
 }
 
 private Boolean isBelowDeactivationThreshold(BigDecimal bathroomHumidity) {
+    // Never deactivate if above absolute high threshold
+    if (bathroomHumidity > absoluteHighThreshold) {
+        return false
+    }
+
     // Use the snapshot reference for deactivation calculation
     BigDecimal effectiveReference = getEffectiveReferenceSnapshot()
     BigDecimal normalThreshold = effectiveReference + normalHumidityOffset
