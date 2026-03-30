@@ -833,7 +833,10 @@ Map getPerformanceData() {
         zwave: extractZwaveMessageCounts(zwaveData),
         zigbee: extractZigbeeMessageCounts(zigbeeData)
     ]
-    if (stats) stats.radioStats = radioStats
+    if (stats) {
+        stats.radioStats = radioStats
+        stats.uptimeSeconds = parseUptime(stats.uptime as String)
+    }
     List checkpoints = loadCheckpoints()
     return [
         stats: stats, resources: resources,
