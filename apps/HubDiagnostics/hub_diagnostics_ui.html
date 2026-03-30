@@ -102,7 +102,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "4.5.3";
+const UI_VERSION = "4.5.5";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -155,6 +155,7 @@ function diffStats(base, comp) {
           }
         });
         diffed.average = diffed.count > 0 ? (diffed.total / diffed.count) : 0;
+        diffed.pctTotal = null;
         return diffed;
       });
     }
@@ -164,6 +165,25 @@ function diffStats(base, comp) {
     const cv = parseInt(comp[key]) || 0, bv = parseInt(base[key]) || 0;
     if (cv || bv) res[key] = (cv - bv) + 'ms';
   });
+  // Diff radio stats and compute msgs/min
+  if (comp.radioStats && base.radioStats) {
+    const elapsedMin = (comp.timestampMs && base.timestampMs) ? (comp.timestampMs - base.timestampMs) / 60000 : 0;
+    res.radioStats = {};
+    ['zwave', 'zigbee'].forEach(proto => {
+      if (comp.radioStats[proto] && base.radioStats[proto]) {
+        const baseMap = {};
+        base.radioStats[proto].forEach(d => { baseMap[d.id] = d; });
+        res.radioStats[proto] = comp.radioStats[proto].map(d => {
+          const bd = baseMap[d.id];
+          const diffMsgs = (d.msgCount || 0) - (bd ? (bd.msgCount || 0) : 0);
+          const r = { ...d, msgCount: diffMsgs, msgPerMin: elapsedMin > 0 ? diffMsgs / elapsedMin : 0 };
+          if (d.routeChanges != null && bd) r.routeChanges = (d.routeChanges || 0) - (bd.routeChanges || 0);
+          return r;
+        });
+      }
+    });
+    res.radioElapsedMin = elapsedMin;
+  }
   return res;
 }
 function h(s){const d=document.createElement('div');d.textContent=s??'';return d.innerHTML}
@@ -311,7 +331,7 @@ function tbl(cid,cols,rows,opts={}){
   filt=sf(filt,sc,sd);el.innerHTML=bld(filt);
   function bind(){
     const t=document.getElementById('t_'+cid);if(!t)return;
-    t.querySelectorAll('th').forEach(th=>{th.onclick=()=>{const ci=+th.dataset.c;if(ci===sc)sd=sd==='asc'?'desc':'asc';else{sc=ci;sd='desc'};filt=sf(filt,sc,sd);el.innerHTML=bld(filt);bind()}});
+    t.querySelectorAll('th').forEach(th=>{th.onclick=()=>{const ci=+th.dataset.c;if(ci===sc)sd=sd==='asc'?'desc':'asc';else{sc=ci;sd='desc'};filt=sf(filt,sc,sd);const det=el.querySelector('details');const wasOpen=det?det.open:false;el.innerHTML=bld(filt);const det2=el.querySelector('details');if(det2)det2.open=wasOpen;bind()}});
     const fi=document.getElementById('flt_'+cid);
     if(fi){fi.addEventListener('input',()=>{
       const q=fi.value.toLowerCase();
@@ -635,6 +655,8 @@ async function rNetwork(){const P='p-network';loading(P);try{
       o+=ni('Route Changes',m.totalRouteChanges);
       if(m.avgRssi!=null)o+=ni('Avg RSSI',m.avgRssi+' dBm',m.avgRssi<-80?'var(--crit)':m.avgRssi<-60?'var(--warn)':'var(--ok)');
       o+='</div><div id="zwMeshTbl" style="margin-top:8px"></div></div>'}
+    // Z-Wave message counts (when no mesh data)
+    if((!z.mesh||!z.mesh.nodes||!z.mesh.nodes.length)&&z.messageCounts&&z.messageCounts.length)o+='<div id="zwMsgTbl" style="margin-top:8px"></div>';
     // Problem nodes
     if(z.problemNodes&&z.problemNodes.length){
       o+='<div style="margin-top:10px"><div class="alert a-warn">\u26A0 Problem Nodes: '+z.problemNodes.length+'</div>';
@@ -664,6 +686,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
       if(m.weakNeighbors&&m.weakNeighbors.length){o+='<details style="margin-top:6px"><summary>Weak Neighbor Details</summary>';
         m.weakNeighbors.forEach(n=>{o+='<div style="margin:3px 0;color:var(--crit)">'+h(n.shortId)+' &mdash; LQI: '+n.lqi+'</div>'});o+='</details>'}
       o+='</div>'}
+    if(z.messageCounts&&z.messageCounts.length)o+='<div id="zbMsgTbl" style="margin-top:10px"></div>';
     o+='<div id="zbWifiChart" style="margin-top:10px"></div>';
     o+='</div></div>'}
   // Matter
@@ -697,8 +720,21 @@ async function rNetwork(){const P='p-network';loading(P);try{
       {l:'RSSI',f:'rssi',t:'n',r:r=>r.rssi!=null?'<span style="color:'+(r.rssi<-80?'var(--crit)':r.rssi<-60?'var(--warn)':'var(--ok)')+'">'+r.rssi+' dBm</span>':'N/A'},
       {l:'PER %',f:'per',t:'n',r:r=>'<span style="color:'+(r.per>1?'var(--crit)':r.per>0?'var(--warn)':'var(--ok)')+'">'+r.per+'%</span>'},
       {l:'Neighbors',f:'neighbors',t:'n'},{l:'Route',f:'route'},{l:'Route Changes',f:'routeChanges',t:'n'},
+      {l:'Msgs',f:'msgCount',t:'n'},
       {l:'State',f:'state',r:r=>'<span style="color:'+(r.state==='OK'?'var(--ok)':'var(--crit)')+'">'+h(r.state)+'</span>'}
     ],d.zwave.mesh.nodes,{sc:0,sd:'asc',collapse:10,collapseLabel:'Z-Wave Mesh Nodes'});
+  // Z-Wave message counts fallback (no mesh data)
+  if(d.zwave&&(!d.zwave.mesh||!d.zwave.mesh.nodes||!d.zwave.mesh.nodes.length)&&d.zwave.messageCounts&&d.zwave.messageCounts.length)
+    tbl('zwMsgTbl',[
+      {l:'Device',f:'name',r:r=>r.deviceId?dlink(r.deviceId,r.name):h(r.name)},
+      {l:'Messages',f:'msgCount',t:'n'},{l:'Route Changes',f:'routeChanges',t:'n'}
+    ],d.zwave.messageCounts,{sc:1,sd:'desc',collapse:10,collapseLabel:'Z-Wave Message Counts'});
+  // Zigbee message counts
+  if(d.zigbee&&d.zigbee.messageCounts&&d.zigbee.messageCounts.length)
+    tbl('zbMsgTbl',[
+      {l:'Device',f:'name',r:r=>r.id?dlink(r.id,r.name):h(r.name)},
+      {l:'Messages',f:'msgCount',t:'n'}
+    ],d.zigbee.messageCounts,{sc:1,sd:'desc',collapse:10,collapseLabel:'Zigbee Message Counts'});
 }catch(e){err(P,e,rNetwork)}}
 
 // ===== TAB: HEALTH =====
@@ -770,7 +806,9 @@ async function rPerf(){const P='p-performance';loading(P);try{
     o+='<div class="card"><div class="card-h">'+title+'</div><div class="card-b"><div class="metrics">';
     if(s.uptime)o+=mc('Interval/Uptime',s.uptime);
     if(s.totalDevicesRuntime)o+=mc('Devices Runtime',s.totalDevicesRuntime);
+    if(s.devicePct)o+=mc('Devices % Busy',s.devicePct);
     if(s.totalAppsRuntime)o+=mc('Apps Runtime',s.totalAppsRuntime);
+    if(s.appPct)o+=mc('Apps % Busy',s.appPct);
     o+='</div></div></div>'}
   
   if(res){
@@ -818,6 +856,24 @@ async function rPerf(){const P='p-performance';loading(P);try{
     o+='<div class="card"><div class="card-h">Device Runtime Detail</div><div class="card-b"><div id="devStatsTbl"></div></div></div>'}
   if(s&&s.appStats&&s.appStats.length){
     o+='<div class="card"><div class="card-h">App Runtime Detail</div><div class="card-b"><div id="appStatsTbl"></div></div></div>'}
+  // Radio message stats
+  const rs=s?.radioStats;
+  const isComp=activePerfComp!=null;
+  const hasZw=rs&&rs.zwave&&rs.zwave.length;
+  const hasZb=rs&&rs.zigbee&&rs.zigbee.length;
+  if(hasZw||hasZb){
+    o+='<div class="card"><div class="card-h">Radio Message Counts'+(isComp?' (Delta)':'')+'</div><div class="card-b">';
+    if(isComp&&s.radioElapsedMin)o+='<div style="margin-bottom:8px;color:var(--muted)">Interval: '+s.radioElapsedMin.toFixed(1)+' min</div>';
+    // Spammy alerts
+    const spamThreshold=2;
+    if(isComp&&s.radioElapsedMin>0){
+      const spammy=[];
+      ['zwave','zigbee'].forEach(p=>{(rs[p]||[]).forEach(d=>{if(d.msgPerMin>spamThreshold)spammy.push({name:d.name,proto:p,rate:d.msgPerMin})})});
+      if(spammy.length){o+='<div class="alert a-warn" style="margin-bottom:8px">\u26A0 Spammy devices (>'+spamThreshold+' msgs/min): ';
+        o+=spammy.map(d=>h(d.name)+' <b>'+d.rate.toFixed(1)+'/min</b> ('+d.proto+')').join(', ');o+='</div>'}}
+    if(hasZw)o+='<div id="perfZwMsgTbl"></div>';
+    if(hasZb)o+='<div id="perfZbMsgTbl" style="margin-top:8px"></div>';
+    o+='</div></div>'}
   document.getElementById(P).innerHTML=o;
   
   // Render checkpoint table
@@ -841,6 +897,7 @@ async function rPerf(){const P='p-performance';loading(P);try{
   if(s&&s.deviceStats)
     tbl('devStatsTbl',[
       {l:'Name',f:'name',r:r=>r.id?dlink(r.id,r.name):h(r.name)},{l:'Total (ms)',f:'total',t:'n'},
+      {l:'% Total',f:'pctTotal',t:'n',r:r=>r.pctTotal!=null?(r.pctTotal*100).toFixed(3)+'%':''},
       {l:'Count',f:'count',t:'n'},{l:'Avg (ms)',f:'average',t:'n',r:r=>Number(r.average||0).toFixed(1)},
       {l:'State Size',f:'stateSize',t:'n'},{l:'Hub Actions',f:'hubActionCount',t:'n'},{l:'Cloud Calls',f:'cloudCallCount',t:'n'}
     ],s.deviceStats,{sc:1,sd:'desc',filter:true,collapse:10,collapseLabel:'Device Runtime Detail'});
@@ -854,10 +911,22 @@ async function rPerf(){const P='p-performance';loading(P);try{
   if(s&&s.appStats)
     tbl('appStatsTbl',[
       {l:'Name',f:'name',r:r=>r.id?'<a href="/installedapp/status/'+r.id+'" target="_blank">'+h(r.name)+'</a>':h(r.name)},
-      {l:'Total (ms)',f:'total',t:'n'},{l:'Count',f:'count',t:'n'},
+      {l:'Total (ms)',f:'total',t:'n'},
+      {l:'% Total',f:'pctTotal',t:'n',r:r=>r.pctTotal!=null?(r.pctTotal*100).toFixed(3)+'%':''},
+      {l:'Count',f:'count',t:'n'},
       {l:'Avg (ms)',f:'average',t:'n',r:r=>Number(r.average||0).toFixed(1)},
       {l:'State Size',f:'stateSize',t:'n'},{l:'Hub Actions',f:'hubActionCount',t:'n'},{l:'Cloud Calls',f:'cloudCallCount',t:'n'}
     ],s.appStats,{sc:1,sd:'desc',filter:true,collapse:10,collapseLabel:'App Runtime Detail'});
+  // Radio message count tables
+  if(hasZw){
+    const zwCols=[{l:'Device',f:'name',r:r=>r.deviceId?dlink(r.deviceId,r.name):h(r.name)},{l:'Messages',f:'msgCount',t:'n'}];
+    if(isComp)zwCols.push({l:'Msgs/Min',f:'msgPerMin',t:'n',r:r=>r.msgPerMin!=null?r.msgPerMin.toFixed(2):''});
+    zwCols.push({l:'Route Changes',f:'routeChanges',t:'n'});
+    tbl('perfZwMsgTbl',zwCols,rs.zwave,{sc:1,sd:'desc',collapse:10,collapseLabel:'Z-Wave Messages'})}
+  if(hasZb){
+    const zbCols=[{l:'Device',f:'name',r:r=>r.id?dlink(r.id,r.name):h(r.name)},{l:'Messages',f:'msgCount',t:'n'}];
+    if(isComp)zbCols.push({l:'Msgs/Min',f:'msgPerMin',t:'n',r:r=>r.msgPerMin!=null?r.msgPerMin.toFixed(2):''});
+    tbl('perfZbMsgTbl',zbCols,rs.zigbee,{sc:1,sd:'desc',collapse:10,collapseLabel:'Zigbee Messages'})}
   // Saved comparison render
   if(!activePerfComp && (d.savedComparison||d.savedComparisonHtml))renderComparison({comparisonHtml:d.savedComparisonHtml,...(d.savedComparison||{})},'savedComp');
 
