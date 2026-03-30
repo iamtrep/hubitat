@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "4.5.3"
+@Field static final String APP_VERSION = "4.5.5"
 @Field static final String STORAGE_SCHEMA_VERSION = "3.2.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -430,6 +430,7 @@ Map apiPerformanceCompare() {
         baselineStats = bCp.stats
         baselineStats.resources = bCp.resources
         baselineStats.radioStats = bCp.radioStats
+        baselineStats.timestampMs = bCp.timestampMs
         baselineLabel = bCp.timestamp
     }
 
@@ -444,6 +445,7 @@ Map apiPerformanceCompare() {
             zwave: extractZwaveMessageCounts(zwaveData),
             zigbee: extractZigbeeMessageCounts(zigbeeData)
         ]
+        checkpointStats.timestampMs = now()
         checkpointLabel = "Now (${new Date().format('yyyy-MM-dd HH:mm:ss')})"
     } else {
         int cIdx = checkpoint.toInteger()
@@ -452,6 +454,7 @@ Map apiPerformanceCompare() {
         checkpointStats = cCp.stats
         checkpointStats.resources = cCp.resources
         checkpointStats.radioStats = cCp.radioStats
+        checkpointStats.timestampMs = cCp.timestampMs
         checkpointLabel = cCp.timestamp
     }
 
@@ -774,7 +777,8 @@ Map getNetworkData() {
             region: networkData.zwave.region, nodeCount: (networkData.zwave.zwDevices ?: [:]).size(),
             isRadioUpdateNeeded: networkData.zwave.isRadioUpdateNeeded,
             zwaveJs: networkData.zwave.zwaveJs, version: zwaveVersion,
-            mesh: zwaveMesh, ghostNodes: ghostNodes, problemNodes: problemNodes
+            mesh: zwaveMesh, ghostNodes: ghostNodes, problemNodes: problemNodes,
+            messageCounts: extractZwaveMessageCounts(networkData.zwave ?: [:])
         ] : null,
         zigbee: networkData.zigbee && !networkData.zigbee.error ? [
             enabled: zigbeeRaw.enabled, healthy: zigbeeRaw.healthy,
@@ -784,6 +788,7 @@ Map getNetworkData() {
             powerLevel: zigbeeRaw.powerLevel,
             responsiveCount: zigbeeRaw.devices ? zigbeeRaw.devices.count { it.active == true } : 0,
             totalCount: (zigbeeRaw.devices ?: []).size(), nonResponsive: nonResponsive,
+            messageCounts: extractZigbeeMessageCounts(networkData.zigbee ?: [:]),
             mesh: zigbeeMesh ? [
                 neighbors: zigbeeMesh.neighbors?.size() ?: 0, routes: zigbeeMesh.routes?.size() ?: 0,
                 avgLqi: zigbeeMesh.avgLqi, minLqi: zigbeeMesh.minLqi, maxLqi: zigbeeMesh.maxLqi,
@@ -822,14 +827,21 @@ Map getHealthData() {
 Map getPerformanceData() {
     Map stats = (Map) hubRequest(RUNTIME_STATS_PATH, "runtime stats")
     Map resources = fetchSystemResources()
+    Map zwaveData = (Map) hubRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", "json", 20)
+    Map zigbeeData = (Map) hubRequest(ZIGBEE_DETAILS_PATH, "Zigbee details", "json", 20)
+    Map radioStats = [
+        zwave: extractZwaveMessageCounts(zwaveData),
+        zigbee: extractZigbeeMessageCounts(zigbeeData)
+    ]
+    if (stats) stats.radioStats = radioStats
     List checkpoints = loadCheckpoints()
     return [
         stats: stats, resources: resources,
         checkpointCount: checkpoints?.size() ?: 0,
         maxCheckpoints: (settings.maxCheckpoints ?: 10) as int,
         checkpoints: (checkpoints ?: []).collect { Map cp -> [
-            timestamp: cp.timestamp, stats: cp.stats,
-            resources: cp.resources, radioStats: cp.radioStats
+            timestamp: cp.timestamp, timestampMs: cp.timestampMs,
+            stats: cp.stats, resources: cp.resources, radioStats: cp.radioStats
         ]},
         savedComparison: loadPerformanceComparisonPayload()
     ]
@@ -1712,6 +1724,7 @@ void createCheckpoint() {
 
 Map buildZeroBaseline(Map stats, Map resources) {
     return [
+        timestampMs: 0,
         uptime: "0h 0m 0s",
         devicesUptime: "0h 0m 0s",
         appsUptime: "0h 0m 0s",
