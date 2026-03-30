@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "4.4.3"
+@Field static final String APP_VERSION = "4.4.4"
 @Field static final String STORAGE_SCHEMA_VERSION = "3.2.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -1217,18 +1217,19 @@ Map analyzeDevices(boolean deep = true) {
                 stats.idsByStatus.inactive << device.id
             }
 
-            // Protocol detection — radio map first, then heuristic fallback
+            // Protocol detection — strictly authoritative for radio/mesh
             String protocol = PROTOCOL_OTHER
-            if (device.linked == true) {
-                protocol = PROTOCOL_HUBMESH
-            } else if (radioProtocols.containsKey(device.id)) {
-                protocol = radioProtocols[device.id]
-            } else {
+            String nativeProtocol = safeToString(device.protocol, "").toLowerCase()
+            
+            if (nativeProtocol == "zigbee") protocol = PROTOCOL_ZIGBEE
+            else if (nativeProtocol == "zwave") protocol = PROTOCOL_ZWAVE
+            else if (nativeProtocol == "matter") protocol = PROTOCOL_MATTER
+            else if (nativeProtocol == "lan") protocol = PROTOCOL_LAN
+            else if (device.linked == true) protocol = PROTOCOL_HUBMESH
+            else if (radioProtocols.containsKey(device.id)) protocol = radioProtocols[device.id]
+            else {
+                // If it's not on a radio, only check for Virtual/Cloud/LAN/Maker
                 protocol = determineProtocolQuick(device)
-                // In quick mode, don't trust heuristic for radio protocols if not in radio map
-                if (!deep && protocol in [PROTOCOL_ZIGBEE, PROTOCOL_ZWAVE, PROTOCOL_MATTER]) {
-                    protocol = PROTOCOL_OTHER
-                }
             }
             stats.byProtocol[protocol] = (stats.byProtocol[protocol] ?: 0) + 1
             if (stats.idsByProtocol[protocol] != null) stats.idsByProtocol[protocol] << device.id
@@ -1612,40 +1613,23 @@ Object extractParentAppId(Map device) {
 }
 
 String determineProtocolQuick(Map device) {
-    if (device.protocol) {
-        String protocol = safeToString(device.protocol, "").toLowerCase()
-        if (protocol == "zigbee") return PROTOCOL_ZIGBEE
-        if (protocol == "zwave") return PROTOCOL_ZWAVE
-        if (protocol == "matter") return PROTOCOL_MATTER
-        if (protocol == "lan") return PROTOCOL_LAN
-    }
-
     String typeName = safeToString(device.type, "").toLowerCase()
+    String label = safeToString(device.label ?: device.name, "").toLowerCase()
+    String combined = "${typeName} ${label}"
 
-    if (typeName.contains("virtual")) return PROTOCOL_VIRTUAL
-    if (typeName.contains("maker") || typeName.contains("webhook")) return PROTOCOL_MAKER
-    if (typeName.contains("cloud") || typeName.contains("google") ||
-        typeName.contains("alexa") || typeName.contains("homekit")) return PROTOCOL_CLOUD
-
-    if (typeName.contains("zigbee") || typeName.contains("aqara") || typeName.contains("ikea") ||
-        typeName.contains("sengled") || typeName.contains("hue") || typeName.contains("tradfri") ||
-        typeName.contains("xiaomi") || typeName.contains("tuya zigbee")) {
-        return PROTOCOL_ZIGBEE
-    }
-
-    if (typeName.contains("z-wave") || typeName.contains("zwave") || typeName.contains("zooz") ||
-        typeName.contains("inovelli") || typeName.contains("ge zwave") || typeName.contains("aeotec")) {
-        return PROTOCOL_ZWAVE
-    }
-
-    if (typeName.contains("matter")) return PROTOCOL_MATTER
-
-    if (typeName.contains("lan") || typeName.contains("http") || typeName.contains("wifi") ||
-        typeName.contains("ip") || typeName.contains("sonos") || typeName.contains("chromecast") ||
-        typeName.contains("bond") || typeName.contains("lutron") || typeName.contains("ecobee") ||
-        typeName.contains("kasa") || typeName.contains("lifx") || typeName.contains("wiz") ||
-        typeName.contains("yeelight") || typeName.contains("rachio") || typeName.contains("govee") ||
-        typeName.contains("shelly")) {
+    // Phase 1: Clear Platform/Virtual/LAN markers (High confidence)
+    if (combined.contains("virtual")) return PROTOCOL_VIRTUAL
+    if (combined.contains("maker api") || combined.contains("webhook")) return PROTOCOL_MAKER
+    if (combined.contains("cloud") || combined.contains("google") ||
+        combined.contains("alexa") || combined.contains("homekit")) return PROTOCOL_CLOUD
+    
+    // Detailed LAN/IP Keyword Check
+    if (combined.contains("lan") || combined.contains("http") || combined.contains("wifi") ||
+        combined.contains("ip") || combined.contains("sonos") || combined.contains("chromecast") ||
+        combined.contains("bond") || combined.contains("lutron") || combined.contains("ecobee") ||
+        combined.contains("kasa") || combined.contains("lifx") || combined.contains("wiz") ||
+        combined.contains("yeelight") || combined.contains("rachio") || combined.contains("govee") ||
+        combined.contains("shelly") || combined.contains("tplink") || combined.contains("wled")) {
         return PROTOCOL_LAN
     }
 
