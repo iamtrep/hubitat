@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "4.5.1"
+@Field static final String APP_VERSION = "4.5.2"
 @Field static final String STORAGE_SCHEMA_VERSION = "3.2.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -194,6 +194,11 @@ Map dashboardPage() {
                 paragraph "<span style='color:red; font-weight:bold;'>\u26A0 Update Recommended:</span> A newer UI version (${uiVer}) is active than this App code (${APP_VERSION}). Please update the Groovy App Code in Hubitat."
             }
             paragraph "<b>App Version:</b> ${APP_VERSION}\n<b>UI Version:</b> ${uiVer}"
+            String editorPath = getAppEditorPath()
+            if (editorPath) {
+                href url: editorPath, title: "Open App Code Editor", style: "embedded",
+                     description: "Update the Groovy source code via Import"
+            }
         }
 
         section("Quick Summary") {
@@ -320,24 +325,12 @@ Map apiVersionCheck() {
     }
     if (!latestVersion) return jsonResponse([error: "Could not parse remote version"])
 
-    // Look up our app type ID for the editor link
-    String typeId = null
-    try {
-        httpGet([uri: HUB_BASE, path: "/hub2/userAppTypes", timeout: 10]) { resp ->
-            List apps = resp.data instanceof List ? (List) resp.data : []
-            Map match = apps.find { it.name == "Hub Diagnostics" }
-            if (match) typeId = match.id?.toString()
-        }
-    } catch (e) {
-        logDebug "Could not look up app type ID: ${e.message}"
-    }
-
     boolean updateAvailable = isNewer(latestVersion, APP_VERSION)
     return jsonResponse([
         currentVersion: APP_VERSION,
         latestVersion: latestVersion,
         updateAvailable: updateAvailable,
-        editorPath: typeId ? "/app/editor/${typeId}" : null
+        editorPath: getAppEditorPath()
     ])
 }
 
@@ -2025,10 +2018,7 @@ boolean isNewer(String v1, String v2) {
 void appButtonHandler(String btn) {
 }
 
-private boolean autoEnableOAuth() {
-    logInfo "Attempting to auto-enable OAuth for Hub Diagnostics..."
-
-    // 1. Find our app type ID from the user app types JSON endpoint
+private String getAppTypeId() {
     String typeId = null
     try {
         httpGet([uri: HUB_BASE, path: "/hub2/userAppTypes", timeout: 15]) { resp ->
@@ -2037,9 +2027,21 @@ private boolean autoEnableOAuth() {
             if (match) typeId = match.id?.toString()
         }
     } catch (e) {
-        logError "Failed to fetch user app types: ${e.message}"
-        return false
+        logDebug "Failed to fetch user app types: ${e.message}"
     }
+    return typeId
+}
+
+private String getAppEditorPath() {
+    String typeId = getAppTypeId()
+    return typeId ? "/app/editor/${typeId}" : null
+}
+
+private boolean autoEnableOAuth() {
+    logInfo "Attempting to auto-enable OAuth for Hub Diagnostics..."
+
+    // 1. Find our app type ID
+    String typeId = getAppTypeId()
     if (!typeId) {
         logError "Could not find Hub Diagnostics in user app types."
         return false
