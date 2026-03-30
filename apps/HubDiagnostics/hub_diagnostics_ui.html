@@ -472,10 +472,10 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
     const el=document.getElementById('updateBanner');
     if(!el||v.error)return;
     if(v.updateAvailable){
-      const link=v.editorPath?'<a href="'+v.editorPath+'" target="_top" style="color:inherit;font-weight:bold">Open Apps Code</a>':'update via Apps Code';
+      const link=v.editorPath?'<a href="'+v.editorPath+'" target="_blank" style="color:inherit;font-weight:bold">Open Apps Code</a>':'update via Apps Code';
       el.innerHTML='<div class="alert a-warn" style="margin-bottom:12px">\u26A0 <b>New version available:</b> v'+h(v.latestVersion)+' (you have v'+h(v.currentVersion)+'). '+link+' and use Import to update.</div>';
     } else if(v.editorPath){
-      el.innerHTML='<div style="margin-bottom:8px"><a href="'+v.editorPath+'" target="_top" style="color:var(--link)">Open Apps Code</a></div>';
+      el.innerHTML='<div style="margin-bottom:8px"><a href="'+v.editorPath+'" target="_blank" style="color:var(--link)">Open Apps Code</a></div>';
     }
   }).catch(()=>{});
 
