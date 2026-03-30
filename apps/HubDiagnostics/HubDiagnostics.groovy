@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "4.4.5"
+@Field static final String APP_VERSION = "4.5.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "3.2.0"
 
 // API endpoint paths (all relative to HUB_BASE)
