@@ -592,7 +592,7 @@ async function rApps(){const P='p-apps';loading(P);try{
     o+='<div id="platTbl"></div></div></div>'}
   // Problem apps (large state + high CPU)
   if(d.platformApps&&d.platformApps.length){
-    const prob=d.platformApps.filter(a=>a.stateSize>5000&&a.pctTotal>0.02);
+    const prob=d.platformApps.filter(a=>a.stateSize>5000&&a.pctTotal>2);
     if(prob.length){o+='<div class="card"><div class="card-h">Problem Apps ('+prob.length+')</div><div class="card-b">';
       o+='<div class="alert a-crit">\u26D4 Apps with both large state (&gt;5 KB) and high CPU (&gt;2%)</div>';
       o+='<div id="probAppsTbl"></div></div></div>'}}
@@ -605,7 +605,7 @@ async function rApps(){const P='p-apps';loading(P);try{
     tbl('platTbl',[
       {l:'Name',f:'name',r:r=>'<a href="/installedapp/status/'+r.id+'" target="_blank">'+h(r.name)+'</a>'},
       {l:'State Size',f:'stateSize',t:'n',r:r=>{const c=r.stateSize>10000?'var(--crit)':r.stateSize>5000?'var(--warn)':'';return c?'<span style="color:'+c+'">'+r.stateSize+'</span>':String(r.stateSize)}},
-      {l:'CPU %',f:'pctTotal',t:'n',r:r=>(r.pctTotal*100).toFixed(3)+'%'},
+      {l:'CPU %',f:'pctTotal',t:'n',r:r=>r.pctTotal.toFixed(3)+'%'},
       {l:'Exec Count',f:'count',t:'n'},
       {l:'Avg (ms)',f:'average',t:'n',r:r=>r.count>0?Number(r.average).toFixed(1):'0'},
       {l:'Hub Actions',f:'hubActionCount',t:'n'},
@@ -613,11 +613,11 @@ async function rApps(){const P='p-apps';loading(P);try{
     ],d.platformApps,{sc:3,sd:'desc',filter:true,collapse:10,collapseLabel:'Platform Apps'});
   // Problem apps table
   if(d.platformApps&&d.platformApps.length){
-    const prob=d.platformApps.filter(a=>a.stateSize>5000&&a.pctTotal>0.02);
+    const prob=d.platformApps.filter(a=>a.stateSize>5000&&a.pctTotal>2);
     if(prob.length)tbl('probAppsTbl',[
       {l:'Name',f:'name',r:r=>'<a href="/installedapp/status/'+r.id+'" target="_blank">'+h(r.name)+'</a>'},
       {l:'State Size',f:'stateSize',t:'n',r:r=>'<span style="color:var(--crit)">'+r.stateSize+'</span>'},
-      {l:'CPU %',f:'pctTotal',t:'n',r:r=>'<span style="color:var(--crit)">'+(r.pctTotal*100).toFixed(3)+'%</span>'},
+      {l:'CPU %',f:'pctTotal',t:'n',r:r=>'<span style="color:var(--crit)">'+r.pctTotal.toFixed(3)+'%</span>'},
       {l:'Exec Count',f:'count',t:'n'},{l:'Avg (ms)',f:'average',t:'n',r:r=>Number(r.average).toFixed(1)}
     ],prob,{sc:2,sd:'desc'})}
 }catch(e){err(P,e,rApps)}}
@@ -856,21 +856,29 @@ async function rPerf(){const P='p-performance';loading(P);try{
     o+='<div class="card"><div class="card-h">Device Runtime Detail</div><div class="card-b"><div id="devStatsTbl"></div></div></div>'}
   if(s&&s.appStats&&s.appStats.length){
     o+='<div class="card"><div class="card-h">App Runtime Detail</div><div class="card-b"><div id="appStatsTbl"></div></div></div>'}
-  // Radio message stats
+  // Radio message stats — compute msgPerMin for both current and comparison views
   const rs=s?.radioStats;
   const isComp=activePerfComp!=null;
+  const uptimeMin=isComp?(s.radioElapsedMin||0):(s?.uptimeSeconds?s.uptimeSeconds/60:0);
+  if(rs&&uptimeMin>0){
+    ['zwave','zigbee'].forEach(p=>{(rs[p]||[]).forEach(d=>{
+      if(d.msgPerMin==null)d.msgPerMin=uptimeMin>0?(d.msgCount||0)/uptimeMin:0})});
+  }
   const hasZw=rs&&rs.zwave&&rs.zwave.length;
   const hasZb=rs&&rs.zigbee&&rs.zigbee.length;
   if(hasZw||hasZb){
     o+='<div class="card"><div class="card-h">Radio Message Counts'+(isComp?' (Delta)':'')+'</div><div class="card-b">';
-    if(isComp&&s.radioElapsedMin)o+='<div style="margin-bottom:8px;color:var(--muted)">Interval: '+s.radioElapsedMin.toFixed(1)+' min</div>';
+    if(uptimeMin>0)o+='<div style="margin-bottom:8px;color:var(--muted)">'+(isComp?'Interval':'Uptime')+': '+uptimeMin.toFixed(1)+' min</div>';
     // Spammy alerts
-    const spamThreshold=2;
-    if(isComp&&s.radioElapsedMin>0){
-      const spammy=[];
-      ['zwave','zigbee'].forEach(p=>{(rs[p]||[]).forEach(d=>{if(d.msgPerMin>spamThreshold)spammy.push({name:d.name,proto:p,rate:d.msgPerMin})})});
-      if(spammy.length){o+='<div class="alert a-warn" style="margin-bottom:8px">\u26A0 Spammy devices (>'+spamThreshold+' msgs/min): ';
-        o+=spammy.map(d=>h(d.name)+' <b>'+d.rate.toFixed(1)+'/min</b> ('+d.proto+')').join(', ');o+='</div>'}}
+    if(uptimeMin>0){
+      const alerts=[];const warns=[];
+      ['zwave','zigbee'].forEach(p=>{(rs[p]||[]).forEach(d=>{
+        if(d.msgPerMin>=10)alerts.push({name:d.name,proto:p,rate:d.msgPerMin});
+        else if(d.msgPerMin>=6)warns.push({name:d.name,proto:p,rate:d.msgPerMin})})});
+      if(alerts.length){o+='<div class="alert a-crit" style="margin-bottom:8px">\u26D4 High message rate (\u226510/min): ';
+        o+=alerts.map(d=>h(d.name)+' <b>'+d.rate.toFixed(1)+'/min</b> ('+d.proto+')').join(', ');o+='</div>'}
+      if(warns.length){o+='<div class="alert a-warn" style="margin-bottom:8px">\u26A0 Elevated message rate (\u22656/min): ';
+        o+=warns.map(d=>h(d.name)+' <b>'+d.rate.toFixed(1)+'/min</b> ('+d.proto+')').join(', ');o+='</div>'}}
     if(hasZw)o+='<div id="perfZwMsgTbl"></div>';
     if(hasZb)o+='<div id="perfZbMsgTbl" style="margin-top:8px"></div>';
     o+='</div></div>'}
@@ -897,7 +905,8 @@ async function rPerf(){const P='p-performance';loading(P);try{
   if(s&&s.deviceStats)
     tbl('devStatsTbl',[
       {l:'Name',f:'name',r:r=>r.id?dlink(r.id,r.name):h(r.name)},{l:'Total (ms)',f:'total',t:'n'},
-      {l:'% Total',f:'pctTotal',t:'n',r:r=>r.pctTotal!=null?(r.pctTotal*100).toFixed(3)+'%':''},
+      {l:'% Busy',f:'pct',t:'n',r:r=>r.pct!=null?r.pct.toFixed(1)+'%':''},
+      {l:'% Total',f:'pctTotal',t:'n',r:r=>r.pctTotal!=null?r.pctTotal.toFixed(3)+'%':''},
       {l:'Count',f:'count',t:'n'},{l:'Avg (ms)',f:'average',t:'n',r:r=>Number(r.average||0).toFixed(1)},
       {l:'State Size',f:'stateSize',t:'n'},{l:'Hub Actions',f:'hubActionCount',t:'n'},{l:'Cloud Calls',f:'cloudCallCount',t:'n'}
     ],s.deviceStats,{sc:1,sd:'desc',filter:true,collapse:10,collapseLabel:'Device Runtime Detail'});
@@ -912,21 +921,25 @@ async function rPerf(){const P='p-performance';loading(P);try{
     tbl('appStatsTbl',[
       {l:'Name',f:'name',r:r=>r.id?'<a href="/installedapp/status/'+r.id+'" target="_blank">'+h(r.name)+'</a>':h(r.name)},
       {l:'Total (ms)',f:'total',t:'n'},
-      {l:'% Total',f:'pctTotal',t:'n',r:r=>r.pctTotal!=null?(r.pctTotal*100).toFixed(3)+'%':''},
+      {l:'% Busy',f:'pct',t:'n',r:r=>r.pct!=null?r.pct.toFixed(1)+'%':''},
+      {l:'% Total',f:'pctTotal',t:'n',r:r=>r.pctTotal!=null?r.pctTotal.toFixed(3)+'%':''},
       {l:'Count',f:'count',t:'n'},
       {l:'Avg (ms)',f:'average',t:'n',r:r=>Number(r.average||0).toFixed(1)},
       {l:'State Size',f:'stateSize',t:'n'},{l:'Hub Actions',f:'hubActionCount',t:'n'},{l:'Cloud Calls',f:'cloudCallCount',t:'n'}
     ],s.appStats,{sc:1,sd:'desc',filter:true,collapse:10,collapseLabel:'App Runtime Detail'});
   // Radio message count tables
+  function rateColor(v){return v>=10?'var(--crit)':v>=6?'var(--warn)':v>=2?'var(--primary)':''}
+  function rateCell(r){if(r.msgPerMin==null)return'';const c=rateColor(r.msgPerMin);const s=c?' style="color:'+c+';font-weight:600"':'';return'<span'+s+'>'+r.msgPerMin.toFixed(2)+'</span>'}
   if(hasZw){
-    const zwCols=[{l:'Device',f:'name',r:r=>r.deviceId?dlink(r.deviceId,r.name):h(r.name)},{l:'Messages',f:'msgCount',t:'n'}];
-    if(isComp)zwCols.push({l:'Msgs/Min',f:'msgPerMin',t:'n',r:r=>r.msgPerMin!=null?r.msgPerMin.toFixed(2):''});
-    zwCols.push({l:'Route Changes',f:'routeChanges',t:'n'});
-    tbl('perfZwMsgTbl',zwCols,rs.zwave,{sc:1,sd:'desc',collapse:10,collapseLabel:'Z-Wave Messages'})}
+    tbl('perfZwMsgTbl',[
+      {l:'Device',f:'name',r:r=>r.deviceId?dlink(r.deviceId,r.name):h(r.name)},{l:'Messages',f:'msgCount',t:'n'},
+      {l:'Msgs/Min',f:'msgPerMin',t:'n',r:rateCell},{l:'Route Changes',f:'routeChanges',t:'n'}
+    ],rs.zwave,{sc:2,sd:'desc',collapse:10,collapseLabel:'Z-Wave Messages'})}
   if(hasZb){
-    const zbCols=[{l:'Device',f:'name',r:r=>r.id?dlink(r.id,r.name):h(r.name)},{l:'Messages',f:'msgCount',t:'n'}];
-    if(isComp)zbCols.push({l:'Msgs/Min',f:'msgPerMin',t:'n',r:r=>r.msgPerMin!=null?r.msgPerMin.toFixed(2):''});
-    tbl('perfZbMsgTbl',zbCols,rs.zigbee,{sc:1,sd:'desc',collapse:10,collapseLabel:'Zigbee Messages'})}
+    tbl('perfZbMsgTbl',[
+      {l:'Device',f:'name',r:r=>r.id?dlink(r.id,r.name):h(r.name)},{l:'Messages',f:'msgCount',t:'n'},
+      {l:'Msgs/Min',f:'msgPerMin',t:'n',r:rateCell}
+    ],rs.zigbee,{sc:2,sd:'desc',collapse:10,collapseLabel:'Zigbee Messages'})}
   // Saved comparison render
   if(!activePerfComp && (d.savedComparison||d.savedComparisonHtml))renderComparison({comparisonHtml:d.savedComparisonHtml,...(d.savedComparison||{})},'savedComp');
 
