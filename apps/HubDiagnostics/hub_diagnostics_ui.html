@@ -102,7 +102,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "4.5.1";
+const UI_VERSION = "4.5.2";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -470,9 +470,13 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   // Async version check against GitHub
   api('version/check').then(v=>{
     const el=document.getElementById('updateBanner');
-    if(!el||!v.updateAvailable)return;
-    const link=v.editorPath?'<a href="'+v.editorPath+'" target="_top" style="color:inherit;font-weight:bold">Open Apps Code</a>':'update via Apps Code';
-    el.innerHTML='<div class="alert a-warn" style="margin-bottom:12px">\u26A0 <b>New version available:</b> v'+h(v.latestVersion)+' (you have v'+h(v.currentVersion)+'). '+link+' and use Import to update.</div>';
+    if(!el||v.error)return;
+    if(v.updateAvailable){
+      const link=v.editorPath?'<a href="'+v.editorPath+'" target="_top" style="color:inherit;font-weight:bold">Open Apps Code</a>':'update via Apps Code';
+      el.innerHTML='<div class="alert a-warn" style="margin-bottom:12px">\u26A0 <b>New version available:</b> v'+h(v.latestVersion)+' (you have v'+h(v.currentVersion)+'). '+link+' and use Import to update.</div>';
+    } else if(v.editorPath){
+      el.innerHTML='<div style="margin-bottom:8px"><a href="'+v.editorPath+'" target="_top" style="color:var(--link)">Open Apps Code</a></div>';
+    }
   }).catch(()=>{});
 
   const btnReport=document.getElementById('btnReport');
