@@ -148,6 +148,7 @@ mappings {
     path('/api/snapshots/clear')    { action: [POST: 'apiClearSnapshots'] }
     path('/api/performance/compare') { action: [POST: 'apiPerformanceCompare'] }
     path('/api/ui/sync')              { action: [POST: 'apiSyncUI'] }
+    path('/api/version/check')        { action: [GET: 'apiVersionCheck'] }
     path('/api/reports')              { action: [GET: 'apiReports'] }
     path('/api/report/generate')      { action: [POST: 'apiGenerateReport'] }
 }
@@ -303,6 +304,41 @@ Map apiSyncUI() {
     logInfo "Manual UI sync requested via API..."
     boolean success = syncUI(true)
     return jsonResponse([success: success])
+}
+
+Map apiVersionCheck() {
+    String latestVersion = null
+    try {
+        httpGet([uri: IMPORT_URL_APP, contentType: "text/plain", timeout: 15]) { resp ->
+            String text = resp.data?.text ?: ""
+            def m = text =~ /APP_VERSION\s*=\s*"([^"]+)"/
+            if (m.find()) latestVersion = m.group(1)
+        }
+    } catch (e) {
+        logDebug "Version check failed: ${e.message}"
+        return jsonResponse([error: "Unable to check for updates"])
+    }
+    if (!latestVersion) return jsonResponse([error: "Could not parse remote version"])
+
+    // Look up our app type ID for the editor link
+    String typeId = null
+    try {
+        httpGet([uri: HUB_BASE, path: "/hub2/userAppTypes", timeout: 10]) { resp ->
+            List apps = resp.data instanceof List ? (List) resp.data : []
+            Map match = apps.find { it.name == "Hub Diagnostics" }
+            if (match) typeId = match.id?.toString()
+        }
+    } catch (e) {
+        logDebug "Could not look up app type ID: ${e.message}"
+    }
+
+    boolean updateAvailable = isNewer(latestVersion, APP_VERSION)
+    return jsonResponse([
+        currentVersion: APP_VERSION,
+        latestVersion: latestVersion,
+        updateAvailable: updateAvailable,
+        editorPath: typeId ? "/app/editor/${typeId}" : null
+    ])
 }
 
 Map apiDashboard() {
@@ -690,7 +726,9 @@ Map getDevicesData() {
         summary: [totalDevices: deviceStats.totalDevices, activeDevices: deviceStats.activeDevices,
                   inactiveDevices: deviceStats.inactiveDevices, disabledDevices: deviceStats.disabledDevices,
                   parentDevices: deviceStats.parentDevices, childDevices: deviceStats.childDevices,
-                  linkedDevices: deviceStats.linkedDevices, batteryDevices: deviceStats.batteryDevices],
+                  linkedDevices: deviceStats.linkedDevices, batteryDevices: deviceStats.batteryDevices,
+                  parentIds: deviceStats.parentIds, childIds: deviceStatis.parentIds + deviceStats.childIds,
+                  linkedIds: deviceStats.linkedIds, batteryIds: deviceStats.batteryIds],
         byProtocol: deviceStats.byProtocol, idsByProtocol: deviceStats.idsByProtocol,
         byType: deviceStats.byType, idsByType: deviceStats.idsByType, idsByStatus: deviceStats.idsByStatus,
         deviceRows: deviceRows, lowBatteryDevices: lowBattery,

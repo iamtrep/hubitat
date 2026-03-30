@@ -173,7 +173,7 @@ function sbadge(s){return'<span class="badge '+(s==='Active'?'b-ok':s==='Disable
 function bat(v){if(v==null||v==='')return'';const c=v<=20?'var(--crit)':v<=50?'var(--warn)':'var(--ok)';return'<span style="color:'+c+';font-weight:600">'+v+'%</span>'}
 function dlink(id,n){return'<a href="/device/edit/'+id+'" target="_blank">'+h(n)+'</a>'}
 function alink(id,n){return'<a href="/installedapp/configure/'+id+'" target="_blank">'+h(n)+'</a>'}
-function dlistlink(count,ids){if(!ids||!ids.length)return String(count??0);return'<a href="/device/list?ids='+ids.join(',')+'" target="_blank">'+count+'</a>'}
+function dlistlink(count,ids){if(ids===true)return'<a href="/device/list" target="_blank">'+(count??0)+'</a>';if(!ids||!ids.length)return String(count??0);return'<a href="/device/list?ids='+ids.join(',')+'" target="_blank">'+count+'</a>'}
 const PD={zigbee:'Zigbee',zwave:'Z-Wave',matter:'Matter',lan:'LAN/IP',virtual:'Virtual',cloud:'Cloud',maker:'Maker API',hubmesh:'Hub Mesh',other:'Other'};
 function mc(l,v,c){const s=c?' style="color:'+c+'"':'';return'<div class="m"><div class="m-l">'+h(l)+'</div><div class="m-v"'+s+'>'+(v??'N/A')+'</div></div>'}
 function ni(l,v,c){const s=c?' style="color:'+c+';font-weight:600"':'';return'<div class="ni"><div class="nl">'+h(l)+'</div><div class="nv"'+s+'>'+h(String(v??'N/A'))+'</div></div>'}
@@ -404,8 +404,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   // Overview
   const bp=d.devices.byProtocol||{},ip=d.devices.idsByProtocol||{},is=d.devices.idsByStatus||{};
   o+='<div class="card"><div class="card-h">Overview</div><div class="card-b"><div class="metrics">';
-  o+=mc('Total Devices',dlistlink(d.devices.total,null));
-  o+=mc('Active',dlistlink(d.devices.active,is.active),'var(--ok)');
+  o+=mc('Total Devices',dlistlink(d.devices.total,true));  o+=mc('Active',dlistlink(d.devices.active,is.active),'var(--ok)');
   o+=mc('Inactive',dlistlink(d.devices.inactive,(is.inactive||[]).concat(is.disabled||[])),(d.devices.inactive>0?'var(--warn)':''));
   o+=mc('Disabled',dlistlink(d.devices.disabled,is.disabled),(d.devices.disabled>0?'var(--crit)':''));
   o+=mc('Applications',d.apps.total);o+=mc('User Apps',d.apps.user);
@@ -444,6 +443,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   const appUpdateNeeded = isNewer(UI_VERSION, d.appVersion);
   
   o+='<div class="card"><div class="card-h">Hub Diagnostic App</div><div class="card-b">';
+  o+='<div id="updateBanner"></div>';
   if(appUpdateNeeded) {
     o+='<div class="alert a-crit">\u26D4 <b>App Update Required:</b> A newer UI version ('+UI_VERSION+') is installed than this App code ('+d.appVersion+'). Please update the Groovy App code in Hubitat.</div>';
   }
@@ -467,6 +467,14 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
     } catch(e) { alert('Sync failed: '+e.message); btnSyncUI.disabled=false; btnSyncUI.textContent='Check for updates'; }
   };
 
+  // Async version check against GitHub
+  api('version/check').then(v=>{
+    const el=document.getElementById('updateBanner');
+    if(!el||!v.updateAvailable)return;
+    const link=v.editorPath?'<a href="'+v.editorPath+'" target="_top" style="color:inherit;font-weight:bold">Open Apps Code</a>':'update via Apps Code';
+    el.innerHTML='<div class="alert a-warn" style="margin-bottom:12px">\u26A0 <b>New version available:</b> v'+h(v.latestVersion)+' (you have v'+h(v.currentVersion)+'). '+link+' and use Import to update.</div>';
+  }).catch(()=>{});
+
   const btnReport=document.getElementById('btnReport');
   if(btnReport)btnReport.onclick=async()=>{
     btnReport.disabled=true;btnReport.textContent='Generating...';
@@ -483,13 +491,12 @@ async function rDevices(){const P='p-devices';loading(P);try{
   const d=await api('devices'),s=d.summary,bp=d.byProtocol||{},ip=d.idsByProtocol||{},is=d.idsByStatus||{};
   let o='';
   o+='<div class="card"><div class="card-h">Device Summary</div><div class="card-b"><div class="metrics">';
-  o+=mc('Total',dlistlink(s.totalDevices,null));o+=mc('Active',dlistlink(s.activeDevices,is.active)+' ('+d.inactivityDays+'d)','var(--ok)');
+  o+=mc('Total',dlistlink(s.totalDevices,true));o+=mc('Active',dlistlink(s.activeDevices,is.active)+' ('+d.inactivityDays+'d)','var(--ok)');
   o+=mc('Inactive',dlistlink(s.inactiveDevices,(is.inactive||[]).concat(is.disabled||[])),(s.inactiveDevices>0?'var(--warn)':''));
   o+=mc('Disabled',dlistlink(s.disabledDevices,is.disabled),(s.disabledDevices>0?'var(--crit)':''));
-  o+=mc('Parent',dlistlink(s.parentDevices,[]));o+=mc('Child',dlistlink(s.childDevices,[]));
-  o+=mc('Hub Mesh',dlistlink(s.linkedDevices,[]));o+=mc('Battery',dlistlink(s.batteryDevices,[]));
-  o+='</div></div></div>';
-  // Protocol distribution
+  o+=mc('Parent',dlistlink(s.parentDevices,s.parentIds));o+=mc('Child',dlistlink(s.childDevices,s.childIds));
+  o+=mc('Hub Mesh',dlistlink(s.linkedDevices,s.linkedIds));o+=mc('Battery',dlistlink(s.batteryDevices,s.batteryIds));
+  o+='</div></div></div>';  // Protocol distribution
   o+='<div class="card"><div class="card-h">Protocol Distribution</div><div class="card-b"><div class="tbl-wrap"><table><thead><tr><th>Protocol</th><th>Count</th></tr></thead><tbody>';
   Object.entries(bp).forEach(([k,v])=>{if(v>0)o+='<tr><td>'+(PD[k]||k)+'</td><td>'+dlistlink(v,ip[k])+'</td></tr>'});
   o+='</tbody></table></div></div></div>';
