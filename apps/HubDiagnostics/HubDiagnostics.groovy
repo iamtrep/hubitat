@@ -160,23 +160,19 @@ Map dashboardPage() {
 
     if (!oauthOk) {
         return dynamicPage(name: "dashboardPage", title: "OAuth Required", install: true, uninstall: true) {
-            section("Step 1: Enable OAuth") {
-                paragraph "<span style='color:red; font-weight:bold;'>Critical: OAuth is required for Hub Diagnostics to function.</span>"
-                paragraph "Hubitat requires OAuth to be manually enabled for user apps that provide a web interface."
-                paragraph "<b>How to fix:</b>"
-                paragraph "1. Exit this app by clicking 'Done'.\n" +
-                          "2. Go to the <span style='background-color:#000; color:#fff; border-radius:4px; padding:2px 4px; display:inline-flex; align-items:center; vertical-align:middle;'><img src='/ui2/images/wand-gear.svg' style='height:1.2em; margin-right:4px;'> <b>Apps code</b></span> section of your hub.\n" +
-                          "3. Find <b>Hub Diagnostics</b> in the list and open the code window.\n" +
-                          "4. Click the <b>three-dot (kebab \u22EE) menu</b> at the top right of the code window.\n" +
-                          "5. Select <b>OAuth</b> in the menu, then click <b>Enable oAuth in app</b>, then <b>Update</b> to save.\n" +
-                          "6. Return here and try again."
+            section("OAuth Setup Failed") {
+                paragraph "Hub Diagnostics was unable to automatically enable OAuth. Please enable it manually:"
+                paragraph "1. Go to <b>Apps Code</b> and open <b>Hub Diagnostics</b>.\n" +
+                          "2. Click the <b>three-dot (\u22EE) menu</b> at the top right.\n" +
+                          "3. Select <b>OAuth</b>, click <b>Enable oAuth in app</b>, then <b>Update</b>.\n" +
+                          "4. Return here and re-open the app."
             }
         }
     }
 
     if (isFirstRun) {
         return dynamicPage(name: "dashboardPage", title: "Welcome to Hub Diagnostics", install: true, uninstall: true) {
-            section("Step 2: Finalize Installation") {
+            section("Finalize Installation") {
                 paragraph "Thank you for installing Hub Diagnostics! To finish the setup, please click <b>Done</b> at the bottom of this page."
                 paragraph "This will initialize the database, sync the user interface, and schedule performance tracking."
                 paragraph "<b>Once you click Done, re-open Hub Diagnostics from your Apps list to access the full dashboard.</b>"
@@ -1988,6 +1984,68 @@ boolean isNewer(String v1, String v2) {
     return false
 }
 
+void appButtonHandler(String btn) {
+}
+
+private boolean autoEnableOAuth() {
+    logInfo "Attempting to auto-enable OAuth for Hub Diagnostics..."
+
+    // 1. Find our app type ID from the user app types JSON endpoint
+    String typeId = null
+    try {
+        httpGet([uri: HUB_BASE, path: "/hub2/userAppTypes", timeout: 15]) { resp ->
+            List apps = resp.data instanceof List ? (List) resp.data : []
+            Map match = apps.find { it.name == "Hub Diagnostics" }
+            if (match) typeId = match.id?.toString()
+        }
+    } catch (e) {
+        logError "Failed to fetch user app types: ${e.message}"
+        return false
+    }
+    if (!typeId) {
+        logError "Could not find Hub Diagnostics in user app types."
+        return false
+    }
+
+    // 2. Get the internal version from the app code JSON endpoint
+    String internalVer = null
+    try {
+        httpGet([uri: HUB_BASE, path: "/app/ajax/code", query: [id: typeId], timeout: 15]) { resp ->
+            internalVer = resp.data?.version?.toString()
+        }
+    } catch (e) {
+        logError "Failed to fetch app code version: ${e.message}"
+        return false
+    }
+    if (!internalVer) {
+        logError "Could not determine app code version."
+        return false
+    }
+
+    // 3. POST to enable OAuth
+    boolean success = false
+    try {
+        httpPost([
+            uri: HUB_BASE,
+            path: "/app/edit/update",
+            requestContentType: "application/x-www-form-urlencoded",
+            body: [
+                id: typeId,
+                version: internalVer,
+                oauthEnabled: "true",
+                _action_update: "Update"
+            ],
+            timeout: 20
+        ]) { resp ->
+            success = true
+            logInfo "Successfully auto-enabled OAuth."
+        }
+    } catch (e) {
+        logError "Failed to enable OAuth: ${e.message}"
+    }
+    return success
+}
+
 // ===== FILE I/O HELPERS =====
 
 List loadCheckpoints() {
@@ -2129,7 +2187,16 @@ private boolean checkOAuth() {
         createAccessToken()
         return (state.accessToken != null)
     } catch (e) {
-        logDebug "OAuth not enabled yet: ${e.message}"
+        logDebug "OAuth not enabled yet, attempting auto-enable..."
+        if (autoEnableOAuth()) {
+            try {
+                createAccessToken()
+                return (state.accessToken != null)
+            } catch (e2) {
+                logError "OAuth enabled but token creation failed: ${e2.message}"
+                return false
+            }
+        }
         return false
     }
 }
