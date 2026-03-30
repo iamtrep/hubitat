@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "4.5.6"
+@Field static final String APP_VERSION = "4.5.7"
 @Field static final String STORAGE_SCHEMA_VERSION = "3.2.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -1986,7 +1986,9 @@ int parseUptime(String uptime) {
     List parts = uptime.tokenize()
 
     parts.each { String part ->
-        if (part.endsWith('h')) {
+        if (part.endsWith('d')) {
+            seconds += part[0..-2].toInteger() * 86400
+        } else if (part.endsWith('h')) {
             seconds += part[0..-2].toInteger() * 3600
         } else if (part.endsWith('m') && !part.endsWith('ms')) {
             seconds += part[0..-2].toInteger() * 60
