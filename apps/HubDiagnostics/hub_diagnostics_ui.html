@@ -102,7 +102,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "4.4.4";
+const UI_VERSION = "4.4.5";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -177,6 +177,16 @@ function dlistlink(count,ids){if(!ids||!ids.length)return String(count??0);retur
 const PD={zigbee:'Zigbee',zwave:'Z-Wave',matter:'Matter',lan:'LAN/IP',virtual:'Virtual',cloud:'Cloud',maker:'Maker API',hubmesh:'Hub Mesh',other:'Other'};
 function mc(l,v,c){const s=c?' style="color:'+c+'"':'';return'<div class="m"><div class="m-l">'+h(l)+'</div><div class="m-v"'+s+'>'+(v??'N/A')+'</div></div>'}
 function ni(l,v,c){const s=c?' style="color:'+c+';font-weight:600"':'';return'<div class="ni"><div class="nl">'+h(l)+'</div><div class="nv"'+s+'>'+h(String(v??'N/A'))+'</div></div>'}
+function isNewer(v1, v2) {
+  if (!v1 || v1 === 'Unknown' || !v2 || v2 === 'Unknown') return false;
+  const p1 = v1.split('.').map(Number), p2 = v2.split('.').map(Number);
+  for (let i = 0; i < Math.max(p1.length, p2.length); i++) {
+    const n1 = p1[i] || 0, n2 = p2[i] || 0;
+    if (n1 > n2) return true;
+    if (n1 < n2) return false;
+  }
+  return false;
+}
 
 // ===== ZIGBEE-WIFI SPECTRUM CHART =====
 function renderZigbeeWifiChart(zbCh,containerId){
@@ -431,7 +441,12 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   o+='</div></div>';
   // App settings
   const upToDate = (d.appVersion === UI_VERSION && UI_VERSION !== 'Unknown');
+  const appUpdateNeeded = isNewer(UI_VERSION, d.appVersion);
+  
   o+='<div class="card"><div class="card-h">Hub Diagnostic App</div><div class="card-b">';
+  if(appUpdateNeeded) {
+    o+='<div class="alert a-crit">\u26D4 <b>App Update Required:</b> A newer UI version ('+UI_VERSION+') is installed than this App code ('+d.appVersion+'). Please update the Groovy App code in Hubitat.</div>';
+  }
   o+='<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">';
   o+='<div><b>App Version:</b> '+d.appVersion+'</div>';
   o+='<div><b>UI Version:</b> '+UI_VERSION+'</div>';

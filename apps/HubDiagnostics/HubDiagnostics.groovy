@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "4.4.4"
+@Field static final String APP_VERSION = "4.4.5"
 @Field static final String STORAGE_SCHEMA_VERSION = "3.2.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -189,8 +189,14 @@ Map dashboardPage() {
     }
 
     dynamicPage(name: "dashboardPage", title: "Hub Diagnostics", install: true, uninstall: true) {
+        String uiVer = getUIVersion()
+        boolean appUpdateNeeded = isNewer(uiVer, APP_VERSION)
+        
         section("Versions") {
-            paragraph "<b>App Version:</b> ${APP_VERSION}\n<b>UI Version:</b> ${getUIVersion()}"
+            if (appUpdateNeeded) {
+                paragraph "<span style='color:red; font-weight:bold;'>\u26A0 Update Recommended:</span> A newer UI version (${uiVer}) is active than this App code (${APP_VERSION}). Please update the Groovy App Code in Hubitat."
+            }
+            paragraph "<b>App Version:</b> ${APP_VERSION}\n<b>UI Version:</b> ${uiVer}"
         }
 
         section("Quick Summary") {
@@ -1968,6 +1974,18 @@ String formatMemory(int kb) {
     } else {
         return "${kb} KB"
     }
+}
+
+boolean isNewer(String v1, String v2) {
+    if (!v1 || v1 == "Unknown" || !v2 || v2 == "Unknown") return false
+    List v1p = v1.tokenize('.'), v2p = v2.tokenize('.')
+    for (int i = 0; i < Math.max(v1p.size(), v2p.size()); i++) {
+        int n1 = i < v1p.size() ? v1p[i].toInteger() : 0
+        int n2 = i < v2p.size() ? v2p[i].toInteger() : 0
+        if (n1 > n2) return true
+        if (n1 < n2) return false
+    }
+    return false
 }
 
 // ===== FILE I/O HELPERS =====
