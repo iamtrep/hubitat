@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "4.4.2"
+@Field static final String APP_VERSION = "4.4.3"
 @Field static final String STORAGE_SCHEMA_VERSION = "3.2.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -165,10 +165,10 @@ Map dashboardPage() {
                 paragraph "Hubitat requires OAuth to be manually enabled for user apps that provide a web interface."
                 paragraph "<b>How to fix:</b>"
                 paragraph "1. Exit this app by clicking 'Done'.\n" +
-                          "2. Go to the <b>Apps Code</b> section of your hub.\n" +
-                          "3. Find <b>Hub Diagnostics</b> in the list.\n" +
-                          "4. Click on <b>OAuth</b> (top right button).\n" +
-                          "5. Click <b>Update</b> to enable it (no other changes needed).\n" +
+                          "2. Go to the <span style='background-color:#000; color:#fff; border-radius:4px; padding:2px 4px; display:inline-flex; align-items:center; vertical-align:middle;'><img src='/ui2/images/wand-gear.svg' style='height:1.2em; margin-right:4px;'> <b>Apps code</b></span> section of your hub.\n" +
+                          "3. Find <b>Hub Diagnostics</b> in the list and open the code window.\n" +
+                          "4. Click the <b>three-dot (kebab \u22EE) menu</b> at the top right of the code window.\n" +
+                          "5. Select <b>OAuth</b> in the menu, then click <b>Enable oAuth in app</b>, then <b>Update</b> to save.\n" +
                           "6. Return here and try again."
             }
         }
