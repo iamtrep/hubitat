@@ -196,8 +196,7 @@ Map dashboardPage() {
             paragraph "<b>App Version:</b> ${APP_VERSION}\n<b>UI Version:</b> ${uiVer}"
             String editorPath = getAppEditorPath()
             if (editorPath) {
-                href url: editorPath, title: "Open App Code Editor", style: "embedded",
-                     description: "Update the Groovy source code via Import"
+                paragraph "<a href='${editorPath}' target='_blank'>Open App Code Editor</a> — update the Groovy source code via Import"
             }
         }
 
