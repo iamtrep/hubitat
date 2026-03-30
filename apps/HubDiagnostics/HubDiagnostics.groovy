@@ -727,7 +727,7 @@ Map getDevicesData() {
                   inactiveDevices: deviceStats.inactiveDevices, disabledDevices: deviceStats.disabledDevices,
                   parentDevices: deviceStats.parentDevices, childDevices: deviceStats.childDevices,
                   linkedDevices: deviceStats.linkedDevices, batteryDevices: deviceStats.batteryDevices,
-                  parentIds: deviceStats.parentIds, childIds: deviceStatis.parentIds + deviceStats.childIds,
+                  parentIds: deviceStats.parentIds, childIds: deviceStats.parentIds + deviceStats.childIds,
                   linkedIds: deviceStats.linkedIds, batteryIds: deviceStats.batteryIds],
         byProtocol: deviceStats.byProtocol, idsByProtocol: deviceStats.idsByProtocol,
         byType: deviceStats.byType, idsByType: deviceStats.idsByType, idsByStatus: deviceStats.idsByStatus,
