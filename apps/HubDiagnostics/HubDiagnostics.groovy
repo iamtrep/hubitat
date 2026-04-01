@@ -188,15 +188,24 @@ Map dashboardPage() {
     dynamicPage(name: "dashboardPage", title: "Hub Diagnostics", install: true, uninstall: true) {
         String uiVer = getUIVersion()
         boolean appUpdateNeeded = isNewer(uiVer, APP_VERSION)
-        
+        String remoteVersion = checkGithubVersion()
+        boolean githubUpdateAvailable = remoteVersion && isNewer(remoteVersion, APP_VERSION)
+
         section("Versions") {
+            if (githubUpdateAvailable) {
+                String editorPath = getAppEditorPath()
+                String importLink = editorPath ? "<a href='${editorPath}' target='_blank'>Open Apps Code</a> and use Import to update." : "Update via Apps Code using Import."
+                paragraph "<span style='color:orange; font-weight:bold;'>\u26A0 New version available:</span> v${remoteVersion} (you have v${APP_VERSION}). ${importLink}"
+            }
             if (appUpdateNeeded) {
                 paragraph "<span style='color:red; font-weight:bold;'>\u26A0 Update Recommended:</span> A newer UI version (${uiVer}) is active than this App code (${APP_VERSION}). Please update the Groovy App Code in Hubitat."
             }
             paragraph "<b>App Version:</b> ${APP_VERSION}\n<b>UI Version:</b> ${uiVer}"
-            String editorPath = getAppEditorPath()
-            if (editorPath) {
-                paragraph "<a href='${editorPath}' target='_blank'>Open App Code Editor</a> — update the Groovy source code via Import"
+            if (!githubUpdateAvailable) {
+                String editorPath = getAppEditorPath()
+                if (editorPath) {
+                    paragraph "<a href='${editorPath}' target='_blank'>Open App Code Editor</a> — update the Groovy source code via Import"
+                }
             }
         }
 
@@ -304,6 +313,27 @@ Map serveUI() {
     }
 }
 
+String checkGithubVersion() {
+    long lastCheck = state.lastGithubVersionCheck ?: 0
+    if (now() - lastCheck < 3600000 && state.lastGithubVersion) {
+        return state.lastGithubVersion
+    }
+    try {
+        String version = null
+        httpGet([uri: IMPORT_URL_APP, contentType: "text/plain", timeout: 10]) { resp ->
+            String text = resp.data?.text ?: ""
+            def m = text =~ /APP_VERSION\s*=\s*"([^"]+)"/
+            if (m.find()) version = m.group(1)
+        }
+        state.lastGithubVersion = version
+        state.lastGithubVersionCheck = now()
+        return version
+    } catch (e) {
+        logDebug "GitHub version check failed: ${e.message}"
+        return state.lastGithubVersion
+    }
+}
+
 Map apiSyncUI() {
     logInfo "Manual UI sync requested via API..."
     boolean success = syncUI(true)
@@ -311,18 +341,8 @@ Map apiSyncUI() {
 }
 
 Map apiVersionCheck() {
-    String latestVersion = null
-    try {
-        httpGet([uri: IMPORT_URL_APP, contentType: "text/plain", timeout: 15]) { resp ->
-            String text = resp.data?.text ?: ""
-            def m = text =~ /APP_VERSION\s*=\s*"([^"]+)"/
-            if (m.find()) latestVersion = m.group(1)
-        }
-    } catch (e) {
-        logDebug "Version check failed: ${e.message}"
-        return jsonResponse([error: "Unable to check for updates"])
-    }
-    if (!latestVersion) return jsonResponse([error: "Could not parse remote version"])
+    String latestVersion = checkGithubVersion()
+    if (!latestVersion) return jsonResponse([error: "Unable to check for updates"])
 
     boolean updateAvailable = isNewer(latestVersion, APP_VERSION)
     return jsonResponse([
