@@ -194,9 +194,12 @@ function bat(v){if(v==null||v==='')return'';const c=v<=20?'var(--crit)':v<=50?'v
 function dlink(id,n){return'<a href="/device/edit/'+id+'" target="_blank">'+h(n)+'</a>'}
 function alink(id,n){return'<a href="/installedapp/configure/'+id+'" target="_blank">'+h(n)+'</a>'}
 function dlistlink(count,ids){if(ids===true)return'<a href="/device/list" target="_blank">'+(count??0)+'</a>';if(!ids||!ids.length)return String(count??0);return'<a href="/device/list?ids='+ids.join(',')+'" target="_blank">'+count+'</a>'}
+function alistlink(count){return'<a href="/installedapp/list" target="_blank">'+(count??0)+'</a>'}
 const PD={zigbee:'Zigbee',zwave:'Z-Wave',matter:'Matter',lan:'LAN/IP',virtual:'Virtual',cloud:'Cloud',maker:'Maker API',hubmesh:'Hub Mesh',other:'Other'};
 function mc(l,v,c){const s=c?' style="color:'+c+'"':'';return'<div class="m"><div class="m-l">'+h(l)+'</div><div class="m-v"'+s+'>'+(v??'N/A')+'</div></div>'}
 function ni(l,v,c){const s=c?' style="color:'+c+';font-weight:600"':'';return'<div class="ni"><div class="nl">'+h(l)+'</div><div class="nv"'+s+'>'+h(String(v??'N/A'))+'</div></div>'}
+function rateColor(v){return v>=10?'var(--crit)':v>=6?'var(--warn)':v>=2?'var(--primary)':''}
+function rateCell(r){if(r.msgPerMin==null)return'';const c=rateColor(r.msgPerMin);const s=c?' style="color:'+c+';font-weight:600"':'';return'<span'+s+'>'+r.msgPerMin.toFixed(2)+'</span>'}
 function isNewer(v1, v2) {
   if (!v1 || v1 === 'Unknown' || !v2 || v2 === 'Unknown') return false;
   const p1 = v1.split('.').map(Number), p2 = v2.split('.').map(Number);
@@ -427,7 +430,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   o+=mc('Total Devices',dlistlink(d.devices.total,true));  o+=mc('Active',dlistlink(d.devices.active,is.active),'var(--ok)');
   o+=mc('Inactive',dlistlink(d.devices.inactive,(is.inactive||[]).concat(is.disabled||[])),(d.devices.inactive>0?'var(--warn)':''));
   o+=mc('Disabled',dlistlink(d.devices.disabled,is.disabled),(d.devices.disabled>0?'var(--crit)':''));
-  o+=mc('Applications',d.apps.total);o+=mc('User Apps',d.apps.user);
+  o+=mc('Applications',alistlink(d.apps.total));o+=mc('User Apps',d.apps.user);
   o+='</div></div></div>';
 
   // Resources
@@ -568,7 +571,7 @@ async function rApps(){const P='p-apps';loading(P);try{
   const d=await api('apps'),s=d.summary;
   let o='';
   o+='<div class="card"><div class="card-h">Application Summary</div><div class="card-b"><div class="metrics">';
-  o+=mc('Total Apps',s.totalApps);o+=mc('System',s.builtInApps);o+=mc('User',s.userApps);
+  o+=mc('Total Apps',alistlink(s.totalApps));o+=mc('System',s.builtInApps);o+=mc('User',s.userApps);
   o+=mc('Parent',s.parentApps);o+=mc('Child',s.childApps);
   if(s.runtimeTotalApps)o+=mc('Platform Total',s.runtimeTotalApps);
   o+='</div></div></div>';
@@ -655,8 +658,8 @@ async function rNetwork(){const P='p-network';loading(P);try{
       o+=ni('Route Changes',m.totalRouteChanges);
       if(m.avgRssi!=null)o+=ni('Avg RSSI',m.avgRssi+' dBm',m.avgRssi<-80?'var(--crit)':m.avgRssi<-60?'var(--warn)':'var(--ok)');
       o+='</div><div id="zwMeshTbl" style="margin-top:8px"></div></div>'}
-    // Z-Wave message counts (when no mesh data)
-    if((!z.mesh||!z.mesh.nodes||!z.mesh.nodes.length)&&z.messageCounts&&z.messageCounts.length)o+='<div id="zwMsgTbl" style="margin-top:8px"></div>';
+    // Z-Wave message counts
+    if(z.messageCounts&&z.messageCounts.length)o+='<div id="zwMsgTbl" style="margin-top:8px"></div>';
     // Problem nodes
     if(z.problemNodes&&z.problemNodes.length){
       o+='<div style="margin-top:10px"><div class="alert a-warn">\u26A0 Problem Nodes: '+z.problemNodes.length+'</div>';
@@ -686,8 +689,8 @@ async function rNetwork(){const P='p-network';loading(P);try{
       if(m.weakNeighbors&&m.weakNeighbors.length){o+='<details style="margin-top:6px"><summary>Weak Neighbor Details</summary>';
         m.weakNeighbors.forEach(n=>{o+='<div style="margin:3px 0;color:var(--crit)">'+h(n.shortId)+' &mdash; LQI: '+n.lqi+'</div>'});o+='</details>'}
       o+='</div>'}
-    if(z.messageCounts&&z.messageCounts.length)o+='<div id="zbMsgTbl" style="margin-top:10px"></div>';
     o+='<div id="zbWifiChart" style="margin-top:10px"></div>';
+    if(z.messageCounts&&z.messageCounts.length)o+='<div id="zbMsgTbl" style="margin-top:10px"></div>';
     o+='</div></div>'}
   // Matter
   if(d.matter){const m=d.matter;
@@ -711,6 +714,12 @@ async function rNetwork(){const P='p-network';loading(P);try{
         o+='<div style="margin:4px 0"><b>'+h(p.name)+'</b> ('+h(p.ip)+') &mdash; <span style="color:'+sc+'">'+st+'</span> | '+p.deviceCount+' devices, '+p.varCount+' variables</div>'});o+='</div>'}
     o+='</div></div>'}
   document.getElementById(P).innerHTML=o;
+  // Calculate message rates if uptime is available
+  if(d.uptimeSeconds>0){
+    const min=d.uptimeSeconds/60;
+    if(d.zwave&&d.zwave.messageCounts)d.zwave.messageCounts.forEach(r=>{r.msgPerMin=(r.msgCount||0)/min});
+    if(d.zigbee&&d.zigbee.messageCounts)d.zigbee.messageCounts.forEach(r=>{r.msgPerMin=(r.msgCount||0)/min});
+  }
   // Render Zigbee-WiFi interference chart
   if(d.zigbee&&d.zigbee.channel)renderZigbeeWifiChart(d.zigbee.channel,'zbWifiChart');
   // Render Z-Wave mesh table
@@ -722,19 +731,22 @@ async function rNetwork(){const P='p-network';loading(P);try{
       {l:'Neighbors',f:'neighbors',t:'n'},{l:'Route',f:'route'},{l:'Route Changes',f:'routeChanges',t:'n'},
       {l:'Msgs',f:'msgCount',t:'n'},
       {l:'State',f:'state',r:r=>'<span style="color:'+(r.state==='OK'?'var(--ok)':'var(--crit)')+'">'+h(r.state)+'</span>'}
-    ],d.zwave.mesh.nodes,{sc:0,sd:'asc',collapse:10,collapseLabel:'Z-Wave Mesh Nodes'});
-  // Z-Wave message counts fallback (no mesh data)
-  if(d.zwave&&(!d.zwave.mesh||!d.zwave.mesh.nodes||!d.zwave.mesh.nodes.length)&&d.zwave.messageCounts&&d.zwave.messageCounts.length)
+    ],d.zwave.mesh.nodes,{sc:0,sd:'asc',collapse:1,collapseLabel:'Z-Wave Mesh Nodes'});
+  // Z-Wave message counts
+  if(d.zwave&&d.zwave.messageCounts&&d.zwave.messageCounts.length)
     tbl('zwMsgTbl',[
       {l:'Device',f:'name',r:r=>r.deviceId?dlink(r.deviceId,r.name):h(r.name)},
-      {l:'Messages',f:'msgCount',t:'n'},{l:'Route Changes',f:'routeChanges',t:'n'}
-    ],d.zwave.messageCounts,{sc:1,sd:'desc',collapse:10,collapseLabel:'Z-Wave Message Counts'});
+      {l:'Messages',f:'msgCount',t:'n'},
+      {l:'Msgs/Min',f:'msgPerMin',t:'n',r:rateCell},
+      {l:'Route Changes',f:'routeChanges',t:'n'}
+    ],d.zwave.messageCounts,{sc:1,sd:'desc',collapse:1,collapseLabel:'Z-Wave Message Counts'});
   // Zigbee message counts
   if(d.zigbee&&d.zigbee.messageCounts&&d.zigbee.messageCounts.length)
     tbl('zbMsgTbl',[
       {l:'Device',f:'name',r:r=>r.id?dlink(r.id,r.name):h(r.name)},
-      {l:'Messages',f:'msgCount',t:'n'}
-    ],d.zigbee.messageCounts,{sc:1,sd:'desc',collapse:10,collapseLabel:'Zigbee Message Counts'});
+      {l:'Messages',f:'msgCount',t:'n'},
+      {l:'Msgs/Min',f:'msgPerMin',t:'n',r:rateCell}
+    ],d.zigbee.messageCounts,{sc:1,sd:'desc',collapse:1,collapseLabel:'Zigbee Message Counts'});
 }catch(e){err(P,e,rNetwork)}}
 
 // ===== TAB: HEALTH =====
@@ -928,8 +940,6 @@ async function rPerf(){const P='p-performance';loading(P);try{
       {l:'State Size',f:'stateSize',t:'n'},{l:'Hub Actions',f:'hubActionCount',t:'n'},{l:'Cloud Calls',f:'cloudCallCount',t:'n'}
     ],s.appStats,{sc:1,sd:'desc',filter:true,collapse:10,collapseLabel:'App Runtime Detail'});
   // Radio message count tables
-  function rateColor(v){return v>=10?'var(--crit)':v>=6?'var(--warn)':v>=2?'var(--primary)':''}
-  function rateCell(r){if(r.msgPerMin==null)return'';const c=rateColor(r.msgPerMin);const s=c?' style="color:'+c+';font-weight:600"':'';return'<span'+s+'>'+r.msgPerMin.toFixed(2)+'</span>'}
   if(hasZw){
     tbl('perfZwMsgTbl',[
       {l:'Device',f:'name',r:r=>r.deviceId?dlink(r.deviceId,r.name):h(r.name)},{l:'Messages',f:'msgCount',t:'n'},

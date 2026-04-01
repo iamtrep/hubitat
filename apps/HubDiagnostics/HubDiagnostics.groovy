@@ -773,6 +773,8 @@ Map getAppsData() {
 
 Map getNetworkData() {
     Map networkData = analyzeNetwork()
+    Map stats = (Map) hubRequest(RUNTIME_STATS_PATH, "runtime stats")
+    Integer uptimeSeconds = stats ? parseUptime(stats.uptime as String) : null
     Map zigbeeMesh = fetchZigbeeMeshInfo()
     String zwaveVersion = fetchZwaveVersion()
     Map zwaveMesh = extractZwaveMeshQuality(networkData.zwave ?: [:])
@@ -791,6 +793,7 @@ Map getNetworkData() {
          deviceCount: hub.deviceIds?.size() ?: 0, varCount: hub.hubVarNames?.size() ?: 0]
     } : []
     return [
+        uptimeSeconds: uptimeSeconds,
         network: networkData.network && !networkData.network.error ? networkData.network : null,
         zwave: networkData.zwave && !networkData.zwave.error ? [
             enabled: networkData.zwave.enabled, healthy: networkData.zwave.healthy,
