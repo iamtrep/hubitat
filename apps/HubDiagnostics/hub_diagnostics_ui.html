@@ -102,7 +102,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "4.5.7";
+const UI_VERSION = "4.6.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -451,7 +451,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   // Reports
   const rpts=await api('reports');
   o+='<div class="card"><div class="card-h">Reports</div><div class="card-b">';
-  o+='<div class="actions" style="margin-bottom:10px"><button class="btn btn-p" id="btnReport">Generate Full Report</button></div>';
+  o+='<div class="actions" style="margin-bottom:10px"><button class="btn btn-p" id="btnReport">Generate Full Report</button><button class="btn btn-p" id="btnForum">Copy for Forum</button></div>';
   if(rpts.lastReport)o+='<p><a href="/local/'+h(rpts.lastReport)+'" target="_blank" style="color:var(--link)">Open latest report: '+h(rpts.lastReport)+'</a></p>';
   if(rpts.reports&&rpts.reports.length>0){
     o+='<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--muted)">All reports ('+rpts.reports.length+')</summary><div style="margin-top:6px">';
@@ -511,6 +511,24 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
       btnReport.insertAdjacentHTML('afterend',link);
       btnReport.textContent='Done!';setTimeout(()=>{btnReport.disabled=false;btnReport.textContent='Generate Full Report'},2000)}
     catch(e){btnReport.disabled=false;btnReport.textContent='Generate Full Report';alert('Report generation failed: '+e.message)}};
+
+  const btnForum=document.getElementById('btnForum');
+  if(btnForum)btnForum.onclick=async()=>{
+    btnForum.disabled=true;btnForum.textContent='Generating...';
+    try{const res=await api('export/forum');
+      if(res.success&&res.markdown){
+        btnForum.disabled=false;btnForum.textContent='Copy for Forum';
+        const overlay=document.createElement('div');overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:flex;align-items:center;justify-content:center';
+        const box=document.createElement('div');box.style.cssText='background:#fff;border-radius:8px;padding:16px;width:90%;max-width:700px;max-height:80vh;display:flex;flex-direction:column';
+        box.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><b>Forum Export</b><span>Select All + Copy, then close</span></div>';
+        const ta=document.createElement('textarea');ta.value=res.markdown;ta.readOnly=true;ta.style.cssText='width:100%;flex:1;min-height:300px;font-family:monospace;font-size:12px;padding:8px;border:1px solid #ddd;border-radius:4px;resize:vertical';
+        const closeBtn=document.createElement('button');closeBtn.textContent='Close';closeBtn.className='btn btn-p';closeBtn.style.marginTop='10px';closeBtn.style.alignSelf='flex-end';
+        closeBtn.onclick=()=>document.body.removeChild(overlay);
+        overlay.onclick=e=>{if(e.target===overlay)document.body.removeChild(overlay)};
+        box.appendChild(ta);box.appendChild(closeBtn);overlay.appendChild(box);document.body.appendChild(overlay);
+        ta.focus();ta.select()}
+      else{btnForum.disabled=false;btnForum.textContent='Copy for Forum';alert('Export failed')}}
+    catch(e){btnForum.disabled=false;btnForum.textContent='Copy for Forum';alert('Export failed: '+e.message)}};
 }catch(e){err(P,e,rDashboard)}}
 
 // ===== TAB: DEVICES =====
@@ -688,6 +706,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
       o+='</div>';
       if(m.weakNeighbors&&m.weakNeighbors.length){o+='<details style="margin-top:6px"><summary>Weak Neighbor Details</summary>';
         m.weakNeighbors.forEach(n=>{o+='<div style="margin:3px 0;color:var(--crit)">'+h(n.shortId)+' &mdash; LQI: '+n.lqi+'</div>'});o+='</details>'}
+      if(m.neighborDetails&&m.neighborDetails.length)o+='<div id="zbNeighborTbl" style="margin-top:8px"></div>';
       o+='</div>'}
     o+='<div id="zbWifiChart" style="margin-top:10px"></div>';
     if(z.messageCounts&&z.messageCounts.length)o+='<div id="zbMsgTbl" style="margin-top:10px"></div>';
@@ -726,10 +745,13 @@ async function rNetwork(){const P='p-network';loading(P);try{
   if(d.zwave&&d.zwave.mesh&&d.zwave.mesh.nodes&&d.zwave.mesh.nodes.length)
     tbl('zwMeshTbl',[
       {l:'Device',f:'name',r:r=>r.deviceId?dlink(r.deviceId,r.name):h(r.name)},
+      {l:'Security',f:'security',r:r=>{const s=r.security||'None';const flag=r.s0Flag?'<span title="S0 on non-security device" style="color:var(--warn)"> \u26A0</span>':'';return h(s)+flag}},
+      {l:'RTT',f:'rtt',t:'n',r:r=>r.rtt!=null?r.rtt+'ms':'\u2014'},
       {l:'RSSI',f:'rssi',t:'n',r:r=>r.rssi!=null?'<span style="color:'+(r.rssi<-80?'var(--crit)':r.rssi<-60?'var(--warn)':'var(--ok)')+'">'+r.rssi+' dBm</span>':'N/A'},
       {l:'PER %',f:'per',t:'n',r:r=>'<span style="color:'+(r.per>1?'var(--crit)':r.per>0?'var(--warn)':'var(--ok)')+'">'+r.per+'%</span>'},
       {l:'Neighbors',f:'neighbors',t:'n'},{l:'Route',f:'route'},{l:'Route Changes',f:'routeChanges',t:'n'},
       {l:'Msgs',f:'msgCount',t:'n'},
+      {l:'Driver',f:'driverType',r:r=>r.driverType==='usr'?'<span style="color:var(--primary)">User</span>':r.driverType==='sys'?'Built-in':'\u2014'},
       {l:'State',f:'state',r:r=>'<span style="color:'+(r.state==='OK'?'var(--ok)':'var(--crit)')+'">'+h(r.state)+'</span>'}
     ],d.zwave.mesh.nodes,{sc:0,sd:'asc',collapse:1,collapseLabel:'Z-Wave Mesh Nodes'});
   // Z-Wave message counts
@@ -740,6 +762,14 @@ async function rNetwork(){const P='p-network';loading(P);try{
       {l:'Msgs/Min',f:'msgPerMin',t:'n',r:rateCell},
       {l:'Route Changes',f:'routeChanges',t:'n'}
     ],d.zwave.messageCounts,{sc:1,sd:'desc',collapse:1,collapseLabel:'Z-Wave Message Counts'});
+  // Zigbee neighbor detail table
+  if(d.zigbee&&d.zigbee.mesh&&d.zigbee.mesh.neighborDetails&&d.zigbee.mesh.neighborDetails.length)
+    tbl('zbNeighborTbl',[
+      {l:'Short ID',f:'shortId'},{l:'LQI',f:'lqi',t:'n',r:r=>r.lqi!=null?'<span style="color:'+(r.lqi<150?'var(--crit)':r.lqi<200?'var(--warn)':'var(--ok)')+'">'+r.lqi+'</span>':'N/A'},
+      {l:'Age',f:'age',t:'n',r:r=>r.stale?'<span class="badge b-warn">'+r.age+' (Stale)</span>':(r.age!=null?''+r.age:'N/A')},
+      {l:'In Cost',f:'inCost',t:'n',r:r=>r.inCost!=null?''+r.inCost:'\u2014'},
+      {l:'Out Cost',f:'outCost',t:'n',r:r=>r.outCost!=null?''+r.outCost:'\u2014'}
+    ],d.zigbee.mesh.neighborDetails,{sc:1,sd:'desc',collapse:1,collapseLabel:'Zigbee Neighbor Details'});
   // Zigbee message counts
   if(d.zigbee&&d.zigbee.messageCounts&&d.zigbee.messageCounts.length)
     tbl('zbMsgTbl',[
@@ -834,6 +864,13 @@ async function rPerf(){const P='p-performance';loading(P);try{
       o+=mc('CPU Load (5m)',res.cpuAvg5min?.toFixed(2),sev(res.cpuAvg5min,4.0,8.0,false));
     }
     o+='</div></div></div>'}
+
+  // Top Talkers
+  if(d.topTalkers&&d.topTalkers.length){
+    o+='<div class="card"><div class="card-h">Top Talkers</div><div class="card-b">';
+    d.topTalkers.forEach((t,i)=>{
+      o+='<div style="padding:4px 0">'+(i+1)+'. '+(t.deviceId?dlink(t.deviceId,t.name):h(t.name))+' <span style="color:var(--muted)">('+h(t.protocol)+')</span> &mdash; <b>'+t.msgCount+'</b> msgs</div>'});
+    o+='</div></div>'}
 
   // Checkpoints
   o+='<div class="card"><div class="card-h">Checkpoints ('+d.checkpointCount+' / '+d.maxCheckpoints+')</div><div class="card-b">';

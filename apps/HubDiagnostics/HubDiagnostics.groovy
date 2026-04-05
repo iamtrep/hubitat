@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "4.5.7"
+@Field static final String APP_VERSION = "4.6.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "3.2.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -151,6 +151,7 @@ mappings {
     path('/api/version/check')        { action: [GET: 'apiVersionCheck'] }
     path('/api/reports')              { action: [GET: 'apiReports'] }
     path('/api/report/generate')      { action: [POST: 'apiGenerateReport'] }
+    path('/api/export/forum')         { action: [GET: 'apiForumExport'] }
 }
 
 // ===== PAGE METHODS =====
@@ -700,6 +701,243 @@ Map apiGenerateReport() {
     return jsonResponse([success: true, filename: filename])
 }
 
+Map apiForumExport() {
+    long start = now()
+
+    // Gather all data
+    Map hubInfo = getHubInfo()
+    Map resources = fetchSystemResources()
+    Float temperature = fetchTemperature()
+    Integer databaseSize = fetchDatabaseSize()
+    Map stateCompression = fetchStateCompression()
+    Map eventStateLimits = fetchEventStateLimits()
+    List alerts = getStructuredAlerts()
+    Map deviceStats = analyzeDevices(false)
+    Map appStats = analyzeApps(false)
+    Map networkData = analyzeNetwork()
+    Map networkConfig = networkData.network ?: [:]
+    Map zwaveRaw = networkData.zwave ?: [:]
+    Map zigbeeRaw = networkData.zigbee ?: [:]
+    Map hubMeshRaw = networkData.hubMesh ?: [:]
+    Map zwaveMesh = extractZwaveMeshQuality(zwaveRaw)
+    List ghostNodes = buildZwaveGhostNodes(zwaveRaw)
+    Map zigbeeMesh = fetchZigbeeMeshInfo()
+    String zwaveVersion = fetchZwaveVersion()
+    Map stats = (Map) hubRequest(RUNTIME_STATS_PATH, "runtime stats")
+    Integer uptimeSeconds = stats ? parseUptime(stats.uptime as String) : null
+    float uptimeMin = uptimeSeconds ? uptimeSeconds / 60.0f : 0
+
+    // Radio message counts with rates
+    List zwaveMsgCounts = extractZwaveMessageCounts(zwaveRaw)
+    List zigbeeMsgCounts = extractZigbeeMessageCounts(zigbeeRaw)
+    List allRadioDevices = (zwaveMsgCounts.collect { [name: it.name, deviceId: it.deviceId, msgCount: it.msgCount, protocol: "Z-Wave"] } +
+                            zigbeeMsgCounts.collect { [name: it.name, deviceId: it.id, msgCount: it.msgCount, protocol: "Zigbee"] })
+
+    StringBuilder md = new StringBuilder()
+
+    // ── 1. System & Health ──
+    md << "### System & Health\n"
+    md << "| | |\n|---|---|\n"
+    md << "| Model | ${hubInfo.hardware} |\n"
+    md << "| Firmware | ${hubInfo.firmware} |\n"
+    md << "| Uptime | ${stats?.uptime ?: 'N/A'} |\n"
+    String connType = networkConfig.hasEthernet ? "Ethernet" : (networkConfig.hasWiFi ? "WiFi" : "Unknown")
+    if (networkConfig.hasEthernet && networkConfig.hasWiFi) connType = "Ethernet + WiFi active"
+    if (networkConfig.hasEthernet) connType += networkConfig.usingStaticIP ? " (Static)" : " (DHCP)"
+    md << "| Connection | ${connType} |\n"
+    md << "| CPU Load (5m) | ${resources ? String.format('%.2f', resources.cpuAvg5min as float) : 'N/A'} |\n"
+    md << "| Free OS Memory | ${resources ? formatMemory(resources.freeOSMemory as int) : 'N/A'} |\n"
+    md << "| Temperature | ${temperature != null ? String.format('%.1f\u00B0C', temperature) : 'N/A'} |\n"
+    md << "| Database | ${databaseSize != null ? "${databaseSize} MB" : 'N/A'} |\n"
+    md << "| State Compression | ${stateCompression?.enabled ? 'Enabled' : 'Disabled'} |\n"
+    if (eventStateLimits) {
+        if (eventStateLimits.maxEvents) md << "| Max Events/Device | ${eventStateLimits.maxEvents} |\n"
+        if (eventStateLimits.maxEventAgeDays) md << "| Max Event Age | ${eventStateLimits.maxEventAgeDays} days |\n"
+        if (eventStateLimits.maxStateAgeDays) md << "| Max State Age | ${eventStateLimits.maxStateAgeDays} days |\n"
+    }
+
+    // Alerts
+    if (alerts) {
+        md << "\n### Alerts\n"
+        alerts.each { Map a -> md << "- **${a.severity}**: ${a.name}\n" }
+    } else {
+        md << "\nNo active alerts.\n"
+    }
+
+    // ── 2. Device Inventory ──
+    md << "\n### Devices\n"
+    md << "| | |\n|---|---|\n"
+    md << "| Total | ${deviceStats.totalDevices} |\n"
+    if (deviceStats.disabledDevices) md << "| Disabled | ${deviceStats.disabledDevices} |\n"
+    Map byProto = deviceStats.byProtocol ?: [:]
+    byProto.each { String proto, int count ->
+        if (count > 0) md << "| ${PROTOCOL_DISPLAY[proto] ?: proto} | ${count} |\n"
+    }
+    List lowBattery = (deviceStats.lowBatteryDevices ?: [])
+    if (lowBattery) {
+        md << "\n**Low Battery:** " + lowBattery.collect { "${it.name} (${it.battery}%)" }.join(", ") + "\n"
+    }
+
+    // ── 3. App Inventory ──
+    md << "\n### Apps\n"
+    md << "- **Total:** ${appStats.totalApps} (Built-in: ${appStats.builtInApps}, User: ${appStats.userApps})\n"
+    // Top 5 apps by CPU from platform stats
+    List appRuntimeStats = (appStats.platformApps ?: []) as List
+    if (appRuntimeStats) {
+        List topApps = appRuntimeStats.sort { -(it.pctTotal ?: 0) as float }.take(5)
+        if (topApps.find { ((it.pctTotal ?: 0) as float) != 0 }) {
+            md << "\n**Top Apps by CPU:**\n"
+            md << "| App | % Busy | Exec Count | Avg (ms) |\n|---|---:|---:|---:|\n"
+            topApps.each { Map a ->
+                float pct = (a.pctTotal ?: 0) as float
+                if (pct > 0) md << "| ${a.name} | ${String.format('%.3f', pct)}% | ${a.count ?: 0} | ${String.format('%.1f', (a.average ?: 0) as float)} |\n"
+            }
+        }
+    }
+
+    // ── 4. Z-Wave Network ──
+    if (zwaveRaw && !zwaveRaw.error) {
+        md << "\n### Z-Wave\n"
+        md << "- **Enabled:** ${zwaveRaw.enabled ? 'Yes' : 'No'}, **Healthy:** ${zwaveRaw.healthy ? 'Yes' : 'No'}\n"
+        md << "- **Version:** ${zwaveVersion ?: 'N/A'}, **Region:** ${zwaveRaw.region ?: 'N/A'}\n"
+        md << "- **Nodes:** ${(zwaveRaw.zwDevices ?: [:]).size()}\n"
+        if (zwaveMesh) {
+            md << "- **Avg PER:** ${String.format('%.1f', (zwaveMesh.avgPer ?: 0) as float)}%"
+            if (zwaveMesh.avgRssi != null) md << ", **Avg RSSI:** ${zwaveMesh.avgRssi} dBm"
+            md << ", **Route Changes:** ${zwaveMesh.totalRouteChanges ?: 0}\n"
+        }
+        // Ghost nodes
+        if (ghostNodes) {
+            md << "\n**Ghost Nodes (${ghostNodes.size()}):**\n"
+            ghostNodes.each { Map g -> md << "- Node ${g.id}: ${g.name} (${g.status})\n" }
+        }
+        // Problem nodes
+        List problemNodes = (zwaveMesh?.nodes ?: []).findAll { Map n -> n.state != "OK" || (n.per ?: 0) > 1 }
+        if (problemNodes) {
+            md << "\n**Problem Nodes (${problemNodes.size()}):**\n"
+            problemNodes.each { Map n ->
+                List issues = []
+                if (n.state != "OK") issues << "State: ${n.state}"
+                if ((n.per ?: 0) > 1) issues << "PER: ${n.per}%"
+                md << "- ${n.name} (Node ${n.nodeId}): ${issues.join(', ')}\n"
+            }
+        }
+        // S0 flagged
+        List s0Flagged = (zwaveMesh?.nodes ?: []).findAll { it.s0Flag }
+        if (s0Flagged) {
+            md << "\n**S0 on non-security devices:** ${s0Flagged.collect { it.name }.join(', ')}\n"
+        }
+        // Full node table
+        List zwNodes = zwaveMesh?.nodes ?: []
+        if (zwNodes) {
+            md << "\n| Node | Name | Security | RTT | PER | RSSI | Route | Msgs/min | Driver |\n"
+            md << "|---:|---|---|---:|---:|---|---|---:|---|\n"
+            zwNodes.sort { it.nodeId }.each { Map n ->
+                String rttStr = n.rtt != null ? "${n.rtt}ms" : "\u2014"
+                String drvStr = n.driverType == "usr" ? "User" : n.driverType == "sys" ? "Built-in" : "\u2014"
+                String rateStr = uptimeMin > 0 ? String.format('%.1f', n.msgCount / uptimeMin) : "\u2014"
+                md << "| ${n.nodeId} | ${n.name} | ${n.security ?: 'None'} | ${rttStr} | ${n.per}% | ${n.rssiStr ?: '\u2014'} | ${n.route ?: '\u2014'} | ${rateStr} | ${drvStr} |\n"
+            }
+        }
+    }
+
+    // ── 5. Zigbee Network ──
+    if (zigbeeRaw && !zigbeeRaw.error && zigbeeRaw.enabled) {
+        int totalZb = (zigbeeRaw.devices ?: []).size()
+        int responsiveZb = zigbeeRaw.devices ? (zigbeeRaw.devices as List).count { it.active == true } : 0
+        md << "\n### Zigbee\n"
+        md << "- **Channel:** ${zigbeeRaw.channel ?: 'N/A'}"
+        if (zigbeeRaw.channel && ![15, 20, 25].contains(zigbeeRaw.channel)) md << " (not on recommended 15/20/25)"
+        md << "\n"
+        if (zigbeeRaw.powerLevel != null) md << "- **Power Level:** ${zigbeeRaw.powerLevel}\n"
+        md << "- **Devices:** ${totalZb}, **Responsive:** ${responsiveZb}/${totalZb}\n"
+        if (zigbeeMesh) {
+            int staleCount = (zigbeeMesh.staleNeighbors ?: []).size()
+            int weakCount = (zigbeeMesh.weakNeighbors ?: []).size()
+            md << "- **Neighbors:** ${zigbeeMesh.neighbors?.size() ?: 0}"
+            if (staleCount > 0) md << " (${staleCount} stale)"
+            md << "\n"
+            if (zigbeeMesh.avgLqi != null) md << "- **LQI:** avg ${zigbeeMesh.avgLqi}, min ${zigbeeMesh.minLqi}, max ${zigbeeMesh.maxLqi}\n"
+            if (weakCount > 0) md << "- **Weak Neighbors:** ${(zigbeeMesh.weakNeighbors ?: []).collect { "${it.shortId} LQI:${it.lqi}" }.join(', ')}\n"
+            if (staleCount > 0) md << "- **Stale Neighbors:** ${(zigbeeMesh.staleNeighbors ?: []).collect { it.shortId }.join(', ')}\n"
+        }
+        // Non-responsive devices
+        List nonResponsive = zigbeeRaw.devices ? (zigbeeRaw.devices as List).findAll { it.active != true }.collect { it.name ?: "Device ${it.id}" } : []
+        if (nonResponsive) {
+            md << "- **Non-Responsive:** ${nonResponsive.join(', ')}\n"
+        }
+    }
+
+    // ── 6. Hub Mesh ──
+    if (hubMeshRaw && !hubMeshRaw.error && hubMeshRaw.hubList) {
+        List peers = hubMeshRaw.hubList as List
+        if (peers) {
+            md << "\n### Hub Mesh\n"
+            md << "| Hub | IP | Status | Devices |\n|---|---|---|---:|\n"
+            peers.each { Map hub ->
+                String status = hub.offline ? "Offline" : "Online"
+                md << "| ${hub.name} | ${hub.ipAddress} | ${status} | ${hub.deviceIds?.size() ?: 0} |\n"
+            }
+        }
+    }
+
+    // ── 7. Performance ──
+    md << "\n### Performance\n"
+    md << "- **Uptime:** ${stats?.uptime ?: 'N/A'}\n"
+    if (stats?.devicePct) md << "- **Device % Busy:** ${stats.devicePct}\n"
+    if (stats?.appPct) md << "- **App % Busy:** ${stats.appPct}\n"
+
+    // Top 5 device types by CPU
+    List devRuntimeStats = (stats?.deviceStats ?: []) as List
+    if (devRuntimeStats) {
+        List topDevTypes = devRuntimeStats.sort { -((it.pctTotal ?: 0) as float) }.take(5)
+        if (topDevTypes.find { ((it.pctTotal ?: 0) as float) != 0 }) {
+            md << "\n**Top Device Types by CPU:**\n"
+            md << "| Device | % Total | Exec Count | Avg (ms) |\n|---|---:|---:|---:|\n"
+            topDevTypes.each { Map d ->
+                float pct = (d.pctTotal ?: 0) as float
+                if (pct > 0) md << "| ${d.name} | ${String.format('%.3f', pct)}% | ${d.count ?: 0} | ${String.format('%.1f', (d.average ?: 0) as float)} |\n"
+            }
+        }
+    }
+
+    // Top 5 app types by CPU
+    List appRtStats = (stats?.appStats ?: []) as List
+    if (appRtStats) {
+        List topAppTypes = appRtStats.sort { -((it.pctTotal ?: 0) as float) }.take(5)
+        if (topAppTypes.find { ((it.pctTotal ?: 0) as float) != 0 }) {
+            md << "\n**Top App Types by CPU:**\n"
+            md << "| App | % Total | Exec Count | Avg (ms) |\n|---|---:|---:|---:|\n"
+            topAppTypes.each { Map a ->
+                float pct = (a.pctTotal ?: 0) as float
+                if (pct > 0) md << "| ${a.name} | ${String.format('%.3f', pct)}% | ${a.count ?: 0} | ${String.format('%.1f', (a.average ?: 0) as float)} |\n"
+            }
+        }
+    }
+
+    // Top talkers by message rate
+    if (allRadioDevices && uptimeMin > 0) {
+        List topTalkers = allRadioDevices.sort { -it.msgCount }.take(5)
+        md << "\n**Top Talkers:**\n"
+        md << "| Device | Protocol | Msgs/min | Total Msgs |\n|---|---|---:|---:|\n"
+        topTalkers.each { Map t ->
+            String rate = String.format('%.1f', t.msgCount / uptimeMin)
+            md << "| ${t.name} | ${t.protocol} | ${rate} | ${t.msgCount} |\n"
+        }
+        // Spammy alerts (>= 6/min)
+        List spammy = allRadioDevices.findAll { it.msgCount / uptimeMin >= 6.0 }
+        if (spammy) {
+            md << "\n**Elevated message rate (\u22656/min):** ${spammy.collect { "${it.name} (${String.format('%.1f', it.msgCount / uptimeMin)}/min)" }.join(', ')}\n"
+        }
+    }
+
+    md << "\n---\n*Generated by Hub Diagnostics v${APP_VERSION}*\n"
+
+    long elapsed = now() - start
+    recordApiTiming("export/forum", elapsed)
+    return jsonResponse([success: true, markdown: md.toString()])
+}
+
 // ===== DATA GATHERERS =====
 // Each returns a plain Map suitable for both jsonResponse() and report embedding.
 
@@ -815,6 +1053,7 @@ Map getNetworkData() {
             mesh: zigbeeMesh ? [
                 neighbors: zigbeeMesh.neighbors?.size() ?: 0, routes: zigbeeMesh.routes?.size() ?: 0,
                 avgLqi: zigbeeMesh.avgLqi, minLqi: zigbeeMesh.minLqi, maxLqi: zigbeeMesh.maxLqi,
+                neighborDetails: (zigbeeMesh.neighbors ?: []).collect { [shortId: it.shortId, lqi: it.lqi, age: it.age, inCost: it.inCost, outCost: it.outCost, stale: it.stale ?: false] },
                 weakNeighbors: (zigbeeMesh.weakNeighbors ?: []).collect { [shortId: it.shortId, lqi: it.lqi] },
                 staleNeighbors: (zigbeeMesh.staleNeighbors ?: []).collect { [shortId: it.shortId, age: it.age] },
                 childDevices: zigbeeMesh.childDevices?.size() ?: 0
@@ -852,10 +1091,15 @@ Map getPerformanceData() {
     Map resources = fetchSystemResources()
     Map zwaveData = (Map) hubRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", "json", 20)
     Map zigbeeData = (Map) hubRequest(ZIGBEE_DETAILS_PATH, "Zigbee details", "json", 20)
-    Map radioStats = [
-        zwave: extractZwaveMessageCounts(zwaveData),
-        zigbee: extractZigbeeMessageCounts(zigbeeData)
-    ]
+    List zwaveMsgCounts = extractZwaveMessageCounts(zwaveData)
+    List zigbeeMsgCounts = extractZigbeeMessageCounts(zigbeeData)
+    Map radioStats = [zwave: zwaveMsgCounts, zigbee: zigbeeMsgCounts]
+
+    // Top talkers: top 3 devices by message count across both radios
+    List allRadioDevices = (zwaveMsgCounts.collect { [name: it.name, deviceId: it.deviceId, msgCount: it.msgCount, protocol: "Z-Wave"] } +
+                            zigbeeMsgCounts.collect { [name: it.name, deviceId: it.id, msgCount: it.msgCount, protocol: "Zigbee"] })
+    List topTalkers = allRadioDevices.sort { -it.msgCount }.take(3)
+
     if (stats) {
         stats.radioStats = radioStats
         stats.uptimeSeconds = parseUptime(stats.uptime as String)
@@ -863,6 +1107,7 @@ Map getPerformanceData() {
     List checkpoints = loadCheckpoints()
     return [
         stats: stats, resources: resources,
+        topTalkers: topTalkers,
         checkpointCount: checkpoints?.size() ?: 0,
         maxCheckpoints: (settings.maxCheckpoints ?: 10) as int,
         checkpoints: (checkpoints ?: []).collect { Map cp -> [
@@ -1124,9 +1369,14 @@ Map fetchZigbeeMeshInfo() {
             java.util.regex.Matcher lqiMatch = (line =~ /LQI:\s*(\d+)/)
             java.util.regex.Matcher ageMatch = (line =~ /age:\s*(\d+)/)
             java.util.regex.Matcher idMatch = (line =~ /^(0x[0-9A-Fa-f]+)/)
+            java.util.regex.Matcher inCostMatch = (line =~ /inCost:\s*(\d+)/)
+            java.util.regex.Matcher outCostMatch = (line =~ /outCost:\s*(\d+)/)
             if (lqiMatch.find()) neighbor.lqi = lqiMatch.group(1).toInteger()
             if (ageMatch.find()) neighbor.age = ageMatch.group(1).toInteger()
             if (idMatch.find()) neighbor.shortId = idMatch.group(1)
+            if (inCostMatch.find()) neighbor.inCost = inCostMatch.group(1).toInteger()
+            if (outCostMatch.find()) neighbor.outCost = outCostMatch.group(1).toInteger()
+            neighbor.stale = (neighbor.age != null && neighbor.age >= 7)
             result.neighbors << neighbor
         } else if (currentSection == "child") {
             result.childDevices << [raw: line]
@@ -1199,6 +1449,26 @@ Map extractZwaveMeshQuality(Map zwaveData) {
         if (per > 0) nodesWithErrors++
         totalRouteChanges += routeChanges
 
+        // averageRtt: integer ms or empty string when unavailable
+        String rttRaw = (node.averageRtt != null) ? node.averageRtt.toString() : ""
+        Integer rtt = (rttRaw && rttRaw.isInteger()) ? rttRaw.toInteger() : null
+
+        // S0 flag: S0 on a device that isn't a lock or garage door is noteworthy overhead
+        String security = node.security ?: ""
+        boolean s0Flag = false
+        if (security.toLowerCase().contains("s0")) {
+            String zwType = (node.zwaveType ?: "").toUpperCase()
+            boolean isSecurityDevice = zwType.contains("DOOR_LOCK") || zwType.contains("GARAGE") || zwType.contains("BARRIER")
+            s0Flag = !isSecurityDevice
+        }
+
+        // driverType from zwDevices (keyed by node ID string)
+        String driverType = ""
+        if (zwaveData.zwDevices) {
+            Map devEntry = zwaveData.zwDevices[node.nodeId.toString()]
+            if (devEntry) driverType = devEntry.driverType ?: ""
+        }
+
         nodes << [
             nodeId: node.nodeId,
             deviceId: node.deviceId,
@@ -1206,6 +1476,7 @@ Map extractZwaveMeshQuality(Map zwaveData) {
             msgCount: (node.msgCount ?: 0) as int,
             rssi: rssiVal,
             rssiStr: rssiStr,
+            rtt: rtt,
             per: per,
             neighbors: neighborCount,
             route: node.route ?: "",
@@ -1213,7 +1484,9 @@ Map extractZwaveMeshQuality(Map zwaveData) {
             state: node.nodeState ?: "Unknown",
             lastTime: node.lastTime ?: "",
             listening: node.listening ?: false,
-            security: node.security ?: ""
+            security: security,
+            s0Flag: s0Flag,
+            driverType: driverType
         ]
     }
 
