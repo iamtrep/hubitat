@@ -655,7 +655,9 @@ async function rNetwork(){const P='p-network';loading(P);try{
     if(n.dnsServers&&n.dnsServers.length)o+=ni('DNS',n.dnsServers.join(', '));
     o+=ni('Ethernet',n.hasEthernet?'Connected':'Not Connected');o+=ni('WiFi',n.hasWiFi?'Available':'No');
     if(n.hasWiFi&&n.wifiNetwork)o+=ni('WiFi Network',n.wifiNetwork);
-    o+='</div></div></div>'}
+    o+='</div>';
+    if(n.hasEthernet&&n.hasWiFi)o+='<div class="alert a-warn" style="margin-top:8px">\u26A0 Both Ethernet and WiFi are active. This is known to cause connectivity issues. Disable WiFi when using Ethernet.</div>';
+    o+='</div></div>'}
   // Z-Wave
   if(d.zwave){const z=d.zwave;
     o+='<div class="card"><div class="card-h">Z-Wave Network</div><div class="card-b"><div class="ng">';

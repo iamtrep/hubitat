@@ -741,10 +741,12 @@ Map apiForumExport() {
     md << "| Model | ${hubInfo.hardware} |\n"
     md << "| Firmware | ${hubInfo.firmware} |\n"
     md << "| Uptime | ${stats?.uptime ?: 'N/A'} |\n"
+    boolean bothActive = networkConfig.hasEthernet && networkConfig.hasWiFi
     String connType = networkConfig.hasEthernet ? "Ethernet" : (networkConfig.hasWiFi ? "WiFi" : "Unknown")
-    if (networkConfig.hasEthernet && networkConfig.hasWiFi) connType = "Ethernet + WiFi active"
+    if (bothActive) connType = "Ethernet + WiFi active"
     if (networkConfig.hasEthernet) connType += networkConfig.usingStaticIP ? " (Static)" : " (DHCP)"
     md << "| Connection | ${connType} |\n"
+    if (bothActive) md << "\n**Warning:** Both Ethernet and WiFi are active. This is known to cause connectivity issues. Disable WiFi when using Ethernet.\n\n"
     md << "| CPU Load (5m) | ${resources ? String.format('%.2f', resources.cpuAvg5min as float) : 'N/A'} |\n"
     md << "| Free OS Memory | ${resources ? formatMemory(resources.freeOSMemory as int) : 'N/A'} |\n"
     md << "| Temperature | ${temperature != null ? String.format('%.1f\u00B0C', temperature) : 'N/A'} |\n"
@@ -1170,7 +1172,13 @@ List getStructuredAlerts() {
     if (hubAlerts?.spammyDevicesMessage) {
         alerts << [key: "spammyDevices", name: "Spammy Devices", severity: "warning", message: hubAlerts.spammyDevicesMessage]
     }
-    
+
+    // Network: Ethernet + WiFi both active
+    Map networkConfig = (Map) hubRequest(NETWORK_CONFIG_PATH, "network configuration", "json", 15)
+    if (networkConfig && !networkConfig.error && networkConfig.hasEthernet && networkConfig.hasWiFi) {
+        alerts << [severity: "warning", name: "Ethernet and WiFi both active \u2014 disable WiFi when using Ethernet"]
+    }
+
     return alerts
 }
 
