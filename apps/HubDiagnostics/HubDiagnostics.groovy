@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "5.3.0"
+@Field static final String APP_VERSION = "5.5.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -1221,13 +1221,18 @@ Map getAppsData() {
         .sort { (it.label ?: it.name ?: "").toString().toLowerCase() }
         .collect { [id: it.id, label: it.label ?: it.name, type: it.name,
                     parentId: it.parentAppId, disabled: it.state == "disabled"] }
-    List allApps = (appStats.allApps ?: []).sort { Map a -> "${a.type ?: ''} ${a.name ?: ''}".toLowerCase() }
+    List platformEntries = (appStats.platformApps ?: []).collect { Map p ->
+        [id: p.id, name: p.name, type: p.name, user: false, source: "platform",
+         disabled: false, hidden: false, setting: false, menu: "", level: 0, childCount: 0, parentId: null]
+    }
+    List allApps = ((appStats.allApps ?: []) + platformEntries)
+        .sort { Map a -> "${a.type ?: ''} ${a.name ?: ''}".toLowerCase() }
     boolean hasMenuData = allApps.any { it.menu as boolean }
     return [
         summary: [totalApps: appStats.totalApps, builtInApps: appStats.builtInApps, userApps: appStats.userApps,
                   parentApps: appStats.parentApps, childApps: appStats.childApps,
                   runtimeTotalApps: appStats.runtimeTotalApps],
-        byNamespace: appStats.byNamespace, platformApps: platformRows,
+        byNamespace: appStats.byNamespace,
         userApps: userAppRows, parentChildHierarchy: appStats.parentChildHierarchy,
         allApps: allApps, hasMenuData: hasMenuData
     ]
@@ -1324,9 +1329,23 @@ Map getPerformanceData() {
                             zigbeeMsgCounts.collect { [name: it.name, deviceId: it.id, msgCount: it.msgCount, integration: "Zigbee"] })
     List topTalkers = allRadioDevices.sort { -it.msgCount }.take(3)
 
+    // Enrich appStats with source labels (community/builtin/platform)
+    Map appSourceById = [:]
+    Map appsListResp = (Map) hubRequest(APPS_LIST_PATH, "apps list")
+    if (appsListResp?.apps) {
+        visitAppEntries(appsListResp.apps as List) { Map appEntry, Map app, boolean isChildLevel, List _ ->
+            if (app?.id != null) appSourceById[app.id] = (app.user ? "community" : "builtin")
+        }
+    }
+
     if (stats) {
         stats.radioStats = radioStats
         stats.uptimeSeconds = parseUptime(stats.uptime as String)
+        if (stats.appStats) {
+            stats.appStats = (stats.appStats as List).collect { Map a ->
+                a + [source: (appSourceById[a.id] ?: "platform")]
+            }
+        }
     }
     List checkpoints = loadCheckpoints()
     return [
@@ -1959,7 +1978,7 @@ Map analyzeApps(boolean deep = true) {
 
     // Dedicated recursion remains here because hierarchy generation mutates nested child lists
     Closure processAppList
-    processAppList = { List entries, boolean isChildLevel, List parentHierarchyList, def currentParentId ->
+    processAppList = { List entries, boolean isChildLevel, List parentHierarchyList, def currentParentId, String currentParentName ->
         entries.each { appEntry ->
             try {
                 Map app = appEntry.data
@@ -1970,7 +1989,8 @@ Map analyzeApps(boolean deep = true) {
                 boolean isUserApp = app.user ?: false
                 String appType = app.type ?: "Unknown App"
                 String appLabel = app.name ?: appType
-                def appId = appEntry.key ?: app.id
+                def appId = appEntry.key ?: app.id  // keep "APP-NNN" for snapshot diff lookups
+                def numericId = app.id              // numeric ID for UI links
                 List children = appEntry.children ?: []
 
                 if (isChildLevel) {
@@ -1990,19 +2010,22 @@ Map analyzeApps(boolean deep = true) {
 
                 stats.byNamespace[appType] = (stats.byNamespace[appType] ?: 0) + 1
 
+                String displayName = stripHtml(app.name ?: appType)
                 // Flat entry for the installed apps table
                 stats.allApps << [
-                    id:         appId,
-                    name:       stripHtml(app.name ?: appType),
+                    id:         numericId,
+                    name:       displayName,
                     type:       appType,
                     user:       isUserApp,
+                    source:     isUserApp ? "community" : "builtin",
                     disabled:   app.disabled ?: false,
                     hidden:     app.hidden ?: false,
                     setting:    app.setting ?: false,
                     menu:       app.menu ?: "",
                     level:      (app.level ?: 0) as int,
                     childCount: children.size(),
-                    parentId:   currentParentId
+                    parentId:   currentParentId,
+                    parentName: currentParentName ?: ""
                 ]
 
                 if (children.size() > 0) {
@@ -2014,7 +2037,7 @@ Map analyzeApps(boolean deep = true) {
                         children: []
                     ]
 
-                    processAppList(children, true, parentInfo.children, app.id)
+                    processAppList(children, true, parentInfo.children, numericId, displayName)
                     parentInfo.childCount = parentInfo.children.size()
                     parentHierarchyList << parentInfo
                 } else if (isChildLevel) {
@@ -2030,7 +2053,7 @@ Map analyzeApps(boolean deep = true) {
             }
         }
     }
-    processAppList(appsList, false, stats.parentChildHierarchy, null)
+    processAppList(appsList, false, stats.parentChildHierarchy, null, null)
 
     // Identify platform-only apps by comparing runtime stats against appsList
     stats.platformApps = []

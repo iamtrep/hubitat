@@ -42,7 +42,7 @@ tr:nth-child(even){background:var(--alt)} tr:hover{background:var(--hover)}
 
 .badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
 .b-ok{background:#e8f5e9;color:var(--ok)} .b-warn{background:#fff3e0;color:var(--warn)} .b-crit{background:#ffebee;color:var(--crit)}
-.b-builtin{background:#e8eaf6;color:#3949ab} .b-community{background:#fce4ec;color:#c62828}
+.b-builtin{background:#e8eaf6;color:#3949ab} .b-community{background:#fce4ec;color:#c62828} .b-platform{background:#f3e8ff;color:#7c3aed}
 
 .alert{padding:8px 12px;border-radius:6px;margin-bottom:6px;font-size:13px;display:flex;align-items:center;gap:6px}
 .a-crit{background:#ffebee;border-left:4px solid var(--crit);color:var(--crit)}
@@ -97,7 +97,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
   <div class="tab" data-tab="health">Health</div>
   <div class="tab" data-tab="performance">Performance</div>
   <div class="tab" data-tab="snapshots">Snapshots</div>
-  <div class="tab" data-tab="config">Config</div>
+  <div class="tab" data-tab="config">App Settings</div>
 </div>
 <div class="content">
   <div class="panel active" id="p-dashboard"></div>
@@ -111,7 +111,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.3.0";
+const UI_VERSION = "5.5.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -648,22 +648,17 @@ async function rApps(){const P='p-apps';loading(P);try{
   if(d.allApps&&d.allApps.length){
     const vis=d.allApps.filter(a=>!a.hidden&&!a.setting);
     o+='<div class="card"><div class="card-h">Installed Apps ('+vis.length+')</div><div class="card-b"><div id="appsTbl"></div></div></div>'}
-  // Platform apps
-  if(d.platformApps&&d.platformApps.length){
-    const big=d.platformApps.filter(a=>a.stateSize>5000);
-    o+='<div class="card"><div class="card-h">Platform Apps ('+d.platformApps.length+')</div><div class="card-b">';
-    if(big.length)o+='<div class="alert a-warn">\u26A0 '+big.length+' app(s) with state size > 5 KB</div>';
-    o+='<div id="platTbl"></div></div></div>'}
-  // Problem apps (large state + high CPU)
-  if(d.platformApps&&d.platformApps.length){
-    const prob=d.platformApps.filter(a=>a.stateSize>5000&&a.pctTotal>2);
-    if(prob.length){o+='<div class="card"><div class="card-h">Problem Apps ('+prob.length+')</div><div class="card-b">';
-      o+='<div class="alert a-crit">\u26D4 Apps with both large state (&gt;5 KB) and high CPU (&gt;2%)</div>';
-      o+='<div id="probAppsTbl"></div></div></div>'}}
   document.getElementById(P).innerHTML=o;
   // Installed Apps table
   if(d.allApps&&d.allApps.length){
-    const srcBadge=u=>u?'<span class="badge b-community">Community</span>':'<span class="badge b-builtin">Built-in</span>';
+    const srcBadge=s=>{
+      if(s==='platform') return'<span class="badge b-platform">Platform</span>';
+      if(s==='community')return'<span class="badge b-community">Community</span>';
+      return'<span class="badge b-builtin">Built-in</span>';
+    };
+    const appLink=r=>r.source==='platform'
+      ?'<a href="/installedapp/status/'+r.id+'" target="_blank">'+h(r.name)+'</a>'
+      :alink(r.id,r.name);
     const menuPill=m=>{
       const map={automations:'Automations',integrations:'Integrations',apps:'Apps'};
       const cls={automations:'pill-auto',integrations:'pill-integ',apps:'pill-apps'};
@@ -671,38 +666,19 @@ async function rApps(){const P='p-apps';loading(P);try{
     };
     const roleStr=r=>{
       if(r.childCount>0)return`Parent (${r.childCount})`;
-      if(r.level>0)return r.parentId?`Child of <a href="/installedapp/configure/${r.parentId}" target="_blank">App ${r.parentId}</a>`:'Child';
+      if(r.level>0)return r.parentId?`Child of <a href="/installedapp/configure/${r.parentId}" target="_blank">${h(r.parentName||'App '+r.parentId)}</a>`:'Child';
       return'';
     };
     const vis=d.allApps.filter(a=>!a.hidden&&!a.setting);
     const menuCol=d.hasMenuData?[{l:'Menu',f:'menu',r:r=>menuPill(r.menu)}]:[];
     tbl('appsTbl',[
-      {l:'App',f:'name',r:r=>alink(r.id,r.name)},
-      {l:'Type',f:'type'},
-      {l:'Source',f:'user',sf:'user',r:r=>srcBadge(r.user)},
+      {l:'App',   f:'name',  r:r=>appLink(r)},
+      {l:'Type',  f:'type'},
+      {l:'Source',f:'source',r:r=>srcBadge(r.source)},
       ...menuCol,
-      {l:'Role',f:'level',r:r=>roleStr(r)},
+      {l:'Role',  f:'level', r:r=>roleStr(r)},
       {l:'Status',f:'disabled',r:r=>r.disabled?'<span class="badge b-crit">Disabled</span>':''}
     ],vis,{sc:1,filter:true})}
-  if(d.platformApps&&d.platformApps.length)
-    tbl('platTbl',[
-      {l:'Name',f:'name',r:r=>'<a href="/installedapp/status/'+r.id+'" target="_blank">'+h(r.name)+'</a>'},
-      {l:'State Size',f:'stateSize',t:'n',r:r=>{const c=r.stateSize>10000?'var(--crit)':r.stateSize>5000?'var(--warn)':'';return c?'<span style="color:'+c+'">'+r.stateSize+'</span>':String(r.stateSize)}},
-      {l:'CPU %',f:'pctTotal',t:'n',r:r=>r.pctTotal.toFixed(3)+'%'},
-      {l:'Exec Count',f:'count',t:'n'},
-      {l:'Avg (ms)',f:'average',t:'n',r:r=>r.count>0?Number(r.average).toFixed(1):'0'},
-      {l:'Hub Actions',f:'hubActionCount',t:'n'},
-      {l:'Cloud Calls',f:'cloudCallCount',t:'n'}
-    ],d.platformApps,{sc:3,sd:'desc',filter:true,collapse:10,collapseLabel:'Platform Apps'});
-  // Problem apps table
-  if(d.platformApps&&d.platformApps.length){
-    const prob=d.platformApps.filter(a=>a.stateSize>5000&&a.pctTotal>2);
-    if(prob.length)tbl('probAppsTbl',[
-      {l:'Name',f:'name',r:r=>'<a href="/installedapp/status/'+r.id+'" target="_blank">'+h(r.name)+'</a>'},
-      {l:'State Size',f:'stateSize',t:'n',r:r=>'<span style="color:var(--crit)">'+r.stateSize+'</span>'},
-      {l:'CPU %',f:'pctTotal',t:'n',r:r=>'<span style="color:var(--crit)">'+r.pctTotal.toFixed(3)+'%</span>'},
-      {l:'Exec Count',f:'count',t:'n'},{l:'Avg (ms)',f:'average',t:'n',r:r=>Number(r.average).toFixed(1)}
-    ],prob,{sc:2,sd:'desc'})}
 }catch(e){err(P,e,rApps)}}
 
 // ===== TAB: NETWORK =====
@@ -1030,16 +1006,22 @@ async function rPerf(){const P='p-performance';loading(P);try{
       renderBarChart(aggregateByType(s.appStats,ptm,'id','total'),'perfAppCpuChart',{format:v=>v.toFixed(0)+' ms'})
     }).catch(()=>{})}
   // App Runtime table
-  if(s&&s.appStats)
+  if(s&&s.appStats){
+    const perfSrcBadge=r=>{
+      if(r.source==='platform') return'<span class="badge b-platform">Platform</span>';
+      if(r.source==='community')return'<span class="badge b-community">Community</span>';
+      return r.source?'<span class="badge b-builtin">Built-in</span>':'';
+    };
     tbl('appStatsTbl',[
-      {l:'Name',f:'name',r:r=>r.id?'<a href="/installedapp/status/'+r.id+'" target="_blank">'+h(r.name)+'</a>':h(r.name)},
+      {l:'Name',  f:'name',  r:r=>r.id?'<a href="/installedapp/status/'+r.id+'" target="_blank">'+h(r.name)+'</a>':h(r.name)},
+      {l:'Source',f:'source',r:perfSrcBadge},
       {l:'Total (ms)',f:'total',t:'n'},
       {l:'% Busy',f:'pct',t:'n',r:r=>r.pct!=null?r.pct.toFixed(1)+'%':''},
       {l:'% Total',f:'pctTotal',t:'n',r:r=>r.pctTotal!=null?r.pctTotal.toFixed(3)+'%':''},
       {l:'Count',f:'count',t:'n'},
       {l:'Avg (ms)',f:'average',t:'n',r:r=>Number(r.average||0).toFixed(1)},
       {l:'State Size',f:'stateSize',t:'n'},{l:'Hub Actions',f:'hubActionCount',t:'n'},{l:'Cloud Calls',f:'cloudCallCount',t:'n'}
-    ],s.appStats,{sc:1,sd:'desc',filter:true,collapse:10,collapseLabel:'App Runtime Detail'});
+    ],s.appStats,{sc:2,sd:'desc',filter:true,collapse:10,collapseLabel:'App Runtime Detail'});}
   // Radio message count tables
   if(hasZw){
     tbl('perfZwMsgTbl',[
