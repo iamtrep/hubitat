@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "5.5.0"
+@Field static final String APP_VERSION = "5.6.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -74,6 +74,19 @@ import groovy.json.JsonOutput
 
 @Field static final long ONE_DAY_MS = 86400000
 @Field static final int API_TIMING_WINDOW = 20
+
+// Protocol-level constants — hardcoded, not user-configurable (industry-standard values)
+@Field static final int    ZIGBEE_LQI_WARN = 200
+@Field static final int    ZIGBEE_LQI_CRIT = 150
+@Field static final double ZWAVE_PER_CRIT  = 1.0
+
+// System alert threshold defaults — these become the defaults for user-configurable settings
+@Field static final int    DEFAULT_WARN_MEM_MB   = 100
+@Field static final int    DEFAULT_CRIT_MEM_MB   = 75
+@Field static final double DEFAULT_WARN_CPU_LOAD = 4.0
+@Field static final double DEFAULT_CRIT_CPU_LOAD = 8.0
+@Field static final int    DEFAULT_WARN_TEMP_C   = 50
+@Field static final int    DEFAULT_CRIT_TEMP_C   = 77
 
 // In-memory API response time tracking (reset on hub reboot)
 @Field static Map apiTimings = [:]
@@ -325,6 +338,16 @@ Map settingsPage() {
             input "lowBatteryThreshold", "number", title: "Low battery threshold (%)", defaultValue: 20, range: "1..50", required: true
             input "chattyDeviceThreshold", "number", title: "Chatty device threshold (msgs/min)", defaultValue: 10, range: "1..1000", required: true
             paragraph "<i>Devices exceeding this message rate between perf checkpoints will be flagged as chatty.</i>"
+        }
+
+        section("Alert Thresholds") {
+            paragraph "Adjust these to match your hub model and environment. Defaults suit most C-8/C-8 Pro setups."
+            input "warnMemMb",   "number",  title: "Free memory warning (MB)",    defaultValue: DEFAULT_WARN_MEM_MB,   range: "10..2000", required: true
+            input "critMemMb",   "number",  title: "Free memory critical (MB)",   defaultValue: DEFAULT_CRIT_MEM_MB,   range: "10..2000", required: true
+            input "warnCpuLoad", "decimal", title: "CPU load average warning",    defaultValue: DEFAULT_WARN_CPU_LOAD, range: "0.1..32",  required: true
+            input "critCpuLoad", "decimal", title: "CPU load average critical",   defaultValue: DEFAULT_CRIT_CPU_LOAD, range: "0.1..32",  required: true
+            input "warnTempC",   "number",  title: "Hub temperature warning (°C)", defaultValue: DEFAULT_WARN_TEMP_C,  range: "20..100",  required: true
+            input "critTempC",   "number",  title: "Hub temperature critical (°C)", defaultValue: DEFAULT_CRIT_TEMP_C, range: "20..100",  required: true
         }
 
         section("Logging") {
@@ -1088,10 +1111,11 @@ Map apiForumExport() {
             String tName = obfuscate ? (t.type ?: t.integration ?: "Device") : t.name
             md << "| ${tName} | ${t.integration} | ${rate} | ${t.msgCount} |\n"
         }
-        // Spammy alerts (>= 6/min)
-        List spammy = allRadioDevices.findAll { it.msgCount / uptimeMin >= 6.0 }
+        // Spammy alerts (>= chattyDeviceThreshold)
+        int chattyT = (settings.chattyDeviceThreshold ?: 10) as int
+        List spammy = allRadioDevices.findAll { it.msgCount / uptimeMin >= chattyT }
         if (spammy) {
-            md << "\n**Elevated message rate (\u22656/min):** ${spammy.collect { "${obfuscate ? (it.type ?: it.integration ?: 'Device') : it.name} (${String.format('%.1f', it.msgCount / uptimeMin)}/min)" }.join(', ')}\n"
+            md << "\n**Elevated message rate (\u2265${chattyT}/min):** ${spammy.collect { "${obfuscate ? (it.type ?: it.integration ?: 'Device') : it.name} (${String.format('%.1f', it.msgCount / uptimeMin)}/min)" }.join(', ')}\n"
         }
     }
 
@@ -1113,6 +1137,12 @@ Map apiGetSettings() {
         inactivityDays:        (settings.inactivityDays ?: 7) as int,
         lowBatteryThreshold:   (settings.lowBatteryThreshold ?: 20) as int,
         chattyDeviceThreshold: (settings.chattyDeviceThreshold ?: 10) as int,
+        warnMemMb:             (settings.warnMemMb   ?: DEFAULT_WARN_MEM_MB)   as int,
+        critMemMb:             (settings.critMemMb   ?: DEFAULT_CRIT_MEM_MB)   as int,
+        warnCpuLoad:           (settings.warnCpuLoad ?: DEFAULT_WARN_CPU_LOAD) as double,
+        critCpuLoad:           (settings.critCpuLoad ?: DEFAULT_CRIT_CPU_LOAD) as double,
+        warnTempC:             (settings.warnTempC   ?: DEFAULT_WARN_TEMP_C)   as int,
+        critTempC:             (settings.critTempC   ?: DEFAULT_CRIT_TEMP_C)   as int,
         debugLogging:            settings.debugLogging ?: false,
         reportLinkMode:          settings.reportLinkMode ?: "relative",
         obfuscateForumExport:    settings.obfuscateForumExport ?: false,
@@ -1128,9 +1158,11 @@ Map apiUpdateSettings() {
     }
     if (!body) return jsonResponse([success: false, error: "Empty or invalid body"])
 
-    Set boolKeys   = ["autoSnapshot", "autoCheckpoint", "debugLogging", "obfuscateForumExport"] as Set
-    Set numberKeys = ["maxSnapshots", "maxCheckpoints", "inactivityDays", "lowBatteryThreshold", "chattyDeviceThreshold"] as Set
-    Set enumKeys   = ["snapshotInterval", "checkpointInterval", "reportLinkMode"] as Set
+    Set boolKeys    = ["autoSnapshot", "autoCheckpoint", "debugLogging", "obfuscateForumExport"] as Set
+    Set numberKeys  = ["maxSnapshots", "maxCheckpoints", "inactivityDays", "lowBatteryThreshold",
+                        "chattyDeviceThreshold", "warnMemMb", "critMemMb", "warnTempC", "critTempC"] as Set
+    Set decimalKeys = ["warnCpuLoad", "critCpuLoad"] as Set
+    Set enumKeys    = ["snapshotInterval", "checkpointInterval", "reportLinkMode"] as Set
     boolean reschedule = false
 
     body.each { String key, Object value ->
@@ -1139,6 +1171,8 @@ Map apiUpdateSettings() {
             if (key in ["autoSnapshot", "autoCheckpoint"]) reschedule = true
         } else if (numberKeys.contains(key)) {
             app.updateSetting(key, [type: "number", value: value.toString().toInteger()])
+        } else if (decimalKeys.contains(key)) {
+            app.updateSetting(key, [type: "decimal", value: value.toString().toBigDecimal()])
         } else if (enumKeys.contains(key)) {
             app.updateSetting(key, [type: "enum", value: value as String])
             if (key in ["snapshotInterval", "checkpointInterval"]) reschedule = true
@@ -1383,21 +1417,28 @@ List getStructuredAlerts() {
     Map hubAlerts = fetchHubAlerts()
 
     // Calculated alerts
-    if (resources && resources.freeOSMemory < 76800) {
+    int    critMemKb   = ((settings.critMemMb   ?: DEFAULT_CRIT_MEM_MB)   as int) * 1024
+    int    warnMemKb   = ((settings.warnMemMb   ?: DEFAULT_WARN_MEM_MB)   as int) * 1024
+    double critCpuLoad = (settings.critCpuLoad  ?: DEFAULT_CRIT_CPU_LOAD) as double
+    double warnCpuLoad = (settings.warnCpuLoad  ?: DEFAULT_WARN_CPU_LOAD) as double
+    int    critTempC   = (settings.critTempC    ?: DEFAULT_CRIT_TEMP_C)   as int
+    int    warnTempC   = (settings.warnTempC    ?: DEFAULT_WARN_TEMP_C)   as int
+
+    if (resources && resources.freeOSMemory < critMemKb) {
         alerts << [severity: "critical", name: "OS memory critically low (${formatMemory(resources.freeOSMemory)})"]
-    } else if (resources && resources.freeOSMemory < 102400) {
+    } else if (resources && resources.freeOSMemory < warnMemKb) {
         alerts << [severity: "warning", name: "Low OS memory (${formatMemory(resources.freeOSMemory)})"]
     }
-    
-    if (resources && (resources.cpuAvg5min ?: 0) > 8.0) {
+
+    if (resources && (resources.cpuAvg5min ?: 0) > critCpuLoad) {
         alerts << [severity: "critical", name: "Very high CPU load (${String.format('%.2f', resources.cpuAvg5min as float)})"]
-    } else if (resources && (resources.cpuAvg5min ?: 0) > 4.0) {
+    } else if (resources && (resources.cpuAvg5min ?: 0) > warnCpuLoad) {
         alerts << [severity: "warning", name: "Elevated CPU load (${String.format('%.2f', resources.cpuAvg5min as float)})"]
     }
-    
-    if (temperature != null && temperature > 77) {
+
+    if (temperature != null && temperature > critTempC) {
         alerts << [severity: "critical", name: "Hub temperature very high (${String.format('%.1f', temperature)}\u00B0C)"]
-    } else if (temperature != null && temperature > 50) {
+    } else if (temperature != null && temperature > warnTempC) {
         alerts << [severity: "warning", name: "Hub temperature elevated (${String.format('%.1f', temperature)}\u00B0C)"]
     }
 
@@ -1641,7 +1682,7 @@ Map fetchZigbeeMeshInfo() {
             result.avgLqi = (lqiValues.sum() / lqiValues.size()).toInteger()
             result.minLqi = lqiValues.min()
             result.maxLqi = lqiValues.max()
-            result.weakNeighbors = result.neighbors.findAll { it.lqi != null && it.lqi < 150 }
+            result.weakNeighbors = result.neighbors.findAll { it.lqi != null && it.lqi < ZIGBEE_LQI_CRIT }
             result.staleNeighbors = result.neighbors.findAll { it.age != null && it.age > 6 }
         }
     }
@@ -2127,19 +2168,26 @@ Map analyzeSystemHealth() {
     ]
 
     // Generate structured alerts from observed data
-    if (memory && memory.freeOSMemory < 76800) {
+    int    critMemKb   = ((settings.critMemMb   ?: DEFAULT_CRIT_MEM_MB)   as int) * 1024
+    int    warnMemKb   = ((settings.warnMemMb   ?: DEFAULT_WARN_MEM_MB)   as int) * 1024
+    double critCpuLoad = (settings.critCpuLoad  ?: DEFAULT_CRIT_CPU_LOAD) as double
+    double warnCpuLoad = (settings.warnCpuLoad  ?: DEFAULT_WARN_CPU_LOAD) as double
+    int    critTempC   = (settings.critTempC    ?: DEFAULT_CRIT_TEMP_C)   as int
+    int    warnTempC   = (settings.warnTempC    ?: DEFAULT_WARN_TEMP_C)   as int
+
+    if (memory && memory.freeOSMemory < critMemKb) {
         health.alerts << [severity: "critical", name: "OS memory critically low (${formatMemory(memory.freeOSMemory)}) — hub may become unresponsive"]
-    } else if (memory && memory.freeOSMemory < 102400) {
+    } else if (memory && memory.freeOSMemory < warnMemKb) {
         health.alerts << [severity: "warning", name: "Low OS memory (${formatMemory(memory.freeOSMemory)})"]
     }
-    if (memory && memory.cpuAvg5min > 8.0) {
+    if (memory && memory.cpuAvg5min > critCpuLoad) {
         health.alerts << [severity: "critical", name: "Very high CPU load (${String.format('%.2f', memory.cpuAvg5min as float)} — 4 cores)"]
-    } else if (memory && memory.cpuAvg5min > 4.0) {
+    } else if (memory && memory.cpuAvg5min > warnCpuLoad) {
         health.alerts << [severity: "warning", name: "Elevated CPU load (${String.format('%.2f', memory.cpuAvg5min as float)} — 4 cores fully saturated)"]
     }
-    if (temperature != null && temperature > 77) {
+    if (temperature != null && temperature > critTempC) {
         health.alerts << [severity: "critical", name: "Hub temperature very high (${String.format('%.1f', temperature)}\u00B0C)"]
-    } else if (temperature != null && temperature > 50) {
+    } else if (temperature != null && temperature > warnTempC) {
         health.alerts << [severity: "warning", name: "Hub temperature elevated (${String.format('%.1f', temperature)}\u00B0C)"]
     }
 

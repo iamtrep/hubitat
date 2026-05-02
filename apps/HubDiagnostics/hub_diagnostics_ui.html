@@ -111,7 +111,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.5.0";
+const UI_VERSION = "5.6.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -208,7 +208,10 @@ const CD={paired:'Paired',lan_direct:'LAN (Direct)',lan_bridge:'LAN (Bridge)',cl
 const PD={zigbee:'Zigbee',zwave:'Z-Wave',matter:'Matter',lan:'LAN/IP',virtual:'Virtual',cloud:'Cloud',maker:'Maker API',hubmesh:'Hub Mesh',other:'Other'};
 function mc(l,v,c){const s=c?' style="color:'+c+'"':'';return'<div class="m"><div class="m-l">'+h(l)+'</div><div class="m-v"'+s+'>'+(v??'N/A')+'</div></div>'}
 function ni(l,v,c){const s=c?' style="color:'+c+';font-weight:600"':'';return'<div class="ni"><div class="nl">'+h(l)+'</div><div class="nv"'+s+'>'+h(String(v??'N/A'))+'</div></div>'}
-function rateColor(v){return v>=10?'var(--crit)':v>=6?'var(--warn)':v>=2?'var(--primary)':''}
+// Module-level thresholds with hardcoded defaults — updated when settings load
+let TH={warnMemMb:100,critMemMb:75,warnCpuLoad:4,critCpuLoad:8,warnTempC:50,critTempC:77,chattyDeviceThreshold:10};
+api('settings').then(s=>{if(s)Object.assign(TH,s);}).catch(()=>{});
+function rateColor(v){return v>=TH.chattyDeviceThreshold?'var(--crit)':v>=TH.chattyDeviceThreshold*0.6?'var(--warn)':v>=2?'var(--primary)':''}
 function rateCell(r){if(r.msgPerMin==null)return'';const c=rateColor(r.msgPerMin);const s=c?' style="color:'+c+';font-weight:600"':'';return'<span'+s+'>'+r.msgPerMin.toFixed(2)+'</span>'}
 function isNewer(v1, v2) {
   if (!v1 || v1 === 'Unknown' || !v2 || v2 === 'Unknown') return false;
@@ -382,7 +385,7 @@ function renderChart(pts,cid,range){
   function xp(i){return ml+i*ppx}
   let osLine='',javaLine='',cpuLine='';
   viewPts.forEach((p,i)=>{const px=xp(i);osLine+=(i?' ':'')+px+','+yOS(p.freeOS);javaLine+=(i?' ':'')+px+','+yOS(p.freeJava);cpuLine+=(i?' ':'')+px+','+yCPU(p.cpuLoad)});
-  const warnY=yOS(102400),critY=yOS(76800);
+  const warnY=yOS(TH.warnMemMb*1024),critY=yOS(TH.critMemMb*1024);
   let timeLabels='',lastDate='';
   viewPts.forEach((p,i)=>{
     const px=xp(i);const parts=p.time.split(' ');const date=parts[0]||'';const time=parts[1]||'';
@@ -476,9 +479,9 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   // Resources
   if(d.resources){const r=d.resources;
     o+='<div class="card"><div class="card-h">Resources</div><div class="card-b"><div class="metrics">';
-    o+=mc('Free OS Memory',fmem(r.freeOSMemory),sev(r.freeOSMemory,102400,76800,true));
-    o+=mc('CPU Load (5m)',r.cpuAvg5min?.toFixed(2)??'N/A',sev(r.cpuAvg5min,4.0,8.0,false));
-    if(d.temperature!=null)o+=mc('Temperature',d.temperature.toFixed(1)+'\u00B0C',sev(d.temperature,50,77,false));
+    o+=mc('Free OS Memory',fmem(r.freeOSMemory),sev(r.freeOSMemory,TH.warnMemMb*1024,TH.critMemMb*1024,true));
+    o+=mc('CPU Load (5m)',r.cpuAvg5min?.toFixed(2)??'N/A',sev(r.cpuAvg5min,TH.warnCpuLoad,TH.critCpuLoad,false));
+    if(d.temperature!=null)o+=mc('Temperature',d.temperature.toFixed(1)+'\u00B0C',sev(d.temperature,TH.warnTempC,TH.critTempC,false));
     if(d.databaseSize!=null)o+=mc('Database',d.databaseSize+' MB');
     o+='</div></div></div>'}
   // Connection Types + Integrations (side by side)
@@ -841,11 +844,11 @@ async function rHealth(){const P='p-health';loading(P);try{
   // Resources
   if(d.resources){const r=d.resources;
     o+='<div class="card"><div class="card-h">System Resources</div><div class="card-b"><div class="metrics">';
-    o+=mc('Free OS Memory',fmem(r.freeOSMemory),sev(r.freeOSMemory,102400,76800,true));
-    o+=mc('CPU Load (5m)',r.cpuAvg5min?.toFixed(2),sev(r.cpuAvg5min,4.0,8.0,false));
+    o+=mc('Free OS Memory',fmem(r.freeOSMemory),sev(r.freeOSMemory,TH.warnMemMb*1024,TH.critMemMb*1024,true));
+    o+=mc('CPU Load (5m)',r.cpuAvg5min?.toFixed(2),sev(r.cpuAvg5min,TH.warnCpuLoad,TH.critCpuLoad,false));
     o+=mc('Total Java Memory',fmem(r.totalJavaMemory));o+=mc('Free Java Memory',fmem(r.freeJavaMemory));
     o+=mc('Direct Java Memory',fmem(r.directJavaMemory));
-    if(d.temperature!=null){const tf=d.temperature*9/5+32;o+=mc('Temperature',d.temperature.toFixed(1)+'\u00B0C ('+tf.toFixed(1)+'\u00B0F)',sev(d.temperature,50,77,false))}
+    if(d.temperature!=null){const tf=d.temperature*9/5+32;o+=mc('Temperature',d.temperature.toFixed(1)+'\u00B0C ('+tf.toFixed(1)+'\u00B0F)',sev(d.temperature,TH.warnTempC,TH.critTempC,false))}
     o+='</div></div></div>'}
   // Memory chart placeholder
   o+='<div class="card"><div class="card-h">Resource History</div><div class="card-b"><div id="memChart"><div class="loading"><div class="spinner"></div><div>Loading history...</div></div></div></div></div>';
@@ -900,8 +903,8 @@ async function rPerf(){const P='p-performance';loading(P);try{
       o+=mc('Free OS Memory',fmem(res.freeOSMemory),res.freeOSMemory<0?'var(--crit)':'var(--ok)');
       o+=mc('CPU Load',res.cpuAvg5min?.toFixed(2),res.cpuAvg5min>0?'var(--warn)':'var(--ok)');
     } else {
-      o+=mc('Free OS Memory',fmem(res.freeOSMemory),sev(res.freeOSMemory,102400,76800,true));
-      o+=mc('CPU Load (5m)',res.cpuAvg5min?.toFixed(2),sev(res.cpuAvg5min,4.0,8.0,false));
+      o+=mc('Free OS Memory',fmem(res.freeOSMemory),sev(res.freeOSMemory,TH.warnMemMb*1024,TH.critMemMb*1024,true));
+      o+=mc('CPU Load (5m)',res.cpuAvg5min?.toFixed(2),sev(res.cpuAvg5min,TH.warnCpuLoad,TH.critCpuLoad,false));
     }
     o+='</div></div></div>'}
 
@@ -961,12 +964,13 @@ async function rPerf(){const P='p-performance';loading(P);try{
     // Spammy alerts
     if(uptimeMin>0){
       const alerts=[];const warns=[];
+      const chattyT=TH.chattyDeviceThreshold,chattyW=chattyT*0.6;
       ['zwave','zigbee'].forEach(p=>{(rs[p]||[]).forEach(d=>{
-        if(d.msgPerMin>=10)alerts.push({name:d.name,proto:p,rate:d.msgPerMin});
-        else if(d.msgPerMin>=6)warns.push({name:d.name,proto:p,rate:d.msgPerMin})})});
-      if(alerts.length){o+='<div class="alert a-crit" style="margin-bottom:8px">\u26D4 High message rate (\u226510/min): ';
+        if(d.msgPerMin>=chattyT)alerts.push({name:d.name,proto:p,rate:d.msgPerMin});
+        else if(d.msgPerMin>=chattyW)warns.push({name:d.name,proto:p,rate:d.msgPerMin})})});
+      if(alerts.length){o+='<div class="alert a-crit" style="margin-bottom:8px">\u26D4 High message rate (\u2265'+chattyT+'/min): ';
         o+=alerts.map(d=>h(d.name)+' <b>'+d.rate.toFixed(1)+'/min</b> ('+d.proto+')').join(', ');o+='</div>'}
-      if(warns.length){o+='<div class="alert a-warn" style="margin-bottom:8px">\u26A0 Elevated message rate (\u22656/min): ';
+      if(warns.length){o+='<div class="alert a-warn" style="margin-bottom:8px">\u26A0 Elevated message rate (\u2265'+chattyW.toFixed(0)+'/min): ';
         o+=warns.map(d=>h(d.name)+' <b>'+d.rate.toFixed(1)+'/min</b> ('+d.proto+')').join(', ');o+='</div>'}}
     if(hasZw)o+='<div id="perfZwMsgTbl"></div>';
     if(hasZb)o+='<div id="perfZbMsgTbl" style="margin-top:8px"></div>';
@@ -1280,6 +1284,22 @@ async function rConfig(){const P='p-config';loading(P);try{
   o+=`<label style="margin-top:8px"><input type="checkbox" id="cfg_obfuscate" ${s.obfuscateForumExport?'checked':''}> Obfuscate device/app labels in forum export (use driver/app type instead of name)</label>`;
   o+='</div></div></div>';
 
+  // Alert Thresholds
+  o+='<div class="card"><div class="card-h">Alert Thresholds</div><div class="card-b">';
+  o+=`<p style="font-size:13px;color:var(--muted);margin:0 0 10px">Adjust to match your hub model and environment. Defaults suit most C-8/C-8 Pro setups.</p>`;
+  o+=`<div class="cfg-row">`;
+  o+=`<label>Free memory warning: <input type="number" id="cfg_warnMemMb" value="${s.warnMemMb}" min="10" max="2000" class="cfg-n"> MB</label>`;
+  o+=`<label>Free memory critical: <input type="number" id="cfg_critMemMb" value="${s.critMemMb}" min="10" max="2000" class="cfg-n"> MB</label>`;
+  o+=`</div><div class="cfg-row">`;
+  o+=`<label>CPU load warning: <input type="number" id="cfg_warnCpuLoad" value="${s.warnCpuLoad}" min="0.1" max="32" step="0.1" class="cfg-n"></label>`;
+  o+=`<label>CPU load critical: <input type="number" id="cfg_critCpuLoad" value="${s.critCpuLoad}" min="0.1" max="32" step="0.1" class="cfg-n"></label>`;
+  o+=`</div><div class="cfg-row">`;
+  o+=`<label>Temperature warning: <input type="number" id="cfg_warnTempC" value="${s.warnTempC}" min="20" max="100" class="cfg-n"> \u00B0C</label>`;
+  o+=`<label>Temperature critical: <input type="number" id="cfg_critTempC" value="${s.critTempC}" min="20" max="100" class="cfg-n"> \u00B0C</label>`;
+  o+=`</div>`;
+  o+=`<div class="cfg-row"><button class="btn btn-p btn-s" id="cfg_saveThresholds">Save</button><span id="cfg_threshStatus" style="font-size:12px;color:var(--ok)"></span></div>`;
+  o+='</div></div>';
+
   // Maintenance
   o+='<div class="card"><div class="card-h">Maintenance</div><div class="card-b"><div class="cfg-row">';
   o+=`<button class="btn btn-d" id="cfg_clearCache">Clear Enrichment Cache (${s.cacheSize} entries)</button>`;
@@ -1310,6 +1330,20 @@ async function rConfig(){const P='p-config';loading(P);try{
   document.getElementById('cfg_saveMon').onclick=async()=>{
     await saveSetting({inactivityDays:parseInt(document.getElementById('cfg_inactivityDays').value)||7,lowBatteryThreshold:parseInt(document.getElementById('cfg_lowBatteryThreshold').value)||20,chattyDeviceThreshold:parseInt(document.getElementById('cfg_chattyDeviceThreshold').value)||10});
     flash('cfg_monStatus','Saved ✓');
+  };
+
+  document.getElementById('cfg_saveThresholds').onclick=async()=>{
+    const upd={
+      warnMemMb:   parseInt(document.getElementById('cfg_warnMemMb').value)||100,
+      critMemMb:   parseInt(document.getElementById('cfg_critMemMb').value)||75,
+      warnCpuLoad: parseFloat(document.getElementById('cfg_warnCpuLoad').value)||4.0,
+      critCpuLoad: parseFloat(document.getElementById('cfg_critCpuLoad').value)||8.0,
+      warnTempC:   parseInt(document.getElementById('cfg_warnTempC').value)||50,
+      critTempC:   parseInt(document.getElementById('cfg_critTempC').value)||77
+    };
+    await saveSetting(upd);
+    Object.assign(TH,upd);
+    flash('cfg_threshStatus','Saved ✓');
   };
 
   document.getElementById('cfg_debugLogging').onchange=async function(){await saveSetting({debugLogging:this.checked})};
