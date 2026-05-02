@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "5.6.3"
+@Field static final String APP_VERSION = "5.6.5"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -1306,7 +1306,8 @@ Map getNetworkData() {
             enabled: networkData.zwave.enabled, healthy: networkData.zwave.healthy,
             region: networkData.zwave.region, nodeCount: (networkData.zwave.zwDevices ?: [:]).size(),
             isRadioUpdateNeeded: networkData.zwave.isRadioUpdateNeeded,
-            zwaveJs: networkData.zwave.zwaveJs, version: zwaveVersion,
+            zwaveJS: networkData.zwave.zwaveJS, zwaveJSAvailable: networkData.zwave.zwaveJSAvailable,
+            version: zwaveVersion,
             mesh: zwaveMesh, ghostNodes: ghostNodes, problemNodes: problemNodes,
             messageCounts: extractZwaveMessageCounts(networkData.zwave ?: [:])
         ] : null,
@@ -2273,15 +2274,21 @@ void visitAppEntries(List entries, Closure visitor, boolean isChildLevel = false
 List buildZwaveGhostNodes(Map zwaveDetails) {
     List ghostNodes = []
     Map zwTypeByNodeId = [:]
+    Map deviceIdByNodeId = [:]   // built from nodes[] — reliable across firmware versions
     (zwaveDetails?.nodes ?: []).each { Map n ->
-        if (n.nodeId && n.zwaveType) zwTypeByNodeId[n.nodeId.toString()] = n.zwaveType
+        if (n.nodeId) {
+            if (n.zwaveType) zwTypeByNodeId[n.nodeId.toString()] = n.zwaveType
+            // zwDevices.deviceId is absent on some firmware; nodes[].deviceId is always present
+            if (n.deviceId) deviceIdByNodeId[n.nodeId.toString()] = n.deviceId
+        }
     }
     (zwaveDetails?.zwDevices ?: [:]).each { nodeId, nodeData ->
         if (!(nodeData instanceof Map)) return
         String zwType = zwTypeByNodeId[nodeId.toString()] ?: ""
         // Never flag the hub's own controller node
         if (zwType.toUpperCase().contains("CONTROLLER")) return
-        boolean noDeviceId = !nodeData.deviceId   // principal signal: no paired Hubitat device
+        def deviceId = deviceIdByNodeId[nodeId.toString()]
+        boolean noDeviceId = !deviceId                         // principal signal: no paired Hubitat device
         boolean isFailed   = nodeData.status == "FAILED" || nodeData.failed == true
         boolean noRoute    = nodeData.route == null || nodeData.route == "" || nodeData.route == "No route"
         boolean noName     = !nodeData.name || nodeData.name == "Unknown" || nodeData.name == ""
@@ -2293,7 +2300,7 @@ List buildZwaveGhostNodes(Map zwaveDetails) {
             if (noName)     signals << "unknown name"
             ghostNodes << [
                 id: nodeId,
-                deviceId: nodeData.deviceId,
+                deviceId: deviceId,
                 name: nodeData.name ?: "Unknown",
                 status: nodeData.status ?: "No route",
                 type: zwType,
