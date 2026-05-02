@@ -10,3 +10,4 @@
 *.har
 *.log
 .claude/worktrees
+tmp
