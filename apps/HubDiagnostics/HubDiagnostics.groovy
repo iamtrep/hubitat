@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "5.1.0"
+@Field static final String APP_VERSION = "5.2.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -834,13 +834,14 @@ Map apiForumExport() {
     Map stateCompression = fetchStateCompression()
     Map eventStateLimits = fetchEventStateLimits()
     List alerts = getStructuredAlerts()
-    Map deviceStats = analyzeDevices(false)
+    Map deviceStats = analyzeDevices(true)
     Map appStats = analyzeApps(false)
     Map networkData = analyzeNetwork()
     Map networkConfig = networkData.network ?: [:]
     Map zwaveRaw = networkData.zwave ?: [:]
     Map zigbeeRaw = networkData.zigbee ?: [:]
     Map hubMeshRaw = networkData.hubMesh ?: [:]
+    Map matterRaw = (Map) (networkData.matter ?: [:])
     Map zwaveMesh = extractZwaveMeshQuality(zwaveRaw)
     boolean obfuscate = settings.obfuscateForumExport ?: false
     List ghostNodes = buildZwaveGhostNodes(zwaveRaw)
@@ -869,9 +870,17 @@ Map apiForumExport() {
     if (bothActive) connType = "Ethernet + WiFi active"
     if (networkConfig.hasEthernet) connType += networkConfig.usingStaticIP ? " (Static)" : " (DHCP)"
     md << "| Connection | ${connType} |\n"
+    if (networkConfig.lanAddr)          md << "| IP Address | ${networkConfig.lanAddr} |\n"
+    if (networkConfig.staticGateway)    md << "| Gateway    | ${networkConfig.staticGateway} |\n"
+    if (networkConfig.staticSubnetMask) md << "| Subnet     | ${networkConfig.staticSubnetMask} |\n"
+    List dnsList = (networkConfig.dnsServers ?: []) as List
+    if (dnsList)                        md << "| DNS        | ${dnsList.join(', ')} |\n"
+    if (networkConfig.hasWiFi && networkConfig.wifiNetwork) md << "| WiFi SSID  | ${networkConfig.wifiNetwork} |\n"
     if (bothActive) md << "\n**Warning:** Both Ethernet and WiFi are active. This is known to cause connectivity issues. Disable WiFi when using Ethernet.\n\n"
     md << "| CPU Load (5m) | ${resources ? String.format('%.2f', resources.cpuAvg5min as float) : 'N/A'} |\n"
     md << "| Free OS Memory | ${resources ? formatMemory(resources.freeOSMemory as int) : 'N/A'} |\n"
+    if (resources?.freeJavaMemory)  md << "| Free Java Heap  | ${formatMemory(resources.freeJavaMemory as int)} |\n"
+    if (resources?.totalJavaMemory) md << "| Total Java Heap | ${formatMemory(resources.totalJavaMemory as int)} |\n"
     md << "| Temperature | ${temperature != null ? String.format('%.1f\u00B0C', temperature) : 'N/A'} |\n"
     md << "| Database | ${databaseSize != null ? "${databaseSize} MB" : 'N/A'} |\n"
     md << "| State Compression | ${stateCompression?.enabled ? 'Enabled' : 'Disabled'} |\n"
@@ -893,6 +902,8 @@ Map apiForumExport() {
     md << "\n### Devices\n"
     md << "| | |\n|---|---|\n"
     md << "| Total | ${deviceStats.totalDevices} |\n"
+    if (deviceStats.activeDevices)   md << "| Active | ${deviceStats.activeDevices} |\n"
+    if (deviceStats.inactiveDevices) md << "| Inactive | ${deviceStats.inactiveDevices} |\n"
     if (deviceStats.disabledDevices) md << "| Disabled | ${deviceStats.disabledDevices} |\n"
     Map byConn = deviceStats.byConnectionType ?: [:]
     byConn.each { String conn, int count ->
@@ -959,6 +970,15 @@ Map apiForumExport() {
         if (s0Flagged) {
             md << "\n**S0 on non-security devices:** ${s0Flagged.collect { obfuscate ? (it.zwaveType ?: 'Z-Wave Node') : it.name }.join(', ')}\n"
         }
+        // Isolated nodes (0 neighbors, non-failed)
+        List isolatedNodes = (zwaveMesh?.nodes ?: []).findAll { Map n -> (n.neighbors ?: 0) == 0 && n.state != "FAILED" }
+        if (isolatedNodes) {
+            md << "\n**Isolated Nodes (0 neighbors, ${isolatedNodes.size()}):**\n"
+            isolatedNodes.each { Map n ->
+                String label = obfuscate ? (n.zwaveType ?: "Node ${n.nodeId}") : (n.name ?: "Node ${n.nodeId}")
+                md << "- Node ${n.nodeId}: ${label}\n"
+            }
+        }
         // Full node table
         List zwNodes = zwaveMesh?.nodes ?: []
         if (zwNodes) {
@@ -999,6 +1019,16 @@ Map apiForumExport() {
         if (nonResponsive) {
             md << "- **Non-Responsive:** ${nonResponsive.join(', ')}\n"
         }
+    }
+
+    // ── 5b. Matter ──
+    if (matterRaw && matterRaw.enabled) {
+        md << "\n### Matter\n"
+        md << "- **Enabled:** Yes, **Installed:** ${matterRaw.installed ? 'Yes' : 'No'}\n"
+        int matterCount = (matterRaw.devices ?: []).size()
+        if (matterCount > 0) md << "- **Devices:** ${matterCount}\n"
+        if (matterRaw.networkState) md << "- **Network State:** ${matterRaw.networkState}\n"
+        if (matterRaw.fabricId)     md << "- **Fabric:** ${matterRaw.fabricId}\n"
     }
 
     // ── 6. Hub Mesh ──
@@ -1683,7 +1713,8 @@ Map extractZwaveMeshQuality(Map zwaveData) {
             listening: node.listening ?: false,
             security: security,
             s0Flag: s0Flag,
-            driverType: driverType
+            driverType: driverType,
+            zwaveType: node.zwaveType ?: ""
         ]
     }
 
@@ -2135,6 +2166,11 @@ void visitAppEntries(List entries, Closure visitor, boolean isChildLevel = false
 
 List buildZwaveGhostNodes(Map zwaveDetails) {
     List ghostNodes = []
+    // Build nodeId → zwaveType lookup from nodes array for obfuscation
+    Map zwTypeByNodeId = [:]
+    (zwaveDetails?.nodes ?: []).each { Map n ->
+        if (n.nodeId && n.zwaveType) zwTypeByNodeId[n.nodeId.toString()] = n.zwaveType
+    }
     (zwaveDetails?.zwDevices ?: [:]).each { nodeId, nodeData ->
         if (nodeData instanceof Map) {
             boolean isFailed = nodeData.status == "FAILED" || nodeData.failed == true
@@ -2145,7 +2181,8 @@ List buildZwaveGhostNodes(Map zwaveDetails) {
                     id: nodeId,
                     deviceId: nodeData.deviceId,
                     name: nodeData.name ?: "Unknown",
-                    status: nodeData.status ?: "No route"
+                    status: nodeData.status ?: "No route",
+                    type: zwTypeByNodeId[nodeId.toString()] ?: ""
                 ]
             }
         }
