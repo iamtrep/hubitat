@@ -111,7 +111,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.6.0";
+const UI_VERSION = "5.6.3";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -709,7 +709,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
     // Ghost nodes
     if(z.ghostNodes&&z.ghostNodes.length){
       o+='<div style="margin-top:10px"><div class="alert a-crit">\u26D4 Ghost Nodes: '+z.ghostNodes.length+'</div>';
-      z.ghostNodes.forEach(g=>{o+='<div style="margin:4px 0;color:var(--crit)">'+(g.deviceId?dlink(g.deviceId,'Node '+g.id):h('Node '+g.id))+' &mdash; '+h(g.name||'Unknown')+' ('+h(g.status)+')</div>'});o+='</div>'}
+      z.ghostNodes.forEach(g=>{const sig=g.signals&&g.signals.length?'<span style="color:var(--muted);font-size:12px"> ['+g.signals.map(s=>h(s)).join(', ')+']</span>':'';o+='<div style="margin:4px 0;color:var(--crit)">'+(g.deviceId?dlink(g.deviceId,'Node '+g.id):h('Node '+g.id))+' &mdash; '+h(g.name||'Unknown')+sig+'</div>'});o+='</div>'}
     // Mesh quality
     if(z.mesh&&z.mesh.nodes&&z.mesh.nodes.length){const m=z.mesh;
       o+='<div style="margin-top:10px"><div class="ng">';
@@ -719,8 +719,6 @@ async function rNetwork(){const P='p-network';loading(P);try{
       o+=ni('Route Changes',m.totalRouteChanges);
       if(m.avgRssi!=null)o+=ni('Avg RSSI',m.avgRssi+' dBm',m.avgRssi<-80?'var(--crit)':m.avgRssi<-60?'var(--warn)':'var(--ok)');
       o+='</div><div id="zwMeshTbl" style="margin-top:8px"></div></div>'}
-    // Z-Wave message counts
-    if(z.messageCounts&&z.messageCounts.length)o+='<div id="zwMsgTbl" style="margin-top:8px"></div>';
     // Problem nodes
     if(z.problemNodes&&z.problemNodes.length){
       o+='<div style="margin-top:10px"><div class="alert a-warn">\u26A0 Problem Nodes: '+z.problemNodes.length+'</div>';
@@ -779,6 +777,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
   // Calculate message rates if uptime is available
   if(d.uptimeSeconds>0){
     const min=d.uptimeSeconds/60;
+    if(d.zwave&&d.zwave.mesh&&d.zwave.mesh.nodes)d.zwave.mesh.nodes.forEach(r=>{r.msgPerMin=(r.msgCount||0)/min});
     if(d.zwave&&d.zwave.messageCounts)d.zwave.messageCounts.forEach(r=>{r.msgPerMin=(r.msgCount||0)/min});
     if(d.zigbee&&d.zigbee.messageCounts)d.zigbee.messageCounts.forEach(r=>{r.msgPerMin=(r.msgCount||0)/min});
   }
@@ -793,18 +792,10 @@ async function rNetwork(){const P='p-network';loading(P);try{
       {l:'RSSI',f:'rssi',t:'n',r:r=>r.rssi!=null?'<span style="color:'+(r.rssi<-80?'var(--crit)':r.rssi<-60?'var(--warn)':'var(--ok)')+'">'+r.rssi+' dBm</span>':'N/A'},
       {l:'PER %',f:'per',t:'n',r:r=>'<span style="color:'+(r.per>1?'var(--crit)':r.per>0?'var(--warn)':'var(--ok)')+'">'+r.per+'%</span>'},
       {l:'Neighbors',f:'neighbors',t:'n'},{l:'Route',f:'route'},{l:'Route Changes',f:'routeChanges',t:'n'},
-      {l:'Msgs',f:'msgCount',t:'n'},
+      {l:'Msgs',f:'msgCount',t:'n'},{l:'Msgs/Min',f:'msgPerMin',t:'n',r:rateCell},
       {l:'Driver',f:'driverType',r:r=>r.driverType==='usr'?'<span style="color:var(--primary)">User</span>':r.driverType==='sys'?'Built-in':'\u2014'},
       {l:'State',f:'state',r:r=>'<span style="color:'+(r.state==='OK'?'var(--ok)':'var(--crit)')+'">'+h(r.state)+'</span>'}
     ],d.zwave.mesh.nodes,{sc:0,sd:'asc',collapse:1,collapseLabel:'Z-Wave Mesh Nodes'});
-  // Z-Wave message counts
-  if(d.zwave&&d.zwave.messageCounts&&d.zwave.messageCounts.length)
-    tbl('zwMsgTbl',[
-      {l:'Device',f:'name',r:r=>r.deviceId?dlink(r.deviceId,r.name):h(r.name)},
-      {l:'Messages',f:'msgCount',t:'n'},
-      {l:'Msgs/Min',f:'msgPerMin',t:'n',r:rateCell},
-      {l:'Route Changes',f:'routeChanges',t:'n'}
-    ],d.zwave.messageCounts,{sc:1,sd:'desc',collapse:1,collapseLabel:'Z-Wave Message Counts'});
   // Zigbee neighbor detail table
   if(d.zigbee&&d.zigbee.mesh&&d.zigbee.mesh.neighborDetails&&d.zigbee.mesh.neighborDetails.length)
     tbl('zbNeighborTbl',[

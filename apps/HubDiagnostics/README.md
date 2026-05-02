@@ -154,7 +154,7 @@ IP address, connection type (DHCP/static), gateway, subnet, DNS. Shows a warning
 - Radio status (enabled, healthy, firmware version, region, node count)
 - Firmware update alert if a radio firmware upgrade is available
 
-**Ghost Nodes** — Nodes that are no longer reachable: either in FAILED state or with no route and an unknown name. These should be removed from the Z-Wave mesh.
+**Ghost Nodes** — Z-Wave radio nodes with no associated Hubitat device (the device was deleted without Z-Wave exclusion), or nodes in FAILED state, or nodes with no route and an unknown name. Each ghost shows the signals that triggered it: `no device`, `FAILED`, `no route`, `unknown name`. These should be removed from the Z-Wave mesh.
 
 **Problem Nodes** — Nodes with state ≠ OK or packet error rate > 1%.
 
@@ -369,7 +369,7 @@ The forum export generates a concise Markdown-formatted summary suitable for pas
 
 | Alert | Condition | Threshold | Severity |
 |---|---|---|---|
-| Ghost Nodes | Status = FAILED, or no route + unknown name | — | Critical |
+| Ghost Nodes | No associated device ID (primary), or FAILED, or no route + unknown name | — | Critical |
 | Problem Nodes | State ≠ OK, or PER > 1% | 1% PER | Warning |
 | Isolated Nodes | 0 neighbors, not FAILED | 0 neighbors | Warning |
 | Avg PER Critical | Mesh average PER > 1% | 1% | Critical |
