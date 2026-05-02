@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "5.2.0"
+@Field static final String APP_VERSION = "5.3.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -1221,12 +1221,15 @@ Map getAppsData() {
         .sort { (it.label ?: it.name ?: "").toString().toLowerCase() }
         .collect { [id: it.id, label: it.label ?: it.name, type: it.name,
                     parentId: it.parentAppId, disabled: it.state == "disabled"] }
+    List allApps = (appStats.allApps ?: []).sort { Map a -> "${a.type ?: ''} ${a.name ?: ''}".toLowerCase() }
+    boolean hasMenuData = allApps.any { it.menu as boolean }
     return [
         summary: [totalApps: appStats.totalApps, builtInApps: appStats.builtInApps, userApps: appStats.userApps,
                   parentApps: appStats.parentApps, childApps: appStats.childApps,
                   runtimeTotalApps: appStats.runtimeTotalApps],
         byNamespace: appStats.byNamespace, platformApps: platformRows,
-        userApps: userAppRows, parentChildHierarchy: appStats.parentChildHierarchy
+        userApps: userAppRows, parentChildHierarchy: appStats.parentChildHierarchy,
+        allApps: allApps, hasMenuData: hasMenuData
     ]
 }
 
@@ -1950,12 +1953,13 @@ Map analyzeApps(boolean deep = true) {
         userAppsList: [],
         byNamespace: [:],
         parentChildHierarchy: [],
+        allApps: [],
         runtimeTotalApps: 0
     ]
 
     // Dedicated recursion remains here because hierarchy generation mutates nested child lists
     Closure processAppList
-    processAppList = { List entries, boolean isChildLevel, List parentHierarchyList ->
+    processAppList = { List entries, boolean isChildLevel, List parentHierarchyList, def currentParentId ->
         entries.each { appEntry ->
             try {
                 Map app = appEntry.data
@@ -1986,6 +1990,21 @@ Map analyzeApps(boolean deep = true) {
 
                 stats.byNamespace[appType] = (stats.byNamespace[appType] ?: 0) + 1
 
+                // Flat entry for the installed apps table
+                stats.allApps << [
+                    id:         appId,
+                    name:       stripHtml(app.name ?: appType),
+                    type:       appType,
+                    user:       isUserApp,
+                    disabled:   app.disabled ?: false,
+                    hidden:     app.hidden ?: false,
+                    setting:    app.setting ?: false,
+                    menu:       app.menu ?: "",
+                    level:      (app.level ?: 0) as int,
+                    childCount: children.size(),
+                    parentId:   currentParentId
+                ]
+
                 if (children.size() > 0) {
                     Map parentInfo = [
                         id: app.id,
@@ -1995,7 +2014,7 @@ Map analyzeApps(boolean deep = true) {
                         children: []
                     ]
 
-                    processAppList(children, true, parentInfo.children)
+                    processAppList(children, true, parentInfo.children, app.id)
                     parentInfo.childCount = parentInfo.children.size()
                     parentHierarchyList << parentInfo
                 } else if (isChildLevel) {
@@ -2011,7 +2030,7 @@ Map analyzeApps(boolean deep = true) {
             }
         }
     }
-    processAppList(appsList, false, stats.parentChildHierarchy)
+    processAppList(appsList, false, stats.parentChildHierarchy, null)
 
     // Identify platform-only apps by comparing runtime stats against appsList
     stats.platformApps = []
@@ -2687,13 +2706,18 @@ Map getEmptyAppStats() {
     return [
         totalApps: 0, userApps: 0, builtInApps: 0, parentApps: 0, childApps: 0,
         builtInInstances: [:], userAppsList: [], byNamespace: [:], parentChildHierarchy: [],
-        runtimeTotalApps: 0
+        allApps: [], runtimeTotalApps: 0
     ]
 }
 
 String safeToString(value, String defaultValue = "") {
     if (value == null || value instanceof List) return defaultValue
     return value.toString()
+}
+
+@CompileStatic
+String stripHtml(String s) {
+    return s ? s.replaceAll(/<[^>]+>/, '').trim() : s
 }
 
 Long parseDate(dateStr) {

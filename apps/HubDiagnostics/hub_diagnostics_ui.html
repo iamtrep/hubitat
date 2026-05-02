@@ -77,6 +77,8 @@ details{margin:8px 0} summary{cursor:pointer;font-weight:600;font-size:13px;padd
 select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-size:13px;margin-right:8px}
 
 .diff-add{color:var(--ok)} .diff-rem{color:var(--crit)} .diff-chg{color:var(--warn)}
+.pill-menu{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:500}
+.pill-auto{background:#dbeafe;color:#1e40af} .pill-integ{background:#d1fae5;color:#065f46} .pill-apps{background:#ede9fe;color:#5b21b6}
 
 @media(max-width:600px){.metrics{grid-template-columns:repeat(2,1fr)}.tab{padding:7px 10px;font-size:12px}.filter input{width:100%}}
 .report-mode .actions,.report-mode .live-only{display:none}
@@ -109,7 +111,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.1.0";
+const UI_VERSION = "5.3.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -642,18 +644,10 @@ async function rApps(){const P='p-apps';loading(P);try{
   o+=mc('Parent',s.parentApps);o+=mc('Child',s.childApps);
   if(s.runtimeTotalApps)o+=mc('Platform Total',s.runtimeTotalApps);
   o+='</div></div></div>';
-  // Parent/Child hierarchy
-  if(d.parentChildHierarchy&&d.parentChildHierarchy.length){
-    o+='<div class="card"><div class="card-h">Parent/Child Hierarchy ('+d.parentChildHierarchy.length+')</div><div class="card-b">';
-    d.parentChildHierarchy.forEach(p=>{
-      o+='<details'+(d.parentChildHierarchy.length<=10?' open':'')+'><summary>'+alink(p.id,p.label||p.type||'Unknown')+' <span style="color:var(--muted);font-weight:normal">('+((p.children||[]).length)+' children)</span></summary>';
-      o+='<div style="padding-left:20px;margin:6px 0">';
-      (p.children||[]).forEach(c=>{o+='<div style="margin:3px 0">'+alink(c.id,c.label||c.name||c.type||('App '+c.id))+(c.disabled?' <span style="color:var(--crit)">(Disabled)</span>':'')+'</div>'});
-      o+='</div></details>'});o+='</div></div>'}
-  // Namespace breakdown
-  if(d.byNamespace&&Object.keys(d.byNamespace).length){
-    const ns=Object.entries(d.byNamespace).map(([k,v])=>({name:k,count:v})).sort((a,b)=>b.count-a.count);
-    o+='<div class="card"><div class="card-h">App Types ('+ns.length+')</div><div class="card-b"><div id="nsTbl"></div></div></div>'}
+  // Installed Apps table
+  if(d.allApps&&d.allApps.length){
+    const vis=d.allApps.filter(a=>!a.hidden&&!a.setting);
+    o+='<div class="card"><div class="card-h">Installed Apps ('+vis.length+')</div><div class="card-b"><div id="appsTbl"></div></div></div>'}
   // Platform apps
   if(d.platformApps&&d.platformApps.length){
     const big=d.platformApps.filter(a=>a.stateSize>5000);
@@ -667,10 +661,29 @@ async function rApps(){const P='p-apps';loading(P);try{
       o+='<div class="alert a-crit">\u26D4 Apps with both large state (&gt;5 KB) and high CPU (&gt;2%)</div>';
       o+='<div id="probAppsTbl"></div></div></div>'}}
   document.getElementById(P).innerHTML=o;
-  // Render tables
-  if(d.byNamespace&&Object.keys(d.byNamespace).length){
-    const ns=Object.entries(d.byNamespace).map(([k,v])=>({name:k,count:v})).sort((a,b)=>b.count-a.count);
-    tbl('nsTbl',[{l:'App Type',f:'name'},{l:'Instances',f:'count',t:'n'}],ns,{sc:1,sd:'desc',collapse:10,collapseLabel:'App Types'})}
+  // Installed Apps table
+  if(d.allApps&&d.allApps.length){
+    const srcBadge=u=>u?'<span class="badge b-community">Community</span>':'<span class="badge b-builtin">Built-in</span>';
+    const menuPill=m=>{
+      const map={automations:'Automations',integrations:'Integrations',apps:'Apps'};
+      const cls={automations:'pill-auto',integrations:'pill-integ',apps:'pill-apps'};
+      return m?`<span class="pill-menu ${cls[m]||'pill-auto'}">${map[m]||m}</span>`:'';
+    };
+    const roleStr=r=>{
+      if(r.childCount>0)return`Parent (${r.childCount})`;
+      if(r.level>0)return r.parentId?`Child of <a href="/installedapp/configure/${r.parentId}" target="_blank">App ${r.parentId}</a>`:'Child';
+      return'';
+    };
+    const vis=d.allApps.filter(a=>!a.hidden&&!a.setting);
+    const menuCol=d.hasMenuData?[{l:'Menu',f:'menu',r:r=>menuPill(r.menu)}]:[];
+    tbl('appsTbl',[
+      {l:'App',f:'name',r:r=>alink(r.id,r.name)},
+      {l:'Type',f:'type'},
+      {l:'Source',f:'user',sf:'user',r:r=>srcBadge(r.user)},
+      ...menuCol,
+      {l:'Role',f:'level',r:r=>roleStr(r)},
+      {l:'Status',f:'disabled',r:r=>r.disabled?'<span class="badge b-crit">Disabled</span>':''}
+    ],vis,{sc:1,filter:true})}
   if(d.platformApps&&d.platformApps.length)
     tbl('platTbl',[
       {l:'Name',f:'name',r:r=>'<a href="/installedapp/status/'+r.id+'" target="_blank">'+h(r.name)+'</a>'},
