@@ -11,8 +11,8 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "4.6.0"
-@Field static final String STORAGE_SCHEMA_VERSION = "3.2.0"
+@Field static final String APP_VERSION = "5.0.0"
+@Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -37,6 +37,7 @@ import groovy.json.JsonOutput
 @Field static final String MAX_EVENT_AGE_PATH = "/hub/advanced/maxEventAgeDays"
 @Field static final String MAX_STATE_AGE_PATH = "/hub/advanced/maxDeviceStateAgeDays"
 @Field static final String MEMORY_HISTORY_PATH = "/hub/advanced/freeOSMemoryHistory"
+@Field static final String DEVICE_TYPES_PATH = "/hub2/userDeviceTypes"
 
 // Zigbee channels recommended to avoid WiFi interference
 @Field static final List RECOMMENDED_ZIGBEE_CHANNELS = [15, 20, 25]
@@ -62,16 +63,14 @@ import groovy.json.JsonOutput
     platformUpdateAvailable: "Platform Update Available"
 ]
 
-// Protocol constants
-@Field static final String PROTOCOL_ZIGBEE = "zigbee"
-@Field static final String PROTOCOL_ZWAVE = "zwave"
-@Field static final String PROTOCOL_MATTER = "matter"
-@Field static final String PROTOCOL_LAN = "lan"
-@Field static final String PROTOCOL_VIRTUAL = "virtual"
-@Field static final String PROTOCOL_MAKER = "maker"
-@Field static final String PROTOCOL_CLOUD = "cloud"
-@Field static final String PROTOCOL_HUBMESH = "hubmesh"
-@Field static final String PROTOCOL_OTHER = "other"
+// Connection type constants
+@Field static final String CONN_PAIRED = "paired"
+@Field static final String CONN_LAN_DIRECT = "lan_direct"
+@Field static final String CONN_LAN_BRIDGE = "lan_bridge"
+@Field static final String CONN_CLOUD = "cloud"
+@Field static final String CONN_VIRTUAL = "virtual"
+@Field static final String CONN_HUBMESH = "hubmesh"
+@Field static final String CONN_OTHER = "other"
 
 @Field static final long ONE_DAY_MS = 86400000
 @Field static final int API_TIMING_WINDOW = 20
@@ -79,8 +78,19 @@ import groovy.json.JsonOutput
 // In-memory API response time tracking (reset on hub reboot)
 @Field static Map apiTimings = [:]
 
-// Protocol display names
-@Field static final Map PROTOCOL_DISPLAY = [
+// Connection type display names
+@Field static final Map CONN_DISPLAY = [
+    "paired": "Paired",
+    "lan_direct": "LAN (Direct)",
+    "lan_bridge": "LAN (Bridge)",
+    "cloud": "Cloud",
+    "virtual": "Virtual",
+    "hubmesh": "Hub Mesh",
+    "other": "Other"
+]
+
+// Legacy protocol display names (for migrating old snapshots)
+@Field static final Map LEGACY_PROTOCOL_DISPLAY = [
     "zwave": "Z-Wave",
     "zigbee": "Zigbee",
     "matter": "Matter",
@@ -92,6 +102,44 @@ import groovy.json.JsonOutput
     "other": "Other"
 ]
 
+// Integration classification table: lowercase keyword → [conn: connectionType, name: displayName]
+// Keys are matched as substrings against parent app type/label.
+// Entries are ordered longest-first to avoid false positives (e.g., "wiz" matching "wizard").
+// LinkedHashMap preserves insertion order, which is the iteration order used by lookupIntegration().
+@Field static final Map INTEGRATION_TABLE = [
+    // 12
+    "home connect": [conn: "cloud", name: "Home Connect"],
+    // 11
+    "philips hue" : [conn: "lan_bridge", name: "Philips Hue"],
+    // 10
+    "hue bridge"  : [conn: "lan_bridge", name: "Philips Hue"],
+    // 9
+    "bluetooth"   : [conn: "paired", name: "Bluetooth"],
+    // 8
+    "icomfort"    : [conn: "cloud", name: "iComfort"],
+    // 7
+    "homekit"     : [conn: "paired", name: "HomeKit"],
+    "samsung"     : [conn: "cloud", name: "SmartThings"],
+    // 6
+    "bthome"      : [conn: "paired", name: "BTHome"],
+    "shelly"      : [conn: "lan_direct", name: "Shelly"],
+    "lutron"      : [conn: "lan_bridge", name: "Lutron"],
+    "ecobee"      : [conn: "cloud", name: "ecobee"],
+    "google"      : [conn: "cloud", name: "Google Home"],
+    // 5
+    "govee"       : [conn: "lan_direct", name: "Govee"],
+    "sonos"       : [conn: "lan_direct", name: "Sonos"],
+    "alexa"       : [conn: "cloud", name: "Amazon Alexa"],
+    // 4
+    "kasa"        : [conn: "lan_direct", name: "Kasa"],
+    "lifx"        : [conn: "lan_direct", name: "LIFX"],
+    "wled"        : [conn: "lan_direct", name: "WLED"],
+    "bond"        : [conn: "lan_bridge", name: "Bond"],
+    // 3
+    "wiz"         : [conn: "lan_direct", name: "WiZ"],
+]
+
+
 // File names for persistence
 @Field static final String SNAPSHOTS_FILE = "hub_diagnostics_snapshots.json"
 @Field static final String CHECKPOINTS_FILE = "hub_diagnostics_checkpoints.json"
@@ -100,6 +148,23 @@ import groovy.json.JsonOutput
 
 @Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/hubitrep/hubitat/refs/heads/main/HubDiagnostics/HubDiagnostics.groovy"
 @Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/hubitrep/hubitat/refs/heads/main/HubDiagnostics/hub_diagnostics_ui.html"
+
+@Field static final String DEVICE_FULL_JSON_PATH = "/device/fullJson/"
+
+// Maps controllerType values (from device/fullJson top-level field) to connection type constants.
+// Actual observed values: ZGB=Zigbee, MAT=Matter, LNK=HubMesh, HKC=HomeKit, BLE=Bluetooth.
+// Used only as a last-resort fallback when parentApp is absent from fullJson.
+@Field static final Map CONTROLLER_TYPE_CONN = [
+    "ZGB": "paired",
+    "ZWV": "paired",
+    "MAT": "paired",
+    "BLE": "paired",
+    "HKC": "paired",
+    "LNK": "hubmesh",
+    "NET": "lan_direct",
+    "CLO": "cloud",
+    "VIR": "virtual",
+]
 
 definition(
     name: "Hub Diagnostics",
@@ -500,6 +565,32 @@ Map apiPerformanceCompare() {
     ])
 }
 
+Map migrateSnapshotDevices(Map snapshotDevices) {
+    if (!snapshotDevices?.byProtocol || snapshotDevices?.byConnectionType) return snapshotDevices
+    Map protoToConn = [
+        zigbee: CONN_PAIRED, zwave: CONN_PAIRED, matter: CONN_PAIRED,
+        lan: CONN_LAN_DIRECT, virtual: CONN_VIRTUAL,
+        cloud: CONN_CLOUD, hubmesh: CONN_HUBMESH, maker: CONN_OTHER, other: CONN_OTHER
+    ]
+    Map byConn = [:]
+    snapshotDevices.byProtocol.each { k, v ->
+        String conn = protoToConn[k] ?: CONN_OTHER
+        byConn[conn] = (byConn[conn] ?: 0) + (v ?: 0)
+    }
+    snapshotDevices.byConnectionType = byConn
+    snapshotDevices.byIntegration = snapshotDevices.byProtocol.collectEntries { k, v ->
+        [(LEGACY_PROTOCOL_DISPLAY[k] ?: k): v]
+    }
+    snapshotDevices.allDevices = (snapshotDevices.allDevices ?: []).collect { Map dev ->
+        if (dev.protocol && !dev.connectionType) {
+            dev.connectionType = protoToConn[dev.protocol] ?: CONN_OTHER
+            dev.integration = LEGACY_PROTOCOL_DISPLAY[dev.protocol] ?: dev.protocol
+        }
+        return dev
+    }
+    return snapshotDevices
+}
+
 Map apiSnapshots() {
     return jsonResponse(getSnapshotsData())
 }
@@ -509,6 +600,7 @@ Map apiSnapshotView() {
     List snapshots = loadSnapshots()
     if (idx < 0 || idx >= snapshots.size()) return jsonResponse([error: "Invalid snapshot index"])
     Map snap = snapshots[idx]
+    if (snap.devices) snap.devices = migrateSnapshotDevices(snap.devices)
 
     return jsonResponse([
         timestamp: snap.timestamp,
@@ -524,9 +616,11 @@ Map apiSnapshotView() {
             activeDevices: snap.devices?.activeDevices ?: 0,
             inactiveDevices: snap.devices?.inactiveDevices ?: 0,
             disabledDevices: snap.devices?.disabledDevices ?: 0,
-            byProtocol: snap.devices?.byProtocol,
+            byConnectionType: snap.devices?.byConnectionType,
+            byIntegration: snap.devices?.byIntegration,
             allDevices: (snap.devices?.allDevices ?: []).collect { Map dev ->
-                [id: dev.id, name: dev.name, type: dev.type, protocol: dev.protocol, status: dev.status]
+                [id: dev.id, name: dev.name, type: dev.type,
+                 connectionType: dev.connectionType, integration: dev.integration, status: dev.status]
             }
         ],
         apps: [
@@ -560,6 +654,10 @@ Map apiSnapshotDiff() {
     }
     Map older = snapshots[olderIdx + (newerIsNow ? 1 : 0)]
 
+    // Migrate old-format snapshots
+    if (older.devices) older.devices = migrateSnapshotDevices(older.devices)
+    if (newer.devices) newer.devices = migrateSnapshotDevices(newer.devices)
+
     // Ensure chronological order
     if ((older.timestampMs ?: 0) > (newer.timestampMs ?: 0)) {
         Map temp = older; older = newer; newer = temp
@@ -572,29 +670,38 @@ Map apiSnapshotDiff() {
     Set newerIds = newerDevices.collect { it.id }.toSet()
 
     List added = newerDevices.findAll { !olderIds.contains(it.id) }.collect {
-        [id: it.id, name: it.name, protocol: PROTOCOL_DISPLAY[it.protocol] ?: it.protocol]
+        [id: it.id, name: it.name, connectionType: CONN_DISPLAY[it.connectionType] ?: it.connectionType, integration: it.integration]
     }
     List removed = olderDevices.findAll { !newerIds.contains(it.id) }.collect {
-        [id: it.id, name: it.name, protocol: PROTOCOL_DISPLAY[it.protocol] ?: it.protocol]
+        [id: it.id, name: it.name, connectionType: CONN_DISPLAY[it.connectionType] ?: it.connectionType, integration: it.integration]
     }
     Map olderById = olderDevices.collectEntries { [(it.id): it] }
     List changed = newerDevices.findAll { olderIds.contains(it.id) }.findAll { Map dev ->
         Map old = olderById[dev.id]
-        old && (old.status != dev.status || old.protocol != dev.protocol)
+        old && (old.status != dev.status || old.connectionType != dev.connectionType || old.integration != dev.integration)
     }.collect { Map dev ->
         Map old = olderById[dev.id]
         Map change = [id: dev.id, name: dev.name, changes: []]
         if (old.status != dev.status) change.changes << [field: "status", from: old.status, to: dev.status]
-        if (old.protocol != dev.protocol) change.changes << [field: "protocol", from: PROTOCOL_DISPLAY[old.protocol] ?: old.protocol, to: PROTOCOL_DISPLAY[dev.protocol] ?: dev.protocol]
+        if (old.connectionType != dev.connectionType) change.changes << [field: "connectionType", from: CONN_DISPLAY[old.connectionType] ?: old.connectionType, to: CONN_DISPLAY[dev.connectionType] ?: dev.connectionType]
+        if (old.integration != dev.integration) change.changes << [field: "integration", from: old.integration, to: dev.integration]
         return change
     }
 
-    // Protocol changes
-    Map olderProto = older.devices?.byProtocol ?: [:]
-    Map newerProto = newer.devices?.byProtocol ?: [:]
-    Set allProtoKeys = (olderProto.keySet() + newerProto.keySet())
-    List protocolChanges = allProtoKeys.findAll { (olderProto[it] ?: 0) != (newerProto[it] ?: 0) }.collect { String key ->
-        [protocol: PROTOCOL_DISPLAY[key] ?: key, from: olderProto[key] ?: 0, to: newerProto[key] ?: 0]
+    // Connection type distribution changes
+    Map olderConn = older.devices?.byConnectionType ?: [:]
+    Map newerConn = newer.devices?.byConnectionType ?: [:]
+    Set allConnKeys = (olderConn.keySet() + newerConn.keySet())
+    List connectionTypeChanges = allConnKeys.findAll { (olderConn[it] ?: 0) != (newerConn[it] ?: 0) }.collect { String key ->
+        [connectionType: CONN_DISPLAY[key] ?: key, from: olderConn[key] ?: 0, to: newerConn[key] ?: 0]
+    }
+
+    // Integration distribution changes
+    Map olderInteg = older.devices?.byIntegration ?: [:]
+    Map newerInteg = newer.devices?.byIntegration ?: [:]
+    Set allIntegKeys = (olderInteg.keySet() + newerInteg.keySet())
+    List integrationChanges = allIntegKeys.findAll { (olderInteg[it] ?: 0) != (newerInteg[it] ?: 0) }.collect { String key ->
+        [integration: key, from: olderInteg[key] ?: 0, to: newerInteg[key] ?: 0]
     }
 
     // Memory delta
@@ -612,7 +719,8 @@ Map apiSnapshotDiff() {
             newerTotal: newer.devices?.totalDevices ?: 0,
             added: added, removed: removed, changed: changed
         ],
-        protocolChanges: protocolChanges,
+        connectionTypeChanges: connectionTypeChanges,
+        integrationChanges: integrationChanges,
         appChanges: [
             olderTotal: older.apps?.totalApps ?: 0,
             newerTotal: newer.apps?.totalApps ?: 0
@@ -730,8 +838,8 @@ Map apiForumExport() {
     // Radio message counts with rates
     List zwaveMsgCounts = extractZwaveMessageCounts(zwaveRaw)
     List zigbeeMsgCounts = extractZigbeeMessageCounts(zigbeeRaw)
-    List allRadioDevices = (zwaveMsgCounts.collect { [name: it.name, deviceId: it.deviceId, msgCount: it.msgCount, protocol: "Z-Wave"] } +
-                            zigbeeMsgCounts.collect { [name: it.name, deviceId: it.id, msgCount: it.msgCount, protocol: "Zigbee"] })
+    List allRadioDevices = (zwaveMsgCounts.collect { [name: it.name, deviceId: it.deviceId, msgCount: it.msgCount, integration: "Z-Wave"] } +
+                            zigbeeMsgCounts.collect { [name: it.name, deviceId: it.id, msgCount: it.msgCount, integration: "Zigbee"] })
 
     StringBuilder md = new StringBuilder()
 
@@ -771,9 +879,16 @@ Map apiForumExport() {
     md << "| | |\n|---|---|\n"
     md << "| Total | ${deviceStats.totalDevices} |\n"
     if (deviceStats.disabledDevices) md << "| Disabled | ${deviceStats.disabledDevices} |\n"
-    Map byProto = deviceStats.byProtocol ?: [:]
-    byProto.each { String proto, int count ->
-        if (count > 0) md << "| ${PROTOCOL_DISPLAY[proto] ?: proto} | ${count} |\n"
+    Map byConn = deviceStats.byConnectionType ?: [:]
+    byConn.each { String conn, int count ->
+        if (count > 0) md << "| ${CONN_DISPLAY[conn] ?: conn} | ${count} |\n"
+    }
+    Map byInteg = deviceStats.byIntegration ?: [:]
+    if (byInteg) {
+        md << "\n**By Integration:**\n\n| Integration | Count |\n|---|---|\n"
+        byInteg.sort { a, b -> b.value <=> a.value }.each { String integ, int count ->
+            if (count > 0) md << "| ${integ} | ${count} |\n"
+        }
     }
     List lowBattery = (deviceStats.lowBatteryDevices ?: [])
     if (lowBattery) {
@@ -921,10 +1036,10 @@ Map apiForumExport() {
     if (allRadioDevices && uptimeMin > 0) {
         List topTalkers = allRadioDevices.sort { -it.msgCount }.take(5)
         md << "\n**Top Talkers:**\n"
-        md << "| Device | Protocol | Msgs/min | Total Msgs |\n|---|---|---:|---:|\n"
+        md << "| Device | Integration | Msgs/min | Total Msgs |\n|---|---|---:|---:|\n"
         topTalkers.each { Map t ->
             String rate = String.format('%.1f', t.msgCount / uptimeMin)
-            md << "| ${t.name} | ${t.protocol} | ${rate} | ${t.msgCount} |\n"
+            md << "| ${t.name} | ${t.integration} | ${rate} | ${t.msgCount} |\n"
         }
         // Spammy alerts (>= 6/min)
         List spammy = allRadioDevices.findAll { it.msgCount / uptimeMin >= 6.0 }
@@ -955,7 +1070,8 @@ Map getDashboardData() {
         devices: [
             total: deviceStats.totalDevices, active: deviceStats.activeDevices,
             inactive: deviceStats.inactiveDevices, disabled: deviceStats.disabledDevices,
-            byProtocol: deviceStats.byProtocol, idsByProtocol: deviceStats.idsByProtocol,
+            byConnectionType: deviceStats.byConnectionType, idsByConnectionType: deviceStats.idsByConnectionType,
+            byIntegration: deviceStats.byIntegration, idsByIntegration: deviceStats.idsByIntegration,
             idsByStatus: deviceStats.idsByStatus
         ],
         apps: [total: appStats.totalApps, builtIn: appStats.builtInApps, user: appStats.userApps],
@@ -967,8 +1083,10 @@ Map getDashboardData() {
 Map getDevicesData() {
     Map deviceStats = analyzeDevices()
     List deviceRows = (deviceStats.allDevices ?: []).collect { Map dev ->
-        [id: dev.id, name: dev.name, type: dev.type, protocol: dev.protocol,
-         protocolDisplay: PROTOCOL_DISPLAY[dev.protocol] ?: (dev.protocol ?: "").toString().capitalize(),
+        [id: dev.id, name: dev.name, type: dev.type,
+         connectionType: dev.connectionType,
+         connectionTypeDisplay: CONN_DISPLAY[dev.connectionType] ?: dev.connectionType,
+         integration: dev.integration,
          room: dev.room, status: dev.status ?: "", lastActivity: dev.lastActivity ?: "Never",
          battery: dev.battery, parentAppId: dev.parentAppId, parentAppName: dev.parentAppName,
          parentDeviceId: dev.parentDeviceId, parentDeviceName: dev.parentDeviceName,
@@ -984,7 +1102,9 @@ Map getDevicesData() {
                   linkedDevices: deviceStats.linkedDevices, batteryDevices: deviceStats.batteryDevices,
                   parentIds: deviceStats.parentIds, childIds: deviceStats.parentIds + deviceStats.childIds,
                   linkedIds: deviceStats.linkedIds, batteryIds: deviceStats.batteryIds],
-        byProtocol: deviceStats.byProtocol, idsByProtocol: deviceStats.idsByProtocol,
+        byConnectionType: deviceStats.byConnectionType, idsByConnectionType: deviceStats.idsByConnectionType,
+        byIntegration: deviceStats.byIntegration, idsByIntegration: deviceStats.idsByIntegration,
+        integrationSources: deviceStats.integrationSources,
         byType: deviceStats.byType, idsByType: deviceStats.idsByType, idsByStatus: deviceStats.idsByStatus,
         deviceRows: deviceRows, lowBatteryDevices: lowBattery,
         inactivityDays: settings.inactivityDays ?: 7
@@ -1098,8 +1218,8 @@ Map getPerformanceData() {
     Map radioStats = [zwave: zwaveMsgCounts, zigbee: zigbeeMsgCounts]
 
     // Top talkers: top 3 devices by message count across both radios
-    List allRadioDevices = (zwaveMsgCounts.collect { [name: it.name, deviceId: it.deviceId, msgCount: it.msgCount, protocol: "Z-Wave"] } +
-                            zigbeeMsgCounts.collect { [name: it.name, deviceId: it.id, msgCount: it.msgCount, protocol: "Zigbee"] })
+    List allRadioDevices = (zwaveMsgCounts.collect { [name: it.name, deviceId: it.deviceId, msgCount: it.msgCount, integration: "Z-Wave"] } +
+                            zigbeeMsgCounts.collect { [name: it.name, deviceId: it.id, msgCount: it.msgCount, integration: "Zigbee"] })
     List topTalkers = allRadioDevices.sort { -it.msgCount }.take(3)
 
     if (stats) {
@@ -1539,8 +1659,16 @@ Map analyzeDevices(boolean deep = true) {
     Map stats = getEmptyDeviceStats()
 
     long inactivityThresholdMs = now() - ((settings.inactivityDays ?: 7) * ONE_DAY_MS)
-    Map radioProtocols = buildRadioProtocolMap()
-    Map appLookup = deep ? buildAppLookupMap() : [:]
+    Map appLookup = buildAppLookupMap()
+    Set communityDrivers = buildCommunityDriverSet()
+    // Set of community app type names (app.name where app.user == true) — used as fallback in enrichDevices()
+    // to determine builtin status when per-device fullJson cache is stale or missing the field.
+    Set communityAppTypeNames = appLookup.values()
+        .findAll { (it as Map)?.user == true }
+        .collect { (String)((it as Map)?.type ?: "") }
+        .findAll { it } as Set
+    // Collects devices needing deep enrichment (isNetwork + CONN_OTHER): deviceId → [appInfo, currentIntegration, currentConn, deviceId]
+    Map uncertainDevices = [:]
 
     devicesList.each { deviceEntry ->
         try {
@@ -1568,22 +1696,23 @@ Map analyzeDevices(boolean deep = true) {
                 stats.idsByStatus.inactive << device.id
             }
 
-            // Protocol detection — strictly authoritative for radio/mesh
-            String protocol = PROTOCOL_OTHER
-            String nativeProtocol = safeToString(device.protocol, "").toLowerCase()
-            
-            if (nativeProtocol == "zigbee") protocol = PROTOCOL_ZIGBEE
-            else if (nativeProtocol == "zwave") protocol = PROTOCOL_ZWAVE
-            else if (nativeProtocol == "matter") protocol = PROTOCOL_MATTER
-            else if (nativeProtocol == "lan") protocol = PROTOCOL_LAN
-            else if (device.linked == true) protocol = PROTOCOL_HUBMESH
-            else if (radioProtocols.containsKey(device.id)) protocol = radioProtocols[device.id]
-            else {
-                // If it's not on a radio, only check for Virtual/Cloud/LAN/Maker
-                protocol = determineProtocolQuick(device)
+            // Two-dimension classification: connectionType + integration
+            Map classification = classifyDevice(device, appLookup, communityDrivers)
+            String connectionType = classification.connectionType
+            String integration = classification.integration
+
+            stats.byConnectionType[connectionType] = (stats.byConnectionType[connectionType] ?: 0) + 1
+            if (!stats.idsByConnectionType.containsKey(connectionType)) stats.idsByConnectionType[connectionType] = []
+            stats.idsByConnectionType[connectionType] << device.id
+
+            stats.byIntegration[integration] = (stats.byIntegration[integration] ?: 0) + 1
+            if (!stats.idsByIntegration.containsKey(integration)) stats.idsByIntegration[integration] = []
+            stats.idsByIntegration[integration] << device.id
+
+            // Track whether each integration is built-in or community (first definitive value wins)
+            if (classification.builtin != null && !stats.integrationSources.containsKey(integration)) {
+                stats.integrationSources[integration] = classification.builtin ? "builtin" : "community"
             }
-            stats.byProtocol[protocol] = (stats.byProtocol[protocol] ?: 0) + 1
-            if (stats.idsByProtocol[protocol] != null) stats.idsByProtocol[protocol] << device.id
 
             // Deep-only: parent/child, battery, type breakdown, full device list
             if (deep) {
@@ -1612,13 +1741,22 @@ Map analyzeDevices(boolean deep = true) {
 
                 Object parentAppId = extractParentAppId(device)
                 String normalizedParentAppId = normalizeAppLookupId(parentAppId)
-                String parentAppName = normalizedParentAppId ? (appLookup[normalizedParentAppId] ?: "App ${normalizedParentAppId}") : null
+                Map parentAppInfo = normalizedParentAppId ? (Map) appLookup[normalizedParentAppId] : null
+                String parentAppName = parentAppInfo?.label ?: (normalizedParentAppId ? "App ${normalizedParentAppId}" : null)
+
+                // Collect for deep-mode enrichment: isNetwork devices (parentApp not in bulk list)
+                // and CONN_OTHER devices (may have parentApp in fullJson)
+                boolean needsEnrichment = (connectionType == CONN_OTHER) ||
+                    (connectionType == CONN_LAN_DIRECT && integration == "LAN Device" && device.isNetwork == true)
+                if (needsEnrichment) {
+                    uncertainDevices[device.id.toString()] = [appInfo: parentAppInfo, currentIntegration: integration, currentConn: connectionType, deviceId: device.id]
+                }
 
                 stats.allDevices << [
                     id: device.id, name: device.name ?: "Unknown",
                     label: device.label ?: device.name ?: "Unknown",
                     type: typeName, userType: device.user ?: false, deviceTypeId: device.deviceTypeId,
-                    protocol: protocol,
+                    connectionType: connectionType, integration: integration,
                     status: device.disabled ? "Disabled" : (lastActivity && lastActivity > inactivityThresholdMs ? "Active" : "Inactive"),
                     lastActivity: lastActivity ? new Date(lastActivity).format("yyyy-MM-dd HH:mm") : "Never",
                     battery: batteryLevel,
@@ -1630,6 +1768,52 @@ Map analyzeDevices(boolean deep = true) {
             }
         } catch (Exception e) {
             logWarn "Error processing device ${deviceEntry.key}: ${e.message}"
+        }
+    }
+
+    // Deep-mode pass 2: enrich uncertain devices via device/fullJson (parentApp + controllerType)
+    if (deep && uncertainDevices) {
+        Map enrichedAppInfos = (Map) uncertainDevices.collectEntries { k, v -> [k, ((Map)v).appInfo] }
+        Map enrichments = enrichDevices(enrichedAppInfos, communityAppTypeNames)
+
+        enrichments.each { String idStr, Map newClass ->
+            Map uncertain = (Map) uncertainDevices[idStr]
+            if (!uncertain) return
+
+            Object deviceId = uncertain.deviceId
+            String oldConn = (String) uncertain.currentConn
+            String oldIntegration = (String) uncertain.currentIntegration
+            String newConn = (String) newClass.connectionType
+            String newInteg = (String) newClass.integration
+
+            if (newConn == oldConn && newInteg == oldIntegration) return  // no change
+
+            // Update connection type stats (rebuild lists to avoid Integer/index remove ambiguity)
+            stats.idsByConnectionType[oldConn] = ((List) stats.idsByConnectionType[oldConn]).findAll { it?.toString() != idStr }
+            stats.byConnectionType[oldConn] = Math.max(0, ((stats.byConnectionType[oldConn] ?: 0) as int) - 1)
+            if (!stats.idsByConnectionType.containsKey(newConn)) stats.idsByConnectionType[newConn] = []
+            ((List) stats.idsByConnectionType[newConn]) << deviceId
+            stats.byConnectionType[newConn] = ((stats.byConnectionType[newConn] ?: 0) as int) + 1
+
+            // Update integration stats
+            stats.idsByIntegration[oldIntegration] = ((List) stats.idsByIntegration[oldIntegration]).findAll { it?.toString() != idStr }
+            stats.byIntegration[oldIntegration] = Math.max(0, ((stats.byIntegration[oldIntegration] ?: 0) as int) - 1)
+            if (!stats.idsByIntegration.containsKey(newInteg)) stats.idsByIntegration[newInteg] = []
+            ((List) stats.idsByIntegration[newInteg]) << deviceId
+            stats.byIntegration[newInteg] = ((stats.byIntegration[newInteg] ?: 0) as int) + 1
+
+            // Update allDevices record in place
+            Map deviceRecord = (Map) stats.allDevices.find { ((Map)it).id?.toString() == idStr }
+            if (deviceRecord) {
+                deviceRecord.connectionType = newConn
+                deviceRecord.integration = newInteg
+            }
+
+            // Update integrationSources for the new integration name
+            Object newBuiltin = newClass.builtin
+            if (newBuiltin != null && !stats.integrationSources.containsKey(newInteg)) {
+                stats.integrationSources[newInteg] = (newBuiltin == true) ? "builtin" : "community"
+            }
         }
     }
 
@@ -1905,15 +2089,15 @@ Map buildRadioProtocolMap() {
     try {
         Map zigbeeData = (Map) hubRequest(ZIGBEE_DETAILS_PATH, "Zigbee details", "json", 20)
         if (zigbeeData && !zigbeeData.error && zigbeeData.devices) {
-            zigbeeData.devices.each { Map d -> if (d.id) protocols[d.id] = PROTOCOL_ZIGBEE }
+            zigbeeData.devices.each { Map d -> if (d.id) protocols[d.id] = "zigbee" }
         }
         Map zwaveData = (Map) hubRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", "json", 20)
         if (zwaveData && !zwaveData.error && zwaveData.nodes) {
-            zwaveData.nodes.each { Map n -> if (n.deviceId) protocols[n.deviceId] = PROTOCOL_ZWAVE }
+            zwaveData.nodes.each { Map n -> if (n.deviceId) protocols[n.deviceId] = "zwave" }
         }
         Map matterData = (Map) hubRequest(MATTER_DETAILS_PATH, "Matter details", "json", 15)
         if (matterData && !matterData.error && matterData.devices) {
-            matterData.devices.each { Map d -> if (d.id) protocols[d.id] = PROTOCOL_MATTER }
+            matterData.devices.each { Map d -> if (d.id) protocols[d.id] = "matter" }
         }
     } catch (Exception e) {
         logDebug "Error building radio protocol map: ${e.message}"
@@ -1931,10 +2115,22 @@ Map buildAppLookupMap() {
     visitAppEntries(response.apps as List) { Map appEntry, Map app, boolean isChildLevel, List parentHierarchyList ->
         String appId = normalizeAppLookupId(appEntry?.key ?: app?.id)
         if (appId) {
-            appLookup[appId] = app?.label ?: app?.name ?: "App ${appId}"
+            appLookup[appId] = [
+                label: app?.label ?: app?.name ?: "App ${appId}",
+                type:  app?.name ?: "",
+                user:  app?.user ?: false
+            ]
         }
     }
     return appLookup
+}
+
+// Fetches community-installed device types and returns a Set of their names.
+// Any device whose type field is NOT in this set uses a built-in Hubitat driver.
+Set buildCommunityDriverSet() {
+    List types = (List) hubRequest(DEVICE_TYPES_PATH, "device types", "json", 15)
+    if (!types) return [] as Set
+    return types.collect { it?.name?.toString() ?: "" }.findAll { it } as Set
 }
 
 String normalizeAppLookupId(Object value) {
@@ -1963,28 +2159,158 @@ Object extractParentAppId(Map device) {
     return null
 }
 
-String determineProtocolQuick(Map device) {
-    String typeName = safeToString(device.type, "").toLowerCase()
-    String label = safeToString(device.label ?: device.name, "").toLowerCase()
-    String combined = "${typeName} ${label}"
+Map lookupIntegration(String text) {
+    if (!text) return null
+    String lower = text.toLowerCase()
+    for (Map.Entry entry : INTEGRATION_TABLE.entrySet()) {
+        if (lower.contains((String) entry.key)) return (Map) entry.value
+    }
+    return null
+}
 
-    // Phase 1: Clear Platform/Virtual/LAN markers (High confidence)
-    if (combined.contains("virtual")) return PROTOCOL_VIRTUAL
-    if (combined.contains("maker api") || combined.contains("webhook")) return PROTOCOL_MAKER
-    if (combined.contains("cloud") || combined.contains("google") ||
-        combined.contains("alexa") || combined.contains("homekit")) return PROTOCOL_CLOUD
-    
-    // Detailed LAN/IP Keyword Check
-    if (combined.contains("lan") || combined.contains("http") || combined.contains("wifi") ||
-        combined.contains("ip") || combined.contains("sonos") || combined.contains("chromecast") ||
-        combined.contains("bond") || combined.contains("lutron") || combined.contains("ecobee") ||
-        combined.contains("kasa") || combined.contains("lifx") || combined.contains("wiz") ||
-        combined.contains("yeelight") || combined.contains("rachio") || combined.contains("govee") ||
-        combined.contains("shelly") || combined.contains("tplink") || combined.contains("wled")) {
-        return PROTOCOL_LAN
+// Returns [connectionType, integration, builtin] where builtin=true means Hubitat-bundled,
+// false means community. communityDrivers is a Set<String> of user-installed driver names
+// from /hub2/userDeviceTypes — any device type NOT in the set uses a built-in driver.
+Map classifyDevice(Map device, Map appLookup, Set communityDrivers) {
+    // 1. Boolean flags from bulk devicesList — authoritative, require no extra API calls.
+    //    The protocol field is unreliable (null on many hubs); these flags are the source of truth.
+    if (device.isZigbee == true)    return [connectionType: CONN_PAIRED,   integration: "Zigbee",    builtin: true]
+    if (device.isZwave == true)     return [connectionType: CONN_PAIRED,   integration: "Z-Wave",    builtin: true]
+    if (device.isMatter == true)    return [connectionType: CONN_PAIRED,   integration: "Matter",    builtin: true]
+    if (device.isBluetooth == true) return [connectionType: CONN_PAIRED,   integration: "Bluetooth", builtin: true]
+    if (device.isLinked == true || device.linked == true) {
+        return [connectionType: CONN_HUBMESH, integration: "Hub Mesh", builtin: true]
+    }
+    if (device.isVirtual == true)   return [connectionType: CONN_VIRTUAL,  integration: "Virtual",   builtin: true]
+
+    // 2. Parent app lookup (parentAppId present in bulk list for some devices)
+    Object parentAppIdRaw = extractParentAppId(device)
+    String normalizedParentAppId = normalizeAppLookupId(parentAppIdRaw)
+    if (normalizedParentAppId) {
+        Map appInfo = (Map) appLookup[normalizedParentAppId]
+        if (appInfo) {
+            String appType  = (appInfo.type  ?: "").toString().toLowerCase()
+            String appLabel = (appInfo.label ?: "").toString().toLowerCase()
+            Map match = lookupIntegration(appType) ?: lookupIntegration(appLabel)
+            if (match) return [connectionType: match.conn, integration: match.name, builtin: true]
+            String intName = (appInfo.type ?: appInfo.label) ?: "Unknown"
+            boolean isBuiltin = !(appInfo.user == true)
+            return [connectionType: CONN_OTHER, integration: intName, builtin: isBuiltin]
+        }
     }
 
-    return PROTOCOL_OTHER
+    boolean driverIsBuiltin = !communityDrivers.contains(safeToString(device.type, ""))
+
+    // 3. Network (LAN) flag — parentApp not available in bulk list; will be enriched via fullJson in deep mode
+    if (device.isNetwork == true) return [connectionType: CONN_LAN_DIRECT, integration: "LAN Device", builtin: driverIsBuiltin]
+
+    // 4. Final fallback — no reliable signal for connection type
+    return [connectionType: CONN_OTHER, integration: "Other", builtin: driverIsBuiltin]
+}
+
+// Enriches device classification using device/fullJson for devices bulk data couldn't resolve.
+// uncertainDevices: Map<String deviceId, Map appInfo> where appInfo may be null.
+// Primary signal: parentApp from fullJson (has appType.name which matches INTEGRATION_TABLE).
+// Fallback signal: controllerType from fullJson top level (actual values: ZGB, MAT, LNK, etc.).
+// Results cached in state.controllerTypeCache — keyed by device ID string, value is compact
+// JSON of [parentAppTypeName, controllerType] since parentApp is also stable for a device's lifetime.
+// Returns Map<String deviceId, Map [connectionType, integration]> for devices that improve.
+Map enrichDevices(Map uncertainDevices, Set communityAppTypeNames = [] as Set) {
+    if (!uncertainDevices) return [:]
+
+    Map cache = (state.controllerTypeCache ?: [:]) as Map
+    Map cacheUpdates = [:]
+    Map result = [:]
+
+    uncertainDevices.each { String idStr, Map appInfo ->
+        String cachedJson = (String) cache[idStr]
+        Map cachedEntry = null
+        if (cachedJson?.startsWith("{")) {
+            try { cachedEntry = (Map) new groovy.json.JsonSlurper().parseText(cachedJson) }
+            catch (Exception ignored) { /* stale/invalid format — re-fetch */ }
+        }
+
+        String parentAppTypeName = cachedEntry?.parentAppTypeName
+        String ct = cachedEntry?.controllerType
+        String connHint = cachedEntry?.connHint  // community developer override via updateDataValue("hubdiag:conn", ...)
+        Boolean isBuiltin = null  // set from parentApp.appType.user when fetched live
+
+        if (!cachedEntry) {
+            try {
+                Map full = (Map) hubRequest("${DEVICE_FULL_JSON_PATH}${idStr}", "device ${idStr} full", "json", 10)
+                Map parentApp = full ? (Map) full.parentApp : null
+                if (parentApp) {
+                    Map appTypeObj = parentApp.appType instanceof Map ? (Map) parentApp.appType : [:]
+                    parentAppTypeName = safeToString(appTypeObj.name ?: parentApp.name, "")
+                    isBuiltin = !(appTypeObj.user == true)
+                }
+                ct = safeToString(full?.controllerType, "").toUpperCase()
+                // Check for community driver classification hint: updateDataValue("hubdiag:conn", "cloud|lan_direct|lan_bridge|paired")
+                try {
+                    String dataJson = safeToString(full?.device?.dataJson, "")
+                    if (dataJson?.startsWith("{")) {
+                        Map dataValues = (Map) new groovy.json.JsonSlurper().parseText(dataJson)
+                        String hint = safeToString(dataValues?.get("hubdiag:conn"), "")
+                        if (hint && CONN_DISPLAY.containsKey(hint)) connHint = hint
+                    }
+                } catch (Exception ignored) {}
+                cacheUpdates[idStr] = groovy.json.JsonOutput.toJson([
+                    parentAppTypeName: parentAppTypeName ?: "",
+                    controllerType: ct ?: "",
+                    connHint: connHint ?: "",
+                    builtin: isBuiltin == null ? "" : (isBuiltin ? "true" : "false")
+                ])
+            } catch (Exception e) {
+                logDebug "enrichDevices: could not fetch device ${idStr}: ${e.message}"
+                return
+            }
+        } else {
+            String builtinStr = (String) cachedEntry.builtin
+            if (builtinStr == "true") isBuiltin = true
+            else if (builtinStr == "false") isBuiltin = false
+        }
+
+        // If builtin still unknown (stale cache or missing appType.user), resolve from appsList data
+        if (isBuiltin == null && parentAppTypeName) {
+            isBuiltin = !communityAppTypeNames.contains(parentAppTypeName)
+        }
+
+        // Community driver hint takes top priority
+        if (connHint) {
+            String intName = appInfo ? ((String)(appInfo.type ?: appInfo.label) ?: "Community Device") : "Community Device"
+            result[idStr] = [connectionType: connHint, integration: intName, builtin: false]
+            return
+        }
+
+        // Primary: match parent app type name against integration table
+        if (parentAppTypeName) {
+            Map match = lookupIntegration(parentAppTypeName)
+            if (match) {
+                result[idStr] = [connectionType: match.conn, integration: match.name, builtin: true]
+                return
+            }
+            // Known parent app but not in table — use app type name, preserve user/builtin from appType.user
+            result[idStr] = [connectionType: CONN_OTHER, integration: parentAppTypeName, builtin: isBuiltin]
+            return
+        }
+
+        // Fallback: controllerType
+        if (ct) {
+            String connType = (String) CONTROLLER_TYPE_CONN[ct]
+            if (connType && connType != CONN_OTHER) {
+                String intName = appInfo ? ((String)(appInfo.type ?: appInfo.label) ?: ct) : ct.toLowerCase().capitalize()
+                result[idStr] = [connectionType: connType, integration: intName, builtin: null]
+            }
+        }
+    }
+
+    if (cacheUpdates) {
+        Map updatedCache = new LinkedHashMap(cache)
+        updatedCache.putAll(cacheUpdates)
+        state.controllerTypeCache = updatedCache
+    }
+
+    return result
 }
 
 // ===== PERFORMANCE CHECKPOINT SYSTEM =====
@@ -2099,7 +2425,8 @@ void createSnapshot() {
     // Strip allDevices down to compact form for storage
     if (snapshot.devices.allDevices) {
         snapshot.devices.allDevices = snapshot.devices.allDevices.collect { Map dev ->
-            [id: dev.id, name: dev.name, type: dev.type, protocol: dev.protocol, status: dev.status]
+            [id: dev.id, name: dev.name, type: dev.type,
+             connectionType: dev.connectionType, integration: dev.integration, status: dev.status]
         }
     }
 
@@ -2234,14 +2561,15 @@ Map getEmptyDeviceStats() {
         lowBatteryDevices: [], allDevices: [],
         byType: [:],
         idsByType: [:],
-        byProtocol: [(PROTOCOL_ZIGBEE): 0, (PROTOCOL_ZWAVE): 0, (PROTOCOL_MATTER): 0,
-                     (PROTOCOL_LAN): 0, (PROTOCOL_VIRTUAL): 0, (PROTOCOL_MAKER): 0,
-                     (PROTOCOL_CLOUD): 0, (PROTOCOL_HUBMESH): 0, (PROTOCOL_OTHER): 0],
+        byConnectionType: [(CONN_PAIRED): 0, (CONN_LAN_DIRECT): 0, (CONN_LAN_BRIDGE): 0,
+                           (CONN_CLOUD): 0, (CONN_VIRTUAL): 0, (CONN_HUBMESH): 0, (CONN_OTHER): 0],
+        idsByConnectionType: [(CONN_PAIRED): [], (CONN_LAN_DIRECT): [], (CONN_LAN_BRIDGE): [],
+                              (CONN_CLOUD): [], (CONN_VIRTUAL): [], (CONN_HUBMESH): [], (CONN_OTHER): []],
+        byIntegration: [:],
+        idsByIntegration: [:],
+        integrationSources: [:],
         byStatus: [active: 0, inactive: 0, disabled: 0],
         idsByStatus: [active: [], inactive: [], disabled: []],
-        idsByProtocol: [(PROTOCOL_ZIGBEE): [], (PROTOCOL_ZWAVE): [], (PROTOCOL_MATTER): [],
-                        (PROTOCOL_LAN): [], (PROTOCOL_VIRTUAL): [], (PROTOCOL_MAKER): [],
-                        (PROTOCOL_CLOUD): [], (PROTOCOL_HUBMESH): [], (PROTOCOL_OTHER): []],
         parentIds: [],
         childIds: [],
         linkedIds: [],
