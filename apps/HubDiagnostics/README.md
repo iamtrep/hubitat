@@ -76,7 +76,7 @@ The Dashboard tab shows the current App Version and UI Version. Click **Check fo
 Use **Apps Code → Hub Diagnostics → Import** (same import URL as above). After saving, re-open the app preferences page once to re-initialize.
 
 ### Updating the UI
-The app checks for a new UI version on first load and once every 24 hours, then downloads it automatically. You can also trigger an immediate sync via **Sync UI from GitHub** on the Dashboard tab. A version-mismatch banner appears if the UI is out of date.
+The app enforces version sync: on each dashboard load it checks whether the installed UI file matches the app version. If the UI is missing or the last check is more than 24 hours old, it downloads the latest UI from GitHub — but only installs it if the downloaded file's embedded version exactly matches the installed app version. In practice this means: after updating the Groovy app code, the matching UI is installed automatically on the next dashboard load. You can also trigger an immediate sync via **Sync UI from GitHub** on the Dashboard tab.
 
 ---
 
@@ -255,7 +255,7 @@ Changes are color-coded: green for additions/improvements, red for removals/degr
 
 ## App Settings Tab
 
-All settings are also accessible from the Hubitat admin UI under **Apps → Hub Diagnostics → Preferences**.
+Most settings are accessible from the Hubitat admin UI under **Apps → Hub Diagnostics → Preferences**. Two settings are available only through the dashboard's App Settings tab and are not shown in the Hubitat admin UI: **Obfuscate labels in forum export** (Export section) and **Clear Enrichment Cache** (Maintenance section).
 
 ### Config Snapshot Scheduling
 - Enable automatic snapshots: on/off
@@ -271,7 +271,7 @@ All settings are also accessible from the Hubitat admin UI under **Apps → Hub 
 | Setting | Default | Range | Effect |
 |---|---|---|---|
 | Inactivity threshold (days) | 7 | 1–90 | Devices with no activity beyond this period are marked Inactive |
-| Low battery alert (%) | 20 | 1–100 | Devices at or below this level appear in the Low Battery Alerts card |
+| Low battery alert (%) | 20 | 1–50 | Devices at or below this level appear in the Low Battery Alerts card |
 | Chatty device threshold (msgs/min) | 10 | 1–1000 | Devices exceeding this rate trigger a critical alert on the Performance tab and in forum exports |
 
 ### Alert Thresholds
@@ -429,6 +429,8 @@ Base URL: `http://{hub-ip}/apps/api/{app-id}/`
 | `api/snapshots` | List of config snapshots |
 | `api/snapshot/view?index=N` | View a specific snapshot |
 | `api/snapshot/diff?older=O&newer=N` | Compare two snapshots |
+| `api/reports` | List saved HTML diagnostic reports (name, size, date) and last generated filename |
+| `api/stats` | Internal API timing metrics (median latency, call count, and recent samples per endpoint) |
 | `api/export/forum` | Generate forum export (Markdown) |
 | `api/version/check` | Check for app updates on GitHub |
 | `api/settings` | Retrieve current settings |
