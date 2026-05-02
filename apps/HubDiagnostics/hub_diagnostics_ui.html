@@ -111,7 +111,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.6.3";
+const UI_VERSION = "5.6.6";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -704,6 +704,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
     o+='<div class="card"><div class="card-h">Z-Wave Network</div><div class="card-b"><div class="ng">';
     o+=ni('Enabled',z.enabled?'Yes':'No');o+=ni('Healthy',z.healthy?'Yes':'No',z.healthy?'var(--ok)':'var(--crit)');
     o+=ni('Version',z.version||'N/A');o+=ni('Region',z.region||'N/A');o+=ni('Nodes',z.nodeCount);
+    if(z.zwaveJS!=null){const stack=z.zwaveJS?'ZWaveJS':'Z/IP Gateway';const avail=(!z.zwaveJS&&z.zwaveJSAvailable)?' <span style="color:var(--muted);font-size:12px">(ZWaveJS available)</span>':'';o+='<div class="ni"><div class="nl">Stack</div><div class="nv">'+h(stack)+avail+'</div></div>';}
     if(z.isRadioUpdateNeeded)o+='</div><div class="alert a-warn" style="margin-top:8px">\u26A0 Z-Wave radio firmware update available</div><div class="ng">';
     o+='</div>';
     // Ghost nodes
@@ -787,6 +788,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
   if(d.zwave&&d.zwave.mesh&&d.zwave.mesh.nodes&&d.zwave.mesh.nodes.length)
     tbl('zwMeshTbl',[
       {l:'Device',f:'name',r:r=>r.deviceId?dlink(r.deviceId,r.name):h(r.name)},
+      {l:'Node',f:'nodeId',t:'n'},
       {l:'Security',f:'security',r:r=>{const s=r.security||'None';const flag=r.s0Flag?'<span title="S0 on non-security device" style="color:var(--warn)"> \u26A0</span>':'';return h(s)+flag}},
       {l:'RTT',f:'rtt',t:'n',r:r=>r.rtt!=null?r.rtt+'ms':'\u2014'},
       {l:'RSSI',f:'rssi',t:'n',r:r=>r.rssi!=null?'<span style="color:'+(r.rssi<-80?'var(--crit)':r.rssi<-60?'var(--warn)':'var(--ok)')+'">'+r.rssi+' dBm</span>':'N/A'},
