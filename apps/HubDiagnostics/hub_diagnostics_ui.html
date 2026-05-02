@@ -42,6 +42,7 @@ tr:nth-child(even){background:var(--alt)} tr:hover{background:var(--hover)}
 
 .badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
 .b-ok{background:#e8f5e9;color:var(--ok)} .b-warn{background:#fff3e0;color:var(--warn)} .b-crit{background:#ffebee;color:var(--crit)}
+.b-builtin{background:#e8eaf6;color:#3949ab} .b-community{background:#fce4ec;color:#c62828}
 
 .alert{padding:8px 12px;border-radius:6px;margin-bottom:6px;font-size:13px;display:flex;align-items:center;gap:6px}
 .a-crit{background:#ffebee;border-left:4px solid var(--crit);color:var(--crit)}
@@ -102,13 +103,13 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "4.6.0";
+const UI_VERSION = "5.0.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
 const MOCK_DATA = {
-  'dashboard': {"hub":{"name":"MyHubitat","firmware":"2.4.4.155","hardware":"C-8 Pro","ip":"192.168.0.10"},"devices":{"total":124,"active":75,"inactive":49,"disabled":3,"byProtocol":{"zigbee":8,"zwave":0,"matter":2,"lan":25,"virtual":35,"maker":0,"cloud":1,"hubmesh":21,"other":32},"idsByProtocol":{"zigbee":[120,50,53,134,211,135,12,51],"zwave":[],"matter":[149,148],"lan":[106,110,95,96,131,92,108,113,107,93,11,101,100,111,102,114,99,94,103,109,105,104,112,97,98],"virtual":[28,26,70,47,20,63,41,40,18,19,57,16,90,201,210,46,175,117,119,118,22,212,177,205,202,203,15,204,56,55,14,58,130,128,129],"maker":[],"cloud":[139],"hubmesh":[1,2,3,4,5,6,7,8,9,62,48,59,61,60,30,29,126,127,77,31,32],"other":[49,206,137,132,133,36,10,17,13,209,199,124,136,208,180,116,153,122,37,23,24,25,179,178,198,200,152,176,43,45,151,52]},"idsByStatus":{"active":[120,106,110,1,2,3,4,5,6,7,8,9,95,96,131,206,92,108,113,107,93,11,139,10,101,100,111,102,209,199,124,136,114,208,99,94,103,109,50,62,180,53,105,104,116,153,122,59,134,61,211,23,149,198,112,12,97,98,60,41,18,19,148,90,30,29,126,46,212,127,77,31,32,14,58],"inactive":[137,132,133,36,17,13,28,26,70,37,24,25,179,178,200,152,47,20,63,176,43,40,45,51,57,16,201,210,151,175,117,119,118,22,177,205,202,203,15,204,56,55,130,128,129,52],"disabled":[49,48,135]}},"apps":{"total":125,"builtIn":89,"user":36},"resources":{"timestamp":"03-28 18:34:06","freeOSMemory":1116192,"cpuAvg5min":0.26,"totalJavaMemory":206840,"freeJavaMemory":31351,"directJavaMemory":4973},"temperature":35.8,"databaseSize":26,"alerts":[{"key":"platformUpdateAvailable","name":"Platform Update Available","severity":"warning"}],"inactivityDays":7},
-  'devices': {"summary":{"totalDevices":124,"activeDevices":75,"inactiveDevices":49,"disabledDevices":3,"parentDevices":0,"childDevices":0,"linkedDevices":21,"batteryDevices":10},"byProtocol":{"zigbee":11,"zwave":0,"matter":3,"lan":25,"virtual":35,"maker":0,"cloud":1,"hubmesh":21,"other":28},"idsByProtocol":{"zigbee":[120,136,50,53,134,211,135,12,152,51,52],"zwave":[],"matter":[149,148,151],"lan":[106,110,95,96,131,92,108,113,107,93,11,101,100,111,102,114,99,94,103,109,105,104,112,97,98],"virtual":[28,26,70,47,20,63,41,40,18,19,57,16,90,201,210,46,175,117,119,118,22,212,177,205,202,203,15,204,56,55,14,58,130,128,129],"maker":[],"cloud":[139],"hubmesh":[1,2,3,4,5,6,7,8,9,62,48,59,61,60,30,29,126,127,77,31,32],"other":[49,206,137,132,133,36,10,17,13,209,199,124,208,180,116,153,122,37,23,24,25,179,178,198,200,176,43,45]},"idsByStatus":{"active":[120,106,110,1,2,3,4,5,6,7,8,9,95,96,131,206,92,108,113,107,93,11,139,10,101,100,111,102,209,199,124,136,114,208,99,94,103,109,50,62,180,53,105,104,116,153,122,59,134,61,211,23,149,198,112,12,97,98,60,41,18,19,148,90,30,29,126,46,212,127,77,31,32,14,58],"inactive":[137,132,133,36,17,13,28,26,70,37,24,25,179,178,200,152,47,20,63,176,43,40,45,51,57,16,201,210,151,175,117,119,118,22,177,205,202,203,15,204,56,55,130,128,129,52],"disabled":[49,48,135]},"deviceRows":[],"lowBatteryDevices":[],"inactivityDays":7},
+  'dashboard': {"hub":{"name":"MyHubitat","firmware":"2.4.4.155","hardware":"C-8 Pro","ip":"192.168.0.10"},"devices":{"total":124,"active":75,"inactive":49,"disabled":3,"byConnectionType":{"paired":10,"lan_direct":15,"lan_bridge":10,"cloud":1,"virtual":35,"hubmesh":21,"other":32},"idsByConnectionType":{"paired":[120,50,53,134,211,135,12,51,149,148],"lan_direct":[106,110,95,96,131,92,108,113,107],"lan_bridge":[93,11,101,100,111,102,114,99,94,103],"cloud":[139],"virtual":[28,26,70,47,20,63,41,40,18,19,57,16,90,201,210,46,175,117,119,118,22,212,177,205,202,203,15,204,56,55,14,58,130,128,129],"hubmesh":[1,2,3,4,5,6,7,8,9,62,48,59,61,60,30,29,126,127,77,31,32],"other":[49,206,137,132,133,36,10,17,13,209,199,124,136,208,180,116,153,122,37,23,24,25,179,178,198,200,152,176,43,45,151,52]},"byIntegration":{"Zigbee":8,"Z-Wave":0,"Matter":2,"Kasa":6,"Lutron":8,"Sonos":4,"HomeKit":2,"Cloud":1,"Virtual":35,"Hub Mesh":21,"Other":32},"idsByIntegration":{"Zigbee":[120,50,53,134,211,135,12,51],"Matter":[149,148],"Kasa":[106,110,95,96,131,92],"Lutron":[93,11,101,100,111,102,114,99],"Sonos":[94,103,109,105],"HomeKit":[104,112],"Cloud":[139],"Virtual":[28,26,70,47,20,63,41,40,18,19,57,16,90,201,210,46,175,117,119,118,22,212,177,205,202,203,15,204,56,55,14,58,130,128,129],"Hub Mesh":[1,2,3,4,5,6,7,8,9,62,48,59,61,60,30,29,126,127,77,31,32],"Other":[49,206,137,132,133,36,10,17,13,209,199,124,136,208,180,116,153,122,37,23,24,25,179,178,198,200,152,176,43,45,151,52]},"idsByStatus":{"active":[120,106,110,1,2,3,4,5,6,7,8,9,95,96,131,206,92,108,113,107,93,11,139,10,101,100,111,102,209,199,124,136,114,208,99,94,103,109,50,62,180,53,105,104,116,153,122,59,134,61,211,23,149,198,112,12,97,98,60,41,18,19,148,90,30,29,126,46,212,127,77,31,32,14,58],"inactive":[137,132,133,36,17,13,28,26,70,37,24,25,179,178,200,152,47,20,63,176,43,40,45,51,57,16,201,210,151,175,117,119,118,22,177,205,202,203,15,204,56,55,130,128,129,52],"disabled":[49,48,135]}},"apps":{"total":125,"builtIn":89,"user":36},"resources":{"timestamp":"03-28 18:34:06","freeOSMemory":1116192,"cpuAvg5min":0.26,"totalJavaMemory":206840,"freeJavaMemory":31351,"directJavaMemory":4973},"temperature":35.8,"databaseSize":26,"alerts":[{"key":"platformUpdateAvailable","name":"Platform Update Available","severity":"warning"}],"inactivityDays":7},
+  'devices': {"summary":{"totalDevices":124,"activeDevices":75,"inactiveDevices":49,"disabledDevices":3,"parentDevices":0,"childDevices":0,"linkedDevices":21,"batteryDevices":10},"byConnectionType":{"paired":10,"lan_direct":15,"lan_bridge":10,"cloud":1,"virtual":35,"hubmesh":21,"other":32},"idsByConnectionType":{"paired":[120,50,53,134,211,135,12,51,149,148],"lan_direct":[106,110,95,96,131,92,108,113,107],"lan_bridge":[93,11,101,100,111,102,114,99,94,103],"cloud":[139],"virtual":[28,26,70,47,20,63,41,40,18,19,57,16,90,201,210,46,175,117,119,118,22,212,177,205,202,203,15,204,56,55,14,58,130,128,129],"hubmesh":[1,2,3,4,5,6,7,8,9,62,48,59,61,60,30,29,126,127,77,31,32],"other":[49,206,137,132,133,36,10,17,13,209,199,124,136,208,180,116,153,122,37,23,24,25,179,178,198,200,152,176,43,45,151,52]},"byIntegration":{"Zigbee":8,"Z-Wave":0,"Matter":2,"Kasa":6,"Lutron":8,"Sonos":4,"HomeKit":2,"Cloud":1,"Virtual":35,"Hub Mesh":21,"Other":32},"idsByIntegration":{"Zigbee":[120,50,53,134,211,135,12,51],"Matter":[149,148],"Kasa":[106,110,95,96,131,92],"Lutron":[93,11,101,100,111,102,114,99],"Sonos":[94,103,109,105],"HomeKit":[104,112],"Cloud":[139],"Virtual":[28,26,70,47,20,63,41,40,18,19,57,16,90,201,210,46,175,117,119,118,22,212,177,205,202,203,15,204,56,55,14,58,130,128,129],"Hub Mesh":[1,2,3,4,5,6,7,8,9,62,48,59,61,60,30,29,126,127,77,31,32],"Other":[49,206,137,132,133,36,10,17,13,209,199,124,136,208,180,116,153,122,37,23,24,25,179,178,198,200,152,176,43,45,151,52]},"idsByStatus":{"active":[120,106,110,1,2,3,4,5,6,7,8,9,95,96,131,206,92,108,113,107,93,11,139,10,101,100,111,102,209,199,124,136,114,208,99,94,103,109,50,62,180,53,105,104,116,153,122,59,134,61,211,23,149,198,112,12,97,98,60,41,18,19,148,90,30,29,126,46,212,127,77,31,32,14,58],"inactive":[137,132,133,36,17,13,28,26,70,37,24,25,179,178,200,152,47,20,63,176,43,40,45,51,57,16,201,210,151,175,117,119,118,22,177,205,202,203,15,204,56,55,130,128,129,52],"disabled":[49,48,135]},"deviceRows":[],"lowBatteryDevices":[],"inactivityDays":7},
   'apps': {"summary":{"totalApps":125,"builtInApps":89,"userApps":36,"parentApps":11,"childApps":25,"runtimeTotalApps":111},"byNamespace":{},"platformApps":[],"userApps":[],"parentChildHierarchy":[]},
   'network': {"network":{"lanAddr":"192.168.0.10","usingStaticIP":false,"staticGateway":"192.168.0.130","staticSubnetMask":"255.255.255.0","hasEthernet":true,"hasWiFi":false},"zwave":{"enabled":true,"healthy":true,"region":"USLR","nodeCount":0,"mesh":{},"ghostNodes":[],"problemNodes":[]},"zigbee":{"enabled":true,"healthy":true,"channel":21,"deviceCount":8,"responsiveCount":8,"totalCount":8,"nonResponsive":[]},"matter":{"enabled":true,"installed":true,"devices":[]},"hubMesh":{"enabled":null,"sharedDevices":5,"linkedDevices":0,"peers":[]}},
   'health': {"hub":{"name":"MyHubitat","firmware":"2.4.4.155","hardware":"C-8 Pro","ip":"192.168.0.10"},"resources":{"freeOSMemory":1116192,"cpuAvg5min":0.26},"alerts":[]},
@@ -195,6 +196,7 @@ function dlink(id,n){return'<a href="/device/edit/'+id+'" target="_blank">'+h(n)
 function alink(id,n){return'<a href="/installedapp/configure/'+id+'" target="_blank">'+h(n)+'</a>'}
 function dlistlink(count,ids){if(ids===true)return'<a href="/device/list" target="_blank">'+(count??0)+'</a>';if(!ids||!ids.length)return String(count??0);return'<a href="/device/list?ids='+ids.join(',')+'" target="_blank">'+count+'</a>'}
 function alistlink(count){return'<a href="/installedapp/list" target="_blank">'+(count??0)+'</a>'}
+const CD={paired:'Paired',lan_direct:'LAN (Direct)',lan_bridge:'LAN (Bridge)',cloud:'Cloud',virtual:'Virtual',hubmesh:'Hub Mesh',other:'Other'};
 const PD={zigbee:'Zigbee',zwave:'Z-Wave',matter:'Matter',lan:'LAN/IP',virtual:'Virtual',cloud:'Cloud',maker:'Maker API',hubmesh:'Hub Mesh',other:'Other'};
 function mc(l,v,c){const s=c?' style="color:'+c+'"':'';return'<div class="m"><div class="m-l">'+h(l)+'</div><div class="m-v"'+s+'>'+(v??'N/A')+'</div></div>'}
 function ni(l,v,c){const s=c?' style="color:'+c+';font-weight:600"':'';return'<div class="ni"><div class="nl">'+h(l)+'</div><div class="nv"'+s+'>'+h(String(v??'N/A'))+'</div></div>'}
@@ -355,7 +357,9 @@ function err(id,e,fn){document.getElementById(id).innerHTML='<div class="err"><d
 function renderChart(pts,cid){
   if(!pts||pts.length<2)return;
   const el=document.getElementById(cid);if(!el)return;
-  const ppx=4,ml=55,mr=50,mt=30,mb=30,ch=200;
+  const ml=55,mr=50,mt=30,mb=30,ch=200;
+  const containerW=el.offsetWidth||800;
+  const ppx=Math.max(4,Math.floor((containerW-ml-mr)/(pts.length||1)));
   const w=ml+pts.length*ppx+mr,svgH=mt+ch+mb;
   let maxOS=0,maxCpu=0;
   pts.forEach(p=>{if(p.freeOS>maxOS)maxOS=p.freeOS;if(p.cpuLoad>maxCpu)maxCpu=p.cpuLoad});
@@ -425,7 +429,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   document.getElementById('hubInfo').textContent=d.hub.name+' | '+d.hub.hardware+' | fw '+d.hub.firmware;
   let o='';
   // Overview
-  const bp=d.devices.byProtocol||{},ip=d.devices.idsByProtocol||{},is=d.devices.idsByStatus||{};
+  const bc=d.devices.byConnectionType||{},ic=d.devices.idsByConnectionType||{},bi=d.devices.byIntegration||{},ii=d.devices.idsByIntegration||{},is=d.devices.idsByStatus||{};
   o+='<div class="card"><div class="card-h">Overview</div><div class="card-b"><div class="metrics">';
   o+=mc('Total Devices',dlistlink(d.devices.total,true));  o+=mc('Active',dlistlink(d.devices.active,is.active),'var(--ok)');
   o+=mc('Inactive',dlistlink(d.devices.inactive,(is.inactive||[]).concat(is.disabled||[])),(d.devices.inactive>0?'var(--warn)':''));
@@ -441,10 +445,14 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
     if(d.temperature!=null)o+=mc('Temperature',d.temperature.toFixed(1)+'\u00B0C',sev(d.temperature,50,77,false));
     if(d.databaseSize!=null)o+=mc('Database',d.databaseSize+' MB');
     o+='</div></div></div>'}
-  // Protocols
-  o+='<div class="card"><div class="card-h">Protocols</div><div class="card-b"><div class="pills">';
-  Object.entries(bp).forEach(([k,v])=>{if(v>0)o+='<div class="pill">'+dlistlink(v,ip[k])+' '+(PD[k]||k)+'</div>'});
+  // Connection Types + Integrations (side by side)
+  o+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
+  o+='<div class="card"><div class="card-h">Connection Types</div><div class="card-b"><div class="pills">';
+  Object.entries(bc).forEach(([k,v])=>{if(v>0)o+='<div class="pill">'+dlistlink(v,ic[k])+' '+(CD[k]||k)+'</div>'});
   o+='</div></div></div>';
+  o+='<div class="card"><div class="card-h">Integrations</div><div class="card-b"><div class="pills">';
+  Object.entries(bi).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>{if(v>0)o+='<div class="pill">'+dlistlink(v,ii[k])+' '+h(k)+'</div>'});
+  o+='</div></div></div></div>';
   // Alerts
   if(d.alerts&&d.alerts.length){o+='<div class="card"><div class="card-h">Platform Alerts</div><div class="card-b">';
     d.alerts.forEach(a=>{o+='<div class="alert a-'+(a.severity==='critical'?'crit':'warn')+'">'+(a.severity==='critical'?'\u26D4':'\u26A0')+' '+h(a.name)+'</div>'});o+='</div></div>'}
@@ -533,7 +541,8 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
 
 // ===== TAB: DEVICES =====
 async function rDevices(){const P='p-devices';loading(P);try{
-  const d=await api('devices'),s=d.summary,bp=d.byProtocol||{},ip=d.idsByProtocol||{},is=d.idsByStatus||{};
+  const d=await api('devices'),s=d.summary,bc=d.byConnectionType||{},ic=d.idsByConnectionType||{},bi=d.byIntegration||{},ii=d.idsByIntegration||{},is=d.idsByStatus||{},src=d.integrationSources||{};
+  const srcBadge=k=>{const s=src[k];return s==='builtin'?'<span class="badge b-builtin">Built-in</span>':s==='community'?'<span class="badge b-community">Community</span>':''};
   let o='';
   o+='<div class="card"><div class="card-h">Device Summary</div><div class="card-b"><div class="metrics">';
   o+=mc('Total',dlistlink(s.totalDevices,true));o+=mc('Active',dlistlink(s.activeDevices,is.active)+' ('+d.inactivityDays+'d)','var(--ok)');
@@ -541,10 +550,15 @@ async function rDevices(){const P='p-devices';loading(P);try{
   o+=mc('Disabled',dlistlink(s.disabledDevices,is.disabled),(s.disabledDevices>0?'var(--crit)':''));
   o+=mc('Parent',dlistlink(s.parentDevices,s.parentIds));o+=mc('Child',dlistlink(s.childDevices,s.childIds));
   o+=mc('Hub Mesh',dlistlink(s.linkedDevices,s.linkedIds));o+=mc('Battery',dlistlink(s.batteryDevices,s.batteryIds));
-  o+='</div></div></div>';  // Protocol distribution
-  o+='<div class="card"><div class="card-h">Protocol Distribution</div><div class="card-b"><div class="tbl-wrap"><table><thead><tr><th>Protocol</th><th>Count</th></tr></thead><tbody>';
-  Object.entries(bp).forEach(([k,v])=>{if(v>0)o+='<tr><td>'+(PD[k]||k)+'</td><td>'+dlistlink(v,ip[k])+'</td></tr>'});
+  o+='</div></div></div>';
+  // Connection type + integration distribution (side by side)
+  o+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
+  o+='<div class="card"><div class="card-h">Connection Types</div><div class="card-b"><div class="tbl-wrap"><table><thead><tr><th>Connection</th><th>Count</th></tr></thead><tbody>';
+  Object.entries(bc).forEach(([k,v])=>{if(v>0)o+='<tr><td>'+(CD[k]||k)+'</td><td>'+dlistlink(v,ic[k])+'</td></tr>'});
   o+='</tbody></table></div></div></div>';
+  o+='<div class="card"><div class="card-h">Integrations</div><div class="card-b"><div class="tbl-wrap"><table><thead><tr><th>Integration</th><th>Source</th><th>Count</th></tr></thead><tbody>';
+  Object.entries(bi).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>{if(v>0)o+='<tr><td>'+h(k)+'</td><td>'+srcBadge(k)+'</td><td>'+dlistlink(v,ii[k])+'</td></tr>'});
+  o+='</tbody></table></div></div></div></div>';
   // Device types
   const bt=d.byType||{},it=d.idsByType||{};
   if(Object.keys(bt).length){
@@ -569,13 +583,14 @@ async function rDevices(){const P='p-devices';loading(P);try{
   {const threshold=2*(d.inactivityDays||7)*86400000,cutoff=Date.now()-threshold;
    const stale=d.deviceRows.filter(r=>{if(r.lastActivity==='Never')return true;const t=new Date(r.lastActivity).getTime();return !isNaN(t)&&t<cutoff});
    if(stale.length)tbl('staleTbl',[
-     {l:'Name',f:'name',r:r=>dlink(r.id,r.name)},{l:'Type',f:'type'},{l:'Protocol',f:'protocolDisplay'},
+     {l:'Name',f:'name',r:r=>dlink(r.id,r.name)},{l:'Type',f:'type'},{l:'Connection',f:'connectionTypeDisplay'},{l:'Integration',f:'integration'},
      {l:'Last Activity',f:'lastActivity'},{l:'Room',f:'room',r:r=>h(r.room||'-')}
    ],stale,{sc:3,sd:'asc',collapse:10,collapseLabel:'Stale Devices'})}
   tbl('devTbl',[
     {l:'Name',f:'name',r:r=>dlink(r.id,r.name)},
     {l:'Type',f:'type',r:r=>r.userType&&r.deviceTypeId?'<a href="/driver/editor/'+r.deviceTypeId+'" target="_blank">'+h(r.type)+'</a>':h(r.type)},
-    {l:'Protocol',f:'protocolDisplay'},
+    {l:'Connection',f:'connectionTypeDisplay'},
+    {l:'Integration',f:'integration'},
     {l:'Room',f:'room',r:r=>h(r.room||'-')},
     {l:'Status',f:'status',r:r=>sbadge(r.status)},
     {l:'Last Activity',f:'lastActivity'},
@@ -871,7 +886,7 @@ async function rPerf(){const P='p-performance';loading(P);try{
   if(d.topTalkers&&d.topTalkers.length){
     o+='<div class="card"><div class="card-h">Top Talkers</div><div class="card-b">';
     d.topTalkers.forEach((t,i)=>{
-      o+='<div style="padding:4px 0">'+(i+1)+'. '+(t.deviceId?dlink(t.deviceId,t.name):h(t.name))+' <span style="color:var(--muted)">('+h(t.protocol)+')</span> &mdash; <b>'+t.msgCount+'</b> msgs</div>'});
+      o+='<div style="padding:4px 0">'+(i+1)+'. '+(t.deviceId?dlink(t.deviceId,t.name):h(t.name))+' <span style="color:var(--muted)">('+h(t.integration||'')+')</span> &mdash; <b>'+t.msgCount+'</b> msgs</div>'});
     o+='</div></div>'}
 
   // Checkpoints
@@ -1118,7 +1133,8 @@ function renderSnapshotView(s,elId){
   // Devices
   const dv=s.devices||{};
   o+='<div style="margin-bottom:6px"><b>Devices:</b> '+dv.totalDevices+' total | Active: '+dv.activeDevices+' | Inactive: '+dv.inactiveDevices+' | Disabled: '+dv.disabledDevices+'</div>';
-  if(dv.byProtocol){o+='<div style="margin-bottom:8px">'+Object.entries(dv.byProtocol).filter(([,v])=>v>0).map(([k,v])=>(PD[k]||k)+': '+v).join(' | ')+'</div>'}
+  if(dv.byConnectionType){o+='<div style="margin-bottom:8px"><b>Connection:</b> '+Object.entries(dv.byConnectionType).filter(([,v])=>v>0).map(([k,v])=>(CD[k]||k)+': '+v).join(' | ')+'</div>'}
+  if(dv.byIntegration){o+='<div style="margin-bottom:8px"><b>Integration:</b> '+Object.entries(dv.byIntegration).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]).map(([k,v])=>h(k)+': '+v).join(' | ')+'</div>'}
   if(dv.allDevices&&dv.allDevices.length){o+='<details><summary>Device List ('+dv.allDevices.length+')</summary><div id="snapDevTbl" style="margin-top:6px"></div></details>'}
   // Apps
   const ap=s.apps||{};
@@ -1140,7 +1156,7 @@ function renderSnapshotView(s,elId){
   // Render sub-tables
   if(dv.allDevices&&dv.allDevices.length)
     tbl('snapDevTbl',[
-      {l:'Name',f:'name',r:r=>dlink(r.id,r.name)},{l:'Type',f:'type'},{l:'Protocol',f:'protocol',r:r=>h(PD[r.protocol]||r.protocol||'')},
+      {l:'Name',f:'name',r:r=>dlink(r.id,r.name)},{l:'Type',f:'type'},{l:'Connection',f:'connectionType',r:r=>h(CD[r.connectionType]||r.connectionType||'')},{l:'Integration',f:'integration',r:r=>h(r.integration||'')},
       {l:'Status',f:'status',r:r=>sbadge(r.status)}
     ],dv.allDevices,{sc:0,sd:'asc'});
   if(ap.byNamespace){
@@ -1163,15 +1179,17 @@ function renderDiff(d,elId){
   const dc=d.deviceChanges;const dd=dc.newerTotal-dc.olderTotal;
   o+='<div style="margin:8px 0"><b>Devices:</b> '+dc.olderTotal+' &rarr; '+dc.newerTotal+(dd!==0?' <span style="color:'+(dd>0?'var(--ok)':'var(--crit)')+'">('+( dd>0?'+':'')+dd+')</span>':'')+'</div>';
   if(dc.added.length){o+='<div class="diff-add" style="margin:4px 0"><b>Added ('+dc.added.length+'):</b></div>';
-    dc.added.forEach(d=>{o+='<div style="margin:2px 0 2px 16px" class="diff-add">+ '+dlink(d.id,d.name)+' ('+h(d.protocol)+')</div>'})}
+    dc.added.forEach(d=>{o+='<div style="margin:2px 0 2px 16px" class="diff-add">+ '+dlink(d.id,d.name)+' ('+h(d.integration||d.connectionType||'')+')</div>'})}
   if(dc.removed.length){o+='<div class="diff-rem" style="margin:4px 0"><b>Removed ('+dc.removed.length+'):</b></div>';
-    dc.removed.forEach(d=>{o+='<div style="margin:2px 0 2px 16px" class="diff-rem">- '+dlink(d.id,d.name)+' ('+h(d.protocol)+')</div>'})}
+    dc.removed.forEach(d=>{o+='<div style="margin:2px 0 2px 16px" class="diff-rem">- '+dlink(d.id,d.name)+' ('+h(d.integration||d.connectionType||'')+')</div>'})}
   if(dc.changed.length){o+='<div class="diff-chg" style="margin:4px 0"><b>Changed ('+dc.changed.length+'):</b></div>';
     dc.changed.forEach(d=>{const ch=d.changes.map(c=>c.field+': '+c.from+' \u2192 '+c.to).join(', ');
       o+='<div style="margin:2px 0 2px 16px" class="diff-chg">~ '+dlink(d.id,d.name)+' &mdash; '+h(ch)+'</div>'})}
   // Protocol changes
-  if(d.protocolChanges&&d.protocolChanges.length){o+='<div style="margin:8px 0"><b>Protocol Changes:</b></div>';
-    d.protocolChanges.forEach(p=>{const dd=p.to-p.from;o+='<div style="margin:2px 0 2px 16px">'+h(p.protocol)+': '+p.from+' \u2192 '+p.to+' <span style="color:'+(dd>0?'var(--ok)':'var(--crit)')+'">('+( dd>0?'+':'')+dd+')</span></div>'})}
+  if(d.connectionTypeChanges&&d.connectionTypeChanges.length){o+='<div style="margin:8px 0"><b>Connection Type Changes:</b></div>';
+    d.connectionTypeChanges.forEach(p=>{const dd=p.to-p.from;o+='<div style="margin:2px 0 2px 16px">'+h(p.connectionType)+': '+p.from+' \u2192 '+p.to+' <span style="color:'+(dd>0?'var(--ok)':'var(--crit)')+'">('+( dd>0?'+':'')+dd+')</span></div>'})}
+  if(d.integrationChanges&&d.integrationChanges.length){o+='<div style="margin:8px 0"><b>Integration Changes:</b></div>';
+    d.integrationChanges.forEach(p=>{const dd=p.to-p.from;o+='<div style="margin:2px 0 2px 16px">'+h(p.integration)+': '+p.from+' \u2192 '+p.to+' <span style="color:'+(dd>0?'var(--ok)':'var(--crit)')+'">('+( dd>0?'+':'')+dd+')</span></div>'})}
   // App changes
   const ac=d.appChanges;const ad=ac.newerTotal-ac.olderTotal;
   o+='<div style="margin:8px 0"><b>Apps:</b> '+ac.olderTotal+' \u2192 '+ac.newerTotal+(ad!==0?' <span style="color:'+(ad>0?'var(--ok)':'var(--crit)')+'">('+( ad>0?'+':'')+ad+')</span>':'')+'</div>';
