@@ -58,7 +58,11 @@ tr:nth-child(even){background:var(--alt)} tr:hover{background:var(--hover)}
 .btn{display:inline-block;padding:7px 14px;border-radius:4px;border:none;cursor:pointer;font-size:13px;font-weight:500;transition:background .15s}
 .btn-p{background:var(--primary);color:#fff} .btn-p:hover{background:#1565a7} .btn-p:disabled{background:#90caf9;cursor:not-allowed}
 .btn-d{background:#ffebee;color:var(--crit)} .btn-d:hover{background:#ffcdd2}
+.btn-s{padding:4px 10px;font-size:12px}
 .actions{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.cfg-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:4px 0}
+.cfg-row label{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
+input[type=number].cfg-n{width:64px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:13px}
 
 .filter input{padding:7px 11px;border:1px solid var(--border);border-radius:4px;font-size:13px;width:280px;max-width:100%;margin-bottom:10px}
 
@@ -91,6 +95,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
   <div class="tab" data-tab="health">Health</div>
   <div class="tab" data-tab="performance">Performance</div>
   <div class="tab" data-tab="snapshots">Snapshots</div>
+  <div class="tab" data-tab="config">Config</div>
 </div>
 <div class="content">
   <div class="panel active" id="p-dashboard"></div>
@@ -100,10 +105,11 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
   <div class="panel" id="p-health"></div>
   <div class="panel" id="p-performance"></div>
   <div class="panel" id="p-snapshots"></div>
+  <div class="panel" id="p-config"></div>
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.0.0";
+const UI_VERSION = "5.1.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -354,33 +360,34 @@ function loading(id){document.getElementById(id).innerHTML='<div class="loading"
 function err(id,e,fn){document.getElementById(id).innerHTML='<div class="err"><div>'+h(e.message||String(e))+'</div><button onclick="('+fn.name+')()">Retry</button></div>'}
 
 // ===== RESOURCE CHART (SVG) =====
-function renderChart(pts,cid){
+const chartData={};
+function renderChart(pts,cid,range){
   if(!pts||pts.length<2)return;
   const el=document.getElementById(cid);if(!el)return;
+  chartData[cid]=pts;
+  const viewPts=range?pts.slice(range.start,range.end+1):pts;
+  const isZoomed=range&&(range.start>0||range.end<pts.length-1);
   const ml=55,mr=50,mt=30,mb=30,ch=200;
   const containerW=el.offsetWidth||800;
-  const ppx=Math.max(4,Math.floor((containerW-ml-mr)/(pts.length||1)));
-  const w=ml+pts.length*ppx+mr,svgH=mt+ch+mb;
+  const ppx=Math.max(4,Math.floor((containerW-ml-mr)/(viewPts.length||1)));
+  const w=ml+viewPts.length*ppx+mr,svgH=mt+ch+mb;
   let maxOS=0,maxCpu=0;
-  pts.forEach(p=>{if(p.freeOS>maxOS)maxOS=p.freeOS;if(p.cpuLoad>maxCpu)maxCpu=p.cpuLoad});
+  viewPts.forEach(p=>{if(p.freeOS>maxOS)maxOS=p.freeOS;if(p.cpuLoad>maxCpu)maxCpu=p.cpuLoad});
   maxOS=Math.ceil(maxOS/51200)*51200;if(maxOS<204800)maxOS=204800;
   maxCpu=Math.ceil(maxCpu);if(maxCpu<2)maxCpu=2;
   function yOS(v){return mt+ch-(v/maxOS)*ch}
   function yCPU(v){return mt+ch-(v/maxCpu)*ch}
-  function x(i){return ml+i*ppx}
+  function xp(i){return ml+i*ppx}
   let osLine='',javaLine='',cpuLine='';
-  pts.forEach((p,i)=>{const px=x(i);osLine+=(i?' ':'')+px+','+yOS(p.freeOS);javaLine+=(i?' ':'')+px+','+yOS(p.freeJava);cpuLine+=(i?' ':'')+px+','+yCPU(p.cpuLoad)});
-  // Threshold lines
+  viewPts.forEach((p,i)=>{const px=xp(i);osLine+=(i?' ':'')+px+','+yOS(p.freeOS);javaLine+=(i?' ':'')+px+','+yOS(p.freeJava);cpuLine+=(i?' ':'')+px+','+yCPU(p.cpuLoad)});
   const warnY=yOS(102400),critY=yOS(76800);
-  // Time labels
   let timeLabels='',lastDate='';
-  pts.forEach((p,i)=>{
-    const px=x(i);const parts=p.time.split(' ');const date=parts[0]||'';const time=parts[1]||'';
+  viewPts.forEach((p,i)=>{
+    const px=xp(i);const parts=p.time.split(' ');const date=parts[0]||'';const time=parts[1]||'';
     if(date!==lastDate&&lastDate){timeLabels+=`<line x1="${px}" y1="${mt}" x2="${px}" y2="${mt+ch}" stroke="#ccc" stroke-dasharray="4"/><text x="${px}" y="${mt+ch+14}" font-size="9" fill="#999" text-anchor="middle">${date}</text>`}
     lastDate=date;
-    if(i%(Math.floor(pts.length/8)||1)===0){timeLabels+=`<text x="${px}" y="${mt+ch+24}" font-size="8" fill="#bbb" text-anchor="middle">${time}</text>`}
+    if(i%(Math.floor(viewPts.length/8)||1)===0){timeLabels+=`<text x="${px}" y="${mt+ch+24}" font-size="8" fill="#bbb" text-anchor="middle">${time}</text>`}
   });
-  // Y-axis labels
   let yLabels='';const steps=5;
   for(let i=0;i<=steps;i++){
     const v=maxOS*i/steps;const y=yOS(v);
@@ -388,6 +395,9 @@ function renderChart(pts,cid){
     const cv=maxCpu*i/steps;const cy=yCPU(cv);
     yLabels+=`<text x="${w-mr+4}" y="${cy+4}" font-size="9" fill="#999">${cv.toFixed(1)}</text>`;
   }
+  const infoBar=isZoomed
+    ?`<button class="btn btn-s btn-p" id="${cid}_reset" style="margin-right:8px">Reset Zoom</button><span style="font-size:11px;color:var(--muted)">${viewPts.length} of ${pts.length} samples &mdash; ${viewPts[0].time} to ${viewPts[viewPts.length-1].time}</span>`
+    :`<span style="font-size:11px;color:var(--muted)">${pts.length} samples &mdash; ${pts[0].time} to ${pts[pts.length-1].time} &mdash; drag to zoom</span>`;
   const svg=`<div class="chart-wrap" id="${cid}_wrap"><svg width="${w}" height="${svgH}" viewBox="0 0 ${w} ${svgH}" style="min-width:${w}px">
     ${yLabels}${timeLabels}
     <line x1="${ml}" y1="${warnY}" x2="${w-mr}" y2="${warnY}" stroke="var(--warn)" stroke-dasharray="6" opacity=".5"/>
@@ -400,26 +410,43 @@ function renderChart(pts,cid){
     <text x="${ml+210}" y="${mt+12}" font-size="10" fill="var(--warn)">CPU Load</text>
     <text x="${ml-4}" y="${mt-4}" font-size="9" fill="#999" text-anchor="end">MB</text>
     <text x="${w-mr+4}" y="${mt-4}" font-size="9" fill="#999">CPU</text>
-    <rect x="${ml}" y="${mt}" width="${(w-ml-mr)}" height="${ch}" fill="transparent" id="${cid}_hover" style="cursor:crosshair"/>
+    <rect id="${cid}_sel" x="0" y="${mt}" width="0" height="${ch}" fill="rgba(33,150,243,0.15)" stroke="rgba(33,150,243,0.5)" stroke-width="1" visibility="hidden"/>
+    <rect x="${ml}" y="${mt}" width="${w-ml-mr}" height="${ch}" fill="transparent" id="${cid}_hover" style="cursor:crosshair"/>
   </svg></div>
-  <div style="font-size:11px;color:var(--muted);margin-top:4px">${pts.length} samples from ${pts[0].time} to ${pts[pts.length-1].time}</div>`;
+  <div style="margin-top:4px;display:flex;align-items:center">${infoBar}</div>`;
   el.innerHTML=svg;
-  // Scroll to right (most recent)
   const wrap=document.getElementById(cid+'_wrap');if(wrap)wrap.scrollLeft=wrap.scrollWidth;
-  // Tooltip
-  const svgEl=el.querySelector('svg');const hover=document.getElementById(cid+'_hover');
+  if(isZoomed){const rb=document.getElementById(cid+'_reset');if(rb)rb.onclick=()=>renderChart(pts,cid)}
+  const svgEl=el.querySelector('svg');const hover=document.getElementById(cid+'_hover');const selRect=document.getElementById(cid+'_sel');
   if(hover&&svgEl){
     const tip=document.createElementNS('http://www.w3.org/2000/svg','text');tip.setAttribute('visibility','hidden');tip.setAttribute('font-size','10');tip.setAttribute('fill','#333');svgEl.appendChild(tip);
     const vline=document.createElementNS('http://www.w3.org/2000/svg','line');vline.setAttribute('y1',mt);vline.setAttribute('y2',mt+ch);vline.setAttribute('stroke','#666');vline.setAttribute('visibility','hidden');svgEl.appendChild(vline);
+    let dragging=false,dragStartSvgX=0;
+    function svgXfromEvent(e){const r=svgEl.getBoundingClientRect();return(e.clientX-r.left)*(w/r.width)}
+    function pxToIdx(svgX){return Math.max(0,Math.min(viewPts.length-1,Math.round((svgX-ml)/ppx)))}
+    hover.addEventListener('mousedown',e=>{dragging=true;dragStartSvgX=svgXfromEvent(e);selRect.setAttribute('x',dragStartSvgX);selRect.setAttribute('width',0);selRect.setAttribute('visibility','visible');e.preventDefault()});
     hover.addEventListener('mousemove',e=>{
-      const rect=svgEl.getBoundingClientRect();const sx=w/rect.width;const mx=(e.clientX-rect.left)*sx-ml;
-      const idx=Math.round(mx/((pts.length-1)*ppx)*(pts.length-1));const ci=Math.max(0,Math.min(pts.length-1,idx));
-      const px=x(ci);vline.setAttribute('x1',px);vline.setAttribute('x2',px);vline.setAttribute('visibility','visible');
-      const p=pts[ci];tip.textContent=`${p.time} | OS: ${(p.freeOS/1024).toFixed(0)} MB | CPU: ${p.cpuLoad.toFixed(2)} | Java: ${(p.freeJava/1024).toFixed(0)} MB`;
-      const tw=tip.textContent.length*5.5+10;let tx=px+8;if(tx+tw>w-10)tx=px-tw-8;
-      tip.setAttribute('x',tx);tip.setAttribute('y',mt+14);tip.setAttribute('visibility','visible');
+      const sx=svgXfromEvent(e);
+      if(dragging){
+        const x0=Math.min(dragStartSvgX,sx),x1=Math.max(dragStartSvgX,sx);
+        selRect.setAttribute('x',x0);selRect.setAttribute('width',x1-x0);
+        vline.setAttribute('visibility','hidden');tip.setAttribute('visibility','hidden');
+      } else {
+        const ci=pxToIdx(sx);const px=xp(ci);
+        vline.setAttribute('x1',px);vline.setAttribute('x2',px);vline.setAttribute('visibility','visible');
+        const p=viewPts[ci];tip.textContent=`${p.time} | OS: ${(p.freeOS/1024).toFixed(0)} MB | CPU: ${p.cpuLoad.toFixed(2)} | Java: ${(p.freeJava/1024).toFixed(0)} MB`;
+        const tw=tip.textContent.length*5.5+10;let tx=px+8;if(tx+tw>w-10)tx=px-tw-8;
+        tip.setAttribute('x',tx);tip.setAttribute('y',mt+14);tip.setAttribute('visibility','visible');
+      }
     });
-    hover.addEventListener('mouseleave',()=>{vline.setAttribute('visibility','hidden');tip.setAttribute('visibility','hidden')});
+    hover.addEventListener('mouseup',e=>{
+      if(!dragging)return;dragging=false;selRect.setAttribute('visibility','hidden');
+      const sx=svgXfromEvent(e);const dx=Math.abs(sx-dragStartSvgX);
+      if(dx<10)return;
+      const i0=pxToIdx(Math.min(dragStartSvgX,sx));const i1=pxToIdx(Math.max(dragStartSvgX,sx));
+      if(i1>i0){const off=range?range.start:0;renderChart(pts,cid,{start:off+i0,end:off+i1})}
+    });
+    hover.addEventListener('mouseleave',()=>{if(dragging){dragging=false;selRect.setAttribute('visibility','hidden')}vline.setAttribute('visibility','hidden');tip.setAttribute('visibility','hidden')});
   }
 }
 
@@ -430,12 +457,19 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   let o='';
   // Overview
   const bc=d.devices.byConnectionType||{},ic=d.devices.idsByConnectionType||{},bi=d.devices.byIntegration||{},ii=d.devices.idsByIntegration||{},is=d.devices.idsByStatus||{};
-  o+='<div class="card"><div class="card-h">Overview</div><div class="card-b"><div class="metrics">';
-  o+=mc('Total Devices',dlistlink(d.devices.total,true));  o+=mc('Active',dlistlink(d.devices.active,is.active),'var(--ok)');
+  o+='<div class="card"><div class="card-h">Overview</div><div class="card-b">';
+  o+='<div class="metrics">';
+  o+=mc('Total Devices',dlistlink(d.devices.total,true));
+  o+=mc('Active',dlistlink(d.devices.active,is.active),'var(--ok)');
   o+=mc('Inactive',dlistlink(d.devices.inactive,(is.inactive||[]).concat(is.disabled||[])),(d.devices.inactive>0?'var(--warn)':''));
   o+=mc('Disabled',dlistlink(d.devices.disabled,is.disabled),(d.devices.disabled>0?'var(--crit)':''));
-  o+=mc('Applications',alistlink(d.apps.total));o+=mc('User Apps',d.apps.user);
-  o+='</div></div></div>';
+  o+='</div>';
+  o+='<div class="metrics" style="margin-top:8px">';
+  o+=mc('Installed Apps',alistlink(d.apps.total));
+  o+=mc('Built-in',d.apps.builtIn);
+  o+=mc('User-installed',d.apps.user);
+  o+='</div>';
+  o+='</div></div>';
 
   // Resources
   if(d.resources){const r=d.resources;
@@ -855,7 +889,7 @@ async function rPerf(){const P='p-performance';loading(P);try{
 
   // Actions
   o+='<div class="actions">';
-  o+='<button class="btn btn-p" id="btnCp">Create Checkpoint</button>';
+  o+='<button class="btn btn-p" id="btnCp">Take Perf Checkpoint</button>';
   if(d.checkpointCount>0)o+='<button class="btn btn-d" id="btnClrCp">Clear All</button>';
   if(activePerfComp) o+='<button class="btn btn-p" id="btnClearComp">Clear Comparison</button>';
   o+='</div>';
@@ -890,9 +924,9 @@ async function rPerf(){const P='p-performance';loading(P);try{
     o+='</div></div>'}
 
   // Checkpoints
-  o+='<div class="card"><div class="card-h">Checkpoints ('+d.checkpointCount+' / '+d.maxCheckpoints+')</div><div class="card-b">';
+  o+='<div class="card"><div class="card-h">Perf Checkpoints ('+d.checkpointCount+' / '+d.maxCheckpoints+')</div><div class="card-b">';
   if(d.checkpoints&&d.checkpoints.length){o+='<div id="cpTbl"></div>'}
-  else o+='<p style="color:var(--muted)">No checkpoints. Create one to start tracking.</p>';
+  else o+='<p style="color:var(--muted)">No performance checkpoints yet. Take one to start tracking.</p>';
   o+='</div></div>';
   // Comparison controls
   if(d.checkpointCount>0){
@@ -900,13 +934,13 @@ async function rPerf(){const P='p-performance';loading(P);try{
     o+='<div style="margin-bottom:10px"><label>Baseline: </label><select id="selBase"><option value="startup" '+(activePerfComp?.baseIdx==='startup'?'selected':'')+'>Since Startup</option>';
     d.checkpoints.forEach((cp,i)=>{
       const sel = activePerfComp?.baseIdx == i ? 'selected' : '';
-      o+='<option value="'+i+'" '+sel+'>Checkpoint '+(i+1)+' - '+h(cp.timestamp)+'</option>';
+      o+='<option value="'+i+'" '+sel+'>Perf Checkpoint '+(i+1)+' -'+h(cp.timestamp)+'</option>';
     });
     o+='</select><label>Compare to: </label><select id="selCp">';
     o+='<option value="now" '+(activePerfComp?.compIdx==='now'?'selected':'')+'>Now</option>';
     d.checkpoints.forEach((cp,i)=>{
       const sel = activePerfComp?.compIdx == i ? 'selected' : '';
-      o+='<option value="'+i+'" '+sel+'>Checkpoint '+(i+1)+' - '+h(cp.timestamp)+'</option>';
+      o+='<option value="'+i+'" '+sel+'>Perf Checkpoint '+(i+1)+' -'+h(cp.timestamp)+'</option>';
     });
     o+='</select><button class="btn btn-p" id="btnCompare" style="margin-left:8px">Compare</button></div>';
     o+='<div id="compResult"></div></div></div></div>'}
@@ -1037,7 +1071,7 @@ async function rPerf(){const P='p-performance';loading(P);try{
     btnComp.disabled=false;btnComp.textContent='Compare'};
 }catch(e){err(P,e,rPerf)}}
 
-async function delCp(idx){if(!confirm('Delete checkpoint '+(idx+1)+'?'))return;await post('checkpoint/delete','index='+idx);drop('performance');rPerf()}
+async function delCp(idx){if(!confirm('Delete performance checkpoint '+(idx+1)+'?'))return;await post('checkpoint/delete','index='+idx);drop('performance');rPerf()}
 
 function renderComparison(data,elId){
   const el=document.getElementById(elId);if(!el)return;
@@ -1058,22 +1092,22 @@ function renderComparison(data,elId){
 async function rSnap(){const P='p-snapshots';loading(P);try{
   const d=await api('snapshots');let o='';
   o+='<div class="actions">';
-  o+='<button class="btn btn-p" id="btnSnap">Create Snapshot</button>';
+  o+='<button class="btn btn-p" id="btnSnap">Take Config Snapshot</button>';
   if(d.snapshotCount>0)o+='<button class="btn btn-d" id="btnClrSnap">Clear All</button>';
   o+='</div>';
   // Snapshot table
   o+='<div class="card"><div class="card-h">Config Snapshots ('+d.snapshotCount+' / '+d.maxSnapshots+')</div><div class="card-b">';
   if(d.snapshots&&d.snapshots.length){o+='<div id="snapTbl"></div>'}
-  else o+='<p style="color:var(--muted)">No snapshots. Create one to start tracking.</p>';
+  else o+='<p style="color:var(--muted)">No config snapshots yet. Take one to start tracking.</p>';
   o+='</div></div>';
   // View snapshot
   if(d.snapshotCount>0){
     o+='<div class="live-only"><div class="card"><div class="card-h">View Snapshot</div><div class="card-b">';
-    o+='<select id="selView"><option value="">Select a snapshot...</option>';
+    o+='<select id="selView"><option value="">Select a config snapshot...</option>';
     d.snapshots.forEach((s,i)=>{o+='<option value="'+i+'">'+h(s.timestamp)+' ('+s.devices.totalDevices+' devices, fw '+h(s.hubInfo?.firmware||'?')+')</option>'});
     o+='</select><div id="snapView" style="margin-top:10px"></div></div></div>';
     // Compare
-    o+='<div class="card"><div class="card-h">Compare Snapshots</div><div class="card-b">';
+    o+='<div class="card"><div class="card-h">Compare Config Snapshots</div><div class="card-b">';
     o+='<label>Older: </label><select id="selOlder"><option value="">Select...</option>';
     d.snapshots.forEach((s,i)=>{o+='<option value="'+i+'">'+h(s.timestamp)+'</option>'});
     o+='</select><label style="margin-left:8px">Newer: </label><select id="selNewer"><option value="">Select...</option><option value="now">Now (create new)</option>';
@@ -1101,7 +1135,7 @@ async function rSnap(){const P='p-snapshots';loading(P);try{
   const btnSnap=document.getElementById('btnSnap');
   if(btnSnap)btnSnap.onclick=async()=>{btnSnap.disabled=true;btnSnap.textContent='Creating...';await post('snapshot/create');drop('snapshots');rSnap()};
   const btnClr=document.getElementById('btnClrSnap');
-  if(btnClr)btnClr.onclick=async()=>{if(!confirm('Clear all snapshots?'))return;await post('snapshots/clear');drop('snapshots');rSnap()};
+  if(btnClr)btnClr.onclick=async()=>{if(!confirm('Clear all config snapshots?'))return;await post('snapshots/clear');drop('snapshots');rSnap()};
   // Diff handler
   const btnDiff=document.getElementById('btnDiff');
   if(btnDiff)btnDiff.onclick=async()=>{
@@ -1116,7 +1150,7 @@ async function rSnap(){const P='p-snapshots';loading(P);try{
     btnDiff.disabled=false;btnDiff.textContent='Compare'};
 }catch(e){err(P,e,rSnap)}}
 
-async function delSnap(idx){if(!confirm('Delete snapshot '+(idx+1)+'?'))return;await post('snapshot/delete','index='+idx);drop('snapshots');rSnap()}
+async function delSnap(idx){if(!confirm('Delete config snapshot '+(idx+1)+'?'))return;await post('snapshot/delete','index='+idx);drop('snapshots');rSnap()}
 
 function renderSnapshotView(s,elId){
   const el=document.getElementById(elId);if(!el)return;let o='';
@@ -1193,14 +1227,110 @@ function renderDiff(d,elId){
   // App changes
   const ac=d.appChanges;const ad=ac.newerTotal-ac.olderTotal;
   o+='<div style="margin:8px 0"><b>Apps:</b> '+ac.olderTotal+' \u2192 '+ac.newerTotal+(ad!==0?' <span style="color:'+(ad>0?'var(--ok)':'var(--crit)')+'">('+( ad>0?'+':'')+ad+')</span>':'')+'</div>';
+  if(ac.added&&ac.added.length)ac.added.forEach(a=>o+='<div style="margin:2px 0 2px 16px" class="diff-add">+ '+alink(a.id,a.label||a.name)+'</div>');
+  if(ac.removed&&ac.removed.length)ac.removed.forEach(a=>o+='<div style="margin:2px 0 2px 16px" class="diff-rem">- '+h(a.label||a.name)+'</div>');
   // Memory
   if(d.memoryDelta){const md=d.memoryDelta;const dd=md.to-md.from;
     o+='<div style="margin:8px 0"><b>Free OS Memory:</b> '+fmem(md.from)+' \u2192 '+fmem(md.to)+' <span style="color:'+(dd>=0?'var(--ok)':'var(--crit)')+'">('+( dd>=0?'+':'')+fmem(dd)+')</span></div>'}
   el.innerHTML=o;
 }
 
+// ===== TAB: CONFIG =====
+async function rConfig(){const P='p-config';loading(P);try{
+  drop('settings');
+  const s=await api('settings');
+  let o='';
+
+  // Snapshot Scheduling
+  o+='<div class="card"><div class="card-h">Config Snapshot Scheduling</div><div class="card-b"><div style="display:flex;flex-direction:column;gap:10px">';
+  o+=`<div class="cfg-row"><label><input type="checkbox" id="cfg_autoSnapshot" ${s.autoSnapshot?'checked':''}><span>Enable automatic config snapshots</span></label></div>`;
+  o+=`<div id="cfg_snapDetail" class="cfg-row" style="display:${s.autoSnapshot?'flex':'none'}">`;
+  o+=`<label>Interval: <select id="cfg_snapshotInterval">`;
+  [['1','1h'],['6','6h'],['12','12h'],['24','24h']].forEach(([v,l])=>o+=`<option value="${v}" ${s.snapshotInterval==v?'selected':''}>${l}</option>`);
+  o+=`</select></label>`;
+  o+=`<label>Max: <input type="number" id="cfg_maxSnapshots" value="${s.maxSnapshots}" min="1" max="50" class="cfg-n"></label>`;
+  o+=`<button class="btn btn-p btn-s" id="cfg_saveSnap">Save</button><span id="cfg_snapStatus" style="font-size:12px;color:var(--ok)"></span>`;
+  o+=`</div></div></div></div>`;
+
+  // Checkpoint Scheduling
+  o+='<div class="card"><div class="card-h">Perf Checkpoint Scheduling</div><div class="card-b"><div style="display:flex;flex-direction:column;gap:10px">';
+  o+=`<div class="cfg-row"><label><input type="checkbox" id="cfg_autoCheckpoint" ${s.autoCheckpoint?'checked':''}><span>Enable automatic perf checkpoints</span></label></div>`;
+  o+=`<div id="cfg_chkDetail" class="cfg-row" style="display:${s.autoCheckpoint?'flex':'none'}">`;
+  o+=`<label>Interval: <select id="cfg_checkpointInterval">`;
+  [['5','5m'],['15','15m'],['30','30m'],['60','1h'],['360','6h'],['720','12h'],['1440','24h']].forEach(([v,l])=>o+=`<option value="${v}" ${s.checkpointInterval==v?'selected':''}>${l}</option>`);
+  o+=`</select></label>`;
+  o+=`<label>Max: <input type="number" id="cfg_maxCheckpoints" value="${s.maxCheckpoints}" min="1" max="50" class="cfg-n"></label>`;
+  o+=`<button class="btn btn-p btn-s" id="cfg_saveChk">Save</button><span id="cfg_chkStatus" style="font-size:12px;color:var(--ok)"></span>`;
+  o+=`</div></div></div></div>`;
+
+  // Device Monitoring
+  o+='<div class="card"><div class="card-h">Device Monitoring</div><div class="card-b"><div class="cfg-row">';
+  o+=`<label>Inactivity threshold: <input type="number" id="cfg_inactivityDays" value="${s.inactivityDays}" min="1" max="365" class="cfg-n"> days</label>`;
+  o+=`<label>Low battery alert: <input type="number" id="cfg_lowBatteryThreshold" value="${s.lowBatteryThreshold}" min="1" max="100" class="cfg-n"> %</label>`;
+  o+=`<label>Chatty device threshold: <input type="number" id="cfg_chattyDeviceThreshold" value="${s.chattyDeviceThreshold}" min="1" max="9999" class="cfg-n"> msgs/min</label>`;
+  o+=`<button class="btn btn-p btn-s" id="cfg_saveMon">Save</button><span id="cfg_monStatus" style="font-size:12px;color:var(--ok)"></span>`;
+  o+='</div></div></div>';
+
+  // Logging
+  o+='<div class="card"><div class="card-h">Logging</div><div class="card-b"><div class="cfg-row">';
+  o+=`<label><input type="checkbox" id="cfg_debugLogging" ${s.debugLogging?'checked':''}><span>Enable debug logging</span></label>`;
+  o+='</div></div></div>';
+
+  // Export
+  o+='<div class="card"><div class="card-h">Export</div><div class="card-b"><div class="cfg-row">';
+  o+=`<label>Report link mode: <select id="cfg_reportLinkMode">`;
+  o+=`<option value="relative" ${s.reportLinkMode==='relative'?'selected':''}>Relative (hub-local links)</option>`;
+  o+=`<option value="absolute" ${s.reportLinkMode==='absolute'?'selected':''}>Absolute (full URL)</option>`;
+  o+=`</select></label>`;
+  o+=`<label style="margin-top:8px"><input type="checkbox" id="cfg_obfuscate" ${s.obfuscateForumExport?'checked':''}> Obfuscate device/app labels in forum export (use driver/app type instead of name)</label>`;
+  o+='</div></div></div>';
+
+  // Maintenance
+  o+='<div class="card"><div class="card-h">Maintenance</div><div class="card-b"><div class="cfg-row">';
+  o+=`<button class="btn btn-d" id="cfg_clearCache">Clear Enrichment Cache (${s.cacheSize} entries)</button>`;
+  o+=`<span id="cfg_cacheStatus" style="font-size:12px;color:var(--ok)"></span>`;
+  o+='</div></div></div>';
+
+  document.getElementById(P).innerHTML=o;
+
+  async function saveSetting(obj){await post('settings',{data:JSON.stringify(obj)});drop('settings')}
+  function flash(id,msg){const el=document.getElementById(id);if(!el)return;el.textContent=msg;setTimeout(()=>{el.textContent=''},2500)}
+
+  const autoSnapEl=document.getElementById('cfg_autoSnapshot');
+  const snapDetail=document.getElementById('cfg_snapDetail');
+  autoSnapEl.onchange=async()=>{await saveSetting({autoSnapshot:autoSnapEl.checked});snapDetail.style.display=autoSnapEl.checked?'flex':'none'};
+  document.getElementById('cfg_saveSnap').onclick=async()=>{
+    await saveSetting({snapshotInterval:document.getElementById('cfg_snapshotInterval').value,maxSnapshots:parseInt(document.getElementById('cfg_maxSnapshots').value)||10});
+    flash('cfg_snapStatus','Saved ✓');
+  };
+
+  const autoChkEl=document.getElementById('cfg_autoCheckpoint');
+  const chkDetail=document.getElementById('cfg_chkDetail');
+  autoChkEl.onchange=async()=>{await saveSetting({autoCheckpoint:autoChkEl.checked});chkDetail.style.display=autoChkEl.checked?'flex':'none'};
+  document.getElementById('cfg_saveChk').onclick=async()=>{
+    await saveSetting({checkpointInterval:document.getElementById('cfg_checkpointInterval').value,maxCheckpoints:parseInt(document.getElementById('cfg_maxCheckpoints').value)||10});
+    flash('cfg_chkStatus','Saved ✓');
+  };
+
+  document.getElementById('cfg_saveMon').onclick=async()=>{
+    await saveSetting({inactivityDays:parseInt(document.getElementById('cfg_inactivityDays').value)||7,lowBatteryThreshold:parseInt(document.getElementById('cfg_lowBatteryThreshold').value)||20,chattyDeviceThreshold:parseInt(document.getElementById('cfg_chattyDeviceThreshold').value)||10});
+    flash('cfg_monStatus','Saved ✓');
+  };
+
+  document.getElementById('cfg_debugLogging').onchange=async function(){await saveSetting({debugLogging:this.checked})};
+  document.getElementById('cfg_reportLinkMode').onchange=async function(){await saveSetting({reportLinkMode:this.value})};
+  document.getElementById('cfg_obfuscate').onchange=async function(){await saveSetting({obfuscateForumExport:this.checked});drop('export/forum')};
+
+  document.getElementById('cfg_clearCache').onclick=async function(){
+    if(!confirm('Clear the enrichment cache? The next analysis will re-fetch device details from the hub.'))return;
+    const res=await post('cache/clear',{});drop('settings');
+    this.textContent='Clear Enrichment Cache (0 entries)';
+    flash('cfg_cacheStatus','Cleared '+res.cleared+' entr'+(res.cleared===1?'y':'ies'));
+  };
+}catch(e){err(P,e,rConfig)}}
+
 // ===== TAB MANAGEMENT =====
-const R={dashboard:rDashboard,devices:rDevices,apps:rApps,network:rNetwork,health:rHealth,performance:rPerf,snapshots:rSnap};
+const R={dashboard:rDashboard,devices:rDevices,apps:rApps,network:rNetwork,health:rHealth,performance:rPerf,config:rConfig,snapshots:rSnap};
 function go(t){
   curTab=t;
   localStorage.setItem('hub_diag_tab', t);

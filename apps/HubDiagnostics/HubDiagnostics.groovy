@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "5.0.0"
+@Field static final String APP_VERSION = "5.1.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -217,6 +217,8 @@ mappings {
     path('/api/reports')              { action: [GET: 'apiReports'] }
     path('/api/report/generate')      { action: [POST: 'apiGenerateReport'] }
     path('/api/export/forum')         { action: [GET: 'apiForumExport'] }
+    path('/api/settings')             { action: [GET: 'apiGetSettings', POST: 'apiUpdateSettings'] }
+    path('/api/cache/clear')          { action: [POST: 'apiClearCache'] }
 }
 
 // ===== PAGE METHODS =====
@@ -708,6 +710,16 @@ Map apiSnapshotDiff() {
     Long olderMem = older.systemHealth?.memory?.freeOSMemory
     Long newerMem = newer.systemHealth?.memory?.freeOSMemory
 
+    // App list diff
+    List olderUserApps = (List) (older.apps?.userAppsList ?: [])
+    List newerUserApps = (List) (newer.apps?.userAppsList ?: [])
+    Set olderAppIds = olderUserApps.collect { safeToString(((Map) it).id, "") } as Set
+    Set newerAppIds = newerUserApps.collect { safeToString(((Map) it).id, "") } as Set
+    List appsAdded   = newerUserApps.findAll { !olderAppIds.contains(safeToString(((Map) it).id, "")) }
+                                    .collect { Map a -> [id: a.id, name: a.name, label: a.label] }
+    List appsRemoved = olderUserApps.findAll { !newerAppIds.contains(safeToString(((Map) it).id, "")) }
+                                    .collect { Map a -> [id: a.id, name: a.name, label: a.label] }
+
     // Save diff for persistence
     saveSnapshotDiffPayload([generatedAt: new Date().format("yyyy-MM-dd HH:mm:ss"), older: older, newer: newer])
 
@@ -723,7 +735,9 @@ Map apiSnapshotDiff() {
         integrationChanges: integrationChanges,
         appChanges: [
             olderTotal: older.apps?.totalApps ?: 0,
-            newerTotal: newer.apps?.totalApps ?: 0
+            newerTotal: newer.apps?.totalApps ?: 0,
+            added: appsAdded,
+            removed: appsRemoved
         ],
         memoryDelta: olderMem != null && newerMem != null ? [from: olderMem, to: newerMem] : null
     ])
@@ -828,6 +842,7 @@ Map apiForumExport() {
     Map zigbeeRaw = networkData.zigbee ?: [:]
     Map hubMeshRaw = networkData.hubMesh ?: [:]
     Map zwaveMesh = extractZwaveMeshQuality(zwaveRaw)
+    boolean obfuscate = settings.obfuscateForumExport ?: false
     List ghostNodes = buildZwaveGhostNodes(zwaveRaw)
     Map zigbeeMesh = fetchZigbeeMeshInfo()
     String zwaveVersion = fetchZwaveVersion()
@@ -892,7 +907,7 @@ Map apiForumExport() {
     }
     List lowBattery = (deviceStats.lowBatteryDevices ?: [])
     if (lowBattery) {
-        md << "\n**Low Battery:** " + lowBattery.collect { "${it.name} (${it.battery}%)" }.join(", ") + "\n"
+        md << "\n**Low Battery:** " + lowBattery.collect { "${obfuscate ? (it.type ?: 'Device') : it.name} (${it.battery}%)" }.join(", ") + "\n"
     }
 
     // ── 3. App Inventory ──
@@ -926,7 +941,7 @@ Map apiForumExport() {
         // Ghost nodes
         if (ghostNodes) {
             md << "\n**Ghost Nodes (${ghostNodes.size()}):**\n"
-            ghostNodes.each { Map g -> md << "- Node ${g.id}: ${g.name} (${g.status})\n" }
+            ghostNodes.each { Map g -> md << "- Node ${g.id}: ${obfuscate ? (g.type ?: 'Z-Wave Node') : g.name} (${g.status})\n" }
         }
         // Problem nodes
         List problemNodes = (zwaveMesh?.nodes ?: []).findAll { Map n -> n.state != "OK" || (n.per ?: 0) > 1 }
@@ -936,13 +951,13 @@ Map apiForumExport() {
                 List issues = []
                 if (n.state != "OK") issues << "State: ${n.state}"
                 if ((n.per ?: 0) > 1) issues << "PER: ${n.per}%"
-                md << "- ${n.name} (Node ${n.nodeId}): ${issues.join(', ')}\n"
+                md << "- ${obfuscate ? (n.zwaveType ?: 'Z-Wave Node') : n.name} (Node ${n.nodeId}): ${issues.join(', ')}\n"
             }
         }
         // S0 flagged
         List s0Flagged = (zwaveMesh?.nodes ?: []).findAll { it.s0Flag }
         if (s0Flagged) {
-            md << "\n**S0 on non-security devices:** ${s0Flagged.collect { it.name }.join(', ')}\n"
+            md << "\n**S0 on non-security devices:** ${s0Flagged.collect { obfuscate ? (it.zwaveType ?: 'Z-Wave Node') : it.name }.join(', ')}\n"
         }
         // Full node table
         List zwNodes = zwaveMesh?.nodes ?: []
@@ -953,7 +968,8 @@ Map apiForumExport() {
                 String rttStr = n.rtt != null ? "${n.rtt}ms" : "\u2014"
                 String drvStr = n.driverType == "usr" ? "User" : n.driverType == "sys" ? "Built-in" : "\u2014"
                 String rateStr = uptimeMin > 0 ? String.format('%.1f', n.msgCount / uptimeMin) : "\u2014"
-                md << "| ${n.nodeId} | ${n.name} | ${n.security ?: 'None'} | ${rttStr} | ${n.per}% | ${n.rssiStr ?: '\u2014'} | ${n.route ?: '\u2014'} | ${rateStr} | ${drvStr} |\n"
+                String nodeName = obfuscate ? (n.zwaveType ?: "Node ${n.nodeId}") : (n.name ?: "Node ${n.nodeId}")
+                md << "| ${n.nodeId} | ${nodeName} | ${n.security ?: 'None'} | ${rttStr} | ${n.per}% | ${n.rssiStr ?: '\u2014'} | ${n.route ?: '\u2014'} | ${rateStr} | ${drvStr} |\n"
             }
         }
     }
@@ -979,7 +995,7 @@ Map apiForumExport() {
             if (staleCount > 0) md << "- **Stale Neighbors:** ${(zigbeeMesh.staleNeighbors ?: []).collect { it.shortId }.join(', ')}\n"
         }
         // Non-responsive devices
-        List nonResponsive = zigbeeRaw.devices ? (zigbeeRaw.devices as List).findAll { it.active != true }.collect { it.name ?: "Device ${it.id}" } : []
+        List nonResponsive = zigbeeRaw.devices ? (zigbeeRaw.devices as List).findAll { it.active != true }.collect { obfuscate ? "Zigbee Device ${it.id}" : (it.name ?: "Device ${it.id}") } : []
         if (nonResponsive) {
             md << "- **Non-Responsive:** ${nonResponsive.join(', ')}\n"
         }
@@ -1039,12 +1055,13 @@ Map apiForumExport() {
         md << "| Device | Integration | Msgs/min | Total Msgs |\n|---|---|---:|---:|\n"
         topTalkers.each { Map t ->
             String rate = String.format('%.1f', t.msgCount / uptimeMin)
-            md << "| ${t.name} | ${t.integration} | ${rate} | ${t.msgCount} |\n"
+            String tName = obfuscate ? (t.type ?: t.integration ?: "Device") : t.name
+            md << "| ${tName} | ${t.integration} | ${rate} | ${t.msgCount} |\n"
         }
         // Spammy alerts (>= 6/min)
         List spammy = allRadioDevices.findAll { it.msgCount / uptimeMin >= 6.0 }
         if (spammy) {
-            md << "\n**Elevated message rate (\u22656/min):** ${spammy.collect { "${it.name} (${String.format('%.1f', it.msgCount / uptimeMin)}/min)" }.join(', ')}\n"
+            md << "\n**Elevated message rate (\u22656/min):** ${spammy.collect { "${obfuscate ? (it.type ?: it.integration ?: 'Device') : it.name} (${String.format('%.1f', it.msgCount / uptimeMin)}/min)" }.join(', ')}\n"
         }
     }
 
@@ -1053,6 +1070,58 @@ Map apiForumExport() {
     long elapsed = now() - start
     recordApiTiming("export/forum", elapsed)
     return jsonResponse([success: true, markdown: md.toString()])
+}
+
+Map apiGetSettings() {
+    return jsonResponse([
+        autoSnapshot:          settings.autoSnapshot ?: false,
+        snapshotInterval:      settings.snapshotInterval ?: "24",
+        maxSnapshots:          (settings.maxSnapshots ?: 10) as int,
+        autoCheckpoint:        settings.autoCheckpoint ?: false,
+        checkpointInterval:    settings.checkpointInterval ?: "60",
+        maxCheckpoints:        (settings.maxCheckpoints ?: 10) as int,
+        inactivityDays:        (settings.inactivityDays ?: 7) as int,
+        lowBatteryThreshold:   (settings.lowBatteryThreshold ?: 20) as int,
+        chattyDeviceThreshold: (settings.chattyDeviceThreshold ?: 10) as int,
+        debugLogging:            settings.debugLogging ?: false,
+        reportLinkMode:          settings.reportLinkMode ?: "relative",
+        obfuscateForumExport:    settings.obfuscateForumExport ?: false,
+        cacheSize:               (state.controllerTypeCache ?: [:]).size()
+    ])
+}
+
+Map apiUpdateSettings() {
+    Map body = [:]
+    String dataStr = params?.data as String
+    if (dataStr) {
+        try { body = (Map) new groovy.json.JsonSlurper().parseText(dataStr) } catch (Exception ignored) {}
+    }
+    if (!body) return jsonResponse([success: false, error: "Empty or invalid body"])
+
+    Set boolKeys   = ["autoSnapshot", "autoCheckpoint", "debugLogging", "obfuscateForumExport"] as Set
+    Set numberKeys = ["maxSnapshots", "maxCheckpoints", "inactivityDays", "lowBatteryThreshold", "chattyDeviceThreshold"] as Set
+    Set enumKeys   = ["snapshotInterval", "checkpointInterval", "reportLinkMode"] as Set
+    boolean reschedule = false
+
+    body.each { String key, Object value ->
+        if (boolKeys.contains(key)) {
+            app.updateSetting(key, [type: "bool", value: value as boolean])
+            if (key in ["autoSnapshot", "autoCheckpoint"]) reschedule = true
+        } else if (numberKeys.contains(key)) {
+            app.updateSetting(key, [type: "number", value: value.toString().toInteger()])
+        } else if (enumKeys.contains(key)) {
+            app.updateSetting(key, [type: "enum", value: value as String])
+            if (key in ["snapshotInterval", "checkpointInterval"]) reschedule = true
+        }
+    }
+    if (reschedule) { unschedule(); initialize() }
+    return jsonResponse([success: true])
+}
+
+Map apiClearCache() {
+    int cleared = (state.controllerTypeCache ?: [:]).size()
+    state.controllerTypeCache = [:]
+    return jsonResponse([success: true, cleared: cleared])
 }
 
 // ===== DATA GATHERERS =====
@@ -2934,18 +3003,21 @@ void initialize() {
 
     if (settings.autoSnapshot) {
         int interval = (settings.snapshotInterval ?: "24").toInteger()
-        schedule("0 0 */${interval} * * ?", "createSnapshot")
+        String cron = interval >= 24 ? "0 0 0 * * ?" : "0 0 */${interval} * * ?"
+        schedule(cron, "createSnapshot")
         logInfo "Automatic config snapshots scheduled every ${interval} hour(s)"
     }
 
     if (settings.autoCheckpoint) {
         int interval = (settings.checkpointInterval ?: "60").toInteger()
+        String cron
         if (interval < 60) {
-            schedule("0 */${interval} * * * ?", "createCheckpoint")
+            cron = "0 */${interval} * * * ?"
         } else {
             int hours = (interval / 60).toInteger()
-            schedule("0 0 */${hours} * * ?", "createCheckpoint")
+            cron = hours >= 24 ? "0 0 0 * * ?" : "0 0 */${hours} * * ?"
         }
+        schedule(cron, "createCheckpoint")
         logInfo "Automatic perf checkpoints scheduled every ${interval} minute(s)"
     }
 }
