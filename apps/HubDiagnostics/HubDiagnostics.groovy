@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "5.6.0"
+@Field static final String APP_VERSION = "5.6.1"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -956,7 +956,8 @@ Map apiForumExport() {
             md << "| App | % Busy | Exec Count | Avg (ms) |\n|---|---:|---:|---:|\n"
             topApps.each { Map a ->
                 float pct = (a.pctTotal ?: 0) as float
-                if (pct > 0) md << "| ${a.name} | ${String.format('%.3f', pct)}% | ${a.count ?: 0} | ${String.format('%.1f', (a.average ?: 0) as float)} |\n"
+                String aName = obfuscate ? (a.type ?: a.name) : a.name
+                if (pct > 0) md << "| ${aName} | ${String.format('%.3f', pct)}% | ${a.count ?: 0} | ${String.format('%.1f', (a.average ?: 0) as float)} |\n"
             }
         }
     }
@@ -1096,7 +1097,8 @@ Map apiForumExport() {
             md << "| App | % Total | Exec Count | Avg (ms) |\n|---|---:|---:|---:|\n"
             topAppTypes.each { Map a ->
                 float pct = (a.pctTotal ?: 0) as float
-                if (pct > 0) md << "| ${a.name} | ${String.format('%.3f', pct)}% | ${a.count ?: 0} | ${String.format('%.1f', (a.average ?: 0) as float)} |\n"
+                String aName = obfuscate ? (a.type ?: a.name) : a.name
+                if (pct > 0) md << "| ${aName} | ${String.format('%.3f', pct)}% | ${a.count ?: 0} | ${String.format('%.1f', (a.average ?: 0) as float)} |\n"
             }
         }
     }
