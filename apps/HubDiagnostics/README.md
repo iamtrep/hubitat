@@ -116,9 +116,25 @@ A full inventory of every device on the hub.
 | Battery | Percentage, color-coded; blank for non-battery devices |
 | Parent | Parent app or device, if any |
 
+### Device Classification
+
+The **Connection** and **Integration** columns are inferred from Hubitat's device metadata: protocol flags (Zigbee, Z-Wave, Matter, Bluetooth, Hub Mesh, Virtual), then the device's parent app matched against a known integration list (Philips Hue, Kasa, Lutron, Mobile App, etc.). Devices that don't match any known pattern show **Other** as the connection type.
+
+Community driver authors can force a specific classification by calling `updateDataValue` in the driver:
+
+```
+updateDataValue("hubdiag:conn", "cloud")       // cloud integration
+updateDataValue("hubdiag:conn", "lan_direct")  // direct LAN integration
+updateDataValue("hubdiag:conn", "lan_bridge")  // LAN bridge (hub-based) integration
+updateDataValue("hubdiag:conn", "virtual")     // virtual device
+updateDataValue("hubdiag:conn", "paired")      // radio-paired device
+```
+
+This value is read during device enrichment and cached. Use **Clear Enrichment Cache** (App Settings → Maintenance) after changing a data value for it to take effect.
+
 **Low Battery Alerts** — Devices below the configured battery threshold are listed separately above the main table.
 
-**Stale Devices** — Devices with no activity for more than 2× the inactivity threshold (default: 14 days) are shown in a separate card. These have likely lost connectivity or been abandoned.
+**Stale Devices** — Devices with no activity for more than 2× the inactivity threshold (default: 14 days) are shown in a separate card. These could have lost connectivity or been abandoned.
 
 ---
 

@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "5.6.5"
+@Field static final String APP_VERSION = "5.6.6"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -120,6 +120,8 @@ import groovy.json.JsonOutput
 // Entries are ordered longest-first to avoid false positives (e.g., "wiz" matching "wizard").
 // LinkedHashMap preserves insertion order, which is the iteration order used by lookupIntegration().
 @Field static final Map INTEGRATION_TABLE = [
+    // 19
+    "mobile app manager": [conn: "cloud",   name: "Mobile App"],
     // 12
     "home connect": [conn: "cloud", name: "Home Connect"],
     // 11
@@ -134,11 +136,12 @@ import groovy.json.JsonOutput
     "homekit"     : [conn: "paired", name: "HomeKit"],
     "samsung"     : [conn: "cloud", name: "SmartThings"],
     // 6
-    "bthome"      : [conn: "paired", name: "BTHome"],
+    "bthome"      : [conn: "paired",    name: "BTHome"],
     "shelly"      : [conn: "lan_direct", name: "Shelly"],
     "lutron"      : [conn: "lan_bridge", name: "Lutron"],
-    "ecobee"      : [conn: "cloud", name: "ecobee"],
-    "google"      : [conn: "cloud", name: "Google Home"],
+    "ecobee"      : [conn: "cloud",     name: "ecobee"],
+    "google"      : [conn: "cloud",     name: "Google Home"],
+    "mobile"      : [conn: "cloud",     name: "Mobile App"],
     // 5
     "govee"       : [conn: "lan_direct", name: "Govee"],
     "sonos"       : [conn: "lan_direct", name: "Sonos"],
@@ -2410,6 +2413,13 @@ Map classifyDevice(Map device, Map appLookup, Set communityDrivers) {
     }
     if (device.isVirtual == true)   return [connectionType: CONN_VIRTUAL,  integration: "Virtual",   builtin: true]
 
+    // 1b. Driver-name heuristic: built-in Virtual* drivers without the isVirtual flag
+    boolean driverIsBuiltin = !communityDrivers.contains(safeToString(device.type, ""))
+    String driverTypeLower = safeToString(device.type, "").toLowerCase()
+    if (driverIsBuiltin && (driverTypeLower.startsWith("virtual ") || driverTypeLower == "virtual")) {
+        return [connectionType: CONN_VIRTUAL, integration: "Virtual", builtin: true]
+    }
+
     // 2. Parent app lookup (parentAppId present in bulk list for some devices)
     Object parentAppIdRaw = extractParentAppId(device)
     String normalizedParentAppId = normalizeAppLookupId(parentAppIdRaw)
@@ -2425,8 +2435,6 @@ Map classifyDevice(Map device, Map appLookup, Set communityDrivers) {
             return [connectionType: CONN_OTHER, integration: intName, builtin: isBuiltin]
         }
     }
-
-    boolean driverIsBuiltin = !communityDrivers.contains(safeToString(device.type, ""))
 
     // 3. Network (LAN) flag — parentApp not available in bulk list; will be enriched via fullJson in deep mode
     if (device.isNetwork == true) return [connectionType: CONN_LAN_DIRECT, integration: "LAN Device", builtin: driverIsBuiltin]
