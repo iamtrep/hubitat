@@ -801,7 +801,9 @@ async function rNetwork(){const P='p-network';loading(P);try{
   // Zigbee neighbor detail table
   if(d.zigbee&&d.zigbee.mesh&&d.zigbee.mesh.neighborDetails&&d.zigbee.mesh.neighborDetails.length)
     tbl('zbNeighborTbl',[
-      {l:'Short ID',f:'shortId'},{l:'LQI',f:'lqi',t:'n',r:r=>r.lqi!=null?'<span style="color:'+(r.lqi<150?'var(--crit)':r.lqi<200?'var(--warn)':'var(--ok)')+'">'+r.lqi+'</span>':'N/A'},
+      {l:'Device',f:'name',r:r=>r.deviceId?dlink(r.deviceId,r.name||r.shortId):h(r.name||r.shortId||'\u2014')},
+      {l:'Short ID',f:'shortId',r:r=>h(r.shortId||'\u2014')},
+      {l:'LQI',f:'lqi',t:'n',r:r=>r.lqi!=null?'<span style="color:'+(r.lqi<150?'var(--crit)':r.lqi<200?'var(--warn)':'var(--ok)')+'">'+r.lqi+'</span>':'N/A'},
       {l:'Age',f:'age',t:'n',r:r=>r.stale?'<span class="badge b-warn">'+r.age+' (Stale)</span>':(r.age!=null?''+r.age:'N/A')},
       {l:'In Cost',f:'inCost',t:'n',r:r=>r.inCost!=null?''+r.inCost:'\u2014'},
       {l:'Out Cost',f:'outCost',t:'n',r:r=>r.outCost!=null?''+r.outCost:'\u2014'}
