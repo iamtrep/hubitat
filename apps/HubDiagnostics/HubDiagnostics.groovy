@@ -1296,6 +1296,8 @@ Map getNetworkData() {
         [name: n.name, deviceId: n.deviceId, nodeId: n.nodeId, issues: issues.join(", ")]
     }
     Map zigbeeRaw = networkData.zigbee ?: [:]
+    Map zigbeeDeviceByShortId = [:]
+    (zigbeeRaw.devices ?: []).each { Map d -> if (d.shortZigbeeId) zigbeeDeviceByShortId[((String)d.shortZigbeeId).toUpperCase()] = d }
     List nonResponsive = zigbeeRaw.devices ? zigbeeRaw.devices.findAll { it.active != true }.collect { [id: it.id, name: it.name ?: "Device ${it.id}"] } : []
     Map hubMeshRaw = networkData.hubMesh ?: [:]
     List hubMeshPeers = hubMeshRaw.hubList ? hubMeshRaw.hubList.collect { Map hub ->
@@ -1326,7 +1328,10 @@ Map getNetworkData() {
             mesh: zigbeeMesh ? [
                 neighbors: zigbeeMesh.neighbors?.size() ?: 0, routes: zigbeeMesh.routes?.size() ?: 0,
                 avgLqi: zigbeeMesh.avgLqi, minLqi: zigbeeMesh.minLqi, maxLqi: zigbeeMesh.maxLqi,
-                neighborDetails: (zigbeeMesh.neighbors ?: []).collect { [shortId: it.shortId, lqi: it.lqi, age: it.age, inCost: it.inCost, outCost: it.outCost, stale: it.stale ?: false] },
+                neighborDetails: (zigbeeMesh.neighbors ?: []).collect { Map n ->
+                    Map zdev = zigbeeDeviceByShortId[n.shortId?.toUpperCase()]
+                    [shortId: n.shortId, name: n.name, deviceId: zdev?.id, lqi: n.lqi, age: n.age, inCost: n.inCost, outCost: n.outCost, stale: n.stale ?: false]
+                },
                 weakNeighbors: (zigbeeMesh.weakNeighbors ?: []).collect { [shortId: it.shortId, lqi: it.lqi] },
                 staleNeighbors: (zigbeeMesh.staleNeighbors ?: []).collect { [shortId: it.shortId, age: it.age] },
                 childDevices: zigbeeMesh.childDevices?.size() ?: 0
@@ -1674,16 +1679,19 @@ Map fetchZigbeeMeshInfo() {
         } else if (line.startsWith("Route Table")) {
             currentSection = "route"
         } else if (currentSection == "neighbor" && line.contains("LQI:")) {
-            // Parse neighbor entries like: "0xABCD (Name) LQI: 255 age: 3 inCost: 1 outCost: 1"
+            // Parse neighbor entries: "[Device Name, ABCD], LQI:255, age:4, inCost:1, outCost:1"
             Map neighbor = [raw: line]
+            java.util.regex.Matcher bracketMatch = (line =~ /^\[([^\]]+),\s*([0-9A-Fa-f]{4})\]/)
             java.util.regex.Matcher lqiMatch = (line =~ /LQI:\s*(\d+)/)
             java.util.regex.Matcher ageMatch = (line =~ /age:\s*(\d+)/)
-            java.util.regex.Matcher idMatch = (line =~ /^(0x[0-9A-Fa-f]+)/)
             java.util.regex.Matcher inCostMatch = (line =~ /inCost:\s*(\d+)/)
             java.util.regex.Matcher outCostMatch = (line =~ /outCost:\s*(\d+)/)
+            if (bracketMatch.find()) {
+                neighbor.name = bracketMatch.group(1).trim()
+                neighbor.shortId = bracketMatch.group(2).toUpperCase()
+            }
             if (lqiMatch.find()) neighbor.lqi = lqiMatch.group(1).toInteger()
             if (ageMatch.find()) neighbor.age = ageMatch.group(1).toInteger()
-            if (idMatch.find()) neighbor.shortId = idMatch.group(1)
             if (inCostMatch.find()) neighbor.inCost = inCostMatch.group(1).toInteger()
             if (outCostMatch.find()) neighbor.outCost = outCostMatch.group(1).toInteger()
             neighbor.stale = (neighbor.age != null && neighbor.age >= 7)
