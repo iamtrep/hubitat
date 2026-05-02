@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "5.6.1"
+@Field static final String APP_VERSION = "5.6.3"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -976,7 +976,11 @@ Map apiForumExport() {
         // Ghost nodes
         if (ghostNodes) {
             md << "\n**Ghost Nodes (${ghostNodes.size()}):**\n"
-            ghostNodes.each { Map g -> md << "- Node ${g.id}: ${obfuscate ? (g.type ?: 'Z-Wave Node') : g.name} (${g.status})\n" }
+            ghostNodes.each { Map g ->
+                String gName = obfuscate ? (g.type ?: 'Z-Wave Node') : g.name
+                String gSig  = g.signals ? " [${(g.signals as List).join(', ')}]" : ""
+                md << "- Node ${g.id}: ${gName}${gSig}\n"
+            }
         }
         // Problem nodes
         List problemNodes = (zwaveMesh?.nodes ?: []).findAll { Map n -> n.state != "OK" || (n.per ?: 0) > 1 }
@@ -1461,6 +1465,16 @@ List getStructuredAlerts() {
     Map networkConfig = (Map) hubRequest(NETWORK_CONFIG_PATH, "network configuration", "json", 15)
     if (networkConfig && !networkConfig.error && networkConfig.hasEthernet && networkConfig.hasWiFi) {
         alerts << [severity: "warning", name: "Ethernet and WiFi both active \u2014 disable WiFi when using Ethernet"]
+    }
+
+    // Z-Wave ghost nodes
+    Map zwRaw = (Map) hubRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", "json", 8)
+    if (zwRaw && !zwRaw.error) {
+        List ghosts = buildZwaveGhostNodes(zwRaw)
+        if (ghosts) {
+            int n = ghosts.size()
+            alerts << [severity: "critical", name: "${n} Z-Wave ghost node${n > 1 ? 's' : ''} detected \u2014 remove from mesh"]
+        }
     }
 
     return alerts
@@ -2258,25 +2272,33 @@ void visitAppEntries(List entries, Closure visitor, boolean isChildLevel = false
 
 List buildZwaveGhostNodes(Map zwaveDetails) {
     List ghostNodes = []
-    // Build nodeId → zwaveType lookup from nodes array for obfuscation
     Map zwTypeByNodeId = [:]
     (zwaveDetails?.nodes ?: []).each { Map n ->
         if (n.nodeId && n.zwaveType) zwTypeByNodeId[n.nodeId.toString()] = n.zwaveType
     }
     (zwaveDetails?.zwDevices ?: [:]).each { nodeId, nodeData ->
-        if (nodeData instanceof Map) {
-            boolean isFailed = nodeData.status == "FAILED" || nodeData.failed == true
-            boolean noRoute = nodeData.route == null || nodeData.route == "" || nodeData.route == "No route"
-            boolean noName = !nodeData.name || nodeData.name == "Unknown" || nodeData.name == ""
-            if (isFailed || (noRoute && noName)) {
-                ghostNodes << [
-                    id: nodeId,
-                    deviceId: nodeData.deviceId,
-                    name: nodeData.name ?: "Unknown",
-                    status: nodeData.status ?: "No route",
-                    type: zwTypeByNodeId[nodeId.toString()] ?: ""
-                ]
-            }
+        if (!(nodeData instanceof Map)) return
+        String zwType = zwTypeByNodeId[nodeId.toString()] ?: ""
+        // Never flag the hub's own controller node
+        if (zwType.toUpperCase().contains("CONTROLLER")) return
+        boolean noDeviceId = !nodeData.deviceId   // principal signal: no paired Hubitat device
+        boolean isFailed   = nodeData.status == "FAILED" || nodeData.failed == true
+        boolean noRoute    = nodeData.route == null || nodeData.route == "" || nodeData.route == "No route"
+        boolean noName     = !nodeData.name || nodeData.name == "Unknown" || nodeData.name == ""
+        if (noDeviceId || isFailed || (noRoute && noName)) {
+            List signals = []
+            if (noDeviceId) signals << "no device"
+            if (isFailed)   signals << "FAILED"
+            if (noRoute)    signals << "no route"
+            if (noName)     signals << "unknown name"
+            ghostNodes << [
+                id: nodeId,
+                deviceId: nodeData.deviceId,
+                name: nodeData.name ?: "Unknown",
+                status: nodeData.status ?: "No route",
+                type: zwType,
+                signals: signals
+            ]
         }
     }
     return ghostNodes
