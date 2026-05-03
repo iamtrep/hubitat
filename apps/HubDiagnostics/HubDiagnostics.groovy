@@ -303,6 +303,11 @@ Map dashboardPage() {
                  description: "Interactive diagnostic dashboard (opens in new tab)"
         }
 
+        section("Documentation") {
+            href url: "https://github.com/hubitrep/hubitat/tree/main/HubDiagnostics", title: "Documentation & README",
+                 style: "external", description: "View documentation, changelog, and usage guide on GitHub"
+        }
+
         section("Settings") {
             href "settingsPage", title: "Settings", description: "Thresholds, auto-scheduling, and options"
         }
@@ -541,10 +546,7 @@ Map apiPerformanceCompare() {
         int bIdx = baseline.toInteger()
         if (bIdx < 0 || bIdx >= checkpoints.size()) return jsonResponse([success: false, error: "Invalid baseline index"])
         Map bCp = checkpoints[bIdx]
-        baselineStats = bCp.stats
-        baselineStats.resources = bCp.resources
-        baselineStats.radioStats = bCp.radioStats
-        baselineStats.timestampMs = bCp.timestampMs
+        baselineStats = bCp.stats + [resources: bCp.resources, radioStats: bCp.radioStats, timestampMs: bCp.timestampMs]
         baselineLabel = bCp.timestamp
     }
 
@@ -565,10 +567,7 @@ Map apiPerformanceCompare() {
         int cIdx = checkpoint.toInteger()
         if (cIdx < 0 || cIdx >= checkpoints.size()) return jsonResponse([success: false, error: "Invalid checkpoint index"])
         Map cCp = checkpoints[cIdx]
-        checkpointStats = cCp.stats
-        checkpointStats.resources = cCp.resources
-        checkpointStats.radioStats = cCp.radioStats
-        checkpointStats.timestampMs = cCp.timestampMs
+        checkpointStats = cCp.stats + [resources: cCp.resources, radioStats: cCp.radioStats, timestampMs: cCp.timestampMs]
         checkpointLabel = cCp.timestamp
     }
 
