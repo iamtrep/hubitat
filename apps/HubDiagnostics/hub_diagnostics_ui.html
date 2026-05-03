@@ -535,7 +535,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
 
   // Resources
   if(d.resources){const r=d.resources;
-    o+='<div class="card"><div class="card-h">Resources</div><div class="card-b"><div id="res-dash" class="metrics">'+renderDashRes(r,d)+'</div></div></div>'}
+    o+='<div class="card"><div class="card-h">Resources<span id="res-dash-ts" style="float:right;font-size:11px;font-weight:normal;opacity:.6"></span></div><div class="card-b"><div id="res-dash" class="metrics">'+renderDashRes(r,d)+'</div></div></div>'}
   // Connection Types + Integrations (side by side)
   o+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
   o+='<div class="card"><div class="card-h">Connection Types</div><div class="card-b"><div class="pills">';
@@ -886,7 +886,7 @@ async function rHealth(){const P='p-health';loading(P);try{
   else o+='<div class="alert a-ok">\u2705 No active alerts</div>';
   // Resources
   if(d.resources){const r=d.resources;
-    o+='<div class="card"><div class="card-h">System Resources</div><div class="card-b"><div id="res-health" class="metrics">'+renderHealthRes(r,d)+'</div></div></div>'}
+    o+='<div class="card"><div class="card-h">System Resources<span id="res-health-ts" style="float:right;font-size:11px;font-weight:normal;opacity:.6"></span></div><div class="card-b"><div id="res-health" class="metrics">'+renderHealthRes(r,d)+'</div></div></div>'}
   // Memory chart placeholder
   o+='<div class="card"><div class="card-h">Resource History</div><div class="card-b"><div id="memChart"><div class="loading"><div class="spinner"></div><div>Loading history...</div></div></div></div></div>';
   // Database
@@ -964,7 +964,8 @@ async function rPerf(){const P='p-performance';loading(P);try{
   if(res){
     const isDiff = activePerfComp != null;
     const perfResId = isDiff ? '' : ' id="res-perf"';
-    o+='<div class="card"><div class="card-h">Resources '+(isDiff?'(Delta)':'')+'</div><div class="card-b"><div'+perfResId+' class="metrics">';
+    const perfTs=isDiff?'':' id="res-perf-ts" style="float:right;font-size:11px;font-weight:normal;opacity:.6"';
+    o+='<div class="card"><div class="card-h">Resources '+(isDiff?'(Delta)':'')+'<span'+perfTs+'></span></div><div class="card-b"><div'+perfResId+' class="metrics">';
     if(isDiff) {
       o+=mc('Free OS Memory',fmem(res.freeOSMemory),res.freeOSMemory<0?'var(--crit)':'var(--ok)');
       o+=mc('CPU Load',res.cpuAvg5min?.toFixed(2),res.cpuAvg5min>0?'var(--warn)':'var(--ok)');
@@ -1485,6 +1486,8 @@ async function refreshLive(){
     const dash=document.getElementById('res-dash');if(dash)dash.innerHTML=renderDashRes(r,d);
     const health=document.getElementById('res-health');if(health)health.innerHTML=renderHealthRes(r,d);
     const perf=document.getElementById('res-perf');if(perf)perf.innerHTML=renderPerfRes(r);
+    const ts=new Date().toLocaleTimeString();
+    ['res-dash-ts','res-health-ts','res-perf-ts'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='Updated '+ts});
   }catch(e){}
 }
 let liveTimer=setInterval(refreshLive,liveIntervalSec*1000);
