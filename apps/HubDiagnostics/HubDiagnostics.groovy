@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "5.6.7"
+@Field static final String APP_VERSION = "5.6.8"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -145,7 +145,7 @@ import groovy.json.JsonOutput
     // 5
     "govee"       : [conn: "lan_direct", name: "Govee"],
     "sonos"       : [conn: "lan_direct", name: "Sonos"],
-    "alexa"       : [conn: "cloud", name: "Amazon Alexa"],
+    "alexa"       : [conn: "cloud", name: "Amazon Echo Skill"],
     // 4
     "kasa"        : [conn: "lan_direct", name: "Kasa"],
     "lifx"        : [conn: "lan_direct", name: "LIFX"],
@@ -323,9 +323,8 @@ Map settingsPage() {
         section("Automatic Config Snapshots") {
             input "autoSnapshot", "bool", title: "Enable automatic config snapshots", defaultValue: false, submitOnChange: true
             if (autoSnapshot) {
-                input "snapshotInterval", "enum", title: "Config snapshot interval",
-                    options: ["1": "1 hour", "6": "6 hours", "12": "12 hours", "24": "24 hours"],
-                    defaultValue: "24", required: true
+                input "snapshotInterval", "number", title: "Config snapshot interval (days)",
+                    defaultValue: 1, range: "1..30", required: true
             }
             input "maxSnapshots", "number", title: "Maximum config snapshots to retain", defaultValue: 10, range: "1..50", required: true
         }
@@ -1149,7 +1148,7 @@ Map apiForumExport() {
 Map apiGetSettings() {
     return jsonResponse([
         autoSnapshot:          settings.autoSnapshot ?: false,
-        snapshotInterval:      settings.snapshotInterval ?: "24",
+        snapshotInterval:      settings.snapshotInterval ?: 1,
         maxSnapshots:          (settings.maxSnapshots ?: 10) as int,
         autoCheckpoint:        settings.autoCheckpoint ?: false,
         checkpointInterval:    settings.checkpointInterval ?: "60",
@@ -1180,9 +1179,10 @@ Map apiUpdateSettings() {
 
     Set boolKeys    = ["autoSnapshot", "autoCheckpoint", "debugLogging", "obfuscateForumExport"] as Set
     Set numberKeys  = ["maxSnapshots", "maxCheckpoints", "inactivityDays", "lowBatteryThreshold",
-                        "chattyDeviceThreshold", "warnMemMb", "critMemMb", "warnTempC", "critTempC"] as Set
+                        "chattyDeviceThreshold", "warnMemMb", "critMemMb", "warnTempC", "critTempC",
+                        "snapshotInterval"] as Set
     Set decimalKeys = ["warnCpuLoad", "critCpuLoad"] as Set
-    Set enumKeys    = ["snapshotInterval", "checkpointInterval", "reportLinkMode"] as Set
+    Set enumKeys    = ["checkpointInterval", "reportLinkMode"] as Set
     boolean reschedule = false
 
     body.each { String key, Object value ->
@@ -3189,10 +3189,10 @@ void initialize() {
     migrateStorageIfNeeded()
 
     if (settings.autoSnapshot) {
-        int interval = (settings.snapshotInterval ?: "24").toInteger()
-        String cron = interval >= 24 ? "0 0 0 * * ?" : "0 0 */${interval} * * ?"
+        int days = (settings.snapshotInterval ?: 1).toInteger()
+        String cron = days == 1 ? "0 0 0 * * ?" : "0 0 0 */${days} * ?"
         schedule(cron, "createSnapshot")
-        logInfo "Automatic config snapshots scheduled every ${interval} hour(s)"
+        logInfo "Automatic config snapshots scheduled every ${days} day(s)"
     }
 
     if (settings.autoCheckpoint) {
