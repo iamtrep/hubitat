@@ -88,7 +88,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </head>
 <body>
 <script>if(window.REPORT_DATA){document.write('<div class="report-banner">Offline Report &mdash; Generated '+(window.REPORT_DATA._generated||'')+'</div>')}</script>
-<div class="hdr"><h1>Hub Diagnostics</h1><span class="info" id="hubInfo">Loading...</span><a href="https://github.com/hubitrep/hubitat/blob/main/HubDiagnostics/README.md" target="_blank" style="font-size:12px;opacity:.75;color:#fff;margin-left:12px;white-space:nowrap">Docs ↗</a></div>
+<div class="hdr"><h1>Hub Diagnostics</h1><span class="info" id="hubInfo">Loading...</span><a href="https://github.com/hubitrep/hubitat/blob/main/HubDiagnostics/README.md" target="_blank" style="font-size:12px;opacity:.75;color:#fff;margin-left:12px;white-space:nowrap">Docs ↗</a><button onclick="refreshPage()" class="live-only" style="font-size:12px;opacity:.75;color:#fff;margin-left:12px;background:none;border:none;cursor:pointer;padding:0">↻ Refresh</button></div>
 <div class="tabs" id="tabs">
   <div class="tab active" data-tab="dashboard">Dashboard</div>
   <div class="tab" data-tab="devices">Devices</div>
@@ -111,7 +111,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.6.9";
+const UI_VERSION = "5.7.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -130,6 +130,7 @@ const MOCK_DATA = {
 const T='${access_token}', B='${api_base}', REPORT=window.REPORT_DATA||null, cache={};
 let curTab = localStorage.getItem('hub_diag_tab') || 'dashboard';
 let activePerfComp = null;
+let liveIntervalSec = ${live_refresh_sec} || 30;
 
 // ===== API =====
 async function api(ep){
@@ -488,6 +489,29 @@ function renderChart(pts,cid,range){
   }
 }
 
+// ===== LIVE RESOURCE CARD RENDERERS =====
+function renderDashRes(r,d){
+  let o='';
+  o+=mc('Free OS Memory',fmem(r.freeOSMemory),sev(r.freeOSMemory,TH.warnMemMb*1024,TH.critMemMb*1024,true));
+  o+=mc('CPU Load (5m)',r.cpuAvg5min?.toFixed(2)??'N/A',sev(r.cpuAvg5min,TH.warnCpuLoad,TH.critCpuLoad,false));
+  if(d.temperature!=null)o+=mc('Temperature',d.temperature.toFixed(1)+'°C',sev(d.temperature,TH.warnTempC,TH.critTempC,false));
+  if(d.databaseSize!=null)o+=mc('Database',d.databaseSize+' MB');
+  return o}
+function renderHealthRes(r,d){
+  let o='';
+  o+=mc('Free OS Memory',fmem(r.freeOSMemory),sev(r.freeOSMemory,TH.warnMemMb*1024,TH.critMemMb*1024,true));
+  o+=mc('CPU Load (5m)',r.cpuAvg5min?.toFixed(2),sev(r.cpuAvg5min,TH.warnCpuLoad,TH.critCpuLoad,false));
+  o+=mc('Total Java Memory',fmem(r.totalJavaMemory));o+=mc('Free Java Memory',fmem(r.freeJavaMemory));
+  o+=mc('Direct Java Memory',fmem(r.directJavaMemory));
+  if(d.temperature!=null){const tf=d.temperature*9/5+32;o+=mc('Temperature',d.temperature.toFixed(1)+'°C ('+tf.toFixed(1)+'°F)',sev(d.temperature,TH.warnTempC,TH.critTempC,false))}
+  if(d.databaseSize!=null)o+=mc('Database',d.databaseSize+' MB');
+  return o}
+function renderPerfRes(r){
+  let o='';
+  o+=mc('Free OS Memory',fmem(r.freeOSMemory),sev(r.freeOSMemory,TH.warnMemMb*1024,TH.critMemMb*1024,true));
+  o+=mc('CPU Load (5m)',r.cpuAvg5min?.toFixed(2),sev(r.cpuAvg5min,TH.warnCpuLoad,TH.critCpuLoad,false));
+  return o}
+
 // ===== TAB: DASHBOARD =====
 async function rDashboard(){const P='p-dashboard';loading(P);try{
   const d=await api('dashboard');
@@ -511,12 +535,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
 
   // Resources
   if(d.resources){const r=d.resources;
-    o+='<div class="card"><div class="card-h">Resources</div><div class="card-b"><div class="metrics">';
-    o+=mc('Free OS Memory',fmem(r.freeOSMemory),sev(r.freeOSMemory,TH.warnMemMb*1024,TH.critMemMb*1024,true));
-    o+=mc('CPU Load (5m)',r.cpuAvg5min?.toFixed(2)??'N/A',sev(r.cpuAvg5min,TH.warnCpuLoad,TH.critCpuLoad,false));
-    if(d.temperature!=null)o+=mc('Temperature',d.temperature.toFixed(1)+'\u00B0C',sev(d.temperature,TH.warnTempC,TH.critTempC,false));
-    if(d.databaseSize!=null)o+=mc('Database',d.databaseSize+' MB');
-    o+='</div></div></div>'}
+    o+='<div class="card"><div class="card-h">Resources</div><div class="card-b"><div id="res-dash" class="metrics">'+renderDashRes(r,d)+'</div></div></div>'}
   // Connection Types + Integrations (side by side)
   o+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
   o+='<div class="card"><div class="card-h">Connection Types</div><div class="card-b"><div class="pills">';
@@ -867,14 +886,7 @@ async function rHealth(){const P='p-health';loading(P);try{
   else o+='<div class="alert a-ok">\u2705 No active alerts</div>';
   // Resources
   if(d.resources){const r=d.resources;
-    o+='<div class="card"><div class="card-h">System Resources</div><div class="card-b"><div class="metrics">';
-    o+=mc('Free OS Memory',fmem(r.freeOSMemory),sev(r.freeOSMemory,TH.warnMemMb*1024,TH.critMemMb*1024,true));
-    o+=mc('CPU Load (5m)',r.cpuAvg5min?.toFixed(2),sev(r.cpuAvg5min,TH.warnCpuLoad,TH.critCpuLoad,false));
-    o+=mc('Total Java Memory',fmem(r.totalJavaMemory));o+=mc('Free Java Memory',fmem(r.freeJavaMemory));
-    o+=mc('Direct Java Memory',fmem(r.directJavaMemory));
-    if(d.temperature!=null){const tf=d.temperature*9/5+32;o+=mc('Temperature',d.temperature.toFixed(1)+'\u00B0C ('+tf.toFixed(1)+'\u00B0F)',sev(d.temperature,TH.warnTempC,TH.critTempC,false))}
-    if(d.databaseSize!=null)o+=mc('Database',d.databaseSize+' MB');
-    o+='</div></div></div>'}
+    o+='<div class="card"><div class="card-h">System Resources</div><div class="card-b"><div id="res-health" class="metrics">'+renderHealthRes(r,d)+'</div></div></div>'}
   // Memory chart placeholder
   o+='<div class="card"><div class="card-h">Resource History</div><div class="card-b"><div id="memChart"><div class="loading"><div class="spinner"></div><div>Loading history...</div></div></div></div></div>';
   // Database
@@ -885,11 +897,14 @@ async function rHealth(){const P='p-health';loading(P);try{
     if(l.maxEvents)o+=mc('Max Events/Device',l.maxEvents);
     if(l.maxEventAgeDays)o+=mc('Max Event Age',l.maxEventAgeDays+' days');
     if(l.maxStateAgeDays)o+=mc('Max State Age',l.maxStateAgeDays+' days')}
+  o+='</div>';
   if(d.storage){const st=d.storage;
-    o+=mc('File Manager Files',st.fileCount);
+    o+='<div style="font-size:12px;font-weight:600;color:var(--muted);margin:10px 0 4px">File Manager</div><div class="metrics">';
+    o+=mc('Files',st.fileCount);
     if(st.usedBytes!=null)o+=mc('Files Used',fmem(st.usedBytes));
-    if(st.freeSpace!=null)o+=mc('Free Space',fmem(st.freeSpace))}
-  o+='</div></div></div>';
+    if(st.freeSpace!=null)o+=mc('Free Space',fmem(st.freeSpace));
+    o+='</div>'}
+  o+='</div></div>';
   document.getElementById(P).innerHTML=o;
   // Fetch and render chart async
   api('health/history').then(h=>{renderChart(h.dataPoints,'memChart')}).catch(()=>{document.getElementById('memChart').innerHTML='<i style="color:var(--muted)">Unable to load history</i>'});
@@ -948,13 +963,13 @@ async function rPerf(){const P='p-performance';loading(P);try{
   
   if(res){
     const isDiff = activePerfComp != null;
-    o+='<div class="card"><div class="card-h">Resources '+(isDiff?'(Delta)':'')+'</div><div class="card-b"><div class="metrics">';
+    const perfResId = isDiff ? '' : ' id="res-perf"';
+    o+='<div class="card"><div class="card-h">Resources '+(isDiff?'(Delta)':'')+'</div><div class="card-b"><div'+perfResId+' class="metrics">';
     if(isDiff) {
       o+=mc('Free OS Memory',fmem(res.freeOSMemory),res.freeOSMemory<0?'var(--crit)':'var(--ok)');
       o+=mc('CPU Load',res.cpuAvg5min?.toFixed(2),res.cpuAvg5min>0?'var(--warn)':'var(--ok)');
     } else {
-      o+=mc('Free OS Memory',fmem(res.freeOSMemory),sev(res.freeOSMemory,TH.warnMemMb*1024,TH.critMemMb*1024,true));
-      o+=mc('CPU Load (5m)',res.cpuAvg5min?.toFixed(2),sev(res.cpuAvg5min,TH.warnCpuLoad,TH.critCpuLoad,false));
+      o+=renderPerfRes(res);
     }
     o+='</div></div></div>'}
 
@@ -1129,7 +1144,7 @@ async function rSnap(){const P='p-snapshots';loading(P);try{
   if(d.snapshotCount>0)o+='<button class="btn btn-d" id="btnClrSnap">Clear All</button>';
   o+='</div>';
   // Snapshot table
-  o+='<div class="card"><div class="card-h">Config Snapshots ('+d.snapshotCount+' / '+d.maxSnapshots+')</div><div class="card-b">';
+  o+='<div class="card"><div class="card-h"><span id="snapListHdr">Config Snapshots ('+d.snapshotCount+' / '+d.maxSnapshots+')</span></div><div class="card-b">';
   if(d.snapshots&&d.snapshots.length){o+='<div id="snapTbl"></div>'}
   else o+='<p style="color:var(--muted)">No config snapshots yet. Take one to start tracking.</p>';
   o+='</div></div>';
@@ -1178,7 +1193,25 @@ async function rSnap(){const P='p-snapshots';loading(P);try{
     document.getElementById('diffResult').innerHTML='<div class="loading"><div class="spinner"></div></div>';
     try{const r=await api('snapshot/diff?older='+o+'&newer='+n);
     drop('snapshot/diff?older='+o+'&newer='+n);
-    renderDiff(r,'diffResult')}
+    renderDiff(r,'diffResult');
+    if(n==='now'){
+      drop('snapshots');
+      api('snapshots').then(fresh=>{
+        const hdr=document.getElementById('snapListHdr');
+        if(hdr)hdr.textContent='Config Snapshots ('+fresh.snapshotCount+' / '+fresh.maxSnapshots+')';
+        const mkOpts=snaps=>snaps.map((s,i)=>'<option value="'+i+'">'+h(s.timestamp)+'</option>').join('');
+        const so=document.getElementById('selOlder');
+        if(so)so.innerHTML='<option value="">Select...</option>'+mkOpts(fresh.snapshots);
+        const sn=document.getElementById('selNewer');
+        if(sn)sn.innerHTML='<option value="">Select...</option><option value="now">Now (create new)</option>'+mkOpts(fresh.snapshots);
+        if(fresh.snapshots&&fresh.snapshots.length&&document.getElementById('snapTbl')){
+          const rows=fresh.snapshots.map((s,i)=>({idx:i+1,timestamp:s.timestamp,firmware:s.hubInfo?.firmware||'N/A',
+            devices:s.devices.totalDevices,apps:s.apps.totalApps,memory:s.memory!=null?fmem(s.memory):'N/A',_idx:i}));
+          tbl('snapTbl',[{l:'#',f:'idx',t:'n'},{l:'Timestamp',f:'timestamp'},{l:'Firmware',f:'firmware'},
+            {l:'Devices',f:'devices',t:'n'},{l:'Apps',f:'apps',t:'n'},{l:'Memory',f:'memory'},
+            {l:'',f:'_idx',r:r=>'<button class="btn btn-d" onclick="delSnap('+r._idx+')">\u{1F5D1}</button>'}
+          ],rows,{sc:0,sd:'desc'})}
+      }).catch(()=>{})}}
     catch(e){document.getElementById('diffResult').innerHTML='<div class="alert a-crit">Failed to compare: '+h(e.message)+'</div>'}
     btnDiff.disabled=false;btnDiff.textContent='Compare'};
 }catch(e){err(P,e,rSnap)}}
@@ -1219,6 +1252,13 @@ function renderSnapshotView(s,elId){
   if(nw.matter)nwParts.push('Matter: '+(nw.matter.enabled?'enabled':'disabled'));
   if(nw.hubMesh){const peers=(nw.hubMesh.peers||[]).map(p=>h(p.name||p.ip)).join(', ');nwParts.push('Hub Mesh: '+(nw.hubMesh.enabled?(peers||'no peers'):'disabled'))}
   if(nwParts.length)o+='<div style="margin:8px 0;color:var(--muted);font-size:12px">'+nwParts.join(' &nbsp;|&nbsp; ')+'</div>';
+  // Storage
+  if(s.storage){const st=s.storage;
+    const stParts=[];
+    if(st.fileCount!=null)stParts.push(st.fileCount+' files');
+    if(st.usedBytes!=null)stParts.push(fmem(st.usedBytes)+' used');
+    if(st.freeSpace!=null)stParts.push(fmem(st.freeSpace)+' free');
+    if(stParts.length)o+='<div style="margin:4px 0;color:var(--muted);font-size:12px">File Manager: '+stParts.join(' | ')+'</div>'}
   el.innerHTML=o;
   // Render sub-tables
   if(dv.allDevices&&dv.allDevices.length)
@@ -1273,6 +1313,13 @@ function renderDiff(d,elId){
   if(nc.hubMeshPeers){
     if(nc.hubMeshPeers.added&&nc.hubMeshPeers.added.length)nc.hubMeshPeers.added.forEach(p=>o+='<div style="margin:2px 0 2px 16px" class="diff-add">+ Hub Mesh peer: '+h(p)+'</div>');
     if(nc.hubMeshPeers.removed&&nc.hubMeshPeers.removed.length)nc.hubMeshPeers.removed.forEach(p=>o+='<div style="margin:2px 0 2px 16px" class="diff-rem">- Hub Mesh peer: '+h(p)+'</div>')}
+  // Storage
+  const os=d.older?.storage,ns=d.newer?.storage,sc=d.storageChanges||{};
+  if(os||ns||Object.keys(sc).length){
+    const fmtSt=st=>st?(st.fileCount+' files'+(st.usedBytes!=null?', '+fmem(st.usedBytes)+' used':'')+(st.freeSpace!=null?', '+fmem(st.freeSpace)+' free':'')):'N/A';
+    o+='<div style="margin:8px 0"><b>File Manager:</b> '+fmtSt(os)+' → '+fmtSt(ns)+'</div>';
+    if(sc.fileCount)o+='<div style="margin:2px 0 2px 16px"'+(sc.fileCount.to>sc.fileCount.from?' class="diff-add"':sc.fileCount.to<sc.fileCount.from?' class="diff-rem"':'')+'>Files: '+sc.fileCount.from+' → '+sc.fileCount.to+'</div>';
+    if(sc.freeSpace)o+='<div style="margin:2px 0 2px 16px"'+(sc.freeSpace.to>sc.freeSpace.from?' class="diff-add"':sc.freeSpace.to<sc.freeSpace.from?' class="diff-rem"':'')+'>Free Space: '+fmem(sc.freeSpace.from)+' → '+fmem(sc.freeSpace.to)+'</div>'}
   el.innerHTML=o;
 }
 
@@ -1315,6 +1362,12 @@ async function rConfig(){const P='p-config';loading(P);try{
   // Logging
   o+='<div class="card"><div class="card-h">Logging</div><div class="card-b"><div class="cfg-row">';
   o+=`<label><input type="checkbox" id="cfg_debugLogging" ${s.debugLogging?'checked':''}><span>Enable debug logging</span></label>`;
+  o+='</div></div></div>';
+
+  // Live Data
+  o+='<div class="card"><div class="card-h">Live Data</div><div class="card-b"><div class="cfg-row">';
+  o+=`<label>Auto-refresh interval: <input type="number" id="cfg_liveRefreshSec" value="${s.liveRefreshSec||30}" min="10" max="300" class="cfg-n"> seconds</label>`;
+  o+=`<button class="btn btn-p btn-s" id="cfg_saveLive">Save</button><span id="cfg_liveStatus" style="font-size:12px;color:var(--ok)"></span>`;
   o+='</div></div></div>';
 
   // Export
@@ -1392,6 +1445,13 @@ async function rConfig(){const P='p-config';loading(P);try{
   document.getElementById('cfg_reportLinkMode').onchange=async function(){await saveSetting({reportLinkMode:this.value})};
   document.getElementById('cfg_obfuscate').onchange=async function(){await saveSetting({obfuscateForumExport:this.checked});drop('export/forum')};
 
+  document.getElementById('cfg_saveLive').onclick=async()=>{
+    const v=Math.max(10,Math.min(300,parseInt(document.getElementById('cfg_liveRefreshSec').value)||30));
+    await saveSetting({liveRefreshSec:v});
+    liveIntervalSec=v;clearInterval(liveTimer);liveTimer=setInterval(refreshLive,liveIntervalSec*1000);
+    flash('cfg_liveStatus','Saved ✓');
+  };
+
   document.getElementById('cfg_clearCache').onclick=async function(){
     if(!confirm('Clear the enrichment cache? The next analysis will re-fetch device details from the hub.'))return;
     const res=await post('cache/clear',{});drop('settings');
@@ -1411,6 +1471,35 @@ function go(t){
   if(!p.children.length||p.querySelector('.loading')||p.querySelector('.err'))R[t]();
 }
 document.getElementById('tabs').addEventListener('click',e=>{if(e.target.dataset.tab)go(e.target.dataset.tab)});
+
+async function refreshLive(){
+  if(document.hidden)return;
+  try{
+    const sep='?';
+    const resp=await fetch(B+'/api/live'+sep+'access_token='+T);
+    if(!resp.ok)return;
+    const d=await resp.json();
+    const r={freeOSMemory:d.freeOSMemory,cpuAvg5min:d.cpuAvg5min,
+              totalJavaMemory:d.totalJavaMemory,freeJavaMemory:d.freeJavaMemory,
+              directJavaMemory:d.directJavaMemory};
+    const dash=document.getElementById('res-dash');if(dash)dash.innerHTML=renderDashRes(r,d);
+    const health=document.getElementById('res-health');if(health)health.innerHTML=renderHealthRes(r,d);
+    const perf=document.getElementById('res-perf');if(perf)perf.innerHTML=renderPerfRes(r);
+  }catch(e){}
+}
+let liveTimer=setInterval(refreshLive,liveIntervalSec*1000);
+document.addEventListener('visibilitychange',()=>{
+  clearInterval(liveTimer);
+  if(!document.hidden)liveTimer=setInterval(refreshLive,liveIntervalSec*1000)
+});
+
+function refreshPage(){
+  const keys={dashboard:['dashboard'],devices:['devices'],apps:['apps'],network:['network'],
+    health:['health','health/history'],performance:['performance'],config:['settings'],snapshots:['snapshots']};
+  (keys[curTab]||[]).forEach(k=>drop(k));
+  R[curTab]()
+}
+
 go(curTab);
 </script>
 </body>

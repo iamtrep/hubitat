@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "5.6.9"
+@Field static final String APP_VERSION = "5.7.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -214,6 +214,7 @@ mappings {
     path('/api/network')          { action: [GET: 'apiNetwork'] }
     path('/api/health')           { action: [GET: 'apiHealth'] }
     path('/api/health/history')   { action: [GET: 'apiHealthHistory'] }
+    path('/api/live')             { action: [GET: 'apiLive'] }
     path('/api/performance')      { action: [GET: 'apiPerformance'] }
     path('/api/snapshots')        { action: [GET: 'apiSnapshots'] }
     path('/api/snapshot/view')    { action: [GET: 'apiSnapshotView'] }
@@ -404,6 +405,7 @@ Map serveUI() {
 
         html = html.replace('${access_token}', state.accessToken)
             .replace('${api_base}', fullLocalApiServerUrl)
+            .replace('${live_refresh_sec}', (settings.liveRefreshSec ?: 30).toString())
         return render(status: 200, contentType: 'text/html', data: html)
     } catch (Exception e) {
         logError "Error serving UI: ${e.message}"
@@ -513,6 +515,19 @@ Map apiHealth() {
 Map apiHealthHistory() {
     List memHistory = fetchMemoryHistory()
     return jsonResponse([dataPoints: memHistory ?: []])
+}
+
+Map apiLive() {
+    Map res = fetchSystemResources() ?: [:]
+    return jsonResponse([
+        freeOSMemory    : res.freeOSMemory,
+        cpuAvg5min      : res.cpuAvg5min,
+        totalJavaMemory : res.totalJavaMemory,
+        freeJavaMemory  : res.freeJavaMemory,
+        directJavaMemory: res.directJavaMemory,
+        temperature     : fetchTemperature(),
+        databaseSize    : fetchDatabaseSize()
+    ])
 }
 
 Map apiPerformance() {
@@ -661,7 +676,8 @@ Map apiSnapshotView() {
                 enabled: snapNet.hubMesh.hubMeshEnabled != null ? snapNet.hubMesh.hubMeshEnabled : snapNet.hubMesh.enabled,
                 peers:   (snapNet.hubMesh.hubList ?: []).collect { [name: it.name, ip: it.ipAddress] }
             ] : null
-        ] : null
+        ] : null,
+        storage: snap.storage
     ])
 }
 
@@ -773,12 +789,23 @@ Map apiSnapshotDiff() {
     List peersRemoved = olderPeers.findAll { !newerPeerSet.contains(it) }
     if (peersAdded || peersRemoved) networkChanges.hubMeshPeers = [added: peersAdded, removed: peersRemoved]
 
+    // Storage diff
+    Map olderStorage = (Map) (older.storage ?: [:])
+    Map newerStorage = (Map) (newer.storage ?: [:])
+    Map storageChanges = [:]
+    if (olderStorage.fileCount != null && newerStorage.fileCount != null && olderStorage.fileCount != newerStorage.fileCount) {
+        storageChanges.fileCount = [from: olderStorage.fileCount, to: newerStorage.fileCount]
+    }
+    if (olderStorage.freeSpace != null && newerStorage.freeSpace != null && olderStorage.freeSpace != newerStorage.freeSpace) {
+        storageChanges.freeSpace = [from: olderStorage.freeSpace, to: newerStorage.freeSpace]
+    }
+
     // Save diff for persistence
     saveSnapshotDiffPayload([generatedAt: new Date().format("yyyy-MM-dd HH:mm:ss"), older: older, newer: newer])
 
     return jsonResponse([
-        older: [timestamp: older.timestamp, firmware: older.hubInfo?.firmware],
-        newer: [timestamp: newer.timestamp, firmware: newer.hubInfo?.firmware],
+        older: [timestamp: older.timestamp, firmware: older.hubInfo?.firmware, storage: older.storage],
+        newer: [timestamp: newer.timestamp, firmware: newer.hubInfo?.firmware, storage: newer.storage],
         deviceChanges: [
             olderTotal: older.devices?.totalDevices ?: 0,
             newerTotal: newer.devices?.totalDevices ?: 0,
@@ -793,7 +820,8 @@ Map apiSnapshotDiff() {
             removed: appsRemoved,
             changed: appsChanged
         ],
-        networkChanges: networkChanges ?: null
+        networkChanges: networkChanges ?: null,
+        storageChanges: storageChanges ?: null
     ])
 }
 
@@ -867,7 +895,7 @@ Map apiGenerateReport() {
 
     String dataJson = JsonOutput.toJson(reportData)
     html = html.replace("</head>", "<script>window.REPORT_DATA=${dataJson}</script>\n</head>")
-    html = html.replace('${access_token}', '').replace('${api_base}', '')
+    html = html.replace('${access_token}', '').replace('${api_base}', '').replace('${live_refresh_sec}', '0')
 
     String filename = "hub_diagnostics_report_${new Date().format('yyyyMMdd_HHmmss')}.html"
     writeFile(filename, html)
@@ -1195,6 +1223,7 @@ Map apiGetSettings() {
         debugLogging:            settings.debugLogging ?: false,
         reportLinkMode:          settings.reportLinkMode ?: "relative",
         obfuscateForumExport:    settings.obfuscateForumExport ?: false,
+        liveRefreshSec:          (settings.liveRefreshSec ?: 30) as int,
         cacheSize:               (state.controllerTypeCache ?: [:]).size()
     ])
 }
@@ -1210,7 +1239,7 @@ Map apiUpdateSettings() {
     Set boolKeys    = ["autoSnapshot", "autoCheckpoint", "debugLogging", "obfuscateForumExport"] as Set
     Set numberKeys  = ["maxSnapshots", "maxCheckpoints", "inactivityDays", "lowBatteryThreshold",
                         "chattyDeviceThreshold", "warnMemMb", "critMemMb", "warnTempC", "critTempC",
-                        "snapshotInterval"] as Set
+                        "snapshotInterval", "liveRefreshSec"] as Set
     Set decimalKeys = ["warnCpuLoad", "critCpuLoad"] as Set
     Set enumKeys    = ["checkpointInterval", "reportLinkMode"] as Set
     boolean reschedule = false
@@ -2710,7 +2739,8 @@ void createSnapshot() {
         apps: analyzeApps(),
         network: analyzeNetwork(),
         systemHealth: analyzeSystemHealth(),
-        hubInfo: getHubInfo()
+        hubInfo: getHubInfo(),
+        storage: fetchFileManagerStats()
     ]
 
     // Strip allDevices down to compact form for storage
