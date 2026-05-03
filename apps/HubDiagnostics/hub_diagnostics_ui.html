@@ -88,7 +88,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </head>
 <body>
 <script>if(window.REPORT_DATA){document.write('<div class="report-banner">Offline Report &mdash; Generated '+(window.REPORT_DATA._generated||'')+'</div>')}</script>
-<div class="hdr"><h1>Hub Diagnostics</h1><span class="info" id="hubInfo">Loading...</span></div>
+<div class="hdr"><h1>Hub Diagnostics</h1><span class="info" id="hubInfo">Loading...</span><a href="https://github.com/hubitrep/hubitat/blob/main/HubDiagnostics/README.md" target="_blank" style="font-size:12px;opacity:.75;color:#fff;margin-left:12px;white-space:nowrap">Docs ↗</a></div>
 <div class="tabs" id="tabs">
   <div class="tab active" data-tab="dashboard">Dashboard</div>
   <div class="tab" data-tab="devices">Devices</div>
@@ -111,7 +111,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.6.7";
+const UI_VERSION = "5.6.8";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -405,7 +405,7 @@ function renderChart(pts,cid,range){
   const isZoomed=range&&(range.start>0||range.end<pts.length-1);
   const ml=55,mr=50,mt=30,mb=30,ch=200;
   const containerW=el.offsetWidth||800;
-  const ppx=Math.max(4,Math.floor((containerW-ml-mr)/(viewPts.length||1)));
+  const ppx=Math.max(isZoomed?4:1,Math.floor((containerW-ml-mr)/(viewPts.length||1)));
   const w=ml+viewPts.length*ppx+mr,svgH=mt+ch+mb;
   let maxOS=0,maxCpu=0;
   viewPts.forEach(p=>{if(p.freeOS>maxOS)maxOS=p.freeOS;if(p.cpuLoad>maxCpu)maxCpu=p.cpuLoad});
