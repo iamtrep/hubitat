@@ -147,6 +147,24 @@ async function post(ep,p){if(REPORT)return{};const q=new URLSearchParams(p||{});
 function drop(ep){if(ep)delete cache[ep];else Object.keys(cache).forEach(k=>delete cache[k])}
 
 // ===== HELPERS =====
+function parseRuntimeMs(v){
+  if(v==null)return 0;if(typeof v==='number')return v;
+  const s=String(v);if(s.endsWith('ms'))return parseInt(s)||0;
+  let ms=0;
+  const hr=s.match(/(\d+)h/);if(hr)ms+=parseInt(hr[1])*3600000;
+  const mn=s.match(/(\d+)m(?!s)/);if(mn)ms+=parseInt(mn[1])*60000;
+  const sc=s.match(/([\d.]+)s/);if(sc)ms+=parseFloat(sc[1])*1000;
+  return ms||(parseInt(s)||0);
+}
+function fmsDuration(ms){
+  if(ms==null)return'N/A';
+  const neg=ms<0;ms=Math.abs(ms);
+  const h=Math.floor(ms/3600000);ms%=3600000;
+  const m=Math.floor(ms/60000);ms%=60000;
+  const s=(ms/1000).toFixed(1);
+  const r=h>0?h+'h '+m+'m '+s+'s':m>0?m+'m '+s+'s':s+'s';
+  return neg?'-'+r:r;
+}
 function diffStats(base, comp) {
   if (!base || !comp) return comp;
   const res = JSON.parse(JSON.stringify(comp));
@@ -169,14 +187,23 @@ function diffStats(base, comp) {
       });
     }
   });
-  // Handle top-level numeric diffs if they exist
-  ['totalDevicesRuntime', 'totalAppsRuntime'].forEach(key => {
-    const cv = parseInt(comp[key]) || 0, bv = parseInt(base[key]) || 0;
-    if (cv || bv) res[key] = (cv - bv) + 'ms';
-  });
+  // Compute interval duration
+  const elapsedMs = (comp.timestampMs && base.timestampMs) ? comp.timestampMs - base.timestampMs : 0;
+  // Diff runtime totals (parse "Xm Ys" / "Xh Ym Zs" / "Nms" formats) and store as ms numbers
+  const devMs = parseRuntimeMs(comp.totalDevicesRuntime) - parseRuntimeMs(base.totalDevicesRuntime);
+  const appMs = parseRuntimeMs(comp.totalAppsRuntime) - parseRuntimeMs(base.totalAppsRuntime);
+  res.totalDevicesRuntime = devMs;
+  res.totalAppsRuntime = appMs;
+  // Replace uptime with interval duration, recompute pct against interval
+  if (elapsedMs > 0) {
+    res.uptime = fmsDuration(elapsedMs);
+    res.uptimeSeconds = elapsedMs / 1000;
+    res.devicePct = (devMs / elapsedMs * 100).toFixed(3) + '%';
+    res.appPct = (appMs / elapsedMs * 100).toFixed(3) + '%';
+  }
   // Diff radio stats and compute msgs/min
   if (comp.radioStats && base.radioStats) {
-    const elapsedMin = (comp.timestampMs && base.timestampMs) ? (comp.timestampMs - base.timestampMs) / 60000 : 0;
+    const elapsedMin = elapsedMs / 60000;
     res.radioStats = {};
     ['zwave', 'zigbee'].forEach(proto => {
       if (comp.radioStats[proto] && base.radioStats[proto]) {
@@ -885,9 +912,9 @@ async function rPerf(){const P='p-performance';loading(P);try{
   if(s){
     o+='<div class="card"><div class="card-h">'+title+'</div><div class="card-b"><div class="metrics">';
     if(s.uptime)o+=mc('Interval/Uptime',s.uptime);
-    if(s.totalDevicesRuntime)o+=mc('Devices Runtime',s.totalDevicesRuntime);
+    if(s.totalDevicesRuntime!=null)o+=mc('Devices Runtime',typeof s.totalDevicesRuntime==='number'?fmsDuration(s.totalDevicesRuntime):s.totalDevicesRuntime);
     if(s.devicePct)o+=mc('Devices % Busy',s.devicePct);
-    if(s.totalAppsRuntime)o+=mc('Apps Runtime',s.totalAppsRuntime);
+    if(s.totalAppsRuntime!=null)o+=mc('Apps Runtime',typeof s.totalAppsRuntime==='number'?fmsDuration(s.totalAppsRuntime):s.totalAppsRuntime);
     if(s.appPct)o+=mc('Apps % Busy',s.appPct);
     o+='</div></div></div>'}
   
@@ -904,9 +931,14 @@ async function rPerf(){const P='p-performance';loading(P);try{
     o+='</div></div></div>'}
 
   // Top Talkers
-  if(d.topTalkers&&d.topTalkers.length){
-    o+='<div class="card"><div class="card-h">Top Talkers</div><div class="card-b">';
-    d.topTalkers.forEach((t,i)=>{
+  const compTalkers=activePerfComp&&s?.radioStats?
+    [...(s.radioStats.zwave||[]).map(r=>({name:r.name,deviceId:r.deviceId,msgCount:r.msgCount,integration:'Z-Wave'})),
+     ...(s.radioStats.zigbee||[]).map(r=>({name:r.name,deviceId:r.id,msgCount:r.msgCount,integration:'Zigbee'}))]
+    .filter(r=>(r.msgCount||0)>0).sort((a,b)=>b.msgCount-a.msgCount).slice(0,3):null;
+  const talkers=compTalkers||d.topTalkers;
+  if(talkers&&talkers.length){
+    o+='<div class="card"><div class="card-h">Top Talkers'+(activePerfComp?' (Interval)':'')+'</div><div class="card-b">';
+    talkers.forEach((t,i)=>{
       o+='<div style="padding:4px 0">'+(i+1)+'. '+(t.deviceId?dlink(t.deviceId,t.name):h(t.name))+' <span style="color:var(--muted)">('+h(t.integration||'')+')</span> &mdash; <b>'+t.msgCount+'</b> msgs</div>'});
     o+='</div></div>'}
 
