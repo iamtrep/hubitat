@@ -910,6 +910,23 @@ async function rPerf(){const P='p-performance';loading(P);try{
   if(activePerfComp) o+='<button class="btn btn-p" id="btnClearComp">Clear Comparison</button>';
   o+='</div>';
 
+  // Comparison controls (top — affects all cards below)
+  if(d.checkpointCount>0){
+    o+='<div class="live-only"><div class="card"><div class="card-h">Compare Performance</div><div class="card-b">';
+    o+='<div style="margin-bottom:10px"><label>Baseline: </label><select id="selBase"><option value="startup" '+(activePerfComp?.baseIdx==='startup'?'selected':'')+'>Since Startup</option>';
+    d.checkpoints.forEach((cp,i)=>{
+      const sel = activePerfComp?.baseIdx == i ? 'selected' : '';
+      o+='<option value="'+i+'" '+sel+'>Perf Checkpoint '+(i+1)+' -'+h(cp.timestamp)+'</option>';
+    });
+    o+='</select><label>Compare to: </label><select id="selCp">';
+    o+='<option value="now" '+(activePerfComp?.compIdx==='now'?'selected':'')+'>Now</option>';
+    d.checkpoints.forEach((cp,i)=>{
+      const sel = activePerfComp?.compIdx == i ? 'selected' : '';
+      o+='<option value="'+i+'" '+sel+'>Perf Checkpoint '+(i+1)+' -'+h(cp.timestamp)+'</option>';
+    });
+    o+='</select><button class="btn btn-p" id="btnCompare" style="margin-left:8px">Compare</button></div>';
+    o+='<div id="compResult"></div></div></div></div>'}
+
   // Runtime stats
   if(s){
     o+='<div class="card"><div class="card-h">'+title+'</div><div class="card-b"><div class="metrics">';
@@ -949,22 +966,6 @@ async function rPerf(){const P='p-performance';loading(P);try{
   if(d.checkpoints&&d.checkpoints.length){o+='<div id="cpTbl"></div>'}
   else o+='<p style="color:var(--muted)">No performance checkpoints yet. Take one to start tracking.</p>';
   o+='</div></div>';
-  // Comparison controls
-  if(d.checkpointCount>0){
-    o+='<div class="live-only"><div class="card"><div class="card-h">Compare Performance</div><div class="card-b">';
-    o+='<div style="margin-bottom:10px"><label>Baseline: </label><select id="selBase"><option value="startup" '+(activePerfComp?.baseIdx==='startup'?'selected':'')+'>Since Startup</option>';
-    d.checkpoints.forEach((cp,i)=>{
-      const sel = activePerfComp?.baseIdx == i ? 'selected' : '';
-      o+='<option value="'+i+'" '+sel+'>Perf Checkpoint '+(i+1)+' -'+h(cp.timestamp)+'</option>';
-    });
-    o+='</select><label>Compare to: </label><select id="selCp">';
-    o+='<option value="now" '+(activePerfComp?.compIdx==='now'?'selected':'')+'>Now</option>';
-    d.checkpoints.forEach((cp,i)=>{
-      const sel = activePerfComp?.compIdx == i ? 'selected' : '';
-      o+='<option value="'+i+'" '+sel+'>Perf Checkpoint '+(i+1)+' -'+h(cp.timestamp)+'</option>';
-    });
-    o+='</select><button class="btn btn-p" id="btnCompare" style="margin-left:8px">Compare</button></div>';
-    o+='<div id="compResult"></div></div></div></div>'}
   // Saved comparison
   if(!activePerfComp && (d.savedComparison||d.savedComparisonHtml)){o+='<div class="card"><div class="card-h">Last Comparison</div><div class="card-b"><div id="savedComp"></div></div></div>'}
   
