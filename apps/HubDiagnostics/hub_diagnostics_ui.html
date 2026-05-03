@@ -111,7 +111,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.6.8";
+const UI_VERSION = "5.6.9";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -873,6 +873,7 @@ async function rHealth(){const P='p-health';loading(P);try{
     o+=mc('Total Java Memory',fmem(r.totalJavaMemory));o+=mc('Free Java Memory',fmem(r.freeJavaMemory));
     o+=mc('Direct Java Memory',fmem(r.directJavaMemory));
     if(d.temperature!=null){const tf=d.temperature*9/5+32;o+=mc('Temperature',d.temperature.toFixed(1)+'\u00B0C ('+tf.toFixed(1)+'\u00B0F)',sev(d.temperature,TH.warnTempC,TH.critTempC,false))}
+    if(d.databaseSize!=null)o+=mc('Database',d.databaseSize+' MB');
     o+='</div></div></div>'}
   // Memory chart placeholder
   o+='<div class="card"><div class="card-h">Resource History</div><div class="card-b"><div id="memChart"><div class="loading"><div class="spinner"></div><div>Loading history...</div></div></div></div></div>';
@@ -884,6 +885,10 @@ async function rHealth(){const P='p-health';loading(P);try{
     if(l.maxEvents)o+=mc('Max Events/Device',l.maxEvents);
     if(l.maxEventAgeDays)o+=mc('Max Event Age',l.maxEventAgeDays+' days');
     if(l.maxStateAgeDays)o+=mc('Max State Age',l.maxStateAgeDays+' days')}
+  if(d.storage){const st=d.storage;
+    o+=mc('File Manager Files',st.fileCount);
+    if(st.usedBytes!=null)o+=mc('Files Used',fmem(st.usedBytes));
+    if(st.freeSpace!=null)o+=mc('Free Space',fmem(st.freeSpace))}
   o+='</div></div></div>';
   document.getElementById(P).innerHTML=o;
   // Fetch and render chart async
