@@ -1028,13 +1028,12 @@ Map apiForumExport() {
     // ── 5. Zigbee Network ──
     if (zigbeeRaw && !zigbeeRaw.error && zigbeeRaw.enabled) {
         int totalZb = (zigbeeRaw.devices ?: []).size()
-        int responsiveZb = zigbeeRaw.devices ? (zigbeeRaw.devices as List).count { it.active == true } : 0
         md << "\n### Zigbee\n"
         md << "- **Channel:** ${zigbeeRaw.channel ?: 'N/A'}"
         if (zigbeeRaw.channel && ![15, 20, 25].contains(zigbeeRaw.channel)) md << " (not on recommended 15/20/25)"
         md << "\n"
         if (zigbeeRaw.powerLevel != null) md << "- **Power Level:** ${zigbeeRaw.powerLevel}\n"
-        md << "- **Devices:** ${totalZb}, **Responsive:** ${responsiveZb}/${totalZb}\n"
+        md << "- **Devices:** ${totalZb}\n"
         if (zigbeeMesh) {
             int staleCount = (zigbeeMesh.staleNeighbors ?: []).size()
             int weakCount = (zigbeeMesh.weakNeighbors ?: []).size()
@@ -1044,11 +1043,6 @@ Map apiForumExport() {
             if (zigbeeMesh.avgLqi != null) md << "- **LQI:** avg ${zigbeeMesh.avgLqi}, min ${zigbeeMesh.minLqi}, max ${zigbeeMesh.maxLqi}\n"
             if (weakCount > 0) md << "- **Weak Neighbors:** ${(zigbeeMesh.weakNeighbors ?: []).collect { "${it.shortId} LQI:${it.lqi}" }.join(', ')}\n"
             if (staleCount > 0) md << "- **Stale Neighbors:** ${(zigbeeMesh.staleNeighbors ?: []).collect { it.shortId }.join(', ')}\n"
-        }
-        // Non-responsive devices
-        List nonResponsive = zigbeeRaw.devices ? (zigbeeRaw.devices as List).findAll { it.active != true }.collect { obfuscate ? "Zigbee Device ${it.id}" : (it.name ?: "Device ${it.id}") } : []
-        if (nonResponsive) {
-            md << "- **Non-Responsive:** ${nonResponsive.join(', ')}\n"
         }
     }
 
@@ -1298,7 +1292,6 @@ Map getNetworkData() {
     Map zigbeeRaw = networkData.zigbee ?: [:]
     Map zigbeeDeviceByShortId = [:]
     (zigbeeRaw.devices ?: []).each { Map d -> if (d.shortZigbeeId) zigbeeDeviceByShortId[((String)d.shortZigbeeId).toUpperCase()] = d }
-    List nonResponsive = zigbeeRaw.devices ? zigbeeRaw.devices.findAll { it.active != true }.collect { [id: it.id, name: it.name ?: "Device ${it.id}"] } : []
     Map hubMeshRaw = networkData.hubMesh ?: [:]
     List hubMeshPeers = hubMeshRaw.hubList ? hubMeshRaw.hubList.collect { Map hub ->
         [name: hub.name, ip: hub.ipAddress, offline: hub.offline,
@@ -1322,8 +1315,6 @@ Map getNetworkData() {
             panId: zigbeeRaw.panId, extendedPanId: zigbeeRaw.extendedPanId,
             deviceCount: (zigbeeRaw.devices ?: []).size(), joinMode: zigbeeRaw.inJoinMode,
             powerLevel: zigbeeRaw.powerLevel,
-            responsiveCount: zigbeeRaw.devices ? zigbeeRaw.devices.count { it.active == true } : 0,
-            totalCount: (zigbeeRaw.devices ?: []).size(), nonResponsive: nonResponsive,
             messageCounts: extractZigbeeMessageCounts(networkData.zigbee ?: [:]),
             mesh: zigbeeMesh ? [
                 neighbors: zigbeeMesh.neighbors?.size() ?: 0, routes: zigbeeMesh.routes?.size() ?: 0,
