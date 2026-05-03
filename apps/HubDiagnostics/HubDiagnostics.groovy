@@ -861,7 +861,7 @@ Map apiForumExport() {
     Map eventStateLimits = fetchEventStateLimits()
     List alerts = getStructuredAlerts()
     Map deviceStats = analyzeDevices(true)
-    Map appStats = analyzeApps(false)
+    Map appStats = analyzeApps(true)
     Map networkData = analyzeNetwork()
     Map networkConfig = networkData.network ?: [:]
     Map zwaveRaw = networkData.zwave ?: [:]
@@ -891,6 +891,7 @@ Map apiForumExport() {
     md << "| Model | ${hubInfo.hardware} |\n"
     md << "| Firmware | ${hubInfo.firmware} |\n"
     md << "| Uptime | ${stats?.uptime ?: 'N/A'} |\n"
+    if (location.currentMode) md << "| Mode | ${location.currentMode} |\n"
     boolean bothActive = networkConfig.hasEthernet && networkConfig.hasWiFi
     String connType = networkConfig.hasEthernet ? "Ethernet" : (networkConfig.hasWiFi ? "WiFi" : "Unknown")
     if (bothActive) connType = "Ethernet + WiFi active"
@@ -946,22 +947,32 @@ Map apiForumExport() {
     if (lowBattery) {
         md << "\n**Low Battery:** " + lowBattery.collect { "${obfuscate ? (it.type ?: 'Device') : it.name} (${it.battery}%)" }.join(", ") + "\n"
     }
+    List inactiveDevices = (deviceStats.allDevices ?: []).findAll { it.status == "Inactive" }
+    if (inactiveDevices) {
+        md << "\n**Inactive Devices (${inactiveDevices.size()}):** "
+        md << inactiveDevices.take(15).collect { obfuscate ? (it.type ?: 'Device') : it.name }.join(", ")
+        if (inactiveDevices.size() > 15) md << " … (+${inactiveDevices.size() - 15} more)"
+        md << "\n"
+    }
 
     // ── 3. App Inventory ──
     md << "\n### Apps\n"
     md << "- **Total:** ${appStats.totalApps} (Built-in: ${appStats.builtInApps}, User: ${appStats.userApps})\n"
-    // Top 5 apps by CPU from platform stats
-    List appRuntimeStats = (appStats.platformApps ?: []) as List
-    if (appRuntimeStats) {
-        List topApps = appRuntimeStats.sort { -(it.pctTotal ?: 0) as float }.take(5)
-        if (topApps.find { ((it.pctTotal ?: 0) as float) != 0 }) {
-            md << "\n**Top Apps by CPU:**\n"
-            md << "| App | % Busy | Exec Count | Avg (ms) |\n|---|---:|---:|---:|\n"
-            topApps.each { Map a ->
-                float pct = (a.pctTotal ?: 0) as float
-                String aName = obfuscate ? (a.type ?: a.name) : a.name
-                if (pct > 0) md << "| ${aName} | ${String.format('%.3f', pct)}% | ${a.count ?: 0} | ${String.format('%.1f', (a.average ?: 0) as float)} |\n"
-            }
+    List userAppsList = (appStats.userAppsList ?: []) as List
+    if (userAppsList) {
+        // Deduplicate by type name, show count when multiple instances
+        Map appCounts = [:]
+        userAppsList.each { Map a -> appCounts[a.name ?: a.label ?: "Unknown"] = (appCounts[a.name ?: a.label ?: "Unknown"] ?: 0) + 1 }
+        md << "\n**Installed User Apps:**\n"
+        appCounts.sort { it.key }.each { String name, int count ->
+            md << "- ${obfuscate ? 'User App' : name}${count > 1 ? " (×${count})" : ''}\n"
+        }
+    }
+    Map builtInInstances = (appStats.builtInInstances ?: [:]) as Map
+    if (builtInInstances) {
+        md << "\n**Installed Built-in Apps:**\n"
+        builtInInstances.sort { it.key }.each { String name, int count ->
+            md << "- ${name}${count > 1 ? " (×${count})" : ''}\n"
         }
     }
 
@@ -970,6 +981,7 @@ Map apiForumExport() {
         md << "\n### Z-Wave\n"
         md << "- **Enabled:** ${zwaveRaw.enabled ? 'Yes' : 'No'}, **Healthy:** ${zwaveRaw.healthy ? 'Yes' : 'No'}\n"
         md << "- **Version:** ${zwaveVersion ?: 'N/A'}, **Region:** ${zwaveRaw.region ?: 'N/A'}\n"
+        if (zwaveRaw.zwaveJS != null) md << "- **Z-Wave JS:** ${zwaveRaw.zwaveJS ? 'Yes' : 'No'}\n"
         md << "- **Nodes:** ${(zwaveRaw.zwDevices ?: [:]).size()}\n"
         if (zwaveMesh) {
             md << "- **Avg PER:** ${String.format('%.1f', (zwaveMesh.avgPer ?: 0) as float)}%"
@@ -1029,6 +1041,9 @@ Map apiForumExport() {
     if (zigbeeRaw && !zigbeeRaw.error && zigbeeRaw.enabled) {
         int totalZb = (zigbeeRaw.devices ?: []).size()
         md << "\n### Zigbee\n"
+        md << "- **Healthy:** ${zigbeeRaw.healthy ? 'Yes' : 'No'}"
+        if (zigbeeRaw.networkState) md << ", **State:** ${zigbeeRaw.networkState}"
+        md << "\n"
         md << "- **Channel:** ${zigbeeRaw.channel ?: 'N/A'}"
         if (zigbeeRaw.channel && ![15, 20, 25].contains(zigbeeRaw.channel)) md << " (not on recommended 15/20/25)"
         md << "\n"
@@ -1061,19 +1076,22 @@ Map apiForumExport() {
         List peers = hubMeshRaw.hubList as List
         if (peers) {
             md << "\n### Hub Mesh\n"
-            md << "| Hub | IP | Status | Devices |\n|---|---|---|---:|\n"
+            md << "| Hub | IP | Status | Devices | Vars |\n|---|---|---|---:|---:|\n"
             peers.each { Map hub ->
                 String status = hub.offline ? "Offline" : "Online"
-                md << "| ${hub.name} | ${hub.ipAddress} | ${status} | ${hub.deviceIds?.size() ?: 0} |\n"
+                md << "| ${hub.name} | ${hub.ipAddress} | ${status} | ${hub.deviceIds?.size() ?: 0} | ${hub.hubVarNames?.size() ?: 0} |\n"
             }
         }
     }
 
     // ── 7. Performance ──
     md << "\n### Performance\n"
-    md << "- **Uptime:** ${stats?.uptime ?: 'N/A'}\n"
-    if (stats?.devicePct) md << "- **Device % Busy:** ${stats.devicePct}\n"
-    if (stats?.appPct) md << "- **App % Busy:** ${stats.appPct}\n"
+    if (stats?.totalDevicesRuntime) md << "- **Device Runtime:** ${stats.totalDevicesRuntime}"
+    if (stats?.devicePct) md << " (${stats.devicePct} busy)"
+    if (stats?.totalDevicesRuntime) md << "\n"
+    if (stats?.totalAppsRuntime) md << "- **App Runtime:** ${stats.totalAppsRuntime}"
+    if (stats?.appPct) md << " (${stats.appPct} busy)"
+    if (stats?.totalAppsRuntime) md << "\n"
 
     // Top 5 device types by CPU
     List devRuntimeStats = (stats?.deviceStats ?: []) as List
