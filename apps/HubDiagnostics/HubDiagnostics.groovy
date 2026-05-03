@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "5.6.8"
+@Field static final String APP_VERSION = "5.6.9"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -1398,7 +1398,8 @@ Map getHealthData() {
               timeZone: location.timeZone?.ID],
         resources: mem ?: null, temperature: systemHealth.temperature,
         databaseSize: systemHealth.databaseSize, stateCompression: systemHealth.stateCompression,
-        eventStateLimits: systemHealth.eventStateLimits, alerts: getStructuredAlerts()
+        eventStateLimits: systemHealth.eventStateLimits, alerts: getStructuredAlerts(),
+        storage: fetchFileManagerStats()
     ]
 }
 
@@ -1666,6 +1667,15 @@ Integer fetchDatabaseSize() {
     String text = (String) hubRequest(DATABASE_SIZE_PATH, "database size", "text")
     if (text) { try { return text.toInteger() } catch (Exception e) { /* ignore */ } }
     return null
+}
+
+Map fetchFileManagerStats() {
+    Map fm = (Map) hubRequest("/hub/fileManager/json", "file manager", "json", 10)
+    if (!fm || fm.error) return null
+    List files = (List) (fm.files ?: [])
+    long usedBytes = 0L
+    files.each { usedBytes += (it.size?.toString()?.toLong() ?: 0L) }
+    return [fileCount: files.size(), usedBytes: usedBytes, freeSpace: fm.freeSpace]
 }
 
 Float fetchTemperature() {
