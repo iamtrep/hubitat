@@ -910,7 +910,7 @@ async function rPerf(){const P='p-performance';loading(P);try{
   if(activePerfComp) o+='<button class="btn btn-p" id="btnClearComp">Clear Comparison</button>';
   o+='</div>';
 
-  // Comparison controls (top — affects all cards below)
+  // Comparison controls + checkpoint list (top — affects all cards below)
   if(d.checkpointCount>0){
     o+='<div class="live-only"><div class="card"><div class="card-h">Compare Performance</div><div class="card-b">';
     o+='<div style="margin-bottom:10px"><label>Baseline: </label><select id="selBase"><option value="startup" '+(activePerfComp?.baseIdx==='startup'?'selected':'')+'>Since Startup</option>';
@@ -925,7 +925,11 @@ async function rPerf(){const P='p-performance';loading(P);try{
       o+='<option value="'+i+'" '+sel+'>Perf Checkpoint '+(i+1)+' -'+h(cp.timestamp)+'</option>';
     });
     o+='</select><button class="btn btn-p" id="btnCompare" style="margin-left:8px">Compare</button></div>';
-    o+='<div id="compResult"></div></div></div></div>'}
+    o+='<div id="compResult"></div></div></div></div>';
+    o+='<div class="card"><details><summary class="card-h" style="display:block;cursor:pointer">Perf Checkpoints ('+d.checkpointCount+' / '+d.maxCheckpoints+')</summary><div class="card-b"><div id="cpTbl"></div></div></details></div>';
+  } else {
+    o+='<div class="card"><div class="card-h">Perf Checkpoints (0 / '+d.maxCheckpoints+')</div><div class="card-b"><p style="color:var(--muted)">No performance checkpoints yet. Take one to start tracking.</p></div></div>';
+  }
 
   // Runtime stats
   if(s){
@@ -961,11 +965,6 @@ async function rPerf(){const P='p-performance';loading(P);try{
       o+='<div style="padding:4px 0">'+(i+1)+'. '+(t.deviceId?dlink(t.deviceId,t.name):h(t.name))+' <span style="color:var(--muted)">('+h(t.integration||'')+')</span> &mdash; <b>'+t.msgCount+'</b> msgs</div>'});
     o+='</div></div>'}
 
-  // Checkpoints
-  o+='<div class="card"><div class="card-h">Perf Checkpoints ('+d.checkpointCount+' / '+d.maxCheckpoints+')</div><div class="card-b">';
-  if(d.checkpoints&&d.checkpoints.length){o+='<div id="cpTbl"></div>'}
-  else o+='<p style="color:var(--muted)">No performance checkpoints yet. Take one to start tracking.</p>';
-  o+='</div></div>';
   // Saved comparison
   if(!activePerfComp && (d.savedComparison||d.savedComparisonHtml)){o+='<div class="card"><div class="card-h">Last Comparison</div><div class="card-b"><div id="savedComp"></div></div></div>'}
   
@@ -1185,14 +1184,6 @@ function renderSnapshotView(s,elId){
   const el=document.getElementById(elId);if(!el)return;let o='';
   o+='<h3 style="margin-bottom:8px">Config Snapshot &mdash; '+h(s.timestamp)+'</h3>';
   if(s.hubInfo)o+='<div style="margin-bottom:8px;color:var(--muted)">'+h(s.hubInfo.name)+' | fw '+h(s.hubInfo.firmware)+' | '+h(s.hubInfo.hardware)+'</div>';
-  // System resources
-  if(s.systemHealth){const sh=s.systemHealth;
-    o+='<div class="ng" style="margin-bottom:10px">';
-    if(sh.freeOSMemory!=null)o+=ni('Free OS Memory',fmem(sh.freeOSMemory));
-    if(sh.cpuAvg5min!=null)o+=ni('CPU Load',sh.cpuAvg5min.toFixed(2));
-    if(sh.freeJavaMemory!=null)o+=ni('Free Java',fmem(sh.freeJavaMemory));
-    if(sh.databaseSize!=null)o+=ni('Database',sh.databaseSize+' MB');
-    o+='</div>'}
   // Devices
   const dv=s.devices||{};
   o+='<div style="margin-bottom:6px"><b>Devices:</b> '+dv.totalDevices+' total | Active: '+dv.activeDevices+' | Inactive: '+dv.inactiveDevices+' | Disabled: '+dv.disabledDevices+'</div>';
@@ -1215,6 +1206,14 @@ function renderSnapshotView(s,elId){
         o+='</ul>'}
       o+='</div>'});
     o+='</div></details>'}
+  // Network config
+  const nw=s.network||{};
+  const nwParts=[];
+  if(nw.zigbee)nwParts.push('Zigbee ch '+(nw.zigbee.channel??'?')+(nw.zigbee.enabled===false?' [off]':''));
+  if(nw.zwave)nwParts.push('Z-Wave '+(nw.zwave.region||'?')+' ('+nw.zwave.nodeCount+' nodes)'+(nw.zwave.enabled===false?' [off]':''));
+  if(nw.matter)nwParts.push('Matter: '+(nw.matter.enabled?'enabled':'disabled'));
+  if(nw.hubMesh){const peers=(nw.hubMesh.peers||[]).map(p=>h(p.name||p.ip)).join(', ');nwParts.push('Hub Mesh: '+(nw.hubMesh.enabled?(peers||'no peers'):'disabled'))}
+  if(nwParts.length)o+='<div style="margin:8px 0;color:var(--muted);font-size:12px">'+nwParts.join(' &nbsp;|&nbsp; ')+'</div>';
   el.innerHTML=o;
   // Render sub-tables
   if(dv.allDevices&&dv.allDevices.length)
@@ -1227,7 +1226,8 @@ function renderSnapshotView(s,elId){
     tbl('snapAppTbl',[{l:'App Type',f:'name'},{l:'Instances',f:'count',t:'n'}],ns,{sc:1,sd:'desc'})}
   if(ap.userAppsList&&ap.userAppsList.length)
     tbl('snapUserAppTbl',[
-      {l:'Name',f:'label',r:r=>alink(r.id,r.label)},{l:'Type',f:'name'}
+      {l:'Name',f:'label',r:r=>alink(r.id,r.label)},{l:'Type',f:'name'},
+      {l:'Status',f:'disabled',r:r=>r.disabled?'<span style="color:var(--crit);font-size:11px">[disabled]</span>':''}
     ],ap.userAppsList,{sc:0,sd:'asc'});
 }
 
@@ -1258,9 +1258,16 @@ function renderDiff(d,elId){
   o+='<div style="margin:8px 0"><b>Apps:</b> '+ac.olderTotal+' \u2192 '+ac.newerTotal+(ad!==0?' <span style="color:'+(ad>0?'var(--ok)':'var(--crit)')+'">('+( ad>0?'+':'')+ad+')</span>':'')+'</div>';
   if(ac.added&&ac.added.length)ac.added.forEach(a=>o+='<div style="margin:2px 0 2px 16px" class="diff-add">+ '+alink(a.id,a.label||a.name)+'</div>');
   if(ac.removed&&ac.removed.length)ac.removed.forEach(a=>o+='<div style="margin:2px 0 2px 16px" class="diff-rem">- '+h(a.label||a.name)+'</div>');
-  // Memory
-  if(d.memoryDelta){const md=d.memoryDelta;const dd=md.to-md.from;
-    o+='<div style="margin:8px 0"><b>Free OS Memory:</b> '+fmem(md.from)+' \u2192 '+fmem(md.to)+' <span style="color:'+(dd>=0?'var(--ok)':'var(--crit)')+'">('+( dd>=0?'+':'')+fmem(dd)+')</span></div>'}
+  if(ac.changed&&ac.changed.length){o+='<div class="diff-chg" style="margin:4px 0"><b>Status Changed ('+ac.changed.length+'):</b></div>';
+    ac.changed.forEach(a=>o+='<div style="margin:2px 0 2px 16px" class="diff-chg">~ '+alink(a.id,a.label||a.name)+' &mdash; '+(a.disabled?'enabled \u2192 disabled':'disabled \u2192 enabled')+'</div>')}
+  // Network config changes
+  const nc=d.networkChanges||{};
+  if(nc.zigbeeChannel)o+='<div style="margin:8px 0"><b>Zigbee Channel:</b> '+(nc.zigbeeChannel.from??'?')+' \u2192 '+(nc.zigbeeChannel.to??'?')+'</div>';
+  if(nc.zwaveRegion)o+='<div style="margin:8px 0"><b>Z-Wave Region:</b> '+h(nc.zwaveRegion.from||'?')+' \u2192 '+h(nc.zwaveRegion.to||'?')+'</div>';
+  if(nc.matterEnabled!=null)o+='<div style="margin:8px 0"><b>Matter:</b> '+(nc.matterEnabled.from?'enabled':'disabled')+' \u2192 '+(nc.matterEnabled.to?'enabled':'disabled')+'</div>';
+  if(nc.hubMeshPeers){
+    if(nc.hubMeshPeers.added&&nc.hubMeshPeers.added.length)nc.hubMeshPeers.added.forEach(p=>o+='<div style="margin:2px 0 2px 16px" class="diff-add">+ Hub Mesh peer: '+h(p)+'</div>');
+    if(nc.hubMeshPeers.removed&&nc.hubMeshPeers.removed.length)nc.hubMeshPeers.removed.forEach(p=>o+='<div style="margin:2px 0 2px 16px" class="diff-rem">- Hub Mesh peer: '+h(p)+'</div>')}
   el.innerHTML=o;
 }
 

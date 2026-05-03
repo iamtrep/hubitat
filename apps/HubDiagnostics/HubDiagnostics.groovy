@@ -628,15 +628,10 @@ Map apiSnapshotView() {
     Map snap = snapshots[idx]
     if (snap.devices) snap.devices = migrateSnapshotDevices(snap.devices)
 
+    Map snapNet = snap.network ?: [:]
     return jsonResponse([
         timestamp: snap.timestamp,
         hubInfo: snap.hubInfo,
-        systemHealth: snap.systemHealth ? [
-            freeOSMemory: snap.systemHealth.memory?.freeOSMemory,
-            cpuAvg5min: snap.systemHealth.memory?.cpuAvg5min,
-            freeJavaMemory: snap.systemHealth.memory?.freeJavaMemory,
-            databaseSize: snap.systemHealth.databaseSize
-        ] : null,
         devices: [
             totalDevices: snap.devices?.totalDevices ?: 0,
             activeDevices: snap.devices?.activeDevices ?: 0,
@@ -657,7 +652,16 @@ Map apiSnapshotView() {
             builtInInstances: snap.apps?.builtInInstances,
             userAppsList: snap.apps?.userAppsList,
             parentChildHierarchy: snap.apps?.parentChildHierarchy
-        ]
+        ],
+        network: snapNet ? [
+            zigbee:  snapNet.zigbee  && !snapNet.zigbee.error  ? [enabled: snapNet.zigbee.enabled,  channel: snapNet.zigbee.channel]  : null,
+            zwave:   snapNet.zwave   && !snapNet.zwave.error   ? [enabled: snapNet.zwave.enabled,   region: snapNet.zwave.region,   nodeCount: (snapNet.zwave.zwDevices ?: [:]).size()] : null,
+            matter:  snapNet.matter  && !snapNet.matter.error  ? [enabled: snapNet.matter.enabled,  installed: snapNet.matter.installed]  : null,
+            hubMesh: snapNet.hubMesh && !snapNet.hubMesh.error ? [
+                enabled: snapNet.hubMesh.hubMeshEnabled != null ? snapNet.hubMesh.hubMeshEnabled : snapNet.hubMesh.enabled,
+                peers:   (snapNet.hubMesh.hubList ?: []).collect { [name: it.name, ip: it.ipAddress] }
+            ] : null
+        ] : null
     ])
 }
 
@@ -730,10 +734,6 @@ Map apiSnapshotDiff() {
         [integration: key, from: olderInteg[key] ?: 0, to: newerInteg[key] ?: 0]
     }
 
-    // Memory delta
-    Long olderMem = older.systemHealth?.memory?.freeOSMemory
-    Long newerMem = newer.systemHealth?.memory?.freeOSMemory
-
     // App list diff
     List olderUserApps = (List) (older.apps?.userAppsList ?: [])
     List newerUserApps = (List) (newer.apps?.userAppsList ?: [])
@@ -743,6 +743,35 @@ Map apiSnapshotDiff() {
                                     .collect { Map a -> [id: a.id, name: a.name, label: a.label] }
     List appsRemoved = olderUserApps.findAll { !newerAppIds.contains(safeToString(((Map) it).id, "")) }
                                     .collect { Map a -> [id: a.id, name: a.name, label: a.label] }
+
+    // App disabled status changes (only for apps present in both snapshots)
+    Map olderAppsById = olderUserApps.collectEntries { Map a -> [(safeToString(a.id, "")): a] }
+    List appsChanged = newerUserApps.findAll { Map a ->
+        String aid = safeToString(a.id, "")
+        Map old = (Map) olderAppsById[aid]
+        old && ((old.disabled ?: false) != (a.disabled ?: false))
+    }.collect { Map a -> [id: a.id, name: a.name, label: a.label, disabled: a.disabled ?: false] }
+
+    // Network configuration diff
+    Map olderNet = older.network ?: [:]
+    Map newerNet = newer.network ?: [:]
+    Map networkChanges = [:]
+    def olderZbCh  = olderNet.zigbee?.channel
+    def newerZbCh  = newerNet.zigbee?.channel
+    if (olderZbCh != newerZbCh) networkChanges.zigbeeChannel = [from: olderZbCh, to: newerZbCh]
+    def olderZwReg = olderNet.zwave?.region
+    def newerZwReg = newerNet.zwave?.region
+    if (olderZwReg != newerZwReg) networkChanges.zwaveRegion = [from: olderZwReg, to: newerZwReg]
+    def olderMatter = olderNet.matter?.enabled
+    def newerMatter = newerNet.matter?.enabled
+    if (olderMatter != newerMatter) networkChanges.matterEnabled = [from: olderMatter, to: newerMatter]
+    List olderPeers = (olderNet.hubMesh?.hubList ?: []).collect { it.name ?: it.ipAddress }
+    List newerPeers = (newerNet.hubMesh?.hubList ?: []).collect { it.name ?: it.ipAddress }
+    Set  olderPeerSet = olderPeers.toSet()
+    Set  newerPeerSet = newerPeers.toSet()
+    List peersAdded   = newerPeers.findAll { !olderPeerSet.contains(it) }
+    List peersRemoved = olderPeers.findAll { !newerPeerSet.contains(it) }
+    if (peersAdded || peersRemoved) networkChanges.hubMeshPeers = [added: peersAdded, removed: peersRemoved]
 
     // Save diff for persistence
     saveSnapshotDiffPayload([generatedAt: new Date().format("yyyy-MM-dd HH:mm:ss"), older: older, newer: newer])
@@ -761,9 +790,10 @@ Map apiSnapshotDiff() {
             olderTotal: older.apps?.totalApps ?: 0,
             newerTotal: newer.apps?.totalApps ?: 0,
             added: appsAdded,
-            removed: appsRemoved
+            removed: appsRemoved,
+            changed: appsChanged
         ],
-        memoryDelta: olderMem != null && newerMem != null ? [from: olderMem, to: newerMem] : null
+        networkChanges: networkChanges ?: null
     ])
 }
 
@@ -2079,7 +2109,7 @@ Map analyzeApps(boolean deep = true) {
 
                 if (isUserApp) {
                     stats.userApps++
-                    stats.userAppsList << [name: appType, label: appLabel, id: appId]
+                    stats.userAppsList << [name: appType, label: appLabel, id: appId, disabled: app.disabled ?: false]
                 } else {
                     stats.builtInApps++
                     stats.builtInInstances[appType] = (stats.builtInInstances[appType] ?: 0) + 1
