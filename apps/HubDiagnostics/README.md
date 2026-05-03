@@ -2,7 +2,7 @@
 
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
-**Current version:** 5.6.0
+**Current version:** 5.7.0
 
 ---
 
@@ -84,9 +84,11 @@ The app enforces version sync: on each dashboard load it checks whether the inst
 
 A summary of hub health at a glance.
 
+The header bar contains a **Docs ↗** link (this document) and a **↻ Refresh** button that forces a full re-fetch and re-render of whichever tab is currently open.
+
 **Overview** — Device counts: total, active, inactive, disabled. Installed apps: total, built-in, user. All counts are linked to the relevant filtered list.
 
-**Resources** — Free OS memory, CPU load (5-minute average), hub temperature, and database size. Values are color-coded against configurable thresholds (see [App Settings](#app-settings-tab)).
+**Resources** — Free OS memory, CPU load (5-minute average), hub temperature, and database size. Values are color-coded against configurable thresholds (see [App Settings](#app-settings-tab)). This card **auto-refreshes** in the background on a configurable interval (default 30 s); the last refresh time is shown in the card header.
 
 **Connection Types / Integrations** — Distribution of devices by how they connect (Paired, LAN Direct, LAN Bridge, Cloud, Virtual, Hub Mesh) and by which integration manages them. Counts are linked to the device list filtered to that group.
 
@@ -210,19 +212,29 @@ Enabled status, shared/linked device and variable counts. Table of peer hubs wit
 
 **Alerts** — All active platform and calculated alerts. Shows a green checkmark when there are none.
 
-**System Resources** — Free OS memory, CPU load, Java heap usage (total/free/direct), temperature (°C and °F). Values are color-coded against configured thresholds.
+**System Resources** — Free OS memory, CPU load, Java heap usage (total/free/direct), temperature (°C and °F), and database size. Values are color-coded against configured thresholds. This card **auto-refreshes** in the background on a configurable interval (default 30 s); the last refresh time is shown in the card header.
 
 **Resource History** — Time-series chart of free OS memory and CPU load over recent checkpoints. Horizontal reference lines mark the warning and critical memory thresholds.
 
-**Database & Storage** — Database size, state compression status, max events per device, max event age (days), max state age (days).
+**Database & Storage** — Database size, state compression status, max events per device, max event age (days), max state age (days). A separate **File Manager** sub-section shows the total number of files stored in the hub's File Manager, total bytes used, and free storage space.
 
 ---
 
 ## Performance Tab
 
+### Compare Performance (top card)
+
+The **Compare Performance** card sits at the top of the tab and acts as a mode switch for all cards below. Select a baseline (hub startup or any saved checkpoint) and a comparison point (now or any checkpoint), then click **Compare**. While a comparison is active, all runtime and resource cards switch from showing current values to showing deltas since the baseline.
+
+Directly below it, the **Perf Checkpoints** list (collapsed by default) shows all saved checkpoints with timestamps; individual checkpoints can be deleted.
+
 ### Current Runtime Statistics
 
-Overview of how the hub is spending its execution time: device runtime %, app runtime %, uptime, resources (memory and CPU).
+When no comparison is active, these cards show current values:
+
+**Runtime** — Hub uptime, device runtime %, app runtime %.
+
+**Resources** — Free OS memory and CPU load (5-minute average). This card **auto-refreshes** in the background on a configurable interval (default 30 s) when no comparison is active; the last refresh time is shown in the card header.
 
 **Top Talkers** — The 3 most message-active Z-Wave and Zigbee devices by total message count since last restart.
 
@@ -239,31 +251,27 @@ A checkpoint captures a point-in-time snapshot of runtime statistics and resourc
 - **Take Perf Checkpoint** — manually capture the current state
 - **Auto-checkpoints** — optionally schedule automatic captures (5m–24h intervals, up to 50 retained)
 
-**Checkpoint comparison** — Select a baseline (hub startup or any checkpoint) and a comparison point (now or any checkpoint). The diff view shows:
-- Delta in device and app runtime %
-- Memory and CPU delta
-- Radio message count delta (msgs/min per device, since the interval)
-
 ---
 
 ## Snapshots Tab
 
-A configuration snapshot captures the full state of devices, apps, hub metadata, and system resources at a point in time. Snapshots are used to detect configuration drift — what changed between two points in time.
+A configuration snapshot captures the state of devices, apps, network configuration, hub metadata, and file storage at a point in time. Snapshots are used to detect configuration drift — what changed between two points in time.
 
-**Taking a snapshot** — Click **Take Config Snapshot**, or enable auto-snapshots on a schedule (1h–24h, up to 50 retained).
+**Taking a snapshot** — Click **Take Config Snapshot**, or enable auto-snapshots on a schedule (1–30 day interval, up to 50 retained).
 
 **Snapshot table** — Lists all saved snapshots with timestamp, firmware version, device count, app count, and free memory. Individual snapshots can be viewed or deleted.
 
-**Viewing a snapshot** — Shows a full breakdown at the time of capture: device counts by status, connection types, integrations, full device list, app counts, app type list, user app instances, and parent/child hierarchy.
+**Viewing a snapshot** — Shows a full breakdown at the time of capture: device counts by status, connection types, integrations, full device list, app counts, app type list, user app instances (with disabled status), parent/child hierarchy, network configuration summary (Zigbee channel, Z-Wave region, Hub Mesh peers, Matter status), and file manager stats.
 
-**Snapshot diff (Compare)** — Select an older and a newer snapshot and click **Compare**. The diff shows:
+**Snapshot diff (Compare)** — Select an older and a newer snapshot (or choose **Now** to capture a new one on the spot) and click **Compare**. After comparing with Now, the snapshot list and dropdowns refresh in place while the diff remains visible. The diff shows:
 
 - Firmware version changes
 - Devices added, removed, or changed (connection type, integration, status)
 - Connection type count deltas
 - Integration count deltas
-- Apps added or removed
-- Free OS memory delta
+- Apps added, removed, or toggled enabled/disabled
+- Network configuration changes (Zigbee channel, Z-Wave region, Hub Mesh peers added/removed, Matter enabled/disabled)
+- File Manager changes (file count, free space)
 
 Changes are color-coded: green for additions/improvements, red for removals/degradations, yellow for modifications.
 
@@ -275,7 +283,7 @@ Most settings are accessible from the Hubitat admin UI under **Apps → Hub Diag
 
 ### Config Snapshot Scheduling
 - Enable automatic snapshots: on/off
-- Interval: 1h / 6h / 12h / 24h
+- Interval: 1–30 days (number input)
 - Max snapshots to retain: 1–50 (default 10; oldest are pruned when the limit is reached)
 
 ### Perf Checkpoint Scheduling
@@ -304,6 +312,9 @@ These thresholds control when resource metrics turn orange (warning) or red (cri
 | Hub temperature critical (°C) | 77 | 20–100 |
 
 Changes take effect immediately in the dashboard without a page reload.
+
+### Live Data
+- **Auto-refresh interval** — How frequently the Resources cards on Dashboard, Health, and Performance tabs update in the background (10–300 seconds, default 30). Changes take effect immediately on save without a page reload.
 
 ### Logging
 - **Debug logging** — Enables verbose logging in the Hubitat Logs page. Useful for troubleshooting; leave off during normal use.
@@ -441,6 +452,7 @@ Base URL: `http://{hub-ip}/apps/api/{app-id}/`
 | `api/network` | Network config and radio protocol status |
 | `api/health` | Hub health, alerts, resource details |
 | `api/health/history` | Memory/CPU history for charting |
+| `api/live` | Lightweight real-time resource metrics (memory, CPU, temperature, database size) used by the auto-refresh feature |
 | `api/performance` | Runtime stats and checkpoints |
 | `api/snapshots` | List of config snapshots |
 | `api/snapshot/view?index=N` | View a specific snapshot |
