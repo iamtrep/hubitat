@@ -2,7 +2,7 @@
 
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
-**Current version:** 5.7.0
+**Current version:** 5.8.2
 
 ---
 
@@ -171,6 +171,7 @@ IP address, connection type (DHCP/static), gateway, subnet, DNS. Shows a warning
 
 - Radio status (enabled, healthy, firmware version, region, node count)
 - Firmware update alert if a radio firmware upgrade is available
+- Compatible with both the default Z/IP stack and the ZWaveJS stack
 
 **Ghost Nodes** — Z-Wave radio nodes with no associated Hubitat device (the device was deleted without Z-Wave exclusion), or nodes in FAILED state, or nodes with no route and an unknown name. Each ghost shows the signals that triggered it: `no device`, `FAILED`, `no route`, `unknown name`. These should be removed from the Z-Wave mesh.
 
@@ -257,7 +258,7 @@ A checkpoint captures a point-in-time snapshot of runtime statistics and resourc
 
 A configuration snapshot captures the state of devices, apps, network configuration, hub metadata, and file storage at a point in time. Snapshots are used to detect configuration drift — what changed between two points in time.
 
-**Taking a snapshot** — Click **Take Config Snapshot**, or enable auto-snapshots on a schedule (1–30 day interval, up to 50 retained).
+**Taking a snapshot** — Click **Take Config Snapshot**, or enable auto-snapshots on a schedule (1 day / 2 days / 1 week / 2 weeks interval, up to 50 retained).
 
 **Snapshot table** — Lists all saved snapshots with timestamp, firmware version, device count, app count, and free memory. Individual snapshots can be viewed or deleted.
 
@@ -283,7 +284,7 @@ Most settings are accessible from the Hubitat admin UI under **Apps → Hub Diag
 
 ### Config Snapshot Scheduling
 - Enable automatic snapshots: on/off
-- Interval: 1–30 days (number input)
+- Interval: 1 day / 2 days / 1 week / 2 weeks
 - Max snapshots to retain: 1–50 (default 10; oldest are pruned when the limit is reached)
 
 ### Perf Checkpoint Scheduling
@@ -320,7 +321,6 @@ Changes take effect immediately in the dashboard without a page reload.
 - **Debug logging** — Enables verbose logging in the Hubitat Logs page. Useful for troubleshooting; leave off during normal use.
 
 ### Export
-- **Report link mode** — Controls how device/app links are formatted in generated HTML reports: Relative (recommended, works via Remote Admin) or Absolute (full local IP URL).
 - **Obfuscate labels in forum export** — Replaces device and app names with their driver/app type in forum exports. Useful for privacy when posting diagnostics in public forums.
 
 ### Maintenance
