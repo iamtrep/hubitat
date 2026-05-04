@@ -111,7 +111,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.7.0";
+const UI_VERSION = "5.8.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -1335,7 +1335,7 @@ async function rConfig(){const P='p-config';loading(P);try{
   o+=`<div class="cfg-row"><label><input type="checkbox" id="cfg_autoSnapshot" ${s.autoSnapshot?'checked':''}><span>Enable automatic config snapshots</span></label></div>`;
   o+=`<div id="cfg_snapDetail" class="cfg-row" style="display:${s.autoSnapshot?'flex':'none'}">`;
   o+=`<label>Interval: <select id="cfg_snapshotInterval">`;
-  [['1','1h'],['6','6h'],['12','12h'],['24','24h']].forEach(([v,l])=>o+=`<option value="${v}" ${s.snapshotInterval==v?'selected':''}>${l}</option>`);
+  [['1','1 day'],['2','2 days'],['7','1 week'],['14','2 weeks']].forEach(([v,l])=>o+=`<option value="${v}" ${String(s.snapshotInterval)==v?'selected':''}>${l}</option>`);
   o+=`</select></label>`;
   o+=`<label>Max: <input type="number" id="cfg_maxSnapshots" value="${s.maxSnapshots}" min="1" max="50" class="cfg-n"></label>`;
   o+=`<button class="btn btn-p btn-s" id="cfg_saveSnap">Save</button><span id="cfg_snapStatus" style="font-size:12px;color:var(--ok)"></span>`;
@@ -1373,11 +1373,7 @@ async function rConfig(){const P='p-config';loading(P);try{
 
   // Export
   o+='<div class="card"><div class="card-h">Export</div><div class="card-b"><div class="cfg-row">';
-  o+=`<label>Report link mode: <select id="cfg_reportLinkMode">`;
-  o+=`<option value="relative" ${s.reportLinkMode==='relative'?'selected':''}>Relative (hub-local links)</option>`;
-  o+=`<option value="absolute" ${s.reportLinkMode==='absolute'?'selected':''}>Absolute (full URL)</option>`;
-  o+=`</select></label>`;
-  o+=`<label style="margin-top:8px"><input type="checkbox" id="cfg_obfuscate" ${s.obfuscateForumExport?'checked':''}> Obfuscate device/app labels in forum export (use driver/app type instead of name)</label>`;
+  o+=`<label><input type="checkbox" id="cfg_obfuscate" ${s.obfuscateForumExport?'checked':''}> Obfuscate device/app labels in forum export (use driver/app type instead of name)</label>`;
   o+='</div></div></div>';
 
   // Alert Thresholds
@@ -1443,7 +1439,6 @@ async function rConfig(){const P='p-config';loading(P);try{
   };
 
   document.getElementById('cfg_debugLogging').onchange=async function(){await saveSetting({debugLogging:this.checked})};
-  document.getElementById('cfg_reportLinkMode').onchange=async function(){await saveSetting({reportLinkMode:this.value})};
   document.getElementById('cfg_obfuscate').onchange=async function(){await saveSetting({obfuscateForumExport:this.checked});drop('export/forum')};
 
   document.getElementById('cfg_saveLive').onclick=async()=>{

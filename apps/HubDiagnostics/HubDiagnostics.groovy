@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "5.7.0"
+@Field static final String APP_VERSION = "5.8.1"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -362,13 +362,6 @@ Map settingsPage() {
             input "debugLogging", "bool", title: "Enable debug logging", defaultValue: false
         }
 
-        section("Export") {
-            input "reportLinkMode", "enum", title: "Full report link mode",
-                options: ["relative": "Relative (recommended)", "absoluteLocal": "Absolute local IP"],
-                defaultValue: "relative", required: true
-            paragraph "<i>Relative links work best when opening reports from the hub's /local/ endpoint or through Remote Admin.</i>"
-        }
-
         section("Installation") {
             label title: "Assign a name", required: false
         }
@@ -557,6 +550,7 @@ Map apiPerformanceCompare() {
         // Will build zero baseline after resolving checkpoint
         baselineLabel = "Startup (0:00:00)"
     } else {
+        if (!baseline?.isInteger()) return jsonResponse([success: false, error: "Invalid baseline index"])
         int bIdx = baseline.toInteger()
         if (bIdx < 0 || bIdx >= checkpoints.size()) return jsonResponse([success: false, error: "Invalid baseline index"])
         Map bCp = checkpoints[bIdx]
@@ -578,6 +572,7 @@ Map apiPerformanceCompare() {
         checkpointStats.timestampMs = now()
         checkpointLabel = "Now (${new Date().format('yyyy-MM-dd HH:mm:ss')})"
     } else {
+        if (!checkpoint?.isInteger()) return jsonResponse([success: false, error: "Invalid checkpoint index"])
         int cIdx = checkpoint.toInteger()
         if (cIdx < 0 || cIdx >= checkpoints.size()) return jsonResponse([success: false, error: "Invalid checkpoint index"])
         Map cCp = checkpoints[cIdx]
@@ -637,7 +632,9 @@ Map apiSnapshots() {
 }
 
 Map apiSnapshotView() {
-    int idx = (params.index ?: "-1").toInteger()
+    String idxStr = params.index ?: "-1"
+    if (!idxStr.isInteger()) return jsonResponse([error: "Invalid snapshot index"])
+    int idx = idxStr.toInteger()
     List snapshots = loadSnapshots()
     if (idx < 0 || idx >= snapshots.size()) return jsonResponse([error: "Invalid snapshot index"])
     Map snap = snapshots[idx]
@@ -682,9 +679,13 @@ Map apiSnapshotView() {
 }
 
 Map apiSnapshotDiff() {
-    int olderIdx = (params.older ?: "-1").toInteger()
+    String olderStr = params.older ?: "-1"
+    if (!olderStr.isInteger()) return jsonResponse([error: "Invalid older snapshot index"])
+    int olderIdx = olderStr.toInteger()
     boolean newerIsNow = params.newer == "now"
-    int newerIdx = newerIsNow ? -1 : (params.newer ?: "-1").toInteger()
+    String newerStr = params.newer ?: "-1"
+    if (!newerIsNow && !newerStr.isInteger()) return jsonResponse([error: "Invalid newer snapshot index"])
+    int newerIdx = newerIsNow ? -1 : newerStr.toInteger()
 
     List snapshots = loadSnapshots()
     if (olderIdx < 0 || olderIdx >= snapshots.size()) return jsonResponse([error: "Invalid older snapshot index"])
@@ -894,7 +895,7 @@ Map apiGenerateReport() {
     if (!html) return jsonResponse([success: false, error: "SPA template not found in File Manager"])
 
     String dataJson = JsonOutput.toJson(reportData)
-    html = html.replace("</head>", "<script>window.REPORT_DATA=${dataJson}</script>\n</head>")
+    html = html.replace("</head>", "<script type=\"application/json\" id=\"report-data\">${dataJson}</script>\n<script>window.REPORT_DATA=JSON.parse(document.getElementById('report-data').textContent)</script>\n</head>")
     html = html.replace('${access_token}', '').replace('${api_base}', '').replace('${live_refresh_sec}', '0')
 
     String filename = "hub_diagnostics_report_${new Date().format('yyyyMMdd_HHmmss')}.html"
@@ -1221,7 +1222,6 @@ Map apiGetSettings() {
         warnTempC:             (settings.warnTempC   ?: DEFAULT_WARN_TEMP_C)   as int,
         critTempC:             (settings.critTempC   ?: DEFAULT_CRIT_TEMP_C)   as int,
         debugLogging:            settings.debugLogging ?: false,
-        reportLinkMode:          settings.reportLinkMode ?: "relative",
         obfuscateForumExport:    settings.obfuscateForumExport ?: false,
         liveRefreshSec:          (settings.liveRefreshSec ?: 30) as int,
         cacheSize:               (state.controllerTypeCache ?: [:]).size()
@@ -1241,7 +1241,7 @@ Map apiUpdateSettings() {
                         "chattyDeviceThreshold", "warnMemMb", "critMemMb", "warnTempC", "critTempC",
                         "snapshotInterval", "liveRefreshSec"] as Set
     Set decimalKeys = ["warnCpuLoad", "critCpuLoad"] as Set
-    Set enumKeys    = ["checkpointInterval", "reportLinkMode"] as Set
+    Set enumKeys    = ["checkpointInterval"] as Set
     boolean reschedule = false
 
     body.each { String key, Object value ->
@@ -1250,11 +1250,12 @@ Map apiUpdateSettings() {
             if (key in ["autoSnapshot", "autoCheckpoint"]) reschedule = true
         } else if (numberKeys.contains(key)) {
             app.updateSetting(key, [type: "number", value: value.toString().toInteger()])
+            if (key == "snapshotInterval") reschedule = true
         } else if (decimalKeys.contains(key)) {
             app.updateSetting(key, [type: "decimal", value: value.toString().toBigDecimal()])
         } else if (enumKeys.contains(key)) {
             app.updateSetting(key, [type: "enum", value: value as String])
-            if (key in ["snapshotInterval", "checkpointInterval"]) reschedule = true
+            if (key == "checkpointInterval") reschedule = true
         }
     }
     if (reschedule) { unschedule(); initialize() }
@@ -1828,7 +1829,7 @@ Map extractZwaveMeshQuality(Map zwaveData) {
     zwaveData.nodes.each { Map node ->
         int per = (node.per ?: 0) as int
         int neighborCount = (node.neighbors ?: 0) as int
-        int routeChanges = (node.routeChanges ?: 0) as int
+        int routeChanges = node.routeChanges?.isInteger() ? (node.routeChanges ?: 0) as int : -1
         String rssiStr = node.lwrRssi ?: ""
         Integer rssiVal = null
         if (rssiStr) {
@@ -1900,7 +1901,7 @@ List extractZwaveMessageCounts(Map zwaveData) {
     if (!zwaveData || zwaveData.error || !zwaveData.nodes) return []
     return zwaveData.nodes.collect { Map node ->
         [id: node.nodeId, deviceId: node.deviceId, name: node.deviceName ?: "Node ${node.nodeId}",
-         msgCount: (node.msgCount ?: 0) as int, routeChanges: (node.routeChanges ?: 0) as int]
+         msgCount: (node.msgCount ?: 0) as int, routeChanges: node.routeChanges?.isInteger() ? (node.routeChanges ?: 0) as int : -1]
     }
 }
 
