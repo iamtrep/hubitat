@@ -11,7 +11,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 
-@Field static final String APP_VERSION = "5.8.1"
+@Field static final String APP_VERSION = "5.8.2"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -878,15 +878,24 @@ Map apiGenerateReport() {
     String timestamp = new Date().format("yyyy-MM-dd HH:mm:ss")
     List memHistory = fetchMemoryHistory()
 
+    Map shared = [
+        network:      analyzeNetwork(),
+        runtimeStats: (Map) hubRequest(RUNTIME_STATS_PATH, "runtime stats"),
+        resources:    fetchSystemResources(),
+        temperature:  fetchTemperature(),
+        hubAlerts:    fetchHubAlerts(),
+        databaseSize: fetchDatabaseSize()
+    ]
+
     Map reportData = [
         _generated: timestamp,
-        dashboard: getDashboardData(),
+        dashboard: getDashboardData(shared),
         devices: getDevicesData(),
         apps: getAppsData(),
-        network: getNetworkData(),
-        health: getHealthData(),
+        network: getNetworkData(shared),
+        health: getHealthData(shared),
         "health/history": [dataPoints: memHistory ?: []],
-        performance: getPerformanceData(),
+        performance: getPerformanceData(shared),
         snapshots: getSnapshotsData(),
         reports: [lastReport: null, reports: []]
     ]
@@ -1271,13 +1280,13 @@ Map apiClearCache() {
 // ===== DATA GATHERERS =====
 // Each returns a plain Map suitable for both jsonResponse() and report embedding.
 
-Map getDashboardData() {
+Map getDashboardData(Map shared = [:]) {
     Map deviceStats = analyzeDevices(false)
     Map appStats = analyzeApps(false)
     Map hubInfo = getHubInfo()
-    Map resources = fetchSystemResources()
-    Float temperature = fetchTemperature()
-    Integer databaseSize = fetchDatabaseSize()
+    Map resources        = (shared.resources as Map)        ?: fetchSystemResources()
+    Float temperature    = (shared.temperature as Float)    ?: fetchTemperature()
+    Integer databaseSize = (shared.databaseSize as Integer) ?: fetchDatabaseSize()
     return [
         hub: hubInfo, appVersion: APP_VERSION, uiVersion: getUIVersion(),
         devices: [
@@ -1289,7 +1298,7 @@ Map getDashboardData() {
         ],
         apps: [total: appStats.totalApps, builtIn: appStats.builtInApps, user: appStats.userApps],
         resources: resources, temperature: temperature, databaseSize: databaseSize,
-        alerts: getStructuredAlerts(), inactivityDays: settings.inactivityDays ?: 7
+        alerts: getStructuredAlerts(shared), inactivityDays: settings.inactivityDays ?: 7
     ]
 }
 
@@ -1352,9 +1361,9 @@ Map getAppsData() {
     ]
 }
 
-Map getNetworkData() {
-    Map networkData = analyzeNetwork()
-    Map stats = (Map) hubRequest(RUNTIME_STATS_PATH, "runtime stats")
+Map getNetworkData(Map shared = [:]) {
+    Map networkData = (shared.network as Map) ?: analyzeNetwork()
+    Map stats = (shared.runtimeStats as Map) ?: (Map) hubRequest(RUNTIME_STATS_PATH, "runtime stats")
     Integer uptimeSeconds = stats ? parseUptime(stats.uptime as String) : null
     Map zigbeeMesh = fetchZigbeeMeshInfo()
     String zwaveVersion = fetchZwaveVersion()
@@ -1416,8 +1425,8 @@ Map getNetworkData() {
     ]
 }
 
-Map getHealthData() {
-    Map systemHealth = analyzeSystemHealth()
+Map getHealthData(Map shared = [:]) {
+    Map systemHealth = analyzeSystemHealth(shared)
     Map hubInfo = getHubInfo()
     def hub = (location.hubs && location.hubs.size() > 0) ? location.hubs[0] : null
     Map mem = systemHealth.memory ?: [:]
@@ -1428,16 +1437,16 @@ Map getHealthData() {
               timeZone: location.timeZone?.ID],
         resources: mem ?: null, temperature: systemHealth.temperature,
         databaseSize: systemHealth.databaseSize, stateCompression: systemHealth.stateCompression,
-        eventStateLimits: systemHealth.eventStateLimits, alerts: getStructuredAlerts(),
+        eventStateLimits: systemHealth.eventStateLimits, alerts: getStructuredAlerts(shared),
         storage: fetchFileManagerStats()
     ]
 }
 
-Map getPerformanceData() {
-    Map stats = (Map) hubRequest(RUNTIME_STATS_PATH, "runtime stats")
-    Map resources = fetchSystemResources()
-    Map zwaveData = (Map) hubRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", "json", 20)
-    Map zigbeeData = (Map) hubRequest(ZIGBEE_DETAILS_PATH, "Zigbee details", "json", 20)
+Map getPerformanceData(Map shared = [:]) {
+    Map stats      = (shared.runtimeStats as Map) ?: (Map) hubRequest(RUNTIME_STATS_PATH, "runtime stats")
+    Map resources  = (shared.resources as Map)    ?: fetchSystemResources()
+    Map zwaveData  = (shared.network?.zwave  as Map) ?: (Map) hubRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", "json", 20)
+    Map zigbeeData = (shared.network?.zigbee as Map) ?: (Map) hubRequest(ZIGBEE_DETAILS_PATH, "Zigbee details", "json", 20)
     List zwaveMsgCounts = extractZwaveMessageCounts(zwaveData)
     List zigbeeMsgCounts = extractZigbeeMessageCounts(zigbeeData)
     Map radioStats = [zwave: zwaveMsgCounts, zigbee: zigbeeMsgCounts]
@@ -1494,11 +1503,11 @@ Map getSnapshotsData() {
     ]
 }
 
-List getStructuredAlerts() {
+List getStructuredAlerts(Map shared = [:]) {
     List alerts = []
-    Map resources = fetchSystemResources()
-    Float temperature = fetchTemperature()
-    Map hubAlerts = fetchHubAlerts()
+    Map resources     = (shared.resources as Map)     ?: fetchSystemResources()
+    Float temperature = (shared.temperature as Float) ?: fetchTemperature()
+    Map hubAlerts     = (shared.hubAlerts as Map)     ?: fetchHubAlerts()
 
     // Calculated alerts
     int    critMemKb   = ((settings.critMemMb   ?: DEFAULT_CRIT_MEM_MB)   as int) * 1024
@@ -1540,13 +1549,13 @@ List getStructuredAlerts() {
     }
 
     // Network: Ethernet + WiFi both active
-    Map networkConfig = (Map) hubRequest(NETWORK_CONFIG_PATH, "network configuration", "json", 15)
+    Map networkConfig = (shared.network?.network as Map) ?: (Map) hubRequest(NETWORK_CONFIG_PATH, "network configuration", "json", 15)
     if (networkConfig && !networkConfig.error && networkConfig.hasEthernet && networkConfig.hasWiFi) {
         alerts << [severity: "warning", name: "Ethernet and WiFi both active \u2014 disable WiFi when using Ethernet"]
     }
 
     // Z-Wave ghost nodes
-    Map zwRaw = (Map) hubRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", "json", 8)
+    Map zwRaw = (shared.network?.zwave as Map) ?: (Map) hubRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", "json", 8)
     if (zwRaw && !zwRaw.error) {
         List ghosts = buildZwaveGhostNodes(zwRaw)
         if (ghosts) {
@@ -2255,12 +2264,12 @@ Map analyzeNetwork() {
     ]
 }
 
-Map analyzeSystemHealth() {
-    Map memory = fetchSystemResources()
+Map analyzeSystemHealth(Map shared = [:]) {
+    Map memory        = (shared.resources as Map)     ?: fetchSystemResources()
     Map stateCompression = fetchStateCompression()
-    Map hubAlerts = fetchHubAlerts()
-    Integer databaseSize = fetchDatabaseSize()
-    Float temperature = fetchTemperature()
+    Map hubAlerts     = (shared.hubAlerts as Map)     ?: fetchHubAlerts()
+    Integer databaseSize = (shared.databaseSize as Integer) ?: fetchDatabaseSize()
+    Float temperature = (shared.temperature as Float) ?: fetchTemperature()
     Map eventStateLimits = fetchEventStateLimits()
 
     Map health = [
