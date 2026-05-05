@@ -14,6 +14,10 @@
  *    future Hubitat platform release.
  *
  *  Changelog:
+ *  1.5.5 - Codex review fixes: unschedule before runIn for both timeout handlers; @Field statics
+ *          reset in initialize(); tighten RM type detection to "rule machine" only; drop
+ *          state.reportHtml (render table on demand from state.allScanRows); depth-cap telemetry;
+ *          remove stale atomicState cleanup from initialize()
  *  1.5.4 - Move transient scan/turn-off state to @Field; eliminate all atomicState usage;
  *          ~900 state writes removed per scan
  *  1.5.3 - Async turnOffAllLogging; refactored buildReportHtml; removed redundant server-side
@@ -46,7 +50,6 @@ import groovy.transform.Field
 
 @Field static final String DEFAULT_PAGE_NAME     = "mainPage"
 @Field static final String TABLE_ID              = "rmlog_table"
-@Field static final int PROGRESS_UPDATE_EVERY    = 20
 
 // Transient scan state — static so it survives across per-call script instances.
 // Hubitat does not reload the class on code push, so static fields persist until hub reboot.
@@ -86,11 +89,16 @@ void updated() {
 }
 
 void initialize() {
-    // Remove state/atomicState keys made obsolete by the @Field static migration (v1.5.4)
-    ["scanPartialResults", "scanRuleQueue", "turnOffQueue", "turnOffErrors"].each { state.remove(it) }
-    atomicState.currentScanId = null
-    atomicState.scanStartMs   = null
-    atomicState.turnOffActive = null
+    if (currentScanId != null) {
+        log.warn "initialize: aborting in-progress scan (scanId: ${currentScanId}) — previous scan results remain visible; re-scan when ready"
+    }
+    currentScanId      = null
+    scanStartMs        = 0L
+    scanRuleQueue      = null
+    scanPartialResults = null
+    turnOffActive      = false
+    turnOffQueue       = null
+    turnOffErrors      = null
 
     if (debugEnable) {
         runIn(1800, logsOff)
@@ -133,7 +141,15 @@ def mainPage() {
                 paragraph "<span style='color:red'><b>Last error:</b> ${htmlEncode(state.lastError.toString())}</span>"
             }
 
-            paragraph(state.reportHtml ?: "Click <b>Scan RM / BC Rules</b> to begin.")
+            if (currentScanId != null) {
+                paragraph "<p><i>Scan in progress…</i></p>"
+            } else if (turnOffActive) {
+                paragraph "<p><i>Turning off logging…</i></p>"
+            } else if (state.allScanRows != null) {
+                paragraph buildReportHtml((state.allScanRows ?: []) as List<Map>)
+            } else {
+                paragraph "Click <b>Scan RM / BC Rules</b> to begin."
+            }
         }
 
         section("Notes", hideable: true, hidden: true) {
@@ -183,7 +199,6 @@ void appButtonHandler(String btn) {
 
 void findLoggingRules() {
     state.lastError = null
-    state.reportHtml = "<p><i>Scan in progress…</i></p>"
 
     List<Map> ruleApps = getRuleMachineRuleApps()
 
@@ -195,7 +210,6 @@ void findLoggingRules() {
         state.anyLoggingOnCount = 0
         state.lastScan = new Date().format("yyyy-MM-dd HH:mm:ss", location.timeZone)
         state.scanDuration = "00:00"
-        state.reportHtml = "<p>No rules to scan.</p>"
         state.allScanRows = []
         return
     }
@@ -216,7 +230,9 @@ void findLoggingRules() {
     scanPartialResults = [:]
     currentScanId      = scanId
 
-    // Safety net in case the chain breaks (timeout or unrecoverable error mid-scan)
+    // Cancel any prior timeout before scheduling a new one so a stale timer can never
+    // fire against a different in-flight scan.
+    unschedule("finalizeScanTimeout")
     runIn(SCAN_TIMEOUT_SECS, "finalizeScanTimeout")
 
     log.info "Scan started — ${queue.size()} rules (scanId: ${scanId})"
@@ -297,11 +313,6 @@ void handleStatusResponse(resp, data) {
 
         if (debugEnable) log.debug "Rule ${nextIdx}/${totalRules}: ${data.ruleName} (${ruleId})"
 
-        // Progressive feedback: cheap counter update so the UI auto-refresh shows progress
-        if (nextIdx > 0 && nextIdx % PROGRESS_UPDATE_EVERY == 0) {
-            state.reportHtml = "<p><i>Scanning… (${nextIdx} of ${totalRules})</i></p>"
-        }
-
         if (nextIdx < totalRules) {
             Map nextRule = scanRuleQueue[nextIdx]
             asynchttpGet("handleStatusResponse",
@@ -317,6 +328,7 @@ void handleStatusResponse(resp, data) {
 }
 
 void finalizeScan() {
+    unschedule("finalizeScanTimeout")
     List<Map> asyncRules     = scanRuleQueue     ?: []
     Map       partialResults = scanPartialResults ?: [:]
     List<Map> allRows = []
@@ -350,7 +362,6 @@ void finalizeScan() {
     state.anyLoggingOnCount = anyLoggingOnCount
     state.lastScan          = new Date().format("yyyy-MM-dd HH:mm:ss", location.timeZone)
     state.scanDuration      = formatScanDuration((now() as Long) - (scanStartMs ?: (now() as Long)))
-    state.reportHtml        = buildReportHtml(allRows)
     currentScanId      = null   // mark complete so late callbacks are discarded
     scanPartialResults = null   // release memory
     scanRuleQueue      = null   // release memory
@@ -428,7 +439,7 @@ String getSupportedAutomationAppType(String type, String name, String label = ""
     if (!combined) return null
     if (combined.contains("basic button controller") || combined.contains("basicbuttoncontroller")) return null
     if (combined.contains("button controller") || combined.contains("buttoncontroller")) return "BC"
-    if (combined.contains("rule machine") || combined.contains("rule")) return "RM"
+    if (combined.contains("rule machine")) return "RM"
     return null
 }
 
@@ -530,9 +541,13 @@ void collectCandidatesFromObject(String source, Object obj, List<Map> candidates
 }
 
 void collectCandidatesFromObject(String source, Object obj, List<Map> candidates, String prefix, int depth) {
-    // Depth cap: RM/BC statusJson nesting is typically ≤ 3 levels; 4 is a safe ceiling that prevents
-    // runaway recursion on unexpectedly deep structures. Increase only if logging fields are being missed.
-    if (obj == null || depth > 4) return
+    // Depth cap: RM/BC statusJson nesting is typically ≤ 3 levels; 4 is a safe ceiling.
+    // If logging fields are ever missed after a Hubitat update, check this log message first.
+    if (obj == null) return
+    if (depth > 4) {
+        if (debugEnable) log.debug "collectCandidatesFromObject: depth cap reached at '${prefix}' — fields nested deeper than 4 levels will not be scanned"
+        return
+    }
 
     if (obj instanceof Map) {
         obj.each { k, v ->
@@ -667,6 +682,9 @@ String buildPostBody(String ruleId, Map configData, String fieldName, Boolean ne
                     ids = ""
                 }
                 fields << ["settings[${name}]", ids]
+                // Hubitat's form handler uses a repeated "deviceList" key to track which inputs
+                // are device pickers; the trailing empty pair is a sentinel that terminates the
+                // device list in the multipart form body. Both are required by the update endpoint.
                 fields << ["deviceList", name]
                 fields << ["", ""]
             } else if (name == fieldName && type == "enum" && multiple) {
@@ -759,6 +777,7 @@ void turnOffAllLogging() {
     turnOffQueue  = queue
     turnOffErrors = []
     turnOffActive = true
+    unschedule("finalizeTurnOffTimeout")
     runIn(TURN_OFF_TIMEOUT_SECS, "finalizeTurnOffTimeout")
     log.info "turnOffAllLogging: starting async chain for ${queue.size()} operations"
     processTurnOffQueue()
@@ -862,6 +881,7 @@ void handleTurnOffUpdateResp(resp, data) {
 }
 
 void finalizeTurnOff() {
+    unschedule("finalizeTurnOffTimeout")
     List<String> errors = turnOffErrors ?: []
     turnOffActive = false
     turnOffQueue  = null
