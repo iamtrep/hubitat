@@ -86,6 +86,12 @@ void updated() {
 }
 
 void initialize() {
+    // Remove state/atomicState keys made obsolete by the @Field static migration (v1.5.4)
+    ["scanPartialResults", "scanRuleQueue", "turnOffQueue", "turnOffErrors"].each { state.remove(it) }
+    atomicState.currentScanId = null
+    atomicState.scanStartMs   = null
+    atomicState.turnOffActive = null
+
     if (debugEnable) {
         runIn(1800, logsOff)
     }
