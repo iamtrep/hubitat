@@ -1,0 +1,46 @@
+{
+  "systemAppTypes": {
+    "__list_element__": {
+      "id": "int",
+      "name": "str",
+      "description": "str",
+      "category": "str",
+      "menu": "str",
+      "deprecated": "bool",
+      "allowNewInstances": "bool"
+    }
+  },
+  "userAppTypes": {
+    "__list_element__": {
+      "id": "int",
+      "name": "str",
+      "description": "str",
+      "category": "null",
+      "menu": "str",
+      "deprecated": "bool",
+      "allowNewInstances": "bool"
+    }
+  },
+  "apps": {
+    "__list_element__": {
+      "key": "str",
+      "data": {
+        "id": "__truncated__",
+        "appTypeId": "__truncated__",
+        "name": "__truncated__",
+        "type": "__truncated__",
+        "disabled": "__truncated__",
+        "user": "__truncated__",
+        "hidden": "__truncated__",
+        "setting": "__truncated__",
+        "level": "__truncated__"
+      },
+      "children": "list[]",
+      "parent": "bool",
+      "child": "bool",
+      "id": "int"
+    }
+  },
+  "builtInAppsDismissed": "bool",
+  "appsSplitDismissed": "bool"
+}
