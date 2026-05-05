@@ -1228,9 +1228,9 @@ String buildReportHtml(List<Map> rows) {
     sb << "&nbsp;&nbsp;<b>Hide columns:</b>&nbsp;"
     sb << "<span class='rmcol-btn' onclick=\"toggleRmCol('rmcol-disabled',this)\">Disabled</span>"
     sb << "<span class='rmcol-btn' onclick=\"toggleRmCol('rmcol-paused',this)\">Paused</span>"
-    sb << "<span class='rmcol-btn' onclick=\"toggleRmCol('rmcol-actions',this)\">Actions</span>"
     sb << "<span class='rmcol-btn' onclick=\"toggleRmCol('rmcol-events',this)\">Events</span>"
     sb << "<span class='rmcol-btn' onclick=\"toggleRmCol('rmcol-triggers',this)\">Triggers</span>"
+    sb << "<span class='rmcol-btn' onclick=\"toggleRmCol('rmcol-actions',this)\">Actions</span>"
     sb << "<span class='rmcol-btn' onclick=\"toggleRmCol('rmcol-lastrun',this)\">Last Run</span>"
     sb << "</div>"
 
@@ -1240,9 +1240,9 @@ String buildReportHtml(List<Map> rows) {
     sb << "<th onclick=\"sortRmLogTable('${TABLE_ID}',2)\" class='center'>App Type</th>"
     sb << "<th onclick=\"sortRmLogTable('${TABLE_ID}',3)\" class='center rmcol-disabled'>Disabled</th>"
     sb << "<th onclick=\"sortRmLogTable('${TABLE_ID}',4)\" class='center rmcol-paused'>Paused</th>"
-    sb << "<th onclick=\"sortRmLogTable('${TABLE_ID}',5)\" class='center rmcol-actions'>Actions</th>"
-    sb << "<th onclick=\"sortRmLogTable('${TABLE_ID}',6)\" class='center rmcol-events'>Events</th>"
-    sb << "<th onclick=\"sortRmLogTable('${TABLE_ID}',7)\" class='center rmcol-triggers'>Triggers</th>"
+    sb << "<th onclick=\"sortRmLogTable('${TABLE_ID}',5)\" class='center rmcol-events'>Events</th>"
+    sb << "<th onclick=\"sortRmLogTable('${TABLE_ID}',6)\" class='center rmcol-triggers'>Triggers</th>"
+    sb << "<th onclick=\"sortRmLogTable('${TABLE_ID}',7)\" class='center rmcol-actions'>Actions</th>"
     sb << "<th onclick=\"sortRmLogTable('${TABLE_ID}',8)\" class='center rmcol-lastrun'>Last Run</th>"
     sb << "</tr></thead><tbody>"
 
@@ -1297,9 +1297,9 @@ String buildReportHtml(List<Map> rows) {
         sb << "<td class='center' data-sort='${appType}'>${appType}</td>"
         sb << "<td class='center rmcol-disabled rmlog-clickable' data-sort='${disabledSort}' data-rule-id='${id}' data-on='${r.disabled as Boolean}' onclick='rmToggleDisabled(this)'>${disabled}</td>"
         sb << "<td class='center rmcol-paused rmlog-clickable'   data-sort='${pausedSort}'   data-rule-id='${id}' data-on='${r.paused   as Boolean}' onclick='rmTogglePaused(this)'>${paused}</td>"
-        sb << clickableTd("rmcol-actions",  r.actionsField  as String, actionsFieldType,  "Actions",  r.actionsOn  as Boolean, actionsSort,  actions)
         sb << clickableTd("rmcol-events",   r.eventsField   as String, eventsFieldType,   "Events",   r.eventsOn   as Boolean, eventsSort,   events)
         sb << clickableTd("rmcol-triggers", r.triggersField as String, triggersFieldType, "Triggers", r.triggersOn as Boolean, triggersSort, triggers)
+        sb << clickableTd("rmcol-actions",  r.actionsField  as String, actionsFieldType,  "Actions",  r.actionsOn  as Boolean, actionsSort,  actions)
         sb << "<td class='center rmcol-lastrun'  data-sort='${lastRun}'>${lastRun}</td>"
         sb << "</tr>"
     }
