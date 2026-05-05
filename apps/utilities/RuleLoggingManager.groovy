@@ -14,6 +14,8 @@
  *    future Hubitat platform release.
  *
  *  Changelog:
+ *  1.5.4 - Move transient scan/turn-off state to @Field; eliminate all atomicState usage;
+ *          ~900 state writes removed per scan
  *  1.5.3 - Async turnOffAllLogging; refactored buildReportHtml; removed redundant server-side
  *          filters; fixed pageBreadcrumbs double-encoding; hardened capability input handling;
  *          click-to-toggle for Disabled and Paused cells; miscellaneous clarity fixes;
@@ -44,6 +46,19 @@ import groovy.transform.Field
 
 @Field static final String DEFAULT_PAGE_NAME     = "mainPage"
 @Field static final String TABLE_ID              = "rmlog_table"
+@Field static final int PROGRESS_UPDATE_EVERY    = 20
+
+// Transient scan state — static so it survives across per-call script instances.
+// Hubitat does not reload the class on code push, so static fields persist until hub reboot.
+// singleInstance:true means there is only ever one logical app, so no cross-tenant leakage.
+@Field static String       currentScanId      = null
+@Field static Long         scanStartMs        = 0L
+@Field static List<Map>    scanRuleQueue      = null
+@Field static Map          scanPartialResults = null
+
+@Field static boolean      turnOffActive  = false
+@Field static List<Map>    turnOffQueue   = null
+@Field static List<String> turnOffErrors  = null
 
 definition(
     name: "Rule Logging Manager",
@@ -81,7 +96,7 @@ void logsOff() {
 }
 
 def mainPage() {
-    int pollInterval = (atomicState.currentScanId || atomicState.turnOffActive) ? 5 : 0
+    int pollInterval = (currentScanId || turnOffActive) ? 5 : 0
     dynamicPage(name: "mainPage", title: "", install: true, uninstall: true, refreshInterval: pollInterval) {
 
         section("Scan") {
@@ -179,25 +194,21 @@ void findLoggingRules() {
         return
     }
 
-    Long scanStartMs = now()
+    scanStartMs = now()
     String scanId = scanStartMs.toString()
 
-    // Scan state — purpose of each field:
-    //   state.scanRuleQueue       : ordered rules to scan; each callback reads the next rule by index
-    //   state.scanPartialResults  : Map<ruleId, row> accumulated as callbacks complete
-    //   atomicState.currentScanId : guards against stale callbacks from cancelled/timed-out scans
-    //   atomicState.scanStartMs   : epoch ms at scan start, used to compute scan duration
-    // atomicState fields commit immediately; state fields commit at method exit (Hubitat platform behaviour).
+    // Scan state stored in @Field — no state serialization on each callback.
+    // Safe because Hubitat no longer reloads the class on code push and callbacks
+    // dispatch to the same instance. Resets on hub reboot (scan timeout cleans up gracefully).
     List<Map> queue = ruleApps.collect { Map r ->
         [id: r.id as String, name: r.name as String,
          appType: (r.appType ?: "RM") as String, disabled: r.disabled as Boolean,
          paused: r.paused as Boolean]
     }
 
-    state.scanRuleQueue        = queue
-    atomicState.currentScanId  = scanId
-    state.scanPartialResults   = [:]
-    atomicState.scanStartMs    = scanStartMs
+    scanRuleQueue      = queue
+    scanPartialResults = [:]
+    currentScanId      = scanId
 
     // Safety net in case the chain breaks (timeout or unrecoverable error mid-scan)
     runIn(SCAN_TIMEOUT_SECS, "finalizeScanTimeout")
@@ -216,7 +227,7 @@ void findLoggingRules() {
 
 void handleStatusResponse(resp, data) {
     String scanId = data.scanId as String
-    if ((atomicState.currentScanId as String) != scanId) return
+    if (currentScanId != scanId) return
 
     String ruleId = data.ruleId as String
 
@@ -251,9 +262,8 @@ void handleStatusResponse(resp, data) {
             log.debug "Logging off: ${data.ruleName} (${ruleId})"
         }
 
-        // Accumulate into a single plain-state Map — named property access only, no atomicState bracket syntax
-        Map partialResults = (state.scanPartialResults ?: [:]) as Map
-        partialResults[ruleId] = [
+        if (scanPartialResults == null) scanPartialResults = [:]
+        scanPartialResults[ruleId] = [
             id             : ruleId,
             name           : data.ruleName,
             appType        : data.appType,
@@ -269,13 +279,11 @@ void handleStatusResponse(resp, data) {
             allLoggingField: logging.allLoggingField,
             lastRun        : extractLastRun(status)
         ]
-        state.scanPartialResults = partialResults
 
     } catch (Exception e) {
         log.warn "handleStatusResponse error for rule ${ruleId}: ${e.message}"
     } finally {
         // Sequential chain: fire the next rule, or finalize if this was the last one
-        String currentScanId = atomicState.currentScanId as String
         if (currentScanId != (data.scanId as String)) return  // stale callback from a cancelled scan
 
         int nextIdx    = ((data.nextIdx    ?: 0) as int)
@@ -283,9 +291,13 @@ void handleStatusResponse(resp, data) {
 
         if (debugEnable) log.debug "Rule ${nextIdx}/${totalRules}: ${data.ruleName} (${ruleId})"
 
+        // Progressive feedback: cheap counter update so the UI auto-refresh shows progress
+        if (nextIdx > 0 && nextIdx % PROGRESS_UPDATE_EVERY == 0) {
+            state.reportHtml = "<p><i>Scanning… (${nextIdx} of ${totalRules})</i></p>"
+        }
+
         if (nextIdx < totalRules) {
-            List<Map> queue = (state.scanRuleQueue ?: []) as List<Map>
-            Map nextRule = queue[nextIdx]
+            Map nextRule = scanRuleQueue[nextIdx]
             asynchttpGet("handleStatusResponse",
                 [uri: RM_BASE_URL, path: "${PATH_STATUS_JSON}${nextRule.id}", timeout: HTTP_TIMEOUT_SECS],
                 [scanId: currentScanId, ruleId: nextRule.id as String, ruleName: nextRule.name as String,
@@ -299,8 +311,8 @@ void handleStatusResponse(resp, data) {
 }
 
 void finalizeScan() {
-    List<Map> asyncRules = (state.scanRuleQueue ?: []) as List<Map>
-    Map partialResults = (state.scanPartialResults ?: [:]) as Map
+    List<Map> asyncRules     = scanRuleQueue     ?: []
+    Map       partialResults = scanPartialResults ?: [:]
     List<Map> allRows = []
 
     asyncRules.each { Map rule ->
@@ -331,15 +343,17 @@ void finalizeScan() {
     state.triggersOnCount   = triggersOnCount
     state.anyLoggingOnCount = anyLoggingOnCount
     state.lastScan          = new Date().format("yyyy-MM-dd HH:mm:ss", location.timeZone)
-    state.scanDuration      = formatScanDuration((now() as Long) - ((atomicState.scanStartMs ?: now()) as Long))
+    state.scanDuration      = formatScanDuration((now() as Long) - (scanStartMs ?: (now() as Long)))
     state.reportHtml        = buildReportHtml(allRows)
-    atomicState.currentScanId = null  // mark complete so late callbacks are discarded
+    currentScanId      = null   // mark complete so late callbacks are discarded
+    scanPartialResults = null   // release memory
+    scanRuleQueue      = null   // release memory
 
     log.info "Scan complete: ${allRows.size()} rules scanned in ${state.scanDuration} — any logging ON: ${anyLoggingOnCount} (Actions: ${actionsOnCount}, Events: ${eventsOnCount}, Triggers: ${triggersOnCount})"
 }
 
 void finalizeScanTimeout() {
-    if (atomicState.currentScanId != null) {
+    if (currentScanId != null) {
         log.warn "Scan timeout: finalizing with partial results"
         finalizeScan()
     }
@@ -704,7 +718,7 @@ String settingToString(Object value) {
 // ============================================================
 
 void turnOffAllLogging() {
-    if (atomicState.turnOffActive) {
+    if (turnOffActive) {
         log.warn "turnOffAllLogging: already in progress, ignoring"
         return
     }
@@ -736,22 +750,22 @@ void turnOffAllLogging() {
         return
     }
 
-    state.turnOffQueue  = queue
-    state.turnOffErrors = []
-    atomicState.turnOffActive = true
+    turnOffQueue  = queue
+    turnOffErrors = []
+    turnOffActive = true
     runIn(TURN_OFF_TIMEOUT_SECS, "finalizeTurnOffTimeout")
     log.info "turnOffAllLogging: starting async chain for ${queue.size()} operations"
     processTurnOffQueue()
 }
 
 void processTurnOffQueue() {
-    List<Map> queue = (state.turnOffQueue ?: []) as List<Map>
+    List<Map> queue = turnOffQueue ?: []
     if (queue.isEmpty()) {
         finalizeTurnOff()
         return
     }
-    Map item = queue[0]
-    state.turnOffQueue = queue.drop(1)
+    Map item     = queue[0]
+    turnOffQueue = queue.drop(1)
 
     asynchttpGet("handleTurnOffConfigResp",
         [uri: RM_BASE_URL, path: "${PATH_CONFIGURE_JSON}${item.ruleId}", timeout: HTTP_TIMEOUT_SECS],
@@ -761,7 +775,7 @@ void processTurnOffQueue() {
 }
 
 void handleTurnOffConfigResp(resp, data) {
-    if (!atomicState.turnOffActive) return
+    if (!turnOffActive) return
     String ruleId     = data.ruleId    as String
     String fieldName  = data.fieldName as String
     Boolean newValue  = data.newValue  as Boolean
@@ -812,7 +826,7 @@ void handleTurnOffConfigResp(resp, data) {
 }
 
 void handleTurnOffUpdateResp(resp, data) {
-    if (!atomicState.turnOffActive) return
+    if (!turnOffActive) return
     String ruleId = data.ruleId as String
     try {
         int httpStatus = resp.getStatus() as int
@@ -842,30 +856,29 @@ void handleTurnOffUpdateResp(resp, data) {
 }
 
 void finalizeTurnOff() {
-    atomicState.turnOffActive = false
-    List<String> errors = (state.turnOffErrors ?: []) as List<String>
+    List<String> errors = turnOffErrors ?: []
+    turnOffActive = false
+    turnOffQueue  = null
+    turnOffErrors = null
     if (errors) {
         state.lastError = "Some toggles failed: ${errors.join('; ')}"
         log.warn state.lastError
     } else {
         log.info "Turned off all logging for all rules"
     }
-    state.turnOffQueue  = []
-    state.turnOffErrors = []
     findLoggingRules()
 }
 
 void finalizeTurnOffTimeout() {
-    if (atomicState.turnOffActive) {
+    if (turnOffActive) {
         log.warn "turnOffAllLogging: timeout — finalizing with partial results"
         finalizeTurnOff()
     }
 }
 
 void appendTurnOffError(String msg) {
-    List<String> errors = (state.turnOffErrors ?: []) as List<String>
-    errors << msg
-    state.turnOffErrors = errors
+    if (turnOffErrors == null) turnOffErrors = []
+    turnOffErrors << msg
     log.warn "turnOffAllLogging: ${msg}"
 }
 
