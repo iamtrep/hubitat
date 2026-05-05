@@ -198,6 +198,10 @@ void appButtonHandler(String btn) {
 // ============================================================
 
 void findLoggingRules() {
+    if (turnOffActive) {
+        log.warn "findLoggingRules: turn-off pass in progress, ignoring"
+        return
+    }
     state.lastError = null
 
     List<Map> ruleApps = getRuleMachineRuleApps()
@@ -473,13 +477,15 @@ Map detectRuleLogging(Map status) {
 
     // When all field names are null, log candidates so we can diagnose unrecognised field names
     if (!result.actionsField && !result.eventsField && !result.triggersField && !result.allLoggingField) {
-        List<String> logCandidates = candidates
-            .findAll { String k = it.name?.toString()?.toLowerCase() ?: ""; k.contains("log") || k.contains("debug") }
-            .collect { "${it.source}/${it.name}=${it.value}" }
-        if (logCandidates) {
-            log.debug "detectRuleLogging: no logging fields found — log-related candidates: ${logCandidates}"
-        } else {
-            log.debug "detectRuleLogging: no logging fields found — all candidates: ${candidates.collect { "${it.source}/${it.name}=${it.value}" }}"
+        if (debugEnable) {
+            List<String> logCandidates = candidates
+                .findAll { String k = it.name?.toString()?.toLowerCase() ?: ""; k.contains("log") || k.contains("debug") }
+                .collect { "${it.source}/${it.name}=${it.value}" }
+            if (logCandidates) {
+                log.debug "detectRuleLogging: no logging fields found — log-related candidates: ${logCandidates}"
+            } else {
+                log.debug "detectRuleLogging: no logging fields found — all candidates: ${candidates.collect { "${it.source}/${it.name}=${it.value}" }}"
+            }
         }
     }
 
@@ -576,28 +582,22 @@ void collectCandidatesFromObject(String source, Object obj, List<Map> candidates
     }
 }
 
-// Heuristic: errs toward false negatives. ".contains('on')" can match substrings; treat as best-effort.
 @CompileStatic
 Boolean valueLooksEnabled(Object value) {
     if (value == null) return false
     if (value instanceof Boolean) return value
     if (value instanceof Collection) return !(value as Collection).isEmpty()
     String v = value.toString().trim().toLowerCase()
-    if (v in ["true", "on", "yes", "enabled", "enable", "1"]) return true
-    if (v.contains("true") || v.contains("enabled") || v.contains("on")) return true
-    return false
+    return v in ["true", "on", "yes", "enabled", "enable", "1"]
 }
 
-// Heuristic: errs toward false negatives. ".contains('off')" can match substrings; treat as best-effort.
 @CompileStatic
 Boolean valueLooksDisabled(Object value) {
     if (value == null) return true
     if (value instanceof Boolean) return !value
     if (value instanceof Collection) return (value as Collection).isEmpty()
     String v = value.toString().trim().toLowerCase()
-    if (v in ["false", "off", "no", "disabled", "disable", "0", "null", ""]) return true
-    if (v.contains("false") || v.contains("disabled") || v.contains("off")) return true
-    return false
+    return v in ["false", "off", "no", "disabled", "disable", "0", "null", ""]
 }
 
 @CompileStatic
@@ -732,7 +732,7 @@ String buildPostBody(String ruleId, Map configData, String fieldName, Boolean ne
 
 @CompileStatic
 String settingToString(Object value) {
-    if (value == null) return "[]"
+    if (value == null) return ""
     if (value instanceof Map) return (value as Map).keySet().collect { it.toString() }.join(",")
     return value.toString()
 }
@@ -742,8 +742,8 @@ String settingToString(Object value) {
 // ============================================================
 
 void turnOffAllLogging() {
-    if (turnOffActive) {
-        log.warn "turnOffAllLogging: already in progress, ignoring"
+    if (turnOffActive || currentScanId) {
+        log.warn "turnOffAllLogging: ${currentScanId ? 'scan' : 'turn-off'} already in progress, ignoring"
         return
     }
     state.lastError = null
@@ -1112,9 +1112,10 @@ async function rmToggleLogging(td) {
                             ? Object.keys(cur).join(',')
                             : (cur != null ? String(cur) : '');
                         fd.set('settings[' + name + ']', ids);
-                        fd.set('deviceList', name);
+                        fd.append('deviceList', name);
+                        fd.append('', '');
                     } else {
-                        var sv = cur == null ? '[]' : (typeof cur === 'object' ? JSON.stringify(cur) : String(cur));
+                        var sv = cur == null ? '' : (typeof cur === 'object' ? JSON.stringify(cur) : String(cur));
                         fd.set('settings[' + name + ']', sv);
                     }
                 }
@@ -1296,7 +1297,12 @@ String buildReportHtml(List<Map> rows) {
         sb << "<td data-sort='${nameSort}'><a href='http://${hubIp}${PATH_CONFIGURE}${id}' target='_blank'>${nameHtml}</a></td>"
         sb << "<td class='center' data-sort='${appType}'>${appType}</td>"
         sb << "<td class='center rmcol-disabled rmlog-clickable' data-sort='${disabledSort}' data-rule-id='${id}' data-on='${r.disabled as Boolean}' onclick='rmToggleDisabled(this)'>${disabled}</td>"
-        sb << "<td class='center rmcol-paused rmlog-clickable'   data-sort='${pausedSort}'   data-rule-id='${id}' data-on='${r.paused   as Boolean}' onclick='rmTogglePaused(this)'>${paused}</td>"
+        String rawAppType = (r.appType ?: "RM") as String
+        if (rawAppType == "RM") {
+            sb << "<td class='center rmcol-paused rmlog-clickable' data-sort='${pausedSort}' data-rule-id='${id}' data-on='${r.paused as Boolean}' onclick='rmTogglePaused(this)'>${paused}</td>"
+        } else {
+            sb << "<td class='center rmcol-paused' data-sort='${pausedSort}'>${paused}</td>"
+        }
         sb << clickableTd("rmcol-events",   r.eventsField   as String, eventsFieldType,   "Events",   r.eventsOn   as Boolean, eventsSort,   events)
         sb << clickableTd("rmcol-triggers", r.triggersField as String, triggersFieldType, "Triggers", r.triggersOn as Boolean, triggersSort, triggers)
         sb << clickableTd("rmcol-actions",  r.actionsField  as String, actionsFieldType,  "Actions",  r.actionsOn  as Boolean, actionsSort,  actions)
