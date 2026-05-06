@@ -100,6 +100,7 @@ def open_hub_session(hub_arg, username=None, password=None):
     return opener, hub_ip
 
 OUTLIER_THRESHOLD_SEC = 0.3
+BOOT_EXCLUSION_MIN = 5  # outliers triggered within this many minutes after a boot are not tallied
 CONTEXT_BEFORE = 5      # log lines before the Triggered entry
 CONTEXT_AFTER = 5       # log lines after the Action entry
 MEM_WINDOW_MIN = 30     # show hub-memory samples within +/- this many minutes of the outlier
@@ -216,7 +217,7 @@ if obf is not None:
         for n in harvest_referenced_names(d.get('msg', '')):
             obf.alias(n)
 
-trigger_state = {}  # app_id -> (datetime, entry_index)
+trigger_state = {}  # app_id -> [(datetime, entry_index), ...]  FIFO queue per concurrent execution
 diffs = []
 outliers = []  # (diff, app_id, app_name, trigger_idx, action_idx)
 involved_apps = set()
@@ -234,15 +235,19 @@ for idx, (current_time, data) in enumerate(entries):
         continue
     app_id = data.get('id')
     msg = data.get('msg', '')
-    if 'Triggered' in msg:
-        trigger_state[app_id] = (current_time, idx)
-    elif 'Action:' in msg and app_id in trigger_state:
-        t_trigger, trigger_idx = trigger_state.pop(app_id)
-        diff = (current_time - t_trigger).total_seconds()
-        diffs.append(diff)
-        involved_apps.add(app_id)
-        if diff > args.threshold:
-            outliers.append((diff, app_id, data.get('name'), trigger_idx, idx))
+    if msg.startswith('Triggered'):
+        trigger_state.setdefault(app_id, []).append((current_time, idx))
+    elif 'Action:' in msg:
+        queue = trigger_state.get(app_id)
+        if queue:
+            t_trigger, trigger_idx = queue.pop(0)
+            if not queue:
+                del trigger_state[app_id]
+            diff = (current_time - t_trigger).total_seconds()
+            diffs.append(diff)
+            involved_apps.add(app_id)
+            if diff > args.threshold:
+                outliers.append((diff, app_id, data.get('name'), trigger_idx, idx))
 
 if not diffs:
     print("No matching patterns found.")
@@ -251,6 +256,14 @@ if not diffs:
 start_time = entries[0][0]
 end_time = entries[-1][0]
 duration = end_time - start_time
+
+# Detect boots from in-band "System startup" app-log messages. Available
+# immediately (no hub fetch needed); merged with mem-history boots later.
+inband_startup_boots = sorted(
+    ts for ts, data in entries
+    if 'System startup with build:' in data.get('msg', '')
+    and start_time <= ts <= end_time
+)
 
 if obf is not None:
     print("[ Names obfuscated for sharing — IDs preserved. ]")
@@ -370,6 +383,26 @@ if mem_samples:
     print(f"  Detected boots within log timespan: {len(boots)}"
           + (f" ({', '.join(b.strftime('%Y-%m-%d %H:%M') for b in boots)})" if boots else ''))
 
+if inband_startup_boots:
+    boots = sorted(set(boots) | set(inband_startup_boots))
+    print(f"  In-band startup markers: {len(inband_startup_boots)}"
+          + f" ({', '.join(b.strftime('%Y-%m-%d %H:%M:%S') for b in inband_startup_boots)})")
+
+
+# Partition outliers: those triggered within BOOT_EXCLUSION_MIN minutes of a
+# boot are flagged separately and excluded from the main tally.
+boot_outliers = []
+if boots:
+    normal = []
+    for item in outliers:
+        t_trig = entries[item[3]][0]  # item[3] == trigger_idx
+        if any(0 <= (t_trig - b).total_seconds() / 60 <= BOOT_EXCLUSION_MIN
+               for b in boots):
+            boot_outliers.append(item)
+        else:
+            normal.append(item)
+    outliers = normal
+
 
 # --- Temporal distribution of outliers -----------------------------------
 def auto_bin_minutes(span_min, target_rows=60):
@@ -463,38 +496,49 @@ def print_mem_window(t_event, samples, window_min):
         print(f"    {marker} {delta_min:>+10.1f}m  {t.strftime('%Y-%m-%d %H:%M:%S')}  " + "  ".join(cells))
 
 
+def _print_outlier_detail(label, diff, app_id, app_name, trigger_idx, action_idx):
+    t_trigger = entries[trigger_idx][0]
+    t_action = entries[action_idx][0]
+    display_name = obf.alias(app_name) if obf else app_name
+    print(f"\n=== {label}: app id={app_id} name={display_name!r} delay={diff:.4f}s ===")
+    print(f"    Trigger at {t_trigger}  Action at {t_action}")
+    ctx_start = max(0, trigger_idx - CONTEXT_BEFORE)
+    ctx_end = min(len(entries), action_idx + CONTEXT_AFTER + 1)
+    prev_t = None
+    for ctx_idx in range(ctx_start, ctx_end):
+        if ctx_idx == trigger_idx:
+            marker = '>'
+        elif ctx_idx == action_idx:
+            marker = '<'
+        elif trigger_idx < ctx_idx < action_idx:
+            marker = '*'
+        else:
+            marker = ' '
+        delta = None if prev_t is None else (entries[ctx_idx][0] - prev_t).total_seconds()
+        print(fmt_entry(ctx_idx, entries[ctx_idx], marker, delta))
+        prev_t = entries[ctx_idx][0]
+    in_gap = action_idx - trigger_idx - 1
+    print(f"    Log entries inside the delay window: {in_gap}")
+    if mem_samples:
+        print_mem_window(t_trigger, mem_samples, args.mem_window)
+
+
 print(f"\n--- Outliers (delay > {args.threshold:.2f}s) ---")
 print(f"Found: {len(outliers)}")
 
 for n, (diff, app_id, app_name, trigger_idx, action_idx) in enumerate(outliers, 1):
-    t_trigger = entries[trigger_idx][0]
-    t_action = entries[action_idx][0]
-    display_name = obf.alias(app_name) if obf else app_name
-    print(f"\n=== Outlier #{n}: app id={app_id} name={display_name!r} delay={diff:.4f}s ===")
-    print(f"    Trigger at {t_trigger}  Action at {t_action}")
+    _print_outlier_detail(f"Outlier #{n}", diff, app_id, app_name, trigger_idx, action_idx)
 
-    ctx_start = max(0, trigger_idx - CONTEXT_BEFORE)
-    ctx_end = min(len(entries), action_idx + CONTEXT_AFTER + 1)
-
-    prev_t = None
-    for idx in range(ctx_start, ctx_end):
-        if idx == trigger_idx:
-            marker = '>'
-        elif idx == action_idx:
-            marker = '<'
-        elif trigger_idx < idx < action_idx:
-            marker = '*'
-        else:
-            marker = ' '
-        delta = None if prev_t is None else (entries[idx][0] - prev_t).total_seconds()
-        print(fmt_entry(idx, entries[idx], marker, delta))
-        prev_t = entries[idx][0]
-
-    in_gap = action_idx - trigger_idx - 1
-    print(f"    Log entries inside the delay window: {in_gap}")
-
-    if mem_samples:
-        print_mem_window(t_trigger, mem_samples, args.mem_window)
+if boot_outliers:
+    print(f"\n--- Boot-adjacent outliers (first {BOOT_EXCLUSION_MIN} min after startup, not tallied) ---")
+    print(f"Found: {len(boot_outliers)}")
+    for n, (diff, app_id, app_name, trigger_idx, action_idx) in enumerate(boot_outliers, 1):
+        t_trig = entries[trigger_idx][0]
+        nearby = next((b for b in boots
+                       if 0 <= (t_trig - b).total_seconds() / 60 <= BOOT_EXCLUSION_MIN), None)
+        note = (f" [{(t_trig - nearby).total_seconds() / 60:.1f} min after boot at {nearby.strftime('%H:%M:%S')}]"
+                if nearby else "")
+        _print_outlier_detail(f"Boot-adjacent #{n}{note}", diff, app_id, app_name, trigger_idx, action_idx)
 
 if obf is not None and args.obfuscate_map:
     with open(args.obfuscate_map, 'w') as fh:
