@@ -100,8 +100,9 @@ def open_hub_session(hub_arg, username=None, password=None):
     return opener, hub_ip
 
 OUTLIER_THRESHOLD_SEC = 0.3
-BOOT_EXCLUSION_MIN = 5  # outliers triggered within this many minutes after a boot are not tallied
-CONTEXT_BEFORE = 5      # log lines before the Triggered entry
+BOOT_EXCLUSION_MIN = 5    # outliers triggered within this many minutes after a boot are not tallied
+TRIGGER_EXPIRY_SEC = 30   # abandon a pending trigger if no Action: arrives within this many seconds
+CONTEXT_BEFORE = 5        # log lines before the Triggered entry
 CONTEXT_AFTER = 5       # log lines after the Action entry
 MEM_WINDOW_MIN = 30     # show hub-memory samples within +/- this many minutes of the outlier
 
@@ -112,6 +113,11 @@ parser.add_argument('--username', help='Hub username (for bare-IP --hub on secur
 parser.add_argument('--password', help='Hub password (for bare-IP --hub on secured hubs).')
 parser.add_argument('--threshold', type=float, default=OUTLIER_THRESHOLD_SEC, help=f'Outlier threshold in seconds (default {OUTLIER_THRESHOLD_SEC})')
 parser.add_argument('--mem-window', type=int, default=MEM_WINDOW_MIN, help=f'Memory-history window in minutes (default {MEM_WINDOW_MIN})')
+parser.add_argument('--trigger-expiry', type=float, default=TRIGGER_EXPIRY_SEC,
+                    help=f'Seconds before a pending trigger is considered abandoned (default {TRIGGER_EXPIRY_SEC}). '
+                         'Prevents queue buildup for rules that have action logging disabled.')
+parser.add_argument('--details', action='store_true',
+                    help='Print surrounding log context for each outlier and stacked trigger.')
 parser.add_argument('--obfuscate', action='store_true', help='Replace device/app names with random adjective-noun aliases (deterministic per-run) for safe sharing on public forums.')
 parser.add_argument('--obfuscate-map', help='If set with --obfuscate, write the original->alias mapping to this file (do NOT share alongside the report).')
 args = parser.parse_args()
@@ -221,6 +227,7 @@ trigger_state = {}  # app_id -> [(datetime, entry_index), ...]  FIFO queue per c
 diffs = []
 outliers = []  # (diff, app_id, app_name, trigger_idx, action_idx)
 involved_apps = set()
+stacked_triggers = []  # (app_id, app_name, queue_depth, prev_idx, prev_t, new_idx, new_t)
 inband_mem_samples = []  # samples written by ws_to_file.py via /hub/advanced/freeOSMemoryLast
 
 for idx, (current_time, data) in enumerate(entries):
@@ -236,18 +243,35 @@ for idx, (current_time, data) in enumerate(entries):
     app_id = data.get('id')
     msg = data.get('msg', '')
     if msg.startswith('Triggered'):
+        existing = trigger_state.get(app_id)
+        if existing:
+            cutoff = current_time - timedelta(seconds=args.trigger_expiry)
+            while existing and existing[0][0] < cutoff:
+                existing.pop(0)
+            if not existing:
+                del trigger_state[app_id]
+                existing = None
+        if existing:
+            prev_t, prev_idx = existing[-1]
+            stacked_triggers.append((app_id, data.get('name'), len(existing), prev_idx, prev_t, idx, current_time))
         trigger_state.setdefault(app_id, []).append((current_time, idx))
     elif 'Action:' in msg:
         queue = trigger_state.get(app_id)
         if queue:
-            t_trigger, trigger_idx = queue.pop(0)
+            cutoff = current_time - timedelta(seconds=args.trigger_expiry)
+            while queue and queue[0][0] < cutoff:
+                queue.pop(0)
             if not queue:
                 del trigger_state[app_id]
-            diff = (current_time - t_trigger).total_seconds()
-            diffs.append(diff)
-            involved_apps.add(app_id)
-            if diff > args.threshold:
-                outliers.append((diff, app_id, data.get('name'), trigger_idx, idx))
+            else:
+                t_trigger, trigger_idx = queue.pop(0)
+                if not queue:
+                    del trigger_state[app_id]
+                diff = (current_time - t_trigger).total_seconds()
+                diffs.append(diff)
+                involved_apps.add(app_id)
+                if diff > args.threshold:
+                    outliers.append((diff, app_id, data.get('name'), trigger_idx, idx))
 
 if not diffs:
     print("No matching patterns found.")
@@ -282,6 +306,11 @@ print(f"Stdev: {statistics.stdev(diffs):.4f}s" if len(diffs) > 1 else "")
 print(f"Median: {statistics.median(diffs):.4f}s")
 print(f"Min: {min(diffs):.4f}s")
 print(f"Max: {max(diffs):.4f}s")
+
+# Pre-compute per-app stacked trigger grouping (used in overview and --details sections).
+by_app_st = {}
+for app_id, app_name, depth, prev_idx, prev_t, new_idx, new_t in stacked_triggers:
+    by_app_st.setdefault(app_id, []).append((app_name, depth, prev_idx, prev_t, new_idx, new_t))
 
 print("\n--- Histogram (log-scale, decade-thirds) ---")
 # Boundaries in seconds. Below 30 ms is collapsed since it's not actionable.
@@ -523,22 +552,70 @@ def _print_outlier_detail(label, diff, app_id, app_name, trigger_idx, action_idx
         print_mem_window(t_trigger, mem_samples, args.mem_window)
 
 
-print(f"\n--- Outliers (delay > {args.threshold:.2f}s) ---")
-print(f"Found: {len(outliers)}")
+if stacked_triggers:
+    suffix = "" if args.details else "  (--details for log context)"
+    print(f"\nStacked triggers: {len(stacked_triggers)} event(s) across {len(by_app_st)} rule(s){suffix}")
+    print("  [measurements are missing for the earlier executions of stacked rules]")
+    for app_id in sorted(by_app_st):
+        events = by_app_st[app_id]
+        display_name = obf.alias(events[0][0]) if obf else events[0][0]
+        print(f"  App id={app_id} name={display_name!r} — {len(events)} event(s)")
+        for _, depth, prev_idx, prev_t, new_idx, new_t in events:
+            gap = (new_t - prev_t).total_seconds()
+            print(f"    [{new_idx:>6}] {new_t.strftime('%H:%M:%S.%f')[:-3]}"
+                  f" stacked onto [{prev_idx:>6}] {prev_t.strftime('%H:%M:%S.%f')[:-3]}"
+                  f"  (gap {gap:.3f}s, queue depth was {depth})")
 
-for n, (diff, app_id, app_name, trigger_idx, action_idx) in enumerate(outliers, 1):
-    _print_outlier_detail(f"Outlier #{n}", diff, app_id, app_name, trigger_idx, action_idx)
+
+def _print_stacked_detail(label, app_id, app_name, depth, prev_idx, prev_t, new_idx, new_t):
+    display_name = obf.alias(app_name) if obf else app_name
+    gap = (new_t - prev_t).total_seconds()
+    print(f"\n=== {label}: app id={app_id} name={display_name!r} gap={gap:.3f}s (queue depth was {depth}) ===")
+    print(f"    Pending trigger at [{prev_idx}] {prev_t}  New trigger at [{new_idx}] {new_t}")
+    ctx_start = max(0, prev_idx - CONTEXT_BEFORE)
+    ctx_end = min(len(entries), new_idx + CONTEXT_AFTER + 1)
+    prev_ts = None
+    for ctx_idx in range(ctx_start, ctx_end):
+        if ctx_idx == prev_idx:
+            marker = '>'
+        elif ctx_idx == new_idx:
+            marker = '!'
+        elif prev_idx < ctx_idx < new_idx:
+            marker = '*'
+        else:
+            marker = ' '
+        delta = None if prev_ts is None else (entries[ctx_idx][0] - prev_ts).total_seconds()
+        print(fmt_entry(ctx_idx, entries[ctx_idx], marker, delta))
+        prev_ts = entries[ctx_idx][0]
+    print(f"    Log entries between the two triggers: {new_idx - prev_idx - 1}")
+    if mem_samples:
+        print_mem_window(prev_t, mem_samples, args.mem_window)
+
+
+print(f"\n--- Outliers (delay > {args.threshold:.2f}s) ---")
+hint = "" if args.details else "  (--details for log context)"
+print(f"Found: {len(outliers)}{hint}")
+
+if args.details:
+    for n, (diff, app_id, app_name, trigger_idx, action_idx) in enumerate(outliers, 1):
+        _print_outlier_detail(f"Outlier #{n}", diff, app_id, app_name, trigger_idx, action_idx)
 
 if boot_outliers:
     print(f"\n--- Boot-adjacent outliers (first {BOOT_EXCLUSION_MIN} min after startup, not tallied) ---")
-    print(f"Found: {len(boot_outliers)}")
-    for n, (diff, app_id, app_name, trigger_idx, action_idx) in enumerate(boot_outliers, 1):
-        t_trig = entries[trigger_idx][0]
-        nearby = next((b for b in boots
-                       if 0 <= (t_trig - b).total_seconds() / 60 <= BOOT_EXCLUSION_MIN), None)
-        note = (f" [{(t_trig - nearby).total_seconds() / 60:.1f} min after boot at {nearby.strftime('%H:%M:%S')}]"
-                if nearby else "")
-        _print_outlier_detail(f"Boot-adjacent #{n}{note}", diff, app_id, app_name, trigger_idx, action_idx)
+    print(f"Found: {len(boot_outliers)}{hint}")
+    if args.details:
+        for n, (diff, app_id, app_name, trigger_idx, action_idx) in enumerate(boot_outliers, 1):
+            t_trig = entries[trigger_idx][0]
+            nearby = next((b for b in boots
+                           if 0 <= (t_trig - b).total_seconds() / 60 <= BOOT_EXCLUSION_MIN), None)
+            note = (f" [{(t_trig - nearby).total_seconds() / 60:.1f} min after boot at {nearby.strftime('%H:%M:%S')}]"
+                    if nearby else "")
+            _print_outlier_detail(f"Boot-adjacent #{n}{note}", diff, app_id, app_name, trigger_idx, action_idx)
+
+if args.details and stacked_triggers:
+    print(f"\n--- Stacked trigger details ---")
+    for n, (app_id, app_name, depth, prev_idx, prev_t, new_idx, new_t) in enumerate(stacked_triggers, 1):
+        _print_stacked_detail(f"Stacked #{n}", app_id, app_name, depth, prev_idx, prev_t, new_idx, new_t)
 
 if obf is not None and args.obfuscate_map:
     with open(args.obfuscate_map, 'w') as fh:
