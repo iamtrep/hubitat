@@ -14,6 +14,8 @@
  *    future Hubitat platform release.
  *
  *  Changelog:
+ *  1.5.6 - Fix "Last Run" column sort: strip hyphens before parseFloat so dates within the same
+ *          year sort correctly (was truncating to year-only, making within-year order random)
  *  1.5.5 - Codex review fixes: unschedule before runIn for both timeout handlers; @Field statics
  *          reset in initialize(); tighten RM type detection to "rule machine" only; drop
  *          state.reportHtml (render table on demand from state.allScanRows); depth-cap telemetry;
@@ -1033,8 +1035,8 @@ function sortRmLogTable(tableId, columnIndex) {
         const bCell = b.querySelectorAll('td')[columnIndex];
         let aText = aCell ? (aCell.getAttribute('data-sort') || aCell.textContent || '').trim() : '';
         let bText = bCell ? (bCell.getAttribute('data-sort') || bCell.textContent || '').trim() : '';
-        const aNum = parseFloat(aText.replace(/[^0-9.-]/g, ''));
-        const bNum = parseFloat(bText.replace(/[^0-9.-]/g, ''));
+        const aNum = parseFloat(aText.replace(/[^0-9.]/g, ''));
+        const bNum = parseFloat(bText.replace(/[^0-9.]/g, ''));
         let comparison = 0;
         if (aText !== '' && bText !== '' && !isNaN(aNum) && !isNaN(bNum)) {
             comparison = aNum - bNum;
