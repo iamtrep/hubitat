@@ -77,3 +77,46 @@ def helpers():
 def run(*args):
     return subprocess.run([PYTHON, str(SCRIPT)] + list(args),
                           capture_output=True, text=True)
+
+
+class TestLoadLogfile:
+    def test_basic(self, helpers, tmp_path):
+        f = write_jsonl(tmp_path, 'a.json', [
+            make_header(),
+            make_entry('2026-05-01 10:00:00.000', 10, 'Rule A', 'Triggered: x'),
+            make_entry('2026-05-01 10:00:00.200', 10, 'Rule A', 'Action: On: Light'),
+        ])
+        entries, hdr, mem = helpers['load_logfile'](str(f))
+        assert len(entries) == 2
+        assert hdr['hub_name'] == 'hub-a'
+        assert mem == []
+
+    def test_no_header(self, helpers, tmp_path):
+        f = write_jsonl(tmp_path, 'b.json', [
+            make_entry('2026-05-01 10:00:00.000', 10, 'Rule A', 'Triggered: x'),
+        ])
+        _, hdr, _ = helpers['load_logfile'](str(f))
+        assert hdr is None
+
+    def test_bad_lines_skipped(self, helpers, tmp_path):
+        f = write_jsonl(tmp_path, 'c.json', [
+            'not json',
+            make_entry('2026-05-01 10:00:00.000', 10, 'Rule A', 'Triggered: x'),
+        ])
+        entries, _, _ = helpers['load_logfile'](str(f))
+        assert len(entries) == 1
+
+    def test_hubstat_goes_to_mem(self, helpers, tmp_path):
+        hubstat = json.dumps({
+            'time': '2026-05-01 10:00:00.000', 'type': 'hubstat',
+            'id': 0, 'name': 'freeOSMemoryLast', 'msg': 'Free OS=500000',
+            'stats': {'Free OS': 500000, '5m CPU avg': 1.0},
+        })
+        f = write_jsonl(tmp_path, 'd.json', [
+            hubstat,
+            make_entry('2026-05-01 10:00:01.000', 10, 'Rule A', 'Triggered: x'),
+        ])
+        entries, _, mem = helpers['load_logfile'](str(f))
+        assert len(mem) == 1
+        assert mem[0][1]['Free OS'] == 500000
+        assert len(entries) == 2  # hubstat also in entries (filtered later by main loop)

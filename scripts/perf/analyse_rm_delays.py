@@ -106,6 +106,48 @@ CONTEXT_BEFORE = 5        # log lines before the Triggered entry
 CONTEXT_AFTER = 5       # log lines after the Action entry
 MEM_WINDOW_MIN = 30     # show hub-memory samples within +/- this many minutes of the outlier
 
+# ---------------------------------------------------------------------------
+# Pure helpers — defined before argparse so they are importable by tests
+# ---------------------------------------------------------------------------
+
+TIME_FMT = '%Y-%m-%d %H:%M:%S.%f'
+
+
+def load_logfile(path):
+    """Load one JSONL log file.
+
+    Returns:
+        entries        – list of (datetime, dict); hubstat entries included
+        capture_header – capture-header dict or None
+        inband_mem     – list of (datetime, row_dict) for hubstat entries
+    """
+    entries = []
+    capture_header = None
+    inband_mem = []
+    with open(path, 'r') as f:
+        for line in f:
+            try:
+                data = json.loads(line)
+                time_str = data.get('time')
+                if not time_str:
+                    continue
+                if data.get('type') == 'capture-header':
+                    capture_header = data
+                    continue
+                ts = datetime.strptime(time_str, TIME_FMT)
+                if data.get('type') == 'hubstat':
+                    stats = data.get('stats') or {}
+                    if stats:
+                        row = {'Date/time': ts.strftime('%m-%d %H:%M:%S')}
+                        row.update({k: ('' if v is None else v)
+                                    for k, v in stats.items()})
+                        inband_mem.append((ts, row))
+                entries.append((ts, data))
+            except (json.JSONDecodeError, ValueError):
+                continue
+    return entries, capture_header, inband_mem
+
+
 parser = argparse.ArgumentParser(description='Analyze Hubitat logsocket capture for slow Trigger->Action delays.')
 parser.add_argument('logfile')
 parser.add_argument('--hub', help='Hub name (from .hubitat.json) or bare IP. If set, fetches /hub/advanced/freeOSMemoryHistory and shows samples around each outlier.')
@@ -195,21 +237,8 @@ def harvest_referenced_names(msg):
 
 
 # First pass: load every log entry into memory so we can pull surrounding context.
-entries = []  # list of (datetime, dict)
-capture_header = None
-with open(args.logfile, 'r') as f:
-    for line in f:
-        try:
-            data = json.loads(line)
-            time_str = data.get('time')
-            if not time_str:
-                continue
-            if data.get('type') == 'capture-header':
-                capture_header = data
-                continue
-            entries.append((datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S.%f'), data))
-        except (json.JSONDecodeError, ValueError):
-            continue
+# (Multi-file orchestration will replace this in Task 4.)
+entries, capture_header, inband_mem_samples = load_logfile(args.logfile)
 
 if not entries:
     print("No log entries parsed.")
@@ -228,15 +257,9 @@ diffs = []
 outliers = []  # (diff, app_id, app_name, trigger_idx, action_idx)
 involved_apps = set()
 stacked_triggers = []  # (app_id, app_name, queue_depth, prev_idx, prev_t, new_idx, new_t)
-inband_mem_samples = []  # samples written by ws_to_file.py via /hub/advanced/freeOSMemoryLast
 
 for idx, (current_time, data) in enumerate(entries):
     if data.get('type') == 'hubstat':
-        stats = data.get('stats') or {}
-        if stats:
-            row = {'Date/time': current_time.strftime('%m-%d %H:%M:%S')}
-            row.update({k: ('' if v is None else v) for k, v in stats.items()})
-            inband_mem_samples.append((current_time, row))
         continue
     if data.get('type') != 'app':
         continue
