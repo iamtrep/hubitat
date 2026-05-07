@@ -238,7 +238,7 @@ def deduplicate_entries(entries):
 
 
 parser = argparse.ArgumentParser(description='Analyze Hubitat logsocket capture for slow Trigger->Action delays.')
-parser.add_argument('logfile')
+parser.add_argument('logfiles', nargs='+', metavar='LOGFILE')
 parser.add_argument('--hub', help='Hub name (from .hubitat.json) or bare IP. If set, fetches /hub/advanced/freeOSMemoryHistory and shows samples around each outlier.')
 parser.add_argument('--username', help='Hub username (for bare-IP --hub on secured hubs).')
 parser.add_argument('--password', help='Hub password (for bare-IP --hub on secured hubs).')
@@ -325,9 +325,39 @@ def harvest_referenced_names(msg):
     return found
 
 
-# First pass: load every log entry into memory so we can pull surrounding context.
-# (Multi-file orchestration will replace this in Task 4.)
-entries, capture_header, inband_mem_samples = load_logfile(args.logfile)
+# --- Multi-file loading and validation -----------------------------------
+per_file = []  # list of (path, entries_list, capture_header, inband_mem)
+for _path in args.logfiles:
+    _ents, _hdr, _mem = load_logfile(_path)
+    per_file.append((_path, _ents, _hdr, _mem))
+
+# Validate hub identity across files that have capture-headers
+_hdr_warnings, _hdr_error, capture_header = validate_headers(
+    [(_p, _h) for _p, _, _h, _ in per_file]
+)
+for _w in _hdr_warnings:
+    print(_w, file=sys.stderr)
+if _hdr_error:
+    print(_hdr_error, file=sys.stderr)
+    sys.exit(1)
+
+# Sort files by first-entry timestamp; user may supply them in any order
+per_file.sort(key=lambda x: x[1][0][0] if x[1] else datetime.min)
+
+# Compute time ranges for gap/overlap detection (only non-empty files)
+_file_ranges = [(_p, _e[0][0], _e[-1][0]) for _p, _e, _, _ in per_file if _e]
+if len(_file_ranges) > 1:
+    for _w in check_time_ordering(_file_ranges):
+        print(_w, file=sys.stderr)
+
+# Merge and deduplicate
+entries = []
+inband_mem_samples = []
+for _p, _ents, _, _mem in per_file:
+    entries.extend(_ents)
+    inband_mem_samples.extend(_mem)
+entries = deduplicate_entries(entries)
+entries.sort(key=lambda x: x[0])
 
 if not entries:
     print("No log entries parsed.")
@@ -403,12 +433,30 @@ inband_startup_boots = sorted(
 
 if obf is not None:
     print("[ Names obfuscated for sharing — IDs preserved. ]")
+elif len(args.logfiles) == 1:
+    print(f"File: {args.logfiles[0]}")
 else:
-    print(f"File: {args.logfile}")
+    print(f"Files ({len(args.logfiles)}):")
+    for _p, _ents, _, _ in per_file:
+        if _ents:
+            print(f"  {_p}  [{_ents[0][0]} — {_ents[-1][0]}]")
+        else:
+            print(f"  {_p}  [empty]")
+
 if capture_header:
+    _all_fw = []
+    _seen_fw = set()
+    for _, _, _h, _ in per_file:
+        if _h:
+            _fw = _h.get('hub_firmware', '?')
+            if _fw not in _seen_fw:
+                _seen_fw.add(_fw)
+                _all_fw.append(_fw)
+    _fw_str = ' → '.join(_all_fw) if _all_fw else '?'
+    _fw_note = '  [firmware changed across files]' if len(_all_fw) > 1 else ''
     print(f"Hub:  {capture_header.get('hub_name', '?')} | "
           f"{capture_header.get('hub_model', '?')} | "
-          f"fw {capture_header.get('hub_firmware', '?')}")
+          f"fw {_fw_str}{_fw_note}")
 print(f"Timespan: {start_time} to {end_time} ({duration})")
 print(f"Total log entries: {len(entries)}")
 print(f"Trigger->Action samples: {len(diffs)}")
@@ -521,6 +569,10 @@ if inband_mem_samples:
 if mem_samples:
     boots = detect_boots(mem_samples)
     boots = [b for b in boots if start_time <= b <= end_time]
+    # Don't flag inter-file gaps as boots — they show up as memory-history gaps too
+    _gap_starts = {_e[0][0] for _, _e, _, _ in per_file[1:] if _e}
+    boots = [b for b in boots
+             if not any(abs((b - _gs).total_seconds()) < 600 for _gs in _gap_starts)]
     print(f"  Detected boots within log timespan: {len(boots)}"
           + (f" ({', '.join(b.strftime('%Y-%m-%d %H:%M') for b in boots)})" if boots else ''))
 

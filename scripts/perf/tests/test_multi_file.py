@@ -223,3 +223,108 @@ class TestDeduplicateEntries:
         d2 = {'type': 'app', 'id': 1, 'msg': 'x', 'name': 'Second'}
         result = helpers['deduplicate_entries']([(ts, d1), (ts, d2)])
         assert len(result) == 1 and result[0][1]['name'] == 'First'
+
+
+class TestSingleFileBackwardCompat:
+    def test_exits_zero(self, tmp_path):
+        f = valid_file(tmp_path, 'a.json')
+        assert run(str(f)).returncode == 0
+
+    def test_shows_filename(self, tmp_path):
+        f = valid_file(tmp_path, 'a.json')
+        assert str(f) in run(str(f)).stdout
+
+    def test_shows_hub_info(self, tmp_path):
+        f = valid_file(tmp_path, 'a.json', header_kwargs={'hub_name': 'my-hub'})
+        assert 'my-hub' in run(str(f)).stdout
+
+    def test_empty_file_exits_nonzero(self, tmp_path):
+        f = tmp_path / 'empty.json'
+        f.write_text('\n')
+        assert run(str(f)).returncode != 0
+
+
+class TestMultiFileHappyPath:
+    def test_two_files_exit_zero(self, tmp_path):
+        f1 = valid_file(tmp_path, 'a.json', '2026-05-01 10:00:00.000', '2026-05-01 10:00:00.200')
+        f2 = valid_file(tmp_path, 'b.json', '2026-05-01 11:00:00.000', '2026-05-01 11:00:00.200')
+        assert run(str(f1), str(f2)).returncode == 0
+
+    def test_both_filenames_in_output(self, tmp_path):
+        f1 = valid_file(tmp_path, 'a.json', '2026-05-01 10:00:00.000', '2026-05-01 10:00:00.200')
+        f2 = valid_file(tmp_path, 'b.json', '2026-05-01 11:00:00.000', '2026-05-01 11:00:00.200')
+        out = run(str(f1), str(f2)).stdout
+        assert str(f1) in out and str(f2) in out
+
+    def test_files_sorted_chronologically(self, tmp_path):
+        # Supply later file first — output timespan must start from the earlier file
+        f_late  = valid_file(tmp_path, 'late.json',  '2026-05-01 12:00:00.000', '2026-05-01 12:00:00.200')
+        f_early = valid_file(tmp_path, 'early.json', '2026-05-01 10:00:00.000', '2026-05-01 10:00:00.200')
+        out = run(str(f_late), str(f_early)).stdout
+        assert '2026-05-01 10:00' in out  # timespan starts at early file
+
+    def test_combined_sample_count(self, tmp_path):
+        f1 = valid_file(tmp_path, 'a.json', '2026-05-01 10:00:00.000', '2026-05-01 10:00:00.200')
+        f2 = valid_file(tmp_path, 'b.json', '2026-05-01 11:00:00.000', '2026-05-01 11:00:00.200')
+        assert 'Trigger->Action samples: 2' in run(str(f1), str(f2)).stdout
+
+
+class TestHubValidation:
+    def test_hub_name_mismatch_exits_nonzero(self, tmp_path):
+        f1 = valid_file(tmp_path, 'a.json', header_kwargs={'hub_name': 'hub-a', 'hub_ip': '1.2.3.4'})
+        f2 = valid_file(tmp_path, 'b.json', '2026-05-01 11:00:00.000', '2026-05-01 11:00:00.200',
+                        header_kwargs={'hub_name': 'hub-b', 'hub_ip': '1.2.3.4'})
+        r = run(str(f1), str(f2))
+        assert r.returncode != 0
+        assert 'Error' in r.stderr
+
+    def test_no_header_warns(self, tmp_path):
+        f1 = valid_file(tmp_path, 'a.json')
+        f2 = write_jsonl(tmp_path, 'b.json',
+                         make_pair('2026-05-01 11:00:00.000', '2026-05-01 11:00:00.200'))
+        r = run(str(f1), str(f2))
+        assert r.returncode == 0
+        assert 'Warning' in r.stderr
+
+    def test_firmware_change_noted(self, tmp_path):
+        f1 = valid_file(tmp_path, 'a.json', header_kwargs={'firmware': '2.5.0.100'})
+        f2 = valid_file(tmp_path, 'b.json', '2026-05-01 11:00:00.000', '2026-05-01 11:00:00.200',
+                        header_kwargs={'firmware': '2.5.0.131'})
+        out = run(str(f1), str(f2)).stdout
+        assert '2.5.0.100' in out and '2.5.0.131' in out
+
+
+class TestGapOverlapDedup:
+    def test_large_gap_warns(self, tmp_path):
+        f1 = valid_file(tmp_path, 'a.json', '2026-05-01 10:00:00.000', '2026-05-01 10:00:00.200')
+        f2 = valid_file(tmp_path, 'b.json', '2026-05-01 12:00:00.000', '2026-05-01 12:00:00.200')
+        r = run(str(f1), str(f2))
+        assert r.returncode == 0
+        assert 'gap' in r.stderr.lower()
+
+    def test_overlap_warns(self, tmp_path):
+        lines_a = [make_header()] + \
+                  make_pair('2026-05-01 10:00:00.000', '2026-05-01 10:00:00.200') + \
+                  make_pair('2026-05-01 10:30:00.000', '2026-05-01 10:30:00.200')
+        f1 = write_jsonl(tmp_path, 'a.json', lines_a)
+        lines_b = [make_header()] + \
+                  make_pair('2026-05-01 10:15:00.000', '2026-05-01 10:15:00.200')
+        f2 = write_jsonl(tmp_path, 'b.json', lines_b)
+        r = run(str(f1), str(f2))
+        assert r.returncode == 0
+        assert 'overlap' in r.stderr.lower()
+
+    def test_identical_files_not_double_counted(self, tmp_path):
+        lines = [make_header()] + make_pair('2026-05-01 10:00:00.000', '2026-05-01 10:00:00.200')
+        f1 = write_jsonl(tmp_path, 'a.json', lines)
+        f2 = write_jsonl(tmp_path, 'b.json', lines)
+        out = run(str(f1), str(f2)).stdout
+        assert 'Trigger->Action samples: 1' in out
+
+    def test_obfuscate_two_files(self, tmp_path):
+        f1 = valid_file(tmp_path, 'a.json')
+        f2 = valid_file(tmp_path, 'b.json', '2026-05-01 11:00:00.000', '2026-05-01 11:00:00.200')
+        r = run(str(f1), str(f2), '--obfuscate')
+        assert r.returncode == 0
+        assert 'Names obfuscated' in r.stdout
+        assert str(f1) not in r.stdout and str(f2) not in r.stdout
