@@ -148,6 +148,95 @@ def load_logfile(path):
     return entries, capture_header, inband_mem
 
 
+GAP_WARN_SEC = 60  # gap between consecutive files that implies missing data
+
+
+def validate_headers(headers_by_file):
+    """Check hub identity consistency across capture-headers.
+
+    Args:
+        headers_by_file: list of (path, header_or_None)
+    Returns:
+        (warnings, error, representative_header)
+        error is a string if files are from different hubs; None otherwise.
+    """
+    warnings_out = []
+    non_null = [(p, h) for p, h in headers_by_file if h is not None]
+    null_paths = [p for p, h in headers_by_file if h is None]
+
+    if not non_null:
+        return [], None, None
+
+    rep_path, rep = non_null[0]
+
+    if null_paths:
+        warnings_out.append(
+            f"Warning: {len(null_paths)} file(s) have no capture-header "
+            f"(hub identity unverified): {', '.join(null_paths)}"
+        )
+
+    ref_name = rep.get('hub_name')
+    ref_ip = rep.get('hub_ip')
+    mismatches = []
+    for path, h in non_null[1:]:
+        name, ip = h.get('hub_name'), h.get('hub_ip')
+        if (name and ref_name and name != ref_name) or \
+           (ip and ref_ip and ip != ref_ip):
+            mismatches.append(
+                f"  {path}: hub_name={name!r} hub_ip={ip!r}"
+            )
+    if mismatches:
+        error = (
+            f"Error: capture-headers disagree on hub identity.\n"
+            f"  Reference ({rep_path}): hub_name={ref_name!r} hub_ip={ref_ip!r}\n"
+            + '\n'.join(mismatches)
+        )
+        return warnings_out, error, None
+
+    return warnings_out, None, rep
+
+
+def check_time_ordering(file_ranges):
+    """Detect gaps and overlaps between consecutive sorted file ranges.
+
+    Args:
+        file_ranges: list of (path, first_ts, last_ts) sorted by first_ts
+    Returns:
+        list of warning strings (empty = clean)
+    """
+    warnings_out = []
+    for i in range(1, len(file_ranges)):
+        prev_path, _, prev_last = file_ranges[i - 1]
+        cur_path, cur_first, _ = file_ranges[i]
+        gap_sec = (cur_first - prev_last).total_seconds()
+        if gap_sec < 0:
+            warnings_out.append(
+                f"Warning: files overlap by {-gap_sec:.1f}s "
+                f"({prev_path} ends {prev_last}, {cur_path} starts {cur_first}). "
+                f"Duplicate entries will be removed."
+            )
+        elif gap_sec > GAP_WARN_SEC:
+            warnings_out.append(
+                f"Warning: {gap_sec:.0f}s gap between "
+                f"{prev_path} (ends {prev_last}) and "
+                f"{cur_path} (starts {cur_first}). "
+                f"Trigger-action pairs spanning this gap may be silently split."
+            )
+    return warnings_out
+
+
+def deduplicate_entries(entries):
+    """Remove exact-duplicate (time, type, id, msg) entries; preserve first."""
+    seen = set()
+    result = []
+    for ts, d in entries:
+        key = (ts, d.get('type'), d.get('id'), d.get('msg'))
+        if key not in seen:
+            seen.add(key)
+            result.append((ts, d))
+    return result
+
+
 parser = argparse.ArgumentParser(description='Analyze Hubitat logsocket capture for slow Trigger->Action delays.')
 parser.add_argument('logfile')
 parser.add_argument('--hub', help='Hub name (from .hubitat.json) or bare IP. If set, fetches /hub/advanced/freeOSMemoryHistory and shows samples around each outlier.')

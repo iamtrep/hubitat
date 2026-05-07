@@ -120,3 +120,106 @@ class TestLoadLogfile:
         assert len(mem) == 1
         assert mem[0][1]['Free OS'] == 500000
         assert len(entries) == 2  # hubstat also in entries (filtered later by main loop)
+
+
+class TestValidateHeaders:
+    def _h(self, name='hub-a', ip='1.2.3.4', fw='2.5.0.100'):
+        return {'hub_name': name, 'hub_ip': ip, 'hub_firmware': fw}
+
+    def test_no_headers_ok(self, helpers):
+        w, err, rep = helpers['validate_headers']([('a.json', None), ('b.json', None)])
+        assert err is None and rep is None
+
+    def test_consistent_ok(self, helpers):
+        h = self._h()
+        w, err, rep = helpers['validate_headers']([('a.json', h), ('b.json', dict(h))])
+        assert err is None and rep is h
+
+    def test_name_mismatch_is_error(self, helpers):
+        _, err, _ = helpers['validate_headers']([
+            ('a.json', self._h(name='hub-a')),
+            ('b.json', self._h(name='hub-b')),
+        ])
+        assert err is not None and 'hub-b' in err
+
+    def test_ip_mismatch_is_error(self, helpers):
+        _, err, _ = helpers['validate_headers']([
+            ('a.json', self._h(ip='1.1.1.1')),
+            ('b.json', self._h(ip='2.2.2.2')),
+        ])
+        assert err is not None
+
+    def test_partial_header_warns_not_error(self, helpers):
+        w, err, rep = helpers['validate_headers']([
+            ('a.json', self._h()), ('b.json', None),
+        ])
+        assert err is None
+        assert any('no capture-header' in x for x in w)
+
+
+class TestCheckTimeOrdering:
+    def _ts(self, s):
+        return datetime.strptime(s, '%Y-%m-%d %H:%M:%S')
+
+    def test_clean_sequential_no_warning(self, helpers):
+        ranges = [
+            ('a.json', self._ts('2026-05-01 10:00:00'), self._ts('2026-05-01 10:30:00')),
+            ('b.json', self._ts('2026-05-01 10:30:30'), self._ts('2026-05-01 11:00:00')),
+        ]
+        assert helpers['check_time_ordering'](ranges) == []
+
+    def test_small_gap_no_warning(self, helpers):
+        # 30s gap — below GAP_WARN_SEC (60s)
+        ranges = [
+            ('a.json', self._ts('2026-05-01 10:00:00'), self._ts('2026-05-01 10:30:00')),
+            ('b.json', self._ts('2026-05-01 10:30:30'), self._ts('2026-05-01 11:00:00')),
+        ]
+        assert helpers['check_time_ordering'](ranges) == []
+
+    def test_large_gap_warns(self, helpers):
+        ranges = [
+            ('a.json', self._ts('2026-05-01 10:00:00'), self._ts('2026-05-01 10:30:00')),
+            ('b.json', self._ts('2026-05-01 12:30:00'), self._ts('2026-05-01 13:00:00')),
+        ]
+        w = helpers['check_time_ordering'](ranges)
+        assert len(w) == 1 and 'gap' in w[0].lower()
+
+    def test_overlap_warns(self, helpers):
+        ranges = [
+            ('a.json', self._ts('2026-05-01 10:00:00'), self._ts('2026-05-01 11:00:00')),
+            ('b.json', self._ts('2026-05-01 10:30:00'), self._ts('2026-05-01 11:30:00')),
+        ]
+        w = helpers['check_time_ordering'](ranges)
+        assert len(w) == 1 and 'overlap' in w[0].lower()
+
+
+class TestDeduplicateEntries:
+    def _e(self, t, app_id, msg):
+        ts = datetime.strptime(t, '%Y-%m-%d %H:%M:%S.%f')
+        return (ts, {'type': 'app', 'id': app_id, 'msg': msg, 'name': 'R'})
+
+    def test_no_dupes_unchanged(self, helpers):
+        e = [self._e('2026-05-01 10:00:00.000', 1, 'Triggered: A'),
+             self._e('2026-05-01 10:00:00.200', 1, 'Action: On')]
+        assert len(helpers['deduplicate_entries'](e)) == 2
+
+    def test_exact_dupe_removed(self, helpers):
+        e = self._e('2026-05-01 10:00:00.000', 1, 'Triggered: A')
+        assert len(helpers['deduplicate_entries']([e, e])) == 1
+
+    def test_same_time_diff_msg_kept(self, helpers):
+        e = [self._e('2026-05-01 10:00:00.000', 1, 'Triggered: A'),
+             self._e('2026-05-01 10:00:00.000', 1, 'Triggered: B')]
+        assert len(helpers['deduplicate_entries'](e)) == 2
+
+    def test_same_time_diff_id_kept(self, helpers):
+        e = [self._e('2026-05-01 10:00:00.000', 1, 'Triggered: A'),
+             self._e('2026-05-01 10:00:00.000', 2, 'Triggered: A')]
+        assert len(helpers['deduplicate_entries'](e)) == 2
+
+    def test_preserves_first_occurrence(self, helpers):
+        ts = datetime.strptime('2026-05-01 10:00:00.000', '%Y-%m-%d %H:%M:%S.%f')
+        d1 = {'type': 'app', 'id': 1, 'msg': 'x', 'name': 'First'}
+        d2 = {'type': 'app', 'id': 1, 'msg': 'x', 'name': 'Second'}
+        result = helpers['deduplicate_entries']([(ts, d1), (ts, d2)])
+        assert len(result) == 1 and result[0][1]['name'] == 'First'
