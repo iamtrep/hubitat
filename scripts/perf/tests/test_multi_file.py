@@ -4,6 +4,7 @@ Run with:
     cd /Users/trep/Documents/GitHub/iamtrep/hubitat/scripts/perf
     python3 -m pytest tests/test_multi_file.py -v
 """
+import re
 import importlib.util
 import json
 import subprocess
@@ -328,3 +329,80 @@ class TestGapOverlapDedup:
         assert r.returncode == 0
         assert 'Names obfuscated' in r.stdout
         assert str(f1) not in r.stdout and str(f2) not in r.stdout
+
+
+def _make_startup(t):
+    return json.dumps({'time': t, 'type': 'app', 'id': 1,
+                       'name': 'hub-a',
+                       'msg': 'System startup with build: 2.5.0.131'})
+
+
+def _boot_file(tmp_path, filename,
+               boot_t='2026-05-01 10:00:00.000',
+               slow_trig='2026-05-01 10:00:30.000',
+               slow_act='2026-05-01 10:00:33.000',
+               normal_trig='2026-05-01 11:00:00.000',
+               normal_act='2026-05-01 11:00:00.100'):
+    """Log with one boot-adjacent outlier (3 s) and one normal pair (0.1 s)."""
+    lines = [
+        make_header(),
+        _make_startup(boot_t),
+        make_entry(slow_trig, 100, 'Rule A', 'Triggered: Periodic'),
+        make_entry(slow_act,  100, 'Rule A', 'Action: On: Light'),
+        make_entry(normal_trig, 100, 'Rule A', 'Triggered: Periodic'),
+        make_entry(normal_act,  100, 'Rule A', 'Action: On: Light'),
+    ]
+    return write_jsonl(tmp_path, filename, lines)
+
+
+class TestBootExclusion:
+    """Boot-adjacent outliers must be excluded from summary stats."""
+
+    def test_boot_outlier_excluded_from_max(self, tmp_path):
+        f = _boot_file(tmp_path, 'boot.json')
+        out = run(str(f)).stdout
+        m = re.search(r'Max:\s*([0-9.]+)s', out)
+        assert m is not None, f"Max not found in output:\n{out}"
+        assert float(m.group(1)) < 1.0, (
+            f"Boot outlier (3 s) should be excluded from Max, got {m.group(1)}")
+
+    def test_boot_outlier_excluded_from_mean(self, tmp_path):
+        f = _boot_file(tmp_path, 'boot2.json')
+        out = run(str(f)).stdout
+        m = re.search(r'Mean:\s*([0-9.]+)s', out)
+        assert m is not None, f"Mean not found in output:\n{out}"
+        assert float(m.group(1)) < 1.0, (
+            f"Boot outlier (3 s) should be excluded from Mean, got {m.group(1)}")
+
+    def test_boot_outlier_in_separate_section(self, tmp_path):
+        f = _boot_file(tmp_path, 'boot3.json')
+        out = run(str(f)).stdout
+        assert 'Boot-adjacent outliers' in out
+
+    def test_main_outlier_count_excludes_boot(self, tmp_path):
+        """Main 'Found: N' count must not include the boot-adjacent outlier."""
+        f = _boot_file(tmp_path, 'boot4.json')
+        out = run(str(f)).stdout
+        # 0.1 s pair is below threshold, 3 s pair is boot-adjacent → main Found: 0
+        assert 'Found: 0' in out
+
+    def test_sample_count_includes_boot_pair(self, tmp_path):
+        """Total Trigger->Action sample count still includes the boot pair."""
+        f = _boot_file(tmp_path, 'boot5.json')
+        out = run(str(f)).stdout
+        assert 'Trigger->Action samples: 2' in out
+
+    def test_no_boot_outlier_unchanged(self, tmp_path):
+        """Without a boot event, a slow pair is fully included in stats."""
+        lines = [
+            make_header(),
+            make_entry('2026-05-01 10:00:00.000', 100, 'Rule A', 'Triggered: Periodic'),
+            make_entry('2026-05-01 10:00:03.000', 100, 'Rule A', 'Action: On: Light'),
+            make_entry('2026-05-01 11:00:00.000', 100, 'Rule A', 'Triggered: Periodic'),
+            make_entry('2026-05-01 11:00:00.100', 100, 'Rule A', 'Action: On: Light'),
+        ]
+        f = write_jsonl(tmp_path, 'no_boot.json', lines)
+        out = run(str(f)).stdout
+        m = re.search(r'Max:\s*([0-9.]+)s', out)
+        assert m is not None
+        assert float(m.group(1)) > 2.0, "Without a boot, 3 s outlier should be in stats"

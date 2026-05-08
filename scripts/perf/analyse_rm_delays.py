@@ -373,6 +373,7 @@ if obf is not None:
 
 trigger_state = {}  # app_id -> [(datetime, entry_index), ...]  FIFO queue per concurrent execution
 diffs = []
+diffs_with_tidx = []  # parallel to diffs: (diff, trigger_idx) — used to filter boot-adjacent from stats
 outliers = []  # (diff, app_id, app_name, trigger_idx, action_idx)
 involved_apps = set()
 stacked_triggers = []  # (app_id, app_name, queue_depth, prev_idx, prev_t, new_idx, new_t)
@@ -411,6 +412,7 @@ for idx, (current_time, data) in enumerate(entries):
                     del trigger_state[app_id]
                 diff = (current_time - t_trigger).total_seconds()
                 diffs.append(diff)
+                diffs_with_tidx.append((diff, trigger_idx))
                 involved_apps.add(app_id)
                 if diff > args.threshold:
                     outliers.append((diff, app_id, data.get('name'), trigger_idx, idx))
@@ -461,47 +463,16 @@ print(f"Timespan: {start_time} to {end_time} ({duration})")
 print(f"Total log entries: {len(entries)}")
 print(f"Trigger->Action samples: {len(diffs)}")
 print(f"Unique App IDs: {len(involved_apps)} ({', '.join(map(str, sorted(involved_apps)))})")
-print(f"Mean: {statistics.mean(diffs):.4f}s")
-print(f"Stdev: {statistics.stdev(diffs):.4f}s" if len(diffs) > 1 else "")
-print(f"Median: {statistics.median(diffs):.4f}s")
-print(f"Min: {min(diffs):.4f}s")
-print(f"Max: {max(diffs):.4f}s")
 
 # Pre-compute per-app stacked trigger grouping (used in overview and --details sections).
 by_app_st = {}
 for app_id, app_name, depth, prev_idx, prev_t, new_idx, new_t in stacked_triggers:
     by_app_st.setdefault(app_id, []).append((app_name, depth, prev_idx, prev_t, new_idx, new_t))
 
-print("\n--- Histogram (log-scale, decade-thirds) ---")
-# Boundaries in seconds. Below 30 ms is collapsed since it's not actionable.
-# Upper end auto-extends if max exceeds 30 s.
-boundaries = [0.0, 0.030, 0.100, 0.300, 1.0, 3.0, 10.0, 30.0]
-while boundaries[-1] < max(diffs):
-    boundaries.append(boundaries[-1] * (10 / 3) if boundaries[-1] >= 1 else boundaries[-1] * 3)
-
 def fmt_bound(s):
     if s < 1:
         return f"{int(round(s * 1000))}ms"
     return f"{s:g}s"
-
-bins = [0] * (len(boundaries) - 1)
-for d in diffs:
-    for i in range(len(bins)):
-        if boundaries[i] <= d < boundaries[i + 1]:
-            bins[i] += 1
-            break
-    else:
-        bins[-1] += 1  # >= last boundary
-
-total = len(diffs)
-max_count = max(bins) if bins else 1
-for i, c in enumerate(bins):
-    lo, hi = boundaries[i], boundaries[i + 1]
-    label = f"{fmt_bound(lo)} - {fmt_bound(hi)}"
-    flag = '!' if lo >= args.threshold else ' '
-    bar = '#' * int(round(30 * c / max_count)) if max_count else ''
-    pct = 100.0 * c / total if total else 0
-    print(f"{flag} {label:>16} | {bar:<30} {c:>5} ({pct:5.1f}%)")
 
 
 # --- Optional: fetch hub memory/CPU history -------------------------------
@@ -595,6 +566,45 @@ if boots:
         else:
             normal.append(item)
     outliers = normal
+
+# Compute clean_diffs by removing boot-adjacent samples so stats/histogram
+# reflect steady-state hub performance, not post-reboot warm-up noise.
+boot_trigger_idxs = {item[3] for item in boot_outliers}
+clean_diffs = [d for d, tidx in diffs_with_tidx if tidx not in boot_trigger_idxs]
+if len(clean_diffs) < len(diffs):
+    print(f"  ({len(diffs) - len(clean_diffs)} boot-adjacent sample(s) excluded from stats below)")
+_stat_diffs = clean_diffs if clean_diffs else diffs
+print(f"Mean: {statistics.mean(_stat_diffs):.4f}s")
+print(f"Stdev: {statistics.stdev(_stat_diffs):.4f}s" if len(_stat_diffs) > 1 else "")
+print(f"Median: {statistics.median(_stat_diffs):.4f}s")
+print(f"Min: {min(_stat_diffs):.4f}s")
+print(f"Max: {max(_stat_diffs):.4f}s")
+
+print("\n--- Histogram (log-scale, decade-thirds) ---")
+# Boundaries in seconds. Below 30 ms is collapsed since it's not actionable.
+# Upper end auto-extends if max exceeds 30 s.
+boundaries = [0.0, 0.030, 0.100, 0.300, 1.0, 3.0, 10.0, 30.0]
+while boundaries[-1] < max(_stat_diffs):
+    boundaries.append(boundaries[-1] * (10 / 3) if boundaries[-1] >= 1 else boundaries[-1] * 3)
+
+bins = [0] * (len(boundaries) - 1)
+for d in _stat_diffs:
+    for i in range(len(bins)):
+        if boundaries[i] <= d < boundaries[i + 1]:
+            bins[i] += 1
+            break
+    else:
+        bins[-1] += 1  # >= last boundary
+
+total = len(_stat_diffs)
+max_count = max(bins) if bins else 1
+for i, c in enumerate(bins):
+    lo, hi = boundaries[i], boundaries[i + 1]
+    label = f"{fmt_bound(lo)} - {fmt_bound(hi)}"
+    flag = '!' if lo >= args.threshold else ' '
+    bar = '#' * int(round(30 * c / max_count)) if max_count else ''
+    pct = 100.0 * c / total if total else 0
+    print(f"{flag} {label:>16} | {bar:<30} {c:>5} ({pct:5.1f}%)")
 
 
 # --- Temporal distribution of outliers -----------------------------------
