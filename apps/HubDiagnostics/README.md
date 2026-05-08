@@ -2,7 +2,7 @@
 
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
-**Current version:** 5.8.2
+**Current version:** 5.8.5
 
 ---
 
@@ -18,10 +18,11 @@ A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-t
 8. [Health Tab](#health-tab)
 9. [Performance Tab](#performance-tab)
 10. [Snapshots Tab](#snapshots-tab)
-11. [App Settings Tab](#app-settings-tab)
-12. [Forum Export](#forum-export)
-13. [Alerts & Warnings Reference](#alerts--warnings-reference)
-14. [REST API](#rest-api)
+11. [Device Usage Audit](#device-usage-audit)
+12. [App Settings Tab](#app-settings-tab)
+13. [Forum Export](#forum-export)
+14. [Alerts & Warnings Reference](#alerts--warnings-reference)
+15. [REST API](#rest-api)
 
 ---
 
@@ -275,6 +276,33 @@ A configuration snapshot captures the state of devices, apps, network configurat
 - File Manager changes (file count, free space)
 
 Changes are color-coded: green for additions/improvements, red for removals/degradations, yellow for modifications.
+
+---
+
+## Device Usage Audit
+
+Generates a one-time, per-device cross-reference report covering:
+
+- **Unreferenced devices** — no apps subscribe to them, no dashboards display them, no parent integration manages them; cleanup candidates.
+- **Mesh orphans** — Hubitat reports `orphan: true` (radio/network state).
+- **Stuck scheduled jobs** — `nextRunTime` in the past.
+- **Critical devices** — top 20 by combined apps + dashboards reference count.
+- **Apps → devices and Dashboards → devices reverse indices**.
+- **Per-device detail table** with all subscribers as clickable links.
+
+### How it works
+
+The scan crawls every device via `/device/fullJson/{id}` — one call per device, throttled to the Hubitat platform's 8-concurrent-async-call cap. On a 350-device hub this takes ~30–60 s. The output is a self-contained HTML file written to FileManager (`hub_usage_audit_YYYYMMDD_HHmmss.html`) and indexed under "Past audits" on the Dashboard.
+
+### Trigger
+
+Dashboard tab → Reports section → **Generate Device Audit**. Progress is polled live; the "View report" link appears on completion. The 10 most recent audits are kept; older entries are auto-deleted.
+
+### Limitations
+
+- The scan is one-shot; subscriptions can change between audits. Re-run for fresh data.
+- A single device fetch failure ratio above 10 % marks the scan as `error` instead of `done` (a partial report is still written).
+- HubDiagnostics is `singleInstance: true`, so two audits cannot run concurrently.
 
 ---
 

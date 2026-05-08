@@ -111,7 +111,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.8.2";
+const UI_VERSION = "5.8.5";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -550,7 +550,9 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   // Reports
   const rpts=await api('reports');
   o+='<div class="card"><div class="card-h">Reports</div><div class="card-b">';
-  o+='<div class="actions" style="margin-bottom:10px"><button class="btn btn-p" id="btnReport">Generate Full Report</button><button class="btn btn-p" id="btnForum">Copy for Forum</button></div>';
+  o+='<div class="actions" style="margin-bottom:10px"><button class="btn btn-p" id="btnReport">Generate Full Report</button><button class="btn btn-p" id="btnForum">Copy for Forum</button><button class="btn btn-p" id="btnAudit">Generate Device Audit</button></div>';
+  o += '<div id="audit-row" style="margin-top:8px"></div>';
+  o += '<div id="audit-list-wrap" style="margin-top:10px"><div class="muted">Past audits…</div></div>';
   if(rpts.lastReport)o+='<p><a href="/local/'+h(rpts.lastReport)+'" target="_blank" style="color:var(--link)">Open latest report: '+h(rpts.lastReport)+'</a></p>';
   if(rpts.reports&&rpts.reports.length>0){
     o+='<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--muted)">All reports ('+rpts.reports.length+')</summary><div style="margin-top:6px">';
@@ -628,7 +630,104 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
         ta.focus();ta.select()}
       else{btnForum.disabled=false;btnForum.textContent='Copy for Forum';alert('Export failed')}}
     catch(e){btnForum.disabled=false;btnForum.textContent='Copy for Forum';alert('Export failed: '+e.message)}};
+
+  const btnAudit=document.getElementById('btnAudit');
+  if(btnAudit)btnAudit.onclick=()=>auditStart();
+
+  auditList();
 }catch(e){err(P,e,rDashboard)}}
+
+async function auditStart() {
+    const btn = document.getElementById('btnAudit');
+    const row = document.getElementById('audit-row');
+    btn.disabled = true; btn.textContent = 'Starting…';
+    try {
+        const r = await fetch(B + '/api/audit/start?access_token=' + T, {method:'POST'});
+        const d = await r.json();
+        if (d.error) { row.innerHTML = '<span class="warn">'+h(d.error)+'</span>'; btn.disabled=false; btn.textContent='Generate Device Audit'; return; }
+        auditPoll(d.scanId, d.total);
+    } catch (e) {
+        row.innerHTML = '<span class="warn">'+h(String(e))+'</span>';
+        btn.disabled = false; btn.textContent = 'Generate Device Audit';
+    }
+}
+
+function auditPoll(scanId, total) {
+    const btn = document.getElementById('btnAudit');
+    const row = document.getElementById('audit-row');
+    let pollTimer = null;
+    async function tick() {
+        try {
+            const r = await fetch(B + '/api/audit/status?scanId=' + encodeURIComponent(scanId) + '&access_token=' + T);
+            const d = await r.json();
+            if (d.status === 'scanning') {
+                row.innerHTML = 'Audit in progress · scanning device <b>'+d.processed+'</b> / '+d.total+' …';
+            } else if (d.status === 'done') {
+                clearInterval(pollTimer);
+                row.innerHTML = '✓ Audit complete · <a href="/local/'+encodeURIComponent(d.filename)+'" target="_blank">View report</a>';
+                btn.disabled = false; btn.textContent = 'Generate Device Audit';
+                drop('audit-list'); auditList();           // refresh past-audits list (Task 12)
+            } else if (d.status === 'error') {
+                clearInterval(pollTimer);
+                row.innerHTML = '<span class="warn">⚠ Audit failed: '+h(d.error || 'see hub logs')+'</span>';
+                btn.disabled = false; btn.textContent = 'Generate Device Audit';
+            } else {
+                clearInterval(pollTimer);
+                row.innerHTML = '<span class="warn">Unknown status: '+h(d.status)+'</span>';
+                btn.disabled = false; btn.textContent = 'Generate Device Audit';
+            }
+        } catch (e) {
+            // transient; keep polling
+            row.innerHTML = '<span class="muted">Polling…</span>';
+        }
+    }
+    tick();
+    pollTimer = setInterval(tick, 2000);
+}
+
+async function auditList() {
+    const wrap = document.getElementById('audit-list-wrap');
+    if (!wrap) return;
+    try {
+        const r = await fetch(B + '/api/audit/list?access_token=' + T);
+        const d = await r.json();
+        const reps = d.reports || [];
+        if (!reps.length) { wrap.innerHTML = '<div class="muted">No past audits yet.</div>'; return; }
+        let h2 = '<table style="width:100%;font-size:12px;border-collapse:collapse"><tr style="color:var(--muted);text-align:left"><th style="padding:4px">Generated</th><th>Devices</th><th>Unref</th><th>Orphans</th><th>Stuck</th><th>Crit</th><th></th></tr>';
+        reps.forEach(r => {
+            h2 += '<tr style="border-top:1px solid var(--border)">'
+               +  '<td style="padding:4px"><a href="/local/'+encodeURIComponent(r.filename)+'" target="_blank">'+h(r.generated)+'</a></td>'
+               +  '<td>'+(r.deviceCount||0)+'</td>'
+               +  '<td>'+(r.unreferencedCount||0)+'</td>'
+               +  '<td>'+(r.orphanCount||0)+'</td>'
+               +  '<td>'+(r.stuckJobCount||0)+'</td>'
+               +  '<td>'+(r.criticalCount||0)+'</td>'
+               +  '<td><a href="javascript:void(0)" class="audit-del" data-filename="'+h(r.filename)+'">delete</a></td>'
+               +  '</tr>';
+        });
+        h2 += '</table>';
+        wrap.innerHTML = h2;
+        wrap.querySelectorAll('a.audit-del').forEach(a => {
+            a.onclick = () => auditDelete(a.dataset.filename);
+        });
+    } catch (e) {
+        wrap.innerHTML = '<span class="muted">Failed to load past audits: '+h(String(e))+'</span>';
+    }
+}
+async function auditDelete(filename) {
+    if (!confirm('Delete '+filename+'?')) return;
+    try {
+        await fetch(B + '/api/audit/delete?access_token=' + T, {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({filename})
+        });
+    } catch (e) {
+        alert('Delete failed: ' + e);
+        return;
+    }
+    drop('audit-list'); auditList();
+}
 
 // ===== TAB: DEVICES =====
 async function rDevices(){const P='p-devices';loading(P);try{

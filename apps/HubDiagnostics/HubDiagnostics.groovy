@@ -10,8 +10,11 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.8.2"
+@Field static final String APP_VERSION = "5.8.5"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -38,6 +41,22 @@ import groovy.json.JsonOutput
 @Field static final String MAX_STATE_AGE_PATH = "/hub/advanced/maxDeviceStateAgeDays"
 @Field static final String MEMORY_HISTORY_PATH = "/hub/advanced/freeOSMemoryHistory"
 @Field static final String DEVICE_TYPES_PATH = "/hub2/userDeviceTypes"
+
+// ===== Device Usage Audit constants =====
+@Field static final String FULL_JSON_PATH_PREFIX = "/device/fullJson/"
+@Field static final int    AUDIT_MAX_INFLIGHT  = 8       // Hubitat platform cap on concurrent async HTTP per app
+@Field static final int    AUDIT_WATCHDOG_SEC  = 120     // safety net if a callback is genuinely lost
+@Field static final long   AUDIT_STALE_MS      = 600_000 // 10 min — anything older is force-cleared on app entry
+@Field static final int    AUDIT_REPORTS_KEEP  = 10      // FIFO trim of state.auditReports[]
+@Field static final double AUDIT_FAIL_RATIO    = 0.10    // > 10% per-device failures → mark scan errored
+
+// Per-scan in-memory state. Each entry is itself a ConcurrentHashMap with keys:
+//   total (Integer), startedAt (Long),
+//   inFlight (AtomicInteger), processed (AtomicInteger),
+//   pending (ConcurrentLinkedQueue<Long>),
+//   devices (ConcurrentHashMap<Long, Map>),
+//   failed (ConcurrentHashMap<Long, String>)
+@Field static final ConcurrentHashMap<String, ConcurrentHashMap> AUDIT_SCANS = new ConcurrentHashMap<>()
 
 // Zigbee channels recommended to avoid WiFi interference
 @Field static final List RECOMMENDED_ZIGBEE_CHANNELS = [15, 20, 25]
@@ -236,6 +255,12 @@ mappings {
     path('/api/export/forum')         { action: [GET: 'apiForumExport'] }
     path('/api/settings')             { action: [GET: 'apiGetSettings', POST: 'apiUpdateSettings'] }
     path('/api/cache/clear')          { action: [POST: 'apiClearCache'] }
+
+    // Device Usage Audit
+    path('/api/audit/start')   { action: [POST: 'apiAuditStart'] }
+    path('/api/audit/status')  { action: [GET:  'apiAuditStatus'] }
+    path('/api/audit/list')    { action: [GET:  'apiAuditList'] }
+    path('/api/audit/delete')  { action: [POST: 'apiAuditDelete'] }
 }
 
 // ===== PAGE METHODS =====
@@ -3163,6 +3188,642 @@ boolean fileExists(String fileName) {
         logDebug "File not found or error checking ${fileName}: ${e.message}"
         return false
     }
+}
+
+// ===== DEVICE USAGE AUDIT =====
+
+/**
+ * Extract Section A/B/C fields from a /device/fullJson/{id} response.
+ * Pure function; safe to call from async callbacks.
+ *
+ * @param fj   Parsed JSON response from /device/fullJson/{id}
+ * @param did  The device id (passed separately because fj.device.id may be a Number type that needs casting)
+ * @return     Slim Map with only the audit-scope fields, ready to accumulate
+ */
+private Map extractAuditFields(Map fj, Long did) {
+    Map dev = (fj?.device ?: [:]) as Map
+
+    // Section A — cross-reference core
+    List appsUsing = ((fj?.appsUsing ?: []) as List).collect { Map a ->
+        [id: (a.id as Long), label: a.label, name: a.name, disabled: a.disabled == true]
+    }
+    List dashboards = ((fj?.dashboards ?: []) as List).collect { Map d ->
+        [id: (d.id as Long), name: d.name]
+    }
+    Map parentApp = (fj?.parentApp instanceof Map)
+        ? [id: (fj.parentApp.id as Long), label: fj.parentApp.label, name: fj.parentApp.name]
+        : null
+
+    // Section B — diagnostic flags
+    List scheduledJobs = ((fj?.scheduledJobs ?: []) as List).collect { Map s ->
+        [handler: s.handler, schedule: s.schedule, nextRunTime: s.nextRunTime,
+         prevRunTime: s.prevRunTime, status: s.status]
+    }
+
+    // Section C — identity & driver attribution
+    return [
+        id:                  did,
+        name:                dev.name,
+        label:               dev.label,
+        displayName:         dev.displayName,
+        deviceTypeName:      dev.deviceTypeName,
+        deviceTypeNamespace: dev.deviceTypeNamespace,
+        deviceTypeId:        (dev.deviceTypeId as Long),
+        readableType:        dev.deviceTypeReadableType,
+        driverType:          dev.driverType,                 // 'usr' or system
+        singleThreaded:      dev.deviceTypeSingleThreaded == true,
+        createTime:          dev.createTime,
+        updateTime:          dev.updateTime,
+        lastActivityTime:    dev.lastActivityTime,
+        parentDeviceId:      (dev.parentDeviceId as Long),
+        childDeviceIds:      ((fj?.childDevices ?: [:]) as Map).keySet()?.collect { it as Long } ?: [],
+        notes:               dev.notes,
+        tags:                dev.tags,
+
+        // Section B
+        orphan:              dev.orphan == true,
+        disabled:            dev.disabled == true,
+        linkedAndDisabled:   dev.linkedAndDisabled == true,
+        spammyThreshold:     (dev.spammyThreshold as Integer),
+        maxStates:           (dev.maxStates as Integer),
+        maxEvents:           (dev.maxEvents as Integer),
+        scheduledJobs:       scheduledJobs,
+
+        // Section A
+        appsUsing:           appsUsing,
+        appsUsingCount:      (fj?.appsUsingCount as Integer) ?: appsUsing.size(),
+        dashboards:          dashboards,
+        parentApp:           parentApp
+    ]
+}
+
+/**
+ * Build all cross-reference indices for the audit report from the accumulated device map.
+ * Pure function. Returns a Map shaped for direct rendering by renderAuditHtml().
+ */
+private Map buildCrossReference(Map devices, long scanStartedMs) {
+    long nowMs = now()
+
+    List unreferenced = []          // [{id, name, type, lastActivityTime, driverType}, ...]
+    List meshOrphans  = []          // [{id, name}, ...]
+    List stuckJobs    = []          // [{id, name, handler, overdueMs, status}, ...]
+    List allRefs      = []          // for ranking — [{id, name, appsCount, dashboardsCount, total}, ...]
+    Map  appsIndex    = [:]         // Long appId → [label, devices: [[id, name], ...]]
+    Map  dashIndex    = [:]         // Long dashId → [name, devices: [[id, name], ...]]
+
+    devices.each { _did, _d ->
+        Long   did   = _did as Long
+        Map    d     = _d  as Map
+        int    apps  = ((d.appsUsing ?: []) as List).size()
+        int    dashs = ((d.dashboards ?: []) as List).size()
+        boolean noParentApp = (d.parentApp == null)
+
+        // Unreferenced
+        if (apps == 0 && dashs == 0 && noParentApp) {
+            unreferenced << [id: did, name: (d.label ?: d.name), type: d.deviceTypeName,
+                             lastActivityTime: d.lastActivityTime, driverType: d.driverType]
+        }
+        // Mesh orphans
+        if (d.orphan) {
+            meshOrphans << [id: did, name: (d.label ?: d.name)]
+        }
+        // Stuck jobs (nextRunTime in the past)
+        ((d.scheduledJobs ?: []) as List).each { Map s ->
+            String nrt = s.nextRunTime as String
+            if (nrt) {
+                Long when = parseHubitatTimestamp(nrt)
+                if (when != null && when < nowMs) {
+                    stuckJobs << [id: did, name: (d.label ?: d.name),
+                                  handler: s.handler, overdueMs: (nowMs - when), status: s.status]
+                }
+            }
+        }
+        // Reference ranking
+        allRefs << [id: did, name: (d.label ?: d.name),
+                    appsCount: apps, dashboardsCount: dashs, total: apps + dashs]
+        // Apps → devices index
+        ((d.appsUsing ?: []) as List).each { Map a ->
+            Long aid = a.id as Long
+            Map entry = (Map) (appsIndex[aid] ?: [label: (a.label ?: a.name), devices: []])
+            (entry.devices as List) << [id: did, name: (d.label ?: d.name)]
+            appsIndex[aid] = entry
+        }
+        // Dashboards → devices index
+        ((d.dashboards ?: []) as List).each { Map dd ->
+            Long ddid = dd.id as Long
+            Map entry = (Map) (dashIndex[ddid] ?: [name: dd.name, devices: []])
+            (entry.devices as List) << [id: did, name: (d.label ?: d.name)]
+            dashIndex[ddid] = entry
+        }
+    }
+
+    // Sort sections per spec
+    unreferenced.sort { a, b -> (parseHubitatTimestamp(a.lastActivityTime as String) ?: 0L) <=> (parseHubitatTimestamp(b.lastActivityTime as String) ?: 0L) }
+    meshOrphans.sort  { a, b -> (a.name as String) <=> (b.name as String) }
+    stuckJobs.sort    { a, b -> (b.overdueMs as Long) <=> (a.overdueMs as Long) }
+    List criticalTop20 = allRefs.sort { a, b ->
+        int t = (b.total as Integer) <=> (a.total as Integer)
+        t != 0 ? t : (a.name as String) <=> (b.name as String)
+    }.take(20)
+
+    // Apps/dashboards alphabetical by label/name; devices within each alphabetical
+    List appsSorted = appsIndex.collect { id, e -> [id: id, label: e.label, devices: (e.devices as List).sort { x, y -> (x.name as String) <=> (y.name as String) }] }
+        .sort { a, b -> (a.label as String) <=> (b.label as String) }
+    List dashSorted = dashIndex.collect { id, e -> [id: id, name: e.name, devices: (e.devices as List).sort { x, y -> (x.name as String) <=> (y.name as String) }] }
+        .sort { a, b -> (a.name as String) <=> (b.name as String) }
+
+    return [
+        deviceCount:       devices.size(),
+        unreferenced:      unreferenced,
+        meshOrphans:       meshOrphans,
+        stuckJobs:         stuckJobs,
+        criticalTop20:     criticalTop20,
+        criticalThreshold: 5,                                 // for the "Critical (≥5 refs)" summary card
+        criticalCount:     allRefs.count { (it.total as Integer) >= 5 },
+        appsToDevices:     appsSorted,
+        dashboardsToDevices: dashSorted,
+        scanStartedMs:     scanStartedMs,
+        scanDurationMs:    (nowMs - scanStartedMs)
+    ]
+}
+
+/**
+ * Parse a Hubitat ISO-8601 timestamp ("2026-05-08T00:27:27+0000") to epoch millis.
+ * Returns null on parse failure (don't fail the report — just skip the value).
+ */
+private Long parseHubitatTimestamp(String s) {
+    if (!s) return null
+    try {
+        return Date.parse("yyyy-MM-dd'T'HH:mm:ssZ", s).time
+    } catch (Exception e) {
+        return null
+    }
+}
+
+/**
+ * Render the audit report as a fully self-contained HTML document.
+ * No external resources; CSS inlined; uses /device/edit/{id} and /installedapp/configure/{id}
+ * relative URLs that work when the file is served from FileManager on the same hub.
+ */
+private String renderAuditHtml(Map xref, String hubName, String generatedAt, List failed) {
+    StringBuilder b = new StringBuilder()
+    b << "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\">"
+    b << "<title>Device Usage Audit — ${esc(hubName)}</title>"
+    b << "<style>"
+    b << ":root{--primary:#1A77C9;--ok:#388e3c;--warn:#ff9800;--crit:#d32f2f;--bg:#f5f5f5;--card:#fff;--border:#ddd;--text:#333;--muted:#777;--alt:#f9f9f9}"
+    b << "*{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:13px;margin:0;padding:14px;line-height:1.4}"
+    b << "a{color:var(--primary);text-decoration:none}a:hover{text-decoration:underline}"
+    b << ".hdr{background:var(--primary);color:#fff;padding:10px 14px;border-radius:8px 8px 0 0;display:flex;align-items:center;gap:12px;flex-wrap:wrap}"
+    b << ".hdr h1{margin:0;font-size:16px;font-weight:600}.hdr .meta{font-size:11px;opacity:.85;margin-left:auto}"
+    b << ".toc{background:var(--card);border-radius:0 0 8px 8px;padding:14px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.08)}"
+    b << ".toc-l{color:var(--muted);font-size:11px;text-transform:uppercase;font-weight:600;margin-bottom:6px}"
+    b << ".toc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:4px;font-size:12px}"
+    b << ".card{background:var(--card);border-radius:8px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.08);overflow:hidden}"
+    b << ".card-h{padding:10px 14px;font-size:13px;font-weight:600;border-bottom:1px solid var(--border);background:var(--alt)}"
+    b << ".card-b{padding:10px 14px}"
+    b << ".sumrow{display:flex;gap:18px;flex-wrap:wrap}.sumcell{}"
+    b << ".sumcell .l{color:var(--muted);font-size:11px;margin-bottom:2px}.sumcell .v{font-size:18px;font-weight:600}"
+    b << "table{width:100%;font-size:12px;border-collapse:collapse}"
+    b << "th{color:var(--muted);text-align:left;font-weight:500;padding:5px;border-bottom:1px solid var(--border)}"
+    b << "td{padding:5px;border-bottom:1px solid #f1f5f9;vertical-align:top}"
+    b << ".badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}"
+    b << ".b-builtin{background:#e8eaf6;color:#3949ab}.b-community{background:#fce4ec;color:#c62828}"
+    b << ".b-warn{background:#fff3e0;color:var(--warn)}.b-crit{background:#ffebee;color:var(--crit)}"
+    b << ".muted{color:var(--muted)}.warn{color:var(--warn)}.crit{color:var(--crit)}"
+    b << "</style></head><body>"
+
+    // Header
+    b << "<div class=\"hdr\"><h1>Device Usage Audit — ${esc(hubName)}</h1>"
+    b << "<div class=\"meta\">Generated ${esc(generatedAt)} · ${xref.deviceCount} devices · scan ${formatDurationSec(xref.scanDurationMs as Long)}</div></div>"
+
+    // TOC
+    b << "<div class=\"toc\"><div class=\"toc-l\">Contents</div><div class=\"toc-grid\">"
+    b << "<div><a href=\"#summary\">Summary</a></div>"
+    b << "<div><a href=\"#unref\">Unreferenced devices (${(xref.unreferenced as List).size()})</a></div>"
+    b << "<div><a href=\"#orphans\">Mesh orphans (${(xref.meshOrphans as List).size()})</a></div>"
+    b << "<div><a href=\"#stuck\">Stuck scheduled jobs (${(xref.stuckJobs as List).size()})</a></div>"
+    b << "<div><a href=\"#critical\">Critical devices (top 20)</a></div>"
+    b << "<div><a href=\"#apps\">Apps → devices</a></div>"
+    b << "<div><a href=\"#dashboards\">Dashboards → devices</a></div>"
+    b << "<div><a href=\"#all\">Per-device detail table</a></div>"
+    if (failed) b << "<div><a href=\"#failed\" class=\"crit\">Failed to fetch (${failed.size()})</a></div>"
+    b << "</div></div>"
+
+    // Summary
+    b << "<div class=\"card\" id=\"summary\"><div class=\"card-b\"><div class=\"sumrow\">"
+    b << sumcell("Devices",     xref.deviceCount as String, null)
+    b << sumcell("Unreferenced", (xref.unreferenced as List).size() as String, "warn")
+    b << sumcell("Mesh orphans", (xref.meshOrphans as List).size() as String, "crit")
+    b << sumcell("Stuck jobs",   (xref.stuckJobs as List).size() as String, "warn")
+    b << sumcell("Critical (≥${xref.criticalThreshold} refs)", xref.criticalCount as String, null)
+    b << "</div></div></div>"
+
+    // Unreferenced
+    b << "<div class=\"card\" id=\"unref\"><div class=\"card-h\">⚠ Unreferenced devices (${(xref.unreferenced as List).size()})</div><div class=\"card-b\">"
+    if ((xref.unreferenced as List).isEmpty()) {
+        b << "<div class=\"muted\">None — every device is used by at least one app, dashboard, or parent integration.</div>"
+    } else {
+        b << "<div class=\"muted\" style=\"margin-bottom:6px\">No apps, no dashboards, no parent app — sorted by oldest last activity first.</div>"
+        b << "<table><tr><th>Device</th><th>Type</th><th>Last activity</th><th>Source</th></tr>"
+        (xref.unreferenced as List).each { Map u ->
+            b << "<tr><td>${dlink(u.id as Long, u.name as String)}</td>"
+            b << "<td>${esc(u.type as String)}</td>"
+            b << "<td>${esc(u.lastActivityTime as String)}</td>"
+            b << "<td>${driverBadge(u.driverType as String)}</td></tr>"
+        }
+        b << "</table>"
+    }
+    b << "</div></div>"
+
+    // Mesh orphans
+    b << "<div class=\"card\" id=\"orphans\"><div class=\"card-h\">⚠ Mesh orphans (${(xref.meshOrphans as List).size()})</div><div class=\"card-b\">"
+    if ((xref.meshOrphans as List).isEmpty()) {
+        b << "<div class=\"muted\">None — no devices report orphan radio state.</div>"
+    } else {
+        b << "<div class=\"muted\" style=\"margin-bottom:6px\">Hubitat reports <code>orphan: true</code> — physical radio relationship lost.</div>"
+        b << "<div>" + (xref.meshOrphans as List).collect { dlink(it.id as Long, it.name as String) }.join(" · ") + "</div>"
+    }
+    b << "</div></div>"
+
+    // Stuck jobs
+    b << "<div class=\"card\" id=\"stuck\"><div class=\"card-h\">⚠ Stuck scheduled jobs (${(xref.stuckJobs as List).size()})</div><div class=\"card-b\">"
+    if ((xref.stuckJobs as List).isEmpty()) {
+        b << "<div class=\"muted\">None — all scheduled jobs have a future or null nextRunTime.</div>"
+    } else {
+        b << "<table><tr><th>Device</th><th>Handler</th><th>Overdue</th><th>Status</th></tr>"
+        (xref.stuckJobs as List).each { Map s ->
+            b << "<tr><td>${dlink(s.id as Long, s.name as String)}</td>"
+            b << "<td><code>${esc(s.handler as String)}</code></td>"
+            b << "<td>${formatDurationSec(s.overdueMs as Long)}</td>"
+            b << "<td>${esc(s.status as String)}</td></tr>"
+        }
+        b << "</table>"
+    }
+    b << "</div></div>"
+
+    // Critical devices
+    b << "<div class=\"card\" id=\"critical\"><div class=\"card-h\">⭐ Critical devices (top 20 by reference count)</div><div class=\"card-b\">"
+    if ((xref.criticalTop20 as List).isEmpty()) {
+        b << "<div class=\"muted\">No devices have any apps or dashboards.</div>"
+    } else {
+        b << "<table><tr><th>Device</th><th>Apps</th><th>Dashboards</th><th>Total</th></tr>"
+        (xref.criticalTop20 as List).each { Map c ->
+            b << "<tr><td>${dlink(c.id as Long, c.name as String)}</td>"
+            b << "<td>${c.appsCount}</td><td>${c.dashboardsCount}</td>"
+            b << "<td><b>${c.total}</b></td></tr>"
+        }
+        b << "</table>"
+    }
+    b << "</div></div>"
+
+    // Apps → devices
+    b << "<div class=\"card\" id=\"apps\"><div class=\"card-h\">📱 Apps → devices</div><div class=\"card-b\">"
+    (xref.appsToDevices as List).each { Map a ->
+        b << "<div style=\"margin-bottom:6px\">"
+        b << alink(a.id as Long, a.label as String) + " <span class=\"muted\">(${(a.devices as List).size()})</span>"
+        b << "<div style=\"padding-left:12px\">"
+        b << (a.devices as List).collect { dlink(it.id as Long, it.name as String) }.join(", ")
+        b << "</div></div>"
+    }
+    b << "</div></div>"
+
+    // Dashboards → devices
+    b << "<div class=\"card\" id=\"dashboards\"><div class=\"card-h\">📊 Dashboards → devices</div><div class=\"card-b\">"
+    (xref.dashboardsToDevices as List).each { Map d ->
+        b << "<div style=\"margin-bottom:6px\">"
+        b << "<b>" + esc(d.name as String) + "</b> <span class=\"muted\">(${(d.devices as List).size()})</span>"
+        b << "<div style=\"padding-left:12px\">"
+        b << (d.devices as List).collect { dlink(it.id as Long, it.name as String) }.join(", ")
+        b << "</div></div>"
+    }
+    b << "</div></div>"
+
+    // Per-device detail table
+    b << "<div class=\"card\" id=\"all\"><div class=\"card-h\">📋 Per-device detail table (${xref.deviceCount})</div><div class=\"card-b\">"
+    b << "<table><tr><th>Name</th><th>Type</th><th>Source</th><th>Apps</th><th>Dashboards</th><th>Parent app</th><th>Last activity</th></tr>"
+    if (xref.allDevices instanceof Map) {
+        ((xref.allDevices as Map).values() as List).sort { x, y -> (x.name as String) <=> (y.name as String) }.each { Map d ->
+            String src = (d.driverType == 'usr') ? "<span class=\"badge b-community\">Community</span>" : "<span class=\"badge b-builtin\">Built-in</span>"
+            List apps = (d.appsUsing ?: []) as List
+            List dashs = (d.dashboards ?: []) as List
+            String appsCell  = apps  ? apps.take(4).collect { alink(it.id as Long, (it.label ?: it.name) as String) }.join(", ") + (apps.size() > 4 ? ", <span class=\"muted\">+${apps.size() - 4}</span>" : "") : ((dashs.isEmpty() && d.parentApp == null) ? "<span class=\"warn\">⚠ unreferenced</span>" : "<span class=\"muted\">—</span>")
+            String dashsCell = dashs ? dashs.take(4).collect { '<a href="/installedapp/configure/' + (it.id as Long) + '" target="_blank">' + esc(it.name as String) + '</a>' }.join(", ") : "<span class=\"muted\">—</span>"
+            Map pa = d.parentApp as Map
+            String paCell = pa ? alink(pa.id as Long, (pa.label ?: pa.name) as String) : "<span class=\"muted\">—</span>"
+            b << "<tr><td>${dlink(d.id as Long, (d.label ?: d.name) as String)}</td>"
+            b << "<td>${esc(d.deviceTypeName as String)}</td>"
+            b << "<td>${src}</td>"
+            b << "<td>${appsCell}</td>"
+            b << "<td>${dashsCell}</td>"
+            b << "<td>${paCell}</td>"
+            b << "<td>${esc(d.lastActivityTime as String)}</td></tr>"
+        }
+    }
+    b << "</table></div></div>"
+
+    // Failed footnote
+    if (failed) {
+        b << "<div class=\"card\" id=\"failed\"><div class=\"card-h crit\">Failed to fetch (${failed.size()})</div><div class=\"card-b muted\">"
+        b << failed.collect { Map f -> "Device ${f.id}: ${esc(f.reason as String)}" }.join("<br>")
+        b << "</div></div>"
+    }
+
+    b << "</body></html>"
+    return b.toString()
+}
+
+// ----- small render helpers -----
+
+private String esc(String s) {
+    if (s == null) return ""
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
+}
+private String dlink(Long id, String name) {
+    return "<a href=\"/device/edit/${id}\" target=\"_blank\">${esc(name ?: ("Device " + id))}</a>"
+}
+private String alink(Long id, String label) {
+    return "<a href=\"/installedapp/configure/${id}\" target=\"_blank\">${esc(label ?: ("App " + id))}</a>"
+}
+private String sumcell(String label, String value, String severity) {
+    String cls = severity ? " ${severity}" : ""
+    return "<div class=\"sumcell\"><div class=\"l\">${esc(label)}</div><div class=\"v${cls}\">${esc(value)}</div></div>"
+}
+private String driverBadge(String dt) {
+    return (dt == 'usr')
+        ? "<span class=\"badge b-community\">Community</span>"
+        : "<span class=\"badge b-builtin\">Built-in</span>"
+}
+private String formatDurationSec(Long ms) {
+    if (ms == null) return ""
+    long sec = (ms as long) / 1000
+    if (sec < 60) return "${sec}s"
+    long m = sec / 60; long s = sec % 60
+    return "${m}m ${s}s"
+}
+
+/**
+ * CAS-bounded dispatch: reserves a slot in the in-flight pool (≤ AUDIT_MAX_INFLIGHT),
+ * pops the next pending device id atomically, and issues an async fullJson fetch.
+ * Returns false if the cap is reached, the queue is empty, or the scan no longer exists.
+ */
+private boolean dispatchOne(String scanId) {
+    ConcurrentHashMap scan = AUDIT_SCANS[scanId]
+    if (scan == null) return false                                  // stale or finalized
+
+    AtomicInteger inFlight = scan.inFlight as AtomicInteger
+    while (true) {                                                  // CAS-reserve a slot
+        int n = inFlight.get()
+        if (n >= AUDIT_MAX_INFLIGHT) return false
+        if (inFlight.compareAndSet(n, n + 1)) break
+    }
+
+    Long deviceId = (scan.pending as ConcurrentLinkedQueue).poll()
+    if (deviceId == null) {                                         // queue drained between cap check and pop
+        inFlight.decrementAndGet()
+        return false
+    }
+
+    Map params = [
+        uri: "${HUB_BASE}${FULL_JSON_PATH_PREFIX}${deviceId}",
+        contentType: "application/json",
+        timeout: 15
+    ]
+    asynchttpGet('fullJsonCb', params, [scanId: scanId, deviceId: deviceId])
+    return true
+}
+
+/**
+ * Async callback for /device/fullJson/{id}. Extracts audit fields, decrements inFlight,
+ * dispatches the next pending id (refilling the pipeline), or finalizes the scan.
+ */
+void fullJsonCb(resp, data) {
+    String scanId = data.scanId as String
+    ConcurrentHashMap scan = AUDIT_SCANS[scanId]
+    if (scan == null) return                                        // callback from prior abandoned scan
+
+    Long deviceId = data.deviceId as Long
+    try {
+        if (resp?.status == 200) {
+            Map fj = (Map) resp.json
+            (scan.devices as ConcurrentHashMap)[deviceId] = extractAuditFields(fj, deviceId)
+        } else {
+            (scan.failed as ConcurrentHashMap)[deviceId] = "HTTP ${resp?.status ?: 'n/a'}"
+        }
+    } catch (Exception e) {
+        (scan.failed as ConcurrentHashMap)[deviceId] = "${getObjectClassName(e)}: ${e.message}"
+    }
+
+    int processed = (scan.processed as AtomicInteger).incrementAndGet()
+    int inFlight  = (scan.inFlight  as AtomicInteger).decrementAndGet()
+    Integer total = scan.total as Integer
+
+    // Update small state snapshot for UI polling — cheap (just scalars)
+    Map snap = (state.audit ?: [:]) as Map
+    if (snap.scanId == scanId) {
+        snap.processed = processed
+        state.audit = snap
+    }
+
+    if (!(scan.pending as ConcurrentLinkedQueue).isEmpty()) {
+        dispatchOne(scanId)                                         // keep pipeline full
+    } else if (inFlight == 0 && processed >= total) {
+        finalizeAudit(scanId)
+    }
+}
+
+/**
+ * Finalize a completed scan: build cross-reference, render HTML, write to FileManager,
+ * append to state.auditReports[] (FIFO trim), update state.audit snapshot, free memory.
+ */
+private void finalizeAudit(String scanId) {
+    ConcurrentHashMap scan = AUDIT_SCANS[scanId]
+    if (scan == null) return
+    long startedAt = scan.startedAt as Long
+    int total      = scan.total as Integer
+    Map devices    = (scan.devices as ConcurrentHashMap) as Map
+    Map failedMap  = (scan.failed  as ConcurrentHashMap) as Map
+    int succeeded  = devices.size()
+    int failed     = failedMap.size()
+
+    boolean errored = (failed / (double) Math.max(total, 1)) > AUDIT_FAIL_RATIO
+
+    // Build cross-reference & attach raw devices for the per-device table
+    Map xref = buildCrossReference(devices, startedAt)
+    xref.allDevices = devices
+
+    // Render HTML
+    String hubName = getHubInfo()?.name ?: "Hubitat"
+    String generatedAt = new Date().format("yyyy-MM-dd HH:mm 'UTC'", TimeZone.getTimeZone("UTC"))
+    List failedList = failedMap.collect { id, reason -> [id: id, reason: reason] }
+    String html = renderAuditHtml(xref, hubName, generatedAt, failedList)
+
+    // Persist to FileManager
+    String filename = "hub_usage_audit_${new Date().format('yyyyMMdd_HHmmss')}.html"
+    writeFile(filename, html)
+
+    // Append to past-audits index (newest first, FIFO trim)
+    Map summary = [
+        filename:           filename,
+        generated:          generatedAt,
+        deviceCount:        total,
+        scanDurationMs:     (now() - startedAt),
+        unreferencedCount:  (xref.unreferenced as List).size(),
+        orphanCount:        (xref.meshOrphans as List).size(),
+        stuckJobCount:      (xref.stuckJobs as List).size(),
+        criticalCount:      xref.criticalCount,
+        failedCount:        failed,
+        errored:            errored
+    ]
+    List reports = (state.auditReports ?: []) as List
+    reports.add(0, summary)
+    while (reports.size() > AUDIT_REPORTS_KEEP) {
+        Map evicted = reports.remove(reports.size() - 1) as Map
+        deleteFile(evicted.filename as String)
+    }
+    state.auditReports = reports
+
+    // Snapshot for UI
+    state.audit = [
+        scanId:    scanId,
+        status:    errored ? 'error' : 'done',
+        processed: (scan.processed as AtomicInteger).get(),
+        total:     total,
+        startedAt: startedAt,
+        filename:  filename
+    ]
+
+    AUDIT_SCANS.remove(scanId)
+    logInfo "[audit ${scanId}] finalized — ${succeeded}/${total} devices, ${failed} failed, ${(now()-startedAt)}ms, file=${filename}"
+}
+
+/**
+ * Watchdog: runIn(AUDIT_WATCHDOG_SEC, 'auditWatchdog') is scheduled at scan start.
+ * If the scan is still in-flight when this fires, mark errored and clean up.
+ */
+void auditWatchdog(data) {
+    String scanId = data?.scanId as String ?: ((state.audit as Map)?.scanId as String)
+    if (!scanId) return
+    ConcurrentHashMap scan = AUDIT_SCANS[scanId]
+    if (scan == null) return                                        // already finalized — nothing to do
+    int processed = (scan.processed as AtomicInteger).get()
+    int total     = scan.total as Integer
+    logWarn "[audit ${scanId}] watchdog fired — ${processed}/${total} done, marking errored"
+    state.audit = [
+        scanId: scanId, status: 'error', processed: processed, total: total,
+        startedAt: scan.startedAt, error: "Watchdog: scan exceeded ${AUDIT_WATCHDOG_SEC}s"
+    ]
+    AUDIT_SCANS.remove(scanId)
+}
+
+/**
+ * POST /api/audit/start — begin a new device usage audit.
+ * Idempotent under concurrent triggers: if a scan is already in-flight, returns its scanId.
+ */
+Map apiAuditStart() {
+    // Force-clear stale scan (>10 min in 'scanning' state) on entry
+    Map prev = (state.audit ?: [:]) as Map
+    if (prev.status == 'scanning' && prev.startedAt && (now() - (prev.startedAt as Long) > AUDIT_STALE_MS)) {
+        logWarn "[audit] clearing stale scan ${prev.scanId} (started ${(now() - (prev.startedAt as Long))/1000}s ago)"
+        AUDIT_SCANS.remove(prev.scanId as String)
+        state.audit = [:]
+    }
+
+    // If a scan is already in-flight, return it
+    if (state.audit?.status == 'scanning' && AUDIT_SCANS[state.audit.scanId]) {
+        return jsonResponse([scanId: state.audit.scanId, total: state.audit.total, alreadyRunning: true])
+    }
+
+    // Build pending queue from /hub2/devicesList
+    Map bulk = (Map) hubRequest(DEVICES_LIST_PATH, "devices list", "json", 30)
+    if (!bulk || bulk.error) {
+        return jsonResponse([error: "Failed to fetch device list", detail: bulk?.message])
+    }
+    List devs = flattenDeviceList((bulk.devices ?: []) as List)
+    List<Long> ids = devs.collect { ((it.data ?: it) as Map).id as Long }.findAll { it != null }
+    if (ids.isEmpty()) {
+        return jsonResponse([error: "No devices to audit"])
+    }
+
+    // New scan — create the in-memory entry
+    String scanId = "audit-${now()}-${(int)(Math.random() * 9999)}"
+    ConcurrentHashMap scan = new ConcurrentHashMap()
+    scan.total      = ids.size()
+    scan.startedAt  = now()
+    scan.inFlight   = new AtomicInteger(0)
+    scan.processed  = new AtomicInteger(0)
+    scan.pending    = new ConcurrentLinkedQueue<Long>(ids)
+    scan.devices    = new ConcurrentHashMap<Long, Map>()
+    scan.failed     = new ConcurrentHashMap<Long, String>()
+    AUDIT_SCANS[scanId] = scan
+
+    state.audit = [
+        scanId: scanId, status: 'scanning', processed: 0, total: ids.size(),
+        startedAt: scan.startedAt
+    ]
+
+    // Schedule the watchdog
+    runIn(AUDIT_WATCHDOG_SEC, 'auditWatchdog', [data: [scanId: scanId]])
+
+    // Initial fan-out — each call self-bounds at 8
+    AUDIT_MAX_INFLIGHT.times { dispatchOne(scanId) }
+
+    logInfo "[audit ${scanId}] started — ${ids.size()} devices to scan"
+    return jsonResponse([scanId: scanId, total: ids.size(), alreadyRunning: false])
+}
+
+/**
+ * Flatten the parent/child structure returned by /hub2/devicesList into a flat list of device entries.
+ */
+private List flattenDeviceList(List items) {
+    List out = []
+    items.each {
+        out << it
+        ((it.children ?: []) as List).each { ch -> out << ch }
+    }
+    return out
+}
+
+/**
+ * GET /api/audit/status?scanId=... — polled by frontend during a scan.
+ * If scanId is omitted, returns the latest known status.
+ */
+Map apiAuditStatus() {
+    String requested = params.scanId as String
+    Map snap = (state.audit ?: [:]) as Map
+    if (requested && snap.scanId != requested) {
+        // Caller asked about a specific scan we don't know about
+        return jsonResponse([scanId: requested, status: 'unknown'])
+    }
+    return jsonResponse([
+        scanId:    snap.scanId,
+        status:    snap.status,
+        processed: snap.processed ?: 0,
+        total:     snap.total ?: 0,
+        startedAt: snap.startedAt,
+        filename:  snap.filename,
+        error:     snap.error
+    ])
+}
+
+/**
+ * GET /api/audit/list — returns past audit summaries, newest first.
+ */
+Map apiAuditList() {
+    return jsonResponse([reports: (state.auditReports ?: []) as List])
+}
+
+/**
+ * POST /api/audit/delete — body: { filename }. Removes file + index entry.
+ */
+Map apiAuditDelete() {
+    String filename = (request?.JSON?.filename ?: params.filename) as String
+    if (!filename) return jsonResponse([error: "filename required"])
+    deleteFile(filename)
+    List reports = (state.auditReports ?: []) as List
+    int before = reports.size()
+    reports = reports.findAll { (it.filename as String) != filename }
+    state.auditReports = reports
+    return jsonResponse([deleted: (before != reports.size()), filename: filename])
 }
 
 void writeFile(String fileName, String data) {

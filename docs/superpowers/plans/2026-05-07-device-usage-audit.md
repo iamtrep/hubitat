@@ -554,7 +554,7 @@ private String renderAuditHtml(Map xref, String hubName, String generatedAt, Lis
     // Per-device rows are built from the same data, but renderAuditHtml is given the xref,
     // so we attach the original devices map onto the xref in finalizeAudit. Defensive: skip if missing.
     if (xref.allDevices instanceof Map) {
-        ((xref.allDevices as Map).values() as List).sort { a, b -> (a.name as String) <=> (b.name as String) }.each { Map d ->
+        ((xref.allDevices as Map).values() as List).sort { x, y -> (x.name as String) <=> (y.name as String) }.each { Map d ->
             String src = (d.driverType == 'usr') ? "<span class=\"badge b-community\">Community</span>" : "<span class=\"badge b-builtin\">Built-in</span>"
             List apps = (d.appsUsing ?: []) as List
             List dashs = (d.dashboards ?: []) as List
