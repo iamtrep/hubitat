@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.10.1"
+@Field static final String APP_VERSION = "5.10.2"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -54,6 +54,7 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final String MDNS_PATH = "/hub/mdnsDevices/json"
 @Field static final String USER_BUNDLES_PATH = "/hub2/userBundles"
 @Field static final String USER_LIBRARIES_PATH = "/hub2/userLibraries"
+@Field static final String USER_APP_TYPES_PATH = "/hub2/userAppTypes"
 @Field static final String NETWORK_TEST_PING_GATEWAY = "/hub/networkTest/ping/gateway"
 @Field static final String NETWORK_TEST_PING_PREFIX = "/hub/networkTest/ping/"
 @Field static final String NETWORK_TEST_SPEEDTEST = "/hub/networkTest/speedtest"
@@ -537,6 +538,8 @@ Map apiApps() {
 Map apiCode() {
     long start = now()
     Map data = [
+        appTypes: fetchUserAppTypes(),
+        driverTypes: fetchUserDriverTypes(),
         bundles: fetchUserBundles(),
         libraries: fetchUserLibraries(),
         hubVariables: fetchHubVariables()
@@ -1967,6 +1970,34 @@ Map fetchFirmwareUpdate() {
     state.fwUpdateCache = result
     state.fwUpdateCacheAt = nowMs
     return result
+}
+
+List fetchUserAppTypes() {
+    Object resp = hubRequest(USER_APP_TYPES_PATH, "user app types", "json", 10)
+    if (!(resp instanceof List)) return []
+    return (resp as List).collect { Map a ->
+        List used = (a.usedBy as List) ?: []
+        [id: a.id, name: a.name, namespace: a.namespace,
+         oauthEnabled: a.oauth == "enabled",
+         lastModified: a.lastModified,
+         usedByCount: used.size(),
+         usedBy: used.collect { Map u -> [id: u.id, name: u.name] }]
+    }
+}
+
+List fetchUserDriverTypes() {
+    Object resp = hubRequest(DEVICE_TYPES_PATH, "user driver types", "json", 10)
+    if (!(resp instanceof List)) return []
+    return (resp as List).collect { Map d ->
+        List used = (d.usedBy as List) ?: []
+        List caps = (d.capabilities as String)?.split(',\\s*')?.findAll { it } ?: []
+        [id: d.id, name: d.name, namespace: d.namespace,
+         lastModified: d.lastModified,
+         capabilityCount: caps.size(),
+         capabilities: caps,
+         usedByCount: used.size(),
+         usedBy: used.collect { Map u -> [id: u.id, name: u.name] }]
+    }
 }
 
 List fetchUserBundles() {

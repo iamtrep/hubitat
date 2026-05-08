@@ -114,7 +114,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.10.1";
+const UI_VERSION = "5.10.2";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -855,14 +855,32 @@ async function rCode(){const P='p-code';loading(P);try{
   const d=await api('code');
   let o='';
   // Summary metrics
+  const aCount=d.appTypes?d.appTypes.length:0;
+  const drCount=d.driverTypes?d.driverTypes.length:0;
   const bCount=d.bundles?d.bundles.length:0;
   const lCount=d.libraries?d.libraries.length:0;
   const hvCount=d.hubVariables?d.hubVariables.count:0;
   o+='<div class="card"><div class="card-h">Code Summary</div><div class="card-b"><div class="metrics">';
+  o+=mc('App Types',aCount);
+  o+=mc('Driver Types',drCount);
   o+=mc('Bundles',bCount);
   o+=mc('Libraries',lCount);
   o+=mc('Hub Variables',hvCount);
-  o+='</div><div class="muted" style="margin-top:8px;font-size:12px">User-installed bundles and libraries can be used by apps, drivers, or both. Hub variables are platform-wide values accessible by any app or driver.</div></div></div>';
+  o+='</div><div class="muted" style="margin-top:8px;font-size:12px">User-installed source code on this hub. App types and driver types are the code; the Apps and Devices tabs show installed instances. Bundles and libraries can be used by apps, drivers, or both.</div></div></div>';
+  // User App Types
+  if(d.appTypes){
+    o+='<div class="card"><div class="card-h">User App Types ('+aCount+')</div><div class="card-b">';
+    if(aCount)o+='<div id="appTypesTbl"></div>';
+    else o+='<div class="muted">No user-installed app types.</div>';
+    o+='</div></div>';
+  }
+  // User Driver Types
+  if(d.driverTypes){
+    o+='<div class="card"><div class="card-h">User Driver Types ('+drCount+')</div><div class="card-b">';
+    if(drCount)o+='<div id="driverTypesTbl"></div>';
+    else o+='<div class="muted">No user-installed driver types.</div>';
+    o+='</div></div>';
+  }
   // User Bundles
   if(d.bundles){
     o+='<div class="card"><div class="card-h">User Bundles ('+bCount+')</div><div class="card-b">';
@@ -888,6 +906,24 @@ async function rCode(){const P='p-code';loading(P);try{
   }
   document.getElementById(P).innerHTML=o;
   // Wire tables
+  if(d.appTypes&&d.appTypes.length){
+    tbl('appTypesTbl',[
+      {l:'App Type',f:'name',r:r=>'<a href="/app/edit/'+r.id+'" target="_blank" style="color:var(--link)">'+h(r.name)+'</a>'},
+      {l:'Namespace',f:'namespace',r:r=>h(r.namespace||'-')},
+      {l:'OAuth',f:'oauthEnabled',r:r=>r.oauthEnabled?'<span class="badge b-ok">Enabled</span>':'<span class="muted" style="font-size:11px">—</span>'},
+      {l:'Instances',f:'usedByCount',t:'n',r:r=>r.usedByCount>0?'<span title="'+h((r.usedBy||[]).map(u=>u.name).join(', '))+'">'+r.usedByCount+'</span>':'<span class="muted">0</span>'},
+      {l:'Last Modified',f:'lastModified',r:r=>h((r.lastModified||'').slice(0,10))}
+    ],d.appTypes,{sc:0,sd:'asc',filter:true,collapse:1,collapseLabel:'App Types'});
+  }
+  if(d.driverTypes&&d.driverTypes.length){
+    tbl('driverTypesTbl',[
+      {l:'Driver Type',f:'name',r:r=>'<a href="/driver/editor/'+r.id+'" target="_blank" style="color:var(--link)">'+h(r.name)+'</a>'},
+      {l:'Namespace',f:'namespace',r:r=>h(r.namespace||'-')},
+      {l:'Capabilities',f:'capabilityCount',t:'n',r:r=>r.capabilityCount>0?'<span title="'+h((r.capabilities||[]).join(', '))+'">'+r.capabilityCount+'</span>':'0'},
+      {l:'Devices',f:'usedByCount',t:'n',r:r=>r.usedByCount>0?'<span title="'+h((r.usedBy||[]).map(u=>u.name).join(', '))+'">'+r.usedByCount+'</span>':'<span class="muted">0</span>'},
+      {l:'Last Modified',f:'lastModified',r:r=>h((r.lastModified||'').slice(0,10))}
+    ],d.driverTypes,{sc:0,sd:'asc',filter:true,collapse:1,collapseLabel:'Driver Types'});
+  }
   if(d.bundles&&d.bundles.length){
     tbl('bundlesTbl',[
       {l:'Bundle',f:'name',r:r=>h(r.name)},
