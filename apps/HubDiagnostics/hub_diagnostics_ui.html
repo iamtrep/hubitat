@@ -112,7 +112,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.9.1";
+const UI_VERSION = "5.10.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -815,6 +815,29 @@ async function rApps(){const P='p-apps';loading(P);try{
   if(d.allApps&&d.allApps.length){
     const vis=d.allApps.filter(a=>!a.hidden&&!a.setting);
     o+='<div class="card"><div class="card-h">Installed Apps ('+vis.length+')</div><div class="card-b"><div id="appsTbl"></div></div></div>'}
+  // User Bundles (v5.10.0)
+  if(d.bundles){
+    o+='<div class="card"><div class="card-h">User Bundles ('+d.bundles.length+')</div><div class="card-b">';
+    if(d.bundles.length){o+='<div id="bundlesTbl"></div>'}
+    else o+='<div class="muted">No user-installed bundles.</div>';
+    o+='</div></div>';
+  }
+  // User Libraries (v5.10.0)
+  if(d.libraries){
+    o+='<div class="card"><div class="card-h">User Libraries ('+d.libraries.length+')</div><div class="card-b">';
+    if(d.libraries.length){o+='<div id="librariesTbl"></div>'}
+    else o+='<div class="muted">No user-installed libraries.</div>';
+    o+='</div></div>';
+  }
+  // Hub Variables (v5.10.0)
+  if(d.hubVariables){const hv=d.hubVariables;
+    o+='<div class="card"><div class="card-h">Hub Variables ('+hv.count+')</div><div class="card-b">';
+    if(!hv.supported)o+='<div class="muted">Hub Variables API not available on this firmware.</div>';
+    else if(hv.error)o+='<div class="alert a-warn">⚠ '+h(hv.error)+'</div>';
+    else if(hv.variables&&hv.variables.length)o+='<div id="hubVarsTbl"></div>';
+    else o+='<div class="muted">No hub variables defined.</div>';
+    o+='</div></div>';
+  }
   document.getElementById(P).innerHTML=o;
   // Installed Apps table
   if(d.allApps&&d.allApps.length){
@@ -846,6 +869,37 @@ async function rApps(){const P='p-apps';loading(P);try{
       {l:'Role',  f:'level', r:r=>roleStr(r)},
       {l:'Status',f:'disabled',r:r=>r.disabled?'<span class="badge b-crit">Disabled</span>':''}
     ],vis,{sc:1,filter:true})}
+  // User Bundles table (v5.10.0)
+  if(d.bundles&&d.bundles.length){
+    tbl('bundlesTbl',[
+      {l:'Bundle',f:'name',r:r=>h(r.name)},
+      {l:'Namespace',f:'namespace',r:r=>h(r.namespace||'-')},
+      {l:'Contents',f:'content',r:r=>'<div style="font-size:12px;color:var(--muted);max-width:600px">'+h(r.content||'')+'</div>'},
+      {l:'Visibility',f:'isPrivate',r:r=>r.isPrivate?'<span class="badge b-warn">Private</span>':'<span class="badge b-ok">Public</span>'}
+    ],d.bundles,{sc:0,sd:'asc',filter:true,collapse:1,collapseLabel:'User Bundles'});
+  }
+  // User Libraries table (v5.10.0)
+  if(d.libraries&&d.libraries.length){
+    tbl('librariesTbl',[
+      {l:'Library',f:'name',r:r=>'<a href="/library/editor/'+r.id+'" target="_blank" style="color:var(--link)">'+h(r.name)+'</a>'},
+      {l:'Namespace',f:'namespace',r:r=>h(r.namespace||'-')},
+      {l:'Author',f:'author',r:r=>h(r.author||'-')},
+      {l:'Version',f:'version',t:'n'},
+      {l:'Description',f:'description',r:r=>'<div style="font-size:12px;color:var(--muted);max-width:400px">'+h(r.description||'')+'</div>'},
+      {l:'Used by Drivers',f:'usedByDeviceCount',t:'n',r:r=>r.usedByDeviceCount>0?'<span title="'+h((r.usedByDeviceTypes||[]).join(', '))+'">'+r.usedByDeviceCount+'</span>':'0'},
+      {l:'Used by Apps',f:'usedByAppCount',t:'n',r:r=>r.usedByAppCount>0?'<span title="'+h((r.usedByAppTypes||[]).join(', '))+'">'+r.usedByAppCount+'</span>':'0'},
+      {l:'Updated',f:'updateTime',r:r=>h((r.updateTime||'').slice(0,10))}
+    ],d.libraries,{sc:0,sd:'asc',filter:true,collapse:1,collapseLabel:'User Libraries'});
+  }
+  // Hub Variables table (v5.10.0)
+  if(d.hubVariables&&d.hubVariables.variables&&d.hubVariables.variables.length){
+    tbl('hubVarsTbl',[
+      {l:'Name',f:'name',r:r=>h(r.name)},
+      {l:'Type',f:'type',r:r=>h(r.type||'-')},
+      {l:'Value',f:'value',r:r=>'<code style="background:var(--alt);padding:2px 6px;border-radius:3px">'+h(String(r.value??''))+'</code>'},
+      {l:'Last Updated',f:'lastUpdated',r:r=>h(r.lastUpdated||'-')}
+    ],d.hubVariables.variables,{sc:0,sd:'asc',filter:true,collapse:1,collapseLabel:'Hub Variables'});
+  }
 }catch(e){err(P,e,rApps)}}
 
 // ===== TAB: NETWORK =====

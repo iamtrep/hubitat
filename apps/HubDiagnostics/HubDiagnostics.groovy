@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.9.1"
+@Field static final String APP_VERSION = "5.10.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -52,6 +52,8 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final String LOAD_THRESHOLD_PATH = "/hub/advanced/getExcessiveLoadThreshold"
 @Field static final String FIRMWARE_UPDATE_PATH = "/hub/cloud/checkForUpdate"
 @Field static final String MDNS_PATH = "/hub/mdnsDevices/json"
+@Field static final String USER_BUNDLES_PATH = "/hub2/userBundles"
+@Field static final String USER_LIBRARIES_PATH = "/hub2/userLibraries"
 @Field static final String NETWORK_TEST_PING_GATEWAY = "/hub/networkTest/ping/gateway"
 @Field static final String NETWORK_TEST_PING_PREFIX = "/hub/networkTest/ping/"
 @Field static final String NETWORK_TEST_SPEEDTEST = "/hub/networkTest/speedtest"
@@ -1414,7 +1416,10 @@ Map getAppsData() {
                   runtimeTotalApps: appStats.runtimeTotalApps],
         byNamespace: appStats.byNamespace,
         userApps: userAppRows, parentChildHierarchy: appStats.parentChildHierarchy,
-        allApps: allApps, hasMenuData: hasMenuData
+        allApps: allApps, hasMenuData: hasMenuData,
+        bundles: fetchUserBundles(),
+        libraries: fetchUserLibraries(),
+        hubVariables: fetchHubVariables()
     ]
 }
 
@@ -1951,6 +1956,45 @@ Map fetchFirmwareUpdate() {
     state.fwUpdateCache = result
     state.fwUpdateCacheAt = nowMs
     return result
+}
+
+List fetchUserBundles() {
+    Object resp = hubRequest(USER_BUNDLES_PATH, "user bundles", "json", 10)
+    if (!(resp instanceof List)) return []
+    return (resp as List).collect { Map b ->
+        [id: b.id, name: b.name, namespace: b.namespace, isPrivate: b.private == true, content: b.content]
+    }
+}
+
+List fetchUserLibraries() {
+    Object resp = hubRequest(USER_LIBRARIES_PATH, "user libraries", "json", 10)
+    if (!(resp instanceof List)) return []
+    return (resp as List).collect { Map l ->
+        List usedByDevices = (l.usedByDeviceTypes as String)?.split(',\\s*')?.findAll { it } ?: []
+        List usedByApps = (l.usedByAppTypes as String)?.split(',\\s*')?.findAll { it } ?: []
+        [id: l.id, name: l.name, namespace: l.namespace, version: l.version,
+         author: l.author, category: l.category, description: l.description,
+         updateTime: l.updateTime, isPrivate: l.private == true,
+         usedByDeviceCount: usedByDevices.size(), usedByAppCount: usedByApps.size(),
+         usedByDeviceTypes: usedByDevices, usedByAppTypes: usedByApps]
+    }
+}
+
+Map fetchHubVariables() {
+    try {
+        Map vars = (Map) getAllGlobalVars()
+        if (!vars) return [count: 0, supported: true, variables: []]
+        List entries = vars.collect { String name, Object meta ->
+            Map m = (meta instanceof Map) ? (Map) meta : [value: meta]
+            [name: name, value: m.value, type: m.type, lastUpdated: m.lastUpdated]
+        }
+        return [count: entries.size(), supported: true, variables: entries.sort { it.name }]
+    } catch (MissingMethodException mme) {
+        return [count: 0, supported: false, variables: []]
+    } catch (Exception e) {
+        logDebug "fetchHubVariables: ${e.message}"
+        return [count: 0, supported: true, variables: [], error: e.message]
+    }
 }
 
 Map fetchMdns() {
