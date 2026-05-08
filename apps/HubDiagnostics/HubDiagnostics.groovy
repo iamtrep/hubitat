@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.11.2"
+@Field static final String APP_VERSION = "5.11.3"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -1512,7 +1512,8 @@ Map getNetworkData(Map shared = [:]) {
         zwaveJs: fetchZwaveJsState(),
         ntpServer: fetchNtpServer(),
         mdns: fetchMdns(),
-        zipgatewayVersion: fetchZipgatewayVersion()
+        zipgatewayVersion: fetchZipgatewayVersion(),
+        security: fetchSecurityInfo()
     ]
 }
 
@@ -1532,8 +1533,7 @@ Map getHealthData(Map shared = [:]) {
         storage: fetchFileManagerStats(),
         backups: fetchBackups(),
         loadThreshold: fetchExcessiveLoadThreshold(),
-        cpuInfo: fetchCpuInfo(),
-        security: fetchSecurityInfo()
+        cpuInfo: fetchCpuInfo()
     ]
 }
 

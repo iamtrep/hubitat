@@ -114,7 +114,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.11.2";
+const UI_VERSION = "5.11.3";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -978,6 +978,17 @@ async function rNetwork(){const P='p-network';loading(P);try{
     o+=ni('Ethernet',n.hasEthernet?'Connected':'Not Connected');o+=ni('WiFi',n.hasWiFi?'Available':'No');
     if(n.hasWiFi&&n.wifiNetwork)o+=ni('WiFi Network',n.wifiNetwork);
     o+=ni('NTP Server',d.ntpServer||'(not configured)');
+    if(d.security){const sec=d.security,la=sec.limitedAccess||{};
+      if(la.enabled){
+        o+=ni('Limited Access','Enabled ('+la.addresses.length+' address'+(la.addresses.length===1?'':'es')+')','var(--ok)');
+        if(la.addresses.length)o+=ni('Allowed IPs',la.addresses.join(', '));
+      } else {
+        o+=ni('Limited Access','Off \u2014 any LAN IP can reach the hub UI','var(--warn)');
+      }
+      if(sec.allowedSubnets&&sec.allowedSubnets.length)o+=ni('Allowed Subnets',sec.allowedSubnets.join(', '));
+      else o+=ni('Allowed Subnets','(none restricted)');
+      if(sec.dnsFallback!=null)o+=ni('DNS Fallback',sec.dnsFallback?'Enabled':'Disabled');
+    }
     o+='</div>';
     if(n.hasEthernet&&n.hasWiFi)o+='<div class="alert a-warn" style="margin-top:8px">\u26A0 Both Ethernet and WiFi are active. This is known to cause connectivity issues. Disable WiFi when using Ethernet.</div>';
     o+='</div></div>'}
@@ -1233,20 +1244,6 @@ async function rHealth(){const P='p-health';loading(P);try{
       o+='</tbody></table></div></details>';
     }
     o+='</div></div>';
-  }
-  // Security (v5.11.1)
-  if(d.security){const sec=d.security,la=sec.limitedAccess||{};
-    o+='<div class="card"><div class="card-h">Security</div><div class="card-b"><div class="ng">';
-    if(la.enabled){
-      o+=ni('Limited Access','Enabled (' + la.addresses.length + ' address' + (la.addresses.length===1?'':'es') + ')','var(--ok)');
-      if(la.addresses.length)o+=ni('Allowed IPs',la.addresses.join(', '));
-    } else {
-      o+=ni('Limited Access','Off — any LAN IP can reach the hub UI','var(--warn)');
-    }
-    if(sec.allowedSubnets&&sec.allowedSubnets.length)o+=ni('Allowed Subnets',sec.allowedSubnets.join(', '));
-    else o+=ni('Allowed Subnets','(none restricted)');
-    if(sec.dnsFallback!=null)o+=ni('DNS Fallback',sec.dnsFallback?'Enabled':'Disabled');
-    o+='</div></div></div>';
   }
   document.getElementById(P).innerHTML=o;
   // Fetch and render chart async
