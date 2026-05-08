@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.9.0"
+@Field static final String APP_VERSION = "5.9.1"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -51,6 +51,7 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final String NTP_SERVER_PATH = "/hub/advanced/ntpServer"
 @Field static final String LOAD_THRESHOLD_PATH = "/hub/advanced/getExcessiveLoadThreshold"
 @Field static final String FIRMWARE_UPDATE_PATH = "/hub/cloud/checkForUpdate"
+@Field static final String MDNS_PATH = "/hub/mdnsDevices/json"
 @Field static final String NETWORK_TEST_PING_GATEWAY = "/hub/networkTest/ping/gateway"
 @Field static final String NETWORK_TEST_PING_PREFIX = "/hub/networkTest/ping/"
 @Field static final String NETWORK_TEST_SPEEDTEST = "/hub/networkTest/speedtest"
@@ -1480,7 +1481,8 @@ Map getNetworkData(Map shared = [:]) {
         ] : null,
         radioHealth: fetchRadioHealth(),
         zwaveJs: fetchZwaveJsState(),
-        ntpServer: fetchNtpServer()
+        ntpServer: fetchNtpServer(),
+        mdns: fetchMdns()
     ]
 }
 
@@ -1949,6 +1951,29 @@ Map fetchFirmwareUpdate() {
     state.fwUpdateCache = result
     state.fwUpdateCacheAt = nowMs
     return result
+}
+
+Map fetchMdns() {
+    Map resp = (Map) hubRequest(MDNS_PATH, "mDNS devices", "json", 15)
+    if (!resp || resp.error) return null
+    List endpoints = []
+    ((resp.serviceTypes as List) ?: []).each { Map st ->
+        String svc = (st.serviceType as String) ?: ""
+        ((st.endpoints as List) ?: []).each { Map ep ->
+            endpoints << [
+                serviceType: svc,
+                name: ep.name, server: ep.server,
+                ip: ep.ip4Address, port: ep.port, mac: ep.macAddress,
+                model: ep.model, manufacturer: ep.manufacturer,
+                lastUpdated: ep.lastUpdated
+            ]
+        }
+    }
+    return [
+        totalServiceTypes: resp.totalServiceTypes,
+        totalEndpoints: resp.totalEndpoints,
+        endpoints: endpoints
+    ]
 }
 
 String runNetworkTest(String type, String ip = null) {

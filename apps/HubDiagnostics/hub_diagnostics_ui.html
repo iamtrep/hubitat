@@ -112,7 +112,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.9.0";
+const UI_VERSION = "5.9.1";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -968,6 +968,13 @@ async function rNetwork(){const P='p-network';loading(P);try{
       hm.peers.forEach(p=>{const st=p.offline?'Offline':'Online';const sc=p.offline?'var(--crit)':'var(--ok)';
         o+='<div style="margin:4px 0"><b>'+h(p.name)+'</b> ('+h(p.ip)+') &mdash; <span style="color:'+sc+'">'+st+'</span> | '+p.deviceCount+' devices, '+p.varCount+' variables</div>'});o+='</div>'}
     o+='</div></div>'}
+  // mDNS Discovery (v5.9.1)
+  if(d.mdns&&d.mdns.endpoints){const md=d.mdns;
+    o+='<div class="card"><div class="card-h">mDNS Discovery ('+md.totalEndpoints+' endpoints, '+md.totalServiceTypes+' service types)</div><div class="card-b">';
+    if(md.endpoints.length){o+='<div id="mdnsTbl"></div>'}
+    else o+='<div class="muted">No mDNS endpoints discovered.</div>';
+    o+='</div></div>';
+  }
   // Network Tests (v5.9.0)
   o+='<div class="card"><div class="card-h">Network Tests</div><div class="card-b">';
   o+='<div class="muted" style="margin-bottom:8px;font-size:12px">Run live network diagnostics from the hub. Speedtest takes ~30s and briefly loads the hub.</div>';
@@ -997,6 +1004,19 @@ async function rNetwork(){const P='p-network';loading(P);try{
     runNt('ping-ip',ip)};
   const bSt=document.getElementById('btnNetSpeed');
   if(bSt)bSt.onclick=()=>{if(!confirm('Run speedtest? Takes ~30s and briefly loads the hub.'))return;runNt('speedtest')};
+  // mDNS table (v5.9.1)
+  if(d.mdns&&d.mdns.endpoints&&d.mdns.endpoints.length){
+    tbl('mdnsTbl',[
+      {l:'Service',f:'serviceType',r:r=>h((r.serviceType||'').replace(/\.local\.$/,'').replace(/^_/,''))},
+      {l:'Name',f:'name',r:r=>h(r.name||'-')},
+      {l:'IP',f:'ip',r:r=>r.ip?'<a href="http://'+h(r.ip)+'" target="_blank" style="color:var(--link)">'+h(r.ip)+'</a>':'-'},
+      {l:'Port',f:'port',t:'n',r:r=>r.port!=null?r.port:'-'},
+      {l:'MAC',f:'mac',r:r=>h(r.mac||'-')},
+      {l:'Server',f:'server',r:r=>h((r.server||'').replace(/\.local\.$/,'')||'-')},
+      {l:'Model',f:'model',r:r=>h(r.model||r.manufacturer||'-')},
+      {l:'Last Updated',f:'lastUpdated',r:r=>h(r.lastUpdated||'-')}
+    ],d.mdns.endpoints,{sc:0,sd:'asc',filter:true,collapse:1,collapseLabel:'mDNS Endpoints'});
+  }
   // Calculate message rates if uptime is available
   if(d.uptimeSeconds>0){
     const min=d.uptimeSeconds/60;
