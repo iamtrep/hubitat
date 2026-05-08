@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.11.1"
+@Field static final String APP_VERSION = "5.11.2"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -590,7 +590,9 @@ Map apiLive() {
         freeJavaMemory  : res.freeJavaMemory,
         directJavaMemory: res.directJavaMemory,
         temperature     : fetchTemperature(),
-        databaseSize    : fetchDatabaseSize()
+        databaseSize    : fetchDatabaseSize(),
+        cpuInfo         : fetchCpuInfo(),
+        loadThreshold   : fetchExcessiveLoadThreshold()
     ])
 }
 
@@ -1887,12 +1889,14 @@ Map fetchBackups() {
             count: localList.size(),
             latestName: latestLocal?.name,
             latestCreateTime: latestLocal?.createTime,
+            latestCreateTimeOrig: latestLocal?.createTimeOrig,
             latestPlatformVersion: latestLocal?.platformVersion
         ],
         cloud: [
             thisHubCount: cloudThisHub.size(),
             otherHubCount: cloudList.size() - cloudThisHub.size(),
             latestThisHubCreateTime: latestCloud?.createTime,
+            latestThisHubCreateTimeOrig: latestCloud?.createTimeOrig,
             latestThisHubVersion: latestCloud?.platformVersion,
             otherHubs: cloudList.findAll { Map b -> b.thisHub != true }.collect { Map b ->
                 [hubName: b.hubName, hubVersion: b.hubVersion, platformVersion: b.platformVersion,
