@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.10.0"
+@Field static final String APP_VERSION = "5.10.1"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -248,6 +248,7 @@ mappings {
     path('/api/dashboard')        { action: [GET: 'apiDashboard'] }
     path('/api/devices')          { action: [GET: 'apiDevices'] }
     path('/api/apps')             { action: [GET: 'apiApps'] }
+    path('/api/code')             { action: [GET: 'apiCode'] }
     path('/api/network')          { action: [GET: 'apiNetwork'] }
     path('/api/health')           { action: [GET: 'apiHealth'] }
     path('/api/health/history')   { action: [GET: 'apiHealthHistory'] }
@@ -530,6 +531,19 @@ Map apiApps() {
     long elapsed = now() - start
     logDebug "apiApps completed in ${elapsed}ms"
     recordApiTiming("apps", elapsed)
+    return jsonResponse(data)
+}
+
+Map apiCode() {
+    long start = now()
+    Map data = [
+        bundles: fetchUserBundles(),
+        libraries: fetchUserLibraries(),
+        hubVariables: fetchHubVariables()
+    ]
+    long elapsed = now() - start
+    logDebug "apiCode completed in ${elapsed}ms"
+    recordApiTiming("code", elapsed)
     return jsonResponse(data)
 }
 
@@ -1416,10 +1430,7 @@ Map getAppsData() {
                   runtimeTotalApps: appStats.runtimeTotalApps],
         byNamespace: appStats.byNamespace,
         userApps: userAppRows, parentChildHierarchy: appStats.parentChildHierarchy,
-        allApps: allApps, hasMenuData: hasMenuData,
-        bundles: fetchUserBundles(),
-        libraries: fetchUserLibraries(),
-        hubVariables: fetchHubVariables()
+        allApps: allApps, hasMenuData: hasMenuData
     ]
 }
 

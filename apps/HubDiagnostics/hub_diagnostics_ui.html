@@ -94,6 +94,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
   <div class="tab active" data-tab="dashboard">Dashboard</div>
   <div class="tab" data-tab="devices">Devices</div>
   <div class="tab" data-tab="apps">Apps</div>
+  <div class="tab" data-tab="code">Code</div>
   <div class="tab" data-tab="network">Network</div>
   <div class="tab" data-tab="health">Health</div>
   <div class="tab" data-tab="performance">Performance</div>
@@ -104,6 +105,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
   <div class="panel active" id="p-dashboard"></div>
   <div class="panel" id="p-devices"></div>
   <div class="panel" id="p-apps"></div>
+  <div class="panel" id="p-code"></div>
   <div class="panel" id="p-network"></div>
   <div class="panel" id="p-health"></div>
   <div class="panel" id="p-performance"></div>
@@ -112,7 +114,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.10.0";
+const UI_VERSION = "5.10.1";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -815,29 +817,6 @@ async function rApps(){const P='p-apps';loading(P);try{
   if(d.allApps&&d.allApps.length){
     const vis=d.allApps.filter(a=>!a.hidden&&!a.setting);
     o+='<div class="card"><div class="card-h">Installed Apps ('+vis.length+')</div><div class="card-b"><div id="appsTbl"></div></div></div>'}
-  // User Bundles (v5.10.0)
-  if(d.bundles){
-    o+='<div class="card"><div class="card-h">User Bundles ('+d.bundles.length+')</div><div class="card-b">';
-    if(d.bundles.length){o+='<div id="bundlesTbl"></div>'}
-    else o+='<div class="muted">No user-installed bundles.</div>';
-    o+='</div></div>';
-  }
-  // User Libraries (v5.10.0)
-  if(d.libraries){
-    o+='<div class="card"><div class="card-h">User Libraries ('+d.libraries.length+')</div><div class="card-b">';
-    if(d.libraries.length){o+='<div id="librariesTbl"></div>'}
-    else o+='<div class="muted">No user-installed libraries.</div>';
-    o+='</div></div>';
-  }
-  // Hub Variables (v5.10.0)
-  if(d.hubVariables){const hv=d.hubVariables;
-    o+='<div class="card"><div class="card-h">Hub Variables ('+hv.count+')</div><div class="card-b">';
-    if(!hv.supported)o+='<div class="muted">Hub Variables API not available on this firmware.</div>';
-    else if(hv.error)o+='<div class="alert a-warn">⚠ '+h(hv.error)+'</div>';
-    else if(hv.variables&&hv.variables.length)o+='<div id="hubVarsTbl"></div>';
-    else o+='<div class="muted">No hub variables defined.</div>';
-    o+='</div></div>';
-  }
   document.getElementById(P).innerHTML=o;
   // Installed Apps table
   if(d.allApps&&d.allApps.length){
@@ -869,7 +848,46 @@ async function rApps(){const P='p-apps';loading(P);try{
       {l:'Role',  f:'level', r:r=>roleStr(r)},
       {l:'Status',f:'disabled',r:r=>r.disabled?'<span class="badge b-crit">Disabled</span>':''}
     ],vis,{sc:1,filter:true})}
-  // User Bundles table (v5.10.0)
+}catch(e){err(P,e,rApps)}}
+
+// ===== TAB: CODE (v5.10.1) =====
+async function rCode(){const P='p-code';loading(P);try{
+  const d=await api('code');
+  let o='';
+  // Summary metrics
+  const bCount=d.bundles?d.bundles.length:0;
+  const lCount=d.libraries?d.libraries.length:0;
+  const hvCount=d.hubVariables?d.hubVariables.count:0;
+  o+='<div class="card"><div class="card-h">Code Summary</div><div class="card-b"><div class="metrics">';
+  o+=mc('Bundles',bCount);
+  o+=mc('Libraries',lCount);
+  o+=mc('Hub Variables',hvCount);
+  o+='</div><div class="muted" style="margin-top:8px;font-size:12px">User-installed bundles and libraries can be used by apps, drivers, or both. Hub variables are platform-wide values accessible by any app or driver.</div></div></div>';
+  // User Bundles
+  if(d.bundles){
+    o+='<div class="card"><div class="card-h">User Bundles ('+bCount+')</div><div class="card-b">';
+    if(bCount)o+='<div id="bundlesTbl"></div>';
+    else o+='<div class="muted">No user-installed bundles.</div>';
+    o+='</div></div>';
+  }
+  // User Libraries
+  if(d.libraries){
+    o+='<div class="card"><div class="card-h">User Libraries ('+lCount+')</div><div class="card-b">';
+    if(lCount)o+='<div id="librariesTbl"></div>';
+    else o+='<div class="muted">No user-installed libraries.</div>';
+    o+='</div></div>';
+  }
+  // Hub Variables
+  if(d.hubVariables){const hv=d.hubVariables;
+    o+='<div class="card"><div class="card-h">Hub Variables ('+hv.count+')</div><div class="card-b">';
+    if(!hv.supported)o+='<div class="muted">Hub Variables API not available on this firmware.</div>';
+    else if(hv.error)o+='<div class="alert a-warn">⚠ '+h(hv.error)+'</div>';
+    else if(hv.variables&&hv.variables.length)o+='<div id="hubVarsTbl"></div>';
+    else o+='<div class="muted">No hub variables defined.</div>';
+    o+='</div></div>';
+  }
+  document.getElementById(P).innerHTML=o;
+  // Wire tables
   if(d.bundles&&d.bundles.length){
     tbl('bundlesTbl',[
       {l:'Bundle',f:'name',r:r=>h(r.name)},
@@ -878,7 +896,6 @@ async function rApps(){const P='p-apps';loading(P);try{
       {l:'Visibility',f:'isPrivate',r:r=>r.isPrivate?'<span class="badge b-warn">Private</span>':'<span class="badge b-ok">Public</span>'}
     ],d.bundles,{sc:0,sd:'asc',filter:true,collapse:1,collapseLabel:'User Bundles'});
   }
-  // User Libraries table (v5.10.0)
   if(d.libraries&&d.libraries.length){
     tbl('librariesTbl',[
       {l:'Library',f:'name',r:r=>'<a href="/library/editor/'+r.id+'" target="_blank" style="color:var(--link)">'+h(r.name)+'</a>'},
@@ -891,7 +908,6 @@ async function rApps(){const P='p-apps';loading(P);try{
       {l:'Updated',f:'updateTime',r:r=>h((r.updateTime||'').slice(0,10))}
     ],d.libraries,{sc:0,sd:'asc',filter:true,collapse:1,collapseLabel:'User Libraries'});
   }
-  // Hub Variables table (v5.10.0)
   if(d.hubVariables&&d.hubVariables.variables&&d.hubVariables.variables.length){
     tbl('hubVarsTbl',[
       {l:'Name',f:'name',r:r=>h(r.name)},
@@ -900,7 +916,7 @@ async function rApps(){const P='p-apps';loading(P);try{
       {l:'Last Updated',f:'lastUpdated',r:r=>h(r.lastUpdated||'-')}
     ],d.hubVariables.variables,{sc:0,sd:'asc',filter:true,collapse:1,collapseLabel:'Hub Variables'});
   }
-}catch(e){err(P,e,rApps)}}
+}catch(e){err(P,e,rCode)}}
 
 // ===== TAB: NETWORK =====
 async function rNetwork(){const P='p-network';loading(P);try{
@@ -1727,7 +1743,7 @@ async function rConfig(){const P='p-config';loading(P);try{
 }catch(e){err(P,e,rConfig)}}
 
 // ===== TAB MANAGEMENT =====
-const R={dashboard:rDashboard,devices:rDevices,apps:rApps,network:rNetwork,health:rHealth,performance:rPerf,config:rConfig,snapshots:rSnap};
+const R={dashboard:rDashboard,devices:rDevices,apps:rApps,code:rCode,network:rNetwork,health:rHealth,performance:rPerf,config:rConfig,snapshots:rSnap};
 function go(t){
   curTab=t;
   localStorage.setItem('hub_diag_tab', t);
