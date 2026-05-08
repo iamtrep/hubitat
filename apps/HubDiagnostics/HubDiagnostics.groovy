@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.10.2"
+@Field static final String APP_VERSION = "5.11.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -55,6 +55,9 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final String USER_BUNDLES_PATH = "/hub2/userBundles"
 @Field static final String USER_LIBRARIES_PATH = "/hub2/userLibraries"
 @Field static final String USER_APP_TYPES_PATH = "/hub2/userAppTypes"
+@Field static final String ROOMS_LIST_PATH = "/hub2/roomsList"
+@Field static final String ZWAVE_JS_NODE_STATE_PREFIX = "/hub/zwave2/getNodeState?node="
+@Field static final String HUB_MESH_LINKED_DEVICE_PREFIX = "/hubMesh/localLinkedDevice/"
 @Field static final String NETWORK_TEST_PING_GATEWAY = "/hub/networkTest/ping/gateway"
 @Field static final String NETWORK_TEST_PING_PREFIX = "/hub/networkTest/ping/"
 @Field static final String NETWORK_TEST_SPEEDTEST = "/hub/networkTest/speedtest"
@@ -1972,6 +1975,58 @@ Map fetchFirmwareUpdate() {
     return result
 }
 
+/**
+ * Walks /hub2/roomsList tree and returns flat list:
+ *   [{id, name, deviceCount, deviceIds[]}]
+ * Devices not assigned to any room are gathered under a synthetic "(Unassigned)" room with id=null.
+ */
+List fetchRoomsForAudit() {
+    Map resp = (Map) hubRequest(ROOMS_LIST_PATH, "rooms list", "json", 10)
+    if (!resp || resp.error) return []
+    List nodes = (resp.roomNodes as List) ?: []
+    List rooms = []
+    nodes.each { Map rn ->
+        Map data = (rn.data as Map) ?: [:]
+        if (!data.id) return
+        List children = (rn.children as List) ?: []
+        List devIds = children.collect { Map c -> (c.data as Map)?.id as Long }.findAll { it }
+        rooms << [id: data.id, name: data.name, deviceCount: devIds.size(), deviceIds: devIds]
+    }
+    rooms.sort { (it.name as String)?.toLowerCase() }
+    return rooms
+}
+
+/** Per-node Z-Wave JS state. Returns null when stack is not JS or fetch fails. */
+Map fetchZwaveNodeState(Integer nodeId) {
+    if (nodeId == null) return null
+    if (detectZwaveStack() != "js") return null
+    Map resp = (Map) hubRequest(ZWAVE_JS_NODE_STATE_PREFIX + nodeId, "zwave node ${nodeId}", "json", 5)
+    if (!resp || resp.error) return null
+    Map stats = (resp.statistics as Map) ?: [:]
+    return [
+        nodeState: resp.nodeState, status: resp.status,
+        interviewStage: resp.interviewStage, ready: resp.ready == true,
+        rssi: resp.rssi, rtt: resp.rtt, per: resp.per,
+        route: resp.route, lastSeenLocal: resp.lastSeenLocal,
+        keepAwake: resp.keepAwake == true, securityClass: resp.securityClass,
+        isFrequentListening: resp.isFrequentListening == true,
+        isControllerNode: resp.isControllerNode == true,
+        statistics: [
+            commandsTX: stats.commandsTX, commandsRX: stats.commandsRX,
+            commandsDroppedTX: stats.commandsDroppedTX, commandsDroppedRX: stats.commandsDroppedRX,
+            timeoutResponse: stats.timeoutResponse
+        ]
+    ]
+}
+
+/** Per-Hub-Mesh-linked-device state. Returns null when device is not Hub-Mesh-linked or fetch fails. */
+Map fetchHubMeshDeviceState(Long deviceId) {
+    if (deviceId == null) return null
+    Map resp = (Map) hubRequest(HUB_MESH_LINKED_DEVICE_PREFIX + deviceId, "hubmesh dev ${deviceId}", "json", 5)
+    if (!resp || resp.error) return null
+    return resp
+}
+
 List fetchUserAppTypes() {
     Object resp = hubRequest(USER_APP_TYPES_PATH, "user app types", "json", 10)
     if (!(resp instanceof List)) return []
@@ -3785,6 +3840,11 @@ private String renderAuditHtml(Map xref, String hubName, String generatedAt, Lis
     b << "<div><a href=\"#stuck\">Stuck scheduled jobs (${(xref.stuckJobs as List).size()})</a></div>"
     b << "<div><a href=\"#tuned\">Manually-tuned devices (${(xref.tunedDevices as List).size()})</a></div>"
     b << "<div><a href=\"#critical\">Critical devices (top 20)</a></div>"
+    b << "<div><a href=\"#rooms\">Devices by room (${(xref.rooms as List).size()})</a></div>"
+    int zwNodeCount = (xref.allDevices as Map).values().count { (it as Map).zwaveNode != null }
+    if (zwNodeCount > 0) b << "<div><a href=\"#zwjs\">Z-Wave JS mesh health (${zwNodeCount})</a></div>"
+    int hmCount = (xref.allDevices as Map).values().count { (it as Map).hubMeshState != null }
+    if (hmCount > 0) b << "<div><a href=\"#hubmesh\">Hub Mesh linked devices (${hmCount})</a></div>"
     b << "<div><a href=\"#apps\">Apps → devices (${(xref.appsToDevices as List).size()})</a></div>"
     b << "<div><a href=\"#dashboards\">Dashboards → devices (${(xref.dashboardsToDevices as List).size()})</a></div>"
     b << "<div><a href=\"#all\">Per-device detail table</a></div>"
@@ -3882,6 +3942,80 @@ private String renderAuditHtml(Map xref, String hubName, String generatedAt, Lis
         b << "</tbody></table></div>"
     }
     b << closeCard()
+
+    // Devices by Room (v5.11.0)
+    List rooms = (xref.rooms as List) ?: []
+    b << openCard("rooms", "🏠 Devices by room (${rooms.size()})", true)
+    if (rooms.isEmpty()) {
+        b << "<div class=\"muted\">No room data available.</div>"
+    } else {
+        Map allDevs = (xref.allDevices as Map) ?: [:]
+        b << "<div class=\"muted\" style=\"margin-bottom:6px\">Devices grouped by their assigned room. Empty rooms surface storage clutter; high-density rooms may warrant a split.</div>"
+        b << "<div class=\"tbl-wrap\"><table data-sortable id=\"t_rooms\"><thead><tr><th>Room</th><th data-t=\"n\" data-sd=\"desc\">Devices</th><th>Members</th></tr></thead><tbody>"
+        rooms.each { Map r ->
+            List dids = (r.deviceIds as List) ?: []
+            String members = dids.collect { Long did ->
+                Map dev = allDevs[did] as Map
+                String label = dev ? (dev.label ?: dev.name ?: "Device ${did}") as String : "Device ${did}"
+                dlink(did, label)
+            }.join(" · ")
+            b << "<tr><td><b>${esc(r.name as String)}</b></td>"
+            b << "<td data-sv=\"${dids.size()}\">${dids.size()}</td>"
+            b << "<td>${members ?: '<span class=\"muted\">empty</span>'}</td></tr>"
+        }
+        b << "</tbody></table></div>"
+    }
+    b << closeCard()
+
+    // Z-Wave JS Mesh Health (v5.11.0)
+    List zwNodeRows = ((xref.allDevices as Map).values().findAll { (it as Map).zwaveNode != null }) as List
+    if (zwNodeRows) {
+        b << openCard("zwjs", "📶 Z-Wave JS mesh health (${zwNodeRows.size()})", true)
+        b << "<div class=\"muted\" style=\"margin-bottom:6px\">Per-node controller statistics from Z-Wave JS. RSSI lower (more negative) is quieter; RTT lower is faster; PER (packet error rate) higher is worse.</div>"
+        b << "<div class=\"tbl-wrap\"><table data-sortable id=\"t_zwjs\"><thead><tr><th>Device</th><th data-t=\"n\">Node</th><th>State</th><th>Status</th><th>Interview</th><th data-t=\"n\">RTT</th><th>RSSI</th><th data-t=\"n\" data-sd=\"desc\">PER %</th><th data-t=\"n\">TX</th><th data-t=\"n\">RX</th><th>Last Seen</th></tr></thead><tbody>"
+        zwNodeRows.sort { x, y -> ((y as Map).zwaveNode?.per ?: 0) <=> ((x as Map).zwaveNode?.per ?: 0) }
+        zwNodeRows.each { Object _row ->
+            Map d = _row as Map
+            Map z = d.zwaveNode as Map
+            Map stats = (z.statistics as Map) ?: [:]
+            String stateColor = (z.nodeState == "OK") ? "var(--ok)" : "var(--crit)"
+            b << "<tr><td>${dlink(d.id as Long, (d.label ?: d.name) as String)}</td>"
+            b << "<td>${z.nodeId ?: ''}</td>"
+            b << "<td><span style=\"color:${stateColor}\">${esc(z.nodeState as String)}</span></td>"
+            b << "<td>${z.status ?: ''}</td>"
+            b << "<td>${esc(z.interviewStage as String)}</td>"
+            b << "<td>${z.rtt ?: '<span class=\"muted\">—</span>'}</td>"
+            b << "<td>${z.rssi ?: '<span class=\"muted\">—</span>'}</td>"
+            b << "<td data-sv=\"${z.per ?: 0}\">${z.per ?: 0}</td>"
+            b << "<td>${stats.commandsTX ?: 0}</td>"
+            b << "<td>${stats.commandsRX ?: 0}</td>"
+            b << "<td>${esc((z.lastSeenLocal ?: '') as String)}</td></tr>"
+        }
+        b << "</tbody></table></div>"
+        b << closeCard()
+    }
+
+    // Hub Mesh Linked Devices (v5.11.0)
+    List hmRows = ((xref.allDevices as Map).values().findAll { (it as Map).hubMeshState != null }) as List
+    if (hmRows) {
+        b << openCard("hubmesh", "🔗 Hub Mesh linked devices (${hmRows.size()})", true)
+        b << "<div class=\"muted\" style=\"margin-bottom:6px\">Devices physically owned by another hub on this account, exposed locally via Hub Mesh.</div>"
+        b << "<div class=\"tbl-wrap\"><table data-sortable id=\"t_hubmesh\"><thead><tr><th>Device</th><th>Source Hub</th><th>Source Device ID</th><th>Status</th><th>Raw</th></tr></thead><tbody>"
+        hmRows.each { Object _row ->
+            Map d = _row as Map
+            Map hm = d.hubMeshState as Map
+            String srcHub = hm.sourceHubName ?: hm.hostHubName ?: hm.hubName ?: "—"
+            String srcDevId = (hm.sourceDeviceId ?: hm.hostDeviceId ?: hm.remoteDeviceId ?: "") as String
+            String status = (hm.status ?: hm.linkStatus ?: hm.online ?: "") as String
+            b << "<tr><td>${dlink(d.id as Long, (d.label ?: d.name) as String)}</td>"
+            b << "<td>${esc(srcHub)}</td>"
+            b << "<td>${esc(srcDevId)}</td>"
+            b << "<td>${esc(status)}</td>"
+            b << "<td><code style=\"font-size:11px\">${esc(hm.toString())}</code></td></tr>"
+        }
+        b << "</tbody></table></div>"
+        b << closeCard()
+    }
 
     // Apps → devices
     b << openCard("apps", "📱 Apps → devices (${(xref.appsToDevices as List).size()})", true)
@@ -4146,6 +4280,45 @@ private void finalizeAudit(String scanId) {
     // Build cross-reference & attach raw devices for the per-device table
     Map xref = buildCrossReference(devices, startedAt)
     xref.allDevices = devices
+
+    // Phase 4 enrichment: rooms, Z-Wave JS per-node, Hub Mesh per-device
+    long enrichStart = now()
+    xref.rooms = fetchRoomsForAudit()
+
+    // Z-Wave JS per-node enrichment (only when Z-Wave JS stack is active)
+    if (detectZwaveStack() == "js") {
+        Map zwData = (Map) hubRequest(ZWAVE_DETAILS_PATH, "Z-Wave details (audit enrichment)", "json", 10)
+        Map zwNodeByDevId = [:]
+        if (zwData && !zwData.error) {
+            ((zwData.zwDevices as Map) ?: [:]).each { Object _key, Object val ->
+                if (val instanceof Map) {
+                    Long devId = (val as Map).deviceId as Long
+                    Integer nodeId = (val as Map).nodeId as Integer
+                    if (devId && nodeId) zwNodeByDevId[devId] = nodeId
+                }
+            }
+        }
+        zwNodeByDevId.each { Object _devIdObj, Object _nodeIdObj ->
+            Long devId = _devIdObj as Long
+            Integer nodeId = _nodeIdObj as Integer
+            Map record = devices[devId] as Map
+            if (record == null) return
+            Map nodeState = fetchZwaveNodeState(nodeId)
+            if (nodeState) record.zwaveNode = nodeState + [nodeId: nodeId]
+        }
+    }
+
+    // Hub Mesh per-device enrichment
+    Map hubMeshData = (Map) hubRequest(HUB_MESH_PATH, "Hub Mesh (audit enrichment)", "json", 10)
+    List linkedDevices = (hubMeshData?.linkedDevices as List) ?: []
+    linkedDevices.each { Map ld ->
+        Long devId = ld.id as Long
+        Map record = (devId != null) ? (devices[devId] as Map) : null
+        if (record == null) return
+        Map ldState = fetchHubMeshDeviceState(devId)
+        if (ldState) record.hubMeshState = ldState
+    }
+    logDebug "Audit Phase 4 enrichment finished in ${now() - enrichStart}ms"
 
     // Render HTML
     String hubName = getHubInfo()?.name ?: "Hubitat"
