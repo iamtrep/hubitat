@@ -114,7 +114,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.12.0";
+const UI_VERSION = "5.12.1";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -318,9 +318,6 @@ function renderZigbeeWifiChart(zbCh,containerId,scan){
   svg+=`<rect x="${PAD}" y="${H-PB+30}" width="8" height="8" rx="1" fill="#2196f3"/><text x="${PAD+12}" y="${H-PB+38}" fill="#aaa" font-size="9">Current (${zbCh})</text>`;
   svg+=`<rect x="${PAD+90}" y="${H-PB+30}" width="8" height="8" rx="1" fill="rgba(60,180,80,0.7)"/><text x="${PAD+102}" y="${H-PB+38}" fill="#aaa" font-size="9">Recommended</text>`;
   svg+=`<rect x="${PAD+195}" y="${H-PB+30}" width="8" height="8" rx="1" fill="rgba(220,60,60,0.25)" stroke="rgba(220,60,60,0.6)" stroke-width="0.7"/><text x="${PAD+207}" y="${H-PB+38}" fill="#aaa" font-size="9">WiFi overlap</text>`;
-  if(scan&&scan.results&&Object.keys(scanByChannel).length){
-    svg+=`<rect x="${PAD+285}" y="${H-PB+30}" width="4" height="8" fill="#dc3c3c"/><rect x="${PAD+291}" y="${H-PB+30}" width="4" height="8" fill="#ff9800"/><rect x="${PAD+297}" y="${H-PB+30}" width="4" height="8" fill="#fbc02d"/><text x="${PAD+305}" y="${H-PB+38}" fill="#aaa" font-size="9">Detected PAN (RSSI strong→weak)</text>`;
-  }
   svg+='</svg>';
   // Summary text
   const avoid=overlapping.size?[...overlapping].sort((a,b)=>a-b).join(', '):'none';
@@ -329,6 +326,22 @@ function renderZigbeeWifiChart(zbCh,containerId,scan){
   if(overlapping.size)svg+=`<span style="color:var(--warn)">\u26A0 Zigbee ch ${zbCh} overlaps WiFi ch ${avoid}</span> &mdash; avoid these WiFi channels (20 MHz)`;
   else svg+=`<span style="color:var(--ok)">\u2714 Zigbee ch ${zbCh} has no overlap with standard WiFi channels</span>`;
   if(safe.length)svg+=`<br><span style="color:var(--ok)">Safe WiFi channels: ${safe.join(', ')}</span>`;
+  if(scan&&scan.results&&Object.keys(scanByChannel).length){
+    const noisy=[],medium=[],weak=[];
+    Object.entries(scanByChannel).forEach(([ch,pans])=>{
+      const top=pans.reduce((a,b)=>a.lastHopRssi>b.lastHopRssi?a:b);
+      const ent='ch '+ch+' ('+pans.length+(pans.length>1?' PANs':' PAN')+', strongest '+top.lastHopRssi+' dBm)';
+      if(top.lastHopRssi>-50)noisy.push(ent);
+      else if(top.lastHopRssi>-70)medium.push(ent);
+      else weak.push(ent);
+    });
+    if(noisy.length)svg+=`<br><span style="color:var(--crit)">⚠ Strong neighbor activity: ${noisy.join(', ')}</span>`;
+    if(medium.length)svg+=`<br><span style="color:var(--warn)">Medium neighbor activity: ${medium.join(', ')}</span>`;
+    if(weak.length)svg+=`<br><span style="color:var(--muted)">Weak detections: ${weak.join(', ')}</span>`;
+    const allChs=[];for(let i=11;i<=26;i++)allChs.push(i);
+    const quiet=allChs.filter(c=>!scanByChannel[c]);
+    if(quiet.length)svg+=`<br><span style="color:var(--ok)">Quiet Zigbee channels: ${quiet.join(', ')}</span>`;
+  }
   svg+=`</div>`;
   document.getElementById(containerId).innerHTML=svg;
 }
