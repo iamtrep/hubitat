@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.8.9"
+@Field static final String APP_VERSION = "5.8.11"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -3298,7 +3298,8 @@ private Map buildCrossReference(Map devices, long scanStartedMs) {
                 Long when = parseHubitatTimestamp(nrt)
                 if (when != null && when < fetchedAt) {
                     stuckJobs << [id: did, name: (d.label ?: d.name),
-                                  handler: s.handler, overdueMs: (fetchedAt - when), status: s.status]
+                                  handler: s.handler, overdueMs: (fetchedAt - when),
+                                  status: s.status, prevRunTime: s.prevRunTime]
                 }
             }
         }
@@ -3308,7 +3309,7 @@ private Map buildCrossReference(Map devices, long scanStartedMs) {
         // Apps → devices index
         ((d.appsUsing ?: []) as List).each { Map a ->
             Long aid = a.id as Long
-            Map entry = (Map) (appsIndex[aid] ?: [label: (a.label ?: a.name), devices: []])
+            Map entry = (Map) (appsIndex[aid] ?: [label: (a.label ?: a.name), disabled: (a.disabled == true), devices: []])
             (entry.devices as List) << [id: did, name: (d.label ?: d.name)]
             appsIndex[aid] = entry
         }
@@ -3331,10 +3332,33 @@ private Map buildCrossReference(Map devices, long scanStartedMs) {
     }.take(20)
 
     // Apps/dashboards alphabetical by label/name; devices within each alphabetical
-    List appsSorted = appsIndex.collect { id, e -> [id: id, label: e.label, devices: (e.devices as List).sort { x, y -> (x.name as String) <=> (y.name as String) }] }
+    List appsSorted = appsIndex.collect { id, e -> [id: id, label: e.label, disabled: (e.disabled == true), devices: (e.devices as List).sort { x, y -> (x.name as String) <=> (y.name as String) }] }
         .sort { a, b -> (a.label as String) <=> (b.label as String) }
     List dashSorted = dashIndex.collect { id, e -> [id: id, name: e.name, devices: (e.devices as List).sort { x, y -> (x.name as String) <=> (y.name as String) }] }
         .sort { a, b -> (a.name as String) <=> (b.name as String) }
+
+    // Manually-tuned devices: detect divergence from the fleet mode for each tuning field.
+    // Hubitat doesn't expose the platform default for these (not in /hub2/hubData), so we
+    // use the fleet mode as a robust proxy — outliers fall out regardless of the actual default.
+    Integer modeSt = computeMode(devices.values().collect { (it as Map).spammyThreshold as Integer })
+    Integer modeMs = computeMode(devices.values().collect { (it as Map).maxStates as Integer })
+    Integer modeMe = computeMode(devices.values().collect { (it as Map).maxEvents as Integer })
+    List tunedDevices = []
+    devices.each { _did, _d ->
+        Map d = _d as Map
+        Integer st = d.spammyThreshold as Integer
+        Integer ms = d.maxStates as Integer
+        Integer me = d.maxEvents as Integer
+        boolean stOff = (st != null && modeSt != null && st != modeSt)
+        boolean msOff = (ms != null && modeMs != null && ms != modeMs)
+        boolean meOff = (me != null && modeMe != null && me != modeMe)
+        if (stOff || msOff || meOff) {
+            tunedDevices << [id: _did as Long, name: (d.label ?: d.name),
+                             spammyThreshold: st, maxStates: ms, maxEvents: me,
+                             spammyOff: stOff, maxStatesOff: msOff, maxEventsOff: meOff]
+        }
+    }
+    tunedDevices.sort { a, b -> (a.name as String) <=> (b.name as String) }
 
     return [
         deviceCount:       devices.size(),
@@ -3346,9 +3370,18 @@ private Map buildCrossReference(Map devices, long scanStartedMs) {
         criticalCount:     allRefs.count { (it.total as Integer) >= 5 },
         appsToDevices:     appsSorted,
         dashboardsToDevices: dashSorted,
+        tunedDevices:      tunedDevices,
+        tunedDefaults:     [spammyThreshold: modeSt, maxStates: modeMs, maxEvents: modeMe],
         scanStartedMs:     scanStartedMs,
         scanDurationMs:    (nowMs - scanStartedMs)
     ]
+}
+
+/** Mode of a list of integers; null entries skipped. Returns null if no values. */
+private Integer computeMode(List values) {
+    Map<Integer,Integer> counts = [:]
+    values.each { v -> if (v != null) counts[v as Integer] = (counts[v as Integer] ?: 0) + 1 }
+    return counts.isEmpty() ? null : counts.max { it.value }.key
 }
 
 /**
@@ -3423,6 +3456,7 @@ private String renderAuditHtml(Map xref, String hubName, String generatedAt, Lis
     b << "<div><a href=\"#unref\">Unreferenced devices (${(xref.unreferenced as List).size()})</a></div>"
     b << "<div><a href=\"#orphans\">Mesh orphans (${(xref.meshOrphans as List).size()})</a></div>"
     b << "<div><a href=\"#stuck\">Stuck scheduled jobs (${(xref.stuckJobs as List).size()})</a></div>"
+    b << "<div><a href=\"#tuned\">Manually-tuned devices (${(xref.tunedDevices as List).size()})</a></div>"
     b << "<div><a href=\"#critical\">Critical devices (top 20)</a></div>"
     b << "<div><a href=\"#apps\">Apps → devices (${(xref.appsToDevices as List).size()})</a></div>"
     b << "<div><a href=\"#dashboards\">Dashboards → devices (${(xref.dashboardsToDevices as List).size()})</a></div>"
@@ -3471,13 +3505,37 @@ private String renderAuditHtml(Map xref, String hubName, String generatedAt, Lis
     if ((xref.stuckJobs as List).isEmpty()) {
         b << "<div class=\"muted\">None — all scheduled jobs have a future or null nextRunTime.</div>"
     } else {
-        b << "<div class=\"tbl-wrap\"><table data-sortable id=\"t_stuck\"><thead><tr><th>Device</th><th>Handler</th><th data-t=\"n\" data-sd=\"desc\">Overdue</th><th>Status</th></tr></thead><tbody>"
+        b << "<div class=\"muted\" style=\"margin-bottom:6px\">A null <i>Last run</i> with a past <i>nextRunTime</i> = job was scheduled but never fired.</div>"
+        b << "<div class=\"tbl-wrap\"><table data-sortable id=\"t_stuck\"><thead><tr><th>Device</th><th>Handler</th><th data-t=\"n\" data-sd=\"desc\">Overdue</th><th>Last run</th><th>Status</th></tr></thead><tbody>"
         (xref.stuckJobs as List).each { Map s ->
             Long ovMs = s.overdueMs as Long
+            String prev = s.prevRunTime as String
             b << "<tr><td>${dlink(s.id as Long, s.name as String)}</td>"
             b << "<td><code>${esc(s.handler as String)}</code></td>"
             b << "<td data-sv=\"${ovMs ?: 0}\">${formatDurationSec(ovMs)}</td>"
+            b << "<td>${prev ? esc(prev) : '<span class=\"muted\">never</span>'}</td>"
             b << "<td>${esc(s.status as String)}</td></tr>"
+        }
+        b << "</tbody></table></div>"
+    }
+    b << closeCard()
+
+    // Manually-tuned devices
+    b << openCard("tuned", "🛠 Manually-tuned devices (${(xref.tunedDevices as List).size()})", true)
+    if ((xref.tunedDevices as List).isEmpty()) {
+        b << "<div class=\"muted\">All devices share the same buffer/threshold values — none have been manually tuned.</div>"
+    } else {
+        Map td = (xref.tunedDefaults as Map) ?: [:]
+        b << "<div class=\"muted\" style=\"margin-bottom:6px\">Devices whose buffer/threshold values diverge from the fleet mode (default: spammyThreshold=${td.spammyThreshold ?: '?'}, maxStates=${td.maxStates ?: '?'}, maxEvents=${td.maxEvents ?: '?'}). Diverging values shown in <span class=\"warn\">bold</span>.</div>"
+        b << "<div class=\"tbl-wrap\"><table data-sortable id=\"t_tuned\"><thead><tr><th data-sd=\"asc\">Device</th><th data-t=\"n\">spammyThreshold</th><th data-t=\"n\">maxStates</th><th data-t=\"n\">maxEvents</th></tr></thead><tbody>"
+        (xref.tunedDevices as List).each { Map t ->
+            String stCell = (t.spammyThreshold == null) ? "<span class=\"muted\">—</span>" : (t.spammyOff ? "<b style=\"color:var(--warn)\">${t.spammyThreshold}</b>" : "${t.spammyThreshold}")
+            String msCell = (t.maxStates == null) ? "<span class=\"muted\">—</span>" : (t.maxStatesOff ? "<b style=\"color:var(--warn)\">${t.maxStates}</b>" : "${t.maxStates}")
+            String meCell = (t.maxEvents == null) ? "<span class=\"muted\">—</span>" : (t.maxEventsOff ? "<b style=\"color:var(--warn)\">${t.maxEvents}</b>" : "${t.maxEvents}")
+            b << "<tr><td>${dlink(t.id as Long, t.name as String)}</td>"
+            b << "<td data-sv=\"${t.spammyThreshold ?: 0}\">${stCell}</td>"
+            b << "<td data-sv=\"${t.maxStates ?: 0}\">${msCell}</td>"
+            b << "<td data-sv=\"${t.maxEvents ?: 0}\">${meCell}</td></tr>"
         }
         b << "</tbody></table></div>"
     }
@@ -3508,7 +3566,10 @@ private String renderAuditHtml(Map xref, String hubName, String generatedAt, Lis
         (xref.appsToDevices as List).each { Map a ->
             int n = (a.devices as List).size()
             String devs = (a.devices as List).collect { dlink(it.id as Long, it.name as String) }.join(", ")
-            b << "<tr><td>${alink(a.id as Long, a.label as String)}</td>"
+            String appCell = a.disabled
+                ? "<s class=\"muted\" title=\"App is disabled — its subscriptions are inactive\">${alink(a.id as Long, a.label as String)}</s> <span class=\"badge b-warn\">disabled</span>"
+                : alink(a.id as Long, a.label as String)
+            b << "<tr><td data-sv=\"${esc(a.label as String)}\">${appCell}</td>"
             b << "<td>${n}</td>"
             b << "<td>${devs}</td></tr>"
         }
@@ -3543,12 +3604,26 @@ private String renderAuditHtml(Map xref, String hubName, String generatedAt, Lis
             String src = (d.driverType == 'usr') ? "<span class=\"badge b-community\">Community</span>" : "<span class=\"badge b-builtin\">Built-in</span>"
             List apps = (d.appsUsing ?: []) as List
             List dashs = (d.dashboards ?: []) as List
-            String appsCell  = apps  ? apps.take(4).collect { alink(it.id as Long, (it.label ?: it.name) as String) }.join(", ") + (apps.size() > 4 ? ", <span class=\"muted\">+${apps.size() - 4}</span>" : "") : ((dashs.isEmpty() && d.parentApp == null) ? "<span class=\"warn\">⚠ unreferenced</span>" : "<span class=\"muted\">—</span>")
+            // Apps cell: render disabled subscribers struck-through + muted
+            String appsCell
+            if (apps) {
+                appsCell = apps.take(4).collect { Map a ->
+                    String inner = alink(a.id as Long, (a.label ?: a.name) as String)
+                    a.disabled ? "<s class=\"muted\" title=\"App is disabled — subscription inactive\">${inner}</s>" : inner
+                }.join(", ") + (apps.size() > 4 ? ", <span class=\"muted\">+${apps.size() - 4}</span>" : "")
+            } else {
+                appsCell = (dashs.isEmpty() && d.parentApp == null) ? "<span class=\"warn\">⚠ unreferenced</span>" : "<span class=\"muted\">—</span>"
+            }
             String dashsCell = dashs ? dashs.take(4).collect { '<a href="/installedapp/configure/' + (it.id as Long) + '" target="_blank">' + esc(it.name as String) + '</a>' }.join(", ") : "<span class=\"muted\">—</span>"
             Map pa = d.parentApp as Map
             String paCell = pa ? alink(pa.id as Long, (pa.label ?: pa.name) as String) : "<span class=\"muted\">—</span>"
+            // Type cell: link to driver code editor for Community drivers (mirrors SPA Devices tab)
+            String typeName = esc(d.deviceTypeName as String)
+            String typeCell = (d.driverType == 'usr' && d.deviceTypeId)
+                ? "<a href=\"/driver/editor/${d.deviceTypeId}\" target=\"_blank\">${typeName}</a>"
+                : typeName
             b << "<tr><td>${dlink(d.id as Long, (d.label ?: d.name) as String)}</td>"
-            b << "<td>${esc(d.deviceTypeName as String)}</td>"
+            b << "<td>${typeCell}</td>"
             b << "<td>${src}</td>"
             b << "<td data-sv=\"${apps.size()}\">${appsCell}</td>"
             b << "<td data-sv=\"${dashs.size()}\">${dashsCell}</td>"

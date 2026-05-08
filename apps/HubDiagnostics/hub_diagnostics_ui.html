@@ -111,7 +111,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.8.9";
+const UI_VERSION = "5.8.11";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -388,7 +388,7 @@ function tbl(cid,cols,rows,opts={}){
       const tb=t.querySelector('tbody');
       if(tb) tb.innerHTML=bldRows(filt);
       else { el.innerHTML=bld(filt);bind() }
-    });fi.focus()}
+    })}
   }bind()
 }
 
