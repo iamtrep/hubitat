@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.11.3"
+@Field static final String APP_VERSION = "5.12.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -63,6 +63,8 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final String LIMITED_ACCESS_PATH = "/hub/advanced/getLimitedAccessAddresses"
 @Field static final String ALLOW_SUBNETS_PATH = "/hub/allowSubnets"
 @Field static final String DNS_FALLBACK_PATH = "/hub/advanced/getDNSFallback"
+@Field static final String ZIGBEE_CHANNEL_SCAN_PATH = "/hub/zigbeeChannelScanJson"
+@Field static final String ZWAVE_TOPOLOGY_PATH = "/hub/zwaveTopology"
 @Field static final String NETWORK_TEST_PING_GATEWAY = "/hub/networkTest/ping/gateway"
 @Field static final String NETWORK_TEST_PING_PREFIX = "/hub/networkTest/ping/"
 @Field static final String NETWORK_TEST_SPEEDTEST = "/hub/networkTest/speedtest"
@@ -292,6 +294,9 @@ mappings {
 
     // Network tests (v5.9.0)
     path('/api/network/test')  { action: [POST: 'apiNetworkTest'] }
+
+    // Zigbee channel scan (v5.12.0)
+    path('/api/network/zigbee/scan') { action: [POST: 'apiZigbeeScan'] }
 }
 
 // ===== PAGE METHODS =====
@@ -615,6 +620,15 @@ Map apiNetworkTest() {
     boolean ok = result != null && !result.startsWith("Error:")
     logDebug "apiNetworkTest(${type}${ip ? ', ' + ip : ''}) completed in ${elapsed}ms"
     return jsonResponse([success: ok, type: type, ip: ip, output: result, elapsedMs: elapsed])
+}
+
+Map apiZigbeeScan() {
+    long start = now()
+    Map result = runZigbeeChannelScan()
+    long elapsed = now() - start
+    logDebug "apiZigbeeScan completed in ${elapsed}ms"
+    boolean ok = result.error == null
+    return jsonResponse([success: ok, scan: result, elapsedMs: elapsed])
 }
 
 Map apiPerformanceCompare() {
@@ -1513,7 +1527,9 @@ Map getNetworkData(Map shared = [:]) {
         ntpServer: fetchNtpServer(),
         mdns: fetchMdns(),
         zipgatewayVersion: fetchZipgatewayVersion(),
-        security: fetchSecurityInfo()
+        security: fetchSecurityInfo(),
+        zigbeeChannelScan: fetchCachedZigbeeScan(),
+        zwaveTopologyHtml: fetchZwaveTopology()
     ]
 }
 
@@ -2169,6 +2185,46 @@ Map fetchSecurityInfo() {
         allowedSubnets: subnetList,
         dnsFallback: dnsFb == null ? null : (dnsFb.toLowerCase().trim() == "true")
     ]
+}
+
+// ===== Z-Wave Topology HTML embed (Phase 6 sub-3, v5.12.0) =====
+
+/**
+ * Returns the bare <table>...</table> HTML adjacency matrix from Hubitat's Z-Wave topology page.
+ * Embedded as-is in the Network tab; bgcolor cells encode pairwise connectivity.
+ */
+String fetchZwaveTopology() {
+    String txt = (String) hubRequest(ZWAVE_TOPOLOGY_PATH, "Z-Wave topology", "text", 10)
+    if (!txt) return null
+    String t = txt.trim()
+    return t ?: null
+}
+
+// ===== Zigbee Channel Scan (Phase 6 sub-1, v5.12.0) =====
+
+/** Read the cached scan result, never triggering a fresh scan. */
+Map fetchCachedZigbeeScan() {
+    if (!state.zigbeeScanCache) return null
+    Map cache = state.zigbeeScanCache as Map
+    return [
+        at: cache.at,
+        results: (cache.results as List) ?: []
+    ]
+}
+
+/** Trigger a fresh scan (~30s, briefly impacts Zigbee join activity), update cache, return new results. */
+Map runZigbeeChannelScan() {
+    long start = now()
+    Object resp = hubRequest(ZIGBEE_CHANNEL_SCAN_PATH, "Zigbee channel scan", "json", 90)
+    if (!(resp instanceof List)) return [at: now(), results: [], error: "scan returned no data"]
+    List results = (resp as List).collect { Map r ->
+        [channel: r.channel, panId: r.panId, extendedPanId: r.extendedPanId,
+         lastHopRssi: r.lastHopRssi, lastHopLqi: r.lastHopLqi,
+         allowingJoin: r.allowingJoin == true, nwkUpdateId: r.nwkUpdateId]
+    }
+    Map cache = [at: now(), results: results, scanDurationMs: (now() - start)]
+    state.zigbeeScanCache = cache
+    return cache
 }
 
 String runNetworkTest(String type, String ip = null) {

@@ -114,7 +114,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.11.3";
+const UI_VERSION = "5.12.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -260,7 +260,7 @@ function isNewer(v1, v2) {
 }
 
 // ===== ZIGBEE-WIFI SPECTRUM CHART =====
-function renderZigbeeWifiChart(zbCh,containerId){
+function renderZigbeeWifiChart(zbCh,containerId,scan){
   if(!zbCh)return;
   const W=700,H=180,PAD=50,PB=40,GW=W-PAD*2;
   // Frequency range: 2400-2485 MHz
@@ -282,6 +282,27 @@ function renderZigbeeWifiChart(zbCh,containerId){
     const stroke=ol?'rgba(220,60,60,0.6)':std?'rgba(60,180,80,0.4)':'rgba(130,130,130,0.25)';
     svg+=`<rect x="${x1}" y="20" width="${x2-x1}" height="${H-PB-20}" rx="3" fill="${fill}" stroke="${stroke}" stroke-width="0.7"/>`;
     svg+=`<text x="${(x1+x2)/2}" y="14" text-anchor="middle" fill="${ol?'#dc3c3c':std?'#3cb44c':'#888'}" font-size="10" font-weight="${ol||std?'600':'400'}">W${ch}</text>`});
+  // Scan overlay (v5.12.0): per-channel detected PAN bars stacked side-by-side, height = RSSI strength
+  const scanByChannel={};
+  if(scan&&scan.results)scan.results.forEach(r=>{
+    if(!r.panId||r.lastHopRssi===0)return; // skip empty/noise rows
+    if(!scanByChannel[r.channel])scanByChannel[r.channel]=[];
+    scanByChannel[r.channel].push(r);
+  });
+  Object.entries(scanByChannel).forEach(([ch,pans])=>{
+    const c=2405+5*(parseInt(ch)-11);const cx=x(c);
+    pans.sort((a,b)=>b.lastHopRssi-a.lastHopRssi);
+    const barW=4,gap=1,maxH=H-PB-50;
+    pans.forEach((p,i)=>{
+      // map RSSI -90 (weak) → 0, -30 (strong) → 1, clamped
+      const norm=Math.max(0,Math.min(1,(p.lastHopRssi+90)/60));
+      const ht=Math.round(maxH*norm);
+      const sev=p.lastHopRssi>-50?'#dc3c3c':p.lastHopRssi>-70?'#ff9800':'#fbc02d';
+      const xb=cx+(i-(pans.length-1)/2)*(barW+gap);
+      const tip=`PAN ${p.panId} on ch${ch}: RSSI ${p.lastHopRssi} dBm, LQI ${p.lastHopLqi}`;
+      svg+=`<rect x="${xb-barW/2}" y="${H-PB-ht}" width="${barW}" height="${ht}" rx="1" fill="${sev}" opacity="0.75"><title>${h(tip)}</title></rect>`;
+    });
+  });
   // All Zigbee channel markers
   for(let ch=11;ch<=26;ch++){const c=2405+5*(ch-11);const cx=x(c);const isCur=ch===zbCh;
     const rec=[15,20,25].includes(ch);
@@ -297,6 +318,9 @@ function renderZigbeeWifiChart(zbCh,containerId){
   svg+=`<rect x="${PAD}" y="${H-PB+30}" width="8" height="8" rx="1" fill="#2196f3"/><text x="${PAD+12}" y="${H-PB+38}" fill="#aaa" font-size="9">Current (${zbCh})</text>`;
   svg+=`<rect x="${PAD+90}" y="${H-PB+30}" width="8" height="8" rx="1" fill="rgba(60,180,80,0.7)"/><text x="${PAD+102}" y="${H-PB+38}" fill="#aaa" font-size="9">Recommended</text>`;
   svg+=`<rect x="${PAD+195}" y="${H-PB+30}" width="8" height="8" rx="1" fill="rgba(220,60,60,0.25)" stroke="rgba(220,60,60,0.6)" stroke-width="0.7"/><text x="${PAD+207}" y="${H-PB+38}" fill="#aaa" font-size="9">WiFi overlap</text>`;
+  if(scan&&scan.results&&Object.keys(scanByChannel).length){
+    svg+=`<rect x="${PAD+285}" y="${H-PB+30}" width="4" height="8" fill="#dc3c3c"/><rect x="${PAD+291}" y="${H-PB+30}" width="4" height="8" fill="#ff9800"/><rect x="${PAD+297}" y="${H-PB+30}" width="4" height="8" fill="#fbc02d"/><text x="${PAD+305}" y="${H-PB+38}" fill="#aaa" font-size="9">Detected PAN (RSSI strong→weak)</text>`;
+  }
   svg+='</svg>';
   // Summary text
   const avoid=overlapping.size?[...overlapping].sort((a,b)=>a-b).join(', '):'none';
@@ -1046,6 +1070,13 @@ async function rNetwork(){const P='p-network';loading(P);try{
     }
     o+='</div></div>';
   }
+  // Z-Wave Topology (v5.12.0) — embedded HTML adjacency matrix from /hub/zwaveTopology
+  if(d.zwaveTopologyHtml){
+    o+='<div class="card"><div class="card-h">Z-Wave Topology</div><div class="card-b">';
+    o+='<div class="muted" style="margin-bottom:8px;font-size:12px">Pairwise neighbor matrix as reported by the Z-Wave controller. Each cell\'s background colour encodes the connectivity between two nodes.</div>';
+    o+='<div class="tbl-wrap" style="overflow-x:auto;max-width:100%">'+d.zwaveTopologyHtml+'</div>';
+    o+='</div></div>';
+  }
   // Zigbee
   if(d.zigbee){const z=d.zigbee;
     o+='<div class="card"><div class="card-h">Zigbee Network</div><div class="card-b"><div class="ng">';
@@ -1067,6 +1098,10 @@ async function rNetwork(){const P='p-network';loading(P);try{
         m.weakNeighbors.forEach(n=>{o+='<div style="margin:3px 0;color:var(--crit)">'+h(n.shortId)+' &mdash; LQI: '+n.lqi+'</div>'});o+='</details>'}
       if(m.neighborDetails&&m.neighborDetails.length)o+='<div id="zbNeighborTbl" style="margin-top:8px"></div>';
       o+='</div>'}
+    o+='<div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap">';
+    o+='<button class="btn btn-p" id="btnZbScan">Run channel scan</button>';
+    o+='<span id="zbScanInfo" class="muted" style="font-size:12px"></span>';
+    o+='</div>';
     o+='<div id="zbWifiChart" style="margin-top:10px"></div>';
     if(z.messageCounts&&z.messageCounts.length)o+='<div id="zbMsgTbl" style="margin-top:10px"></div>';
     o+='</div></div>'}
@@ -1148,7 +1183,25 @@ async function rNetwork(){const P='p-network';loading(P);try{
     if(d.zigbee&&d.zigbee.messageCounts)d.zigbee.messageCounts.forEach(r=>{r.msgPerMin=(r.msgCount||0)/min});
   }
   // Render Zigbee-WiFi interference chart
-  if(d.zigbee&&d.zigbee.channel)renderZigbeeWifiChart(d.zigbee.channel,'zbWifiChart');
+  if(d.zigbee&&d.zigbee.channel){
+    const scan=d.zigbeeChannelScan;
+    renderZigbeeWifiChart(d.zigbee.channel,'zbWifiChart',scan);
+    const info=document.getElementById('zbScanInfo');
+    if(info)info.textContent=scan&&scan.at?('Last scan: '+new Date(scan.at).toLocaleString()+' — '+(scan.results||[]).filter(r=>r.panId).length+' neighbor PANs detected'):'No scan data yet — click to run (~30s, briefly impacts Zigbee join)';
+    const btn=document.getElementById('btnZbScan');
+    if(btn)btn.onclick=async()=>{
+      btn.disabled=true;btn.textContent='Scanning…';
+      if(info)info.textContent='Scanning all 16 channels…';
+      try{
+        const r=await post('network/zigbee/scan');
+        if(r.success&&r.scan){
+          renderZigbeeWifiChart(d.zigbee.channel,'zbWifiChart',r.scan);
+          info.textContent='Scan complete: '+(r.scan.results||[]).filter(x=>x.panId).length+' neighbor PANs detected ('+(r.elapsedMs/1000).toFixed(1)+'s)';
+        } else { info.textContent='Scan failed: '+(r.scan&&r.scan.error||'unknown error'); }
+      }catch(e){info.textContent='Scan error: '+e.message}
+      finally{btn.disabled=false;btn.textContent='Run channel scan';}
+    };
+  }
   // Render Z-Wave mesh table
   if(d.zwave&&d.zwave.mesh&&d.zwave.mesh.nodes&&d.zwave.mesh.nodes.length)
     tbl('zwMeshTbl',[
