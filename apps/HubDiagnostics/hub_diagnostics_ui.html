@@ -111,7 +111,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.8.5";
+const UI_VERSION = "5.8.9";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -550,9 +550,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   // Reports
   const rpts=await api('reports');
   o+='<div class="card"><div class="card-h">Reports</div><div class="card-b">';
-  o+='<div class="actions" style="margin-bottom:10px"><button class="btn btn-p" id="btnReport">Generate Full Report</button><button class="btn btn-p" id="btnForum">Copy for Forum</button><button class="btn btn-p" id="btnAudit">Generate Device Audit</button></div>';
-  o += '<div id="audit-row" style="margin-top:8px"></div>';
-  o += '<div id="audit-list-wrap" style="margin-top:10px"><div class="muted">Past audits…</div></div>';
+  o+='<div class="actions" style="margin-bottom:10px"><button class="btn btn-p" id="btnReport">Generate Full Report</button><button class="btn btn-p" id="btnForum">Copy for Forum</button></div>';
   if(rpts.lastReport)o+='<p><a href="/local/'+h(rpts.lastReport)+'" target="_blank" style="color:var(--link)">Open latest report: '+h(rpts.lastReport)+'</a></p>';
   if(rpts.reports&&rpts.reports.length>0){
     o+='<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--muted)">All reports ('+rpts.reports.length+')</summary><div style="margin-top:6px">';
@@ -631,10 +629,6 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
       else{btnForum.disabled=false;btnForum.textContent='Copy for Forum';alert('Export failed')}}
     catch(e){btnForum.disabled=false;btnForum.textContent='Copy for Forum';alert('Export failed: '+e.message)}};
 
-  const btnAudit=document.getElementById('btnAudit');
-  if(btnAudit)btnAudit.onclick=()=>auditStart();
-
-  auditList();
 }catch(e){err(P,e,rDashboard)}}
 
 async function auditStart() {
@@ -741,6 +735,13 @@ async function rDevices(){const P='p-devices';loading(P);try{
   o+=mc('Parent',dlistlink(s.parentDevices,s.parentIds));o+=mc('Child',dlistlink(s.childDevices,s.childIds));
   o+=mc('Hub Mesh',dlistlink(s.linkedDevices,s.linkedIds));o+=mc('Battery',dlistlink(s.batteryDevices,s.batteryIds));
   o+='</div></div></div>';
+  // Device Audit
+  o+='<div class="card"><div class="card-h">Device Audit</div><div class="card-b">';
+  o+='<div class="muted" style="margin-bottom:8px">Cross-references each device against the apps and dashboards that subscribe to it. Surfaces unreferenced devices, mesh orphans, stuck scheduled jobs and critical devices in a standalone HTML report.</div>';
+  o+='<div class="actions" style="margin-bottom:10px"><button class="btn btn-p" id="btnAudit">Generate Device Audit</button></div>';
+  o+='<div id="audit-row" style="margin-top:8px"></div>';
+  o+='<div id="audit-list-wrap" style="margin-top:10px"><div class="muted">Past audits…</div></div>';
+  o+='</div></div>';
   // Connection type + integration distribution (side by side)
   o+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
   o+='<div class="card"><div class="card-h">Connection Types</div><div class="card-b"><div class="tbl-wrap"><table><thead><tr><th>Connection</th><th>Count</th></tr></thead><tbody>';
@@ -787,6 +788,9 @@ async function rDevices(){const P='p-devices';loading(P);try{
     {l:'Battery',f:'battery',t:'n',r:r=>bat(r.battery)},
     {l:'Parent',f:'parentAppName',r:r=>r.parentAppName?alink(r.parentAppId,r.parentAppName):r.parentDeviceName?dlink(r.parentDeviceId,r.parentDeviceName):'-',sf:'parentAppName'}
   ],d.deviceRows,{filter:true,sc:0,sd:'asc',collapse:10,collapseLabel:'All Devices'});
+  const btnAudit=document.getElementById('btnAudit');
+  if(btnAudit)btnAudit.onclick=()=>auditStart();
+  auditList();
 }catch(e){err(P,e,rDevices)}}
 
 // ===== TAB: APPS =====

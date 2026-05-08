@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.8.5"
+@Field static final String APP_VERSION = "5.8.9"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -3287,14 +3287,18 @@ private Map buildCrossReference(Map devices, long scanStartedMs) {
         if (d.orphan) {
             meshOrphans << [id: did, name: (d.label ?: d.name)]
         }
-        // Stuck jobs (nextRunTime in the past)
+        // Stuck jobs: nextRunTime in the past AT THE MOMENT WE OBSERVED THIS DEVICE.
+        // Comparing against the per-device fetch timestamp (not now()) eliminates the
+        // scan-duration false positives where a recurring job fires during the scan and
+        // its old nextRunTime appears stale relative to finalize time.
+        Long fetchedAt = (d.fetchedAtMs as Long) ?: nowMs
         ((d.scheduledJobs ?: []) as List).each { Map s ->
             String nrt = s.nextRunTime as String
             if (nrt) {
                 Long when = parseHubitatTimestamp(nrt)
-                if (when != null && when < nowMs) {
+                if (when != null && when < fetchedAt) {
                     stuckJobs << [id: did, name: (d.label ?: d.name),
-                                  handler: s.handler, overdueMs: (nowMs - when), status: s.status]
+                                  handler: s.handler, overdueMs: (fetchedAt - when), status: s.status]
                 }
             }
         }
@@ -3370,22 +3374,39 @@ private String renderAuditHtml(Map xref, String hubName, String generatedAt, Lis
     b << "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\">"
     b << "<title>Device Usage Audit — ${esc(hubName)}</title>"
     b << "<style>"
-    b << ":root{--primary:#1A77C9;--ok:#388e3c;--warn:#ff9800;--crit:#d32f2f;--bg:#f5f5f5;--card:#fff;--border:#ddd;--text:#333;--muted:#777;--alt:#f9f9f9}"
-    b << "*{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:13px;margin:0;padding:14px;line-height:1.4}"
+    b << ":root{--primary:#1A77C9;--ok:#388e3c;--warn:#ff9800;--crit:#d32f2f;--bg:#f5f5f5;--card:#fff;--border:#ddd;--text:#333;--muted:#777;--alt:#f9f9f9;--hover:#e3f2fd}"
+    b << "*{box-sizing:border-box;margin:0;padding:0}"
+    b << "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:14px;padding:16px}"
     b << "a{color:var(--primary);text-decoration:none}a:hover{text-decoration:underline}"
-    b << ".hdr{background:var(--primary);color:#fff;padding:10px 14px;border-radius:8px 8px 0 0;display:flex;align-items:center;gap:12px;flex-wrap:wrap}"
-    b << ".hdr h1{margin:0;font-size:16px;font-weight:600}.hdr .meta{font-size:11px;opacity:.85;margin-left:auto}"
+    b << ".hdr{background:var(--primary);color:#fff;padding:10px 20px;border-radius:8px 8px 0 0;display:flex;align-items:center;gap:12px;flex-wrap:wrap}"
+    b << ".hdr h1{font-size:17px;font-weight:600}.hdr .meta{font-size:12px;opacity:.85;margin-left:auto}"
     b << ".toc{background:var(--card);border-radius:0 0 8px 8px;padding:14px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.08)}"
     b << ".toc-l{color:var(--muted);font-size:11px;text-transform:uppercase;font-weight:600;margin-bottom:6px}"
-    b << ".toc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:4px;font-size:12px}"
-    b << ".card{background:var(--card);border-radius:8px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.08);overflow:hidden}"
+    b << ".toc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:4px;font-size:13px}"
+    b << ".card{background:var(--card);border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:14px;overflow:hidden}"
     b << ".card-h{padding:10px 14px;font-size:13px;font-weight:600;border-bottom:1px solid var(--border);background:var(--alt)}"
-    b << ".card-b{padding:10px 14px}"
-    b << ".sumrow{display:flex;gap:18px;flex-wrap:wrap}.sumcell{}"
-    b << ".sumcell .l{color:var(--muted);font-size:11px;margin-bottom:2px}.sumcell .v{font-size:18px;font-weight:600}"
-    b << "table{width:100%;font-size:12px;border-collapse:collapse}"
-    b << "th{color:var(--muted);text-align:left;font-weight:500;padding:5px;border-bottom:1px solid var(--border)}"
-    b << "td{padding:5px;border-bottom:1px solid #f1f5f9;vertical-align:top}"
+    b << ".card-b{padding:14px}"
+    // <summary class="card-h">: keep card-h look + native left disclosure triangle
+    b << "summary.card-h{cursor:pointer;user-select:none}"
+    b << "summary.card-h::-webkit-details-marker{color:var(--muted)}"
+    b << "summary.card-h::marker{color:var(--muted)}"
+    b << "summary.card-h:hover{background:#f0f0f0}"
+    b << "details:not([open])>summary.card-h{border-bottom:0}"
+    b << ".metrics{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}"
+    b << ".m{padding:10px;border-radius:6px;background:var(--alt)}"
+    b << ".m-l{font-size:11px;color:var(--muted);margin-bottom:2px}.m-v{font-size:18px;font-weight:600}"
+    // SPA-style tables: blue header, white text, striped rows, hover highlight
+    b << ".tbl-wrap{overflow-x:auto}"
+    b << "table{width:100%;border-collapse:collapse;font-size:13px}"
+    b << "th{background:var(--primary);color:#fff;padding:7px 9px;text-align:left;white-space:nowrap;user-select:none}"
+    b << "td{padding:6px 9px;border-bottom:1px solid #eee;vertical-align:top}"
+    b << "tbody tr:nth-child(even){background:var(--alt)}"
+    b << "tbody tr:hover{background:var(--hover)}"
+    b << "table[data-sortable] th{cursor:pointer}"
+    b << "table[data-sortable] th:hover{background:#1565a7}"
+    b << "table[data-sortable] th .arr{font-size:9px;margin-left:3px;opacity:.6}"
+    b << "table[data-sortable] th[data-dir] .arr{opacity:1}"
+    b << ".filter input{padding:7px 11px;border:1px solid var(--border);border-radius:4px;font-size:13px;width:280px;max-width:100%;margin-bottom:10px}"
     b << ".badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}"
     b << ".b-builtin{background:#e8eaf6;color:#3949ab}.b-community{background:#fce4ec;color:#c62828}"
     b << ".b-warn{background:#fff3e0;color:var(--warn)}.b-crit{background:#ffebee;color:var(--crit)}"
@@ -3403,14 +3424,14 @@ private String renderAuditHtml(Map xref, String hubName, String generatedAt, Lis
     b << "<div><a href=\"#orphans\">Mesh orphans (${(xref.meshOrphans as List).size()})</a></div>"
     b << "<div><a href=\"#stuck\">Stuck scheduled jobs (${(xref.stuckJobs as List).size()})</a></div>"
     b << "<div><a href=\"#critical\">Critical devices (top 20)</a></div>"
-    b << "<div><a href=\"#apps\">Apps → devices</a></div>"
-    b << "<div><a href=\"#dashboards\">Dashboards → devices</a></div>"
+    b << "<div><a href=\"#apps\">Apps → devices (${(xref.appsToDevices as List).size()})</a></div>"
+    b << "<div><a href=\"#dashboards\">Dashboards → devices (${(xref.dashboardsToDevices as List).size()})</a></div>"
     b << "<div><a href=\"#all\">Per-device detail table</a></div>"
     if (failed) b << "<div><a href=\"#failed\" class=\"crit\">Failed to fetch (${failed.size()})</a></div>"
     b << "</div></div>"
 
-    // Summary
-    b << "<div class=\"card\" id=\"summary\"><div class=\"card-b\"><div class=\"sumrow\">"
+    // Summary (not collapsible — high-signal at-a-glance)
+    b << "<div class=\"card\" id=\"summary\"><div class=\"card-h\">Summary</div><div class=\"card-b\"><div class=\"metrics\">"
     b << sumcell("Devices",     xref.deviceCount as String, null)
     b << sumcell("Unreferenced", (xref.unreferenced as List).size() as String, "warn")
     b << sumcell("Mesh orphans", (xref.meshOrphans as List).size() as String, "crit")
@@ -3419,88 +3440,104 @@ private String renderAuditHtml(Map xref, String hubName, String generatedAt, Lis
     b << "</div></div></div>"
 
     // Unreferenced
-    b << "<div class=\"card\" id=\"unref\"><div class=\"card-h\">⚠ Unreferenced devices (${(xref.unreferenced as List).size()})</div><div class=\"card-b\">"
+    b << openCard("unref", "⚠ Unreferenced devices (${(xref.unreferenced as List).size()})", true)
     if ((xref.unreferenced as List).isEmpty()) {
         b << "<div class=\"muted\">None — every device is used by at least one app, dashboard, or parent integration.</div>"
     } else {
-        b << "<div class=\"muted\" style=\"margin-bottom:6px\">No apps, no dashboards, no parent app — sorted by oldest last activity first.</div>"
-        b << "<table><tr><th>Device</th><th>Type</th><th>Last activity</th><th>Source</th></tr>"
+        b << "<div class=\"muted\" style=\"margin-bottom:6px\">No apps, no dashboards, no parent app — default sort: oldest last activity first.</div>"
+        b << "<div class=\"tbl-wrap\"><table data-sortable id=\"t_unref\"><thead><tr><th>Device</th><th>Type</th><th data-sd=\"asc\">Last activity</th><th>Source</th></tr></thead><tbody>"
         (xref.unreferenced as List).each { Map u ->
             b << "<tr><td>${dlink(u.id as Long, u.name as String)}</td>"
             b << "<td>${esc(u.type as String)}</td>"
             b << "<td>${esc(u.lastActivityTime as String)}</td>"
             b << "<td>${driverBadge(u.driverType as String)}</td></tr>"
         }
-        b << "</table>"
+        b << "</tbody></table></div>"
     }
-    b << "</div></div>"
+    b << closeCard()
 
     // Mesh orphans
-    b << "<div class=\"card\" id=\"orphans\"><div class=\"card-h\">⚠ Mesh orphans (${(xref.meshOrphans as List).size()})</div><div class=\"card-b\">"
+    b << openCard("orphans", "⚠ Mesh orphans (${(xref.meshOrphans as List).size()})", true)
     if ((xref.meshOrphans as List).isEmpty()) {
         b << "<div class=\"muted\">None — no devices report orphan radio state.</div>"
     } else {
         b << "<div class=\"muted\" style=\"margin-bottom:6px\">Hubitat reports <code>orphan: true</code> — physical radio relationship lost.</div>"
         b << "<div>" + (xref.meshOrphans as List).collect { dlink(it.id as Long, it.name as String) }.join(" · ") + "</div>"
     }
-    b << "</div></div>"
+    b << closeCard()
 
     // Stuck jobs
-    b << "<div class=\"card\" id=\"stuck\"><div class=\"card-h\">⚠ Stuck scheduled jobs (${(xref.stuckJobs as List).size()})</div><div class=\"card-b\">"
+    b << openCard("stuck", "⚠ Stuck scheduled jobs (${(xref.stuckJobs as List).size()})", true)
     if ((xref.stuckJobs as List).isEmpty()) {
         b << "<div class=\"muted\">None — all scheduled jobs have a future or null nextRunTime.</div>"
     } else {
-        b << "<table><tr><th>Device</th><th>Handler</th><th>Overdue</th><th>Status</th></tr>"
+        b << "<div class=\"tbl-wrap\"><table data-sortable id=\"t_stuck\"><thead><tr><th>Device</th><th>Handler</th><th data-t=\"n\" data-sd=\"desc\">Overdue</th><th>Status</th></tr></thead><tbody>"
         (xref.stuckJobs as List).each { Map s ->
+            Long ovMs = s.overdueMs as Long
             b << "<tr><td>${dlink(s.id as Long, s.name as String)}</td>"
             b << "<td><code>${esc(s.handler as String)}</code></td>"
-            b << "<td>${formatDurationSec(s.overdueMs as Long)}</td>"
+            b << "<td data-sv=\"${ovMs ?: 0}\">${formatDurationSec(ovMs)}</td>"
             b << "<td>${esc(s.status as String)}</td></tr>"
         }
-        b << "</table>"
+        b << "</tbody></table></div>"
     }
-    b << "</div></div>"
+    b << closeCard()
 
     // Critical devices
-    b << "<div class=\"card\" id=\"critical\"><div class=\"card-h\">⭐ Critical devices (top 20 by reference count)</div><div class=\"card-b\">"
+    b << openCard("critical", "⭐ Critical devices (top 20 by reference count)", true)
     if ((xref.criticalTop20 as List).isEmpty()) {
         b << "<div class=\"muted\">No devices have any apps or dashboards.</div>"
     } else {
-        b << "<table><tr><th>Device</th><th>Apps</th><th>Dashboards</th><th>Total</th></tr>"
+        b << "<div class=\"tbl-wrap\"><table data-sortable id=\"t_crit\"><thead><tr><th>Device</th><th data-t=\"n\">Apps</th><th data-t=\"n\">Dashboards</th><th data-t=\"n\" data-sd=\"desc\">Total</th></tr></thead><tbody>"
         (xref.criticalTop20 as List).each { Map c ->
             b << "<tr><td>${dlink(c.id as Long, c.name as String)}</td>"
             b << "<td>${c.appsCount}</td><td>${c.dashboardsCount}</td>"
             b << "<td><b>${c.total}</b></td></tr>"
         }
-        b << "</table>"
+        b << "</tbody></table></div>"
     }
-    b << "</div></div>"
+    b << closeCard()
 
     // Apps → devices
-    b << "<div class=\"card\" id=\"apps\"><div class=\"card-h\">📱 Apps → devices</div><div class=\"card-b\">"
-    (xref.appsToDevices as List).each { Map a ->
-        b << "<div style=\"margin-bottom:6px\">"
-        b << alink(a.id as Long, a.label as String) + " <span class=\"muted\">(${(a.devices as List).size()})</span>"
-        b << "<div style=\"padding-left:12px\">"
-        b << (a.devices as List).collect { dlink(it.id as Long, it.name as String) }.join(", ")
-        b << "</div></div>"
+    b << openCard("apps", "📱 Apps → devices (${(xref.appsToDevices as List).size()})", true)
+    if ((xref.appsToDevices as List).isEmpty()) {
+        b << "<div class=\"muted\">No apps subscribe to any devices.</div>"
+    } else {
+        b << "<div class=\"filter\"><input type=\"text\" data-filter=\"t_apps\" placeholder=\"Filter apps or devices…\"></div>"
+        b << "<div class=\"tbl-wrap\"><table data-sortable id=\"t_apps\"><thead><tr><th data-sd=\"asc\">App</th><th data-t=\"n\"># Devices</th><th>Devices</th></tr></thead><tbody>"
+        (xref.appsToDevices as List).each { Map a ->
+            int n = (a.devices as List).size()
+            String devs = (a.devices as List).collect { dlink(it.id as Long, it.name as String) }.join(", ")
+            b << "<tr><td>${alink(a.id as Long, a.label as String)}</td>"
+            b << "<td>${n}</td>"
+            b << "<td>${devs}</td></tr>"
+        }
+        b << "</tbody></table></div>"
     }
-    b << "</div></div>"
+    b << closeCard()
 
     // Dashboards → devices
-    b << "<div class=\"card\" id=\"dashboards\"><div class=\"card-h\">📊 Dashboards → devices</div><div class=\"card-b\">"
-    (xref.dashboardsToDevices as List).each { Map d ->
-        b << "<div style=\"margin-bottom:6px\">"
-        b << "<b>" + esc(d.name as String) + "</b> <span class=\"muted\">(${(d.devices as List).size()})</span>"
-        b << "<div style=\"padding-left:12px\">"
-        b << (d.devices as List).collect { dlink(it.id as Long, it.name as String) }.join(", ")
-        b << "</div></div>"
+    b << openCard("dashboards", "📊 Dashboards → devices (${(xref.dashboardsToDevices as List).size()})", true)
+    if ((xref.dashboardsToDevices as List).isEmpty()) {
+        b << "<div class=\"muted\">No dashboards reference any devices.</div>"
+    } else {
+        b << "<div class=\"filter\"><input type=\"text\" data-filter=\"t_dash\" placeholder=\"Filter dashboards or devices…\"></div>"
+        b << "<div class=\"tbl-wrap\"><table data-sortable id=\"t_dash\"><thead><tr><th data-sd=\"asc\">Dashboard</th><th data-t=\"n\"># Devices</th><th>Devices</th></tr></thead><tbody>"
+        (xref.dashboardsToDevices as List).each { Map d ->
+            int n = (d.devices as List).size()
+            String devs = (d.devices as List).collect { dlink(it.id as Long, it.name as String) }.join(", ")
+            b << "<tr><td><b>${esc(d.name as String)}</b></td>"
+            b << "<td>${n}</td>"
+            b << "<td>${devs}</td></tr>"
+        }
+        b << "</tbody></table></div>"
     }
-    b << "</div></div>"
+    b << closeCard()
 
     // Per-device detail table
-    b << "<div class=\"card\" id=\"all\"><div class=\"card-h\">📋 Per-device detail table (${xref.deviceCount})</div><div class=\"card-b\">"
-    b << "<table><tr><th>Name</th><th>Type</th><th>Source</th><th>Apps</th><th>Dashboards</th><th>Parent app</th><th>Last activity</th></tr>"
+    b << openCard("all", "📋 Per-device detail table (${xref.deviceCount})", true)
+    b << "<div class=\"filter\"><input type=\"text\" data-filter=\"t_all\" placeholder=\"Filter devices…\"></div>"
+    b << "<div class=\"tbl-wrap\"><table data-sortable id=\"t_all\"><thead><tr><th data-sd=\"asc\">Name</th><th>Type</th><th>Source</th><th data-t=\"n\">Apps</th><th data-t=\"n\">Dashboards</th><th>Parent app</th><th>Last activity</th></tr></thead><tbody>"
     if (xref.allDevices instanceof Map) {
         ((xref.allDevices as Map).values() as List).sort { x, y -> (x.name as String) <=> (y.name as String) }.each { Map d ->
             String src = (d.driverType == 'usr') ? "<span class=\"badge b-community\">Community</span>" : "<span class=\"badge b-builtin\">Built-in</span>"
@@ -3513,13 +3550,14 @@ private String renderAuditHtml(Map xref, String hubName, String generatedAt, Lis
             b << "<tr><td>${dlink(d.id as Long, (d.label ?: d.name) as String)}</td>"
             b << "<td>${esc(d.deviceTypeName as String)}</td>"
             b << "<td>${src}</td>"
-            b << "<td>${appsCell}</td>"
-            b << "<td>${dashsCell}</td>"
+            b << "<td data-sv=\"${apps.size()}\">${appsCell}</td>"
+            b << "<td data-sv=\"${dashs.size()}\">${dashsCell}</td>"
             b << "<td>${paCell}</td>"
             b << "<td>${esc(d.lastActivityTime as String)}</td></tr>"
         }
     }
-    b << "</table></div></div>"
+    b << "</tbody></table></div>"
+    b << closeCard()
 
     // Failed footnote
     if (failed) {
@@ -3528,8 +3566,60 @@ private String renderAuditHtml(Map xref, String hubName, String generatedAt, Lis
         b << "</div></div>"
     }
 
+    // Inline sort + filter script
+    b << '''<script>
+(function(){
+  function cmp(a,b,n){if(n){a=parseFloat(a)||0;b=parseFloat(b)||0;return a<b?-1:a>b?1:0;}a=String(a).toLowerCase();b=String(b).toLowerCase();return a<b?-1:a>b?1:0;}
+  function getSv(td){return td.dataset.sv!=null?td.dataset.sv:td.textContent.trim();}
+  function sortTable(tbl,col,dir){
+    var th=tbl.tHead.rows[0].cells[col],n=th.dataset.t==='n';
+    var tb=tbl.tBodies[0],rows=Array.prototype.slice.call(tb.rows);
+    rows.sort(function(r1,r2){return cmp(getSv(r1.cells[col]),getSv(r2.cells[col]),n)*(dir==='desc'?-1:1);});
+    rows.forEach(function(r){tb.appendChild(r);});
+  }
+  function setArrows(ths,col,dir){
+    Array.prototype.forEach.call(ths,function(t,i){
+      var a=t.querySelector('.arr');
+      if(i===col){t.dataset.dir=dir;if(a)a.textContent=dir==='asc'?' ▲':' ▼';}
+      else{delete t.dataset.dir;if(a)a.textContent=' ⇅';}
+    });
+  }
+  document.querySelectorAll('table[data-sortable]').forEach(function(tbl){
+    if(!tbl.tHead||!tbl.tBodies[0])return;
+    var ths=tbl.tHead.rows[0].cells,defCol=-1,defDir='asc';
+    Array.prototype.forEach.call(ths,function(th,i){
+      var s=document.createElement('span');s.className='arr';s.textContent=' ⇅';th.appendChild(s);
+      th.addEventListener('click',function(){
+        var dir=th.dataset.dir==='asc'?'desc':(th.dataset.dir==='desc'?'asc':(th.dataset.t==='n'?'desc':'asc'));
+        setArrows(ths,i,dir);sortTable(tbl,i,dir);
+      });
+      if(th.dataset.sd){defCol=i;defDir=th.dataset.sd;}
+    });
+    if(defCol>=0){setArrows(ths,defCol,defDir);sortTable(tbl,defCol,defDir);}
+  });
+  document.querySelectorAll('input[data-filter]').forEach(function(inp){
+    var tbl=document.getElementById(inp.dataset.filter);if(!tbl||!tbl.tBodies[0])return;
+    inp.addEventListener('input',function(){
+      var q=inp.value.toLowerCase();
+      Array.prototype.forEach.call(tbl.tBodies[0].rows,function(r){
+        r.style.display=r.textContent.toLowerCase().indexOf(q)>=0?'':'none';
+      });
+    });
+  });
+})();
+</script>'''
+
     b << "</body></html>"
     return b.toString()
+}
+
+private String openCard(String anchorId, String headerHtml, boolean openByDefault) {
+    String openAttr = openByDefault ? " open" : ""
+    return "<div class=\"card\" id=\"${anchorId}\"><details${openAttr}><summary class=\"card-h\">${headerHtml}</summary><div class=\"card-b\">"
+}
+
+private String closeCard() {
+    return "</div></details></div>"
 }
 
 // ----- small render helpers -----
@@ -3545,8 +3635,9 @@ private String alink(Long id, String label) {
     return "<a href=\"/installedapp/configure/${id}\" target=\"_blank\">${esc(label ?: ("App " + id))}</a>"
 }
 private String sumcell(String label, String value, String severity) {
-    String cls = severity ? " ${severity}" : ""
-    return "<div class=\"sumcell\"><div class=\"l\">${esc(label)}</div><div class=\"v${cls}\">${esc(value)}</div></div>"
+    String color = (severity == 'warn') ? 'var(--warn)' : (severity == 'crit') ? 'var(--crit)' : null
+    String s = color ? " style=\"color:${color}\"" : ""
+    return "<div class=\"m\"><div class=\"m-l\">${esc(label)}</div><div class=\"m-v\"${s}>${esc(value)}</div></div>"
 }
 private String driverBadge(String dt) {
     return (dt == 'usr')
@@ -3597,6 +3688,7 @@ private boolean dispatchOne(String scanId) {
  * dispatches the next pending id (refilling the pipeline), or finalizes the scan.
  */
 void fullJsonCb(resp, data) {
+    long fetchedAtMs = now()                                        // observe as close to response arrival as possible
     String scanId = data.scanId as String
     ConcurrentHashMap scan = AUDIT_SCANS[scanId]
     if (scan == null) return                                        // callback from prior abandoned scan
@@ -3605,7 +3697,9 @@ void fullJsonCb(resp, data) {
     try {
         if (resp?.status == 200) {
             Map fj = (Map) resp.json
-            (scan.devices as ConcurrentHashMap)[deviceId] = extractAuditFields(fj, deviceId)
+            Map record = extractAuditFields(fj, deviceId)
+            record.fetchedAtMs = fetchedAtMs                        // anchor for stuck-job timing (see buildCrossReference)
+            (scan.devices as ConcurrentHashMap)[deviceId] = record
         } else {
             (scan.failed as ConcurrentHashMap)[deviceId] = "HTTP ${resp?.status ?: 'n/a'}"
         }
