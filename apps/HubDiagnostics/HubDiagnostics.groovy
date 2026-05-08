@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.11.0"
+@Field static final String APP_VERSION = "5.11.1"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -58,6 +58,11 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final String ROOMS_LIST_PATH = "/hub2/roomsList"
 @Field static final String ZWAVE_JS_NODE_STATE_PREFIX = "/hub/zwave2/getNodeState?node="
 @Field static final String HUB_MESH_LINKED_DEVICE_PREFIX = "/hubMesh/localLinkedDevice/"
+@Field static final String CPU_INFO_PATH = "/hub/cpuInfo"
+@Field static final String ZIPGATEWAY_VERSION_PATH = "/hub/advanced/zipgatewayVersion"
+@Field static final String LIMITED_ACCESS_PATH = "/hub/advanced/getLimitedAccessAddresses"
+@Field static final String ALLOW_SUBNETS_PATH = "/hub/allowSubnets"
+@Field static final String DNS_FALLBACK_PATH = "/hub/advanced/getDNSFallback"
 @Field static final String NETWORK_TEST_PING_GATEWAY = "/hub/networkTest/ping/gateway"
 @Field static final String NETWORK_TEST_PING_PREFIX = "/hub/networkTest/ping/"
 @Field static final String NETWORK_TEST_SPEEDTEST = "/hub/networkTest/speedtest"
@@ -1504,7 +1509,8 @@ Map getNetworkData(Map shared = [:]) {
         radioHealth: fetchRadioHealth(),
         zwaveJs: fetchZwaveJsState(),
         ntpServer: fetchNtpServer(),
-        mdns: fetchMdns()
+        mdns: fetchMdns(),
+        zipgatewayVersion: fetchZipgatewayVersion()
     ]
 }
 
@@ -1523,7 +1529,9 @@ Map getHealthData(Map shared = [:]) {
         eventStateLimits: systemHealth.eventStateLimits, alerts: getStructuredAlerts(shared),
         storage: fetchFileManagerStats(),
         backups: fetchBackups(),
-        loadThreshold: fetchExcessiveLoadThreshold()
+        loadThreshold: fetchExcessiveLoadThreshold(),
+        cpuInfo: fetchCpuInfo(),
+        security: fetchSecurityInfo()
     ]
 }
 
@@ -2114,6 +2122,48 @@ Map fetchMdns() {
         totalServiceTypes: resp.totalServiceTypes,
         totalEndpoints: resp.totalEndpoints,
         endpoints: endpoints
+    ]
+}
+
+// ===== Phase 5 fetch methods (v5.11.1) =====
+
+Map fetchCpuInfo() {
+    String txt = (String) hubRequest(CPU_INFO_PATH, "CPU info", "text", 5)
+    if (!txt) return null
+    Map result = [:]
+    txt.split('\n').each { String line ->
+        String trimmed = line.trim()
+        if (!trimmed) return
+        if (trimmed.startsWith("Processors")) {
+            try { result.processors = trimmed.replaceAll(/[^\d]/, '').toInteger() } catch (Exception e) { /* skip */ }
+        } else if (trimmed.startsWith("Load Average")) {
+            try { result.loadAverage = trimmed.replaceAll(/[^\d.]/, '').toFloat() } catch (Exception e) { /* skip */ }
+        }
+    }
+    return result.isEmpty() ? null : result
+}
+
+String fetchZipgatewayVersion() {
+    String txt = (String) hubRequest(ZIPGATEWAY_VERSION_PATH, "zipgateway version", "text", 5)
+    if (!txt) return null
+    String t = txt.trim()
+    return t ?: null
+}
+
+Map fetchSecurityInfo() {
+    String laRaw = (String) hubRequest(LIMITED_ACCESS_PATH, "limited access addresses", "text", 5)
+    String subnets = (String) hubRequest(ALLOW_SUBNETS_PATH, "allowed subnets", "text", 5)
+    String dnsFb = (String) hubRequest(DNS_FALLBACK_PATH, "DNS fallback", "text", 5)
+    String laClean = laRaw ? laRaw.replaceAll(/<[^>]+>/, '').trim() : null
+    boolean limitedSet = laClean && !laClean.equalsIgnoreCase("no limit set") && !laClean.isEmpty()
+    List subnetList = subnets ? subnets.trim().split(',').findAll { it } as List : []
+    return [
+        limitedAccess: [
+            enabled: limitedSet,
+            addresses: limitedSet ? laClean.split(/[,\s]+/).findAll { it } as List : []
+        ],
+        allowedSubnets: subnetList,
+        dnsFallback: dnsFb == null ? null : (dnsFb.toLowerCase().trim() == "true")
     ]
 }
 

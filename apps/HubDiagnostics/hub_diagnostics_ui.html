@@ -114,7 +114,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.11.0";
+const UI_VERSION = "5.11.1";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -504,6 +504,10 @@ function renderHealthRes(r,d){
   let o='';
   o+=mc('Free OS Memory',fmem(r.freeOSMemory),sev(r.freeOSMemory,TH.warnMemMb*1024,TH.critMemMb*1024,true));
   o+=mc('CPU Load (5m)',r.cpuAvg5min?.toFixed(2),sev(r.cpuAvg5min,TH.warnCpuLoad,TH.critCpuLoad,false));
+  if(d.cpuInfo){const ci=d.cpuInfo;
+    if(ci.processors!=null)o+=mc('Processors',ci.processors);
+    if(ci.loadAverage!=null)o+=mc('Load Avg (1m)',ci.loadAverage.toFixed(2));
+  }
   if(d.loadThreshold!=null)o+=mc('Hub Load Threshold',d.loadThreshold+'%');
   o+=mc('Total Java Memory',fmem(r.totalJavaMemory));o+=mc('Free Java Memory',fmem(r.freeJavaMemory));
   o+=mc('Direct Java Memory',fmem(r.directJavaMemory));
@@ -981,7 +985,9 @@ async function rNetwork(){const P='p-network';loading(P);try{
   if(d.zwave){const z=d.zwave;
     o+='<div class="card"><div class="card-h">Z-Wave Network</div><div class="card-b"><div class="ng">';
     o+=ni('Enabled',z.enabled?'Yes':'No');o+=ni('Healthy',z.healthy?'Yes':'No',z.healthy?'var(--ok)':'var(--crit)');
-    o+=ni('Version',z.version||'N/A');o+=ni('Region',z.region||'N/A');o+=ni('Nodes',z.nodeCount);
+    o+=ni('Version',z.version||'N/A');
+    if(d.zipgatewayVersion)o+=ni('Zip Gateway',d.zipgatewayVersion);
+    o+=ni('Region',z.region||'N/A');o+=ni('Nodes',z.nodeCount);
     if(z.zwaveJS!=null){const stack=z.zwaveJS?'ZWaveJS':'Z/IP Gateway';const avail=(!z.zwaveJS&&z.zwaveJSAvailable)?' <span style="color:var(--muted);font-size:12px">(ZWaveJS available)</span>':'';o+='<div class="ni"><div class="nl">Stack</div><div class="nv">'+h(stack)+avail+'</div></div>';}
     if(z.isRadioUpdateNeeded)o+='</div><div class="alert a-warn" style="margin-top:8px">\u26A0 Z-Wave radio firmware update available</div><div class="ng">';
     o+='</div>';
@@ -1226,6 +1232,20 @@ async function rHealth(){const P='p-health';loading(P);try{
       o+='</tbody></table></div></details>';
     }
     o+='</div></div>';
+  }
+  // Security (v5.11.1)
+  if(d.security){const sec=d.security,la=sec.limitedAccess||{};
+    o+='<div class="card"><div class="card-h">Security</div><div class="card-b"><div class="ng">';
+    if(la.enabled){
+      o+=ni('Limited Access','Enabled (' + la.addresses.length + ' address' + (la.addresses.length===1?'':'es') + ')','var(--ok)');
+      if(la.addresses.length)o+=ni('Allowed IPs',la.addresses.join(', '));
+    } else {
+      o+=ni('Limited Access','Off — any LAN IP can reach the hub UI','var(--warn)');
+    }
+    if(sec.allowedSubnets&&sec.allowedSubnets.length)o+=ni('Allowed Subnets',sec.allowedSubnets.join(', '));
+    else o+=ni('Allowed Subnets','(none restricted)');
+    if(sec.dnsFallback!=null)o+=ni('DNS Fallback',sec.dnsFallback?'Enabled':'Disabled');
+    o+='</div></div></div>';
   }
   document.getElementById(P).innerHTML=o;
   // Fetch and render chart async
