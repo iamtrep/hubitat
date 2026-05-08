@@ -14,20 +14,18 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.8.11"
+@Field static final String APP_VERSION = "5.9.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
 @Field static final String DEVICES_LIST_PATH = "/hub2/devicesList"
 @Field static final String APPS_LIST_PATH = "/hub2/appsList"
-@Field static final String APP_FULL_JSON_PATH = "/app/fullJson/"
 @Field static final String NETWORK_CONFIG_PATH = "/hub2/networkConfiguration"
 @Field static final String ZWAVE_DETAILS_PATH = "/hub/zwaveDetails/json"
 @Field static final String ZIGBEE_DETAILS_PATH = "/hub/zigbeeDetails/json"
 @Field static final String MATTER_DETAILS_PATH = "/hub/matterDetails/json"
 @Field static final String HUB_DATA_PATH = "/hub2/hubData"
-@Field static final String MODES_PATH = "/modes/json"
 @Field static final String HUB_MESH_PATH = "/hub2/hubMeshJson"
 @Field static final String STATE_COMPRESSION_PATH = "/hub/advanced/stateCompressionStatus"
 @Field static final String FREE_MEMORY_PATH = "/hub/advanced/freeOSMemoryLast"
@@ -41,6 +39,23 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final String MAX_STATE_AGE_PATH = "/hub/advanced/maxDeviceStateAgeDays"
 @Field static final String MEMORY_HISTORY_PATH = "/hub/advanced/freeOSMemoryHistory"
 @Field static final String DEVICE_TYPES_PATH = "/hub2/userDeviceTypes"
+
+// v5.9.0 — Phase 0+1+2 endpoints
+@Field static final String LOCAL_BACKUPS_PATH = "/hub2/localBackups"
+@Field static final String CLOUD_BACKUPS_PATH = "/hub2/cloudBackups"
+@Field static final String HUB_MESSAGES_PATH = "/hub/messages"
+@Field static final String ZWAVE_HEALTH_PATH = "/hub/zwave/healthStatus"
+@Field static final String ZIGBEE_HEALTH_PATH = "/hub/zigbee/healthStatus"
+@Field static final String ZWAVE_JS_STATUS_PATH = "/hub/zwave2/status"
+@Field static final String ZWAVE_JS_CONTROLLER_PATH = "/hub/zwave2/getControllerState"
+@Field static final String NTP_SERVER_PATH = "/hub/advanced/ntpServer"
+@Field static final String LOAD_THRESHOLD_PATH = "/hub/advanced/getExcessiveLoadThreshold"
+@Field static final String FIRMWARE_UPDATE_PATH = "/hub/cloud/checkForUpdate"
+@Field static final String NETWORK_TEST_PING_GATEWAY = "/hub/networkTest/ping/gateway"
+@Field static final String NETWORK_TEST_PING_PREFIX = "/hub/networkTest/ping/"
+@Field static final String NETWORK_TEST_SPEEDTEST = "/hub/networkTest/speedtest"
+@Field static final String MIN_FW_RADIO_HEALTH = "2.4.1.154"
+@Field static final long   FW_UPDATE_CACHE_TTL_MS = 3600_000L
 
 // ===== Device Usage Audit constants =====
 @Field static final String FULL_JSON_PATH_PREFIX = "/device/fullJson/"
@@ -261,6 +276,9 @@ mappings {
     path('/api/audit/status')  { action: [GET:  'apiAuditStatus'] }
     path('/api/audit/list')    { action: [GET:  'apiAuditList'] }
     path('/api/audit/delete')  { action: [POST: 'apiAuditDelete'] }
+
+    // Network tests (v5.9.0)
+    path('/api/network/test')  { action: [POST: 'apiNetworkTest'] }
 }
 
 // ===== PAGE METHODS =====
@@ -555,6 +573,18 @@ Map apiPerformance() {
     logDebug "apiPerformance completed in ${elapsed}ms"
     recordApiTiming("performance", elapsed)
     return jsonResponse(data)
+}
+
+Map apiNetworkTest() {
+    String type = params.type
+    String ip = params.ip
+    if (!type) return jsonResponse([success: false, error: "Missing 'type' parameter"])
+    long start = now()
+    String result = runNetworkTest(type, ip)
+    long elapsed = now() - start
+    boolean ok = result != null && !result.startsWith("Error:")
+    logDebug "apiNetworkTest(${type}${ip ? ', ' + ip : ''}) completed in ${elapsed}ms"
+    return jsonResponse([success: ok, type: type, ip: ip, output: result, elapsedMs: elapsed])
 }
 
 Map apiPerformanceCompare() {
@@ -1323,7 +1353,8 @@ Map getDashboardData(Map shared = [:]) {
         ],
         apps: [total: appStats.totalApps, builtIn: appStats.builtInApps, user: appStats.userApps],
         resources: resources, temperature: temperature, databaseSize: databaseSize,
-        alerts: getStructuredAlerts(shared), inactivityDays: settings.inactivityDays ?: 7
+        alerts: getStructuredAlerts(shared), inactivityDays: settings.inactivityDays ?: 7,
+        firmwareUpdate: fetchFirmwareUpdate()
     ]
 }
 
@@ -1446,7 +1477,10 @@ Map getNetworkData(Map shared = [:]) {
             linkedDevices: hubMeshRaw.linkedDevices?.size() ?: 0,
             sharedVars: hubMeshRaw.sharedVars?.size() ?: 0, linkedVars: hubMeshRaw.linkedVars?.size() ?: 0,
             peers: hubMeshPeers
-        ] : null
+        ] : null,
+        radioHealth: fetchRadioHealth(),
+        zwaveJs: fetchZwaveJsState(),
+        ntpServer: fetchNtpServer()
     ]
 }
 
@@ -1463,7 +1497,9 @@ Map getHealthData(Map shared = [:]) {
         resources: mem ?: null, temperature: systemHealth.temperature,
         databaseSize: systemHealth.databaseSize, stateCompression: systemHealth.stateCompression,
         eventStateLimits: systemHealth.eventStateLimits, alerts: getStructuredAlerts(shared),
-        storage: fetchFileManagerStats()
+        storage: fetchFileManagerStats(),
+        backups: fetchBackups(),
+        loadThreshold: fetchExcessiveLoadThreshold()
     ]
 }
 
@@ -1573,6 +1609,12 @@ List getStructuredAlerts(Map shared = [:]) {
         alerts << [key: "spammyDevices", name: "Spammy Devices", severity: "warning", message: hubAlerts.spammyDevicesMessage]
     }
 
+    // Hub messages from /hub/messages — admin notifications surfaced in the platform UI
+    fetchHubMessages().each { Map msg ->
+        String text = msg.text ?: msg.message ?: msg.toString()
+        if (text) alerts << [key: "hubMessage", name: text, severity: "info"]
+    }
+
     // Network: Ethernet + WiFi both active
     Map networkConfig = (shared.network?.network as Map) ?: (Map) hubRequest(NETWORK_CONFIG_PATH, "network configuration", "json", 15)
     if (networkConfig && !networkConfig.error && networkConfig.hasEthernet && networkConfig.hasWiFi) {
@@ -1671,6 +1713,44 @@ private Object hubRequest(String path, String name, String type = "json", int ti
     }
 }
 
+// ===== Version + stack detection helpers (Phase 0) =====
+
+private String getHubFirmwareVersion() {
+    if (location?.hubs && location.hubs.size() > 0) {
+        return location.hubs[0].firmwareVersionString ?: ""
+    }
+    return ""
+}
+
+private boolean isVersionAtLeast(String actual, String required) {
+    if (!actual || !required) return false
+    List<Integer> a = actual.split('\\.').collect { String s ->
+        try { return s.toInteger() } catch (Exception e) { return 0 }
+    }
+    List<Integer> r = required.split('\\.').collect { String s ->
+        try { return s.toInteger() } catch (Exception e) { return 0 }
+    }
+    int n = Math.max(a.size(), r.size())
+    for (int i = 0; i < n; i++) {
+        int av = i < a.size() ? a[i] : 0
+        int rv = i < r.size() ? r[i] : 0
+        if (av > rv) return true
+        if (av < rv) return false
+    }
+    return true
+}
+
+private String detectZwaveStack() {
+    if (state.zwaveStackCache) return (String) state.zwaveStackCache
+    String txt = (String) hubRequest(ZWAVE_JS_STATUS_PATH, "Z-Wave JS status probe", "text", 5)
+    String stack
+    if (txt == null) stack = "unknown"
+    else if (txt.toLowerCase().trim() == "true") stack = "js"
+    else stack = "legacy"
+    state.zwaveStackCache = stack
+    return stack
+}
+
 Map fetchSystemResources() {
     String text = (String) hubRequest(FREE_MEMORY_PATH, "system resources", "text", 15)
     if (!text) return null
@@ -1757,6 +1837,142 @@ Map fetchHubAlerts() {
         spammyDevicesMessage: hubData.spammyDevicesMessage,
         devMode: hubData.baseModel?.devMode ?: false
     ]
+}
+
+// ===== Phase 1+2 fetch methods (v5.9.0) =====
+
+Map fetchBackups() {
+    Object localResp = hubRequest(LOCAL_BACKUPS_PATH, "local backups", "json", 10)
+    Map cloudResp = (Map) hubRequest(CLOUD_BACKUPS_PATH, "cloud backups", "json", 15)
+    List localList = (localResp instanceof List) ? (List) localResp : []
+    if (cloudResp?.error) cloudResp = [:]
+    List cloudList = ((cloudResp?.backups as List) ?: [])
+    Map latestLocal = localList ? (Map) localList[-1] : null
+    List cloudThisHub = cloudList.findAll { Map b -> b.thisHub == true } as List
+    Map latestCloud = cloudThisHub ? (Map) cloudThisHub[-1] : null
+    return [
+        local: [
+            count: localList.size(),
+            latestName: latestLocal?.name,
+            latestCreateTime: latestLocal?.createTime,
+            latestPlatformVersion: latestLocal?.platformVersion
+        ],
+        cloud: [
+            thisHubCount: cloudThisHub.size(),
+            otherHubCount: cloudList.size() - cloudThisHub.size(),
+            latestThisHubCreateTime: latestCloud?.createTime,
+            latestThisHubVersion: latestCloud?.platformVersion,
+            otherHubs: cloudList.findAll { Map b -> b.thisHub != true }.collect { Map b ->
+                [hubName: b.hubName, hubVersion: b.hubVersion, platformVersion: b.platformVersion,
+                 createTime: b.createTime, fileSize: b.fileSize]
+            },
+            hasCloudBackupEntitlements: cloudResp?.hasCloudBackupEntitlements ?: false,
+            hasCloudRestoreEntitlements: cloudResp?.hasCloudRestoreEntitlements ?: false
+        ]
+    ]
+}
+
+List fetchHubMessages() {
+    Map resp = (Map) hubRequest(HUB_MESSAGES_PATH, "hub messages", "json", 5)
+    if (!resp || resp.error) return []
+    return ((resp.messages as List) ?: []).collect { Object m ->
+        if (m instanceof Map) return m
+        return [text: m?.toString()]
+    }
+}
+
+Map fetchRadioHealth() {
+    String fw = getHubFirmwareVersion()
+    if (!isVersionAtLeast(fw, MIN_FW_RADIO_HEALTH)) {
+        return [zwave: null, zigbee: null, supported: false, minFirmware: MIN_FW_RADIO_HEALTH, currentFirmware: fw]
+    }
+    String zw = (String) hubRequest(ZWAVE_HEALTH_PATH, "zwave health", "text", 5)
+    String zb = (String) hubRequest(ZIGBEE_HEALTH_PATH, "zigbee health", "text", 5)
+    return [
+        zwave: zw == null ? null : (zw.toLowerCase().trim() == "true"),
+        zigbee: zb == null ? null : (zb.toLowerCase().trim() == "true"),
+        supported: true
+    ]
+}
+
+Map fetchZwaveJsState() {
+    if (detectZwaveStack() != "js") return null
+    Map ctrl = (Map) hubRequest(ZWAVE_JS_CONTROLLER_PATH, "zwave JS controller", "json", 10)
+    if (!ctrl || ctrl.error) return null
+    Map stats = (ctrl.statistics as Map) ?: [:]
+    return [
+        firmwareVersion: ctrl.firmwareVersion, sdkVersion: ctrl.sdkVersion,
+        homeId: ctrl.homeId, ownNodeId: ctrl.ownNodeId,
+        isPrimary: ctrl.isPrimary, isSUC: ctrl.isSUC, isSISPresent: ctrl.isSISPresent,
+        isRebuildingRoutes: ctrl.isRebuildingRoutes,
+        rfRegion: ctrl.rfRegion, supportsLongRange: ctrl.supportsLongRange,
+        statistics: [
+            messagesRX: stats.messagesRX, messagesTX: stats.messagesTX,
+            messagesDroppedRX: stats.messagesDroppedRX, messagesDroppedTX: stats.messagesDroppedTX,
+            CAN: stats.CAN, NAK: stats.NAK,
+            timeoutACK: stats.timeoutACK, timeoutCallback: stats.timeoutCallback, timeoutResponse: stats.timeoutResponse,
+            backgroundRSSI: stats.backgroundRSSI
+        ]
+    ]
+}
+
+Integer fetchExcessiveLoadThreshold() {
+    String txt = (String) hubRequest(LOAD_THRESHOLD_PATH, "excessive load threshold", "text", 5)
+    if (!txt) return null
+    try { return txt.trim().toInteger() } catch (Exception e) { return null }
+}
+
+String fetchNtpServer() {
+    String txt = (String) hubRequest(NTP_SERVER_PATH, "NTP server", "text", 5)
+    if (!txt) return null
+    String t = txt.trim()
+    if (!t || t.equalsIgnoreCase("No value set")) return null
+    return t
+}
+
+Map fetchFirmwareUpdate() {
+    long nowMs = now()
+    if (state.fwUpdateCache && state.fwUpdateCacheAt &&
+        (nowMs - (state.fwUpdateCacheAt as Long)) < FW_UPDATE_CACHE_TTL_MS) {
+        return (Map) state.fwUpdateCache
+    }
+    Map resp = (Map) hubRequest(FIRMWARE_UPDATE_PATH, "firmware update check", "json", 15)
+    if (!resp || resp.error) return null
+    Map result = [
+        currentVersion: getHubFirmwareVersion(),
+        availableVersion: resp.version,
+        updateAvailable: resp.upgrade == true,
+        status: resp.status,
+        beta: resp.beta == true,
+        releaseNotesUrl: resp.releaseNotesUrl
+    ]
+    state.fwUpdateCache = result
+    state.fwUpdateCacheAt = nowMs
+    return result
+}
+
+String runNetworkTest(String type, String ip = null) {
+    String path
+    int timeout
+    switch (type) {
+        case "ping-gateway":
+            path = NETWORK_TEST_PING_GATEWAY
+            timeout = 30
+            break
+        case "ping-ip":
+            if (!ip || !(ip ==~ /^(\d{1,3}\.){3}\d{1,3}$/)) return "Error: invalid IP address"
+            path = NETWORK_TEST_PING_PREFIX + ip
+            timeout = 30
+            break
+        case "speedtest":
+            path = NETWORK_TEST_SPEEDTEST
+            timeout = 90
+            break
+        default:
+            return "Error: unknown test type"
+    }
+    String result = (String) hubRequest(path, "network test ${type}", "text", timeout)
+    return result ?: "(no output returned)"
 }
 
 Map fetchEventStateLimits() {

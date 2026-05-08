@@ -48,6 +48,7 @@ tr:nth-child(even){background:var(--alt)} tr:hover{background:var(--hover)}
 .a-crit{background:#ffebee;border-left:4px solid var(--crit);color:var(--crit)}
 .a-warn{background:#fff3e0;border-left:4px solid var(--warn);color:#e65100}
 .a-ok{background:#e8f5e9;border-left:4px solid var(--ok);color:var(--ok)}
+.a-info{background:#e3f2fd;border-left:4px solid #1976d2;color:#0d47a1}
 
 .loading{text-align:center;padding:50px 20px;color:var(--muted)}
 .spinner{display:inline-block;width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .8s linear infinite;margin-bottom:8px}
@@ -111,7 +112,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.8.11";
+const UI_VERSION = "5.9.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -501,6 +502,7 @@ function renderHealthRes(r,d){
   let o='';
   o+=mc('Free OS Memory',fmem(r.freeOSMemory),sev(r.freeOSMemory,TH.warnMemMb*1024,TH.critMemMb*1024,true));
   o+=mc('CPU Load (5m)',r.cpuAvg5min?.toFixed(2),sev(r.cpuAvg5min,TH.warnCpuLoad,TH.critCpuLoad,false));
+  if(d.loadThreshold!=null)o+=mc('Hub Load Threshold',d.loadThreshold+'%');
   o+=mc('Total Java Memory',fmem(r.totalJavaMemory));o+=mc('Free Java Memory',fmem(r.freeJavaMemory));
   o+=mc('Direct Java Memory',fmem(r.directJavaMemory));
   if(d.temperature!=null){const tf=d.temperature*9/5+32;o+=mc('Temperature',d.temperature.toFixed(1)+'°C ('+tf.toFixed(1)+'°F)',sev(d.temperature,TH.warnTempC,TH.critTempC,false))}
@@ -546,7 +548,14 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   o+='</div></div></div></div>';
   // Alerts
   if(d.alerts&&d.alerts.length){o+='<div class="card"><div class="card-h">Platform Alerts</div><div class="card-b">';
-    d.alerts.forEach(a=>{o+='<div class="alert a-'+(a.severity==='critical'?'crit':'warn')+'">'+(a.severity==='critical'?'\u26D4':'\u26A0')+' '+h(a.name)+'</div>'});o+='</div></div>'}
+    d.alerts.forEach(a=>{const sev=(a.severity==='critical')?'crit':((a.severity==='info')?'info':'warn');const icon=(a.severity==='critical')?'\u26D4':((a.severity==='info')?'\u2139':'\u26A0');o+='<div class="alert a-'+sev+'">'+icon+' '+h(a.name)+'</div>'});o+='</div></div>'}
+  // Firmware update (v5.9.0)
+  if(d.firmwareUpdate){const fu=d.firmwareUpdate;
+    if(fu.updateAvailable){
+      const rn=fu.releaseNotesUrl?' <a href="'+h(fu.releaseNotesUrl)+'" target="_blank" style="color:var(--link)">Release notes</a>':'';
+      o+='<div class="card"><div class="card-h">Hub Firmware</div><div class="card-b"><div class="alert a-warn">\u2B06 Update available: <b>'+h(fu.availableVersion)+'</b> (you have '+h(fu.currentVersion)+').'+rn+'</div></div></div>';
+    }
+  }
   // Reports
   const rpts=await api('reports');
   o+='<div class="card"><div class="card-h">Reports</div><div class="card-b">';
@@ -842,6 +851,13 @@ async function rApps(){const P='p-apps';loading(P);try{
 // ===== TAB: NETWORK =====
 async function rNetwork(){const P='p-network';loading(P);try{
   const d=await api('network');let o='';
+  // Radio health badges (v5.9.0)
+  if(d.radioHealth){const rh=d.radioHealth;
+    if(rh.supported){
+      const badge=(name,val)=>{if(val===true)return '<span class="badge b-ok">'+name+': UP</span>';if(val===false)return '<span class="badge b-crit">'+name+': DOWN</span>';return '<span class="badge b-warn">'+name+': N/A</span>'};
+      o+='<div class="card"><div class="card-b"><div style="display:flex;gap:8px;flex-wrap:wrap">'+badge('Z-Wave',rh.zwave)+badge('Zigbee',rh.zigbee)+'</div></div></div>';
+    }
+  }
   // Network config
   if(d.network){const n=d.network;
     o+='<div class="card"><div class="card-h">Network Configuration</div><div class="card-b"><div class="ng">';
@@ -851,6 +867,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
     if(n.dnsServers&&n.dnsServers.length)o+=ni('DNS',n.dnsServers.join(', '));
     o+=ni('Ethernet',n.hasEthernet?'Connected':'Not Connected');o+=ni('WiFi',n.hasWiFi?'Available':'No');
     if(n.hasWiFi&&n.wifiNetwork)o+=ni('WiFi Network',n.wifiNetwork);
+    o+=ni('NTP Server',d.ntpServer||'(not configured)');
     o+='</div>';
     if(n.hasEthernet&&n.hasWiFi)o+='<div class="alert a-warn" style="margin-top:8px">\u26A0 Both Ethernet and WiFi are active. This is known to cause connectivity issues. Disable WiFi when using Ethernet.</div>';
     o+='</div></div>'}
@@ -880,6 +897,32 @@ async function rNetwork(){const P='p-network';loading(P);try{
       o+='<div style="margin-top:10px"><div class="alert a-warn">\u26A0 Problem Nodes: '+z.problemNodes.length+'</div>';
       z.problemNodes.forEach(n=>{o+='<div style="margin:4px 0;color:var(--crit)">'+(n.deviceId?dlink(n.deviceId,n.name):h(n.name))+' &mdash; '+h(n.issues)+'</div>'});o+='</div>'}
     o+='</div></div>'}
+  // Z-Wave JS Controller (v5.9.0) \u2014 only when Z-Wave JS stack is active
+  if(d.zwaveJs){const j=d.zwaveJs,s=j.statistics||{};
+    o+='<div class="card"><div class="card-h">Z-Wave JS Controller</div><div class="card-b"><div class="ng">';
+    o+=ni('Firmware',j.firmwareVersion);o+=ni('SDK',j.sdkVersion);
+    o+=ni('Home ID',j.homeId);o+=ni('Own Node',j.ownNodeId);
+    o+=ni('Primary',j.isPrimary?'Yes':'No');o+=ni('SUC',j.isSUC?'Yes':'No');o+=ni('SIS Present',j.isSISPresent?'Yes':'No');
+    o+=ni('Long Range',j.supportsLongRange?'Yes':'No');
+    if(j.isRebuildingRoutes)o+=ni('Rebuilding Routes','Yes','var(--warn)');
+    o+='</div>';
+    o+='<div style="margin-top:10px;font-size:12px;font-weight:600;color:var(--muted)">Controller Statistics</div><div class="metrics" style="margin-top:4px">';
+    if(s.messagesRX!=null)o+=mc('RX',s.messagesRX);
+    if(s.messagesTX!=null)o+=mc('TX',s.messagesTX);
+    if(s.messagesDroppedRX!=null)o+=mc('Dropped RX',s.messagesDroppedRX,s.messagesDroppedRX>0?'var(--warn)':'');
+    if(s.messagesDroppedTX!=null)o+=mc('Dropped TX',s.messagesDroppedTX,s.messagesDroppedTX>0?'var(--warn)':'');
+    if(s.CAN!=null)o+=mc('CAN',s.CAN);if(s.NAK!=null)o+=mc('NAK',s.NAK);
+    if(s.timeoutACK!=null)o+=mc('Timeout ACK',s.timeoutACK,s.timeoutACK>0?'var(--warn)':'');
+    if(s.timeoutCallback!=null)o+=mc('Timeout CB',s.timeoutCallback,s.timeoutCallback>0?'var(--warn)':'');
+    if(s.timeoutResponse!=null)o+=mc('Timeout Resp',s.timeoutResponse,s.timeoutResponse>0?'var(--warn)':'');
+    o+='</div>';
+    if(s.backgroundRSSI){const b=s.backgroundRSSI;
+      o+='<div style="margin-top:10px;font-size:12px;font-weight:600;color:var(--muted)">Background RSSI (dBm \u2014 lower is quieter)</div><div class="metrics" style="margin-top:4px">';
+      ['channel0','channel1','channel2','channel3'].forEach(ch=>{if(b[ch]&&b[ch].current!=null){const v=b[ch].current;const sev=v>-70?'var(--crit)':v>-85?'var(--warn)':'var(--ok)';o+=mc(ch.replace('channel','Ch '),v+(b[ch].average!=null?' (avg '+b[ch].average.toFixed(1)+')':''),sev)}});
+      o+='</div>';
+    }
+    o+='</div></div>';
+  }
   // Zigbee
   if(d.zigbee){const z=d.zigbee;
     o+='<div class="card"><div class="card-h">Zigbee Network</div><div class="card-b"><div class="ng">';
@@ -925,7 +968,35 @@ async function rNetwork(){const P='p-network';loading(P);try{
       hm.peers.forEach(p=>{const st=p.offline?'Offline':'Online';const sc=p.offline?'var(--crit)':'var(--ok)';
         o+='<div style="margin:4px 0"><b>'+h(p.name)+'</b> ('+h(p.ip)+') &mdash; <span style="color:'+sc+'">'+st+'</span> | '+p.deviceCount+' devices, '+p.varCount+' variables</div>'});o+='</div>'}
     o+='</div></div>'}
+  // Network Tests (v5.9.0)
+  o+='<div class="card"><div class="card-h">Network Tests</div><div class="card-b">';
+  o+='<div class="muted" style="margin-bottom:8px;font-size:12px">Run live network diagnostics from the hub. Speedtest takes ~30s and briefly loads the hub.</div>';
+  o+='<div class="actions" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">';
+  o+='<button class="btn btn-p" id="btnNetPingGw">Ping gateway</button>';
+  o+='<input type="text" id="netPingIp" placeholder="x.x.x.x" style="padding:6px 10px;border:1px solid var(--border);border-radius:4px;width:130px;font-family:monospace">';
+  o+='<button class="btn btn-p" id="btnNetPingIp">Ping IP</button>';
+  o+='<button class="btn btn-p" id="btnNetSpeed">Speedtest</button>';
+  o+='</div>';
+  o+='<pre id="netTestOut" style="margin-top:10px;padding:10px;background:#1e1e1e;color:#dcdcdc;border-radius:4px;font-size:12px;line-height:1.4;min-height:60px;white-space:pre-wrap;overflow-x:auto;display:none"></pre>';
+  o+='</div></div>';
   document.getElementById(P).innerHTML=o;
+  // Wire network test buttons
+  const ntOut=document.getElementById('netTestOut');
+  const runNt=async(type,ip)=>{
+    ntOut.style.display='block';ntOut.textContent='Running '+type+(ip?' '+ip:'')+'...';
+    try{
+      const q='type='+encodeURIComponent(type)+(ip?'&ip='+encodeURIComponent(ip):'');
+      const r=await post('network/test',q);
+      ntOut.textContent=r.output||'(no output)';
+    }catch(e){ntOut.textContent='Error: '+e.message}
+  };
+  const bGw=document.getElementById('btnNetPingGw');if(bGw)bGw.onclick=()=>runNt('ping-gateway');
+  const bIp=document.getElementById('btnNetPingIp');
+  if(bIp)bIp.onclick=()=>{const ip=document.getElementById('netPingIp').value.trim();
+    if(!ip||!/^(\d{1,3}\.){3}\d{1,3}$/.test(ip)){alert('Enter a valid IPv4 address (e.g. 1.1.1.1)');return}
+    runNt('ping-ip',ip)};
+  const bSt=document.getElementById('btnNetSpeed');
+  if(bSt)bSt.onclick=()=>{if(!confirm('Run speedtest? Takes ~30s and briefly loads the hub.'))return;runNt('speedtest')};
   // Calculate message rates if uptime is available
   if(d.uptimeSeconds>0){
     const min=d.uptimeSeconds/60;
@@ -985,7 +1056,7 @@ async function rHealth(){const P='p-health';loading(P);try{
     else if(a.name||a.message)allAlerts.push({severity:a.severity||'warning',message:a.name||a.message});
   });
   if(allAlerts.length){o+='<div class="card"><div class="card-h">Alerts ('+allAlerts.length+')</div><div class="card-b">';
-    allAlerts.forEach(a=>{o+='<div class="alert a-'+(a.severity==='critical'?'crit':'warn')+'">'+(a.severity==='critical'?'\u26D4':'\u26A0')+' '+h(a.message)+'</div>'});o+='</div></div>'}
+    allAlerts.forEach(a=>{const sev=(a.severity==='critical')?'crit':((a.severity==='info')?'info':'warn');const icon=(a.severity==='critical')?'\u26D4':((a.severity==='info')?'\u2139':'\u26A0');o+='<div class="alert a-'+sev+'">'+icon+' '+h(a.message)+'</div>'});o+='</div></div>'}
   else o+='<div class="alert a-ok">\u2705 No active alerts</div>';
   // Resources
   if(d.resources){const r=d.resources;
@@ -1008,6 +1079,28 @@ async function rHealth(){const P='p-health';loading(P);try{
     if(st.freeSpace!=null)o+=mc('Free Space',fmem(st.freeSpace));
     o+='</div>'}
   o+='</div></div>';
+  // Backups (v5.9.0)
+  if(d.backups){const bk=d.backups,lo=bk.local||{},co=bk.cloud||{};
+    const stale=lo.latestCreateTime?(Date.now()-new Date(lo.latestCreateTime.replace(' ','T')).getTime())/86400000:null;
+    const localSev=lo.count===0?'var(--crit)':(stale!=null&&stale>2?'var(--warn)':'var(--ok)');
+    const cloudThis=co.thisHubCount||0;
+    o+='<div class="card"><div class="card-h">Backups</div><div class="card-b"><div class="metrics">';
+    o+=mc('Local Backups',lo.count||0,localSev);
+    if(lo.latestCreateTime)o+=mc('Latest Local',lo.latestCreateTime+(stale!=null?' ('+stale.toFixed(1)+'d ago)':''));
+    if(lo.latestPlatformVersion)o+=mc('Latest Local FW',lo.latestPlatformVersion);
+    o+=mc('Cloud (this hub)',cloudThis,cloudThis===0?(co.hasCloudBackupEntitlements?'var(--warn)':'var(--muted)'):'var(--ok)');
+    if(co.latestThisHubCreateTime)o+=mc('Latest Cloud',co.latestThisHubCreateTime);
+    if(co.otherHubCount>0)o+=mc('Cloud (other hubs)',co.otherHubCount);
+    o+=mc('Cloud Backup Entitlement',co.hasCloudBackupEntitlements?'Yes':'No',co.hasCloudBackupEntitlements?'var(--ok)':'');
+    o+=mc('Cloud Restore Entitlement',co.hasCloudRestoreEntitlements?'Yes':'No',co.hasCloudRestoreEntitlements?'var(--ok)':'');
+    o+='</div>';
+    if(co.otherHubs&&co.otherHubs.length){
+      o+='<details style="margin-top:10px"><summary style="cursor:pointer;color:var(--muted)">Cloud backups for other hubs ('+co.otherHubs.length+')</summary><div class="tbl-wrap" style="margin-top:6px"><table><thead><tr><th>Hub</th><th>Hardware</th><th>Firmware</th><th>Size</th><th>Created</th></tr></thead><tbody>';
+      co.otherHubs.forEach(b=>{o+='<tr><td>'+h(b.hubName||'')+'</td><td>'+h(b.hubVersion||'')+'</td><td>'+h(b.platformVersion||'')+'</td><td>'+h(b.fileSize||'')+'</td><td>'+h(b.createTime||'')+'</td></tr>'});
+      o+='</tbody></table></div></details>';
+    }
+    o+='</div></div>';
+  }
   document.getElementById(P).innerHTML=o;
   // Fetch and render chart async
   api('health/history').then(h=>{renderChart(h.dataPoints,'memChart')}).catch(()=>{document.getElementById('memChart').innerHTML='<i style="color:var(--muted)">Unable to load history</i>'});
