@@ -16,7 +16,7 @@ Severity legend: 🔴 critical bug · 🟠 high (architecture / leverage) · �
 
 | # | Finding | Severity | Verdict | Status |
 |---|---|---|---|---|
-| 1 | Re-fetch in single request path; multiple `/hub2/hubData` per dashboard refresh | 🟠 | Valid & understated; the `shared` Map pattern is half-built | [ ] |
+| 1 | Re-fetch in single request path; multiple `/hub2/hubData` per dashboard refresh | 🟠 | **Fixed v5.14.0** | [x] |
 | 2 | Oversized methods (`renderAuditHtml` 363 lines, `apiSnapshotDiff` 242, `analyzeDevices` 172) | 🟡 | Partially valid — only `renderAuditHtml` is truly egregious | [ ] |
 | 3 | Audit report duplicates SPA framework (own CSS / own table-sort JS) | 🟠 | Strongly valid | [ ] |
 | 4 | `serveUI` runs `getUIVersion()` + sync check on every request | 🟡 | Valid; 24h-gated so production impact is modest | [ ] |
@@ -28,7 +28,7 @@ Severity legend: 🔴 critical bug · 🟠 high (architecture / leverage) · �
 | 10 | Table filter searches raw fields, not rendered cell content | 🟡 | Valid UX surprise | [ ] |
 | 11 | `MOCK_DATA` shipped in production (5,635 B / 4% of file) | ⚪ | **Overstated** — accept | n/a |
 | 12 | `hubRequest` has 3 distinct return shapes for "did it work?" | 🟡 | Valid | [ ] |
-| A1 | The `shared` Map plumbing is dead infrastructure — wiring it through the API entry points would directly fix #1 | 🟠 | Internal — high leverage | [ ] |
+| A1 | The `shared` Map plumbing is dead infrastructure — wiring it through the API entry points would directly fix #1 | 🟠 | **Fixed v5.14.0** | [x] |
 | A2 | `apiSnapshotDiff` writes diff payload to FileManager on every request | ⚪ | Internal — write amplification | [ ] |
 | A3 | `detectZwaveStack` cache never invalidated | ⚪ | Internal — trivial | [ ] |
 | A4 | `state.fwUpdateCache` stores entire response Map instead of just diff-relevant fields | ⚪ | Internal — trivial | [ ] |
@@ -71,13 +71,20 @@ Severity legend: 🔴 critical bug · 🟠 high (architecture / leverage) · �
 
 ---
 
-### 🟠 #1 + A1 — `/hub2/hubData` fetched 4× per dashboard refresh; `shared` Map plumbing exists but is dead
+### ✅ #1 + A1 — `/hub2/hubData` fetched 2-3× per request; `shared` Map plumbing was dead (fixed v5.14.0)
 
-**Where (callers):** `getHubInfo()` (line ~3389), `fetchHubAlerts()` (1984), `fetchSecurityInfo()` (2279), `fetchFirmwareUpdate()` (uses cache but populates from same endpoint).
+**Original callers of `/hub2/hubData`:** `fetchHubAlerts()`, `fetchSecurityInfo()`, `getHubInfo()`. (CODE_REVIEW originally also listed `fetchFirmwareUpdate` — wrong; that one hits `/hub/cloud/checkForUpdate`, not hubData.)
 
-**Existing infrastructure:** `getDashboardData(Map shared = [:])`, `getNetworkData(Map shared = [:])`, `getHealthData(Map shared = [:])`, `getStructuredAlerts(Map shared = [:])` — all designed to accept a shared cache. None of the API entry points (`apiDashboard`, `apiHealth`, `apiNetwork`) populate or pass a `shared` Map.
+**Fix shipped:** new `private Map buildSharedCache(boolean includeNetwork = false)` helper pre-fetches `hubData`, `resources`, `temperature`, `databaseSize`, `hubAlerts` once per request. The three hubData consumers now accept an optional `Map prefetchedHubData = null` and skip the self-fetch when one is provided. Wired through `apiDashboard`, `apiHealth`, and (minimally) `apiNetwork`.
 
-**Fix sketch:** create a private `gatherShared()` that fetches `hubData`, `runtimeStats`, `network` once and returns a Map; pass it through `getDashboardData(shared)` etc. from each `apiXxx` entry point. Per-call hub traffic drops from ~5–7 to ~3.
+**Per-request hubData fetches:**
+- `/api/dashboard`: 2 → 1
+- `/api/health`:    2 → 1
+- `/api/network`:   1 → 1 (consistency only — only `fetchSecurityInfo` consumed hubData here)
+
+Plus `fetchSystemResources` / `fetchTemperature` / `fetchDatabaseSize` de-duplicated within each request — previously called once directly and a second time by `getStructuredAlerts`'s `?:` fallback when shared was empty.
+
+**Resilience trade-off note (one-time hub-stress event observed post-deploy):** when hubData times out (10s), pre-R-2 the two consumers (fetchHubAlerts + getHubInfo) each made independent retry attempts, sometimes one of which succeeded. Post-R-2 both share one fetch attempt. Downstream still degrades gracefully (empty alerts, fall-back hub.hardware from `location.hubs[0].type`, null cloudController) — same UI degradation, just more deterministic now. R-4's items #12 + A8 (uniform return shape + retry) will address this resilience concern properly.
 
 ---
 
@@ -214,17 +221,16 @@ Goal: ship the two real defects immediately. Both were one-line changes.
 
 ---
 
-### Phase R-2 — Wire up the `shared` Map (M, ~1-2 hours)
+### Phase R-2 — Wire up the `shared` Map (M, ~1-2 hours) — ✅ shipped v5.14.0 (`fe7f819`)
 
-Goal: fix #1 + A1 by completing the half-built request-scoped cache. Single biggest perf win available.
+Goal: fix #1 + A1 by completing the half-built request-scoped cache.
 
-- [ ] Add `private Map gatherShared()` that fetches `hubData`, `runtimeStats`, and `analyzeNetwork()` once; returns `[hubData, runtimeStats, network, hubAlerts, resources]` Map
-- [ ] In `apiDashboard`, `apiHealth`, `apiNetwork`, `apiPerformance`: build `shared` once, pass to `getXxxData(shared)`
-- [ ] Refactor `getHubInfo()`, `fetchHubAlerts()`, `fetchSecurityInfo()`, `fetchFirmwareUpdate()` to accept an optional pre-fetched hubData arg (don't re-fetch when caller already has it)
-- [ ] Verify: `/api/dashboard` should make ~3 hub calls instead of ~6; measure via `logDebug` instrumentation or `apiTimings`
-- [ ] Bump to v5.14.0 (minor — meaningful internal refactor, no UI change)
+- [x] Added `private Map buildSharedCache(boolean includeNetwork = false)` — pre-fetches hubData, resources, temperature, databaseSize, hubAlerts; optional network/runtimeStats for heavier endpoints
+- [x] Wired through `apiDashboard`, `apiHealth`, `apiNetwork` (minimal — just hubData since only `fetchSecurityInfo` consumes it there). `apiPerformance` not touched (no hubData consumer in its path).
+- [x] Refactored `getHubInfo`, `fetchHubAlerts`, `fetchSecurityInfo` to accept optional `Map prefetchedHubData = null`. `fetchFirmwareUpdate` was excluded after re-verification — it hits `/hub/cloud/checkForUpdate`, not hubData.
+- [x] No behavioral regression: 175/175 PASS on maison-pro after refactor.
 
-**Verification:** `test-hub-diagnostics-api.sh` still passes (no behavioral change). Manual: enable debug logging, watch `/hub/logs` for "Fetched X" lines per dashboard refresh, count drops by ~50%.
+**Trade-off note:** one timeout error observed post-deploy. Pre-R-2, two consumers each made independent fetch attempts; post-R-2 both share one. Downstream consumers still degrade gracefully — empty alerts, local fallback for hub.hardware, null cloudController. The deterministic single-attempt is the price of the call-count savings; resilience improvement (retry/backoff) is part of R-4 item #12 + A8.
 
 ---
 
