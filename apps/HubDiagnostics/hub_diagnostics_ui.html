@@ -85,6 +85,24 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 .report-mode .actions,.report-mode .live-only{display:none}
 .report-banner{background:#fff3cd;color:#856404;padding:8px 20px;font-size:13px;text-align:center;border-bottom:1px solid #ffc107;position:sticky;top:0;z-index:101}
 .report-mode .hdr{top:33px}
+
+/* ===== AUDIT MODE — styles not already in the SPA ===== */
+/* Audit page uses body directly (no .hdr sticky chrome) */
+#audit-root body,.audit-body{padding:16px}
+.toc{background:var(--card);border-radius:0 0 8px 8px;padding:14px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.toc-l{color:var(--muted);font-size:11px;text-transform:uppercase;font-weight:600;margin-bottom:6px}
+.toc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:4px;font-size:13px}
+.hdr-audit{background:var(--primary);color:#fff;padding:10px 20px;border-radius:8px 8px 0 0;display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:0}
+.hdr-audit h1{font-size:17px;font-weight:600}.hdr-audit .meta{font-size:12px;opacity:.85;margin-left:auto}
+summary.card-h{cursor:pointer;user-select:none}
+summary.card-h::-webkit-details-marker{color:var(--muted)}
+summary.card-h::marker{color:var(--muted)}
+summary.card-h:hover{background:#f0f0f0}
+details:not([open])>summary.card-h{border-bottom:0}
+table[data-sortable] th{cursor:pointer}
+table[data-sortable] th:hover{background:#1565a7}
+table[data-sortable] th[data-dir] .arr{opacity:1}
+.muted{color:var(--muted)}.warn{color:var(--warn)}.crit{color:var(--crit)}
 </style>
 </head>
 <body>
@@ -1999,12 +2017,6 @@ async function refreshLive(){
     ['res-dash-ts','res-health-ts','res-perf-ts'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='Updated '+ts});
   }catch(e){}
 }
-let liveTimer=setInterval(refreshLive,liveIntervalSec*1000);
-document.addEventListener('visibilitychange',()=>{
-  clearInterval(liveTimer);
-  if(!document.hidden)liveTimer=setInterval(refreshLive,liveIntervalSec*1000)
-});
-
 function refreshPage(){
   const keys={dashboard:['dashboard'],devices:['devices'],apps:['apps'],network:['network'],
     health:['health','health/history'],performance:['performance'],config:['settings'],snapshots:['snapshots']};
@@ -2012,7 +2024,384 @@ function refreshPage(){
   R[curTab]()
 }
 
-go(curTab);
+// ===== AUDIT MODE =====
+async function renderAuditPage(filename) {
+  document.body.innerHTML = '<div id="audit-root" style="padding:20px"><div class="loading">Loading audit report…</div></div>';
+  try {
+    const data = await api('audit/data?filename=' + encodeURIComponent(filename));
+    document.getElementById('audit-root').innerHTML = buildAuditHtml(data);
+    initAuditSort();
+  } catch(e) {
+    document.getElementById('audit-root').innerHTML = `<div class="err">Failed to load audit report: ${h(e.message || String(e))}</div>`;
+  }
+}
+
+function fmtDurSec(ms) {
+  if (ms == null) return '';
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return sec + 's';
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return m + 'm ' + s + 's';
+}
+
+function buildAuditHtml(data) {
+  const hubName = data.hubName || '';
+  const generatedAt = data.generatedAt || '';
+  const unreferenced = data.unreferenced || [];
+  const meshOrphans = data.meshOrphans || [];
+  const stuckJobs = data.stuckJobs || [];
+  const tunedDevices = data.tunedDevices || [];
+  const tunedDefaults = data.tunedDefaults || {};
+  const criticalTop20 = data.criticalTop20 || [];
+  const rooms = data.rooms || [];
+  const appsToDevices = data.appsToDevices || [];
+  const dashboardsToDevices = data.dashboardsToDevices || [];
+  const allDevices = data.allDevices || {};
+  const failed = data.failed || [];
+
+  const zwNodeRows = Object.values(allDevices).filter(d => d.zwaveNode != null);
+  const hmRows = Object.values(allDevices).filter(d => d.hubMeshState != null);
+
+  function sumcell(label, value, severity) {
+    const color = severity === 'warn' ? 'var(--warn)' : severity === 'crit' ? 'var(--crit)' : null;
+    const s = color ? ` style="color:${color}"` : '';
+    return `<div class="m"><div class="m-l">${h(label)}</div><div class="m-v"${s}>${h(String(value ?? ''))}</div></div>`;
+  }
+  function openCard(anchorId, headerHtml, openByDefault) {
+    const openAttr = openByDefault ? ' open' : '';
+    return `<div class="card" id="${anchorId}"><details${openAttr}><summary class="card-h">${headerHtml}</summary><div class="card-b">`;
+  }
+  function closeCard() { return '</div></details></div>'; }
+  function driverBadge(dt) {
+    return dt === 'usr'
+      ? '<span class="badge b-community">Community</span>'
+      : '<span class="badge b-builtin">Built-in</span>';
+  }
+
+  let o = '';
+
+  // Header
+  o += `<div class="hdr-audit"><h1>Device Usage Audit — ${h(hubName)}</h1>`;
+  o += `<div class="meta">Generated ${h(generatedAt)} · ${data.deviceCount} devices · scan ${fmtDurSec(data.scanDurationMs)}</div></div>`;
+
+  // TOC
+  o += '<div class="toc"><div class="toc-l">Contents</div><div class="toc-grid">';
+  o += '<div><a href="#summary">Summary</a></div>';
+  o += `<div><a href="#unref">Unreferenced devices (${unreferenced.length})</a></div>`;
+  o += `<div><a href="#orphans">Mesh orphans (${meshOrphans.length})</a></div>`;
+  o += `<div><a href="#stuck">Stuck scheduled jobs (${stuckJobs.length})</a></div>`;
+  o += `<div><a href="#tuned">Manually-tuned devices (${tunedDevices.length})</a></div>`;
+  o += '<div><a href="#critical">Critical devices (top 20)</a></div>';
+  o += `<div><a href="#rooms">Devices by room (${rooms.length})</a></div>`;
+  if (zwNodeRows.length > 0) o += `<div><a href="#zwjs">Z-Wave JS mesh health (${zwNodeRows.length})</a></div>`;
+  if (hmRows.length > 0) o += `<div><a href="#hubmesh">Hub Mesh linked devices (${hmRows.length})</a></div>`;
+  o += `<div><a href="#apps">Apps → devices (${appsToDevices.length})</a></div>`;
+  o += `<div><a href="#dashboards">Dashboards → devices (${dashboardsToDevices.length})</a></div>`;
+  o += '<div><a href="#all">Per-device detail table</a></div>';
+  if (failed.length > 0) o += `<div><a href="#failed" class="crit">Failed to fetch (${failed.length})</a></div>`;
+  o += '</div></div>';
+
+  // Summary
+  o += '<div class="card" id="summary"><div class="card-h">Summary</div><div class="card-b"><div class="metrics">';
+  o += sumcell('Devices', data.deviceCount, null);
+  o += sumcell('Unreferenced', unreferenced.length, 'warn');
+  o += sumcell('Mesh orphans', meshOrphans.length, 'crit');
+  o += sumcell('Stuck jobs', stuckJobs.length, 'warn');
+  o += sumcell(`Critical (≥${data.criticalThreshold} refs)`, data.criticalCount, null);
+  o += '</div></div></div>';
+
+  // Unreferenced
+  o += openCard('unref', `⚠ Unreferenced devices (${unreferenced.length})`, true);
+  if (!unreferenced.length) {
+    o += '<div class="muted">None — every device is used by at least one app, dashboard, or parent integration.</div>';
+  } else {
+    o += '<div class="muted" style="margin-bottom:6px">No apps, no dashboards, no parent app — default sort: oldest last activity first.</div>';
+    o += '<div class="tbl-wrap"><table data-sortable id="t_unref"><thead><tr><th>Device</th><th>Type</th><th data-sd="asc">Last activity</th><th>Source</th></tr></thead><tbody>';
+    unreferenced.forEach(u => {
+      o += `<tr><td>${dlink(u.id, u.name)}</td>`;
+      o += `<td>${h(u.type || '')}</td>`;
+      o += `<td>${h(u.lastActivityTime || '')}</td>`;
+      o += `<td>${driverBadge(u.driverType)}</td></tr>`;
+    });
+    o += '</tbody></table></div>';
+  }
+  o += closeCard();
+
+  // Mesh orphans
+  o += openCard('orphans', `⚠ Mesh orphans (${meshOrphans.length})`, true);
+  if (!meshOrphans.length) {
+    o += '<div class="muted">None — no devices report orphan radio state.</div>';
+  } else {
+    o += '<div class="muted" style="margin-bottom:6px">Hubitat reports <code>orphan: true</code> — physical radio relationship lost.</div>';
+    o += '<div>' + meshOrphans.map(d => dlink(d.id, d.name)).join(' · ') + '</div>';
+  }
+  o += closeCard();
+
+  // Stuck jobs
+  o += openCard('stuck', `⚠ Stuck scheduled jobs (${stuckJobs.length})`, true);
+  if (!stuckJobs.length) {
+    o += '<div class="muted">None — all scheduled jobs have a future or null nextRunTime.</div>';
+  } else {
+    o += '<div class="muted" style="margin-bottom:6px">A null <i>Last run</i> with a past <i>nextRunTime</i> = job was scheduled but never fired.</div>';
+    o += '<div class="tbl-wrap"><table data-sortable id="t_stuck"><thead><tr><th>Device</th><th>Handler</th><th data-t="n" data-sd="desc">Overdue</th><th>Last run</th><th>Status</th></tr></thead><tbody>';
+    stuckJobs.forEach(s => {
+      const prev = s.prevRunTime || '';
+      o += `<tr><td>${dlink(s.id, s.name)}</td>`;
+      o += `<td><code>${h(s.handler || '')}</code></td>`;
+      o += `<td data-sv="${s.overdueMs || 0}">${fmtDurSec(s.overdueMs)}</td>`;
+      o += `<td>${prev ? h(prev) : '<span class="muted">never</span>'}</td>`;
+      o += `<td>${h(s.status || '')}</td></tr>`;
+    });
+    o += '</tbody></table></div>';
+  }
+  o += closeCard();
+
+  // Manually-tuned devices
+  o += openCard('tuned', `🛠 Manually-tuned devices (${tunedDevices.length})`, true);
+  if (!tunedDevices.length) {
+    o += '<div class="muted">All devices share the same buffer/threshold values — none have been manually tuned.</div>';
+  } else {
+    o += `<div class="muted" style="margin-bottom:6px">Devices whose buffer/threshold values diverge from the fleet mode (default: spammyThreshold=${tunedDefaults.spammyThreshold || '?'}, maxStates=${tunedDefaults.maxStates || '?'}, maxEvents=${tunedDefaults.maxEvents || '?'}). Diverging values shown in <span class="warn">bold</span>.</div>`;
+    o += '<div class="tbl-wrap"><table data-sortable id="t_tuned"><thead><tr><th data-sd="asc">Device</th><th data-t="n">spammyThreshold</th><th data-t="n">maxStates</th><th data-t="n">maxEvents</th></tr></thead><tbody>';
+    tunedDevices.forEach(t => {
+      const stCell = t.spammyThreshold == null ? '<span class="muted">—</span>' : (t.spammyOff ? `<b style="color:var(--warn)">${t.spammyThreshold}</b>` : String(t.spammyThreshold));
+      const msCell = t.maxStates == null ? '<span class="muted">—</span>' : (t.maxStatesOff ? `<b style="color:var(--warn)">${t.maxStates}</b>` : String(t.maxStates));
+      const meCell = t.maxEvents == null ? '<span class="muted">—</span>' : (t.maxEventsOff ? `<b style="color:var(--warn)">${t.maxEvents}</b>` : String(t.maxEvents));
+      o += `<tr><td>${dlink(t.id, t.name)}</td>`;
+      o += `<td data-sv="${t.spammyThreshold ?? 0}">${stCell}</td>`;
+      o += `<td data-sv="${t.maxStates ?? 0}">${msCell}</td>`;
+      o += `<td data-sv="${t.maxEvents ?? 0}">${meCell}</td></tr>`;
+    });
+    o += '</tbody></table></div>';
+  }
+  o += closeCard();
+
+  // Critical devices
+  o += openCard('critical', '⭐ Critical devices (top 20 by reference count)', true);
+  if (!criticalTop20.length) {
+    o += '<div class="muted">No devices have any apps or dashboards.</div>';
+  } else {
+    o += '<div class="tbl-wrap"><table data-sortable id="t_crit"><thead><tr><th>Device</th><th data-t="n">Apps</th><th data-t="n">Dashboards</th><th data-t="n" data-sd="desc">Total</th></tr></thead><tbody>';
+    criticalTop20.forEach(c => {
+      o += `<tr><td>${dlink(c.id, c.name)}</td>`;
+      o += `<td>${c.appsCount}</td><td>${c.dashboardsCount}</td>`;
+      o += `<td><b>${c.total}</b></td></tr>`;
+    });
+    o += '</tbody></table></div>';
+  }
+  o += closeCard();
+
+  // Devices by room
+  o += openCard('rooms', `🏠 Devices by room (${rooms.length})`, true);
+  if (!rooms.length) {
+    o += '<div class="muted">No room data available.</div>';
+  } else {
+    o += '<div class="muted" style="margin-bottom:6px">Devices grouped by their assigned room. Empty rooms surface storage clutter; high-density rooms may warrant a split.</div>';
+    o += '<div class="tbl-wrap"><table data-sortable id="t_rooms"><thead><tr><th>Room</th><th data-t="n" data-sd="desc">Devices</th><th>Members</th></tr></thead><tbody>';
+    rooms.forEach(r => {
+      const dids = r.deviceIds || [];
+      const members = dids.map(did => {
+        const dev = allDevices[did];
+        const label = dev ? (dev.label || dev.name || ('Device ' + did)) : ('Device ' + did);
+        return dlink(did, label);
+      }).join(' · ');
+      o += `<tr><td><b>${h(r.name || '')}</b></td>`;
+      o += `<td data-sv="${dids.length}">${dids.length}</td>`;
+      o += `<td>${members || '<span class="muted">empty</span>'}</td></tr>`;
+    });
+    o += '</tbody></table></div>';
+  }
+  o += closeCard();
+
+  // Z-Wave JS mesh health
+  if (zwNodeRows.length > 0) {
+    o += openCard('zwjs', `📶 Z-Wave JS mesh health (${zwNodeRows.length})`, true);
+    o += '<div class="muted" style="margin-bottom:6px">Per-node controller statistics from Z-Wave JS. RSSI lower (more negative) is quieter; RTT lower is faster; PER (packet error rate) higher is worse.</div>';
+    o += '<div class="tbl-wrap"><table data-sortable id="t_zwjs"><thead><tr><th>Device</th><th data-t="n">Node</th><th>State</th><th>Status</th><th>Interview</th><th data-t="n">RTT</th><th>RSSI</th><th data-t="n" data-sd="desc">PER %</th><th data-t="n">TX</th><th data-t="n">RX</th><th>Last Seen</th></tr></thead><tbody>';
+    const sortedZw = zwNodeRows.slice().sort((a, b) => ((b.zwaveNode && b.zwaveNode.per) || 0) - ((a.zwaveNode && a.zwaveNode.per) || 0));
+    sortedZw.forEach(d => {
+      const z = d.zwaveNode || {};
+      const stats = z.statistics || {};
+      const stateColor = z.nodeState === 'OK' ? 'var(--ok)' : 'var(--crit)';
+      o += `<tr><td>${dlink(d.id, d.label || d.name)}</td>`;
+      o += `<td>${z.nodeId || ''}</td>`;
+      o += `<td><span style="color:${stateColor}">${h(z.nodeState || '')}</span></td>`;
+      o += `<td>${z.status || ''}</td>`;
+      o += `<td>${h(z.interviewStage || '')}</td>`;
+      o += `<td>${z.rtt || '<span class="muted">—</span>'}</td>`;
+      o += `<td>${z.rssi || '<span class="muted">—</span>'}</td>`;
+      o += `<td data-sv="${z.per || 0}">${z.per || 0}</td>`;
+      o += `<td>${stats.commandsTX || 0}</td>`;
+      o += `<td>${stats.commandsRX || 0}</td>`;
+      o += `<td>${h((z.lastSeenLocal || ''))}</td></tr>`;
+    });
+    o += '</tbody></table></div>';
+    o += closeCard();
+  }
+
+  // Hub Mesh linked devices
+  if (hmRows.length > 0) {
+    o += openCard('hubmesh', `🔗 Hub Mesh linked devices (${hmRows.length})`, true);
+    o += '<div class="muted" style="margin-bottom:6px">Devices physically owned by another hub on this account, exposed locally via Hub Mesh.</div>';
+    o += '<div class="tbl-wrap"><table data-sortable id="t_hubmesh"><thead><tr><th>Device</th><th>Source Hub</th><th>Source Device ID</th><th>Status</th><th>Raw</th></tr></thead><tbody>';
+    hmRows.forEach(d => {
+      const hm = d.hubMeshState || {};
+      const srcHub = hm.sourceHubName || hm.hostHubName || hm.hubName || '—';
+      const srcDevId = String(hm.sourceDeviceId || hm.hostDeviceId || hm.remoteDeviceId || '');
+      const status = String(hm.status || hm.linkStatus || hm.online || '');
+      o += `<tr><td>${dlink(d.id, d.label || d.name)}</td>`;
+      o += `<td>${h(srcHub)}</td>`;
+      o += `<td>${h(srcDevId)}</td>`;
+      o += `<td>${h(status)}</td>`;
+      o += `<td><code style="font-size:11px">${h(JSON.stringify(hm))}</code></td></tr>`;
+    });
+    o += '</tbody></table></div>';
+    o += closeCard();
+  }
+
+  // Apps -> devices
+  o += openCard('apps', `📱 Apps → devices (${appsToDevices.length})`, true);
+  if (!appsToDevices.length) {
+    o += '<div class="muted">No apps subscribe to any devices.</div>';
+  } else {
+    o += '<div class="filter"><input type="text" data-filter="t_apps" placeholder="Filter apps or devices…"></div>';
+    o += '<div class="tbl-wrap"><table data-sortable id="t_apps"><thead><tr><th data-sd="asc">App</th><th data-t="n"># Devices</th><th>Devices</th></tr></thead><tbody>';
+    appsToDevices.forEach(a => {
+      const n = (a.devices || []).length;
+      const devs = (a.devices || []).map(d => dlink(d.id, d.name)).join(', ');
+      const appCell = a.disabled
+        ? `<s class="muted" title="App is disabled — its subscriptions are inactive">${alink(a.id, a.label)}</s> <span class="badge b-warn">disabled</span>`
+        : alink(a.id, a.label);
+      o += `<tr><td data-sv="${h(a.label || '')}">${appCell}</td>`;
+      o += `<td>${n}</td>`;
+      o += `<td>${devs}</td></tr>`;
+    });
+    o += '</tbody></table></div>';
+  }
+  o += closeCard();
+
+  // Dashboards -> devices
+  o += openCard('dashboards', `📊 Dashboards → devices (${dashboardsToDevices.length})`, true);
+  if (!dashboardsToDevices.length) {
+    o += '<div class="muted">No dashboards reference any devices.</div>';
+  } else {
+    o += '<div class="filter"><input type="text" data-filter="t_dash" placeholder="Filter dashboards or devices…"></div>';
+    o += '<div class="tbl-wrap"><table data-sortable id="t_dash"><thead><tr><th data-sd="asc">Dashboard</th><th data-t="n"># Devices</th><th>Devices</th></tr></thead><tbody>';
+    dashboardsToDevices.forEach(d => {
+      const n = (d.devices || []).length;
+      const devs = (d.devices || []).map(dv => dlink(dv.id, dv.name)).join(', ');
+      o += `<tr><td><b>${h(d.name || '')}</b></td>`;
+      o += `<td>${n}</td>`;
+      o += `<td>${devs}</td></tr>`;
+    });
+    o += '</tbody></table></div>';
+  }
+  o += closeCard();
+
+  // Per-device detail table
+  o += openCard('all', `📋 Per-device detail table (${data.deviceCount})`, true);
+  o += '<div class="filter"><input type="text" data-filter="t_all" placeholder="Filter devices…"></div>';
+  o += '<div class="tbl-wrap"><table data-sortable id="t_all"><thead><tr><th data-sd="asc">Name</th><th>Type</th><th>Source</th><th data-t="n">Apps</th><th data-t="n">Dashboards</th><th>Parent app</th><th>Last activity</th></tr></thead><tbody>';
+  const sortedDevices = Object.values(allDevices).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  sortedDevices.forEach(d => {
+    const src = d.driverType === 'usr' ? '<span class="badge b-community">Community</span>' : '<span class="badge b-builtin">Built-in</span>';
+    const apps = d.appsUsing || [];
+    const dashs = d.dashboards || [];
+    let appsCell;
+    if (apps.length) {
+      appsCell = apps.slice(0, 4).map(a => {
+        const inner = alink(a.id, a.label || a.name);
+        return a.disabled ? `<s class="muted" title="App is disabled — subscription inactive">${inner}</s>` : inner;
+      }).join(', ') + (apps.length > 4 ? `, <span class="muted">+${apps.length - 4}</span>` : '');
+    } else {
+      appsCell = d.parentApp == null ? '<span class="warn">⚠ unreferenced</span>' : '<span class="muted">—</span>';
+    }
+    const dashsCell = dashs.length
+      ? dashs.slice(0, 4).map(dash => `<a href="/installedapp/configure/${dash.id}" target="_blank">${h(dash.name || '')}</a>`).join(', ')
+        + (dashs.length > 4 ? `, <span class="muted">+${dashs.length - 4}</span>` : '')
+      : '<span class="muted">—</span>';
+    const pa = d.parentApp;
+    const paCell = pa ? alink(pa.id, pa.label || pa.name) : '<span class="muted">—</span>';
+    const typeName = h(d.deviceTypeName || '');
+    const typeCell = (d.driverType === 'usr' && d.deviceTypeId)
+      ? `<a href="/driver/editor/${d.deviceTypeId}" target="_blank">${typeName}</a>`
+      : typeName;
+    o += `<tr><td>${dlink(d.id, d.label || d.name)}</td>`;
+    o += `<td>${typeCell}</td>`;
+    o += `<td>${src}</td>`;
+    o += `<td data-sv="${apps.length}">${appsCell}</td>`;
+    o += `<td data-sv="${dashs.length}">${dashsCell}</td>`;
+    o += `<td>${paCell}</td>`;
+    o += `<td>${h(d.lastActivityTime || '')}</td></tr>`;
+  });
+  o += '</tbody></table></div>';
+  o += closeCard();
+
+  // Failed footnote
+  if (failed.length > 0) {
+    o += `<div class="card" id="failed"><div class="card-h crit">Failed to fetch (${failed.length})</div><div class="card-b muted">`;
+    o += failed.map(f => `Device ${f.id}: ${h(f.reason || '')}`).join('<br>');
+    o += '</div></div>';
+  }
+
+  return o;
+}
+
+function initAuditSort() {
+  function cmp(a, b, n) {
+    if (n) { a = parseFloat(a) || 0; b = parseFloat(b) || 0; return a < b ? -1 : a > b ? 1 : 0; }
+    a = String(a).toLowerCase(); b = String(b).toLowerCase(); return a < b ? -1 : a > b ? 1 : 0;
+  }
+  function getSv(td) { return td.dataset.sv != null ? td.dataset.sv : td.textContent.trim(); }
+  function sortTable(tbl, col, dir) {
+    const th = tbl.tHead.rows[0].cells[col], n = th.dataset.t === 'n';
+    const tb = tbl.tBodies[0];
+    const rows = Array.from(tb.rows);
+    rows.sort((r1, r2) => cmp(getSv(r1.cells[col]), getSv(r2.cells[col]), n) * (dir === 'desc' ? -1 : 1));
+    rows.forEach(r => tb.appendChild(r));
+  }
+  function setArrows(ths, col, dir) {
+    Array.from(ths).forEach((t, i) => {
+      const a = t.querySelector('.arr');
+      if (i === col) { t.dataset.dir = dir; if (a) a.textContent = dir === 'asc' ? ' ▲' : ' ▼'; }
+      else { delete t.dataset.dir; if (a) a.textContent = ' ⇅'; }
+    });
+  }
+  document.querySelectorAll('table[data-sortable]').forEach(tbl => {
+    if (!tbl.tHead || !tbl.tBodies[0]) return;
+    const ths = tbl.tHead.rows[0].cells;
+    let defCol = -1, defDir = 'asc';
+    Array.from(ths).forEach((th, i) => {
+      const s = document.createElement('span'); s.className = 'arr'; s.textContent = ' ⇅'; th.appendChild(s);
+      th.addEventListener('click', () => {
+        const dir = th.dataset.dir === 'asc' ? 'desc' : (th.dataset.dir === 'desc' ? 'asc' : (th.dataset.t === 'n' ? 'desc' : 'asc'));
+        setArrows(ths, i, dir); sortTable(tbl, i, dir);
+      });
+      if (th.dataset.sd) { defCol = i; defDir = th.dataset.sd; }
+    });
+    if (defCol >= 0) { setArrows(ths, defCol, defDir); sortTable(tbl, defCol, defDir); }
+  });
+  document.querySelectorAll('input[data-filter]').forEach(inp => {
+    const tbl = document.getElementById(inp.dataset.filter); if (!tbl || !tbl.tBodies[0]) return;
+    inp.addEventListener('input', () => {
+      const q = inp.value.toLowerCase();
+      Array.from(tbl.tBodies[0].rows).forEach(r => { r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none'; });
+    });
+  });
+}
+
+// ===== STARTUP =====
+const _auditFile = new URLSearchParams(window.location.search).get('audit');
+if (_auditFile) {
+  renderAuditPage(_auditFile);
+} else {
+  let liveTimer=setInterval(refreshLive,liveIntervalSec*1000);
+  document.addEventListener('visibilitychange',()=>{
+    clearInterval(liveTimer);
+    if(!document.hidden)liveTimer=setInterval(refreshLive,liveIntervalSec*1000)
+  });
+  go(curTab);
+}
 </script>
 </body>
 </html>
