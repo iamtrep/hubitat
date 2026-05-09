@@ -1,14 +1,24 @@
 # HubDiagnostics — Code Review Findings & Fix Plan
 
-Status as of 2026-05-08 (post-v5.18.0; round-2 review added).
+Status as of 2026-05-08 (post-v5.20.0; rounds 1-3 complete, both reviewers re-affirmed work).
 
-Combined output of three independent passes:
-- **Codex round 1** — external code-review pass (12 findings)
+Combined output of five independent passes:
+- **Codex round 1** — initial external code-review pass (12 findings)
 - **Internal** — verification + 10 additional findings (A1–A10)
 - **Codex round 2** — external re-review after R-1..R-5 shipped (5 net-new items B1–B5; updates to prior items)
-- **Gemini** — third-party review (3 net-new items G1–G3; the rest overlap)
+- **Gemini round 1** — third-party review (3 net-new items G1–G3; the rest overlap)
+- **Codex round 3 + Gemini round 2** — post-v5.20.0 re-reviews (zero net-new actionable items; both confirmed shipped fixes verified, deferrals reaffirmed)
 
 All findings were verified against the code; verdicts are recorded below.
+
+## Round 3 summary
+
+After R-6 + R-7 shipped, both Codex and Gemini ran fresh reviews:
+
+- **Codex r3:** no new findings. Re-flagged 7 items, all of which trace back to existing entries in this doc (deferrals, partial fixes, accepted trade-offs). Recommended "modularization" via Hubitat libraries — not viable on this platform (libraries are concatenated at compile, no real modularity).
+- **Gemini r2:** verdict "production-ready and highly optimized for the Hubitat environment." Verified all 5 R-6 + R-7 fixes (B2, B3, B4, B5, G1, A3, A7). Explicitly endorsed the #5 (audit serial enrichment) and #3 (CSS mirror) deferrals as "the correct pragmatic choice" / "great middle ground." Praised this doc as a living tech-debt register.
+
+**Net new actionable items from round 3: zero.** The work is at a natural stopping point. Remaining open items are all explicit deferrals or accepted trade-offs documented above. Future work should be feature-driven, not review-driven cleanup.
 
 ---
 
