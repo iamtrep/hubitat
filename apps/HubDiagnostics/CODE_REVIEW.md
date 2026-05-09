@@ -40,8 +40,8 @@ Severity legend: 🔴 critical bug · 🟠 high (architecture / leverage) · �
 | A8 | No retry / backoff in `hubRequest`; single transient timeout fails an entire panel render | ⚪ | **Fixed v5.15.0** (single retry on SocketTimeoutException/ConnectException) | [x] |
 | A9 | `extractAuditFields` schema has no version sentinel; pre/post-schema records indistinguishable | ⚪ | **Fixed v5.18.0** (`_schemaVersion: 1` field) | [x] |
 | A10 | `tbl()` re-renders entire table on header click instead of just `<tbody>` rows | ⚪ | **Fixed v5.18.0** (tbody-only re-render; preserves filter focus + details state) | [x] |
-| B1 | `analyzeDevices` deep-mode N+1: one sync `/device/fullJson` per uncertain device | 🟠 | Codex r2 — never addressed; only audit pipeline got async fan-out | [ ] |
-| B2 | Performance-tab UI re-fetches `api('devices')` + `api('apps')` for chart labels | 🟡 | Codex r2 — extension of #1 across endpoint boundary | [ ] |
+| B1 | `analyzeDevices` deep-mode N+1: one sync `/device/fullJson` per uncertain device | 🟠 | **Deferred** — `state.controllerTypeCache` mitigates: cost paid only on fresh install + after `updated()` clears cache (rare); async refactor would need API-contract change (poll-based) for low frequency | [-] |
+| B2 | Performance-tab UI re-fetches `api('devices')` + `api('apps')` for chart labels | 🟡 | **Fixed v5.20.0** (server-side label maps in `/api/performance`) | [x] |
 | B3 | `rDevices` computes `dt` (device-types sorted) and `stale` (filtered devices) twice each | ⚪ | **Fixed v5.19.0** | [x] |
 | B4 | `tbl()` filter input fires on every keystroke; no debounce; full filter+sort+`<tbody>` rewrite per char | 🟡 | **Fixed v5.19.0** (150ms debounce) | [x] |
 | B5 | `state.controllerTypeCache` grows unbounded; only cleared via explicit user action | ⚪ | **Fixed v5.19.0** (cleared in updated()) | [x] |
@@ -389,14 +389,15 @@ Three batches.
 - [x] **B5** — `state.controllerTypeCache` cleared in `updated()` (matches R-5 A3/A7 pattern)
 - [x] **G1** — `apiAuditStatus` reads AtomicInteger directly when scan in-flight; falls back to `state.audit` for completed scans
 
-### Phase R-7 — Architectural plays (M-L, separate releases)
+### Phase R-7 — Architectural plays — ✅ B2 shipped v5.20.0; B1 deferred with reasoning
 
-Two genuine architectural items that warrant their own dedicated work:
-
-- [ ] **B1** — `analyzeDevices` deep-mode N+1: refactor to async fan-out (mirror audit's CAS-bounded dispatch). M effort, real scaling win for large hubs.
-- [ ] **B2** — Performance-tab cross-tab refetch: client-side `api()` cache layer with TTL, OR a small `/api/labels` endpoint returning just id→name maps for chart labels. S-M.
-
-Independent releases — pick one at a time when ready.
+- [x] **B2** — Server-side label maps in `/api/performance` (v5.20.0, `2581012`). Eliminated 2 cross-tab refetches; charts now render in 1 round trip instead of 3.
+- [-] **B1** — **Deferred.** `state.controllerTypeCache` already mitigates: cache populates after first deep-mode call per device, persists across hub reboots (in `state`), only cleared by `updated()` (R-6 B5) or the explicit "Clear Enrichment Cache" button. So N+1 cost is paid:
+  - First Devices/Performance/snapshot/forum-export run after install (one-time)
+  - First run after settings save (rare; user-triggered)
+  - Otherwise: cache hits, no `/device/fullJson` call
+  
+  The async refactor would require API-contract change (poll-based for `/api/devices`, `/api/performance`, snapshot creation, forum export — all currently synchronous endpoints). Complexity not justified for ~2× per-year cost. Revisit if a user reports slowness on a large hub with frequent settings saves.
 
 ### Deferred (documented, not in any pack)
 
