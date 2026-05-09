@@ -792,7 +792,7 @@ function auditPoll(scanId, total) {
             if (d.status === 'scanning') {
                 if (row) row.innerHTML = 'Audit in progress · scanning device <b>'+d.processed+'</b> / '+d.total+' …';
             } else if (d.status === 'done') {
-                stopPoll('✓ Audit complete · <a href="/local/'+encodeURIComponent(d.filename)+'" target="_blank">View report</a>');
+                stopPoll('✓ Audit complete · <a href="?access_token='+encodeURIComponent(T)+'&audit='+encodeURIComponent(d.filename)+'" target="_blank">View report</a>');
                 drop('audit-list'); auditList();
             } else if (d.status === 'error') {
                 stopPoll('<span class="warn">⚠ Audit failed: '+h(d.error || 'see hub logs')+'</span>');
@@ -818,7 +818,7 @@ async function auditList() {
         let h2 = '<table style="width:100%;font-size:12px;border-collapse:collapse"><tr style="color:var(--muted);text-align:left"><th style="padding:4px">Generated</th><th>Devices</th><th>Unref</th><th>Orphans</th><th>Stuck</th><th>Crit</th><th></th></tr>';
         reps.forEach(r => {
             h2 += '<tr style="border-top:1px solid var(--border)">'
-               +  '<td style="padding:4px"><a href="/local/'+encodeURIComponent(r.filename)+'" target="_blank">'+h(r.generated)+'</a></td>'
+               +  '<td style="padding:4px"><a href="?access_token='+encodeURIComponent(T)+'&audit='+encodeURIComponent(r.filename)+'" target="_blank">'+h(r.generated)+'</a></td>'
                +  '<td>'+(r.deviceCount||0)+'</td>'
                +  '<td>'+(r.unreferencedCount||0)+'</td>'
                +  '<td>'+(r.orphanCount||0)+'</td>'
