@@ -1332,7 +1332,7 @@ Map apiForumExport() {
     }
 
     // ── 4. Z-Wave Network ──
-    if (zwaveRaw && !zwaveRaw.error) {
+    if (zwaveRaw) {
         md << "\n### Z-Wave\n"
         md << "- **Enabled:** ${zwaveRaw.enabled ? 'Yes' : 'No'}, **Healthy:** ${zwaveRaw.healthy ? 'Yes' : 'No'}\n"
         md << "- **Version:** ${zwaveVersion ?: 'N/A'}, **Region:** ${zwaveRaw.region ?: 'N/A'}\n"
@@ -1393,7 +1393,7 @@ Map apiForumExport() {
     }
 
     // ── 5. Zigbee Network ──
-    if (zigbeeRaw && !zigbeeRaw.error && zigbeeRaw.enabled) {
+    if (zigbeeRaw && zigbeeRaw.enabled) {
         int totalZb = (zigbeeRaw.devices ?: []).size()
         md << "\n### Zigbee\n"
         md << "- **Healthy:** ${zigbeeRaw.healthy ? 'Yes' : 'No'}"
@@ -1427,7 +1427,7 @@ Map apiForumExport() {
     }
 
     // ── 6. Hub Mesh ──
-    if (hubMeshRaw && !hubMeshRaw.error && hubMeshRaw.hubList) {
+    if (hubMeshRaw && hubMeshRaw.hubList) {
         List peers = hubMeshRaw.hubList as List
         if (peers) {
             md << "\n### Hub Mesh\n"
@@ -1679,8 +1679,8 @@ Map getNetworkData(Map shared = [:]) {
     } : []
     return [
         uptimeSeconds: uptimeSeconds,
-        network: networkData.network && !networkData.network.error ? networkData.network : null,
-        zwave: networkData.zwave && !networkData.zwave.error ? [
+        network: networkData.network ?: null,
+        zwave: networkData.zwave ? [
             enabled: networkData.zwave.enabled, healthy: networkData.zwave.healthy,
             region: networkData.zwave.region, nodeCount: (networkData.zwave.zwDevices ?: [:]).size(),
             isRadioUpdateNeeded: networkData.zwave.isRadioUpdateNeeded,
@@ -1689,7 +1689,7 @@ Map getNetworkData(Map shared = [:]) {
             mesh: zwaveMesh, ghostNodes: ghostNodes, problemNodes: problemNodes,
             messageCounts: extractZwaveMessageCounts(networkData.zwave ?: [:])
         ] : null,
-        zigbee: networkData.zigbee && !networkData.zigbee.error ? [
+        zigbee: networkData.zigbee ? [
             enabled: zigbeeRaw.enabled, healthy: zigbeeRaw.healthy,
             networkState: zigbeeRaw.networkState, channel: zigbeeRaw.channel,
             panId: zigbeeRaw.panId, extendedPanId: zigbeeRaw.extendedPanId,
@@ -1708,8 +1708,8 @@ Map getNetworkData(Map shared = [:]) {
                 childDevices: zigbeeMesh.childDevices?.size() ?: 0
             ] : null
         ] : null,
-        matter: networkData.matter && !networkData.matter.error ? networkData.matter : null,
-        hubMesh: networkData.hubMesh && !networkData.hubMesh.error ? [
+        matter: networkData.matter ?: null,
+        hubMesh: networkData.hubMesh ? [
             enabled: hubMeshRaw.hubMeshEnabled != null ? hubMeshRaw.hubMeshEnabled : hubMeshRaw.enabled,
             sharedDevices: hubMeshRaw.sharedDevices?.size() ?: 0,
             linkedDevices: hubMeshRaw.linkedDevices?.size() ?: 0,
@@ -2688,7 +2688,7 @@ Map extractZwaveMeshQuality(Map zwaveData) {
 }
 
 List extractZwaveMessageCounts(Map zwaveData) {
-    if (!zwaveData || zwaveData.error || !zwaveData.nodes) return []
+    if (!zwaveData || !zwaveData.nodes) return []
     return zwaveData.nodes.collect { Map node ->
         [id: node.nodeId, deviceId: node.deviceId, name: node.deviceName ?: "Node ${node.nodeId}",
          msgCount: (node.msgCount ?: 0) as int, routeChanges: node.routeChanges?.toString()?.isInteger() ? (node.routeChanges ?: 0) as int : -1]
@@ -2696,7 +2696,7 @@ List extractZwaveMessageCounts(Map zwaveData) {
 }
 
 List extractZigbeeMessageCounts(Map zigbeeData) {
-    if (!zigbeeData || zigbeeData.error || !zigbeeData.devices) return []
+    if (!zigbeeData || !zigbeeData.devices) return []
     return zigbeeData.devices.collect { Map device ->
         [id: device.id, name: device.name ?: "Device ${device.id}",
          msgCount: (device.messageCount ?: 0) as int]
@@ -3036,11 +3036,11 @@ Map analyzeApps(boolean deep = true) {
 
 Map analyzeNetwork() {
     return [
-        network: (Map) hubRequest(NETWORK_CONFIG_PATH, "network configuration", "json", 15),
-        zwave: (Map) hubRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", "json", 20),
-        zigbee: (Map) hubRequest(ZIGBEE_DETAILS_PATH, "Zigbee details", "json", 20),
-        matter: (Map) hubRequest(MATTER_DETAILS_PATH, "Matter details", "json", 15),
-        hubMesh: (Map) hubRequest(HUB_MESH_PATH, "Hub Mesh", "json", 15)
+        network: hubMapRequest(NETWORK_CONFIG_PATH, "network configuration", 15).with { it.ok ? it.data : null },
+        zwave:   hubMapRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", 20).with { it.ok ? it.data : null },
+        zigbee:  hubMapRequest(ZIGBEE_DETAILS_PATH, "Zigbee details", 20).with { it.ok ? it.data : null },
+        matter:  hubMapRequest(MATTER_DETAILS_PATH, "Matter details", 15).with { it.ok ? it.data : null },
+        hubMesh: hubMapRequest(HUB_MESH_PATH, "Hub Mesh", 15).with { it.ok ? it.data : null }
     ]
 }
 
