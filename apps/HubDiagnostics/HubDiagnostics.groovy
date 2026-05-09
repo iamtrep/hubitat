@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.12.2"
+@Field static final String APP_VERSION = "5.13.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -773,7 +773,13 @@ Map apiSnapshotView() {
                 peers:   (snapNet.hubMesh.hubList ?: []).collect { [name: it.name, ip: it.ipAddress] }
             ] : null
         ] : null,
-        storage: snap.storage
+        storage: snap.storage,
+        // v5.13.0 additions
+        backups: snap.backups,
+        security: snap.security,
+        ntpServer: snap.ntpServer,
+        loadThreshold: snap.loadThreshold,
+        code: snap.code
     ])
 }
 
@@ -900,6 +906,99 @@ Map apiSnapshotDiff() {
         storageChanges.freeSpace = [from: olderStorage.freeSpace, to: newerStorage.freeSpace]
     }
 
+    // Backups diff (v5.13.0) — only when both snapshots have backup data
+    Map backupsChanges = [:]
+    Map oBk = (Map) older.backups
+    Map nBk = (Map) newer.backups
+    if (oBk && nBk) {
+        Map oLo = (Map) (oBk.local ?: [:])
+        Map nLo = (Map) (nBk.local ?: [:])
+        if ((oLo.count ?: 0) != (nLo.count ?: 0)) backupsChanges.localCount = [from: oLo.count ?: 0, to: nLo.count ?: 0]
+        if (oLo.latestCreateTime != nLo.latestCreateTime && (oLo.latestCreateTime || nLo.latestCreateTime)) {
+            backupsChanges.latestLocal = [from: oLo.latestCreateTime, to: nLo.latestCreateTime]
+        }
+        Map oCl = (Map) (oBk.cloud ?: [:])
+        Map nCl = (Map) (nBk.cloud ?: [:])
+        if ((oCl.thisHubCount ?: 0) != (nCl.thisHubCount ?: 0)) backupsChanges.cloudThisHubCount = [from: oCl.thisHubCount ?: 0, to: nCl.thisHubCount ?: 0]
+        if ((oCl.hasCloudBackupEntitlements ?: false) != (nCl.hasCloudBackupEntitlements ?: false)) backupsChanges.cloudBackupEntitlement = [from: oCl.hasCloudBackupEntitlements ?: false, to: nCl.hasCloudBackupEntitlements ?: false]
+        if ((oCl.hasCloudRestoreEntitlements ?: false) != (nCl.hasCloudRestoreEntitlements ?: false)) backupsChanges.cloudRestoreEntitlement = [from: oCl.hasCloudRestoreEntitlements ?: false, to: nCl.hasCloudRestoreEntitlements ?: false]
+    }
+
+    // Security diff (v5.13.0)
+    Map securityChanges = [:]
+    Map oSec = (Map) older.security
+    Map nSec = (Map) newer.security
+    if (oSec && nSec) {
+        boolean oLim = (oSec.limitedAccess as Map)?.enabled == true
+        boolean nLim = (nSec.limitedAccess as Map)?.enabled == true
+        if (oLim != nLim) securityChanges.limitedAccess = [from: oLim, to: nLim]
+        List oAddrs = ((oSec.limitedAccess as Map)?.addresses as List) ?: []
+        List nAddrs = ((nSec.limitedAccess as Map)?.addresses as List) ?: []
+        if (oAddrs.toSet() != nAddrs.toSet()) securityChanges.limitedAddresses = [from: oAddrs, to: nAddrs]
+        List oSub = (oSec.allowedSubnets as List) ?: []
+        List nSub = (nSec.allowedSubnets as List) ?: []
+        if (oSub.toSet() != nSub.toSet()) securityChanges.allowedSubnets = [from: oSub, to: nSub]
+        if (oSec.dnsFallback != nSec.dnsFallback) securityChanges.dnsFallback = [from: oSec.dnsFallback, to: nSec.dnsFallback]
+        if (oSec.cloudController != nSec.cloudController && (oSec.cloudController != null || nSec.cloudController != null)) {
+            securityChanges.cloudController = [from: oSec.cloudController, to: nSec.cloudController]
+        }
+    }
+
+    // Network settings diff (v5.13.0) — only when both snapshots actually captured the field
+    // (older snapshots predating v5.13.0 don't have these keys at all; we don't want to surface
+    // "schema added the field" as a config change).
+    if (((Map) older).containsKey('ntpServer') && ((Map) newer).containsKey('ntpServer') && older.ntpServer != newer.ntpServer) {
+        if (networkChanges == null) networkChanges = [:]
+        networkChanges.ntpServer = [from: older.ntpServer, to: newer.ntpServer]
+    }
+    if (((Map) older).containsKey('loadThreshold') && ((Map) newer).containsKey('loadThreshold') && older.loadThreshold != newer.loadThreshold) {
+        if (networkChanges == null) networkChanges = [:]
+        networkChanges.loadThreshold = [from: older.loadThreshold, to: newer.loadThreshold]
+    }
+
+    // Code inventory diff (v5.13.0): bundles, libraries, hub variables — by id (or name for hub vars)
+    Map codeChanges = [:]
+    Map oCode = (Map) older.code
+    Map nCode = (Map) newer.code
+    if (oCode && nCode) {
+        // Bundles — keyed by id
+        List oBund = (oCode.bundles as List) ?: []
+        List nBund = (nCode.bundles as List) ?: []
+        Set oBundIds = oBund.collect { (it as Map).id } as Set
+        Set nBundIds = nBund.collect { (it as Map).id } as Set
+        List bundlesAdded   = nBund.findAll { !oBundIds.contains((it as Map).id) }
+        List bundlesRemoved = oBund.findAll { !nBundIds.contains((it as Map).id) }
+        if (bundlesAdded || bundlesRemoved) codeChanges.bundles = [added: bundlesAdded, removed: bundlesRemoved]
+
+        // Libraries — keyed by id; also detect version changes
+        List oLib = (oCode.libraries as List) ?: []
+        List nLib = (nCode.libraries as List) ?: []
+        Set oLibIds = oLib.collect { (it as Map).id } as Set
+        Set nLibIds = nLib.collect { (it as Map).id } as Set
+        Map oLibById = oLib.collectEntries { Map l -> [(l.id): l] }
+        List libsAdded   = nLib.findAll { !oLibIds.contains((it as Map).id) }
+        List libsRemoved = oLib.findAll { !nLibIds.contains((it as Map).id) }
+        List libsVersionChanged = nLib.findAll { Map l ->
+            Map o = (Map) oLibById[l.id]
+            o && o.version != l.version
+        }.collect { Map l -> [id: l.id, name: l.name, namespace: l.namespace, from: ((Map) oLibById[l.id]).version, to: l.version] }
+        if (libsAdded || libsRemoved || libsVersionChanged) codeChanges.libraries = [added: libsAdded, removed: libsRemoved, versionChanged: libsVersionChanged]
+
+        // Hub variables — keyed by name (no stable id); also detect type changes
+        List oHv = (oCode.hubVariables as List) ?: []
+        List nHv = (nCode.hubVariables as List) ?: []
+        Set oHvNames = oHv.collect { (it as Map).name } as Set
+        Set nHvNames = nHv.collect { (it as Map).name } as Set
+        Map oHvByName = oHv.collectEntries { Map v -> [(v.name): v] }
+        List hvAdded   = nHv.findAll { !oHvNames.contains((it as Map).name) }
+        List hvRemoved = oHv.findAll { !nHvNames.contains((it as Map).name) }
+        List hvTypeChanged = nHv.findAll { Map v ->
+            Map o = (Map) oHvByName[v.name]
+            o && o.type != v.type
+        }.collect { Map v -> [name: v.name, from: ((Map) oHvByName[v.name]).type, to: v.type] }
+        if (hvAdded || hvRemoved || hvTypeChanged) codeChanges.hubVariables = [added: hvAdded, removed: hvRemoved, typeChanged: hvTypeChanged]
+    }
+
     // Save diff for persistence
     saveSnapshotDiffPayload([generatedAt: new Date().format("yyyy-MM-dd HH:mm:ss"), older: older, newer: newer])
 
@@ -921,7 +1020,10 @@ Map apiSnapshotDiff() {
             changed: appsChanged
         ],
         networkChanges: networkChanges ?: null,
-        storageChanges: storageChanges ?: null
+        storageChanges: storageChanges ?: null,
+        backupsChanges: backupsChanges ?: null,
+        securityChanges: securityChanges ?: null,
+        codeChanges: codeChanges ?: null
     ])
 }
 
@@ -2174,16 +2276,19 @@ Map fetchSecurityInfo() {
     String laRaw = (String) hubRequest(LIMITED_ACCESS_PATH, "limited access addresses", "text", 5)
     String subnets = (String) hubRequest(ALLOW_SUBNETS_PATH, "allowed subnets", "text", 5)
     String dnsFb = (String) hubRequest(DNS_FALLBACK_PATH, "DNS fallback", "text", 5)
+    Map hubData = (Map) hubRequest(HUB_DATA_PATH, "hub data (cloud controller flag)", "json", 10)
     String laClean = laRaw ? laRaw.replaceAll(/<[^>]+>/, '').trim() : null
     boolean limitedSet = laClean && !laClean.equalsIgnoreCase("no limit set") && !laClean.isEmpty()
     List subnetList = subnets ? subnets.trim().split(',').findAll { it } as List : []
+    Boolean cloudDisabled = (hubData && !hubData.error) ? (hubData.disableCloudController == true) : null
     return [
         limitedAccess: [
             enabled: limitedSet,
             addresses: limitedSet ? laClean.split(/[,\s]+/).findAll { it } as List : []
         ],
         allowedSubnets: subnetList,
-        dnsFallback: dnsFb == null ? null : (dnsFb.toLowerCase().trim() == "true")
+        dnsFallback: dnsFb == null ? null : (dnsFb.toLowerCase().trim() == "true"),
+        cloudController: cloudDisabled == null ? null : (cloudDisabled ? "disabled" : "enabled")
     ]
 }
 
@@ -3259,6 +3364,25 @@ void clearAllCheckpoints() {
 void createSnapshot() {
     logInfo "Creating config snapshot..."
 
+    // v5.13.0: capture additional facts surfaced by Phases 0–6.
+    // Backup payload is slimmed (other-hub list dropped) to keep snapshot size bounded.
+    Map backupsRaw = fetchBackups()
+    Map backupsSlim = backupsRaw ? [
+        local: backupsRaw.local,
+        cloud: backupsRaw.cloud ? [
+            thisHubCount: backupsRaw.cloud.thisHubCount,
+            otherHubCount: backupsRaw.cloud.otherHubCount,
+            latestThisHubCreateTime: backupsRaw.cloud.latestThisHubCreateTime,
+            latestThisHubCreateTimeOrig: backupsRaw.cloud.latestThisHubCreateTimeOrig,
+            latestThisHubVersion: backupsRaw.cloud.latestThisHubVersion,
+            hasCloudBackupEntitlements: backupsRaw.cloud.hasCloudBackupEntitlements,
+            hasCloudRestoreEntitlements: backupsRaw.cloud.hasCloudRestoreEntitlements
+        ] : null
+    ] : null
+    // Hub variables: capture identity (name + type) only, not value — values churn from automations.
+    Map hvRaw = fetchHubVariables() ?: [:]
+    List hvSlim = ((hvRaw.variables as List) ?: []).collect { Map v -> [name: v.name, type: v.type] }
+
     Map snapshot = [
         timestamp: new Date().format("yyyy-MM-dd HH:mm:ss"),
         timestampMs: now(),
@@ -3267,7 +3391,16 @@ void createSnapshot() {
         network: analyzeNetwork(),
         systemHealth: analyzeSystemHealth(),
         hubInfo: getHubInfo(),
-        storage: fetchFileManagerStats()
+        storage: fetchFileManagerStats(),
+        backups: backupsSlim,
+        security: fetchSecurityInfo(),
+        ntpServer: fetchNtpServer(),
+        loadThreshold: fetchExcessiveLoadThreshold(),
+        code: [
+            bundles:   fetchUserBundles().collect   { Map b -> [id: b.id, name: b.name, namespace: b.namespace] },
+            libraries: fetchUserLibraries().collect { Map l -> [id: l.id, name: l.name, namespace: l.namespace, version: l.version] },
+            hubVariables: hvSlim
+        ]
     ]
 
     // Strip allDevices down to compact form for storage

@@ -114,7 +114,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.12.2";
+const UI_VERSION = "5.13.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -1035,6 +1035,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
       if(sec.allowedSubnets&&sec.allowedSubnets.length)o+=ni('Allowed Subnets',sec.allowedSubnets.join(', '));
       else o+=ni('Allowed Subnets','(none restricted)');
       if(sec.dnsFallback!=null)o+=ni('DNS Fallback',sec.dnsFallback?'Enabled':'Disabled');
+      if(sec.cloudController)o+=ni('Hubitat Cloud',sec.cloudController==='enabled'?'Connected':'Disabled (local-only)');
     }
     o+='</div>';
     if(n.hasEthernet&&n.hasWiFi)o+='<div class="alert a-warn" style="margin-top:8px">\u26A0 Both Ethernet and WiFi are active. This is known to cause connectivity issues. Disable WiFi when using Ethernet.</div>';
@@ -1737,6 +1738,45 @@ function renderDiff(d,elId){
     o+='<div style="margin:8px 0"><b>File Manager:</b> '+fmtSt(os)+' → '+fmtSt(ns)+'</div>';
     if(sc.fileCount)o+='<div style="margin:2px 0 2px 16px"'+(sc.fileCount.to>sc.fileCount.from?' class="diff-add"':sc.fileCount.to<sc.fileCount.from?' class="diff-rem"':'')+'>Files: '+sc.fileCount.from+' → '+sc.fileCount.to+'</div>';
     if(sc.freeSpace)o+='<div style="margin:2px 0 2px 16px"'+(sc.freeSpace.to>sc.freeSpace.from?' class="diff-add"':sc.freeSpace.to<sc.freeSpace.from?' class="diff-rem"':'')+'>Free Space: '+fmem(sc.freeSpace.from)+' → '+fmem(sc.freeSpace.to)+'</div>'}
+  // Backups (v5.13.0)
+  const bc=d.backupsChanges;
+  if(bc&&Object.keys(bc).length){o+='<div style="margin:8px 0"><b>Backups:</b></div>';
+    if(bc.localCount){const dd=bc.localCount.to-bc.localCount.from;const cls=bc.localCount.to<bc.localCount.from?'diff-rem':bc.localCount.to>bc.localCount.from?'diff-add':'';o+='<div style="margin:2px 0 2px 16px" class="'+cls+'">Local backup count: '+bc.localCount.from+' → '+bc.localCount.to+(dd!==0?' ('+(dd>0?'+':'')+dd+')':'')+'</div>'}
+    if(bc.latestLocal)o+='<div style="margin:2px 0 2px 16px">Latest local backup: '+h(bc.latestLocal.from||'(none)')+' → '+h(bc.latestLocal.to||'(none)')+'</div>';
+    if(bc.cloudThisHubCount){const dd=bc.cloudThisHubCount.to-bc.cloudThisHubCount.from;const cls=bc.cloudThisHubCount.to<bc.cloudThisHubCount.from?'diff-rem':bc.cloudThisHubCount.to>bc.cloudThisHubCount.from?'diff-add':'';o+='<div style="margin:2px 0 2px 16px" class="'+cls+'">Cloud backups (this hub): '+bc.cloudThisHubCount.from+' → '+bc.cloudThisHubCount.to+(dd!==0?' ('+(dd>0?'+':'')+dd+')':'')+'</div>'}
+    if(bc.cloudBackupEntitlement)o+='<div style="margin:2px 0 2px 16px" class="diff-chg">Cloud backup entitlement: '+(bc.cloudBackupEntitlement.from?'yes':'no')+' → '+(bc.cloudBackupEntitlement.to?'yes':'no')+'</div>';
+    if(bc.cloudRestoreEntitlement)o+='<div style="margin:2px 0 2px 16px" class="diff-chg">Cloud restore entitlement: '+(bc.cloudRestoreEntitlement.from?'yes':'no')+' → '+(bc.cloudRestoreEntitlement.to?'yes':'no')+'</div>';
+  }
+  // Security (v5.13.0)
+  const secCh=d.securityChanges;
+  if(secCh&&Object.keys(secCh).length){o+='<div style="margin:8px 0"><b>Security:</b></div>';
+    if(secCh.limitedAccess)o+='<div style="margin:2px 0 2px 16px" class="diff-chg">Limited Access: '+(secCh.limitedAccess.from?'enabled':'off')+' → '+(secCh.limitedAccess.to?'enabled':'off')+'</div>';
+    if(secCh.limitedAddresses)o+='<div style="margin:2px 0 2px 16px" class="diff-chg">Allowed IPs: ['+secCh.limitedAddresses.from.map(h).join(', ')+'] → ['+secCh.limitedAddresses.to.map(h).join(', ')+']</div>';
+    if(secCh.allowedSubnets)o+='<div style="margin:2px 0 2px 16px" class="diff-chg">Allowed Subnets: ['+secCh.allowedSubnets.from.map(h).join(', ')+'] → ['+secCh.allowedSubnets.to.map(h).join(', ')+']</div>';
+    if(secCh.dnsFallback)o+='<div style="margin:2px 0 2px 16px" class="diff-chg">DNS Fallback: '+(secCh.dnsFallback.from?'on':'off')+' → '+(secCh.dnsFallback.to?'on':'off')+'</div>';
+    if(secCh.cloudController)o+='<div style="margin:2px 0 2px 16px" class="diff-chg">Hubitat Cloud: '+h(secCh.cloudController.from||'?')+' → '+h(secCh.cloudController.to||'?')+'</div>';
+  }
+  // Network settings (NTP, load threshold) — extends networkChanges block
+  if(nc.ntpServer)o+='<div style="margin:8px 0"><b>NTP Server:</b> '+h(nc.ntpServer.from||'(none)')+' → '+h(nc.ntpServer.to||'(none)')+'</div>';
+  if(nc.loadThreshold)o+='<div style="margin:8px 0"><b>Hub Load Threshold:</b> '+h(String(nc.loadThreshold.from??'?'))+'% → '+h(String(nc.loadThreshold.to??'?'))+'%</div>';
+  // Code inventory (v5.13.0)
+  const cc=d.codeChanges;
+  if(cc&&Object.keys(cc).length){o+='<div style="margin:8px 0"><b>User Code:</b></div>';
+    if(cc.bundles){
+      (cc.bundles.added||[]).forEach(b=>o+='<div style="margin:2px 0 2px 16px" class="diff-add">+ Bundle: '+h(b.namespace+'/'+b.name)+'</div>');
+      (cc.bundles.removed||[]).forEach(b=>o+='<div style="margin:2px 0 2px 16px" class="diff-rem">- Bundle: '+h(b.namespace+'/'+b.name)+'</div>');
+    }
+    if(cc.libraries){
+      (cc.libraries.added||[]).forEach(l=>o+='<div style="margin:2px 0 2px 16px" class="diff-add">+ Library: '+h(l.namespace+'/'+l.name)+(l.version?' v'+l.version:'')+'</div>');
+      (cc.libraries.removed||[]).forEach(l=>o+='<div style="margin:2px 0 2px 16px" class="diff-rem">- Library: '+h(l.namespace+'/'+l.name)+(l.version?' v'+l.version:'')+'</div>');
+      (cc.libraries.versionChanged||[]).forEach(l=>o+='<div style="margin:2px 0 2px 16px" class="diff-chg">~ Library: '+h(l.namespace+'/'+l.name)+' v'+l.from+' → v'+l.to+'</div>');
+    }
+    if(cc.hubVariables){
+      (cc.hubVariables.added||[]).forEach(v=>o+='<div style="margin:2px 0 2px 16px" class="diff-add">+ Hub Variable: '+h(v.name)+(v.type?' ('+h(v.type)+')':'')+'</div>');
+      (cc.hubVariables.removed||[]).forEach(v=>o+='<div style="margin:2px 0 2px 16px" class="diff-rem">- Hub Variable: '+h(v.name)+(v.type?' ('+h(v.type)+')':'')+'</div>');
+      (cc.hubVariables.typeChanged||[]).forEach(v=>o+='<div style="margin:2px 0 2px 16px" class="diff-chg">~ Hub Variable: '+h(v.name)+' '+h(v.from)+' → '+h(v.to)+'</div>');
+    }
+  }
   el.innerHTML=o;
 }
 
