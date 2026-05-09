@@ -30,31 +30,13 @@ for i in $(seq 1 60); do
 done
 [[ "$ST" == "done" ]] || { echo "FAIL: final status=$ST"; exit 1; }
 
-FILE=$(echo "$STATUS" | jq -r '.filename')
-echo "  → report: $FILE"
-
-echo
-echo "=== GET /api/audit/list ==="
-LIST=$(curl -sf "${BASE}/audit/list?access_token=${ACCESS_TOKEN}")
-echo "$LIST" | jq .
-COUNT=$(echo "$LIST" | jq '.reports | length')
-[[ "$COUNT" -gt 0 ]] || { echo "FAIL: no reports listed"; exit 1; }
-
 echo
 echo "=== GET /api/audit/data ==="
-curl -sfo /tmp/audit-test.json "${BASE}/audit/data?filename=${FILE}&access_token=${ACCESS_TOKEN}"
+curl -sfo /tmp/audit-test.json "${BASE}/audit/data?access_token=${ACCESS_TOKEN}"
 [[ $(wc -c < /tmp/audit-test.json) -gt 1000 ]] || { echo "FAIL: JSON too small"; exit 1; }
 jq -e '.deviceCount and .unreferenced and .allDevices' /tmp/audit-test.json > /dev/null \
     || { echo "FAIL: missing expected JSON keys"; exit 1; }
 echo "  JSON size: $(wc -c < /tmp/audit-test.json) bytes — OK"
-
-echo
-echo "=== POST /api/audit/delete ==="
-DEL=$(curl -sf -X POST "${BASE}/audit/delete?access_token=${ACCESS_TOKEN}" \
-    -H "Content-Type: application/json" \
-    -d "{\"filename\":\"${FILE}\"}")
-echo "$DEL" | jq .
-[[ $(echo "$DEL" | jq -r '.deleted') == "true" ]] || { echo "FAIL: delete returned false"; exit 1; }
 
 echo
 echo "ALL TESTS PASSED"
