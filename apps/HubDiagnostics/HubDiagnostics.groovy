@@ -565,14 +565,16 @@ Map apiVersionCheck() {
  */
 private Map buildSharedCache(boolean includeNetwork = false) {
     Map shared = [:]
-    shared.hubData     = (Map) hubRequest(HUB_DATA_PATH, "hub data (shared)", "json", 10)
+    Map hubDataWrap = hubMapRequest(HUB_DATA_PATH, "hub data (shared)", 10)
+    shared.hubData     = hubDataWrap.ok ? hubDataWrap.data : null
     shared.resources   = fetchSystemResources()
     shared.temperature = fetchTemperature()
     shared.databaseSize = fetchDatabaseSize()
     shared.hubAlerts   = fetchHubAlerts(shared.hubData as Map)
     if (includeNetwork) {
         shared.network      = analyzeNetwork()
-        shared.runtimeStats = (Map) hubRequest(RUNTIME_STATS_PATH, "runtime stats (shared)", "json")
+        Map statsWrap = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats (shared)")
+        shared.runtimeStats = statsWrap.ok ? statsWrap.data : null
     }
     return shared
 }
@@ -645,7 +647,8 @@ Map apiNetwork() {
     long start = now()
     // Network tab needs hubData (for fetchSecurityInfo's cloudController flag); rest is fetched by analyzeNetwork
     Map shared = [:]
-    shared.hubData = (Map) hubRequest(HUB_DATA_PATH, "hub data (shared)", "json", 10)
+    Map hubDataWrap = hubMapRequest(HUB_DATA_PATH, "hub data (shared)", 10)
+    shared.hubData = hubDataWrap.ok ? hubDataWrap.data : null
     Map data = getNetworkData(shared)
     long elapsed = now() - start
     logDebug "apiNetwork completed in ${elapsed}ms"
@@ -1167,9 +1170,10 @@ Map apiGenerateReport() {
     String timestamp = new Date().format("yyyy-MM-dd HH:mm:ss")
     List memHistory = fetchMemoryHistory()
 
+    Map statsWrap = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats")
     Map shared = [
         network:      analyzeNetwork(),
-        runtimeStats: (Map) hubRequest(RUNTIME_STATS_PATH, "runtime stats"),
+        runtimeStats: statsWrap.ok ? statsWrap.data : null,
         resources:    fetchSystemResources(),
         temperature:  fetchTemperature(),
         hubAlerts:    fetchHubAlerts(),
@@ -2141,7 +2145,7 @@ Float fetchTemperature() {
 
 Map fetchHubAlerts(Map prefetchedHubData = null) {
     Map hubData = prefetchedHubData ?: (Map) hubRequest(HUB_DATA_PATH, "hub data", "json", 10)
-    if (!hubData || hubData.error) return [:]
+    if (!hubData) return [:]
     return [
         alerts: hubData.alerts ?: [:],
         databaseSize: hubData.alerts?.databaseSize,
@@ -2439,7 +2443,7 @@ Map fetchSecurityInfo(Map prefetchedHubData = null) {
     String laClean = laRaw ? laRaw.replaceAll(/<[^>]+>/, '').trim() : null
     boolean limitedSet = laClean && !laClean.equalsIgnoreCase("no limit set") && !laClean.isEmpty()
     List subnetList = subnets ? subnets.trim().split(',').findAll { it } as List : []
-    Boolean cloudDisabled = (hubData && !hubData.error) ? (hubData.disableCloudController == true) : null
+    Boolean cloudDisabled = hubData ? (hubData.disableCloudController == true) : null
     return [
         limitedAccess: [
             enabled: limitedSet,
