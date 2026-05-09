@@ -2,14 +2,24 @@
 #
 # Hub Diagnostics API Validation Test
 #
-# Tests all JSON API endpoints of the headless architecture, validates
-# response structure, data integrity, and cross-endpoint coherence.
-# Also compares API data against raw hub APIs (ground truth).
+# Tests all JSON API endpoints, validates response structure, data integrity,
+# cross-endpoint coherence, and OAuth enforcement. Compares API data against
+# raw hub APIs (ground truth) and against the SPA-served HTML.
+#
+# Coverage current as of v5.13.0 (Phases 0–6 complete + snapshot enrichment).
+# Tests every new field added since v5.8.5: firmwareUpdate, backups, security
+# (incl. cloudController), cpuInfo, loadThreshold, radioHealth, zwaveJs, ntpServer,
+# mdns, zipgatewayVersion, zigbeeChannelScan, zwaveTopologyHtml, snapshot.code,
+# snapshot diff sections (backupsChanges/securityChanges/codeChanges + extended
+# networkChanges), /api/code, /api/live cpuInfo+loadThreshold persistence
+# (regression guard for the v5.11.2 chip-disappearing bug), /api/network/test
+# (incl. server-side IPv4 validation), and /api/network/zigbee/scan caching.
 #
 # Usage:
-#   bash scripts/test-hub-diagnostics-api.sh                    # default hub
-#   bash scripts/test-hub-diagnostics-api.sh @maison            # specific hub
-#   bash scripts/test-hub-diagnostics-api.sh @maison 243        # specific hub + instance ID
+#   bash tests/test-hub-diagnostics-api.sh                    # default hub
+#   bash tests/test-hub-diagnostics-api.sh @maison-pro        # specific hub
+#   bash tests/test-hub-diagnostics-api.sh @maison-pro 247    # specific hub + instance
+#   RUN_SLOW_TESTS=1 bash tests/test-hub-diagnostics-api.sh   # also run the Zigbee scan (~30s)
 #
 
 set -euo pipefail
@@ -315,6 +325,23 @@ else:
     else:
         fail("Missing or zero freeOSMemory")
 
+    # v5.9.0+ firmware-update badge data
+    if "firmwareUpdate" in dash:
+        ok("Has 'firmwareUpdate' field")
+        fu = dash["firmwareUpdate"]
+        if fu is None:
+            warn("firmwareUpdate is null (cloud check may have failed; benign)")
+        else:
+            for field in ["currentVersion", "availableVersion", "updateAvailable", "status"]:
+                if field in fu:
+                    ok(f"firmwareUpdate has '{field}'")
+                else:
+                    fail(f"firmwareUpdate missing '{field}'")
+            if fu.get("currentVersion") and fu["currentVersion"] != gt_firmware:
+                fail(f"firmwareUpdate.currentVersion '{fu['currentVersion']}' != hub firmware '{gt_firmware}'")
+    else:
+        fail("Missing 'firmwareUpdate' field (v5.9.0+)")
+
 # ── Test 3: GET /api/devices ──────────────────────────────────────────
 section("GET /api/devices")
 
@@ -330,23 +357,30 @@ else:
     else:
         fail(f"Device rows {len(rows)} != {gt_devices}")
 
-    # Spot check structure
+    # Spot check structure (v5.13: deviceRows now use connectionType + integration, not protocol)
     if rows:
         r = rows[0]
-        for field in ["id", "name", "type", "protocol", "status"]:
+        for field in ["id", "name", "type", "connectionType", "integration", "status"]:
             if field in r:
                 ok(f"Device row has '{field}' field")
             else:
                 fail(f"Device row missing '{field}' field")
-            break  # Only check first row for all fields
 
-    # Protocol counts should sum to total
-    bp = devs.get("byProtocol", {})
-    proto_sum = sum(bp.values())
-    if proto_sum == gt_devices:
-        ok(f"Protocol counts sum to total ({proto_sum})")
+    # Connection-type counts should sum to total (replaces obsolete byProtocol)
+    bc = devs.get("byConnectionType", {})
+    conn_sum = sum(bc.values())
+    if conn_sum == gt_devices:
+        ok(f"Connection-type counts sum to total ({conn_sum})")
     else:
-        fail(f"Protocol counts sum {proto_sum} != {gt_devices}")
+        fail(f"Connection-type counts sum {conn_sum} != {gt_devices}")
+
+    # Integration counts should also sum to total
+    bi = devs.get("byIntegration", {})
+    integ_sum = sum(bi.values())
+    if integ_sum == gt_devices:
+        ok(f"Integration counts sum to total ({integ_sum})")
+    else:
+        fail(f"Integration counts sum {integ_sum} != {gt_devices}")
 
     # Device type breakdown
     bt = devs.get("byType", {})
@@ -456,6 +490,103 @@ else:
     else:
         warn("No Zigbee data")
 
+    # v5.9.0+ radio health badges
+    if "radioHealth" in net:
+        ok("Has 'radioHealth' field")
+        rh = net["radioHealth"]
+        if rh.get("supported"):
+            ok(f"radioHealth: zwave={rh.get('zwave')} zigbee={rh.get('zigbee')}")
+        else:
+            warn(f"radioHealth not supported (firmware below {rh.get('minFirmware', '?')})")
+    else:
+        fail("Missing 'radioHealth' field (v5.9.0+)")
+
+    # v5.9.0+ Z-Wave JS controller (only when JS stack is detected)
+    if "zwaveJs" in net:
+        ok("Has 'zwaveJs' field")
+        zj = net["zwaveJs"]
+        if zj is None:
+            info("zwaveJs is null (legacy Z/IP stack or detection failed)")
+        else:
+            for field in ["firmwareVersion", "homeId", "ownNodeId", "statistics"]:
+                if field in zj:
+                    ok(f"zwaveJs has '{field}'")
+                else:
+                    fail(f"zwaveJs missing '{field}'")
+    else:
+        fail("Missing 'zwaveJs' field (v5.9.0+)")
+
+    # v5.9.0+ NTP server display
+    if "ntpServer" in net:
+        ok(f"Has 'ntpServer' field (value: {net['ntpServer'] or '(not configured)'})")
+    else:
+        fail("Missing 'ntpServer' field (v5.9.0+)")
+
+    # v5.9.1+ mDNS discovery
+    if "mdns" in net:
+        ok("Has 'mdns' field")
+        md = net["mdns"]
+        if md is None:
+            warn("mdns is null (endpoint failed)")
+        else:
+            for field in ["totalEndpoints", "totalServiceTypes", "endpoints"]:
+                if field in md:
+                    ok(f"mdns has '{field}'")
+                else:
+                    fail(f"mdns missing '{field}'")
+    else:
+        fail("Missing 'mdns' field (v5.9.1+)")
+
+    # v5.11.1+ Zip Gateway version
+    if "zipgatewayVersion" in net:
+        ok(f"Has 'zipgatewayVersion' field (value: {net.get('zipgatewayVersion') or '(none)'})")
+    else:
+        fail("Missing 'zipgatewayVersion' field (v5.11.1+)")
+
+    # v5.11.3+ security (was on Health, moved to Network)
+    if "security" in net:
+        ok("Has 'security' field")
+        sec = net["security"] or {}
+        if "limitedAccess" in sec:
+            ok(f"security.limitedAccess.enabled = {sec['limitedAccess'].get('enabled')}")
+        else:
+            fail("security missing 'limitedAccess'")
+        for field in ["allowedSubnets", "dnsFallback", "cloudController"]:
+            if field in sec:
+                ok(f"security has '{field}' (value: {sec[field]})")
+            else:
+                fail(f"security missing '{field}'")
+    else:
+        fail("Missing 'security' field (v5.11.3+)")
+
+    # v5.12.0+ Zigbee channel scan cache (may be null if never scanned)
+    if "zigbeeChannelScan" in net:
+        ok("Has 'zigbeeChannelScan' field")
+        sc = net["zigbeeChannelScan"]
+        if sc is None:
+            info("zigbeeChannelScan cache is empty — POST /api/network/zigbee/scan to populate")
+        else:
+            for field in ["at", "results"]:
+                if field in sc:
+                    ok(f"zigbeeChannelScan has '{field}'")
+                else:
+                    fail(f"zigbeeChannelScan missing '{field}'")
+    else:
+        fail("Missing 'zigbeeChannelScan' field (v5.12.0+)")
+
+    # v5.12.0+ Z-Wave topology HTML embed
+    if "zwaveTopologyHtml" in net:
+        ok("Has 'zwaveTopologyHtml' field")
+        topo = net["zwaveTopologyHtml"]
+        if topo and "<table" in topo:
+            ok("zwaveTopologyHtml contains <table> markup")
+        elif topo is None:
+            warn("zwaveTopologyHtml is null (endpoint failed)")
+        else:
+            fail("zwaveTopologyHtml present but has no <table>")
+    else:
+        fail("Missing 'zwaveTopologyHtml' field (v5.12.0+)")
+
 # ── Test 6: GET /api/health ───────────────────────────────────────────
 section("GET /api/health")
 
@@ -485,6 +616,57 @@ else:
 
     alerts = health.get("alerts", [])
     ok(f"Alerts: {len(alerts)} active")
+
+    # v5.11.1+ CPU info chips
+    if "cpuInfo" in health:
+        ok("Has 'cpuInfo' field")
+        ci = health["cpuInfo"]
+        if ci and "processors" in ci and "loadAverage" in ci:
+            ok(f"cpuInfo: processors={ci['processors']} loadAvg={ci['loadAverage']}")
+        elif ci is None:
+            warn("cpuInfo is null (endpoint failed)")
+        else:
+            fail(f"cpuInfo missing processors or loadAverage: {ci}")
+    else:
+        fail("Missing 'cpuInfo' field (v5.11.1+)")
+
+    # v5.9.0+ load threshold
+    if "loadThreshold" in health:
+        lt = health["loadThreshold"]
+        if isinstance(lt, int) and 1 <= lt <= 100:
+            ok(f"loadThreshold = {lt}%")
+        elif lt is None:
+            warn("loadThreshold is null")
+        else:
+            fail(f"loadThreshold has unexpected value: {lt!r}")
+    else:
+        fail("Missing 'loadThreshold' field (v5.9.0+)")
+
+    # v5.9.0+ backups card data
+    if "backups" in health:
+        ok("Has 'backups' field")
+        bk = health["backups"] or {}
+        if "local" in bk and isinstance(bk["local"], dict):
+            ok(f"backups.local: count={bk['local'].get('count')} latest={bk['local'].get('latestCreateTime')}")
+            # v5.11.2+ ISO timestamp for client-side date math
+            if "latestCreateTimeOrig" in bk["local"]:
+                ok("backups.local has 'latestCreateTimeOrig' (ISO format for diff math)")
+            else:
+                fail("backups.local missing 'latestCreateTimeOrig' (v5.11.2+)")
+        else:
+            fail("backups missing 'local' object")
+        if "cloud" in bk and isinstance(bk["cloud"], dict):
+            cl = bk["cloud"]
+            ok(f"backups.cloud: thisHubCount={cl.get('thisHubCount')} otherHubCount={cl.get('otherHubCount')}")
+            for field in ["hasCloudBackupEntitlements", "hasCloudRestoreEntitlements"]:
+                if field in cl:
+                    ok(f"backups.cloud has '{field}'")
+                else:
+                    fail(f"backups.cloud missing '{field}'")
+        else:
+            fail("backups missing 'cloud' object")
+    else:
+        fail("Missing 'backups' field (v5.9.0+)")
 
 # ── Test 7: GET /api/health/history ───────────────────────────────────
 section("GET /api/health/history")
@@ -574,6 +756,28 @@ if snaps.get("snapshotCount", 0) > 0:
             ok(f"Has parentChildHierarchy ({len(ap['parentChildHierarchy'])} parents)")
         else:
             fail("Missing parentChildHierarchy in snapshot view")
+
+        # v5.13.0+ new top-level snapshot fields
+        for field in ["backups", "security", "ntpServer", "loadThreshold", "code"]:
+            if field in sv:
+                ok(f"Has v5.13.0 field '{field}'")
+            else:
+                warn(f"Missing v5.13.0 field '{field}' (snapshot may pre-date 5.13.0)")
+        # Code subfields
+        code = sv.get("code")
+        if code:
+            for sub in ["bundles", "libraries", "hubVariables"]:
+                if sub in code:
+                    ok(f"code.{sub}: {len(code[sub])} entries")
+                else:
+                    fail(f"code missing '{sub}'")
+            # Hub variables MUST NOT capture value (only name+type) — privacy/diff-noise rule
+            hv = code.get("hubVariables") or []
+            if hv:
+                if "value" in hv[0]:
+                    fail("code.hubVariables captures 'value' — should be name+type only to avoid diff churn")
+                else:
+                    ok("code.hubVariables omits 'value' (correct — automation churn would generate diff noise)")
 else:
     warn("No snapshots to view — skipping")
 
@@ -593,13 +797,33 @@ if snaps.get("snapshotCount", 0) >= 2:
                 ok(f"Has '{key}'")
             else:
                 fail(f"Missing '{key}'")
-        
+
         dc = diff.get("deviceChanges", {})
         for key in ["added", "removed", "changed"]:
             if key in dc:
                 ok(f"Has deviceChanges '{key}'")
             else:
                 fail(f"Missing deviceChanges '{key}'")
+
+        # v5.13.0+ new diff sections (always present in payload, may be null)
+        for key in ["backupsChanges", "securityChanges", "codeChanges"]:
+            if key in diff:
+                ok(f"Has v5.13.0 diff field '{key}' (value: {'null' if diff[key] is None else 'present'})")
+            else:
+                fail(f"Missing v5.13.0 diff field '{key}'")
+
+        # Two snapshots taken back-to-back with no real changes should produce no false-positive
+        # diffs in any of the v5.13 sections. (Older snapshot may pre-date v5.13.0 — in that
+        # case all four sections are guarded to None by the containsKey/null-Map checks.)
+        unchanged_sections = sum(1 for k in ["backupsChanges", "securityChanges", "codeChanges"] if diff.get(k) is None)
+        nc_v513 = (diff.get("networkChanges") or {})
+        v513_net_keys = [k for k in ("ntpServer", "loadThreshold") if k in nc_v513]
+        if unchanged_sections == 3 and not v513_net_keys:
+            ok("No v5.13 false-positive diffs between back-to-back snapshots (guards working)")
+        elif v513_net_keys:
+            warn(f"v5.13 networkChanges populated unexpectedly: {v513_net_keys} — may indicate config actually changed, or guard regression")
+        else:
+            warn(f"v5.13 diff sections populated unexpectedly ({3 - unchanged_sections} non-null) — investigate if no real changes occurred")
 elif snaps.get("snapshotCount", 0) == 1:
     # Test the "now" comparison
     diff = api_get("snapshot/diff?older=0&newer=now")
@@ -651,6 +875,140 @@ else:
     else:
         fail("Missing 'lastReport' field")
 
+# ── v5.10.x: GET /api/code ────────────────────────────────────────────
+section("GET /api/code")
+
+code_resp = api_get("code")
+if "_error" in code_resp:
+    fail(f"Request failed: {code_resp['_error']}")
+else:
+    ok("Endpoint responds")
+    for field in ["appTypes", "driverTypes", "bundles", "libraries", "hubVariables"]:
+        if field in code_resp:
+            v = code_resp[field]
+            if isinstance(v, list):
+                ok(f"code.{field}: {len(v)} entries")
+            elif isinstance(v, dict):  # hubVariables is a dict {count, supported, variables}
+                ok(f"code.{field}: count={v.get('count')} supported={v.get('supported')}")
+            else:
+                fail(f"code.{field} has unexpected type {type(v).__name__}")
+        else:
+            fail(f"Missing 'code.{field}'")
+
+    # appTypes shape
+    ats = code_resp.get("appTypes") or []
+    if ats:
+        a = ats[0]
+        for field in ["id", "name", "namespace", "oauthEnabled", "lastModified", "usedByCount"]:
+            if field in a:
+                ok(f"appType has '{field}'")
+            else:
+                fail(f"appType missing '{field}'")
+
+    # driverTypes shape
+    dts = code_resp.get("driverTypes") or []
+    if dts:
+        d = dts[0]
+        for field in ["id", "name", "namespace", "lastModified", "capabilityCount", "usedByCount"]:
+            if field in d:
+                ok(f"driverType has '{field}'")
+            else:
+                fail(f"driverType missing '{field}'")
+
+    # Coherence: code.appTypes count of user-app-types should match /hub2/userAppTypes ground truth
+    user_app_types_raw = fetch("/hub2/userAppTypes")
+    if isinstance(user_app_types_raw, list):
+        if len(ats) == len(user_app_types_raw):
+            ok(f"appTypes count matches /hub2/userAppTypes ({len(ats)})")
+        else:
+            fail(f"appTypes count {len(ats)} != /hub2/userAppTypes {len(user_app_types_raw)}")
+
+# ── v5.11.2: GET /api/live (auto-refresh payload) ─────────────────────
+section("GET /api/live")
+
+live = api_get("live")
+if "_error" in live:
+    fail(f"Request failed: {live['_error']}")
+else:
+    ok("Endpoint responds")
+    # v5.11.2 fix: cpuInfo + loadThreshold MUST be in /api/live to survive auto-refresh overwrite
+    if "cpuInfo" in live and live["cpuInfo"]:
+        ok(f"live.cpuInfo present (regression guard for v5.11.2 chip-disappearing bug)")
+    else:
+        fail("live missing cpuInfo — chips will disappear after auto-refresh (regression of v5.11.2 fix)")
+    if "loadThreshold" in live:
+        ok(f"live.loadThreshold present (value: {live['loadThreshold']})")
+    else:
+        fail("live missing loadThreshold (regression of v5.11.2 fix)")
+    # Standard live fields
+    for field in ["freeOSMemory", "cpuAvg5min", "temperature", "databaseSize"]:
+        if field in live:
+            ok(f"live has '{field}'")
+        else:
+            fail(f"live missing '{field}'")
+
+# ── v5.9.0: POST /api/network/test (ping-gateway + IPv4 validation) ──
+section("POST /api/network/test")
+
+# Happy path: ping the gateway
+ping_resp = api_post("network/test", "type=ping-gateway", timeout=45)
+if "_error" in ping_resp:
+    fail(f"Request failed: {ping_resp['_error']}")
+elif ping_resp.get("success"):
+    out = ping_resp.get("output", "")
+    if "PING" in out and "packets transmitted" in out:
+        ok(f"ping-gateway returned valid ping output ({ping_resp.get('elapsedMs')}ms)")
+    else:
+        fail(f"ping-gateway output missing expected markers: {out[:200]}")
+else:
+    fail(f"ping-gateway returned success=false: {ping_resp.get('output', '')[:200]}")
+
+# Server-side IPv4 validation: invalid input must be rejected
+bad_resp = api_post("network/test", "type=ping-ip&ip=not-an-ip")
+if bad_resp.get("success") is False and "Error: invalid IP address" in (bad_resp.get("output") or ""):
+    ok("Invalid IPv4 rejected with 'Error: invalid IP address' (server-side regex guard)")
+else:
+    fail(f"Invalid IPv4 NOT rejected — security regression: {bad_resp}")
+
+# Unknown test type must also be rejected
+unk_resp = api_post("network/test", "type=bogus")
+if unk_resp.get("success") is False and "unknown test type" in (unk_resp.get("output") or "").lower():
+    ok("Unknown test type rejected")
+else:
+    fail(f"Unknown test type NOT rejected: {unk_resp}")
+
+# Missing type must error out
+miss_resp = api_post("network/test", "")
+if miss_resp.get("success") is False:
+    ok("Missing 'type' parameter rejected")
+else:
+    fail(f"Missing 'type' parameter NOT rejected: {miss_resp}")
+
+# ── v5.12.0: POST /api/network/zigbee/scan (slow — gated by env var) ─
+section("POST /api/network/zigbee/scan (gated by RUN_SLOW_TESTS=1)")
+
+if os.environ.get("RUN_SLOW_TESTS") == "1":
+    info("Triggering Zigbee channel scan (~15-30s)…")
+    scan_resp = api_post("network/zigbee/scan", "", timeout=120)
+    if "_error" in scan_resp:
+        fail(f"Scan request failed: {scan_resp['_error']}")
+    elif scan_resp.get("success"):
+        sc = scan_resp.get("scan") or {}
+        results = sc.get("results") or []
+        detected = [r for r in results if r.get("panId")]
+        ok(f"Scan completed in {scan_resp.get('elapsedMs')}ms — {len(detected)} neighbor PANs detected of {len(results)} channels probed")
+        # Verify scan got cached and is now visible in /api/network
+        net2 = api_get("network")
+        cached = (net2.get("zigbeeChannelScan") or {})
+        if cached.get("at") == sc.get("at"):
+            ok("Scan result cached in state and visible in subsequent /api/network response")
+        else:
+            fail("Scan result NOT cached — cache write or readback broken")
+    else:
+        fail(f"Scan returned success=false: {scan_resp}")
+else:
+    info("Skipped (set RUN_SLOW_TESTS=1 to run; takes ~30s)")
+
 # ── Test 13: POST actions ─────────────────────────────────────────────
 section("POST /api/snapshot/create")
 
@@ -692,6 +1050,18 @@ if dash_apps is not None and apps_total is not None:
         ok(f"Apps: dashboard ({dash_apps}) == apps ({apps_total})")
     else:
         fail(f"Apps: dashboard ({dash_apps}) != apps ({apps_total})")
+
+# v5.10.x: code.appTypes count == apps.summary.userApps install-source ratio
+# (every user-installed app instance comes from one of the user app types)
+code_atypes = len(code_resp.get("appTypes") or []) if code_resp and "_error" not in code_resp else None
+apps_user = apps.get("summary", {}).get("userApps") if not "_error" in apps else None
+if code_atypes is not None and apps_user is not None:
+    if apps_user == 0:
+        info("No user apps installed — code/apps coherence skipped")
+    elif apps_user >= 1 and code_atypes >= 1:
+        ok(f"User-installed code present (appTypes={code_atypes}, userAppInstances={apps_user})")
+    else:
+        warn(f"appTypes={code_atypes} but userAppInstances={apps_user} — possible orphan instances")
 
 # Dashboard hub vs Health hub
 dash_hub = dash.get("hub", {}).get("name") if not "_error" in dash else None
