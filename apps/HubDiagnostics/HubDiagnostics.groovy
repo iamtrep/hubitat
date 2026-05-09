@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.14.0"
+@Field static final String APP_VERSION = "5.15.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -208,7 +208,6 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final String SNAPSHOTS_FILE = "hub_diagnostics_snapshots.json"
 @Field static final String CHECKPOINTS_FILE = "hub_diagnostics_checkpoints.json"
 @Field static final String PERFORMANCE_COMPARISON_FILE = "hub_diagnostics_performance_comparison.json"
-@Field static final String SNAPSHOT_DIFF_FILE = "hub_diagnostics_snapshot_diff.json"
 
 @Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/hubitrep/hubitat/refs/heads/main/HubDiagnostics/HubDiagnostics.groovy"
 @Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/hubitrep/hubitat/refs/heads/main/HubDiagnostics/hub_diagnostics_ui.html"
@@ -440,14 +439,9 @@ Map serveUI() {
     if (!checkOAuth()) {
         return render(status: 403, contentType: 'text/plain', data: 'OAuth is not enabled for this app. Please enable it in the Hubitat App Settings.')
     }
-    
-    // Background sync check (Option 5: once every 24h)
-    long lastCheck = state.lastUIUpdateCheck ?: 0
-    String uiVer = getUIVersion()
-    if (now() - lastCheck > 86400000 || uiVer == "Unknown") {
-        logDebug "Auto-syncing UI (Unknown version or >24h)..."
-        syncUI(uiVer == "Unknown")
-    }
+
+    // v5.15.0: removed inline sync check from the hot path. Daily UI sync runs as a scheduled
+    // job (see initialize). Emergency sync still triggers below if the file is missing.
 
     try {
         String html = loadUITemplate()
@@ -541,12 +535,20 @@ Map apiDashboard() {
 }
 
 String getUIVersion() {
+    // v5.15.0: cached in state by syncUI on each successful sync. Falls back to a one-shot
+    // file read if the cache is empty (first install, post-state-clear, etc.).
+    String cached = state.cachedUIVersion as String
+    if (cached) return cached
     try {
         byte[] htmlBytes = downloadHubFile('hub_diagnostics_ui.html')
         if (htmlBytes) {
             String html = new String(htmlBytes, 'UTF-8')
             java.util.regex.Matcher m = (html =~ /const UI_VERSION = "([^"]+)"/)
-            if (m.find()) return m.group(1)
+            if (m.find()) {
+                String ver = m.group(1)
+                state.cachedUIVersion = ver
+                return ver
+            }
         }
     } catch (Exception e) {
         logDebug "Error reading UI version: ${e.message}"
@@ -1025,9 +1027,6 @@ Map apiSnapshotDiff() {
         }.collect { Map v -> [name: v.name, from: ((Map) oHvByName[v.name]).type, to: v.type] }
         if (hvAdded || hvRemoved || hvTypeChanged) codeChanges.hubVariables = [added: hvAdded, removed: hvRemoved, typeChanged: hvTypeChanged]
     }
-
-    // Save diff for persistence
-    saveSnapshotDiffPayload([generatedAt: new Date().format("yyyy-MM-dd HH:mm:ss"), older: older, newer: newer])
 
     return jsonResponse([
         older: [timestamp: older.timestamp, firmware: older.hubInfo?.firmware, storage: older.storage],
@@ -1862,6 +1861,15 @@ Map apiStats() {
  * @return For json: Map (or [error:true, message:...] on failure). For text: String (or null on failure).
  */
 private Object hubRequest(String path, String name, String type = "json", int timeout = 30) {
+    return hubRequestInternal(path, name, type, timeout, true)
+}
+
+/**
+ * Inner helper. allowRetry=true on first call; recurse with false after a transient error
+ * (SocketTimeoutException, ConnectException) so we get exactly one retry per request, no more.
+ * Permanent errors (4xx, malformed responses, sandbox issues) skip retry — pointless and noisy.
+ */
+private Object hubRequestInternal(String path, String name, String type, int timeout, boolean allowRetry) {
     long start = now()
     try {
         Map params = [
@@ -1882,8 +1890,14 @@ private Object hubRequest(String path, String name, String type = "json", int ti
         logDebug "Fetched ${name} in ${now() - start}ms"
         return type == "json" ? (result ?: [:]) : result
     } catch (Exception e) {
+        String exClass = getObjectClassName(e)
+        boolean isTransient = (exClass == 'java.net.SocketTimeoutException' || exClass == 'java.net.ConnectException')
+        if (allowRetry && isTransient) {
+            logDebug "Transient error fetching ${name} (${exClass}); retrying once"
+            return hubRequestInternal(path, name, type, timeout, false)
+        }
         if (type == "json") {
-            logError "Error fetching ${name} (${now() - start}ms): ${getObjectClassName(e)}: ${e.message}"
+            logError "Error fetching ${name} (${now() - start}ms): ${exClass}: ${e.message}"
             return [error: true, message: e.message]
         } else {
             logDebug "Error fetching ${name}: ${e.message}"
@@ -3461,7 +3475,6 @@ void deleteSnapshot(int index) {
 
 void clearAllSnapshots() {
     deleteFile(SNAPSHOTS_FILE)
-    deleteFile(SNAPSHOT_DIFF_FILE)
     logInfo "All config snapshots cleared"
 }
 
@@ -3799,16 +3812,6 @@ void savePerformanceComparisonPayload(Map payload) {
     }
 }
 
-Map loadSnapshotDiffPayload() {
-    def data = readFile(SNAPSHOT_DIFF_FILE)
-    return data instanceof Map ? (Map) data : null
-}
-
-void saveSnapshotDiffPayload(Map payload) {
-    if (payload) {
-        writeFile(SNAPSHOT_DIFF_FILE, groovy.json.JsonOutput.toJson(payload))
-    }
-}
 
 String loadUITemplate() {
     try {
@@ -4847,6 +4850,7 @@ boolean syncUI(boolean force = false) {
                         uploadHubFile("hub_diagnostics_ui.html", htmlBytes)
                         state.lastInstalledVersion = APP_VERSION
                         state.lastUIUpdateCheck = now()
+                        state.cachedUIVersion = APP_VERSION   // v5.15.0: cache for getUIVersion()
                         logInfo "UI updated from GitHub to match App v${APP_VERSION} (${htmlBytes.length} bytes)"
                         success = true
                     } else {
@@ -4887,6 +4891,15 @@ void initialize() {
         schedule(cron, "createCheckpoint")
         logInfo "Automatic perf checkpoints scheduled every ${interval} minute(s)"
     }
+
+    // v5.15.0: daily UI sync moved out of serveUI hot path. 03:17 local time, off-peak.
+    schedule("0 17 3 * * ?", "scheduledUISync")
+    logInfo "Daily UI sync scheduled at 03:17"
+}
+
+void scheduledUISync() {
+    logDebug "Running scheduled UI sync"
+    syncUI(false)
 }
 
 void migrateStorageIfNeeded() {
