@@ -42,11 +42,11 @@ Severity legend: 🔴 critical bug · 🟠 high (architecture / leverage) · �
 | A10 | `tbl()` re-renders entire table on header click instead of just `<tbody>` rows | ⚪ | **Fixed v5.18.0** (tbody-only re-render; preserves filter focus + details state) | [x] |
 | B1 | `analyzeDevices` deep-mode N+1: one sync `/device/fullJson` per uncertain device | 🟠 | Codex r2 — never addressed; only audit pipeline got async fan-out | [ ] |
 | B2 | Performance-tab UI re-fetches `api('devices')` + `api('apps')` for chart labels | 🟡 | Codex r2 — extension of #1 across endpoint boundary | [ ] |
-| B3 | `rDevices` computes `dt` (device-types sorted) and `stale` (filtered devices) twice each | ⚪ | Codex r2 — verified at lines 852/867 + 858/871 | [ ] |
-| B4 | `tbl()` filter input fires on every keystroke; no debounce; full filter+sort+`<tbody>` rewrite per char | 🟡 | Codex r2 — verified; painful at 200+ rows | [ ] |
-| B5 | `state.controllerTypeCache` grows unbounded; only cleared via explicit user action | ⚪ | Codex r2 — needs TTL or LRU bound | [ ] |
-| G1 | `apiAuditStatus` reads from `state.audit` snapshot, not the underlying `AtomicInteger` — counter can lag by 1-7 during high-concurrency scans | 🟡 | Gemini — verified; minor visible stutter, never wrong final state | [ ] |
-| G2 | `AUDIT_SCANS` in-memory; lost on JVM reload or hub reboot mid-scan; no resume | ⚪ | Gemini — real edge case, low frequency; defer | [-] |
+| B3 | `rDevices` computes `dt` (device-types sorted) and `stale` (filtered devices) twice each | ⚪ | **Fixed v5.19.0** | [x] |
+| B4 | `tbl()` filter input fires on every keystroke; no debounce; full filter+sort+`<tbody>` rewrite per char | 🟡 | **Fixed v5.19.0** (150ms debounce) | [x] |
+| B5 | `state.controllerTypeCache` grows unbounded; only cleared via explicit user action | ⚪ | **Fixed v5.19.0** (cleared in updated()) | [x] |
+| G1 | `apiAuditStatus` reads from `state.audit` snapshot, not the underlying `AtomicInteger` — counter can lag by 1-7 during high-concurrency scans | 🟡 | **Fixed v5.19.0** (reads AtomicInteger when in-flight) | [x] |
+| G2 | `AUDIT_SCANS` in-memory; lost on JVM reload or hub reboot mid-scan; no resume | n/a | **Won't fix** — volatile storage is the deliberate design choice; user-acknowledged trade-off | [x] |
 | G3 | `INTEGRATION_TABLE` / `ALERT_DISPLAY_NAMES` hardcoded; no user-configurable mappings | ⚪ | Gemini — feature request, not defect; existing driver-side extension point covers most cases | [-] |
 
 ---
@@ -274,6 +274,10 @@ Every keystroke triggers `rows.filter(...)` → `sf(filt, sc, sd)` (sort) → `t
 
 ## Gemini review additions
 
+### Note on Gemini #2 — "split into Hubitat Libraries"
+
+Gemini recommended splitting the 5k-line file into Hubitat Libraries (the platform's `library` mechanism). **This recommendation is not viable on Hubitat:** the platform simply concatenates imported libraries into a single script at compile time — there's no namespace separation, no independent versioning, no isolation. The file size and cognitive load are identical pre/post-split; only the on-disk file count changes. The underlying "god object" concern is valid (and tracked as #2 in this doc), but the suggested fix doesn't actually help.
+
 ### 🟡 G1 — `apiAuditStatus` reads from snapshot, not AtomicInteger
 
 **Where:** `apiAuditStatus()` returns `snap.processed` from `state.audit` (HubDiagnostics.groovy:4769). `state.audit.processed` is updated by `fullJsonCb` after each device fetches: `int processed = scan.processed.incrementAndGet(); ... state.audit = snap` (lines 4546, 4554).
@@ -284,15 +288,11 @@ Every keystroke triggers `rows.filter(...)` → `sf(filt, sc, sd)` (sort) → `t
 
 **Fix:** in `apiAuditStatus`, read `processed` directly from `AUDIT_SCANS[scanId].processed.get()` when the scan is still in-flight; fall back to `state.audit.processed` for completed scans (when AUDIT_SCANS entry has been removed). Eliminates the race entirely.
 
-### G2 (deferred) — Audit pending-queue persistence for reboot-resume
+### G2 (won't fix) — Audit pending-queue persistence for reboot-resume
 
-**Symptom:** if Hubitat recycles the app's JVM mid-audit (e.g., hub reboot, code update), the entire `AUDIT_SCANS` map vanishes. The watchdog timer (`AUDIT_WATCHDOG_SEC = 120`) is also tied to the JVM, so it can't fire to mark the scan errored.
+**Symptom:** if Hubitat recycles the app's JVM mid-audit (e.g., hub reboot, code update), the entire `AUDIT_SCANS` map vanishes. The watchdog timer (`AUDIT_WATCHDOG_SEC = 120`) is also tied to the JVM.
 
-**Frequency:** low. JVM recycles don't happen on a typical schedule; hub reboots are rare. Worst case is a "stuck" scan that never completes — recoverable by user re-triggering.
-
-**Fix path if/when needed:** persist `scan.pending` (the ConcurrentLinkedQueue of remaining device IDs) and `scan.devices` (already-collected results) to `state` periodically. On `installed()`/`updated()`, check for orphaned scan state and either auto-resume or auto-cancel with a user message.
-
-**Verdict:** defer until a user reports it. Current resilience (watchdog at 120s) is adequate for the common case.
+**Decision:** **volatile storage is the deliberate design choice.** Persisting per-callback would slow the audit substantially; persisting only the queue would still need careful invariants around resume-after-reboot. The audit is user-triggered and recoverable by re-trigger. User has acknowledged this trade-off.
 
 ### G3 (deferred) — User-configurable integration mappings
 
@@ -382,16 +382,12 @@ Three batches.
 
 ---
 
-### Phase R-6 — Round-2 quick-wins pack (S-M, single PR)
+### Phase R-6 — Round-2 quick-wins pack (v5.19.0, `755bbaa`) ✅ shipped
 
-Group the trivial-to-small round-2 + Gemini items into one housekeeping ship. Real UX/scaling wins per line.
-
-- [ ] **B3** — lift `dt` and `stale` out of duplicate `rDevices` computations
-- [ ] **B4** — debounce `tbl()` filter input (150ms)
-- [ ] **B5** — invalidate `state.controllerTypeCache` on `updated()` (matches R-5 A3/A7 pattern)
-- [ ] **G1** — `apiAuditStatus` reads from AtomicInteger when scan is in-flight; fall back to `state.audit` when completed
-
-Bump to v5.19.0. All four are independently small; `tbl()` debounce is the most user-visible.
+- [x] **B3** — lifted `dt` and `stale` out of duplicate `rDevices` computations
+- [x] **B4** — `tbl()` filter input debounced (150ms)
+- [x] **B5** — `state.controllerTypeCache` cleared in `updated()` (matches R-5 A3/A7 pattern)
+- [x] **G1** — `apiAuditStatus` reads AtomicInteger directly when scan in-flight; falls back to `state.audit` for completed scans
 
 ### Phase R-7 — Architectural plays (M-L, separate releases)
 
