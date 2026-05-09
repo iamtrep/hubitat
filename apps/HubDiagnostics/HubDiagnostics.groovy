@@ -1661,7 +1661,9 @@ Map getAppsData() {
 
 Map getNetworkData(Map shared = [:]) {
     Map networkData = (shared.network as Map) ?: analyzeNetwork()
-    Map stats = (shared.runtimeStats as Map) ?: (Map) hubRequest(RUNTIME_STATS_PATH, "runtime stats")
+    Map statsRaw = (Map) shared.runtimeStats
+    if (!statsRaw) { Map r = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats"); statsRaw = r.ok ? r.data : null }
+    Map stats = statsRaw
     Integer uptimeSeconds = stats ? parseUptime(stats.uptime as String) : null
     Map zigbeeMesh = fetchZigbeeMeshInfo()
     String zwaveVersion = fetchZwaveVersion()
@@ -1752,10 +1754,13 @@ Map getHealthData(Map shared = [:]) {
 }
 
 Map getPerformanceData(Map shared = [:]) {
-    Map stats      = (shared.runtimeStats as Map) ?: (Map) hubRequest(RUNTIME_STATS_PATH, "runtime stats")
-    Map resources  = (shared.resources as Map)    ?: fetchSystemResources()
-    Map zwaveData  = (shared.network?.zwave  as Map) ?: (Map) hubRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", "json", 20)
-    Map zigbeeData = (shared.network?.zigbee as Map) ?: (Map) hubRequest(ZIGBEE_DETAILS_PATH, "Zigbee details", "json", 20)
+    Map stats
+    if (shared.runtimeStats) { stats = (Map) shared.runtimeStats } else { Map r = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats"); stats = r.ok ? r.data : null }
+    Map resources  = (shared.resources as Map) ?: fetchSystemResources()
+    Map zwaveData
+    if (shared.network?.zwave) { zwaveData = (Map) shared.network.zwave } else { Map r = hubMapRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", 20); zwaveData = r.ok ? r.data : null }
+    Map zigbeeData
+    if (shared.network?.zigbee) { zigbeeData = (Map) shared.network.zigbee } else { Map r = hubMapRequest(ZIGBEE_DETAILS_PATH, "Zigbee details", 20); zigbeeData = r.ok ? r.data : null }
     List zwaveMsgCounts = extractZwaveMessageCounts(zwaveData)
     List zigbeeMsgCounts = extractZigbeeMessageCounts(zigbeeData)
     Map radioStats = [zwave: zwaveMsgCounts, zigbee: zigbeeMsgCounts]
@@ -1900,8 +1905,9 @@ List getStructuredAlerts(Map shared = [:]) {
     }
 
     // Network: Ethernet + WiFi both active
-    Map networkConfig = (shared.network?.network as Map) ?: (Map) hubRequest(NETWORK_CONFIG_PATH, "network configuration", "json", 15)
-    if (networkConfig && !networkConfig.error && networkConfig.hasEthernet && networkConfig.hasWiFi) {
+    Map networkConfig = (Map) shared.network?.network
+    if (!networkConfig) { Map r = hubMapRequest(NETWORK_CONFIG_PATH, "network configuration", 15); networkConfig = r.ok ? r.data : null }
+    if (networkConfig && networkConfig.hasEthernet && networkConfig.hasWiFi) {
         alerts << [severity: "warning", name: "Ethernet and WiFi both active \u2014 disable WiFi when using Ethernet"]
     }
 
@@ -1911,8 +1917,9 @@ List getStructuredAlerts(Map shared = [:]) {
     if (!zwRaw) {
         long lastZwCheck = state.lastZwaveGhostCheckMs ?: 0
         if (now() - lastZwCheck > 60000) {
-            zwRaw = (Map) hubRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", "json", 8)
-            if (zwRaw && !zwRaw.error) {
+            Map zwWrap = hubMapRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", 8)
+            zwRaw = zwWrap.ok ? zwWrap.data : null
+            if (zwRaw) {
                 state.lastZwaveGhostCheckMs = now()
                 state.cachedZwaveGhostCount = buildZwaveGhostNodes(zwRaw).size()
             }
@@ -2144,7 +2151,8 @@ Float fetchTemperature() {
 }
 
 Map fetchHubAlerts(Map prefetchedHubData = null) {
-    Map hubData = prefetchedHubData ?: (Map) hubRequest(HUB_DATA_PATH, "hub data", "json", 10)
+    Map hubData = prefetchedHubData
+    if (!hubData) { Map r = hubMapRequest(HUB_DATA_PATH, "hub data", 10); hubData = r.ok ? r.data : null }
     if (!hubData) return [:]
     return [
         alerts: hubData.alerts ?: [:],
@@ -2439,7 +2447,8 @@ Map fetchSecurityInfo(Map prefetchedHubData = null) {
     String laRaw = (String) hubRequest(LIMITED_ACCESS_PATH, "limited access addresses", "text", 5)
     String subnets = (String) hubRequest(ALLOW_SUBNETS_PATH, "allowed subnets", "text", 5)
     String dnsFb = (String) hubRequest(DNS_FALLBACK_PATH, "DNS fallback", "text", 5)
-    Map hubData = prefetchedHubData ?: (Map) hubRequest(HUB_DATA_PATH, "hub data (cloud controller flag)", "json", 10)
+    Map hubData = prefetchedHubData
+    if (!hubData) { Map r = hubMapRequest(HUB_DATA_PATH, "hub data (cloud controller flag)", 10); hubData = r.ok ? r.data : null }
     String laClean = laRaw ? laRaw.replaceAll(/<[^>]+>/, '').trim() : null
     boolean limitedSet = laClean && !laClean.equalsIgnoreCase("no limit set") && !laClean.isEmpty()
     List subnetList = subnets ? subnets.trim().split(',').findAll { it } as List : []
@@ -3690,8 +3699,9 @@ Map getHubInfo(Map prefetchedHubData = null) {
         info.ip = hub.localIP ?: "Unknown"
     }
     // Fetch model from hubData for accurate hardware name (e.g. "C-7", "C-8 Pro")
-    Map hubData = prefetchedHubData ?: (Map) hubRequest(HUB_DATA_PATH, "hub data", "json", 10)
-    if (hubData && !hubData.error && hubData.model) {
+    Map hubData = prefetchedHubData
+    if (!hubData) { Map r = hubMapRequest(HUB_DATA_PATH, "hub data", 10); hubData = r.ok ? r.data : null }
+    if (hubData && hubData.model) {
         info.hardware = hubData.model
     }
     return info
