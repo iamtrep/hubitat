@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.16.0"
+@Field static final String APP_VERSION = "5.17.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -211,6 +211,58 @@ import java.util.concurrent.atomic.AtomicInteger
 
 @Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/hubitrep/hubitat/refs/heads/main/HubDiagnostics/HubDiagnostics.groovy"
 @Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/hubitrep/hubitat/refs/heads/main/HubDiagnostics/hub_diagnostics_ui.html"
+
+// =====================================================================================
+// AUDIT_REPORT_CSS — extracted from renderAuditHtml in v5.17.0 (R-3 #3).
+// The audit report (a self-contained HTML file written to FileManager) needs its own
+// inline CSS because it's loaded as a static document, not through serveUI. This block
+// is a deliberately-curated subset of the SPA's <style> block in hub_diagnostics_ui.html
+// — same color tokens, same card/metric/table/badge primitives — plus audit-only styles
+// (TOC, summary.card-h disclosure triangle, .muted/.warn/.crit text helpers).
+//
+// SOURCE OF TRUTH: hub_diagnostics_ui.html lines 8-88 (the SPA <style> block).
+// When you change visual primitives here, mirror the change in the SPA <style> block,
+// and vice versa. Future R-3 work could deduplicate these by injecting via serveUI
+// substitution, but that breaks workbench/offline modes — left as documented future
+// option in CODE_REVIEW.md.
+// =====================================================================================
+@Field static final String AUDIT_REPORT_CSS = """\
+:root{--primary:#1A77C9;--ok:#388e3c;--warn:#ff9800;--crit:#d32f2f;--bg:#f5f5f5;--card:#fff;--border:#ddd;--text:#333;--muted:#777;--alt:#f9f9f9;--hover:#e3f2fd}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:14px;padding:16px}
+a{color:var(--primary);text-decoration:none}a:hover{text-decoration:underline}
+.hdr{background:var(--primary);color:#fff;padding:10px 20px;border-radius:8px 8px 0 0;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.hdr h1{font-size:17px;font-weight:600}.hdr .meta{font-size:12px;opacity:.85;margin-left:auto}
+.toc{background:var(--card);border-radius:0 0 8px 8px;padding:14px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.toc-l{color:var(--muted);font-size:11px;text-transform:uppercase;font-weight:600;margin-bottom:6px}
+.toc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:4px;font-size:13px}
+.card{background:var(--card);border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:14px;overflow:hidden}
+.card-h{padding:10px 14px;font-size:13px;font-weight:600;border-bottom:1px solid var(--border);background:var(--alt)}
+.card-b{padding:14px}
+summary.card-h{cursor:pointer;user-select:none}
+summary.card-h::-webkit-details-marker{color:var(--muted)}
+summary.card-h::marker{color:var(--muted)}
+summary.card-h:hover{background:#f0f0f0}
+details:not([open])>summary.card-h{border-bottom:0}
+.metrics{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
+.m{padding:10px;border-radius:6px;background:var(--alt)}
+.m-l{font-size:11px;color:var(--muted);margin-bottom:2px}.m-v{font-size:18px;font-weight:600}
+.tbl-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:var(--primary);color:#fff;padding:7px 9px;text-align:left;white-space:nowrap;user-select:none}
+td{padding:6px 9px;border-bottom:1px solid #eee;vertical-align:top}
+tbody tr:nth-child(even){background:var(--alt)}
+tbody tr:hover{background:var(--hover)}
+table[data-sortable] th{cursor:pointer}
+table[data-sortable] th:hover{background:#1565a7}
+table[data-sortable] th .arr{font-size:9px;margin-left:3px;opacity:.6}
+table[data-sortable] th[data-dir] .arr{opacity:1}
+.filter input{padding:7px 11px;border:1px solid var(--border);border-radius:4px;font-size:13px;width:280px;max-width:100%;margin-bottom:10px}
+.badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
+.b-builtin{background:#e8eaf6;color:#3949ab}.b-community{background:#fce4ec;color:#c62828}
+.b-warn{background:#fff3e0;color:var(--warn)}.b-crit{background:#ffebee;color:var(--crit)}
+.muted{color:var(--muted)}.warn{color:var(--warn)}.crit{color:var(--crit)}
+"""
 
 @Field static final String DEVICE_FULL_JSON_PATH = "/device/fullJson/"
 
@@ -4061,44 +4113,13 @@ private String renderAuditHtml(Map xref, String hubName, String generatedAt, Lis
     StringBuilder b = new StringBuilder()
     b << "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\">"
     b << "<title>Device Usage Audit — ${esc(hubName)}</title>"
+    // v5.17.0 (R-3 #3): inline CSS extracted to AUDIT_REPORT_CSS @Field constant near the top
+    // of the file. Same source-of-truth duplication pattern as before — kept in sync with the
+    // SPA <style> block in hub_diagnostics_ui.html — but visible as one block instead of 38
+    // scattered StringBuilder appends. Future deduplication via serveUI substitution is a
+    // documented option (would break workbench/offline modes).
     b << "<style>"
-    b << ":root{--primary:#1A77C9;--ok:#388e3c;--warn:#ff9800;--crit:#d32f2f;--bg:#f5f5f5;--card:#fff;--border:#ddd;--text:#333;--muted:#777;--alt:#f9f9f9;--hover:#e3f2fd}"
-    b << "*{box-sizing:border-box;margin:0;padding:0}"
-    b << "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:14px;padding:16px}"
-    b << "a{color:var(--primary);text-decoration:none}a:hover{text-decoration:underline}"
-    b << ".hdr{background:var(--primary);color:#fff;padding:10px 20px;border-radius:8px 8px 0 0;display:flex;align-items:center;gap:12px;flex-wrap:wrap}"
-    b << ".hdr h1{font-size:17px;font-weight:600}.hdr .meta{font-size:12px;opacity:.85;margin-left:auto}"
-    b << ".toc{background:var(--card);border-radius:0 0 8px 8px;padding:14px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.08)}"
-    b << ".toc-l{color:var(--muted);font-size:11px;text-transform:uppercase;font-weight:600;margin-bottom:6px}"
-    b << ".toc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:4px;font-size:13px}"
-    b << ".card{background:var(--card);border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:14px;overflow:hidden}"
-    b << ".card-h{padding:10px 14px;font-size:13px;font-weight:600;border-bottom:1px solid var(--border);background:var(--alt)}"
-    b << ".card-b{padding:14px}"
-    // <summary class="card-h">: keep card-h look + native left disclosure triangle
-    b << "summary.card-h{cursor:pointer;user-select:none}"
-    b << "summary.card-h::-webkit-details-marker{color:var(--muted)}"
-    b << "summary.card-h::marker{color:var(--muted)}"
-    b << "summary.card-h:hover{background:#f0f0f0}"
-    b << "details:not([open])>summary.card-h{border-bottom:0}"
-    b << ".metrics{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}"
-    b << ".m{padding:10px;border-radius:6px;background:var(--alt)}"
-    b << ".m-l{font-size:11px;color:var(--muted);margin-bottom:2px}.m-v{font-size:18px;font-weight:600}"
-    // SPA-style tables: blue header, white text, striped rows, hover highlight
-    b << ".tbl-wrap{overflow-x:auto}"
-    b << "table{width:100%;border-collapse:collapse;font-size:13px}"
-    b << "th{background:var(--primary);color:#fff;padding:7px 9px;text-align:left;white-space:nowrap;user-select:none}"
-    b << "td{padding:6px 9px;border-bottom:1px solid #eee;vertical-align:top}"
-    b << "tbody tr:nth-child(even){background:var(--alt)}"
-    b << "tbody tr:hover{background:var(--hover)}"
-    b << "table[data-sortable] th{cursor:pointer}"
-    b << "table[data-sortable] th:hover{background:#1565a7}"
-    b << "table[data-sortable] th .arr{font-size:9px;margin-left:3px;opacity:.6}"
-    b << "table[data-sortable] th[data-dir] .arr{opacity:1}"
-    b << ".filter input{padding:7px 11px;border:1px solid var(--border);border-radius:4px;font-size:13px;width:280px;max-width:100%;margin-bottom:10px}"
-    b << ".badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}"
-    b << ".b-builtin{background:#e8eaf6;color:#3949ab}.b-community{background:#fce4ec;color:#c62828}"
-    b << ".b-warn{background:#fff3e0;color:var(--warn)}.b-crit{background:#ffebee;color:var(--crit)}"
-    b << ".muted{color:var(--muted)}.warn{color:var(--warn)}.crit{color:var(--crit)}"
+    b << AUDIT_REPORT_CSS
     b << "</style></head><body>"
 
     // Header
