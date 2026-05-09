@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.23.1"
+@Field static final String APP_VERSION = "5.24.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -750,7 +750,7 @@ Map apiPerformanceCompare() {
         int bIdx = baseline.toInteger()
         if (bIdx < 0 || bIdx >= checkpoints.size()) return jsonResponse([success: false, error: "Invalid baseline index"])
         Map bCp = checkpoints[bIdx]
-        baselineStats = bCp.stats + [resources: bCp.resources, radioStats: bCp.radioStats, timestampMs: bCp.timestampMs]
+        baselineStats = bCp.stats + [resources: bCp.resources, radioStats: bCp.radioStats, timestampMs: bCp.timestampMs, temperature: bCp.temperature, databaseSize: bCp.databaseSize]
         baselineLabel = bCp.timestamp
     }
 
@@ -769,6 +769,8 @@ Map apiPerformanceCompare() {
             zwave: extractZwaveMessageCounts(zwaveData),
             zigbee: extractZigbeeMessageCounts(zigbeeData)
         ]
+        checkpointStats.temperature = fetchTemperature()
+        checkpointStats.databaseSize = fetchDatabaseSize()
         checkpointStats.timestampMs = now()
         checkpointLabel = "Now (${new Date().format('yyyy-MM-dd HH:mm:ss')})"
     } else {
@@ -776,7 +778,7 @@ Map apiPerformanceCompare() {
         int cIdx = checkpoint.toInteger()
         if (cIdx < 0 || cIdx >= checkpoints.size()) return jsonResponse([success: false, error: "Invalid checkpoint index"])
         Map cCp = checkpoints[cIdx]
-        checkpointStats = cCp.stats + [resources: cCp.resources, radioStats: cCp.radioStats, timestampMs: cCp.timestampMs]
+        checkpointStats = cCp.stats + [resources: cCp.resources, radioStats: cCp.radioStats, timestampMs: cCp.timestampMs, temperature: cCp.temperature, databaseSize: cCp.databaseSize]
         checkpointLabel = cCp.timestamp
     }
 
@@ -1800,6 +1802,8 @@ Map getPerformanceData(Map shared = [:]) {
     if (stats) {
         stats.radioStats = radioStats
         stats.uptimeSeconds = parseUptime(stats.uptime as String)
+        stats.temperature = (shared.temperature as Float) ?: fetchTemperature()
+        stats.databaseSize = (shared.databaseSize as Integer) ?: fetchDatabaseSize()
         if (stats.appStats) {
             stats.appStats = (stats.appStats as List).collect { Map a ->
                 a + [source: (appSourceById[a.id] ?: "platform")]
@@ -1848,7 +1852,8 @@ Map getPerformanceData(Map shared = [:]) {
         maxCheckpoints: (settings.maxCheckpoints ?: 10) as int,
         checkpoints: (checkpoints ?: []).collect { Map cp -> [
             timestamp: cp.timestamp, timestampMs: cp.timestampMs,
-            stats: cp.stats, resources: cp.resources, radioStats: cp.radioStats
+            stats: cp.stats, resources: cp.resources, radioStats: cp.radioStats,
+            temperature: cp.temperature, databaseSize: cp.databaseSize
         ]},
         savedComparison: loadPerformanceComparisonPayload()
     ]
@@ -3470,8 +3475,11 @@ boolean createCheckpoint() {
         return false
     }
     Map stats = statsWrap.data
+    stats.uptimeSeconds = parseUptime(stats.uptime as String)
 
     Map resources = fetchSystemResources()
+    Float temperature = fetchTemperature()
+    Integer databaseSize = fetchDatabaseSize()
 
     // Capture radio message counts for Z-Wave and Zigbee
     Map zwaveData = hubMapRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", 20).with { it.ok ? it.data : null }
@@ -3484,6 +3492,8 @@ boolean createCheckpoint() {
         timestampMs: now(),
         stats: stats,
         resources: resources,
+        temperature: temperature,
+        databaseSize: databaseSize,
         radioStats: [
             zwave: zwaveRadio,
             zigbee: zigbeeRadio
@@ -3507,12 +3517,15 @@ Map buildZeroBaseline(Map stats, Map resources) {
     return [
         timestampMs: 0,
         uptime: "0h 0m 0s",
+        uptimeSeconds: 0,
         devicesUptime: "0h 0m 0s",
         appsUptime: "0h 0m 0s",
         totalDevicesRuntime: "0ms",
         totalAppsRuntime: "0ms",
         devicePct: "0.000%",
         appPct: "0.000%",
+        temperature: null,
+        databaseSize: null,
         resources: resources ? [
             timestamp: "0:00:00",
             freeOSMemory: 0,

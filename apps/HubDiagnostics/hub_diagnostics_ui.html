@@ -114,7 +114,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.23.1";
+const UI_VERSION = "5.24.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -607,6 +607,8 @@ function renderPerfRes(r){
   let o='';
   o+=mc('Free OS Memory',fmem(r.freeOSMemory),sev(r.freeOSMemory,TH.warnMemMb*1024,TH.critMemMb*1024,true));
   o+=mc('CPU Load (5m)',r.cpuAvg5min?.toFixed(2),sev(r.cpuAvg5min,TH.warnCpuLoad,TH.critCpuLoad,false));
+  if(r.temperature!=null)o+=mc('Temperature',r.temperature.toFixed(1)+'°C',sev(r.temperature,TH.warnTempC,TH.critTempC,false));
+  if(r.databaseSize!=null)o+=mc('Database',r.databaseSize+' MB');
   return o}
 
 // ===== TAB: DASHBOARD =====
@@ -1430,6 +1432,8 @@ async function rPerf(){const P='p-performance';loading(P);try{
     if(isDiff) {
       o+=mc('Free OS Memory',fmem(res.freeOSMemory),res.freeOSMemory<0?'var(--crit)':'var(--ok)');
       o+=mc('CPU Load',res.cpuAvg5min?.toFixed(2),res.cpuAvg5min>0?'var(--warn)':'var(--ok)');
+      if(res.temperature!=null){const sgn=res.temperature>=0?'+':'';o+=mc('Temperature',sgn+res.temperature.toFixed(1)+'°C',res.temperature>2?'var(--warn)':'var(--ok)');}
+      if(res.databaseSize!=null){const sgn=res.databaseSize>=0?'+':'';o+=mc('Database',sgn+res.databaseSize+' MB',res.databaseSize>50?'var(--warn)':'var(--ok)');}
     } else {
       o+=renderPerfRes(res);
     }
@@ -1491,10 +1495,12 @@ async function rPerf(){const P='p-performance';loading(P);try{
   // Render checkpoint table
   if(d.checkpoints&&d.checkpoints.length){
     const cpRows=d.checkpoints.map((cp,i)=>({idx:i+1,timestamp:cp.timestamp,
-      uptime:cp.stats?.uptime||'N/A',devRuntime:cp.stats?.totalDevicesRuntime||'N/A',appRuntime:cp.stats?.totalAppsRuntime||'N/A',_idx:i}));
+      uptime:cp.stats?.uptime||'N/A',devRuntime:cp.stats?.totalDevicesRuntime||'N/A',appRuntime:cp.stats?.totalAppsRuntime||'N/A',
+      temp:cp.temperature!=null?cp.temperature.toFixed(1)+'°C':'—',db:cp.databaseSize!=null?cp.databaseSize+' MB':'—',_idx:i}));
     tbl('cpTbl',[
       {l:'#',f:'idx',t:'n'},{l:'Timestamp',f:'timestamp'},{l:'Uptime',f:'uptime'},
       {l:'Dev Runtime',f:'devRuntime'},{l:'App Runtime',f:'appRuntime'},
+      {l:'Temp',f:'temp'},{l:'DB',f:'db'},
       {l:'',f:'_idx',r:r=>'<button class="btn btn-d" onclick="delCp('+r._idx+')">\u{1F5D1}</button>'}
     ],cpRows,{sc:0,sd:'desc'})}
 
@@ -1575,7 +1581,9 @@ async function rPerf(){const P='p-performance';loading(P);try{
           diff: diffStats(r.baselineStats, r.checkpointStats),
           diffResources: r.baselineStats.resources && r.checkpointStats.resources ? {
             freeOSMemory: r.checkpointStats.resources.freeOSMemory - r.baselineStats.resources.freeOSMemory,
-            cpuAvg5min: r.checkpointStats.resources.cpuAvg5min - r.baselineStats.resources.cpuAvg5min
+            cpuAvg5min: r.checkpointStats.resources.cpuAvg5min - r.baselineStats.resources.cpuAvg5min,
+            temperature: r.checkpointStats.temperature!=null&&r.baselineStats.temperature!=null ? r.checkpointStats.temperature-r.baselineStats.temperature : null,
+            databaseSize: r.checkpointStats.databaseSize!=null&&r.baselineStats.databaseSize!=null ? r.checkpointStats.databaseSize-r.baselineStats.databaseSize : null
           } : null
         };
         rPerf();
@@ -1597,6 +1605,8 @@ function renderComparison(data,elId){
     const br=b.resources,cr=c.resources;
     if(cr.freeOSMemory!=null&&br.freeOSMemory!=null){const d=cr.freeOSMemory-br.freeOSMemory;o+=ni('Free OS Memory',fmem(cr.freeOSMemory)+' ('+(d>=0?'+':'')+fmem(d)+')',d<0?'var(--crit)':'var(--ok)')}
     if(cr.cpuAvg5min!=null&&br.cpuAvg5min!=null){const d=cr.cpuAvg5min-br.cpuAvg5min;o+=ni('CPU Load',cr.cpuAvg5min.toFixed(2)+' ('+(d>=0?'+':'')+d.toFixed(2)+')',d>0?'var(--warn)':'var(--ok)')}
+    if(c.temperature!=null&&b.temperature!=null){const d=c.temperature-b.temperature;o+=ni('Temperature',c.temperature.toFixed(1)+'°C ('+(d>=0?'+':'')+d.toFixed(1)+'°C)',d>2?'var(--warn)':'var(--ok)')}
+    if(c.databaseSize!=null&&b.databaseSize!=null){const d=c.databaseSize-b.databaseSize;o+=ni('Database',c.databaseSize+' MB ('+(d>=0?'+':'')+d+' MB)',d>50?'var(--warn)':'var(--ok)')}
     o+='</div>'}
   el.innerHTML=o;
 }
@@ -1980,7 +1990,8 @@ async function refreshLive(){
     const d=await resp.json();
     const r={freeOSMemory:d.freeOSMemory,cpuAvg5min:d.cpuAvg5min,
               totalJavaMemory:d.totalJavaMemory,freeJavaMemory:d.freeJavaMemory,
-              directJavaMemory:d.directJavaMemory};
+              directJavaMemory:d.directJavaMemory,
+              temperature:d.temperature,databaseSize:d.databaseSize};
     const dash=document.getElementById('res-dash');if(dash)dash.innerHTML=renderDashRes(r,d);
     const health=document.getElementById('res-health');if(health)health.innerHTML=renderHealthRes(r,d);
     const perf=document.getElementById('res-perf');if(perf)perf.innerHTML=renderPerfRes(r);
