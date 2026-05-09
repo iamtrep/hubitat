@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.22.0"
+@Field static final String APP_VERSION = "5.23.1"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -138,6 +138,14 @@ import java.util.concurrent.atomic.AtomicInteger
 
 // In-memory API response time tracking (reset on hub reboot)
 @Field static Map apiTimings = [:]
+
+// In-memory caches (survive within a JVM session; cleared on hub reboot/app reload)
+@Field static volatile String  uiVersionCache
+@Field static volatile String  zwaveStackCache
+@Field static volatile Map     fwUpdateCache
+@Field static volatile Long    fwUpdateCacheAt
+@Field static volatile boolean githubVersionRefreshPending = false
+@Field static final java.util.regex.Pattern HTML_TAG_RE = ~/<[^>]+>/
 
 // Connection type display names
 @Field static final Map CONN_DISPLAY = [
@@ -499,7 +507,7 @@ Map serveUI() {
         String html = loadUITemplate()
         if (!html) {
             logError "hub_diagnostics_ui.html missing from hub. Attempting emergency sync..."
-            if (syncUI(true)) html = loadUITemplate()
+            if (syncUIBlocking()) html = loadUITemplate()
         }
         if (!html) return render(status: 404, contentType: 'text/plain', data: 'UI file not found. Check hub logs.')
 
@@ -513,30 +521,38 @@ Map serveUI() {
     }
 }
 
+// Returns the last-known GitHub version immediately (stale-while-revalidate).
+// State-backed so the cached value survives reboots; asynchttpGet handles the refresh.
 String checkGithubVersion() {
     long lastCheck = state.lastGithubVersionCheck ?: 0
-    if (now() - lastCheck < 3600000 && state.lastGithubVersion) {
-        return state.lastGithubVersion
+    if (now() - lastCheck >= 3600000 && !githubVersionRefreshPending) {
+        githubVersionRefreshPending = true
+        asynchttpGet('githubVersionCallback', [uri: IMPORT_URL_APP, contentType: "text/plain", timeout: 10])
+    }
+    return state.lastGithubVersion
+}
+
+void githubVersionCallback(resp, data) {
+    githubVersionRefreshPending = false
+    if (resp.hasError() || resp.status != 200) {
+        logDebug "GitHub version check failed: HTTP ${resp.status}"
+        return
     }
     try {
-        String version = null
-        httpGet([uri: IMPORT_URL_APP, contentType: "text/plain", timeout: 10]) { resp ->
-            String text = resp.data?.text ?: ""
-            def m = text =~ /APP_VERSION\s*=\s*"([^"]+)"/
-            if (m.find()) version = m.group(1)
+        String text = resp.data ?: ""
+        def m = text =~ /APP_VERSION\s*=\s*"([^"]+)"/
+        if (m.find()) {
+            state.lastGithubVersion = m.group(1)
+            state.lastGithubVersionCheck = now()
         }
-        state.lastGithubVersion = version
-        state.lastGithubVersionCheck = now()
-        return version
-    } catch (e) {
-        logDebug "GitHub version check failed: ${e.message}"
-        return state.lastGithubVersion
+    } catch (Exception e) {
+        logDebug "GitHub version callback error: ${e.message}"
     }
 }
 
 Map apiSyncUI() {
     logInfo "Manual UI sync requested via API..."
-    boolean success = syncUI(true)
+    boolean success = syncUIBlocking()
     return jsonResponse([success: success])
 }
 
@@ -589,10 +605,7 @@ Map apiDashboard() {
 }
 
 String getUIVersion() {
-    // v5.15.0: cached in state by syncUI on each successful sync. Falls back to a one-shot
-    // file read if the cache is empty (first install, post-state-clear, etc.).
-    String cached = state.cachedUIVersion as String
-    if (cached) return cached
+    if (uiVersionCache) return uiVersionCache
     try {
         byte[] htmlBytes = downloadHubFile('hub_diagnostics_ui.html')
         if (htmlBytes) {
@@ -600,7 +613,7 @@ String getUIVersion() {
             java.util.regex.Matcher m = (html =~ /const UI_VERSION = "([^"]+)"/)
             if (m.find()) {
                 String ver = m.group(1)
-                state.cachedUIVersion = ver
+                uiVersionCache = ver
                 return ver
             }
         }
@@ -2068,13 +2081,13 @@ private boolean isVersionAtLeast(String actual, String required) {
 }
 
 private String detectZwaveStack() {
-    if (state.zwaveStackCache) return (String) state.zwaveStackCache
+    if (zwaveStackCache) return zwaveStackCache
     String txt = (String) hubRequest(ZWAVE_JS_STATUS_PATH, "Z-Wave JS status probe", "text", 5)
     String stack
     if (txt == null) stack = "unknown"
     else if (txt.toLowerCase().trim() == "true") stack = "js"
     else stack = "legacy"
-    state.zwaveStackCache = stack
+    zwaveStackCache = stack
     return stack
 }
 
@@ -2263,9 +2276,9 @@ String fetchNtpServer() {
 
 Map fetchFirmwareUpdate() {
     long nowMs = now()
-    if (state.fwUpdateCache && state.fwUpdateCacheAt &&
-        (nowMs - (state.fwUpdateCacheAt as Long)) < FW_UPDATE_CACHE_TTL_MS) {
-        return (Map) state.fwUpdateCache
+    if (fwUpdateCache && fwUpdateCacheAt &&
+        (nowMs - fwUpdateCacheAt) < FW_UPDATE_CACHE_TTL_MS) {
+        return fwUpdateCache
     }
     Map wrap = hubMapRequest(FIRMWARE_UPDATE_PATH, "firmware update check", 15)
     if (!wrap.ok) return null
@@ -2278,8 +2291,8 @@ Map fetchFirmwareUpdate() {
         beta: resp.beta == true,
         releaseNotesUrl: resp.releaseNotesUrl
     ]
-    state.fwUpdateCache = result
-    state.fwUpdateCacheAt = nowMs
+    fwUpdateCache = result
+    fwUpdateCacheAt = nowMs
     return result
 }
 
@@ -3756,7 +3769,7 @@ String safeToString(value, String defaultValue = "") {
 
 @CompileStatic
 String stripHtml(String s) {
-    return s ? s.replaceAll(/<[^>]+>/, '').trim() : s
+    return s ? HTML_TAG_RE.matcher(s).replaceAll('').trim() : s
 }
 
 Long parseDate(dateStr) {
@@ -4925,7 +4938,7 @@ void installed() {
     logInfo "Hub Diagnostics installed"
     state.installed = true
     if (!state.accessToken) checkOAuth()
-    syncUI(true)
+    runIn(1, 'syncUIForced')
     initialize()
 }
 
@@ -4934,13 +4947,13 @@ void updated() {
     state.installed = true
     unsubscribe()
     unschedule()
-    // R-5 (v5.18.0) + R-6 B5 (v5.19.0): clear session-scoped caches so config/hardware changes take effect immediately
-    state.remove('zwaveStackCache')   // A3 — re-detect stack on next use (handles user switching legacy ↔ JS)
-    state.remove('fwUpdateCache')     // also clear so next dashboard refresh hits cloud (1h TTL would otherwise apply)
-    state.remove('fwUpdateCacheAt')
-    state.remove('controllerTypeCache') // B5 — evict per-device classification cache; rebuilds on next analysis pass; auto-handles removed/re-paired devices
-    apiTimings.clear()                // A7 — drop stats for any renamed/removed endpoints; fresh measurements from now
-    syncUI(true)
+    // clear session-scoped caches so config/hardware changes take effect immediately
+    zwaveStackCache  = null   // re-detect Z-Wave stack on next use (handles user switching legacy ↔ JS)
+    fwUpdateCache    = null   // force fresh cloud fetch on next dashboard render
+    fwUpdateCacheAt  = null
+    state.remove('controllerTypeCache') // evict per-device classification cache; rebuilds on next analysis pass
+    apiTimings.clear()                  // drop stats for renamed/removed endpoints; fresh measurements from now
+    runIn(1, 'syncUIForced')
     initialize()
 }
 
@@ -4970,48 +4983,68 @@ private boolean checkOAuth() {
     }
 }
 
-boolean syncUI(boolean force = false) {
+// Async UI sync — used by scheduled job and lifecycle paths. Fire-and-forget.
+void syncUI(boolean force = false) {
     if (!force && state.lastInstalledVersion == APP_VERSION) {
         long lastCheck = state.lastUIUpdateCheck ?: 0
-        if (now() - lastCheck < 86400000) return true
+        if (now() - lastCheck < 86400000) return
     }
-    
+    logInfo "Hub Diagnostics: Syncing UI from GitHub (async)..."
+    asynchttpGet('syncUICallback', [uri: IMPORT_URL_WEB, contentType: "text/plain", timeout: 30])
+}
+
+void syncUICallback(resp, data) {
+    if (resp.hasError() || resp.status != 200) {
+        logWarn "Async UI sync failed: HTTP ${resp.status}"
+        return
+    }
+    processSyncUIResponse(resp.data ?: "")
+}
+
+// Blocking UI sync — only for emergency recovery (file missing) and explicit API endpoint.
+private boolean syncUIBlocking() {
     try {
-        logInfo "Hub Diagnostics: Syncing UI from GitHub..."
-        Map params = [uri: IMPORT_URL_WEB, contentType: "text/plain", timeout: 30]
-        boolean success = false
-        // Use synchronous httpGet by not providing a closure to params
-        httpGet(params) { resp ->
-            if (resp.success && resp.data) {
-                String htmlText = resp.data.text ?: resp.data.toString()
-                if (htmlText && htmlText.contains("Hub Diagnostics")) {
-                    // Enforce version sync: downloaded HTML must contain the same version string as the App
-                    if (htmlText.contains("const UI_VERSION = \"${APP_VERSION}\"")) {
-                        byte[] htmlBytes = htmlText.getBytes("UTF-8")
-                        uploadHubFile("hub_diagnostics_ui.html", htmlBytes)
-                        state.lastInstalledVersion = APP_VERSION
-                        state.lastUIUpdateCheck = now()
-                        state.cachedUIVersion = APP_VERSION   // v5.15.0: cache for getUIVersion()
-                        logInfo "UI updated from GitHub to match App v${APP_VERSION} (${htmlBytes.length} bytes)"
-                        success = true
-                    } else {
-                        logWarn "Sync failed: GitHub UI version does not match App v${APP_VERSION}"
-                    }
-                } else {
-                    logWarn "Sync failed: Downloaded content appears invalid"
-                }
-            }
+        logInfo "Hub Diagnostics: Syncing UI from GitHub (blocking)..."
+        String htmlText = null
+        httpGet([uri: IMPORT_URL_WEB, contentType: "text/plain", timeout: 30]) { resp ->
+            if (resp.success && resp.data) htmlText = resp.data.text ?: resp.data.toString()
         }
-        return success
+        return processSyncUIResponse(htmlText ?: "")
     } catch (Exception e) {
         logWarn "Failed to sync UI from GitHub: ${e.message}"
         return false
     }
 }
 
+private boolean processSyncUIResponse(String htmlText) {
+    if (!htmlText || !htmlText.contains("Hub Diagnostics")) {
+        logWarn "Sync failed: Downloaded content appears invalid"
+        return false
+    }
+    if (!htmlText.contains("const UI_VERSION = \"${APP_VERSION}\"")) {
+        logWarn "Sync failed: GitHub UI version does not match App v${APP_VERSION}"
+        return false
+    }
+    byte[] htmlBytes = htmlText.getBytes("UTF-8")
+    uploadHubFile("hub_diagnostics_ui.html", htmlBytes)
+    state.lastInstalledVersion = APP_VERSION
+    state.lastUIUpdateCheck = now()
+    uiVersionCache = APP_VERSION
+    logInfo "UI updated from GitHub to match App v${APP_VERSION} (${htmlBytes.length} bytes)"
+    return true
+}
+
 void initialize() {
     logInfo "Hub Diagnostics initialized"
     migrateStorageIfNeeded()
+
+    // Reconcile audit state: if a scan was in-flight when the app reloaded, AUDIT_SCANS is now
+    // empty and the scan can never complete — mark it failed so the UI doesn't get stuck.
+    Map audit = (state.audit ?: [:]) as Map
+    if (audit.status == 'scanning' && audit.scanId && !AUDIT_SCANS[audit.scanId as String]) {
+        state.audit = audit + [status: 'error', error: 'Scan interrupted by hub reboot/app reload']
+        logWarn "[audit] cleared orphaned scan ${audit.scanId} (in-memory state lost on reload)"
+    }
 
     if (settings.autoSnapshot) {
         int days = (settings.snapshotInterval ?: 1).toInteger()
@@ -5041,6 +5074,10 @@ void initialize() {
 void scheduledUISync() {
     logDebug "Running scheduled UI sync"
     syncUI(false)
+}
+
+void syncUIForced() {
+    syncUI(true)
 }
 
 void migrateStorageIfNeeded() {
