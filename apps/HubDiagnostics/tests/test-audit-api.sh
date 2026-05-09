@@ -41,10 +41,12 @@ COUNT=$(echo "$LIST" | jq '.reports | length')
 [[ "$COUNT" -gt 0 ]] || { echo "FAIL: no reports listed"; exit 1; }
 
 echo
-echo "=== GET the rendered HTML ==="
-curl -sfo /tmp/audit-test.html "${HUB}/local/${FILE}"
-[[ $(wc -c < /tmp/audit-test.html) -gt 1000 ]] || { echo "FAIL: HTML too small"; exit 1; }
-echo "  HTML size: $(wc -c < /tmp/audit-test.html) bytes — OK"
+echo "=== GET /api/audit/data ==="
+curl -sfo /tmp/audit-test.json "${BASE}/audit/data?filename=${FILE}&access_token=${ACCESS_TOKEN}"
+[[ $(wc -c < /tmp/audit-test.json) -gt 1000 ]] || { echo "FAIL: JSON too small"; exit 1; }
+jq -e '.deviceCount and .unreferenced and .allDevices' /tmp/audit-test.json > /dev/null \
+    || { echo "FAIL: missing expected JSON keys"; exit 1; }
+echo "  JSON size: $(wc -c < /tmp/audit-test.json) bytes — OK"
 
 echo
 echo "=== POST /api/audit/delete ==="
