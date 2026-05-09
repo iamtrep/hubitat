@@ -2141,12 +2141,12 @@ Integer fetchDatabaseSize() {
 }
 
 Map fetchFileManagerStats() {
-    Map fm = (Map) hubRequest("/hub/fileManager/json", "file manager", "json", 10)
-    if (!fm || fm.error) return null
-    List files = (List) (fm.files ?: [])
+    Map wrap = hubMapRequest("/hub/fileManager/json", "file manager", 10)
+    if (!wrap.ok) return null
+    List files = (List) (wrap.data.files ?: [])
     long usedBytes = 0L
     files.each { usedBytes += (it.size?.toString()?.toLong() ?: 0L) }
-    return [fileCount: files.size(), usedBytes: usedBytes, freeSpace: fm.freeSpace]
+    return [fileCount: files.size(), usedBytes: usedBytes, freeSpace: wrap.data.freeSpace]
 }
 
 Float fetchTemperature() {
@@ -2171,9 +2171,9 @@ Map fetchHubAlerts(Map prefetchedHubData = null) {
 
 Map fetchBackups() {
     Object localResp = hubRequest(LOCAL_BACKUPS_PATH, "local backups", "json", 10)
-    Map cloudResp = (Map) hubRequest(CLOUD_BACKUPS_PATH, "cloud backups", "json", 15)
+    Map cloudWrap = hubMapRequest(CLOUD_BACKUPS_PATH, "cloud backups", 15)
+    Map cloudResp = cloudWrap.ok ? cloudWrap.data : [:]
     List localList = (localResp instanceof List) ? (List) localResp : []
-    if (cloudResp?.error) cloudResp = [:]
     List cloudList = ((cloudResp?.backups as List) ?: [])
     Map latestLocal = localList ? (Map) localList[-1] : null
     List cloudThisHub = cloudList.findAll { Map b -> b.thisHub == true } as List
@@ -2203,9 +2203,9 @@ Map fetchBackups() {
 }
 
 List fetchHubMessages() {
-    Map resp = (Map) hubRequest(HUB_MESSAGES_PATH, "hub messages", "json", 5)
-    if (!resp || resp.error) return []
-    return ((resp.messages as List) ?: []).collect { Object m ->
+    Map wrap = hubMapRequest(HUB_MESSAGES_PATH, "hub messages", 5)
+    if (!wrap.ok) return []
+    return ((wrap.data.messages as List) ?: []).collect { Object m ->
         if (m instanceof Map) return m
         return [text: m?.toString()]
     }
@@ -2227,8 +2227,9 @@ Map fetchRadioHealth() {
 
 Map fetchZwaveJsState() {
     if (detectZwaveStack() != "js") return null
-    Map ctrl = (Map) hubRequest(ZWAVE_JS_CONTROLLER_PATH, "zwave JS controller", "json", 10)
-    if (!ctrl || ctrl.error) return null
+    Map wrap = hubMapRequest(ZWAVE_JS_CONTROLLER_PATH, "zwave JS controller", 10)
+    if (!wrap.ok) return null
+    Map ctrl = wrap.data
     Map stats = (ctrl.statistics as Map) ?: [:]
     return [
         firmwareVersion: ctrl.firmwareVersion, sdkVersion: ctrl.sdkVersion,
@@ -2266,8 +2267,9 @@ Map fetchFirmwareUpdate() {
         (nowMs - (state.fwUpdateCacheAt as Long)) < FW_UPDATE_CACHE_TTL_MS) {
         return (Map) state.fwUpdateCache
     }
-    Map resp = (Map) hubRequest(FIRMWARE_UPDATE_PATH, "firmware update check", "json", 15)
-    if (!resp || resp.error) return null
+    Map wrap = hubMapRequest(FIRMWARE_UPDATE_PATH, "firmware update check", 15)
+    if (!wrap.ok) return null
+    Map resp = wrap.data
     Map result = [
         currentVersion: getHubFirmwareVersion(),
         availableVersion: resp.version,
@@ -2287,9 +2289,9 @@ Map fetchFirmwareUpdate() {
  * Devices not assigned to any room are gathered under a synthetic "(Unassigned)" room with id=null.
  */
 List fetchRoomsForAudit() {
-    Map resp = (Map) hubRequest(ROOMS_LIST_PATH, "rooms list", "json", 10)
-    if (!resp || resp.error) return []
-    List nodes = (resp.roomNodes as List) ?: []
+    Map wrap = hubMapRequest(ROOMS_LIST_PATH, "rooms list", 10)
+    if (!wrap.ok) return []
+    List nodes = (wrap.data.roomNodes as List) ?: []
     List rooms = []
     nodes.each { Map rn ->
         Map data = (rn.data as Map) ?: [:]
@@ -2306,8 +2308,9 @@ List fetchRoomsForAudit() {
 Map fetchZwaveNodeState(Integer nodeId) {
     if (nodeId == null) return null
     if (detectZwaveStack() != "js") return null
-    Map resp = (Map) hubRequest(ZWAVE_JS_NODE_STATE_PREFIX + nodeId, "zwave node ${nodeId}", "json", 5)
-    if (!resp || resp.error) return null
+    Map wrap = hubMapRequest(ZWAVE_JS_NODE_STATE_PREFIX + nodeId, "zwave node ${nodeId}", 5)
+    if (!wrap.ok) return null
+    Map resp = wrap.data
     Map stats = (resp.statistics as Map) ?: [:]
     return [
         nodeState: resp.nodeState, status: resp.status,
@@ -2328,9 +2331,9 @@ Map fetchZwaveNodeState(Integer nodeId) {
 /** Per-Hub-Mesh-linked-device state. Returns null when device is not Hub-Mesh-linked or fetch fails. */
 Map fetchHubMeshDeviceState(Long deviceId) {
     if (deviceId == null) return null
-    Map resp = (Map) hubRequest(HUB_MESH_LINKED_DEVICE_PREFIX + deviceId, "hubmesh dev ${deviceId}", "json", 5)
-    if (!resp || resp.error) return null
-    return resp
+    Map wrap = hubMapRequest(HUB_MESH_LINKED_DEVICE_PREFIX + deviceId, "hubmesh dev ${deviceId}", 5)
+    if (!wrap.ok) return null
+    return wrap.data
 }
 
 List fetchUserAppTypes() {
@@ -2401,8 +2404,9 @@ Map fetchHubVariables() {
 }
 
 Map fetchMdns() {
-    Map resp = (Map) hubRequest(MDNS_PATH, "mDNS devices", "json", 15)
-    if (!resp || resp.error) return null
+    Map wrap = hubMapRequest(MDNS_PATH, "mDNS devices", 15)
+    if (!wrap.ok) return null
+    Map resp = wrap.data
     List endpoints = []
     ((resp.serviceTypes as List) ?: []).each { Map st ->
         String svc = (st.serviceType as String) ?: ""
