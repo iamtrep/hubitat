@@ -2,7 +2,7 @@
 
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
-**Current version:** 5.8.5
+**Current version:** 5.12.2
 
 ---
 
@@ -14,15 +14,16 @@ A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-t
 4. [Dashboard Tab](#dashboard-tab)
 5. [Devices Tab](#devices-tab)
 6. [Apps Tab](#apps-tab)
-7. [Network Tab](#network-tab)
-8. [Health Tab](#health-tab)
-9. [Performance Tab](#performance-tab)
-10. [Snapshots Tab](#snapshots-tab)
-11. [Device Usage Audit](#device-usage-audit)
-12. [App Settings Tab](#app-settings-tab)
-13. [Forum Export](#forum-export)
-14. [Alerts & Warnings Reference](#alerts--warnings-reference)
-15. [REST API](#rest-api)
+7. [Code Tab](#code-tab)
+8. [Network Tab](#network-tab)
+9. [Health Tab](#health-tab)
+10. [Performance Tab](#performance-tab)
+11. [Snapshots Tab](#snapshots-tab)
+12. [Device Usage Audit](#device-usage-audit)
+13. [App Settings Tab](#app-settings-tab)
+14. [Forum Export](#forum-export)
+15. [Alerts & Warnings Reference](#alerts--warnings-reference)
+16. [REST API](#rest-api)
 
 ---
 
@@ -93,7 +94,9 @@ The header bar contains a **Docs ↗** link (this document) and a **↻ Refresh*
 
 **Connection Types / Integrations** — Distribution of devices by how they connect (Paired, LAN Direct, LAN Bridge, Cloud, Virtual, Hub Mesh) and by which integration manages them. Counts are linked to the device list filtered to that group.
 
-**Platform Alerts** — Active alerts reported by the Hubitat hub itself (load warnings, radio crashes, backup failures, etc.) plus any threshold-based alerts calculated by this app (memory, CPU, temperature). See [Alerts & Warnings Reference](#alerts--warnings-reference) for the full list.
+**Platform Alerts** — Active alerts reported by the Hubitat hub itself (load warnings, radio crashes, backup failures, etc.) plus any threshold-based alerts calculated by this app (memory, CPU, temperature) plus any messages from `/hub/messages` (info-severity). See [Alerts & Warnings Reference](#alerts--warnings-reference) for the full list.
+
+**Hub Firmware** — When `/hub/cloud/checkForUpdate` reports an upgrade is available, an orange badge appears with the current version, the available version, and a link to the release notes. The check is cached for 1 hour to avoid hammering the cloud API on every dashboard refresh.
 
 **Reports** — Buttons to generate a full HTML report or copy a forum-ready Markdown export to the clipboard.
 
@@ -104,6 +107,8 @@ The header bar contains a **Docs ↗** link (this document) and a **↻ Refresh*
 A full inventory of every device on the hub.
 
 **Summary cards** — Total devices with active/inactive/disabled counts (the inactivity threshold is shown). Parent/child/Hub Mesh/battery device counts. Connection type breakdown and integration breakdown tables.
+
+**Device Audit card** — Sits below the Device Summary card. Contains the **Generate Device Audit** button that triggers the per-device cross-reference scan, and a list of past audit reports. See [Device Usage Audit](#device-usage-audit) for details on what the audit produces.
 
 **Device table** columns:
 
@@ -160,19 +165,112 @@ The table is sortable and filterable. Hidden apps and setting-only apps (no user
 
 ---
 
+## Code Tab
+
+The canonical place for all user-installed source code on this hub. The Apps and Devices tabs show installed *instances*; this tab shows the *source code* those instances are built from, plus user-defined libraries, bundles, and hub variables.
+
+**Code Summary** — Top-of-tab metrics: App Types, Driver Types, Bundles, Libraries, Hub Variables.
+
+**User App Types** (`/hub2/userAppTypes`) — Sortable + filterable table of every user-installed app type:
+
+| Column | Description |
+|---|---|
+| App Type | Name, linked to `/app/edit/<id>` |
+| Namespace | Author/maintainer namespace |
+| OAuth | Green badge when OAuth is enabled on this app type |
+| Instances | Count of installed instances of this app type — installed-instance names appear in a hover tooltip |
+| Last Modified | YYYY-MM-DD |
+
+**User Driver Types** (`/hub2/userDeviceTypes`) — Same shape, for driver code:
+
+| Column | Description |
+|---|---|
+| Driver Type | Name, linked to `/driver/editor/<id>` |
+| Namespace | Author/maintainer namespace |
+| Capabilities | Count — capability list appears in a hover tooltip |
+| Devices | Count of devices using this driver — device names appear in a hover tooltip |
+| Last Modified | YYYY-MM-DD |
+
+**User Bundles** (`/hub2/userBundles`) — Bundles installed via Hubitat Package Manager or manually:
+
+| Column | Description |
+|---|---|
+| Bundle | Bundle name |
+| Namespace | Bundle namespace |
+| Contents | Free-form contents summary (lists apps/drivers/libraries inside the bundle) |
+| Visibility | Public / Private badge |
+
+**User Libraries** (`/hub2/userLibraries`) — Reusable Groovy libraries that apps and drivers can include:
+
+| Column | Description |
+|---|---|
+| Library | Name, linked to `/library/editor/<id>` |
+| Namespace | Library namespace |
+| Author | Library author |
+| Version | Numeric version |
+| Description | Short description |
+| Used by Drivers | Count — driver names appear in a hover tooltip |
+| Used by Apps | Count — app names appear in a hover tooltip |
+| Updated | YYYY-MM-DD |
+
+**Hub Variables** — Read directly via Hubitat's `getAllGlobalVars()` platform API (no Hub Variables app instance required). Soft-fails to "API not available on this firmware" via `MissingMethodException` on older firmware.
+
+| Column | Description |
+|---|---|
+| Name | Variable name |
+| Type | string / integer / decimal / boolean / datetime |
+| Value | Current value, rendered as monospace code |
+| Last Updated | Timestamp if exposed by the platform |
+
+---
+
 ## Network Tab
 
-Detailed status for all network interfaces and radio protocols.
+Detailed status for all network interfaces and radio protocols. Card order: **Radio Health Badges → Network Configuration → Zigbee → Z-Wave → Matter → Hub Mesh → mDNS Discovery → Network Tests**.
+
+### Radio Health Badges
+
+Strip at the very top with a green / red / N/A badge for Z-Wave and Zigbee, fed by `/hub/zwave/healthStatus` and `/hub/zigbee/healthStatus`. Version-gated to firmware ≥ 2.4.1.154; on older firmware the badges show "N/A".
 
 ### Network Configuration
 
-IP address, connection type (DHCP/static), gateway, subnet, DNS. Shows a warning if both Ethernet and WiFi are active simultaneously (this is known to cause instability on some hub models).
+- IP address, connection type (DHCP/static), gateway, subnet, DNS
+- Ethernet / WiFi status; if WiFi is active, the WiFi network name
+- **NTP Server** — current time-source IP, or "(not configured)" when unset
+- **Limited Access** — green when IP allowlist is enabled (with the allowed IPs listed), orange-warn when off ("any LAN IP can reach the hub UI")
+- **Allowed Subnets** — comma-separated subnet allowlist, or "(none restricted)"
+- **DNS Fallback** — Enabled / Disabled
+
+Shows a warning if both Ethernet and WiFi are active simultaneously (known to cause instability on some hub models).
+
+### Zigbee
+
+- Radio status (enabled, healthy, channel, PAN ID, device count, join mode, power level)
+- Responsive vs total device count, color-coded by ratio (warning < 100%, critical < 80%)
+- Non-responsive device list
+
+**Mesh Quality** — Average LQI (Link Quality Indicator), min/max, weak neighbors (LQI < 150), stale neighbors (age ≥ 7 rounds).
+
+**Neighbor Detail table** — Short ID, LQI (color-coded), age (stale badge at age 7), In Cost, Out Cost.
+
+**Zigbee–WiFi Spectrum Chart** — Visual overlay of Zigbee channels and 2.4 GHz WiFi channels, showing potential interference. Recommended Zigbee channels (15, 20, 25) avoid overlap with WiFi channels 1, 6, and 11. The chart fills the full container width and re-renders on browser resize.
+
+**Live channel scan** (`/hub/zigbeeChannelScanJson`) — Click **Run channel scan** to perform a real Zigbee scan (~15–30 s, briefly impacts Zigbee join activity). The scan detects other Zigbee networks (PANs) operating in the surrounding RF environment and overlays them on the spectrum chart as colored bars at each channel position (red = strong, orange = medium, yellow = weak; bar height proportional to RSSI strength). Tooltip on hover shows PAN ID, RSSI, LQI. Scan results are cached in app state so subsequent page loads display the last-known scan without re-running it.
+
+Below the chart, scan results are summarized as text grouped by interference level:
+- **Strong on:** channels with detected PANs at RSSI > -50 dBm
+- **Medium on:** channels with PANs at RSSI -50 to -70
+- **Weak on:** channels with PANs at RSSI < -70
+- **No detections on Zigbee channels:** the quiet channels — best candidates if changing channel
+
+The user's own channel is annotated with "(your channel)" when it appears in the scan.
 
 ### Z-Wave
 
 - Radio status (enabled, healthy, firmware version, region, node count)
+- **Zip Gateway** version (`/hub/advanced/zipgatewayVersion`) — the Z-Wave SDK version
 - Firmware update alert if a radio firmware upgrade is available
-- Compatible with both the default Z/IP stack and the ZWaveJS stack
+- Compatible with both the legacy Z/IP stack and the Z-Wave JS stack
 
 **Ghost Nodes** — Z-Wave radio nodes with no associated Hubitat device (the device was deleted without Z-Wave exclusion), or nodes in FAILED state, or nodes with no route and an unknown name. Each ghost shows the signals that triggered it: `no device`, `FAILED`, `no route`, `unknown name`. These should be removed from the Z-Wave mesh.
 
@@ -186,17 +284,18 @@ IP address, connection type (DHCP/static), gateway, subnet, DNS. Shows a warning
 
 **Isolated Nodes** — Non-failed nodes with zero neighbors cannot participate in mesh routing. This usually indicates a device out of range or with a firmware issue.
 
-### Zigbee
+#### Z-Wave JS Controller (Z-Wave JS hubs only)
 
-- Radio status (enabled, healthy, channel, PAN ID, device count, join mode, power level)
-- Responsive vs total device count, color-coded by ratio (warning < 100%, critical < 80%)
-- Non-responsive device list
+Renders only when the Z-Wave JS stack is detected (probe of `/hub/zwave2/status`; result cached in state for the session). Sources data from `/hub/zwave2/getControllerState`:
 
-**Mesh Quality** — Average LQI (Link Quality Indicator), min/max, weak neighbors (LQI < 150), stale neighbors (age ≥ 7 rounds).
+- Controller firmware, SDK version, Home ID, own node ID, Primary / SUC / SIS-present flags, Long Range support
+- "Rebuilding routes" warning when active
+- **Statistics chips:** TX, RX, dropped TX/RX, CAN, NAK, timeout ACK/Callback/Response — non-zero error counters are colored warn
+- **Background RSSI** per channel (channel0–3): current dBm with average in parentheses, colored by quietness (lower RSSI = quieter, better)
 
-**Neighbor Detail table** — Short ID, LQI (color-coded), age (stale badge at age 7), In Cost, Out Cost.
+#### Z-Wave Topology
 
-**Zigbee–WiFi Spectrum Chart** — Visual overlay of Zigbee channels and 2.4 GHz WiFi channels, showing potential interference. Recommended Zigbee channels (15, 20, 25) avoid overlap with WiFi channels 1, 6, and 11.
+Pairwise neighbor adjacency matrix as reported by the Z-Wave controller (`/hub/zwaveTopology`). Hubitat returns this as a bare HTML `<table>` with bgcolor cells encoding connectivity between each node pair; the card injects the fragment as-is wrapped in `.tbl-wrap` for our look-and-feel. Always matches what Hubitat itself shows.
 
 ### Matter
 
@@ -206,19 +305,35 @@ Device list, network state, fabric ID.
 
 Enabled status, shared/linked device and variable counts. Table of peer hubs with name, IP, online status, and their device/variable counts.
 
+### mDNS Discovery
+
+Lists devices visible to the hub via mDNS / Bonjour / Avahi (`/hub/mdnsDevices/json`). Sortable + filterable table with Service (e.g. `airplay._tcp`, `hap._tcp`, `lutron._tcp`), Name, IP (clickable HTTP link), Port, MAC, Server, Model, Last Updated. Useful for confirming HomeKit/AirPlay/Lutron/Chromecast devices are reachable.
+
+### Network Tests
+
+User-triggered live network diagnostics from the hub:
+
+- **Ping gateway** — instant `/hub/networkTest/ping/gateway`
+- **Ping IP** — IP input field with client-side and server-side IPv4 validation, then `/hub/networkTest/ping/<ip>`
+- **Speedtest** — `/hub/networkTest/speedtest`. Takes ~30 s and briefly loads the hub. Confirm-prompt before firing.
+
+Results render in a monospace pane below the buttons.
+
 ---
 
 ## Health Tab
 
 **Hub Information** — Hardware model, firmware version, hub ID, IP address, Zigbee ID, location, current mode, time zone.
 
-**Alerts** — All active platform and calculated alerts. Shows a green checkmark when there are none.
+**Alerts** — All active platform and calculated alerts plus messages from `/hub/messages` (info-severity, blue). Shows a green checkmark when there are none.
 
-**System Resources** — Free OS memory, CPU load, Java heap usage (total/free/direct), temperature (°C and °F), and database size. Values are color-coded against configured thresholds. This card **auto-refreshes** in the background on a configurable interval (default 30 s); the last refresh time is shown in the card header.
+**System Resources** — Free OS memory, CPU load (5-min avg), **Processors** (count, from `/hub/cpuInfo`), **Load Avg (1m)** (from `/hub/cpuInfo`), **Hub Load Threshold** (% from `/hub/advanced/getExcessiveLoadThreshold` — the level Hubitat itself considers "excessive"), Java heap usage (total/free/direct), temperature (°C and °F), and database size. Values are color-coded against configured thresholds. This card **auto-refreshes** in the background on a configurable interval (default 30 s); the last refresh time is shown in the card header. The auto-refresh response (`/api/live`) carries `cpuInfo` and `loadThreshold` so those chips persist across refreshes.
 
-**Resource History** — Time-series chart of free OS memory and CPU load over recent checkpoints. Horizontal reference lines mark the warning and critical memory thresholds.
+**Resource History** — Time-series chart of free OS memory and CPU load over recent checkpoints. Horizontal reference lines mark the warning and critical memory thresholds. Re-renders on browser resize.
 
 **Database & Storage** — Database size, state compression status, max events per device, max event age (days), max state age (days). A separate **File Manager** sub-section shows the total number of files stored in the hub's File Manager, total bytes used, and free storage space.
+
+**Backups** (`/hub2/localBackups` + `/hub2/cloudBackups`) — Local backup count + latest backup timestamp + age in days (orange-warn when > 2 days, red-crit when 0 backups). Cloud backups for this hub plus an expandable list of cloud backups for other hubs on the same Hubitat account. Cloud backup and restore entitlement flags.
 
 ---
 
@@ -285,18 +400,26 @@ Generates a one-time, per-device cross-reference report covering:
 
 - **Unreferenced devices** — no apps subscribe to them, no dashboards display them, no parent integration manages them; cleanup candidates.
 - **Mesh orphans** — Hubitat reports `orphan: true` (radio/network state).
-- **Stuck scheduled jobs** — `nextRunTime` in the past.
+- **Stuck scheduled jobs** — `nextRunTime` in the past, with a "Last run" (`prevRunTime`) column to disambiguate "never ran" vs "ran once and lingered".
+- **Manually-tuned devices** — devices with non-default `spammyThreshold`, `maxStates`, or `maxEvents` values. The audit detects the fleet's mode value for each setting and highlights divergent devices in bold.
 - **Critical devices** — top 20 by combined apps + dashboards reference count.
-- **Apps → devices and Dashboards → devices reverse indices**.
-- **Per-device detail table** with all subscribers as clickable links.
+- **Devices by Room** — devices grouped by their assigned room (sourced from `/hub2/roomsList`). Surfaces empty rooms (cleanup targets) and high-density rooms (split candidates). Hubitat provides a synthetic "Unassigned" room for devices not assigned anywhere.
+- **Z-Wave JS Mesh Health** (Z-Wave JS hubs only) — per-Z-Wave-device row from `/hub/zwave2/getNodeState?node=N`: state, status, interview stage, RTT, RSSI, PER %, TX/RX command counts, last-seen timestamp.
+- **Hub Mesh Linked Devices** — for each device this hub consumes from another hub via Hub Mesh, source hub + source device ID + status from `/hubMesh/localLinkedDevice/<id>`.
+- **Apps → devices** and **Dashboards → devices reverse indices** — disabled app subscribers are rendered with strikethrough so "ghost references" stand out.
+- **Per-device detail table** with all subscribers as clickable links. Type cells link to `/driver/editor/<id>` for community drivers.
 
 ### How it works
 
-The scan crawls every device via `/device/fullJson/{id}` — one call per device, throttled to the Hubitat platform's 8-concurrent-async-call cap. On a 350-device hub this takes ~30–60 s. The output is a self-contained HTML file written to FileManager (`hub_usage_audit_YYYYMMDD_HHmmss.html`) and indexed under "Past audits" on the Dashboard.
+The scan crawls every device via `/device/fullJson/{id}` — one call per device, throttled to the Hubitat platform's 8-concurrent-async-call cap. On a 350-device hub this takes ~30–60 s. After the main scan completes, three synchronous enrichment passes run in `finalizeAudit`: rooms (single fetch), Z-Wave JS per-node (one call per Z-Wave device on JS hubs), Hub Mesh per-device (one call per linked device). The output is a self-contained HTML file written to FileManager (`hub_usage_audit_YYYYMMDD_HHmmss.html`) and indexed under "Past audits" on the Devices tab.
 
 ### Trigger
 
-Dashboard tab → Reports section → **Generate Device Audit**. Progress is polled live; the "View report" link appears on completion. The 10 most recent audits are kept; older entries are auto-deleted.
+**Devices tab → Device Audit card → Generate Device Audit**. Progress is polled live; the "View report" link appears on completion. The 10 most recent audits are kept; older entries are auto-deleted.
+
+### Stuck-job timing accuracy
+
+Each `/device/fullJson/{id}` callback captures a `fetchedAtMs` timestamp at response arrival. The "stuck job" predicate compares `nextRunTime` against this per-device timestamp rather than the audit-finalize time. This eliminates the scan-duration race that previously produced false positives (a job whose `nextRunTime` came due during the 30–60 s scan window would otherwise look "stuck" even though it had already fired).
 
 ### Limitations
 
@@ -377,6 +500,13 @@ The forum export generates a concise Markdown-formatted summary suitable for pas
 ---
 
 ## Alerts & Warnings Reference
+
+Severity levels: **Critical** (red), **Warning** (orange), **Info** (blue), **OK** (green).
+
+### Hub Messages
+| Alert | Source | Severity |
+|---|---|---|
+| Hub messages from `/hub/messages` | Hubitat platform admin notifications | Info |
 
 ### System Resource Alerts
 *Thresholds are configurable in App Settings → Alert Thresholds.*
@@ -474,18 +604,21 @@ Base URL: `http://{hub-ip}/apps/api/{app-id}/`
 | Endpoint | Description |
 |---|---|
 | `ui.html` | Serves the dashboard UI |
-| `api/dashboard` | Overview data (devices, apps, resources, alerts) |
+| `api/dashboard` | Overview data — devices, apps, resources, alerts, **firmwareUpdate** badge data (1-hour cache) |
 | `api/devices` | Device inventory and details |
 | `api/apps` | Installed app listing |
-| `api/network` | Network config and radio protocol status |
-| `api/health` | Hub health, alerts, resource details |
+| `api/code` | User-installed source code: app types, driver types, bundles, libraries, hub variables |
+| `api/network` | Network config + security + radio protocol status + radio health badges + Z-Wave JS controller state + NTP server + Zip Gateway version + mDNS endpoints + cached Zigbee channel scan + Z-Wave topology HTML fragment |
+| `api/health` | Hub health, alerts, resource details, **CPU info**, **load threshold**, **backups**, hub messages |
 | `api/health/history` | Memory/CPU history for charting |
-| `api/live` | Lightweight real-time resource metrics (memory, CPU, temperature, database size) used by the auto-refresh feature |
+| `api/live` | Lightweight real-time resource metrics (memory, CPU, temperature, database size, **CPU info**, **load threshold**) used by the auto-refresh feature |
 | `api/performance` | Runtime stats and checkpoints |
 | `api/snapshots` | List of config snapshots |
 | `api/snapshot/view?index=N` | View a specific snapshot |
 | `api/snapshot/diff?older=O&newer=N` | Compare two snapshots |
 | `api/reports` | List saved HTML diagnostic reports (name, size, date) and last generated filename |
+| `api/audit/status?scanId=...` | Poll a running device-audit scan |
+| `api/audit/list` | List past audit reports |
 | `api/stats` | Internal API timing metrics (median latency, call count, and recent samples per endpoint) |
 | `api/export/forum` | Generate forum export (Markdown) |
 | `api/version/check` | Check for app updates on GitHub |
@@ -506,3 +639,7 @@ Base URL: `http://{hub-ip}/apps/api/{app-id}/`
 | `api/report/generate` | Generate a full HTML report |
 | `api/ui/sync` | Force-sync the UI file from GitHub |
 | `api/cache/clear` | Clear the device enrichment cache |
+| `api/audit/start` | Trigger a new device usage audit scan |
+| `api/audit/delete` | Delete an audit report by filename |
+| `api/network/test` | Run a live network test — `type=ping-gateway\|ping-ip\|speedtest`, optional `ip=x.x.x.x` for ping-ip |
+| `api/network/zigbee/scan` | Trigger a fresh Zigbee channel scan (~15–30 s); result cached in app state and returned in subsequent `api/network` reads |
