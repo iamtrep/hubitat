@@ -1242,6 +1242,68 @@ try:
 except Exception as e:
     fail(f"Could not fetch UI: {e}")
 
+# ── Audit: start → poll → data ────────────────────────────────────────
+section("POST /api/audit/start")
+
+audit_start = api_post("audit/start", timeout=30)
+if "_error" in audit_start:
+    fail(f"Request failed: {audit_start['_error']}")
+else:
+    scan_id = audit_start.get("scanId")
+    total_devices = audit_start.get("total", 0)
+    if scan_id and scan_id != "null":
+        ok(f"Scan started: scanId={scan_id}, total={total_devices}")
+    else:
+        fail(f"No scanId in response: {audit_start}")
+    if total_devices > 0:
+        ok(f"Device count > 0 ({total_devices})")
+    else:
+        fail(f"total={total_devices} (expected > 0)")
+
+    section("GET /api/audit/status (poll until done)")
+    final_status = None
+    for i in range(60):
+        st = api_get(f"audit/status?scanId={scan_id}", timeout=15)
+        if "_error" in st:
+            fail(f"Status poll failed: {st['_error']}")
+            break
+        proc = st.get("processed", 0)
+        s = st.get("status")
+        info(f"[{i+1}] processed={proc}/{total_devices}  status={s}")
+        if s in ("done", "error"):
+            final_status = s
+            break
+        time.sleep(2)
+
+    if final_status == "done":
+        ok("Scan completed with status=done")
+    elif final_status == "error":
+        fail(f"Scan errored: {st.get('error')}")
+    else:
+        fail("Scan did not complete within 120s")
+
+    section("GET /api/audit/data")
+    audit_data = api_get("audit/data", timeout=30)
+    if "_error" in audit_data:
+        fail(f"Request failed: {audit_data['_error']}")
+    else:
+        ok("Endpoint responds")
+        for key in ["deviceCount", "unreferenced", "allDevices", "hubName", "generatedAt"]:
+            if key in audit_data:
+                ok(f"Has '{key}'")
+            else:
+                fail(f"Missing '{key}'")
+        device_count = audit_data.get("deviceCount", 0)
+        if device_count == total_devices:
+            ok(f"deviceCount matches scan total ({device_count})")
+        else:
+            fail(f"deviceCount {device_count} != scan total {total_devices}")
+        all_devs = audit_data.get("allDevices") or {}
+        if len(all_devs) > 0:
+            ok(f"allDevices populated ({len(all_devs)} entries)")
+        else:
+            fail("allDevices is empty")
+
 # ── Summary ───────────────────────────────────────────────────────────
 total = passed + failed
 print(f"\n{BOLD}=== Results: {passed}/{total} passed", end="")
