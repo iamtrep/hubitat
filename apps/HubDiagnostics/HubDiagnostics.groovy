@@ -4063,13 +4063,13 @@ private void finalizeAudit(String scanId) {
 
     // Persist to FileManager as JSON (rendered client-side by SPA)
     String hubName = getHubInfo()?.name ?: "Hubitat"
-    Date now = new Date()
-    String generatedAt = now.format("yyyy-MM-dd HH:mm 'UTC'", TimeZone.getTimeZone("UTC"))
+    Date finishDate = new Date()
+    String generatedAt = finishDate.format("yyyy-MM-dd HH:mm 'UTC'", TimeZone.getTimeZone("UTC"))
     xref.hubName = hubName
     xref.generatedAt = generatedAt
     xref.failed = failedMap.collect { id, reason -> [id: id, reason: reason] }
 
-    String filename = "hub_usage_audit_${now.format('yyyyMMdd_HHmmss')}.json"
+    String filename = "hub_usage_audit_${finishDate.format('yyyyMMdd_HHmmss')}.json"
     writeFile(filename, JsonOutput.toJson(xref))
 
     // Append to past-audits index (newest first, FIFO trim)
