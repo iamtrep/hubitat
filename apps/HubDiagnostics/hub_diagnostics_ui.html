@@ -267,6 +267,296 @@ function mc(l,v,c){const s=c?' style="color:'+c+'"':'';return'<div class="m"><di
 function ni(l,v,c){const s=c?' style="color:'+c+';font-weight:600"':'';return'<div class="ni"><div class="nl">'+h(l)+'</div><div class="nv"'+s+'>'+h(String(v??'N/A'))+'</div></div>'}
 // Module-level thresholds with hardcoded defaults — updated when settings load
 let TH={warnMemMb:100,critMemMb:75,warnCpuLoad:4,critCpuLoad:8,warnTempC:50,critTempC:77,chattyDeviceThreshold:10};
+
+function buildForumMarkdown(d){
+  const lines=[];
+  const L=s=>lines.push(s);
+  const obfuscate=d.obfuscate||false;
+  const hubInfo=d.hubInfo||{};
+  const resources=d.resources||null;
+  const networkData=d.networkData||{};
+  const networkConfig=networkData.network||{};
+  const zwaveRaw=networkData.zwave||null;
+  const zigbeeRaw=networkData.zigbee||null;
+  const hubMeshRaw=networkData.hubMesh||null;
+  const matterRaw=networkData.matter||null;
+  const zwaveMesh=d.zwaveMesh||null;
+  const ghostNodes=d.ghostNodes||[];
+  const zigbeeMesh=d.zigbeeMesh||null;
+  const alerts=d.alerts||[];
+  const deviceStats=d.deviceStats||{};
+  const appStats=d.appStats||{};
+  const stats=d.stats||null;
+  const allRadioDevices=d.allRadioDevices||[];
+  const uptimeMin=d.uptimeMin!=null?d.uptimeMin:0;
+
+  // ── 1. System & Health ──
+  L('### System & Health');
+  L('| | |');
+  L('|---|---|');
+  L(`| Model | ${hubInfo.hardware||'N/A'} |`);
+  L(`| Firmware | ${hubInfo.firmware||'N/A'} |`);
+  L(`| Uptime | ${stats&&stats.uptime?stats.uptime:'N/A'} |`);
+  const bothActive=networkConfig.hasEthernet&&networkConfig.hasWiFi;
+  let connType=networkConfig.hasEthernet?'Ethernet':(networkConfig.hasWiFi?'WiFi':'Unknown');
+  if(bothActive)connType='Ethernet + WiFi active';
+  if(networkConfig.hasEthernet)connType+=(networkConfig.usingStaticIP?' (Static)':' (DHCP)');
+  L(`| Connection | ${connType} |`);
+  if(networkConfig.lanAddr)          L(`| IP Address | ${networkConfig.lanAddr} |`);
+  if(networkConfig.staticGateway)    L(`| Gateway    | ${networkConfig.staticGateway} |`);
+  if(networkConfig.staticSubnetMask) L(`| Subnet     | ${networkConfig.staticSubnetMask} |`);
+  const dnsList=networkConfig.dnsServers||[];
+  if(dnsList.length)                 L(`| DNS        | ${dnsList.join(', ')} |`);
+  if(networkConfig.hasWiFi&&networkConfig.wifiNetwork) L(`| WiFi SSID  | ${networkConfig.wifiNetwork} |`);
+  if(bothActive){L('');L('**Warning:** Both Ethernet and WiFi are active. This is known to cause connectivity issues. Disable WiFi when using Ethernet.');L('');}
+  L(`| CPU Load (5m) | ${resources?Number(resources.cpuAvg5min).toFixed(2):'N/A'} |`);
+  L(`| Free OS Memory | ${resources?fmem(resources.freeOSMemory):'N/A'} |`);
+  if(resources&&resources.freeJavaMemory)  L(`| Free Java Heap  | ${fmem(resources.freeJavaMemory)} |`);
+  if(resources&&resources.totalJavaMemory) L(`| Total Java Heap | ${fmem(resources.totalJavaMemory)} |`);
+  L(`| Temperature | ${d.temperature!=null?Number(d.temperature).toFixed(1)+'°C':'N/A'} |`);
+  L(`| Database | ${d.databaseSize!=null?d.databaseSize+' MB':'N/A'} |`);
+  L(`| State Compression | ${d.stateCompression&&d.stateCompression.enabled?'Enabled':'Disabled'} |`);
+  const esl=d.eventStateLimits||null;
+  if(esl){
+    if(esl.maxEvents)        L(`| Max Events/Device | ${esl.maxEvents} |`);
+    if(esl.maxEventAgeDays)  L(`| Max Event Age | ${esl.maxEventAgeDays} days |`);
+    if(esl.maxStateAgeDays)  L(`| Max State Age | ${esl.maxStateAgeDays} days |`);
+  }
+
+  // Alerts
+  if(alerts&&alerts.length){
+    L('');L('### Alerts');
+    alerts.forEach(a=>L(`- **${a.severity}**: ${a.name}`));
+  }else{
+    L('');L('No active alerts.');
+  }
+
+  // ── 2. Device Inventory ──
+  L('');L('### Devices');
+  L('| | |');
+  L('|---|---|');
+  L(`| Total | ${deviceStats.totalDevices||0} |`);
+  if(deviceStats.activeDevices)   L(`| Active | ${deviceStats.activeDevices} |`);
+  if(deviceStats.inactiveDevices) L(`| Inactive | ${deviceStats.inactiveDevices} |`);
+  if(deviceStats.disabledDevices) L(`| Disabled | ${deviceStats.disabledDevices} |`);
+  const byConn=deviceStats.byConnectionType||{};
+  Object.entries(byConn).forEach(([conn,count])=>{
+    if(count>0)L(`| ${CD[conn]||conn} | ${count} |`);
+  });
+  const byInteg=deviceStats.byIntegration||{};
+  if(Object.keys(byInteg).length){
+    L('');L('**By Integration:**');L('');L('| Integration | Count |');L('|---|---|');
+    Object.entries(byInteg).sort((a,b)=>b[1]-a[1]).forEach(([integ,count])=>{
+      if(count>0)L(`| ${integ} | ${count} |`);
+    });
+  }
+  const lowBattery=deviceStats.lowBatteryDevices||[];
+  if(lowBattery.length){
+    L('');L('**Low Battery:** '+lowBattery.map(it=>`${obfuscate?(it.type||'Device'):it.name} (${it.battery}%)`).join(', '));
+  }
+  const inactiveDevices=(deviceStats.allDevices||[]).filter(it=>it.status==='Inactive');
+  if(inactiveDevices.length){
+    let inactiveLine=`\n**Inactive Devices (${inactiveDevices.length}):** `;
+    inactiveLine+=inactiveDevices.slice(0,15).map(it=>obfuscate?(it.type||'Device'):it.name).join(', ');
+    if(inactiveDevices.length>15)inactiveLine+=` … (+${inactiveDevices.length-15} more)`;
+    L(inactiveLine);
+  }
+
+  // ── 3. App Inventory ──
+  L('');L('### Apps');
+  L(`- **Total:** ${appStats.totalApps||0} (Built-in: ${appStats.builtInApps||0}, User: ${appStats.userApps||0})`);
+  const userAppsList=appStats.userAppsList||[];
+  if(userAppsList.length){
+    const appCounts={};
+    userAppsList.forEach(a=>{const key=a.name||a.label||'Unknown';appCounts[key]=(appCounts[key]||0)+1;});
+    L('');L('**Installed User Apps:**');
+    Object.keys(appCounts).sort().forEach(name=>{
+      const count=appCounts[name];
+      L(`- ${obfuscate?'User App':name}${count>1?` (×${count})`:''}`);
+    });
+  }
+  const builtInInstances=appStats.builtInInstances||{};
+  if(Object.keys(builtInInstances).length){
+    L('');L('**Installed Built-in Apps:**');
+    Object.keys(builtInInstances).sort().forEach(name=>{
+      const count=builtInInstances[name];
+      L(`- ${name}${count>1?` (×${count})`:''}`);
+    });
+  }
+
+  // ── 4. Z-Wave Network ──
+  if(zwaveRaw){
+    L('');L('### Z-Wave');
+    L(`- **Enabled:** ${zwaveRaw.enabled?'Yes':'No'}, **Healthy:** ${zwaveRaw.healthy?'Yes':'No'}`);
+    L(`- **Version:** ${d.zwaveVersion||'N/A'}, **Region:** ${zwaveRaw.region||'N/A'}`);
+    if(zwaveRaw.zwaveJS!=null)L(`- **Z-Wave JS:** ${zwaveRaw.zwaveJS?'Yes':'No'}`);
+    L(`- **Nodes:** ${Object.keys(zwaveRaw.zwDevices||{}).length}`);
+    if(zwaveMesh){
+      let meshLine=`- **Avg PER:** ${Number(zwaveMesh.avgPer||0).toFixed(1)}%`;
+      if(zwaveMesh.avgRssi!=null)meshLine+=`, **Avg RSSI:** ${zwaveMesh.avgRssi} dBm`;
+      meshLine+=`, **Route Changes:** ${zwaveMesh.totalRouteChanges||0}`;
+      L(meshLine);
+    }
+    // Ghost nodes
+    if(ghostNodes.length){
+      L('');L(`**Ghost Nodes (${ghostNodes.length}):**`);
+      ghostNodes.forEach(g=>{
+        const gName=obfuscate?(g.type||'Z-Wave Node'):g.name;
+        const gSig=g.signals?` [${g.signals.join(', ')}]`:'';
+        L(`- Node ${g.id}: ${gName}${gSig}`);
+      });
+    }
+    // Problem nodes
+    const zwNodes=zwaveMesh&&zwaveMesh.nodes?zwaveMesh.nodes:[];
+    const problemNodes=zwNodes.filter(n=>n.state!=='OK'||(n.per||0)>1);
+    if(problemNodes.length){
+      L('');L(`**Problem Nodes (${problemNodes.length}):**`);
+      problemNodes.forEach(n=>{
+        const issues=[];
+        if(n.state!=='OK')issues.push(`State: ${n.state}`);
+        if((n.per||0)>1)issues.push(`PER: ${n.per}%`);
+        L(`- ${obfuscate?(n.zwaveType||'Z-Wave Node'):n.name} (Node ${n.nodeId}): ${issues.join(', ')}`);
+      });
+    }
+    // S0 flagged
+    const s0Flagged=zwNodes.filter(n=>n.s0Flag);
+    if(s0Flagged.length){
+      L('');L(`**S0 on non-security devices:** ${s0Flagged.map(n=>obfuscate?(n.zwaveType||'Z-Wave Node'):n.name).join(', ')}`);
+    }
+    // Isolated nodes (0 neighbors, non-failed)
+    const isolatedNodes=zwNodes.filter(n=>(n.neighbors||0)===0&&n.state!=='FAILED');
+    if(isolatedNodes.length){
+      L('');L(`**Isolated Nodes (0 neighbors, ${isolatedNodes.length}):**`);
+      isolatedNodes.forEach(n=>{
+        const label=obfuscate?(n.zwaveType||`Node ${n.nodeId}`):(n.name||`Node ${n.nodeId}`);
+        L(`- Node ${n.nodeId}: ${label}`);
+      });
+    }
+    // Full node table
+    if(zwNodes.length){
+      L('');L('| Node | Name | Security | RTT | PER | RSSI | Route | Msgs/min | Driver |');
+      L('|---:|---|---|---:|---:|---|---|---:|---|');
+      [...zwNodes].sort((a,b)=>a.nodeId-b.nodeId).forEach(n=>{
+        const rttStr=n.rtt!=null?`${n.rtt}ms`:'—';
+        const drvStr=n.driverType==='usr'?'User':n.driverType==='sys'?'Built-in':'—';
+        const rateStr=uptimeMin>0?Number(n.msgCount/uptimeMin).toFixed(1):'—';
+        const nodeName=obfuscate?(n.zwaveType||`Node ${n.nodeId}`):(n.name||`Node ${n.nodeId}`);
+        L(`| ${n.nodeId} | ${nodeName} | ${n.security||'None'} | ${rttStr} | ${n.per}% | ${n.rssiStr||'—'} | ${n.route||'—'} | ${rateStr} | ${drvStr} |`);
+      });
+    }
+  }
+
+  // ── 5. Zigbee Network ──
+  if(zigbeeRaw&&zigbeeRaw.enabled){
+    L('');L('### Zigbee');
+    let zbLine=`- **Healthy:** ${zigbeeRaw.healthy?'Yes':'No'}`;
+    if(zigbeeRaw.networkState)zbLine+=`, **State:** ${zigbeeRaw.networkState}`;
+    L(zbLine);
+    let chLine=`- **Channel:** ${zigbeeRaw.channel||'N/A'}`;
+    if(zigbeeRaw.channel&&![15,20,25].includes(zigbeeRaw.channel))chLine+=' (not on recommended 15/20/25)';
+    L(chLine);
+    if(zigbeeRaw.powerLevel!=null)L(`- **Power Level:** ${zigbeeRaw.powerLevel}`);
+    L(`- **Devices:** ${(zigbeeRaw.devices||[]).length}`);
+    if(zigbeeMesh){
+      const staleCount=(zigbeeMesh.staleNeighbors||[]).length;
+      const weakCount=(zigbeeMesh.weakNeighbors||[]).length;
+      let nbLine=`- **Neighbors:** ${zigbeeMesh.neighbors?zigbeeMesh.neighbors.length:0}`;
+      if(staleCount>0)nbLine+=` (${staleCount} stale)`;
+      L(nbLine);
+      if(zigbeeMesh.avgLqi!=null)L(`- **LQI:** avg ${zigbeeMesh.avgLqi}, min ${zigbeeMesh.minLqi}, max ${zigbeeMesh.maxLqi}`);
+      if(weakCount>0) L(`- **Weak Neighbors:** ${(zigbeeMesh.weakNeighbors||[]).map(it=>`${it.shortId} LQI:${it.lqi}`).join(', ')}`);
+      if(staleCount>0)L(`- **Stale Neighbors:** ${(zigbeeMesh.staleNeighbors||[]).map(it=>it.shortId).join(', ')}`);
+    }
+  }
+
+  // ── 5b. Matter ──
+  if(matterRaw&&matterRaw.enabled){
+    L('');L('### Matter');
+    L(`- **Enabled:** Yes, **Installed:** ${matterRaw.installed?'Yes':'No'}`);
+    const matterCount=(matterRaw.devices||[]).length;
+    if(matterCount>0)L(`- **Devices:** ${matterCount}`);
+    if(matterRaw.networkState)L(`- **Network State:** ${matterRaw.networkState}`);
+    if(matterRaw.fabricId)    L(`- **Fabric:** ${matterRaw.fabricId}`);
+  }
+
+  // ── 6. Hub Mesh ──
+  if(hubMeshRaw&&hubMeshRaw.hubList){
+    const peers=hubMeshRaw.hubList||[];
+    if(peers.length){
+      L('');L('### Hub Mesh');
+      L('| Hub | IP | Status | Devices | Vars |');
+      L('|---|---|---|---:|---:|');
+      peers.forEach(hub=>{
+        const status=hub.offline?'Offline':'Online';
+        L(`| ${hub.name} | ${hub.ipAddress} | ${status} | ${hub.deviceIds?hub.deviceIds.length:0} | ${hub.hubVarNames?hub.hubVarNames.length:0} |`);
+      });
+    }
+  }
+
+  // ── 7. Performance ──
+  L('');L('### Performance');
+  if(stats&&stats.totalDevicesRuntime){
+    let drtLine=`- **Device Runtime:** ${stats.totalDevicesRuntime}`;
+    if(stats.devicePct)drtLine+=` (${stats.devicePct} busy)`;
+    L(drtLine);
+  }
+  if(stats&&stats.totalAppsRuntime){
+    let artLine=`- **App Runtime:** ${stats.totalAppsRuntime}`;
+    if(stats.appPct)artLine+=` (${stats.appPct} busy)`;
+    L(artLine);
+  }
+  // Top 5 device types by CPU
+  const devRtStats=stats&&stats.deviceStats?stats.deviceStats:[];
+  if(devRtStats.length){
+    const topDevTypes=[...devRtStats].sort((a,b)=>Number(b.pctTotal||0)-Number(a.pctTotal||0)).slice(0,5);
+    if(topDevTypes.some(dt=>Number(dt.pctTotal||0)!==0)){
+      L('');L('**Top Device Types by CPU:**');
+      L('| Device | % Total | Exec Count | Avg (ms) |');
+      L('|---|---:|---:|---:|');
+      topDevTypes.forEach(dt=>{
+        const pct=Number(dt.pctTotal||0);
+        if(pct>0)L(`| ${dt.name} | ${pct.toFixed(3)}% | ${dt.count||0} | ${Number(dt.average||0).toFixed(1)} |`);
+      });
+    }
+  }
+  // Top 5 app types by CPU
+  const appRtStats=stats&&stats.appStats?stats.appStats:[];
+  if(appRtStats.length){
+    const topAppTypes=[...appRtStats].sort((a,b)=>Number(b.pctTotal||0)-Number(a.pctTotal||0)).slice(0,5);
+    if(topAppTypes.some(at=>Number(at.pctTotal||0)!==0)){
+      L('');L('**Top App Types by CPU:**');
+      L('| App | % Total | Exec Count | Avg (ms) |');
+      L('|---|---:|---:|---:|');
+      topAppTypes.forEach(at=>{
+        const pct=Number(at.pctTotal||0);
+        const aName=obfuscate?(at.type||at.name):at.name;
+        if(pct>0)L(`| ${aName} | ${pct.toFixed(3)}% | ${at.count||0} | ${Number(at.average||0).toFixed(1)} |`);
+      });
+    }
+  }
+  // Top talkers by message rate
+  if(allRadioDevices.length&&uptimeMin>0){
+    const topTalkers=[...allRadioDevices].sort((a,b)=>b.msgCount-a.msgCount).slice(0,5);
+    L('');L('**Top Talkers:**');
+    L('| Device | Integration | Msgs/min | Total Msgs |');
+    L('|---|---|---:|---:|');
+    topTalkers.forEach(t=>{
+      const rate=Number(t.msgCount/uptimeMin).toFixed(1);
+      const tName=obfuscate?(t.type||t.integration||'Device'):t.name;
+      L(`| ${tName} | ${t.integration} | ${rate} | ${t.msgCount} |`);
+    });
+    // Spammy alerts (>= chattyDeviceThreshold)
+    const chattyT=TH.chattyDeviceThreshold||10;
+    const spammy=allRadioDevices.filter(it=>it.msgCount/uptimeMin>=chattyT);
+    if(spammy.length){
+      L('');L(`**Elevated message rate (≥${chattyT}/min):** ${spammy.map(it=>`${obfuscate?(it.type||it.integration||'Device'):it.name} (${Number(it.msgCount/uptimeMin).toFixed(1)}/min)`).join(', ')}`);
+    }
+  }
+
+  L('');L(`---\n*Generated by Hub Diagnostics v${UI_VERSION}*`);
+
+  return lines.join('\n');
+}
 api('settings').then(s=>{if(s)Object.assign(TH,s);}).catch(()=>{});
 function rateColor(v){return v>=TH.chattyDeviceThreshold?'var(--crit)':v>=TH.chattyDeviceThreshold*0.6?'var(--warn)':v>=2?'var(--primary)':''}
 function rateCell(r){if(r.msgPerMin==null)return'';const c=rateColor(r.msgPerMin);const s=c?' style="color:'+c+';font-weight:600"':'';return'<span'+s+'>'+r.msgPerMin.toFixed(2)+'</span>'}
@@ -738,13 +1028,14 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   const btnForum=document.getElementById('btnForum');
   if(btnForum)btnForum.onclick=async()=>{
     btnForum.disabled=true;btnForum.textContent='Generating...';
-    try{const res=await api('export/forum');
-      if(res.success&&res.markdown){
+    try{const res=await api('forum/data');
+      if(res.hubInfo){
+        const markdown=buildForumMarkdown(res);
         btnForum.disabled=false;btnForum.textContent='Copy for Forum';
         const overlay=document.createElement('div');overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:flex;align-items:center;justify-content:center';
         const box=document.createElement('div');box.style.cssText='background:#fff;border-radius:8px;padding:16px;width:90%;max-width:700px;max-height:80vh;display:flex;flex-direction:column';
         box.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><b>Forum Export</b><span>Select All + Copy, then close</span></div>';
-        const ta=document.createElement('textarea');ta.value=res.markdown;ta.readOnly=true;ta.style.cssText='width:100%;flex:1;min-height:300px;font-family:monospace;font-size:12px;padding:8px;border:1px solid #ddd;border-radius:4px;resize:vertical';
+        const ta=document.createElement('textarea');ta.value=markdown;ta.readOnly=true;ta.style.cssText='width:100%;flex:1;min-height:300px;font-family:monospace;font-size:12px;padding:8px;border:1px solid #ddd;border-radius:4px;resize:vertical';
         const closeBtn=document.createElement('button');closeBtn.textContent='Close';closeBtn.className='btn btn-p';closeBtn.style.marginTop='10px';closeBtn.style.alignSelf='flex-end';
         closeBtn.onclick=()=>document.body.removeChild(overlay);
         overlay.onclick=e=>{if(e.target===overlay)document.body.removeChild(overlay)};
@@ -1970,7 +2261,7 @@ async function rConfig(){const P='p-config';loading(P);try{
   };
 
   document.getElementById('cfg_debugLogging').onchange=async function(){await saveSetting({debugLogging:this.checked})};
-  document.getElementById('cfg_obfuscate').onchange=async function(){await saveSetting({obfuscateForumExport:this.checked});drop('export/forum')};
+  document.getElementById('cfg_obfuscate').onchange=async function(){await saveSetting({obfuscateForumExport:this.checked});drop('forum/data')};
 
   document.getElementById('cfg_saveLive').onclick=async()=>{
     const v=Math.max(10,Math.min(300,parseInt(document.getElementById('cfg_liveRefreshSec').value)||30));
