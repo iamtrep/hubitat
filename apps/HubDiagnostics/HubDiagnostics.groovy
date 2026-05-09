@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.24.0"
+@Field static final String APP_VERSION = "5.25.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -1197,10 +1197,8 @@ Map apiForumData() {
     Integer uptimeSeconds = stats ? parseUptime(stats.uptime as String) : null
     List zwaveMsgCounts = extractZwaveMessageCounts(networkData.zwave ?: [:])
     List zigbeeMsgCounts = extractZigbeeMessageCounts(networkData.zigbee ?: [:])
-    List allRadioDevices = (
-        zwaveMsgCounts.collect { [name: it.name, deviceId: it.deviceId, msgCount: it.msgCount, integration: "Z-Wave"] } +
-        zigbeeMsgCounts.collect { [name: it.name, deviceId: it.id, msgCount: it.msgCount, integration: "Zigbee"] }
-    )
+    List allRadioDevices = (zwaveMsgCounts.collect { [name: it.name, deviceId: it.deviceId, msgCount: it.msgCount, integration: "Z-Wave"] } +
+                            zigbeeMsgCounts.collect { [name: it.name, deviceId: it.id, msgCount: it.msgCount, integration: "Zigbee"] })
     recordApiTiming("forum/data", now() - start)
     return jsonResponse([
         hubInfo: hubInfo, resources: resources, temperature: temperature,
@@ -1209,7 +1207,7 @@ Map apiForumData() {
         deviceStats: deviceStats, appStats: appStats, networkData: networkData,
         zwaveMesh: zwaveMesh, ghostNodes: ghostNodes, zigbeeMesh: zigbeeMesh,
         zwaveVersion: zwaveVersion, stats: stats, allRadioDevices: allRadioDevices,
-        uptimeMin: uptimeSeconds != null ? uptimeSeconds / 60.0f : 0.0f,
+        uptimeMin: uptimeSeconds != null ? uptimeSeconds / 60.0f : null,
         obfuscate: settings.obfuscateForumExport ?: false
     ])
 }
