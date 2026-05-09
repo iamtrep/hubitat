@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.21.0"
+@Field static final String APP_VERSION = "5.21.1"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -1881,9 +1881,11 @@ List getStructuredAlerts(Map shared = [:]) {
         alerts << [key: "spammyDevices", name: "Spammy Devices", severity: "warning", message: hubAlerts.spammyDevicesMessage]
     }
 
-    // Hub messages from /hub/messages — admin notifications surfaced in the platform UI
+    // Hub messages from /hub/messages — admin notifications surfaced in the platform UI.
+    // The hub embeds raw HTML in message text (e.g. <span> with dismiss links); strip it
+    // so the UI h() escape doesn't render visible tags.
     fetchHubMessages().each { Map msg ->
-        String text = msg.text ?: msg.message ?: msg.toString()
+        String text = stripHtml(msg.text ?: msg.message ?: msg.toString())
         if (text) alerts << [key: "hubMessage", name: text, severity: "info"]
     }
 
