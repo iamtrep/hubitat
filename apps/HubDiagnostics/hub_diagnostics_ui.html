@@ -114,7 +114,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.18.0";
+const UI_VERSION = "5.19.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -447,20 +447,28 @@ function tbl(cid,cols,rows,opts={}){
       }
     }});
     const fi=document.getElementById('flt_'+cid);
-    if(fi){fi.addEventListener('input',()=>{
-      const q=fi.value.toLowerCase();
-      // v5.16.0 (#10): columns with `ff:` get full-text filtering on rendered/derived content
-      // (defaults to raw `r[c.f]` when ff is omitted). Use this for columns whose displayed
-      // text differs from the raw field (e.g. Parent column shows app name OR device name).
-      filt=rows.filter(r=>cols.some(c=>{
-        const txt=c.ff?c.ff(r):String(r[c.f]??'');
-        return String(txt).toLowerCase().includes(q);
-      }));
-      filt=sf(filt,sc,sd);
-      const tb=t.querySelector('tbody');
-      if(tb) tb.innerHTML=bldRows(filt);
-      else { el.innerHTML=bld(filt);bind() }
-    })}
+    if(fi){
+      // v5.19.0 (R-6 B4): 150ms debounce — pre-fix every keystroke triggered full filter+sort+innerHTML
+      // rewrite, painful on 200+ row tables. Debounce coalesces typing bursts into one render.
+      let _fltTimer=null;
+      fi.addEventListener('input',()=>{
+        clearTimeout(_fltTimer);
+        _fltTimer=setTimeout(()=>{
+          const q=fi.value.toLowerCase();
+          // v5.16.0 (#10): columns with `ff:` get full-text filtering on rendered/derived content
+          // (defaults to raw `r[c.f]` when ff is omitted). Use this for columns whose displayed
+          // text differs from the raw field (e.g. Parent column shows app name OR device name).
+          filt=rows.filter(r=>cols.some(c=>{
+            const txt=c.ff?c.ff(r):String(r[c.f]??'');
+            return String(txt).toLowerCase().includes(q);
+          }));
+          filt=sf(filt,sc,sd);
+          const tb=t.querySelector('tbody');
+          if(tb) tb.innerHTML=bldRows(filt);
+          else { el.innerHTML=bld(filt);bind() }
+        },150);
+      });
+    }
   }bind()
 }
 
@@ -846,33 +854,31 @@ async function rDevices(){const P='p-devices';loading(P);try{
   o+='<div class="card"><div class="card-h">Integrations</div><div class="card-b"><div class="tbl-wrap"><table><thead><tr><th>Integration</th><th>Source</th><th>Count</th></tr></thead><tbody>';
   Object.entries(bi).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>{if(v>0)o+='<tr><td>'+h(k)+'</td><td>'+srcBadge(k)+'</td><td>'+dlistlink(v,ii[k])+'</td></tr>'});
   o+='</tbody></table></div></div></div></div>';
-  // Device types
+  // R-6 B3 (v5.19.0): compute dt + stale once; reused for both the markup-build phase below and the post-render tbl() init.
   const bt=d.byType||{},it=d.idsByType||{};
-  if(Object.keys(bt).length){
-    const dt=Object.entries(bt).map(([k,v])=>({name:k,count:v,ids:it[k]||[]})).sort((a,b)=>b.count-a.count);
-    o+='<div class="card"><div class="card-h">Device Types ('+dt.length+')</div><div class="card-b"><div id="dtTbl"></div></div></div>'}
+  const dt=Object.keys(bt).length?Object.entries(bt).map(([k,v])=>({name:k,count:v,ids:it[k]||[]})).sort((a,b)=>b.count-a.count):[];
+  const staleCutoff=Date.now()-2*(d.inactivityDays||7)*86400000;
+  const stale=d.deviceRows.filter(r=>{if(r.lastActivity==='Never')return true;const t=new Date(r.lastActivity).getTime();return !isNaN(t)&&t<staleCutoff});
+  // Device types
+  if(dt.length)o+='<div class="card"><div class="card-h">Device Types ('+dt.length+')</div><div class="card-b"><div id="dtTbl"></div></div></div>';
   // Low battery
   if(d.lowBatteryDevices&&d.lowBatteryDevices.length){o+='<div class="card"><div class="card-h">Low Battery Alerts</div><div class="card-b">';
     d.lowBatteryDevices.forEach(dev=>{o+='<div class="alert a-warn">'+dlink(dev.id,dev.name)+': <b>'+dev.battery+'%</b></div>'});o+='</div></div>'}
   // Stale devices (inactive > 2x threshold)
-  {const threshold=2*(d.inactivityDays||7)*86400000,cutoff=Date.now()-threshold;
-   const stale=d.deviceRows.filter(r=>{if(r.lastActivity==='Never')return true;const t=new Date(r.lastActivity).getTime();return !isNaN(t)&&t<cutoff});
-   if(stale.length){o+='<div class="card"><div class="card-h">Stale Devices ('+stale.length+')</div><div class="card-b">';
-     o+='<div class="alert a-warn">\u26A0 Devices with no activity in '+2*(d.inactivityDays||7)+'+ days (2\u00D7 inactivity threshold)</div>';
-     o+='<div id="staleTbl"></div></div></div>'}}
+  if(stale.length){o+='<div class="card"><div class="card-h">Stale Devices ('+stale.length+')</div><div class="card-b">';
+    o+='<div class="alert a-warn">\u26A0 Devices with no activity in '+2*(d.inactivityDays||7)+'+ days (2\u00D7 inactivity threshold)</div>';
+    o+='<div id="staleTbl"></div></div></div>'}
   // Device table
   o+='<div class="card"><div class="card-h">All Devices ('+d.deviceRows.length+')</div><div class="card-b"><div id="devTbl"></div></div></div>';
   document.getElementById(P).innerHTML=o;
-  if(Object.keys(bt).length){
-    const dt=Object.entries(bt).map(([k,v])=>({name:k,count:v,ids:it[k]||[]})).sort((a,b)=>b.count-a.count);
-    tbl('dtTbl',[{l:'Device Type',f:'name'},{l:'Devices',f:'count',t:'n',r:r=>dlistlink(r.count,r.ids)}],dt,{sc:1,sd:'desc',filter:true,collapse:10,collapseLabel:'Device Types'})}
+  if(dt.length)
+    tbl('dtTbl',[{l:'Device Type',f:'name'},{l:'Devices',f:'count',t:'n',r:r=>dlistlink(r.count,r.ids)}],dt,{sc:1,sd:'desc',filter:true,collapse:10,collapseLabel:'Device Types'});
   // Stale devices table
-  {const threshold=2*(d.inactivityDays||7)*86400000,cutoff=Date.now()-threshold;
-   const stale=d.deviceRows.filter(r=>{if(r.lastActivity==='Never')return true;const t=new Date(r.lastActivity).getTime();return !isNaN(t)&&t<cutoff});
-   if(stale.length)tbl('staleTbl',[
-     {l:'Name',f:'name',r:r=>dlink(r.id,r.name)},{l:'Type',f:'type'},{l:'Connection',f:'connectionTypeDisplay'},{l:'Integration',f:'integration'},
-     {l:'Last Activity',f:'lastActivity'},{l:'Room',f:'room',r:r=>h(r.room||'-')}
-   ],stale,{sc:3,sd:'asc',collapse:10,collapseLabel:'Stale Devices'})}
+  if(stale.length)
+    tbl('staleTbl',[
+      {l:'Name',f:'name',r:r=>dlink(r.id,r.name)},{l:'Type',f:'type'},{l:'Connection',f:'connectionTypeDisplay'},{l:'Integration',f:'integration'},
+      {l:'Last Activity',f:'lastActivity'},{l:'Room',f:'room',r:r=>h(r.room||'-')}
+    ],stale,{sc:3,sd:'asc',collapse:10,collapseLabel:'Stale Devices'});
   tbl('devTbl',[
     {l:'Name',f:'name',r:r=>dlink(r.id,r.name)},
     {l:'Type',f:'type',r:r=>r.userType&&r.deviceTypeId?'<a href="/driver/editor/'+r.deviceTypeId+'" target="_blank">'+h(r.type)+'</a>':h(r.type)},

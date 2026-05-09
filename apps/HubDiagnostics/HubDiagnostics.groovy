@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.18.0"
+@Field static final String APP_VERSION = "5.19.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -4763,11 +4763,20 @@ Map apiAuditStatus() {
         // Caller asked about a specific scan we don't know about
         return jsonResponse([scanId: requested, status: 'unknown'])
     }
+    // R-6 G1 (v5.19.0): when a scan is still in-flight, read processed/total directly from
+    // AUDIT_SCANS' AtomicInteger. The fullJsonCb handler updates state.audit.processed from
+    // up to 8 concurrent callbacks — Hubitat's "last write wins" persistence semantics mean
+    // the snapshot can lag by several count units (never wrong direction, just slightly
+    // behind). Reading the AtomicInteger eliminates the lag for live progress polling.
+    String scanId = (snap.scanId ?: requested) as String
+    ConcurrentHashMap scan = scanId ? (AUDIT_SCANS[scanId] as ConcurrentHashMap) : null
+    Integer processed = scan ? (scan.processed as AtomicInteger).get() : (snap.processed as Integer)
+    Integer total     = scan ? (scan.total as Integer)                  : (snap.total     as Integer)
     return jsonResponse([
         scanId:    snap.scanId,
         status:    snap.status,
-        processed: snap.processed ?: 0,
-        total:     snap.total ?: 0,
+        processed: processed ?: 0,
+        total:     total ?: 0,
         startedAt: snap.startedAt,
         filename:  snap.filename,
         error:     snap.error
@@ -4826,10 +4835,11 @@ void updated() {
     state.installed = true
     unsubscribe()
     unschedule()
-    // R-5 (v5.18.0): clear session-scoped caches so updated config / hardware changes take effect immediately
+    // R-5 (v5.18.0) + R-6 B5 (v5.19.0): clear session-scoped caches so config/hardware changes take effect immediately
     state.remove('zwaveStackCache')   // A3 — re-detect stack on next use (handles user switching legacy ↔ JS)
     state.remove('fwUpdateCache')     // also clear so next dashboard refresh hits cloud (1h TTL would otherwise apply)
     state.remove('fwUpdateCacheAt')
+    state.remove('controllerTypeCache') // B5 — evict per-device classification cache; rebuilds on next analysis pass; auto-handles removed/re-paired devices
     apiTimings.clear()                // A7 — drop stats for any renamed/removed endpoints; fresh measurements from now
     syncUI(true)
     initialize()
