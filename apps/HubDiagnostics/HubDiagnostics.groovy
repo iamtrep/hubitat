@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.21.1"
+@Field static final String APP_VERSION = "5.21.2"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -4040,12 +4040,17 @@ private Map buildCrossReference(Map devices, long scanStartedMs) {
     devices.each { _did, _d ->
         Long   did   = _did as Long
         Map    d     = _d  as Map
-        int    apps  = ((d.appsUsing ?: []) as List).size()
+        // appsUsingCount is the hub's authoritative subscriber count (from fj.appsUsingCount).
+        // appsUsing.size() is NOT used here — fj.dashboards contains every dashboard the device
+        // is in the *allowed-devices list* for, not just dashboards with actual tiles, so it is
+        // too noisy to gate "unreferenced" on. A device is unreferenced when no app subscribes
+        // to it and it has no parent integration app managing it.
+        int    apps  = (d.appsUsingCount as Integer) ?: 0
         int    dashs = ((d.dashboards ?: []) as List).size()
         boolean noParentApp = (d.parentApp == null)
 
-        // Unreferenced
-        if (apps == 0 && dashs == 0 && noParentApp) {
+        // Unreferenced: no app subscribers and no parent app (dashboard membership ignored)
+        if (apps == 0 && noParentApp) {
             unreferenced << [id: did, name: (d.label ?: d.name), type: d.deviceTypeName,
                              lastActivityTime: d.lastActivityTime, driverType: d.driverType]
         }
@@ -4426,7 +4431,7 @@ private String renderAuditHtml(Map xref, String hubName, String generatedAt, Lis
                     a.disabled ? "<s class=\"muted\" title=\"App is disabled — subscription inactive\">${inner}</s>" : inner
                 }.join(", ") + (apps.size() > 4 ? ", <span class=\"muted\">+${apps.size() - 4}</span>" : "")
             } else {
-                appsCell = (dashs.isEmpty() && d.parentApp == null) ? "<span class=\"warn\">⚠ unreferenced</span>" : "<span class=\"muted\">—</span>"
+                appsCell = (d.parentApp == null) ? "<span class=\"warn\">⚠ unreferenced</span>" : "<span class=\"muted\">—</span>"
             }
             String dashsCell = dashs ? dashs.take(4).collect { '<a href="/installedapp/configure/' + (it.id as Long) + '" target="_blank">' + esc(it.name as String) + '</a>' }.join(", ") : "<span class=\"muted\">—</span>"
             Map pa = d.parentApp as Map
