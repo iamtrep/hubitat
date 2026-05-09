@@ -1974,6 +1974,14 @@ private Object hubRequest(String path, String name, String type = "json", int ti
     return hubRequestInternal(path, name, type, timeout, true)
 }
 
+private Map hubMapRequest(String path, String name, int timeout = 30) {
+    Object raw = hubRequestInternal(path, name, "json", timeout, true)
+    if (raw instanceof Map && ((Map) raw).error) {
+        return [ok: false, data: [:], error: (String) ((Map) raw).message]
+    }
+    return [ok: true, data: (Map)(raw ?: [:]), error: null]
+}
+
 /**
  * Inner helper. allowRetry=true on first call; recurse with false after a transient error
  * (SocketTimeoutException, ConnectException) so we get exactly one retry per request, no more.
