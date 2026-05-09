@@ -290,7 +290,7 @@ mappings {
     path('/api/version/check')        { action: [GET: 'apiVersionCheck'] }
     path('/api/reports')              { action: [GET: 'apiReports'] }
     path('/api/report/generate')      { action: [POST: 'apiGenerateReport'] }
-    path('/api/export/forum')         { action: [GET: 'apiForumExport'] }
+    path('/api/forum/data')           { action: [GET: 'apiForumData'] }
     path('/api/settings')             { action: [GET: 'apiGetSettings', POST: 'apiUpdateSettings'] }
     path('/api/cache/clear')          { action: [POST: 'apiClearCache'] }
 
@@ -1176,10 +1176,8 @@ Map apiGenerateReport() {
     return jsonResponse([success: true, filename: filename])
 }
 
-Map apiForumExport() {
+Map apiForumData() {
     long start = now()
-
-    // Gather all data
     Map hubInfo = getHubInfo()
     Map resources = fetchSystemResources()
     Float temperature = fetchTemperature()
@@ -1190,289 +1188,30 @@ Map apiForumExport() {
     Map deviceStats = analyzeDevices(true)
     Map appStats = analyzeApps(true)
     Map networkData = analyzeNetwork()
-    Map networkConfig = networkData.network ?: [:]
-    Map zwaveRaw = networkData.zwave ?: [:]
-    Map zigbeeRaw = networkData.zigbee ?: [:]
-    Map hubMeshRaw = networkData.hubMesh ?: [:]
-    Map matterRaw = (Map) (networkData.matter ?: [:])
-    Map zwaveMesh = extractZwaveMeshQuality(zwaveRaw)
-    boolean obfuscate = settings.obfuscateForumExport ?: false
-    List ghostNodes = buildZwaveGhostNodes(zwaveRaw)
+    Map zwaveMesh = extractZwaveMeshQuality(networkData.zwave ?: [:])
+    List ghostNodes = buildZwaveGhostNodes(networkData.zwave ?: [:])
     Map zigbeeMesh = fetchZigbeeMeshInfo()
     String zwaveVersion = fetchZwaveVersion()
     Map statsWrap = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats")
     Map stats = statsWrap.ok ? statsWrap.data : null
     Integer uptimeSeconds = stats ? parseUptime(stats.uptime as String) : null
-    float uptimeMin = uptimeSeconds ? uptimeSeconds / 60.0f : 0
-
-    // Radio message counts with rates
-    List zwaveMsgCounts = extractZwaveMessageCounts(zwaveRaw)
-    List zigbeeMsgCounts = extractZigbeeMessageCounts(zigbeeRaw)
-    List allRadioDevices = (zwaveMsgCounts.collect { [name: it.name, deviceId: it.deviceId, msgCount: it.msgCount, integration: "Z-Wave"] } +
-                            zigbeeMsgCounts.collect { [name: it.name, deviceId: it.id, msgCount: it.msgCount, integration: "Zigbee"] })
-
-    StringBuilder md = new StringBuilder()
-
-    // ── 1. System & Health ──
-    md << "### System & Health\n"
-    md << "| | |\n|---|---|\n"
-    md << "| Model | ${hubInfo.hardware} |\n"
-    md << "| Firmware | ${hubInfo.firmware} |\n"
-    md << "| Uptime | ${stats?.uptime ?: 'N/A'} |\n"
-    if (location.currentMode) md << "| Mode | ${location.currentMode} |\n"
-    boolean bothActive = networkConfig.hasEthernet && networkConfig.hasWiFi
-    String connType = networkConfig.hasEthernet ? "Ethernet" : (networkConfig.hasWiFi ? "WiFi" : "Unknown")
-    if (bothActive) connType = "Ethernet + WiFi active"
-    if (networkConfig.hasEthernet) connType += networkConfig.usingStaticIP ? " (Static)" : " (DHCP)"
-    md << "| Connection | ${connType} |\n"
-    if (networkConfig.lanAddr)          md << "| IP Address | ${networkConfig.lanAddr} |\n"
-    if (networkConfig.staticGateway)    md << "| Gateway    | ${networkConfig.staticGateway} |\n"
-    if (networkConfig.staticSubnetMask) md << "| Subnet     | ${networkConfig.staticSubnetMask} |\n"
-    List dnsList = (networkConfig.dnsServers ?: []) as List
-    if (dnsList)                        md << "| DNS        | ${dnsList.join(', ')} |\n"
-    if (networkConfig.hasWiFi && networkConfig.wifiNetwork) md << "| WiFi SSID  | ${networkConfig.wifiNetwork} |\n"
-    if (bothActive) md << "\n**Warning:** Both Ethernet and WiFi are active. This is known to cause connectivity issues. Disable WiFi when using Ethernet.\n\n"
-    md << "| CPU Load (5m) | ${resources ? String.format('%.2f', resources.cpuAvg5min as float) : 'N/A'} |\n"
-    md << "| Free OS Memory | ${resources ? formatMemory(resources.freeOSMemory as int) : 'N/A'} |\n"
-    if (resources?.freeJavaMemory)  md << "| Free Java Heap  | ${formatMemory(resources.freeJavaMemory as int)} |\n"
-    if (resources?.totalJavaMemory) md << "| Total Java Heap | ${formatMemory(resources.totalJavaMemory as int)} |\n"
-    md << "| Temperature | ${temperature != null ? String.format('%.1f\u00B0C', temperature) : 'N/A'} |\n"
-    md << "| Database | ${databaseSize != null ? "${databaseSize} MB" : 'N/A'} |\n"
-    md << "| State Compression | ${stateCompression?.enabled ? 'Enabled' : 'Disabled'} |\n"
-    if (eventStateLimits) {
-        if (eventStateLimits.maxEvents) md << "| Max Events/Device | ${eventStateLimits.maxEvents} |\n"
-        if (eventStateLimits.maxEventAgeDays) md << "| Max Event Age | ${eventStateLimits.maxEventAgeDays} days |\n"
-        if (eventStateLimits.maxStateAgeDays) md << "| Max State Age | ${eventStateLimits.maxStateAgeDays} days |\n"
-    }
-
-    // Alerts
-    if (alerts) {
-        md << "\n### Alerts\n"
-        alerts.each { Map a -> md << "- **${a.severity}**: ${a.name}\n" }
-    } else {
-        md << "\nNo active alerts.\n"
-    }
-
-    // ── 2. Device Inventory ──
-    md << "\n### Devices\n"
-    md << "| | |\n|---|---|\n"
-    md << "| Total | ${deviceStats.totalDevices} |\n"
-    if (deviceStats.activeDevices)   md << "| Active | ${deviceStats.activeDevices} |\n"
-    if (deviceStats.inactiveDevices) md << "| Inactive | ${deviceStats.inactiveDevices} |\n"
-    if (deviceStats.disabledDevices) md << "| Disabled | ${deviceStats.disabledDevices} |\n"
-    Map byConn = deviceStats.byConnectionType ?: [:]
-    byConn.each { String conn, int count ->
-        if (count > 0) md << "| ${CONN_DISPLAY[conn] ?: conn} | ${count} |\n"
-    }
-    Map byInteg = deviceStats.byIntegration ?: [:]
-    if (byInteg) {
-        md << "\n**By Integration:**\n\n| Integration | Count |\n|---|---|\n"
-        byInteg.sort { a, b -> b.value <=> a.value }.each { String integ, int count ->
-            if (count > 0) md << "| ${integ} | ${count} |\n"
-        }
-    }
-    List lowBattery = (deviceStats.lowBatteryDevices ?: [])
-    if (lowBattery) {
-        md << "\n**Low Battery:** " + lowBattery.collect { "${obfuscate ? (it.type ?: 'Device') : it.name} (${it.battery}%)" }.join(", ") + "\n"
-    }
-    List inactiveDevices = (deviceStats.allDevices ?: []).findAll { it.status == "Inactive" }
-    if (inactiveDevices) {
-        md << "\n**Inactive Devices (${inactiveDevices.size()}):** "
-        md << inactiveDevices.take(15).collect { obfuscate ? (it.type ?: 'Device') : it.name }.join(", ")
-        if (inactiveDevices.size() > 15) md << " … (+${inactiveDevices.size() - 15} more)"
-        md << "\n"
-    }
-
-    // ── 3. App Inventory ──
-    md << "\n### Apps\n"
-    md << "- **Total:** ${appStats.totalApps} (Built-in: ${appStats.builtInApps}, User: ${appStats.userApps})\n"
-    List userAppsList = (appStats.userAppsList ?: []) as List
-    if (userAppsList) {
-        // Deduplicate by type name, show count when multiple instances
-        Map appCounts = [:]
-        userAppsList.each { Map a -> appCounts[a.name ?: a.label ?: "Unknown"] = (appCounts[a.name ?: a.label ?: "Unknown"] ?: 0) + 1 }
-        md << "\n**Installed User Apps:**\n"
-        appCounts.sort { it.key }.each { String name, int count ->
-            md << "- ${obfuscate ? 'User App' : name}${count > 1 ? " (×${count})" : ''}\n"
-        }
-    }
-    Map builtInInstances = (appStats.builtInInstances ?: [:]) as Map
-    if (builtInInstances) {
-        md << "\n**Installed Built-in Apps:**\n"
-        builtInInstances.sort { it.key }.each { String name, int count ->
-            md << "- ${name}${count > 1 ? " (×${count})" : ''}\n"
-        }
-    }
-
-    // ── 4. Z-Wave Network ──
-    if (zwaveRaw) {
-        md << "\n### Z-Wave\n"
-        md << "- **Enabled:** ${zwaveRaw.enabled ? 'Yes' : 'No'}, **Healthy:** ${zwaveRaw.healthy ? 'Yes' : 'No'}\n"
-        md << "- **Version:** ${zwaveVersion ?: 'N/A'}, **Region:** ${zwaveRaw.region ?: 'N/A'}\n"
-        if (zwaveRaw.zwaveJS != null) md << "- **Z-Wave JS:** ${zwaveRaw.zwaveJS ? 'Yes' : 'No'}\n"
-        md << "- **Nodes:** ${(zwaveRaw.zwDevices ?: [:]).size()}\n"
-        if (zwaveMesh) {
-            md << "- **Avg PER:** ${String.format('%.1f', (zwaveMesh.avgPer ?: 0) as float)}%"
-            if (zwaveMesh.avgRssi != null) md << ", **Avg RSSI:** ${zwaveMesh.avgRssi} dBm"
-            md << ", **Route Changes:** ${zwaveMesh.totalRouteChanges ?: 0}\n"
-        }
-        // Ghost nodes
-        if (ghostNodes) {
-            md << "\n**Ghost Nodes (${ghostNodes.size()}):**\n"
-            ghostNodes.each { Map g ->
-                String gName = obfuscate ? (g.type ?: 'Z-Wave Node') : g.name
-                String gSig  = g.signals ? " [${(g.signals as List).join(', ')}]" : ""
-                md << "- Node ${g.id}: ${gName}${gSig}\n"
-            }
-        }
-        // Problem nodes
-        List problemNodes = (zwaveMesh?.nodes ?: []).findAll { Map n -> n.state != "OK" || (n.per ?: 0) > 1 }
-        if (problemNodes) {
-            md << "\n**Problem Nodes (${problemNodes.size()}):**\n"
-            problemNodes.each { Map n ->
-                List issues = []
-                if (n.state != "OK") issues << "State: ${n.state}"
-                if ((n.per ?: 0) > 1) issues << "PER: ${n.per}%"
-                md << "- ${obfuscate ? (n.zwaveType ?: 'Z-Wave Node') : n.name} (Node ${n.nodeId}): ${issues.join(', ')}\n"
-            }
-        }
-        // S0 flagged
-        List s0Flagged = (zwaveMesh?.nodes ?: []).findAll { it.s0Flag }
-        if (s0Flagged) {
-            md << "\n**S0 on non-security devices:** ${s0Flagged.collect { obfuscate ? (it.zwaveType ?: 'Z-Wave Node') : it.name }.join(', ')}\n"
-        }
-        // Isolated nodes (0 neighbors, non-failed)
-        List isolatedNodes = (zwaveMesh?.nodes ?: []).findAll { Map n -> (n.neighbors ?: 0) == 0 && n.state != "FAILED" }
-        if (isolatedNodes) {
-            md << "\n**Isolated Nodes (0 neighbors, ${isolatedNodes.size()}):**\n"
-            isolatedNodes.each { Map n ->
-                String label = obfuscate ? (n.zwaveType ?: "Node ${n.nodeId}") : (n.name ?: "Node ${n.nodeId}")
-                md << "- Node ${n.nodeId}: ${label}\n"
-            }
-        }
-        // Full node table
-        List zwNodes = zwaveMesh?.nodes ?: []
-        if (zwNodes) {
-            md << "\n| Node | Name | Security | RTT | PER | RSSI | Route | Msgs/min | Driver |\n"
-            md << "|---:|---|---|---:|---:|---|---|---:|---|\n"
-            zwNodes.sort { it.nodeId }.each { Map n ->
-                String rttStr = n.rtt != null ? "${n.rtt}ms" : "\u2014"
-                String drvStr = n.driverType == "usr" ? "User" : n.driverType == "sys" ? "Built-in" : "\u2014"
-                String rateStr = uptimeMin > 0 ? String.format('%.1f', n.msgCount / uptimeMin) : "\u2014"
-                String nodeName = obfuscate ? (n.zwaveType ?: "Node ${n.nodeId}") : (n.name ?: "Node ${n.nodeId}")
-                md << "| ${n.nodeId} | ${nodeName} | ${n.security ?: 'None'} | ${rttStr} | ${n.per}% | ${n.rssiStr ?: '\u2014'} | ${n.route ?: '\u2014'} | ${rateStr} | ${drvStr} |\n"
-            }
-        }
-    }
-
-    // ── 5. Zigbee Network ──
-    if (zigbeeRaw && zigbeeRaw.enabled) {
-        int totalZb = (zigbeeRaw.devices ?: []).size()
-        md << "\n### Zigbee\n"
-        md << "- **Healthy:** ${zigbeeRaw.healthy ? 'Yes' : 'No'}"
-        if (zigbeeRaw.networkState) md << ", **State:** ${zigbeeRaw.networkState}"
-        md << "\n"
-        md << "- **Channel:** ${zigbeeRaw.channel ?: 'N/A'}"
-        if (zigbeeRaw.channel && ![15, 20, 25].contains(zigbeeRaw.channel)) md << " (not on recommended 15/20/25)"
-        md << "\n"
-        if (zigbeeRaw.powerLevel != null) md << "- **Power Level:** ${zigbeeRaw.powerLevel}\n"
-        md << "- **Devices:** ${totalZb}\n"
-        if (zigbeeMesh) {
-            int staleCount = (zigbeeMesh.staleNeighbors ?: []).size()
-            int weakCount = (zigbeeMesh.weakNeighbors ?: []).size()
-            md << "- **Neighbors:** ${zigbeeMesh.neighbors?.size() ?: 0}"
-            if (staleCount > 0) md << " (${staleCount} stale)"
-            md << "\n"
-            if (zigbeeMesh.avgLqi != null) md << "- **LQI:** avg ${zigbeeMesh.avgLqi}, min ${zigbeeMesh.minLqi}, max ${zigbeeMesh.maxLqi}\n"
-            if (weakCount > 0) md << "- **Weak Neighbors:** ${(zigbeeMesh.weakNeighbors ?: []).collect { "${it.shortId} LQI:${it.lqi}" }.join(', ')}\n"
-            if (staleCount > 0) md << "- **Stale Neighbors:** ${(zigbeeMesh.staleNeighbors ?: []).collect { it.shortId }.join(', ')}\n"
-        }
-    }
-
-    // ── 5b. Matter ──
-    if (matterRaw && matterRaw.enabled) {
-        md << "\n### Matter\n"
-        md << "- **Enabled:** Yes, **Installed:** ${matterRaw.installed ? 'Yes' : 'No'}\n"
-        int matterCount = (matterRaw.devices ?: []).size()
-        if (matterCount > 0) md << "- **Devices:** ${matterCount}\n"
-        if (matterRaw.networkState) md << "- **Network State:** ${matterRaw.networkState}\n"
-        if (matterRaw.fabricId)     md << "- **Fabric:** ${matterRaw.fabricId}\n"
-    }
-
-    // ── 6. Hub Mesh ──
-    if (hubMeshRaw && hubMeshRaw.hubList) {
-        List peers = hubMeshRaw.hubList as List
-        if (peers) {
-            md << "\n### Hub Mesh\n"
-            md << "| Hub | IP | Status | Devices | Vars |\n|---|---|---|---:|---:|\n"
-            peers.each { Map hub ->
-                String status = hub.offline ? "Offline" : "Online"
-                md << "| ${hub.name} | ${hub.ipAddress} | ${status} | ${hub.deviceIds?.size() ?: 0} | ${hub.hubVarNames?.size() ?: 0} |\n"
-            }
-        }
-    }
-
-    // ── 7. Performance ──
-    md << "\n### Performance\n"
-    if (stats?.totalDevicesRuntime) md << "- **Device Runtime:** ${stats.totalDevicesRuntime}"
-    if (stats?.devicePct) md << " (${stats.devicePct} busy)"
-    if (stats?.totalDevicesRuntime) md << "\n"
-    if (stats?.totalAppsRuntime) md << "- **App Runtime:** ${stats.totalAppsRuntime}"
-    if (stats?.appPct) md << " (${stats.appPct} busy)"
-    if (stats?.totalAppsRuntime) md << "\n"
-
-    // Top 5 device types by CPU
-    List devRuntimeStats = (stats?.deviceStats ?: []) as List
-    if (devRuntimeStats) {
-        List topDevTypes = devRuntimeStats.sort { -((it.pctTotal ?: 0) as float) }.take(5)
-        if (topDevTypes.find { ((it.pctTotal ?: 0) as float) != 0 }) {
-            md << "\n**Top Device Types by CPU:**\n"
-            md << "| Device | % Total | Exec Count | Avg (ms) |\n|---|---:|---:|---:|\n"
-            topDevTypes.each { Map d ->
-                float pct = (d.pctTotal ?: 0) as float
-                if (pct > 0) md << "| ${d.name} | ${String.format('%.3f', pct)}% | ${d.count ?: 0} | ${String.format('%.1f', (d.average ?: 0) as float)} |\n"
-            }
-        }
-    }
-
-    // Top 5 app types by CPU
-    List appRtStats = (stats?.appStats ?: []) as List
-    if (appRtStats) {
-        List topAppTypes = appRtStats.sort { -((it.pctTotal ?: 0) as float) }.take(5)
-        if (topAppTypes.find { ((it.pctTotal ?: 0) as float) != 0 }) {
-            md << "\n**Top App Types by CPU:**\n"
-            md << "| App | % Total | Exec Count | Avg (ms) |\n|---|---:|---:|---:|\n"
-            topAppTypes.each { Map a ->
-                float pct = (a.pctTotal ?: 0) as float
-                String aName = obfuscate ? (a.type ?: a.name) : a.name
-                if (pct > 0) md << "| ${aName} | ${String.format('%.3f', pct)}% | ${a.count ?: 0} | ${String.format('%.1f', (a.average ?: 0) as float)} |\n"
-            }
-        }
-    }
-
-    // Top talkers by message rate
-    if (allRadioDevices && uptimeMin > 0) {
-        List topTalkers = allRadioDevices.sort { -it.msgCount }.take(5)
-        md << "\n**Top Talkers:**\n"
-        md << "| Device | Integration | Msgs/min | Total Msgs |\n|---|---|---:|---:|\n"
-        topTalkers.each { Map t ->
-            String rate = String.format('%.1f', t.msgCount / uptimeMin)
-            String tName = obfuscate ? (t.type ?: t.integration ?: "Device") : t.name
-            md << "| ${tName} | ${t.integration} | ${rate} | ${t.msgCount} |\n"
-        }
-        // Spammy alerts (>= chattyDeviceThreshold)
-        int chattyT = (settings.chattyDeviceThreshold ?: 10) as int
-        List spammy = allRadioDevices.findAll { it.msgCount / uptimeMin >= chattyT }
-        if (spammy) {
-            md << "\n**Elevated message rate (\u2265${chattyT}/min):** ${spammy.collect { "${obfuscate ? (it.type ?: it.integration ?: 'Device') : it.name} (${String.format('%.1f', it.msgCount / uptimeMin)}/min)" }.join(', ')}\n"
-        }
-    }
-
-    md << "\n---\n*Generated by Hub Diagnostics v${APP_VERSION}*\n"
-
-    long elapsed = now() - start
-    recordApiTiming("export/forum", elapsed)
-    return jsonResponse([success: true, markdown: md.toString()])
+    List zwaveMsgCounts = extractZwaveMessageCounts(networkData.zwave ?: [:])
+    List zigbeeMsgCounts = extractZigbeeMessageCounts(networkData.zigbee ?: [:])
+    List allRadioDevices = (
+        zwaveMsgCounts.collect { [name: it.name, deviceId: it.deviceId, msgCount: it.msgCount, integration: "Z-Wave"] } +
+        zigbeeMsgCounts.collect { [name: it.name, deviceId: it.id, msgCount: it.msgCount, integration: "Zigbee"] }
+    )
+    recordApiTiming("forum/data", now() - start)
+    return jsonResponse([
+        hubInfo: hubInfo, resources: resources, temperature: temperature,
+        databaseSize: databaseSize, stateCompression: stateCompression,
+        eventStateLimits: eventStateLimits, alerts: alerts,
+        deviceStats: deviceStats, appStats: appStats, networkData: networkData,
+        zwaveMesh: zwaveMesh, ghostNodes: ghostNodes, zigbeeMesh: zigbeeMesh,
+        zwaveVersion: zwaveVersion, stats: stats, allRadioDevices: allRadioDevices,
+        uptimeMin: uptimeSeconds != null ? uptimeSeconds / 60.0f : 0.0f,
+        obfuscate: settings.obfuscateForumExport ?: false
+    ])
 }
 
 Map apiGetSettings() {
