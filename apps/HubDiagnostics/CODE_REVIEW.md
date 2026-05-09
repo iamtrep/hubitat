@@ -30,14 +30,14 @@ Severity legend: 🔴 critical bug · 🟠 high (architecture / leverage) · �
 | 12 | `hubRequest` has 3 distinct return shapes for "did it work?" | 🟡 | Valid | [ ] |
 | A1 | The `shared` Map plumbing is dead infrastructure — wiring it through the API entry points would directly fix #1 | 🟠 | **Fixed v5.14.0** | [x] |
 | A2 | `apiSnapshotDiff` writes diff payload to FileManager on every request | ⚪ | **Fixed v5.15.0** (load fn was unused — removed entire feature) | [x] |
-| A3 | `detectZwaveStack` cache never invalidated | ⚪ | Internal — trivial | [ ] |
-| A4 | `state.fwUpdateCache` stores entire response Map instead of just diff-relevant fields | ⚪ | Internal — trivial | [ ] |
-| A5 | Inline `onclick='+r._idx+'` references stale closure index | ⚪ | Internal — only matters mid-mutation | [ ] |
+| A3 | `detectZwaveStack` cache never invalidated | ⚪ | **Fixed v5.18.0** (cleared in updated()) | [x] |
+| A4 | `state.fwUpdateCache` stores entire response Map instead of just diff-relevant fields | ⚪ | **Already done** (cache already stored slim 6-field Map; verified v5.18.0) | [x] |
+| A5 | Inline `onclick='+r._idx+'` references stale closure index | ⚪ | **Deferred** — needs API contract rethink (delete-by-id rather than delete-by-index) | [-] |
 | A6 | Audit dispatch state machine (CAS-bounded) is well-designed — keep intact | ✅ | Internal — positive note | n/a |
-| A7 | `apiTimings` keyed by endpoint name with no reset; renamed endpoints leak forever | ⚪ | Internal — trivial | [ ] |
+| A7 | `apiTimings` keyed by endpoint name with no reset; renamed endpoints leak forever | ⚪ | **Fixed v5.18.0** (cleared in updated()) | [x] |
 | A8 | No retry / backoff in `hubRequest`; single transient timeout fails an entire panel render | ⚪ | **Fixed v5.15.0** (single retry on SocketTimeoutException/ConnectException) | [x] |
-| A9 | `extractAuditFields` schema has no version sentinel; pre/post-schema records indistinguishable | ⚪ | Internal — bounded by in-memory `AUDIT_SCANS` lifetime | [ ] |
-| A10 | `tbl()` re-renders entire table on header click instead of just `<tbody>` rows | ⚪ | Internal — noticeable on 350-device tables | [ ] |
+| A9 | `extractAuditFields` schema has no version sentinel; pre/post-schema records indistinguishable | ⚪ | **Fixed v5.18.0** (`_schemaVersion: 1` field) | [x] |
+| A10 | `tbl()` re-renders entire table on header click instead of just `<tbody>` rows | ⚪ | **Fixed v5.18.0** (tbody-only re-render; preserves filter focus + details state) | [x] |
 
 ---
 
@@ -271,18 +271,14 @@ Three batches.
 
 ---
 
-### Phase R-5 — Trivial cleanup (S, single PR)
+### Phase R-5 — Trivial cleanup (S) — ✅ shipped v5.18.0 (`d3c45c4`)
 
-Group all remaining ⚪ items into one housekeeping commit.
-
-- [ ] **A3** — invalidate `state.zwaveStackCache` on `updated()`
-- [ ] **A4** — slim `state.fwUpdateCache` to only the displayed fields
-- [ ] **A5** — replace `r._idx` closure-index with explicit row identity (e.g., `data-id` attr)
-- [ ] **A7** — clear `apiTimings` for endpoint names not currently registered, on `updated()`
-- [ ] **A9** — add a `_schemaVersion` field to audit records
-- [ ] **A10** — `tbl()` header click: only re-render `<tbody>` instead of full table
-
-Bump to v5.17.0 (or fold into the polish layer).
+- [x] **A3** — invalidate `state.zwaveStackCache` (and `fwUpdateCache`) on `updated()`
+- [x] **A4** — already slim from initial implementation (6-field result Map, not raw response); verified
+- [-] **A5** — **deferred** — true fix needs the snapshot/checkpoint delete API to take a stable id (timestamp/filename) rather than an array index; that's API contract work, not housekeeping
+- [x] **A7** — `apiTimings.clear()` on `updated()`
+- [x] **A9** — `_schemaVersion: 1` added to `extractAuditFields` output for forward compat
+- [x] **A10** — `tbl()` header click now re-renders `<tbody>` only; preserves filter focus + details state; faster on large tables
 
 ---
 
