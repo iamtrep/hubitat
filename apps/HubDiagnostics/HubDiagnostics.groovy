@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.17.0"
+@Field static final String APP_VERSION = "5.18.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -3929,6 +3929,12 @@ private Map extractAuditFields(Map fj, Long did) {
 
     // Section C — identity & driver attribution
     return [
+        // R-5 (v5.18.0, A9): schema version sentinel for forward-compat. Bump when extractAuditFields'
+        // output shape changes in a way that downstream consumers (renderAuditHtml, finalizeAudit
+        // enrichment passes) need to know about. AUDIT_SCANS is in-memory only, so old records
+        // never persist across an app reload — but cross-restart cases or future on-disk persistence
+        // benefit from being able to detect the format.
+        _schemaVersion:      1,
         id:                  did,
         name:                dev.name,
         label:               dev.label,
@@ -4820,6 +4826,11 @@ void updated() {
     state.installed = true
     unsubscribe()
     unschedule()
+    // R-5 (v5.18.0): clear session-scoped caches so updated config / hardware changes take effect immediately
+    state.remove('zwaveStackCache')   // A3 — re-detect stack on next use (handles user switching legacy ↔ JS)
+    state.remove('fwUpdateCache')     // also clear so next dashboard refresh hits cloud (1h TTL would otherwise apply)
+    state.remove('fwUpdateCacheAt')
+    apiTimings.clear()                // A7 — drop stats for any renamed/removed endpoints; fresh measurements from now
     syncUI(true)
     initialize()
 }

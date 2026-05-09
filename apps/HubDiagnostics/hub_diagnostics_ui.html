@@ -114,7 +114,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.16.0";
+const UI_VERSION = "5.18.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -421,7 +421,31 @@ function tbl(cid,cols,rows,opts={}){
   filt=sf(filt,sc,sd);el.innerHTML=bld(filt);
   function bind(){
     const t=document.getElementById('t_'+cid);if(!t)return;
-    t.querySelectorAll('th').forEach(th=>{th.onclick=()=>{const ci=+th.dataset.c;if(ci===sc)sd=sd==='asc'?'desc':'asc';else{sc=ci;sd='desc'};filt=sf(filt,sc,sd);const det=el.querySelector('details');const wasOpen=det?det.open:false;el.innerHTML=bld(filt);const det2=el.querySelector('details');if(det2)det2.open=wasOpen;bind()}});
+    // v5.18.0 (R-5 A10): on header click, only re-render <tbody> rows + update sort arrows in
+    // the existing <th> cells. Pre-fix the entire table was rebuilt via el.innerHTML and bind()
+    // was re-run, throwing away the click handlers, the filter input (and its focus), and any
+    // <details> open state. New path is faster on large tables (350-row per-device audit table)
+    // and preserves filter focus / details state automatically.
+    t.querySelectorAll('th').forEach(th=>{th.onclick=()=>{
+      const ci=+th.dataset.c;
+      if(ci===sc)sd=sd==='asc'?'desc':'asc';else{sc=ci;sd='desc'};
+      filt=sf(filt,sc,sd);
+      const tb=t.querySelector('tbody');
+      if(tb){
+        tb.innerHTML=bldRows(filt);
+        // Refresh sort-arrow indicators across all th cells
+        t.querySelectorAll('th').forEach((thh,i)=>{
+          const arr=thh.querySelector('.arr');
+          if(arr)arr.textContent=i===sc?(sd==='asc'?' ▲':' ▼'):' ⇅';
+        });
+      } else {
+        // Fallback: full rebuild if tbody is somehow missing
+        const det=el.querySelector('details');const wasOpen=det?det.open:false;
+        el.innerHTML=bld(filt);
+        const det2=el.querySelector('details');if(det2)det2.open=wasOpen;
+        bind();
+      }
+    }});
     const fi=document.getElementById('flt_'+cid);
     if(fi){fi.addEventListener('input',()=>{
       const q=fi.value.toLowerCase();
