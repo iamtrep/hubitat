@@ -114,7 +114,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.13.0";
+const UI_VERSION = "5.16.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -425,7 +425,13 @@ function tbl(cid,cols,rows,opts={}){
     const fi=document.getElementById('flt_'+cid);
     if(fi){fi.addEventListener('input',()=>{
       const q=fi.value.toLowerCase();
-      filt=rows.filter(r=>cols.some(c=>String(r[c.f]??'').toLowerCase().includes(q)));
+      // v5.16.0 (#10): columns with `ff:` get full-text filtering on rendered/derived content
+      // (defaults to raw `r[c.f]` when ff is omitted). Use this for columns whose displayed
+      // text differs from the raw field (e.g. Parent column shows app name OR device name).
+      filt=rows.filter(r=>cols.some(c=>{
+        const txt=c.ff?c.ff(r):String(r[c.f]??'');
+        return String(txt).toLowerCase().includes(q);
+      }));
       filt=sf(filt,sc,sd);
       const tb=t.querySelector('tbody');
       if(tb) tb.innerHTML=bldRows(filt);
@@ -708,37 +714,41 @@ async function auditStart() {
     }
 }
 
+// v5.16.0 (#9): module-scope registry of active audit polls keyed by scanId. Prevents duplicate
+// pollers stacking up when a user re-renders the Devices tab while an audit is in flight, and
+// makes outstanding pollers discoverable for future cleanup hooks.
+const pollTimers = {};
+
 function auditPoll(scanId, total) {
+    if (pollTimers[scanId]) return;  // already polling this scan; no-op
     const btn = document.getElementById('btnAudit');
     const row = document.getElementById('audit-row');
-    let pollTimer = null;
+    function stopPoll(htmlMsg) {
+        clearInterval(pollTimers[scanId]);
+        delete pollTimers[scanId];
+        if (row) row.innerHTML = htmlMsg;
+        if (btn) { btn.disabled = false; btn.textContent = 'Generate Device Audit'; }
+    }
     async function tick() {
         try {
             const r = await fetch(B + '/api/audit/status?scanId=' + encodeURIComponent(scanId) + '&access_token=' + T);
             const d = await r.json();
             if (d.status === 'scanning') {
-                row.innerHTML = 'Audit in progress · scanning device <b>'+d.processed+'</b> / '+d.total+' …';
+                if (row) row.innerHTML = 'Audit in progress · scanning device <b>'+d.processed+'</b> / '+d.total+' …';
             } else if (d.status === 'done') {
-                clearInterval(pollTimer);
-                row.innerHTML = '✓ Audit complete · <a href="/local/'+encodeURIComponent(d.filename)+'" target="_blank">View report</a>';
-                btn.disabled = false; btn.textContent = 'Generate Device Audit';
-                drop('audit-list'); auditList();           // refresh past-audits list (Task 12)
+                stopPoll('✓ Audit complete · <a href="/local/'+encodeURIComponent(d.filename)+'" target="_blank">View report</a>');
+                drop('audit-list'); auditList();
             } else if (d.status === 'error') {
-                clearInterval(pollTimer);
-                row.innerHTML = '<span class="warn">⚠ Audit failed: '+h(d.error || 'see hub logs')+'</span>';
-                btn.disabled = false; btn.textContent = 'Generate Device Audit';
+                stopPoll('<span class="warn">⚠ Audit failed: '+h(d.error || 'see hub logs')+'</span>');
             } else {
-                clearInterval(pollTimer);
-                row.innerHTML = '<span class="warn">Unknown status: '+h(d.status)+'</span>';
-                btn.disabled = false; btn.textContent = 'Generate Device Audit';
+                stopPoll('<span class="warn">Unknown status: '+h(d.status)+'</span>');
             }
         } catch (e) {
-            // transient; keep polling
-            row.innerHTML = '<span class="muted">Polling…</span>';
+            // transient; keep polling. Don't overwrite the row — last good state stays visible.
         }
     }
     tick();
-    pollTimer = setInterval(tick, 2000);
+    pollTimers[scanId] = setInterval(tick, 2000);
 }
 
 async function auditList() {
@@ -848,7 +858,7 @@ async function rDevices(){const P='p-devices';loading(P);try{
     {l:'Status',f:'status',r:r=>sbadge(r.status)},
     {l:'Last Activity',f:'lastActivity'},
     {l:'Battery',f:'battery',t:'n',r:r=>bat(r.battery)},
-    {l:'Parent',f:'parentAppName',r:r=>r.parentAppName?alink(r.parentAppId,r.parentAppName):r.parentDeviceName?dlink(r.parentDeviceId,r.parentDeviceName):'-',sf:'parentAppName'}
+    {l:'Parent',f:'parentAppName',r:r=>r.parentAppName?alink(r.parentAppId,r.parentAppName):r.parentDeviceName?dlink(r.parentDeviceId,r.parentDeviceName):'-',sf:'parentAppName',ff:r=>r.parentAppName||r.parentDeviceName||''}
   ],d.deviceRows,{filter:true,sc:0,sd:'asc',collapse:10,collapseLabel:'All Devices'});
   const btnAudit=document.getElementById('btnAudit');
   if(btnAudit)btnAudit.onclick=()=>auditStart();
