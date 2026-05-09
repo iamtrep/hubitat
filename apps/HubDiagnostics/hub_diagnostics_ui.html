@@ -1083,8 +1083,7 @@ function auditPoll(scanId, total) {
             if (d.status === 'scanning') {
                 if (row) row.innerHTML = 'Audit in progress · scanning device <b>'+d.processed+'</b> / '+d.total+' …';
             } else if (d.status === 'done') {
-                stopPoll('✓ Audit complete · <a href="?access_token='+encodeURIComponent(T)+'&audit='+encodeURIComponent(d.filename)+'" target="_blank">View report</a>');
-                drop('audit-list'); auditList();
+                stopPoll('✓ Audit complete · <a href="?access_token='+encodeURIComponent(T)+'&audit=1" target="_blank">View Report</a>');
             } else if (d.status === 'error') {
                 stopPoll('<span class="warn">⚠ Audit failed: '+h(d.error || 'see hub logs')+'</span>');
             } else {
@@ -1098,49 +1097,6 @@ function auditPoll(scanId, total) {
     pollTimers[scanId] = setInterval(tick, 2000);
 }
 
-async function auditList() {
-    const wrap = document.getElementById('audit-list-wrap');
-    if (!wrap) return;
-    try {
-        const r = await fetch(B + '/api/audit/list?access_token=' + T);
-        const d = await r.json();
-        const reps = d.reports || [];
-        if (!reps.length) { wrap.innerHTML = '<div class="muted">No past audits yet.</div>'; return; }
-        let h2 = '<table style="width:100%;font-size:12px;border-collapse:collapse"><tr style="color:var(--muted);text-align:left"><th style="padding:4px">Generated</th><th>Devices</th><th>Unref</th><th>Orphans</th><th>Stuck</th><th>Crit</th><th></th></tr>';
-        reps.forEach(r => {
-            h2 += '<tr style="border-top:1px solid var(--border)">'
-               +  '<td style="padding:4px"><a href="?access_token='+encodeURIComponent(T)+'&audit='+encodeURIComponent(r.filename)+'" target="_blank">'+h(r.generated)+'</a></td>'
-               +  '<td>'+(r.deviceCount||0)+'</td>'
-               +  '<td>'+(r.unreferencedCount||0)+'</td>'
-               +  '<td>'+(r.orphanCount||0)+'</td>'
-               +  '<td>'+(r.stuckJobCount||0)+'</td>'
-               +  '<td>'+(r.criticalCount||0)+'</td>'
-               +  '<td><a href="javascript:void(0)" class="audit-del" data-filename="'+h(r.filename)+'">delete</a></td>'
-               +  '</tr>';
-        });
-        h2 += '</table>';
-        wrap.innerHTML = h2;
-        wrap.querySelectorAll('a.audit-del').forEach(a => {
-            a.onclick = () => auditDelete(a.dataset.filename);
-        });
-    } catch (e) {
-        wrap.innerHTML = '<span class="muted">Failed to load past audits: '+h(String(e))+'</span>';
-    }
-}
-async function auditDelete(filename) {
-    if (!confirm('Delete '+filename+'?')) return;
-    try {
-        await fetch(B + '/api/audit/delete?access_token=' + T, {
-            method: 'POST',
-            headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({filename})
-        });
-    } catch (e) {
-        alert('Delete failed: ' + e);
-        return;
-    }
-    drop('audit-list'); auditList();
-}
 
 // ===== TAB: DEVICES =====
 async function rDevices(){const P='p-devices';loading(P);try{
@@ -1159,7 +1115,6 @@ async function rDevices(){const P='p-devices';loading(P);try{
   o+='<div class="muted" style="margin-bottom:8px">Cross-references each device against the apps and dashboards that subscribe to it. Surfaces unreferenced devices, mesh orphans, stuck scheduled jobs and critical devices in a standalone HTML report.</div>';
   o+='<div class="actions" style="margin-bottom:10px"><button class="btn btn-p" id="btnAudit">Generate Device Audit</button></div>';
   o+='<div id="audit-row" style="margin-top:8px"></div>';
-  o+='<div id="audit-list-wrap" style="margin-top:10px"><div class="muted">Past audits…</div></div>';
   o+='</div></div>';
   // Connection type + integration distribution (side by side)
   o+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
@@ -1207,7 +1162,6 @@ async function rDevices(){const P='p-devices';loading(P);try{
   ],d.deviceRows,{filter:true,sc:0,sd:'asc',collapse:10,collapseLabel:'All Devices'});
   const btnAudit=document.getElementById('btnAudit');
   if(btnAudit)btnAudit.onclick=()=>auditStart();
-  auditList();
 }catch(e){err(P,e,rDevices)}}
 
 // ===== TAB: APPS =====
@@ -2316,10 +2270,10 @@ function refreshPage(){
 }
 
 // ===== AUDIT MODE =====
-async function renderAuditPage(filename) {
+async function renderAuditPage() {
   document.body.innerHTML = '<div id="audit-root" style="padding:20px"><div class="loading">Loading audit report…</div></div>';
   try {
-    const data = await api('audit/data?filename=' + encodeURIComponent(filename));
+    const data = await api('audit/data');
     document.getElementById('audit-root').innerHTML = buildAuditHtml(data);
     initAuditSort();
   } catch(e) {
@@ -2682,9 +2636,9 @@ function initAuditSort() {
 }
 
 // ===== STARTUP =====
-const _auditFile = new URLSearchParams(window.location.search).get('audit');
-if (_auditFile) {
-  renderAuditPage(_auditFile);
+const _inAuditMode = new URLSearchParams(window.location.search).has('audit');
+if (_inAuditMode) {
+  renderAuditPage();
 } else {
   let liveTimer=setInterval(refreshLive,liveIntervalSec*1000);
   document.addEventListener('visibilitychange',()=>{
