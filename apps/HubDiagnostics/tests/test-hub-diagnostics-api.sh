@@ -1062,6 +1062,65 @@ elif cp_result.get("success"):
 else:
     fail(f"Unexpected response: {cp_result}")
 
+# ── Test 13b: Performance compare endpoint ────────────────────────────
+section("POST /api/performance/compare")
+
+# Missing params → error
+comp_missing = api_post("performance/compare")
+if "_error" in comp_missing:
+    fail(f"Request failed: {comp_missing['_error']}")
+elif comp_missing.get("success") == False and comp_missing.get("error"):
+    ok(f"Missing params returns error: {comp_missing['error']}")
+else:
+    fail(f"Expected error for missing params, got: {comp_missing}")
+
+# Invalid checkpoint index → error
+comp_bad_idx = api_post("performance/compare", "baseline=startup&checkpoint=9999")
+if "_error" in comp_bad_idx:
+    fail(f"Request failed: {comp_bad_idx['_error']}")
+elif comp_bad_idx.get("success") == False and comp_bad_idx.get("error"):
+    ok(f"Invalid checkpoint index returns error: {comp_bad_idx['error']}")
+else:
+    fail(f"Expected error for invalid index, got: {comp_bad_idx}")
+
+# Valid comparison: startup → now
+comp_valid = api_post("performance/compare", "baseline=startup&checkpoint=now")
+if "_error" in comp_valid:
+    fail(f"Request failed: {comp_valid['_error']}")
+elif comp_valid.get("success"):
+    ok("startup→now compare returns success=true")
+    for field in ["baselineLabel", "checkpointLabel", "baselineStats", "checkpointStats"]:
+        if field in comp_valid:
+            ok(f"  Has '{field}'")
+        else:
+            fail(f"  Missing '{field}' in compare response")
+    cs = comp_valid.get("checkpointStats", {})
+    if cs.get("uptimeSeconds"):
+        ok(f"  checkpointStats.uptimeSeconds present ({cs['uptimeSeconds']:.0f}s)")
+    else:
+        fail("  checkpointStats.uptimeSeconds missing — startup comparison pct will be N/A")
+else:
+    fail(f"startup→now compare returned success=false: {comp_valid.get('error')}")
+
+# Valid comparison: startup → saved checkpoint (if one exists)
+perf2 = api_get("performance")
+cp_count = perf2.get("checkpointCount", 0) if "_error" not in perf2 else 0
+if cp_count > 0:
+    comp_cp = api_post("performance/compare", "baseline=startup&checkpoint=0")
+    if "_error" in comp_cp:
+        fail(f"startup→cp[0] request failed: {comp_cp['_error']}")
+    elif comp_cp.get("success"):
+        ok(f"startup→cp[0] compare returns success=true")
+        cs2 = comp_cp.get("checkpointStats", {})
+        if cs2.get("deviceStats") is not None:
+            ok(f"  checkpointStats.deviceStats present ({len(cs2['deviceStats'])} entries)")
+        else:
+            fail("  checkpointStats.deviceStats missing")
+    else:
+        fail(f"startup→cp[0] returned error: {comp_cp.get('error')}")
+else:
+    info("Skipping checkpoint index compare (no checkpoints)")
+
 # ── Test 14: Cross-endpoint coherence ─────────────────────────────────
 section("Cross-Endpoint Coherence")
 

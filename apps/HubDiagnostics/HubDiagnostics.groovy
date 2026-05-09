@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.21.2"
+@Field static final String APP_VERSION = "5.22.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -741,6 +741,7 @@ Map apiPerformanceCompare() {
     // Resolve checkpoint
     if (checkpoint == "now") {
         checkpointStats = (Map) hubRequest(RUNTIME_STATS_PATH, "runtime stats")
+        if (!checkpointStats) return jsonResponse([success: false, error: "Unable to fetch current runtime stats"])
         Map currentResources = fetchSystemResources()
         checkpointStats.resources = currentResources
         Map zwaveData = (Map) hubRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", "json", 20)
@@ -758,6 +759,11 @@ Map apiPerformanceCompare() {
         Map cCp = checkpoints[cIdx]
         checkpointStats = cCp.stats + [resources: cCp.resources, radioStats: cCp.radioStats, timestampMs: cCp.timestampMs]
         checkpointLabel = cCp.timestamp
+    }
+
+    // Ensure uptimeSeconds is present — needed by the JS diffStats elapsedMs fallback for startup comparisons
+    if (!checkpointStats.uptimeSeconds && checkpointStats.uptime) {
+        checkpointStats = checkpointStats + [uptimeSeconds: parseUptime(checkpointStats.uptime as String)]
     }
 
     // Build zero baseline if startup
@@ -1121,7 +1127,7 @@ Map apiDeleteSnapshot() {
 }
 
 Map apiCreateCheckpoint() {
-    createCheckpoint()
+    if (!createCheckpoint()) return jsonResponse([success: false, error: "Failed to capture runtime stats"])
     List checkpoints = loadCheckpoints()
     return jsonResponse([success: true, checkpointCount: checkpoints?.size() ?: 0])
 }
@@ -3411,13 +3417,13 @@ Map enrichDevices(Map uncertainDevices, Set communityAppTypeNames = [] as Set) {
 
 // ===== PERFORMANCE CHECKPOINT SYSTEM =====
 
-void createCheckpoint() {
+boolean createCheckpoint() {
     logInfo "Creating perf checkpoint..."
 
     Map stats = (Map) hubRequest(RUNTIME_STATS_PATH, "runtime stats")
     if (!stats) {
         logError "Failed to fetch current stats"
-        return
+        return false
     }
 
     Map resources = fetchSystemResources()
@@ -3449,6 +3455,7 @@ void createCheckpoint() {
 
     saveCheckpoints(checkpoints)
     logInfo "Perf checkpoint created successfully"
+    return true
 }
 
 Map buildZeroBaseline(Map stats, Map resources) {

@@ -114,7 +114,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.21.2";
+const UI_VERSION = "5.22.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -173,6 +173,10 @@ function fmsDuration(ms){
 function diffStats(base, comp) {
   if (!base || !comp) return comp;
   const res = JSON.parse(JSON.stringify(comp));
+  // base.timestampMs is 0 for "startup" baseline (falsy) — fall back to comp's uptimeSeconds.
+  const elapsedMs = (comp.timestampMs && base.timestampMs)
+    ? comp.timestampMs - base.timestampMs
+    : (comp.uptimeSeconds ? comp.uptimeSeconds * 1000 : 0);
   ['deviceStats', 'appStats'].forEach(key => {
     if (comp[key] && base[key]) {
       const baseMap = {};
@@ -188,12 +192,11 @@ function diffStats(base, comp) {
         });
         diffed.average = diffed.count > 0 ? (diffed.total / diffed.count) : 0;
         diffed.pctTotal = null;
+        diffed.pct = elapsedMs > 0 ? (diffed.total / elapsedMs * 100) : null;
         return diffed;
       });
     }
   });
-  // Compute interval duration
-  const elapsedMs = (comp.timestampMs && base.timestampMs) ? comp.timestampMs - base.timestampMs : 0;
   // Diff runtime totals (parse "Xm Ys" / "Xh Ym Zs" / "Nms" formats) and store as ms numbers
   const devMs = parseRuntimeMs(comp.totalDevicesRuntime) - parseRuntimeMs(base.totalDevicesRuntime);
   const appMs = parseRuntimeMs(comp.totalAppsRuntime) - parseRuntimeMs(base.totalAppsRuntime);
@@ -1551,10 +1554,16 @@ async function rPerf(){const P='p-performance';loading(P);try{
   const btnClr=document.getElementById('btnClrCp');
   if(btnClr)btnClr.onclick=async()=>{if(!confirm('Clear all checkpoints?'))return;await post('checkpoints/clear');drop('performance');rPerf()};
   const btnClearComp=document.getElementById('btnClearComp');
-  if(btnClearComp)btnClearComp.onclick=()=>{activePerfComp=null;rPerf()};
+  if(btnClearComp)btnClearComp.onclick=()=>{activePerfComp=null;drop('performance');rPerf()};
   const btnComp=document.getElementById('btnCompare');
   if(btnComp)btnComp.onclick=async()=>{btnComp.disabled=true;btnComp.textContent='Comparing...';
     const b=document.getElementById('selBase').value,c=document.getElementById('selCp').value;
+    // Validate temporal order when both sides are checkpoint indices
+    if(b!=='startup'&&c!=='now'){
+      const bTs=d.checkpoints[parseInt(b)]?.timestampMs,cTs=d.checkpoints[parseInt(c)]?.timestampMs;
+      if(bTs!=null&&cTs!=null&&bTs>=cTs){
+        document.getElementById('compResult').innerHTML='<div class="alert a-warn">Baseline must be older than the comparison point. Swap the selections.</div>';
+        btnComp.disabled=false;btnComp.textContent='Compare';return;}}
     try {
       const r=await post('performance/compare','baseline='+b+'&checkpoint='+c);
       if(r.success){
