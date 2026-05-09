@@ -2,7 +2,7 @@
 
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
-**Current version:** 5.12.2
+**Current version:** 5.24.0
 
 ---
 
@@ -78,7 +78,7 @@ The Dashboard tab shows the current App Version and UI Version. Click **Check fo
 Use **Apps Code → Hub Diagnostics → Import** (same import URL as above). After saving, re-open the app preferences page once to re-initialize.
 
 ### Updating the UI
-The app enforces version sync: on each dashboard load it checks whether the installed UI file matches the app version. If the UI is missing or the last check is more than 24 hours old, it downloads the latest UI from GitHub — but only installs it if the downloaded file's embedded version exactly matches the installed app version. In practice this means: after updating the Groovy app code, the matching UI is installed automatically on the next dashboard load. You can also trigger an immediate sync via **Sync UI from GitHub** on the Dashboard tab.
+The app enforces version sync: a scheduled job runs once daily at 03:17 local time and downloads the latest UI from GitHub — but only installs it if the downloaded file's embedded version exactly matches the installed app version. If the UI file is missing entirely (e.g. first install, File Manager cleared), the next `ui.html` request triggers an emergency blocking sync. In practice: after updating the Groovy app code, open the app preferences once and re-save (or wait for the nightly job) and the matching UI will install automatically. You can also trigger an immediate sync via **Sync UI from GitHub** on the Dashboard tab.
 
 ---
 
@@ -363,7 +363,7 @@ When no comparison is active, these cards show current values:
 
 ### Performance Checkpoints
 
-A checkpoint captures a point-in-time snapshot of runtime statistics and resources. Use checkpoints to compare performance before and after changes (new app, added devices, firmware update, etc.).
+A checkpoint captures a point-in-time snapshot of runtime statistics, resources, radio message counts, hub temperature, and database size. Use checkpoints to compare performance before and after changes (new app, added devices, firmware update, etc.).
 
 - **Take Perf Checkpoint** — manually capture the current state
 - **Auto-checkpoints** — optionally schedule automatic captures (5m–24h intervals, up to 50 retained)
@@ -378,7 +378,7 @@ A configuration snapshot captures the state of devices, apps, network configurat
 
 **Snapshot table** — Lists all saved snapshots with timestamp, firmware version, device count, app count, and free memory. Individual snapshots can be viewed or deleted.
 
-**Viewing a snapshot** — Shows a full breakdown at the time of capture: device counts by status, connection types, integrations, full device list, app counts, app type list, user app instances (with disabled status), parent/child hierarchy, network configuration summary (Zigbee channel, Z-Wave region, Hub Mesh peers, Matter status), and file manager stats.
+**Viewing a snapshot** — Shows a full breakdown at the time of capture: device counts by status, connection types, integrations, full device list, app counts, app type list, user app instances (with disabled status), parent/child hierarchy, network configuration summary (Zigbee channel, Z-Wave region, Hub Mesh peers, Matter status), file manager stats, backup counts, security settings (limited access, allowed subnets, DNS fallback, cloud controller), NTP server, hub load threshold, and code inventory (bundles, libraries, hub variable names + types).
 
 **Snapshot diff (Compare)** — Select an older and a newer snapshot (or choose **Now** to capture a new one on the spot) and click **Compare**. After comparing with Now, the snapshot list and dropdowns refresh in place while the diff remains visible. The diff shows:
 
@@ -387,8 +387,11 @@ A configuration snapshot captures the state of devices, apps, network configurat
 - Connection type count deltas
 - Integration count deltas
 - Apps added, removed, or toggled enabled/disabled
-- Network configuration changes (Zigbee channel, Z-Wave region, Hub Mesh peers added/removed, Matter enabled/disabled)
+- Network configuration changes (Zigbee channel, Z-Wave region, Hub Mesh peers added/removed, Matter enabled/disabled, NTP server, load threshold)
+- Security changes (limited access on/off, allowed addresses, allowed subnets, DNS fallback, cloud controller)
 - File Manager changes (file count, free space)
+- Backup count changes (local and cloud)
+- Code inventory changes (bundles added/removed, libraries added/removed/version-changed, hub variables added/removed/type-changed)
 
 Changes are color-coded: green for additions/improvements, red for removals/degradations, yellow for modifications.
 
