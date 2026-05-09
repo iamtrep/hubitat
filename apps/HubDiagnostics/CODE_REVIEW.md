@@ -39,7 +39,7 @@ Severity legend: 🔴 critical bug · 🟠 high (architecture / leverage) · �
 | 9 | `auditPoll` interval not tracked, can leak on tab switch | 🟡 | **Fixed v5.16.0** (dedupe via pollTimers Map) | [x] |
 | 10 | Table filter searches raw fields, not rendered cell content | 🟡 | **Fixed v5.16.0** (`ff:` column property) | [x] |
 | 11 | `MOCK_DATA` shipped in production (5,635 B / 4% of file) | ⚪ | **Overstated** — accept | n/a |
-| 12 | `hubRequest` has 3 distinct return shapes for "did it work?" | 🟡 | Valid | [ ] |
+| 12 | `hubRequest` has 3 distinct return shapes for "did it work?" | 🟡 | **Fixed v5.22.0** (`hubMapRequest` + ~35 callers migrated to `[ok, data, error]`) | [x] |
 | A1 | The `shared` Map plumbing is dead infrastructure — wiring it through the API entry points would directly fix #1 | 🟠 | **Fixed v5.14.0** | [x] |
 | A2 | `apiSnapshotDiff` writes diff payload to FileManager on every request | ⚪ | **Fixed v5.15.0** (load fn was unused — removed entire feature) | [x] |
 | A3 | `detectZwaveStack` cache never invalidated | ⚪ | **Fixed v5.18.0** (cleared in updated()) | [x] |
@@ -377,7 +377,7 @@ Three batches.
 - [x] **#10** — `ff:` column property on `tbl()`; Devices-tab Parent column wired so device-name search works
 
 **Pack 3 — cleanup:**
-- [ ] **#12** — uniform `hubRequest` return shape `[ok, data, error]`; ~40 callers to migrate
+- [x] **#12** — uniform `hubRequest` return shape `[ok, data, error]`; ~35 Map-json callers migrated to `hubMapRequest` (v5.22.0)
 
 ---
 
