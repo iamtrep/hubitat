@@ -743,12 +743,15 @@ Map apiPerformanceCompare() {
 
     // Resolve checkpoint
     if (checkpoint == "now") {
-        checkpointStats = (Map) hubRequest(RUNTIME_STATS_PATH, "runtime stats")
-        if (!checkpointStats) return jsonResponse([success: false, error: "Unable to fetch current runtime stats"])
+        Map statsWrap = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats")
+        if (!statsWrap.ok) return jsonResponse([success: false, error: "Unable to fetch current runtime stats"])
+        checkpointStats = statsWrap.data
         Map currentResources = fetchSystemResources()
         checkpointStats.resources = currentResources
-        Map zwaveData = (Map) hubRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", "json", 20)
-        Map zigbeeData = (Map) hubRequest(ZIGBEE_DETAILS_PATH, "Zigbee details", "json", 20)
+        Map zwWrap = hubMapRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", 20)
+        Map zwaveData = zwWrap.ok ? zwWrap.data : [:]
+        Map zbWrap = hubMapRequest(ZIGBEE_DETAILS_PATH, "Zigbee details", 20)
+        Map zigbeeData = zbWrap.ok ? zbWrap.data : [:]
         checkpointStats.radioStats = [
             zwave: extractZwaveMessageCounts(zwaveData),
             zigbee: extractZigbeeMessageCounts(zigbeeData)
@@ -1772,8 +1775,9 @@ Map getPerformanceData(Map shared = [:]) {
 
     // Enrich appStats with source labels (community/builtin/platform)
     Map appSourceById = [:]
-    Map appsListResp = (Map) hubRequest(APPS_LIST_PATH, "apps list")
-    if (appsListResp?.apps) {
+    Map appsListWrap = hubMapRequest(APPS_LIST_PATH, "apps list")
+    Map appsListResp = appsListWrap.ok ? appsListWrap.data : [:]
+    if (appsListResp.apps) {
         visitAppEntries(appsListResp.apps as List) { Map appEntry, Map app, boolean isChildLevel, List _ ->
             if (app?.id != null) appSourceById[app.id] = (app.user ? "community" : "builtin")
         }
@@ -1794,9 +1798,9 @@ Map getPerformanceData(Map shared = [:]) {
     // Walk /hub2/devicesList directly to build id→type map. Skips analyzeDevices' enrichment overhead
     // (we only need the raw type/name from the bulk endpoint, not the cross-classification work).
     Map deviceTypeById = [:]
-    Map devListResp = (Map) hubRequest(DEVICES_LIST_PATH, "devices list (B2 labels)", "json", 15)
-    if (devListResp?.devices) {
-        flattenDeviceEntries(devListResp.devices as List).each { Map entry ->
+    Map devWrap = hubMapRequest(DEVICES_LIST_PATH, "devices list (B2 labels)", 15)
+    if (devWrap.ok && devWrap.data.devices) {
+        flattenDeviceEntries(devWrap.data.devices as List).each { Map entry ->
             Map dev = entry?.data instanceof Map ? (Map) entry.data : null
             if (dev?.id != null) deviceTypeById[dev.id] = (dev.type ?: 'Unknown') as String
         }
