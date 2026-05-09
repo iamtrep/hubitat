@@ -114,7 +114,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.19.0";
+const UI_VERSION = "5.20.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -1494,13 +1494,11 @@ async function rPerf(){const P='p-performance';loading(P);try{
       {l:'',f:'_idx',r:r=>'<button class="btn btn-d" onclick="delCp('+r._idx+')">\u{1F5D1}</button>'}
     ],cpRows,{sc:0,sd:'desc'})}
 
-  // CPU by device type chart
+  // CPU by device type chart — v5.20.0 (R-7 B2): id→type map now ships in /api/performance
   if(s&&s.deviceStats&&s.deviceStats.length){
-    api('devices').then(devData=>{
-      const typeById={};
-      if(devData.deviceRows)devData.deviceRows.forEach(r=>{typeById[r.id]=r.type||'Unknown'});
-      renderBarChart(aggregateByType(s.deviceStats,typeById,'id','total'),'perfDevCpuChart',{format:v=>v.toFixed(0)+' ms'})
-    }).catch(()=>{})}
+    const typeById=d.deviceTypeById||{};
+    renderBarChart(aggregateByType(s.deviceStats,typeById,'id','total'),'perfDevCpuChart',{format:v=>v.toFixed(0)+' ms'});
+  }
   // Device Runtime table
   if(s&&s.deviceStats)
     tbl('devStatsTbl',[
@@ -1510,12 +1508,11 @@ async function rPerf(){const P='p-performance';loading(P);try{
       {l:'Count',f:'count',t:'n'},{l:'Avg (ms)',f:'average',t:'n',r:r=>Number(r.average||0).toFixed(1)},
       {l:'State Size',f:'stateSize',t:'n'},{l:'Hub Actions',f:'hubActionCount',t:'n'},{l:'Cloud Calls',f:'cloudCallCount',t:'n'}
     ],s.deviceStats,{sc:1,sd:'desc',filter:true,collapse:10,collapseLabel:'Device Runtime Detail'});
-  // CPU by app type chart
+  // CPU by app type chart — v5.20.0 (R-7 B2): id→parent-label map now ships in /api/performance
   if(s&&s.appStats&&s.appStats.length){
-    api('apps').then(appData=>{
-      const ptm=buildParentTypeMap(appData.parentChildHierarchy);
-      renderBarChart(aggregateByType(s.appStats,ptm,'id','total'),'perfAppCpuChart',{format:v=>v.toFixed(0)+' ms'})
-    }).catch(()=>{})}
+    const ptm=d.appParentTypeById||{};
+    renderBarChart(aggregateByType(s.appStats,ptm,'id','total'),'perfAppCpuChart',{format:v=>v.toFixed(0)+' ms'});
+  }
   // App Runtime table
   if(s&&s.appStats){
     const perfSrcBadge=r=>{

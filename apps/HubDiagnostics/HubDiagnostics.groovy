@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.19.0"
+@Field static final String APP_VERSION = "5.20.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -1765,10 +1765,44 @@ Map getPerformanceData(Map shared = [:]) {
             }
         }
     }
+    // R-7 B2 (v5.20.0): build small id→label maps for the Performance tab's CPU charts so the
+    // SPA doesn't cross-fetch /api/devices and /api/apps just to look up names. Tiny payload
+    // (counts × ~20 bytes), saves 2 client round trips of much heavier endpoints.
+    // Walk /hub2/devicesList directly to build id→type map. Skips analyzeDevices' enrichment overhead
+    // (we only need the raw type/name from the bulk endpoint, not the cross-classification work).
+    Map deviceTypeById = [:]
+    Map devListResp = (Map) hubRequest(DEVICES_LIST_PATH, "devices list (B2 labels)", "json", 15)
+    if (devListResp?.devices) {
+        flattenDeviceEntries(devListResp.devices as List).each { Map entry ->
+            Map dev = entry?.data instanceof Map ? (Map) entry.data : null
+            if (dev?.id != null) deviceTypeById[dev.id] = (dev.type ?: 'Unknown') as String
+        }
+    }
+    // Walk /hub2/appsList directly for parent→child label association.
+    Map appParentTypeById = [:]
+    Map appsListResp2 = (Map) hubRequest(APPS_LIST_PATH, "apps list (B2 labels)")
+    if (appsListResp2?.apps) {
+        Closure walkApps
+        walkApps = { List apps, String parentLabel = null ->
+            (apps ?: []).each { Map entry ->
+                Map data = entry?.data instanceof Map ? (Map) entry.data : null
+                if (!data) return
+                Object id = data.id
+                String myLabel = (data.label ?: data.name ?: 'Unknown') as String
+                String labelForChildren = parentLabel ?: myLabel
+                if (id != null) appParentTypeById[id] = labelForChildren
+                if (entry.children) walkApps(entry.children as List, labelForChildren)
+            }
+        }
+        walkApps(appsListResp2.apps as List, null)
+    }
+
     List checkpoints = loadCheckpoints()
     return [
         stats: stats, resources: resources,
         topTalkers: topTalkers,
+        deviceTypeById: deviceTypeById,        // B2: id → driver type for CPU-by-device-type chart
+        appParentTypeById: appParentTypeById,  // B2: id → parent label for CPU-by-app-type chart
         checkpointCount: checkpoints?.size() ?: 0,
         maxCheckpoints: (settings.maxCheckpoints ?: 10) as int,
         checkpoints: (checkpoints ?: []).collect { Map cp -> [
