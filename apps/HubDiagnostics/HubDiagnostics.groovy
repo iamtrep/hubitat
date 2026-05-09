@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.13.0"
+@Field static final String APP_VERSION = "5.13.1"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -1524,7 +1524,7 @@ Map getDevicesData() {
                   inactiveDevices: deviceStats.inactiveDevices, disabledDevices: deviceStats.disabledDevices,
                   parentDevices: deviceStats.parentDevices, childDevices: deviceStats.childDevices,
                   linkedDevices: deviceStats.linkedDevices, batteryDevices: deviceStats.batteryDevices,
-                  parentIds: deviceStats.parentIds, childIds: deviceStats.parentIds + deviceStats.childIds,
+                  parentIds: deviceStats.parentIds, childIds: deviceStats.childIds,
                   linkedIds: deviceStats.linkedIds, batteryIds: deviceStats.batteryIds],
         byConnectionType: deviceStats.byConnectionType, idsByConnectionType: deviceStats.idsByConnectionType,
         byIntegration: deviceStats.byIntegration, idsByIntegration: deviceStats.idsByIntegration,
@@ -1545,7 +1545,7 @@ Map getAppsData() {
     List userAppRows = (appStats.userAppsList ?: [])
         .sort { (it.label ?: it.name ?: "").toString().toLowerCase() }
         .collect { [id: it.id, label: it.label ?: it.name, type: it.name,
-                    parentId: it.parentAppId, disabled: it.state == "disabled"] }
+                    parentId: it.parentAppId, disabled: it.disabled ?: false] }
     List platformEntries = (appStats.platformApps ?: []).collect { Map p ->
         [id: p.id, name: p.name, type: p.name, user: false, source: "platform",
          disabled: false, hidden: false, setting: false, menu: "", level: 0, childCount: 0, parentId: null]

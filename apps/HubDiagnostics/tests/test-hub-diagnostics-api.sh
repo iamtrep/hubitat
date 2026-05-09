@@ -232,15 +232,18 @@ apps_data = fetch("/hub2/appsList")
 gt_apps = 0
 gt_apps_user = 0
 gt_apps_system = 0
+gt_apps_user_disabled = 0
 if apps_data and "apps" in apps_data:
     def count_apps(entries):
-        global gt_apps, gt_apps_user, gt_apps_system
+        global gt_apps, gt_apps_user, gt_apps_system, gt_apps_user_disabled
         for entry in entries:
             d = entry.get("data", {})
             if d and isinstance(d, dict):
                 gt_apps += 1
                 if d.get("user"):
                     gt_apps_user += 1
+                    if d.get("disabled"):
+                        gt_apps_user_disabled += 1
                 else:
                     gt_apps_system += 1
             if entry.get("children"):
@@ -416,6 +419,21 @@ else:
     else:
         fail(f"Summary totalDevices {s.get('totalDevices')} != {gt_devices}")
 
+    # Regression guard for v5.13.1 fix (#6): childIds must contain ONLY child device IDs,
+    # not parents+children. Pre-fix, getDevicesData concatenated parentIds + childIds,
+    # so the "Child" metric link on the Devices tab navigated to the wrong set.
+    parent_ids = set(s.get("parentIds") or [])
+    child_ids  = set(s.get("childIds")  or [])
+    if len(child_ids) == s.get("childDevices", 0):
+        ok(f"childIds count == childDevices ({len(child_ids)}) — no parent IDs leaked in")
+    else:
+        fail(f"childIds count {len(child_ids)} != childDevices {s.get('childDevices')} (regression of #6)")
+    overlap = parent_ids & child_ids
+    if not overlap:
+        ok("childIds and parentIds are disjoint (regression guard for #6)")
+    else:
+        fail(f"childIds includes {len(overlap)} parent IDs — regression of v5.13.1 fix #6")
+
 # ── Test 4: GET /api/apps ─────────────────────────────────────────────
 section("GET /api/apps")
 
@@ -438,6 +456,20 @@ else:
         ok(f"System apps matches ({s['builtInApps']})")
     else:
         fail(f"System apps {s.get('builtInApps')} != {gt_apps_system}")
+
+    # Regression guard for v5.13.1 fix (#7): the userApps row's `disabled` field is set from
+    # `it.disabled ?: false`. Pre-fix, code read `it.state == "disabled"` against a Map that
+    # has no `state` key, so `disabled` was ALWAYS false even for actually-disabled apps,
+    # and the "Disabled" badge on the Apps tab never appeared.
+    user_app_rows = apps.get("userApps") or []
+    api_disabled_count = sum(1 for a in user_app_rows if a.get("disabled") is True)
+    if api_disabled_count == gt_apps_user_disabled:
+        if gt_apps_user_disabled == 0:
+            ok("Disabled-app count matches ground truth (0 disabled — both 0; can't fully exercise but no false positive)")
+        else:
+            ok(f"Disabled-app count matches ground truth ({api_disabled_count}) — fix #7 working")
+    else:
+        fail(f"Disabled-app count {api_disabled_count} != ground truth {gt_apps_user_disabled} (regression of #7)")
 
     # Namespace breakdown
     ns = apps.get("byNamespace", {})
