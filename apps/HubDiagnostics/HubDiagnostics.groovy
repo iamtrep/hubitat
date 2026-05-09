@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.13.1"
+@Field static final String APP_VERSION = "5.14.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -507,9 +507,33 @@ Map apiVersionCheck() {
     ])
 }
 
+/**
+ * Build a request-scoped shared cache so downstream getXxxData methods reuse common datasets
+ * instead of re-fetching them. Pre-fix (v5.13.x), a single /api/dashboard call hit /hub2/hubData
+ * twice (getHubInfo + fetchHubAlerts via getStructuredAlerts) and fetched system resources twice
+ * (once directly, once via getStructuredAlerts fallback). With the shared cache populated, both
+ * are fetched once and reused.
+ *
+ * @param includeNetwork  set true when the caller will use network/runtimeStats (Network/Performance tabs);
+ *                        defaults false because analyzeNetwork is heavier than the savings on Dashboard/Health.
+ */
+private Map buildSharedCache(boolean includeNetwork = false) {
+    Map shared = [:]
+    shared.hubData     = (Map) hubRequest(HUB_DATA_PATH, "hub data (shared)", "json", 10)
+    shared.resources   = fetchSystemResources()
+    shared.temperature = fetchTemperature()
+    shared.databaseSize = fetchDatabaseSize()
+    shared.hubAlerts   = fetchHubAlerts(shared.hubData as Map)
+    if (includeNetwork) {
+        shared.network      = analyzeNetwork()
+        shared.runtimeStats = (Map) hubRequest(RUNTIME_STATS_PATH, "runtime stats (shared)", "json")
+    }
+    return shared
+}
+
 Map apiDashboard() {
     long start = now()
-    Map data = getDashboardData()
+    Map data = getDashboardData(buildSharedCache(false))
     long elapsed = now() - start
     logDebug "apiDashboard completed in ${elapsed}ms"
     recordApiTiming("dashboard", elapsed)
@@ -565,7 +589,10 @@ Map apiCode() {
 
 Map apiNetwork() {
     long start = now()
-    Map data = getNetworkData()
+    // Network tab needs hubData (for fetchSecurityInfo's cloudController flag); rest is fetched by analyzeNetwork
+    Map shared = [:]
+    shared.hubData = (Map) hubRequest(HUB_DATA_PATH, "hub data (shared)", "json", 10)
+    Map data = getNetworkData(shared)
     long elapsed = now() - start
     logDebug "apiNetwork completed in ${elapsed}ms"
     recordApiTiming("network", elapsed)
@@ -574,7 +601,7 @@ Map apiNetwork() {
 
 Map apiHealth() {
     long start = now()
-    Map data = getHealthData()
+    Map data = getHealthData(buildSharedCache(false))
     long elapsed = now() - start
     logDebug "apiHealth completed in ${elapsed}ms"
     recordApiTiming("health", elapsed)
@@ -1484,7 +1511,7 @@ Map apiClearCache() {
 Map getDashboardData(Map shared = [:]) {
     Map deviceStats = analyzeDevices(false)
     Map appStats = analyzeApps(false)
-    Map hubInfo = getHubInfo()
+    Map hubInfo = getHubInfo(shared.hubData as Map)
     Map resources        = (shared.resources as Map)        ?: fetchSystemResources()
     Float temperature    = (shared.temperature as Float)    ?: fetchTemperature()
     Integer databaseSize = (shared.databaseSize as Integer) ?: fetchDatabaseSize()
@@ -1629,7 +1656,7 @@ Map getNetworkData(Map shared = [:]) {
         ntpServer: fetchNtpServer(),
         mdns: fetchMdns(),
         zipgatewayVersion: fetchZipgatewayVersion(),
-        security: fetchSecurityInfo(),
+        security: fetchSecurityInfo(shared.hubData as Map),
         zigbeeChannelScan: fetchCachedZigbeeScan(),
         zwaveTopologyHtml: fetchZwaveTopology()
     ]
@@ -1637,7 +1664,7 @@ Map getNetworkData(Map shared = [:]) {
 
 Map getHealthData(Map shared = [:]) {
     Map systemHealth = analyzeSystemHealth(shared)
-    Map hubInfo = getHubInfo()
+    Map hubInfo = getHubInfo(shared.hubData as Map)
     def hub = (location.hubs && location.hubs.size() > 0) ? location.hubs[0] : null
     Map mem = systemHealth.memory ?: [:]
     return [
@@ -1720,7 +1747,7 @@ List getStructuredAlerts(Map shared = [:]) {
     List alerts = []
     Map resources     = (shared.resources as Map)     ?: fetchSystemResources()
     Float temperature = (shared.temperature as Float) ?: fetchTemperature()
-    Map hubAlerts     = (shared.hubAlerts as Map)     ?: fetchHubAlerts()
+    Map hubAlerts     = (shared.hubAlerts as Map)     ?: fetchHubAlerts(shared.hubData as Map)
 
     // Calculated alerts
     int    critMemKb   = ((settings.critMemMb   ?: DEFAULT_CRIT_MEM_MB)   as int) * 1024
@@ -1980,8 +2007,8 @@ Float fetchTemperature() {
     return null
 }
 
-Map fetchHubAlerts() {
-    Map hubData = (Map) hubRequest(HUB_DATA_PATH, "hub data", "json", 10)
+Map fetchHubAlerts(Map prefetchedHubData = null) {
+    Map hubData = prefetchedHubData ?: (Map) hubRequest(HUB_DATA_PATH, "hub data", "json", 10)
     if (!hubData || hubData.error) return [:]
     return [
         alerts: hubData.alerts ?: [:],
@@ -2272,11 +2299,11 @@ String fetchZipgatewayVersion() {
     return t ?: null
 }
 
-Map fetchSecurityInfo() {
+Map fetchSecurityInfo(Map prefetchedHubData = null) {
     String laRaw = (String) hubRequest(LIMITED_ACCESS_PATH, "limited access addresses", "text", 5)
     String subnets = (String) hubRequest(ALLOW_SUBNETS_PATH, "allowed subnets", "text", 5)
     String dnsFb = (String) hubRequest(DNS_FALLBACK_PATH, "DNS fallback", "text", 5)
-    Map hubData = (Map) hubRequest(HUB_DATA_PATH, "hub data (cloud controller flag)", "json", 10)
+    Map hubData = prefetchedHubData ?: (Map) hubRequest(HUB_DATA_PATH, "hub data (cloud controller flag)", "json", 10)
     String laClean = laRaw ? laRaw.replaceAll(/<[^>]+>/, '').trim() : null
     boolean limitedSet = laClean && !laClean.equalsIgnoreCase("no limit set") && !laClean.isEmpty()
     List subnetList = subnets ? subnets.trim().split(',').findAll { it } as List : []
@@ -2889,7 +2916,7 @@ Map analyzeNetwork() {
 Map analyzeSystemHealth(Map shared = [:]) {
     Map memory        = (shared.resources as Map)     ?: fetchSystemResources()
     Map stateCompression = fetchStateCompression()
-    Map hubAlerts     = (shared.hubAlerts as Map)     ?: fetchHubAlerts()
+    Map hubAlerts     = (shared.hubAlerts as Map)     ?: fetchHubAlerts(shared.hubData as Map)
     Integer databaseSize = (shared.databaseSize as Integer) ?: fetchDatabaseSize()
     Float temperature = (shared.temperature as Float) ?: fetchTemperature()
     Map eventStateLimits = fetchEventStateLimits()
@@ -3519,7 +3546,7 @@ private void logError(String message) {
     log.error "${logPrefix()} : ${message}"
 }
 
-Map getHubInfo() {
+Map getHubInfo(Map prefetchedHubData = null) {
     Map info = [name: location.name ?: "Unknown", firmware: "Unknown", hardware: "Unknown", ip: "Unknown"]
     if (location.hubs && location.hubs.size() > 0) {
         def hub = location.hubs[0]
@@ -3528,7 +3555,7 @@ Map getHubInfo() {
         info.ip = hub.localIP ?: "Unknown"
     }
     // Fetch model from hubData for accurate hardware name (e.g. "C-7", "C-8 Pro")
-    Map hubData = (Map) hubRequest(HUB_DATA_PATH, "hub data", "json", 10)
+    Map hubData = prefetchedHubData ?: (Map) hubRequest(HUB_DATA_PATH, "hub data", "json", 10)
     if (hubData && !hubData.error && hubData.model) {
         info.hardware = hubData.model
     }
