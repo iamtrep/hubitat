@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.20.0"
+@Field static final String APP_VERSION = "5.21.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -1112,7 +1112,9 @@ Map apiCreateSnapshot() {
 }
 
 Map apiDeleteSnapshot() {
-    int idx = (params.index ?: "-1").toInteger()
+    String idxStr = params.index ?: "-1"
+    if (!idxStr.isInteger()) return jsonResponse([success: false, error: "Invalid index"])
+    int idx = idxStr.toInteger()
     if (idx < 0) return jsonResponse([success: false, error: "Invalid index"])
     deleteSnapshot(idx)
     return jsonResponse([success: true])
@@ -1125,7 +1127,9 @@ Map apiCreateCheckpoint() {
 }
 
 Map apiDeleteCheckpoint() {
-    int idx = (params.index ?: "-1").toInteger()
+    String idxStr = params.index ?: "-1"
+    if (!idxStr.isInteger()) return jsonResponse([success: false, error: "Invalid index"])
+    int idx = idxStr.toInteger()
     if (idx < 0) return jsonResponse([success: false, error: "Invalid index"])
     deleteCheckpoint(idx)
     return jsonResponse([success: true])
@@ -1182,7 +1186,7 @@ Map apiGenerateReport() {
     String html = loadUITemplate()
     if (!html) return jsonResponse([success: false, error: "SPA template not found in File Manager"])
 
-    String dataJson = JsonOutput.toJson(reportData)
+    String dataJson = JsonOutput.toJson(reportData).replace("</script>", "<\\/script>")
     html = html.replace("</head>", "<script type=\"application/json\" id=\"report-data\">${dataJson}</script>\n<script>window.REPORT_DATA=JSON.parse(document.getElementById('report-data').textContent)</script>\n</head>")
     html = html.replace('${access_token}', '').replace('${api_base}', '').replace('${live_refresh_sec}', '0')
 
@@ -1537,10 +1541,14 @@ Map apiUpdateSettings() {
             app.updateSetting(key, [type: "bool", value: value as boolean])
             if (key in ["autoSnapshot", "autoCheckpoint"]) reschedule = true
         } else if (numberKeys.contains(key)) {
-            app.updateSetting(key, [type: "number", value: value.toString().toInteger()])
+            String numStr = value.toString()
+            if (!numStr.isInteger()) return
+            app.updateSetting(key, [type: "number", value: numStr.toInteger()])
             if (key == "snapshotInterval") reschedule = true
         } else if (decimalKeys.contains(key)) {
-            app.updateSetting(key, [type: "decimal", value: value.toString().toBigDecimal()])
+            String numStr = value.toString()
+            if (!numStr.isBigDecimal()) return
+            app.updateSetting(key, [type: "decimal", value: numStr.toBigDecimal()])
         } else if (enumKeys.contains(key)) {
             app.updateSetting(key, [type: "enum", value: value as String])
             if (key == "checkpointInterval") reschedule = true
@@ -1778,10 +1786,10 @@ Map getPerformanceData(Map shared = [:]) {
             if (dev?.id != null) deviceTypeById[dev.id] = (dev.type ?: 'Unknown') as String
         }
     }
-    // Walk /hub2/appsList directly for parent→child label association.
+    // Walk /hub2/appsList directly for parent→child label association — reuse the response already
+    // fetched above for appSourceById rather than making a second round trip.
     Map appParentTypeById = [:]
-    Map appsListResp2 = (Map) hubRequest(APPS_LIST_PATH, "apps list (B2 labels)")
-    if (appsListResp2?.apps) {
+    if (appsListResp?.apps) {
         Closure walkApps
         walkApps = { List apps, String parentLabel = null ->
             (apps ?: []).each { Map entry ->
@@ -1794,7 +1802,7 @@ Map getPerformanceData(Map shared = [:]) {
                 if (entry.children) walkApps(entry.children as List, labelForChildren)
             }
         }
-        walkApps(appsListResp2.apps as List, null)
+        walkApps(appsListResp.apps as List, null)
     }
 
     List checkpoints = loadCheckpoints()
@@ -1885,14 +1893,22 @@ List getStructuredAlerts(Map shared = [:]) {
         alerts << [severity: "warning", name: "Ethernet and WiFi both active \u2014 disable WiFi when using Ethernet"]
     }
 
-    // Z-Wave ghost nodes
-    Map zwRaw = (shared.network?.zwave as Map) ?: (Map) hubRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", "json", 8)
-    if (zwRaw && !zwRaw.error) {
-        List ghosts = buildZwaveGhostNodes(zwRaw)
-        if (ghosts) {
-            int n = ghosts.size()
-            alerts << [severity: "critical", name: "${n} Z-Wave ghost node${n > 1 ? 's' : ''} detected \u2014 remove from mesh"]
+    // Z-Wave ghost nodes \u2014 cached 60 s to avoid an 8-second fetch on every Dashboard/Health load
+    // when the shared cache was built without includeNetwork (the common lightweight path).
+    Map zwRaw = (shared.network?.zwave as Map)
+    if (!zwRaw) {
+        long lastZwCheck = state.lastZwaveGhostCheckMs ?: 0
+        if (now() - lastZwCheck > 60000) {
+            zwRaw = (Map) hubRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", "json", 8)
+            if (zwRaw && !zwRaw.error) {
+                state.lastZwaveGhostCheckMs = now()
+                state.cachedZwaveGhostCount = buildZwaveGhostNodes(zwRaw).size()
+            }
         }
+    }
+    int ghostCount = zwRaw ? buildZwaveGhostNodes(zwRaw).size() : (state.cachedZwaveGhostCount ?: 0) as int
+    if (ghostCount > 0) {
+        alerts << [severity: "critical", name: "${ghostCount} Z-Wave ghost node${ghostCount > 1 ? 's' : ''} detected \u2014 remove from mesh"]
     }
 
     return alerts
@@ -2587,7 +2603,7 @@ Map extractZwaveMeshQuality(Map zwaveData) {
     zwaveData.nodes.each { Map node ->
         int per = (node.per ?: 0) as int
         int neighborCount = (node.neighbors ?: 0) as int
-        int routeChanges = node.routeChanges?.isInteger() ? (node.routeChanges ?: 0) as int : -1
+        int routeChanges = node.routeChanges?.toString()?.isInteger() ? (node.routeChanges ?: 0) as int : -1
         String rssiStr = node.lwrRssi ?: ""
         Integer rssiVal = null
         if (rssiStr) {
@@ -2659,7 +2675,7 @@ List extractZwaveMessageCounts(Map zwaveData) {
     if (!zwaveData || zwaveData.error || !zwaveData.nodes) return []
     return zwaveData.nodes.collect { Map node ->
         [id: node.nodeId, deviceId: node.deviceId, name: node.deviceName ?: "Node ${node.nodeId}",
-         msgCount: (node.msgCount ?: 0) as int, routeChanges: node.routeChanges?.isInteger() ? (node.routeChanges ?: 0) as int : -1]
+         msgCount: (node.msgCount ?: 0) as int, routeChanges: node.routeChanges?.toString()?.isInteger() ? (node.routeChanges ?: 0) as int : -1]
     }
 }
 
@@ -2714,7 +2730,6 @@ Map analyzeDevices(boolean deep = true) {
             if (device.disabled) {
                 stats.disabledDevices++
                 stats.idsByStatus.disabled << device.id
-                stats.inactiveDevices++
             } else if (lastActivity && lastActivity > inactivityThresholdMs) {
                 stats.activeDevices++
                 stats.idsByStatus.active << device.id
@@ -3768,8 +3783,10 @@ boolean isNewer(String v1, String v2) {
     if (!v1 || v1 == "Unknown" || !v2 || v2 == "Unknown") return false
     List v1p = v1.tokenize('.'), v2p = v2.tokenize('.')
     for (int i = 0; i < Math.max(v1p.size(), v2p.size()); i++) {
-        int n1 = i < v1p.size() ? v1p[i].toInteger() : 0
-        int n2 = i < v2p.size() ? v2p[i].toInteger() : 0
+        String s1 = i < v1p.size() ? v1p[i] : "0"
+        String s2 = i < v2p.size() ? v2p[i] : "0"
+        int n1 = s1.isInteger() ? s1.toInteger() : 0
+        int n2 = s2.isInteger() ? s2.toInteger() : 0
         if (n1 > n2) return true
         if (n1 < n2) return false
     }
@@ -4775,13 +4792,14 @@ Map apiAuditStart() {
 }
 
 /**
- * Flatten the parent/child structure returned by /hub2/devicesList into a flat list of device entries.
+ * Flatten the parent/child/grandchild structure returned by /hub2/devicesList into a flat list.
  */
 private List flattenDeviceList(List items) {
     List out = []
-    items.each {
-        out << it
-        ((it.children ?: []) as List).each { ch -> out << ch }
+    items.each { Map item ->
+        out << item
+        List children = (item.children ?: []) as List
+        if (children) out.addAll(flattenDeviceList(children))
     }
     return out
 }
