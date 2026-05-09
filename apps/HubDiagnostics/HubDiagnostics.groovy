@@ -76,7 +76,6 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final int    AUDIT_MAX_INFLIGHT  = 8       // Hubitat platform cap on concurrent async HTTP per app
 @Field static final int    AUDIT_WATCHDOG_SEC  = 120     // safety net if a callback is genuinely lost
 @Field static final long   AUDIT_STALE_MS      = 600_000 // 10 min — anything older is force-cleared on app entry
-@Field static final int    AUDIT_REPORTS_KEEP  = 10      // FIFO trim of state.auditReports[]
 @Field static final double AUDIT_FAIL_RATIO    = 0.10    // > 10% per-device failures → mark scan errored
 
 // Per-scan in-memory state. Each entry is itself a ConcurrentHashMap with keys:
@@ -86,6 +85,7 @@ import java.util.concurrent.atomic.AtomicInteger
 //   devices (ConcurrentHashMap<Long, Map>),
 //   failed (ConcurrentHashMap<Long, String>)
 @Field static final ConcurrentHashMap<String, ConcurrentHashMap> AUDIT_SCANS = new ConcurrentHashMap<>()
+@Field static Map lastAuditResult = null
 
 // Zigbee channels recommended to avoid WiFi interference
 @Field static final List RECOMMENDED_ZIGBEE_CHANNELS = [15, 20, 25]
@@ -297,8 +297,6 @@ mappings {
     // Device Usage Audit
     path('/api/audit/start')   { action: [POST: 'apiAuditStart'] }
     path('/api/audit/status')  { action: [GET:  'apiAuditStatus'] }
-    path('/api/audit/list')    { action: [GET:  'apiAuditList'] }
-    path('/api/audit/delete')  { action: [POST: 'apiAuditDelete'] }
     path('/api/audit/data')    { action: [GET:  'apiAuditData'] }
 
     // Network tests (v5.9.0)
@@ -4003,8 +4001,8 @@ void fullJsonCb(resp, data) {
 }
 
 /**
- * Finalize a completed scan: build cross-reference, render HTML, write to FileManager,
- * append to state.auditReports[] (FIFO trim), update state.audit snapshot, free memory.
+ * Finalize a completed scan: build cross-reference, store result in volatile memory,
+ * update state.audit snapshot, free memory.
  */
 private void finalizeAudit(String scanId) {
     ConcurrentHashMap scan = AUDIT_SCANS[scanId]
@@ -4061,7 +4059,7 @@ private void finalizeAudit(String scanId) {
     }
     logDebug "Audit Phase 4 enrichment finished in ${now() - enrichStart}ms"
 
-    // Persist to FileManager as JSON (rendered client-side by SPA)
+    // Store result in volatile memory (lost on hub restart — acceptable)
     String hubName = getHubInfo()?.name ?: "Hubitat"
     Date finishDate = new Date()
     String generatedAt = finishDate.format("yyyy-MM-dd HH:mm 'UTC'", TimeZone.getTimeZone("UTC"))
@@ -4069,12 +4067,9 @@ private void finalizeAudit(String scanId) {
     xref.generatedAt = generatedAt
     xref.failed = failedMap.collect { id, reason -> [id: id, reason: reason] }
 
-    String filename = "hub_usage_audit_${finishDate.format('yyyyMMdd_HHmmss')}.json"
-    writeFile(filename, JsonOutput.toJson(xref))
+    lastAuditResult = xref
 
-    // Append to past-audits index (newest first, FIFO trim)
     Map summary = [
-        filename:           filename,
         generated:          generatedAt,
         deviceCount:        total,
         scanDurationMs:     (now() - startedAt),
@@ -4085,13 +4080,6 @@ private void finalizeAudit(String scanId) {
         failedCount:        failed,
         errored:            errored
     ]
-    List reports = (state.auditReports ?: []) as List
-    reports.add(0, summary)
-    while (reports.size() > AUDIT_REPORTS_KEEP) {
-        Map evicted = reports.remove(reports.size() - 1) as Map
-        deleteFile(evicted.filename as String)
-    }
-    state.auditReports = reports
 
     // Snapshot for UI
     state.audit = [
@@ -4099,12 +4087,11 @@ private void finalizeAudit(String scanId) {
         status:    errored ? 'error' : 'done',
         processed: (scan.processed as AtomicInteger).get(),
         total:     total,
-        startedAt: startedAt,
-        filename:  filename
+        startedAt: startedAt
     ]
 
     AUDIT_SCANS.remove(scanId)
-    logInfo "[audit ${scanId}] finalized — ${succeeded}/${total} devices, ${failed} failed, ${(now()-startedAt)}ms, file=${filename}"
+    logInfo "[audit ${scanId}] finalized — ${succeeded}/${total} devices, ${failed} failed, ${(now()-startedAt)}ms"
 }
 
 /**
@@ -4221,48 +4208,20 @@ Map apiAuditStatus() {
         processed: processed ?: 0,
         total:     total ?: 0,
         startedAt: snap.startedAt,
-        filename:  snap.filename,
         error:     snap.error
     ])
 }
 
-/**
- * GET /api/audit/list — returns past audit summaries, newest first.
- */
-Map apiAuditList() {
-    return jsonResponse([reports: (state.auditReports ?: []) as List])
-}
 
 /**
- * POST /api/audit/delete — body: { filename }. Removes file + index entry.
- */
-Map apiAuditDelete() {
-    String filename = (request?.JSON?.filename ?: params.filename) as String
-    if (!filename) return jsonResponse([error: "filename required"])
-    deleteFile(filename)
-    List reports = (state.auditReports ?: []) as List
-    int before = reports.size()
-    reports = reports.findAll { (it.filename as String) != filename }
-    state.auditReports = reports
-    return jsonResponse([deleted: (before != reports.size()), filename: filename])
-}
-
-/**
- * GET /api/audit/data?filename=hub_usage_audit_*.json — returns raw audit JSON.
+ * GET /api/audit/data — returns the most recent audit result from volatile memory.
+ * Returns 404 if no audit has been run since the last hub restart.
  */
 Map apiAuditData() {
-    String filename = params.filename as String
-    if (!filename) return jsonResponse([error: "filename param required"])
-    if (!filename.startsWith("hub_usage_audit_") || !filename.endsWith(".json")) {
-        return jsonResponse([error: "invalid filename"])
+    if (lastAuditResult == null) {
+        return render(status: 404, contentType: 'application/json', data: '{"error":"no audit result available"}')
     }
-    try {
-        byte[] fileBytes = downloadHubFile(filename)
-        if (!fileBytes) return render(status: 404, contentType: 'application/json', data: '{"error":"not found"}')
-        return render(status: 200, contentType: 'application/json', data: new String(fileBytes, "UTF-8"))
-    } catch (Exception e) {
-        return jsonResponse([error: e.message])
-    }
+    return jsonResponse(lastAuditResult)
 }
 
 void writeFile(String fileName, String data) {
