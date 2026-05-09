@@ -350,6 +350,7 @@ mappings {
     path('/api/audit/status')  { action: [GET:  'apiAuditStatus'] }
     path('/api/audit/list')    { action: [GET:  'apiAuditList'] }
     path('/api/audit/delete')  { action: [POST: 'apiAuditDelete'] }
+    path('/api/audit/data')    { action: [GET:  'apiAuditData'] }
 
     // Network tests (v5.9.0)
     path('/api/network/test')  { action: [POST: 'apiNetworkTest'] }
@@ -4744,15 +4745,15 @@ private void finalizeAudit(String scanId) {
     }
     logDebug "Audit Phase 4 enrichment finished in ${now() - enrichStart}ms"
 
-    // Render HTML
+    // Persist to FileManager as JSON (rendered client-side by SPA)
     String hubName = getHubInfo()?.name ?: "Hubitat"
     String generatedAt = new Date().format("yyyy-MM-dd HH:mm 'UTC'", TimeZone.getTimeZone("UTC"))
-    List failedList = failedMap.collect { id, reason -> [id: id, reason: reason] }
-    String html = renderAuditHtml(xref, hubName, generatedAt, failedList)
+    xref.hubName = hubName
+    xref.generatedAt = generatedAt
+    xref.failed = failedMap.collect { id, reason -> [id: id, reason: reason] }
 
-    // Persist to FileManager
-    String filename = "hub_usage_audit_${new Date().format('yyyyMMdd_HHmmss')}.html"
-    writeFile(filename, html)
+    String filename = "hub_usage_audit_${new Date().format('yyyyMMdd_HHmmss')}.json"
+    writeFile(filename, JsonOutput.toJson(xref))
 
     // Append to past-audits index (newest first, FIFO trim)
     Map summary = [
@@ -4927,6 +4928,24 @@ Map apiAuditDelete() {
     reports = reports.findAll { (it.filename as String) != filename }
     state.auditReports = reports
     return jsonResponse([deleted: (before != reports.size()), filename: filename])
+}
+
+/**
+ * GET /api/audit/data?filename=hub_usage_audit_*.json — returns raw audit JSON.
+ */
+Map apiAuditData() {
+    String filename = params?.filename as String
+    if (!filename) return jsonResponse([error: "filename param required"])
+    if (!filename.startsWith("hub_usage_audit_") || !filename.endsWith(".json")) {
+        return jsonResponse([error: "invalid filename"])
+    }
+    try {
+        byte[] data = downloadHubFile(filename)
+        if (!data) return render(status: 404, contentType: 'application/json', data: '{"error":"not found"}')
+        return render(status: 200, contentType: 'application/json', data: new String(data, "UTF-8"))
+    } catch (Exception e) {
+        return jsonResponse([error: e.message])
+    }
 }
 
 void writeFile(String fileName, String data) {
