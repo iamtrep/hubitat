@@ -1235,7 +1235,8 @@ Map apiForumExport() {
     List ghostNodes = buildZwaveGhostNodes(zwaveRaw)
     Map zigbeeMesh = fetchZigbeeMeshInfo()
     String zwaveVersion = fetchZwaveVersion()
-    Map stats = (Map) hubRequest(RUNTIME_STATS_PATH, "runtime stats")
+    Map statsWrap = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats")
+    Map stats = statsWrap.ok ? statsWrap.data : null
     Integer uptimeSeconds = stats ? parseUptime(stats.uptime as String) : null
     float uptimeMin = uptimeSeconds ? uptimeSeconds / 60.0f : 0
 
@@ -2723,14 +2724,14 @@ List extractZigbeeMessageCounts(Map zigbeeData) {
 // ===== ANALYSIS MODULES =====
 
 Map analyzeDevices(boolean deep = true) {
-    Map response = (Map) hubRequest(DEVICES_LIST_PATH, "devices list")
+    Map respWrap = hubMapRequest(DEVICES_LIST_PATH, "devices list")
 
-    if (!response || response.error || !response.devices) {
+    if (!respWrap.ok || !respWrap.data.devices) {
         logWarn "Failed to fetch devices list"
         return getEmptyDeviceStats()
     }
 
-    List devicesList = flattenDeviceEntries(response.devices as List, deep)
+    List devicesList = flattenDeviceEntries(respWrap.data.devices as List, deep)
 
     Map stats = getEmptyDeviceStats()
 
