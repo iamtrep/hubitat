@@ -4747,12 +4747,13 @@ private void finalizeAudit(String scanId) {
 
     // Persist to FileManager as JSON (rendered client-side by SPA)
     String hubName = getHubInfo()?.name ?: "Hubitat"
-    String generatedAt = new Date().format("yyyy-MM-dd HH:mm 'UTC'", TimeZone.getTimeZone("UTC"))
+    Date now = new Date()
+    String generatedAt = now.format("yyyy-MM-dd HH:mm 'UTC'", TimeZone.getTimeZone("UTC"))
     xref.hubName = hubName
     xref.generatedAt = generatedAt
     xref.failed = failedMap.collect { id, reason -> [id: id, reason: reason] }
 
-    String filename = "hub_usage_audit_${new Date().format('yyyyMMdd_HHmmss')}.json"
+    String filename = "hub_usage_audit_${now.format('yyyyMMdd_HHmmss')}.json"
     writeFile(filename, JsonOutput.toJson(xref))
 
     // Append to past-audits index (newest first, FIFO trim)
@@ -4934,15 +4935,15 @@ Map apiAuditDelete() {
  * GET /api/audit/data?filename=hub_usage_audit_*.json — returns raw audit JSON.
  */
 Map apiAuditData() {
-    String filename = params?.filename as String
+    String filename = params.filename as String
     if (!filename) return jsonResponse([error: "filename param required"])
     if (!filename.startsWith("hub_usage_audit_") || !filename.endsWith(".json")) {
         return jsonResponse([error: "invalid filename"])
     }
     try {
-        byte[] data = downloadHubFile(filename)
-        if (!data) return render(status: 404, contentType: 'application/json', data: '{"error":"not found"}')
-        return render(status: 200, contentType: 'application/json', data: new String(data, "UTF-8"))
+        byte[] fileBytes = downloadHubFile(filename)
+        if (!fileBytes) return render(status: 404, contentType: 'application/json', data: '{"error":"not found"}')
+        return render(status: 200, contentType: 'application/json', data: new String(fileBytes, "UTF-8"))
     } catch (Exception e) {
         return jsonResponse([error: e.message])
     }
