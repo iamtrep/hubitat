@@ -17,15 +17,15 @@ Severity legend: 🔴 critical bug · 🟠 high (architecture / leverage) · �
 | # | Finding | Severity | Verdict | Status |
 |---|---|---|---|---|
 | 1 | Re-fetch in single request path; multiple `/hub2/hubData` per dashboard refresh | 🟠 | **Fixed v5.14.0** | [x] |
-| 2 | Oversized methods (`renderAuditHtml` 363 lines, `apiSnapshotDiff` 242, `analyzeDevices` 172) | 🟡 | Partially valid — only `renderAuditHtml` is truly egregious | [ ] |
-| 3 | Audit report duplicates SPA framework (own CSS / own table-sort JS) | 🟠 | Strongly valid | [ ] |
+| 2 | Oversized methods (`renderAuditHtml` 363 lines, `apiSnapshotDiff` 242, `analyzeDevices` 172) | 🟡 | **Partially fixed v5.17.0** (renderAuditHtml shrunk by 38 lines via CSS extraction); other methods accepted | [~] |
+| 3 | Audit report duplicates SPA framework (own CSS / own table-sort JS) | 🟠 | **Partially fixed v5.17.0** (CSS now in 1 visible block; sort/filter JS still inline — Option B) | [~] |
 | 4 | `serveUI` runs `getUIVersion()` + sync check on every request | 🟡 | **Fixed v5.15.0** | [x] |
 | 5 | `finalizeAudit` enrichment is serial after the async fan-out | 🟡 | Valid scaling concern; documented trade-off — defer until scale hurts | [ ] |
 | 6 | `childIds` includes parent IDs — wrong navigation target | 🔴 | **Fixed v5.13.1** | [x] |
 | 7 | `disabled` flag on `apps.userApps` never set due to wrong key | 🟡 | **Fixed v5.13.1** (downgraded from 🔴 — currently-unconsumed code path; preventive) | [x] |
 | 8 | Inline `onclick`, `document.write`, full-container innerHTML | ⚪ | Valid style observation; works fine | [ ] |
-| 9 | `auditPoll` interval not tracked, can leak on tab switch | 🟡 | Valid | [ ] |
-| 10 | Table filter searches raw fields, not rendered cell content | 🟡 | Valid UX surprise | [ ] |
+| 9 | `auditPoll` interval not tracked, can leak on tab switch | 🟡 | **Fixed v5.16.0** (dedupe via pollTimers Map) | [x] |
+| 10 | Table filter searches raw fields, not rendered cell content | 🟡 | **Fixed v5.16.0** (`ff:` column property) | [x] |
 | 11 | `MOCK_DATA` shipped in production (5,635 B / 4% of file) | ⚪ | **Overstated** — accept | n/a |
 | 12 | `hubRequest` has 3 distinct return shapes for "did it work?" | 🟡 | Valid | [ ] |
 | A1 | The `shared` Map plumbing is dead infrastructure — wiring it through the API entry points would directly fix #1 | 🟠 | **Fixed v5.14.0** | [x] |
@@ -234,21 +234,18 @@ Goal: fix #1 + A1 by completing the half-built request-scoped cache.
 
 ---
 
-### Phase R-3 — De-duplicate audit-report styling (M-L, ~2-3 hours)
+### Phase R-3 — De-duplicate audit-report styling (M, ~1 hour) — ✅ Option A shipped v5.17.0 (`b163940`)
 
-Goal: fix #3 (and naturally shrink #2's `renderAuditHtml`) by sharing CSS / table primitives between the SPA and the audit report.
+Picked Option A (Option A-Pragmatic, really): pull the audit's 38-line inline CSS out of `renderAuditHtml` into a single `@Field static final AUDIT_REPORT_CSS` constant near the other top-of-file `@Field`s, with a comment block flagging the SPA's `<style>` block as the parallel source of truth. Side-by-side diffability without breaking workbench / offline modes.
 
-Option A (smaller — extract CSS only):
-- [ ] Move SPA's table/card/badge CSS into a `@Field static final String SHARED_CSS`
-- [ ] Reference it in both the SPA's `<style>` block (via a templated include in `serveUI`) and the audit-report renderer
-- [ ] Verify: visual diff of audit report before/after — should be unchanged
+- [x] Audit CSS extracted to `AUDIT_REPORT_CSS` constant (38 lines)
+- [x] `renderAuditHtml` shrunk from 358 → ~320 lines (also covers part of #2)
+- [x] Audit report still byte-equivalent for selector content (verified key selectors round-trip)
+- [x] 175/175 PASS
 
-Option B (larger — extract sort/filter JS too):
-- [ ] As above + extract the sort-on-click / filter-on-input JS into a shared inline `<script>` constant
-- [ ] Audit report's `<script>` block becomes a single line that loads the shared module
-- [ ] `renderAuditHtml` shrinks from 363 → ~200 lines
+**Option B (extract sort/filter JS too) deliberately not taken.** Would need refactoring the audit's inline `<script>` block into a shared module; pays off only if the audit gains more interactive features. Documented as a future option in the constant's header comment.
 
-Recommend Option A first; Option B if/when the audit needs more interactive features and the duplication starts hurting again.
+**True single-source deduplication** (one file, both consumers) deferred — would need either (a) `serveUI` substitution that breaks workbench/offline modes, or (b) a build step (explicit non-goal). Maintenance discipline: when changing visual primitives, mirror between `AUDIT_REPORT_CSS` and the SPA `<style>` block. The constant's header comment documents this rule.
 
 - [ ] Bump to v5.15.0 (minor)
 
@@ -265,9 +262,9 @@ Three batches.
 - [x] **A2** — removed `saveSnapshotDiffPayload` (load fn was never called — entire feature dead)
 - [x] **#4** — `getUIVersion` reads from `state.cachedUIVersion`; daily sync moved to scheduled job at 03:17
 
-**Pack 2 — UI lifecycle (next):**
-- [ ] **#9** — `pollTimers` global registry; clear on tab switch
-- [ ] **#10** — `ff:` (filter-by) column property on `tbl()`; opt-in for columns whose rendered text differs from raw
+**Pack 2 — UI lifecycle (v5.16.0, `632404c`):** ✅ shipped
+- [x] **#9** — `pollTimers` Map dedupes by scanId; stopPoll helper clears+removes on terminal states
+- [x] **#10** — `ff:` column property on `tbl()`; Devices-tab Parent column wired so device-name search works
 
 **Pack 3 — cleanup:**
 - [ ] **#12** — uniform `hubRequest` return shape `[ok, data, error]`; ~40 callers to migrate
