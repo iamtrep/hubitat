@@ -114,7 +114,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.12.1";
+const UI_VERSION = "5.12.2";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -274,7 +274,7 @@ function renderZigbeeWifiChart(zbCh,containerId,scan){
   // Find overlapping WiFi channels
   const overlapping=new Set();
   wifiChs.forEach(ch=>{const c=2412+5*(ch-1);if(c+11>zbLo&&c-11<zbHi)overlapping.add(ch)});
-  let svg=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:${W}px;font-family:inherit;font-size:11px">`;
+  let svg=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;font-family:inherit;font-size:11px">`;
   // WiFi channel bars
   wifiChs.forEach(ch=>{const c=2412+5*(ch-1);const x1=x(c-11),x2=x(c+11);
     const ol=overlapping.has(ch);const std=[1,6,11].includes(ch);
@@ -327,20 +327,22 @@ function renderZigbeeWifiChart(zbCh,containerId,scan){
   else svg+=`<span style="color:var(--ok)">\u2714 Zigbee ch ${zbCh} has no overlap with standard WiFi channels</span>`;
   if(safe.length)svg+=`<br><span style="color:var(--ok)">Safe WiFi channels: ${safe.join(', ')}</span>`;
   if(scan&&scan.results&&Object.keys(scanByChannel).length){
+    const own=String(zbCh);
     const noisy=[],medium=[],weak=[];
     Object.entries(scanByChannel).forEach(([ch,pans])=>{
       const top=pans.reduce((a,b)=>a.lastHopRssi>b.lastHopRssi?a:b);
-      const ent='ch '+ch+' ('+pans.length+(pans.length>1?' PANs':' PAN')+', strongest '+top.lastHopRssi+' dBm)';
+      const ent='ch '+ch+(ch===own?' (your channel)':'')+': '+pans.length+(pans.length>1?' PANs':' PAN')+', strongest '+top.lastHopRssi+' dBm';
       if(top.lastHopRssi>-50)noisy.push(ent);
       else if(top.lastHopRssi>-70)medium.push(ent);
       else weak.push(ent);
     });
-    if(noisy.length)svg+=`<br><span style="color:var(--crit)">⚠ Strong neighbor activity: ${noisy.join(', ')}</span>`;
-    if(medium.length)svg+=`<br><span style="color:var(--warn)">Medium neighbor activity: ${medium.join(', ')}</span>`;
-    if(weak.length)svg+=`<br><span style="color:var(--muted)">Weak detections: ${weak.join(', ')}</span>`;
+    svg+=`<br><span style="color:var(--muted)">Other Zigbee networks detected in your RF environment — these compete for airtime on their channel:</span>`;
+    if(noisy.length)svg+=`<br><span style="color:var(--crit)">⚠ Strong on: ${noisy.join('; ')}</span>`;
+    if(medium.length)svg+=`<br><span style="color:var(--warn)">Medium on: ${medium.join('; ')}</span>`;
+    if(weak.length)svg+=`<br><span style="color:var(--muted)">Weak on: ${weak.join('; ')}</span>`;
     const allChs=[];for(let i=11;i<=26;i++)allChs.push(i);
     const quiet=allChs.filter(c=>!scanByChannel[c]);
-    if(quiet.length)svg+=`<br><span style="color:var(--ok)">Quiet Zigbee channels: ${quiet.join(', ')}</span>`;
+    if(quiet.length)svg+=`<br><span style="color:var(--ok)">No detections on Zigbee channels: ${quiet.join(', ')}</span>`;
   }
   svg+=`</div>`;
   document.getElementById(containerId).innerHTML=svg;
@@ -438,6 +440,14 @@ function err(id,e,fn){document.getElementById(id).innerHTML='<div class="err"><d
 
 // ===== RESOURCE CHART (SVG) =====
 const chartData={};
+// v5.12.2: re-render charts on window resize so they adapt to screen-width changes
+let _chartResizeTimer;
+window.addEventListener('resize',()=>{
+  clearTimeout(_chartResizeTimer);
+  _chartResizeTimer=setTimeout(()=>{
+    Object.keys(chartData).forEach(cid=>{const pts=chartData[cid];if(pts&&document.getElementById(cid))renderChart(pts,cid)});
+  },200);
+});
 function renderChart(pts,cid,range){
   if(!pts||pts.length<2)return;
   const el=document.getElementById(cid);if(!el)return;
@@ -1029,6 +1039,34 @@ async function rNetwork(){const P='p-network';loading(P);try{
     o+='</div>';
     if(n.hasEthernet&&n.hasWiFi)o+='<div class="alert a-warn" style="margin-top:8px">\u26A0 Both Ethernet and WiFi are active. This is known to cause connectivity issues. Disable WiFi when using Ethernet.</div>';
     o+='</div></div>'}
+  // Zigbee
+  if(d.zigbee){const z=d.zigbee;
+    o+='<div class="card"><div class="card-h">Zigbee Network</div><div class="card-b"><div class="ng">';
+    o+=ni('Enabled',z.enabled?'Yes':'No');o+=ni('Healthy',z.healthy?'Yes':'No',z.healthy?'var(--ok)':'var(--crit)');
+    o+=ni('Channel',z.channel,([15,20,25].includes(z.channel)?'var(--ok)':'var(--warn)'));
+    o+=ni('PAN ID',z.panId);o+=ni('Extended PAN ID',z.extendedPanId);
+    o+=ni('Devices',z.deviceCount);o+=ni('Join Mode',z.joinMode?'Active':'Inactive');
+    if(z.powerLevel!=null)o+=ni('Power Level',z.powerLevel);
+    o+='</div>';
+    // Zigbee mesh
+    if(z.mesh){const m=z.mesh;
+      o+='<div style="margin-top:10px"><div class="ng">';
+      o+=ni('Neighbors',m.neighbors);o+=ni('Routes',m.routes);o+=ni('End Devices',m.childDevices);
+      if(m.avgLqi!=null)o+=ni('Avg LQI',m.avgLqi+' (min: '+m.minLqi+', max: '+m.maxLqi+')',m.avgLqi<150?'var(--crit)':m.avgLqi<200?'var(--warn)':'var(--ok)');
+      if(m.weakNeighbors&&m.weakNeighbors.length)o+=ni('Weak Neighbors',m.weakNeighbors.length,'var(--crit)');
+      if(m.staleNeighbors&&m.staleNeighbors.length)o+=ni('Stale Neighbors',m.staleNeighbors.length,'var(--warn)');
+      o+='</div>';
+      if(m.weakNeighbors&&m.weakNeighbors.length){o+='<details style="margin-top:6px"><summary>Weak Neighbor Details</summary>';
+        m.weakNeighbors.forEach(n=>{o+='<div style="margin:3px 0;color:var(--crit)">'+h(n.shortId)+' &mdash; LQI: '+n.lqi+'</div>'});o+='</details>'}
+      if(m.neighborDetails&&m.neighborDetails.length)o+='<div id="zbNeighborTbl" style="margin-top:8px"></div>';
+      o+='</div>'}
+    o+='<div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap">';
+    o+='<button class="btn btn-p" id="btnZbScan">Run channel scan</button>';
+    o+='<span id="zbScanInfo" class="muted" style="font-size:12px"></span>';
+    o+='</div>';
+    o+='<div id="zbWifiChart" style="margin-top:10px"></div>';
+    if(z.messageCounts&&z.messageCounts.length)o+='<div id="zbMsgTbl" style="margin-top:10px"></div>';
+    o+='</div></div>'}
   // Z-Wave
   if(d.zwave){const z=d.zwave;
     o+='<div class="card"><div class="card-h">Z-Wave Network</div><div class="card-b"><div class="ng">';
@@ -1090,34 +1128,6 @@ async function rNetwork(){const P='p-network';loading(P);try{
     o+='<div class="tbl-wrap" style="overflow-x:auto;max-width:100%">'+d.zwaveTopologyHtml+'</div>';
     o+='</div></div>';
   }
-  // Zigbee
-  if(d.zigbee){const z=d.zigbee;
-    o+='<div class="card"><div class="card-h">Zigbee Network</div><div class="card-b"><div class="ng">';
-    o+=ni('Enabled',z.enabled?'Yes':'No');o+=ni('Healthy',z.healthy?'Yes':'No',z.healthy?'var(--ok)':'var(--crit)');
-    o+=ni('Channel',z.channel,([15,20,25].includes(z.channel)?'var(--ok)':'var(--warn)'));
-    o+=ni('PAN ID',z.panId);o+=ni('Extended PAN ID',z.extendedPanId);
-    o+=ni('Devices',z.deviceCount);o+=ni('Join Mode',z.joinMode?'Active':'Inactive');
-    if(z.powerLevel!=null)o+=ni('Power Level',z.powerLevel);
-    o+='</div>';
-    // Zigbee mesh
-    if(z.mesh){const m=z.mesh;
-      o+='<div style="margin-top:10px"><div class="ng">';
-      o+=ni('Neighbors',m.neighbors);o+=ni('Routes',m.routes);o+=ni('End Devices',m.childDevices);
-      if(m.avgLqi!=null)o+=ni('Avg LQI',m.avgLqi+' (min: '+m.minLqi+', max: '+m.maxLqi+')',m.avgLqi<150?'var(--crit)':m.avgLqi<200?'var(--warn)':'var(--ok)');
-      if(m.weakNeighbors&&m.weakNeighbors.length)o+=ni('Weak Neighbors',m.weakNeighbors.length,'var(--crit)');
-      if(m.staleNeighbors&&m.staleNeighbors.length)o+=ni('Stale Neighbors',m.staleNeighbors.length,'var(--warn)');
-      o+='</div>';
-      if(m.weakNeighbors&&m.weakNeighbors.length){o+='<details style="margin-top:6px"><summary>Weak Neighbor Details</summary>';
-        m.weakNeighbors.forEach(n=>{o+='<div style="margin:3px 0;color:var(--crit)">'+h(n.shortId)+' &mdash; LQI: '+n.lqi+'</div>'});o+='</details>'}
-      if(m.neighborDetails&&m.neighborDetails.length)o+='<div id="zbNeighborTbl" style="margin-top:8px"></div>';
-      o+='</div>'}
-    o+='<div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap">';
-    o+='<button class="btn btn-p" id="btnZbScan">Run channel scan</button>';
-    o+='<span id="zbScanInfo" class="muted" style="font-size:12px"></span>';
-    o+='</div>';
-    o+='<div id="zbWifiChart" style="margin-top:10px"></div>';
-    if(z.messageCounts&&z.messageCounts.length)o+='<div id="zbMsgTbl" style="margin-top:10px"></div>';
-    o+='</div></div>'}
   // Matter
   if(d.matter){const m=d.matter;
     o+='<div class="card"><div class="card-h">Matter</div><div class="card-b"><div class="ng">';
