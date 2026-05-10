@@ -1,8 +1,8 @@
 # HubDiagnostics — Code Review Findings & Fix Plan
 
-Status as of 2026-05-09 (post-v5.27.0; rounds 1-5 complete).
+Status as of 2026-05-10 (post-v5.27.0 + uncommitted v5.28/5.29 WIP; rounds 1-6 complete).
 
-Combined output of seven independent passes:
+Combined output of eight independent passes:
 - **Codex round 1** — initial external code-review pass (12 findings)
 - **Internal** — verification + 10 additional findings (A1–A10)
 - **Codex round 2** — external re-review after R-1..R-5 shipped (5 net-new items B1–B5; updates to prior items)
@@ -10,6 +10,7 @@ Combined output of seven independent passes:
 - **Codex round 3 + Gemini round 2** — post-v5.20.0 re-reviews (zero net-new actionable items; both confirmed shipped fixes verified, deferrals reaffirmed)
 - **Claude round 4** — post-v5.24.0 review (10 net-new items C1–C10)
 - **Gemini round 5** — post-v5.27.0 review (5 net-new items C11–C15)
+- **Claude round 6** — post-v5.27.0 + uncommitted v5.28/5.29 review (8 net-new items N1–N8; verified C1–C15 still open)
 
 All findings were verified against the code; verdicts are recorded below.
 
@@ -36,6 +37,24 @@ Reviewed full source at v5.24.0. Confirmed all prior fixes. Found 10 net-new ite
 - **C8** (⚪) — `fetchHubMessages()` called unconditionally on every dashboard/health render (5s timeout in hot path).
 - **C9** (⚪) — `schedule(cron, ...)` `*/N` day syntax has known Hubitat firmware quirk for multi-day auto-snapshot intervals.
 - **C10** (⚪) — `autoEnableOAuth()` uses raw `httpGet`/`httpPost` without the retry-on-transient behavior from A8.
+
+## Round 6 summary (Claude, 2026-05-10, v5.27.0 + uncommitted v5.28/5.29 WIP)
+
+Comprehensive code + architecture review against `ARCHITECTURE.md`. All 15 prior open items (C1–C15) verified still present in current code. Found 8 net-new items (N1–N8), most introduced by the uncommitted caching changes in `getPerformanceData` and `loadCheckpoints`/`saveCheckpoints`:
+
+- **N1** (🟠) — five new volatile caches (`cachedZwaveData/At`, `cachedZigbeeData/At`, `cachedAppsListData/At`, `cachedDevicesListData/At`, `cachedCheckpoints`) are not cleared in `updated()`, breaking the established A3/A7/B5 cache-invalidation pattern.
+- **N2** (🟠) — caching strategy fragmented: `ZWAVE_DETAILS_PATH`/`ZIGBEE_DETAILS_PATH`/`APPS_LIST_PATH`/`DEVICES_LIST_PATH` are fetched at 11+ call sites, but only the `getPerformanceData` path uses the new TTL caches. Same-request concurrency may see one path fresh and another cached.
+- **N3** (🟡) — TTL cache pattern duplicated 4× in `getPerformanceData` (lines 1497–1578); a 6-line helper would consolidate.
+- **N4** (🟡) — `cachedCheckpoints` shares its list reference with callers in both directions; a single in-place mutation by any caller silently corrupts the cache and bypasses persistence.
+- **N5** (⚪) — aggregator-rationale comments missing on `apiCode` and `apiPerformance` (the recent mappings reorg added them everywhere else).
+- **N6** (⚪) — `getUIVersion` cache is a `@Field static volatile`, not `state.cachedUIVersion` as the #4 fix description in this doc claims; fix the code or the doc.
+- **N7** (⚪) — `_perfInFlight` in-flight guard is local to `rPerf`; lifting dedup into `api()` would cover all tabs in one change.
+- **N8** (⚪) — version drift in WIP: `APP_VERSION = 5.29.0` vs `UI_VERSION = 5.28.0`.
+
+**Architectural notes (no code change requested):**
+- The `mappings { }` reorganization into Aggregator / App-owned / Mutations / Long-running / Side-effectful sections matches ARCHITECTURE.md cleanly — preserve on every new route.
+- Six caching mechanisms now coexist (request-scoped `shared`, persistent `state`, ghost-node state-gate, volatile-field with `updated()` clear, new TTL'd volatile fields, SPA in-memory). Resolving N2 with a single abstraction would slow the proliferation.
+- Audit-report and forum-export move to the SPA (v5.25.0) softened the "Groovy normalizes, SPA renders" boundary; consider documenting as an accepted trade-off in ARCHITECTURE.md so future contributors don't push more parsing into the SPA.
 
 ## Round 5 summary (Gemini CLI, 2026-05-09, v5.27.0)
 
@@ -100,6 +119,14 @@ Severity legend: 🔴 critical bug · 🟠 high (architecture / leverage) · �
 | C13 | Excessive complexity in `buildForumMarkdown` and `buildCrossReference` | 🟡 | Open | [ ] |
 | C14 | Version drift risk: `APP_VERSION` and `UI_VERSION` maintained separately | ⚪ | Open | [ ] |
 | C15 | Static `lastAuditResult` bypasses state management and consumes heap | 🟡 | Open | [ ] |
+| N1 | New volatile caches (`cachedZwaveData/At`, `cachedZigbeeData/At`, `cachedAppsListData/At`, `cachedDevicesListData/At`, `cachedCheckpoints`) not cleared in `updated()` | 🟠 | Open | [ ] |
+| N2 | Caching strategy fragmented: same hub endpoints fetched at 11+ call sites; only `getPerformanceData` uses the new TTL caches | 🟠 | Open | [ ] |
+| N3 | TTL cache pattern duplicated 4× in `getPerformanceData` (DRY) | 🟡 | Open | [ ] |
+| N4 | `cachedCheckpoints` shares list reference with callers; in-place mutation silently corrupts cache + bypasses persistence | 🟡 | Open | [ ] |
+| N5 | Missing aggregator-rationale comments on `apiCode` and `apiPerformance` (other routes have them post-reorg) | ⚪ | Open | [ ] |
+| N6 | `getUIVersion` cache is `@Field static volatile`, not `state.cachedUIVersion` as #4 fix description claims | ⚪ | Open | [ ] |
+| N7 | `_perfInFlight` in-flight guard is tab-local; could be lifted into `api()` to dedupe across all tabs | ⚪ | Open | [ ] |
+| N8 | Version drift in WIP: `APP_VERSION=5.29.0` vs `UI_VERSION=5.28.0` | ⚪ | Open | [ ] |
 
 ---
 
@@ -495,6 +522,182 @@ These two calls use blocking `httpGet`/`httpPost` directly rather than `hubReque
 
 ---
 
+## Round 6 detailed findings (Claude, post-v5.27.0 + v5.28/5.29 WIP)
+
+### 🟠 N1 — New volatile caches not cleared in `updated()`
+
+**Where:** `HubDiagnostics.groovy:148–156` (declarations) and `:4348–4361` (`updated()` body).
+
+The uncommitted v5.28/5.29 work added five new volatile fields:
+
+```groovy
+@Field static volatile Map  cachedZwaveData
+@Field static volatile Long cachedZwaveAt
+@Field static volatile Map  cachedZigbeeData
+@Field static volatile Long cachedZigbeeAt
+@Field static volatile Map  cachedAppsListData
+@Field static volatile Long cachedAppsListAt
+@Field static volatile Map  cachedDevicesListData
+@Field static volatile Long cachedDevicesListAt
+@Field static volatile List cachedCheckpoints
+```
+
+`updated()` clears `zwaveStackCache`, `fwUpdateCache/At`, `state.controllerTypeCache`, and `apiTimings` — but none of the five new ones. This breaks the established A3/A7/B5 invalidation pattern and the ARCHITECTURE.md "state requires an invalidation story" rule (Required Pattern #6).
+
+**Symptom:** after a settings change, stale Performance/Apps/Devices reads persist for 60-120s. `cachedCheckpoints` has no TTL at all and persists until the next `saveCheckpoints` or `clearAllCheckpoints` call.
+
+**Fix:** add to the existing block in `updated()`:
+
+```groovy
+cachedZwaveData = null;       cachedZwaveAt = null
+cachedZigbeeData = null;      cachedZigbeeAt = null
+cachedAppsListData = null;    cachedAppsListAt = null
+cachedDevicesListData = null; cachedDevicesListAt = null
+cachedCheckpoints = null
+```
+
+---
+
+### 🟠 N2 — Caching strategy fragmented across the codebase
+
+**Where:** `ZWAVE_DETAILS_PATH`, `ZIGBEE_DETAILS_PATH`, `APPS_LIST_PATH`, `DEVICES_LIST_PATH` are fetched at 11+ call sites (lines `:740, 742, 1507, 1521, 1543, 1576, 1704, 2526, 2699, 2857, 2858, 3012, 3016, 3031, 3261, 3262, 4124`). Only the four sites inside `getPerformanceData` consult the new TTL caches.
+
+**Implication:** within a single window, two requests can see different views — one served from the 60-120s cache, the other freshly fetched. Consistency is intentional in places (audit enrichment wants live data) but the policy is now implicit.
+
+**Architectural overlap:** the request-scoped `shared` Map (ARCHITECTURE.md Required Pattern #2) and the new session-scoped TTL caches now coexist with no documented decision rule for when to use which.
+
+**Fix options (pick one):**
+1. Document the boundary — these caches are explicitly Performance/checkpoint-only, other paths are by design uncached. Add a comment in `ARCHITECTURE.md`.
+2. Extract a single `cachedFetch(name, ttlMs, closure)` helper backed by a `Map<String, [data, at]>` registry; thread *all* current cached-endpoint call sites through it.
+3. Extend the request-scoped `shared` Map to cover these fields when a request would benefit.
+
+---
+
+### 🟡 N3 — TTL cache pattern duplicated 4× in `getPerformanceData`
+
+**Where:** `HubDiagnostics.groovy:1497–1525` (zwave + zigbee), `:1539–1545` (apps), `:1572–1578` (devices).
+
+Same shape repeated four times:
+
+```groovy
+long nowMs = now()
+if (cachedX && cachedXAt && (nowMs - cachedXAt) < TTL_MS) {
+    data = cachedX
+} else {
+    Map r = hubMapRequest(PATH, "label", timeout)
+    data = r.ok ? r.data : null
+    if (data) { cachedX = data; cachedXAt = nowMs }
+}
+```
+
+**Fix:** small private helper resolves N2 and N3 together:
+
+```groovy
+private Object cachedFetch(String name, long ttlMs, Closure fetch) {
+    long nowMs = now()
+    Map slot = STATIC_CACHE_REGISTRY[name]
+    if (slot?.data && (nowMs - slot.at) < ttlMs) return slot.data
+    Object data = fetch()
+    if (data) STATIC_CACHE_REGISTRY[name] = [data: data, at: nowMs]
+    return data
+}
+```
+
+---
+
+### 🟡 N4 — `cachedCheckpoints` shares its list reference with callers
+
+**Where:** `HubDiagnostics.groovy:3713–3731`.
+
+```groovy
+List loadCheckpoints() {
+    if (cachedCheckpoints != null) return cachedCheckpoints  // <-- returns shared reference
+    ...
+}
+void saveCheckpoints(List checkpoints) {
+    ...
+    writeFile(CHECKPOINTS_FILE, json)
+    cachedCheckpoints = checkpoints   // <-- stores caller's reference
+}
+```
+
+This is exactly the "in-place mutation may not persist" pitfall the ARCHITECTURE.md warns about, but applied to a memory cache. Today's callers don't mutate, but a future caller writing `loadCheckpoints() << newCp` would silently corrupt the cache and skip the file write entirely.
+
+**Fix:** defensive copies on both sides:
+
+```groovy
+return new ArrayList<>(cachedCheckpoints)
+// and:
+cachedCheckpoints = new ArrayList<>(checkpoints)
+```
+
+---
+
+### ⚪ N5 — Missing aggregator-rationale comments on two routes
+
+**Where:** `HubDiagnostics.groovy:615` (`apiCode`) and `:677` (`apiPerformance`).
+
+The mappings reorganization at `:275–325` added one-line rationale comments above `apiDashboard`, `apiDevices`, `apiApps`, `apiNetwork`, `apiHealth`, `apiHealthHistory`, `apiLive` — per ARCHITECTURE.md guidance. `apiCode` and `apiPerformance` were missed; both are aggregators (apiCode joins 5 hub endpoints; apiPerformance composes runtime stats with checkpoint-derived data).
+
+**Fix:** add a one-line comment to each, mirroring the others.
+
+---
+
+### ⚪ N6 — `getUIVersion` cache placement disagrees with #4 fix description
+
+**Where:** `HubDiagnostics.groovy:576–593` (impl), `:4435` (cache write), and the Phase R-4 Pack 1 description in this doc which says "cache `uiVer` in `state` after a successful sync".
+
+Actual implementation uses `@Field static volatile String uiVersionCache`. Volatile fields are wiped on JVM reload; `state` survives. After a hub reboot, the first `serveUI` call still does a FileManager read to re-populate the cache.
+
+**Fix:** either move to `state.cachedUIVersion` to match the doc, or update the doc to say "session-scoped cache; one FileManager read per JVM start." The latter is probably the right call — reading FileManager once per restart is fine, and `state` writes have their own cost.
+
+---
+
+### ⚪ N7 — `_perfInFlight` guard is tab-local
+
+**Where:** `hub_diagnostics_ui.html:1648-1649`.
+
+```javascript
+let _perfInFlight=false;
+async function rPerf(){if(_perfInFlight)return;_perfInFlight=true; ...}
+```
+
+Good defensive pattern but only applied to one tab. If a user double-clicks a tab fast or the auto-refresh races a manual click, multiple parallel `api(ep)` calls land for other tabs (Devices, Apps, Network, Health). The 120s `api()` cache helps but doesn't dedupe in-flight requests that started simultaneously (cache miss → both proceed to `fetch()`).
+
+**Fix:** lift dedupe into `api()` itself with a per-endpoint in-flight `Promise` registry:
+
+```javascript
+const inFlight = {};
+async function api(ep){
+  if(WORKBENCH && MOCK_DATA[ep]) return MOCK_DATA[ep];
+  if(REPORT&&REPORT[ep]) return REPORT[ep];
+  const hit = cache[ep]; if(hit && Date.now()-hit.ts<CACHE_TTL_MS) return hit.d;
+  if(inFlight[ep]) return inFlight[ep];
+  inFlight[ep] = (async()=>{
+    try {
+      const r = await fetch(B+'/api/'+ep+(ep.includes('?')?'&':'?')+'access_token='+T);
+      if(!r.ok) throw new Error('API '+r.status);
+      const d = await r.json();
+      cache[ep] = {d, ts:Date.now()};
+      return d;
+    } finally { delete inFlight[ep]; }
+  })();
+  return inFlight[ep];
+}
+```
+
+One change covers all tabs and `_perfInFlight` becomes redundant.
+
+---
+
+### ⚪ N8 — Version drift in WIP
+
+**Where:** `HubDiagnostics.groovy:17` (`APP_VERSION = "5.29.0"`) vs `hub_diagnostics_ui.html:135` (`UI_VERSION = "5.28.0"`).
+
+Per the user's own memory rule "Version bump both files together." Bump UI to 5.29.0 before commit. Trivial.
+
+---
+
 ## Prioritized fix plan
 
 ### Phase R-1 — Critical bug fixes (S, ~30 min) — ✅ shipped v5.13.1 (`c462801`)
@@ -602,6 +805,36 @@ Priority order:
 - [ ] **C9** — Validate multi-day cron behavior; switch to self-rescheduling `runIn` for `snapshotInterval > 1`. (30 min)
 - [ ] **C4** — Thread pre-fetched appsList through `apiGenerateReport` shared map. (45 min, lower urgency — report generation is user-triggered and infrequent)
 - [ ] **C10** — Route `autoEnableOAuth()` HTTP calls through `hubRequest`/`hubMapRequest` for retry-on-transient coverage. (20 min, lowest priority — first-install-only path)
+
+### Phase R-9 — Round-6 pack (ordered by leverage)
+
+Recommended order — first six are ~2-3h of work and clear one critical and three meaningful items:
+
+- [ ] **N1** — Add the 5 new caches to the `updated()` clear list. (5 min)
+- [ ] **C1** — Guard `createSnapshot()` result in `apiSnapshotDiff(newer=now)`. (15 min)
+- [ ] **N4** — Defensive copy in `loadCheckpoints`/`saveCheckpoints`. (10 min)
+- [ ] **C2** — Add `logsOff` auto-disable: `runIn(1800, 'logsOff')` in `updated()` when `debugLogging` is true. (10 min)
+- [ ] **C5** — Extract `buildThresholdAlerts()` to deduplicate `getStructuredAlerts` ↔ `analyzeSystemHealth`. (30 min)
+- [ ] **C3** — Cache `generateQuickSummary()` result in `state` for 60s OR cut to zero-HTTP. (30 min)
+- [ ] **N5** — Add aggregator-rationale comments to `apiCode` and `apiPerformance`. (5 min)
+- [ ] **N8** — Bump `UI_VERSION` to match `APP_VERSION` before commit. (1 min — gating any commit)
+- [ ] **N7** — Lift in-flight dedupe into `api()` in the SPA; remove `_perfInFlight`. (15 min)
+- [ ] **C7** — Add `@CompileStatic` to pure-computation cluster. (15 min)
+- [ ] **C6** — Type `readFile()` return as `Object`; replace `def` locals. (15 min)
+- [ ] **C8** — Add 60s state cache to `fetchHubMessages()`. (15 min)
+- [ ] **N6** — Reconcile `getUIVersion` cache placement vs doc description (likely update doc). (10 min)
+- [ ] **N2 + N3** — Design pass: pick one of the three N2 options and refactor the cache pattern. Resolves N3 if option 2 is picked. (1-2 h, design first)
+- [ ] **C9** — Validate multi-day cron behavior; switch to self-rescheduling `runIn` for `snapshotInterval > 1`. (30 min)
+- [ ] **C4** — Thread pre-fetched appsList through `apiGenerateReport` shared map. (45 min)
+- [ ] **C10** — Route `autoEnableOAuth()` HTTP calls through `hubRequest`/`hubMapRequest`. (20 min)
+
+Higher-effort/architectural items remain on their own track:
+
+- **C11** (🟠) — fragile regex parsing of internal Hubitat HTML. No clean fix without an upstream contract.
+- **C12** (🟠) — audit `fullJson` heap pressure. Real-world failure mode; needs concurrency-cap rethink.
+- **C13** (🟡) — `buildForumMarkdown` (290 lines) and `buildCrossReference` complexity.
+- **C15** (🟡) — `lastAuditResult` heap retention.
+- **C14** (⚪) — `APP_VERSION`/`UI_VERSION` drift risk; partly addressed each release by N8 discipline.
 
 ### Deferred (documented, not in any pack)
 

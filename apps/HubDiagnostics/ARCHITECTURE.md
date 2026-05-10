@@ -4,6 +4,8 @@ This document is the contributor-facing architecture guide for Hub Diagnostics.
 
 Use it to make feature additions that reinforce the current design instead of eroding it. It is intentionally prescriptive. `README.md` explains what the app does. `CODE_REVIEW.md` records review findings and accepted tradeoffs. This file defines how future changes should be built.
 
+> **Read first:** [`/ARCHITECTURE.md`](../../ARCHITECTURE.md) — repo-wide Hubitat development principles and platform constraints (sandbox restrictions, `state` semantics, async-call ceiling, static typing, date handling, generic API endpoint design, app/UI version sync, fail-soft defaults). This guide assumes that document and adds Hub Diagnostics specifics on top.
+
 ## Purpose
 
 Hub Diagnostics is a Hubitat app plus a single-file SPA:
@@ -45,9 +47,7 @@ The UI should render API data, not become a second backend.
 
 ## API Endpoint Boundaries
 
-Every `/api/*` route must justify its place in the Groovy layer. The boundary is not "Groovy vs browser" — it is **app-owned logic vs direct hub data**.
-
-### What the Groovy layer owns
+The repo-wide guide defines the three endpoint categories — *app-owned*, *aggregator*, and *pure passthrough* — and the rule that pure-passthrough routes should not exist. The notes below are Hub Diagnostics specifics on top of that rule.
 
 The Groovy app acts as an application server for the SPA, providing four things the browser cannot get from raw hub endpoints:
 
@@ -56,21 +56,13 @@ The Groovy app acts as an application server for the SPA, providing four things 
 3. **Aggregation** — collapsing multiple hub requests into narrower UI-facing payloads, with shared-cache and fail-soft semantics centralized.
 4. **Normalization** — stable field names, payload shape, date-to-epoch conversion, firmware/version compatibility.
 
-### Three endpoint categories
-
-Every route fits into one of these:
-
-- **App-owned** — exposes app state, performs a write, runs long orchestration, or composes data only the app can produce. Most routes are here. These must stay Groovy.
-- **Aggregator** — fetches multiple hub resources, normalizes them, and serves a UI-specific contract. Justified by shared-cache, fail-soft behavior, and normalization the SPA should not duplicate. Examples: `/api/dashboard`, `/api/health`, `/api/live`.
-- **Pure passthrough** — a thin wrapper over a single hub endpoint, with no aggregation, normalization, or app state. **This category should be empty.** A passthrough route earns no architectural benefit and is the only realistic candidate for direct browser fetch under a future admin-session UI.
-
-If a new route would be a pure passthrough, do not add it. Fold it into an existing aggregator, add real normalization, or leave the data for the browser to fetch directly when an admin-session mode exists.
+Most Hub Diagnostics routes are app-owned. The notable aggregators are `/api/dashboard`, `/api/health`, and `/api/live`; they are justified by shared-cache, fail-soft behavior, and normalization the SPA should not duplicate.
 
 The `mappings { }` block in `HubDiagnostics.groovy` is grouped by category. Place new routes in the matching section.
 
 ## Contributor Prerequisites
 
-Read this section before writing any code. These are not style preferences — they are platform constraints and structural facts that will cause silent failures or lost work if ignored.
+Read this section — and the platform constraints in the repo-wide guide — before writing any code. These are not style preferences; they are facts that will cause silent failures or lost work if ignored.
 
 ### Test script structure
 
@@ -80,17 +72,9 @@ Read this section before writing any code. These are not style preferences — t
 
 The SPA (`hub_diagnostics_ui.html`) is deployed to the hub's File Manager. Editing the local file has no effect on the running app until it is uploaded. Use the `/hubitat-filemanager upload` skill to push changes. The Groovy app's `/ui.html` endpoint reads the uploaded file from File Manager, injects runtime values like the access token and API base, and serves the resulting HTML directly.
 
-### Hubitat sandbox constraints
-
-Several standard Groovy and Java patterns are blocked or behave differently inside the Hubitat sandbox:
-
-- **`value.getClass()` is sandbox-blocked.** Use the global `getObjectClassName(value)` instead to get a runtime class name string.
-
-- **`state` in-place mutation may not persist.** Writing `state.myList << item` is not reliably detected as a change by the platform. Always use explicit reassignment: `state.myList = modifiedList`.
-
-- **Pushing source does not trigger `updated()`.** Updated Groovy takes effect immediately (the platform interprets it on the fly), but `updated()` and `initialize()` are not called. Subscriptions and `state` from the previous code version persist until the user re-saves the app's preferences in the hub UI.
-
 ## Required Patterns
+
+The repo-wide guide already covers backend-owns-normalization, date handling, state/cache invalidation, and app/UI version sync. The patterns below are Hub Diagnostics specifics.
 
 ### 1. All hub HTTP calls go through the request wrappers
 
@@ -110,13 +94,7 @@ if (!(raw instanceof List)) return []
 List items = (List) raw
 ```
 
-New fetch helpers must fail closed unless there is a strong reason not to:
-
-- map-shaped failures should degrade to `null` or `{}` through the normalized wrapper path
-- list-shaped failures should degrade to `[]`
-- text fetch failures should degrade to `null`
-
-The goal is partial UI degradation, not endpoint collapse.
+New fetch helpers must follow the repo-wide fail-soft defaults — map-shaped failures degrade to `null`/`{}`, list-shaped failures degrade to `[]`, text-fetch failures degrade to `null` — so the UI degrades partially instead of the endpoint collapsing.
 
 ### 2. Request-scoped shared data must stay shared
 
@@ -158,30 +136,7 @@ Any new fetch added to any of these must satisfy all of the following:
 
 If a new data source is unstable, expensive, or poorly understood, keep it out of shared alert generation and out of live-refresh paths.
 
-### 4. Backend owns normalization
-
-Normalize raw Hubitat payloads in Groovy whenever practical.
-
-Examples of backend-owned work:
-
-- mapping raw endpoint responses into stable field names
-- converting response shapes into UI-friendly maps/lists
-- computing labels, classifications, and derived status
-- handling firmware/version compatibility differences
-- shaping dates or timestamps into safe fields for the UI
-
-The SPA should not be the place that learns hub payload quirks. If a field needs parsing or interpretation, prefer doing it once in Groovy.
-
-**Date handling:** Hub endpoints return ISO 8601 strings with numeric timezone offsets (e.g., `"2026-05-05T23:07:43.088-0400"`). This format is not consistently parsed by `new Date()` in all browsers — Safari/WebKit in particular fails silently or returns `Invalid Date`. Always convert timestamps to epoch milliseconds in Groovy before including them in API responses. In the SPA, format with `new Date(ts).toLocaleString()`.
-
-```groovy
-long ts = 0
-try { ts = Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", (String) raw.date).time } catch (Exception ignored) {}
-```
-
-Never pass a raw ISO offset date string through to the SPA as a string field intended for display.
-
-### 5. Reuse existing UI primitives
+### 4. Reuse existing UI primitives
 
 New UI should use the existing card, metric, badge, and table helpers unless there is a real reason not to.
 
@@ -198,57 +153,21 @@ Small visual duplication is acceptable. Structural duplication of logic is not.
 
 **Variable shadowing in `tbl()` renderers:** The global `h()` function (HTML escaping) is used inside column renderer callbacks. Avoid naming any arrow-function parameter `h` in the same scope — the shadowing is silent and will produce unescaped output or incorrect behavior. `.then(h => {...})` is a common offender. Use `hist`, `data`, `resp`, or any other name.
 
-### 6. `state` requires an invalidation story
-
-Use persistent `state` only for data that should survive app reloads or is intentionally durable across requests.
-
-Use volatile/static in-memory fields only when loss on JVM reload is acceptable.
-
-Avoid storing cached data in state when it is readily available from the hub in a single fetch; use volatile/static in-memory fields instead.
-
-Before adding a new cache, define:
-
-- what is cached
-- when it expires
-- what event clears it
-- whether loss on reboot is acceptable
-
-If you cannot explain invalidation in one or two sentences, the cache design is not ready.
-
-### 7. Versioned app and UI changes stay in sync
-
-The app and SPA are version-coupled by design.
-
-If a change alters the API/UI contract or UI behavior:
-
-- bump `APP_VERSION`
-- bump `UI_VERSION`
-- preserve the current sync assumptions
-
-Do not add new UI-visible API fields and forget the version-sync model.
-
 ## Patterns To Avoid
 
-Avoid these unless there is a deliberate, documented exception:
+In addition to the repo-wide patterns-to-avoid list, these are Hub Diagnostics specifics:
 
-- raw `httpGet` calls in feature logic
-- new endpoint-specific error contracts when wrappers already define the norm
+- raw `httpGet` calls in feature logic when a wrapper covers the case
+- new endpoint-specific error contracts when the wrappers already define the norm
 - duplicate fetches of the same endpoint within a request path
-- adding a Groovy `/api/*` route that is a pure passthrough over one hub endpoint, with no aggregation, normalization, or app state
 - adding experimental or expensive fetches to `getStructuredAlerts()` or `apiLive()`
 - pushing backend parsing and compatibility logic into the SPA
-- passing raw ISO offset date strings through to the SPA
 - one-off tables when `tbl()` is sufficient
-- persistent caches with no clear invalidation
 - "cleanup" refactors that ignore Hubitat platform constraints already accepted by the project
 
 ## Accepted Architectural Tradeoffs
 
 These are deliberate tradeoffs, not accidental debt to "fix" blindly:
-
-### Hubitat libraries are not real modularity here
-
-Do not assume moving code into Hubitat libraries creates clean module boundaries. On this platform, that does not provide the kind of architectural separation it would in a normal application.
 
 ### Some large methods are acceptable
 
@@ -261,10 +180,6 @@ The device audit path is allowed to do heavier work because it is explicitly use
 ### Some UI/report duplication is tolerated
 
 There is known duplication between the SPA and the audit report rendering. That is an accepted compromise under current platform constraints. Do not expand that duplication casually, but do not destabilize working code for purity alone.
-
-### Fail-soft behavior is preferred
-
-For diagnostics, partial data is usually better than a hard endpoint failure. Preserve the existing preference for returning incomplete-but-usable payloads over brittle strictness.
 
 ## What Counts As Architecture Regression
 
@@ -286,7 +201,7 @@ When adding a feature, decide where it belongs before writing code.
 
 ### Add a new `/api/*` endpoint
 
-Before adding a route, decide which category it belongs to (see *API Endpoint Boundaries*):
+Before adding a route, decide which category it belongs to (see *API Endpoint Boundaries* above and the repo-wide guide):
 
 1. Does it own state, perform a write, or run orchestration? → app-owned. Add to the matching section in `mappings { }`.
 2. Does it fetch and join multiple hub resources, or normalize a single hub payload the SPA should not learn? → aggregator. Add to the aggregator section in `mappings { }` and a one-line rationale comment on the action method explaining what the SPA cannot do directly.
@@ -346,7 +261,7 @@ Before pushing a feature, answer these:
 - Is the UI reusing `tbl()`, existing cards, and existing badge/metric patterns?
 - If `tbl()` is used on potentially unbounded data, has the row-cap question been discussed?
 - Does any new cache have explicit expiration and invalidation behavior?
-- If API/UI contract changed, were both versions updated appropriately?
+- If API/UI contract changed, were both `APP_VERSION` and `UI_VERSION` updated?
 - Did `tests/test-hub-diagnostics-api.sh` gain or update coverage where needed?
 - Would this change still behave acceptably if the new endpoint timed out, returned an empty payload, or changed shape slightly?
 
@@ -354,8 +269,9 @@ If any answer is "no" or "not sure," the design should be revisited before merge
 
 ## Relationship To Other Docs
 
+- [`/ARCHITECTURE.md`](../../ARCHITECTURE.md): repo-wide Hubitat development principles and platform constraints
 - `README.md`: user-facing behavior, installation, features, and REST API overview
 - `CODE_REVIEW.md`: review findings, debt ledger, and rationale for accepted tradeoffs
-- `ARCHITECTURE.md`: contributor rules for safely extending the system
+- `ARCHITECTURE.md` (this file): contributor rules for safely extending Hub Diagnostics
 
-Keep all three aligned, but do not collapse them into one document.
+Keep all four aligned, but do not collapse them into one document.
