@@ -4,41 +4,36 @@ This document captures architectural principles and platform constraints that ap
 
 Treat this guide as the default. Project-level guides may extend specific sections, but the platform constraints below are not negotiable: violating them produces silent failures or lost work.
 
-## Hubitat Platform Constraints
+The guide is organized in three parts: **Common** principles that apply to anything built for Hubitat, then **Apps**-specific guidance, then **Drivers**-specific guidance. A companion file [`ARCHITECTURE_CANDIDATES.md`](ARCHITECTURE_CANDIDATES.md) holds lower-priority observations from the codebase review, kept aside for later reconsideration.
 
-These are facts about the platform, not style preferences. Code that ignores them fails in subtle, hard-to-debug ways.
+**Hubitat platform reference.** Platform mechanics — lifecycle methods, capabilities, app and driver metadata, OAuth, Zigbee helpers, etc. — are covered authoritatively at <https://docs2.hubitat.com/en/developer>. This guide does not duplicate that material. It focuses on project-specific conventions, workarounds for platform quirks, and failure modes that are easy to miss.
 
-### Sandbox restrictions
+## Common
+
+### Platform constraints
 
 Several standard Groovy and Java patterns are blocked or behave differently in the Hubitat sandbox.
 
 - **`value.getClass()` is sandbox-blocked.** Use the global `getObjectClassName(value)` instead to get a runtime class name string.
-
 - **In-place mutation of `state` may not persist.** Writing `state.myList << item` is not reliably detected as a change by the platform. Always use explicit reassignment: `state.myList = modifiedList`.
-
-- **Pushing source code does not trigger `updated()`.** Updated Groovy takes effect immediately — the platform interprets it on the fly — but `updated()` and `initialize()` are not called. Subscriptions and `state` from the previous code version persist until the user re-saves the app's preferences in the hub UI.
+- **Pushing source code does not trigger `updated()`.** Updated Groovy takes effect immediately, but `updated()` and `initialize()` are not called. Subscriptions and `state` from the previous version persist until the user re-saves the app's preferences in the hub UI. See *Version constants and code-push detection* below for the workaround.
+- **`sendEvent()` deduplicates silently.** If the value hasn't changed and `isStateChange` is not set to `true`, the event is filtered out and not fired. Set `isStateChange: true` explicitly when an event must fire even with an unchanged value (button presses, repeated identical commands, forced state ticks).
+- **Concurrent async HTTP calls are capped at 8 per app.** Code that fans out one request per device will silently lose calls at scale. Prefer batched or aggregated endpoints, or serialize work behind a small worker pool.
 
 ### `state` vs `atomicState`
 
-`state` is committed to the database when the method exits, not on each write. `atomicState` commits immediately on each write. Pick the one that matches the access pattern: prefer `state` for the common case, `atomicState` only when a method may be preempted or when concurrent writers race.
+`state` is committed to the database when the method exits, not on each write. `atomicState` commits immediately on each write.
 
-### `sendEvent()` deduplicates silently
-
-If the value hasn't changed and `isStateChange` is not set to `true`, the event is filtered out and not fired. Do not rely on `sendEvent()` to "tick the state forward" — set `isStateChange: true` explicitly when an event must fire even with an unchanged value.
-
-### Async HTTP call ceiling
-
-The platform caps concurrent async HTTP calls at 8 per app. Code that fans out one request per device will silently lose calls at scale. Prefer batched or aggregated endpoints, or serialize work behind a small worker pool.
+- Default to `state` for the common case.
+- Use `atomicState` for fields written from async callbacks, WebSocket handlers, or anywhere the surrounding method has likely already exited (intentional-disconnect flags, scan-orchestration counters, log counters). Otherwise the writes can vanish.
 
 ### Hubitat libraries are not real modularity
 
-Moving Groovy code into Hubitat libraries does not provide the architectural separation it would in a normal application. Library code shares the host app's namespace, lifecycle, and sandbox. Treat libraries as include files for code reuse, not as modules with enforced boundaries.
+Moving Groovy code into Hubitat libraries does not provide architectural separation. Library code shares the host's namespace, lifecycle, and sandbox. Treat libraries as include files for code reuse, not as modules with enforced boundaries.
 
-## Coding Conventions
+### Coding conventions
 
-### Static typing
-
-Use explicit types for return values, parameters, and local variables. Avoid `def`.
+**Static typing.** Use explicit types for return values, parameters, and local variables. Avoid `def`.
 
 ```groovy
 void refresh() { ... }
@@ -46,18 +41,61 @@ String formatLabel(int id, String prefix) { ... }
 Map jsonData = parseJson(raw)
 ```
 
-Two exceptions:
+Two exceptions: Hubitat callback parameters (`evt`, `resp`, `data`) stay untyped per platform convention; genuinely polymorphic values (e.g. `aValue` passed straight to `sendEvent`) stay untyped. Don't use `Object` as a substitute for `def` — it adds no value.
 
-- Hubitat async callback parameters (`resp`, `data`) stay untyped — platform convention.
-- Genuinely polymorphic values (for example, `aValue` passed straight to `sendEvent`) stay untyped. Don't use `Object` as a substitute for `def`; it adds no value.
+**Constants and pure computation.** Declare constants with `@Field static final` — top-level Groovy fields aren't usable as constants in the sandbox. Use `@CompileStatic` on pure computation methods that don't access Hubitat dynamic properties (`settings`, `state`, `device`, etc.).
 
-Use `@CompileStatic` on pure computation methods that do not access Hubitat dynamic properties (`settings`, `state`, `device`, etc.).
+**Capabilities.** Use current capabilities, not deprecated ones. For example, prefer `capability "Refresh"` over the deprecated `capability "Polling"` for pollable devices.
 
-### Capabilities
+### Lifecycle skeleton
 
-Use current capabilities, not deprecated ones. For example, prefer `capability "Refresh"` over the deprecated `capability "Polling"` for pollable devices.
+The standard lifecycle methods (`installed`, `updated`, `uninstalled`, `initialize`) are platform-defined; two project conventions matter on top:
 
-## Date Handling
+- **`initialize()` is the convergence point.** Both the install path and the preferences-saved path route through it, so subscriptions, schedules, and version checks live there exactly once.
+- **`updated()` resets before reinitializing** — `unsubscribe(); unschedule(); initialize()` (drivers omit `unsubscribe()`). Skipping `unschedule()` produces orphan timers from prior preference saves: every `runIn`/`schedule` from the previous configuration keeps firing alongside the new ones.
+
+### Version constants and code-push detection
+
+Because pushing source code does not trigger `updated()`, code-aware reconfigure is up to the file itself. The idiom: declare a version constant, and on every entry into a known-reachable lifecycle path, compare it against `state.version` and run any necessary reconfigure.
+
+```groovy
+@Field static final String DRIVER_VERSION = "1.2.0"
+
+void initialize() {
+    if (state.version != DRIVER_VERSION) {
+        log.warn "New version: ${DRIVER_VERSION} (was: ${state.version})"
+        state.version = DRIVER_VERSION
+        // run reconfigure if needed
+    }
+    ...
+}
+```
+
+For Zigbee drivers, place the check in `parse()` instead, so the device auto-reconfigures on the first event after a code push (the user doesn't have to re-save preferences). Trigger the reconfigure via `runInMillis` so it doesn't run inline with parsing.
+
+### Logging discipline
+
+Every app and driver should expose three boolean preferences and a small set of gated helpers.
+
+```groovy
+input name: "txtEnable",   type: "bool", title: "Enable descriptionText logging", defaultValue: true
+input name: "debugEnable", type: "bool", title: "Enable debug logging",           defaultValue: false, submitOnChange: true
+if (debugEnable) {
+    input name: "traceEnable", type: "bool", title: "Enable trace logging",       defaultValue: false
+}
+```
+
+Implement private `logTrace`/`logDebug`/`logInfo`/`logWarn`/`logError` that check the corresponding preference and prefix `${device}` (drivers) or `${app.label}` (apps).
+
+Auto-disable debug and trace after about 30 minutes:
+
+```groovy
+if (debugEnable) runIn(1800, "logsOff")
+```
+
+The `logsOff` handler clears the flags via `device.updateSetting` / `app.updateSetting`.
+
+### Date handling
 
 Hubitat hub endpoints return ISO 8601 strings with numeric timezone offsets, e.g. `"2026-05-05T23:07:43.088-0400"`. This format is **not consistently parsed by `new Date()` in browsers** — Safari/WebKit in particular fails silently or returns `Invalid Date`.
 
@@ -68,15 +106,11 @@ long ts = 0
 try { ts = Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", (String) raw.date).time } catch (Exception ignored) {}
 ```
 
-In a SPA or other consumer, format with `new Date(ts).toLocaleString()`.
+In a SPA or other consumer, format with `new Date(ts).toLocaleString()`. Never pass a raw ISO offset date string through to a UI as a display field.
 
-Never pass a raw ISO offset date string through to a UI as a string field intended for display.
+### State and caching discipline
 
-## State and Caching Discipline
-
-Use persistent `state` only for data that should survive app reloads or is intentionally durable across requests. Use volatile or static in-memory fields when loss on JVM reload is acceptable.
-
-Avoid storing cached data in `state` when it is readily available from the hub in a single fetch — use volatile or static in-memory fields instead.
+Use persistent `state` only for data that should survive app reloads or is intentionally durable across requests. Use volatile or static in-memory fields when loss on JVM reload is acceptable. Avoid storing in `state` cache data that is readily available from the hub in a single fetch.
 
 Before adding a new cache, define:
 
@@ -87,38 +121,33 @@ Before adding a new cache, define:
 
 If you cannot explain invalidation in one or two sentences, the cache design is not ready.
 
-## Backend Owns Normalization
+### Backend owns normalization
 
-When a Groovy app exposes data to a UI, mobile client, or external consumer, normalize raw Hubitat payloads in Groovy whenever practical. Backend-owned work includes:
+When a Groovy app exposes data to a UI, mobile client, or external consumer, normalize raw Hubitat payloads in Groovy whenever practical: stable field names, consumer-friendly maps and lists, computed labels and classifications, firmware-difference handling, dates shaped into safe fields. The consumer should not be the place that learns hub payload quirks.
 
-- mapping raw endpoint responses into stable field names
-- converting response shapes into consumer-friendly maps and lists
-- computing labels, classifications, and derived status
-- handling firmware/version compatibility differences
-- shaping dates and timestamps into safe fields for the consumer
+### Random jitter on recurring schedules
 
-The consumer should not be the place that learns hub payload quirks. If a field needs parsing or interpretation, do it once in Groovy.
+For cloud or external-API polling, randomize the cron offset to avoid synchronized stampedes across hubs and across schedule restarts.
 
-## API Endpoint Design
+```groovy
+Random rng = new Random()
+String cron = "${rng.nextInt(60)} */${rate} * ? * *"
+schedule(cron, "refresh")
+```
 
-Apps that expose `/api/*` routes (typically OAuth-mounted) should classify each route into one of three categories:
+For sub-minute jitter on `runIn`, use `delay = intervalSecs - 7 + new Random().nextInt(15)`.
 
-- **App-owned** — exposes app state, performs a write, runs long orchestration, or composes data only the app can produce. Always justified.
-- **Aggregator** — fetches multiple hub resources, normalizes them, and serves a consumer-specific contract. Justified by aggregation, normalization, or shared-cache and fail-soft behavior the consumer should not duplicate.
-- **Pure passthrough** — a thin wrapper over a single hub endpoint with no aggregation, normalization, or app state. **This category should be empty.** A passthrough route earns no architectural benefit; the consumer can fetch the hub directly under an admin session.
+### Async HTTP callback contract
 
-If a new route would be a pure passthrough, do not add it. Fold it into an existing aggregator, add real normalization, or leave the data for the consumer to fetch directly.
+The async-HTTP API (`asynchttpGet`/`Put`/`Post`) is platform-standard. The project convention is that every callback runs three checks in order before reading the response body:
 
-## App and UI Version Sync
+1. `resp.hasError()` — log and return.
+2. `resp.getStatus() == 200` (or `207` if applicable) — log and return otherwise.
+3. Then read `resp.data`/`resp.json`/etc., with a `try`/`catch` around any JSON parsing.
 
-When a Groovy app is paired with a UI artifact (single-page app, dashboard tile, file-manager HTML), the two are version-coupled by design. Any change that alters the API/UI contract or UI behavior must:
+Pass per-request context (URL, retry count, identifying ID) through the `extraData` argument; it arrives as `data` on the callback.
 
-- bump the app's `APP_VERSION` constant
-- bump the UI's `UI_VERSION` constant
-
-Do not add new UI-visible API fields and forget the version-sync model.
-
-## Fail-Soft Defaults
+### Fail-soft defaults
 
 For monitoring, diagnostics, and dashboard-style apps, partial data is usually better than a hard endpoint failure. Prefer returning incomplete-but-usable payloads over brittle strictness:
 
@@ -126,7 +155,104 @@ For monitoring, diagnostics, and dashboard-style apps, partial data is usually b
 - list-shaped failures should degrade to `[]`
 - text-fetch failures should degrade to `null`
 
-The goal is partial UI degradation, not endpoint collapse. This default does not apply to writes or destructive actions, which should fail loudly.
+This default does not apply to writes or destructive actions, which should fail loudly.
+
+## Apps
+
+### App lifecycle and subscriptions
+
+Apps follow the common lifecycle skeleton. When post-reboot recovery matters (re-evaluating switch state, re-establishing connections, refreshing devices), subscribe to the system start event:
+
+```groovy
+subscribe(location, "systemStart", "systemStartHandler")
+```
+
+The handler typically refreshes devices and re-evaluates the app's monitored conditions.
+
+### OAuth-served HTTP endpoints
+
+App-served UIs and programmatic APIs use Hubitat's per-app OAuth path (`oauth: true` + `mappings { }` + `createAccessToken()`). The architectural property that matters: endpoints reachable via `${getFullLocalApiServerUrl()}/...?access_token=${state.accessToken}` work without an active hub admin session — that is what makes app-served UIs viable for users.
+
+The `/hubitat-oauth` skill in this repo enables OAuth on a Groovy app without manual hub UI steps.
+
+### API endpoint design
+
+Apps that expose `/api/*` routes should classify each route into one of three categories:
+
+- **App-owned** — exposes app state, performs a write, runs orchestration, or composes data only the app can produce. Always justified.
+- **Aggregator** — fetches multiple hub resources, normalizes them, and serves a consumer-specific contract. Justified by aggregation, normalization, or shared-cache and fail-soft behavior the consumer should not duplicate.
+- **Pure passthrough** — a thin wrapper over a single hub endpoint with no aggregation, normalization, or app state. **This category should be empty.** A passthrough route earns no architectural benefit; the consumer can fetch the hub directly under an admin session.
+
+If a new route would be a pure passthrough, do not add it. Fold it into an aggregator, add real normalization, or leave the data for the consumer to fetch directly.
+
+### App and UI version sync
+
+When a Groovy app is paired with a UI artifact (single-page app, dashboard tile, file-manager HTML), the two are version-coupled by design. Any change that alters the API/UI contract or UI behavior must:
+
+- bump the app's `APP_VERSION` constant
+- bump the UI's `UI_VERSION` constant
+
+### Settings migration
+
+Hub settings persist across code pushes — left-behind settings don't disappear on their own. When changing a settings schema:
+
+1. Detect the prior schema by setting presence (e.g. `if (settings.oldField != null)`).
+2. Write the new shape with `app.updateSetting(name, [type:..., value:...])`.
+3. Remove the old shape with `app.removeSetting(name)`.
+4. Clean obsolete state via `state.remove(...)`.
+
+Run migration once, idempotently, at the top of `initialize()`.
+
+The platform doesn't support nested-Map settings, so multi-instance apps typically encode per-instance fields with prefixed names (e.g. `group${N}.fieldName`) and access them via small accessor helpers.
+
+### Parent/child patterns
+
+The mechanics of nested apps (`app(...)` declaration, `parent: "ns:Name"`) and child devices (`addChildDevice`, `getChildDevices`, `deleteChildDevice`) are platform-standard. The project conventions on top:
+
+- **DNI prefix scheme.** Every parent uses a stable DNI prefix (e.g. `visiblair-${uuid}`) so children are identifiable at a glance and won't collide with hand-created devices.
+- **Push from parent, callback from child.** Parents push data via custom child methods (`child.updateSensorData(map)`); children call back via custom parent methods (`parent.refreshSensor(dni)`, `parent.sendFirmwareCommand(uuid, cmd)`). Avoid raw `state` sharing across the boundary.
+- **Orphan tracking, explicit user action.** When the parent's source-of-truth changes (a sensor unenrolls upstream, etc.), diff the active DNI `Set` against `getChildDevices()` and surface orphans for the user to remove explicitly. Don't auto-delete child devices — they may carry user-edited labels, dashboard pins, or rule references.
+
+## Drivers
+
+### Driver lifecycle
+
+The platform defines what `configure()`, `initialize()`, `refresh()`, and `deviceTypeUpdated()` mean. Two project-specific rules:
+
+- **`initialize()` should `refresh()`, not `configure()`.** It runs on every hub startup. Reconfiguring on each restart wastes Zigbee bandwidth and can race with other devices joining the mesh.
+- **`deviceTypeUpdated()` should warn and reconfigure.** The convention is `logWarn "driver change detected"; configure()`, so that switching a device's driver type re-applies device-side reporting and defaults.
+
+### Zigbee parse skeleton
+
+`parse(String description)` and `zigbee.parseDescriptionAsMap` are platform-standard. The project shape on top:
+
+1. Outer dispatch on five paths: attribute report (`descMap.attrId != null`), ZDO command (`profileId == "0000"`), ZHA global command (`profileId == "0104"` with no `attrId`), enroll request, and zone status/report. Log unhandled cases at trace level — silent dropping makes new device behavior invisible.
+2. Inside the attribute-report path, **always iterate `descMap.additionalAttrs`** alongside the primary report. Zigbee batches related reports, and dropping them produces silent partial updates.
+3. Delegate per-cluster work to a `parseAttributeReport(descMap)` helper that outer-switches on `cluster`/`clusterInt`, inner-switches on `attrId`/`attrInt`, builds a `[name, value, unit, descriptionText, type]` map, and returns `createEvent(map)`.
+
+### Zigbee command building
+
+Build a `List<String> cmds`, accumulate with the `zigbee.*` helpers, then dispatch with a small wrapper:
+
+```groovy
+private void sendZigbeeCommands(List cmds) {
+    hubitat.device.HubMultiAction hubAction =
+        new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE)
+    sendHubCommand(hubAction)
+}
+```
+
+Manufacturer-specific clusters require `[mfgCode: '0xNNNN']` as the trailing parameter to `writeAttribute` / `readAttribute` / `configureReporting`. Easy to forget; silent failure when omitted.
+
+### Bidirectional setting↔event sync
+
+When a device reports a state change for a value that is also exposed as a preference (display mode, LED color, lockout state, control mode), call `device.updateSetting('prefName', [value:..., type:...])` from the parser to keep the preferences UI consistent with the device. Without this, the UI silently drifts from reality.
+
+### `device.updateDataValue` for device metadata
+
+Use `device.updateDataValue("key", "value")` for non-state metadata that should survive driver swaps and be visible in the device edit page: firmware version, MAC, UUID, runtime-discovered capability flags. Read with `device.getDataValue("key")`.
+
+This is distinct from `state` (driver-instance scoped, not visible in the device edit page) and from attributes (event-bearing, dashboard-visible).
 
 ## Patterns To Avoid
 
@@ -140,6 +266,11 @@ Avoid these unless there is a deliberate, documented exception:
 - pure-passthrough `/api/*` routes that exist only to forward a hub call
 - treating Hubitat libraries as architectural module boundaries
 - per-device async fan-out that exceeds the 8-call concurrency ceiling
+- skipping `unschedule()` in `updated()` (produces orphan timers)
+- writing async-callback state with `state` instead of `atomicState`
+- treating `state` as the place for device metadata that belongs in `updateDataValue`
+- omitting `mfgCode` on manufacturer-specific Zigbee cluster operations
+- reconfiguring a Zigbee device from `initialize()` on every hub startup
 
 ## Per-Project Architecture Guides
 
