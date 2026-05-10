@@ -303,6 +303,14 @@ else:
     else:
         fail(f"Firmware '{h.get('firmware')}' != '{gt_firmware}'")
 
+    # v5.27.0+ expanded hub fields now shared via buildHubMap()
+    for field in ["hubId", "location", "mode", "timeZone"]:
+        val = h.get(field)
+        if val is not None:
+            ok(f"dashboard hub has '{field}': {val}")
+        else:
+            fail(f"dashboard hub missing '{field}' (v5.27.0+)")
+
     # Device counts
     dv = dash.get("devices", {})
     if dv.get("total") == gt_devices:
@@ -699,6 +707,29 @@ else:
             fail("backups missing 'cloud' object")
     else:
         fail("Missing 'backups' field (v5.9.0+)")
+
+    # v5.27.0+ Hub Events
+    if "events" in health:
+        ev = health["events"]
+        if isinstance(ev, list):
+            ok(f"Has 'events': {len(ev)} entries")
+            if ev:
+                first = ev[0]
+                for field in ["id", "name", "description", "ts"]:
+                    if field in first:
+                        ok(f"events[0] has '{field}' ({first[field]})")
+                    else:
+                        fail(f"events[0] missing '{field}'")
+                if "date" in first:
+                    fail("events[0] has raw 'date' string — should be 'ts' epoch ms only (v5.27.0+)")
+                if isinstance(first.get("ts"), int) and first["ts"] > 0:
+                    ok(f"events[0].ts is valid epoch ms")
+                else:
+                    fail(f"events[0].ts is not a positive int: {first.get('ts')!r}")
+        else:
+            fail("'events' is not a list")
+    else:
+        fail("Missing 'events' field (v5.27.0+)")
 
 # ── Test 7: GET /api/health/history ───────────────────────────────────
 section("GET /api/health/history")

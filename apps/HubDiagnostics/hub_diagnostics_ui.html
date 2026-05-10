@@ -132,7 +132,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.26.0";
+const UI_VERSION = "5.27.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -924,6 +924,12 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   const d=await api('dashboard');
   document.getElementById('hubInfo').textContent=d.hub.name+' | '+d.hub.hardware+' | fw '+d.hub.firmware;
   let o='';
+  // Hub Information
+  if(d.hub){o+='<div class="card"><div class="card-h">Hub Information</div><div class="card-b"><div class="ng">';
+    o+=ni('Hub Name',d.hub.name);o+=ni('Hub ID',d.hub.hubId);o+=ni('Hardware',d.hub.hardware);
+    o+=ni('Firmware',d.hub.firmware);o+=ni('IP Address',d.hub.ip);o+=ni('Zigbee ID',d.hub.zigbeeId);
+    o+=ni('Location',d.hub.location);o+=ni('Mode',d.hub.mode);o+=ni('Time Zone',d.hub.timeZone);
+    o+='</div></div></div>'}
   // Overview
   const bc=d.devices.byConnectionType||{},ic=d.devices.idsByConnectionType||{},bi=d.devices.byIntegration||{},ii=d.devices.idsByIntegration||{},is=d.devices.idsByStatus||{};
   o+='<div class="card"><div class="card-h">Overview</div><div class="card-b">';
@@ -1571,12 +1577,6 @@ async function rNetwork(){const P='p-network';loading(P);try{
 // ===== TAB: HEALTH =====
 async function rHealth(){const P='p-health';loading(P);try{
   const d=await api('health');let o='';
-  // Hub info
-  if(d.hub){o+='<div class="card"><div class="card-h">Hub Information</div><div class="card-b"><div class="ng">';
-    o+=ni('Hub Name',d.hub.name);o+=ni('Hub ID',d.hub.hubId);o+=ni('Hardware',d.hub.hardware);
-    o+=ni('Firmware',d.hub.firmware);o+=ni('IP Address',d.hub.ip);o+=ni('Zigbee ID',d.hub.zigbeeId);
-    o+=ni('Location',d.hub.location);o+=ni('Mode',d.hub.mode);o+=ni('Time Zone',d.hub.timeZone);
-    o+='</div></div></div>'}
   // Alerts
   const allAlerts=[];
   (d.alerts||[]).forEach(a=>{
@@ -1631,7 +1631,15 @@ async function rHealth(){const P='p-health';loading(P);try{
     }
     o+='</div></div>';
   }
+  // Hub Events placeholder (populated by tbl() after innerHTML is set)
+  o+='<div class="card"><div class="card-h">Hub Events</div><div class="card-b"><div id="evtTbl"></div></div></div>';
   document.getElementById(P).innerHTML=o;
+  const evBadge={systemStart:'b-ok',update:'b-builtin',manualReboot:'b-warn',deviceJoin:'b-community'};
+  tbl('evtTbl',[
+    {l:'Date',f:'ts',r:r=>h(r.ts?new Date(r.ts).toLocaleString():'')},
+    {l:'Event',f:'name',r:r=>'<span class="badge '+(evBadge[r.name]||'')+'">'+h(r.name)+'</span>'},
+    {l:'Description',f:'description'}
+  ],(d.events||[]).slice(0,25),{sc:0,sd:'desc',collapse:5,collapseLabel:'Hub Events'});
   // Fetch and render chart async
   api('health/history').then(h=>{renderChart(h.dataPoints,'memChart')}).catch(()=>{document.getElementById('memChart').innerHTML='<i style="color:var(--muted)">Unable to load history</i>'});
 }catch(e){err(P,e,rHealth)}}
