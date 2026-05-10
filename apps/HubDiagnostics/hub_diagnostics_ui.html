@@ -1634,14 +1634,12 @@ async function rHealth(){const P='p-health';loading(P);try{
   // Hub Events placeholder (populated by tbl() after innerHTML is set)
   o+='<div class="card"><div class="card-h">Hub Events</div><div class="card-b"><div id="evtTbl"></div></div></div>';
   document.getElementById(P).innerHTML=o;
-  if(d.events&&d.events.length){
-    const evBadge={systemStart:'b-ok',update:'b-builtin',manualReboot:'b-warn',deviceJoin:'b-community'};
-    tbl('evtTbl',[
-      {l:'Date',f:'ts',r:r=>h(r.ts?new Date(r.ts).toLocaleString():'')},
-      {l:'Event',f:'name',r:r=>'<span class="badge '+(evBadge[r.name]||'')+'">'+h(r.name)+'</span>'},
-      {l:'Description',f:'description'}
-    ],(d.events||[]).slice(0,25),{sc:0,sd:'desc',collapse:5,collapseLabel:'Hub Events'});
-  }
+  const evBadge={systemStart:'b-ok',update:'b-builtin',manualReboot:'b-warn',deviceJoin:'b-community'};
+  tbl('evtTbl',[
+    {l:'Date',f:'ts',r:r=>h(r.ts?new Date(r.ts).toLocaleString():'')},
+    {l:'Event',f:'name',r:r=>'<span class="badge '+(evBadge[r.name]||'')+'">'+h(r.name)+'</span>'},
+    {l:'Description',f:'description'}
+  ],(d.events||[]).slice(0,25),{sc:0,sd:'desc',collapse:5,collapseLabel:'Hub Events'});
   // Fetch and render chart async
   api('health/history').then(h=>{renderChart(h.dataPoints,'memChart')}).catch(()=>{document.getElementById('memChart').innerHTML='<i style="color:var(--muted)">Unable to load history</i>'});
 }catch(e){err(P,e,rHealth)}}
