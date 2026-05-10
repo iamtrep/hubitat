@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.26.0"
+@Field static final String APP_VERSION = "5.27.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -68,6 +68,7 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final String NETWORK_TEST_PING_GATEWAY = "/hub/networkTest/ping/gateway"
 @Field static final String NETWORK_TEST_PING_PREFIX = "/hub/networkTest/ping/"
 @Field static final String NETWORK_TEST_SPEEDTEST = "/hub/networkTest/speedtest"
+@Field static final String HUB_EVENTS_PATH = "/hub/eventsJson"
 @Field static final String MIN_FW_RADIO_HEALTH = "2.4.1.154"
 @Field static final long   FW_UPDATE_CACHE_TTL_MS = 3600_000L
 
@@ -1278,6 +1279,13 @@ Map apiClearCache() {
     return jsonResponse([success: true, cleared: cleared])
 }
 
+private Map buildHubMap(Map hubInfo, def hub) {
+    return [name: hubInfo.name, hubId: hub?.id, hardware: hubInfo.hardware,
+            firmware: hubInfo.firmware, ip: hubInfo.ip, zigbeeId: hub?.zigbeeId,
+            location: location.name, mode: location.currentMode?.toString(),
+            timeZone: location.timeZone?.ID]
+}
+
 // ===== DATA GATHERERS =====
 // Each returns a plain Map suitable for both jsonResponse() and report embedding.
 
@@ -1285,11 +1293,12 @@ Map getDashboardData(Map shared = [:]) {
     Map deviceStats = analyzeDevices(false)
     Map appStats = analyzeApps(false)
     Map hubInfo = getHubInfo(shared.hubData as Map)
+    def hub = (location.hubs && location.hubs.size() > 0) ? location.hubs[0] : null
     Map resources        = (shared.resources as Map)        ?: fetchSystemResources()
     Float temperature    = (shared.temperature as Float)    ?: fetchTemperature()
     Integer databaseSize = (shared.databaseSize as Integer) ?: fetchDatabaseSize()
     return [
-        hub: hubInfo, appVersion: APP_VERSION, uiVersion: getUIVersion(),
+        hub: buildHubMap(hubInfo, hub), appVersion: APP_VERSION, uiVersion: getUIVersion(),
         devices: [
             total: deviceStats.totalDevices, active: deviceStats.activeDevices,
             inactive: deviceStats.inactiveDevices, disabled: deviceStats.disabledDevices,
@@ -1443,17 +1452,15 @@ Map getHealthData(Map shared = [:]) {
     def hub = (location.hubs && location.hubs.size() > 0) ? location.hubs[0] : null
     Map mem = systemHealth.memory ?: [:]
     return [
-        hub: [name: hubInfo.name, hubId: hub?.id, hardware: hubInfo.hardware,
-              firmware: hubInfo.firmware, ip: hubInfo.ip, zigbeeId: hub?.zigbeeId,
-              location: location.name, mode: location.currentMode?.toString(),
-              timeZone: location.timeZone?.ID],
+        hub: buildHubMap(hubInfo, hub),
         resources: mem ?: null, temperature: systemHealth.temperature,
         databaseSize: systemHealth.databaseSize, stateCompression: systemHealth.stateCompression,
         eventStateLimits: systemHealth.eventStateLimits, alerts: getStructuredAlerts(shared),
         storage: fetchFileManagerStats(),
         backups: fetchBackups(),
         loadThreshold: fetchExcessiveLoadThreshold(),
-        cpuInfo: fetchCpuInfo()
+        cpuInfo: fetchCpuInfo(),
+        events: fetchHubEvents()
     ]
 }
 
@@ -1868,6 +1875,22 @@ Map fetchHubAlerts(Map prefetchedHubData = null) {
         spammyDevicesMessage: hubData.spammyDevicesMessage,
         devMode: hubData.baseModel?.devMode ?: false
     ]
+}
+
+List fetchHubEvents() {
+    try {
+        Object raw = hubRequest(HUB_EVENTS_PATH, "hub events", "json", 10)
+        if (!(raw instanceof List)) return []
+        return ((List) raw).collect { Object e ->
+            Map ev = (Map) e
+            long ts = 0
+            try { ts = Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", (String) ev.date).time } catch (Exception ignored) {}
+            [id: ev.id, name: ev.name, description: ev.descriptionText, ts: ts, value: ev.value]
+        }
+    } catch (Exception e) {
+        logDebug "fetchHubEvents failed: ${e.message}"
+        return []
+    }
 }
 
 // ===== Phase 1+2 fetch methods (v5.9.0) =====
