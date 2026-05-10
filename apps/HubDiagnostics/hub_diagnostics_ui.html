@@ -132,7 +132,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.27.0";
+const UI_VERSION = "5.28.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -1645,7 +1645,8 @@ async function rHealth(){const P='p-health';loading(P);try{
 }catch(e){err(P,e,rHealth)}}
 
 // ===== TAB: PERFORMANCE =====
-async function rPerf(){const P='p-performance';loading(P);try{
+let _perfInFlight=false;
+async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-performance';loading(P);try{
   const d=await api('performance');let o='';
   // Logic to determine which stats to show
   let s = d.stats;
@@ -1861,7 +1862,7 @@ async function rPerf(){const P='p-performance';loading(P);try{
       }else{document.getElementById('compResult').innerHTML='<div class="alert a-warn">'+h(r.error)+'</div>'}
     } catch(e) { alert('Comparison failed: '+e.message); }
     btnComp.disabled=false;btnComp.textContent='Compare'};
-}catch(e){err(P,e,rPerf)}}
+}catch(e){err(P,e,rPerf)}finally{_perfInFlight=false}}
 
 async function delCp(idx){if(!confirm('Delete performance checkpoint '+(idx+1)+'?'))return;await post('checkpoint/delete','index='+idx);drop('performance');rPerf()}
 

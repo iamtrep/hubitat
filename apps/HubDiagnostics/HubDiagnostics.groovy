@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.27.0"
+@Field static final String APP_VERSION = "5.29.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -145,6 +145,17 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static volatile String  zwaveStackCache
 @Field static volatile Map     fwUpdateCache
 @Field static volatile Long    fwUpdateCacheAt
+@Field static volatile Map     cachedZwaveData
+@Field static volatile Long    cachedZwaveAt
+@Field static volatile Map     cachedZigbeeData
+@Field static volatile Long    cachedZigbeeAt
+@Field static volatile Map     cachedAppsListData
+@Field static volatile Long    cachedAppsListAt
+@Field static volatile Map     cachedDevicesListData
+@Field static volatile Long    cachedDevicesListAt
+@Field static volatile List    cachedCheckpoints
+@Field static final long       RADIO_CACHE_TTL_MS = 60_000L
+@Field static final long       HUB_LIST_CACHE_TTL_MS = 120_000L
 @Field static volatile boolean githubVersionRefreshPending = false
 @Field static final java.util.regex.Pattern HTML_TAG_RE = ~/<[^>]+>/
 
@@ -264,46 +275,54 @@ mappings {
     // Frontend asset serving
     path('/ui.html') { action: [GET: 'serveUI'] }
 
-    // Data API endpoints
+    // ===== Aggregator GETs =====
+    // Routes that fetch multiple hub resources, normalize them, and serve a
+    // UI-specific contract. Justified by shared-cache, fail-soft behavior,
+    // and normalization the SPA should not duplicate. See ARCHITECTURE.md
+    // ("API Endpoint Boundaries") before adding a new route here.
     path('/api/dashboard')        { action: [GET: 'apiDashboard'] }
     path('/api/devices')          { action: [GET: 'apiDevices'] }
     path('/api/apps')             { action: [GET: 'apiApps'] }
-    path('/api/code')             { action: [GET: 'apiCode'] }
     path('/api/network')          { action: [GET: 'apiNetwork'] }
     path('/api/health')           { action: [GET: 'apiHealth'] }
     path('/api/health/history')   { action: [GET: 'apiHealthHistory'] }
     path('/api/live')             { action: [GET: 'apiLive'] }
+
+    // ===== App-owned GETs =====
+    // Routes that read app-owned state (snapshots, checkpoints, performance
+    // history, telemetry, settings) or compose data only the app can produce.
+    path('/api/code')             { action: [GET: 'apiCode'] }
     path('/api/performance')      { action: [GET: 'apiPerformance'] }
     path('/api/snapshots')        { action: [GET: 'apiSnapshots'] }
     path('/api/snapshot/view')    { action: [GET: 'apiSnapshotView'] }
     path('/api/snapshot/diff')    { action: [GET: 'apiSnapshotDiff'] }
     path('/api/stats')            { action: [GET: 'apiStats'] }
+    path('/api/version/check')    { action: [GET: 'apiVersionCheck'] }
+    path('/api/reports')          { action: [GET: 'apiReports'] }
+    path('/api/forum/data')       { action: [GET: 'apiForumData'] }
 
-    // Actions
-    path('/api/snapshot/create')    { action: [POST: 'apiCreateSnapshot'] }
-    path('/api/snapshot/delete')    { action: [POST: 'apiDeleteSnapshot'] }
-    path('/api/checkpoint/create')  { action: [POST: 'apiCreateCheckpoint'] }
-    path('/api/checkpoint/delete')  { action: [POST: 'apiDeleteCheckpoint'] }
-    path('/api/checkpoints/clear')  { action: [POST: 'apiClearCheckpoints'] }
-    path('/api/snapshots/clear')    { action: [POST: 'apiClearSnapshots'] }
+    // ===== App-owned mutations =====
+    // Stateful writes and orchestration. App-owned by definition.
+    path('/api/snapshot/create')     { action: [POST: 'apiCreateSnapshot'] }
+    path('/api/snapshot/delete')     { action: [POST: 'apiDeleteSnapshot'] }
+    path('/api/snapshots/clear')     { action: [POST: 'apiClearSnapshots'] }
+    path('/api/checkpoint/create')   { action: [POST: 'apiCreateCheckpoint'] }
+    path('/api/checkpoint/delete')   { action: [POST: 'apiDeleteCheckpoint'] }
+    path('/api/checkpoints/clear')   { action: [POST: 'apiClearCheckpoints'] }
     path('/api/performance/compare') { action: [POST: 'apiPerformanceCompare'] }
-    path('/api/ui/sync')              { action: [POST: 'apiSyncUI'] }
-    path('/api/version/check')        { action: [GET: 'apiVersionCheck'] }
-    path('/api/reports')              { action: [GET: 'apiReports'] }
-    path('/api/report/generate')      { action: [POST: 'apiGenerateReport'] }
-    path('/api/forum/data')           { action: [GET: 'apiForumData'] }
-    path('/api/settings')             { action: [GET: 'apiGetSettings', POST: 'apiUpdateSettings'] }
-    path('/api/cache/clear')          { action: [POST: 'apiClearCache'] }
+    path('/api/ui/sync')             { action: [POST: 'apiSyncUI'] }
+    path('/api/report/generate')     { action: [POST: 'apiGenerateReport'] }
+    path('/api/settings')            { action: [GET: 'apiGetSettings', POST: 'apiUpdateSettings'] }
+    path('/api/cache/clear')         { action: [POST: 'apiClearCache'] }
 
-    // Device Usage Audit
+    // ===== Long-running orchestration =====
+    // Device usage audit — async scan with app-owned state.
     path('/api/audit/start')   { action: [POST: 'apiAuditStart'] }
     path('/api/audit/status')  { action: [GET:  'apiAuditStatus'] }
     path('/api/audit/data')    { action: [GET:  'apiAuditData'] }
 
-    // Network tests (v5.9.0)
-    path('/api/network/test')  { action: [POST: 'apiNetworkTest'] }
-
-    // Zigbee channel scan (v5.12.0)
+    // ===== Side-effectful network actions =====
+    path('/api/network/test')        { action: [POST: 'apiNetworkTest'] }
     path('/api/network/zigbee/scan') { action: [POST: 'apiZigbeeScan'] }
 }
 
@@ -544,6 +563,7 @@ private Map buildSharedCache(boolean includeNetwork = false) {
     return shared
 }
 
+// Aggregator: shared cache over multiple hub resources with fail-soft fallbacks.
 Map apiDashboard() {
     long start = now()
     Map data = getDashboardData(buildSharedCache(false))
@@ -572,6 +592,7 @@ String getUIVersion() {
     return "Unknown"
 }
 
+// Aggregator: device classification and fullJson enrichment join.
 Map apiDevices() {
     long start = now()
     Map data = getDevicesData()
@@ -581,6 +602,7 @@ Map apiDevices() {
     return jsonResponse(data)
 }
 
+// Aggregator: joins apps list with runtime stats; surfaces parent/child structure.
 Map apiApps() {
     long start = now()
     Map data = getAppsData()
@@ -605,6 +627,7 @@ Map apiCode() {
     return jsonResponse(data)
 }
 
+// Aggregator: normalizes multiple hub resources; adds mesh and health derivations.
 Map apiNetwork() {
     long start = now()
     // Network tab needs hubData (for fetchSecurityInfo's cloudController flag); rest is fetched by analyzeNetwork
@@ -618,6 +641,7 @@ Map apiNetwork() {
     return jsonResponse(data)
 }
 
+// Aggregator: cross-resource health summary with alert shaping.
 Map apiHealth() {
     long start = now()
     Map data = getHealthData(buildSharedCache(false))
@@ -627,11 +651,14 @@ Map apiHealth() {
     return jsonResponse(data)
 }
 
+// Aggregator: parses a hub text endpoint into a stable structured payload.
 Map apiHealthHistory() {
     List memHistory = fetchMemoryHistory()
     return jsonResponse([dataPoints: memHistory ?: []])
 }
 
+// Aggregator on the hot path (polled by the SPA every few seconds):
+// consolidates polling and centralizes fail-soft semantics.
 Map apiLive() {
     Map res = fetchSystemResources() ?: [:]
     return jsonResponse([
@@ -1469,9 +1496,33 @@ Map getPerformanceData(Map shared = [:]) {
     if (shared.runtimeStats) { stats = (Map) shared.runtimeStats } else { Map r = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats"); stats = r.ok ? r.data : null }
     Map resources  = (shared.resources as Map) ?: fetchSystemResources()
     Map zwaveData
-    if (shared.network?.zwave) { zwaveData = (Map) shared.network.zwave } else { Map r = hubMapRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", 20); zwaveData = r.ok ? r.data : null }
+    if (shared.network?.zwave) {
+        zwaveData = (Map) shared.network.zwave
+    } else {
+        long nowMs = now()
+        if (cachedZwaveData && cachedZwaveAt && (nowMs - cachedZwaveAt) < RADIO_CACHE_TTL_MS) {
+            zwaveData = cachedZwaveData
+            logDebug "Using cached Z-Wave data (age ${nowMs - cachedZwaveAt}ms)"
+        } else {
+            Map r = hubMapRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", 20)
+            zwaveData = r.ok ? r.data : null
+            if (zwaveData) { cachedZwaveData = zwaveData; cachedZwaveAt = nowMs }
+        }
+    }
     Map zigbeeData
-    if (shared.network?.zigbee) { zigbeeData = (Map) shared.network.zigbee } else { Map r = hubMapRequest(ZIGBEE_DETAILS_PATH, "Zigbee details", 20); zigbeeData = r.ok ? r.data : null }
+    if (shared.network?.zigbee) {
+        zigbeeData = (Map) shared.network.zigbee
+    } else {
+        long nowMs = now()
+        if (cachedZigbeeData && cachedZigbeeAt && (nowMs - cachedZigbeeAt) < RADIO_CACHE_TTL_MS) {
+            zigbeeData = cachedZigbeeData
+            logDebug "Using cached Zigbee data (age ${nowMs - cachedZigbeeAt}ms)"
+        } else {
+            Map r = hubMapRequest(ZIGBEE_DETAILS_PATH, "Zigbee details", 20)
+            zigbeeData = r.ok ? r.data : null
+            if (zigbeeData) { cachedZigbeeData = zigbeeData; cachedZigbeeAt = nowMs }
+        }
+    }
     List zwaveMsgCounts = extractZwaveMessageCounts(zwaveData)
     List zigbeeMsgCounts = extractZigbeeMessageCounts(zigbeeData)
     Map radioStats = [zwave: zwaveMsgCounts, zigbee: zigbeeMsgCounts]
@@ -1483,8 +1534,16 @@ Map getPerformanceData(Map shared = [:]) {
 
     // Enrich appStats with source labels (community/builtin/platform)
     Map appSourceById = [:]
-    Map appsListWrap = hubMapRequest(APPS_LIST_PATH, "apps list")
-    Map appsListResp = appsListWrap.ok ? appsListWrap.data : [:]
+    long nowApps = now()
+    Map appsListResp
+    if (cachedAppsListData && cachedAppsListAt && (nowApps - cachedAppsListAt) < HUB_LIST_CACHE_TTL_MS) {
+        logDebug "Using cached apps list (age ${nowApps - cachedAppsListAt}ms)"
+        appsListResp = cachedAppsListData
+    } else {
+        Map appsListWrap = hubMapRequest(APPS_LIST_PATH, "apps list")
+        appsListResp = appsListWrap.ok ? appsListWrap.data : [:]
+        if (appsListWrap.ok) { cachedAppsListData = appsListResp; cachedAppsListAt = nowApps }
+    }
     if (appsListResp.apps) {
         visitAppEntries(appsListResp.apps as List) { Map appEntry, Map app, boolean isChildLevel, List _ ->
             if (app?.id != null) appSourceById[app.id] = (app.user ? "community" : "builtin")
@@ -1508,9 +1567,18 @@ Map getPerformanceData(Map shared = [:]) {
     // Walk /hub2/devicesList directly to build id→type map. Skips analyzeDevices' enrichment overhead
     // (we only need the raw type/name from the bulk endpoint, not the cross-classification work).
     Map deviceTypeById = [:]
-    Map devWrap = hubMapRequest(DEVICES_LIST_PATH, "devices list (B2 labels)", 15)
-    if (devWrap.ok && devWrap.data.devices) {
-        flattenDeviceEntries(devWrap.data.devices as List).each { Map entry ->
+    long nowDev = now()
+    Map devListData
+    if (cachedDevicesListData && cachedDevicesListAt && (nowDev - cachedDevicesListAt) < HUB_LIST_CACHE_TTL_MS) {
+        logDebug "Using cached devices list (age ${nowDev - cachedDevicesListAt}ms)"
+        devListData = cachedDevicesListData
+    } else {
+        Map devWrap = hubMapRequest(DEVICES_LIST_PATH, "devices list (B2 labels)", 15)
+        devListData = devWrap.ok ? devWrap.data : [:]
+        if (devWrap.ok) { cachedDevicesListData = devListData; cachedDevicesListAt = nowDev }
+    }
+    if (devListData.devices) {
+        flattenDeviceEntries(devListData.devices as List).each { Map entry ->
             Map dev = entry?.data instanceof Map ? (Map) entry.data : null
             if (dev?.id != null) deviceTypeById[dev.id] = (dev.type ?: 'Unknown') as String
         }
@@ -1542,11 +1610,12 @@ Map getPerformanceData(Map shared = [:]) {
         appParentTypeById: appParentTypeById,  // B2: id → parent label for CPU-by-app-type chart
         checkpointCount: checkpoints?.size() ?: 0,
         maxCheckpoints: (settings.maxCheckpoints ?: 10) as int,
-        checkpoints: (checkpoints ?: []).collect { Map cp -> [
-            timestamp: cp.timestamp, timestampMs: cp.timestampMs,
-            stats: cp.stats, resources: cp.resources, radioStats: cp.radioStats,
-            temperature: cp.temperature, databaseSize: cp.databaseSize
-        ]},
+        checkpoints: (checkpoints ?: []).collect { Map cp ->
+            Map s = (Map) cp.stats
+            [timestamp: cp.timestamp, timestampMs: cp.timestampMs,
+             stats: s ? [uptime: s.uptime, totalDevicesRuntime: s.totalDevicesRuntime, totalAppsRuntime: s.totalAppsRuntime] : null,
+             resources: cp.resources, temperature: cp.temperature, databaseSize: cp.databaseSize]
+        },
         savedComparison: loadPerformanceComparisonPayload()
     ]
 }
@@ -3183,7 +3252,6 @@ boolean createCheckpoint() {
         return false
     }
     Map stats = statsWrap.data
-    stats.uptimeSeconds = parseUptime(stats.uptime as String)
 
     Map resources = fetchSystemResources()
     Float temperature = fetchTemperature()
@@ -3273,6 +3341,7 @@ void deleteCheckpoint(int index) {
 void clearAllCheckpoints() {
     deleteFile(CHECKPOINTS_FILE)
     deleteFile(PERFORMANCE_COMPARISON_FILE)
+    cachedCheckpoints = []
     logInfo "All perf checkpoints cleared"
 }
 
@@ -3643,19 +3712,22 @@ private boolean autoEnableOAuth() {
 // ===== FILE I/O HELPERS =====
 
 List loadCheckpoints() {
+    if (cachedCheckpoints != null) return cachedCheckpoints
     try {
         def data = readFile(CHECKPOINTS_FILE)
-        if (data) return data
+        cachedCheckpoints = data ? (List) data : []
     } catch (Exception e) {
         logDebug "No existing checkpoints: ${e.message}"
+        cachedCheckpoints = []
     }
-    return []
+    return cachedCheckpoints
 }
 
 void saveCheckpoints(List checkpoints) {
     try {
         String json = groovy.json.JsonOutput.toJson(checkpoints)
         writeFile(CHECKPOINTS_FILE, json)
+        cachedCheckpoints = checkpoints
     } catch (Exception e) {
         logError "Error saving checkpoints: ${e}"
     }
