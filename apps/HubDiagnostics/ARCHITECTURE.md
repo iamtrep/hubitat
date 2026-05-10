@@ -53,7 +53,7 @@ Read this section before writing any code. These are not style preferences — t
 
 ### UI file deployment
 
-The SPA (`hub_diagnostics_ui.html`) is deployed to the hub's File Manager and served at `http://{hub_ip}/local/hub_diagnostics_ui.html`. Editing the local file has no effect on the running app until it is uploaded. Use the `/hubitat-filemanager upload` skill to push changes. The Groovy app serves the UI by redirecting its `/ui.html` endpoint to the locally-served file.
+The SPA (`hub_diagnostics_ui.html`) is deployed to the hub's File Manager. Editing the local file has no effect on the running app until it is uploaded. Use the `/hubitat-filemanager upload` skill to push changes. The Groovy app's `/ui.html` endpoint reads the uploaded file from File Manager, injects runtime values like the access token and API base, and serves the resulting HTML directly.
 
 ### Hubitat sandbox constraints
 
@@ -113,15 +113,16 @@ Do not introduce duplicate fetches on the same request path just because each he
 
 Some methods have large blast radius and must not gain new fetches casually. They are not equally sensitive:
 
-**Hardest change zones** — these run on every refresh cycle and affect all tabs:
+**Hardest change zones** — these run on common refresh paths or have broad fan-out across the app:
 
-- `buildSharedCache()` — runs on every dashboard, health, and network request
+- `buildSharedCache()` — runs on every dashboard and health request
+- `getStructuredAlerts()` — feeds alert content across multiple tabs and endpoints
 - `apiLive()` — called automatically by the frontend every few seconds
 
-**High blast radius** — these run on every tab load and already contain multiple HTTP calls; new additions need justification but are not forbidden:
+**High blast radius** — these run on common tab loads and already contain multiple HTTP calls; new additions need justification but are not forbidden:
 
-- `getStructuredAlerts()` — feeds alert content across multiple tabs
 - `getDashboardData()` and `getHealthData()` — tab-specific, not recurring, but called on every open of those tabs
+- `apiNetwork()` / `getNetworkData()` — narrower than Dashboard/Health, but still substantial and easy to bloat
 
 Any new fetch added to any of these must satisfy all of the following:
 
