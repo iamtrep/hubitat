@@ -43,6 +43,31 @@ The UI is a vanilla JS SPA with one renderer per tab or feature area. It relies 
 
 The UI should render API data, not become a second backend.
 
+## API Endpoint Boundaries
+
+Every `/api/*` route must justify its place in the Groovy layer. The boundary is not "Groovy vs browser" — it is **app-owned logic vs direct hub data**.
+
+### What the Groovy layer owns
+
+The Groovy app acts as an application server for the SPA, providing four things the browser cannot get from raw hub endpoints:
+
+1. **Auth stability** via OAuth app endpoints, so the SPA does not require an active Hubitat admin session.
+2. **App-owned persistence** — snapshots, checkpoints, generated reports, scan caches, settings.
+3. **Aggregation** — collapsing multiple hub requests into narrower UI-facing payloads, with shared-cache and fail-soft semantics centralized.
+4. **Normalization** — stable field names, payload shape, date-to-epoch conversion, firmware/version compatibility.
+
+### Three endpoint categories
+
+Every route fits into one of these:
+
+- **App-owned** — exposes app state, performs a write, runs long orchestration, or composes data only the app can produce. Most routes are here. These must stay Groovy.
+- **Aggregator** — fetches multiple hub resources, normalizes them, and serves a UI-specific contract. Justified by shared-cache, fail-soft behavior, and normalization the SPA should not duplicate. Examples: `/api/dashboard`, `/api/health`, `/api/live`.
+- **Pure passthrough** — a thin wrapper over a single hub endpoint, with no aggregation, normalization, or app state. **This category should be empty.** A passthrough route earns no architectural benefit and is the only realistic candidate for direct browser fetch under a future admin-session UI.
+
+If a new route would be a pure passthrough, do not add it. Fold it into an existing aggregator, add real normalization, or leave the data for the browser to fetch directly when an admin-session mode exists.
+
+The `mappings { }` block in `HubDiagnostics.groovy` is grouped by category. Place new routes in the matching section.
+
 ## Contributor Prerequisites
 
 Read this section before writing any code. These are not style preferences — they are platform constraints and structural facts that will cause silent failures or lost work if ignored.
@@ -209,6 +234,7 @@ Avoid these unless there is a deliberate, documented exception:
 - raw `httpGet` calls in feature logic
 - new endpoint-specific error contracts when wrappers already define the norm
 - duplicate fetches of the same endpoint within a request path
+- adding a Groovy `/api/*` route that is a pure passthrough over one hub endpoint, with no aggregation, normalization, or app state
 - adding experimental or expensive fetches to `getStructuredAlerts()` or `apiLive()`
 - pushing backend parsing and compatibility logic into the SPA
 - passing raw ISO offset date strings through to the SPA
@@ -258,6 +284,16 @@ Treat these as regressions even if the feature "works" locally:
 
 When adding a feature, decide where it belongs before writing code.
 
+### Add a new `/api/*` endpoint
+
+Before adding a route, decide which category it belongs to (see *API Endpoint Boundaries*):
+
+1. Does it own state, perform a write, or run orchestration? → app-owned. Add to the matching section in `mappings { }`.
+2. Does it fetch and join multiple hub resources, or normalize a single hub payload the SPA should not learn? → aggregator. Add to the aggregator section in `mappings { }` and a one-line rationale comment on the action method explaining what the SPA cannot do directly.
+3. Is it a pure passthrough over one hub endpoint? → do not add it. Fold the data into an existing aggregator, or leave the hub endpoint for the SPA to fetch directly under a future admin-session mode.
+
+Do not add a new route just because the data is hub-side. The Groovy layer earns its place by aggregation, normalization, persistence, or orchestration.
+
 ### Add a new hub endpoint fetch
 
 Default approach:
@@ -296,6 +332,9 @@ The UI should rarely be the place where event names, raw dates, or cross-endpoin
 
 Before pushing a feature, answer these:
 
+- Does this change add any new `/api/*` routes?
+- If yes, does each route own state, aggregate, or normalize — or is it a pure passthrough that should not exist?
+- Is each new route placed in the correct category section in `mappings { }`?
 - Does this change add any new hub endpoint fetches?
 - If yes, is each fetch using the correct wrapper for its response shape?
 - If an endpoint returns a JSON array, is `hubRequest()` used instead of `hubMapRequest()`?
