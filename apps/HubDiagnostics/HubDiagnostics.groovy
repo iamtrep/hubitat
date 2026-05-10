@@ -85,7 +85,7 @@ import java.util.concurrent.atomic.AtomicInteger
 //   devices (ConcurrentHashMap<Long, Map>),
 //   failed (ConcurrentHashMap<Long, String>)
 @Field static final ConcurrentHashMap<String, ConcurrentHashMap> AUDIT_SCANS = new ConcurrentHashMap<>()
-@Field static Map lastAuditResult = null
+@Field static volatile Map lastAuditResult = null
 
 // Zigbee channels recommended to avoid WiFi interference
 @Field static final List RECOMMENDED_ZIGBEE_CHANNELS = [15, 20, 25]
