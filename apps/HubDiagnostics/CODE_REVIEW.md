@@ -1,14 +1,15 @@
 # HubDiagnostics — Code Review Findings & Fix Plan
 
-Status as of 2026-05-09 (post-v5.24.0; rounds 1-4 complete).
+Status as of 2026-05-09 (post-v5.27.0; rounds 1-5 complete).
 
-Combined output of six independent passes:
+Combined output of seven independent passes:
 - **Codex round 1** — initial external code-review pass (12 findings)
 - **Internal** — verification + 10 additional findings (A1–A10)
 - **Codex round 2** — external re-review after R-1..R-5 shipped (5 net-new items B1–B5; updates to prior items)
 - **Gemini round 1** — third-party review (3 net-new items G1–G3; the rest overlap)
 - **Codex round 3 + Gemini round 2** — post-v5.20.0 re-reviews (zero net-new actionable items; both confirmed shipped fixes verified, deferrals reaffirmed)
 - **Claude round 4** — post-v5.24.0 review (10 net-new items C1–C10)
+- **Gemini round 5** — post-v5.27.0 review (5 net-new items C11–C15)
 
 All findings were verified against the code; verdicts are recorded below.
 
@@ -35,6 +36,16 @@ Reviewed full source at v5.24.0. Confirmed all prior fixes. Found 10 net-new ite
 - **C8** (⚪) — `fetchHubMessages()` called unconditionally on every dashboard/health render (5s timeout in hot path).
 - **C9** (⚪) — `schedule(cron, ...)` `*/N` day syntax has known Hubitat firmware quirk for multi-day auto-snapshot intervals.
 - **C10** (⚪) — `autoEnableOAuth()` uses raw `httpGet`/`httpPost` without the retry-on-transient behavior from A8.
+
+## Round 5 summary (Gemini CLI, 2026-05-09, v5.27.0)
+
+Reviewed full source at v5.27.0. Validated alignment with `ARCHITECTURE.md` platform constraints. Confirmed Round 4 findings (C1–C10) remain open/valid. Found 5 net-new items (C11–C15):
+
+- **C11** (🟠) — Fragile regex-parsing of internal Hubitat HTML (`zwaveTopologyHtml`, `parseZigbeeMesh`). High risk of breakage upon platform firmware updates.
+- **C12** (🟠) — Audit memory pressure: concurrent `fullJson` fetches (up to 8) for every device can cause significant JVM heap spikes on large hubs.
+- **C13** (🟡) — High cyclomatic complexity in `buildForumMarkdown` (JS) and `buildCrossReference` (Groovy). Giant procedural functions that are difficult to maintain.
+- **C14** (⚪) — Static version management: `APP_VERSION` and `UI_VERSION` are maintained separately in two files, increasing risk of code/UI drift.
+- **C15** (🟡) — In-memory static storage of `lastAuditResult`: potentially holds MBs of data in the JVM heap until the next reboot, bypassing platform state management.
 
 ---
 
@@ -84,6 +95,11 @@ Severity legend: 🔴 critical bug · 🟠 high (architecture / leverage) · �
 | C8 | `fetchHubMessages()` called unconditionally in hot path with 5s timeout | ⚪ | Open | [ ] |
 | C9 | `schedule(cron, ...)` `*/N` day syntax has Hubitat firmware quirk for multi-day auto-snapshot | ⚪ | Open | [ ] |
 | C10 | `autoEnableOAuth()` bypasses the retry-on-transient behavior from A8 | ⚪ | Open | [ ] |
+| C11 | Fragile regex-parsing of internal Hubitat HTML (topology, zigbee mesh) | 🟠 | Open | [ ] |
+| C12 | Audit memory pressure: concurrent `fullJson` fetches spike JVM heap | 🟠 | Open | [ ] |
+| C13 | Excessive complexity in `buildForumMarkdown` and `buildCrossReference` | 🟡 | Open | [ ] |
+| C14 | Version drift risk: `APP_VERSION` and `UI_VERSION` maintained separately | ⚪ | Open | [ ] |
+| C15 | Static `lastAuditResult` bypasses state management and consumes heap | 🟡 | Open | [ ] |
 
 ---
 
