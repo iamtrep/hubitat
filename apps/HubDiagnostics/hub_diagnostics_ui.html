@@ -82,7 +82,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 .pill-auto{background:#dbeafe;color:#1e40af} .pill-integ{background:#d1fae5;color:#065f46} .pill-apps{background:#ede9fe;color:#5b21b6}
 
 @media(max-width:600px){.metrics{grid-template-columns:repeat(2,1fr)}.tab{padding:7px 10px;font-size:12px}.filter input{width:100%}}
-.report-mode .actions,.report-mode .live-only{display:none}
+.report-mode .actions,.report-mode .live-only,.report-mode .tab[data-tab="config"]{display:none}
 .report-banner{background:#fff3cd;color:#856404;padding:8px 20px;font-size:13px;text-align:center;border-bottom:1px solid #ffc107;position:sticky;top:0;z-index:101}
 .report-mode .hdr{top:33px}
 
@@ -132,7 +132,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.31.0";
+const UI_VERSION = "5.32.5";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -1060,7 +1060,47 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   const btnReport=document.getElementById('btnReport');
   if(btnReport)btnReport.onclick=async()=>{
     btnReport.disabled=true;btnReport.textContent='Generating...';
-    try{const res=await post('report/generate');drop('reports');
+    try{
+      // Fetch every aggregator in small concurrent batches. Going fully parallel exhausts the
+      // hub's HTTP connection pool — each /api/* endpoint internally fans out to 3-10 hub HTTP
+      // calls, so 10 concurrent /api/* requests can demand ~50 sockets against a ~20-slot pool
+      // and hit "ConnectionPoolTimeoutException". Batches of 3 give ~3x speedup over the old
+      // sequential pipeline while keeping peak connection demand within safe range.
+      const eps=['dashboard','devices','apps','code','network','health','health/history','performance','snapshots'];
+      const BATCH=3, results={};
+      for(let i=0;i<eps.length;i+=BATCH){
+        const batch=eps.slice(i,i+BATCH);
+        const got=await Promise.all(batch.map(ep=>api(ep)));
+        batch.forEach((ep,j)=>{results[ep]=got[j]});
+      }
+      const dashboard=results.dashboard, devices=results.devices, apps=results.apps, code=results.code,
+            network=results.network, health=results.health, healthHistory=results['health/history'],
+            performance=results.performance, snapshots=results.snapshots;
+      // Fetch raw template via OAuth (works regardless of /local/ access policy).
+      const tmplResp=await fetch(B+'/api/report/template?access_token='+T);
+      if(!tmplResp.ok)throw new Error('template fetch '+tmplResp.status);
+      let html=await tmplResp.text();
+      // Build the envelope shape the SPA's REPORT mode expects (window.REPORT_DATA[ep]).
+      const ts=new Date();
+      const pad=n=>String(n).padStart(2,'0');
+      const generated=ts.getFullYear()+'-'+pad(ts.getMonth()+1)+'-'+pad(ts.getDate())+' '+pad(ts.getHours())+':'+pad(ts.getMinutes())+':'+pad(ts.getSeconds());
+      const reportData={_generated:generated,dashboard,devices,apps,code,network,health,'health/history':healthHistory,performance,snapshots,reports:{lastReport:null,reports:[]}};
+      // Script-close sequences below are written with an escaped slash. The HTML parser ends
+      // a script tag at the first such sequence it sees, even inside JS strings or comments.
+      const dataJson=JSON.stringify(reportData).replace(/<\/script>/g,'<\\/script>');
+      html=html.replace('</head>','<script type="application/json" id="report-data">'+dataJson+'<\/script>\n<script>window.REPORT_DATA=JSON.parse(document.getElementById(\'report-data\').textContent);document.documentElement.classList.add(\'report-mode\')<\/script>\n</head>');
+      // Strip the hub's runtime placeholders. The placeholder strings are assembled at
+      // runtime so the hub's own serve-time substitution does not rewrite them in this source.
+      const PH_TOK='$'+'{access_token}', PH_BASE='$'+'{api_base}', PH_REFRESH='$'+'{live_refresh_sec}';
+      html=html.replace(PH_TOK,'').replace(PH_BASE,'').replace(PH_REFRESH,'0');
+      // Filename matches old format: hub_diagnostics_report_YYYYMMDD_HHmmss.html
+      const stamp=ts.getFullYear()+pad(ts.getMonth()+1)+pad(ts.getDate())+'_'+pad(ts.getHours())+pad(ts.getMinutes())+pad(ts.getSeconds());
+      const filename='hub_diagnostics_report_'+stamp+'.html';
+      const saveResp=await fetch(B+'/api/report/save?access_token='+T,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename,html})});
+      if(!saveResp.ok)throw new Error('save '+saveResp.status);
+      const saveJson=await saveResp.json();
+      if(!saveJson.success)throw new Error(saveJson.error||'save failed');
+      drop('reports');
       const rp=await api('reports');
       const link=rp.lastReport?'<p style="margin-top:8px"><a href="/local/'+h(rp.lastReport)+'" target="_blank" style="color:var(--link)">Open: '+h(rp.lastReport)+'</a></p>':'';
       btnReport.insertAdjacentHTML('afterend',link);

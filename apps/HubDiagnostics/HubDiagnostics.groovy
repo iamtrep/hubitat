@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.31.0"
+@Field static final String APP_VERSION = "5.32.5"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -313,7 +313,8 @@ mappings {
     path('/api/checkpoints/clear')   { action: [POST: 'apiClearCheckpoints'] }
     path('/api/performance/compare') { action: [POST: 'apiPerformanceCompare'] }
     path('/api/ui/sync')             { action: [POST: 'apiSyncUI'] }
-    path('/api/report/generate')     { action: [POST: 'apiGenerateReport'] }
+    path('/api/report/save')         { action: [POST: 'apiSaveReport'] }
+    path('/api/report/template')     { action: [GET:  'apiReportTemplate'] }
     path('/api/settings')            { action: [GET: 'apiGetSettings', POST: 'apiUpdateSettings'] }
     path('/api/cache/clear')         { action: [POST: 'apiClearCache'] }
 
@@ -920,46 +921,30 @@ Map apiReports() {
     ])
 }
 
-Map apiGenerateReport() {
-    logInfo "Generating report..."
-    String timestamp = new Date().format("yyyy-MM-dd HH:mm:ss")
-    List memHistory = fetchMemoryHistory()
-
-    Map statsWrap = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats")
-    Map shared = [
-        network:      analyzeNetwork(),
-        runtimeStats: statsWrap.ok ? statsWrap.data : null,
-        resources:    fetchSystemResources(),
-        temperature:  fetchTemperature(),
-        hubAlerts:    fetchHubAlerts(),
-        databaseSize: fetchDatabaseSize()
-    ]
-
-    Map reportData = [
-        _generated: timestamp,
-        dashboard: getDashboardData(shared),
-        devices: getDevicesData(),
-        apps: getAppsData(),
-        network: getNetworkData(shared),
-        health: getHealthData(shared),
-        "health/history": [dataPoints: memHistory ?: []],
-        performance: getPerformanceData(shared),
-        snapshots: getSnapshotsData(),
-        reports: [lastReport: null, reports: []]
-    ]
-
+// Returns the raw SPA template (with placeholders intact). The SPA fetches this,
+// strips placeholders, injects window.REPORT_DATA, and POSTs the resulting HTML
+// to /api/report/save. Replaces the heavier server-side apiGenerateReport pipeline.
+Map apiReportTemplate() {
     String html = loadUITemplate()
-    if (!html) return jsonResponse([success: false, error: "SPA template not found in File Manager"])
+    if (!html) return render(status: 404, contentType: 'application/json', data: '{"error":"SPA template not found in File Manager"}')
+    return render(contentType: 'text/html', data: html)
+}
 
-    String dataJson = JsonOutput.toJson(reportData).replace("</script>", "<\\/script>")
-    html = html.replace("</head>", "<script type=\"application/json\" id=\"report-data\">${dataJson}</script>\n<script>window.REPORT_DATA=JSON.parse(document.getElementById('report-data').textContent)</script>\n</head>")
-    html = html.replace('${access_token}', '').replace('${api_base}', '').replace('${live_refresh_sec}', '0')
+// Thin file-write endpoint. Body is JSON: {filename, html}. The SPA assembles the
+// report client-side (parallel data fetches, template injection, placeholder strip)
+// and just hands the finished bytes here for FileManager persistence.
+Map apiSaveReport() {
+    Map body = (request?.JSON instanceof Map) ? (Map) request.JSON : null
+    if (!body) return jsonResponse([success: false, error: "Empty or invalid JSON body"])
+    String filename = (body.filename ?: "") as String
+    String html = (body.html ?: "") as String
+    if (!filename || !html) return jsonResponse([success: false, error: "filename and html are required"])
+    if (!filename.endsWith('.html')) return jsonResponse([success: false, error: "filename must end with .html"])
+    if (filename.contains('/') || filename.contains('..')) return jsonResponse([success: false, error: "invalid filename"])
 
-    String filename = "hub_diagnostics_report_${new Date().format('yyyyMMdd_HHmmss')}.html"
     writeFile(filename, html)
     state.lastReportFile = filename
-    logInfo "Report generated: ${filename} (${(dataJson.length() / 1024).intValue()} KB data)"
-
+    logInfo "Report saved: ${filename} (${(html.length() / 1024).intValue()} KB)"
     return jsonResponse([success: true, filename: filename])
 }
 
