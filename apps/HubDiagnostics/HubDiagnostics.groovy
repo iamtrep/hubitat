@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.29.0"
+@Field static final String APP_VERSION = "5.30.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -153,9 +153,12 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static volatile Long    cachedAppsListAt
 @Field static volatile Map     cachedDevicesListData
 @Field static volatile Long    cachedDevicesListAt
+@Field static volatile Map     cachedSystemResources
+@Field static volatile Long    cachedSystemResourcesAt
 @Field static volatile List    cachedCheckpoints
 @Field static final long       RADIO_CACHE_TTL_MS = 60_000L
 @Field static final long       HUB_LIST_CACHE_TTL_MS = 120_000L
+@Field static final long       SYSTEM_RESOURCES_CACHE_TTL_MS = 10_000L
 @Field static volatile boolean githubVersionRefreshPending = false
 @Field static final java.util.regex.Pattern HTML_TAG_RE = ~/<[^>]+>/
 
@@ -540,8 +543,8 @@ Map apiVersionCheck() {
 /**
  * Build a request-scoped shared cache so downstream getXxxData methods reuse common datasets
  * instead of re-fetching them. Pre-fix (v5.13.x), a single /api/dashboard call hit /hub2/hubData
- * twice (getHubInfo + fetchHubAlerts via getStructuredAlerts) and fetched system resources twice
- * (once directly, once via getStructuredAlerts fallback). With the shared cache populated, both
+ * twice (getHubInfo + fetchHubAlerts via getAlertSignals) and fetched system resources twice
+ * (once directly, once via getAlertSignals fallback). With the shared cache populated, both
  * are fetched once and reused.
  *
  * @param includeNetwork  set true when the caller will use network/runtimeStats (Network/Performance tabs);
@@ -1210,7 +1213,7 @@ Map apiForumData() {
     Integer databaseSize = fetchDatabaseSize()
     Map stateCompression = fetchStateCompression()
     Map eventStateLimits = fetchEventStateLimits()
-    List alerts = getStructuredAlerts()
+    Map alertSignals = getAlertSignals()
     Map deviceStats = analyzeDevices(true)
     Map appStats = analyzeApps(true)
     Map networkData = analyzeNetwork()
@@ -1229,7 +1232,7 @@ Map apiForumData() {
     return jsonResponse([
         hubInfo: hubInfo, resources: resources, temperature: temperature,
         databaseSize: databaseSize, stateCompression: stateCompression,
-        eventStateLimits: eventStateLimits, alerts: alerts,
+        eventStateLimits: eventStateLimits, alertSignals: alertSignals,
         deviceStats: deviceStats, appStats: appStats, networkData: networkData,
         zwaveMesh: zwaveMesh, ghostNodes: ghostNodes, zigbeeMesh: zigbeeMesh,
         zwaveVersion: zwaveVersion, stats: stats, allRadioDevices: allRadioDevices,
@@ -1335,7 +1338,7 @@ Map getDashboardData(Map shared = [:]) {
         ],
         apps: [total: appStats.totalApps, builtIn: appStats.builtInApps, user: appStats.userApps],
         resources: resources, temperature: temperature, databaseSize: databaseSize,
-        alerts: getStructuredAlerts(shared), inactivityDays: settings.inactivityDays ?: 7,
+        alertSignals: getAlertSignals(shared), inactivityDays: settings.inactivityDays ?: 7,
         firmwareUpdate: fetchFirmwareUpdate()
     ]
 }
@@ -1482,7 +1485,7 @@ Map getHealthData(Map shared = [:]) {
         hub: buildHubMap(hubInfo, hub),
         resources: mem ?: null, temperature: systemHealth.temperature,
         databaseSize: systemHealth.databaseSize, stateCompression: systemHealth.stateCompression,
-        eventStateLimits: systemHealth.eventStateLimits, alerts: getStructuredAlerts(shared),
+        eventStateLimits: systemHealth.eventStateLimits, alertSignals: getAlertSignals(shared),
         storage: fetchFileManagerStats(),
         backups: fetchBackups(),
         loadThreshold: fetchExcessiveLoadThreshold(),
@@ -1635,68 +1638,36 @@ Map getSnapshotsData() {
     ]
 }
 
-List getStructuredAlerts(Map shared = [:]) {
-    List alerts = []
-    Map resources     = (shared.resources as Map)     ?: fetchSystemResources()
-    Float temperature = (shared.temperature as Float) ?: fetchTemperature()
-    Map hubAlerts     = (shared.hubAlerts as Map)     ?: fetchHubAlerts(shared.hubData as Map)
+// Raw signals for the SPA to compose alerts client-side. Threshold-based
+// alerts (memory/CPU/temperature) are derived in the SPA from `resources` +
+// `temperature` + the `TH` thresholds it already loads via /api/settings.
+// Hub-message HTML stripping also runs in the SPA \u2014 we ship raw text.
+Map getAlertSignals(Map shared = [:]) {
+    Map hubAlerts = (shared.hubAlerts as Map) ?: fetchHubAlerts(shared.hubData as Map)
 
-    // Calculated alerts
-    int    critMemKb   = ((settings.critMemMb   ?: DEFAULT_CRIT_MEM_MB)   as int) * 1024
-    int    warnMemKb   = ((settings.warnMemMb   ?: DEFAULT_WARN_MEM_MB)   as int) * 1024
-    double critCpuLoad = (settings.critCpuLoad  ?: DEFAULT_CRIT_CPU_LOAD) as double
-    double warnCpuLoad = (settings.warnCpuLoad  ?: DEFAULT_WARN_CPU_LOAD) as double
-    int    critTempC   = (settings.critTempC    ?: DEFAULT_CRIT_TEMP_C)   as int
-    int    warnTempC   = (settings.warnTempC    ?: DEFAULT_WARN_TEMP_C)   as int
-
-    if (resources && resources.freeOSMemory < critMemKb) {
-        alerts << [severity: "critical", name: "OS memory critically low (${formatMemory(resources.freeOSMemory)})"]
-    } else if (resources && resources.freeOSMemory < warnMemKb) {
-        alerts << [severity: "warning", name: "Low OS memory (${formatMemory(resources.freeOSMemory)})"]
-    }
-
-    if (resources && (resources.cpuAvg5min ?: 0) > critCpuLoad) {
-        alerts << [severity: "critical", name: "Very high CPU load (${String.format('%.2f', resources.cpuAvg5min as float)})"]
-    } else if (resources && (resources.cpuAvg5min ?: 0) > warnCpuLoad) {
-        alerts << [severity: "warning", name: "Elevated CPU load (${String.format('%.2f', resources.cpuAvg5min as float)})"]
-    }
-
-    if (temperature != null && temperature > critTempC) {
-        alerts << [severity: "critical", name: "Hub temperature very high (${String.format('%.1f', temperature)}\u00B0C)"]
-    } else if (temperature != null && temperature > warnTempC) {
-        alerts << [severity: "warning", name: "Hub temperature elevated (${String.format('%.1f', temperature)}\u00B0C)"]
-    }
-
-    // Platform alerts
+    List platformAlerts = []
     if (hubAlerts?.alerts) {
         ALERT_DISPLAY_NAMES.each { String key, String displayName ->
             if (hubAlerts.alerts[key] == true) {
                 String severity = (key in ["hubLoadSevere", "hubZwaveCrashed", "hubHugeDatabase", "zwaveOffline", "zigbeeOffline"]) ? "critical" : "warning"
-                alerts << [key: key, name: displayName, severity: severity]
+                platformAlerts << [key: key, name: displayName, severity: severity]
             }
         }
     }
-    if (hubAlerts?.spammyDevicesMessage) {
-        alerts << [key: "spammyDevices", name: "Spammy Devices", severity: "warning", message: hubAlerts.spammyDevicesMessage]
-    }
 
-    // Hub messages from /hub/messages — admin notifications surfaced in the platform UI.
-    // The hub embeds raw HTML in message text (e.g. <span> with dismiss links); strip it
-    // so the UI h() escape doesn't render visible tags.
-    fetchHubMessages().each { Map msg ->
-        String text = stripHtml(msg.text ?: msg.message ?: msg.toString())
-        if (text) alerts << [key: "hubMessage", name: text, severity: "info"]
-    }
+    List hubMessages = fetchHubMessages().collect { Map msg ->
+        (msg.text ?: msg.message ?: msg.toString()) as String
+    }.findAll { it } as List
 
-    // Network: Ethernet + WiFi both active
     Map networkConfig = (Map) shared.network?.network
-    if (!networkConfig) { Map r = hubMapRequest(NETWORK_CONFIG_PATH, "network configuration", 15); networkConfig = r.ok ? r.data : null }
-    if (networkConfig && networkConfig.hasEthernet && networkConfig.hasWiFi) {
-        alerts << [severity: "warning", name: "Ethernet and WiFi both active \u2014 disable WiFi when using Ethernet"]
+    if (!networkConfig) {
+        Map r = hubMapRequest(NETWORK_CONFIG_PATH, "network configuration", 15)
+        networkConfig = r.ok ? r.data : null
     }
+    boolean ethernetAndWifi = (networkConfig && networkConfig.hasEthernet && networkConfig.hasWiFi) as boolean
 
-    // Z-Wave ghost nodes \u2014 cached 60 s to avoid an 8-second fetch on every Dashboard/Health load
-    // when the shared cache was built without includeNetwork (the common lightweight path).
+    // Z-Wave ghost nodes \u2014 cached 60 s to avoid an 8-second fetch on every
+    // Dashboard/Health load when the shared cache was built without includeNetwork.
     Map zwRaw = (shared.network?.zwave as Map)
     if (!zwRaw) {
         long lastZwCheck = state.lastZwaveGhostCheckMs ?: 0
@@ -1709,12 +1680,15 @@ List getStructuredAlerts(Map shared = [:]) {
             }
         }
     }
-    int ghostCount = zwRaw ? buildZwaveGhostNodes(zwRaw).size() : (state.cachedZwaveGhostCount ?: 0) as int
-    if (ghostCount > 0) {
-        alerts << [severity: "critical", name: "${ghostCount} Z-Wave ghost node${ghostCount > 1 ? 's' : ''} detected \u2014 remove from mesh"]
-    }
+    int ghostNodeCount = zwRaw ? buildZwaveGhostNodes(zwRaw).size() : (state.cachedZwaveGhostCount ?: 0) as int
 
-    return alerts
+    return [
+        platformAlerts:       platformAlerts,
+        spammyDevicesMessage: hubAlerts?.spammyDevicesMessage,
+        hubMessages:          hubMessages,
+        ethernetAndWifi:      ethernetAndWifi,
+        ghostNodeCount:       ghostNodeCount
+    ]
 }
 
 // ===== BUTTON HANDLER =====
@@ -1858,6 +1832,10 @@ private String detectZwaveStack() {
 }
 
 Map fetchSystemResources() {
+    long nowMs = now()
+    if (cachedSystemResources && cachedSystemResourcesAt && (nowMs - cachedSystemResourcesAt) < SYSTEM_RESOURCES_CACHE_TTL_MS) {
+        return cachedSystemResources
+    }
     String text = (String) hubRequest(FREE_MEMORY_PATH, "system resources", "text", 15)
     if (!text) return null
     try {
@@ -1865,7 +1843,7 @@ Map fetchSystemResources() {
         if (lines.size() > 1) {
             String[] values = lines[1].split(',')
             if (values.size() >= 6) {
-                return [
+                Map data = [
                     timestamp: values[0].trim(),
                     freeOSMemory: values[1].trim().toInteger(),
                     cpuAvg5min: values[2].trim().toFloat(),
@@ -1873,6 +1851,9 @@ Map fetchSystemResources() {
                     freeJavaMemory: values[4].trim().toInteger(),
                     directJavaMemory: values[5].trim().toInteger()
                 ]
+                cachedSystemResources = data
+                cachedSystemResourcesAt = nowMs
+                return data
             }
         }
     } catch (Exception e) {

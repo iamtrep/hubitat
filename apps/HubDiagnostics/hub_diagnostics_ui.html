@@ -132,7 +132,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.28.0";
+const UI_VERSION = "5.30.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -268,6 +268,41 @@ function ni(l,v,c){const s=c?' style="color:'+c+';font-weight:600"':'';return'<d
 // Module-level thresholds with hardcoded defaults — updated when settings load
 let TH={warnMemMb:100,critMemMb:75,warnCpuLoad:4,critCpuLoad:8,warnTempC:50,critTempC:77,chattyDeviceThreshold:10};
 
+// Compose displayable alerts from raw signals + resources/temperature + thresholds.
+// Hub ships {alertSignals, resources, temperature}; the SPA derives severity, formats
+// numbers, strips HTML on hub messages, and emits a uniform [{severity,name,message?,key?}].
+function composeAlerts(d){
+  const out=[];
+  const sig=d.alertSignals||{};
+  const r=d.resources||null;
+  const t=d.temperature;
+  if(r){
+    if(r.freeOSMemory!=null){
+      if(r.freeOSMemory<TH.critMemMb*1024) out.push({severity:'critical',name:`OS memory critically low (${fmem(r.freeOSMemory)})`});
+      else if(r.freeOSMemory<TH.warnMemMb*1024) out.push({severity:'warning',name:`Low OS memory (${fmem(r.freeOSMemory)})`});
+    }
+    const cpu=r.cpuAvg5min;
+    if(cpu!=null){
+      if(cpu>TH.critCpuLoad) out.push({severity:'critical',name:`Very high CPU load (${Number(cpu).toFixed(2)})`});
+      else if(cpu>TH.warnCpuLoad) out.push({severity:'warning',name:`Elevated CPU load (${Number(cpu).toFixed(2)})`});
+    }
+  }
+  if(t!=null){
+    if(t>TH.critTempC) out.push({severity:'critical',name:`Hub temperature very high (${Number(t).toFixed(1)}°C)`});
+    else if(t>TH.warnTempC) out.push({severity:'warning',name:`Hub temperature elevated (${Number(t).toFixed(1)}°C)`});
+  }
+  (sig.platformAlerts||[]).forEach(a=>out.push(a));
+  if(sig.spammyDevicesMessage) out.push({key:'spammyDevices',name:'Spammy Devices',severity:'warning',message:sig.spammyDevicesMessage});
+  (sig.hubMessages||[]).forEach(text=>{
+    const stripped=String(text||'').replace(/<[^>]+>/g,'').trim();
+    if(stripped) out.push({key:'hubMessage',name:stripped,severity:'info'});
+  });
+  if(sig.ethernetAndWifi) out.push({severity:'warning',name:'Ethernet and WiFi both active — disable WiFi when using Ethernet'});
+  const gn=sig.ghostNodeCount||0;
+  if(gn>0) out.push({severity:'critical',name:`${gn} Z-Wave ghost node${gn>1?'s':''} detected — remove from mesh`});
+  return out;
+}
+
 function buildForumMarkdown(d){
   const lines=[];
   const L=s=>lines.push(s);
@@ -283,7 +318,7 @@ function buildForumMarkdown(d){
   const zwaveMesh=d.zwaveMesh||null;
   const ghostNodes=d.ghostNodes||[];
   const zigbeeMesh=d.zigbeeMesh||null;
-  const alerts=d.alerts||[];
+  const alerts=composeAlerts(d);
   const deviceStats=d.deviceStats||{};
   const appStats=d.appStats||{};
   const stats=d.stats||null;
@@ -958,8 +993,9 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   Object.entries(bi).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>{if(v>0)o+='<div class="pill">'+dlistlink(v,ii[k])+' '+h(k)+'</div>'});
   o+='</div></div></div></div>';
   // Alerts
-  if(d.alerts&&d.alerts.length){o+='<div class="card"><div class="card-h">Platform Alerts</div><div class="card-b">';
-    d.alerts.forEach(a=>{const sev=(a.severity==='critical')?'crit':((a.severity==='info')?'info':'warn');const icon=(a.severity==='critical')?'\u26D4':((a.severity==='info')?'\u2139':'\u26A0');o+='<div class="alert a-'+sev+'">'+icon+' '+h(a.name)+'</div>'});o+='</div></div>'}
+  const dashAlerts=composeAlerts(d);
+  if(dashAlerts.length){o+='<div class="card"><div class="card-h">Platform Alerts</div><div class="card-b">';
+    dashAlerts.forEach(a=>{const sev=(a.severity==='critical')?'crit':((a.severity==='info')?'info':'warn');const icon=(a.severity==='critical')?'\u26D4':((a.severity==='info')?'\u2139':'\u26A0');o+='<div class="alert a-'+sev+'">'+icon+' '+h(a.name)+'</div>'});o+='</div></div>'}
   // Firmware update (v5.9.0)
   if(d.firmwareUpdate){const fu=d.firmwareUpdate;
     if(fu.updateAvailable){
@@ -1578,12 +1614,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
 async function rHealth(){const P='p-health';loading(P);try{
   const d=await api('health');let o='';
   // Alerts
-  const allAlerts=[];
-  (d.alerts||[]).forEach(a=>{
-    if(!a)return;
-    if(typeof a==='string')allAlerts.push({severity:'warning',message:a});
-    else if(a.name||a.message)allAlerts.push({severity:a.severity||'warning',message:a.name||a.message});
-  });
+  const allAlerts=composeAlerts(d).map(a=>({severity:a.severity||'warning',message:a.name||a.message||''})).filter(a=>a.message);
   if(allAlerts.length){o+='<div class="card"><div class="card-h">Alerts ('+allAlerts.length+')</div><div class="card-b">';
     allAlerts.forEach(a=>{const sev=(a.severity==='critical')?'crit':((a.severity==='info')?'info':'warn');const icon=(a.severity==='critical')?'\u26D4':((a.severity==='info')?'\u2139':'\u26A0');o+='<div class="alert a-'+sev+'">'+icon+' '+h(a.message)+'</div>'});o+='</div></div>'}
   else o+='<div class="alert a-ok">\u2705 No active alerts</div>';

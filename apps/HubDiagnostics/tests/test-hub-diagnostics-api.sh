@@ -636,7 +636,7 @@ if "_error" in health:
 else:
     ok("Endpoint responds")
 
-    for key in ["hub", "resources", "alerts"]:
+    for key in ["hub", "resources", "alertSignals"]:
         if key in health:
             ok(f"Has '{key}' key")
         else:
@@ -654,8 +654,13 @@ else:
     else:
         fail("Missing or zero freeOSMemory")
 
-    alerts = health.get("alerts", [])
-    ok(f"Alerts: {len(alerts)} active")
+    sig = health.get("alertSignals") or {}
+    expected_sig_keys = ["platformAlerts", "hubMessages", "ethernetAndWifi", "ghostNodeCount"]
+    missing = [k for k in expected_sig_keys if k not in sig]
+    if missing:
+        fail(f"alertSignals missing keys: {missing}")
+    else:
+        ok(f"alertSignals shape ok (platformAlerts={len(sig.get('platformAlerts', []))}, hubMessages={len(sig.get('hubMessages', []))}, ghostNodeCount={sig.get('ghostNodeCount')})")
 
     # v5.11.1+ CPU info chips
     if "cpuInfo" in health:
