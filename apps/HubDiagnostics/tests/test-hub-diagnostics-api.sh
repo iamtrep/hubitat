@@ -849,60 +849,9 @@ if snaps.get("snapshotCount", 0) > 0:
 else:
     warn("No snapshots to view — skipping")
 
-# ── Test 11: GET /api/snapshot/diff ───────────────────────────────────
-section("GET /api/snapshot/diff")
-
-if snaps.get("snapshotCount", 0) >= 2:
-    diff = api_get("snapshot/diff?older=1&newer=0")
-    if "_error" in diff:
-        fail(f"Request failed: {diff['_error']}")
-    elif diff.get("error"):
-        fail(f"API error: {diff['error']}")
-    else:
-        ok("Endpoint responds (two snapshots)")
-        for key in ["older", "newer", "deviceChanges"]:
-            if key in diff:
-                ok(f"Has '{key}'")
-            else:
-                fail(f"Missing '{key}'")
-
-        dc = diff.get("deviceChanges", {})
-        for key in ["added", "removed", "changed"]:
-            if key in dc:
-                ok(f"Has deviceChanges '{key}'")
-            else:
-                fail(f"Missing deviceChanges '{key}'")
-
-        # v5.13.0+ new diff sections (always present in payload, may be null)
-        for key in ["backupsChanges", "securityChanges", "codeChanges"]:
-            if key in diff:
-                ok(f"Has v5.13.0 diff field '{key}' (value: {'null' if diff[key] is None else 'present'})")
-            else:
-                fail(f"Missing v5.13.0 diff field '{key}'")
-
-        # Two snapshots taken back-to-back with no real changes should produce no false-positive
-        # diffs in any of the v5.13 sections. (Older snapshot may pre-date v5.13.0 — in that
-        # case all four sections are guarded to None by the containsKey/null-Map checks.)
-        unchanged_sections = sum(1 for k in ["backupsChanges", "securityChanges", "codeChanges"] if diff.get(k) is None)
-        nc_v513 = (diff.get("networkChanges") or {})
-        v513_net_keys = [k for k in ("ntpServer", "loadThreshold") if k in nc_v513]
-        if unchanged_sections == 3 and not v513_net_keys:
-            ok("No v5.13 false-positive diffs between back-to-back snapshots (guards working)")
-        elif v513_net_keys:
-            warn(f"v5.13 networkChanges populated unexpectedly: {v513_net_keys} — may indicate config actually changed, or guard regression")
-        else:
-            warn(f"v5.13 diff sections populated unexpectedly ({3 - unchanged_sections} non-null) — investigate if no real changes occurred")
-elif snaps.get("snapshotCount", 0) == 1:
-    # Test the "now" comparison
-    diff = api_get("snapshot/diff?older=0&newer=now")
-    if "_error" in diff:
-        fail(f"Request failed (now compare): {diff['_error']}")
-    elif diff.get("error"):
-        fail(f"API error (now compare): {diff['error']}")
-    else:
-        ok("Endpoint responds (compare to now)")
-else:
-    warn("No snapshots for diff — skipping")
+# Test 11 (GET /api/snapshot/diff) removed in v5.31.0 — diff is now computed
+# in the SPA from two /api/snapshot/view payloads. Test 10 covers the snapshot
+# view contract that the SPA depends on.
 
 # ── Test 12: GET /api/stats ──────────────────────────────────────────
 section("GET /api/stats")

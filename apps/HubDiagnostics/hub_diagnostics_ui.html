@@ -132,7 +132,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.30.0";
+const UI_VERSION = "5.31.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -1969,8 +1969,14 @@ async function rSnap(){const P='p-snapshots';loading(P);try{
     if(!o||!n||o===n){alert('Select two different snapshots');return}
     btnDiff.disabled=true;btnDiff.textContent='Comparing...';
     document.getElementById('diffResult').innerHTML='<div class="loading"><div class="spinner"></div></div>';
-    try{const r=await api('snapshot/diff?older='+o+'&newer='+n);
-    drop('snapshot/diff?older='+o+'&newer='+n);
+    try{
+    // Fetch older first (its index is stable; if "now" is selected, creating a new snapshot would shift the older index by 1).
+    const olderSnap=await api('snapshot/view?index='+o);
+    let newerSnap;
+    if(n==='now'){await post('snapshot/create');drop('snapshots');newerSnap=await api('snapshot/view?index=0')}
+    else{newerSnap=await api('snapshot/view?index='+n)}
+    if(olderSnap.error||newerSnap.error)throw new Error(olderSnap.error||newerSnap.error);
+    const r=computeSnapshotDiff(olderSnap,newerSnap);
     renderDiff(r,'diffResult');
     if(n==='now'){
       drop('snapshots');
@@ -2052,6 +2058,145 @@ function renderSnapshotView(s,elId){
       {l:'Name',f:'label',r:r=>alink(r.id,r.label)},{l:'Type',f:'name'},
       {l:'Status',f:'disabled',r:r=>r.disabled?'<span style="color:var(--crit);font-size:11px">[disabled]</span>':''}
     ],ap.userAppsList,{sc:0,sd:'asc'});
+}
+
+// Compute snapshot diff client-side. Mirrors the structure that renderDiff() expects;
+// hub no longer ships /api/snapshot/diff. Inputs are two full snapshots fetched via
+// /api/snapshot/view (which already runs migrateSnapshotDevices on the way out).
+function computeSnapshotDiff(older, newer){
+  // Chronological order
+  if((older.timestampMs||0) > (newer.timestampMs||0)){const tmp=older;older=newer;newer=tmp}
+  const oDevs=(older.devices&&older.devices.allDevices)||[];
+  const nDevs=(newer.devices&&newer.devices.allDevices)||[];
+  const oIds=new Set(oDevs.map(x=>x.id));
+  const nIds=new Set(nDevs.map(x=>x.id));
+  const oById={};oDevs.forEach(x=>{oById[x.id]=x});
+  const mapDev=x=>({id:x.id,name:x.name,connectionType:CD[x.connectionType]||x.connectionType,integration:x.integration});
+  const added=nDevs.filter(x=>!oIds.has(x.id)).map(mapDev);
+  const removed=oDevs.filter(x=>!nIds.has(x.id)).map(mapDev);
+  const changed=nDevs.filter(x=>oIds.has(x.id)).map(x=>{
+    const old=oById[x.id];const ch=[];
+    if(old.status!==x.status)ch.push({field:'status',from:old.status,to:x.status});
+    if(old.connectionType!==x.connectionType)ch.push({field:'connectionType',from:CD[old.connectionType]||old.connectionType,to:CD[x.connectionType]||x.connectionType});
+    if(old.integration!==x.integration)ch.push({field:'integration',from:old.integration,to:x.integration});
+    return ch.length?{id:x.id,name:x.name,changes:ch}:null;
+  }).filter(Boolean);
+
+  const distChanges=(oMap,nMap,labelKey,labelXform)=>{
+    oMap=oMap||{};nMap=nMap||{};
+    const keys=new Set([...Object.keys(oMap),...Object.keys(nMap)]);
+    return [...keys].filter(k=>(oMap[k]||0)!==(nMap[k]||0))
+      .map(k=>({[labelKey]:labelXform?labelXform(k):k,from:oMap[k]||0,to:nMap[k]||0}));
+  };
+  const connectionTypeChanges=distChanges(older.devices&&older.devices.byConnectionType,newer.devices&&newer.devices.byConnectionType,'connectionType',k=>CD[k]||k);
+  const integrationChanges=distChanges(older.devices&&older.devices.byIntegration,newer.devices&&newer.devices.byIntegration,'integration');
+
+  const oApps=(older.apps&&older.apps.userAppsList)||[];
+  const nApps=(newer.apps&&newer.apps.userAppsList)||[];
+  const aid=a=>String(a.id||'');
+  const oAids=new Set(oApps.map(aid));
+  const nAids=new Set(nApps.map(aid));
+  const oAppsById={};oApps.forEach(a=>{oAppsById[aid(a)]=a});
+  const appsAdded=nApps.filter(a=>!oAids.has(aid(a))).map(a=>({id:a.id,name:a.name,label:a.label}));
+  const appsRemoved=oApps.filter(a=>!nAids.has(aid(a))).map(a=>({id:a.id,name:a.name,label:a.label}));
+  const appsChanged=nApps.filter(a=>{const o=oAppsById[aid(a)];return o&&((o.disabled||false)!==(a.disabled||false))})
+    .map(a=>({id:a.id,name:a.name,label:a.label,disabled:a.disabled||false}));
+
+  const oNet=older.network||{},nNet=newer.network||{};
+  const networkChanges={};
+  if((oNet.zigbee&&oNet.zigbee.channel)!==(nNet.zigbee&&nNet.zigbee.channel))
+    networkChanges.zigbeeChannel={from:oNet.zigbee&&oNet.zigbee.channel,to:nNet.zigbee&&nNet.zigbee.channel};
+  if((oNet.zwave&&oNet.zwave.region)!==(nNet.zwave&&nNet.zwave.region))
+    networkChanges.zwaveRegion={from:oNet.zwave&&oNet.zwave.region,to:nNet.zwave&&nNet.zwave.region};
+  if((oNet.matter&&oNet.matter.enabled)!==(nNet.matter&&nNet.matter.enabled))
+    networkChanges.matterEnabled={from:oNet.matter&&oNet.matter.enabled,to:nNet.matter&&nNet.matter.enabled};
+  const peerName=p=>p.name||p.ipAddress;
+  const oPeers=((oNet.hubMesh&&oNet.hubMesh.hubList)||[]).map(peerName);
+  const nPeers=((nNet.hubMesh&&nNet.hubMesh.hubList)||[]).map(peerName);
+  const oPeerSet=new Set(oPeers),nPeerSet=new Set(nPeers);
+  const peersAdded=nPeers.filter(p=>!oPeerSet.has(p));
+  const peersRemoved=oPeers.filter(p=>!nPeerSet.has(p));
+  if(peersAdded.length||peersRemoved.length)networkChanges.hubMeshPeers={added:peersAdded,removed:peersRemoved};
+  if('ntpServer' in older && 'ntpServer' in newer && older.ntpServer!==newer.ntpServer)
+    networkChanges.ntpServer={from:older.ntpServer,to:newer.ntpServer};
+  if('loadThreshold' in older && 'loadThreshold' in newer && older.loadThreshold!==newer.loadThreshold)
+    networkChanges.loadThreshold={from:older.loadThreshold,to:newer.loadThreshold};
+
+  const oSt=older.storage||{},nSt=newer.storage||{};
+  const storageChanges={};
+  if(oSt.fileCount!=null&&nSt.fileCount!=null&&oSt.fileCount!==nSt.fileCount)storageChanges.fileCount={from:oSt.fileCount,to:nSt.fileCount};
+  if(oSt.freeSpace!=null&&nSt.freeSpace!=null&&oSt.freeSpace!==nSt.freeSpace)storageChanges.freeSpace={from:oSt.freeSpace,to:nSt.freeSpace};
+
+  const backupsChanges={};
+  const oBk=older.backups,nBk=newer.backups;
+  if(oBk&&nBk){
+    const oLo=oBk.local||{},nLo=nBk.local||{};
+    if((oLo.count||0)!==(nLo.count||0))backupsChanges.localCount={from:oLo.count||0,to:nLo.count||0};
+    if(oLo.latestCreateTime!==nLo.latestCreateTime&&(oLo.latestCreateTime||nLo.latestCreateTime))
+      backupsChanges.latestLocal={from:oLo.latestCreateTime,to:nLo.latestCreateTime};
+    const oCl=oBk.cloud||{},nCl=nBk.cloud||{};
+    if((oCl.thisHubCount||0)!==(nCl.thisHubCount||0))backupsChanges.cloudThisHubCount={from:oCl.thisHubCount||0,to:nCl.thisHubCount||0};
+    if((oCl.hasCloudBackupEntitlements||false)!==(nCl.hasCloudBackupEntitlements||false))
+      backupsChanges.cloudBackupEntitlement={from:oCl.hasCloudBackupEntitlements||false,to:nCl.hasCloudBackupEntitlements||false};
+    if((oCl.hasCloudRestoreEntitlements||false)!==(nCl.hasCloudRestoreEntitlements||false))
+      backupsChanges.cloudRestoreEntitlement={from:oCl.hasCloudRestoreEntitlements||false,to:nCl.hasCloudRestoreEntitlements||false};
+  }
+
+  const securityChanges={};
+  const oSec=older.security,nSec=newer.security;
+  if(oSec&&nSec){
+    const oLim=!!(oSec.limitedAccess&&oSec.limitedAccess.enabled);
+    const nLim=!!(nSec.limitedAccess&&nSec.limitedAccess.enabled);
+    if(oLim!==nLim)securityChanges.limitedAccess={from:oLim,to:nLim};
+    const oAddrs=(oSec.limitedAccess&&oSec.limitedAccess.addresses)||[];
+    const nAddrs=(nSec.limitedAccess&&nSec.limitedAccess.addresses)||[];
+    const setEq=(a,b)=>a.length===b.length&&a.every(x=>b.includes(x));
+    if(!setEq(oAddrs,nAddrs))securityChanges.limitedAddresses={from:oAddrs,to:nAddrs};
+    const oSub=oSec.allowedSubnets||[];const nSub=nSec.allowedSubnets||[];
+    if(!setEq(oSub,nSub))securityChanges.allowedSubnets={from:oSub,to:nSub};
+    if(oSec.dnsFallback!==nSec.dnsFallback)securityChanges.dnsFallback={from:oSec.dnsFallback,to:nSec.dnsFallback};
+    if(oSec.cloudController!==nSec.cloudController&&(oSec.cloudController!=null||nSec.cloudController!=null))
+      securityChanges.cloudController={from:oSec.cloudController,to:nSec.cloudController};
+  }
+
+  const codeChanges={};
+  const oCode=older.code,nCode=newer.code;
+  if(oCode&&nCode){
+    const diffById=(o,n)=>{
+      o=o||[];n=n||[];
+      const oIds=new Set(o.map(x=>x.id));const nIdSet=new Set(n.map(x=>x.id));
+      return {added:n.filter(x=>!oIds.has(x.id)),removed:o.filter(x=>!nIdSet.has(x.id))};
+    };
+    const bdl=diffById(oCode.bundles,nCode.bundles);
+    if(bdl.added.length||bdl.removed.length)codeChanges.bundles=bdl;
+    const oLib=oCode.libraries||[],nLib=nCode.libraries||[];
+    const oLibById={};oLib.forEach(l=>{oLibById[l.id]=l});
+    const lib=diffById(oLib,nLib);
+    const versionChanged=nLib.filter(l=>oLibById[l.id]&&oLibById[l.id].version!==l.version)
+      .map(l=>({id:l.id,name:l.name,namespace:l.namespace,from:oLibById[l.id].version,to:l.version}));
+    if(lib.added.length||lib.removed.length||versionChanged.length)codeChanges.libraries={added:lib.added,removed:lib.removed,versionChanged};
+    const oHv=oCode.hubVariables||[],nHv=nCode.hubVariables||[];
+    const oHvByName={};oHv.forEach(v=>{oHvByName[v.name]=v});
+    const oNames=new Set(oHv.map(v=>v.name));const nNames=new Set(nHv.map(v=>v.name));
+    const hvAdded=nHv.filter(v=>!oNames.has(v.name));
+    const hvRemoved=oHv.filter(v=>!nNames.has(v.name));
+    const typeChanged=nHv.filter(v=>oHvByName[v.name]&&oHvByName[v.name].type!==v.type)
+      .map(v=>({name:v.name,from:oHvByName[v.name].type,to:v.type}));
+    if(hvAdded.length||hvRemoved.length||typeChanged.length)codeChanges.hubVariables={added:hvAdded,removed:hvRemoved,typeChanged};
+  }
+
+  return {
+    older:{timestamp:older.timestamp,firmware:older.hubInfo&&older.hubInfo.firmware,storage:older.storage},
+    newer:{timestamp:newer.timestamp,firmware:newer.hubInfo&&newer.hubInfo.firmware,storage:newer.storage},
+    deviceChanges:{olderTotal:(older.devices&&older.devices.totalDevices)||0,newerTotal:(newer.devices&&newer.devices.totalDevices)||0,added,removed,changed},
+    connectionTypeChanges, integrationChanges,
+    appChanges:{olderTotal:(older.apps&&older.apps.totalApps)||0,newerTotal:(newer.apps&&newer.apps.totalApps)||0,added:appsAdded,removed:appsRemoved,changed:appsChanged},
+    networkChanges:Object.keys(networkChanges).length?networkChanges:null,
+    storageChanges:Object.keys(storageChanges).length?storageChanges:null,
+    backupsChanges:Object.keys(backupsChanges).length?backupsChanges:null,
+    securityChanges:Object.keys(securityChanges).length?securityChanges:null,
+    codeChanges:Object.keys(codeChanges).length?codeChanges:null
+  };
 }
 
 function renderDiff(d,elId){
