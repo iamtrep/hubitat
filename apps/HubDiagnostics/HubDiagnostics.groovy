@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.33.0"
+@Field static final String APP_VERSION = "5.33.1"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -1254,16 +1254,32 @@ Map getHealthData(Map shared = [:]) {
 }
 
 Map getPerformanceData(Map shared = [:]) {
+    // v5.33.1: per-phase timing instrumentation to break down cold-load wall time.
+    // Each phase records (a) elapsed ms, (b) whether the fetch hit the @Field static
+    // cache or made a fresh httpGet. Summary logged at end as a single info line.
+    Map t = [:]
+    long t1
+    boolean zwaveCache = false, zigbeeCache = false, appsCache = false, devicesCache = false
+
+    t1 = now()
     Map stats
     if (shared.runtimeStats) { stats = (Map) shared.runtimeStats } else { Map r = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats"); stats = r.ok ? r.data : null }
+    t.runtime = now() - t1
+
+    t1 = now()
     Map resources  = (shared.resources as Map) ?: fetchSystemResources()
+    t.resources = now() - t1
+
+    t1 = now()
     Map zwaveData
     if (shared.network?.zwave) {
         zwaveData = (Map) shared.network.zwave
+        zwaveCache = true
     } else {
         long nowMs = now()
         if (cachedZwaveData && cachedZwaveAt && (nowMs - cachedZwaveAt) < RADIO_CACHE_TTL_MS) {
             zwaveData = cachedZwaveData
+            zwaveCache = true
             logDebug "Using cached Z-Wave data (age ${nowMs - cachedZwaveAt}ms)"
         } else {
             Map r = hubMapRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", 20)
@@ -1271,13 +1287,18 @@ Map getPerformanceData(Map shared = [:]) {
             if (zwaveData) { cachedZwaveData = zwaveData; cachedZwaveAt = nowMs }
         }
     }
+    t.zwave = now() - t1
+
+    t1 = now()
     Map zigbeeData
     if (shared.network?.zigbee) {
         zigbeeData = (Map) shared.network.zigbee
+        zigbeeCache = true
     } else {
         long nowMs = now()
         if (cachedZigbeeData && cachedZigbeeAt && (nowMs - cachedZigbeeAt) < RADIO_CACHE_TTL_MS) {
             zigbeeData = cachedZigbeeData
+            zigbeeCache = true
             logDebug "Using cached Zigbee data (age ${nowMs - cachedZigbeeAt}ms)"
         } else {
             Map r = hubMapRequest(ZIGBEE_DETAILS_PATH, "Zigbee details", 20)
@@ -1285,6 +1306,9 @@ Map getPerformanceData(Map shared = [:]) {
             if (zigbeeData) { cachedZigbeeData = zigbeeData; cachedZigbeeAt = nowMs }
         }
     }
+    t.zigbee = now() - t1
+
+    t1 = now()
     List zwaveMsgCounts = extractZwaveMessageCounts(zwaveData)
     List zigbeeMsgCounts = extractZigbeeMessageCounts(zigbeeData)
     Map radioStats = [zwave: zwaveMsgCounts, zigbee: zigbeeMsgCounts]
@@ -1293,7 +1317,9 @@ Map getPerformanceData(Map shared = [:]) {
     List allRadioDevices = (zwaveMsgCounts.collect { [name: it.name, deviceId: it.deviceId, msgCount: it.msgCount, integration: "Z-Wave"] } +
                             zigbeeMsgCounts.collect { [name: it.name, deviceId: it.id, msgCount: it.msgCount, integration: "Zigbee"] })
     List topTalkers = allRadioDevices.sort { -it.msgCount }.take(3)
+    t.radioCalc = now() - t1
 
+    t1 = now()
     // Enrich appStats with source labels (community/builtin/platform)
     Map appSourceById = [:]
     long nowApps = now()
@@ -1301,17 +1327,23 @@ Map getPerformanceData(Map shared = [:]) {
     if (cachedAppsListData && cachedAppsListAt && (nowApps - cachedAppsListAt) < HUB_LIST_CACHE_TTL_MS) {
         logDebug "Using cached apps list (age ${nowApps - cachedAppsListAt}ms)"
         appsListResp = cachedAppsListData
+        appsCache = true
     } else {
         Map appsListWrap = hubMapRequest(APPS_LIST_PATH, "apps list")
         appsListResp = appsListWrap.ok ? appsListWrap.data : [:]
         if (appsListWrap.ok) { cachedAppsListData = appsListResp; cachedAppsListAt = nowApps }
     }
+    t.appsFetch = now() - t1
+
+    t1 = now()
     if (appsListResp.apps) {
         visitAppEntries(appsListResp.apps as List) { Map appEntry, Map app, boolean isChildLevel, List _ ->
             if (app?.id != null) appSourceById[app.id] = (app.user ? "community" : "builtin")
         }
     }
+    t.appsSourceWalk = now() - t1
 
+    t1 = now()
     if (stats) {
         stats.radioStats = radioStats
         stats.uptimeSeconds = parseUptime(stats.uptime as String)
@@ -1323,28 +1355,38 @@ Map getPerformanceData(Map shared = [:]) {
             }
         }
     }
+    t.statsEnrich = now() - t1
+
     // R-7 B2 (v5.20.0): build small id→label maps for the Performance tab's CPU charts so the
     // SPA doesn't cross-fetch /api/devices and /api/apps just to look up names. Tiny payload
     // (counts × ~20 bytes), saves 2 client round trips of much heavier endpoints.
     // Walk /hub2/devicesList directly to build id→type map. Skips analyzeDevices' enrichment overhead
     // (we only need the raw type/name from the bulk endpoint, not the cross-classification work).
+    t1 = now()
     Map deviceTypeById = [:]
     long nowDev = now()
     Map devListData
     if (cachedDevicesListData && cachedDevicesListAt && (nowDev - cachedDevicesListAt) < HUB_LIST_CACHE_TTL_MS) {
         logDebug "Using cached devices list (age ${nowDev - cachedDevicesListAt}ms)"
         devListData = cachedDevicesListData
+        devicesCache = true
     } else {
         Map devWrap = hubMapRequest(DEVICES_LIST_PATH, "devices list (B2 labels)", 15)
         devListData = devWrap.ok ? devWrap.data : [:]
         if (devWrap.ok) { cachedDevicesListData = devListData; cachedDevicesListAt = nowDev }
     }
+    t.devicesFetch = now() - t1
+
+    t1 = now()
     if (devListData.devices) {
         flattenDeviceEntries(devListData.devices as List).each { Map entry ->
             Map dev = entry?.data instanceof Map ? (Map) entry.data : null
             if (dev?.id != null) deviceTypeById[dev.id] = (dev.type ?: 'Unknown') as String
         }
     }
+    t.devicesWalk = now() - t1
+
+    t1 = now()
     // Walk /hub2/appsList directly for parent→child label association — reuse the response already
     // fetched above for appSourceById rather than making a second round trip.
     Map appParentTypeById = [:]
@@ -1363,11 +1405,22 @@ Map getPerformanceData(Map shared = [:]) {
         }
         walkApps(appsListResp.apps as List, null)
     }
+    t.appsParentWalk = now() - t1
 
+    t1 = now()
     // v5.33.0: read the slim checkpoint index. Backed by loadCheckpointIndex which
     // reads a small per-app index file (or migrates the legacy single-blob file once).
     // The Performance tab API never touches the full per-checkpoint detail files.
     List indexEntries = getCheckpointIndex()
+    t.indexRead = now() - t1
+
+    long totalMs = (t.values().sum() ?: 0) as long
+    logDebug "getPerformanceData breakdown (sum ${totalMs}ms): " +
+        "runtime=${t.runtime}ms resources=${t.resources}ms " +
+        "zwave=${t.zwave}ms${zwaveCache ? '(cache)' : ''} zigbee=${t.zigbee}ms${zigbeeCache ? '(cache)' : ''} radioCalc=${t.radioCalc}ms " +
+        "appsFetch=${t.appsFetch}ms${appsCache ? '(cache)' : ''} appsSourceWalk=${t.appsSourceWalk}ms statsEnrich=${t.statsEnrich}ms " +
+        "devicesFetch=${t.devicesFetch}ms${devicesCache ? '(cache)' : ''} devicesWalk=${t.devicesWalk}ms appsParentWalk=${t.appsParentWalk}ms " +
+        "indexRead=${t.indexRead}ms"
     return [
         stats: stats, resources: resources,
         topTalkers: topTalkers,
