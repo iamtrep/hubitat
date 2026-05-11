@@ -57,7 +57,7 @@ Two exceptions: Hubitat callback parameters (`evt`, `resp`, `data`) stay untyped
 The standard lifecycle methods (`installed`, `updated`, `uninstalled`, `initialize`) are platform-defined; two project conventions matter on top:
 
 - **`initialize()` is the convergence point.** Both the install path and the preferences-saved path route through it, so subscriptions, schedules, and version checks live there exactly once.
-- **`updated()` resets before reinitializing** — `unsubscribe(); unschedule(); initialize()` (drivers omit `unsubscribe()`). Skipping `unschedule()` produces orphan timers from prior preference saves: every `runIn`/`schedule` from the previous configuration keeps firing alongside the new ones.
+- **`updated()` resets before reinitializing** — `unsubscribe(); unschedule(); initialize()` (drivers omit `unsubscribe()`). Same-handler-name `runIn`/`runInMillis`/`runOnce`/`schedule` calls are self-cancelling because the platform's `options.overwrite` defaults to `true` — so a static handler name re-scheduled in the new config does not need `unschedule()` to avoid accumulation. The defensive `unschedule()` matters in narrower cases: handler names that change across configs (e.g., `"check_${index}"` when the index shifts), handlers scheduled from event handlers that the new config no longer fires, and any call site that passes `[overwrite: false]`. Calling `unschedule()` unconditionally remains the convention because it's cheap and protects against all three.
 
 ### Version constants and code-push detection
 
