@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.32.5"
+@Field static final String APP_VERSION = "5.32.6"
 @Field static final String STORAGE_SCHEMA_VERSION = "4.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -430,6 +430,7 @@ Map settingsPage() {
                     defaultValue: "60", required: true
             }
             input "maxCheckpoints", "number", title: "Maximum perf checkpoints to keep", defaultValue: 10, range: "1..50", required: true
+            paragraph "<i>After updating the App or UI code, click <b>Done</b> on this page to re-arm scheduled jobs. A code push alone does not re-run initialize().</i>"
         }
 
         section("Device Monitoring") {
@@ -740,10 +741,11 @@ Map apiPerformanceCompare() {
         checkpointStats = statsWrap.data
         Map currentResources = fetchSystemResources()
         checkpointStats.resources = currentResources
-        Map zwWrap = hubMapRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", 20)
-        Map zwaveData = zwWrap.ok ? zwWrap.data : [:]
-        Map zbWrap = hubMapRequest(ZIGBEE_DETAILS_PATH, "Zigbee details", 20)
-        Map zigbeeData = zbWrap.ok ? zbWrap.data : [:]
+        // v5.32.6: cache-first radio fetch with bounded budget (8s, no retry) — same
+        // pattern as scheduled createCheckpoint. Keeps Compare → Now from pinning the
+        // app thread for tens of seconds on a stressed hub.
+        Map zwaveData = fetchZwaveDataForCheckpoint() ?: [:]
+        Map zigbeeData = fetchZigbeeDataForCheckpoint() ?: [:]
         checkpointStats.radioStats = [
             zwave: extractZwaveMessageCounts(zwaveData),
             zigbee: extractZigbeeMessageCounts(zigbeeData)
@@ -886,9 +888,8 @@ Map apiDeleteSnapshot() {
 }
 
 Map apiCreateCheckpoint() {
-    if (!createCheckpoint()) return jsonResponse([success: false, error: "Failed to capture runtime stats"])
-    List checkpoints = loadCheckpoints()
-    return jsonResponse([success: true, checkpointCount: checkpoints?.size() ?: 0])
+    if (!createCheckpoint()) return jsonResponse([success: false, error: "Checkpoint creation failed or already in progress"])
+    return jsonResponse([success: true, checkpointCount: getCheckpointIndex().size()])
 }
 
 Map apiDeleteCheckpoint() {
@@ -1348,20 +1349,19 @@ Map getPerformanceData(Map shared = [:]) {
         walkApps(appsListResp.apps as List, null)
     }
 
-    List checkpoints = loadCheckpoints()
+    // v5.32.6: read the slim checkpoint index from state instead of loading the
+    // full checkpoints file. The index is maintained by saveCheckpoints / clearAllCheckpoints
+    // and carries the exact shape the SPA needs (count + projection). Eliminates the
+    // multi-MB file read and JSON parse from the Performance tab hot path.
+    List indexEntries = getCheckpointIndex()
     return [
         stats: stats, resources: resources,
         topTalkers: topTalkers,
         deviceTypeById: deviceTypeById,        // B2: id → driver type for CPU-by-device-type chart
         appParentTypeById: appParentTypeById,  // B2: id → parent label for CPU-by-app-type chart
-        checkpointCount: checkpoints?.size() ?: 0,
+        checkpointCount: indexEntries.size(),
         maxCheckpoints: (settings.maxCheckpoints ?: 10) as int,
-        checkpoints: (checkpoints ?: []).collect { Map cp ->
-            Map s = (Map) cp.stats
-            [timestamp: cp.timestamp, timestampMs: cp.timestampMs,
-             stats: s ? [uptime: s.uptime, totalDevicesRuntime: s.totalDevicesRuntime, totalAppsRuntime: s.totalAppsRuntime] : null,
-             resources: cp.resources, temperature: cp.temperature, databaseSize: cp.databaseSize]
-        },
+        checkpoints: indexEntries,
         savedComparison: loadPerformanceComparisonPayload()
     ]
 }
@@ -1486,8 +1486,8 @@ private Object hubRequest(String path, String name, String type = "json", int ti
     return hubRequestInternal(path, name, type, timeout, true)
 }
 
-private Map hubMapRequest(String path, String name, int timeout = 30) {
-    Object raw = hubRequestInternal(path, name, "json", timeout, true)
+private Map hubMapRequest(String path, String name, int timeout = 30, boolean allowRetry = true) {
+    Object raw = hubRequestInternal(path, name, "json", timeout, allowRetry)
     if (raw instanceof Map && ((Map) raw).error) {
         return [ok: false, data: [:], error: (String) ((Map) raw).message]
     }
@@ -2968,6 +2968,50 @@ Map enrichDevices(Map uncertainDevices, Set communityAppTypeNames = [] as Set) {
 // ===== PERFORMANCE CHECKPOINT SYSTEM =====
 
 boolean createCheckpoint() {
+    // v5.32.6: in-flight guard. Prevents a scheduled tick from racing a user-triggered
+    // Save Checkpoint, which would stack file I/O and HTTP fetches on the app thread.
+    // atomicState (not state) because state commits at method exit — too late for the race.
+    Long inFlight = atomicState.checkpointInFlight as Long
+    if (inFlight && (now() - inFlight) < 300_000L) {
+        logInfo "createCheckpoint skipped — already in flight since ${new Date(inFlight)}"
+        return false
+    }
+    atomicState.checkpointInFlight = now()
+    try {
+        return doCreateCheckpoint()
+    } finally {
+        atomicState.checkpointInFlight = null
+    }
+}
+
+// v5.32.6: radio fetch with cache-first + bounded budget. Used by checkpoint paths
+// (createCheckpoint, apiPerformanceCompare 'now') where blocking the app thread for
+// tens of seconds contributes to hub-wide overload. getPerformanceData has its own
+// cache check inline (it returns the data directly into the response) so it keeps
+// the longer 20s timeout — the user explicitly opened the tab and wants the data.
+private Map fetchZwaveDataForCheckpoint() {
+    long nowMs = now()
+    if (cachedZwaveData && cachedZwaveAt && (nowMs - cachedZwaveAt) < RADIO_CACHE_TTL_MS) {
+        logDebug "Using cached Z-Wave data for checkpoint (age ${nowMs - cachedZwaveAt}ms)"
+        return cachedZwaveData
+    }
+    Map r = hubMapRequest(ZWAVE_DETAILS_PATH, "Z-Wave details (checkpoint)", 8, false)
+    if (r.ok) { cachedZwaveData = r.data; cachedZwaveAt = nowMs; return r.data }
+    return null
+}
+
+private Map fetchZigbeeDataForCheckpoint() {
+    long nowMs = now()
+    if (cachedZigbeeData && cachedZigbeeAt && (nowMs - cachedZigbeeAt) < RADIO_CACHE_TTL_MS) {
+        logDebug "Using cached Zigbee data for checkpoint (age ${nowMs - cachedZigbeeAt}ms)"
+        return cachedZigbeeData
+    }
+    Map r = hubMapRequest(ZIGBEE_DETAILS_PATH, "Zigbee details (checkpoint)", 8, false)
+    if (r.ok) { cachedZigbeeData = r.data; cachedZigbeeAt = nowMs; return r.data }
+    return null
+}
+
+private boolean doCreateCheckpoint() {
     logInfo "Creating perf checkpoint..."
 
     Map statsWrap = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats")
@@ -2981,9 +3025,12 @@ boolean createCheckpoint() {
     Float temperature = fetchTemperature()
     Integer databaseSize = fetchDatabaseSize()
 
-    // Capture radio message counts for Z-Wave and Zigbee
-    Map zwaveData = hubMapRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", 20).with { it.ok ? it.data : null }
-    Map zigbeeData = hubMapRequest(ZIGBEE_DETAILS_PATH, "Zigbee details", 20).with { it.ok ? it.data : null }
+    // v5.32.6: capture radio message counts via the same 60s @Field static cache used by
+    // getPerformanceData. On a cold cache, bound the fetch to 8s with no retry — worst-case
+    // per-radio blocking drops from ~40s (20s × once-retry) to 8s, halving total checkpoint
+    // app-thread time. If the call still fails, store empty arrays rather than crashing.
+    Map zwaveData = fetchZwaveDataForCheckpoint()
+    Map zigbeeData = fetchZigbeeDataForCheckpoint()
     List zwaveRadio = extractZwaveMessageCounts(zwaveData)
     List zigbeeRadio = extractZigbeeMessageCounts(zigbeeData)
 
@@ -3066,6 +3113,7 @@ void clearAllCheckpoints() {
     deleteFile(CHECKPOINTS_FILE)
     deleteFile(PERFORMANCE_COMPARISON_FILE)
     cachedCheckpoints = []
+    state.checkpointIndex = []
     logInfo "All perf checkpoints cleared"
 }
 
@@ -3444,6 +3492,12 @@ List loadCheckpoints() {
         logDebug "No existing checkpoints: ${e.message}"
         cachedCheckpoints = []
     }
+    int cap = (settings.maxCheckpoints ?: 10) as int
+    if (cachedCheckpoints.size() > cap) {
+        logInfo "Trimming over-sized checkpoint file from ${cachedCheckpoints.size()} to ${cap}"
+        List trimmed = cachedCheckpoints.take(cap)
+        saveCheckpoints(trimmed)
+    }
     return cachedCheckpoints
 }
 
@@ -3452,9 +3506,37 @@ void saveCheckpoints(List checkpoints) {
         String json = groovy.json.JsonOutput.toJson(checkpoints)
         writeFile(CHECKPOINTS_FILE, json)
         cachedCheckpoints = checkpoints
+        state.checkpointIndex = checkpoints.collect { buildCheckpointIndexEntry((Map) it) }
     } catch (Exception e) {
         logError "Error saving checkpoints: ${e}"
     }
+}
+
+// Slim per-checkpoint projection consumed by the Performance tab. Mirrors the shape
+// returned by getPerformanceData at v5.32.5 so the SPA needs no changes. Maintained
+// in state.checkpointIndex so the Performance tab API never reads the full checkpoint
+// file (which can be multi-MB on busy hubs).
+private Map buildCheckpointIndexEntry(Map cp) {
+    Map s = (Map) cp?.stats
+    return [
+        timestamp: cp?.timestamp,
+        timestampMs: cp?.timestampMs,
+        stats: s ? [uptime: s.uptime, totalDevicesRuntime: s.totalDevicesRuntime, totalAppsRuntime: s.totalAppsRuntime] : null,
+        resources: cp?.resources,
+        temperature: cp?.temperature,
+        databaseSize: cp?.databaseSize
+    ]
+}
+
+List getCheckpointIndex() {
+    List idx = state.checkpointIndex as List
+    if (idx != null) return idx
+    // Cold start (first call after install or upgrade): lazily rebuild from the
+    // full file once, then state.checkpointIndex carries us across future calls.
+    List cps = loadCheckpoints()
+    List slim = cps.collect { buildCheckpointIndexEntry((Map) it) }
+    state.checkpointIndex = slim
+    return slim
 }
 
 List loadSnapshots() {
