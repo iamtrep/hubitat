@@ -18,6 +18,7 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 
 | Folder | Description |
 |---|---|
+| [HubDiagnostics/](HubDiagnostics/) | Comprehensive hub diagnostic dashboard — devices, apps, network, performance history, snapshots, forum export. Served as a single-page UI from the hub. |
 | [LogMonitor/](LogMonitor/) | Hub log monitoring app with WebSocket bridge — connects to one or more hub logsockets, applies configurable filters, and outputs to notifications, log files, or HTTP POST. |
 | [sensors/](sensors/) | Sensor Aggregator, Sensor Filter, and Motion Fusion apps for combining, smoothing, or fusing multiple sensor readings into a single virtual device. |
 | [tests/](tests/) | Hub stress test apps for benchmarking async HTTP, UDP, and File Manager API performance. |

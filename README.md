@@ -6,6 +6,10 @@ Personal collection of apps, drivers, and integrations for the [Hubitat Elevatio
 
 Automation apps for humidity control, peak energy management, device monitoring, sensor aggregation, and hub administration. See [`apps/`](apps/README.md) for the full list.
 
+### Hub Diagnostics
+
+Comprehensive diagnostic dashboard served from the hub itself — devices, apps, network, performance history, snapshots, and a forum-friendly export. See [`apps/HubDiagnostics/`](apps/HubDiagnostics/README.md).
+
 ## Drivers
 
 Zigbee, BLE, and cloud API device drivers — including families for Sinopé, Stelpro, ThirdReality, and standalone devices like Awair Element, Ecobee, and Environment Canada AQHI. See [`drivers/`](drivers/README.md) for the full list.
