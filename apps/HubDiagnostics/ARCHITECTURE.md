@@ -20,6 +20,17 @@ The architecture is optimized for:
 - server-side normalization of irregular Hubitat payloads
 - a small set of reusable UI primitives instead of ad hoc rendering paths
 
+## Guiding Principle: The Hub Is The Constrained Side
+
+The hub is a 4-core ARM Cortex-A53 sharing memory with every other Hubitat app on the device. The browser is, in practice, an order of magnitude faster with effectively unbounded RAM relative to this workload. Optimize accordingly.
+
+- Ship slightly larger normalized payloads to the browser rather than do CPU-intensive transformation on the hub.
+- *Aggregation* means coalescing duplicate fetches and providing fail-soft semantics — not computing derived data the browser can compute trivially.
+- *Normalization* means stable field names, payload shape, and date-to-epoch conversion — not sorting, ranking, diffing, threshold-evaluating, or HTML-cleaning.
+- Sorts, top-N selection, set differences, snapshot diffs, threshold-based severity, HTML stripping, and percentage rollups all belong in the SPA.
+
+When in doubt, ship raw and let the SPA derive.
+
 ## System Shape
 
 ### Backend layers
@@ -53,7 +64,7 @@ The Groovy app acts as an application server for the SPA, providing four things 
 
 1. **Auth stability** via OAuth app endpoints, so the SPA does not require an active Hubitat admin session.
 2. **App-owned persistence** — snapshots, checkpoints, generated reports, scan caches, settings.
-3. **Aggregation** — collapsing multiple hub requests into narrower UI-facing payloads, with shared-cache and fail-soft semantics centralized.
+3. **Aggregation** — collapsing multiple hub requests into a single response with shared-cache and fail-soft semantics centralized. Aggregation is about *coalescing fetches*, not about computing derived values; if the only thing the SPA cannot do directly is sort, slice, or threshold-check the result, that does not belong on the hub.
 4. **Normalization** — stable field names, payload shape, date-to-epoch conversion, firmware/version compatibility.
 
 Most Hub Diagnostics routes are app-owned. The notable aggregators are `/api/dashboard`, `/api/health`, and `/api/live`; they are justified by shared-cache, fail-soft behavior, and normalization the SPA should not duplicate.
@@ -162,6 +173,9 @@ In addition to the repo-wide patterns-to-avoid list, these are Hub Diagnostics s
 - duplicate fetches of the same endpoint within a request path
 - adding experimental or expensive fetches to `getStructuredAlerts()` or `apiLive()`
 - pushing backend parsing and compatibility logic into the SPA
+- computing derivable data hub-side that the SPA can compute trivially — sorts, top-N, set differences, snapshot diffs, threshold-based severity, HTML cleanup, percentage rollups
+- blocking hot paths (`apiLive()`, `getStructuredAlerts()`, `buildSharedCache()`) on data that does not change between ticks
+- hub-side string templating or HTML assembly when the SPA owns rendering
 - one-off tables when `tbl()` is sufficient
 - "cleanup" refactors that ignore Hubitat platform constraints already accepted by the project
 
@@ -176,6 +190,8 @@ Not every long method is a design failure. In this codebase, some pipelines are 
 ### Audit internals use a different cost model
 
 The device audit path is allowed to do heavier work because it is explicitly user-triggered and infrequent. Do not copy audit-time behavior into dashboard, health, or live-refresh paths.
+
+This relaxed budget applies to *collection* — per-device `fullJson` fan-out, async orchestration, the radio-state enrichment phase. It does not extend to *post-processing*: sorts, indexes, mode computation, top-N selection, and cross-reference assembly should still move to the SPA where practical, even on the audit path.
 
 ### Some UI/report duplication is tolerated
 
@@ -194,6 +210,9 @@ Treat these as regressions even if the feature "works" locally:
 - a new cache grows without expiration or invalidation
 - the same logical payload shape is duplicated across endpoints and drifts
 - a new UI feature reimplements table or card behavior already covered by shared helpers
+- hub-side computation of values that depend only on data already in the same response payload — those should be derived in the SPA
+- new sorting or top-N selection done in Groovy when the SPA already sorts or filters the same column via `tbl()`
+- hub-side string/HTML/markdown assembly when the SPA owns rendering for the same surface
 
 ## Change Design Rules
 
@@ -235,13 +254,16 @@ If the field is only for one tab and fetches risky data, keep it on that tab's e
 
 Default approach:
 
-1. extend the relevant API payload in Groovy
-2. normalize/shape data in Groovy, including date-to-epoch conversion
-3. render with existing card helpers
-4. use `tbl()` for table behavior unless the UI truly needs a simpler static table
-5. if the data source is unbounded, discuss row-cap policy with the project owner before merging
+1. For each new field, decide whether it is *irreducible* or *derivable*:
+   - **Irreducible** — comes from a hub HTTP call, requires normalization, or requires a cross-endpoint join only practical hub-side. These belong in the Groovy payload.
+   - **Derivable** — computed from data already in the response (sort order, top-N, ranks, set differences, threshold-based severity, formatted strings, percentages, indexes). These belong in the SPA renderer.
+2. Add irreducible fields to the Groovy payload; normalize/shape there, including date-to-epoch conversion. Reuse existing payloads or extend a nearby endpoint instead of inventing a new one.
+3. Compute derivable fields in the SPA at render time. `tbl()` already handles per-column sort and filter — do not pre-sort hub-side just because you can.
+4. Render with existing card helpers (`mc()`, `ni()`, etc.).
+5. Use `tbl()` for table behavior unless the UI truly needs a simpler static table.
+6. If the data source is unbounded, discuss row-cap policy with the project owner before merging.
 
-The UI should rarely be the place where event names, raw dates, or cross-endpoint joins are invented.
+The UI should rarely be the place where event names, raw dates, or cross-endpoint joins are invented — but it is the right place for sorts, top-N, threshold-based styling, and other pure derivations from the response payload.
 
 ## Pre-Merge Checklist
 
