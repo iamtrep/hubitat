@@ -9,7 +9,7 @@ Items that are pure platform mechanics — capability/attribute/command syntax, 
 - **`importUrl` convention.** Every app/driver `definition()` block points at the canonical raw GitHub URL so the hub UI can install/update from URL. Project-wide convention.
 - **License headers.** Two patterns coexist: MIT (newer apps) and Apache-2.0 (drivers, often inherited from upstream). Consider whether to standardize.
 - **Median / rolling-window state idiom.** DevicePing (`RESPONSE_HISTORY_SIZE = 21`), AwairElement (`MAX_PM25_READINGS = 5`), HumidityFanController (sensor median) all converge: list in `state`, drop oldest when over cap, compute median/avg, save back. Worth canonicalizing if a fourth instance appears.
-- **Firmware-conditional behavior.** DevicePing checks `location.hub.firmwareVersionString` before picking between `NetworkUtils.ping` signatures; IKEA-Blinds gates capabilities by the `softwareBuild` data value. A short pattern for "behave differently on older firmware without crashing" might be worth documenting.
+- **Firmware-conditional behavior.** DevicePing checks `location.hub.firmwareVersionString`, which returns the platform's version, before picking between `NetworkUtils.ping` signatures; IKEA-Blinds gates capabilities by the `softwareBuild` data value, which points to the device's firmware version. A short pattern for "behave differently on older firmware without crashing" might be worth documenting.
 
 ## Apps
 

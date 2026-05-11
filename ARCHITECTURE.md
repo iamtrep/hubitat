@@ -20,12 +20,17 @@ Several standard Groovy and Java patterns are blocked or behave differently in t
 - **`sendEvent()` deduplicates silently.** If the value hasn't changed and `isStateChange` is not set to `true`, the event is filtered out and not fired. Set `isStateChange: true` explicitly when an event must fire even with an unchanged value (button presses, repeated identical commands, forced state ticks).
 - **Concurrent async HTTP calls are capped at 8 per app.** Code that fans out one request per device will silently lose calls at scale. Prefer batched or aggregated endpoints, or serialize work behind a small worker pool.
 
-### `state` vs `atomicState`
+### State tiers: `state`, `atomicState`, `@Field static`
 
-`state` is committed to the database when the method exits, not on each write. `atomicState` commits immediately on each write.
+Three storage options are available, with very different durability and cost:
 
-- Default to `state` for the common case.
-- Use `atomicState` for fields written from async callbacks, WebSocket handlers, or anywhere the surrounding method has likely already exited (intentional-disconnect flags, scan-orchestration counters, log counters). Otherwise the writes can vanish.
+- **`state`** — persisted to the hub database; committed when the method exits. Survives hub restarts. The default.
+- **`atomicState`** — persisted to the hub database; committed on every write. Survives hub restarts. Use when fields are written from async callbacks, WebSocket handlers, or anywhere the surrounding method has likely already exited (intentional-disconnect flags, scan counters, log counters). Plain `state` writes from those paths can silently vanish.
+- **`@Field static`** — in-memory only, no database I/O. Survives across script executions within the same hub uptime, lost on hub restart or app/driver reinstall. Use for transient scan/orchestration state, request-scoped caches with a bounded TTL, and fast-path counters where DB writes would dominate the work. RuleLoggingManager and HubDiagnostics use this deliberately; both files have explanatory comments at the declaration site.
+
+  Mark a `@Field static` field with `volatile` when it may be read or written by concurrent OAuth endpoint handlers. Without `volatile`, readers may see stale values across threads.
+
+Choosing the wrong tier is a real bug source: transient per-scan data in `state` causes unnecessary DB writes; async-written plain `state` silently loses writes; long-lived configuration in `@Field static` is lost on every reboot.
 
 ### Hubitat libraries are not real modularity
 
@@ -268,6 +273,8 @@ Avoid these unless there is a deliberate, documented exception:
 - per-device async fan-out that exceeds the 8-call concurrency ceiling
 - skipping `unschedule()` in `updated()` (produces orphan timers)
 - writing async-callback state with `state` instead of `atomicState`
+- storing transient per-scan or per-request data in `state` instead of `@Field static`
+- omitting `volatile` on `@Field static` fields read by concurrent endpoint handlers
 - treating `state` as the place for device metadata that belongs in `updateDataValue`
 - omitting `mfgCode` on manufacturer-specific Zigbee cluster operations
 - reconfiguring a Zigbee device from `initialize()` on every hub startup
