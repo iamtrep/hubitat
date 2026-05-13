@@ -8,20 +8,7 @@ governs the rule.
 
 ---
 
-## 1. `apps/utilities/ruletracker.groovy`
-
-Looks like an early prototype that never got rewritten.
-
-- [ ] **Add `unsubscribe()` to `updated()`** at `:94`. (`unschedule()` is already handled inside `updateScheduledCheck()` at `:278`.) *Rule:* Common → Lifecycle skeleton.
-- [ ] **Add a version constant and `state.version` check.** No `@Field static final String APP_VERSION` exists. *Rule:* Version constants and code-push detection.
-- [ ] **Adopt the three-pref logging convention.** Rename `debugLogs`/`traceLogs` to `debugEnable`/`traceEnable`, add `txtEnable`, define private helpers, add `runIn(1800, "logsOff")`. *Rule:* Logging discipline.
-- [ ] **Replace `def` with static types** (34 occurrences — return types, parameters, locals like `def String tableHtml`, `def int eventsStartIndex`). *Rule:* Coding conventions → Static typing.
-- [ ] **Consider switching the sync `httpGet` at `:242` to `asynchttpGet`** with the three-step response check. *Rule:* Async HTTP callback contract.
-- [ ] **Decide the fate of the file.** The top TODO block hints the design was never finished — either complete it or delete it.
-
----
-
-## 2. `apps/sensors/StickyMotion.groovy`
+## 1. `apps/sensors/StickyMotion.groovy`
 
 Small file, violation-dense, brittle by design.
 
@@ -33,7 +20,7 @@ Small file, violation-dense, brittle by design.
 
 ---
 
-## 3. `apps/sensors/SensorFilterChild.groovy` ✅ DONE
+## 2. `apps/sensors/SensorFilterChild.groovy` ✅ DONE
 
 - [x] In-place `state.valueWindow` mutation replaced with copy+reassign at `:177/184/221`.
 - [x] `state.version` check added in `initialize()`; constant renamed to `CHILD_APP_VERSION`.
@@ -44,10 +31,10 @@ Deployed: maison-pro (app type 597, compile-test only), maison (app type 593, 4 
 
 ---
 
-## 4. `apps/utilities/DeviceReplacement.groovy` (mostly done — HTTP migration intentionally deferred)
+## 3. `apps/utilities/DeviceReplacement.groovy` (mostly done — HTTP migration intentionally deferred)
 
 - [x] `unsubscribe()` added to `updated()`.
-- [ ] **Migrate 8 sync `httpGet`/`httpPost` to `asynchttpGet`/`Post`** with the three-step response check — `:167, :202, :256, :288, :475, :650, :685, :761`. **Deferred**: 4 of these (167/202/256/288) are in `previewPage()` (Hubitat dynamic pages run synchronously); fanning them out async-in-loop would also blow past the 8-call concurrency cap. The remaining 4 (475/650/685/761) are sequential in the swap-execution path and would require chained callbacks. Re-evaluate if/when those become a bottleneck.
+- [ ] **Migrate 8 sync `httpGet`/`httpPost` to `asynchttpGet`/`Post`** at `:167, :202, :256, :288, :475, :650, :685, :761`. **Deferred** — `:167/:202/:256/:288` live inside `previewPage()` (sync rendering required) and the rest are sequential dependent calls. See ARCHITECTURE.md *When sync HTTP is the right call*. Re-evaluate only if/when those become a measured bottleneck.
 - [x] `state.version` check added in `initialize()`; constant renamed to `APP_VERSION`.
 - [x] `logLevel` enum replaced with `txtEnable`/`debugEnable`/`traceEnable` bools; `logsOff` auto-disable added; existing private helpers kept, gates rewritten; new `logTrace` helper added.
 
@@ -58,7 +45,7 @@ Deployed: maison-pro (app type 510 → version 12, 1 active instance).
 ## Honorable mentions
 
 - [x] `apps/sensors/SensorAggregatorDiscreteChild.groovy` — `state.failedTests << testName` at `:760`/`:775` replaced with reassignment. Audit's `updated() missing unschedule()` claim was incorrect: file already has `unsubscribe()` at `:164` and contains no `runIn`/`schedule()` calls. Pushed to maison-pro, published to chalet ✅, maison ✅, andree ❌ (deployment failed — no `Sensor Aggregator` parent type on andree; non-blocking, andree has 0 SADC instances).
-- [x] `drivers/EcobeeCompanion.groovy` — `logEnable` migrated to three-bool (`txtEnable`/`debugEnable`/`traceEnable`); new `logTrace` helper added; existing `logsOff` updated to clear both new toggles; `version` constant renamed to `DRIVER_VERSION`; `state.version` check enhanced with warn-on-change. Pushed to maison-pro, published to all three other hubs ✅. **HTTP migration deferred**: 5 sync sites (`httpGet`/`httpPost`) at `:191`/`:233`/`:273`/`:368`/`:372`; `callApi(...)` returns `Map` synchronously to every command — migrating async would require chained callbacks and restructuring all callers. Re-evaluate if/when token-refresh latency becomes a user-visible issue.
+- [x] `drivers/EcobeeCompanion.groovy` — `logEnable` migrated to three-bool (`txtEnable`/`debugEnable`/`traceEnable`); new `logTrace` helper added; existing `logsOff` updated to clear both new toggles; `version` constant renamed to `DRIVER_VERSION`; `state.version` check enhanced with warn-on-change. Pushed to maison-pro, published to all three other hubs ✅. **HTTP migration deferred** — 5 sync sites at `:191/:233/:273/:368/:372`; `callApi(...)` returns `Map` synchronously to every command. See ARCHITECTURE.md *When sync HTTP is the right call*.
 - ~~`apps/utilities/rlm.groovy`~~ — file removed from the project; item no longer applicable.
 
 ---

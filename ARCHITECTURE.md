@@ -172,6 +172,22 @@ The async-HTTP API (`asynchttpGet`/`Put`/`Post`) is platform-standard. The proje
 
 Pass per-request context (URL, retry count, identifying ID) through the `extraData` argument; it arrives as `data` on the callback.
 
+### When sync HTTP is the right call
+
+The async-HTTP contract above is the project default. It is the right tool for **background work** — scheduled polls, event-handler reactions, fan-out queries across many devices — where the caller has nothing to wait on, the workload may run concurrent with other async work, and the platform's 8-concurrent-call ceiling needs headroom.
+
+Two cases legitimately call for sync HTTP. Both are present in this repo.
+
+**1. Inside `dynamicPage` rendering.** Hubitat `dynamicPage` builds and returns the page Map in a single synchronous method call; there is no platform mechanism to suspend rendering and await an async callback mid-render. Any data the page needs from hub APIs has to be in hand by return time. The async escape hatch — "kick off the call, render placeholders, force a page reload when the result lands" — replaces a short blocking call with a multi-reload state machine that the user can interrupt by clicking away. It is worse, not better. Compounding the constraint: pages that iterate (one call per app/device) can issue dozens of HTTP calls per render, far past the per-app cap of 8 concurrent async; the excess would silently drop and corrupt the preview.
+
+Canonical example — `apps/utilities/DeviceReplacement.groovy:167,202,256,288`. Four sync `httpGet` sites in `previewPage()`. The two loop sites (`:202`, `:256`) iterate over the per-app list returned by `:167`, producing 60+ calls on a 30-app preview. Sync is the only shape that fits a `dynamicPage`'s render-and-return semantics.
+
+**2. Driver commands that return a value to their caller.** Hubitat invokes driver commands synchronously: `setHeatingSetpoint`, `setMode`, `refresh`. If the command's body calls an external API and acts on the result — fire a device event reflecting the new state, retry on auth failure, decide whether the operation actually succeeded — the simplest correct implementation is a sync HTTP call inside the command. Restructuring around async means continuation chains: token-check callback → token-refresh callback → API-call callback → event-emit, with intermediate state stashed in `state.*` between hops. The sync form has 5 lines and obvious semantics; the async form is a 30-line state machine with new failure modes (callback never fires, state from a previous command bleeds into the next, retries race the timeout). Latency on a user-initiated thermostat command is invisible.
+
+Canonical example — `drivers/EcobeeCompanion.groovy:273,368,372`. `callApi(method, path, ...)` returns `Map result` synchronously to every command path; `refreshAccessToken()` returns `Boolean success` that callers check before issuing API calls. OAuth bootstrap sites at `:191,:233` could migrate to async without any of these concerns, but they're one-shot user-triggered calls run twice in the device's lifetime — migrating only the cheapest sites would leave the file inconsistent without making it better.
+
+**The contract, confirmed.** Async is right when the work is background, fan-out, or event-handler-shaped — the caller doesn't need a return value, latency is invisible to a user, and many calls may be in flight at once. Sync is right when the work is on the synchronous critical path of a user-facing operation and the caller structurally depends on the return value — page render, command dispatch, a dependent chain that completes inside one logical user action. The two files above are not violations of the async-HTTP contract; they are the shapes the contract carves out.
+
 ### Fail-soft defaults
 
 For monitoring, diagnostics, and dashboard-style apps, partial data is usually better than a hard endpoint failure. Prefer returning incomplete-but-usable payloads over brittle strictness:

@@ -34,17 +34,6 @@ Additional features:
 - **Undo** — stores the last swap and offers a one-click undo from the main page.
 - Recommends creating a hub backup before executing.
 
-### Rule Tracker (`ruletracker.groovy`)
-
-A debugging tool that monitors Rule Machine 5.0 rules for changes to their event subscriptions and scheduled jobs.
-
-- Select one or more RM 5.0 rules to monitor.
-- Configurable check frequency: 1 min to 3 hours (or disabled).
-- Scrapes the app status page (`/installedapp/status/{id}`), parses the Event Subscriptions and Scheduled Jobs HTML tables, and logs the results.
-- "Run check now" button for on-demand checks.
-- Supports Hub Security login when enabled.
-- Includes a test mode that parses a sample HTML file from the hub's File Manager.
-
 ## Installation
 
 1. Install the app code on your hub.
