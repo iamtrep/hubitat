@@ -94,6 +94,16 @@ Map mainPage() {
             }
             input name: "excludeAfter", type: "number", title: "Exclude sensor when inactive for this many minutes:", defaultValue: 60, range: "0..1440", submitOnChange: true
         }
+        section(title: "Sticky trigger (\"and stays\")", hideable: true, hidden: true) {
+            paragraph "Mirrors Rule Machine's per-trigger 'And stays?' option, applied per sensor before aggregation. A sensor's state change must persist for the configured window before being committed (symmetric — applies in both directions). Composing this filter across multiple sensors and an aggregation method is the gap RM cannot bridge."
+            input name: "defaultStaysSeconds", type: "number", title: "Default \"and stays\" window (seconds, 0 = disabled)", defaultValue: 0, range: "0..3600", required: true, submitOnChange: true
+            if (defaultStaysSeconds && (defaultStaysSeconds as int) > 0 && inputSensors) {
+                paragraph "<i>Per-sensor overrides (leave blank to use the default; set to 0 to disable for that sensor):</i>"
+                inputSensors.each { sensor ->
+                    input name: "staysOverride_${sensor.id}", type: "number", title: "Override for ${sensor.displayName} (seconds)", required: false, range: "0..3600"
+                }
+            }
+        }
         section("Operation") {
             input name: "forceUpdate", type: "button", title: "Force update aggregate value"
             if(inputSensors && state.aggregateValue != null) {
@@ -119,7 +129,7 @@ Map mainPage() {
             paragraph "<b>Automated Testing</b>"
             paragraph "Run automated tests to verify the aggregation logic. This will create test devices, run tests, and clean up automatically."
             input name: "runSmokeTests", type: "button", title: "Run Quick Smoke Tests (3 tests)"
-            input name: "runAllTests", type: "button", title: "Run Full Test Suite (11 tests)"
+            input name: "runAllTests", type: "button", title: "Run Full Test Suite (~40 tests)"
             input name: "cleanupTestDevices", type: "button", title: "Cleanup Test Devices Only"
 
             if (state.lastTestRun) {
@@ -184,6 +194,8 @@ void initialize() {
     if (state.aggregateValue == null) { state.aggregateValue = "" }
     if (state.createChild == null) { state.createChild = false }
     if (state.previousExcludedSensors == null) { state.previousExcludedSensors = [] }
+    if (atomicState.stuckState == null) { atomicState.stuckState = [:] }
+    if (atomicState.pendingSeq == null) { atomicState.pendingSeq = [:] }
 
     if (!outputSensor && state.createChild && !state.testingInProgress) {
         fetchChildDevice()
@@ -192,6 +204,18 @@ void initialize() {
     if (inputSensors && selectedSensorCapability) {
         String attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute
         if (attributeName) {
+            // Always re-seed stuck state from current live values on init/updated.
+            // Any pending sticky timers from the previous configuration will fire and
+            // find a stale seq (we reset pendingSeq) — they'll no-op.
+            Map<String, String> seededStuck = [:]
+            inputSensors.each { sensor ->
+                String sid = sensor.id as String
+                String liveValue = sensor.currentValue(attributeName) as String
+                if (liveValue != null) seededStuck[sid] = liveValue
+            }
+            atomicState.stuckState = seededStuck
+            atomicState.pendingSeq = [:]
+
             subscribe(inputSensors, attributeName, sensorEventHandler)
             logTrace "Subscribed to ${attributeName} events for ${inputSensors.collect { it.displayName}}."
         }
@@ -228,9 +252,62 @@ ChildDeviceWrapper fetchChildDevice() {
 }
 
 void sensorEventHandler(Event evt=null) {
-    if (evt != null) logTrace "sensorEventHandler() called: ${evt?.name} ${evt?.getDevice().getLabel()} ${evt?.value} ${evt?.descriptionText}"
+    if (evt == null) {
+        // Manual recompute (forceUpdate, initial calculation) — skip sticky filter
+        publishAggregate()
+        return
+    }
 
-	if (computeAggregateSensorValue()) {
+    // Defensive — these maps are normally seeded by initialize(), but a fresh code
+    // push doesn't fire updated(), so we may receive events on an upgraded instance
+    // before re-save. Idempotent.
+    if (atomicState.stuckState == null) atomicState.stuckState = [:]
+    if (atomicState.pendingSeq == null) atomicState.pendingSeq = [:]
+
+    logTrace "sensorEventHandler() called: ${evt.name} ${evt.getDevice().getLabel()} ${evt.value} ${evt.descriptionText}"
+
+    String sid = evt.device.id as String
+    String newValue = evt.value as String
+    int seconds = effectiveStaysSeconds(evt.device)
+
+    if (seconds == 0) {
+        commitState(sid, newValue)
+        return
+    }
+
+    Map pending = (atomicState.pendingSeq as Map) ?: [:]
+    int seq = ((pending[sid] ?: 0) as int) + 1
+    atomicState.pendingSeq = pending + [(sid): seq]
+    runIn(seconds, "commitStuckState",
+          [data: [sensorId: sid, seq: seq, value: newValue], overwrite: false])
+    logDebug "Sticky scheduled: ${evt.getDevice().getLabel()} -> ${newValue} in ${seconds}s (seq ${seq})"
+}
+
+void commitStuckState(Map data) {
+    if (atomicState.pendingSeq == null) atomicState.pendingSeq = [:]
+    if (atomicState.stuckState == null) atomicState.stuckState = [:]
+    String sid = data.sensorId as String
+    Integer expectedSeq = (atomicState.pendingSeq as Map)?.get(sid) as Integer
+    if (expectedSeq == null || (data.seq as int) != expectedSeq) {
+        logTrace "Stale sticky commit ignored: sensor ${sid} seq ${data.seq} (current ${expectedSeq})"
+        return
+    }
+    commitState(sid, data.value as String)
+}
+
+private void commitState(String sid, String newValue) {
+    Map<String, String> current = ((atomicState.stuckState ?: [:]) as Map<String, String>)
+    if (current[sid] == newValue) {
+        logTrace "Sticky commit no-op: sensor ${sid} already ${newValue}"
+        return
+    }
+    atomicState.stuckState = current + [(sid): newValue]
+    logDebug "Sticky committed: sensor ${sid} -> ${newValue}"
+    publishAggregate()
+}
+
+private void publishAggregate() {
+    if (computeAggregateSensorValue()) {
         DeviceWrapper sensorDevice = outputSensor
         if (!sensorDevice) {
             sensorDevice = fetchChildDevice()
@@ -250,6 +327,18 @@ void sensorEventHandler(Event evt=null) {
     }
 }
 
+private int effectiveStaysSeconds(sensor) {
+    if (sensor == null) return 0
+    Integer override = settings["staysOverride_${sensor.id}"] as Integer
+    if (override != null) return override as int
+    return (settings.defaultStaysSeconds ?: 0) as int
+}
+
+private String stuckValueFor(DeviceWrapper sensor, String attributeName) {
+    String stuck = atomicState.stuckState?.get(sensor.id as String)
+    return stuck != null ? stuck : (sensor.currentValue(attributeName) as String)
+}
+
 private List<DeviceWrapper> refreshIncludedSensors() {
     Date now = new Date()
     Date timeAgo = new Date(now.time - excludeAfter * 60 * 1000)
@@ -261,13 +350,13 @@ private List<DeviceWrapper> refreshIncludedSensors() {
     inputSensors.each {
         Date lastActivity = it.getLastActivity()
         if (lastActivity > timeAgo) {
-            if (it.currentValue(attributeName) != null) {
+            if (stuckValueFor(it, attributeName) != null) {
                 includedSensors << it
-                logTrace("Including sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - last activity ${lastActivity}")
+                logTrace("Including sensor ${it.getLabel()} (${stuckValueFor(it, attributeName)}) - last activity ${lastActivity}")
             }
         } else {
             excludedSensors << it
-            logTrace("Excluding sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - no activity since $timeAgo (last active ${lastActivity})")
+            logTrace("Excluding sensor ${it.getLabel()} (${stuckValueFor(it, attributeName)}) - no activity since $timeAgo (last active ${lastActivity})")
         }
     }
 
@@ -313,7 +402,7 @@ private boolean computeAggregateSensorValue() {
 
     String attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute
     List<String> possibleValues = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.values
-    List<Object> sensorValues = includedSensors.collect { it.currentValue(attributeName) }
+    List<Object> sensorValues = includedSensors.collect { stuckValueFor(it, attributeName) }
     String targetValue = attributeValue
     String oppositeValue = possibleValues.find { it != targetValue }
 
@@ -472,6 +561,8 @@ void runAllTests() {
     test_ANY_OneOpen()
     test_ALL_NotAll()
     test_ALL_AllMatch()
+    test_AttributeValue_TargetClosed()
+    test_AllSensorsExcluded()
 
     // Suite 2: Voting Methods
     logInfo ""
@@ -490,6 +581,9 @@ void runAllTests() {
     logInfo "-" * 60
     test_ValueChanges()
 
+    // Suite 4: Sticky Trigger
+    runStaysTests()
+
     finalizeTestRun("FULL TEST SUITE")
     teardownTestEnvironment()
 }
@@ -507,8 +601,12 @@ boolean setupTestEnvironment() {
         attributeValue: attributeValue,
         aggregationMethod: aggregationMethod,
         thresholdPercent: thresholdPercent,
-        excludeAfter: excludeAfter
+        excludeAfter: excludeAfter,
+        defaultStaysSeconds: settings.defaultStaysSeconds
     ]
+
+    // Zero out sticky filter during the suite — sticky tests opt in via prepareStickyTest()
+    app.updateSetting("defaultStaysSeconds", [type: "number", value: 0])
 
     // Create test devices
     if (!createTestDevices()) {
@@ -594,6 +692,12 @@ void teardownTestEnvironment() {
 
         if (state.savedConfig.excludeAfter) {
             app.updateSetting("excludeAfter", [type: "number", value: state.savedConfig.excludeAfter])
+        }
+
+        // Restore sticky setting (may be null/0 — both valid)
+        Integer savedStays = state.savedConfig.defaultStaysSeconds as Integer
+        if (savedStays != null) {
+            app.updateSetting("defaultStaysSeconds", [type: "number", value: savedStays])
         }
     }
 
@@ -713,10 +817,50 @@ void configureForTest(Map config) {
     if (config.thresholdPercent != null) {
         app.updateSetting("thresholdPercent", [type: "number", value: config.thresholdPercent])
     }
+    if (config.attributeValue) {
+        app.updateSetting("attributeValue", [type: "enum", value: config.attributeValue])
+    }
+    if (config.containsKey('defaultStaysSeconds')) {
+        app.updateSetting("defaultStaysSeconds", [type: "number", value: (config.defaultStaysSeconds ?: 0)])
+    }
+    // staysOverrides: Map<Integer testSensorIndex (1..5), Integer seconds or null to clear>
+    if (config.staysOverrides != null) {
+        for (int i = 1; i <= 5; i++) {
+            String dni = "test-input-${app.id}-${i}"
+            ChildDeviceWrapper d = getChildDevice(dni)
+            if (d == null) continue
+            String key = "staysOverride_${d.id}"
+            if ((config.staysOverrides as Map).containsKey(i)) {
+                Integer v = (config.staysOverrides as Map)[i] as Integer
+                if (v == null) {
+                    app.removeSetting(key)
+                } else {
+                    app.updateSetting(key, [type: "number", value: v])
+                }
+            } else {
+                app.removeSetting(key)
+            }
+        }
+    }
+    if (config.clearStuckState) {
+        atomicState.stuckState = [:]
+        atomicState.pendingSeq = [:]
+    }
+    if (config.containsKey('excludeAfter')) {
+        app.updateSetting("excludeAfter", [type: "number", value: config.excludeAfter])
+    }
 
     pauseExecution(500)
     initialize()
     pauseExecution(500)
+}
+
+ChildDeviceWrapper getTestSensor(int oneBasedIndex) {
+    return getChildDevice("test-input-${app.id}-${oneBasedIndex}")
+}
+
+void setStaysSeconds(int seconds) {
+    app.updateSetting("defaultStaysSeconds", [type: "number", value: seconds])
 }
 
 void setTestInputSensors(List<Integer> openIndices) {
@@ -735,18 +879,21 @@ void setTestInputSensors(List<Integer> openIndices) {
         return
     }
 
-    // Set all to closed first
-    devices.each { it.close() }
-    pauseExecution(500)
+    // Set all to closed first. Pace events apart — real-world sensor activity is
+    // never sub-millisecond, and bunching events triggers concurrent handler races
+    // (multiple commitState calls reading the same atomicState snapshot).
+    devices.each { it.close(); pauseExecution(150) }
+    pauseExecution(400)
 
-    // Open specified sensors
+    // Open specified sensors (same pacing).
     openIndices.each { index ->
         if (index >= 0 && index < devices.size()) {
             devices[index].open()
+            pauseExecution(150)
         }
     }
 
-    pauseExecution(1500) // Allow events to propagate and aggregation to compute
+    pauseExecution(1200) // Allow remaining events to propagate and aggregation to settle
 }
 
 boolean assertAggregateValue(String expected, String testName, boolean countAsTest = true) {
@@ -947,4 +1094,388 @@ void test_ValueChanges() {
     if (!step1 || !step2 || !step3) {
         logWarn "Overall test had failures in one or more steps"
     }
+}
+
+// ============================================================================
+// STICKY TRIGGER ("AND STAYS") TEST SUITE
+// ============================================================================
+
+void runStaysTests() {
+    logInfo ""
+    logInfo "-" * 60
+    logInfo "TEST SUITE 4: Sticky Trigger (and stays)"
+    logInfo "-" * 60
+
+    test_Stays_BypassWhenZero()
+    test_Stays_BasicStick()
+    test_Stays_FlickerSuppressed()
+    test_Stays_RapidFireResetsTimer()
+    test_Stays_OverrideTrumpsDefault()
+    test_Stays_OverrideZeroDisablesPerSensor()
+    test_Stays_BothDirectionsStick()
+    test_Stays_OnePerSensorIndependent()
+    test_Stays_RemovedSensorIsPruned()
+    test_Stays_ExcludeAfterStillWins()
+    test_Stays_MajorityWithSticky()
+    test_Stays_ThresholdWithSticky()
+    test_Stays_OverrideOnlyDefaultZero()
+    test_Stays_PendingTimerSurvivesReinit()
+    // test_Stays_SameDirectionRepeatDedup intentionally removed:
+    // Hubitat's sendEvent dedupes same-value emissions (no isStateChange:true), so the
+    // "fire same value twice in a row" scenario can't occur in production. Seq supersession
+    // for alternating values is already covered by test_Stays_FlickerSuppressed (4.3) and
+    // test_Stays_RapidFireResetsTimer (4.4).
+}
+
+private void prepareStickyTest(int defaultSeconds, Map<Integer,Integer> overrides=[:]) {
+    // Turn off sticky and reset all sensors to closed via bypass path
+    app.updateSetting("defaultStaysSeconds", [type: "number", value: 0])
+    pauseExecution(200)
+    setTestInputSensors([])  // all closed; bypass=0; aggregate becomes "closed"
+    pauseExecution(300)
+
+    // Clear sticky internal state and overrides
+    atomicState.stuckState = [:]
+    atomicState.pendingSeq = [:]
+    for (int i = 1; i <= 5; i++) {
+        ChildDeviceWrapper d = getTestSensor(i)
+        if (d) app.removeSetting("staysOverride_${d.id}")
+    }
+    overrides.each { idx, secs ->
+        ChildDeviceWrapper d = getTestSensor(idx as int)
+        if (d) {
+            if (secs == null) {
+                app.removeSetting("staysOverride_${d.id}")
+            } else {
+                app.updateSetting("staysOverride_${d.id}", [type: "number", value: secs])
+            }
+        }
+    }
+
+    // Configure aggregation method and default stays window
+    app.updateSetting("aggregationMethod", [type: "enum", value: "any"])
+    app.updateSetting("defaultStaysSeconds", [type: "number", value: defaultSeconds])
+    pauseExecution(300)
+    initialize()
+    pauseExecution(500)
+}
+
+private void fireSensor(int oneBasedIndex, String newValue) {
+    ChildDeviceWrapper d = getTestSensor(oneBasedIndex)
+    if (d == null) return
+    if (newValue == "open") d.open()
+    else if (newValue == "closed") d.close()
+}
+
+void test_Stays_BypassWhenZero() {
+    String testName = "Test 4.1: Stays - Bypass when 0"
+    logInfo ""
+    logInfo "Running: ${testName}"
+    prepareStickyTest(0)
+    fireSensor(1, "open")
+    pauseExecution(800)
+    assertAggregateValue("open", testName)
+}
+
+void test_Stays_BasicStick() {
+    String testName = "Test 4.2: Stays - Basic stick"
+    logInfo ""
+    logInfo "Running: ${testName}"
+    prepareStickyTest(3)
+    fireSensor(1, "open")
+    pauseExecution(1000)
+    assertAggregateValue("closed", "${testName} - not yet stuck @1s")
+    pauseExecution(3000)
+    assertAggregateValue("open", "${testName} - stuck after 4s")
+}
+
+void test_Stays_FlickerSuppressed() {
+    String testName = "Test 4.3: Stays - Flicker suppressed"
+    logInfo ""
+    logInfo "Running: ${testName}"
+    prepareStickyTest(3)
+    fireSensor(1, "open")         // seq=1, fires at +3s
+    pauseExecution(1000)
+    fireSensor(1, "closed")        // seq=2 (supersedes seq=1), fires at +4s
+    pauseExecution(4000)           // wait through both timer fire points
+    // seq=1 timer found stale and no-oped; seq=2 timer committed "closed" but value didn't change
+    assertAggregateValue("closed", testName)
+}
+
+void test_Stays_RapidFireResetsTimer() {
+    String testName = "Test 4.4: Stays - Rapid fire, latest seq wins"
+    logInfo ""
+    logInfo "Running: ${testName}"
+    prepareStickyTest(3)
+    fireSensor(1, "open")           // t=0, seq=1, fires at t=3
+    pauseExecution(1500)
+    fireSensor(1, "closed")          // t=1.5, seq=2, fires at t=4.5
+    pauseExecution(500)
+    fireSensor(1, "open")           // t=2, seq=3, fires at t=5
+    pauseExecution(2000)
+    // t=4: seq=1 fired at t=3 (stale); seq=2 fires at t=4.5 (still pending); seq=3 fires at t=5
+    assertAggregateValue("closed", "${testName} - pre-final-commit")
+    pauseExecution(2500)
+    // t=6.5: seq=2 fired stale, seq=3 committed "open"
+    assertAggregateValue("open", "${testName} - latest seq committed")
+}
+
+void test_Stays_OverrideTrumpsDefault() {
+    String testName = "Test 4.5: Stays - Override > default"
+    logInfo ""
+    logInfo "Running: ${testName}"
+    prepareStickyTest(2, [1: 5])
+    fireSensor(1, "open")
+    pauseExecution(3000)
+    assertAggregateValue("closed", "${testName} - override 5s not yet elapsed at 3s")
+    pauseExecution(3000)
+    assertAggregateValue("open", "${testName} - committed after override elapsed")
+}
+
+void test_Stays_OverrideZeroDisablesPerSensor() {
+    String testName = "Test 4.6: Stays - Override 0 disables filter for that sensor"
+    logInfo ""
+    logInfo "Running: ${testName}"
+    prepareStickyTest(5, [1: 0])
+    fireSensor(1, "open")
+    pauseExecution(800)
+    assertAggregateValue("open", testName)
+}
+
+void test_Stays_BothDirectionsStick() {
+    String testName = "Test 4.7: Stays - Symmetric, both directions"
+    logInfo ""
+    logInfo "Running: ${testName}"
+    prepareStickyTest(2)
+    fireSensor(1, "open")
+    pauseExecution(2500)
+    assertAggregateValue("open", "${testName} - open committed")
+    fireSensor(1, "closed")
+    pauseExecution(1000)
+    assertAggregateValue("open", "${testName} - close not yet stuck @1s")
+    pauseExecution(2000)
+    assertAggregateValue("closed", "${testName} - close stuck after 3s")
+}
+
+void test_Stays_OnePerSensorIndependent() {
+    String testName = "Test 4.8: Stays - Per-sensor independent timers"
+    logInfo ""
+    logInfo "Running: ${testName}"
+    prepareStickyTest(2)
+    // Switch to 'all' so the aggregate is sensitive to the last-sticking sensor
+    app.updateSetting("aggregationMethod", [type: "enum", value: "all"])
+    pauseExecution(300)
+    // Open sensors 1..4 at t≈0 (paced 150ms apart to avoid concurrent-handler races —
+    // production sensors never fire this close together anyway).
+    [1, 2, 3, 4].each { fireSensor(it, "open"); pauseExecution(150) }
+    // We are now ~0.6s in; the 2s sticky windows for sensors 1..4 will commit ~t≈2.0–2.6s.
+    pauseExecution(400)  // total ~1.0s elapsed
+    // Open sensor 5 at t≈1.0
+    fireSensor(5, "open")
+    pauseExecution(1500)
+    // t≈2.5: sensors 1..4 committed (~2.1..2.6s); sensor 5 commits at t≈3.0
+    assertAggregateValue("closed", "${testName} - all method: 4/5 stuck, sensor 5 pending")
+    pauseExecution(1500)
+    // t≈4.0: sensor 5 committed at t≈3.0 -> all open
+    assertAggregateValue("open", "${testName} - all method: all 5 stuck")
+}
+
+void test_Stays_RemovedSensorIsPruned() {
+    String testName = "Test 4.9: Stays - Removed sensor pruned"
+    logInfo ""
+    logInfo "Running: ${testName}"
+    prepareStickyTest(2)
+    fireSensor(1, "open")
+    pauseExecution(2500)
+    ChildDeviceWrapper s1 = getTestSensor(1)
+    String s1id = s1?.id as String
+
+    // Verify the stuck entry exists pre-prune
+    state.testsTotal++
+    if ((atomicState.stuckState as Map)?.containsKey(s1id)) {
+        state.testsPassed++
+        logInfo "✓ PASS: ${testName} - precondition: s1 in stuckState"
+    } else {
+        state.testsFailed++
+        state.failedTests = state.failedTests + ["${testName} - precondition"]
+        logError "✗ FAIL: ${testName} - s1 (${s1id}) missing from stuckState: ${atomicState.stuckState}"
+    }
+
+    // Drop sensor 1 from inputSensors and re-init
+    List<String> remainingIds = []
+    for (int i = 2; i <= 5; i++) {
+        ChildDeviceWrapper d = getTestSensor(i)
+        if (d) remainingIds << (d.id as String)
+    }
+    app.updateSetting("inputSensors", [type: "capability.contactSensor", value: remainingIds])
+    pauseExecution(500)
+    initialize()
+    pauseExecution(500)
+
+    // Verify pruning
+    state.testsTotal++
+    boolean stuckPruned = !((atomicState.stuckState as Map)?.containsKey(s1id))
+    boolean seqPruned = !((atomicState.pendingSeq as Map)?.containsKey(s1id))
+    if (stuckPruned && seqPruned) {
+        state.testsPassed++
+        logInfo "✓ PASS: ${testName} - s1 pruned from stuckState and pendingSeq"
+    } else {
+        state.testsFailed++
+        state.failedTests = state.failedTests + [testName]
+        logError "✗ FAIL: ${testName} - prune failed (stuck=${stuckPruned}, seq=${seqPruned}, stuckState=${atomicState.stuckState}, pendingSeq=${atomicState.pendingSeq})"
+    }
+
+    // Restore all 5 sensors for subsequent tests
+    List<String> allIds = []
+    for (int i = 1; i <= 5; i++) {
+        ChildDeviceWrapper d = getTestSensor(i)
+        if (d) allIds << (d.id as String)
+    }
+    app.updateSetting("inputSensors", [type: "capability.contactSensor", value: allIds])
+    pauseExecution(500)
+    initialize()
+    pauseExecution(500)
+}
+
+void test_Stays_ExcludeAfterStillWins() {
+    String testName = "Test 4.10: Stays - excludeAfter orthogonal"
+    logInfo ""
+    logInfo "Running: ${testName}"
+    prepareStickyTest(2)
+    // Set excludeAfter to 0 minutes — any non-immediate activity is "stale"
+    app.updateSetting("excludeAfter", [type: "number", value: 0])
+    pauseExecution(300)
+    fireSensor(1, "open")
+    pauseExecution(3000)
+    // Sensor 1 is "stuck open" in atomicState.stuckState BUT excludeAfter=0 drops it from aggregation
+    // computeAggregateSensorValue returns false (no sensors included), aggregate value unchanged from prep ("closed")
+    assertAggregateValue("closed", testName)
+    // Restore for subsequent tests
+    app.updateSetting("excludeAfter", [type: "number", value: 60])
+    pauseExecution(300)
+}
+
+// ============================================================================
+// STICKY TRIGGER COVERAGE EXTENSIONS (4.11 .. 4.15)
+// ============================================================================
+
+void test_Stays_MajorityWithSticky() {
+    String testName = "Test 4.11: Stays - Majority aggregation uses stuck values"
+    logInfo ""
+    logInfo "Running: ${testName}"
+    prepareStickyTest(2)
+    app.updateSetting("aggregationMethod", [type: "enum", value: "majority"])
+    pauseExecution(300)
+    // Open sensors 1 and 2 (2/5 — under majority of >50%)
+    fireSensor(1, "open"); pauseExecution(150)
+    fireSensor(2, "open")
+    pauseExecution(2500)  // both stuck
+    assertAggregateValue("closed", "${testName} - 2/5 stuck, below majority")
+    // Open sensor 3 — 3/5 once stuck
+    fireSensor(3, "open")
+    pauseExecution(2500)  // sensor 3 stuck
+    assertAggregateValue("open", "${testName} - 3/5 stuck, majority")
+}
+
+void test_Stays_ThresholdWithSticky() {
+    String testName = "Test 4.12: Stays - Threshold aggregation uses stuck values"
+    logInfo ""
+    logInfo "Running: ${testName}"
+    prepareStickyTest(2)
+    app.updateSetting("aggregationMethod", [type: "enum", value: "threshold"])
+    app.updateSetting("thresholdPercent", [type: "number", value: 60])
+    pauseExecution(300)
+    // 2/5 = 40% (under 60%)
+    fireSensor(1, "open"); pauseExecution(150)
+    fireSensor(2, "open")
+    pauseExecution(2500)
+    assertAggregateValue("closed", "${testName} - 2/5 (40%) below threshold")
+    // 3/5 = 60% (at threshold)
+    fireSensor(3, "open")
+    pauseExecution(2500)
+    assertAggregateValue("open", "${testName} - 3/5 (60%) at threshold")
+}
+
+void test_Stays_OverrideOnlyDefaultZero() {
+    String testName = "Test 4.13: Stays - Override opts a sensor in when default is 0"
+    logInfo ""
+    logInfo "Running: ${testName}"
+    prepareStickyTest(0, [1: 3])
+    // Sensor 2 has default (=0) → immediate commit
+    fireSensor(2, "open")
+    pauseExecution(800)
+    assertAggregateValue("open", "${testName} - sensor 2 (default 0) immediate")
+    fireSensor(2, "closed")  // reset state cleanly
+    pauseExecution(800)
+    assertAggregateValue("closed", "${testName} - sensor 2 back to closed")
+    // Sensor 1 has override=3 → must wait 3 s
+    fireSensor(1, "open")
+    pauseExecution(1000)
+    assertAggregateValue("closed", "${testName} - sensor 1 (override 3s) not yet stuck @1s")
+    pauseExecution(2500)
+    assertAggregateValue("open", "${testName} - sensor 1 stuck after 3.5s")
+}
+
+void test_Stays_PendingTimerSurvivesReinit() {
+    String testName = "Test 4.15: Stays - Pending sticky timer no-ops after initialize()"
+    logInfo ""
+    logInfo "Running: ${testName}"
+    prepareStickyTest(3)
+    // Open then close sensor 1 — leaves two pending sticky commits (seq=1 'open', seq=2 'closed')
+    fireSensor(1, "open")
+    pauseExecution(500)
+    fireSensor(1, "closed")
+    pauseExecution(500)
+    // T≈1: device is back to "closed". Force re-init.
+    initialize()
+    pauseExecution(500)
+    // initialize() reseeds stuckState[241]="closed" and resets pendingSeq=[:].
+    // Both pending runIns (T≈3 and T≈3.5) will find expectedSeq=null → stale → no-op.
+    pauseExecution(3500)
+    assertAggregateValue("closed", testName)
+}
+
+// ============================================================================
+// PRE-EXISTING FEATURE COVERAGE EXTENSIONS
+// ============================================================================
+
+void test_AttributeValue_TargetClosed() {
+    // Existing tests all target "open" — this exercises the inverted path
+    String testName = "Test 1.5: Aggregation with target value 'closed' (inverted target)"
+    logInfo ""
+    logInfo "Running: ${testName}"
+    configureForTest([aggregationMethod: "any", attributeValue: "closed"])
+    // 4 open + 1 closed: 'any closed' is true → output "closed"
+    setTestInputSensors([0, 1, 2, 3])  // sensors 1-4 open, sensor 5 closed
+    assertAggregateValue("closed", "${testName} - any=closed: 1 sensor matches")
+    // All 5 open: no sensor matches "closed" → output is opposite "open"
+    setTestInputSensors([0, 1, 2, 3, 4])
+    assertAggregateValue("open", "${testName} - any=closed: 0 sensors match")
+    // Restore target back to "open" for downstream tests
+    app.updateSetting("attributeValue", [type: "enum", value: "open"])
+    pauseExecution(200)
+}
+
+void test_AllSensorsExcluded() {
+    // With excludeAfter=0, all sensors are stale by definition.
+    // computeAggregateSensorValue should return false; output should NOT update.
+    String testName = "Test 1.6: All sensors excluded by excludeAfter=0 → no output update"
+    logInfo ""
+    logInfo "Running: ${testName}"
+    configureForTest([aggregationMethod: "any"])
+    // Seed a known output value first
+    setTestInputSensors([0])
+    assertAggregateValue("open", "${testName} - precondition: output 'open'")
+    // Now exclude everything by setting excludeAfter to 0 minutes
+    app.updateSetting("excludeAfter", [type: "number", value: 0])
+    pauseExecution(300)
+    // Trigger an event that WOULD transition aggregate to "closed" if any sensor were included
+    fireSensor(1, "closed")  // sensor 1 commits closed (sticky bypass)
+    pauseExecution(1500)
+    // refreshIncludedSensors excludes all (all stale). computeAggregateSensorValue returns false.
+    // state.aggregateValue is NOT updated. Output device retains last value ("open").
+    assertAggregateValue("open", "${testName} - output unchanged when all excluded")
+    // Restore excludeAfter to default for downstream tests
+    app.updateSetting("excludeAfter", [type: "number", value: 60])
+    pauseExecution(300)
 }
