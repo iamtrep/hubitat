@@ -33,40 +33,33 @@ Small file, violation-dense, brittle by design.
 
 ---
 
-## 3. `apps/sensors/SensorFilterChild.groovy`
+## 3. `apps/sensors/SensorFilterChild.groovy` ✅ DONE
 
-Cleaner shape than the others, but still trips multiple Patterns To Avoid.
+- [x] In-place `state.valueWindow` mutation replaced with copy+reassign at `:177/184/221`.
+- [x] `state.version` check added in `initialize()`; constant renamed to `CHILD_APP_VERSION`.
+- [x] Three-pref logging adopted (`txtEnable`/`debugEnable`/`traceEnable`), five private helpers, `disableLogging` renamed to `logsOff`. Kept multi-day `logRetention` auto-disable (intentional design — separate from the standard 30-min debug auto-disable).
+- [x] ~29 `def` replaced with static types (one polymorphic local kept untyped per project guidance).
 
-- [ ] **Replace in-place `state.valueWindow` mutation with reassignment.** *Rule:* Common → State tiers.
-  - `:177` — `state.valueWindow.add(value)`
-  - `:184` — `state.valueWindow.remove(0)`
-  - `:221` — `state.valueWindow.remove(0)`
-  - Pattern: copy the list, mutate, reassign.
-- [ ] **Add a `state.version` check in `initialize()`.** `child_app_version` declared at `:31` but never compared. *Rule:* Version constants and code-push detection.
-- [ ] **Adopt the three-pref logging convention.** Add `txtEnable`, rename `logEnable` → `debugEnable`, add private `logTrace`/`logDebug`/... helpers, add the standard `runIn(1800, "logsOff")` auto-disable (the custom `logRetention` window is a different mechanism). *Rule:* Logging discipline.
-- [ ] **Replace `def` with static types** (29 occurrences). *Rule:* Coding conventions → Static typing.
+Deployed: maison-pro (app type 597, compile-test only), maison (app type 593, 4 instances live: 839/840 orphans + 843/872 parented), andree (app type 277, 2 orphan instances live). Parent stub installed on maison-pro and andree to satisfy validator.
 
 ---
 
-## 4. `apps/utilities/DeviceReplacement.groovy`
+## 4. `apps/utilities/DeviceReplacement.groovy` (mostly done — HTTP migration intentionally deferred)
 
-Hub-API helper. Doesn't follow lifecycle or async conventions.
+- [x] `unsubscribe()` added to `updated()`.
+- [ ] **Migrate 8 sync `httpGet`/`httpPost` to `asynchttpGet`/`Post`** with the three-step response check — `:167, :202, :256, :288, :475, :650, :685, :761`. **Deferred**: 4 of these (167/202/256/288) are in `previewPage()` (Hubitat dynamic pages run synchronously); fanning them out async-in-loop would also blow past the 8-call concurrency cap. The remaining 4 (475/650/685/761) are sequential in the swap-execution path and would require chained callbacks. Re-evaluate if/when those become a bottleneck.
+- [x] `state.version` check added in `initialize()`; constant renamed to `APP_VERSION`.
+- [x] `logLevel` enum replaced with `txtEnable`/`debugEnable`/`traceEnable` bools; `logsOff` auto-disable added; existing private helpers kept, gates rewritten; new `logTrace` helper added.
 
-- [ ] **Add `unsubscribe()` to `updated()`.** Currently `logDebug "updated()"; initialize()`. (The file has no `runIn`/`schedule` calls, so `unschedule()` is not strictly needed.) *Rule:* Common → Lifecycle skeleton.
-- [ ] **Migrate 8 sync `httpGet`/`httpPost` call sites to `asynchttpGet`/`Post`** with the three-step response check (`hasError`, status, then body). *Rule:* Async HTTP callback contract.
-  - `:167`, `:202`, `:256`, `:288`, `:475`, `:650`, `:685`, `:761`
-- [ ] **Add a `state.version` check.** `app_version` declared at `:28` but never compared. *Rule:* Version constants and code-push detection.
-- [ ] **Switch the `logLevel` enum to the three-boolean convention** (`txtEnable`/`debugEnable`/`traceEnable`) and add `runIn(1800, "logsOff")` auto-disable. Existing private helpers can stay. *Rule:* Logging discipline.
+Deployed: maison-pro (app type 510 → version 12, 1 active instance).
 
 ---
 
 ## Honorable mentions
 
-Not in the top 5, but worth queuing.
-
-- [ ] `apps/sensors/SensorAggregatorDiscreteChild.groovy:760,775` — `state.failedTests << testName` (in-place mutation); `updated()` missing `unschedule()`.
-- [ ] `drivers/EcobeeCompanion.groovy` — 5 sync `httpGet`/`Post`, no `txtEnable`/`debugEnable`/`traceEnable`, no gated log helpers.
-- [ ] `apps/utilities/rlm.groovy` — `updated()` missing `unsubscribe()`/`unschedule()`; only `debugEnable`, no log helpers; document the sync `httpGet` calls used for OAuth bootstrap so future readers know they're deliberate.
+- [x] `apps/sensors/SensorAggregatorDiscreteChild.groovy` — `state.failedTests << testName` at `:760`/`:775` replaced with reassignment. Audit's `updated() missing unschedule()` claim was incorrect: file already has `unsubscribe()` at `:164` and contains no `runIn`/`schedule()` calls. Pushed to maison-pro, published to chalet ✅, maison ✅, andree ❌ (deployment failed — no `Sensor Aggregator` parent type on andree; non-blocking, andree has 0 SADC instances).
+- [x] `drivers/EcobeeCompanion.groovy` — `logEnable` migrated to three-bool (`txtEnable`/`debugEnable`/`traceEnable`); new `logTrace` helper added; existing `logsOff` updated to clear both new toggles; `version` constant renamed to `DRIVER_VERSION`; `state.version` check enhanced with warn-on-change. Pushed to maison-pro, published to all three other hubs ✅. **HTTP migration deferred**: 5 sync sites (`httpGet`/`httpPost`) at `:191`/`:233`/`:273`/`:368`/`:372`; `callApi(...)` returns `Map` synchronously to every command — migrating async would require chained callbacks and restructuring all callers. Re-evaluate if/when token-refresh latency becomes a user-visible issue.
+- ~~`apps/utilities/rlm.groovy`~~ — file removed from the project; item no longer applicable.
 
 ---
 

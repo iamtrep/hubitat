@@ -85,11 +85,15 @@ metadata {
         input name: "apiKey", type: "text", title: "Ecobee API Key", required: true
         input name: "thermostatId", type: "text", title: "Thermostat Identifier", required: true
         input name: "pollInterval", type: "number", title: "Polling interval (minutes)", description: "How often to refresh thermostat state (1-30 minutes)", range: "1..30", defaultValue: 5, required: true
-        input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: true
+        input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
+        input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
+        if (debugEnable) {
+            input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
+        }
     }
 }
 
-@Field static final String version = "0.0.4"
+@Field static final String DRIVER_VERSION = "0.0.5"
 
 // OAuth and API endpoints
 @Field static final String constEcobeeApiBase= "https://api.ecobee.com"
@@ -139,15 +143,21 @@ metadata {
 // ========================================
 
 void installed() {
-    if (state.version != version) state.version = version
+    if (state.version != DRIVER_VERSION) {
+        logWarn "New version: ${DRIVER_VERSION} (was: ${state.version})"
+        state.version = DRIVER_VERSION
+    }
     sendEvent(name: "connectionStatus", value: "disonnected", descriptionText: "${device.displayName} is disconnected")
     configure()
 }
 
 void updated() {
-    if (state.version != version) state.version = version
+    if (state.version != DRIVER_VERSION) {
+        logWarn "New version: ${DRIVER_VERSION} (was: ${state.version})"
+        state.version = DRIVER_VERSION
+    }
     unschedule()
-    if (logEnable) runIn(DEBUG_LOG_TIMEOUT_SECONDS, logsOff)
+    if (debugEnable) runIn(DEBUG_LOG_TIMEOUT_SECONDS, logsOff)
     schedulePolling()
 }
 
@@ -162,7 +172,10 @@ void configure() {
 }
 
 void refresh() {
-    if (state.version != version) state.version = version
+    if (state.version != DRIVER_VERSION) {
+        logWarn "New version: ${DRIVER_VERSION} (was: ${state.version})"
+        state.version = DRIVER_VERSION
+    }
     getCurrentState()
 }
 
@@ -1107,12 +1120,16 @@ private void schedulePolling() {
     logDebug "Polling: every ${interval} min"
 }
 
+private void logTrace(String message) {
+    if (traceEnable) log.trace("${device.displayName} : ${message}")
+}
+
 private void logDebug(String message) {
-    if (logEnable) log.debug("${device.displayName} : ${message}")
+    if (debugEnable) log.debug("${device.displayName} : ${message}")
 }
 
 private void logInfo(String message) {
-    log.info("${device.displayName} : ${message}")
+    if (txtEnable) log.info("${device.displayName} : ${message}")
 }
 
 private void logWarn(String message) {
@@ -1124,6 +1141,7 @@ private void logError(String message) {
 }
 
 void logsOff() {
-    logWarn "Debug logging disabled"
-    device.updateSetting("logEnable", [value: "false", type: "bool"])
+    logWarn "Debug/trace logging disabled"
+    device.updateSetting("debugEnable", [value: "false", type: "bool"])
+    device.updateSetting("traceEnable", [value: "false", type: "bool"])
 }

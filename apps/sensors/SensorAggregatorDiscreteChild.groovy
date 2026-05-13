@@ -757,7 +757,7 @@ boolean assertAggregateValue(String expected, String testName, boolean countAsTe
         logError "Test output device not found!"
         if (countAsTest) {
             state.testsFailed++
-            state.failedTests << testName
+            state.failedTests = state.failedTests + [testName]
         }
         return false
     }
@@ -772,7 +772,7 @@ boolean assertAggregateValue(String expected, String testName, boolean countAsTe
             logInfo "✓ PASS: ${testName} - Output: ${actual}"
         } else {
             state.testsFailed++
-            state.failedTests << testName
+            state.failedTests = state.failedTests + [testName]
             logError "✗ FAIL: ${testName} - Expected: ${expected}, Got: ${actual}"
             logDebug "  State aggregateValue: ${state.aggregateValue}"
             logDebug "  Aggregation method: ${aggregationMethod}"
