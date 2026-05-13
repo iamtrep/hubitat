@@ -25,7 +25,7 @@ SOFTWARE.
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String app_version = "0.0.1"
+@Field static final String APP_VERSION = "0.0.2"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
 
 definition(
@@ -125,13 +125,20 @@ Map mainPage() {
         }
 
         section("Logging", hideable: true, hidden: true) {
-            input "logLevel", "enum",
-                title: "Log level",
-                options: ["warn", "info", "debug"],
-                defaultValue: "info", required: true
+            input "txtEnable", "bool",
+                title: "Enable descriptionText logging",
+                defaultValue: true
+            input "debugEnable", "bool",
+                title: "Enable debug logging",
+                defaultValue: false, submitOnChange: true
+            if (debugEnable) {
+                input "traceEnable", "bool",
+                    title: "Enable trace logging",
+                    defaultValue: false
+            }
         }
         section("") {
-            paragraph "Version ${app_version}"
+            paragraph "Version ${APP_VERSION}"
         }
     }
 }
@@ -791,7 +798,9 @@ void installed() {
 
 void updated() {
     logDebug "updated()"
+    unsubscribe()
     initialize()
+    if (debugEnable) runIn(1800, "logsOff")
 }
 
 void uninstalled() {
@@ -800,16 +809,30 @@ void uninstalled() {
 
 void initialize() {
     logDebug "initialize()"
+    if (state.version != APP_VERSION) {
+        logWarn "New version: ${APP_VERSION} (was: ${state.version})"
+        state.version = APP_VERSION
+    }
+}
+
+void logsOff() {
+    log.warn "${app.getLabel()}: disabling debug/trace logging"
+    app.updateSetting("debugEnable", [value: "false", type: "bool"])
+    app.updateSetting("traceEnable", [value: "false", type: "bool"])
 }
 
 // ---- Logging helpers ----
 
+private void logTrace(String msg) {
+    if (traceEnable) log.trace "${app.getLabel()}: ${msg}"
+}
+
 private void logDebug(String msg) {
-    if (logLevel == "debug") log.debug "${app.getLabel()}: ${msg}"
+    if (debugEnable) log.debug "${app.getLabel()}: ${msg}"
 }
 
 private void logInfo(String msg) {
-    if (logLevel in ["info", "debug"]) log.info "${app.getLabel()}: ${msg}"
+    if (txtEnable) log.info "${app.getLabel()}: ${msg}"
 }
 
 private void logWarn(String msg) {
