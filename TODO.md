@@ -8,23 +8,7 @@ governs the rule.
 
 ---
 
-## 1. `apps/sensors/HumidityAggregator.groovy`
-
-Hits four Patterns To Avoid at once.
-
-- [ ] **Replace in-place `state` list mutation with reassignment.** *Rule:* Common → State tiers.
-  - `:91-92` — `state.includedSensors.clear()` / `state.excludedSensors.clear()`
-  - `:100` — `state.includedSensors << it`
-  - `:103` — `state.excludedSensors << it`
-  - Pattern: build a local `List`, then `state.includedSensors = builtList`.
-- [ ] **Stop storing `DeviceWrapper` instances in `state`.** Persist device IDs (or labels) and rehydrate via `humiditySensors.find { it.id == ... }` when needed. *Rule:* State and caching discipline.
-- [ ] **Add a `state.version` check.** `app_version` is declared at `:23` but never compared. *Rule:* Version constants and code-push detection.
-- [ ] **Adopt the three-pref logging convention.** Replace `logEnable` with `txtEnable`/`debugEnable`/`traceEnable`, add private `logTrace`/`logDebug`/`logInfo`/`logWarn`/`logError` helpers, add `logsOff` auto-disable via `runIn(1800, "logsOff")`. *Rule:* Logging discipline.
-- [ ] **Replace `def` with static types** (16 occurrences). *Rule:* Coding conventions → Static typing.
-
----
-
-## 2. `apps/utilities/ruletracker.groovy`
+## 1. `apps/utilities/ruletracker.groovy`
 
 Looks like an early prototype that never got rewritten.
 
@@ -37,7 +21,7 @@ Looks like an early prototype that never got rewritten.
 
 ---
 
-## 3. `apps/sensors/StickyMotion.groovy`
+## 2. `apps/sensors/StickyMotion.groovy`
 
 Small file, violation-dense, brittle by design.
 
@@ -49,7 +33,7 @@ Small file, violation-dense, brittle by design.
 
 ---
 
-## 4. `apps/sensors/SensorFilterChild.groovy`
+## 3. `apps/sensors/SensorFilterChild.groovy`
 
 Cleaner shape than the others, but still trips multiple Patterns To Avoid.
 
@@ -64,7 +48,7 @@ Cleaner shape than the others, but still trips multiple Patterns To Avoid.
 
 ---
 
-## 5. `apps/utilities/DeviceReplacement.groovy`
+## 4. `apps/utilities/DeviceReplacement.groovy`
 
 Hub-API helper. Doesn't follow lifecycle or async conventions.
 

@@ -126,6 +126,26 @@ Before adding a new cache, define:
 
 If you cannot explain invalidation in one or two sentences, the cache design is not ready.
 
+### Never store `DeviceWrapper` (or other live platform proxies) in `state`
+
+`state` and `atomicState` are JSON-serialized. Live platform proxies — `DeviceWrapper`, `InstalledAppWrapper`, `LocationWrapper`, `HubWrapper`, event/subscription objects — do not survive a serialization round-trip cleanly. They appear to "work" within a single method call (because the in-memory list is read back before commit), but on the next invocation the values come back as garbled blobs and any method call on them (`it.currentValue(...)`, `it.getLabel()`) breaks.
+
+Store **device IDs** (Hubitat-issued, e.g. `it.id` — string) and rehydrate at read time from the input selection:
+
+```groovy
+// write
+state.includedSensors = wrappers.collect { it.id }
+
+// read
+List<DeviceWrapper> live = humiditySensors.findAll { it.id in state.includedSensors }
+// or, for a single id
+DeviceWrapper d = humiditySensors.find { it.id == storedId }
+```
+
+Prefer IDs over labels — labels can be renamed by the user and silently break the lookup.
+
+Citation: Hubitat co-founder bravenel, ["No, you can't put a device in state."](https://community.hubitat.com/t/save-list-of-devices-to-stat-variable/3552) (2018). Vintage but still consistent with current community guidance ([2024 thread](https://community.hubitat.com/t/best-way-to-store-information-settings-about-devices/126036)) and with Hubitat's own example apps (e.g., [`modeSwitches.groovy`](https://github.com/hubitat/HubitatPublic/blob/master/example-apps/modeSwitches.groovy) keys `state.modeSwitch` by `dev.id`, never stores the wrapper).
+
 ### Backend owns normalization
 
 When a Groovy app exposes data to a UI, mobile client, or external consumer, normalize raw Hubitat payloads in Groovy whenever practical: stable field names, consumer-friendly maps and lists, computed labels and classifications, firmware-difference handling, dates shaped into safe fields. The consumer should not be the place that learns hub payload quirks.
