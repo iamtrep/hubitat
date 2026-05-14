@@ -226,7 +226,8 @@ private ChildDeviceWrapper fetchChildDevice() {
 
 private List<DeviceWrapper> refreshIncludedSensors() {
     Date now = new Date()
-    Date timeAgo = new Date(now.time - excludeAfter * 60 * 1000)
+    int excludeAfterMin = ((excludeAfter ?: 60) as Integer)
+    Date timeAgo = new Date(now.time - excludeAfterMin * 60 * 1000)
     String attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute
 
     List<DeviceWrapper> includedSensors = []

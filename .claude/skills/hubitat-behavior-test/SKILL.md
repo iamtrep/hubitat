@@ -78,6 +78,12 @@ cases:
     actions:                 # test trigger (inside the log-capture window)
       - { device: <input label>, command: <command name> }
     wait_seconds: <int>      # how long to wait for the app to react before asserting
+    command_spacing_seconds: 0.5  # optional; pause between consecutive
+                             # commands in setup/actions. Defaults to 0.
+                             # Set this if you fire multiple Maker API
+                             # commands to the *same device* in quick
+                             # succession — Hubitat coalesces same-device
+                             # events <1s apart. 0.3–0.5s is usually enough.
     assert:                  # attribute-level expectations
       - { device: <output label>, attribute: <attribute name>, value: <expected> }
       # Optional `tolerance: <float>` — when present, compare as floats with
@@ -203,7 +209,18 @@ For each `inputs[].role`, set `settings[{role}]` to the comma-separated list of 
 
 Also set `app.label = app.instance_label` (via the `label.type=text` + `label={value}` fields) so future runs find the instance reliably.
 
-Verify by re-fetching `/installedapp/configure/json/{instanceId}` and confirming all expected settings are present.
+**Null-handling rule — critical.** Do NOT echo the literal string `"[]"` as a value for any input that has a `type`. Hubitat stores the field exactly as posted, and Groovy app code that does arithmetic on the setting will hit string repetition (e.g. `"[]" * 60 * 1000` → 120 000-char string) and then crash on the next operator with `MissingMethodException: minus(String)`. Two-phase POSTs amplify the risk because the intermediate state persists until Phase 2 lands.
+
+For unset preferences, choose ONE of:
+
+1. **Omit the field entirely.** Don't include `settings[X]`, `X.type`, or `X.multiple` for it. Hubitat keeps the previous value (or `null` on a fresh instance).
+2. **Send the input's `defaultValue`** from the configPage entry (e.g. `60` for SAC's `excludeAfter`). This is safer when the field is required-with-default and the app's `initialize()` runs on the very first save.
+
+Never send `settings[X]=[]` for a `number`, `enum`, or `text` field. For `bool` and `button` fields, omit them (Hubitat treats absent as unchecked) — never send `settings[X]=[]` for those either.
+
+If you have to echo back a setting that was already set, read its current value from `cfg.settings.X` and round-trip it as a string. Don't manufacture `"[]"` from `None`.
+
+Verify by re-fetching `/installedapp/configure/json/{instanceId}` and confirming all expected settings are present *and* that no setting now contains the literal string `"[]"`.
 
 ### Step 12: Render the test template
 

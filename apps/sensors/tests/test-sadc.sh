@@ -260,30 +260,39 @@ for case in CASES:
     name = case.get("name", "<unnamed>")
     section(f"Case: {name}")
 
-    # 6a. setup (idempotent reset; not checked against the log guard)
-    for step in case.get("setup") or []:
-        label = step["device"]
-        cmd = step["command"]
-        args = step.get("args") or []
-        if not maker_send(label_to_id[label], cmd, args=args):
-            warn(f"setup: {label} ← {cmd}{('(' + ','.join(str(x) for x in args) + ')') if args else ''} (Maker API non-200)")
+    # `command_spacing_seconds`: pause between consecutive Maker API
+    # commands within the same case. Hubitat coalesces same-device events
+    # fired <1s apart, so apps that rely on each event being seen (e.g.
+    # moving-average filters, debouncers) need explicit spacing. Default
+    # 0 keeps fast tests fast.
+    spacing = float(case.get("command_spacing_seconds", 0))
+
+    def run_step(label, cmd, args, kind):
+        ok_call = maker_send(label_to_id[label], cmd, args=args)
+        argstr = ('(' + ','.join(str(x) for x in args) + ')') if args else ''
+        if not ok_call:
+            warn(f"{kind}: {label} ← {cmd}{argstr} (Maker API non-200)")
         else:
-            info(f"setup: {label} ← {cmd}{('(' + ','.join(str(x) for x in args) + ')') if args else ''}")
-    if case.get("setup"):
+            info(f"{kind}: {label} ← {cmd}{argstr}")
+
+    # 6a. setup (idempotent reset; not checked against the log guard)
+    setup_steps = case.get("setup") or []
+    for i, step in enumerate(setup_steps):
+        run_step(step["device"], step["command"], step.get("args") or [], "setup")
+        if spacing and i < len(setup_steps) - 1:
+            time.sleep(spacing)
+    if setup_steps:
         # Let setup commands propagate before the test action.
         time.sleep(min(case.get("setup_wait_seconds", 1), 5))
 
     # 6b. Open the log-capture window around actions + assertions.
     with LogCapture(hub_ip=hub_ip, username=hub_creds[0], password=hub_creds[1]) as cap:
         # actions (test trigger)
-        for step in case.get("actions") or []:
-            label = step["device"]
-            cmd = step["command"]
-            args = step.get("args") or []
-            if not maker_send(label_to_id[label], cmd, args=args):
-                warn(f"action: {label} ← {cmd}{('(' + ','.join(str(x) for x in args) + ')') if args else ''} (Maker API non-200)")
-            else:
-                info(f"action: {label} ← {cmd}{('(' + ','.join(str(x) for x in args) + ')') if args else ''}")
+        action_steps = case.get("actions") or []
+        for i, step in enumerate(action_steps):
+            run_step(step["device"], step["command"], step.get("args") or [], "action")
+            if spacing and i < len(action_steps) - 1:
+                time.sleep(spacing)
 
         # wait for the app to react
         wait_s = case.get("wait_seconds", 2)

@@ -1,0 +1,82 @@
+# SensorFilterChild — Mode 1 behavior test spec
+#
+# 1:1 filter: subscribes to sourceDevice.<attributeToFilter>, maintains
+# a rolling window of recent values (capped at `windowSize`), emits the
+# filtered value (average/median over the window) to targetDevice.
+#
+# The window persists in state across test runs. With windowSize=3 and
+# 3 distinct values per case, the window is fully overwritten by the
+# end of each case — so cases are deterministic regardless of prior
+# state.
+#
+# Generate with: /hubitat-behavior-test apps/sensors/tests/spec-sensor-filter.yaml
+
+app:
+  source: apps/sensors/SensorFilterChild.groovy
+  type_name: "Sensor Filter Child"
+  instance_label: test-filter-app
+  parent:
+    source: apps/sensors/SensorFilterManager.groovy
+    type_name: "Sensor Filters"
+    # singleInstance parent — test child hangs off the existing
+    # production parent (or one created on demand). No instance_label.
+  config:
+    attributeToFilter: temperature
+    filterType: average
+    windowSize: "3"     # enum string, not int — Hubitat preference type
+    decay: 1            # minutes; long enough that decay never fires
+                        # during a normal test run
+    txtEnable: true
+    debugEnable: true
+    logRetention: 7
+
+inputs:
+  - { name: test-filter-in,  driver: Virtual Temperature Sensor, role: sourceDevice }
+
+outputs:
+  - { name: test-filter-out, driver: Virtual Temperature Sensor, role: targetDevice }
+
+maker_api:
+  label: test-filter-maker
+
+# Each case pushes 3 distinct values. With windowSize=3, the window is
+# exactly those 3 values when the last event lands — regardless of what
+# was in the window before. Tolerance absorbs Hubitat's float formatting.
+#
+# `command_spacing_seconds: 0.5` is critical: Hubitat coalesces same-
+# device events fired <1s apart, so without it the filter sees only
+# 2 of the 3 events per case and the assertion misses by ~3.
+cases:
+  - name: average-of-10-12-14
+    command_spacing_seconds: 0.5
+    setup:
+      - { device: test-filter-in, command: setTemperature, args: [10] }
+      - { device: test-filter-in, command: setTemperature, args: [12] }
+      - { device: test-filter-in, command: setTemperature, args: [14] }
+    wait_seconds: 5
+    assert:
+      # window = [10, 12, 14] → avg = 12
+      - { device: test-filter-out, attribute: temperature, value: 12, tolerance: 0.5 }
+
+  - name: window-slides-to-20-22-24
+    command_spacing_seconds: 0.5
+    actions:
+      - { device: test-filter-in, command: setTemperature, args: [20] }
+      - { device: test-filter-in, command: setTemperature, args: [22] }
+      - { device: test-filter-in, command: setTemperature, args: [24] }
+    wait_seconds: 5
+    assert:
+      # window = [20, 22, 24] → avg = 22
+      - { device: test-filter-out, attribute: temperature, value: 22, tolerance: 0.5 }
+
+  - name: idempotent-reset-to-12
+    command_spacing_seconds: 0.5
+    actions:
+      - { device: test-filter-in, command: setTemperature, args: [10] }
+      - { device: test-filter-in, command: setTemperature, args: [12] }
+      - { device: test-filter-in, command: setTemperature, args: [14] }
+    wait_seconds: 5
+    assert:
+      - { device: test-filter-out, attribute: temperature, value: 12, tolerance: 0.5 }
+
+runtime_budget_seconds: 30
