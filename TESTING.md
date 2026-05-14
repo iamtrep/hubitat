@@ -173,13 +173,13 @@ Canonical example: [`apps/HubDiagnostics/tests/TEST_PLAN.md`](apps/HubDiagnostic
 
 ### 2.4 Named gaps
 
-Two remaining gaps that, if closed, would make the closed loop fully agent-runnable for the majority of the repo. Listed in priority order. These are descriptive — they capture what's missing, not a commitment to build.
+One remaining gap that, if closed, would make the closed loop fully agent-runnable for the majority of the repo. Listed in priority order. These are descriptive — they capture what's missing, not a commitment to build.
 
 - ~~**`/hubitat-behavior-test` skill (top priority).**~~ **Shipped.** See [`.claude/skills/hubitat-behavior-test/SKILL.md`](.claude/skills/hubitat-behavior-test/SKILL.md). Reads a YAML spec, provisions the rig idempotently (virtual devices, dedicated Maker API instance, dedicated test app instance) on the chosen hub, renders a self-contained `tests/test-{app}.sh` from [`test-template.sh.tmpl`](.claude/skills/hubitat-behavior-test/test-template.sh.tmpl), and runs it. Reuses `/hubitat-create-device`, `/hubitat-app-device`, and `/hubitat-install`. Pilot test: `apps/sensors/tests/test-sadc.sh` from spec-sadc.yaml.
 
 - ~~**Top-level runner — `scripts/run-tests.sh [@hubname]`.**~~ **Shipped.** See [`scripts/run-tests.sh`](scripts/run-tests.sh). Discovers every `<project>/tests/test-*.sh`, `<project>/tests/test-*.js`, and `<project>/tests/test_*.py` (excluding `.claude/worktrees`), forwards `@hubname` to bash tests, invokes `node` for `*.js` and `python3 -m pytest` for `test_*.py`, aggregates exit codes, prints a final summary. Supports `--list`, `--filter <substr>`, `--verbose`. Opt-out: `TEST-EXCLUDE` marker in the first 20 lines of the test file.
 
-- **Log-assertion helper (`ws://<hub>/logsocket`).** A small Python (or bash + Python) library that, given a hub name and a time window, subscribes to the hub's logsocket WebSocket, captures emitted log lines, and exposes assertion primitives — `assert_log_matches(pattern, level=…, source=…)`, `assert_no_log_matches(pattern)`, `count_matching_logs(pattern)`. Two payoffs:
+- ~~**Log-assertion helper (`ws://<hub>/logsocket`).**~~ **Shipped.** See [`scripts/lib/logsocket.py`](scripts/lib/logsocket.py). `LogCapture` context manager subscribes to the hub's logsocket WebSocket in a background thread and exposes `matches(pattern, level=…, source=…)`, `no_matches(...)`, `count(...)`, `find_all(...)`, and `wait_for(pattern, timeout=…)` over the captured set. Source filter accepts either an app/device `id` (int) or a regex against `name`. Level filter accepts a string or list. End-to-end test: [`scripts/tests/test-logsocket.sh`](scripts/tests/test-logsocket.sh). Two payoffs now unlocked:
   - Mode 1 behavior tests can assert on warnings or errors the app emits, not just on attribute changes.
   - Mode 5 stress apps gain real assertions: a test wrapper drives the in-hub app via the button-press helper below, watches the logsocket for the result lines the app already prints, and produces structured `[PASS]`/`[FAIL]`.
 
