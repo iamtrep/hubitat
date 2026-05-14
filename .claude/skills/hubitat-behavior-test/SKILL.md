@@ -69,13 +69,21 @@ maker_api:
   label: <label for the dedicated Maker API instance>
 cases:
   - name: <case label>
-    setup:                   # optional, runs before each case
+    setup:                   # optional, runs before each case (outside the log-capture window)
       - { device: <input label>, command: <command name> }
-    actions:
+    actions:                 # test trigger (inside the log-capture window)
       - { device: <input label>, command: <command name> }
-    wait_seconds: <int>
-    assert:
+    wait_seconds: <int>      # how long to wait for the app to react before asserting
+    assert:                  # attribute-level expectations
       - { device: <output label>, attribute: <attribute name>, value: <expected> }
+    # Optional log-guard controls (default: guard ON, no whitelist).
+    # Each case opens a LogCapture around its actions+asserts; after, the
+    # generated test fails the case if APP_INSTANCE_LABEL emitted any warn/
+    # error log line. These fields tune that guard:
+    allow_warnings: false    # true → disable the guard for this case entirely
+    allow_log_patterns:      # list of regexes (re.search on msg); matched lines are
+      - "expected.*warning"  # excluded from the guard. Use sparingly — every entry
+                             # is a future invisible regression vector.
 runtime_budget_seconds: <int>   # surfaces in the generated script header per §1.1
 ```
 
@@ -190,6 +198,8 @@ Read the template at `.claude/skills/hubitat-behavior-test/test-template.sh.tmpl
 | `{{RUNTIME_BUDGET_SECONDS}}` | Integer literal, no quotes (e.g. `30`) |
 
 All `*_JSON` placeholders must be substituted with Python/JSON literal syntax so the resulting `.sh` file has valid embedded Python.
+
+The generated test depends on `scripts/lib/logsocket.py` at runtime: each case opens a `LogCapture` around its actions + assertions, and an implicit guard fails the case if the app under test emitted any warn/error log line not whitelisted by the spec. Per-case spec fields `allow_warnings` and `allow_log_patterns` tune the guard (see Step 3 schema). The template's `sys.path.insert(0, f"{project_root}/scripts/lib")` makes the import work for tests at any nesting depth — `$PROJECT_ROOT` is computed in the bash wrapper and passed to the Python heredoc as `sys.argv[5]`.
 
 Write the rendered output to `<project>/tests/test-{app-slug}.sh`, where:
 

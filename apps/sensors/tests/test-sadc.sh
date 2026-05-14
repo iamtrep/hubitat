@@ -31,7 +31,7 @@ for arg in "$@"; do
     fi
 done
 
-python3 - "$HUB_NAME" "$INSTANCE_ID" "$CONFIG_FILE" "$COOKIE_JAR" <<'PYTHON_SCRIPT'
+python3 - "$HUB_NAME" "$INSTANCE_ID" "$CONFIG_FILE" "$COOKIE_JAR" "$PROJECT_ROOT" <<'PYTHON_SCRIPT'
 import json, sys, re, time, urllib.request, urllib.parse, urllib.error, http.cookiejar
 
 # ── Embedded spec data (rendered by /hubitat-behavior-test) ──────────
@@ -40,71 +40,15 @@ APP_INSTANCE_LABEL    = "test-sadc-app"
 MAKER_API_LABEL       = "test-sadc-maker"
 INPUT_DEVICE_LABELS   = ["test-sadc-in-1", "test-sadc-in-2", "test-sadc-in-3"]
 OUTPUT_DEVICE_LABELS  = ["test-sadc-out"]
-CASES                 = [
-  {
-    "name": "all-closed-baseline",
-    "setup": [
-      {
-        "device": "test-sadc-in-1",
-        "command": "close"
-      },
-      {
-        "device": "test-sadc-in-2",
-        "command": "close"
-      },
-      {
-        "device": "test-sadc-in-3",
-        "command": "close"
-      }
-    ],
-    "wait_seconds": 2,
-    "assert": [
-      {
-        "device": "test-sadc-out",
-        "attribute": "contact",
-        "value": "closed"
-      }
-    ]
-  },
-  {
-    "name": "single-open-propagation",
-    "actions": [
-      {
-        "device": "test-sadc-in-1",
-        "command": "open"
-      }
-    ],
-    "wait_seconds": 2,
-    "assert": [
-      {
-        "device": "test-sadc-out",
-        "attribute": "contact",
-        "value": "open"
-      }
-    ]
-  },
-  {
-    "name": "idempotent-reset",
-    "actions": [
-      {
-        "device": "test-sadc-in-1",
-        "command": "close"
-      }
-    ],
-    "wait_seconds": 2,
-    "assert": [
-      {
-        "device": "test-sadc-out",
-        "attribute": "contact",
-        "value": "closed"
-      }
-    ]
-  }
-]
+CASES                 = [{"name": "all-closed-baseline", "setup": [{"device": "test-sadc-in-1", "command": "close"}, {"device": "test-sadc-in-2", "command": "close"}, {"device": "test-sadc-in-3", "command": "close"}], "wait_seconds": 2, "assert": [{"device": "test-sadc-out", "attribute": "contact", "value": "closed"}]}, {"name": "single-open-propagation", "actions": [{"device": "test-sadc-in-1", "command": "open"}], "wait_seconds": 2, "assert": [{"device": "test-sadc-out", "attribute": "contact", "value": "open"}]}, {"name": "idempotent-reset", "actions": [{"device": "test-sadc-in-1", "command": "close"}], "wait_seconds": 2, "assert": [{"device": "test-sadc-out", "attribute": "contact", "value": "closed"}]}]
 RUNTIME_BUDGET_SECONDS = 30
 
 # ── Stdin args ────────────────────────────────────────────────────────
-hub_name_arg, instance_id_arg, config_file, cookie_jar_path = sys.argv[1:5]
+hub_name_arg, instance_id_arg, config_file, cookie_jar_path, project_root = sys.argv[1:6]
+
+# scripts/lib/logsocket.py provides the LogCapture helper used per case.
+sys.path.insert(0, f"{project_root}/scripts/lib")
+from logsocket import LogCapture
 
 GREEN = "\033[32m"; RED = "\033[31m"; YELLOW = "\033[33m"
 CYAN = "\033[36m"; DIM = "\033[2m"; RESET = "\033[0m"
@@ -296,11 +240,19 @@ def current_attribute(device_label, attr_name):
     return None
 
 # ── Step 6: Run cases ─────────────────────────────────────────────────
+# Each case opens a LogCapture window around its actions + assertions.
+# After the window closes, an implicit guard fails the case if the app
+# under test (APP_INSTANCE_LABEL) emitted any warn/error log that the
+# spec didn't explicitly allow. Setup runs *outside* the window — only
+# the "interesting" hub activity is checked.
+hub_creds = (hub.get("username"), hub.get("password"))
+LOG_GUARD_LEVELS = ["warn", "error"]
+
 for case in CASES:
     name = case.get("name", "<unnamed>")
     section(f"Case: {name}")
 
-    # 6a. setup (idempotent reset for this case)
+    # 6a. setup (idempotent reset; not checked against the log guard)
     for step in case.get("setup") or []:
         label = step["device"]
         cmd = step["command"]
@@ -309,32 +261,53 @@ for case in CASES:
         else:
             info(f"setup: {label} ← {cmd}")
     if case.get("setup"):
-        # Let setup commands propagate before the test action
+        # Let setup commands propagate before the test action.
         time.sleep(min(case.get("setup_wait_seconds", 1), 5))
 
-    # 6b. actions (test trigger)
-    for step in case.get("actions") or []:
-        label = step["device"]
-        cmd = step["command"]
-        if not maker_send(label_to_id[label], cmd):
-            warn(f"action: {label} ← {cmd} (Maker API non-200)")
-        else:
-            info(f"action: {label} ← {cmd}")
+    # 6b. Open the log-capture window around actions + assertions.
+    with LogCapture(hub_ip=hub_ip, username=hub_creds[0], password=hub_creds[1]) as cap:
+        # actions (test trigger)
+        for step in case.get("actions") or []:
+            label = step["device"]
+            cmd = step["command"]
+            if not maker_send(label_to_id[label], cmd):
+                warn(f"action: {label} ← {cmd} (Maker API non-200)")
+            else:
+                info(f"action: {label} ← {cmd}")
 
-    # 6c. wait for the app to react
-    wait_s = case.get("wait_seconds", 2)
-    time.sleep(wait_s)
+        # wait for the app to react
+        wait_s = case.get("wait_seconds", 2)
+        time.sleep(wait_s)
 
-    # 6d. assertions
-    for a in case.get("assert") or []:
-        label = a["device"]
-        attr = a["attribute"]
-        want = a["value"]
-        got = current_attribute(label, attr)
-        if str(got) == str(want):
-            ok(f"{label}.{attr} = {got}")
+        # assertions (read device state via Maker API; capture still open)
+        for a in case.get("assert") or []:
+            label = a["device"]
+            attr = a["attribute"]
+            want = a["value"]
+            got = current_attribute(label, attr)
+            if str(got) == str(want):
+                ok(f"{label}.{attr} = {got}")
+            else:
+                fail(f"{label}.{attr} expected {want!r}, got {got!r}")
+
+    # 6c. Implicit log guard — fails on unexpected warn/error from the SUT.
+    # Spec opt-outs:
+    #   allow_warnings: true        → disable the guard for this case
+    #   allow_log_patterns: [regex] → whitelist matching lines (substring re.search)
+    if case.get("allow_warnings"):
+        info("log guard skipped (allow_warnings: true)")
+    else:
+        allow_patterns = [re.compile(p) for p in (case.get("allow_log_patterns") or [])]
+        suspect = cap.find_all(pattern=None, level=LOG_GUARD_LEVELS, source=APP_INSTANCE_LABEL)
+        unexpected = [m for m in suspect
+                      if not any(r.search(m.get("msg") or "") for r in allow_patterns)]
+        if unexpected:
+            for m in unexpected[:3]:
+                fail(f"unexpected {m.get('level')} from {m.get('name')}: {m.get('msg')!r}")
+            if len(unexpected) > 3:
+                info(f"... and {len(unexpected) - 3} more unexpected log line(s)")
         else:
-            fail(f"{label}.{attr} expected {want!r}, got {got!r}")
+            ok(f"no unexpected warn/error from {APP_INSTANCE_LABEL}")
 
 # ── Trailer ───────────────────────────────────────────────────────────
 elapsed = int(time.time() - start_time)

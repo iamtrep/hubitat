@@ -101,7 +101,7 @@ The spec maps directly onto the procedure below — for [`apps/sensors/SensorAgg
 
 - Exit code: `0` if all asserts pass, `1` if any fails, `2` if config or hub setup fails.
 
-**Closed-loop notes:** every step is observable through the Maker API (`GET /apps/api/{appId}/devices/{deviceId}` returns the current attribute value). No log scraping required for this app. For apps whose behavior shows up only in logs, see the log-assertion gap in §2.4.
+**Closed-loop notes:** every attribute-level expectation is observable through the Maker API (`GET /apps/api/{appId}/devices/{deviceId}` returns the current attribute value). On top of that, every generated Mode 1 test opens a [`LogCapture`](scripts/lib/logsocket.py) window around each case and an implicit guard fails the case if the app under test emitted any unexpected warn/error log line — so an exception or unintended warning surfaces as a `[FAIL]` even if the attribute assertions still hold. Specs can opt out per-case via `allow_warnings: true` or whitelist patterns via `allow_log_patterns: [regex]`. For apps whose *primary* behavior shows up only in logs, write spec assertions against `LogCapture` directly using the same helper.
 
 #### Mode 2 — API integration tests
 
