@@ -173,11 +173,11 @@ Canonical example: [`apps/HubDiagnostics/tests/TEST_PLAN.md`](apps/HubDiagnostic
 
 ### 2.4 Named gaps
 
-Three remaining gaps that, if closed, would make the closed loop fully agent-runnable for the majority of the repo. Listed in priority order. These are descriptive — they capture what's missing, not a commitment to build.
+Two remaining gaps that, if closed, would make the closed loop fully agent-runnable for the majority of the repo. Listed in priority order. These are descriptive — they capture what's missing, not a commitment to build.
 
 - ~~**`/hubitat-behavior-test` skill (top priority).**~~ **Shipped.** See [`.claude/skills/hubitat-behavior-test/SKILL.md`](.claude/skills/hubitat-behavior-test/SKILL.md). Reads a YAML spec, provisions the rig idempotently (virtual devices, dedicated Maker API instance, dedicated test app instance) on the chosen hub, renders a self-contained `tests/test-{app}.sh` from [`test-template.sh.tmpl`](.claude/skills/hubitat-behavior-test/test-template.sh.tmpl), and runs it. Reuses `/hubitat-create-device`, `/hubitat-app-device`, and `/hubitat-install`. Pilot test: `apps/sensors/tests/test-sadc.sh` from spec-sadc.yaml.
 
-- **Top-level runner — `scripts/run-tests.sh [@hubname]`.** Discovers every `<project>/tests/test-*.sh`, `<project>/tests/test-*.js`, and `<project>/tests/test_*.py`, runs them (serially or with bounded parallelism), aggregates exit codes, prints a final summary. Unlocks "run everything before commit" in one invocation. Discovery rule: any file matching those globs is a test; opt-out via a top-of-file marker comment (e.g. `# TEST-EXCLUDE`).
+- ~~**Top-level runner — `scripts/run-tests.sh [@hubname]`.**~~ **Shipped.** See [`scripts/run-tests.sh`](scripts/run-tests.sh). Discovers every `<project>/tests/test-*.sh`, `<project>/tests/test-*.js`, and `<project>/tests/test_*.py` (excluding `.claude/worktrees`), forwards `@hubname` to bash tests, invokes `node` for `*.js` and `python3 -m pytest` for `test_*.py`, aggregates exit codes, prints a final summary. Supports `--list`, `--filter <substr>`, `--verbose`. Opt-out: `TEST-EXCLUDE` marker in the first 20 lines of the test file.
 
 - **Log-assertion helper (`ws://<hub>/logsocket`).** A small Python (or bash + Python) library that, given a hub name and a time window, subscribes to the hub's logsocket WebSocket, captures emitted log lines, and exposes assertion primitives — `assert_log_matches(pattern, level=…, source=…)`, `assert_no_log_matches(pattern)`, `count_matching_logs(pattern)`. Two payoffs:
   - Mode 1 behavior tests can assert on warnings or errors the app emits, not just on attribute changes.
