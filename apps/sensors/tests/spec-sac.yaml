@@ -1,0 +1,70 @@
+# SensorAggregatorChild (SAC) — Mode 1 behavior test spec
+#
+# Sister to SADC for continuous-value aggregation. Same parent app
+# (Sensor Aggregator, singleInstance), but the child aggregates over
+# numeric attributes (temperature here; the app also supports humidity,
+# illuminance, CO2). Asserts use `tolerance` because aggregates over
+# floats can round/format differently than the literal computed value.
+#
+# Generate the test with: /hubitat-behavior-test apps/sensors/tests/spec-sac.yaml
+
+app:
+  source: apps/sensors/SensorAggregatorChild.groovy
+  type_name: "Sensor Aggregator Child"
+  instance_label: test-sac-app
+  parent:
+    source: apps/sensors/SensorAggregator.groovy
+    type_name: "Sensor Aggregator"
+    # singleInstance parent — child hangs off the existing production
+    # parent (same handling as SADC); no instance_label needed.
+  config:
+    appName: test-sac-app
+    selectedSensorCapability: capability.temperatureMeasurement
+    aggregationMethod: average
+    logLevel: debug
+
+inputs:
+  - { name: test-sac-in-1, driver: Virtual Temperature Sensor, role: inputSensors }
+  - { name: test-sac-in-2, driver: Virtual Temperature Sensor, role: inputSensors }
+  - { name: test-sac-in-3, driver: Virtual Temperature Sensor, role: inputSensors }
+
+outputs:
+  - { name: test-sac-out, driver: Virtual Temperature Sensor, role: outputSensor }
+
+maker_api:
+  label: test-sac-maker
+
+# Each case chains from the previous case's final state. Case 1 sets the
+# baseline explicitly via `setup`. Re-running reverts to baseline at case 1.
+#
+# Tolerance: SAC computes the aggregate as a Groovy double and sendEvent
+# may round to a single decimal. ±0.05 absorbs both rounding and any
+# floating-point drift while still catching real regressions (a swap to
+# `min`/`max`/`median` would shift the value by whole units).
+cases:
+  - name: all-equal-baseline
+    setup:
+      - { device: test-sac-in-1, command: setTemperature, args: [20.0] }
+      - { device: test-sac-in-2, command: setTemperature, args: [20.0] }
+      - { device: test-sac-in-3, command: setTemperature, args: [20.0] }
+    wait_seconds: 2
+    assert:
+      - { device: test-sac-out, attribute: temperature, value: 20.0, tolerance: 0.05 }
+
+  - name: single-input-raised
+    # in1 → 30, in2 and in3 stay 20 ⇒ average = (30+20+20)/3 = 23.333…
+    actions:
+      - { device: test-sac-in-1, command: setTemperature, args: [30.0] }
+    wait_seconds: 2
+    assert:
+      - { device: test-sac-out, attribute: temperature, value: 23.333, tolerance: 0.1 }
+
+  - name: idempotent-reset
+    # in1 back to 20 ⇒ average returns to 20.0
+    actions:
+      - { device: test-sac-in-1, command: setTemperature, args: [20.0] }
+    wait_seconds: 2
+    assert:
+      - { device: test-sac-out, attribute: temperature, value: 20.0, tolerance: 0.05 }
+
+runtime_budget_seconds: 30

@@ -196,9 +196,17 @@ def maker_get(path, timeout=15):
     except Exception as e:
         return {"_error": str(e)}
 
-def maker_send(device_id, command, timeout=15):
-    """Drive a device via Maker API. Returns True on HTTP 200."""
-    url = f"{api_base}/devices/{device_id}/{command}?access_token={access_token}"
+def maker_send(device_id, command, args=None, timeout=15):
+    """Drive a device via Maker API. Returns True on HTTP 200.
+    `args` is an optional list of command arguments — joined as URL
+    path segments. Hubitat Maker API supports a single secondary value
+    after the command for most parameterized commands (e.g.
+    /devices/{id}/setLevel/50 or /devices/{id}/setTemperature/22.5)."""
+    path = f"/devices/{device_id}/{command}"
+    if args:
+        for a in args:
+            path += f"/{urllib.parse.quote(str(a), safe='')}"
+    url = f"{api_base}{path}?access_token={access_token}"
     try:
         with urllib.request.urlopen(url, timeout=timeout) as r:
             return r.status == 200
@@ -256,10 +264,11 @@ for case in CASES:
     for step in case.get("setup") or []:
         label = step["device"]
         cmd = step["command"]
-        if not maker_send(label_to_id[label], cmd):
-            warn(f"setup: {label} ← {cmd} (Maker API non-200)")
+        args = step.get("args") or []
+        if not maker_send(label_to_id[label], cmd, args=args):
+            warn(f"setup: {label} ← {cmd}{('(' + ','.join(str(x) for x in args) + ')') if args else ''} (Maker API non-200)")
         else:
-            info(f"setup: {label} ← {cmd}")
+            info(f"setup: {label} ← {cmd}{('(' + ','.join(str(x) for x in args) + ')') if args else ''}")
     if case.get("setup"):
         # Let setup commands propagate before the test action.
         time.sleep(min(case.get("setup_wait_seconds", 1), 5))
@@ -270,10 +279,11 @@ for case in CASES:
         for step in case.get("actions") or []:
             label = step["device"]
             cmd = step["command"]
-            if not maker_send(label_to_id[label], cmd):
-                warn(f"action: {label} ← {cmd} (Maker API non-200)")
+            args = step.get("args") or []
+            if not maker_send(label_to_id[label], cmd, args=args):
+                warn(f"action: {label} ← {cmd}{('(' + ','.join(str(x) for x in args) + ')') if args else ''} (Maker API non-200)")
             else:
-                info(f"action: {label} ← {cmd}")
+                info(f"action: {label} ← {cmd}{('(' + ','.join(str(x) for x in args) + ')') if args else ''}")
 
         # wait for the app to react
         wait_s = case.get("wait_seconds", 2)
@@ -284,11 +294,25 @@ for case in CASES:
             label = a["device"]
             attr = a["attribute"]
             want = a["value"]
+            tol = a.get("tolerance")
             got = current_attribute(label, attr)
-            if str(got) == str(want):
-                ok(f"{label}.{attr} = {got}")
+            if tol is None:
+                # Default: exact string match (works for discrete attributes)
+                if str(got) == str(want):
+                    ok(f"{label}.{attr} = {got}")
+                else:
+                    fail(f"{label}.{attr} expected {want!r}, got {got!r}")
             else:
-                fail(f"{label}.{attr} expected {want!r}, got {got!r}")
+                # Numeric compare with tolerance — use for floats/aggregates
+                try:
+                    got_f = float(got); want_f = float(want)
+                except (TypeError, ValueError):
+                    fail(f"{label}.{attr} expected {want} ±{tol}, got non-numeric {got!r}")
+                    continue
+                if abs(got_f - want_f) <= float(tol):
+                    ok(f"{label}.{attr} = {got} (≈ {want} ±{tol})")
+                else:
+                    fail(f"{label}.{attr} expected {want} ±{tol}, got {got_f}")
 
     # 6c. Implicit log guard — fails on unexpected warn/error from the SUT.
     # Spec opt-outs:

@@ -71,11 +71,21 @@ cases:
   - name: <case label>
     setup:                   # optional, runs before each case (outside the log-capture window)
       - { device: <input label>, command: <command name> }
+      # Optional `args: [v1, v2, ...]` for parameterized commands (e.g.
+      # setTemperature, setLevel). Hubitat's Maker API encodes args as
+      # extra URL path segments after the command.
+      - { device: <input>, command: setTemperature, args: [22.5] }
     actions:                 # test trigger (inside the log-capture window)
       - { device: <input label>, command: <command name> }
     wait_seconds: <int>      # how long to wait for the app to react before asserting
     assert:                  # attribute-level expectations
       - { device: <output label>, attribute: <attribute name>, value: <expected> }
+      # Optional `tolerance: <float>` — when present, compare as floats with
+      # `abs(got - want) <= tolerance`. Without it, comparison is exact string
+      # match (the right default for discrete attributes like contact/motion).
+      # Required for aggregates over numeric attributes (temperature, humidity,
+      # illuminance, etc.) since Hubitat may format/round the output value.
+      - { device: <output>, attribute: temperature, value: 22.0, tolerance: 0.1 }
     # Optional log-guard controls (default: guard ON, no whitelist).
     # Each case opens a LogCapture around its actions+asserts; after, the
     # generated test fails the case if APP_INSTANCE_LABEL emitted any warn/
@@ -130,10 +140,24 @@ Same as Step 4 but for `app.type_name` and `app.source`. Record `childAppTypeId`
 Search `/hub2/appsList` for an entry with `data.name == app.instance_label`. If absent:
 
 ```bash
-curl -s "http://{hub_ip}/installedapp/create/{childAppTypeId}"
+curl -s -i "http://{hub_ip}/installedapp/create/{childAppTypeId}"
 ```
 
-**Known limitation — parent linkage:** Hubitat's REST API does not appear to expose a way to bind a newly-created child instance to its parent. `/installedapp/create/{childAppTypeId}?parent={parentId}` (and the `parentAppId`/`parentInstalledAppId` variants) all create an orphaned instance (`app.parentAppId == null`). POSTing `parentAppId` in the form body of `/installedapp/update/json` is silently ignored. The instance still functions — event subscriptions fire normally — and it shows up at top level in `/hub2/appsList`. For v1, an orphaned test child is acceptable. If the parent has UI elements that aggregate state from children, behavior may differ; flag this in the test report.
+**Capture the new instance id from the 302 `Location` header** — the response redirects to `/installedapp/configure/{newId}`. **Do not** re-fetch `/hub2/appsList` and try to find the new instance there: orphaned child instances (see "parent linkage" below) are **not visible in `/hub2/appsList` until they have been configured at least once with a real settings diff**. Polling the list will fail. The Location header is the authoritative source for the just-created id.
+
+In Python:
+```python
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def http_error_302(self, req, fp, code, msg, headers): return None
+opener_no_redir = urllib.request.build_opener(NoRedirect())
+try:
+    opener_no_redir.open(f"http://{hub_ip}/installedapp/create/{child_type_id}")
+except urllib.error.HTTPError as e:
+    loc = e.headers.get("Location", "")
+    new_id = int(re.search(r"/configure/(\d+)", loc).group(1))
+```
+
+**Known limitation — parent linkage:** Hubitat's REST API does not appear to expose a way to bind a newly-created child instance to its parent. `/installedapp/create/{childAppTypeId}?parent={parentId}` (and the `parentAppId`/`parentInstalledAppId` variants) all create an orphaned instance (`app.parentAppId == null`). POSTing `parentAppId` in the form body of `/installedapp/update/json` is silently ignored. The instance still functions — event subscriptions fire normally — and after Step 11's config save it shows up at top level in `/hub2/appsList`. For v1, an orphaned test child is acceptable. If the parent has UI elements that aggregate state from children, behavior may differ; flag this in the test report.
 
 After creating the instance, set its label via the form-encoded POST procedure in `/hubitat-app-device` Step 6 — supply `label.type=text` and `label={instance_label}`. Without this step the new instance has no label, and discovery fails.
 
@@ -157,7 +181,7 @@ Record `{name → deviceId}` for every input and output. Save these as a Python 
 A Maker API app type ships with the hub (built-in, not user code). Search `/hub2/appsList` for an instance with `data.name == maker_api.label`:
 
 - **If present**, capture its installed-instance ID. Read its current device list (`/installedapp/configure/json/{id}`) to find the device-input field name (whose `type` starts with `capability.`).
-- **If absent**, the Maker API type ID is needed. Fetch `/hub2/userAppTypes` *and* the built-in app types list (`/installedapp/availableApps` or the apps-create UI page) to find the Maker API type ID. Create an instance via `/installedapp/create/{makerApiTypeId}` and set its label via Step 11's POST.
+- **If absent**, the Maker API type ID is needed. Fetch `/hub2/userAppTypes` *and* the built-in app types list (`/installedapp/availableApps` or the apps-create UI page) to find the Maker API type ID. Create an instance via `/installedapp/create/{makerApiTypeId}` — capture the new id from the 302 `Location` header per Step 7, since the same "not visible in `/hub2/appsList` until configured" rule applies to Maker API instances too. Set its label and devices via Step 11's POST.
 
 For every device in `inputs` + `outputs`, ensure it's in the Maker API's device list. For each missing device, invoke `/hubitat-app-device add {deviceId} {makerApiInstanceId}` (or follow that skill's POST procedure inline).
 
