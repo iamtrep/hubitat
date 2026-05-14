@@ -84,9 +84,9 @@ Each mode below has a purpose, a canonical example to mimic, and notes on how it
 
 **Pattern:** virtual test devices created via `POST /device/save`; a dedicated Maker API instance fronting them; a dedicated installed instance of the app under test, configured with the test devices and test-friendly timing; a test script (bash + Python or bash + curl) driving the cycle `reset() → action() → wait() → verify()`.
 
-**Worked example (sketch — no test exists yet; this is the shape the `/hubitat-behavior-test` skill described in §2.4 would generate):**
+**Canonical example:** [`apps/sensors/tests/test-sadc.sh`](apps/sensors/tests/test-sadc.sh), generated from [`apps/sensors/tests/spec-sadc.yaml`](apps/sensors/tests/spec-sadc.yaml) by the [`/hubitat-behavior-test`](.claude/skills/hubitat-behavior-test/SKILL.md) skill (§2.4).
 
-For [`apps/sensors/SensorAggregatorDiscreteChild.groovy`](apps/sensors/SensorAggregatorDiscreteChild.groovy) (SADC), which aggregates discrete sensor values across N inputs into a single virtual output device:
+The spec maps directly onto the procedure below — for [`apps/sensors/SensorAggregatorDiscreteChild.groovy`](apps/sensors/SensorAggregatorDiscreteChild.groovy) (SADC), which aggregates discrete sensor values across N inputs into a single virtual output device:
 
 - Setup
   - Create 3 virtual contact sensors: `test-sadc-in-1`, `test-sadc-in-2`, `test-sadc-in-3`.
@@ -173,9 +173,9 @@ Canonical example: [`apps/HubDiagnostics/tests/TEST_PLAN.md`](apps/HubDiagnostic
 
 ### 2.4 Named gaps
 
-Four concrete gaps that, if closed, would make the closed loop fully agent-runnable for the majority of the repo. Listed in priority order. These are descriptive — they capture what's missing, not a commitment to build.
+Three remaining gaps that, if closed, would make the closed loop fully agent-runnable for the majority of the repo. Listed in priority order. These are descriptive — they capture what's missing, not a commitment to build.
 
-- **`/hubitat-behavior-test` skill (top priority).** Scaffolds the virtual-device + Maker-API + test-instance rig from a small declarative spec (e.g. a YAML file defining inputs, app configuration, action sequences, and expected outputs). Reuses `/hubitat-create-device`, `/hubitat-app-device`, `/hubitat-install` under the hood. Output conforms to §1.1. This is the gap that converts Mode 1 from "expert hand-assembly per app" into "agent-runnable per app" and unlocks the tier-bar requirement for automation apps.
+- ~~**`/hubitat-behavior-test` skill (top priority).**~~ **Shipped.** See [`.claude/skills/hubitat-behavior-test/SKILL.md`](.claude/skills/hubitat-behavior-test/SKILL.md). Reads a YAML spec, provisions the rig idempotently (virtual devices, dedicated Maker API instance, dedicated test app instance) on the chosen hub, renders a self-contained `tests/test-{app}.sh` from [`test-template.sh.tmpl`](.claude/skills/hubitat-behavior-test/test-template.sh.tmpl), and runs it. Reuses `/hubitat-create-device`, `/hubitat-app-device`, and `/hubitat-install`. Pilot test: `apps/sensors/tests/test-sadc.sh` from spec-sadc.yaml.
 
 - **Top-level runner — `scripts/run-tests.sh [@hubname]`.** Discovers every `<project>/tests/test-*.sh`, `<project>/tests/test-*.js`, and `<project>/tests/test_*.py`, runs them (serially or with bounded parallelism), aggregates exit codes, prints a final summary. Unlocks "run everything before commit" in one invocation. Discovery rule: any file matching those globs is a test; opt-out via a top-of-file marker comment (e.g. `# TEST-EXCLUDE`).
 

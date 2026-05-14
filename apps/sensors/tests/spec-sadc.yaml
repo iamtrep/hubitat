@@ -1,0 +1,65 @@
+# SensorAggregatorDiscreteChild (SADC) — Mode 1 behavior test spec
+#
+# Mirrors the §2.1 worked example in TESTING.md.
+# Generate the test with: /hubitat-behavior-test apps/sensors/tests/spec-sadc.yaml
+
+app:
+  source: apps/sensors/SensorAggregatorDiscreteChild.groovy
+  type_name: "Sensor Aggregator Discrete Child"
+  instance_label: test-sadc-app
+  parent:
+    source: apps/sensors/SensorAggregator.groovy
+    type_name: "Sensor Aggregator"
+    # Sensor Aggregator is singleInstance: true — the test child is added to
+    # whichever Sensor Aggregator instance exists (typically the production
+    # parent). The parent is an organizational container; it doesn't aggregate
+    # config from its children, so this is isolation-safe. No instance_label
+    # field — the skill ignores it for singleInstance parents.
+  config:
+    appName: test-sadc-app
+    selectedSensorCapability: capability.contactSensor
+    attributeValue: open
+    aggregationMethod: any
+    excludeAfter: 60
+    defaultStaysSeconds: 0
+    logLevel: debug
+
+inputs:
+  - { name: test-sadc-in-1, driver: Virtual Contact Sensor, role: inputSensors }
+  - { name: test-sadc-in-2, driver: Virtual Contact Sensor, role: inputSensors }
+  - { name: test-sadc-in-3, driver: Virtual Contact Sensor, role: inputSensors }
+
+outputs:
+  - { name: test-sadc-out, driver: Virtual Contact Sensor, role: outputSensor }
+
+maker_api:
+  label: test-sadc-maker
+
+# Cases chain from the previous case's final state. Case 1 establishes baseline
+# explicitly via `setup`; cases 2 and 3 use only `actions` and rely on the prior
+# case's terminal state. Re-running the script reverts to the baseline at case 1.
+cases:
+  - name: all-closed-baseline
+    setup:
+      - { device: test-sadc-in-1, command: close }
+      - { device: test-sadc-in-2, command: close }
+      - { device: test-sadc-in-3, command: close }
+    wait_seconds: 2
+    assert:
+      - { device: test-sadc-out, attribute: contact, value: closed }
+
+  - name: single-open-propagation
+    actions:
+      - { device: test-sadc-in-1, command: open }
+    wait_seconds: 2
+    assert:
+      - { device: test-sadc-out, attribute: contact, value: open }
+
+  - name: idempotent-reset
+    actions:
+      - { device: test-sadc-in-1, command: close }
+    wait_seconds: 2
+    assert:
+      - { device: test-sadc-out, attribute: contact, value: closed }
+
+runtime_budget_seconds: 30
