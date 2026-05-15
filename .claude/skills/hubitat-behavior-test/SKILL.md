@@ -57,6 +57,21 @@ app:
     source: <relative path to parent .groovy>
     type_name: <name from parent definition()>
     instance_label: <label for the parent instance>
+  manual_setup_required: false  # set `true` for apps where REST
+                             # provisioning can't reliably establish
+                             # subscriptions (sub-page configs, deeply
+                             # conditional dynamicPage fields). The
+                             # skill then creates the rig shell
+                             # (devices + Maker API + app instance)
+                             # and stops, leaving the operator to do
+                             # the one-time UI config. The generated
+                             # test still runs idempotently against
+                             # the configured rig. See
+                             # `feedback_manual_setup_acceptable`
+                             # memory for the rationale.
+                             # When set, include a top-of-file YAML
+                             # comment block listing the exact UI
+                             # steps (page, fields, values).
   setup_buttons:             # optional list of button-input names to
                              # click ONCE during provisioning (between
                              # Step 7 instance create and Step 11 config
@@ -252,6 +267,12 @@ From the Maker API instance config (`/installedapp/configure/json/{makerApiInsta
 If no token is found, OAuth may not be enabled. Report this clearly: the user needs to open `http://{hub_ip}/installedapp/configure/{makerApiInstanceId}`, scroll to the OAuth/access-token paragraph, and confirm OAuth is enabled.
 
 Construct `api_base = http://{hub_ip}/apps/api/{makerApiInstanceId}` and `token = {access_token}`. These are embedded in the generated test.
+
+### Step 10b: Bail out if manual setup is required
+
+If `app.manual_setup_required` is `true`, the rig shell (devices + Maker API + uninitialized app instance) is now in place. Skip Steps 11 and continue to Step 12 (render the test) — but in your final report (Step 14), instead of running the generated test, **list the one-time UI configuration steps** from the spec's top-of-file comment so the operator can do them in the browser.
+
+Once the operator has saved the config in the UI (a few clicks, typically `<30s`), the generated test runs idempotently from that point on. Re-runs of the skill remain safe — they'll detect the existing rig and skip re-creation, but won't overwrite the manually-applied config.
 
 ### Step 11: Apply the app-under-test configuration
 
