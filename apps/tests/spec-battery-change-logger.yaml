@@ -1,0 +1,70 @@
+# BatteryChangeLogger — Mode 1 behavior test spec
+#
+# The app subscribes to `battery` events on configured devices and
+# detects a "replacement" when the new level exceeds the previous
+# level by at least `threshold` percentage points. The detection's
+# only observable side effect (with `updateDeviceNotes: false`) is an
+# info-level log line — so this spec leans on `assert_logs:` rather
+# than attribute assertions.
+#
+# Idempotency:
+#   The app stores `state.batteryLevels[deviceId] = lastLevel`. Re-runs
+#   inherit whatever level was last persisted. Each case below is
+#   self-contained: case 1 unconditionally pushes 50 → 80, case 2
+#   pushes 80 → 85 (sub-threshold), case 3 pushes 85 → 50 (decrease).
+#   The terminal value is 50, matching the next run's case-1 setup.
+#
+# Generate with: /hubitat-behavior-test apps/tests/spec-battery-change-logger.yaml
+
+app:
+  source: apps/BatteryChangeLogger.groovy
+  type_name: "Battery Change Logger"
+  instance_label: test-bcl-app
+  config:
+    threshold: 20
+    # Disable the device-notes update path — it makes internal HTTP
+    # calls to /device/fullJson and /device/update that can warn on
+    # firmware quirks, which would trip the implicit log guard.
+    updateDeviceNotes: false
+    logLevel: debug
+
+inputs:
+  - { name: test-bcl-battery, driver: Virtual Battery, role: batteryDevices }
+
+# BCL emits no attribute events; the test asserts on logs only.
+outputs: []
+
+maker_api:
+  label: test-bcl-maker
+
+cases:
+  - name: seed-then-replace-detected
+    # 50 → 80 is a +30 delta, above the 20-threshold; expect detection.
+    command_spacing_seconds: 0.5
+    setup:
+      - { device: test-bcl-battery, command: sendBatteryEvent, args: [50] }
+    setup_wait_seconds: 2
+    actions:
+      - { device: test-bcl-battery, command: sendBatteryEvent, args: [80] }
+    wait_seconds: 2
+    assert_logs:
+      - { pattern: "Battery replacement detected.*50.*80", level: info }
+
+  - name: below-threshold-no-replacement
+    # 80 → 85 is a +5 delta, below the 20-threshold; no detection.
+    actions:
+      - { device: test-bcl-battery, command: sendBatteryEvent, args: [85] }
+    wait_seconds: 2
+    assert_logs:
+      - { pattern: "Battery replacement detected", level: info, negate: true }
+
+  - name: decrease-no-replacement
+    # 85 → 50 is a negative delta; a decrease is never a replacement.
+    # Also resets the device to 50 for the next test run's case 1.
+    actions:
+      - { device: test-bcl-battery, command: sendBatteryEvent, args: [50] }
+    wait_seconds: 2
+    assert_logs:
+      - { pattern: "Battery replacement detected", level: info, negate: true }
+
+runtime_budget_seconds: 30

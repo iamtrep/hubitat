@@ -92,6 +92,18 @@ cases:
       # Required for aggregates over numeric attributes (temperature, humidity,
       # illuminance, etc.) since Hubitat may format/round the output value.
       - { device: <output>, attribute: temperature, value: 22.0, tolerance: 0.1 }
+    assert_logs:             # log-level expectations against the captured
+                             # /logsocket stream during the case window.
+                             # Use for apps whose primary observable is a log
+                             # line, not an attribute change.
+      - { pattern: "Battery replacement detected", level: info }
+      # Optional fields:
+      #   level   — exact level (info/warn/error/debug/trace) or list of levels
+      #   source  — regex matched against the log's `name` field. Defaults to
+      #             APP_INSTANCE_LABEL (the app under test). Use a different
+      #             value if you need to assert on logs from a peer app/device.
+      #   negate: true → asserts the pattern did NOT appear.
+      - { pattern: "Battery replacement detected", negate: true }
     # Optional log-guard controls (default: guard ON, no whitelist).
     # Each case opens a LogCapture around its actions+asserts; after, the
     # generated test fails the case if APP_INSTANCE_LABEL emitted any warn/
@@ -235,7 +247,7 @@ Read the template at `.claude/skills/hubitat-behavior-test/test-template.sh.tmpl
 | `{{MAKER_API_LABEL_JSON}}` | `json.dumps(maker_api.label)` |
 | `{{INPUT_DEVICE_LABELS_JSON}}` | `json.dumps([i.name for i in inputs])` |
 | `{{OUTPUT_DEVICE_LABELS_JSON}}` | `json.dumps([o.name for o in outputs])` |
-| `{{CASES_JSON}}` | `json.dumps(cases)` — full cases array; the template iterates it and resolves device labels to IDs at runtime |
+| `{{CASES_JSON}}` | `repr(cases)` — full cases array as a **Python literal**, NOT JSON. The embedded heredoc parses the substituted text as Python source, so JSON `true`/`false`/`null` would raise `NameError`. `repr` emits Python syntax (`True`/`False`/`None`) with single-quoted strings. The name still ends in `_JSON` for historical reasons. |
 | `{{RUNTIME_BUDGET_SECONDS}}` | Integer literal, no quotes (e.g. `30`) |
 
 All `*_JSON` placeholders must be substituted with Python/JSON literal syntax so the resulting `.sh` file has valid embedded Python.

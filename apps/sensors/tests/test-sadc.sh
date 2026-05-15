@@ -17,7 +17,17 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+# Walk up from SCRIPT_DIR to find the repo root (the dir containing
+# .hubitat.json). Lets tests live at any depth — apps/sensors/tests/,
+# apps/tests/, scripts/tests/, etc.
+PROJECT_ROOT="$SCRIPT_DIR"
+while [[ "$PROJECT_ROOT" != "/" && ! -f "$PROJECT_ROOT/.hubitat.json" ]]; do
+    PROJECT_ROOT="$(dirname "$PROJECT_ROOT")"
+done
+if [[ ! -f "$PROJECT_ROOT/.hubitat.json" ]]; then
+    echo "Could not find .hubitat.json walking up from $SCRIPT_DIR" >&2
+    exit 2
+fi
 CONFIG_FILE="$PROJECT_ROOT/.hubitat.json"
 COOKIE_JAR="/tmp/hubitat_behavior_test_cookies"
 
@@ -40,7 +50,7 @@ APP_INSTANCE_LABEL    = "test-sadc-app"
 MAKER_API_LABEL       = "test-sadc-maker"
 INPUT_DEVICE_LABELS   = ["test-sadc-in-1", "test-sadc-in-2", "test-sadc-in-3"]
 OUTPUT_DEVICE_LABELS  = ["test-sadc-out"]
-CASES                 = [{"name": "all-closed-baseline", "setup": [{"device": "test-sadc-in-1", "command": "close"}, {"device": "test-sadc-in-2", "command": "close"}, {"device": "test-sadc-in-3", "command": "close"}], "wait_seconds": 2, "assert": [{"device": "test-sadc-out", "attribute": "contact", "value": "closed"}]}, {"name": "single-open-propagation", "actions": [{"device": "test-sadc-in-1", "command": "open"}], "wait_seconds": 2, "assert": [{"device": "test-sadc-out", "attribute": "contact", "value": "open"}]}, {"name": "idempotent-reset", "actions": [{"device": "test-sadc-in-1", "command": "close"}], "wait_seconds": 2, "assert": [{"device": "test-sadc-out", "attribute": "contact", "value": "closed"}]}]
+CASES                 = [{'name': 'all-closed-baseline', 'setup': [{'device': 'test-sadc-in-1', 'command': 'close'}, {'device': 'test-sadc-in-2', 'command': 'close'}, {'device': 'test-sadc-in-3', 'command': 'close'}], 'wait_seconds': 2, 'assert': [{'device': 'test-sadc-out', 'attribute': 'contact', 'value': 'closed'}]}, {'name': 'single-open-propagation', 'actions': [{'device': 'test-sadc-in-1', 'command': 'open'}], 'wait_seconds': 2, 'assert': [{'device': 'test-sadc-out', 'attribute': 'contact', 'value': 'open'}]}, {'name': 'idempotent-reset', 'actions': [{'device': 'test-sadc-in-1', 'command': 'close'}], 'wait_seconds': 2, 'assert': [{'device': 'test-sadc-out', 'attribute': 'contact', 'value': 'closed'}]}]
 RUNTIME_BUDGET_SECONDS = 30
 
 # ── Stdin args ────────────────────────────────────────────────────────
@@ -298,7 +308,7 @@ for case in CASES:
         wait_s = case.get("wait_seconds", 2)
         time.sleep(wait_s)
 
-        # assertions (read device state via Maker API; capture still open)
+        # attribute assertions (read device state via Maker API; capture still open)
         for a in case.get("assert") or []:
             label = a["device"]
             attr = a["attribute"]
@@ -322,6 +332,28 @@ for case in CASES:
                     ok(f"{label}.{attr} = {got} (≈ {want} ±{tol})")
                 else:
                     fail(f"{label}.{attr} expected {want} ±{tol}, got {got_f}")
+
+        # log assertions (against the captured /logsocket stream — still open).
+        # Use these for apps whose primary observable is a log line, not an
+        # attribute change (e.g. event loggers, anomaly detectors).
+        for la in case.get("assert_logs") or []:
+            pattern = la.get("pattern")
+            level   = la.get("level")
+            source  = la.get("source", APP_INSTANCE_LABEL)
+            negate  = bool(la.get("negate", False))
+            matched = cap.matches(pattern, level=level, source=source)
+            level_str  = f" level={level}" if level else ""
+            source_str = f" source={source!r}"
+            if (matched and not negate) or (not matched and negate):
+                kind = "no-match" if negate else "match"
+                ok(f"log {kind}: {pattern!r}{level_str}{source_str}")
+            else:
+                kind = "no-match" if negate else "match"
+                # On miss, show up to 3 captured lines from the same source for diagnosis.
+                near = cap.find_all(None, source=source)[:3]
+                near_str = "; ".join(f"[{m.get('level')}] {(m.get('msg') or '')[:80]}" for m in near)
+                fail(f"log {kind} expected for {pattern!r}{level_str}{source_str}"
+                     f"; recent from {source!r}: [{near_str}]")
 
     # 6c. Implicit log guard — fails on unexpected warn/error from the SUT.
     # Spec opt-outs:
