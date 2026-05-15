@@ -17,11 +17,13 @@
  */
 
 import groovy.json.JsonSlurper
+import groovy.transform.CompileStatic
 import groovy.transform.Field
+import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String DRIVER_VERSION = "1.0.0"
+@Field static final String DRIVER_VERSION = "1.0.1"
 @Field static final int STARTUP_DELAY_SECS = 60
-@Field static final JsonSlurper JSON_SLURPER = new JsonSlurper()
+@Field static final AtomicInteger LOGS_RECEIVED = new AtomicInteger()
 
 metadata {
     definition(
@@ -84,7 +86,10 @@ void initialize() {
 
     atomicState.intentionalDisconnect = false
     state.reconnectAttempts = 0
-    atomicState.logsReceived = 0
+    LOGS_RECEIVED.set(0)
+
+    atomicState.remove("logsReceived")
+    state.remove("logsReceived")
 
     sendEvent(name: "connectionStatus", value: "initializing")
 
@@ -184,10 +189,10 @@ void webSocketStatus(String message) {
 }
 
 void parse(String message) {
-    atomicState.logsReceived = (atomicState.logsReceived ?: 0) + 1
+    LOGS_RECEIVED.incrementAndGet()
 
     try {
-        Map logEntry = JSON_SLURPER.parseText(message)
+        Map logEntry = new JsonSlurper().parseText(message)
 
         if (!logEntry?.type) return
 
@@ -223,8 +228,9 @@ void parse(String message) {
  * Returns the total count of logs received by this bridge.
  * Can be called by the parent app to display status without attribute overhead.
  */
-long getLogsReceivedCount() {
-    return (atomicState.logsReceived ?: 0) as long
+@CompileStatic
+int getLogsReceivedCount() {
+    return LOGS_RECEIVED.get()
 }
 
 // ============================================================================
