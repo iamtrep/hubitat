@@ -29,7 +29,10 @@ if [[ ! -f "$PROJECT_ROOT/.hubitat.json" ]]; then
     exit 2
 fi
 CONFIG_FILE="$PROJECT_ROOT/.hubitat.json"
-COOKIE_JAR="/tmp/hubitat_behavior_test_cookies"
+# Unique per run/hub/test so concurrent runs (e.g. parallel agents, pytest -n)
+# don't clobber each other's session state. Cleaned up on exit.
+COOKIE_JAR="$(mktemp -u "${TMPDIR:-/tmp}/hubitat-test-cookies.XXXXXX")"
+trap 'rm -f "$COOKIE_JAR"' EXIT
 
 HUB_NAME=""
 INSTANCE_ID=""

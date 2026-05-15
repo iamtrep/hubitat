@@ -1,0 +1,68 @@
+# SwitchMonitor — Mode 1 behavior test spec
+#
+# SwitchMonitor watches groups of switches; when one deviates from its
+# target state, it waits `graceMinutes*60 + graceSeconds`, commands the
+# switch back to target, then verifies after `verifyDelay`. With the
+# test-friendly timers below, the full deviation→correction cycle
+# completes in ~3 seconds.
+#
+# ── ONE-TIME MANUAL SETUP REQUIRED ────────────────────────────────────
+# Group config lives on a sub-page (`groupPage`), not on `mainPage`.
+# `/installedapp/update/json` only addresses mainPage so REST can't
+# configure the per-group settings. The orchestrator creates the rig
+# shell — virtual switch, Maker API instance, app instance with
+# `state.groups = [1]` already populated via `btnNewGroup` — then stops.
+# To finish setup, open the instance in the Hubitat UI:
+#   http://<hub_ip>/installedapp/configure/<instance_id>
+# Click the row for **Group 1** to open `groupPage` and set:
+#   Target state: ON
+#   Switches to monitor: test-switchmon-1
+#   Group label: test group
+#   Timing →
+#     Minutes to wait: 0
+#     Additional seconds: 1
+#     Seconds between retries: 5
+#     Seconds to wait before verifying: 1
+#     Maximum retry attempts: 1
+# Click **Done** on the group page, then **Done** on the main page.
+# ──────────────────────────────────────────────────────────────────────
+#
+# Generate with: /hubitat-behavior-test apps/tests/spec-switch-monitor.yaml
+
+app:
+  source: apps/SwitchMonitor.groovy
+  type_name: "Switch Monitor"
+  instance_label: test-switchmon-app
+  manual_setup_required: true
+  setup_buttons:
+    - btnNewGroup
+  config:
+    # Global toggles applied at provisioning (these DO work via REST).
+    enableDebug: true
+    enableTrace: false
+
+inputs:
+  - { name: test-switchmon-1, driver: Virtual Switch, role: group1.devices }
+
+# No separate output — the monitored switch IS the device whose state
+# we drive (to off) and then verify (returns to on).
+outputs: []
+
+maker_api:
+  label: test-switchmon-maker
+
+cases:
+  - name: correct-deviated-switch
+    # Ensure baseline is "on" (matches targetState).
+    setup:
+      - { device: test-switchmon-1, command: "on" }
+    setup_wait_seconds: 2
+    # Deviate the switch — SwitchMonitor should pull it back.
+    actions:
+      - { device: test-switchmon-1, command: "off" }
+    # grace (1s) + verify (1s) + buffer for command propagation
+    wait_seconds: 5
+    assert:
+      - { device: test-switchmon-1, attribute: switch, value: "on" }
+
+runtime_budget_seconds: 30

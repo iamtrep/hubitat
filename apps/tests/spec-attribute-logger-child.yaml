@@ -1,0 +1,84 @@
+# AttributeLoggerChild — Mode 1 behavior test spec
+#
+# Subscribes to a chosen device's selected attributes and appends a CSV
+# row to a hub file on every event. Primary observable is a trace-level
+# `new data <line>` log emitted by the event handler — no output device,
+# so the test asserts on logs (like BCL).
+#
+# ── ONE-TIME MANUAL SETUP REQUIRED ────────────────────────────────────
+# `selectedAttributes` is a dynamicPage enum gated on `selectedDevice`;
+# REST POSTs don't reliably establish subscriptions for this shape. The
+# orchestrator creates the rig shell — devices, Maker API instance, and
+# an uninitialized Attribute Logger Child app instance — then stops.
+# To finish setup, open the instance in the Hubitat UI:
+#   http://<hub_ip>/installedapp/configure/<instance_id>
+# and set:
+#   Log File Name:     test-attrlog.csv
+#   Log level:         trace
+#   Select Device:     test-attrlog-1
+#   Select Attributes: contact
+#   Confirm Changes:   ✓
+# Click **Done**. The generated test runs idempotently from then on.
+# ──────────────────────────────────────────────────────────────────────
+#
+# Generate with: /hubitat-behavior-test apps/tests/spec-attribute-logger-child.yaml
+
+app:
+  source: apps/AttributeLoggerChild.groovy
+  type_name: "Attribute Logger Child"
+  instance_label: test-attrlog-app
+  parent:
+    source: apps/AttributeLogger.groovy
+    type_name: "Attribute Logger"
+    # singleInstance parent — same pattern as SADC/SAC.
+  manual_setup_required: true
+  config:
+    logFileName: "test-attrlog.csv"
+    # `trace` is the only level at which handleEvent's "new data" line
+    # fires. info/debug log other (less reliable) lines.
+    logLevel: trace
+    # The "Confirm Changes" gate in mainPage sets state.pendingChanges
+    # on first config save (device/attributes changed from null). Pre-
+    # confirming here lets updated() commit the change in one POST.
+    confirmChanges: true
+    # selectedAttributes is a dynamicPage enum gated on selectedDevice,
+    # so the orchestrator's two-phase POST sets selectedDevice first
+    # and selectedAttributes second.
+    selectedAttributes: ["contact"]
+
+inputs:
+  - { name: test-attrlog-1, driver: Virtual Contact Sensor, role: selectedDevice }
+
+# AttributeLoggerChild emits no device events; logs only.
+outputs: []
+
+maker_api:
+  label: test-attrlog-maker
+
+# AttributeLoggerChild reads the prior CSV before appending. The first
+# event after a fresh install/uninstall will logWarn "Could not read
+# existing data" because the file doesn't exist yet. Whitelist that
+# pattern so the implicit log guard doesn't fail on it.
+cases:
+  - name: attribute-event-logged
+    setup:
+      - { device: test-attrlog-1, command: "close" }
+    setup_wait_seconds: 2
+    actions:
+      - { device: test-attrlog-1, command: "open" }
+    wait_seconds: 3
+    assert_logs:
+      - { pattern: "new data.*open", level: trace }
+    allow_log_patterns:
+      - "Could not read existing data"
+
+  - name: idempotent-reset
+    actions:
+      - { device: test-attrlog-1, command: "close" }
+    wait_seconds: 3
+    assert_logs:
+      - { pattern: "new data.*close", level: trace }
+    allow_log_patterns:
+      - "Could not read existing data"
+
+runtime_budget_seconds: 30

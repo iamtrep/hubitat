@@ -70,7 +70,7 @@ A refresh procedure must be documented next to the snapshot — typically a `--s
 - `apps/tests/*.groovy` — in-hub stress and diagnostic apps. This directory is the exception, not the convention.
 - `drivers/tests/*Test.groovy` — paired test drivers (companion drivers that drive the behavior of another driver under test).
 
-The repo-root `tests/` directory is reserved for cross-project tooling and a future top-level runner (see §2.4).
+The repo-root `tests/` directory is reserved for cross-project tooling. The top-level runner lives at [`scripts/run-tests.sh`](scripts/run-tests.sh) — see §2.4.
 
 ## 2. Apps
 
@@ -148,7 +148,7 @@ The spec maps directly onto the procedure below — for [`apps/sensors/SensorAgg
 - [`apps/tests/udpStressTest.groovy`](apps/tests/udpStressTest.groovy) — UDP round-trip latency under load.
 - [`apps/tests/fileManagerTests.groovy`](apps/tests/fileManagerTests.groovy) — file manager API benchmark.
 
-**Closed-loop notes:** Mode 5 does not satisfy the contract today — button press is manual and output is hub-log only. See the log-assertion and button-press gaps in §2.4 for how this category would join the loop.
+**Closed-loop notes:** Mode 5 historically did not satisfy the contract — button press was manual and output was hub-log only. With the button-press helper ([`/hubitat-app-button`](.claude/skills/hubitat-app-button/SKILL.md)) and [`LogCapture`](scripts/lib/logsocket.py) both shipped (see §2.4), a wrapper script can now drive the in-hub app and assert structurally on its log output. No existing Mode 5 app has been refactored to a wrapper-driven test yet; doing so is what brings each stress app into the loop.
 
 ### 2.2 The tiered bar — applies to new or significantly-changed code only
 

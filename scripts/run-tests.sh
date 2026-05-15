@@ -21,10 +21,13 @@
 #   bash scripts/run-tests.sh --verbose        # stream each test's stdout/stderr live
 #   bash scripts/run-tests.sh @hub --filter sadc  # only tests whose path matches "sadc"
 #
-# Exit codes:
+# Exit codes (mirroring the per-test contract in TESTING.md §1.1):
 #   0 — all discovered tests passed
-#   1 — at least one test failed
-#   2 — runner couldn't enumerate tests (e.g. project root not a git repo)
+#   1 — at least one test failed an assertion (child exit 1, or any non-{0,2})
+#   2 — runner couldn't enumerate tests, OR every child that ran exited 2
+#       ("couldn't run at all" — rig/config/auth issue, no real assertions
+#       were exercised). If a run mixes assertion failures with couldn't-run
+#       tests, the runner exits 1 — there is still a regression to chase.
 #
 
 set -uo pipefail
@@ -123,7 +126,9 @@ echo
 
 PASS_COUNT=0
 FAIL_COUNT=0
+ERROR_COUNT=0
 FAIL_PATHS=()
+ERROR_PATHS=()
 RUNNER_START=$(date +%s)
 
 run_one() {
@@ -158,6 +163,16 @@ run_one() {
     if [[ $ec -eq 0 ]]; then
         PASS_COUNT=$((PASS_COUNT + 1))
         echo -e "  ${G}[PASS]${X} $rel ${D}(${elapsed}s)${X}"
+    elif [[ $ec -eq 2 ]]; then
+        # Per the §1.1 contract: exit 2 = "couldn't run at all" (rig/config/auth).
+        # Track separately from assertion failures so the suite-level exit code
+        # preserves the same three-way distinction.
+        ERROR_COUNT=$((ERROR_COUNT + 1))
+        ERROR_PATHS+=("$rel (exit 2)")
+        echo -e "  ${Y}[ERROR]${X} $rel ${D}(${elapsed}s, exit 2 — could not run)${X}"
+        if [[ $VERBOSE -eq 0 ]]; then
+            sed 's/^/      /' "$out_file" | tail -n 40
+        fi
     else
         FAIL_COUNT=$((FAIL_COUNT + 1))
         FAIL_PATHS+=("$rel (exit $ec)")
@@ -178,13 +193,36 @@ TOTAL_ELAPSED=$((RUNNER_END - RUNNER_START))
 
 # ── Summary ───────────────────────────────────────────────────────────
 echo
-echo -e "${B}=== ${PASS_COUNT}/${#TESTS[@]} passed${X}${FAIL_COUNT:+, ${R}${FAIL_COUNT} failed${X}} ${D}(${TOTAL_ELAPSED}s)${X}"
+SUMMARY="${B}=== ${PASS_COUNT}/${#TESTS[@]} passed${X}"
+[[ $FAIL_COUNT  -gt 0 ]] && SUMMARY+=", ${R}${FAIL_COUNT} failed${X}"
+[[ $ERROR_COUNT -gt 0 ]] && SUMMARY+=", ${Y}${ERROR_COUNT} could-not-run${X}"
+SUMMARY+=" ${D}(${TOTAL_ELAPSED}s)${X}"
+echo -e "$SUMMARY"
+
 if [[ $FAIL_COUNT -gt 0 ]]; then
     echo
-    echo -e "${R}Failed tests:${X}"
+    echo -e "${R}Failed tests (assertion regressions):${X}"
     for f in "${FAIL_PATHS[@]}"; do
         echo "  - $f"
     done
 fi
+if [[ $ERROR_COUNT -gt 0 ]]; then
+    echo
+    echo -e "${Y}Could-not-run (rig/config/auth):${X}"
+    for f in "${ERROR_PATHS[@]}"; do
+        echo "  - $f"
+    done
+fi
 
-exit $(( FAIL_COUNT > 0 ? 1 : 0 ))
+# Suite exit code mirrors the §1.1 three-way contract.
+# Assertion failures take priority — a real regression matters more than a
+# rig issue. If nothing ran cleanly and the only signal is "couldn't run",
+# exit 2 so an agent loop branches to rig/config triage instead of debugging
+# nonexistent assertion regressions.
+if (( FAIL_COUNT > 0 )); then
+    exit 1
+elif (( ERROR_COUNT > 0 )); then
+    exit 2
+else
+    exit 0
+fi
