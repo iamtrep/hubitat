@@ -21,13 +21,17 @@
 #   bash scripts/run-tests.sh --verbose        # stream each test's stdout/stderr live
 #   bash scripts/run-tests.sh @hub --filter sadc  # only tests whose path matches "sadc"
 #
-# Exit codes (mirroring the per-test contract in TESTING.md §1.1):
-#   0 — all discovered tests passed
-#   1 — at least one test failed an assertion (child exit 1, or any non-{0,2})
-#   2 — runner couldn't enumerate tests, OR every child that ran exited 2
-#       ("couldn't run at all" — rig/config/auth issue, no real assertions
-#       were exercised). If a run mixes assertion failures with couldn't-run
-#       tests, the runner exits 1 — there is still a regression to chase.
+# Exit codes (mirroring the per-test contract in TESTING.md §1.1).
+# The ladder is regression > rig issue > all-green:
+#   0 — every discovered test ran and passed.
+#   1 — at least one test failed an assertion (child exit 1, or any
+#       non-{0,2}). Takes priority over rig issues — a real regression
+#       matters more than incomplete coverage.
+#   2 — runner couldn't enumerate tests, OR at least one child exited 2
+#       (rig/config/auth — couldn't run) and no child reported an
+#       assertion failure. Coverage is incomplete; investigate the
+#       [ERROR] list before trusting the [PASS]es. Returning 0 in this
+#       case would let a single passing-by-luck test mask N rig failures.
 #
 
 set -uo pipefail
