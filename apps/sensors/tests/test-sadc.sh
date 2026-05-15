@@ -223,6 +223,24 @@ def maker_send(device_id, command, args=None, timeout=15):
     except Exception:
         return False
 
+def app_button(button_name, app_id=None, timeout=15):
+    """Click a button-type preference on an installed app. Invokes the
+    app's appButtonHandler(String btn). Defaults to the app under test."""
+    target = app_id if app_id is not None else instance_id
+    body = urllib.parse.urlencode({
+        "id": str(target),
+        "name": button_name,
+        f"settings[{button_name}]": "clicked",
+        f"{button_name}.type": "button",
+    }).encode()
+    req = urllib.request.Request(f"http://{hub_ip}/installedapp/btn", data=body)
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    try:
+        with opener.open(req, timeout=timeout) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
 devices_resp = maker_get("/devices")
 if not isinstance(devices_resp, list):
     die(f"Maker API /devices returned unexpected payload: {devices_resp}")
@@ -277,7 +295,29 @@ for case in CASES:
     # 0 keeps fast tests fast.
     spacing = float(case.get("command_spacing_seconds", 0))
 
-    def run_step(label, cmd, args, kind):
+    def run_step(step, kind):
+        # Two step shapes:
+        #   - device command: { device: <label>, command: <name>, args: [...] }
+        #   - app button:     { button: <name> [, target_app: <label or id>] }
+        # target_app defaults to the app under test.
+        if "button" in step:
+            btn = step["button"]
+            target = step.get("target_app")  # default → app under test
+            target_id = target if (target is None or isinstance(target, int)) else None
+            # If target is a string, the caller can resolve before calling;
+            # for the common case (button on the SUT), leave it None.
+            ok_call = app_button(btn, app_id=target_id)
+            arrow = f"button({btn})"
+            label = "<app>" if target is None else f"<app:{target}>"
+            if not ok_call:
+                warn(f"{kind}: {label} ← {arrow} (HTTP non-200)")
+            else:
+                info(f"{kind}: {label} ← {arrow}")
+            return
+        # Otherwise: device command
+        label = step["device"]
+        cmd = step["command"]
+        args = step.get("args") or []
         ok_call = maker_send(label_to_id[label], cmd, args=args)
         argstr = ('(' + ','.join(str(x) for x in args) + ')') if args else ''
         if not ok_call:
@@ -288,7 +328,7 @@ for case in CASES:
     # 6a. setup (idempotent reset; not checked against the log guard)
     setup_steps = case.get("setup") or []
     for i, step in enumerate(setup_steps):
-        run_step(step["device"], step["command"], step.get("args") or [], "setup")
+        run_step(step, "setup")
         if spacing and i < len(setup_steps) - 1:
             time.sleep(spacing)
     if setup_steps:
@@ -300,7 +340,7 @@ for case in CASES:
         # actions (test trigger)
         action_steps = case.get("actions") or []
         for i, step in enumerate(action_steps):
-            run_step(step["device"], step["command"], step.get("args") or [], "action")
+            run_step(step, "action")
             if spacing and i < len(action_steps) - 1:
                 time.sleep(spacing)
 

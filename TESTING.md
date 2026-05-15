@@ -173,7 +173,7 @@ Canonical example: [`apps/HubDiagnostics/tests/TEST_PLAN.md`](apps/HubDiagnostic
 
 ### 2.4 Named gaps
 
-One remaining gap that, if closed, would make the closed loop fully agent-runnable for the majority of the repo. Listed in priority order. These are descriptive — they capture what's missing, not a commitment to build.
+All four originally named gaps are now shipped. Listed in priority order for historical reference.
 
 - ~~**`/hubitat-behavior-test` skill (top priority).**~~ **Shipped.** See [`.claude/skills/hubitat-behavior-test/SKILL.md`](.claude/skills/hubitat-behavior-test/SKILL.md). Reads a YAML spec, provisions the rig idempotently (virtual devices, dedicated Maker API instance, dedicated test app instance) on the chosen hub, renders a self-contained `tests/test-{app}.sh` from [`test-template.sh.tmpl`](.claude/skills/hubitat-behavior-test/test-template.sh.tmpl), and runs it. Reuses `/hubitat-create-device`, `/hubitat-app-device`, and `/hubitat-install`. Pilot test: `apps/sensors/tests/test-sadc.sh` from spec-sadc.yaml.
 
@@ -183,7 +183,7 @@ One remaining gap that, if closed, would make the closed loop fully agent-runnab
   - Mode 1 behavior tests can assert on warnings or errors the app emits, not just on attribute changes.
   - Mode 5 stress apps gain real assertions: a test wrapper drives the in-hub app via the button-press helper below, watches the logsocket for the result lines the app already prints, and produces structured `[PASS]`/`[FAIL]`.
 
-- **Button-press helper (nice to have).** A small skill that POSTs to an installed app's `appButtonHandler` route, letting agents start in-hub Mode 5 apps without UI clicks. On its own it gets you "test can be started"; paired with log-assertion it gets you "test can be started and its result observed." Lower priority because log-assertion delivers most of the closed-loop value across all modes.
+- ~~**Button-press helper (nice to have).**~~ **Shipped.** See [`.claude/skills/hubitat-app-button/SKILL.md`](.claude/skills/hubitat-app-button/SKILL.md). POSTs to `/installedapp/btn` with `id`, `name`, `settings[name]=clicked`, `name.type=button` — invokes the app's `appButtonHandler(String btn)` synchronously. The behavior-test template integrates it two ways: `app.setup_buttons:` in the spec for provisioning-time clicks that mutate state shape (e.g. `btnNewGroup` on SwitchMonitor to create groups), and a per-step `{ button: <name> }` shape in `setup` / `actions` for runtime clicks inside a case window. Pair with [`LogCapture`](scripts/lib/logsocket.py) (the same `cap` the template already opens around each case) to assert on the click's effect.
 
 ## 3. Drivers
 

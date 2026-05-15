@@ -57,6 +57,17 @@ app:
     source: <relative path to parent .groovy>
     type_name: <name from parent definition()>
     instance_label: <label for the parent instance>
+  setup_buttons:             # optional list of button-input names to
+                             # click ONCE during provisioning (between
+                             # Step 7 instance create and Step 11 config
+                             # apply). Use for apps whose state shape is
+                             # established by UI button clicks rather
+                             # than direct settings (e.g. SwitchMonitor's
+                             # btnNewGroup, which creates the group(s)
+                             # state.groups uses). Uses the same
+                             # /installedapp/btn endpoint as
+                             # /hubitat-app-button — see Step 7b below.
+    - btnNewGroup
   config:                    # settings applied via POST /installedapp/update/json
     <preference_name>: <value>
     ...
@@ -75,6 +86,12 @@ cases:
       # setTemperature, setLevel). Hubitat's Maker API encodes args as
       # extra URL path segments after the command.
       - { device: <input>, command: setTemperature, args: [22.5] }
+      # Button-click step: clicks a button-type preference on the app
+      # under test. The post fires `appButtonHandler(String btn)` in
+      # the SUT. Use sparingly inside actions/setup — a click typically
+      # belongs in `app.setup_buttons` (one-time provisioning) rather
+      # than per-case state mutation.
+      - { button: btnRunNow }
     actions:                 # test trigger (inside the log-capture window)
       - { device: <input label>, command: <command name> }
     wait_seconds: <int>      # how long to wait for the app to react before asserting
@@ -180,6 +197,29 @@ except urllib.error.HTTPError as e:
 After creating the instance, set its label via the form-encoded POST procedure in `/hubitat-app-device` Step 6 — supply `label.type=text` and `label={instance_label}`. Without this step the new instance has no label, and discovery fails.
 
 Record `instanceId`.
+
+### Step 7b: Dispatch provisioning-time button clicks (if any)
+
+Skip this step if `app.setup_buttons` is absent or empty.
+
+For each name in `app.setup_buttons`, POST to `/installedapp/btn` against the test app instance — same payload as the [`/hubitat-app-button`](../hubitat-app-button/SKILL.md) skill:
+
+```bash
+curl -s -X POST "http://{hub_ip}/installedapp/btn" \
+  --data-urlencode "id={instanceId}" \
+  --data-urlencode "name={button_name}" \
+  --data-urlencode "settings[{button_name}]=clicked" \
+  --data-urlencode "{button_name}.type=button"
+```
+
+Each click is synchronous and invokes `appButtonHandler(String btn)` in the SUT before returning. Typical uses:
+
+- **`btnNewGroup` on `SwitchMonitor`** — creates a group; the group's per-group settings (`1.targetState`, `1.devices`, etc.) then become valid keys for Step 11's config apply.
+- Any other "Add X" button that mutates app state in a way that exposes new settings keys.
+
+If the button is supposed to make new settings keys available, **re-fetch `/installedapp/configure/json/{instanceId}` after the click** before Step 11 — Step 11's "echo back all rendered inputs" walk depends on the fresh page.
+
+Order if multiple buttons are listed: dispatch in the order given in the spec. Apps that need multiple `btnNewGroup` clicks (one per group) should declare them explicitly: `setup_buttons: [btnNewGroup, btnNewGroup]`.
 
 ### Step 8: Ensure virtual devices exist
 
