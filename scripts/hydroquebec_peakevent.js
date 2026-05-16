@@ -1,3 +1,6 @@
+// Copyright (c) 2025-2026 PJ
+// SPDX-License-Identifier: MIT
+
 /*
   This is a Google Apps Script to detect any specified Gmail and turn on an HE virtual switch via a call to MakerAPI
 

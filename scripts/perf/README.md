@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Hubitat Hub Diagnostics Scripts
 
 Tools for capturing and analysing Hubitat hub log streams to diagnose slow

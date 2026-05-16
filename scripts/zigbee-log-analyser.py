@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2025-2026 PJ
+# SPDX-License-Identifier: MIT
+
 # (Short header omitted for brevity)
 import argparse, json, re, sys, statistics, os
 from collections import defaultdict, Counter

@@ -1,3 +1,6 @@
+// Copyright (c) 2025-2026 PJ
+// SPDX-License-Identifier: MIT
+
 /**
  * Log Event Monitor Test Driver
  * Emits log messages at specified levels to exercise LogEventMonitor filtering

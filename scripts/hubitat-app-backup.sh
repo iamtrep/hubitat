@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) 2025-2026 PJ
+# SPDX-License-Identifier: MIT
+
 #
 # hubitat-app-backup.sh — Back up installed Hubitat app configurations and state
 #

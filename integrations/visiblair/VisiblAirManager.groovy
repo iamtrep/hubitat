@@ -1,10 +1,11 @@
+// Copyright (c) 2025-2026 PJ
+// SPDX-License-Identifier: MIT
+
 /*
  * VisiblAir Manager — Parent Integration App
  *
  * Discovers sensors via the VisiblAir cloud API and creates child devices
  * using model-specific drivers. Handles bulk polling and firmware commands.
- *
- * Licensed under the Apache License, Version 2.0
  */
 
 import groovy.json.JsonOutput

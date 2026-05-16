@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Architecture Guide — Candidate Topics
 
 Lower-priority observations from the codebase review. Kept here for later reconsideration; promote to [`ARCHITECTURE.md`](ARCHITECTURE.md) if a topic reaches the bar of *"skipping it causes a real bug or substantial confusion."*

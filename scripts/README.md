@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Scripts
 
 Utility scripts for Hubitat hub administration, log analysis, and external integrations.

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2025-2026 PJ
+# SPDX-License-Identifier: MIT
+
 """
 Zigbee OTA Traffic Analyzer
 

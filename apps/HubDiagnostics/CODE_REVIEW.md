@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # HubDiagnostics — Code Review Findings & Fix Plan
 
 Status as of 2026-05-10 (post-v5.27.0 + uncommitted v5.28/5.29 WIP; rounds 1-6 complete).

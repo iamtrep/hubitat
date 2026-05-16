@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Copyright (c) 2025-2026 PJ
+// SPDX-License-Identifier: MIT
+
 // Unit tests for diffStats (hub_diagnostics_ui.html)
 // Run: node tests/test-diffStats.js
 //

@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Hub Diagnostics
 
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.

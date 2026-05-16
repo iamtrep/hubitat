@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # HubDiagnostics — Test Coverage Plan
 
 Status as of 2026-05-08:

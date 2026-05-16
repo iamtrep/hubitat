@@ -1,3 +1,6 @@
+# Copyright (c) 2025-2026 PJ
+# SPDX-License-Identifier: MIT
+
 """Log-assertion helper for Mode 1 behavior tests.
 
 Subscribes to a hub's `ws://<hub>/logsocket` stream in a background thread,

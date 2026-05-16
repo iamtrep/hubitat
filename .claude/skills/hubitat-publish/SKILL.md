@@ -5,6 +5,12 @@ argument-hint: "[driver/app name, filepath, or ID]"
 allowed-tools: Bash, Read, Glob, Grep
 ---
 
+
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Hubitat Publish Skill
 
 Publish a driver or app's code to all other Hubitat hubs linked to the same account, and report distribution status.

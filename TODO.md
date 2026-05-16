@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Architecture-Compliance TODO
 
 Worst offenders against [`ARCHITECTURE.md`](ARCHITECTURE.md), ranked by severity-weighted

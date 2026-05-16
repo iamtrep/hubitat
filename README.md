@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Hubitat
 
 Personal collection of apps, drivers, and integrations for the [Hubitat Elevation](https://hubitat.com/) home automation platform.
@@ -26,4 +31,13 @@ Backup, log analysis, and external integration scripts. See [`scripts/`](scripts
 
 ## License
 
-MIT — see individual source file headers.
+Released under the **MIT License** — see [LICENSE](LICENSE). Individual source files carry an `SPDX-License-Identifier: MIT` header.
+
+A small number of files under `drivers/` are derived from upstream community work and remain under their original **Apache License 2.0** (each file's own header is authoritative):
+
+- `drivers/IKEA-Blinds.groovy` (Wayne Man)
+- `drivers/XfinityContactSensor.groovy` (John Goughenour)
+- `drivers/sinope/Sinope_TH1300ZB.groovy` (community)
+- `drivers/sinope/Sinope_VA422xZB.groovy` (sacua, kkossev, thebearmay)
+- `drivers/stelpro/StelproKi.groovy` (Philippe Charette, Stelpro)
+- `drivers/stelpro/StelproAllia.groovy` (Maxime Boissonneault, Philippe Charette, Stelpro)

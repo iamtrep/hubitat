@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Hubitat Create Device Skill
 
 Create a virtual device on the Hubitat hub using a specified driver.

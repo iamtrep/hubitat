@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # VerbNav — Hubitat UI prototype
 
 A single-page reimagining of the Hubitat hub UI, organized around five **verbs** that describe what you actually want to do, rather than the platform's object-centric menu structure.

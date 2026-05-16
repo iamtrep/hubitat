@@ -1,3 +1,6 @@
+# Copyright (c) 2025-2026 PJ
+# SPDX-License-Identifier: MIT
+
 # MotionFusionChild — Mode 1 behavior test spec
 #
 # Exercises the `pirQuickMmwaveHold` fusion mode of

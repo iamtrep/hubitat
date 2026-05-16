@@ -1,10 +1,11 @@
+// Copyright (c) 2025-2026 PJ
+// SPDX-License-Identifier: MIT
+
 /*
  * VisiblAir Sensor C — Child Driver (Basic: CO2, Temperature, Humidity)
  *
  * Part of the VisiblAir Manager integration. Do not configure API credentials here;
  * all communication goes through the parent app.
- *
- * Licensed under the Apache License, Version 2.0
  */
 
 import groovy.transform.CompileStatic

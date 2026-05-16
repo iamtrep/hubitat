@@ -1,3 +1,6 @@
+// Copyright (c) 2025-2026 PJ
+// SPDX-License-Identifier: MIT
+
 definition(
     name: "Async UDP Stress Test App",
     namespace: "iamtrep",

@@ -5,6 +5,12 @@ argument-hint: "[upload|download|list|delete] [filepath]"
 allowed-tools: Bash, Read, Glob, Grep
 ---
 
+
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Hubitat File Manager Skill
 
 Manage files on the Hubitat hub's File Manager. Files stored here are accessible at `http://{hub_ip}/local/{filename}` and can be read/written by apps via `downloadHubFile()` / `uploadHubFile()`.

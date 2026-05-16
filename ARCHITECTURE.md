@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Hubitat Development Architecture Guide
 
 This document captures architectural principles and platform constraints that apply across all Hubitat Groovy development in this repository — apps, drivers, and integrations alike. Per-project guides (for example, `apps/HubDiagnostics/ARCHITECTURE.md`) build on top of this one and add the specifics of their own design.

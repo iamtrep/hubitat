@@ -1,3 +1,6 @@
+# Copyright (c) 2025-2026 PJ
+# SPDX-License-Identifier: MIT
+
 """Event-assertion helper for Mode 1 behavior tests.
 
 Subscribes to a hub's ``ws://<hub>/eventsocket`` stream in a background

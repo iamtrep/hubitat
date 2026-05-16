@@ -1,3 +1,6 @@
+# Copyright (c) 2025-2026 PJ
+# SPDX-License-Identifier: MIT
+
 # SensorFilterChild — Mode 1 behavior test spec
 #
 # 1:1 filter: subscribes to sourceDevice.<attributeToFilter>, maintains

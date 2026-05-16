@@ -1,3 +1,6 @@
+# Copyright (c) 2025-2026 PJ
+# SPDX-License-Identifier: MIT
+
 # AttributeLoggerChild — Mode 1 behavior test spec
 #
 # Subscribes to a chosen device's selected attributes and appends a CSV

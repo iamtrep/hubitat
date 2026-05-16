@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # VisiblAir Integration
 
 Parent/child integration for [VisiblAir](https://visiblair.com/) indoor air quality sensors. The manager app auto-discovers sensors linked to your account and creates child devices using model-specific drivers.

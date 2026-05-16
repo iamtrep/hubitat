@@ -5,6 +5,12 @@ argument-hint: "[filepath ...] | --branch"
 allowed-tools: Read, Glob, Grep, Bash
 ---
 
+
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Hubitat Architecture Audit Skill
 
 Read the project's architecture docs, then scan one or more Groovy files and report concrete deviations. The skill contains **zero architectural rules of its own** — it consumes `ARCHITECTURE.md` as the rubric, so it stays in sync as the doc evolves.

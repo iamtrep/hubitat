@@ -5,6 +5,12 @@ argument-hint: "[@hubname] {installed_app_id} {button_name}"
 allowed-tools: Bash, Read
 ---
 
+
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Hubitat App Button Skill
 
 Closes the §2.4 "button-press helper" gap. Programmatically invokes an installed app's `appButtonHandler(String btn)` by POSTing to the `/installedapp/btn` endpoint — the same call the Hubitat UI makes when a user clicks a `button`-type preference on the configure page.

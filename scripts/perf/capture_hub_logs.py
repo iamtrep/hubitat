@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2025-2026 PJ
+# SPDX-License-Identifier: MIT
+
 """Capture a Hubitat hub's /logsocket stream to a JSONL file, reconnecting on
 disconnect.  Every N seconds injects a JSON line with /hub/advanced/freeOSMemoryLast
 stats so analyse_rm_delays.py can correlate event timing with hub memory/CPU pressure.

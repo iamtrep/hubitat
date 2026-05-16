@@ -1,19 +1,12 @@
+// Copyright (c) 2025-2026 PJ
+// SPDX-License-Identifier: MIT
+
 /**
  * Log Monitor — Hub Log Monitoring App
  *
  * Creates bridge child devices for WebSocket connectivity to one or more
  * hub logsockets. Supports multiple independent filter configurations,
  * each with its own output actions (notification, log file, HTTP POST).
- *
- *	Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
- *	in compliance with the License. You may obtain a copy of the License at:
- *
- *		http://www.apache.org/licenses/LICENSE-2.0
- *
- *	Unless required by applicable law or agreed to in writing, software distributed under the License is distributed
- *	on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
- *	for the specific language governing permissions and limitations under the License.
- *
  */
 
 import groovy.transform.CompileStatic

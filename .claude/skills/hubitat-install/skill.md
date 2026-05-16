@@ -5,6 +5,12 @@ argument-hint: "[filepath]"
 allowed-tools: Bash, Read, Glob, Grep
 ---
 
+
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Hubitat Install Skill
 
 Create a new app or driver on the hub from a local Groovy file, install an instance, and open configuration.

@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Hubitat Testing Guide
 
 This document captures how apps and drivers are tested in this repository, and codifies the conventions that make tests agent-runnable as part of a closed-loop write/push/test/fix workflow. Per-project test plans (for example, [`apps/HubDiagnostics/tests/TEST_PLAN.md`](apps/HubDiagnostics/tests/TEST_PLAN.md)) build on this one and add the specifics of their own coverage targets.

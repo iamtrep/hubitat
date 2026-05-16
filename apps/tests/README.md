@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Hub Stress Tests
 
 Hubitat Elevation apps for stress-testing various hub subsystems. These are diagnostic tools — install them temporarily, run the tests, then remove them.

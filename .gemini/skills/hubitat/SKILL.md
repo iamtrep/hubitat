@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Hubitat Development Skill
 
 This skill provides tools to facilitate Hubitat Elevation app and driver development by allowing code pushes and real-time log streaming directly from the Gemini CLI.

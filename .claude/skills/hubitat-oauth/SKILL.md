@@ -4,6 +4,12 @@ description: Add self-enabling OAuth to a Hubitat Groovy app so the user never h
 allowed-tools: Read, Edit, Bash, Grep
 ---
 
+
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Hubitat Self-Enabling OAuth Skill
 
 Integrate automatic OAuth bootstrapping into a Hubitat Groovy app. The app detects at runtime

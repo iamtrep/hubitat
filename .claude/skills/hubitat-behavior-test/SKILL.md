@@ -5,6 +5,12 @@ argument-hint: "[@hubname] [path/to/spec-*.yaml]"
 allowed-tools: Bash, Read, Write, Glob, Grep
 ---
 
+
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Hubitat Behavior Test Skill
 
 Closes the §2.4 "named gap" for `/hubitat-behavior-test`. Given a YAML spec, ensures the rig exists on the hub (idempotently), applies the app under test's configuration, and generates a self-contained `tests/test-{app}.sh` that satisfies the §1.1 closed-loop contract: single invocation, `@hubname`-driven hub selection, self-discovery via `/hub2/appsList`, exit codes 0/1/2, `[PASS]/[FAIL]/[WARN]/[INFO]` labels, idempotent setup.

@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Sensor Aggregator & Sensor Filter
 
 Hubitat Elevation apps for combining multiple sensor readings into a single virtual device.

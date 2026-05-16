@@ -1,10 +1,11 @@
+// Copyright (c) 2025-2026 PJ
+// SPDX-License-Identifier: MIT
+
 /*
  * VisiblAir Sensor E — Child Driver (Air Quality: CO2, T, H, VOC, Pressure, PM, Battery, AQI)
  *
  * For models E and E-Lite. Part of the VisiblAir Manager integration.
  * All communication goes through the parent app.
- *
- * Licensed under the Apache License, Version 2.0
  */
 
 import groovy.transform.CompileStatic

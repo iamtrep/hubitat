@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2025-2026 PJ
+# SPDX-License-Identifier: MIT
+
 """Analyze a Hubitat logsocket JSONL capture for slow Trigger->Action delays.
 
 Reads a file produced by capture_hub_logs.py (or any JSONL logsocket capture)

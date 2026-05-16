@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) 2025-2026 PJ
+# SPDX-License-Identifier: MIT
+
 #
 # Top-level test runner. Discovers every `<project>/tests/test-*.sh`,
 # `<project>/tests/test-*.js`, and `<project>/tests/test_*.py` under the

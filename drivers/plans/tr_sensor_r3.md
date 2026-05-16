@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # ThirdReality Presence Sensor R3 — Hubitat Driver Plan
 
 ## Context

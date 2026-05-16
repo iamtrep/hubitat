@@ -1,3 +1,6 @@
+// Copyright (c) 2025-2026 PJ
+// SPDX-License-Identifier: MIT
+
 import groovy.transform.Field
 
 @Field static final long RSSI_MIN_INTERVAL_MS = 10000

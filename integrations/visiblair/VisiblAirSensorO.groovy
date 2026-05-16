@@ -1,10 +1,11 @@
+// Copyright (c) 2025-2026 PJ
+// SPDX-License-Identifier: MIT
+
 /*
  * VisiblAir Sensor O — Child Driver (Smoke/Vape: CO2, T, H, VOC, PM, smoke/vape detection)
  *
  * For model O (SMOKE-VAPE variant). Part of the VisiblAir Manager integration.
  * All communication goes through the parent app.
- *
- * Licensed under the Apache License, Version 2.0
  */
 
 import groovy.transform.CompileStatic

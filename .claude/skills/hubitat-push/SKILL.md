@@ -5,6 +5,12 @@ argument-hint: "[filepath]"
 allowed-tools: Bash, Read, Glob, Grep
 ---
 
+
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Hubitat Push Skill
 
 Push a local Groovy file to the Hubitat hub, compile it, and report the result.

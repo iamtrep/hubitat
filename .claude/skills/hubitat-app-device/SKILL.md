@@ -5,6 +5,12 @@ argument-hint: "add|remove|list {device_id} [{installed_app_id}]"
 allowed-tools: Bash, Read, Glob, Grep
 ---
 
+
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Hubitat App Device Skill
 
 Add or remove devices from an installed app's device input. Primary use case: managing Maker API's device list for automated testing.

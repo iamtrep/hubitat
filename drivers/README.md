@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Drivers
 
 Hubitat Elevation device drivers for Zigbee devices, BLE sensors, and cloud APIs.

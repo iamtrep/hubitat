@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Well Pump Monitor
 
 A Hubitat Elevation app that monitors a well pump via power metering, tracks water consumption using a flow meter, logs pump cycles to CSV, and provides emergency shutoff protection. Includes a web-based dashboard with charts and statistics.

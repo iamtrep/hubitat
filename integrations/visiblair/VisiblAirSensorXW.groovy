@@ -1,10 +1,11 @@
+// Copyright (c) 2025-2026 PJ
+// SPDX-License-Identifier: MIT
+
 /*
  * VisiblAir Sensor XW — Child Driver (Wind: speed, direction)
  *
  * For model X-WIND. Part of the VisiblAir Manager integration.
  * All communication goes through the parent app.
- *
- * Licensed under the Apache License, Version 2.0
  */
 
 import groovy.transform.CompileStatic

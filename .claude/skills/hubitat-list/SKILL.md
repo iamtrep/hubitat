@@ -5,6 +5,12 @@ argument-hint: "[drivers|apps|devices|instances]"
 allowed-tools: Bash, Read
 ---
 
+
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Hubitat List Skill
 
 Discover and display resources on the Hubitat hub.

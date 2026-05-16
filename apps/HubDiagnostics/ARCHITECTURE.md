@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Hub Diagnostics Architecture Guide
 
 This document is the contributor-facing architecture guide for Hub Diagnostics.

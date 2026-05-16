@@ -1,3 +1,6 @@
+# Copyright (c) 2025-2026 PJ
+# SPDX-License-Identifier: MIT
+
 """Tests for multi-file input support in analyse_rm_delays.py.
 
 Run with:

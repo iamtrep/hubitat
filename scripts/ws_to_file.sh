@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2025-2026 PJ
+# SPDX-License-Identifier: MIT
+
 
 print_usage() {
     echo "Usage: $0 [-t] <WEBSOCKET_URL> <OUTPUT_FILE_PATH>"

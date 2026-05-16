@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # `/device/fullJson/{id}` — Field Reference
 
 Reference for the per-device payload returned by Hubitat's `GET /device/fullJson/{id}` endpoint, captured for the Device Usage Audit feature in HubDiagnostics.

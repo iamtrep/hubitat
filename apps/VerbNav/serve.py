@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2025-2026 PJ
+# SPDX-License-Identifier: MIT
+
 """
 Proxy server for Verb Nav prototype.
 Serves static files locally and proxies /hub/* and /ws/* to the Hubitat hub,

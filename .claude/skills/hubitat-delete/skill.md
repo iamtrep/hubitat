@@ -5,6 +5,12 @@ argument-hint: "[filepath | apptype:N | driver:N | instance:N] [@hubname]"
 allowed-tools: Bash, Read, Glob, Grep
 ---
 
+
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Hubitat Delete Skill
 
 Permanently delete an installed app instance, an app type (optionally cascading through its instances), or a driver type from the hub. Refuses to delete code with dependents unless the user explicitly opts into cascade. Never deletes local Groovy files — that's `git rm`'s job, not this skill's.
