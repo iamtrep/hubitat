@@ -1,0 +1,548 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
+# Contributing — A Guided Tour of the Workflow
+
+Welcome. This document is a tutorial for developers who have cloned or forked the repo and want to be productive in it. It walks you end-to-end through the workflow that the rest of the repo assumes: how local Groovy files become hub-installed code, how the [Claude Code](https://claude.com/claude-code) skills under [`.claude/skills/`](.claude/skills/) mediate every hub interaction, how automated tests are written against a real hub, and how a change moves from "edit on disk" to "passing test on every hub I own".
+
+Read this once, top to bottom, with your editor and a hub in front of you. By the end you'll have pushed a small app, installed it, driven it from the command line, generated a behavior test for it, and watched the test pass.
+
+The companion documents — [`ARCHITECTURE.md`](ARCHITECTURE.md) for platform constraints and design conventions, and [`TESTING.md`](TESTING.md) for the test framework — are the authoritative reference material. This guide *uses* them, points to them, but does not duplicate them. Once you understand the workflow here, those two files will read very differently.
+
+## Table of contents
+
+1. [Prerequisites](#1-prerequisites)
+2. [One-time setup](#2-one-time-setup)
+3. [Repo tour](#3-repo-tour)
+4. [The development loop, by worked example](#4-the-development-loop-by-worked-example)
+5. [Writing tests — Mode 1 behavior tests](#5-writing-tests--mode-1-behavior-tests)
+6. [Cross-hub deployment](#6-cross-hub-deployment)
+7. [The skill catalog](#7-the-skill-catalog)
+8. [Going deeper](#8-going-deeper)
+9. [Troubleshooting](#9-troubleshooting)
+
+---
+
+## 1. Prerequisites
+
+Before starting, you need:
+
+- **[Claude Code](https://claude.com/claude-code) installed and signed in.** Every interaction with the hub in this workflow goes through a skill, and skills run inside Claude Code. If you've never used a skill before, the short version is: you type `/skill-name args` in the Claude Code prompt, and the skill runs to completion (asking permission for shell commands the first time). The skills in this repo are auto-discovered from [`.claude/skills/`](.claude/skills/) when you run Claude Code from the repo root.
+- **A Hubitat Elevation hub on your LAN.** Any model — C-5, C-7, C-8, C-8 Pro. You'll need its IP address; if you don't know it, find it in the Hubitat mobile app or via `arp -a` once the hub is on your network.
+- **Basic Groovy familiarity.** The Hubitat platform runs sandboxed Groovy. You don't need to be an expert — the existing apps and drivers in this repo are good reading material — but you should be comfortable reading and editing it. The official [Hubitat developer documentation](https://docs2.hubitat.com/en/developer) covers platform mechanics (capabilities, lifecycle, OAuth, Zigbee helpers); this repo does not duplicate it.
+- **`python3` with `pyyaml`.** Required by the behavior-test skill. `pip install pyyaml` if you don't have it.
+- **`curl`, `jq`, and `bash`.** All the hub interactions are curl-driven; the test runner is bash.
+
+Recommended but not required: a hub or two beyond your primary one. The workflow is designed around running tests on a dedicated test hub (or test instance) while production runs untouched on your main hub. One hub is enough to learn on — you'll just need to be more careful about test isolation, which the tooling helps with.
+
+---
+
+## 2. One-time setup
+
+### 2.1 Clone
+
+```bash
+git clone https://github.com/iamtrep/hubitat.git
+cd hubitat
+```
+
+### 2.2 Create `.hubitat.json`
+
+Every skill in this repo reads `.hubitat.json` from the project root to figure out which hub(s) to talk to. The file is gitignored — it holds IPs, usernames, and passwords, none of which should ever be committed.
+
+Create it by hand. Minimal one-hub example (no hub security):
+
+```json
+{
+  "default_hub": "myhub",
+  "hubs": {
+    "myhub": {
+      "hub_ip": "10.0.0.42",
+      "maker_api": { "app_id": null, "token": null }
+    }
+  }
+}
+```
+
+If your hub has security enabled (login screen at `http://<hub_ip>/login`), add `username` and `password`:
+
+```json
+{
+  "default_hub": "myhub",
+  "hubs": {
+    "myhub": {
+      "hub_ip": "10.0.0.42",
+      "username": "admin",
+      "password": "your-hub-password",
+      "maker_api": { "app_id": null, "token": null }
+    }
+  }
+}
+```
+
+Multi-hub setups follow the same shape, one entry per hub:
+
+```json
+{
+  "default_hub": "main",
+  "hubs": {
+    "main":  { "hub_ip": "10.0.0.42",  "maker_api": { "app_id": null, "token": null } },
+    "test":  { "hub_ip": "10.0.0.43",  "maker_api": { "app_id": null, "token": null } },
+    "cabin": { "hub_ip": "192.168.50.5", "username": "admin", "password": "...",
+               "maker_api": { "app_id": null, "token": null } }
+  }
+}
+```
+
+`maker_api.app_id` and `maker_api.token` can stay `null` for now. They're used by skills that need direct Maker API access; the test skill discovers them automatically from the hub on first run.
+
+### 2.3 Verify
+
+In Claude Code, run:
+
+```
+/hubitat-list
+```
+
+You should see a summary of your hub's installed apps, devices, and user drivers. If you get a connection error, see [Troubleshooting](#9-troubleshooting).
+
+### 2.4 The `@hubname` convention
+
+Every hub-touching skill in this repo accepts an `@hubname` prefix as its first argument to override `default_hub`. For example:
+
+```
+/hubitat-list @cabin
+/hubitat-push @test apps/sensors/MotionFusionChild.groovy
+```
+
+Without the prefix, the skill targets `default_hub`. With it, the skill targets the named hub for that one invocation only. **At the start of a session where you'll be pushing code, decide which hub you're targeting and be explicit about it.** Pushing to the wrong hub is recoverable but annoying.
+
+---
+
+## 3. Repo tour
+
+```
+hubitat/
+├── README.md                  # What's in the repo, end-user view
+├── ARCHITECTURE.md            # Platform constraints, design conventions (REFERENCE)
+├── TESTING.md                 # Test framework, closed-loop contract (REFERENCE)
+├── TODO.md                    # Backlog
+├── CONTRIBUTING.md            # This file
+├── .hubitat.json              # Your local hub config (gitignored — create per §2.2)
+│
+├── apps/                      # Groovy apps
+│   ├── sensors/               #   sensor aggregators, motion fusion
+│   ├── HubDiagnostics/        #   self-served dashboard app
+│   ├── utilities/             #   small utility apps
+│   ├── WellPumpMonitor/       #   topic-specific apps
+│   ├── VerbNav/
+│   └── tests/                 #   in-hub Mode 5 stress apps
+│
+├── drivers/                   # Groovy drivers
+│   ├── sinope/                #   per-vendor subdirectories
+│   ├── stelpro/
+│   ├── visiblair/
+│   └── tests/                 #   companion test drivers (Mode 1 driver tests)
+│
+├── integrations/              # Parent/child integrations spanning multiple drivers
+│   └── visiblair/
+│
+├── scripts/                   # Helper scripts and the top-level test runner
+│   ├── run-tests.sh           #   discover + run every test in the repo
+│   ├── lib/                   #   shared bash + Python utilities (logsocket, eventsocket)
+│   └── perf/                  #   performance tooling
+│
+└── .claude/
+    ├── settings.local.json    # Skill + bash permission allowlist
+    └── skills/                # 13 Hubitat-specific skills (cataloged in §7)
+```
+
+Per-project READMEs live next to the code they describe — e.g. [`apps/sensors/README.md`](apps/sensors/README.md), [`drivers/README.md`](drivers/README.md), [`integrations/visiblair/README.md`](integrations/visiblair/README.md). Per-project test plans live next to their tests — e.g. [`apps/HubDiagnostics/tests/TEST_PLAN.md`](apps/HubDiagnostics/tests/TEST_PLAN.md). Per-project architecture docs sit alongside per-project ARCHITECTURE.md files — e.g. [`apps/HubDiagnostics/ARCHITECTURE.md`](apps/HubDiagnostics/ARCHITECTURE.md) — and extend the top-level [`ARCHITECTURE.md`](ARCHITECTURE.md) with project-specific conventions.
+
+---
+
+## 4. The development loop, by worked example
+
+The rest of the tutorial uses one example end-to-end. **This example app does not exist in the repo** — it's invented purely for the tutorial, small enough to fit on a page, large enough to exercise the whole workflow. We'll call it **DoorbellChimeChild**: when a contact sensor opens (someone opens the front door), turn a virtual switch ON; after a configurable `chimeSeconds` grace period, turn it OFF. In real life you'd wire that switch to a notification, a TTS device, or a relay.
+
+If you'd like to see a real version of the same shape, look at [`apps/sensors/SensorAggregatorDiscreteChild.groovy`](apps/sensors/SensorAggregatorDiscreteChild.groovy) and its spec [`apps/sensors/tests/spec-sadc.yaml`](apps/sensors/tests/spec-sadc.yaml) — that's the canonical example referenced throughout [`TESTING.md`](TESTING.md). DoorbellChimeChild is structured the same way, just smaller.
+
+### 4.1 Write the Groovy
+
+Save the following at `apps/example/DoorbellChimeChild.groovy`. (You won't commit this — it's tutorial-only.)
+
+```groovy
+import groovy.transform.Field
+
+@Field static final String APP_VERSION = "0.1.0"
+
+definition(
+    name: "Doorbell Chime Child",
+    namespace: "tutorial",
+    author: "you",
+    description: "Toggle a switch when a contact sensor opens, off after N seconds",
+    category: "Convenience",
+    parent: null,
+    iconUrl: "", iconX2Url: "", iconX3Url: ""
+)
+
+preferences {
+    page(name: "mainPage", title: "Doorbell Chime", install: true, uninstall: true) {
+        section {
+            input "appName", "text", title: "Name this instance", defaultValue: "doorbell-chime"
+            input "doorSensor", "capability.contactSensor", title: "Contact sensor", required: true
+            input "chimeSwitch", "capability.switch", title: "Chime switch", required: true
+            input "chimeSeconds", "number", title: "Chime duration (seconds)", defaultValue: 5
+            input "debugEnable", "bool", title: "Enable debug logging", defaultValue: true
+        }
+    }
+}
+
+void installed() { initialize() }
+void updated()   { unsubscribe(); unschedule(); initialize() }
+void uninstalled() { /* no-op */ }
+
+void initialize() {
+    if (state.version != APP_VERSION) {
+        log.warn "Doorbell Chime ${app.label}: version ${APP_VERSION} (was ${state.version})"
+        state.version = APP_VERSION
+    }
+    app.updateLabel(settings.appName ?: "doorbell-chime")
+    subscribe(doorSensor, "contact.open", "onOpen")
+}
+
+void onOpen(evt) {
+    if (debugEnable) log.debug "${app.label}: door opened, chiming for ${chimeSeconds}s"
+    chimeSwitch.on()
+    runIn((settings.chimeSeconds ?: 5) as Integer, "chimeOff")
+}
+
+void chimeOff() {
+    if (debugEnable) log.debug "${app.label}: chime off"
+    chimeSwitch.off()
+}
+```
+
+A few things to notice here, all of which are conventions from [`ARCHITECTURE.md`](ARCHITECTURE.md): version constant guarded by `state.version` so code-pushes self-detect (because pushing source does *not* fire `updated()`); `initialize()` is the single convergence point; `updated()` does `unsubscribe(); unschedule(); initialize()`; `runIn` uses a stable handler name (`chimeOff`) so re-firings are self-cancelling. None of these are arbitrary — see [`ARCHITECTURE.md`](ARCHITECTURE.md) §Common for the full rationale on each.
+
+### 4.2 First push — `/hubitat-install`
+
+The file isn't on the hub yet. To create it, run:
+
+```
+/hubitat-install apps/example/DoorbellChimeChild.groovy
+```
+
+What this does: reads the `definition()` block, extracts `name`, POSTs the source to `/app/saveOrUpdateJson` on the hub, reports the new app type's ID. If the hub's compiler rejects the source, you get the compile error back inline. Fix and re-run.
+
+`/hubitat-install` is a one-time-per-file action. After the file exists on the hub, switch to `/hubitat-push` for subsequent edits — `/hubitat-install` will redirect you to it automatically.
+
+### 4.3 Iterate — `/hubitat-push`
+
+Every time you edit `DoorbellChimeChild.groovy` after the first install:
+
+```
+/hubitat-push apps/example/DoorbellChimeChild.groovy
+```
+
+Or, if it's the most recently modified `.groovy` file in `apps/` or `drivers/`, just:
+
+```
+/hubitat-push
+```
+
+The skill discovers the matching hub-side app type by `name`, fetches the current version number (the hub requires it for updates), POSTs the new source, and reports the result. Compile errors come back with line numbers from the hub's compiler.
+
+**Important caveat from [`ARCHITECTURE.md`](ARCHITECTURE.md):** pushing source does NOT call `updated()` or `initialize()` on installed instances. The new code is loaded immediately (Groovy is interpreted), but existing subscriptions and `state` from the previous code remain in place until the user re-saves the app's preferences in the hub UI — or until the version-constant trick (in §4.1) detects the change on the next event and triggers a reconfigure. This is why every app and driver in this repo declares a `@Field static final` version constant and checks it in `initialize()` (or `parse()` for drivers).
+
+### 4.4 Install an instance for smoke-testing
+
+You now have the *app type* on the hub. To exercise it, you need an *installed instance* of it, with a real contact sensor and switch wired up.
+
+For a one-off smoke test, the easiest path is the hub UI: **Apps → Add User App → Doorbell Chime Child**, pick two devices (any contact sensor and any switch you already have), Done.
+
+For repeatable test setups, do it programmatically — that's what `/hubitat-behavior-test` does in §5 below. The supporting skill is [`/hubitat-app-device`](.claude/skills/hubitat-app-device/SKILL.md), which adds or removes devices on an existing app instance. You won't need to drive it directly today; the behavior-test skill calls it for you.
+
+### 4.5 Drive a device — `/hubitat-run`
+
+Once an instance exists, you can verify it manually by sending commands to the input contact sensor and watching the chime switch react.
+
+```
+/hubitat-run open <contact-sensor-name-or-id>
+```
+
+The skill sends the command via the Maker API (creating a dedicated Maker API instance on first use if needed). Open the hub's **Logs** page (`http://<hub_ip>/logs`) in a browser to watch the live log stream, or — more useful for scripting — `scripts/lib/logsocket.py` exposes a Python `LogCapture` context manager that subscribes to the hub's WebSocket log stream.
+
+### 4.6 Inspect — `/hubitat-list`
+
+At any point:
+
+```
+/hubitat-list                 # everything: apps, drivers, devices, instances
+/hubitat-list apps            # just installed apps and app types
+/hubitat-list devices         # just devices
+/hubitat-list drivers         # just user drivers and what uses them
+```
+
+Useful for confirming an install landed, finding device IDs, or spotting orphaned test rigs you forgot to clean up.
+
+That's the daily edit loop. Write Groovy, `/hubitat-push`, hub UI for the first instance, `/hubitat-run` to drive it, `/hubitat-list` to confirm. The whole cycle for a small change is well under a minute.
+
+---
+
+## 5. Writing tests — Mode 1 behavior tests
+
+This is the lever the rest of the workflow rests on. Once an app has a Mode 1 test, you can edit, push, and run the test in a tight loop — and an agent can run that loop on your behalf, because the test satisfies the closed-loop contract defined in [`TESTING.md`](TESTING.md) §1.1.
+
+### 5.1 The contract, in one paragraph
+
+A Mode 1 test is a single bash script under `tests/` that satisfies five rules: runnable with one command (`bash tests/test-foo.sh [@hubname]`), no hardcoded hub IPs (reads `.hubitat.json`), auto-discovers the app instance via `/hub2/appsList`, exits 0/1/2 (pass / asserts failed / couldn't run), and prints `[PASS]/[FAIL]/[WARN]/[INFO]` lines that an agent can parse plus a final `N passed, M failed, K warnings` summary. The full rules — including idempotent setup/teardown, no production mutation, and bounded wall-clock — are in [`TESTING.md`](TESTING.md) §1.1.
+
+You do not write the bash script by hand. You write a YAML spec describing the rig and the assertions, and the [`/hubitat-behavior-test`](.claude/skills/hubitat-behavior-test/SKILL.md) skill generates the bash from a template, *and* provisions the rig on the hub idempotently.
+
+### 5.2 The spec
+
+For our DoorbellChimeChild, save the following as `apps/example/tests/spec-doorbell-chime-child.yaml`:
+
+```yaml
+# Doorbell Chime Child — Mode 1 behavior test spec (tutorial example)
+# Generate with: /hubitat-behavior-test apps/example/tests/spec-doorbell-chime-child.yaml
+
+app:
+  source: apps/example/DoorbellChimeChild.groovy
+  type_name: "Doorbell Chime Child"
+  instance_label: test-doorbell-chime
+  config:
+    appName: test-doorbell-chime
+    chimeSeconds: 3        # short so the test stays fast
+    debugEnable: true
+
+inputs:
+  - { name: test-doorbell-in,  driver: Virtual Contact Sensor, role: doorSensor }
+
+outputs:
+  - { name: test-doorbell-out, driver: Virtual Switch,         role: chimeSwitch }
+
+maker_api:
+  label: test-doorbell-maker
+
+cases:
+  - name: baseline-closed-off
+    setup:
+      - { device: test-doorbell-in, command: close }
+    wait_seconds: 1
+    assert:
+      - { device: test-doorbell-out, attribute: switch, value: "off" }
+
+  - name: open-triggers-chime-on
+    actions:
+      - { device: test-doorbell-in, command: open }
+    wait_seconds: 1
+    assert:
+      - { device: test-doorbell-out, attribute: switch, value: "on" }
+
+  - name: auto-reset-after-grace
+    wait_seconds: 4        # chimeSeconds (3) + 1s buffer
+    assert:
+      - { device: test-doorbell-out, attribute: switch, value: "off" }
+
+runtime_budget_seconds: 30
+```
+
+What the spec says, line by line:
+
+- **`app`** — where the source lives, what `name:` from the `definition()` block to match, what label to give the dedicated test instance, and what preferences to set on it.
+- **`inputs` and `outputs`** — the virtual devices the rig needs. `role:` is the name of the preference on the app under test that the device gets wired into (matches `input "doorSensor", ...` and `input "chimeSwitch", ...` in the Groovy).
+- **`maker_api`** — the dedicated Maker API instance the test will drive devices through. Separate from any production Maker API so test traffic doesn't pollute it.
+- **`cases`** — a sequence of `setup` (state established silently before the case) → `actions` (the trigger, captured for log assertions) → `wait_seconds` (give the app a moment to react) → `assert` (attribute-level expectations).
+
+Two small subtleties worth knowing about (both come from production-test bug history):
+
+- **Quote `on` / `off` / `yes` / `no`.** YAML 1.1 parses bare `on` as `True`, which the skill then renders into Maker API URL paths as the literal string `True` — and `POST /devices/<id>/True` 404s. The spec above quotes `"off"` and `"on"` defensively.
+- **Numeric attributes need a `tolerance`.** Our chime example uses a discrete attribute (`switch` is `on`/`off`), so exact string compare works. If you were asserting a temperature or humidity, add `tolerance: 0.1` so the float compare is tolerant — Hubitat may format/round the value.
+
+Lots more spec features (button clicks, log-pattern assertions, event-stream assertions, per-case log-guard tuning) are documented at the top of [`.claude/skills/hubitat-behavior-test/SKILL.md`](.claude/skills/hubitat-behavior-test/SKILL.md). For most behavior tests you'll need only what's in the spec above.
+
+### 5.3 Generate and run
+
+```
+/hubitat-behavior-test apps/example/tests/spec-doorbell-chime-child.yaml
+```
+
+What happens, in order (all idempotent — re-running on a hub with the rig already in place takes seconds):
+
+1. Reads `.hubitat.json` and picks the target hub (override with an `@hubname` prefix as usual).
+2. Parses the YAML, validates that every device in `cases` appears in `inputs`/`outputs`.
+3. Ensures the app type `Doorbell Chime Child` is installed on the hub (calls `/hubitat-install` if not).
+4. Ensures a test app instance labeled `test-doorbell-chime` exists, creating one if not.
+5. Ensures virtual devices `test-doorbell-in` and `test-doorbell-out` exist on the hub.
+6. Ensures a Maker API instance labeled `test-doorbell-maker` exists, with both virtual devices added to it.
+7. Discovers the Maker API's access token (it's embedded in the configPage HTML, not in `settings`).
+8. POSTs the `config` block from the spec into the test app instance's settings.
+9. Renders `apps/example/tests/test-doorbell-chime.sh` from [`test-template.sh.tmpl`](.claude/skills/hubitat-behavior-test/test-template.sh.tmpl), substituting in the rig IDs and the cases.
+10. Runs the generated test once.
+
+Expected output looks roughly like:
+
+```
+[INFO] Starting test-doorbell-chime against @maison-pro (instance 1234)
+[INFO] Case 1: baseline-closed-off
+[PASS] test-doorbell-out.switch == off
+[INFO] Case 2: open-triggers-chime-on
+[PASS] test-doorbell-out.switch == on
+[INFO] Case 3: auto-reset-after-grace
+[PASS] test-doorbell-out.switch == off
+
+3 passed, 0 failed, 0 warnings
+```
+
+Exit code `0`. If the run is non-zero, the skill surfaces the first `[FAIL]` line and a hint to re-run once — first-time app config saves sometimes need a moment to settle.
+
+### 5.4 Re-running the test
+
+The generated `apps/example/tests/test-doorbell-chime.sh` is self-contained. Once it exists, you don't need the skill anymore to run it:
+
+```bash
+bash apps/example/tests/test-doorbell-chime.sh           # against default_hub
+bash apps/example/tests/test-doorbell-chime.sh @test     # against the @test hub
+bash apps/example/tests/test-doorbell-chime.sh @test 1234  # explicit instance id
+```
+
+This is the loop. Edit `DoorbellChimeChild.groovy`, `/hubitat-push`, `bash apps/example/tests/test-doorbell-chime.sh`. Sub-30-second cycle. Watch the `[PASS]`/`[FAIL]` lines and the exit code.
+
+Commit both the spec and the generated test alongside your app change. The generated test is a real artifact, not throwaway.
+
+### 5.5 Running everything
+
+The top-level runner discovers every test in the repo:
+
+```bash
+bash scripts/run-tests.sh                  # all tests, default_hub
+bash scripts/run-tests.sh @test            # all tests, @test hub
+bash scripts/run-tests.sh --list           # just print what would run
+bash scripts/run-tests.sh --filter doorbell  # only tests whose path matches
+bash scripts/run-tests.sh --verbose        # stream each test's stdout live
+```
+
+The runner finds every `**/tests/test-*.sh`, `**/tests/test-*.js`, and `**/tests/test_*.py` (Mode 3 JS unit tests and Mode 4 Python mirrors — see [`TESTING.md`](TESTING.md) §2.1), forwards `@hubname` to the bash ones, and aggregates the exit codes. Final exit is `0` if every test passed, `1` if any assertions failed, `2` if any couldn't run.
+
+A test can opt out by including the literal marker `TEST-EXCLUDE` in its first 20 lines.
+
+### 5.6 When Mode 1 isn't the right shape
+
+The five test modes in [`TESTING.md`](TESTING.md) §2.1 are summarized as:
+
+- **Mode 1** — behavior tests for automation apps (what we just did). Lead tier.
+- **Mode 2** — API integration tests for apps that serve `/api/*` routes (HubDiagnostics, RuleLoggingManager).
+- **Mode 3** — pure-JS unit tests for SPA helpers (HubDiagnostics dashboard).
+- **Mode 4** — Python-mirror tests for pure Groovy logic (classifiers, parsers).
+- **Mode 5** — in-hub stress apps, where the app itself is the test (async-HTTP, UDP, file-manager throughput).
+
+The tiered bar — which modes new code is required to ship with — is in [`TESTING.md`](TESTING.md) §2.2. For now, the rule is: behavior apps need Mode 1; everything else is judgment.
+
+---
+
+## 6. Cross-hub deployment
+
+If your Hubitat hubs are linked to a single Hubitat cloud account, code published from one hub can be pulled into the others without manually re-importing on each hub.
+
+```
+/hubitat-publish apps/example/DoorbellChimeChild.groovy
+```
+
+What this does: triggers Hubitat's `/hub/publishCode/{type}/{id}` endpoint on the hub you pushed from, then polls `/hub/publishCode/status` until distribution is complete, reporting each peer hub's status (`Pending` / `Done`). Per the memory rules in this repo: **publish from the same hub you pushed to** — `/hubitat-publish` does not push code that isn't on the originating hub already, so the typical flow is `/hubitat-push @main` followed by `/hubitat-publish @main`.
+
+`/hubitat-publish` works for both apps and drivers. It does not propagate installed instances or their configuration — only the code. After publishing, you'll still need to install the app type on each peer hub (or use `/hubitat-behavior-test` on each, which provisions an instance idempotently).
+
+---
+
+## 7. The skill catalog
+
+All thirteen skills live in [`.claude/skills/`](.claude/skills/). Each has a `SKILL.md` with full instructions; the one-liners below are the `description` field from each frontmatter. Group is the workflow phase where you'd reach for it.
+
+### Inspect
+
+| Skill | Purpose |
+|---|---|
+| `/hubitat-list` | List drivers, apps, and devices on the Hubitat hub |
+| `/hubitat-arch-review` | Audit Groovy app/driver files against the project's ARCHITECTURE.md and any per-project arch docs, reporting concrete deviations with doc citations. Read-only — never modifies files. |
+
+### Code lifecycle
+
+| Skill | Purpose |
+|---|---|
+| `/hubitat-install` | Create, install, and configure a Hubitat app or driver from a local Groovy file |
+| `/hubitat-push` | Push Groovy app or driver code to Hubitat hub and report compile status |
+| `/hubitat-publish` | Publish a driver or app to other Hubitat hubs on the same account |
+| `/hubitat-delete` | Delete a Hubitat installed app instance, app type, or driver type from the hub, with mandatory confirmation |
+
+### Install & configure
+
+| Skill | Purpose |
+|---|---|
+| `/hubitat-create-device` | Create virtual devices on the hub |
+| `/hubitat-app-device` | Add or remove devices from a Hubitat app instance (e.g., Maker API) |
+| `/hubitat-oauth` | Add self-enabling OAuth to a Hubitat Groovy app so the user never has to manually enable it in the code editor |
+| `/hubitat-filemanager` | Upload, download, list, or delete files on the Hubitat hub's File Manager |
+
+### Runtime control
+
+| Skill | Purpose |
+|---|---|
+| `/hubitat-run` | Send commands to Hubitat devices or interact with app instances |
+| `/hubitat-app-button` | Click a button-type preference on an installed Hubitat app (invokes the app's appButtonHandler), without UI clicks |
+
+### Testing
+
+| Skill | Purpose |
+|---|---|
+| `/hubitat-behavior-test` | Generate a Mode 1 behavior test for a Hubitat automation app from a YAML spec — provisions the test rig idempotently (virtual devices, dedicated Maker API instance, dedicated app instance) and writes a self-contained `tests/test-{app}.sh` that meets the TESTING.md §1.1 closed-loop contract |
+
+For deeper detail on any skill — exactly what API endpoints it hits, what arguments it accepts, what failure modes it handles — open the matching `SKILL.md`. The behavior-test skill in particular has a long instructions section worth reading once before you write a complex spec.
+
+---
+
+## 8. Going deeper
+
+You now have the workflow. The reference material below is what you reach for when the workflow's defaults aren't enough.
+
+- **[`ARCHITECTURE.md`](ARCHITECTURE.md)** — the platform-level design guide. Read it cover to cover at least once. The sections you'll come back to most:
+  - *Platform constraints* — what the Hubitat sandbox blocks, where `sendEvent` deduplicates silently, why pushing source doesn't fire `updated()`, the 8-call async-HTTP concurrency cap.
+  - *State tiers: `state`, `atomicState`, `@Field static`* — three storage options, very different durability and cost. Picking wrong is a real bug source.
+  - *Coding conventions* — static typing, version constants, `@CompileStatic`, the lifecycle skeleton.
+  - *Async HTTP callback contract* and *When sync HTTP is the right call* — the project's stance on the async/sync HTTP split, with concrete examples.
+  - *Apps* and *Drivers* sections — OAuth-served endpoints, settings migration, parent/child patterns, Zigbee parse skeleton, command building.
+
+- **[`TESTING.md`](TESTING.md)** — the test framework. The sections you'll come back to most:
+  - §1.1 — the closed-loop contract.
+  - §2.1 — the five test modes, with canonical examples for each.
+  - §2.2 — the tiered bar by artifact type.
+  - §4 — patterns to avoid (mocking hub responses, hardcoding IPs, snapshots without refresh procedures).
+
+- **[`apps/HubDiagnostics/ARCHITECTURE.md`](apps/HubDiagnostics/ARCHITECTURE.md)** and **[`apps/HubDiagnostics/tests/TEST_PLAN.md`](apps/HubDiagnostics/tests/TEST_PLAN.md)** — worked examples of per-project architecture and test plans that extend the platform-level docs. Use these as templates when a project gets large enough to need its own design document.
+
+- **[`ARCHITECTURE_CANDIDATES.md`](ARCHITECTURE_CANDIDATES.md)** and **[`TODO.md`](TODO.md)** — lower-priority observations and the open backlog. Worth a skim to see what's queued.
+
+When you're considering a non-trivial change, run [`/hubitat-arch-review`](.claude/skills/hubitat-arch-review/SKILL.md) against the file you're editing. It's read-only — it just reports deviations from `ARCHITECTURE.md` with doc citations, so you find out at edit time rather than at code-review time.
+
+---
+
+## 9. Troubleshooting
+
+**Hub unreachable** — `/hubitat-list` errors out, or `/hubitat-push` times out. Check `.hubitat.json`: the `hub_ip` must be right, you must be on the same LAN as the hub (or have a route to it), and if the hub has security enabled, the `username` and `password` must be correct. Confirm with `curl -s http://<hub_ip>/hub2/hubData` from the same shell — if that returns JSON, the skill should work too.
+
+**`[FAIL]` on a behavior-test's first run, but pass on re-run** — when `/hubitat-behavior-test` creates an instance for the first time and applies its config in the same pass, occasionally the config save lags slightly and the first case fires before the app's `initialize()` has fully wired up subscriptions. The skill's own report mentions this verbatim ("If this is the first run, the app's config may need a moment to apply — re-run once"). Re-run the test; if the second run still fails, it's a real failure.
+
+**Skill doesn't appear / unknown command** — make sure you're running Claude Code from the repo root, not from a subdirectory. Skills are discovered from `.claude/skills/` relative to your working directory. If the skill is recognized but a bash command inside it isn't allowed, the permission prompt will say so — accept it once and the allowlist in `.claude/settings.local.json` should remember.
+
+**Compile error on push** — `/hubitat-push` reports the hub compiler's error verbatim, usually with a line and column. Fix in the file and re-push. The hub does not retain partial compilation state; the previous successfully-compiled version stays in place until a successful push replaces it.
+
+**Stale test rig blocking a fresh test run** — if a prior test left a partially-configured app instance or a Maker API instance that's now broken, use `/hubitat-list apps` to find the offending instance, then `/hubitat-delete` to remove it. The next `/hubitat-behavior-test` run will recreate it cleanly.
+
+**Maker API access token missing** — `/hubitat-behavior-test` reports "no access token found" on the Maker API instance. OAuth probably isn't enabled on that instance. Open `http://<hub_ip>/installedapp/configure/<maker-api-id>` in a browser, scroll to the OAuth section, and confirm OAuth is enabled. `/hubitat-oauth` handles this for user apps but not for built-in apps like Maker API.
+
+---
+
+That's the workflow. Edit, push, install, test, publish — all mediated by skills, all driven from the command line, all reproducible. Welcome aboard.
