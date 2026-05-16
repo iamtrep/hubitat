@@ -1,0 +1,124 @@
+# MotionFusionChild — Mode 1 behavior test spec
+#
+# Exercises the `pirQuickMmwaveHold` fusion mode of
+# apps/sensors/MotionFusionChild.groovy. That's the app's recommended
+# default ("Best for lighting") and the richest mode to test:
+#
+#   - PIR active → output active immediately
+#   - mmWave occupancy sustains active state after PIR releases
+#   - mmWave alone (no prior PIR) does NOT activate
+#   - Both inputs inactive → cooldown timer starts; on expiry, output
+#     transitions to inactive
+#
+# Test-friendly timing: cooldownTime=2s (default 30s). logLevel=debug
+# so we can assert on the per-transition log lines.
+#
+# Source device is a Virtual mmWave PIR Sensor (custom test driver at
+# drivers/tests/VirtualMmwavePirSensor.groovy) — exposes the same
+# pirDetection + roomState attributes that the FP300 family drivers
+# emit, with setPirDetection / setRoomState commands for Maker API
+# injection.
+#
+# Generate with: /hubitat-behavior-test apps/sensors/tests/spec-motion-fusion-child.yaml
+
+app:
+  source: apps/sensors/MotionFusionChild.groovy
+  type_name: "Motion Fusion Child"
+  instance_label: test-mfc-app
+  parent:
+    source: apps/sensors/SensorAggregator.groovy
+    type_name: "Sensor Aggregator"
+    # singleInstance parent — the test child hangs off whichever
+    # Sensor Aggregator instance exists. instance_label is ignored
+    # for singleInstance parents per the skill.
+  config:
+    appName: test-mfc-app
+    fusionMode: pirQuickMmwaveHold
+    cooldownTime: 2
+    logLevel: debug
+
+inputs:
+  - { name: test-mfc-source, driver: Virtual mmWave PIR Sensor, role: sourceDevice }
+
+outputs:
+  - { name: test-mfc-out, driver: Virtual Motion Sensor, role: outputDevice }
+
+maker_api:
+  label: test-mfc-maker
+
+cases:
+  # Reset to baseline. Robust against interrupted previous runs: drives
+  # both inputs to their "inactive" values and the output device to
+  # inactive externally. wait_seconds=3 covers any pending cooldown
+  # (cooldownTime=2s) that a previous run might have left scheduled.
+  - name: baseline-inactive
+    setup:
+      - { device: test-mfc-source, command: setPirDetection, args: [inactive] }
+      - { device: test-mfc-source, command: setRoomState,    args: [unoccupied] }
+      - { device: test-mfc-out,    command: "inactive" }
+    wait_seconds: 3
+    assert:
+      - { device: test-mfc-out, attribute: motion, value: "inactive" }
+
+  - name: pir-triggers-active
+    actions:
+      - { device: test-mfc-source, command: setPirDetection, args: [active] }
+    wait_seconds: 1
+    assert:
+      - { device: test-mfc-out, attribute: motion, value: "active" }
+    assert_events:
+      - { attribute: "motion", value: "active", source: "test-mfc-out" }
+
+  # PIR released while mmWave occupied → output stays active sustained
+  # by mmWave. We drive mmWave occupied FIRST so the app sees it as
+  # already-occupied when PIR drops; otherwise the brief gap could
+  # trip the cooldown path.
+  #
+  # The negated motion=inactive event assertion is stronger than the
+  # final attribute check: it proves the output was *never* transitioned
+  # to inactive during the case window — covers both "cooldown never
+  # started" and "cooldown started+cancelled but produced no transition".
+  - name: mmwave-sustains-after-pir-released
+    actions:
+      - { device: test-mfc-source, command: setRoomState,    args: [occupied] }
+      - { device: test-mfc-source, command: setPirDetection, args: [inactive] }
+    command_spacing_seconds: 1.0
+    wait_seconds: 3
+    assert:
+      - { device: test-mfc-out, attribute: motion, value: "active" }
+    assert_events:
+      - { attribute: "motion", value: "inactive", source: "test-mfc-out", negate: true }
+
+  # mmWave released → both inputs inactive → 2s cooldown timer → output
+  # transitions to inactive. The event assertion proves the transition
+  # happened during the case window (vs being a leftover from elsewhere).
+  - name: mmwave-released-starts-cooldown
+    actions:
+      - { device: test-mfc-source, command: setRoomState, args: [unoccupied] }
+    wait_seconds: 3
+    assert:
+      - { device: test-mfc-out, attribute: motion, value: "inactive" }
+    assert_events:
+      - { attribute: "motion", value: "inactive", source: "test-mfc-out" }
+
+  # mmWave occupied without prior PIR → output stays inactive.
+  # The app's pirQuickMmwaveHold rule: "Don't go active on mmWave alone
+  # without prior PIR trigger". The negated event proves no motion=active
+  # was emitted during the window.
+  - name: mmwave-alone-doesnt-trigger
+    actions:
+      - { device: test-mfc-source, command: setRoomState, args: [occupied] }
+    wait_seconds: 2
+    assert:
+      - { device: test-mfc-out, attribute: motion, value: "inactive" }
+    assert_events:
+      - { attribute: "motion", value: "active", source: "test-mfc-out", negate: true }
+
+  - name: cleanup-to-baseline
+    actions:
+      - { device: test-mfc-source, command: setRoomState, args: [unoccupied] }
+    wait_seconds: 1
+    assert:
+      - { device: test-mfc-out, attribute: motion, value: "inactive" }
+
+runtime_budget_seconds: 25
