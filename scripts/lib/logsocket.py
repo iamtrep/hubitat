@@ -94,6 +94,7 @@ class LogCapture:
         self._ready = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._open_error: Optional[str] = None
+        self._ws = None  # populated by _run, used by stop() to interrupt recv
 
     # ── Lifecycle ─────────────────────────────────────────────────────
 
@@ -121,8 +122,19 @@ class LogCapture:
 
     def stop(self) -> None:
         self._stop.set()
+        # Close the WebSocket from the foreground thread so the background
+        # recv() returns immediately instead of waiting for the next socket
+        # timeout. Without this, stop() blocks up to ~5s per call (the recv
+        # timeout in _run), which is fine for one-off captures but bad when
+        # the capture is created per-test-case in a loop.
+        ws = self._ws
+        if ws is not None:
+            try:
+                ws.close()
+            except Exception:
+                pass
         if self._thread:
-            self._thread.join(timeout=2)
+            self._thread.join(timeout=7)
             self._thread = None
 
     # ── Capture loop (runs in background thread) ──────────────────────
@@ -138,11 +150,18 @@ class LogCapture:
                 ping_interval=None,
                 additional_headers=headers,
             ) as ws:
+                self._ws = ws
                 self._ready.set()
                 # The synchronous client doesn't expose a non-blocking recv,
-                # so we use a short socket timeout to allow the stop signal
-                # to break the loop quickly.
-                ws.socket.settimeout(0.5)
+                # so we use a socket timeout to allow the stop signal to
+                # break the loop. Aggressive timeouts (<1s) corrupt the
+                # WebSocket protocol state in python-websockets' sync API
+                # — only the first message arrives before the connection
+                # is torn down. 5s is a safe value: messages are still
+                # delivered promptly (each arriving message returns recv
+                # immediately), and stop() only waits up to one timeout
+                # window after `_stop` is set.
+                ws.socket.settimeout(5.0)
                 while not self._stop.is_set():
                     try:
                         raw = ws.recv()

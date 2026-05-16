@@ -1,20 +1,16 @@
 # HumidityFanController (HFC) — Mode 1 behavior test spec
 #
-# Exercises the core humidity state machine and fan-control reactions of
-# apps/HumidityFanController.groovy.
+# Exercises the humidity state machine and fan-control reactions of
+# apps/HumidityFanController.groovy. Beyond the happy-path activate /
+# deactivate flows, covers state-machine convergence:
 #
-# Coverage:
-#   - NORMAL → PENDING_HIGH → HIGH activation (via offset)
-#   - PENDING_HIGH → HIGH bypass when bath > absoluteHighThreshold
-#   - HIGH → PENDING_NORMAL → NORMAL deactivation (via snapshot threshold)
-#   - Restriction blocking + lifting while HIGH
-#   - High-humidity status switch synchronization
+#   - cancel-pending-deactivation: PENDING_NORMAL → HIGH bounce
+#   - cancel-pending-activation:   PENDING_HIGH → NORMAL bounce
+#   - absolute-high-bypass:        skips activationDelay when bath > absoluteHigh
+#   - countermand-pending-on:      v0.6.1 fix — external OFF resolves a pending
+#                                  ON cleanly, no spurious "Fan failed to turn on"
 #
-# Gaps tracked for follow-up (see HumidityFanController_test_gaps memory):
-#   - cancel-pending-deactivation (rise during PENDING_NORMAL)
-#   - cancel-pending-activation   (drop during PENDING_HIGH)
-#   - countermand-pending-on      (v0.6.1 fanSwitchHandler bug-fix path)
-#   - max-fan-run-time-expiry     (60s minimum — needs slow-test variant)
+# Gap: max-fan-run-time-expiry (60s minimum — needs slow-test variant).
 #
 # Test-friendly timing: activationDelay=2s, deactivationDelay=2s,
 # maxFanRunTime=0. Reference baseline = 50%, bathroom triggers:
@@ -72,6 +68,21 @@ cases:
       - { device: test-hfc-fan,   attribute: switch, value: "on" }
       - { device: test-hfc-hi-sw, attribute: switch, value: "on" }
 
+  # HIGH → PENDING_NORMAL → HIGH bounce. Bath drops below snapshot
+  # threshold, then rises back above it before the 2s deactivation
+  # timer fires. Cancel must unschedule the timer; fan must stay on.
+  - name: cancel-pending-deactivation
+    actions:
+      - { device: test-hfc-bath, command: setHumidity, args: [60] }
+      - { device: test-hfc-bath, command: setHumidity, args: [75] }
+    command_spacing_seconds: 1.0
+    wait_seconds: 2
+    assert:
+      - { device: test-hfc-fan,   attribute: switch, value: "on" }
+      - { device: test-hfc-hi-sw, attribute: switch, value: "on" }
+    assert_logs:
+      - { pattern: "Humidity rose during deactivation delay", level: info }
+
   - name: deactivate-via-snapshot
     actions:
       - { device: test-hfc-bath, command: setHumidity, args: [60] }
@@ -79,6 +90,21 @@ cases:
     assert:
       - { device: test-hfc-fan,   attribute: switch, value: "off" }
       - { device: test-hfc-hi-sw, attribute: switch, value: "off" }
+
+  # NORMAL → PENDING_HIGH → NORMAL bounce. Bath rises above activation
+  # threshold, then drops back below it before the 2s activation timer
+  # fires. Cancel must unschedule the timer; fan must stay off.
+  - name: cancel-pending-activation
+    actions:
+      - { device: test-hfc-bath, command: setHumidity, args: [75] }
+      - { device: test-hfc-bath, command: setHumidity, args: [45] }
+    command_spacing_seconds: 1.0
+    wait_seconds: 2
+    assert:
+      - { device: test-hfc-fan,   attribute: switch, value: "off" }
+      - { device: test-hfc-hi-sw, attribute: switch, value: "off" }
+    assert_logs:
+      - { pattern: "Humidity dropped during activation delay", level: info }
 
   # PENDING_HIGH → HIGH bypass. While in PENDING_HIGH, bath jumps above
   # absoluteHighThreshold (90) → skip the 2s activation timer entirely.
@@ -94,6 +120,32 @@ cases:
     assert:
       - { device: test-hfc-fan,   attribute: switch, value: "on" }
       - { device: test-hfc-hi-sw, attribute: switch, value: "on" }
+    assert_logs:
+      - { pattern: "bypassing activation delay", level: info }
+
+  # v0.6.1 bug-fix coverage. After absolute-high-bypass: state=HIGH, fan=on,
+  # snapshot=50. Engineer pendingCommand="on" with no fan event in flight:
+  #   bath=60 → HIGH → PENDING_NORMAL (snapshot+offset = 65, so 60 deactivates)
+  #   bath=75 → rise during deactivation → back to HIGH → turnOnFan →
+  #             pendingCommand="on", fanSwitch.on() is a dedup (fan already on)
+  #   fan.off → fanSwitchHandler must treat as countermand: clear
+  #             pendingCommand, clear fanTurnedOnByApp, no spurious error
+  #
+  # Before v0.6.1, verifyFanOn fired 5s later and emitted a spurious
+  # "Fan failed to turn on" error + notification.
+  - name: countermand-pending-on
+    actions:
+      - { device: test-hfc-bath, command: setHumidity, args: [60] }
+      - { device: test-hfc-bath, command: setHumidity, args: [75] }
+      - { device: test-hfc-fan,  command: "off" }
+    command_spacing_seconds: 1.0
+    wait_seconds: 2
+    assert:
+      - { device: test-hfc-fan,   attribute: switch, value: "off" }
+      - { device: test-hfc-hi-sw, attribute: switch, value: "on" }
+    assert_logs:
+      - { pattern: "Pending ON countermanded by external OFF event", level: info }
+      - { pattern: "Fan failed to turn on", level: error, negate: true }
 
   - name: restriction-blocks-activation
     setup:
@@ -114,6 +166,8 @@ cases:
     assert:
       - { device: test-hfc-fan,   attribute: switch, value: "on" }
       - { device: test-hfc-hi-sw, attribute: switch, value: "on" }
+    assert_logs:
+      - { pattern: "Restriction lifted while humidity is high", level: info }
 
   - name: cleanup-to-baseline
     actions:
@@ -123,4 +177,4 @@ cases:
       - { device: test-hfc-fan,   attribute: switch, value: "off" }
       - { device: test-hfc-hi-sw, attribute: switch, value: "off" }
 
-runtime_budget_seconds: 40
+runtime_budget_seconds: 50
