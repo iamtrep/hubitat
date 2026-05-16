@@ -96,6 +96,12 @@ maker_api:
 cases:
   - name: <case label>
     setup:                   # optional, runs before each case (outside the log-capture window)
+      # ⚠ YAML 1.1 trap: bare `on`, `off`, `yes`, `no`, `true`, `false` parse
+      # as Python booleans, which then become URL segments like `/dev/123/True`
+      # → 404 from Maker API, silent test failure. ALWAYS QUOTE these values:
+      #   - { device: <switch>, command: "off" }       # correct
+      #   - { device: <switch>, command: off   }       # WRONG — parses to False
+      #   assert: [{ device: x, attribute: switch, value: "on" }]  # correct
       - { device: <input label>, command: <command name> }
       # Optional `args: [v1, v2, ...]` for parameterized commands (e.g.
       # setTemperature, setLevel). Hubitat's Maker API encodes args as
@@ -259,6 +265,13 @@ A Maker API app type ships with the hub (built-in, not user code). Search `/hub2
 For every device in `inputs` + `outputs`, ensure it's in the Maker API's device list. For each missing device, invoke `/hubitat-app-device add {deviceId} {makerApiInstanceId}` (or follow that skill's POST procedure inline).
 
 Verify by re-fetching `/installedapp/configure/json/{makerApiInstanceId}` and confirming every test device's ID is now a key in `settings.{deviceInput}`.
+
+**Maker API config POST quirks** (learned the hard way on a fresh instance):
+
+1. **Echo back EVERY rendered input from configPage** — not just the ones you're changing. Maker API rejects with HTTP 500 if any bool/text/enum input from the rendered form is missing. For unset bool inputs, send `settings[name]=[]` + `name.type=bool` (no `checkbox[name]=on`). For unset text inputs, send `settings[name]=[]` + `name.type=text`. (The `"[]"` echo is safe for Maker API specifically because its app code never does arithmetic on these settings; the `hubitat_settings_null_echo` caveat does not apply here. For *user* apps under test in Step 11, follow that rule strictly.)
+2. The `pickedDevices` input has `type: "capability.*"` (literally with the asterisk). Send it back verbatim: `pickedDevices.type=capability.*` and `pickedDevices.multiple=true`.
+
+If creating a Maker API instance from scratch, the `cloudAccess` bool is stored as the string `"false"` (not `"[]"`) on fresh instances — echo it back as `"false"`. `localAccess` is `"true"` — echo with `checkbox[localAccess]=on`.
 
 ### Step 10: Discover the Maker API access token
 
