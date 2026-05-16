@@ -187,10 +187,11 @@ All four originally named gaps are now shipped. Listed in priority order for his
 
 ## 3. Drivers
 
-Most drivers in this repo need no automated tests. Two cases warrant them.
+Most drivers in this repo need no automated tests. Three options when one is warranted.
 
 - **Non-trivial behavior.** State machines, retry logic, OAuth refresh chains. Use Mode 1 with a paired test driver alongside — a companion driver that emits the events or returns the responses the driver under test needs to react to. Canonical example: [`drivers/tests/LogEventMonitorTest.groovy`](drivers/tests/LogEventMonitorTest.groovy), a companion driver that emits log messages at controlled levels to exercise the LogEventMonitor app's filtering.
 - **Pure helpers.** Parsers, formatters, computed transformations. Qualify for Mode 4 (Python mirror) when the helper has enough cases to be worth testing. Most don't.
+- **Protocol-driven drivers we own** (Zigbee / Z-Wave / BLE — Sinope, BTHomeV2-Motion, IKEA-Blinds, XfinityContactSensor and similar). Mode 1 is possible without a paired test driver, by leveraging a Hubitat capability: a parent app can call any method on a child device, including `parse(String description)`. A `TestFixtureManager` app creates the driver-under-test as a child device and exposes Maker-API-callable commands that wrap `child.parse(...)` with crafted protocol fixtures. The driver's `parse()` runs against the fixture, emits attribute events, and the test asserts on those via the existing [`EventCapture`](scripts/lib/eventsocket.py) / [`LogCapture`](scripts/lib/logsocket.py) primitives. The same fixture-app pattern lets *app* tests run against a real driver (instead of a parallel test driver) when integration with the real driver's event surface is what's being tested. **Parked — not yet built.** Pick this option when a specific driver accumulates enough regression history to justify it, or when an app test needs the real driver's exact event sequencing/format. Out of scope for drivers we don't own (third-party / community) and for polling drivers like VisiblAir that have no `parse()` entry point.
 
 The tiered bar in §2.2 leaves drivers explicitly unrequired. The bar can tighten later if a particular driver category (e.g. OAuth-integration drivers) accumulates enough regression history to justify it.
 
