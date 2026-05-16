@@ -33,7 +33,7 @@ The companion documents — [`ARCHITECTURE.md`](ARCHITECTURE.md) for platform co
 
 Before starting, you need:
 
-- **[Claude Code](https://claude.com/claude-code) installed and signed in.** This is your IDE and your collaborator for the workflow. You'll describe intent in natural language ("draft a small app that…", "push it", "the test failed, debug it"), and Claude Code will read the project conventions, edit the files for you, invoke the right skills, parse the output, and report back. Skills auto-discover from [`.claude/skills/`](.claude/skills/) when you run Claude Code from the repo root.
+- **[Claude Code](https://claude.com/claude-code) or [Gemini CLI](https://github.com/google-gemini/gemini-cli) installed and signed in.** These are your IDEs and collaborators for the workflow. You'll describe intent in natural language ("draft a small app that…", "push it", "the test failed, debug it"), and they will read the project conventions, edit the files for you, invoke the right skills, parse the output, and report back. Skills auto-discover from [`.claude/skills/`](.claude/skills/) (for Claude) or [`.gemini/skills/`](.gemini/skills/) (for Gemini) when you run them from the repo root.
 - **A Hubitat Elevation hub on your LAN.** Any model — C-5, C-7, C-8, C-8 Pro. You'll need its IP address; if you don't know it, find it in the Hubitat mobile app or via `arp -a` once the hub is on your network.
 - **Basic Groovy familiarity.** The Hubitat platform runs sandboxed Groovy. You don't need to be an expert — the existing apps and drivers in this repo are good reading material — but you should be comfortable reading and editing it. The official [Hubitat developer documentation](https://docs2.hubitat.com/en/developer) covers platform mechanics (capabilities, lifecycle, OAuth, Zigbee helpers); this repo does not duplicate it.
 - **`python3` with `pyyaml`.** Required by the behavior-test skill. `pip install pyyaml` if you don't have it.
@@ -153,14 +153,19 @@ hubitat/
 ├── integrations/              # Parent/child integrations spanning multiple drivers
 │   └── visiblair/
 │
-├── scripts/                   # Helper scripts and the top-level test runner
-│   ├── run-tests.sh           #   discover + run every test in the repo
-│   ├── lib/                   #   shared bash + Python utilities (logsocket, eventsocket)
-│   └── perf/                  #   performance tooling
+├───scripts/                   # Helper scripts and the top-level test runner
+│   ├───run-tests.sh           #   discover + run every test in the repo
+│   ├───lib/                   #   shared bash + Python utilities (logsocket, eventsocket)
+│   └───perf/                  #   performance tooling
 │
-└── .claude/
-    ├── settings.local.json    # Skill + bash permission allowlist
-    └── skills/                # 13 Hubitat-specific skills (cataloged in §7)
+├───.claude/
+│   ├───settings.local.json    # Skill + bash permission allowlist
+│   └───skills/                # 13 Hubitat-specific skills (Claude-native)
+│
+└───.gemini/
+    └───skills/
+        └───hubitat/           # Unified Hubitat development skill (Gemini-native)
+
 ```
 
 Per-project READMEs live next to the code they describe — e.g. [`apps/sensors/README.md`](apps/sensors/README.md), [`drivers/README.md`](drivers/README.md), [`integrations/visiblair/README.md`](integrations/visiblair/README.md). Per-project test plans live next to their tests — e.g. [`apps/HubDiagnostics/tests/TEST_PLAN.md`](apps/HubDiagnostics/tests/TEST_PLAN.md). Per-project architecture docs sit alongside per-project ARCHITECTURE.md files — e.g. [`apps/HubDiagnostics/ARCHITECTURE.md`](apps/HubDiagnostics/ARCHITECTURE.md) — and extend the top-level [`ARCHITECTURE.md`](ARCHITECTURE.md) with project-specific conventions.
