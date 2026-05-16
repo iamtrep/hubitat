@@ -47,10 +47,10 @@ capture_hub_logs.py [-t] [--mem-interval SECS] [--username U] [--password P]
 ./capture_hub_logs.py @maison-pro
 
 # Capture from a bare IP (credentials looked up in .hubitat.json if present)
-./capture_hub_logs.py 192.168.1.86
+./capture_hub_logs.py 192.0.2.10
 
 # Capture from a secured hub with no config file
-./capture_hub_logs.py 192.168.78.112 --username admin --password secret
+./capture_hub_logs.py 192.0.2.11 --username admin --password secret
 
 # Custom output file, memory sampling every 10 minutes
 ./capture_hub_logs.py @maison-pro logs/maison-$(date +%Y%m%d).json --mem-interval 600
@@ -118,8 +118,8 @@ working directory upward.  Example structure:
 {
   "default_hub": "maison-pro",
   "hubs": {
-    "maison-pro": { "hub_ip": "192.168.1.86" },
-    "andree":     { "hub_ip": "192.168.78.112", "username": "u", "password": "p" }
+    "maison-pro": { "hub_ip": "192.0.2.10" },
+    "andree":     { "hub_ip": "192.0.2.11", "username": "u", "password": "p" }
   }
 }
 ```

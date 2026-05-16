@@ -190,7 +190,7 @@ select{padding:5px 8px;background:var(--bg-input);border:1px solid var(--border)
   <div class="modal">
     <h2>Hub Connection</h2>
     <label>Hub IP Address</label>
-    <input type="text" id="cfgIp" placeholder="192.168.1.86">
+    <input type="text" id="cfgIp" placeholder="192.0.2.10">
     <div style="display:flex;gap:8px">
       <button class="btn btn-primary" onclick="saveConfig()">Connect</button>
       <button class="btn btn-secondary" onclick="closeConfig()">Cancel</button>
@@ -262,11 +262,11 @@ function detectHubBase(){
   if(loc.pathname.startsWith('/local/') || (loc.hostname.match(/^\d+\.\d+\.\d+\.\d+$/) && loc.hostname!=='127.0.0.1'))
     return ''; // same-origin, relative paths
   const saved=localStorage.getItem('verb_nav_hub_ip');
-  return saved ? `http://${saved}` : 'http://192.168.1.86';
+  return saved ? `http://${saved}` : 'http://192.0.2.10';
 }
 const S = {
   hubBase: detectHubBase(),
-  hubIp: localStorage.getItem('verb_nav_hub_ip') || '192.168.1.86',
+  hubIp: localStorage.getItem('verb_nav_hub_ip') || '192.0.2.10',
   activeVerb: 'connect',
   raw: { devices:null, apps:null, drivers:null, userApps:null, hubData:null, netConfig:null, hubMesh:null, zigbee:null, zwave:null, freeMemory:null, cpuInfo:null, temp:null, memHistory:null, localBackups:null, cloudBackups:null, events:null },
   classified: { devices:[], searchIndex:[] },

@@ -125,7 +125,7 @@ Map bridgePage(Map params) {
             input name: "bLabel", type: "text", title: "Bridge name", required: true,
                 description: "e.g., maison, chalet, local"
             input name: "bHubAddress", type: "text", title: "Hub IP address (leave blank for local hub)",
-                required: false, description: "e.g., 192.168.1.213"
+                required: false, description: "e.g., 192.0.2.10"
         }
         if (!isNew) {
             List<Map> bridges = state.bridges ?: []

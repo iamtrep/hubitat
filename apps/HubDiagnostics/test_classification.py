@@ -12,7 +12,7 @@ Fetches fullJson for every device on the hub and shows:
 
 Usage:
   python3 test_classification.py [hub_ip]
-  python3 test_classification.py 192.168.1.86
+  python3 test_classification.py 192.0.2.10
 """
 
 import json
@@ -21,7 +21,7 @@ import urllib.request
 import urllib.error
 from collections import Counter, defaultdict
 
-HUB_IP = sys.argv[1] if len(sys.argv) > 1 else "192.168.1.86"
+HUB_IP = sys.argv[1] if len(sys.argv) > 1 else "192.0.2.10"
 
 # Mirror of INTEGRATION_TABLE from HubDiagnostics.groovy — longest-first ordering
 INTEGRATION_TABLE = [

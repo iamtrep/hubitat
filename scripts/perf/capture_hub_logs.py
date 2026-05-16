@@ -270,7 +270,7 @@ def main():
         epilog=(
             "HUB examples:\n"
             "  @maison-pro          look up in .hubitat.json\n"
-            "  192.168.1.86         bare IP (no config file needed)\n\n"
+            "  192.0.2.10           bare IP (no config file needed)\n\n"
             "Output file is auto-generated if not supplied:\n"
             "  <hub-name>-<model>-<firmware>-<timestamp>.json"
         ),

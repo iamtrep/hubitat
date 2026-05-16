@@ -25,7 +25,7 @@ A single-page reimagining of the Hubitat hub UI, organized around five **verbs**
 ### Option A — local with the proxy (recommended for development)
 
 ```bash
-python3 serve.py [hub_ip] [port]   # defaults: 192.168.1.86, 8000
+python3 serve.py [hub_ip] [port]   # defaults: 192.0.2.10, 8000
 ```
 
 Then open <http://localhost:8000/verb_nav_prototype.html>.

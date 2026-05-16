@@ -25,7 +25,7 @@ Usage::
 
     from eventsocket import EventCapture
 
-    with EventCapture(hub_ip="192.168.1.86") as cap:
+    with EventCapture(hub_ip="192.0.2.10") as cap:
         maker_send(fan_id, "on")
         # wait_for blocks until a matching event arrives (or timeout)
         cap.wait_for(attribute="switch", value="on",

@@ -18,7 +18,7 @@
 #   --list-types            List distinct app types and exit
 #
 # Options:
-#   --hub <host>            Hub address (default: from .hubitat.json or 192.168.1.86)
+#   --hub <host>            Hub address (default: from .hubitat.json or 192.0.2.10)
 #   --dir <path>            Output directory (default: ./backups/apps)
 #   --no-timestamp          Don't append timestamp to filenames
 #   --dry-run               Show what would be backed up without fetching
@@ -79,7 +79,7 @@ if [[ -z "$HUB" ]]; then
             [[ -n "$HUB" ]] && break
         fi
     done
-    HUB="${HUB:-192.168.1.86}"
+    HUB="${HUB:-192.0.2.10}"
 fi
 
 BASE="http://${HUB}"

@@ -8,14 +8,14 @@ Serves static files locally and proxies /hub/* and /ws/* to the Hubitat hub,
 bypassing browser CORS restrictions.
 
 Usage: python3 serve.py [hub_ip] [port]
-  Default hub_ip: 192.168.1.86
+  Default hub_ip: 192.0.2.10
   Default port: 8000
 
 Then open: http://localhost:8000/verb_nav_prototype.html
 """
 import sys, os, http.server, urllib.request, urllib.error, socketserver, threading, hashlib, base64, struct, socket, select
 
-HUB_IP = sys.argv[1] if len(sys.argv) > 1 else '192.168.1.86'
+HUB_IP = sys.argv[1] if len(sys.argv) > 1 else '192.0.2.10'
 PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 8000
 HUB_BASE = f'http://{HUB_IP}'
 

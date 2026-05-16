@@ -14,7 +14,7 @@ Usage:
 
     from logsocket import LogCapture
 
-    with LogCapture(hub_ip="192.168.1.86") as cap:
+    with LogCapture(hub_ip="192.0.2.10") as cap:
         # drive the app under test
         maker_send(device_id, "open")
         # cap.wait_for blocks until a matching line arrives (or timeout)
