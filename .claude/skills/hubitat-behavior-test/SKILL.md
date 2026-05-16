@@ -142,6 +142,22 @@ cases:
       #             value if you need to assert on logs from a peer app/device.
       #   negate: true → asserts the pattern did NOT appear.
       - { pattern: "Battery replacement detected", negate: true }
+    assert_events:           # event-level expectations against the captured
+                             # /eventsocket stream during the case window.
+                             # Prefer over assert_logs when the observable is
+                             # a device-state transition — events are tied to
+                             # capability attributes, far more stable than log
+                             # wording across refactors.
+      - { attribute: "motion", value: "active", source: "test-mfc-out" }
+      # Fields:
+      #   attribute — regex matched against the event's `name` field
+      #               (e.g. "motion", "switch", "humidity"). None → any.
+      #   value     — str (exact match against `value` string) or omit.
+      #   source    — deviceId int → match by id; str → regex on
+      #               `displayName`. None → any source.
+      #   pattern   — regex matched against `descriptionText`. None → any.
+      #   negate: true → asserts no matching event appeared.
+      - { attribute: "motion", value: "inactive", source: "test-mfc-out", negate: true }
     # Optional log-guard controls (default: guard ON, no whitelist).
     # Each case opens a LogCapture around its actions+asserts; after, the
     # generated test fails the case if APP_INSTANCE_LABEL emitted any warn/
