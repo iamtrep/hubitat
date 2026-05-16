@@ -13,4 +13,5 @@
 tmp
 .superpowers
 docs/superpowers
+.hubitat-perf/
 
