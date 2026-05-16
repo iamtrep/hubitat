@@ -246,8 +246,8 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final String CHECKPOINT_DETAIL_PREFIX = "hub_diagnostics_checkpoint_"
 @Field static final String PERFORMANCE_COMPARISON_FILE = "hub_diagnostics_performance_comparison.json"
 
-@Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/hubitrep/hubitat/refs/heads/main/HubDiagnostics/HubDiagnostics.groovy"
-@Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/hubitrep/hubitat/refs/heads/main/HubDiagnostics/hub_diagnostics_ui.html"
+@Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/HubDiagnostics/HubDiagnostics.groovy"
+@Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/HubDiagnostics/hub_diagnostics_ui.html"
 
 
 @Field static final String DEVICE_FULL_JSON_PATH = "/device/fullJson/"
@@ -269,8 +269,8 @@ import java.util.concurrent.atomic.AtomicInteger
 
 definition(
     name: "Hub Diagnostics",
-    namespace: "hubitrep",
-    author: "hubitrep",
+    namespace: "iamtrep",
+    author: "pj",
     description: "Comprehensive hub diagnostics: inventory, performance tracking, network analysis, and snapshot comparison",
     category: "Utility",
     singleInstance: true,
@@ -410,7 +410,7 @@ Map dashboardPage() {
         }
 
         section("Documentation") {
-            href url: "https://github.com/hubitrep/hubitat/tree/main/HubDiagnostics", title: "Documentation & README",
+            href url: "https://github.com/iamtrep/hubitat/tree/main/apps/HubDiagnostics", title: "Documentation & README",
                  style: "external", description: "View documentation, changelog, and usage guide on GitHub"
         }
 
