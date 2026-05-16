@@ -44,7 +44,7 @@ definition(
 import groovy.transform.Field
 import com.hubitat.hub.domain.Event
 
-@Field static final String APP_VERSION = "0.1.0"
+@Field static final String APP_VERSION = "0.1.1"
 
 @Field static final Map<String, String> FUSION_MODES = [
     "pirOnly"              : "PIR Only",
@@ -125,6 +125,7 @@ Map mainPage() {
 
 void installed() {
     logDebug "installed()"
+    initialize()
 }
 
 void updated() {
