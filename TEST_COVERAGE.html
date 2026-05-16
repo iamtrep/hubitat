@@ -1,0 +1,643 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+<h1 id="test-coverage-ledger">Test Coverage Ledger</h1>
+<p>Inventory of every app and driver in this repo and its current
+automated-test coverage. The bar for what <em>qualifies</em> as a test,
+and the meaning of each Mode number, is defined in <a
+href="TESTING.md"><code>TESTING.md</code></a>. This file is the ledger;
+that file is the policy.</p>
+<p><strong>Conventions used in the tables below</strong> -
+<strong>Mode</strong> values: <code>1</code> (behavior, the lead tier),
+<code>2</code> (API integration), <code>3</code> (pure-JS unit),
+<code>4</code> (Python mirror), <code>5</code> (in-hub stress, exempt
+from §1.1). <code>—</code> means no automated test. -
+<strong>Required?</strong> column reflects the tiered bar in <a
+href="TESTING.md"><code>TESTING.md</code></a> §2.2. - <code>Y</code> —
+tier requires a test for new or significantly-changed code. -
+<code>N</code> — no test required by the bar, but one would still be
+useful. - <code>exempt</code> — Mode 5 stress apps, parent shells, or
+sub-files that aren’t independently invocable. - <strong>Test
+artifact</strong> is the canonical entry point (the <code>.sh</code> /
+<code>.js</code> / <code>.py</code> the agent runs).</p>
+<p>When you ship a new test, add a row here in the same commit as the
+test artifact.</p>
+<h2 id="apps">Apps</h2>
+<table style="width:100%;">
+<colgroup>
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+</colgroup>
+<thead>
+<tr>
+<th>Source</th>
+<th>Role</th>
+<th>Mode</th>
+<th>Required?</th>
+<th>Test artifact</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a
+href="apps/AttributeLogger.groovy"><code>apps/AttributeLogger.groovy</code></a></td>
+<td>Parent shell</td>
+<td>—</td>
+<td>exempt</td>
+<td>—</td>
+<td>Holds <code>AttributeLoggerChild</code> instances; no logic to
+test.</td>
+</tr>
+<tr>
+<td><a
+href="apps/AttributeLoggerChild.groovy"><code>apps/AttributeLoggerChild.groovy</code></a></td>
+<td>Automation</td>
+<td>1</td>
+<td>Y</td>
+<td><a
+href="apps/tests/test-attribute-logger-child.sh"><code>apps/tests/test-attribute-logger-child.sh</code></a>
+(<a href="apps/tests/spec-attribute-logger-child.yaml">spec</a>)</td>
+<td>Subscribes to device attribute → emits log entries.</td>
+</tr>
+<tr>
+<td><a
+href="apps/BatteryChangeLogger.groovy"><code>apps/BatteryChangeLogger.groovy</code></a></td>
+<td>Automation</td>
+<td>1</td>
+<td>Y</td>
+<td><a
+href="apps/tests/test-battery-change-logger.sh"><code>apps/tests/test-battery-change-logger.sh</code></a>
+(<a href="apps/tests/spec-battery-change-logger.yaml">spec</a>)</td>
+<td>Subscribes to battery events → logs replacement candidates.</td>
+</tr>
+<tr>
+<td><a
+href="apps/HubDiagnostics/HubDiagnostics.groovy"><code>apps/HubDiagnostics/HubDiagnostics.groovy</code></a></td>
+<td>OAuth API + UI</td>
+<td>2, 3, 4</td>
+<td>Y</td>
+<td><a
+href="apps/HubDiagnostics/tests/test-hub-diagnostics-api.sh"><code>tests/test-hub-diagnostics-api.sh</code></a>,
+<a
+href="apps/HubDiagnostics/tests/test-diffStats.js"><code>tests/test-diffStats.js</code></a>,
+<a
+href="apps/HubDiagnostics/test_classification.py"><code>test_classification.py</code></a></td>
+<td>Phased plan in <a
+href="apps/HubDiagnostics/tests/TEST_PLAN.md"><code>tests/TEST_PLAN.md</code></a>.
+Mode 2 audit-HTML + snapshot-diff still planned.</td>
+</tr>
+<tr>
+<td><a
+href="apps/HumidityFanController.groovy"><code>apps/HumidityFanController.groovy</code></a></td>
+<td>Automation</td>
+<td>1</td>
+<td>Y</td>
+<td><a
+href="apps/tests/test-humidity-fan-controller.sh"><code>apps/tests/test-humidity-fan-controller.sh</code></a>
+(<a href="apps/tests/spec-humidity-fan-controller.yaml">spec</a>)</td>
+<td>10 cases, full state-machine convergence.
+<code>max-fan-run-time-expiry</code> uncovered (60s minimum — needs
+slow-test variant).</td>
+</tr>
+<tr>
+<td><a
+href="apps/HydroPeakEvents.groovy"><code>apps/HydroPeakEvents.groovy</code></a></td>
+<td>Automation</td>
+<td>—</td>
+<td>Y</td>
+<td>—</td>
+<td>Uncovered.</td>
+</tr>
+<tr>
+<td><a
+href="apps/LocationEventMapper.groovy"><code>apps/LocationEventMapper.groovy</code></a></td>
+<td>Parent shell</td>
+<td>—</td>
+<td>exempt</td>
+<td>—</td>
+<td>Holds <code>LocationEventMapperChild</code> instances.</td>
+</tr>
+<tr>
+<td><a
+href="apps/LocationEventMapperChild.groovy"><code>apps/LocationEventMapperChild.groovy</code></a></td>
+<td>Automation</td>
+<td>—</td>
+<td>Y</td>
+<td>—</td>
+<td>Uncovered. Drives device commands from location-mode
+transitions.</td>
+</tr>
+<tr>
+<td><a
+href="apps/LogMonitor/LogMonitor.groovy"><code>apps/LogMonitor/LogMonitor.groovy</code></a></td>
+<td>Parent shell</td>
+<td>—</td>
+<td>exempt</td>
+<td>—</td>
+<td>Holds the bridge child.</td>
+</tr>
+<tr>
+<td><a
+href="apps/LogMonitor/LogMonitorBridge.groovy"><code>apps/LogMonitor/LogMonitorBridge.groovy</code></a></td>
+<td>Automation</td>
+<td>—</td>
+<td>Y</td>
+<td>—</td>
+<td>Uncovered. Recent CME fix in <code>parse()</code> would benefit from
+regression coverage.</td>
+</tr>
+<tr>
+<td><a
+href="apps/sensors/MotionFusionChild.groovy"><code>apps/sensors/MotionFusionChild.groovy</code></a></td>
+<td>Automation</td>
+<td>1</td>
+<td>Y</td>
+<td><a
+href="apps/sensors/tests/test-motion-fusion-child.sh"><code>apps/sensors/tests/test-motion-fusion-child.sh</code></a>
+(<a
+href="apps/sensors/tests/spec-motion-fusion-child.yaml">spec</a>)</td>
+<td>Currently exercises only <code>pirQuickMmwaveHold</code> mode; six
+other fusion modes still uncovered. Uses paired <a
+href="drivers/tests/VirtualMmwavePirSensor.groovy"><code>drivers/tests/VirtualMmwavePirSensor.groovy</code></a>.</td>
+</tr>
+<tr>
+<td><a
+href="apps/sensors/SensorAggregator.groovy"><code>apps/sensors/SensorAggregator.groovy</code></a></td>
+<td>Parent shell (singleInstance)</td>
+<td>—</td>
+<td>exempt</td>
+<td>—</td>
+<td>Holds SAC / SADC / MotionFusion children.</td>
+</tr>
+<tr>
+<td><a
+href="apps/sensors/SensorAggregatorChild.groovy"><code>apps/sensors/SensorAggregatorChild.groovy</code></a></td>
+<td>Automation</td>
+<td>1</td>
+<td>Y</td>
+<td><a
+href="apps/sensors/tests/test-sac.sh"><code>apps/sensors/tests/test-sac.sh</code></a>
+(<a href="apps/sensors/tests/spec-sac.yaml">spec</a>)</td>
+<td>Aggregates numeric values across N inputs into a virtual
+output.</td>
+</tr>
+<tr>
+<td><a
+href="apps/sensors/SensorAggregatorDiscreteChild.groovy"><code>apps/sensors/SensorAggregatorDiscreteChild.groovy</code></a></td>
+<td>Automation</td>
+<td>1</td>
+<td>Y</td>
+<td><a
+href="apps/sensors/tests/test-sadc.sh"><code>apps/sensors/tests/test-sadc.sh</code></a>
+(<a href="apps/sensors/tests/spec-sadc.yaml">spec</a>)</td>
+<td>Canonical Mode 1 worked example per <a
+href="TESTING.md"><code>TESTING.md</code></a> §2.1.</td>
+</tr>
+<tr>
+<td><a
+href="apps/sensors/SensorFilterChild.groovy"><code>apps/sensors/SensorFilterChild.groovy</code></a></td>
+<td>Automation</td>
+<td>1</td>
+<td>Y</td>
+<td><a
+href="apps/sensors/tests/test-sensor-filter.sh"><code>apps/sensors/tests/test-sensor-filter.sh</code></a>
+(<a href="apps/sensors/tests/spec-sensor-filter.yaml">spec</a>)</td>
+<td>Filters / smooths sensor readings.</td>
+</tr>
+<tr>
+<td><a
+href="apps/sensors/SensorFilterManager.groovy"><code>apps/sensors/SensorFilterManager.groovy</code></a></td>
+<td>Parent shell (singleInstance)</td>
+<td>—</td>
+<td>exempt</td>
+<td>—</td>
+<td>Holds <code>SensorFilterChild</code> instances.</td>
+</tr>
+<tr>
+<td><a
+href="apps/StartupShutdownMonitor.groovy"><code>apps/StartupShutdownMonitor.groovy</code></a></td>
+<td>Automation</td>
+<td>—</td>
+<td>Y</td>
+<td>—</td>
+<td>Uncovered. Hub lifecycle hooks — non-trivial to drive (would need a
+way to simulate hub start/stop events).</td>
+</tr>
+<tr>
+<td><a
+href="apps/SwitchMonitor.groovy"><code>apps/SwitchMonitor.groovy</code></a></td>
+<td>Automation</td>
+<td>1</td>
+<td>Y</td>
+<td><a
+href="apps/tests/test-switch-monitor.sh"><code>apps/tests/test-switch-monitor.sh</code></a>
+(<a href="apps/tests/spec-switch-monitor.yaml">spec</a>)</td>
+<td>Mode 1 with <code>setup_buttons</code> (the worked example for the
+<code>app.setup_buttons</code> spec field).</td>
+</tr>
+<tr>
+<td><a
+href="apps/tests/asyncHttpStressTest.groovy"><code>apps/tests/asyncHttpStressTest.groovy</code></a></td>
+<td>In-hub stress</td>
+<td>5</td>
+<td>exempt</td>
+<td>(the app itself)</td>
+<td>Manual button press to start; log-asserted via wrapper would close
+the §2.4 gap.</td>
+</tr>
+<tr>
+<td><a
+href="apps/tests/fileManagerTests.groovy"><code>apps/tests/fileManagerTests.groovy</code></a></td>
+<td>In-hub stress</td>
+<td>5</td>
+<td>exempt</td>
+<td>(the app itself)</td>
+<td>File Manager API benchmark.</td>
+</tr>
+<tr>
+<td><a
+href="apps/tests/hubStressTests.groovy"><code>apps/tests/hubStressTests.groovy</code></a></td>
+<td>In-hub stress</td>
+<td>5</td>
+<td>exempt</td>
+<td>(the app itself)</td>
+<td>Generic hub-load harness.</td>
+</tr>
+<tr>
+<td><a
+href="apps/tests/SampleApp.groovy"><code>apps/tests/SampleApp.groovy</code></a></td>
+<td>In-hub sample / scratch</td>
+<td>5</td>
+<td>exempt</td>
+<td>(the app itself)</td>
+<td>Reference scaffold, not behavior.</td>
+</tr>
+<tr>
+<td><a
+href="apps/tests/udpStressTest.groovy"><code>apps/tests/udpStressTest.groovy</code></a></td>
+<td>In-hub stress</td>
+<td>5</td>
+<td>exempt</td>
+<td>(the app itself)</td>
+<td>UDP round-trip latency.</td>
+</tr>
+<tr>
+<td><a
+href="apps/utilities/DeviceInUseEnumerator.groovy"><code>apps/utilities/DeviceInUseEnumerator.groovy</code></a></td>
+<td>Utility (UI report)</td>
+<td>—</td>
+<td>N</td>
+<td>—</td>
+<td>Uncovered. Computation-heavy with a UI surface; Mode 4 mirror could
+test the enumeration logic if regressions appear.</td>
+</tr>
+<tr>
+<td><a
+href="apps/utilities/DeviceReplacement.groovy"><code>apps/utilities/DeviceReplacement.groovy</code></a></td>
+<td>Utility</td>
+<td>—</td>
+<td>N</td>
+<td>—</td>
+<td>Uncovered.</td>
+</tr>
+<tr>
+<td><a
+href="apps/utilities/RuleLoggingManager.groovy"><code>apps/utilities/RuleLoggingManager.groovy</code></a></td>
+<td>OAuth API</td>
+<td>2</td>
+<td>Y</td>
+<td><a
+href="apps/utilities/tests/test-rule-logging-manager.sh"><code>apps/utilities/tests/test-rule-logging-manager.sh</code></a></td>
+<td>Snapshot-diff coverage of undocumented hub endpoints.</td>
+</tr>
+<tr>
+<td><a
+href="apps/WellPumpMonitor/WellPumpMonitor.groovy"><code>apps/WellPumpMonitor/WellPumpMonitor.groovy</code></a></td>
+<td>Automation</td>
+<td>—</td>
+<td>Y</td>
+<td>—</td>
+<td>Uncovered.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="drivers">Drivers</h2>
+<p>Per <a href="TESTING.md"><code>TESTING.md</code></a> §2.2, driver
+tests are not required by default; the four options when one <em>is</em>
+warranted are documented in <a
+href="TESTING.md"><code>TESTING.md</code></a> §3 (paired test driver,
+Mode 4 mirror, <code>parse()</code> injection via fixture app,
+mock-service app). The latter two are parked.</p>
+<table style="width:100%;">
+<colgroup>
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+</colgroup>
+<thead>
+<tr>
+<th>Source</th>
+<th>Connection</th>
+<th>Mode</th>
+<th>Required?</th>
+<th>Test artifact</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a
+href="drivers/AwairElement.groovy"><code>drivers/AwairElement.groovy</code></a></td>
+<td>Polling (local API)</td>
+<td>—</td>
+<td>N</td>
+<td>—</td>
+<td>Mock-service pattern would apply (parked).</td>
+</tr>
+<tr>
+<td><a
+href="drivers/BTHomeV2-Motion.groovy"><code>drivers/BTHomeV2-Motion.groovy</code></a></td>
+<td>BLE advertisement</td>
+<td>—</td>
+<td>N</td>
+<td>—</td>
+<td><code>parse()</code>-injection pattern would apply (parked).</td>
+</tr>
+<tr>
+<td><a
+href="drivers/DevicePing.groovy"><code>drivers/DevicePing.groovy</code></a></td>
+<td>HTTP polling</td>
+<td>—</td>
+<td>N</td>
+<td>—</td>
+<td>Mock-service pattern would apply (parked).</td>
+</tr>
+<tr>
+<td><a
+href="drivers/EcobeeCompanion.groovy"><code>drivers/EcobeeCompanion.groovy</code></a></td>
+<td>Cloud OAuth</td>
+<td>—</td>
+<td>N</td>
+<td>—</td>
+<td>Mock-service pattern would apply (parked); OAuth state machine makes
+mock non-trivial.</td>
+</tr>
+<tr>
+<td><a
+href="drivers/EnvironmentCanada_AQHI.groovy"><code>drivers/EnvironmentCanada_AQHI.groovy</code></a></td>
+<td>HTTP polling (public XML)</td>
+<td>—</td>
+<td>N</td>
+<td>—</td>
+<td>Smallest-surface candidate for the parked mock-service pattern (no
+auth).</td>
+</tr>
+<tr>
+<td><a
+href="drivers/IKEA-Blinds.groovy"><code>drivers/IKEA-Blinds.groovy</code></a></td>
+<td>Zigbee</td>
+<td>—</td>
+<td>N</td>
+<td>—</td>
+<td><code>parse()</code>-injection pattern would apply (parked).</td>
+</tr>
+<tr>
+<td><a
+href="drivers/LogEventMonitor.groovy"><code>drivers/LogEventMonitor.groovy</code></a></td>
+<td>Hub log subscription</td>
+<td>(paired)</td>
+<td>N</td>
+<td>—</td>
+<td>Has a companion: <a
+href="drivers/tests/LogEventMonitorTest.groovy"><code>drivers/tests/LogEventMonitorTest.groovy</code></a>
+— used to drive the LogEventMonitor app’s filtering tests (no standalone
+test for this driver itself).</td>
+</tr>
+<tr>
+<td><a
+href="drivers/sinope/Sinope_DM2500ZB.groovy"><code>drivers/sinope/Sinope_DM2500ZB.groovy</code></a></td>
+<td>Zigbee</td>
+<td>—</td>
+<td>N</td>
+<td>—</td>
+<td><code>parse()</code>-injection pattern would apply (parked). Shares
+structure with the rest of the Sinope family.</td>
+</tr>
+<tr>
+<td><a
+href="drivers/sinope/Sinope_SW2500ZB.groovy"><code>drivers/sinope/Sinope_SW2500ZB.groovy</code></a></td>
+<td>Zigbee</td>
+<td>—</td>
+<td>N</td>
+<td>—</td>
+<td>Recommended first target if/when the <code>parse()</code>-injection
+pattern is built (parked) — in-repo, in production use, reasonable
+attribute surface.</td>
+</tr>
+<tr>
+<td><a
+href="drivers/sinope/Sinope_switch_specs.groovy"><code>drivers/sinope/Sinope_switch_specs.groovy</code></a></td>
+<td>(sub-file)</td>
+<td>—</td>
+<td>exempt</td>
+<td>—</td>
+<td>Library file with shared switch spec constants; not independently
+invocable.</td>
+</tr>
+<tr>
+<td><a
+href="drivers/sinope/Sinope_TH1300ZB.groovy"><code>drivers/sinope/Sinope_TH1300ZB.groovy</code></a></td>
+<td>Zigbee</td>
+<td>—</td>
+<td>N</td>
+<td>—</td>
+<td>Thermostat — richest attribute surface in the Sinope family.</td>
+</tr>
+<tr>
+<td><a
+href="drivers/sinope/Sinope_VA422xZB.groovy"><code>drivers/sinope/Sinope_VA422xZB.groovy</code></a></td>
+<td>Zigbee</td>
+<td>—</td>
+<td>N</td>
+<td>—</td>
+<td>Valve actuator.</td>
+</tr>
+<tr>
+<td><a
+href="drivers/stelpro/Stelpro_orleans_specs.groovy"><code>drivers/stelpro/Stelpro_orleans_specs.groovy</code></a></td>
+<td>(sub-file)</td>
+<td>—</td>
+<td>exempt</td>
+<td>—</td>
+<td>Library file with shared Stelpro spec constants.</td>
+</tr>
+<tr>
+<td><a
+href="drivers/stelpro/StelproAllia.groovy"><code>drivers/stelpro/StelproAllia.groovy</code></a></td>
+<td>Zigbee</td>
+<td>—</td>
+<td>N</td>
+<td>—</td>
+<td>Thermostat.</td>
+</tr>
+<tr>
+<td><a
+href="drivers/stelpro/StelproKi.groovy"><code>drivers/stelpro/StelproKi.groovy</code></a></td>
+<td>Zigbee</td>
+<td>—</td>
+<td>N</td>
+<td>—</td>
+<td>Thermostat.</td>
+</tr>
+<tr>
+<td><a
+href="drivers/tests/DeviceInspector.groovy"><code>drivers/tests/DeviceInspector.groovy</code></a></td>
+<td>Fixture / introspection</td>
+<td>(fixture)</td>
+<td>exempt</td>
+<td>—</td>
+<td>Diagnostic driver, not a device driver.</td>
+</tr>
+<tr>
+<td><a
+href="drivers/tests/GenericWebsocket.groovy"><code>drivers/tests/GenericWebsocket.groovy</code></a></td>
+<td>LAN (WebSocket)</td>
+<td>(fixture)</td>
+<td>exempt</td>
+<td>—</td>
+<td>Test-only generic WS client.</td>
+</tr>
+<tr>
+<td><a
+href="drivers/tests/LogEventMonitorTest.groovy"><code>drivers/tests/LogEventMonitorTest.groovy</code></a></td>
+<td>Fixture (paired)</td>
+<td>(fixture)</td>
+<td>exempt</td>
+<td>—</td>
+<td>Companion driver — drives LogEventMonitor app behavior tests.</td>
+</tr>
+<tr>
+<td><a
+href="drivers/tests/VirtualMmwavePirSensor.groovy"><code>drivers/tests/VirtualMmwavePirSensor.groovy</code></a></td>
+<td>Virtual (fixture)</td>
+<td>(fixture)</td>
+<td>exempt</td>
+<td>—</td>
+<td>Test driver for <code>MotionFusionChild</code> Mode 1. Mirrors Aqara
+FP300 attribute surface.</td>
+</tr>
+<tr>
+<td><a
+href="drivers/ThirdReality_3RPL01084Z.groovy"><code>drivers/ThirdReality_3RPL01084Z.groovy</code></a></td>
+<td>Zigbee</td>
+<td>—</td>
+<td>N</td>
+<td>—</td>
+<td>Smart plug. <code>parse()</code>-injection pattern would apply
+(parked).</td>
+</tr>
+<tr>
+<td><a
+href="drivers/VirtualSwitchPowerSource.groovy"><code>drivers/VirtualSwitchPowerSource.groovy</code></a></td>
+<td>Virtual</td>
+<td>—</td>
+<td>N</td>
+<td>—</td>
+<td>Virtual driver — typically driven by direct command, no
+<code>parse()</code>.</td>
+</tr>
+<tr>
+<td><a
+href="drivers/visiblair/visiblair.groovy"><code>drivers/visiblair/visiblair.groovy</code></a></td>
+<td>HTTP polling</td>
+<td>—</td>
+<td>N</td>
+<td>—</td>
+<td>Standalone driver. Coexists with the
+<code>apps/sensors/visiblair/</code> parent-child integration.
+Mock-service pattern would apply (parked).</td>
+</tr>
+<tr>
+<td><a
+href="drivers/XfinityContactSensor.groovy"><code>drivers/XfinityContactSensor.groovy</code></a></td>
+<td>Zigbee</td>
+<td>—</td>
+<td>N</td>
+<td>—</td>
+<td>Smallest-surface candidate for the parked
+<code>parse()</code>-injection pattern (single attribute).</td>
+</tr>
+</tbody>
+</table>
+<h2 id="scripts-libraries">Scripts &amp; libraries</h2>
+<p>These aren’t apps or drivers, but they ship test coverage of their
+own.</p>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th>Source</th>
+<th>Mode</th>
+<th>Test artifact</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a
+href="scripts/lib/logsocket.py"><code>scripts/lib/logsocket.py</code></a></td>
+<td>1 (lib)</td>
+<td><a
+href="scripts/tests/test-logsocket.sh"><code>scripts/tests/test-logsocket.sh</code></a></td>
+<td><code>LogCapture</code> helper used by every Mode 1 test.</td>
+</tr>
+<tr>
+<td><a
+href="scripts/lib/eventsocket.py"><code>scripts/lib/eventsocket.py</code></a></td>
+<td>1 (lib)</td>
+<td><a
+href="scripts/tests/test-eventsocket.sh"><code>scripts/tests/test-eventsocket.sh</code></a></td>
+<td><code>EventCapture</code> helper; <code>assert_events</code>
+complement to <code>assert_logs</code>.</td>
+</tr>
+<tr>
+<td><a href="scripts/perf/"><code>scripts/perf/</code></a> JSONL
+analyser</td>
+<td>4</td>
+<td><a
+href="scripts/perf/tests/test_multi_file.py"><code>scripts/perf/tests/test_multi_file.py</code></a></td>
+<td>pytest suite.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="summary">Summary</h2>
+<ul>
+<li>Apps tested: <strong>11</strong> of <strong>22</strong> non-exempt
+apps (50%). Six exempt (parents + in-hub stress apps).</li>
+<li>Drivers tested: <strong>0</strong> of <strong>15</strong>
+non-fixture drivers. Driver tests are not required by the bar — see <a
+href="TESTING.md"><code>TESTING.md</code></a> §2.2.</li>
+<li>Mode 1 (behavior) is by far the dominant test mode (8 apps + 2
+libraries). Mode 2 (API integration) covers 2 apps. Mode 3 / Mode 4
+cover HubDiagnostics only.</li>
+<li>Named uncovered automation apps: <code>HydroPeakEvents</code>,
+<code>LocationEventMapperChild</code>, <code>LogMonitor</code> /
+<code>LogMonitorBridge</code>, <code>StartupShutdownMonitor</code>,
+<code>WellPumpMonitor</code>.</li>
+</ul>
+<p>Update this ledger when you add a test or a new source file. The
+summary counts are easy to forget — recount when you change rows.</p>
