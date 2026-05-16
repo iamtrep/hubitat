@@ -86,7 +86,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Humidity-Based Fan Controller"
-@Field static final String APP_VERSION = "0.6.0"
+@Field static final String APP_VERSION = "0.6.1"
 
 // Humidity state machine states
 @Field static final String HUMIDITY_NORMAL = "NORMAL"
@@ -283,24 +283,37 @@ void referenceHumidityHandler(evt) {
 void fanSwitchHandler(evt) {
     logDebug("Fan switch changed to ${evt.value}")
 
+    // Any switch event resolves a pending verification — the verifyFan*
+    // timer is only a fallback for missed events. Unschedule both timers
+    // on every event: a no-op when nothing was scheduled, defensive when
+    // the device emitted the opposite of the pending command.
+    unschedule("verifyFanOn")
+    unschedule("verifyFanOff")
+
     if (evt.value == "on") {
-        unschedule("verifyFanOn")
         if (state.pendingCommand == "on") {
             log.info("Fan verified ON")
             state.pendingCommand = null
+        } else if (state.pendingCommand == "off") {
+            // We requested OFF but the switch went ON — externally countermanded.
+            log.info("Pending OFF countermanded by external ON event - clearing")
+            state.pendingCommand = null
         }
+        // else: external on with no pending command — leave state alone
     } else if (evt.value == "off") {
-        unschedule("verifyFanOff")
-        if (state.fanTurnedOnByApp) {
-            if (state.pendingCommand != "off") {
-                // We didn't send this off command - someone else turned it off
-                log.info("Fan turned off externally - clearing app control flag")
-                state.fanTurnedOnByApp = false
-            } else {
-                log.info("Fan verified OFF")
-                state.fanTurnedOnByApp = false
-                state.pendingCommand = null
-            }
+        if (state.pendingCommand == "off") {
+            log.info("Fan verified OFF")
+            state.fanTurnedOnByApp = false
+            state.pendingCommand = null
+        } else if (state.pendingCommand == "on") {
+            // We requested ON but the switch went OFF — externally countermanded.
+            log.info("Pending ON countermanded by external OFF event - clearing")
+            state.fanTurnedOnByApp = false
+            state.pendingCommand = null
+        } else if (state.fanTurnedOnByApp) {
+            // External off while we thought we controlled the fan
+            log.info("Fan turned off externally - clearing app control flag")
+            state.fanTurnedOnByApp = false
         }
     }
 }
@@ -626,13 +639,17 @@ private void turnOnFan() {
 }
 
 void verifyFanOn() {
+    // Fires only when no switch event arrived within the verification
+    // window (fanSwitchHandler unschedules this on any event). If the
+    // device's current value is "on" anyway, the event was missed or
+    // the switch was already on (sendEvent dedup) — treat as verified.
     String switchState = fanSwitch.currentValue("switch")
 
     if (switchState == "on") {
         log.info("Fan verified ON (timeout check)")
         state.pendingCommand = null
     } else {
-        log.error("Fan failed to turn on after ${switchVerificationTimeout} seconds")
+        log.error("Fan failed to turn on after ${switchVerificationTimeout} seconds (no event received)")
         state.fanTurnedOnByApp = false
         sendNotification("ERROR: ${fanSwitch.displayName} failed to turn on!")
         state.pendingCommand = null
@@ -653,6 +670,8 @@ private void turnOffFan() {
 }
 
 void verifyFanOff() {
+    // Same pattern as verifyFanOn — only fires when no switch event arrived
+    // within the verification window.
     String switchState = fanSwitch.currentValue("switch")
 
     if (switchState == "off") {
@@ -660,7 +679,7 @@ void verifyFanOff() {
         state.fanTurnedOnByApp = false
         state.pendingCommand = null
     } else {
-        log.error("Fan failed to turn off after ${switchVerificationTimeout} seconds")
+        log.error("Fan failed to turn off after ${switchVerificationTimeout} seconds (no event received)")
         sendNotification("ERROR: ${fanSwitch.displayName} failed to turn off!")
         state.pendingCommand = null
     }

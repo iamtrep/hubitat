@@ -1,0 +1,126 @@
+# HumidityFanController (HFC) — Mode 1 behavior test spec
+#
+# Exercises the core humidity state machine and fan-control reactions of
+# apps/HumidityFanController.groovy.
+#
+# Coverage:
+#   - NORMAL → PENDING_HIGH → HIGH activation (via offset)
+#   - PENDING_HIGH → HIGH bypass when bath > absoluteHighThreshold
+#   - HIGH → PENDING_NORMAL → NORMAL deactivation (via snapshot threshold)
+#   - Restriction blocking + lifting while HIGH
+#   - High-humidity status switch synchronization
+#
+# Gaps tracked for follow-up (see HumidityFanController_test_gaps memory):
+#   - cancel-pending-deactivation (rise during PENDING_NORMAL)
+#   - cancel-pending-activation   (drop during PENDING_HIGH)
+#   - countermand-pending-on      (v0.6.1 fanSwitchHandler bug-fix path)
+#   - max-fan-run-time-expiry     (60s minimum — needs slow-test variant)
+#
+# Test-friendly timing: activationDelay=2s, deactivationDelay=2s,
+# maxFanRunTime=0. Reference baseline = 50%, bathroom triggers:
+# 75 (offset activation), 95 (above absoluteHigh=90), 60 (deactivation
+# via snapshot+normalOffset=65), 45 (deactivation floor at 58).
+#
+# Generate with: /hubitat-behavior-test apps/tests/spec-humidity-fan-controller.yaml
+
+app:
+  source: apps/HumidityFanController.groovy
+  type_name: "Humidity-Based Fan Controller"
+  instance_label: test-hfc-app
+  config:
+    highHumidityOffset: 20
+    normalHumidityOffset: 15
+    absoluteHighThreshold: 90
+    absoluteLowThreshold: 60
+    absoluteLowTolerance: 2
+    activationDelay: 2
+    deactivationDelay: 2
+    switchVerificationTimeout: 5
+    sensorInactivityTimeout: 60
+    maxFanRunTime: 0
+
+inputs:
+  - { name: test-hfc-bath,     driver: Virtual Humidity Sensor, role: bathroomHumiditySensors }
+  - { name: test-hfc-ref,      driver: Virtual Humidity Sensor, role: referenceHumiditySensors }
+  - { name: test-hfc-restrict, driver: Virtual Switch,          role: restrictionSwitchesMustBeOff }
+
+outputs:
+  - { name: test-hfc-fan,   driver: Virtual Switch, role: fanSwitch }
+  - { name: test-hfc-hi-sw, driver: Virtual Switch, role: highHumiditySwitch }
+
+maker_api:
+  label: test-hfc-maker
+
+cases:
+  - name: baseline-normal
+    setup:
+      - { device: test-hfc-bath,     command: setHumidity, args: [45] }
+      - { device: test-hfc-ref,      command: setHumidity, args: [50] }
+      - { device: test-hfc-restrict, command: "off" }
+      - { device: test-hfc-fan,      command: "off" }
+      - { device: test-hfc-hi-sw,    command: "off" }
+    wait_seconds: 4
+    assert:
+      - { device: test-hfc-fan,   attribute: switch, value: "off" }
+      - { device: test-hfc-hi-sw, attribute: switch, value: "off" }
+
+  - name: activate-via-offset
+    actions:
+      - { device: test-hfc-bath, command: setHumidity, args: [75] }
+    wait_seconds: 4
+    assert:
+      - { device: test-hfc-fan,   attribute: switch, value: "on" }
+      - { device: test-hfc-hi-sw, attribute: switch, value: "on" }
+
+  - name: deactivate-via-snapshot
+    actions:
+      - { device: test-hfc-bath, command: setHumidity, args: [60] }
+    wait_seconds: 4
+    assert:
+      - { device: test-hfc-fan,   attribute: switch, value: "off" }
+      - { device: test-hfc-hi-sw, attribute: switch, value: "off" }
+
+  # PENDING_HIGH → HIGH bypass. While in PENDING_HIGH, bath jumps above
+  # absoluteHighThreshold (90) → skip the 2s activation timer entirely.
+  # The 0.5s wait is much shorter than activationDelay=2s, so this case
+  # only passes if the bypass code actually fires; a regression would
+  # leave fan=off at the assertion point.
+  - name: absolute-high-bypass
+    actions:
+      - { device: test-hfc-bath, command: setHumidity, args: [75] }
+      - { device: test-hfc-bath, command: setHumidity, args: [95] }
+    command_spacing_seconds: 1.0
+    wait_seconds: 0.5
+    assert:
+      - { device: test-hfc-fan,   attribute: switch, value: "on" }
+      - { device: test-hfc-hi-sw, attribute: switch, value: "on" }
+
+  - name: restriction-blocks-activation
+    setup:
+      - { device: test-hfc-bath,     command: setHumidity, args: [45] }
+      - { device: test-hfc-restrict, command: "on" }
+    setup_wait_seconds: 3
+    actions:
+      - { device: test-hfc-bath, command: setHumidity, args: [75] }
+    wait_seconds: 4
+    assert:
+      - { device: test-hfc-fan,   attribute: switch, value: "off" }
+      - { device: test-hfc-hi-sw, attribute: switch, value: "on" }
+
+  - name: restriction-lifted-while-high
+    actions:
+      - { device: test-hfc-restrict, command: "off" }
+    wait_seconds: 3
+    assert:
+      - { device: test-hfc-fan,   attribute: switch, value: "on" }
+      - { device: test-hfc-hi-sw, attribute: switch, value: "on" }
+
+  - name: cleanup-to-baseline
+    actions:
+      - { device: test-hfc-bath, command: setHumidity, args: [45] }
+    wait_seconds: 4
+    assert:
+      - { device: test-hfc-fan,   attribute: switch, value: "off" }
+      - { device: test-hfc-hi-sw, attribute: switch, value: "off" }
+
+runtime_budget_seconds: 40
