@@ -16,6 +16,7 @@ metadata {
         name: "VisiblAir Sensor E",
         namespace: "iamtrep",
         author: "pj",
+        description: "CO₂, temperature, humidity, VOC, pressure, PM, AQI",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/integrations/visiblair/VisiblAirSensorE.groovy"
     ) {
         capability "AirQuality"

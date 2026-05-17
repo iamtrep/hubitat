@@ -16,6 +16,7 @@ metadata {
         name: "VisiblAir Sensor X",
         namespace: "iamtrep",
         author: "pj",
+        description: "Temperature, humidity, pressure, PM (1 / 2.5 / 4 / 10)",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/integrations/visiblair/VisiblAirSensorX.groovy"
     ) {
         capability "PressureMeasurement"

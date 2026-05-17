@@ -16,6 +16,7 @@ metadata {
         name: "VisiblAir Sensor C",
         namespace: "iamtrep",
         author: "pj",
+        description: "CO₂, temperature, humidity",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/integrations/visiblair/VisiblAirSensorC.groovy"
     ) {
         capability "CarbonDioxideMeasurement"

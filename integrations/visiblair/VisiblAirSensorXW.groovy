@@ -16,6 +16,7 @@ metadata {
         name: "VisiblAir Sensor XW",
         namespace: "iamtrep",
         author: "pj",
+        description: "Wind speed, direction, compass heading",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/integrations/visiblair/VisiblAirSensorXW.groovy"
     ) {
         capability "Sensor"

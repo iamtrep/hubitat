@@ -19,6 +19,7 @@ metadata {
         name: "Log Event Monitor",
         namespace: "iamtrep",
         author: "pj",
+        description: "Monitors the hub log stream and fires events on pattern matches",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/LogEventMonitor.groovy"
     ) {
         capability "Actuator"

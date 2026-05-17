@@ -21,6 +21,7 @@ metadata {
         name: "Sinope Dimmer (DM2500ZB)",
         namespace: "iamtrep",
         author: "pj",
+        description: "Zigbee dimmer switch",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/sinope/Sinope_DM2500ZB.groovy"
     ) {
 		capability "Actuator"

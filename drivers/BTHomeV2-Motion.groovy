@@ -10,6 +10,7 @@ metadata {
         name: "Bluetooth Home v2 Motion/Occupancy Sensor",
         namespace: "hubitat",
         author: "Victor U.",
+        description: "BLE motion/occupancy sensor via BTHome v2",
         singleThreaded: true
     ) {
         capability "Battery"

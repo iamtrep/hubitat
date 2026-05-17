@@ -89,6 +89,7 @@ metadata {
         name: "Environment Canada AQHI",
         namespace: "iamtrep",
         author: "pj",
+        description: "Air Quality Health Index driver using the Environment Canada GeoMet OGC API — current observations, hourly forecasts, and alerts",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/EnvironmentCanada_AQHI.groovy"
     ) {
         capability "AirQuality"

@@ -12,6 +12,7 @@ metadata {
         name: "VisiblAir Sensor",
         namespace: "iamtrep",
         author: "pj",
+        description: "Standalone single-device driver for a VisiblAir indoor air quality sensor",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/visiblair/visiblair.groovy"
     ) {
         capability "Battery"

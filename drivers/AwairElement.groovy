@@ -20,6 +20,7 @@ metadata {
     definition(name: "Awair Element",
                namespace: "iamtrep",
                author: "pj",
+               description: "Local API driver for Awair Element air quality monitors",
                importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/AwairElement.groovy"
     ) {
         capability "AirQuality"

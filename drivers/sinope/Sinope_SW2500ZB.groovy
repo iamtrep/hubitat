@@ -21,6 +21,7 @@ metadata {
         name: "Sinope Switch (SW2500ZB)",
         namespace: "iamtrep",
         author: "pj",
+        description: "Zigbee on/off switch",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/sinope/Sinope_SW2500ZB.groovy"
     ) {
 		capability "Actuator"

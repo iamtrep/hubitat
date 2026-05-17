@@ -18,7 +18,8 @@ metadata {
     definition(
         name: "Virtual mmWave PIR Sensor",
         namespace: "iamtrep",
-        author: "pj"
+        author: "pj",
+        description: "Virtual device combining PIR + mmWave motion attributes for testing Motion Fusion"
     ) {
         capability "Actuator"
         capability "Sensor"

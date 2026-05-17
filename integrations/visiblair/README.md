@@ -13,11 +13,11 @@ Parent/child integration for [VisiblAir](https://visiblair.com/) indoor air qual
 | Component | Type | Description |
 |---|---|---|
 | **VisiblAir Manager** | App | Auto-discovers VisiblAir sensors and creates child devices with model-specific drivers |
-| **VisiblAir Sensor C** | Driver |  |
-| **VisiblAir Sensor E** | Driver |  |
-| **VisiblAir Sensor O** | Driver |  |
-| **VisiblAir Sensor X** | Driver |  |
-| **VisiblAir Sensor XW** | Driver |  |
+| **VisiblAir Sensor C** | Driver | CO₂, temperature, humidity |
+| **VisiblAir Sensor E** | Driver | CO₂, temperature, humidity, VOC, pressure, PM, AQI |
+| **VisiblAir Sensor O** | Driver | CO₂, temperature, humidity, VOC, PM, smoke/vape detection |
+| **VisiblAir Sensor X** | Driver | Temperature, humidity, pressure, PM (1 / 2.5 / 4 / 10) |
+| **VisiblAir Sensor XW** | Driver | Wind speed, direction, compass heading |
 <!-- /AUTO -->
 
 ## Standalone Alternative

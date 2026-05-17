@@ -24,7 +24,8 @@ metadata {
     definition(
         name: "Virtual Flow Meter (Test)",
         namespace: "iamtrep",
-        author: "pj"
+        author: "pj",
+        description: "Virtual liquid-flow-rate device for testing Well Monitor flow tracking"
     ) {
         capability "Actuator"
         capability "Sensor"

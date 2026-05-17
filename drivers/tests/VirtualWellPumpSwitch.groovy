@@ -26,7 +26,8 @@ metadata {
     definition(
         name: "Virtual Well Pump Switch (Test)",
         namespace: "iamtrep",
-        author: "pj"
+        author: "pj",
+        description: "Virtual switch + powerMeter device for testing Well Monitor pump cycle detection"
     ) {
         capability "Actuator"
         capability "Sensor"

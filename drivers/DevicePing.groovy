@@ -10,6 +10,7 @@ metadata {
         name: "Device Ping",
         namespace: "iamtrep",
         author: "pj",
+        description: "Pings a device and reports connectivity as a contact sensor",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/DevicePing.groovy",
         singleThreaded: true
     )

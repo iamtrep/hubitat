@@ -16,6 +16,7 @@ metadata {
         name: "VisiblAir Sensor O",
         namespace: "iamtrep",
         author: "pj",
+        description: "CO₂, temperature, humidity, VOC, PM, smoke/vape detection",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/integrations/visiblair/VisiblAirSensorO.groovy"
     ) {
         capability "AirQuality"

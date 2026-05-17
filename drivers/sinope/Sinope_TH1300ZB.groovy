@@ -33,6 +33,7 @@ metadata
         name: 'Sinope Thermostat TH13X0ZB DEV',
         namespace: 'iamtrep',
         author: 'pj',
+        description: 'Zigbee thermostat',
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/sinope/Sinope_TH1300ZB.groovy"
     ) {
         capability 'Actuator'

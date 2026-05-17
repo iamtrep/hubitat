@@ -24,6 +24,7 @@ metadata {
         name: "Ecobee Companion",
         namespace: "iamtrep",
         author: "pj",
+        description: "Advanced Ecobee thermostat control via OAuth API",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/EcobeeCompanion.groovy"
     ) {
         capability "Actuator"

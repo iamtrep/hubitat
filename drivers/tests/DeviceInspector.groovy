@@ -17,6 +17,7 @@ metadata {
         name: "Device Inspector",
         namespace: "iamtrep",
         author: "iamtrep",
+        description: "Diagnostic driver that dumps DeviceWrapper properties to logs",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/DeviceInspector.groovy"
     ) {
         capability "Refresh"

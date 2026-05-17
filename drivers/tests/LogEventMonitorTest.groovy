@@ -10,7 +10,8 @@ metadata {
     definition(
         name: "Log Event Monitor Test",
         namespace: "iamtrep",
-        author: "pj"
+        author: "pj",
+        description: "Companion test device for Log Event Monitor"
     ) {
         capability "Actuator"
 

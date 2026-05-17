@@ -30,6 +30,7 @@ metadata {
         name: "Universal Electronics / Visonic / Xfinity Contact Sensor",
         namespace: "iamtrep",
         author: "pj",
+        description: "Zigbee contact sensor with battery, tamper, and temperature",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/XfinityContactSensor.groovy"
     ) {
         capability "Configuration"

@@ -29,6 +29,7 @@ metadata {
         name: "IKEA Window Blinds",
         namespace: "iamtrep",
         author: "pj",
+        description: "Zigbee driver for IKEA window blinds",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/IKEA-Blinds.groovy"
     ) {
         capability "Actuator"

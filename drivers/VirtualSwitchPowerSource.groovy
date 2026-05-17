@@ -15,7 +15,8 @@
    setPowerSource(other)     → switch=on,  powerSource={value}
  */
 metadata {
-    definition(name: 'Virtual Switch + PowerSource', namespace: 'iamtrep', author: 'pj') {
+    definition(name: 'Virtual Switch + PowerSource', namespace: 'iamtrep', author: 'pj',
+               description: 'Virtual device with synced Switch and PowerSource capabilities for testing power outage detection') {
         capability 'Switch'
         capability 'PowerSource'
 

@@ -39,6 +39,7 @@ metadata {
         name: "Sinope Water Valve (VA422xZB)",
         namespace: "iamtrep",
         author: "pj",
+        description: "Zigbee water valve with optional flow sensor support",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/sinope/Sinope_VA422xZB.groovy"
     ) {
         capability "Configuration"

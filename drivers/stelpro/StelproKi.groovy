@@ -40,6 +40,7 @@ metadata {
         name: "Stelpro Ki ZigBee Thermostat",
         namespace: "iamtrep",
         author: "pj",
+        description: "Zigbee thermostat for Stelpro Ki",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/stelpro/StelproKi.groovy"
     ) {
         capability "Configuration"

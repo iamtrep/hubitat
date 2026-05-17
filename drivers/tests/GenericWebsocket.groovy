@@ -6,7 +6,8 @@
  */
 
 metadata {
-    definition(name: "Generic WebSocket Test", namespace: "iamtrep", author: "pj") {
+    definition(name: "Generic WebSocket Test", namespace: "iamtrep", author: "pj",
+               description: "Development driver for testing WebSocket connections") {
         command "connect"
         command "disconnect"
 

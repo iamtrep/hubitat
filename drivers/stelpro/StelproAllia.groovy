@@ -39,6 +39,7 @@ metadata {
     definition (name: "Stelpro Allia Zigbee Thermostat",
                 namespace: "iamtrep",
                 author: "pj",
+                description: "Zigbee thermostat for Allia / Stello Hilo HT402",
                 importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/stelpro/StelproAllia.groovy"
     ) {
         capability 'Actuator'

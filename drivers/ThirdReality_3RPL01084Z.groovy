@@ -37,6 +37,7 @@ metadata {
         name: "ThirdReality Presence Sensor R3 (3RPL01084Z)",
         namespace: "iamtrep",
         author: "pj",
+        description: "60 GHz mmWave presence sensor with RGB night light, illuminance, and TVOC air quality (Zigbee 3.0)",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/ThirdReality_3RPL01084Z.groovy"
     ) {
         capability "Configuration"
