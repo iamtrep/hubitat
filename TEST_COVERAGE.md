@@ -47,7 +47,7 @@ When you ship a new test, add a row here in the same commit as the test artifact
 | [`apps/utilities/DeviceInUseEnumerator.groovy`](apps/utilities/DeviceInUseEnumerator.groovy) | Utility (UI report) | — | N | — | Uncovered. Computation-heavy with a UI surface; Mode 4 mirror could test the enumeration logic if regressions appear. |
 | [`apps/utilities/DeviceReplacement.groovy`](apps/utilities/DeviceReplacement.groovy) | Utility | — | N | — | Uncovered. |
 | [`apps/utilities/RuleLoggingManager.groovy`](apps/utilities/RuleLoggingManager.groovy) | OAuth API | 2 | Y | [`apps/utilities/tests/test-rule-logging-manager.sh`](apps/utilities/tests/test-rule-logging-manager.sh) | Snapshot-diff coverage of undocumented hub endpoints. |
-| [`apps/WellPumpMonitor/WellPumpMonitor.groovy`](apps/WellPumpMonitor/WellPumpMonitor.groovy) | Automation | — | Y | — | Uncovered. |
+| [`apps/WellMonitor/WellMonitor.groovy`](apps/WellMonitor/WellMonitor.groovy) | Automation | 1 | Y | [`apps/WellMonitor/tests/test-well-monitor-app.sh`](apps/WellMonitor/tests/test-well-monitor-app.sh) ([spec](apps/WellMonitor/tests/spec-well-monitor.yaml)) | 5 cases: pump start/stop, coincident-flow math, water-flow start/stop, emergency shutoff. Uses paired [`drivers/tests/VirtualWellPumpSwitch.groovy`](drivers/tests/VirtualWellPumpSwitch.groovy) + [`drivers/tests/VirtualFlowMeter.groovy`](drivers/tests/VirtualFlowMeter.groovy). |
 
 ## Drivers
 
@@ -74,6 +74,8 @@ Per [`TESTING.md`](TESTING.md) §2.2, driver tests are not required by default; 
 | [`drivers/tests/GenericWebsocket.groovy`](drivers/tests/GenericWebsocket.groovy) | LAN (WebSocket) | (fixture) | exempt | — | Test-only generic WS client. |
 | [`drivers/tests/LogEventMonitorTest.groovy`](drivers/tests/LogEventMonitorTest.groovy) | Fixture (paired) | (fixture) | exempt | — | Companion driver — drives LogEventMonitor app behavior tests. |
 | [`drivers/tests/VirtualMmwavePirSensor.groovy`](drivers/tests/VirtualMmwavePirSensor.groovy) | Virtual (fixture) | (fixture) | exempt | — | Test driver for `MotionFusionChild` Mode 1. Mirrors Aqara FP300 attribute surface. |
+| [`drivers/tests/VirtualWellPumpSwitch.groovy`](drivers/tests/VirtualWellPumpSwitch.groovy) | Virtual (fixture) | (fixture) | exempt | [`drivers/tests/test-well-monitor-drivers.sh`](drivers/tests/test-well-monitor-drivers.sh) | Test driver for `WellMonitor` Mode 1. Combines `PowerMeter` + `Switch` (the app calls `pumpSwitch.off()` during emergency); paired bash script smoke-tests the command→event contract. |
+| [`drivers/tests/VirtualFlowMeter.groovy`](drivers/tests/VirtualFlowMeter.groovy) | Virtual (fixture) | (fixture) | exempt | [`drivers/tests/test-well-monitor-drivers.sh`](drivers/tests/test-well-monitor-drivers.sh) | Test driver for `WellMonitor` Mode 1. Mirrors the `Sinope_VA422xZB` attribute surface (`LiquidFlowRate` + `volume`). Shares the smoke-test script with the pump-switch fixture. |
 | [`drivers/ThirdReality_3RPL01084Z.groovy`](drivers/ThirdReality_3RPL01084Z.groovy) | Zigbee | — | N | — | Smart plug. `parse()`-injection pattern would apply (parked). |
 | [`drivers/VirtualSwitchPowerSource.groovy`](drivers/VirtualSwitchPowerSource.groovy) | Virtual | — | N | — | Virtual driver — typically driven by direct command, no `parse()`. |
 | [`drivers/visiblair/visiblair.groovy`](drivers/visiblair/visiblair.groovy) | HTTP polling | — | N | — | Standalone driver. Coexists with the `apps/sensors/visiblair/` parent-child integration. Mock-service pattern would apply (parked). |
@@ -91,9 +93,9 @@ These aren't apps or drivers, but they ship test coverage of their own.
 
 ## Summary
 
-- Apps tested: **11** of **22** non-exempt apps (50%). Six exempt (parents + in-hub stress apps).
+- Apps tested: **12** of **22** non-exempt apps (55%). Six exempt (parents + in-hub stress apps).
 - Drivers tested: **0** of **15** non-fixture drivers. Driver tests are not required by the bar — see [`TESTING.md`](TESTING.md) §2.2.
-- Mode 1 (behavior) is by far the dominant test mode (8 apps + 2 libraries). Mode 2 (API integration) covers 2 apps. Mode 3 / Mode 4 cover HubDiagnostics only.
-- Named uncovered automation apps: `HydroPeakEvents`, `LocationEventMapperChild`, `LogMonitor` / `LogMonitorBridge`, `StartupShutdownMonitor`, `WellPumpMonitor`.
+- Mode 1 (behavior) is by far the dominant test mode (9 apps + 2 libraries). Mode 2 (API integration) covers 2 apps. Mode 3 / Mode 4 cover HubDiagnostics only.
+- Named uncovered automation apps: `HydroPeakEvents`, `LocationEventMapperChild`, `LogMonitor` / `LogMonitorBridge`, `StartupShutdownMonitor`.
 
 Update this ledger when you add a test or a new source file. The summary counts are easy to forget — recount when you change rows.

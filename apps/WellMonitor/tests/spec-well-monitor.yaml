@@ -1,0 +1,185 @@
+# Copyright (c) 2025-2026 PJ
+# SPDX-License-Identifier: MIT
+
+# WellMonitor — Mode 1 behavior test spec
+#
+# Covers the core pump-cycle, water-flow, and emergency-shutoff paths.
+# The minimum `emergencyTimeoutSeconds` allowed by the app is 10s (per the
+# preference's `range: "10..3600"`); we use that minimum so the emergency
+# case can run in ~12s instead of the prod default of 5 minutes.
+#
+# ── PREREQUISITES (driver gap) ────────────────────────────────────────
+# The hub does NOT currently host virtual drivers for the two primary
+# inputs. Two test-only drivers must be authored and installed before
+# this rig can be provisioned:
+#
+#   1. `Virtual Well Pump Switch (Test)` — combines `PowerMeter` +
+#      `Switch`; exposes `setPower(Number)` to drive cycle transitions.
+#      Required because the app calls `pumpSwitch.off()` from
+#      `performEmergencyShutoff` AND subscribes to `power` events; no
+#      single existing virtual driver carries both.
+#
+#   2. `Virtual Flow Meter (Test)` — exposes `LiquidFlowRate` +
+#      a custom `volume` Number attribute; commands `setRate(Number)`,
+#      `setVolume(Number)` drive flow-event handlers and cycle volume
+#      math. (Real driver is `Sinope_VA422xZB` — Zigbee, not usable as a
+#      virtual.)
+#
+# All other input/output devices use stock virtual drivers (see below).
+# ──────────────────────────────────────────────────────────────────────
+
+app:
+  source: apps/WellMonitor/WellMonitor.groovy
+  type_name: "Well Monitor"
+  instance_label: test-well-monitor-app
+  config:
+    # Power thresholds — defaults are fine but we pin them explicitly so
+    # the test isn't sensitive to future default tweaks.
+    powerOnThreshold: 100
+    powerOffThreshold: 10
+    # Emergency timer at its minimum so the emergency case is fast.
+    enableEmergencyShutoff: true
+    emergencyTimeoutSeconds: 10
+    # Flow tracking ON (case 4/5).
+    enableFlowTracking: true
+    # CSV logging OFF — the rig has no need to write files and disabling
+    # it keeps log noise down. Cycle/flow history in state is enough for
+    # the assertions below.
+    enableCsvLogging: false
+    # Volume attribute on the flow meter (matches the test driver).
+    waterMeterAttribute: volume
+    # Standard log flags.
+    txtEnable: true
+    debugEnable: true
+    traceEnable: false
+
+inputs:
+  - { name: test-wm-pump,  driver: "Virtual Well Pump Switch (Test)", role: pumpSwitch }
+  - { name: test-wm-meter, driver: "Virtual Flow Meter (Test)",        role: waterMeter }
+
+outputs:
+  - { name: test-wm-pump-active, driver: Virtual Switch,         role: pumpActiveSwitch }
+  # Using Virtual Omni Sensor (carries WaterSensor + wet/dry) rather
+  # than Virtual Moisture Sensor — the Omni Sensor is confirmed-present
+  # on @maison-pro (driverTypeId 510), and Hubitat doesn't expose a JSON
+  # endpoint to look up built-in driver IDs by name.
+  - { name: test-wm-leak,        driver: Virtual Omni Sensor,    role: emergencyLeakSensor }
+  - { name: test-wm-flow-ind,    driver: Virtual Switch,         role: flowIndicatorSwitch }
+
+maker_api:
+  label: test-well-monitor-maker
+
+# Cases chain — each case picks up where the previous one left off, except
+# where `setup` resets state explicitly. Re-running the script reverts to
+# the baseline at case 1.
+cases:
+  # ─── Case 1: pump-start transition ──────────────────────────────────
+  # Baseline (setup): pump idle, volume baseline at 1000L.
+  # Action: power crosses ON threshold → handlePumpStarted should fire.
+  - name: pump-start-turns-on-active-switch
+    setup:
+      - { device: test-wm-pump,  command: setPower,  args: [0] }
+      - { device: test-wm-meter, command: setVolume, args: [1000] }
+      - { device: test-wm-pump-active, command: "off" }
+    setup_wait_seconds: 2
+    actions:
+      - { device: test-wm-pump, command: setPower, args: [200] }
+    wait_seconds: 3
+    assert:
+      - { device: test-wm-pump-active, attribute: switch, value: "on" }
+    assert_logs:
+      - { pattern: "Pump started", level: info }
+
+  # ─── Case 2: pump-stop transition (depends on case 1 leaving pump on)
+  # Drive some coincident draw (1000 → 1007.5L = 7.5L during cycle),
+  # then drop power below OFF threshold. handlePumpStopped should fire,
+  # turn the active switch off, append a cycle entry, and log the
+  # coincident-flow summary.
+  - name: pump-stop-records-cycle
+    setup:
+      - { device: test-wm-meter, command: setVolume, args: [1007.5] }
+    setup_wait_seconds: 1
+    actions:
+      - { device: test-wm-pump, command: setPower, args: [0] }
+    wait_seconds: 3
+    assert:
+      - { device: test-wm-pump-active, attribute: switch, value: "off" }
+    assert_logs:
+      - { pattern: "Pump stopped", level: info }
+      # Verifies the coincident-flow figure is being computed and logged
+      # (exact decimal formatting may vary — pattern matches "7.5L" or
+      # "7.50L"). If formatting tightens up later, loosen the regex.
+      - { pattern: "coincident flow 7\\.5", level: info }
+
+  # ─── Case 3: water-flow start (rateHandler, independent of pump) ────
+  # The water meter's rate going non-zero (with no pump cycle in flight)
+  # should toggle the flow indicator on and log "Water flow started".
+  - name: flow-start-turns-on-flow-indicator
+    setup:
+      - { device: test-wm-meter, command: setRate, args: [0] }
+      - { device: test-wm-flow-ind, command: "off" }
+    setup_wait_seconds: 2
+    actions:
+      - { device: test-wm-meter, command: setRate, args: [5] }
+    wait_seconds: 3
+    assert:
+      - { device: test-wm-flow-ind, attribute: switch, value: "on" }
+    assert_logs:
+      - { pattern: "Water flow started", level: info }
+
+  # ─── Case 4: water-flow stop (depends on case 3 leaving flow active) ─
+  # Bump volume to simulate ~3L delivered, then drop rate to 0.
+  - name: flow-stop-records-event
+    setup:
+      - { device: test-wm-meter, command: setVolume, args: [1010.5] }
+    setup_wait_seconds: 1
+    actions:
+      - { device: test-wm-meter, command: setRate, args: [0] }
+    wait_seconds: 3
+    assert:
+      - { device: test-wm-flow-ind, attribute: switch, value: "off" }
+    assert_logs:
+      - { pattern: "Water flow stopped", level: info }
+
+  # ─── Case 5: emergency shutoff after maxRunTime ─────────────────────
+  # Start a fresh pump cycle; wait past the 10s emergency threshold.
+  # The scheduled `emergencyShutoff` callback should fire, set the leak
+  # sensor wet, command the pump off, and log "EMERGENCY SHUTOFF". The
+  # pump driver's off() should drive power to 0, which then trips the
+  # OFF threshold and turns the active switch off via handlePumpStopped.
+  #
+  # We assert via the eventsocket stream (leak sensor transitioning to
+  # `wet` during the case window) rather than the `EMERGENCY SHUTOFF`
+  # log line: log assertions on the late-firing emergency timer flaked
+  # in early runs (the log capture occasionally missed lines that the
+  # /logsJson endpoint clearly received), whereas the eventsocket-side
+  # leak-sensor transition is what real downstream automations would
+  # subscribe to anyway. The trailing attribute check is kept as
+  # belt-and-braces (verifies the device's persisted state, not just
+  # the in-flight event).
+  - name: emergency-shutoff-fires-after-max-runtime
+    setup:
+      - { device: test-wm-pump, command: setPower, args: [0] }
+      - { device: test-wm-leak, command: "dry" }
+      - { device: test-wm-pump-active, command: "off" }
+    setup_wait_seconds: 2
+    actions:
+      - { device: test-wm-pump, command: setPower, args: [200] }
+    # 10s emergency threshold + slack for runIn callback + the
+    # follow-up power=0 event from pump.off().
+    wait_seconds: 14
+    assert:
+      - { device: test-wm-leak,        attribute: water,  value: "wet" }
+      - { device: test-wm-pump-active, attribute: switch, value: "off" }
+    assert_events:
+      - { attribute: "water",  value: "wet", source: "test-wm-leak" }
+      - { attribute: "switch", value: "off", source: "test-wm-pump-active" }
+    # Emergency notification is sent via sendNotification(), which logs a
+    # warn when no notification device is configured. The spec deliberately
+    # omits notificationDevices (it's optional), so this warn is expected.
+    allow_log_patterns:
+      - "No notification device configured"
+
+# Budget: cases 1-4 ~3s each + case 5 ~14s + per-case provisioning slack
+# = ~35s. Bump if Hubitat scheduling jitter pushes us past this.
+runtime_budget_seconds: 45
