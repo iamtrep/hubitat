@@ -67,7 +67,8 @@ hub_auth_args() {
       local ip
       ip=$(hub_ip "$name")
       curl -s -c "$jar" -X POST "http://$ip/login" \
-        -d "username=$user&password=$pass" >/dev/null
+        --data-urlencode "username=$user" \
+        --data-urlencode "password=$pass" >/dev/null
     fi
     echo "-b $jar"
   fi
@@ -112,12 +113,12 @@ cmd_push() {
   endpoint_update="$type/ajax/update"
 
   local groovy_name
-  groovy_name=$(grep -oE 'name:[[:space:]]*"[^"]+"' "$file" | head -1 | sed 's/.*"\(.*\)"/\1/')
+  groovy_name=$(grep -m1 'name:' "$file" | sed -E 's/.*name:[[:space:]]*"(.*)".*/\1/' | sed 's/\\"/"/g')
   [[ -n "$groovy_name" ]] || { echo "error: could not extract name from definition()" >&2; exit 2; }
 
   local id version
   id=$(curl -s $auth "http://$ip/hub2/$endpoint_list" \
-       | jq -r ".[] | select(.name==\"$groovy_name\") | .id")
+       | jq -r --arg n "$groovy_name" '.[] | select(.name==$n) | .id')
   [[ -n "$id" ]] || { echo "error: '$groovy_name' not found on $name — use /hubitat-install first" >&2; exit 2; }
 
   version=$(curl -s $auth "http://$ip/$endpoint_code?id=$id" | jq -r '.version')
@@ -164,13 +165,24 @@ cmd_logs() {
   local name ip
   name=$(resolve_hub "$hub_arg")
   ip=$(hub_ip "$name")
+  # Ensure cookie jar is fresh if hub has security; ignore the returned -b args.
+  hub_auth_args "$name" >/dev/null
   command -v websocat >/dev/null || {
     echo "error: websocat not installed. brew install websocat" >&2
     echo "alternative: python3 scripts/lib/logsocket.py (if it exposes a CLI)" >&2
     exit 2
   }
+  local ws_args=()
+  local jar="/tmp/hubitat_cookies_$name"
+  if [[ -f "$jar" ]]; then
+    local cookie_val
+    cookie_val=$(awk '/HUBSESSION/{print $NF}' "$jar" | tail -1)
+    if [[ -n "$cookie_val" ]]; then
+      ws_args=(--header "Cookie: HUBSESSION=$cookie_val")
+    fi
+  fi
   echo "# tailing ws://$ip/logsocket — Ctrl-C to stop"
-  websocat "ws://$ip/logsocket"
+  websocat "${ws_args[@]}" "ws://$ip/logsocket"
 }
 
 cmd_run() {
@@ -193,9 +205,12 @@ cmd_run() {
 
   local url="http://$ip/apps/api/$app_id/devices/$device_id/$command"
   if [[ -n "${rest:-}" ]]; then
-    local encoded
-    encoded=$(printf '%s' "$rest" | jq -sRr @uri)
-    url="$url/$encoded"
+    local token encoded
+    read -ra rest_parts <<< "$rest"
+    for token in "${rest_parts[@]}"; do
+      encoded=$(printf '%s' "$token" | jq -sRr @uri)
+      url="$url/$encoded"
+    done
   fi
   url="$url?access_token=$token"
 
