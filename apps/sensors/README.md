@@ -9,6 +9,17 @@ Hubitat Elevation apps for combining multiple sensor readings into a single virt
 
 ## Apps
 
+<!-- AUTO:sensors-index -->
+| File | App | Description |
+|---|---|---|
+| `MotionFusionChild.groovy` | **Motion Fusion Child (child)** | Combine PIR and mmWave inputs into a single motion output using configurable fusion algorithms |
+| `SensorAggregator.groovy` | **Sensor Aggregator** | Manage sensor aggregators - apps that aggregate sensor values and save the result to a single virtual device |
+| `SensorAggregatorChild.groovy` | **Sensor Aggregator Child (child)** | Aggregate sensor values and save to a single virtual device |
+| `SensorAggregatorDiscreteChild.groovy` | **Sensor Aggregator Discrete Child (child)** | Aggregate discrete sensor values (contact, motion, tilt, etc) and save to a single virtual device |
+| `SensorFilterChild.groovy` | **Sensor Filter Child (child)** | Apply moving average or median filter to sensor data |
+| `SensorFilterManager.groovy` | **Sensor Filters** | Manages multiple sensor filter instances |
+<!-- /AUTO -->
+
 ### Sensor Aggregator (parent/child)
 
 Aggregates values from multiple sensors of the same type and writes the result to a single virtual output device.

@@ -9,6 +9,17 @@ Hubitat Elevation apps for stress-testing various hub subsystems. These are diag
 
 ## Apps
 
+<!-- AUTO:tests-index -->
+| File | App | Description |
+|---|---|---|
+| `asyncHttpStressTest.groovy` | **Async HTTP Stress Test App** | Async HTTP Stress Test App |
+| `udpStressTest.groovy` | **Async UDP Stress Test App** | Async UDP Stress Test App |
+| `FieldStaticPersistenceTest.groovy` | **Field Static Persistence Test** | Probe app for verifying @Field static survives Hubitat code pushes (2.5.0.x+). |
+| `fileManagerTests.groovy` | **File Manager API test** | tbd |
+| `hubStressTests.groovy` | **Hub Stress Test App** | Some HE stress test functions |
+| `SampleApp.groovy` | **Sample Application** | A skeleton sample app for HE |
+<!-- /AUTO -->
+
 ### Async HTTP Stress Test (`asyncHttpStressTest.groovy`)
 
 Fires batches of overlapping `asynchttpGet` calls against a configurable URL to test the hub's async HTTP concurrency and callback handling.

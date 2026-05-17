@@ -172,12 +172,13 @@ The app exposes the following endpoints via OAuth-secured mappings. The access t
 
 ## File Structure
 
+<!-- AUTO:wellmonitor-files -->
 ```
 apps/WellMonitor/
   WellMonitor.groovy            # Hubitat app (Groovy)
   wellmonitor-dashboard.html    # Web dashboard (HTML/CSS/JS)
-  README.md                     # This file
 ```
+<!-- /AUTO -->
 
 On the hub's File Manager:
 ```

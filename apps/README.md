@@ -9,26 +9,30 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 
 ## Standalone Apps
 
+<!-- AUTO:apps-table -->
 | App | Description |
 |---|---|
-| **Switch Monitor** | Monitors switches that must remain on or off, organized in device groups with independent target state, timing, notifications, and load monitoring. Auto-corrects deviations after a configurable grace period with retry logic, and optionally monitors connected load on power-reporting devices. Supports power outage awareness to pause recovery during outages. |
-| **Attribute Logger** | Parent/child app that logs device attribute changes. Create multiple logger instances to track different devices and attributes. |
-| **Battery Change Logger** | Monitors battery levels across devices and logs replacement history to an on-hub JSON file. |
-| **Humidity Fan Controller** | Controls a bathroom extractor fan using a state machine that compares bathroom humidity against a reference sensor, with debounced transitions and configurable thresholds. |
-| **Hydro-Québec Peak Period Manager** | Manages thermostats and appliances during Hydro-Québec peak demand periods using data from the Hydro-Québec API. |
-| **Location Event Mapper** | Parent/child app that maps hub location events (startup, shutdown, reboot, etc.) to virtual contact sensor states for use in Rule Machine automations. |
-| **Startup and Shutdown Monitor** | Opens/closes a virtual contact sensor on hub shutdown, reboot, and startup events for use in automations. |
+| **Attribute Logger (parent/child)** | Manages multiple Attribute Logger app instances |
+| **Battery Change Logger** | Monitors battery levels and logs replacements to app history and an on-hub JSON file |
+| **Humidity-Based Fan Controller** | Controls a bathroom extractor fan based on humidity levels compared to a reference sensor |
+| **Hydro-Québec Peak Period Manager** | Manages devices during Hydro-Québec peak periods |
+| **Location Event Mapper (parent/child)** | TBD |
+| **Startup and Shutdown Monitor** | Controls a virtual contact sensor based on system events related to startup, shutdown and reboot |
+| **Switch Monitor** | Monitors switches that must remain on or off, organized in groups with independent timing, notifications, and load monitoring. |
+<!-- /AUTO -->
 
 ## Subfolders
 
+<!-- AUTO:apps-subfolders -->
 | Folder | Description |
 |---|---|
-| [HubDiagnostics/](HubDiagnostics/) | Comprehensive hub diagnostic dashboard — devices, apps, network, performance history, snapshots, forum export. Served as a single-page UI from the hub. |
-| [LogMonitor/](LogMonitor/) | Hub log monitoring app with WebSocket bridge — connects to one or more hub logsockets, applies configurable filters, and outputs to notifications, log files, or HTTP POST. |
-| [sensors/](sensors/) | Sensor Aggregator, Sensor Filter, and Motion Fusion apps for combining, smoothing, or fusing multiple sensor readings into a single virtual device. |
-| [tests/](tests/) | Hub stress test apps for benchmarking async HTTP, UDP, and File Manager API performance. |
-| [utilities/](utilities/) | Hub administration tools: device "in use by" report, device replacement helper, and Rule Machine subscription tracker. |
-| [WellPumpMonitor/](WellPumpMonitor/) | Well pump monitoring with cycle tracking, water flow metering, emergency shutoff, and a web dashboard. |
+| [HubDiagnostics/](./HubDiagnostics/) | Comprehensive hub diagnostics: inventory, performance tracking, network analysis, and snapshot comparison |
+| [LogMonitor/](./LogMonitor/) |  |
+| [sensors/](./sensors/) |  |
+| [tests/](./tests/) |  |
+| [utilities/](./utilities/) |  |
+| [WellMonitor/](./WellMonitor/) | Monitors well pump cycles, downstream consumption, tank usage, and emergency shutoff |
+<!-- /AUTO -->
 
 ## License
 

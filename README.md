@@ -29,6 +29,10 @@ Parent/child integration for [VisiblAir](https://visiblair.com/) indoor air qual
 
 Backup, log analysis, and external integration scripts. See [`scripts/`](scripts/README.md) for the full list.
 
+## Development
+
+After cloning, run `scripts/install-git-hooks.sh` once to enable the pre-commit hook that keeps the AUTO-generated sections of every README in sync with the source.
+
 ## License
 
 Released under the **MIT License** — see [LICENSE](LICENSE). Individual source files carry an `SPDX-License-Identifier: MIT` header.
