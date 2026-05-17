@@ -24,8 +24,9 @@ The companion documents — [`ARCHITECTURE.md`](ARCHITECTURE.md) for platform co
 5. [Writing tests — Mode 1 behavior tests](#5-writing-tests--mode-1-behavior-tests)
 6. [Cross-hub deployment](#6-cross-hub-deployment)
 7. [The skill catalog](#7-the-skill-catalog)
-8. [Going deeper](#8-going-deeper)
-9. [Troubleshooting](#9-troubleshooting)
+8. [Working efficiently](#8-working-efficiently)
+9. [Going deeper](#9-going-deeper)
+10. [Troubleshooting](#10-troubleshooting)
 
 ---
 
@@ -110,7 +111,7 @@ In Claude Code, run:
 /hubitat-list
 ```
 
-You should see a summary of your hub's installed apps, devices, and user drivers. If you get a connection error, see [Troubleshooting](#9-troubleshooting).
+You should see a summary of your hub's installed apps, devices, and user drivers. If you get a connection error, see [Troubleshooting](#10-troubleshooting).
 
 ### 2.4 The `@hubname` convention
 
@@ -492,7 +493,55 @@ For deeper detail on any skill — exactly what API endpoints it hits, what argu
 
 ---
 
-## 8. Going deeper
+## 8. Working efficiently
+
+This section is for anyone who wants to be deliberate about how much context each task consumes. None of it is required — the workflow works fine without these patterns. But knowing when to reach for them keeps sessions focused and produces sharper results.
+
+### 8.1 Direct skill invocation for routine work
+
+When you know exactly which skill you want, type the skill invocation directly:
+
+```
+/hubitat-push apps/foo.groovy @hubname
+```
+
+The agent runs the skill without first deliberating about which skill to use or whether to use one at all. Same result, less round-tripping. The intent-driven form ("push this file") still works — direct is just faster when you already know.
+
+### 8.2 The `./hub` CLI for ops that don't need reasoning
+
+Some operations — pushing a known file, listing devices, tailing logs, sending a command, checking hub status — don't need an agent. The `./hub` CLI dispatches them straight to `curl`:
+
+```
+./hub push apps/foo.groovy @hubname
+./hub list devices @hubname
+./hub logs @hubname
+./hub run "<device-id> on" @hubname
+./hub status @hubname
+./hub --help
+```
+
+The agent is for thinking; the CLI is for doing. Reach for the CLI when you don't need the agent to read code, weigh tradeoffs, or interpret output.
+
+### 8.3 Heavy vs. light skills — a taxonomy
+
+Skills vary in how much reference material they pull in:
+
+- **Light:** `/hubitat-list`, `/hubitat-push`, `/hubitat-run`, `/hubitat-app-button`, `/hubitat-publish`, `/hubitat-delete`, `/hubitat-filemanager`, `/hubitat-create-device`
+- **Heavy:** `/hubitat-behavior-test`, `/hubitat-arch-review`, `/hubitat-perf`, `/hubitat-oauth`, `/hubitat-app-device`, `/hubitat-install`
+
+Heavy skills run multi-step workflows and consult `ARCHITECTURE.md` / `TESTING.md`. They're the right tool when their job is what you actually need. They're the wrong tool when a light skill or the `./hub` CLI would handle it.
+
+### 8.4 One hub per task
+
+If a task only needs one hub, target one hub. Read-only operations against an auth-free hub are the cheapest end of the spectrum. Cross-hub work (publishing a driver to every hub, diffing two hubs) costs more by nature — reach for it when you're actually doing cross-hub work, not as a default.
+
+### 8.5 Single-purpose sessions
+
+A focused session ("write a behavior test for X," "fix the bug in Y," "review Z") keeps context lean and the prompt cache warm. Long mixed sessions inflate the context as the agent shifts gears and re-loads reference docs. Splitting a workday into a few focused sessions tends to produce sharper results than one continuous one.
+
+---
+
+## 9. Going deeper
 
 You now have the workflow. The reference material below is what you reach for when the workflow's defaults aren't enough.
 
@@ -517,7 +566,7 @@ When you're considering a non-trivial change, run [`/hubitat-arch-review`](.clau
 
 ---
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 **Hub unreachable** — `/hubitat-list` errors out, or `/hubitat-push` times out. Check `.hubitat.json`: the `hub_ip` must be right, you must be on the same LAN as the hub (or have a route to it), and if the hub has security enabled, the `username` and `password` must be correct. Confirm with `curl -s http://<hub_ip>/hub2/hubData` from the same shell — if that returns JSON, the skill should work too.
 
