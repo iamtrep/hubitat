@@ -16,7 +16,7 @@ import com.hubitat.hub.domain.Event
 import java.nio.file.AccessDeniedException
 
 @Field static final String APP_NAME = "Well Pump Monitor"
-@Field static final String APP_VERSION = "0.5.0"
+@Field static final String APP_VERSION = "0.8.1"
 @Field static final String DASHBOARD_FILE = "wellpump-dashboard.html"
 @Field static final String CHARTJS_FILE = "wellpump-chart.min.js"
 
@@ -897,6 +897,41 @@ private List<Map> computeDailySummaries(List<Map> history, String volumeKey) {
 }
 
 /**
+ * Bucket flow-event volumes into hourly windows over the past `hoursWindow` hours
+ * (anchored to the start of the current local-time hour). Returns one entry per
+ * hour, oldest first, even for hours with no activity (volumeL=0, count=0).
+ */
+private List<Map> computeHourlyConsumption(int hoursWindow) {
+    long bucketMs = 3600000L
+    TimeZone tz = location?.timeZone ?: TimeZone.getDefault()
+    Calendar cal = Calendar.getInstance(tz)
+    cal.setTimeInMillis(now())
+    cal.set(Calendar.MINUTE, 0)
+    cal.set(Calendar.SECOND, 0)
+    cal.set(Calendar.MILLISECOND, 0)
+    long currentHourStart = cal.getTimeInMillis()
+    long windowStart = currentHourStart - (hoursWindow - 1) * bucketMs
+
+    List<Map> buckets = new ArrayList<Map>(hoursWindow)
+    for (int i = 0; i < hoursWindow; i++) {
+        long ts = windowStart + i * bucketMs
+        buckets.add([ts: ts, volumeL: 0.0 as BigDecimal, count: 0])
+    }
+
+    List<Map> flowHistory = (state.flowHistory ?: []) as List<Map>
+    flowHistory.each { Map entry ->
+        Long ts = entry.ts as Long
+        if (ts == null || ts < windowStart) return
+        long idx = (ts - windowStart).intdiv(bucketMs)
+        if (idx < 0 || idx >= hoursWindow) return
+        Map bucket = buckets[idx as int]
+        bucket.volumeL = (bucket.volumeL as BigDecimal) + ((entry.volumeL ?: 0) as BigDecimal)
+        bucket.count = (bucket.count as int) + 1
+    }
+    return buckets
+}
+
+/**
  * Bucket pump cycles by hour-of-day (0-23) for peak usage analysis.
  */
 private Map<Integer, Integer> computeHourlyDistribution() {
@@ -1195,12 +1230,27 @@ Map getStatsJson() {
     List<Map> dailyFlow = computeDailySummaries((state.flowHistory ?: []) as List<Map>, 'volumeL')
     Map<Integer, Integer> hourly = computeHourlyDistribution()
 
+    long cutoff24h = now() - 24L * 3600000L
+    long cutoff7d  = now() - 7L * 24L * 3600000L
+    List<Map> fh = (state.flowHistory ?: []) as List<Map>
+    List<Map> flowEvents24h = fh.findAll { Map e -> (e.ts as Long) != null && (e.ts as Long) >= cutoff24h }
+    List<Map> flowEvents7d  = fh.findAll { Map e -> (e.ts as Long) != null && (e.ts as Long) >= cutoff7d  }
+    List<Map> ch = (state.cycleHistory ?: []) as List<Map>
+    List<Map> cycleEvents24h = ch.findAll { Map e -> (e.ts as Long) != null && (e.ts as Long) >= cutoff24h }
+    List<Map> cycleEvents7d  = ch.findAll { Map e -> (e.ts as Long) != null && (e.ts as Long) >= cutoff7d  }
+
     Map stats = [
         allTime: allTime,
         recentWindow: recentCycle,
         dailyCycleSummaries: dailyCycles,
         dailyFlowSummaries: dailyFlow,
-        hourlyDistribution: hourly
+        hourlyDistribution: hourly,
+        hourlyConsumption24h: computeHourlyConsumption(24),
+        hourlyConsumption7d:  computeHourlyConsumption(168),
+        flowEvents24h: flowEvents24h,
+        flowEvents7d:  flowEvents7d,
+        cycleEvents24h: cycleEvents24h,
+        cycleEvents7d:  cycleEvents7d
     ]
     return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson(stats))
 }

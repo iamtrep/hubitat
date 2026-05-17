@@ -54,6 +54,12 @@ SPDX-License-Identifier: MIT
 
         .chart-container { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 24px; }
         .chart-container h3 { font-size: 0.95rem; font-weight: 600; margin-bottom: 12px; }
+        .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 8px; }
+        .chart-header h3 { margin: 0; }
+        .chart-toggle { display: inline-flex; background: var(--bg); border-radius: 6px; padding: 2px; gap: 0; }
+        .chart-toggle button { background: transparent; border: none; padding: 4px 10px; font-size: 0.75rem; cursor: pointer; color: var(--text-muted); border-radius: 4px; font-weight: 500; }
+        .chart-toggle button.active { background: var(--card-bg); color: var(--primary); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+        .chart-toggle button:hover:not(.active) { color: var(--text); }
         .chart-wrap { position: relative; height: 220px; }
         .chart-wrap.tall { height: 250px; }
         .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
@@ -121,13 +127,45 @@ SPDX-License-Identifier: MIT
         <div class="cards" id="overviewCards"></div>
         <div class="chart-row">
             <div class="chart-container">
+                <div class="chart-header">
+                    <h3>Flow Events</h3>
+                    <div class="chart-toggle" data-toggle="flowEvents">
+                        <button class="active" data-window="24h">24h</button>
+                        <button data-window="7d">7d</button>
+                    </div>
+                </div>
+                <div class="chart-wrap"><canvas id="flowEvents24Chart"></canvas></div>
+            </div>
+            <div class="chart-container">
+                <div class="chart-header">
+                    <h3>Cycle Events</h3>
+                    <div class="chart-toggle" data-toggle="cycleEvents">
+                        <button class="active" data-window="24h">24h</button>
+                        <button data-window="7d">7d</button>
+                    </div>
+                </div>
+                <div class="chart-wrap"><canvas id="cycleEventsChart"></canvas></div>
+            </div>
+        </div>
+        <div class="chart-row">
+            <div class="chart-container">
+                <div class="chart-header">
+                    <h3>Hourly Consumption</h3>
+                    <div class="chart-toggle" data-toggle="hourly">
+                        <button class="active" data-window="24h">24h</button>
+                        <button data-window="7d">7d</button>
+                    </div>
+                </div>
+                <div class="chart-wrap"><canvas id="hourly24Chart"></canvas></div>
+            </div>
+            <div class="chart-container">
                 <h3>Daily Water Consumption (Flow Events)</h3>
                 <div class="chart-wrap"><canvas id="dailyChart"></canvas></div>
             </div>
-            <div class="chart-container">
-                <h3>Pump Cycles by Hour of Day</h3>
-                <div class="chart-wrap"><canvas id="hourlyChart"></canvas></div>
-            </div>
+        </div>
+        <div class="chart-container">
+            <h3>Pump Cycles by Hour of Day</h3>
+            <div class="chart-wrap"><canvas id="hourlyChart"></canvas></div>
         </div>
     </div>
 
@@ -205,7 +243,7 @@ SPDX-License-Identifier: MIT
 
     const ACCESS_TOKEN = '${access_token}';
     const BASE_URL = window.location.pathname.replace(/\/dashboard\/?$/, '');
-    const UI_VERSION = '0.5.0';
+    const UI_VERSION = '0.8.1';
 
     // ==================== Helpers ====================
 
@@ -247,6 +285,28 @@ SPDX-License-Identifier: MIT
 
     function fmtTsDate(ts) {
         return fmtTs(ts, { year: 'numeric', month: 'short', day: 'numeric' });
+    }
+
+    // Build aligned ticks for a time-window scatter axis. For "24h" snaps to top-of-hour
+    // every `hourStep` hours; for "7d" snaps to local midnight every `dayStep` days.
+    function buildTimeAxisTicks(min, max, windowKey, hourStep, dayStep) {
+        const step = (windowKey === '7d') ? dayStep * 86400000 : hourStep * 3600000;
+        function alignDown(t) {
+            const d = new Date(t);
+            if (windowKey === '7d') {
+                d.setHours(0, 0, 0, 0);
+            } else {
+                d.setMinutes(0, 0, 0);
+            }
+            return d.getTime();
+        }
+        let first = alignDown(min);
+        if (first < min) first += step;
+        const ticks = [];
+        for (let t = first; t <= max; t += step) {
+            ticks.push({ value: t });
+        }
+        return ticks;
     }
 
     // Safari-safe parse for "yyyy-MM-dd HH:mm:ss" — Date.parse on this is unreliable across browsers.
@@ -314,6 +374,16 @@ SPDX-License-Identifier: MIT
     let dailyChartInstance = null;
     let hourlyChartInstance = null;
     let trendChartInstance = null;
+    let hourly24ChartInstance = null;
+    let flowEvents24ChartInstance = null;
+    let cycleEventsChartInstance = null;
+
+    // Latest /api/stats payload — kept around so chart-toggle clicks can re-render without re-fetching.
+    let lastStats = null;
+    // Current window selection per toggleable chart.
+    let hourlyWindow = '24h';
+    let flowEventsWindow = '24h';
+    let cycleEventsWindow = '24h';
 
     function renderDailyChart(dailySummaries) {
         const ctx = document.getElementById('dailyChart').getContext('2d');
@@ -375,6 +445,193 @@ SPDX-License-Identifier: MIT
                 scales: {
                     y: { beginAtZero: true, ticks: { stepSize: 1 } },
                     x: { title: { display: true, text: 'Hour of Day' } }
+                }
+            }
+        });
+    }
+
+    function renderHourly24Chart(buckets, windowKey) {
+        const ctx = document.getElementById('hourly24Chart').getContext('2d');
+        if (hourly24ChartInstance) hourly24ChartInstance.destroy();
+        if (!buckets || !buckets.length) return;
+        const is7d = windowKey === '7d';
+        hourly24ChartInstance = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: buckets.map(function(b) {
+                    return is7d
+                        ? fmtTs(b.ts, { month: 'short', day: 'numeric', hour: '2-digit' })
+                        : fmtTs(b.ts, { hour: '2-digit', minute: '2-digit' });
+                }),
+                datasets: [{
+                    label: 'Volume (L)',
+                    data: buckets.map(function(b) { return b.volumeL; }),
+                    backgroundColor: chartColors.blue,
+                    borderRadius: 2,
+                    barPercentage: 1.0,
+                    categoryPercentage: 1.0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(c) {
+                                const b = buckets[c.dataIndex];
+                                return fmtVol(b.volumeL) + ' L · ' + fmtInt(b.count) + ' event(s)';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: { ticks: { maxRotation: 60, autoSkip: true, maxTicksLimit: is7d ? 14 : 12 } },
+                    y: { beginAtZero: true, title: { display: true, text: 'Volume (L)' } }
+                }
+            }
+        });
+    }
+
+    function renderFlowEvents24Chart(events, windowKey) {
+        const ctx = document.getElementById('flowEvents24Chart').getContext('2d');
+        if (flowEvents24ChartInstance) flowEvents24ChartInstance.destroy();
+        const now = Date.now();
+        const hours = windowKey === '7d' ? 168 : 24;
+        const windowStart = now - hours * 3600 * 1000;
+        const points = (events || []).map(function(e) {
+            return { x: e.ts, y: e.volumeL, durationS: e.durationS, date: e.date };
+        });
+        flowEvents24ChartInstance = new Chart(ctx, {
+            type: 'scatter',
+            data: {
+                datasets: [{
+                    label: 'Flow event',
+                    data: points,
+                    backgroundColor: chartColors.teal,
+                    borderColor: chartColors.teal,
+                    pointRadius: function(c) {
+                        if (!c.raw) return 4;
+                        var d = c.raw.durationS || 0;
+                        return Math.min(10, Math.max(3, Math.sqrt(d)));
+                    },
+                    pointHoverRadius: function(c) {
+                        if (!c.raw) return 6;
+                        var d = c.raw.durationS || 0;
+                        return Math.min(12, Math.max(5, Math.sqrt(d) + 2));
+                    }
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(c) {
+                                return fmtVol(c.raw.y) + ' L over ' + fmtDec(c.raw.durationS) + 's at ' + fmtTs(c.raw.x);
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'linear',
+                        min: windowStart,
+                        max: now,
+                        afterBuildTicks: function(axis) {
+                            axis.ticks = buildTimeAxisTicks(windowStart, now, windowKey, 3, 1);
+                        },
+                        ticks: {
+                            callback: function(value) {
+                                return windowKey === '7d'
+                                    ? new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+                                    : new Date(value).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+                            }
+                        },
+                        title: { display: false }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: 'Volume per event (L)' }
+                    }
+                }
+            }
+        });
+    }
+
+    function renderCycleEventsChart(events, windowKey) {
+        const ctx = document.getElementById('cycleEventsChart').getContext('2d');
+        if (cycleEventsChartInstance) cycleEventsChartInstance.destroy();
+        const now = Date.now();
+        const hours = windowKey === '7d' ? 168 : 24;
+        const windowStart = now - hours * 3600 * 1000;
+        const points = (events || []).map(function(e) {
+            return {
+                x: e.ts,
+                y: e.coincidentFlowL != null ? e.coincidentFlowL : (e.volumeL || 0),
+                durationS: e.durationS,
+                coincidentLpm: e.coincidentLpm,
+                date: e.date
+            };
+        });
+        cycleEventsChartInstance = new Chart(ctx, {
+            type: 'scatter',
+            data: {
+                datasets: [{
+                    label: 'Pump cycle',
+                    data: points,
+                    backgroundColor: chartColors.orange,
+                    borderColor: chartColors.orange,
+                    pointRadius: function(c) {
+                        if (!c.raw) return 4;
+                        var d = c.raw.durationS || 0;
+                        return Math.min(10, Math.max(3, Math.sqrt(d)));
+                    },
+                    pointHoverRadius: function(c) {
+                        if (!c.raw) return 6;
+                        var d = c.raw.durationS || 0;
+                        return Math.min(12, Math.max(5, Math.sqrt(d) + 2));
+                    }
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(c) {
+                                const r = c.raw;
+                                return fmtDec(r.durationS) + 's run · coincident ' + fmtVol(r.y) + 'L @ ' + fmtDec(r.coincidentLpm) + ' LPM · ' + fmtTs(r.x);
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'linear',
+                        min: windowStart,
+                        max: now,
+                        afterBuildTicks: function(axis) {
+                            axis.ticks = buildTimeAxisTicks(windowStart, now, windowKey, 3, 1);
+                        },
+                        ticks: {
+                            callback: function(value) {
+                                return windowKey === '7d'
+                                    ? new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+                                    : new Date(value).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+                            }
+                        },
+                        title: { display: false }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: 'Coincident flow (L)' }
+                    }
                 }
             }
         });
@@ -448,8 +705,40 @@ SPDX-License-Identifier: MIT
         `;
         document.getElementById('overviewCards').innerHTML = html;
 
+        renderHourlyConsumptionChart(hourlyWindow);
+        renderFlowEventsChart(flowEventsWindow);
+        renderCycleEventsChartFor(cycleEventsWindow);
         renderDailyChart(stats.dailyFlowSummaries || []);
         renderHourlyChart(stats.hourlyDistribution || {});
+    }
+
+    function renderHourlyConsumptionChart(windowKey) {
+        if (!lastStats) return;
+        const data = windowKey === '7d' ? lastStats.hourlyConsumption7d : lastStats.hourlyConsumption24h;
+        renderHourly24Chart(data || [], windowKey);
+    }
+
+    function renderFlowEventsChart(windowKey) {
+        if (!lastStats) return;
+        const data = windowKey === '7d' ? lastStats.flowEvents7d : lastStats.flowEvents24h;
+        renderFlowEvents24Chart(data || [], windowKey);
+    }
+
+    function renderCycleEventsChartFor(windowKey) {
+        if (!lastStats) return;
+        const data = windowKey === '7d' ? lastStats.cycleEvents7d : lastStats.cycleEvents24h;
+        renderCycleEventsChart(data || [], windowKey);
+    }
+
+    function setupChartToggle(toggleEl, onChange) {
+        const buttons = toggleEl.querySelectorAll('button[data-window]');
+        buttons.forEach(function(b) {
+            b.addEventListener('click', function() {
+                buttons.forEach(function(x) { x.classList.remove('active'); });
+                b.classList.add('active');
+                onChange(b.dataset.window);
+            });
+        });
     }
 
     function renderCyclesTable(cycles) {
@@ -713,6 +1002,7 @@ SPDX-License-Identifier: MIT
                 fetchJson('/api/stats')
             ]);
 
+            lastStats = stats;
             updateStatus(status);
             renderOverview(status, stats);
             renderCyclesTable(cycles);
@@ -721,6 +1011,23 @@ SPDX-License-Identifier: MIT
             // Pass cycles to stats for trend chart
             stats._cycles = cycles;
             renderStatistics(stats);
+
+            // Wire up the 24h/7d toggle on each Overview chart.
+            const hourlyToggle = document.querySelector('[data-toggle="hourly"]');
+            if (hourlyToggle) setupChartToggle(hourlyToggle, function(w) {
+                hourlyWindow = w;
+                renderHourlyConsumptionChart(w);
+            });
+            const flowEventsToggle = document.querySelector('[data-toggle="flowEvents"]');
+            if (flowEventsToggle) setupChartToggle(flowEventsToggle, function(w) {
+                flowEventsWindow = w;
+                renderFlowEventsChart(w);
+            });
+            const cycleEventsToggle = document.querySelector('[data-toggle="cycleEvents"]');
+            if (cycleEventsToggle) setupChartToggle(cycleEventsToggle, function(w) {
+                cycleEventsWindow = w;
+                renderCycleEventsChartFor(w);
+            });
 
             // Make tables sortable
             makeSortable(document.getElementById('cyclesTable'));
