@@ -205,7 +205,7 @@ SPDX-License-Identifier: MIT
 
     const ACCESS_TOKEN = '${access_token}';
     const BASE_URL = window.location.pathname.replace(/\/dashboard\/?$/, '');
-    const UI_VERSION = '0.4.1';
+    const UI_VERSION = '0.4.2';
 
     // ==================== Helpers ====================
 
@@ -531,6 +531,9 @@ SPDX-License-Identifier: MIT
             html += statRow('Mean Duration', fmtDec(rw.meanDurationS) + 's \u00b1 ' + fmtDec(rw.stddevDurationS) + 's');
             html += statRow('Median Coincident Flow', fmtVol(rw.medianCoincidentFlowL) + 'L');
             html += statRow('Mean Coincident Flow', fmtVol(rw.meanCoincidentFlowL) + 'L \u00b1 ' + fmtVol(rw.stddevCoincidentFlowL) + 'L');
+            if (rw.tankWorkingVolumeCount > 0) {
+                html += statRow('Mean Tank Working Volume', fmtVol(rw.meanTankWorkingVolumeL) + 'L <span class="stat-n">(n=' + fmtInt(rw.tankWorkingVolumeCount) + ')</span>');
+            }
             html += `</div>`;
         }
 

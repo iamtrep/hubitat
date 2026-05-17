@@ -16,7 +16,7 @@ import com.hubitat.hub.domain.Event
 import java.nio.file.AccessDeniedException
 
 @Field static final String APP_NAME = "Well Pump Monitor"
-@Field static final String APP_VERSION = "0.4.1"
+@Field static final String APP_VERSION = "0.4.2"
 @Field static final String DASHBOARD_FILE = "wellpump-dashboard.html"
 @Field static final String CHARTJS_FILE = "wellpump-chart.min.js"
 
@@ -778,6 +778,23 @@ private Map computeCycleStats() {
     varianceCoincident = varianceCoincident / n
     BigDecimal stddevCoincident = Math.sqrt(varianceCoincident as double) as BigDecimal
 
+    // Tank working volume — mean draw between adjacent cycles in the in-memory window.
+    // history is newest-first, so each pair (newer, older) contributes
+    // newer.volumeAtStart - older.volumeAtEnd. Negative gaps (meter rollback) are skipped.
+    BigDecimal tankUsageSum = 0.0
+    int tankUsageN = 0
+    for (int i = 0; i < n - 1; i++) {
+        Map newer = history[i] as Map
+        Map older = history[i + 1] as Map
+        if (newer.volumeAtStart == null || older.volumeAtEnd == null) continue
+        BigDecimal gap = (newer.volumeAtStart as BigDecimal) - (older.volumeAtEnd as BigDecimal)
+        if (gap >= 0) {
+            tankUsageSum += gap
+            tankUsageN++
+        }
+    }
+    BigDecimal meanTankWorkingVolume = tankUsageN > 0 ? (tankUsageSum / tankUsageN) : 0.0 as BigDecimal
+
     return [
         recentCount: n,
         medianDurationS: medianDuration,
@@ -786,6 +803,8 @@ private Map computeCycleStats() {
         medianCoincidentFlowL: medianCoincident,
         meanCoincidentFlowL: meanCoincident,
         stddevCoincidentFlowL: stddevCoincident,
+        meanTankWorkingVolumeL: meanTankWorkingVolume,
+        tankWorkingVolumeCount: tankUsageN,
     ]
 }
 
