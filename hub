@@ -205,10 +205,10 @@ cmd_run() {
 
   local url="http://$ip/apps/api/$app_id/devices/$device_id/$command"
   if [[ -n "${rest:-}" ]]; then
-    local token encoded
+    local part encoded
     read -ra rest_parts <<< "$rest"
-    for token in "${rest_parts[@]}"; do
-      encoded=$(printf '%s' "$token" | jq -sRr @uri)
+    for part in "${rest_parts[@]}"; do
+      encoded=$(printf '%s' "$part" | jq -sRr @uri)
       url="$url/$encoded"
     done
   fi
