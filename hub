@@ -1,0 +1,219 @@
+#!/usr/bin/env bash
+# Copyright (c) 2025-2026 PJ
+# SPDX-License-Identifier: MIT
+#
+# ./hub — bash dispatcher for routine Hubitat hub operations.
+# Reads .hubitat.json (same convention as .claude/skills/*).
+# Use the agent for anything requiring reasoning; use this for ops you already know.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+CONFIG="$REPO_ROOT/.hubitat.json"
+
+usage() {
+  cat <<EOF
+./hub — routine Hubitat ops, no agent required.
+
+Usage:
+  ./hub status [@hubname]                     Hub info (firmware, IP, model)
+  ./hub push <file> [@hubname]                Push a .groovy file
+  ./hub list apps|drivers|devices [@hubname]  List resources on hub
+  ./hub logs [@hubname]                       Tail hub log stream
+  ./hub run "<device-id> <command> [args]" [@hubname]
+                                              Send a Maker API device command
+  ./hub --help                                This message
+
+Hub selection:
+  Pass @hubname (e.g., @cabin) to target a specific hub. If omitted, uses
+  default_hub from .hubitat.json.
+
+For ops that need reasoning (provisioning test rigs, OAuth setup, arch review,
+performance baselines, behavior tests), run the agent: /hubitat-<skill> in a
+Claude Code session.
+EOF
+}
+
+require_jq() {
+  command -v jq >/dev/null || { echo "error: jq is required" >&2; exit 2; }
+}
+
+require_config() {
+  [[ -f "$CONFIG" ]] || { echo "error: $CONFIG not found" >&2; exit 2; }
+}
+
+resolve_hub() {
+  local first="${1:-}"
+  if [[ "$first" =~ ^@(.+)$ ]]; then
+    echo "${BASH_REMATCH[1]}"
+  else
+    jq -r '.default_hub' "$CONFIG"
+  fi
+}
+
+hub_ip() {
+  local name="$1"
+  jq -er ".hubs[\"$name\"].hub_ip" "$CONFIG"
+}
+
+hub_auth_args() {
+  local name="$1"
+  local user pass
+  user=$(jq -r ".hubs[\"$name\"].username // empty" "$CONFIG")
+  pass=$(jq -r ".hubs[\"$name\"].password // empty" "$CONFIG")
+  if [[ -n "$user" && -n "$pass" ]]; then
+    local jar="/tmp/hubitat_cookies_$name"
+    if [[ ! -f "$jar" ]]; then
+      local ip
+      ip=$(hub_ip "$name")
+      curl -s -c "$jar" -X POST "http://$ip/login" \
+        -d "username=$user&password=$pass" >/dev/null
+    fi
+    echo "-b $jar"
+  fi
+}
+
+cmd_status() {
+  local name ip auth
+  name=$(resolve_hub "$@")
+  ip=$(hub_ip "$name")
+  auth=$(hub_auth_args "$name")
+  curl -s $auth "http://$ip/hub2/hubData" \
+    | jq -r '"name:     \(.name)\nmodel:    \(.model)\nfirmware: \(.version)\nip:       \(.ipAddress)"'
+}
+
+cmd_push() {
+  local file="" name ip auth type endpoint_list endpoint_code endpoint_update
+  local args=("$@")
+  for a in "${args[@]}"; do
+    if [[ "$a" =~ ^@ ]]; then continue; fi
+    file="$a"
+    break
+  done
+  [[ -n "$file" ]] || { echo "error: file path required" >&2; exit 2; }
+  [[ -f "$file" ]] || { echo "error: file not found: $file" >&2; exit 2; }
+
+  local hub_arg=""
+  for a in "${args[@]}"; do
+    if [[ "$a" =~ ^@ ]]; then hub_arg="$a"; break; fi
+  done
+  name=$(resolve_hub "$hub_arg")
+  ip=$(hub_ip "$name")
+  auth=$(hub_auth_args "$name")
+
+  case "$file" in
+    *apps/*)    type="app"   ;;
+    *drivers/*) type="driver" ;;
+    *) echo "error: file must be under apps/ or drivers/" >&2; exit 2 ;;
+  esac
+
+  endpoint_list="userAppTypes"; [[ "$type" == "driver" ]] && endpoint_list="userDeviceTypes"
+  endpoint_code="$type/ajax/code"
+  endpoint_update="$type/ajax/update"
+
+  local groovy_name
+  groovy_name=$(grep -oE 'name:[[:space:]]*"[^"]+"' "$file" | head -1 | sed 's/.*"\(.*\)"/\1/')
+  [[ -n "$groovy_name" ]] || { echo "error: could not extract name from definition()" >&2; exit 2; }
+
+  local id version
+  id=$(curl -s $auth "http://$ip/hub2/$endpoint_list" \
+       | jq -r ".[] | select(.name==\"$groovy_name\") | .id")
+  [[ -n "$id" ]] || { echo "error: '$groovy_name' not found on $name — use /hubitat-install first" >&2; exit 2; }
+
+  version=$(curl -s $auth "http://$ip/$endpoint_code?id=$id" | jq -r '.version')
+
+  local result
+  result=$(curl -s $auth -X POST "http://$ip/$endpoint_update" \
+             -H "Content-Type: application/x-www-form-urlencoded" \
+             --data-urlencode "id=$id" \
+             --data-urlencode "version=$version" \
+             --data-urlencode "source@$file")
+
+  echo "$result" | jq -r '
+    if .status == "success" then
+      "ok: \(.id) version=\(.version)"
+    else
+      "error: \(.errors // . | tostring)"
+    end'
+}
+
+cmd_list() {
+  local what="${1:-}"
+  shift || true
+  local hub_arg=""
+  for a in "$@"; do
+    if [[ "$a" =~ ^@ ]]; then hub_arg="$a"; break; fi
+  done
+  local name ip auth endpoint jq_fmt
+  name=$(resolve_hub "$hub_arg")
+  ip=$(hub_ip "$name")
+  auth=$(hub_auth_args "$name")
+
+  case "$what" in
+    apps)    endpoint="hub2/userAppTypes"; jq_fmt='.[] | "\(.id)\t\(.name)\t\(.namespace)"' ;;
+    drivers) endpoint="hub2/userDeviceTypes"; jq_fmt='.[] | "\(.id)\t\(.name)\t\(.namespace)"' ;;
+    devices) endpoint="hub2/devicesList"; jq_fmt='.[] | "\(.id)\t\(.label // .name)\t\(.type)"' ;;
+    *) echo "error: list what? (apps|drivers|devices)" >&2; exit 2 ;;
+  esac
+
+  curl -s $auth "http://$ip/$endpoint" | jq -r "$jq_fmt" | sort -t$'\t' -k2
+}
+
+cmd_logs() {
+  local hub_arg="${1:-}"
+  local name ip
+  name=$(resolve_hub "$hub_arg")
+  ip=$(hub_ip "$name")
+  command -v websocat >/dev/null || {
+    echo "error: websocat not installed. brew install websocat" >&2
+    echo "alternative: python3 scripts/lib/logsocket.py (if it exposes a CLI)" >&2
+    exit 2
+  }
+  echo "# tailing ws://$ip/logsocket — Ctrl-C to stop"
+  websocat "ws://$ip/logsocket"
+}
+
+cmd_run() {
+  local spec="${1:-}"
+  shift || true
+  [[ -n "$spec" ]] || { echo "error: run \"<device-id> <command> [args]\"" >&2; exit 2; }
+  local hub_arg=""
+  for a in "$@"; do
+    if [[ "$a" =~ ^@ ]]; then hub_arg="$a"; break; fi
+  done
+  local name ip app_id token
+  name=$(resolve_hub "$hub_arg")
+  ip=$(hub_ip "$name")
+  app_id=$(jq -er ".hubs[\"$name\"].maker_api.app_id" "$CONFIG")
+  token=$(jq -er ".hubs[\"$name\"].maker_api.token" "$CONFIG")
+
+  local device_id command rest
+  read -r device_id command rest <<< "$spec"
+  [[ -n "$device_id" && -n "$command" ]] || { echo "error: spec must be \"<id> <command> [args]\"" >&2; exit 2; }
+
+  local url="http://$ip/apps/api/$app_id/devices/$device_id/$command"
+  if [[ -n "${rest:-}" ]]; then
+    local encoded
+    encoded=$(printf '%s' "$rest" | jq -sRr @uri)
+    url="$url/$encoded"
+  fi
+  url="$url?access_token=$token"
+
+  curl -s "$url" | jq .
+}
+
+main() {
+  local sub="${1:-}"
+  shift || true
+  case "$sub" in
+    -h|--help|"") usage; exit 0 ;;
+    status)  require_jq; require_config; cmd_status "$@" ;;
+    push)    require_jq; require_config; cmd_push   "$@" ;;
+    list)    require_jq; require_config; cmd_list   "$@" ;;
+    logs)    require_jq; require_config; cmd_logs   "$@" ;;
+    run)     require_jq; require_config; cmd_run    "$@" ;;
+    *) echo "unknown subcommand: $sub" >&2; usage; exit 2 ;;
+  esac
+}
+
+main "$@"
