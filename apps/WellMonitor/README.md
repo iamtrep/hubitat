@@ -3,16 +3,18 @@ Copyright (c) 2025-2026 PJ
 SPDX-License-Identifier: MIT
 -->
 
-# Well Pump Monitor
+# Well Monitor
 
-A Hubitat Elevation app that monitors a well pump via power metering, tracks water consumption using a flow meter, logs pump cycles to CSV, and provides emergency shutoff protection. Includes a web-based dashboard with charts and statistics.
+A Hubitat Elevation app that monitors a residential well: pump cycles (via power metering on the pump switch), downstream water flow events (via a flow-rate meter), tank usage between cycles, daily/hourly consumption patterns, and emergency shutoff. CSV-logged history with a self-hosted SPA dashboard served via OAuth.
+
+The flow meter sits *downstream* of the pressure tank, so it measures household consumption — not pump output. The dashboard distinguishes between "downstream consumption" (real water used) and "coincident flow during pump cycles" (consumption that overlapped with a refill).
 
 ## Features
 
 ### Pump Cycle Tracking
 - Detects pump start/stop via configurable power thresholds on a metered switch
-- Records each cycle's duration, volume pumped, and average flow rate
-- Tracks **tank usage** (water consumed between pump cycles) by comparing meter readings
+- Records each cycle's duration, coincident downstream flow, and the meter readings at start/end
+- Tracks **tank usage** (consumption between pump cycles) by comparing meter readings — the working volume of the pressure tank
 - Maintains a rolling 100-cycle in-memory history plus persistent CSV logs
 
 ### Water Flow Tracking
@@ -27,40 +29,47 @@ A Hubitat Elevation app that monitors a well pump via power metering, tracks wat
 - Activates an optional virtual leak sensor (for integration with other automations)
 - Sends push notifications on shutoff
 
-### Flow Alerts
-- Warns when the pump runs longer than expected for the observed flow rate
-- Dynamic alert threshold: base time + bonus seconds for each flow-rate threshold exceeded
-- Detects potential dry-run or pipe-blockage conditions
-
 ### Hub Reboot Recovery
-- On initialization, checks if the pump was running before a hub restart
+- Subscribes to `systemStart` so it re-evaluates pump state after a hub restart
 - Reschedules the emergency timer for the remaining time, or triggers immediate shutoff if the timeout already passed
 - Handles the case where the pump stopped while the hub was down
 
 ### Statistics & Aggregation
 - **All-time statistics** from running counters (O(1) computation):
-  - Total cycles, total volume, total pump duration
-  - Mean and standard deviation for cycle duration and volume (via sum-of-squares)
+  - Total cycles, total downstream consumption, total tank usage, total pump duration
+  - Mean and standard deviation for cycle duration and coincident flow (via sum-of-squares)
   - Cycles per day, longest/shortest runs
 - **Recent window statistics** from the 100-entry history:
-  - Median, mean, and standard deviation for duration and volume
-- **Daily summaries**: cycles, volume, and duration grouped by day
+  - Median/mean/stddev for duration and coincident flow
+  - Mean tank working volume (between-cycle draw)
+- **Daily summaries**: flow-event volumes grouped by day
 - **Hourly distribution**: pump cycles bucketed by hour of day (0-23)
-- One-time migration seeds counters from existing history on upgrade
+- Migrations are idempotent and run on every initialization until no work remains
 
 ### Web Dashboard
 - Single-page HTML/JS dashboard served through the app's own OAuth endpoints
-- **Overview tab**: status cards, daily consumption chart, hourly distribution chart
+- **Overview tab** has 24h/7d toggles on three charts:
+  - Flow Events (scatter: time × volume, point size = √duration)
+  - Pump Cycle Events (mirror scatter for cycles)
+  - Hourly Consumption (bar)
+- Plus the long-running views: Daily Water Consumption, Pump Cycles by Hour of Day
 - **Cycles tab**: sortable table of all recorded pump cycles with tank usage
 - **Flow tab**: sortable table of all flow events
-- **Statistics tab**: all-time and recent-window stats, duration trend chart, daily summaries table
+- **Statistics tab**: all-time and recent-window stats with sample-size annotations
 - Auto-refreshing pump status (every 10 seconds)
+- Update banner when a newer app version is published on GitHub
 - CSV full-history loading via button click
 - Responsive mobile-first layout
 - Charts rendered with [Chart.js](https://www.chartjs.org/)
 
+### Dashboard Auto-Sync
+- On first install and on every "Done" save, the app fetches its dashboard HTML from GitHub and writes it to File Manager — no manual upload step required
+- Validates the downloaded file (must contain the app name AND a matching `UI_VERSION`) before overwriting the local copy
+- Daily scheduled re-check at 03:17 local for slow drift catch-up
+- Emergency recovery: if `/dashboard` is requested and the local file is missing, a blocking GitHub fetch is attempted before failing
+
 ### CSV Logging
-- Pump cycles: `datetime, duration_s, volume_L, avg_lpm, vol_at_start, vol_at_end`
+- Pump cycles: `datetime, duration_s, coincident_flow_L, coincident_lpm, vol_at_start, vol_at_end`
 - Flow events: `datetime, duration_s, volume_L`
 - Persistent hub file storage with configurable file names
 - Downloadable via the dashboard or API endpoints
@@ -75,32 +84,34 @@ A Hubitat Elevation app that monitors a well pump via power metering, tracks wat
 - **Virtual pump active switch** -- toggled on/off to reflect pump state (for dashboards or rules)
 - **Emergency leak sensor** -- virtual water sensor activated on emergency shutoff (for triggering alerts)
 - **Water flow indicator switch** -- toggled on/off to reflect water flow state
-- **Notification devices** -- for push notifications on emergency shutoff and flow alerts
+- **Notification devices** -- for push notifications on emergency shutoff
 
 ## Installation
 
 ### 1. Install the App Code
 
 In the Hubitat web UI:
-1. Go to **Apps Code** > **New App**
-2. Paste the contents of `WellPumpMonitor.groovy`
+1. Go to **Apps Code** > **New App** > **Import**
+2. Paste the import URL:
+   `https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/WellMonitor/WellMonitor.groovy`
 3. Click **Save**
 
 ### 2. Enable OAuth
 
-In the app code editor (this is required for the dashboard):
-1. Click **Enable OAuth**
-2. Click **Update** (then **Save** again if prompted)
+In the app code editor (required for the dashboard):
+1. Click **OAuth** > **Enable OAuth in App**
+2. Click **Update**
 
-### 3. Upload Dashboard Files
+### 3. Upload Chart.js
 
 Go to **Settings** > **File Manager** and upload:
-- `wellpump-dashboard.html`
 - `wellpump-chart.min.js` -- Chart.js 4.x UMD bundle, download from [jsdelivr](https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js) and rename
+
+(The dashboard HTML is fetched automatically from GitHub on first save -- no manual upload required.)
 
 ### 4. Create App Instance
 
-1. Go to **Apps** > **Add User App** > **Well Pump Monitor**
+1. Go to **Apps** > **Add User App** > **Well Monitor**
 2. Select your pump switch and water meter
 3. Configure thresholds and options (sensible defaults are provided)
 4. Click **Done**
@@ -125,19 +136,6 @@ The OFF threshold must be lower than the ON threshold. The gap between them prov
 | Enable emergency shutoff | true | Auto-turn-off if pump runs too long |
 | Emergency timeout | 300s | Maximum allowed pump run time |
 
-### Flow Alerts
-
-| Setting | Default | Description |
-|---|---|---|
-| Enable flow alerts | true | Notify on no-flow/low-flow conditions |
-| Base alert time | 40s | Minimum run time before alerting with no flow |
-| Flow threshold 1 | 10 LPM | First flow rate tier |
-| Flow threshold 2 | 20 LPM | Second flow rate tier |
-| Flow threshold 3 | 30 LPM | Third flow rate tier |
-| Bonus seconds per tier | 10s | Additional time allowed per threshold exceeded |
-
-The alert time is dynamic: `baseTime + (bonusSeconds * thresholdsExceeded)`. A pump running at 25 LPM exceeds thresholds 1 and 2, giving `40 + 20 = 60s` before an alert fires.
-
 ### CSV Logging
 
 | Setting | Default | Description |
@@ -148,11 +146,13 @@ The alert time is dynamic: `baseTime + (bonusSeconds * thresholdsExceeded)`. A p
 
 ### Logging
 
-| Level | Description |
-|---|---|
-| warn | Warnings and errors only |
-| info | Normal operational messages (default) |
-| debug | Verbose diagnostic output |
+Three boolean preferences in the project standard pattern:
+
+| Preference | Default | Description |
+|---|---|---|
+| `txtEnable` | true | descriptionText / info-level operational messages |
+| `debugEnable` | false | Verbose diagnostic output. Auto-disables after 30 minutes. |
+| `traceEnable` | false | Very chatty per-event tracing. Only visible when `debugEnable` is on; auto-disables with debug. |
 
 ## API Endpoints
 
@@ -165,25 +165,26 @@ The app exposes the following endpoints via OAuth-secured mappings. The access t
 | `/api/status` | application/json | Live pump/flow state, power, volume |
 | `/api/cycles` | application/json | Cycle history (100 entries) with derived tank usage |
 | `/api/flow` | application/json | Flow history (100 entries) |
-| `/api/stats` | application/json | All-time stats, recent stats, daily summaries, hourly distribution |
+| `/api/stats` | application/json | All-time + recent stats, daily summaries, hourly distribution, 24h/7d windows |
+| `/api/version` | application/json | Installed APP_VERSION, latest version on GitHub, updateAvailable flag |
 | `/csv/cycles` | text/csv | Full pump cycle CSV file |
 | `/csv/flow` | text/csv | Full flow event CSV file |
 
 ## File Structure
 
 ```
-apps/WellPumpMonitor/
-  WellPumpMonitor.groovy      # Hubitat app (Groovy)
-  wellpump-dashboard.html     # Web dashboard (HTML/CSS/JS)
-  README.md                   # This file
+apps/WellMonitor/
+  WellMonitor.groovy            # Hubitat app (Groovy)
+  wellmonitor-dashboard.html    # Web dashboard (HTML/CSS/JS)
+  README.md                     # This file
 ```
 
 On the hub's File Manager:
 ```
-wellpump-dashboard.html       # Dashboard HTML (uploaded)
-wellpump-chart.min.js         # Chart.js UMD bundle (uploaded)
-pumpCycles.csv                # Pump cycle log (created automatically)
-waterFlow.csv                 # Flow event log (created automatically)
+wellmonitor-dashboard.html      # Dashboard HTML (auto-fetched from GitHub)
+wellpump-chart.min.js           # Chart.js UMD bundle (uploaded manually)
+pumpCycles.csv                  # Pump cycle log (created automatically)
+waterFlow.csv                   # Flow event log (created automatically)
 ```
 
 ## License

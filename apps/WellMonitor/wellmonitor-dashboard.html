@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Well Pump Monitor</title>
+    <title>Well Monitor</title>
     <style>
         :root {
             --bg: #f4f6f9;
@@ -91,6 +91,8 @@ SPDX-License-Identifier: MIT
 
         .loading { text-align: center; padding: 40px; color: var(--text-muted); }
         .error { background: var(--danger-light); color: var(--danger); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; }
+        .info-banner { background: #fef3c7; color: #92400e; border: 1px solid #fbbf24; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 0.9rem; }
+        .info-banner strong { margin-right: 6px; }
 
         @media (max-width: 768px) {
             .chart-row { grid-template-columns: 1fr; }
@@ -106,7 +108,7 @@ SPDX-License-Identifier: MIT
 <body>
 
 <header>
-    <h1>Well Pump Monitor</h1>
+    <h1>Well Monitor</h1>
     <div class="header-right">
         <span id="pumpBadge" class="status-badge badge-idle">Pump Idle</span>
         <span id="flowBadge" class="status-badge" style="display:none"></span>
@@ -243,7 +245,7 @@ SPDX-License-Identifier: MIT
 
     const ACCESS_TOKEN = '${access_token}';
     const BASE_URL = window.location.pathname.replace(/\/dashboard\/?$/, '');
-    const UI_VERSION = '0.8.1';
+    const UI_VERSION = '0.9.0';
 
     // ==================== Helpers ====================
 
@@ -978,6 +980,37 @@ SPDX-License-Identifier: MIT
     document.getElementById('loadCsvCycles').addEventListener('click', loadCsvCycles);
     document.getElementById('loadCsvFlow').addEventListener('click', loadCsvFlow);
 
+    // ==================== App update check ====================
+
+    function showAppUpdateBanner(info) {
+        if (document.getElementById('appUpdateBanner')) return;
+        const main = document.querySelector('main');
+        const banner = document.createElement('div');
+        banner.id = 'appUpdateBanner';
+        banner.className = 'info-banner';
+        banner.innerHTML = '<strong>Update available</strong>: Well Monitor v' + info.latestVersion +
+            ' on GitHub (installed: v' + info.currentVersion +
+            '). Update via <em>Apps Code &rarr; Well Monitor &rarr; Import</em>.';
+        main.insertBefore(banner, main.firstChild);
+    }
+
+    async function checkAppUpdate(retried) {
+        try {
+            const info = await fetchJson('/api/version');
+            if (info && info.updateAvailable && info.latestVersion) {
+                showAppUpdateBanner(info);
+                return;
+            }
+            // First call frequently lands while the backend's stale-while-revalidate fetch is
+            // still pending. Retry once after the async probe has had time to land.
+            if (!retried && (!info || !info.latestVersion)) {
+                setTimeout(function() { checkAppUpdate(true); }, 4000);
+            }
+        } catch (e) {
+            // Network/API failure — silent; user can refresh later.
+        }
+    }
+
     // ==================== Init ====================
 
     function loadScript(url) {
@@ -1038,6 +1071,9 @@ SPDX-License-Identifier: MIT
             setInterval(function() {
                 fetchJson('/api/status').then(updateStatus).catch(function() {});
             }, 10000);
+
+            // One-shot GitHub version check; retries once if the backend's first probe hadn't landed.
+            checkAppUpdate(false);
 
         } catch (e) {
             document.querySelector('main').innerHTML = `<div class="error">Failed to load data: ${e.message}. Check that the app is running and OAuth is enabled.</div>`;

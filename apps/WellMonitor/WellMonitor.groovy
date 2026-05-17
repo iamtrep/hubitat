@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: MIT
 
 /*
- Well Pump Monitor
+ Well Monitor
 
- Monitors a well pump via power metering on its switch, tracks water consumption
- using a flow meter, logs pump cycles to CSV, and provides emergency shutoff
- protection. Replaces a complex Rule Machine automation with a configurable app.
+ Monitors a residential well: pump cycles (via power metering on the pump switch),
+ downstream water flow events (via a flow-rate meter), tank usage between cycles,
+ daily/hourly consumption patterns, and emergency shutoff. CSV-logged history with
+ a self-hosted SPA dashboard served via OAuth.
  */
 import groovy.transform.CompileStatic
 import groovy.transform.Field
@@ -15,33 +16,41 @@ import com.hubitat.app.DeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.nio.file.AccessDeniedException
 
-@Field static final String APP_NAME = "Well Pump Monitor"
-@Field static final String APP_VERSION = "0.8.1"
-@Field static final String DASHBOARD_FILE = "wellpump-dashboard.html"
+@Field static final String APP_NAME = "Well Monitor"
+@Field static final String APP_VERSION = "0.9.0"
+@Field static final String DASHBOARD_FILE = "wellmonitor-dashboard.html"
 @Field static final String CHARTJS_FILE = "wellpump-chart.min.js"
+
+@Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/WellMonitor/WellMonitor.groovy"
+@Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/WellMonitor/wellmonitor-dashboard.html"
+
+// In-flight flag for the GitHub version probe; `volatile` because OAuth endpoint handlers
+// can race on it across threads.
+@Field static volatile boolean githubVersionRefreshPending = false
 
 definition(
     name: APP_NAME,
     namespace: "iamtrep",
     author: "pj",
-    description: "Monitors well pump cycles, tracks water consumption, and provides emergency shutoff protection",
+    description: "Monitors well pump cycles, downstream consumption, tank usage, and emergency shutoff",
     category: "Utility",
     iconUrl: "",
     iconX2Url: "",
-    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/WellPumpMonitor.groovy",
+    importUrl: IMPORT_URL_APP,
     oauth: true,
     singleThreaded: true
 )
 
 mappings {
-    path('/dashboard')  { action: [GET: 'getDashboardHtml'] }
-    path('/chart.js')   { action: [GET: 'getChartJs'] }
-    path('/api/status') { action: [GET: 'getStatusJson'] }
-    path('/api/cycles') { action: [GET: 'getCyclesJson'] }
-    path('/api/flow')   { action: [GET: 'getFlowJson'] }
-    path('/api/stats')  { action: [GET: 'getStatsJson'] }
-    path('/csv/cycles') { action: [GET: 'getCyclesCsv'] }
-    path('/csv/flow')   { action: [GET: 'getFlowCsv'] }
+    path('/dashboard')   { action: [GET: 'getDashboardHtml'] }
+    path('/chart.js')    { action: [GET: 'getChartJs'] }
+    path('/api/status')  { action: [GET: 'getStatusJson'] }
+    path('/api/cycles')  { action: [GET: 'getCyclesJson'] }
+    path('/api/flow')    { action: [GET: 'getFlowJson'] }
+    path('/api/stats')   { action: [GET: 'getStatsJson'] }
+    path('/api/version') { action: [GET: 'getVersionJson'] }
+    path('/csv/cycles')  { action: [GET: 'getCyclesCsv'] }
+    path('/csv/flow')    { action: [GET: 'getFlowCsv'] }
 }
 
 preferences {
@@ -308,6 +317,7 @@ Map flowHistoryPage() {
 
 void installed() {
     logDebug("Installed with settings: ${settings}")
+    runIn(1, 'syncUIForced')
     initialize()
 }
 
@@ -315,6 +325,7 @@ void updated() {
     logDebug("Updated with settings: ${settings}")
     unsubscribe()
     unschedule()
+    runIn(1, 'syncUIForced')
     initialize()
 }
 
@@ -391,6 +402,10 @@ void initialize() {
 
     // Auto-disable debug/trace after 30 minutes so verbose logging doesn't get left on indefinitely.
     if (debugEnable) runIn(1800, "logsOff")
+
+    // Daily off-peak UI sync so a manually-uploaded HTML drifts back into alignment with the
+    // groovy version if the user upgrades the app code via GitHub import.
+    schedule("0 17 3 * * ?", "scheduledUISync")
 
     recoverPumpState()
 
@@ -1160,12 +1175,24 @@ private void migrateLogSettings() {
 // ==================== API Endpoints ====================
 
 Map getDashboardHtml() {
-    String html
+    String html = null
     try {
         byte[] bytes = safeDownloadHubFile(DASHBOARD_FILE)
-        html = bytes ? new String(bytes, 'UTF-8') : '<html><body>Dashboard file not found. Upload <code>wellpump-dashboard.html</code> to the hub File Manager.</body></html>'
-    } catch (Exception e) {
-        html = "<html><body>Error loading dashboard: ${e.message}</body></html>"
+        if (bytes) html = new String(bytes, 'UTF-8')
+    } catch (Exception ignored) {}
+
+    // Emergency recovery: file missing → try a blocking pull from GitHub before failing.
+    if (html == null) {
+        if (syncUIBlocking()) {
+            try {
+                byte[] bytes = safeDownloadHubFile(DASHBOARD_FILE)
+                if (bytes) html = new String(bytes, 'UTF-8')
+            } catch (Exception ignored) {}
+        }
+    }
+
+    if (html == null) {
+        html = "<html><body>Dashboard file not found and GitHub sync failed. Upload <code>${DASHBOARD_FILE}</code> to the hub File Manager manually.</body></html>"
     }
     html = html.replaceAll('\\$\\{access_token\\}', state.accessToken ?: '')
     return render(status: 200, contentType: 'text/html', data: html)
@@ -1300,6 +1327,133 @@ private void appendToCsvLog(long timestamp, BigDecimal durationSeconds, BigDecim
     String newData = existingData + csvLine
     safeUploadHubFile(fileName, newData.getBytes('UTF-8'))
     logDebug("Appended pump cycle to ${fileName}")
+}
+
+// ==================== GitHub version probe ====================
+
+// Returns the last-known GitHub APP_VERSION immediately (stale-while-revalidate).
+// Fires an async refresh if the cache is older than 1 hour.
+String checkGithubVersion() {
+    long lastCheck = (state.lastGithubVersionCheck ?: 0L) as long
+    if (now() - lastCheck >= 3600000L && !githubVersionRefreshPending) {
+        githubVersionRefreshPending = true
+        asynchttpGet('githubVersionCallback', [uri: IMPORT_URL_APP, contentType: "text/plain", timeout: 10])
+    }
+    return state.lastGithubVersion as String
+}
+
+void githubVersionCallback(resp, data) {
+    githubVersionRefreshPending = false
+    if (resp.hasError() || resp.status != 200) {
+        logDebug("GitHub version check failed: HTTP ${resp.status}")
+        return
+    }
+    try {
+        String text = resp.data ?: ""
+        java.util.regex.Matcher m = (text =~ /APP_VERSION\s*=\s*"([^"]+)"/)
+        if (m.find()) {
+            state.lastGithubVersion = m.group(1)
+            state.lastGithubVersionCheck = now()
+        }
+    } catch (Exception e) {
+        logDebug("GitHub version callback error: ${e.message}")
+    }
+}
+
+// Lexical-by-component compare of dotted version strings; returns true iff v1 > v2.
+boolean isNewerVersion(String v1, String v2) {
+    if (!v1 || !v2 || v1 == "Unknown" || v2 == "Unknown") return false
+    List v1p = v1.tokenize('.'), v2p = v2.tokenize('.')
+    for (int i = 0; i < Math.max(v1p.size(), v2p.size()); i++) {
+        String s1 = i < v1p.size() ? v1p[i] : "0"
+        String s2 = i < v2p.size() ? v2p[i] : "0"
+        int n1 = s1.isInteger() ? s1.toInteger() : 0
+        int n2 = s2.isInteger() ? s2.toInteger() : 0
+        if (n1 > n2) return true
+        if (n1 < n2) return false
+    }
+    return false
+}
+
+Map getVersionJson() {
+    String latest = checkGithubVersion()
+    Map payload = [
+        currentVersion: APP_VERSION,
+        latestVersion: latest,
+        updateAvailable: latest ? isNewerVersion(latest, APP_VERSION) : false,
+        lastChecked: (state.lastGithubVersionCheck ?: 0L) as long
+    ]
+    return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson(payload))
+}
+
+// ==================== Dashboard auto-sync from GitHub ====================
+
+// Async UI sync — used by lifecycle paths (installed/updated → runIn(1, 'syncUIForced')) and the
+// daily off-peak schedule. Fire-and-forget; the callback validates content before writing.
+void syncUI(boolean force = false) {
+    if (!force && state.lastInstalledVersion == APP_VERSION) {
+        long lastCheck = (state.lastUIUpdateCheck ?: 0L) as long
+        if (now() - lastCheck < 86400000L) return
+    }
+    logInfo("Syncing dashboard UI from GitHub (async)...")
+    asynchttpGet('syncUICallback', [uri: IMPORT_URL_WEB, contentType: "text/plain", timeout: 30])
+}
+
+void syncUICallback(resp, data) {
+    if (resp.hasError() || resp.status != 200) {
+        logWarn("Async UI sync failed: HTTP ${resp.status}")
+        return
+    }
+    processSyncUIResponse(resp.data ?: "")
+}
+
+void scheduledUISync() {
+    syncUI(false)
+}
+
+void syncUIForced() {
+    syncUI(true)
+}
+
+// Blocking UI sync — for emergency recovery on the /dashboard endpoint when the file is missing.
+// dynamicPage-style request paths can't await an async callback, so sync HTTP is the correct
+// shape here. See ARCHITECTURE.md → "When sync HTTP is the right call".
+private boolean syncUIBlocking() {
+    try {
+        logInfo("Syncing dashboard UI from GitHub (blocking, recovery path)...")
+        String htmlText = null
+        httpGet([uri: IMPORT_URL_WEB, contentType: "text/plain", timeout: 30]) { resp ->
+            if (resp.success && resp.data) htmlText = resp.data.text ?: resp.data.toString()
+        }
+        return processSyncUIResponse(htmlText ?: "")
+    } catch (Exception e) {
+        logWarn("Failed to sync UI from GitHub: ${e.message}")
+        return false
+    }
+}
+
+// Validates downloaded HTML — must look like our dashboard AND carry a UI_VERSION matching
+// this app's APP_VERSION — before writing to File Manager. Prevents loading a partial body
+// or an in-progress GitHub commit where APP and UI haven't been bumped together yet.
+private boolean processSyncUIResponse(String htmlText) {
+    if (!htmlText || !htmlText.contains(APP_NAME)) {
+        logWarn("UI sync rejected: downloaded content does not look like the ${APP_NAME} dashboard")
+        return false
+    }
+    if (!htmlText.contains("const UI_VERSION = '${APP_VERSION}'")) {
+        logWarn("UI sync rejected: GitHub UI version does not match App v${APP_VERSION}")
+        return false
+    }
+    try {
+        uploadHubFile(DASHBOARD_FILE, htmlText.getBytes("UTF-8"))
+    } catch (Exception e) {
+        logWarn("UI sync upload failed: ${e.message}")
+        return false
+    }
+    state.lastInstalledVersion = APP_VERSION
+    state.lastUIUpdateCheck = now()
+    logInfo("Dashboard UI updated from GitHub to match App v${APP_VERSION} (${htmlText.length()} bytes)")
+    return true
 }
 
 private byte[] safeDownloadHubFile(String fileName) {
