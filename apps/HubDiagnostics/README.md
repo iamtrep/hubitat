@@ -443,11 +443,11 @@ Each `/device/fullJson/{id}` callback captures a `fetchedAtMs` timestamp at resp
 
 ## App Settings Tab
 
-Most settings are accessible from the Hubitat admin UI under **Apps → Hub Diagnostics → Preferences**. Two settings are available only through the dashboard's App Settings tab and are not shown in the Hubitat admin UI: **Obfuscate labels in forum export** (Export section) and **Clear Enrichment Cache** (Maintenance section).
+Most settings are accessible from the Hubitat admin UI under **Apps → Hub Diagnostics → Preferences**. Three settings are available only through the dashboard's App Settings tab and are not shown in the Hubitat admin UI: **Auto-refresh interval** (Live Data section), **Obfuscate labels in forum export** (Export section), and **Clear Enrichment Cache** (Maintenance section).
 
 ### Config Snapshot Scheduling
 - Enable automatic snapshots: on/off
-- Interval: 1 day / 2 days / 1 week / 2 weeks
+- Interval: 1–30 days (default 1)
 - Max snapshots to retain: 1–50 (default 10; oldest are pruned when the limit is reached)
 
 ### Perf Checkpoint Scheduling
