@@ -16,7 +16,7 @@ import com.hubitat.hub.domain.Event
 import java.nio.file.AccessDeniedException
 
 @Field static final String APP_NAME = "Well Pump Monitor"
-@Field static final String APP_VERSION = "0.4.2"
+@Field static final String APP_VERSION = "0.5.0"
 @Field static final String DASHBOARD_FILE = "wellpump-dashboard.html"
 @Field static final String CHARTJS_FILE = "wellpump-chart.min.js"
 
@@ -147,10 +147,19 @@ Map mainPage() {
         }
 
         section("Logging", hideable: true, hidden: true) {
-            input "logLevel", "enum",
-                title: "Log level",
-                options: ["warn", "info", "debug"],
-                defaultValue: "info", required: true
+            input name: "txtEnable", type: "bool",
+                title: "Enable descriptionText (info) logging",
+                defaultValue: true
+            input name: "debugEnable", type: "bool",
+                title: "Enable debug logging",
+                description: "Auto-disables after 30 minutes.",
+                defaultValue: false, submitOnChange: true
+            if (debugEnable) {
+                input name: "traceEnable", type: "bool",
+                    title: "Enable trace logging",
+                    description: "Very chatty; auto-disables with debug.",
+                    defaultValue: false
+            }
         }
 
         section("Pump Cycle History", hideable: true, hidden: false) {
@@ -379,6 +388,9 @@ void initialize() {
 
     // Hub-restart recovery — initialize() is not called on reboot.
     subscribe(location, "systemStart", systemStartHandler)
+
+    // Auto-disable debug/trace after 30 minutes so verbose logging doesn't get left on indefinitely.
+    if (debugEnable) runIn(1800, "logsOff")
 
     recoverPumpState()
 
@@ -959,6 +971,9 @@ private void migrateRunningCounters() {
     // Also migrates `state.totalVolume`/`state.totalVolumeSq`/`state.lastRunVolume`/`state.lastRunAvgLpm`
     // to their `Coincident…` counterparts, and drops settings for the removed flow-alert feature.
     renameCoincidentFlowFields()
+
+    // v4 logging refactor: convert the old `logLevel` enum to the project-standard three bools.
+    migrateLogSettings()
 }
 
 /**
@@ -1090,6 +1105,21 @@ private void renameCoincidentFlowFields() {
     if (changed) {
         log.warn "${APP_NAME}: v3 rename — coincident-flow fields migrated (${renamed} cycle entries)"
     }
+}
+
+/**
+ * v4 migration: convert the legacy `logLevel` enum setting into the
+ * standard `txtEnable` / `debugEnable` / `traceEnable` booleans. Idempotent.
+ */
+private void migrateLogSettings() {
+    if (settings.logLevel == null) return
+    String level = settings.logLevel as String
+    boolean txt = level in ['info', 'debug']
+    boolean dbg = level == 'debug'
+    app.updateSetting('txtEnable', [type: 'bool', value: txt])
+    app.updateSetting('debugEnable', [type: 'bool', value: dbg])
+    app.removeSetting('logLevel')
+    log.warn "${APP_NAME}: v4 log settings migrated (logLevel='${level}' → txtEnable=${txt}, debugEnable=${dbg})"
 }
 
 // ==================== API Endpoints ====================
@@ -1372,12 +1402,16 @@ private String fmtDec(Number value) {
 
 // ==================== Logging ====================
 
+private void logTrace(String msg) {
+    if (traceEnable) log.trace "${app.getLabel() ?: APP_NAME}: ${msg}"
+}
+
 private void logDebug(String msg) {
-    if (logLevel == "debug") log.debug "${app.getLabel() ?: APP_NAME}: ${msg}"
+    if (debugEnable) log.debug "${app.getLabel() ?: APP_NAME}: ${msg}"
 }
 
 private void logInfo(String msg) {
-    if (logLevel in ["info", "debug"]) log.info "${app.getLabel() ?: APP_NAME}: ${msg}"
+    if (txtEnable != false) log.info "${app.getLabel() ?: APP_NAME}: ${msg}"
 }
 
 private void logWarn(String msg) {
@@ -1386,4 +1420,10 @@ private void logWarn(String msg) {
 
 private void logError(String msg) {
     log.error "${app.getLabel() ?: APP_NAME}: ${msg}"
+}
+
+void logsOff() {
+    log.warn "${APP_NAME}: debug/trace logging auto-disabled"
+    app.updateSetting("debugEnable", [type: "bool", value: false])
+    app.updateSetting("traceEnable", [type: "bool", value: false])
 }
