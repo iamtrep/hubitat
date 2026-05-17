@@ -75,6 +75,7 @@ SPDX-License-Identifier: MIT
         .stat-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 0.85rem; }
         .stat-label { color: var(--text-muted); }
         .stat-value { font-weight: 600; }
+        .stat-n { font-weight: 400; font-size: 0.75rem; color: var(--text-muted); margin-left: 4px; }
 
         .btn { background: var(--primary); color: #fff; border: none; padding: 8px 16px; border-radius: 6px; font-size: 0.85rem; cursor: pointer; transition: opacity 0.15s; }
         .btn:hover { opacity: 0.85; }
@@ -96,7 +97,7 @@ SPDX-License-Identifier: MIT
         }
     </style>
 </head>
-<body data-version="0.2.0">
+<body>
 
 <header>
     <h1>Well Pump Monitor</h1>
@@ -120,11 +121,11 @@ SPDX-License-Identifier: MIT
         <div class="cards" id="overviewCards"></div>
         <div class="chart-row">
             <div class="chart-container">
-                <h3>Daily Water Consumption (Pump Cycles)</h3>
+                <h3>Daily Water Consumption (Flow Events)</h3>
                 <div class="chart-wrap"><canvas id="dailyChart"></canvas></div>
             </div>
             <div class="chart-container">
-                <h3>Pump Activity by Hour of Day</h3>
+                <h3>Pump Cycles by Hour of Day</h3>
                 <div class="chart-wrap"><canvas id="hourlyChart"></canvas></div>
             </div>
         </div>
@@ -142,8 +143,8 @@ SPDX-License-Identifier: MIT
                     <tr>
                         <th data-col="date" data-type="string">Date/Time</th>
                         <th data-col="durationS" data-type="number" class="num">Duration (s)</th>
-                        <th data-col="volumeL" data-type="number" class="num">Volume (L)</th>
-                        <th data-col="avgLpm" data-type="number" class="num">Avg Flow (LPM)</th>
+                        <th data-col="coincidentFlowL" data-type="number" class="num">Coincident Flow (L)</th>
+                        <th data-col="coincidentLpm" data-type="number" class="num">Coincident Rate (LPM)</th>
                         <th data-col="tankUsageL" data-type="number" class="num">Tank Usage (L)</th>
                     </tr>
                 </thead>
@@ -187,7 +188,7 @@ SPDX-License-Identifier: MIT
                         <tr>
                             <th data-col="date" data-type="string">Date</th>
                             <th data-col="count" data-type="number" class="num">Cycles</th>
-                            <th data-col="totalVolumeL" data-type="number" class="num">Volume (L)</th>
+                            <th data-col="totalVolumeL" data-type="number" class="num">Coincident Flow (L)</th>
                             <th data-col="totalDurationS" data-type="number" class="num">Duration (s)</th>
                         </tr>
                     </thead>
@@ -204,6 +205,7 @@ SPDX-License-Identifier: MIT
 
     const ACCESS_TOKEN = '${access_token}';
     const BASE_URL = window.location.pathname.replace(/\/dashboard\/?$/, '');
+    const UI_VERSION = '0.4.1';
 
     // ==================== Helpers ====================
 
@@ -227,6 +229,32 @@ SPDX-License-Identifier: MIT
     function fmtInt(v) {
         if (v == null || isNaN(v)) return '—';
         return Math.round(v).toLocaleString();
+    }
+
+    // Format an epoch-ms timestamp for display. Falls back to '—' on missing/invalid input.
+    function fmtTs(ts, opts) {
+        if (ts == null || !isFinite(ts) || ts <= 0) return '—';
+        return new Date(ts).toLocaleString(undefined, opts || {});
+    }
+
+    function fmtTsShort(ts) {
+        return fmtTs(ts, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    }
+
+    function fmtTsDay(ts) {
+        return fmtTs(ts, { month: 'short', day: 'numeric' });
+    }
+
+    function fmtTsDate(ts) {
+        return fmtTs(ts, { year: 'numeric', month: 'short', day: 'numeric' });
+    }
+
+    // Safari-safe parse for "yyyy-MM-dd HH:mm:ss" — Date.parse on this is unreliable across browsers.
+    function parseLegacyDate(s) {
+        if (!s) return null;
+        const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/.exec(s);
+        if (!m) return null;
+        return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
     }
 
     // ==================== Tab Switching ====================
@@ -294,14 +322,14 @@ SPDX-License-Identifier: MIT
         dailyChartInstance = new Chart(ctx, {
             type: 'bar',
             data: {
-                labels: data.map(function(d) { return d.date.substring(5); }),
+                labels: data.map(function(d) { return d.ts ? fmtTsDay(d.ts) : (d.date || ''); }),
                 datasets: [{
                     label: 'Volume (L)',
                     data: data.map(function(d) { return d.totalVolumeL; }),
                     backgroundColor: chartColors.blue,
                     borderRadius: 4,
                 }, {
-                    label: 'Cycles',
+                    label: 'Flow Events',
                     data: data.map(function(d) { return d.count; }),
                     backgroundColor: chartColors.teal,
                     borderRadius: 4,
@@ -314,7 +342,7 @@ SPDX-License-Identifier: MIT
                 plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } } },
                 scales: {
                     y: { beginAtZero: true, title: { display: true, text: 'Volume (L)' } },
-                    y1: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, title: { display: true, text: 'Cycles' } }
+                    y1: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, title: { display: true, text: 'Flow Events' } }
                 }
             }
         });
@@ -359,7 +387,7 @@ SPDX-License-Identifier: MIT
         trendChartInstance = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: data.map(function(c, i) { return c.date ? c.date.substring(5, 16) : i; }),
+                labels: data.map(function(c, i) { return c.ts ? fmtTsShort(c.ts) : (c.date || i); }),
                 datasets: [{
                     label: 'Duration (s)',
                     data: data.map(function(c) { return c.durationS; }),
@@ -369,8 +397,8 @@ SPDX-License-Identifier: MIT
                     tension: 0.3,
                     pointRadius: 3,
                 }, {
-                    label: 'Volume (L)',
-                    data: data.map(function(c) { return c.volumeL; }),
+                    label: 'Coincident Flow (L)',
+                    data: data.map(function(c) { return c.coincidentFlowL != null ? c.coincidentFlowL : c.volumeL; }),
                     borderColor: chartColors.teal,
                     backgroundColor: chartColors.tealBg,
                     fill: true,
@@ -386,7 +414,7 @@ SPDX-License-Identifier: MIT
                 scales: {
                     x: { ticks: { maxTicksLimit: 15, maxRotation: 45 } },
                     y: { beginAtZero: true, title: { display: true, text: 'Duration (s)' } },
-                    y1: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, title: { display: true, text: 'Volume (L)' } }
+                    y1: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, title: { display: true, text: 'Coincident Flow (L)' } }
                 }
             }
         });
@@ -403,24 +431,24 @@ SPDX-License-Identifier: MIT
                 <div class="card-sub">${fmtDec(at.cyclesPerDay || 0)} / day</div>
             </div>
             <div class="card">
-                <div class="card-label">Total Volume Pumped</div>
-                <div class="card-value">${fmtVol(at.totalVolumeL || 0)}L</div>
-                <div class="card-sub">since ${at.firstCycleDate ? at.firstCycleDate.substring(0, 10) : '—'}</div>
+                <div class="card-label">Total Consumption</div>
+                <div class="card-value">${fmtVol(at.totalFlowVolumeL || 0)}L</div>
+                <div class="card-sub">downstream (flow events)</div>
             </div>
             <div class="card">
                 <div class="card-label">Total Tank Usage</div>
                 <div class="card-value">${fmtVol(at.totalTankUsageL || 0)}L</div>
-                <div class="card-sub">between-cycle consumption</div>
+                <div class="card-sub">between-cycle draw</div>
             </div>
             <div class="card">
                 <div class="card-label">Avg Cycle Duration</div>
                 <div class="card-value">${fmtDec(at.meanDurationS || 0)}s</div>
-                <div class="card-sub">\u00b1 ${fmtDec(at.stddevDurationS || 0)}s</div>
+                <div class="card-sub">\u00b1 ${fmtDec(at.stddevDurationS || 0)}s \u00b7 n=${fmtInt(at.totalCycles || 0)} all-time</div>
             </div>
         `;
         document.getElementById('overviewCards').innerHTML = html;
 
-        renderDailyChart(stats.dailyCycleSummaries || []);
+        renderDailyChart(stats.dailyFlowSummaries || []);
         renderHourlyChart(stats.hourlyDistribution || {});
     }
 
@@ -429,16 +457,20 @@ SPDX-License-Identifier: MIT
         tbody.innerHTML = '';
         cycles.forEach(function(c) {
             const tr = document.createElement('tr');
-            tr.dataset.date = c.date || '';
+            // legacy entries (pre-v0.4.0) may carry the old volumeL/avgLpm keys; fall back gracefully
+            const coincidentFlowL = c.coincidentFlowL != null ? c.coincidentFlowL : c.volumeL;
+            const coincidentLpm = c.coincidentLpm != null ? c.coincidentLpm : c.avgLpm;
+            tr.dataset.date = c.date || (c.ts || 0);
             tr.dataset.durationS = c.durationS || 0;
-            tr.dataset.volumeL = c.volumeL || 0;
-            tr.dataset.avgLpm = c.avgLpm || 0;
+            tr.dataset.coincidentFlowL = coincidentFlowL || 0;
+            tr.dataset.coincidentLpm = coincidentLpm || 0;
             tr.dataset.tankUsageL = c.tankUsageL != null ? c.tankUsageL : -1;
+            const displayDate = c.ts ? fmtTs(c.ts) : (c.date || '—');
             tr.innerHTML = `
-                <td>${c.date || '—'}</td>
+                <td>${displayDate}</td>
                 <td class="num">${fmtDec(c.durationS)}</td>
-                <td class="num">${fmtVol(c.volumeL)}</td>
-                <td class="num">${fmtDec(c.avgLpm)}</td>
+                <td class="num">${fmtVol(coincidentFlowL)}</td>
+                <td class="num">${fmtDec(coincidentLpm)}</td>
                 <td class="num">${c.tankUsageL != null ? fmtVol(c.tankUsageL) : '—'}</td>
             `;
             tbody.appendChild(tr);
@@ -451,11 +483,12 @@ SPDX-License-Identifier: MIT
         tbody.innerHTML = '';
         flows.forEach(function(f) {
             const tr = document.createElement('tr');
-            tr.dataset.date = f.date || '';
+            tr.dataset.date = f.date || (f.ts || 0);
             tr.dataset.durationS = f.durationS || 0;
             tr.dataset.volumeL = f.volumeL || 0;
+            const displayDate = f.ts ? fmtTs(f.ts) : (f.date || '—');
             tr.innerHTML = `
-                <td>${f.date || '—'}</td>
+                <td>${displayDate}</td>
                 <td class="num">${fmtDec(f.durationS)}</td>
                 <td class="num">${fmtVol(f.volumeL)}</td>
             `;
@@ -476,18 +509,18 @@ SPDX-License-Identifier: MIT
             html += `<div class="stats-card"><h3>All-Time Statistics</h3>`;
             html += statRow('Total Cycles', fmtInt(at.totalCycles));
             html += statRow('Cycles / Day', fmtDec(at.cyclesPerDay));
-            html += statRow('Total Volume', fmtVol(at.totalVolumeL) + 'L');
-            if (at.totalTankUsageL > 0) html += statRow('Total Tank Usage', fmtVol(at.totalTankUsageL) + 'L');
             if (at.totalFlowEvents > 0) {
+                html += statRow('Total Consumption (flow)', fmtVol(at.totalFlowVolumeL) + 'L');
                 html += statRow('Total Flow Events', fmtInt(at.totalFlowEvents));
-                html += statRow('Total Flow Volume', fmtVol(at.totalFlowVolumeL) + 'L');
             }
+            if (at.totalTankUsageL > 0) html += statRow('Total Tank Usage', fmtVol(at.totalTankUsageL) + 'L');
+            html += statRow('Total Coincident Flow (cycles)', fmtVol(at.totalCoincidentFlowL) + 'L');
             html += statRow('Total Pump Time', fmtDec(at.totalPumpDurationS) + 's');
-            html += statRow('Mean Duration', fmtDec(at.meanDurationS) + 's \u00b1 ' + fmtDec(at.stddevDurationS) + 's');
-            html += statRow('Mean Volume', fmtVol(at.meanVolumeL) + 'L \u00b1 ' + fmtVol(at.stddevVolumeL) + 'L');
+            html += statRow('Mean Duration', fmtDec(at.meanDurationS) + 's \u00b1 ' + fmtDec(at.stddevDurationS) + 's <span class="stat-n">(n=' + fmtInt(at.totalCycles) + ')</span>');
+            html += statRow('Mean Coincident Flow / Cycle', fmtVol(at.meanCoincidentFlowL) + 'L \u00b1 ' + fmtVol(at.stddevCoincidentFlowL) + 'L <span class="stat-n">(n=' + fmtInt(at.totalCycles) + ')</span>');
             html += statRow('Longest Run', fmtDec(at.longestRunS) + 's (' + (at.longestRunDate || '—') + ')');
             html += statRow('Shortest Run', fmtDec(at.shortestRunS) + 's (' + (at.shortestRunDate || '—') + ')');
-            html += statRow('First Cycle', at.firstCycleDate || '—');
+            html += statRow('First Cycle', at.firstCycleTs ? fmtTs(at.firstCycleTs) : (at.firstCycleDate || '—'));
             html += `</div>`;
         }
 
@@ -496,8 +529,8 @@ SPDX-License-Identifier: MIT
             html += `<div class="stats-card"><h3>Recent ${rw.recentCount} Cycles</h3>`;
             html += statRow('Median Duration', fmtDec(rw.medianDurationS) + 's');
             html += statRow('Mean Duration', fmtDec(rw.meanDurationS) + 's \u00b1 ' + fmtDec(rw.stddevDurationS) + 's');
-            html += statRow('Median Volume', fmtVol(rw.medianVolumeL) + 'L');
-            html += statRow('Mean Volume', fmtVol(rw.meanVolumeL) + 'L \u00b1 ' + fmtVol(rw.stddevVolumeL) + 'L');
+            html += statRow('Median Coincident Flow', fmtVol(rw.medianCoincidentFlowL) + 'L');
+            html += statRow('Mean Coincident Flow', fmtVol(rw.meanCoincidentFlowL) + 'L \u00b1 ' + fmtVol(rw.stddevCoincidentFlowL) + 'L');
             html += `</div>`;
         }
 
@@ -561,6 +594,17 @@ SPDX-License-Identifier: MIT
         if (status.currentPowerW != null) {
             powerDisplay.textContent = fmtDec(status.currentPowerW) + 'W';
         }
+
+        if (status.appVersion && status.appVersion !== UI_VERSION) {
+            const main = document.querySelector('main');
+            if (!document.getElementById('versionMismatchBanner')) {
+                const banner = document.createElement('div');
+                banner.id = 'versionMismatchBanner';
+                banner.className = 'error';
+                banner.textContent = 'App/UI version mismatch (app ' + status.appVersion + ', UI ' + UI_VERSION + '). Re-upload the dashboard HTML and hard-refresh.';
+                main.insertBefore(banner, main.firstChild);
+            }
+        }
     }
 
     // ==================== CSV Loading ====================
@@ -580,9 +624,10 @@ SPDX-License-Identifier: MIT
                 if (cols.length < 4) continue;
                 const entry = {
                     date: cols[0],
+                    ts: parseLegacyDate(cols[0]),
                     durationS: parseFloat(cols[1]) || 0,
-                    volumeL: parseFloat(cols[2]) || 0,
-                    avgLpm: parseFloat(cols[3]) || 0,
+                    coincidentFlowL: parseFloat(cols[2]) || 0,
+                    coincidentLpm: parseFloat(cols[3]) || 0,
                     tankUsageL: null
                 };
                 // Derive tank usage from adjacent rows if vol_at_start/vol_at_end present
@@ -624,6 +669,7 @@ SPDX-License-Identifier: MIT
                 if (cols.length < 3) continue;
                 flows.push({
                     date: cols[0],
+                    ts: parseLegacyDate(cols[0]),
                     durationS: parseFloat(cols[1]) || 0,
                     volumeL: parseFloat(cols[2]) || 0
                 });

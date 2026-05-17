@@ -16,7 +16,7 @@ import com.hubitat.hub.domain.Event
 import java.nio.file.AccessDeniedException
 
 @Field static final String APP_NAME = "Well Pump Monitor"
-@Field static final String APP_VERSION = "0.2.0"
+@Field static final String APP_VERSION = "0.4.1"
 @Field static final String DASHBOARD_FILE = "wellpump-dashboard.html"
 @Field static final String CHARTJS_FILE = "wellpump-chart.min.js"
 
@@ -127,30 +127,6 @@ Map mainPage() {
                 defaultValue: 300, required: true, range: "10..3600"
         }
 
-        section("Flow Alerts", hideable: true, hidden: true) {
-            input "enableFlowAlerts", "bool",
-                title: "Enable no-flow/low-flow alerts",
-                description: "Notify when pump runs longer than expected for the observed flow rate",
-                defaultValue: true, required: false
-            input "baseAlertTimeSeconds", "number",
-                title: "Base alert time (seconds)",
-                description: "Minimum pump run time before alerting when no flow is detected",
-                defaultValue: 40, required: true, range: "5..600"
-            input "flowThreshold1", "number",
-                title: "Flow threshold 1 (LPM)",
-                defaultValue: 10, required: true
-            input "flowThreshold2", "number",
-                title: "Flow threshold 2 (LPM)",
-                defaultValue: 20, required: true
-            input "flowThreshold3", "number",
-                title: "Flow threshold 3 (LPM)",
-                defaultValue: 30, required: true
-            input "flowBonusSeconds", "number",
-                title: "Seconds added per threshold exceeded",
-                description: "For each flow threshold exceeded, add this many seconds to the alert time",
-                defaultValue: 10, required: true, range: "1..120"
-        }
-
         section("Water Flow Tracking", hideable: true, hidden: true) {
             input "enableFlowTracking", "bool",
                 title: "Enable water flow tracking",
@@ -185,7 +161,7 @@ Map mainPage() {
                 String table = "<table style='border-collapse:collapse;width:100%'>" +
                     "<thead><tr style='background:#ddd'>" +
                     "<th ${td}>Date/Time</th><th ${tdR}>Duration</th>" +
-                    "<th ${tdR}>Volume</th><th ${tdR}>Avg Flow</th><th ${tdR}>Tank Usage</th>" +
+                    "<th ${tdR}>Coincident Flow</th><th ${tdR}>Coincident Rate</th><th ${tdR}>Tank Usage</th>" +
                     "</tr></thead><tbody>"
                 int count = Math.min(cycleHistory.size(), 10)
                 for (int i = 0; i < count; i++) {
@@ -194,8 +170,8 @@ Map mainPage() {
                     table += "<tr>" +
                         "<td ${td}>${entry.date}</td>" +
                         "<td ${tdR}>${fmtDec(entry.durationS)}s</td>" +
-                        "<td ${tdR}>${fmtVol(entry.volumeL)}L</td>" +
-                        "<td ${tdR}>${fmtDec(entry.avgLpm)} LPM</td>" +
+                        "<td ${tdR}>${fmtVol(entry.coincidentFlowL)}L</td>" +
+                        "<td ${tdR}>${fmtDec(entry.coincidentLpm)} LPM</td>" +
                         "<td ${tdR}>${tankUsage}</td>" +
                         "</tr>"
                 }
@@ -259,14 +235,14 @@ Map historyPage() {
                     stats.append(" (${fmtDec(allTime.cyclesPerDay)}/day)")
                 }
                 stats.append("<br/>")
-                if (allTime.totalVolumeL) {
-                    stats.append("Total volume: <b>${fmtVol(allTime.totalVolumeL)}L</b><br/>")
+                if (allTime.totalFlowVolumeL && (allTime.totalFlowVolumeL as BigDecimal) > 0) {
+                    stats.append("Total consumption (flow events): <b>${fmtVol(allTime.totalFlowVolumeL)}L</b><br/>")
                 }
                 if (allTime.totalTankUsageL && (allTime.totalTankUsageL as BigDecimal) > 0) {
-                    stats.append("Total tank usage: <b>${fmtVol(allTime.totalTankUsageL)}L</b><br/>")
+                    stats.append("Total tank usage (between cycles): <b>${fmtVol(allTime.totalTankUsageL)}L</b><br/>")
                 }
                 stats.append("Duration: mean <b>${fmtDec(allTime.meanDurationS)}s</b> \u00b1 ${fmtDec(allTime.stddevDurationS)}s<br/>")
-                stats.append("Volume/cycle: mean <b>${fmtVol(allTime.meanVolumeL)}L</b> \u00b1 ${fmtVol(allTime.stddevVolumeL)}L<br/>")
+                stats.append("Coincident flow / cycle: mean <b>${fmtVol(allTime.meanCoincidentFlowL)}L</b> \u00b1 ${fmtVol(allTime.stddevCoincidentFlowL)}L<br/>")
                 if (allTime.longestRunS) {
                     stats.append("Longest: <b>${fmtDec(allTime.longestRunS)}s</b> (${allTime.longestRunDate})<br/>")
                 }
@@ -280,7 +256,7 @@ Map historyPage() {
             if (recent) {
                 stats.append("<br/><b>Recent ${recent.recentCount} cycles:</b><br/>")
                 stats.append("Duration: median <b>${fmtDec(recent.medianDurationS)}s</b>, mean ${fmtDec(recent.meanDurationS)}s \u00b1 ${fmtDec(recent.stddevDurationS)}s<br/>")
-                stats.append("Volume: median <b>${fmtVol(recent.medianVolumeL)}L</b>, mean ${fmtVol(recent.meanVolumeL)}L \u00b1 ${fmtVol(recent.stddevVolumeL)}L<br/>")
+                stats.append("Coincident flow: median <b>${fmtVol(recent.medianCoincidentFlowL)}L</b>, mean ${fmtVol(recent.meanCoincidentFlowL)}L \u00b1 ${fmtVol(recent.stddevCoincidentFlowL)}L<br/>")
             }
 
             if (allTime.firstCycleDate) {
@@ -336,6 +312,12 @@ void updated() {
 void initialize() {
     logDebug("Initializing...")
 
+    if (state.version != APP_VERSION) {
+        log.warn "${APP_NAME}: version ${APP_VERSION} (was: ${state.version})"
+        state.version = APP_VERSION
+        // Version-aware reconfigure hook: add per-version migrations here when needed.
+    }
+
     // Initialize state variables if not set
     if (state.previousPower == null) state.previousPower = 0
     if (state.pumpBegin == null) state.pumpBegin = 0
@@ -343,22 +325,21 @@ void initialize() {
     if (state.pumpRunning == null) state.pumpRunning = false
     if (state.pumpCurrentDuration == null) state.pumpCurrentDuration = 0
     if (state.lastRunDuration == null) state.lastRunDuration = 0
-    if (state.lastRunVolume == null) state.lastRunVolume = 0.0
-    if (state.lastRunAvgLpm == null) state.lastRunAvgLpm = 0.0
+    // lastRunCoincidentFlow / lastRunCoincidentLpm intentionally left unset until first cycle;
+    // reads use `?: 0`, and defaulting here would pre-empt the v3 migration's rename copy.
     if (state.pumpTimeMax == null) state.pumpTimeMax = 0
     if (state.pumpTimeMaxDate == null) state.pumpTimeMaxDate = ""
     if (state.pumpTimeMin == null) state.pumpTimeMin = 0
     if (state.pumpTimeMinDate == null) state.pumpTimeMinDate = ""
-    if (state.totalVolume == null) state.totalVolume = 0.0
     if (state.totalTankUsage == null) state.totalTankUsage = 0.0
     // state.lastCycleVolumeAtEnd: raw meter reading at end of previous cycle (null until first cycle completes)
     if (state.cycleHistory == null) state.cycleHistory = []
 
     // Running counters for aggregate statistics
+    // totalCoincidentFlow / totalCoincidentFlowSq intentionally left unset — see note above.
     if (state.totalCycleCount == null) state.totalCycleCount = 0
     if (state.totalPumpDurationS == null) state.totalPumpDurationS = 0.0
     if (state.totalPumpDurationSqS == null) state.totalPumpDurationSqS = 0.0
-    if (state.totalVolumeSq == null) state.totalVolumeSq = 0.0
     if (state.firstCycleDate == null) state.firstCycleDate = ""
     if (state.firstCycleTimestamp == null) state.firstCycleTimestamp = 0
 
@@ -396,35 +377,51 @@ void initialize() {
         }
     }
 
-    // Hub reboot recovery: if pump was running, check current state
-    if (state.pumpRunning) {
-        BigDecimal currentPower = pumpSwitch.currentValue("power") as BigDecimal
-        int onThreshold = (powerOnThreshold ?: 100) as int
-        if (currentPower > onThreshold) {
-            // Pump is still running - reschedule emergency timer for remaining time
-            if (enableEmergencyShutoff != false) {
-                long elapsed = now() - (state.pumpBegin as long)
-                int timeoutMs = ((emergencyTimeoutSeconds ?: 300) as int) * 1000
-                long remaining = timeoutMs - elapsed
-                if (remaining > 0) {
-                    int remainingSeconds = Math.round(remaining / 1000.0) as int
-                    runIn(remainingSeconds, "emergencyShutoff")
-                    logInfo("Recovered running pump state, emergency timer rescheduled (${remainingSeconds}s remaining)")
-                } else {
-                    logWarn("Recovered running pump state but emergency timeout already exceeded - triggering shutoff")
-                    emergencyShutoff()
-                    return
-                }
-            }
-        } else {
-            // Pump stopped while hub was down - we missed the stop event
-            logWarn("Pump was running before restart but is now off (${currentPower}W). Cycle data lost.")
-            state.pumpRunning = false
-            if (pumpActiveSwitch) pumpActiveSwitch.off()
-        }
-    }
+    // Hub-restart recovery — initialize() is not called on reboot.
+    subscribe(location, "systemStart", systemStartHandler)
+
+    recoverPumpState()
 
     log.info("${APP_NAME} initialized. Pump running: ${state.pumpRunning}")
+}
+
+void systemStartHandler(evt) {
+    logInfo("Hub started — re-evaluating pump state")
+    recoverPumpState()
+}
+
+private void recoverPumpState() {
+    if (!state.pumpRunning) return
+
+    Object rawPower = pumpSwitch?.currentValue("power")
+    if (rawPower == null) {
+        logWarn("Recovery: pump power unavailable — leaving state.pumpRunning as-is")
+        return
+    }
+    BigDecimal currentPower = rawPower as BigDecimal
+    int onThreshold = (powerOnThreshold ?: 100) as int
+
+    if (currentPower > onThreshold) {
+        // Pump still running — reschedule emergency timer for the remaining window.
+        if (enableEmergencyShutoff != false) {
+            long elapsed = now() - (state.pumpBegin as long)
+            int timeoutMs = ((emergencyTimeoutSeconds ?: 300) as int) * 1000
+            long remaining = timeoutMs - elapsed
+            if (remaining > 0) {
+                int remainingSeconds = Math.round(remaining / 1000.0) as int
+                runIn(remainingSeconds, "emergencyShutoff")
+                logInfo("Recovered running pump state, emergency timer rescheduled (${remainingSeconds}s remaining)")
+            } else {
+                logWarn("Recovered running pump state but emergency timeout already exceeded - triggering shutoff")
+                emergencyShutoff()
+            }
+        }
+    } else {
+        // Pump stopped while we weren't watching — we missed the stop event.
+        logWarn("Pump was running before restart but is now off (${currentPower}W). Cycle data lost.")
+        state.pumpRunning = false
+        if (pumpActiveSwitch) pumpActiveSwitch.off()
+    }
 }
 
 // ==================== Event Handler ====================
@@ -505,46 +502,50 @@ private void handlePumpStopped(long currentTime) {
 
     BigDecimal volumeEnd = readVolume()
     BigDecimal volumeBegin = (state.volumeBegin ?: 0.0) as BigDecimal
-    BigDecimal volumeDuringRun = volumeEnd - volumeBegin
-    if (volumeDuringRun < 0) volumeDuringRun = 0.0
+    BigDecimal coincidentFlow = volumeEnd - volumeBegin
+    if (coincidentFlow < 0) coincidentFlow = 0.0
 
-    BigDecimal avgLpm = 0.0
-    if (durationMs > 0 && volumeDuringRun > 0) {
-        avgLpm = (volumeDuringRun * 60000.0) / durationMs
+    BigDecimal coincidentLpm = 0.0
+    if (durationMs > 0 && coincidentFlow > 0) {
+        coincidentLpm = (coincidentFlow * 60000.0) / durationMs
     }
 
-    // Store last run stats (raw values - format at display time only)
+    // Store last run stats (raw values - format at display time only).
+    // coincidentFlow = downstream draw measured during this pump's ON window;
+    // it influences cycle duration (pump must offset both deficit and ongoing draw),
+    // and is NOT a measurement of pump output.
     state.lastRunDuration = durationSeconds
-    state.lastRunVolume = volumeDuringRun
-    state.lastRunAvgLpm = avgLpm
-    state.totalVolume = ((state.totalVolume ?: 0.0) as BigDecimal) + volumeDuringRun
+    state.lastRunCoincidentFlow = coincidentFlow
+    state.lastRunCoincidentLpm = coincidentLpm
+    state.totalCoincidentFlow = ((state.totalCoincidentFlow ?: 0.0) as BigDecimal) + coincidentFlow
     state.lastCycleVolumeAtEnd = volumeEnd
 
     // Update running counters for aggregate statistics
     state.totalCycleCount = ((state.totalCycleCount ?: 0) as int) + 1
     state.totalPumpDurationS = ((state.totalPumpDurationS ?: 0.0) as BigDecimal) + durationSeconds
     state.totalPumpDurationSqS = ((state.totalPumpDurationSqS ?: 0.0) as BigDecimal) + (durationSeconds * durationSeconds)
-    state.totalVolumeSq = ((state.totalVolumeSq ?: 0.0) as BigDecimal) + (volumeDuringRun * volumeDuringRun)
+    state.totalCoincidentFlowSq = ((state.totalCoincidentFlowSq ?: 0.0) as BigDecimal) + (coincidentFlow * coincidentFlow)
     if (!state.firstCycleDate) {
         state.firstCycleDate = formatDate(currentTime)
         state.firstCycleTimestamp = currentTime
     }
 
-    logInfo("Pump stopped: ${fmtDec(durationSeconds)}s, ${fmtVol(volumeDuringRun)}L, ${fmtDec(avgLpm)} LPM")
+    logInfo("Pump stopped: ${fmtDec(durationSeconds)}s, coincident flow ${fmtVol(coincidentFlow)}L @ ${fmtDec(coincidentLpm)} LPM")
 
     // Append to CSV log
     if (enableCsvLogging != false) {
-        appendToCsvLog(currentTime, durationSeconds, volumeDuringRun, avgLpm, volumeBegin, volumeEnd)
+        appendToCsvLog(currentTime, durationSeconds, coincidentFlow, coincidentLpm, volumeBegin, volumeEnd)
     }
 
     // Add to cycle history (newest first, capped at 100)
     String dateStr = formatDate(currentTime)
     List<Map> history = (state.cycleHistory ?: []) as List<Map>
     history.add(0, [
+        ts: currentTime,
         date: dateStr,
         durationS: durationSeconds,
-        volumeL: volumeDuringRun,
-        avgLpm: avgLpm,
+        coincidentFlowL: coincidentFlow,
+        coincidentLpm: coincidentLpm,
         volumeAtStart: volumeBegin,
         volumeAtEnd: volumeEnd
     ])
@@ -552,9 +553,6 @@ private void handlePumpStopped(long currentTime) {
         history = history.subList(0, 100)
     }
     state.cycleHistory = history
-
-    // Evaluate flow alert
-    evaluateFlowAlert(durationMs, avgLpm)
 
     // Update min/max statistics
     updateStatistics(durationMs, currentTime)
@@ -666,6 +664,7 @@ void rateHandler(Event evt) {
         String dateStr = formatDate(flowEnd)
         List<Map> history = (state.flowHistory ?: []) as List<Map>
         history.add(0, [
+            ts: flowEnd,
             date: dateStr,
             durationS: durationSeconds,
             volumeL: volumeDelivered
@@ -685,7 +684,7 @@ private void appendToFlowCsvLog(long timestamp, BigDecimal durationSeconds, BigD
     String existingData = null
     try {
         byte[] byteArray = safeDownloadHubFile(fileName)
-        if (byteArray) existingData = new String(byteArray)
+        if (byteArray) existingData = new String(byteArray, 'UTF-8')
     } catch (Exception e) {
         logWarn("Could not read existing flow CSV data: ${e.message}")
     }
@@ -695,7 +694,7 @@ private void appendToFlowCsvLog(long timestamp, BigDecimal durationSeconds, BigD
     }
 
     String newData = existingData + csvLine
-    safeUploadHubFile(fileName, newData.bytes)
+    safeUploadHubFile(fileName, newData.getBytes('UTF-8'))
     logDebug("Appended flow event to ${fileName}")
 }
 
@@ -709,26 +708,6 @@ private BigDecimal readVolume() {
         return 0.0
     }
     return value as BigDecimal
-}
-
-private void evaluateFlowAlert(long durationMs, BigDecimal avgLpm) {
-    if (!enableFlowAlerts) return
-
-    int baseMs = ((baseAlertTimeSeconds ?: 40) as int) * 1000
-    int bonusMs = ((flowBonusSeconds ?: 10) as int) * 1000
-
-    int dynamicLimitMs = baseMs
-    if (avgLpm > ((flowThreshold1 ?: 10) as BigDecimal)) dynamicLimitMs += bonusMs
-    if (avgLpm > ((flowThreshold2 ?: 20) as BigDecimal)) dynamicLimitMs += bonusMs
-    if (avgLpm > ((flowThreshold3 ?: 30) as BigDecimal)) dynamicLimitMs += bonusMs
-
-    if (durationMs > dynamicLimitMs) {
-        BigDecimal limitSeconds = dynamicLimitMs / 1000.0
-        BigDecimal durationSeconds = durationMs / 1000.0
-        String msg = "Well pump ran for ${fmtDec(durationSeconds)}s (limit: ${fmtDec(limitSeconds)}s) with avg flow ${fmtDec(avgLpm)} LPM - possible no-flow or low-flow condition"
-        logWarn(msg)
-        sendNotification(msg)
-    }
 }
 
 // ==================== Statistics ====================
@@ -759,7 +738,7 @@ private Map computeCycleStats() {
     if (n == 0) return [:]
 
     List<BigDecimal> durations = history.collect { ((it as Map).durationS ?: 0) as BigDecimal }
-    List<BigDecimal> volumes = history.collect { ((it as Map).volumeL ?: 0) as BigDecimal }
+    List<BigDecimal> coincidentFlows = history.collect { ((it as Map).coincidentFlowL ?: 0) as BigDecimal }
 
     // Median duration (SensorAggregatorChild pattern)
     List<BigDecimal> sortedDurations = new ArrayList<BigDecimal>(durations)
@@ -771,14 +750,14 @@ private Map computeCycleStats() {
         medianDuration = sortedDurations[(n / 2) as int]
     }
 
-    // Median volume
-    List<BigDecimal> sortedVolumes = new ArrayList<BigDecimal>(volumes)
-    Collections.sort(sortedVolumes)
-    BigDecimal medianVolume
+    // Median coincident flow
+    List<BigDecimal> sortedCoincident = new ArrayList<BigDecimal>(coincidentFlows)
+    Collections.sort(sortedCoincident)
+    BigDecimal medianCoincident
     if (n % 2 == 0) {
-        medianVolume = (sortedVolumes[(n / 2 - 1) as int] + sortedVolumes[(n / 2) as int]) / 2.0
+        medianCoincident = (sortedCoincident[(n / 2 - 1) as int] + sortedCoincident[(n / 2) as int]) / 2.0
     } else {
-        medianVolume = sortedVolumes[(n / 2) as int]
+        medianCoincident = sortedCoincident[(n / 2) as int]
     }
 
     // Mean and stddev for duration
@@ -790,23 +769,23 @@ private Map computeCycleStats() {
     varianceDuration = varianceDuration / n
     BigDecimal stddevDuration = Math.sqrt(varianceDuration as double) as BigDecimal
 
-    // Mean and stddev for volume
-    BigDecimal sumVolume = 0.0
-    volumes.each { sumVolume += it }
-    BigDecimal meanVolume = sumVolume / n
-    BigDecimal varianceVolume = 0.0
-    volumes.each { varianceVolume += (it - meanVolume) * (it - meanVolume) }
-    varianceVolume = varianceVolume / n
-    BigDecimal stddevVolume = Math.sqrt(varianceVolume as double) as BigDecimal
+    // Mean and stddev for coincident flow
+    BigDecimal sumCoincident = 0.0
+    coincidentFlows.each { sumCoincident += it }
+    BigDecimal meanCoincident = sumCoincident / n
+    BigDecimal varianceCoincident = 0.0
+    coincidentFlows.each { varianceCoincident += (it - meanCoincident) * (it - meanCoincident) }
+    varianceCoincident = varianceCoincident / n
+    BigDecimal stddevCoincident = Math.sqrt(varianceCoincident as double) as BigDecimal
 
     return [
         recentCount: n,
         medianDurationS: medianDuration,
         meanDurationS: meanDuration,
         stddevDurationS: stddevDuration,
-        medianVolumeL: medianVolume,
-        meanVolumeL: meanVolume,
-        stddevVolumeL: stddevVolume,
+        medianCoincidentFlowL: medianCoincident,
+        meanCoincidentFlowL: meanCoincident,
+        stddevCoincidentFlowL: stddevCoincident,
     ]
 }
 
@@ -819,18 +798,18 @@ private Map computeAllTimeStats() {
 
     BigDecimal totalDuration = (state.totalPumpDurationS ?: 0.0) as BigDecimal
     BigDecimal totalDurationSq = (state.totalPumpDurationSqS ?: 0.0) as BigDecimal
-    BigDecimal totalVol = (state.totalVolume ?: 0.0) as BigDecimal
-    BigDecimal totalVolSq = (state.totalVolumeSq ?: 0.0) as BigDecimal
+    BigDecimal totalCoincident = (state.totalCoincidentFlow ?: 0.0) as BigDecimal
+    BigDecimal totalCoincidentSq = (state.totalCoincidentFlowSq ?: 0.0) as BigDecimal
 
     BigDecimal meanDuration = totalDuration / totalCycles
     BigDecimal varianceDuration = (totalDurationSq / totalCycles) - (meanDuration * meanDuration)
     if (varianceDuration < 0) varianceDuration = 0.0
     BigDecimal stddevDuration = Math.sqrt(varianceDuration as double) as BigDecimal
 
-    BigDecimal meanVolume = totalVol / totalCycles
-    BigDecimal varianceVolume = (totalVolSq / totalCycles) - (meanVolume * meanVolume)
-    if (varianceVolume < 0) varianceVolume = 0.0
-    BigDecimal stddevVolume = Math.sqrt(varianceVolume as double) as BigDecimal
+    BigDecimal meanCoincident = totalCoincident / totalCycles
+    BigDecimal varianceCoincident = (totalCoincidentSq / totalCycles) - (meanCoincident * meanCoincident)
+    if (varianceCoincident < 0) varianceCoincident = 0.0
+    BigDecimal stddevCoincident = Math.sqrt(varianceCoincident as double) as BigDecimal
 
     BigDecimal cyclesPerDay = 0.0
     if (state.firstCycleTimestamp && (state.firstCycleTimestamp as long) > 0) {
@@ -842,42 +821,48 @@ private Map computeAllTimeStats() {
     return [
         totalCycles: totalCycles,
         totalFlowEvents: (state.totalFlowEventCount ?: 0) as int,
-        totalVolumeL: totalVol,
+        totalCoincidentFlowL: totalCoincident,
         totalTankUsageL: (state.totalTankUsage ?: 0.0) as BigDecimal,
         totalFlowVolumeL: (state.totalFlowVolume ?: 0.0) as BigDecimal,
         totalPumpDurationS: totalDuration,
         meanDurationS: meanDuration,
         stddevDurationS: stddevDuration,
-        meanVolumeL: meanVolume,
-        stddevVolumeL: stddevVolume,
+        meanCoincidentFlowL: meanCoincident,
+        stddevCoincidentFlowL: stddevCoincident,
         cyclesPerDay: cyclesPerDay,
         longestRunS: ((state.pumpTimeMax ?: 0) as long) / 1000.0 as BigDecimal,
         longestRunDate: state.pumpTimeMaxDate ?: "",
         shortestRunS: ((state.pumpTimeMin ?: 0) as long) / 1000.0 as BigDecimal,
         shortestRunDate: state.pumpTimeMinDate ?: "",
         firstCycleDate: state.firstCycleDate ?: "",
+        firstCycleTs: (state.firstCycleTimestamp ?: 0) as long,
     ]
 }
 
 /**
  * Group history entries by day for daily summaries.
+ * Keys by tz-local yyyy-MM-dd derived from each entry's `ts`; emits `ts` (start-of-day epoch ms)
+ * so consumers can format the label themselves without parsing date strings.
  */
 private List<Map> computeDailySummaries(List<Map> history, String volumeKey) {
     if (!history) return []
     Map<String, Map> byDay = [:]
     history.each { Map entry ->
-        String day = (entry.date as String)?.substring(0, 10)
-        if (!day) return
+        Long entryTs = entry.ts as Long
+        if (entryTs == null) return
+        String day = new Date(entryTs).format("yyyy-MM-dd", location.timeZone)
         Map daySummary = byDay.get(day)
         if (!daySummary) {
-            daySummary = [date: day, count: 0, totalVolumeL: 0.0 as BigDecimal, totalDurationS: 0.0 as BigDecimal]
+            // Use this entry's ts as a representative timestamp within the day — sufficient for chart labels;
+            // consumers should format with the hub's tz (or accept locale browser tz).
+            daySummary = [ts: entryTs, date: day, count: 0, totalVolumeL: 0.0 as BigDecimal, totalDurationS: 0.0 as BigDecimal]
             byDay[day] = daySummary
         }
         daySummary.count = (daySummary.count as int) + 1
         daySummary.totalVolumeL = (daySummary.totalVolumeL as BigDecimal) + ((entry[volumeKey] ?: 0) as BigDecimal)
         daySummary.totalDurationS = (daySummary.totalDurationS as BigDecimal) + ((entry.durationS ?: 0) as BigDecimal)
     }
-    return byDay.values().toList().sort { a, b -> (b as Map).date <=> (a as Map).date }
+    return byDay.values().toList().sort { a, b -> (b as Map).ts <=> (a as Map).ts }
 }
 
 /**
@@ -888,64 +873,204 @@ private Map<Integer, Integer> computeHourlyDistribution() {
     Map<Integer, Integer> hourCounts = [:]
     for (int h = 0; h < 24; h++) { hourCounts[h] = 0 }
     history.each { Map entry ->
-        String dateStr = entry.date as String
-        if (dateStr?.length() >= 13) {
-            try {
-                int hour = (dateStr.substring(11, 13)) as int
-                hourCounts[hour] = (hourCounts[hour] ?: 0) + 1
-            } catch (Exception ignored) {}
-        }
+        Long entryTs = entry.ts as Long
+        if (entryTs == null) return
+        int hour = (new Date(entryTs).format("HH", location.timeZone)) as int
+        hourCounts[hour] = (hourCounts[hour] ?: 0) + 1
     }
     return hourCounts
 }
 
 /**
- * One-time migration: seed running counters from existing history.
+ * Schema migrations, idempotent per version gate.
+ *   v1 — seed running counters from pre-existing history.
+ *   v2 — backfill epoch-ms `ts` on history entries (previously only `date` strings).
  */
 private void migrateRunningCounters() {
     int currentVersion = (state.statsVersion ?: 0) as int
-    if (currentVersion >= 1) return
 
-    List<Map> history = (state.cycleHistory ?: []) as List<Map>
-    if (history) {
-        int count = history.size()
-        BigDecimal totalDur = 0.0
-        BigDecimal totalDurSq = 0.0
-        BigDecimal totalVolSq = 0.0
+    if (currentVersion < 1) {
+        List<Map> history = (state.cycleHistory ?: []) as List<Map>
+        if (history) {
+            int count = history.size()
+            BigDecimal totalDur = 0.0
+            BigDecimal totalDurSq = 0.0
+            BigDecimal totalVolSq = 0.0
 
-        history.each { Map entry ->
-            BigDecimal dur = (entry.durationS ?: 0) as BigDecimal
-            BigDecimal vol = (entry.volumeL ?: 0) as BigDecimal
-            totalDur += dur
-            totalDurSq += (dur * dur)
-            totalVolSq += (vol * vol)
-        }
+            history.each { Map entry ->
+                BigDecimal dur = (entry.durationS ?: 0) as BigDecimal
+                BigDecimal vol = (entry.volumeL ?: 0) as BigDecimal
+                totalDur += dur
+                totalDurSq += (dur * dur)
+                totalVolSq += (vol * vol)
+            }
 
-        if ((state.totalCycleCount ?: 0) as int == 0) {
-            state.totalCycleCount = count
-            state.totalPumpDurationS = totalDur
-            state.totalPumpDurationSqS = totalDurSq
-            state.totalVolumeSq = totalVolSq
-        }
+            if ((state.totalCycleCount ?: 0) as int == 0) {
+                state.totalCycleCount = count
+                state.totalPumpDurationS = totalDur
+                state.totalPumpDurationSqS = totalDurSq
+                state.totalVolumeSq = totalVolSq
+            }
 
-        if (!state.firstCycleDate && history.size() > 0) {
-            Map oldest = history.last() as Map
-            state.firstCycleDate = oldest.date as String
-            try {
-                state.firstCycleTimestamp = Date.parse("yyyy-MM-dd HH:mm:ss", oldest.date as String).getTime()
-            } catch (Exception e) {
-                state.firstCycleTimestamp = 0
+            if (!state.firstCycleDate && history.size() > 0) {
+                Map oldest = history.last() as Map
+                state.firstCycleDate = oldest.date as String
+                try {
+                    state.firstCycleTimestamp = Date.parse("yyyy-MM-dd HH:mm:ss", oldest.date as String).getTime()
+                } catch (Exception e) {
+                    state.firstCycleTimestamp = 0
+                }
             }
         }
+
+        List<Map> flowHistory = (state.flowHistory ?: []) as List<Map>
+        if (flowHistory && ((state.totalFlowEventCount ?: 0) as int) == 0) {
+            state.totalFlowEventCount = flowHistory.size()
+        }
+
+        state.statsVersion = 1
+        logInfo("Running counters migrated from history (${(state.cycleHistory ?: []).size()} cycles, ${(state.flowHistory ?: []).size()} flow events)")
     }
 
+    // v2 timestamp backfill — idempotent, runs on every initialize() until no work remains.
+    // Detects entries with `date` but no `ts`; the loop becomes a no-op once all entries carry ts.
+    backfillHistoryTimestamps()
+
+    // v3 field rename: `volumeL`/`avgLpm` → `coincidentFlowL`/`coincidentLpm` on cycle entries.
+    // Also migrates `state.totalVolume`/`state.totalVolumeSq`/`state.lastRunVolume`/`state.lastRunAvgLpm`
+    // to their `Coincident…` counterparts, and drops settings for the removed flow-alert feature.
+    renameCoincidentFlowFields()
+}
+
+/**
+ * Backfill `ts` (epoch ms) on history entries that only carry `date` strings.
+ * Idempotent: skip-if-already-present per entry, log a single summary line each call.
+ */
+private void backfillHistoryTimestamps() {
+    List<Map> cycleHistory = (state.cycleHistory ?: []) as List<Map>
+    int cycleNeed = cycleHistory.count { Map e -> e.ts == null && e.date } as int
+    int flowNeed = 0
     List<Map> flowHistory = (state.flowHistory ?: []) as List<Map>
-    if (flowHistory && ((state.totalFlowEventCount ?: 0) as int) == 0) {
-        state.totalFlowEventCount = flowHistory.size()
+    flowNeed = flowHistory.count { Map e -> e.ts == null && e.date } as int
+
+    if (cycleNeed == 0 && flowNeed == 0) return
+
+    int cycleDone = 0
+    int cycleFail = 0
+    List<Map> migratedCycles = []
+    for (Map entry : cycleHistory) {
+        if (entry.ts != null || !entry.date) {
+            migratedCycles.add(entry)
+            continue
+        }
+        long ts = parseHistoryDate(entry.date as String)
+        if (ts > 0) {
+            cycleDone++
+            migratedCycles.add(entry + [ts: ts])
+        } else {
+            cycleFail++
+            migratedCycles.add(entry)
+        }
+    }
+    state.cycleHistory = migratedCycles
+
+    int flowDone = 0
+    int flowFail = 0
+    List<Map> migratedFlow = []
+    for (Map entry : flowHistory) {
+        if (entry.ts != null || !entry.date) {
+            migratedFlow.add(entry)
+            continue
+        }
+        long ts = parseHistoryDate(entry.date as String)
+        if (ts > 0) {
+            flowDone++
+            migratedFlow.add(entry + [ts: ts])
+        } else {
+            flowFail++
+            migratedFlow.add(entry)
+        }
+    }
+    state.flowHistory = migratedFlow
+
+    log.warn "${APP_NAME}: ts backfill — cycles ${cycleDone}/${cycleNeed} (failed ${cycleFail}), flow ${flowDone}/${flowNeed} (failed ${flowFail})"
+}
+
+private long parseHistoryDate(String s) {
+    if (!s) return 0L
+    try {
+        return Date.parse("yyyy-MM-dd HH:mm:ss", s).getTime()
+    } catch (Exception e) {
+        log.warn "${APP_NAME}: failed to parse history date '${s}': ${e.message}"
+        return 0L
+    }
+}
+
+/**
+ * v3 migration: rename pump-cycle "volume" fields to "coincident flow" since the meter
+ * measures downstream draw, not pump output. Idempotent.
+ */
+private void renameCoincidentFlowFields() {
+    boolean changed = false
+
+    // Running counters — copy each old key (if still present) into the new key, then drop the old.
+    // Idempotent: after first successful run the old keys are gone and subsequent runs no-op.
+    if (state.totalVolume != null) {
+        state.totalCoincidentFlow = state.totalVolume
+        state.remove('totalVolume')
+        changed = true
+    }
+    if (state.totalVolumeSq != null) {
+        state.totalCoincidentFlowSq = state.totalVolumeSq
+        state.remove('totalVolumeSq')
+        changed = true
+    }
+    if (state.lastRunVolume != null) {
+        state.lastRunCoincidentFlow = state.lastRunVolume
+        state.remove('lastRunVolume')
+        changed = true
+    }
+    if (state.lastRunAvgLpm != null) {
+        state.lastRunCoincidentLpm = state.lastRunAvgLpm
+        state.remove('lastRunAvgLpm')
+        changed = true
     }
 
-    state.statsVersion = 1
-    logInfo("Running counters migrated from history (${history?.size() ?: 0} cycles, ${flowHistory?.size() ?: 0} flow events)")
+    // Cycle history entries
+    List<Map> cycleHistory = (state.cycleHistory ?: []) as List<Map>
+    int renamed = 0
+    List<Map> migrated = []
+    for (Map entry : cycleHistory) {
+        boolean hasOld = entry.volumeL != null || entry.avgLpm != null
+        boolean hasNew = entry.coincidentFlowL != null
+        if (hasOld && !hasNew) {
+            Map newEntry = new LinkedHashMap(entry)
+            newEntry.coincidentFlowL = entry.volumeL
+            newEntry.coincidentLpm = entry.avgLpm
+            newEntry.remove('volumeL')
+            newEntry.remove('avgLpm')
+            migrated.add(newEntry)
+            renamed++
+        } else {
+            migrated.add(entry)
+        }
+    }
+    if (renamed > 0) {
+        state.cycleHistory = migrated
+        changed = true
+    }
+
+    // Drop obsolete flow-alert settings (the feature was removed in 0.4.0).
+    ['enableFlowAlerts', 'baseAlertTimeSeconds', 'flowThreshold1', 'flowThreshold2', 'flowThreshold3', 'flowBonusSeconds'].each { String name ->
+        if (settings[name] != null) {
+            app.removeSetting(name)
+            changed = true
+        }
+    }
+
+    if (changed) {
+        log.warn "${APP_NAME}: v3 rename — coincident-flow fields migrated (${renamed} cycle entries)"
+    }
 }
 
 // ==================== API Endpoints ====================
@@ -980,8 +1105,8 @@ Map getStatusJson() {
         currentVolumeL: waterMeter?.currentValue(waterMeterAttribute ?: "volume"),
         pumpBeginTimestamp: state.pumpRunning ? (state.pumpBegin as long) : null,
         lastRunDurationS: state.lastRunDuration,
-        lastRunVolumeL: state.lastRunVolume,
-        lastRunAvgLpm: state.lastRunAvgLpm,
+        lastRunCoincidentFlowL: state.lastRunCoincidentFlow,
+        lastRunCoincidentLpm: state.lastRunCoincidentLpm,
         lastFlowDurationS: state.lastFlowDuration,
         lastFlowVolumeL: state.lastFlowVolume,
         pumpDeviceName: pumpSwitch?.displayName ?: "",
@@ -1017,7 +1142,7 @@ Map getFlowJson() {
 Map getStatsJson() {
     Map allTime = computeAllTimeStats()
     Map recentCycle = computeCycleStats()
-    List<Map> dailyCycles = computeDailySummaries((state.cycleHistory ?: []) as List<Map>, 'volumeL')
+    List<Map> dailyCycles = computeDailySummaries((state.cycleHistory ?: []) as List<Map>, 'coincidentFlowL')
     List<Map> dailyFlow = computeDailySummaries((state.flowHistory ?: []) as List<Map>, 'volumeL')
     Map<Integer, Integer> hourly = computeHourlyDistribution()
 
@@ -1035,7 +1160,7 @@ Map getCyclesCsv() {
     String fileName = csvFileName ?: "pumpCycles.csv"
     try {
         byte[] bytes = safeDownloadHubFile(fileName)
-        String csv = bytes ? new String(bytes, 'UTF-8') : "datetime,duration_s,volume_L,avg_lpm,vol_at_start,vol_at_end\n"
+        String csv = bytes ? new String(bytes, 'UTF-8') : "datetime,duration_s,coincident_flow_L,coincident_lpm,vol_at_start,vol_at_end\n"
         return render(status: 200, contentType: 'text/csv', data: csv)
     } catch (Exception e) {
         return render(status: 500, contentType: 'text/plain', data: "Error: ${e.message}")
@@ -1055,26 +1180,26 @@ Map getFlowCsv() {
 
 // ==================== CSV Logging ====================
 
-private void appendToCsvLog(long timestamp, BigDecimal durationSeconds, BigDecimal volume, BigDecimal avgLpm,
+private void appendToCsvLog(long timestamp, BigDecimal durationSeconds, BigDecimal coincidentFlow, BigDecimal coincidentLpm,
                              BigDecimal volumeAtStart, BigDecimal volumeAtEnd) {
     String fileName = csvFileName ?: "pumpCycles.csv"
     String dateStr = formatDate(timestamp)
-    String csvLine = "${dateStr},${durationSeconds},${volume},${avgLpm},${volumeAtStart},${volumeAtEnd}\n"
+    String csvLine = "${dateStr},${durationSeconds},${coincidentFlow},${coincidentLpm},${volumeAtStart},${volumeAtEnd}\n"
 
     String existingData = null
     try {
         byte[] byteArray = safeDownloadHubFile(fileName)
-        if (byteArray) existingData = new String(byteArray)
+        if (byteArray) existingData = new String(byteArray, 'UTF-8')
     } catch (Exception e) {
         logWarn("Could not read existing CSV data: ${e.message}")
     }
 
     if (existingData == null) {
-        existingData = "datetime,duration_s,volume_L,avg_lpm,vol_at_start,vol_at_end\n"
+        existingData = "datetime,duration_s,coincident_flow_L,coincident_lpm,vol_at_start,vol_at_end\n"
     }
 
     String newData = existingData + csvLine
-    safeUploadHubFile(fileName, newData.bytes)
+    safeUploadHubFile(fileName, newData.getBytes('UTF-8'))
     logDebug("Appended pump cycle to ${fileName}")
 }
 
@@ -1138,7 +1263,7 @@ private String getStatusText() {
             String tu = deriveTankUsage(history[0] as Map, history[1] as Map)
             if (tu != "—") tankInfo = " (tank: ${tu})"
         }
-        status.append("<br/><b>Last Pump Run:</b> ${fmtDec(state.lastRunDuration)}s, ${fmtVol(state.lastRunVolume)}L, ${fmtDec(state.lastRunAvgLpm)} LPM${tankInfo}<br/>")
+        status.append("<br/><b>Last Pump Run:</b> ${fmtDec(state.lastRunDuration)}s, coincident flow ${fmtVol(state.lastRunCoincidentFlow)}L @ ${fmtDec(state.lastRunCoincidentLpm)} LPM${tankInfo}<br/>")
     }
 
     // Last flow event details
@@ -1151,18 +1276,22 @@ private String getStatusText() {
         status.append("<br/><b>Statistics:</b><br/>")
         status.append("Longest: ${fmtDec((state.pumpTimeMax as long) / 1000.0)}s (${state.pumpTimeMaxDate})<br/>")
         status.append("Shortest: ${fmtDec((state.pumpTimeMin as long) / 1000.0)}s (${state.pumpTimeMinDate})<br/>")
-        if (state.totalVolume) {
-            status.append("Total volume: ${fmtVol(state.totalVolume)}L<br/>")
+        if (state.totalFlowVolume) {
+            status.append("Total consumption: ${fmtVol(state.totalFlowVolume)}L<br/>")
         }
         if (state.totalTankUsage && (state.totalTankUsage as BigDecimal) > 0) {
             status.append("Total tank usage: ${fmtVol(state.totalTankUsage)}L<br/>")
+        }
+        if (state.totalCoincidentFlow && (state.totalCoincidentFlow as BigDecimal) > 0) {
+            status.append("<small>Total coincident flow (during pump cycles): ${fmtVol(state.totalCoincidentFlow)}L</small><br/>")
         }
     }
 
     // Device info
     if (pumpSwitch) {
-        BigDecimal currentPower = pumpSwitch.currentValue("power") as BigDecimal
-        status.append("<br/><small>Pump: ${pumpSwitch.displayName} (${currentPower}W)</small><br/>")
+        Object rawPower = pumpSwitch.currentValue("power")
+        String powerLabel = rawPower != null ? "${rawPower as BigDecimal}W" : "—"
+        status.append("<br/><small>Pump: ${pumpSwitch.displayName} (${powerLabel})</small><br/>")
     }
     if (waterMeter) {
         Object currentVolume = waterMeter.currentValue(waterMeterAttribute ?: "volume")
@@ -1213,12 +1342,12 @@ private String formatDate(long timestamp) {
 }
 
 @CompileStatic
-private String fmtVol(Object value) {
+private String fmtVol(Number value) {
     return ((value ?: 0) as BigDecimal).setScale(1, BigDecimal.ROUND_HALF_UP).toString()
 }
 
 @CompileStatic
-private String fmtDec(Object value) {
+private String fmtDec(Number value) {
     return ((value ?: 0) as BigDecimal).setScale(1, BigDecimal.ROUND_HALF_UP).toString()
 }
 
