@@ -6,6 +6,7 @@ definition(
     namespace: "iamtrep",
     author: "iamtrep",
     description: "Async HTTP Stress Test App",
+    menu: "Apps", // new in platform 2.5.0
     category: "Convenience",
     iconUrl: "",
     iconX2Url: "",

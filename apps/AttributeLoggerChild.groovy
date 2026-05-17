@@ -19,6 +19,7 @@ definition(
     namespace: "iamtrep",
     author: "pj",
     description: "Logs selected attributes to a CSV file",
+    menu: "Apps", // new in platform 2.5.0
     category: "Convenience",
     iconUrl: "",
     iconX2Url: "",

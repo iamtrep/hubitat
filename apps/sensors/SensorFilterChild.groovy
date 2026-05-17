@@ -14,6 +14,7 @@ definition(
     namespace: "iamtrep",
     author: "pj",
     description: "Apply moving average or median filter to sensor data",
+    menu: "Automations", // new in platform 2.5.0
     category: "Utility",
     iconUrl: "",
     iconX2Url: "",

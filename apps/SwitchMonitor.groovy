@@ -70,6 +70,7 @@ definition(
     namespace: "iamtrep",
     author: "pj",
     description: "Monitors switches that must remain on or off, organized in groups with independent timing, notifications, and load monitoring.",
+    menu: "Automations", // new in platform 2.5.0
     category: "Convenience",
     singleInstance: false,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/SwitchMonitor.groovy",

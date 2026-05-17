@@ -19,6 +19,7 @@ definition(
     parent: "iamtrep:Location Event Mapper",
     author: "pj",
     description: "Trigger virtual contact sensor state changes with location events",
+    menu: "Automations", // new in platform 2.5.0
     category: "Utility",
     iconUrl: "",
     iconX2Url: "",

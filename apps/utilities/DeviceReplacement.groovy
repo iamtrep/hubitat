@@ -12,6 +12,7 @@ definition(
     namespace: "iamtrep",
     author: "pj",
     description: "Replace a device across all installed apps in one shot",
+    menu: "Apps", // new in platform 2.5.0
     category: "Utility",
     iconUrl: "",
     iconX2Url: ""

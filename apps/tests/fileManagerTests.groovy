@@ -6,6 +6,7 @@ definition(
     namespace: "Example",
     author: "Hubitat Example",
     description: "tbd",
+    menu: "Apps", // new in platform 2.5.0
     category: "Convenience",
     iconUrl: "",
     iconX2Url: "")

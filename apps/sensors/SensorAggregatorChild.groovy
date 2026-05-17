@@ -16,6 +16,7 @@ definition(
     parent: "iamtrep:Sensor Aggregator",
     author: "pj",
     description: "Aggregate sensor values and save to a single virtual device",
+    menu: "Automations", // new in platform 2.5.0
     category: "Convenience",
     iconUrl: "",
     iconX2Url: "",

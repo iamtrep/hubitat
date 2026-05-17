@@ -15,6 +15,7 @@ definition(
     namespace: "iamtrep",
     author: "pj",
     description: "For each device, enumerates the apps referencing them",
+    menu: "Apps", // new in platform 2.5.0
     category: "Utility",
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/DeviceInUseEnumerator.groovy",
     iconUrl: "",

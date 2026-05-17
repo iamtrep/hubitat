@@ -21,6 +21,7 @@ definition(
     namespace: "iamtrep",
     author: "pj",
     description: "Monitor hub logs with multiple filters and output actions",
+    menu: "Apps", // new in platform 2.5.0
     category: "Utility",
     singleInstance: true,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/apps/LogMonitor/LogMonitor.groovy",

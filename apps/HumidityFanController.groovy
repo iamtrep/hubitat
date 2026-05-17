@@ -90,6 +90,7 @@ definition(
     namespace: "iamtrep",
     author: "pj",
     description: "Controls a bathroom extractor fan based on humidity levels compared to a reference sensor",
+    menu: "Automations", // new in platform 2.5.0
     category: "Convenience",
     singleInstance: false,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/HumidityFanController.groovy",

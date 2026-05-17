@@ -12,6 +12,7 @@ definition(
     author: "pj",
     singleInstance: true,
     description: "TBD",
+    menu: "Automations", // new in platform 2.5.0
     category: "Convenience",
     importUrl: "",
     iconUrl: "",

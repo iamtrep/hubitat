@@ -272,6 +272,7 @@ definition(
     namespace: "iamtrep",
     author: "pj",
     description: "Comprehensive hub diagnostics: inventory, performance tracking, network analysis, and snapshot comparison",
+    menu: "Apps", // new in platform 2.5.0
     category: "Utility",
     singleInstance: true,
     importUrl: IMPORT_URL_APP,

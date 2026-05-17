@@ -24,6 +24,7 @@ definition(
     namespace: "iamtrep",
     author: "pj",
     description: "Monitors battery levels and logs replacements to app history and an on-hub JSON file",
+    menu: "Apps", // new in platform 2.5.0
     category: "Utility",
     iconUrl: "",
     iconX2Url: ""

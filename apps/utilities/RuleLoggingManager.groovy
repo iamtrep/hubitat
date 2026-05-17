@@ -73,6 +73,7 @@ definition(
     namespace: "johnland",
     author: "John Land & ChatGPT",
     description: "Reports Rule Machine and Button Controller rules that have Actions, Events, or Triggers logging selected.",
+    menu: "Apps", // new in platform 2.5.0
     category: "Utility",
     singleInstance: true,
     installOnOpen: true,

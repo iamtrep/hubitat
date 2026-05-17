@@ -13,6 +13,7 @@ definition(
     parent: "iamtrep:Sensor Aggregator",
     author: "pj",
     description: "Combine PIR and mmWave inputs into a single motion output using configurable fusion algorithms",
+    menu: "Automations", // new in platform 2.5.0
     category: "Convenience",
     iconUrl: "",
     iconX2Url: "",

@@ -21,6 +21,7 @@ definition(
     namespace: "iamtrep",
     author: "pj",
     description: "Controls a virtual contact sensor based on system events related to startup, shutdown and reboot",
+    menu: "Automations", // new in platform 2.5.0
     category: "Utility",
     iconUrl: "",
     iconX2Url: "",

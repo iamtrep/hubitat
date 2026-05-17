@@ -11,6 +11,7 @@ definition(
     namespace: "iamtrep",
     author: "pj",
     description: "Manages multiple Attribute Logger app instances",
+    menu: "Apps", // new in platform 2.5.0
     category: "Utility",
     iconUrl: "",
     iconX2Url: "",

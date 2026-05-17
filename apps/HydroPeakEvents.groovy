@@ -19,6 +19,7 @@ definition(
     namespace: "iamtrep",
     author: "pj",
     description: "Manages devices during Hydro-Québec peak periods",
+    menu: "Automations", // new in platform 2.5.0
     category: "Utility",
     iconUrl: "",
     iconX2Url: "",

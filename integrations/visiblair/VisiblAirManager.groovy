@@ -17,6 +17,7 @@ definition(
     namespace: "iamtrep",
     author: "pj",
     description: "Auto-discovers VisiblAir sensors and creates child devices with model-specific drivers",
+    menu: "Integrations", // new in platform 2.5.0
     category: "Convenience",
     singleInstance: true,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/integrations/visiblair/VisiblAirManager.groovy",
