@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.33.1"
+@Field static final String APP_VERSION = "5.33.2"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -4572,17 +4572,26 @@ void initialize() {
 
     if (settings.autoCheckpoint) {
         int interval = (settings.checkpointInterval ?: "60").toInteger()
+        int offsetSec = (state.checkpointOffsetSeconds ?: -1) as int
+        if (offsetSec < 180 || offsetSec > 420) {
+            offsetSec = 180 + new Random().nextInt(241)
+            state.checkpointOffsetSeconds = offsetSec
+        }
+        int sec = offsetSec % 60
+        int min = offsetSec.intdiv(60)
         String cron
         if (interval < 60) {
-            cron = "0 */${interval} * * * ?"
+            cron = "${sec} ${min}/${interval} * * * ?"
         } else {
             int hours = (interval / 60).toInteger()
-            cron = hours >= 24 ? "0 0 0 * * ?" : "0 0 */${hours} * * ?"
+            cron = hours >= 24 ? "${sec} ${min} 0 * * ?" : "${sec} ${min} */${hours} * * ?"
         }
         // v5.33.0: scheduledCheckpoint fires the async chain and returns immediately,
         // so the platform scheduler is never blocked on radio/file work.
         schedule(cron, "scheduledCheckpoint")
-        logInfo "Automatic perf checkpoints scheduled every ${interval} minute(s)"
+        String mm = min.toString().padLeft(2, '0')
+        String ss = sec.toString().padLeft(2, '0')
+        logInfo "Automatic perf checkpoints scheduled every ${interval} minute(s) at :${mm}:${ss} past the hour"
     }
 
     // v5.15.0: daily UI sync moved out of serveUI hot path. 03:17 local time, off-peak.
