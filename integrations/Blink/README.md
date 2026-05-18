@@ -5,7 +5,11 @@ SPDX-License-Identifier: MIT
 
 # Blink Integration
 
-Parent/child integration for [Blink](https://blinkforhome.com/) home security cameras. The manager app authenticates against the Blink cloud (OAuth 2.0 + PKCE + 2FA), discovers cameras and networks, and creates lean child devices that expose only the attributes that are useful on Hubitat.
+Integration for [Blink](https://blinkforhome.com/) home security cameras. 
+
+The manager app authenticates against the Blink cloud (OAuth 2.0 + PKCE + 2FA), discovers cameras and networks, and creates lean child devices that expose only the attributes that are useful on Hubitat.
+
+There exists a full-featured Hubitat community integration for Blink devices, please see Acknowledgements below.  This integration was built to be lean and does not expose as many features, attributes, and specific device functions.
 
 ## Components
 
@@ -50,17 +54,34 @@ The access token is refreshed automatically 5 minutes before expiry. Refresh tok
 - `MotionSensor` — `motion` flips to `active` when a clip is recorded
 - `Switch` — `on` = per-camera motion detection enabled
 - `Battery` — percent (for battery cameras; null for wired)
-- `TemperatureMeasurement` — built-in temperature sensor
-- `lastClipUrl` / `lastClipTime` — most recent recorded clip
-- `wifiSignal` — dBm
-- `online` / `firmwareVersion` / `batteryState`
-- `snapThumbnail` command — request a fresh still image
+- `TemperatureMeasurement` — built-in temperature sensor (refreshed against the calibrated `/signals` endpoint on rotation)
+- `lastClipUrl` / `lastClipTime` — most recent recorded clip (the actual `.mp4`)
+- `lastThumbnailUrl` / `lastUpdated` — most recent still-image snapshot and camera-config update time
+- `wifiSignal` (dBm) / `lfrSignal` (1–5 bars, sync-module link quality)
+- `online` / `firmwareVersion` / `batteryState` (`"ok"` / `"low"`) / `batteryBars` (1–3) / `acPower` (wired cameras only)
+- `snapThumbnail` / `recordClip` commands
 
 Per-camera motion enable/disable currently works only for standard cameras (not Mini/Owl, doorbells, or floodlights). The other variants are exposed but their `on()` / `off()` will log a warning; this is the path that will be split into per-type child drivers in a follow-up.
+
+## Example rules
+
+A handful of automations this integration enables, shown in trigger → action form:
+
+**Arm/disarm with Hubitat mode.** When location mode changes to *Away*, turn on the Blink Network device's `switch`. Reverse on *Home*. Equivalent to arming the system in the Blink mobile app, but triggered by Hubitat's authoritative mode.
+
+**Clip-recorded notification.** Trigger on `lastClipTime` changing for a camera; send a push notification with the camera label and `lastClipUrl`. The URL plays in any browser or video app — a one-tap recording link directly from the camera. (Blink-issued clip URLs are short-lived signed URLs; deliver promptly.)
+
+**Motion-triggered outdoor lighting.** Trigger on `motion` becoming `active` for a camera, with a condition of "between sunset and sunrise," and turn on the matching outdoor light for 5 minutes. Blink does not push events — `motion` reflects what the most recent poll reported, so reaction latency is bounded by the poll interval (up to 60 s at the default). Lowering the interval helps but Blink throttles short intervals; see *Polling* below.
+
+**Low-battery alert.** Trigger on `batteryState` becoming `"low"` for any Blink Camera (or on `battery` dropping below your own threshold); send a notification with the device label.
+
+**Doorbell mains-power loss.** Trigger on `acPower` changing for the doorbell; if the new value reports no AC, notify *"Doorbell on backup battery."* Only fires for cameras that report `acPower` (wired models).
 
 ## Polling
 
 Default poll interval is 60 s. Configurable to 30 / 60 / 120 / 300 s from the manager app's settings page. The integration calls `/api/v3/accounts/{accountId}/homescreen` once per cycle (cheap), reads everything from a single response, and dispatches to children.
+
+Because Blink does not push events, every observable state change (motion, arm/disarm result, new clip) becomes visible to Hubitat only on the next poll. Polling more often shortens reaction latency, but Blink throttles aggressively short intervals; 30 s is the safe lower bound (matches blinkpy's default).
 
 ## Orphans
 
