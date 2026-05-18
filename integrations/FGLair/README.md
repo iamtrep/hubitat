@@ -91,7 +91,7 @@ If a unit is removed from your FGLair account, the Hubitat child is flagged as o
 
 - **Sensor scale is `°F` hundredths.** Empirically, the unit reports `display_temperature` and `outdoor_temperature` as integers in hundredths of Fahrenheit (e.g. `7000` = 70.0°F). The driver converts to the hub's `getTemperatureScale()` regardless. If your unit reports sensors in Celsius, this assumption needs a per-unit override (not currently implemented).
 - **Setpoint scale is `°C` tenths.** `adjust_temperature` is reported as tenths of Celsius (e.g. `180` = 18.0°C), independent of the unit's display scale.
-- **`supportedThermostatModes` / `supportedThermostatFanModes`** are written via `sendEvent` directly. The platform's `setSupported*()` methods are not reliably bound to user-namespaced drivers on current firmware. See `/Users/trep/.claude/projects/-Users-trep-Documents-GitHub-iamtrep-hubitat/memory/hubitat_supported_thermostat_modes.md` for the gory details.
+- **`supportedThermostatModes` / `supportedThermostatFanModes`** are written via `sendEvent` directly. The platform's `setSupported*()` methods are not reliably bound to user-namespaced drivers on current firmware.
 
 ## Acknowledgments
 
