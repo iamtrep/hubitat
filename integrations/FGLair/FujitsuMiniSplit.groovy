@@ -87,7 +87,7 @@ void refresh() {
 }
 
 private void emitBounds() {
-    String scale = location.temperatureScale
+    String scale = getTemperatureScale()
     sendEvent(name: 'minHeatingSetpoint', value: convertFromC(16), unit: scale)
     sendEvent(name: 'maxHeatingSetpoint', value: convertFromC(30), unit: scale)
     sendEvent(name: 'minCoolingSetpoint', value: convertFromC(18), unit: scale)
@@ -95,7 +95,7 @@ private void emitBounds() {
 }
 
 private BigDecimal convertFromC(BigDecimal celsius) {
-    if (location.temperatureScale == 'F') {
+    if (getTemperatureScale() == 'F') {
         return (celsius * 9 / 5 + 32).setScale(1, java.math.RoundingMode.HALF_UP)
     }
     return celsius.setScale(1, java.math.RoundingMode.HALF_UP)
@@ -122,8 +122,111 @@ void fanAuto()        { setThermostatFanMode("auto") }
 void fanOn()          { logWarn "fanOn() not a standard Fujitsu fan setting — routing to setFanSpeed(\"high\")"; setFanSpeed("high") }
 void fanCirculate()   { logWarn "fanCirculate() not a standard Fujitsu fan setting — routing to setFanSpeed(\"low\")"; setFanSpeed("low") }
 
-// updateState lands in Task 6.
-void updateState(Map data) { logTrace "updateState(${data}) — not implemented yet" }
+// --- Inbound state from parent ---
+
+@Field static final Map<Integer, String> OP_MODE = [
+    0: "off", 1: null, 2: "auto", 3: "cool", 4: "dry", 5: "fan_only", 6: "heat"
+]
+@Field static final Map<Integer, String> FAN_MODE = [
+    0: "quiet", 1: "low", 2: "medium", 3: "high", 4: "auto"
+]
+@Field static final List<String> CANONICAL_MODES = ["off", "heat", "cool", "auto"]
+
+void updateState(Map data) {
+    logTrace "updateState(${data})"
+    String fujMode = null
+    if (data.opMode != null) {
+        fujMode = OP_MODE[(int) data.opMode]
+        if (fujMode != null) {
+            sendEvent(name: "fujitsuMode", value: fujMode,
+                      descriptionText: "${device} fujitsuMode is ${fujMode}")
+            if (fujMode in CANONICAL_MODES) {
+                sendEvent(name: "thermostatMode", value: fujMode,
+                          descriptionText: "${device} mode is ${fujMode}")
+            }
+            sendEvent(name: "thermostatOperatingState",
+                      value: deriveOperatingState(fujMode, data.displayTemp, data.adjustTemp))
+        }
+    }
+    if (data.fanSpeed != null) {
+        String speed = FAN_MODE[(int) data.fanSpeed]
+        if (speed != null) {
+            sendEvent(name: "fanSpeed", value: speed,
+                      descriptionText: "${device} fanSpeed is ${speed}")
+            if (speed == "auto") {
+                sendEvent(name: "thermostatFanMode", value: "auto",
+                          descriptionText: "${device} thermostatFanMode is auto")
+            }
+        }
+    }
+    if (data.displayTemp != null) {
+        BigDecimal t = aylaSensorToScale(data.displayTemp)
+        sendEvent(name: "temperature", value: t, unit: getTemperatureScale(),
+                  descriptionText: "${device} temperature is ${t}${getTemperatureScale()}")
+    }
+    if (data.adjustTemp != null) {
+        BigDecimal sp = aylaSetpointToScale(data.adjustTemp)
+        ["thermostatSetpoint", "heatingSetpoint", "coolingSetpoint"].each { String name ->
+            sendEvent(name: name, value: sp, unit: getTemperatureScale(),
+                      descriptionText: "${device} ${name} is ${sp}${getTemperatureScale()}")
+        }
+    }
+    if (data.outdoorTemp != null) {
+        BigDecimal ot = aylaSensorToScale(data.outdoorTemp)
+        sendEvent(name: "outdoorTemperature", value: ot, unit: getTemperatureScale(),
+                  descriptionText: "${device} outdoor temperature is ${ot}${getTemperatureScale()}")
+    }
+}
+
+private String deriveOperatingState(String mode, Object displayTemp, Object adjustTemp) {
+    switch (mode) {
+        case "off":      return "idle"
+        case "heat":     return "heating"
+        case "cool":     return "cooling"
+        case "fan_only": return "fan only"
+        case "dry":      return "idle"
+        case "auto":
+            if (displayTemp == null || adjustTemp == null) return "idle"
+            BigDecimal sp = aylaSetpointToScale(adjustTemp)
+            BigDecimal dt = aylaSensorToScale(displayTemp)
+            if (sp > dt) return "heating"
+            if (sp < dt) return "cooling"
+            return "idle"
+        default: return "idle"
+    }
+}
+
+// Sensor readings (display_temperature, outdoor_temperature): hundredths of °F.
+// Empirically verified 2026-05-18: raw 7000 = 70.00°F, raw 5500 = 55.00°F.
+// Independent of the hub's temperature scale; we always convert to it.
+// (If we ever see a unit reporting sensors in °C, this assumption needs a
+// per-unit override setting on the manager.)
+private BigDecimal aylaSensorToScale(Object raw) {
+    BigDecimal fahrenheit = (raw as BigDecimal) / 100
+    if (getTemperatureScale() == 'C') {
+        BigDecimal celsius = (fahrenheit - 32) * 5 / 9
+        return celsius.setScale(1, java.math.RoundingMode.HALF_UP)
+    }
+    return fahrenheit.setScale(1, java.math.RoundingMode.HALF_UP)
+}
+
+// Setpoint (adjust_temperature): tenths of °C, regardless of the unit's
+// display scale. Empirically verified 2026-05-18: raw 180 = 18.0°C.
+private BigDecimal aylaSetpointToScale(Object raw) {
+    BigDecimal celsius = (raw as BigDecimal) / 10
+    if (getTemperatureScale() == 'F') {
+        return (celsius * 9 / 5 + 32).setScale(1, java.math.RoundingMode.HALF_UP)
+    }
+    return celsius.setScale(1, java.math.RoundingMode.HALF_UP)
+}
+
+private BigDecimal scaleToAylaSetpoint(BigDecimal scaleValue) {
+    BigDecimal celsius = scaleValue
+    if (getTemperatureScale() == 'F') {
+        celsius = (scaleValue - 32) * 5 / 9
+    }
+    return (celsius * 10).setScale(0, java.math.RoundingMode.HALF_UP)
+}
 
 private void logTrace(String msg) { if (settings.traceEnable) log.trace "${device} ${msg}" }
 private void logDebug(String msg) { if (settings.debugEnable) log.debug "${device} ${msg}" }

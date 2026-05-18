@@ -413,6 +413,57 @@ private void handleDeviceList(List rawDevices) {
         }
     }
     computeOrphans(liveDnis)
+
+    // After ensuring children exist, fetch each DSN's properties and dispatch.
+    devices.each { Map d ->
+        String dsn = d.dsn?.toString()
+        if (dsn) fetchProperties(dsn)
+    }
+}
+
+void fetchProperties(String dsn) {
+    if (tokenNearExpiry()) { refreshToken(); runIn(3, "fetchProperties", [data: [dsn: dsn]]); return }
+    Map<String, String> rc = regionConfig()
+    Map params = [
+        uri: "${rc.ads}/apiv1/dsns/${dsn}/properties.json",
+        headers: authHeader(),
+        contentType: "application/json",
+        timeout: HTTP_TIMEOUT
+    ]
+    asynchttpGet("fetchPropertiesCallback", params, [dsn: dsn])
+}
+
+void fetchPropertiesCallback(resp, data) {
+    String dsn = data?.dsn
+    if (resp.hasError()) { logError "fetchProperties(${dsn}) error: ${resp.getErrorMessage()}"; return }
+    int status = resp.getStatus()
+    if (status == 401) { logWarn "fetchProperties(${dsn}) 401 — refresh"; refreshToken(); runIn(3, "fetchProperties", [data: [dsn: dsn]]); return }
+    if (status != 200) { logError "fetchProperties(${dsn}) HTTP ${status}"; return }
+    List parsed
+    try { parsed = (List) new JsonSlurper().parseText(resp.getData()) }
+    catch (Exception e) { logError "fetchProperties parse: ${e.message}"; return }
+
+    Map<String, Object> props = [:]
+    parsed.each { item ->
+        Map p = (Map) ((Map) item).property
+        if (p?.name) props[((String) p.name).toLowerCase()] = p.value
+    }
+    Map stateMap = [
+        opMode      : props["operation_mode"],
+        fanSpeed    : props["fan_speed"],
+        adjustTemp  : props["adjust_temperature"],
+        displayTemp : props["display_temperature"],
+        outdoorTemp : props["outdoor_temperature"],
+        online      : true
+    ]
+    logTrace "fetchProperties(${dsn}) -> ${stateMap}"
+    ChildDeviceWrapper child = getChildDevice("${DNI_PREFIX_UNIT}${dsn}")
+    child?.updateState(stateMap)
+}
+
+void refreshUnit(String dni) {
+    String dsn = dni?.replaceFirst("^${java.util.regex.Pattern.quote(DNI_PREFIX_UNIT)}", "")
+    if (dsn) fetchProperties(dsn)
 }
 
 private void computeOrphans(Set<String> liveDnis) {
