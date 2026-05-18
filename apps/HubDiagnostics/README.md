@@ -50,7 +50,7 @@ Hub Diagnostics consists of two files:
 1. In the Hubitat admin UI, go to **Apps Code → + New App**
 2. Paste the contents of `HubDiagnostics.groovy`, or use the **Import** button with this URL:
    ```
-   https://raw.githubusercontent.com/hubitrep/hubitat/refs/heads/main/HubDiagnostics/HubDiagnostics.groovy
+   https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/HubDiagnostics/HubDiagnostics.groovy
    ```
 3. Click **Save**
 4. **Enable OAuth**: on the app code page, click **OAuth** and enable it. This is required — the dashboard communicates with the app via OAuth-protected API calls.
@@ -96,6 +96,8 @@ The app enforces version sync: a scheduled job runs once daily at 03:17 local ti
 A summary of hub health at a glance.
 
 The header bar contains a **Docs ↗** link (this document) and a **↻ Refresh** button that forces a full re-fetch and re-render of whichever tab is currently open.
+
+**Hub Information** — Hardware model, firmware version, hub ID, IP address, Zigbee ID, location, current mode, time zone.
 
 **Overview** — Device counts: total, active, inactive, disabled. Installed apps: total, built-in, user. All counts are linked to the relevant filtered list.
 
@@ -239,7 +241,7 @@ Detailed status for all network interfaces and radio protocols. Card order: **Ra
 
 ### Radio Health Badges
 
-Strip at the very top with a green / red / N/A badge for Z-Wave and Zigbee, fed by `/hub/zwave/healthStatus` and `/hub/zigbee/healthStatus`. Version-gated to firmware ≥ 2.4.1.154; on older firmware the badges show "N/A".
+Strip at the very top with a green / red / N/A badge for Z-Wave and Zigbee, fed by `/hub/zwave/healthStatus` and `/hub/zigbee/healthStatus`. Version-gated to firmware ≥ 2.4.1.154; on older firmware the card is not rendered.
 
 ### Network Configuration
 
@@ -255,8 +257,6 @@ Shows a warning if both Ethernet and WiFi are active simultaneously (known to ca
 ### Zigbee
 
 - Radio status (enabled, healthy, channel, PAN ID, device count, join mode, power level)
-- Responsive vs total device count, color-coded by ratio (warning < 100%, critical < 80%)
-- Non-responsive device list
 
 **Mesh Quality** — Average LQI (Link Quality Indicator), min/max, weak neighbors (LQI < 150), stale neighbors (age ≥ 7 rounds).
 
@@ -281,7 +281,7 @@ The user's own channel is annotated with "(your channel)" when it appears in the
 - Firmware update alert if a radio firmware upgrade is available
 - Compatible with both the legacy Z/IP stack and the Z-Wave JS stack
 
-**Ghost Nodes** — Z-Wave radio nodes with no associated Hubitat device (the device was deleted without Z-Wave exclusion), or nodes in FAILED state, or nodes with no route and an unknown name. Each ghost shows the signals that triggered it: `no device`, `FAILED`, `no route`, `unknown name`. These should be removed from the Z-Wave mesh.
+**Ghost Nodes** — Z-Wave radio nodes flagged by any of: no associated Hubitat device ID (primary signal — the device was deleted without Z-Wave exclusion), node in FAILED state, or (no route AND unknown name). Each ghost shows the signals that triggered it: `no device`, `FAILED`, `no route`, `unknown name`. These should be removed from the Z-Wave mesh.
 
 **Problem Nodes** — Nodes with state ≠ OK or packet error rate > 1%.
 
@@ -290,8 +290,6 @@ The user's own channel is annotated with "(your channel)" when it appears in the
 **Message Counts table** — Devices ranked by message volume, with messages/minute color-coded against the chatty device threshold.
 
 **S0 Security flag** — Devices paired with S0 security that are not locks or garage doors are highlighted. S0 generates ~3× the mesh traffic of S2; re-pairing with S2 improves mesh performance.
-
-**Isolated Nodes** — Non-failed nodes with zero neighbors cannot participate in mesh routing. This usually indicates a device out of range or with a firmware issue.
 
 #### Z-Wave JS Controller (Z-Wave JS hubs only)
 
@@ -304,11 +302,11 @@ Renders only when the Z-Wave JS stack is detected (probe of `/hub/zwave2/status`
 
 #### Z-Wave Topology
 
-Pairwise neighbor adjacency matrix as reported by the Z-Wave controller (`/hub/zwaveTopology`). Hubitat returns this as a bare HTML `<table>` with bgcolor cells encoding connectivity between each node pair; the card injects the fragment as-is wrapped in `.tbl-wrap` for our look-and-feel. Always matches what Hubitat itself shows.
+Pairwise neighbor adjacency matrix as reported by the Z-Wave controller (`/hub/zwaveTopology`). Hubitat returns this as a bare HTML `<table>` with bgcolor cells encoding connectivity between each node pair; the card injects the fragment as-is wrapped in `.tbl-wrap` for our look-and-feel. The card is hidden when no Z-Wave nodes are paired — the hub returns a degenerate, malformed (unclosed) self-only matrix in that case.
 
 ### Matter
 
-Device list, network state, fabric ID.
+Enabled / installed flags, network state, fabric ID, device count.
 
 ### Hub Mesh
 
@@ -321,8 +319,6 @@ Lists devices visible to the hub via mDNS / Bonjour / Avahi (`/hub/mdnsDevices/j
 ---
 
 ## Health Tab
-
-**Hub Information** — Hardware model, firmware version, hub ID, IP address, Zigbee ID, location, current mode, time zone.
 
 **Alerts** — All active platform and calculated alerts plus messages from `/hub/messages` (info-severity, blue). Shows a green checkmark when there are none.
 
@@ -437,7 +433,7 @@ Most settings are accessible from the Hubitat admin UI under **Apps → Hub Diag
 
 ### Config Snapshot Scheduling
 - Enable automatic snapshots: on/off
-- Interval: 1–30 days (default 1)
+- Interval: 1 day / 2 days / 1 week / 2 weeks (default 1 day)
 - Max snapshots to retain: 1–50 (default 10; oldest are pruned when the limit is reached)
 
 ### Perf Checkpoint Scheduling
@@ -448,7 +444,7 @@ Most settings are accessible from the Hubitat admin UI under **Apps → Hub Diag
 ### Device Monitoring
 | Setting | Default | Range | Effect |
 |---|---|---|---|
-| Inactivity threshold (days) | 7 | 1–90 | Devices with no activity beyond this period are marked Inactive |
+| Inactivity threshold (days) | 7 | 1–365 | Devices with no activity beyond this period are marked Inactive |
 | Low battery alert (%) | 20 | 1–50 | Devices at or below this level appear in the Low Battery Alerts card |
 | Chatty device threshold (msgs/min) | 10 | 1–1000 | Devices exceeding this rate trigger a critical alert on the Performance tab and in forum exports |
 
@@ -492,7 +488,7 @@ The forum export generates a concise Markdown-formatted summary suitable for pas
 - System basics: model, firmware, uptime, network config, CPU, memory, temperature, database size
 - Active alerts (all severities)
 - Device inventory: counts by status, connection type, and integration; low battery devices
-- App inventory: counts by source; top 5 apps by CPU %
+- App inventory: counts by source; list of user-installed app types
 - Z-Wave: health, ghost nodes, problem nodes, S0 flag, mesh quality stats, top talkers
 - Zigbee: health, channel, LQI stats, weak/stale neighbors, top talkers
 - Hub Mesh and Matter status
@@ -558,7 +554,6 @@ Severity levels: **Critical** (red), **Warning** (orange), **Info** (blue), **OK
 |---|---|---|---|
 | Ghost Nodes | No associated device ID (primary), or FAILED, or no route + unknown name | — | Critical |
 | Problem Nodes | State ≠ OK, or PER > 1% | 1% PER | Warning |
-| Isolated Nodes | 0 neighbors, not FAILED | 0 neighbors | Warning |
 | Avg PER Critical | Mesh average PER > 1% | 1% | Critical |
 | Avg PER Warning | Mesh average PER > 0% | 0% | Warning |
 | Avg RSSI Critical | Mesh average RSSI < −80 dBm | −80 dBm | Critical |
@@ -597,50 +592,8 @@ Severity levels: **Critical** (red), **Warning** (orange), **Info** (blue), **OK
 
 ## REST API
 
-The app exposes a REST API used by the dashboard. All endpoints require the OAuth `access_token` parameter.
+The app exposes a REST API consumed by the dashboard SPA. It is not a stable public contract — routes are added and renamed as the SPA evolves. All endpoints require the OAuth `access_token` query parameter.
 
 Base URL: `http://{hub-ip}/apps/api/{app-id}/`
 
-### Data endpoints (GET)
-
-| Endpoint | Description |
-|---|---|
-| `ui.html` | Serves the dashboard UI |
-| `api/dashboard` | Overview data — devices, apps, resources, alerts, **firmwareUpdate** badge data (1-hour cache) |
-| `api/devices` | Device inventory and details |
-| `api/apps` | Installed app listing |
-| `api/code` | User-installed source code: app types, driver types, bundles, libraries, hub variables |
-| `api/network` | Network config + security + radio protocol status + radio health badges + Z-Wave JS controller state + NTP server + Zip Gateway version + mDNS endpoints + cached Zigbee channel scan + Z-Wave topology HTML fragment |
-| `api/health` | Hub health, alerts, resource details, **CPU info**, **load threshold**, **backups**, hub messages |
-| `api/health/history` | Memory/CPU history for charting |
-| `api/live` | Lightweight real-time resource metrics (memory, CPU, temperature, database size, **CPU info**, **load threshold**) used by the auto-refresh feature |
-| `api/performance` | Runtime stats and checkpoints |
-| `api/snapshots` | List of config snapshots |
-| `api/snapshot/view?index=N` | View a specific snapshot |
-| `api/snapshot/diff?older=O&newer=N` | Compare two snapshots |
-| `api/reports` | List saved HTML diagnostic reports (name, size, date) and last generated filename |
-| `api/audit/status?scanId=...` | Poll a running device-audit scan |
-| `api/audit/list` | List past audit reports |
-| `api/stats` | Internal API timing metrics (median latency, call count, and recent samples per endpoint) |
-| `api/export/forum` | Generate forum export (Markdown) |
-| `api/version/check` | Check for app updates on GitHub |
-| `api/settings` | Retrieve current settings |
-
-### Action endpoints (POST)
-
-| Endpoint | Description |
-|---|---|
-| `api/settings` | Update one or more settings |
-| `api/snapshot/create` | Take a config snapshot |
-| `api/snapshot/delete` | Delete snapshot by index |
-| `api/snapshots/clear` | Delete all snapshots |
-| `api/checkpoint/create` | Take a performance checkpoint |
-| `api/checkpoint/delete` | Delete checkpoint by index |
-| `api/checkpoints/clear` | Delete all checkpoints |
-| `api/performance/compare` | Run a performance comparison |
-| `api/report/generate` | Generate a full HTML report |
-| `api/ui/sync` | Force-sync the UI file from GitHub |
-| `api/cache/clear` | Clear the device enrichment cache |
-| `api/audit/start` | Trigger a new device usage audit scan |
-| `api/audit/delete` | Delete an audit report by filename |
-| `api/network/zigbee/scan` | Trigger a fresh Zigbee channel scan (~15–30 s); result cached in app state and returned in subsequent `api/network` reads |
+The canonical list of routes (with HTTP methods and handler names) is the `mappings { }` block in `HubDiagnostics.groovy` (search for `mappings {`). It groups routes into aggregator GETs, app-owned GETs, app-owned mutations, long-running orchestration, and side-effectful network actions.
