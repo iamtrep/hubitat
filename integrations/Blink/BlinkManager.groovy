@@ -68,65 +68,59 @@ definition(
 preferences {
     page(name: "mainPage")
     page(name: "loginPage")
+    page(name: "diagnosticsPage")
 }
 
 // --- Pages ---
 
 Map mainPage() {
     dynamicPage(name: "mainPage", title: "Blink Manager", install: true, uninstall: true) {
-        section("Debug — state snapshot") {
-            String at = state.accessToken ? "set (${state.accessToken.toString().length()} chars)" : "null"
-            String rt = state.refreshToken ? "set (${state.refreshToken.toString().length()} chars)" : "null"
-            String exp = state.tokenExpiry ? new Date((long) state.tokenExpiry).format('HH:mm:ss', location.timeZone) : "null"
-            paragraph "<b>isAuthenticated:</b> ${isAuthenticated()}"
-            paragraph "<b>accessToken:</b> ${at}"
-            paragraph "<b>refreshToken:</b> ${rt}"
-            paragraph "<b>tokenExpiry:</b> ${exp}"
-            paragraph "<b>needs2fa:</b> ${state.needs2fa}"
-            paragraph "<b>tier:</b> ${state.tier} &nbsp; <b>accountId:</b> ${state.accountId}"
-            paragraph "<b>hardwareId:</b> ${state.hardwareId}"
-            input "btnResetAuth", "button", title: "Reset auth state"
-        }
         if (isAuthenticated()) {
-            section("Status") {
-                paragraph "<b>Connected</b> to Blink"
-                if (state.tier) paragraph "Region: <b>${state.tier}</b>"
-                if (state.accountId) paragraph "Account ID: <b>${state.accountId}</b>"
+            section("🟢 Status") {
+                paragraph "Connected to Blink — region <b>${state.tier ?: '?'}</b>, account <b>${state.accountId ?: '?'}</b>"
                 if (state.tokenExpiry) {
-                    String exp = new Date((long) state.tokenExpiry).format("yyyy-MM-dd HH:mm:ss", location.timeZone)
-                    paragraph "Token expires: <b>${exp}</b>"
+                    String exp = new Date((long) state.tokenExpiry).format("yyyy-MM-dd HH:mm", location.timeZone)
+                    paragraph "<small>Token expires ${exp}.</small>"
                 }
                 if (atomicState.homescreenSummary) paragraph atomicState.homescreenSummary
             }
-            section("Polling") {
-                input "pollRate", "enum", title: "Poll interval (seconds)", options: ["60", "120", "300"], defaultValue: "60", submitOnChange: true
-                input "btnRefreshNow", "button", title: "Refresh now"
-                if (!state.accountId) {
-                    paragraph "<span style='color:orange'><b>No account ID yet</b> — tier discovery failed. Click below to retry.</span>"
-                    input "btnFetchTier", "button", title: "Re-fetch tier info"
-                }
-            }
-            section("Devices") {
+            section("📷 Devices") {
                 renderChildDeviceList()
                 List<Map> orphans = (atomicState.orphanedDevices ?: []) as List<Map>
                 if (orphans.size() > 0) {
-                    paragraph "<span style='color:orange'><b>Orphaned devices (${orphans.size()}):</b></span>"
+                    paragraph "<span style='color:orange'><b>⚠️ Orphaned (${orphans.size()}):</b></span>"
                     orphans.each { Map o ->
-                        paragraph "<a href='/device/edit/${o.id}' target='_blank'>${o.label}</a> (${o.dni})"
+                        paragraph "<a href='/device/edit/${o.id}' target='_blank'>${o.label}</a> <small>(${o.dni})</small>"
                     }
                     input "btnRemoveOrphans", "button", title: "Remove orphaned devices"
                 }
             }
-            section("Actions") {
-                input "btnDisconnect", "button", title: "Disconnect"
+            section("⏱️ Polling") {
+                input "pollRate", "enum", title: "Poll interval (seconds)", options: ["60", "120", "300"], defaultValue: "60", submitOnChange: true
+                input "btnRefreshNow", "button", title: "🔄 Refresh now"
+            }
+            section("🔔 Blink notifications") {
+                Map flags = (atomicState.notificationFlags ?: [:]) as Map
+                if (flags.size() == 0) {
+                    paragraph "<small>Notification flags not yet fetched.</small>"
+                } else {
+                    paragraph "<small>Toggle to change Blink's notification posture for this account. Save by clicking <b>Done</b> at the top.</small>"
+                    flags.sort().each { String name, Object value ->
+                        input "notif_${name}", "bool", title: name, defaultValue: (value as boolean)
+                    }
+                }
+                input "btnRefreshNotifications", "button", title: "🔄 Refresh notification flags"
+            }
+            section("🛠️ Diagnostics & advanced") {
+                href "diagnosticsPage", title: "Open diagnostics", description: "Token state, manual re-fetch, disconnect, reset auth"
             }
         } else {
-            section {
+            section("🔴 Not connected") {
                 paragraph "Connect your Blink account to get started."
                 href "loginPage", title: "Login to Blink", description: "Enter your Blink credentials"
             }
         }
-        section("Settings") {
+        section("⚙️ Settings") {
             label title: "Assign a name", required: false
             input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
             input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
@@ -137,26 +131,64 @@ Map mainPage() {
     }
 }
 
+// --- Diagnostics sub-page ---
+//
+// Houses the rare/destructive actions and raw state inspection so the main
+// page stays focused on day-to-day use.
+
+Map diagnosticsPage() {
+    dynamicPage(name: "diagnosticsPage", title: "Blink Manager — Diagnostics", nextPage: "mainPage") {
+        section("🩺 State snapshot") {
+            String at = state.accessToken ? "set (${state.accessToken.toString().length()} chars)" : "<i>null</i>"
+            String rt = state.refreshToken ? "set (${state.refreshToken.toString().length()} chars)" : "<i>null</i>"
+            String exp = state.tokenExpiry ? new Date((long) state.tokenExpiry).format('HH:mm:ss', location.timeZone) : "<i>null</i>"
+            paragraph """
+                <b>isAuthenticated:</b> ${isAuthenticated()}<br>
+                <b>accessToken:</b> ${at}<br>
+                <b>refreshToken:</b> ${rt}<br>
+                <b>tokenExpiry:</b> ${exp}<br>
+                <b>tier:</b> ${state.tier ?: '<i>null</i>'} &nbsp; <b>accountId:</b> ${state.accountId ?: '<i>null</i>'}<br>
+                <b>hardwareId:</b> <small>${state.hardwareId ?: '<i>null</i>'}</small><br>
+                <b>needs2fa:</b> ${state.needs2fa ?: '<i>null</i>'}
+            """.stripIndent()
+        }
+        if (!state.accountId) {
+            section("Recovery") {
+                paragraph "<span style='color:orange'><b>No account ID</b> — tier discovery failed.</span>"
+                input "btnFetchTier", "button", title: "Re-fetch tier info"
+            }
+        }
+        section("🚪 Disconnect / reset") {
+            paragraph "<small>Use these only when something is wrong. <b>Disconnect</b> clears auth tokens but keeps tier/account info for one-click re-auth; <b>Reset</b> nukes everything and requires a full re-login.</small>"
+            input "btnDisconnect", "button", title: "Disconnect"
+            input "btnResetAuth", "button", title: "Reset auth state (full wipe)"
+        }
+    }
+}
+
 private void renderChildDeviceList() {
     List<ChildDeviceWrapper> kids = getChildDevices()
     if (kids.size() == 0) {
-        paragraph "No child devices yet."
+        paragraph "<small>No child devices yet — wait for the first poll or click <b>Refresh now</b>.</small>"
         return
     }
     List<ChildDeviceWrapper> networks = kids.findAll { it.deviceNetworkId?.startsWith(DNI_PREFIX_NETWORK) }
     List<ChildDeviceWrapper> cameras = kids.findAll { it.deviceNetworkId?.startsWith(DNI_PREFIX_CAMERA) }
     if (networks.size() > 0) {
-        paragraph "<b>Networks (${networks.size()}):</b>"
+        StringBuilder sb = new StringBuilder("<b>🛡️ Networks (${networks.size()})</b><br>")
         networks.each { ChildDeviceWrapper c ->
-            paragraph "<a href='/device/edit/${c.id}' target='_blank'>${c.label ?: c.name}</a>"
+            sb.append("&nbsp;&nbsp;• <a href='/device/edit/${c.id}' target='_blank'>${c.label ?: c.name}</a><br>")
         }
+        paragraph sb.toString()
     }
     if (cameras.size() > 0) {
-        paragraph "<b>Cameras (${cameras.size()}):</b>"
+        StringBuilder sb = new StringBuilder("<b>📹 Cameras (${cameras.size()})</b><br>")
         cameras.each { ChildDeviceWrapper c ->
             String typeTag = c.getDataValue("cameraType") ?: ""
-            paragraph "<a href='/device/edit/${c.id}' target='_blank'>${c.label ?: c.name}</a>${typeTag ? ' — ' + typeTag : ''}"
+            String typeSuffix = (typeTag && typeTag != "camera") ? " <small>(${typeTag})</small>" : ""
+            sb.append("&nbsp;&nbsp;• <a href='/device/edit/${c.id}' target='_blank'>${c.label ?: c.name}</a>${typeSuffix}<br>")
         }
+        paragraph sb.toString()
     }
 }
 
@@ -204,6 +236,7 @@ void updated() {
     unschedule()
     if (debugEnable) runIn(DEBUG_LOG_TIMEOUT, "turnOffDebugLogging")
     initialize()
+    pushNotificationFlagChanges()
 }
 
 void uninstalled() {
@@ -278,11 +311,12 @@ void appButtonHandler(String btn) {
     switch (btn) {
         case "btnLogin":          startOAuthFlow(); break
         case "btnVerifyPin":      verifyPin(); break
-        case "btnRefreshNow":     pollHomescreen(); break
-        case "btnFetchTier":      fetchTierInfo(); break
-        case "btnDisconnect":     logout(); break
-        case "btnRemoveOrphans":  removeOrphans(); break
-        case "btnResetAuth":      clearAuthState(); break
+        case "btnRefreshNow":            pollHomescreen(); break
+        case "btnFetchTier":             fetchTierInfo(); break
+        case "btnDisconnect":            logout(); break
+        case "btnRemoveOrphans":         removeOrphans(); break
+        case "btnResetAuth":             clearAuthState(); break
+        case "btnRefreshNotifications":  fetchNotificationFlags(); break
     }
 }
 
@@ -547,6 +581,7 @@ void exchangeCodeForTokens(String code) {
             fetchTierInfo()
             schedulePolling()
             runIn(2, "pollHomescreen")
+            runIn(4, "fetchNotificationFlags")
         }
     } catch (Exception e) {
         logError "token exchange failed: ${e.message}"
@@ -969,10 +1004,12 @@ private static int batteryPercent(int voltageHundredths) {
 
 private void updateHomescreenSummary(List<Map> networks, List<Map> cameras, List<Map> syncModules) {
     StringBuilder sb = new StringBuilder()
-    sb.append("<b>Last poll:</b> ${new Date().format('HH:mm:ss', location.timeZone)}<br>")
-    sb.append("Networks: ${networks.size()}, Cameras: ${cameras.size()}, Sync modules: ${syncModules.size()}<br>")
+    sb.append("Last poll <b>${new Date().format('HH:mm:ss', location.timeZone)}</b> — ")
+    sb.append("${networks.size()} networks, ${cameras.size()} cameras, ${syncModules.size()} sync modules<br>")
     networks.each { Map n ->
-        sb.append("<br><b>${n.name ?: n.id}</b>: ${n.armed ? 'Armed' : 'Disarmed'}")
+        String marker = (n.armed == true) ? "🔒" : "🔓"
+        String state = (n.armed == true) ? "armed" : "disarmed"
+        sb.append("&nbsp;&nbsp;${marker} <b>${n.name ?: n.id}</b> — ${state}<br>")
     }
     // atomicState: same async-chain reasoning as syncChildren's orphan write.
     atomicState.homescreenSummary = sb.toString()
@@ -1254,6 +1291,113 @@ void recentClipsResponse(resp, data) {
     } finally {
         // Always advance the cursor — server-side time is unknown, clock drift is minor.
         atomicState.lastClipFetchTime = fetchedAt
+    }
+}
+
+// --- Notification flags (M1) ---
+//
+// Blink keeps an account-wide notification posture (low-battery alerts,
+// camera-offline alerts, motion alerts, etc.) — toggled in the Blink mobile
+// app's settings. Read/write surface is GET/POST to
+// /api/v1/accounts/{aid}/notifications/configuration. The Hubitat-side
+// pattern: fetch flags after auth (and on-demand via the Refresh button);
+// surface each flag as a bool preference under the manager app; on Done,
+// diff settings against atomicState and POST changed flags.
+
+void fetchNotificationFlags() {
+    if (!isAuthenticated() || !state.accountId || !state.tier) return
+    String url = "https://rest-${state.tier}.immedia-semi.com/api/v1/accounts/${state.accountId}/notifications/configuration"
+    logDebug "fetching notification flags"
+    asynchttpGet("notificationFlagsResponse", [
+        uri        : url,
+        headers    : bearerHeaders(),
+        contentType: "application/json",
+        timeout    : HTTP_TIMEOUT
+    ])
+}
+
+void notificationFlagsResponse(resp, data) {
+    try {
+        if (resp.hasError() || resp.getStatus() != 200) {
+            logWarn "notification flags: HTTP ${resp.getStatus()}"
+            return
+        }
+        Map json = resp.json as Map
+        if (!json) return
+        // Response shape: blinkpy POSTs {notifications: {...}}; the GET likely
+        // mirrors that. Be defensive and accept either {notifications: {...}}
+        // or {...} directly.
+        Map flagsMap = (json.notifications instanceof Map) ? (json.notifications as Map) : json
+        Map<String, Boolean> clean = [:]
+        flagsMap.each { k, v ->
+            if (v instanceof Boolean) {
+                clean[k.toString()] = (Boolean) v
+            } else if (v instanceof String && (v == "true" || v == "false")) {
+                clean[k.toString()] = (v == "true")
+            }
+        }
+        atomicState.notificationFlags = clean
+        // Mirror to settings so the prefs UI reflects current server state,
+        // not stale user-side toggles.
+        clean.each { String name, Boolean value ->
+            app.updateSetting("notif_${name}", [value: value, type: "bool"])
+        }
+        logInfo "fetched ${clean.size()} notification flags"
+    } catch (Exception e) {
+        logError "notificationFlagsResponse: ${e.message}"
+    }
+}
+
+private void pushNotificationFlagChanges() {
+    if (!isAuthenticated() || !state.accountId) return
+    Map current = (atomicState.notificationFlags ?: [:]) as Map
+    if (current.size() == 0) return
+    Map<String, Boolean> changes = [:]
+    current.each { String name, Object oldVal ->
+        Object newVal = settings["notif_${name}"]
+        if (newVal != null && (newVal as boolean) != (oldVal as boolean)) {
+            changes[name] = (newVal as boolean)
+        }
+    }
+    if (changes.size() == 0) {
+        logTrace "no notification flag changes to push"
+        return
+    }
+    setNotificationFlags(changes)
+}
+
+private void setNotificationFlags(Map changes) {
+    String url = "https://rest-${state.tier}.immedia-semi.com/api/v1/accounts/${state.accountId}/notifications/configuration"
+    String body = groovy.json.JsonOutput.toJson([notifications: changes])
+    logInfo "updating notification flags: ${changes.keySet().join(', ')}"
+    asynchttpPost("notificationUpdateResponse", [
+        uri               : url,
+        headers           : bearerHeaders(),
+        body              : body,
+        requestContentType: "application/json",
+        contentType       : "application/json",
+        timeout           : HTTP_TIMEOUT
+    ], [changes: changes])
+}
+
+void notificationUpdateResponse(resp, data) {
+    try {
+        if (resp.hasError()) {
+            logError "notification update: ${resp.getErrorMessage()}"
+            return
+        }
+        int status = resp.getStatus()
+        if (status != 200) {
+            logWarn "notification update: HTTP ${status}"
+            return
+        }
+        Map changes = (data?.changes ?: [:]) as Map
+        Map flags = (atomicState.notificationFlags ?: [:]) as Map
+        flags.putAll(changes)
+        atomicState.notificationFlags = flags
+        logInfo "notification flags updated: ${changes.keySet().join(', ')}"
+    } catch (Exception e) {
+        logError "notificationUpdateResponse: ${e.message}"
     }
 }
 
