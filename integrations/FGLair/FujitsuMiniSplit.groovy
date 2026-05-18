@@ -337,18 +337,20 @@ private String deriveOperatingState(String mode, Object displayTemp, Object adju
     }
 }
 
-// Sensor readings (display_temperature, outdoor_temperature): hundredths of °F.
-// Empirically verified 2026-05-18: raw 7000 = 70.00°F, raw 5500 = 55.00°F.
-// Independent of the hub's temperature scale; we always convert to it.
-// (If we ever see a unit reporting sensors in °C, this assumption needs a
-// per-unit override setting on the manager.)
+// Sensor readings (display_temperature, outdoor_temperature) are a linear
+// range-mapped integer, NOT hundredths of a degree. Per ayla-iot-unofficial's
+// _convert_sensed_temp_to_celsius (used by Home Assistant): raw range
+// [4000, 9500] maps linearly to [-10°C, +45°C]. Result is rounded to 0.5°C
+// steps to match the Python lib, then converted to the hub's scale.
 private BigDecimal aylaSensorToScale(Object raw) {
-    BigDecimal fahrenheit = (raw as BigDecimal) / 100
-    if (getTemperatureScale() == 'C') {
-        BigDecimal celsius = (fahrenheit - 32) * 5 / 9
-        return celsius.setScale(1, java.math.RoundingMode.HALF_UP)
+    BigDecimal rawBD = raw as BigDecimal
+    BigDecimal scaled = (rawBD - 4000) / 5500   // (max - min) = 9500 - 4000
+    BigDecimal celsius = -10 + scaled * 55      // (max - min) = 45 - (-10)
+    celsius = (celsius * 2).setScale(0, java.math.RoundingMode.HALF_UP) / 2
+    if (getTemperatureScale() == 'F') {
+        return (celsius * 9 / 5 + 32).setScale(1, java.math.RoundingMode.HALF_UP)
     }
-    return fahrenheit.setScale(1, java.math.RoundingMode.HALF_UP)
+    return celsius.setScale(1, java.math.RoundingMode.HALF_UP)
 }
 
 // Setpoint (adjust_temperature): tenths of °C, regardless of the unit's
