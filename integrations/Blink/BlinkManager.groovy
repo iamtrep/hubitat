@@ -709,6 +709,28 @@ private void processHomescreen(Map json) {
     syncChildren(networks, cameras, syncModules)
     dispatchToChildren(networks, cameras, syncModules)
     updateHomescreenSummary(networks, cameras, syncModules)
+    rotateSignalsFetch(cameras)
+}
+
+// Fetch /signals for one default camera per poll cycle, rotating through the
+// eligible set. Picks up calibrated temperature (blinkpy `temperature_calibrated`).
+// One extra async HTTP call per poll cycle — well under the 8-call cap.
+private void rotateSignalsFetch(List<Map> cameras) {
+    if (!cameras || cameras.size() == 0) return
+    // /signals endpoint pattern only covers default cameras; mini/doorbell/etc
+    // have their own per-type config endpoints we don't currently call.
+    List<Map> eligible = cameras.findAll { ((it.__type as String) ?: "camera") == "camera" }
+    if (eligible.size() == 0) return
+    int cursor = ((atomicState.signalsCursor ?: 0) as Number).intValue()
+    int idx = cursor % eligible.size()
+    Map c = eligible[idx]
+    String camId = c.id?.toString()
+    String netId = (c.network_id ?: c.networkId)?.toString()
+    if (camId && netId) {
+        logTrace "/signals rotation: camera ${camId} (${idx + 1}/${eligible.size()})"
+        fetchCameraSignals(camId, netId)
+    }
+    atomicState.signalsCursor = (idx + 1) % eligible.size()
 }
 
 @CompileStatic
@@ -943,16 +965,21 @@ private void updateHomescreenSummary(List<Map> networks, List<Map> cameras, List
 
 // --- Child Callbacks ---
 
+// Per-action command-verification budgets. Network arming completes within seconds;
+// per-camera capture (clip, thumbnail) on a sleeping battery camera can take 30s+.
+@Field static final int CMD_RETRY_NETWORK = 10  // 10 × 2s = 20s
+@Field static final int CMD_RETRY_CAMERA  = 30  // 30 × 2s = 60s
+
 void arm(String networkId) {
     logInfo "arming network ${networkId}"
     String path = "/api/v1/accounts/${state.accountId}/networks/${networkId}/state/arm"
-    blinkPostAsync(path, "commandPostResponse", [label: "arm ${networkId}"])
+    blinkPostAsync(path, "commandPostResponse", [label: "arm ${networkId}", maxAttempts: CMD_RETRY_NETWORK])
 }
 
 void disarm(String networkId) {
     logInfo "disarming network ${networkId}"
     String path = "/api/v1/accounts/${state.accountId}/networks/${networkId}/state/disarm"
-    blinkPostAsync(path, "commandPostResponse", [label: "disarm ${networkId}"])
+    blinkPostAsync(path, "commandPostResponse", [label: "disarm ${networkId}", maxAttempts: CMD_RETRY_NETWORK])
 }
 
 void enableMotion(String cameraId) {
@@ -963,7 +990,7 @@ void enableMotion(String cameraId) {
         return
     }
     String path = "/network/${cc.networkId}/camera/${cameraId}/enable"
-    blinkPostAsync(path, "commandPostResponse", [label: "enableMotion ${cameraId}"])
+    blinkPostAsync(path, "commandPostResponse", [label: "enableMotion ${cameraId}", maxAttempts: CMD_RETRY_NETWORK])
 }
 
 void disableMotion(String cameraId) {
@@ -974,7 +1001,7 @@ void disableMotion(String cameraId) {
         return
     }
     String path = "/network/${cc.networkId}/camera/${cameraId}/disable"
-    blinkPostAsync(path, "commandPostResponse", [label: "disableMotion ${cameraId}"])
+    blinkPostAsync(path, "commandPostResponse", [label: "disableMotion ${cameraId}", maxAttempts: CMD_RETRY_NETWORK])
 }
 
 void snapThumbnail(String cameraId) {
@@ -985,7 +1012,7 @@ void snapThumbnail(String cameraId) {
         return
     }
     String path = "/network/${cc.networkId}/camera/${cameraId}/thumbnail"
-    blinkPostAsync(path, "commandPostResponse", [label: "snapThumbnail ${cameraId}"])
+    blinkPostAsync(path, "commandPostResponse", [label: "snapThumbnail ${cameraId}", maxAttempts: CMD_RETRY_CAMERA])
 }
 
 void recordClip(String cameraId) {
@@ -996,7 +1023,7 @@ void recordClip(String cameraId) {
         return
     }
     String path = "/network/${cc.networkId}/camera/${cameraId}/clip"
-    blinkPostAsync(path, "commandPostResponse", [label: "recordClip ${cameraId}"])
+    blinkPostAsync(path, "commandPostResponse", [label: "recordClip ${cameraId}", maxAttempts: CMD_RETRY_CAMERA])
 }
 
 // --- Command verification (blinkpy wait_for_command pattern) ---
@@ -1022,8 +1049,9 @@ void commandPostResponse(resp, data) {
             return
         }
         int cmdId = (cmdIdObj as Number).intValue()
-        logDebug "${label} accepted: networkId=${netId}, cmdId=${cmdId}"
-        pollCommandStatus([networkId: netId, cmdId: cmdId, attempt: 0, label: label])
+        int maxAttempts = ((data?.maxAttempts ?: CMD_RETRY_NETWORK) as Number).intValue()
+        logDebug "${label} accepted: networkId=${netId}, cmdId=${cmdId}, maxAttempts=${maxAttempts}"
+        pollCommandStatus([networkId: netId, cmdId: cmdId, attempt: 0, label: label, maxAttempts: maxAttempts])
     } catch (Exception e) {
         logError "commandPostResponse: ${e.message}"
         runIn(3, "pollHomescreen")
@@ -1067,8 +1095,9 @@ void commandStatusResponse(resp, data) {
         pollHomescreen()
         return
     }
-    if (attempt >= 10) {
-        logWarn "${label} not confirmed after ${attempt} checks; polling anyway"
+    int maxAttempts = ((ctx.maxAttempts ?: CMD_RETRY_NETWORK) as Number).intValue()
+    if (attempt >= maxAttempts) {
+        logWarn "${label} not confirmed after ${attempt} checks (cap=${maxAttempts}); polling anyway"
         pollHomescreen()
         return
     }
