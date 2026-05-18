@@ -924,7 +924,11 @@ private static String buildThumbnailUrl(Map c, Object thumb, String tier, String
     if (s.startsWith("http")) return s
     String netId = (c.get("network_id") ?: c.get("networkId"))?.toString()
     String camId = c.get("id")?.toString()
-    String type = (c.get("__type") ?: "camera") as String
+    // Blink's own `type` field is the slug Blink expects in the thumbnail URL
+    // path (e.g. "catalina" for default cameras, "owl" for mini, etc.).
+    // Our internal `__type` tag is for variant dispatch and is NOT the right
+    // slug here — blinkpy `camera.py` uses config.get("type") directly.
+    String type = (c.get("type") ?: c.get("__type") ?: "camera") as String
     if (!netId || !camId) return null
     String base = "https://rest-${tier}.immedia-semi.com"
     // Numeric thumbnail token == Unix timestamp; assemble v3 media URL (blinkpy
