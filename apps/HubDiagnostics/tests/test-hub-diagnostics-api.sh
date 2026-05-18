@@ -15,8 +15,8 @@
 # mdns, zipgatewayVersion, zigbeeChannelScan, zwaveTopologyHtml, snapshot.code,
 # snapshot diff sections (backupsChanges/securityChanges/codeChanges + extended
 # networkChanges), /api/code, /api/live cpuInfo+loadThreshold persistence
-# (regression guard for the v5.11.2 chip-disappearing bug), /api/network/test
-# (incl. server-side IPv4 validation), and /api/network/zigbee/scan caching.
+# (regression guard for the v5.11.2 chip-disappearing bug), and
+# /api/network/zigbee/scan caching.
 #
 # Usage:
 #   bash tests/test-hub-diagnostics-api.sh                    # default hub
@@ -969,43 +969,6 @@ else:
             ok(f"live has '{field}'")
         else:
             fail(f"live missing '{field}'")
-
-# ── v5.9.0: POST /api/network/test (ping-gateway + IPv4 validation) ──
-section("POST /api/network/test")
-
-# Happy path: ping the gateway
-ping_resp = api_post("network/test", "type=ping-gateway", timeout=45)
-if "_error" in ping_resp:
-    fail(f"Request failed: {ping_resp['_error']}")
-elif ping_resp.get("success"):
-    out = ping_resp.get("output", "")
-    if "PING" in out and "packets transmitted" in out:
-        ok(f"ping-gateway returned valid ping output ({ping_resp.get('elapsedMs')}ms)")
-    else:
-        fail(f"ping-gateway output missing expected markers: {out[:200]}")
-else:
-    fail(f"ping-gateway returned success=false: {ping_resp.get('output', '')[:200]}")
-
-# Server-side IPv4 validation: invalid input must be rejected
-bad_resp = api_post("network/test", "type=ping-ip&ip=not-an-ip")
-if bad_resp.get("success") is False and "Error: invalid IP address" in (bad_resp.get("output") or ""):
-    ok("Invalid IPv4 rejected with 'Error: invalid IP address' (server-side regex guard)")
-else:
-    fail(f"Invalid IPv4 NOT rejected — security regression: {bad_resp}")
-
-# Unknown test type must also be rejected
-unk_resp = api_post("network/test", "type=bogus")
-if unk_resp.get("success") is False and "unknown test type" in (unk_resp.get("output") or "").lower():
-    ok("Unknown test type rejected")
-else:
-    fail(f"Unknown test type NOT rejected: {unk_resp}")
-
-# Missing type must error out
-miss_resp = api_post("network/test", "")
-if miss_resp.get("success") is False:
-    ok("Missing 'type' parameter rejected")
-else:
-    fail(f"Missing 'type' parameter NOT rejected: {miss_resp}")
 
 # ── v5.12.0: POST /api/network/zigbee/scan (slow — gated by env var) ─
 section("POST /api/network/zigbee/scan (gated by RUN_SLOW_TESTS=1)")

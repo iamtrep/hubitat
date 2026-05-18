@@ -92,7 +92,7 @@ metadata {
     }
 }
 
-@Field static final String DRIVER_VERSION = "0.0.5"
+@Field static final String DRIVER_VERSION = "0.0.6"
 
 // OAuth and API endpoints
 @Field static final String constEcobeeApiBase= "https://api.ecobee.com"
@@ -146,7 +146,7 @@ void installed() {
         logWarn "New version: ${DRIVER_VERSION} (was: ${state.version})"
         state.version = DRIVER_VERSION
     }
-    sendEvent(name: "connectionStatus", value: "disonnected", descriptionText: "${device.displayName} is disconnected")
+    sendEvent(name: "connectionStatus", value: "disconnected", descriptionText: "${device.displayName} is disconnected")
     configure()
 }
 

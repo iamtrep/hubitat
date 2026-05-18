@@ -136,7 +136,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.33.2";
+const UI_VERSION = "5.33.3";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -1552,35 +1552,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
     else o+='<div class="muted">No mDNS endpoints discovered.</div>';
     o+='</div></div>';
   }
-  // Network Tests (v5.9.0)
-  o+='<div class="card"><div class="card-h">Network Tests</div><div class="card-b">';
-  o+='<div class="muted" style="margin-bottom:8px;font-size:12px">Run live network diagnostics from the hub. Speedtest takes ~30s and briefly loads the hub.</div>';
-  o+='<div class="actions" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">';
-  o+='<button class="btn btn-p" id="btnNetPingGw">Ping gateway</button>';
-  o+='<input type="text" id="netPingIp" placeholder="x.x.x.x" style="padding:6px 10px;border:1px solid var(--border);border-radius:4px;width:130px;font-family:monospace">';
-  o+='<button class="btn btn-p" id="btnNetPingIp">Ping IP</button>';
-  o+='<button class="btn btn-p" id="btnNetSpeed">Speedtest</button>';
-  o+='</div>';
-  o+='<pre id="netTestOut" style="margin-top:10px;padding:10px;background:#1e1e1e;color:#dcdcdc;border-radius:4px;font-size:12px;line-height:1.4;min-height:60px;white-space:pre-wrap;overflow-x:auto;display:none"></pre>';
-  o+='</div></div>';
   document.getElementById(P).innerHTML=o;
-  // Wire network test buttons
-  const ntOut=document.getElementById('netTestOut');
-  const runNt=async(type,ip)=>{
-    ntOut.style.display='block';ntOut.textContent='Running '+type+(ip?' '+ip:'')+'...';
-    try{
-      const q='type='+encodeURIComponent(type)+(ip?'&ip='+encodeURIComponent(ip):'');
-      const r=await post('network/test',q);
-      ntOut.textContent=r.output||'(no output)';
-    }catch(e){ntOut.textContent='Error: '+e.message}
-  };
-  const bGw=document.getElementById('btnNetPingGw');if(bGw)bGw.onclick=()=>runNt('ping-gateway');
-  const bIp=document.getElementById('btnNetPingIp');
-  if(bIp)bIp.onclick=()=>{const ip=document.getElementById('netPingIp').value.trim();
-    if(!ip||!/^(\d{1,3}\.){3}\d{1,3}$/.test(ip)){alert('Enter a valid IPv4 address (e.g. 1.1.1.1)');return}
-    runNt('ping-ip',ip)};
-  const bSt=document.getElementById('btnNetSpeed');
-  if(bSt)bSt.onclick=()=>{if(!confirm('Run speedtest? Takes ~30s and briefly loads the hub.'))return;runNt('speedtest')};
   // mDNS table (v5.9.1)
   if(d.mdns&&d.mdns.endpoints&&d.mdns.endpoints.length){
     tbl('mdnsTbl',[
