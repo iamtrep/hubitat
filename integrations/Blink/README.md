@@ -70,8 +70,10 @@ If a camera or network is removed from your Blink account, the corresponding Hub
 
 Blink does not publish API documentation. Two open-source projects shaped this integration's understanding of the Blink cloud and deserve credit:
 
-- **[blinkpy](https://github.com/fronzbot/blinkpy)** — the Python reference implementation for the Blink API.
-- **[Blink API driver by Snell](https://community.hubitat.com/t/project-driver-for-blink-api/51257)** — the pre-existing Hubitat integration this project replaces.
+- **[blinkpy](https://github.com/fronzbot/blinkpy)** (MIT) — the Python reference implementation for the Blink API.
+- **[Blink API driver by Snell](https://community.hubitat.com/t/project-driver-for-blink-api/51257)** (Apache 2.0) — the pre-existing Hubitat integration this project replaces.
+
+This integration is an independent reimplementation; both sources were consulted for protocol facts (endpoints, payload shapes, field names) only, not structural code. No source from either project is incorporated.
 
 ## License
 
