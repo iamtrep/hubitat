@@ -136,7 +136,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.33.3";
+const UI_VERSION = "5.34.2";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -258,6 +258,7 @@ function diffStats(base, comp) {
 }
 function h(s){const d=document.createElement('div');d.textContent=s??'';return d.innerHTML}
 function fmem(kb){if(kb==null)return'N/A';if(kb>=1048576)return(kb/1048576).toFixed(2)+' GB';if(kb>=1024)return(kb/1024).toFixed(0)+' MB';return kb+' KB'}
+function fbytes(b){if(b==null)return'N/A';if(b>=1073741824)return(b/1073741824).toFixed(2)+' GB';if(b>=1048576)return(b/1048576).toFixed(2)+' MB';if(b>=1024)return(b/1024).toFixed(1)+' KB';return b+' B'}
 function sev(v,w,c,inv){if(v==null)return'';if(inv)return v<c?'var(--crit)':v<w?'var(--warn)':'var(--ok)';return v>c?'var(--crit)':v>w?'var(--warn)':'var(--ok)'}
 function sbadge(s){return'<span class="badge '+(s==='Active'?'b-ok':s==='Disabled'?'b-crit':'b-warn')+'">'+h(s)+'</span>'}
 function bat(v){if(v==null||v==='')return'';const c=v<=20?'var(--crit)':v<=50?'var(--warn)':'var(--ok)';return'<span style="color:'+c+';font-weight:600">'+v+'%</span>'}
@@ -959,9 +960,14 @@ function renderPerfRes(r){
   return o}
 
 // ===== TAB: DASHBOARD =====
+function setHubInfoHeader(hub){
+  if(!hub)return;
+  const el=document.getElementById('hubInfo');
+  if(el)el.textContent=hub.name+' | '+hub.hardware+' | fw '+hub.firmware;
+}
 async function rDashboard(){const P='p-dashboard';loading(P);try{
   const d=await api('dashboard');
-  document.getElementById('hubInfo').textContent=d.hub.name+' | '+d.hub.hardware+' | fw '+d.hub.firmware;
+  setHubInfoHeader(d.hub);
   let o='';
   // Hub Information
   if(d.hub){o+='<div class="card"><div class="card-h">Hub Information</div><div class="card-b"><div class="ng">';
@@ -975,7 +981,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   o+='<div class="metrics">';
   o+=mc('Total Devices',dlistlink(d.devices.total,true));
   o+=mc('Active',dlistlink(d.devices.active,is.active),'var(--ok)');
-  o+=mc('Inactive',dlistlink(d.devices.inactive,(is.inactive||[]).concat(is.disabled||[])),(d.devices.inactive>0?'var(--warn)':''));
+  o+=mc('Inactive',dlistlink(d.devices.inactive,is.inactive),(d.devices.inactive>0?'var(--warn)':''));
   o+=mc('Disabled',dlistlink(d.devices.disabled,is.disabled),(d.devices.disabled>0?'var(--crit)':''));
   o+='</div>';
   o+='<div class="metrics" style="margin-top:8px">';
@@ -1191,7 +1197,7 @@ async function rDevices(){const P='p-devices';loading(P);try{
   let o='';
   o+='<div class="card"><div class="card-h">Device Summary</div><div class="card-b"><div class="metrics">';
   o+=mc('Total',dlistlink(s.totalDevices,true));o+=mc('Active',dlistlink(s.activeDevices,is.active)+' ('+d.inactivityDays+'d)','var(--ok)');
-  o+=mc('Inactive',dlistlink(s.inactiveDevices,(is.inactive||[]).concat(is.disabled||[])),(s.inactiveDevices>0?'var(--warn)':''));
+  o+=mc('Inactive',dlistlink(s.inactiveDevices,is.inactive),(s.inactiveDevices>0?'var(--warn)':''));
   o+=mc('Disabled',dlistlink(s.disabledDevices,is.disabled),(s.disabledDevices>0?'var(--crit)':''));
   o+=mc('Parent',dlistlink(s.parentDevices,s.parentIds));o+=mc('Child',dlistlink(s.childDevices,s.childIds));
   o+=mc('Hub Mesh',dlistlink(s.linkedDevices,s.linkedIds));o+=mc('Battery',dlistlink(s.batteryDevices,s.batteryIds));
@@ -1257,7 +1263,7 @@ async function rApps(){const P='p-apps';loading(P);try{
   o+='<div class="card"><div class="card-h">Application Summary</div><div class="card-b"><div class="metrics">';
   o+=mc('Total Apps',alistlink(s.totalApps));o+=mc('System',s.builtInApps);o+=mc('User',s.userApps);
   o+=mc('Parent',s.parentApps);o+=mc('Child',s.childApps);
-  if(s.runtimeTotalApps)o+=mc('Platform Total',s.runtimeTotalApps);
+  if(s.runtimeTotalApps)o+=mc('Runtime Total',s.runtimeTotalApps);
   o+='</div></div></div>';
   // Installed Apps table
   if(d.allApps&&d.allApps.length){
@@ -1420,17 +1426,20 @@ async function rNetwork(){const P='p-network';loading(P);try{
     o+=ni('Ethernet',n.hasEthernet?'Connected':'Not Connected');o+=ni('WiFi',n.hasWiFi?'Available':'No');
     if(n.hasWiFi&&n.wifiNetwork)o+=ni('WiFi Network',n.wifiNetwork);
     o+=ni('NTP Server',d.ntpServer||'(not configured)');
-    if(d.security){const sec=d.security,la=sec.limitedAccess||{};
-      if(la.enabled){
+    if(d.security){const sec=d.security,la=sec.limitedAccess;
+      if(la==null){
+        o+=ni('Limited Access','Unknown (fetch failed)','var(--muted)');
+      } else if(la.enabled){
         o+=ni('Limited Access','Enabled ('+la.addresses.length+' address'+(la.addresses.length===1?'':'es')+')','var(--ok)');
         if(la.addresses.length)o+=ni('Allowed IPs',la.addresses.join(', '));
       } else {
         o+=ni('Limited Access','Off \u2014 any LAN IP can reach the hub UI','var(--warn)');
       }
-      if(sec.allowedSubnets&&sec.allowedSubnets.length)o+=ni('Allowed Subnets',sec.allowedSubnets.join(', '));
+      if(sec.allowedSubnets==null)o+=ni('Allowed Subnets','Unknown (fetch failed)','var(--muted)');
+      else if(sec.allowedSubnets.length)o+=ni('Allowed Subnets',sec.allowedSubnets.join(', '));
       else o+=ni('Allowed Subnets','(none restricted)');
       if(sec.dnsFallback!=null)o+=ni('DNS Fallback',sec.dnsFallback?'Enabled':'Disabled');
-      if(sec.cloudController)o+=ni('Hubitat Cloud',sec.cloudController==='enabled'?'Connected':'Disabled (local-only)');
+      if(sec.cloudController)o+=ni('Hubitat Cloud',sec.cloudController==='enabled'?'Enabled':'Disabled (local-only)');
     }
     o+='</div>';
     if(n.hasEthernet&&n.hasWiFi)o+='<div class="alert a-warn" style="margin-top:8px">\u26A0 Both Ethernet and WiFi are active. This is known to cause connectivity issues. Disable WiFi when using Ethernet.</div>';
@@ -1517,8 +1526,10 @@ async function rNetwork(){const P='p-network';loading(P);try{
     }
     o+='</div></div>';
   }
-  // Z-Wave Topology (v5.12.0) — embedded HTML adjacency matrix from /hub/zwaveTopology
-  if(d.zwaveTopologyHtml){
+  // Z-Wave Topology (v5.12.0) — embedded HTML adjacency matrix from /hub/zwaveTopology.
+  // Hub returns a degenerate self-only matrix (with malformed unclosed <table>) when no nodes are paired,
+  // which both renders empty AND breaks the DOM for following cards. Gate on real-node presence.
+  if(d.zwaveTopologyHtml&&d.zwave&&d.zwave.nodeCount>0){
     o+='<div class="card"><div class="card-h">Z-Wave Topology</div><div class="card-b">';
     o+='<div class="muted" style="margin-bottom:8px;font-size:12px">Pairwise neighbor matrix as reported by the Z-Wave controller. Each cell\'s background colour encodes the connectivity between two nodes.</div>';
     o+='<div class="tbl-wrap" style="overflow-x:auto;max-width:100%">'+d.zwaveTopologyHtml+'</div>';
@@ -1642,7 +1653,10 @@ async function rHealth(){const P='p-health';loading(P);try{
   // Database
   o+='<div class="card"><div class="card-h">Database & Storage</div><div class="card-b"><div class="metrics">';
   if(d.databaseSize!=null)o+=mc('Database Size',d.databaseSize+' MB');
-  if(d.stateCompression)o+=mc('State Compression',d.stateCompression.enabled?'Enabled':'Disabled',d.stateCompression.enabled?'var(--ok)':'var(--warn)');
+  if(d.stateCompression){const sc=d.stateCompression;
+    if(sc.status==='unavailable')o+=mc('State Compression','Unknown','var(--muted)');
+    else o+=mc('State Compression',sc.enabled?'Enabled':'Disabled',sc.enabled?'var(--ok)':'var(--warn)');
+  }
   if(d.eventStateLimits){const l=d.eventStateLimits;
     if(l.maxEvents)o+=mc('Max Events/Device',l.maxEvents);
     if(l.maxEventAgeDays)o+=mc('Max Event Age',l.maxEventAgeDays+' days');
@@ -1651,8 +1665,8 @@ async function rHealth(){const P='p-health';loading(P);try{
   if(d.storage){const st=d.storage;
     o+='<div style="font-size:12px;font-weight:600;color:var(--muted);margin:10px 0 4px">File Manager</div><div class="metrics">';
     o+=mc('Files',st.fileCount);
-    if(st.usedBytes!=null)o+=mc('Files Used',fmem(st.usedBytes));
-    if(st.freeSpace!=null)o+=mc('Free Space',fmem(st.freeSpace));
+    if(st.usedBytes!=null)o+=mc('Files Used',fbytes(st.usedBytes));
+    if(st.freeSpace!=null)o+=mc('Free Space',fbytes(st.freeSpace));
     o+='</div>'}
   o+='</div></div>';
   // Backups (v5.9.0)
@@ -2846,6 +2860,8 @@ if (_inAuditMode) {
     clearInterval(liveTimer);
     if(!document.hidden)liveTimer=setInterval(refreshLive,liveIntervalSec*1000)
   });
+  // Populate header hub info regardless of which tab opens first (cached for 2min, free on dashboard tab).
+  api('dashboard').then(d=>setHubInfoHeader(d&&d.hub)).catch(()=>{});
   go(curTab);
 }
 </script>

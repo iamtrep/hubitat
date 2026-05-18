@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.33.3"
+@Field static final String APP_VERSION = "5.34.2"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -2033,16 +2033,22 @@ Map fetchSecurityInfo(Map prefetchedHubData = null) {
     String dnsFb = (String) hubRequest(DNS_FALLBACK_PATH, "DNS fallback", "text", 5)
     Map hubData = prefetchedHubData
     if (!hubData) { Map r = hubMapRequest(HUB_DATA_PATH, "hub data (cloud controller flag)", 10); hubData = r.ok ? r.data : null }
-    String laClean = laRaw ? laRaw.replaceAll(/<[^>]+>/, '').trim() : null
-    boolean limitedSet = laClean && !laClean.equalsIgnoreCase("no limit set") && !laClean.isEmpty()
-    List subnetList = subnets ? subnets.trim().split(',').findAll { it } as List : []
-    Boolean cloudDisabled = hubData ? (hubData.disableCloudController == true) : null
-    return [
-        limitedAccess: [
+    // null laRaw/subnets means the fetch itself failed — distinguish from a successfully-fetched "no restriction"
+    // so the UI can render "Unknown" instead of a falsely reassuring "Off".
+    Map limitedAccess = null
+    if (laRaw != null) {
+        String laClean = laRaw.replaceAll(/<[^>]+>/, '').trim()
+        boolean limitedSet = laClean && !laClean.equalsIgnoreCase("no limit set") && !laClean.isEmpty()
+        limitedAccess = [
             enabled: limitedSet,
             addresses: limitedSet ? laClean.split(/[,\s]+/).findAll { it } as List : []
-        ],
-        allowedSubnets: subnetList,
+        ]
+    }
+    List allowedSubnets = subnets == null ? null : (subnets.trim().split(',').findAll { it } as List)
+    Boolean cloudDisabled = hubData ? (hubData.disableCloudController == true) : null
+    return [
+        limitedAccess: limitedAccess,
+        allowedSubnets: allowedSubnets,
         dnsFallback: dnsFb == null ? null : (dnsFb.toLowerCase().trim() == "true"),
         cloudController: cloudDisabled == null ? null : (cloudDisabled ? "disabled" : "enabled")
     ]
@@ -2058,7 +2064,11 @@ String fetchZwaveTopology() {
     String txt = (String) hubRequest(ZWAVE_TOPOLOGY_PATH, "Z-Wave topology", "text", 10)
     if (!txt) return null
     String t = txt.trim()
-    return t ?: null
+    if (!t) return null
+    // Hub omits closing </table> on the no-nodes self-only matrix; append defensively so embedded
+    // HTML can't swallow the DOM of following cards if the bug recurs with real nodes.
+    if (t.toLowerCase().contains("<table") && !t.toLowerCase().contains("</table>")) t += "</table>"
+    return t
 }
 
 // ===== Zigbee Channel Scan (Phase 6 sub-1, v5.12.0) =====
@@ -2876,10 +2886,12 @@ Map classifyDevice(Map device, Map appLookup, Set communityDrivers) {
         if (appInfo) {
             String appType  = (appInfo.type  ?: "").toString().toLowerCase()
             String appLabel = (appInfo.label ?: "").toString().toLowerCase()
-            Map match = lookupIntegration(appType) ?: lookupIntegration(appLabel)
-            if (match) return [connectionType: match.conn, integration: match.name, builtin: true]
-            String intName = (appInfo.type ?: appInfo.label) ?: "Unknown"
             boolean isBuiltin = !(appInfo.user == true)
+            // INTEGRATION_TABLE entries (Hue, Shelly, WLED, Kasa, ...) match parent app type/label, but
+            // can equally come from built-in Hubitat integrations or community ports — defer to appInfo.user.
+            Map match = lookupIntegration(appType) ?: lookupIntegration(appLabel)
+            if (match) return [connectionType: match.conn, integration: match.name, builtin: isBuiltin]
+            String intName = (appInfo.type ?: appInfo.label) ?: "Unknown"
             return [connectionType: CONN_OTHER, integration: intName, builtin: isBuiltin]
         }
     }
@@ -2970,7 +2982,8 @@ Map enrichDevices(Map uncertainDevices, Set communityAppTypeNames = [] as Set) {
         if (parentAppTypeName) {
             Map match = lookupIntegration(parentAppTypeName)
             if (match) {
-                result[idStr] = [connectionType: match.conn, integration: match.name, builtin: true]
+                // INTEGRATION_TABLE keywords match both built-in and community apps — defer to appType.user.
+                result[idStr] = [connectionType: match.conn, integration: match.name, builtin: isBuiltin]
                 return
             }
             // Known parent app but not in table — use app type name, preserve user/builtin from appType.user
