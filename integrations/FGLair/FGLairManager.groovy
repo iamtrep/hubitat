@@ -71,8 +71,24 @@ Map mainPage() {
                     String exp = new Date((long) state.tokenExpiry).format("yyyy-MM-dd HH:mm:ss", location.timeZone)
                     paragraph "Token expires: <b>${exp}</b>"
                 }
-                input "btnDisconnect", "button", title: "Disconnect"
             }
+            section("Polling") {
+                input "pollRate", "enum", title: "Poll interval (seconds)",
+                      options: ["30", "60", "120", "300"], defaultValue: "60", submitOnChange: true
+                input "btnRefreshNow", "button", title: "Refresh now"
+            }
+            section("Devices") {
+                renderChildList()
+                List<Map> orphans = (atomicState.orphanedDevices ?: []) as List<Map>
+                if (orphans.size() > 0) {
+                    paragraph "<span style='color:orange'><b>Orphaned devices (${orphans.size()}):</b></span>"
+                    orphans.each { Map o ->
+                        paragraph "<a href='/device/edit/${o.id}' target='_blank'>${o.label}</a> (${o.dni})"
+                    }
+                    input "btnRemoveOrphans", "button", title: "Remove orphaned devices"
+                }
+            }
+            section("Actions") { input "btnDisconnect", "button", title: "Disconnect" }
         } else {
             section {
                 paragraph "Connect your FGLair account to get started."
@@ -122,14 +138,17 @@ void initialize()  {
     }
     if (isAuthenticated()) {
         scheduleTokenRefresh()
+        schedulePolling()
     }
     subscribe(location, "systemStart", "systemStartHandler")
 }
 
 void systemStartHandler(evt) {
-    logInfo "systemStart — re-asserting schedule"
+    logInfo "systemStart — re-asserting schedules"
     if (isAuthenticated()) {
         scheduleTokenRefresh()
+        schedulePolling()
+        runIn(5, "fetchDevices")
     }
 }
 
@@ -146,9 +165,61 @@ private void scheduleTokenRefresh() {
 void appButtonHandler(String btn) {
     logDebug "appButtonHandler(${btn})"
     switch (btn) {
-        case "btnLogin":      signIn(); break
-        case "btnDisconnect": disconnect(); break
+        case "btnLogin":         signIn(); break
+        case "btnDisconnect":    disconnect(); break
+        case "btnRefreshNow":    fetchDevices(); break
+        case "btnRemoveOrphans": removeOrphans(); break
         default: logWarn "unhandled button: ${btn}"
+    }
+}
+
+private void renderChildList() {
+    List<ChildDeviceWrapper> kids = getChildDevices().findAll {
+        it.deviceNetworkId?.startsWith(DNI_PREFIX_UNIT)
+    }
+    if (kids.size() == 0) { paragraph "No child devices yet."; return }
+    paragraph "<b>Units (${kids.size()}):</b>"
+    kids.each { ChildDeviceWrapper c ->
+        paragraph "<a href='/device/edit/${c.id}' target='_blank'>${c.label ?: c.name}</a>"
+    }
+}
+
+void removeOrphans() {
+    List<Map> orphans = (atomicState.orphanedDevices ?: []) as List<Map>
+    orphans.each { Map o ->
+        try {
+            deleteChildDevice((String) o.dni)
+            logInfo "removed orphan ${o.dni}"
+        } catch (Exception e) {
+            logError "remove orphan ${o.dni} failed: ${e.message}"
+        }
+    }
+    atomicState.orphanedDevices = []
+}
+
+private void schedulePolling() {
+    int rate = (settings.pollRate ?: "60") as int
+    Random rng = new Random()
+    int offset = rng.nextInt(60)
+    String cron = "${offset} */${(int) Math.max(1, rate / 60)} * ? * *"
+    if (rate < 60) {
+        logDebug "schedulePolling: ${rate}s loop"
+        unschedule("pollTick")
+        runIn(rate, "pollTick")
+    } else {
+        logDebug "schedulePolling: cron '${cron}'"
+        unschedule("pollTick")
+        schedule(cron, "pollTick")
+    }
+}
+
+void pollTick() {
+    logTrace "pollTick"
+    fetchDevices()
+    int rate = (settings.pollRate ?: "60") as int
+    if (rate < 60) {
+        int jitter = -7 + new Random().nextInt(15)
+        runIn(Math.max(15, rate + jitter), "pollTick")
     }
 }
 
@@ -210,6 +281,7 @@ void signInCallback(resp, data) {
     storeTokens(parsed)
     logInfo "FGLair sign-in successful"
     runIn(2, "fetchDevices")
+    schedulePolling()
 }
 
 private void storeTokens(Map parsed) {
