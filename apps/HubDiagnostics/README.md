@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
 <!-- AUTO:hubdiag-version -->
-**Current version:** 5.33.2
+**Current version:** 5.33.3
 <!-- /AUTO -->
 
 ---
@@ -235,7 +235,7 @@ The canonical place for all user-installed source code on this hub. The Apps and
 
 ## Network Tab
 
-Detailed status for all network interfaces and radio protocols. Card order: **Radio Health Badges → Network Configuration → Zigbee → Z-Wave → Matter → Hub Mesh → mDNS Discovery → Network Tests**.
+Detailed status for all network interfaces and radio protocols. Card order: **Radio Health Badges → Network Configuration → Zigbee → Z-Wave → Matter → Hub Mesh → mDNS Discovery**.
 
 ### Radio Health Badges
 
@@ -317,16 +317,6 @@ Enabled status, shared/linked device and variable counts. Table of peer hubs wit
 ### mDNS Discovery
 
 Lists devices visible to the hub via mDNS / Bonjour / Avahi (`/hub/mdnsDevices/json`). Sortable + filterable table with Service (e.g. `airplay._tcp`, `hap._tcp`, `lutron._tcp`), Name, IP (clickable HTTP link), Port, MAC, Server, Model, Last Updated. Useful for confirming HomeKit/AirPlay/Lutron/Chromecast devices are reachable.
-
-### Network Tests
-
-User-triggered live network diagnostics from the hub:
-
-- **Ping gateway** — instant `/hub/networkTest/ping/gateway`
-- **Ping IP** — IP input field with client-side and server-side IPv4 validation, then `/hub/networkTest/ping/<ip>`
-- **Speedtest** — `/hub/networkTest/speedtest`. Takes ~30 s and briefly loads the hub. Confirm-prompt before firing.
-
-Results render in a monospace pane below the buttons.
 
 ---
 
@@ -653,5 +643,4 @@ Base URL: `http://{hub-ip}/apps/api/{app-id}/`
 | `api/cache/clear` | Clear the device enrichment cache |
 | `api/audit/start` | Trigger a new device usage audit scan |
 | `api/audit/delete` | Delete an audit report by filename |
-| `api/network/test` | Run a live network test — `type=ping-gateway\|ping-ip\|speedtest`, optional `ip=x.x.x.x` for ping-ip |
 | `api/network/zigbee/scan` | Trigger a fresh Zigbee channel scan (~15–30 s); result cached in app state and returned in subsequent `api/network` reads |
