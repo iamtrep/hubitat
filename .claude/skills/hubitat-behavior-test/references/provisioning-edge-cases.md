@@ -23,7 +23,7 @@ Hubitat's REST API does not appear to expose a way to bind a newly-created child
 
 Learned the hard way on fresh Maker API instances:
 
-1. **Echo back EVERY rendered input from configPage** — not just the ones you're changing. Maker API rejects with HTTP 500 if any bool/text/enum input from the rendered form is missing. For unset bool inputs, send `settings[name]=[]` + `name.type=bool` (no `checkbox[name]=on`). For unset text inputs, send `settings[name]=[]` + `name.type=text`. (The `"[]"` echo is safe for Maker API specifically because its app code never does arithmetic on these settings; the `hubitat_settings_null_echo` caveat does not apply here. For *user* apps under test in Step 11, follow that rule strictly.)
+1. **Echo back EVERY rendered input from configPage** — not just the ones you're changing. Maker API rejects with HTTP 500 if any bool/text/enum input from the rendered form is missing. For unset bool inputs, send `settings[name]=[]` + `name.type=bool` (no `checkbox[name]=on`). For unset text inputs, send `settings[name]=[]` + `name.type=text`. (The `"[]"` echo is safe for Maker API specifically because its app code never does arithmetic on these settings; the null-handling rule (SKILL.md Step 11) does not apply here. For *user* apps under test in Step 11, follow that rule strictly.)
 2. The `pickedDevices` input has `type: "capability.*"` (literally with the asterisk). Send it back verbatim: `pickedDevices.type=capability.*` and `pickedDevices.multiple=true`.
 
 If creating a Maker API instance from scratch, the `cloudAccess` bool is stored as the string `"false"` (not `"[]"`) on fresh instances — echo it back as `"false"`. `localAccess` is `"true"` — echo with `checkbox[localAccess]=on`.
@@ -35,23 +35,6 @@ A Maker API app type ships with the hub (built-in, not user code). If no instanc
 - Fetch `/hub2/userAppTypes` *and* the built-in app types list (`/installedapp/availableApps` or the apps-create UI page) to find the Maker API type ID.
 - Create an instance via `/installedapp/create/{makerApiTypeId}` — capture the new id from the 302 `Location` header (same rule as Step 7: the instance is not visible in `/hub2/appsList` until configured at least once).
 - Set its label and devices via Step 11's POST procedure.
-
-## Orphaned instances not visible in /hub2/appsList
-
-Orphaned child instances (and freshly-created Maker API instances) are **not visible in `/hub2/appsList` until they have been configured at least once with a real settings diff**. Polling the list will fail. Always capture the new instance ID from the 302 `Location` header of `/installedapp/create/{typeId}`, not from a subsequent appsList fetch.
-
-Python snippet to capture id from the redirect:
-
-```python
-class NoRedirect(urllib.request.HTTPRedirectHandler):
-    def http_error_302(self, req, fp, code, msg, headers): return None
-opener_no_redir = urllib.request.build_opener(NoRedirect())
-try:
-    opener_no_redir.open(f"http://{hub_ip}/installedapp/create/{child_type_id}")
-except urllib.error.HTTPError as e:
-    loc = e.headers.get("Location", "")
-    new_id = int(re.search(r"/configure/(\d+)", loc).group(1))
-```
 
 ## OAuth token missing (Step 10)
 

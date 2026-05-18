@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT
 
 # YAML Spec Examples
 
-> **Load this when:** writing specs with parameterized commands, multi-device rigs, button clicks inside cases, command spacing, tolerance-based assertions, or any pattern beyond the minimal single-device example.
+> **Load this when:** writing specs with parameterized commands, multi-device rigs, button clicks inside cases, provisioning-time `setup_buttons`, command spacing, tolerance-based assertions, or any pattern beyond the minimal single-device example.
 
 ## Parameterized commands (args)
 

@@ -208,7 +208,9 @@ Record `{name → deviceId}` for every input and output. Save these as a Python 
 A Maker API app type ships with the hub (built-in, not user code). Search `/hub2/appsList` for an instance with `data.name == maker_api.label`:
 
 - **If present**, capture its installed-instance ID. Read its current device list (`/installedapp/configure/json/{id}`) to find the device-input field name (whose `type` starts with `capability.`).
-- **If absent**, find the Maker API type ID and create an instance via `/installedapp/create/{makerApiTypeId}` — capture the new id from the 302 `Location` header. Load `references/provisioning-edge-cases.md` for the Maker API config POST quirks (HTTP 500 on missing inputs, `capability.*` type, `cloudAccess`/`localAccess` echo values).
+- **If absent**, find the Maker API type ID and create an instance via `/installedapp/create/{makerApiTypeId}` — capture the new id from the 302 `Location` header.
+
+For Maker API config POST quirks (HTTP 500 on missing inputs, `capability.*` type strings, `cloudAccess`/`localAccess` echo values), load `references/provisioning-edge-cases.md`.
 
 For every device in `inputs` + `outputs`, ensure it's in the Maker API's device list. For each missing device, invoke `/hubitat-app-device add {deviceId} {makerApiInstanceId}` (or follow that skill's POST procedure inline).
 
