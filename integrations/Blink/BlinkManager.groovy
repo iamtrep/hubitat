@@ -59,6 +59,12 @@ definition(
 @Field static final int HTTP_TIMEOUT = 15
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 
+// /media/changed initial-window lookback on first fetch — picks up clips that
+// happened in the hour before the integration started, so a new install with
+// recent activity isn't entirely silent. Subsequent fetches use the persisted
+// cursor (atomicState.lastClipFetchTime).
+@Field static final long CLIP_INITIAL_WINDOW_SEC = 3600L
+
 preferences {
     page(name: "mainPage")
     page(name: "loginPage")
@@ -93,7 +99,7 @@ Map mainPage() {
                 if (atomicState.homescreenSummary) paragraph atomicState.homescreenSummary
             }
             section("Polling") {
-                input "pollRate", "enum", title: "Poll interval (seconds)", options: ["30", "60", "120", "300"], defaultValue: "60", submitOnChange: true
+                input "pollRate", "enum", title: "Poll interval (seconds)", options: ["60", "120", "300"], defaultValue: "60", submitOnChange: true
                 input "btnRefreshNow", "button", title: "Refresh now"
                 if (!state.accountId) {
                     paragraph "<span style='color:orange'><b>No account ID yet</b> — tier discovery failed. Click below to retry.</span>"
@@ -242,13 +248,14 @@ void systemStartHandler(evt) {
 }
 
 private void schedulePolling() {
-    int rate = (pollRate ?: "60").toString().toInteger()
+    // 60 s is the lower bound per blinkpy's README ("API calls faster than 60 s
+    // is not recommended as it can overwhelm Blink's servers"). Force-clamp in
+    // case a user has a stale "30" value persisted from a prior release.
+    int rate = Math.max(60, (pollRate ?: "60").toString().toInteger())
     Random rng = new Random()
-    int offset = rng.nextInt(rate < 60 ? rate : 60)
+    int offset = rng.nextInt(60)
     String cron
-    if (rate < 60) {
-        cron = "0/${rate} * * ? * *"
-    } else if (rate == 60) {
+    if (rate == 60) {
         cron = "${offset} * * ? * *"
     } else {
         int minutes = rate / 60 as int
@@ -710,6 +717,7 @@ private void processHomescreen(Map json) {
     dispatchToChildren(networks, cameras, syncModules)
     updateHomescreenSummary(networks, cameras, syncModules)
     rotateSignalsFetch(cameras)
+    fetchRecentClips()
 }
 
 // Fetch /signals for one default camera per poll cycle, rotating through the
@@ -791,6 +799,9 @@ private void syncChildren(List<Map> networks, List<Map> cameras, List<Map> syncM
         child.updateDataValue("cameraId", camId)
         child.updateDataValue("networkId", (c.network_id ?: c.networkId)?.toString() ?: "")
         child.updateDataValue("cameraType", c.__type as String ?: "camera")
+        // Blink reports clips in /media/changed by `device_name` (not id); store
+        // the Blink-side name so we can match clip entries back to this child.
+        if (c.name != null) child.updateDataValue("blinkName", c.name.toString())
     }
 
     // Orphan tracking (no auto-delete).
@@ -1156,6 +1167,93 @@ void cameraSignalsResponse(resp, data) {
         }
     } catch (Exception e) {
         logError "cameraSignalsResponse: ${e.message}"
+    }
+}
+
+// --- Recent clips (M2) ---
+//
+// Fetches /api/v1/accounts/{aid}/media/changed?since=<unix-seconds>&page=1 once
+// per poll cycle. Response is `{media: [{device_name, media: "/clip.mp4",
+// created_at, deleted}, ...]}` per blinkpy sync_module.py:335. Each new clip
+// for a camera updates that child's lastClipUrl + lastClipTime attributes —
+// the actual recorded video, distinct from the still-image lastThumbnailUrl.
+private void fetchRecentClips() {
+    if (!isAuthenticated() || !state.accountId || !state.tier) return
+    long since = ((atomicState.lastClipFetchTime ?: ((now() / 1000L) - CLIP_INITIAL_WINDOW_SEC)) as Number).longValue()
+    String url = "https://rest-${state.tier}.immedia-semi.com/api/v1/accounts/${state.accountId}/media/changed?since=${since}&page=1"
+    logTrace "fetchRecentClips: since=${since}"
+    asynchttpGet("recentClipsResponse", [
+        uri        : url,
+        headers    : bearerHeaders(),
+        contentType: "application/json",
+        timeout    : HTTP_TIMEOUT
+    ])
+}
+
+void recentClipsResponse(resp, data) {
+    long fetchedAt = (now() / 1000L) as long
+    try {
+        if (resp.hasError()) {
+            logDebug "clips: ${resp.getErrorMessage()}"
+            return
+        }
+        int status = resp.getStatus()
+        if (status != 200) {
+            logDebug "clips: HTTP ${status}"
+            return
+        }
+        Map json = resp.json as Map
+        List<Map> media = (json?.media ?: []) as List<Map>
+        if (media.size() == 0) {
+            atomicState.lastClipFetchTime = fetchedAt
+            return
+        }
+
+        // Pick the latest non-deleted clip per Blink camera name.
+        Map<String, Map> latestByName = [:]
+        media.each { Map entry ->
+            if (entry.deleted == true) return
+            String name = entry.device_name?.toString()
+            if (!name) return
+            String t = entry.created_at?.toString()
+            Map prev = latestByName[name]
+            String prevT = prev?.get("_t") as String
+            if (prev == null || (t != null && (prevT == null || t > prevT))) {
+                Map copy = [:]
+                copy.putAll(entry)
+                copy.put("_t", t)
+                latestByName[name] = copy
+            }
+        }
+
+        String base = "https://rest-${state.tier}.immedia-semi.com"
+        int dispatched = 0
+        getChildDevices().each { ChildDeviceWrapper child ->
+            String blinkName = child.getDataValue("blinkName")
+            if (!blinkName) return
+            Map entry = latestByName[blinkName]
+            if (entry == null) return
+            String clipPath = entry.media?.toString()
+            if (!clipPath) return
+            String fullUrl = clipPath.startsWith("http") ? clipPath : "${base}${clipPath}"
+            Map update = [lastClipUrl: fullUrl]
+            if (entry._t) update.lastClipTime = entry._t as String
+            try {
+                child.handleCameraUpdate(update)
+                dispatched++
+            } catch (Exception e) {
+                logError "clip dispatch to ${child.deviceNetworkId}: ${e.message}"
+            }
+        }
+
+        if (dispatched > 0) {
+            logInfo "clips: ${media.size()} entries, dispatched to ${dispatched} cameras"
+        }
+    } catch (Exception e) {
+        logError "recentClipsResponse: ${e.message}"
+    } finally {
+        // Always advance the cursor — server-side time is unknown, clock drift is minor.
+        atomicState.lastClipFetchTime = fetchedAt
     }
 }
 

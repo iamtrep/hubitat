@@ -32,6 +32,8 @@ metadata {
 
         attribute "lastThumbnailUrl", "string"
         attribute "lastUpdated", "string"
+        attribute "lastClipUrl", "string"
+        attribute "lastClipTime", "string"
         attribute "wifiSignal", "number"
         attribute "lfrSignal", "number"
         attribute "batteryBars", "number"
@@ -144,6 +146,12 @@ void handleCameraUpdate(Map data) {
     }
     if (data.lastUpdated) {
         sendEvent(name: "lastUpdated", value: data.lastUpdated as String)
+    }
+    if (data.lastClipUrl) {
+        sendEvent(name: "lastClipUrl", value: data.lastClipUrl as String)
+    }
+    if (data.lastClipTime) {
+        sendEvent(name: "lastClipTime", value: data.lastClipTime as String)
     }
 }
 
