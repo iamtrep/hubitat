@@ -337,20 +337,26 @@ private String deriveOperatingState(String mode, Object displayTemp, Object adju
     }
 }
 
-// Sensor readings (display_temperature, outdoor_temperature) are a linear
-// range-mapped integer, NOT hundredths of a degree. Per ayla-iot-unofficial's
-// _convert_sensed_temp_to_celsius (used by Home Assistant): raw range
-// [4000, 9500] maps linearly to [-10°C, +45°C]. Result is rounded to 0.5°C
-// steps to match the Python lib, then converted to the hub's scale.
+// Sensor readings (display_temperature, outdoor_temperature) are in hundredths
+// of °F on this unit. Empirically verified 2026-05-18 against ambient
+// readings: raw 7000 = 70.0°F = 21.1°C (indoor display), raw 5500 = 55.0°F =
+// 12.8°C (outdoor, matched ambient). Independent of the hub's temperature
+// scale; we always convert to it.
+//
+// Note: ayla-iot-unofficial (the HA dependency) uses a linear range-map
+// formula instead — raw [4000, 9500] -> [-10, +45]°C. Applying that to this
+// unit produces values ~8°C off on outdoor. The Python lib's constants are
+// presumably for a different model/firmware variant. If a future unit
+// reports values outside the [3200, 11200] hundredths-of-°F range (-18°C to
+// +49°C, well past mini-split sensor limits), the lib formula may need to
+// be re-considered with a per-unit override.
 private BigDecimal aylaSensorToScale(Object raw) {
-    BigDecimal rawBD = raw as BigDecimal
-    BigDecimal scaled = (rawBD - 4000) / 5500   // (max - min) = 9500 - 4000
-    BigDecimal celsius = -10 + scaled * 55      // (max - min) = 45 - (-10)
-    celsius = (celsius * 2).setScale(0, java.math.RoundingMode.HALF_UP) / 2
-    if (getTemperatureScale() == 'F') {
-        return (celsius * 9 / 5 + 32).setScale(1, java.math.RoundingMode.HALF_UP)
+    BigDecimal fahrenheit = (raw as BigDecimal) / 100
+    if (getTemperatureScale() == 'C') {
+        BigDecimal celsius = (fahrenheit - 32) * 5 / 9
+        return celsius.setScale(1, java.math.RoundingMode.HALF_UP)
     }
-    return celsius.setScale(1, java.math.RoundingMode.HALF_UP)
+    return fahrenheit.setScale(1, java.math.RoundingMode.HALF_UP)
 }
 
 // Setpoint (adjust_temperature): tenths of °C, regardless of the unit's
