@@ -21,9 +21,7 @@ Zigbee, BLE, and cloud API device drivers — including families for Sinopé, St
 
 ## Integrations
 
-### VisiblAir
-
-Parent/child integration for [VisiblAir](https://visiblair.com/) indoor air quality sensors — auto-discovers sensors and creates model-specific child devices. See [`integrations/visiblair/`](integrations/visiblair/README.md) for details.
+Parent-app + child-driver integrations for vendor cloud APIs — currently Blink home security cameras and VisiblAir indoor air quality sensors. See [`integrations/`](integrations/README.md) for the full list.
 
 ## Scripts
 
