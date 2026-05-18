@@ -37,7 +37,7 @@ The integration uses the same OAuth 2.0 Authorization-Code + PKCE flow as the iO
 5. `GET /oauth/v2/authorize` again to obtain the auth code
 6. `POST /oauth/token` to exchange the code for access + refresh tokens
 
-The access token is refreshed automatically 5 minutes before expiry. Refresh tokens are persisted in the app's `state` and survive hub restarts. **They are not preserved across an app code push** — after pushing new code you may need to log in again.
+The access token is refreshed automatically 5 minutes before expiry. Refresh tokens are persisted in the app's `state` and survive both hub restarts and code pushes — only an explicit **Disconnect** or **Reset auth state** clears them.
 
 ## Devices
 
