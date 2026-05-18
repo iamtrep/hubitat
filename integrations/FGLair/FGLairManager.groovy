@@ -209,6 +209,7 @@ void signInCallback(resp, data) {
     }
     storeTokens(parsed)
     logInfo "FGLair sign-in successful"
+    runIn(2, "fetchDevices")
 }
 
 private void storeTokens(Map parsed) {
@@ -267,6 +268,91 @@ void refreshTokenCallback(resp, data) {
 private boolean tokenNearExpiry() {
     if (!state.tokenExpiry) return true
     return now() > ((long) state.tokenExpiry) - 60_000L
+}
+
+// --- Device discovery ---
+
+private Map authHeader() { return ["Authorization": "auth_token ${state.accessToken}"] }
+
+void fetchDevices() {
+    logDebug "fetchDevices"
+    if (tokenNearExpiry()) {
+        logDebug "token near expiry — refreshing inline before fetchDevices"
+        refreshToken()
+        runIn(3, "fetchDevices")
+        return
+    }
+    Map<String, String> rc = regionConfig()
+    Map params = [
+        uri: "${rc.ads}/apiv1/devices.json",
+        headers: authHeader(),
+        contentType: "application/json",
+        timeout: HTTP_TIMEOUT
+    ]
+    asynchttpGet("fetchDevicesCallback", params, [:])
+}
+
+void fetchDevicesCallback(resp, data) {
+    if (resp.hasError()) {
+        logError "fetchDevices HTTP error: ${resp.getErrorMessage()}"
+        return
+    }
+    int status = resp.getStatus()
+    if (status == 401) {
+        logWarn "fetchDevices HTTP 401 — refreshing token and retrying"
+        refreshToken()
+        runIn(3, "fetchDevices")
+        return
+    }
+    if (status != 200) {
+        logError "fetchDevices HTTP ${status}: ${resp.getData()}"
+        return
+    }
+    List parsed
+    try {
+        parsed = (List) new JsonSlurper().parseText(resp.getData())
+    } catch (Exception e) {
+        logError "fetchDevices JSON parse error: ${e.message}"
+        return
+    }
+    handleDeviceList(parsed)
+}
+
+private void handleDeviceList(List rawDevices) {
+    // Ayla wraps each device under {"device": {...}}.
+    List<Map> devices = rawDevices.collect { (Map) ((Map) it).device }.findAll { it != null }
+    logInfo "fetchDevices returned ${devices.size()} device(s)"
+    logTrace "raw device list: ${JsonOutput.toJson(devices)}"
+
+    Set<String> liveDnis = [] as Set
+    devices.each { Map d ->
+        String dsn = d.dsn?.toString()
+        if (!dsn) return
+        // For MVP, accept all returned devices as Fujitsu indoor units. If multi-vendor
+        // accounts surface later, filter on d.oem_model or d.product_name here.
+        String dni = "${DNI_PREFIX_UNIT}${dsn}"
+        liveDnis << dni
+        ChildDeviceWrapper child = getChildDevice(dni)
+        if (!child) {
+            String label = d.product_name?.toString() ?: "Fujitsu Mini-Split ${dsn}"
+            logInfo "creating child device ${dni} (${label})"
+            addChildDevice("iamtrep", DRIVER_UNIT, dni,
+                [name: DRIVER_UNIT, label: label, isComponent: false])
+        }
+    }
+    computeOrphans(liveDnis)
+}
+
+private void computeOrphans(Set<String> liveDnis) {
+    List<Map> orphans = []
+    getChildDevices().each { ChildDeviceWrapper c ->
+        String dni = c.deviceNetworkId
+        if (dni?.startsWith(DNI_PREFIX_UNIT) && !(dni in liveDnis)) {
+            orphans << [id: c.id, label: c.label ?: c.name, dni: dni]
+        }
+    }
+    atomicState.orphanedDevices = orphans
+    if (orphans.size() > 0) logWarn "${orphans.size()} orphaned device(s) detected"
 }
 
 void disconnect() {

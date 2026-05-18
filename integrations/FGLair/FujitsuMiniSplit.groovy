@@ -4,9 +4,20 @@
 /*
  * Fujitsu Mini-Split — Child Driver
  *
- * One device per Fujitsu indoor unit. Standard Thermostat + TemperatureMeasurement
- * capabilities, plus a custom outdoorTemperature attribute. Receives state via
- * parent.updateState(Map); writes via parent.sendCommand(dni, name, intValue).
+ * One device per Fujitsu indoor unit.
+ *
+ * Capability strategy: the standard Thermostat capability is constrained to the
+ * canonical Hubitat enums (modes: off/heat/cool/auto[/emergency heat]; fan modes:
+ * auto/circulate/on). setSupportedThermostatModes / setSupportedThermostatFanModes
+ * narrow that canonical set — they cannot extend it. The Fujitsu-specific values
+ * (dry / fan_only modes; quiet/low/medium/high fan speeds) live on a parallel
+ * custom surface: fujitsuMode + fanSpeed attributes, setFujitsuMode + setFanSpeed
+ * commands. Dashboards and Alexa/Google use the canonical Thermostat surface for
+ * the 80% case; automations needing dry/fan_only or specific fan speeds use the
+ * custom surface.
+ *
+ * Receives state via parent.updateState(Map); writes via
+ * parent.sendCommand(dni, name, intValue).
  */
 
 import groovy.json.JsonOutput
@@ -25,7 +36,20 @@ metadata {
         capability "Sensor"
         capability "Actuator"
 
-        attribute "outdoorTemperature", "number"
+        attribute "supportedThermostatFanModes", "JSON_OBJECT"
+        attribute "supportedThermostatModes",    "JSON_OBJECT"
+        attribute "outdoorTemperature",          "number"
+        attribute "fujitsuMode",                 "string"
+        attribute "fanSpeed",                    "string"
+
+        command "setSupportedThermostatFanModes", ["JSON_OBJECT"]
+        command "setSupportedThermostatModes",    ["JSON_OBJECT"]
+        command "setFujitsuMode", [[name: "mode*", type: "ENUM",
+                                    description: "Fujitsu operation mode",
+                                    constraints: ["off","heat","cool","auto","dry","fan_only"]]]
+        command "setFanSpeed",    [[name: "speed*", type: "ENUM",
+                                    description: "Fujitsu fan speed",
+                                    constraints: ["auto","quiet","low","medium","high"]]]
     }
 
     preferences {
@@ -39,6 +63,11 @@ metadata {
 
 @Field static final String DRIVER_VERSION = "0.1.0"
 
+@Field static final List<String> SUPPORTED_STD_MODES = ["\"off\"", "\"heat\"", "\"cool\"", "\"auto\""]
+@Field static final List<String> SUPPORTED_STD_FAN_MODES = ["\"auto\""]
+@Field static final List<String> FUJITSU_MODES = ["off","heat","cool","auto","dry","fan_only"]
+@Field static final List<String> FUJITSU_FAN_SPEEDS = ["auto","quiet","low","medium","high"]
+
 void installed() { logDebug "installed"; state.version = DRIVER_VERSION; initialize() }
 void updated()   { logDebug "updated"; unschedule(); initialize() }
 void initialize() {
@@ -47,8 +76,8 @@ void initialize() {
         logWarn "new version: ${DRIVER_VERSION} (was: ${state.version})"
         state.version = DRIVER_VERSION
     }
-    setSupportedThermostatModes(JsonOutput.toJson(["off", "heat", "cool", "auto", "dry", "fan_only"]))
-    setSupportedThermostatFanModes(JsonOutput.toJson(["auto", "quiet", "low", "medium", "high"]))
+    sendEvent(name: "supportedThermostatModes",    value: SUPPORTED_STD_MODES)
+    sendEvent(name: "supportedThermostatFanModes", value: SUPPORTED_STD_FAN_MODES)
     emitBounds()
 }
 
@@ -72,21 +101,26 @@ private BigDecimal convertFromC(BigDecimal celsius) {
     return celsius.setScale(1, java.math.RoundingMode.HALF_UP)
 }
 
-// Stubs to be implemented in later tasks. Hubitat platform requires all
-// Thermostat / Thermostat Fan Mode capability commands to be defined on the
-// driver; bodies land in Task 7.
-void setThermostatMode(String mode)        { logWarn "setThermostatMode(${mode}) — not implemented yet" }
-void setHeatingSetpoint(BigDecimal t)      { logWarn "setHeatingSetpoint(${t}) — not implemented yet" }
-void setCoolingSetpoint(BigDecimal t)      { logWarn "setCoolingSetpoint(${t}) — not implemented yet" }
-void setThermostatFanMode(String fanMode)  { logWarn "setThermostatFanMode(${fanMode}) — not implemented yet" }
+// --- Command stubs ---
+// Standard Thermostat / Thermostat Fan Mode commands are defined regardless of
+// the supported list. They land with real bodies in Task 7. Custom commands
+// (setFujitsuMode / setFanSpeed) also get real bodies in Task 7.
+
+void setThermostatMode(String mode)       { logWarn "setThermostatMode(${mode}) — not implemented yet" }
+void setHeatingSetpoint(BigDecimal t)     { logWarn "setHeatingSetpoint(${t}) — not implemented yet" }
+void setCoolingSetpoint(BigDecimal t)     { logWarn "setCoolingSetpoint(${t}) — not implemented yet" }
+void setThermostatFanMode(String fanMode) { logWarn "setThermostatFanMode(${fanMode}) — not implemented yet" }
+void setFujitsuMode(String mode)          { logWarn "setFujitsuMode(${mode}) — not implemented yet" }
+void setFanSpeed(String speed)            { logWarn "setFanSpeed(${speed}) — not implemented yet" }
+
 void auto()           { setThermostatMode("auto") }
 void cool()           { setThermostatMode("cool") }
 void heat()           { setThermostatMode("heat") }
 void off()            { setThermostatMode("off") }
 void emergencyHeat()  { logWarn "emergencyHeat() not supported on Fujitsu mini-splits — routing to heat"; setThermostatMode("heat") }
 void fanAuto()        { setThermostatFanMode("auto") }
-void fanOn()          { logWarn "fanOn() not in Fujitsu fan set — routing to high"; setThermostatFanMode("high") }
-void fanCirculate()   { logWarn "fanCirculate() not in Fujitsu fan set — routing to low"; setThermostatFanMode("low") }
+void fanOn()          { logWarn "fanOn() not a standard Fujitsu fan setting — routing to setFanSpeed(\"high\")"; setFanSpeed("high") }
+void fanCirculate()   { logWarn "fanCirculate() not a standard Fujitsu fan setting — routing to setFanSpeed(\"low\")"; setFanSpeed("low") }
 
 // updateState lands in Task 6.
 void updateState(Map data) { logTrace "updateState(${data}) — not implemented yet" }
