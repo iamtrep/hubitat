@@ -120,6 +120,25 @@ void initialize()  {
         logWarn "new version: ${APP_VERSION} (was: ${state.version})"
         state.version = APP_VERSION
     }
+    if (isAuthenticated()) {
+        scheduleTokenRefresh()
+    }
+    subscribe(location, "systemStart", "systemStartHandler")
+}
+
+void systemStartHandler(evt) {
+    logInfo "systemStart — re-asserting schedule"
+    if (isAuthenticated()) {
+        scheduleTokenRefresh()
+    }
+}
+
+private void scheduleTokenRefresh() {
+    if (!state.tokenExpiry) return
+    long ms = ((long) state.tokenExpiry) - now() - TOKEN_REFRESH_BUFFER_MS
+    int secs = Math.max(60, (int) (ms / 1000L))
+    logDebug "scheduleTokenRefresh in ${secs}s"
+    runIn(secs, "refreshToken")
 }
 
 // --- Buttons ---
@@ -198,6 +217,56 @@ private void storeTokens(Map parsed) {
     long expiresInMs = ((parsed.expires_in ?: 3600L) as long) * 1000L
     state.tokenExpiry = now() + expiresInMs
     state.remove("authError")
+    scheduleTokenRefresh()
+}
+
+void refreshToken() {
+    logDebug "refreshToken"
+    String rt = state.refreshToken
+    if (!rt) {
+        logWarn "no refresh token — attempting full re-sign-in"
+        signIn()
+        return
+    }
+    Map<String, String> rc = regionConfig()
+    Map body = [user: [refresh_token: rt]]
+    Map params = [
+        uri: "${rc.userField}/users/refresh_token.json",
+        contentType: "application/json",
+        requestContentType: "application/json",
+        body: JsonOutput.toJson(body),
+        timeout: HTTP_TIMEOUT
+    ]
+    asynchttpPost("refreshTokenCallback", params, [:])
+}
+
+void refreshTokenCallback(resp, data) {
+    if (resp.hasError()) {
+        logWarn "refreshToken HTTP error: ${resp.getErrorMessage()} — falling back to re-sign-in"
+        signIn()
+        return
+    }
+    int status = resp.getStatus()
+    if (status != 200) {
+        logWarn "refreshToken HTTP ${status} — falling back to re-sign-in"
+        signIn()
+        return
+    }
+    Map parsed
+    try {
+        parsed = new JsonSlurper().parseText(resp.getData())
+    } catch (Exception e) {
+        logError "refreshToken JSON parse error: ${e.message}"
+        signIn()
+        return
+    }
+    storeTokens(parsed)
+    logInfo "FGLair token refreshed"
+}
+
+private boolean tokenNearExpiry() {
+    if (!state.tokenExpiry) return true
+    return now() > ((long) state.tokenExpiry) - 60_000L
 }
 
 void disconnect() {
