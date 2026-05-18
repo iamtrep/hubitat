@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 > **Load this when:** the user invokes `--diff LABEL` or asks how to interpret the diff output.
 
-#### `--diff LABEL`
+## `--diff LABEL`
 
 1. If `.hubitat-perf/{hubname}/{label}.json` doesn't exist, error and suggest `/hubitat-perf @{hubname} --list`.
 2. Load the baseline. Build two maps keyed by app `id`: `BASE` and `CUR`.

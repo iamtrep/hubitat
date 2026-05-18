@@ -7,18 +7,18 @@ SPDX-License-Identifier: MIT
 
 > **Load this when:** the user invokes `--list`, `--delete`, or `--save`, or asks about managing saved baselines.
 
-### `--list`
+## `--list`
 
 List `.hubitat-perf/{hubname}/*.json`. For each file print `LABEL  captured_at  (firmware_version, uptime)` extracted from the file's JSON (`jq -r '"\(.captured_at)  (\(.firmware_version), \(.uptime))"'`). If the directory doesn't exist or is empty, say so.
 
-### `--delete LABEL`
+## `--delete LABEL`
 
 If `.hubitat-perf/{hubname}/{label}.json` doesn't exist, say so and exit. Otherwise:
 - Print the file's `captured_at` and `firmware_version`.
 - Ask the user `Delete this baseline? [y/N]:` and read a line from stdin.
 - Only on exact `y` or `Y` do `rm` the file. Anything else aborts.
 
-### `--save LABEL`
+## `--save LABEL`
 
 1. Ensure `.hubitat-perf/{hubname}/` exists (`mkdir -p`).
 2. If `.hubitat-perf/{hubname}/{label}.json` already exists, read its `captured_at` and `firmware_version`, print them, and ask `Overwrite baseline '{label}' from {captured_at}? [y/N]:`. Only proceed on `y` or `Y`.
