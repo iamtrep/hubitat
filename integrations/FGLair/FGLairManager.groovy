@@ -201,7 +201,7 @@ private void schedulePolling() {
     int rate = (settings.pollRate ?: "60") as int
     Random rng = new Random()
     int offset = rng.nextInt(60)
-    String cron = "${offset} */${(int) Math.max(1, rate / 60)} * ? * *"
+    String cron = "${offset} */${Math.max(1, rate.intdiv(60))} * ? * *"
     if (rate < 60) {
         logDebug "schedulePolling: ${rate}s loop"
         unschedule("pollTick")
