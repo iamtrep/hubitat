@@ -136,7 +136,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.34.2";
+const UI_VERSION = "5.35.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -437,14 +437,22 @@ function buildForumMarkdown(d){
       meshLine+=`, **Route Changes:** ${zwaveMesh.totalRouteChanges||0}`;
       L(meshLine);
     }
-    // Ghost nodes
-    if(ghostNodes.length){
-      L('');L(`**Ghost Nodes (${ghostNodes.length}):**`);
-      ghostNodes.forEach(g=>{
-        const gName=obfuscate?(g.type||'Z-Wave Node'):g.name;
-        const gSig=g.signals?` [${g.signals.join(', ')}]`:'';
-        L(`- Node ${g.id}: ${gName}${gSig}`);
-      });
+    // Ghost / Failed nodes — split by kind so readers can see how many are truly orphaned
+    // vs how many are recoverable (battery/range issues).
+    const ghosts=ghostNodes.filter(g=>(g.kind?g.kind==='ghost':!g.deviceId));
+    const failed=ghostNodes.filter(g=>(g.kind?g.kind==='failed':!!g.deviceId));
+    const renderNode=g=>{
+      const gName=obfuscate?(g.type||'Z-Wave Node'):g.name;
+      const gSig=g.signals?` [${g.signals.join(', ')}]`:'';
+      L(`- Node ${g.id}: ${gName}${gSig}`);
+    };
+    if(ghosts.length){
+      L('');L(`**Ghost Nodes (${ghosts.length}, no Hubitat device):**`);
+      ghosts.forEach(renderNode);
+    }
+    if(failed.length){
+      L('');L(`**Failed Nodes (${failed.length}, recoverable — try battery/range):**`);
+      failed.forEach(renderNode);
     }
     // Problem nodes
     const zwNodes=zwaveMesh&&zwaveMesh.nodes?zwaveMesh.nodes:[];
@@ -1482,10 +1490,25 @@ async function rNetwork(){const P='p-network';loading(P);try{
     if(z.zwaveJS!=null){const stack=z.zwaveJS?'ZWaveJS':'Z/IP Gateway';const avail=(!z.zwaveJS&&z.zwaveJSAvailable)?' <span style="color:var(--muted);font-size:12px">(ZWaveJS available)</span>':'';o+='<div class="ni"><div class="nl">Stack</div><div class="nv">'+h(stack)+avail+'</div></div>';}
     if(z.isRadioUpdateNeeded)o+='</div><div class="alert a-warn" style="margin-top:8px">\u26A0 Z-Wave radio firmware update available</div><div class="ng">';
     o+='</div>';
-    // Ghost nodes
+    // Ghost / Failed nodes \u2014 split by kind so users don't force-remove recoverable nodes.
+    // kind=ghost  -> no Hubitat device, safe to force-remove from radio
+    // kind=failed -> has device, radio reports failure; try battery/range before excluding
     if(z.ghostNodes&&z.ghostNodes.length){
-      o+='<div style="margin-top:10px"><div class="alert a-crit">\u26D4 Ghost Nodes: '+z.ghostNodes.length+'</div>';
-      z.ghostNodes.forEach(g=>{const sig=g.signals&&g.signals.length?'<span style="color:var(--muted);font-size:12px"> ['+g.signals.map(s=>h(s)).join(', ')+']</span>':'';o+='<div style="margin:4px 0;color:var(--crit)">'+(g.deviceId?dlink(g.deviceId,'Node '+g.id):h('Node '+g.id))+' &mdash; '+h(g.name||'Unknown')+sig+'</div>'});o+='</div>'}
+      const renderRow=g=>{const sig=g.signals&&g.signals.length?'<span style="color:var(--muted);font-size:12px"> ['+g.signals.map(s=>h(s)).join(', ')+']</span>':'';return '<div style="margin:4px 0;color:var(--crit)">'+(g.deviceId?dlink(g.deviceId,'Node '+g.id):h('Node '+g.id))+' &mdash; '+h(g.name||'Unknown')+sig+'</div>'};
+      // Legacy backend without kind field: treat noDeviceId as ghost, anything else as failed.
+      const ghosts=z.ghostNodes.filter(g=>(g.kind?g.kind==='ghost':!g.deviceId));
+      const failed=z.ghostNodes.filter(g=>(g.kind?g.kind==='failed':!!g.deviceId));
+      if(ghosts.length){
+        o+='<div style="margin-top:10px"><div class="alert a-crit">\u26D4 Ghost Nodes: '+ghosts.length+' \u2014 no Hubitat device, safe to force-remove from radio</div>';
+        ghosts.forEach(g=>{o+=renderRow(g)});
+        o+='</div>';
+      }
+      if(failed.length){
+        o+='<div style="margin-top:10px"><div class="alert a-warn">\u26A0 Failed Nodes: '+failed.length+' \u2014 radio reports failure; try a battery swap or moving the device closer to the hub before excluding</div>';
+        failed.forEach(g=>{o+=renderRow(g)});
+        o+='</div>';
+      }
+    }
     // Mesh quality
     if(z.mesh&&z.mesh.nodes&&z.mesh.nodes.length){const m=z.mesh;
       o+='<div style="margin-top:10px"><div class="ng">';
