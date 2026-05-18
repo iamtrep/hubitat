@@ -62,9 +62,11 @@ RUNTIME_BUDGET_SECONDS = 30
 # ── Stdin args ────────────────────────────────────────────────────────
 hub_name_arg, instance_id_arg, config_file, cookie_jar_path, project_root = sys.argv[1:6]
 
-# scripts/lib/logsocket.py provides the LogCapture helper used per case.
+# scripts/lib/logsocket.py provides LogCapture (log lines).
+# scripts/lib/eventsocket.py provides EventCapture (device events).
 sys.path.insert(0, f"{project_root}/scripts/lib")
 from logsocket import LogCapture
+from eventsocket import EventCapture
 
 GREEN = "\033[32m"; RED = "\033[31m"; YELLOW = "\033[33m"
 CYAN = "\033[36m"; DIM = "\033[2m"; RESET = "\033[0m"
@@ -341,8 +343,14 @@ for case in CASES:
         # Let setup commands propagate before the test action.
         time.sleep(min(case.get("setup_wait_seconds", 1), 5))
 
-    # 6b. Open the log-capture window around actions + assertions.
-    with LogCapture(hub_ip=hub_ip, username=hub_creds[0], password=hub_creds[1]) as cap:
+    # 6b. Open the log AND event capture windows around actions + assertions.
+    # LogCapture observes app log lines (info/warn/error/debug); EventCapture
+    # observes device-state events (attribute transitions + values). Specs
+    # use whichever is the least-fragile observation for each case:
+    # `assert_logs` for log-emitting apps, `assert_events` for state-change
+    # apps (the latter avoids breakage when log wording changes).
+    with LogCapture(hub_ip=hub_ip, username=hub_creds[0], password=hub_creds[1]) as cap, \
+         EventCapture(hub_ip=hub_ip, username=hub_creds[0], password=hub_creds[1]) as evt_cap:
         # actions (test trigger)
         action_steps = case.get("actions") or []
         for i, step in enumerate(action_steps):
@@ -400,6 +408,35 @@ for case in CASES:
                 near_str = "; ".join(f"[{m.get('level')}] {(m.get('msg') or '')[:80]}" for m in near)
                 fail(f"log {kind} expected for {pattern!r}{level_str}{source_str}"
                      f"; recent from {source!r}: [{near_str}]")
+
+        # event assertions (against the captured /eventsocket stream — still open).
+        # Prefer these over log assertions when the observable is a device-state
+        # transition: events are tied to capability attributes, which are far
+        # more stable than log wording across refactors.
+        for ea in case.get("assert_events") or []:
+            attribute = ea.get("attribute")
+            value     = ea.get("value")
+            source    = ea.get("source")
+            pattern   = ea.get("pattern")
+            negate    = bool(ea.get("negate", False))
+            matched = evt_cap.matches(pattern=pattern, attribute=attribute,
+                                       value=value, source=source)
+            attr_str = f" attribute={attribute!r}" if attribute else ""
+            val_str  = f" value={value!r}" if value is not None else ""
+            src_str  = f" source={source!r}" if source is not None else ""
+            pat_str  = f" pattern={pattern!r}" if pattern else ""
+            sig = f"{attr_str}{val_str}{src_str}{pat_str}"
+            if (matched and not negate) or (not matched and negate):
+                kind = "no-match" if negate else "match"
+                ok(f"event {kind}:{sig}")
+            else:
+                kind = "no-match" if negate else "match"
+                # On miss, show up to 3 recent events from the same source for diagnosis.
+                near = evt_cap.find_all(source=source)[:3] if source is not None else evt_cap.events[:3]
+                near_str = "; ".join(
+                    f"{m.get('displayName')!r}.{m.get('name')}={m.get('value')!r}"
+                    for m in near)
+                fail(f"event {kind} expected for{sig}; recent: [{near_str}]")
 
     # 6c. Implicit log guard — fails on unexpected warn/error from the SUT.
     # Spec opt-outs:
