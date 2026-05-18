@@ -871,6 +871,10 @@ private static Map cameraSnapshot(Map c) {
     out["online"] = ((c.get("status") ?: "unknown") as String)
     Object fw = c.get("fw_version") ?: c.get("firmware")
     if (fw) out["firmwareVersion"] = fw.toString()
+    // AC power: passed through as string. Wired cameras (doorbells, floodlights)
+    // populate this to indicate mains-power presence; battery-only cameras may omit it.
+    Object acPower = c.get("ac_power")
+    if (acPower != null) out["acPower"] = acPower.toString()
     Object thumb = c.get("thumbnail")
     if (thumb) out["lastClipUrl"] = thumb.toString()
     Object updatedAt = c.get("updated_at")

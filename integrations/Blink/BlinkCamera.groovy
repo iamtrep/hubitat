@@ -38,6 +38,7 @@ metadata {
         attribute "online", "string"
         attribute "firmwareVersion", "string"
         attribute "batteryState", "string"
+        attribute "acPower", "string"
 
         command "snapThumbnail"
         command "recordClip"
@@ -134,6 +135,9 @@ void handleCameraUpdate(Map data) {
     }
     if (data.firmwareVersion) {
         sendEvent(name: "firmwareVersion", value: data.firmwareVersion as String)
+    }
+    if (data.acPower != null) {
+        sendEvent(name: "acPower", value: data.acPower as String)
     }
     if (data.lastClipUrl) {
         sendEvent(name: "lastClipUrl", value: data.lastClipUrl as String)
