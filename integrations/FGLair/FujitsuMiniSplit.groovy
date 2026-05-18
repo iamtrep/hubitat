@@ -42,8 +42,6 @@ metadata {
         attribute "fujitsuMode",                 "string"
         attribute "fanSpeed",                    "string"
 
-        command "setSupportedThermostatFanModes", ["JSON_OBJECT"]
-        command "setSupportedThermostatModes",    ["JSON_OBJECT"]
         command "setFujitsuMode", [[name: "mode*", type: "ENUM",
                                     description: "Fujitsu operation mode",
                                     constraints: ["off","heat","cool","auto","dry","fan_only"]]]
@@ -53,6 +51,10 @@ metadata {
     }
 
     preferences {
+        input name: "optimisticUpdates", type: "bool",
+              title: "Optimistic attribute updates on write",
+              description: "When on, attributes reflect the requested value immediately on command. When off, attributes only update on the next poll cycle (truthful cloud state).",
+              defaultValue: true
         input name: "txtEnable",   type: "bool", title: "Enable descriptionText logging", defaultValue: true
         input name: "debugEnable", type: "bool", title: "Enable debug logging",           defaultValue: false, submitOnChange: true
         if (debugEnable) {
@@ -101,17 +103,148 @@ private BigDecimal convertFromC(BigDecimal celsius) {
     return celsius.setScale(1, java.math.RoundingMode.HALF_UP)
 }
 
-// --- Command stubs ---
-// Standard Thermostat / Thermostat Fan Mode commands are defined regardless of
-// the supported list. They land with real bodies in Task 7. Custom commands
-// (setFujitsuMode / setFanSpeed) also get real bodies in Task 7.
+// --- Write commands ---
 
-void setThermostatMode(String mode)       { logWarn "setThermostatMode(${mode}) — not implemented yet" }
-void setHeatingSetpoint(BigDecimal t)     { logWarn "setHeatingSetpoint(${t}) — not implemented yet" }
-void setCoolingSetpoint(BigDecimal t)     { logWarn "setCoolingSetpoint(${t}) — not implemented yet" }
-void setThermostatFanMode(String fanMode) { logWarn "setThermostatFanMode(${fanMode}) — not implemented yet" }
-void setFujitsuMode(String mode)          { logWarn "setFujitsuMode(${mode}) — not implemented yet" }
-void setFanSpeed(String speed)            { logWarn "setFanSpeed(${speed}) — not implemented yet" }
+@Field static final Map<String, Integer> OP_MODE_INV = [
+    "off": 0, "auto": 2, "cool": 3, "dry": 4, "fan_only": 5, "heat": 6
+]
+@Field static final Map<String, Integer> FAN_MODE_INV = [
+    "quiet": 0, "low": 1, "medium": 2, "high": 3, "auto": 4
+]
+@Field static final List<String> FUJITSU_ALL_MODES = ["off","heat","cool","auto","dry","fan_only"]
+@Field static final List<String> FUJITSU_ALL_FAN_SPEEDS = ["auto","quiet","low","medium","high"]
+
+void setThermostatMode(String mode) {
+    if (!(mode in CANONICAL_MODES)) {
+        logWarn "setThermostatMode(${mode}): not in canonical set — use setFujitsuMode for dry/fan_only"
+        return
+    }
+    writeMode(mode)
+}
+
+void setFujitsuMode(String mode) {
+    if (!(mode in FUJITSU_ALL_MODES)) {
+        logWarn "setFujitsuMode(${mode}): not supported"
+        return
+    }
+    writeMode(mode)
+}
+
+private void writeMode(String mode) {
+    Integer code = OP_MODE_INV[mode]
+    if (code == null) { logWarn "writeMode(${mode}): no int code"; return }
+    String prevMode = device.currentValue("fujitsuMode")
+    logInfo "setting operation_mode -> ${mode} (${code})"
+    parent?.sendCommand(device.deviceNetworkId, "operation_mode", code)
+
+    // Auto-push the stored mode-specific setpoint when transitioning into heat or cool.
+    BigDecimal preset = null
+    if (mode == "heat" && prevMode != "heat") {
+        preset = device.currentValue("heatingSetpoint") as BigDecimal
+    } else if (mode == "cool" && prevMode != "cool") {
+        preset = device.currentValue("coolingSetpoint") as BigDecimal
+    }
+    if (preset != null) {
+        logInfo "mode change ${prevMode} -> ${mode}: pushing stored ${mode}ingSetpoint ${preset}${getTemperatureScale()} to unit"
+        pushSetpointToUnit(preset)
+    }
+
+    if (!isOptimistic()) return
+    sendEvent(name: "fujitsuMode", value: mode,
+              descriptionText: "${device} fujitsuMode is ${mode}")
+    if (mode in CANONICAL_MODES) {
+        sendEvent(name: "thermostatMode", value: mode,
+                  descriptionText: "${device} mode is ${mode}")
+    }
+    String optState = optimisticOperatingState(mode)
+    if (optState != null) {
+        sendEvent(name: "thermostatOperatingState", value: optState,
+                  descriptionText: "${device} operating state is ${optState}")
+    }
+}
+
+private boolean isOptimistic() {
+    return settings.optimisticUpdates == null ? true : (settings.optimisticUpdates as Boolean)
+}
+
+private String optimisticOperatingState(String mode) {
+    switch (mode) {
+        case "off":      return "idle"
+        case "heat":     return "heating"
+        case "cool":     return "cooling"
+        case "fan_only": return "fan only"
+        case "dry":      return "idle"
+        default:         return null  // auto — let next poll derive from sensor vs setpoint
+    }
+}
+
+void setThermostatFanMode(String fanMode) {
+    if (fanMode != "auto") {
+        logWarn "setThermostatFanMode(${fanMode}): only 'auto' is canonical — use setFanSpeed for quiet/low/medium/high"
+        return
+    }
+    writeFanSpeed("auto")
+}
+
+void setFanSpeed(String speed) {
+    if (!(speed in FUJITSU_ALL_FAN_SPEEDS)) {
+        logWarn "setFanSpeed(${speed}): not supported"
+        return
+    }
+    writeFanSpeed(speed)
+}
+
+private void writeFanSpeed(String speed) {
+    Integer code = FAN_MODE_INV[speed]
+    if (code == null) { logWarn "writeFanSpeed(${speed}): no int code"; return }
+    logInfo "setting fan_speed -> ${speed} (${code})"
+    parent?.sendCommand(device.deviceNetworkId, "fan_speed", code)
+    if (!isOptimistic()) return
+    sendEvent(name: "fanSpeed", value: speed,
+              descriptionText: "${device} fanSpeed is ${speed}")
+    if (speed == "auto") {
+        sendEvent(name: "thermostatFanMode", value: "auto",
+                  descriptionText: "${device} thermostatFanMode is auto")
+    }
+}
+
+void setHeatingSetpoint(BigDecimal t) { handleSetSetpoint("heat", t) }
+void setCoolingSetpoint(BigDecimal t) { handleSetSetpoint("cool", t) }
+
+private void handleSetSetpoint(String role, BigDecimal t) {
+    if (t == null) { logWarn "set${role.capitalize()}Setpoint(null) — ignored"; return }
+    BigDecimal clamped = clampSetpoint(t)
+    String attrName = "${role}ingSetpoint"
+    sendEvent(name: attrName, value: clamped, unit: getTemperatureScale(),
+              descriptionText: "${device} ${attrName} is ${clamped}${getTemperatureScale()}")
+
+    String mode = device.currentValue("fujitsuMode")
+    boolean writeToUnit = (mode == role) || (mode in ["auto", "dry", "off", null])
+    if (!writeToUnit) {
+        logInfo "${attrName} stored as preset; unit currently in ${mode} mode, not pushing to unit"
+        return
+    }
+    pushSetpointToUnit(clamped)
+}
+
+private BigDecimal clampSetpoint(BigDecimal t) {
+    BigDecimal lo = getTemperatureScale() == 'F' ? 61 : 16
+    BigDecimal hi = getTemperatureScale() == 'F' ? 86 : 30
+    BigDecimal clamped = t
+    if (clamped < lo) { logWarn "setpoint ${t} below min ${lo} — clamped"; clamped = lo }
+    if (clamped > hi) { logWarn "setpoint ${t} above max ${hi} — clamped"; clamped = hi }
+    return clamped
+}
+
+private void pushSetpointToUnit(BigDecimal clamped) {
+    BigDecimal aylaValue = scaleToAylaSetpoint(clamped)
+    logInfo "setting adjust_temperature -> ${clamped}${getTemperatureScale()} (raw ${aylaValue})"
+    parent?.sendCommand(device.deviceNetworkId, "adjust_temperature", aylaValue.toInteger())
+    // thermostatSetpoint is the device-confirmed value — updated only by the next
+    // poll, mirroring the built-in Ecobee integration model. heatingSetpoint /
+    // coolingSetpoint are user-intent presets and update immediately at the call
+    // site, regardless of the optimisticUpdates preference.
+}
 
 void auto()           { setThermostatMode("auto") }
 void cool()           { setThermostatMode("cool") }
@@ -166,9 +299,17 @@ void updateState(Map data) {
     }
     if (data.adjustTemp != null) {
         BigDecimal sp = aylaSetpointToScale(data.adjustTemp)
-        ["thermostatSetpoint", "heatingSetpoint", "coolingSetpoint"].each { String name ->
-            sendEvent(name: name, value: sp, unit: getTemperatureScale(),
-                      descriptionText: "${device} ${name} is ${sp}${getTemperatureScale()}")
+        sendEvent(name: "thermostatSetpoint", value: sp, unit: getTemperatureScale(),
+                  descriptionText: "${device} thermostatSetpoint is ${sp}${getTemperatureScale()}")
+        // Mirror to mode-specific slot. Bootstrap empty heat/cool attributes on first observation.
+        String modeNow = fujMode ?: device.currentValue("fujitsuMode")
+        if (modeNow == "heat" || device.currentValue("heatingSetpoint") == null) {
+            sendEvent(name: "heatingSetpoint", value: sp, unit: getTemperatureScale(),
+                      descriptionText: "${device} heatingSetpoint is ${sp}${getTemperatureScale()}")
+        }
+        if (modeNow == "cool" || device.currentValue("coolingSetpoint") == null) {
+            sendEvent(name: "coolingSetpoint", value: sp, unit: getTemperatureScale(),
+                      descriptionText: "${device} coolingSetpoint is ${sp}${getTemperatureScale()}")
         }
     }
     if (data.outdoorTemp != null) {

@@ -466,6 +466,56 @@ void refreshUnit(String dni) {
     if (dsn) fetchProperties(dsn)
 }
 
+// --- Write commands ---
+
+void sendCommand(String dni, String propertyName, Object value) {
+    String dsn = dni?.replaceFirst("^${java.util.regex.Pattern.quote(DNI_PREFIX_UNIT)}", "")
+    if (!dsn) { logError "sendCommand: invalid dni ${dni}"; return }
+    if (tokenNearExpiry()) {
+        refreshToken()
+        runIn(3, "sendCommandDeferred", [data: [dsn: dsn, name: propertyName, value: value]])
+        return
+    }
+    writeDatapoint(dsn, propertyName, value)
+}
+
+void sendCommandDeferred(Map data) {
+    writeDatapoint((String) data.dsn, (String) data.name, data.value)
+}
+
+private void writeDatapoint(String dsn, String propertyName, Object value) {
+    Map<String, String> rc = regionConfig()
+    Map body = [datapoint: [value: value]]
+    Map params = [
+        uri: "${rc.ads}/apiv1/dsns/${dsn}/properties/${propertyName}/datapoints.json",
+        headers: authHeader(),
+        contentType: "application/json",
+        requestContentType: "application/json",
+        body: JsonOutput.toJson(body),
+        timeout: HTTP_TIMEOUT
+    ]
+    logDebug "writeDatapoint dsn=${dsn} ${propertyName}=${value}"
+    asynchttpPost("writeDatapointCallback", params, [dsn: dsn, name: propertyName])
+}
+
+void writeDatapointCallback(resp, data) {
+    if (resp.hasError()) {
+        logError "writeDatapoint(${data?.name}) HTTP error: ${resp.getErrorMessage()}"
+        return
+    }
+    int status = resp.getStatus()
+    if (status == 401) {
+        logWarn "writeDatapoint(${data?.name}) 401 — refresh and retry once"
+        refreshToken()
+        return
+    }
+    if (status != 200 && status != 201) {
+        logError "writeDatapoint(${data?.name}) HTTP ${status}: ${resp.getData()}"
+        return
+    }
+    logDebug "writeDatapoint(${data?.name}) ok"
+}
+
 private void computeOrphans(Set<String> liveDnis) {
     List<Map> orphans = []
     getChildDevices().each { ChildDeviceWrapper c ->
