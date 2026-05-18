@@ -77,6 +77,58 @@ A handful of automations this integration enables, shown in trigger → action f
 
 **Doorbell mains-power loss.** Trigger on `acPower` changing for the doorbell; if the new value reports no AC, notify *"Doorbell on backup battery."* Only fires for cameras that report `acPower` (wired models).
 
+## Settings reference
+
+Everything you can interact with on the Blink Manager app, section by section.
+
+### 🟢 Status (read-only)
+
+Connection state, region tier, account ID, token expiry, and a summary of the last poll (timestamps and per-network armed state). No knobs — informational only. Token refresh is automatic five minutes before expiry; the displayed expiry is for diagnostics.
+
+### 📷 Devices (read-only)
+
+The list of `Blink Network` and `Blink Camera` children, with links to each device's edit page. Camera entries that aren't default-type cameras show a small tag (`mini`, `doorbell`, `superior`, `storm`) since variant-specific commands aren't yet implemented for those — see the M4 entry in [BLINK_AUDIT.md](BLINK_AUDIT.md). Orphans (cameras or networks deleted in the Blink mobile app but still present in Hubitat) appear with a **Remove orphaned devices** button.
+
+### ⏱️ Polling
+
+- **Poll interval (seconds)** — how often the integration calls Blink's homescreen endpoint. Options: `60` (default), `120`, `300`. Sub-60 s is not exposed; see the *Polling* section below for the why.
+- **🔄 Refresh now** — fires an immediate poll, bypassing the schedule.
+
+<a id="blink-notifications"></a>
+### 🔔 Blink notifications
+
+Mirrors the notification toggles in the Blink mobile app. **Account-wide** — not per-network or per-camera. Controls whether Blink fires its own push notifications for camera events. Toggling here does not affect Hubitat rule behaviour; it changes what Blink emails / push-notifies / SMSes the account owner about.
+
+- The exact flag set is **whatever Blink returns** at fetch time. Common flag names you may see:
+  - `low_battery` — Blink notifies you when a camera battery is low
+  - `camera_offline` — camera lost contact with the sync module
+  - `sync_module_offline` — the sync module itself went offline
+  - `motion` — motion-clip notifications (the main one for most users)
+  - `doorbell_button` — doorbell-press notifications
+  - `local_storage` — local-storage-related notifications (USB-equipped sync modules)
+- Blink may add or remove flags without notice. The integration discovers and exposes whatever is currently in the response.
+- The label shown next to each toggle is a humanized version of the underlying flag name; the raw `snake_case` name is shown below in `<code>` style for unambiguity.
+- **🔄 Refresh notification flags** — re-fetches the current set from Blink. Click after changing notification settings in the Blink mobile app to pull the new values in.
+
+To change a flag: toggle the input, then click **Done** at the top of the page. The integration diffs your settings against Blink's last-fetched state and pushes only the changed flags.
+
+### 🛠️ Diagnostics & advanced (sub-page)
+
+Houses the rare or destructive actions. The link on the main page opens a sub-page with:
+
+- **🩺 State snapshot** — read-only dump of internal auth/discovery state (token presence, tier, account ID, hardware ID). Useful when reporting a bug.
+- **Recovery** *(only when account ID is null)* — manual retry for the tier-discovery call. Visible only when something went wrong with first-time setup.
+- **🚪 Disconnect / reset** —
+  - **Disconnect** — clears auth tokens but preserves tier/account/hardware ID for one-click re-auth.
+  - **Reset auth state (full wipe)** — clears everything; requires a fresh login from scratch. Use this only if Disconnect's lighter cleanup didn't resolve the problem.
+
+### ⚙️ Settings
+
+- **Assign a name** — rename the Manager app's label.
+- **Enable descriptionText logging** *(default on)* — info-level event logs.
+- **Enable debug logging** *(default off)* — verbose diagnostic logs; auto-disables after 30 minutes.
+- **Enable trace logging** *(default off, only shown when debug is on)* — even more verbose; intended for debugging the integration itself.
+
 ## Polling
 
 Default poll interval is 60 s. Configurable to 60 / 120 / 300 s from the manager app's settings page. The integration calls `/api/v3/accounts/{accountId}/homescreen` once per cycle (cheap), reads everything from a single response, and dispatches to children.

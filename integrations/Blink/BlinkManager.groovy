@@ -84,7 +84,7 @@ Map mainPage() {
                 }
                 if (atomicState.homescreenSummary) paragraph atomicState.homescreenSummary
             }
-            section("📷 Devices") {
+            section(hideable: true, hidden: false, "📷 Devices") {
                 renderChildDeviceList()
                 List<Map> orphans = (atomicState.orphanedDevices ?: []) as List<Map>
                 if (orphans.size() > 0) {
@@ -99,14 +99,14 @@ Map mainPage() {
                 input "pollRate", "enum", title: "Poll interval (seconds)", options: ["60", "120", "300"], defaultValue: "60", submitOnChange: true
                 input "btnRefreshNow", "button", title: "🔄 Refresh now"
             }
-            section("🔔 Blink notifications") {
+            section(hideable: true, hidden: true, "🔔 Blink notifications") {
+                paragraph "<small>These mirror the notification toggles in the Blink mobile app. They are <b>account-wide</b> (not per-network or per-camera) and control whether Blink itself fires push notifications for events like low battery, camera offline, motion, etc. Toggle here and click <b>Done</b> at the top to save. See <a href='https://github.com/iamtrep/hubitat/tree/main/integrations/Blink#blink-notifications' target='_blank'>the README</a> for what each flag does — the exact set Blink exposes varies by account and changes over time.</small>"
                 Map flags = (atomicState.notificationFlags ?: [:]) as Map
                 if (flags.size() == 0) {
-                    paragraph "<small>Notification flags not yet fetched.</small>"
+                    paragraph "<small><i>Not fetched yet — click the button below.</i></small>"
                 } else {
-                    paragraph "<small>Toggle to change Blink's notification posture for this account. Save by clicking <b>Done</b> at the top.</small>"
                     flags.sort().each { String name, Object value ->
-                        input "notif_${name}", "bool", title: name, defaultValue: (value as boolean)
+                        input "notif_${name}", "bool", title: humanizeFlag(name), defaultValue: (value as boolean), description: "<code>${name}</code>"
                     }
                 }
                 input "btnRefreshNotifications", "button", title: "🔄 Refresh notification flags"
@@ -120,7 +120,7 @@ Map mainPage() {
                 href "loginPage", title: "Login to Blink", description: "Enter your Blink credentials"
             }
         }
-        section("⚙️ Settings") {
+        section(hideable: true, hidden: true, "⚙️ Settings") {
             label title: "Assign a name", required: false
             input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
             input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
@@ -164,6 +164,16 @@ Map diagnosticsPage() {
             input "btnResetAuth", "button", title: "Reset auth state (full wipe)"
         }
     }
+}
+
+// snake_case Blink flag → "Snake case" — humanize the dynamic flag names Blink
+// returns so users see "Low battery" rather than "low_battery" as the toggle label.
+@CompileStatic
+private static String humanizeFlag(String name) {
+    if (!name) return ""
+    String s = name.replace("_", " ").replace("-", " ").trim()
+    if (s.length() == 0) return s
+    return s.substring(0, 1).toUpperCase() + s.substring(1)
 }
 
 private void renderChildDeviceList() {
