@@ -194,7 +194,7 @@ Each click invokes `appButtonHandler(String btn)` in the SUT synchronously. If t
 
 For each entry in `inputs` and `outputs`:
 
-1. Search `/hub2/devicesList` for a device with `data.label == {name}` OR `data.name == {name}`. Skip if present.
+1. Search `/hub2/devicesList` for a device with `data.label == {name}` OR `data.name == {name}`. (Devices created via `POST /device/save` get `data.name` set but `data.label` null — match either.) Skip if present.
 2. Otherwise, delegate to `/hubitat-create-device`:
    ```
    /hubitat-create-device "{name}" "{driver}"
@@ -256,7 +256,7 @@ Read the template at `.claude/skills/hubitat-behavior-test/test-template.sh.tmpl
 
 All `*_JSON` placeholders must be substituted with Python/JSON literal syntax so the resulting `.sh` file has valid embedded Python.
 
-The generated test depends on `scripts/lib/logsocket.py` at runtime: each case opens a `LogCapture` around its actions + assertions, and an implicit guard fails the case if the app under test emitted any warn/error log line not whitelisted by the spec. The template's `sys.path.insert(0, f"{project_root}/scripts/lib")` makes the import work for tests at any nesting depth.
+The generated test depends on `scripts/lib/logsocket.py` at runtime: each case opens a `LogCapture` around its actions + assertions, and an implicit guard fails the case if the app under test emitted any warn/error log line not whitelisted by the spec. The template's `sys.path.insert(0, f"{project_root}/scripts/lib")` makes the import work for tests at any nesting depth — `$PROJECT_ROOT` is computed in the bash wrapper and passed to the Python heredoc as `sys.argv[5]`.
 
 Write the rendered output to `<project>/tests/test-{app-slug}.sh`, where:
 
