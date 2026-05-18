@@ -250,6 +250,7 @@ Read the template at `.claude/skills/hubitat-behavior-test/test-template.sh.tmpl
 | `{{TEST_PATH}}` | Relative path of the generated test (the file you're about to write) |
 | `{{APP_TYPE_NAME_JSON}}` | `json.dumps(app.type_name)` — quoted string literal |
 | `{{APP_INSTANCE_LABEL_JSON}}` | `json.dumps(app.instance_label)` |
+| `{{APP_INSTANCE_LABEL}}` | `app.instance_label` raw, no quotes (used in the comment header) |
 | `{{MAKER_API_LABEL_JSON}}` | `json.dumps(maker_api.label)` |
 | `{{INPUT_DEVICE_LABELS_JSON}}` | `json.dumps([i.name for i in inputs])` |
 | `{{OUTPUT_DEVICE_LABELS_JSON}}` | `json.dumps([o.name for o in outputs])` |
