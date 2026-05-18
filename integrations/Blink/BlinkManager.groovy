@@ -214,6 +214,7 @@ void initialize() {
         logWarn "version change: ${state.version} -> ${APP_VERSION}"
         state.version = APP_VERSION
     }
+    subscribe(location, "systemStart", "systemStartHandler")
     if (!isAuthenticated()) {
         logDebug "not authenticated yet, skipping schedules"
         return
@@ -226,6 +227,18 @@ void initialize() {
     }
     schedulePolling()
     runIn(2, "pollHomescreen")
+}
+
+void systemStartHandler(evt) {
+    logInfo "systemStart: re-evaluating tokens + polling"
+    if (!isAuthenticated()) return
+    if (state.tokenExpiry && now() >= ((long) state.tokenExpiry)) {
+        refreshAccessToken()
+    } else {
+        scheduleTokenRefresh()
+    }
+    schedulePolling()
+    runIn(3, "pollHomescreen")
 }
 
 private void schedulePolling() {
@@ -574,8 +587,8 @@ void refreshAccessToken() {
         logError "token refresh failed: ${e.message}"
         String msg = e.message ?: ""
         if (msg.contains("401") || msg.contains("400")) {
-            logWarn "refresh token rejected, clearing auth state"
-            clearAuthState()
+            logWarn "refresh token rejected; tokens cleared (tier/accountId/hardwareId preserved for one-click re-auth)"
+            clearTokensOnly()
         }
     }
 }
@@ -601,49 +614,8 @@ private void ensureValidToken() {
 
 void fetchTierInfo() {
     logDebug "fetching tier info"
-
-    // blinkpy's canonical endpoint. Recent iOS-flow tokens are sometimes
-    // rejected here with 401; on failure we fall back to /api/v1/accounts
-    // and /user (used by the prior iOS-flow integration).
-    if (!tryTierEndpoint("/api/v1/users/tier_info", "tier_info") { Map json ->
-        if (json.tier) state.tier = json.tier
-        if (json.account_id) state.accountId = json.account_id
-    }) {
-        tryTierEndpoint("/api/v1/accounts", "accounts") { Map json ->
-            if (json.tier) state.tier = json.tier
-            if (json.account_id) state.accountId = json.account_id
-            if (!state.accountId && json.accounts) {
-                Map first = ((List) json.accounts)[0] as Map
-                if (first) {
-                    state.accountId = first.account_id ?: first.id
-                    state.tier = first.tier ?: state.tier
-                }
-            }
-            if (!state.accountId && json.id) state.accountId = json.id
-        }
-    }
-
-    if (!state.accountId) {
-        tryTierEndpoint("/user", "user") { Map json ->
-            if (json.account_id) state.accountId = json.account_id
-            if (json.tier) state.tier = json.tier
-            // /user responses sometimes wrap account under `user`
-            if (!state.accountId && json.user) {
-                Map u = json.user as Map
-                state.accountId = u.account_id ?: u.id
-                if (u.tier) state.tier = u.tier
-            }
-        }
-    }
-
-    if (!state.tier) state.tier = "prod"
-    logInfo "tier: ${state.tier}, accountId: ${state.accountId}"
-}
-
-private boolean tryTierEndpoint(String path, String label, Closure handler) {
-    String url = "https://rest-prod.immedia-semi.com${path}"
-    boolean ok = false
-    // Match blinkpy's tier_info call shape: android UA + form-urlencoded Content-Type.
+    String url = "https://rest-prod.immedia-semi.com/api/v1/users/tier_info"
+    // blinkpy's tier_info call shape: android UA + form-urlencoded Content-Type.
     Map headers = [
         "User-Agent"   : "27.0ANDROID_28373244",
         "Authorization": "Bearer ${state.accessToken}",
@@ -653,16 +625,16 @@ private boolean tryTierEndpoint(String path, String label, Closure handler) {
     try {
         httpGet([uri: url, headers: headers, timeout: HTTP_TIMEOUT]) { resp ->
             Map json = resp.data as Map
-            logTrace "${label} response: ${json}"
-            handler.call(json)
-            ok = true
+            if (json.tier) state.tier = json.tier
+            if (json.account_id) state.accountId = json.account_id
         }
     } catch (groovyx.net.http.HttpResponseException e) {
-        logWarn "${label} failed: HTTP ${e.statusCode}"
+        logWarn "tier_info failed: HTTP ${e.statusCode}"
     } catch (Exception e) {
-        logWarn "${label} failed: ${e.message}"
+        logWarn "tier_info failed: ${e.message}"
     }
-    return ok
+    if (!state.tier) state.tier = "prod"
+    logInfo "tier: ${state.tier}, accountId: ${state.accountId}"
 }
 
 // --- Polling & Discovery ---
@@ -876,13 +848,26 @@ private static Map cameraSnapshot(Map c) {
         Number v = (Number) battery
         int pct = batteryPercent(v.intValue())
         out["battery"] = pct
-    } else if (c.get("battery") != null) {
+    }
+    if (c.get("battery") != null) {
         out["batteryState"] = c.get("battery")?.toString()
     }
     Object temp = c.get("temperature")
     if (temp instanceof Number) out["temperature"] = (Number) temp
     Object wifi = c.get("wifi_strength")
     if (wifi instanceof Number) out["wifiSignal"] = (Number) wifi
+    // Bar-scale indicators are nested under `signals` on the homescreen entry.
+    // signals.lfr (1-5) = sync-module link strength.
+    // signals.battery (1-3) = Blink's app-displayed battery bars.
+    // signals.temp duplicates the top-level uncalibrated temp (we use the calibrated
+    // value from the separate /signals endpoint via fetchCameraSignals instead).
+    Map signals = (c.get("signals") instanceof Map) ? (Map) c.get("signals") : null
+    if (signals != null) {
+        Object lfr = signals.get("lfr")
+        if (lfr instanceof Number) out["lfrSignal"] = (Number) lfr
+        Object batBars = signals.get("battery")
+        if (batBars instanceof Number) out["batteryBars"] = (Number) batBars
+    }
     out["online"] = ((c.get("status") ?: "unknown") as String)
     Object fw = c.get("fw_version") ?: c.get("firmware")
     if (fw) out["firmwareVersion"] = fw.toString()
@@ -894,15 +879,15 @@ private static Map cameraSnapshot(Map c) {
 }
 
 @CompileStatic
-private static int batteryPercent(int voltageMv) {
-    // Blink reports battery voltage in tenths of a volt (e.g. 158 = 1.58V * 2-cell pack ≈ 3.16V).
-    // Map to a 0..100% scale across the usable range (~140..180 = 0..100%).
-    if (voltageMv <= 0) return 0
+private static int batteryPercent(int voltageHundredths) {
+    // Blink reports battery voltage in 100ths of volts per cell (e.g. 163 = 1.63V/cell;
+    // two cells in series ≈ 3.26V pack). Map per-cell 1.40V..1.80V to 0..100%.
+    if (voltageHundredths <= 0) return 0
     int low = 140
     int high = 180
-    if (voltageMv <= low) return 0
-    if (voltageMv >= high) return 100
-    return (int) Math.round(((voltageMv - low) * 100.0d) / (high - low))
+    if (voltageHundredths <= low) return 0
+    if (voltageHundredths >= high) return 100
+    return (int) Math.round(((voltageHundredths - low) * 100.0d) / (high - low))
 }
 
 private void updateHomescreenSummary(List<Map> networks, List<Map> cameras, List<Map> syncModules) {
@@ -920,100 +905,138 @@ private void updateHomescreenSummary(List<Map> networks, List<Map> cameras, List
 void arm(String networkId) {
     logInfo "arming network ${networkId}"
     String path = "/api/v1/accounts/${state.accountId}/networks/${networkId}/state/arm"
-    blinkPostAsync(path, "armDisarmResponse", [networkId: networkId, action: "arm"])
+    blinkPostAsync(path, "commandPostResponse", [label: "arm ${networkId}"])
 }
 
 void disarm(String networkId) {
     logInfo "disarming network ${networkId}"
     String path = "/api/v1/accounts/${state.accountId}/networks/${networkId}/state/disarm"
-    blinkPostAsync(path, "armDisarmResponse", [networkId: networkId, action: "disarm"])
-}
-
-void armDisarmResponse(resp, data) {
-    try {
-        if (resp.hasError()) {
-            logError "${data.action} ${data.networkId}: ${resp.getErrorMessage()}"
-            return
-        }
-        int status = resp.getStatus()
-        if (status != 200) {
-            logWarn "${data.action} ${data.networkId}: HTTP ${status}"
-            return
-        }
-        logInfo "${data.action} ${data.networkId} accepted; verifying via poll"
-        runIn(5, "pollHomescreen")
-    } catch (Exception e) {
-        logError "armDisarmResponse: ${e.message}"
-    }
+    blinkPostAsync(path, "commandPostResponse", [label: "disarm ${networkId}"])
 }
 
 void enableMotion(String cameraId) {
-    Map ctx = cameraContext(cameraId)
-    if (!ctx) { logWarn "enableMotion: unknown camera ${cameraId}"; return }
-    if (ctx.type != "camera") {
-        logWarn "enableMotion not implemented for type=${ctx.type} (camera ${cameraId})"
+    Map cc = cameraContext(cameraId)
+    if (!cc) { logWarn "enableMotion: unknown camera ${cameraId}"; return }
+    if (cc.type != "camera") {
+        logWarn "enableMotion not implemented for type=${cc.type} (camera ${cameraId})"
         return
     }
-    String path = "/network/${ctx.networkId}/camera/${cameraId}/enable"
-    blinkPostAsync(path, "motionEnableResponse", [cameraId: cameraId, enabled: true])
+    String path = "/network/${cc.networkId}/camera/${cameraId}/enable"
+    blinkPostAsync(path, "commandPostResponse", [label: "enableMotion ${cameraId}"])
 }
 
 void disableMotion(String cameraId) {
-    Map ctx = cameraContext(cameraId)
-    if (!ctx) { logWarn "disableMotion: unknown camera ${cameraId}"; return }
-    if (ctx.type != "camera") {
-        logWarn "disableMotion not implemented for type=${ctx.type} (camera ${cameraId})"
+    Map cc = cameraContext(cameraId)
+    if (!cc) { logWarn "disableMotion: unknown camera ${cameraId}"; return }
+    if (cc.type != "camera") {
+        logWarn "disableMotion not implemented for type=${cc.type} (camera ${cameraId})"
         return
     }
-    String path = "/network/${ctx.networkId}/camera/${cameraId}/disable"
-    blinkPostAsync(path, "motionEnableResponse", [cameraId: cameraId, enabled: false])
-}
-
-void motionEnableResponse(resp, data) {
-    try {
-        if (resp.hasError()) {
-            logError "motion ${data.enabled ? 'enable' : 'disable'} ${data.cameraId}: ${resp.getErrorMessage()}"
-            return
-        }
-        int status = resp.getStatus()
-        if (status != 200) {
-            logWarn "motion ${data.enabled ? 'enable' : 'disable'} ${data.cameraId}: HTTP ${status}"
-            return
-        }
-        logInfo "motion ${data.enabled ? 'enabled' : 'disabled'} for ${data.cameraId}; verifying via poll"
-        runIn(5, "pollHomescreen")
-    } catch (Exception e) {
-        logError "motionEnableResponse: ${e.message}"
-    }
+    String path = "/network/${cc.networkId}/camera/${cameraId}/disable"
+    blinkPostAsync(path, "commandPostResponse", [label: "disableMotion ${cameraId}"])
 }
 
 void snapThumbnail(String cameraId) {
-    Map ctx = cameraContext(cameraId)
-    if (!ctx) { logWarn "snapThumbnail: unknown camera ${cameraId}"; return }
-    if (ctx.type != "camera") {
-        logWarn "snapThumbnail not implemented for type=${ctx.type} (camera ${cameraId})"
+    Map cc = cameraContext(cameraId)
+    if (!cc) { logWarn "snapThumbnail: unknown camera ${cameraId}"; return }
+    if (cc.type != "camera") {
+        logWarn "snapThumbnail not implemented for type=${cc.type} (camera ${cameraId})"
         return
     }
-    String path = "/network/${ctx.networkId}/camera/${cameraId}/thumbnail"
-    blinkPostAsync(path, "snapThumbnailResponse", [cameraId: cameraId])
+    String path = "/network/${cc.networkId}/camera/${cameraId}/thumbnail"
+    blinkPostAsync(path, "commandPostResponse", [label: "snapThumbnail ${cameraId}"])
 }
 
-void snapThumbnailResponse(resp, data) {
+void recordClip(String cameraId) {
+    Map cc = cameraContext(cameraId)
+    if (!cc) { logWarn "recordClip: unknown camera ${cameraId}"; return }
+    if (cc.type != "camera") {
+        logWarn "recordClip not implemented for type=${cc.type} (camera ${cameraId})"
+        return
+    }
+    String path = "/network/${cc.networkId}/camera/${cameraId}/clip"
+    blinkPostAsync(path, "commandPostResponse", [label: "recordClip ${cameraId}"])
+}
+
+// --- Command verification (blinkpy wait_for_command pattern) ---
+
+void commandPostResponse(resp, data) {
+    String label = data?.label ?: "command"
     try {
         if (resp.hasError()) {
-            logError "snapThumbnail ${data.cameraId}: ${resp.getErrorMessage()}"
+            logError "${label}: ${resp.getErrorMessage()}"
             return
         }
         int status = resp.getStatus()
         if (status != 200) {
-            logWarn "snapThumbnail ${data.cameraId}: HTTP ${status}"
+            logWarn "${label}: HTTP ${status}"
             return
         }
-        logInfo "snapThumbnail ${data.cameraId} accepted; verifying via poll"
-        runIn(8, "pollHomescreen")
+        Map json = resp.json as Map
+        Object cmdIdObj = json?.id
+        String netId = (json?.network_id ?: json?.networkId)?.toString()
+        if (cmdIdObj == null || !netId) {
+            logInfo "${label} accepted (no command id); refreshing in 3s"
+            runIn(3, "pollHomescreen")
+            return
+        }
+        int cmdId = (cmdIdObj as Number).intValue()
+        logDebug "${label} accepted: networkId=${netId}, cmdId=${cmdId}"
+        pollCommandStatus([networkId: netId, cmdId: cmdId, attempt: 0, label: label])
     } catch (Exception e) {
-        logError "snapThumbnailResponse: ${e.message}"
+        logError "commandPostResponse: ${e.message}"
+        runIn(3, "pollHomescreen")
     }
+}
+
+private void pollCommandStatus(Map ctx) {
+    String url = "https://rest-${state.tier}.immedia-semi.com/network/${ctx.networkId}/command/${ctx.cmdId}"
+    asynchttpGet("commandStatusResponse", [
+        uri        : url,
+        headers    : bearerHeaders(),
+        contentType: "application/json",
+        timeout    : HTTP_TIMEOUT
+    ], ctx)
+}
+
+void commandStatusResponse(resp, data) {
+    Map ctx = data as Map
+    int attempt = ((ctx.attempt ?: 0) as Number).intValue() + 1
+    String label = (ctx.label ?: "command") as String
+
+    int statusCode = 0
+    boolean complete = false
+    try {
+        if (!resp.hasError() && resp.getStatus() == 200) {
+            Map json = resp.json as Map
+            statusCode = ((json?.status_code ?: 0) as Number).intValue()
+            complete = json?.complete == true
+        }
+    } catch (Exception e) {
+        logDebug "commandStatusResponse parse: ${e.message}"
+    }
+
+    if (complete && statusCode == 908) {
+        logInfo "${label} confirmed (${attempt} ${attempt == 1 ? 'check' : 'checks'})"
+        pollHomescreen()
+        return
+    }
+    if (statusCode != 0 && statusCode != 908) {
+        logError "${label} failed server-side: status_code=${statusCode}"
+        pollHomescreen()
+        return
+    }
+    if (attempt >= 10) {
+        logWarn "${label} not confirmed after ${attempt} checks; polling anyway"
+        pollHomescreen()
+        return
+    }
+    ctx.attempt = attempt
+    runInMillis(2000, "pollCommandStatusDeferred", [data: ctx, overwrite: false])
+}
+
+void pollCommandStatusDeferred(Map data) {
+    pollCommandStatus(data)
 }
 
 void refreshNetwork(String networkId) {
@@ -1022,8 +1045,44 @@ void refreshNetwork(String networkId) {
 }
 
 void refreshCamera(String cameraId) {
-    logDebug "refresh requested by camera ${cameraId}, triggering poll"
+    Map cc = cameraContext(cameraId)
+    if (!cc) { pollHomescreen(); return }
+    logDebug "refresh requested by camera ${cameraId}, fetching /signals + homescreen"
     pollHomescreen()
+    fetchCameraSignals(cameraId, cc.networkId as String)
+}
+
+private void fetchCameraSignals(String cameraId, String networkId) {
+    if (!networkId) return
+    String url = "https://rest-${state.tier}.immedia-semi.com/network/${networkId}/camera/${cameraId}/signals"
+    asynchttpGet("cameraSignalsResponse", [
+        uri        : url,
+        headers    : bearerHeaders(),
+        contentType: "application/json",
+        timeout    : HTTP_TIMEOUT
+    ], [cameraId: cameraId])
+}
+
+void cameraSignalsResponse(resp, data) {
+    try {
+        if (resp.hasError() || resp.getStatus() != 200) {
+            logDebug "signals ${data?.cameraId}: HTTP error"
+            return
+        }
+        Map json = resp.json as Map
+        if (!json) return
+        ChildDeviceWrapper child = getChildDevice("${DNI_PREFIX_CAMERA}${data.cameraId}")
+        if (!child) return
+        // The /signals endpoint only returns `{temp: <calibrated F>}` per blinkpy
+        // (camera.py:281). Bar-scale lfr/wifi/battery come from homescreen, not
+        // here. Use this to override the uncalibrated homescreen temperature.
+        if (json.temp instanceof Number) {
+            child.handleCameraUpdate([temperature: json.temp])
+            logDebug "signals ${data.cameraId}: calibrated temp=${json.temp}"
+        }
+    } catch (Exception e) {
+        logError "cameraSignalsResponse: ${e.message}"
+    }
 }
 
 private Map cameraContext(String cameraId) {
@@ -1077,12 +1136,17 @@ private boolean isAuthenticated() {
 
 private void clearAuthState() {
     unschedule()
+    clearTokensOnly()
+    state.remove("tier")
+    state.remove("accountId")
+    state.remove("hardwareId")
+    cleanupEphemeralState()
+}
+
+private void clearTokensOnly() {
     state.remove("accessToken")
     state.remove("refreshToken")
     state.remove("tokenExpiry")
-    state.remove("tier")
-    state.remove("accountId")
-    cleanupEphemeralState()
 }
 
 private void cleanupEphemeralState() {

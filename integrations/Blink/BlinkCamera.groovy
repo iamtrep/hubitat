@@ -33,11 +33,14 @@ metadata {
         attribute "lastClipUrl", "string"
         attribute "lastClipTime", "string"
         attribute "wifiSignal", "number"
+        attribute "lfrSignal", "number"
+        attribute "batteryBars", "number"
         attribute "online", "string"
         attribute "firmwareVersion", "string"
         attribute "batteryState", "string"
 
         command "snapThumbnail"
+        command "recordClip"
     }
 }
 
@@ -83,6 +86,11 @@ void snapThumbnail() {
     if (cameraId) parent.snapThumbnail(cameraId)
 }
 
+void recordClip() {
+    String cameraId = device.getDataValue("cameraId")
+    if (cameraId) parent.recordClip(cameraId)
+}
+
 // Called by the parent on each poll with the latest camera state.
 void handleCameraUpdate(Map data) {
     if (!data) return
@@ -114,6 +122,12 @@ void handleCameraUpdate(Map data) {
     }
     if (data.wifiSignal != null) {
         sendEvent(name: "wifiSignal", value: data.wifiSignal as int, unit: "dBm")
+    }
+    if (data.lfrSignal != null) {
+        sendEvent(name: "lfrSignal", value: data.lfrSignal as int)
+    }
+    if (data.batteryBars != null) {
+        sendEvent(name: "batteryBars", value: data.batteryBars as int)
     }
     if (data.online) {
         sendEvent(name: "online", value: data.online as String)
