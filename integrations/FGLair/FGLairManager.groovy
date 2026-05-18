@@ -64,8 +64,24 @@ preferences {
 
 Map mainPage() {
     dynamicPage(name: "mainPage", title: "FGLair Manager", install: true, uninstall: true) {
+        if (isAuthenticated()) {
+            section("Status") {
+                paragraph "<b>Connected</b> to FGLair (${settings.region ?: 'us'})"
+                if (state.tokenExpiry) {
+                    String exp = new Date((long) state.tokenExpiry).format("yyyy-MM-dd HH:mm:ss", location.timeZone)
+                    paragraph "Token expires: <b>${exp}</b>"
+                }
+                input "btnDisconnect", "button", title: "Disconnect"
+            }
+        } else {
+            section {
+                paragraph "Connect your FGLair account to get started."
+                href "loginPage", title: "Login to FGLair", description: "Enter your FGLair credentials"
+            }
+        }
         section("Settings") {
             label title: "Assign a name", required: false
+            input name: "region",      type: "enum", title: "Region", options: ["us", "eu"], defaultValue: "us"
             input name: "txtEnable",   type: "bool", title: "Enable descriptionText logging", defaultValue: true
             input name: "debugEnable", type: "bool", title: "Enable debug logging",           defaultValue: false, submitOnChange: true
             if (debugEnable) {
@@ -77,9 +93,23 @@ Map mainPage() {
 
 Map loginPage() {
     dynamicPage(name: "loginPage", title: "FGLair Login", nextPage: "mainPage") {
-        section { paragraph "Login UI lands in Task 2." }
+        if (state.authError) {
+            section { paragraph "<span style='color:red;'><b>Error:</b> ${state.authError}</span>" }
+            state.remove("authError")
+        }
+        if (isAuthenticated()) {
+            section { paragraph "<b>✓ Connected.</b> Click <b>Next</b> to return to the main page." }
+            return
+        }
+        section("Credentials") {
+            input "fglairEmail",    "text",     title: "Email",    required: true, submitOnChange: true
+            input "fglairPassword", "password", title: "Password", required: true, submitOnChange: true
+            input "btnLogin",       "button",   title: "Login"
+        }
     }
 }
+
+// --- Lifecycle ---
 
 void installed()   { logDebug "installed"; state.version = APP_VERSION; initialize() }
 void updated()     { logDebug "updated"; unsubscribe(); unschedule(); initialize() }
@@ -92,7 +122,93 @@ void initialize()  {
     }
 }
 
+// --- Buttons ---
+
+void appButtonHandler(String btn) {
+    logDebug "appButtonHandler(${btn})"
+    switch (btn) {
+        case "btnLogin":      signIn(); break
+        case "btnDisconnect": disconnect(); break
+        default: logWarn "unhandled button: ${btn}"
+    }
+}
+
+// --- Authentication ---
+
 private boolean isAuthenticated() { return state.accessToken != null }
+
+private Map<String, String> regionConfig() {
+    String r = settings.region ?: "us"
+    return REGION[r] ?: REGION.us
+}
+
+void signIn() {
+    String email = settings.fglairEmail
+    String password = settings.fglairPassword
+    if (!email || !password) {
+        state.authError = "Email and password required."
+        return
+    }
+    Map<String, String> rc = regionConfig()
+    Map body = [
+        user: [
+            email: email,
+            password: password,
+            application: [app_id: rc.appId, app_secret: rc.appSecret]
+        ]
+    ]
+    Map params = [
+        uri: "${rc.userField}/users/sign_in.json",
+        contentType: "application/json",
+        requestContentType: "application/json",
+        body: JsonOutput.toJson(body),
+        timeout: HTTP_TIMEOUT
+    ]
+    logDebug "signIn POST ${params.uri}"
+    asynchttpPost("signInCallback", params, [:])
+}
+
+void signInCallback(resp, data) {
+    if (resp.hasError()) {
+        logError "signIn HTTP error: ${resp.getErrorMessage()}"
+        state.authError = "Sign-in failed: ${resp.getErrorMessage()}"
+        return
+    }
+    int status = resp.getStatus()
+    if (status != 200) {
+        logError "signIn HTTP ${status}: ${resp.getData()}"
+        state.authError = "Sign-in failed (HTTP ${status}). Check email/password and region."
+        return
+    }
+    Map parsed
+    try {
+        parsed = new JsonSlurper().parseText(resp.getData())
+    } catch (Exception e) {
+        logError "signIn JSON parse error: ${e.message}"
+        state.authError = "Sign-in response could not be parsed."
+        return
+    }
+    storeTokens(parsed)
+    logInfo "FGLair sign-in successful"
+}
+
+private void storeTokens(Map parsed) {
+    state.accessToken  = parsed.access_token
+    state.refreshToken = parsed.refresh_token
+    long expiresInMs = ((parsed.expires_in ?: 3600L) as long) * 1000L
+    state.tokenExpiry = now() + expiresInMs
+    state.remove("authError")
+}
+
+void disconnect() {
+    logInfo "disconnecting"
+    state.remove("accessToken")
+    state.remove("refreshToken")
+    state.remove("tokenExpiry")
+    unschedule()
+}
+
+// --- Logging ---
 
 private void logTrace(String msg) { if (settings.traceEnable) log.trace "${app.label} ${msg}" }
 private void logDebug(String msg) { if (settings.debugEnable) log.debug "${app.label} ${msg}" }
