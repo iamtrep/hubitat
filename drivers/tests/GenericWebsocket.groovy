@@ -20,7 +20,7 @@ metadata {
     }
 }
 
-def connect() {
+void connect() {
     if (!wsUrl) {
         log.error "No URL configured"
         return
@@ -30,18 +30,18 @@ def connect() {
     interfaces.webSocket.connect(wsUrl)
 }
 
-def disconnect() {
+void disconnect() {
     log.info "Disconnecting"
     interfaces.webSocket.close()
     sendEvent(name: "status", value: "disconnected")
 }
 
-def webSocketStatus(String message) {
+void webSocketStatus(String message) {
     log.info "webSocketStatus: ${message}"
     sendEvent(name: "status", value: message)
 }
 
-def parse(String message) {
+void parse(String message) {
     state.count = (state.count ?: 0) + 1
 
     if (message.contains('"clusterId":"0019"')) {

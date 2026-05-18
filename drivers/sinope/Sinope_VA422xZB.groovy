@@ -371,12 +371,12 @@ private Map parseAttributeReport(Map descMap) {
             switch (descMap.attrId) {
                 case "0000":
                     // IAS enroll response
-                    def enrolled = descMap.value == "01" ? true : false
+                    boolean enrolled = descMap.value == "01"
                     logDebug("IAS Zone cluster enrolled = $enrolled")
                     return null
 
                 case "0002":
-                    def status = descMap.value
+                    String status = descMap.value
                     if (status == "01") {
                         map.name = "water"
                         map.value = "wet"
@@ -447,7 +447,7 @@ private Map parseAttributeReport(Map descMap) {
             break
     }
 
-    def result = null
+    Map result = null
 
     if (map) {
         if (map.descriptionText) logInfo("${map.descriptionText}")
@@ -569,7 +569,7 @@ private Object getBatteryLevel(String value) {
 }
 
 private Integer getBatteryLevelFromVoltage() {
-    def voltage = device.currentValue("batteryVoltage")
+    BigDecimal voltage = device.currentValue("batteryVoltage") as BigDecimal
     if (voltage == null || voltage <= constBatteryVoltageMin) {
         return 0
     }

@@ -233,7 +233,7 @@ private void scheduleNextPing() {
     int delay
     if (state.currentRetryCount > 0 && state.currentRetryCount <= maxRetries) {
         // Retry mode: exponential backoff
-        def backoffFactor = Math.min(Math.pow(2, state.currentRetryCount - 1), maxBackoffFactor).toInteger()
+        Integer backoffFactor = Math.min(Math.pow(2, state.currentRetryCount - 1), maxBackoffFactor).toInteger()
         delay = retryInterval * backoffFactor
         logDebug "Scheduling retry ${state.currentRetryCount}/${maxRetries} in ${delay} seconds (backoff factor: ${backoffFactor})"
     } else {

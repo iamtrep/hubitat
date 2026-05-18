@@ -10,6 +10,7 @@
  *
  */
 
+import com.hubitat.hub.domain.Hub
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
@@ -524,7 +525,7 @@ void githubVersionCallback(resp, data) {
     }
     try {
         String text = resp.data ?: ""
-        def m = text =~ /APP_VERSION\s*=\s*"([^"]+)"/
+        java.util.regex.Matcher m = text =~ /APP_VERSION\s*=\s*"([^"]+)"/
         if (m.find()) {
             state.lastGithubVersion = m.group(1)
             state.lastGithubVersionCheck = now()
@@ -1056,7 +1057,7 @@ Map apiClearCache() {
     return jsonResponse([success: true, cleared: cleared])
 }
 
-private Map buildHubMap(Map hubInfo, def hub) {
+private Map buildHubMap(Map hubInfo, Hub hub) {
     return [name: hubInfo.name, hubId: hub?.id, hardware: hubInfo.hardware,
             firmware: hubInfo.firmware, ip: hubInfo.ip, zigbeeId: hub?.zigbeeId,
             location: location.name, mode: location.currentMode?.toString(),
@@ -1070,7 +1071,7 @@ Map getDashboardData(Map shared = [:]) {
     Map deviceStats = analyzeDevices(false)
     Map appStats = analyzeApps(false)
     Map hubInfo = getHubInfo(shared.hubData as Map)
-    def hub = (location.hubs && location.hubs.size() > 0) ? location.hubs[0] : null
+    Hub hub = (location.hubs && location.hubs.size() > 0) ? location.hubs[0] : null
     Map resources        = (shared.resources as Map)        ?: fetchSystemResources()
     Float temperature    = (shared.temperature as Float)    ?: fetchTemperature()
     Integer databaseSize = (shared.databaseSize as Integer) ?: fetchDatabaseSize()
@@ -1226,7 +1227,7 @@ Map getNetworkData(Map shared = [:]) {
 Map getHealthData(Map shared = [:]) {
     Map systemHealth = analyzeSystemHealth(shared)
     Map hubInfo = getHubInfo(shared.hubData as Map)
-    def hub = (location.hubs && location.hubs.size() > 0) ? location.hubs[0] : null
+    Hub hub = (location.hubs && location.hubs.size() > 0) ? location.hubs[0] : null
     Map mem = systemHealth.memory ?: [:]
     return [
         hub: buildHubMap(hubInfo, hub),
@@ -2167,8 +2168,8 @@ String parseZWaveVersion(String raw) {
     if (!raw || raw == "N/A" || !raw.contains("VersionReport")) return raw
     // Extract SDK version if present in targetVersions or protocol version
     // Example: VersionReport(..., zWaveProtocolVersion:7, zWaveProtocolSubVersion:23, ..., targetVersions:[[target:1, version:7, subVersion:18]])
-    def mProtocol = raw =~ /zWaveProtocolVersion:(\d+), zWaveProtocolSubVersion:(\d+)/
-    def mTarget = raw =~ /targetVersions:\[\[target:1, version:(\d+), subVersion:(\d+)\]\]/
+    java.util.regex.Matcher mProtocol = raw =~ /zWaveProtocolVersion:(\d+), zWaveProtocolSubVersion:(\d+)/
+    java.util.regex.Matcher mTarget = raw =~ /targetVersions:\[\[target:1, version:(\d+), subVersion:(\d+)\]\]/
     
     String protocolVer = mProtocol ? "${mProtocol[0][1]}.${mProtocol[0][2]}" : ""
     String sdkVer = mTarget ? "${mTarget[0][1]}.${mTarget[0][2]}" : ""
@@ -3439,7 +3440,7 @@ private void logError(String message) {
 Map getHubInfo(Map prefetchedHubData = null) {
     Map info = [name: location.name ?: "Unknown", firmware: "Unknown", hardware: "Unknown", ip: "Unknown"]
     if (location.hubs && location.hubs.size() > 0) {
-        def hub = location.hubs[0]
+        Hub hub = location.hubs[0]
         info.firmware = hub.firmwareVersionString ?: "Unknown"
         info.hardware = hub.type ?: "Unknown"
         info.ip = hub.localIP ?: "Unknown"
@@ -3673,9 +3674,9 @@ private String detailFilenameFor(Object timestampMs) {
 List loadCheckpointIndex() {
     if (cachedCheckpointIndex != null) return cachedCheckpointIndex
     try {
-        def data = readFile(CHECKPOINT_INDEX_FILE)
+        List data = (List) readFile(CHECKPOINT_INDEX_FILE)
         if (data != null) {
-            cachedCheckpointIndex = (List) data
+            cachedCheckpointIndex = data
             state.checkpointIndex = cachedCheckpointIndex
             return cachedCheckpointIndex
         }
@@ -3738,14 +3739,14 @@ void deleteCheckpointDetail(String filename) {
 private List migrateLegacyCheckpointsIfPresent() {
     List legacy
     try {
-        def data = readFile(CHECKPOINTS_FILE)
+        List data = (List) readFile(CHECKPOINTS_FILE)
         if (data == null) {
             // No legacy file. First-time install — start with an empty index file
             // so subsequent reads short-circuit without a migration probe.
             saveCheckpointIndex([])
             return []
         }
-        legacy = (List) data
+        legacy = data
     } catch (Exception e) {
         logDebug "Legacy migration: no legacy file: ${e.message}"
         saveCheckpointIndex([])
@@ -3810,7 +3811,7 @@ List getCheckpointIndex() {
 
 List loadSnapshots() {
     try {
-        def data = readFile(SNAPSHOTS_FILE)
+        List data = (List) readFile(SNAPSHOTS_FILE)
         if (data) return data
     } catch (Exception e) {
         logDebug "No existing snapshots: ${e.message}"

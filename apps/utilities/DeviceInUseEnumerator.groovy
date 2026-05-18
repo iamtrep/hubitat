@@ -89,19 +89,19 @@ String generateReport() {
     List devicesList = getDevicesList()
 
     devicesList.each { deviceId ->
-        def deviceInfo = getDeviceInfo(deviceId, appMap)
+        Map deviceInfo = getDeviceInfo(deviceId as Integer, appMap)
         if (!onlyChildDevices || deviceInfo.isChild) {
             deviceAppMap[deviceId] = [name: deviceInfo.name, info: deviceInfo]
         }
     }
 
-    def sortedDevices = deviceAppMap.sort { -it.value.info.apps.size() }
-    def reportHtml = "<table><tr><th>Device</th><th>Total Apps</th><th>Apps</th><th>Parent</th></tr>"
+    Map sortedDevices = deviceAppMap.sort { -((Map) it.value).info.apps.size() }
+    String reportHtml = "<table><tr><th>Device</th><th>Total Apps</th><th>Apps</th><th>Parent</th></tr>"
 
     sortedDevices.each { deviceId, deviceData ->
-        def deviceUrl = getDeviceDetailsUrl(deviceId)
-        def appLinks = deviceData.info.apps.collect { app -> "<a href='${getAppConfigUrl(app.id)}' target='_blank'>${app.label}</a>" }
-        def parentLink = deviceData.info.parent ? "<a href='${deviceData.info.parent.url}' target='_blank'>${deviceData.info.parent.label}</a>" : "N/A"
+        String deviceUrl = getDeviceDetailsUrl(deviceId as Integer)
+        List appLinks = deviceData.info.apps.collect { appEntry -> "<a href='${getAppConfigUrl(appEntry.id as Integer)}' target='_blank'>${appEntry.label}</a>" }
+        String parentLink = deviceData.info.parent ? "<a href='${deviceData.info.parent.url}' target='_blank'>${deviceData.info.parent.label}</a>" : "N/A"
         reportHtml += "<tr><td><a href='${deviceUrl}' target='_blank'>${deviceData.name}</a></td><td>${deviceData.info.apps.size()}</td><td>${appLinks.join(', ')}</td><td>${parentLink}</td></tr>"
     }
 
@@ -139,7 +139,7 @@ private Map getDeviceInfo(Integer device_id, Map appMap) {
     try {
         httpGet(constDeviceFullJsonURL + device_id) { response ->
             if (response.status == 200) {
-                def json = response.data
+                Map json = response.data as Map
                 displayName = json.device.displayName
                 apps = json.appsUsing.findAll { it.id != app.id }.collect { [id: it.id, label: it.label] }
                 isChildDevice = json.device.parentAppId != null || json.device.parentDeviceId != null
@@ -164,8 +164,8 @@ private Map getParentDeviceInfo(Integer parentDeviceId) {
     try {
         httpGet(url) { response ->
             if (response.status == 200) {
-                def json = response.data
-                def label = json.device.label ?: json.device.name
+                Map json = response.data as Map
+                String label = json.device.label ?: json.device.name
                 parent = [label: label, url: getDeviceDetailsUrl(parentDeviceId)]
             } else {
                 logError "Failed to retrieve data for parent device id ${parentDeviceId}. HTTP status: ${response.status}"
@@ -183,7 +183,7 @@ private Map getParentAppInfo(Integer parentAppId, Map appMap) {
     try {
         httpGet(url) { response ->
             if (response.status == 200) {
-                def json = response.data
+                Map json = response.data as Map
                 String label = json.installedApp.label ?: json.installedApp.name
                 parent = [label: label, url: getAppConfigUrl(parentAppId)]
                 appMap[parentAppId] = parent

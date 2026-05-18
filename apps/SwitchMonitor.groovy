@@ -49,6 +49,7 @@
  - Load monitoring alerts are cleared during outage
  - When power is restored: refresh all monitored switches, then re-evaluate
  */
+import com.hubitat.app.DeviceWrapper
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
@@ -263,7 +264,7 @@ void appButtonHandler(String btn) {
         List parts = (btn - "btnFix_").split("_") as List
         String deviceId = parts[0]
         String targetState = parts[1]
-        def dev = getAllMonitoredSwitches().find { it.id.toString() == deviceId }
+        DeviceWrapper dev = (DeviceWrapper) getAllMonitoredSwitches().find { it.id.toString() == deviceId }
         if (dev) {
             log.info "Manual command: turning ${targetState} ${dev.displayName}"
             targetState == "on" ? dev.on() : dev.off()
@@ -718,7 +719,7 @@ void checkLowLoad(Map data) {
     List recovered = []
 
     lowLoadDevices.each { String devId, timestamp ->
-        def dev = devices?.find { it.id.toString() == devId }
+        DeviceWrapper dev = (DeviceWrapper) devices?.find { it.id.toString() == devId }
         if (!dev) {
             recovered << devId
             return

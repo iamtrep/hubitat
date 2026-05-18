@@ -115,7 +115,7 @@ void logsOff() {
     app.updateSetting("debugEnable", [value: "false", type: "bool"])
 }
 
-def mainPage() {
+Map mainPage() {
     int pollInterval = (currentScanId || turnOffActive) ? 5 : 0
     dynamicPage(name: "mainPage", title: "", install: true, uninstall: true, refreshInterval: pollInterval) {
 
@@ -397,7 +397,7 @@ List<Map> getRuleMachineRuleApps() {
     try {
         httpGet([uri: RM_BASE_URL, path: PATH_APPS_LIST, contentType: "application/json"]) { resp ->
             resp.data?.apps?.each { parentApp ->
-                def pd = parentApp?.data
+                Map pd = (Map) parentApp?.data
                 String parentType  = pd?.type?.toString()  ?: ""
                 String parentName  = pd?.name?.toString()  ?: ""
                 String parentLabel = pd?.label?.toString() ?: ""
@@ -410,7 +410,7 @@ List<Map> getRuleMachineRuleApps() {
                         // its own children, process those instead.
                         List grandchildren = (child?.children ?: []) as List
                         (grandchildren.isEmpty() ? [child] : grandchildren).each { node ->
-                            def d = node?.data
+                            Map d = (Map) node?.data
                             if (d?.id && d?.name) {
                                 String id = d.id.toString()
                                 if (!seenIds.contains(id)) {

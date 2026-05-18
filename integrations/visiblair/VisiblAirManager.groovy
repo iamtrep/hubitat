@@ -8,6 +8,7 @@
  * using model-specific drivers. Handles bulk polling and firmware commands.
  */
 
+import com.hubitat.app.ChildDeviceWrapper
 import groovy.json.JsonOutput
 import groovy.transform.CompileStatic
 import groovy.transform.Field
@@ -52,7 +53,7 @@ Map mainPage() {
                     String desc = sensor.description ?: uuid
                     String driverName = resolveDriverName(model, variant)
                     String dni = "${DNI_PREFIX}${uuid}"
-                    def child = getChildDevice(dni)
+                    ChildDeviceWrapper child = getChildDevice(dni)
                     if (child) {
                         paragraph "<a href='/device/edit/${child.id}' target='_blank'><b>${desc}</b></a> (${model}${variant ? '/' + variant : ''}) — ${driverName}"
                     } else {
@@ -210,7 +211,7 @@ private void syncChildDevices(List<Map> sensors) {
         String description = (sensor.description ?: uuid) as String
         String viewToken = (sensor.viewToken ?: "") as String
 
-        def child = getChildDevice(dni)
+        ChildDeviceWrapper child = getChildDevice(dni)
         if (!child) {
             logInfo "creating child device: ${description} (${driverName})"
             try {
@@ -233,7 +234,7 @@ private void syncChildDevices(List<Map> sensors) {
 
     // Track orphaned children in state for UI display
     List<Map> orphans = []
-    List<com.hubitat.app.ChildDeviceWrapper> children = getChildDevices()
+    List<ChildDeviceWrapper> children = getChildDevices()
     children.each { child ->
         if (!activeDnis.contains(child.deviceNetworkId)) {
             orphans << [dni: child.deviceNetworkId, label: child.label ?: child.deviceNetworkId, id: child.id]
@@ -247,7 +248,7 @@ private void dispatchSensorData(List sensorList) {
     sensorList.each { Map sensorData ->
         String uuid = sensorData.uuid as String
         String dni = "${DNI_PREFIX}${uuid}"
-        def child = getChildDevice(dni)
+        ChildDeviceWrapper child = getChildDevice(dni)
         if (child) {
             logTrace "dispatching data to ${dni}"
             child.updateSensorData(sensorData)

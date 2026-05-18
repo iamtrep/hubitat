@@ -31,7 +31,7 @@ preferences {
     }
 }
 
-def appButtonHandler(btn) {
+void appButtonHandler(String btn) {
     switch(btn) {
         case "stopButton":
         default:
@@ -43,11 +43,11 @@ def appButtonHandler(btn) {
       }
 }
 
-def installed() {
+void installed() {
     logDebug "installed()"
 }
 
-def updated() {
+void updated() {
     log.info "updated() - starting a new test run"
 
     unschedule()
@@ -59,7 +59,7 @@ def updated() {
     schedule('*/2 * * ? * *',"udpStressTest",[misfire:"ignore"])
 }
 
-def uninstalled() {}
+void uninstalled() {}
 
 //////////////////////////////////////////////
 
@@ -69,7 +69,7 @@ import groovy.transform.Field
 //@Field static Long numCallsOverThreshold = 0
 @Field static Map appInstanceStats = [:]
 
-def udpStressTest() {
+void udpStressTest() {
     state.currentIteration++
     if (state.currentIteration > iterations) {
         unschedule()
@@ -78,20 +78,20 @@ def udpStressTest() {
     }
 
     // overlapped UDP send
-    def timeStart = now()
+    long timeStart = now()
     for(int i = 0;i<numCalls;i++) {
-        sendUdpMessage(i+1, numCalls)
+        sendUdpMessage(i+1, numCalls as int)
         if (pacing) pauseExecution(pacing)
     }
-    def timeStop = now()
+    long timeStop = now()
     logDebug("Initiated $numCalls async UDP calls in ${(timeStop-timeStart)} ms (iteration $state.currentIteration)")
     //log.info("Initiated $numCalls async UDP calls in ${(timeStop-timeStart)} ms (iteration $state.currentIteration)")
 }
 
-def sendUdpMessage(i, n) {
-    def timeSent = now()
+void sendUdpMessage(int i, int n) {
+    long timeSent = now()
     String payload = "$state.currentIteration,$i,$n,$timeSent"
-	def myHubAction = new hubitat.device.HubAction(
+	hubitat.device.HubAction myHubAction = new hubitat.device.HubAction(
         payload,
 		hubitat.device.Protocol.LAN,
 		[type: hubitat.device.HubAction.Type.LAN_TYPE_UDPCLIENT,
@@ -108,10 +108,10 @@ def sendUdpMessage(i, n) {
 	}
 }
 
-def parseUdpMessage(message){
+void parseUdpMessage(message){
     try {
         BigInteger timeReceived = now() as BigInteger
-        def resp = parseLanMessage(message.description)
+        Map resp = parseLanMessage(message.description)
         String[] params = resp.payload.split('2C') // payload is ASCII representation as String
         BigInteger batch = parseBigInteger(hubitat.helper.HexUtils.hexStringToByteArray(params[0]))
         BigInteger iterationNumber = parseBigInteger(hubitat.helper.HexUtils.hexStringToByteArray(params[1]))
@@ -157,7 +157,7 @@ BigInteger parseBigInteger(byte[] bytes)
     return sum
 }
 
-def logDebug(message)
+void logDebug(message)
 {
     if(debugLogs) log.debug(message)
 }

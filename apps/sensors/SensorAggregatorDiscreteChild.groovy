@@ -452,11 +452,13 @@ void logStatistics() {
     }
 }
 
-private List<String> getAttributePossibleValues(deviceWrapper, capability) {
-    List capabilities = deviceWrapper.getCapabilities()
-    def targetCapability = capabilities?.find { it.name.toLowerCase() == capability?.substring("capability.".length()).toLowerCase() }
-    def targetAttribute = deviceWrapper.getSupportedAttributes().find { it.name == targetCapability?.attributes[0].name }
-    return targetAttribute?.getValues()
+private List<String> getAttributePossibleValues(DeviceWrapper deviceWrapper, String capability) {
+    String capName = capability?.substring("capability.".length())?.toLowerCase()
+    String attrName = deviceWrapper.getCapabilities()?.find {
+        it.name.toLowerCase() == capName
+    }?.attributes?.getAt(0)?.name
+    if (!attrName) return null
+    return deviceWrapper.getSupportedAttributes().find { it.name == attrName }?.getValues()
 }
 
 private void logObjectProperties(obj) {

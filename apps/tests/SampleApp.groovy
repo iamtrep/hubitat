@@ -14,12 +14,12 @@ definition(
 preferences {
 }
 
-def installed() {
+void installed() {
     log.debug "installed()"
 }
 
-def updated() {
+void updated() {
     log.debug "updated()"
 }
 
-def uninstalled() {}
+void uninstalled() {}

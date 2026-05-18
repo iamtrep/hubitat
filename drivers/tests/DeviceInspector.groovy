@@ -10,6 +10,7 @@
  interactively.
 */
 
+import com.hubitat.hub.domain.Hub
 import groovy.json.JsonOutput
 
 metadata {
@@ -174,7 +175,7 @@ void inspectIdentity() {
 
 void inspectHub() {
     log.info "${device.displayName}: ── Hub ───────────────────────────────────────"
-    def hub = device.hub
+    Hub hub = device.hub
     logProp "device.hubId",                          device.hubId
     logProp "device.hub",                            hub
     logProp "device.hub.id",                         hub?.id

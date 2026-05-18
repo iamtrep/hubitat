@@ -269,10 +269,10 @@ private boolean computeAggregateSensorValue() {
     state.minSensorValue = roundToDecimalPlaces(sensorValues.min())
     state.maxSensorValue = roundToDecimalPlaces(sensorValues.max())
 
-    def sum = sensorValues.sum()
+    Number sum = (Number) sensorValues.sum()
     state.avgSensorValue = roundToDecimalPlaces(sum / sensorValues.size(),1)
 
-    def variance = sensorValues.collect { (it - state.avgSensorValue) ** 2 }.sum() / n
+    Number variance = (Number) (sensorValues.collect { (it - state.avgSensorValue) ** 2 }.sum()) / n
     state.standardDeviation = roundToDecimalPlaces(Math.sqrt(variance),1)
 
     sensorValues.sort()

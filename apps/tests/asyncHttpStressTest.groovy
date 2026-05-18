@@ -25,24 +25,24 @@ preferences {
     }
 }
 
-def installed() {
+void installed() {
     log.debug "installed()"
 }
 
-def updated() {
+void updated() {
     log.debug "updated()"
 
     httpStressTest()
 }
 
-def uninstalled() {}
+void uninstalled() {}
 
 //////////////////////////////////////////////
 
 import groovy.transform.Field
 @Field static Long currentIteration = 0
 
-def httpStressTest() {
+void httpStressTest() {
     currentIteration++
     if (currentIteration > iterations) {
         currentIteration = 0
@@ -51,16 +51,16 @@ def httpStressTest() {
 
     // overlapped async http get
     log.debug("Initiating $numCalls async HTTP GET calls - pacing: $pacing ms timeout: $httpTimeout (iteration $currentIteration)")
-    def timeStart = now()
+    long timeStart = now()
     for(int i = 0;i<numCalls;i++) {
         apiGet(i, numCalls)
         if (pacing) pauseExecution(pacing)
     }
-    def timeStop = now()
+    long timeStop = now()
     log.debug("Initiated $numCalls async HTTP GET calls in ${(timeStop-timeStart)} ms (iteration $currentIteration)")
 }
 
-def apiGet(i, n) {
+void apiGet(int i, int n) {
     Map requestParams =
 	[
         uri: requestURL,
@@ -73,7 +73,7 @@ def apiGet(i, n) {
     asynchttpGet("getApi", requestParams, [call: i, total: n, timestamp: now()])
 }
 
-def getApi(resp, data){
+void getApi(resp, data){
     try {
         //log.debug "${resp.properties["data"]} - (${data.call+1}/$data.total ${(now()-data.timestamp)/1000}) ($currentIteration) - ${resp.getStatus()}"
         log.debug "${resp.properties["status"]} - (${data.call+1}/$data.total ${(now()-data.timestamp)/1000}) ($currentIteration)"

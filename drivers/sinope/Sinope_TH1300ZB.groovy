@@ -222,7 +222,7 @@ void configure() {
 
     //Set temperature limit for floor or air
     if (prefMaxAirTemperature) {
-        def maxAirTemperatureValue
+        Integer maxAirTemperatureValue
         if (getTemperatureScale() == 'F') {
             maxAirTemperatureValue = fahrenheitToCelsius(prefMaxAirTemperature).toInteger()
         } else { // getTemperatureScale() == 'C'
@@ -238,7 +238,7 @@ void configure() {
     }
 
     if (prefMinFloorTemperature) {
-        def floorLimitMinValue
+        Integer floorLimitMinValue
         if (getTemperatureScale() == 'F') {
             floorLimitMinValue = fahrenheitToCelsius(prefMinFloorTemperature).toInteger()
         } else { // getTemperatureScale() == 'C'
@@ -253,7 +253,7 @@ void configure() {
     }
 
     if (prefMaxFloorTemperature) {
-        def floorLimitMaxValue
+        Integer floorLimitMaxValue
         if (getTemperatureScale() == 'F') {
             floorLimitMaxValue = fahrenheitToCelsius(prefMaxFloorTemperature).toInteger()
         } else { //getTemperatureScale() == 'C'
@@ -410,7 +410,7 @@ void setThermostatFanMode(String fanmode) {
     logWarn("setThermostatFanMode(${fanmode}): is not available for this device")
 }
 
-def setThermostatMode(String value) {
+void setThermostatMode(String value) {
     logInfo("setThermostatMode(${value})")
 
     switch (value) {
@@ -418,10 +418,12 @@ def setThermostatMode(String value) {
         case 'emergency heat':
         case 'auto':
         case 'cool':
-            return heat()
+            heat()
+            break
 
         case 'off':
-            return off()
+            off()
+            break
     }
 }
 
@@ -494,8 +496,8 @@ private Map parseAttributeReport(Map descMap) {
                     map.value = getHeatingDemand(descMap.value)
                     map.descriptionText = "${device.displayName} is at ${map.value}% heating demand"
                     if (device.currentValue('maxPower') != null) {
-                        def maxPowerValue = device.currentValue('maxPower').toInteger()
-                        def powerValue = Math.round(maxPowerValue * map.value / 100)
+                        Integer maxPowerValue = device.currentValue('maxPower').toInteger()
+                        long powerValue = Math.round(maxPowerValue * (map.value as Number).doubleValue() / 100)
                         sendEvent(name: 'power', value: powerValue, unit: 'W', descriptionText: "${device.displayName} is heating at ${powerValue}W")
                     }
                     sendEvent(name: 'heatingDemand', value: map.value, unit: '%', descriptionText: "${device.displayName} is heating at ${map.value}% of its capacity")
@@ -665,7 +667,7 @@ private Map parseAttributeReport(Map descMap) {
             break
     }
 
-    def result = null
+    Map result = null
 
     if (map) {
         if (map.descriptionText) logInfo("${map.descriptionText}")
@@ -828,29 +830,27 @@ private void setThermostatCycle(String cycle = prefCycleLength) {
     }
 }
 
-@CompileStatic
 private Double getTemperature(String value) {
     if (value == null) {
         return null
     }
-    double celsius = Integer.parseInt(value, 16) / 100.0
+    double celsius = Integer.parseInt(value, 16) / 100.0d
     if (getTemperatureScale() == 'C') {
         return celsius
     } else {
-        return roundToTwoDecimalPlaces(celsiusToFahrenheit(celsius))
+        return roundToTwoDecimalPlaces(celsiusToFahrenheit(celsius) as Double)
     }
 }
 
-@CompileStatic
 private Double getTemperatureOffset(String value) {
     if (value == null) {
         return null
     }
-    double celsius = Integer.parseInt(value, 16) / 10.0
+    double celsius = Integer.parseInt(value, 16) / 10.0d
     if (getTemperatureScale() == 'C') {
         return celsius
     } else {
-        return roundToTwoDecimalPlaces(celsiusToFahrenheit(celsius))
+        return roundToTwoDecimalPlaces(celsiusToFahrenheit(celsius) as Double)
     }
 }
 
@@ -880,7 +880,7 @@ private Double getRMSCurrent(String attributeReportValue) {
     if (attributeReportValue == null) {
         return null
     }
-    return Integer.parseInt(attributeReportValue, 16) / 1000.0
+    return Integer.parseInt(attributeReportValue, 16) / 1000.0d
 }
 
 @CompileStatic
@@ -908,7 +908,7 @@ private void sendZigbeeCommands(List cmds) {
 
 @CompileStatic
 private Double roundToTwoDecimalPlaces(Double val) {
-    return Math.round(val * 100) / 100.0
+    return Math.round(val * 100) / 100.0d
 }
 
 // Logging helpers

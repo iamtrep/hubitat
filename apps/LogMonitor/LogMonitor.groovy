@@ -9,6 +9,7 @@
  * each with its own output actions (notification, log file, HTTP POST).
  */
 
+import com.hubitat.app.ChildDeviceWrapper
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
@@ -52,7 +53,7 @@ Map mainPage() {
                 paragraph "<i>No bridges configured. A local bridge will be created on install.</i>"
             } else {
                 bridges.eachWithIndex { Map br, int i ->
-                    def dev = getChildDevice(br.dni)
+                    ChildDeviceWrapper dev = getChildDevice(br.dni as String)
                     String status = dev?.currentValue("connectionStatus") ?: "unknown"
                     String ip = br.hubAddress ?: "local"
                     long received = dev?.getLogsReceivedCount() ?: 0
@@ -131,7 +132,7 @@ Map bridgePage(Map params) {
         if (!isNew) {
             List<Map> bridges = state.bridges ?: []
             Map br = bridges[idx]
-            def dev = getChildDevice(br?.dni)
+            ChildDeviceWrapper dev = getChildDevice(br?.dni as String)
             if (dev) {
                 section("Status") {
                     String status = dev.currentValue("connectionStatus") ?: "unknown"
@@ -298,7 +299,7 @@ Map deleteFilterPage(Map params) {
             if (filters[i].notifySettingsKey) {
                 String oldKey = "notifyDevices_${i + 1}"
                 String newKey = "notifyDevices_${i}"
-                def devs = settings[oldKey]
+                List devs = settings[oldKey] as List
                 if (devs) {
                     app.updateSetting(newKey, devs)
                 }
@@ -381,7 +382,7 @@ private void savePendingBridge() {
         bridges[idx] = br
 
         // Update device label and IP setting
-        def dev = getChildDevice(br.dni)
+        ChildDeviceWrapper dev = getChildDevice(br.dni as String)
         if (dev) {
             dev.setLabel(label)
             dev.updateSetting("hubAddress", [type: "text", value: hubAddress])
@@ -401,7 +402,7 @@ private void savePendingBridge() {
             [name: "Log Monitor Bridge", label: label, isComponent: false])
 
         // Set IP on the new device
-        def dev = getChildDevice(dni)
+        ChildDeviceWrapper dev = getChildDevice(dni)
         if (dev && hubAddress) {
             dev.updateSetting("hubAddress", [type: "text", value: hubAddress])
         }

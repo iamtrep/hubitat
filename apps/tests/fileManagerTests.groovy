@@ -20,21 +20,21 @@ preferences {
     }
 }
 
-def installed() {
+void installed() {
     log.debug "installed()"
     state.isRunning = false
 }
 
-def updated() {
+void updated() {
     log.debug "updated()"
 }
 
-def uninstalled() {
+void uninstalled() {
     log.debug "uninstalled()"
 }
 
 
-def appButtonHandler(btn) {
+void appButtonHandler(String btn) {
     switch(btn) {
         case "startButton":
         default:
@@ -46,24 +46,24 @@ def appButtonHandler(btn) {
 }
 
 
-def fileManagerTest() {
+void fileManagerTest() {
     state.isRunning = true
 
-    def iterations = numCalls
+    int iterations = numCalls as int
 
-    def fileList
-    def timeStart = now()
+    List fileList
+    long timeStart = now()
     for(int i = 0;i<iterations;i++) {
         fileList = getHubFiles()      // List<Map<String,String>> getHubFiles(String folder = "")
     }
-    def timeStop = now()
+    long timeStop = now()
     log.debug("File List API call took ${(timeStop-timeStart)/iterations} ms on average")
 
     printFileList(fileList)
-    def downloadTestFile = fileList[0]["name"]
+    String downloadTestFile = fileList[0]["name"] as String
     log.debug("Using $downloadTestFile for download tests")
 
-    def buffer
+    byte[] buffer
     timesStart = now()
     for(int i = 0;i<iterations;i++) {
        buffer = downloadHubFile(downloadTestFile)
@@ -71,7 +71,7 @@ def fileManagerTest() {
     timeStop = now()
     log.debug("File download API took ${(timeStop-timeStart)/iterations} ms on average")
 
-    def fileList2
+    List<String> fileList2
     timesStart = now()
     for(int i = 0;i<iterations;i++) {
        fileList2 = listFiles()
@@ -79,7 +79,7 @@ def fileManagerTest() {
     timeStop = now()
     log.debug("File list HTTP took ${(timeStop-timeStart)/iterations} ms on average")
 
-    def buffer2
+    String buffer2
     timesStart = now()
     for(int i = 0;i<iterations;i++) {
        buffer2 = readFile(downloadTestFile)
@@ -91,11 +91,11 @@ def fileManagerTest() {
 }
 
 
-def printFileList(fileList) {
+void printFileList(List fileList) {
     fileList.each {
         // [date:1699675111000, size:266562, name:RGZW1791U_DB1-US_V1.05.01.otz, type:file]
         if (it["type"] == "file") {
-            def formattedDate = new Date(it["date"].toLong())
+            Date formattedDate = new Date((it["date"] as String).toLong())
             log.debug("File name : ${it["name"]}, Timestamp : ${formattedDate.getDateTimeString()}, Size: ${it["size"]}")
         }
     }
@@ -105,11 +105,11 @@ def printFileList(fileList) {
 // The following methods are taken from https://raw.githubusercontent.com/thebearmay/hubitat/main/libraries/templateProcessing.groovy
 
 @SuppressWarnings('unused')
-String readFile(fName){
+String readFile(String fName){
     if(security) cookie = getCookie()
     uri = "http://${location.hub.localIP}:8080/local/${fName}"
 
-    def params = [
+    Map params = [
         uri: uri,
         contentType: "text/html",
         textParser: true,
@@ -144,11 +144,11 @@ String readFile(fName){
 }
 
 @SuppressWarnings('unused')
-List<String> listFiles(filt = null){
+List<String> listFiles(String filt = null){
     if(security) cookie = getCookie()
     if(debugEnabled) log.debug "Getting list of files"
     uri = "http://${location.hub.localIP}:8080/hub/fileManager/json";
-    def params = [
+    Map params = [
         uri: uri,
         headers: [
 				"Cookie": cookie
@@ -159,7 +159,7 @@ List<String> listFiles(filt = null){
         httpGet(params) { resp ->
             if (resp != null){
                 if(logEnable) log.debug "Found the files"
-                def json = resp.data
+                Map json = resp.data as Map
                 for (rec in json.files) {
                     if(filt != null){
                         if(rec.name.contains("$filt")){

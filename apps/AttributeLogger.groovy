@@ -23,7 +23,7 @@ preferences {
     page(name: "mainPage")
 }
 
-def mainPage() {
+Map mainPage() {
     dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
         section {
             paragraph "Manage your device attribute loggers here"
@@ -36,15 +36,15 @@ def mainPage() {
     }
 }
 
-def installed() {
+void installed() {
     initialize()
 }
 
-def updated() {
+void updated() {
     unsubscribe()
     initialize()
 }
 
-def initialize() {
+void initialize() {
     log.debug "Initializing Attribute Logger"
 }

@@ -23,33 +23,33 @@ preferences {
     }
 }
 
-def installed() {
+void installed() {
     log.debug "installed()"
 }
 
-def updated() {
+void updated() {
     log.debug "updated()"
 
     //fileManagerStressTest()
     httpStressTest()
 }
 
-def uninstalled() {}
+void uninstalled() {}
 
 //////////////////////////////////////////////
 
-def httpStressTest() {
+void httpStressTest() {
     // overlapped async http get
-    def timeStart = now()
+    long timeStart = now()
     for(int i = 0;i<iterations;i++) {
         apiGet(i, iterations)
         pauseExecution(pacing)
     }
-    def timeStop = now()
+    long timeStop = now()
     log.debug("Initiated $iterations async HTTP GET calls in ${(timeStop-timeStart)} ms")
 }
 
-def apiGet(i, n) {
+void apiGet(int i, int n) {
     Map requestParams =
 	[
         uri: "https://httpstat.us/200?sleep=60000",
@@ -63,7 +63,7 @@ def apiGet(i, n) {
     asynchttpGet("getApi", requestParams, [iteration: i, total: n, timestamp: now()])
 }
 
-def getApi(resp, data){
+void getApi(resp, data){
     try {
         log.debug "$resp.properties - (${data.iteration+1}/$data.total ${(now()-data.timestamp)/1000}) - ${resp.getStatus()}"
         if (data.iteration + 1 == data.total) {
@@ -78,26 +78,26 @@ def getApi(resp, data){
 
 //////////////////////////////////////////////
 
-def fileManagerStressTest() {
-    def fileList
-    def timeStart = now()
+void fileManagerStressTest() {
+    List fileList
+    long timeStart = now()
     for(int i = 0;i<iterations;i++) {
         fileList = getHubFiles()      // List<Map<String,String>> getHubFiles(String folder = "")
     }
-    def timeStop = now()
+    long timeStop = now()
     log.debug("File List API call took ${(timeStop-timeStart)/iterations} ms on average")
 
     printFileList(fileList)
 
-    def buffer
+    byte[] buffer
     timesStart = now()
     for(int i = 0;i<iterations;i++) {
-       buffer = downloadHubFile(fileList[0]["name"])
+       buffer = downloadHubFile(fileList[0]["name"] as String)
     }
     timeStop = now()
     log.debug("File download API took ${(timeStop-timeStart)/iterations} ms on average")
 
-    def fileList2
+    List<String> fileList2
     timesStart = now()
     for(int i = 0;i<iterations;i++) {
        fileList2 = listFiles()
@@ -105,20 +105,20 @@ def fileManagerStressTest() {
     timeStop = now()
     log.debug("File list HTTP took ${(timeStop-timeStart)/iterations} ms on average")
 
-    def buffer2
+    String buffer2
     timesStart = now()
     for(int i = 0;i<iterations;i++) {
-       buffer2 = readFile(fileList[0]["name"])
+       buffer2 = readFile(fileList[0]["name"] as String)
     }
     timeStop = now()
     log.debug("File HTTP download took ${(timeStop-timeStart)/iterations} ms on average")
 }
 
-def printFileList(fileList) {
+void printFileList(List fileList) {
     fileList.each {
         // [date:1699675111000, size:266562, name:RGZW1791U_DB1-US_V1.05.01.otz, type:file]
         if (it["type"] == "file") {
-            def formattedDate = new Date(it["date"].toLong())
+            Date formattedDate = new Date((it["date"] as String).toLong())
             log.debug("File name : ${it["name"]}, Timestamp : ${formattedDate.getDateTimeString()}, Size: ${it["size"]}")
         }
     }
@@ -132,7 +132,7 @@ String readFile(fName){
     if(security) cookie = getCookie()
     uri = "http://${location.hub.localIP}:8080/local/${fName}"
 
-    def params = [
+    Map params = [
         uri: uri,
         contentType: "text/html",
         textParser: true,
@@ -167,11 +167,11 @@ String readFile(fName){
 }
 
 @SuppressWarnings('unused')
-List<String> listFiles(filt = null){
+List<String> listFiles(String filt = null){
     if(security) cookie = getCookie()
     if(debugEnabled) log.debug "Getting list of files"
     uri = "http://${location.hub.localIP}:8080/hub/fileManager/json";
-    def params = [
+    Map params = [
         uri: uri,
         headers: [
 				"Cookie": cookie
@@ -182,7 +182,7 @@ List<String> listFiles(filt = null){
         httpGet(params) { resp ->
             if (resp != null){
                 if(logEnable) log.debug "Found the files"
-                def json = resp.data
+                Map json = resp.data as Map
                 for (rec in json.files) {
                     if(filt != null){
                         if(rec.name.contains("$filt")){
