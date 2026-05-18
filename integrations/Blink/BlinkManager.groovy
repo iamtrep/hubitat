@@ -90,7 +90,7 @@ Map mainPage() {
                     String exp = new Date((long) state.tokenExpiry).format("yyyy-MM-dd HH:mm:ss", location.timeZone)
                     paragraph "Token expires: <b>${exp}</b>"
                 }
-                if (state.homescreenSummary) paragraph state.homescreenSummary
+                if (atomicState.homescreenSummary) paragraph atomicState.homescreenSummary
             }
             section("Polling") {
                 input "pollRate", "enum", title: "Poll interval (seconds)", options: ["30", "60", "120", "300"], defaultValue: "60", submitOnChange: true
@@ -102,7 +102,7 @@ Map mainPage() {
             }
             section("Devices") {
                 renderChildDeviceList()
-                List<Map> orphans = (state.orphanedDevices ?: []) as List<Map>
+                List<Map> orphans = (atomicState.orphanedDevices ?: []) as List<Map>
                 if (orphans.size() > 0) {
                     paragraph "<span style='color:orange'><b>Orphaned devices (${orphans.size()}):</b></span>"
                     orphans.each { Map o ->
@@ -280,13 +280,13 @@ void appButtonHandler(String btn) {
 }
 
 private void removeOrphans() {
-    List<Map> orphans = (state.orphanedDevices ?: []) as List<Map>
+    List<Map> orphans = (atomicState.orphanedDevices ?: []) as List<Map>
     orphans.each { Map o ->
         String dni = o.dni as String
         logWarn "removing orphan: ${dni} (${o.label})"
         try { deleteChildDevice(dni) } catch (Exception e) { logError "delete ${dni}: ${e.message}" }
     }
-    state.orphanedDevices = []
+    atomicState.orphanedDevices = []
     logInfo "removed ${orphans.size()} orphaned devices"
 }
 
@@ -683,7 +683,8 @@ void handleHomescreenResponse(resp, data) {
             return
         }
         int nNet = (json.networks ?: []).size()
-        int nCam = (json.cameras ?: []).size() + (json.owls ?: []).size() + (json.doorbells ?: []).size() + (json.superiors ?: []).size()
+        Map acc = (json.accessories ?: [:]) as Map
+        int nCam = (json.cameras ?: []).size() + (json.owls ?: []).size() + (json.doorbells ?: []).size() + (json.superiors ?: []).size() + (acc.storm ?: []).size()
         logInfo "homescreen OK: ${nNet} networks, ${nCam} cameras"
         processHomescreen(json)
     } catch (Exception e) {
@@ -771,13 +772,16 @@ private void syncChildren(List<Map> networks, List<Map> cameras, List<Map> syncM
     }
 
     // Orphan tracking (no auto-delete).
+    // atomicState because syncChildren runs inside the asynchttpGet callback chain
+    // (handleHomescreenResponse → processHomescreen → syncChildren) — plain state
+    // writes from async paths can silently vanish per ARCHITECTURE.md §"State tiers".
     List<Map> orphans = []
     getChildDevices().each { ChildDeviceWrapper c ->
         if (!activeDnis.contains(c.deviceNetworkId)) {
             orphans << [dni: c.deviceNetworkId, label: c.label ?: c.name, id: c.id]
         }
     }
-    state.orphanedDevices = orphans
+    atomicState.orphanedDevices = orphans
 }
 
 private void dispatchToChildren(List<Map> networks, List<Map> cameras, List<Map> syncModules) {
@@ -812,13 +816,15 @@ private void dispatchToChildren(List<Map> networks, List<Map> cameras, List<Map>
         }
     }
 
+    String tier = state.tier as String
+    String acct = state.accountId?.toString()
     cameras.each { Map c ->
         String camId = c.id?.toString()
         if (!camId) return
         ChildDeviceWrapper child = getChildDevice("${DNI_PREFIX_CAMERA}${camId}")
         if (!child) { missingChildren++; return }
         try {
-            child.handleCameraUpdate(cameraSnapshot(c))
+            child.handleCameraUpdate(cameraSnapshot(c, tier, acct))
             camsDispatched++
         } catch (Exception e) {
             logError "handleCameraUpdate failed on ${child.deviceNetworkId}: ${e.message}"
@@ -839,7 +845,7 @@ private static int countCamerasForNetwork(List<Map> cameras, String netId) {
 }
 
 @CompileStatic
-private static Map cameraSnapshot(Map c) {
+private static Map cameraSnapshot(Map c, String tier, String accountId) {
     Map<String, Object> out = [:]
     out["motion"] = (c.get("motion_detected") == true) ? "active" : "inactive"
     out["motionEnabled"] = (c.get("enabled") == true)
@@ -875,11 +881,41 @@ private static Map cameraSnapshot(Map c) {
     // populate this to indicate mains-power presence; battery-only cameras may omit it.
     Object acPower = c.get("ac_power")
     if (acPower != null) out["acPower"] = acPower.toString()
+    // Thumbnail: c.thumbnail is a token (often a Unix timestamp integer) or a relative
+    // path; assemble into a full URL per blinkpy's update_images logic. This is a
+    // STILL IMAGE, not a recorded clip — true clip URLs come from /media/changed (M2).
     Object thumb = c.get("thumbnail")
-    if (thumb) out["lastClipUrl"] = thumb.toString()
+    if (thumb != null) {
+        String url = buildThumbnailUrl(c, thumb, tier, accountId)
+        if (url) out["lastThumbnailUrl"] = url
+    }
+    // Generic camera-config update time. NOT clip-recorded time.
     Object updatedAt = c.get("updated_at")
-    if (updatedAt) out["lastClipTime"] = updatedAt.toString()
+    if (updatedAt) out["lastUpdated"] = updatedAt.toString()
     return out
+}
+
+@CompileStatic
+private static String buildThumbnailUrl(Map c, Object thumb, String tier, String accountId) {
+    if (thumb == null || !tier || !accountId) return null
+    String s = thumb.toString()
+    if (s.startsWith("http")) return s
+    String netId = (c.get("network_id") ?: c.get("networkId"))?.toString()
+    String camId = c.get("id")?.toString()
+    String type = (c.get("__type") ?: "camera") as String
+    if (!netId || !camId) return null
+    String base = "https://rest-${tier}.immedia-semi.com"
+    // Numeric thumbnail token == Unix timestamp; assemble v3 media URL (blinkpy
+    // camera.py update_images path).
+    if (s ==~ /\d+/) {
+        return "${base}/api/v3/media/accounts/${accountId}/networks/${netId}/${type}/${camId}/thumbnail/thumbnail.jpg?ts=${s}&ext="
+    }
+    // Old-API: relative path, append .jpg unless it already has the v3 query suffix.
+    if (s.endsWith("&ext=")) {
+        return s.startsWith("/") ? "${base}${s}" : "${base}/${s}"
+    }
+    String prefix = s.startsWith("/") ? "" : "/"
+    return "${base}${prefix}${s}.jpg"
 }
 
 @CompileStatic
@@ -901,7 +937,8 @@ private void updateHomescreenSummary(List<Map> networks, List<Map> cameras, List
     networks.each { Map n ->
         sb.append("<br><b>${n.name ?: n.id}</b>: ${n.armed ? 'Armed' : 'Disarmed'}")
     }
-    state.homescreenSummary = sb.toString()
+    // atomicState: same async-chain reasoning as syncChildren's orphan write.
+    atomicState.homescreenSummary = sb.toString()
 }
 
 // --- Child Callbacks ---
@@ -1131,7 +1168,8 @@ private Map bearerHeaders() {
 void logout() {
     logInfo "disconnecting from Blink"
     clearAuthState()
-    state.remove("homescreenSummary")
+    atomicState.remove("homescreenSummary")
+    atomicState.remove("orphanedDevices")
 }
 
 private boolean isAuthenticated() {

@@ -66,6 +66,13 @@ Default poll interval is 60 s. Configurable to 30 / 60 / 120 / 300 s from the ma
 
 If a camera or network is removed from your Blink account, the corresponding Hubitat child device is flagged as orphaned on the manager app's main page but **not auto-deleted**. Click the **Remove orphaned devices** button to remove them explicitly — this preserves user-edited labels, dashboard pins, and rule references until you say otherwise.
 
+## Acknowledgments
+
+Blink does not publish API documentation. Two open-source projects shaped this integration's understanding of the Blink cloud and deserve credit:
+
+- **[blinkpy](https://github.com/fronzbot/blinkpy)** — the Python reference implementation for the Blink API.
+- **[Blink API driver by Snell](https://community.hubitat.com/t/project-driver-for-blink-api/51257)** — the pre-existing Hubitat integration this project replaces.
+
 ## License
 
 MIT — see individual source files for the full license text.

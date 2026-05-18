@@ -30,8 +30,8 @@ metadata {
         capability "TemperatureMeasurement"
         capability "Refresh"
 
-        attribute "lastClipUrl", "string"
-        attribute "lastClipTime", "string"
+        attribute "lastThumbnailUrl", "string"
+        attribute "lastUpdated", "string"
         attribute "wifiSignal", "number"
         attribute "lfrSignal", "number"
         attribute "batteryBars", "number"
@@ -139,11 +139,11 @@ void handleCameraUpdate(Map data) {
     if (data.acPower != null) {
         sendEvent(name: "acPower", value: data.acPower as String)
     }
-    if (data.lastClipUrl) {
-        sendEvent(name: "lastClipUrl", value: data.lastClipUrl as String)
+    if (data.lastThumbnailUrl) {
+        sendEvent(name: "lastThumbnailUrl", value: data.lastThumbnailUrl as String)
     }
-    if (data.lastClipTime) {
-        sendEvent(name: "lastClipTime", value: data.lastClipTime as String)
+    if (data.lastUpdated) {
+        sendEvent(name: "lastUpdated", value: data.lastUpdated as String)
     }
 }
 
