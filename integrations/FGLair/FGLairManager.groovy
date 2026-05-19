@@ -60,6 +60,7 @@ definition(
 preferences {
     page(name: "mainPage")
     page(name: "loginPage")
+    page(name: "discoveredPropertiesPage")
 }
 
 Map mainPage() {
@@ -88,8 +89,13 @@ Map mainPage() {
                     input "btnRemoveOrphans", "button", title: "Remove orphaned devices"
                 }
             }
-            section("Discovered Properties (debug)") {
-                renderDiscoveredProperties()
+            section {
+                Map<String, Object> known = (atomicState.knownProperties ?: [:]) as Map<String, Object>
+                href "discoveredPropertiesPage",
+                     title: "Discovered properties (debug)",
+                     description: known.isEmpty()
+                        ? "No properties observed yet — wait for one poll cycle."
+                        : "${known.size()} property name(s) observed — tap to view"
             }
             section("Actions") { input "btnDisconnect", "button", title: "Disconnect" }
         } else {
@@ -201,17 +207,25 @@ void removeOrphans() {
     atomicState.orphanedDevices = []
 }
 
-private void renderDiscoveredProperties() {
-    Map<String, Object> known = (atomicState.knownProperties ?: [:]) as Map<String, Object>
-    if (known.isEmpty()) {
-        paragraph "No properties observed yet — wait for one poll cycle."
-        return
+Map discoveredPropertiesPage() {
+    dynamicPage(name: "discoveredPropertiesPage", title: "Discovered properties (debug)", nextPage: "mainPage") {
+        Map<String, Object> known = (atomicState.knownProperties ?: [:]) as Map<String, Object>
+        if (known.isEmpty()) {
+            section { paragraph "No properties observed yet — wait for one poll cycle, then return here." }
+            return
+        }
+        section {
+            paragraph "<b>${known.size()} property name(s) observed.</b> Tap <b>Next</b> to return to the manager."
+        }
+        section("Properties") {
+            known.keySet().sort().each { String name ->
+                paragraph "<code>${name}</code>: ${known[name]}"
+            }
+        }
+        section {
+            input "btnResetDiscovered", "button", title: "Reset discovered properties"
+        }
     }
-    paragraph "<b>${known.size()} property name(s) observed:</b>"
-    known.keySet().sort().each { String name ->
-        paragraph "<code>${name}</code>: ${known[name]}"
-    }
-    input "btnResetDiscovered", "button", title: "Reset discovered properties"
 }
 
 void resetDiscoveredProperties() {

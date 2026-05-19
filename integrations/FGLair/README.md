@@ -102,12 +102,6 @@ If a unit is removed from your FGLair account, the Hubitat child is flagged as o
 
 The manager's main page lists every Ayla property name observed across polls, with each property's last-seen value. This is a development aid for adding coverage of properties the integration doesn't expose yet — different Fujitsu models report different property sets, and the discovery section makes the unit's actual property surface visible without dumping logs. A **Reset discovered properties** button clears the accumulator if you want a fresh snapshot.
 
-## Quirks worth knowing
-
-- **Sensor scale is `°F` hundredths.** Empirically, the unit reports `display_temperature` and `outdoor_temperature` as integers in hundredths of Fahrenheit (e.g. `7000` = 70.0°F). The driver converts to the hub's `getTemperatureScale()` regardless. If your unit reports sensors in Celsius, this assumption needs a per-unit override (not currently implemented).
-- **Setpoint scale is `°C` tenths.** `adjust_temperature` is reported as tenths of Celsius (e.g. `180` = 18.0°C), independent of the unit's display scale.
-- **`supportedThermostatModes` / `supportedThermostatFanModes`** are written via `sendEvent` directly. The platform's `setSupported*()` methods are not reliably bound to user-namespaced drivers on current firmware.
-
 ## Acknowledgments
 
 Protocol facts (endpoints, body shapes, integer codes) lifted from:
