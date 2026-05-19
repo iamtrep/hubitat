@@ -726,7 +726,7 @@ void handleHomescreenResponse(resp, data) {
             return
         }
         if (status != 200) {
-            logWarn "homescreen HTTP ${status}"
+            logWarn "homescreen: HTTP ${status}${describeHttpBody(resp)}"
             return
         }
         Map json = resp.json as Map
@@ -925,7 +925,10 @@ private static int countCamerasForNetwork(List<Map> cameras, String netId) {
 @CompileStatic
 private static Map cameraSnapshot(Map c, String tier, String accountId) {
     Map<String, Object> out = [:]
-    out["motion"] = (c.get("motion_detected") == true) ? "active" : "inactive"
+    // Note: `motion` is NOT derived from `c.motion_detected` — Blink doesn't
+    // reliably populate that flag in the homescreen response. Motion events are
+    // fired from the /media/changed clip-arrival path in recentClipsResponse,
+    // matching blinkpy's sync_module.py behaviour (motion = a new clip arrived).
     out["motionEnabled"] = (c.get("enabled") == true)
     Object battery = c.get("battery_voltage")
     if (battery instanceof Number) {
@@ -1094,12 +1097,12 @@ void commandPostResponse(resp, data) {
     String label = data?.label ?: "command"
     try {
         if (resp.hasError()) {
-            logError "${label}: ${resp.getErrorMessage()}"
+            logError "${label}: ${resp.getErrorMessage()}${describeHttpBody(resp)}"
             return
         }
         int status = resp.getStatus()
         if (status != 200) {
-            logWarn "${label}: HTTP ${status}"
+            logWarn "${label}: HTTP ${status}${describeHttpBody(resp)}"
             return
         }
         Map json = resp.json as Map
@@ -1138,13 +1141,20 @@ void commandStatusResponse(resp, data) {
     int statusCode = 0
     boolean complete = false
     try {
-        if (!resp.hasError() && resp.getStatus() == 200) {
-            Map json = resp.json as Map
-            statusCode = ((json?.status_code ?: 0) as Number).intValue()
-            complete = json?.complete == true
+        if (resp.hasError()) {
+            logWarn "${label} cmd-status: ${resp.getErrorMessage()}${describeHttpBody(resp)}"
+        } else {
+            int httpStatus = resp.getStatus()
+            if (httpStatus != 200) {
+                logWarn "${label} cmd-status: HTTP ${httpStatus}${describeHttpBody(resp)}"
+            } else {
+                Map json = resp.json as Map
+                statusCode = ((json?.status_code ?: 0) as Number).intValue()
+                complete = json?.complete == true
+            }
         }
     } catch (Exception e) {
-        logDebug "commandStatusResponse parse: ${e.message}"
+        logWarn "commandStatusResponse parse: ${e.message}"
     }
 
     if (complete && statusCode == 908) {
@@ -1197,8 +1207,13 @@ private void fetchCameraSignals(String cameraId, String networkId) {
 
 void cameraSignalsResponse(resp, data) {
     try {
-        if (resp.hasError() || resp.getStatus() != 200) {
-            logDebug "signals ${data?.cameraId}: HTTP error"
+        if (resp.hasError()) {
+            logWarn "signals ${data?.cameraId}: ${resp.getErrorMessage()}${describeHttpBody(resp)}"
+            return
+        }
+        int status = resp.getStatus()
+        if (status != 200) {
+            logWarn "signals ${data?.cameraId}: HTTP ${status}${describeHttpBody(resp)}"
             return
         }
         Map json = resp.json as Map
@@ -1226,9 +1241,15 @@ void cameraSignalsResponse(resp, data) {
 // the actual recorded video, distinct from the still-image lastThumbnailUrl.
 private void fetchRecentClips() {
     if (!isAuthenticated() || !state.accountId || !state.tier) return
-    long since = ((atomicState.lastClipFetchTime ?: ((now() / 1000L) - CLIP_INITIAL_WINDOW_SEC)) as Number).longValue()
-    String url = "https://rest-${state.tier}.immedia-semi.com/api/v1/accounts/${state.accountId}/media/changed?since=${since}&page=1"
-    logTrace "fetchRecentClips: since=${since}"
+    long sinceUnix = ((atomicState.lastClipFetchTime ?: ((now() / 1000L) - CLIP_INITIAL_WINDOW_SEC)) as Number).longValue()
+    // Blink expects ISO 8601 with a timezone offset ("YYYY-MM-DDTHH:MM:SS+0000")
+    // per blinkpy helpers/util.py:69 + constants.TIMESTAMP_FORMAT. A raw Unix
+    // epoch is rejected with HTTP 400. URL-encode because the "+" sign in the
+    // offset would otherwise be decoded as a literal space by Blink's parser.
+    String sinceIso = new Date(sinceUnix * 1000L).format("yyyy-MM-dd'T'HH:mm:ssZ", TimeZone.getTimeZone("UTC"))
+    String sinceEnc = URLEncoder.encode(sinceIso, "UTF-8")
+    String url = "https://rest-${state.tier}.immedia-semi.com/api/v1/accounts/${state.accountId}/media/changed?since=${sinceEnc}&page=1"
+    logTrace "fetchRecentClips: since=${sinceIso}"
     asynchttpGet("recentClipsResponse", [
         uri        : url,
         headers    : bearerHeaders(),
@@ -1239,69 +1260,88 @@ private void fetchRecentClips() {
 
 void recentClipsResponse(resp, data) {
     long fetchedAt = (now() / 1000L) as long
+    List<Map> media = []
+    Map<String, Map> latestByName = [:]
+    String errorMsg = null
+
     try {
         if (resp.hasError()) {
-            logDebug "clips: ${resp.getErrorMessage()}"
-            return
-        }
-        int status = resp.getStatus()
-        if (status != 200) {
-            logDebug "clips: HTTP ${status}"
-            return
-        }
-        Map json = resp.json as Map
-        List<Map> media = (json?.media ?: []) as List<Map>
-        if (media.size() == 0) {
-            atomicState.lastClipFetchTime = fetchedAt
-            return
-        }
-
-        // Pick the latest non-deleted clip per Blink camera name.
-        Map<String, Map> latestByName = [:]
-        media.each { Map entry ->
-            if (entry.deleted == true) return
-            String name = entry.device_name?.toString()
-            if (!name) return
-            String t = entry.created_at?.toString()
-            Map prev = latestByName[name]
-            String prevT = prev?.get("_t") as String
-            if (prev == null || (t != null && (prevT == null || t > prevT))) {
-                Map copy = [:]
-                copy.putAll(entry)
-                copy.put("_t", t)
-                latestByName[name] = copy
+            errorMsg = "error: ${resp.getErrorMessage()}${describeHttpBody(resp)}"
+        } else {
+            int status = resp.getStatus()
+            if (status != 200) {
+                errorMsg = "HTTP ${status}${describeHttpBody(resp)}"
+            } else {
+                Map json = resp.json as Map
+                media = (json?.media ?: []) as List<Map>
+                // Pick the latest non-deleted clip per Blink camera name.
+                media.each { Map entry ->
+                    if (entry.deleted == true) return
+                    String name = entry.device_name?.toString()
+                    if (!name) return
+                    String t = entry.created_at?.toString()
+                    Map prev = latestByName[name]
+                    String prevT = prev?.get("_t") as String
+                    if (prev == null || (t != null && (prevT == null || t > prevT))) {
+                        Map copy = [:]
+                        copy.putAll(entry)
+                        copy.put("_t", t)
+                        latestByName[name] = copy
+                    }
+                }
             }
-        }
-
-        String base = "https://rest-${state.tier}.immedia-semi.com"
-        int dispatched = 0
-        getChildDevices().each { ChildDeviceWrapper child ->
-            String blinkName = child.getDataValue("blinkName")
-            if (!blinkName) return
-            Map entry = latestByName[blinkName]
-            if (entry == null) return
-            String clipPath = entry.media?.toString()
-            if (!clipPath) return
-            String fullUrl = clipPath.startsWith("http") ? clipPath : "${base}${clipPath}"
-            Map update = [lastClipUrl: fullUrl]
-            if (entry._t) update.lastClipTime = entry._t as String
-            try {
-                child.handleCameraUpdate(update)
-                dispatched++
-            } catch (Exception e) {
-                logError "clip dispatch to ${child.deviceNetworkId}: ${e.message}"
-            }
-        }
-
-        if (dispatched > 0) {
-            logInfo "clips: ${media.size()} entries, dispatched to ${dispatched} cameras"
         }
     } catch (Exception e) {
-        logError "recentClipsResponse: ${e.message}"
-    } finally {
-        // Always advance the cursor — server-side time is unknown, clock drift is minor.
-        atomicState.lastClipFetchTime = fetchedAt
+        errorMsg = "parse: ${e.message}"
     }
+
+    // Always dispatch motion (and lastClipUrl/lastClipTime when applicable) to every
+    // Blink Camera child — including motion=inactive when nothing arrived. Hubitat's
+    // sendEvent will dedup the inactive case after the first fire, so this is cheap.
+    // Skipping this loop (the previous behaviour) meant the motion attribute never
+    // settled to a value and motion=active alone couldn't be diagnosed.
+    String base = "https://rest-${state.tier}.immedia-semi.com"
+    int active = 0, inactive = 0, missingName = 0
+    Set<String> activeNames = [] as Set<String>
+    getChildDevices().each { ChildDeviceWrapper child ->
+        if (!child.deviceNetworkId?.startsWith(DNI_PREFIX_CAMERA)) return
+        String blinkName = child.getDataValue("blinkName")
+        if (!blinkName) { missingName++; return }
+        Map entry = latestByName[blinkName]
+        String motionValue = (entry != null) ? "active" : "inactive"
+        Map update = [motion: motionValue]
+        if (entry != null) {
+            activeNames << blinkName
+            active++
+            String clipPath = entry.media?.toString()
+            if (clipPath) {
+                String fullUrl = clipPath.startsWith("http") ? clipPath : "${base}${clipPath}"
+                update.lastClipUrl = fullUrl
+            }
+            if (entry._t) update.lastClipTime = entry._t as String
+        } else {
+            inactive++
+        }
+        try {
+            child.handleCameraUpdate(update)
+        } catch (Exception e) {
+            logError "clip/motion dispatch to ${child.deviceNetworkId}: ${e.message}"
+        }
+    }
+
+    // Visibility: log on every response so we can diagnose silence vs. response issues.
+    long sinceUnix = ((atomicState.lastClipFetchTime ?: 0L) as Number).longValue()
+    String sinceIsoForLog = new Date(sinceUnix * 1000L).format("yyyy-MM-dd'T'HH:mm:ssZ", TimeZone.getTimeZone("UTC"))
+    if (errorMsg) {
+        logWarn "clips fetch (since=${sinceIsoForLog}): ${errorMsg}"
+    } else {
+        String activeSuffix = activeNames.isEmpty() ? "" : " — motion=active on ${activeNames.join(', ')}"
+        String missingSuffix = (missingName > 0) ? ", ${missingName} cameras missing blinkName" : ""
+        logInfo "clips fetch (since=${sinceIsoForLog}): ${media.size()} entries, ${active} active, ${inactive} inactive${missingSuffix}${activeSuffix}"
+    }
+
+    // Cursor advances even on error to avoid getting permanently stuck on a bad window.
+    atomicState.lastClipFetchTime = fetchedAt
 }
 
 // --- Notification flags (M1) ---
@@ -1328,8 +1368,13 @@ void fetchNotificationFlags() {
 
 void notificationFlagsResponse(resp, data) {
     try {
-        if (resp.hasError() || resp.getStatus() != 200) {
-            logWarn "notification flags: HTTP ${resp.getStatus()}"
+        if (resp.hasError()) {
+            logWarn "notification flags: ${resp.getErrorMessage()}${describeHttpBody(resp)}"
+            return
+        }
+        int status = resp.getStatus()
+        if (status != 200) {
+            logWarn "notification flags: HTTP ${status}${describeHttpBody(resp)}"
             return
         }
         Map json = resp.json as Map
@@ -1393,12 +1438,12 @@ private void setNotificationFlags(Map changes) {
 void notificationUpdateResponse(resp, data) {
     try {
         if (resp.hasError()) {
-            logError "notification update: ${resp.getErrorMessage()}"
+            logError "notification update: ${resp.getErrorMessage()}${describeHttpBody(resp)}"
             return
         }
         int status = resp.getStatus()
         if (status != 200) {
-            logWarn "notification update: HTTP ${status}"
+            logWarn "notification update: HTTP ${status}${describeHttpBody(resp)}"
             return
         }
         Map changes = (data?.changes ?: [:]) as Map
@@ -1446,6 +1491,28 @@ private Map bearerHeaders() {
         "Authorization": "Bearer ${state.accessToken}",
         "Accept"       : "application/json"
     ]
+}
+
+// Extract the response body from an async HTTP response on a non-2xx path, so
+// non-200 log lines surface the actual server message (e.g. "{"message":"Camera
+// disabled","code":900}") instead of just an opaque status code. Returns a
+// pre-prefixed " body=..." string for direct concatenation into a log message,
+// or empty string when no body is available. Capped at 400 chars so a large
+// HTML error page doesn't blow up the log.
+private String describeHttpBody(resp) {
+    if (!resp) return ""
+    String body = null
+    // 4xx/5xx responses populate getErrorData(); 2xx and IOError paths populate
+    // getData() / resp.data. Try all three in sequence for portability across
+    // hub firmware versions.
+    try { body = resp.getErrorData()?.toString() } catch (Exception ignored) {}
+    if (!body) {
+        try { body = resp.getData()?.toString() } catch (Exception ignored) {}
+    }
+    if (!body) {
+        try { body = resp.data?.toString() } catch (Exception ignored) {}
+    }
+    return (body && body.length() > 0) ? " body=${body.take(400)}" : ""
 }
 
 // --- Auth State ---
