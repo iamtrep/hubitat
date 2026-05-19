@@ -32,7 +32,6 @@ metadata {
     ) {
         capability "Thermostat"
         capability "TemperatureMeasurement"
-        capability "MotionSensor"
         capability "Refresh"
         capability "Sensor"
         capability "Actuator"
@@ -66,7 +65,7 @@ metadata {
     }
 }
 
-@Field static final String DRIVER_VERSION = "0.1.0"
+@Field static final String DRIVER_VERSION = "0.1.1"
 
 @Field static final List<String> SUPPORTED_STD_MODES = ["\"off\"", "\"heat\"", "\"cool\"", "\"auto\""]
 @Field static final List<String> SUPPORTED_STD_FAN_MODES = ["\"auto\""]
@@ -338,16 +337,6 @@ void updateState(Map data) {
                   descriptionText: "${device} opStatus is ${st}")
         if (prev != null && prev != st) {
             logInfo "opStatus changed: ${prev} -> ${st}"
-        }
-    }
-    if (data.humanDet != null) {
-        Integer hd = data.humanDet as Integer
-        String motion = (hd == 1) ? "active" : (hd == 0 ? "inactive" : null)
-        if (motion != null) {
-            sendEvent(name: "motion", value: motion,
-                      descriptionText: "${device} motion is ${motion}")
-        } else {
-            logWarn "unexpected human_det value: ${hd}"
         }
     }
     // Device metadata — visible on the device edit page's Data section.

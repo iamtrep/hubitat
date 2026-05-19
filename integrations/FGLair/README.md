@@ -5,14 +5,14 @@ SPDX-License-Identifier: MIT
 
 # FGLair (Fujitsu Mini-Split) Integration
 
-Parent/child integration for Fujitsu mini-split heat pumps that authenticate against the FGLair cloud (hosted on Ayla Networks' IoT platform). The manager app handles sign-in, token refresh, and periodic property polling. Each indoor unit is exposed as a child device implementing the standard `Thermostat` and `MotionSensor` capabilities plus a parallel custom surface for Fujitsu-specific modes and fan speeds.
+Parent/child integration for Fujitsu mini-split heat pumps that authenticate against the FGLair cloud (hosted on Ayla Networks' IoT platform). The manager app handles sign-in, token refresh, and periodic property polling. Each indoor unit is exposed as a child device implementing the standard `Thermostat` capability plus a parallel custom surface for Fujitsu-specific modes and fan speeds.
 
 ## Components
 
 | Component | Type | Description |
 |---|---|---|
 | **FGLair Manager** | App | Ayla authentication, periodic poll, command dispatch, orphan tracking, property discovery debug section |
-| **Fujitsu Mini-Split** | Driver | One device per indoor unit; mode, setpoints, fan speed, room temp, outdoor temp, built-in occupancy sensor, fault and operational status, device metadata |
+| **Fujitsu Mini-Split** | Driver | One device per indoor unit; mode, setpoints, fan speed, room temp, outdoor temp, fault and operational status, device metadata |
 
 ## Installation
 
@@ -37,7 +37,6 @@ Region (US / EU) is configurable on the manager page; the region setting drives 
 - `temperature` — room temperature from `display_temperature`
 - `heatingSetpoint` / `coolingSetpoint` / `thermostatSetpoint`
 - `thermostatOperatingState` — `idle` / `heating` / `cooling` / `fan only`
-- `motion` — `active` / `inactive` from the unit's built-in human-detection sensor (units that ship it)
 
 **Custom Fujitsu surface (full unit enum):**
 - `fujitsuMode` — `off`, `heat`, `cool`, `auto`, `dry`, `fan_only`

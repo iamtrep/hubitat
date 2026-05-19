@@ -50,6 +50,16 @@ To capture:
 - Note what the unit is physically doing when each non-zero value appears.
 - Build value→name maps once enough observations accumulate.
 
+## human_det — disposition
+
+**MotionSensor capability dropped 2026-05-19.** It mapped `human_det` to `motion` active/inactive, but the value sat stuck at `1` day and night.
+
+Research findings (so this isn't re-done):
+- No open-source FGLair/Fujitsu project exposes presence/motion/occupancy in any form — checked `ayla-iot-unofficial` (the lib HA core's `fujitsu_fglair` uses), HA core `fujitsu_fglair`, `pyfujitseu`, `bigmoby/fglair_for_homeassistant`. `ayla-iot-unofficial` doesn't even list `human_det` among its Fujitsu properties.
+- Conclusion: Fujitsu's "human sensor" is a local hardware feature (airflow steering / energy-save); the cloud does not appear to publish a live occupancy datapoint. `human_det` is almost certainly the feature enable flag, not a reading.
+
+To revisit: dump this unit's full `properties.json` (HAR from the FGLair app, or a trace dump from the manager) and inspect the `human_det` property object — `direction` (`input` = app→device setting, `output` = device reading), `read_only`, `base_type`, `data_updated_at`. If it's a writable input property, expose it as a switch (`humanSensorMode` on/off + `setHumanSensorMode`). If read-only and never changing, leave it dropped.
+
 ## Discovery debug section refinements
 
 The `atomicState.knownProperties` accumulator is currently single-unit-blind (one map for all units combined). Two future improvements if the discovery surface ever gets reused in a multi-unit account:

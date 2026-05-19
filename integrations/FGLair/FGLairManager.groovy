@@ -30,7 +30,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String APP_VERSION = "0.1.0"
+@Field static final String APP_VERSION = "0.1.1"
 
 // Region-specific Ayla endpoints + app credentials, lifted from
 // ayla-iot-unofficial/src/ayla_iot_unofficial/const.py and fujitsu_consts.py.
@@ -504,7 +504,6 @@ void fetchPropertiesCallback(resp, data) {
         outdoorTemp     : props["outdoor_temperature"],
         errorCode       : props["error_code"],
         opStatus        : props["op_status"],
-        humanDet        : props["human_det"],
         modelName       : props["model_name"],
         firmwareVersion : props["mcu_fw_version"],
         deviceName      : props["device_name"],
