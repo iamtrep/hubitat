@@ -88,6 +88,9 @@ Map mainPage() {
                     input "btnRemoveOrphans", "button", title: "Remove orphaned devices"
                 }
             }
+            section("Discovered Properties (debug)") {
+                renderDiscoveredProperties()
+            }
             section("Actions") { input "btnDisconnect", "button", title: "Disconnect" }
         } else {
             section {
@@ -165,10 +168,11 @@ private void scheduleTokenRefresh() {
 void appButtonHandler(String btn) {
     logDebug "appButtonHandler(${btn})"
     switch (btn) {
-        case "btnLogin":         signIn(); break
-        case "btnDisconnect":    disconnect(); break
-        case "btnRefreshNow":    fetchDevices(); break
-        case "btnRemoveOrphans": removeOrphans(); break
+        case "btnLogin":            signIn(); break
+        case "btnDisconnect":       disconnect(); break
+        case "btnRefreshNow":       fetchDevices(); break
+        case "btnRemoveOrphans":    removeOrphans(); break
+        case "btnResetDiscovered":  resetDiscoveredProperties(); break
         default: logWarn "unhandled button: ${btn}"
     }
 }
@@ -195,6 +199,24 @@ void removeOrphans() {
         }
     }
     atomicState.orphanedDevices = []
+}
+
+private void renderDiscoveredProperties() {
+    Map<String, Object> known = (atomicState.knownProperties ?: [:]) as Map<String, Object>
+    if (known.isEmpty()) {
+        paragraph "No properties observed yet — wait for one poll cycle."
+        return
+    }
+    paragraph "<b>${known.size()} property name(s) observed:</b>"
+    known.keySet().sort().each { String name ->
+        paragraph "<code>${name}</code>: ${known[name]}"
+    }
+    input "btnResetDiscovered", "button", title: "Reset discovered properties"
+}
+
+void resetDiscoveredProperties() {
+    logInfo "resetting discovered properties"
+    atomicState.knownProperties = [:]
 }
 
 private void schedulePolling() {
@@ -448,6 +470,8 @@ void fetchPropertiesCallback(resp, data) {
         Map p = (Map) ((Map) item).property
         if (p?.name) props[((String) p.name).toLowerCase()] = p.value
     }
+    Map<String, Object> known = (atomicState.knownProperties ?: [:]) as Map<String, Object>
+    atomicState.knownProperties = (known + props)
     Map stateMap = [
         opMode      : props["operation_mode"],
         fanSpeed    : props["fan_speed"],
