@@ -32,6 +32,7 @@ metadata {
     ) {
         capability "Thermostat"
         capability "TemperatureMeasurement"
+        capability "MotionSensor"
         capability "Refresh"
         capability "Sensor"
         capability "Actuator"
@@ -41,6 +42,8 @@ metadata {
         attribute "outdoorTemperature",          "number"
         attribute "fujitsuMode",                 "string"
         attribute "fanSpeed",                    "string"
+        attribute "errorCode",                   "number"
+        attribute "opStatus",                    "number"
 
         command "setFujitsuMode", [[name: "mode*", type: "ENUM",
                                     description: "Fujitsu operation mode",
@@ -316,6 +319,44 @@ void updateState(Map data) {
         BigDecimal ot = aylaSensorToScale(data.outdoorTemp)
         sendEvent(name: "outdoorTemperature", value: ot, unit: getTemperatureScale(),
                   descriptionText: "${device} outdoor temperature is ${ot}${getTemperatureScale()}")
+    }
+    if (data.errorCode != null) {
+        Integer prev = device.currentValue("errorCode") as Integer
+        Integer code = data.errorCode as Integer
+        sendEvent(name: "errorCode", value: code,
+                  descriptionText: "${device} errorCode is ${code}")
+        if (prev != null && prev == 0 && code != 0) {
+            logWarn "errorCode set to ${code}"
+        } else if (prev != null && prev != 0 && code == 0) {
+            logInfo "errorCode cleared (was ${prev})"
+        }
+    }
+    if (data.opStatus != null) {
+        Integer prev = device.currentValue("opStatus") as Integer
+        Integer st = data.opStatus as Integer
+        sendEvent(name: "opStatus", value: st,
+                  descriptionText: "${device} opStatus is ${st}")
+        if (prev != null && prev != st) {
+            logInfo "opStatus changed: ${prev} -> ${st}"
+        }
+    }
+    if (data.humanDet != null) {
+        Integer hd = data.humanDet as Integer
+        String motion = (hd == 1) ? "active" : (hd == 0 ? "inactive" : null)
+        if (motion != null) {
+            sendEvent(name: "motion", value: motion,
+                      descriptionText: "${device} motion is ${motion}")
+        } else {
+            logWarn "unexpected human_det value: ${hd}"
+        }
+    }
+    // Device metadata — visible on the device edit page's Data section.
+    [modelName: "modelName", firmwareVersion: "firmwareVersion",
+     deviceName: "deviceName", commVersion: "commVersion"].each { String key, String dataKey ->
+        Object v = data[key]
+        if (v != null && v.toString() != "") {
+            device.updateDataValue(dataKey, v.toString())
+        }
     }
 }
 

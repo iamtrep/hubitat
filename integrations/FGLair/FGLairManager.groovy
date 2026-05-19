@@ -445,6 +445,16 @@ private void handleDeviceList(List rawDevices) {
 
 void fetchProperties(String dsn) {
     if (tokenNearExpiry()) { refreshToken(); runIn(3, "fetchProperties", [data: [dsn: dsn]]); return }
+    // Ayla caches property values for long stretches (hours). The Python lib
+    // ayla-iot-unofficial works around this by POSTing refresh=1 to wake the
+    // unit before every GET. We do the same: trigger, wait 2s for ingest,
+    // then GET. Fail-soft — if the trigger write fails, the GET still runs.
+    writeDatapoint(dsn, "refresh", 1)
+    runIn(2, "fetchPropertiesGet", [data: [dsn: dsn]])
+}
+
+void fetchPropertiesGet(Map data) {
+    String dsn = (String) data.dsn
     Map<String, String> rc = regionConfig()
     Map params = [
         uri: "${rc.ads}/apiv1/dsns/${dsn}/properties.json",
@@ -473,12 +483,19 @@ void fetchPropertiesCallback(resp, data) {
     Map<String, Object> known = (atomicState.knownProperties ?: [:]) as Map<String, Object>
     atomicState.knownProperties = (known + props)
     Map stateMap = [
-        opMode      : props["operation_mode"],
-        fanSpeed    : props["fan_speed"],
-        adjustTemp  : props["adjust_temperature"],
-        displayTemp : props["display_temperature"],
-        outdoorTemp : props["outdoor_temperature"],
-        online      : true
+        opMode          : props["operation_mode"],
+        fanSpeed        : props["fan_speed"],
+        adjustTemp      : props["adjust_temperature"],
+        displayTemp     : props["display_temperature"],
+        outdoorTemp     : props["outdoor_temperature"],
+        errorCode       : props["error_code"],
+        opStatus        : props["op_status"],
+        humanDet        : props["human_det"],
+        modelName       : props["model_name"],
+        firmwareVersion : props["mcu_fw_version"],
+        deviceName      : props["device_name"],
+        commVersion     : props["comm_version"],
+        online          : true
     ]
     logTrace "fetchProperties(${dsn}) -> ${stateMap}"
     ChildDeviceWrapper child = getChildDevice("${DNI_PREFIX_UNIT}${dsn}")
