@@ -5,14 +5,14 @@ SPDX-License-Identifier: MIT
 
 # FGLair (Fujitsu Mini-Split) Integration
 
-Parent/child integration for Fujitsu mini-split heat pumps that authenticate against the FGLair cloud (hosted on Ayla Networks' IoT platform). The manager app handles sign-in, token refresh, and periodic property polling. Each indoor unit is exposed as a child device implementing the standard `Thermostat` capability plus a parallel custom surface for Fujitsu-specific modes and fan speeds.
+Parent/child integration for Fujitsu mini-split heat pumps that authenticate against the FGLair cloud (hosted on Ayla Networks' IoT platform). The manager app handles sign-in, token refresh, and periodic property polling. Each indoor unit is exposed as a child device implementing the standard `Thermostat` and `MotionSensor` capabilities plus a parallel custom surface for Fujitsu-specific modes and fan speeds.
 
 ## Components
 
 | Component | Type | Description |
 |---|---|---|
-| **FGLair Manager** | App | Ayla authentication, periodic poll, command dispatch, orphan tracking |
-| **Fujitsu Mini-Split** | Driver | One device per indoor unit; mode, setpoints, fan speed, room temp, outdoor temp |
+| **FGLair Manager** | App | Ayla authentication, periodic poll, command dispatch, orphan tracking, property discovery debug section |
+| **Fujitsu Mini-Split** | Driver | One device per indoor unit; mode, setpoints, fan speed, room temp, outdoor temp, built-in occupancy sensor, fault and operational status, device metadata |
 
 ## Installation
 
@@ -31,23 +31,32 @@ Region (US / EU) is configurable on the manager page; the region setting drives 
 
 ### Fujitsu Mini-Split
 
-**Standard Thermostat capability surface (canonical values only):**
+**Standard capability surface (canonical values only):**
 - `thermostatMode` — `off`, `heat`, `cool`, `auto`
 - `thermostatFanMode` — `auto`
 - `temperature` — room temperature from `display_temperature`
 - `heatingSetpoint` / `coolingSetpoint` / `thermostatSetpoint`
 - `thermostatOperatingState` — `idle` / `heating` / `cooling` / `fan only`
+- `motion` — `active` / `inactive` from the unit's built-in human-detection sensor (units that ship it)
 
 **Custom Fujitsu surface (full unit enum):**
 - `fujitsuMode` — `off`, `heat`, `cool`, `auto`, `dry`, `fan_only`
 - `fanSpeed` — `auto`, `quiet`, `low`, `medium`, `high`
 - `outdoorTemperature` — temperature reported by the outdoor unit (number)
+- `errorCode` — raw Fujitsu error code (number; `0` = no fault). Transitions `0 → non-0` log a warning; `non-0 → 0` logs an info-level clear.
+- `opStatus` — raw operational status (number). Logged at info level on change.
 - `setFujitsuMode(String)` command — accepts the full mode enum
 - `setFanSpeed(String)` command — accepts the full fan-speed enum
 
 The standard surface keeps dashboards, Rule Machine triggers, and Alexa/Google integrations working for the canonical 80% case. The custom surface gives full access to `dry`/`fan_only` modes and `quiet`/`low`/`medium`/`high` fan speeds for automations that need them.
 
 Setpoint range: 16–30°C (heat), 18–30°C (cool). Values outside the range are clamped with a warning logged.
+
+**Device metadata** (visible on the device edit page's **Data** section, written via `device.updateDataValue`):
+- `modelName` — e.g. `ASUG15LZTD : AP-WF1E`
+- `firmwareVersion` — Fujitsu MCU firmware identifier
+- `deviceName` — the WiFi adapter's identifier
+- `commVersion` — Ayla communication protocol version
 
 ### Dual setpoint model
 
@@ -81,11 +90,17 @@ The `optimisticUpdates` driver preference (default **on**) controls how non-setp
 
 ## Polling
 
-Default poll interval is 60 s. Configurable to 30 / 60 / 120 / 300 s. Each cycle fetches the device list, then issues one `properties.json` request per DSN.
+Default poll interval is 60 s. Configurable to 30 / 60 / 120 / 300 s. Each cycle fetches the device list, then issues one `properties.json` request per indoor unit.
+
+The Ayla cloud caches property values aggressively (raw values can sit unchanged for hours despite real-world change), so before every property read the manager POSTs `refresh: 1` to the unit's `refresh` property and waits 2 seconds before issuing the GET. This forces the unit to publish fresh values to the cloud. Effective end-to-end staleness from physical event to Hubitat event is bounded by `pollRate + ~2 s`.
 
 ## Orphans
 
 If a unit is removed from your FGLair account, the Hubitat child is flagged as orphaned on the manager page but **not auto-deleted**. Click **Remove orphaned devices** on the manager to remove them explicitly.
+
+## Discovered Properties (debug)
+
+The manager's main page lists every Ayla property name observed across polls, with each property's last-seen value. This is a development aid for adding coverage of properties the integration doesn't expose yet — different Fujitsu models report different property sets, and the discovery section makes the unit's actual property surface visible without dumping logs. A **Reset discovered properties** button clears the accumulator if you want a fresh snapshot.
 
 ## Quirks worth knowing
 
