@@ -2566,9 +2566,9 @@ const RC={
     state:'idle',         // idle|connecting|connected|paused|disconnected|reconnecting
     reconnectMs:1000,     // exponential backoff
     reconnectTimer:null,
-    pausedLiveTail:false,
-    displayBuf:[],        // ring of last 1000 filtered display rows
-    displayCap:1000,
+    pausedCapture:false,
+    displayBuf:[],        // ring of last 50 filtered display rows; rendered in a scrollable container
+    displayCap:50,
     filters:{cluster:null,cmd:null,dni:'',mfr:null,minLqi:null,maxRssi:null},
     framesLastSec:[],     // sliding window for frames/s counter
     lastAggregateAt:0
@@ -2605,10 +2605,10 @@ function renderZigbeeSubTab(){
     <div class="card" style="margin-bottom:12px">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button id="rc-zb-start" class="btn-primary">Start capture</button>
-        <button id="rc-zb-stop" disabled>Stop & Download</button>
-        <button id="rc-zb-dl" disabled title="Download the current buffer without stopping">Download now</button>
-        <button id="rc-zb-pause" disabled>Pause live tail</button>
-        <button id="rc-zb-clear" disabled>Clear buffers</button>
+        <button id="rc-zb-pause" disabled>Pause capture</button>
+        <button id="rc-zb-stop" disabled>Stop capture</button>
+        <button id="rc-zb-dl" disabled title="Download the current buffer">Download</button>
+        <button id="rc-zb-clear" disabled>Clear buffer</button>
         <span style="margin-left:auto">Recording cap:
           <select id="rc-zb-cap">
             <option value="10">10 MB</option>
@@ -2630,7 +2630,7 @@ function renderZigbeeSubTab(){
   `;
   document.getElementById('rc-zb-start').addEventListener('click',rcZbStart);
   document.getElementById('rc-zb-stop').addEventListener('click',rcZbStop);
-  document.getElementById('rc-zb-dl').addEventListener('click',rcZbDownloadNow);
+  document.getElementById('rc-zb-dl').addEventListener('click',rcZbDownload);
   document.getElementById('rc-zb-pause').addEventListener('click',rcZbPause);
   document.getElementById('rc-zb-clear').addEventListener('click',rcZbClear);
   document.getElementById('rc-zb-cap').addEventListener('change',e=>{
@@ -2668,10 +2668,13 @@ function rcZbUpdateBadge(){
 function rcZbStart(){
   const z=RC.zigbee;
   if(!RC.hubIp){alert('Hub IP unknown — open the Dashboard tab once first.');return}
-  if(!z.buf){
-    const mb=parseInt(document.getElementById('rc-zb-cap').value,10);
-    z.buf=new FrameBuffer(mb*1024*1024);
-  }
+  // Start always begins a fresh session. Prior buffer is discarded — Download first if needed.
+  const mb=parseInt(document.getElementById('rc-zb-cap').value,10);
+  z.buf=new FrameBuffer(mb*1024*1024);
+  z.displayBuf=[];
+  z.framesLastSec=[];
+  z.pausedCapture=false;
+  document.getElementById('rc-zb-pause').textContent='Pause capture';
   z.reconnectMs=1000;
   rcZbConnect();
 }
@@ -2680,22 +2683,14 @@ function rcZbStop(){
   const z=RC.zigbee;
   if(z.reconnectTimer){clearTimeout(z.reconnectTimer);z.reconnectTimer=null}
   if(z.socket){z.socket.onclose=null;z.socket.close();z.socket=null}
-  if(z.buf&&z.buf.count()>0){
-    const fn=downloadRecording(z.buf,{
-      hubName:RC.hubName,hubIp:RC.hubIp,firmware:null,
-      appVersion:'5.36.0',uiVersion:UI_VERSION,
-      captureDurationS:z.buf.startedAt?Math.round((Date.now()-z.buf.startedAt)/1000):null
-    },'zigbee');
-    console.log('Saved',fn);
-  }
-  z.buf=null;
+  // Buffer is preserved on stop so Download remains useful. Start or Clear discards it.
   z.state='idle';
   rcZbUpdateBadge();rcZbUpdateMetrics();
 }
 
 function rcZbPause(){
-  const z=RC.zigbee;z.pausedLiveTail=!z.pausedLiveTail;
-  document.getElementById('rc-zb-pause').textContent=z.pausedLiveTail?'Resume live tail':'Pause live tail';
+  const z=RC.zigbee;z.pausedCapture=!z.pausedCapture;
+  document.getElementById('rc-zb-pause').textContent=z.pausedCapture?'Resume capture':'Pause capture';
 }
 
 function rcZbClear(){
@@ -2712,7 +2707,7 @@ function rcZbCaptureMeta(){
   };
 }
 
-function rcZbDownloadNow(){
+function rcZbDownload(){
   const z=RC.zigbee;if(!z.buf||z.buf.count()===0)return;
   const fn=downloadRecording(z.buf,rcZbCaptureMeta(),'zigbee');
   console.log('Saved',fn);
@@ -2737,7 +2732,7 @@ function rcZbConnect(){
 }
 
 function rcZbOnFrame(text){
-  const z=RC.zigbee;if(!z.buf)return;
+  const z=RC.zigbee;if(!z.buf||z.pausedCapture)return;
   z.buf.push(text);
   const now=Date.now();
   z.framesLastSec.push(now);
@@ -2785,12 +2780,12 @@ function rcZbFrameToRow(text){
 function rcZbFilterCard(){
   return `
     <div class="card" style="margin-bottom:12px">
-      <h3 style="margin-top:0">Filters <span style="font-weight:normal;font-size:12px;opacity:.7">(live tail only; recording stays unfiltered)</span></h3>
+      <h3 style="margin-top:0">Filters <span style="font-weight:normal;font-size:12px;opacity:.7">(live tail only; recording stays unfiltered. Match by hex code or friendly name; comma-separate alternatives.)</span></h3>
       <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;font-size:13px">
-        <label>Cluster: <input id="rc-zb-f-cluster" placeholder="e.g. 0019,0006" style="width:140px"></label>
+        <label>Cluster: <input id="rc-zb-f-cluster" placeholder="0019, OTA, On/Off" style="width:160px"></label>
         <label>Cmd byte: <input id="rc-zb-f-cmd" placeholder="e.g. 02" style="width:80px"></label>
-        <label>DNI regex: <input id="rc-zb-f-dni" placeholder="e.g. ^78" style="width:120px"></label>
-        <label>Manufacturer: <input id="rc-zb-f-mfr" placeholder="e.g. 100B,117C" style="width:140px"></label>
+        <label>DNI regex: <input id="rc-zb-f-dni" placeholder="e.g. ^0x78" style="width:120px"></label>
+        <label>Manufacturer: <input id="rc-zb-f-mfr" placeholder="100B, Signify" style="width:160px"></label>
         <label>Min LQI: <input id="rc-zb-f-minlqi" type="number" placeholder="any" style="width:80px"></label>
         <label>Max RSSI: <input id="rc-zb-f-maxrssi" type="number" placeholder="any" style="width:80px"></label>
         <button id="rc-zb-f-clear">Clear filters</button>
@@ -2800,15 +2795,16 @@ function rcZbFilterCard(){
 
 function rcZbReadFilters(){
   const z=RC.zigbee;const get=id=>{const el=document.getElementById(id);return el?el.value.trim():''};
-  const csv=v=>v?v.split(/[,\s]+/).map(s=>s.toUpperCase().replace(/^0X/,'').padStart(4,'0')):null;
-  const csvByte=v=>v?v.split(/[,\s]+/).map(s=>s.toLowerCase().replace(/^0x/,'').padStart(2,'0')):null;
+  // Substring tokens, lowercased, with any "0x" prefix stripped. Empty tokens dropped.
+  const tokens=v=>{if(!v)return null;const t=v.split(/[,\s]+/).map(s=>s.toLowerCase().replace(/^0x/,'')).filter(Boolean);return t.length?t:null};
+  const csvByte=v=>v?v.split(/[,\s]+/).map(s=>s.toLowerCase().replace(/^0x/,'').padStart(2,'0')).filter(Boolean):null;
   let dniRe=null;const dniStr=get('rc-zb-f-dni');
   if(dniStr){try{dniRe=new RegExp(dniStr,'i')}catch(e){dniRe=null}}
   z.filters={
-    cluster:csv(get('rc-zb-f-cluster')),
+    cluster:tokens(get('rc-zb-f-cluster')),
     cmd:csvByte(get('rc-zb-f-cmd')),
     dni:dniRe,
-    mfr:csv(get('rc-zb-f-mfr')),
+    mfr:tokens(get('rc-zb-f-mfr')),
     minLqi:get('rc-zb-f-minlqi')?parseInt(get('rc-zb-f-minlqi'),10):null,
     maxRssi:get('rc-zb-f-maxrssi')?parseInt(get('rc-zb-f-maxrssi'),10):null
   };
@@ -2817,10 +2813,21 @@ function rcZbReadFilters(){
 function rcZbFrameMatchesFilter(text,f){
   if(!f)return true;
   let frame;try{frame=JSON.parse(text)}catch(e){return false}
-  if(f.cluster){const c=String(frame.clusterId||'').toUpperCase().padStart(4,'0');if(!f.cluster.includes(c))return false}
+  if(f.cluster){
+    // Substring match against hex code OR friendly label. Any token hits = pass.
+    const code=String(frame.clusterId||'').toLowerCase();
+    const label=clusterLabel(frame.clusterId||'').toLowerCase();
+    if(!f.cluster.some(t=>code.includes(t)||label.includes(t)))return false;
+  }
   if(f.cmd){const cmd=frame.payload&&frame.payload.length>2?String(frame.payload[2]).toLowerCase():'';if(!f.cmd.includes(cmd))return false}
-  if(f.dni&&!f.dni.test(String(frame.id||'')))return false;
-  if(f.mfr){const m=(frame.clusterId==='0019'&&frame.payload&&frame.payload.length>=6)?(frame.payload[5]+frame.payload[4]).toUpperCase():'';if(!f.mfr.includes(m))return false}
+  if(f.dni&&!f.dni.test(String(frame.id?'0x'+String(frame.id).toUpperCase():'')))return false;
+  if(f.mfr){
+    // Manufacturer code is OTA-specific (cluster 0019). Skip non-OTA frames when filtering.
+    if(frame.clusterId!=='0019'||!frame.payload||frame.payload.length<6)return false;
+    const code=(frame.payload[5]+frame.payload[4]).toLowerCase();
+    const label=mfrLabel((frame.payload[5]+frame.payload[4]).toUpperCase()).toLowerCase();
+    if(!f.mfr.some(t=>code.includes(t)||label.includes(t)))return false;
+  }
   if(f.minLqi!=null&&(frame.lastHopLqi==null||frame.lastHopLqi<f.minLqi))return false;
   if(f.maxRssi!=null&&(frame.lastHopRssi==null||frame.lastHopRssi>f.maxRssi))return false;
   return true;
@@ -2907,7 +2914,7 @@ function rcZbRenderAggregates(){
 }
 
 function rcZbRenderTail(){
-  const z=RC.zigbee;if(z.pausedLiveTail)return;
+  const z=RC.zigbee;
   // Rebuild displayBuf from the recording buffer's tail (last z.displayCap frames after filter).
   const src=z.buf?z.buf.frames:[];
   const filters=z.filters;
@@ -2917,9 +2924,9 @@ function rcZbRenderTail(){
     if(!rcZbFrameMatchesFilter(src[i].line,filters))continue;
     const r=rcZbFrameToRow(src[i].line);if(r)z.displayBuf.push(r);
   }
-  // Render via existing tbl() helper
+  // Render via existing tbl() helper. Wrap in a scrollable container so the tail caps at ~50 rows visible.
   const container=document.getElementById('rc-zb-live');
-  container.innerHTML='<div class="card"><h3 style="margin-top:0">Live tail (last '+z.displayBuf.length+' frames)</h3><div id="rc-zb-tail-tbl"></div></div>';
+  container.innerHTML='<div class="card"><h3 style="margin-top:0">Live tail (last '+z.displayBuf.length+' of up to '+z.displayCap+' frames)</h3><div id="rc-zb-tail-tbl" style="max-height:420px;overflow-y:auto"></div></div>';
   tbl('rc-zb-tail-tbl',[
     {l:'Time',f:'time'},
     {l:'DNI',f:'id'},
