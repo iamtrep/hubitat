@@ -295,6 +295,39 @@ const ZB_MFR={
 function clusterLabel(id){if(!id)return'';const k=String(id).toUpperCase().padStart(4,'0');return ZB_CLUSTERS[k]?ZB_CLUSTERS[k]+' (0x'+k+')':'0x'+k}
 function mfrLabel(code){if(!code)return'';const k=String(code).toUpperCase().padStart(4,'0');return ZB_MFR[k]?ZB_MFR[k]+' ('+k+')':k}
 
+// ===== RADIO CAPTURE: RING BUFFER =====
+// Stores raw frame lines (JSON strings). Bounded by maxBytes. Oldest-out on overflow.
+class FrameBuffer{
+  constructor(maxBytes){this.maxBytes=maxBytes;this.frames=[];this.bytes=0;this.dropped=0;this.startedAt=null}
+  setMaxBytes(b){this.maxBytes=b;this._trim()}
+  push(line){
+    if(!this.startedAt)this.startedAt=Date.now();
+    const sz=new Blob([line]).size+1; // +1 for newline on emit
+    this.frames.push({line,sz,t:Date.now()});
+    this.bytes+=sz;
+    this._trim();
+  }
+  _trim(){
+    while(this.bytes>this.maxBytes&&this.frames.length){
+      const f=this.frames.shift();this.bytes-=f.sz;this.dropped++;
+    }
+  }
+  clear(){this.frames=[];this.bytes=0;this.dropped=0;this.startedAt=null}
+  count(){return this.frames.length}
+  // Returns frames received within the last windowMs. Also reports actual coverage (oldest frame timestamp).
+  window(windowMs){
+    const cutoff=Date.now()-windowMs;
+    const out=[];let coverFrom=null;
+    for(let i=this.frames.length-1;i>=0;i--){
+      const f=this.frames[i];
+      if(f.t<cutoff)break;
+      out.unshift(f);coverFrom=f.t;
+    }
+    const full=this.frames.length===0||(this.frames.length>0&&this.frames[0].t>=cutoff-1);
+    return{frames:out,coverFrom,fullCoverage:full};
+  }
+}
+
 function mc(l,v,c){const s=c?' style="color:'+c+'"':'';return'<div class="m"><div class="m-l">'+h(l)+'</div><div class="m-v"'+s+'>'+(v??'N/A')+'</div></div>'}
 function ni(l,v,c){const s=c?' style="color:'+c+';font-weight:600"':'';return'<div class="ni"><div class="nl">'+h(l)+'</div><div class="nv"'+s+'>'+h(String(v??'N/A'))+'</div></div>'}
 // Module-level thresholds with hardcoded defaults — updated when settings load
