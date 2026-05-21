@@ -2812,6 +2812,27 @@ function rcZbAggregateBy(frames, keyFn){
   return [...counts.entries()].map(([k,v])=>({k,v})).sort((a,b)=>b.v-a.v);
 }
 
+// OTA command types per Zigbee OTA spec (cluster 0x0019 ZCL commands).
+const OTA_CMDS={'00':'Image Notify','01':'Query Next Image Req','02':'Query Next Image Resp',
+  '03':'Image Block Req','04':'Image Page Req','05':'Image Block Resp',
+  '06':'Upgrade End Req','07':'Upgrade End Resp','08':'Query Specific File Req','09':'Query Specific File Resp'};
+
+function rcZbOtaSummary(frames){
+  const byDev=new Map();
+  for(const f of frames){
+    if(f.clusterId!=='0019')continue;
+    if(!f.payload||f.payload.length<6)continue;
+    const key=f.name||f.id||'unknown';
+    const cmd=String(f.payload[2]).toLowerCase().padStart(2,'0');
+    const mfr=(f.payload[5]+f.payload[4]).toUpperCase();
+    const row=byDev.get(key)||{device:key,frames:0,mfr:'',blockReqs:0,lastCmd:'',lastSeen:null};
+    row.frames++;row.mfr=mfr;row.lastCmd=OTA_CMDS[cmd]||('0x'+cmd);row.lastSeen=f.time||'';
+    if(cmd==='03'||cmd==='04')row.blockReqs++;
+    byDev.set(key,row);
+  }
+  return [...byDev.values()].sort((a,b)=>b.frames-a.frames);
+}
+
 function rcZbRenderAggregates(){
   const z=RC.zigbee;
   const container=document.getElementById('rc-zb-aggregates');
@@ -2850,6 +2871,19 @@ function rcZbRenderAggregates(){
   tbl('rc-zb-top1',[{l:'Device',f:'k'},{l:'Frames',f:'v',t:'n'}],top1,{filter:false});
   tbl('rc-zb-top5',[{l:'Device',f:'k'},{l:'Frames',f:'v',t:'n'}],top5,{filter:false});
   renderBarChart(clusters.map(c=>({label:c.k,value:c.v})),'rc-zb-clusters',{height:200});
+  const ota=rcZbOtaSummary(parsed5);
+  if(ota.length){
+    container.insertAdjacentHTML('beforeend',
+      '<div class="card" style="margin-top:12px"><h3 style="margin-top:0">OTA progress (last 5 min)</h3><div id="rc-zb-ota"></div></div>');
+    tbl('rc-zb-ota',[
+      {l:'Device',f:'device'},
+      {l:'Manufacturer',f:'mfr',r:r=>h(mfrLabel(r.mfr))},
+      {l:'Frames',f:'frames',t:'n'},
+      {l:'Block Reqs',f:'blockReqs',t:'n'},
+      {l:'Last Cmd',f:'lastCmd'},
+      {l:'Last Seen',f:'lastSeen'}
+    ],ota,{filter:false,sc:2,sd:'desc'});
+  }
 }
 
 function rcZbRenderTail(){
