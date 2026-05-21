@@ -2607,7 +2607,6 @@ function renderZigbeeSubTab(){
         <button id="rc-zb-start" class="btn-primary">Start capture</button>
         <button id="rc-zb-stop" disabled>Stop & Download</button>
         <button id="rc-zb-dl" disabled title="Download the current buffer without stopping">Download now</button>
-        <button id="rc-zb-gem" disabled title="Download buffer, copy a Gemini analysis prompt to clipboard, open Gemini">Send to Gemini</button>
         <button id="rc-zb-pause" disabled>Pause live tail</button>
         <button id="rc-zb-clear" disabled>Clear buffers</button>
         <span style="margin-left:auto">Recording cap:
@@ -2632,7 +2631,6 @@ function renderZigbeeSubTab(){
   document.getElementById('rc-zb-start').addEventListener('click',rcZbStart);
   document.getElementById('rc-zb-stop').addEventListener('click',rcZbStop);
   document.getElementById('rc-zb-dl').addEventListener('click',rcZbDownloadNow);
-  document.getElementById('rc-zb-gem').addEventListener('click',rcZbSendToGemini);
   document.getElementById('rc-zb-pause').addEventListener('click',rcZbPause);
   document.getElementById('rc-zb-clear').addEventListener('click',rcZbClear);
   document.getElementById('rc-zb-cap').addEventListener('change',e=>{
@@ -2665,7 +2663,6 @@ function rcZbUpdateBadge(){
   document.getElementById('rc-zb-pause').disabled=idle;
   document.getElementById('rc-zb-clear').disabled=idle&&!z.buf;
   document.getElementById('rc-zb-dl').disabled=!hasFrames;
-  document.getElementById('rc-zb-gem').disabled=!hasFrames;
 }
 
 function rcZbStart(){
@@ -2721,60 +2718,6 @@ function rcZbDownloadNow(){
   console.log('Saved',fn);
 }
 
-function rcZbSendToGemini(){
-  const z=RC.zigbee;if(!z.buf||z.buf.count()===0)return;
-  const fn=downloadRecording(z.buf,rcZbCaptureMeta(),'zigbee');
-  const promptText='Please analyse the Zigbee traffic in the attached capture file from my Hubitat hub. The file is JSON-lines (one frame per line); the first line is a #-prefixed metadata header. Tell me about your findings, prioritized by impact on mesh health (top talkers, retries, weak links, OTA activity, abnormal patterns).';
-  // window.open and execCommand must run synchronously inside the click handler.
-  // navigator.clipboard requires a secure context (HTTPS) — the hub serves HTTP, so we use execCommand.
-  window.open('https://gemini.google.com/app','_blank','noopener');
-  const copied=rcZbCopyToClipboard(promptText);
-  rcZbShowGeminiModal(fn,promptText,copied);
-}
-
-function rcZbCopyToClipboard(text){
-  try{
-    const ta=document.createElement('textarea');
-    ta.value=text;
-    ta.style.position='fixed';ta.style.left='-9999px';ta.style.top='-9999px';
-    document.body.appendChild(ta);
-    ta.focus();ta.select();
-    const ok=document.execCommand('copy');
-    document.body.removeChild(ta);
-    return ok;
-  }catch(e){return false}
-}
-
-function rcZbShowGeminiModal(filename,promptText,copied){
-  const existing=document.getElementById('rc-zb-gem-modal');if(existing)existing.remove();
-  const overlay=document.createElement('div');
-  overlay.id='rc-zb-gem-modal';
-  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:9999';
-  overlay.innerHTML=`
-    <div style="background:#1a1d24;color:#e6e6e6;padding:20px;border-radius:8px;max-width:680px;width:90%;box-shadow:0 8px 40px rgba(0,0,0,.5)">
-      <h3 style="margin:0 0 12px 0">Send to Gemini</h3>
-      <p style="font-size:13px;margin:0 0 8px 0">Downloaded <code>${h(filename)}</code>. Gemini opened in a new tab.</p>
-      <p style="font-size:13px;margin:0 0 8px 0">${copied?'Prompt copied to clipboard.':'<span style="color:var(--warn,#f5a623)">Auto-copy failed (HTTP context). Use the Copy button below or click the box and press Ctrl/Cmd-C.</span>'} Paste in Gemini, then attach the downloaded file.</p>
-      <textarea id="rc-zb-gem-prompt" readonly style="width:100%;height:140px;font-family:ui-monospace,monospace;font-size:12px;padding:8px;background:rgba(255,255,255,0.06);color:inherit;border:1px solid rgba(255,255,255,0.2);border-radius:4px;box-sizing:border-box;resize:vertical">${h(promptText)}</textarea>
-      <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-        <button id="rc-zb-gem-copy">Copy prompt</button>
-        <button id="rc-zb-gem-close" class="btn-primary">Close</button>
-      </div>
-    </div>`;
-  document.body.appendChild(overlay);
-  const ta=document.getElementById('rc-zb-gem-prompt');
-  ta.addEventListener('focus',()=>ta.select());
-  ta.addEventListener('click',()=>ta.select());
-  document.getElementById('rc-zb-gem-copy').addEventListener('click',()=>{
-    const ok=rcZbCopyToClipboard(promptText);
-    const btn=document.getElementById('rc-zb-gem-copy');
-    btn.textContent=ok?'Copied!':'Copy failed — select manually';
-    setTimeout(()=>{if(document.getElementById('rc-zb-gem-copy'))btn.textContent='Copy prompt'},2000);
-  });
-  document.getElementById('rc-zb-gem-close').addEventListener('click',()=>overlay.remove());
-  overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove()});
-}
-
 function rcZbConnect(){
   const z=RC.zigbee;
   z.state='connecting';rcZbUpdateBadge();
@@ -2820,7 +2763,6 @@ function rcZbUpdateMetrics(){
   const hasFrames=!!z.buf&&z.buf.count()>0;
   document.getElementById('rc-zb-clear').disabled=!z.buf||z.buf.count()===0;
   const dl=document.getElementById('rc-zb-dl');if(dl)dl.disabled=!hasFrames;
-  const gem=document.getElementById('rc-zb-gem');if(gem)gem.disabled=!hasFrames;
 }
 
 function rcZbFrameToRow(text){
