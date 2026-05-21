@@ -2582,24 +2582,21 @@ async function rRadioCapture(){
   document.getElementById(P).innerHTML=`
     <div class="tabs" id="rc-subtabs" style="margin-bottom:12px">
       <div class="tab active" data-rcsub="zigbee">Zigbee</div>
-      <div class="tab" data-rcsub="zwaveZip">Z-Wave (Z/IP)</div>
-      <div class="tab" data-rcsub="zwaveJs">Z-Wave JS</div>
+      <div class="tab" data-rcsub="zwave">Z-Wave</div>
     </div>
     <div id="rc-zigbee"></div>
-    <div id="rc-zwaveZip" style="display:none"></div>
-    <div id="rc-zwaveJs" style="display:none"></div>
+    <div id="rc-zwave" style="display:none"></div>
   `;
   document.getElementById('rc-subtabs').addEventListener('click',e=>{
     const s=e.target.dataset.rcsub;if(!s)return;
     document.querySelectorAll('#rc-subtabs .tab').forEach(t=>t.classList.toggle('active',t.dataset.rcsub===s));
-    ['zigbee','zwaveZip','zwaveJs'].forEach(k=>{
+    ['zigbee','zwave'].forEach(k=>{
       document.getElementById('rc-'+k).style.display=k===s?'':'none';
     });
     RC.subTab=s;
   });
   renderZigbeeSubTab();
-  renderZwaveZipPlaceholder();
-  renderZwaveJsPlaceholder();
+  renderZwavePlaceholder();
 }
 
 function renderZigbeeSubTab(){
@@ -2609,6 +2606,8 @@ function renderZigbeeSubTab(){
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button id="rc-zb-start" class="btn-primary">Start capture</button>
         <button id="rc-zb-stop" disabled>Stop & Download</button>
+        <button id="rc-zb-dl" disabled title="Download the current buffer without stopping">Download now</button>
+        <button id="rc-zb-gem" disabled title="Download buffer, copy a Gemini analysis prompt to clipboard, open Gemini">Send to Gemini</button>
         <button id="rc-zb-pause" disabled>Pause live tail</button>
         <button id="rc-zb-clear" disabled>Clear buffers</button>
         <span style="margin-left:auto">Recording cap:
@@ -2632,6 +2631,8 @@ function renderZigbeeSubTab(){
   `;
   document.getElementById('rc-zb-start').addEventListener('click',rcZbStart);
   document.getElementById('rc-zb-stop').addEventListener('click',rcZbStop);
+  document.getElementById('rc-zb-dl').addEventListener('click',rcZbDownloadNow);
+  document.getElementById('rc-zb-gem').addEventListener('click',rcZbSendToGemini);
   document.getElementById('rc-zb-pause').addEventListener('click',rcZbPause);
   document.getElementById('rc-zb-clear').addEventListener('click',rcZbClear);
   document.getElementById('rc-zb-cap').addEventListener('change',e=>{
@@ -2652,15 +2653,19 @@ function renderZigbeeSubTab(){
 
 function rcZbUpdateBadge(){
   const el=document.getElementById('rc-zb-state');if(!el)return;
-  const s=RC.zigbee.state;
+  const z=RC.zigbee;
+  const s=z.state;
   const cls=s==='connected'?'b-ok':s==='disconnected'||s==='idle'?'b-warn':'b-warn';
   el.className='badge '+cls;el.textContent=s;
-  // Button enable/disable based on state
+  // Button enable/disable based on state + buffer presence
   const idle=s==='idle'||s==='disconnected';
+  const hasFrames=!!z.buf&&z.buf.count()>0;
   document.getElementById('rc-zb-start').disabled=!idle;
   document.getElementById('rc-zb-stop').disabled=idle;
   document.getElementById('rc-zb-pause').disabled=idle;
-  document.getElementById('rc-zb-clear').disabled=idle&&!RC.zigbee.buf;
+  document.getElementById('rc-zb-clear').disabled=idle&&!z.buf;
+  document.getElementById('rc-zb-dl').disabled=!hasFrames;
+  document.getElementById('rc-zb-gem').disabled=!hasFrames;
 }
 
 function rcZbStart(){
@@ -2699,6 +2704,36 @@ function rcZbPause(){
 function rcZbClear(){
   const z=RC.zigbee;if(z.buf)z.buf.clear();z.displayBuf=[];z.framesLastSec=[];
   rcZbUpdateMetrics();rcZbRenderTail();
+}
+
+function rcZbCaptureMeta(){
+  const z=RC.zigbee;
+  return{
+    hubName:RC.hubName,hubIp:RC.hubIp,firmware:null,
+    appVersion:UI_VERSION,uiVersion:UI_VERSION,
+    captureDurationS:z.buf&&z.buf.startedAt?Math.round((Date.now()-z.buf.startedAt)/1000):null
+  };
+}
+
+function rcZbDownloadNow(){
+  const z=RC.zigbee;if(!z.buf||z.buf.count()===0)return;
+  const fn=downloadRecording(z.buf,rcZbCaptureMeta(),'zigbee');
+  console.log('Saved',fn);
+}
+
+function rcZbSendToGemini(){
+  const z=RC.zigbee;if(!z.buf||z.buf.count()===0)return;
+  const fn=downloadRecording(z.buf,rcZbCaptureMeta(),'zigbee');
+  const prompt='Please analyse the Zigbee traffic in the attached capture file from my Hubitat hub. The file is JSON-lines (one frame per line); the first line is a #-prefixed metadata header. Tell me about your findings, prioritized by impact on mesh health (top talkers, retries, weak links, OTA activity, abnormal patterns).';
+  let clipPromise;
+  try{clipPromise=navigator.clipboard.writeText(prompt)}catch(e){clipPromise=Promise.reject(e)}
+  Promise.resolve(clipPromise).then(()=>{
+    alert('Downloaded '+fn+'\nGemini prompt copied to clipboard.\nOpen Gemini, paste the prompt, and attach the downloaded file.');
+  }).catch(()=>{
+    alert('Downloaded '+fn+'\n(Could not copy prompt to clipboard — paste this manually:)\n\n'+prompt);
+  }).finally(()=>{
+    window.open('https://gemini.google.com/app','_blank','noopener');
+  });
 }
 
 function rcZbConnect(){
@@ -2742,19 +2777,23 @@ function rcZbUpdateMetrics(){
   if(bufEl)bufEl.textContent=(z.buf?z.buf.count():0)+' frames / '+fbytes(z.buf?z.buf.bytes:0);
   const dropEl=document.getElementById('rc-zb-dropped');
   if(dropEl)dropEl.textContent=z.buf?z.buf.dropped:0;
-  // Re-evaluate clear button enable
+  // Re-evaluate buffer-dependent button enables
+  const hasFrames=!!z.buf&&z.buf.count()>0;
   document.getElementById('rc-zb-clear').disabled=!z.buf||z.buf.count()===0;
+  const dl=document.getElementById('rc-zb-dl');if(dl)dl.disabled=!hasFrames;
+  const gem=document.getElementById('rc-zb-gem');if(gem)gem.disabled=!hasFrames;
 }
 
 function rcZbFrameToRow(text){
   let f;try{f=JSON.parse(text)}catch(e){return null}
   return{
     time:f.time||'',
-    id:f.id||'',
+    id:f.id?'0x'+String(f.id).toUpperCase():'',
     name:f.name||'',
+    _deviceId:f.deviceId,
     cluster:f.clusterId?clusterLabel(f.clusterId):'',
     cmd:f.payload&&f.payload.length>2?'0x'+f.payload[2]:'',
-    mfr:(f.payload&&f.payload.length>=6)?mfrLabel((f.payload[5]+f.payload[4]).toUpperCase()):'',
+    mfr:(f.clusterId==='0019'&&f.payload&&f.payload.length>=6)?mfrLabel((f.payload[5]+f.payload[4]).toUpperCase()):'',
     lqi:f.lastHopLqi!=null?f.lastHopLqi:'',
     rssi:f.lastHopRssi!=null?f.lastHopRssi:'',
     payload:(f.payload||[]).slice(0,32).join(' ')+((f.payload||[]).length>32?' …':''),
@@ -2780,7 +2819,7 @@ function rcZbFilterCard(){
 
 function rcZbReadFilters(){
   const z=RC.zigbee;const get=id=>{const el=document.getElementById(id);return el?el.value.trim():''};
-  const csv=v=>v?v.split(/[,\s]+/).map(s=>s.toUpperCase().padStart(4,'0')):null;
+  const csv=v=>v?v.split(/[,\s]+/).map(s=>s.toUpperCase().replace(/^0X/,'').padStart(4,'0')):null;
   const csvByte=v=>v?v.split(/[,\s]+/).map(s=>s.toLowerCase().replace(/^0x/,'').padStart(2,'0')):null;
   let dniRe=null;const dniStr=get('rc-zb-f-dni');
   if(dniStr){try{dniRe=new RegExp(dniStr,'i')}catch(e){dniRe=null}}
@@ -2800,7 +2839,7 @@ function rcZbFrameMatchesFilter(text,f){
   if(f.cluster){const c=String(frame.clusterId||'').toUpperCase().padStart(4,'0');if(!f.cluster.includes(c))return false}
   if(f.cmd){const cmd=frame.payload&&frame.payload.length>2?String(frame.payload[2]).toLowerCase():'';if(!f.cmd.includes(cmd))return false}
   if(f.dni&&!f.dni.test(String(frame.id||'')))return false;
-  if(f.mfr){const m=(frame.payload&&frame.payload.length>=6)?(frame.payload[5]+frame.payload[4]).toUpperCase():'';if(!f.mfr.includes(m))return false}
+  if(f.mfr){const m=(frame.clusterId==='0019'&&frame.payload&&frame.payload.length>=6)?(frame.payload[5]+frame.payload[4]).toUpperCase():'';if(!f.mfr.includes(m))return false}
   if(f.minLqi!=null&&(frame.lastHopLqi==null||frame.lastHopLqi<f.minLqi))return false;
   if(f.maxRssi!=null&&(frame.lastHopRssi==null||frame.lastHopRssi>f.maxRssi))return false;
   return true;
@@ -2903,7 +2942,7 @@ function rcZbRenderTail(){
   tbl('rc-zb-tail-tbl',[
     {l:'Time',f:'time'},
     {l:'DNI',f:'id'},
-    {l:'Name',f:'name'},
+    {l:'Name',f:'name',r:r=>r._deviceId?dlink(r._deviceId,r.name):h(r.name)},
     {l:'Cluster',f:'cluster'},
     {l:'Cmd',f:'cmd'},
     {l:'Manufacturer',f:'mfr'},
@@ -2912,8 +2951,7 @@ function rcZbRenderTail(){
     {l:'Payload',f:'payload'}
   ],z.displayBuf,{filter:false}); // newest first (loop already walked newest-to-oldest)
 }
-function renderZwaveZipPlaceholder(){document.getElementById('rc-zwaveZip').innerHTML='<div class="card">Z-Wave (Z/IP) capture coming in pass 2.</div>'}
-function renderZwaveJsPlaceholder(){document.getElementById('rc-zwaveJs').innerHTML='<div class="card">Z-Wave JS capture coming in a later pass.</div>'}
+function renderZwavePlaceholder(){document.getElementById('rc-zwave').innerHTML='<div class="card">Z-Wave capture coming in pass 2. Auto-detects the active stack (Z/IP or Z-Wave JS) at runtime.</div>'}
 
 // ===== TAB MANAGEMENT =====
 const R={dashboard:rDashboard,devices:rDevices,apps:rApps,code:rCode,network:rNetwork,health:rHealth,performance:rPerf,config:rConfig,snapshots:rSnap,'radio-capture':rRadioCapture};
