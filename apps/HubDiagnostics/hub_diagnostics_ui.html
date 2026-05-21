@@ -2626,6 +2626,7 @@ function renderZigbeeSubTab(){
         <span>Dropped: <span id="rc-zb-dropped">0</span></span>
       </div>
     </div>
+    ${rcZbFilterCard()}
     <div id="rc-zb-live"></div>
     <div id="rc-zb-aggregates"></div>
   `;
@@ -2638,6 +2639,15 @@ function renderZigbeeSubTab(){
     if(z.buf)z.buf.setMaxBytes(mb*1024*1024);
   });
   rcZbUpdateBadge();
+  ['rc-zb-f-cluster','rc-zb-f-cmd','rc-zb-f-dni','rc-zb-f-mfr','rc-zb-f-minlqi','rc-zb-f-maxrssi'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el)el.addEventListener('input',()=>{rcZbReadFilters();rcZbRenderTail()});
+  });
+  document.getElementById('rc-zb-f-clear').addEventListener('click',()=>{
+    ['rc-zb-f-cluster','rc-zb-f-cmd','rc-zb-f-dni','rc-zb-f-mfr','rc-zb-f-minlqi','rc-zb-f-maxrssi'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=''});
+    rcZbReadFilters();rcZbRenderTail();
+  });
+  rcZbReadFilters();
 }
 
 function rcZbUpdateBadge(){
@@ -2750,13 +2760,61 @@ function rcZbFrameToRow(text){
   };
 }
 
+function rcZbFilterCard(){
+  return `
+    <div class="card" style="margin-bottom:12px">
+      <h3 style="margin-top:0">Filters <span style="font-weight:normal;font-size:12px;opacity:.7">(live tail only; recording stays unfiltered)</span></h3>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;font-size:13px">
+        <label>Cluster: <input id="rc-zb-f-cluster" placeholder="e.g. 0019,0006" style="width:140px"></label>
+        <label>Cmd byte: <input id="rc-zb-f-cmd" placeholder="e.g. 02" style="width:80px"></label>
+        <label>DNI regex: <input id="rc-zb-f-dni" placeholder="e.g. ^78" style="width:120px"></label>
+        <label>Manufacturer: <input id="rc-zb-f-mfr" placeholder="e.g. 100B,117C" style="width:140px"></label>
+        <label>Min LQI: <input id="rc-zb-f-minlqi" type="number" placeholder="any" style="width:80px"></label>
+        <label>Max RSSI: <input id="rc-zb-f-maxrssi" type="number" placeholder="any" style="width:80px"></label>
+        <button id="rc-zb-f-clear">Clear filters</button>
+      </div>
+    </div>`;
+}
+
+function rcZbReadFilters(){
+  const z=RC.zigbee;const get=id=>{const el=document.getElementById(id);return el?el.value.trim():''};
+  const csv=v=>v?v.split(/[,\s]+/).map(s=>s.toUpperCase().padStart(4,'0')):null;
+  const csvByte=v=>v?v.split(/[,\s]+/).map(s=>s.toLowerCase().replace(/^0x/,'').padStart(2,'0')):null;
+  let dniRe=null;const dniStr=get('rc-zb-f-dni');
+  if(dniStr){try{dniRe=new RegExp(dniStr,'i')}catch(e){dniRe=null}}
+  z.filters={
+    cluster:csv(get('rc-zb-f-cluster')),
+    cmd:csvByte(get('rc-zb-f-cmd')),
+    dni:dniRe,
+    mfr:csv(get('rc-zb-f-mfr')),
+    minLqi:get('rc-zb-f-minlqi')?parseInt(get('rc-zb-f-minlqi'),10):null,
+    maxRssi:get('rc-zb-f-maxrssi')?parseInt(get('rc-zb-f-maxrssi'),10):null
+  };
+}
+
+function rcZbFrameMatchesFilter(text,f){
+  if(!f)return true;
+  let frame;try{frame=JSON.parse(text)}catch(e){return false}
+  if(f.cluster){const c=String(frame.clusterId||'').toUpperCase().padStart(4,'0');if(!f.cluster.includes(c))return false}
+  if(f.cmd){const cmd=frame.payload&&frame.payload.length>2?String(frame.payload[2]).toLowerCase():'';if(!f.cmd.includes(cmd))return false}
+  if(f.dni&&!f.dni.test(String(frame.id||'')))return false;
+  if(f.mfr){const m=(frame.payload&&frame.payload.length>=6)?(frame.payload[5]+frame.payload[4]).toUpperCase():'';if(!f.mfr.includes(m))return false}
+  if(f.minLqi!=null&&(frame.lastHopLqi==null||frame.lastHopLqi<f.minLqi))return false;
+  if(f.maxRssi!=null&&(frame.lastHopRssi==null||frame.lastHopRssi>f.maxRssi))return false;
+  return true;
+}
+
 function rcZbRenderTail(){
   const z=RC.zigbee;if(z.pausedLiveTail)return;
-  // Rebuild displayBuf from the recording buffer's tail (last z.displayCap frames after filter — Task 9 adds filter).
+  // Rebuild displayBuf from the recording buffer's tail (last z.displayCap frames after filter).
   const src=z.buf?z.buf.frames:[];
-  const start=Math.max(0,src.length-z.displayCap);
+  const filters=z.filters;
   z.displayBuf=[];
-  for(let i=start;i<src.length;i++){const r=rcZbFrameToRow(src[i].line);if(r)z.displayBuf.push(r)}
+  // Walk the recording buffer from newest to oldest until we have z.displayCap matching frames.
+  for(let i=src.length-1;i>=0&&z.displayBuf.length<z.displayCap;i--){
+    if(!rcZbFrameMatchesFilter(src[i].line,filters))continue;
+    const r=rcZbFrameToRow(src[i].line);if(r)z.displayBuf.push(r);
+  }
   // Render via existing tbl() helper
   const container=document.getElementById('rc-zb-live');
   container.innerHTML='<div class="card"><h3 style="margin-top:0">Live tail (last '+z.displayBuf.length+' frames)</h3><div id="rc-zb-tail-tbl"></div></div>';
@@ -2770,7 +2828,7 @@ function rcZbRenderTail(){
     {l:'LQI',f:'lqi',t:'n'},
     {l:'RSSI',f:'rssi',t:'n'},
     {l:'Payload',f:'payload'}
-  ],z.displayBuf.slice().reverse(),{filter:false}); // newest at top
+  ],z.displayBuf,{filter:false}); // newest first (loop already walked newest-to-oldest)
 }
 function renderZwaveZipPlaceholder(){document.getElementById('rc-zwaveZip').innerHTML='<div class="card">Z-Wave (Z/IP) capture coming in pass 2.</div>'}
 function renderZwaveJsPlaceholder(){document.getElementById('rc-zwaveJs').innerHTML='<div class="card">Z-Wave JS capture coming in a later pass.</div>'}
