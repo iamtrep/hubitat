@@ -121,6 +121,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
   <div class="tab" data-tab="health">Health</div>
   <div class="tab" data-tab="performance">Performance</div>
   <div class="tab" data-tab="snapshots">Snapshots</div>
+  <div class="tab" data-tab="radio-capture">Radio Capture</div>
   <div class="tab" data-tab="config">App Settings</div>
 </div>
 <div class="content">
@@ -132,6 +133,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
   <div class="panel" id="p-health"></div>
   <div class="panel" id="p-performance"></div>
   <div class="panel" id="p-snapshots"></div>
+  <div class="panel" id="p-radio-capture"></div>
   <div class="panel" id="p-config"></div>
 </div>
 <script>
@@ -2553,8 +2555,59 @@ async function rConfig(){const P='p-config';loading(P);try{
   };
 }catch(e){err(P,e,rConfig)}}
 
+// ===== RADIO CAPTURE: RENDERER =====
+const RC={
+  subTab:'zigbee',                              // current sub-tab
+  hubName:null,                                  // captured from dashboard payload
+  hubIp:null,                                    // ditto
+  zigbee:{                                       // pass-1 sub-tab state; pass-2 mirrors for zwaveZip / zwaveJs
+    buf:null,             // FrameBuffer
+    socket:null,          // WebSocket
+    state:'idle',         // idle|connecting|connected|paused|disconnected|reconnecting
+    reconnectMs:1000,     // exponential backoff
+    reconnectTimer:null,
+    pausedLiveTail:false,
+    displayBuf:[],        // ring of last 1000 filtered display rows
+    displayCap:1000,
+    filters:{cluster:null,cmd:null,dni:'',mfr:null,minLqi:null,maxRssi:null},
+    framesLastSec:[],     // sliding window for frames/s counter
+    lastAggregateAt:0
+  }
+};
+
+async function rRadioCapture(){
+  const P='p-radio-capture';
+  // Populate hub identity from dashboard cache (already fetched on most sessions).
+  try{const d=await api('dashboard');RC.hubName=d&&d.hub&&d.hub.name;RC.hubIp=d&&d.hub&&d.hub.ip}catch(e){}
+  document.getElementById(P).innerHTML=`
+    <div class="tabs" id="rc-subtabs" style="margin-bottom:12px">
+      <div class="tab active" data-rcsub="zigbee">Zigbee</div>
+      <div class="tab" data-rcsub="zwaveZip">Z-Wave (Z/IP)</div>
+      <div class="tab" data-rcsub="zwaveJs">Z-Wave JS</div>
+    </div>
+    <div id="rc-zigbee"></div>
+    <div id="rc-zwaveZip" style="display:none"></div>
+    <div id="rc-zwaveJs" style="display:none"></div>
+  `;
+  document.getElementById('rc-subtabs').addEventListener('click',e=>{
+    const s=e.target.dataset.rcsub;if(!s)return;
+    document.querySelectorAll('#rc-subtabs .tab').forEach(t=>t.classList.toggle('active',t.dataset.rcsub===s));
+    ['zigbee','zwaveZip','zwaveJs'].forEach(k=>{
+      document.getElementById('rc-'+k).style.display=k===s?'':'none';
+    });
+    RC.subTab=s;
+  });
+  renderZigbeeSubTab();
+  renderZwaveZipPlaceholder();
+  renderZwaveJsPlaceholder();
+}
+
+function renderZigbeeSubTab(){document.getElementById('rc-zigbee').innerHTML='<div class="card">Zigbee capture controls (Task 7)</div>'}
+function renderZwaveZipPlaceholder(){document.getElementById('rc-zwaveZip').innerHTML='<div class="card">Z-Wave (Z/IP) capture coming in pass 2.</div>'}
+function renderZwaveJsPlaceholder(){document.getElementById('rc-zwaveJs').innerHTML='<div class="card">Z-Wave JS capture coming in a later pass.</div>'}
+
 // ===== TAB MANAGEMENT =====
-const R={dashboard:rDashboard,devices:rDevices,apps:rApps,code:rCode,network:rNetwork,health:rHealth,performance:rPerf,config:rConfig,snapshots:rSnap};
+const R={dashboard:rDashboard,devices:rDevices,apps:rApps,code:rCode,network:rNetwork,health:rHealth,performance:rPerf,config:rConfig,snapshots:rSnap,'radio-capture':rRadioCapture};
 function go(t){
   curTab=t;
   localStorage.setItem('hub_diag_tab', t);
