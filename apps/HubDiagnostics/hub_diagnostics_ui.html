@@ -2567,9 +2567,9 @@ const RC={
     reconnectMs:1000,     // exponential backoff
     reconnectTimer:null,
     pausedCapture:false,
-    displayBuf:[],        // ring of last 50 filtered display rows; rendered in a scrollable container
-    displayCap:50,
+    displayBuf:[],        // all filtered display rows (newest first). Visible area is fixed via overflow-y; buffer is not capped.
     selectedRaw:null,     // raw JSON text of the currently expanded row (or null)
+    lastTailRenderAt:0,   // throttle tail re-render to ~1 Hz during ingest to keep large-buffer renders cheap
     filters:{cluster:null,cmd:null,dni:'',mfr:null,minLqi:null,maxRssi:null},
     framesLastSec:[],     // sliding window for frames/s counter
     lastAggregateAt:0
@@ -2741,11 +2741,12 @@ function rcZbOnFrame(text){
   z.framesLastSec.push(now);
   // prune to 5 s window for rate calc
   while(z.framesLastSec.length&&z.framesLastSec[0]<now-5000)z.framesLastSec.shift();
-  // Tail + metrics throttled to ~10 Hz; aggregates throttled to ~1 Hz separately.
+  // Metrics throttled to ~10 Hz via rAF; tail + aggregates each throttled to ~1 Hz to stay cheap as the buffer grows.
   if(!z._tailPending){z._tailPending=true;requestAnimationFrame(()=>{
-    z._tailPending=false;rcZbUpdateMetrics();rcZbRenderTail();
-    const now=Date.now();
-    if(now-z.lastAggregateAt>1000){z.lastAggregateAt=now;rcZbRenderAggregates()}
+    z._tailPending=false;rcZbUpdateMetrics();
+    const t=Date.now();
+    if(t-z.lastTailRenderAt>1000){z.lastTailRenderAt=t;rcZbRenderTail()}
+    if(t-z.lastAggregateAt>1000){z.lastAggregateAt=t;rcZbRenderAggregates()}
   })}
 }
 
@@ -2938,19 +2939,19 @@ function rcZbRenderAggregates(){
 
 function rcZbRenderTail(){
   const z=RC.zigbee;
-  // Rebuild displayBuf from the recording buffer's tail (last z.displayCap frames after filter).
+  // Rebuild displayBuf from the entire recording buffer (filter-respecting). Newest first.
+  // Buffer accumulates without cap — the visible area is constrained by max-height + overflow-y on the wrapper.
   const src=z.buf?z.buf.frames:[];
   const filters=z.filters;
   z.displayBuf=[];
-  // Walk the recording buffer from newest to oldest until we have z.displayCap matching frames.
-  for(let i=src.length-1;i>=0&&z.displayBuf.length<z.displayCap;i--){
+  for(let i=src.length-1;i>=0;i--){
     if(!rcZbFrameMatchesFilter(src[i].line,filters))continue;
     const r=rcZbFrameToRow(src[i].line);if(r)z.displayBuf.push(r);
   }
-  // If the selected row scrolled out of the buffer, deselect it.
+  // If the selected row scrolled out (e.g., ring overflow dropped it), deselect.
   if(z.selectedRaw&&!z.displayBuf.some(r=>r._raw===z.selectedRaw))z.selectedRaw=null;
   const container=document.getElementById('rc-zb-live');
-  container.innerHTML='<div class="card"><h3 style="margin-top:0">Live tail (last '+z.displayBuf.length+' of up to '+z.displayCap+' frames) <span style="font-weight:normal;font-size:12px;opacity:.7">— click a row to expand</span></h3><div id="rc-zb-tail-tbl" style="max-height:420px;overflow-y:auto;border:1px solid rgba(255,255,255,0.08);border-radius:4px">'+rcZbRenderTailHtml(z.displayBuf,z.selectedRaw)+'</div></div>';
+  container.innerHTML='<div class="card"><h3 style="margin-top:0">Live tail ('+z.displayBuf.length+' frames) <span style="font-weight:normal;font-size:12px;opacity:.7">— click a row to expand; scroll to see older frames</span></h3><div id="rc-zb-tail-tbl" style="max-height:420px;overflow-y:auto;border:1px solid rgba(255,255,255,0.08);border-radius:4px">'+rcZbRenderTailHtml(z.displayBuf,z.selectedRaw)+'</div></div>';
 }
 
 function rcZbRenderTailHtml(rows, selectedRaw){
