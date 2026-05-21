@@ -2763,11 +2763,21 @@ function rcZbUpdateMetrics(){
   const dl=document.getElementById('rc-zb-dl');if(dl)dl.disabled=!hasFrames;
 }
 
+// DNI on zigbeeLogsocket is a 16-bit integer; render as 0xHHHH (4-digit zero-padded uppercase hex).
+// Also handles pure-decimal strings (e.g., "30944") and already-hex strings (e.g., "78E0", "0x78E0").
+function rcZbDniHex(id){
+  if(id==null||id==='')return'';
+  if(typeof id==='number')return'0x'+(id&0xFFFF).toString(16).toUpperCase().padStart(4,'0');
+  const s=String(id).trim();
+  if(/^\d+$/.test(s))return'0x'+(parseInt(s,10)&0xFFFF).toString(16).toUpperCase().padStart(4,'0');
+  return'0x'+s.replace(/^0x/i,'').toUpperCase().padStart(4,'0');
+}
+
 function rcZbFrameToRow(text){
   let f;try{f=JSON.parse(text)}catch(e){return null}
   return{
     time:f.time||'',
-    id:f.id?'0x'+String(f.id).toUpperCase():'',
+    id:rcZbDniHex(f.id),
     name:f.name||'',
     _deviceId:f.deviceId,
     cluster:f.clusterId?clusterLabel(f.clusterId):'',
@@ -2823,7 +2833,7 @@ function rcZbFrameMatchesFilter(text,f){
     if(!f.cluster.some(t=>code.includes(t)||label.includes(t)))return false;
   }
   if(f.cmd){const cmd=frame.payload&&frame.payload.length>2?String(frame.payload[2]).toLowerCase():'';if(!f.cmd.includes(cmd))return false}
-  if(f.dni&&!f.dni.test(String(frame.id?'0x'+String(frame.id).toUpperCase():'')))return false;
+  if(f.dni&&!f.dni.test(rcZbDniHex(frame.id)))return false;
   if(f.mfr){
     // Manufacturer code is OTA-specific (cluster 0019). Skip non-OTA frames when filtering.
     if(frame.clusterId!=='0019'||!frame.payload||frame.payload.length<6)return false;
@@ -2836,10 +2846,16 @@ function rcZbFrameMatchesFilter(text,f){
   return true;
 }
 
-function rcZbAggregateBy(frames, keyFn){
+// Returns array of {k, v, ...extra} sorted by v desc. extraFn(frame) is called once per new key
+// to seed auxiliary fields (e.g., deviceId for link rendering).
+function rcZbAggregateBy(frames, keyFn, extraFn){
   const counts=new Map();
-  for(const f of frames){const k=keyFn(f);if(!k)continue;counts.set(k,(counts.get(k)||0)+1)}
-  return [...counts.entries()].map(([k,v])=>({k,v})).sort((a,b)=>b.v-a.v);
+  for(const f of frames){const k=keyFn(f);if(!k)continue;
+    let row=counts.get(k);
+    if(!row){row={k,v:0,...(extraFn?extraFn(f):{})};counts.set(k,row)}
+    row.v++;
+  }
+  return [...counts.values()].sort((a,b)=>b.v-a.v);
 }
 
 // OTA command types per Zigbee OTA spec (cluster 0x0019 ZCL commands).
@@ -2852,11 +2868,12 @@ function rcZbOtaSummary(frames){
   for(const f of frames){
     if(f.clusterId!=='0019')continue;
     if(!f.payload||f.payload.length<6)continue;
-    const key=f.name||f.id||'unknown';
+    const key=f.name||rcZbDniHex(f.id)||'unknown';
     const cmd=String(f.payload[2]).toLowerCase().padStart(2,'0');
     const mfr=(f.payload[5]+f.payload[4]).toUpperCase();
-    const row=byDev.get(key)||{device:key,frames:0,mfr:'',blockReqs:0,lastCmd:'',lastSeen:null};
+    const row=byDev.get(key)||{device:key,frames:0,mfr:'',blockReqs:0,lastCmd:'',lastSeen:null,deviceId:null};
     row.frames++;row.mfr=mfr;row.lastCmd=OTA_CMDS[cmd]||('0x'+cmd);row.lastSeen=f.time||'';
+    if(!row.deviceId&&f.deviceId)row.deviceId=f.deviceId;
     if(cmd==='03'||cmd==='04')row.blockReqs++;
     byDev.set(key,row);
   }
@@ -2873,8 +2890,10 @@ function rcZbRenderAggregates(){
   const parsed1=win1.frames.map(parse).filter(Boolean);
   const parsed5=win5.frames.map(parse).filter(Boolean);
 
-  const top1=rcZbAggregateBy(parsed1,f=>f.name||f.id).slice(0,10);
-  const top5=rcZbAggregateBy(parsed5,f=>f.name||f.id).slice(0,10);
+  const devKey=f=>f.name||rcZbDniHex(f.id);
+  const devExtra=f=>({deviceId:f.deviceId});
+  const top1=rcZbAggregateBy(parsed1,devKey,devExtra).slice(0,10);
+  const top5=rcZbAggregateBy(parsed5,devKey,devExtra).slice(0,10);
   const clusters=rcZbAggregateBy(parsed5,f=>f.clusterId?clusterLabel(f.clusterId):null).slice(0,15);
 
   const truncNote1=win1.fullCoverage?'':'<div class="warn-note" style="font-size:12px;color:var(--warn);margin-bottom:4px">Window truncated to last '+Math.round((Date.now()-win1.coverFrom)/1000)+' s of buffer.</div>';
@@ -2898,15 +2917,16 @@ function rcZbRenderAggregates(){
         </div>
       </div>
     </div>`;
-  tbl('rc-zb-top1',[{l:'Device',f:'k'},{l:'Frames',f:'v',t:'n'}],top1,{filter:false});
-  tbl('rc-zb-top5',[{l:'Device',f:'k'},{l:'Frames',f:'v',t:'n'}],top5,{filter:false});
+  const devCol={l:'Device',f:'k',r:r=>r.deviceId?dlink(r.deviceId,r.k):h(r.k)};
+  tbl('rc-zb-top1',[devCol,{l:'Frames',f:'v',t:'n'}],top1,{filter:false});
+  tbl('rc-zb-top5',[devCol,{l:'Frames',f:'v',t:'n'}],top5,{filter:false});
   renderBarChart(clusters.map(c=>({label:c.k,value:c.v})),'rc-zb-clusters',{height:200});
   const ota=rcZbOtaSummary(parsed5);
   if(ota.length){
     container.insertAdjacentHTML('beforeend',
       '<div class="card" style="margin-top:12px"><h3 style="margin-top:0">OTA progress (last 5 min)</h3><div id="rc-zb-ota"></div></div>');
     tbl('rc-zb-ota',[
-      {l:'Device',f:'device'},
+      {l:'Device',f:'device',r:r=>r.deviceId?dlink(r.deviceId,r.device):h(r.device)},
       {l:'Manufacturer',f:'mfr',r:r=>h(mfrLabel(r.mfr))},
       {l:'Frames',f:'frames',t:'n'},
       {l:'Block Reqs',f:'blockReqs',t:'n'},
