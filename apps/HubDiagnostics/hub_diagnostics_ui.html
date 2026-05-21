@@ -2602,7 +2602,62 @@ async function rRadioCapture(){
   renderZwaveJsPlaceholder();
 }
 
-function renderZigbeeSubTab(){document.getElementById('rc-zigbee').innerHTML='<div class="card">Zigbee capture controls (Task 7)</div>'}
+function renderZigbeeSubTab(){
+  const z=RC.zigbee;
+  document.getElementById('rc-zigbee').innerHTML=`
+    <div class="card" style="margin-bottom:12px">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button id="rc-zb-start" class="btn-primary">Start capture</button>
+        <button id="rc-zb-stop" disabled>Stop & Download</button>
+        <button id="rc-zb-pause" disabled>Pause live tail</button>
+        <button id="rc-zb-clear" disabled>Clear buffers</button>
+        <span style="margin-left:auto">Recording cap:
+          <select id="rc-zb-cap">
+            <option value="10">10 MB</option>
+            <option value="50" selected>50 MB</option>
+            <option value="200">200 MB</option>
+          </select>
+        </span>
+      </div>
+      <div style="margin-top:8px;display:flex;gap:16px;flex-wrap:wrap;font-size:13px">
+        <span>State: <span id="rc-zb-state" class="badge b-warn">idle</span></span>
+        <span>Frames/s: <span id="rc-zb-rate">0</span></span>
+        <span>Buffered: <span id="rc-zb-buffered">0 frames / 0 MB</span></span>
+        <span>Dropped: <span id="rc-zb-dropped">0</span></span>
+      </div>
+    </div>
+    <div id="rc-zb-live"></div>
+    <div id="rc-zb-aggregates"></div>
+  `;
+  document.getElementById('rc-zb-start').addEventListener('click',rcZbStart);
+  document.getElementById('rc-zb-stop').addEventListener('click',rcZbStop);
+  document.getElementById('rc-zb-pause').addEventListener('click',rcZbPause);
+  document.getElementById('rc-zb-clear').addEventListener('click',rcZbClear);
+  document.getElementById('rc-zb-cap').addEventListener('change',e=>{
+    const mb=parseInt(e.target.value,10);
+    if(z.buf)z.buf.setMaxBytes(mb*1024*1024);
+  });
+  rcZbUpdateBadge();
+}
+
+function rcZbUpdateBadge(){
+  const el=document.getElementById('rc-zb-state');if(!el)return;
+  const s=RC.zigbee.state;
+  const cls=s==='connected'?'b-ok':s==='disconnected'||s==='idle'?'b-warn':'b-warn';
+  el.className='badge '+cls;el.textContent=s;
+  // Button enable/disable based on state
+  const idle=s==='idle'||s==='disconnected';
+  document.getElementById('rc-zb-start').disabled=!idle;
+  document.getElementById('rc-zb-stop').disabled=idle;
+  document.getElementById('rc-zb-pause').disabled=idle;
+  document.getElementById('rc-zb-clear').disabled=idle&&!RC.zigbee.buf;
+}
+
+// Stubs filled in by later tasks
+function rcZbStart(){RC.zigbee.state='connecting';rcZbUpdateBadge();setTimeout(()=>{RC.zigbee.state='idle';rcZbUpdateBadge()},500)}
+function rcZbStop(){RC.zigbee.state='idle';rcZbUpdateBadge()}
+function rcZbPause(){}
+function rcZbClear(){}
 function renderZwaveZipPlaceholder(){document.getElementById('rc-zwaveZip').innerHTML='<div class="card">Z-Wave (Z/IP) capture coming in pass 2.</div>'}
 function renderZwaveJsPlaceholder(){document.getElementById('rc-zwaveJs').innerHTML='<div class="card">Z-Wave JS capture coming in a later pass.</div>'}
 
