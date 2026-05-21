@@ -2734,8 +2734,44 @@ function rcZbUpdateMetrics(){
   document.getElementById('rc-zb-clear').disabled=!z.buf||z.buf.count()===0;
 }
 
-// Stub until Task 8 lands
-function rcZbRenderTail(){}
+function rcZbFrameToRow(text){
+  let f;try{f=JSON.parse(text)}catch(e){return null}
+  return{
+    time:f.time||'',
+    id:f.id||'',
+    name:f.name||'',
+    cluster:f.clusterId?clusterLabel(f.clusterId):'',
+    cmd:f.payload&&f.payload.length>2?'0x'+f.payload[2]:'',
+    mfr:(f.payload&&f.payload.length>=6)?mfrLabel(((f.payload[5]<<8|f.payload[4])>>>0).toString(16).toUpperCase().padStart(4,'0')):'',
+    lqi:f.lastHopLqi!=null?f.lastHopLqi:'',
+    rssi:f.lastHopRssi!=null?f.lastHopRssi:'',
+    payload:(f.payload||[]).slice(0,32).join(' ')+((f.payload||[]).length>32?' …':''),
+    _raw:text
+  };
+}
+
+function rcZbRenderTail(){
+  const z=RC.zigbee;if(z.pausedLiveTail)return;
+  // Rebuild displayBuf from the recording buffer's tail (last z.displayCap frames after filter — Task 9 adds filter).
+  const src=z.buf?z.buf.frames:[];
+  const start=Math.max(0,src.length-z.displayCap);
+  z.displayBuf=[];
+  for(let i=start;i<src.length;i++){const r=rcZbFrameToRow(src[i].line);if(r)z.displayBuf.push(r)}
+  // Render via existing tbl() helper
+  const container=document.getElementById('rc-zb-live');
+  container.innerHTML='<div class="card"><h3 style="margin-top:0">Live tail (last '+z.displayBuf.length+' frames)</h3><div id="rc-zb-tail-tbl"></div></div>';
+  tbl('rc-zb-tail-tbl',[
+    {l:'Time',f:'time'},
+    {l:'DNI',f:'id'},
+    {l:'Name',f:'name'},
+    {l:'Cluster',f:'cluster'},
+    {l:'Cmd',f:'cmd'},
+    {l:'Manufacturer',f:'mfr'},
+    {l:'LQI',f:'lqi',t:'n'},
+    {l:'RSSI',f:'rssi',t:'n'},
+    {l:'Payload',f:'payload'}
+  ],z.displayBuf.slice().reverse(),{filter:false}); // newest at top
+}
 function renderZwaveZipPlaceholder(){document.getElementById('rc-zwaveZip').innerHTML='<div class="card">Z-Wave (Z/IP) capture coming in pass 2.</div>'}
 function renderZwaveJsPlaceholder(){document.getElementById('rc-zwaveJs').innerHTML='<div class="card">Z-Wave JS capture coming in a later pass.</div>'}
 
