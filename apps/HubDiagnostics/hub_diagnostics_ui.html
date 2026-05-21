@@ -328,6 +328,29 @@ class FrameBuffer{
   }
 }
 
+// ===== RADIO CAPTURE: RECORDING FILE =====
+// Format: first line is "# {json metadata}" (skipped by zigbee-ota-analyser.py), then raw frame lines.
+function buildRecordingFile(buf, meta){
+  const headerObj={_hubitat_capture:true,...meta,framesCaptured:buf.count(),framesDropped:buf.dropped,
+    captureStartedAt:buf.startedAt?new Date(buf.startedAt).toISOString():null,
+    capturedAt:new Date().toISOString()};
+  const lines=['# '+JSON.stringify(headerObj)];
+  for(const f of buf.frames)lines.push(f.line);
+  return lines.join('\n')+'\n';
+}
+
+function downloadRecording(buf, meta, filenameProtocol){
+  const text=buildRecordingFile(buf, meta);
+  const hub=(meta.hubName||'hub').replace(/[^A-Za-z0-9._-]+/g,'-');
+  const ts=new Date().toISOString().replace(/[-:]/g,'').replace(/\.\d+Z$/,'Z');
+  const filename=filenameProtocol+'-capture-'+hub+'-'+ts+'.jsonl';
+  const blob=new Blob([text],{type:'application/x-ndjson'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();
+  setTimeout(()=>{URL.revokeObjectURL(url);a.remove()},1000);
+  return filename;
+}
+
 function mc(l,v,c){const s=c?' style="color:'+c+'"':'';return'<div class="m"><div class="m-l">'+h(l)+'</div><div class="m-v"'+s+'>'+(v??'N/A')+'</div></div>'}
 function ni(l,v,c){const s=c?' style="color:'+c+';font-weight:600"':'';return'<div class="ni"><div class="nl">'+h(l)+'</div><div class="nv"'+s+'>'+h(String(v??'N/A'))+'</div></div>'}
 // Module-level thresholds with hardcoded defaults — updated when settings load
