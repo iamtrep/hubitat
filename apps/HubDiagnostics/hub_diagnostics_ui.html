@@ -323,8 +323,8 @@ class FrameBuffer{
       if(f.t<cutoff)break;
       out.unshift(f);coverFrom=f.t;
     }
-    const full=this.frames.length===0||(this.frames.length>0&&this.frames[0].t>=cutoff-1);
-    return{frames:out,coverFrom,fullCoverage:full};
+    const fullCoverage=this.frames.length===0||this.frames[0].t<=cutoff;
+    return{frames:out,coverFrom,fullCoverage};
   }
 }
 
