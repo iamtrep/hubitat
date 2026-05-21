@@ -2569,6 +2569,7 @@ const RC={
     pausedCapture:false,
     displayBuf:[],        // ring of last 50 filtered display rows; rendered in a scrollable container
     displayCap:50,
+    selectedRaw:null,     // raw JSON text of the currently expanded row (or null)
     filters:{cluster:null,cmd:null,dni:'',mfr:null,minLqi:null,maxRssi:null},
     framesLastSec:[],     // sliding window for frames/s counter
     lastAggregateAt:0
@@ -2637,6 +2638,8 @@ function renderZigbeeSubTab(){
     const mb=parseInt(e.target.value,10);
     if(z.buf)z.buf.setMaxBytes(mb*1024*1024);
   });
+  // Event delegation for live-tail row selection. Bound once; survives re-renders inside #rc-zb-live.
+  document.getElementById('rc-zb-live').addEventListener('click',rcZbHandleTailClick);
   rcZbUpdateBadge();
   ['rc-zb-f-cluster','rc-zb-f-cmd','rc-zb-f-dni','rc-zb-f-mfr','rc-zb-f-minlqi','rc-zb-f-maxrssi'].forEach(id=>{
     const el=document.getElementById(id);
@@ -2924,20 +2927,52 @@ function rcZbRenderTail(){
     if(!rcZbFrameMatchesFilter(src[i].line,filters))continue;
     const r=rcZbFrameToRow(src[i].line);if(r)z.displayBuf.push(r);
   }
-  // Render via existing tbl() helper. Wrap in a scrollable container so the tail caps at ~50 rows visible.
+  // If the selected row scrolled out of the buffer, deselect it.
+  if(z.selectedRaw&&!z.displayBuf.some(r=>r._raw===z.selectedRaw))z.selectedRaw=null;
   const container=document.getElementById('rc-zb-live');
-  container.innerHTML='<div class="card"><h3 style="margin-top:0">Live tail (last '+z.displayBuf.length+' of up to '+z.displayCap+' frames)</h3><div id="rc-zb-tail-tbl" style="max-height:420px;overflow-y:auto"></div></div>';
-  tbl('rc-zb-tail-tbl',[
-    {l:'Time',f:'time'},
-    {l:'DNI',f:'id'},
-    {l:'Name',f:'name',r:r=>r._deviceId?dlink(r._deviceId,r.name):h(r.name)},
-    {l:'Cluster',f:'cluster'},
-    {l:'Cmd',f:'cmd'},
-    {l:'Manufacturer',f:'mfr'},
-    {l:'LQI',f:'lqi',t:'n'},
-    {l:'RSSI',f:'rssi',t:'n'},
-    {l:'Payload',f:'payload'}
-  ],z.displayBuf,{filter:false}); // newest first (loop already walked newest-to-oldest)
+  container.innerHTML='<div class="card"><h3 style="margin-top:0">Live tail (last '+z.displayBuf.length+' of up to '+z.displayCap+' frames) <span style="font-weight:normal;font-size:12px;opacity:.7">— click a row to expand</span></h3><div id="rc-zb-tail-tbl" style="max-height:420px;overflow-y:auto;border:1px solid rgba(255,255,255,0.08);border-radius:4px">'+rcZbRenderTailHtml(z.displayBuf,z.selectedRaw)+'</div></div>';
+}
+
+function rcZbRenderTailHtml(rows, selectedRaw){
+  if(!rows.length)return '<p style="color:var(--muted,#888);padding:16px;margin:0">No frames yet</p>';
+  const th='padding:6px 10px;text-align:left;font-size:12px;background:#1a1d24;position:sticky;top:0;z-index:1;border-bottom:1px solid rgba(255,255,255,0.12)';
+  const td='padding:5px 10px;font-size:12px;border-top:1px solid rgba(255,255,255,0.05);vertical-align:top';
+  const tdMono=td+';font-family:ui-monospace,SFMono-Regular,Menlo,monospace';
+  let html='<table style="width:100%;border-collapse:collapse"><thead><tr>';
+  ['Time','DNI','Name','Cluster','Cmd','Manufacturer','LQI','RSSI','Payload'].forEach(l=>html+='<th style="'+th+'">'+l+'</th>');
+  html+='</tr></thead><tbody>';
+  rows.forEach((r,idx)=>{
+    const sel=r._raw===selectedRaw;
+    const rowBg=sel?'background:rgba(33,150,243,0.18)':'';
+    html+='<tr data-idx="'+idx+'" style="cursor:pointer;'+rowBg+'">';
+    html+='<td style="'+td+'">'+h(r.time)+'</td>';
+    html+='<td style="'+tdMono+'">'+h(r.id)+'</td>';
+    html+='<td style="'+td+'">'+(r._deviceId?dlink(r._deviceId,r.name):h(r.name))+'</td>';
+    html+='<td style="'+td+'">'+h(r.cluster)+'</td>';
+    html+='<td style="'+tdMono+'">'+h(r.cmd)+'</td>';
+    html+='<td style="'+td+'">'+h(r.mfr)+'</td>';
+    html+='<td style="'+td+';text-align:right">'+h(String(r.lqi))+'</td>';
+    html+='<td style="'+td+';text-align:right">'+h(String(r.rssi))+'</td>';
+    html+='<td style="'+tdMono+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px">'+h(r.payload)+'</td>';
+    html+='</tr>';
+    if(sel){
+      let pretty;try{pretty=JSON.stringify(JSON.parse(r._raw),null,2)}catch(e){pretty=r._raw}
+      html+='<tr style="background:rgba(33,150,243,0.08)"><td colspan="9" style="padding:8px 14px"><pre style="margin:0;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-all;color:#cfe0f5">'+h(pretty)+'</pre></td></tr>';
+    }
+  });
+  html+='</tbody></table>';
+  return html;
+}
+
+function rcZbHandleTailClick(e){
+  // Don't intercept clicks on links (device name → /device/edit/)
+  if(e.target.closest('a'))return;
+  const tr=e.target.closest('tr[data-idx]');if(!tr)return;
+  const z=RC.zigbee;
+  const idx=parseInt(tr.dataset.idx,10);
+  const row=z.displayBuf[idx];if(!row)return;
+  z.selectedRaw=(z.selectedRaw===row._raw)?null:row._raw;
+  rcZbRenderTail();
 }
 function renderZwavePlaceholder(){document.getElementById('rc-zwave').innerHTML='<div class="card">Z-Wave capture coming in pass 2. Auto-detects the active stack (Z/IP or Z-Wave JS) at runtime.</div>'}
 
