@@ -268,6 +268,33 @@ function dlistlink(count,ids){if(ids===true)return'<a href="/device/list" target
 function alistlink(count){return'<a href="/installedapp/list" target="_blank">'+(count??0)+'</a>'}
 const CD={paired:'Paired',lan_direct:'LAN (Direct)',lan_bridge:'LAN (Bridge)',cloud:'Cloud',virtual:'Virtual',hubmesh:'Hub Mesh',other:'Other'};
 const PD={zigbee:'Zigbee',zwave:'Z-Wave',matter:'Matter',lan:'LAN/IP',virtual:'Virtual',cloud:'Cloud',maker:'Maker API',hubmesh:'Hub Mesh',other:'Other'};
+
+// ===== RADIO CAPTURE CONSTANTS =====
+// Subset of the Zigbee Cluster Library. Keys are 4-char hex (uppercase). Friendly labels for live tail and filter chips.
+const ZB_CLUSTERS={
+  '0000':'Basic','0001':'Power Config','0003':'Identify','0004':'Groups','0005':'Scenes',
+  '0006':'On/Off','0008':'Level','000A':'Time','0019':'OTA','0020':'Poll Control',
+  '0101':'Door Lock','0201':'Thermostat','0202':'Fan Control','0204':'Thermostat UI',
+  '0300':'Color','0400':'Illuminance','0402':'Temperature','0403':'Pressure','0405':'Humidity',
+  '0406':'Occupancy','0500':'IAS Zone','0501':'IAS ACE','0502':'IAS WD',
+  '0702':'Metering','0B01':'Meter Identification','0B04':'Electrical Measurement',
+  '0B05':'Diagnostics','FC01':'Manufacturer Specific','FC02':'Manufacturer Specific'
+};
+
+// Manufacturer code lookup. Lifted verbatim from scripts/zigbee-ota-analyser.py KNOWN_MANUFACTURERS.
+// Documented duplication; the python script and SPA are independent consumers.
+const ZB_MFR={
+  '0000':'Matter Standard','100B':'Signify (Philips)','1021':'Legrand','115F':'LUMI (Aqara)',
+  '117C':'IKEA','1037':'NXP','1141':'Develco','11CA':'Sengled','110A':'GE',
+  '1233':'Develco/frient','124B':'Innr','1289':'Ledvance','1037':'NXP',
+  '1135':'SmartThings','1166':'Sercomm','1191':'Sinopé','11A0':'eWeLink',
+  '12CC':'Tuya','1228':'Schneider Electric','1224':'Yale','1235':'Telegesis'
+  // Implementation note: extend over time. Unknown codes render as the raw hex; users still see the code.
+};
+
+function clusterLabel(id){if(!id)return'';const k=String(id).toUpperCase().padStart(4,'0');return ZB_CLUSTERS[k]?ZB_CLUSTERS[k]+' (0x'+k+')':'0x'+k}
+function mfrLabel(code){if(!code)return'';const k=String(code).toUpperCase().padStart(4,'0');return ZB_MFR[k]?ZB_MFR[k]+' ('+k+')':k}
+
 function mc(l,v,c){const s=c?' style="color:'+c+'"':'';return'<div class="m"><div class="m-l">'+h(l)+'</div><div class="m-v"'+s+'>'+(v??'N/A')+'</div></div>'}
 function ni(l,v,c){const s=c?' style="color:'+c+';font-weight:600"':'';return'<div class="ni"><div class="nl">'+h(l)+'</div><div class="nv"'+s+'>'+h(String(v??'N/A'))+'</div></div>'}
 // Module-level thresholds with hardcoded defaults — updated when settings load
