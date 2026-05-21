@@ -2726,9 +2726,11 @@ function rcZbOnFrame(text){
   z.framesLastSec.push(now);
   // prune to 5 s window for rate calc
   while(z.framesLastSec.length&&z.framesLastSec[0]<now-5000)z.framesLastSec.shift();
-  // Tail + metrics throttled to ~10 Hz to avoid hammering DOM
+  // Tail + metrics throttled to ~10 Hz; aggregates throttled to ~1 Hz separately.
   if(!z._tailPending){z._tailPending=true;requestAnimationFrame(()=>{
     z._tailPending=false;rcZbUpdateMetrics();rcZbRenderTail();
+    const now=Date.now();
+    if(now-z.lastAggregateAt>1000){z.lastAggregateAt=now;rcZbRenderAggregates()}
   })}
 }
 
@@ -2802,6 +2804,52 @@ function rcZbFrameMatchesFilter(text,f){
   if(f.minLqi!=null&&(frame.lastHopLqi==null||frame.lastHopLqi<f.minLqi))return false;
   if(f.maxRssi!=null&&(frame.lastHopRssi==null||frame.lastHopRssi>f.maxRssi))return false;
   return true;
+}
+
+function rcZbAggregateBy(frames, keyFn){
+  const counts=new Map();
+  for(const f of frames){const k=keyFn(f);if(!k)continue;counts.set(k,(counts.get(k)||0)+1)}
+  return [...counts.entries()].map(([k,v])=>({k,v})).sort((a,b)=>b.v-a.v);
+}
+
+function rcZbRenderAggregates(){
+  const z=RC.zigbee;
+  const container=document.getElementById('rc-zb-aggregates');
+  if(!z.buf||z.buf.count()===0){container.innerHTML='';return}
+  const win1=z.buf.window(60*1000);
+  const win5=z.buf.window(5*60*1000);
+  const parse=fr=>{try{return JSON.parse(fr.line)}catch(e){return null}};
+  const parsed1=win1.frames.map(parse).filter(Boolean);
+  const parsed5=win5.frames.map(parse).filter(Boolean);
+
+  const top1=rcZbAggregateBy(parsed1,f=>f.name||f.id).slice(0,10);
+  const top5=rcZbAggregateBy(parsed5,f=>f.name||f.id).slice(0,10);
+  const clusters=rcZbAggregateBy(parsed5,f=>f.clusterId?clusterLabel(f.clusterId):null).slice(0,15);
+
+  const truncNote1=win1.fullCoverage?'':'<div class="warn-note" style="font-size:12px;color:var(--warn);margin-bottom:4px">Window truncated to last '+Math.round((Date.now()-win1.coverFrom)/1000)+' s of buffer.</div>';
+  const truncNote5=win5.fullCoverage?'':'<div class="warn-note" style="font-size:12px;color:var(--warn);margin-bottom:4px">Window truncated to last '+Math.round((Date.now()-win5.coverFrom)/1000)+' s of buffer.</div>';
+
+  container.innerHTML=`
+    <div class="card" style="margin-top:12px">
+      <h3 style="margin-top:0">Aggregates</h3>
+      <div style="display:grid;grid-template-columns:1fr 1fr 2fr;gap:16px">
+        <div>
+          <h4>Top talkers (1 min)</h4>${truncNote1}
+          <div id="rc-zb-top1"></div>
+        </div>
+        <div>
+          <h4>Top talkers (5 min)</h4>${truncNote5}
+          <div id="rc-zb-top5"></div>
+        </div>
+        <div>
+          <h4>Cluster breakdown (5 min)</h4>
+          <div id="rc-zb-clusters"></div>
+        </div>
+      </div>
+    </div>`;
+  tbl('rc-zb-top1',[{l:'Device',f:'k'},{l:'Frames',f:'v',t:'n'}],top1,{filter:false});
+  tbl('rc-zb-top5',[{l:'Device',f:'k'},{l:'Frames',f:'v',t:'n'}],top5,{filter:false});
+  renderBarChart(clusters.map(c=>({label:c.k,value:c.v})),'rc-zb-clusters',{height:200});
 }
 
 function rcZbRenderTail(){
