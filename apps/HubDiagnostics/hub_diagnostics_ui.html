@@ -2742,7 +2742,7 @@ function rcZbFrameToRow(text){
     name:f.name||'',
     cluster:f.clusterId?clusterLabel(f.clusterId):'',
     cmd:f.payload&&f.payload.length>2?'0x'+f.payload[2]:'',
-    mfr:(f.payload&&f.payload.length>=6)?mfrLabel(((f.payload[5]<<8|f.payload[4])>>>0).toString(16).toUpperCase().padStart(4,'0')):'',
+    mfr:(f.payload&&f.payload.length>=6)?mfrLabel((f.payload[5]+f.payload[4]).toUpperCase()):'',
     lqi:f.lastHopLqi!=null?f.lastHopLqi:'',
     rssi:f.lastHopRssi!=null?f.lastHopRssi:'',
     payload:(f.payload||[]).slice(0,32).join(' ')+((f.payload||[]).length>32?' …':''),
