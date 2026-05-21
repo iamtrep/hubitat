@@ -2577,7 +2577,10 @@ const RC={
     lastTailRenderAt:0,   // throttle tail re-render to ~1 Hz during ingest to keep large-buffer renders cheap
     filters:{cluster:null,cmd:null,dni:'',mfr:null,minLqi:null,maxRssi:null},
     framesLastSec:[],     // sliding window for frames/s counter
-    lastAggregateAt:0
+    lastAggregateAt:0,
+    // Per-table sort state for aggregate tables; persisted across re-renders so the user's column choice survives 1Hz ticks.
+    // Top tables default to descending Frames (col 1); OTA defaults to descending Frames (col 2).
+    aggSort:{top1:{sc:1,sd:'desc'},top5:{sc:1,sd:'desc'},ota:{sc:2,sd:'desc'}}
   }
 };
 
@@ -2645,6 +2648,8 @@ function renderZigbeeSubTab(){
   });
   // Event delegation for live-tail row selection. Bound once; survives re-renders inside #rc-zb-live.
   document.getElementById('rc-zb-live').addEventListener('click',rcZbHandleTailClick);
+  // Capture clicks on aggregate-table headers so user's sort choice survives the 1Hz re-render.
+  document.getElementById('rc-zb-aggregates').addEventListener('click',rcZbHandleAggSortClick);
   rcZbUpdateBadge();
   ['rc-zb-f-cluster','rc-zb-f-cmd','rc-zb-f-dni','rc-zb-f-mfr','rc-zb-f-minlqi','rc-zb-f-maxrssi'].forEach(id=>{
     const el=document.getElementById(id);
@@ -2924,13 +2929,15 @@ function rcZbRenderAggregates(){
       </div>
     </div>`;
   const devCol={l:'Device',f:'k',r:r=>r.deviceId?dlink(r.deviceId,r.k):h(r.k)};
-  tbl('rc-zb-top1',[devCol,{l:'Frames',f:'v',t:'n'}],top1,{filter:false});
-  tbl('rc-zb-top5',[devCol,{l:'Frames',f:'v',t:'n'}],top5,{filter:false});
+  const s1=z.aggSort.top1, s5=z.aggSort.top5;
+  tbl('rc-zb-top1',[devCol,{l:'Frames',f:'v',t:'n'}],top1,{filter:false,sc:s1.sc,sd:s1.sd});
+  tbl('rc-zb-top5',[devCol,{l:'Frames',f:'v',t:'n'}],top5,{filter:false,sc:s5.sc,sd:s5.sd});
   renderBarChart(clusters.map(c=>({label:c.k,value:c.v})),'rc-zb-clusters',{height:200});
   const ota=rcZbOtaSummary(parsed5);
   if(ota.length){
     container.insertAdjacentHTML('beforeend',
       '<div class="card" style="margin-top:12px"><h3 style="margin-top:0">OTA progress (last 5 min)</h3><div id="rc-zb-ota"></div></div>');
+    const so=z.aggSort.ota;
     tbl('rc-zb-ota',[
       {l:'Device',f:'device',r:r=>r.deviceId?dlink(r.deviceId,r.device):h(r.device)},
       {l:'Manufacturer',f:'mfr',r:r=>h(mfrLabel(r.mfr))},
@@ -2938,7 +2945,7 @@ function rcZbRenderAggregates(){
       {l:'Block Reqs',f:'blockReqs',t:'n'},
       {l:'Last Cmd',f:'lastCmd'},
       {l:'Last Seen',f:'lastSeen'}
-    ],ota,{filter:false,sc:2,sd:'desc'});
+    ],ota,{filter:false,sc:so.sc,sd:so.sd});
   }
 }
 
@@ -2988,6 +2995,20 @@ function rcZbRenderTailHtml(rows, selectedRaw){
   });
   html+='</tbody></table>';
   return html;
+}
+
+// Mirror tbl()'s internal sort-toggle logic so our persisted sort state stays in sync with what tbl() actually showed.
+// tbl(): same column → flip asc/desc; different column → set new column with desc default.
+function rcZbHandleAggSortClick(e){
+  const th=e.target.closest('th[data-c]');if(!th)return;
+  const tableEl=th.closest('table');if(!tableEl)return;
+  const wrap=tableEl.closest('[id^="rc-zb-"]');if(!wrap)return;
+  const key=wrap.id==='rc-zb-top1'?'top1':wrap.id==='rc-zb-top5'?'top5':wrap.id==='rc-zb-ota'?'ota':null;
+  if(!key)return;
+  const ci=+th.dataset.c;
+  const s=RC.zigbee.aggSort[key];
+  if(s.sc===ci)s.sd=s.sd==='asc'?'desc':'asc';
+  else{s.sc=ci;s.sd='desc'}
 }
 
 function rcZbHandleTailClick(e){
@@ -3416,8 +3437,52 @@ if (_inAuditMode) {
     if(!document.hidden)liveTimer=setInterval(refreshLive,liveIntervalSec*1000)
   });
   // Populate header hub info regardless of which tab opens first (cached for 2min, free on dashboard tab).
-  api('dashboard').then(d=>setHubInfoHeader(d&&d.hub)).catch(()=>{});
+  // Also seed the alert-aware favicon from the same payload.
+  api('dashboard').then(d=>{setHubInfoHeader(d&&d.hub);setFaviconSeverity(severityFromDashboard(d))}).catch(()=>{});
+  // Refresh favicon every 60s so the tab indicator stays useful even when the user is on a non-Dashboard tab.
+  // api('dashboard') is cached for 2min, so most ticks hit cache; actual hub fetches happen ~every 2min.
+  setInterval(()=>{api('dashboard').then(d=>setFaviconSeverity(severityFromDashboard(d))).catch(()=>{})},60000);
   go(curTab);
+}
+
+// ===== ALERT-AWARE FAVICON =====
+// Overlays a colored dot (green/amber/red) on the Hubitat favicon, reflecting the highest alert severity.
+// Lets the user spot a problem from the browser tab list without switching tabs.
+let __favBaseImg=null,__favLastSev=null,__favBaseLoading=null;
+function faviconBase(){
+  if(__favBaseImg)return Promise.resolve(__favBaseImg);
+  if(__favBaseLoading)return __favBaseLoading;
+  __favBaseLoading=new Promise(resolve=>{
+    const img=new Image();
+    img.onload=()=>{__favBaseImg=img;resolve(img)};
+    img.onerror=()=>resolve(null);
+    img.src='/ui2/images/favicon-32x32.png';
+  });
+  return __favBaseLoading;
+}
+async function setFaviconSeverity(sev){
+  if(sev===__favLastSev)return;
+  const img=await faviconBase();
+  if(!img)return;
+  const c=document.createElement('canvas');c.width=32;c.height=32;
+  const ctx=c.getContext('2d');
+  ctx.drawImage(img,0,0,32,32);
+  const color=sev==='critical'?'#e53935':sev==='warning'?'#fb8c00':'#43a047';
+  // White halo for legibility on any background, then severity-colored dot.
+  ctx.beginPath();ctx.arc(24,24,7,0,Math.PI*2);ctx.fillStyle='#ffffff';ctx.fill();
+  ctx.beginPath();ctx.arc(24,24,5.5,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();
+  let url;try{url=c.toDataURL('image/png')}catch(e){return}
+  let link=document.querySelector('link[rel="icon"][sizes="32x32"]');
+  if(!link){link=document.createElement('link');link.rel='icon';link.type='image/png';link.setAttribute('sizes','32x32');document.head.appendChild(link)}
+  link.href=url;
+  __favLastSev=sev;
+}
+function severityFromDashboard(d){
+  // Reuse composeAlerts to honor the same alert thresholds + signals as the Dashboard/Health tabs.
+  const alerts=(d&&typeof composeAlerts==='function')?composeAlerts(d):((d&&d.alerts)||[]);
+  if(alerts.some(a=>a.severity==='critical'))return 'critical';
+  if(alerts.some(a=>a.severity==='warning'))return 'warning';
+  return 'ok';
 }
 </script>
 </body>
