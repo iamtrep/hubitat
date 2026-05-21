@@ -395,23 +395,26 @@ Changes are color-coded: green for additions/improvements, red for removals/degr
 
 ## Radio Capture Tab
 
-Live capture of radio traffic from the hub's internal log sockets, intended for mesh troubleshooting. Pass 1 supports **Zigbee** via `ws://${hub_ip}/zigbeeLogsocket`. Z-Wave (Z/IP and Z-Wave JS) sub-tabs are placeholders for a later pass.
+Live capture of radio traffic from the hub's internal log sockets, intended for mesh troubleshooting. Pass 1 supports **Zigbee** via `ws://${hub_ip}/zigbeeLogsocket`. A single **Z-Wave** sub-tab is reserved for a later pass; it will auto-detect the active Z-Wave stack (Z/IP or Z-Wave JS) at runtime.
 
-**Capture controls:**
+**Capture controls** — in order: Start capture, Pause capture, Stop capture, Download, Clear buffer.
 
-- **Start capture** opens a WebSocket to the hub's `/zigbeeLogsocket` endpoint directly from your browser. All frames are buffered client-side; the hub does not relay or transform anything. The capture lives with the open tab — closing the browser tab ends the capture and discards the buffer.
-- **Stop & Download** ends the capture and downloads the recording as a JSON-lines file (`zigbee-capture-<hub>-<timestamp>.jsonl`) compatible with `scripts/zigbee-ota-analyser.py`. The first line is a `#`-prefixed JSON metadata header that the analyser silently skips.
-- **Pause live tail** stops updating the displayed table while the recording continues to accumulate.
-- **Clear buffers** empties the display and recording buffers without disconnecting.
+- **Start capture** opens a WebSocket to the hub's `/zigbeeLogsocket` endpoint directly from your browser. Each click begins a fresh capture — any prior buffer is discarded, so Download first if you want to keep it. All frames are buffered client-side; the hub does not relay or transform anything. Closing the browser tab ends the capture and discards the buffer.
+- **Pause capture** toggles ingest. While paused, incoming frames are dropped and the frame-rate counter falls to zero; click again to resume. The recording buffer is preserved across pause.
+- **Stop capture** closes the socket but keeps the recording buffer, so Download remains useful afterwards.
+- **Download** is enabled as soon as the buffer has any frames (running or stopped). It saves the recording as a JSON-lines file (`zigbee-capture-<hub>-<timestamp>.jsonl`) compatible with `scripts/zigbee-ota-analyser.py`. The first line is a `#`-prefixed JSON metadata header that the analyser silently skips.
+- **Clear buffer** empties the recording buffer without disconnecting.
 - **Recording cap** selects the recording buffer's byte cap (10 / 50 / 200 MB). When the buffer is full, oldest frames are dropped and the "Dropped: N" counter advances so you know the capture is no longer complete from `t0`.
 
-**Filters** apply only to the live tail view — the recording buffer is always full-fidelity. Filter on cluster IDs (comma-separated 4-char hex), command byte, source DNI (regex), manufacturer code, minimum LQI, maximum RSSI.
+**Live tail** shows every captured frame (newest first) inside a scrollable, fixed-height panel — the visible area is bounded but the buffer is not, so older frames are reachable by scrolling. Click any row to expand a pretty-printed JSON detail block beneath it; click again to collapse. The **DNI** column renders the 16-bit short address as `0xHHHH`. The **Name** column links to that device's edit page on the hub when the frame carries a Hubitat device id. The **Manufacturer** column is populated only for OTA (cluster `0x0019`) frames where that byte layout is well-defined.
+
+**Filters** apply only to the live tail view — the recording buffer is always full-fidelity. Cluster and Manufacturer filters substring-match on either the hex code or the friendly name (case-insensitive); comma-separated tokens are OR'd, so `0019, OTA, On/Off` or `100B, Signify` both work. Command byte is an exact 2-hex match. DNI is a JavaScript regex tested against the `0xHHHH` form shown in the column.
 
 **Aggregates** are derived live from the recording buffer at 1 Hz:
 
-- Top talkers in 1-min and 5-min trailing windows.
-- Cluster breakdown for the last 5 min.
-- OTA progress per device when cluster `0x0019` traffic is present.
+- **Top talkers** in 1-min and 5-min trailing windows. Device names link to their edit page when known.
+- **Cluster breakdown** for the last 5 min.
+- **OTA progress** per device when cluster `0x0019` traffic is present — manufacturer code, frame count, block-request count, last command, last seen. Device names link to their edit page when known.
 
 When the recording buffer rolls past a window (high traffic + small cap), the affected aggregate shows a "Window truncated to last N s of buffer" warning so the metric isn't silently misreported.
 
