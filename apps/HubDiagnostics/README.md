@@ -26,11 +26,12 @@ A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-t
 9. [Health Tab](#health-tab)
 10. [Performance Tab](#performance-tab)
 11. [Snapshots Tab](#snapshots-tab)
-12. [Device Usage Audit](#device-usage-audit)
-13. [App Settings Tab](#app-settings-tab)
-14. [Forum Export](#forum-export)
-15. [Alerts & Warnings Reference](#alerts--warnings-reference)
-16. [REST API](#rest-api)
+12. [Radio Capture Tab](#radio-capture-tab)
+13. [Device Usage Audit](#device-usage-audit)
+14. [App Settings Tab](#app-settings-tab)
+15. [Forum Export](#forum-export)
+16. [Alerts & Warnings Reference](#alerts--warnings-reference)
+17. [REST API](#rest-api)
 
 ---
 
@@ -389,6 +390,30 @@ A configuration snapshot captures the state of devices, apps, network configurat
 - Code inventory changes (bundles added/removed, libraries added/removed/version-changed, hub variables added/removed/type-changed)
 
 Changes are color-coded: green for additions/improvements, red for removals/degradations, yellow for modifications.
+
+---
+
+## Radio Capture Tab
+
+Live capture of radio traffic from the hub's internal log sockets, intended for mesh troubleshooting. Pass 1 supports **Zigbee** via `ws://${hub_ip}/zigbeeLogsocket`. Z-Wave (Z/IP and Z-Wave JS) sub-tabs are placeholders for a later pass.
+
+**Capture controls:**
+
+- **Start capture** opens a WebSocket to the hub's `/zigbeeLogsocket` endpoint directly from your browser. All frames are buffered client-side; the hub does not relay or transform anything. The capture lives with the open tab — closing the browser tab ends the capture and discards the buffer.
+- **Stop & Download** ends the capture and downloads the recording as a JSON-lines file (`zigbee-capture-<hub>-<timestamp>.jsonl`) compatible with `scripts/zigbee-ota-analyser.py`. The first line is a `#`-prefixed JSON metadata header that the analyser silently skips.
+- **Pause live tail** stops updating the displayed table while the recording continues to accumulate.
+- **Clear buffers** empties the display and recording buffers without disconnecting.
+- **Recording cap** selects the recording buffer's byte cap (10 / 50 / 200 MB). When the buffer is full, oldest frames are dropped and the "Dropped: N" counter advances so you know the capture is no longer complete from `t0`.
+
+**Filters** apply only to the live tail view — the recording buffer is always full-fidelity. Filter on cluster IDs (comma-separated 4-char hex), command byte, source DNI (regex), manufacturer code, minimum LQI, maximum RSSI.
+
+**Aggregates** are derived live from the recording buffer at 1 Hz:
+
+- Top talkers in 1-min and 5-min trailing windows.
+- Cluster breakdown for the last 5 min.
+- OTA progress per device when cluster `0x0019` traffic is present.
+
+When the recording buffer rolls past a window (high traffic + small cap), the affected aggregate shows a "Window truncated to last N s of buffer" warning so the metric isn't silently misreported.
 
 ---
 
