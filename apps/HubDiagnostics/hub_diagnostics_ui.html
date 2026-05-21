@@ -2653,11 +2653,89 @@ function rcZbUpdateBadge(){
   document.getElementById('rc-zb-clear').disabled=idle&&!RC.zigbee.buf;
 }
 
-// Stubs filled in by later tasks
-function rcZbStart(){RC.zigbee.state='connecting';rcZbUpdateBadge();setTimeout(()=>{RC.zigbee.state='idle';rcZbUpdateBadge()},500)}
-function rcZbStop(){RC.zigbee.state='idle';rcZbUpdateBadge()}
-function rcZbPause(){}
-function rcZbClear(){}
+function rcZbStart(){
+  const z=RC.zigbee;
+  if(!RC.hubIp){alert('Hub IP unknown — open the Dashboard tab once first.');return}
+  if(!z.buf){
+    const mb=parseInt(document.getElementById('rc-zb-cap').value,10);
+    z.buf=new FrameBuffer(mb*1024*1024);
+  }
+  z.reconnectMs=1000;
+  rcZbConnect();
+}
+
+function rcZbStop(){
+  const z=RC.zigbee;
+  if(z.reconnectTimer){clearTimeout(z.reconnectTimer);z.reconnectTimer=null}
+  if(z.socket){z.socket.onclose=null;z.socket.close();z.socket=null}
+  if(z.buf&&z.buf.count()>0){
+    const fn=downloadRecording(z.buf,{
+      hubName:RC.hubName,hubIp:RC.hubIp,firmware:null,
+      appVersion:'5.36.0',uiVersion:UI_VERSION,
+      captureDurationS:z.buf.startedAt?Math.round((Date.now()-z.buf.startedAt)/1000):null
+    },'zigbee');
+    console.log('Saved',fn);
+  }
+  z.buf=null;
+  z.state='idle';
+  rcZbUpdateBadge();rcZbUpdateMetrics();
+}
+
+function rcZbPause(){
+  const z=RC.zigbee;z.pausedLiveTail=!z.pausedLiveTail;
+  document.getElementById('rc-zb-pause').textContent=z.pausedLiveTail?'Resume live tail':'Pause live tail';
+}
+
+function rcZbClear(){
+  const z=RC.zigbee;if(z.buf)z.buf.clear();z.displayBuf=[];z.framesLastSec=[];
+  rcZbUpdateMetrics();rcZbRenderTail();
+}
+
+function rcZbConnect(){
+  const z=RC.zigbee;
+  z.state='connecting';rcZbUpdateBadge();
+  const url='ws://'+RC.hubIp+'/zigbeeLogsocket';
+  const ws=new WebSocket(url);
+  z.socket=ws;
+  ws.onopen=()=>{z.state='connected';z.reconnectMs=1000;rcZbUpdateBadge()};
+  ws.onmessage=ev=>rcZbOnFrame(ev.data);
+  ws.onclose=()=>{
+    z.socket=null;
+    if(z.state==='idle')return; // clean stop
+    z.state='reconnecting';rcZbUpdateBadge();
+    z.reconnectTimer=setTimeout(rcZbConnect,z.reconnectMs);
+    z.reconnectMs=Math.min(z.reconnectMs*2,30000);
+  };
+  ws.onerror=()=>{ /* close handler will run with the same effect */ };
+}
+
+function rcZbOnFrame(text){
+  const z=RC.zigbee;if(!z.buf)return;
+  z.buf.push(text);
+  const now=Date.now();
+  z.framesLastSec.push(now);
+  // prune to 5 s window for rate calc
+  while(z.framesLastSec.length&&z.framesLastSec[0]<now-5000)z.framesLastSec.shift();
+  // Tail + metrics throttled to ~10 Hz to avoid hammering DOM
+  if(!z._tailPending){z._tailPending=true;requestAnimationFrame(()=>{
+    z._tailPending=false;rcZbUpdateMetrics();rcZbRenderTail();
+  })}
+}
+
+function rcZbUpdateMetrics(){
+  const z=RC.zigbee;
+  const rate=z.framesLastSec.length/5;
+  const rateEl=document.getElementById('rc-zb-rate');if(rateEl)rateEl.textContent=rate.toFixed(1);
+  const bufEl=document.getElementById('rc-zb-buffered');
+  if(bufEl)bufEl.textContent=(z.buf?z.buf.count():0)+' frames / '+fbytes(z.buf?z.buf.bytes:0);
+  const dropEl=document.getElementById('rc-zb-dropped');
+  if(dropEl)dropEl.textContent=z.buf?z.buf.dropped:0;
+  // Re-evaluate clear button enable
+  document.getElementById('rc-zb-clear').disabled=!z.buf||z.buf.count()===0;
+}
+
+// Stub until Task 8 lands
+function rcZbRenderTail(){}
 function renderZwaveZipPlaceholder(){document.getElementById('rc-zwaveZip').innerHTML='<div class="card">Z-Wave (Z/IP) capture coming in pass 2.</div>'}
 function renderZwaveJsPlaceholder(){document.getElementById('rc-zwaveJs').innerHTML='<div class="card">Z-Wave JS capture coming in a later pass.</div>'}
 
