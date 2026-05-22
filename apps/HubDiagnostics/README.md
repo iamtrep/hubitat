@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
 <!-- AUTO:hubdiag-version -->
-**Current version:** 5.40.0
+**Current version:** 5.41.0
 <!-- /AUTO -->
 
 ---
@@ -406,14 +406,15 @@ Live capture of radio traffic from the hub's internal log sockets, intended for 
 - **Clear buffer** empties the recording buffer without disconnecting.
 - **Recording cap** selects the recording buffer's byte cap (10 / 50 / 200 MB). When the buffer is full, oldest frames are dropped and the "Dropped: N" counter advances so you know the capture is no longer complete from `t0`.
 
-**Live tail** shows every captured frame (newest first) inside a scrollable, fixed-height panel — the visible area is bounded but the buffer is not, so older frames are reachable by scrolling. Click any row to expand a pretty-printed JSON detail block beneath it; click again to collapse. The **DNI** column renders the 16-bit short address as `0xHHHH`. The **Name** column links to that device's edit page on the hub when the frame carries a Hubitat device id. The **Manufacturer** column is populated only for OTA (cluster `0x0019`) frames where that byte layout is well-defined.
+**Live tail** shows every captured frame (newest first) inside a scrollable, fixed-height panel — the visible area is bounded but the buffer is not, so older frames are reachable by scrolling. Columns are **Time · Name · DNI · LQI · RSSI · Cluster · Command · Decoded**. The **DNI** column renders the 16-bit short address as `0xHHHH`; the **Name** column links to that device's edit page on the hub when the frame carries a Hubitat device id. The **Command** column decodes the ZCL command to a friendly name (e.g. `Report Attributes (0x0A)`, `On (0x01)`) and folds in a direction arrow — `←hub` for device→hub frames, `→dev` for hub→device; a `(mfr)` marker flags manufacturer-specific frames (whose command id is read at the correct offset). The **Decoded** column shows the human-readable payload: reported/read attributes as `Name=value` (e.g. `OnOff=true`, `MeasuredValue=2348`) and Default Responses as `Command→STATUS`; hover the cell for the full form with attribute ids and ZCL data types. Values are shown raw (no unit scaling). Click any row to expand a decoded breakdown — frame-control flags (global/cluster-specific, direction, manufacturer-specific, default-response-disabled), the command, and the attribute/response detail — above the pretty-printed raw JSON (which carries the raw payload bytes); click again to collapse.
 
-**Filters** apply only to the live tail view — the recording buffer is always full-fidelity. Cluster and Manufacturer filters substring-match on either the hex code or the friendly name (case-insensitive); comma-separated tokens are OR'd, so `0019, OTA, On/Off` or `100B, Signify` both work. Command byte is an exact 2-hex match. DNI is a JavaScript regex tested against the `0xHHHH` form shown in the column.
+**Filter** — a single box (like the table filter used elsewhere in the SPA) substring-matches, case-insensitively, against everything the row shows: name, DNI, cluster, command (decoded name + direction), decoded value, LQI, and RSSI. Space-separated terms must all match, so `kitchen onoff` or `0402 report` narrow progressively. It applies only to the live tail view — the recording buffer is always full-fidelity.
 
 **Aggregates** are derived live from the recording buffer at 1 Hz:
 
 - **Top talkers** in 1-min and 5-min trailing windows. Device names link to their edit page when known.
 - **Cluster breakdown** for the last 5 min.
+- **Signal quality** for the last 5 min — per-device last-hop **LQI** and **RSSI** (min / avg / max + sample count) in two tables, sorted weakest-first so devices with poor links surface at the top. Device names link to their edit page when known.
 - **OTA progress** per device when cluster `0x0019` traffic is present — manufacturer code, frame count, block-request count, last command, last seen. Device names link to their edit page when known.
 
 When the recording buffer rolls past a window (high traffic + small cap), the affected aggregate shows a "Window truncated to last N s of buffer" warning so the metric isn't silently misreported.

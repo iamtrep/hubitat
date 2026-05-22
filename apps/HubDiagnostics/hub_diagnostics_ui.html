@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.40.0";
+const UI_VERSION = "5.41.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -304,6 +304,224 @@ const ZB_MFR={
 
 function clusterLabel(id){if(!id)return'';const k=String(id).toUpperCase().padStart(4,'0');return ZB_CLUSTERS[k]?ZB_CLUSTERS[k]+' (0x'+k+')':'0x'+k}
 function mfrLabel(code){if(!code)return'';const k=String(code).toUpperCase().padStart(4,'0');return ZB_MFR[k]?ZB_MFR[k]+' ('+k+')':k}
+
+// ===== ZCL DECODE (BEGIN) =====
+// Pure ZCL frame decoders for the Zigbee live tail. No DOM deps except rcZbDecodeHtml (uses h()/mfrLabel).
+// Tested standalone in Node by extracting this BEGIN..END block; keep it self-contained.
+
+// ZCL general (profile-wide / "global") command frames. Hex id -> friendly name.
+const ZB_GLOBAL_CMDS={
+  '00':'Read Attributes','01':'Read Attributes Response','02':'Write Attributes',
+  '03':'Write Attributes Undivided','04':'Write Attributes Response','05':'Write Attributes No Response',
+  '06':'Configure Reporting','07':'Configure Reporting Response','08':'Read Reporting Config',
+  '09':'Read Reporting Config Response','0A':'Report Attributes','0B':'Default Response',
+  '0C':'Discover Attributes','0D':'Discover Attributes Response','0E':'Read Attributes Structured',
+  '0F':'Write Attributes Structured','10':'Write Attributes Structured Response',
+  '11':'Discover Commands Received','12':'Discover Commands Received Response',
+  '13':'Discover Commands Generated','14':'Discover Commands Generated Response',
+  '15':'Discover Attributes Extended','16':'Discover Attributes Extended Response'
+};
+
+// Cluster-specific commands, keyed by 4-hex cluster then direction: c2s = client->server (hub->device),
+// s2c = server->client (device->hub). Covers the clusters seen on this mesh; extend over time.
+const ZB_CLUSTER_CMDS={
+  '0003':{c2s:{'00':'Identify','01':'Identify Query','40':'Trigger Effect'},s2c:{'00':'Identify Query Response'}},
+  '0004':{c2s:{'00':'Add Group','01':'View Group','02':'Get Group Membership','03':'Remove Group','04':'Remove All Groups','05':'Add Group If Identifying'},
+          s2c:{'00':'Add Group Response','01':'View Group Response','02':'Get Group Membership Response','03':'Remove Group Response'}},
+  '0005':{c2s:{'00':'Add Scene','01':'View Scene','02':'Remove Scene','03':'Remove All Scenes','04':'Store Scene','05':'Recall Scene','06':'Get Scene Membership'},
+          s2c:{'00':'Add Scene Response','01':'View Scene Response','02':'Remove Scene Response','03':'Remove All Scenes Response','04':'Store Scene Response','06':'Get Scene Membership Response'}},
+  '0006':{c2s:{'00':'Off','01':'On','02':'Toggle','40':'Off With Effect','41':'On With Recall Global Scene','42':'On With Timed Off'}},
+  '0008':{c2s:{'00':'Move To Level','01':'Move','02':'Step','03':'Stop','04':'Move To Level (w/ On/Off)','05':'Move (w/ On/Off)','06':'Step (w/ On/Off)','07':'Stop (w/ On/Off)'}},
+  '0019':{c2s:{'01':'Query Next Image Req','03':'Image Block Req','04':'Image Page Req','06':'Upgrade End Req','08':'Query Specific File Req'},
+          s2c:{'00':'Image Notify','02':'Query Next Image Resp','05':'Image Block Resp','07':'Upgrade End Resp','09':'Query Specific File Resp'}},
+  '0020':{c2s:{'00':'Check-in Response','01':'Fast Poll Stop','02':'Set Long Poll Interval','03':'Set Short Poll Interval'},s2c:{'00':'Check-in'}},
+  '0101':{c2s:{'00':'Lock Door','01':'Unlock Door','02':'Toggle','03':'Unlock With Timeout'},
+          s2c:{'00':'Lock Door Response','01':'Unlock Door Response','02':'Toggle Response','03':'Unlock With Timeout Response','20':'Operating Event Notification'}},
+  '0201':{c2s:{'00':'Setpoint Raise/Lower','01':'Set Weekly Schedule','02':'Get Weekly Schedule','03':'Clear Weekly Schedule'},s2c:{'00':'Get Weekly Schedule Response'}},
+  '0300':{c2s:{'00':'Move To Hue','01':'Move Hue','02':'Step Hue','03':'Move To Saturation','04':'Move Saturation','05':'Step Saturation','06':'Move To Hue & Saturation','07':'Move To Color','08':'Move Color','09':'Step Color','0A':'Move To Color Temperature','4B':'Move Color Temperature','4C':'Step Color Temperature'}},
+  '0500':{c2s:{'00':'Zone Enroll Response','01':'Initiate Normal Operation Mode','02':'Initiate Test Mode'},s2c:{'00':'Zone Status Change Notification','01':'Zone Enroll Request'}},
+  '0501':{c2s:{'00':'Arm','01':'Bypass','02':'Emergency','03':'Fire','04':'Panic','05':'Get Zone ID Map','06':'Get Zone Information'},
+          s2c:{'00':'Arm Response','01':'Get Zone ID Map Response','02':'Get Zone Information Response','03':'Zone Status Changed','04':'Panel Status Changed'}}
+};
+
+// ZCL data types: hex type id -> {len in bytes (-1 = length-prefixed), kind for value formatting, name shown as [type]}.
+const ZB_DTYPE={
+  '00':{len:0,kind:'none',name:'nodata'},
+  '08':{len:1,kind:'hex',name:'data8'},'09':{len:2,kind:'hex',name:'data16'},'0A':{len:3,kind:'hex',name:'data24'},'0B':{len:4,kind:'hex',name:'data32'},
+  '10':{len:1,kind:'bool',name:'bool'},
+  '18':{len:1,kind:'map',name:'map8'},'19':{len:2,kind:'map',name:'map16'},'1A':{len:3,kind:'map',name:'map24'},'1B':{len:4,kind:'map',name:'map32'},
+  '20':{len:1,kind:'uint',name:'uint8'},'21':{len:2,kind:'uint',name:'uint16'},'22':{len:3,kind:'uint',name:'uint24'},'23':{len:4,kind:'uint',name:'uint32'},'24':{len:5,kind:'uint',name:'uint40'},'25':{len:6,kind:'uint',name:'uint48'},'27':{len:8,kind:'uint',name:'uint64'},
+  '28':{len:1,kind:'int',name:'int8'},'29':{len:2,kind:'int',name:'int16'},'2A':{len:3,kind:'int',name:'int24'},'2B':{len:4,kind:'int',name:'int32'},'2D':{len:6,kind:'int',name:'int48'},'2F':{len:8,kind:'int',name:'int64'},
+  '30':{len:1,kind:'enum',name:'enum8'},'31':{len:2,kind:'enum',name:'enum16'},
+  '39':{len:4,kind:'float',name:'single'},'3A':{len:8,kind:'float',name:'double'},
+  '41':{len:-1,kind:'octstr',name:'octstr'},'42':{len:-1,kind:'string',name:'string'},
+  'E8':{len:2,kind:'hex',name:'clusterId'},'E9':{len:2,kind:'hex',name:'attribId'},'F0':{len:8,kind:'hex',name:'EUI64'}
+};
+
+// Headline attributes per cluster (4-hex cluster -> 4-hex attr -> name). Extend over time; unmapped renders as 0xNNNN.
+const ZB_ATTRS={
+  '0000':{'0000':'ZCLVersion','0001':'AppVersion','0004':'ManufacturerName','0005':'ModelIdentifier','0007':'PowerSource'},
+  '0001':{'0020':'BatteryVoltage','0021':'BatteryPercentage'},
+  '0006':{'0000':'OnOff','4001':'OnTime','4002':'OffWaitTime'},
+  '0008':{'0000':'CurrentLevel'},
+  '0201':{'0000':'LocalTemperature','0011':'OccupiedCoolingSetpoint','0012':'OccupiedHeatingSetpoint','001C':'SystemMode'},
+  '0300':{'0000':'CurrentHue','0001':'CurrentSaturation','0003':'CurrentX','0004':'CurrentY','0007':'ColorTempMireds','4000':'EnhancedCurrentHue'},
+  '0400':{'0000':'MeasuredValue'},'0402':{'0000':'MeasuredValue'},'0403':{'0000':'MeasuredValue'},'0405':{'0000':'MeasuredValue'},
+  '0406':{'0000':'Occupancy'},
+  '0500':{'0000':'ZoneState','0001':'ZoneType','0002':'ZoneStatus'},
+  '0702':{'0000':'CurrentSummationDelivered','0400':'InstantaneousDemand'},
+  '0B04':{'0505':'RMSVoltage','0508':'RMSCurrent','050B':'ActivePower'}
+};
+
+// ZCL status codes (Default Response etc.). Standard names.
+const ZB_STATUS={
+  '00':'SUCCESS','01':'FAILURE','7E':'NOT_AUTHORIZED','7F':'RESERVED_FIELD_NOT_ZERO',
+  '80':'MALFORMED_COMMAND','81':'UNSUP_CLUSTER_COMMAND','82':'UNSUP_GENERAL_COMMAND',
+  '83':'UNSUP_MANUF_CLUSTER_COMMAND','84':'UNSUP_MANUF_GENERAL_COMMAND','85':'INVALID_FIELD',
+  '86':'UNSUPPORTED_ATTRIBUTE','87':'INVALID_VALUE','88':'READ_ONLY','89':'INSUFFICIENT_SPACE',
+  '8A':'DUPLICATE_EXISTS','8B':'NOT_FOUND','8C':'UNREPORTABLE_ATTRIBUTE','8D':'INVALID_DATA_TYPE',
+  '8E':'INVALID_SELECTOR','94':'TIMEOUT','C3':'UNSUPPORTED_CLUSTER'
+};
+
+// Normalize one payload byte (string like "0a"/"0x0A" or a number) to 2-char uppercase hex.
+function zbHx2(x){
+  if(x==null)return'';
+  if(typeof x==='number')return(x&0xFF).toString(16).toUpperCase().padStart(2,'0');
+  return String(x).trim().replace(/^0x/i,'').toUpperCase().padStart(2,'0');
+}
+function zb4(id){return String(id||'').toUpperCase().replace(/^0X/,'').padStart(4,'0')}
+
+// Parse a ZCL frame (payload = array of hex-string bytes). Returns a decoded header or null.
+// Handles the manufacturer-specific offset (2-byte mfr code between frame control and TSN).
+function rcZbParseZcl(payload,clusterId){
+  if(!Array.isArray(payload)||!payload.length)return null;
+  const b=payload.map(zbHx2);
+  const fc=parseInt(b[0],16);
+  if(isNaN(fc))return null;
+  const global=(fc&0x03)===0;
+  const mfrSpecific=!!(fc&0x04);
+  const dir=(fc&0x08)?1:0;                 // 1 = server->client, 0 = client->server
+  const disableDefault=!!(fc&0x10);
+  const cluster=zb4(clusterId);
+  let i=1,mfrCode=null;
+  if(mfrSpecific){
+    if(b.length<3)return{fc,global,mfrSpecific,dir,disableDefault,mfrCode:null,tsn:null,cmd:null,cluster,body:[],raw:b,truncated:true};
+    mfrCode=(b[2]+b[1]).toUpperCase();     // little-endian -> big-endian
+    i=3;
+  }
+  const tsn=b.length>i?b[i++]:null;
+  const cmd=b.length>i?b[i++]:null;
+  const body=b.slice(i);
+  return{fc,global,mfrSpecific,dir,disableDefault,mfrCode,tsn,cmd,cluster,body,raw:b,truncated:(tsn==null||cmd==null)};
+}
+
+// Friendly cluster-command name (tries the frame's direction first, then the other). Null if unknown.
+function zbClusterCmdName(cluster,code,dir){
+  const cl=ZB_CLUSTER_CMDS[zb4(cluster)];if(!cl)return null;
+  const pri=dir?'s2c':'c2s',alt=dir?'c2s':'s2c';
+  return(cl[pri]&&cl[pri][code])||(cl[alt]&&cl[alt][code])||null;
+}
+// "Report Attributes (0x0A)" / "On (0x01)" / "0x42" (unknown).
+function resolveCmd(zcl){
+  if(!zcl||zcl.cmd==null)return'';
+  const c=zcl.cmd;
+  const name=zcl.global?ZB_GLOBAL_CMDS[c]:zbClusterCmdName(zcl.cluster,c,zcl.dir);
+  return name?name+' (0x'+c+')':'0x'+c;
+}
+
+// Direction arrow for the Command column. Device is the cluster server by default; for OTA (0019) the device is the client.
+function rcZbDirArrow(zcl){
+  if(!zcl)return'';
+  const deviceIsClient=(zcl.cluster==='0019');
+  const fromDevice=deviceIsClient?(zcl.dir===0):(zcl.dir===1);
+  return fromDevice?'←hub':'→dev';   // <-hub = device->hub ; ->dev = hub->device
+}
+
+// Attribute friendly name (with/without the hex suffix).
+function zbAttrName(cluster,attr){const cl=ZB_ATTRS[zb4(cluster)];const k=zb4(attr);return(cl&&cl[k])||('0x'+k)}
+function zbAttrLabel(cluster,attr){const cl=ZB_ATTRS[zb4(cluster)];const k=zb4(attr);const n=cl&&cl[k];return n?n+' (0x'+k+')':'0x'+k}
+
+// Format a typed value. valBytes are little-endian hex-string bytes (length prefix already stripped for strings).
+function rcZbFormatValue(kind,valBytes){
+  if(!valBytes.length)return'';
+  let be='';for(let i=valBytes.length-1;i>=0;i--)be+=valBytes[i];   // LE -> BE hex
+  switch(kind){
+    case'bool':{const v=parseInt(valBytes[0],16);return v===0?'false':v===1?'true':'0x'+valBytes[0]}
+    case'uint':return BigInt('0x'+be).toString();
+    case'int':{const bits=valBytes.length*8;let v=BigInt('0x'+be);const half=1n<<BigInt(bits-1);if(v>=half)v-=(1n<<BigInt(bits));return v.toString()}
+    case'enum':case'map':case'hex':return'0x'+be;
+    case'float':{const buf=new ArrayBuffer(valBytes.length),dv=new DataView(buf);for(let i=0;i<valBytes.length;i++)dv.setUint8(i,parseInt(valBytes[i],16));return String(valBytes.length===4?dv.getFloat32(0,true):dv.getFloat64(0,true))}
+    case'string':{let s='';for(const x of valBytes){const c=parseInt(x,16);s+=(c>=32&&c<127)?String.fromCharCode(c):'.'}return JSON.stringify(s)}
+    case'octstr':return'0x'+valBytes.join('');
+    default:return'0x'+be;
+  }
+}
+
+// Walk an attribute-record list. isReadResp => Read Attributes Response layout (has a status byte).
+// Returns [{attr, type, typeName, value, status?, unknownType?}]. Stops cleanly on truncation/unknown type.
+function rcZbDecodeAttrs(body,isReadResp){
+  const out=[];let i=0;
+  while(i+2<=body.length){
+    const attr=(body[i+1]+body[i]).toUpperCase();i+=2;
+    if(isReadResp){
+      if(i>=body.length)break;
+      const status=body[i++];
+      if(status!=='00'){out.push({attr,status,value:null,type:null});continue}
+    }
+    if(i>=body.length)break;
+    const type=body[i++].toUpperCase();
+    const dt=ZB_DTYPE[type];
+    if(!dt){out.push({attr,type,value:null,unknownType:true});break}   // unknown length: cannot realign
+    let valBytes;
+    if(dt.len===-1){if(i>=body.length)break;const len=parseInt(body[i++],16);valBytes=body.slice(i,i+len);i+=len}
+    else{valBytes=body.slice(i,i+dt.len);i+=dt.len}
+    out.push({attr,type,typeName:dt.name,value:rcZbFormatValue(dt.kind,valBytes)});
+  }
+  return out;
+}
+
+// Compact + full decoded-payload strings for the Decoded column (short = cell text, full = title/expand).
+function rcZbDecodedSummary(zcl){
+  if(!zcl||zcl.cmd==null||zcl.truncated)return{short:'',full:''};
+  const c=zcl.cmd;
+  if(zcl.global&&(c==='0A'||c==='02'||c==='01')){
+    const attrs=rcZbDecodeAttrs(zcl.body,c==='01');
+    if(!attrs.length)return{short:'',full:''};
+    const shortP=[],fullP=[];
+    for(const a of attrs){
+      const nm=zbAttrName(zcl.cluster,a.attr);
+      if(a.status&&a.status!=='00'){const st=ZB_STATUS[a.status]||('0x'+a.status);shortP.push(nm+':'+st);fullP.push(zbAttrLabel(zcl.cluster,a.attr)+' → '+st+' (0x'+a.status+')')}
+      else if(a.unknownType){shortP.push(nm+'=? [0x'+a.type+']');fullP.push(zbAttrLabel(zcl.cluster,a.attr)+' = ? [unknown type 0x'+a.type+']')}
+      else{shortP.push(nm+'='+a.value);fullP.push(zbAttrLabel(zcl.cluster,a.attr)+' = '+a.value+' ['+a.typeName+']')}
+    }
+    return{short:shortP.join('; '),full:fullP.join('; ')};
+  }
+  if(zcl.global&&c==='0B'){
+    if(zcl.body.length<2)return{short:'',full:''};
+    const rc=zcl.body[0].toUpperCase(),st=zcl.body[1].toUpperCase();
+    const rcName=zbClusterCmdName(zcl.cluster,rc,0),stName=ZB_STATUS[st]||('0x'+st);
+    return{short:(rcName||'0x'+rc)+'→'+stName,
+           full:'Default response: for cmd '+(rcName?rcName+' (0x'+rc+')':'0x'+rc)+' — '+stName+' (0x'+st+')'};
+  }
+  return{short:'',full:''};
+}
+
+// Expanded-row "Decoded" breakdown (frame-control flags + command + payload summary). Browser-only (uses h()/mfrLabel).
+function rcZbDecodeHtml(rawText){
+  let f;try{f=JSON.parse(rawText)}catch(e){return''}
+  const zcl=rcZbParseZcl(f.payload,f.clusterId);if(!zcl)return'';
+  const fcHex='0x'+zcl.fc.toString(16).toUpperCase().padStart(2,'0');
+  const parts=[zcl.global?'Global':'Cluster-specific',zcl.dir?'server→client':'client→server'];
+  if(zcl.mfrSpecific)parts.push('Mfr-specific '+mfrLabel(zcl.mfrCode));
+  if(zcl.disableDefault)parts.push('Default-resp disabled');
+  const lines=['<b>Frame control:</b> '+h(fcHex)+' — '+h(parts.join(', ')),
+               '<b>Command:</b> '+h(rcZbDirArrow(zcl)+' '+(resolveCmd(zcl)||'—'))];
+  if(zcl.truncated)lines.push('<span style="color:var(--warn,#e0a800)">Frame truncated</span>');
+  const sum=rcZbDecodedSummary(zcl);
+  if(sum.full)lines.push('<b>'+((zcl.global&&zcl.cmd==='0B')?'Default response':'Attributes')+':</b> '+h(sum.full));
+  return'<div style="margin-bottom:8px;padding:8px 10px;background:rgba(33,150,243,0.06);border-radius:4px;font-size:11px;line-height:1.6;color:#cfe0f5">'+lines.join('<br>')+'</div>';
+}
+// ===== ZCL DECODE (END) =====
 
 // ===== RADIO CAPTURE: RING BUFFER =====
 // Stores raw frame lines (JSON strings). Bounded by maxBytes. Oldest-out on overflow.
@@ -2578,7 +2796,7 @@ const RC={
     lastAggregateAt:0,
     // Per-table sort state for aggregate tables; persisted across re-renders so the user's column choice survives 1Hz ticks.
     // Top tables default to descending Frames (col 1); OTA defaults to descending Frames (col 2).
-    aggSort:{top1:{sc:1,sd:'desc'},top5:{sc:1,sd:'desc'},ota:{sc:2,sd:'desc'}}
+    aggSort:{top1:{sc:1,sd:'desc'},top5:{sc:1,sd:'desc'},ota:{sc:2,sd:'desc'},lqi:{sc:3,sd:'asc'},rssi:{sc:3,sd:'asc'}}
   }
 };
 
@@ -2649,14 +2867,9 @@ function renderZigbeeSubTab(){
   // Capture clicks on aggregate-table headers so user's sort choice survives the 1Hz re-render.
   document.getElementById('rc-zb-aggregates').addEventListener('click',rcZbHandleAggSortClick);
   rcZbUpdateBadge();
-  ['rc-zb-f-cluster','rc-zb-f-cmd','rc-zb-f-dni','rc-zb-f-mfr','rc-zb-f-minlqi','rc-zb-f-maxrssi'].forEach(id=>{
-    const el=document.getElementById(id);
-    if(el)el.addEventListener('input',()=>{rcZbReadFilters();rcZbRenderTail()});
-  });
-  document.getElementById('rc-zb-f-clear').addEventListener('click',()=>{
-    ['rc-zb-f-cluster','rc-zb-f-cmd','rc-zb-f-dni','rc-zb-f-mfr','rc-zb-f-minlqi','rc-zb-f-maxrssi'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=''});
-    rcZbReadFilters();rcZbRenderTail();
-  });
+  // Single substring filter, 150 ms debounce — matches the tbl() filter UX used elsewhere in the SPA.
+  const fq=document.getElementById('rc-zb-f-q');
+  if(fq){let t=null;fq.addEventListener('input',()=>{clearTimeout(t);t=setTimeout(()=>{rcZbReadFilters();rcZbRenderTail()},150)})}
   rcZbReadFilters();
 }
 
@@ -2784,16 +2997,21 @@ function rcZbDniHex(id){
 
 function rcZbFrameToRow(text){
   let f;try{f=JSON.parse(text)}catch(e){return null}
+  const zcl=rcZbParseZcl(f.payload,f.clusterId);
+  const sum=zcl?rcZbDecodedSummary(zcl):{short:'',full:''};
   return{
     time:f.time||'',
     id:rcZbDniHex(f.id),
     name:f.name||'',
     _deviceId:f.deviceId,
     cluster:f.clusterId?clusterLabel(f.clusterId):'',
-    cmd:f.payload&&f.payload.length>2?'0x'+f.payload[2]:'',
+    cmd:zcl?resolveCmd(zcl):'',                       // decoded, offset-correct command
+    dirArrow:zcl?rcZbDirArrow(zcl):'',                // ←hub / →dev, folded into the Command cell
+    mfrMark:zcl&&zcl.mfrSpecific?' (mfr)':'',
+    decoded:sum.short,                                // compact payload decode for the Decoded column
+    decodedFull:sum.full,                             // full form for the cell title tooltip
     lqi:f.lastHopLqi!=null?f.lastHopLqi:'',
     rssi:f.lastHopRssi!=null?f.lastHopRssi:'',
-    payload:(f.payload||[]).slice(0,32).join(' ')+((f.payload||[]).length>32?' …':''),
     _raw:text
   };
 }
@@ -2801,57 +3019,37 @@ function rcZbFrameToRow(text){
 function rcZbFilterCard(){
   return `
     <div class="card" style="margin-bottom:12px">
-      <h3 style="margin-top:0">Filters <span style="font-weight:normal;font-size:12px;opacity:.7">(live tail only; recording stays unfiltered. Match by hex code or friendly name; comma-separate alternatives.)</span></h3>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;font-size:13px">
-        <label>Cluster: <input id="rc-zb-f-cluster" placeholder="0019, OTA, On/Off" style="width:160px"></label>
-        <label>Cmd byte: <input id="rc-zb-f-cmd" placeholder="e.g. 02" style="width:80px"></label>
-        <label>DNI regex: <input id="rc-zb-f-dni" placeholder="e.g. ^0x78" style="width:120px"></label>
-        <label>Manufacturer: <input id="rc-zb-f-mfr" placeholder="100B, Signify" style="width:160px"></label>
-        <label>Min LQI: <input id="rc-zb-f-minlqi" type="number" placeholder="any" style="width:80px"></label>
-        <label>Max RSSI: <input id="rc-zb-f-maxrssi" type="number" placeholder="any" style="width:80px"></label>
-        <button id="rc-zb-f-clear">Clear filters</button>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <input id="rc-zb-f-q" type="text" placeholder="Filter live tail… (name, DNI, cluster, command, decoded value, LQI, RSSI)" style="flex:1;min-width:260px;padding:6px 10px">
+        <span style="font-size:12px;opacity:.7">Substring match across all columns; space-separated terms all must match. Filters the live tail only — the recording stays full-fidelity.</span>
       </div>
     </div>`;
 }
 
 function rcZbReadFilters(){
-  const z=RC.zigbee;const get=id=>{const el=document.getElementById(id);return el?el.value.trim():''};
-  // Substring tokens, lowercased, with any "0x" prefix stripped. Empty tokens dropped.
-  const tokens=v=>{if(!v)return null;const t=v.split(/[,\s]+/).map(s=>s.toLowerCase().replace(/^0x/,'')).filter(Boolean);return t.length?t:null};
-  const csvByte=v=>v?v.split(/[,\s]+/).map(s=>s.toLowerCase().replace(/^0x/,'').padStart(2,'0')).filter(Boolean):null;
-  let dniRe=null;const dniStr=get('rc-zb-f-dni');
-  if(dniStr){try{dniRe=new RegExp(dniStr,'i')}catch(e){dniRe=null}}
-  z.filters={
-    cluster:tokens(get('rc-zb-f-cluster')),
-    cmd:csvByte(get('rc-zb-f-cmd')),
-    dni:dniRe,
-    mfr:tokens(get('rc-zb-f-mfr')),
-    minLqi:get('rc-zb-f-minlqi')?parseInt(get('rc-zb-f-minlqi'),10):null,
-    maxRssi:get('rc-zb-f-maxrssi')?parseInt(get('rc-zb-f-maxrssi'),10):null
-  };
+  const el=document.getElementById('rc-zb-f-q');
+  const v=el?el.value.trim().toLowerCase():'';
+  // Space-separated terms, AND-matched against a per-frame search string. Null = no filter.
+  RC.zigbee.filters=v?{q:v.split(/\s+/).filter(Boolean)}:null;
+}
+
+// Compose the same text the live tail shows for a frame, so the single filter box matches what the user sees.
+function rcZbFrameHaystack(frame){
+  const zcl=rcZbParseZcl(frame.payload,frame.clusterId);
+  const sum=zcl?rcZbDecodedSummary(zcl):{short:''};
+  return [
+    frame.time, frame.name, rcZbDniHex(frame.id),
+    clusterLabel(frame.clusterId||''),
+    zcl?rcZbDirArrow(zcl):'', zcl?resolveCmd(zcl):'', zcl&&zcl.mfrSpecific?'mfr':'',
+    sum.short, frame.lastHopLqi, frame.lastHopRssi
+  ].join(' ').toLowerCase();
 }
 
 function rcZbFrameMatchesFilter(text,f){
-  if(!f)return true;
+  if(!f||!f.q||!f.q.length)return true;
   let frame;try{frame=JSON.parse(text)}catch(e){return false}
-  if(f.cluster){
-    // Substring match against hex code OR friendly label. Any token hits = pass.
-    const code=String(frame.clusterId||'').toLowerCase();
-    const label=clusterLabel(frame.clusterId||'').toLowerCase();
-    if(!f.cluster.some(t=>code.includes(t)||label.includes(t)))return false;
-  }
-  if(f.cmd){const cmd=frame.payload&&frame.payload.length>2?String(frame.payload[2]).toLowerCase():'';if(!f.cmd.includes(cmd))return false}
-  if(f.dni&&!f.dni.test(rcZbDniHex(frame.id)))return false;
-  if(f.mfr){
-    // Manufacturer code is OTA-specific (cluster 0019). Skip non-OTA frames when filtering.
-    if(frame.clusterId!=='0019'||!frame.payload||frame.payload.length<6)return false;
-    const code=(frame.payload[5]+frame.payload[4]).toLowerCase();
-    const label=mfrLabel((frame.payload[5]+frame.payload[4]).toUpperCase()).toLowerCase();
-    if(!f.mfr.some(t=>code.includes(t)||label.includes(t)))return false;
-  }
-  if(f.minLqi!=null&&(frame.lastHopLqi==null||frame.lastHopLqi<f.minLqi))return false;
-  if(f.maxRssi!=null&&(frame.lastHopRssi==null||frame.lastHopRssi>f.maxRssi))return false;
-  return true;
+  const hay=rcZbFrameHaystack(frame);
+  return f.q.every(t=>hay.includes(t));
 }
 
 // Returns array of {k, v, ...extra} sorted by v desc. extraFn(frame) is called once per new key
@@ -2886,6 +3084,22 @@ function rcZbOtaSummary(frames){
     byDev.set(key,row);
   }
   return [...byDev.values()].sort((a,b)=>b.frames-a.frames);
+}
+
+// Per-device last-hop signal quality (LQI 0-255, higher=better; RSSI dBm, higher=better).
+// Skips frames missing the metric. Returns one row per device with {n,min,avg,max} for each.
+function rcZbSignalSummary(frames){
+  const byDev=new Map();
+  for(const f of frames){
+    const key=f.name||rcZbDniHex(f.id);if(!key)continue;
+    let row=byDev.get(key);
+    if(!row){row={device:key,deviceId:f.deviceId||null,lqis:[],rssis:[]};byDev.set(key,row)}
+    if(!row.deviceId&&f.deviceId)row.deviceId=f.deviceId;
+    if(f.lastHopLqi!=null)row.lqis.push(f.lastHopLqi);
+    if(f.lastHopRssi!=null)row.rssis.push(f.lastHopRssi);
+  }
+  const stat=a=>a.length?{n:a.length,min:Math.min(...a),max:Math.max(...a),avg:Math.round(a.reduce((s,x)=>s+x,0)/a.length)}:null;
+  return [...byDev.values()].map(r=>({device:r.device,deviceId:r.deviceId,lqi:stat(r.lqis),rssi:stat(r.rssis)}));
 }
 
 function rcZbRenderAggregates(){
@@ -2930,6 +3144,25 @@ function rcZbRenderAggregates(){
   tbl('rc-zb-top1',[devCol,{l:'Frames',f:'v',t:'n'}],top1,{filter:false,sc:s1.sc,sd:s1.sd});
   tbl('rc-zb-top5',[devCol,{l:'Frames',f:'v',t:'n'}],top5,{filter:false,sc:s5.sc,sd:s5.sd});
   renderBarChart(clusters.map(c=>({label:c.k,value:c.v})),'rc-zb-clusters',{height:200});
+  // Signal quality: per-device LQI/RSSI rollups over the 5-min window, weakest links first.
+  const sig=rcZbSignalSummary(parsed5);
+  const lqiRows=sig.filter(r=>r.lqi).map(r=>({device:r.device,deviceId:r.deviceId,frames:r.lqi.n,min:r.lqi.min,avg:r.lqi.avg,max:r.lqi.max}));
+  const rssiRows=sig.filter(r=>r.rssi).map(r=>({device:r.device,deviceId:r.deviceId,frames:r.rssi.n,min:r.rssi.min,avg:r.rssi.avg,max:r.rssi.max}));
+  if(lqiRows.length||rssiRows.length){
+    container.insertAdjacentHTML('beforeend',
+      '<div class="card" style="margin-top:12px"><h3 style="margin-top:0">Signal quality (last 5 min) <span style="font-weight:normal;font-size:12px;opacity:.7">— last-hop LQI/RSSI per device, weakest first</span></h3>'
+      +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">'
+      +'<div><h4 style="margin-top:0">Weakest LQI</h4><div id="rc-zb-lqi"></div></div>'
+      +'<div><h4 style="margin-top:0">Weakest RSSI</h4><div id="rc-zb-rssi"></div></div>'
+      +'</div></div>');
+    const sigCols=[
+      {l:'Device',f:'device',r:r=>r.deviceId?dlink(r.deviceId,r.device):h(r.device)},
+      {l:'Frames',f:'frames',t:'n'},{l:'Min',f:'min',t:'n'},{l:'Avg',f:'avg',t:'n'},{l:'Max',f:'max',t:'n'}
+    ];
+    const sl=z.aggSort.lqi, sr=z.aggSort.rssi;
+    if(lqiRows.length)tbl('rc-zb-lqi',sigCols,lqiRows,{filter:false,sc:sl.sc,sd:sl.sd});
+    if(rssiRows.length)tbl('rc-zb-rssi',sigCols,rssiRows,{filter:false,sc:sr.sc,sd:sr.sd});
+  }
   const ota=rcZbOtaSummary(parsed5);
   if(ota.length){
     container.insertAdjacentHTML('beforeend',
@@ -2969,11 +3202,12 @@ function rcZbRenderTailHtml(rows, selectedRaw){
   const td='padding:5px 10px;font-size:12px;border-top:1px solid rgba(255,255,255,0.05);vertical-align:top';
   const tdMono=td+';font-family:ui-monospace,SFMono-Regular,Menlo,monospace';
   let html='<table style="width:100%;border-collapse:collapse"><thead><tr>';
-  ['Time','Name','DNI','LQI','RSSI','Cluster','Cmd','Payload'].forEach(l=>html+='<th style="'+th+'">'+l+'</th>');
+  ['Time','Name','DNI','LQI','RSSI','Cluster','Command','Decoded'].forEach(l=>html+='<th style="'+th+'">'+l+'</th>');
   html+='</tr></thead><tbody>';
   rows.forEach((r,idx)=>{
     const sel=r._raw===selectedRaw;
     const rowBg=sel?'background:rgba(33,150,243,0.18)':'';
+    const cmdCell=(r.dirArrow?'<span style="opacity:.65">'+h(r.dirArrow)+'</span> ':'')+h(r.cmd||'')+(r.mfrMark?'<span style="opacity:.6">'+h(r.mfrMark)+'</span>':'');
     html+='<tr data-idx="'+idx+'" style="cursor:pointer;'+rowBg+'">';
     html+='<td style="'+td+'">'+h(r.time)+'</td>';
     html+='<td style="'+td+'">'+(r._deviceId?dlink(r._deviceId,r.name):h(r.name))+'</td>';
@@ -2981,12 +3215,12 @@ function rcZbRenderTailHtml(rows, selectedRaw){
     html+='<td style="'+td+';text-align:right">'+h(String(r.lqi))+'</td>';
     html+='<td style="'+td+';text-align:right">'+h(String(r.rssi))+'</td>';
     html+='<td style="'+td+'">'+h(r.cluster)+'</td>';
-    html+='<td style="'+tdMono+'">'+h(r.cmd)+'</td>';
-    html+='<td style="'+tdMono+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px">'+h(r.payload)+'</td>';
+    html+='<td style="'+td+'">'+cmdCell+'</td>';
+    html+='<td style="'+tdMono+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:320px"'+(r.decodedFull?' title="'+h(r.decodedFull)+'"':'')+'>'+h(r.decoded||'')+'</td>';
     html+='</tr>';
     if(sel){
       let pretty;try{pretty=JSON.stringify(JSON.parse(r._raw),null,2)}catch(e){pretty=r._raw}
-      html+='<tr style="background:rgba(33,150,243,0.08)"><td colspan="8" style="padding:8px 14px"><pre style="margin:0;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-all;color:#cfe0f5">'+h(pretty)+'</pre></td></tr>';
+      html+='<tr style="background:rgba(33,150,243,0.08)"><td colspan="8" style="padding:8px 14px">'+rcZbDecodeHtml(r._raw)+'<pre style="margin:0;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-all;color:#cfe0f5">'+h(pretty)+'</pre></td></tr>';
     }
   });
   html+='</tbody></table>';
@@ -2999,7 +3233,7 @@ function rcZbHandleAggSortClick(e){
   const th=e.target.closest('th[data-c]');if(!th)return;
   const tableEl=th.closest('table');if(!tableEl)return;
   const wrap=tableEl.closest('[id^="rc-zb-"]');if(!wrap)return;
-  const key=wrap.id==='rc-zb-top1'?'top1':wrap.id==='rc-zb-top5'?'top5':wrap.id==='rc-zb-ota'?'ota':null;
+  const key={'rc-zb-top1':'top1','rc-zb-top5':'top5','rc-zb-ota':'ota','rc-zb-lqi':'lqi','rc-zb-rssi':'rssi'}[wrap.id]||null;
   if(!key)return;
   const ci=+th.dataset.c;
   const s=RC.zigbee.aggSort[key];
