@@ -98,9 +98,6 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 /* ===== AUDIT MODE — styles not already in the SPA ===== */
 /* Audit page uses body directly (no .hdr sticky chrome) */
 #audit-root body,.audit-body{padding:16px}
-.toc{background:var(--card);border-radius:0 0 8px 8px;padding:14px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
-.toc-l{color:var(--muted);font-size:11px;text-transform:uppercase;font-weight:600;margin-bottom:6px}
-.toc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:4px;font-size:13px}
 .hdr-audit{background:var(--primary);color:#fff;padding:10px 20px;border-radius:8px 8px 0 0;display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:0}
 .hdr-audit h1{font-size:17px;font-weight:600}.hdr-audit .meta{font-size:12px;opacity:.85;margin-left:auto}
 summary.card-h{cursor:pointer;user-select:none}
@@ -143,7 +140,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.38.0";
+const UI_VERSION = "5.38.1";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -1324,7 +1321,7 @@ async function rDevices(){const P='p-devices';loading(P);try{
   o+='</div></div></div>';
   // Device Audit
   o+='<div class="card"><div class="card-h">Device Audit</div><div class="card-b">';
-  o+='<div class="muted" style="margin-bottom:8px">Cross-references each device against the apps and dashboards that subscribe to it. Surfaces unreferenced devices, mesh orphans, stuck scheduled jobs and critical devices in a standalone HTML report.</div>';
+  o+='<div class="muted" style="margin-bottom:8px">Cross-references each device against the apps and dashboards that subscribe to it. Surfaces unreferenced devices, mesh orphans and critical devices in a standalone HTML report.</div>';
   o+='<div class="actions" style="margin-bottom:10px"><button class="btn btn-p" id="btnAudit">Generate Device Audit</button></div>';
   o+='<div id="audit-row" style="margin-top:8px"></div>';
   o+='</div></div>';
@@ -3107,7 +3104,6 @@ function buildAuditHtml(data) {
   const generatedAt = data.generatedAt || '';
   const unreferenced = data.unreferenced || [];
   const meshOrphans = data.meshOrphans || [];
-  const stuckJobs = data.stuckJobs || [];
   const tunedDevices = data.tunedDevices || [];
   const tunedDefaults = data.tunedDefaults || {};
   const criticalTop20 = data.criticalTop20 || [];
@@ -3142,29 +3138,11 @@ function buildAuditHtml(data) {
   o += `<div class="hdr-audit"><h1>Device Usage Audit — ${h(hubName)}</h1>`;
   o += `<div class="meta">Generated ${h(generatedAt)} · ${data.deviceCount} devices · scan ${fmtDurSec(data.scanDurationMs)}</div></div>`;
 
-  // TOC
-  o += '<div class="toc"><div class="toc-l">Contents</div><div class="toc-grid">';
-  o += '<div><a href="#summary">Summary</a></div>';
-  o += `<div><a href="#unref">Unreferenced devices (${unreferenced.length})</a></div>`;
-  o += `<div><a href="#orphans">Mesh orphans (${meshOrphans.length})</a></div>`;
-  o += `<div><a href="#stuck">Stuck scheduled jobs (${stuckJobs.length})</a></div>`;
-  o += `<div><a href="#tuned">Manually-tuned devices (${tunedDevices.length})</a></div>`;
-  o += '<div><a href="#critical">Critical devices (top 20)</a></div>';
-  o += `<div><a href="#rooms">Devices by room (${rooms.length})</a></div>`;
-  if (zwNodeRows.length > 0) o += `<div><a href="#zwjs">Z-Wave JS mesh health (${zwNodeRows.length})</a></div>`;
-  if (hmRows.length > 0) o += `<div><a href="#hubmesh">Hub Mesh linked devices (${hmRows.length})</a></div>`;
-  o += `<div><a href="#apps">Apps → devices (${appsToDevices.length})</a></div>`;
-  o += `<div><a href="#dashboards">Dashboards → devices (${dashboardsToDevices.length})</a></div>`;
-  o += '<div><a href="#all">Per-device detail table</a></div>';
-  if (failed.length > 0) o += `<div><a href="#failed" class="crit">Failed to fetch (${failed.length})</a></div>`;
-  o += '</div></div>';
-
   // Summary
   o += '<div class="card" id="summary"><div class="card-h">Summary</div><div class="card-b"><div class="metrics">';
   o += sumcell('Devices', data.deviceCount, null);
   o += sumcell('Unreferenced', unreferenced.length, 'warn');
   o += sumcell('Mesh orphans', meshOrphans.length, 'crit');
-  o += sumcell('Stuck jobs', stuckJobs.length, 'warn');
   o += sumcell(`Critical (≥${data.criticalThreshold} refs)`, data.criticalCount, null);
   o += '</div></div></div>';
 
@@ -3192,25 +3170,6 @@ function buildAuditHtml(data) {
   } else {
     o += '<div class="muted" style="margin-bottom:6px">Hubitat reports <code>orphan: true</code> — physical radio relationship lost.</div>';
     o += '<div>' + meshOrphans.map(d => dlink(d.id, d.name)).join(' · ') + '</div>';
-  }
-  o += closeCard();
-
-  // Stuck jobs
-  o += openCard('stuck', `⚠ Stuck scheduled jobs (${stuckJobs.length})`);
-  if (!stuckJobs.length) {
-    o += '<div class="muted">None — all scheduled jobs have a future or null nextRunTime.</div>';
-  } else {
-    o += '<div class="muted" style="margin-bottom:6px">A null <i>Last run</i> with a past <i>nextRunTime</i> = job was scheduled but never fired.</div>';
-    o += '<div class="tbl-wrap"><table data-sortable id="t_stuck"><thead><tr><th>Device</th><th>Handler</th><th data-t="n" data-sd="desc">Overdue</th><th>Last run</th><th>Status</th></tr></thead><tbody>';
-    stuckJobs.forEach(s => {
-      const prev = s.prevRunTime || '';
-      o += `<tr><td>${dlink(s.id, s.name)}</td>`;
-      o += `<td><code>${h(s.handler || '')}</code></td>`;
-      o += `<td data-sv="${s.overdueMs || 0}">${fmtDurSec(s.overdueMs)}</td>`;
-      o += `<td>${prev ? h(prev) : '<span class="muted">never</span>'}</td>`;
-      o += `<td>${h(s.status || '')}</td></tr>`;
-    });
-    o += '</tbody></table></div>';
   }
   o += closeCard();
 
