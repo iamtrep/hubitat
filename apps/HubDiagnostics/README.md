@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
 <!-- AUTO:hubdiag-version -->
-**Current version:** 5.41.0
+**Current version:** 5.42.0
 <!-- /AUTO -->
 
 ---
@@ -37,14 +37,7 @@ A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-t
 
 ## Installation
 
-Hub Diagnostics consists of two files:
-
-<!-- AUTO:hubdiag-files -->
-| File | Purpose |
-|---|---|
-| `HubDiagnostics.groovy` | The Hubitat app (backend logic, API, data collection) |
-| `hub_diagnostics_ui.html` | The web dashboard UI (served from hub File Manager) |
-<!-- /AUTO -->
+You only need to install one file — the Groovy app. The app downloads and installs its own web dashboard onto the hub.
 
 ### Step 1 — Install the Groovy app
 
@@ -59,7 +52,7 @@ Hub Diagnostics consists of two files:
 ### Step 2 — Create an app instance
 
 1. Go to **Apps → + Add User App → Hub Diagnostics**
-2. The app will initialize, configure OAuth, and verify the UI file is present.
+2. On first run the app initializes, configures OAuth, and automatically downloads its web dashboard to the hub's File Manager — you don't need to install that file yourself.
 3. A link to open the dashboard appears on the main page.
 
 > **Note:** If OAuth auto-enable fails during install, the app will show instructions to enable it manually from the Apps Code page.
@@ -88,7 +81,7 @@ The Dashboard tab shows the current App Version and UI Version. Click **Check fo
 Use **Apps Code → Hub Diagnostics → Import** (same import URL as above). After saving, re-open the app preferences page once to re-initialize.
 
 ### Updating the UI
-The app enforces version sync: a scheduled job runs once daily at 03:17 local time and downloads the latest UI from GitHub — but only installs it if the downloaded file's embedded version exactly matches the installed app version. If the UI file is missing entirely (e.g. first install, File Manager cleared), the next `ui.html` request triggers an emergency blocking sync. In practice: after updating the Groovy app code, open the app preferences once and re-save (or wait for the nightly job) and the matching UI will install automatically. You can also trigger an immediate sync via **Sync UI from GitHub** on the Dashboard tab.
+The app keeps the UI in sync with the app version automatically: a nightly job downloads the latest UI from GitHub and installs it once its version matches the installed app. In practice: after updating the Groovy app code, open the app preferences once and re-save (or wait for the nightly job) and the matching UI will install automatically. You can also trigger an immediate sync via **Sync UI from GitHub** on the Dashboard tab.
 
 ---
 
@@ -225,7 +218,7 @@ The canonical place for all user-installed source code on this hub. The Apps and
 | Used by Apps | Count — app names appear in a hover tooltip |
 | Updated | YYYY-MM-DD |
 
-**Hub Variables** — Read directly via Hubitat's `getAllGlobalVars()` platform API (no Hub Variables app instance required). Soft-fails to "API not available on this firmware" via `MissingMethodException` on older firmware.
+**Hub Variables** — Read directly via Hubitat's `getAllGlobalVars()` platform API (no Hub Variables app instance required). Shows "API not available on this firmware" on older firmware.
 
 | Column | Description |
 |---|---|
@@ -294,7 +287,7 @@ The user's own channel is annotated with "(your channel)" when it appears in the
 
 #### Z-Wave JS Controller (Z-Wave JS hubs only)
 
-Renders only when the Z-Wave JS stack is detected (probe of `/hub/zwave2/status`; result cached in state for the session). Sources data from `/hub/zwave2/getControllerState`:
+Renders only when the Z-Wave JS stack is detected (via `/hub/zwave2/status`). Sources data from `/hub/zwave2/getControllerState`:
 
 - Controller firmware, SDK version, Home ID, own node ID, Primary / SUC / SIS-present flags, Long Range support
 - "Rebuilding routes" warning when active
@@ -303,7 +296,7 @@ Renders only when the Z-Wave JS stack is detected (probe of `/hub/zwave2/status`
 
 #### Z-Wave Topology
 
-Pairwise neighbor adjacency matrix as reported by the Z-Wave controller (`/hub/zwaveTopology`). Hubitat returns this as a bare HTML `<table>` with bgcolor cells encoding connectivity between each node pair; the card injects the fragment as-is wrapped in `.tbl-wrap` for our look-and-feel. The card is hidden when no Z-Wave nodes are paired — the hub returns a degenerate, malformed (unclosed) self-only matrix in that case.
+Pairwise neighbor adjacency matrix as reported by the Z-Wave controller (`/hub/zwaveTopology`), showing connectivity between each node pair. The card is hidden when no Z-Wave nodes are paired.
 
 ### Matter
 
@@ -323,7 +316,7 @@ Lists devices visible to the hub via mDNS / Bonjour / Avahi (`/hub/mdnsDevices/j
 
 **Alerts** — All active platform and calculated alerts plus messages from `/hub/messages` (info-severity, blue). Shows a green checkmark when there are none.
 
-**System Resources** — Free OS memory, CPU load (5-min avg), **Processors** (count, from `/hub/cpuInfo`), **Load Avg (1m)** (from `/hub/cpuInfo`), **Hub Load Threshold** (% from `/hub/advanced/getExcessiveLoadThreshold` — the level Hubitat itself considers "excessive"), Java heap usage (total/free/direct), temperature (°C and °F), and database size. Values are color-coded against configured thresholds. This card **auto-refreshes** in the background on a configurable interval (default 30 s); the last refresh time is shown in the card header. The auto-refresh response (`/api/live`) carries `cpuInfo` and `loadThreshold` so those chips persist across refreshes.
+**System Resources** — Free OS memory, CPU load (5-min avg), **Processors** (count, from `/hub/cpuInfo`), **Load Avg (1m)** (from `/hub/cpuInfo`), **Hub Load Threshold** (% from `/hub/advanced/getExcessiveLoadThreshold` — the level Hubitat itself considers "excessive"), Java heap usage (total/free/direct), temperature (°C and °F), and database size. Values are color-coded against configured thresholds. This card **auto-refreshes** in the background on a configurable interval (default 30 s); the last refresh time is shown in the card header.
 
 **Resource History** — Time-series chart of free OS memory and CPU load over recent checkpoints. Horizontal reference lines mark the warning and critical memory thresholds. Re-renders on browser resize.
 
@@ -395,7 +388,7 @@ Changes are color-coded: green for additions/improvements, red for removals/degr
 
 ## Radio Capture Tab
 
-Live capture of radio traffic from the hub's internal log sockets, intended for mesh troubleshooting. Pass 1 supports **Zigbee** via `ws://${hub_ip}/zigbeeLogsocket`. A single **Z-Wave** sub-tab is reserved for a later pass; it will auto-detect the active Z-Wave stack (Z/IP or Z-Wave JS) at runtime.
+Live capture of radio traffic from the hub's internal log sockets, intended for mesh troubleshooting. **Zigbee** capture is supported today, via `ws://${hub_ip}/zigbeeLogsocket`. A **Z-Wave** sub-tab is planned; it will auto-detect the active Z-Wave stack (Z/IP or Z-Wave JS) at runtime.
 
 **Capture controls** — in order: Start capture, Pause capture, Stop capture, Download, Clear buffer.
 
@@ -439,7 +432,7 @@ Generates a one-time, per-device cross-reference report covering:
 
 ### How it works
 
-The scan crawls every device via `/device/fullJson/{id}` — one call per device, throttled to the Hubitat platform's 8-concurrent-async-call cap. On a 350-device hub this takes ~30–60 s. After the main scan completes, three synchronous enrichment passes run in `finalizeAudit`: rooms (single fetch), Z-Wave JS per-node (one call per Z-Wave device on JS hubs), Hub Mesh per-device (one call per linked device). The result is held in memory (the single most recent audit) and rendered live in the browser when you open the **View report** link — it is **not** written to a file and does not survive a hub restart. Re-run the audit to regenerate it.
+The scan crawls every device via `/device/fullJson/{id}` — one call per device, throttled to the Hubitat platform's 8-concurrent-async-call cap. On a 350-device hub this takes ~30–60 s. After the main scan it adds room assignments, Z-Wave JS per-node detail (on JS hubs), and Hub Mesh linked-device detail. The result is held in memory (the single most recent audit) and rendered live in the browser when you open the **View report** link — it is **not** written to a file and does not survive a hub restart. Re-run the audit to regenerate it.
 
 ### Trigger
 
@@ -448,7 +441,7 @@ The scan crawls every device via `/device/fullJson/{id}` — one call per device
 ### Limitations
 
 - The scan is one-shot; subscriptions can change between audits. Re-run for fresh data.
-- A single device fetch failure ratio above 10 % marks the scan as `error` instead of `done` (a partial report is still written).
+- A single device fetch failure ratio above 10 % marks the scan as `error` instead of `done` (a partial result is still retained in memory).
 
 ---
 
@@ -526,7 +519,7 @@ The forum export generates a concise Markdown-formatted summary suitable for pas
 
 Severity levels: **Critical** (red), **Warning** (orange), **Info** (blue), **OK** (green).
 
-The **alert-aware favicon** and the Dashboard *Platform Alerts* / Health *Alerts* lists share one roll-up (the SPA's `composeAlerts`): System Resource Alerts, Platform Alerts, Hub Messages, Ethernet + WiFi, the Z-Wave ghost / failed / problem-node counts, Z-Wave radio-firmware-update, hub-firmware-update, and app-update status. The remaining entries below — Matter reboot, the per-mesh quality metrics (Avg PER / RSSI, S0 overhead, Zigbee LQI), and the device-inventory alerts (low battery, stale devices, chatty devices) — are surfaced on their own tabs and do **not** affect the favicon or the *Alerts* count. The Performance tab's chatty-device banner is a separate, browser-computed metric (per-device messages/min vs the chatty-device threshold) and is distinct from the hub's *Spammy Devices Detected* flag; only the hub flag feeds the roll-up.
+The **alert-aware favicon** and the Dashboard *Platform Alerts* / Health *Alerts* lists share one roll-up: System Resource Alerts, Platform Alerts, Hub Messages, Ethernet + WiFi, the Z-Wave ghost / failed / problem-node counts, Z-Wave radio-firmware-update, hub-firmware-update, and app-update status. The remaining entries below — Matter reboot, the per-mesh quality metrics (Avg PER / RSSI, S0 overhead, Zigbee LQI), and the device-inventory alerts (low battery, stale devices, chatty devices) — are surfaced on their own tabs and do **not** affect the favicon or the *Alerts* count. The Performance tab's chatty-device banner is a separate, browser-computed metric (per-device messages/min vs the chatty-device threshold) and is distinct from the hub's *Spammy Devices Detected* flag; only the hub flag feeds the roll-up.
 
 ### Hub Messages
 | Alert | Source | Severity |

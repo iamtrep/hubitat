@@ -180,39 +180,6 @@ def gen_hubdiag_version() -> str:
     return f"**Current version:** {m.app_version}\n"
 
 
-def gen_hubdiag_files() -> str:
-    """List the files in apps/HubDiagnostics/ that ship with the app."""
-    d = ROOT / "apps" / "HubDiagnostics"
-    rows = []
-    for p in sorted(d.iterdir()):
-        if p.is_dir() or p.name in _IGNORE_NAMES or p.name.startswith("."):
-            continue
-        if p.name.endswith("~") or p.suffix == ".pyc":
-            continue
-        if p.suffix in (".md", ".py") or p.name.endswith(".har"):
-            continue
-        purpose = _hubdiag_file_purpose(p.name)
-        if not purpose:
-            continue
-        rows.append(f"| `{p.name}` | {purpose} |")
-    if not rows:
-        return "_(no shipped files)_\n"
-    return "| File | Purpose |\n|---|---|\n" + "\n".join(rows) + "\n"
-
-
-_HUBDIAG_PURPOSE = {
-    ".groovy": "The Hubitat app (backend logic, API, data collection)",
-    ".html": "The web dashboard UI (served from hub File Manager)",
-}
-
-
-def _hubdiag_file_purpose(name: str) -> str | None:
-    for suf, purpose in _HUBDIAG_PURPOSE.items():
-        if name.endswith(suf):
-            return purpose
-    return None
-
-
 def gen_visiblair_components() -> str:
     """Components of the visiblair integration: manager app + sensor drivers."""
     d = ROOT / "integrations" / "visiblair"
@@ -338,7 +305,6 @@ SECTIONS: dict[tuple[str, str], "callable[[], str]"] = {
     ("drivers/README.md", "drivers-stelpro"): gen_drivers_stelpro,
     ("drivers/README.md", "drivers-tests"): gen_drivers_tests,
     ("apps/HubDiagnostics/README.md", "hubdiag-version"): gen_hubdiag_version,
-    ("apps/HubDiagnostics/README.md", "hubdiag-files"): gen_hubdiag_files,
     ("apps/WellMonitor/README.md", "wellmonitor-files"): gen_wellmonitor_files,
     ("apps/utilities/README.md", "utilities-index"): gen_utilities_index,
     ("apps/sensors/README.md", "sensors-index"): gen_sensors_index,
