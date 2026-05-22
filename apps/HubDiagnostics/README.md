@@ -443,15 +443,10 @@ The scan crawls every device via `/device/fullJson/{id}` — one call per device
 
 **Devices tab → Device Audit card → Generate Device Audit**. Progress is polled live; the "View report" link appears on completion. The 10 most recent audits are kept; older entries are auto-deleted.
 
-### Stuck-job timing accuracy
-
-Each `/device/fullJson/{id}` callback captures a `fetchedAtMs` timestamp at response arrival. The "stuck job" predicate compares `nextRunTime` against this per-device timestamp rather than the audit-finalize time. This eliminates the scan-duration race that previously produced false positives (a job whose `nextRunTime` came due during the 30–60 s scan window would otherwise look "stuck" even though it had already fired).
-
 ### Limitations
 
 - The scan is one-shot; subscriptions can change between audits. Re-run for fresh data.
 - A single device fetch failure ratio above 10 % marks the scan as `error` instead of `done` (a partial report is still written).
-- HubDiagnostics is `singleInstance: true`, so two audits cannot run concurrently.
 
 ---
 
