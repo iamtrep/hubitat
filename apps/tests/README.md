@@ -17,6 +17,7 @@ Hubitat Elevation apps for stress-testing various hub subsystems. These are diag
 | `FieldStaticPersistenceTest.groovy` | **Field Static Persistence Test** | Probe app for verifying @Field static survives Hubitat code pushes (2.5.0.x+). |
 | `fileManagerTests.groovy` | **File Manager API test** | tbd |
 | `hubStressTests.groovy` | **Hub Stress Test App** | Some HE stress test functions |
+| `PushoverNotificationTester.groovy` | **Pushover Notification Tester** | Systematic test app for the Pushover Notifications driver |
 | `SampleApp.groovy` | **Sample Application** | A skeleton sample app for HE |
 <!-- /AUTO -->
 
