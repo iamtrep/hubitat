@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.42.0";
+const UI_VERSION = "5.43.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -3469,6 +3469,34 @@ function buildAuditHtml(data) {
   }
   o += closeCard();
 
+  // Device hardware and firmware (hardware identity) — make / model / firmware, v5.37.0
+  const invRows = Object.values(allDevices).map(dv => ({
+    id: dv.id,
+    name: dv.label || dv.name || '',
+    type: dv.deviceTypeName || '',
+    protocol: dv.protocol || '',
+    manufacturer: dv.manufacturer || '',
+    model: dv.model || '',
+    firmware: dv.firmware || ''
+  })).sort((a, b) => (a.manufacturer || '').localeCompare(b.manufacturer || '') || a.name.localeCompare(b.name));
+  window._auditInventory = invRows;
+  window._auditHubName = hubName || 'hub';
+  o += openCard('inventory', `🔧 Device hardware and firmware (${invRows.length})`);
+  o += '<div style="margin-bottom:10px"><button type="button" class="btn btn-p btn-s" onclick="downloadInventoryCsv()">⬇ Download CSV</button> <button type="button" class="btn btn-p btn-s" onclick="copyInventoryCsv(this)">⧉ Copy CSV</button></div>';
+  o += '<div class="filter"><input type="text" data-filter="t_inv" placeholder="Filter by name, manufacturer, model…"></div>';
+  o += '<div class="tbl-wrap"><table data-sortable id="t_inv"><thead><tr><th>Name</th><th>Type</th><th>Protocol</th><th data-sd="asc">Manufacturer</th><th>Model</th><th>Firmware</th></tr></thead><tbody>';
+  const invDash = '<span class="muted">—</span>';
+  invRows.forEach(r => {
+    o += `<tr><td>${dlink(r.id, r.name)}</td>`;
+    o += `<td>${h(r.type)}</td>`;
+    o += `<td>${r.protocol ? h(r.protocol) : invDash}</td>`;
+    o += `<td>${r.manufacturer ? h(r.manufacturer) : invDash}</td>`;
+    o += `<td>${r.model ? h(r.model) : invDash}</td>`;
+    o += `<td>${r.firmware ? h(r.firmware) : invDash}</td></tr>`;
+  });
+  o += '</tbody></table></div>';
+  o += closeCard();
+
   // Devices by room
   o += openCard('rooms', `🏠 Devices by room (${rooms.length})`);
   if (!rooms.length) {
@@ -3574,34 +3602,6 @@ function buildAuditHtml(data) {
     });
     o += '</tbody></table></div>';
   }
-  o += closeCard();
-
-  // Device inventory (hardware identity) — make / model / firmware, v5.37.0
-  const invRows = Object.values(allDevices).map(dv => ({
-    id: dv.id,
-    name: dv.label || dv.name || '',
-    type: dv.deviceTypeName || '',
-    protocol: dv.protocol || '',
-    manufacturer: dv.manufacturer || '',
-    model: dv.model || '',
-    firmware: dv.firmware || ''
-  })).sort((a, b) => (a.manufacturer || '').localeCompare(b.manufacturer || '') || a.name.localeCompare(b.name));
-  window._auditInventory = invRows;
-  window._auditHubName = hubName || 'hub';
-  o += openCard('inventory', `🔧 Device inventory — make / model / firmware (${invRows.length})`);
-  o += '<div style="margin-bottom:10px"><button type="button" class="btn btn-p btn-s" onclick="downloadInventoryCsv()">⬇ Download CSV</button> <button type="button" class="btn btn-p btn-s" onclick="copyInventoryCsv(this)">⧉ Copy CSV</button></div>';
-  o += '<div class="filter"><input type="text" data-filter="t_inv" placeholder="Filter by name, manufacturer, model…"></div>';
-  o += '<div class="tbl-wrap"><table data-sortable id="t_inv"><thead><tr><th>Name</th><th>Type</th><th>Protocol</th><th data-sd="asc">Manufacturer</th><th>Model</th><th>Firmware</th></tr></thead><tbody>';
-  const invDash = '<span class="muted">—</span>';
-  invRows.forEach(r => {
-    o += `<tr><td>${dlink(r.id, r.name)}</td>`;
-    o += `<td>${h(r.type)}</td>`;
-    o += `<td>${r.protocol ? h(r.protocol) : invDash}</td>`;
-    o += `<td>${r.manufacturer ? h(r.manufacturer) : invDash}</td>`;
-    o += `<td>${r.model ? h(r.model) : invDash}</td>`;
-    o += `<td>${r.firmware ? h(r.firmware) : invDash}</td></tr>`;
-  });
-  o += '</tbody></table></div>';
   o += closeCard();
 
   // Per-device detail table
