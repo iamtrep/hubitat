@@ -86,7 +86,7 @@ details{margin:8px 0} summary{cursor:pointer;font-weight:600;font-size:13px;padd
 
 select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-size:13px;margin-right:8px}
 
-.diff-add{color:var(--ok)} .diff-rem{color:var(--crit)} .diff-chg{color:var(--warn)}
+.diff-add{color:var(--ok)} .diff-rem{color:var(--crit)} .diff-chg{color:var(--warn)} .diff-item{margin:2px 0 2px 16px}
 .pill-menu{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:500}
 .pill-auto{background:#dbeafe;color:#1e40af} .pill-integ{background:#d1fae5;color:#065f46} .pill-apps{background:#ede9fe;color:#5b21b6}
 
@@ -96,8 +96,6 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 .report-mode .hdr{top:33px}
 
 /* ===== AUDIT MODE — styles not already in the SPA ===== */
-/* Audit page uses body directly (no .hdr sticky chrome) */
-#audit-root body,.audit-body{padding:16px}
 .hdr-audit{background:var(--primary);color:#fff;padding:10px 20px;border-radius:8px 8px 0 0;display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:0}
 .hdr-audit h1{font-size:17px;font-weight:600}.hdr-audit .meta{font-size:12px;opacity:.85;margin-left:auto}
 summary.card-h{cursor:pointer;user-select:none}
@@ -140,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.39.0";
+const UI_VERSION = "5.40.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -275,7 +273,11 @@ function alink(id,n){return'<a href="/installedapp/configure/'+id+'" target="_bl
 function dlistlink(count,ids){if(ids===true)return'<a href="/device/list" target="_blank">'+(count??0)+'</a>';if(!ids||!ids.length)return String(count??0);return'<a href="/device/list?ids='+ids.join(',')+'" target="_blank">'+count+'</a>'}
 function alistlink(count){return'<a href="/installedapp/list" target="_blank">'+(count??0)+'</a>'}
 const CD={paired:'Paired',lan_direct:'LAN (Direct)',lan_bridge:'LAN (Bridge)',cloud:'Cloud',virtual:'Virtual',hubmesh:'Hub Mesh',other:'Other'};
-const PD={zigbee:'Zigbee',zwave:'Z-Wave',matter:'Matter',lan:'LAN/IP',virtual:'Virtual',cloud:'Cloud',maker:'Maker API',hubmesh:'Hub Mesh',other:'Other'};
+const BADGE={builtin:'<span class="badge b-builtin">Built-in</span>',community:'<span class="badge b-community">Community</span>',platform:'<span class="badge b-platform">Platform</span>'};
+// Source classification → badge markup. emptyAsBuiltin=true renders Built-in for a missing source (apps); false renders nothing (perf rows).
+function srcBadge(source,emptyAsBuiltin){if(source==='platform')return BADGE.platform;if(source==='community')return BADGE.community;if(!source&&!emptyAsBuiltin)return'';return BADGE.builtin;}
+// Split Z-Wave nodes into ghosts/failed. Legacy backend (no `kind` field): treat no-deviceId as ghost, anything else as failed.
+function splitGhostNodes(nodes){return{ghosts:nodes.filter(g=>(g.kind?g.kind==='ghost':!g.deviceId)),failed:nodes.filter(g=>(g.kind?g.kind==='failed':!!g.deviceId))};}
 
 // ===== RADIO CAPTURE CONSTANTS =====
 // Subset of the Zigbee Cluster Library. Keys are 4-char hex (uppercase). Friendly labels for live tail and filter chips.
@@ -548,8 +550,7 @@ function buildForumMarkdown(d){
     }
     // Ghost / Failed nodes — split by kind so readers can see how many are truly orphaned
     // vs how many are recoverable (battery/range issues).
-    const ghosts=ghostNodes.filter(g=>(g.kind?g.kind==='ghost':!g.deviceId));
-    const failed=ghostNodes.filter(g=>(g.kind?g.kind==='failed':!!g.deviceId));
+    const {ghosts,failed}=splitGhostNodes(ghostNodes);
     const renderNode=g=>{
       const gName=obfuscate?(g.type||'Z-Wave Node'):g.name;
       const gSig=g.signals?` [${g.signals.join(', ')}]`:'';
@@ -818,13 +819,6 @@ function renderZigbeeWifiChart(zbCh,containerId,scan){
 }
 
 // ===== HORIZONTAL BAR CHART =====
-// Build id→parentType map from parentChildHierarchy
-function buildParentTypeMap(pch){
-  const m={};
-  if(!pch)return m;
-  pch.forEach(p=>{const t=p.label||p.type||'Unknown';m[p.id]=t;(p.children||[]).forEach(c=>{m[c.id]=t})});
-  return m}
-
 // Aggregate values by type using parent-type map, return sorted top-10 + Other
 function aggregateByType(items,typeMap,idKey,valKey){
   const byType={};
@@ -1047,16 +1041,18 @@ function renderChart(pts,cid,range){
 }
 
 // ===== LIVE RESOURCE CARD RENDERERS =====
+// Free OS Memory metric card — identical across the dash/health/perf resource renderers.
+function resMemCard(r){return mc('Free OS Memory',fmem(r.freeOSMemory),sev(r.freeOSMemory,TH.warnMemMb*1024,TH.critMemMb*1024,true))}
 function renderDashRes(r,d){
   let o='';
-  o+=mc('Free OS Memory',fmem(r.freeOSMemory),sev(r.freeOSMemory,TH.warnMemMb*1024,TH.critMemMb*1024,true));
+  o+=resMemCard(r);
   o+=mc('CPU Load (5m)',r.cpuAvg5min?.toFixed(2)??'N/A',sev(r.cpuAvg5min,TH.warnCpuLoad,TH.critCpuLoad,false));
   if(d.temperature!=null)o+=mc('Temperature',d.temperature.toFixed(1)+'°C',sev(d.temperature,TH.warnTempC,TH.critTempC,false));
   if(d.databaseSize!=null)o+=mc('Database',d.databaseSize+' MB');
   return o}
 function renderHealthRes(r,d){
   let o='';
-  o+=mc('Free OS Memory',fmem(r.freeOSMemory),sev(r.freeOSMemory,TH.warnMemMb*1024,TH.critMemMb*1024,true));
+  o+=resMemCard(r);
   o+=mc('CPU Load (5m)',r.cpuAvg5min?.toFixed(2),sev(r.cpuAvg5min,TH.warnCpuLoad,TH.critCpuLoad,false));
   if(d.cpuInfo){const ci=d.cpuInfo;
     if(ci.processors!=null)o+=mc('Processors',ci.processors);
@@ -1070,7 +1066,7 @@ function renderHealthRes(r,d){
   return o}
 function renderPerfRes(r){
   let o='';
-  o+=mc('Free OS Memory',fmem(r.freeOSMemory),sev(r.freeOSMemory,TH.warnMemMb*1024,TH.critMemMb*1024,true));
+  o+=resMemCard(r);
   o+=mc('CPU Load (5m)',r.cpuAvg5min?.toFixed(2),sev(r.cpuAvg5min,TH.warnCpuLoad,TH.critCpuLoad,false));
   if(r.temperature!=null)o+=mc('Temperature',r.temperature.toFixed(1)+'°C',sev(r.temperature,TH.warnTempC,TH.critTempC,false));
   if(r.databaseSize!=null)o+=mc('Database',r.databaseSize+' MB');
@@ -1310,7 +1306,6 @@ function auditPoll(scanId, total) {
 // ===== TAB: DEVICES =====
 async function rDevices(){const P='p-devices';loading(P);try{
   const d=await api('devices'),s=d.summary,bc=d.byConnectionType||{},ic=d.idsByConnectionType||{},bi=d.byIntegration||{},ii=d.idsByIntegration||{},is=d.idsByStatus||{},src=d.integrationSources||{};
-  const srcBadge=k=>{const s=src[k];return s==='builtin'?'<span class="badge b-builtin">Built-in</span>':s==='community'?'<span class="badge b-community">Community</span>':''};
   let o='';
   o+='<div class="card"><div class="card-h">Device Summary</div><div class="card-b"><div class="metrics">';
   o+=mc('Total',dlistlink(s.totalDevices,true));o+=mc('Active',dlistlink(s.activeDevices,is.active)+' ('+d.inactivityDays+'d)','var(--ok)');
@@ -1331,7 +1326,7 @@ async function rDevices(){const P='p-devices';loading(P);try{
   Object.entries(bc).forEach(([k,v])=>{if(v>0)o+='<tr><td>'+(CD[k]||k)+'</td><td>'+dlistlink(v,ic[k])+'</td></tr>'});
   o+='</tbody></table></div></div></div>';
   o+='<div class="card"><div class="card-h">Integrations</div><div class="card-b"><div class="tbl-wrap"><table><thead><tr><th>Integration</th><th>Source</th><th>Count</th></tr></thead><tbody>';
-  Object.entries(bi).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>{if(v>0)o+='<tr><td>'+h(k)+'</td><td>'+srcBadge(k)+'</td><td>'+dlistlink(v,ii[k])+'</td></tr>'});
+  Object.entries(bi).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>{if(v>0)o+='<tr><td>'+h(k)+'</td><td>'+srcBadge(src[k],false)+'</td><td>'+dlistlink(v,ii[k])+'</td></tr>'});
   o+='</tbody></table></div></div></div></div>';
   // R-6 B3 (v5.19.0): compute dt + stale once; reused for both the markup-build phase below and the post-render tbl() init.
   const bt=d.byType||{},it=d.idsByType||{};
@@ -1389,11 +1384,6 @@ async function rApps(){const P='p-apps';loading(P);try{
   document.getElementById(P).innerHTML=o;
   // Installed Apps table
   if(d.allApps&&d.allApps.length){
-    const srcBadge=s=>{
-      if(s==='platform') return'<span class="badge b-platform">Platform</span>';
-      if(s==='community')return'<span class="badge b-community">Community</span>';
-      return'<span class="badge b-builtin">Built-in</span>';
-    };
     const appLink=r=>r.source==='platform'
       ?'<a href="/installedapp/status/'+r.id+'" target="_blank">'+h(r.name)+'</a>'
       :alink(r.id,r.name);
@@ -1412,7 +1402,7 @@ async function rApps(){const P='p-apps';loading(P);try{
     tbl('appsTbl',[
       {l:'App',   f:'name',  r:r=>appLink(r)},
       {l:'Type',  f:'type'},
-      {l:'Source',f:'source',r:r=>srcBadge(r.source)},
+      {l:'Source',f:'source',r:r=>srcBadge(r.source,true)},
       ...menuCol,
       {l:'Role',  f:'level', r:r=>roleStr(r)},
       {l:'Status',f:'disabled',r:r=>r.disabled?'<span class="badge b-crit">Disabled</span>':''}
@@ -1604,9 +1594,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
     // kind=failed -> has device, radio reports failure; try battery/range before excluding
     if(z.ghostNodes&&z.ghostNodes.length){
       const renderRow=g=>{const sig=g.signals&&g.signals.length?'<span style="color:var(--muted);font-size:12px"> ['+g.signals.map(s=>h(s)).join(', ')+']</span>':'';return '<div style="margin:4px 0;color:var(--crit)">'+(g.deviceId?dlink(g.deviceId,'Node '+g.id):h('Node '+g.id))+' &mdash; '+h(g.name||'Unknown')+sig+'</div>'};
-      // Legacy backend without kind field: treat noDeviceId as ghost, anything else as failed.
-      const ghosts=z.ghostNodes.filter(g=>(g.kind?g.kind==='ghost':!g.deviceId));
-      const failed=z.ghostNodes.filter(g=>(g.kind?g.kind==='failed':!!g.deviceId));
+      const {ghosts,failed}=splitGhostNodes(z.ghostNodes);
       if(ghosts.length){
         o+='<div style="margin-top:10px"><div class="alert a-crit">\u26D4 Ghost Nodes: '+ghosts.length+' \u2014 no Hubitat device, safe to force-remove from radio</div>';
         ghosts.forEach(g=>{o+=renderRow(g)});
@@ -1990,14 +1978,9 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
   }
   // App Runtime table
   if(s&&s.appStats){
-    const perfSrcBadge=r=>{
-      if(r.source==='platform') return'<span class="badge b-platform">Platform</span>';
-      if(r.source==='community')return'<span class="badge b-community">Community</span>';
-      return r.source?'<span class="badge b-builtin">Built-in</span>':'';
-    };
     tbl('appStatsTbl',[
       {l:'Name',  f:'name',  r:r=>r.id?'<a href="/installedapp/status/'+r.id+'" target="_blank">'+h(r.name)+'</a>':h(r.name)},
-      {l:'Source',f:'source',r:perfSrcBadge},
+      {l:'Source',f:'source',r:r=>srcBadge(r.source,false)},
       {l:'Total (ms)',f:'total',t:'n'},
       {l:'% Busy',f:'pct',t:'n',r:r=>r.pct!=null?r.pct.toFixed(1)+'%':''},
       {l:'% Total',f:'pctTotal',t:'n',r:r=>r.pctTotal!=null?r.pctTotal.toFixed(3)+'%':''},
@@ -2077,6 +2060,15 @@ function renderComparison(data,elId){
 }
 
 // ===== TAB: SNAPSHOTS =====
+function renderSnapTable(snaps){
+  const rows=snaps.map((s,i)=>({idx:i+1,timestamp:s.timestamp,firmware:s.hubInfo?.firmware||'N/A',
+    devices:s.devices.totalDevices,apps:s.apps.totalApps,memory:s.memory!=null?fmem(s.memory):'N/A',_idx:i}));
+  tbl('snapTbl',[
+    {l:'#',f:'idx',t:'n'},{l:'Timestamp',f:'timestamp'},{l:'Firmware',f:'firmware'},
+    {l:'Devices',f:'devices',t:'n'},{l:'Apps',f:'apps',t:'n'},{l:'Memory',f:'memory'},
+    {l:'',f:'_idx',r:r=>'<button class="btn btn-d" onclick="delSnap('+r._idx+')">\u{1F5D1}</button>'}
+  ],rows,{sc:0,sd:'desc'});
+}
 async function rSnap(){const P='p-snapshots';loading(P);try{
   const d=await api('snapshots');let o='';
   o+='<div class="actions">';
@@ -2104,14 +2096,7 @@ async function rSnap(){const P='p-snapshots';loading(P);try{
     o+='<div id="diffResult" style="margin-top:10px"></div></div></div></div>'}
   document.getElementById(P).innerHTML=o;
   // Render table
-  if(d.snapshots&&d.snapshots.length){
-    const rows=d.snapshots.map((s,i)=>({idx:i+1,timestamp:s.timestamp,firmware:s.hubInfo?.firmware||'N/A',
-      devices:s.devices.totalDevices,apps:s.apps.totalApps,memory:s.memory!=null?fmem(s.memory):'N/A',_idx:i}));
-    tbl('snapTbl',[
-      {l:'#',f:'idx',t:'n'},{l:'Timestamp',f:'timestamp'},{l:'Firmware',f:'firmware'},
-      {l:'Devices',f:'devices',t:'n'},{l:'Apps',f:'apps',t:'n'},{l:'Memory',f:'memory'},
-      {l:'',f:'_idx',r:r=>'<button class="btn btn-d" onclick="delSnap('+r._idx+')">\u{1F5D1}</button>'}
-    ],rows,{sc:0,sd:'desc'})}
+  if(d.snapshots&&d.snapshots.length){renderSnapTable(d.snapshots)}
   // View snapshot handler
   const selView=document.getElementById('selView');
   if(selView)selView.onchange=async()=>{
@@ -2150,13 +2135,7 @@ async function rSnap(){const P='p-snapshots';loading(P);try{
         if(so)so.innerHTML='<option value="">Select...</option>'+mkOpts(fresh.snapshots);
         const sn=document.getElementById('selNewer');
         if(sn)sn.innerHTML='<option value="">Select...</option><option value="now">Now (create new)</option>'+mkOpts(fresh.snapshots);
-        if(fresh.snapshots&&fresh.snapshots.length&&document.getElementById('snapTbl')){
-          const rows=fresh.snapshots.map((s,i)=>({idx:i+1,timestamp:s.timestamp,firmware:s.hubInfo?.firmware||'N/A',
-            devices:s.devices.totalDevices,apps:s.apps.totalApps,memory:s.memory!=null?fmem(s.memory):'N/A',_idx:i}));
-          tbl('snapTbl',[{l:'#',f:'idx',t:'n'},{l:'Timestamp',f:'timestamp'},{l:'Firmware',f:'firmware'},
-            {l:'Devices',f:'devices',t:'n'},{l:'Apps',f:'apps',t:'n'},{l:'Memory',f:'memory'},
-            {l:'',f:'_idx',r:r=>'<button class="btn btn-d" onclick="delSnap('+r._idx+')">\u{1F5D1}</button>'}
-          ],rows,{sc:0,sd:'desc'})}
+        if(fresh.snapshots&&fresh.snapshots.length&&document.getElementById('snapTbl')){renderSnapTable(fresh.snapshots)}
       }).catch(()=>{})}}
     catch(e){document.getElementById('diffResult').innerHTML='<div class="alert a-crit">Failed to compare: '+h(e.message)+'</div>'}
     btnDiff.disabled=false;btnDiff.textContent='Compare'};
@@ -2372,56 +2351,56 @@ function renderDiff(d,elId){
   const dc=d.deviceChanges;const dd=dc.newerTotal-dc.olderTotal;
   o+='<div style="margin:8px 0"><b>Devices:</b> '+dc.olderTotal+' &rarr; '+dc.newerTotal+(dd!==0?' <span style="color:'+(dd>0?'var(--ok)':'var(--crit)')+'">('+( dd>0?'+':'')+dd+')</span>':'')+'</div>';
   if(dc.added.length){o+='<div class="diff-add" style="margin:4px 0"><b>Added ('+dc.added.length+'):</b></div>';
-    dc.added.forEach(d=>{o+='<div style="margin:2px 0 2px 16px" class="diff-add">+ '+dlink(d.id,d.name)+' ('+h(d.integration||d.connectionType||'')+')</div>'})}
+    dc.added.forEach(d=>{o+='<div class="diff-item diff-add">+ '+dlink(d.id,d.name)+' ('+h(d.integration||d.connectionType||'')+')</div>'})}
   if(dc.removed.length){o+='<div class="diff-rem" style="margin:4px 0"><b>Removed ('+dc.removed.length+'):</b></div>';
-    dc.removed.forEach(d=>{o+='<div style="margin:2px 0 2px 16px" class="diff-rem">- '+dlink(d.id,d.name)+' ('+h(d.integration||d.connectionType||'')+')</div>'})}
+    dc.removed.forEach(d=>{o+='<div class="diff-item diff-rem">- '+dlink(d.id,d.name)+' ('+h(d.integration||d.connectionType||'')+')</div>'})}
   if(dc.changed.length){o+='<div class="diff-chg" style="margin:4px 0"><b>Changed ('+dc.changed.length+'):</b></div>';
     dc.changed.forEach(d=>{const ch=d.changes.map(c=>c.field+': '+c.from+' \u2192 '+c.to).join(', ');
-      o+='<div style="margin:2px 0 2px 16px" class="diff-chg">~ '+dlink(d.id,d.name)+' &mdash; '+h(ch)+'</div>'})}
+      o+='<div class="diff-item diff-chg">~ '+dlink(d.id,d.name)+' &mdash; '+h(ch)+'</div>'})}
   // Protocol changes
   if(d.connectionTypeChanges&&d.connectionTypeChanges.length){o+='<div style="margin:8px 0"><b>Connection Type Changes:</b></div>';
-    d.connectionTypeChanges.forEach(p=>{const dd=p.to-p.from;o+='<div style="margin:2px 0 2px 16px">'+h(p.connectionType)+': '+p.from+' \u2192 '+p.to+' <span style="color:'+(dd>0?'var(--ok)':'var(--crit)')+'">('+( dd>0?'+':'')+dd+')</span></div>'})}
+    d.connectionTypeChanges.forEach(p=>{const dd=p.to-p.from;o+='<div class="diff-item">'+h(p.connectionType)+': '+p.from+' \u2192 '+p.to+' <span style="color:'+(dd>0?'var(--ok)':'var(--crit)')+'">('+( dd>0?'+':'')+dd+')</span></div>'})}
   if(d.integrationChanges&&d.integrationChanges.length){o+='<div style="margin:8px 0"><b>Integration Changes:</b></div>';
-    d.integrationChanges.forEach(p=>{const dd=p.to-p.from;o+='<div style="margin:2px 0 2px 16px">'+h(p.integration)+': '+p.from+' \u2192 '+p.to+' <span style="color:'+(dd>0?'var(--ok)':'var(--crit)')+'">('+( dd>0?'+':'')+dd+')</span></div>'})}
+    d.integrationChanges.forEach(p=>{const dd=p.to-p.from;o+='<div class="diff-item">'+h(p.integration)+': '+p.from+' \u2192 '+p.to+' <span style="color:'+(dd>0?'var(--ok)':'var(--crit)')+'">('+( dd>0?'+':'')+dd+')</span></div>'})}
   // App changes
   const ac=d.appChanges;const ad=ac.newerTotal-ac.olderTotal;
   o+='<div style="margin:8px 0"><b>Apps:</b> '+ac.olderTotal+' \u2192 '+ac.newerTotal+(ad!==0?' <span style="color:'+(ad>0?'var(--ok)':'var(--crit)')+'">('+( ad>0?'+':'')+ad+')</span>':'')+'</div>';
-  if(ac.added&&ac.added.length)ac.added.forEach(a=>o+='<div style="margin:2px 0 2px 16px" class="diff-add">+ '+alink(a.id,a.label||a.name)+'</div>');
-  if(ac.removed&&ac.removed.length)ac.removed.forEach(a=>o+='<div style="margin:2px 0 2px 16px" class="diff-rem">- '+h(a.label||a.name)+'</div>');
+  if(ac.added&&ac.added.length)ac.added.forEach(a=>o+='<div class="diff-item diff-add">+ '+alink(a.id,a.label||a.name)+'</div>');
+  if(ac.removed&&ac.removed.length)ac.removed.forEach(a=>o+='<div class="diff-item diff-rem">- '+h(a.label||a.name)+'</div>');
   if(ac.changed&&ac.changed.length){o+='<div class="diff-chg" style="margin:4px 0"><b>Status Changed ('+ac.changed.length+'):</b></div>';
-    ac.changed.forEach(a=>o+='<div style="margin:2px 0 2px 16px" class="diff-chg">~ '+alink(a.id,a.label||a.name)+' &mdash; '+(a.disabled?'enabled \u2192 disabled':'disabled \u2192 enabled')+'</div>')}
+    ac.changed.forEach(a=>o+='<div class="diff-item diff-chg">~ '+alink(a.id,a.label||a.name)+' &mdash; '+(a.disabled?'enabled \u2192 disabled':'disabled \u2192 enabled')+'</div>')}
   // Network config changes
   const nc=d.networkChanges||{};
   if(nc.zigbeeChannel)o+='<div style="margin:8px 0"><b>Zigbee Channel:</b> '+(nc.zigbeeChannel.from??'?')+' \u2192 '+(nc.zigbeeChannel.to??'?')+'</div>';
   if(nc.zwaveRegion)o+='<div style="margin:8px 0"><b>Z-Wave Region:</b> '+h(nc.zwaveRegion.from||'?')+' \u2192 '+h(nc.zwaveRegion.to||'?')+'</div>';
   if(nc.matterEnabled!=null)o+='<div style="margin:8px 0"><b>Matter:</b> '+(nc.matterEnabled.from?'enabled':'disabled')+' \u2192 '+(nc.matterEnabled.to?'enabled':'disabled')+'</div>';
   if(nc.hubMeshPeers){
-    if(nc.hubMeshPeers.added&&nc.hubMeshPeers.added.length)nc.hubMeshPeers.added.forEach(p=>o+='<div style="margin:2px 0 2px 16px" class="diff-add">+ Hub Mesh peer: '+h(p)+'</div>');
-    if(nc.hubMeshPeers.removed&&nc.hubMeshPeers.removed.length)nc.hubMeshPeers.removed.forEach(p=>o+='<div style="margin:2px 0 2px 16px" class="diff-rem">- Hub Mesh peer: '+h(p)+'</div>')}
+    if(nc.hubMeshPeers.added&&nc.hubMeshPeers.added.length)nc.hubMeshPeers.added.forEach(p=>o+='<div class="diff-item diff-add">+ Hub Mesh peer: '+h(p)+'</div>');
+    if(nc.hubMeshPeers.removed&&nc.hubMeshPeers.removed.length)nc.hubMeshPeers.removed.forEach(p=>o+='<div class="diff-item diff-rem">- Hub Mesh peer: '+h(p)+'</div>')}
   // Storage
   const os=d.older?.storage,ns=d.newer?.storage,sc=d.storageChanges||{};
   if(os||ns||Object.keys(sc).length){
     const fmtSt=st=>st?(st.fileCount+' files'+(st.usedBytes!=null?', '+fmem(st.usedBytes)+' used':'')+(st.freeSpace!=null?', '+fmem(st.freeSpace)+' free':'')):'N/A';
     o+='<div style="margin:8px 0"><b>File Manager:</b> '+fmtSt(os)+' → '+fmtSt(ns)+'</div>';
-    if(sc.fileCount)o+='<div style="margin:2px 0 2px 16px"'+(sc.fileCount.to>sc.fileCount.from?' class="diff-add"':sc.fileCount.to<sc.fileCount.from?' class="diff-rem"':'')+'>Files: '+sc.fileCount.from+' → '+sc.fileCount.to+'</div>';
-    if(sc.freeSpace)o+='<div style="margin:2px 0 2px 16px"'+(sc.freeSpace.to>sc.freeSpace.from?' class="diff-add"':sc.freeSpace.to<sc.freeSpace.from?' class="diff-rem"':'')+'>Free Space: '+fmem(sc.freeSpace.from)+' → '+fmem(sc.freeSpace.to)+'</div>'}
+    if(sc.fileCount)o+='<div class="diff-item'+(sc.fileCount.to>sc.fileCount.from?' diff-add':sc.fileCount.to<sc.fileCount.from?' diff-rem':'')+'">Files: '+sc.fileCount.from+' → '+sc.fileCount.to+'</div>';
+    if(sc.freeSpace)o+='<div class="diff-item'+(sc.freeSpace.to>sc.freeSpace.from?' diff-add':sc.freeSpace.to<sc.freeSpace.from?' diff-rem':'')+'">Free Space: '+fmem(sc.freeSpace.from)+' → '+fmem(sc.freeSpace.to)+'</div>'}
   // Backups (v5.13.0)
   const bc=d.backupsChanges;
   if(bc&&Object.keys(bc).length){o+='<div style="margin:8px 0"><b>Backups:</b></div>';
-    if(bc.localCount){const dd=bc.localCount.to-bc.localCount.from;const cls=bc.localCount.to<bc.localCount.from?'diff-rem':bc.localCount.to>bc.localCount.from?'diff-add':'';o+='<div style="margin:2px 0 2px 16px" class="'+cls+'">Local backup count: '+bc.localCount.from+' → '+bc.localCount.to+(dd!==0?' ('+(dd>0?'+':'')+dd+')':'')+'</div>'}
-    if(bc.latestLocal)o+='<div style="margin:2px 0 2px 16px">Latest local backup: '+h(bc.latestLocal.from||'(none)')+' → '+h(bc.latestLocal.to||'(none)')+'</div>';
-    if(bc.cloudThisHubCount){const dd=bc.cloudThisHubCount.to-bc.cloudThisHubCount.from;const cls=bc.cloudThisHubCount.to<bc.cloudThisHubCount.from?'diff-rem':bc.cloudThisHubCount.to>bc.cloudThisHubCount.from?'diff-add':'';o+='<div style="margin:2px 0 2px 16px" class="'+cls+'">Cloud backups (this hub): '+bc.cloudThisHubCount.from+' → '+bc.cloudThisHubCount.to+(dd!==0?' ('+(dd>0?'+':'')+dd+')':'')+'</div>'}
-    if(bc.cloudBackupEntitlement)o+='<div style="margin:2px 0 2px 16px" class="diff-chg">Cloud backup entitlement: '+(bc.cloudBackupEntitlement.from?'yes':'no')+' → '+(bc.cloudBackupEntitlement.to?'yes':'no')+'</div>';
-    if(bc.cloudRestoreEntitlement)o+='<div style="margin:2px 0 2px 16px" class="diff-chg">Cloud restore entitlement: '+(bc.cloudRestoreEntitlement.from?'yes':'no')+' → '+(bc.cloudRestoreEntitlement.to?'yes':'no')+'</div>';
+    if(bc.localCount){const dd=bc.localCount.to-bc.localCount.from;const cls=bc.localCount.to<bc.localCount.from?'diff-rem':bc.localCount.to>bc.localCount.from?'diff-add':'';o+='<div class="diff-item '+cls+'">Local backup count: '+bc.localCount.from+' → '+bc.localCount.to+(dd!==0?' ('+(dd>0?'+':'')+dd+')':'')+'</div>'}
+    if(bc.latestLocal)o+='<div class="diff-item">Latest local backup: '+h(bc.latestLocal.from||'(none)')+' → '+h(bc.latestLocal.to||'(none)')+'</div>';
+    if(bc.cloudThisHubCount){const dd=bc.cloudThisHubCount.to-bc.cloudThisHubCount.from;const cls=bc.cloudThisHubCount.to<bc.cloudThisHubCount.from?'diff-rem':bc.cloudThisHubCount.to>bc.cloudThisHubCount.from?'diff-add':'';o+='<div class="diff-item '+cls+'">Cloud backups (this hub): '+bc.cloudThisHubCount.from+' → '+bc.cloudThisHubCount.to+(dd!==0?' ('+(dd>0?'+':'')+dd+')':'')+'</div>'}
+    if(bc.cloudBackupEntitlement)o+='<div class="diff-item diff-chg">Cloud backup entitlement: '+(bc.cloudBackupEntitlement.from?'yes':'no')+' → '+(bc.cloudBackupEntitlement.to?'yes':'no')+'</div>';
+    if(bc.cloudRestoreEntitlement)o+='<div class="diff-item diff-chg">Cloud restore entitlement: '+(bc.cloudRestoreEntitlement.from?'yes':'no')+' → '+(bc.cloudRestoreEntitlement.to?'yes':'no')+'</div>';
   }
   // Security (v5.13.0)
   const secCh=d.securityChanges;
   if(secCh&&Object.keys(secCh).length){o+='<div style="margin:8px 0"><b>Security:</b></div>';
-    if(secCh.limitedAccess)o+='<div style="margin:2px 0 2px 16px" class="diff-chg">Limited Access: '+(secCh.limitedAccess.from?'enabled':'off')+' → '+(secCh.limitedAccess.to?'enabled':'off')+'</div>';
-    if(secCh.limitedAddresses)o+='<div style="margin:2px 0 2px 16px" class="diff-chg">Allowed IPs: ['+secCh.limitedAddresses.from.map(h).join(', ')+'] → ['+secCh.limitedAddresses.to.map(h).join(', ')+']</div>';
-    if(secCh.allowedSubnets)o+='<div style="margin:2px 0 2px 16px" class="diff-chg">Allowed Subnets: ['+secCh.allowedSubnets.from.map(h).join(', ')+'] → ['+secCh.allowedSubnets.to.map(h).join(', ')+']</div>';
-    if(secCh.dnsFallback)o+='<div style="margin:2px 0 2px 16px" class="diff-chg">DNS Fallback: '+(secCh.dnsFallback.from?'on':'off')+' → '+(secCh.dnsFallback.to?'on':'off')+'</div>';
-    if(secCh.cloudController)o+='<div style="margin:2px 0 2px 16px" class="diff-chg">Hubitat Cloud: '+h(secCh.cloudController.from||'?')+' → '+h(secCh.cloudController.to||'?')+'</div>';
+    if(secCh.limitedAccess)o+='<div class="diff-item diff-chg">Limited Access: '+(secCh.limitedAccess.from?'enabled':'off')+' → '+(secCh.limitedAccess.to?'enabled':'off')+'</div>';
+    if(secCh.limitedAddresses)o+='<div class="diff-item diff-chg">Allowed IPs: ['+secCh.limitedAddresses.from.map(h).join(', ')+'] → ['+secCh.limitedAddresses.to.map(h).join(', ')+']</div>';
+    if(secCh.allowedSubnets)o+='<div class="diff-item diff-chg">Allowed Subnets: ['+secCh.allowedSubnets.from.map(h).join(', ')+'] → ['+secCh.allowedSubnets.to.map(h).join(', ')+']</div>';
+    if(secCh.dnsFallback)o+='<div class="diff-item diff-chg">DNS Fallback: '+(secCh.dnsFallback.from?'on':'off')+' → '+(secCh.dnsFallback.to?'on':'off')+'</div>';
+    if(secCh.cloudController)o+='<div class="diff-item diff-chg">Hubitat Cloud: '+h(secCh.cloudController.from||'?')+' → '+h(secCh.cloudController.to||'?')+'</div>';
   }
   // Network settings (NTP, load threshold) — extends networkChanges block
   if(nc.ntpServer)o+='<div style="margin:8px 0"><b>NTP Server:</b> '+h(nc.ntpServer.from||'(none)')+' → '+h(nc.ntpServer.to||'(none)')+'</div>';
@@ -2430,18 +2409,18 @@ function renderDiff(d,elId){
   const cc=d.codeChanges;
   if(cc&&Object.keys(cc).length){o+='<div style="margin:8px 0"><b>User Code:</b></div>';
     if(cc.bundles){
-      (cc.bundles.added||[]).forEach(b=>o+='<div style="margin:2px 0 2px 16px" class="diff-add">+ Bundle: '+h(b.namespace+'/'+b.name)+'</div>');
-      (cc.bundles.removed||[]).forEach(b=>o+='<div style="margin:2px 0 2px 16px" class="diff-rem">- Bundle: '+h(b.namespace+'/'+b.name)+'</div>');
+      (cc.bundles.added||[]).forEach(b=>o+='<div class="diff-item diff-add">+ Bundle: '+h(b.namespace+'/'+b.name)+'</div>');
+      (cc.bundles.removed||[]).forEach(b=>o+='<div class="diff-item diff-rem">- Bundle: '+h(b.namespace+'/'+b.name)+'</div>');
     }
     if(cc.libraries){
-      (cc.libraries.added||[]).forEach(l=>o+='<div style="margin:2px 0 2px 16px" class="diff-add">+ Library: '+h(l.namespace+'/'+l.name)+(l.version?' v'+l.version:'')+'</div>');
-      (cc.libraries.removed||[]).forEach(l=>o+='<div style="margin:2px 0 2px 16px" class="diff-rem">- Library: '+h(l.namespace+'/'+l.name)+(l.version?' v'+l.version:'')+'</div>');
-      (cc.libraries.versionChanged||[]).forEach(l=>o+='<div style="margin:2px 0 2px 16px" class="diff-chg">~ Library: '+h(l.namespace+'/'+l.name)+' v'+l.from+' → v'+l.to+'</div>');
+      (cc.libraries.added||[]).forEach(l=>o+='<div class="diff-item diff-add">+ Library: '+h(l.namespace+'/'+l.name)+(l.version?' v'+l.version:'')+'</div>');
+      (cc.libraries.removed||[]).forEach(l=>o+='<div class="diff-item diff-rem">- Library: '+h(l.namespace+'/'+l.name)+(l.version?' v'+l.version:'')+'</div>');
+      (cc.libraries.versionChanged||[]).forEach(l=>o+='<div class="diff-item diff-chg">~ Library: '+h(l.namespace+'/'+l.name)+' v'+l.from+' → v'+l.to+'</div>');
     }
     if(cc.hubVariables){
-      (cc.hubVariables.added||[]).forEach(v=>o+='<div style="margin:2px 0 2px 16px" class="diff-add">+ Hub Variable: '+h(v.name)+(v.type?' ('+h(v.type)+')':'')+'</div>');
-      (cc.hubVariables.removed||[]).forEach(v=>o+='<div style="margin:2px 0 2px 16px" class="diff-rem">- Hub Variable: '+h(v.name)+(v.type?' ('+h(v.type)+')':'')+'</div>');
-      (cc.hubVariables.typeChanged||[]).forEach(v=>o+='<div style="margin:2px 0 2px 16px" class="diff-chg">~ Hub Variable: '+h(v.name)+' '+h(v.from)+' → '+h(v.to)+'</div>');
+      (cc.hubVariables.added||[]).forEach(v=>o+='<div class="diff-item diff-add">+ Hub Variable: '+h(v.name)+(v.type?' ('+h(v.type)+')':'')+'</div>');
+      (cc.hubVariables.removed||[]).forEach(v=>o+='<div class="diff-item diff-rem">- Hub Variable: '+h(v.name)+(v.type?' ('+h(v.type)+')':'')+'</div>');
+      (cc.hubVariables.typeChanged||[]).forEach(v=>o+='<div class="diff-item diff-chg">~ Hub Variable: '+h(v.name)+' '+h(v.from)+' → '+h(v.to)+'</div>');
     }
   }
   el.innerHTML=o;
@@ -3124,11 +3103,7 @@ function buildAuditHtml(data) {
     return `<div class="card" id="${anchorId}"><details${openAttr}><summary class="card-h">${headerHtml}</summary><div class="card-b">`;
   }
   function closeCard() { return '</div></details></div>'; }
-  function driverBadge(dt) {
-    return dt === 'usr'
-      ? '<span class="badge b-community">Community</span>'
-      : '<span class="badge b-builtin">Built-in</span>';
-  }
+  function driverBadge(dt) { return dt === 'usr' ? BADGE.community : BADGE.builtin; }
 
   let o = '';
 
@@ -3347,7 +3322,7 @@ function buildAuditHtml(data) {
   o += '<div class="tbl-wrap"><table data-sortable id="t_all"><thead><tr><th data-sd="asc">Name</th><th>Type</th><th>Source</th><th data-t="n">Apps</th><th data-t="n">Dashboards</th><th>Parent app</th><th>Last activity</th></tr></thead><tbody>';
   const sortedDevices = Object.values(allDevices).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   sortedDevices.forEach(d => {
-    const src = d.driverType === 'usr' ? '<span class="badge b-community">Community</span>' : '<span class="badge b-builtin">Built-in</span>';
+    const src = driverBadge(d.driverType);
     const apps = d.appsUsing || [];
     const dashs = d.dashboards || [];
     let appsCell;
