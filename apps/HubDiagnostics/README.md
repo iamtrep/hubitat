@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
 <!-- AUTO:hubdiag-version -->
-**Current version:** 5.37.0
+**Current version:** 5.38.0
 <!-- /AUTO -->
 
 ---
@@ -106,7 +106,7 @@ The header bar contains a **Docs ↗** link (this document) and a **↻ Refresh*
 
 **Connection Types / Integrations** — Distribution of devices by how they connect (Paired, LAN Direct, LAN Bridge, Cloud, Virtual, Hub Mesh) and by which integration manages them. Counts are linked to the device list filtered to that group.
 
-**Platform Alerts** — Active alerts reported by the Hubitat hub itself (load warnings, radio crashes, backup failures, etc.) plus any threshold-based alerts calculated by this app (memory, CPU, temperature) plus any messages from `/hub/messages` (info-severity). See [Alerts & Warnings Reference](#alerts--warnings-reference) for the full list.
+**Platform Alerts** — A roll-up of hub health: alerts reported by the Hubitat hub itself (load warnings, radio crashes, backup failures, etc.), threshold-based alerts derived in the browser from the configured thresholds (memory, CPU, temperature), Z-Wave radio health (ghost / failed / problem nodes and radio-firmware-update), hub-firmware and app-update status, and messages from `/hub/messages` (info-severity). This same roll-up drives the **alert-aware favicon** (a colored dot on the browser tab showing the highest active severity) and the Health tab's *Alerts* list. Device-inventory conditions — low battery, stale devices, and chatty devices — are shown on their own tabs (Devices / Performance), **not** in this roll-up or the favicon. See [Alerts & Warnings Reference](#alerts--warnings-reference) for the full list.
 
 **Hub Firmware** — When `/hub/cloud/checkForUpdate` reports an upgrade is available, an orange badge appears with the current version, the available version, and a link to the release notes. The check is cached for 1 hour to avoid hammering the cloud API on every dashboard refresh.
 
@@ -525,6 +525,8 @@ The forum export generates a concise Markdown-formatted summary suitable for pas
 
 Severity levels: **Critical** (red), **Warning** (orange), **Info** (blue), **OK** (green).
 
+The **alert-aware favicon** and the Dashboard *Platform Alerts* / Health *Alerts* lists share one roll-up (the SPA's `composeAlerts`): System Resource Alerts, Platform Alerts, Hub Messages, Ethernet + WiFi, the Z-Wave ghost / failed / problem-node counts, Z-Wave radio-firmware-update, hub-firmware-update, and app-update status. The remaining entries below — Matter reboot, the per-mesh quality metrics (Avg PER / RSSI, S0 overhead, Zigbee LQI), and the device-inventory alerts (low battery, stale devices, chatty devices) — are surfaced on their own tabs and do **not** affect the favicon or the *Alerts* count. The Performance tab's chatty-device banner is a separate, browser-computed metric (per-device messages/min vs the chatty-device threshold) and is distinct from the hub's *Spammy Devices Detected* flag; only the hub flag feeds the roll-up.
+
 ### Hub Messages
 | Alert | Source | Severity |
 |---|---|---|
@@ -576,7 +578,8 @@ Severity levels: **Critical** (red), **Warning** (orange), **Info** (blue), **OK
 
 | Alert | Condition | Threshold | Severity |
 |---|---|---|---|
-| Ghost Nodes | No associated device ID (primary), or FAILED, or no route + unknown name | — | Critical |
+| Ghost Nodes | No associated device ID (orphaned in the radio), or no route + unknown name | — | Critical |
+| Failed Nodes | Has a Hubitat device but the radio reports it FAILED / down | — | Warning |
 | Problem Nodes | State ≠ OK, or PER > 1% | 1% PER | Warning |
 | Avg PER Critical | Mesh average PER > 1% | 1% | Critical |
 | Avg PER Warning | Mesh average PER > 0% | 0% | Warning |

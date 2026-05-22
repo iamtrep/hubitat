@@ -661,12 +661,15 @@ else:
         fail("Missing or zero freeOSMemory")
 
     sig = health.get("alertSignals") or {}
-    expected_sig_keys = ["platformAlerts", "hubMessages", "ethernetAndWifi", "ghostNodeCount"]
+    # v5.38.0: ghostNodeCount split into zwaveGhostCount/zwaveFailedCount/zwaveProblemCount
+    # + zwaveRadioUpdate so the SPA roll-up (composeAlerts) and favicon reflect each distinctly.
+    expected_sig_keys = ["platformAlerts", "hubMessages", "ethernetAndWifi",
+                         "zwaveGhostCount", "zwaveFailedCount", "zwaveProblemCount", "zwaveRadioUpdate"]
     missing = [k for k in expected_sig_keys if k not in sig]
     if missing:
         fail(f"alertSignals missing keys: {missing}")
     else:
-        ok(f"alertSignals shape ok (platformAlerts={len(sig.get('platformAlerts', []))}, hubMessages={len(sig.get('hubMessages', []))}, ghostNodeCount={sig.get('ghostNodeCount')})")
+        ok(f"alertSignals shape ok (platformAlerts={len(sig.get('platformAlerts', []))}, hubMessages={len(sig.get('hubMessages', []))}, zwave ghost/failed/problem={sig.get('zwaveGhostCount')}/{sig.get('zwaveFailedCount')}/{sig.get('zwaveProblemCount')}, radioUpdate={sig.get('zwaveRadioUpdate')})")
 
     # v5.11.1+ CPU info chips
     if "cpuInfo" in health:

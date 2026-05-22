@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.37.0"
+@Field static final String APP_VERSION = "5.38.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -1249,6 +1249,7 @@ Map getHealthData(Map shared = [:]) {
         resources: mem ?: null, temperature: systemHealth.temperature,
         databaseSize: systemHealth.databaseSize, stateCompression: systemHealth.stateCompression,
         eventStateLimits: systemHealth.eventStateLimits, alertSignals: getAlertSignals(shared),
+        firmwareUpdate: fetchFirmwareUpdate(),
         storage: fetchFileManagerStats(),
         backups: fetchBackups(),
         loadThreshold: fetchExcessiveLoadThreshold(),
@@ -1490,18 +1491,42 @@ Map getAlertSignals(Map shared = [:]) {
             zwRaw = zwWrap.ok ? zwWrap.data : null
             if (zwRaw) {
                 state.lastZwaveGhostCheckMs = now()
-                state.cachedZwaveGhostCount = buildZwaveGhostNodes(zwRaw).size()
+                state.cachedZwaveSignals = computeZwaveSignals(zwRaw)
             }
         }
     }
-    int ghostNodeCount = zwRaw ? buildZwaveGhostNodes(zwRaw).size() : (state.cachedZwaveGhostCount ?: 0) as int
+    Map zwSignals = zwRaw ? computeZwaveSignals(zwRaw) : ((state.cachedZwaveSignals as Map) ?: [:])
 
     return [
         platformAlerts:       platformAlerts,
         spammyDevicesMessage: hubAlerts?.spammyDevicesMessage,
         hubMessages:          hubMessages,
         ethernetAndWifi:      ethernetAndWifi,
-        ghostNodeCount:       ghostNodeCount
+        zwaveGhostCount:      (zwSignals.ghostCount   ?: 0) as int,
+        zwaveFailedCount:     (zwSignals.failedCount  ?: 0) as int,
+        zwaveProblemCount:    (zwSignals.problemCount ?: 0) as int,
+        zwaveRadioUpdate:     (zwSignals.radioUpdate == true)
+    ]
+}
+
+// Derive the Z-Wave alert signals the SPA rolls up, all from a single zwaveDetails
+// payload — the same fetch getAlertSignals already makes for ghost-node counting:
+//   ghostCount   — orphaned nodes (no Hubitat device), safe to force-remove from radio
+//   failedCount  — nodes with a Hubitat device that the radio reports down
+//   problemCount — mesh nodes not in "OK" state or with packet-error-rate > 1%
+//   radioUpdate  — Z-Wave radio firmware update available
+Map computeZwaveSignals(Map zwRaw) {
+    if (!zwRaw) return [ghostCount: 0, failedCount: 0, problemCount: 0, radioUpdate: false]
+    List ghostNodes = buildZwaveGhostNodes(zwRaw)
+    int ghostCount   = ghostNodes.count { it.kind == "ghost" } as int
+    int failedCount  = ghostNodes.count { it.kind == "failed" } as int
+    List meshNodes   = (extractZwaveMeshQuality(zwRaw).nodes ?: []) as List
+    int problemCount = meshNodes.count { Map n -> n.state != "OK" || ((n.per ?: 0) as int) > 1 } as int
+    return [
+        ghostCount:   ghostCount,
+        failedCount:  failedCount,
+        problemCount: problemCount,
+        radioUpdate:  (zwRaw.isRadioUpdateNeeded == true)
     ]
 }
 
@@ -2736,60 +2761,18 @@ Map analyzeSystemHealth(Map shared = [:]) {
     Float temperature = (shared.temperature as Float) ?: fetchTemperature()
     Map eventStateLimits = fetchEventStateLimits()
 
+    // Alert composition lives entirely in the SPA's composeAlerts() — the hub ships raw
+    // signals (resources/temperature in this map, plus getAlertSignals()) and the browser
+    // derives severity from the configured thresholds. We deliberately do NOT compose an
+    // alert list here: a second server-side composer drifts from the client one undetected.
     Map health = [
         memory: memory,
         stateCompression: stateCompression,
         hubAlerts: hubAlerts,
         databaseSize: databaseSize,
         temperature: temperature,
-        eventStateLimits: eventStateLimits,
-        alerts: []
+        eventStateLimits: eventStateLimits
     ]
-
-    // Generate structured alerts from observed data
-    int    critMemKb   = ((settings.critMemMb   ?: DEFAULT_CRIT_MEM_MB)   as int) * 1024
-    int    warnMemKb   = ((settings.warnMemMb   ?: DEFAULT_WARN_MEM_MB)   as int) * 1024
-    double critCpuLoad = (settings.critCpuLoad  ?: DEFAULT_CRIT_CPU_LOAD) as double
-    double warnCpuLoad = (settings.warnCpuLoad  ?: DEFAULT_WARN_CPU_LOAD) as double
-    int    critTempC   = (settings.critTempC    ?: DEFAULT_CRIT_TEMP_C)   as int
-    int    warnTempC   = (settings.warnTempC    ?: DEFAULT_WARN_TEMP_C)   as int
-
-    if (memory && memory.freeOSMemory < critMemKb) {
-        health.alerts << [severity: "critical", name: "OS memory critically low (${formatMemory(memory.freeOSMemory)}) — hub may become unresponsive"]
-    } else if (memory && memory.freeOSMemory < warnMemKb) {
-        health.alerts << [severity: "warning", name: "Low OS memory (${formatMemory(memory.freeOSMemory)})"]
-    }
-    if (memory && (memory.cpuAvg5min > warnCpuLoad || memory.cpuAvg5min > critCpuLoad)) {
-        Map cpuInfo = fetchCpuInfo()
-        // Default 4 matches current C-7/C-8/C-8 Pro models when /hub/cpuInfo is unavailable
-        // (sandbox blocks java.lang.Runtime so we can't query availableProcessors() at runtime).
-        int cores = (cpuInfo?.processors as Integer) ?: 4
-        String coreLabel = "${cores} core${cores == 1 ? '' : 's'}"
-        if (memory.cpuAvg5min > critCpuLoad) {
-            health.alerts << [severity: "critical", name: "Very high CPU load (${String.format('%.2f', memory.cpuAvg5min as float)} — ${coreLabel})"]
-        } else {
-            health.alerts << [severity: "warning", name: "Elevated CPU load (${String.format('%.2f', memory.cpuAvg5min as float)} — ${coreLabel})"]
-        }
-    }
-    if (temperature != null && temperature > critTempC) {
-        health.alerts << [severity: "critical", name: "Hub temperature very high (${String.format('%.1f', temperature)}\u00B0C)"]
-    } else if (temperature != null && temperature > warnTempC) {
-        health.alerts << [severity: "warning", name: "Hub temperature elevated (${String.format('%.1f', temperature)}\u00B0C)"]
-    }
-
-    // Incorporate platform alerts
-    if (hubAlerts.alerts) {
-        Map platformAlerts = hubAlerts.alerts
-        ALERT_DISPLAY_NAMES.each { String key, String displayName ->
-            if (platformAlerts[key] == true) {
-                String severity = (key in ["hubLoadSevere", "hubZwaveCrashed", "hubHugeDatabase", "zwaveOffline", "zigbeeOffline"]) ? "critical" : "warning"
-                health.alerts << [severity: severity, key: key, name: displayName]
-            }
-        }
-    }
-    if (hubAlerts.spammyDevicesMessage) {
-        health.alerts << [severity: "warning", key: "spammyDevices", name: "Spammy Devices", message: hubAlerts.spammyDevicesMessage]
-    }
 
     return health
 }

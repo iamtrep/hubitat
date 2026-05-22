@@ -143,7 +143,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.37.0";
+const UI_VERSION = "5.38.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -390,15 +390,33 @@ function composeAlerts(d){
     if(t>TH.critTempC) out.push({severity:'critical',name:`Hub temperature very high (${Number(t).toFixed(1)}°C)`});
     else if(t>TH.warnTempC) out.push({severity:'warning',name:`Hub temperature elevated (${Number(t).toFixed(1)}°C)`});
   }
-  (sig.platformAlerts||[]).forEach(a=>out.push(a));
+  // Platform alerts (severity assigned hub-side). Drop the generic spammyDevices flag when
+  // the message-bearing spammyDevicesMessage below is also present — same condition, no dup.
+  (sig.platformAlerts||[]).forEach(a=>{
+    if(a&&a.key==='spammyDevices'&&sig.spammyDevicesMessage)return;
+    out.push(a);
+  });
   if(sig.spammyDevicesMessage) out.push({key:'spammyDevices',name:'Spammy Devices',severity:'warning',message:sig.spammyDevicesMessage});
   (sig.hubMessages||[]).forEach(text=>{
     const stripped=String(text||'').replace(/<[^>]+>/g,'').trim();
     if(stripped) out.push({key:'hubMessage',name:stripped,severity:'info'});
   });
   if(sig.ethernetAndWifi) out.push({severity:'warning',name:'Ethernet and WiFi both active — disable WiFi when using Ethernet'});
-  const gn=sig.ghostNodeCount||0;
-  if(gn>0) out.push({severity:'critical',name:`${gn} Z-Wave ghost node${gn>1?'s':''} detected — remove from mesh`});
+  // Z-Wave radio health (derived hub-side from one zwaveDetails fetch).
+  const ghost=sig.zwaveGhostCount||0,failed=sig.zwaveFailedCount||0,problem=sig.zwaveProblemCount||0;
+  if(ghost>0) out.push({severity:'critical',name:`${ghost} Z-Wave ghost node${ghost>1?'s':''} — no Hubitat device, remove from mesh`});
+  if(failed>0) out.push({severity:'warning',name:`${failed} Z-Wave failed node${failed>1?'s':''} — try a battery swap or move closer to the hub`});
+  if(problem>0) out.push({severity:'warning',name:`${problem} Z-Wave problem node${problem>1?'s':''} — degraded route or packet errors`});
+  if(sig.zwaveRadioUpdate) out.push({severity:'warning',name:'Z-Wave radio firmware update available'});
+  // Hub firmware update (present on both dashboard and health payloads).
+  const fu=d.firmwareUpdate;
+  if(fu&&fu.updateAvailable) out.push({severity:'warning',name:`Hub firmware update available: v${fu.availableVersion||'?'}`});
+  // App code behind the bundled UI — the Groovy app needs re-importing.
+  if(d.appVersion&&typeof isNewer==='function'&&isNewer(UI_VERSION,d.appVersion))
+    out.push({severity:'critical',name:`App update required — UI is v${UI_VERSION} but app code is v${d.appVersion}`});
+  // Criticals first, then warnings, then info — both list surfaces render in this order.
+  const rank={critical:0,warning:1,info:2};
+  out.sort((a,b)=>(rank[a.severity]??1)-(rank[b.severity]??1));
   return out;
 }
 
@@ -1106,7 +1124,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   o+='</div></div></div></div>';
   // Alerts
   const dashAlerts=composeAlerts(d);
-  if(dashAlerts.length){o+='<div class="card"><div class="card-h">Platform Alerts</div><div class="card-b">';
+  if(dashAlerts.length){o+='<div class="card"><div class="card-h">Platform Alerts</div><div class="card-b" role="status" aria-live="polite" aria-label="Platform alerts">';
     dashAlerts.forEach(a=>{const sev=(a.severity==='critical')?'crit':((a.severity==='info')?'info':'warn');const icon=(a.severity==='critical')?'\u26D4':((a.severity==='info')?'\u2139':'\u26A0');o+='<div class="alert a-'+sev+'">'+icon+' '+h(a.name)+'</div>'});o+='</div></div>'}
   // Firmware update (v5.9.0)
   if(d.firmwareUpdate){const fu=d.firmwareUpdate;
@@ -1759,7 +1777,7 @@ async function rHealth(){const P='p-health';loading(P);try{
   const d=await api('health');let o='';
   // Alerts
   const allAlerts=composeAlerts(d).map(a=>({severity:a.severity||'warning',message:a.name||a.message||''})).filter(a=>a.message);
-  if(allAlerts.length){o+='<div class="card"><div class="card-h">Alerts ('+allAlerts.length+')</div><div class="card-b">';
+  if(allAlerts.length){o+='<div class="card"><div class="card-h">Alerts ('+allAlerts.length+')</div><div class="card-b" role="status" aria-live="polite" aria-label="Active alerts">';
     allAlerts.forEach(a=>{const sev=(a.severity==='critical')?'crit':((a.severity==='info')?'info':'warn');const icon=(a.severity==='critical')?'\u26D4':((a.severity==='info')?'\u2139':'\u26A0');o+='<div class="alert a-'+sev+'">'+icon+' '+h(a.message)+'</div>'});o+='</div></div>'}
   else o+='<div class="alert a-ok">\u2705 No active alerts</div>';
   // Resources
@@ -3526,6 +3544,8 @@ function faviconBase(){
 }
 async function setFaviconSeverity(sev){
   if(sev===__favLastSev)return;
+  // Textual equivalent of the favicon dot for screen readers / icon-less browsers.
+  document.title=(sev==='critical'?'⛔ ':sev==='warning'?'⚠ ':'')+'Hub Diagnostics';
   const img=await faviconBase();
   if(!img)return;
   const c=document.createElement('canvas');c.width=32;c.height=32;
