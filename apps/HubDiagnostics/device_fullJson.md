@@ -74,15 +74,26 @@ Per-device driver and metadata enrichment beyond what `devicesList` provides.
 
 ---
 
-## Section D — Configuration backup (deferred)
+## Section D — Configuration backup (mostly deferred)
 
-Useful for a "device configuration snapshot/restore" use case. Not in v1 because it can balloon (a complex driver may have 20+ preferences) and isn't core to the usage audit.
+Useful for a "device configuration snapshot/restore" use case. The full preference set is not in v1 because it can balloon (a complex driver may have 20+ preferences) and isn't core to the usage audit.
+
+**Exception (promoted v5.37.0):** the make/model/firmware subset of `device.dataJson` *is* extracted to
+power the **Device Inventory** section of the report (`extractAuditFields` parses `dataJson` and pulls
+`manufacturer`, `model`, and firmware via the first non-blank of `softwareBuild` / `application` /
+`firmwareVersion` / `softwareVersion`). Keys vary by protocol and driver, so reads are defensive:
+Zigbee firmware is `softwareBuild`/`application`, Z-Wave is `firmwareVersion`, Matter is
+`softwareVersion` (often empty → blank). Z-Wave manufacturer/model arrive as numeric/hex IDs (e.g.
+`634`, `0x0312`), not friendly names — shown verbatim. The top-level `controllerType` code
+(`ZGB`→Zigbee, `ZWV`→Z-Wave, `MAT`→Matter, `LNK`→Linked, `LAN`, `BLE`/`BTH`→Bluetooth; unknown codes
+pass through) supplies the inventory's Protocol column. The broader settings/config backup below
+stays deferred.
 
 | Field | Notes |
 |---|---|
 | `settings[]` | Driver preferences with `type`, `defaultValue`, `description`, `range`, etc. |
 | `inputValues[]` | Current preference values (the "what's set") |
-| `device.data` / `device.dataJson` | Pairing-time data (Zigbee clusters, Z-Wave model, manufacturer info) — useful for re-pairing |
+| `device.data` / `device.dataJson` | Pairing-time data (Zigbee clusters, Z-Wave model, manufacturer info) — useful for re-pairing. **Make/model/firmware subset extracted as of v5.37.0** (Device Inventory); rest deferred. |
 
 ---
 
@@ -126,7 +137,7 @@ UI-only flags, paginated dialog variants of data already captured, or values tha
 | A — Cross-reference core | ✓ | The point of the report |
 | B — Diagnostic flags | ✓ | Mesh orphans, stuck jobs, tuning flags |
 | C — Identity & driver attribution | ✓ | Per-device enrichment |
-| D — Configuration backup | deferred | Future "device config snapshot" feature |
+| D — Configuration backup | partial | Make/model/firmware extracted (Device Inventory, v5.37.0); rest deferred to a future "device config snapshot" |
 | E — Reference data | deferred | Capability/command/protocol detail |
 | F — Verbatim-only fields | deferred | `deviceState`, `currentStates` |
 | G — Excluded | — | UI flags, derivable, constants |

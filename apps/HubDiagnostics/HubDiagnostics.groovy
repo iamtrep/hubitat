@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.36.1"
+@Field static final String APP_VERSION = "5.37.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -4009,6 +4009,25 @@ boolean fileExists(String fileName) {
 private Map extractAuditFields(Map fj, Long did) {
     Map dev = (fj?.device ?: [:]) as Map
 
+    // Hardware inventory (v5.37.0) — make/model/firmware from pairing-time data values.
+    // dev.dataJson is a JSON *string* of the device's data-value map; keys vary by protocol and
+    // driver, so read defensively (firstDataValue also skips blank values). Firmware key by
+    // protocol: Zigbee → softwareBuild/application; Z-Wave → firmwareVersion; Matter → softwareVersion.
+    // Zigbee exposes human-readable manufacturer/model; Z-Wave exposes them as numeric/hex IDs.
+    // Virtual/cloud devices have no dataJson and yield blanks. ("make" has no distinct data value
+    // on Hubitat — manufacturer is the make.)
+    String manufacturer = null, model = null, firmware = null
+    try {
+        String dataJson = safeToString(dev.dataJson, "")
+        if (dataJson.startsWith("{")) {
+            Map dv = (Map) new groovy.json.JsonSlurper().parseText(dataJson)
+            manufacturer = firstDataValue(dv, ['manufacturer'])
+            model        = firstDataValue(dv, ['model'])
+            firmware     = firstDataValue(dv, ['softwareBuild', 'application', 'firmwareVersion', 'softwareVersion'])
+        }
+    } catch (Exception ignored) { /* malformed dataJson — leave inventory fields blank */ }
+    String protocol = controllerTypeLabel(safeToString(fj?.controllerType, ""))
+
     // Section A — cross-reference core
     List appsUsing = ((fj?.appsUsing ?: []) as List).collect { Map a ->
         [id: (a.id as Long), label: a.label, name: a.name, disabled: a.disabled == true]
@@ -4033,7 +4052,7 @@ private Map extractAuditFields(Map fj, Long did) {
         // need to know about. AUDIT_SCANS is in-memory only, so old records
         // never persist across an app reload — but cross-restart cases or future on-disk persistence
         // benefit from being able to detect the format.
-        _schemaVersion:      1,
+        _schemaVersion:      2,
         id:                  did,
         name:                dev.name,
         label:               dev.label,
@@ -4052,6 +4071,12 @@ private Map extractAuditFields(Map fj, Long did) {
         notes:               dev.notes,
         tags:                dev.tags,
 
+        // Hardware inventory (Section D, promoted v5.37.0)
+        manufacturer:        manufacturer,
+        model:               model,
+        firmware:            firmware,
+        protocol:            protocol,
+
         // Section B
         orphan:              dev.orphan == true,
         disabled:            dev.disabled == true,
@@ -4067,6 +4092,40 @@ private Map extractAuditFields(Map fj, Long did) {
         dashboards:          dashboards,
         parentApp:           parentApp
     ]
+}
+
+/**
+ * First non-blank value among `keys` in a device data-value map, or null.
+ * Lets extractAuditFields read make/model/firmware defensively across protocols, since the
+ * exact key differs (Zigbee firmware is application/softwareBuild; Z-Wave is firmwareVersion).
+ */
+private String firstDataValue(Map dv, List<String> keys) {
+    for (String k : keys) {
+        Object v = dv?.get(k)
+        if (v != null) {
+            String s = v.toString().trim()
+            if (s) return s
+        }
+    }
+    return null
+}
+
+/**
+ * Map a Hubitat controllerType code to a human-readable protocol name for the inventory.
+ * Unknown codes pass through verbatim; blank (virtual/cloud) yields null.
+ */
+private String controllerTypeLabel(String ct) {
+    if (!ct) return null
+    switch (ct.trim().toUpperCase()) {
+        case 'ZGB': return 'Zigbee'
+        case 'ZWV': return 'Z-Wave'
+        case 'MAT': return 'Matter'
+        case 'LNK': return 'Linked'      // Hub Mesh device linked from another hub
+        case 'LAN': return 'LAN'
+        case 'BLE':
+        case 'BTH': return 'Bluetooth'
+        default:    return ct
+    }
 }
 
 /**
@@ -4290,7 +4349,15 @@ void fullJsonCb(resp, data) {
 
     if (!(scan.pending as ConcurrentLinkedQueue).isEmpty()) {
         dispatchOne(scanId)                                         // keep pipeline full
-    } else if (inFlight == 0 && processed >= total) {
+    } else if (inFlight == 0 && (scan.processed as AtomicInteger).get() >= total) {
+        // Finalize trigger must read `processed` FRESH, not this callback's local increment
+        // value. `processed` and `inFlight` are independent atomics: the callback that zeroes
+        // inFlight is not necessarily the one whose increment hit `total`, so the local
+        // `processed` can be stale (< total) on the very callback that sees inFlight == 0 —
+        // leaving the scan unfinalized until the watchdog fails it. Because every callback
+        // increments processed *before* decrementing inFlight, once inFlight hits 0 all
+        // increments have landed, so a fresh read is guaranteed == total. inFlight.decrement
+        // returns 0 for exactly one callback, so finalize still fires exactly once.
         finalizeAudit(scanId)
     }
 }

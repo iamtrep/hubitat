@@ -143,7 +143,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.36.1";
+const UI_VERSION = "5.37.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -3151,7 +3151,7 @@ function buildAuditHtml(data) {
   o += '</div></div></div>';
 
   // Unreferenced
-  o += openCard('unref', `⚠ Unreferenced devices (${unreferenced.length})`, true);
+  o += openCard('unref', `⚠ Unreferenced devices (${unreferenced.length})`);
   if (!unreferenced.length) {
     o += '<div class="muted">None — every device is used by at least one app, dashboard, or parent integration.</div>';
   } else {
@@ -3168,7 +3168,7 @@ function buildAuditHtml(data) {
   o += closeCard();
 
   // Mesh orphans
-  o += openCard('orphans', `⚠ Mesh orphans (${meshOrphans.length})`, true);
+  o += openCard('orphans', `⚠ Mesh orphans (${meshOrphans.length})`);
   if (!meshOrphans.length) {
     o += '<div class="muted">None — no devices report orphan radio state.</div>';
   } else {
@@ -3178,7 +3178,7 @@ function buildAuditHtml(data) {
   o += closeCard();
 
   // Stuck jobs
-  o += openCard('stuck', `⚠ Stuck scheduled jobs (${stuckJobs.length})`, true);
+  o += openCard('stuck', `⚠ Stuck scheduled jobs (${stuckJobs.length})`);
   if (!stuckJobs.length) {
     o += '<div class="muted">None — all scheduled jobs have a future or null nextRunTime.</div>';
   } else {
@@ -3197,7 +3197,7 @@ function buildAuditHtml(data) {
   o += closeCard();
 
   // Manually-tuned devices
-  o += openCard('tuned', `🛠 Manually-tuned devices (${tunedDevices.length})`, true);
+  o += openCard('tuned', `🛠 Manually-tuned devices (${tunedDevices.length})`);
   if (!tunedDevices.length) {
     o += '<div class="muted">All devices share the same buffer/threshold values — none have been manually tuned.</div>';
   } else {
@@ -3217,7 +3217,7 @@ function buildAuditHtml(data) {
   o += closeCard();
 
   // Critical devices
-  o += openCard('critical', '⭐ Critical devices (top 20 by reference count)', true);
+  o += openCard('critical', '⭐ Critical devices (top 20 by reference count)');
   if (!criticalTop20.length) {
     o += '<div class="muted">No devices have any apps or dashboards.</div>';
   } else {
@@ -3232,7 +3232,7 @@ function buildAuditHtml(data) {
   o += closeCard();
 
   // Devices by room
-  o += openCard('rooms', `🏠 Devices by room (${rooms.length})`, true);
+  o += openCard('rooms', `🏠 Devices by room (${rooms.length})`);
   if (!rooms.length) {
     o += '<div class="muted">No room data available.</div>';
   } else {
@@ -3255,7 +3255,7 @@ function buildAuditHtml(data) {
 
   // Z-Wave JS mesh health
   if (zwNodeRows.length > 0) {
-    o += openCard('zwjs', `📶 Z-Wave JS mesh health (${zwNodeRows.length})`, true);
+    o += openCard('zwjs', `📶 Z-Wave JS mesh health (${zwNodeRows.length})`);
     o += '<div class="muted" style="margin-bottom:6px">Per-node controller statistics from Z-Wave JS. RSSI lower (more negative) is quieter; RTT lower is faster; PER (packet error rate) higher is worse.</div>';
     o += '<div class="tbl-wrap"><table data-sortable id="t_zwjs"><thead><tr><th>Device</th><th data-t="n">Node</th><th>State</th><th>Status</th><th>Interview</th><th data-t="n">RTT</th><th>RSSI</th><th data-t="n" data-sd="desc">PER %</th><th data-t="n">TX</th><th data-t="n">RX</th><th>Last Seen</th></tr></thead><tbody>';
     const sortedZw = zwNodeRows.slice().sort((a, b) => ((b.zwaveNode && b.zwaveNode.per) || 0) - ((a.zwaveNode && a.zwaveNode.per) || 0));
@@ -3281,7 +3281,7 @@ function buildAuditHtml(data) {
 
   // Hub Mesh linked devices
   if (hmRows.length > 0) {
-    o += openCard('hubmesh', `🔗 Hub Mesh linked devices (${hmRows.length})`, true);
+    o += openCard('hubmesh', `🔗 Hub Mesh linked devices (${hmRows.length})`);
     o += '<div class="muted" style="margin-bottom:6px">Devices physically owned by another hub on this account, exposed locally via Hub Mesh.</div>';
     o += '<div class="tbl-wrap"><table data-sortable id="t_hubmesh"><thead><tr><th>Device</th><th>Source Hub</th><th>Source Device ID</th><th>Status</th><th>Raw</th></tr></thead><tbody>';
     hmRows.forEach(d => {
@@ -3300,7 +3300,7 @@ function buildAuditHtml(data) {
   }
 
   // Apps -> devices
-  o += openCard('apps', `📱 Apps → devices (${appsToDevices.length})`, true);
+  o += openCard('apps', `📱 Apps → devices (${appsToDevices.length})`);
   if (!appsToDevices.length) {
     o += '<div class="muted">No apps subscribe to any devices.</div>';
   } else {
@@ -3321,7 +3321,7 @@ function buildAuditHtml(data) {
   o += closeCard();
 
   // Dashboards -> devices
-  o += openCard('dashboards', `📊 Dashboards → devices (${dashboardsToDevices.length})`, true);
+  o += openCard('dashboards', `📊 Dashboards → devices (${dashboardsToDevices.length})`);
   if (!dashboardsToDevices.length) {
     o += '<div class="muted">No dashboards reference any devices.</div>';
   } else {
@@ -3338,8 +3338,36 @@ function buildAuditHtml(data) {
   }
   o += closeCard();
 
+  // Device inventory (hardware identity) — make / model / firmware, v5.37.0
+  const invRows = Object.values(allDevices).map(dv => ({
+    id: dv.id,
+    name: dv.label || dv.name || '',
+    type: dv.deviceTypeName || '',
+    protocol: dv.protocol || '',
+    manufacturer: dv.manufacturer || '',
+    model: dv.model || '',
+    firmware: dv.firmware || ''
+  })).sort((a, b) => (a.manufacturer || '').localeCompare(b.manufacturer || '') || a.name.localeCompare(b.name));
+  window._auditInventory = invRows;
+  window._auditHubName = hubName || 'hub';
+  o += openCard('inventory', `🔧 Device inventory — make / model / firmware (${invRows.length})`);
+  o += '<div style="margin-bottom:10px"><button type="button" class="btn btn-p btn-s" onclick="downloadInventoryCsv()">⬇ Download CSV</button> <button type="button" class="btn btn-p btn-s" onclick="copyInventoryCsv(this)">⧉ Copy CSV</button></div>';
+  o += '<div class="filter"><input type="text" data-filter="t_inv" placeholder="Filter by name, manufacturer, model…"></div>';
+  o += '<div class="tbl-wrap"><table data-sortable id="t_inv"><thead><tr><th>Name</th><th>Type</th><th>Protocol</th><th data-sd="asc">Manufacturer</th><th>Model</th><th>Firmware</th></tr></thead><tbody>';
+  const invDash = '<span class="muted">—</span>';
+  invRows.forEach(r => {
+    o += `<tr><td>${dlink(r.id, r.name)}</td>`;
+    o += `<td>${h(r.type)}</td>`;
+    o += `<td>${r.protocol ? h(r.protocol) : invDash}</td>`;
+    o += `<td>${r.manufacturer ? h(r.manufacturer) : invDash}</td>`;
+    o += `<td>${r.model ? h(r.model) : invDash}</td>`;
+    o += `<td>${r.firmware ? h(r.firmware) : invDash}</td></tr>`;
+  });
+  o += '</tbody></table></div>';
+  o += closeCard();
+
   // Per-device detail table
-  o += openCard('all', `📋 Per-device detail table (${data.deviceCount})`, true);
+  o += openCard('all', `📋 Per-device detail table (${data.deviceCount})`);
   o += '<div class="filter"><input type="text" data-filter="t_all" placeholder="Filter devices…"></div>';
   o += '<div class="tbl-wrap"><table data-sortable id="t_all"><thead><tr><th data-sd="asc">Name</th><th>Type</th><th>Source</th><th data-t="n">Apps</th><th data-t="n">Dashboards</th><th>Parent app</th><th>Last activity</th></tr></thead><tbody>';
   const sortedDevices = Object.values(allDevices).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -3428,6 +3456,38 @@ function initAuditSort() {
       Array.from(tbl.tBodies[0].rows).forEach(r => { r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none'; });
     });
   });
+}
+
+// Device inventory export (CSV download + copy) — rows stashed on window by buildAuditHtml
+function _csvEscape(v) {
+  const s = (v == null ? '' : String(v));
+  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+function buildInventoryCsv() {
+  const rows = window._auditInventory || [];
+  const lines = ['Name,Type,Protocol,Manufacturer,Model,Firmware'];
+  rows.forEach(r => lines.push([r.name, r.type, r.protocol, r.manufacturer, r.model, r.firmware].map(_csvEscape).join(',')));
+  return lines.join('\r\n');
+}
+function downloadInventoryCsv() {
+  const text = buildInventoryCsv();
+  const hub = (window._auditHubName || 'hub').replace(/[^A-Za-z0-9._-]+/g, '-');
+  const ts = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+  const blob = new Blob([text], {type: 'text/csv;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = `device-inventory-${hub}-${ts}.csv`;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+}
+function copyInventoryCsv(btn) {
+  const text = buildInventoryCsv();
+  const orig = btn ? btn.textContent : null;
+  const flash = msg => { if (btn) { btn.textContent = msg; setTimeout(() => { btn.textContent = orig; }, 1500); } };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => flash('✓ Copied')).catch(() => flash('✗ Copy failed'));
+  } else {
+    flash('✗ Copy unsupported');
+  }
 }
 
 // ===== STARTUP =====

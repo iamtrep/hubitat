@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
 <!-- AUTO:hubdiag-version -->
-**Current version:** 5.36.1
+**Current version:** 5.37.0
 <!-- /AUTO -->
 
 ---
@@ -120,7 +120,7 @@ A full inventory of every device on the hub.
 
 **Summary cards** — Total devices with active/inactive/disabled counts (the inactivity threshold is shown). Parent/child/Hub Mesh/battery device counts. Connection type breakdown and integration breakdown tables.
 
-**Device Audit card** — Sits below the Device Summary card. Contains the **Generate Device Audit** button that triggers the per-device cross-reference scan, and a list of past audit reports. See [Device Usage Audit](#device-usage-audit) for details on what the audit produces.
+**Device Audit card** — Sits below the Device Summary card. Contains the **Generate Device Audit** button that triggers the per-device cross-reference scan; on completion a **View report** link opens the result. See [Device Usage Audit](#device-usage-audit) for details on what the audit produces.
 
 **Device table** columns:
 
@@ -433,15 +433,16 @@ Generates a one-time, per-device cross-reference report covering:
 - **Z-Wave JS Mesh Health** (Z-Wave JS hubs only) — per-Z-Wave-device row from `/hub/zwave2/getNodeState?node=N`: state, status, interview stage, RTT, RSSI, PER %, TX/RX command counts, last-seen timestamp.
 - **Hub Mesh Linked Devices** — for each device this hub consumes from another hub via Hub Mesh, source hub + source device ID + status from `/hubMesh/localLinkedDevice/<id>`.
 - **Apps → devices** and **Dashboards → devices reverse indices** — disabled app subscribers are rendered with strikethrough so "ghost references" stand out.
+- **Device inventory** — every device's hardware identity: protocol, manufacturer, model, and firmware revision, parsed from each device's pairing-time data values (no extra hub calls — it rides on the scan the audit already runs). Sortable and filterable, with **Download CSV** / **Copy CSV** export for documentation or firmware tracking. Z-Wave manufacturer/model appear as hex IDs (shown verbatim); virtual and cloud devices have blank cells.
 - **Per-device detail table** with all subscribers as clickable links. Type cells link to `/driver/editor/<id>` for community drivers.
 
 ### How it works
 
-The scan crawls every device via `/device/fullJson/{id}` — one call per device, throttled to the Hubitat platform's 8-concurrent-async-call cap. On a 350-device hub this takes ~30–60 s. After the main scan completes, three synchronous enrichment passes run in `finalizeAudit`: rooms (single fetch), Z-Wave JS per-node (one call per Z-Wave device on JS hubs), Hub Mesh per-device (one call per linked device). The output is a self-contained HTML file written to FileManager (`hub_usage_audit_YYYYMMDD_HHmmss.html`) and indexed under "Past audits" on the Devices tab.
+The scan crawls every device via `/device/fullJson/{id}` — one call per device, throttled to the Hubitat platform's 8-concurrent-async-call cap. On a 350-device hub this takes ~30–60 s. After the main scan completes, three synchronous enrichment passes run in `finalizeAudit`: rooms (single fetch), Z-Wave JS per-node (one call per Z-Wave device on JS hubs), Hub Mesh per-device (one call per linked device). The result is held in memory (the single most recent audit) and rendered live in the browser when you open the **View report** link — it is **not** written to a file and does not survive a hub restart. Re-run the audit to regenerate it.
 
 ### Trigger
 
-**Devices tab → Device Audit card → Generate Device Audit**. Progress is polled live; the "View report" link appears on completion. The 10 most recent audits are kept; older entries are auto-deleted.
+**Devices tab → Device Audit card → Generate Device Audit**. Progress is polled live; the "View report" link appears on completion and opens the report rendered from the latest in-memory result.
 
 ### Limitations
 
