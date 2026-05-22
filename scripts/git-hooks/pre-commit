@@ -7,6 +7,17 @@ set -e
 
 repo_root=$(git rev-parse --show-toplevel)
 
+# Syntax-check staged Groovy files (CONVERSION-phase parse only — catches brace/
+# quote/expression errors, not types or runtime). Skipped gracefully when Groovy
+# isn't installed, so commits still work on machines without it.
+if command -v groovy >/dev/null 2>&1; then
+    staged_groovy=$(git -C "$repo_root" diff --cached --name-only --diff-filter=ACM -- '*.groovy')
+    if [ -n "$staged_groovy" ]; then
+        # shellcheck disable=SC2086
+        ( cd "$repo_root" && groovy scripts/groovy-parse-check.groovy $staged_groovy )
+    fi
+fi
+
 python3 "$repo_root/scripts/readme-sync.py" >/dev/null
 
 # Stage any README.md the generator just rewrote. `git diff --name-only`
