@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.38.1"
+@Field static final String APP_VERSION = "5.39.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -892,9 +892,19 @@ Map apiSnapshotView() {
 }
 
 Map apiCreateSnapshot() {
+    // C1: createSnapshot() is void and swallows save failures (writeFile catches internally), so a
+    // failed live snapshot would otherwise return success and the SPA would diff against a stale
+    // snapshot with no error. Detect real success by checking the newest snapshot's timestampMs
+    // actually changed — robust even at the retention cap, where the total count stays flat.
+    def prevNewestMs = loadSnapshots()?.getAt(0)?.timestampMs
     createSnapshot()
     List snapshots = loadSnapshots()
-    return jsonResponse([success: true, snapshotCount: snapshots?.size() ?: 0])
+    def newestMs = snapshots?.getAt(0)?.timestampMs
+    if (newestMs == null || newestMs == prevNewestMs) {
+        logWarn "apiCreateSnapshot: live snapshot did not persist (newest timestampMs unchanged) — creation failed"
+        return jsonResponse([success: false, error: "Failed to create live snapshot — check hub logs", snapshotCount: snapshots?.size() ?: 0])
+    }
+    return jsonResponse([success: true, snapshotCount: snapshots.size()])
 }
 
 Map apiDeleteSnapshot() {
@@ -3779,13 +3789,15 @@ private String detailFilenameFor(Object timestampMs) {
 }
 
 List loadCheckpointIndex() {
-    if (cachedCheckpointIndex != null) return cachedCheckpointIndex
+    // N4: return a defensive copy so a caller doing `loadCheckpointIndex() << x` can't mutate the
+    // shared cache (which would also bypass the FileManager write in saveCheckpointIndex).
+    if (cachedCheckpointIndex != null) return new ArrayList(cachedCheckpointIndex)
     try {
         List data = (List) readFile(CHECKPOINT_INDEX_FILE)
         if (data != null) {
             cachedCheckpointIndex = data
             state.checkpointIndex = cachedCheckpointIndex
-            return cachedCheckpointIndex
+            return new ArrayList(cachedCheckpointIndex)
         }
     } catch (Exception e) {
         logDebug "No existing checkpoint index: ${e.message}"
@@ -3794,15 +3806,16 @@ List loadCheckpointIndex() {
     List migrated = migrateLegacyCheckpointsIfPresent()
     cachedCheckpointIndex = migrated
     state.checkpointIndex = cachedCheckpointIndex
-    return cachedCheckpointIndex
+    return cachedCheckpointIndex == null ? null : new ArrayList(cachedCheckpointIndex)
 }
 
 void saveCheckpointIndex(List index) {
     try {
         String json = groovy.json.JsonOutput.toJson(index)
         writeFile(CHECKPOINT_INDEX_FILE, json)
-        cachedCheckpointIndex = index
-        state.checkpointIndex = index
+        // N4: store our own copy so the caller's ongoing reference can't later mutate the cache.
+        cachedCheckpointIndex = (index == null ? null : new ArrayList(index))
+        state.checkpointIndex = cachedCheckpointIndex
     } catch (Exception e) {
         logError "Error saving checkpoint index: ${e}"
     }
@@ -4606,8 +4619,27 @@ void updated() {
     fwUpdateCacheAt  = null
     state.remove('controllerTypeCache') // evict per-device classification cache; rebuilds on next analysis pass
     apiTimings.clear()                  // drop stats for renamed/removed endpoints; fresh measurements from now
+    // N1: clear the TTL'd radio/list/resource caches too, so a settings change isn't masked by
+    // stale data for up to the cache TTL. Matches the A3/A7/B5 invalidation discipline.
+    cachedZwaveData = null;        cachedZwaveAt = null
+    cachedZigbeeData = null;       cachedZigbeeAt = null
+    cachedAppsListData = null;     cachedAppsListAt = null
+    cachedDevicesListData = null;  cachedDevicesListAt = null
+    cachedSystemResources = null;  cachedSystemResourcesAt = null
+    cachedTemperature = null;      cachedTemperatureAt = null
+    cachedDatabaseSize = null;     cachedDatabaseSizeAt = null
+    cachedCpuInfo = null;          cachedCpuInfoAt = null
+    cachedLoadThreshold = null;    cachedLoadThresholdAt = null
+    cachedCheckpointIndex = null   // re-read the checkpoint index from FileManager on next access
+    // C2: auto-disable debug logging after 30 min so it can't be left on indefinitely
+    if (settings.debugLogging) runIn(1800, 'logsOff')
     runIn(1, 'syncUIForced')
     initialize()
+}
+
+void logsOff() {
+    app.updateSetting("debugLogging", [type: "bool", value: false])
+    logInfo "Debug logging auto-disabled after 30 minutes"
 }
 
 void uninstalled() {

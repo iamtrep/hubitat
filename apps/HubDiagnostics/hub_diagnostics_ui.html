@@ -140,7 +140,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.38.1";
+const UI_VERSION = "5.39.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -2135,7 +2135,7 @@ async function rSnap(){const P='p-snapshots';loading(P);try{
     // Fetch older first (its index is stable; if "now" is selected, creating a new snapshot would shift the older index by 1).
     const olderSnap=await api('snapshot/view?index='+o);
     let newerSnap;
-    if(n==='now'){await post('snapshot/create');drop('snapshots');newerSnap=await api('snapshot/view?index=0')}
+    if(n==='now'){const cr=await post('snapshot/create');if(cr&&cr.success===false)throw new Error(cr.error||'Failed to create live snapshot');drop('snapshots');newerSnap=await api('snapshot/view?index=0')}
     else{newerSnap=await api('snapshot/view?index='+n)}
     if(olderSnap.error||newerSnap.error)throw new Error(olderSnap.error||newerSnap.error);
     const r=computeSnapshotDiff(olderSnap,newerSnap);
