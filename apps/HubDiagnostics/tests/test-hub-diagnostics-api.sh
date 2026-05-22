@@ -1245,7 +1245,7 @@ else:
         fail(f"Request failed: {audit_data['_error']}")
     else:
         ok("Endpoint responds")
-        for key in ["deviceCount", "unreferenced", "allDevices", "hubName", "generatedAt"]:
+        for key in ["deviceCount", "criticalThreshold", "allDevices", "hubName", "generatedAt"]:
             if key in audit_data:
                 ok(f"Has '{key}'")
             else:
@@ -1260,6 +1260,19 @@ else:
             ok(f"allDevices populated ({len(all_devs)} entries)")
         else:
             fail("allDevices is empty")
+        # LB1 (v5.42.0): the SPA derives the cross-reference (unreferenced / mesh orphans / critical /
+        # apps↔devices / tuned-device divergence) from these raw per-device fields via buildAuditXref().
+        # Assert the raw contract the SPA depends on; the derived OUTPUT is verified manually in-browser
+        # (see CODE_REVIEW.md and memory/project_hubdiag_test_coverage.md).
+        if all_devs:
+            sample = next(iter(all_devs.values()))
+            raw_fields = ["appsUsingCount", "parentApp", "orphan", "dashboards",
+                          "spammyThreshold", "maxStates", "maxEvents", "lastActivityTimeMs"]
+            missing = [f for f in raw_fields if f not in sample]
+            if not missing:
+                ok("allDevices entries carry the raw cross-reference fields the SPA derives from")
+            else:
+                fail(f"allDevices entries missing raw fields: {missing}")
 
 # ── Summary ───────────────────────────────────────────────────────────
 total = passed + failed

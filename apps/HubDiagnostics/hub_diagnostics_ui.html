@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.41.0";
+const UI_VERSION = "5.42.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -3310,19 +3310,73 @@ function fmtDurSec(ms) {
   return m + 'm ' + s + 's';
 }
 
+// Audit cross-reference, derived in the browser from the raw allDevices map (moved off the hub — LB1, v5.42.0).
+// Mirrors the former Groovy buildCrossReference. `stuckJobs` is intentionally not produced (its card was removed).
+// String ordering uses code-unit comparison (a<b) to match Groovy's String <=> for the non-re-sorted lists.
+function buildAuditXref(allDevices) {
+  const byName = (a, b) => (String(a.name) < String(b.name) ? -1 : String(a.name) > String(b.name) ? 1 : 0);
+  const devs = Object.values(allDevices || {});
+  const unreferenced = [], meshOrphans = [], allRefs = [];
+  const appsIndex = {}, dashIndex = {};
+  devs.forEach(d => {
+    const nm = d.label || d.name;
+    const apps = d.appsUsingCount || 0;
+    const dashs = (d.dashboards || []).length;
+    // Unreferenced: no app subscribers and no parent app (dashboard membership ignored)
+    if (apps === 0 && d.parentApp == null) {
+      unreferenced.push({ id: d.id, name: nm, type: d.deviceTypeName, lastActivityTime: d.lastActivityTime, lastActivityTimeMs: d.lastActivityTimeMs, driverType: d.driverType });
+    }
+    if (d.orphan) meshOrphans.push({ id: d.id, name: nm });
+    allRefs.push({ id: d.id, name: nm, appsCount: apps, dashboardsCount: dashs, total: apps + dashs });
+    (d.appsUsing || []).forEach(a => {
+      const e = appsIndex[a.id] || (appsIndex[a.id] = { id: a.id, label: (a.label || a.name), disabled: a.disabled === true, devices: [] });
+      e.devices.push({ id: d.id, name: nm });
+    });
+    (d.dashboards || []).forEach(dd => {
+      const e = dashIndex[dd.id] || (dashIndex[dd.id] = { id: dd.id, name: dd.name, devices: [] });
+      e.devices.push({ id: d.id, name: nm });
+    });
+  });
+  unreferenced.sort((a, b) => (a.lastActivityTimeMs || 0) - (b.lastActivityTimeMs || 0));
+  meshOrphans.sort(byName);
+  const criticalTop20 = allRefs.slice().sort((a, b) => (b.total - a.total) || byName(a, b)).slice(0, 20);
+  const criticalCount = allRefs.filter(r => r.total >= 5).length;
+  const appsToDevices = Object.values(appsIndex)
+    .map(e => ({ id: e.id, label: e.label, disabled: e.disabled, devices: e.devices.slice().sort(byName) }))
+    .sort((a, b) => (String(a.label) < String(b.label) ? -1 : String(a.label) > String(b.label) ? 1 : 0));
+  const dashboardsToDevices = Object.values(dashIndex)
+    .map(e => ({ id: e.id, name: e.name, devices: e.devices.slice().sort(byName) }))
+    .sort(byName);
+  // Manually-tuned devices: divergence from the fleet mode of each tuning field (robust proxy for the platform default).
+  const mode = key => { const c = {}; let best = null, bc = -1; devs.forEach(d => { const v = d[key]; if (v != null) { c[v] = (c[v] || 0) + 1; if (c[v] > bc) { bc = c[v]; best = v; } } }); return best; };
+  const modeSt = mode('spammyThreshold'), modeMs = mode('maxStates'), modeMe = mode('maxEvents');
+  const tunedDevices = [];
+  devs.forEach(d => {
+    const st = d.spammyThreshold, ms = d.maxStates, me = d.maxEvents;
+    const stOff = (st != null && modeSt != null && st !== modeSt);
+    const msOff = (ms != null && modeMs != null && ms !== modeMs);
+    const meOff = (me != null && modeMe != null && me !== modeMe);
+    if (stOff || msOff || meOff) tunedDevices.push({ id: d.id, name: (d.label || d.name), spammyThreshold: st, maxStates: ms, maxEvents: me, spammyOff: stOff, maxStatesOff: msOff, maxEventsOff: meOff });
+  });
+  tunedDevices.sort(byName);
+  return { unreferenced, meshOrphans, criticalTop20, criticalCount, appsToDevices, dashboardsToDevices, tunedDevices, tunedDefaults: { spammyThreshold: modeSt, maxStates: modeMs, maxEvents: modeMe } };
+}
+
 function buildAuditHtml(data) {
   const hubName = data.hubName || '';
   const generatedAt = data.generatedAt || '';
-  const unreferenced = data.unreferenced || [];
-  const meshOrphans = data.meshOrphans || [];
-  const tunedDevices = data.tunedDevices || [];
-  const tunedDefaults = data.tunedDefaults || {};
-  const criticalTop20 = data.criticalTop20 || [];
   const rooms = data.rooms || [];
-  const appsToDevices = data.appsToDevices || [];
-  const dashboardsToDevices = data.dashboardsToDevices || [];
   const allDevices = data.allDevices || {};
   const failed = data.failed || [];
+  // Cross-reference derivation moved off the hub (LB1, v5.42.0) — derive from allDevices in the browser.
+  const x = buildAuditXref(allDevices);
+  const unreferenced = x.unreferenced;
+  const meshOrphans = x.meshOrphans;
+  const tunedDevices = x.tunedDevices;
+  const tunedDefaults = x.tunedDefaults;
+  const criticalTop20 = x.criticalTop20;
+  const appsToDevices = x.appsToDevices;
+  const dashboardsToDevices = x.dashboardsToDevices;
 
   const zwNodeRows = Object.values(allDevices).filter(d => d.zwaveNode != null);
   const hmRows = Object.values(allDevices).filter(d => d.hubMeshState != null);
@@ -3350,7 +3404,7 @@ function buildAuditHtml(data) {
   o += sumcell('Devices', data.deviceCount, null);
   o += sumcell('Unreferenced', unreferenced.length, 'warn');
   o += sumcell('Mesh orphans', meshOrphans.length, 'crit');
-  o += sumcell(`Critical (≥${data.criticalThreshold} refs)`, data.criticalCount, null);
+  o += sumcell(`Critical (≥${data.criticalThreshold} refs)`, x.criticalCount, null);
   o += '</div></div></div>';
 
   // Unreferenced

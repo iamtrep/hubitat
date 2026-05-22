@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.41.0"
+@Field static final String APP_VERSION = "5.42.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -2717,13 +2717,12 @@ Map analyzeApps(boolean deep = true) {
                     ]
                 }
             }
-            stats.platformApps = stats.platformApps.sort { -(it.stateSize as int) }
         }
     } catch (Exception e) {
         logDebug "Could not fetch runtime stats for app count: ${e.message}"
     }
 
-    stats.userAppsList = stats.userAppsList.sort { it.name }
+    // userAppsList / platformApps display order is left to the SPA (tbl() re-sorts; platformApps is unconsumed).
     stats.parentChildHierarchy = stats.parentChildHierarchy.sort { it.type }
 
     return stats
@@ -4008,6 +4007,7 @@ private Map extractAuditFields(Map fj, Long did) {
         createTime:          dev.createTime,
         updateTime:          dev.updateTime,
         lastActivityTime:    dev.lastActivityTime,
+        lastActivityTimeMs:  parseHubitatTimestamp(dev.lastActivityTime as String),  // epoch for SPA-side unreferenced sort
         parentDeviceId:      (dev.parentDeviceId as Long),
         childDeviceIds:      ((fj?.childDevices ?: [:]) as Map).keySet()?.collect { it as Long } ?: [],
         notes:               dev.notes,
@@ -4073,138 +4073,6 @@ private String controllerTypeLabel(String ct) {
 }
 
 /**
- * Build all cross-reference indices for the audit report from the accumulated device map.
- * Pure function. Returns a Map shaped for use in the audit report.
- */
-private Map buildCrossReference(Map devices, long scanStartedMs) {
-    long nowMs = now()
-
-    List unreferenced = []          // [{id, name, type, lastActivityTime, driverType}, ...]
-    List meshOrphans  = []          // [{id, name}, ...]
-    List stuckJobs    = []          // [{id, name, handler, overdueMs, status}, ...]
-    List allRefs      = []          // for ranking — [{id, name, appsCount, dashboardsCount, total}, ...]
-    Map  appsIndex    = [:]         // Long appId → [label, devices: [[id, name], ...]]
-    Map  dashIndex    = [:]         // Long dashId → [name, devices: [[id, name], ...]]
-
-    devices.each { _did, _d ->
-        Long   did   = _did as Long
-        Map    d     = _d  as Map
-        // appsUsingCount is the hub's authoritative subscriber count (from fj.appsUsingCount).
-        // appsUsing.size() is NOT used here — fj.dashboards contains every dashboard the device
-        // is in the *allowed-devices list* for, not just dashboards with actual tiles, so it is
-        // too noisy to gate "unreferenced" on. A device is unreferenced when no app subscribes
-        // to it and it has no parent integration app managing it.
-        int    apps  = (d.appsUsingCount as Integer) ?: 0
-        int    dashs = ((d.dashboards ?: []) as List).size()
-        boolean noParentApp = (d.parentApp == null)
-
-        // Unreferenced: no app subscribers and no parent app (dashboard membership ignored)
-        if (apps == 0 && noParentApp) {
-            unreferenced << [id: did, name: (d.label ?: d.name), type: d.deviceTypeName,
-                             lastActivityTime: d.lastActivityTime, driverType: d.driverType]
-        }
-        // Mesh orphans
-        if (d.orphan) {
-            meshOrphans << [id: did, name: (d.label ?: d.name)]
-        }
-        // Stuck jobs: nextRunTime in the past AT THE MOMENT WE OBSERVED THIS DEVICE.
-        // Comparing against the per-device fetch timestamp (not now()) eliminates the
-        // scan-duration false positives where a recurring job fires during the scan and
-        // its old nextRunTime appears stale relative to finalize time.
-        Long fetchedAt = (d.fetchedAtMs as Long) ?: nowMs
-        ((d.scheduledJobs ?: []) as List).each { Map s ->
-            String nrt = s.nextRunTime as String
-            if (nrt) {
-                Long when = parseHubitatTimestamp(nrt)
-                if (when != null && when < fetchedAt) {
-                    stuckJobs << [id: did, name: (d.label ?: d.name),
-                                  handler: s.handler, overdueMs: (fetchedAt - when),
-                                  status: s.status, prevRunTime: s.prevRunTime]
-                }
-            }
-        }
-        // Reference ranking
-        allRefs << [id: did, name: (d.label ?: d.name),
-                    appsCount: apps, dashboardsCount: dashs, total: apps + dashs]
-        // Apps → devices index
-        ((d.appsUsing ?: []) as List).each { Map a ->
-            Long aid = a.id as Long
-            Map entry = (Map) (appsIndex[aid] ?: [label: (a.label ?: a.name), disabled: (a.disabled == true), devices: []])
-            (entry.devices as List) << [id: did, name: (d.label ?: d.name)]
-            appsIndex[aid] = entry
-        }
-        // Dashboards → devices index
-        ((d.dashboards ?: []) as List).each { Map dd ->
-            Long ddid = dd.id as Long
-            Map entry = (Map) (dashIndex[ddid] ?: [name: dd.name, devices: []])
-            (entry.devices as List) << [id: did, name: (d.label ?: d.name)]
-            dashIndex[ddid] = entry
-        }
-    }
-
-    // Sort sections per spec
-    unreferenced.sort { a, b -> (parseHubitatTimestamp(a.lastActivityTime as String) ?: 0L) <=> (parseHubitatTimestamp(b.lastActivityTime as String) ?: 0L) }
-    meshOrphans.sort  { a, b -> (a.name as String) <=> (b.name as String) }
-    stuckJobs.sort    { a, b -> (b.overdueMs as Long) <=> (a.overdueMs as Long) }
-    List criticalTop20 = allRefs.sort { a, b ->
-        int t = (b.total as Integer) <=> (a.total as Integer)
-        t != 0 ? t : (a.name as String) <=> (b.name as String)
-    }.take(20)
-
-    // Apps/dashboards alphabetical by label/name; devices within each alphabetical
-    List appsSorted = appsIndex.collect { id, e -> [id: id, label: e.label, disabled: (e.disabled == true), devices: (e.devices as List).sort { x, y -> (x.name as String) <=> (y.name as String) }] }
-        .sort { a, b -> (a.label as String) <=> (b.label as String) }
-    List dashSorted = dashIndex.collect { id, e -> [id: id, name: e.name, devices: (e.devices as List).sort { x, y -> (x.name as String) <=> (y.name as String) }] }
-        .sort { a, b -> (a.name as String) <=> (b.name as String) }
-
-    // Manually-tuned devices: detect divergence from the fleet mode for each tuning field.
-    // Hubitat doesn't expose the platform default for these (not in /hub2/hubData), so we
-    // use the fleet mode as a robust proxy — outliers fall out regardless of the actual default.
-    Integer modeSt = computeMode(devices.values().collect { (it as Map).spammyThreshold as Integer })
-    Integer modeMs = computeMode(devices.values().collect { (it as Map).maxStates as Integer })
-    Integer modeMe = computeMode(devices.values().collect { (it as Map).maxEvents as Integer })
-    List tunedDevices = []
-    devices.each { _did, _d ->
-        Map d = _d as Map
-        Integer st = d.spammyThreshold as Integer
-        Integer ms = d.maxStates as Integer
-        Integer me = d.maxEvents as Integer
-        boolean stOff = (st != null && modeSt != null && st != modeSt)
-        boolean msOff = (ms != null && modeMs != null && ms != modeMs)
-        boolean meOff = (me != null && modeMe != null && me != modeMe)
-        if (stOff || msOff || meOff) {
-            tunedDevices << [id: _did as Long, name: (d.label ?: d.name),
-                             spammyThreshold: st, maxStates: ms, maxEvents: me,
-                             spammyOff: stOff, maxStatesOff: msOff, maxEventsOff: meOff]
-        }
-    }
-    tunedDevices.sort { a, b -> (a.name as String) <=> (b.name as String) }
-
-    return [
-        deviceCount:       devices.size(),
-        unreferenced:      unreferenced,
-        meshOrphans:       meshOrphans,
-        stuckJobs:         stuckJobs,
-        criticalTop20:     criticalTop20,
-        criticalThreshold: 5,                                 // for the "Critical (≥5 refs)" summary card
-        criticalCount:     allRefs.count { (it.total as Integer) >= 5 },
-        appsToDevices:     appsSorted,
-        dashboardsToDevices: dashSorted,
-        tunedDevices:      tunedDevices,
-        tunedDefaults:     [spammyThreshold: modeSt, maxStates: modeMs, maxEvents: modeMe],
-        scanStartedMs:     scanStartedMs,
-        scanDurationMs:    (nowMs - scanStartedMs)
-    ]
-}
-
-/** Mode of a list of integers; null entries skipped. Returns null if no values. */
-private Integer computeMode(List values) {
-    Map<Integer,Integer> counts = [:]
-    values.each { v -> if (v != null) counts[v as Integer] = (counts[v as Integer] ?: 0) + 1 }
-    return counts.isEmpty() ? null : counts.max { it.value }.key
-}
-
-/**
  * Parse a Hubitat ISO-8601 timestamp ("2026-05-08T00:27:27+0000") to epoch millis.
  * Returns null on parse failure (don't fail the report — just skip the value).
  */
@@ -4253,7 +4121,6 @@ private boolean dispatchOne(String scanId) {
  * dispatches the next pending id (refilling the pipeline), or finalizes the scan.
  */
 void fullJsonCb(resp, data) {
-    long fetchedAtMs = now()                                        // observe as close to response arrival as possible
     String scanId = data.scanId as String
     ConcurrentHashMap scan = AUDIT_SCANS[scanId]
     if (scan == null) return                                        // callback from prior abandoned scan
@@ -4263,7 +4130,6 @@ void fullJsonCb(resp, data) {
         if (resp?.status == 200) {
             Map fj = (Map) resp.json
             Map record = extractAuditFields(fj, deviceId)
-            record.fetchedAtMs = fetchedAtMs                        // anchor for stuck-job timing (see buildCrossReference)
             (scan.devices as ConcurrentHashMap)[deviceId] = record
         } else {
             (scan.failed as ConcurrentHashMap)[deviceId] = "HTTP ${resp?.status ?: 'n/a'}"
@@ -4314,9 +4180,16 @@ private void finalizeAudit(String scanId) {
 
     boolean errored = (failed / (double) Math.max(total, 1)) > AUDIT_FAIL_RATIO
 
-    // Build cross-reference & attach raw devices for the per-device table
-    Map xref = buildCrossReference(devices, startedAt)
-    xref.allDevices = devices
+    // Ship the raw collected device records; the SPA derives the cross-reference
+    // (unreferenced / mesh orphans / critical ranking / apps↔devices / tuned-device divergence)
+    // from allDevices — see buildAuditXref() in hub_diagnostics_ui.html.
+    Map xref = [
+        deviceCount:       succeeded,
+        criticalThreshold: 5,
+        scanStartedMs:     startedAt,
+        scanDurationMs:    (now() - startedAt),
+        allDevices:        devices
+    ]
 
     // Phase 4 enrichment: rooms, Z-Wave JS per-node, Hub Mesh per-device
     long enrichStart = now()
@@ -4366,18 +4239,6 @@ private void finalizeAudit(String scanId) {
     xref.failed = failedMap.collect { id, reason -> [id: id, reason: reason] }
 
     lastAuditResult = xref
-
-    Map summary = [
-        generated:          generatedAt,
-        deviceCount:        total,
-        scanDurationMs:     (now() - startedAt),
-        unreferencedCount:  (xref.unreferenced as List).size(),
-        orphanCount:        (xref.meshOrphans as List).size(),
-        stuckJobCount:      (xref.stuckJobs as List).size(),
-        criticalCount:      xref.criticalCount,
-        failedCount:        failed,
-        errored:            errored
-    ]
 
     // Snapshot for UI
     state.audit = [
