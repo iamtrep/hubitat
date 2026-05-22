@@ -26,6 +26,9 @@ import groovy.transform.Field
 @Field static final int TEST_EMERGENCY_RETRY_UNDER_MIN = 10
 @Field static final int TEST_EMERGENCY_EXPIRE_OVER_MAX = 99999
 @Field static final int TEST_DELAY_SECONDS = 3
+// An in-progress run that records no step for this long is treated as dead (stale),
+// so the UI doesn't stay locked after a run is interrupted (hub reboot, code save, etc.)
+@Field static final long STALE_RUN_MS = 30000
 
 definition(
     name: "Pushover Notification Tester",
@@ -57,15 +60,22 @@ def mainPage() {
         }
         if (pushoverDevice) {
             section("Automated Test Run") {
-                if (state.testRunInProgress) {
+                boolean runStale = isRunStale()
+                if (state.testRunInProgress && !runStale) {
                     int total = state.testTotal ?: 0
                     int current = state.currentTestIndex ?: 0
-                    paragraph "<b>Running test ${current + 1} of ${total}...</b>"
+                    paragraph "<b>Completed ${current} of ${total} tests...</b>"
                     if (state.currentTestName) {
-                        paragraph "Current: ${state.currentTestName}"
+                        paragraph "Last started: ${state.currentTestName}"
                     }
+                    paragraph "<i>This page does not auto-update — tap Refresh Status to see progress.</i>"
+                    input "btnRefreshStatus", "button", title: "Refresh Status"
                     input "btnStopTests", "button", title: "Stop Tests"
                 } else {
+                    if (state.testRunInProgress && runStale) {
+                        paragraph "<b>⚠ Previous run did not finish cleanly</b> (no activity for a while). Start a new run, or Stop to reset."
+                        input "btnStopTests", "button", title: "Stop Tests"
+                    }
                     input "btnRunAll", "button", title: "Run All Tests (Skip Emergency)"
                     input "btnRunAllWithEmergency", "button", title: "Run All Tests (Include Emergency)"
                 }
@@ -496,6 +506,9 @@ void appButtonHandler(String buttonName) {
         case "btnStopTests":
             stopTests()
             break
+        case "btnRefreshStatus":
+            // No-op: pressing any button re-renders the page, refreshing the progress display
+            break
 
         default:
             log.warn "Unknown button: ${buttonName}"
@@ -633,7 +646,21 @@ private List getTestCases() {
     ]
 }
 
+// Returns true when a run is flagged in-progress but appears dead (no recent step) —
+// e.g. a hub reboot or code save interrupted the runIn chain. Lets the UI recover.
+private boolean isRunStale() {
+    return computeRunStale(state.testRunInProgress == true, state.lastStepEpoch as Long, now(), STALE_RUN_MS)
+}
+private static boolean computeRunStale(boolean inProgress, Long lastStepEpoch, long nowMs, long thresholdMs) {
+    if (!inProgress) return false
+    if (lastStepEpoch == null) return true
+    return (nowMs - lastStepEpoch) > thresholdMs
+}
+
 private void runAllTests(boolean includeEmergency) {
+    // Defensive: clear any stale schedule left by a prior run that didn't finish cleanly
+    unschedule("executeNextTest")
+
     List testCases = getTestCases()
     if (!includeEmergency) {
         testCases = testCases.findAll { !it.emergency }
@@ -647,6 +674,7 @@ private void runAllTests(boolean includeEmergency) {
     state.testRunStartTime = new Date().format("yyyy-MM-dd HH:mm:ss")
     state.testRunEndTime = null
     state.currentTestName = null
+    state.lastStepEpoch = now()
 
     if (logEnable) log.debug "runAllTests(): starting ${testCases.size()} tests (includeEmergency=${includeEmergency})"
 
@@ -680,6 +708,7 @@ void executeNextTest() {
 
     Map testCase = testCases[idx]
     state.currentTestName = testCase.name
+    state.lastStepEpoch = now()
     String type = testCase.type ?: "notification"
 
     if (logEnable) log.debug "executeNextTest(): [${idx + 1}/${testCases.size()}] ${testCase.name}"
