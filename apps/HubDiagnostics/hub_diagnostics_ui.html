@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.43.0";
+const UI_VERSION = "5.43.1";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -607,16 +607,27 @@ function composeAlerts(d){
     if(t>TH.critTempC) out.push({severity:'critical',name:`Hub temperature very high (${Number(t).toFixed(1)}°C)`});
     else if(t>TH.warnTempC) out.push({severity:'warning',name:`Hub temperature elevated (${Number(t).toFixed(1)}°C)`});
   }
+  // Hub firmware update — surfaced once via the version-bearing entry at the end of this
+  // function. The platform flags the same update two other ways (the platformUpdateAvailable
+  // alert and a "Platform update … available" hub message); both are suppressed below when an
+  // update is confirmed, so the rollup carries one firmware entry instead of three.
+  const fu=d.firmwareUpdate;
+  const fwUpdate=!!(fu&&fu.updateAvailable);
+  const fwVer=fwUpdate?(fu.availableVersion||''):'';
   // Platform alerts (severity assigned hub-side). Drop the generic spammyDevices flag when
   // the message-bearing spammyDevicesMessage below is also present — same condition, no dup.
   (sig.platformAlerts||[]).forEach(a=>{
     if(a&&a.key==='spammyDevices'&&sig.spammyDevicesMessage)return;
+    if(a&&a.key==='platformUpdateAvailable'&&fwUpdate)return;
     out.push(a);
   });
   if(sig.spammyDevicesMessage) out.push({key:'spammyDevices',name:'Spammy Devices',severity:'warning',message:sig.spammyDevicesMessage});
   (sig.hubMessages||[]).forEach(text=>{
     const stripped=String(text||'').replace(/<[^>]+>/g,'').trim();
-    if(stripped) out.push({key:'hubMessage',name:stripped,severity:'info'});
+    if(!stripped)return;
+    // Same firmware update as the entry below — skip the platform's redundant notification.
+    if(fwUpdate&&((fwVer&&stripped.includes(fwVer))||/platform update/i.test(stripped)))return;
+    out.push({key:'hubMessage',name:stripped,severity:'info'});
   });
   if(sig.ethernetAndWifi) out.push({severity:'warning',name:'Ethernet and WiFi both active — disable WiFi when using Ethernet'});
   // Z-Wave radio health (derived hub-side from one zwaveDetails fetch).
@@ -625,9 +636,9 @@ function composeAlerts(d){
   if(failed>0) out.push({severity:'warning',name:`${failed} Z-Wave failed node${failed>1?'s':''} — try a battery swap or move closer to the hub`});
   if(problem>0) out.push({severity:'warning',name:`${problem} Z-Wave problem node${problem>1?'s':''} — degraded route or packet errors`});
   if(sig.zwaveRadioUpdate) out.push({severity:'warning',name:'Z-Wave radio firmware update available'});
-  // Hub firmware update (present on both dashboard and health payloads).
-  const fu=d.firmwareUpdate;
-  if(fu&&fu.updateAvailable) out.push({severity:'warning',name:`Hub firmware update available: v${fu.availableVersion||'?'}`});
+  // Hub firmware update (present on both dashboard and health payloads). The Dashboard's
+  // dedicated "Hub Firmware" card carries the release-notes link; this is the rollup entry.
+  if(fwUpdate) out.push({severity:'warning',name:`Hub firmware update available: v${fwVer||'?'}`});
   // App code behind the bundled UI — the Groovy app needs re-importing.
   if(d.appVersion&&typeof isNewer==='function'&&isNewer(UI_VERSION,d.appVersion))
     out.push({severity:'critical',name:`App update required — UI is v${UI_VERSION} but app code is v${d.appVersion}`});
