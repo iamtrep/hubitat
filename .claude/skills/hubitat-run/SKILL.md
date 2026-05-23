@@ -76,18 +76,25 @@ Display the device's current attributes in a readable format.
 
 #### If Maker API is NOT configured:
 
-Maker API is required for sending commands. Tell the user:
+You can still send commands via the internal admin endpoint `POST /device/runmethod` — no token or Maker API setup required:
 
-1. They need to install "Maker API" on their hub
-2. Add the target device(s) to Maker API's allowed devices
-3. Update `.hubitat.json` with the `app_id` and `token` from Maker API
-4. Provide the direct link to the device in the hub UI: `http://{hub_ip}/device/edit/{device_id}`
-
-Even without Maker API, you can still show device info by querying:
 ```bash
-curl -s "http://{hub_ip}/hub2/devicesList"
+# no-arg command (e.g. "42 refresh")
+curl -s -X POST "http://{hub_ip}/device/runmethod" -H "Content-Type: application/json" \
+  -d '{"id":{device_id},"method":"{command}","args":[]}'
+# command with arguments (e.g. "42 setLevel 50") — one {type,value} per parameter;
+# get each parameter's type from GET /device/fullJson/{device_id} -> device…commands[].parameters[]
+curl -s -X POST "http://{hub_ip}/device/runmethod" -H "Content-Type: application/json" \
+  -d '{"id":{device_id},"method":"setLevel","args":[{"type":"NUMBER","value":50}]}'
 ```
-Find the device by ID and display its current states and attributes.
+
+Response is `{"success":true,"message":null}`. The command runs **async**, so read state back from:
+```bash
+curl -s "http://{hub_ip}/device/fullJson/{device_id}"
+```
+Current attribute values are under `device.currentStates[].value` — poll until the value changes rather than reading once.
+
+**Caveat:** `/device/runmethod` is the web-UI invocation channel; its script-instance/binding lifecycle could differ from app- or Maker-API-driven calls. For production-representative testing — anything sensitive to cross-invocation state — prefer Maker API instead: install "Maker API", add the device, and put `app_id` + `token` in `.hubitat.json`. Endpoint details in [`docs/hubitat-internal-apis.md`](../../../docs/hubitat-internal-apis.md).
 
 ### Step 5: Report Result
 

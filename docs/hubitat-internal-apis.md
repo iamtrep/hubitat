@@ -82,6 +82,15 @@ Reference for the internal admin HTTP APIs of a Hubitat Elevation hub. Hubitat o
 - `POST /device/save` with form-encoded fields: `name`, `label`, `deviceNetworkId`, `deviceTypeId`
 - Returns HTTP 302 on success (redirect to the new device's edit page)
 - Field names discovered from `vue-hub2.min.js`: the `deviceModel` object
+- Delete a virtual device: `GET /device/forceDelete/{id}/json` → `{"status":"success"}`
+- Delete a user driver type: `GET /driver/deleteDeviceType/{id}` (delete any devices using it first)
+
+## Run a device command (no Maker API)
+
+- `POST /device/runmethod` — invoke any command on a device via the admin-UI channel, without a Maker API token. JSON body: `{"id": <deviceId>, "method": "<commandName>", "args": [{"type": "<paramType>", "value": <v>}, ...]}` (use `"args": []` for no-arg commands). Response: `{"success":true,"message":null}`
+- Command processing is **async** — the POST returns before the command runs. Poll `GET /device/fullJson/{id}` (current attribute values are under `device.currentStates[].value`) until the expected state appears.
+- A device's invokable commands are listed in `GET /device/fullJson/{id}` under `device…commands[]` (each has `name`, `parameters`).
+- This is the **web-UI invocation channel**; its script-instance/binding lifecycle could differ from app- or Maker-API-driven calls. For production-representative behavior — and any test that cares about cross-invocation state — prefer the Maker API route `GET /apps/api/{appId}/devices/{deviceId}/{command}?access_token={token}`. (The two channels matched for command dispatch and binding persistence on firmware 2.5.0.143 — see [`hubitat-platform-notes.md`](hubitat-platform-notes.md).)
 
 ## Maker API specifics
 
