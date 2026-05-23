@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.43.1";
+const UI_VERSION = "5.43.2";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -3156,9 +3156,12 @@ function rcZbRenderAggregates(){
   tbl('rc-zb-top5',[devCol,{l:'Frames',f:'v',t:'n'}],top5,{filter:false,sc:s5.sc,sd:s5.sd});
   renderBarChart(clusters.map(c=>({label:c.k,value:c.v})),'rc-zb-clusters',{height:200});
   // Signal quality: per-device LQI/RSSI rollups over the 5-min window, weakest links first.
+  // Capped to the 10 weakest (lowest avg) like the Top-talkers tables above — sort here before
+  // slicing since tbl() only sorts for display, so the cap keeps the worst offenders, not an
+  // arbitrary 10. The header's column sort still rearranges those 10.
   const sig=rcZbSignalSummary(parsed5);
-  const lqiRows=sig.filter(r=>r.lqi).map(r=>({device:r.device,deviceId:r.deviceId,frames:r.lqi.n,min:r.lqi.min,avg:r.lqi.avg,max:r.lqi.max}));
-  const rssiRows=sig.filter(r=>r.rssi).map(r=>({device:r.device,deviceId:r.deviceId,frames:r.rssi.n,min:r.rssi.min,avg:r.rssi.avg,max:r.rssi.max}));
+  const lqiRows=sig.filter(r=>r.lqi).map(r=>({device:r.device,deviceId:r.deviceId,frames:r.lqi.n,min:r.lqi.min,avg:r.lqi.avg,max:r.lqi.max})).sort((a,b)=>a.avg-b.avg).slice(0,10);
+  const rssiRows=sig.filter(r=>r.rssi).map(r=>({device:r.device,deviceId:r.deviceId,frames:r.rssi.n,min:r.rssi.min,avg:r.rssi.avg,max:r.rssi.max})).sort((a,b)=>a.avg-b.avg).slice(0,10);
   if(lqiRows.length||rssiRows.length){
     container.insertAdjacentHTML('beforeend',
       '<div class="card" style="margin-top:12px"><h3 style="margin-top:0">Signal quality (last 5 min) <span style="font-weight:normal;font-size:12px;opacity:.7">— last-hop LQI/RSSI per device, weakest first</span></h3>'
