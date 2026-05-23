@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.43.4"
+@Field static final String APP_VERSION = "5.44.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -1048,7 +1048,7 @@ private Map buildHubMap(Map hubInfo, Hub hub) {
     return [name: hubInfo.name, hubId: hub?.id, hardware: hubInfo.hardware,
             firmware: hubInfo.firmware, ip: hubInfo.ip, zigbeeId: hub?.zigbeeId,
             location: location.name, mode: location.currentMode?.toString(),
-            timeZone: location.timeZone?.ID]
+            timeZone: location.timeZone?.ID, zwaveStack: detectZwaveStack()]
 }
 
 // ===== DATA GATHERERS =====

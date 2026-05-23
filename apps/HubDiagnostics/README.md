@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
 <!-- AUTO:hubdiag-version -->
-**Current version:** 5.43.4
+**Current version:** 5.44.0
 <!-- /AUTO -->
 
 ---
@@ -388,7 +388,7 @@ Changes are color-coded: green for additions/improvements, red for removals/degr
 
 ## Radio Capture Tab
 
-Live capture of radio traffic from the hub's internal log sockets, intended for mesh troubleshooting. **Zigbee** capture is supported today, via `ws://${hub_ip}/zigbeeLogsocket`. A **Z-Wave** sub-tab is planned; it will auto-detect the active Z-Wave stack (Z/IP or Z-Wave JS) at runtime.
+Live capture of radio traffic from the hub's internal log sockets, intended for mesh troubleshooting. **Zigbee** capture (via `ws://${hub_ip}/zigbeeLogsocket`) is fully featured. A **Z-Wave** sub-tab (via `ws://${hub_ip}/zwaveLogsocket`) provides capture, live tail, and download; it auto-detects the active Z-Wave stack and picks a per-stack renderer. On the **Z/IP (legacy)** stack the tail shows the per-message IME radio telemetry — **Time · Node · Device · Type · RSSI · Seq** (RSSI per hop, in dBm). On the **Z-Wave JS** stack frames are shown raw for now (field mapping pending a sample). Aggregates and command-level decoding are not yet built for Z-Wave; the recording is full-fidelity raw lines on both stacks. The capture controls, recording cap, pause/stop/clear/download semantics, and the click-to-expand raw JSON behaviour match the Zigbee sub-tab described below.
 
 **Capture controls** — in order: Start capture, Pause capture, Stop capture, Download, Clear buffer.
 

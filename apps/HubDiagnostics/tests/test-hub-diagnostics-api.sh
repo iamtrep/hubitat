@@ -310,12 +310,17 @@ else:
         fail(f"Firmware '{h.get('firmware')}' != '{gt_firmware}'")
 
     # v5.27.0+ expanded hub fields now shared via buildHubMap()
-    for field in ["hubId", "location", "mode", "timeZone"]:
+    # v5.44.0 added zwaveStack (drives the Radio Capture Z-Wave sub-tab's per-stack mapper)
+    for field in ["hubId", "location", "mode", "timeZone", "zwaveStack"]:
         val = h.get(field)
         if val is not None:
             ok(f"dashboard hub has '{field}': {val}")
         else:
-            fail(f"dashboard hub missing '{field}' (v5.27.0+)")
+            fail(f"dashboard hub missing '{field}'")
+    if h.get("zwaveStack") in ("js", "legacy", "unknown"):
+        ok(f"dashboard hub zwaveStack is valid ({h.get('zwaveStack')})")
+    else:
+        fail(f"dashboard hub zwaveStack '{h.get('zwaveStack')}' not in js/legacy/unknown (v5.44.0+)")
 
     # Device counts
     dv = dash.get("devices", {})
