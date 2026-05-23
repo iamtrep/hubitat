@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.44.0";
+const UI_VERSION = "5.44.2";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -280,15 +280,65 @@ function srcBadge(source,emptyAsBuiltin){if(source==='platform')return BADGE.pla
 function splitGhostNodes(nodes){return{ghosts:nodes.filter(g=>(g.kind?g.kind==='ghost':!g.deviceId)),failed:nodes.filter(g=>(g.kind?g.kind==='failed':!!g.deviceId))};}
 
 // ===== RADIO CAPTURE CONSTANTS =====
-// Subset of the Zigbee Cluster Library. Keys are 4-char hex (uppercase). Friendly labels for live tail and filter chips.
+// Full standard Zigbee Cluster Library cluster set. Keys are 4-char hex (uppercase).
+// IDs lifted from zigbee-herdsman zcl/definition/cluster.ts (same source as ZB_MFR);
+// labels are the terse spec names used in the live tail and filter chips. Unmapped
+// (e.g. per-vendor manufacturer-specific) clusters fall through to raw 0xNNNN.
 const ZB_CLUSTERS={
-  '0000':'Basic','0001':'Power Config','0003':'Identify','0004':'Groups','0005':'Scenes',
-  '0006':'On/Off','0008':'Level','000A':'Time','0019':'OTA','0020':'Poll Control',
-  '0101':'Door Lock','0201':'Thermostat','0202':'Fan Control','0204':'Thermostat UI',
-  '0300':'Color','0400':'Illuminance','0402':'Temperature','0403':'Pressure','0405':'Humidity',
-  '0406':'Occupancy','0500':'IAS Zone','0501':'IAS ACE','0502':'IAS WD',
-  '0702':'Metering','0B01':'Meter Identification','0B04':'Electrical Measurement',
-  '0B05':'Diagnostics','FC01':'Manufacturer Specific','FC02':'Manufacturer Specific'
+  // General / foundation (0x00xx)
+  '0000':'Basic','0001':'Power Config','0002':'Device Temp Config','0003':'Identify',
+  '0004':'Groups','0005':'Scenes','0006':'On/Off','0007':'On/Off Switch Config',
+  '0008':'Level','0009':'Alarms','000A':'Time','000B':'RSSI Location',
+  '000C':'Analog Input','000D':'Analog Output','000E':'Analog Value','000F':'Binary Input',
+  '0010':'Binary Output','0011':'Binary Value','0012':'Multistate Input','0013':'Multistate Output',
+  '0014':'Multistate Value','0015':'Commissioning','0016':'Partition','0019':'OTA',
+  '001A':'Power Profile','001B':'Appliance Control','001C':'PWM','0020':'Poll Control',
+  '0021':'Green Power','0022':'Mobile Device Config','0023':'Neighbor Cleaning',
+  '0024':'Nearest Gateway','0025':'Keep-Alive','003D':'Zigbee Direct Config',
+  // Closures (0x01xx)
+  '0100':'Shade Config','0101':'Door Lock','0102':'Window Covering','0103':'Barrier Control',
+  // HVAC (0x02xx)
+  '0200':'Pump Config/Control','0201':'Thermostat','0202':'Fan Control',
+  '0203':'Dehumidification Control','0204':'Thermostat UI',
+  // Lighting (0x03xx)
+  '0300':'Color','0301':'Ballast Config',
+  // Measurement & sensing (0x04xx)
+  '0400':'Illuminance','0401':'Illuminance Level Sensing','0402':'Temperature','0403':'Pressure',
+  '0404':'Flow','0405':'Humidity','0406':'Occupancy','0407':'Leaf Wetness','0408':'Soil Moisture',
+  '0409':'pH Measurement','040A':'Electrical Conductivity','040B':'Wind Speed','040C':'Carbon Monoxide',
+  '040D':'Carbon Dioxide','040E':'Ethylene','040F':'Ethylene Oxide','0410':'Hydrogen',
+  '0411':'Hydrogen Sulfide','0412':'Nitric Oxide','0413':'Nitrogen Dioxide','0414':'Oxygen',
+  '0415':'Ozone','0416':'Sulfur Dioxide','0417':'Dissolved Oxygen','0418':'Bromate',
+  '0419':'Chloramines','041A':'Chlorine','041B':'Fecal Coliform/E. Coli','041C':'Fluoride',
+  '041D':'Haloacetic Acids','041E':'Total Trihalomethanes','041F':'Total Coliform Bacteria',
+  '0420':'Turbidity','0421':'Copper','0422':'Lead','0423':'Manganese','0424':'Sulfate',
+  '0425':'Bromodichloromethane','0426':'Bromoform','0427':'Chlorodibromomethane','0428':'Chloroform',
+  '0429':'Sodium','042A':'PM2.5','042B':'Formaldehyde',
+  // Air-quality clusters added to the ZCL after the herdsman/zigpy snapshot this table was lifted from (both stop at 0x042B)
+  '042C':'PM1','042D':'PM10','042E':'VOC',
+  // Security & safety (0x05xx)
+  '0500':'IAS Zone','0501':'IAS ACE','0502':'IAS WD',
+  // Protocol interfaces / BACnet (0x06xx)
+  '0600':'Generic Tunnel','0601':'BACnet Tunnel','0602':'BACnet Analog Input (Reg)',
+  '0603':'BACnet Analog Input (Ext)','0604':'BACnet Analog Output (Reg)','0605':'BACnet Analog Output (Ext)',
+  '0606':'BACnet Analog Value (Reg)','0607':'BACnet Analog Value (Ext)','0608':'BACnet Binary Input (Reg)',
+  '0609':'BACnet Binary Input (Ext)','060A':'BACnet Binary Output (Reg)','060B':'BACnet Binary Output (Ext)',
+  '060C':'BACnet Binary Value (Reg)','060D':'BACnet Binary Value (Ext)','060E':'BACnet Multistate Input (Reg)',
+  '060F':'BACnet Multistate Input (Ext)','0610':'BACnet Multistate Output (Reg)','0611':'BACnet Multistate Output (Ext)',
+  '0612':'BACnet Multistate Value (Reg)','0613':'BACnet Multistate Value (Ext)','0614':'11073 Protocol Tunnel',
+  '0615':'ISO7816 Protocol Tunnel','0617':'Retail Tunnel',
+  // Smart energy (0x07xx)
+  '0702':'Metering','0704':'Tunneling',
+  // Telecommunications (0x09xx)
+  '0900':'Telecom Information','0904':'Voice over Zigbee','0905':'Chatting',
+  // Home automation / smart energy (0x0Bxx)
+  '0B00':'Appliance Identification','0B01':'Meter Identification','0B02':'Appliance Events/Alerts',
+  '0B03':'Appliance Statistics','0B04':'Electrical Measurement','0B05':'Diagnostics',
+  // Touchlink commissioning
+  '1000':'Touchlink',
+  // Manufacturer-specific names for stable, unambiguous IDs. Other 0xFC00-0xFFFF clusters
+  // collide across vendors and get a generic/vendor-named fallback from clusterLabel's range rule.
+  'EF00':'Tuya (Mfr Specific)','FC57':'Amazon WWAH'
 };
 
 // Manufacturer code lookup. Lifted verbatim from scripts/zigbee-ota-analyser.py KNOWN_MANUFACTURERS.
@@ -472,7 +522,20 @@ const ZB_MFR={
   '6006':'Google','6666':'Sprut.device (custom)','7777':'Lytko (custom)'
 };
 
-function clusterLabel(id){if(!id)return'';const k=String(id).toUpperCase().padStart(4,'0');return ZB_CLUSTERS[k]?ZB_CLUSTERS[k]+' (0x'+k+')':'0x'+k}
+function clusterLabel(id,mfrCode){
+  if(!id)return'';
+  const k=String(id).toUpperCase().padStart(4,'0');
+  if(ZB_CLUSTERS[k])return ZB_CLUSTERS[k]+' (0x'+k+')';
+  // Spec: 0xFC00-0xFFFF is the manufacturer-specific cluster range. These collide across vendors
+  // and aren't in the standard library, so label generically — with the vendor name when the
+  // frame carried a mfr code (ZB_MFR), otherwise just 'Mfr-specific' — rather than bare hex.
+  if(parseInt(k,16)>=0xFC00){
+    const mk=mfrCode?String(mfrCode).toUpperCase().padStart(4,'0'):null;
+    const v=mk&&ZB_MFR[mk]?ZB_MFR[mk]:null;
+    return(v?'Mfr-specific: '+v:'Mfr-specific')+' (0x'+k+')';
+  }
+  return '0x'+k;
+}
 function mfrLabel(code){if(!code)return'';const k=String(code).toUpperCase().padStart(4,'0');return ZB_MFR[k]?ZB_MFR[k]+' ('+k+')':k}
 
 // ===== ZCL DECODE (BEGIN) =====
@@ -689,7 +752,7 @@ function rcZbDecodeHtml(rawText){
   if(zcl.truncated)lines.push('<span style="color:var(--warn,#e0a800)">Frame truncated</span>');
   const sum=rcZbDecodedSummary(zcl);
   if(sum.full)lines.push('<b>'+((zcl.global&&zcl.cmd==='0B')?'Default response':'Attributes')+':</b> '+h(sum.full));
-  return'<div style="margin-bottom:8px;padding:8px 10px;background:rgba(33,150,243,0.06);border-radius:4px;font-size:11px;line-height:1.6;color:#cfe0f5">'+lines.join('<br>')+'</div>';
+  return'<div style="margin-bottom:8px;padding:8px 10px;background:rgba(33,150,243,0.06);border-radius:4px;font-size:11px;line-height:1.6;color:var(--text)">'+lines.join('<br>')+'</div>';
 }
 // ===== ZCL DECODE (END) =====
 
@@ -3199,7 +3262,7 @@ function rcZbFrameToRow(text){
     id:rcZbDniHex(f.id),
     name:f.name||'',
     _deviceId:f.deviceId,
-    cluster:f.clusterId?clusterLabel(f.clusterId):'',
+    cluster:f.clusterId?clusterLabel(f.clusterId,zcl&&zcl.mfrCode):'',
     cmd:zcl?resolveCmd(zcl):'',                       // decoded, offset-correct command
     dirArrow:zcl?rcZbDirArrow(zcl):'',                // ←hub / →dev, folded into the Command cell
     mfrMark:zcl&&zcl.mfrSpecific?' (mfr)':'',
@@ -3234,7 +3297,7 @@ function rcZbFrameHaystack(frame){
   const sum=zcl?rcZbDecodedSummary(zcl):{short:''};
   return [
     frame.time, frame.name, rcZbDniHex(frame.id),
-    clusterLabel(frame.clusterId||''),
+    clusterLabel(frame.clusterId||'',zcl&&zcl.mfrCode),
     zcl?rcZbDirArrow(zcl):'', zcl?resolveCmd(zcl):'', zcl&&zcl.mfrSpecific?'mfr':'',
     sum.short, frame.lastHopLqi, frame.lastHopRssi
   ].join(' ').toLowerCase();
@@ -3311,7 +3374,7 @@ function rcZbRenderAggregates(){
   const devExtra=f=>({deviceId:f.deviceId});
   const top1=rcZbAggregateBy(parsed1,devKey,devExtra).slice(0,10);
   const top5=rcZbAggregateBy(parsed5,devKey,devExtra).slice(0,10);
-  const clusters=rcZbAggregateBy(parsed5,f=>f.clusterId?clusterLabel(f.clusterId):null).slice(0,15);
+  const clusters=rcZbAggregateBy(parsed5,f=>{if(!f.clusterId)return null;const z=rcZbParseZcl(f.payload,f.clusterId);return clusterLabel(f.clusterId,z&&z.mfrCode)}).slice(0,15);
 
   const truncNote1=win1.fullCoverage?'':'<div class="warn-note" style="font-size:12px;color:var(--warn);margin-bottom:4px">Window truncated to last '+Math.round((Date.now()-win1.coverFrom)/1000)+' s of buffer.</div>';
   const truncNote5=win5.fullCoverage?'':'<div class="warn-note" style="font-size:12px;color:var(--warn);margin-bottom:4px">Window truncated to last '+Math.round((Date.now()-win5.coverFrom)/1000)+' s of buffer.</div>';
@@ -3418,7 +3481,7 @@ function rcZbRenderTailHtml(rows, selectedRaw){
     html+='</tr>';
     if(sel){
       let pretty;try{pretty=JSON.stringify(JSON.parse(r._raw),null,2)}catch(e){pretty=r._raw}
-      html+='<tr style="background:rgba(33,150,243,0.08)"><td colspan="8" style="padding:8px 14px">'+rcZbDecodeHtml(r._raw)+'<pre style="margin:0;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-all;color:#cfe0f5">'+h(pretty)+'</pre></td></tr>';
+      html+='<tr style="background:rgba(33,150,243,0.08)"><td colspan="8" style="padding:8px 14px">'+rcZbDecodeHtml(r._raw)+'<pre style="margin:0;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-all;color:var(--text)">'+h(pretty)+'</pre></td></tr>';
     }
   });
   html+='</tbody></table>';
@@ -3689,7 +3752,7 @@ function rcZwRenderTailHtml(rows, selectedRaw, stack){
     html+='</tr>';
     if(sel){
       let pretty;try{pretty=JSON.stringify(JSON.parse(r._raw),null,2)}catch(e){pretty=r._raw}
-      html+='<tr style="background:rgba(33,150,243,0.08)"><td colspan="'+cols.length+'" style="padding:8px 14px"><pre style="margin:0;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-all;color:#cfe0f5">'+h(pretty)+'</pre></td></tr>';
+      html+='<tr style="background:rgba(33,150,243,0.08)"><td colspan="'+cols.length+'" style="padding:8px 14px"><pre style="margin:0;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-all;color:var(--text)">'+h(pretty)+'</pre></td></tr>';
     }
   });
   html+='</tbody></table>';
