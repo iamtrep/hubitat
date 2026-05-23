@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.43.4";
+const UI_VERSION = "5.44.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -2962,6 +2962,7 @@ const RC={
   subTab:'zigbee',                              // current sub-tab
   hubName:null,                                  // captured from dashboard payload
   hubIp:null,                                    // ditto
+  zwaveStack:null,                               // 'js' | 'legacy' | 'unknown', from d.hub.zwaveStack
   zigbee:{                                       // pass-1 sub-tab state; pass-2 mirrors for zwaveZip / zwaveJs
     buf:null,             // FrameBuffer
     socket:null,          // WebSocket
@@ -2978,13 +2979,26 @@ const RC={
     // Per-table sort state for aggregate tables; persisted across re-renders so the user's column choice survives 1Hz ticks.
     // Top tables default to descending Frames (col 1); OTA defaults to descending Frames (col 2).
     aggSort:{top1:{sc:1,sd:'desc'},top5:{sc:1,sd:'desc'},ota:{sc:2,sd:'desc'},lqi:{sc:3,sd:'asc'},rssi:{sc:3,sd:'asc'}}
+  },
+  zwave:{                                        // pass-1 capture skeleton; aggregates/JS-decode deferred
+    buf:null,             // FrameBuffer (protocol-generic, reused as-is)
+    socket:null,          // WebSocket
+    state:'idle',         // idle|connecting|connected|paused|disconnected|reconnecting
+    reconnectMs:1000,     // exponential backoff
+    reconnectTimer:null,
+    pausedCapture:false,
+    displayBuf:[],        // display rows (newest first); buffer is not capped, visible area is overflow-scrolled
+    selectedRaw:null,     // raw text of the currently expanded row (or null)
+    lastTailRenderAt:0,   // throttle tail re-render to ~1 Hz during ingest
+    framesLastSec:[],     // sliding window for frames/s counter
+    stack:null            // resolved at Start time from RC.zwaveStack — picks the per-stack row mapper
   }
 };
 
 async function rRadioCapture(){
   const P='p-radio-capture';
   // Populate hub identity from dashboard cache (already fetched on most sessions).
-  try{const d=await api('dashboard');RC.hubName=d&&d.hub&&d.hub.name;RC.hubIp=d&&d.hub&&d.hub.ip}catch(e){}
+  try{const d=await api('dashboard');RC.hubName=d&&d.hub&&d.hub.name;RC.hubIp=d&&d.hub&&d.hub.ip;RC.zwaveStack=d&&d.hub&&d.hub.zwaveStack}catch(e){}
   document.getElementById(P).innerHTML=`
     <div class="tabs" id="rc-subtabs" style="margin-bottom:12px">
       <div class="tab active" data-rcsub="zigbee">Zigbee</div>
@@ -3002,7 +3016,7 @@ async function rRadioCapture(){
     RC.subTab=s;
   });
   renderZigbeeSubTab();
-  renderZwavePlaceholder();
+  renderZwaveSubTab();
 }
 
 function renderZigbeeSubTab(){
@@ -3435,7 +3449,262 @@ function rcZbHandleTailClick(e){
   z.selectedRaw=(z.selectedRaw===row._raw)?null:row._raw;
   rcZbRenderTail();
 }
-function renderZwavePlaceholder(){document.getElementById('rc-zwave').innerHTML='<div class="card">Z-Wave capture coming in pass 2. Auto-detects the active stack (Z/IP or Z-Wave JS) at runtime.</div>'}
+// ===== RADIO CAPTURE: Z-WAVE SUB-TAB (pass 1 — capture skeleton, stack-branched) =====
+// Mirrors the Zigbee rcZb* set against ws://<hubIp>/zwaveLogsocket. No aggregates / no command-class
+// decode this pass: the socket carries radio telemetry (imeReport), not command payloads. The recording
+// is full-fidelity raw lines regardless of how the display mapper interprets frames.
+function renderZwaveSubTab(){
+  const z=RC.zwave;
+  const stk=RC.zwaveStack||'unknown';
+  const stkCls=(stk==='js'||stk==='legacy')?'b-ok':'b-warn';
+  const stkNote=stk==='js'?'Z-Wave JS — frame mapping deferred (no sample yet); frames shown raw'
+    :stk==='legacy'?'Z/IP (legacy) — per-message IME radio telemetry (RSSI per hop, route/speed)'
+    :'unknown stack — frames shown raw';
+  document.getElementById('rc-zwave').innerHTML=`
+    <div class="card" style="margin-bottom:12px">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button id="rc-zw-start" class="btn-primary">Start capture</button>
+        <button id="rc-zw-pause" disabled>Pause capture</button>
+        <button id="rc-zw-stop" disabled>Stop capture</button>
+        <button id="rc-zw-dl" disabled title="Download the current buffer">Download</button>
+        <button id="rc-zw-clear" disabled>Clear buffer</button>
+        <span style="margin-left:auto">Recording cap:
+          <select id="rc-zw-cap">
+            <option value="10">10 MB</option>
+            <option value="50" selected>50 MB</option>
+            <option value="200">200 MB</option>
+          </select>
+        </span>
+      </div>
+      <div style="margin-top:8px;display:flex;gap:16px;flex-wrap:wrap;font-size:13px;align-items:center">
+        <span>State: <span id="rc-zw-state" class="badge b-warn">idle</span></span>
+        <span>Stack: <span class="badge ${stkCls}">${h(stk)}</span></span>
+        <span>Frames/s: <span id="rc-zw-rate">0</span></span>
+        <span>Buffered: <span id="rc-zw-buffered">0 frames / 0 MB</span></span>
+        <span>Dropped: <span id="rc-zw-dropped">0</span></span>
+      </div>
+      <div style="margin-top:6px;font-size:12px;opacity:.7">${h(stkNote)}</div>
+    </div>
+    <div id="rc-zw-live"></div>
+  `;
+  document.getElementById('rc-zw-start').addEventListener('click',rcZwStart);
+  document.getElementById('rc-zw-stop').addEventListener('click',rcZwStop);
+  document.getElementById('rc-zw-dl').addEventListener('click',rcZwDownload);
+  document.getElementById('rc-zw-pause').addEventListener('click',rcZwPause);
+  document.getElementById('rc-zw-clear').addEventListener('click',rcZwClear);
+  document.getElementById('rc-zw-cap').addEventListener('change',e=>{
+    const mb=parseInt(e.target.value,10);
+    if(z.buf)z.buf.setMaxBytes(mb*1024*1024);
+  });
+  document.getElementById('rc-zw-live').addEventListener('click',rcZwHandleTailClick);
+  rcZwUpdateBadge();
+  rcZwRenderTail();
+}
+
+function rcZwUpdateBadge(){
+  const el=document.getElementById('rc-zw-state');if(!el)return;
+  const z=RC.zwave;
+  const s=z.state;
+  const cls=s==='connected'?'b-ok':'b-warn';
+  el.className='badge '+cls;el.textContent=s;
+  const idle=s==='idle'||s==='disconnected';
+  const hasFrames=!!z.buf&&z.buf.count()>0;
+  document.getElementById('rc-zw-start').disabled=!idle;
+  document.getElementById('rc-zw-stop').disabled=idle;
+  document.getElementById('rc-zw-pause').disabled=idle;
+  document.getElementById('rc-zw-clear').disabled=idle&&!z.buf;
+  document.getElementById('rc-zw-dl').disabled=!hasFrames;
+}
+
+function rcZwStart(){
+  const z=RC.zwave;
+  if(!RC.hubIp){alert('Hub IP unknown — open the Dashboard tab once first.');return}
+  // Start always begins a fresh session. Prior buffer is discarded — Download first if needed.
+  const mb=parseInt(document.getElementById('rc-zw-cap').value,10);
+  z.buf=new FrameBuffer(mb*1024*1024);
+  z.displayBuf=[];
+  z.framesLastSec=[];
+  z.pausedCapture=false;
+  z.stack=RC.zwaveStack;          // freeze the per-stack mapper choice for this session
+  document.getElementById('rc-zw-pause').textContent='Pause capture';
+  z.reconnectMs=1000;
+  rcZwConnect();
+}
+
+function rcZwStop(){
+  const z=RC.zwave;
+  if(z.reconnectTimer){clearTimeout(z.reconnectTimer);z.reconnectTimer=null}
+  if(z.socket){z.socket.onclose=null;z.socket.close();z.socket=null}
+  // Buffer preserved on stop so Download stays useful. Start or Clear discards it.
+  z.state='idle';
+  rcZwUpdateBadge();rcZwUpdateMetrics();
+}
+
+function rcZwPause(){
+  const z=RC.zwave;z.pausedCapture=!z.pausedCapture;
+  document.getElementById('rc-zw-pause').textContent=z.pausedCapture?'Resume capture':'Pause capture';
+}
+
+function rcZwClear(){
+  const z=RC.zwave;if(z.buf)z.buf.clear();z.displayBuf=[];z.framesLastSec=[];
+  rcZwUpdateMetrics();rcZwRenderTail();
+}
+
+function rcZwCaptureMeta(){
+  const z=RC.zwave;
+  return{
+    hubName:RC.hubName,hubIp:RC.hubIp,firmware:null,zwaveStack:RC.zwaveStack,
+    appVersion:UI_VERSION,uiVersion:UI_VERSION,
+    captureDurationS:z.buf&&z.buf.startedAt?Math.round((Date.now()-z.buf.startedAt)/1000):null
+  };
+}
+
+function rcZwDownload(){
+  const z=RC.zwave;if(!z.buf||z.buf.count()===0)return;
+  const fn=downloadRecording(z.buf,rcZwCaptureMeta(),'zwave');
+  console.log('Saved',fn);
+}
+
+function rcZwConnect(){
+  const z=RC.zwave;
+  z.state='connecting';rcZwUpdateBadge();
+  const url='ws://'+RC.hubIp+'/zwaveLogsocket';
+  const ws=new WebSocket(url);
+  z.socket=ws;
+  ws.onopen=()=>{z.state='connected';z.reconnectMs=1000;rcZwUpdateBadge()};
+  ws.onmessage=ev=>rcZwOnFrame(ev.data);
+  ws.onclose=()=>{
+    z.socket=null;
+    if(z.state==='idle')return; // clean stop
+    z.state='reconnecting';rcZwUpdateBadge();
+    z.reconnectTimer=setTimeout(rcZwConnect,z.reconnectMs);
+    z.reconnectMs=Math.min(z.reconnectMs*2,30000);
+  };
+  ws.onerror=()=>{ /* close handler will run with the same effect */ };
+}
+
+function rcZwOnFrame(text){
+  const z=RC.zwave;if(!z.buf||z.pausedCapture)return;
+  z.buf.push(text);          // raw, unmodified — keeps the recording full-fidelity
+  const now=Date.now();
+  z.framesLastSec.push(now);
+  while(z.framesLastSec.length&&z.framesLastSec[0]<now-5000)z.framesLastSec.shift();
+  // Metrics throttled via rAF; tail re-render throttled to ~1 Hz to stay cheap as the buffer grows.
+  if(!z._tailPending){z._tailPending=true;requestAnimationFrame(()=>{
+    z._tailPending=false;rcZwUpdateMetrics();
+    const t=Date.now();
+    if(t-z.lastTailRenderAt>1000){z.lastTailRenderAt=t;rcZwRenderTail()}
+  })}
+}
+
+function rcZwUpdateMetrics(){
+  const z=RC.zwave;
+  const rate=z.framesLastSec.length/5;
+  const rateEl=document.getElementById('rc-zw-rate');if(rateEl)rateEl.textContent=rate.toFixed(1);
+  const bufEl=document.getElementById('rc-zw-buffered');
+  if(bufEl)bufEl.textContent=(z.buf?z.buf.count():0)+' frames / '+fbytes(z.buf?z.buf.bytes:0);
+  const dropEl=document.getElementById('rc-zw-dropped');
+  if(dropEl)dropEl.textContent=z.buf?z.buf.dropped:0;
+  const hasFrames=!!z.buf&&z.buf.count()>0;
+  const cl=document.getElementById('rc-zw-clear');if(cl)cl.disabled=!z.buf||z.buf.count()===0;
+  const dl=document.getElementById('rc-zw-dl');if(dl)dl.disabled=!hasFrames;
+}
+
+// Per-stack frame→row dispatch. The connect URL is identical for both stacks; only the row mapper differs.
+function rcZwFrameToRow(text){
+  const s=RC.zwave.stack||RC.zwaveStack||'unknown';
+  if(s==='legacy')return rcZwLegacyFrameToRow(text);   // implemented (HAR-derived imeReport schema)
+  if(s==='js')return rcZwJsFrameToRow(text);           // stub — falls back to raw until a JS sample exists
+  return rcZwRawFrameToRow(text);                       // unknown → raw fallback
+}
+
+// Z/IP (legacy) zwaveLogsocket frame:
+//   {seqNo, name, deviceId, id:"<decimal node id>", imeReport:{...,"3":[rssiPerHop],...}, time, type}
+// imeReport["3"] is RSSI per hop in dBm; 127 = unused hop.
+function rcZwLegacyFrameToRow(text){
+  let f;try{f=JSON.parse(text)}catch(e){return rcZwRawFrameToRow(text)}
+  const ime=f.imeReport||{};
+  const hops=Array.isArray(ime['3'])?ime['3']:[];
+  const rssi=hops.filter(v=>v!=null&&v!==127).join('/');
+  return{
+    time:f.time||'',
+    node:(f.id!=null?String(f.id):''),
+    device:f.name||'',
+    _deviceId:f.deviceId,
+    type:f.type||'',
+    rssi:rssi,
+    seq:(f.seqNo!=null?f.seqNo:''),
+    _raw:text
+  };
+}
+
+// STUB: no Z-Wave JS zwaveLogsocket sample yet (needs a JS-stack hub with paired nodes).
+// Finalize the named-field extraction here once a sample is captured. Until then, show JS frames raw.
+function rcZwJsFrameToRow(text){return rcZwRawFrameToRow(text)}
+
+// Universal fallback: pull a timestamp if the line is JSON, otherwise show the raw line verbatim.
+function rcZwRawFrameToRow(text){
+  let t='';try{const f=JSON.parse(text);if(f&&f.time)t=f.time}catch(e){}
+  return{time:t,raw:text,_raw:text};
+}
+
+function rcZwRenderTail(){
+  const z=RC.zwave;
+  // Rebuild displayBuf from the full recording buffer, newest first.
+  const src=z.buf?z.buf.frames:[];
+  z.displayBuf=[];
+  for(let i=src.length-1;i>=0;i--){
+    const r=rcZwFrameToRow(src[i].line);if(r)z.displayBuf.push(r);
+  }
+  if(z.selectedRaw&&!z.displayBuf.some(r=>r._raw===z.selectedRaw))z.selectedRaw=null;
+  const container=document.getElementById('rc-zw-live');if(!container)return;
+  container.innerHTML='<div class="card"><h3 style="margin-top:0">Live tail ('+z.displayBuf.length+' frames) <span style="font-weight:normal;font-size:12px;opacity:.7">— click a row to expand; scroll to see older frames</span></h3><div id="rc-zw-tail-tbl" style="max-height:420px;overflow-y:auto;border:1px solid rgba(255,255,255,0.08);border-radius:4px">'+rcZwRenderTailHtml(z.displayBuf,z.selectedRaw,z.stack)+'</div></div>';
+}
+
+function rcZwRenderTailHtml(rows, selectedRaw, stack){
+  if(!rows.length)return '<p style="color:var(--muted,#888);padding:16px;margin:0">No frames yet</p>';
+  const th='padding:6px 10px;text-align:left;font-size:12px;background:#1a1d24;position:sticky;top:0;z-index:1;border-bottom:1px solid rgba(255,255,255,0.12)';
+  const td='padding:5px 10px;font-size:12px;border-top:1px solid rgba(255,255,255,0.05);vertical-align:top';
+  const tdMono=td+';font-family:ui-monospace,SFMono-Regular,Menlo,monospace';
+  const legacy=stack==='legacy';
+  const cols=legacy?['Time','Node','Device','Type','RSSI','Seq']:['Time','Raw'];
+  let html='<table style="width:100%;border-collapse:collapse"><thead><tr>';
+  cols.forEach(l=>html+='<th style="'+th+'">'+l+'</th>');
+  html+='</tr></thead><tbody>';
+  rows.forEach((r,idx)=>{
+    const sel=r._raw===selectedRaw;
+    const rowBg=sel?'background:rgba(33,150,243,0.18)':'';
+    html+='<tr data-idx="'+idx+'" style="cursor:pointer;'+rowBg+'">';
+    if(legacy){
+      html+='<td style="'+td+'">'+h(r.time)+'</td>';
+      html+='<td style="'+tdMono+'">'+h(r.node)+'</td>';
+      html+='<td style="'+td+'">'+(r._deviceId?dlink(r._deviceId,r.device):h(r.device||''))+'</td>';
+      html+='<td style="'+td+'">'+h(r.type)+'</td>';
+      html+='<td style="'+td+';text-align:right">'+h(String(r.rssi||''))+'</td>';
+      html+='<td style="'+td+';text-align:right">'+h(String(r.seq))+'</td>';
+    }else{
+      html+='<td style="'+td+';white-space:nowrap">'+h(r.time)+'</td>';
+      html+='<td style="'+tdMono+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:640px">'+h(r.raw||'')+'</td>';
+    }
+    html+='</tr>';
+    if(sel){
+      let pretty;try{pretty=JSON.stringify(JSON.parse(r._raw),null,2)}catch(e){pretty=r._raw}
+      html+='<tr style="background:rgba(33,150,243,0.08)"><td colspan="'+cols.length+'" style="padding:8px 14px"><pre style="margin:0;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-all;color:#cfe0f5">'+h(pretty)+'</pre></td></tr>';
+    }
+  });
+  html+='</tbody></table>';
+  return html;
+}
+
+function rcZwHandleTailClick(e){
+  if(e.target.closest('a'))return;   // don't intercept device-name links
+  const tr=e.target.closest('tr[data-idx]');if(!tr)return;
+  const z=RC.zwave;
+  const idx=parseInt(tr.dataset.idx,10);
+  const row=z.displayBuf[idx];if(!row)return;
+  z.selectedRaw=(z.selectedRaw===row._raw)?null:row._raw;
+  rcZwRenderTail();
+}
 
 // ===== TAB MANAGEMENT =====
 const R={dashboard:rDashboard,devices:rDevices,apps:rApps,code:rCode,network:rNetwork,health:rHealth,performance:rPerf,config:rConfig,snapshots:rSnap,'radio-capture':rRadioCapture};
