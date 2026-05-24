@@ -41,15 +41,15 @@ integration table in the SPA.
   firmwareOta, protocol, lastActivityTimeMs, appsUsingCount, flag bits) — a much smaller payload
   that should deliver under the relay timeout (also speeds up all peers); (b) reach remote hubs over
   LAN/VPN instead of cloud (no relay timeout).
-- **Map Z-Wave manufacturer IDs to names.** Z-Wave exposes `manufacturer` as a numeric id, shown
-  verbatim (e.g. `634` = ZOOZ 0x027A, `541` = Alfred). HubDiagnostics has a full Zigbee manufacturer
-  table but no Z-Wave one — add a Z-Wave maker-id→name lookup so the register/drift show friendly
-  names. (HubDiagnostics-side; cosmetic but improves readability of every Z-Wave device.)
-- **Multi-target Z-Wave firmware.** Z-Wave devices can report several firmware targets — e.g. the
-  Alfred locks on maison expose `firmwareVersion=1.05` (primary) AND `firmware1Version=2.01`
-  (secondary chip). The audit captures only the primary, so identical devices could drift on a
-  secondary target invisibly. Consider extracting `firmware{N}Version` into the audit record (and
-  the drift comparison) when present.
+- **Multi-target Z-Wave firmware — drift comparison.** Extraction + display shipped: HubDiagnostics
+  v5.51.0 emits `firmwareTargets` (e.g. a lock's `{0:'1.05', 1:'2.01'}`), and the SPA shows them where
+  firmware is displayed. **Remaining:** factor secondary targets into the drift *comparison* —
+  `firmwareDrift` still compares only the primary firmware basis, so identical devices that match on
+  the primary but differ on a secondary chip aren't flagged.
+
+  *(Done — Z-Wave manufacturer id→name mapping shipped SPA-side: 786-entry zwave-js table in the MHI
+  SPA, `displayMfr()` maps `634`→Zooz, `541`→Kaadas, etc. Kept out of the Groovy per the "derivable
+  lookups belong in the SPA" architecture principle.)*
 - **Self-peer UX.** When the serving hub is its own peer it must use the loopback URL
   (`http://127.0.0.1:8080/...`) because a hub can't HTTP its own external IP. Auto-detect the
   host hub and rewrite to loopback, instead of requiring the user to know this.
