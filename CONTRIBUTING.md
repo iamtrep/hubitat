@@ -582,6 +582,7 @@ Some apps in this repo aren't automations — they're **dashboards**: a Groovy a
 - **Inactivity is absolute days since last activity, color-thresholded** — never a bare timestamp. Tiers mirror HubDiagnostics: `< inactivityDays` (default 7) green (`--ok`); `≥ inactivityDays` orange (`--warn`); `≥ 2× inactivityDays` (14d) red (`--crit`); `"Never"` if no activity.
 - **Classify devices properly.** The raw `controllerType`/protocol field is unreliable (null on most devices; leaks codes like `HKC`). Reuse HubDiagnostics' `classifyDevice` cascade (authoritative `isZigbee`/`isZwave`/… flags + a parent-app → integration lookup), not the raw field.
 - **Reuse the UI primitives:** the sortable/filterable table helper (`tbl()`), the badge classes, and the card helpers — over one-off implementations.
+- **Header links:** the SPA header should include a **⚙ Settings** link to the app's Hubitat config page (`/installedapp/configure/{id}`, derived from `api_base` by matching `^(https?://[^/]+)/apps/api/(\d+)`) and a **Docs ↗** link to the app's README on GitHub — matching HubDiagnostics. Omit the Settings link when `api_base` is the literal placeholder (WORKBENCH mode — no match).
 
 ---
 
