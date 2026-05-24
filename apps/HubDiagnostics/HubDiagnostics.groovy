@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.50.0"
+@Field static final String APP_VERSION = "5.51.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -3994,6 +3994,7 @@ private Map extractAuditFields(Map fj, Long did) {
     // Virtual/cloud devices have no dataJson and yield blanks. ("make" has no distinct data value
     // on Hubitat — manufacturer is the make.)
     String manufacturer = null, model = null, firmware = null, firmwareOta = null, firmwareSource = null
+    Map firmwareTargets = [:]
     try {
         String dataJson = safeToString(dev.dataJson, "")
         if (dataJson.startsWith("{")) {
@@ -4017,6 +4018,15 @@ private Map extractAuditFields(Map fj, Long did) {
             // Canonical/comparable firmware id for drift detection across identical hardware, where the
             // human-readable softwareBuild can differ in representation or be absent. Display still uses `firmware`.
             firmwareOta = firmwareMT ? firmwareMT.tokenize('-')[-1] : null
+            // Multi-target Z-Wave firmware (v5.51.0): some Z-Wave devices (e.g. locks) expose secondary
+            // firmware chips as firmware1Version, firmware2Version, … alongside the primary firmwareVersion.
+            // Collect all targets by index so identical devices can be compared across all chips.
+            dv.each { kk, vv ->
+                String idx = null
+                if (kk == 'firmwareVersion') idx = '0'
+                else { java.util.regex.Matcher fm = (kk =~ /^firmware(\d+)Version$/); if (fm.matches()) idx = fm.group(1) }
+                if (idx != null) { String s = safeToString(vv, '').trim(); if (s) firmwareTargets[idx] = s }
+            }
         }
     } catch (Exception ignored) { /* malformed dataJson — leave inventory fields blank */ }
     String protocol = controllerTypeLabel(safeToString(fj?.controllerType, ""))
@@ -4071,6 +4081,7 @@ private Map extractAuditFields(Map fj, Long did) {
         firmware:            firmware,
         firmwareSource:      firmwareSource,
         firmwareOta:         firmwareOta,
+        firmwareTargets:     (firmwareTargets.size() > 1 ? firmwareTargets : null),
         protocol:            protocol,
 
         // Section B
