@@ -408,10 +408,6 @@ Map dashboardPage() {
             }
         }
 
-        section("Quick Summary") {
-            paragraph generateQuickSummary()
-        }
-
         section("Dashboard") {
             String dashboardUrl = "${fullLocalApiServerUrl}/ui.html?access_token=${state.accessToken}"
             href url: dashboardUrl, title: "Open Dashboard", style: "external",
@@ -3598,36 +3594,6 @@ List<Map> listHubFiles(String nameContains = null) {
     } catch (Exception e) {
         logDebug "Unable to list hub files: ${e.message}"
         return []
-    }
-}
-
-// ===== FORMATTING HELPERS =====
-
-String generateQuickSummary() {
-    try {
-        Map deviceStats = analyzeDevices(false)
-        Map appStats = analyzeApps(false)
-        Map hubInfo = getHubInfo()
-        Map resources = fetchSystemResources()
-
-        String summary = "Hub: ${hubInfo.name} | Firmware: ${hubInfo.firmware} | Hardware: ${hubInfo.hardware}\n"
-        summary += "Devices: ${deviceStats.totalDevices} total (Active: ${deviceStats.activeDevices} | Inactive: ${deviceStats.inactiveDevices} | Disabled: ${deviceStats.disabledDevices})\n"
-        summary += "Apps: ${appStats.totalApps} total (System: ${appStats.builtInApps} | User: ${appStats.userApps})"
-        if (resources) {
-            summary += "\nResources: ${formatMemory(resources.freeOSMemory ?: 0)} free | CPU: ${String.format('%.2f', (resources.cpuAvg5min ?: 0) as float)}"
-        }
-        synchronized (apiTimings) {
-            if (apiTimings) {
-                List timingParts = apiTimings.collect { String ep, Map entry ->
-                    "${ep}: ${entry.median}ms"
-                }.sort()
-                summary += "\nAPI medians: ${timingParts.join(' | ')}"
-            }
-        }
-        return summary
-    } catch (Exception e) {
-        logError "Error generating summary: ${getObjectClassName(e)}: ${e.message}"
-        return "Error generating summary. Please check logs."
     }
 }
 
