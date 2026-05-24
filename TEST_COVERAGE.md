@@ -81,21 +81,11 @@ Per [`TESTING.md`](TESTING.md) §2.2, driver tests are not required by default; 
 | [`drivers/visiblair/visiblair.groovy`](drivers/visiblair/visiblair.groovy) | HTTP polling | — | N | — | Standalone driver. Coexists with the `apps/sensors/visiblair/` parent-child integration. Mock-service pattern would apply (parked). |
 | [`drivers/XfinityContactSensor.groovy`](drivers/XfinityContactSensor.groovy) | Zigbee | — | N | — | Smallest-surface candidate for the parked `parse()`-injection pattern (single attribute). |
 
-## Scripts & libraries
-
-These aren't apps or drivers, but they ship test coverage of their own.
-
-| Source | Mode | Test artifact | Notes |
-|---|---|---|---|
-| [`scripts/lib/logsocket.py`](scripts/lib/logsocket.py) | 1 (lib) | [`scripts/tests/test-logsocket.sh`](scripts/tests/test-logsocket.sh) | `LogCapture` helper used by every Mode 1 test. |
-| [`scripts/lib/eventsocket.py`](scripts/lib/eventsocket.py) | 1 (lib) | [`scripts/tests/test-eventsocket.sh`](scripts/tests/test-eventsocket.sh) | `EventCapture` helper; `assert_events` complement to `assert_logs`. |
-| [`scripts/perf/`](scripts/perf/) JSONL analyser | 4 | [`scripts/perf/tests/test_multi_file.py`](scripts/perf/tests/test_multi_file.py) | pytest suite. |
-
 ## Summary
 
 - Apps tested: **12** of **22** non-exempt apps (55%). Six exempt (parents + in-hub stress apps).
 - Drivers tested: **0** of **15** non-fixture drivers. Driver tests are not required by the bar — see [`TESTING.md`](TESTING.md) §2.2.
-- Mode 1 (behavior) is by far the dominant test mode (9 apps + 2 libraries). Mode 2 (API integration) covers 2 apps. Mode 3 / Mode 4 cover HubDiagnostics only.
+- Mode 1 (behavior) is by far the dominant test mode (9 apps). Mode 2 (API integration) covers 2 apps. Mode 3 / Mode 4 cover HubDiagnostics only.
 - Named uncovered automation apps: `HydroPeakEvents`, `LocationEventMapperChild`, `LogMonitor` / `LogMonitorBridge`, `StartupShutdownMonitor`.
 
 Update this ledger when you add a test or a new source file. The summary counts are easy to forget — recount when you change rows.

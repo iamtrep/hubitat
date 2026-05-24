@@ -25,11 +25,7 @@ Parent-app + child-driver integrations for vendor cloud APIs — currently Blink
 
 ## Scripts
 
-Backup, log analysis, and external integration scripts. See [`scripts/`](scripts/README.md) for the full list.
-
-## Development
-
-After cloning, run `scripts/install-git-hooks.sh` once to enable the pre-commit hook that keeps the AUTO-generated sections of every README in sync with the source.
+A standalone Hydro-Québec peak-event integration script lives under `scripts/`.
 
 ## License
 

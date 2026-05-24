@@ -75,7 +75,7 @@ A refresh procedure must be documented next to the snapshot — typically a `--s
 - `apps/tests/*.groovy` — in-hub stress and diagnostic apps. This directory is the exception, not the convention.
 - `drivers/tests/*Test.groovy` — paired test drivers (companion drivers that drive the behavior of another driver under test).
 
-The repo-root `tests/` directory is reserved for cross-project tooling. The top-level runner lives at [`scripts/run-tests.sh`](scripts/run-tests.sh) — see §2.4.
+The repo-root `tests/` directory is reserved for cross-project tooling. The top-level runner lives at `scripts/run-tests.sh` — see §2.4.
 
 ## 2. Apps
 
@@ -89,7 +89,7 @@ Each mode below has a purpose, a canonical example to mimic, and notes on how it
 
 **Pattern:** virtual test devices created via `POST /device/save`; a dedicated Maker API instance fronting them; a dedicated installed instance of the app under test, configured with the test devices and test-friendly timing; a test script (bash + Python or bash + curl) driving the cycle `reset() → action() → wait() → verify()`.
 
-**Canonical example:** [`apps/sensors/tests/test-sadc.sh`](apps/sensors/tests/test-sadc.sh), generated from [`apps/sensors/tests/spec-sadc.yaml`](apps/sensors/tests/spec-sadc.yaml) by the [`/hubitat-behavior-test`](.claude/skills/hubitat-behavior-test/SKILL.md) skill (§2.4).
+**Canonical example:** [`apps/sensors/tests/test-sadc.sh`](apps/sensors/tests/test-sadc.sh), generated from [`apps/sensors/tests/spec-sadc.yaml`](apps/sensors/tests/spec-sadc.yaml) by the `/hubitat-behavior-test` skill (§2.4).
 
 The spec maps directly onto the procedure below — for [`apps/sensors/SensorAggregatorDiscreteChild.groovy`](apps/sensors/SensorAggregatorDiscreteChild.groovy) (SADC), which aggregates discrete sensor values across N inputs into a single virtual output device:
 
@@ -106,7 +106,7 @@ The spec maps directly onto the procedure below — for [`apps/sensors/SensorAgg
 
 - Exit code: `0` if all asserts pass, `1` if any fails, `2` if config or hub setup fails.
 
-**Closed-loop notes:** every attribute-level expectation is observable through the Maker API (`GET /apps/api/{appId}/devices/{deviceId}` returns the current attribute value). On top of that, every generated Mode 1 test opens a [`LogCapture`](scripts/lib/logsocket.py) window around each case and an implicit guard fails the case if the app under test emitted any unexpected warn/error log line — so an exception or unintended warning surfaces as a `[FAIL]` even if the attribute assertions still hold. Specs can opt out per-case via `allow_warnings: true` or whitelist patterns via `allow_log_patterns: [regex]`. For apps whose *primary* behavior shows up only in logs, write spec assertions against `LogCapture` directly using the same helper.
+**Closed-loop notes:** every attribute-level expectation is observable through the Maker API (`GET /apps/api/{appId}/devices/{deviceId}` returns the current attribute value). On top of that, every generated Mode 1 test opens a `LogCapture` window around each case and an implicit guard fails the case if the app under test emitted any unexpected warn/error log line — so an exception or unintended warning surfaces as a `[FAIL]` even if the attribute assertions still hold. Specs can opt out per-case via `allow_warnings: true` or whitelist patterns via `allow_log_patterns: [regex]`. For apps whose *primary* behavior shows up only in logs, write spec assertions against `LogCapture` directly using the same helper.
 
 #### Mode 2 — API integration tests
 
@@ -138,7 +138,7 @@ The spec maps directly onto the procedure below — for [`apps/sensors/SensorAgg
 
 **Canonical examples:**
 - [`apps/HubDiagnostics/test_classification.py`](apps/HubDiagnostics/test_classification.py) — mirrors the `INTEGRATION_TABLE` classification logic.
-- [`scripts/perf/tests/`](scripts/perf/tests) — pytest suite for the JSONL log analyser.
+- `scripts/perf/tests/` — pytest suite for the JSONL log analyser.
 
 **Closed-loop notes:** when the Groovy is the source of truth and the Python mirror drifts, the mirror is wrong by definition. Keep the source-line-range comment in the mirror up-to-date; periodic review is a code-review concern, not an automated one.
 
@@ -153,7 +153,7 @@ The spec maps directly onto the procedure below — for [`apps/sensors/SensorAgg
 - [`apps/tests/udpStressTest.groovy`](apps/tests/udpStressTest.groovy) — UDP round-trip latency under load.
 - [`apps/tests/fileManagerTests.groovy`](apps/tests/fileManagerTests.groovy) — file manager API benchmark.
 
-**Closed-loop notes:** Mode 5 historically did not satisfy the contract — button press was manual and output was hub-log only. With the button-press helper ([`/hubitat-app-button`](.claude/skills/hubitat-app-button/SKILL.md)) and [`LogCapture`](scripts/lib/logsocket.py) both shipped (see §2.4), a wrapper script can now drive the in-hub app and assert structurally on its log output. No existing Mode 5 app has been refactored to a wrapper-driven test yet; doing so is what brings each stress app into the loop.
+**Closed-loop notes:** Mode 5 historically did not satisfy the contract — button press was manual and output was hub-log only. With the button-press helper (`/hubitat-app-button`) and `LogCapture` both shipped (see §2.4), a wrapper script can now drive the in-hub app and assert structurally on its log output. No existing Mode 5 app has been refactored to a wrapper-driven test yet; doing so is what brings each stress app into the loop.
 
 ### 2.2 The tiered bar — applies to new or significantly-changed code only
 
@@ -178,17 +178,7 @@ Canonical example: [`apps/HubDiagnostics/tests/TEST_PLAN.md`](apps/HubDiagnostic
 
 ### 2.4 Named gaps
 
-All four originally named gaps are now shipped. Listed in priority order for historical reference.
-
-- ~~**`/hubitat-behavior-test` skill (top priority).**~~ **Shipped.** See [`.claude/skills/hubitat-behavior-test/SKILL.md`](.claude/skills/hubitat-behavior-test/SKILL.md). Reads a YAML spec, provisions the rig idempotently (virtual devices, dedicated Maker API instance, dedicated test app instance) on the chosen hub, renders a self-contained `tests/test-{app}.sh` from [`test-template.sh.tmpl`](.claude/skills/hubitat-behavior-test/test-template.sh.tmpl), and runs it. Reuses `/hubitat-create-device`, `/hubitat-app-device`, and `/hubitat-install`. Pilot test: `apps/sensors/tests/test-sadc.sh` from spec-sadc.yaml.
-
-- ~~**Top-level runner — `scripts/run-tests.sh [@hubname]`.**~~ **Shipped.** See [`scripts/run-tests.sh`](scripts/run-tests.sh). Discovers every `<project>/tests/test-*.sh`, `<project>/tests/test-*.js`, and `<project>/tests/test_*.py` (excluding `.claude/worktrees`), forwards `@hubname` to bash tests, invokes `node` for `*.js` and `python3 -m pytest` for `test_*.py`, aggregates exit codes, prints a final summary. Supports `--list`, `--filter <substr>`, `--verbose`. Opt-out: `TEST-EXCLUDE` marker in the first 20 lines of the test file.
-
-- ~~**Log-assertion helper (`ws://<hub>/logsocket`).**~~ **Shipped.** See [`scripts/lib/logsocket.py`](scripts/lib/logsocket.py). `LogCapture` context manager subscribes to the hub's logsocket WebSocket in a background thread and exposes `matches(pattern, level=…, source=…)`, `no_matches(...)`, `count(...)`, `find_all(...)`, and `wait_for(pattern, timeout=…)` over the captured set. Source filter accepts either an app/device `id` (int) or a regex against `name`. Level filter accepts a string or list. End-to-end test: [`scripts/tests/test-logsocket.sh`](scripts/tests/test-logsocket.sh). Two payoffs now unlocked:
-  - Mode 1 behavior tests can assert on warnings or errors the app emits, not just on attribute changes.
-  - Mode 5 stress apps gain real assertions: a test wrapper drives the in-hub app via the button-press helper below, watches the logsocket for the result lines the app already prints, and produces structured `[PASS]`/`[FAIL]`.
-
-- ~~**Button-press helper (nice to have).**~~ **Shipped.** See [`.claude/skills/hubitat-app-button/SKILL.md`](.claude/skills/hubitat-app-button/SKILL.md). POSTs to `/installedapp/btn` with `id`, `name`, `settings[name]=clicked`, `name.type=button` — invokes the app's `appButtonHandler(String btn)` synchronously. The behavior-test template integrates it two ways: `app.setup_buttons:` in the spec for provisioning-time clicks that mutate state shape (e.g. `btnNewGroup` on SwitchMonitor to create groups), and a per-step `{ button: <name> }` shape in `setup` / `actions` for runtime clicks inside a case window. Pair with [`LogCapture`](scripts/lib/logsocket.py) (the same `cap` the template already opens around each case) to assert on the click's effect.
+All originally-identified tooling gaps (behavior-test generation, a top-level test runner, log/event-assertion helpers, a button-press helper) are addressed in the IDE tooling.
 
 ## 3. Drivers
 
@@ -201,7 +191,7 @@ However a driver is exercised, there are **two harness mechanisms** for driving 
 
 - **Non-trivial behavior.** State machines, retry logic, OAuth refresh chains. Use Mode 1 with a paired test driver alongside — a companion driver that emits the events or returns the responses the driver under test needs to react to. Canonical example: [`drivers/tests/LogEventMonitorTest.groovy`](drivers/tests/LogEventMonitorTest.groovy), a companion driver that emits log messages at controlled levels to exercise the LogEventMonitor app's filtering.
 - **Pure helpers.** Parsers, formatters, computed transformations. Qualify for Mode 4 (Python mirror) when the helper has enough cases to be worth testing. Most don't.
-- **Protocol-driven drivers we own** (Zigbee / Z-Wave / BLE — Sinope, BTHomeV2-Motion, IKEA-Blinds, XfinityContactSensor and similar). Mode 1 is possible without a paired test driver, by leveraging a Hubitat capability: a parent app can call any method on a child device, including `parse(String description)`. A `TestFixtureManager` app creates the driver-under-test as a child device and exposes Maker-API-callable commands that wrap `child.parse(...)` with crafted protocol fixtures. The driver's `parse()` runs against the fixture, emits attribute events, and the test asserts on those via the existing [`EventCapture`](scripts/lib/eventsocket.py) / [`LogCapture`](scripts/lib/logsocket.py) primitives. The same fixture-app pattern lets *app* tests run against a real driver (instead of a parallel test driver) when integration with the real driver's event surface is what's being tested. **Parked — not yet built.** Pick this option when a specific driver accumulates enough regression history to justify it, or when an app test needs the real driver's exact event sequencing/format. Out of scope for drivers we don't own (third-party / community) and for polling/cloud drivers that have no `parse()` entry point — see the next bullet.
+- **Protocol-driven drivers we own** (Zigbee / Z-Wave / BLE — Sinope, BTHomeV2-Motion, IKEA-Blinds, XfinityContactSensor and similar). Mode 1 is possible without a paired test driver, by leveraging a Hubitat capability: a parent app can call any method on a child device, including `parse(String description)`. A `TestFixtureManager` app creates the driver-under-test as a child device and exposes Maker-API-callable commands that wrap `child.parse(...)` with crafted protocol fixtures. The driver's `parse()` runs against the fixture, emits attribute events, and the test asserts on those via the existing `EventCapture` / `LogCapture` primitives. The same fixture-app pattern lets *app* tests run against a real driver (instead of a parallel test driver) when integration with the real driver's event surface is what's being tested. **Parked — not yet built.** Pick this option when a specific driver accumulates enough regression history to justify it, or when an app test needs the real driver's exact event sequencing/format. Out of scope for drivers we don't own (third-party / community) and for polling/cloud drivers that have no `parse()` entry point — see the next bullet.
 - **Polling / cloud-service drivers** (VisiblAir, EnvironmentCanada_AQHI, AwairElement, EcobeeCompanion, DevicePing and similar). The driver's input surface is HTTP responses from a remote service, not `parse()` of protocol bytes — so the fixture-app pattern above doesn't apply. The complementary option is a **mock service**: a small Hubitat app that exposes OAuth-served HTTP endpoints (same mechanism Maker API uses) and returns crafted JSON/XML/text responses for each test case. Point the driver-under-test at the mock's URL via its endpoint preference, then drive the test by calling Maker-API commands on the mock that set its next-response payload before each case. The driver polls, gets the crafted response, emits events; tests assert on those events via `EventCapture` / `LogCapture`. **Parked — not yet built.** Pick this option when a specific polling driver accumulates regression history or when the protocol nuances (rate limits, error modes, malformed payloads) become worth exercising. Realism scales with effort — pure GET-returns-JSON is small; OAuth state machines, pagination, and rate-limit semantics get expensive. For services with no stable contract we control (third-party cloud APIs that change), the mock has to be re-validated against the real service periodically or it becomes a snapshot of a moment in time.
 
 The tiered bar in §2.2 leaves drivers explicitly unrequired. The bar can tighten later if a particular driver category (e.g. OAuth-integration drivers) accumulates enough regression history to justify it.
