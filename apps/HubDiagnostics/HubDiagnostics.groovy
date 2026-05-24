@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.49.0"
+@Field static final String APP_VERSION = "5.50.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -3999,7 +3999,15 @@ private Map extractAuditFields(Map fj, Long did) {
         if (dataJson.startsWith("{")) {
             Map dv = (Map) new groovy.json.JsonSlurper().parseText(dataJson)
             manufacturer = firstDataValue(dv, ['manufacturer'])
-            model        = firstDataValue(dv, ['model'])
+            // Zigbee/cloud expose `model`; Z-Wave has no `model` key — it uses `deviceModel` (e.g. ZEN55).
+            // When even deviceModel is absent (some Z-Wave devices), identify by the unique deviceType:deviceId
+            // pair, so distinct products sharing one numeric manufacturer id (e.g. ZOOZ = 634) don't collapse
+            // into a single group and get flagged as false firmware drift.
+            model        = firstDataValue(dv, ['model', 'deviceModel'])
+            if (!model && safeToString(fj?.controllerType, "").trim().equalsIgnoreCase("ZWV")) {
+                String dt = firstDataValue(dv, ['deviceType']), di = firstDataValue(dv, ['deviceId'])
+                if (dt && di) model = "${dt}:${di}"
+            }
             for (String k : ['softwareBuild', 'application', 'firmwareVersion', 'softwareVersion']) {
                 String v = firstDataValue(dv, [k])
                 if (v) { firmware = v; firmwareSource = k; break }

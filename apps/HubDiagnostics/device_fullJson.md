@@ -83,8 +83,11 @@ power the **Device Inventory** section of the report (`extractAuditFields` parse
 `manufacturer`, `model`, and firmware via the first non-blank of `softwareBuild` / `application` /
 `firmwareVersion` / `softwareVersion`). Keys vary by protocol and driver, so reads are defensive:
 Zigbee firmware is `softwareBuild`/`application`, Z-Wave is `firmwareVersion`, Matter is
-`softwareVersion` (often empty → blank). Z-Wave manufacturer/model arrive as numeric/hex IDs (e.g.
-`634`, `0x0312`), not friendly names — shown verbatim. The top-level `controllerType` code
+`softwareVersion` (often empty → blank). Z-Wave manufacturer arrives as a numeric id (e.g. `634` =
+ZOOZ 0x027A), not a friendly name — shown verbatim. **Model (v5.50.0):** Z-Wave has no `model` key, so
+`model` reads from `deviceModel` (e.g. `ZEN55`), falling back to the unique `deviceType:deviceId` pair
+when `deviceModel` is absent. Without this, distinct products sharing one numeric `manufacturer` id (every
+ZOOZ device is `634`) collapse into a single group and false-flag as firmware drift. The top-level `controllerType` code
 (`ZGB`→Zigbee, `ZWV`→Z-Wave, `MAT`→Matter, `LNK`→Linked, `LAN`, `BLE`/`BTH`→Bluetooth; unknown codes
 pass through) supplies the inventory's Protocol column. The broader settings/config backup below
 stays deferred.
