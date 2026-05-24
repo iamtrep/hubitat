@@ -170,9 +170,10 @@ function firmwareDrift(rows){
   return out;
 }
 function attentionItems(rows, opts){
+  const MS_PER_DAY = 86400000;
   opts = opts || {};
   const staleDays = opts.staleDays || 7;
-  const cutoff = (opts.now || Date.now()) - staleDays * 86400000;
+  const cutoff = (opts.now || Date.now()) - staleDays * MS_PER_DAY;
   const res = { stale:[], orphaned:[], disabled:[], unreferenced:[] };
   for (const r of rows){
     if (r.disabled === true) res.disabled.push(r);

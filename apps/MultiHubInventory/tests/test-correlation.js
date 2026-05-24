@@ -57,7 +57,7 @@ t('mergeFleet flattens allDevices, tags hub, drops Linked, records hub status', 
   assert.strictEqual(m.hubs[1].error, 'unreachable');
 });
 
-t('firmwareDrift flags mixed firmware, ignores singletons + unknown-only, sorts mixed first', () => {
+t('firmwareDrift flags mixed firmware, ignores singletons, marks unknown-only as not-mixed, sorts mixed first', () => {
   const rows = [
     {manufacturer:'Acme',model:'M1',firmware:'1.0',hub:'a'},
     {manufacturer:'Acme',model:'M1',firmware:'1.1',hub:'b'},   // mixed group
@@ -65,13 +65,19 @@ t('firmwareDrift flags mixed firmware, ignores singletons + unknown-only, sorts 
     {manufacturer:'Beta',model:'B1',firmware:'2.0',hub:'a'},
     {manufacturer:'Beta',model:'B1',firmware:'2.0',hub:'b'},   // consistent group
     {manufacturer:'Solo',model:'S1',firmware:'9',hub:'a'},     // singleton -> excluded
+    {manufacturer:'Ghost',model:'G1',firmware:'',hub:'a'},
+    {manufacturer:'Ghost',model:'G1',firmware:'',hub:'b'},     // unknown-only group (blank firmware)
+    {manufacturer:'Ghost',model:'G1',firmware:'',hub:'c'},
   ];
   const d = C.firmwareDrift(rows);
-  assert.strictEqual(d.length, 2);                 // M1 + B1, not S1
+  assert.strictEqual(d.length, 3);                 // M1 + B1 + G1, not S1
   assert.strictEqual(d[0].mixed, true);            // mixed sorts first
   assert.strictEqual(d[0].model, 'M1');
   assert.strictEqual(d[0].count, 3);
   assert.strictEqual(d[1].mixed, false);
+  const ghost = d.find(g => g.model === 'G1');
+  assert(ghost, 'Ghost/G1 group should be present');
+  assert.strictEqual(ghost.mixed, false);          // unknown-only: all firmware='unknown', not mixed
 });
 
 t('attentionItems classifies by reason with injectable now + staleDays', () => {
@@ -90,6 +96,7 @@ t('attentionItems classifies by reason with injectable now + staleDays', () => {
 });
 
 t('fleetSummary counts by hub/protocol/manufacturer + attention totals', () => {
+  // lastActivityTimeMs:Date.now() keeps every row non-stale so attentionCounts isolates disabled/unreferenced.
   const merged = { rows: [
     {hub:'a', protocol:'Zigbee', manufacturer:'X', appsUsingCount:1, dashboards:[1], lastActivityTimeMs:Date.now()},
     {hub:'a', protocol:'Z-Wave', manufacturer:'X', appsUsingCount:0, dashboards:[],  lastActivityTimeMs:Date.now()},
