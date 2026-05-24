@@ -31,7 +31,7 @@ mappings {
 
 // ===== CONFIG PAGE =====
 def mainPage() {
-    if (!state.peerIds) state.peerIds = [1]
+    if (state.peerIds == null) state.peerIds = [1]
     dynamicPage(name: "mainPage", title: "Multi-Hub Inventory v${APP_VERSION}", install: true, uninstall: true) {
         section("Hubs") {
             paragraph "For each hub running Hub Diagnostics, paste its API base URL with the access token, e.g.<br><code>http://192.168.1.86/apps/api/247/api/?access_token=abcd…</code><br>(the <code>/api/</code> path, not the <code>ui.html</code> link). Include this hub as a peer too, pointing at its own Hub Diagnostics."
@@ -53,6 +53,7 @@ def mainPage() {
     }
 }
 
+// Matches the /apps/api/<id>/api base + token even if the user pastes a longer path (e.g. a ui.html link); the \b + [^?]* lets extra path segments be consumed before the query string.
 // Parse "http://<ip>/apps/api/<id>/api/...?access_token=<tok>" into baseUrl (through /api) + token.
 private Map parsePeerUrl(String raw) {
     java.util.regex.Matcher m = (raw =~ /(https?:\/\/[^?\s]*?\/apps\/api\/\d+\/api)\b[^?]*\?.*?access_token=([a-fA-F0-9\-]+)/)
@@ -125,7 +126,7 @@ Map apiPeer() {
     String base = peer.baseUrl, token = peer.token
     String url; String method = 'GET'
     if (op == 'start')       { url = "${base}/audit/start?access_token=${token}"; method = 'POST' }
-    else if (op == 'status') { String sid = params.scanId ? "&scanId=${params.scanId}" : ''; url = "${base}/audit/status?access_token=${token}${sid}" }
+    else if (op == 'status') { String rawSid = params.scanId as String; String sid = (rawSid && rawSid ==~ /[A-Za-z0-9_\-]+/) ? "&scanId=${rawSid}" : ''; url = "${base}/audit/status?access_token=${token}${sid}" }
     else                     { url = "${base}/audit/data?access_token=${token}" }
     try {
         Object body = null
@@ -134,8 +135,9 @@ Map apiPeer() {
         else                  httpGet([uri: url, contentType: 'application/json', timeout: 90], handler)
         return jsonResponse(body ?: [:])
     } catch (Exception e) {
-        logWarn "peer ${idx} ${op} failed: ${e.message}"
-        return jsonResponse([error: "peer call failed", detail: (e.message ?: e.toString())])
+        String safeMsg = (e.message ?: '')?.replaceAll(/access_token=[^&\s]+/, 'access_token=REDACTED')
+        logWarn "peer ${idx} ${op} failed: ${e.class?.simpleName}: ${safeMsg}"
+        return jsonResponse([error: "peer call failed"])
     }
 }
 
