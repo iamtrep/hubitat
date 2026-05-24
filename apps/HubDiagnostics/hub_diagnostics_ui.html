@@ -3184,6 +3184,7 @@ function rcZbStart(){
   z.pausedCapture=false;
   document.getElementById('rc-zb-pause').textContent='Pause capture';
   z.reconnectMs=1000;
+  rcZbRenderTail({repin:true});   // fresh session: clear any stale rows and re-pin to live (Start may follow scrolling into history)
   rcZbConnect();
 }
 
@@ -3488,7 +3489,10 @@ function rcTailPaint(cfg, opt){
     +'<span style="font-weight:normal;font-size:12px;opacity:.7">— click a row to expand; top is live, scroll down for history</span>';
   let tbl=document.getElementById(cfg.tblId);
   if(!tbl){
-    // First paint for this sub-tab render: build the persistent shell once.
+    // First paint for this sub-tab render: build the persistent shell once. A brand-new shell has no
+    // scroll history to preserve, so (re)establish the live-pinned invariant — module-level pin state may
+    // be stale-unpinned from before a DOM rebuild (e.g. the Refresh button re-runs the panel renderer).
+    z.pinnedToLive=true;z.pinBaselineLen=0;
     live.innerHTML='<div class="card">'
       +'<h3 id="'+cfg.tblId+'-h" style="margin-top:0">'+headerHtml+'</h3>'
       +'<div style="position:relative">'
@@ -3695,6 +3699,7 @@ function rcZwStart(){
   z.stack=RC.zwaveStack;          // freeze the per-stack mapper choice for this session
   document.getElementById('rc-zw-pause').textContent='Pause capture';
   z.reconnectMs=1000;
+  rcZwRenderTail({repin:true});   // fresh session: clear any stale rows and re-pin to live (Start may follow scrolling into history)
   rcZwConnect();
 }
 
