@@ -2512,6 +2512,19 @@ Map analyzeDevices(boolean deep = true) {
                 stats.integrationSources[integration] = classification.builtin ? "builtin" : "community"
             }
 
+            Object parentAppId = extractParentAppId(device)
+            String normalizedParentAppId = normalizeAppLookupId(parentAppId)
+            Map parentAppInfo = normalizedParentAppId ? (Map) appLookup[normalizedParentAppId] : null
+            // Devices whose bulk metadata cannot fully resolve classification need the per-device fullJson
+            // correction pass so Dashboard and Devices summaries stay in sync.
+            boolean needsEnrichment = (connectionType == CONN_OTHER) ||
+                (connectionType == CONN_LAN_DIRECT && integration == "LAN Device" && device.isNetwork == true)
+            if (needsEnrichment) {
+                uncertainDevices[device.id.toString()] = [
+                    appInfo: parentAppInfo, currentIntegration: integration, currentConn: connectionType, deviceId: device.id
+                ]
+            }
+
             // Deep-only: parent/child, battery, type breakdown, full device list
             if (deep) {
                 if (deviceEntry.parent == true) { stats.parentDevices++; stats.parentIds << device.id }
@@ -2542,19 +2555,7 @@ Map analyzeDevices(boolean deep = true) {
                     }
                 }
 
-                Object parentAppId = extractParentAppId(device)
-                String normalizedParentAppId = normalizeAppLookupId(parentAppId)
-                Map parentAppInfo = normalizedParentAppId ? (Map) appLookup[normalizedParentAppId] : null
                 String parentAppName = parentAppInfo?.label ?: (normalizedParentAppId ? "App ${normalizedParentAppId}" : null)
-
-                // Collect for deep-mode enrichment: isNetwork devices (parentApp not in bulk list)
-                // and CONN_OTHER devices (may have parentApp in fullJson)
-                boolean needsEnrichment = (connectionType == CONN_OTHER) ||
-                    (connectionType == CONN_LAN_DIRECT && integration == "LAN Device" && device.isNetwork == true)
-                if (needsEnrichment) {
-                    uncertainDevices[device.id.toString()] = [appInfo: parentAppInfo, currentIntegration: integration, currentConn: connectionType, deviceId: device.id]
-                }
-
                 stats.allDevices << [
                     id: device.id, name: device.name ?: "Unknown",
                     label: device.label ?: device.name ?: "Unknown",
@@ -2574,8 +2575,9 @@ Map analyzeDevices(boolean deep = true) {
         }
     }
 
-    // Deep-mode pass 2: enrich uncertain devices via device/fullJson (parentApp + controllerType)
-    if (deep && uncertainDevices) {
+    // Pass 2: enrich uncertain devices via device/fullJson (parentApp + controllerType).
+    // This updates summary buckets for both shallow Dashboard and deep Devices calls.
+    if (uncertainDevices) {
         Map enrichedAppInfos = (Map) uncertainDevices.collectEntries { k, v -> [k, ((Map)v).appInfo] }
         Map enrichments = enrichDevices(enrichedAppInfos, communityAppTypeNames)
 
