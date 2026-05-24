@@ -219,7 +219,7 @@ async function proxy(hubIdx, op, extra){
   if (WORKBENCH){
     if (op === 'data') return MOCK_AUDIT[hubIdx] || { _error: 404 };
     if (op === 'start') return { scanId: 'mock', total: 0, alreadyRunning: false };
-    return { status: 'complete', processed: 0, total: 0 };
+    return { status: 'done', processed: 0, total: 0 };
   }
   try {
     const r = await fetch(peerUrl(hubIdx, op, extra));
@@ -258,7 +258,9 @@ async function rescanFleet(){
       await new Promise(res => setTimeout(res, 2000));
       const st = await proxy(p.index, 'status', sid ? `&scanId=${sid}` : '');
       if (!st || st._error){ break; }
-      if (st.status === 'complete' || st.status === 'error') done = true;
+      // HubDiagnostics' terminal audit status is 'done' (verified live), not 'complete';
+      // treat anything no longer actively 'scanning' as finished (done/error/unknown).
+      if (st.status && st.status !== 'scanning') done = true;
     }
     const d = await proxy(p.index, 'data');
     if (d && !d._error && !d.error) results.push({ label:p.label, ok:true, data:d });
