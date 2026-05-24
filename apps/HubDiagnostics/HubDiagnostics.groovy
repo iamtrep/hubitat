@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.57.0"
+@Field static final String APP_VERSION = "5.58.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -315,7 +315,6 @@ mappings {
     path('/api/stats')            { action: [GET: 'apiStats'] }
     path('/api/version/check')    { action: [GET: 'apiVersionCheck'] }
     path('/api/reports')          { action: [GET: 'apiReports'] }
-    path('/api/forum/data')       { action: [GET: 'apiForumData'] }
 
     // ===== App-owned mutations =====
     // Stateful writes and orchestration. App-owned by definition.
@@ -963,40 +962,6 @@ Map apiSaveReport() {
     return jsonResponse([success: true, filename: filename])
 }
 
-Map apiForumData() {
-    long start = now()
-    Map hubInfo = getHubInfo()
-    Map resources = fetchSystemResources()
-    Float temperature = fetchTemperature()
-    Integer databaseSize = fetchDatabaseSize()
-    Map stateCompression = fetchStateCompression()
-    Map eventStateLimits = fetchEventStateLimits()
-    Map alertSignals = getAlertSignals()
-    Map deviceStats = analyzeDevices(true)
-    Map appStats = analyzeApps(true)
-    Map networkData = analyzeNetwork()
-    Map zwaveMesh = extractZwaveMeshQuality(networkData.zwave ?: [:])
-    List ghostNodes = buildZwaveGhostNodes(networkData.zwave ?: [:])
-    Map zigbeeMesh = fetchZigbeeMeshInfo()
-    String zwaveVersion = fetchZwaveVersion()
-    Map statsWrap = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats")
-    Map stats = statsWrap.ok ? statsWrap.data : null
-    Integer uptimeSeconds = stats ? parseUptime(stats.uptime as String) : null
-    List zwaveMsgCounts = extractZwaveMessageCounts(networkData.zwave ?: [:])
-    List zigbeeMsgCounts = extractZigbeeMessageCounts(networkData.zigbee ?: [:])
-    recordApiTiming("forum/data", now() - start)
-    return jsonResponse([
-        hubInfo: hubInfo, resources: resources, temperature: temperature,
-        databaseSize: databaseSize, stateCompression: stateCompression,
-        eventStateLimits: eventStateLimits, alertSignals: alertSignals,
-        deviceStats: deviceStats, appStats: appStats, networkData: networkData,
-        zwaveMesh: zwaveMesh, ghostNodes: ghostNodes, zigbeeMesh: zigbeeMesh,
-        zwaveVersion: zwaveVersion, stats: stats, radioStats: [zwave: zwaveMsgCounts, zigbee: zigbeeMsgCounts],
-        uptimeMin: uptimeSeconds != null ? uptimeSeconds / 60.0f : null,
-        obfuscate: settings.obfuscateForumExport ?: false
-    ])
-}
-
 Map apiGetSettings() {
     return jsonResponse([
         autoSnapshot:          settings.autoSnapshot ?: false,
@@ -1113,7 +1078,7 @@ Map getDevicesData() {
          userType: dev.userType ?: false, deviceTypeId: dev.deviceTypeId]
     }
     List lowBattery = (deviceStats.lowBatteryDevices ?: []).collect { Map dev ->
-        [id: dev.id, name: dev.name, battery: dev.battery]
+        [id: dev.id, name: dev.name, type: dev.type, battery: dev.battery]
     }
     return [
         summary: [totalDevices: deviceStats.totalDevices, activeDevices: deviceStats.activeDevices,
@@ -1155,7 +1120,8 @@ Map getAppsData() {
                   runtimeTotalApps: appStats.runtimeTotalApps],
         byNamespace: appStats.byNamespace,
         userApps: userAppRows, parentChildHierarchy: appStats.parentChildHierarchy,
-        allApps: allApps, hasMenuData: hasMenuData
+        allApps: allApps, hasMenuData: hasMenuData,
+        builtInInstances: appStats.builtInInstances
     ]
 }
 

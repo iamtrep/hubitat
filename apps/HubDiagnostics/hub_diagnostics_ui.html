@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.57.0";
+const UI_VERSION = "5.58.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -946,6 +946,47 @@ function composeAlerts(d){
   return out;
 }
 
+// Assemble the forum-export data object from the tab-endpoint payloads — the same shape the hub
+// used to ship from /api/forum/data. Same source of truth: these endpoints and the old aggregator
+// both derive from analyzeDevices/analyzeApps/analyzeNetwork on the hub; this just reshapes for the
+// markdown builder. r = { dashboard, devices, apps, network, health, performance, settings }.
+function assembleForumData(r){
+  const dash=r.dashboard||{}, dev=r.devices||{}, app=r.apps||{}, net=r.network||{},
+        hlth=r.health||{}, perf=r.performance||{}, set=r.settings||{};
+  const ds=dev.summary||{}, as=app.summary||{};
+  const zw=net.zwave||null, zb=net.zigbee||null;
+  return {
+    hubInfo: hlth.hub||dash.hub||{},
+    appVersion: dash.appVersion,
+    resources: hlth.resources||dash.resources||null,
+    temperature: hlth.temperature!=null?hlth.temperature:dash.temperature,
+    databaseSize: hlth.databaseSize!=null?hlth.databaseSize:dash.databaseSize,
+    stateCompression: hlth.stateCompression||null,
+    eventStateLimits: hlth.eventStateLimits||null,
+    alertSignals: hlth.alertSignals||dash.alertSignals||{},
+    firmwareUpdate: hlth.firmwareUpdate||dash.firmwareUpdate||null,
+    deviceStats: {
+      totalDevices: ds.totalDevices, activeDevices: ds.activeDevices,
+      inactiveDevices: ds.inactiveDevices, disabledDevices: ds.disabledDevices,
+      byConnectionType: dev.byConnectionType||{}, byIntegration: dev.byIntegration||{},
+      lowBatteryDevices: dev.lowBatteryDevices||[], allDevices: dev.deviceRows||[]
+    },
+    appStats: {
+      totalApps: as.totalApps, builtInApps: as.builtInApps, userApps: as.userApps,
+      userAppsList: (app.userApps||[]).map(a=>({name:a.type, label:a.label, id:a.id})),
+      builtInInstances: app.builtInInstances||{}
+    },
+    networkData: { network: net.network||{}, zwave: zw, zigbee: zb, hubMesh: net.hubMesh||null, matter: net.matter||null },
+    zwaveMesh: (zw&&zw.mesh)||null,
+    ghostNodes: (zw&&zw.ghostNodes)||[],
+    zigbeeMesh: (zb&&zb.mesh) ? {...zb.mesh, neighbors: zb.mesh.neighborDetails||[]} : null,
+    zwaveVersion: (zw&&zw.version)||null,
+    stats: perf.stats||null,
+    radioStats: perf.radioStats||null,
+    uptimeMin: net.uptimeSeconds!=null ? net.uptimeSeconds/60 : null,
+    obfuscate: set.obfuscateForumExport||false
+  };
+}
 function buildForumMarkdown(d){
   const lines=[];
   const L=s=>lines.push(s);
@@ -1068,7 +1109,7 @@ function buildForumMarkdown(d){
     L(`- **Enabled:** ${zwaveRaw.enabled?'Yes':'No'}, **Healthy:** ${zwaveRaw.healthy?'Yes':'No'}`);
     L(`- **Version:** ${d.zwaveVersion||'N/A'}, **Region:** ${zwaveRaw.region||'N/A'}`);
     if(zwaveRaw.zwaveJS!=null)L(`- **Z-Wave JS:** ${zwaveRaw.zwaveJS?'Yes':'No'}`);
-    L(`- **Nodes:** ${Object.keys(zwaveRaw.zwDevices||{}).length}`);
+    L(`- **Nodes:** ${zwaveRaw.nodeCount!=null?zwaveRaw.nodeCount:Object.keys(zwaveRaw.zwDevices||{}).length}`);
     if(zwaveMesh){
       let meshLine=`- **Avg PER:** ${Number(zwaveMesh.avgPer||0).toFixed(1)}%`;
       if(zwaveMesh.avgRssi!=null)meshLine+=`, **Avg RSSI:** ${zwaveMesh.avgRssi} dBm`;
@@ -1141,7 +1182,7 @@ function buildForumMarkdown(d){
     if(zigbeeRaw.channel&&![15,20,25].includes(zigbeeRaw.channel))chLine+=' (not on recommended 15/20/25)';
     L(chLine);
     if(zigbeeRaw.powerLevel!=null)L(`- **Power Level:** ${zigbeeRaw.powerLevel}`);
-    L(`- **Devices:** ${(zigbeeRaw.devices||[]).length}`);
+    L(`- **Devices:** ${zigbeeRaw.deviceCount!=null?zigbeeRaw.deviceCount:(zigbeeRaw.devices||[]).length}`);
     if(zigbeeMesh){
       const staleNbrs=zbStaleNeighbors(zigbeeMesh.neighbors),weakNbrs=zbWeakNeighbors(zigbeeMesh.neighbors);
       const staleCount=staleNbrs.length,weakCount=weakNbrs.length;
@@ -1165,15 +1206,20 @@ function buildForumMarkdown(d){
   }
 
   // ── 6. Hub Mesh ──
-  if(hubMeshRaw&&hubMeshRaw.hubList){
-    const peers=hubMeshRaw.hubList||[];
+  // /api/network ships hubMesh.peers (reshaped: name/ip/offline/deviceCount/varCount); fall back to
+  // the raw hubList shape for safety.
+  if(hubMeshRaw&&(hubMeshRaw.peers||hubMeshRaw.hubList)){
+    const peers=hubMeshRaw.peers||hubMeshRaw.hubList||[];
     if(peers.length){
       L('');L('### Hub Mesh');
       L('| Hub | IP | Status | Devices | Vars |');
       L('|---|---|---|---:|---:|');
       peers.forEach(hub=>{
         const status=hub.offline?'Offline':'Online';
-        L(`| ${hub.name} | ${hub.ipAddress} | ${status} | ${hub.deviceIds?hub.deviceIds.length:0} | ${hub.hubVarNames?hub.hubVarNames.length:0} |`);
+        const ip=hub.ip||hub.ipAddress||'';
+        const devs=hub.deviceCount!=null?hub.deviceCount:(hub.deviceIds?hub.deviceIds.length:0);
+        const vars=hub.varCount!=null?hub.varCount:(hub.hubVarNames?hub.hubVarNames.length:0);
+        L(`| ${hub.name} | ${ip} | ${status} | ${devs} | ${vars} |`);
       });
     }
   }
@@ -1760,20 +1806,27 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   const btnForum=document.getElementById('btnForum');
   if(btnForum)btnForum.onclick=async()=>{
     btnForum.disabled=true;btnForum.textContent='Generating...';
-    try{const res=await api('forum/data');
-      if(res.hubInfo){
-        const markdown=buildForumMarkdown(res);
-        btnForum.disabled=false;btnForum.textContent='Copy for Forum';
-        const overlay=document.createElement('div');overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:flex;align-items:center;justify-content:center';
-        const box=document.createElement('div');box.style.cssText='background:#fff;border-radius:8px;padding:16px;width:90%;max-width:700px;max-height:80vh;display:flex;flex-direction:column';
-        box.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><b>Forum Export</b><span>Select All + Copy, then close</span></div>';
-        const ta=document.createElement('textarea');ta.value=markdown;ta.readOnly=true;ta.style.cssText='width:100%;flex:1;min-height:300px;font-family:monospace;font-size:12px;padding:8px;border:1px solid #ddd;border-radius:4px;resize:vertical';
-        const closeBtn=document.createElement('button');closeBtn.textContent='Close';closeBtn.className='btn btn-p';closeBtn.style.marginTop='10px';closeBtn.style.alignSelf='flex-end';
-        closeBtn.onclick=()=>document.body.removeChild(overlay);
-        overlay.onclick=e=>{if(e.target===overlay)document.body.removeChild(overlay)};
-        box.appendChild(ta);box.appendChild(closeBtn);overlay.appendChild(box);document.body.appendChild(overlay);
-        ta.focus();ta.select()}
-      else{btnForum.disabled=false;btnForum.textContent='Copy for Forum';alert('Export failed')}}
+    try{
+      // Build the export entirely client-side from the tab endpoints (batched 3 at a time to
+      // respect the hub's HTTP pool, like the report path), then shape via assembleForumData.
+      const eps=['dashboard','devices','apps','network','health','performance','settings'];
+      const BATCH=3, results={};
+      for(let i=0;i<eps.length;i+=BATCH){
+        const batch=eps.slice(i,i+BATCH);
+        const got=await Promise.all(batch.map(ep=>api(ep)));
+        batch.forEach((ep,j)=>{results[ep]=got[j]});
+      }
+      const markdown=buildForumMarkdown(assembleForumData(results));
+      btnForum.disabled=false;btnForum.textContent='Copy for Forum';
+      const overlay=document.createElement('div');overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:flex;align-items:center;justify-content:center';
+      const box=document.createElement('div');box.style.cssText='background:#fff;border-radius:8px;padding:16px;width:90%;max-width:700px;max-height:80vh;display:flex;flex-direction:column';
+      box.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><b>Forum Export</b><span>Select All + Copy, then close</span></div>';
+      const ta=document.createElement('textarea');ta.value=markdown;ta.readOnly=true;ta.style.cssText='width:100%;flex:1;min-height:300px;font-family:monospace;font-size:12px;padding:8px;border:1px solid #ddd;border-radius:4px;resize:vertical';
+      const closeBtn=document.createElement('button');closeBtn.textContent='Close';closeBtn.className='btn btn-p';closeBtn.style.marginTop='10px';closeBtn.style.alignSelf='flex-end';
+      closeBtn.onclick=()=>document.body.removeChild(overlay);
+      overlay.onclick=e=>{if(e.target===overlay)document.body.removeChild(overlay)};
+      box.appendChild(ta);box.appendChild(closeBtn);overlay.appendChild(box);document.body.appendChild(overlay);
+      ta.focus();ta.select()}
     catch(e){btnForum.disabled=false;btnForum.textContent='Copy for Forum';alert('Export failed: '+e.message)}};
 
 }catch(e){err(P,e,rDashboard)}}
@@ -3077,7 +3130,7 @@ async function rConfig(){const P='p-config';loading(P);try{
   };
 
   document.getElementById('cfg_debugLogging').onchange=async function(){await saveSetting({debugLogging:this.checked})};
-  document.getElementById('cfg_obfuscate').onchange=async function(){await saveSetting({obfuscateForumExport:this.checked});drop('forum/data')};
+  document.getElementById('cfg_obfuscate').onchange=async function(){await saveSetting({obfuscateForumExport:this.checked});drop('settings')};
 
   document.getElementById('cfg_saveLive').onclick=async()=>{
     const v=Math.max(10,Math.min(300,parseInt(document.getElementById('cfg_liveRefreshSec').value)||30));
