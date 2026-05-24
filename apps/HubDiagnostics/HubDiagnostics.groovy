@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.54.0"
+@Field static final String APP_VERSION = "5.55.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -207,15 +207,20 @@ import java.util.concurrent.atomic.AtomicInteger
 // because isNetwork is true for them (making the algorithm pick lan_direct).
 // Integration NAME always comes from cleanIntegrationName(appType).
 // cloud vs lan_direct is always derived from device.isNetwork.
-// lan_bridge is the one connection type that requires an explicit override.
+// Built-in (Hubitat-native) integration set with predefined connection types — no config-file
+// dependency. Community integrations live in the File Manager config file (loaded + overlaid by
+// getIntegrationOverrides()); cloud-vs-lan_direct for anything unmatched is still derived from isNetwork.
 // Entries are ordered longest-first to avoid false positives (e.g. "hue bridge" before "hue").
 // LinkedHashMap preserves insertion order, which is the iteration order used by lookupIntegration().
 @Field static final Map INTEGRATION_OVERRIDES = [
-    // LAN bridges — algorithm would call them lan_direct; override to lan_bridge
-    "philips hue" : [conn: "lan_bridge", name: "Philips Hue"],
-    "hue bridge"  : [conn: "lan_bridge", name: "Philips Hue"],
-    "lutron"      : [conn: "lan_bridge", name: "Lutron"],
-    "bond"        : [conn: "lan_bridge", name: "Bond"],
+    "homekit"            : [conn: "paired",     name: "HomeKit"],
+    "google"             : [conn: "cloud",      name: "Google Home"],
+    "alexa"              : [conn: "cloud",      name: "Amazon Echo Skill"],
+    "mobile app manager" : [conn: "cloud",      name: "Mobile App"],
+    "mobile"             : [conn: "cloud",      name: "Mobile App"],
+    "lutron"             : [conn: "lan_bridge", name: "Lutron"],
+    "philips hue"        : [conn: "lan_bridge", name: "Philips Hue"],
+    "hue bridge"         : [conn: "lan_bridge", name: "Philips Hue"],
 ]
 
 
@@ -480,7 +485,7 @@ Map settingsPage() {
                 "Keys are lowercase substrings matched against the device's parent-app name; " +
                 "valid <code>conn</code> values are: paired, lan_direct, lan_bridge, cloud, virtual, hubmesh, other. " +
                 "Save this page after uploading the file to apply the changes. " +
-                "See <i>integration_overrides.example.json</i> in the app repository for the format."
+                "A default community-integration config (<i>integration_overrides.json</i>) is shipped with the app and can be uploaded as-is to get started."
         }
 
         section("Logging") {

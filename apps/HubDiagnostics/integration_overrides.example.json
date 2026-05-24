@@ -1,7 +1,0 @@
-{
-  "_README": "Keys are lowercase substrings matched against the device's parent-app name. 'conn' must be one of: paired, lan_direct, lan_bridge, cloud, virtual, hubmesh, other. 'name' is the display name shown in reports. Either field is optional. This file is merged over the built-in bridge defaults (Philips Hue, Lutron, Bond). Upload to File Manager as hub_diagnostics_integration_overrides.json, then save the Hub Diagnostics settings page to apply.",
-
-  "yolink":       { "conn": "cloud",      "name": "YoLink" },
-  "b-hyve":       { "conn": "cloud",      "name": "B-Hyve" },
-  "my lan thing": { "conn": "lan_bridge", "name": "My Bridge" }
-}

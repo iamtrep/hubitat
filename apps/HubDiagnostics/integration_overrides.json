@@ -1,0 +1,19 @@
+{
+  "_README": "Community integration overrides for Hub Diagnostics. Upload as hub_diagnostics_integration_overrides.json to the hub's File Manager, then save the app's settings page to apply. Keys are lowercase substrings matched against a device's parent-app name. 'conn' is one of: paired, lan_direct, lan_bridge, cloud, virtual, hubmesh, other. 'name' is the display name. Either field is optional. Edit freely to add your own integrations or override built-in ones.",
+  "kasa":         { "conn": "lan_direct", "name": "Kasa" },
+  "shelly":       { "conn": "lan_direct", "name": "Shelly" },
+  "sonos":        { "conn": "lan_direct", "name": "Sonos" },
+  "govee":        { "conn": "lan_direct", "name": "Govee" },
+  "lifx":         { "conn": "lan_direct", "name": "LIFX" },
+  "wled":         { "conn": "lan_direct", "name": "WLED" },
+  "wiz":          { "conn": "lan_direct", "name": "WiZ" },
+  "ecobee":       { "conn": "cloud",      "name": "ecobee" },
+  "home connect": { "conn": "cloud",      "name": "Home Connect" },
+  "icomfort":     { "conn": "cloud",      "name": "iComfort" },
+  "bthome":       { "conn": "paired",     "name": "BTHome" },
+  "samsung":      { "conn": "cloud",      "name": "SmartThings" },
+  "bond":         { "conn": "lan_bridge", "name": "Bond" },
+  "sonoff":       { "conn": "cloud",      "name": "Sonoff" },
+  "b-hyve":       { "conn": "cloud",      "name": "B-Hyve" },
+  "yolink":       { "conn": "cloud",      "name": "YoLink" }
+}

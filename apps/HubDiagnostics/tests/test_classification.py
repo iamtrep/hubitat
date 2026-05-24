@@ -25,16 +25,40 @@ CONN_VIRTUAL    = "virtual"
 CONN_HUBMESH    = "hubmesh"
 CONN_OTHER      = "other"
 
-# Mirror of INTEGRATION_OVERRIDES — ordered longest-first
-# Sole purpose: force lan_bridge for LAN-bridge hubs (Hue/Lutron/Bond) that the
-# isNetwork algorithm would misclassify as lan_direct.  Integration names and
-# cloud/lan_direct distinction are always derived algorithmically.
+# Mirror of INTEGRATION_OVERRIDES — Hubitat-native integrations only, ordered longest-first.
+# Predefined connection types; no config-file dependency.
+# Community integrations live in the File Manager config file (integration_overrides.json),
+# loaded and overlaid by getIntegrationOverrides().
 INTEGRATION_OVERRIDES = [
-    ("philips hue", CONN_LAN_BRIDGE, "Philips Hue"),
-    ("hue bridge",  CONN_LAN_BRIDGE, "Philips Hue"),
-    ("lutron",      CONN_LAN_BRIDGE, "Lutron"),
-    ("bond",        CONN_LAN_BRIDGE, "Bond"),
+    ("homekit",            CONN_PAIRED,      "HomeKit"),
+    ("google",             CONN_CLOUD,       "Google Home"),
+    ("alexa",              CONN_CLOUD,       "Amazon Echo Skill"),
+    ("mobile app manager", CONN_CLOUD,       "Mobile App"),
+    ("mobile",             CONN_CLOUD,       "Mobile App"),
+    ("lutron",             CONN_LAN_BRIDGE,  "Lutron"),
+    ("philips hue",        CONN_LAN_BRIDGE,  "Philips Hue"),
+    ("hue bridge",         CONN_LAN_BRIDGE,  "Philips Hue"),
 ]
+
+# Sample community config (mirrors integration_overrides.json shipped with the app)
+COMMUNITY_CONFIG = {
+    "kasa":         {"conn": "lan_direct", "name": "Kasa"},
+    "shelly":       {"conn": "lan_direct", "name": "Shelly"},
+    "sonos":        {"conn": "lan_direct", "name": "Sonos"},
+    "govee":        {"conn": "lan_direct", "name": "Govee"},
+    "lifx":         {"conn": "lan_direct", "name": "LIFX"},
+    "wled":         {"conn": "lan_direct", "name": "WLED"},
+    "wiz":          {"conn": "lan_direct", "name": "WiZ"},
+    "ecobee":       {"conn": "cloud",      "name": "ecobee"},
+    "home connect": {"conn": "cloud",      "name": "Home Connect"},
+    "icomfort":     {"conn": "cloud",      "name": "iComfort"},
+    "bthome":       {"conn": "paired",     "name": "BTHome"},
+    "samsung":      {"conn": "cloud",      "name": "SmartThings"},
+    "bond":         {"conn": "lan_bridge", "name": "Bond"},
+    "sonoff":       {"conn": "cloud",      "name": "Sonoff"},
+    "b-hyve":       {"conn": "cloud",      "name": "B-Hyve"},
+    "yolink":       {"conn": "cloud",      "name": "YoLink"},
+}
 
 # Mirror of cleanIntegrationName() suffix list — longest-first
 _CLEAN_SUFFIXES = [
@@ -321,6 +345,48 @@ def test_lan_direct_sonos():
     assert name == "Sonos"
 
 
+# --- Hubitat-native builtin overrides ---
+
+def test_native_homekit():
+    """HomeKit Integration → (paired, "HomeKit") via builtin override."""
+    app = {"type": "HomeKit Integration"}
+    conn, name = classify_device({}, app)
+    assert conn == CONN_PAIRED
+    assert name == "HomeKit"
+
+
+def test_native_google_home():
+    """Google Home → (cloud, "Google Home") via builtin override."""
+    app = {"type": "Google Home"}
+    conn, name = classify_device({}, app)
+    assert conn == CONN_CLOUD
+    assert name == "Google Home"
+
+
+def test_native_alexa():
+    """Amazon Echo Skill → (cloud, "Amazon Echo Skill") via builtin override."""
+    app = {"type": "Alexa Skill"}
+    conn, name = classify_device({}, app)
+    assert conn == CONN_CLOUD
+    assert name == "Amazon Echo Skill"
+
+
+def test_native_mobile_app():
+    """Mobile App Manager → (cloud, "Mobile App") via builtin 'mobile app manager' override."""
+    app = {"type": "Mobile App Manager"}
+    conn, name = classify_device({}, app)
+    assert conn == CONN_CLOUD
+    assert name == "Mobile App"
+
+
+def test_native_mobile_short():
+    """'mobile' keyword → (cloud, "Mobile App") via builtin 'mobile' override."""
+    app = {"type": "Mobile"}
+    conn, name = classify_device({}, app)
+    assert conn == CONN_CLOUD
+    assert name == "Mobile App"
+
+
 # --- bridge overrides ---
 
 def test_bridge_philips_hue():
@@ -347,23 +413,33 @@ def test_bridge_lutron():
     assert name == "Lutron"
 
 
-def test_bridge_bond():
-    """Bond → lan_bridge via override."""
-    app = {"type": "Bond Home"}
-    conn, name = classify_device({}, app)
-    assert conn == CONN_LAN_BRIDGE
-    assert name == "Bond"
+def test_bridge_bond_via_community():
+    """Bond is in the community config (not built-in); merging community config yields lan_bridge."""
+    merged = merge_overrides(INTEGRATION_OVERRIDES, COMMUNITY_CONFIG)
+    result = lookup_integration_with_map("Bond Home", merged)
+    assert result is not None, "expected a match for 'bond' in merged map"
+    assert result[0] == CONN_LAN_BRIDGE
+    assert result[1] == "Bond"
 
 
-# --- samsung derives algorithmically (no override needed) ---
+# --- samsung: builtin-only lookup derives algorithmically; community config adds the override ---
 
 def test_samsung_smartthings_cloud():
-    """Samsung SmartThings → name cleaned algorithmically; conn derived (cloud, no isNetwork)."""
+    """Samsung SmartThings → name cleaned algorithmically via builtin-only lookup; conn derived (cloud, no isNetwork)."""
     app = {"type": "Samsung SmartThings"}
     conn, name = classify_device({}, app)
     assert conn == CONN_CLOUD
     # cleanIntegrationName strips nothing from "Samsung SmartThings" → name is the raw type
     assert name == "Samsung SmartThings"
+
+
+def test_samsung_community_override():
+    """Samsung → 'SmartThings' when community config is loaded (samsung key maps to cloud/SmartThings)."""
+    merged = merge_overrides(INTEGRATION_OVERRIDES, COMMUNITY_CONFIG)
+    result = lookup_integration_with_map("Samsung SmartThings", merged)
+    assert result is not None, "expected a match for 'samsung' in merged map"
+    assert result[0] == CONN_CLOUD
+    assert result[1] == "SmartThings"
 
 
 # --- no parent app ---
@@ -470,6 +546,45 @@ def test_merge_user_wins_on_precedence():
     assert result is not None
     assert result[0] == "cloud"
     assert result[1] == "My Hue"
+
+
+# ── Community config (integration_overrides.json) merge tests ────────────────
+
+
+def test_community_config_kasa_lan_direct():
+    """Kasa from community config → (lan_direct, "Kasa") in merged map."""
+    merged = merge_overrides(INTEGRATION_OVERRIDES, COMMUNITY_CONFIG)
+    result = lookup_integration_with_map("Kasa Device Manager", merged)
+    assert result is not None, "expected a match for 'kasa' in merged map"
+    assert result[0] == CONN_LAN_DIRECT
+    assert result[1] == "Kasa"
+
+
+def test_community_config_yolink_cloud():
+    """YoLink from community config → (cloud, "YoLink") in merged map."""
+    merged = merge_overrides(INTEGRATION_OVERRIDES, COMMUNITY_CONFIG)
+    result = lookup_integration_with_map("YoLink Device Service", merged)
+    assert result is not None, "expected a match for 'yolink' in merged map"
+    assert result[0] == CONN_CLOUD
+    assert result[1] == "YoLink"
+
+
+def test_community_config_builtin_preserved():
+    """Merging community config preserves all builtin entries (no collision on disjoint keys)."""
+    merged = merge_overrides(INTEGRATION_OVERRIDES, COMMUNITY_CONFIG)
+    keywords = [kw for kw, _, _ in merged]
+    # All 8 builtins must still be present
+    for builtin_kw, _, _ in INTEGRATION_OVERRIDES:
+        assert builtin_kw in keywords, f"builtin key '{builtin_kw}' missing from merged map"
+
+
+def test_community_config_readme_skipped():
+    """_README key in the community config file is skipped during merge."""
+    config_with_readme = dict(COMMUNITY_CONFIG)
+    config_with_readme["_README"] = "documentation"
+    merged = merge_overrides(INTEGRATION_OVERRIDES, config_with_readme)
+    keywords = [kw for kw, _, _ in merged]
+    assert "_readme" not in keywords, "_README should be skipped"
 
 
 # ── Standalone runner ────────────────────────────────────────────────────────
