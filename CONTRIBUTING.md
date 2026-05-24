@@ -564,6 +564,25 @@ You now have the workflow. The reference material below is what you reach for wh
 
 When you're considering a non-trivial change, run [`/hubitat-arch-review`](.claude/skills/hubitat-arch-review/SKILL.md) against the file you're editing. It's read-only — it just reports deviations from `ARCHITECTURE.md` with doc citations, so you find out at edit time rather than at code-review time.
 
+### Building a dashboard SPA — conventions
+
+Some apps in this repo aren't automations — they're **dashboards**: a Groovy app that serves a single-page HTML app and backs it with `/api/*` JSON endpoints (e.g. [`apps/HubDiagnostics/`](apps/HubDiagnostics/), [`apps/MultiHubInventory/`](apps/MultiHubInventory/)). [`apps/HubDiagnostics/hub_diagnostics_ui.html`](apps/HubDiagnostics/hub_diagnostics_ui.html) is the reference implementation — match its conventions rather than inventing simpler ones (a leaner dashboard built without them tends to look done but be unusable).
+
+**The served-HTML pattern**
+
+- The HTML lives in the hub's File Manager; the Groovy serves it via `downloadHubFile()` from a `mappings` route (`path('/ui.html') { action: [GET: 'serveUI'] }`) behind an OAuth check.
+- `serveUI()` substitutes `${access_token}` and `${api_base}` placeholders into the HTML so the page can call its own `/api/*` endpoints **same-origin** (browsers can't reach another hub directly — see [`ARCHITECTURE.md`](ARCHITECTURE.md) "Cross-origin (CORS)…").
+- **Two-part deploy:** push the Groovy *and* upload the HTML to File Manager — pushing only the Groovy leaves the UI stale. Keep `APP_VERSION` (Groovy) and `UI_VERSION` (HTML) in lockstep.
+- Develop hub-free behind a `WORKBENCH = true` toggle + mock data, and unit-test the pure SPA helpers in Node (Mode 3 — see [`TESTING.md`](TESTING.md) §2.1).
+
+**Display conventions (these are the difference between a demo and a usable tool)**
+
+- **Device names are always links.** HubDiagnostics' helper: `dlink(id,n) → <a href="/device/edit/{id}" target="_blank">{name}</a>`. A flagged device you can't click is a device you can't find. In a *multi-hub* SPA the link must point at the device's **own hub** (`{hubWebBase}/device/edit/{id}`), not the serving hub — so expose each hub's web base (scheme+host only, never the token) to the page.
+- **Counts link too:** `dlistlink(count, ids) → /device/list?ids=...`.
+- **Inactivity is absolute days since last activity, color-thresholded** — never a bare timestamp. Tiers mirror HubDiagnostics: `< inactivityDays` (default 7) green (`--ok`); `≥ inactivityDays` orange (`--warn`); `≥ 2× inactivityDays` (14d) red (`--crit`); `"Never"` if no activity.
+- **Classify devices properly.** The raw `controllerType`/protocol field is unreliable (null on most devices; leaks codes like `HKC`). Reuse HubDiagnostics' `classifyDevice` cascade (authoritative `isZigbee`/`isZwave`/… flags + a parent-app → integration lookup), not the raw field.
+- **Reuse the UI primitives:** the sortable/filterable table helper (`tbl()`), the badge classes, and the card helpers — over one-off implementations.
+
 ---
 
 ## 10. Troubleshooting
