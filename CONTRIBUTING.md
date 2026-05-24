@@ -33,8 +33,8 @@ apps/             Automation and dashboard apps          (see apps/README.md)
 drivers/          Zigbee / BLE / cloud device drivers    (see drivers/README.md)
 integrations/     Parent-app + child-driver vendor integrations (see integrations/README.md)
 ARCHITECTURE.md   Coding conventions & platform semantics (authoritative)
+README.md         As per usual convention
 TESTING.md        Testing methodology & the closed-loop contract
-TEST_COVERAGE.md  Current test-coverage ledger
 ```
 
 ## Building a dashboard SPA — conventions
