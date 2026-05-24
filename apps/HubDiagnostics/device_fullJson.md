@@ -154,7 +154,7 @@ UI-only flags, paginated dialog variants of data already captured, or values tha
 
 ---
 
-## Integration detection model (v5.53.0)
+## Integration detection model (v5.54.0)
 
 Device integration and connection type are derived by `classifyDevice` / `enrichDevices` using an algorithm-primary model:
 
@@ -162,11 +162,34 @@ Device integration and connection type are derived by `classifyDevice` / `enrich
 2. **Parent app present** (bulk `parentAppId` → `appLookup`, or `parentApp.appType.name` from `fullJson`):
    - **Integration name**: `cleanIntegrationName(appType)` strips trailing noise tokens (`Device Manager`, `Device Service`, `Integration`, `Service`, `Manager`, etc.) — e.g. `"YoLink Device Service"` → `"YoLink"`.
    - **Connection type**: `device.isNetwork == true` ⇒ `lan_direct`; otherwise `cloud`.
-   - **`INTEGRATION_OVERRIDES`** (small map, 4 entries): forces `conn = lan_bridge` for LAN-bridge hubs (`Philips Hue`, `Lutron`, `Bond`) that `isNetwork` alone would misclassify as `lan_direct`. Integration name is always the cleaned parent-app name; `cloud` vs `lan_direct` is always derived from `isNetwork`; `lan_bridge` is the one type that requires an explicit override.
+   - **`INTEGRATION_OVERRIDES`** (built-in map, 4 entries): forces `conn = lan_bridge` for LAN-bridge hubs (`Philips Hue`, `Lutron`, `Bond`) that `isNetwork` alone would misclassify as `lan_direct`. Integration name is always the cleaned parent-app name; `cloud` vs `lan_direct` is always derived from `isNetwork`; `lan_bridge` is the one type that requires an explicit override.
+   - **User override file** (optional): overlay the built-in map via File Manager — see below.
 3. **`isNetwork` only, no parent app** → `lan_direct`, `"LAN Device"`.
 4. **Fallback** → `other`, `"Other"`.
 
 This model auto-scales to any community integration without table changes.
+
+### User-customizable integration overrides
+
+To override a connection type or display name for any integration without editing Groovy:
+
+- **File**: `hub_diagnostics_integration_overrides.json`
+- **Location**: Hubitat File Manager
+- **Format**: JSON object mapping lowercase keyword strings to `{conn?, name?}` entries:
+  ```json
+  {
+    "yolink":       { "conn": "cloud",      "name": "YoLink" },
+    "b-hyve":       { "conn": "cloud",      "name": "B-Hyve" },
+    "my lan thing": { "conn": "lan_bridge", "name": "My Bridge" }
+  }
+  ```
+- **Keys**: lowercase substrings matched against the device's parent-app name (same substring logic as the built-in overrides).
+- **`conn`** (optional): one of `paired`, `lan_direct`, `lan_bridge`, `cloud`, `virtual`, `hubmesh`, `other`. Unknown values are silently ignored.
+- **`name`** (optional): display name shown in reports. Either field may be omitted.
+- **Merge**: user entries are placed first (they win on key collision and on substring-match precedence), followed by built-in entries not overridden.
+- **Apply**: save the Hub Diagnostics settings page after uploading the file — this invalidates the in-memory cache and triggers a reload on next use.
+- **Error handling**: a missing file or malformed JSON logs a warning and falls back to the built-in defaults; the app never throws.
+- **Example**: `apps/HubDiagnostics/integration_overrides.example.json` in the repository.
 
 ---
 

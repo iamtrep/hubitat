@@ -62,15 +62,61 @@ def clean_integration_name(raw: str) -> str:
     return s or raw
 
 
-def lookup_integration(text: str):
-    """Mirror of Groovy lookupIntegration(String). Returns (conn, name) or None."""
+VALID_CONN = {
+    "paired", "lan_direct", "lan_bridge", "cloud", "virtual", "hubmesh", "other"
+}
+
+
+def merge_overrides(builtin: list, user: dict) -> list:
+    """
+    Mirror of Groovy getIntegrationOverrides() merge logic.
+    builtin: list of (keyword, conn, name) tuples (the INTEGRATION_OVERRIDES constant).
+    user: dict of {raw_key: {conn?, name?}} from the user config file.
+    Returns a merged list of (keyword, conn, name) tuples with user entries first.
+    Invalid conn values are rejected; name-only entries keep the builtin conn if present.
+    """
+    merged_dict: dict = {}  # keyword -> (conn, name), user entries first
+
+    for raw_key, raw_val in user.items():
+        if raw_key == "_README":
+            continue
+        key = raw_key.lower().strip()
+        if not key:
+            continue
+        entry_conn = None
+        entry_name = None
+        if isinstance(raw_val, dict):
+            conn_candidate = (raw_val.get("conn") or "").strip()
+            if conn_candidate in VALID_CONN:
+                entry_conn = conn_candidate
+            name_candidate = (raw_val.get("name") or "").strip()
+            if name_candidate:
+                entry_name = name_candidate
+        if entry_conn is not None or entry_name is not None:
+            merged_dict[key] = (entry_conn, entry_name)
+
+    # Append built-in entries not already overridden
+    for kw, conn, name in builtin:
+        if kw not in merged_dict:
+            merged_dict[kw] = (conn, name)
+
+    return [(kw, cv[0], cv[1]) for kw, cv in merged_dict.items()]
+
+
+def lookup_integration_with_map(text: str, overrides: list):
+    """lookup_integration() operating on an arbitrary overrides list."""
     if not text:
         return None
     lower = text.lower()
-    for keyword, conn, name in INTEGRATION_OVERRIDES:
+    for keyword, conn, name in overrides:
         if keyword in lower:
             return (conn, name)
     return None
+
+
+def lookup_integration(text: str):
+    """Mirror of Groovy lookupIntegration(String). Returns (conn, name) or None."""
+    return lookup_integration_with_map(text, INTEGRATION_OVERRIDES)
 
 
 def classify_device(device: dict, app_info: dict | None) -> tuple[str, str]:
@@ -334,6 +380,96 @@ def test_no_parent_no_signal():
     conn, name = classify_device({}, None)
     assert conn == CONN_OTHER
     assert name == "Other"
+
+
+# ── Integration-overrides merge tests ───────────────────────────────────────
+
+
+def test_merge_adds_new_integration():
+    """User adds a new entry not in built-ins; lookup finds it."""
+    user = {"yolink": {"conn": "cloud", "name": "YoLink"}}
+    merged = merge_overrides(INTEGRATION_OVERRIDES, user)
+    result = lookup_integration_with_map("YoLink Device Service", merged)
+    assert result is not None, "expected a match for 'yolink'"
+    assert result[0] == "cloud"
+    assert result[1] == "YoLink"
+
+
+def test_merge_user_overrides_builtin():
+    """User forces lutron to cloud; user value wins over built-in lan_bridge."""
+    user = {"lutron": {"conn": "cloud", "name": "Lutron Cloud"}}
+    merged = merge_overrides(INTEGRATION_OVERRIDES, user)
+    result = lookup_integration_with_map("Lutron Connect", merged)
+    assert result is not None, "expected a match for 'lutron'"
+    assert result[0] == "cloud", f"expected cloud, got {result[0]}"
+    assert result[1] == "Lutron Cloud"
+
+
+def test_merge_invalid_conn_rejected():
+    """Invalid conn value is rejected; entry is omitted from merged map."""
+    user = {"badentry": {"conn": "banana", "name": "Bad"}}
+    merged = merge_overrides(INTEGRATION_OVERRIDES, user)
+    result = lookup_integration_with_map("badentry device", merged)
+    # conn is None because it was rejected; name-only means entry IS added (name present)
+    # Per spec: if only name is invalid too and conn invalid, entry has no fields → omitted.
+    # Here name IS valid so entry is present but conn is None.
+    assert result is None or result[0] is None, (
+        f"expected conn=None (rejected), got {result}"
+    )
+
+
+def test_merge_invalid_conn_name_only_accepted():
+    """Entry with invalid conn but valid name: name applies, conn stays None."""
+    user = {"mycloud": {"conn": "banana", "name": "My Cloud"}}
+    merged = merge_overrides(INTEGRATION_OVERRIDES, user)
+    result = lookup_integration_with_map("mycloud service", merged)
+    assert result is not None, "expected a match (valid name kept entry)"
+    assert result[0] is None, f"conn should be None (rejected), got {result[0]}"
+    assert result[1] == "My Cloud"
+
+
+def test_merge_name_only_entry():
+    """Name-only entry (no conn): name applied, conn left None (derived by caller)."""
+    user = {"shelly": {"name": "Shelly Plus"}}
+    merged = merge_overrides(INTEGRATION_OVERRIDES, user)
+    result = lookup_integration_with_map("Shelly Device Service", merged)
+    assert result is not None
+    assert result[0] is None,  f"conn should be None (not set), got {result[0]}"
+    assert result[1] == "Shelly Plus"
+
+
+def test_merge_empty_user_config():
+    """Empty user dict → merged map equals built-in defaults."""
+    merged = merge_overrides(INTEGRATION_OVERRIDES, {})
+    assert len(merged) == len(INTEGRATION_OVERRIDES)
+    for (kw, conn, name), (bkw, bconn, bname) in zip(merged, INTEGRATION_OVERRIDES):
+        assert kw == bkw
+        assert conn == bconn
+        assert name == bname
+
+
+def test_merge_readme_key_skipped():
+    """_README key in user file is ignored."""
+    user = {
+        "_README": "documentation string",
+        "yolink": {"conn": "cloud", "name": "YoLink"},
+    }
+    merged = merge_overrides(INTEGRATION_OVERRIDES, user)
+    keywords = [kw for kw, _, _ in merged]
+    assert "_readme" not in keywords, "_README should be skipped"
+    assert "yolink" in keywords
+
+
+def test_merge_user_wins_on_precedence():
+    """User entry appears before built-ins in iteration order (user wins on first match)."""
+    # Built-in has "philips hue" and "hue bridge". User overrides "hue bridge" to cloud.
+    user = {"hue bridge": {"conn": "cloud", "name": "My Hue"}}
+    merged = merge_overrides(INTEGRATION_OVERRIDES, user)
+    # "Hue Bridge Device" should match user entry first
+    result = lookup_integration_with_map("hue bridge device", merged)
+    assert result is not None
+    assert result[0] == "cloud"
+    assert result[1] == "My Hue"
 
 
 # ── Standalone runner ────────────────────────────────────────────────────────

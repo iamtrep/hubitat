@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.53.0"
+@Field static final String APP_VERSION = "5.54.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -218,6 +218,18 @@ import java.util.concurrent.atomic.AtomicInteger
     "bond"        : [conn: "lan_bridge", name: "Bond"],
 ]
 
+
+// User-customizable integration-overrides config file (optional, File Manager)
+@Field static final String INTEGRATION_OVERRIDES_FILE = "hub_diagnostics_integration_overrides.json"
+
+// Valid conn values; used to reject unknown strings from the user config file
+@Field static final Set<String> VALID_CONN = [
+    "paired", "lan_direct", "lan_bridge", "cloud", "virtual", "hubmesh", "other"
+] as Set
+
+// Cache for the merged (built-in + user file) integration overrides map.
+// Null means "not yet loaded"; set to null in updated() to force a reload.
+@Field static volatile Map integrationOverridesCache = null
 
 // File names for persistence
 @Field static final String SNAPSHOTS_FILE = "hub_diagnostics_snapshots.json"
@@ -460,6 +472,15 @@ Map settingsPage() {
             }
             input "warnTempInput", "number", title: "Hub temperature warning (°${tempScale})",  range: tempThresholdRange(), required: true
             input "critTempInput", "number", title: "Hub temperature critical (°${tempScale})", range: tempThresholdRange(), required: true
+        }
+
+        section("Integration Overrides") {
+            paragraph "To override a connection type or display name for any integration, create " +
+                "<b>${INTEGRATION_OVERRIDES_FILE}</b> in File Manager. " +
+                "Keys are lowercase substrings matched against the device's parent-app name; " +
+                "valid <code>conn</code> values are: paired, lan_direct, lan_bridge, cloud, virtual, hubmesh, other. " +
+                "Save this page after uploading the file to apply the changes. " +
+                "See <i>integration_overrides.example.json</i> in the app repository for the format."
         }
 
         section("Logging") {
@@ -2934,10 +2955,52 @@ Object extractParentAppId(Map device) {
     return null
 }
 
+/**
+ * Returns the merged integration-overrides map: user file entries first (so user wins on
+ * substring-match precedence and on key collision), then built-in entries not overridden.
+ * Result is cached in integrationOverridesCache; call updated() to invalidate.
+ * Any parse error falls back silently to the built-in defaults.
+ */
+private Map getIntegrationOverrides() {
+    if (integrationOverridesCache != null) return integrationOverridesCache
+    try {
+        byte[] fileData = downloadHubFile(INTEGRATION_OVERRIDES_FILE)
+        if (fileData) {
+            String jsonString = new String(fileData, "UTF-8")
+            Map userRaw = (Map) new groovy.json.JsonSlurper().parseText(jsonString)
+            // Build merged map: user entries first, then built-in entries not overridden.
+            Map merged = new LinkedHashMap()
+            userRaw.each { rawKey, rawVal ->
+                if (rawKey == "_README") return           // skip documentation key
+                String key = rawKey.toString().toLowerCase().trim()
+                if (!key) return
+                Map entry = [:]
+                if (rawVal instanceof Map) {
+                    String conn = rawVal?.conn?.toString()?.trim()
+                    if (conn && VALID_CONN.contains(conn)) entry.conn = conn
+                    String nm = rawVal?.name?.toString()?.trim()
+                    if (nm) entry.name = nm
+                }
+                if (!entry.isEmpty()) merged[key] = entry
+            }
+            INTEGRATION_OVERRIDES.each { k, v ->
+                if (!merged.containsKey(k)) merged[k] = v
+            }
+            logDebug "Loaded integration overrides: ${merged.size()} entries (${userRaw.size() - (userRaw.containsKey('_README') ? 1 : 0)} from user file)"
+            integrationOverridesCache = merged
+            return merged
+        }
+    } catch (Exception e) {
+        logWarn "Could not load ${INTEGRATION_OVERRIDES_FILE}: ${e.message} — using built-in defaults"
+    }
+    integrationOverridesCache = INTEGRATION_OVERRIDES
+    return INTEGRATION_OVERRIDES
+}
+
 Map lookupIntegration(String text) {
     if (!text) return null
     String lower = text.toLowerCase()
-    for (Map.Entry entry : INTEGRATION_OVERRIDES.entrySet()) {
+    for (Map.Entry entry : getIntegrationOverrides().entrySet()) {
         if (lower.contains((String) entry.key)) return (Map) entry.value
     }
     return null
@@ -4520,6 +4583,7 @@ void updated() {
     cachedCpuInfo = null;          cachedCpuInfoAt = null
     cachedLoadThreshold = null;    cachedLoadThresholdAt = null
     cachedCheckpointIndex = null   // re-read the checkpoint index from FileManager on next access
+    integrationOverridesCache = null  // reload user integration-overrides file on next use
     // C2: auto-disable debug logging after 30 min so it can't be left on indefinitely
     if (settings.debugLogging) runIn(1800, 'logsOff')
     runIn(1, 'syncUIForced')
