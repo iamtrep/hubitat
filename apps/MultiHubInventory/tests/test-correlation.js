@@ -57,5 +57,22 @@ t('mergeFleet flattens allDevices, tags hub, drops Linked, records hub status', 
   assert.strictEqual(m.hubs[1].error, 'unreachable');
 });
 
+t('firmwareDrift flags mixed firmware, ignores singletons + unknown-only, sorts mixed first', () => {
+  const rows = [
+    {manufacturer:'Acme',model:'M1',firmware:'1.0',hub:'a'},
+    {manufacturer:'Acme',model:'M1',firmware:'1.1',hub:'b'},   // mixed group
+    {manufacturer:'Acme',model:'M1',firmware:'1.0',hub:'c'},
+    {manufacturer:'Beta',model:'B1',firmware:'2.0',hub:'a'},
+    {manufacturer:'Beta',model:'B1',firmware:'2.0',hub:'b'},   // consistent group
+    {manufacturer:'Solo',model:'S1',firmware:'9',hub:'a'},     // singleton -> excluded
+  ];
+  const d = C.firmwareDrift(rows);
+  assert.strictEqual(d.length, 2);                 // M1 + B1, not S1
+  assert.strictEqual(d[0].mixed, true);            // mixed sorts first
+  assert.strictEqual(d[0].model, 'M1');
+  assert.strictEqual(d[0].count, 3);
+  assert.strictEqual(d[1].mixed, false);
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
