@@ -92,16 +92,76 @@ void initialize() {
 }
 
 // ===== OAUTH + HELPERS =====
+// Self-enabling OAuth: try createAccessToken(); if OAuth isn't enabled on the app type yet,
+// enable it via the hub loopback API and retry — so no manual code-editor toggle is needed.
 private boolean checkOAuth() {
-    if (!state.accessToken) {
-        try { createAccessToken() } catch (Exception e) { logError "OAuth not enabled: ${e.message}"; return false }
+    if (state.accessToken) return true
+    try {
+        createAccessToken()
+        return (state.accessToken != null)
+    } catch (Exception e) {
+        logDebug "OAuth not enabled yet, attempting auto-enable..."
+        if (autoEnableOAuth()) {
+            try {
+                createAccessToken()
+                return (state.accessToken != null)
+            } catch (Exception e2) {
+                logError "OAuth enabled but token creation failed: ${e2.message}"
+                return false
+            }
+        }
+        return false
     }
-    return state.accessToken != null
+}
+
+// Look up this app's type ID by its definition name, via the hub loopback API.
+private String getAppTypeId() {
+    String typeId = null
+    try {
+        httpGet([uri: "http://127.0.0.1:8080", path: "/hub2/userAppTypes", timeout: 15]) { resp ->
+            List apps = resp.data instanceof List ? (List) resp.data : []
+            Map match = apps.find { it.name == "Multi-Hub Inventory" }
+            if (match) typeId = match.id?.toString()
+        }
+    } catch (e) {
+        logDebug "Failed to fetch user app types: ${e.message}"
+    }
+    return typeId
+}
+
+// Enable OAuth on this app type via the hub loopback API (loopback is trusted, no session needed).
+private boolean autoEnableOAuth() {
+    String typeId = getAppTypeId()
+    if (!typeId) { logError "Could not find app type ID."; return false }
+    String internalVer = null
+    try {
+        httpGet([uri: "http://127.0.0.1:8080", path: "/app/ajax/code", query: [id: typeId], timeout: 15]) { resp ->
+            internalVer = resp.data?.version?.toString()
+        }
+    } catch (e) {
+        logError "Failed to fetch app code version: ${e.message}"
+        return false
+    }
+    if (!internalVer) { logError "Could not determine app code version."; return false }
+    boolean success = false
+    try {
+        httpPost([
+            uri: "http://127.0.0.1:8080",
+            path: "/app/edit/update",
+            requestContentType: "application/x-www-form-urlencoded",
+            body: [id: typeId, version: internalVer, oauthEnabled: "true", _action_update: "Update"],
+            timeout: 20
+        ]) { resp -> success = true }
+    } catch (e) {
+        logError "Failed to enable OAuth: ${e.message}"
+    }
+    return success
 }
 private Map jsonResponse(Object data) { return render(contentType: 'application/json', data: groovy.json.JsonOutput.toJson(data)) }
 private void logInfo(String m)  { log.info  "MultiHubInventory: ${m}" }
 private void logWarn(String m)  { log.warn  "MultiHubInventory: ${m}" }
 private void logError(String m) { log.error "MultiHubInventory: ${m}" }
+private void logDebug(String m) { log.debug "MultiHubInventory: ${m}" }
 
 // ===== API =====
 // GET /api/peers — labels + index + reachability. NEVER returns tokens.
