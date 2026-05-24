@@ -151,3 +151,17 @@ UI-only flags, paginated dialog variants of data already captured, or values tha
 | E — Reference data | deferred | Capability/command/protocol detail |
 | F — Verbatim-only fields | deferred | `deviceState`, `currentStates` |
 | G — Excluded | — | UI flags, derivable, constants |
+
+---
+
+## Audit result — top-level fields (v5.52.0)
+
+The object stored in `lastAuditResult` (and returned by the audit API endpoint) carries these result-level fields alongside the per-device map:
+
+| Field | Source | Notes |
+|---|---|---|
+| `hubName` | `getHubInfo().name` | Hub's user-assigned name |
+| `hubModel` | `getHubInfo().hardware` | Hardware model string (e.g. `C-8 Pro`) — added v5.52.0 |
+| `hubFirmware` | `getHubInfo().firmware` | Platform firmware version string — added v5.52.0 |
+| `generatedAt` | Server time | UTC timestamp of scan completion |
+| `failed[]` | Scan errors | List of `{id, reason}` for devices that could not be fetched |

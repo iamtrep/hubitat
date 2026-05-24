@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.51.0"
+@Field static final String APP_VERSION = "5.52.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -4296,10 +4296,13 @@ private void finalizeAudit(String scanId) {
     logDebug "Audit Phase 4 enrichment finished in ${now() - enrichStart}ms"
 
     // Store result in volatile memory (lost on hub restart — acceptable)
-    String hubName = getHubInfo()?.name ?: "Hubitat"
+    Map hubInfo = getHubInfo()
+    String hubName = hubInfo?.name ?: "Hubitat"
     Date finishDate = new Date()
     String generatedAt = finishDate.format("yyyy-MM-dd HH:mm 'UTC'", TimeZone.getTimeZone("UTC"))
     xref.hubName = hubName
+    xref.hubModel = hubInfo?.hardware
+    xref.hubFirmware = hubInfo?.firmware
     xref.generatedAt = generatedAt
     xref.failed = failedMap.collect { id, reason -> [id: id, reason: reason] }
 
