@@ -1,0 +1,138 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multi-Hub Inventory</title>
+<style>
+:root { --primary:#1A77C9; --ok:#388e3c; --warn:#ff9800; --crit:#d32f2f; --bg:#f5f5f5; --card:#fff; --border:#ddd; --text:#333; --muted:#777; --alt:#f9f9f9; --hover:#e3f2fd; }
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:14px}
+a{color:var(--primary);text-decoration:none} a:hover{text-decoration:underline}
+
+.hdr{background:var(--primary);color:#fff;padding:10px 20px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:100;box-shadow:0 2px 4px rgba(0,0,0,.15)}
+.hdr h1{font-size:17px;font-weight:600} .hdr .info{margin-left:auto;font-size:12px;opacity:.85}
+
+.tabs{display:flex;background:#fff;border-bottom:2px solid var(--border);overflow-x:auto;position:sticky;top:42px;z-index:99}
+.tab{padding:9px 16px;cursor:pointer;font-size:13px;font-weight:500;border-bottom:3px solid transparent;white-space:nowrap;color:var(--muted);transition:all .15s}
+.tab:hover{color:var(--text);background:var(--alt)} .tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+
+.content{max-width:1400px;margin:0 auto;padding:16px}
+.panel{display:none} .panel.active{display:block}
+
+.card{background:var(--card);border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:14px;overflow:hidden}
+.card-h{padding:10px 14px;font-size:13px;font-weight:600;border-bottom:1px solid var(--border);background:var(--alt)}
+.card-b{padding:14px}
+
+.metrics{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
+.m{padding:10px;border-radius:6px;background:var(--alt)}
+.m-l{font-size:11px;color:var(--muted);margin-bottom:2px} .m-v{font-size:18px;font-weight:600}
+
+.pills{display:flex;flex-wrap:wrap;gap:6px}
+.pill{padding:5px 12px;border-radius:14px;font-size:12px;font-weight:500;background:var(--hover)}
+.pill b{color:var(--primary);margin-left:4px}
+
+.tbl-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:var(--primary);color:#fff;padding:7px 9px;text-align:left;cursor:pointer;white-space:nowrap;user-select:none;position:sticky;top:0}
+th:hover{background:#1565a7} th .arr{font-size:9px;margin-left:3px;opacity:.6}
+td{padding:6px 9px;border-bottom:1px solid #eee}
+tr:nth-child(even){background:var(--alt)} tr:hover{background:var(--hover)}
+
+.badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
+.b-ok{background:#e8f5e9;color:var(--ok)} .b-warn{background:#fff3e0;color:var(--warn)} .b-crit{background:#ffebee;color:var(--crit)}
+.b-builtin{background:#e8eaf6;color:#3949ab} .b-community{background:#fce4ec;color:#c62828} .b-platform{background:#f3e8ff;color:#7c3aed}
+
+.alert{padding:8px 12px;border-radius:6px;margin-bottom:6px;font-size:13px;display:flex;align-items:center;gap:6px}
+.a-crit{background:#ffebee;border-left:4px solid var(--crit);color:var(--crit)}
+.a-warn{background:#fff3e0;border-left:4px solid var(--warn);color:#e65100}
+.a-ok{background:#e8f5e9;border-left:4px solid var(--ok);color:var(--ok)}
+.a-info{background:#e3f2fd;border-left:4px solid #1976d2;color:#0d47a1}
+
+.loading{text-align:center;padding:50px 20px;color:var(--muted)}
+.spinner{display:inline-block;width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .8s linear infinite;margin-bottom:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.err{text-align:center;padding:30px;color:var(--crit)}
+.err button{margin-top:10px;padding:7px 18px;background:var(--primary);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px}
+
+.btn{display:inline-block;padding:7px 14px;border-radius:4px;border:none;cursor:pointer;font-size:13px;font-weight:500;transition:background .15s}
+.btn-p{background:var(--primary);color:#fff} .btn-p:hover{background:#1565a7} .btn-p:disabled{background:#90caf9;cursor:not-allowed}
+.btn-d{background:#ffebee;color:var(--crit)} .btn-d:hover{background:#ffcdd2}
+.btn-s{padding:4px 10px;font-size:12px}
+.actions{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.cfg-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:4px 0}
+.cfg-row label{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
+input[type=number].cfg-n{width:64px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:13px}
+
+.filter input{padding:7px 11px;border:1px solid var(--border);border-radius:4px;font-size:13px;width:280px;max-width:100%;margin-bottom:10px}
+
+.ng{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px}
+.ni{padding:7px 10px;background:var(--alt);border-radius:4px}
+.ni .nl{font-size:11px;color:var(--muted)} .ni .nv{font-size:13px;font-weight:500}
+
+.chart-wrap{overflow-x:auto;margin:8px 0}
+
+details{margin:8px 0} summary{cursor:pointer;font-weight:600;font-size:13px;padding:6px 0;color:var(--primary)}
+
+select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-size:13px;margin-right:8px}
+
+.diff-add{color:var(--ok)} .diff-rem{color:var(--crit)} .diff-chg{color:var(--warn)} .diff-item{margin:2px 0 2px 16px}
+.pill-menu{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:500}
+.pill-auto{background:#dbeafe;color:#1e40af} .pill-integ{background:#d1fae5;color:#065f46} .pill-apps{background:#ede9fe;color:#5b21b6}
+
+@media(max-width:600px){.metrics{grid-template-columns:repeat(2,1fr)}.tab{padding:7px 10px;font-size:12px}.filter input{width:100%}}
+.report-mode .actions,.report-mode .live-only,.report-mode .tab[data-tab="config"]{display:none}
+.report-banner{background:#fff3cd;color:#856404;padding:8px 20px;font-size:13px;text-align:center;border-bottom:1px solid #ffc107;position:sticky;top:0;z-index:101}
+.report-mode .hdr{top:33px}
+
+/* ===== AUDIT MODE — styles not already in the SPA ===== */
+.hdr-audit{background:var(--primary);color:#fff;padding:10px 20px;border-radius:8px 8px 0 0;display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:0}
+.hdr-audit h1{font-size:17px;font-weight:600}.hdr-audit .meta{font-size:12px;opacity:.85;margin-left:auto}
+summary.card-h{cursor:pointer;user-select:none}
+summary.card-h::-webkit-details-marker{color:var(--muted)}
+summary.card-h::marker{color:var(--muted)}
+summary.card-h:hover{background:#f0f0f0}
+details:not([open])>summary.card-h{border-bottom:0}
+table[data-sortable] th{cursor:pointer}
+table[data-sortable] th:hover{background:#1565a7}
+table[data-sortable] th[data-dir] .arr{opacity:1}
+.muted{color:var(--muted)}.warn{color:var(--warn)}.crit{color:var(--crit)}
+</style>
+</head>
+<body>
+<div class="hdr"><h1>Multi-Hub Inventory</h1><span class="info" id="hubInfo">Loading…</span>
+  <button onclick="rescanFleet()" class="btn btn-p btn-s" style="margin-left:auto">↻ Rescan fleet</button></div>
+<div class="tabs" id="tabs">
+  <div class="tab active" data-tab="summary">Summary</div>
+  <div class="tab" data-tab="register">Register</div>
+  <div class="tab" data-tab="drift">Firmware Drift</div>
+  <div class="tab" data-tab="attention">Maintenance</div>
+</div>
+<div class="content">
+  <div class="panel active" id="p-summary"></div>
+  <div class="panel" id="p-register"></div>
+  <div class="panel" id="p-drift"></div>
+  <div class="panel" id="p-attention"></div>
+</div>
+<script>
+// ===== VERSION =====
+const UI_VERSION = "0.1.0";
+
+// ===== CONFIG & MOCKS =====
+const WORKBENCH = false; // true for hub-free local development
+const T = '${access_token}', B = '${api_base}';
+
+// ===== CORRELATION ===== (pure functions; unit-tested in tests/test-correlation.js)
+
+// ===== ORCHESTRATION =====
+
+// ===== VIEWS =====
+
+// ===== BOOTSTRAP =====
+</script>
+</body>
+</html>

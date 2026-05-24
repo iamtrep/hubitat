@@ -28,6 +28,7 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 |---|---|
 | [HubDiagnostics/](./HubDiagnostics/) | Comprehensive hub diagnostics: inventory, performance tracking, network analysis, and snapshot comparison |
 | [LogMonitor/](./LogMonitor/) |  |
+| [MultiHubInventory/](./MultiHubInventory/) |  |
 | [sensors/](./sensors/) |  |
 | [tests/](./tests/) |  |
 | [utilities/](./utilities/) |  |
