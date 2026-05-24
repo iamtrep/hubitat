@@ -349,7 +349,81 @@ async function boot(){
 
 // ===== VIEWS =====
 const esc = s => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const h = esc; // alias for tbl() which uses h() for escaping
 const fmtDate = ms => (typeof ms==='number'&&ms>0) ? new Date(ms).toISOString().slice(0,10) : '—';
+
+// ===== TABLE ENGINE ===== (ported verbatim from HubDiagnostics tbl())
+function tbl(cid,cols,rows,opts={}){
+  const el=document.getElementById(cid);if(!el)return;
+  if(!rows||!rows.length){el.innerHTML='<p style="color:var(--muted);padding:16px">No data</p>';return}
+  let filt=[...rows],sc=opts.sc??0,sd=opts.sd??'asc';
+  const ct=opts.collapse??0,cl=opts.collapseLabel;
+  function sf(r,ci,d){const c=cols[ci];return r.sort((a,b)=>{let x=a[c.sf]??a[c.f]??'',y=b[c.sf]??b[c.f]??'';if(c.t==='n'){x=parseFloat(x)||0;y=parseFloat(y)||0}else{x=String(x).toLowerCase();y=String(y).toLowerCase()};if(x<y)return d==='asc'?-1:1;if(x>y)return d==='asc'?1:-1;return 0})}
+  function bld(rs){
+    let o='';
+    if(opts.filter)o+='<div class="filter"><input type="text" placeholder="Filter..." id="flt_'+cid+'"></div>';
+    if(ct>0&&cl){const open=rows.length<=ct?' open':'';o+='<details'+open+'><summary style="cursor:pointer;font-weight:600;margin:4px 0">'+cl+' ('+rows.length+')</summary>'}
+    o+='<div class="tbl-wrap"><table id="t_'+cid+'"><thead><tr>';
+    cols.forEach((c,i)=>{const ar=i===sc?(sd==='asc'?' ▲':' ▼'):' ⇅';o+='<th data-c="'+i+'">'+h(c.l)+'<span class="arr">'+ar+'</span></th>'});
+    o+='</tr></thead><tbody>'+bldRows(rs)+'</tbody></table></div>';
+    if(ct>0&&cl)o+='</details>';return o
+  }
+  function bldRows(rs){
+    let o='';
+    rs.forEach(r=>{
+      o+='<tr>';
+      cols.forEach(c=>{
+        const v=c.r?c.r(r):h(r[c.f]??'');
+        const sv=r[c.sf]??r[c.f]??'';
+        const color = r['_' + c.f + 'Color'] || '';
+        const style = color ? ' style="color:' + color + ';font-weight:600"' : '';
+        o+='<td data-v="'+h(String(sv))+'"'+style+'>'+v+'</td>'
+      });
+      o+='</tr>'
+    });
+    return o;
+  }
+  filt=sf(filt,sc,sd);el.innerHTML=bld(filt);
+  function bind(){
+    const t=document.getElementById('t_'+cid);if(!t)return;
+    t.querySelectorAll('th').forEach(th=>{th.onclick=()=>{
+      const ci=+th.dataset.c;
+      if(ci===sc)sd=sd==='asc'?'desc':'asc';else{sc=ci;sd='desc'};
+      filt=sf(filt,sc,sd);
+      const tb=t.querySelector('tbody');
+      if(tb){
+        tb.innerHTML=bldRows(filt);
+        t.querySelectorAll('th').forEach((thh,i)=>{
+          const arr=thh.querySelector('.arr');
+          if(arr)arr.textContent=i===sc?(sd==='asc'?' ▲':' ▼'):' ⇅';
+        });
+      } else {
+        const det=el.querySelector('details');const wasOpen=det?det.open:false;
+        el.innerHTML=bld(filt);
+        const det2=el.querySelector('details');if(det2)det2.open=wasOpen;
+        bind();
+      }
+    }});
+    const fi=document.getElementById('flt_'+cid);
+    if(fi){
+      let _fltTimer=null;
+      fi.addEventListener('input',()=>{
+        clearTimeout(_fltTimer);
+        _fltTimer=setTimeout(()=>{
+          const q=fi.value.toLowerCase();
+          filt=rows.filter(r=>cols.some(c=>{
+            const txt=c.ff?c.ff(r):String(r[c.f]??'');
+            return String(txt).toLowerCase().includes(q);
+          }));
+          filt=sf(filt,sc,sd);
+          const tb=t.querySelector('tbody');
+          if(tb) tb.innerHTML=bldRows(filt);
+          else { el.innerHTML=bld(filt);bind() }
+        },150);
+      });
+    }
+  }bind()
+}
 
 function renderSummary(){
   const s = fleetSummary(FLEET);
@@ -368,36 +442,44 @@ function renderSummary(){
      <div class="card"><div class="card-h">By manufacturer</div><div class="card-b"><div class="pills">${kv(s.byManufacturer)}</div></div></div>`;
 }
 
-function renderRegister(){
-  const rows = FLEET.rows;
-  const body = rows.map(r => {
-    const ia = inactivity(r.lastActivityTimeMs);
-    return `<tr><td>${esc(r.hub)}</td><td>${dlink(r.id, r.label||r.displayName, r.hub)}</td><td>${esc(r.deviceTypeName)}</td>`
-      + `<td>${esc(r.manufacturer)}</td><td>${esc(r.model)}</td><td>${esc(r.firmware)}</td><td>${esc(r.protocol)}</td>`
-      + `<td style="color:${ia.color}">${ia.text}</td><td>${Number(r.appsUsingCount)||0}</td>`
-      + `<td>${flagPills(r)}</td></tr>`;
-  }).join('');
-  document.getElementById('p-register').innerHTML =
-    `<div class="actions"><input class="filter-i" id="regFilter" placeholder="filter…" oninput="filterRows()" style="padding:7px 11px;border:1px solid var(--border);border-radius:4px">
-       <label style="font-size:13px;display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="regFlagged" onchange="filterRows()"> Flagged only</label>
-       <button class="btn btn-p btn-s" onclick="exportCsv()">Export CSV</button></div>
-     <div class="card"><div class="tbl-wrap"><table data-sortable id="regTable"><thead><tr>
-       <th>Hub</th><th>Label</th><th>Type</th><th>Manufacturer</th><th>Model</th><th>Firmware</th><th>Protocol</th><th>Days inactive</th><th>#Apps</th><th>Flags</th>
-       </tr></thead><tbody>${body}</tbody></table></div></div>`;
-}
-function filterRows(){
-  const q = (document.getElementById('regFilter').value||'').toLowerCase();
+function hasFw(r){ return !!((r.firmware||'').trim() || (r.firmwareOta||'').trim()); }
+function flagText(r){ return [r.orphan&&'orphan', r.disabled&&'disabled', (((r.appsUsingCount||0)===0)&&(!r.dashboards||r.dashboards.length===0))&&'unreferenced', r.singleThreaded&&'single-thread'].filter(Boolean).join(' '); }
+function regViewRows(){
   const flaggedOnly = document.getElementById('regFlagged') && document.getElementById('regFlagged').checked;
-  const rows = FLEET.rows;
-  document.querySelectorAll('#regTable tbody tr').forEach((tr, i) => {
-    const r = rows[i];
-    const textMatch = tr.textContent.toLowerCase().includes(q);
-    const flagMatch = !flaggedOnly || (r && isFlagged(r));
-    tr.style.display = (textMatch && flagMatch) ? '' : 'none';
+  const hasFwOnly  = document.getElementById('regHasFw')  && document.getElementById('regHasFw').checked;
+  return FLEET.rows.filter(r => (!flaggedOnly||isFlagged(r)) && (!hasFwOnly||hasFw(r))).map(r=>{
+    const ia = inactivity(r.lastActivityTimeMs);
+    const days = (ia.text==='Never') ? 1e9 : Number(ia.text);
+    return Object.assign({}, r, { _days:days, _daysText:ia.text, _daysColor:ia.color, _flags:flagText(r) });
   });
 }
+function refreshRegTbl(){
+  const cols = [
+    { l:'Hub',          f:'hub' },
+    { l:'Label',        f:'label', ff:r=>(r.label||r.displayName||''), r:r=>dlink(r.id, r.label||r.displayName, r.hub) },
+    { l:'Type',         f:'deviceTypeName' },
+    { l:'Manufacturer', f:'manufacturer' },
+    { l:'Model',        f:'model' },
+    { l:'Firmware',     f:'firmware' },
+    { l:'OTA',          f:'firmwareOta', r:r=>esc(r.firmwareOta||'—') },
+    { l:'Protocol',     f:'protocol' },
+    { l:'Days inactive',f:'_days', t:'n', r:r=>`<span style="color:${r._daysColor}">${esc(r._daysText)}</span>` },
+    { l:'#Apps',        f:'appsUsingCount', t:'n' },
+    { l:'Flags',        f:'_flags', ff:r=>r._flags||'', r:r=>flagPills(r) },
+  ];
+  tbl('regTbl', cols, regViewRows(), {filter:true});
+}
+function renderRegister(){
+  document.getElementById('p-register').innerHTML =
+    `<div class="actions">
+       <label style="font-size:13px;display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="regFlagged" onchange="refreshRegTbl()"> Flagged only</label>
+       <label style="font-size:13px;display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="regHasFw" onchange="refreshRegTbl()"> Has firmware</label>
+       <button class="btn btn-p btn-s" onclick="exportCsv()">Export CSV</button></div>
+     <div class="card"><div class="card-b"><div id="regTbl"></div></div></div>`;
+  refreshRegTbl();
+}
 function exportCsv(){
-  const cols = ['hub','label','deviceTypeName','manufacturer','model','firmware','protocol','lastActivityTimeMs','appsUsingCount'];
+  const cols = ['hub','label','deviceTypeName','manufacturer','model','firmware','firmwareOta','protocol','lastActivityTimeMs','appsUsingCount'];
   const head = cols.join(',');
   const lines = FLEET.rows.map(r => cols.map(c => `"${String(r[c]==null?'':r[c]).replace(/"/g,'""')}"`).join(','));
   const blob = new Blob([head+'\n'+lines.join('\n')], {type:'text/csv'});
@@ -406,34 +488,39 @@ function exportCsv(){
 
 function renderDrift(){
   const groups = firmwareDrift(FLEET.rows);
-  const cards = groups.map(g => {
-    const variants = g.variants.map(v => `<div class="diff-item">${v.version==='unknown'?'<span class="muted">unknown</span>':esc(v.version)}`
-      + ` — ${v.count} on ${esc(v.hubs.join(', '))}</div>`).join('');
-    // Sort devices by OTA version then firmware so drift is visible (unknowns last).
-    const sorted = g.devices.slice().sort((a,b) => {
-      const fa = ((a.firmwareOta||a.firmware||'').trim())||'~', fb = ((b.firmwareOta||b.firmware||'').trim())||'~';
-      return fa < fb ? -1 : fa > fb ? 1 : 0;
-    });
-    const devRows = sorted.map(dev => {
-      const ia = inactivity(dev.lastActivityTimeMs);
-      return `<div class="diff-item" style="display:flex;gap:10px;align-items:baseline">`
-        + `<span style="min-width:180px">${dlink(dev.id, dev.label||dev.displayName, dev.hub)}</span>`
-        + `<span class="muted" style="min-width:100px">${esc(dev.hub)}</span>`
-        + `<span style="min-width:70px">${dev.firmware ? esc(dev.firmware) : '<span class="muted">unknown</span>'}</span>`
-        + `<span style="min-width:90px" class="muted">${esc(dev.firmwareOta || '—')}</span>`
-        + `<span style="color:${ia.color}">${ia.text}d</span>`
-        + `</div>`;
-    }).join('');
-    return `<div class="card"><div class="card-h">${g.mixed?'<span class="crit">⚠ mixed</span> ':''}${esc(g.manufacturer)} ${esc(g.model)} (${g.count})</div>`
-      + `<div class="card-b">${variants}<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">${devRows}</div></div></div>`;
+  if (!groups.length){
+    document.getElementById('p-drift').innerHTML = '<div class="card"><div class="card-b muted">No identical-model groups found.</div></div>';
+    return;
+  }
+  const driftCols = [
+    { l:'Device',       f:'label', ff:r=>(r.label||r.displayName||''), r:r=>dlink(r.id, r.label||r.displayName, r.hub) },
+    { l:'Hub',          f:'hub' },
+    { l:'Firmware',     f:'firmware', r:r=>r.firmware?esc(r.firmware):'<span class="muted">—</span>' },
+    { l:'OTA',          f:'firmwareOta', r:r=>esc(r.firmwareOta||'—') },
+    { l:'Days inactive',f:'_days', t:'n', r:r=>`<span style="color:${r._daysColor}">${esc(r._daysText)}</span>` },
+  ];
+  const cards = groups.map((g, i) => {
+    const variants = g.variants.map(v => (v.version==='unknown'?'<span class="muted">unknown</span>':esc(v.version))
+      + (v.hubs.length ? ` <span class="muted">(${esc(v.hubs.join(', '))})</span>` : '')).join(' · ');
+    return `<div class="card"><div class="card-h">${g.mixed?'<span class="crit">⚠ mixed</span> ':''}${esc(g.manufacturer)} ${esc(g.model)} (${g.count})`
+      + `<span class="muted" style="font-weight:400"> — ${variants}</span></div>`
+      + `<div class="card-b"><div id="drift_${i}"></div></div></div>`;
   }).join('');
-  document.getElementById('p-drift').innerHTML = cards || '<div class="card"><div class="card-b muted">No identical-model groups found.</div></div>';
+  document.getElementById('p-drift').innerHTML = cards;
+  groups.forEach((g, i) => {
+    const devRows = g.devices.map(dev => {
+      const ia = inactivity(dev.lastActivityTimeMs);
+      const days = (ia.text==='Never') ? 1e9 : Number(ia.text);
+      return Object.assign({}, dev, { _days:days, _daysText:ia.text, _daysColor:ia.color });
+    });
+    tbl('drift_'+i, driftCols, devRows, {});
+  });
 }
 
 function renderAll(){
   document.getElementById('hubInfo').textContent =
     `${FLEET.hubs.filter(h=>h.ok).length}/${FLEET.hubs.length} hubs · ${FLEET.rows.length} devices`;
-  renderSummary(); renderRegister(); renderDrift(); wireSort();
+  renderSummary(); renderRegister(); renderDrift();
 }
 
 // ===== BOOTSTRAP =====
@@ -443,22 +530,6 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   t.classList.add('active');
   document.getElementById('p-' + t.dataset.tab).classList.add('active');
 });
-function wireSort(){
-  document.querySelectorAll('table[data-sortable]').forEach(tbl => {
-    tbl.querySelectorAll('th').forEach((th, i) => th.onclick = () => {
-      const dir = th.dataset.dir === 'asc' ? 'desc' : 'asc';
-      tbl.querySelectorAll('th').forEach(h => h.removeAttribute('data-dir')); th.dataset.dir = dir;
-      const body = tbl.querySelector('tbody');
-      [...body.rows].sort((a, b) => {
-        const x = a.cells[i].textContent, y = b.cells[i].textContent;
-        const xn = Number(x), yn = Number(y);
-        const numeric = x !== '' && y !== '' && !isNaN(xn) && !isNaN(yn);
-        const cmp = numeric ? (xn - yn) : x.localeCompare(y);
-        return dir === 'asc' ? cmp : -cmp;
-      }).forEach(r => body.appendChild(r));
-    });
-  });
-}
 boot().catch(e => { document.getElementById('hubInfo').textContent = 'Failed to load: ' + (e && e.message ? e.message : e); });
 </script>
 </body>
