@@ -22,6 +22,7 @@ Items that are pure platform mechanics — capability/attribute/command syntax, 
 - **`appButtonHandler` for in-page actions.** Button-name prefix matching with parameterized names (`btnConfirmDelete_${id}`, `btnFix_${deviceId}_${state}`) is a recurring project shape on top of platform-standard button inputs.
 - **`singleInstance` vs `singleThreaded` decision rule.** `singleInstance: true` for parents/integration roots (only one allowed per hub). `singleThreaded: true` for serialized mutable state — file IO (AttributeLoggerChild), scan orchestration (rlm), pinging (DevicePing). Both are platform-standard; the *when-to-use* rule is the project bit.
 - **Status text rendered as HTML.** Apps with rich state build `StringBuilder` HTML inside `paragraph` calls in preference pages — gives a status panel without a separate UI artifact. Style is consistent (red for problems, green for OK, tables with `border-collapse`).
+- **Admin interface menu affinity.** Add a "menu" key to the app metadata.  Choose among the three possible choices: "Automations", "Integrations" or "Apps".
 
 ## Drivers
 
