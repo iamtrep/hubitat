@@ -154,6 +154,22 @@ UI-only flags, paginated dialog variants of data already captured, or values tha
 
 ---
 
+## Integration detection model (v5.53.0)
+
+Device integration and connection type are derived by `classifyDevice` / `enrichDevices` using an algorithm-primary model:
+
+1. **Radio / protocol flags** (`isZigbee`, `isZwave`, `isMatter`, `isBluetooth`) → `paired` + protocol name. `isLinked` → `hubmesh`. `isVirtual` (or Virtual driver name heuristic) → `virtual`.
+2. **Parent app present** (bulk `parentAppId` → `appLookup`, or `parentApp.appType.name` from `fullJson`):
+   - **Integration name**: `cleanIntegrationName(appType)` strips trailing noise tokens (`Device Manager`, `Device Service`, `Integration`, `Service`, `Manager`, etc.) — e.g. `"YoLink Device Service"` → `"YoLink"`.
+   - **Connection type**: `device.isNetwork == true` ⇒ `lan_direct`; otherwise `cloud`.
+   - **`INTEGRATION_OVERRIDES`** (small map, ~5 entries): overrides conn and/or name for LAN bridges (`Philips Hue`, `Lutron`, `Bond`) and canonical aliases (`samsung` → `SmartThings`). Only entries the algorithm can't derive correctly are kept here.
+3. **`isNetwork` only, no parent app** → `lan_direct`, `"LAN Device"`.
+4. **Fallback** → `other`, `"Other"`.
+
+This model auto-scales to any community integration without table changes.
+
+---
+
 ## Audit result — top-level fields (v5.52.0)
 
 The object stored in `lastAuditResult` (and returned by the audit API endpoint) carries these result-level fields alongside the per-device map:

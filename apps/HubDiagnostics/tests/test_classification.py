@@ -1,0 +1,341 @@
+#!/usr/bin/env python3
+# Copyright (c) 2025-2026 PJ
+# SPDX-License-Identifier: MIT
+
+"""
+Mode-4 pure unit test for HubDiagnostics device classification.
+
+Mirrors the Groovy logic in:
+  - cleanIntegrationName()    (strips trailing app-name noise)
+  - INTEGRATION_OVERRIDES     (small map: bridges + aliases)
+  - lookupIntegration()       (substring match against INTEGRATION_OVERRIDES)
+  - classifyDevice() branch 2 (parent-app → algorithm-primary + override)
+
+Hub-free: no network calls, no fixtures beyond synthetic dicts.
+Discoverable by run-tests.sh (tests/test_*.py → python3 -m pytest).
+"""
+
+# ── Mirror of Groovy constants ──────────────────────────────────────────────
+
+CONN_PAIRED     = "paired"
+CONN_LAN_DIRECT = "lan_direct"
+CONN_LAN_BRIDGE = "lan_bridge"
+CONN_CLOUD      = "cloud"
+CONN_VIRTUAL    = "virtual"
+CONN_HUBMESH    = "hubmesh"
+CONN_OTHER      = "other"
+
+# Mirror of INTEGRATION_OVERRIDES — ordered longest-first
+INTEGRATION_OVERRIDES = [
+    ("philips hue", CONN_LAN_BRIDGE, "Philips Hue"),
+    ("hue bridge",  CONN_LAN_BRIDGE, "Philips Hue"),
+    ("lutron",      CONN_LAN_BRIDGE, "Lutron"),
+    ("bond",        CONN_LAN_BRIDGE, "Bond"),
+    ("samsung",     None,            "SmartThings"),
+]
+
+# Mirror of cleanIntegrationName() suffix list — longest-first
+_CLEAN_SUFFIXES = [
+    "(connect)", "connect", "device manager", "device service", "devices", "device",
+    "integration", "manager", "service", "controller", "account",
+]
+
+
+def clean_integration_name(raw: str) -> str:
+    """Mirror of Groovy cleanIntegrationName(String)."""
+    if not raw:
+        return raw
+    s = raw.strip()
+    changed = True
+    while changed:
+        changed = False
+        lower = s.lower()
+        for suf in _CLEAN_SUFFIXES:
+            if lower.endswith(suf):
+                candidate = s[: len(s) - len(suf)].strip()
+                if candidate:
+                    s = candidate
+                    changed = True
+                    break
+    return s or raw
+
+
+def lookup_integration(text: str):
+    """Mirror of Groovy lookupIntegration(String). Returns (conn, name) or None."""
+    if not text:
+        return None
+    lower = text.lower()
+    for keyword, conn, name in INTEGRATION_OVERRIDES:
+        if keyword in lower:
+            return (conn, name)
+    return None
+
+
+def classify_device(device: dict, app_info: dict | None) -> tuple[str, str]:
+    """
+    Mirror of Groovy classifyDevice() — returns (connectionType, integration).
+    Covers: radio flags, hub-mesh, virtual, parent-app algorithm-primary, isNetwork, fallback.
+    app_info: dict with keys 'type', 'label', 'user' (True if community app), or None.
+    """
+    # 1. Radio / protocol flags
+    if device.get("isZigbee"):
+        return (CONN_PAIRED, "Zigbee")
+    if device.get("isZwave"):
+        return (CONN_PAIRED, "Z-Wave")
+    if device.get("isMatter"):
+        return (CONN_PAIRED, "Matter")
+    if device.get("isBluetooth"):
+        return (CONN_PAIRED, "Bluetooth")
+    if device.get("isLinked") or device.get("linked"):
+        return (CONN_HUBMESH, "Hub Mesh")
+    if device.get("isVirtual"):
+        return (CONN_VIRTUAL, "Virtual")
+
+    # 2. Parent app present — algorithm-primary
+    if app_info:
+        app_type  = str(app_info.get("type")  or "")
+        app_label = str(app_info.get("label") or "")
+        raw = app_type or app_label
+        ov = lookup_integration(app_type) or lookup_integration(app_label)
+        integration = ov[1] if ov else clean_integration_name(raw)
+        if ov and ov[0] is not None:
+            conn = ov[0]
+        else:
+            conn = CONN_LAN_DIRECT if device.get("isNetwork") else CONN_CLOUD
+        return (conn, integration or raw)
+
+    # 3. LAN flag, no parent app
+    if device.get("isNetwork"):
+        return (CONN_LAN_DIRECT, "LAN Device")
+
+    # 4. Fallback
+    return (CONN_OTHER, "Other")
+
+
+# ── Tests ───────────────────────────────────────────────────────────────────
+
+
+# --- cleanIntegrationName unit cases ---
+
+def test_clean_device_service():
+    assert clean_integration_name("YoLink Device Service") == "YoLink"
+
+
+def test_clean_device_manager():
+    assert clean_integration_name("Sonoff Wifi Device Manager") == "Sonoff Wifi"
+
+
+def test_clean_integration_suffix():
+    assert clean_integration_name("Ecobee Integration") == "Ecobee"
+
+
+def test_clean_manager_suffix():
+    assert clean_integration_name("Mobile App Manager") == "Mobile App"
+
+
+def test_clean_device_service_multi_word():
+    """'Device Service' is stripped as a two-word phrase before 'Device' alone."""
+    assert clean_integration_name("MQTT Device Service") == "MQTT"
+
+
+def test_clean_noop():
+    """Names that need no stripping are returned verbatim."""
+    assert clean_integration_name("B-Hyve") == "B-Hyve"
+
+
+def test_clean_noop_kasa():
+    assert clean_integration_name("Kasa") == "Kasa"
+
+
+def test_clean_noop_shelly():
+    assert clean_integration_name("Shelly") == "Shelly"
+
+
+def test_clean_never_returns_empty():
+    """If stripping would empty the string, keep the original."""
+    # "Service" stripped from "Service" → "" → return original
+    assert clean_integration_name("Service") == "Service"
+
+
+def test_clean_connect_parens():
+    assert clean_integration_name("Philips Hue (Connect)") == "Philips Hue"
+
+
+def test_clean_connect_plain():
+    assert clean_integration_name("Lutron Connect") == "Lutron"
+
+
+def test_clean_devices_suffix():
+    assert clean_integration_name("LIFX Devices") == "LIFX"
+
+
+def test_clean_controller_suffix():
+    assert clean_integration_name("Kasa Controller") == "Kasa"
+
+
+def test_clean_account_suffix():
+    assert clean_integration_name("Ecobee Account") == "Ecobee"
+
+
+# --- radio / protocol flags ---
+
+def test_zigbee_flag():
+    conn, name = classify_device({"isZigbee": True}, None)
+    assert conn == CONN_PAIRED
+    assert name == "Zigbee"
+
+
+def test_zwave_flag():
+    conn, name = classify_device({"isZwave": True}, None)
+    assert conn == CONN_PAIRED
+    assert name == "Z-Wave"
+
+
+def test_matter_flag():
+    conn, name = classify_device({"isMatter": True}, None)
+    assert conn == CONN_PAIRED
+    assert name == "Matter"
+
+
+def test_bluetooth_flag():
+    conn, name = classify_device({"isBluetooth": True}, None)
+    assert conn == CONN_PAIRED
+    assert name == "Bluetooth"
+
+
+def test_hubmesh_isLinked():
+    conn, name = classify_device({"isLinked": True}, None)
+    assert conn == CONN_HUBMESH
+    assert name == "Hub Mesh"
+
+
+def test_hubmesh_linked():
+    conn, name = classify_device({"linked": True}, None)
+    assert conn == CONN_HUBMESH
+    assert name == "Hub Mesh"
+
+
+def test_virtual_flag():
+    conn, name = classify_device({"isVirtual": True}, None)
+    assert conn == CONN_VIRTUAL
+    assert name == "Virtual"
+
+
+# --- community integration auto-detect (no override, derive from parent app) ---
+
+def test_community_yolink_cloud():
+    """YoLink Device Service → (cloud, "YoLink") — no isNetwork."""
+    app = {"type": "YoLink Device Service", "user": True}
+    conn, name = classify_device({}, app)
+    assert conn == CONN_CLOUD
+    assert name == "YoLink"
+
+
+def test_community_bhyve_cloud():
+    """B-Hyve → (cloud, "B-Hyve") — no stripping needed."""
+    app = {"type": "B-Hyve", "user": True}
+    conn, name = classify_device({}, app)
+    assert conn == CONN_CLOUD
+    assert name == "B-Hyve"
+
+
+def test_community_sonoff_cloud():
+    """Sonoff Wifi Device Manager → (cloud, "Sonoff Wifi")."""
+    app = {"type": "Sonoff Wifi Device Manager", "user": True}
+    conn, name = classify_device({}, app)
+    assert conn == CONN_CLOUD
+    assert name == "Sonoff Wifi"
+
+
+def test_community_ecobee_cloud():
+    """Ecobee Integration → (cloud, "Ecobee")."""
+    app = {"type": "Ecobee Integration", "user": True}
+    conn, name = classify_device({}, app)
+    assert conn == CONN_CLOUD
+    assert name == "Ecobee"
+
+
+# --- LAN-direct derive (isNetwork + parent app, no override) ---
+
+def test_lan_direct_shelly():
+    """Shelly + isNetwork → (lan_direct, "Shelly") — not in overrides."""
+    app = {"type": "Shelly", "user": True}
+    conn, name = classify_device({"isNetwork": True}, app)
+    assert conn == CONN_LAN_DIRECT
+    assert name == "Shelly"
+
+
+def test_lan_direct_sonos():
+    """Sonos + isNetwork → (lan_direct, "Sonos")."""
+    app = {"type": "Sonos", "user": True}
+    conn, name = classify_device({"isNetwork": True}, app)
+    assert conn == CONN_LAN_DIRECT
+    assert name == "Sonos"
+
+
+# --- bridge overrides ---
+
+def test_bridge_philips_hue():
+    """Philips Hue Bridge + isNetwork → (lan_bridge, "Philips Hue") via override."""
+    app = {"type": "Philips Hue Bridge", "user": False}
+    conn, name = classify_device({"isNetwork": True}, app)
+    assert conn == CONN_LAN_BRIDGE
+    assert name == "Philips Hue"
+
+
+def test_bridge_hue_bridge_keyword():
+    """'Hue Bridge Integration' keyword triggers override."""
+    app = {"type": "Hue Bridge Integration"}
+    conn, name = classify_device({"isNetwork": True}, app)
+    assert conn == CONN_LAN_BRIDGE
+    assert name == "Philips Hue"
+
+
+def test_bridge_lutron():
+    """Lutron → lan_bridge via override regardless of isNetwork."""
+    app = {"type": "Lutron Connect"}
+    conn, name = classify_device({}, app)
+    assert conn == CONN_LAN_BRIDGE
+    assert name == "Lutron"
+
+
+def test_bridge_bond():
+    """Bond → lan_bridge via override."""
+    app = {"type": "Bond Home"}
+    conn, name = classify_device({}, app)
+    assert conn == CONN_LAN_BRIDGE
+    assert name == "Bond"
+
+
+# --- name alias override (samsung → SmartThings) ---
+
+def test_alias_samsung():
+    """Samsung keyword → name alias 'SmartThings'; conn derived (cloud, no isNetwork)."""
+    app = {"type": "Samsung SmartThings"}
+    conn, name = classify_device({}, app)
+    assert name == "SmartThings"
+    assert conn == CONN_CLOUD  # override conn is None → derive
+
+
+def test_alias_samsung_lan():
+    """Samsung + isNetwork → name alias 'SmartThings', conn lan_direct (override conn is None)."""
+    app = {"type": "Samsung SmartThings"}
+    conn, name = classify_device({"isNetwork": True}, app)
+    assert name == "SmartThings"
+    assert conn == CONN_LAN_DIRECT
+
+
+# --- no parent app ---
+
+def test_no_parent_isnetwork():
+    """No parent app + isNetwork → (lan_direct, "LAN Device")."""
+    conn, name = classify_device({"isNetwork": True}, None)
+    assert conn == CONN_LAN_DIRECT
+    assert name == "LAN Device"
+
+
+def test_no_parent_no_signal():
+    """Nothing → (other, "Other")."""
+    conn, name = classify_device({}, None)
+    assert conn == CONN_OTHER
+    assert name == "Other"

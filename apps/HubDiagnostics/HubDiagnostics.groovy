@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.52.0"
+@Field static final String APP_VERSION = "5.53.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -202,44 +202,20 @@ import java.util.concurrent.atomic.AtomicInteger
     "other": "Other"
 ]
 
-// Integration classification table: lowercase keyword → [conn: connectionType, name: displayName]
-// Keys are matched as substrings against parent app type/label.
-// Entries are ordered longest-first to avoid false positives (e.g., "wiz" matching "wizard").
+// Integration override map: lowercase keyword → [conn: connectionType, name: displayName]
+// Contains ONLY entries that need a connection-type fix the algorithm can't derive, or a
+// canonical-name alias.  Everything else auto-derives: integration = cleanIntegrationName(appType),
+// connectionType = (device.isNetwork ? lan_direct : cloud).
+// Entries are ordered longest-first to avoid false positives (e.g. "hue bridge" before "hue").
 // LinkedHashMap preserves insertion order, which is the iteration order used by lookupIntegration().
-@Field static final Map INTEGRATION_TABLE = [
-    // 19
-    "mobile app manager": [conn: "cloud",   name: "Mobile App"],
-    // 12
-    "home connect": [conn: "cloud", name: "Home Connect"],
-    // 11
+@Field static final Map INTEGRATION_OVERRIDES = [
+    // LAN bridges — algorithm would call them lan_direct; override to lan_bridge
     "philips hue" : [conn: "lan_bridge", name: "Philips Hue"],
-    // 10
     "hue bridge"  : [conn: "lan_bridge", name: "Philips Hue"],
-    // 9
-    "bluetooth"   : [conn: "paired", name: "Bluetooth"],
-    // 8
-    "icomfort"    : [conn: "cloud", name: "iComfort"],
-    // 7
-    "homekit"     : [conn: "paired", name: "HomeKit"],
-    "samsung"     : [conn: "cloud", name: "SmartThings"],
-    // 6
-    "bthome"      : [conn: "paired",    name: "BTHome"],
-    "shelly"      : [conn: "lan_direct", name: "Shelly"],
     "lutron"      : [conn: "lan_bridge", name: "Lutron"],
-    "ecobee"      : [conn: "cloud",     name: "ecobee"],
-    "google"      : [conn: "cloud",     name: "Google Home"],
-    "mobile"      : [conn: "cloud",     name: "Mobile App"],
-    // 5
-    "govee"       : [conn: "lan_direct", name: "Govee"],
-    "sonos"       : [conn: "lan_direct", name: "Sonos"],
-    "alexa"       : [conn: "cloud", name: "Amazon Echo Skill"],
-    // 4
-    "kasa"        : [conn: "lan_direct", name: "Kasa"],
-    "lifx"        : [conn: "lan_direct", name: "LIFX"],
-    "wled"        : [conn: "lan_direct", name: "WLED"],
     "bond"        : [conn: "lan_bridge", name: "Bond"],
-    // 3
-    "wiz"         : [conn: "lan_direct", name: "WiZ"],
+    // Canonical-name aliases
+    "samsung"     : [conn: null,         name: "SmartThings"],
 ]
 
 
@@ -2961,10 +2937,36 @@ Object extractParentAppId(Map device) {
 Map lookupIntegration(String text) {
     if (!text) return null
     String lower = text.toLowerCase()
-    for (Map.Entry entry : INTEGRATION_TABLE.entrySet()) {
+    for (Map.Entry entry : INTEGRATION_OVERRIDES.entrySet()) {
         if (lower.contains((String) entry.key)) return (Map) entry.value
     }
     return null
+}
+
+// Strips common trailing app-name noise to produce a clean integration display name.
+// Examples: "YoLink Device Service" → "YoLink", "Sonoff Wifi Device Manager" → "Sonoff Wifi",
+//           "Ecobee Integration" → "Ecobee".  Conservative: only strips a known suffix set,
+// case-insensitively, repeatedly from the tail.  Never returns empty — falls back to original.
+String cleanIntegrationName(String raw) {
+    if (!raw) return raw
+    // Suffixes tried longest-first so multi-word phrases match before single words
+    List<String> suffixes = [
+        "(connect)", "connect", "device manager", "device service", "devices", "device",
+        "integration", "manager", "service", "controller", "account"
+    ]
+    String s = raw.trim()
+    boolean changed = true
+    while (changed) {
+        changed = false
+        String lower = s.toLowerCase()
+        for (String suf : suffixes) {
+            if (lower.endsWith(suf)) {
+                String candidate = s.substring(0, s.length() - suf.length()).trim()
+                if (candidate) { s = candidate; changed = true; break }
+            }
+        }
+    }
+    return s ?: raw
 }
 
 // Returns [connectionType, integration, builtin] where builtin=true means Hubitat-bundled,
@@ -2990,20 +2992,30 @@ Map classifyDevice(Map device, Map appLookup, Set communityDrivers) {
     }
 
     // 2. Parent app lookup (parentAppId present in bulk list for some devices)
+    //    Algorithm-primary: integration = cleanIntegrationName(appType), connectionType derived from
+    //    device.isNetwork signal (LAN ⇒ lan_direct, else cloud).  INTEGRATION_OVERRIDES provides a
+    //    small connection-type or name override for the few that the algorithm can't derive correctly
+    //    (LAN bridges, canonical-name aliases).
     Object parentAppIdRaw = extractParentAppId(device)
     String normalizedParentAppId = normalizeAppLookupId(parentAppIdRaw)
     if (normalizedParentAppId) {
         Map appInfo = (Map) appLookup[normalizedParentAppId]
         if (appInfo) {
-            String appType  = (appInfo.type  ?: "").toString().toLowerCase()
-            String appLabel = (appInfo.label ?: "").toString().toLowerCase()
+            String appType  = (appInfo.type  ?: "").toString()
+            String appLabel = (appInfo.label ?: "").toString()
             boolean isBuiltin = !(appInfo.user == true)
-            // INTEGRATION_TABLE entries (Hue, Shelly, WLED, Kasa, ...) match parent app type/label, but
-            // can equally come from built-in Hubitat integrations or community ports — defer to appInfo.user.
-            Map match = lookupIntegration(appType) ?: lookupIntegration(appLabel)
-            if (match) return [connectionType: match.conn, integration: match.name, builtin: isBuiltin]
-            String intName = (appInfo.type ?: appInfo.label) ?: "Unknown"
-            return [connectionType: CONN_OTHER, integration: intName, builtin: isBuiltin]
+            // Check override map first (bridges, aliases) — falls back to algorithmic derivation
+            Map ov = lookupIntegration(appType) ?: lookupIntegration(appLabel)
+            String raw = appType ?: appLabel
+            String integration = (ov?.name) ? (String) ov.name : cleanIntegrationName(raw)
+            // Connection type: override wins; otherwise LAN signal ⇒ local, no LAN ⇒ cloud
+            String connectionType
+            if (ov?.conn) {
+                connectionType = (String) ov.conn
+            } else {
+                connectionType = (device.isNetwork == true) ? CONN_LAN_DIRECT : CONN_CLOUD
+            }
+            return [connectionType: connectionType, integration: integration ?: raw, builtin: isBuiltin]
         }
     }
 
@@ -3016,7 +3028,9 @@ Map classifyDevice(Map device, Map appLookup, Set communityDrivers) {
 
 // Enriches device classification using device/fullJson for devices bulk data couldn't resolve.
 // uncertainDevices: Map<String deviceId, Map appInfo> where appInfo may be null.
-// Primary signal: parentApp from fullJson (has appType.name which matches INTEGRATION_TABLE).
+// Primary signal: parentApp from fullJson (appType.name) — runs the same algorithm-primary logic as
+//   classifyDevice: integration = cleanIntegrationName(appType.name), connectionType derived from
+//   the controllerType signal (NET/LAN ⇒ lan_direct, else cloud); INTEGRATION_OVERRIDES override conn/name.
 // Fallback signal: controllerType from fullJson top level (actual values: ZGB, MAT, LNK, etc.).
 // Results cached in state.controllerTypeCache — keyed by device ID string, value is compact
 // JSON of [parentAppTypeName, controllerType] since parentApp is also stable for a device's lifetime.
@@ -3089,16 +3103,18 @@ Map enrichDevices(Map uncertainDevices, Set communityAppTypeNames = [] as Set) {
             return
         }
 
-        // Primary: match parent app type name against integration table
+        // Primary: algorithm-primary parent-app classification (mirrors classifyDevice branch 2)
         if (parentAppTypeName) {
-            Map match = lookupIntegration(parentAppTypeName)
-            if (match) {
-                // INTEGRATION_TABLE keywords match both built-in and community apps — defer to appType.user.
-                result[idStr] = [connectionType: match.conn, integration: match.name, builtin: isBuiltin]
-                return
+            Map ov = lookupIntegration(parentAppTypeName)
+            String integration = (ov?.name) ? (String) ov.name : cleanIntegrationName(parentAppTypeName)
+            // Connection type: override wins; LAN controllerType ⇒ lan_direct; else cloud
+            String connectionType
+            if (ov?.conn) {
+                connectionType = (String) ov.conn
+            } else {
+                connectionType = (ct == "NET" || ct == "LAN") ? CONN_LAN_DIRECT : CONN_CLOUD
             }
-            // Known parent app but not in table — use app type name, preserve user/builtin from appType.user
-            result[idStr] = [connectionType: CONN_OTHER, integration: parentAppTypeName, builtin: isBuiltin]
+            result[idStr] = [connectionType: connectionType, integration: integration ?: parentAppTypeName, builtin: isBuiltin]
             return
         }
 
