@@ -3617,7 +3617,7 @@ function rcZbHandleTailClick(e){
   const expanding=(z.selectedRaw!==row._raw);
   z.selectedRaw=expanding?row._raw:null;
   // Expanding means "I'm reading this" — freeze auto-follow so the row doesn't get scrolled away.
-  if(expanding){z.pinnedToLive=false;z.pinBaselineLen=z.displayBuf.length;}
+  if(expanding&&z.pinnedToLive){z.pinnedToLive=false;z.pinBaselineLen=z.displayBuf.length;}  // only when following; if already in history, keep the pill's running count
   rcZbRenderTail({});
 }
 // ===== RADIO CAPTURE: Z-WAVE SUB-TAB (pass 1 — capture skeleton, stack-branched) =====
@@ -3876,7 +3876,7 @@ function rcZwHandleTailClick(e){
   const expanding=(z.selectedRaw!==row._raw);
   z.selectedRaw=expanding?row._raw:null;
   // Expanding means "I'm reading this" — freeze auto-follow so the row doesn't get scrolled away.
-  if(expanding){z.pinnedToLive=false;z.pinBaselineLen=z.displayBuf.length;}
+  if(expanding&&z.pinnedToLive){z.pinnedToLive=false;z.pinBaselineLen=z.displayBuf.length;}  // only when following; if already in history, keep the pill's running count
   rcZwRenderTail({});
 }
 
