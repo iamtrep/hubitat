@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.44.2";
+const UI_VERSION = "5.45.1";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -817,6 +817,21 @@ function ni(l,v,c){const s=c?' style="color:'+c+';font-weight:600"':'';return'<d
 // Module-level thresholds with hardcoded defaults — updated when settings load
 let TH={warnMemMb:100,critMemMb:75,warnCpuLoad:4,critCpuLoad:8,warnTempC:50,critTempC:77,chattyDeviceThreshold:10};
 
+// ===== TEMPERATURE SCALE =====
+// The reading AND the warn/crit thresholds (TH.warnTempC/critTempC) are always Celsius —
+// comparisons are done in Celsius so a hub scale change never reinterprets them. The hub's
+// getTemperatureScale() ('C'|'F', from TH.temperatureScale) is used ONLY to convert values
+// for display, and to convert the config inputs the user enters in their scale back to Celsius.
+function tScale(){return TH.temperatureScale==='F'?'F':'C'}
+function tSym(){return '°'+tScale()}
+function c2u(c){return tScale()==='F'?c*9/5+32:c}    // °C -> hub scale (display)
+function u2c(v){return tScale()==='F'?(v-32)*5/9:v}  // hub scale -> °C (config input)
+function c2uD(c){return tScale()==='F'?c*9/5:c}      // a °C *delta* -> hub-scale delta (no offset)
+function cClamp(c){return Math.min(100,Math.max(20,c))}  // clamp a Celsius threshold to 20..100
+function ftemp(c){return c==null?'N/A':c2u(c).toFixed(1)+tSym()}        // absolute reading
+function ftempD(c){return c==null?'':(c>=0?'+':'')+c2uD(c).toFixed(1)+tSym()}  // signed delta
+function ftempBoth(c){if(c==null)return'N/A';const o=tScale()==='F'?'C':'F';const ov=o==='F'?c*9/5+32:c;return ftemp(c)+' ('+ov.toFixed(1)+'°'+o+')'}
+
 // Compose displayable alerts from raw signals + resources/temperature + thresholds.
 // Hub ships {alertSignals, resources, temperature}; the SPA derives severity, formats
 // numbers, strips HTML on hub messages, and emits a uniform [{severity,name,message?,key?}].
@@ -837,8 +852,8 @@ function composeAlerts(d){
     }
   }
   if(t!=null){
-    if(t>TH.critTempC) out.push({severity:'critical',name:`Hub temperature very high (${Number(t).toFixed(1)}°C)`});
-    else if(t>TH.warnTempC) out.push({severity:'warning',name:`Hub temperature elevated (${Number(t).toFixed(1)}°C)`});
+    if(t>TH.critTempC) out.push({severity:'critical',name:`Hub temperature very high (${ftemp(t)})`});
+    else if(t>TH.warnTempC) out.push({severity:'warning',name:`Hub temperature elevated (${ftemp(t)})`});
   }
   // Hub firmware update — surfaced once via the version-bearing entry at the end of this
   // function. The platform flags the same update two other ways (the platformUpdateAvailable
@@ -926,7 +941,7 @@ function buildForumMarkdown(d){
   L(`| Free OS Memory | ${resources?fmem(resources.freeOSMemory):'N/A'} |`);
   if(resources&&resources.freeJavaMemory)  L(`| Free Java Heap  | ${fmem(resources.freeJavaMemory)} |`);
   if(resources&&resources.totalJavaMemory) L(`| Total Java Heap | ${fmem(resources.totalJavaMemory)} |`);
-  L(`| Temperature | ${d.temperature!=null?Number(d.temperature).toFixed(1)+'°C':'N/A'} |`);
+  L(`| Temperature | ${ftemp(d.temperature)} |`);
   L(`| Database | ${d.databaseSize!=null?d.databaseSize+' MB':'N/A'} |`);
   L(`| State Compression | ${d.stateCompression&&d.stateCompression.enabled?'Enabled':'Disabled'} |`);
   const esl=d.eventStateLimits||null;
@@ -1509,7 +1524,7 @@ function renderDashRes(r,d){
   let o='';
   o+=resMemCard(r);
   o+=mc('CPU Load (5m)',r.cpuAvg5min?.toFixed(2)??'N/A',sev(r.cpuAvg5min,TH.warnCpuLoad,TH.critCpuLoad,false));
-  if(d.temperature!=null)o+=mc('Temperature',d.temperature.toFixed(1)+'°C',sev(d.temperature,TH.warnTempC,TH.critTempC,false));
+  if(d.temperature!=null)o+=mc('Temperature',ftemp(d.temperature),sev(d.temperature,TH.warnTempC,TH.critTempC,false));
   if(d.databaseSize!=null)o+=mc('Database',d.databaseSize+' MB');
   return o}
 function renderHealthRes(r,d){
@@ -1523,14 +1538,14 @@ function renderHealthRes(r,d){
   if(d.loadThreshold!=null)o+=mc('Hub Load Threshold',d.loadThreshold+'%');
   o+=mc('Total Java Memory',fmem(r.totalJavaMemory));o+=mc('Free Java Memory',fmem(r.freeJavaMemory));
   o+=mc('Direct Java Memory',fmem(r.directJavaMemory));
-  if(d.temperature!=null){const tf=d.temperature*9/5+32;o+=mc('Temperature',d.temperature.toFixed(1)+'°C ('+tf.toFixed(1)+'°F)',sev(d.temperature,TH.warnTempC,TH.critTempC,false))}
+  if(d.temperature!=null)o+=mc('Temperature',ftempBoth(d.temperature),sev(d.temperature,TH.warnTempC,TH.critTempC,false));
   if(d.databaseSize!=null)o+=mc('Database',d.databaseSize+' MB');
   return o}
 function renderPerfRes(r){
   let o='';
   o+=resMemCard(r);
   o+=mc('CPU Load (5m)',r.cpuAvg5min?.toFixed(2),sev(r.cpuAvg5min,TH.warnCpuLoad,TH.critCpuLoad,false));
-  if(r.temperature!=null)o+=mc('Temperature',r.temperature.toFixed(1)+'°C',sev(r.temperature,TH.warnTempC,TH.critTempC,false));
+  if(r.temperature!=null)o+=mc('Temperature',ftemp(r.temperature),sev(r.temperature,TH.warnTempC,TH.critTempC,false));
   if(r.databaseSize!=null)o+=mc('Database',r.databaseSize+' MB');
   return o}
 
@@ -2347,7 +2362,7 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
     if(isDiff) {
       o+=mc('Free OS Memory',fmem(res.freeOSMemory),res.freeOSMemory<0?'var(--crit)':'var(--ok)');
       o+=mc('CPU Load',res.cpuAvg5min?.toFixed(2),res.cpuAvg5min>0?'var(--warn)':'var(--ok)');
-      if(res.temperature!=null){const sgn=res.temperature>=0?'+':'';o+=mc('Temperature',sgn+res.temperature.toFixed(1)+'°C',res.temperature>2?'var(--warn)':'var(--ok)');}
+      if(res.temperature!=null)o+=mc('Temperature',ftempD(res.temperature),res.temperature>2?'var(--warn)':'var(--ok)');
       if(res.databaseSize!=null){const sgn=res.databaseSize>=0?'+':'';o+=mc('Database',sgn+res.databaseSize+' MB',res.databaseSize>50?'var(--warn)':'var(--ok)');}
     } else {
       o+=renderPerfRes(res);
@@ -2411,7 +2426,7 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
   if(d.checkpoints&&d.checkpoints.length){
     const cpRows=d.checkpoints.map((cp,i)=>({idx:i+1,timestamp:cp.timestamp,
       uptime:cp.stats?.uptime||'N/A',devRuntime:cp.stats?.totalDevicesRuntime||'N/A',appRuntime:cp.stats?.totalAppsRuntime||'N/A',
-      temp:cp.temperature!=null?cp.temperature.toFixed(1)+'°C':'—',db:cp.databaseSize!=null?cp.databaseSize+' MB':'—',_idx:i}));
+      temp:cp.temperature!=null?ftemp(cp.temperature):'—',db:cp.databaseSize!=null?cp.databaseSize+' MB':'—',_idx:i}));
     tbl('cpTbl',[
       {l:'#',f:'idx',t:'n'},{l:'Timestamp',f:'timestamp'},{l:'Uptime',f:'uptime'},
       {l:'Dev Runtime',f:'devRuntime'},{l:'App Runtime',f:'appRuntime'},
@@ -2515,7 +2530,7 @@ function renderComparison(data,elId){
     const br=b.resources,cr=c.resources;
     if(cr.freeOSMemory!=null&&br.freeOSMemory!=null){const d=cr.freeOSMemory-br.freeOSMemory;o+=ni('Free OS Memory',fmem(cr.freeOSMemory)+' ('+(d>=0?'+':'')+fmem(d)+')',d<0?'var(--crit)':'var(--ok)')}
     if(cr.cpuAvg5min!=null&&br.cpuAvg5min!=null){const d=cr.cpuAvg5min-br.cpuAvg5min;o+=ni('CPU Load',cr.cpuAvg5min.toFixed(2)+' ('+(d>=0?'+':'')+d.toFixed(2)+')',d>0?'var(--warn)':'var(--ok)')}
-    if(c.temperature!=null&&b.temperature!=null){const d=c.temperature-b.temperature;o+=ni('Temperature',c.temperature.toFixed(1)+'°C ('+(d>=0?'+':'')+d.toFixed(1)+'°C)',d>2?'var(--warn)':'var(--ok)')}
+    if(c.temperature!=null&&b.temperature!=null){const d=c.temperature-b.temperature;o+=ni('Temperature',ftemp(c.temperature)+' ('+ftempD(d)+')',d>2?'var(--warn)':'var(--ok)')}
     if(c.databaseSize!=null&&b.databaseSize!=null){const d=c.databaseSize-b.databaseSize;o+=ni('Database',c.databaseSize+' MB ('+(d>=0?'+':'')+d+' MB)',d>50?'var(--warn)':'var(--ok)')}
     o+='</div>'}
   el.innerHTML=o;
@@ -2950,8 +2965,8 @@ async function rConfig(){const P='p-config';loading(P);try{
   o+=`<label>CPU load warning: <input type="number" id="cfg_warnCpuLoad" value="${s.warnCpuLoad}" min="0.1" max="32" step="0.1" class="cfg-n"></label>`;
   o+=`<label>CPU load critical: <input type="number" id="cfg_critCpuLoad" value="${s.critCpuLoad}" min="0.1" max="32" step="0.1" class="cfg-n"></label>`;
   o+=`</div><div class="cfg-row">`;
-  o+=`<label>Temperature warning: <input type="number" id="cfg_warnTempC" value="${s.warnTempC}" min="20" max="100" class="cfg-n"> \u00B0C</label>`;
-  o+=`<label>Temperature critical: <input type="number" id="cfg_critTempC" value="${s.critTempC}" min="20" max="100" class="cfg-n"> \u00B0C</label>`;
+  o+=`<label>Temperature warning: <input type="number" id="cfg_warnTempC" value="${Math.round(c2u(s.warnTempC))}" min="${tScale()==='F'?68:20}" max="${tScale()==='F'?212:100}" class="cfg-n"> ${tSym()}</label>`;
+  o+=`<label>Temperature critical: <input type="number" id="cfg_critTempC" value="${Math.round(c2u(s.critTempC))}" min="${tScale()==='F'?68:20}" max="${tScale()==='F'?212:100}" class="cfg-n"> ${tSym()}</label>`;
   o+=`</div>`;
   o+=`<div class="cfg-row"><button class="btn btn-p btn-s" id="cfg_saveThresholds">Save</button><span id="cfg_threshStatus" style="font-size:12px;color:var(--ok)"></span></div>`;
   o+='</div></div>';
@@ -2989,13 +3004,17 @@ async function rConfig(){const P='p-config';loading(P);try{
   };
 
   document.getElementById('cfg_saveThresholds').onclick=async()=>{
+    // Inputs are in the hub scale; thresholds are stored in Celsius (clamped to 20..100°C, 0.1° res).
+    const _wT=parseInt(document.getElementById('cfg_warnTempC').value);
+    const _cT=parseInt(document.getElementById('cfg_critTempC').value);
+    const toC=v=>Math.round(cClamp(u2c(v))*10)/10;
     const upd={
       warnMemMb:   parseInt(document.getElementById('cfg_warnMemMb').value)||100,
       critMemMb:   parseInt(document.getElementById('cfg_critMemMb').value)||75,
       warnCpuLoad: parseFloat(document.getElementById('cfg_warnCpuLoad').value)||4.0,
       critCpuLoad: parseFloat(document.getElementById('cfg_critCpuLoad').value)||8.0,
-      warnTempC:   parseInt(document.getElementById('cfg_warnTempC').value)||50,
-      critTempC:   parseInt(document.getElementById('cfg_critTempC').value)||77
+      warnTempC:   isNaN(_wT)?50:toC(_wT),
+      critTempC:   isNaN(_cT)?77:toC(_cT)
     };
     await saveSetting(upd);
     Object.assign(TH,upd);

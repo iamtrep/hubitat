@@ -954,6 +954,39 @@ else:
         else:
             fail(f"appTypes count {len(ats)} != /hub2/userAppTypes {len(user_app_types_raw)}")
 
+# ── v5.45.0: GET /api/settings (temperature scale awareness) ──────────
+section("GET /api/settings (temperature scale)")
+
+settings_resp = api_get("settings")
+if "_error" in settings_resp:
+    fail(f"Request failed: {settings_resp['_error']}")
+else:
+    ok("Endpoint responds")
+    scale = settings_resp.get("temperatureScale")
+    if scale in ("C", "F"):
+        ok(f"temperatureScale present and valid ({scale})")
+    else:
+        fail(f"temperatureScale invalid or missing: {scale!r}")
+
+    # Thresholds are stored and surfaced in CELSIUS regardless of the hub's display scale, so a
+    # scale change can never reinterpret them. They must always fall in the Celsius range 20..100
+    # (a value in the °F range here would mean the old scale-native storage bug had regressed).
+    wt = settings_resp.get("warnTempC")
+    ct = settings_resp.get("critTempC")
+    for label, val in (("warnTempC", wt), ("critTempC", ct)):
+        if isinstance(val, (int, float)):
+            if 20 <= val <= 100:
+                ok(f"{label} present and within Celsius range 20..100 ({val})")
+            else:
+                fail(f"{label}={val} outside Celsius range 20..100 (should be °C, not display scale)")
+        else:
+            fail(f"{label} missing or non-numeric: {val!r}")
+    if isinstance(wt, (int, float)) and isinstance(ct, (int, float)):
+        if wt < ct:
+            ok(f"warnTempC < critTempC ({wt} < {ct})")
+        else:
+            fail(f"warnTempC ({wt}) should be below critTempC ({ct})")
+
 # ── v5.11.2: GET /api/live (auto-refresh payload) ─────────────────────
 section("GET /api/live")
 

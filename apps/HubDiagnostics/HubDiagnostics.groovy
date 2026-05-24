@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.44.2"
+@Field static final String APP_VERSION = "5.45.1"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -467,8 +467,18 @@ Map settingsPage() {
             input "critMemMb",   "number",  title: "Free memory critical (MB)",   defaultValue: DEFAULT_CRIT_MEM_MB,   range: "10..2000", required: true
             input "warnCpuLoad", "decimal", title: "CPU load average warning",    defaultValue: DEFAULT_WARN_CPU_LOAD, range: "0.1..32",  required: true
             input "critCpuLoad", "decimal", title: "CPU load average critical",   defaultValue: DEFAULT_CRIT_CPU_LOAD, range: "0.1..32",  required: true
-            input "warnTempC",   "number",  title: "Hub temperature warning (°C)", defaultValue: DEFAULT_WARN_TEMP_C,  range: "20..100",  required: true
-            input "critTempC",   "number",  title: "Hub temperature critical (°C)", defaultValue: DEFAULT_CRIT_TEMP_C, range: "20..100",  required: true
+            String tempScale = getTemperatureScale()
+            paragraph "Thresholds are stored in °C; you enter them in the hub's current scale (°${tempScale})."
+            // Re-derive the scale inputs from the canonical Celsius thresholds on first render and
+            // after a hub scale change, so switching scales never reinterprets a stored value.
+            // Within a scale the inputs are left untouched; updated() converts them back to °C.
+            if (settings.warnTempInput == null || state.tempInputScale != tempScale) {
+                app.updateSetting("warnTempInput", [type: "number", value: warnTempDisplayValue()])
+                app.updateSetting("critTempInput", [type: "number", value: critTempDisplayValue()])
+                state.tempInputScale = tempScale
+            }
+            input "warnTempInput", "number", title: "Hub temperature warning (°${tempScale})",  range: tempThresholdRange(), required: true
+            input "critTempInput", "number", title: "Hub temperature critical (°${tempScale})", range: tempThresholdRange(), required: true
         }
 
         section("Logging") {
@@ -991,8 +1001,9 @@ Map apiGetSettings() {
         critMemMb:             (settings.critMemMb   ?: DEFAULT_CRIT_MEM_MB)   as int,
         warnCpuLoad:           (settings.warnCpuLoad ?: DEFAULT_WARN_CPU_LOAD) as double,
         critCpuLoad:           (settings.critCpuLoad ?: DEFAULT_CRIT_CPU_LOAD) as double,
-        warnTempC:             (settings.warnTempC   ?: DEFAULT_WARN_TEMP_C)   as int,
-        critTempC:             (settings.critTempC   ?: DEFAULT_CRIT_TEMP_C)   as int,
+        warnTempC:             warnTempCValue(),
+        critTempC:             critTempCValue(),
+        temperatureScale:      getTemperatureScale(),
         debugLogging:            settings.debugLogging ?: false,
         obfuscateForumExport:    settings.obfuscateForumExport ?: false,
         liveRefreshSec:          (settings.liveRefreshSec ?: 30) as int,
@@ -1010,9 +1021,9 @@ Map apiUpdateSettings() {
 
     Set boolKeys    = ["autoSnapshot", "autoCheckpoint", "debugLogging", "obfuscateForumExport"] as Set
     Set numberKeys  = ["maxSnapshots", "maxCheckpoints", "inactivityDays", "lowBatteryThreshold",
-                        "chattyDeviceThreshold", "warnMemMb", "critMemMb", "warnTempC", "critTempC",
+                        "chattyDeviceThreshold", "warnMemMb", "critMemMb",
                         "snapshotInterval", "liveRefreshSec"] as Set
-    Set decimalKeys = ["warnCpuLoad", "critCpuLoad"] as Set
+    Set decimalKeys = ["warnCpuLoad", "critCpuLoad", "warnTempC", "critTempC"] as Set
     Set enumKeys    = ["checkpointInterval"] as Set
     boolean reschedule = false
 
@@ -1804,6 +1815,26 @@ Float fetchTemperature() {
     }
     return null
 }
+
+// ===== TEMPERATURE THRESHOLDS =====
+// The internal reading and the warn/crit thresholds are ALWAYS Celsius internally
+// (warnTempC/critTempC), so comparisons stay valid no matter what scale the hub is set to —
+// changing the hub scale never reinterprets a stored threshold. Conversion to the hub's
+// getTemperatureScale() happens only at the edges: the native settings inputs
+// (warnTempInput/critTempInput, in the hub scale) and the SPA display.
+private BigDecimal cToScale(Number celsius) {
+    (getTemperatureScale() == "F") ? ((celsius * 9 / 5 + 32) as BigDecimal) : (celsius as BigDecimal)
+}
+private BigDecimal scaleToC(Number v) {
+    // round canonical Celsius to 0.1° so an F→C→F round-trip stays clean and JSON stays tidy
+    BigDecimal c = (getTemperatureScale() == "F") ? (((v - 32) * 5 / 9) as BigDecimal) : (v as BigDecimal)
+    return (Math.round(c.doubleValue() * 10) / 10.0) as BigDecimal
+}
+private BigDecimal warnTempCValue() { (settings.warnTempC != null ? settings.warnTempC : DEFAULT_WARN_TEMP_C) as BigDecimal }
+private BigDecimal critTempCValue() { (settings.critTempC != null ? settings.critTempC : DEFAULT_CRIT_TEMP_C) as BigDecimal }
+private int warnTempDisplayValue() { Math.round(cToScale(warnTempCValue()).doubleValue()) as int }
+private int critTempDisplayValue() { Math.round(cToScale(critTempCValue()).doubleValue()) as int }
+private String tempThresholdRange() { (getTemperatureScale() == "F") ? "68..212" : "20..100" }
 
 Map fetchHubAlerts(Map prefetchedHubData = null) {
     Map hubData = prefetchedHubData
@@ -4412,6 +4443,10 @@ void installed() {
 void updated() {
     logInfo "Hub Diagnostics updated"
     state.installed = true
+    // Convert the scale-display threshold inputs to canonical Celsius storage. Thresholds are
+    // always compared in Celsius, so a later hub scale change can never reinterpret them.
+    if (settings.warnTempInput != null) app.updateSetting("warnTempC", [type: "decimal", value: scaleToC(settings.warnTempInput as BigDecimal)])
+    if (settings.critTempInput != null) app.updateSetting("critTempC", [type: "decimal", value: scaleToC(settings.critTempInput as BigDecimal)])
     unsubscribe()
     unschedule()
     // clear session-scoped caches so config/hardware changes take effect immediately
