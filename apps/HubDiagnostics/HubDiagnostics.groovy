@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.56.1"
+@Field static final String APP_VERSION = "5.57.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -124,10 +124,6 @@ import java.util.concurrent.atomic.AtomicInteger
 
 @Field static final long ONE_DAY_MS = 86400000
 @Field static final int API_TIMING_WINDOW = 20
-
-// Protocol-level constants — hardcoded, not user-configurable (industry-standard values)
-@Field static final int    ZIGBEE_LQI_CRIT = 150
-@Field static final double ZWAVE_PER_CRIT  = 1.0
 
 // System alert threshold defaults — these become the defaults for user-configurable settings
 @Field static final int    DEFAULT_WARN_MEM_MB   = 100
@@ -2774,11 +2770,6 @@ private Object reqData(String path, String name, int timeout = 10) {
 private List buildRadioDeviceList(List zwaveMsgCounts, List zigbeeMsgCounts) {
     return (zwaveMsgCounts.collect { [name: it.name, deviceId: it.deviceId, msgCount: it.msgCount, integration: "Z-Wave"] } +
             zigbeeMsgCounts.collect { [name: it.name, deviceId: it.id, msgCount: it.msgCount, integration: "Zigbee"] })
-}
-
-// A Z-Wave mesh node is a "problem" if it is not OK or its packet-error-rate exceeds ZWAVE_PER_CRIT.
-private boolean isZwaveProblemNode(Map n) {
-    return n.state != "OK" || (n.per ?: 0) > ZWAVE_PER_CRIT
 }
 
 Map analyzeNetwork() {
