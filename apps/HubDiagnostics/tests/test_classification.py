@@ -26,12 +26,14 @@ CONN_HUBMESH    = "hubmesh"
 CONN_OTHER      = "other"
 
 # Mirror of INTEGRATION_OVERRIDES — ordered longest-first
+# Sole purpose: force lan_bridge for LAN-bridge hubs (Hue/Lutron/Bond) that the
+# isNetwork algorithm would misclassify as lan_direct.  Integration names and
+# cloud/lan_direct distinction are always derived algorithmically.
 INTEGRATION_OVERRIDES = [
     ("philips hue", CONN_LAN_BRIDGE, "Philips Hue"),
     ("hue bridge",  CONN_LAN_BRIDGE, "Philips Hue"),
     ("lutron",      CONN_LAN_BRIDGE, "Lutron"),
     ("bond",        CONN_LAN_BRIDGE, "Bond"),
-    ("samsung",     None,            "SmartThings"),
 ]
 
 # Mirror of cleanIntegrationName() suffix list — longest-first
@@ -307,22 +309,15 @@ def test_bridge_bond():
     assert name == "Bond"
 
 
-# --- name alias override (samsung → SmartThings) ---
+# --- samsung derives algorithmically (no override needed) ---
 
-def test_alias_samsung():
-    """Samsung keyword → name alias 'SmartThings'; conn derived (cloud, no isNetwork)."""
+def test_samsung_smartthings_cloud():
+    """Samsung SmartThings → name cleaned algorithmically; conn derived (cloud, no isNetwork)."""
     app = {"type": "Samsung SmartThings"}
     conn, name = classify_device({}, app)
-    assert name == "SmartThings"
-    assert conn == CONN_CLOUD  # override conn is None → derive
-
-
-def test_alias_samsung_lan():
-    """Samsung + isNetwork → name alias 'SmartThings', conn lan_direct (override conn is None)."""
-    app = {"type": "Samsung SmartThings"}
-    conn, name = classify_device({"isNetwork": True}, app)
-    assert name == "SmartThings"
-    assert conn == CONN_LAN_DIRECT
+    assert conn == CONN_CLOUD
+    # cleanIntegrationName strips nothing from "Samsung SmartThings" → name is the raw type
+    assert name == "Samsung SmartThings"
 
 
 # --- no parent app ---
@@ -339,3 +334,36 @@ def test_no_parent_no_signal():
     conn, name = classify_device({}, None)
     assert conn == CONN_OTHER
     assert name == "Other"
+
+
+# ── Standalone runner ────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    import sys
+    import types
+    import traceback
+
+    module = sys.modules[__name__]
+    tests = [
+        (name, obj)
+        for name, obj in vars(module).items()
+        if name.startswith("test_") and callable(obj)
+    ]
+    tests.sort(key=lambda t: t[0])
+
+    passed = 0
+    failed = 0
+    for name, fn in tests:
+        try:
+            fn()
+            print(f"[PASS] {name}")
+            passed += 1
+        except AssertionError as exc:
+            print(f"[FAIL] {name}: {exc}")
+            failed += 1
+        except Exception as exc:
+            print(f"[FAIL] {name}: {type(exc).__name__}: {exc}")
+            failed += 1
+
+    print(f"\n{passed} passed, {failed} failed")
+    sys.exit(1 if failed else 0)

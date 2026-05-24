@@ -202,10 +202,12 @@ import java.util.concurrent.atomic.AtomicInteger
     "other": "Other"
 ]
 
-// Integration override map: lowercase keyword → [conn: connectionType, name: displayName]
-// Contains ONLY entries that need a connection-type fix the algorithm can't derive, or a
-// canonical-name alias.  Everything else auto-derives: integration = cleanIntegrationName(appType),
-// connectionType = (device.isNetwork ? lan_direct : cloud).
+// Connection-type overrides for LAN bridges: lowercase keyword → [conn: connectionType, name: displayName]
+// Sole purpose: force conn = lan_bridge for Hue/Lutron/Bond, which the algorithm can't derive
+// because isNetwork is true for them (making the algorithm pick lan_direct).
+// Integration NAME always comes from cleanIntegrationName(appType).
+// cloud vs lan_direct is always derived from device.isNetwork.
+// lan_bridge is the one connection type that requires an explicit override.
 // Entries are ordered longest-first to avoid false positives (e.g. "hue bridge" before "hue").
 // LinkedHashMap preserves insertion order, which is the iteration order used by lookupIntegration().
 @Field static final Map INTEGRATION_OVERRIDES = [
@@ -214,8 +216,6 @@ import java.util.concurrent.atomic.AtomicInteger
     "hue bridge"  : [conn: "lan_bridge", name: "Philips Hue"],
     "lutron"      : [conn: "lan_bridge", name: "Lutron"],
     "bond"        : [conn: "lan_bridge", name: "Bond"],
-    // Canonical-name aliases
-    "samsung"     : [conn: null,         name: "SmartThings"],
 ]
 
 

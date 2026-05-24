@@ -162,7 +162,7 @@ Device integration and connection type are derived by `classifyDevice` / `enrich
 2. **Parent app present** (bulk `parentAppId` → `appLookup`, or `parentApp.appType.name` from `fullJson`):
    - **Integration name**: `cleanIntegrationName(appType)` strips trailing noise tokens (`Device Manager`, `Device Service`, `Integration`, `Service`, `Manager`, etc.) — e.g. `"YoLink Device Service"` → `"YoLink"`.
    - **Connection type**: `device.isNetwork == true` ⇒ `lan_direct`; otherwise `cloud`.
-   - **`INTEGRATION_OVERRIDES`** (small map, ~5 entries): overrides conn and/or name for LAN bridges (`Philips Hue`, `Lutron`, `Bond`) and canonical aliases (`samsung` → `SmartThings`). Only entries the algorithm can't derive correctly are kept here.
+   - **`INTEGRATION_OVERRIDES`** (small map, 4 entries): forces `conn = lan_bridge` for LAN-bridge hubs (`Philips Hue`, `Lutron`, `Bond`) that `isNetwork` alone would misclassify as `lan_direct`. Integration name is always the cleaned parent-app name; `cloud` vs `lan_direct` is always derived from `isNetwork`; `lan_bridge` is the one type that requires an explicit override.
 3. **`isNetwork` only, no parent app** → `lan_direct`, `"LAN Device"`.
 4. **Fallback** → `other`, `"Other"`.
 
