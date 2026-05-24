@@ -112,7 +112,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 <div class="tabs" id="tabs">
   <div class="tab active" data-tab="summary">Summary</div>
   <div class="tab" data-tab="register">Register</div>
-  <div class="tab" data-tab="drift">Firmware Drift</div>
+  <div class="tab" data-tab="drift">Device Drift</div>
 </div>
 <div class="content">
   <div class="panel active" id="p-summary"></div>
@@ -158,7 +158,11 @@ const MOCK_AUDIT = {
             protocol:'Z-Wave',orphan:true,disabled:false,appsUsingCount:0,dashboards:[],lastActivityTimeMs:Date.now()-30*86400000},
        '4':{id:4,label:'Office Plug B',deviceTypeName:'Zigbee Outlet',manufacturer:'Acme',model:'P1',
             firmware:'1.0.7',firmwareSource:'softwareBuild',firmwareOta:null,
-            protocol:'Zigbee',orphan:false,disabled:false,appsUsingCount:1,dashboards:[1],lastActivityTimeMs:Date.now()-3*86400000} } },
+            protocol:'Zigbee',orphan:false,disabled:false,appsUsingCount:1,dashboards:[1],lastActivityTimeMs:Date.now()-3*86400000},
+       // TH01 driver drift: same mfr+model, two different drivers across hubs
+       '5':{id:5,label:'Temp Sensor A',deviceTypeName:'Tuya Temp/Humidity',manufacturer:'Tuya',model:'TH01',
+            firmware:'1.0',firmwareSource:'softwareBuild',firmwareOta:null,
+            protocol:'Zigbee',orphan:false,disabled:false,appsUsingCount:1,dashboards:[1],lastActivityTimeMs:Date.now()-1*86400000} } },
   1: { hubName:'maison', generatedAt:'2026-05-23 10:01 UTC', deviceCount:3, allDevices:{
        // P1 — real drift: same hub, same source, yet another value
        '7':{id:7,label:'Office Plug C',deviceTypeName:'Zigbee Outlet',manufacturer:'Acme',model:'P1',
@@ -170,6 +174,10 @@ const MOCK_AUDIT = {
             protocol:'Zigbee',orphan:false,disabled:false,appsUsingCount:1,dashboards:[1],lastActivityTimeMs:Date.now()-1*86400000},
        // Linked mirror — should be filtered out by filterLinked
        '9':{id:9,label:'Mirror',manufacturer:'Acme',model:'P1',firmware:'1.0.6',firmwareSource:'softwareBuild',firmwareOta:null,protocol:'Linked',appsUsingCount:0,dashboards:[],lastActivityTimeMs:Date.now()},
+       // TH01 driver drift: counterpart with a different driver
+       '11':{id:11,label:'Temp Sensor B',deviceTypeName:'Generic Zigbee Temp',manufacturer:'Tuya',model:'TH01',
+             firmware:'1.0',firmwareSource:'softwareBuild',firmwareOta:null,
+             protocol:'Zigbee',orphan:false,disabled:false,appsUsingCount:1,dashboards:[1],lastActivityTimeMs:Date.now()-2*86400000},
        // Z-Wave device: numeric manufacturer id (634 = Zooz) + multi-target firmware
        '10':{id:10,label:'Zooz ZEN55',deviceTypeName:'Z-Wave Switch',manufacturer:'634',model:'ZEN55',
              firmware:'1.05',firmwareSource:'softwareBuild',firmwareOta:null,
@@ -229,6 +237,25 @@ function firmwareDrift(rows){
                devices:g.devices, bases, mixed, inconsistent });
   }
   out.sort((a,b) => (b.mixed - a.mixed) || (b.inconsistent - a.inconsistent) || (b.count - a.count));
+  return out;
+}
+function driverDrift(rows){
+  const groups = {};
+  for (const r of rows){
+    const mfr=(r.manufacturer||'').trim(), model=(r.model||'').trim();
+    if (!mfr && !model) continue;
+    const key = mfr + ' ' + model;
+    (groups[key] = groups[key] || {key, manufacturer:mfr, model, devices:[]}).devices.push(r);
+  }
+  const out = [];
+  for (const k in groups){
+    const g = groups[k];
+    if (g.devices.length < 2) continue;
+    const drivers = [...new Set(g.devices.map(d => (d.deviceTypeName||'').trim()).filter(Boolean))];
+    if (drivers.length < 2) continue;   // one (or zero) distinct driver → not drift
+    out.push({ key:g.key, manufacturer:g.manufacturer, model:g.model, count:g.devices.length, devices:g.devices, drivers });
+  }
+  out.sort((a,b) => (b.drivers.length - a.drivers.length) || (b.count - a.count));
   return out;
 }
 function attentionItems(rows, opts){
@@ -541,12 +568,10 @@ function exportCsv(){
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'multi-hub-inventory.csv'; a.click();
 }
 
-function renderDrift(){
-  const groups = firmwareDrift(FLEET.rows);
-  if (!groups.length){
-    document.getElementById('p-drift').innerHTML = '<div class="card"><div class="card-b muted">No firmware drift or inconsistency detected.</div></div>';
-    return;
-  }
+function renderDeviceDrift(){
+  const fwGroups = firmwareDrift(FLEET.rows);
+  const ddGroups = driverDrift(FLEET.rows);
+
   const driftCols = [
     { l:'Device',       f:'label', ff:r=>(r.label||r.displayName||''), r:r=>dlink(r.id, r.label||r.displayName, r.hub) },
     { l:'Hub',          f:'hub' },
@@ -555,17 +580,47 @@ function renderDrift(){
     { l:'OTA',          f:'firmwareOta', r:r=>esc(r.firmwareOta||'—') },
     { l:'Days inactive',f:'_days', t:'n', r:r=>`<span style="color:${r._daysColor}">${esc(r._daysText)}</span>` },
   ];
-  const cards = groups.map((g, i) => {
-    const mfr = esc(displayMfr(g.manufacturer)), model = esc(g.model), count = g.count;
-    let label;
-    if (g.mixed && g.inconsistent) label = '<span class="crit">⚠ mixed firmware + inconsistent fields</span>';
-    else if (g.mixed)              label = '<span class="crit">⚠ mixed firmware</span>';
-    else                           label = `<span class="warn">⚠ inconsistent firmware fields (${esc(g.bases.join(' vs '))})</span>`;
-    return `<div class="card"><div class="card-h">${label} ${mfr} ${model} (${count})</div>`
-      + `<div class="card-b"><div id="drift_${i}"></div></div></div>`;
-  }).join('');
-  document.getElementById('p-drift').innerHTML = cards;
-  groups.forEach((g, i) => {
+  const driverCols = [
+    { l:'Device',    f:'label', ff:r=>(r.label||r.displayName||''), r:r=>dlink(r.id, r.label||r.displayName, r.hub) },
+    { l:'Hub',       f:'hub' },
+    { l:'Driver',    f:'deviceTypeName' },
+    { l:'Namespace', f:'deviceTypeNamespace' },
+  ];
+
+  // Build firmware-drift card HTML
+  let fwHtml;
+  if (!fwGroups.length){
+    fwHtml = '<div class="card"><div class="card-b muted">No firmware drift — all identical-model devices report consistent firmware.</div></div>';
+  } else {
+    fwHtml = fwGroups.map((g, i) => {
+      const mfr = esc(displayMfr(g.manufacturer)), model = esc(g.model), count = g.count;
+      let label;
+      if (g.mixed && g.inconsistent) label = '<span class="crit">⚠ mixed firmware + inconsistent fields</span>';
+      else if (g.mixed)              label = '<span class="crit">⚠ mixed firmware</span>';
+      else                           label = `<span class="warn">⚠ inconsistent firmware fields (${esc(g.bases.join(' vs '))})</span>`;
+      return `<div class="card"><div class="card-h">${label} ${mfr} ${model} (${count})</div>`
+        + `<div class="card-b"><div id="drift_${i}"></div></div></div>`;
+    }).join('');
+  }
+
+  // Build driver-drift card HTML
+  let ddHtml;
+  if (!ddGroups.length){
+    ddHtml = '<div class="card"><div class="card-b muted">No driver drift — identical-model devices all use the same driver.</div></div>';
+  } else {
+    ddHtml = ddGroups.map((g, i) => {
+      const hdr = `⚠ ${esc(displayMfr(g.manufacturer))} ${esc(g.model)} (${g.count}) — drivers: ${esc(g.drivers.join(' · '))}`;
+      return `<div class="card"><div class="card-h">${hdr}</div>`
+        + `<div class="card-b"><div id="driverdrift_${i}"></div></div></div>`;
+    }).join('');
+  }
+
+  document.getElementById('p-drift').innerHTML =
+    '<h3 style="margin:6px 0">Firmware drift</h3>' + fwHtml +
+    '<h3 style="margin:14px 0 6px">Driver drift</h3>' + ddHtml;
+
+  // Bind firmware-drift tables
+  fwGroups.forEach((g, i) => {
     const devRows = g.devices.map(dev => {
       const ia = inactivity(dev.lastActivityTimeMs);
       const days = (ia.text==='Never') ? 1e9 : Number(ia.text);
@@ -573,12 +628,17 @@ function renderDrift(){
     });
     tbl('drift_'+i, driftCols, devRows, {});
   });
+
+  // Bind driver-drift tables
+  ddGroups.forEach((g, i) => {
+    tbl('driverdrift_'+i, driverCols, g.devices, {});
+  });
 }
 
 function renderAll(){
   document.getElementById('hubInfo').textContent =
     `${FLEET.hubs.filter(h=>h.ok).length}/${FLEET.hubs.length} hubs · ${FLEET.rows.length} devices`;
-  renderSummary(); renderRegister(); renderDrift();
+  renderSummary(); renderRegister(); renderDeviceDrift();
 }
 
 // ===== BOOTSTRAP =====

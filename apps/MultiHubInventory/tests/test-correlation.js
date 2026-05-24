@@ -23,7 +23,7 @@ function extractFn(name) {
   throw new Error('unbalanced braces for ' + name);
 }
 
-const FNS = ['filterLinked', 'mergeFleet', 'fwBasis', 'firmwareDrift', 'attentionItems', 'fleetSummary'];
+const FNS = ['filterLinked', 'mergeFleet', 'fwBasis', 'firmwareDrift', 'driverDrift', 'attentionItems', 'fleetSummary'];
 const harness = FNS.map(extractFn).join('\n') + '\nmodule.exports = { ' + FNS.join(', ') + ' };';
 const tmp = path.join(os.tmpdir(), 'mhi_corr_' + process.pid + '.js');
 fs.writeFileSync(tmp, harness);
@@ -157,6 +157,43 @@ t('fleetSummary counts by hub/protocol/manufacturer + attention totals', () => {
   assert.strictEqual(s.byManufacturer.X, 2);
   assert.strictEqual(s.attentionCounts.disabled, 1);
   assert.strictEqual(s.attentionCounts.unreferenced, 1);
+});
+
+t('driverDrift — same mfr+model, two different drivers → returned', () => {
+  const rows = [
+    {manufacturer:'Tuya', model:'TH01', deviceTypeName:'Tuya Temp/Humidity', hub:'a'},
+    {manufacturer:'Tuya', model:'TH01', deviceTypeName:'Generic Zigbee Temp', hub:'b'},
+  ];
+  const d = C.driverDrift(rows);
+  assert.strictEqual(d.length, 1, 'one group returned');
+  assert.strictEqual(d[0].model, 'TH01');
+  assert.strictEqual(d[0].drivers.length, 2, 'two distinct drivers');
+});
+
+t('driverDrift — same mfr+model, same driver → not returned', () => {
+  const rows = [
+    {manufacturer:'Tuya', model:'TH01', deviceTypeName:'Tuya Temp/Humidity', hub:'a'},
+    {manufacturer:'Tuya', model:'TH01', deviceTypeName:'Tuya Temp/Humidity', hub:'b'},
+  ];
+  const d = C.driverDrift(rows);
+  assert.strictEqual(d.length, 0, 'consistent drivers → not returned');
+});
+
+t('driverDrift — singleton → not returned', () => {
+  const rows = [
+    {manufacturer:'Tuya', model:'TH01', deviceTypeName:'Tuya Temp/Humidity', hub:'a'},
+  ];
+  const d = C.driverDrift(rows);
+  assert.strictEqual(d.length, 0, 'singleton → not returned');
+});
+
+t('driverDrift — two devices, one blank deviceTypeName → only one distinct driver → not returned', () => {
+  const rows = [
+    {manufacturer:'Tuya', model:'TH01', deviceTypeName:'Tuya Temp/Humidity', hub:'a'},
+    {manufacturer:'Tuya', model:'TH01', deviceTypeName:'',                   hub:'b'},
+  ];
+  const d = C.driverDrift(rows);
+  assert.strictEqual(d.length, 0, 'blank deviceTypeName → only one named driver → not returned');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
