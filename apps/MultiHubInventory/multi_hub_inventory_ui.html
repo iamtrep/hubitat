@@ -487,9 +487,12 @@ function exportCsv(){
 }
 
 function renderDrift(){
-  const groups = firmwareDrift(FLEET.rows);
+  // Show ONLY groups that actually drift — identical hardware (manufacturer+model) running more
+  // than one distinct firmware. Consistent groups (all the same OTA/firmware) are not drift and
+  // would just clutter the tab.
+  const groups = firmwareDrift(FLEET.rows).filter(g => g.mixed);
   if (!groups.length){
-    document.getElementById('p-drift').innerHTML = '<div class="card"><div class="card-b muted">No identical-model groups found.</div></div>';
+    document.getElementById('p-drift').innerHTML = '<div class="card"><div class="card-b muted">No firmware drift detected — identical-model devices all share the same firmware.</div></div>';
     return;
   }
   const driftCols = [
