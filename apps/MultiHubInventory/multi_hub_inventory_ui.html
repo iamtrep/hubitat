@@ -1,0 +1,377 @@
+<!--
+Copyright (c) 2025-2026 PJ
+SPDX-License-Identifier: MIT
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multi-Hub Inventory</title>
+<style>
+:root { --primary:#1A77C9; --ok:#388e3c; --warn:#ff9800; --crit:#d32f2f; --bg:#f5f5f5; --card:#fff; --border:#ddd; --text:#333; --muted:#777; --alt:#f9f9f9; --hover:#e3f2fd; }
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:14px}
+a{color:var(--primary);text-decoration:none} a:hover{text-decoration:underline}
+
+.hdr{background:var(--primary);color:#fff;padding:10px 20px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:100;box-shadow:0 2px 4px rgba(0,0,0,.15)}
+.hdr h1{font-size:17px;font-weight:600} .hdr .info{margin-left:auto;font-size:12px;opacity:.85}
+
+.tabs{display:flex;background:#fff;border-bottom:2px solid var(--border);overflow-x:auto;position:sticky;top:42px;z-index:99}
+.tab{padding:9px 16px;cursor:pointer;font-size:13px;font-weight:500;border-bottom:3px solid transparent;white-space:nowrap;color:var(--muted);transition:all .15s}
+.tab:hover{color:var(--text);background:var(--alt)} .tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+
+.content{max-width:1400px;margin:0 auto;padding:16px}
+.panel{display:none} .panel.active{display:block}
+
+.card{background:var(--card);border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:14px;overflow:hidden}
+.card-h{padding:10px 14px;font-size:13px;font-weight:600;border-bottom:1px solid var(--border);background:var(--alt)}
+.card-b{padding:14px}
+
+.metrics{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
+.m{padding:10px;border-radius:6px;background:var(--alt)}
+.m-l{font-size:11px;color:var(--muted);margin-bottom:2px} .m-v{font-size:18px;font-weight:600}
+
+.pills{display:flex;flex-wrap:wrap;gap:6px}
+.pill{padding:5px 12px;border-radius:14px;font-size:12px;font-weight:500;background:var(--hover)}
+.pill b{color:var(--primary);margin-left:4px}
+
+.tbl-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:var(--primary);color:#fff;padding:7px 9px;text-align:left;cursor:pointer;white-space:nowrap;user-select:none;position:sticky;top:0}
+th:hover{background:#1565a7} th .arr{font-size:9px;margin-left:3px;opacity:.6}
+td{padding:6px 9px;border-bottom:1px solid #eee}
+tr:nth-child(even){background:var(--alt)} tr:hover{background:var(--hover)}
+
+.badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
+.b-ok{background:#e8f5e9;color:var(--ok)} .b-warn{background:#fff3e0;color:var(--warn)} .b-crit{background:#ffebee;color:var(--crit)}
+.b-builtin{background:#e8eaf6;color:#3949ab} .b-community{background:#fce4ec;color:#c62828} .b-platform{background:#f3e8ff;color:#7c3aed}
+
+.alert{padding:8px 12px;border-radius:6px;margin-bottom:6px;font-size:13px;display:flex;align-items:center;gap:6px}
+.a-crit{background:#ffebee;border-left:4px solid var(--crit);color:var(--crit)}
+.a-warn{background:#fff3e0;border-left:4px solid var(--warn);color:#e65100}
+.a-ok{background:#e8f5e9;border-left:4px solid var(--ok);color:var(--ok)}
+.a-info{background:#e3f2fd;border-left:4px solid #1976d2;color:#0d47a1}
+
+.loading{text-align:center;padding:50px 20px;color:var(--muted)}
+.spinner{display:inline-block;width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .8s linear infinite;margin-bottom:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.err{text-align:center;padding:30px;color:var(--crit)}
+.err button{margin-top:10px;padding:7px 18px;background:var(--primary);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px}
+
+.btn{display:inline-block;padding:7px 14px;border-radius:4px;border:none;cursor:pointer;font-size:13px;font-weight:500;transition:background .15s}
+.btn-p{background:var(--primary);color:#fff} .btn-p:hover{background:#1565a7} .btn-p:disabled{background:#90caf9;cursor:not-allowed}
+.btn-d{background:#ffebee;color:var(--crit)} .btn-d:hover{background:#ffcdd2}
+.btn-s{padding:4px 10px;font-size:12px}
+.actions{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.cfg-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:4px 0}
+.cfg-row label{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
+input[type=number].cfg-n{width:64px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:13px}
+
+.filter input{padding:7px 11px;border:1px solid var(--border);border-radius:4px;font-size:13px;width:280px;max-width:100%;margin-bottom:10px}
+
+.ng{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px}
+.ni{padding:7px 10px;background:var(--alt);border-radius:4px}
+.ni .nl{font-size:11px;color:var(--muted)} .ni .nv{font-size:13px;font-weight:500}
+
+.chart-wrap{overflow-x:auto;margin:8px 0}
+
+details{margin:8px 0} summary{cursor:pointer;font-weight:600;font-size:13px;padding:6px 0;color:var(--primary)}
+
+select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-size:13px;margin-right:8px}
+
+.diff-add{color:var(--ok)} .diff-rem{color:var(--crit)} .diff-chg{color:var(--warn)} .diff-item{margin:2px 0 2px 16px}
+.pill-menu{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:500}
+.pill-auto{background:#dbeafe;color:#1e40af} .pill-integ{background:#d1fae5;color:#065f46} .pill-apps{background:#ede9fe;color:#5b21b6}
+
+@media(max-width:600px){.metrics{grid-template-columns:repeat(2,1fr)}.tab{padding:7px 10px;font-size:12px}.filter input{width:100%}}
+.report-mode .actions,.report-mode .live-only,.report-mode .tab[data-tab="config"]{display:none}
+.report-banner{background:#fff3cd;color:#856404;padding:8px 20px;font-size:13px;text-align:center;border-bottom:1px solid #ffc107;position:sticky;top:0;z-index:101}
+.report-mode .hdr{top:33px}
+
+/* ===== AUDIT MODE — styles not already in the SPA ===== */
+.hdr-audit{background:var(--primary);color:#fff;padding:10px 20px;border-radius:8px 8px 0 0;display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:0}
+.hdr-audit h1{font-size:17px;font-weight:600}.hdr-audit .meta{font-size:12px;opacity:.85;margin-left:auto}
+summary.card-h{cursor:pointer;user-select:none}
+summary.card-h::-webkit-details-marker{color:var(--muted)}
+summary.card-h::marker{color:var(--muted)}
+summary.card-h:hover{background:#f0f0f0}
+details:not([open])>summary.card-h{border-bottom:0}
+table[data-sortable] th{cursor:pointer}
+table[data-sortable] th:hover{background:#1565a7}
+table[data-sortable] th[data-dir] .arr{opacity:1}
+.muted{color:var(--muted)}.warn{color:var(--warn)}.crit{color:var(--crit)}
+</style>
+</head>
+<body>
+<div class="hdr"><h1>Multi-Hub Inventory</h1><span class="info" id="hubInfo">Loading…</span>
+  <button onclick="rescanFleet()" class="btn btn-p btn-s" style="margin-left:auto">↻ Rescan fleet</button></div>
+<div class="tabs" id="tabs">
+  <div class="tab active" data-tab="summary">Summary</div>
+  <div class="tab" data-tab="register">Register</div>
+  <div class="tab" data-tab="drift">Firmware Drift</div>
+  <div class="tab" data-tab="attention">Maintenance</div>
+</div>
+<div class="content">
+  <div class="panel active" id="p-summary"></div>
+  <div class="panel" id="p-register"></div>
+  <div class="panel" id="p-drift"></div>
+  <div class="panel" id="p-attention"></div>
+</div>
+<script>
+// ===== VERSION =====
+const UI_VERSION = "0.1.0";
+
+// ===== CONFIG & MOCKS =====
+const WORKBENCH = false; // true for hub-free local development
+const T = '${access_token}', B = '${api_base}';
+const MOCK_PEERS = [{index:0,label:'maison-pro',reachable:true},{index:1,label:'maison',reachable:true}];
+const MOCK_AUDIT = {
+  0: { hubName:'maison-pro', generatedAt:'2026-05-23 10:00 UTC', deviceCount:2, allDevices:{
+       '1':{id:1,label:'Office Plug',deviceTypeName:'Zigbee Outlet',manufacturer:'Acme',model:'P1',firmware:'1.0',protocol:'Zigbee',orphan:false,disabled:false,appsUsingCount:2,dashboards:[],lastActivityTimeMs:Date.now()},
+       '2':{id:2,label:'Old Sensor',deviceTypeName:'Contact',manufacturer:'Acme',model:'C1',firmware:'1.0',protocol:'Z-Wave',orphan:true,disabled:false,appsUsingCount:0,dashboards:[],lastActivityTimeMs:Date.now()-30*86400000} } },
+  1: { hubName:'maison', generatedAt:'2026-05-23 10:01 UTC', deviceCount:2, allDevices:{
+       '7':{id:7,label:'Kitchen Plug',deviceTypeName:'Zigbee Outlet',manufacturer:'Acme',model:'P1',firmware:'1.1',protocol:'Zigbee',orphan:false,disabled:false,appsUsingCount:1,dashboards:[1],lastActivityTimeMs:Date.now()},
+       '8':{id:8,label:'Mirror',manufacturer:'Acme',model:'P1',firmware:'1.0',protocol:'Linked',appsUsingCount:0,dashboards:[],lastActivityTimeMs:Date.now()} } },
+};
+
+// ===== CORRELATION ===== (pure functions; unit-tested in tests/test-correlation.js)
+function filterLinked(rows){ return rows.filter(r => r.protocol !== 'Linked'); }
+function mergeFleet(hubResults){
+  const rows = [], hubs = [];
+  for (const h of hubResults){
+    const info = { label:h.label, ok:!!h.ok, error:h.error||null, hubName:null, generatedAt:null, deviceCount:0 };
+    if (h.ok && h.data && h.data.allDevices){
+      info.hubName = h.data.hubName || null;
+      info.generatedAt = h.data.generatedAt || null;
+      const tagged = Object.values(h.data.allDevices).map(r => Object.assign({}, r, { hub:h.label }));
+      const kept = filterLinked(tagged);
+      info.deviceCount = kept.length;
+      for (const r of kept) rows.push(r);
+    }
+    hubs.push(info);
+  }
+  return { rows, hubs };
+}
+function firmwareDrift(rows){
+  const groups = {};
+  for (const r of rows){
+    const mfr = (r.manufacturer||'').trim(), model = (r.model||'').trim();
+    if (!mfr && !model) continue;                  // fully-unknown hardware: skip
+    const key = mfr + ' ' + model;
+    (groups[key] = groups[key] || { key, manufacturer:mfr, model, devices:[] }).devices.push(r);
+  }
+  const out = [];
+  for (const k in groups){
+    const g = groups[k];
+    if (g.devices.length < 2) continue;
+    const byFw = {};
+    for (const d of g.devices){
+      const fw = (d.firmware||'').trim() || 'unknown';
+      const v = (byFw[fw] = byFw[fw] || { firmware:fw, count:0, hubs:[] });
+      v.count++; if (v.hubs.indexOf(d.hub) < 0) v.hubs.push(d.hub);
+    }
+    const variants = Object.values(byFw);
+    const mixed = variants.filter(v => v.firmware !== 'unknown').length > 1;
+    out.push({ key:g.key, manufacturer:g.manufacturer, model:g.model, count:g.devices.length, variants, mixed });
+  }
+  out.sort((a,b) => (b.mixed - a.mixed) || (b.count - a.count));
+  return out;
+}
+function attentionItems(rows, opts){
+  const MS_PER_DAY = 86400000;
+  opts = opts || {};
+  const staleDays = opts.staleDays || 7;
+  const cutoff = (opts.now || Date.now()) - staleDays * MS_PER_DAY;
+  const res = { stale:[], orphaned:[], disabled:[], unreferenced:[] };
+  for (const r of rows){
+    if (r.disabled === true) res.disabled.push(r);
+    if (r.orphan === true) res.orphaned.push(r);
+    if (typeof r.lastActivityTimeMs === 'number' && r.lastActivityTimeMs > 0 && r.lastActivityTimeMs < cutoff) res.stale.push(r);
+    const noApps = (r.appsUsingCount || 0) === 0;
+    const noDash = !r.dashboards || r.dashboards.length === 0;
+    if (noApps && noDash) res.unreferenced.push(r);
+  }
+  return res;
+}
+function fleetSummary(merged){
+  const rows = merged.rows, byHub = {}, byProtocol = {}, byMfr = {};
+  for (const r of rows){
+    byHub[r.hub] = (byHub[r.hub] || 0) + 1;
+    const p = r.protocol || 'Unknown'; byProtocol[p] = (byProtocol[p] || 0) + 1;
+    const m = (r.manufacturer||'').trim() || 'Unknown'; byMfr[m] = (byMfr[m] || 0) + 1;
+  }
+  const att = attentionItems(rows, {});
+  return { total: rows.length, byHub, byProtocol, byManufacturer: byMfr,
+    attentionCounts: { stale:att.stale.length, orphaned:att.orphaned.length,
+      disabled:att.disabled.length, unreferenced:att.unreferenced.length } };
+}
+
+// ===== ORCHESTRATION =====
+let FLEET = { rows: [], hubs: [] };
+
+function peerUrl(hubIdx, op, extra){
+  let u = `${B}/api/peer?hub=${hubIdx}&op=${op}&access_token=${T}`;
+  if (extra) u += extra;
+  return u;
+}
+async function proxy(hubIdx, op, extra){
+  if (WORKBENCH){
+    if (op === 'data') return MOCK_AUDIT[hubIdx] || { _error: 404 };
+    if (op === 'start') return { scanId: 'mock', total: 0, alreadyRunning: false };
+    return { status: 'done', processed: 0, total: 0 };
+  }
+  try {
+    const r = await fetch(peerUrl(hubIdx, op, extra));
+    if (!r.ok) return { _error: r.status };
+    return r.json();
+  } catch(e) { return { _error: 'network' }; }
+}
+async function loadPeers(){
+  if (WORKBENCH) return MOCK_PEERS;
+  try {
+    const r = await fetch(`${B}/api/peers?access_token=${T}`);
+    const j = await r.json();
+    return j.peers || [];
+  } catch(e) { return []; }
+}
+// Pull each hub's last audit/data (fast). 404/error -> hub marked not-ok.
+async function collectExisting(peers){
+  const results = [];
+  for (const p of peers){
+    const d = await proxy(p.index, 'data');
+    if (d && !d._error && !d.error) results.push({ label:p.label, ok:true, data:d });
+    else results.push({ label:p.label, ok:false, error: d && d.error ? d.error : 'no scan yet', data:null });
+  }
+  return results;
+}
+// Trigger a fresh scan on each hub, poll to completion, then pull data.
+async function rescanFleet(){
+  const peers = await loadPeers();
+  const results = [];
+  for (const p of peers){
+    const started = await proxy(p.index, 'start');
+    if (!started || started._error){ results.push({label:p.label,ok:false,error:'start failed',data:null}); continue; }
+    const sid = started.scanId;
+    let done = false; const deadline = Date.now() + 300000; // 5 min cap
+    while (!done && Date.now() < deadline){
+      await new Promise(res => setTimeout(res, 2000));
+      const st = await proxy(p.index, 'status', sid ? `&scanId=${sid}` : '');
+      if (!st || st._error){ break; }
+      // HubDiagnostics' terminal audit status is 'done' (verified live), not 'complete';
+      // treat anything no longer actively 'scanning' as finished (done/error/unknown).
+      if (st.status && st.status !== 'scanning') done = true;
+    }
+    const d = await proxy(p.index, 'data');
+    if (d && !d._error && !d.error) results.push({ label:p.label, ok:true, data:d });
+    else results.push({ label:p.label, ok:false, error: done ? 'scan produced no data' : 'scan timed out', data:null });
+  }
+  FLEET = mergeFleet(results);
+  renderAll();
+}
+async function boot(){
+  const peers = await loadPeers();
+  const results = await collectExisting(peers);
+  FLEET = mergeFleet(results);
+  renderAll();
+}
+
+// ===== VIEWS =====
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmtDate = ms => (typeof ms==='number'&&ms>0) ? new Date(ms).toISOString().slice(0,10) : '—';
+
+function renderSummary(){
+  const s = fleetSummary(FLEET);
+  const hubLines = FLEET.hubs.map(h => `<div class="ni"><div class="nl">${esc(h.label)}${h.ok?'':' ⚠'}</div>`
+    + `<div class="nv">${h.ok?h.deviceCount+' devices':'<span class="crit">'+esc(h.error)+'</span>'}</div>`
+    + `<div class="nl">${h.ok?('as of '+esc(h.generatedAt||'?')):''}</div></div>`).join('');
+  const kv = o => Object.entries(o).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<span class="pill">${esc(k)}<b>${v}</b></span>`).join('');
+  const a = s.attentionCounts;
+  document.getElementById('p-summary').innerHTML =
+    `<div class="card"><div class="card-h">Fleet — ${s.total} devices (mesh mirrors excluded)</div><div class="card-b">
+       <div class="ng">${hubLines}</div></div></div>
+     <div class="card"><div class="card-h">Attention</div><div class="card-b"><div class="pills">
+       <span class="pill">Stale<b>${a.stale}</b></span><span class="pill">Orphaned<b>${a.orphaned}</b></span>
+       <span class="pill">Disabled<b>${a.disabled}</b></span><span class="pill">Unreferenced<b>${a.unreferenced}</b></span></div></div></div>
+     <div class="card"><div class="card-h">By protocol</div><div class="card-b"><div class="pills">${kv(s.byProtocol)}</div></div></div>
+     <div class="card"><div class="card-h">By manufacturer</div><div class="card-b"><div class="pills">${kv(s.byManufacturer)}</div></div></div>`;
+}
+
+function renderRegister(){
+  const rows = FLEET.rows;
+  const body = rows.map(r => `<tr><td>${esc(r.hub)}</td><td>${esc(r.label||r.displayName)}</td><td>${esc(r.deviceTypeName)}</td>`
+    + `<td>${esc(r.manufacturer)}</td><td>${esc(r.model)}</td><td>${esc(r.firmware)}</td><td>${esc(r.protocol)}</td>`
+    + `<td>${fmtDate(r.lastActivityTimeMs)}</td><td>${Number(r.appsUsingCount)||0}</td>`
+    + `<td>${[r.orphan?'orphan':'',r.disabled?'disabled':'',r.singleThreaded?'single-thread':''].filter(Boolean).join(' ')}</td></tr>`).join('');
+  document.getElementById('p-register').innerHTML =
+    `<div class="actions"><input class="filter-i" id="regFilter" placeholder="filter…" oninput="filterRows()" style="padding:7px 11px;border:1px solid var(--border);border-radius:4px">
+       <button class="btn btn-p btn-s" onclick="exportCsv()">Export CSV</button></div>
+     <div class="card"><div class="tbl-wrap"><table data-sortable id="regTable"><thead><tr>
+       <th>Hub</th><th>Label</th><th>Type</th><th>Manufacturer</th><th>Model</th><th>Firmware</th><th>Protocol</th><th>Last Activity</th><th>#Apps</th><th>Flags</th>
+       </tr></thead><tbody>${body}</tbody></table></div></div>`;
+}
+function filterRows(){
+  const q = (document.getElementById('regFilter').value||'').toLowerCase();
+  document.querySelectorAll('#regTable tbody tr').forEach(tr =>
+    tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none');
+}
+function exportCsv(){
+  const cols = ['hub','label','deviceTypeName','manufacturer','model','firmware','protocol','lastActivityTimeMs','appsUsingCount'];
+  const head = cols.join(',');
+  const lines = FLEET.rows.map(r => cols.map(c => `"${String(r[c]==null?'':r[c]).replace(/"/g,'""')}"`).join(','));
+  const blob = new Blob([head+'\n'+lines.join('\n')], {type:'text/csv'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'multi-hub-inventory.csv'; a.click();
+}
+
+function renderDrift(){
+  const groups = firmwareDrift(FLEET.rows);
+  const cards = groups.map(g => {
+    const variants = g.variants.map(v => `<div class="diff-item">${v.firmware==='unknown'?'<span class="muted">unknown</span>':esc(v.firmware)}`
+      + ` — ${v.count} on ${esc(v.hubs.join(', '))}</div>`).join('');
+    return `<div class="card"><div class="card-h">${g.mixed?'<span class="crit">⚠ mixed</span> ':''}${esc(g.manufacturer)} ${esc(g.model)} (${g.count})</div><div class="card-b">${variants}</div></div>`;
+  }).join('');
+  document.getElementById('p-drift').innerHTML = cards || '<div class="card"><div class="card-b muted">No identical-model groups found.</div></div>';
+}
+
+function renderAttention(){
+  const a = attentionItems(FLEET.rows, {});
+  const sect = (title, list) => `<div class="card"><div class="card-h">${title} (${list.length})</div><div class="card-b">`
+    + (list.length ? list.map(r => `<div class="diff-item">${esc(r.hub)} · ${esc(r.label||r.displayName)} <span class="muted">(${esc(r.deviceTypeName||'')})</span></div>`).join('')
+       : '<span class="muted">none</span>') + '</div></div>';
+  document.getElementById('p-attention').innerHTML =
+    sect('Stale', a.stale) + sect('Orphaned', a.orphaned) + sect('Disabled', a.disabled) + sect('Unreferenced', a.unreferenced);
+}
+
+function renderAll(){
+  document.getElementById('hubInfo').textContent =
+    `${FLEET.hubs.filter(h=>h.ok).length}/${FLEET.hubs.length} hubs · ${FLEET.rows.length} devices`;
+  renderSummary(); renderRegister(); renderDrift(); renderAttention(); wireSort();
+}
+
+// ===== BOOTSTRAP =====
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(x => x.classList.remove('active'));
+  t.classList.add('active');
+  document.getElementById('p-' + t.dataset.tab).classList.add('active');
+});
+function wireSort(){
+  document.querySelectorAll('table[data-sortable]').forEach(tbl => {
+    tbl.querySelectorAll('th').forEach((th, i) => th.onclick = () => {
+      const dir = th.dataset.dir === 'asc' ? 'desc' : 'asc';
+      tbl.querySelectorAll('th').forEach(h => h.removeAttribute('data-dir')); th.dataset.dir = dir;
+      const body = tbl.querySelector('tbody');
+      [...body.rows].sort((a, b) => {
+        const x = a.cells[i].textContent, y = b.cells[i].textContent;
+        const xn = Number(x), yn = Number(y);
+        const numeric = x !== '' && y !== '' && !isNaN(xn) && !isNaN(yn);
+        const cmp = numeric ? (xn - yn) : x.localeCompare(y);
+        return dir === 'asc' ? cmp : -cmp;
+      }).forEach(r => body.appendChild(r));
+    });
+  });
+}
+boot().catch(e => { document.getElementById('hubInfo').textContent = 'Failed to load: ' + (e && e.message ? e.message : e); });
+</script>
+</body>
+</html>
