@@ -221,15 +221,19 @@ async function proxy(hubIdx, op, extra){
     if (op === 'start') return { scanId: 'mock', total: 0, alreadyRunning: false };
     return { status: 'complete', processed: 0, total: 0 };
   }
-  const r = await fetch(peerUrl(hubIdx, op, extra));
-  if (!r.ok) return { _error: r.status };
-  return r.json();
+  try {
+    const r = await fetch(peerUrl(hubIdx, op, extra));
+    if (!r.ok) return { _error: r.status };
+    return r.json();
+  } catch(e) { return { _error: 'network' }; }
 }
 async function loadPeers(){
   if (WORKBENCH) return MOCK_PEERS;
-  const r = await fetch(`${B}/api/peers?access_token=${T}`);
-  const j = await r.json();
-  return j.peers || [];
+  try {
+    const r = await fetch(`${B}/api/peers?access_token=${T}`);
+    const j = await r.json();
+    return j.peers || [];
+  } catch(e) { return []; }
 }
 // Pull each hub's last audit/data (fast). 404/error -> hub marked not-ok.
 async function collectExisting(peers){
@@ -295,7 +299,7 @@ function renderRegister(){
   const rows = FLEET.rows;
   const body = rows.map(r => `<tr><td>${esc(r.hub)}</td><td>${esc(r.label||r.displayName)}</td><td>${esc(r.deviceTypeName)}</td>`
     + `<td>${esc(r.manufacturer)}</td><td>${esc(r.model)}</td><td>${esc(r.firmware)}</td><td>${esc(r.protocol)}</td>`
-    + `<td>${fmtDate(r.lastActivityTimeMs)}</td><td>${r.appsUsingCount||0}</td>`
+    + `<td>${fmtDate(r.lastActivityTimeMs)}</td><td>${Number(r.appsUsingCount)||0}</td>`
     + `<td>${[r.orphan?'orphan':'',r.disabled?'disabled':'',r.singleThreaded?'single-thread':''].filter(Boolean).join(' ')}</td></tr>`).join('');
   document.getElementById('p-register').innerHTML =
     `<div class="actions"><input class="filter-i" id="regFilter" placeholder="filter…" oninput="filterRows()" style="padding:7px 11px;border:1px solid var(--border);border-radius:4px">
@@ -357,14 +361,15 @@ function wireSort(){
       const body = tbl.querySelector('tbody');
       [...body.rows].sort((a, b) => {
         const x = a.cells[i].textContent, y = b.cells[i].textContent;
-        const n = parseFloat(x) - parseFloat(y);
-        const cmp = isNaN(n) ? x.localeCompare(y) : n;
+        const xn = Number(x), yn = Number(y);
+        const numeric = x !== '' && y !== '' && !isNaN(xn) && !isNaN(yn);
+        const cmp = numeric ? (xn - yn) : x.localeCompare(y);
         return dir === 'asc' ? cmp : -cmp;
       }).forEach(r => body.appendChild(r));
     });
   });
 }
-boot();
+boot().catch(e => { document.getElementById('hubInfo').textContent = 'Failed to load: ' + (e && e.message ? e.message : e); });
 </script>
 </body>
 </html>
