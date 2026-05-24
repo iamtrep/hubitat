@@ -125,7 +125,7 @@ const UI_VERSION = "0.1.0";
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // true for hub-free local development
 const T = '${access_token}', B = '${api_base}';
-const MOCK_PEERS = [{index:0,label:'maison-pro',reachable:true},{index:1,label:'maison',reachable:true}];
+const MOCK_PEERS = [{index:0,label:'maison-pro',reachable:true,webBase:'http://192.168.1.86'},{index:1,label:'maison',reachable:true,webBase:'http://192.168.1.213'}];
 const MOCK_AUDIT = {
   0: { hubName:'maison-pro', generatedAt:'2026-05-23 10:00 UTC', deviceCount:2, allDevices:{
        '1':{id:1,label:'Office Plug',deviceTypeName:'Zigbee Outlet',manufacturer:'Acme',model:'P1',firmware:'1.0',protocol:'Zigbee',orphan:false,disabled:false,appsUsingCount:2,dashboards:[],lastActivityTimeMs:Date.now()},
@@ -173,7 +173,7 @@ function firmwareDrift(rows){
     }
     const variants = Object.values(byFw);
     const mixed = variants.filter(v => v.firmware !== 'unknown').length > 1;
-    out.push({ key:g.key, manufacturer:g.manufacturer, model:g.model, count:g.devices.length, variants, mixed });
+    out.push({ key:g.key, manufacturer:g.manufacturer, model:g.model, count:g.devices.length, variants, mixed, devices:g.devices });
   }
   out.sort((a,b) => (b.mixed - a.mixed) || (b.count - a.count));
   return out;
@@ -205,6 +205,28 @@ function fleetSummary(merged){
   return { total: rows.length, byHub, byProtocol, byManufacturer: byMfr,
     attentionCounts: { stale:att.stale.length, orphaned:att.orphaned.length,
       disabled:att.disabled.length, unreferenced:att.unreferenced.length } };
+}
+
+// ===== HELPERS =====
+const STALE_DAYS = 7;
+// Map of hub label -> webBase (scheme+host), populated from /api/peers.
+let HUB_WEBBASE = {};
+// Return an <a> link to the device edit page, or plain escaped text if id is unknown.
+// Falls back to a relative path for loopback/localhost bases (resolves to the serving hub).
+function dlink(id, name, hubLabel){
+  if (id == null) return esc(name);
+  const wb = HUB_WEBBASE[hubLabel] || '';
+  const base = (wb && !/127\.0\.0\.1|localhost/.test(wb)) ? wb : '';
+  return `<a href="${base}/device/edit/${id}" target="_blank" rel="noopener">${esc(name)}</a>`;
+}
+// Return {text, color} for days since lastActivityTimeMs.
+function inactivity(ms){
+  if (typeof ms !== 'number' || ms <= 0) return { text:'Never', color:'var(--crit)' };
+  const days = Math.floor((Date.now() - ms) / 86400000);
+  let color = 'var(--ok)';
+  if (days >= 2*STALE_DAYS) color = 'var(--crit)';
+  else if (days >= STALE_DAYS) color = 'var(--warn)';
+  return { text: days + 'd', color };
 }
 
 // ===== ORCHESTRATION =====
@@ -248,6 +270,7 @@ async function collectExisting(peers){
 // Trigger a fresh scan on each hub, poll to completion, then pull data.
 async function rescanFleet(){
   const peers = await loadPeers();
+  HUB_WEBBASE = {}; for (const p of peers) if (p.webBase) HUB_WEBBASE[p.label] = p.webBase;
   const results = [];
   for (const p of peers){
     const started = await proxy(p.index, 'start');
@@ -271,6 +294,7 @@ async function rescanFleet(){
 }
 async function boot(){
   const peers = await loadPeers();
+  HUB_WEBBASE = {}; for (const p of peers) if (p.webBase) HUB_WEBBASE[p.label] = p.webBase;
   const results = await collectExisting(peers);
   FLEET = mergeFleet(results);
   renderAll();
@@ -299,15 +323,18 @@ function renderSummary(){
 
 function renderRegister(){
   const rows = FLEET.rows;
-  const body = rows.map(r => `<tr><td>${esc(r.hub)}</td><td>${esc(r.label||r.displayName)}</td><td>${esc(r.deviceTypeName)}</td>`
-    + `<td>${esc(r.manufacturer)}</td><td>${esc(r.model)}</td><td>${esc(r.firmware)}</td><td>${esc(r.protocol)}</td>`
-    + `<td>${fmtDate(r.lastActivityTimeMs)}</td><td>${Number(r.appsUsingCount)||0}</td>`
-    + `<td>${[r.orphan?'orphan':'',r.disabled?'disabled':'',r.singleThreaded?'single-thread':''].filter(Boolean).join(' ')}</td></tr>`).join('');
+  const body = rows.map(r => {
+    const ia = inactivity(r.lastActivityTimeMs);
+    return `<tr><td>${esc(r.hub)}</td><td>${dlink(r.id, r.label||r.displayName, r.hub)}</td><td>${esc(r.deviceTypeName)}</td>`
+      + `<td>${esc(r.manufacturer)}</td><td>${esc(r.model)}</td><td>${esc(r.firmware)}</td><td>${esc(r.protocol)}</td>`
+      + `<td style="color:${ia.color}">${ia.text}</td><td>${Number(r.appsUsingCount)||0}</td>`
+      + `<td>${[r.orphan?'orphan':'',r.disabled?'disabled':'',r.singleThreaded?'single-thread':''].filter(Boolean).join(' ')}</td></tr>`;
+  }).join('');
   document.getElementById('p-register').innerHTML =
     `<div class="actions"><input class="filter-i" id="regFilter" placeholder="filter…" oninput="filterRows()" style="padding:7px 11px;border:1px solid var(--border);border-radius:4px">
        <button class="btn btn-p btn-s" onclick="exportCsv()">Export CSV</button></div>
      <div class="card"><div class="tbl-wrap"><table data-sortable id="regTable"><thead><tr>
-       <th>Hub</th><th>Label</th><th>Type</th><th>Manufacturer</th><th>Model</th><th>Firmware</th><th>Protocol</th><th>Last Activity</th><th>#Apps</th><th>Flags</th>
+       <th>Hub</th><th>Label</th><th>Type</th><th>Manufacturer</th><th>Model</th><th>Firmware</th><th>Protocol</th><th>Inactive</th><th>#Apps</th><th>Flags</th>
        </tr></thead><tbody>${body}</tbody></table></div></div>`;
 }
 function filterRows(){
@@ -328,7 +355,22 @@ function renderDrift(){
   const cards = groups.map(g => {
     const variants = g.variants.map(v => `<div class="diff-item">${v.firmware==='unknown'?'<span class="muted">unknown</span>':esc(v.firmware)}`
       + ` — ${v.count} on ${esc(v.hubs.join(', '))}</div>`).join('');
-    return `<div class="card"><div class="card-h">${g.mixed?'<span class="crit">⚠ mixed</span> ':''}${esc(g.manufacturer)} ${esc(g.model)} (${g.count})</div><div class="card-b">${variants}</div></div>`;
+    // Sort devices by firmware so drift is visible (unknowns last).
+    const sorted = g.devices.slice().sort((a,b) => {
+      const fa = (a.firmware||'').trim()||'~', fb = (b.firmware||'').trim()||'~';
+      return fa < fb ? -1 : fa > fb ? 1 : 0;
+    });
+    const devRows = sorted.map(dev => {
+      const ia = inactivity(dev.lastActivityTimeMs);
+      return `<div class="diff-item" style="display:flex;gap:10px;align-items:baseline">`
+        + `<span style="min-width:180px">${dlink(dev.id, dev.label||dev.displayName, dev.hub)}</span>`
+        + `<span class="muted" style="min-width:100px">${esc(dev.hub)}</span>`
+        + `<span style="min-width:70px">${dev.firmware ? esc(dev.firmware) : '<span class="muted">unknown</span>'}</span>`
+        + `<span style="color:${ia.color}">${ia.text}</span>`
+        + `</div>`;
+    }).join('');
+    return `<div class="card"><div class="card-h">${g.mixed?'<span class="crit">⚠ mixed</span> ':''}${esc(g.manufacturer)} ${esc(g.model)} (${g.count})</div>`
+      + `<div class="card-b">${variants}<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">${devRows}</div></div></div>`;
   }).join('');
   document.getElementById('p-drift').innerHTML = cards || '<div class="card"><div class="card-b muted">No identical-model groups found.</div></div>';
 }
@@ -336,7 +378,7 @@ function renderDrift(){
 function renderAttention(){
   const a = attentionItems(FLEET.rows, {});
   const sect = (title, list) => `<div class="card"><div class="card-h">${title} (${list.length})</div><div class="card-b">`
-    + (list.length ? list.map(r => `<div class="diff-item">${esc(r.hub)} · ${esc(r.label||r.displayName)} <span class="muted">(${esc(r.deviceTypeName||'')})</span></div>`).join('')
+    + (list.length ? list.map(r => `<div class="diff-item">${esc(r.hub)} · ${dlink(r.id, r.label||r.displayName, r.hub)} <span class="muted">(${esc(r.deviceTypeName||'')})</span></div>`).join('')
        : '<span class="muted">none</span>') + '</div></div>';
   document.getElementById('p-attention').innerHTML =
     sect('Stale', a.stale) + sect('Orphaned', a.orphaned) + sect('Disabled', a.disabled) + sect('Unreferenced', a.unreferenced);

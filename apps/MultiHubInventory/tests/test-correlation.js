@@ -78,6 +78,10 @@ t('firmwareDrift flags mixed firmware, ignores singletons, marks unknown-only as
   const ghost = d.find(g => g.model === 'G1');
   assert(ghost, 'Ghost/G1 group should be present');
   assert.strictEqual(ghost.mixed, false);          // unknown-only: all firmware='unknown', not mixed
+  // Change 4: devices array is exposed on each group
+  assert(d.find(g => g.model === 'M1').devices.length === 3);
+  assert(d.find(g => g.model === 'B1').devices.length === 2);
+  assert(ghost.devices.length === 3);
 });
 
 t('attentionItems classifies by reason with injectable now + staleDays', () => {
