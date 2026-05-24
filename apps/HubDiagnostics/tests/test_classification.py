@@ -6,10 +6,17 @@
 Mode-4 pure unit test for HubDiagnostics device classification.
 
 Mirrors the Groovy logic in:
-  - cleanIntegrationName()    (strips trailing app-name noise)
-  - INTEGRATION_OVERRIDES     (small map: bridges + aliases)
+  - cleanIntegrationName()    (strips trailing app-name noise → display name)
+  - INTEGRATION_OVERRIDES     (connection-type EXCEPTIONS only — bridges + AirPlay)
   - lookupIntegration()       (substring match against INTEGRATION_OVERRIDES)
+  - getIntegrationOverrides() merge (user File Manager config overlaid on built-ins)
   - classifyDevice() branch 2 (parent-app → algorithm-primary + override)
+
+Model under test (v5.56.0): the override map holds ONLY the connection types the
+isNetwork derivation can't infer. Everything else rides on the derivation —
+name from cleanIntegrationName, built-in/community from the hub's appInfo.user
+flag, conn from device.isNetwork (LAN ⇒ lan_direct, else cloud). The File Manager
+config is the user escape hatch for additional connection-type exceptions.
 
 Hub-free: no network calls, no fixtures beyond synthetic dicts.
 Discoverable by run-tests.sh (tests/test_*.py → python3 -m pytest).
@@ -25,40 +32,20 @@ CONN_VIRTUAL    = "virtual"
 CONN_HUBMESH    = "hubmesh"
 CONN_OTHER      = "other"
 
-# Mirror of INTEGRATION_OVERRIDES — Hubitat-native integrations only, ordered longest-first.
-# Predefined connection types; no config-file dependency.
-# Community integrations live in the File Manager config file (integration_overrides.json),
-# loaded and overlaid by getIntegrationOverrides().
+# Mirror of INTEGRATION_OVERRIDES — connection-type exceptions only, ordered longest-first.
+# Tuples are (keyword, conn, name); name is None because the map carries NO name overrides
+# (display names always come from cleanIntegrationName).
+#   • the four bridges report isNetwork=true (would mis-derive to lan_direct) but front their
+#     child devices, so they're lan_bridge;
+#   • AirPlay devices carry MAC-format DNIs with isNetwork=false (would mis-derive to cloud)
+#     but are local, so lan_direct.
 INTEGRATION_OVERRIDES = [
-    ("homekit",            CONN_PAIRED,      "HomeKit"),
-    ("google",             CONN_CLOUD,       "Google Home"),
-    ("alexa",              CONN_CLOUD,       "Amazon Echo Skill"),
-    ("mobile app manager", CONN_CLOUD,       "Mobile App"),
-    ("mobile",             CONN_CLOUD,       "Mobile App"),
-    ("lutron",             CONN_LAN_BRIDGE,  "Lutron"),
-    ("philips hue",        CONN_LAN_BRIDGE,  "Philips Hue"),
-    ("hue bridge",         CONN_LAN_BRIDGE,  "Philips Hue"),
+    ("philips hue", CONN_LAN_BRIDGE,  None),
+    ("hue bridge",  CONN_LAN_BRIDGE,  None),
+    ("airplay",     CONN_LAN_DIRECT,  None),
+    ("lutron",      CONN_LAN_BRIDGE,  None),
+    ("bond",        CONN_LAN_BRIDGE,  None),
 ]
-
-# Sample community config (mirrors integration_overrides.json shipped with the app)
-COMMUNITY_CONFIG = {
-    "kasa":         {"conn": "lan_direct", "name": "Kasa"},
-    "shelly":       {"conn": "lan_direct", "name": "Shelly"},
-    "sonos":        {"conn": "lan_direct", "name": "Sonos"},
-    "govee":        {"conn": "lan_direct", "name": "Govee"},
-    "lifx":         {"conn": "lan_direct", "name": "LIFX"},
-    "wled":         {"conn": "lan_direct", "name": "WLED"},
-    "wiz":          {"conn": "lan_direct", "name": "WiZ"},
-    "ecobee":       {"conn": "cloud",      "name": "ecobee"},
-    "home connect": {"conn": "cloud",      "name": "Home Connect"},
-    "icomfort":     {"conn": "cloud",      "name": "iComfort"},
-    "bthome":       {"conn": "paired",     "name": "BTHome"},
-    "samsung":      {"conn": "cloud",      "name": "SmartThings"},
-    "bond":         {"conn": "lan_bridge", "name": "Bond"},
-    "sonoff":       {"conn": "cloud",      "name": "Sonoff"},
-    "b-hyve":       {"conn": "cloud",      "name": "B-Hyve"},
-    "yolink":       {"conn": "cloud",      "name": "YoLink"},
-}
 
 # Mirror of cleanIntegrationName() suffix list — longest-first
 _CLEAN_SUFFIXES = [
@@ -97,12 +84,13 @@ def merge_overrides(builtin: list, user: dict) -> list:
     builtin: list of (keyword, conn, name) tuples (the INTEGRATION_OVERRIDES constant).
     user: dict of {raw_key: {conn?, name?}} from the user config file.
     Returns a merged list of (keyword, conn, name) tuples with user entries first.
-    Invalid conn values are rejected; name-only entries keep the builtin conn if present.
+    Keys starting with '_' (documentation / commented-out entries) are skipped.
+    Invalid conn values are rejected; name-only entries keep conn None (derived by caller).
     """
     merged_dict: dict = {}  # keyword -> (conn, name), user entries first
 
     for raw_key, raw_val in user.items():
-        if raw_key == "_README":
+        if str(raw_key).startswith("_"):  # documentation / commented-out keys
             continue
         key = raw_key.lower().strip()
         if not key:
@@ -169,7 +157,9 @@ def classify_device(device: dict, app_info: dict | None) -> tuple[str, str]:
         app_label = str(app_info.get("label") or "")
         raw = app_type or app_label
         ov = lookup_integration(app_type) or lookup_integration(app_label)
-        integration = ov[1] if ov else clean_integration_name(raw)
+        # Name: override name wins ONLY if present; otherwise cleaned parent-app name.
+        integration = ov[1] if (ov and ov[1]) else clean_integration_name(raw)
+        # Conn: override conn wins ONLY if present; otherwise LAN signal ⇒ local, else cloud.
         if ov and ov[0] is not None:
             conn = ov[0]
         else:
@@ -293,17 +283,20 @@ def test_virtual_flag():
     assert name == "Virtual"
 
 
-# --- community integration auto-detect (no override, derive from parent app) ---
+# --- derivation with NO override entry (the common case) -----------------------
+# These integrations are deliberately absent from INTEGRATION_OVERRIDES. They prove
+# the algorithm derives the right (conn, name) from isNetwork + cleanIntegrationName
+# alone — the whole reason the override map stays lean.
 
-def test_community_yolink_cloud():
-    """YoLink Device Service → (cloud, "YoLink") — no isNetwork."""
+def test_derive_yolink_cloud():
+    """YoLink Device Service, no isNetwork → (cloud, "YoLink")."""
     app = {"type": "YoLink Device Service", "user": True}
     conn, name = classify_device({}, app)
     assert conn == CONN_CLOUD
     assert name == "YoLink"
 
 
-def test_community_bhyve_cloud():
+def test_derive_bhyve_cloud():
     """B-Hyve → (cloud, "B-Hyve") — no stripping needed."""
     app = {"type": "B-Hyve", "user": True}
     conn, name = classify_device({}, app)
@@ -311,7 +304,7 @@ def test_community_bhyve_cloud():
     assert name == "B-Hyve"
 
 
-def test_community_sonoff_cloud():
+def test_derive_sonoff_cloud():
     """Sonoff Wifi Device Manager → (cloud, "Sonoff Wifi")."""
     app = {"type": "Sonoff Wifi Device Manager", "user": True}
     conn, name = classify_device({}, app)
@@ -319,25 +312,31 @@ def test_community_sonoff_cloud():
     assert name == "Sonoff Wifi"
 
 
-def test_community_ecobee_cloud():
-    """Ecobee Integration → (cloud, "Ecobee")."""
-    app = {"type": "Ecobee Integration", "user": True}
+def test_derive_ecobee_cloud():
+    """Ecobee Integration (built-in) → (cloud, "Ecobee") — no entry needed."""
+    app = {"type": "Ecobee Integration", "user": False}
     conn, name = classify_device({}, app)
     assert conn == CONN_CLOUD
     assert name == "Ecobee"
 
 
-# --- LAN-direct derive (isNetwork + parent app, no override) ---
+def test_derive_kasa_lan_direct():
+    """Kasa + isNetwork → (lan_direct, "Kasa") — derived, not in overrides."""
+    app = {"type": "Kasa Device Manager", "user": True}
+    conn, name = classify_device({"isNetwork": True}, app)
+    assert conn == CONN_LAN_DIRECT
+    assert name == "Kasa"
 
-def test_lan_direct_shelly():
-    """Shelly + isNetwork → (lan_direct, "Shelly") — not in overrides."""
+
+def test_derive_shelly_lan_direct():
+    """Shelly + isNetwork → (lan_direct, "Shelly")."""
     app = {"type": "Shelly", "user": True}
     conn, name = classify_device({"isNetwork": True}, app)
     assert conn == CONN_LAN_DIRECT
     assert name == "Shelly"
 
 
-def test_lan_direct_sonos():
+def test_derive_sonos_lan_direct():
     """Sonos + isNetwork → (lan_direct, "Sonos")."""
     app = {"type": "Sonos", "user": True}
     conn, name = classify_device({"isNetwork": True}, app)
@@ -345,101 +344,65 @@ def test_lan_direct_sonos():
     assert name == "Sonos"
 
 
-# --- Hubitat-native builtin overrides ---
-
-def test_native_homekit():
-    """HomeKit Integration → (paired, "HomeKit") via builtin override."""
-    app = {"type": "HomeKit Integration"}
+def test_derive_samsung_smartthings_cloud():
+    """Samsung SmartThings, no isNetwork → (cloud, "Samsung SmartThings") — name unchanged by cleaner."""
+    app = {"type": "Samsung SmartThings"}
     conn, name = classify_device({}, app)
-    assert conn == CONN_PAIRED
+    assert conn == CONN_CLOUD
+    assert name == "Samsung SmartThings"
+
+
+def test_derive_homekit_lan_direct():
+    """HomeKit Controller is isNetwork=true → (lan_direct, "HomeKit"); the old homekit→paired
+    override was dropped because the derivation is already correct."""
+    app = {"type": "HomeKit Controller", "user": True}
+    conn, name = classify_device({"isNetwork": True}, app)
+    assert conn == CONN_LAN_DIRECT
     assert name == "HomeKit"
 
 
-def test_native_google_home():
-    """Google Home → (cloud, "Google Home") via builtin override."""
-    app = {"type": "Google Home"}
-    conn, name = classify_device({}, app)
-    assert conn == CONN_CLOUD
-    assert name == "Google Home"
-
-
-def test_native_alexa():
-    """Amazon Echo Skill → (cloud, "Amazon Echo Skill") via builtin override."""
-    app = {"type": "Alexa Skill"}
-    conn, name = classify_device({}, app)
-    assert conn == CONN_CLOUD
-    assert name == "Amazon Echo Skill"
-
-
-def test_native_mobile_app():
-    """Mobile App Manager → (cloud, "Mobile App") via builtin 'mobile app manager' override."""
-    app = {"type": "Mobile App Manager"}
-    conn, name = classify_device({}, app)
-    assert conn == CONN_CLOUD
-    assert name == "Mobile App"
-
-
-def test_native_mobile_short():
-    """'mobile' keyword → (cloud, "Mobile App") via builtin 'mobile' override."""
-    app = {"type": "Mobile"}
-    conn, name = classify_device({}, app)
-    assert conn == CONN_CLOUD
-    assert name == "Mobile App"
-
-
-# --- bridge overrides ---
+# --- connection-type exceptions (the only reason the override map exists) -------
 
 def test_bridge_philips_hue():
-    """Philips Hue Bridge + isNetwork → (lan_bridge, "Philips Hue") via override."""
+    """Philips Hue Bridge + isNetwork → lan_bridge (override beats the lan_direct derivation);
+    name comes from cleanIntegrationName (no name override)."""
     app = {"type": "Philips Hue Bridge", "user": False}
     conn, name = classify_device({"isNetwork": True}, app)
     assert conn == CONN_LAN_BRIDGE
-    assert name == "Philips Hue"
+    assert name == "Philips Hue Bridge"
 
 
 def test_bridge_hue_bridge_keyword():
-    """'Hue Bridge Integration' keyword triggers override."""
+    """'Hue Bridge Integration' keyword triggers the lan_bridge override; cleaner → 'Hue Bridge'."""
     app = {"type": "Hue Bridge Integration"}
     conn, name = classify_device({"isNetwork": True}, app)
     assert conn == CONN_LAN_BRIDGE
-    assert name == "Philips Hue"
+    assert name == "Hue Bridge"
 
 
 def test_bridge_lutron():
-    """Lutron → lan_bridge via override regardless of isNetwork."""
-    app = {"type": "Lutron Connect"}
-    conn, name = classify_device({}, app)
+    """Lutron → lan_bridge via override regardless of isNetwork; cleaner → 'Lutron'."""
+    app = {"type": "Lutron Integration"}
+    conn, name = classify_device({"isNetwork": True}, app)
     assert conn == CONN_LAN_BRIDGE
     assert name == "Lutron"
 
 
-def test_bridge_bond_via_community():
-    """Bond is in the community config (not built-in); merging community config yields lan_bridge."""
-    merged = merge_overrides(INTEGRATION_OVERRIDES, COMMUNITY_CONFIG)
-    result = lookup_integration_with_map("Bond Home", merged)
-    assert result is not None, "expected a match for 'bond' in merged map"
-    assert result[0] == CONN_LAN_BRIDGE
-    assert result[1] == "Bond"
+def test_bridge_bond():
+    """Bond is a built-in lan_bridge exception (the Bond bridge fronts its devices)."""
+    app = {"type": "BOND Home Integration", "user": True}
+    conn, name = classify_device({"isNetwork": True}, app)
+    assert conn == CONN_LAN_BRIDGE
+    assert name == "BOND Home"
 
 
-# --- samsung: builtin-only lookup derives algorithmically; community config adds the override ---
-
-def test_samsung_smartthings_cloud():
-    """Samsung SmartThings → name cleaned algorithmically via builtin-only lookup; conn derived (cloud, no isNetwork)."""
-    app = {"type": "Samsung SmartThings"}
-    conn, name = classify_device({}, app)
-    assert conn == CONN_CLOUD
-    # cleanIntegrationName strips nothing from "Samsung SmartThings" → name is the raw type
-    assert name == "Samsung SmartThings"
-
-
-def test_samsung_community_override():
-    """Samsung → 'SmartThings' when community config is loaded (samsung key maps to cloud/SmartThings)."""
-    merged = merge_overrides(INTEGRATION_OVERRIDES, COMMUNITY_CONFIG)
-    result = lookup_integration_with_map("Samsung SmartThings", merged)
-    assert result is not None, "expected a match for 'samsung' in merged map"
-    assert result[0] == CONN_CLOUD
-    assert result[1] == "SmartThings"
+def test_airplay_lan_direct():
+    """AirPlay devices carry MAC-format DNIs with isNetwork=false — without the override they'd
+    mis-derive to cloud. The override forces lan_direct."""
+    app = {"type": "AirPlay", "user": True}
+    conn, name = classify_device({}, app)  # no isNetwork → would derive cloud
+    assert conn == CONN_LAN_DIRECT
+    assert name == "AirPlay"
 
 
 # --- no parent app ---
@@ -458,17 +421,19 @@ def test_no_parent_no_signal():
     assert name == "Other"
 
 
-# ── Integration-overrides merge tests ───────────────────────────────────────
+# ── Integration-overrides merge tests (user File Manager config) ─────────────
+# Proves a user can still add their own connection-type exception via the config
+# file, and that the merge precedence / validation rules hold.
 
 
 def test_merge_adds_new_integration():
-    """User adds a new entry not in built-ins; lookup finds it."""
-    user = {"yolink": {"conn": "cloud", "name": "YoLink"}}
+    """User adds a new connection-type exception not in built-ins; lookup finds it."""
+    user = {"vera": {"conn": "lan_bridge", "name": "Vera"}}
     merged = merge_overrides(INTEGRATION_OVERRIDES, user)
-    result = lookup_integration_with_map("YoLink Device Service", merged)
-    assert result is not None, "expected a match for 'yolink'"
-    assert result[0] == "cloud"
-    assert result[1] == "YoLink"
+    result = lookup_integration_with_map("Vera Bridge Integration", merged)
+    assert result is not None, "expected a match for 'vera'"
+    assert result[0] == CONN_LAN_BRIDGE
+    assert result[1] == "Vera"
 
 
 def test_merge_user_overrides_builtin():
@@ -482,13 +447,10 @@ def test_merge_user_overrides_builtin():
 
 
 def test_merge_invalid_conn_rejected():
-    """Invalid conn value is rejected; entry is omitted from merged map."""
+    """Invalid conn value is rejected; conn falls back to None (name-only) or entry omitted."""
     user = {"badentry": {"conn": "banana", "name": "Bad"}}
     merged = merge_overrides(INTEGRATION_OVERRIDES, user)
     result = lookup_integration_with_map("badentry device", merged)
-    # conn is None because it was rejected; name-only means entry IS added (name present)
-    # Per spec: if only name is invalid too and conn invalid, entry has no fields → omitted.
-    # Here name IS valid so entry is present but conn is None.
     assert result is None or result[0] is None, (
         f"expected conn=None (rejected), got {result}"
     )
@@ -515,9 +477,9 @@ def test_merge_name_only_entry():
 
 
 def test_merge_empty_user_config():
-    """Empty user dict → merged map equals built-in defaults."""
+    """Empty user dict → merged map equals built-in defaults (5 conn-only exceptions)."""
     merged = merge_overrides(INTEGRATION_OVERRIDES, {})
-    assert len(merged) == len(INTEGRATION_OVERRIDES)
+    assert len(merged) == len(INTEGRATION_OVERRIDES) == 5
     for (kw, conn, name), (bkw, bconn, bname) in zip(merged, INTEGRATION_OVERRIDES):
         assert kw == bkw
         assert conn == bconn
@@ -528,12 +490,26 @@ def test_merge_readme_key_skipped():
     """_README key in user file is ignored."""
     user = {
         "_README": "documentation string",
-        "yolink": {"conn": "cloud", "name": "YoLink"},
+        "vera": {"conn": "lan_bridge", "name": "Vera"},
     }
     merged = merge_overrides(INTEGRATION_OVERRIDES, user)
     keywords = [kw for kw, _, _ in merged]
     assert "_readme" not in keywords, "_README should be skipped"
-    assert "yolink" in keywords
+    assert "vera" in keywords
+
+
+def test_merge_underscore_key_skipped():
+    """Any key starting with '_' (commented-out example) is ignored, not merged."""
+    user = {
+        "_example my lan bridge": {"conn": "lan_bridge", "name": "My Bridge"},
+        "vera": {"conn": "lan_bridge", "name": "Vera"},
+    }
+    merged = merge_overrides(INTEGRATION_OVERRIDES, user)
+    keywords = [kw for kw, _, _ in merged]
+    assert "_example my lan bridge" not in keywords, "underscore-prefixed key should be skipped"
+    assert "vera" in keywords
+    # The disabled example must not classify anything.
+    assert lookup_integration_with_map("my lan bridge device", merged) is None
 
 
 def test_merge_user_wins_on_precedence():
@@ -548,43 +524,13 @@ def test_merge_user_wins_on_precedence():
     assert result[1] == "My Hue"
 
 
-# ── Community config (integration_overrides.json) merge tests ────────────────
-
-
-def test_community_config_kasa_lan_direct():
-    """Kasa from community config → (lan_direct, "Kasa") in merged map."""
-    merged = merge_overrides(INTEGRATION_OVERRIDES, COMMUNITY_CONFIG)
-    result = lookup_integration_with_map("Kasa Device Manager", merged)
-    assert result is not None, "expected a match for 'kasa' in merged map"
-    assert result[0] == CONN_LAN_DIRECT
-    assert result[1] == "Kasa"
-
-
-def test_community_config_yolink_cloud():
-    """YoLink from community config → (cloud, "YoLink") in merged map."""
-    merged = merge_overrides(INTEGRATION_OVERRIDES, COMMUNITY_CONFIG)
-    result = lookup_integration_with_map("YoLink Device Service", merged)
-    assert result is not None, "expected a match for 'yolink' in merged map"
-    assert result[0] == CONN_CLOUD
-    assert result[1] == "YoLink"
-
-
-def test_community_config_builtin_preserved():
-    """Merging community config preserves all builtin entries (no collision on disjoint keys)."""
-    merged = merge_overrides(INTEGRATION_OVERRIDES, COMMUNITY_CONFIG)
+def test_merge_builtins_preserved():
+    """Merging a disjoint user config preserves all 5 built-in exceptions."""
+    user = {"vera": {"conn": "lan_bridge", "name": "Vera"}}
+    merged = merge_overrides(INTEGRATION_OVERRIDES, user)
     keywords = [kw for kw, _, _ in merged]
-    # All 8 builtins must still be present
     for builtin_kw, _, _ in INTEGRATION_OVERRIDES:
         assert builtin_kw in keywords, f"builtin key '{builtin_kw}' missing from merged map"
-
-
-def test_community_config_readme_skipped():
-    """_README key in the community config file is skipped during merge."""
-    config_with_readme = dict(COMMUNITY_CONFIG)
-    config_with_readme["_README"] = "documentation"
-    merged = merge_overrides(INTEGRATION_OVERRIDES, config_with_readme)
-    keywords = [kw for kw, _, _ in merged]
-    assert "_readme" not in keywords, "_README should be skipped"
 
 
 # ── Standalone runner ────────────────────────────────────────────────────────

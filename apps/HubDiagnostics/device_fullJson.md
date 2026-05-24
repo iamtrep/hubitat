@@ -154,39 +154,48 @@ UI-only flags, paginated dialog variants of data already captured, or values tha
 
 ---
 
-## Integration detection model (v5.55.0)
+## Integration detection model (v5.56.0)
 
-Device integration and connection type are derived by `classifyDevice` / `enrichDevices` using an algorithm-primary model:
+Device integration and connection type are derived by `classifyDevice` / `enrichDevices` using an algorithm-primary model. The guiding principle: **derive everything possible from the hub's own signals; hold only the exceptions the derivation can't infer.**
 
 1. **Radio / protocol flags** (`isZigbee`, `isZwave`, `isMatter`, `isBluetooth`) → `paired` + protocol name. `isLinked` → `hubmesh`. `isVirtual` (or Virtual driver name heuristic) → `virtual`.
 2. **Parent app present** (bulk `parentAppId` → `appLookup`, or `parentApp.appType.name` from `fullJson`):
-   - **Integration name**: `cleanIntegrationName(appType)` strips trailing noise tokens (`Device Manager`, `Device Service`, `Integration`, `Service`, `Manager`, etc.) — e.g. `"YoLink Device Service"` → `"YoLink"`.
+   - **Integration name**: always `cleanIntegrationName(appType)` — strips trailing noise tokens (`Device Manager`, `Device Service`, `Integration`, `Service`, `Manager`, etc.), e.g. `"YoLink Device Service"` → `"YoLink"`. There are **no name overrides**.
+   - **Built-in vs community**: from the hub's own `appInfo.user` flag (`user == true` ⇒ community).
    - **Connection type**: `device.isNetwork == true` ⇒ `lan_direct`; otherwise `cloud`.
-   - **`INTEGRATION_OVERRIDES`** (built-in table, Hubitat-native integrations only — predefined connection types, no config-file dependency): overrides `conn` and/or `name` for HomeKit (`paired`), Google Home and Amazon Echo Skill and Mobile App (`cloud`), and Lutron/Philips Hue (`lan_bridge`). Unmatched integrations derive name (cleaned parent-app) and conn (from `isNetwork`) automatically.
-   - **Community integrations** ship in the `hub_diagnostics_integration_overrides.json` File Manager config (default provided with the app, user-editable). The loader merges the file over the built-in table with user entries first.
+   - **`INTEGRATION_OVERRIDES`** (built-in table) holds **connection-type exceptions only** — the handful the `isNetwork` signal mis-derives. It is *not* a roster of integrations:
+
+     | Key(s) | conn | Why the derivation is wrong without it |
+     |---|---|---|
+     | `philips hue` / `hue bridge` | `lan_bridge` | the Hue Bridge fronts the bulbs; children report `isNetwork=true` ⇒ would derive `lan_direct` |
+     | `lutron` | `lan_bridge` | behind the Lutron bridge; `isNetwork=true` ⇒ would derive `lan_direct` |
+     | `bond` | `lan_bridge` | the Bond Bridge fronts the devices; `isNetwork=true` ⇒ would derive `lan_direct` |
+     | `airplay` | `lan_direct` | MAC-format DNI with `isNetwork=false` ⇒ would derive `cloud` |
+
+     Everything else — Kasa, Sonos, Ecobee, Blink, FGLair, Govee, LIFX, WiZ, HomeKit, Google Home, Amazon Echo, the Mobile App, … — needs **no entry**: name comes from `cleanIntegrationName`, conn from `isNetwork`, built-in/community from the `user` flag. (HomeKit Controller devices are `isNetwork=true` ⇒ `lan_direct`, which is correct, so the old `homekit→paired` guess was removed.)
+   - **User exceptions** go in the `hub_diagnostics_integration_overrides.json` File Manager config — the escape hatch for a connection type *your* hub can't infer (a template ships with the app). The loader merges the file over the built-in table with user entries first.
 3. **`isNetwork` only, no parent app** → `lan_direct`, `"LAN Device"`.
 4. **Fallback** → `other`, `"Other"`.
 
-This model auto-scales to any community integration without table changes.
+This model auto-scales to any integration without table changes; the override map grows only when a genuinely new connection-type exception is discovered.
 
 ### Integration overrides config file
 
-A default community-integration config (`apps/HubDiagnostics/integration_overrides.json`) ships with the app and covers common community integrations (Kasa, Shelly, Sonos, Govee, LIFX, WLED, WiZ, ecobee, Bond, YoLink, and more). Upload it to File Manager as `hub_diagnostics_integration_overrides.json` to activate it; edit freely to add your own integrations or override built-in ones.
+A documented template (`apps/HubDiagnostics/integration_overrides.json`) ships with the app. It contains a `_README` and a single commented-out example — **not** a list of integrations, because the algorithm classifies almost everything correctly on its own. Add an entry only to correct a connection type your hub can't infer. Upload it to File Manager as `hub_diagnostics_integration_overrides.json` to activate it.
 
 - **File**: `hub_diagnostics_integration_overrides.json`
 - **Location**: Hubitat File Manager
 - **Format**: JSON object mapping lowercase keyword strings to `{conn?, name?}` entries:
   ```json
   {
-    "kasa":         { "conn": "lan_direct", "name": "Kasa" },
-    "yolink":       { "conn": "cloud",      "name": "YoLink" },
-    "my lan thing": { "conn": "lan_bridge", "name": "My Bridge" }
+    "_README": "…how-to text…",
+    "my lan bridge": { "conn": "lan_bridge", "name": "My Bridge" }
   }
   ```
-- **Keys**: lowercase substrings matched against the device's parent-app name (same substring logic as the built-in overrides).
+- **Keys**: lowercase substrings matched against the device's parent-app name (same substring logic as the built-in overrides). **Any key starting with `_` is ignored** — used for documentation (`_README`) and commented-out examples.
 - **`conn`** (optional): one of `paired`, `lan_direct`, `lan_bridge`, `cloud`, `virtual`, `hubmesh`, `other`. Unknown values are silently ignored.
-- **`name`** (optional): display name shown in reports. Either field may be omitted.
-- **Merge**: file entries are placed first (they win on key collision and on substring-match precedence), followed by built-in entries not overridden. The disjoint default keys produce the union of both tables.
+- **`name`** (optional): display name shown in reports — rarely needed, since `cleanIntegrationName` usually produces the right name. Either field may be omitted.
+- **Merge**: file entries are placed first (they win on key collision and on substring-match precedence), followed by built-in entries not overridden.
 - **Apply**: save the Hub Diagnostics settings page after uploading the file — this invalidates the in-memory cache and triggers a reload on next use.
 - **Error handling**: a missing file or malformed JSON logs a warning and falls back to the built-in defaults; the app never throws.
 

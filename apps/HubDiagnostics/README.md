@@ -131,7 +131,7 @@ A full inventory of every device on the hub.
 
 ### Device Classification
 
-The **Connection** and **Integration** columns are inferred from Hubitat's device metadata: protocol flags (Zigbee, Z-Wave, Matter, Bluetooth, Hub Mesh, Virtual), then the device's parent app matched against a known integration list (Philips Hue, Kasa, Lutron, Mobile App, etc.). Devices that don't match any known pattern show **Other** as the connection type.
+The **Connection** and **Integration** columns are inferred from Hubitat's device metadata: protocol flags (Zigbee, Z-Wave, Matter, Bluetooth, Hub Mesh, Virtual) classify paired and mesh devices directly; for everything else the integration name comes from the device's parent app and the connection type from Hubitat's own LAN flag (LAN ⇒ local, otherwise cloud). A small built-in table corrects only the few connection types the LAN flag can't infer — LAN bridges such as Philips Hue, Lutron, and Bond, plus AirPlay — and you can add your own exceptions via a File Manager config file. Devices with no parent app and no LAN signal show **Other**.
 
 Community driver authors can force a specific classification by calling `updateDataValue` in the driver:
 

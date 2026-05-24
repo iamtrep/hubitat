@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.55.0"
+@Field static final String APP_VERSION = "5.56.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -71,6 +71,9 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final String ZWAVE_TOPOLOGY_PATH = "/hub/zwaveTopology"
 @Field static final String HUB_EVENTS_PATH = "/hub/eventsJson"
 @Field static final String MIN_FW_RADIO_HEALTH = "2.4.1.154"
+// Minimum platform firmware Hub Diagnostics is developed and tested against. Older builds may
+// lack endpoints/behaviours the app relies on; below this the Versions section shows a warning.
+@Field static final String MIN_FW_SUPPORTED = "2.5.0"
 @Field static final long   FW_UPDATE_CACHE_TTL_MS = 3600_000L
 
 // ===== Device Usage Audit constants =====
@@ -202,25 +205,26 @@ import java.util.concurrent.atomic.AtomicInteger
     "other": "Other"
 ]
 
-// Connection-type overrides for LAN bridges: lowercase keyword → [conn: connectionType, name: displayName]
-// Sole purpose: force conn = lan_bridge for Hue/Lutron/Bond, which the algorithm can't derive
-// because isNetwork is true for them (making the algorithm pick lan_direct).
-// Integration NAME always comes from cleanIntegrationName(appType).
-// cloud vs lan_direct is always derived from device.isNetwork.
-// Built-in (Hubitat-native) integration set with predefined connection types — no config-file
-// dependency. Community integrations live in the File Manager config file (loaded + overlaid by
-// getIntegrationOverrides()); cloud-vs-lan_direct for anything unmatched is still derived from isNetwork.
-// Entries are ordered longest-first to avoid false positives (e.g. "hue bridge" before "hue").
-// LinkedHashMap preserves insertion order, which is the iteration order used by lookupIntegration().
+// Connection-type exceptions: lowercase keyword → [conn: connectionType].
+// This map is NOT a roster of integrations — it holds ONLY the connection types the
+// isNetwork-derivation can't infer. Everything else rides on the derivation:
+//   • integration NAME always comes from cleanIntegrationName(appType);
+//   • built-in vs community comes from the hub's own appInfo.user flag;
+//   • cloud vs lan_direct is derived from device.isNetwork (LAN ⇒ lan_direct, else cloud).
+// The four bridges report isNetwork=true (so they'd mis-derive to lan_direct) but front their
+// child devices, so they're lan_bridge. AirPlay devices carry MAC-format DNIs with isNetwork=false
+// (so they'd mis-derive to cloud) but are local, so lan_direct. No name overrides — let
+// cleanIntegrationName handle every display name.
+// User-discovered exceptions go in the File Manager config file (loaded + overlaid by
+// getIntegrationOverrides()).
+// Entries are ordered longest-first to avoid false positives. LinkedHashMap preserves insertion
+// order, which is the iteration order used by lookupIntegration().
 @Field static final Map INTEGRATION_OVERRIDES = [
-    "homekit"            : [conn: "paired",     name: "HomeKit"],
-    "google"             : [conn: "cloud",      name: "Google Home"],
-    "alexa"              : [conn: "cloud",      name: "Amazon Echo Skill"],
-    "mobile app manager" : [conn: "cloud",      name: "Mobile App"],
-    "mobile"             : [conn: "cloud",      name: "Mobile App"],
-    "lutron"             : [conn: "lan_bridge", name: "Lutron"],
-    "philips hue"        : [conn: "lan_bridge", name: "Philips Hue"],
-    "hue bridge"         : [conn: "lan_bridge", name: "Philips Hue"],
+    "philips hue" : [conn: "lan_bridge"],
+    "hue bridge"  : [conn: "lan_bridge"],
+    "airplay"     : [conn: "lan_direct"],
+    "lutron"      : [conn: "lan_bridge"],
+    "bond"        : [conn: "lan_bridge"],
 ]
 
 
@@ -380,7 +384,13 @@ Map dashboardPage() {
         String remoteVersion = checkGithubVersion()
         boolean githubUpdateAvailable = remoteVersion && isNewer(remoteVersion, APP_VERSION)
 
+        String hubFw = getHubFirmwareVersion()
+        boolean firmwareUnsupported = hubFw && !isVersionAtLeast(hubFw, MIN_FW_SUPPORTED)
+
         section("Versions") {
+            if (firmwareUnsupported) {
+                paragraph "<span style='color:red; font-weight:bold;'>\u26A0 Unsupported hub firmware:</span> Hub Diagnostics is developed and tested against platform ${MIN_FW_SUPPORTED} and later \u2014 your hub runs ${hubFw}. Some features may be unavailable or behave unexpectedly. Updating the hub firmware is recommended."
+            }
             if (githubUpdateAvailable) {
                 String editorPath = getAppEditorPath()
                 String importLink = editorPath ? "<a href='${editorPath}' target='_blank'>Open Apps Code</a> and use Import to update." : "Update via Apps Code using Import."
@@ -389,7 +399,7 @@ Map dashboardPage() {
             if (appUpdateNeeded) {
                 paragraph "<span style='color:red; font-weight:bold;'>\u26A0 Update Recommended:</span> A newer UI version (${uiVer}) is active than this App code (${APP_VERSION}). Please update the Groovy App Code in Hubitat."
             }
-            paragraph "<b>App Version:</b> ${APP_VERSION}\n<b>UI Version:</b> ${uiVer}"
+            paragraph "<b>App Version:</b> ${APP_VERSION}\n<b>UI Version:</b> ${uiVer}\n<b>Hub Firmware:</b> ${hubFw ?: 'Unknown'}"
             if (!githubUpdateAvailable) {
                 String editorPath = getAppEditorPath()
                 if (editorPath) {
@@ -480,12 +490,14 @@ Map settingsPage() {
         }
 
         section("Integration Overrides") {
-            paragraph "To override a connection type or display name for any integration, create " +
+            paragraph "Most integrations need no setup — Hub Diagnostics derives the connection type from the " +
+                "hub's own LAN flag and the display name from the parent app. To correct a connection type the hub " +
+                "can't infer (e.g. a LAN bridge, or a local device the hub flags as cloud), create " +
                 "<b>${INTEGRATION_OVERRIDES_FILE}</b> in File Manager. " +
                 "Keys are lowercase substrings matched against the device's parent-app name; " +
                 "valid <code>conn</code> values are: paired, lan_direct, lan_bridge, cloud, virtual, hubmesh, other. " +
                 "Save this page after uploading the file to apply the changes. " +
-                "A default community-integration config (<i>integration_overrides.json</i>) is shipped with the app and can be uploaded as-is to get started."
+                "A documented template (<i>integration_overrides.json</i>) ships with the app to start from."
         }
 
         section("Logging") {
@@ -2976,7 +2988,7 @@ private Map getIntegrationOverrides() {
             // Build merged map: user entries first, then built-in entries not overridden.
             Map merged = new LinkedHashMap()
             userRaw.each { rawKey, rawVal ->
-                if (rawKey == "_README") return           // skip documentation key
+                if (rawKey.toString().startsWith("_")) return   // skip documentation / commented-out keys
                 String key = rawKey.toString().toLowerCase().trim()
                 if (!key) return
                 Map entry = [:]
@@ -2991,7 +3003,8 @@ private Map getIntegrationOverrides() {
             INTEGRATION_OVERRIDES.each { k, v ->
                 if (!merged.containsKey(k)) merged[k] = v
             }
-            logDebug "Loaded integration overrides: ${merged.size()} entries (${userRaw.size() - (userRaw.containsKey('_README') ? 1 : 0)} from user file)"
+            int userEntryCount = userRaw.keySet().count { !it.toString().startsWith("_") } as int
+            logDebug "Loaded integration overrides: ${merged.size()} entries (${userEntryCount} from user file)"
             integrationOverridesCache = merged
             return merged
         }
@@ -3061,9 +3074,8 @@ Map classifyDevice(Map device, Map appLookup, Set communityDrivers) {
 
     // 2. Parent app lookup (parentAppId present in bulk list for some devices)
     //    Algorithm-primary: integration = cleanIntegrationName(appType), connectionType derived from
-    //    device.isNetwork signal (LAN ⇒ lan_direct, else cloud).  INTEGRATION_OVERRIDES provides a
-    //    small connection-type or name override for the few that the algorithm can't derive correctly
-    //    (LAN bridges, canonical-name aliases).
+    //    device.isNetwork signal (LAN ⇒ lan_direct, else cloud).  INTEGRATION_OVERRIDES supplies a
+    //    connection-type exception for the few the isNetwork signal can't derive (LAN bridges, AirPlay).
     Object parentAppIdRaw = extractParentAppId(device)
     String normalizedParentAppId = normalizeAppLookupId(parentAppIdRaw)
     if (normalizedParentAppId) {
@@ -3072,7 +3084,7 @@ Map classifyDevice(Map device, Map appLookup, Set communityDrivers) {
             String appType  = (appInfo.type  ?: "").toString()
             String appLabel = (appInfo.label ?: "").toString()
             boolean isBuiltin = !(appInfo.user == true)
-            // Check override map first (bridges, aliases) — falls back to algorithmic derivation
+            // Check override map first (bridges, AirPlay) — falls back to algorithmic derivation
             Map ov = lookupIntegration(appType) ?: lookupIntegration(appLabel)
             String raw = appType ?: appLabel
             String integration = (ov?.name) ? (String) ov.name : cleanIntegrationName(raw)
@@ -3098,7 +3110,7 @@ Map classifyDevice(Map device, Map appLookup, Set communityDrivers) {
 // uncertainDevices: Map<String deviceId, Map appInfo> where appInfo may be null.
 // Primary signal: parentApp from fullJson (appType.name) — runs the same algorithm-primary logic as
 //   classifyDevice: integration = cleanIntegrationName(appType.name), connectionType derived from
-//   the controllerType signal (NET/LAN ⇒ lan_direct, else cloud); INTEGRATION_OVERRIDES override conn/name.
+//   the controllerType signal (NET/LAN ⇒ lan_direct, else cloud); INTEGRATION_OVERRIDES supplies a conn exception.
 // Fallback signal: controllerType from fullJson top level (actual values: ZGB, MAT, LNK, etc.).
 // Results cached in state.controllerTypeCache — keyed by device ID string, value is compact
 // JSON of [parentAppTypeName, controllerType] since parentApp is also stable for a device's lifetime.

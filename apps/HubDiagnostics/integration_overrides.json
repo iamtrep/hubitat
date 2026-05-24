@@ -1,19 +1,4 @@
 {
-  "_README": "Community integration overrides for Hub Diagnostics. Upload as hub_diagnostics_integration_overrides.json to the hub's File Manager, then save the app's settings page to apply. Keys are lowercase substrings matched against a device's parent-app name. 'conn' is one of: paired, lan_direct, lan_bridge, cloud, virtual, hubmesh, other. 'name' is the display name. Either field is optional. Edit freely to add your own integrations or override built-in ones.",
-  "kasa":         { "conn": "lan_direct", "name": "Kasa" },
-  "shelly":       { "conn": "lan_direct", "name": "Shelly" },
-  "sonos":        { "conn": "lan_direct", "name": "Sonos" },
-  "govee":        { "conn": "lan_direct", "name": "Govee" },
-  "lifx":         { "conn": "lan_direct", "name": "LIFX" },
-  "wled":         { "conn": "lan_direct", "name": "WLED" },
-  "wiz":          { "conn": "lan_direct", "name": "WiZ" },
-  "ecobee":       { "conn": "cloud",      "name": "ecobee" },
-  "home connect": { "conn": "cloud",      "name": "Home Connect" },
-  "icomfort":     { "conn": "cloud",      "name": "iComfort" },
-  "bthome":       { "conn": "paired",     "name": "BTHome" },
-  "samsung":      { "conn": "cloud",      "name": "SmartThings" },
-  "bond":         { "conn": "lan_bridge", "name": "Bond" },
-  "sonoff":       { "conn": "cloud",      "name": "Sonoff" },
-  "b-hyve":       { "conn": "cloud",      "name": "B-Hyve" },
-  "yolink":       { "conn": "cloud",      "name": "YoLink" }
+  "_README": "Optional connection-type exceptions for Hub Diagnostics. Most integrations need NO entry here: the connection type is derived from the hub's own isNetwork flag (LAN => lan_direct, otherwise cloud) and the display name from the parent-app name. Add an entry ONLY when that derivation is wrong for one of your integrations -- e.g. a LAN bridge whose child devices report isNetwork=true (they would mis-derive to lan_direct instead of lan_bridge), or a locally-addressed integration the hub flags isNetwork=false (it would mis-derive to cloud instead of lan_direct). To use: upload this file to the hub's File Manager as hub_diagnostics_integration_overrides.json, then open the Hub Diagnostics app and Save the settings page to apply. Keys are lowercase substrings matched against a device's parent-app name. 'conn' is one of: paired, lan_direct, lan_bridge, cloud, virtual, hubmesh, other. 'name' overrides the display name (rarely needed -- the cleaned parent-app name is usually correct). Either field may be omitted. Any key starting with an underscore is ignored, so the _example entry below is inactive: copy it and remove the leading underscore from the key to enable it.",
+  "_example my lan bridge": { "conn": "lan_bridge", "name": "My Bridge" }
 }
