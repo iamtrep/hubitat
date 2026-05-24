@@ -271,8 +271,100 @@ async function boot(){
 }
 
 // ===== VIEWS =====
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmtDate = ms => (typeof ms==='number'&&ms>0) ? new Date(ms).toISOString().slice(0,10) : '—';
+
+function renderSummary(){
+  const s = fleetSummary(FLEET);
+  const hubLines = FLEET.hubs.map(h => `<div class="ni"><div class="nl">${esc(h.label)}${h.ok?'':' ⚠'}</div>`
+    + `<div class="nv">${h.ok?h.deviceCount+' devices':'<span class="crit">'+esc(h.error)+'</span>'}</div>`
+    + `<div class="nl">${h.ok?('as of '+esc(h.generatedAt||'?')):''}</div></div>`).join('');
+  const kv = o => Object.entries(o).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<span class="pill">${esc(k)}<b>${v}</b></span>`).join('');
+  const a = s.attentionCounts;
+  document.getElementById('p-summary').innerHTML =
+    `<div class="card"><div class="card-h">Fleet — ${s.total} devices (mesh mirrors excluded)</div><div class="card-b">
+       <div class="ng">${hubLines}</div></div></div>
+     <div class="card"><div class="card-h">Attention</div><div class="card-b"><div class="pills">
+       <span class="pill">Stale<b>${a.stale}</b></span><span class="pill">Orphaned<b>${a.orphaned}</b></span>
+       <span class="pill">Disabled<b>${a.disabled}</b></span><span class="pill">Unreferenced<b>${a.unreferenced}</b></span></div></div></div>
+     <div class="card"><div class="card-h">By protocol</div><div class="card-b"><div class="pills">${kv(s.byProtocol)}</div></div></div>
+     <div class="card"><div class="card-h">By manufacturer</div><div class="card-b"><div class="pills">${kv(s.byManufacturer)}</div></div></div>`;
+}
+
+function renderRegister(){
+  const rows = FLEET.rows;
+  const body = rows.map(r => `<tr><td>${esc(r.hub)}</td><td>${esc(r.label||r.displayName)}</td><td>${esc(r.deviceTypeName)}</td>`
+    + `<td>${esc(r.manufacturer)}</td><td>${esc(r.model)}</td><td>${esc(r.firmware)}</td><td>${esc(r.protocol)}</td>`
+    + `<td>${fmtDate(r.lastActivityTimeMs)}</td><td>${r.appsUsingCount||0}</td>`
+    + `<td>${[r.orphan?'orphan':'',r.disabled?'disabled':'',r.singleThreaded?'single-thread':''].filter(Boolean).join(' ')}</td></tr>`).join('');
+  document.getElementById('p-register').innerHTML =
+    `<div class="actions"><input class="filter-i" id="regFilter" placeholder="filter…" oninput="filterRows()" style="padding:7px 11px;border:1px solid var(--border);border-radius:4px">
+       <button class="btn btn-p btn-s" onclick="exportCsv()">Export CSV</button></div>
+     <div class="card"><div class="tbl-wrap"><table data-sortable id="regTable"><thead><tr>
+       <th>Hub</th><th>Label</th><th>Type</th><th>Manufacturer</th><th>Model</th><th>Firmware</th><th>Protocol</th><th>Last Activity</th><th>#Apps</th><th>Flags</th>
+       </tr></thead><tbody>${body}</tbody></table></div></div>`;
+}
+function filterRows(){
+  const q = (document.getElementById('regFilter').value||'').toLowerCase();
+  document.querySelectorAll('#regTable tbody tr').forEach(tr =>
+    tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none');
+}
+function exportCsv(){
+  const cols = ['hub','label','deviceTypeName','manufacturer','model','firmware','protocol','lastActivityTimeMs','appsUsingCount'];
+  const head = cols.join(',');
+  const lines = FLEET.rows.map(r => cols.map(c => `"${String(r[c]==null?'':r[c]).replace(/"/g,'""')}"`).join(','));
+  const blob = new Blob([head+'\n'+lines.join('\n')], {type:'text/csv'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'multi-hub-inventory.csv'; a.click();
+}
+
+function renderDrift(){
+  const groups = firmwareDrift(FLEET.rows);
+  const cards = groups.map(g => {
+    const variants = g.variants.map(v => `<div class="diff-item">${v.firmware==='unknown'?'<span class="muted">unknown</span>':esc(v.firmware)}`
+      + ` — ${v.count} on ${esc(v.hubs.join(', '))}</div>`).join('');
+    return `<div class="card"><div class="card-h">${g.mixed?'<span class="crit">⚠ mixed</span> ':''}${esc(g.manufacturer)} ${esc(g.model)} (${g.count})</div><div class="card-b">${variants}</div></div>`;
+  }).join('');
+  document.getElementById('p-drift').innerHTML = cards || '<div class="card"><div class="card-b muted">No identical-model groups found.</div></div>';
+}
+
+function renderAttention(){
+  const a = attentionItems(FLEET.rows, {});
+  const sect = (title, list) => `<div class="card"><div class="card-h">${title} (${list.length})</div><div class="card-b">`
+    + (list.length ? list.map(r => `<div class="diff-item">${esc(r.hub)} · ${esc(r.label||r.displayName)} <span class="muted">(${esc(r.deviceTypeName||'')})</span></div>`).join('')
+       : '<span class="muted">none</span>') + '</div></div>';
+  document.getElementById('p-attention').innerHTML =
+    sect('Stale', a.stale) + sect('Orphaned', a.orphaned) + sect('Disabled', a.disabled) + sect('Unreferenced', a.unreferenced);
+}
+
+function renderAll(){
+  document.getElementById('hubInfo').textContent =
+    `${FLEET.hubs.filter(h=>h.ok).length}/${FLEET.hubs.length} hubs · ${FLEET.rows.length} devices`;
+  renderSummary(); renderRegister(); renderDrift(); renderAttention(); wireSort();
+}
 
 // ===== BOOTSTRAP =====
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(x => x.classList.remove('active'));
+  t.classList.add('active');
+  document.getElementById('p-' + t.dataset.tab).classList.add('active');
+});
+function wireSort(){
+  document.querySelectorAll('table[data-sortable]').forEach(tbl => {
+    tbl.querySelectorAll('th').forEach((th, i) => th.onclick = () => {
+      const dir = th.dataset.dir === 'asc' ? 'desc' : 'asc';
+      tbl.querySelectorAll('th').forEach(h => h.removeAttribute('data-dir')); th.dataset.dir = dir;
+      const body = tbl.querySelector('tbody');
+      [...body.rows].sort((a, b) => {
+        const x = a.cells[i].textContent, y = b.cells[i].textContent;
+        const n = parseFloat(x) - parseFloat(y);
+        const cmp = isNaN(n) ? x.localeCompare(y) : n;
+        return dir === 'asc' ? cmp : -cmp;
+      }).forEach(r => body.appendChild(r));
+    });
+  });
+}
+boot();
 </script>
 </body>
 </html>
