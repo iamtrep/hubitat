@@ -36,11 +36,25 @@ function t(name, fn) {
   catch (e) { fail++; console.log('  FAIL ' + name + '\n         ' + e.message); }
 }
 
-// --- tests appended in later tasks ---
 t('filterLinked drops protocol === Linked', () => {
   const rows = [{id:1,protocol:'Zigbee'},{id:2,protocol:'Linked'},{id:3,protocol:'Z-Wave'}];
   const out = C.filterLinked(rows);
   assert.deepStrictEqual(out.map(r=>r.id), [1,3]);
+});
+
+t('mergeFleet flattens allDevices, tags hub, drops Linked, records hub status', () => {
+  const hubResults = [
+    { label:'pro', ok:true, data:{ hubName:'Pro', generatedAt:'2026-05-23 10:00 UTC',
+        allDevices:{ '1':{id:1,protocol:'Zigbee',manufacturer:'X'}, '2':{id:2,protocol:'Linked'} } } },
+    { label:'main', ok:false, error:'unreachable', data:null },
+  ];
+  const m = C.mergeFleet(hubResults);
+  assert.strictEqual(m.rows.length, 1);
+  assert.strictEqual(m.rows[0].hub, 'pro');
+  assert.strictEqual(m.hubs[0].deviceCount, 1);
+  assert.strictEqual(m.hubs[0].hubName, 'Pro');
+  assert.strictEqual(m.hubs[1].ok, false);
+  assert.strictEqual(m.hubs[1].error, 'unreachable');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
