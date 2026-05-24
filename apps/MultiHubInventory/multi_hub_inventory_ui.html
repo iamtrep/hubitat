@@ -127,6 +127,75 @@ const WORKBENCH = false; // true for hub-free local development
 const T = '${access_token}', B = '${api_base}';
 
 // ===== CORRELATION ===== (pure functions; unit-tested in tests/test-correlation.js)
+function filterLinked(rows){ return rows.filter(r => r.protocol !== 'Linked'); }
+function mergeFleet(hubResults){
+  const rows = [], hubs = [];
+  for (const h of hubResults){
+    const info = { label:h.label, ok:!!h.ok, error:h.error||null, hubName:null, generatedAt:null, deviceCount:0 };
+    if (h.ok && h.data && h.data.allDevices){
+      info.hubName = h.data.hubName || null;
+      info.generatedAt = h.data.generatedAt || null;
+      const tagged = Object.values(h.data.allDevices).map(r => Object.assign({}, r, { hub:h.label }));
+      const kept = filterLinked(tagged);
+      info.deviceCount = kept.length;
+      for (const r of kept) rows.push(r);
+    }
+    hubs.push(info);
+  }
+  return { rows, hubs };
+}
+function firmwareDrift(rows){
+  const groups = {};
+  for (const r of rows){
+    const mfr = (r.manufacturer||'').trim(), model = (r.model||'').trim();
+    if (!mfr && !model) continue;                  // fully-unknown hardware: skip
+    const key = mfr + ' ' + model;
+    (groups[key] = groups[key] || { key, manufacturer:mfr, model, devices:[] }).devices.push(r);
+  }
+  const out = [];
+  for (const k in groups){
+    const g = groups[k];
+    if (g.devices.length < 2) continue;
+    const byFw = {};
+    for (const d of g.devices){
+      const fw = (d.firmware||'').trim() || 'unknown';
+      const v = (byFw[fw] = byFw[fw] || { firmware:fw, count:0, hubs:[] });
+      v.count++; if (v.hubs.indexOf(d.hub) < 0) v.hubs.push(d.hub);
+    }
+    const variants = Object.values(byFw);
+    const mixed = variants.filter(v => v.firmware !== 'unknown').length > 1;
+    out.push({ key:g.key, manufacturer:g.manufacturer, model:g.model, count:g.devices.length, variants, mixed });
+  }
+  out.sort((a,b) => (b.mixed - a.mixed) || (b.count - a.count));
+  return out;
+}
+function attentionItems(rows, opts){
+  opts = opts || {};
+  const staleDays = opts.staleDays || 7;
+  const cutoff = (opts.now || Date.now()) - staleDays * 86400000;
+  const res = { stale:[], orphaned:[], disabled:[], unreferenced:[] };
+  for (const r of rows){
+    if (r.disabled === true) res.disabled.push(r);
+    if (r.orphan === true) res.orphaned.push(r);
+    if (typeof r.lastActivityTimeMs === 'number' && r.lastActivityTimeMs > 0 && r.lastActivityTimeMs < cutoff) res.stale.push(r);
+    const noApps = (r.appsUsingCount || 0) === 0;
+    const noDash = !r.dashboards || r.dashboards.length === 0;
+    if (noApps && noDash) res.unreferenced.push(r);
+  }
+  return res;
+}
+function fleetSummary(merged){
+  const rows = merged.rows, byHub = {}, byProtocol = {}, byMfr = {};
+  for (const r of rows){
+    byHub[r.hub] = (byHub[r.hub] || 0) + 1;
+    const p = r.protocol || 'Unknown'; byProtocol[p] = (byProtocol[p] || 0) + 1;
+    const m = (r.manufacturer||'').trim() || 'Unknown'; byMfr[m] = (byMfr[m] || 0) + 1;
+  }
+  const att = attentionItems(rows, {});
+  return { total: rows.length, byHub, byProtocol, byManufacturer: byMfr,
+    attentionCounts: { stale:att.stale.length, orphaned:att.orphaned.length,
+      disabled:att.disabled.length, unreferenced:att.unreferenced.length } };
+}
 
 // ===== ORCHESTRATION =====
 

@@ -37,6 +37,11 @@ function t(name, fn) {
 }
 
 // --- tests appended in later tasks ---
+t('filterLinked drops protocol === Linked', () => {
+  const rows = [{id:1,protocol:'Zigbee'},{id:2,protocol:'Linked'},{id:3,protocol:'Z-Wave'}];
+  const out = C.filterLinked(rows);
+  assert.deepStrictEqual(out.map(r=>r.id), [1,3]);
+});
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
