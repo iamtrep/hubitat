@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.56.1"
+@Field static final String APP_VERSION = "5.57.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -124,10 +124,6 @@ import java.util.concurrent.atomic.AtomicInteger
 
 @Field static final long ONE_DAY_MS = 86400000
 @Field static final int API_TIMING_WINDOW = 20
-
-// Protocol-level constants — hardcoded, not user-configurable (industry-standard values)
-@Field static final int    ZIGBEE_LQI_CRIT = 150
-@Field static final double ZWAVE_PER_CRIT  = 1.0
 
 // System alert threshold defaults — these become the defaults for user-configurable settings
 @Field static final int    DEFAULT_WARN_MEM_MB   = 100
@@ -406,10 +402,6 @@ Map dashboardPage() {
                     paragraph "<a href='${editorPath}' target='_blank'>Open App Code Editor</a> — update the Groovy source code via Import"
                 }
             }
-        }
-
-        section("Quick Summary") {
-            paragraph generateQuickSummary()
         }
 
         section("Dashboard") {
@@ -778,22 +770,23 @@ Map apiPerformanceCompare() {
         checkpointStats = checkpointStats + [uptimeSeconds: parseUptime(checkpointStats.uptime as String)]
     }
 
-    // Build zero baseline if startup
-    if (baseline == "startup") {
-        baselineStats = buildZeroBaseline(checkpointStats, checkpointStats.resources)
-    }
+    // The "startup" baseline is a zeroed structural mirror of the checkpoint. The SPA now
+    // synthesizes it client-side (zeroBaseline) so the hub ships no derived baseline — for a
+    // startup comparison baselineStats stays null and baselineMode tells the SPA to fill it in.
+    String baselineMode = (baseline == "startup") ? "startup" : "checkpoint"
 
     // Save for persistence
     savePerformanceComparisonPayload([
         generatedAt: new Date().format("yyyy-MM-dd HH:mm:ss"),
-        baselineLabel: baselineLabel, checkpointLabel: checkpointLabel,
-        baselineStats: baselineStats ?: [:], checkpointStats: checkpointStats ?: [:]
+        baselineLabel: baselineLabel, checkpointLabel: checkpointLabel, baselineMode: baselineMode,
+        baselineStats: baselineStats, checkpointStats: checkpointStats ?: [:]
     ])
 
     return jsonResponse([
         success: true,
         baselineLabel: baselineLabel,
         checkpointLabel: checkpointLabel,
+        baselineMode: baselineMode,
         baselineStats: baselineStats,
         checkpointStats: checkpointStats
     ])
@@ -991,7 +984,6 @@ Map apiForumData() {
     Integer uptimeSeconds = stats ? parseUptime(stats.uptime as String) : null
     List zwaveMsgCounts = extractZwaveMessageCounts(networkData.zwave ?: [:])
     List zigbeeMsgCounts = extractZigbeeMessageCounts(networkData.zigbee ?: [:])
-    List allRadioDevices = buildRadioDeviceList(zwaveMsgCounts, zigbeeMsgCounts)
     recordApiTiming("forum/data", now() - start)
     return jsonResponse([
         hubInfo: hubInfo, resources: resources, temperature: temperature,
@@ -999,7 +991,7 @@ Map apiForumData() {
         eventStateLimits: eventStateLimits, alertSignals: alertSignals,
         deviceStats: deviceStats, appStats: appStats, networkData: networkData,
         zwaveMesh: zwaveMesh, ghostNodes: ghostNodes, zigbeeMesh: zigbeeMesh,
-        zwaveVersion: zwaveVersion, stats: stats, allRadioDevices: allRadioDevices,
+        zwaveVersion: zwaveVersion, stats: stats, radioStats: [zwave: zwaveMsgCounts, zigbee: zigbeeMsgCounts],
         uptimeMin: uptimeSeconds != null ? uptimeSeconds / 60.0f : null,
         obfuscate: settings.obfuscateForumExport ?: false
     ])
@@ -1177,12 +1169,6 @@ Map getNetworkData(Map shared = [:]) {
     String zwaveVersion = fetchZwaveVersion()
     Map zwaveMesh = extractZwaveMeshQuality(networkData.zwave ?: [:])
     List ghostNodes = buildZwaveGhostNodes(networkData.zwave ?: [:])
-    List problemNodes = (zwaveMesh?.nodes ?: []).findAll { Map n -> isZwaveProblemNode(n) }.collect { Map n ->
-        List issues = []
-        if (n.state != "OK") issues << "State: ${n.state}"
-        if ((n.per ?: 0) > ZWAVE_PER_CRIT) issues << "PER: ${n.per}%"
-        [name: n.name, deviceId: n.deviceId, nodeId: n.nodeId, issues: issues.join(", ")]
-    }
     Map zigbeeRaw = networkData.zigbee ?: [:]
     Map zigbeeDeviceByShortId = [:]
     (zigbeeRaw.devices ?: []).each { Map d -> if (d.shortZigbeeId) zigbeeDeviceByShortId[((String)d.shortZigbeeId).toUpperCase()] = d }
@@ -1200,7 +1186,7 @@ Map getNetworkData(Map shared = [:]) {
             isRadioUpdateNeeded: networkData.zwave.isRadioUpdateNeeded,
             zwaveJS: networkData.zwave.zwaveJS, zwaveJSAvailable: networkData.zwave.zwaveJSAvailable,
             version: zwaveVersion,
-            mesh: zwaveMesh, ghostNodes: ghostNodes, problemNodes: problemNodes,
+            mesh: zwaveMesh, ghostNodes: ghostNodes,
             messageCounts: extractZwaveMessageCounts(networkData.zwave ?: [:])
         ] : null,
         zigbee: networkData.zigbee ? [
@@ -1217,8 +1203,6 @@ Map getNetworkData(Map shared = [:]) {
                     Map zdev = zigbeeDeviceByShortId[n.shortId?.toUpperCase()]
                     [shortId: n.shortId, name: n.name, deviceId: zdev?.id, lqi: n.lqi, age: n.age, inCost: n.inCost, outCost: n.outCost, stale: n.stale ?: false]
                 },
-                weakNeighbors: (zigbeeMesh.weakNeighbors ?: []).collect { [shortId: it.shortId, lqi: it.lqi] },
-                staleNeighbors: (zigbeeMesh.staleNeighbors ?: []).collect { [shortId: it.shortId, age: it.age] },
                 childDevices: zigbeeMesh.childDevices?.size() ?: 0
             ] : null
         ] : null,
@@ -1319,10 +1303,7 @@ Map getPerformanceData(Map shared = [:]) {
     List zwaveMsgCounts = extractZwaveMessageCounts(zwaveData)
     List zigbeeMsgCounts = extractZigbeeMessageCounts(zigbeeData)
     Map radioStats = [zwave: zwaveMsgCounts, zigbee: zigbeeMsgCounts]
-
-    // Top talkers: top 3 devices by message count across both radios
-    List allRadioDevices = buildRadioDeviceList(zwaveMsgCounts, zigbeeMsgCounts)
-    List topTalkers = allRadioDevices.sort { -it.msgCount }.take(3)
+    // Ship the raw per-device message counts; the SPA ranks the top talkers (sort + top-N).
     t.radioCalc = now() - t1
 
     t1 = now()
@@ -1429,7 +1410,7 @@ Map getPerformanceData(Map shared = [:]) {
         "indexRead=${t.indexRead}ms"
     return [
         stats: stats, resources: resources,
-        topTalkers: topTalkers,
+        radioStats: radioStats,
         deviceTypeById: deviceTypeById,        // B2: id → driver type for CPU-by-device-type chart
         appParentTypeById: appParentTypeById,  // B2: id → parent label for CPU-by-app-type chart
         checkpointCount: indexEntries.size(),
@@ -2318,8 +2299,6 @@ Map fetchZigbeeMeshInfo() {
             result.avgLqi = (lqiValues.sum() / lqiValues.size()).toInteger()
             result.minLqi = lqiValues.min()
             result.maxLqi = lqiValues.max()
-            result.weakNeighbors = result.neighbors.findAll { it.lqi != null && it.lqi < ZIGBEE_LQI_CRIT }
-            result.staleNeighbors = result.neighbors.findAll { it.age != null && it.age > 6 }
         }
     }
 
@@ -2784,17 +2763,6 @@ Map analyzeApps(boolean deep = true) {
 private Object reqData(String path, String name, int timeout = 10) {
     Map r = hubMapRequest(path, name, timeout)
     return r.ok ? r.data : null
-}
-
-// Join Z-Wave + Zigbee per-device message counts into one list for top-talker ranking.
-private List buildRadioDeviceList(List zwaveMsgCounts, List zigbeeMsgCounts) {
-    return (zwaveMsgCounts.collect { [name: it.name, deviceId: it.deviceId, msgCount: it.msgCount, integration: "Z-Wave"] } +
-            zigbeeMsgCounts.collect { [name: it.name, deviceId: it.id, msgCount: it.msgCount, integration: "Zigbee"] })
-}
-
-// A Z-Wave mesh node is a "problem" if it is not OK or its packet-error-rate exceeds ZWAVE_PER_CRIT.
-private boolean isZwaveProblemNode(Map n) {
-    return n.state != "OK" || (n.per ?: 0) > ZWAVE_PER_CRIT
 }
 
 Map analyzeNetwork() {
@@ -3438,46 +3406,6 @@ private boolean doCreateCheckpoint() {
     return true
 }
 
-Map buildZeroBaseline(Map stats, Map resources) {
-    return [
-        timestampMs: 0,
-        uptime: "0h 0m 0s",
-        uptimeSeconds: 0,
-        devicesUptime: "0h 0m 0s",
-        appsUptime: "0h 0m 0s",
-        totalDevicesRuntime: "0ms",
-        totalAppsRuntime: "0ms",
-        devicePct: "0.000%",
-        appPct: "0.000%",
-        temperature: null,
-        databaseSize: null,
-        resources: resources ? [
-            timestamp: "0:00:00",
-            freeOSMemory: 0,
-            cpuAvg5min: 0.0,
-            totalJavaMemory: 0,
-            freeJavaMemory: 0,
-            directJavaMemory: 0
-        ] : null,
-        deviceStats: (stats.deviceStats ?: []).collect { dev ->
-            [id: dev.id, name: dev.name, total: 0, pct: 0, count: 0, average: 0,
-             stateSize: 0, hubActionCount: 0, cloudCallCount: 0]
-        },
-        appStats: (stats.appStats ?: []).collect { app ->
-            [id: app.id, name: app.name, total: 0, pct: 0, count: 0, average: 0,
-             stateSize: 0, hubActionCount: 0, cloudCallCount: 0]
-        },
-        radioStats: [
-            zwave: (stats.radioStats?.zwave ?: []).collect { node ->
-                [id: node.id, deviceId: node.deviceId, name: node.name, msgCount: 0, routeChanges: 0]
-            },
-            zigbee: (stats.radioStats?.zigbee ?: []).collect { dev ->
-                [id: dev.id, name: dev.name, msgCount: 0]
-            }
-        ]
-    ]
-}
-
 void deleteCheckpoint(int index) {
     List idx = new ArrayList(loadCheckpointIndex())
     if (index >= 0 && index < idx.size()) {
@@ -3598,36 +3526,6 @@ List<Map> listHubFiles(String nameContains = null) {
     } catch (Exception e) {
         logDebug "Unable to list hub files: ${e.message}"
         return []
-    }
-}
-
-// ===== FORMATTING HELPERS =====
-
-String generateQuickSummary() {
-    try {
-        Map deviceStats = analyzeDevices(false)
-        Map appStats = analyzeApps(false)
-        Map hubInfo = getHubInfo()
-        Map resources = fetchSystemResources()
-
-        String summary = "Hub: ${hubInfo.name} | Firmware: ${hubInfo.firmware} | Hardware: ${hubInfo.hardware}\n"
-        summary += "Devices: ${deviceStats.totalDevices} total (Active: ${deviceStats.activeDevices} | Inactive: ${deviceStats.inactiveDevices} | Disabled: ${deviceStats.disabledDevices})\n"
-        summary += "Apps: ${appStats.totalApps} total (System: ${appStats.builtInApps} | User: ${appStats.userApps})"
-        if (resources) {
-            summary += "\nResources: ${formatMemory(resources.freeOSMemory ?: 0)} free | CPU: ${String.format('%.2f', (resources.cpuAvg5min ?: 0) as float)}"
-        }
-        synchronized (apiTimings) {
-            if (apiTimings) {
-                List timingParts = apiTimings.collect { String ep, Map entry ->
-                    "${ep}: ${entry.median}ms"
-                }.sort()
-                summary += "\nAPI medians: ${timingParts.join(' | ')}"
-            }
-        }
-        return summary
-    } catch (Exception e) {
-        logError "Error generating summary: ${getObjectClassName(e)}: ${e.message}"
-        return "Error generating summary. Please check logs."
     }
 }
 
@@ -4348,7 +4246,6 @@ private void finalizeAudit(String scanId) {
     // from allDevices — see buildAuditXref() in hub_diagnostics_ui.html.
     Map xref = [
         deviceCount:       succeeded,
-        criticalThreshold: 5,
         scanStartedMs:     startedAt,
         scanDurationMs:    (now() - startedAt),
         allDevices:        devices
@@ -4393,15 +4290,13 @@ private void finalizeAudit(String scanId) {
     }
     logDebug "Audit Phase 4 enrichment finished in ${now() - enrichStart}ms"
 
-    // Store result in volatile memory (lost on hub restart — acceptable)
+    // Store result in volatile memory (lost on hub restart — acceptable). The SPA formats
+    // generatedMs for display (toLocaleString) and owns the critical-reference threshold.
     Map hubInfo = getHubInfo()
-    String hubName = hubInfo?.name ?: "Hubitat"
-    Date finishDate = new Date()
-    String generatedAt = finishDate.format("yyyy-MM-dd HH:mm 'UTC'", TimeZone.getTimeZone("UTC"))
-    xref.hubName = hubName
+    xref.hubName = hubInfo?.name ?: "Hubitat"
     xref.hubModel = hubInfo?.hardware
     xref.hubFirmware = hubInfo?.firmware
-    xref.generatedAt = generatedAt
+    xref.generatedMs = now()
     xref.failed = failedMap.collect { id, reason -> [id: id, reason: reason] }
 
     lastAuditResult = xref

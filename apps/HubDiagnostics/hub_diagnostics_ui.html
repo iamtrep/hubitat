@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.56.1";
+const UI_VERSION = "5.57.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -199,6 +199,54 @@ function fmsDuration(ms){
   const s=(ms/1000).toFixed(1);
   const r=h>0?h+'h '+m+'m '+s+'s':m>0?m+'m '+s+'s':s+'s';
   return neg?'-'+r:r;
+}
+// Z-Wave problem nodes and Zigbee weak/stale neighbors are pure subsets of the raw mesh data the
+// network payload already carries (zwave.mesh.nodes; the zigbee neighbor list). The hub ships the
+// raw mesh; the SPA applies the thresholds and assembles the issue strings here.
+const ZWAVE_PER_CRIT=1.0, ZIGBEE_LQI_CRIT=150;
+function zwProblemNodes(nodes){
+  return (nodes||[]).filter(n=>n.state!=='OK'||(n.per||0)>ZWAVE_PER_CRIT).map(n=>{
+    const issues=[];
+    if(n.state!=='OK')issues.push('State: '+n.state);
+    if((n.per||0)>ZWAVE_PER_CRIT)issues.push('PER: '+n.per+'%');
+    return {name:n.name,deviceId:n.deviceId,nodeId:n.nodeId,issues:issues.join(', ')};
+  });
+}
+function zbWeakNeighbors(neighbors){ return (neighbors||[]).filter(n=>n.lqi!=null&&n.lqi<ZIGBEE_LQI_CRIT); }
+function zbStaleNeighbors(neighbors){ return (neighbors||[]).filter(n=>n.age!=null&&n.age>6); }
+// Flatten the raw per-radio message counts into one device list (Z-Wave keys off deviceId,
+// Zigbee off id). Replaces the old Groovy buildRadioDeviceList — the hub ships raw radioStats.
+function flattenRadioDevices(rs){
+  if(!rs)return [];
+  return [...(rs.zwave||[]).map(r=>({name:r.name,deviceId:r.deviceId,msgCount:r.msgCount,integration:'Z-Wave'})),
+          ...(rs.zigbee||[]).map(r=>({name:r.name,deviceId:r.id,msgCount:r.msgCount,integration:'Zigbee'}))];
+}
+// Top radio talkers: drop silent devices, rank top-N. A pure SPA derivation shared by the
+// Performance tab's current view and its comparison (interval) view.
+function topRadioTalkers(rs){
+  return flattenRadioDevices(rs).filter(r=>(r.msgCount||0)>0).sort((a,b)=>b.msgCount-a.msgCount).slice(0,3);
+}
+// Startup baseline: a zeroed structural mirror of the checkpoint. The hub used to build this
+// server-side (buildZeroBaseline); it now ships baselineStats:null + baselineMode:"startup" and
+// the SPA synthesizes it here so diffStats() runs its full per-entry recompute (comp - 0) instead
+// of the !base shortcut. Field-for-field port of the old Groovy buildZeroBaseline().
+function zeroBaseline(comp){
+  if(!comp)return null;
+  const rs=comp.radioStats||{};
+  return {
+    timestampMs:0,uptime:"0h 0m 0s",uptimeSeconds:0,
+    devicesUptime:"0h 0m 0s",appsUptime:"0h 0m 0s",
+    totalDevicesRuntime:"0ms",totalAppsRuntime:"0ms",
+    devicePct:"0.000%",appPct:"0.000%",
+    temperature:null,databaseSize:null,
+    resources:comp.resources?{timestamp:"0:00:00",freeOSMemory:0,cpuAvg5min:0,totalJavaMemory:0,freeJavaMemory:0,directJavaMemory:0}:null,
+    deviceStats:(comp.deviceStats||[]).map(d=>({id:d.id,name:d.name,total:0,pct:0,count:0,average:0,stateSize:0,hubActionCount:0,cloudCallCount:0})),
+    appStats:(comp.appStats||[]).map(a=>({id:a.id,name:a.name,total:0,pct:0,count:0,average:0,stateSize:0,hubActionCount:0,cloudCallCount:0})),
+    radioStats:{
+      zwave:(rs.zwave||[]).map(n=>({id:n.id,deviceId:n.deviceId,name:n.name,msgCount:0,routeChanges:0})),
+      zigbee:(rs.zigbee||[]).map(d=>({id:d.id,name:d.name,msgCount:0}))
+    }
+  };
 }
 function diffStats(base, comp) {
   if (!base || !comp) return comp;
@@ -917,7 +965,7 @@ function buildForumMarkdown(d){
   const deviceStats=d.deviceStats||{};
   const appStats=d.appStats||{};
   const stats=d.stats||null;
-  const allRadioDevices=d.allRadioDevices||[];
+  const allRadioDevices=flattenRadioDevices(d.radioStats);
   const uptimeMin=d.uptimeMin!=null?d.uptimeMin:0;
 
   // ── 1. System & Health ──
@@ -1095,14 +1143,14 @@ function buildForumMarkdown(d){
     if(zigbeeRaw.powerLevel!=null)L(`- **Power Level:** ${zigbeeRaw.powerLevel}`);
     L(`- **Devices:** ${(zigbeeRaw.devices||[]).length}`);
     if(zigbeeMesh){
-      const staleCount=(zigbeeMesh.staleNeighbors||[]).length;
-      const weakCount=(zigbeeMesh.weakNeighbors||[]).length;
+      const staleNbrs=zbStaleNeighbors(zigbeeMesh.neighbors),weakNbrs=zbWeakNeighbors(zigbeeMesh.neighbors);
+      const staleCount=staleNbrs.length,weakCount=weakNbrs.length;
       let nbLine=`- **Neighbors:** ${zigbeeMesh.neighbors?zigbeeMesh.neighbors.length:0}`;
       if(staleCount>0)nbLine+=` (${staleCount} stale)`;
       L(nbLine);
       if(zigbeeMesh.avgLqi!=null)L(`- **LQI:** avg ${zigbeeMesh.avgLqi}, min ${zigbeeMesh.minLqi}, max ${zigbeeMesh.maxLqi}`);
-      if(weakCount>0) L(`- **Weak Neighbors:** ${(zigbeeMesh.weakNeighbors||[]).map(it=>`${it.shortId} LQI:${it.lqi}`).join(', ')}`);
-      if(staleCount>0)L(`- **Stale Neighbors:** ${(zigbeeMesh.staleNeighbors||[]).map(it=>it.shortId).join(', ')}`);
+      if(weakCount>0) L(`- **Weak Neighbors:** ${weakNbrs.map(it=>`${it.shortId} LQI:${it.lqi}`).join(', ')}`);
+      if(staleCount>0)L(`- **Stale Neighbors:** ${staleNbrs.map(it=>it.shortId).join(', ')}`);
     }
   }
 
@@ -2041,14 +2089,15 @@ async function rNetwork(){const P='p-network';loading(P);try{
     o+='</div>';
     // Zigbee mesh
     if(z.mesh){const m=z.mesh;
+      const weakNbrs=zbWeakNeighbors(m.neighborDetails),staleNbrs=zbStaleNeighbors(m.neighborDetails);
       o+='<div style="margin-top:10px"><div class="ng">';
       o+=ni('Neighbors',m.neighbors);o+=ni('Routes',m.routes);o+=ni('End Devices',m.childDevices);
       if(m.avgLqi!=null)o+=ni('Avg LQI',m.avgLqi+' (min: '+m.minLqi+', max: '+m.maxLqi+')',m.avgLqi<150?'var(--crit)':m.avgLqi<200?'var(--warn)':'var(--ok)');
-      if(m.weakNeighbors&&m.weakNeighbors.length)o+=ni('Weak Neighbors',m.weakNeighbors.length,'var(--crit)');
-      if(m.staleNeighbors&&m.staleNeighbors.length)o+=ni('Stale Neighbors',m.staleNeighbors.length,'var(--warn)');
+      if(weakNbrs.length)o+=ni('Weak Neighbors',weakNbrs.length,'var(--crit)');
+      if(staleNbrs.length)o+=ni('Stale Neighbors',staleNbrs.length,'var(--warn)');
       o+='</div>';
-      if(m.weakNeighbors&&m.weakNeighbors.length){o+='<details style="margin-top:6px"><summary>Weak Neighbor Details</summary>';
-        m.weakNeighbors.forEach(n=>{o+='<div style="margin:3px 0;color:var(--crit)">'+h(n.shortId)+' &mdash; LQI: '+n.lqi+'</div>'});o+='</details>'}
+      if(weakNbrs.length){o+='<details style="margin-top:6px"><summary>Weak Neighbor Details</summary>';
+        weakNbrs.forEach(n=>{o+='<div style="margin:3px 0;color:var(--crit)">'+h(n.shortId)+' &mdash; LQI: '+n.lqi+'</div>'});o+='</details>'}
       if(m.neighborDetails&&m.neighborDetails.length)o+='<div id="zbNeighborTbl" style="margin-top:8px"></div>';
       o+='</div>'}
     o+='<div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap">';
@@ -2095,9 +2144,10 @@ async function rNetwork(){const P='p-network';loading(P);try{
       if(m.avgRssi!=null)o+=ni('Avg RSSI',m.avgRssi+' dBm',m.avgRssi<-80?'var(--crit)':m.avgRssi<-60?'var(--warn)':'var(--ok)');
       o+='</div><div id="zwMeshTbl" style="margin-top:8px"></div></div>'}
     // Problem nodes
-    if(z.problemNodes&&z.problemNodes.length){
-      o+='<div style="margin-top:10px"><div class="alert a-warn">\u26A0 Problem Nodes: '+z.problemNodes.length+'</div>';
-      z.problemNodes.forEach(n=>{o+='<div style="margin:4px 0;color:var(--crit)">'+(n.deviceId?dlink(n.deviceId,n.name):h(n.name))+' &mdash; '+h(n.issues)+'</div>'});o+='</div>'}
+    const probNodes=zwProblemNodes(z.mesh&&z.mesh.nodes);
+    if(probNodes.length){
+      o+='<div style="margin-top:10px"><div class="alert a-warn">\u26A0 Problem Nodes: '+probNodes.length+'</div>';
+      probNodes.forEach(n=>{o+='<div style="margin:4px 0;color:var(--crit)">'+(n.deviceId?dlink(n.deviceId,n.name):h(n.name))+' &mdash; '+h(n.issues)+'</div>'});o+='</div>'}
     o+='</div></div>'}
   // Z-Wave JS Controller (v5.9.0) \u2014 only when Z-Wave JS stack is active
   if(d.zwaveJs){const j=d.zwaveJs,s=j.statistics||{};
@@ -2371,12 +2421,8 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
     }
     o+='</div></div></div>'}
 
-  // Top Talkers
-  const compTalkers=activePerfComp&&s?.radioStats?
-    [...(s.radioStats.zwave||[]).map(r=>({name:r.name,deviceId:r.deviceId,msgCount:r.msgCount,integration:'Z-Wave'})),
-     ...(s.radioStats.zigbee||[]).map(r=>({name:r.name,deviceId:r.id,msgCount:r.msgCount,integration:'Zigbee'}))]
-    .filter(r=>(r.msgCount||0)>0).sort((a,b)=>b.msgCount-a.msgCount).slice(0,3):null;
-  const talkers=compTalkers||d.topTalkers;
+  // Top Talkers — derived client-side from raw radioStats (comparison interval, else current).
+  const talkers=topRadioTalkers(activePerfComp ? s?.radioStats : d.radioStats);
   if(talkers&&talkers.length){
     o+='<div class="card"><div class="card-h">Top Talkers'+(activePerfComp?' (Interval)':'')+'</div><div class="card-b">';
     talkers.forEach((t,i)=>{
@@ -2479,7 +2525,12 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
       {l:'Msgs/Min',f:'msgPerMin',t:'n',r:rateCell}
     ],rs.zigbee,{sc:2,sd:'desc',collapse:10,collapseLabel:'Zigbee Messages'})}
   // Saved comparison render
-  if(!activePerfComp && (d.savedComparison||d.savedComparisonHtml))renderComparison({comparisonHtml:d.savedComparisonHtml,...(d.savedComparison||{})},'savedComp');
+  if(!activePerfComp && (d.savedComparison||d.savedComparisonHtml)){
+    const sc=d.savedComparison||{};
+    // Persisted startup comparisons store baselineStats:null + baselineMode:"startup"; rebuild the zero baseline.
+    const scBase=sc.baselineStats||(sc.baselineMode==='startup'?zeroBaseline(sc.checkpointStats):sc.baselineStats);
+    renderComparison({comparisonHtml:d.savedComparisonHtml,...sc,baselineStats:scBase},'savedComp');
+  }
 
   // Button bindings
   const btnCp=document.getElementById('btnCp');
@@ -2500,17 +2551,19 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
     try {
       const r=await post('performance/compare','baseline='+b+'&checkpoint='+c);
       if(r.success){
+        // Startup baseline arrives as null + baselineMode:"startup"; synthesize the zeroed mirror client-side.
+        const baseStats = r.baselineStats || (r.baselineMode==='startup' ? zeroBaseline(r.checkpointStats) : null);
         activePerfComp = {
           baseIdx: b === 'startup' ? 'startup' : parseInt(b),
           compIdx: c === 'now' ? 'now' : parseInt(c),
           baselineLabel: r.baselineLabel,
           checkpointLabel: r.checkpointLabel,
-          diff: diffStats(r.baselineStats, r.checkpointStats),
-          diffResources: r.baselineStats.resources && r.checkpointStats.resources ? {
-            freeOSMemory: r.checkpointStats.resources.freeOSMemory - r.baselineStats.resources.freeOSMemory,
-            cpuAvg5min: r.checkpointStats.resources.cpuAvg5min - r.baselineStats.resources.cpuAvg5min,
-            temperature: r.checkpointStats.temperature!=null&&r.baselineStats.temperature!=null ? r.checkpointStats.temperature-r.baselineStats.temperature : null,
-            databaseSize: r.checkpointStats.databaseSize!=null&&r.baselineStats.databaseSize!=null ? r.checkpointStats.databaseSize-r.baselineStats.databaseSize : null
+          diff: diffStats(baseStats, r.checkpointStats),
+          diffResources: baseStats && baseStats.resources && r.checkpointStats.resources ? {
+            freeOSMemory: r.checkpointStats.resources.freeOSMemory - baseStats.resources.freeOSMemory,
+            cpuAvg5min: r.checkpointStats.resources.cpuAvg5min - baseStats.resources.cpuAvg5min,
+            temperature: r.checkpointStats.temperature!=null&&baseStats.temperature!=null ? r.checkpointStats.temperature-baseStats.temperature : null,
+            databaseSize: r.checkpointStats.databaseSize!=null&&baseStats.databaseSize!=null ? r.checkpointStats.databaseSize-baseStats.databaseSize : null
           } : null
         };
         rPerf();
@@ -3940,6 +3993,9 @@ function fmtDurSec(ms) {
 }
 
 // Audit cross-reference, derived in the browser from the raw allDevices map (moved off the hub — LB1, v5.42.0).
+// Reference count at/above which a device is flagged "critical" in the audit report. Owned by the
+// SPA (the hub no longer ships criticalThreshold) — used for both the filter and the label below.
+const AUDIT_CRIT_REFS = 5;
 // Mirrors the former Groovy buildCrossReference. `stuckJobs` is intentionally not produced (its card was removed).
 // String ordering uses code-unit comparison (a<b) to match Groovy's String <=> for the non-re-sorted lists.
 function buildAuditXref(allDevices) {
@@ -3969,7 +4025,7 @@ function buildAuditXref(allDevices) {
   unreferenced.sort((a, b) => (a.lastActivityTimeMs || 0) - (b.lastActivityTimeMs || 0));
   meshOrphans.sort(byName);
   const criticalTop20 = allRefs.slice().sort((a, b) => (b.total - a.total) || byName(a, b)).slice(0, 20);
-  const criticalCount = allRefs.filter(r => r.total >= 5).length;
+  const criticalCount = allRefs.filter(r => r.total >= AUDIT_CRIT_REFS).length;
   const appsToDevices = Object.values(appsIndex)
     .map(e => ({ id: e.id, label: e.label, disabled: e.disabled, devices: e.devices.slice().sort(byName) }))
     .sort((a, b) => (String(a.label) < String(b.label) ? -1 : String(a.label) > String(b.label) ? 1 : 0));
@@ -3993,7 +4049,8 @@ function buildAuditXref(allDevices) {
 
 function buildAuditHtml(data) {
   const hubName = data.hubName || '';
-  const generatedAt = data.generatedAt || '';
+  // Hub ships generatedMs (epoch); format for display here, consistent with the rest of the UI.
+  const generatedAt = data.generatedMs ? new Date(data.generatedMs).toLocaleString() : '';
   const rooms = data.rooms || [];
   const allDevices = data.allDevices || {};
   const failed = data.failed || [];
@@ -4033,7 +4090,7 @@ function buildAuditHtml(data) {
   o += sumcell('Devices', data.deviceCount, null);
   o += sumcell('Unreferenced', unreferenced.length, 'warn');
   o += sumcell('Mesh orphans', meshOrphans.length, 'crit');
-  o += sumcell(`Critical (≥${data.criticalThreshold} refs)`, x.criticalCount, null);
+  o += sumcell(`Critical (≥${AUDIT_CRIT_REFS} refs)`, x.criticalCount, null);
   o += '</div></div></div>';
 
   // Unreferenced

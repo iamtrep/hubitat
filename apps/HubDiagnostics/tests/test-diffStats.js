@@ -95,6 +95,28 @@ function diffStats(base, comp) {
   return res;
 }
 
+// ── zeroBaseline: copied from hub_diagnostics_ui.html — keep in sync ──
+// Field-for-field port of the old Groovy buildZeroBaseline(); the SPA now synthesizes the
+// startup baseline client-side instead of the hub shipping it.
+function zeroBaseline(comp){
+  if(!comp)return null;
+  const rs=comp.radioStats||{};
+  return {
+    timestampMs:0,uptime:"0h 0m 0s",uptimeSeconds:0,
+    devicesUptime:"0h 0m 0s",appsUptime:"0h 0m 0s",
+    totalDevicesRuntime:"0ms",totalAppsRuntime:"0ms",
+    devicePct:"0.000%",appPct:"0.000%",
+    temperature:null,databaseSize:null,
+    resources:comp.resources?{timestamp:"0:00:00",freeOSMemory:0,cpuAvg5min:0,totalJavaMemory:0,freeJavaMemory:0,directJavaMemory:0}:null,
+    deviceStats:(comp.deviceStats||[]).map(d=>({id:d.id,name:d.name,total:0,pct:0,count:0,average:0,stateSize:0,hubActionCount:0,cloudCallCount:0})),
+    appStats:(comp.appStats||[]).map(a=>({id:a.id,name:a.name,total:0,pct:0,count:0,average:0,stateSize:0,hubActionCount:0,cloudCallCount:0})),
+    radioStats:{
+      zwave:(rs.zwave||[]).map(n=>({id:n.id,deviceId:n.deviceId,name:n.name,msgCount:0,routeChanges:0})),
+      zigbee:(rs.zigbee||[]).map(d=>({id:d.id,name:d.name,msgCount:0}))
+    }
+  };
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────
 
 section('diffStats: per-row pct is recomputed as interval percentage');
@@ -181,6 +203,44 @@ else fail(`uptime expected '1.0s', got '${r1.uptime}'`);
 
 if (r1.devicePct === '10.000%') ok(`devicePct set to interval aggregate pct (${r1.devicePct})`);
 else fail(`devicePct expected '10.000%', got '${r1.devicePct}'`);
+
+section('zeroBaseline + diffStats: startup baseline synthesized client-side (replaces hub buildZeroBaseline)');
+
+const compStartup = {
+  timestampMs: 60000, uptimeSeconds: 60,
+  totalDevicesRuntime: '6000ms', totalAppsRuntime: '600ms',
+  temperature: 40, databaseSize: 120,
+  resources: { freeOSMemory: 500000, cpuAvg5min: 1.5, totalJavaMemory: 1000, freeJavaMemory: 400, directJavaMemory: 10 },
+  deviceStats: [{ id: 1, name: 'Dev A', total: 6000, pct: 10, count: 60, average: 100, hubActionCount: 3, cloudCallCount: 1, stateSize: 50, pctTotal: 0.6 }],
+  appStats: [{ id: 11, name: 'App X', total: 600, pct: 1, count: 6, average: 100, hubActionCount: 0, cloudCallCount: 0, stateSize: 5, pctTotal: 0.06 }],
+  radioStats: { zwave: [{ id: 'z1', deviceId: 1, name: 'Dev A', msgCount: 120, routeChanges: 2 }], zigbee: [{ id: 'g1', name: 'Dev B', msgCount: 80 }] }
+};
+
+const zb = zeroBaseline(compStartup);
+
+if (zb.timestampMs === 0) ok('zeroBaseline timestampMs is 0 (triggers uptimeSeconds elapsed fallback)');
+else fail(`zeroBaseline timestampMs expected 0, got ${zb.timestampMs}`);
+if (zb.deviceStats.length === 1 && zb.deviceStats[0].id === 1 && zb.deviceStats[0].total === 0)
+  ok('zeroBaseline mirrors device ids with zeroed totals');
+else fail('zeroBaseline device mirror wrong');
+if (zb.radioStats.zwave[0].msgCount === 0 && zb.radioStats.zwave[0].id === 'z1' && zb.radioStats.zigbee[0].msgCount === 0)
+  ok('zeroBaseline mirrors radio ids with zeroed msgCount');
+else fail('zeroBaseline radio mirror wrong');
+if (zb.resources && zb.resources.freeOSMemory === 0) ok('zeroBaseline resources zeroed (drives current-minus-zero resource delta)');
+else fail('zeroBaseline resources not zeroed');
+
+// diffStats over the synthesized baseline must reproduce the old server behavior: comp - 0.
+const rStartup = diffStats(zb, compStartup);
+if (rStartup.deviceStats[0].total === 6000) ok('startup diff: device total = full lifetime (comp - 0)');
+else fail(`startup device total expected 6000, got ${rStartup.deviceStats[0].total}`);
+// elapsedMs from uptimeSeconds (60s) = 60000ms; pct = 6000/60000*100 = 10%
+if (rStartup.deviceStats[0].pct !== null && Math.abs(rStartup.deviceStats[0].pct - 10) < 0.001)
+  ok(`startup diff: device pct from uptime interval (${rStartup.deviceStats[0].pct.toFixed(1)}%)`);
+else fail(`startup device pct expected 10, got ${rStartup.deviceStats[0].pct}`);
+if (rStartup.radioStats.zwave[0].msgCount === 120) ok('startup diff: radio msgCount = full count (comp - 0)');
+else fail(`startup radio msgCount expected 120, got ${rStartup.radioStats.zwave[0].msgCount}`);
+if (rStartup.uptime === '1m 0.0s') ok(`startup diff: uptime = interval from uptimeSeconds (${rStartup.uptime})`);
+else fail(`startup uptime expected '1m 0.0s', got '${rStartup.uptime}'`);
 
 // ── Summary ───────────────────────────────────────────────────────────
 console.log(`\n=== Results: ${passed}/${passed + failed} passed${failed ? `, ${failed} failed` : ''} ===`);

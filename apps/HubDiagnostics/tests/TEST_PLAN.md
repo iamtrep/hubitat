@@ -170,6 +170,17 @@ bash tests/test-snapshot-diff.sh @maison-pro
 
 # SPA unit tests (Phase D, when shipped) — open in any browser
 open tests/spa/index.html
+
+# Pure-JS derivation tests (extraction pattern — bound to the shipped SPA functions)
+node tests/test-diffStats.js            # diffStats + zeroBaseline (startup-baseline synthesis)
+node tests/test-radio-derivations.js    # topRadioTalkers (Performance top-N ranking)
+node tests/test-network-derivations.js  # zwProblemNodes / zbWeakNeighbors / zbStaleNeighbors
+node tests/test-temp-scale.js           # temperature-scale helpers
 ```
+
+> **Phase D progress:** the SPA derivations relocated from Groovy during the v5.57.0 refactor each
+> landed with extraction-based pure-JS coverage (`test-radio-derivations.js`, `test-network-derivations.js`,
+> and the `zeroBaseline` case in `test-diffStats.js`). The broader renderer coverage in Phase D's
+> coverage-targets list (charts, tab routing, snapshot-diff renderer) is still outstanding.
 
 All test scripts auto-discover the Hub Diagnostics installed-app instance via `/hub2/appsList`; pass an explicit instance ID as the second arg if discovery fails.

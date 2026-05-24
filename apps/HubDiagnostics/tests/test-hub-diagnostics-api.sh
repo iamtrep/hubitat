@@ -1084,11 +1084,21 @@ if "_error" in comp_valid:
     fail(f"Request failed: {comp_valid['_error']}")
 elif comp_valid.get("success"):
     ok("startup→now compare returns success=true")
-    for field in ["baselineLabel", "checkpointLabel", "baselineStats", "checkpointStats"]:
+    for field in ["baselineLabel", "checkpointLabel", "checkpointStats"]:
         if field in comp_valid:
             ok(f"  Has '{field}'")
         else:
             fail(f"  Missing '{field}' in compare response")
+    # The startup baseline is now synthesized client-side (SPA zeroBaseline). The hub no longer
+    # ships a derived zero baseline: it returns baselineStats=null + baselineMode="startup".
+    if comp_valid.get("baselineMode") == "startup":
+        ok("  baselineMode='startup' (SPA synthesizes the zero baseline)")
+    else:
+        fail(f"  expected baselineMode='startup', got {comp_valid.get('baselineMode')!r}")
+    if comp_valid.get("baselineStats") is None:
+        ok("  baselineStats is null for startup (no hub-side buildZeroBaseline)")
+    else:
+        fail("  baselineStats should be null for a startup baseline (synthesis moved to SPA)")
     cs = comp_valid.get("checkpointStats", {})
     if cs.get("uptimeSeconds"):
         ok(f"  checkpointStats.uptimeSeconds present ({cs['uptimeSeconds']:.0f}s)")
@@ -1283,7 +1293,8 @@ else:
         fail(f"Request failed: {audit_data['_error']}")
     else:
         ok("Endpoint responds")
-        for key in ["deviceCount", "criticalThreshold", "allDevices", "hubName", "generatedAt"]:
+        # criticalThreshold + the formatted generatedAt moved to the SPA; the hub ships generatedMs (epoch).
+        for key in ["deviceCount", "allDevices", "hubName", "generatedMs"]:
             if key in audit_data:
                 ok(f"Has '{key}'")
             else:
