@@ -40,6 +40,13 @@ integration table in the SPA.
   per-peer `audit/status` probe on save so the summary can show ok / auth-failed / unreachable.
 - **Parallel rescan + per-hub progress bars.** Rescan currently scans hubs sequentially; fine
   for 2 hubs, but parallelize (bounded) with progress as the fleet grows.
+- **Compare preferences across identical devices.** For devices of the same hardware
+  (manufacturer+model) and the same driver type, show their settings/preferences side by side to
+  spot misconfiguration. Needs device preferences in the audit record — `extractAuditFields`
+  currently carries only `spammyThreshold`/`maxStates`/`maxEvents`, not full preferences.
+- **Flag same hardware, different driver.** Group by manufacturer+model; flag groups where the
+  driver (`deviceTypeName`/`deviceTypeId`) differs across devices — surfaces devices that arguably
+  should share a driver. Computable from current audit fields (adjacent to firmware-drift).
 
 ## Low priority
 
