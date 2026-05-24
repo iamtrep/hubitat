@@ -200,6 +200,20 @@ function fmsDuration(ms){
   const r=h>0?h+'h '+m+'m '+s+'s':m>0?m+'m '+s+'s':s+'s';
   return neg?'-'+r:r;
 }
+// Z-Wave problem nodes and Zigbee weak/stale neighbors are pure subsets of the raw mesh data the
+// network payload already carries (zwave.mesh.nodes; the zigbee neighbor list). The hub ships the
+// raw mesh; the SPA applies the thresholds and assembles the issue strings here.
+const ZWAVE_PER_CRIT=1.0, ZIGBEE_LQI_CRIT=150;
+function zwProblemNodes(nodes){
+  return (nodes||[]).filter(n=>n.state!=='OK'||(n.per||0)>ZWAVE_PER_CRIT).map(n=>{
+    const issues=[];
+    if(n.state!=='OK')issues.push('State: '+n.state);
+    if((n.per||0)>ZWAVE_PER_CRIT)issues.push('PER: '+n.per+'%');
+    return {name:n.name,deviceId:n.deviceId,nodeId:n.nodeId,issues:issues.join(', ')};
+  });
+}
+function zbWeakNeighbors(neighbors){ return (neighbors||[]).filter(n=>n.lqi!=null&&n.lqi<ZIGBEE_LQI_CRIT); }
+function zbStaleNeighbors(neighbors){ return (neighbors||[]).filter(n=>n.age!=null&&n.age>6); }
 // Top radio talkers: flatten the raw per-radio message counts, drop silent devices, rank top-N.
 // The hub ships raw radioStats; ranking (sort + top-N) is a pure SPA derivation shared by the
 // Performance tab's current view and its comparison (interval) view.
@@ -1126,14 +1140,14 @@ function buildForumMarkdown(d){
     if(zigbeeRaw.powerLevel!=null)L(`- **Power Level:** ${zigbeeRaw.powerLevel}`);
     L(`- **Devices:** ${(zigbeeRaw.devices||[]).length}`);
     if(zigbeeMesh){
-      const staleCount=(zigbeeMesh.staleNeighbors||[]).length;
-      const weakCount=(zigbeeMesh.weakNeighbors||[]).length;
+      const staleNbrs=zbStaleNeighbors(zigbeeMesh.neighbors),weakNbrs=zbWeakNeighbors(zigbeeMesh.neighbors);
+      const staleCount=staleNbrs.length,weakCount=weakNbrs.length;
       let nbLine=`- **Neighbors:** ${zigbeeMesh.neighbors?zigbeeMesh.neighbors.length:0}`;
       if(staleCount>0)nbLine+=` (${staleCount} stale)`;
       L(nbLine);
       if(zigbeeMesh.avgLqi!=null)L(`- **LQI:** avg ${zigbeeMesh.avgLqi}, min ${zigbeeMesh.minLqi}, max ${zigbeeMesh.maxLqi}`);
-      if(weakCount>0) L(`- **Weak Neighbors:** ${(zigbeeMesh.weakNeighbors||[]).map(it=>`${it.shortId} LQI:${it.lqi}`).join(', ')}`);
-      if(staleCount>0)L(`- **Stale Neighbors:** ${(zigbeeMesh.staleNeighbors||[]).map(it=>it.shortId).join(', ')}`);
+      if(weakCount>0) L(`- **Weak Neighbors:** ${weakNbrs.map(it=>`${it.shortId} LQI:${it.lqi}`).join(', ')}`);
+      if(staleCount>0)L(`- **Stale Neighbors:** ${staleNbrs.map(it=>it.shortId).join(', ')}`);
     }
   }
 
@@ -2072,14 +2086,15 @@ async function rNetwork(){const P='p-network';loading(P);try{
     o+='</div>';
     // Zigbee mesh
     if(z.mesh){const m=z.mesh;
+      const weakNbrs=zbWeakNeighbors(m.neighborDetails),staleNbrs=zbStaleNeighbors(m.neighborDetails);
       o+='<div style="margin-top:10px"><div class="ng">';
       o+=ni('Neighbors',m.neighbors);o+=ni('Routes',m.routes);o+=ni('End Devices',m.childDevices);
       if(m.avgLqi!=null)o+=ni('Avg LQI',m.avgLqi+' (min: '+m.minLqi+', max: '+m.maxLqi+')',m.avgLqi<150?'var(--crit)':m.avgLqi<200?'var(--warn)':'var(--ok)');
-      if(m.weakNeighbors&&m.weakNeighbors.length)o+=ni('Weak Neighbors',m.weakNeighbors.length,'var(--crit)');
-      if(m.staleNeighbors&&m.staleNeighbors.length)o+=ni('Stale Neighbors',m.staleNeighbors.length,'var(--warn)');
+      if(weakNbrs.length)o+=ni('Weak Neighbors',weakNbrs.length,'var(--crit)');
+      if(staleNbrs.length)o+=ni('Stale Neighbors',staleNbrs.length,'var(--warn)');
       o+='</div>';
-      if(m.weakNeighbors&&m.weakNeighbors.length){o+='<details style="margin-top:6px"><summary>Weak Neighbor Details</summary>';
-        m.weakNeighbors.forEach(n=>{o+='<div style="margin:3px 0;color:var(--crit)">'+h(n.shortId)+' &mdash; LQI: '+n.lqi+'</div>'});o+='</details>'}
+      if(weakNbrs.length){o+='<details style="margin-top:6px"><summary>Weak Neighbor Details</summary>';
+        weakNbrs.forEach(n=>{o+='<div style="margin:3px 0;color:var(--crit)">'+h(n.shortId)+' &mdash; LQI: '+n.lqi+'</div>'});o+='</details>'}
       if(m.neighborDetails&&m.neighborDetails.length)o+='<div id="zbNeighborTbl" style="margin-top:8px"></div>';
       o+='</div>'}
     o+='<div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap">';
@@ -2126,9 +2141,10 @@ async function rNetwork(){const P='p-network';loading(P);try{
       if(m.avgRssi!=null)o+=ni('Avg RSSI',m.avgRssi+' dBm',m.avgRssi<-80?'var(--crit)':m.avgRssi<-60?'var(--warn)':'var(--ok)');
       o+='</div><div id="zwMeshTbl" style="margin-top:8px"></div></div>'}
     // Problem nodes
-    if(z.problemNodes&&z.problemNodes.length){
-      o+='<div style="margin-top:10px"><div class="alert a-warn">\u26A0 Problem Nodes: '+z.problemNodes.length+'</div>';
-      z.problemNodes.forEach(n=>{o+='<div style="margin:4px 0;color:var(--crit)">'+(n.deviceId?dlink(n.deviceId,n.name):h(n.name))+' &mdash; '+h(n.issues)+'</div>'});o+='</div>'}
+    const probNodes=zwProblemNodes(z.mesh&&z.mesh.nodes);
+    if(probNodes.length){
+      o+='<div style="margin-top:10px"><div class="alert a-warn">\u26A0 Problem Nodes: '+probNodes.length+'</div>';
+      probNodes.forEach(n=>{o+='<div style="margin:4px 0;color:var(--crit)">'+(n.deviceId?dlink(n.deviceId,n.name):h(n.name))+' &mdash; '+h(n.issues)+'</div>'});o+='</div>'}
     o+='</div></div>'}
   // Z-Wave JS Controller (v5.9.0) \u2014 only when Z-Wave JS stack is active
   if(d.zwaveJs){const j=d.zwaveJs,s=j.statistics||{};

@@ -1174,12 +1174,6 @@ Map getNetworkData(Map shared = [:]) {
     String zwaveVersion = fetchZwaveVersion()
     Map zwaveMesh = extractZwaveMeshQuality(networkData.zwave ?: [:])
     List ghostNodes = buildZwaveGhostNodes(networkData.zwave ?: [:])
-    List problemNodes = (zwaveMesh?.nodes ?: []).findAll { Map n -> isZwaveProblemNode(n) }.collect { Map n ->
-        List issues = []
-        if (n.state != "OK") issues << "State: ${n.state}"
-        if ((n.per ?: 0) > ZWAVE_PER_CRIT) issues << "PER: ${n.per}%"
-        [name: n.name, deviceId: n.deviceId, nodeId: n.nodeId, issues: issues.join(", ")]
-    }
     Map zigbeeRaw = networkData.zigbee ?: [:]
     Map zigbeeDeviceByShortId = [:]
     (zigbeeRaw.devices ?: []).each { Map d -> if (d.shortZigbeeId) zigbeeDeviceByShortId[((String)d.shortZigbeeId).toUpperCase()] = d }
@@ -1197,7 +1191,7 @@ Map getNetworkData(Map shared = [:]) {
             isRadioUpdateNeeded: networkData.zwave.isRadioUpdateNeeded,
             zwaveJS: networkData.zwave.zwaveJS, zwaveJSAvailable: networkData.zwave.zwaveJSAvailable,
             version: zwaveVersion,
-            mesh: zwaveMesh, ghostNodes: ghostNodes, problemNodes: problemNodes,
+            mesh: zwaveMesh, ghostNodes: ghostNodes,
             messageCounts: extractZwaveMessageCounts(networkData.zwave ?: [:])
         ] : null,
         zigbee: networkData.zigbee ? [
@@ -1214,8 +1208,6 @@ Map getNetworkData(Map shared = [:]) {
                     Map zdev = zigbeeDeviceByShortId[n.shortId?.toUpperCase()]
                     [shortId: n.shortId, name: n.name, deviceId: zdev?.id, lqi: n.lqi, age: n.age, inCost: n.inCost, outCost: n.outCost, stale: n.stale ?: false]
                 },
-                weakNeighbors: (zigbeeMesh.weakNeighbors ?: []).collect { [shortId: it.shortId, lqi: it.lqi] },
-                staleNeighbors: (zigbeeMesh.staleNeighbors ?: []).collect { [shortId: it.shortId, age: it.age] },
                 childDevices: zigbeeMesh.childDevices?.size() ?: 0
             ] : null
         ] : null,
@@ -2312,8 +2304,6 @@ Map fetchZigbeeMeshInfo() {
             result.avgLqi = (lqiValues.sum() / lqiValues.size()).toInteger()
             result.minLqi = lqiValues.min()
             result.maxLqi = lqiValues.max()
-            result.weakNeighbors = result.neighbors.findAll { it.lqi != null && it.lqi < ZIGBEE_LQI_CRIT }
-            result.staleNeighbors = result.neighbors.findAll { it.age != null && it.age > 6 }
         }
     }
 
