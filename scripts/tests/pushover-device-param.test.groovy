@@ -108,3 +108,4 @@ if (failures == 0) {
     println "pushover-device-param: FAIL (${failures} failure(s))"
     System.exit(1)
 }
+
