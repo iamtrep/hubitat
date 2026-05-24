@@ -89,5 +89,20 @@ t('attentionItems classifies by reason with injectable now + staleDays', () => {
   assert.deepStrictEqual(a.unreferenced.map(r=>r.id), [3]);
 });
 
+t('fleetSummary counts by hub/protocol/manufacturer + attention totals', () => {
+  const merged = { rows: [
+    {hub:'a', protocol:'Zigbee', manufacturer:'X', appsUsingCount:1, dashboards:[1], lastActivityTimeMs:Date.now()},
+    {hub:'a', protocol:'Z-Wave', manufacturer:'X', appsUsingCount:0, dashboards:[],  lastActivityTimeMs:Date.now()},
+    {hub:'b', protocol:'Zigbee', manufacturer:'Y', disabled:true,    appsUsingCount:1, dashboards:[1], lastActivityTimeMs:Date.now()},
+  ], hubs: [] };
+  const s = C.fleetSummary(merged);
+  assert.strictEqual(s.total, 3);
+  assert.strictEqual(s.byHub.a, 2);
+  assert.strictEqual(s.byProtocol.Zigbee, 2);
+  assert.strictEqual(s.byManufacturer.X, 2);
+  assert.strictEqual(s.attentionCounts.disabled, 1);
+  assert.strictEqual(s.attentionCounts.unreferenced, 1);
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
