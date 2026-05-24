@@ -85,7 +85,9 @@ void initialize() {
         Map parsed = parsePeerUrl(raw)
         if (!parsed) { logWarn "peer ${p}: could not parse URL"; return }
         String label = (settings["peer_${p}_label"] as String) ?: parsed.baseUrl
-        peerList << [label: label, baseUrl: parsed.baseUrl, token: parsed.token, reachable: null]
+        // Derive webBase: scheme+host of the peer (everything before /apps/).
+        String webBase = (parsed.baseUrl =~ /^(https?:\/\/[^\/]+)/)[0][1] ?: ''
+        peerList << [label: label, baseUrl: parsed.baseUrl, token: parsed.token, reachable: null, webBase: webBase]
     }
     state.peerList = peerList
     logInfo "Multi-Hub Inventory initialized with ${peerList.size()} peer(s)"
@@ -168,7 +170,7 @@ private void logDebug(String m) { log.debug "MultiHubInventory: ${m}" }
 Map apiPeers() {
     if (!checkOAuth()) return render(status: 403, contentType: 'text/plain', data: 'OAuth not enabled')
     List out = []
-    (state.peerList ?: []).eachWithIndex { Map p, int i -> out << [index: i, label: p.label, reachable: p.reachable] }
+    (state.peerList ?: []).eachWithIndex { Map p, int i -> out << [index: i, label: p.label, reachable: p.reachable, webBase: p.webBase ?: ''] }
     return jsonResponse([peers: out])
 }
 
