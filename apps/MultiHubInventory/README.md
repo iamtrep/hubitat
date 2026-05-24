@@ -35,9 +35,8 @@ the UI absent.
 1. **Push the Groovy app** to your primary hub (the hub that will serve the SPA):
    `apps/MultiHubInventory/MultiHubInventory.groovy`
 
-2. **Enable OAuth** for the app (Apps Code → Multi-Hub Inventory → OAuth). The app uses
-   self-enabling OAuth via `createAccessToken()` on first install, but the OAuth checkbox
-   in the code editor must be enabled first.
+2. **OAuth enables itself.** On first install the app auto-enables OAuth (via the hub's
+   loopback API) and creates its own access token — no manual code-editor toggle needed.
 
 3. **Upload the SPA** to that hub's File Manager:
    `apps/MultiHubInventory/multi_hub_inventory_ui.html`
@@ -59,9 +58,16 @@ http://192.168.1.86/apps/api/247/api/?access_token=4c0edefe-55ed-4001-bd44-3abd3
 This is the `/api/` path — **not** the `ui.html` dashboard link. You can find it on the Hub
 Diagnostics settings page under "Open Hub Diagnostics Dashboard."
 
-Add an entry for **this hub itself** too, pointing at its own Hub Diagnostics instance.
-Tokens are stored only in the app's settings; they never leave the hub and are never returned
-by `/api/peers`.
+Add an entry for **this hub itself** too, pointing at its own Hub Diagnostics instance — but
+for the host hub use the **loopback** address, because a hub cannot make an HTTP call to its
+own external IP (the call fails with "peer call failed"):
+
+```
+http://127.0.0.1:8080/apps/api/247/api/?access_token=<token>
+```
+
+Peer hubs use their normal LAN IP. Tokens are stored only in the app's settings; they never
+leave the hub and are never returned by `/api/peers`.
 
 ## v1 limitations
 
