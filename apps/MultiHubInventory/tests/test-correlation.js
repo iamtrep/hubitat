@@ -23,7 +23,7 @@ function extractFn(name) {
   throw new Error('unbalanced braces for ' + name);
 }
 
-const FNS = ['filterLinked', 'mergeFleet', 'firmwareDrift', 'attentionItems', 'fleetSummary'];
+const FNS = ['filterLinked', 'mergeFleet', 'fwBasis', 'firmwareDrift', 'attentionItems', 'fleetSummary'];
 const harness = FNS.map(extractFn).join('\n') + '\nmodule.exports = { ' + FNS.join(', ') + ' };';
 const tmp = path.join(os.tmpdir(), 'mhi_corr_' + process.pid + '.js');
 fs.writeFileSync(tmp, harness);
@@ -57,58 +57,75 @@ t('mergeFleet flattens allDevices, tags hub, drops Linked, records hub status', 
   assert.strictEqual(m.hubs[1].error, 'unreachable');
 });
 
-t('firmwareDrift flags mixed firmware, ignores singletons, marks unknown-only as not-mixed, sorts mixed first', () => {
+t('firmwareDrift — real drift (same source, different values)', () => {
+  // Two M1 devices, same firmwareSource, different firmware values, no OTA -> mixed
   const rows = [
-    {manufacturer:'Acme',model:'M1',firmware:'1.0',firmwareOta:'100',hub:'a'},
-    {manufacturer:'Acme',model:'M1',firmware:'1.1',firmwareOta:'101',hub:'b'},   // mixed group (different OTA)
-    {manufacturer:'Acme',model:'M1',firmware:'1.0',firmwareOta:'100',hub:'c'},
-    {manufacturer:'Beta',model:'B1',firmware:'2.0',firmwareOta:'200',hub:'a'},
-    {manufacturer:'Beta',model:'B1',firmware:'2.0',firmwareOta:'200',hub:'b'},   // consistent group
-    {manufacturer:'Solo',model:'S1',firmware:'9',firmwareOta:'900',hub:'a'},     // singleton -> excluded
-    {manufacturer:'Ghost',model:'G1',firmware:'',hub:'a'},
-    {manufacturer:'Ghost',model:'G1',firmware:'',hub:'b'},     // unknown-only group (blank firmware, no OTA)
-    {manufacturer:'Ghost',model:'G1',firmware:'',hub:'c'},
-  ];
-  const d = C.firmwareDrift(rows);
-  assert.strictEqual(d.length, 3);                 // M1 + B1 + G1, not S1
-  assert.strictEqual(d[0].mixed, true);            // mixed sorts first
-  assert.strictEqual(d[0].model, 'M1');
-  assert.strictEqual(d[0].count, 3);
-  assert.strictEqual(d[1].mixed, false);
-  const ghost = d.find(g => g.model === 'G1');
-  assert(ghost, 'Ghost/G1 group should be present');
-  assert.strictEqual(ghost.mixed, false);          // unknown-only: all version='unknown', not mixed
-  // devices array is exposed on each group
-  assert(d.find(g => g.model === 'M1').devices.length === 3);
-  assert(d.find(g => g.model === 'B1').devices.length === 2);
-  assert(ghost.devices.length === 3);
-});
-
-t('firmwareDrift uses firmwareOta for variant grouping — same OTA despite different firmware strings is NOT mixed', () => {
-  // Two devices with different firmware labels but same firmwareOta -> one OTA variant -> not mixed.
-  // A third device with a different firmwareOta -> two OTA variants -> mixed.
-  const rows = [
-    {manufacturer:'Widgets',model:'W1',firmware:'1.0',  firmwareOta:'500',hub:'a'},
-    {manufacturer:'Widgets',model:'W1',firmware:'1.01', firmwareOta:'500',hub:'b'},  // same OTA as above
-    {manufacturer:'Widgets',model:'W1',firmware:'1.5',  firmwareOta:'501',hub:'c'},  // different OTA
+    {manufacturer:'Acme',model:'M1',firmware:'1.0',firmwareSource:'softwareBuild',firmwareOta:null,hub:'a'},
+    {manufacturer:'Acme',model:'M1',firmware:'1.1',firmwareSource:'softwareBuild',firmwareOta:null,hub:'b'},
   ];
   const d = C.firmwareDrift(rows);
   assert.strictEqual(d.length, 1);
-  assert.strictEqual(d[0].model, 'W1');
-  assert.strictEqual(d[0].mixed, true);   // OTA 500 vs 501 -> mixed
-  assert.strictEqual(d[0].variants.length, 2);
-  // OTA 500 group has count 2 (both firmware:'1.0' and firmware:'1.01' share it)
-  const v500 = d[0].variants.find(v => v.version === '500');
-  assert(v500, 'variant 500 should exist');
-  assert.strictEqual(v500.count, 2);
-  // If we remove the third device, same-OTA group should NOT be mixed
-  const rows2 = [
-    {manufacturer:'Widgets',model:'W1',firmware:'1.0',  firmwareOta:'500',hub:'a'},
-    {manufacturer:'Widgets',model:'W1',firmware:'1.01', firmwareOta:'500',hub:'b'},
+  assert.strictEqual(d[0].model, 'M1');
+  assert.strictEqual(d[0].mixed, true,        'M1: same source, different values -> mixed');
+  assert.strictEqual(d[0].inconsistent, false,'M1: only one basis used -> not inconsistent');
+});
+
+t('firmwareDrift — inconsistent fields (different sources, no OTA)', () => {
+  // Two S1 devices: one reports via softwareBuild, other via application -> inconsistent, not mixed
+  const rows = [
+    {manufacturer:'Sinope',model:'S1',firmware:'1.0.7',firmwareSource:'softwareBuild',firmwareOta:null,hub:'a'},
+    {manufacturer:'Sinope',model:'S1',firmware:'08',   firmwareSource:'application',  firmwareOta:null,hub:'b'},
   ];
-  const d2 = C.firmwareDrift(rows2);
-  assert.strictEqual(d2.length, 1);
-  assert.strictEqual(d2[0].mixed, false, 'same OTA on both devices must NOT be mixed');
+  const d = C.firmwareDrift(rows);
+  assert.strictEqual(d.length, 1);
+  assert.strictEqual(d[0].model, 'S1');
+  assert.strictEqual(d[0].mixed,        false,'S1: different fields -> not mixed');
+  assert.strictEqual(d[0].inconsistent, true, 'S1: different fields -> inconsistent');
+});
+
+t('firmwareDrift — OTA trumps source: same OTA on devices with different firmwareSource -> NOT returned', () => {
+  // O1 devices: different firmwareSource but same firmwareOta -> basis OTA, one value -> consistent -> excluded
+  const rows = [
+    {manufacturer:'Osram',model:'O1',firmware:'1.0.7',firmwareSource:'softwareBuild',firmwareOta:'500',hub:'a'},
+    {manufacturer:'Osram',model:'O1',firmware:'08',   firmwareSource:'application',  firmwareOta:'500',hub:'b'},
+  ];
+  const d = C.firmwareDrift(rows);
+  assert.strictEqual(d.length, 0, 'O1 same OTA -> consistent -> not returned');
+});
+
+t('firmwareDrift — consistent group and singleton are excluded; interesting groups returned', () => {
+  // C1: consistent (same source, same value) -> excluded
+  // Solo: singleton -> excluded
+  // M1 + S1 from above-style inputs -> returned
+  const rows = [
+    // C1 consistent
+    {manufacturer:'Cree',model:'C1',firmware:'2.0',firmwareSource:'softwareBuild',firmwareOta:null,hub:'a'},
+    {manufacturer:'Cree',model:'C1',firmware:'2.0',firmwareSource:'softwareBuild',firmwareOta:null,hub:'b'},
+    // Solo singleton
+    {manufacturer:'Solo',model:'X1',firmware:'9.0',firmwareSource:'softwareBuild',firmwareOta:null,hub:'a'},
+    // M1 real drift
+    {manufacturer:'Acme',model:'M1',firmware:'1.0',firmwareSource:'softwareBuild',firmwareOta:null,hub:'a'},
+    {manufacturer:'Acme',model:'M1',firmware:'1.1',firmwareSource:'softwareBuild',firmwareOta:null,hub:'b'},
+    // S1 inconsistent fields
+    {manufacturer:'Sinope',model:'S1',firmware:'1.0.7',firmwareSource:'softwareBuild',firmwareOta:null,hub:'a'},
+    {manufacturer:'Sinope',model:'S1',firmware:'08',   firmwareSource:'application',  firmwareOta:null,hub:'b'},
+  ];
+  const d = C.firmwareDrift(rows);
+  // Only M1 (mixed) and S1 (inconsistent) should appear; C1 and Solo excluded
+  assert.strictEqual(d.length, 2, 'exactly M1 + S1 returned');
+  const m1 = d.find(g => g.model === 'M1');
+  const s1 = d.find(g => g.model === 'S1');
+  assert(m1, 'M1 group present');
+  assert(s1, 'S1 group present');
+  assert.strictEqual(m1.mixed, true);
+  assert.strictEqual(m1.inconsistent, false);
+  assert.strictEqual(s1.mixed, false);
+  assert.strictEqual(s1.inconsistent, true);
+  // mixed sorts before inconsistent-only
+  assert.strictEqual(d[0].model, 'M1', 'mixed (M1) sorts before inconsistent-only (S1)');
+  // devices arrays
+  assert.strictEqual(m1.devices.length, 2);
+  assert.strictEqual(s1.devices.length, 2);
 });
 
 t('attentionItems classifies by reason with injectable now + staleDays', () => {

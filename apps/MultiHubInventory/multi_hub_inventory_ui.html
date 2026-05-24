@@ -128,13 +128,33 @@ const WORKBENCH = false; // true for hub-free local development
 const T = '${access_token}', B = '${api_base}';
 const MOCK_PEERS = [{index:0,label:'maison-pro',reachable:true,webBase:'http://192.168.1.86'},{index:1,label:'maison',reachable:true,webBase:'http://192.168.1.213'}];
 const MOCK_AUDIT = {
-  0: { hubName:'maison-pro', generatedAt:'2026-05-23 10:00 UTC', deviceCount:3, allDevices:{
-       '1':{id:1,label:'Office Plug',deviceTypeName:'Zigbee Outlet',manufacturer:'Acme',model:'P1',firmware:'1.0',firmwareOta:'10013065',protocol:'Zigbee',orphan:false,disabled:false,appsUsingCount:2,dashboards:[],lastActivityTimeMs:Date.now()},
-       '2':{id:2,label:'Old Sensor',deviceTypeName:'Contact',manufacturer:'Acme',model:'C1',firmware:'1.0',firmwareOta:'20004001',protocol:'Z-Wave',orphan:true,disabled:false,appsUsingCount:0,dashboards:[],lastActivityTimeMs:Date.now()-30*86400000},
-       '3':{id:3,label:'Office Plug B',deviceTypeName:'Zigbee Outlet',manufacturer:'Acme',model:'P1',firmware:'1.01',firmwareOta:'10013065',protocol:'Zigbee',orphan:false,disabled:false,appsUsingCount:1,dashboards:[1],lastActivityTimeMs:Date.now()-3*86400000} } },
-  1: { hubName:'maison', generatedAt:'2026-05-23 10:01 UTC', deviceCount:2, allDevices:{
-       '7':{id:7,label:'Kitchen Plug',deviceTypeName:'Zigbee Outlet',manufacturer:'Acme',model:'P1',firmware:'1.1',firmwareOta:'10013099',protocol:'Zigbee',orphan:false,disabled:false,appsUsingCount:1,dashboards:[1],lastActivityTimeMs:Date.now()},
-       '8':{id:8,label:'Mirror',manufacturer:'Acme',model:'P1',firmware:'1.0',firmwareOta:'10013065',protocol:'Linked',appsUsingCount:0,dashboards:[],lastActivityTimeMs:Date.now()} } },
+  // Hub 0: real-drift group (same source=softwareBuild, different values) + inconsistent-fields group (different sources)
+  0: { hubName:'maison-pro', generatedAt:'2026-05-23 10:00 UTC', deviceCount:4, allDevices:{
+       // P1 — real drift: both use softwareBuild but different values
+       '1':{id:1,label:'Office Plug A',deviceTypeName:'Zigbee Outlet',manufacturer:'Acme',model:'P1',
+            firmware:'1.0.6',firmwareSource:'softwareBuild',firmwareOta:null,
+            protocol:'Zigbee',orphan:false,disabled:false,appsUsingCount:2,dashboards:[],lastActivityTimeMs:Date.now()},
+       // S1 — inconsistent fields: one device reports via softwareBuild, other via application
+       '2':{id:2,label:'Thermostat A',deviceTypeName:'Thermostat',manufacturer:'Sinope',model:'TH1300ZB',
+            firmware:'1.0.7',firmwareSource:'softwareBuild',firmwareOta:null,
+            protocol:'Zigbee',orphan:false,disabled:false,appsUsingCount:1,dashboards:[1],lastActivityTimeMs:Date.now()-2*86400000},
+       '3':{id:3,label:'Old Sensor',deviceTypeName:'Contact',manufacturer:'Acme',model:'C1',
+            firmware:'1.0',firmwareSource:'softwareBuild',firmwareOta:'20004001',
+            protocol:'Z-Wave',orphan:true,disabled:false,appsUsingCount:0,dashboards:[],lastActivityTimeMs:Date.now()-30*86400000},
+       '4':{id:4,label:'Office Plug B',deviceTypeName:'Zigbee Outlet',manufacturer:'Acme',model:'P1',
+            firmware:'1.0.7',firmwareSource:'softwareBuild',firmwareOta:null,
+            protocol:'Zigbee',orphan:false,disabled:false,appsUsingCount:1,dashboards:[1],lastActivityTimeMs:Date.now()-3*86400000} } },
+  1: { hubName:'maison', generatedAt:'2026-05-23 10:01 UTC', deviceCount:3, allDevices:{
+       // P1 — real drift: same hub, same source, yet another value
+       '7':{id:7,label:'Office Plug C',deviceTypeName:'Zigbee Outlet',manufacturer:'Acme',model:'P1',
+            firmware:'1.0.9',firmwareSource:'softwareBuild',firmwareOta:null,
+            protocol:'Zigbee',orphan:false,disabled:false,appsUsingCount:1,dashboards:[1],lastActivityTimeMs:Date.now()},
+       // S1 — inconsistent fields: application='08' vs softwareBuild='1.0.7' on hub 0
+       '8':{id:8,label:'Thermostat B',deviceTypeName:'Thermostat',manufacturer:'Sinope',model:'TH1300ZB',
+            firmware:'08',firmwareSource:'application',firmwareOta:null,
+            protocol:'Zigbee',orphan:false,disabled:false,appsUsingCount:1,dashboards:[1],lastActivityTimeMs:Date.now()-1*86400000},
+       // Linked mirror — should be filtered out by filterLinked
+       '9':{id:9,label:'Mirror',manufacturer:'Acme',model:'P1',firmware:'1.0.6',firmwareSource:'softwareBuild',firmwareOta:null,protocol:'Linked',appsUsingCount:0,dashboards:[],lastActivityTimeMs:Date.now()} } },
 };
 
 // ===== CORRELATION ===== (pure functions; unit-tested in tests/test-correlation.js)
@@ -155,29 +175,40 @@ function mergeFleet(hubResults){
   }
   return { rows, hubs };
 }
+function fwBasis(d){
+  const ota = (d.firmwareOta||'').trim();
+  if (ota) return { basis:'OTA', value: ota };
+  const fw = (d.firmware||'').trim();
+  if (fw) return { basis: d.firmwareSource || 'firmware', value: fw };
+  return { basis: null, value: null };
+}
 function firmwareDrift(rows){
   const groups = {};
   for (const r of rows){
-    const mfr = (r.manufacturer||'').trim(), model = (r.model||'').trim();
-    if (!mfr && !model) continue;                  // fully-unknown hardware: skip
+    const mfr=(r.manufacturer||'').trim(), model=(r.model||'').trim();
+    if (!mfr && !model) continue;
     const key = mfr + ' ' + model;
-    (groups[key] = groups[key] || { key, manufacturer:mfr, model, devices:[] }).devices.push(r);
+    (groups[key] = groups[key] || {key, manufacturer:mfr, model, devices:[]}).devices.push(r);
   }
   const out = [];
   for (const k in groups){
     const g = groups[k];
     if (g.devices.length < 2) continue;
-    const byVer = {};
+    const byBasis = {};                                   // basis -> Set of values
     for (const d of g.devices){
-      const ver = (d.firmwareOta || d.firmware || '').trim() || 'unknown';
-      const v = (byVer[ver] = byVer[ver] || { version:ver, count:0, hubs:[] });
-      v.count++; if (v.hubs.indexOf(d.hub) < 0) v.hubs.push(d.hub);
+      const b = fwBasis(d);
+      if (!b.basis) continue;                             // unknown firmware: not comparable
+      (byBasis[b.basis] = byBasis[b.basis] || new Set()).add(b.value);
     }
-    const variants = Object.values(byVer);
-    const mixed = variants.filter(v => v.version !== 'unknown').length > 1;
-    out.push({ key:g.key, manufacturer:g.manufacturer, model:g.model, count:g.devices.length, variants, mixed, devices:g.devices });
+    const bases = Object.keys(byBasis);
+    if (!bases.length) continue;                          // all-unknown group: skip
+    const mixed = bases.some(b => byBasis[b].size > 1);   // same field, different values = real drift
+    const inconsistent = bases.length > 1;                // identical hardware reporting via different fields
+    if (!mixed && !inconsistent) continue;                // consistent: not interesting, don't show
+    out.push({ key:g.key, manufacturer:g.manufacturer, model:g.model, count:g.devices.length,
+               devices:g.devices, bases, mixed, inconsistent });
   }
-  out.sort((a,b) => (b.mixed - a.mixed) || (b.count - a.count));
+  out.sort((a,b) => (b.mixed - a.mixed) || (b.inconsistent - a.inconsistent) || (b.count - a.count));
   return out;
 }
 function attentionItems(rows, opts){
@@ -491,26 +522,26 @@ function exportCsv(){
 }
 
 function renderDrift(){
-  // Show ONLY groups that actually drift — identical hardware (manufacturer+model) running more
-  // than one distinct firmware. Consistent groups (all the same OTA/firmware) are not drift and
-  // would just clutter the tab.
-  const groups = firmwareDrift(FLEET.rows).filter(g => g.mixed);
+  const groups = firmwareDrift(FLEET.rows);
   if (!groups.length){
-    document.getElementById('p-drift').innerHTML = '<div class="card"><div class="card-b muted">No firmware drift detected — identical-model devices all share the same firmware.</div></div>';
+    document.getElementById('p-drift').innerHTML = '<div class="card"><div class="card-b muted">No firmware drift or inconsistency detected.</div></div>';
     return;
   }
   const driftCols = [
     { l:'Device',       f:'label', ff:r=>(r.label||r.displayName||''), r:r=>dlink(r.id, r.label||r.displayName, r.hub) },
     { l:'Hub',          f:'hub' },
     { l:'Firmware',     f:'firmware', r:r=>r.firmware?esc(r.firmware):'<span class="muted">—</span>' },
+    { l:'Source',       f:'firmwareSource', r:r=>r.firmwareSource?esc(r.firmwareSource):'<span class="muted">—</span>' },
     { l:'OTA',          f:'firmwareOta', r:r=>esc(r.firmwareOta||'—') },
     { l:'Days inactive',f:'_days', t:'n', r:r=>`<span style="color:${r._daysColor}">${esc(r._daysText)}</span>` },
   ];
   const cards = groups.map((g, i) => {
-    const variants = g.variants.map(v => (v.version==='unknown'?'<span class="muted">unknown</span>':esc(v.version))
-      + (v.hubs.length ? ` <span class="muted">(${esc(v.hubs.join(', '))})</span>` : '')).join(' · ');
-    return `<div class="card"><div class="card-h">${g.mixed?'<span class="crit">⚠ mixed</span> ':''}${esc(g.manufacturer)} ${esc(g.model)} (${g.count})`
-      + `<span class="muted" style="font-weight:400"> — ${variants}</span></div>`
+    const mfr = esc(g.manufacturer), model = esc(g.model), count = g.count;
+    let label;
+    if (g.mixed && g.inconsistent) label = '<span class="crit">⚠ mixed firmware + inconsistent fields</span>';
+    else if (g.mixed)              label = '<span class="crit">⚠ mixed firmware</span>';
+    else                           label = `<span class="warn">⚠ inconsistent firmware fields (${esc(g.bases.join(' vs '))})</span>`;
+    return `<div class="card"><div class="card-h">${label} ${mfr} ${model} (${count})</div>`
       + `<div class="card-b"><div id="drift_${i}"></div></div></div>`;
   }).join('');
   document.getElementById('p-drift').innerHTML = cards;
