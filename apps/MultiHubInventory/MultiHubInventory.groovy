@@ -29,6 +29,49 @@ mappings {
     path('/api/peer')  { action: [GET: 'apiPeer'] }
 }
 
+// ===== CONFIG PAGE =====
+def mainPage() {
+    if (!state.peerIds) state.peerIds = [1]
+    dynamicPage(name: "mainPage", title: "Multi-Hub Inventory v${APP_VERSION}", install: true, uninstall: true) {
+        section("Hubs") {
+            paragraph "For each hub running Hub Diagnostics, paste its API base URL with the access token, e.g.<br><code>http://192.168.1.86/apps/api/247/api/?access_token=abcd…</code><br>(the <code>/api/</code> path, not the <code>ui.html</code> link). Include this hub as a peer too, pointing at its own Hub Diagnostics."
+            (state.peerIds as List).each { Integer p ->
+                input "peer_${p}_label", "text", title: "Hub ${p} label",   required: false, width: 4
+                input "peer_${p}_url",   "text", title: "Hub ${p} API URL", required: false, width: 6, submitOnChange: true
+                input "btnRemoveHub_${p}", "button", title: "Remove ${p}", width: 2
+            }
+            input "btnAddHub", "button", title: "➕ Add hub"
+        }
+        section("Dashboard") {
+            if (state.accessToken) {
+                href url: "${fullLocalApiServerUrl}/ui.html?access_token=${state.accessToken}",
+                     title: "Open Multi-Hub Inventory", style: "external", required: false
+            } else {
+                paragraph "Enable OAuth (Apps Code → this app → OAuth) and re-open to get the dashboard link."
+            }
+        }
+    }
+}
+
+// Parse "http://<ip>/apps/api/<id>/api/...?access_token=<tok>" into baseUrl (through /api) + token.
+private Map parsePeerUrl(String raw) {
+    java.util.regex.Matcher m = (raw =~ /(https?:\/\/[^?\s]*?\/apps\/api\/\d+\/api)\b[^?]*\?.*?access_token=([a-fA-F0-9\-]+)/)
+    if (m.find()) return [baseUrl: m.group(1).replaceAll(/\/+$/, ''), token: m.group(2)]
+    return null
+}
+
+void appButtonHandler(String btn) {
+    List ids = (state.peerIds ?: []) as List
+    if (btn == 'btnAddHub') {
+        Integer next = ids ? ((ids.max() as Integer) + 1) : 1
+        ids << next; state.peerIds = ids
+    } else if (btn?.startsWith('btnRemoveHub_')) {
+        Integer p = btn.replace('btnRemoveHub_', '') as Integer
+        ids.remove((Object) p); state.peerIds = ids
+        app.removeSetting("peer_${p}_label"); app.removeSetting("peer_${p}_url")
+    }
+}
+
 // ===== LIFECYCLE =====
 void installed() { state.peerIds = [1]; checkOAuth(); initialize() }
 void updated()   { initialize() }
