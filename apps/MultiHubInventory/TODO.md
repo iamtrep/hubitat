@@ -31,8 +31,16 @@ integration table in the SPA.
 
 ## Medium priority
 
-- **Remote hubs via cloud URLs.** v1 is same-LAN only; the courier could call peers' cloud
-  endpoints server-side to reach chalet/andree.
+- **Cloud-relay peers: large `audit/data` 504s.** Cloud URLs now parse and the courier reaches
+  them server-side — `op=start`/`op=status` (small responses) cross the relay fine. But fetching
+  the full `audit/data` for a sizeable hub **times out: the Hubitat cloud relay returns HTTP 504
+  after ~10s** (verified 2026-05-24: chalet, 190 devices, scan completes `done` but `audit/data`
+  → 504, ~10s, even on a direct curl). This is a Hubitat cloud-relay gateway-timeout/payload limit,
+  not our code. Fix options: (a) add a **slim/projection mode** to HubDiagnostics `/api/audit/data`
+  returning only the ~11 fields MHI uses (id, label, deviceTypeName, manufacturer, model, firmware,
+  firmwareOta, protocol, lastActivityTimeMs, appsUsingCount, flag bits) — a much smaller payload
+  that should deliver under the relay timeout (also speeds up all peers); (b) reach remote hubs over
+  LAN/VPN instead of cloud (no relay timeout).
 - **Self-peer UX.** When the serving hub is its own peer it must use the loopback URL
   (`http://127.0.0.1:8080/...`) because a hub can't HTTP its own external IP. Auto-detect the
   host hub and rewrite to loopback, instead of requiring the user to know this.
