@@ -111,7 +111,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
   <button id="rescanBtn" onclick="rescanFleet()" class="btn btn-p btn-s" style="margin-left:auto">↻ Rescan fleet</button></div>
 <div class="tabs" id="tabs">
   <div class="tab active" data-tab="summary">Summary</div>
-  <div class="tab" data-tab="register">Register</div>
+  <div class="tab" data-tab="register">Device Register</div>
   <div class="tab" data-tab="drift">Device Drift</div>
 </div>
 <div class="content">
@@ -144,7 +144,7 @@ const T = '${access_token}', B = '${api_base}';
 const MOCK_PEERS = [{index:0,label:'maison-pro',reachable:true,webBase:'http://192.168.1.86'},{index:1,label:'maison',reachable:true,webBase:'http://192.168.1.213'}];
 const MOCK_AUDIT = {
   // Hub 0: real-drift group (same source=softwareBuild, different values) + inconsistent-fields group (different sources)
-  0: { hubName:'maison-pro', generatedAt:'2026-05-23 10:00 UTC', deviceCount:4, allDevices:{
+  0: { hubName:'maison-pro', generatedAt:'2026-05-23 10:00 UTC', hubModel:'C-8 Pro', hubFirmware:'2.4.4.155', deviceCount:4, allDevices:{
        // P1 — real drift: both use softwareBuild but different values
        '1':{id:1,label:'Office Plug A',deviceTypeName:'Zigbee Outlet',manufacturer:'Acme',model:'P1',
             firmware:'1.0.6',firmwareSource:'softwareBuild',firmwareOta:null,
@@ -163,7 +163,7 @@ const MOCK_AUDIT = {
        '5':{id:5,label:'Temp Sensor A',deviceTypeName:'Tuya Temp/Humidity',manufacturer:'Tuya',model:'TH01',
             firmware:'1.0',firmwareSource:'softwareBuild',firmwareOta:null,
             protocol:'Zigbee',orphan:false,disabled:false,appsUsingCount:1,dashboards:[1],lastActivityTimeMs:Date.now()-1*86400000} } },
-  1: { hubName:'maison', generatedAt:'2026-05-23 10:01 UTC', deviceCount:3, allDevices:{
+  1: { hubName:'maison', generatedAt:'2026-05-23 10:01 UTC', hubModel:'C-8', hubFirmware:'2.4.4.155', deviceCount:3, allDevices:{
        // P1 — real drift: same hub, same source, yet another value
        '7':{id:7,label:'Office Plug C',deviceTypeName:'Zigbee Outlet',manufacturer:'Acme',model:'P1',
             firmware:'1.0.9',firmwareSource:'softwareBuild',firmwareOta:null,
@@ -190,10 +190,12 @@ function filterLinked(rows){ return rows.filter(r => r.protocol !== 'Linked'); }
 function mergeFleet(hubResults){
   const rows = [], hubs = [];
   for (const h of hubResults){
-    const info = { label:h.label, ok:!!h.ok, error:h.error||null, hubName:null, generatedAt:null, deviceCount:0 };
+    const info = { label:h.label, ok:!!h.ok, error:h.error||null, hubName:null, generatedAt:null, deviceCount:0, hubModel:null, hubFirmware:null };
     if (h.ok && h.data && h.data.allDevices){
       info.hubName = h.data.hubName || null;
       info.generatedAt = h.data.generatedAt || null;
+      info.hubModel = (h.data && h.data.hubModel) || null;
+      info.hubFirmware = (h.data && h.data.hubFirmware) || null;
       const tagged = Object.values(h.data.allDevices).map(r => Object.assign({}, r, { hub:h.label }));
       const kept = filterLinked(tagged);
       info.deviceCount = kept.length;
@@ -511,7 +513,8 @@ function renderSummary(){
   const s = fleetSummary(FLEET);
   const hubLines = FLEET.hubs.map(h => `<div class="ni"><div class="nl">${esc(h.label)}${h.ok?'':' ⚠'}</div>`
     + `<div class="nv">${h.ok?h.deviceCount+' devices':'<span class="crit">'+esc(h.error)+'</span>'}</div>`
-    + `<div class="nl">${h.ok?('as of '+esc(h.generatedAt||'?')):''}</div></div>`).join('');
+    + `<div class="nl">${h.ok?('as of '+esc(h.generatedAt||'?')):''}</div>`
+    + `${(h.hubModel||h.hubFirmware)?('<div class="nl">'+esc(h.hubModel||'')+( h.hubFirmware?(' · fw '+esc(h.hubFirmware)):'' )+'</div>'):''}</div>`).join('');
   const kv = o => Object.entries(o).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<span class="pill">${esc(k)}<b>${v}</b></span>`).join('');
   const a = s.attentionCounts;
   document.getElementById('p-summary').innerHTML =

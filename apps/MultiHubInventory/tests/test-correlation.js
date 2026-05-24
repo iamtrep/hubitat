@@ -45,6 +45,7 @@ t('filterLinked drops protocol === Linked', () => {
 t('mergeFleet flattens allDevices, tags hub, drops Linked, records hub status', () => {
   const hubResults = [
     { label:'pro', ok:true, data:{ hubName:'Pro', generatedAt:'2026-05-23 10:00 UTC',
+        hubModel:'C-8 Pro', hubFirmware:'2.4.4.155',
         allDevices:{ '1':{id:1,protocol:'Zigbee',manufacturer:'X'}, '2':{id:2,protocol:'Linked'} } } },
     { label:'main', ok:false, error:'unreachable', data:null },
   ];
@@ -53,8 +54,12 @@ t('mergeFleet flattens allDevices, tags hub, drops Linked, records hub status', 
   assert.strictEqual(m.rows[0].hub, 'pro');
   assert.strictEqual(m.hubs[0].deviceCount, 1);
   assert.strictEqual(m.hubs[0].hubName, 'Pro');
+  assert.strictEqual(m.hubs[0].hubModel, 'C-8 Pro');
+  assert.strictEqual(m.hubs[0].hubFirmware, '2.4.4.155');
   assert.strictEqual(m.hubs[1].ok, false);
   assert.strictEqual(m.hubs[1].error, 'unreachable');
+  assert.strictEqual(m.hubs[1].hubModel, null);
+  assert.strictEqual(m.hubs[1].hubFirmware, null);
 });
 
 t('firmwareDrift — real drift (same source, different values)', () => {
