@@ -215,3 +215,4 @@ Per-project test plans inherit from this guide. Existing plans:
 - [`apps/HubDiagnostics/tests/TEST_PLAN.md`](apps/HubDiagnostics/tests/TEST_PLAN.md) — phased coverage for HubDiagnostics: Mode 2 (done), Mode 2 audit-HTML (planned), Mode 2 snapshot-diff (planned), Mode 3 SPA helpers (planned).
 
 This section grows as more projects gain plans. The convention is one `TEST_PLAN.md` per project with phased coverage targets — see §2.3.
+
