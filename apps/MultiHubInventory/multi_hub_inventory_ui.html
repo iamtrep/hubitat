@@ -218,6 +218,10 @@ let HUB_WEBBASE = {};
 function dlink(id, name, hubLabel){
   if (id == null) return esc(name);
   const wb = HUB_WEBBASE[hubLabel] || '';
+  // Cloud-relay peers have no reachable /device/edit admin page (cloud.hubitat.com serves the
+  // OAuth API, not the hub UI) — render plain text rather than a broken link.
+  if (/cloud\.hubitat\.com/.test(wb)) return esc(name);
+  // Loopback self-peer (or no webBase): a relative link resolves to the serving hub.
   const base = (wb && !/127\.0\.0\.1|localhost/.test(wb)) ? wb : '';
   return `<a href="${base}/device/edit/${id}" target="_blank" rel="noopener">${esc(name)}</a>`;
 }

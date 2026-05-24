@@ -53,10 +53,14 @@ def mainPage() {
     }
 }
 
-// Matches the /apps/api/<id>/api base + token even if the user pastes a longer path (e.g. a ui.html link); the \b + [^?]* lets extra path segments be consumed before the query string.
-// Parse "http://<ip>/apps/api/<id>/api/...?access_token=<tok>" into baseUrl (through /api) + token.
+// Parse a Hub Diagnostics API base URL + access token, accepting BOTH shapes:
+//   local: http://<ip>/apps/api/<id>/api/?access_token=<tok>
+//   cloud: https://cloud.hubitat.com/api/<cloudHubId>/apps/<id>/api/?access_token=<tok>
+// Capture everything up to the LAST "/api" segment before the query as the base (the proxy
+// appends /audit/... to it), then the token. Greedy [^?\s]+/api lands on the app's /api base
+// in either shape (the cloud URL also has an earlier /api/<cloudHubId> which is correctly skipped).
 private Map parsePeerUrl(String raw) {
-    java.util.regex.Matcher m = (raw =~ /(https?:\/\/[^?\s]*?\/apps\/api\/\d+\/api)\b[^?]*\?.*?access_token=([a-fA-F0-9\-]+)/)
+    java.util.regex.Matcher m = (raw =~ /(https?:\/\/[^?\s]+\/api)\/?\?.*?access_token=([a-fA-F0-9\-]+)/)
     if (m.find()) return [baseUrl: m.group(1).replaceAll(/\/+$/, ''), token: m.group(2)]
     return null
 }
