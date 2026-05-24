@@ -1316,10 +1316,7 @@ Map getPerformanceData(Map shared = [:]) {
     List zwaveMsgCounts = extractZwaveMessageCounts(zwaveData)
     List zigbeeMsgCounts = extractZigbeeMessageCounts(zigbeeData)
     Map radioStats = [zwave: zwaveMsgCounts, zigbee: zigbeeMsgCounts]
-
-    // Top talkers: top 3 devices by message count across both radios
-    List allRadioDevices = buildRadioDeviceList(zwaveMsgCounts, zigbeeMsgCounts)
-    List topTalkers = allRadioDevices.sort { -it.msgCount }.take(3)
+    // Ship the raw per-device message counts; the SPA ranks the top talkers (sort + top-N).
     t.radioCalc = now() - t1
 
     t1 = now()
@@ -1426,7 +1423,7 @@ Map getPerformanceData(Map shared = [:]) {
         "indexRead=${t.indexRead}ms"
     return [
         stats: stats, resources: resources,
-        topTalkers: topTalkers,
+        radioStats: radioStats,
         deviceTypeById: deviceTypeById,        // B2: id → driver type for CPU-by-device-type chart
         appParentTypeById: appParentTypeById,  // B2: id → parent label for CPU-by-app-type chart
         checkpointCount: indexEntries.size(),

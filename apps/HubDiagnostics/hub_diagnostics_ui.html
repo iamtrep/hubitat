@@ -200,6 +200,15 @@ function fmsDuration(ms){
   const r=h>0?h+'h '+m+'m '+s+'s':m>0?m+'m '+s+'s':s+'s';
   return neg?'-'+r:r;
 }
+// Top radio talkers: flatten the raw per-radio message counts, drop silent devices, rank top-N.
+// The hub ships raw radioStats; ranking (sort + top-N) is a pure SPA derivation shared by the
+// Performance tab's current view and its comparison (interval) view.
+function topRadioTalkers(rs){
+  if(!rs)return [];
+  return [...(rs.zwave||[]).map(r=>({name:r.name,deviceId:r.deviceId,msgCount:r.msgCount,integration:'Z-Wave'})),
+          ...(rs.zigbee||[]).map(r=>({name:r.name,deviceId:r.id,msgCount:r.msgCount,integration:'Zigbee'}))]
+    .filter(r=>(r.msgCount||0)>0).sort((a,b)=>b.msgCount-a.msgCount).slice(0,3);
+}
 // Startup baseline: a zeroed structural mirror of the checkpoint. The hub used to build this
 // server-side (buildZeroBaseline); it now ships baselineStats:null + baselineMode:"startup" and
 // the SPA synthesizes it here so diffStats() runs its full per-entry recompute (comp - 0) instead
@@ -2393,12 +2402,8 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
     }
     o+='</div></div></div>'}
 
-  // Top Talkers
-  const compTalkers=activePerfComp&&s?.radioStats?
-    [...(s.radioStats.zwave||[]).map(r=>({name:r.name,deviceId:r.deviceId,msgCount:r.msgCount,integration:'Z-Wave'})),
-     ...(s.radioStats.zigbee||[]).map(r=>({name:r.name,deviceId:r.id,msgCount:r.msgCount,integration:'Zigbee'}))]
-    .filter(r=>(r.msgCount||0)>0).sort((a,b)=>b.msgCount-a.msgCount).slice(0,3):null;
-  const talkers=compTalkers||d.topTalkers;
+  // Top Talkers — derived client-side from raw radioStats (comparison interval, else current).
+  const talkers=topRadioTalkers(activePerfComp ? s?.radioStats : d.radioStats);
   if(talkers&&talkers.length){
     o+='<div class="card"><div class="card-h">Top Talkers'+(activePerfComp?' (Interval)':'')+'</div><div class="card-b">';
     talkers.forEach((t,i)=>{
