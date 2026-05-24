@@ -221,6 +221,14 @@ App-served UIs and programmatic APIs use Hubitat's per-app OAuth path (`oauth: t
 
 The `/hubitat-oauth` skill in this repo enables OAuth on a Groovy app without manual hub UI steps.
 
+### Cross-origin (CORS) and multi-hub browser clients
+
+The local OAuth API sends no CORS headers (see `docs/hubitat-platform-notes.md` for the measured behavior), so a browser page served by one hub cannot read another hub's API response directly. Browser-based multi-hub tools therefore cannot fan out to peer hubs from the client: the cross-hub calls must run server-side on the hub that serves the page, which forwards them and returns the result same-origin.
+
+Such a forwarding route is **not** the "pure passthrough" forbidden under API endpoint design below — that rule assumes the consumer can fetch the target directly under an admin session, which the CORS boundary makes impossible. Keep the forwarder hardened: whitelist the forwarded operations and address peers by index, never by a caller-supplied URL or token.
+
+*(The cloud relay places every hub under one `cloud.hubitat.com` host, which would make browser-direct calls same-origin — at the cost of routing LAN traffic through Hubitat's cloud.)*
+
 ### API endpoint design
 
 Apps that expose `/api/*` routes should classify each route into one of three categories:
