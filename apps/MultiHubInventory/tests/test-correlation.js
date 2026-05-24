@@ -74,5 +74,20 @@ t('firmwareDrift flags mixed firmware, ignores singletons + unknown-only, sorts 
   assert.strictEqual(d[1].mixed, false);
 });
 
+t('attentionItems classifies by reason with injectable now + staleDays', () => {
+  const NOW = 1_000_000_000_000, day = 86400000;
+  const rows = [
+    {id:1, lastActivityTimeMs: NOW - 10*day, appsUsingCount:1, dashboards:[1]}, // stale (referenced -> not unreferenced)
+    {id:2, orphan:true,   lastActivityTimeMs: NOW, appsUsingCount:1, dashboards:[1]}, // orphaned only
+    {id:3, disabled:true, lastActivityTimeMs: NOW, appsUsingCount:0, dashboards:[]},  // disabled + unreferenced
+    {id:4, lastActivityTimeMs: NOW, appsUsingCount:2, dashboards:[]},                // nothing
+  ];
+  const a = C.attentionItems(rows, { now: NOW, staleDays: 7 });
+  assert.deepStrictEqual(a.stale.map(r=>r.id), [1]);
+  assert.deepStrictEqual(a.orphaned.map(r=>r.id), [2]);
+  assert.deepStrictEqual(a.disabled.map(r=>r.id), [3]);
+  assert.deepStrictEqual(a.unreferenced.map(r=>r.id), [3]);
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
