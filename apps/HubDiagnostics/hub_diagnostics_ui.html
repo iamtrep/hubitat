@@ -3055,6 +3055,9 @@ const RC={
     displayBuf:[],        // all filtered display rows (newest first). Visible area is fixed via overflow-y; buffer is not capped.
     selectedRaw:null,     // raw JSON text of the currently expanded row (or null)
     lastTailRenderAt:0,   // throttle tail re-render to ~1 Hz during ingest to keep large-buffer renders cheap
+    pinnedToLive:true,    // auto-follow newest (top); false while reading history or a row is expanded
+    pinBaselineLen:0,     // displayBuf length captured when un-pinning; drives the "N new frames" pill
+    _suppressScrollUntil:0, // perf.now() horizon during which the scroll handler ignores our own scrollTop writes
     filters:{cluster:null,cmd:null,dni:'',mfr:null,minLqi:null,maxRssi:null},
     framesLastSec:[],     // sliding window for frames/s counter
     lastAggregateAt:0,
@@ -3146,8 +3149,9 @@ function renderZigbeeSubTab(){
   rcZbUpdateBadge();
   // Single substring filter, 150 ms debounce — matches the tbl() filter UX used elsewhere in the SPA.
   const fq=document.getElementById('rc-zb-f-q');
-  if(fq){let t=null;fq.addEventListener('input',()=>{clearTimeout(t);t=setTimeout(()=>{rcZbReadFilters();rcZbRenderTail()},150)})}
+  if(fq){let t=null;fq.addEventListener('input',()=>{clearTimeout(t);t=setTimeout(()=>{rcZbReadFilters();rcZbRenderTail({repin:true})},150)})}
   rcZbReadFilters();
+  rcZbRenderTail({repin:true});   // build the persistent tail shell now (also repaints an existing paused buffer)
 }
 
 function rcZbUpdateBadge(){
@@ -3196,7 +3200,7 @@ function rcZbPause(){
 
 function rcZbClear(){
   const z=RC.zigbee;if(z.buf)z.buf.clear();z.displayBuf=[];z.framesLastSec=[];
-  rcZbUpdateMetrics();rcZbRenderTail();
+  rcZbUpdateMetrics();rcZbRenderTail({repin:true});
 }
 
 function rcZbCaptureMeta(){
@@ -3243,7 +3247,7 @@ function rcZbOnFrame(text){
   if(!z._tailPending){z._tailPending=true;requestAnimationFrame(()=>{
     z._tailPending=false;rcZbUpdateMetrics();
     const t=Date.now();
-    if(t-z.lastTailRenderAt>1000){z.lastTailRenderAt=t;rcZbRenderTail()}
+    if(t-z.lastTailRenderAt>1000){z.lastTailRenderAt=t;rcZbRenderTail({fromTick:true})}
     if(t-z.lastAggregateAt>1000){z.lastAggregateAt=t;rcZbRenderAggregates()}
   })}
 }
@@ -3459,7 +3463,78 @@ function rcZbRenderAggregates(){
   }
 }
 
-function rcZbRenderTail(){
+// ===== RADIO CAPTURE: shared live-tail scroll / auto-follow (Zigbee + Z-Wave) =====
+// Frames render newest-first, so the "live edge" is the TOP of the scroll box.
+// The scroll container is built once per sub-tab render (persistent) and only its
+// inner <table> is repainted per tick, so scroll position survives. Auto-follow pins
+// to the top; scrolling down or expanding a row un-pins and shows a jump-to-live pill.
+const RC_PIN_THRESHOLD_PX = 8;
+
+// cfg: { liveId, tblId, z, rowsHtml }
+// opt: { fromTick:true } new frames prepended (anchor history) | { repin:true } reset to live | {} keep position
+function rcTailPaint(cfg, opt){
+  opt=opt||{};
+  const z=cfg.z;
+  const live=document.getElementById(cfg.liveId);if(!live)return;
+  const headerHtml='Live tail ('+z.displayBuf.length+' frames) '
+    +'<span style="font-weight:normal;font-size:12px;opacity:.7">— click a row to expand; top is live, scroll down for history</span>';
+  let tbl=document.getElementById(cfg.tblId);
+  if(!tbl){
+    // First paint for this sub-tab render: build the persistent shell once.
+    live.innerHTML='<div class="card">'
+      +'<h3 id="'+cfg.tblId+'-h" style="margin-top:0">'+headerHtml+'</h3>'
+      +'<div style="position:relative">'
+      +'<button id="'+cfg.tblId+'-pill" type="button" style="display:none;position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:2;cursor:pointer;border:0;border-radius:12px;padding:4px 12px;font-size:12px;background:var(--primary);color:#fff;box-shadow:0 2px 6px rgba(0,0,0,0.4)"></button>'
+      +'<div id="'+cfg.tblId+'" style="max-height:420px;overflow-y:auto;border:1px solid rgba(255,255,255,0.08);border-radius:4px">'+cfg.rowsHtml+'</div>'
+      +'</div></div>';
+    tbl=document.getElementById(cfg.tblId);
+    tbl.addEventListener('scroll',()=>rcTailOnScroll(cfg));
+    document.getElementById(cfg.tblId+'-pill').addEventListener('click',()=>rcTailJumpToLive(cfg));
+    z._suppressScrollUntil=performance.now()+80;tbl.scrollTop=0;
+    rcTailUpdatePill(cfg);
+    return;
+  }
+  // Subsequent paints: update the header count, swap only the inner table, keep scroll sane.
+  const hEl=document.getElementById(cfg.tblId+'-h');if(hEl)hEl.innerHTML=headerHtml;
+  const oldH=tbl.scrollHeight,oldTop=tbl.scrollTop;
+  tbl.innerHTML=cfg.rowsHtml;
+  let newTop;
+  if(opt.repin){z.pinnedToLive=true;z.pinBaselineLen=0;newTop=0;}
+  else if(z.pinnedToLive){newTop=0;}
+  else if(opt.fromTick){newTop=oldTop+(tbl.scrollHeight-oldH);}  // new frames prepended above the viewport
+  else{newTop=oldTop;}                                           // user interaction (expand/collapse): hold position
+  z._suppressScrollUntil=performance.now()+80;tbl.scrollTop=newTop;
+  rcTailUpdatePill(cfg);
+}
+
+// Pin when the user returns to the top; un-pin (and snapshot the baseline frame count) when they scroll into history.
+function rcTailOnScroll(cfg){
+  const z=cfg.z;
+  if(performance.now()<(z._suppressScrollUntil||0))return;   // ignore the render's own programmatic scrolls
+  const tbl=document.getElementById(cfg.tblId);if(!tbl)return;
+  if(tbl.scrollTop<=RC_PIN_THRESHOLD_PX){
+    if(!z.pinnedToLive){z.pinnedToLive=true;z.pinBaselineLen=0;rcTailUpdatePill(cfg);}
+  }else if(z.pinnedToLive){
+    z.pinnedToLive=false;z.pinBaselineLen=z.displayBuf.length;rcTailUpdatePill(cfg);
+  }
+}
+
+function rcTailUpdatePill(cfg){
+  const z=cfg.z;
+  const pill=document.getElementById(cfg.tblId+'-pill');if(!pill)return;
+  const n=Math.max(0,z.displayBuf.length-(z.pinBaselineLen||0));
+  if(!z.pinnedToLive&&n>0){pill.style.display='';pill.textContent='▲ '+n+' new frame'+(n===1?'':'s');}
+  else{pill.style.display='none';}
+}
+
+function rcTailJumpToLive(cfg){
+  const z=cfg.z;const tbl=document.getElementById(cfg.tblId);if(!tbl)return;
+  z.pinnedToLive=true;z.pinBaselineLen=0;
+  z._suppressScrollUntil=performance.now()+80;tbl.scrollTop=0;
+  rcTailUpdatePill(cfg);
+}
+
+function rcZbRenderTail(opt){
   const z=RC.zigbee;
   // Rebuild displayBuf from the entire recording buffer (filter-respecting). Newest first.
   // Buffer accumulates without cap — the visible area is constrained by max-height + overflow-y on the wrapper.
@@ -3472,8 +3547,7 @@ function rcZbRenderTail(){
   }
   // If the selected row scrolled out (e.g., ring overflow dropped it), deselect.
   if(z.selectedRaw&&!z.displayBuf.some(r=>r._raw===z.selectedRaw))z.selectedRaw=null;
-  const container=document.getElementById('rc-zb-live');
-  container.innerHTML='<div class="card"><h3 style="margin-top:0">Live tail ('+z.displayBuf.length+' frames) <span style="font-weight:normal;font-size:12px;opacity:.7">— click a row to expand; scroll to see older frames</span></h3><div id="rc-zb-tail-tbl" style="max-height:420px;overflow-y:auto;border:1px solid rgba(255,255,255,0.08);border-radius:4px">'+rcZbRenderTailHtml(z.displayBuf,z.selectedRaw)+'</div></div>';
+  rcTailPaint({liveId:'rc-zb-live',tblId:'rc-zb-tail-tbl',z:z,rowsHtml:rcZbRenderTailHtml(z.displayBuf,z.selectedRaw)},opt);
 }
 
 function rcZbRenderTailHtml(rows, selectedRaw){
@@ -3528,8 +3602,11 @@ function rcZbHandleTailClick(e){
   const z=RC.zigbee;
   const idx=parseInt(tr.dataset.idx,10);
   const row=z.displayBuf[idx];if(!row)return;
-  z.selectedRaw=(z.selectedRaw===row._raw)?null:row._raw;
-  rcZbRenderTail();
+  const expanding=(z.selectedRaw!==row._raw);
+  z.selectedRaw=expanding?row._raw:null;
+  // Expanding means "I'm reading this" — freeze auto-follow so the row doesn't get scrolled away.
+  if(expanding){z.pinnedToLive=false;z.pinBaselineLen=z.displayBuf.length;}
+  rcZbRenderTail({});
 }
 // ===== RADIO CAPTURE: Z-WAVE SUB-TAB (pass 1 — capture skeleton, stack-branched) =====
 // Mirrors the Zigbee rcZb* set against ws://<hubIp>/zwaveLogsocket. No aggregates / no command-class
