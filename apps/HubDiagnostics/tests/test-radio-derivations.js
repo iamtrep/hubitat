@@ -33,10 +33,12 @@ function extractFn(name) {
   return src.slice(start, i);
 }
 
-const harness = extractFn('topRadioTalkers') + '\nmodule.exports = { topRadioTalkers };';
+// topRadioTalkers builds on flattenRadioDevices, so extract both.
+const harness = extractFn('flattenRadioDevices') + '\n' + extractFn('topRadioTalkers') +
+  '\nmodule.exports = { flattenRadioDevices, topRadioTalkers };';
 const tmp = path.join(os.tmpdir(), 'hd_radio_' + process.pid + '.js');
 fs.writeFileSync(tmp, harness);
-const { topRadioTalkers } = require(tmp);
+const { flattenRadioDevices, topRadioTalkers } = require(tmp);
 process.on('exit', () => { try { fs.unlinkSync(tmp); } catch (e) {} });
 
 let pass = 0, fail = 0;
@@ -57,6 +59,15 @@ const rs = {
   ]
 };
 
+t('flattenRadioDevices: full flatten, keeps silent devices, no ranking', () => {
+  const all = flattenRadioDevices(rs);
+  assert.strictEqual(all.length, 5);  // 3 zwave + 2 zigbee, including the 0-count device
+  assert(all.some(x => x.name === 'ZW Quiet' && x.msgCount === 0), 'silent device retained in full list');
+  const zb = all.find(x => x.name === 'ZB Top');
+  assert.strictEqual(zb.deviceId, 10);          // zigbee id -> deviceId
+  assert.strictEqual(zb.integration, 'Zigbee');
+  assert.deepStrictEqual(flattenRadioDevices(null), []);
+});
 t('ranks across both radios, top 3 by msgCount desc', () => {
   const top = topRadioTalkers(rs);
   assert.strictEqual(top.length, 3);

@@ -214,14 +214,17 @@ function zwProblemNodes(nodes){
 }
 function zbWeakNeighbors(neighbors){ return (neighbors||[]).filter(n=>n.lqi!=null&&n.lqi<ZIGBEE_LQI_CRIT); }
 function zbStaleNeighbors(neighbors){ return (neighbors||[]).filter(n=>n.age!=null&&n.age>6); }
-// Top radio talkers: flatten the raw per-radio message counts, drop silent devices, rank top-N.
-// The hub ships raw radioStats; ranking (sort + top-N) is a pure SPA derivation shared by the
-// Performance tab's current view and its comparison (interval) view.
-function topRadioTalkers(rs){
+// Flatten the raw per-radio message counts into one device list (Z-Wave keys off deviceId,
+// Zigbee off id). Replaces the old Groovy buildRadioDeviceList — the hub ships raw radioStats.
+function flattenRadioDevices(rs){
   if(!rs)return [];
   return [...(rs.zwave||[]).map(r=>({name:r.name,deviceId:r.deviceId,msgCount:r.msgCount,integration:'Z-Wave'})),
-          ...(rs.zigbee||[]).map(r=>({name:r.name,deviceId:r.id,msgCount:r.msgCount,integration:'Zigbee'}))]
-    .filter(r=>(r.msgCount||0)>0).sort((a,b)=>b.msgCount-a.msgCount).slice(0,3);
+          ...(rs.zigbee||[]).map(r=>({name:r.name,deviceId:r.id,msgCount:r.msgCount,integration:'Zigbee'}))];
+}
+// Top radio talkers: drop silent devices, rank top-N. A pure SPA derivation shared by the
+// Performance tab's current view and its comparison (interval) view.
+function topRadioTalkers(rs){
+  return flattenRadioDevices(rs).filter(r=>(r.msgCount||0)>0).sort((a,b)=>b.msgCount-a.msgCount).slice(0,3);
 }
 // Startup baseline: a zeroed structural mirror of the checkpoint. The hub used to build this
 // server-side (buildZeroBaseline); it now ships baselineStats:null + baselineMode:"startup" and
@@ -962,7 +965,7 @@ function buildForumMarkdown(d){
   const deviceStats=d.deviceStats||{};
   const appStats=d.appStats||{};
   const stats=d.stats||null;
-  const allRadioDevices=d.allRadioDevices||[];
+  const allRadioDevices=flattenRadioDevices(d.radioStats);
   const uptimeMin=d.uptimeMin!=null?d.uptimeMin:0;
 
   // ── 1. System & Health ──

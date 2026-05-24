@@ -984,7 +984,6 @@ Map apiForumData() {
     Integer uptimeSeconds = stats ? parseUptime(stats.uptime as String) : null
     List zwaveMsgCounts = extractZwaveMessageCounts(networkData.zwave ?: [:])
     List zigbeeMsgCounts = extractZigbeeMessageCounts(networkData.zigbee ?: [:])
-    List allRadioDevices = buildRadioDeviceList(zwaveMsgCounts, zigbeeMsgCounts)
     recordApiTiming("forum/data", now() - start)
     return jsonResponse([
         hubInfo: hubInfo, resources: resources, temperature: temperature,
@@ -992,7 +991,7 @@ Map apiForumData() {
         eventStateLimits: eventStateLimits, alertSignals: alertSignals,
         deviceStats: deviceStats, appStats: appStats, networkData: networkData,
         zwaveMesh: zwaveMesh, ghostNodes: ghostNodes, zigbeeMesh: zigbeeMesh,
-        zwaveVersion: zwaveVersion, stats: stats, allRadioDevices: allRadioDevices,
+        zwaveVersion: zwaveVersion, stats: stats, radioStats: [zwave: zwaveMsgCounts, zigbee: zigbeeMsgCounts],
         uptimeMin: uptimeSeconds != null ? uptimeSeconds / 60.0f : null,
         obfuscate: settings.obfuscateForumExport ?: false
     ])
@@ -2764,12 +2763,6 @@ Map analyzeApps(boolean deep = true) {
 private Object reqData(String path, String name, int timeout = 10) {
     Map r = hubMapRequest(path, name, timeout)
     return r.ok ? r.data : null
-}
-
-// Join Z-Wave + Zigbee per-device message counts into one list for top-talker ranking.
-private List buildRadioDeviceList(List zwaveMsgCounts, List zigbeeMsgCounts) {
-    return (zwaveMsgCounts.collect { [name: it.name, deviceId: it.deviceId, msgCount: it.msgCount, integration: "Z-Wave"] } +
-            zigbeeMsgCounts.collect { [name: it.name, deviceId: it.id, msgCount: it.msgCount, integration: "Zigbee"] })
 }
 
 Map analyzeNetwork() {
