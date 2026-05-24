@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.56.0";
+const UI_VERSION = "5.56.1";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -1589,7 +1589,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   // Connection Types + Integrations (side by side)
   o+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
   o+='<div class="card"><div class="card-h">Connection Types</div><div class="card-b"><div class="pills">';
-  Object.entries(bc).forEach(([k,v])=>{if(v>0)o+='<div class="pill">'+dlistlink(v,ic[k])+' '+(CD[k]||k)+'</div>'});
+  Object.entries(bc).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>{if(v>0)o+='<div class="pill">'+dlistlink(v,ic[k])+' '+(CD[k]||k)+'</div>'});
   o+='</div></div></div>';
   o+='<div class="card"><div class="card-h">Integrations</div><div class="card-b"><div class="pills">';
   Object.entries(bi).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>{if(v>0)o+='<div class="pill">'+dlistlink(v,ii[k])+' '+h(k)+'</div>'});
@@ -1802,7 +1802,7 @@ async function rDevices(){const P='p-devices';loading(P);try{
   // Connection type + integration distribution (side by side)
   o+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
   o+='<div class="card"><div class="card-h">Connection Types</div><div class="card-b"><div class="tbl-wrap"><table><thead><tr><th>Connection</th><th>Count</th></tr></thead><tbody>';
-  Object.entries(bc).forEach(([k,v])=>{if(v>0)o+='<tr><td>'+(CD[k]||k)+'</td><td>'+dlistlink(v,ic[k])+'</td></tr>'});
+  Object.entries(bc).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>{if(v>0)o+='<tr><td>'+(CD[k]||k)+'</td><td>'+dlistlink(v,ic[k])+'</td></tr>'});
   o+='</tbody></table></div></div></div>';
   o+='<div class="card"><div class="card-h">Integrations</div><div class="card-b"><div class="tbl-wrap"><table><thead><tr><th>Integration</th><th>Source</th><th>Count</th></tr></thead><tbody>';
   Object.entries(bi).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>{if(v>0)o+='<tr><td>'+h(k)+'</td><td>'+srcBadge(src[k],false)+'</td><td>'+dlistlink(v,ii[k])+'</td></tr>'});
