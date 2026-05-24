@@ -102,6 +102,43 @@ private void logInfo(String m)  { log.info  "MultiHubInventory: ${m}" }
 private void logWarn(String m)  { log.warn  "MultiHubInventory: ${m}" }
 private void logError(String m) { log.error "MultiHubInventory: ${m}" }
 
+// ===== API =====
+// GET /api/peers — labels + index + reachability. NEVER returns tokens.
+Map apiPeers() {
+    if (!checkOAuth()) return render(status: 403, contentType: 'text/plain', data: 'OAuth not enabled')
+    List out = []
+    (state.peerList ?: []).eachWithIndex { Map p, int i -> out << [index: i, label: p.label, reachable: p.reachable] }
+    return jsonResponse([peers: out])
+}
+
+// GET /api/peer?hub=<idx>&op=start|status|data[&scanId=...] — same-origin forwarder.
+// op is whitelisted; the caller passes a hub INDEX, never a URL or token.
+Map apiPeer() {
+    if (!checkOAuth()) return render(status: 403, contentType: 'text/plain', data: 'OAuth not enabled')
+    String op = (params.op ?: '') as String
+    if (!(op in ['start', 'status', 'data'])) return jsonResponse([error: "invalid op"])
+    List peers = (state.peerList ?: []) as List
+    String hubParam = (params.hub ?: '') as String
+    Integer idx = hubParam.isInteger() ? hubParam.toInteger() : null
+    if (idx == null || idx < 0 || idx >= peers.size()) return jsonResponse([error: "unknown hub"])
+    Map peer = peers[idx] as Map
+    String base = peer.baseUrl, token = peer.token
+    String url; String method = 'GET'
+    if (op == 'start')       { url = "${base}/audit/start?access_token=${token}"; method = 'POST' }
+    else if (op == 'status') { String sid = params.scanId ? "&scanId=${params.scanId}" : ''; url = "${base}/audit/status?access_token=${token}${sid}" }
+    else                     { url = "${base}/audit/data?access_token=${token}" }
+    try {
+        Object body = null
+        Closure handler = { resp -> body = resp.data }
+        if (method == 'POST') httpPost([uri: url, requestContentType: 'application/json', contentType: 'application/json', timeout: 30], handler)
+        else                  httpGet([uri: url, contentType: 'application/json', timeout: 90], handler)
+        return jsonResponse(body ?: [:])
+    } catch (Exception e) {
+        logWarn "peer ${idx} ${op} failed: ${e.message}"
+        return jsonResponse([error: "peer call failed", detail: (e.message ?: e.toString())])
+    }
+}
+
 // ===== UI SERVING =====
 Map serveUI() {
     if (!checkOAuth()) return render(status: 403, contentType: 'text/plain', data: 'OAuth is not enabled for this app.')
