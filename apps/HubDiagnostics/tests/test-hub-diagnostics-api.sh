@@ -1293,7 +1293,8 @@ else:
         fail(f"Request failed: {audit_data['_error']}")
     else:
         ok("Endpoint responds")
-        for key in ["deviceCount", "criticalThreshold", "allDevices", "hubName", "generatedAt"]:
+        # criticalThreshold + the formatted generatedAt moved to the SPA; the hub ships generatedMs (epoch).
+        for key in ["deviceCount", "allDevices", "hubName", "generatedMs"]:
             if key in audit_data:
                 ok(f"Has '{key}'")
             else:

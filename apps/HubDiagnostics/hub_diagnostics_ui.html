@@ -3990,6 +3990,9 @@ function fmtDurSec(ms) {
 }
 
 // Audit cross-reference, derived in the browser from the raw allDevices map (moved off the hub — LB1, v5.42.0).
+// Reference count at/above which a device is flagged "critical" in the audit report. Owned by the
+// SPA (the hub no longer ships criticalThreshold) — used for both the filter and the label below.
+const AUDIT_CRIT_REFS = 5;
 // Mirrors the former Groovy buildCrossReference. `stuckJobs` is intentionally not produced (its card was removed).
 // String ordering uses code-unit comparison (a<b) to match Groovy's String <=> for the non-re-sorted lists.
 function buildAuditXref(allDevices) {
@@ -4019,7 +4022,7 @@ function buildAuditXref(allDevices) {
   unreferenced.sort((a, b) => (a.lastActivityTimeMs || 0) - (b.lastActivityTimeMs || 0));
   meshOrphans.sort(byName);
   const criticalTop20 = allRefs.slice().sort((a, b) => (b.total - a.total) || byName(a, b)).slice(0, 20);
-  const criticalCount = allRefs.filter(r => r.total >= 5).length;
+  const criticalCount = allRefs.filter(r => r.total >= AUDIT_CRIT_REFS).length;
   const appsToDevices = Object.values(appsIndex)
     .map(e => ({ id: e.id, label: e.label, disabled: e.disabled, devices: e.devices.slice().sort(byName) }))
     .sort((a, b) => (String(a.label) < String(b.label) ? -1 : String(a.label) > String(b.label) ? 1 : 0));
@@ -4043,7 +4046,8 @@ function buildAuditXref(allDevices) {
 
 function buildAuditHtml(data) {
   const hubName = data.hubName || '';
-  const generatedAt = data.generatedAt || '';
+  // Hub ships generatedMs (epoch); format for display here, consistent with the rest of the UI.
+  const generatedAt = data.generatedMs ? new Date(data.generatedMs).toLocaleString() : '';
   const rooms = data.rooms || [];
   const allDevices = data.allDevices || {};
   const failed = data.failed || [];
@@ -4083,7 +4087,7 @@ function buildAuditHtml(data) {
   o += sumcell('Devices', data.deviceCount, null);
   o += sumcell('Unreferenced', unreferenced.length, 'warn');
   o += sumcell('Mesh orphans', meshOrphans.length, 'crit');
-  o += sumcell(`Critical (≥${data.criticalThreshold} refs)`, x.criticalCount, null);
+  o += sumcell(`Critical (≥${AUDIT_CRIT_REFS} refs)`, x.criticalCount, null);
   o += '</div></div></div>';
 
   // Unreferenced

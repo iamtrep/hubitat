@@ -4262,7 +4262,6 @@ private void finalizeAudit(String scanId) {
     // from allDevices — see buildAuditXref() in hub_diagnostics_ui.html.
     Map xref = [
         deviceCount:       succeeded,
-        criticalThreshold: 5,
         scanStartedMs:     startedAt,
         scanDurationMs:    (now() - startedAt),
         allDevices:        devices
@@ -4307,15 +4306,13 @@ private void finalizeAudit(String scanId) {
     }
     logDebug "Audit Phase 4 enrichment finished in ${now() - enrichStart}ms"
 
-    // Store result in volatile memory (lost on hub restart — acceptable)
+    // Store result in volatile memory (lost on hub restart — acceptable). The SPA formats
+    // generatedMs for display (toLocaleString) and owns the critical-reference threshold.
     Map hubInfo = getHubInfo()
-    String hubName = hubInfo?.name ?: "Hubitat"
-    Date finishDate = new Date()
-    String generatedAt = finishDate.format("yyyy-MM-dd HH:mm 'UTC'", TimeZone.getTimeZone("UTC"))
-    xref.hubName = hubName
+    xref.hubName = hubInfo?.name ?: "Hubitat"
     xref.hubModel = hubInfo?.hardware
     xref.hubFirmware = hubInfo?.firmware
-    xref.generatedAt = generatedAt
+    xref.generatedMs = now()
     xref.failed = failedMap.collect { id, reason -> [id: id, reason: reason] }
 
     lastAuditResult = xref
