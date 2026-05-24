@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.48.0"
+@Field static final String APP_VERSION = "5.49.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -3993,14 +3993,17 @@ private Map extractAuditFields(Map fj, Long did) {
     // Zigbee exposes human-readable manufacturer/model; Z-Wave exposes them as numeric/hex IDs.
     // Virtual/cloud devices have no dataJson and yield blanks. ("make" has no distinct data value
     // on Hubitat — manufacturer is the make.)
-    String manufacturer = null, model = null, firmware = null, firmwareOta = null
+    String manufacturer = null, model = null, firmware = null, firmwareOta = null, firmwareSource = null
     try {
         String dataJson = safeToString(dev.dataJson, "")
         if (dataJson.startsWith("{")) {
             Map dv = (Map) new groovy.json.JsonSlurper().parseText(dataJson)
             manufacturer = firstDataValue(dv, ['manufacturer'])
             model        = firstDataValue(dv, ['model'])
-            firmware     = firstDataValue(dv, ['softwareBuild', 'application', 'firmwareVersion', 'softwareVersion'])
+            for (String k : ['softwareBuild', 'application', 'firmwareVersion', 'softwareVersion']) {
+                String v = firstDataValue(dv, [k])
+                if (v) { firmware = v; firmwareSource = k; break }
+            }
             String firmwareMT = firstDataValue(dv, ['firmwareMT'])
             // OTA fileVersion = last '-' segment of firmwareMT ("1233-D3A6-10013065" -> "10013065").
             // Canonical/comparable firmware id for drift detection across identical hardware, where the
@@ -4058,6 +4061,7 @@ private Map extractAuditFields(Map fj, Long did) {
         manufacturer:        manufacturer,
         model:               model,
         firmware:            firmware,
+        firmwareSource:      firmwareSource,
         firmwareOta:         firmwareOta,
         protocol:            protocol,
 
