@@ -774,22 +774,23 @@ Map apiPerformanceCompare() {
         checkpointStats = checkpointStats + [uptimeSeconds: parseUptime(checkpointStats.uptime as String)]
     }
 
-    // Build zero baseline if startup
-    if (baseline == "startup") {
-        baselineStats = buildZeroBaseline(checkpointStats, checkpointStats.resources)
-    }
+    // The "startup" baseline is a zeroed structural mirror of the checkpoint. The SPA now
+    // synthesizes it client-side (zeroBaseline) so the hub ships no derived baseline — for a
+    // startup comparison baselineStats stays null and baselineMode tells the SPA to fill it in.
+    String baselineMode = (baseline == "startup") ? "startup" : "checkpoint"
 
     // Save for persistence
     savePerformanceComparisonPayload([
         generatedAt: new Date().format("yyyy-MM-dd HH:mm:ss"),
-        baselineLabel: baselineLabel, checkpointLabel: checkpointLabel,
-        baselineStats: baselineStats ?: [:], checkpointStats: checkpointStats ?: [:]
+        baselineLabel: baselineLabel, checkpointLabel: checkpointLabel, baselineMode: baselineMode,
+        baselineStats: baselineStats, checkpointStats: checkpointStats ?: [:]
     ])
 
     return jsonResponse([
         success: true,
         baselineLabel: baselineLabel,
         checkpointLabel: checkpointLabel,
+        baselineMode: baselineMode,
         baselineStats: baselineStats,
         checkpointStats: checkpointStats
     ])
@@ -3432,46 +3433,6 @@ private boolean doCreateCheckpoint() {
     persistCheckpoint(checkpoint)
     logInfo "Perf checkpoint created successfully"
     return true
-}
-
-Map buildZeroBaseline(Map stats, Map resources) {
-    return [
-        timestampMs: 0,
-        uptime: "0h 0m 0s",
-        uptimeSeconds: 0,
-        devicesUptime: "0h 0m 0s",
-        appsUptime: "0h 0m 0s",
-        totalDevicesRuntime: "0ms",
-        totalAppsRuntime: "0ms",
-        devicePct: "0.000%",
-        appPct: "0.000%",
-        temperature: null,
-        databaseSize: null,
-        resources: resources ? [
-            timestamp: "0:00:00",
-            freeOSMemory: 0,
-            cpuAvg5min: 0.0,
-            totalJavaMemory: 0,
-            freeJavaMemory: 0,
-            directJavaMemory: 0
-        ] : null,
-        deviceStats: (stats.deviceStats ?: []).collect { dev ->
-            [id: dev.id, name: dev.name, total: 0, pct: 0, count: 0, average: 0,
-             stateSize: 0, hubActionCount: 0, cloudCallCount: 0]
-        },
-        appStats: (stats.appStats ?: []).collect { app ->
-            [id: app.id, name: app.name, total: 0, pct: 0, count: 0, average: 0,
-             stateSize: 0, hubActionCount: 0, cloudCallCount: 0]
-        },
-        radioStats: [
-            zwave: (stats.radioStats?.zwave ?: []).collect { node ->
-                [id: node.id, deviceId: node.deviceId, name: node.name, msgCount: 0, routeChanges: 0]
-            },
-            zigbee: (stats.radioStats?.zigbee ?: []).collect { dev ->
-                [id: dev.id, name: dev.name, msgCount: 0]
-            }
-        ]
-    ]
 }
 
 void deleteCheckpoint(int index) {

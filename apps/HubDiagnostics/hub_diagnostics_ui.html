@@ -200,6 +200,28 @@ function fmsDuration(ms){
   const r=h>0?h+'h '+m+'m '+s+'s':m>0?m+'m '+s+'s':s+'s';
   return neg?'-'+r:r;
 }
+// Startup baseline: a zeroed structural mirror of the checkpoint. The hub used to build this
+// server-side (buildZeroBaseline); it now ships baselineStats:null + baselineMode:"startup" and
+// the SPA synthesizes it here so diffStats() runs its full per-entry recompute (comp - 0) instead
+// of the !base shortcut. Field-for-field port of the old Groovy buildZeroBaseline().
+function zeroBaseline(comp){
+  if(!comp)return null;
+  const rs=comp.radioStats||{};
+  return {
+    timestampMs:0,uptime:"0h 0m 0s",uptimeSeconds:0,
+    devicesUptime:"0h 0m 0s",appsUptime:"0h 0m 0s",
+    totalDevicesRuntime:"0ms",totalAppsRuntime:"0ms",
+    devicePct:"0.000%",appPct:"0.000%",
+    temperature:null,databaseSize:null,
+    resources:comp.resources?{timestamp:"0:00:00",freeOSMemory:0,cpuAvg5min:0,totalJavaMemory:0,freeJavaMemory:0,directJavaMemory:0}:null,
+    deviceStats:(comp.deviceStats||[]).map(d=>({id:d.id,name:d.name,total:0,pct:0,count:0,average:0,stateSize:0,hubActionCount:0,cloudCallCount:0})),
+    appStats:(comp.appStats||[]).map(a=>({id:a.id,name:a.name,total:0,pct:0,count:0,average:0,stateSize:0,hubActionCount:0,cloudCallCount:0})),
+    radioStats:{
+      zwave:(rs.zwave||[]).map(n=>({id:n.id,deviceId:n.deviceId,name:n.name,msgCount:0,routeChanges:0})),
+      zigbee:(rs.zigbee||[]).map(d=>({id:d.id,name:d.name,msgCount:0}))
+    }
+  };
+}
 function diffStats(base, comp) {
   if (!base || !comp) return comp;
   const res = JSON.parse(JSON.stringify(comp));
@@ -2479,7 +2501,12 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
       {l:'Msgs/Min',f:'msgPerMin',t:'n',r:rateCell}
     ],rs.zigbee,{sc:2,sd:'desc',collapse:10,collapseLabel:'Zigbee Messages'})}
   // Saved comparison render
-  if(!activePerfComp && (d.savedComparison||d.savedComparisonHtml))renderComparison({comparisonHtml:d.savedComparisonHtml,...(d.savedComparison||{})},'savedComp');
+  if(!activePerfComp && (d.savedComparison||d.savedComparisonHtml)){
+    const sc=d.savedComparison||{};
+    // Persisted startup comparisons store baselineStats:null + baselineMode:"startup"; rebuild the zero baseline.
+    const scBase=sc.baselineStats||(sc.baselineMode==='startup'?zeroBaseline(sc.checkpointStats):sc.baselineStats);
+    renderComparison({comparisonHtml:d.savedComparisonHtml,...sc,baselineStats:scBase},'savedComp');
+  }
 
   // Button bindings
   const btnCp=document.getElementById('btnCp');
@@ -2500,17 +2527,19 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
     try {
       const r=await post('performance/compare','baseline='+b+'&checkpoint='+c);
       if(r.success){
+        // Startup baseline arrives as null + baselineMode:"startup"; synthesize the zeroed mirror client-side.
+        const baseStats = r.baselineStats || (r.baselineMode==='startup' ? zeroBaseline(r.checkpointStats) : null);
         activePerfComp = {
           baseIdx: b === 'startup' ? 'startup' : parseInt(b),
           compIdx: c === 'now' ? 'now' : parseInt(c),
           baselineLabel: r.baselineLabel,
           checkpointLabel: r.checkpointLabel,
-          diff: diffStats(r.baselineStats, r.checkpointStats),
-          diffResources: r.baselineStats.resources && r.checkpointStats.resources ? {
-            freeOSMemory: r.checkpointStats.resources.freeOSMemory - r.baselineStats.resources.freeOSMemory,
-            cpuAvg5min: r.checkpointStats.resources.cpuAvg5min - r.baselineStats.resources.cpuAvg5min,
-            temperature: r.checkpointStats.temperature!=null&&r.baselineStats.temperature!=null ? r.checkpointStats.temperature-r.baselineStats.temperature : null,
-            databaseSize: r.checkpointStats.databaseSize!=null&&r.baselineStats.databaseSize!=null ? r.checkpointStats.databaseSize-r.baselineStats.databaseSize : null
+          diff: diffStats(baseStats, r.checkpointStats),
+          diffResources: baseStats && baseStats.resources && r.checkpointStats.resources ? {
+            freeOSMemory: r.checkpointStats.resources.freeOSMemory - baseStats.resources.freeOSMemory,
+            cpuAvg5min: r.checkpointStats.resources.cpuAvg5min - baseStats.resources.cpuAvg5min,
+            temperature: r.checkpointStats.temperature!=null&&baseStats.temperature!=null ? r.checkpointStats.temperature-baseStats.temperature : null,
+            databaseSize: r.checkpointStats.databaseSize!=null&&baseStats.databaseSize!=null ? r.checkpointStats.databaseSize-baseStats.databaseSize : null
           } : null
         };
         rPerf();
