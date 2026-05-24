@@ -125,6 +125,15 @@ const UI_VERSION = "0.1.0";
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // true for hub-free local development
 const T = '${access_token}', B = '${api_base}';
+const MOCK_PEERS = [{index:0,label:'maison-pro',reachable:true},{index:1,label:'maison',reachable:true}];
+const MOCK_AUDIT = {
+  0: { hubName:'maison-pro', generatedAt:'2026-05-23 10:00 UTC', deviceCount:2, allDevices:{
+       '1':{id:1,label:'Office Plug',deviceTypeName:'Zigbee Outlet',manufacturer:'Acme',model:'P1',firmware:'1.0',protocol:'Zigbee',orphan:false,disabled:false,appsUsingCount:2,dashboards:[],lastActivityTimeMs:Date.now()},
+       '2':{id:2,label:'Old Sensor',deviceTypeName:'Contact',manufacturer:'Acme',model:'C1',firmware:'1.0',protocol:'Z-Wave',orphan:true,disabled:false,appsUsingCount:0,dashboards:[],lastActivityTimeMs:Date.now()-30*86400000} } },
+  1: { hubName:'maison', generatedAt:'2026-05-23 10:01 UTC', deviceCount:2, allDevices:{
+       '7':{id:7,label:'Kitchen Plug',deviceTypeName:'Zigbee Outlet',manufacturer:'Acme',model:'P1',firmware:'1.1',protocol:'Zigbee',orphan:false,disabled:false,appsUsingCount:1,dashboards:[1],lastActivityTimeMs:Date.now()},
+       '8':{id:8,label:'Mirror',manufacturer:'Acme',model:'P1',firmware:'1.0',protocol:'Linked',appsUsingCount:0,dashboards:[],lastActivityTimeMs:Date.now()} } },
+};
 
 // ===== CORRELATION ===== (pure functions; unit-tested in tests/test-correlation.js)
 function filterLinked(rows){ return rows.filter(r => r.protocol !== 'Linked'); }
@@ -199,6 +208,67 @@ function fleetSummary(merged){
 }
 
 // ===== ORCHESTRATION =====
+let FLEET = { rows: [], hubs: [] };
+
+function peerUrl(hubIdx, op, extra){
+  let u = `${B}/api/peer?hub=${hubIdx}&op=${op}&access_token=${T}`;
+  if (extra) u += extra;
+  return u;
+}
+async function proxy(hubIdx, op, extra){
+  if (WORKBENCH){
+    if (op === 'data') return MOCK_AUDIT[hubIdx] || { _error: 404 };
+    if (op === 'start') return { scanId: 'mock', total: 0, alreadyRunning: false };
+    return { status: 'complete', processed: 0, total: 0 };
+  }
+  const r = await fetch(peerUrl(hubIdx, op, extra));
+  if (!r.ok) return { _error: r.status };
+  return r.json();
+}
+async function loadPeers(){
+  if (WORKBENCH) return MOCK_PEERS;
+  const r = await fetch(`${B}/api/peers?access_token=${T}`);
+  const j = await r.json();
+  return j.peers || [];
+}
+// Pull each hub's last audit/data (fast). 404/error -> hub marked not-ok.
+async function collectExisting(peers){
+  const results = [];
+  for (const p of peers){
+    const d = await proxy(p.index, 'data');
+    if (d && !d._error && !d.error) results.push({ label:p.label, ok:true, data:d });
+    else results.push({ label:p.label, ok:false, error: d && d.error ? d.error : 'no scan yet', data:null });
+  }
+  return results;
+}
+// Trigger a fresh scan on each hub, poll to completion, then pull data.
+async function rescanFleet(){
+  const peers = await loadPeers();
+  const results = [];
+  for (const p of peers){
+    const started = await proxy(p.index, 'start');
+    if (!started || started._error){ results.push({label:p.label,ok:false,error:'start failed',data:null}); continue; }
+    const sid = started.scanId;
+    let done = false; const deadline = Date.now() + 300000; // 5 min cap
+    while (!done && Date.now() < deadline){
+      await new Promise(res => setTimeout(res, 2000));
+      const st = await proxy(p.index, 'status', sid ? `&scanId=${sid}` : '');
+      if (!st || st._error){ break; }
+      if (st.status === 'complete' || st.status === 'error') done = true;
+    }
+    const d = await proxy(p.index, 'data');
+    if (d && !d._error && !d.error) results.push({ label:p.label, ok:true, data:d });
+    else results.push({ label:p.label, ok:false, error: done ? 'scan produced no data' : 'scan timed out', data:null });
+  }
+  FLEET = mergeFleet(results);
+  renderAll();
+}
+async function boot(){
+  const peers = await loadPeers();
+  const results = await collectExisting(peers);
+  FLEET = mergeFleet(results);
+  renderAll();
+}
 
 // ===== VIEWS =====
 
