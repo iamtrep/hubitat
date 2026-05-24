@@ -363,7 +363,7 @@ A checkpoint captures a point-in-time snapshot of runtime statistics, resources,
 
 A configuration snapshot captures the state of devices, apps, network configuration, hub metadata, and file storage at a point in time. Snapshots are used to detect configuration drift — what changed between two points in time.
 
-**Taking a snapshot** — Click **Take Config Snapshot**, or enable auto-snapshots on a schedule (1 day / 2 days / 1 week / 2 weeks interval, up to 50 retained).
+**Taking a snapshot** — Click **Take Config Snapshot**, or enable auto-snapshots on a schedule (interval 1–30 days, up to 50 retained).
 
 **Snapshot table** — Lists all saved snapshots with timestamp, firmware version, device count, app count, and free memory. Individual snapshots can be viewed or deleted.
 
@@ -451,18 +451,20 @@ Most settings are accessible from the Hubitat admin UI under **Apps → Hub Diag
 
 ### Config Snapshot Scheduling
 - Enable automatic snapshots: on/off
-- Interval: 1 day / 2 days / 1 week / 2 weeks (default 1 day)
+- Interval: 1–30 days (default 1)
 - Max snapshots to retain: 1–50 (default 10; oldest are pruned when the limit is reached)
+- On-demand trigger switch (optional): pick a switch; turning it ON captures a snapshot immediately
 
 ### Perf Checkpoint Scheduling
 - Enable automatic checkpoints: on/off
 - Interval: 5m / 15m / 30m / 1h / 6h / 12h / 24h
 - Max checkpoints to retain: 1–50 (default 10)
+- On-demand trigger switch (optional): pick a switch; turning it ON records a checkpoint immediately
 
 ### Device Monitoring
 | Setting | Default | Range | Effect |
 |---|---|---|---|
-| Inactivity threshold (days) | 7 | 1–365 | Devices with no activity beyond this period are marked Inactive |
+| Inactivity threshold (days) | 7 | 1–90 | Devices with no activity beyond this period are marked Inactive |
 | Low battery alert (%) | 20 | 1–50 | Devices at or below this level appear in the Low Battery Alerts card |
 | Chatty device threshold (msgs/min) | 10 | 1–1000 | Devices exceeding this rate trigger a critical alert on the Performance tab and in forum exports |
 
