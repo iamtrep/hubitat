@@ -19,6 +19,18 @@ id. This guarantees the audit classification exactly matches the SPA's, with no 
 MHI renders the `integration` column + a `connectionType` (CONN_DISPLAY) column, and the summary's
 "By integration" card, all falling back to `protocol` for old/unclassified peers.
 
+### Onboarding & update management ✅ (v0.4.0)
+- **SPA self-sync** — `installed()`/`updated()` trigger a version-change download of
+  `multi_hub_inventory_ui.html` from GitHub into File Manager (mirrors Hub Diagnostics' `syncUI`), so
+  the dashboard HTML no longer has to be uploaded by hand; `serveUI` emergency-syncs if it's missing.
+- **Version lockstep guard** — `processSyncUIResponse` refuses a GitHub UI whose `UI_VERSION` !=
+  `APP_VERSION`, and the config page shows App vs UI version + warns on mismatch. (MHI previously
+  lacked the guard Hub Diagnostics has — which is how the versions drifted.)
+- **Self-peer loopback** — `initialize()` detects a peer pointing at this hub's own `localIP` and
+  routes its server-side calls via `127.0.0.1:8080` (browser device links keep the real IP).
+- **Reachability probe** — `probePeers()` (runIn off `initialize`) hits each peer's `audit/status`
+  and shows ok / auth / unreachable per hub on the config page.
+
 ## Medium priority
 
 - **Cloud-relay peers: large `audit/data` 504s.** Cloud URLs now parse and the courier reaches
@@ -40,11 +52,6 @@ MHI renders the `integration` column + a `connectionType` (CONN_DISPLAY) column,
   *(Done — Z-Wave manufacturer id→name mapping shipped SPA-side: 786-entry zwave-js table in the MHI
   SPA, `displayMfr()` maps `634`→Zooz, `541`→Kaadas, etc. Kept out of the Groovy per the "derivable
   lookups belong in the SPA" architecture principle.)*
-- **Self-peer UX.** When the serving hub is its own peer it must use the loopback URL
-  (`http://127.0.0.1:8080/...`) because a hub can't HTTP its own external IP. Auto-detect the
-  host hub and rewrite to loopback, instead of requiring the user to know this.
-- **Reachability probe.** `/api/peers` always returns `reachable: null`; wire up the optional
-  per-peer `audit/status` probe on save so the summary can show ok / auth-failed / unreachable.
 - **Parallel rescan + per-hub progress bars.** Rescan currently scans hubs sequentially; fine
   for 2 hubs, but parallelize (bounded) with progress as the fleet grows.
 - **Compare preferences across identical devices.** For devices of the same hardware

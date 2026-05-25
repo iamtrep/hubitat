@@ -29,19 +29,18 @@ of its own peer entries pointing at its co-located Hub Diagnostics instance, so 
 
 ## Install / deploy
 
-Deployment is a two-part process — **both files must ship**. Pushing only the Groovy leaves
-the UI absent.
-
-1. **Push the Groovy app** to your primary hub (the hub that will serve the SPA):
-   `apps/MultiHubInventory/MultiHubInventory.groovy`
+1. **Import/push the Groovy app** to your primary hub (the hub that will serve the SPA):
+   `apps/MultiHubInventory/MultiHubInventory.groovy` (the Import URL is set, so Hubitat can pull
+   updates).
 
 2. **OAuth enables itself.** On first install the app auto-enables OAuth (via the hub's
    loopback API) and creates its own access token — no manual code-editor toggle needed.
 
-3. **Upload the SPA** to that hub's File Manager:
-   `apps/MultiHubInventory/multi_hub_inventory_ui.html`
-   The Groovy serves it via `downloadHubFile` — it must be in File Manager under that exact
-   filename.
+3. **The SPA self-syncs.** On install and on every save, the app downloads the matching
+   `multi_hub_inventory_ui.html` from GitHub into File Manager — you don't normally upload it by
+   hand. The download is version-gated: only HTML whose `UI_VERSION` matches the app's `APP_VERSION`
+   is stored, and the config page warns on a mismatch. If you're running an unpublished local build
+   (or the hub is offline), upload the HTML to File Manager manually under that exact filename.
 
 4. **Install the app** (Apps → Add User App → Multi-Hub Inventory). Once installed, the
    settings page shows a dashboard link — open it to verify the UI loads.

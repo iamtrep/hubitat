@@ -4,9 +4,12 @@
  */
 import groovy.transform.Field
 
-@Field static final String APP_VERSION = "0.3.0"
+@Field static final String APP_VERSION = "0.4.0"
 @Field static final String UI_FILE = "multi_hub_inventory_ui.html"
 @Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/MultiHubInventory.groovy"
+@Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/multi_hub_inventory_ui.html"
+@Field static volatile String uiVersionCache = null
+@Field static volatile boolean githubVersionRefreshPending = false
 
 definition(
     name: "Multi-Hub Inventory",
@@ -39,6 +42,12 @@ def mainPage() {
                 input "peer_${p}_label", "text", title: "Hub ${p} label",   required: false, width: 4
                 input "peer_${p}_url",   "text", title: "Hub ${p} API URL", required: false, width: 6, submitOnChange: true
                 input "btnRemoveHub_${p}", "button", title: "Remove ${p}", width: 2
+                Map pinfo = (state.peerList ?: []).find { (it as Map).pid == p } as Map
+                String st = pinfo?.reachable
+                if (st) {
+                    String icon = (st == 'ok') ? '✅' : (st == 'auth') ? '🔒 auth failed' : (st == 'unreachable') ? '⚠️ unreachable' : "⚠️ ${st}"
+                    paragraph "&nbsp;&nbsp;↳ ${icon}${pinfo?.self ? ' · this hub (loopback)' : ''}", width: 12
+                }
             }
             input "btnAddHub", "button", title: "➕ Add hub"
         }
@@ -48,6 +57,18 @@ def mainPage() {
                      title: "Open Multi-Hub Inventory", style: "external", required: false
             } else {
                 paragraph "Enable OAuth (Apps Code → this app → OAuth) and re-open to get the dashboard link."
+            }
+        }
+        section {
+            String uiVer = getUIVersion()
+            String latest = checkGithubVersion()
+            if (uiVer != "Unknown" && uiVer != APP_VERSION) {
+                paragraph "⚠️ <b>Version mismatch:</b> dashboard HTML is v${uiVer} but the app is v${APP_VERSION}. It auto-syncs from GitHub on save; if this persists, re-open the app or upload the HTML to File Manager manually."
+            } else {
+                paragraph "<small>App v${APP_VERSION} · Dashboard UI v${uiVer}</small>"
+            }
+            if (isNewer(latest, APP_VERSION)) {
+                paragraph "🔄 <b>Update available:</b> v${latest} on GitHub (you have v${APP_VERSION}). Use <b>Import</b> on the Apps Code page to update."
             }
         }
     }
@@ -78,10 +99,11 @@ void appButtonHandler(String btn) {
 }
 
 // ===== LIFECYCLE =====
-void installed() { state.peerIds = [1]; checkOAuth(); initialize() }
-void updated()   { initialize() }
+void installed() { state.peerIds = [1]; checkOAuth(); runIn(1, 'syncUIForced'); initialize() }
+void updated()   { uiVersionCache = null; runIn(1, 'syncUIForced'); initialize() }
 void initialize() {
     if (!state.accessToken) checkOAuth()
+    String hubIp = location?.hubs ? location.hubs[0]?.localIP : null
     List peerList = []
     (state.peerIds ?: []).each { Integer p ->
         String raw = settings["peer_${p}_url"] as String
@@ -89,12 +111,18 @@ void initialize() {
         Map parsed = parsePeerUrl(raw)
         if (!parsed) { logWarn "peer ${p}: could not parse URL"; return }
         String label = (settings["peer_${p}_label"] as String) ?: parsed.baseUrl
-        // Derive webBase: scheme+host of the peer (everything before /apps/).
+        // webBase: scheme+host of the peer (everything before /apps/) — used for browser device links.
         String webBase = (parsed.baseUrl =~ /^(https?:\/\/[^\/]+)/)[0][1] ?: ''
-        peerList << [label: label, baseUrl: parsed.baseUrl, token: parsed.token, reachable: null, webBase: webBase]
+        // Self-peer: a hub can't HTTP its own external IP, so route this app's server-side calls
+        // through the loopback while keeping webBase = real IP (browser device links resolve to it).
+        boolean isSelf = (hubIp && webBase.contains(hubIp))
+        String callBase = isSelf ? parsed.baseUrl.replaceFirst(/^https?:\/\/[^\/]+/, 'http://127.0.0.1:8080') : parsed.baseUrl
+        if (isSelf) logInfo "peer ${p} is this hub — routing API calls via loopback"
+        peerList << [pid: p, label: label, baseUrl: callBase, token: parsed.token, reachable: null, webBase: webBase, self: isSelf]
     }
     state.peerList = peerList
     logInfo "Multi-Hub Inventory initialized with ${peerList.size()} peer(s)"
+    if (peerList) runIn(2, 'probePeers')
 }
 
 // ===== OAUTH + HELPERS =====
@@ -169,6 +197,119 @@ private void logWarn(String m)  { log.warn  "MultiHubInventory: ${m}" }
 private void logError(String m) { log.error "MultiHubInventory: ${m}" }
 private void logDebug(String m) { log.debug "MultiHubInventory: ${m}" }
 
+// ===== UPDATE MANAGEMENT =====
+// Self-healing SPA: on install/update (and on File Manager loss), download the matching
+// multi_hub_inventory_ui.html from GitHub and store it in File Manager — so the dashboard HTML
+// never has to be uploaded by hand and can't silently drift behind the app version.
+void syncUIForced() { syncUI(true) }
+
+void syncUI(boolean force = false) {
+    if (!force && state.lastInstalledUIVersion == APP_VERSION && (now() - (state.lastUISyncCheck ?: 0) < 86400000)) return
+    logInfo "Syncing dashboard UI from GitHub (async)..."
+    asynchttpGet('syncUICallback', [uri: IMPORT_URL_WEB, contentType: "text/plain", timeout: 30])
+}
+
+void syncUICallback(resp, data) {
+    if (resp.hasError() || resp.status != 200) { logWarn "UI sync failed: HTTP ${resp.status}"; return }
+    processSyncUIResponse(resp.data ?: "")
+}
+
+// Blocking sync — only for emergency recovery from serveUI when the File Manager copy is missing.
+private boolean syncUIBlocking() {
+    try {
+        String html = null
+        httpGet([uri: IMPORT_URL_WEB, contentType: "text/plain", timeout: 30]) { resp ->
+            if (resp.success && resp.data) html = resp.data.text ?: resp.data.toString()
+        }
+        return processSyncUIResponse(html ?: "")
+    } catch (Exception e) {
+        logWarn "Failed to sync UI from GitHub: ${e.message}"
+        return false
+    }
+}
+
+// Validate the download (right app + UI_VERSION matches APP_VERSION) before storing it. The version
+// gate is the lockstep guard: a GitHub UI whose UI_VERSION != APP_VERSION is refused, so File Manager
+// never holds a SPA that mismatches the installed app.
+private boolean processSyncUIResponse(String html) {
+    if (!html || !html.contains("Multi-Hub Inventory")) { logWarn "UI sync: downloaded content looks invalid"; return false }
+    if (!html.contains("const UI_VERSION = \"${APP_VERSION}\"")) {
+        logWarn "UI sync: GitHub UI version does not match app v${APP_VERSION} — not storing"
+        return false
+    }
+    uploadHubFile(UI_FILE, html.getBytes("UTF-8"))
+    state.lastInstalledUIVersion = APP_VERSION
+    state.lastUISyncCheck = now()
+    uiVersionCache = APP_VERSION
+    logInfo "Dashboard UI synced from GitHub to v${APP_VERSION}"
+    return true
+}
+
+// UI_VERSION embedded in the File Manager copy — for display + drift detection on the config page.
+private String getUIVersion() {
+    if (uiVersionCache) return uiVersionCache
+    try {
+        byte[] bytes = downloadHubFile(UI_FILE)
+        if (bytes) {
+            java.util.regex.Matcher m = (new String(bytes, 'UTF-8') =~ /const UI_VERSION = "([^"]+)"/)
+            if (m.find()) { uiVersionCache = m.group(1); return uiVersionCache }
+        }
+    } catch (Exception e) { logDebug "Error reading UI version: ${e.message}" }
+    return "Unknown"
+}
+
+// Stale-while-revalidate GitHub version check: returns the last-known latest version immediately and
+// kicks off an async refresh at most hourly. The config page compares it against APP_VERSION.
+String checkGithubVersion() {
+    if (now() - (state.lastGithubVersionCheck ?: 0) >= 3600000 && !githubVersionRefreshPending) {
+        githubVersionRefreshPending = true
+        state.lastGithubVersionCheck = now()   // throttle to hourly regardless of outcome
+        asynchttpGet('githubVersionCallback', [uri: IMPORT_URL_APP, contentType: "text/plain", timeout: 10])
+    }
+    return state.lastGithubVersion
+}
+
+void githubVersionCallback(resp, data) {
+    githubVersionRefreshPending = false
+    if (resp.hasError() || resp.status != 200) { logDebug "GitHub version check failed: HTTP ${resp?.status}"; return }
+    try {
+        java.util.regex.Matcher m = ((resp.data?.toString() ?: '') =~ /APP_VERSION = "([^"]+)"/)
+        if (m.find()) state.lastGithubVersion = m.group(1)
+    } catch (Exception e) { logDebug "GitHub version parse failed: ${e.message}" }
+}
+
+// True if dotted-numeric version a is strictly newer than b (so a GitHub copy that is BEHIND the
+// installed app never shows as an available update).
+private boolean isNewer(String a, String b) {
+    if (!a || !b) return false
+    List pa = a.tokenize('.').collect { it.isInteger() ? it.toInteger() : 0 }
+    List pb = b.tokenize('.').collect { it.isInteger() ? it.toInteger() : 0 }
+    for (int i = 0; i < Math.max(pa.size(), pb.size()); i++) {
+        int x = i < pa.size() ? (pa[i] as int) : 0
+        int y = i < pb.size() ? (pb[i] as int) : 0
+        if (x != y) return x > y
+    }
+    return false
+}
+
+// ===== REACHABILITY =====
+// Probe each peer's audit/status (runIn'd off initialize) so the config page shows ok / auth /
+// unreachable per hub before a scan is ever run.
+void probePeers() {
+    List peers = (state.peerList ?: []) as List
+    peers.each { Map peer ->
+        try {
+            httpGet([uri: "${peer.baseUrl}/audit/status?access_token=${peer.token}", contentType: 'application/json', timeout: 8]) { resp ->
+                peer.reachable = (resp.status == 200) ? 'ok' : "http ${resp.status}"
+            }
+        } catch (Exception e) {
+            String msg = (e.message ?: '')
+            peer.reachable = (msg.contains('401') || msg.contains('403')) ? 'auth' : 'unreachable'
+        }
+    }
+    state.peerList = peers
+}
+
 // ===== API =====
 // GET /api/peers — labels + index + reachability. NEVER returns tokens.
 Map apiPeers() {
@@ -212,7 +353,11 @@ Map serveUI() {
     if (!checkOAuth()) return render(status: 403, contentType: 'text/plain', data: 'OAuth is not enabled for this app.')
     try {
         byte[] bytes = downloadHubFile(UI_FILE)
-        if (!bytes) return render(status: 404, contentType: 'text/plain', data: "${UI_FILE} not found in File Manager. Upload it.")
+        if (!bytes) {
+            logError "${UI_FILE} missing from File Manager — attempting emergency sync from GitHub..."
+            if (syncUIBlocking()) bytes = downloadHubFile(UI_FILE)
+        }
+        if (!bytes) return render(status: 404, contentType: 'text/plain', data: "${UI_FILE} not found in File Manager. Re-open the app to auto-sync, or upload it manually.")
         String html = new String(bytes, 'UTF-8')
             .replace('${access_token}', state.accessToken)
             .replace('${api_base}', fullLocalApiServerUrl)
