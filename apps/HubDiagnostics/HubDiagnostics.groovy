@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.61.0"
+@Field static final String APP_VERSION = "5.62.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -163,6 +163,12 @@ import java.util.concurrent.atomic.AtomicInteger
 // Staging area for an in-progress async scheduled checkpoint. Safe as a single static
 // because atomicState.checkpointInFlight serializes chains.
 @Field static volatile Map     asyncCheckpointStaging
+// v5.62.0: /logs/json (runtime stats) is the slow first leg of the async checkpoint chain
+// and occasionally crosses its 30s timeout under transient hub load. Rather than discard the
+// whole checkpoint (leaving a multi-interval gap in perf history), retry the leg once after a
+// short breather. checkpointInFlight (300s guard) comfortably covers the retry window.
+@Field static final int        RUNTIME_STATS_MAX_ATTEMPTS = 2
+@Field static final int        RUNTIME_STATS_RETRY_S      = 60
 @Field static final long       RADIO_CACHE_TTL_MS = 60_000L
 @Field static final long       HUB_LIST_CACHE_TTL_MS = 120_000L
 @Field static final long       SYSTEM_RESOURCES_CACHE_TTL_MS = 10_000L
@@ -3235,7 +3241,14 @@ void scheduledCheckpoint() {
 
 private void fireAsyncCheckpointChain() {
     logInfo "Starting async scheduled checkpoint..."
-    asyncCheckpointStaging = [chainStartMs: now()]
+    asyncCheckpointStaging = [chainStartMs: now(), statsAttempt: 0]
+    dispatchRuntimeStatsFetch()
+}
+
+// v5.62.0: factored out so the runtime-stats leg can be re-fired on a transient timeout.
+private void dispatchRuntimeStatsFetch() {
+    if (asyncCheckpointStaging == null) return
+    asyncCheckpointStaging.statsAttempt = ((asyncCheckpointStaging.statsAttempt ?: 0) as int) + 1
     Map params = [uri: HUB_BASE, path: RUNTIME_STATS_PATH, contentType: "application/json", timeout: 30]
     try {
         asynchttpGet("asyncOnRuntimeStats", params, null)
@@ -3245,13 +3258,26 @@ private void fireAsyncCheckpointChain() {
     }
 }
 
-void asyncOnRuntimeStats(resp, data) {
-    if (resp?.hasError()) {
-        logError "scheduledCheckpoint: runtime stats error: ${resp.getErrorMessage()}"
+// runIn target for the single bounded retry of the runtime-stats leg.
+void retryRuntimeStatsFetch() {
+    if (asyncCheckpointStaging == null) {
+        // Chain was aborted or staging was reset (e.g. code push) during the retry wait.
+        logDebug "scheduledCheckpoint: runtime stats retry skipped — chain no longer active"
         abortAsyncChain(); return
     }
-    if (resp?.status != 200) {
-        logError "scheduledCheckpoint: runtime stats HTTP ${resp?.status}"
+    dispatchRuntimeStatsFetch()
+}
+
+void asyncOnRuntimeStats(resp, data) {
+    if (resp?.hasError() || resp?.status != 200) {
+        String why = resp?.hasError() ? "error: ${resp.getErrorMessage()}" : "HTTP ${resp?.status}"
+        int attempt = (asyncCheckpointStaging?.statsAttempt ?: RUNTIME_STATS_MAX_ATTEMPTS) as int
+        if (attempt < RUNTIME_STATS_MAX_ATTEMPTS) {
+            logWarn "scheduledCheckpoint: runtime stats ${why} (attempt ${attempt}/${RUNTIME_STATS_MAX_ATTEMPTS}); retrying in ${RUNTIME_STATS_RETRY_S}s"
+            runIn(RUNTIME_STATS_RETRY_S, "retryRuntimeStatsFetch")
+            return
+        }
+        logError "scheduledCheckpoint: runtime stats ${why} — giving up after ${attempt} attempt(s)"
         abortAsyncChain(); return
     }
     try {
