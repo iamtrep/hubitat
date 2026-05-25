@@ -4,7 +4,7 @@
  */
 import groovy.transform.Field
 
-@Field static final String APP_VERSION = "0.5.0"
+@Field static final String APP_VERSION = "0.6.0"
 @Field static final String UI_FILE = "multi_hub_inventory_ui.html"
 @Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/MultiHubInventory.groovy"
 @Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/multi_hub_inventory_ui.html"
@@ -35,6 +35,7 @@ mappings {
     path('/ui.html')   { action: [GET: 'serveUI'] }
     path('/api/peers') { action: [GET: 'apiPeers'] }
     path('/api/peer')  { action: [GET: 'apiPeer'] }
+    path('/api/reinit') { action: [POST: 'apiReinit'] }
 }
 
 // ===== CONFIG PAGE =====
@@ -350,6 +351,16 @@ void probePeers() {
 }
 
 // ===== API =====
+// POST /api/reinit — re-run the lifecycle as if the user had clicked Done (re-syncs the UI, re-probes
+// peers, arms the version-check cron, refreshes the update-label badge). A code push alone does NOT
+// fire updated()/initialize(), so the deploy chain calls this after pushing new code.
+Map apiReinit() {
+    if (!checkOAuth()) return render(status: 403, contentType: 'text/plain', data: 'OAuth not enabled')
+    logInfo "Reinitialize requested via API (running updated())"
+    updated()
+    return jsonResponse([success: true, version: APP_VERSION])
+}
+
 // GET /api/peers — labels + index + reachability. NEVER returns tokens.
 Map apiPeers() {
     if (!checkOAuth()) return render(status: 403, contentType: 'text/plain', data: 'OAuth not enabled')

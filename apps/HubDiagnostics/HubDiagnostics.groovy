@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.63.1"
+@Field static final String APP_VERSION = "5.64.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -368,6 +368,7 @@ mappings {
     path('/api/report/template')     { action: [GET:  'apiReportTemplate'] }
     path('/api/settings')            { action: [GET: 'apiGetSettings', POST: 'apiUpdateSettings'] }
     path('/api/cache/clear')         { action: [POST: 'apiClearCache'] }
+    path('/api/reinit')              { action: [POST: 'apiReinit'] }
 
     // ===== Long-running orchestration =====
     // Device usage audit — async scan with app-owned state.
@@ -607,6 +608,15 @@ Map apiSyncUI() {
     logInfo "Manual UI sync requested via API..."
     boolean success = syncUIBlocking()
     return jsonResponse([success: success])
+}
+
+// Re-run the lifecycle as if the user had clicked Done — arms schedules, re-subscribes, runs
+// settings migrations, and refreshes the update-label badge. A code push alone does NOT fire
+// updated()/initialize(), so the deploy chain calls this per hub after pushing new code.
+Map apiReinit() {
+    logInfo "Reinitialize requested via API (running updated())"
+    updated()
+    return jsonResponse([success: true, version: APP_VERSION])
 }
 
 Map apiVersionCheck() {
