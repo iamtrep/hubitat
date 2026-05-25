@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.58.0"
+@Field static final String APP_VERSION = "5.59.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -4017,7 +4017,7 @@ private Map extractAuditFields(Map fj, Long did) {
         // need to know about. AUDIT_SCANS is in-memory only, so old records
         // never persist across an app reload — but cross-restart cases or future on-disk persistence
         // benefit from being able to detect the format.
-        _schemaVersion:      2,
+        _schemaVersion:      3,
         id:                  did,
         name:                dev.name,
         label:               dev.label,
@@ -4045,6 +4045,10 @@ private Map extractAuditFields(Map fj, Long did) {
         firmwareOta:         firmwareOta,
         firmwareTargets:     (firmwareTargets.size() > 1 ? firmwareTargets : null),
         protocol:            protocol,
+        // Authoritative two-dimension classification — stamped in finalizeAudit() by joining
+        // analyzeDevices()'s classifyDevice result (the raw `protocol` above is null on many hubs).
+        connectionType:      null,
+        integration:         null,
 
         // Section B
         orphan:              dev.orphan == true,
@@ -4254,6 +4258,27 @@ private void finalizeAudit(String scanId) {
         Map ldState = fetchHubMeshDeviceState(devId)
         if (ldState) record.hubMeshState = ldState
     }
+
+    // Connection-type / integration classification — parity with the Dashboard/Devices view.
+    // Audit records carry only the raw `protocol` (controllerTypeLabel), which is null on many
+    // hubs for virtual/cloud/LAN/integration-owned devices. analyzeDevices() runs the authoritative
+    // classifyDevice + enrichDevices passes off the bulk devicesList is* flags; join its per-device
+    // result onto the audit records by id so external consumers (e.g. Multi-Hub Inventory) get the
+    // same connectionType/integration the SPA shows — without duplicating the classification logic.
+    try {
+        List classified = (analyzeDevices(true)?.allDevices ?: []) as List
+        Map classById = classified.collectEntries { Map d -> [(d.id?.toString()): d] }
+        devices.each { Object devId, Object recObj ->
+            Map cls = (Map) classById[devId?.toString()]
+            if (cls) {
+                ((Map) recObj).connectionType = cls.connectionType
+                ((Map) recObj).integration    = cls.integration
+            }
+        }
+    } catch (Exception e) {
+        logWarn "[audit ${scanId}] classification enrichment failed: ${e.message}"
+    }
+
     logDebug "Audit Phase 4 enrichment finished in ${now() - enrichStart}ms"
 
     // Store result in volatile memory (lost on hub restart — acceptable). The SPA formats
