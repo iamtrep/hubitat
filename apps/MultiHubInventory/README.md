@@ -7,7 +7,7 @@ into one read-only, cross-hub view. It does **not** modify Hub Diagnostics in an
 
 Multi-Hub Inventory provides four views across all hubs in your fleet:
 
-- **Fleet Summary** — total device count, per-hub counts, protocol and manufacturer breakdowns,
+- **Fleet Summary** — total device count, per-hub counts, integration and manufacturer breakdowns,
   and a cross-hub attention badge (stale / orphaned / disabled / unreferenced).
 - **Unified Device Register** — every device across all hubs in one sortable, filterable table
   with CSV export. Hub Mesh mirror devices are excluded and counted once on their home hub.

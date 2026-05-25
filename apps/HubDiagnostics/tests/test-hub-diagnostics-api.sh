@@ -1315,8 +1315,11 @@ else:
         # (see CODE_REVIEW.md and memory/project_hubdiag_test_coverage.md).
         if all_devs:
             sample = next(iter(all_devs.values()))
+            # connectionType + integration (v5.59.0): authoritative classification joined in from
+            # analyzeDevices(); external consumers (Multi-Hub Inventory) render these over raw protocol.
             raw_fields = ["appsUsingCount", "parentApp", "orphan", "dashboards",
-                          "spammyThreshold", "maxStates", "maxEvents", "lastActivityTimeMs"]
+                          "spammyThreshold", "maxStates", "maxEvents", "lastActivityTimeMs",
+                          "connectionType", "integration"]
             missing = [f for f in raw_fields if f not in sample]
             if not missing:
                 ok("allDevices entries carry the raw cross-reference fields the SPA derives from")

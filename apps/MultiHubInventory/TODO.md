@@ -3,31 +3,21 @@
 Backlog for the app. v0.1.0 is functional (deployed + verified on maison-pro); this is the
 remaining work.
 
-## High priority
+## Done
 
-### Device classification parity with Hub Diagnostics
-The register/summary currently display the audit record's raw `protocol` field, which is just
-`controllerTypeLabel(controllerType)` — a thin mapper. Two consequences seen in live data
-(165 devices on maison-pro):
+### Device classification parity with Hub Diagnostics ✅ (MHI v0.3.0 / HubDiag v5.59.0)
+The register/summary previously displayed the audit record's raw `protocol`
+(`controllerTypeLabel(controllerType)`), which left ~130/165 devices as "Unknown" (blank
+`controllerType` on virtual/cloud/LAN/integration devices) and leaked unmapped codes (`HKC`).
 
-- **~130 devices show as "Unknown"** because `controllerType` is blank for virtual / cloud /
-  LAN / integration-owned devices. Hub Diagnostics' own code notes the protocol field is
-  "unreliable (null on many hubs)".
-- **Unmapped controller codes leak** (e.g. `HKC` for HomeKit), because `controllerTypeLabel`
-  hits `default: return ct` for anything outside ZGB/ZWV/MAT/LNK/LAN/BLE/BTH.
-
-Hub Diagnostics classifies properly via `classifyDevice`: authoritative `isZigbee`/`isZwave`/
-`isMatter`/`isBluetooth`/`isLinked`/`isVirtual`/`isNetwork` flags, a virtual-driver heuristic,
-and a parent-app → `INTEGRATION_TABLE` lookup (Hue, Shelly, Kasa, WLED, Sonos, …) yielding both
-an `integration` name and a `connectionType`; `enrichDevices` resolves stragglers from `fullJson`
-(`parentApp` + `controllerType`).
-
-**Fix (single-source it):** add `integration` and `connectionType` to each audit record in
-Hub Diagnostics' `extractAuditFields` (the `fullJson` path has `parentApp` + `controllerType`, so
-the `enrichDevices`-style lookup is available there). Then this app renders `integration` instead
-of the raw `protocol`. This is a Hub Diagnostics-side enrichment — classifying devices is its own
-job; the audit contract just isn't exposing what it already computes. Avoids duplicating the
-integration table in the SPA.
+Single-sourced in Hub Diagnostics. Rather than the originally-sketched fullJson-only
+classification in `extractAuditFields` (which would have reproduced the "Unknown" problem, since
+fullJson lacks the authoritative `isZigbee`/`isZwave`/`isNetwork` bulk-list flags), `finalizeAudit`
+now reuses `analyzeDevices()` — the full `classifyDevice` + `enrichDevices` passes that already feed
+the Dashboard — and joins the per-device `connectionType` + `integration` onto each audit record by
+id. This guarantees the audit classification exactly matches the SPA's, with no duplicated table.
+MHI renders the `integration` column + a `connectionType` (CONN_DISPLAY) column, and the summary's
+"By integration" card, all falling back to `protocol` for old/unclassified peers.
 
 ## Medium priority
 

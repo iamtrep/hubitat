@@ -44,7 +44,7 @@ t('filterLinked drops protocol === Linked', () => {
 
 t('mergeFleet flattens allDevices, tags hub, drops Linked, records hub status', () => {
   const hubResults = [
-    { label:'pro', ok:true, data:{ hubName:'Pro', generatedAt:'2026-05-23 10:00 UTC',
+    { label:'pro', ok:true, data:{ hubName:'Pro', generatedMs:1747999200000,
         hubModel:'C-8 Pro', hubFirmware:'2.4.4.155',
         allDevices:{ '1':{id:1,protocol:'Zigbee',manufacturer:'X'}, '2':{id:2,protocol:'Linked'} } } },
     { label:'main', ok:false, error:'unreachable', data:null },
@@ -56,6 +56,8 @@ t('mergeFleet flattens allDevices, tags hub, drops Linked, records hub status', 
   assert.strictEqual(m.hubs[0].hubName, 'Pro');
   assert.strictEqual(m.hubs[0].hubModel, 'C-8 Pro');
   assert.strictEqual(m.hubs[0].hubFirmware, '2.4.4.155');
+  assert.strictEqual(typeof m.hubs[0].generatedAt, 'string');   // generatedMs (epoch) formatted for display
+  assert.ok(/\d/.test(m.hubs[0].generatedAt));
   assert.strictEqual(m.hubs[1].ok, false);
   assert.strictEqual(m.hubs[1].error, 'unreachable');
   assert.strictEqual(m.hubs[1].hubModel, null);
@@ -148,17 +150,18 @@ t('attentionItems classifies by reason with injectable now + staleDays', () => {
   assert.deepStrictEqual(a.unreferenced.map(r=>r.id), [3]);
 });
 
-t('fleetSummary counts by hub/protocol/manufacturer + attention totals', () => {
+t('fleetSummary counts by hub/integration/manufacturer + attention totals', () => {
   // lastActivityTimeMs:Date.now() keeps every row non-stale so attentionCounts isolates disabled/unreferenced.
+  // Last row has no integration → fleetSummary falls back to protocol (old-hub / unclassified device).
   const merged = { rows: [
-    {hub:'a', protocol:'Zigbee', manufacturer:'X', appsUsingCount:1, dashboards:[1], lastActivityTimeMs:Date.now()},
-    {hub:'a', protocol:'Z-Wave', manufacturer:'X', appsUsingCount:0, dashboards:[],  lastActivityTimeMs:Date.now()},
+    {hub:'a', integration:'Zigbee', protocol:'Zigbee', manufacturer:'X', appsUsingCount:1, dashboards:[1], lastActivityTimeMs:Date.now()},
+    {hub:'a', integration:'Z-Wave', protocol:'Z-Wave', manufacturer:'X', appsUsingCount:0, dashboards:[],  lastActivityTimeMs:Date.now()},
     {hub:'b', protocol:'Zigbee', manufacturer:'Y', disabled:true,    appsUsingCount:1, dashboards:[1], lastActivityTimeMs:Date.now()},
   ], hubs: [] };
   const s = C.fleetSummary(merged);
   assert.strictEqual(s.total, 3);
   assert.strictEqual(s.byHub.a, 2);
-  assert.strictEqual(s.byProtocol.Zigbee, 2);
+  assert.strictEqual(s.byIntegration.Zigbee, 2);   // 1 via integration + 1 via protocol fallback
   assert.strictEqual(s.byManufacturer.X, 2);
   assert.strictEqual(s.attentionCounts.disabled, 1);
   assert.strictEqual(s.attentionCounts.unreferenced, 1);
