@@ -155,9 +155,9 @@ if config_page and "configPage" in config_page:
         for item in s.get("body", []):
             desc = item.get("description", "")
             url  = item.get("url", "")
-            m = re.search(r'access_token=([a-f0-9-]+)', desc)
+            m = re.search(r'ui\.html\?access_token=([a-f0-9-]+)', desc)
             if not m:
-                m = re.search(r'access_token=([a-f0-9-]+)', url)
+                m = re.search(r'ui\.html\?access_token=([a-f0-9-]+)', url)
             if m:
                 access_token = m.group(1)
                 break
