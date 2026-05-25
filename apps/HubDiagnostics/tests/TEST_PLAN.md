@@ -175,6 +175,8 @@ open tests/spa/index.html
 node tests/test-diffStats.js            # diffStats + zeroBaseline (startup-baseline synthesis)
 node tests/test-radio-derivations.js    # topRadioTalkers (Performance top-N ranking)
 node tests/test-network-derivations.js  # zwProblemNodes / zbWeakNeighbors / zbStaleNeighbors
+node tests/test-forum-export.js         # assembleForumData (client-side forum-export data assembly)
+node tests/test-forum-render.js         # full forum-export render (buildForumMarkdown end-to-end)
 node tests/test-temp-scale.js           # temperature-scale helpers
 ```
 
