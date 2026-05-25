@@ -121,7 +121,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "0.4.1";
+const UI_VERSION = "0.4.2";
 const APP_VERSION = '${app_version}';   // injected by serveUI; stays literal in workbench/dev
 
 // ===== Z-WAVE MANUFACTURER TABLE (decimal maker-id -> name, from zwave-js) =====
@@ -271,21 +271,23 @@ function attentionItems(rows, opts){
     if (r.disabled === true) res.disabled.push(r);
     if (r.orphan === true) res.orphaned.push(r);
     if (typeof r.lastActivityTimeMs === 'number' && r.lastActivityTimeMs > 0 && r.lastActivityTimeMs < cutoff) res.stale.push(r);
-    const noApps = (r.appsUsingCount || 0) === 0;
-    const noDash = !r.dashboards || r.dashboards.length === 0;
-    if (noApps && noDash) res.unreferenced.push(r);
+    // Unreferenced = no app uses the device. Dashboards intentionally excluded: Hubitat's
+    // per-device dashboards list is non-discriminating (every device reports the catch-all
+    // "Dashboard"), so it can't separate referenced from unreferenced.
+    if ((r.appsUsingCount || 0) === 0) res.unreferenced.push(r);
   }
   return res;
 }
 function fleetSummary(merged){
-  const rows = merged.rows, byHub = {}, byIntegration = {}, byMfr = {};
+  const rows = merged.rows, byHub = {}, byIntegration = {}, byConnection = {}, byMfr = {};
   for (const r of rows){
     byHub[r.hub] = (byHub[r.hub] || 0) + 1;
     const i = r.integration || r.protocol || 'Unknown'; byIntegration[i] = (byIntegration[i] || 0) + 1;
+    const c = r.connectionType ? (CD[r.connectionType] || r.connectionType) : 'Unknown'; byConnection[c] = (byConnection[c] || 0) + 1;
     const m = (r.manufacturer||'').trim() || 'Unknown'; byMfr[m] = (byMfr[m] || 0) + 1;
   }
   const att = attentionItems(rows, {});
-  return { total: rows.length, byHub, byIntegration, byManufacturer: byMfr,
+  return { total: rows.length, byHub, byIntegration, byConnection, byManufacturer: byMfr,
     attentionCounts: { stale:att.stale.length, orphaned:att.orphaned.length,
       disabled:att.disabled.length, unreferenced:att.unreferenced.length } };
 }
@@ -532,8 +534,9 @@ function renderSummary(){
     `<div class="card"><div class="card-h">Fleet — ${s.total} devices (mesh mirrors excluded)</div><div class="card-b">
        <div class="ng">${hubLines}</div></div></div>
      <div class="card"><div class="card-h">Attention</div><div class="card-b"><div class="pills">
-       <span class="pill">Stale<b>${a.stale}</b></span><span class="pill">Orphaned<b>${a.orphaned}</b></span>
+       <span class="pill">Stale<b>${a.stale}</b></span>
        <span class="pill">Disabled<b>${a.disabled}</b></span><span class="pill">Unreferenced<b>${a.unreferenced}</b></span></div></div></div>
+     <div class="card"><div class="card-h">By connection</div><div class="card-b"><div class="pills">${kv(s.byConnection)}</div></div></div>
      <div class="card"><div class="card-h">By integration</div><div class="card-b"><div class="pills">${kv(s.byIntegration)}</div></div></div>
      <div class="card"><div class="card-h">By manufacturer</div><div class="card-b"><div class="pills">${kv(s.byManufacturer)}</div></div></div>`;
 }
@@ -543,7 +546,13 @@ function flagText(r){ return [r.orphan&&'orphan', r.disabled&&'disabled', (((r.a
 function regViewRows(){
   const flaggedOnly = document.getElementById('regFlagged') && document.getElementById('regFlagged').checked;
   const hasFwOnly  = document.getElementById('regHasFw')  && document.getElementById('regHasFw').checked;
-  return FLEET.rows.filter(r => (!flaggedOnly||isFlagged(r)) && (!hasFwOnly||hasFw(r))).map(r=>{
+  const connSel  = (document.getElementById('regConn')  || {}).value || '';
+  const integSel = (document.getElementById('regInteg') || {}).value || '';
+  const connOf  = r => CD[r.connectionType] || r.connectionType || '';
+  const integOf = r => r.integration || r.protocol || '';
+  return FLEET.rows.filter(r => (!flaggedOnly||isFlagged(r)) && (!hasFwOnly||hasFw(r))
+      && (!connSel  || connOf(r)  === connSel)
+      && (!integSel || integOf(r) === integSel)).map(r=>{
     const ia = inactivity(r.lastActivityTimeMs);
     const days = (ia.text==='Never') ? 1e9 : Number(ia.text);
     return Object.assign({}, r, { _days:days, _daysText:ia.text, _daysColor:ia.color, _flags:flagText(r), _mfrName:displayMfr(r.manufacturer) });
@@ -567,10 +576,17 @@ function refreshRegTbl(){
   tbl('regTbl', cols, regViewRows(), {filter:true});
 }
 function renderRegister(){
+  const distinct = (getter) => [...new Set(FLEET.rows.map(getter).filter(Boolean))].sort();
+  const sel = (id,label,vals) => `<select id="${id}" onchange="refreshRegTbl()" style="font-size:13px;padding:2px 4px">`
+    + `<option value="">All ${label}</option>` + vals.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('') + `</select>`;
+  const conns  = distinct(r => CD[r.connectionType] || r.connectionType);
+  const integs = distinct(r => r.integration || r.protocol);
   document.getElementById('p-register').innerHTML =
     `<div class="actions">
        <label style="font-size:13px;display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="regFlagged" onchange="refreshRegTbl()"> Flagged only</label>
        <label style="font-size:13px;display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="regHasFw" onchange="refreshRegTbl()"> Has firmware</label>
+       ${sel('regConn','connections',conns)}
+       ${sel('regInteg','integrations',integs)}
        <button class="btn btn-p btn-s" onclick="exportCsv()">Export CSV</button></div>
      <div class="card"><div class="card-b"><div id="regTbl"></div></div></div>`;
   refreshRegTbl();
