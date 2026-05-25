@@ -135,6 +135,30 @@ A full inventory of every device on the hub.
 
 The **Connection** and **Integration** columns are inferred from Hubitat's device metadata: protocol flags (Zigbee, Z-Wave, Matter, Bluetooth, Hub Mesh, Virtual) classify paired and mesh devices directly; for everything else the integration name comes from the device's parent app and the connection type from Hubitat's own LAN flag (LAN ⇒ local, otherwise cloud). A small built-in table corrects only the few connection types the LAN flag can't infer — LAN bridges such as Philips Hue, Lutron, and Bond, plus AirPlay — and you can add your own exceptions via a File Manager config file. Devices with no parent app and no LAN signal show **Other**.
 
+#### Customizing classification with the override file
+
+When the automatic rules above get one of your integrations wrong, correct it with an optional File Manager config file, `hub_diagnostics_integration_overrides.json`. Most integrations need no entry — add one only when the derived connection type or integration name is wrong for yours.
+
+Each entry's key is a **lowercase substring** matched against a device's parent-app name, or — for a standalone device with no parent app — its driver type name. An entry may set either or both of:
+
+- `conn` — the connection type, one of `paired`, `lan_direct`, `lan_bridge`, `cloud`, `virtual`, `hubmesh`, `other`. Use it when the LAN flag derives the wrong type (e.g. a LAN bridge whose child devices look like `lan_direct`, or a local device the hub flags as cloud).
+- `name` — the integration display name. Use it to **group several driver types under one integration** — e.g. an integration whose `Foo Switch`, `Foo Dimmer`, and `Foo Pico` drivers should all report as a single "Foo" rather than one bucket per driver type.
+
+```json
+{
+  "awair":     { "conn": "lan_direct", "name": "Awair" },
+  "my bridge": { "conn": "lan_bridge", "name": "My Bridge" }
+}
+```
+
+To apply:
+
+1. Start from the documented template, `integration_overrides.json`, that ships with the app. Entries whose key begins with `_` are disabled — enable one by removing its leading underscore.
+2. Upload the file to the hub's **File Manager**, named exactly `hub_diagnostics_integration_overrides.json`.
+3. Open Hub Diagnostics and **Save** the App Settings page to reload it.
+
+Your entries overlay the built-in table; on a key collision, yours wins.
+
 Community driver authors can force a specific classification by calling `updateDataValue` in the driver:
 
 ```
