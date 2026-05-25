@@ -21,7 +21,7 @@ function extractFn(name) {
   for (; i < src.length; i++) { if (src[i] === '{') d++; else if (src[i] === '}') { d--; if (d === 0) { i++; break; } } }
   return src.slice(s, i);
 }
-const HELPERS = ['assembleForumData', 'buildForumMarkdown', 'composeAlerts', 'flattenRadioDevices',
+const HELPERS = ['makeObf', 'assembleForumData', 'buildForumMarkdown', 'composeAlerts', 'flattenRadioDevices',
   'fmem', 'ftemp', 'tScale', 'tSym', 'c2u', 'splitGhostNodes', 'zbWeakNeighbors', 'zbStaleNeighbors', 'isNewer'];
 const CD = (src.match(/const CD=\{[^;]*\};/) || [])[0];
 assert(CD, 'CD const not found');
@@ -31,10 +31,11 @@ const harness =
   'const UI_VERSION="5.58.0";\n' +
   'let TH={temperatureScale:"C",critMemMb:75,warnMemMb:100,warnCpuLoad:4,critCpuLoad:8,warnTempC:50,critTempC:60,chattyDeviceThreshold:10};\n' +
   THRESHOLDS + '\n' + CD + '\n' + HELPERS.map(extractFn).join('\n') +
-  '\nmodule.exports = { assembleForumData, buildForumMarkdown };';
+  '\nconst Obf = makeObf();' +
+  '\nmodule.exports = { assembleForumData, buildForumMarkdown, Obf };';
 const tmp = path.join(os.tmpdir(), 'hd_render_' + process.pid + '.js');
 fs.writeFileSync(tmp, harness);
-const { assembleForumData, buildForumMarkdown } = require(tmp);
+const { assembleForumData, buildForumMarkdown, Obf } = require(tmp);
 process.on('exit', () => { try { fs.unlinkSync(tmp); } catch (e) {} });
 
 // Synthetic tab payloads modeled on a real C-7 export (Z-Wave nodes, Zigbee, Matter, Hub Mesh, Perf).
@@ -205,6 +206,18 @@ has2('(2 stale)', 'neighbor line notes stale count');
 has2('**Stale Neighbors:** 39E4, B44B', 'stale neighbor short IDs');
 hasNot2('### Hub Mesh', 'Hub Mesh section omitted (no peers)');
 has2('**Fabric:** 9F93BB6F02A43E79', 'Matter still renders');
+
+// --- obfuscation: names become aliases, types stay real ---
+{
+  const rObf = JSON.parse(JSON.stringify(r));
+  rObf.settings = { obfuscateForumExport: true };
+  const mdObf = buildForumMarkdown(assembleForumData(rObf));
+  assert.ok(!/Fuite Piano/.test(mdObf), 'real device name leaked into obfuscated export');
+  assert.ok(!/Apple TV Salon/.test(mdObf), 'real device name leaked into obfuscated export');
+  assert.ok(/[a-z]+-[a-z]+/.test(mdObf), 'no alias present in obfuscated export');
+  assert.ok(/Water Sensor/.test(mdObf), 'driver type was wrongly obfuscated');
+  console.log('  ok   obfuscated export aliases names, keeps types');
+}
 
 console.log(`\n${pass}/${pass + fail} passed${fail ? `, ${fail} failed` : ''}`);
 process.exit(fail ? 1 : 0);

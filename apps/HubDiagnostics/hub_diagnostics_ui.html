@@ -1038,6 +1038,14 @@ function buildForumMarkdown(d){
   const lines=[];
   const L=s=>lines.push(s);
   const obfuscate=d.obfuscate||false;
+  Obf.enabled=obfuscate;
+  if(obfuscate){
+    const reg=[];
+    ((d.deviceStats&&d.deviceStats.allDevices)||[]).forEach(x=>{if(x&&x.name)reg.push(x.name);});
+    ((d.deviceStats&&d.deviceStats.lowBatteryDevices)||[]).forEach(x=>{if(x&&x.name)reg.push(x.name);});
+    ((d.appStats&&d.appStats.userAppsList)||[]).forEach(x=>{if(x&&x.label)reg.push(x.label);});
+    Obf.register(reg); Obf.prime();
+  }
   const hubInfo=d.hubInfo||{};
   const resources=d.resources||null;
   const networkData=d.networkData||{};
@@ -1118,12 +1126,12 @@ function buildForumMarkdown(d){
   }
   const lowBattery=deviceStats.lowBatteryDevices||[];
   if(lowBattery.length){
-    L('');L('**Low Battery:** '+lowBattery.map(it=>`${obfuscate?(it.type||'Device'):it.name} (${it.battery}%)`).join(', '));
+    L('');L('**Low Battery:** '+lowBattery.map(it=>obfuscate&&it.type?`${Obf.nm(it.name)} (${it.type}, ${it.battery}%)`:`${Obf.nm(it.name)} (${it.battery}%)`).join(', '));
   }
   const inactiveDevices=(deviceStats.allDevices||[]).filter(it=>it.status==='Inactive');
   if(inactiveDevices.length){
     let inactiveLine=`\n**Inactive Devices (${inactiveDevices.length}):** `;
-    inactiveLine+=inactiveDevices.slice(0,15).map(it=>obfuscate?(it.type||'Device'):it.name).join(', ');
+    inactiveLine+=inactiveDevices.slice(0,15).map(it=>Obf.nm(it.name)).join(', ');
     if(inactiveDevices.length>15)inactiveLine+=` … (+${inactiveDevices.length-15} more)`;
     L(inactiveLine);
   }
@@ -1138,7 +1146,7 @@ function buildForumMarkdown(d){
     L('');L('**Installed User Apps:**');
     Object.keys(appCounts).sort().forEach(name=>{
       const count=appCounts[name];
-      L(`- ${obfuscate?'User App':name}${count>1?` (×${count})`:''}`);
+      L(`- ${Obf.nm(name)}${count>1?` (×${count})`:''}`);
     });
   }
   const builtInInstances=appStats.builtInInstances||{};
@@ -1167,7 +1175,7 @@ function buildForumMarkdown(d){
     // vs how many are recoverable (battery/range issues).
     const {ghosts,failed}=splitGhostNodes(ghostNodes);
     const renderNode=g=>{
-      const gName=obfuscate?(g.type||'Z-Wave Node'):g.name;
+      const gName=Obf.nm(g.name);
       const gSig=g.signals?` [${g.signals.join(', ')}]`:'';
       L(`- Node ${g.id}: ${gName}${gSig}`);
     };
@@ -1188,20 +1196,20 @@ function buildForumMarkdown(d){
         const issues=[];
         if(n.state!=='OK')issues.push(`State: ${n.state}`);
         if((n.per||0)>1)issues.push(`PER: ${n.per}%`);
-        L(`- ${obfuscate?(n.zwaveType||'Z-Wave Node'):n.name} (Node ${n.nodeId}): ${issues.join(', ')}`);
+        L(`- ${Obf.nm(n.name)} (Node ${n.nodeId}): ${Obf.scrub(issues.join(', '))}`);
       });
     }
     // S0 flagged
     const s0Flagged=zwNodes.filter(n=>n.s0Flag);
     if(s0Flagged.length){
-      L('');L(`**S0 on non-security devices:** ${s0Flagged.map(n=>obfuscate?(n.zwaveType||'Z-Wave Node'):n.name).join(', ')}`);
+      L('');L(`**S0 on non-security devices:** ${s0Flagged.map(n=>Obf.nm(n.name)).join(', ')}`);
     }
     // Isolated nodes (0 neighbors, non-failed)
     const isolatedNodes=zwNodes.filter(n=>(n.neighbors||0)===0&&n.state!=='FAILED');
     if(isolatedNodes.length){
       L('');L(`**Isolated Nodes (0 neighbors, ${isolatedNodes.length}):**`);
       isolatedNodes.forEach(n=>{
-        const label=obfuscate?(n.zwaveType||`Node ${n.nodeId}`):(n.name||`Node ${n.nodeId}`);
+        const label=Obf.nm(n.name||`Node ${n.nodeId}`);
         L(`- Node ${n.nodeId}: ${label}`);
       });
     }
@@ -1213,7 +1221,7 @@ function buildForumMarkdown(d){
         const rttStr=n.rtt!=null?`${n.rtt}ms`:'—';
         const drvStr=n.driverType==='usr'?'User':n.driverType==='sys'?'Built-in':'—';
         const rateStr=uptimeMin>0?Number(n.msgCount/uptimeMin).toFixed(1):'—';
-        const nodeName=obfuscate?(n.zwaveType||`Node ${n.nodeId}`):(n.name||`Node ${n.nodeId}`);
+        const nodeName=Obf.nm(n.name||`Node ${n.nodeId}`);
         L(`| ${n.nodeId} | ${nodeName} | ${n.security||'None'} | ${rttStr} | ${n.per}% | ${n.rssiStr||'—'} | ${n.route||'—'} | ${rateStr} | ${drvStr} |`);
       });
     }
@@ -1307,7 +1315,7 @@ function buildForumMarkdown(d){
       L('|---|---:|---:|---:|');
       topAppTypes.forEach(at=>{
         const pct=Number(at.pctTotal||0);
-        const aName=obfuscate?(at.type||at.name):at.name;
+        const aName=Obf.nm(at.name);
         if(pct>0)L(`| ${aName} | ${pct.toFixed(3)}% | ${at.count||0} | ${Number(at.average||0).toFixed(1)} |`);
       });
     }
@@ -1320,14 +1328,14 @@ function buildForumMarkdown(d){
     L('|---|---|---:|---:|');
     topTalkers.forEach(t=>{
       const rate=Number(t.msgCount/uptimeMin).toFixed(1);
-      const tName=obfuscate?(t.type||t.integration||'Device'):t.name;
+      const tName=Obf.nm(t.name);
       L(`| ${tName} | ${t.integration} | ${rate} | ${t.msgCount} |`);
     });
     // Spammy alerts (>= chattyDeviceThreshold)
     const chattyT=TH.chattyDeviceThreshold||10;
     const spammy=allRadioDevices.filter(it=>it.msgCount/uptimeMin>=chattyT);
     if(spammy.length){
-      L('');L(`**Elevated message rate (≥${chattyT}/min):** ${spammy.map(it=>`${obfuscate?(it.type||it.integration||'Device'):it.name} (${Number(it.msgCount/uptimeMin).toFixed(1)}/min)`).join(', ')}`);
+      L('');L(`**Elevated message rate (≥${chattyT}/min):** ${spammy.map(it=>`${Obf.nm(it.name)} (${Number(it.msgCount/uptimeMin).toFixed(1)}/min)`).join(', ')}`);
     }
   }
 

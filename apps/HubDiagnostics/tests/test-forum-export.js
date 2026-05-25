@@ -103,7 +103,7 @@ t('deviceStats: summary unnested + by-maps + low battery keeps type (obfuscation
   assert.strictEqual(d.deviceStats.totalDevices, 50);
   assert.strictEqual(d.deviceStats.disabledDevices, 2);
   assert.strictEqual(d.deviceStats.byIntegration['Philips Hue'], 20);
-  assert.strictEqual(d.deviceStats.lowBatteryDevices[0].type, 'Contact Sensor'); // needed for obfuscate mode
+  assert.strictEqual(d.deviceStats.lowBatteryDevices[0].type, 'Contact Sensor'); // type stays real in obfuscate mode (names are aliased, not types)
   assert.strictEqual(d.deviceStats.allDevices.find(x => x.status === 'Inactive').name, 'Old Switch');
 });
 t('appStats: userAppsList grouped-by app type; builtInInstances passed through', () => {
