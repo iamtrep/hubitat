@@ -207,16 +207,21 @@ has2('**Stale Neighbors:** 39E4, B44B', 'stale neighbor short IDs');
 hasNot2('### Hub Mesh', 'Hub Mesh section omitted (no peers)');
 has2('**Fabric:** 9F93BB6F02A43E79', 'Matter still renders');
 
-// --- obfuscation: names become aliases, types stay real ---
+// --- obfuscation: names become aliases; prose shows alias ALONE (no appended type) ---
 {
   const rObf = JSON.parse(JSON.stringify(r));
   rObf.settings = { obfuscateForumExport: true };
   const mdObf = buildForumMarkdown(assembleForumData(rObf));
   assert.ok(!/Fuite Piano/.test(mdObf), 'real device name leaked into obfuscated export');
   assert.ok(!/Apple TV Salon/.test(mdObf), 'real device name leaked into obfuscated export');
-  assert.ok(/[a-z]+-[a-z]+/.test(mdObf), 'no alias present in obfuscated export');
-  assert.ok(/Water Sensor/.test(mdObf), 'driver type was wrongly obfuscated');
-  console.log('  ok   obfuscated export aliases names, keeps types');
+  // Old behavior substituted the driver TYPE for the name in prose; the agreed design
+  // aliases the name and shows the alias ALONE — so the type must NOT appear in prose.
+  assert.ok(!/Water Sensor/.test(mdObf), 'low-battery prose still shows the driver type (must be alias alone)');
+  // buildForumMarkdown left Obf enabled + the name registered/primed, so this is the exact alias it emitted:
+  const fpAlias = Obf.nm('Fuite Piano');
+  assert.ok(/^[a-z]+-[a-z]+$/.test(fpAlias), 'unexpected alias format: ' + fpAlias);
+  assert.ok(mdObf.includes(fpAlias), 'expected alias "' + fpAlias + '" not found in obfuscated export');
+  console.log('  ok   obfuscated export aliases names (alias-alone prose, no types)');
 }
 
 console.log(`\n${pass}/${pass + fail} passed${fail ? `, ${fail} failed` : ''}`);

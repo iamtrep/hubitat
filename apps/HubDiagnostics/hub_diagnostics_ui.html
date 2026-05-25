@@ -1126,7 +1126,7 @@ function buildForumMarkdown(d){
   }
   const lowBattery=deviceStats.lowBatteryDevices||[];
   if(lowBattery.length){
-    L('');L('**Low Battery:** '+lowBattery.map(it=>obfuscate&&it.type?`${Obf.nm(it.name)} (${it.type}, ${it.battery}%)`:`${Obf.nm(it.name)} (${it.battery}%)`).join(', '));
+    L('');L('**Low Battery:** '+lowBattery.map(it=>`${Obf.nm(it.name)} (${it.battery}%)`).join(', '));
   }
   const inactiveDevices=(deviceStats.allDevices||[]).filter(it=>it.status==='Inactive');
   if(inactiveDevices.length){
