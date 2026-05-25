@@ -51,7 +51,7 @@ In the app's settings page, click **"Add hub"**. Paste that hub's Hub Diagnostic
 URL with its access token**, for example:
 
 ```
-http://192.168.1.86/apps/api/247/api/?access_token=4c0edefe-55ed-4001-bd44-3abd33734536
+http://192.168.0.10/apps/api/247/api/?access_token=<token>
 ```
 
 This is the `/api/` path — **not** the `ui.html` dashboard link. You can find it on the Hub

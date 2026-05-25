@@ -142,10 +142,10 @@ function fwTargetsLabel(r){
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // true for hub-free local development
 const T = '${access_token}', B = '${api_base}';
-const MOCK_PEERS = [{index:0,label:'maison-pro',reachable:true,webBase:'http://192.168.1.86'},{index:1,label:'maison',reachable:true,webBase:'http://192.168.1.213'}];
+const MOCK_PEERS = [{index:0,label:'Hub A',reachable:true,webBase:'http://192.168.0.10'},{index:1,label:'Hub B',reachable:true,webBase:'http://192.168.0.11'}];
 const MOCK_AUDIT = {
   // Hub 0: real-drift group (same source=softwareBuild, different values) + inconsistent-fields group (different sources)
-  0: { hubName:'maison-pro', generatedMs:Date.now()-300000, hubModel:'C-8 Pro', hubFirmware:'2.4.4.155', deviceCount:4, allDevices:{
+  0: { hubName:'Hub A', generatedMs:Date.now()-300000, hubModel:'C-8 Pro', hubFirmware:'2.4.4.155', deviceCount:4, allDevices:{
        // P1 — real drift: both use softwareBuild but different values
        '1':{id:1,label:'Office Plug A',deviceTypeName:'Zigbee Outlet',manufacturer:'Acme',model:'P1',
             firmware:'1.0.6',firmwareSource:'softwareBuild',firmwareOta:null,
@@ -164,7 +164,7 @@ const MOCK_AUDIT = {
        '5':{id:5,label:'Temp Sensor A',deviceTypeName:'Tuya Temp/Humidity',manufacturer:'Tuya',model:'TH01',
             firmware:'1.0',firmwareSource:'softwareBuild',firmwareOta:null,
             protocol:'Zigbee',connectionType:'paired',integration:'Zigbee',orphan:false,disabled:false,appsUsingCount:1,dashboards:[1],lastActivityTimeMs:Date.now()-1*86400000} } },
-  1: { hubName:'maison', generatedMs:Date.now()-240000, hubModel:'C-8', hubFirmware:'2.4.4.155', deviceCount:3, allDevices:{
+  1: { hubName:'Hub B', generatedMs:Date.now()-240000, hubModel:'C-8', hubFirmware:'2.4.4.155', deviceCount:3, allDevices:{
        // P1 — real drift: same hub, same source, yet another value
        '7':{id:7,label:'Office Plug C',deviceTypeName:'Zigbee Outlet',manufacturer:'Acme',model:'P1',
             firmware:'1.0.9',firmwareSource:'softwareBuild',firmwareOta:null,
