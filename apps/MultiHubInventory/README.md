@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
 # Multi-Hub Inventory
 
 A standalone Hubitat app that aggregates each hub's existing Hub Diagnostics `/api/audit/*` data
