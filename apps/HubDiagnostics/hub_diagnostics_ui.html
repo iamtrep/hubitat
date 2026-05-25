@@ -1335,7 +1335,16 @@ function buildForumMarkdown(d){
 
   return lines.join('\n');
 }
-api('settings').then(s=>{if(s)Object.assign(TH,s);}).catch(()=>{});
+api('settings').then(s=>{if(s){Object.assign(TH,s);Obf.enabled=!!s.obfuscateForumExport;if(Obf.enabled)seedObfRegistry();}}).catch(()=>{});
+async function seedObfRegistry(){
+  try{
+    const [dv,ap]=await Promise.all([api('devices'),api('apps')]);
+    const reg=[];
+    ((dv&&dv.deviceRows)||[]).forEach(d=>{if(d&&d.name)reg.push(d.name);});
+    ((ap&&ap.userApps)||[]).forEach(a=>{if(a&&a.label)reg.push(a.label);});
+    Obf.register(reg); Obf.prime();
+  }catch(e){}
+}
 function rateColor(v){return v>=TH.chattyDeviceThreshold?'var(--crit)':v>=TH.chattyDeviceThreshold*0.6?'var(--warn)':v>=2?'var(--primary)':''}
 function rateCell(r){if(r.msgPerMin==null)return'';const c=rateColor(r.msgPerMin);const s=c?' style="color:'+c+';font-weight:600"':'';return'<span'+s+'>'+r.msgPerMin.toFixed(2)+'</span>'}
 function isNewer(v1, v2) {
@@ -3107,7 +3116,7 @@ async function rConfig(){const P='p-config';loading(P);try{
 
   // Export
   o+='<div class="card"><div class="card-h">Export</div><div class="card-b"><div class="cfg-row">';
-  o+=`<label><input type="checkbox" id="cfg_obfuscate" ${s.obfuscateForumExport?'checked':''}> Obfuscate device/app labels in forum export (use driver/app type instead of name)</label>`;
+  o+=`<label><input type="checkbox" id="cfg_obfuscate" ${s.obfuscateForumExport?'checked':''}> Obfuscate device/app names throughout the UI and forum export (uses stable random aliases)</label>`;
   o+='</div></div></div>';
 
   // Alert Thresholds
@@ -3177,7 +3186,14 @@ async function rConfig(){const P='p-config';loading(P);try{
   };
 
   document.getElementById('cfg_debugLogging').onchange=async function(){await saveSetting({debugLogging:this.checked})};
-  document.getElementById('cfg_obfuscate').onchange=async function(){await saveSetting({obfuscateForumExport:this.checked});drop('settings')};
+  document.getElementById('cfg_obfuscate').onchange=async function(){
+    const on=this.checked;
+    await saveSetting({obfuscateForumExport:on});drop('settings');
+    Obf.enabled=on;
+    if(on)await seedObfRegistry();
+    document.querySelectorAll('.panel').forEach(p=>{p.innerHTML='';});
+    go(curTab);
+  };
 
   document.getElementById('cfg_saveLive').onclick=async()=>{
     const v=Math.max(10,Math.min(300,parseInt(document.getElementById('cfg_liveRefreshSec').value)||30));
