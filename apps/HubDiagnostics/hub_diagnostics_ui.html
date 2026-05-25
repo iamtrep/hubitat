@@ -365,8 +365,8 @@ function fbytes(b){if(b==null)return'N/A';if(b>=1073741824)return(b/1073741824).
 function sev(v,w,c,inv){if(v==null)return'';if(inv)return v<c?'var(--crit)':v<w?'var(--warn)':'var(--ok)';return v>c?'var(--crit)':v>w?'var(--warn)':'var(--ok)'}
 function sbadge(s){return'<span class="badge '+(s==='Active'?'b-ok':s==='Disabled'?'b-crit':'b-warn')+'">'+h(s)+'</span>'}
 function bat(v){if(v==null||v==='')return'';const c=v<=20?'var(--crit)':v<=50?'var(--warn)':'var(--ok)';return'<span style="color:'+c+';font-weight:600">'+v+'%</span>'}
-function dlink(id,n){return'<a href="/device/edit/'+id+'" target="_blank">'+h(n)+'</a>'}
-function alink(id,n){return'<a href="/installedapp/configure/'+id+'" target="_blank">'+h(n)+'</a>'}
+function dlink(id,n){return'<a href="/device/edit/'+id+'" target="_blank">'+h(Obf.nm(n))+'</a>'}
+function alink(id,n){return'<a href="/installedapp/configure/'+id+'" target="_blank">'+h(Obf.nm(n))+'</a>'}
 function dlistlink(count,ids){if(ids===true)return'<a href="/device/list" target="_blank">'+(count??0)+'</a>';if(!ids||!ids.length)return String(count??0);return'<a href="/device/list?ids='+ids.join(',')+'" target="_blank">'+count+'</a>'}
 function alistlink(count){return'<a href="/installedapp/list" target="_blank">'+(count??0)+'</a>'}
 const CD={paired:'Paired',lan_direct:'LAN (Direct)',lan_bridge:'LAN (Bridge)',cloud:'Cloud',virtual:'Virtual',hubmesh:'Hub Mesh',other:'Other'};
@@ -1756,7 +1756,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
     rpts.reports.forEach(r=>{
       const sz=r.size?(Number(r.size)>=1048576?(Number(r.size)/1048576).toFixed(1)+' MB':(Number(r.size)/1024).toFixed(0)+' KB'):'';
       const dt=r.date?new Date(Number(r.date)).toLocaleString():'';
-      o+='<div style="display:flex;gap:12px;padding:3px 0"><a href="/local/'+h(r.name)+'" target="_blank" style="color:var(--link)">'+h(r.name)+'</a><span style="color:var(--muted)">'+sz+'</span><span style="color:var(--muted)">'+dt+'</span></div>'});
+      o+='<div style="display:flex;gap:12px;padding:3px 0"><a href="/local/'+h(r.name)+'" target="_blank" style="color:var(--link)">'+h(Obf.nm(r.name))+'</a><span style="color:var(--muted)">'+sz+'</span><span style="color:var(--muted)">'+dt+'</span></div>'});
     o+='</div></details>'}
   o+='</div></div>';
   // App settings
@@ -2012,7 +2012,7 @@ async function rApps(){const P='p-apps';loading(P);try{
   // Installed Apps table
   if(d.allApps&&d.allApps.length){
     const appLink=r=>r.source==='platform'
-      ?'<a href="/installedapp/status/'+r.id+'" target="_blank">'+h(r.name)+'</a>'
+      ?'<a href="/installedapp/status/'+r.id+'" target="_blank">'+h(Obf.nm(r.name))+'</a>'
       :alink(r.id,r.name);
     const menuPill=m=>{
       const map={automations:'Automations',integrations:'Integrations',apps:'Apps'};
@@ -2021,7 +2021,7 @@ async function rApps(){const P='p-apps';loading(P);try{
     };
     const roleStr=r=>{
       if(r.childCount>0)return`Parent (${r.childCount})`;
-      if(r.level>0)return r.parentId?`Child of <a href="/installedapp/configure/${r.parentId}" target="_blank">${h(r.parentName||'App '+r.parentId)}</a>`:'Child';
+      if(r.level>0)return r.parentId?`Child of <a href="/installedapp/configure/${r.parentId}" target="_blank">${h(Obf.nm(r.parentName||'App '+r.parentId))}</a>`:'Child';
       return'';
     };
     const vis=d.allApps.filter(a=>!a.hidden&&!a.setting);
@@ -2221,7 +2221,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
     // kind=ghost  -> no Hubitat device, safe to force-remove from radio
     // kind=failed -> has device, radio reports failure; try battery/range before excluding
     if(z.ghostNodes&&z.ghostNodes.length){
-      const renderRow=g=>{const sig=g.signals&&g.signals.length?'<span style="color:var(--muted);font-size:12px"> ['+g.signals.map(s=>h(s)).join(', ')+']</span>':'';return '<div style="margin:4px 0;color:var(--crit)">'+(g.deviceId?dlink(g.deviceId,'Node '+g.id):h('Node '+g.id))+' &mdash; '+h(g.name||'Unknown')+sig+'</div>'};
+      const renderRow=g=>{const sig=g.signals&&g.signals.length?'<span style="color:var(--muted);font-size:12px"> ['+g.signals.map(s=>h(s)).join(', ')+']</span>':'';return '<div style="margin:4px 0;color:var(--crit)">'+(g.deviceId?dlink(g.deviceId,'Node '+g.id):h('Node '+g.id))+' &mdash; '+h(Obf.nm(g.name||'Unknown'))+sig+'</div>'};
       const {ghosts,failed}=splitGhostNodes(z.ghostNodes);
       if(ghosts.length){
         o+='<div style="margin-top:10px"><div class="alert a-crit">\u26D4 Ghost Nodes: '+ghosts.length+' \u2014 no Hubitat device, safe to force-remove from radio</div>';
@@ -2247,7 +2247,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
     const probNodes=zwProblemNodes(z.mesh&&z.mesh.nodes);
     if(probNodes.length){
       o+='<div style="margin-top:10px"><div class="alert a-warn">\u26A0 Problem Nodes: '+probNodes.length+'</div>';
-      probNodes.forEach(n=>{o+='<div style="margin:4px 0;color:var(--crit)">'+(n.deviceId?dlink(n.deviceId,n.name):h(n.name))+' &mdash; '+h(n.issues)+'</div>'});o+='</div>'}
+      probNodes.forEach(n=>{o+='<div style="margin:4px 0;color:var(--crit)">'+(n.deviceId?dlink(n.deviceId,n.name):h(Obf.nm(n.name)))+' &mdash; '+h(Obf.scrub(n.issues))+'</div>'});o+='</div>'}
     o+='</div></div>'}
   // Z-Wave JS Controller (v5.9.0) \u2014 only when Z-Wave JS stack is active
   if(d.zwaveJs){const j=d.zwaveJs,s=j.statistics||{};
@@ -2356,7 +2356,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
   // Render Z-Wave mesh table
   if(d.zwave&&d.zwave.mesh&&d.zwave.mesh.nodes&&d.zwave.mesh.nodes.length)
     tbl('zwMeshTbl',[
-      {l:'Device',f:'name',r:r=>r.deviceId?dlink(r.deviceId,r.name):h(r.name)},
+      {l:'Device',f:'name',r:r=>r.deviceId?dlink(r.deviceId,r.name):h(Obf.nm(r.name))},
       {l:'Node',f:'nodeId',t:'n',r:r=>r.nodeId!=null?'0x'+r.nodeId.toString(16).toUpperCase().padStart(2,'0'):'—'},
       {l:'Security',f:'security',r:r=>{const s=r.security||'None';const flag=r.s0Flag?'<span title="S0 on non-security device" style="color:var(--warn)"> \u26A0</span>':'';return h(s)+flag}},
       {l:'RTT',f:'rtt',t:'n',r:r=>r.rtt!=null?r.rtt+'ms':'\u2014'},
@@ -2370,7 +2370,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
   // Zigbee neighbor detail table
   if(d.zigbee&&d.zigbee.mesh&&d.zigbee.mesh.neighborDetails&&d.zigbee.mesh.neighborDetails.length)
     tbl('zbNeighborTbl',[
-      {l:'Device',f:'name',r:r=>r.deviceId?dlink(r.deviceId,r.name||r.shortId):h(r.name||r.shortId||'\u2014')},
+      {l:'Device',f:'name',r:r=>r.deviceId?dlink(r.deviceId,r.name||r.shortId):h(Obf.nm(r.name||r.shortId||'\u2014'))},
       {l:'Short ID',f:'shortId',r:r=>h(r.shortId||'\u2014')},
       {l:'LQI',f:'lqi',t:'n',r:r=>r.lqi!=null?'<span style="color:'+(r.lqi<150?'var(--crit)':r.lqi<200?'var(--warn)':'var(--ok)')+'">'+r.lqi+'</span>':'N/A'},
       {l:'Age',f:'age',t:'n',r:r=>r.stale?'<span class="badge b-warn">'+r.age+' (Stale)</span>':(r.age!=null?''+r.age:'N/A')},
@@ -2380,7 +2380,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
   // Zigbee message counts
   if(d.zigbee&&d.zigbee.messageCounts&&d.zigbee.messageCounts.length)
     tbl('zbMsgTbl',[
-      {l:'Device',f:'name',r:r=>r.id?dlink(r.id,r.name):h(r.name)},
+      {l:'Device',f:'name',r:r=>r.id?dlink(r.id,r.name):h(Obf.nm(r.name))},
       {l:'Messages',f:'msgCount',t:'n'},
       {l:'Msgs/Min',f:'msgPerMin',t:'n',r:rateCell}
     ],d.zigbee.messageCounts,{sc:1,sd:'desc',collapse:1,collapseLabel:'Zigbee Message Counts'});
@@ -2390,7 +2390,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
 async function rHealth(){const P='p-health';loading(P);try{
   const d=await api('health');let o='';
   // Alerts
-  const allAlerts=composeAlerts(d).map(a=>({severity:a.severity||'warning',message:a.name||a.message||''})).filter(a=>a.message);
+  const allAlerts=composeAlerts(d).map(a=>({severity:a.severity||'warning',message:Obf.scrub(a.name||a.message||'')})).filter(a=>a.message);
   if(allAlerts.length){o+='<div class="card"><div class="card-h">Alerts ('+allAlerts.length+')</div><div class="card-b" role="status" aria-live="polite" aria-label="Active alerts">';
     allAlerts.forEach(a=>{const sev=(a.severity==='critical')?'crit':((a.severity==='info')?'info':'warn');const icon=(a.severity==='critical')?'\u26D4':((a.severity==='info')?'\u2139':'\u26A0');o+='<div class="alert a-'+sev+'">'+icon+' '+h(a.message)+'</div>'});o+='</div></div>'}
   else o+='<div class="alert a-ok">\u2705 No active alerts</div>';
@@ -2526,7 +2526,7 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
   if(talkers&&talkers.length){
     o+='<div class="card"><div class="card-h">Top Talkers'+(activePerfComp?' (Interval)':'')+'</div><div class="card-b">';
     talkers.forEach((t,i)=>{
-      o+='<div style="padding:4px 0">'+(i+1)+'. '+(t.deviceId?dlink(t.deviceId,t.name):h(t.name))+' <span style="color:var(--muted)">('+h(t.integration||'')+')</span> &mdash; <b>'+t.msgCount+'</b> msgs</div>'});
+      o+='<div style="padding:4px 0">'+(i+1)+'. '+(t.deviceId?dlink(t.deviceId,t.name):h(Obf.nm(t.name)))+' <span style="color:var(--muted)">('+h(t.integration||'')+')</span> &mdash; <b>'+t.msgCount+'</b> msgs</div>'});
     o+='</div></div>'}
 
   // Saved comparison
@@ -2590,7 +2590,7 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
   // Device Runtime table
   if(s&&s.deviceStats)
     tbl('devStatsTbl',[
-      {l:'Name',f:'name',r:r=>r.id?dlink(r.id,r.name):h(r.name)},{l:'Total (ms)',f:'total',t:'n'},
+      {l:'Name',f:'name',r:r=>r.id?dlink(r.id,r.name):h(Obf.nm(r.name))},{l:'Total (ms)',f:'total',t:'n'},
       {l:'% Busy',f:'pct',t:'n',r:r=>r.pct!=null?r.pct.toFixed(1)+'%':''},
       {l:'% Total',f:'pctTotal',t:'n',r:r=>r.pctTotal!=null?r.pctTotal.toFixed(3)+'%':''},
       {l:'Count',f:'count',t:'n'},{l:'Avg (ms)',f:'average',t:'n',r:r=>Number(r.average||0).toFixed(1)},
@@ -2604,7 +2604,7 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
   // App Runtime table
   if(s&&s.appStats){
     tbl('appStatsTbl',[
-      {l:'Name',  f:'name',  r:r=>r.id?'<a href="/installedapp/status/'+r.id+'" target="_blank">'+h(r.name)+'</a>':h(r.name)},
+      {l:'Name',  f:'name',  r:r=>r.id?'<a href="/installedapp/status/'+r.id+'" target="_blank">'+h(Obf.nm(r.name))+'</a>':h(Obf.nm(r.name))},
       {l:'Source',f:'source',r:r=>srcBadge(r.source,false)},
       {l:'Total (ms)',f:'total',t:'n'},
       {l:'% Busy',f:'pct',t:'n',r:r=>r.pct!=null?r.pct.toFixed(1)+'%':''},
@@ -2616,12 +2616,12 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
   // Radio message count tables
   if(hasZw){
     tbl('perfZwMsgTbl',[
-      {l:'Device',f:'name',r:r=>r.deviceId?dlink(r.deviceId,r.name):h(r.name)},{l:'Messages',f:'msgCount',t:'n'},
+      {l:'Device',f:'name',r:r=>r.deviceId?dlink(r.deviceId,r.name):h(Obf.nm(r.name))},{l:'Messages',f:'msgCount',t:'n'},
       {l:'Msgs/Min',f:'msgPerMin',t:'n',r:rateCell},{l:'Route Changes',f:'routeChanges',t:'n'}
     ],rs.zwave,{sc:2,sd:'desc',collapse:10,collapseLabel:'Z-Wave Messages'})}
   if(hasZb){
     tbl('perfZbMsgTbl',[
-      {l:'Device',f:'name',r:r=>r.id?dlink(r.id,r.name):h(r.name)},{l:'Messages',f:'msgCount',t:'n'},
+      {l:'Device',f:'name',r:r=>r.id?dlink(r.id,r.name):h(Obf.nm(r.name))},{l:'Messages',f:'msgCount',t:'n'},
       {l:'Msgs/Min',f:'msgPerMin',t:'n',r:rateCell}
     ],rs.zigbee,{sc:2,sd:'desc',collapse:10,collapseLabel:'Zigbee Messages'})}
   // Saved comparison render
@@ -3731,7 +3731,7 @@ function rcZbRenderTailHtml(rows, selectedRaw){
     const cmdCell=(r.dirArrow?'<span style="opacity:.65">'+h(r.dirArrow)+'</span> ':'')+h(r.cmd||'')+(r.mfrMark?'<span style="opacity:.6">'+h(r.mfrMark)+'</span>':'');
     html+='<tr data-idx="'+idx+'" style="cursor:pointer;'+rowBg+'">';
     html+='<td style="'+td+'">'+h(r.time)+'</td>';
-    html+='<td style="'+td+'">'+(r._deviceId?dlink(r._deviceId,r.name):h(r.name))+'</td>';
+    html+='<td style="'+td+'">'+(r._deviceId?dlink(r._deviceId,r.name):h(Obf.nm(r.name)))+'</td>';
     html+='<td style="'+tdMono+'">'+h(r.id)+'</td>';
     html+='<td style="'+td+';text-align:right">'+h(String(r.lqi))+'</td>';
     html+='<td style="'+td+';text-align:right">'+h(String(r.rssi))+'</td>';
