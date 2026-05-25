@@ -86,5 +86,12 @@ t('scrub: disabled passthrough', () => {
   assert.strictEqual(o.scrub('Front Door went offline'), 'Front Door went offline');
 });
 
+t('prime: collision resolution is registration-order independent', () => {
+  const names = []; for (let i = 0; i < 300; i++) names.push('Dev' + i);
+  const a = makeObf(); a.enabled = true; a.register(names); a.prime();
+  const b = makeObf(); b.enabled = true; b.register(names.slice().reverse()); b.prime();
+  names.forEach(n => assert.strictEqual(a.nm(n), b.nm(n), 'alias differs for ' + n));
+});
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
