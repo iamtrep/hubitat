@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.59.0"
+@Field static final String APP_VERSION = "5.59.1"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -113,7 +113,13 @@ import java.util.concurrent.atomic.AtomicInteger
     platformUpdateAvailable: "Platform Update Available"
 ]
 
-// Connection type constants
+// Connection type constants.
+// "paired" = the hub is a controller/admin of the device via a commissioning that ENROLLED it into
+// the hub (keys exchanged; the device is a member of a network/fabric the hub controls): Zigbee
+// join, Z-Wave inclusion, Matter fabric commissioning (Thread OR WiFi), BLE bond, HomeKit pairing.
+// NOT defined by radio (Matter-WiFi / HomeKit-LAN qualify) or exclusivity (Matter is multi-admin).
+// Contrast lan_direct/lan_bridge/cloud: the hub is just a client of an autonomous IP device
+// (Kasa, Shelly, Sonos, a Hue bridge, a cloud account) — nothing was commissioned into the hub.
 @Field static final String CONN_PAIRED = "paired"
 @Field static final String CONN_LAN_DIRECT = "lan_direct"
 @Field static final String CONN_LAN_BRIDGE = "lan_bridge"
@@ -221,6 +227,10 @@ import java.util.concurrent.atomic.AtomicInteger
     "airplay"     : [conn: "lan_direct"],
     "lutron"      : [conn: "lan_bridge"],
     "bond"        : [conn: "lan_bridge"],
+    // HomeKit Controller commissions the accessory INTO the hub (the hub becomes its HAP controller)
+    // — enrolled, not merely reached over IP — so it's "paired" despite isNetwork=true (which would
+    // derive lan_direct; the enrich path derives cloud from HKC). See the CONN_PAIRED definition.
+    "homekit"     : [conn: "paired"],
 ]
 
 

@@ -45,6 +45,7 @@ INTEGRATION_OVERRIDES = [
     ("airplay",     CONN_LAN_DIRECT,  None),
     ("lutron",      CONN_LAN_BRIDGE,  None),
     ("bond",        CONN_LAN_BRIDGE,  None),
+    ("homekit",     CONN_PAIRED,      None),
 ]
 
 # Mirror of cleanIntegrationName() suffix list — longest-first
@@ -352,12 +353,14 @@ def test_derive_samsung_smartthings_cloud():
     assert name == "Samsung SmartThings"
 
 
-def test_derive_homekit_lan_direct():
-    """HomeKit Controller is isNetwork=true → (lan_direct, "HomeKit"); the old homekit→paired
-    override was dropped because the derivation is already correct."""
+def test_derive_homekit_paired():
+    """HomeKit Controller commissions the accessory into the hub as its HAP controller (enrolled in,
+    not merely reached over IP), so it's "paired" — not lan_direct — even though isNetwork=true would
+    derive lan_direct and the enrich/parent-app path would derive cloud (HKC). The "homekit" override
+    pins it to paired (consistent with CONTROLLER_TYPE_CONN["HKC"] and the CONN_PAIRED definition)."""
     app = {"type": "HomeKit Controller", "user": True}
     conn, name = classify_device({"isNetwork": True}, app)
-    assert conn == CONN_LAN_DIRECT
+    assert conn == CONN_PAIRED
     assert name == "HomeKit"
 
 
@@ -477,9 +480,9 @@ def test_merge_name_only_entry():
 
 
 def test_merge_empty_user_config():
-    """Empty user dict → merged map equals built-in defaults (5 conn-only exceptions)."""
+    """Empty user dict → merged map equals built-in defaults (6 conn-only exceptions)."""
     merged = merge_overrides(INTEGRATION_OVERRIDES, {})
-    assert len(merged) == len(INTEGRATION_OVERRIDES) == 5
+    assert len(merged) == len(INTEGRATION_OVERRIDES) == 6
     for (kw, conn, name), (bkw, bconn, bname) in zip(merged, INTEGRATION_OVERRIDES):
         assert kw == bkw
         assert conn == bconn
