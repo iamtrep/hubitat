@@ -313,6 +313,52 @@ function diffStats(base, comp) {
   return res;
 }
 function h(s){const d=document.createElement('div');d.textContent=s??'';return d.innerHTML}
+// ===== Name obfuscation (UI + forum export) =====
+// Deterministic adjective-noun aliaser. Each distinct real name maps to a stable,
+// unique codename (e.g. "amber-otter"). Dependency-free so it's unit-testable via
+// extractFn. nm()=display wrapper; scrub()=rewrite names embedded in free text.
+function makeObf(){
+  const ADJECTIVES=['amber','azure','brave','brisk','bronze','calm','clever','coral','crimson','dapper','eager','fierce','frosty','gentle','glossy','golden','grand','hardy','hidden','humble','icy','indigo','jolly','keen','lively','lucky','merry','misty','mossy','noble','olive','plucky','quiet','rapid','rosy','rustic','sandy','silent','silver','sleek','smooth','snowy','solid','spry','stormy','sturdy','sunny','swift','tame','tidy','vivid','warm','wild','witty','zesty'];
+  const NOUNS=['acorn','badger','beacon','beetle','bramble','canyon','cedar','cliff','comet','cricket','dahlia','delta','ember','falcon','ferret','finch','garnet','geode','glade','harbor','heron','iris','jade','kestrel','lagoon','lichen','lotus','marble','meadow','mesa','moss','newt','onyx','opal','otter','pebble','plume','quartz','quill','raven','reef','river','sage','shoal','silt','slate','spark','spruce','sumac','thistle','tundra','vale','vine','weave','willow','yarrow'];
+  const map=new Map(), used=new Set();
+  let names=[];        // registered real names, sorted longest-first (then alpha) for scrub + deterministic priming
+  let enabled=false;
+  function hash(s){let hv=2166136261>>>0;for(let i=0;i<s.length;i++){hv^=s.charCodeAt(i);hv=Math.imul(hv,16777619);}return hv>>>0;}
+  function register(list){
+    let added=false;
+    (list||[]).forEach(n=>{if(n!=null&&n!==''){const k=String(n);if(names.indexOf(k)<0){names.push(k);added=true;}}});
+    if(added)names.sort((a,b)=>b.length-a.length||(a<b?-1:1));
+  }
+  function alias(name){
+    if(name==null||name==='')return name;
+    const key=String(name);
+    const cached=map.get(key);
+    if(cached)return cached;
+    const hv=hash(key);
+    let ai=hv%ADJECTIVES.length, ni=(hv>>>8)%NOUNS.length, a;
+    for(let tries=0;tries<ADJECTIVES.length*NOUNS.length;tries++){
+      a=ADJECTIVES[ai]+'-'+NOUNS[ni];
+      if(!used.has(a))break;
+      ni++; if(ni>=NOUNS.length){ni=0;ai=(ai+1)%ADJECTIVES.length;}
+    }
+    used.add(a); map.set(key,a); register([key]);
+    return a;
+  }
+  // Pre-assign aliases for all registered names in a fixed order so collision
+  // resolution is identical across reloads (stable screenshots).
+  function prime(){for(let i=0;i<names.length;i++)alias(names[i]);}
+  function scrub(text){
+    if(!enabled||text==null||text==='')return text;
+    let out=String(text);
+    for(let i=0;i<names.length;i++){const real=names[i];if(out.indexOf(real)>=0)out=out.split(real).join(alias(real));}
+    return out;
+  }
+  function nm(s){return enabled?alias(s):s;}
+  return {alias,register,prime,scrub,nm,
+    get enabled(){return enabled;},
+    set enabled(v){enabled=!!v;}};
+}
+const Obf = makeObf();
 function fmem(kb){if(kb==null)return'N/A';if(kb>=1048576)return(kb/1048576).toFixed(2)+' GB';if(kb>=1024)return(kb/1024).toFixed(0)+' MB';return kb+' KB'}
 function fbytes(b){if(b==null)return'N/A';if(b>=1073741824)return(b/1073741824).toFixed(2)+' GB';if(b>=1048576)return(b/1048576).toFixed(2)+' MB';if(b>=1024)return(b/1024).toFixed(1)+' KB';return b+' B'}
 function sev(v,w,c,inv){if(v==null)return'';if(inv)return v<c?'var(--crit)':v<w?'var(--warn)':'var(--ok)';return v>c?'var(--crit)':v>w?'var(--warn)':'var(--ok)'}
