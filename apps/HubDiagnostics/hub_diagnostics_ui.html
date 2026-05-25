@@ -1146,7 +1146,7 @@ function buildForumMarkdown(d){
     L('');L('**Installed User Apps:**');
     Object.keys(appCounts).sort().forEach(name=>{
       const count=appCounts[name];
-      L(`- ${Obf.nm(name)}${count>1?` (×${count})`:''}`);
+      L(`- ${name}${count>1?` (×${count})`:''}`);
     });
   }
   const builtInInstances=appStats.builtInInstances||{};
@@ -1755,7 +1755,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   // Alerts
   const dashAlerts=composeAlerts(d);
   if(dashAlerts.length){o+='<div class="card"><div class="card-h">Platform Alerts</div><div class="card-b" role="status" aria-live="polite" aria-label="Platform alerts">';
-    dashAlerts.forEach(a=>{const sev=(a.severity==='critical')?'crit':((a.severity==='info')?'info':'warn');const icon=(a.severity==='critical')?'\u26D4':((a.severity==='info')?'\u2139':'\u26A0');o+='<div class="alert a-'+sev+'">'+icon+' '+h(a.name)+'</div>'});o+='</div></div>'}
+    dashAlerts.forEach(a=>{const sev=(a.severity==='critical')?'crit':((a.severity==='info')?'info':'warn');const icon=(a.severity==='critical')?'\u26D4':((a.severity==='info')?'\u2139':'\u26A0');o+='<div class="alert a-'+sev+'">'+icon+' '+h(Obf.scrub(a.name))+'</div>'});o+='</div></div>'}
   // Firmware update (v5.9.0)
   if(d.firmwareUpdate){const fu=d.firmwareUpdate;
     if(fu.updateAvailable){
@@ -2114,7 +2114,7 @@ async function rCode(){const P='p-code';loading(P);try{
       {l:'App Type',f:'name',r:r=>'<a href="/app/edit/'+r.id+'" target="_blank" style="color:var(--link)">'+h(r.name)+'</a>'},
       {l:'Namespace',f:'namespace',r:r=>h(r.namespace||'-')},
       {l:'OAuth',f:'oauthEnabled',r:r=>r.oauthEnabled?'<span class="badge b-ok">Enabled</span>':'<span class="muted" style="font-size:11px">—</span>'},
-      {l:'Instances',f:'usedByCount',t:'n',r:r=>r.usedByCount>0?'<span title="'+h((r.usedBy||[]).map(u=>u.name).join(', '))+'">'+r.usedByCount+'</span>':'<span class="muted">0</span>'},
+      {l:'Instances',f:'usedByCount',t:'n',r:r=>r.usedByCount>0?'<span title="'+h((r.usedBy||[]).map(u=>Obf.nm(u.name)).join(', '))+'">'+r.usedByCount+'</span>':'<span class="muted">0</span>'},
       {l:'Last Modified',f:'lastModified',r:r=>h((r.lastModified||'').slice(0,10))}
     ],d.appTypes,{sc:0,sd:'asc',filter:true,collapse:1,collapseLabel:'App Types'});
   }
@@ -2123,7 +2123,7 @@ async function rCode(){const P='p-code';loading(P);try{
       {l:'Driver Type',f:'name',r:r=>'<a href="/driver/editor/'+r.id+'" target="_blank" style="color:var(--link)">'+h(r.name)+'</a>'},
       {l:'Namespace',f:'namespace',r:r=>h(r.namespace||'-')},
       {l:'Capabilities',f:'capabilityCount',t:'n',r:r=>r.capabilityCount>0?'<span title="'+h((r.capabilities||[]).join(', '))+'">'+r.capabilityCount+'</span>':'0'},
-      {l:'Devices',f:'usedByCount',t:'n',r:r=>r.usedByCount>0?'<span title="'+h((r.usedBy||[]).map(u=>u.name).join(', '))+'">'+r.usedByCount+'</span>':'<span class="muted">0</span>'},
+      {l:'Devices',f:'usedByCount',t:'n',r:r=>r.usedByCount>0?'<span title="'+h((r.usedBy||[]).map(u=>Obf.nm(u.name)).join(', '))+'">'+r.usedByCount+'</span>':'<span class="muted">0</span>'},
       {l:'Last Modified',f:'lastModified',r:r=>h((r.lastModified||'').slice(0,10))}
     ],d.driverTypes,{sc:0,sd:'asc',filter:true,collapse:1,collapseLabel:'Driver Types'});
   }
@@ -2579,9 +2579,9 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
         if(d.msgPerMin>=chattyT)alerts.push({name:d.name,proto:p,rate:d.msgPerMin});
         else if(d.msgPerMin>=chattyW)warns.push({name:d.name,proto:p,rate:d.msgPerMin})})});
       if(alerts.length){o+='<div class="alert a-crit" style="margin-bottom:8px">\u26D4 High message rate (\u2265'+chattyT+'/min): ';
-        o+=alerts.map(d=>h(d.name)+' <b>'+d.rate.toFixed(1)+'/min</b> ('+d.proto+')').join(', ');o+='</div>'}
+        o+=alerts.map(d=>h(Obf.nm(d.name))+' <b>'+d.rate.toFixed(1)+'/min</b> ('+d.proto+')').join(', ');o+='</div>'}
       if(warns.length){o+='<div class="alert a-warn" style="margin-bottom:8px">\u26A0 Elevated message rate (\u2265'+chattyW.toFixed(0)+'/min): ';
-        o+=warns.map(d=>h(d.name)+' <b>'+d.rate.toFixed(1)+'/min</b> ('+d.proto+')').join(', ');o+='</div>'}}
+        o+=warns.map(d=>h(Obf.nm(d.name))+' <b>'+d.rate.toFixed(1)+'/min</b> ('+d.proto+')').join(', ');o+='</div>'}}
     if(hasZw)o+='<div id="perfZwMsgTbl"></div>';
     if(hasZb)o+='<div id="perfZbMsgTbl" style="margin-top:8px"></div>';
     o+='</div></div>'}
@@ -3015,7 +3015,7 @@ function renderDiff(d,elId){
   const ac=d.appChanges;const ad=ac.newerTotal-ac.olderTotal;
   o+='<div style="margin:8px 0"><b>Apps:</b> '+ac.olderTotal+' \u2192 '+ac.newerTotal+(ad!==0?' <span style="color:'+(ad>0?'var(--ok)':'var(--crit)')+'">('+( ad>0?'+':'')+ad+')</span>':'')+'</div>';
   if(ac.added&&ac.added.length)ac.added.forEach(a=>o+='<div class="diff-item diff-add">+ '+alink(a.id,a.label||a.name)+'</div>');
-  if(ac.removed&&ac.removed.length)ac.removed.forEach(a=>o+='<div class="diff-item diff-rem">- '+h(a.label||a.name)+'</div>');
+  if(ac.removed&&ac.removed.length)ac.removed.forEach(a=>o+='<div class="diff-item diff-rem">- '+h(Obf.nm(a.label||a.name))+'</div>');
   if(ac.changed&&ac.changed.length){o+='<div class="diff-chg" style="margin:4px 0"><b>Status Changed ('+ac.changed.length+'):</b></div>';
     ac.changed.forEach(a=>o+='<div class="diff-item diff-chg">~ '+alink(a.id,a.label||a.name)+' &mdash; '+(a.disabled?'enabled \u2192 disabled':'disabled \u2192 enabled')+'</div>')}
   // Network config changes
@@ -4406,7 +4406,7 @@ function buildAuditHtml(data) {
     dashboardsToDevices.forEach(d => {
       const n = (d.devices || []).length;
       const devs = (d.devices || []).map(dv => dlink(dv.id, dv.name)).join(', ');
-      o += `<tr><td><b>${h(d.name || '')}</b></td>`;
+      o += `<tr><td><b>${h(Obf.nm(d.name || ''))}</b></td>`;
       o += `<td>${n}</td>`;
       o += `<td>${devs}</td></tr>`;
     });
@@ -4433,7 +4433,7 @@ function buildAuditHtml(data) {
       appsCell = d.parentApp == null ? '<span class="warn">⚠ unreferenced</span>' : '<span class="muted">—</span>';
     }
     const dashsCell = dashs.length
-      ? dashs.slice(0, 4).map(dash => `<a href="/installedapp/configure/${dash.id}" target="_blank">${h(dash.name || '')}</a>`).join(', ')
+      ? dashs.slice(0, 4).map(dash => `<a href="/installedapp/configure/${dash.id}" target="_blank">${h(Obf.nm(dash.name || ''))}</a>`).join(', ')
         + (dashs.length > 4 ? `, <span class="muted">+${dashs.length - 4}</span>` : '')
       : '<span class="muted">—</span>';
     const pa = d.parentApp;
