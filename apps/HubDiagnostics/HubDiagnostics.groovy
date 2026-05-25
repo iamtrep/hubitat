@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.62.0"
+@Field static final String APP_VERSION = "5.63.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -188,6 +188,11 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static volatile Long    cachedLoadThresholdAt
 @Field static volatile boolean githubVersionRefreshPending = false
 @Field static final java.util.regex.Pattern HTML_TAG_RE = ~/<[^>]+>/
+// Green badge appended to the app label (visible in the Apps list) when a newer release is
+// published on GitHub. UPDATE_BADGE_RE strips any prior badge so re-applying is idempotent and
+// survives the label being saved verbatim through the "Assign a name" input on Done.
+@Field static final String UPDATE_AVAILABLE_BADGE = ' <span style="color:green; font-weight:bold;">update available</span>'
+@Field static final java.util.regex.Pattern UPDATE_BADGE_RE = ~/(?i)\s*<span\b[^>]*>\s*update available\s*<\/span>\s*$/
 
 // Connection type display names
 @Field static final Map CONN_DISPLAY = [
@@ -587,6 +592,7 @@ void githubVersionCallback(resp, data) {
         if (m.find()) {
             state.lastGithubVersion = m.group(1)
             state.lastGithubVersionCheck = now()
+            refreshUpdateLabel()
         }
     } catch (Exception e) {
         logDebug "GitHub version callback error: ${e.message}"
@@ -610,6 +616,29 @@ Map apiVersionCheck() {
         updateAvailable: updateAvailable,
         editorPath: getAppEditorPath()
     ])
+}
+
+// Reflect GitHub update status in the app label so the Apps list shows a green "update available"
+// badge without opening the app. Idempotent: strips any prior badge before deciding whether to
+// re-append, so it never stacks and clears itself once the installed code catches up to GitHub.
+private void refreshUpdateLabel() {
+    try {
+        String current = (app.getLabel() ?: "") as String
+        String base = stripUpdateBadge(current)
+        String remote = state.lastGithubVersion as String
+        boolean outdated = remote && isNewer(remote, APP_VERSION)
+        String desired = outdated ? (base + UPDATE_AVAILABLE_BADGE) : base
+        if (current != desired) {
+            app.updateLabel(desired)
+            logDebug "App label ${outdated ? "badged 'update available' (remote v${remote})" : 'badge cleared'}"
+        }
+    } catch (Exception e) {
+        logDebug "refreshUpdateLabel error: ${e.message}"
+    }
+}
+
+private String stripUpdateBadge(String label) {
+    return label ? UPDATE_BADGE_RE.matcher(label).replaceAll('') : label
 }
 
 /**
@@ -3571,7 +3600,7 @@ List<Map> listHubFiles(String nameContains = null) {
 // ===== UTILITY METHODS =====
 
 private String logPrefix() {
-    return app?.label ?: app?.name ?: "Hub Diagnostics"
+    return stripUpdateBadge((app?.label ?: app?.name ?: "Hub Diagnostics") as String)
 }
 
 private void logDebug(String message) {
@@ -4697,6 +4726,12 @@ void initialize() {
     schedule("0 17 3 * * ?", "scheduledUISync")
     logInfo "Daily UI sync scheduled at 03:17"
 
+    // v5.63.0: keep the Apps-list "update available" badge current even when the config page is
+    // never opened — poll GitHub daily for a newer release, and reconcile the label now so the
+    // badge clears immediately after the user updates the installed code.
+    schedule("0 41 3 * * ?", "scheduledVersionCheck")
+    refreshUpdateLabel()
+
     if (settings.snapshotTriggerSwitch) {
         subscribe(settings.snapshotTriggerSwitch, "switch.on", "snapshotSwitchHandler")
         logInfo "Config snapshot trigger armed on ${settings.snapshotTriggerSwitch}"
@@ -4731,6 +4766,12 @@ void checkpointSwitchHandler(evt) {
 void scheduledUISync() {
     logDebug "Running scheduled UI sync"
     syncUI(false)
+}
+
+void scheduledVersionCheck() {
+    logDebug "Running scheduled GitHub version check"
+    checkGithubVersion()   // stale-while-revalidate; the async callback refreshes the label
+    refreshUpdateLabel()   // also reconcile the label against the already-cached version
 }
 
 void syncUIForced() {

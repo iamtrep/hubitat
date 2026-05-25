@@ -4,12 +4,17 @@
  */
 import groovy.transform.Field
 
-@Field static final String APP_VERSION = "0.4.2"
+@Field static final String APP_VERSION = "0.5.0"
 @Field static final String UI_FILE = "multi_hub_inventory_ui.html"
 @Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/MultiHubInventory.groovy"
 @Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/multi_hub_inventory_ui.html"
 @Field static volatile String uiVersionCache = null
 @Field static volatile boolean githubVersionRefreshPending = false
+// Green badge appended to the app label (visible in the Apps list) when a newer release is
+// published on GitHub. UPDATE_BADGE_RE strips any prior badge so re-applying is idempotent and
+// survives the label being saved verbatim through the "Assign a name" input on Done.
+@Field static final String UPDATE_AVAILABLE_BADGE = ' <span style="color:green; font-weight:bold;">update available</span>'
+@Field static final java.util.regex.Pattern UPDATE_BADGE_RE = ~/(?i)\s*<span\b[^>]*>\s*update available\s*<\/span>\s*$/
 
 definition(
     name: "Multi-Hub Inventory",
@@ -122,6 +127,11 @@ void initialize() {
     }
     state.peerList = peerList
     logInfo "Multi-Hub Inventory initialized with ${peerList.size()} peer(s)"
+    // Keep the Apps-list "update available" badge current even when the config page is never opened:
+    // poll GitHub daily for a newer release, and reconcile the label now so the badge clears
+    // immediately after the user updates the installed code. (Same-handler reschedule is idempotent.)
+    schedule("0 41 3 * * ?", "scheduledVersionCheck")
+    refreshUpdateLabel()
     if (peerList) runIn(2, 'probePeers')
 }
 
@@ -274,8 +284,37 @@ void githubVersionCallback(resp, data) {
     if (resp.hasError() || resp.status != 200) { logDebug "GitHub version check failed: HTTP ${resp?.status}"; return }
     try {
         java.util.regex.Matcher m = ((resp.data?.toString() ?: '') =~ /APP_VERSION = "([^"]+)"/)
-        if (m.find()) state.lastGithubVersion = m.group(1)
+        if (m.find()) { state.lastGithubVersion = m.group(1); refreshUpdateLabel() }
     } catch (Exception e) { logDebug "GitHub version parse failed: ${e.message}" }
+}
+
+// Reflect GitHub update status in the app label so the Apps list shows a green "update available"
+// badge without opening the app. Idempotent: strips any prior badge before deciding whether to
+// re-append, so it never stacks and clears itself once the installed code catches up to GitHub.
+private void refreshUpdateLabel() {
+    try {
+        String current = (app.getLabel() ?: "") as String
+        String base = stripUpdateBadge(current)
+        String remote = state.lastGithubVersion as String
+        boolean outdated = remote && isNewer(remote, APP_VERSION)
+        String desired = outdated ? (base + UPDATE_AVAILABLE_BADGE) : base
+        if (current != desired) {
+            app.updateLabel(desired)
+            logDebug "App label ${outdated ? "badged 'update available' (remote v${remote})" : 'badge cleared'}"
+        }
+    } catch (Exception e) {
+        logDebug "refreshUpdateLabel error: ${e.message}"
+    }
+}
+
+private String stripUpdateBadge(String label) {
+    return label ? UPDATE_BADGE_RE.matcher(label).replaceAll('') : label
+}
+
+void scheduledVersionCheck() {
+    logDebug "Running scheduled GitHub version check"
+    checkGithubVersion()   // stale-while-revalidate; the async callback refreshes the label
+    refreshUpdateLabel()   // also reconcile the label against the already-cached version
 }
 
 // True if dotted-numeric version a is strictly newer than b (so a GitHub copy that is BEHIND the

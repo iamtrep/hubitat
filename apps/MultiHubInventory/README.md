@@ -70,6 +70,11 @@ of its own peer entries pointing at its co-located Hub Diagnostics instance, so 
 4. **Install the app** (Apps → Add User App → Multi-Hub Inventory). Once installed, the
    settings page shows a dashboard link — open it to verify the UI loads.
 
+When a newer release is published on GitHub, the app appends a green **update available** badge to
+its label on the Apps list, so you can spot an available update without opening the app. The badge
+is reconciled daily (and whenever the app re-initializes) and clears itself once the installed code
+catches up.
+
 ## Adding a hub
 
 A hub can only be added once it has a configured Hub Diagnostics instance (see **Requirements**

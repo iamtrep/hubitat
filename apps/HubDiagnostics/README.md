@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
 <!-- AUTO:hubdiag-version -->
-**Current version:** 5.62.0
+**Current version:** 5.63.0
 <!-- /AUTO -->
 
 ---
@@ -76,6 +76,8 @@ Bookmark this URL for direct access. The access token is tied to the app instanc
 
 ### Check for updates
 The Dashboard tab shows the current App Version and UI Version. Click **Check for updates** to query GitHub for a newer release.
+
+When a newer release is published on GitHub, the app appends a green **update available** badge to its label on the Apps list, so you can spot an available update without opening the app. The badge is reconciled daily (and whenever the app re-initializes) and clears itself once the installed code catches up.
 
 ### Updating the Groovy app
 Use **Apps Code → Hub Diagnostics → Import** (same import URL as above). After saving, re-open the app preferences page once to re-initialize.
