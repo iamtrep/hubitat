@@ -3,6 +3,26 @@
 A standalone Hubitat app that aggregates each hub's existing Hub Diagnostics `/api/audit/*` data
 into one read-only, cross-hub view. It does **not** modify Hub Diagnostics in any way.
 
+## Requirements
+
+Multi-Hub Inventory has **no data of its own** — it only reads and merges the audit data that
+**Hub Diagnostics already produces** on each hub. Before a hub can appear in any view, it must
+already be running Hub Diagnostics:
+
+- **Hub Diagnostics must be installed *and* instantiated on every hub you want to include** —
+  including the host hub that serves this app. Importing the Hub Diagnostics app *code* is not
+  enough; each hub needs a configured Hub Diagnostics *instance* (Apps → Add User App → Hub
+  Diagnostics) that has finished its setup.
+- **That instance must have OAuth enabled with an access token**, so it exposes a local
+  `/apps/api/<id>/api/` endpoint. (Hub Diagnostics enables its own OAuth on install, so this is
+  normally automatic.)
+- **The endpoint must be reachable on the LAN** from the hub that serves Multi-Hub Inventory.
+
+A hub without a configured Hub Diagnostics instance cannot be added: there is no audit API for the
+proxy to call, so its peer probe reports it unreachable and it contributes nothing to the merged
+views. Install and configure Hub Diagnostics on each target hub *first*, then add it here as
+described under **Adding a hub** below.
+
 ## What it does
 
 Multi-Hub Inventory provides four views across all hubs in your fleet:
@@ -47,8 +67,9 @@ of its own peer entries pointing at its co-located Hub Diagnostics instance, so 
 
 ## Adding a hub
 
-In the app's settings page, click **"Add hub"**. Paste that hub's Hub Diagnostics **API base
-URL with its access token**, for example:
+A hub can only be added once it has a configured Hub Diagnostics instance (see **Requirements**
+above). In the app's settings page, click **"Add hub"**. Paste that hub's Hub Diagnostics **API
+base URL with its access token**, for example:
 
 ```
 http://192.168.0.10/apps/api/247/api/?access_token=<token>
