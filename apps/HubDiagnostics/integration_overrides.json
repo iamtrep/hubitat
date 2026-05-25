@@ -1,4 +1,18 @@
 {
-  "_README": "Optional connection-type exceptions for Hub Diagnostics. Most integrations need NO entry here: the connection type is derived from the hub's own isNetwork flag (LAN => lan_direct, otherwise cloud) and the display name from the parent-app name. Add an entry ONLY when that derivation is wrong for one of your integrations -- e.g. a LAN bridge whose child devices report isNetwork=true (they would mis-derive to lan_direct instead of lan_bridge), or a locally-addressed integration the hub flags isNetwork=false (it would mis-derive to cloud instead of lan_direct). To use: upload this file to the hub's File Manager as hub_diagnostics_integration_overrides.json, then open the Hub Diagnostics app and Save the settings page to apply. Keys are lowercase substrings matched against a device's parent-app name. 'conn' is one of: paired, lan_direct, lan_bridge, cloud, virtual, hubmesh, other. 'name' overrides the display name (rarely needed -- the cleaned parent-app name is usually correct). Either field may be omitted. Any key starting with an underscore is ignored, so the _example entry below is inactive: copy it and remove the leading underscore from the key to enable it.",
-  "_example my lan bridge": { "conn": "lan_bridge", "name": "My Bridge" }
+  "_README": "Optional connection-type exceptions for Hub Diagnostics. Most integrations need NO entry here: the connection type is derived from the hub's own isNetwork flag (LAN => lan_direct, otherwise cloud) and the display name from the parent-app name. Add an entry ONLY when that derivation is wrong for one of your integrations -- e.g. a LAN bridge whose child devices report isNetwork=true (they would mis-derive to lan_direct instead of lan_bridge), or a locally-addressed integration the hub flags isNetwork=false (it would mis-derive to cloud instead of lan_direct). For a STANDALONE device with no parent app (e.g. a community LAN or cloud driver added directly), the key is matched against the device's DRIVER TYPE NAME instead -- this is how you classify such devices (e.g. {\"awair\": {\"conn\": \"lan_direct\"}}). To use: upload this file to the hub's File Manager as hub_diagnostics_integration_overrides.json, then open the Hub Diagnostics app and Save the settings page to apply. Keys are lowercase substrings matched against a device's parent-app name, or its driver type name when there is no parent app. 'conn' is one of: paired, lan_direct, lan_bridge, cloud, virtual, hubmesh, other. 'name' overrides the display name (groups several driver types under one integration -- e.g. all Blink* drivers as 'Blink'). Either field may be omitted. Any key starting with an underscore is ignored, so every entry below is inactive: to enable one, remove the leading underscore from its key. The entries below are common community integrations pre-seeded as disabled examples -- enable the ones you use, edit names to taste, and delete the rest.",
+  "_example my lan bridge": { "conn": "lan_bridge", "name": "My Bridge" },
+
+  "_awair":              { "conn": "lan_direct", "name": "Awair" },
+  "_konnected":          { "conn": "lan_direct", "name": "Konnected" },
+  "_lgtv":               { "conn": "lan_direct", "name": "LG TV" },
+  "_samsung tv":         { "conn": "lan_direct", "name": "Samsung TV" },
+  "_broadlink":          { "conn": "lan_direct", "name": "Broadlink" },
+
+  "_blink":              { "conn": "cloud", "name": "Blink" },
+  "_yolink":             { "conn": "cloud", "name": "YoLink" },
+  "_hilo":               { "conn": "cloud", "name": "Hilo" },
+  "_air things":         { "conn": "cloud", "name": "Airthings" },
+  "_environment canada": { "conn": "cloud", "name": "Environment Canada" },
+  "_gcal":               { "conn": "cloud", "name": "Google Calendar" },
+  "_fujitsu":            { "conn": "cloud", "name": "Fujitsu" }
 }

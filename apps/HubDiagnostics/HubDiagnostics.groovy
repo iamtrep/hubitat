@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.59.1"
+@Field static final String APP_VERSION = "5.60.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -231,6 +231,19 @@ import java.util.concurrent.atomic.AtomicInteger
     // — enrolled, not merely reached over IP — so it's "paired" despite isNetwork=true (which would
     // derive lan_direct; the enrich path derives cloud from HKC). See the CONN_PAIRED definition.
     "homekit"     : [conn: "paired"],
+]
+
+// Built-in Hubitat cloud-polling DEVICE drivers: standalone cloud clients with no parent app, no
+// radio, and isNetwork=false — every derivation signal is absent, so classifyDevice would drop them
+// into "Other". They're enumerated here by built-in driver type name (lowercased) → integration
+// display name. Only Hubitat-bundled drivers belong here; the driverIsBuiltin guard in classifyDevice
+// prevents a same-named community driver from matching. Community cloud/LAN devices are handled by the
+// File Manager override file (matched on driver type name), not this table.
+@Field static final Map BUILTIN_CLOUD_DRIVERS = [
+    "openweathermap"     : "OpenWeather",
+    "ecobee thermostat"  : "Ecobee",
+    "pushover driver"    : "Pushover",
+    "mobile app device"  : "Mobile App",
 ]
 
 
@@ -495,7 +508,8 @@ Map settingsPage() {
                 "hub's own LAN flag and the display name from the parent app. To correct a connection type the hub " +
                 "can't infer (e.g. a LAN bridge, or a local device the hub flags as cloud), create " +
                 "<b>${INTEGRATION_OVERRIDES_FILE}</b> in File Manager. " +
-                "Keys are lowercase substrings matched against the device's parent-app name; " +
+                "Keys are lowercase substrings matched against the device's parent-app name, or — for a " +
+                "standalone device with no parent app — its driver type name; " +
                 "valid <code>conn</code> values are: paired, lan_direct, lan_bridge, cloud, virtual, hubmesh, other. " +
                 "Save this page after uploading the file to apply the changes. " +
                 "A documented template (<i>integration_overrides.json</i>) ships with the app to start from."
@@ -3018,6 +3032,17 @@ Map classifyDevice(Map device, Map appLookup, Set communityDrivers) {
         return [connectionType: CONN_VIRTUAL, integration: "Virtual", builtin: true]
     }
 
+    // 1c. Built-in cloud device drivers (OpenWeatherMap, etc.) — standalone cloud pollers with no
+    //     parent app and isNetwork=false; every derivation signal is absent, so the only reliable
+    //     signal is the built-in driver type name. driverIsBuiltin guards against a same-named
+    //     community driver. Community cloud/LAN devices use the override file instead (branch 2b).
+    if (driverIsBuiltin) {
+        String cloudIntegration = (String) BUILTIN_CLOUD_DRIVERS[driverTypeLower]
+        if (cloudIntegration) {
+            return [connectionType: CONN_CLOUD, integration: cloudIntegration, builtin: true]
+        }
+    }
+
     // 2. Parent app lookup (parentAppId present in bulk list for some devices)
     //    Algorithm-primary: integration = cleanIntegrationName(appType), connectionType derived from
     //    device.isNetwork signal (LAN ⇒ lan_direct, else cloud).  INTEGRATION_OVERRIDES supplies a
@@ -3043,6 +3068,18 @@ Map classifyDevice(Map device, Map appLookup, Set communityDrivers) {
             }
             return [connectionType: connectionType, integration: integration ?: raw, builtin: isBuiltin]
         }
+    }
+
+    // 2b. Override file by driver type name — the declarative path for standalone community devices
+    //     (no parent app) the derivation can't place: a LAN device the hub flags isNetwork=false would
+    //     mis-derive to cloud (or fall to Other), a cloud device with no signals falls to Other. Users
+    //     add e.g. {"awair": {"conn": "lan_direct"}} to the File Manager override file; matched by the
+    //     same substring lookup used for parent-app names, so it wins over the isNetwork derivation.
+    Map typeOverride = lookupIntegration(safeToString(device.type, ""))
+    if (typeOverride?.conn) {
+        String typeName = safeToString(device.type, "")
+        String integration = (typeOverride.name) ? (String) typeOverride.name : cleanIntegrationName(typeName)
+        return [connectionType: (String) typeOverride.conn, integration: integration ?: typeName, builtin: driverIsBuiltin]
     }
 
     // 3. Network (LAN) flag — parentApp not available in bulk list; will be enriched via fullJson in deep mode
