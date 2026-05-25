@@ -4,7 +4,7 @@
  */
 import groovy.transform.Field
 
-@Field static final String APP_VERSION = "0.4.0"
+@Field static final String APP_VERSION = "0.4.1"
 @Field static final String UI_FILE = "multi_hub_inventory_ui.html"
 @Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/MultiHubInventory.groovy"
 @Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/multi_hub_inventory_ui.html"
@@ -361,6 +361,7 @@ Map serveUI() {
         String html = new String(bytes, 'UTF-8')
             .replace('${access_token}', state.accessToken)
             .replace('${api_base}', fullLocalApiServerUrl)
+            .replace('${app_version}', APP_VERSION)
         return render(status: 200, contentType: 'text/html', data: html)
     } catch (Exception e) {
         logError "serveUI: ${e.message}"
