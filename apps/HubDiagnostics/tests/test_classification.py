@@ -38,18 +38,20 @@ CONN_VIRTUAL    = "virtual"
 CONN_HUBMESH    = "hubmesh"
 CONN_OTHER      = "other"
 
-# Mirror of INTEGRATION_OVERRIDES — connection-type exceptions only, ordered longest-first.
-# Tuples are (keyword, conn, name); name is None because the map carries NO name overrides
-# (display names always come from cleanIntegrationName).
-#   • the four bridges report isNetwork=true (would mis-derive to lan_direct) but front their
+# Mirror of INTEGRATION_OVERRIDES — connection-type exceptions, ordered longest-first.
+# Tuples are (keyword, conn, name). Display names normally come from cleanIntegrationName, so
+# name is None for most entries; Lutron is the exception (see below).
+#   • the bridges report isNetwork=true (would mis-derive to lan_direct) but front their
 #     child devices, so they're lan_bridge;
 #   • AirPlay devices carry MAC-format DNIs with isNetwork=false (would mis-derive to cloud)
-#     but are local, so lan_direct.
+#     but are local, so lan_direct;
+#   • Lutron carries name="Lutron": its devices reach branch 2b (no parentAppId in the bulk list)
+#     with driver types "Lutron Switch/Pico/Dimmer/Telnet", which would otherwise split per type.
 INTEGRATION_OVERRIDES = [
     ("philips hue", CONN_LAN_BRIDGE,  None),
     ("hue bridge",  CONN_LAN_BRIDGE,  None),
     ("airplay",     CONN_LAN_DIRECT,  None),
-    ("lutron",      CONN_LAN_BRIDGE,  None),
+    ("lutron",      CONN_LAN_BRIDGE,  "Lutron"),
     ("bond",        CONN_LAN_BRIDGE,  None),
     ("homekit",     CONN_PAIRED,      None),
 ]
@@ -429,11 +431,25 @@ def test_bridge_hue_bridge_keyword():
 
 
 def test_bridge_lutron():
-    """Lutron → lan_bridge via override regardless of isNetwork; cleaner → 'Lutron'."""
+    """Hypothetical parent-app path: a 'Lutron Integration' app would clean to 'Lutron'. Note the
+    real hub app type is 'Lutron Integrator' (cleaner does NOT strip 'integrator'), and bulk
+    devices carry no parentAppId anyway — see test_lutron_no_parent_app_groups for the real path."""
     app = {"type": "Lutron Integration"}
     conn, name = classify_device({"isNetwork": True}, app)
     assert conn == CONN_LAN_BRIDGE
     assert name == "Lutron"
+
+
+def test_lutron_no_parent_app_groups():
+    """Regression: the real Lutron case. /hub2/devicesList exposes no parentAppId for any device,
+    so Lutron devices (driver types 'Lutron Switch/Pico/Dimmer/Telnet', isNetwork=true, built-in)
+    reach branch 2b and match the 'lutron' override. The override's name groups every driver type
+    under one 'Lutron' integration; without it they split per driver type (the v5.56.0 regression)."""
+    for dtype in ("Lutron Switch", "Lutron Pico", "Lutron Dimmer", "Lutron Telnet"):
+        dev = {"type": dtype, "isNetwork": True}
+        conn, name = classify_device(dev, None)  # no parent app, built-in driver
+        assert conn == CONN_LAN_BRIDGE, f"{dtype}: expected lan_bridge, got {conn}"
+        assert name == "Lutron", f"{dtype}: expected 'Lutron', got '{name}' (driver-type split)"
 
 
 def test_bridge_bond():

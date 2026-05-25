@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.63.0"
+@Field static final String APP_VERSION = "5.63.1"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -224,10 +224,10 @@ import java.util.concurrent.atomic.AtomicInteger
 //   • integration NAME always comes from cleanIntegrationName(appType);
 //   • built-in vs community comes from the hub's own appInfo.user flag;
 //   • cloud vs lan_direct is derived from device.isNetwork (LAN ⇒ lan_direct, else cloud).
-// The four bridges report isNetwork=true (so they'd mis-derive to lan_direct) but front their
+// The bridges report isNetwork=true (so they'd mis-derive to lan_direct) but front their
 // child devices, so they're lan_bridge. AirPlay devices carry MAC-format DNIs with isNetwork=false
-// (so they'd mis-derive to cloud) but are local, so lan_direct. No name overrides — let
-// cleanIntegrationName handle every display name.
+// (so they'd mis-derive to cloud) but are local, so lan_direct. Names are normally left to
+// cleanIntegrationName — Lutron is the lone name exception (see its entry).
 // User-discovered exceptions go in the File Manager config file (loaded + overlaid by
 // getIntegrationOverrides()).
 // Entries are ordered longest-first to avoid false positives. LinkedHashMap preserves insertion
@@ -236,7 +236,11 @@ import java.util.concurrent.atomic.AtomicInteger
     "philips hue" : [conn: "lan_bridge"],
     "hue bridge"  : [conn: "lan_bridge"],
     "airplay"     : [conn: "lan_direct"],
-    "lutron"      : [conn: "lan_bridge"],
+    // Lutron devices arrive in the bulk devicesList with no parentAppId and driver types
+    // "Lutron Switch/Pico/Dimmer/Telnet", so they classify via branch 2b. The name groups them
+    // under one "Lutron" integration; without it each driver type becomes its own bucket. (The
+    // parent app's type is "Lutron Integrator", which cleanIntegrationName wouldn't reduce to "Lutron".)
+    "lutron"      : [conn: "lan_bridge", name: "Lutron"],
     "bond"        : [conn: "lan_bridge"],
     // HomeKit Controller commissions the accessory INTO the hub (the hub becomes its HAP controller)
     // — enrolled, not merely reached over IP — so it's "paired" despite isNetwork=true (which would
