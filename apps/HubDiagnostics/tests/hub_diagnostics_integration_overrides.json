@@ -1,0 +1,55 @@
+{
+    "awair": {
+        "conn": "lan_direct"
+    },
+    "environment canada aqhi": {
+        "conn": "cloud"
+    },
+    "blinkapi":  {
+        "conn": "cloud",
+        "name": "Blink API"
+    },
+    "broadlink remote": {
+        "conn": "lan_direct"
+    },
+    "device ping": {
+        "conn": "lan_direct"
+    },
+    "device inspector": {
+        "conn": "virtual"
+    },
+    "ecobee companion": {
+        "conn": "cloud",
+        "name": "Ecobee"
+    },
+    "generic websocket": {
+      "conn": "lan_direct"
+    },
+    "hub information driver v3": {
+      "conn": "virtual"
+    },
+    "lgtv remote": {
+        "conn": "lan_direct"
+    },
+    "lgtv with webos": {
+        "conn": "lan_direct"
+    },
+    "log event monitor": {
+        "conn": "virtual"
+    },
+    "nut upsmon driver": {
+        "conn": "lan_direct"
+    },
+    "pushover": {
+        "conn": "cloud"
+    },
+    "samsung tv remote": {
+        "conn": "lan_direct"
+    },
+    "suncalc driver": {
+        "conn": "virtual"
+    },
+    "virtual": {
+        "conn": "virtual"
+    }
+}
