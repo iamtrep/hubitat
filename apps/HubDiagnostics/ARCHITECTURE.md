@@ -61,6 +61,62 @@ The UI is a vanilla JS SPA with one renderer per tab or feature area. It relies 
 
 The UI should render API data, not become a second backend.
 
+## Caching Strategy
+
+Caching is how the app honours the guiding principle: every avoided hub fetch is CPU and HTTP-pool headroom returned to the rest of the platform. Data is cached at three tiers, each with a different lifetime and failure mode. The tier and TTL for a given piece of data are deliberate design decisions, not free tuning knobs — changing one has architectural consequences.
+
+### Tier 1 — Browser (SPA) cache
+
+`hub_diagnostics_ui.html` wraps every aggregator fetch in `api(ep)`, backed by an in-memory `cache={}` object with a single flat TTL:
+
+- `CACHE_TTL_MS = 120000` (2 min) applies uniformly to all cached endpoints.
+- Two endpoints deliberately bypass it:
+  - `snapshot/view` — keyed by a positional index that shifts on every snapshot create/delete, so a cached entry would serve the wrong snapshot after a mutation.
+  - `/api/live` — fetched via a raw `fetch()` in `refreshLive()`, never through `api()`, so the live tile's freshness is governed by the **server-side** TTLs below, not this cache.
+- Invalidation is mutation-driven, never time-pressured: every mutating `post()` calls `drop(ep)` for the affected key, and `refreshPage()` drops the current tab's keys before re-rendering.
+
+Consequence to keep in mind: for every tab except Live, the 2-minute SPA cache is the outer gate. The server TTLs only take effect on an SPA cache miss — first load, after a `drop`, after 2 minutes, or an explicit Refresh.
+
+### Tier 2 — Server in-memory cache (`@Field static volatile`)
+
+These fields live for the JVM session and are **wiped on hub reboot, app reload, and code push** (`@Field static` does not survive a push — see the repo-wide guide). Use this tier only for data that is safe to lose on a push. Each entry pairs a value field with an `…At` timestamp and is checked as `now() - …At < TTL`.
+
+TTLs are proportional to how fast the underlying metric actually moves, sized so `apiLive()`'s ~30 s poll (which fans out to several hub calls) does not hammer slow-changing endpoints:
+
+| Constant | TTL | Cached data | Why this TTL |
+|---|---|---|---|
+| `SYSTEM_RESOURCES_CACHE_TTL_MS` | 10 s | free mem, CPU load, JVM memory | Fastest-moving; short TTL still coalesces a request's duplicate reads. |
+| `RADIO_CACHE_TTL_MS` | 60 s | Z-Wave + Zigbee mesh | Topology fetch is ~8 s and bounded no-retry; 60 s avoids paying it per tab load. |
+| `TEMPERATURE_CACHE_TTL_MS` | 60 s | hub temperature | Slow-changing. |
+| `DATABASE_SIZE_CACHE_TTL_MS` | 60 s | database size | Grows over hours, not seconds. |
+| `HUB_LIST_CACHE_TTL_MS` | 2 min | apps list, devices list | Large payloads; topology only changes on install/remove. |
+| `CPU_INFO_CACHE_TTL_MS` | 5 min | core count / static CPU facts | Effectively constant per install. |
+| `LOAD_THRESHOLD_CACHE_TTL_MS` | 5 min | platform load threshold | Rarely changes. |
+| `INTEGRATION_OVERRIDES_CACHE_TTL_MS` | 5 min | File Manager overrides config | Picks up a re-uploaded config without a full Done; `updated()`/`apiClearCache()` reset it immediately. |
+| `FW_UPDATE_CACHE_TTL_MS` | 1 hr | firmware-update check | Slow-moving; no value polling more often. |
+| *(none)* | process life | `uiVersionCache`, `zwaveStackCache` | Install-constant; re-derived after a code push anyway. |
+
+### Tier 3 — Persistent cache (`state` / File Manager)
+
+Data that must **survive a code push or reboot** is stored in `state` or File Manager, never in a `@Field static`:
+
+- `state.lastGithubVersion` / `state.lastGithubVersionCheck` — 1 hr refresh interval, **stale-while-revalidate**: `checkGithubVersion()` returns the last-known value immediately and fires an async refresh only if the value is older than 1 hr and none is pending (`githubVersionRefreshPending` prevents a stampede). Persisted so the update badge never flickers to "Unknown" after a restart.
+- `state.controllerTypeCache` — device enrichment (parent app type, controller type) keyed by device ID, with **no TTL** and no per-entry expiry (`enrichDevices()` only ever adds entries). A device's parent and controller type are stable for its lifetime, and each entry costs a per-device `fullJson` fetch (against the 8-call cap), so the cache persists across reboots and is evicted *wholesale*, not by age, at exactly two points: `updated()` (any Done / settings save, via `state.remove('controllerTypeCache')`) and the manual "Clear Enrichment Cache" config button (`apiClearCache()`). This is the one cache where staleness is a *correctness* risk: if a device is re-parented, its entry stays wrong until the next Done or a manual clear.
+- `cachedCheckpointIndex` — an in-memory mirror of the File-Manager-persisted checkpoint index. The file is the source of truth; the `@Field` copy is a read-through, refreshed on write and handed out as a defensive `ArrayList` copy so callers cannot mutate the shared cache.
+- `state.zigbeeScanCache` — refreshed only on an explicit user scan (the scan perturbs Zigbee joins, so it is never auto-triggered); `fetchCachedZigbeeScan()` reads it without ever scanning.
+- `state.cachedZwaveSignals` — fallback so ghost-node signals still render when the shared cache was built `includeNetwork=false`.
+
+### Request-scoped shared cache
+
+`buildSharedCache()` is an orthogonal mechanism: a per-request map (no TTL) that coalesces duplicate fetches *within a single endpoint call*. It is the dedup layer; the TTL caches above are the cross-request layer. See *Required Patterns §2*.
+
+### Rules for adding or changing a cache
+
+- **Pick the tier by lifetime requirement.** Loss-on-push acceptable → Tier 2 `@Field static`. Must survive a code push → Tier 3 `state`/File Manager. Needed only within one request → the request-scoped shared map, not a new field.
+- **Every cross-request cache needs an explicit TTL or an explicit invalidation path.** A cache that grows without expiration or invalidation is a regression. The only no-TTL exceptions are justified above: `controllerTypeCache` is evicted on `updated()`/manually, and the install-constant `@Field` fields (`uiVersionCache`, `zwaveStackCache`) are wiped by a code push.
+- **Set the TTL by volatility, not convenience** — reuse an existing tier (10 s / 60 s / 2 min / 5 min / 1 hr) rather than inventing a new value, and declare the constant beside the others near the top of the file.
+- **Wire invalidation end to end.** A server-side mutation that changes cached data must drop both the server cache (or rely on its TTL) and the matching SPA key via `drop()`.
+
 ## API Endpoint Boundaries
 
 The repo-wide guide defines the three endpoint categories — *app-owned*, *aggregator*, and *pure passthrough* — and the rule that pure-passthrough routes should not exist. The notes below are Hub Diagnostics specifics on top of that rule.
@@ -127,6 +183,8 @@ Current examples include:
 If a new Dashboard, Health, or Network feature needs data that is already naturally request-scoped, extend the shared-cache pattern instead of re-fetching the same endpoint in multiple helpers.
 
 Do not introduce duplicate fetches on the same request path just because each helper can fetch its own fallback independently.
+
+This shared map is the request-scoped tier of the broader caching design; see *Caching Strategy* for how it relates to the cross-request TTL caches and the persistent `state` caches.
 
 ### 3. Hot paths are strict change zones
 
