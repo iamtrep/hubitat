@@ -58,8 +58,14 @@ metadata {
         // ── Housekeeping ──────────────────────────────────────────────────────
         attribute "lastInspection", "string"
 
+        // ── DeviceWrapper interface probe ─────────────────────────────────────
+        attribute "wrapperClass",  "string"
+        attribute "virtualProbe",  "string"
+        attribute "wrapperProps",  "string"
+
         // ── Bulk inspection ───────────────────────────────────────────────────
         command "inspect"
+        command "inspectWrapper"
         command "inspectIdentity"
         command "inspectHub"
         command "inspectCapabilities"
@@ -144,6 +150,40 @@ void inspect() {
     String ts = new Date().format("yyyy-MM-dd HH:mm:ss z")
     sendEvent(name: "lastInspection", value: ts, descriptionText: "Inspection completed at ${ts}")
     log.info "${device.displayName}: ════ Inspection complete at ${ts} ════"
+}
+
+// ── DeviceWrapper interface probe ───────────────────────────────────────────────
+// Dumps the DeviceWrapper's class, the getters relevant to "virtual" classification,
+// and its full readable-property surface — to assess what actually informs isVirtual.
+void inspectWrapper() {
+    log.info "${device.displayName}: ════ DeviceWrapper introspection ════"
+    // getObjectClassName() is the sandbox-safe class probe (device.getClass() is blocked).
+    String cls = getObjectClassName(device)
+    log.info "${device.displayName}:   device class = ${cls}"
+    sendEvent(name: "wrapperClass", value: cls)
+
+    // Direct probes of the getters relevant to virtual classification (each guarded)
+    Map probe = [:]
+    try { probe["isVirtual()"]          = device.isVirtual() }          catch (Throwable t) { probe["isVirtual()"]          = "ERR:${t.message}" }
+    try { probe["isComponent()"]        = device.isComponent() }        catch (Throwable t) { probe["isComponent()"]        = "ERR:${t.message}" }
+    try { probe["getType()"]            = device.getType() }            catch (Throwable t) { probe["getType()"]            = "ERR:${t.message}" }
+    try { probe["getDeviceNetworkId()"] = device.getDeviceNetworkId() } catch (Throwable t) { probe["getDeviceNetworkId()"] = "ERR:${t.message}" }
+    log.info "${device.displayName}:   virtual/identity probe = ${probe}"
+    sendEvent(name: "virtualProbe", value: JsonOutput.toJson(probe))
+
+    // Full readable-property surface of the DeviceWrapper (Groovy bean properties).
+    // This is the authoritative "what does DeviceWrapper expose" list.
+    try {
+        Map propVals = [:]
+        device.properties.each { k, v -> propVals[k.toString()] = (v == null ? null : v.toString()) }
+        log.info "${device.displayName}:   device.properties (${propVals.size()} keys):"
+        propVals.sort().each { k, v -> log.info "${device.displayName}:       ${k} = ${v}" }
+        sendEvent(name: "wrapperProps", value: JsonOutput.toJson(propVals.keySet().sort()))
+    } catch (Throwable t) {
+        log.info "${device.displayName}:   device.properties blocked: ${t.message}"
+        sendEvent(name: "wrapperProps", value: "ERR:${t.message}")
+    }
+    log.info "${device.displayName}: ════ wrapper introspection complete ════"
 }
 
 // ── Identity ──────────────────────────────────────────────────────────────────
