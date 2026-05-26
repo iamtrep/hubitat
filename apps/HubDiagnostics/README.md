@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
 <!-- AUTO:hubdiag-version -->
-**Current version:** 5.64.3
+**Current version:** 5.65.0
 <!-- /AUTO -->
 
 ---
@@ -99,7 +99,7 @@ The header bar contains a **Docs ↗** link (this document) and a **↻ Refresh*
 
 **Resources** — Free OS memory, CPU load (5-minute average), hub temperature, and database size. Values are color-coded against configurable thresholds (see [App Settings](#app-settings-tab)). This card **auto-refreshes** in the background on a configurable interval (default 30 s); the last refresh time is shown in the card header.
 
-**Connection Types / Integrations** — Distribution of devices by how they connect (Paired, LAN Direct, LAN Bridge, Cloud, Virtual, Hub Mesh) and by which integration manages them. Counts are linked to the device list filtered to that group.
+**Connection Types / Integrations** — Two independent breakdowns. **Connection** is how the hub reaches each device — the specific radio for commissioned devices (Zigbee, Z-Wave, Matter, Bluetooth), HomeKit for HAP-commissioned accessories, plus LAN (Direct), LAN (Bridge), Cloud, Virtual, and Hub Mesh. **Integrations** counts only devices managed by a parent integration (an app or a parent device) — e.g. Lutron, Blink, Kasa; standalone devices aren't listed here, so this breakdown won't sum to the device total. Counts are linked to the device list filtered to that group.
 
 **Platform Alerts** — A roll-up of hub health: alerts reported by the Hubitat hub itself (load warnings, radio crashes, backup failures, etc.), threshold-based alerts derived in the browser from the configured thresholds (memory, CPU, temperature), Z-Wave radio health (ghost / failed / problem nodes and radio-firmware-update), hub-firmware and app-update status, and messages from `/hub/messages` (info-severity). This same roll-up drives the **alert-aware favicon** (a colored dot on the browser tab showing the highest active severity) and the Health tab's *Alerts* list. Device-inventory conditions — low battery, stale devices, and chatty devices — are shown on their own tabs (Devices / Performance), **not** in this roll-up or the favicon. See [Alerts & Warnings Reference](#alerts--warnings-reference) for the full list.
 
@@ -113,7 +113,7 @@ The header bar contains a **Docs ↗** link (this document) and a **↻ Refresh*
 
 A full inventory of every device on the hub.
 
-**Summary cards** — Total devices with active/inactive/disabled counts (the inactivity threshold is shown). Parent/child/Hub Mesh/battery device counts. Connection type breakdown and integration breakdown tables.
+**Summary cards** — Total devices with active/inactive/disabled counts (the inactivity threshold is shown). Parent/child/Hub Mesh/battery device counts. Connection type and integration breakdown tables.
 
 **Device Audit card** — Sits below the Device Summary card. Contains the **Generate Device Audit** button that triggers the per-device cross-reference scan; on completion a **View report** link opens the result. See [Device Usage Audit](#device-usage-audit) for details on what the audit produces.
 
@@ -123,8 +123,8 @@ A full inventory of every device on the hub.
 |---|---|
 | Name | Linked to the device edit page |
 | Type | Driver type; community drivers are linked to the driver editor |
-| Connection | How the device connects: Paired, LAN (Direct), LAN (Bridge), Cloud, Virtual, Hub Mesh |
-| Integration | Which integration manages the device (Zigbee, Z-Wave, Kasa, Lutron, etc.) |
+| Connection | How the hub reaches the device: Zigbee, Z-Wave, Matter, Bluetooth, HomeKit, LAN (Direct), LAN (Bridge), Cloud, Virtual, Hub Mesh |
+| Integration | The parent integration that manages the device (Lutron, Blink, Kasa, …); blank for standalone devices |
 | Room | Assigned room |
 | Status | Active / Inactive / Disabled badge |
 | Last Activity | Timestamp or "Never" |
@@ -133,7 +133,10 @@ A full inventory of every device on the hub.
 
 ### Device Classification
 
-The **Connection** and **Integration** columns are inferred from Hubitat's device metadata: protocol flags (Zigbee, Z-Wave, Matter, Bluetooth, Hub Mesh, Virtual) classify paired and mesh devices directly; for everything else the integration name comes from the device's parent app and the connection type from Hubitat's own LAN flag (LAN ⇒ local, otherwise cloud). A small built-in table corrects only the few connection types the LAN flag can't infer — LAN bridges such as Philips Hue, Lutron, and Bond, plus AirPlay — and you can add your own exceptions via a File Manager config file. Devices with no parent app and no LAN signal show **Other**.
+Two independent axes are inferred from Hubitat's device metadata:
+
+- **Connection** — how the hub reaches the device. Radio flags give the specific radio (Zigbee, Z-Wave, Matter, Bluetooth); otherwise it's derived from Hubitat's LAN flag (LAN ⇒ local, else cloud), with `Virtual` and `Hub Mesh` from their own flags. A small built-in table corrects the few the LAN flag can't infer — LAN bridges such as Philips Hue, Lutron, and Bond, plus AirPlay — and you can add your own via a File Manager config file. Anything left unresolved shows **Other**.
+- **Integration** — *only* devices managed by a parent integration (a parent app, or a parent device created by one) get an integration name (its app/parent name). A bare driver — a radio device, a standalone cloud/LAN device, a virtual device — is **not** an integration, so this column is blank for it. (Hubitat treats integrations as apps, not drivers.)
 
 #### Customizing classification with the override file
 
@@ -141,7 +144,7 @@ When the automatic rules above get one of your integrations wrong, correct it wi
 
 Each entry's key is a substring matched (**case-insensitively** — the app lowercases keys for you) against a device's parent-app name, or — for a standalone device with no parent app — its driver type name. An entry may set either or both of:
 
-- `conn` — the connection type, one of `paired`, `lan_direct`, `lan_bridge`, `cloud`, `virtual`, `hubmesh`, `other`. Use it when the LAN flag derives the wrong type (e.g. a LAN bridge whose child devices look like `lan_direct`, or a local device the hub flags as cloud).
+- `conn` — the connection type, one of `homekit`, `lan_direct`, `lan_bridge`, `cloud`, `virtual`, `hubmesh`, `other` (the radio types `zigbee`/`zwave`/`matter`/`bluetooth` are detected automatically and don't need overriding). Use it when the LAN flag derives the wrong type (e.g. a LAN bridge whose child devices look like `lan_direct`, or a local device the hub flags as cloud).
 - `name` — the integration display name, and the **opt-in that says "this device is part of an integration."** Use it to group several driver types under one integration — e.g. `Foo Switch`, `Foo Dimmer`, `Foo Pico` all reporting as a single "Foo".
 
 **`conn` alone vs `conn` + `name`:**
@@ -172,7 +175,7 @@ updateDataValue("hubdiag:conn", "cloud")       // cloud integration
 updateDataValue("hubdiag:conn", "lan_direct")  // direct LAN integration
 updateDataValue("hubdiag:conn", "lan_bridge")  // LAN bridge (hub-based) integration
 updateDataValue("hubdiag:conn", "virtual")     // virtual device
-updateDataValue("hubdiag:conn", "paired")      // radio-paired device
+updateDataValue("hubdiag:conn", "homekit")     // HomeKit-commissioned accessory
 ```
 
 This value is read during device enrichment and cached. Use **Clear Enrichment Cache** (App Settings → Maintenance) after changing a data value for it to take effect.

@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.64.3"
+@Field static final String APP_VERSION = "5.65.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -113,14 +113,16 @@ import java.util.concurrent.atomic.AtomicInteger
     platformUpdateAvailable: "Platform Update Available"
 ]
 
-// Connection type constants.
-// "paired" = the hub is a controller/admin of the device via a commissioning that ENROLLED it into
-// the hub (keys exchanged; the device is a member of a network/fabric the hub controls): Zigbee
-// join, Z-Wave inclusion, Matter fabric commissioning (Thread OR WiFi), BLE bond, HomeKit pairing.
-// NOT defined by radio (Matter-WiFi / HomeKit-LAN qualify) or exclusivity (Matter is multi-admin).
-// Contrast lan_direct/lan_bridge/cloud: the hub is just a client of an autonomous IP device
-// (Kasa, Shelly, Sonos, a Hue bridge, a cloud account) — nothing was commissioned into the hub.
-@Field static final String CONN_PAIRED = "paired"
+// Connection type constants — how the hub reaches a device. A device commissioned INTO the hub (keys
+// exchanged; a member of a network/fabric the hub controls) reports its specific mechanism: the radio
+// for Zigbee/Z-Wave/Matter/BLE, or HomeKit for HAP-commissioned accessories. Contrast
+// lan_direct/lan_bridge/cloud, where the hub is just a client of an autonomous IP device (Kasa,
+// Shelly, a Hue bridge, a cloud account) — nothing was commissioned into the hub.
+@Field static final String CONN_ZIGBEE = "zigbee"
+@Field static final String CONN_ZWAVE = "zwave"
+@Field static final String CONN_MATTER = "matter"
+@Field static final String CONN_BLUETOOTH = "bluetooth"
+@Field static final String CONN_HOMEKIT = "homekit"
 @Field static final String CONN_LAN_DIRECT = "lan_direct"
 @Field static final String CONN_LAN_BRIDGE = "lan_bridge"
 @Field static final String CONN_CLOUD = "cloud"
@@ -199,7 +201,11 @@ import java.util.concurrent.atomic.AtomicInteger
 
 // Connection type display names
 @Field static final Map CONN_DISPLAY = [
-    "paired": "Paired",
+    "zigbee": "Zigbee",
+    "zwave": "Z-Wave",
+    "matter": "Matter",
+    "bluetooth": "Bluetooth",
+    "homekit": "HomeKit",
     "lan_direct": "LAN (Direct)",
     "lan_bridge": "LAN (Bridge)",
     "cloud": "Cloud",
@@ -246,9 +252,9 @@ import java.util.concurrent.atomic.AtomicInteger
     "lutron"      : [conn: "lan_bridge", name: "Lutron"],
     "bond"        : [conn: "lan_bridge"],
     // HomeKit Controller commissions the accessory INTO the hub (the hub becomes its HAP controller)
-    // — enrolled, not merely reached over IP — so it's "paired" despite isNetwork=true (which would
-    // derive lan_direct; the enrich path derives cloud from HKC). See the CONN_PAIRED definition.
-    "homekit"     : [conn: "paired"],
+    // — enrolled, not merely reached over IP — so its connection is "homekit" despite isNetwork=true
+    // (which would derive lan_direct; the enrich path derives cloud from the HKC controllerType).
+    "homekit"     : [conn: "homekit"],
 ]
 
 // Built-in Hubitat cloud-polling DEVICE drivers: standalone cloud clients with no parent app, no
@@ -257,11 +263,11 @@ import java.util.concurrent.atomic.AtomicInteger
 // display name. Only Hubitat-bundled drivers belong here; the driverIsBuiltin guard in classifyDevice
 // prevents a same-named community driver from matching. Community cloud/LAN devices are handled by the
 // File Manager override file (matched on driver type name), not this table.
-@Field static final Map BUILTIN_CLOUD_DRIVERS = [
-    "openweathermap"     : "OpenWeather",
-    "ecobee thermostat"  : "Ecobee",
-    "pushover driver"    : "Pushover",
-    "mobile app device"  : "Mobile App",
+@Field static final Set<String> BUILTIN_CLOUD_DRIVERS = [
+    "openweathermap",
+    "ecobee thermostat",
+    "pushover driver",
+    "mobile app device",
 ]
 
 
@@ -270,7 +276,8 @@ import java.util.concurrent.atomic.AtomicInteger
 
 // Valid conn values; used to reject unknown strings from the user config file
 @Field static final Set<String> VALID_CONN = [
-    "paired", "lan_direct", "lan_bridge", "cloud", "virtual", "hubmesh", "other"
+    "zigbee", "zwave", "matter", "bluetooth", "homekit",
+    "lan_direct", "lan_bridge", "cloud", "virtual", "hubmesh", "other"
 ] as Set
 
 // Cache for the merged (built-in + user file) integration overrides map.
@@ -297,11 +304,11 @@ import java.util.concurrent.atomic.AtomicInteger
 // Actual observed values: ZGB=Zigbee, MAT=Matter, LNK=HubMesh, HKC=HomeKit, BLE=Bluetooth.
 // Used only as a last-resort fallback when parentApp is absent from fullJson.
 @Field static final Map CONTROLLER_TYPE_CONN = [
-    "ZGB": "paired",
-    "ZWV": "paired",
-    "MAT": "paired",
-    "BLE": "paired",
-    "HKC": "paired",
+    "ZGB": "zigbee",
+    "ZWV": "zwave",
+    "MAT": "matter",
+    "BLE": "bluetooth",
+    "HKC": "homekit",
     "LNK": "hubmesh",
     "NET": "lan_direct",
     "CLO": "cloud",
@@ -530,7 +537,8 @@ Map settingsPage() {
                 "<b>${INTEGRATION_OVERRIDES_FILE}</b> in File Manager. " +
                 "Keys are substrings matched case-insensitively against the device's parent-app name, or — for a " +
                 "standalone device with no parent app — its driver type name; " +
-                "valid <code>conn</code> values are: paired, lan_direct, lan_bridge, cloud, virtual, hubmesh, other. " +
+                "valid <code>conn</code> values are: homekit, lan_direct, lan_bridge, cloud, virtual, hubmesh, other " +
+                "(the radios zigbee/zwave/matter/bluetooth are auto-detected). " +
                 "Add <code>conn</code> alone to fix only the connection type (the device stays standalone — " +
                 "omitted from the integration breakdown); add a <code>name</code> too only when the device belongs " +
                 "to an integration you want grouped and labeled. " +
@@ -874,7 +882,7 @@ Map apiPerformanceCompare() {
 Map migrateSnapshotDevices(Map snapshotDevices) {
     if (!snapshotDevices?.byProtocol || snapshotDevices?.byConnectionType) return snapshotDevices
     Map protoToConn = [
-        zigbee: CONN_PAIRED, zwave: CONN_PAIRED, matter: CONN_PAIRED,
+        zigbee: CONN_ZIGBEE, zwave: CONN_ZWAVE, matter: CONN_MATTER,
         lan: CONN_LAN_DIRECT, virtual: CONN_VIRTUAL,
         cloud: CONN_CLOUD, hubmesh: CONN_HUBMESH, maker: CONN_OTHER, other: CONN_OTHER
     ]
@@ -2557,8 +2565,7 @@ Map analyzeDevices(boolean deep = true) {
             Map parentAppInfo = normalizedParentAppId ? (Map) appLookup[normalizedParentAppId] : null
             // Devices whose bulk metadata cannot fully resolve classification need the per-device fullJson
             // correction pass so Dashboard and Devices summaries stay in sync.
-            boolean needsEnrichment = (connectionType == CONN_OTHER) ||
-                (connectionType == CONN_LAN_DIRECT && integration == "LAN Device" && device.isNetwork == true)
+            boolean needsEnrichment = (connectionType == CONN_OTHER) || (classification.tentative == true)
             if (needsEnrichment) {
                 uncertainDevices[device.id.toString()] = [
                     appInfo: parentAppInfo, currentIntegration: integration, currentConn: connectionType, deviceId: device.id
@@ -3122,37 +3129,37 @@ String cleanIntegrationName(String raw) {
     return s ?: raw
 }
 
-// Returns [connectionType, integration, builtin] where builtin=true means Hubitat-bundled,
-// false means community. communityDrivers is a Set<String> of user-installed driver names
-// from /hub2/userDeviceTypes — any device type NOT in the set uses a built-in driver.
+// Returns [connectionType, integration, builtin]. Two orthogonal axes:
+//   connectionType = how the hub reaches the device (the specific radio for commissioned devices,
+//                    homekit for HAP, else lan_direct/lan_bridge/cloud/virtual/hubmesh/other);
+//   integration    = the PARENT-managed group only (parent-app name, parent-device-inherited, or an
+//                    explicit override name) — null for everything parentless (radio, virtual,
+//                    hub-mesh, standalone cloud/LAN). builtin=true means Hubitat-bundled.
+// communityDrivers is a Set<String> of user driver names from /hub2/userDeviceTypes.
 Map classifyDevice(Map device, Map appLookup, Set communityDrivers) {
-    // 1. Boolean flags from bulk devicesList — authoritative, require no extra API calls.
-    //    The protocol field is unreliable (null on many hubs); these flags are the source of truth.
-    if (device.isZigbee == true)    return [connectionType: CONN_PAIRED,   integration: "Zigbee",    builtin: true]
-    if (device.isZwave == true)     return [connectionType: CONN_PAIRED,   integration: "Z-Wave",    builtin: true]
-    if (device.isMatter == true)    return [connectionType: CONN_PAIRED,   integration: "Matter",    builtin: true]
-    if (device.isBluetooth == true) return [connectionType: CONN_PAIRED,   integration: "Bluetooth", builtin: true]
+    // 1. Boolean flags from bulk devicesList — authoritative, require no extra API calls. A radio-paired
+    //    device's connection type IS its radio (the hub is its controller); it has no integration.
+    if (device.isZigbee == true)    return [connectionType: CONN_ZIGBEE,    integration: null, builtin: true]
+    if (device.isZwave == true)     return [connectionType: CONN_ZWAVE,     integration: null, builtin: true]
+    if (device.isMatter == true)    return [connectionType: CONN_MATTER,    integration: null, builtin: true]
+    if (device.isBluetooth == true) return [connectionType: CONN_BLUETOOTH, integration: null, builtin: true]
     if (device.isLinked == true || device.linked == true) {
-        return [connectionType: CONN_HUBMESH, integration: "Hub Mesh", builtin: true]
+        return [connectionType: CONN_HUBMESH, integration: null, builtin: true]
     }
-    if (device.isVirtual == true)   return [connectionType: CONN_VIRTUAL,  integration: "Virtual",   builtin: true]
+    if (device.isVirtual == true)   return [connectionType: CONN_VIRTUAL, integration: null, builtin: true]
 
     // 1b. Driver-name heuristic: built-in Virtual* drivers without the isVirtual flag
     boolean driverIsBuiltin = !communityDrivers.contains(safeToString(device.type, ""))
     String driverTypeLower = safeToString(device.type, "").toLowerCase()
     if (driverIsBuiltin && (driverTypeLower.startsWith("virtual ") || driverTypeLower == "virtual")) {
-        return [connectionType: CONN_VIRTUAL, integration: "Virtual", builtin: true]
+        return [connectionType: CONN_VIRTUAL, integration: null, builtin: true]
     }
 
-    // 1c. Built-in cloud device drivers (OpenWeatherMap, etc.) — standalone cloud pollers with no
-    //     parent app and isNetwork=false; every derivation signal is absent, so the only reliable
-    //     signal is the built-in driver type name. driverIsBuiltin guards against a same-named
-    //     community driver. Community cloud/LAN devices use the override file instead (branch 2b).
-    if (driverIsBuiltin) {
-        String cloudIntegration = (String) BUILTIN_CLOUD_DRIVERS[driverTypeLower]
-        if (cloudIntegration) {
-            return [connectionType: CONN_CLOUD, integration: cloudIntegration, builtin: true]
-        }
+    // 1c. Built-in cloud device drivers (OpenWeatherMap, Pushover, etc.) — standalone cloud pollers
+    //     with no parent app and isNetwork=false. They aren't an integration; the built-in driver name
+    //     is just the only signal that they're cloud-connected, so set CONN_CLOUD, integration null.
+    if (driverIsBuiltin && BUILTIN_CLOUD_DRIVERS.contains(driverTypeLower)) {
+        return [connectionType: CONN_CLOUD, integration: null, builtin: true]
     }
 
     // 2. Parent app lookup (parentAppId present in bulk list for some devices)
@@ -3197,11 +3204,12 @@ Map classifyDevice(Map device, Map appLookup, Set communityDrivers) {
         return [connectionType: (String) typeOverride.conn, integration: integration, builtin: driverIsBuiltin]
     }
 
-    // 3. Network (LAN) flag — parentApp not available in bulk list; will be enriched via fullJson in deep mode
-    if (device.isNetwork == true) return [connectionType: CONN_LAN_DIRECT, integration: "LAN Device", builtin: driverIsBuiltin]
+    // 3. Network (LAN) flag — parentApp not available in bulk list. Standalone for now (integration
+    //    null); tentative=true asks the deep pass to fullJson-enrich it in case it has a parent app.
+    if (device.isNetwork == true) return [connectionType: CONN_LAN_DIRECT, integration: null, builtin: driverIsBuiltin, tentative: true]
 
-    // 4. Final fallback — no reliable signal for connection type
-    return [connectionType: CONN_OTHER, integration: "Other", builtin: driverIsBuiltin]
+    // 4. Final fallback — no reliable signal for connection type; standalone, no integration
+    return [connectionType: CONN_OTHER, integration: null, builtin: driverIsBuiltin]
 }
 
 // Enriches device classification using device/fullJson for devices bulk data couldn't resolve.
@@ -3244,7 +3252,7 @@ Map enrichDevices(Map uncertainDevices, Set communityAppTypeNames = [] as Set) {
                     isBuiltin = !(appTypeObj.user == true)
                 }
                 ct = safeToString(full?.controllerType, "").toUpperCase()
-                // Check for community driver classification hint: updateDataValue("hubdiag:conn", "cloud|lan_direct|lan_bridge|paired")
+                // Check for community driver classification hint: updateDataValue("hubdiag:conn", "cloud|lan_direct|lan_bridge|homekit")
                 try {
                     String dataJson = safeToString(full?.device?.dataJson, "")
                     if (dataJson?.startsWith("{")) {
@@ -3296,11 +3304,12 @@ Map enrichDevices(Map uncertainDevices, Set communityAppTypeNames = [] as Set) {
             return
         }
 
-        // Fallback: controllerType
+        // Fallback: controllerType gives the connection type. Integration only if a real parent app is
+        // known — a parentless device is standalone (no integration), never the raw controllerType code.
         if (ct) {
             String connType = (String) CONTROLLER_TYPE_CONN[ct]
             if (connType && connType != CONN_OTHER) {
-                String intName = appInfo ? ((String)(appInfo.type ?: appInfo.label) ?: ct) : ct.toLowerCase().capitalize()
+                String intName = appInfo ? (cleanIntegrationName(safeToString(appInfo.type ?: appInfo.label, "")) ?: null) : null
                 result[idStr] = [connectionType: connType, integration: intName, builtin: null]
             }
         }
@@ -3723,9 +3732,11 @@ Map getEmptyDeviceStats() {
         lowBatteryDevices: [], allDevices: [],
         byType: [:],
         idsByType: [:],
-        byConnectionType: [(CONN_PAIRED): 0, (CONN_LAN_DIRECT): 0, (CONN_LAN_BRIDGE): 0,
+        byConnectionType: [(CONN_ZIGBEE): 0, (CONN_ZWAVE): 0, (CONN_MATTER): 0, (CONN_BLUETOOTH): 0,
+                           (CONN_HOMEKIT): 0, (CONN_LAN_DIRECT): 0, (CONN_LAN_BRIDGE): 0,
                            (CONN_CLOUD): 0, (CONN_VIRTUAL): 0, (CONN_HUBMESH): 0, (CONN_OTHER): 0],
-        idsByConnectionType: [(CONN_PAIRED): [], (CONN_LAN_DIRECT): [], (CONN_LAN_BRIDGE): [],
+        idsByConnectionType: [(CONN_ZIGBEE): [], (CONN_ZWAVE): [], (CONN_MATTER): [], (CONN_BLUETOOTH): [],
+                              (CONN_HOMEKIT): [], (CONN_LAN_DIRECT): [], (CONN_LAN_BRIDGE): [],
                               (CONN_CLOUD): [], (CONN_VIRTUAL): [], (CONN_HUBMESH): [], (CONN_OTHER): []],
         byIntegration: [:],
         idsByIntegration: [:],

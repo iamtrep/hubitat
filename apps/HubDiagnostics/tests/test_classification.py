@@ -30,7 +30,11 @@ Discoverable by run-tests.sh (tests/test_*.py → python3 -m pytest).
 
 # ── Mirror of Groovy constants ──────────────────────────────────────────────
 
-CONN_PAIRED     = "paired"
+CONN_ZIGBEE     = "zigbee"
+CONN_ZWAVE      = "zwave"
+CONN_MATTER     = "matter"
+CONN_BLUETOOTH  = "bluetooth"
+CONN_HOMEKIT    = "homekit"
 CONN_LAN_DIRECT = "lan_direct"
 CONN_LAN_BRIDGE = "lan_bridge"
 CONN_CLOUD      = "cloud"
@@ -53,16 +57,16 @@ INTEGRATION_OVERRIDES = [
     ("airplay",     CONN_LAN_DIRECT,  None),
     ("lutron",      CONN_LAN_BRIDGE,  "Lutron"),
     ("bond",        CONN_LAN_BRIDGE,  None),
-    ("homekit",     CONN_PAIRED,      None),
+    ("homekit",     CONN_HOMEKIT,     None),
 ]
 
 # Mirror of BUILTIN_CLOUD_DRIVERS — built-in driver type name (lowercased) → integration name.
 # Standalone Hubitat cloud pollers with no parent app, no radio, isNetwork=false.
 BUILTIN_CLOUD_DRIVERS = {
-    "openweathermap":    "OpenWeather",
-    "ecobee thermostat": "Ecobee",
-    "pushover driver":   "Pushover",
-    "mobile app device": "Mobile App",
+    "openweathermap",
+    "ecobee thermostat",
+    "pushover driver",
+    "mobile app device",
 }
 
 # Mirror of cleanIntegrationName() suffix list — longest-first
@@ -92,7 +96,8 @@ def clean_integration_name(raw: str) -> str:
 
 
 VALID_CONN = {
-    "paired", "lan_direct", "lan_bridge", "cloud", "virtual", "hubmesh", "other"
+    "zigbee", "zwave", "matter", "bluetooth", "homekit",
+    "lan_direct", "lan_bridge", "cloud", "virtual", "hubmesh", "other"
 }
 
 
@@ -170,27 +175,27 @@ def classify_device(
     driver_is_builtin = driver_type not in community_drivers
     driver_type_lower = driver_type.lower()
 
-    # 1. Radio / protocol flags
+    # 1. Radio flags — the specific radio IS the connection type; a radio device is not an integration.
     if device.get("isZigbee"):
-        return (CONN_PAIRED, "Zigbee")
+        return (CONN_ZIGBEE, None)
     if device.get("isZwave"):
-        return (CONN_PAIRED, "Z-Wave")
+        return (CONN_ZWAVE, None)
     if device.get("isMatter"):
-        return (CONN_PAIRED, "Matter")
+        return (CONN_MATTER, None)
     if device.get("isBluetooth"):
-        return (CONN_PAIRED, "Bluetooth")
+        return (CONN_BLUETOOTH, None)
     if device.get("isLinked") or device.get("linked"):
-        return (CONN_HUBMESH, "Hub Mesh")
+        return (CONN_HUBMESH, None)
     if device.get("isVirtual"):
-        return (CONN_VIRTUAL, "Virtual")
+        return (CONN_VIRTUAL, None)
 
     # 1b. Built-in Virtual* drivers without the isVirtual flag
     if driver_is_builtin and (driver_type_lower.startswith("virtual ") or driver_type_lower == "virtual"):
-        return (CONN_VIRTUAL, "Virtual")
+        return (CONN_VIRTUAL, None)
 
-    # 1c. Built-in cloud device drivers (OpenWeatherMap, etc.) — guarded by built-in status
+    # 1c. Built-in cloud device drivers — standalone cloud pollers; set CONN_CLOUD, no integration
     if driver_is_builtin and driver_type_lower in BUILTIN_CLOUD_DRIVERS:
-        return (CONN_CLOUD, BUILTIN_CLOUD_DRIVERS[driver_type_lower])
+        return (CONN_CLOUD, None)
 
     # 2. Parent app present — algorithm-primary
     if app_info:
@@ -216,12 +221,12 @@ def classify_device(
         integration = type_ov[1] if type_ov[1] else None
         return (type_ov[0], integration)
 
-    # 3. LAN flag, no parent app
+    # 3. LAN flag, no parent app — standalone (integration None); deep pass may enrich it
     if device.get("isNetwork"):
-        return (CONN_LAN_DIRECT, "LAN Device")
+        return (CONN_LAN_DIRECT, None)
 
-    # 4. Fallback
-    return (CONN_OTHER, "Other")
+    # 4. Fallback — standalone, no integration
+    return (CONN_OTHER, None)
 
 
 # ── Tests ───────────────────────────────────────────────────────────────────
@@ -289,48 +294,34 @@ def test_clean_account_suffix():
     assert clean_integration_name("Ecobee Account") == "Ecobee"
 
 
-# --- radio / protocol flags ---
+# --- radio flags: the specific radio IS the connection type; not an integration (None) ---
 
 def test_zigbee_flag():
-    conn, name = classify_device({"isZigbee": True}, None)
-    assert conn == CONN_PAIRED
-    assert name == "Zigbee"
+    assert classify_device({"isZigbee": True}, None) == (CONN_ZIGBEE, None)
 
 
 def test_zwave_flag():
-    conn, name = classify_device({"isZwave": True}, None)
-    assert conn == CONN_PAIRED
-    assert name == "Z-Wave"
+    assert classify_device({"isZwave": True}, None) == (CONN_ZWAVE, None)
 
 
 def test_matter_flag():
-    conn, name = classify_device({"isMatter": True}, None)
-    assert conn == CONN_PAIRED
-    assert name == "Matter"
+    assert classify_device({"isMatter": True}, None) == (CONN_MATTER, None)
 
 
 def test_bluetooth_flag():
-    conn, name = classify_device({"isBluetooth": True}, None)
-    assert conn == CONN_PAIRED
-    assert name == "Bluetooth"
+    assert classify_device({"isBluetooth": True}, None) == (CONN_BLUETOOTH, None)
 
 
 def test_hubmesh_isLinked():
-    conn, name = classify_device({"isLinked": True}, None)
-    assert conn == CONN_HUBMESH
-    assert name == "Hub Mesh"
+    assert classify_device({"isLinked": True}, None) == (CONN_HUBMESH, None)
 
 
 def test_hubmesh_linked():
-    conn, name = classify_device({"linked": True}, None)
-    assert conn == CONN_HUBMESH
-    assert name == "Hub Mesh"
+    assert classify_device({"linked": True}, None) == (CONN_HUBMESH, None)
 
 
 def test_virtual_flag():
-    conn, name = classify_device({"isVirtual": True}, None)
-    assert conn == CONN_VIRTUAL
-    assert name == "Virtual"
+    assert classify_device({"isVirtual": True}, None) == (CONN_VIRTUAL, None)
 
 
 # --- derivation with NO override entry (the common case) -----------------------
@@ -402,14 +393,14 @@ def test_derive_samsung_smartthings_cloud():
     assert name == "Samsung SmartThings"
 
 
-def test_derive_homekit_paired():
+def test_derive_homekit_connection():
     """HomeKit Controller commissions the accessory into the hub as its HAP controller (enrolled in,
-    not merely reached over IP), so it's "paired" — not lan_direct — even though isNetwork=true would
-    derive lan_direct and the enrich/parent-app path would derive cloud (HKC). The "homekit" override
-    pins it to paired (consistent with CONTROLLER_TYPE_CONN["HKC"] and the CONN_PAIRED definition)."""
+    not merely reached over IP), so its connection is "homekit" — not lan_direct — even though
+    isNetwork=true would derive lan_direct. Here a parent app is present, so it's also a real
+    integration ("HomeKit", from the cleaned app name); the "homekit" override pins the connection."""
     app = {"type": "HomeKit Controller", "user": True}
     conn, name = classify_device({"isNetwork": True}, app)
-    assert conn == CONN_PAIRED
+    assert conn == CONN_HOMEKIT
     assert name == "HomeKit"
 
 
@@ -471,68 +462,52 @@ def test_airplay_lan_direct():
     assert name == "AirPlay"
 
 
-# --- no parent app ---
+# --- no parent app: standalone, no integration ---
 
 def test_no_parent_isnetwork():
-    """No parent app + isNetwork → (lan_direct, "LAN Device")."""
-    conn, name = classify_device({"isNetwork": True}, None)
-    assert conn == CONN_LAN_DIRECT
-    assert name == "LAN Device"
+    """No parent app + isNetwork → (lan_direct, None) — standalone."""
+    assert classify_device({"isNetwork": True}, None) == (CONN_LAN_DIRECT, None)
 
 
 def test_no_parent_no_signal():
-    """Nothing → (other, "Other")."""
-    conn, name = classify_device({}, None)
-    assert conn == CONN_OTHER
-    assert name == "Other"
+    """Nothing → (other, None) — standalone."""
+    assert classify_device({}, None) == (CONN_OTHER, None)
 
 
 # --- built-in cloud device drivers (branch 1c) --------------------------------
-# Modeled on the real /device/fullJson for the built-in OpenWeatherMap driver: no parent
-# app, no radio flags, isNetwork=false — every derivation signal is absent, so it would
-# fall to "Other" without the BUILTIN_CLOUD_DRIVERS table.
+# Standalone Hubitat cloud pollers (OpenWeatherMap, etc.): the table gives them CONN_CLOUD;
+# they are NOT an integration (integration is None).
 
 def test_builtin_cloud_openweather():
-    """Built-in OpenWeatherMap (no parent app, no flags) → (cloud, "OpenWeather")."""
-    dev = {"type": "OpenWeatherMap"}
-    conn, name = classify_device(dev, None, community_drivers=set())
-    assert conn == CONN_CLOUD
-    assert name == "OpenWeather"
+    """Built-in OpenWeatherMap → cloud connection, standalone (no integration)."""
+    assert classify_device({"type": "OpenWeatherMap"}, None, community_drivers=set()) == (CONN_CLOUD, None)
 
 
 def test_builtin_cloud_guard_community_namesake():
     """A *community* driver named OpenWeatherMap must NOT hit the built-in table; with no other
-    signal it falls to Other (proving the driverIsBuiltin guard)."""
-    dev = {"type": "OpenWeatherMap"}
-    conn, name = classify_device(dev, None, community_drivers={"OpenWeatherMap"})
-    assert conn == CONN_OTHER
-    assert name == "Other"
+    signal it falls to (other, None) (proving the driverIsBuiltin guard)."""
+    assert classify_device({"type": "OpenWeatherMap"}, None, community_drivers={"OpenWeatherMap"}) == (CONN_OTHER, None)
 
 
 def test_builtin_cloud_ecobee():
-    """Built-in 'Ecobee Thermostat' → (cloud, "Ecobee")."""
-    conn, name = classify_device({"type": "Ecobee Thermostat"}, None, community_drivers=set())
-    assert (conn, name) == (CONN_CLOUD, "Ecobee")
+    """Built-in 'Ecobee Thermostat' → cloud, standalone."""
+    assert classify_device({"type": "Ecobee Thermostat"}, None, community_drivers=set()) == (CONN_CLOUD, None)
 
 
 def test_builtin_cloud_pushover():
-    """Built-in 'Pushover driver' → (cloud, "Pushover")."""
-    conn, name = classify_device({"type": "Pushover driver"}, None, community_drivers=set())
-    assert (conn, name) == (CONN_CLOUD, "Pushover")
+    """Built-in 'Pushover driver' → cloud, standalone."""
+    assert classify_device({"type": "Pushover driver"}, None, community_drivers=set()) == (CONN_CLOUD, None)
 
 
 def test_builtin_cloud_mobile_app():
-    """Built-in 'Mobile App Device' → (cloud, "Mobile App")."""
-    conn, name = classify_device({"type": "Mobile App Device"}, None, community_drivers=set())
-    assert (conn, name) == (CONN_CLOUD, "Mobile App")
+    """Built-in 'Mobile App Device' → cloud, standalone."""
+    assert classify_device({"type": "Mobile App Device"}, None, community_drivers=set()) == (CONN_CLOUD, None)
 
 
 def test_community_pushover_not_matched():
-    """The community driver named just 'Pushover' (distinct from built-in 'Pushover driver') is not
-    a table key, so it does not become cloud via the table — it falls to Other."""
-    dev = {"type": "Pushover"}
-    conn, name = classify_device(dev, None, community_drivers={"Pushover"})
-    assert (conn, name) == (CONN_OTHER, "Other")
+    """The community driver named just 'Pushover' is not a table key, so it does not become cloud
+    via the table — it falls to (other, None)."""
+    assert classify_device({"type": "Pushover"}, None, community_drivers={"Pushover"}) == (CONN_OTHER, None)
 
 
 # --- standalone community devices via the override file (branch 2b) -----------
@@ -541,11 +516,9 @@ def test_community_pushover_not_matched():
 # classifies it by adding its driver type name to the File Manager override file.
 
 def test_awair_no_override_falls_to_other():
-    """Community Awair Element, no override → (other, "Other") — the documented default."""
+    """Community Awair Element, no override → (other, None) — standalone, no integration."""
     dev = {"type": "Awair Element", "isNetwork": False}
-    conn, name = classify_device(dev, None, community_drivers={"Awair Element"})
-    assert conn == CONN_OTHER
-    assert name == "Other"
+    assert classify_device(dev, None, community_drivers={"Awair Element"}) == (CONN_OTHER, None)
 
 
 def test_awair_type_override_lan_direct():

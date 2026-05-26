@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.64.3";
+const UI_VERSION = "5.65.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -369,7 +369,7 @@ function dlink(id,n){return'<a href="/device/edit/'+id+'" target="_blank">'+h(Ob
 function alink(id,n){return'<a href="/installedapp/configure/'+id+'" target="_blank">'+h(Obf.nm(n))+'</a>'}
 function dlistlink(count,ids){if(ids===true)return'<a href="/device/list" target="_blank">'+(count??0)+'</a>';if(!ids||!ids.length)return String(count??0);return'<a href="/device/list?ids='+ids.join(',')+'" target="_blank">'+count+'</a>'}
 function alistlink(count){return'<a href="/installedapp/list" target="_blank">'+(count??0)+'</a>'}
-const CD={paired:'Paired',lan_direct:'LAN (Direct)',lan_bridge:'LAN (Bridge)',cloud:'Cloud',virtual:'Virtual',hubmesh:'Hub Mesh',other:'Other'};
+const CD={zigbee:'Zigbee',zwave:'Z-Wave',matter:'Matter',bluetooth:'Bluetooth',homekit:'HomeKit',lan_direct:'LAN (Direct)',lan_bridge:'LAN (Bridge)',cloud:'Cloud',virtual:'Virtual',hubmesh:'Hub Mesh',other:'Other'};
 const BADGE={builtin:'<span class="badge b-builtin">Built-in</span>',community:'<span class="badge b-community">Community</span>',platform:'<span class="badge b-platform">Platform</span>'};
 // Source classification → badge markup. emptyAsBuiltin=true renders Built-in for a missing source (apps); false renders nothing (perf rows).
 function srcBadge(source,emptyAsBuiltin){if(source==='platform')return BADGE.platform;if(source==='community')return BADGE.community;if(!source&&!emptyAsBuiltin)return'';return BADGE.builtin;}
@@ -1994,14 +1994,14 @@ async function rDevices(){const P='p-devices';loading(P);try{
   // Stale devices table
   if(stale.length)
     tbl('staleTbl',[
-      {l:'Name',f:'name',r:r=>dlink(r.id,r.name)},{l:'Type',f:'type'},{l:'Connection',f:'connectionTypeDisplay'},{l:'Integration',f:'integration'},
+      {l:'Name',f:'name',r:r=>dlink(r.id,r.name)},{l:'Type',f:'type'},{l:'Connection',f:'connectionTypeDisplay'},{l:'Integration',f:'integration',r:r=>h(r.integration||'-')},
       {l:'Last Activity',f:'lastActivity'},{l:'Room',f:'room',r:r=>h(r.room||'-')}
     ],stale,{sc:3,sd:'asc',collapse:10,collapseLabel:'Stale Devices'});
   tbl('devTbl',[
     {l:'Name',f:'name',r:r=>dlink(r.id,r.name)},
     {l:'Type',f:'type',r:r=>r.userType&&r.deviceTypeId?'<a href="/driver/editor/'+r.deviceTypeId+'" target="_blank">'+h(r.type)+'</a>':h(r.type)},
     {l:'Connection',f:'connectionTypeDisplay'},
-    {l:'Integration',f:'integration'},
+    {l:'Integration',f:'integration',r:r=>h(r.integration||'-')},
     {l:'Room',f:'room',r:r=>h(r.room||'-')},
     {l:'Status',f:'status',r:r=>sbadge(r.status)},
     {l:'Last Activity',f:'lastActivity'},
