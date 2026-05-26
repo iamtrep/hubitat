@@ -121,7 +121,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "0.6.0";
+const UI_VERSION = "0.6.1";
 const APP_VERSION = '${app_version}';   // injected by serveUI; stays literal in workbench/dev
 
 // ===== Z-WAVE MANUFACTURER TABLE (decimal maker-id -> name, from zwave-js) =====
@@ -187,6 +187,11 @@ const MOCK_AUDIT = {
 };
 
 // ===== CORRELATION ===== (pure functions; unit-tested in tests/test-correlation.js)
+// Connection-type display labels (mirror of HubDiagnostics CONN_DISPLAY). Used as the integration
+// fallback: a device with no parent integration is grouped/shown by how it connects (Zigbee, Cloud…)
+// rather than "Unknown". Hub Diagnostics 5.65.0+ reports the specific radio as the connection type.
+const CD={zigbee:'Zigbee',zwave:'Z-Wave',matter:'Matter',bluetooth:'Bluetooth',homekit:'HomeKit',lan_direct:'LAN (Direct)',lan_bridge:'LAN (Bridge)',cloud:'Cloud',virtual:'Virtual',hubmesh:'Hub Mesh',other:'Other'};
+const integLabel = r => r.integration || CD[r.connectionType] || r.connectionType || '';
 function filterLinked(rows){ return rows.filter(r => r.protocol !== 'Linked'); }
 function mergeFleet(hubResults){
   const rows = [], hubs = [];
@@ -282,7 +287,7 @@ function fleetSummary(merged){
   const rows = merged.rows, byHub = {}, byIntegration = {}, byConnection = {}, byMfr = {};
   for (const r of rows){
     byHub[r.hub] = (byHub[r.hub] || 0) + 1;
-    const i = r.integration || r.protocol || 'Unknown'; byIntegration[i] = (byIntegration[i] || 0) + 1;
+    const i = integLabel(r) || 'Unknown'; byIntegration[i] = (byIntegration[i] || 0) + 1;
     const c = r.connectionType ? (CD[r.connectionType] || r.connectionType) : 'Unknown'; byConnection[c] = (byConnection[c] || 0) + 1;
     const m = (r.manufacturer||'').trim() || 'Unknown'; byMfr[m] = (byMfr[m] || 0) + 1;
   }
@@ -549,7 +554,7 @@ function regViewRows(){
   const connSel  = (document.getElementById('regConn')  || {}).value || '';
   const integSel = (document.getElementById('regInteg') || {}).value || '';
   const connOf  = r => CD[r.connectionType] || r.connectionType || '';
-  const integOf = r => r.integration || r.protocol || '';
+  const integOf = integLabel;
   return FLEET.rows.filter(r => (!flaggedOnly||isFlagged(r)) && (!hasFwOnly||hasFw(r))
       && (!connSel  || connOf(r)  === connSel)
       && (!integSel || integOf(r) === integSel)).map(r=>{
@@ -568,7 +573,7 @@ function refreshRegTbl(){
     { l:'Firmware',     f:'firmware', r:r=>esc(r.firmware||'')+fwTargetsLabel(r) },
     { l:'OTA',          f:'firmwareOta', r:r=>esc(r.firmwareOta||'—') },
     { l:'Connection',   f:'connectionType', r:r=>esc(CD[r.connectionType]||r.connectionType||'—') },
-    { l:'Integration',  f:'integration', r:r=>esc(r.integration||r.protocol||'—') },
+    { l:'Integration',  f:'integration', r:r=>esc(integLabel(r)||'—') },
     { l:'Days inactive',f:'_days', t:'n', r:r=>`<span style="color:${r._daysColor}">${esc(r._daysText)}</span>` },
     { l:'#Apps',        f:'appsUsingCount', t:'n' },
     { l:'Flags',        f:'_flags', ff:r=>r._flags||'', r:r=>flagPills(r) },
@@ -580,7 +585,7 @@ function renderRegister(){
   const sel = (id,label,vals) => `<select id="${id}" onchange="refreshRegTbl()" style="font-size:13px;padding:2px 4px">`
     + `<option value="">All ${label}</option>` + vals.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('') + `</select>`;
   const conns  = distinct(r => CD[r.connectionType] || r.connectionType);
-  const integs = distinct(r => r.integration || r.protocol);
+  const integs = distinct(integLabel);
   document.getElementById('p-register').innerHTML =
     `<div class="actions">
        <label style="font-size:13px;display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="regFlagged" onchange="refreshRegTbl()"> Flagged only</label>

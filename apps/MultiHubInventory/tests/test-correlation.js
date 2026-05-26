@@ -23,8 +23,18 @@ function extractFn(name) {
   throw new Error('unbalanced braces for ' + name);
 }
 
+// Grab a single-line `const NAME = ...;` definition verbatim (for the CD map + integLabel helper
+// that fleetSummary/the table depend on), so the harness uses the real shipped definitions.
+function extractConstLine(prefix) {
+  const i = src.indexOf(prefix);
+  assert(i >= 0, 'const not found in HTML: ' + prefix);
+  const j = src.indexOf('\n', i);
+  return src.slice(i, j < 0 ? src.length : j);
+}
+
 const FNS = ['filterLinked', 'mergeFleet', 'fwBasis', 'firmwareDrift', 'driverDrift', 'attentionItems', 'fleetSummary'];
-const harness = FNS.map(extractFn).join('\n') + '\nmodule.exports = { ' + FNS.join(', ') + ' };';
+const harness = extractConstLine('const CD=') + '\n' + extractConstLine('const integLabel') + '\n'
+  + FNS.map(extractFn).join('\n') + '\nmodule.exports = { ' + FNS.join(', ') + ' };';
 const tmp = path.join(os.tmpdir(), 'mhi_corr_' + process.pid + '.js');
 fs.writeFileSync(tmp, harness);
 const C = require(tmp);
@@ -152,16 +162,18 @@ t('attentionItems classifies by reason with injectable now + staleDays', () => {
 
 t('fleetSummary counts by hub/integration/manufacturer + attention totals', () => {
   // lastActivityTimeMs:Date.now() keeps every row non-stale so attentionCounts isolates disabled/unreferenced.
-  // Last row has no integration → fleetSummary falls back to protocol (old-hub / unclassified device).
+  // integLabel groups by parent integration when present (row 1), else by connection-type label
+  // (rows 2-3 are radio devices: integration null, connectionType the specific radio).
   const merged = { rows: [
-    {hub:'a', integration:'Zigbee', protocol:'Zigbee', manufacturer:'X', appsUsingCount:1, dashboards:[1], lastActivityTimeMs:Date.now()},
-    {hub:'a', integration:'Z-Wave', protocol:'Z-Wave', manufacturer:'X', appsUsingCount:0, dashboards:[],  lastActivityTimeMs:Date.now()},
-    {hub:'b', protocol:'Zigbee', manufacturer:'Y', disabled:true,    appsUsingCount:1, dashboards:[1], lastActivityTimeMs:Date.now()},
+    {hub:'a', integration:'Lutron', connectionType:'lan_bridge', manufacturer:'X', appsUsingCount:1, dashboards:[1], lastActivityTimeMs:Date.now()},
+    {hub:'a', connectionType:'zigbee', manufacturer:'X', appsUsingCount:0, dashboards:[],  lastActivityTimeMs:Date.now()},
+    {hub:'b', connectionType:'zigbee', manufacturer:'Y', disabled:true,    appsUsingCount:1, dashboards:[1], lastActivityTimeMs:Date.now()},
   ], hubs: [] };
   const s = C.fleetSummary(merged);
   assert.strictEqual(s.total, 3);
   assert.strictEqual(s.byHub.a, 2);
-  assert.strictEqual(s.byIntegration.Zigbee, 2);   // 1 via integration + 1 via protocol fallback
+  assert.strictEqual(s.byIntegration.Lutron, 1);   // real parent integration
+  assert.strictEqual(s.byIntegration.Zigbee, 2);   // radio devices grouped by connection-type label
   assert.strictEqual(s.byManufacturer.X, 2);
   assert.strictEqual(s.attentionCounts.disabled, 1);
   assert.strictEqual(s.attentionCounts.unreferenced, 1);
