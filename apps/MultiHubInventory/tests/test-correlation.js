@@ -162,8 +162,9 @@ t('attentionItems classifies by reason with injectable now + staleDays', () => {
 
 t('fleetSummary counts by hub/integration/manufacturer + attention totals', () => {
   // lastActivityTimeMs:Date.now() keeps every row non-stale so attentionCounts isolates disabled/unreferenced.
-  // integLabel groups by parent integration when present (row 1), else by connection-type label
-  // (rows 2-3 are radio devices: integration null, connectionType the specific radio).
+  // Two-axis model (mirrors HubDiagnostics): byIntegration counts only devices with a real parent
+  // integration (row 1). Standalone devices (rows 2-3: integration null) are omitted from
+  // byIntegration and reported under byConnection instead — no connection-label fallback.
   const merged = { rows: [
     {hub:'a', integration:'Lutron', connectionType:'lan_bridge', manufacturer:'X', appsUsingCount:1, dashboards:[1], lastActivityTimeMs:Date.now()},
     {hub:'a', connectionType:'zigbee', manufacturer:'X', appsUsingCount:0, dashboards:[],  lastActivityTimeMs:Date.now()},
@@ -172,8 +173,9 @@ t('fleetSummary counts by hub/integration/manufacturer + attention totals', () =
   const s = C.fleetSummary(merged);
   assert.strictEqual(s.total, 3);
   assert.strictEqual(s.byHub.a, 2);
-  assert.strictEqual(s.byIntegration.Lutron, 1);   // real parent integration
-  assert.strictEqual(s.byIntegration.Zigbee, 2);   // radio devices grouped by connection-type label
+  assert.strictEqual(s.byIntegration.Lutron, 1);          // real parent integration
+  assert.strictEqual(s.byIntegration.Zigbee, undefined);  // standalone radios omitted from byIntegration
+  assert.strictEqual(s.byConnection.Zigbee, 2);           // …counted under byConnection instead
   assert.strictEqual(s.byManufacturer.X, 2);
   assert.strictEqual(s.attentionCounts.disabled, 1);
   assert.strictEqual(s.attentionCounts.unreferenced, 1);

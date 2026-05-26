@@ -121,7 +121,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "0.6.2";
+const UI_VERSION = "0.6.3";
 const APP_VERSION = '${app_version}';   // injected by serveUI; stays literal in workbench/dev
 
 // ===== Z-WAVE MANUFACTURER TABLE (decimal maker-id -> name, from zwave-js) =====
@@ -187,9 +187,10 @@ const MOCK_AUDIT = {
 };
 
 // ===== CORRELATION ===== (pure functions; unit-tested in tests/test-correlation.js)
-// Integration label fallback (CD is the connection-display map in HELPERS): a device with no parent
-// integration is shown/grouped by how it connects (Zigbee, Cloud…) rather than "Unknown".
-const integLabel = r => r.integration || CD[r.connectionType] || r.connectionType || '';
+// Real parent-managed integration name only (e.g. Lutron, Blink, AirPlay); '' for standalone devices.
+// Standalone devices are reported under "By connection", not "By integration" — mirrors the
+// HubDiagnostics two-axis model (Groovy analyzeDevices omits null integrations from byIntegration).
+const integLabel = r => r.integration || '';
 function filterLinked(rows){ return rows.filter(r => r.protocol !== 'Linked'); }
 function mergeFleet(hubResults){
   const rows = [], hubs = [];
@@ -285,7 +286,7 @@ function fleetSummary(merged){
   const rows = merged.rows, byHub = {}, byIntegration = {}, byConnection = {}, byMfr = {};
   for (const r of rows){
     byHub[r.hub] = (byHub[r.hub] || 0) + 1;
-    const i = integLabel(r) || 'Unknown'; byIntegration[i] = (byIntegration[i] || 0) + 1;
+    const i = integLabel(r); if (i) byIntegration[i] = (byIntegration[i] || 0) + 1;  // null integration omitted (counted in byConnection)
     const c = r.connectionType ? (CD[r.connectionType] || r.connectionType) : 'Unknown'; byConnection[c] = (byConnection[c] || 0) + 1;
     const m = (r.manufacturer||'').trim() || 'Unknown'; byMfr[m] = (byMfr[m] || 0) + 1;
   }
