@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.64.1"
+@Field static final String APP_VERSION = "5.64.2"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -2479,7 +2479,10 @@ Map analyzeDevices(boolean deep = true) {
         return getEmptyDeviceStats()
     }
 
-    List devicesList = flattenDeviceEntries(respWrap.data.devices as List, deep)
+    // includeParentContext=true (not just deep) so child devices carry their parentDeviceId in
+    // both passes — needed for parent-device inheritance below (the parent-device analog of
+    // parent-app grouping). The richer entry shape is otherwise consumed identically.
+    List devicesList = flattenDeviceEntries(respWrap.data.devices as List, true)
 
     Map stats = getEmptyDeviceStats()
 
@@ -2494,6 +2497,9 @@ Map analyzeDevices(boolean deep = true) {
         .findAll { it } as Set
     // Collects devices needing deep enrichment (isNetwork + CONN_OTHER): deviceId → [appInfo, currentIntegration, currentConn, deviceId]
     Map uncertainDevices = [:]
+    // deviceId(String) → its classification [connectionType, integration, builtin], so a child
+    // device can inherit its parent DEVICE's classification after the pass.
+    Map classByDeviceId = [:]
 
     devicesList.each { deviceEntry ->
         try {
@@ -2524,6 +2530,7 @@ Map analyzeDevices(boolean deep = true) {
             Map classification = classifyDevice(device, appLookup, communityDrivers)
             String connectionType = classification.connectionType
             String integration = classification.integration
+            classByDeviceId[device.id?.toString()] = [connectionType: connectionType, integration: integration, builtin: classification.builtin]
 
             stats.byConnectionType[connectionType] = (stats.byConnectionType[connectionType] ?: 0) + 1
             if (!stats.idsByConnectionType.containsKey(connectionType)) stats.idsByConnectionType[connectionType] = []
@@ -2604,8 +2611,30 @@ Map analyzeDevices(boolean deep = true) {
     // Pass 2: enrich uncertain devices via device/fullJson (parentApp + controllerType).
     // This updates summary buckets for both shallow Dashboard and deep Devices calls.
     if (uncertainDevices) {
-        Map enrichedAppInfos = (Map) uncertainDevices.collectEntries { k, v -> [k, ((Map)v).appInfo] }
+        // Parent-device inheritance: a child device the bulk pass couldn't place (it landed in
+        // uncertainDevices) inherits its parent DEVICE's classification — the parent-device analog
+        // of parent-app grouping (e.g. a Blink/Lutron parent device fronting child cameras/dimmers,
+        // where the children share no driver-type token with the parent). Computed from the
+        // pre-enrichment classifications and applied before fullJson enrichment, so inherited
+        // children skip pointless per-device fetches and ride the same reassignment loop below.
+        Map inherited = [:]
+        devicesList.each { deviceEntry ->
+            Object pid = deviceEntry.parentDeviceId
+            Object cid = (deviceEntry.data instanceof Map) ? ((Map) deviceEntry.data).id : null
+            if (pid == null || cid == null) return
+            String cidStr = cid.toString()
+            if (!uncertainDevices.containsKey(cidStr)) return    // only fill devices we couldn't place
+            Map parentClass = (Map) classByDeviceId[pid.toString()]
+            if (parentClass && parentClass.integration && parentClass.integration != "Other") {
+                inherited[cidStr] = parentClass
+            }
+        }
+
+        Map enrichedAppInfos = (Map) uncertainDevices
+            .findAll { k, v -> !inherited.containsKey(k) }
+            .collectEntries { k, v -> [k, ((Map)v).appInfo] }
         Map enrichments = enrichDevices(enrichedAppInfos, communityAppTypeNames)
+        if (inherited) enrichments.putAll(inherited)   // parent-device inheritance wins over the (empty) fullJson result
 
         enrichments.each { String idStr, Map newClass ->
             Map uncertain = (Map) uncertainDevices[idStr]
