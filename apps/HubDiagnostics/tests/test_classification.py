@@ -42,22 +42,18 @@ CONN_VIRTUAL    = "virtual"
 CONN_HUBMESH    = "hubmesh"
 CONN_OTHER      = "other"
 
-# Mirror of INTEGRATION_OVERRIDES — connection-type exceptions, ordered longest-first.
-# Tuples are (keyword, conn, name). Display names normally come from cleanIntegrationName, so
-# name is None for most entries; Lutron is the exception (see below).
-#   • the bridges report isNetwork=true (would mis-derive to lan_direct) but front their
-#     child devices, so they're lan_bridge;
-#   • AirPlay devices carry MAC-format DNIs with isNetwork=false (would mis-derive to cloud)
-#     but are local, so lan_direct;
-#   • Lutron carries name="Lutron": its devices reach branch 2b (no parentAppId in the bulk list)
-#     with driver types "Lutron Switch/Pico/Dimmer/Telnet", which would otherwise split per type.
+# Mirror of INTEGRATION_OVERRIDES — built-in parent-managed integrations, ordered longest-first.
+# Tuples are (keyword, conn, name). Each carries a name: their devices arrive without a parentAppId
+# in the bulk list (so the parent-app derivation can't see them, and the deep-enrich pass never runs),
+# and a conn-only override would demote them to standalone. The conn also fixes the connection type the
+# isNetwork derivation can't infer (bridges → lan_bridge; AirPlay isNetwork=false but local → lan_direct).
 INTEGRATION_OVERRIDES = [
-    ("philips hue", CONN_LAN_BRIDGE,  None),
-    ("hue bridge",  CONN_LAN_BRIDGE,  None),
-    ("airplay",     CONN_LAN_DIRECT,  None),
+    ("philips hue", CONN_LAN_BRIDGE,  "Philips Hue"),
+    ("hue bridge",  CONN_LAN_BRIDGE,  "Philips Hue"),
+    ("airplay",     CONN_LAN_DIRECT,  "AirPlay"),
     ("lutron",      CONN_LAN_BRIDGE,  "Lutron"),
-    ("bond",        CONN_LAN_BRIDGE,  None),
-    ("homekit",     CONN_HOMEKIT,     None),
+    ("bond",        CONN_LAN_BRIDGE,  "Bond"),
+    ("homekit",     CONN_HOMEKIT,     "HomeKit"),
 ]
 
 # Mirror of BUILTIN_CLOUD_DRIVERS — built-in driver type name (lowercased) → integration name.
@@ -408,19 +404,19 @@ def test_derive_homekit_connection():
 
 def test_bridge_philips_hue():
     """Philips Hue Bridge + isNetwork → lan_bridge (override beats the lan_direct derivation);
-    name comes from cleanIntegrationName (no name override)."""
+    the override now supplies the integration name 'Philips Hue'."""
     app = {"type": "Philips Hue Bridge", "user": False}
     conn, name = classify_device({"isNetwork": True}, app)
     assert conn == CONN_LAN_BRIDGE
-    assert name == "Philips Hue Bridge"
+    assert name == "Philips Hue"
 
 
 def test_bridge_hue_bridge_keyword():
-    """'Hue Bridge Integration' keyword triggers the lan_bridge override; cleaner → 'Hue Bridge'."""
+    """'Hue Bridge Integration' keyword triggers the lan_bridge override → name 'Philips Hue'."""
     app = {"type": "Hue Bridge Integration"}
     conn, name = classify_device({"isNetwork": True}, app)
     assert conn == CONN_LAN_BRIDGE
-    assert name == "Hue Bridge"
+    assert name == "Philips Hue"
 
 
 def test_bridge_lutron():
@@ -446,11 +442,11 @@ def test_lutron_no_parent_app_groups():
 
 
 def test_bridge_bond():
-    """Bond is a built-in lan_bridge exception (the Bond bridge fronts its devices)."""
+    """Bond is a built-in lan_bridge integration (the Bond bridge fronts its devices); name 'Bond'."""
     app = {"type": "BOND Home Integration", "user": True}
     conn, name = classify_device({"isNetwork": True}, app)
     assert conn == CONN_LAN_BRIDGE
-    assert name == "BOND Home"
+    assert name == "Bond"
 
 
 def test_airplay_lan_direct():

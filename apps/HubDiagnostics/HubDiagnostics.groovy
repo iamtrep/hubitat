@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.65.0"
+@Field static final String APP_VERSION = "5.65.1"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -227,34 +227,29 @@ import java.util.concurrent.atomic.AtomicInteger
     "other": "Other"
 ]
 
-// Connection-type exceptions: lowercase keyword → [conn: connectionType].
-// This map is NOT a roster of integrations — it holds ONLY the connection types the
-// isNetwork-derivation can't infer. Everything else rides on the derivation:
-//   • integration NAME always comes from cleanIntegrationName(appType);
-//   • built-in vs community comes from the hub's own appInfo.user flag;
-//   • cloud vs lan_direct is derived from device.isNetwork (LAN ⇒ lan_direct, else cloud).
-// The bridges report isNetwork=true (so they'd mis-derive to lan_direct) but front their
-// child devices, so they're lan_bridge. AirPlay devices carry MAC-format DNIs with isNetwork=false
-// (so they'd mis-derive to cloud) but are local, so lan_direct. Names are normally left to
-// cleanIntegrationName — Lutron is the lone name exception (see its entry).
+// Built-in integration overrides: lowercase keyword → [conn, name]. These are Hubitat-native
+// parent-managed integrations whose devices arrive without a parentAppId in the bulk list (so the
+// parent-app derivation can't see them and the deep-enrich pass never runs on them). Each entry
+// supplies both the connection type the isNetwork derivation can't infer (the bridges report
+// isNetwork=true but front their children → lan_bridge; AirPlay is isNetwork=false but local →
+// lan_direct) AND the integration name that keeps the devices grouped. built-in vs community still
+// comes from the hub's own appInfo.user flag.
 // User-discovered exceptions go in the File Manager config file (loaded + overlaid by
 // getIntegrationOverrides()).
 // Entries are ordered longest-first to avoid false positives. LinkedHashMap preserves insertion
 // order, which is the iteration order used by lookupIntegration().
+// Each of these is a genuine parent-managed integration whose devices arrive in the bulk devicesList
+// with no parentAppId, so they classify via branch 2b. The name keeps them grouped as one integration
+// (without it branch 2b would treat them as standalone and drop them from the integration breakdown);
+// the conn corrects the connection type the isNetwork derivation can't infer. HomeKit's connection is
+// "homekit" (HAP-commissioned) and it's also the HomeKit Controller integration.
 @Field static final Map INTEGRATION_OVERRIDES = [
-    "philips hue" : [conn: "lan_bridge"],
-    "hue bridge"  : [conn: "lan_bridge"],
-    "airplay"     : [conn: "lan_direct"],
-    // Lutron devices arrive in the bulk devicesList with no parentAppId and driver types
-    // "Lutron Switch/Pico/Dimmer/Telnet", so they classify via branch 2b. The name groups them
-    // under one "Lutron" integration; without it each driver type becomes its own bucket. (The
-    // parent app's type is "Lutron Integrator", which cleanIntegrationName wouldn't reduce to "Lutron".)
+    "philips hue" : [conn: "lan_bridge", name: "Philips Hue"],
+    "hue bridge"  : [conn: "lan_bridge", name: "Philips Hue"],
+    "airplay"     : [conn: "lan_direct", name: "AirPlay"],
     "lutron"      : [conn: "lan_bridge", name: "Lutron"],
-    "bond"        : [conn: "lan_bridge"],
-    // HomeKit Controller commissions the accessory INTO the hub (the hub becomes its HAP controller)
-    // — enrolled, not merely reached over IP — so its connection is "homekit" despite isNetwork=true
-    // (which would derive lan_direct; the enrich path derives cloud from the HKC controllerType).
-    "homekit"     : [conn: "homekit"],
+    "bond"        : [conn: "lan_bridge", name: "Bond"],
+    "homekit"     : [conn: "homekit",    name: "HomeKit"],
 ]
 
 // Built-in Hubitat cloud-polling DEVICE drivers: standalone cloud clients with no parent app, no
