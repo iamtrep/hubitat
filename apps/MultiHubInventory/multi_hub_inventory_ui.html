@@ -121,7 +121,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "0.6.1";
+const UI_VERSION = "0.6.2";
 const APP_VERSION = '${app_version}';   // injected by serveUI; stays literal in workbench/dev
 
 // ===== Z-WAVE MANUFACTURER TABLE (decimal maker-id -> name, from zwave-js) =====
@@ -187,10 +187,8 @@ const MOCK_AUDIT = {
 };
 
 // ===== CORRELATION ===== (pure functions; unit-tested in tests/test-correlation.js)
-// Connection-type display labels (mirror of HubDiagnostics CONN_DISPLAY). Used as the integration
-// fallback: a device with no parent integration is grouped/shown by how it connects (Zigbee, Cloud…)
-// rather than "Unknown". Hub Diagnostics 5.65.0+ reports the specific radio as the connection type.
-const CD={zigbee:'Zigbee',zwave:'Z-Wave',matter:'Matter',bluetooth:'Bluetooth',homekit:'HomeKit',lan_direct:'LAN (Direct)',lan_bridge:'LAN (Bridge)',cloud:'Cloud',virtual:'Virtual',hubmesh:'Hub Mesh',other:'Other'};
+// Integration label fallback (CD is the connection-display map in HELPERS): a device with no parent
+// integration is shown/grouped by how it connects (Zigbee, Cloud…) rather than "Unknown".
 const integLabel = r => r.integration || CD[r.connectionType] || r.connectionType || '';
 function filterLinked(rows){ return rows.filter(r => r.protocol !== 'Linked'); }
 function mergeFleet(hubResults){
@@ -300,7 +298,7 @@ function fleetSummary(merged){
 // ===== HELPERS =====
 const STALE_DAYS = 7;
 // Connection-type display names — mirrors HubDiagnostics CONN_DISPLAY.
-const CD = {paired:'Paired', lan_direct:'LAN (Direct)', lan_bridge:'LAN (Bridge)', cloud:'Cloud', virtual:'Virtual', hubmesh:'Hub Mesh', other:'Other'};
+const CD = {zigbee:'Zigbee', zwave:'Z-Wave', matter:'Matter', bluetooth:'Bluetooth', homekit:'HomeKit', paired:'Paired', lan_direct:'LAN (Direct)', lan_bridge:'LAN (Bridge)', cloud:'Cloud', virtual:'Virtual', hubmesh:'Hub Mesh', other:'Other'};
 // Map of hub label -> webBase (scheme+host), populated from /api/peers.
 let HUB_WEBBASE = {};
 // Return an <a> link to the device edit page, or plain escaped text if id is unknown.

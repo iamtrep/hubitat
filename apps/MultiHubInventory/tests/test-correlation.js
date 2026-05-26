@@ -33,7 +33,7 @@ function extractConstLine(prefix) {
 }
 
 const FNS = ['filterLinked', 'mergeFleet', 'fwBasis', 'firmwareDrift', 'driverDrift', 'attentionItems', 'fleetSummary'];
-const harness = extractConstLine('const CD=') + '\n' + extractConstLine('const integLabel') + '\n'
+const harness = extractConstLine('const CD =') + '\n' + extractConstLine('const integLabel') + '\n'
   + FNS.map(extractFn).join('\n') + '\nmodule.exports = { ' + FNS.join(', ') + ' };';
 const tmp = path.join(os.tmpdir(), 'mhi_corr_' + process.pid + '.js');
 fs.writeFileSync(tmp, harness);
