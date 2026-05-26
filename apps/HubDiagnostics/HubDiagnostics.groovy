@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.64.0"
+@Field static final String APP_VERSION = "5.64.1"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -178,6 +178,9 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final long       DATABASE_SIZE_CACHE_TTL_MS = 60_000L
 @Field static final long       CPU_INFO_CACHE_TTL_MS      = 300_000L
 @Field static final long       LOAD_THRESHOLD_CACHE_TTL_MS = 300_000L
+// Optional integration-overrides file: re-read at most this often so an uploaded/edited file is
+// picked up without a full Done. updated()/apiClearCache() reset it for an immediate reload.
+@Field static final long       INTEGRATION_OVERRIDES_CACHE_TTL_MS = 300_000L
 @Field static volatile Float   cachedTemperature
 @Field static volatile Long    cachedTemperatureAt
 @Field static volatile Integer cachedDatabaseSize
@@ -272,7 +275,8 @@ import java.util.concurrent.atomic.AtomicInteger
 
 // Cache for the merged (built-in + user file) integration overrides map.
 // Null means "not yet loaded"; set to null in updated() to force a reload.
-@Field static volatile Map integrationOverridesCache = null
+@Field static volatile Map  integrationOverridesCache = null
+@Field static volatile Long integrationOverridesCacheAt = null
 
 // File names for persistence
 @Field static final String SNAPSHOTS_FILE = "hub_diagnostics_snapshots.json"
@@ -1101,6 +1105,10 @@ Map apiUpdateSettings() {
 Map apiClearCache() {
     int cleared = (state.controllerTypeCache ?: [:]).size()
     state.controllerTypeCache = [:]
+    // Also drop the integration-overrides cache so this re-reads the File Manager config on next
+    // use — the intuitive "apply my override edits" action, no full Done required.
+    integrationOverridesCache = null
+    integrationOverridesCacheAt = null
     return jsonResponse([success: true, cleared: cleared])
 }
 
@@ -2984,14 +2992,26 @@ Object extractParentAppId(Map device) {
 /**
  * Returns the merged integration-overrides map: user file entries first (so user wins on
  * substring-match precedence and on key collision), then built-in entries not overridden.
- * Result is cached in integrationOverridesCache; call updated() to invalidate.
- * Any parse error falls back silently to the built-in defaults.
+ * Result is cached in integrationOverridesCache for INTEGRATION_OVERRIDES_CACHE_TTL_MS so a file
+ * uploaded/edited after first load is picked up without a full Done; updated() and apiClearCache()
+ * reset it for an immediate reload. A parse error falls back to the built-in defaults.
  */
 private Map getIntegrationOverrides() {
-    if (integrationOverridesCache != null) return integrationOverridesCache
+    if (integrationOverridesCache != null && integrationOverridesCacheAt != null &&
+        (now() - integrationOverridesCacheAt) < INTEGRATION_OVERRIDES_CACHE_TTL_MS) {
+        return integrationOverridesCache
+    }
+    // The override file is OPTIONAL. downloadHubFile throws when it's absent (with the bare
+    // filename as the message) — the normal case on most hubs — so log that at debug, not warn.
+    // A WARN is reserved for a file that IS present but can't be parsed (a real misconfiguration).
+    byte[] fileData = null
     try {
-        byte[] fileData = downloadHubFile(INTEGRATION_OVERRIDES_FILE)
-        if (fileData) {
+        fileData = downloadHubFile(INTEGRATION_OVERRIDES_FILE)
+    } catch (Exception e) {
+        logDebug "No ${INTEGRATION_OVERRIDES_FILE} in File Manager — using built-in defaults"
+    }
+    if (fileData) {
+        try {
             String jsonString = new String(fileData, "UTF-8")
             Map userRaw = (Map) new groovy.json.JsonSlurper().parseText(jsonString)
             // Build merged map: user entries first, then built-in entries not overridden.
@@ -3015,12 +3035,14 @@ private Map getIntegrationOverrides() {
             int userEntryCount = userRaw.keySet().count { !it.toString().startsWith("_") } as int
             logDebug "Loaded integration overrides: ${merged.size()} entries (${userEntryCount} from user file)"
             integrationOverridesCache = merged
+            integrationOverridesCacheAt = now()
             return merged
+        } catch (Exception e) {
+            logWarn "Found ${INTEGRATION_OVERRIDES_FILE} but could not parse it (${e.message}) — using built-in defaults"
         }
-    } catch (Exception e) {
-        logWarn "Could not load ${INTEGRATION_OVERRIDES_FILE}: ${e.message} — using built-in defaults"
     }
     integrationOverridesCache = INTEGRATION_OVERRIDES
+    integrationOverridesCacheAt = now()
     return INTEGRATION_OVERRIDES
 }
 
@@ -4604,7 +4626,7 @@ void updated() {
     cachedCpuInfo = null;          cachedCpuInfoAt = null
     cachedLoadThreshold = null;    cachedLoadThresholdAt = null
     cachedCheckpointIndex = null   // re-read the checkpoint index from FileManager on next access
-    integrationOverridesCache = null  // reload user integration-overrides file on next use
+    integrationOverridesCache = null; integrationOverridesCacheAt = null  // reload user integration-overrides file on next use
     // C2: auto-disable debug logging after 30 min so it can't be left on indefinitely
     if (settings.debugLogging) runIn(1800, 'logsOff')
     runIn(1, 'syncUIForced')
