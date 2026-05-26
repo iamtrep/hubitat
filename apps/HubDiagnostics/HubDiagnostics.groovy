@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.64.2"
+@Field static final String APP_VERSION = "5.64.3"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -528,9 +528,12 @@ Map settingsPage() {
                 "hub's own LAN flag and the display name from the parent app. To correct a connection type the hub " +
                 "can't infer (e.g. a LAN bridge, or a local device the hub flags as cloud), create " +
                 "<b>${INTEGRATION_OVERRIDES_FILE}</b> in File Manager. " +
-                "Keys are lowercase substrings matched against the device's parent-app name, or — for a " +
+                "Keys are substrings matched case-insensitively against the device's parent-app name, or — for a " +
                 "standalone device with no parent app — its driver type name; " +
                 "valid <code>conn</code> values are: paired, lan_direct, lan_bridge, cloud, virtual, hubmesh, other. " +
+                "Add <code>conn</code> alone to fix only the connection type (the device stays standalone — " +
+                "omitted from the integration breakdown); add a <code>name</code> too only when the device belongs " +
+                "to an integration you want grouped and labeled. " +
                 "Save this page after uploading the file to apply the changes. " +
                 "A documented template (<i>integration_overrides.json</i>) ships with the app to start from."
         }
@@ -2536,13 +2539,17 @@ Map analyzeDevices(boolean deep = true) {
             if (!stats.idsByConnectionType.containsKey(connectionType)) stats.idsByConnectionType[connectionType] = []
             stats.idsByConnectionType[connectionType] << device.id
 
-            stats.byIntegration[integration] = (stats.byIntegration[integration] ?: 0) + 1
-            if (!stats.idsByIntegration.containsKey(integration)) stats.idsByIntegration[integration] = []
-            stats.idsByIntegration[integration] << device.id
+            // integration is null for standalone devices (connection-type-only override): counted in
+            // the connection-type breakdown above, but intentionally omitted from the integration breakdown.
+            if (integration) {
+                stats.byIntegration[integration] = (stats.byIntegration[integration] ?: 0) + 1
+                if (!stats.idsByIntegration.containsKey(integration)) stats.idsByIntegration[integration] = []
+                stats.idsByIntegration[integration] << device.id
 
-            // Track whether each integration is built-in or community (first definitive value wins)
-            if (classification.builtin != null && !stats.integrationSources.containsKey(integration)) {
-                stats.integrationSources[integration] = classification.builtin ? "builtin" : "community"
+                // Track whether each integration is built-in or community (first definitive value wins)
+                if (classification.builtin != null && !stats.integrationSources.containsKey(integration)) {
+                    stats.integrationSources[integration] = classification.builtin ? "builtin" : "community"
+                }
             }
 
             Object parentAppId = extractParentAppId(device)
@@ -2655,12 +2662,17 @@ Map analyzeDevices(boolean deep = true) {
             ((List) stats.idsByConnectionType[newConn]) << deviceId
             stats.byConnectionType[newConn] = ((stats.byConnectionType[newConn] ?: 0) as int) + 1
 
-            // Update integration stats
-            stats.idsByIntegration[oldIntegration] = ((List) stats.idsByIntegration[oldIntegration]).findAll { it?.toString() != idStr }
-            stats.byIntegration[oldIntegration] = Math.max(0, ((stats.byIntegration[oldIntegration] ?: 0) as int) - 1)
-            if (!stats.idsByIntegration.containsKey(newInteg)) stats.idsByIntegration[newInteg] = []
-            ((List) stats.idsByIntegration[newInteg]) << deviceId
-            stats.byIntegration[newInteg] = ((stats.byIntegration[newInteg] ?: 0) as int) + 1
+            // Update integration stats (oldIntegration/newInteg are null for standalone devices,
+            // which never entered the integration breakdown — guard so we don't touch a null bucket)
+            if (oldIntegration) {
+                stats.idsByIntegration[oldIntegration] = ((List) stats.idsByIntegration[oldIntegration]).findAll { it?.toString() != idStr }
+                stats.byIntegration[oldIntegration] = Math.max(0, ((stats.byIntegration[oldIntegration] ?: 0) as int) - 1)
+            }
+            if (newInteg) {
+                if (!stats.idsByIntegration.containsKey(newInteg)) stats.idsByIntegration[newInteg] = []
+                ((List) stats.idsByIntegration[newInteg]) << deviceId
+                stats.byIntegration[newInteg] = ((stats.byIntegration[newInteg] ?: 0) as int) + 1
+            }
 
             // Update allDevices record in place
             Map deviceRecord = (Map) stats.allDevices.find { ((Map)it).id?.toString() == idStr }
@@ -3177,9 +3189,12 @@ Map classifyDevice(Map device, Map appLookup, Set communityDrivers) {
     //     same substring lookup used for parent-app names, so it wins over the isNetwork derivation.
     Map typeOverride = lookupIntegration(safeToString(device.type, ""))
     if (typeOverride?.conn) {
-        String typeName = safeToString(device.type, "")
-        String integration = (typeOverride.name) ? (String) typeOverride.name : cleanIntegrationName(typeName)
-        return [connectionType: (String) typeOverride.conn, integration: integration ?: typeName, builtin: driverIsBuiltin]
+        // A `name` means "this is an integration" — group + label the device under it. No `name` means
+        // a connection-type-only override: the device is standalone (not part of any integration), so
+        // return a null integration. analyzeDevices counts it in the connection-type breakdown but
+        // omits it from the integration breakdown (rather than fabricating a per-driver integration).
+        String integration = (typeOverride.name) ? (String) typeOverride.name : null
+        return [connectionType: (String) typeOverride.conn, integration: integration, builtin: driverIsBuiltin]
     }
 
     // 3. Network (LAN) flag — parentApp not available in bulk list; will be enriched via fullJson in deep mode

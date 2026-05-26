@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
 <!-- AUTO:hubdiag-version -->
-**Current version:** 5.64.2
+**Current version:** 5.64.3
 <!-- /AUTO -->
 
 ---
@@ -139,15 +139,21 @@ The **Connection** and **Integration** columns are inferred from Hubitat's devic
 
 When the automatic rules above get one of your integrations wrong, correct it with an optional File Manager config file, `hub_diagnostics_integration_overrides.json`. Most integrations need no entry — add one only when the derived connection type or integration name is wrong for yours.
 
-Each entry's key is a **lowercase substring** matched against a device's parent-app name, or — for a standalone device with no parent app — its driver type name. An entry may set either or both of:
+Each entry's key is a substring matched (**case-insensitively** — the app lowercases keys for you) against a device's parent-app name, or — for a standalone device with no parent app — its driver type name. An entry may set either or both of:
 
 - `conn` — the connection type, one of `paired`, `lan_direct`, `lan_bridge`, `cloud`, `virtual`, `hubmesh`, `other`. Use it when the LAN flag derives the wrong type (e.g. a LAN bridge whose child devices look like `lan_direct`, or a local device the hub flags as cloud).
-- `name` — the integration display name. Use it to **group several driver types under one integration** — e.g. an integration whose `Foo Switch`, `Foo Dimmer`, and `Foo Pico` drivers should all report as a single "Foo" rather than one bucket per driver type.
+- `name` — the integration display name, and the **opt-in that says "this device is part of an integration."** Use it to group several driver types under one integration — e.g. `Foo Switch`, `Foo Dimmer`, `Foo Pico` all reporting as a single "Foo".
+
+**`conn` alone vs `conn` + `name`:**
+
+- **`conn` only** — a connection-type-only override. The device is treated as **standalone** (not part of any integration): it's counted in the Connection Types breakdown but **omitted from the Integrations breakdown**. Use this for single cloud/LAN drivers like Awair or Pushover that aren't really an "integration." (Because standalone devices are omitted there, the Integrations counts won't sum to the device total — that's expected.)
+- **`conn` + `name`** — labels the device as belonging to the named integration and groups it in the Integrations breakdown.
 
 ```json
 {
-  "awair":     { "conn": "lan_direct", "name": "Awair" },
-  "my bridge": { "conn": "lan_bridge", "name": "My Bridge" }
+  "awair":     { "conn": "lan_direct" },                  // standalone — connection type only
+  "pushover":  { "conn": "cloud" },                       // standalone — connection type only
+  "blinkapi":  { "conn": "cloud", "name": "Blink API" }   // an integration — grouped + labeled
 }
 ```
 

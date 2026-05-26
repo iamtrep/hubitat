@@ -208,11 +208,13 @@ def classify_device(
         return (conn, integration or raw)
 
     # 2b. Override file matched on driver type name (standalone device, no parent app).
-    #     Wins over the isNetwork derivation below.
+    #     Wins over the isNetwork derivation below. A `name` means "this is an integration" (label it);
+    #     no `name` means connection-type-only — the device is standalone, so integration is None and
+    #     the caller omits it from the integration breakdown (no fabricated per-driver integration).
     type_ov = lookup_integration_with_map(driver_type, overrides)
     if type_ov and type_ov[0] is not None:
-        integration = type_ov[1] if type_ov[1] else clean_integration_name(driver_type)
-        return (type_ov[0], integration or driver_type)
+        integration = type_ov[1] if type_ov[1] else None
+        return (type_ov[0], integration)
 
     # 3. LAN flag, no parent app
     if device.get("isNetwork"):
@@ -547,13 +549,13 @@ def test_awair_no_override_falls_to_other():
 
 
 def test_awair_type_override_lan_direct():
-    """User adds {"awair": {"conn": "lan_direct"}} → matched on driver type name → lan_direct;
-    name from cleanIntegrationName (no name override) → "Awair Element"."""
+    """User adds {"awair": {"conn": "lan_direct"}} (no name) → connection-type-only override:
+    lan_direct, and integration is None (standalone — not labeled as an 'Awair' integration)."""
     merged = merge_overrides(INTEGRATION_OVERRIDES, {"awair": {"conn": "lan_direct"}})
     dev = {"type": "Awair Element", "isNetwork": False}
     conn, name = classify_device(dev, None, community_drivers={"Awair Element"}, overrides=merged)
     assert conn == CONN_LAN_DIRECT
-    assert name == "Awair Element"
+    assert name is None
 
 
 def test_type_override_with_name():
@@ -572,6 +574,16 @@ def test_type_override_wins_over_isnetwork():
     dev = {"type": "WeatherThing", "isNetwork": True}
     conn, name = classify_device(dev, None, community_drivers={"WeatherThing"}, overrides=merged)
     assert conn == CONN_CLOUD
+    assert name is None   # connection-type-only override → standalone, no integration
+
+
+def test_conn_only_override_is_standalone():
+    """Connection-type-only override (no name) classifies a standalone device: the connection type is
+    set, but integration is None so analyzeDevices omits it from the integration breakdown."""
+    merged = merge_overrides(INTEGRATION_OVERRIDES, {"pushover": {"conn": "cloud"}})
+    conn, name = classify_device({"type": "Pushover"}, None, community_drivers={"Pushover"}, overrides=merged)
+    assert conn == CONN_CLOUD
+    assert name is None
 
 
 # ── Integration-overrides merge tests (user File Manager config) ─────────────
