@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.65.1";
+const UI_VERSION = "5.65.2";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -1493,7 +1493,24 @@ function tbl(cid,cols,rows,opts={}){
   if(!rows||!rows.length){el.innerHTML='<p style="color:var(--muted);padding:16px">No data</p>';return}
   let filt=[...rows],sc=opts.sc??0,sd=opts.sd??'asc';
   const ct=opts.collapse??0,cl=opts.collapseLabel;
-  function sf(r,ci,d){const c=cols[ci];return r.sort((a,b)=>{let x=a[c.sf]??a[c.f]??'',y=b[c.sf]??b[c.f]??'';if(c.t==='n'){x=parseFloat(x)||0;y=parseFloat(y)||0}else{x=String(x).toLowerCase();y=String(y).toLowerCase()};if(x<y)return d==='asc'?-1:1;if(x>y)return d==='asc'?1:-1;return 0})}
+  // Filter/sort compare against each cell's *visible* text so they match what the user sees —
+  // the alias when name obfuscation is on (renderers already apply Obf.nm), the real name when
+  // off. Memoized once per build (toggling obfuscation clears panels and rebuilds the table), so
+  // the debounced filter and the sort comparator never re-parse HTML per keystroke.
+  const _ctCache=new Map();
+  function cellText(c,ci,r){
+    let arr=_ctCache.get(r);if(!arr){arr=[];_ctCache.set(r,arr)}
+    if(arr[ci]!==undefined)return arr[ci];
+    let t;
+    if(c.ff)t=String(c.ff(r)??'');                                                                    // explicit override wins
+    else if(c.r){const tmp=document.createElement('div');tmp.innerHTML=c.r(r);t=tmp.textContent||''}  // rendered text: tags stripped, entities decoded
+    else t=String(r[c.f]??'');                                                                        // plain field
+    return arr[ci]=t;
+  }
+  function sf(r,ci,d){const c=cols[ci],num=c.t==='n';
+    return r.map(row=>({row,k:num?(parseFloat(row[c.sf]??row[c.f])||0):cellText(c,ci,row).toLowerCase()}))
+      .sort((a,b)=>{if(a.k<b.k)return d==='asc'?-1:1;if(a.k>b.k)return d==='asc'?1:-1;return 0})
+      .map(o=>o.row)}
   function bld(rs){
     let o='';
     if(opts.filter)o+='<div class="filter"><input type="text" placeholder="Filter..." id="flt_'+cid+'"></div>';
@@ -1507,9 +1524,9 @@ function tbl(cid,cols,rows,opts={}){
     let o='';
     rs.forEach(r=>{
       o+='<tr>';
-      cols.forEach(c=>{
+      cols.forEach((c,ci)=>{
         const v=c.r?c.r(r):h(r[c.f]??'');
-        const sv=r[c.sf]??r[c.f]??'';
+        const sv=cellText(c,ci,r);   // data-v mirrors visible text → no real-name leak into copied/exported HTML
         const color = r['_' + c.f + 'Color'] || '';
         const style = color ? ' style="color:' + color + ';font-weight:600"' : '';
         o+='<td data-v="'+h(String(sv))+'"'+style+'>'+v+'</td>'
@@ -1555,13 +1572,9 @@ function tbl(cid,cols,rows,opts={}){
         clearTimeout(_fltTimer);
         _fltTimer=setTimeout(()=>{
           const q=fi.value.toLowerCase();
-          // v5.16.0 (#10): columns with `ff:` get full-text filtering on rendered/derived content
-          // (defaults to raw `r[c.f]` when ff is omitted). Use this for columns whose displayed
-          // text differs from the raw field (e.g. Parent column shows app name OR device name).
-          filt=rows.filter(r=>cols.some(c=>{
-            const txt=c.ff?c.ff(r):String(r[c.f]??'');
-            return String(txt).toLowerCase().includes(q);
-          }));
+          // Full-text match across each column's visible text (see cellText): the displayed
+          // alias when name obfuscation is on, the real name when off.
+          filt=rows.filter(r=>cols.some((c,ci)=>cellText(c,ci,r).toLowerCase().includes(q)));
           filt=sf(filt,sc,sd);
           const tb=t.querySelector('tbody');
           if(tb) tb.innerHTML=bldRows(filt);
@@ -2006,7 +2019,7 @@ async function rDevices(){const P='p-devices';loading(P);try{
     {l:'Status',f:'status',r:r=>sbadge(r.status)},
     {l:'Last Activity',f:'lastActivity'},
     {l:'Battery',f:'battery',t:'n',r:r=>bat(r.battery)},
-    {l:'Parent',f:'parentAppName',r:r=>r.parentAppName?alink(r.parentAppId,r.parentAppName):r.parentDeviceName?dlink(r.parentDeviceId,r.parentDeviceName):'-',sf:'parentAppName',ff:r=>r.parentAppName||r.parentDeviceName||''}
+    {l:'Parent',f:'parentAppName',r:r=>r.parentAppName?alink(r.parentAppId,r.parentAppName):r.parentDeviceName?dlink(r.parentDeviceId,r.parentDeviceName):'-'}
   ],d.deviceRows,{filter:true,sc:0,sd:'asc',collapse:10,collapseLabel:'All Devices'});
   const btnAudit=document.getElementById('btnAudit');
   if(btnAudit)btnAudit.onclick=()=>auditStart();
