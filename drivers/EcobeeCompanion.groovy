@@ -84,7 +84,8 @@ metadata {
         input name: "apiKey", type: "text", title: "Ecobee API Key", required: true
         if (state.thermostats && !state.thermostats.isEmpty()) {
             input name: "thermostatId", type: "enum", title: "Thermostat",
-                  options: state.thermostats, required: true
+                  options: state.thermostats.collectEntries { id, info -> [(id): info.name] },
+                  required: true
         }
         input name: "pollInterval", type: "number", title: "Polling interval (minutes)", description: "How often to refresh thermostat state (1-30 minutes)", range: "1..30", defaultValue: 5, required: true
         input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
@@ -380,19 +381,18 @@ List<Map> listThermostats() {
     List<Map> thermostats = data.thermostatList
     logInfo "Found ${thermostats.size()} thermostat(s)"
 
-    Map<String, String> opts = [:]
+    Map<String, Map> discovered = [:]
     thermostats.each { Map t ->
         String id = t.identifier?.toString()
-        String label = "${t.name} (${t.modelNumber})"
-        opts[id] = label
-        logInfo "  ${label} — ID: ${id}"
+        discovered[id] = [name: t.name?.toString(), model: t.modelNumber?.toString()]
+        logInfo "  ${t.name} (${t.modelNumber}) — ID: ${id}"
     }
-    state.thermostats = opts
+    state.thermostats = discovered
 
     if (thermostats.size() == 1) {
         String onlyId = thermostats[0].identifier?.toString()
         device.updateSetting("thermostatId", [type: "enum", value: onlyId])
-        logInfo "Auto-selected the only thermostat: ${opts[onlyId]}"
+        logInfo "Auto-selected the only thermostat: ${discovered[onlyId].name}"
     }
 
     return thermostats
@@ -480,6 +480,8 @@ Map getThermostat() {
 }
 
 Boolean updateThermostat(Map thermostat) {
+    if (!requireThermostatId()) return false
+
     Map body = [
         selection: [
             selectionType: "thermostats",
@@ -771,9 +773,10 @@ void getCurrentState() {
     sendEvent(name: "heatingSetpoint", value: heatC, unit: "°C", descriptionText: "${device.displayName} heating setpoint is ${heatC}°C")
     sendEvent(name: "coolingSetpoint", value: coolC, unit: "°C", descriptionText: "${device.displayName} cooling setpoint is ${coolC}°C")
 
-    // Update HVAC mode
+    // Update HVAC mode (both the custom attribute and the platform-standard thermostatMode)
     String hvacModeValue = thermostat.settings?.hvacMode?.toString() ?: "unknown"
-    sendEvent(name: "hvacMode", value: hvacModeValue, descriptionText: "${device.displayName} HVAC mode is set to ${hvacMode}")
+    sendEvent(name: "hvacMode", value: hvacModeValue, descriptionText: "${device.displayName} HVAC mode is set to ${hvacModeValue}")
+    sendEvent(name: "thermostatMode", value: hvacModeValue, descriptionText: "${device.displayName} thermostat mode is ${hvacModeValue}")
 
     // Update current program
     String currentProgramValue = thermostat.program?.currentClimateRef?.toString() ?: "unknown"
@@ -842,6 +845,8 @@ void setThermostatMode(String mode) {
         logError "Invalid thermostat mode: ${mode}. Valid modes: ${constValidThermostatModes.keySet()}"
         return
     }
+
+    if (!requireThermostatId()) return
 
     Map bodyData = [
         selection: [
@@ -1024,6 +1029,14 @@ private boolean validateToken() {
     return true
 }
 
+private boolean requireThermostatId() {
+    if (!thermostatId) {
+        logError "No thermostat selected — run listThermostats() to discover, then save preferences"
+        return false
+    }
+    return true
+}
+
 private boolean validateDayParameter(String day) {
     if (!constScheduleDaysIndex.keySet().contains(day?.toLowerCase())) {
         logError "Invalid day: ${day}. Must be one of: ${constScheduleDaysIndex.keySet()}"
@@ -1034,6 +1047,7 @@ private boolean validateDayParameter(String day) {
 
 private Map fetchThermostatData(String apiPath = "/1/thermostat", Map customSelection = null) {
     if (!validateToken()) return null
+    if (!requireThermostatId()) return null
 
     Map selection = customSelection != null ? customSelection : [
         selectionType: "thermostats",
@@ -1077,6 +1091,8 @@ private List adjustScheduleBlocks(List blocks, Integer fromBlock, Integer toBloc
 // ========================================
 
 Boolean sendFunction(Map function) {
+    if (!requireThermostatId()) return false
+
     Map body = [
         selection: [
             selectionType: "thermostats",
@@ -1169,15 +1185,15 @@ Integer dayNameToIndex(String day) {
 @CompileStatic
 Integer celsiusToEcobee(def temp) {
     // Ecobee uses Fahrenheit * 10 internally
-    if (!temp) return null
+    if (temp == null) return null
     BigDecimal celsius = (temp instanceof String) ? temp.toBigDecimal() : (temp as BigDecimal)
     BigDecimal fahrenheit = celsius * 9 / 5 + 32
-    return (fahrenheit * 10).setScale(0, BigDecimal.ROUND_HALF_UP).intValue()
+    return (fahrenheit * 10).setScale(0, RoundingMode.HALF_UP).intValue()
 }
 
 @CompileStatic
 BigDecimal ecobeeToCelsius(def temp) {
-    if (!temp) return null
+    if (temp == null) return null
     BigDecimal fahrenheitTimes10 = (temp instanceof String) ? temp.toBigDecimal() : (temp as BigDecimal)
     BigDecimal celsius = (fahrenheitTimes10 / 10 - 32) * 5 / 9
     return roundTemp(celsius)
