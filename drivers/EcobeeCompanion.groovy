@@ -82,7 +82,10 @@ metadata {
 
     preferences {
         input name: "apiKey", type: "text", title: "Ecobee API Key", required: true
-        input name: "thermostatId", type: "text", title: "Thermostat Identifier", required: true
+        if (state.thermostats && !state.thermostats.isEmpty()) {
+            input name: "thermostatId", type: "enum", title: "Thermostat",
+                  options: state.thermostats, required: true
+        }
         input name: "pollInterval", type: "number", title: "Polling interval (minutes)", description: "How often to refresh thermostat state (1-30 minutes)", range: "1..30", defaultValue: 5, required: true
         input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
         input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
@@ -184,7 +187,7 @@ void refresh() {
 
 void connect() {
     if (!apiKey) {
-        log.error "API Key not configured"
+        logError "API Key not configured"
         sendEvent(name: "connectionStatus", value: "error", descriptionText: "${device.displayName} Error: No API Key")
         return
     }
@@ -196,37 +199,47 @@ void connect() {
             client_id: apiKey,
             scope: "smartWrite"
         ],
-        contentType: "application/json"
+        contentType: "application/json",
+        timeout: 15
     ]
 
     try {
         httpGet(params) { response ->
-            if (response.status == 200) {
-                Map data = response.data
-                state.ecobeeAuthToken = data.code
-                state.interval = data.interval
-                state.pinExpires = now() + (data.expires_in * 1000)
-
-                log.info "PIN: ${data.ecobeePin} (expires in ${data.expires_in / 60} min)"
-                log.info "Authorize at ecobee.com, then run authorize() to complete setup"
-
-                sendEvent(name: "connectionStatus", value: "pending", descriptionText: "${device.displayName} Waiting for PIN authorization: ${data.ecobeePin}")
+            int status = response.status
+            if (status < 200 || status >= 300) {
+                logWarn "connect() non-success status=${status} body=${response.data}"
+                return
             }
+            Map data = response.data
+            state.ecobeeAuthToken = data.code
+            state.interval = data.interval
+            state.pinExpires = now() + (data.expires_in * 1000)
+
+            logInfo "PIN: ${data.ecobeePin} (expires in ${data.expires_in / 60} min)"
+            logInfo "Authorize at ecobee.com, then run authorize() to complete setup"
+
+            sendEvent(name: "connectionStatus", value: "pending", descriptionText: "${device.displayName} Waiting for PIN authorization: ${data.ecobeePin}")
         }
     } catch (e) {
-        log.error "Error initiating OAuth: ${e.message}"
-        sendEvent(name: "connectionStatus", value: "error", descriptionText: "${device.displayName} Error: ${e.message}")
+        Integer status = e.response?.status as Integer
+        String oauthError = e.response?.data?.error?.toString()
+        if (status != null && status >= 400 && status < 500) {
+            logError "connect() client error status=${status} oauth=${oauthError} msg=${e.message}"
+            sendEvent(name: "connectionStatus", value: "error", descriptionText: "${device.displayName} Error: ${oauthError ?: e.message}")
+        } else {
+            logWarn "connect() transient failure status=${status} msg=${e.message}"
+        }
     }
 }
 
 void authorize() {
     if (!state.ecobeeAuthToken) {
-        log.error "No authorization token. Call connect() first"
+        logError "No authorization token. Call connect() first"
         return
     }
 
     if (now() > state.pinExpires) {
-        log.error "PIN expired. Call connect() again"
+        logError "PIN expired. Call connect() again"
         sendEvent(name: "connectionStatus", value: "error", descriptionText: "${device.displayName} Error: PIN expired")
         return
     }
@@ -238,35 +251,60 @@ void authorize() {
             code: state.ecobeeAuthToken,
             client_id: apiKey
         ],
-        contentType: "application/json"
+        contentType: "application/json",
+        timeout: 15
     ]
 
     try {
         httpPost(params) { response ->
-            if (response.status == 200) {
-                Map data = response.data
-                state.accessToken = data.access_token
-                state.refreshToken = data.refresh_token
-                state.tokenExpiry = now() + (data.expires_in * 1000)
-
-                state.remove('ecobeeAuthToken')
-                state.remove('interval')
-                state.remove('pinExpires')
-
-                log.info "Authorization successful"
-                sendEvent(name: "connectionStatus", value: "connected")
+            int status = response.status
+            if (status < 200 || status >= 300) {
+                logWarn "authorize() non-success status=${status} body=${response.data}"
+                return
             }
+            Map data = response.data
+            state.accessToken = data.access_token
+            state.refreshToken = data.refresh_token
+            state.tokenExpiry = now() + (data.expires_in * 1000)
+
+            state.remove('ecobeeAuthToken')
+            state.remove('interval')
+            state.remove('pinExpires')
+
+            logInfo "Authorization successful"
+            sendEvent(name: "connectionStatus", value: "connected")
+            listThermostats()
         }
     } catch (e) {
-        log.error "Authorization error: ${e.message}"
-        sendEvent(name: "connectionStatus", value: "error", descriptionText: "${device.displayName} Error: ${e.message}")
+        Integer status = e.response?.status as Integer
+        String oauthError = e.response?.data?.error?.toString()
+        if (status != null && status >= 400 && status < 500) {
+            switch (oauthError) {
+                case "authorization_pending":
+                    logInfo "authorize() still waiting for PIN entry at ecobee.com"
+                    break
+                case "slow_down":
+                    logWarn "authorize() polling too fast — back off before retrying"
+                    break
+                case "invalid_grant":
+                case "expired_token":
+                    logError "authorize() PIN expired (${oauthError}) — call connect() to get a new PIN"
+                    sendEvent(name: "connectionStatus", value: "error", descriptionText: "${device.displayName} Error: PIN expired (${oauthError})")
+                    break
+                default:
+                    logError "authorize() client error status=${status} oauth=${oauthError} msg=${e.message}"
+                    sendEvent(name: "connectionStatus", value: "error", descriptionText: "${device.displayName} Error: ${oauthError ?: e.message}")
+            }
+        } else {
+            logWarn "authorize() transient failure status=${status} msg=${e.message}"
+        }
     }
 }
 
 Boolean refreshToken() {
     if (!state.refreshToken) {
-        log.error "No refresh token available"
-        sendEvent(name: "connectionStatus", "error", descriptionText: "${device.displayName} Error: Not authorized")
+        logError "No refresh token available"
+        sendEvent(name: "connectionStatus", value: "error", descriptionText: "${device.displayName} Error: Not authorized")
         return false
     }
 
@@ -277,26 +315,36 @@ Boolean refreshToken() {
             refresh_token: state.refreshToken,
             client_id: apiKey
         ],
-        contentType: "application/json"
+        contentType: "application/json",
+        timeout: 15
     ]
 
     Boolean success = false
     try {
         httpPost(params) { response ->
-            if (response.status == 200) {
-                Map data = response.data
-                state.accessToken = data.access_token
-                state.refreshToken = data.refresh_token
-                state.tokenExpiry = now() + (data.expires_in * 1000)
-
-                logDebug "Token refreshed"
-                sendEvent(name: "connectionStatus", value: "connected", descriptionText: "${device.displayName} is connected")
-                success = true
+            int status = response.status
+            if (status < 200 || status >= 300) {
+                logWarn "Token refresh non-success status=${status} body=${response.data}"
+                return
             }
+            Map data = response.data
+            state.accessToken = data.access_token
+            state.refreshToken = data.refresh_token
+            state.tokenExpiry = now() + (data.expires_in * 1000)
+
+            logDebug "Token refreshed"
+            sendEvent(name: "connectionStatus", value: "connected", descriptionText: "${device.displayName} is connected")
+            success = true
         }
     } catch (e) {
-        log.error "Token refresh error: ${e.message}"
-        sendEvent(name: "connectionStatus", value: "error", descriptionText: "${device.displayName} Token refresh failed")
+        Integer status = e.response?.status as Integer
+        String oauthError = e.response?.data?.error?.toString()
+        if (status != null && status >= 400 && status < 500 && oauthError in ["invalid_grant", "invalid_client"]) {
+            logError "Token refresh auth failure status=${status} oauth=${oauthError} — re-authorization required"
+            sendEvent(name: "connectionStatus", value: "error", descriptionText: "${device.displayName} re-authorization required (${oauthError})")
+        } else {
+            logWarn "Token refresh transient failure status=${status} oauth=${oauthError} msg=${e.message}"
+        }
     }
     return success
 }
@@ -325,14 +373,26 @@ List<Map> listThermostats() {
 
     Map data = callEcobeeApi("GET", "/1/thermostat", queryData)
     if (!data?.thermostatList) {
-        log.error "Could not retrieve thermostat list"
+        logError "Could not retrieve thermostat list"
         return []
     }
 
     List<Map> thermostats = data.thermostatList
-    log.info "Found ${thermostats.size()} thermostat(s)"
+    logInfo "Found ${thermostats.size()} thermostat(s)"
+
+    Map<String, String> opts = [:]
     thermostats.each { Map t ->
-        log.info "  ${t.name} (ID: ${t.identifier}, Model: ${t.modelNumber})"
+        String id = t.identifier?.toString()
+        String label = "${t.name} (${t.modelNumber})"
+        opts[id] = label
+        logInfo "  ${label} — ID: ${id}"
+    }
+    state.thermostats = opts
+
+    if (thermostats.size() == 1) {
+        String onlyId = thermostats[0].identifier?.toString()
+        device.updateSetting("thermostatId", [type: "enum", value: onlyId])
+        logInfo "Auto-selected the only thermostat: ${opts[onlyId]}"
     }
 
     return thermostats
@@ -343,11 +403,11 @@ List<Map> listComfortSettings() {
     if (!thermostat) return []
 
     List<Map> climates = thermostat.program.climates
-    log.info "Found ${climates.size()} comfort setting(s)"
+    logInfo "Found ${climates.size()} comfort setting(s)"
     climates.each { Map c ->
         BigDecimal heatC = ecobeeToCelsius(c.heatTemp)
         BigDecimal coolC = ecobeeToCelsius(c.coolTemp)
-        log.info "  ${c.name}: Heat ${heatC}°C, Cool ${coolC}°C (${c.climateRef})"
+        logInfo "  ${c.name}: Heat ${heatC}°C, Cool ${coolC}°C (${c.climateRef})"
     }
 
     return climates
@@ -357,18 +417,20 @@ List<Map> listComfortSettings() {
 // Ecobee API Methods
 // ========================================
 
-private Map callEcobeeApi(String method, String path, Map queryParams = null, Map bodyData = null) {
+private Map callEcobeeApi(String method, String path, Map queryParams = null, Map bodyData = null, int attempt = 0) {
     if (!checkAndRefreshToken()) {
-        log.error "Cannot call API: token refresh failed"
+        logError "Cannot call API: token refresh failed"
         return null
     }
 
+    Map headers = [Authorization: "Bearer ${state.accessToken}"]
+    if (bodyData) headers["Content-Type"] = "application/json"
+
     Map params = [
         uri: "${constEcobeeApiBase}${path}",
-        headers: [
-            Authorization: "Bearer ${state.accessToken}",
-            "Content-Type": "application/json"
-        ]
+        headers: headers,
+        contentType: "application/json",
+        timeout: 15
     ]
 
     if (queryParams) params.query = queryParams
@@ -376,24 +438,35 @@ private Map callEcobeeApi(String method, String path, Map queryParams = null, Ma
 
     try {
         Map result = null
+        Closure handler = { response ->
+            int status = response.status
+            if (status < 200 || status >= 300) {
+                logWarn "Ecobee API non-success [${method} ${path}] status=${status} body=${response.data}"
+                return
+            }
+            def data = response.data
+            Integer ecobeeCode = data?.status?.code as Integer
+            if (ecobeeCode != null && ecobeeCode != 0) {
+                logWarn "Ecobee app-level error [${method} ${path}] code=${ecobeeCode} msg=${data?.status?.message}"
+                return
+            }
+            result = data
+        }
         if (method == "GET") {
-            httpGet(params) { response ->
-                if (response.status == 200) result = response.data
-            }
+            httpGet(params, handler)
         } else if (method == "POST") {
-            httpPost(params) { response ->
-                if (response.status == 200) result = response.data
-            }
+            httpPost(params, handler)
         }
         return result
     } catch (e) {
-        if (e.response?.status == 401) {
-            log.warn "Token invalid, refreshing..."
+        Integer status = e.response?.status as Integer
+        if (status == 401 && attempt == 0) {
+            logWarn "Token invalid, refreshing..."
             if (refreshToken()) {
-                return callEcobeeApi(method, path, queryParams, bodyData) // Retry
+                return callEcobeeApi(method, path, queryParams, bodyData, attempt + 1)
             }
         }
-        log.error "Error calling Ecobee API: ${e.message}"
+        logError "Ecobee API failed [${method} ${path}] status=${status} msg=${e.message}"
         return null
     }
 }
@@ -401,7 +474,7 @@ private Map callEcobeeApi(String method, String path, Map queryParams = null, Ma
 Map getThermostat() {
     Map thermostat = fetchThermostatData()
     if (!thermostat) {
-        log.error "Could not retrieve thermostat data"
+        logError "Could not retrieve thermostat data"
     }
     return thermostat
 }
@@ -424,7 +497,7 @@ Boolean updateThermostat(Map thermostat) {
 
 void setComfortTemperature(String comfortName, heatTemp, coolTemp = null) {
     if (heatTemp == null) {
-        log.error "Heat temperature is required"
+        logError "Heat temperature is required"
         return
     }
 
@@ -432,7 +505,7 @@ void setComfortTemperature(String comfortName, heatTemp, coolTemp = null) {
         BigDecimal heatC = (heatTemp instanceof String) ? heatTemp.toBigDecimal() : (heatTemp as BigDecimal)
         BigDecimal coolC = (coolTemp instanceof String) ? coolTemp.toBigDecimal() : (coolTemp as BigDecimal)
         if (heatC >= coolC) {
-            log.error "Heat temp must be less than cool temp"
+            logError "Heat temp must be less than cool temp"
             return
         }
     }
@@ -442,7 +515,7 @@ void setComfortTemperature(String comfortName, heatTemp, coolTemp = null) {
 
     Map climate = thermostat.program.climates.find { it.name == comfortName }
     if (!climate) {
-        log.error "Comfort setting '${comfortName}' not found"
+        logError "Comfort setting '${comfortName}' not found"
         return
     }
 
@@ -452,10 +525,10 @@ void setComfortTemperature(String comfortName, heatTemp, coolTemp = null) {
     }
 
     if (updateThermostat([program: thermostat.program])) {
-        log.info "Updated ${comfortName}: Heat ${heatTemp}°C" + (coolTemp ? ", Cool ${coolTemp}°C" : "")
+        logInfo "Updated ${comfortName}: Heat ${heatTemp}°C" + (coolTemp ? ", Cool ${coolTemp}°C" : "")
         state.lastUpdate = new Date().format("yyyy-MM-dd HH:mm:ss")
     } else {
-        log.error "Failed to update ${comfortName}"
+        logError "Failed to update ${comfortName}"
     }
 }
 
@@ -470,15 +543,15 @@ List<Map> listVacations() {
     List<Map> vacations = (thermostat.events ?: []).findAll { it.type == "vacation" }
 
     if (vacations.size() == 0) {
-        log.info "No vacations scheduled"
+        logInfo "No vacations scheduled"
         return []
     }
 
-    log.info "Found ${vacations.size()} vacation(s)"
+    logInfo "Found ${vacations.size()} vacation(s)"
     vacations.each { Map v ->
         BigDecimal heatC = ecobeeToCelsius(v.heatHoldTemp)
         BigDecimal coolC = ecobeeToCelsius(v.coolHoldTemp)
-        log.info "  ${v.name}: ${v.startDate} ${v.startTime} to ${v.endDate} ${v.endTime}, Heat ${heatC}°C, Cool ${coolC}°C, Fan ${v.fan}"
+        logInfo "  ${v.name}: ${v.startDate} ${v.startTime} to ${v.endDate} ${v.endTime}, Heat ${heatC}°C, Cool ${coolC}°C, Fan ${v.fan}"
     }
 
     return vacations
@@ -489,7 +562,7 @@ void createVacation(String name, String startDateTime, String endDateTime, heatT
     Map<String, String> endParts = parseDateTime(endDateTime)
 
     if (!startParts || !endParts) {
-        log.error "Invalid date/time format. Use: yyyy-MM-dd HH:mm"
+        logError "Invalid date/time format. Use: yyyy-MM-dd HH:mm"
         return
     }
 
@@ -497,23 +570,23 @@ void createVacation(String name, String startDateTime, String endDateTime, heatT
         Date startDate = Date.parse("yyyy-MM-dd HH:mm:ss", "${startParts.date} ${startParts.time}")
         Date endDate = Date.parse("yyyy-MM-dd HH:mm:ss", "${endParts.date} ${endParts.time}")
         if (endDate <= startDate) {
-            log.error "End date/time must be after start date/time"
+            logError "End date/time must be after start date/time"
             return
         }
     } catch (Exception e) {
-        log.error "Error validating dates: ${e.message}"
+        logError "Error validating dates: ${e.message}"
         return
     }
 
     if (heatTemp == null || coolTemp == null) {
-        log.error "Both heat and cool temperatures are required"
+        logError "Both heat and cool temperatures are required"
         return
     }
 
     BigDecimal heatC = (heatTemp instanceof String) ? heatTemp.toBigDecimal() : (heatTemp as BigDecimal)
     BigDecimal coolC = (coolTemp instanceof String) ? coolTemp.toBigDecimal() : (coolTemp as BigDecimal)
     if (heatC >= coolC) {
-        log.error "Heat temp must be less than cool temp"
+        logError "Heat temp must be less than cool temp"
         return
     }
 
@@ -521,7 +594,7 @@ void createVacation(String name, String startDateTime, String endDateTime, heatT
     if (!thermostat) return
 
     if (thermostat.events?.find { it.type == "vacation" && it.name == name }) {
-        log.error "Vacation '${name}' already exists"
+        logError "Vacation '${name}' already exists"
         return
     }
 
@@ -542,10 +615,10 @@ void createVacation(String name, String startDateTime, String endDateTime, heatT
     ]
 
     if (sendFunction([type: "createVacation", params: vacation])) {
-        log.info "Created vacation '${name}'"
+        logInfo "Created vacation '${name}'"
         state.lastUpdate = new Date().format("yyyy-MM-dd HH:mm:ss")
     } else {
-        log.error "Failed to create vacation '${name}'"
+        logError "Failed to create vacation '${name}'"
     }
 }
 
@@ -554,15 +627,15 @@ void deleteVacation(String name) {
     if (!thermostat) return
 
     if (!thermostat.events?.find { it.type == "vacation" && it.name == name }) {
-        log.error "Vacation '${name}' not found"
+        logError "Vacation '${name}' not found"
         return
     }
 
     if (sendFunction([type: "deleteVacation", params: [name: name]])) {
-        log.info "Deleted vacation '${name}'"
+        logInfo "Deleted vacation '${name}'"
         state.lastUpdate = new Date().format("yyyy-MM-dd HH:mm:ss")
     } else {
-        log.error "Failed to delete vacation '${name}'"
+        logError "Failed to delete vacation '${name}'"
     }
 }
 
@@ -579,13 +652,13 @@ List<Map> listThermostatSchedule(String day) {
     Integer dayIndex = dayNameToIndex(day)
     List scheduleBlocks = thermostat.program.schedule[dayIndex]
     if (!scheduleBlocks) {
-        log.error "No schedule found for ${day}"
+        logError "No schedule found for ${day}"
         return []
     }
 
     Map<String, String> climates = thermostat.program.climates.collectEntries { [(it.climateRef): it.name] }
 
-    log.info "Schedule for ${day}"
+    logInfo "Schedule for ${day}"
     List<Map> transitions = []
     String lastClimate = null
     for (int i = 0; i < scheduleBlocks.size(); i++) {
@@ -595,7 +668,7 @@ List<Map> listThermostatSchedule(String day) {
             Integer minutes = (i % 2) * 30
             String timeStr = String.format("%02d:%02d", hours, minutes)
             String climateName = climates[climate] ?: climate
-            log.info "  ${timeStr}: ${climateName}"
+            logInfo "  ${timeStr}: ${climateName}"
 
             transitions << [
                 time: timeStr,
@@ -618,7 +691,7 @@ void setThermostatScheduleTime(String day, String comfortName, String currentTim
     Map program = thermostat.program
     Map climate = program.climates.find { it.name == comfortName }
     if (!climate) {
-        log.error "Comfort setting '${comfortName}' not found"
+        logError "Comfort setting '${comfortName}' not found"
         return
     }
     String climateRef = climate.climateRef
@@ -627,12 +700,12 @@ void setThermostatScheduleTime(String day, String comfortName, String currentTim
     Integer newBlock = timeToBlockIndex(newTime)
 
     if (currentBlock == null || newBlock == null) {
-        log.error "Invalid time format. Use HH:mm on 30-minute boundaries (XX:00 or XX:30)"
+        logError "Invalid time format. Use HH:mm on 30-minute boundaries (XX:00 or XX:30)"
         return
     }
 
     if (currentBlock == newBlock) {
-        log.info "Time is already ${currentTime}, no change needed"
+        logInfo "Time is already ${currentTime}, no change needed"
         return
     }
 
@@ -640,12 +713,12 @@ void setThermostatScheduleTime(String day, String comfortName, String currentTim
     List scheduleBlocks = program.schedule[dayIndex]
 
     if (scheduleBlocks[currentBlock] != climateRef) {
-        log.error "No ${comfortName} schedule entry at ${currentTime} on ${day}"
+        logError "No ${comfortName} schedule entry at ${currentTime} on ${day}"
         return
     }
 
     if (currentBlock > 0 && scheduleBlocks[currentBlock - 1] == climateRef) {
-        log.error "${comfortName} doesn't start at ${currentTime}"
+        logError "${comfortName} doesn't start at ${currentTime}"
         return
     }
 
@@ -656,10 +729,10 @@ void setThermostatScheduleTime(String day, String comfortName, String currentTim
 
     Map updateData = [program: program]
     if (updateThermostat(updateData)) {
-        log.info "Moved ${comfortName} on ${day} from ${currentTime} to ${newTime}"
+        logInfo "Moved ${comfortName} on ${day} from ${currentTime} to ${newTime}"
         state.lastUpdate = new Date().format("yyyy-MM-dd HH:mm:ss")
     } else {
-        log.error "Failed to update schedule"
+        logError "Failed to update schedule"
     }
 }
 
@@ -743,7 +816,7 @@ void getCurrentState() {
     }
 
     // Concise log summary
-    log.info "State: ${tempC}°C, ${runtime.actualHumidity}%, Heat ${heatC}°C, Cool ${coolC}°C, ${operatingState}, ${activeHold ? 'Hold active' : 'No hold'}"
+    logInfo "State: ${tempC}°C, ${runtime.actualHumidity}%, Heat ${heatC}°C, Cool ${coolC}°C, ${operatingState}, ${activeHold ? 'Hold active' : 'No hold'}"
 
     state.lastUpdate = new Date().format("yyyy-MM-dd HH:mm:ss")
 }
@@ -753,20 +826,20 @@ void getCurrentState() {
 // ========================================
 
 void setCoolingSetpoint(BigDecimal temperature) {
-    log.info "Setting cooling setpoint to ${temperature}°C"
+    logInfo "Setting cooling setpoint to ${temperature}°C"
     setHoldTemperature(null, temperature, "nextTransition")
 }
 
 void setHeatingSetpoint(BigDecimal temperature) {
-    log.info "Setting heating setpoint to ${temperature}°C"
+    logInfo "Setting heating setpoint to ${temperature}°C"
     setHoldTemperature(temperature, null, "nextTransition")
 }
 
 void setThermostatMode(String mode) {
-    log.info "Setting thermostat mode to ${mode}"
+    logInfo "Setting thermostat mode to ${mode}"
 
     if (!constValidThermostatModes.containsKey(mode)) {
-        log.error "Invalid thermostat mode: ${mode}. Valid modes: ${constValidThermostatModes.keySet()}"
+        logError "Invalid thermostat mode: ${mode}. Valid modes: ${constValidThermostatModes.keySet()}"
         return
     }
 
@@ -785,9 +858,9 @@ void setThermostatMode(String mode) {
     Map data = callEcobeeApi("POST", "/1/thermostat", null, bodyData)
     if (data) {
         sendEvent(name: "thermostatMode", value: mode)
-        log.info "Successfully set thermostat mode to ${mode}"
+        logInfo "Successfully set thermostat mode to ${mode}"
     } else {
-        log.error "Failed to set thermostat mode"
+        logError "Failed to set thermostat mode"
     }
 }
 
@@ -812,14 +885,14 @@ void off() {
 }
 
 void setThermostatSchedule(String jsonSchedule) {
-    log.warn "setThermostatSchedule() not implemented - use setThermostatScheduleTime() instead"
+    logWarn "setThermostatSchedule() not implemented - use setThermostatScheduleTime() instead"
 }
 
 void setThermostatFanMode(String fanMode) {
-    log.info "Setting fan mode to ${fanMode}"
+    logInfo "Setting fan mode to ${fanMode}"
 
     if (!constValidFanModes.containsKey(fanMode)) {
-        log.error "Invalid fan mode: ${fanMode}. Valid modes: ${constValidFanModes.keySet()}"
+        logError "Invalid fan mode: ${fanMode}. Valid modes: ${constValidFanModes.keySet()}"
         return
     }
 
@@ -833,9 +906,9 @@ void setThermostatFanMode(String fanMode) {
 
     if (sendFunction(function)) {
         sendEvent(name: "thermostatFanMode", value: fanMode)
-        log.info "Successfully set fan mode to ${fanMode}"
+        logInfo "Successfully set fan mode to ${fanMode}"
     } else {
-        log.error "Failed to set fan mode"
+        logError "Failed to set fan mode"
     }
 }
 
@@ -874,9 +947,9 @@ private void setHoldTemperature(BigDecimal heatTemp, BigDecimal coolTemp, String
         if (coolTemp != null) {
             sendEvent(name: "coolingSetpoint", value: coolTemp, unit: "°C")
         }
-        log.info "Successfully set temperature hold"
+        logInfo "Successfully set temperature hold"
     } else {
-        log.error "Failed to set temperature hold"
+        logError "Failed to set temperature hold"
     }
 }
 
@@ -887,17 +960,17 @@ void getWeatherForecast() {
 
     Map weather = thermostat.weather
     if (!weather?.forecasts) {
-        log.error "No weather forecast available"
+        logError "No weather forecast available"
         return
     }
 
-    log.info "Weather: ${weather.weatherStation}"
+    logInfo "Weather: ${weather.weatherStation}"
     weather.forecasts.take(5).eachWithIndex { forecast, index ->
         String day = index == 0 ? "Today" : "Day ${index}"
         BigDecimal high = ecobeeToCelsius(forecast.tempHigh)
         BigDecimal low = ecobeeToCelsius(forecast.tempLow)
         String precip = forecast.pop > 0 ? ", ${forecast.pop}% precip" : ""
-        log.info "  ${day}: ${forecast.condition}, ${high}°C/${low}°C, ${forecast.relativeHumidity}%${precip}"
+        logInfo "  ${day}: ${forecast.condition}, ${high}°C/${low}°C, ${forecast.relativeHumidity}%${precip}"
     }
 }
 
@@ -908,11 +981,11 @@ List<Map> listSensors() {
 
     List<Map> sensors = thermostat.remoteSensors
     if (!sensors || sensors.size() == 0) {
-        log.info "No remote sensors found"
+        logInfo "No remote sensors found"
         return []
     }
 
-    log.info "Found ${sensors.size()} sensor(s)"
+    logInfo "Found ${sensors.size()} sensor(s)"
     sensors.each { Map sensor ->
         List<String> readings = []
         sensor.capability.each { Map cap ->
@@ -929,7 +1002,7 @@ List<Map> listSensors() {
                 readings << "${cap.value}% RH"
             }
         }
-        log.info "  ${sensor.name} (${sensor.type}): ${readings.join(', ')}"
+        logInfo "  ${sensor.name} (${sensor.type}): ${readings.join(', ')}"
     }
 
     return sensors
@@ -945,7 +1018,7 @@ private static BigDecimal roundTemp(BigDecimal temp) {
 
 private boolean validateToken() {
     if (!state.accessToken) {
-        log.warn "Not authorized - run connect() first"
+        logWarn "Not authorized - run connect() first"
         return false
     }
     return true
@@ -953,7 +1026,7 @@ private boolean validateToken() {
 
 private boolean validateDayParameter(String day) {
     if (!constScheduleDaysIndex.keySet().contains(day?.toLowerCase())) {
-        log.error "Invalid day: ${day}. Must be one of: ${constScheduleDaysIndex.keySet()}"
+        logError "Invalid day: ${day}. Must be one of: ${constScheduleDaysIndex.keySet()}"
         return false
     }
     return true
@@ -973,7 +1046,7 @@ private Map fetchThermostatData(String apiPath = "/1/thermostat", Map customSele
     Map data = callEcobeeApi("GET", apiPath, queryData)
 
     if (data?.status?.code != null && data.status.code != 0) {
-        log.error "API error: ${data.status.message}"
+        logError "API error: ${data.status.message}"
         return null
     }
 
@@ -989,7 +1062,7 @@ private List adjustScheduleBlocks(List blocks, Integer fromBlock, Integer toBloc
     } else if (toBlock > fromBlock) {
         // Moving later: previous climate extends into old space
         if (previousClimate == null) {
-            log.error "Cannot move first schedule entry later"
+            logError "Cannot move first schedule entry later"
             return null
         }
         for (int i = fromBlock; i < toBlock; i++) {
@@ -1017,7 +1090,7 @@ Boolean sendFunction(Map function) {
         return true
     }
     if (data?.status) {
-        log.error "Function failed: ${data.status.message}"
+        logError "Function failed: ${data.status.message}"
     }
     return false
 }
