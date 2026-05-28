@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
 <!-- AUTO:hubdiag-version -->
-**Current version:** 5.65.1
+**Current version:** 5.65.3
 <!-- /AUTO -->
 
 ---
@@ -162,8 +162,8 @@ Each entry's key is a substring matched (**case-insensitively** — the app lowe
 
 To apply:
 
-1. Start from the documented template, `integration_overrides.json`, that ships with the app. Entries whose key begins with `_` are disabled — enable one by removing its leading underscore.
-2. Upload the file to the hub's **File Manager**, named exactly `hub_diagnostics_integration_overrides.json`.
+1. Start from the sample file at `apps/HubDiagnostics/tests/hub_diagnostics_integration_overrides.json` (or build your own). Keys beginning with `_` are treated as comments/disabled — strip the leading underscore to enable an entry.
+2. Upload the file to the hub's **File Manager**, keeping the name `hub_diagnostics_integration_overrides.json`.
 3. Open Hub Diagnostics and **Save** the App Settings page to reload it.
 
 Your entries overlay the built-in table; on a key collision, yours wins.
