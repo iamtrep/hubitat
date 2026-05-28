@@ -115,13 +115,6 @@ metadata {
 @Field static final int SCHEDULE_BLOCKS_PER_DAY = 48
 @Field static final int SCHEDULE_MINUTES_PER_BLOCK = 30
 
-@Field static final Map constConnectionStatus = [
-    connected: "connected",
-    disconnected: "disconnected",
-    pending: "pending",
-    error: "error"
-]
-
 // Token and timeout configuration
 @Field static final long TOKEN_REFRESH_BUFFER_MS = 325782L  // Refresh 5.5 minutes before expiry
 @Field static final int DEBUG_LOG_TIMEOUT_SECONDS = 3600    // Auto-disable debug logging after 1 hour
@@ -192,6 +185,12 @@ void connect() {
         sendEvent(name: "connectionStatus", value: "error", descriptionText: "${device.displayName} Error: No API Key")
         return
     }
+
+    // Wipe any prior OAuth state so a fresh PIN flow doesn't collide with stale tokens/selection.
+    state.remove('accessToken')
+    state.remove('refreshToken')
+    state.remove('tokenExpiry')
+    state.remove('thermostats')
 
     Map params = [
         uri: "${constEcobeeApiBase}/authorize",
@@ -889,10 +888,6 @@ void off() {
     setThermostatMode("off")
 }
 
-void setThermostatSchedule(String jsonSchedule) {
-    logWarn "setThermostatSchedule() not implemented - use setThermostatScheduleTime() instead"
-}
-
 void setThermostatFanMode(String fanMode) {
     logInfo "Setting fan mode to ${fanMode}"
 
@@ -1182,7 +1177,6 @@ Integer dayNameToIndex(String day) {
     return constScheduleDaysIndex[day.toLowerCase()]
 }
 
-@CompileStatic
 Integer celsiusToEcobee(def temp) {
     // Ecobee uses Fahrenheit * 10 internally
     if (temp == null) return null
@@ -1191,7 +1185,6 @@ Integer celsiusToEcobee(def temp) {
     return (fahrenheit * 10).setScale(0, RoundingMode.HALF_UP).intValue()
 }
 
-@CompileStatic
 BigDecimal ecobeeToCelsius(def temp) {
     if (temp == null) return null
     BigDecimal fahrenheitTimes10 = (temp instanceof String) ? temp.toBigDecimal() : (temp as BigDecimal)
@@ -1230,6 +1223,6 @@ private void logError(String message) {
 
 void logsOff() {
     logWarn "Debug/trace logging disabled"
-    device.updateSetting("debugEnable", [value: "false", type: "bool"])
-    device.updateSetting("traceEnable", [value: "false", type: "bool"])
+    device.updateSetting("debugEnable", [value: false, type: "bool"])
+    device.updateSetting("traceEnable", [value: false, type: "bool"])
 }
