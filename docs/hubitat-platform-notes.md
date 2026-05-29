@@ -45,3 +45,21 @@ These methods are firmware 2.5.0.143+. Code shipped to older hubs will throw `Mi
 ## App `definition()` flags
 
 - `doNotFocus: true` (firmware 2.5.0.123+) — stops the main page auto-focusing the first input on open. Useful when the first element is a paragraph, status banner, or read-only field (the auto-focus otherwise scrolls past it). Unknown definition keys are ignored on older firmware, so this is safe to set unconditionally.
+- `showAppTitle: false` (firmware 2.4.1.x+, default true) — hides the app title from the rendered configuration page. Sibling to `doNotFocus`. Safe to set unconditionally on older firmware (unknown keys ignored).
+
+## Scheduler helpers
+
+- `cancelRunIn(handle)` / `cancelRunOnce(handle)` (firmware 2.4.2.119+) — take the `String` handle returned by `runIn` / `runOnce` and cancel that specific pending job. Returns `Boolean`. Use when an app has multiple pending invocations of the same handler that need to be individually cancellable (per-device debouncers all routing through one shared method, etc.). Doesn't replace `unschedule(handlerName)` or the same-handler-name overwrite default — those remain correct for "cancel all" and "always latest wins" patterns respectively.
+
+## Subscription helpers
+
+- `subscribe(dev, attr, handler, [subscriptionData: 'value'])` (firmware 2.4.1.151+) — attaches arbitrary data to a subscription so one shared handler can disambiguate origin without per-device wrappers. Handler-side accessor (likely `evt.subscriptionData`) not yet HAR-verified here.
+
+## HTTP subsystem
+
+- `httpPost` / `asynchttpPost` (firmware 2.4.1.151+) — accept `gzipBody: true` to gzip-encode the request body. Only useful when the upstream documents/accepts gzip — do not assume.
+- The HTTP subsystem reuses connections across calls (2.4.1.151+). Transparent for callers, but it changes timing: subsequent calls to the same host avoid handshake cost. Test assertions about latency that depend on cold-handshake behavior may flake on warm pools. Still subject to the 8-concurrent async-HTTP cap.
+
+## CPU column semantic change
+
+- `freeOSMemoryHistory.csv` / `freeOSMemoryLast.csv` CPU column changed semantics in firmware 2.4.4.129 — from "average load" to "CPU %" (sampled at 1 sec interval). This is a value-meaning change, not a position change — code that parses by header name still gets the right column but its numeric range has shifted (load averages and percentages aren't directly comparable across the boundary). Also see the column-reordering caveat in the platform-behavior memory file.

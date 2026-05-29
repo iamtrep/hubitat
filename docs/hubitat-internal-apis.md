@@ -21,6 +21,11 @@ Reference for the internal admin HTTP APIs of a Hubitat Elevation hub. Hubitat o
 - Same pattern for apps: `/app/ajax/code`, `/app/ajax/update`
 - `GET /hub/mdnsDevices` (firmware 2.5.0.126+) — services the hub has discovered via mDNS/Bonjour on the LAN (pre-commissioning visibility — HomeKit accessories, ESPHome devices, printers, AirPlay receivers, integration bridges). Response shape not yet HAR-verified; capture before parsing.
 - `GET /hub2/chart/data?deviceId={id}&attribute={name}` (firmware 2.5.0.135+) — historical attribute trace from a **separate** store than the main events DB; retention 31 days OR 1000 values, whichever caps first. Independent of events-DB churn — useful when the events store has been compacted but a long-window trace is still wanted. Response shape not yet HAR-verified.
+- `GET /hub/zigbee/healthStatus` and `GET /hub/zwave/healthStatus` (firmware 2.4.1.154+) — dedicated per-radio health probes. **Response is a plain text body of `true` or `false`** (verified 2026-05-29 on firmware 2.5.0.143). Content-Type is `text/html;charset=utf-8` — misleading, the body is the literal text `true`/`false`, NOT JSON. Use for cheap up/down badges; use `/hub/zigbeeDetails/json` / `/hub/zwaveDetails/json` when per-device mesh info is needed.
+
+## Process monitor / auto-reboot controls
+
+- `GET /hub/advanced/disableHubProcessMonitor` / `GET /hub/advanced/enableHubProcessMonitor` — toggle the hub's process watchdog. **Widened in firmware 2.4.3.137**: these now ALSO control the critical-CPU auto-reboot added in 2.4.3.133 (the platform auto-reboots if CPU stays at a critical level for ≥15 min; suppressed during the first hour of uptime).
 
 ## Code push details
 
@@ -107,3 +112,13 @@ Reference for the internal admin HTTP APIs of a Hubitat Elevation hub. Hubitat o
 - `GET /apps/api/{appId}/devices/{deviceId}/events?access_token={TOKEN}`
 - Returns array: `[{"device_id","label","name","value","date","unit","isStateChange","source"},...]`
 - Most recent events first; useful for verifying app behavior in tests
+
+### Maker API additions in 2.4.4 (HAR NEEDED before consumption)
+
+Firmware 2.4.4.146 added room-management endpoints + a device-data endpoint; 2.4.4.151 added set-device-name + set-device-driver endpoints. **The exact paths, methods, query params, and response shapes are not yet HAR-verified in this repo.** Capture a HAR via the Maker API instance in the UI (DevTools → Network → "Preserve log" → perform the operation in the UI → save as HAR) before writing code against these. Once verified, fill in the contract here and resolve the stub in `memory/hubitat_maker_api_2_4_4_endpoints.md`.
+
+Capabilities advertised (per the 2.4.4 release-notes thread):
+- Room management (create / list / rename / delete?)
+- Per-device "device data" retrieval
+- Set device name
+- Set device driver
