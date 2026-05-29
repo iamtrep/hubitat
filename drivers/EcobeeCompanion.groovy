@@ -303,8 +303,7 @@ void authorize() {
 
 Boolean refreshToken() {
     if (!state.refreshToken) {
-        logError "No refresh token available"
-        sendEvent(name: "connectionStatus", value: "error", descriptionText: "${device.displayName} Error: Not authorized")
+        logWarn "Not authorized — run connect() to start OAuth"
         return false
     }
 
@@ -1016,14 +1015,6 @@ private static BigDecimal roundTemp(BigDecimal temp) {
     return ((temp * 10).setScale(0, RoundingMode.HALF_UP) / 10).setScale(1, RoundingMode.HALF_UP)
 }
 
-private boolean validateToken() {
-    if (!state.accessToken) {
-        logWarn "Not authorized - run connect() first"
-        return false
-    }
-    return true
-}
-
 private boolean requireThermostatId() {
     if (!thermostatId) {
         logError "No thermostat selected — run listThermostats() to discover, then save preferences"
@@ -1041,7 +1032,6 @@ private boolean validateDayParameter(String day) {
 }
 
 private Map fetchThermostatData(String apiPath = "/1/thermostat", Map customSelection = null) {
-    if (!validateToken()) return null
     if (!requireThermostatId()) return null
 
     Map selection = customSelection != null ? customSelection : [
