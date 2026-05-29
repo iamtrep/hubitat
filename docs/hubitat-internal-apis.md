@@ -19,6 +19,8 @@ Reference for the internal admin HTTP APIs of a Hubitat Elevation hub. Hubitat o
 - `GET /driver/ajax/code?id={ID}` — get driver source + version
 - `POST /driver/ajax/update` — push driver code (id, version, source form-encoded)
 - Same pattern for apps: `/app/ajax/code`, `/app/ajax/update`
+- `GET /hub/mdnsDevices` (firmware 2.5.0.126+) — services the hub has discovered via mDNS/Bonjour on the LAN (pre-commissioning visibility — HomeKit accessories, ESPHome devices, printers, AirPlay receivers, integration bridges). Response shape not yet HAR-verified; capture before parsing.
+- `GET /hub2/chart/data?deviceId={id}&attribute={name}` (firmware 2.5.0.135+) — historical attribute trace from a **separate** store than the main events DB; retention 31 days OR 1000 values, whichever caps first. Independent of events-DB churn — useful when the events store has been compacted but a long-window trace is still wanted. Response shape not yet HAR-verified.
 
 ## Code push details
 

@@ -31,3 +31,17 @@ Notes on Hubitat's Groovy sandbox and platform behavior. Reverse-engineered or l
 - The async HTTP call pool is capped at 8 concurrent per app. Per-device drilling at scale exhausts it; batch or rate-limit.
 - `com.hubitat.hub.domain.Hub` is the importable type for `location.hubs[0]`. `com.hubitat.app.HubInfo` and `HubWrapper` do not exist.
 - The local OAuth API (`/apps/api/<id>/...`) sends **no CORS headers** and does not support preflight: a cross-origin `GET` returns `200 OK` with no `Access-Control-Allow-Origin`, and an `OPTIONS` preflight returns `405 Method Not Allowed` (verified 2026-05-23 on a C-8 Pro). This is browser-enforced, so a page served by one hub cannot *read* another hub's API response, while `curl` and server-side calls are unaffected. The architectural consequence — browser-based multi-hub tools must proxy cross-hub calls server-side — is in `ARCHITECTURE.md` ("Cross-origin (CORS) and multi-hub browser clients").
+
+## Locale-aware date/time formatting (firmware 2.5.0.143+)
+
+Hubitat exposes platform-injected helpers that format dates per the user's Settings → Hub Details date/time format. Prefer these over hand-rolled `SimpleDateFormat` patterns for any display-side timestamp in apps or driver attributes:
+
+- `formatActivityDateTime(date)`, `formatActivityDateTimeShort(date)`
+- `formatDate(date)`, `formatShortDate(date)`
+- `formatTimeHourMinute(date)`, `formatTimeHourMinuteSecond(date)`, `formatTimeHourMinuteSecondMillis(date)`
+
+These methods are firmware 2.5.0.143+. Code shipped to older hubs will throw `MissingMethodException` — either gate on `location.hub.firmwareVersionString` or document a minimum-firmware requirement. Storage and comparisons stay in epoch millis (never persist user-formatted strings).
+
+## App `definition()` flags
+
+- `doNotFocus: true` (firmware 2.5.0.123+) — stops the main page auto-focusing the first input on open. Useful when the first element is a paragraph, status banner, or read-only field (the auto-focus otherwise scrolls past it). Unknown definition keys are ignored on older firmware, so this is safe to set unconditionally.
