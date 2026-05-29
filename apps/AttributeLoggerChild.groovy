@@ -12,7 +12,7 @@ import com.hubitat.app.DeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.nio.file.AccessDeniedException
 
-@Field static final String child_app_version = "0.0.3"
+@Field static final String CHILD_APP_VERSION = "0.0.3"
 
 definition(
     name: "Attribute Logger Child",
@@ -54,7 +54,7 @@ Map mainPage() {
             }
         }
         section("") {
-            paragraph "Version ${child_app_version}"
+            paragraph "Version ${CHILD_APP_VERSION}"
         }
     }
 }

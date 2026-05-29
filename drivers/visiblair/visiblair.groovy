@@ -40,7 +40,7 @@ metadata {
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String driver_version = "0.1.0"
+@Field static final String DRIVER_VERSION = "0.1.0"
 @Field static final String constCO2ClickURL = 'https://environment-monitor-01.co2.click:11000/api/v1'
 @Field static final String constVisiblairURL = 'https://api.visiblair.com:11000/api/v1'
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
@@ -80,7 +80,7 @@ private void updateDeviceAttribute(String aKey, aValue, String aUnit = "", Strin
 
 void installed() {
     logDebug "installed..."
-    state.version = driver_version
+    state.version = DRIVER_VERSION
     initialize()
 }
 
@@ -89,9 +89,9 @@ void uninstalled() {
 }
 
 void initialize() {
-    if (state.version != driver_version) {
-        logWarn "New driver version detected: ${driver_version} (previous: ${state.version})"
-        state.version = driver_version
+    if (state.version != DRIVER_VERSION) {
+        logWarn "New driver version detected: ${DRIVER_VERSION} (previous: ${state.version})"
+        state.version = DRIVER_VERSION
     }
     updateDeviceAttribute("battery", 100, "%")
     updated()

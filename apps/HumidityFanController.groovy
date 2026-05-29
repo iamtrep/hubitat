@@ -143,7 +143,11 @@ Map mainPage() {
         }
 
         section("Logging", hideable: true, hidden: true) {
-            input "enableDebug", "bool", title: "Enable debug logging", defaultValue: false
+            input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
+            input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
+            if (debugEnable) {
+                input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
+            }
         }
 
         section("") {
@@ -166,6 +170,14 @@ void updated() {
 
 void initialize() {
     logDebug("Initializing...")
+
+    // Migrate legacy `enableDebug` pref to the standard `debugEnable` name
+    if (settings.enableDebug != null) {
+        app.updateSetting("debugEnable", [value: settings.enableDebug as String, type: "bool"])
+        app.removeSetting("enableDebug")
+    }
+
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
 
     // Initialize humidity state machine (only if not already set)
     if (state.humidityState == null) {
@@ -204,14 +216,14 @@ void initialize() {
     // Consistency check: if in HIGH/PENDING_NORMAL but snapshot is missing, reset to NORMAL
     if ((state.humidityState == HUMIDITY_HIGH || state.humidityState == HUMIDITY_PENDING_NORMAL)
             && state.referenceHumiditySnapshot == null) {
-        log.warn("Inconsistent state: ${state.humidityState} with no reference snapshot. Resetting to NORMAL.")
+        logWarn("Inconsistent state: ${state.humidityState} with no reference snapshot. Resetting to NORMAL.")
         state.humidityState = HUMIDITY_NORMAL
         state.pendingStateSince = null
     }
 
     // Consistency check: if humidity is NORMAL but we think we control the fan, turn it off
     if (state.humidityState == HUMIDITY_NORMAL && state.fanTurnedOnByApp) {
-        log.warn("Inconsistent state detected: humidity NORMAL but fanTurnedOnByApp=true. Turning off fan.")
+        logWarn("Inconsistent state detected: humidity NORMAL but fanTurnedOnByApp=true. Turning off fan.")
         turnOffFan()
     }
 
@@ -220,11 +232,11 @@ void initialize() {
         String fanState = fanSwitch.currentValue("switch")
         if (fanState == "on") {
             // Fan is already on (e.g. turned on manually or by another app) - adopt control
-            log.info("Humidity is HIGH and fan is already ON - adopting control of fan")
+            logInfo("Humidity is HIGH and fan is already ON - adopting control of fan")
             state.fanTurnedOnByApp = true
             if (!state.lastHumidityEventTime) state.lastHumidityEventTime = now()
         } else {
-            log.warn("Inconsistent state detected: humidity HIGH, not restricted, but fan not on. Turning on fan.")
+            logWarn("Inconsistent state detected: humidity HIGH, not restricted, but fan not on. Turning on fan.")
             turnOnFan()
         }
     }
@@ -237,7 +249,7 @@ void initialize() {
     // Initial evaluation to sync state
     evaluateHumidityStateMachine()
 
-    log.info("${APP_NAME} initialized. Humidity: ${state.humidityState}, Fan controlled by app: ${state.fanTurnedOnByApp}")
+    logInfo("${APP_NAME} initialized. Humidity: ${state.humidityState}, Fan controlled by app: ${state.fanTurnedOnByApp}")
 }
 
 // ==================== Event Handlers ====================
@@ -272,27 +284,27 @@ void fanSwitchHandler(evt) {
 
     if (evt.value == "on") {
         if (state.pendingCommand == "on") {
-            log.info("Fan verified ON")
+            logInfo("Fan verified ON")
             state.pendingCommand = null
         } else if (state.pendingCommand == "off") {
             // We requested OFF but the switch went ON — externally countermanded.
-            log.info("Pending OFF countermanded by external ON event - clearing")
+            logInfo("Pending OFF countermanded by external ON event - clearing")
             state.pendingCommand = null
         }
         // else: external on with no pending command — leave state alone
     } else if (evt.value == "off") {
         if (state.pendingCommand == "off") {
-            log.info("Fan verified OFF")
+            logInfo("Fan verified OFF")
             state.fanTurnedOnByApp = false
             state.pendingCommand = null
         } else if (state.pendingCommand == "on") {
             // We requested ON but the switch went OFF — externally countermanded.
-            log.info("Pending ON countermanded by external OFF event - clearing")
+            logInfo("Pending ON countermanded by external OFF event - clearing")
             state.fanTurnedOnByApp = false
             state.pendingCommand = null
         } else if (state.fanTurnedOnByApp) {
             // External off while we thought we controlled the fan
-            log.info("Fan turned off externally - clearing app control flag")
+            logInfo("Fan turned off externally - clearing app control flag")
             state.fanTurnedOnByApp = false
         }
     }
@@ -305,11 +317,11 @@ void restrictionSwitchHandler(evt) {
 
     if (nowRestricted && state.fanTurnedOnByApp) {
         // Restriction activated and we have the fan on - turn it off
-        log.info("Restriction activated - turning off fan")
+        logInfo("Restriction activated - turning off fan")
         turnOffFan()
     } else if (!nowRestricted && isHumidityHigh()) {
         // Restriction lifted and humidity is high - turn fan on
-        log.info("Restriction lifted while humidity is high - turning on fan")
+        logInfo("Restriction lifted while humidity is high - turning on fan")
         turnOnFan()
     }
 }
@@ -321,7 +333,7 @@ private void evaluateHumidityStateMachine(reportingDevice = null) {
     BigDecimal referenceHumidity = computeMedianHumidity(referenceHumiditySensors, reportingDevice)
 
     if (bathroomHumidity == null) {
-        log.warn("No active bathroom sensors - skipping humidity evaluation")
+        logWarn("No active bathroom sensors - skipping humidity evaluation")
         return
     }
 
@@ -331,14 +343,14 @@ private void evaluateHumidityStateMachine(reportingDevice = null) {
     switch (state.humidityState) {
         case HUMIDITY_NORMAL:
             if (referenceHumidity == null && bathroomHumidity <= absoluteHighThreshold) {
-                log.warn("No active reference sensors - cannot evaluate activation threshold")
+                logWarn("No active reference sensors - cannot evaluate activation threshold")
                 return
             }
             evaluateNormalState(bathroomHumidity, referenceHumidity ?: absoluteLowThreshold)
             break
         case HUMIDITY_PENDING_HIGH:
             if (referenceHumidity == null && bathroomHumidity <= absoluteHighThreshold) {
-                log.info("Reference sensors lost during activation delay - returning to NORMAL")
+                logInfo("Reference sensors lost during activation delay - returning to NORMAL")
                 unschedule("delayedTransitionToHigh")
                 state.pendingStateSince = null
                 state.referenceHumiditySnapshot = null
@@ -354,7 +366,7 @@ private void evaluateHumidityStateMachine(reportingDevice = null) {
             evaluatePendingNormalState(bathroomHumidity)
             break
         default:
-            log.warn("Unknown humidity state: ${state.humidityState}, resetting to NORMAL")
+            logWarn("Unknown humidity state: ${state.humidityState}, resetting to NORMAL")
             transitionHumidityState(HUMIDITY_NORMAL)
     }
 }
@@ -362,7 +374,7 @@ private void evaluateHumidityStateMachine(reportingDevice = null) {
 private void evaluateNormalState(BigDecimal bathroomHumidity, BigDecimal referenceHumidity) {
     if (isAboveActivationThreshold(bathroomHumidity, referenceHumidity)) {
         String reason = getActivationReason(bathroomHumidity, referenceHumidity)
-        log.info("Humidity above activation threshold: ${reason} - starting ${activationDelay}s delay")
+        logInfo("Humidity above activation threshold: ${reason} - starting ${activationDelay}s delay")
 
         // Snapshot the reference humidity at activation time
         state.referenceHumiditySnapshot = referenceHumidity
@@ -378,7 +390,7 @@ private void evaluateNormalState(BigDecimal bathroomHumidity, BigDecimal referen
 private void evaluatePendingHighState(BigDecimal bathroomHumidity, BigDecimal referenceHumidity) {
     if (!isAboveActivationThreshold(bathroomHumidity, referenceHumidity)) {
         // Humidity dropped - cancel pending activation
-        log.info("Humidity dropped during activation delay - returning to NORMAL")
+        logInfo("Humidity dropped during activation delay - returning to NORMAL")
         unschedule("delayedTransitionToHigh")
         state.pendingStateSince = null
         state.referenceHumiditySnapshot = null
@@ -388,7 +400,7 @@ private void evaluatePendingHighState(BigDecimal bathroomHumidity, BigDecimal re
 
     // Above absolute high - bypass activation delay, go straight to HIGH
     if (bathroomHumidity > absoluteHighThreshold) {
-        log.info("Humidity ${bathroomHumidity}% above absolute high ${absoluteHighThreshold}% - bypassing activation delay")
+        logInfo("Humidity ${bathroomHumidity}% above absolute high ${absoluteHighThreshold}% - bypassing activation delay")
         unschedule("delayedTransitionToHigh")
         state.pendingStateSince = null
         transitionHumidityState(HUMIDITY_HIGH)
@@ -410,7 +422,7 @@ void delayedTransitionToHigh() {
 
     // Trust the event-driven pattern: if we're still PENDING_HIGH, no event cancelled us,
     // which means conditions remained above threshold throughout the delay period.
-    log.info("Activation delay completed - transitioning to HIGH")
+    logInfo("Activation delay completed - transitioning to HIGH")
 
     state.pendingStateSince = null
     transitionHumidityState(HUMIDITY_HIGH)
@@ -422,7 +434,7 @@ void delayedTransitionToHigh() {
 private void evaluateHighState(BigDecimal bathroomHumidity) {
     if (isBelowDeactivationThreshold(bathroomHumidity)) {
         String reason = getDeactivationReason(bathroomHumidity)
-        log.info("Humidity below deactivation threshold: ${reason} - starting ${deactivationDelay}s delay")
+        logInfo("Humidity below deactivation threshold: ${reason} - starting ${deactivationDelay}s delay")
 
         state.pendingStateSince = now()
         transitionHumidityState(HUMIDITY_PENDING_NORMAL)
@@ -435,7 +447,7 @@ private void evaluateHighState(BigDecimal bathroomHumidity) {
 private void evaluatePendingNormalState(BigDecimal bathroomHumidity) {
     if (!isBelowDeactivationThreshold(bathroomHumidity)) {
         // Humidity rose - cancel pending deactivation
-        log.info("Humidity rose during deactivation delay - returning to HIGH")
+        logInfo("Humidity rose during deactivation delay - returning to HIGH")
         unschedule("delayedTransitionToNormal")
         state.pendingStateSince = null
         transitionHumidityState(HUMIDITY_HIGH)
@@ -459,7 +471,7 @@ void delayedTransitionToNormal() {
 
     // Trust the event-driven pattern: if we're still PENDING_NORMAL, no event cancelled us,
     // which means conditions remained below threshold throughout the delay period.
-    log.info("Deactivation delay completed - transitioning to NORMAL")
+    logInfo("Deactivation delay completed - transitioning to NORMAL")
 
     state.pendingStateSince = null
     state.referenceHumiditySnapshot = null
@@ -474,7 +486,7 @@ private void transitionHumidityState(String newState) {
     state.humidityState = newState
 
     if (oldState != newState) {
-        log.info("Humidity state: ${oldState} -> ${newState}")
+        logInfo("Humidity state: ${oldState} -> ${newState}")
         syncHighHumiditySwitch()
     }
 }
@@ -493,11 +505,11 @@ private void reschedulePendingTimers() {
             Long remainingMs = activationDelayMs - elapsedMs
             if (remainingMs > 0) {
                 Integer remainingSeconds = (remainingMs / 1000).toInteger() + 1  // Round up
-                log.info("Rescheduling activation timer: ${remainingSeconds}s remaining")
+                logInfo("Rescheduling activation timer: ${remainingSeconds}s remaining")
                 runIn(remainingSeconds, "delayedTransitionToHigh")
             } else {
                 // Timer should have already fired - trigger it now
-                log.info("Activation timer expired during reconfiguration - triggering now")
+                logInfo("Activation timer expired during reconfiguration - triggering now")
                 runIn(1, "delayedTransitionToHigh")
             }
             break
@@ -507,11 +519,11 @@ private void reschedulePendingTimers() {
             Long remainingMsDeact = deactivationDelayMs - elapsedMs
             if (remainingMsDeact > 0) {
                 Integer remainingSeconds = (remainingMsDeact / 1000).toInteger() + 1  // Round up
-                log.info("Rescheduling deactivation timer: ${remainingSeconds}s remaining")
+                logInfo("Rescheduling deactivation timer: ${remainingSeconds}s remaining")
                 runIn(remainingSeconds, "delayedTransitionToNormal")
             } else {
                 // Timer should have already fired - trigger it now
-                log.info("Deactivation timer expired during reconfiguration - triggering now")
+                logInfo("Deactivation timer expired during reconfiguration - triggering now")
                 runIn(1, "delayedTransitionToNormal")
             }
             break
@@ -604,7 +616,7 @@ private void onHumidityBecameNormal() {
 }
 
 private void turnOnFan() {
-    log.info("Turning on fan")
+    logInfo("Turning on fan")
 
     state.fanTurnedOnByApp = true
     state.pendingCommand = "on"
@@ -626,10 +638,10 @@ void verifyFanOn() {
     String switchState = fanSwitch.currentValue("switch")
 
     if (switchState == "on") {
-        log.info("Fan verified ON (timeout check)")
+        logInfo("Fan verified ON (timeout check)")
         state.pendingCommand = null
     } else {
-        log.error("Fan failed to turn on after ${switchVerificationTimeout} seconds (no event received)")
+        logError("Fan failed to turn on after ${switchVerificationTimeout} seconds (no event received)")
         state.fanTurnedOnByApp = false
         sendNotification("ERROR: ${fanSwitch.displayName} failed to turn on!")
         state.pendingCommand = null
@@ -637,7 +649,7 @@ void verifyFanOn() {
 }
 
 private void turnOffFan() {
-    log.info("Turning off fan")
+    logInfo("Turning off fan")
 
     state.pendingCommand = "off"
     fanSwitch.off()
@@ -655,11 +667,11 @@ void verifyFanOff() {
     String switchState = fanSwitch.currentValue("switch")
 
     if (switchState == "off") {
-        log.info("Fan verified OFF (timeout check)")
+        logInfo("Fan verified OFF (timeout check)")
         state.fanTurnedOnByApp = false
         state.pendingCommand = null
     } else {
-        log.error("Fan failed to turn off after ${switchVerificationTimeout} seconds (no event received)")
+        logError("Fan failed to turn off after ${switchVerificationTimeout} seconds (no event received)")
         sendNotification("ERROR: ${fanSwitch.displayName} failed to turn off!")
         state.pendingCommand = null
     }
@@ -715,7 +727,7 @@ void maxFanRunTimeExpired() {
         return
     }
 
-    log.warn("Max fan run time (${maxFanRunTime} min) expired without humidity events - turning off fan")
+    logWarn("Max fan run time (${maxFanRunTime} min) expired without humidity events - turning off fan")
     sendNotification("WARNING: Fan turned off after ${maxFanRunTime} minutes - check humidity sensors")
 
     // Transition humidity state to NORMAL since we're giving up
@@ -946,14 +958,20 @@ private Map getSensorStatus(List sensors) {
 private void sendNotification(String message) {
     if (notificationDevice) {
         notificationDevice.deviceNotification(message)
-        log.info("Notification sent: ${message}")
+        logInfo("Notification sent: ${message}")
     } else {
-        log.warn("No notification device configured. Message: ${message}")
+        logWarn("No notification device configured. Message: ${message}")
     }
 }
 
-private void logDebug(String message) {
-    if (enableDebug) {
-        log.debug(message)
-    }
+private void logTrace(String message) { if (traceEnable) log.trace(message) }
+private void logDebug(String message) { if (debugEnable) log.debug(message) }
+private void logInfo(String message)  { if (txtEnable)   log.info(message) }
+private void logWarn(String message)  { log.warn(message) }
+private void logError(String message) { log.error(message) }
+
+void logsOff() {
+    log.warn "Debug/trace logging auto-disabled"
+    app.updateSetting("debugEnable", [value: "false", type: "bool"])
+    app.updateSetting("traceEnable", [value: "false", type: "bool"])
 }

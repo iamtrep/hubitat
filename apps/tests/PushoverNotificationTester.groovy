@@ -53,7 +53,7 @@ preferences {
 // ========================================
 // MAIN PAGE
 // ========================================
-def mainPage() {
+Map mainPage() {
     dynamicPage(name: "mainPage", title: "Pushover Notification Tester", install: true, uninstall: true) {
         section("Device Selection") {
             input "pushoverDevice", "capability.notification", title: "Select Pushover Device", required: true, submitOnChange: true
@@ -124,7 +124,7 @@ def mainPage() {
 // ========================================
 // PRIORITY TESTS
 // ========================================
-def priorityTests() {
+Map priorityTests() {
     dynamicPage(name: "priorityTests", title: "Priority Tests", install: false, uninstall: false) {
         section("Send a test message at each priority level") {
             input "btnPriorityDefault", "button", title: "Default Priority (no prefix)"
@@ -148,7 +148,7 @@ def priorityTests() {
 // ========================================
 // FORMATTING TESTS
 // ========================================
-def formattingTests() {
+Map formattingTests() {
     dynamicPage(name: "formattingTests", title: "Formatting Tests", install: false, uninstall: false) {
         section("HTML Mode") {
             input "btnHtmlBasic", "button", title: "Basic [HTML] message"
@@ -179,7 +179,7 @@ def formattingTests() {
 // ========================================
 // BRACKET OPTION TESTS
 // ========================================
-def bracketOptionTests() {
+Map bracketOptionTests() {
     dynamicPage(name: "bracketOptionTests", title: "Embedded Options (Bracket Syntax)", install: false, uninstall: false) {
         section("Individual Options") {
             input "btnBracketTitle", "button", title: "[TITLE=Test Title]"
@@ -204,7 +204,7 @@ def bracketOptionTests() {
 // ========================================
 // LEGACY OPTION TESTS
 // ========================================
-def legacyOptionTests() {
+Map legacyOptionTests() {
     dynamicPage(name: "legacyOptionTests", title: "Embedded Options (Legacy Syntax)", install: false, uninstall: false) {
         section("Individual Options") {
             input "btnLegacyTitle", "button", title: "^Test Title^ (legacy title)"
@@ -228,7 +228,7 @@ def legacyOptionTests() {
 // ========================================
 // EMERGENCY TESTS
 // ========================================
-def emergencyTests() {
+Map emergencyTests() {
     dynamicPage(name: "emergencyTests", title: "Emergency Tests", install: false, uninstall: false) {
         section("<b>WARNING:</b> Emergency messages repeat until acknowledged!") {
             paragraph "These tests send Emergency priority messages. You must acknowledge them in the Pushover app to stop the repeating alerts."
@@ -256,7 +256,7 @@ def emergencyTests() {
 // ========================================
 // COMBINATION TESTS
 // ========================================
-def combinationTests() {
+Map combinationTests() {
     dynamicPage(name: "combinationTests", title: "Combination Tests", install: false, uninstall: false) {
         section("Multiple options in one message") {
             input "btnComboHighHtmlTitle", "button", title: "[H] + [HTML] + [TITLE=Alert] + bold text"
@@ -282,7 +282,7 @@ def combinationTests() {
 // ========================================
 // COMMAND TESTS
 // ========================================
-def commandTests() {
+Map commandTests() {
     dynamicPage(name: "commandTests", title: "Command Tests", install: false, uninstall: false) {
         section("speak() Command") {
             input "btnSpeak", "button", title: "Send via speak() instead of deviceNotification()"
@@ -314,7 +314,7 @@ def commandTests() {
 // ========================================
 // TEST RESULTS PAGE
 // ========================================
-def testResults() {
+Map testResults() {
     dynamicPage(name: "testResults", title: "Test Results", install: false, uninstall: false) {
         if (state.testResults) {
             section("Summary") {
@@ -750,17 +750,19 @@ void executeNextTest() {
 // ========================================
 // LIFECYCLE
 // ========================================
-def installed() {
+void installed() {
     log.debug "'installed()' called"
     initialize()
 }
 
-def updated() {
+void updated() {
     log.debug "'updated()' called"
+    unsubscribe()
+    unschedule()
     initialize()
 }
 
-def initialize() {
+void initialize() {
     if (logEnable) {
         log.info "Debug logging enabled"
         runIn(1800, logsOff)
