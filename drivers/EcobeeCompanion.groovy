@@ -1194,11 +1194,19 @@ BigDecimal ecobeeToCelsius(def temp) {
 
 private void schedulePolling() {
     Integer interval = pollInterval as Integer
-    if (!interval || interval < 1 || interval > 30) return
+    Integer effective = interval
 
-    String cronExpression = "0 0/${interval} * ? * *"
+    if (!interval || interval < 1 || interval > 30) {
+        logWarn "Polling interval ${interval} out of range (1..30) — falling back to 5 min"
+        effective = 5
+    } else if ((60 % interval) != 0) {
+        logWarn "Polling interval ${interval} does not divide 60 evenly (cron would be irregular) — falling back to 5 min"
+        effective = 5
+    }
+
+    String cronExpression = "0 0/${effective} * ? * *"
     schedule(cronExpression, "refresh")
-    logDebug "Polling: every ${interval} min"
+    logDebug "Polling: every ${effective} min"
 }
 
 private void logTrace(String message) {
