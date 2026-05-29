@@ -99,10 +99,10 @@ metadata {
 @Field static final String DRIVER_VERSION = "0.0.6"
 
 // OAuth and API endpoints
-@Field static final String constEcobeeApiBase= "https://api.ecobee.com"
+@Field static final String ECOBEE_API_BASE= "https://api.ecobee.com"
 
 // Static mappings
-@Field static final Map<String, Integer> constScheduleDaysIndex = [
+@Field static final Map<String, Integer> SCHEDULE_DAYS_INDEX = [
     monday: 0,
     tuesday: 1,
     wednesday: 2,
@@ -120,18 +120,20 @@ metadata {
 @Field static final int DEBUG_LOG_TIMEOUT_SECONDS = 3600    // Auto-disable debug logging after 1 hour
 
 
-@Field static final Map constValidFanModes = [
+@Field static final Map VALID_FAN_MODES = [
     auto: "auto",
     on: "on",
     circulate: "circulate"
 ]
 
-@Field static final Map constValidThermostatModes = [
-    heat: "heat",
-    cool: "cool",
-    auto: "auto",
-    off: "off",
-    auxHeatOnly: "auxHeatOnly"
+// HE-canonical thermostatMode -> Ecobee hvacMode wire value.
+// Ecobee uses "auxHeatOnly"; HE's Thermostat capability uses "emergency heat".
+@Field static final Map HE_TO_ECOBEE_MODE = [
+    "auto": "auto",
+    "cool": "cool",
+    "heat": "heat",
+    "off": "off",
+    "emergency heat": "auxHeatOnly"
 ]
 
 // ========================================
@@ -139,19 +141,13 @@ metadata {
 // ========================================
 
 void installed() {
-    if (state.version != DRIVER_VERSION) {
-        logWarn "New version: ${DRIVER_VERSION} (was: ${state.version})"
-        state.version = DRIVER_VERSION
-    }
+    checkVersion()
     sendEvent(name: "connectionStatus", value: "disconnected", descriptionText: "${device.displayName} is disconnected")
     configure()
 }
 
 void updated() {
-    if (state.version != DRIVER_VERSION) {
-        logWarn "New version: ${DRIVER_VERSION} (was: ${state.version})"
-        state.version = DRIVER_VERSION
-    }
+    checkVersion()
     unschedule()
     if (debugEnable) runIn(DEBUG_LOG_TIMEOUT_SECONDS, logsOff)
     schedulePolling()
@@ -163,16 +159,20 @@ void deviceTypeUpdated() {
 }
 
 void configure() {
-    sendEvent(name: "supportedThermostatFanModes", value: JsonOutput.toJson(constValidFanModes.values()))
-    sendEvent(name: "supportedThermostatModes", value: JsonOutput.toJson(constValidThermostatModes.values()))
+    sendEvent(name: "supportedThermostatFanModes", value: JsonOutput.toJson(VALID_FAN_MODES.values()))
+    sendEvent(name: "supportedThermostatModes", value: JsonOutput.toJson(HE_TO_ECOBEE_MODE.keySet().toList()))
 }
 
 void refresh() {
+    checkVersion()
+    getCurrentState()
+}
+
+private void checkVersion() {
     if (state.version != DRIVER_VERSION) {
         logWarn "New version: ${DRIVER_VERSION} (was: ${state.version})"
         state.version = DRIVER_VERSION
     }
-    getCurrentState()
 }
 
 // ========================================
@@ -193,7 +193,7 @@ void connect() {
     state.remove('thermostats')
 
     Map params = [
-        uri: "${constEcobeeApiBase}/authorize",
+        uri: "${ECOBEE_API_BASE}/authorize",
         query: [
             response_type: "ecobeePin",
             client_id: apiKey,
@@ -212,7 +212,6 @@ void connect() {
             }
             Map data = response.data
             state.ecobeeAuthToken = data.code
-            state.interval = data.interval
             state.pinExpires = now() + (data.expires_in * 1000)
 
             logInfo "PIN: ${data.ecobeePin} (expires in ${data.expires_in / 60} min)"
@@ -238,14 +237,14 @@ void authorize() {
         return
     }
 
-    if (now() > state.pinExpires) {
+    if (!state.pinExpires || now() > state.pinExpires) {
         logError "PIN expired. Call connect() again"
         sendEvent(name: "connectionStatus", value: "error", descriptionText: "${device.displayName} Error: PIN expired")
         return
     }
 
     Map params = [
-        uri: "${constEcobeeApiBase}/token",
+        uri: "${ECOBEE_API_BASE}/token",
         query: [
             grant_type: "ecobeePin",
             code: state.ecobeeAuthToken,
@@ -308,7 +307,7 @@ Boolean refreshToken() {
     }
 
     Map params = [
-        uri: "${constEcobeeApiBase}/token",
+        uri: "${ECOBEE_API_BASE}/token",
         query: [
             grant_type: "refresh_token",
             refresh_token: state.refreshToken,
@@ -361,7 +360,7 @@ Boolean checkAndRefreshToken() {
 
 List<Map> listThermostats() {
     Map queryData = [
-        json: groovy.json.JsonOutput.toJson([
+        json: JsonOutput.toJson([
             selection: [
                 selectionType: "registered",
                 selectionMatch: "",
@@ -425,14 +424,14 @@ private Map callEcobeeApi(String method, String path, Map queryParams = null, Ma
     if (bodyData) headers["Content-Type"] = "application/json"
 
     Map params = [
-        uri: "${constEcobeeApiBase}${path}",
+        uri: "${ECOBEE_API_BASE}${path}",
         headers: headers,
         contentType: "application/json",
         timeout: 15
     ]
 
     if (queryParams) params.query = queryParams
-    if (bodyData) params.body = groovy.json.JsonOutput.toJson(bodyData)
+    if (bodyData) params.body = JsonOutput.toJson(bodyData)
 
     try {
         Map result = null
@@ -771,10 +770,12 @@ void getCurrentState() {
     sendEvent(name: "heatingSetpoint", value: heatC, unit: "°C", descriptionText: "${device.displayName} heating setpoint is ${heatC}°C")
     sendEvent(name: "coolingSetpoint", value: coolC, unit: "°C", descriptionText: "${device.displayName} cooling setpoint is ${coolC}°C")
 
-    // Update HVAC mode (both the custom attribute and the platform-standard thermostatMode)
+    // Update HVAC mode: custom hvacMode carries the Ecobee wire value as-is;
+    // thermostatMode is translated to the HE-canonical value (auxHeatOnly -> "emergency heat").
     String hvacModeValue = thermostat.settings?.hvacMode?.toString() ?: "unknown"
+    String thermostatModeValue = HE_TO_ECOBEE_MODE.find { k, v -> v == hvacModeValue }?.key ?: hvacModeValue
     sendEvent(name: "hvacMode", value: hvacModeValue, descriptionText: "${device.displayName} HVAC mode is set to ${hvacModeValue}")
-    sendEvent(name: "thermostatMode", value: hvacModeValue, descriptionText: "${device.displayName} thermostat mode is ${hvacModeValue}")
+    sendEvent(name: "thermostatMode", value: thermostatModeValue, descriptionText: "${device.displayName} thermostat mode is ${thermostatModeValue}")
 
     // Update current program
     String currentProgramValue = thermostat.program?.currentClimateRef?.toString() ?: "unknown"
@@ -828,24 +829,25 @@ void getCurrentState() {
 
 void setCoolingSetpoint(BigDecimal temperature) {
     logInfo "Setting cooling setpoint to ${temperature}°C"
-    setHoldTemperature(null, temperature, "nextTransition")
+    setHoldTemperature(null, temperature)
 }
 
 void setHeatingSetpoint(BigDecimal temperature) {
     logInfo "Setting heating setpoint to ${temperature}°C"
-    setHoldTemperature(temperature, null, "nextTransition")
+    setHoldTemperature(temperature, null)
 }
 
 void setThermostatMode(String mode) {
     logInfo "Setting thermostat mode to ${mode}"
 
-    if (!constValidThermostatModes.containsKey(mode)) {
-        logError "Invalid thermostat mode: ${mode}. Valid modes: ${constValidThermostatModes.keySet()}"
+    if (!HE_TO_ECOBEE_MODE.containsKey(mode)) {
+        logError "Invalid thermostat mode: ${mode}. Valid modes: ${HE_TO_ECOBEE_MODE.keySet()}"
         return
     }
 
     if (!requireThermostatId()) return
 
+    String ecobeeMode = HE_TO_ECOBEE_MODE[mode]
     Map bodyData = [
         selection: [
             selectionType: "thermostats",
@@ -853,7 +855,7 @@ void setThermostatMode(String mode) {
         ],
         thermostat: [
             settings: [
-                hvacMode: mode
+                hvacMode: ecobeeMode
             ]
         ]
     ]
@@ -861,6 +863,7 @@ void setThermostatMode(String mode) {
     Map data = callEcobeeApi("POST", "/1/thermostat", null, bodyData)
     if (data) {
         sendEvent(name: "thermostatMode", value: mode)
+        sendEvent(name: "hvacMode", value: ecobeeMode)
         logInfo "Successfully set thermostat mode to ${mode}"
     } else {
         logError "Failed to set thermostat mode"
@@ -876,7 +879,7 @@ void cool() {
 }
 
 void emergencyHeat() {
-    setThermostatMode("auxHeatOnly")
+    setThermostatMode("emergency heat")
 }
 
 void heat() {
@@ -890,8 +893,8 @@ void off() {
 void setThermostatFanMode(String fanMode) {
     logInfo "Setting fan mode to ${fanMode}"
 
-    if (!constValidFanModes.containsKey(fanMode)) {
-        logError "Invalid fan mode: ${fanMode}. Valid modes: ${constValidFanModes.keySet()}"
+    if (!VALID_FAN_MODES.containsKey(fanMode)) {
+        logError "Invalid fan mode: ${fanMode}. Valid modes: ${VALID_FAN_MODES.keySet()}"
         return
     }
 
@@ -1012,7 +1015,7 @@ List<Map> listSensors() {
 // ========================================
 
 private static BigDecimal roundTemp(BigDecimal temp) {
-    return ((temp * 10).setScale(0, RoundingMode.HALF_UP) / 10).setScale(1, RoundingMode.HALF_UP)
+    return temp.setScale(1, RoundingMode.HALF_UP)
 }
 
 private boolean requireThermostatId() {
@@ -1024,8 +1027,8 @@ private boolean requireThermostatId() {
 }
 
 private boolean validateDayParameter(String day) {
-    if (!constScheduleDaysIndex.keySet().contains(day?.toLowerCase())) {
-        logError "Invalid day: ${day}. Must be one of: ${constScheduleDaysIndex.keySet()}"
+    if (!SCHEDULE_DAYS_INDEX.keySet().contains(day?.toLowerCase())) {
+        logError "Invalid day: ${day}. Must be one of: ${SCHEDULE_DAYS_INDEX.keySet()}"
         return false
     }
     return true
@@ -1041,14 +1044,8 @@ private Map fetchThermostatData(String apiPath = "/1/thermostat", Map customSele
         includeEvents: true
     ]
 
-    Map queryData = [json: groovy.json.JsonOutput.toJson([selection: selection])]
+    Map queryData = [json: JsonOutput.toJson([selection: selection])]
     Map data = callEcobeeApi("GET", apiPath, queryData)
-
-    if (data?.status?.code != null && data.status.code != 0) {
-        logError "API error: ${data.status.message}"
-        return null
-    }
-
     return data?.thermostatList ? data.thermostatList[0] : null
 }
 
@@ -1086,14 +1083,7 @@ Boolean sendFunction(Map function) {
         functions: [function]
     ]
 
-    Map data = callEcobeeApi("POST", "/1/thermostat", [format: "json"], body)
-    if (data?.status?.code == 0) {
-        return true
-    }
-    if (data?.status) {
-        logError "Function failed: ${data.status.message}"
-    }
-    return false
+    return callEcobeeApi("POST", "/1/thermostat", [format: "json"], body) != null
 }
 
 @CompileStatic
@@ -1164,7 +1154,7 @@ String minutesToTime(Integer minutes) {
 
 @CompileStatic
 Integer dayNameToIndex(String day) {
-    return constScheduleDaysIndex[day.toLowerCase()]
+    return SCHEDULE_DAYS_INDEX[day.toLowerCase()]
 }
 
 Integer celsiusToEcobee(def temp) {
