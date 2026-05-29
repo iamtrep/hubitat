@@ -22,7 +22,7 @@ Parent/child integration for [VisiblAir](https://visiblair.com/) indoor air qual
 
 ## Standalone Alternative
 
-A [standalone single-device driver](../../drivers/visiblair/visiblair.groovy) is also available if you only need to monitor one sensor without the full parent/child setup.
+A standalone single-device driver also exists at `drivers/visiblair/visiblair.groovy` if you only need to monitor one sensor without the full parent/child setup.
 
 ## License
 

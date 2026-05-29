@@ -59,7 +59,7 @@ Hubitat Elevation device drivers for Zigbee devices, BLE sensors, and cloud APIs
 
 ## VisiblAir
 
-A [standalone single-device driver](visiblair/visiblair.groovy) for VisiblAir indoor air quality sensors is available in the `visiblair/` subfolder. For multi-sensor setups, see the full [VisiblAir integration](../integrations/visiblair/).
+A standalone single-device driver for VisiblAir indoor air quality sensors lives at `visiblair/visiblair.groovy`. For multi-sensor setups, see the full [VisiblAir integration](../integrations/visiblair/).
 
 ## License
 

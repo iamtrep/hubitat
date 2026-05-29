@@ -87,7 +87,7 @@ Connection state, region tier, account ID, token expiry, and a summary of the la
 
 ### 📷 Devices (read-only)
 
-The list of `Blink Network` and `Blink Camera` children, with links to each device's edit page. Camera entries that aren't default-type cameras show a small tag (`mini`, `doorbell`, `superior`, `storm`) since variant-specific commands aren't yet implemented for those — see the M4 entry in [BLINK_AUDIT.md](BLINK_AUDIT.md). Orphans (cameras or networks deleted in the Blink mobile app but still present in Hubitat) appear with a **Remove orphaned devices** button.
+The list of `Blink Network` and `Blink Camera` children, with links to each device's edit page. Camera entries that aren't default-type cameras show a small tag (`mini`, `doorbell`, `superior`, `storm`) since variant-specific commands aren't yet implemented for those. Orphans (cameras or networks deleted in the Blink mobile app but still present in Hubitat) appear with a **Remove orphaned devices** button.
 
 ### ⏱️ Polling
 

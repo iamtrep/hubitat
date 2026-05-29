@@ -37,6 +37,14 @@ README.md         As per usual convention
 TESTING.md        Testing methodology & the closed-loop contract
 ```
 
+## Marking work-in-progress
+
+A directory containing an empty file named `.wip` is treated as **work-in-progress** and
+intentionally hidden from ancestor/index narratives. The directory's own `README.md` is
+still authoritative; only mentions from parent READMEs (e.g. the root `README.md`,
+`integrations/README.md`) are suppressed until the marker is removed. Find all WIP
+directories with `git ls-files | grep '\.wip$'`.
+
 ## Building a dashboard SPA — conventions
 
 Some apps in this repo aren't automations — they're **dashboards**: a Groovy app that serves a single-page HTML app and backs it with `/api/*` JSON endpoints (e.g. [`apps/HubDiagnostics/`](apps/HubDiagnostics/), [`apps/MultiHubInventory/`](apps/MultiHubInventory/)). [`apps/HubDiagnostics/hub_diagnostics_ui.html`](apps/HubDiagnostics/hub_diagnostics_ui.html) is the reference implementation — match its conventions rather than inventing simpler ones (a leaner dashboard built without them tends to look done but be unusable).

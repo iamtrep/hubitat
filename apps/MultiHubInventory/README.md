@@ -30,16 +30,15 @@ described under **Adding a hub** below.
 
 ## What it does
 
-Multi-Hub Inventory provides four views across all hubs in your fleet:
+Multi-Hub Inventory has three tabs across all hubs in your fleet:
 
-- **Fleet Summary** — total device count, per-hub counts, integration and manufacturer breakdowns,
-  and a cross-hub attention badge (stale / orphaned / disabled / unreferenced).
-- **Unified Device Register** — every device across all hubs in one sortable, filterable table
+- **Summary** — total device count, per-hub counts, connection/integration/manufacturer
+  breakdowns, and an **Attention** card rolling up stale, orphaned, disabled, and
+  unreferenced devices across hubs.
+- **Device Register** — every device across all hubs in one sortable, filterable table
   with CSV export. Hub Mesh mirror devices are excluded and counted once on their home hub.
-- **Firmware Drift** — groups of identical (manufacturer + model) devices are flagged when they
-  run mixed firmware across hubs, sorted most-drifted first.
-- **Maintenance / Attention** — cross-hub roll-up of stale, orphaned, disabled, and
-  unreferenced devices.
+- **Device Drift** — groups of identical devices flagged when they run mixed firmware
+  (or, in a separate section, mixed driver types) across hubs, sorted most-drifted first.
 
 ## How it works
 
@@ -106,8 +105,9 @@ The following are known constraints in v1:
 - **Same-LAN hubs only.** Remote hubs accessible via cloud URLs are not yet supported.
 - **No battery or live-attribute data.** The audit endpoint exposes inventory and lifecycle
   fields only; current attribute values are not included.
-- **Z-Wave manufacturer and model appear as numeric / hex IDs.** Firmware-drift grouping still
-  works, but the labels are less readable than Zigbee entries.
+- **Z-Wave models still appear as raw hex IDs.** Manufacturers are looked up against a
+  bundled Z-Wave maker-id table and shown by name; the model column has no equivalent
+  mapping yet, so firmware-drift labels remain less readable than Zigbee entries.
 - **Hub Mesh mirrors are filtered, not deduped in a separate view.** Devices with
   `protocol == 'Linked'` are excluded from all counts and the register; they do not appear in
   a dedicated mesh-link view.

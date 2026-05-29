@@ -18,7 +18,7 @@ A single-page reimagining of the Hubitat hub UI, organized around five **verbs**
 ## Files
 
 - `verb_nav_prototype.html` — the entire UI (HTML + CSS + JS, no build step)
-- `serve.py` — local proxy that serves the HTML and forwards `/hub*`, `/device/*`, `/installedapp/*`, `/driver/*`, `/app/*`, and the `/logsocket` WebSocket to the hub, bypassing CORS
+- `serve.py` — local proxy that serves the HTML and forwards `/hub*`, `/device/*`, `/installedapp/*`, `/driver/*`, `/app/*`, `/logs/*`, and the `/logsocket` WebSocket to the hub, bypassing CORS
 
 ## Running it
 
