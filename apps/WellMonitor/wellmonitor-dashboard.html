@@ -43,6 +43,10 @@ SPDX-License-Identifier: MIT
         .badge-sync-ok { background: var(--success-light); color: var(--success); cursor: pointer; }
         .badge-sync-warn { background: #fef3c7; color: var(--warn); cursor: pointer; }
         .badge-sync-err { background: var(--danger-light); color: var(--danger); cursor: pointer; }
+        .ws-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+        .ws-dot.ws-on { background: var(--success); }
+        .ws-dot.ws-conn { background: var(--warn); animation: pulse 1.2s infinite; }
+        .ws-dot.ws-off { background: var(--text-muted); }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
 
         nav { background: var(--card-bg); border-bottom: 1px solid var(--border); display: flex; overflow-x: auto; }
@@ -126,6 +130,7 @@ SPDX-License-Identifier: MIT
         <span id="flowBadge" class="status-badge" style="display:none"></span>
         <span id="versionBadge" class="status-badge" style="display:none" title="Click to check for updates"></span>
         <span id="powerDisplay" style="font-size:0.8rem;color:var(--text-muted)"></span>
+        <span id="wsStatus" class="ws-dot ws-off" title="Live event stream: disconnected"></span>
     </div>
 </header>
 
@@ -258,13 +263,17 @@ SPDX-License-Identifier: MIT
 
     const ACCESS_TOKEN = '${access_token}';
     const BASE_URL = window.location.pathname.replace(/\/dashboard\/?$/, '');
-    const UI_VERSION = '0.10.0';
+    const UI_VERSION = '0.11.2';
 
     // Latest /api/version probe (latestVersion + updateAvailable). Cached so the version
     // badge can be re-rendered from /api/status updates without re-hitting /api/version.
     let lastVersionInfo = null;
     // Latest /api/status (for re-renders from /api/version updates).
     let lastStatus = null;
+    // Eventsocket state — see openEventSocket / onEventFrame.
+    let ws = null;
+    let wsReconnectDelay = 1000;
+    let wsRefetchTimer = null;
 
     // ==================== Helpers ====================
 
@@ -891,6 +900,17 @@ SPDX-License-Identifier: MIT
     // ==================== Status Updates ====================
 
     function updateStatus(status) {
+        // Detect terminal transitions BEFORE overwriting lastStatus — true→false
+        // on pumpRunning/flowActive means a row was just appended to the history.
+        const prev = lastStatus;
+        if (prev) {
+            if (prev.pumpRunning && !status.pumpRunning) {
+                fetchJson('/api/cycles').then(renderCyclesTable).catch(function() {});
+            }
+            if (prev.flowActive && !status.flowActive) {
+                fetchJson('/api/flow').then(renderFlowTable).catch(function() {});
+            }
+        }
         lastStatus = status;
         const pumpBadge = document.getElementById('pumpBadge');
         const flowBadge = document.getElementById('flowBadge');
@@ -1019,6 +1039,77 @@ SPDX-License-Identifier: MIT
         } finally {
             if (badge) { badge.textContent = prevText; renderVersionBadge(); }
         }
+    }
+
+    // ==================== Eventsocket (wake-on-event) ====================
+
+    // Opens (or re-opens) the hub's /eventsocket and routes pump/meter frames into
+    // onEventFrame. The socket complements the slow safety-net poll — it doesn't replace
+    // the mappings endpoints (derived state still has to come from /api/status).
+    function openEventSocket() {
+        if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+        try {
+            ws = new WebSocket('ws://' + location.hostname + '/eventsocket');
+        } catch (e) {
+            renderWsStatus();
+            scheduleWsReconnect();
+            return;
+        }
+        renderWsStatus();
+        ws.onopen = function() { wsReconnectDelay = 1000; renderWsStatus(); };
+        ws.onmessage = onEventFrame;
+        ws.onclose = function() { renderWsStatus(); scheduleWsReconnect(); };
+        ws.onerror = function() { renderWsStatus(); /* onclose follows; reconnect handled there */ };
+    }
+
+    function scheduleWsReconnect() {
+        const jitter = Math.random() * 500;
+        setTimeout(openEventSocket, wsReconnectDelay + jitter);
+        wsReconnectDelay = Math.min(wsReconnectDelay * 2, 30000);
+    }
+
+    function renderWsStatus() {
+        const dot = document.getElementById('wsStatus');
+        if (!dot) return;
+        const state = ws ? ws.readyState : -1;
+        if (state === WebSocket.OPEN) {
+            dot.className = 'ws-dot ws-on';
+            dot.title = 'Live event stream: connected';
+        } else if (state === WebSocket.CONNECTING) {
+            dot.className = 'ws-dot ws-conn';
+            dot.title = 'Live event stream: connecting…';
+        } else {
+            dot.className = 'ws-dot ws-off';
+            dot.title = 'Live event stream: disconnected — falling back to 60s polling';
+        }
+    }
+
+    function onEventFrame(msg) {
+        if (!lastStatus) return;
+        let ev;
+        try { ev = JSON.parse(msg.data); } catch (e) { return; }
+        if (!ev || ev.source !== 'DEVICE') return;
+        const dId = ev.deviceId;
+        const isPump = dId === lastStatus.pumpDeviceId;
+        const isMeter = dId === lastStatus.meterDeviceId;
+        if (!isPump && !isMeter) return;
+
+        // Atomic readouts — pulled straight from the event, no round-trip.
+        if (isPump && ev.name === 'power') {
+            const w = parseFloat(ev.value);
+            if (!isNaN(w)) {
+                const pd = document.getElementById('powerDisplay');
+                if (pd) pd.textContent = fmtDec(w) + 'W';
+            }
+        }
+
+        // Wake signal — debounced re-fetch of derived state (pumpRunning/flowActive
+        // depend on threshold + debounce logic that lives in the Groovy handlers).
+        if (wsRefetchTimer) clearTimeout(wsRefetchTimer);
+        wsRefetchTimer = setTimeout(function() {
+            wsRefetchTimer = null;
+            fetchJson('/api/status').then(updateStatus).catch(function() {});
+        }, 250);
     }
 
     // ==================== CSV Loading ====================
@@ -1189,10 +1280,25 @@ SPDX-License-Identifier: MIT
             makeSortable(document.getElementById('flowTable'));
             makeSortable(document.getElementById('dailySummaryTable'));
 
-            // Auto-refresh status every 10s
+            // Live updates come from /eventsocket (see openEventSocket). The slow poll
+            // here is a safety net for when the socket has dropped silently or the hub
+            // restarted — it lets the pills converge without waiting for a tab refocus.
             setInterval(function() {
                 fetchJson('/api/status').then(updateStatus).catch(function() {});
-            }, 10000);
+            }, 60000);
+
+            // Open the eventsocket after the first /api/status has populated device IDs.
+            openEventSocket();
+
+            // Pause the socket while the tab is hidden; on refocus, reopen and resync once.
+            document.addEventListener('visibilitychange', function() {
+                if (document.hidden) {
+                    if (ws) try { ws.close(); } catch (e) {}
+                } else {
+                    openEventSocket();
+                    fetchJson('/api/status').then(updateStatus).catch(function() {});
+                }
+            });
 
             // One-shot GitHub version check; retries once if the backend's first probe hadn't landed.
             checkAppUpdate(false);

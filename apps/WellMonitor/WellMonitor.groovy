@@ -17,7 +17,7 @@ import com.hubitat.hub.domain.Event
 import java.nio.file.AccessDeniedException
 
 @Field static final String APP_NAME = "Well Monitor"
-@Field static final String APP_VERSION = "0.10.0"
+@Field static final String APP_VERSION = "0.11.2"
 @Field static final String DASHBOARD_FILE = "wellmonitor-dashboard.html"
 @Field static final String CHARTJS_FILE = "wellpump-chart.min.js"
 
@@ -27,9 +27,6 @@ import java.nio.file.AccessDeniedException
 // In-flight flag for the GitHub version probe; `volatile` because OAuth endpoint handlers
 // can race on it across threads.
 @Field static volatile boolean githubVersionRefreshPending = false
-
-// Cached UI_VERSION extracted from the dashboard HTML in File Manager; invalidated on sync.
-@Field static volatile String uiVersionCache = null
 
 definition(
     name: APP_NAME,
@@ -1227,7 +1224,10 @@ Map getStatusJson() {
         lastFlowDurationS: state.lastFlowDuration,
         lastFlowVolumeL: state.lastFlowVolume,
         pumpDeviceName: pumpSwitch?.displayName ?: "",
+        pumpDeviceId: pumpSwitch?.id as Long,
         meterDeviceName: waterMeter?.displayName ?: "",
+        meterDeviceId: waterMeter?.id as Long,
+        meterVolumeAttr: (waterMeterAttribute ?: "volume"),
         pumpSwitchState: pumpSwitch?.currentValue("switch"),
         flowTrackingEnabled: enableFlowTracking != false,
         hubName: hub?.name,
@@ -1370,21 +1370,17 @@ void githubVersionCallback(resp, data) {
     }
 }
 
-// Reads UI_VERSION from the dashboard HTML in File Manager. Cached after first read;
-// invalidated by processSyncUIResponse() on successful sync. Returns "Unknown" on miss.
+// Reads UI_VERSION from the dashboard HTML in File Manager. Not cached — direct uploads
+// (filemanager skill, manual UI upload) bypass any invalidation hook we could install,
+// so a cache would go stale silently. /api/status polling is infrequent enough that the
+// re-read cost is invisible.
 String getUIVersion() {
-    String cached = uiVersionCache
-    if (cached) return cached
     try {
         byte[] bytes = downloadHubFile(DASHBOARD_FILE)
         if (bytes) {
             String html = new String(bytes, "UTF-8")
             java.util.regex.Matcher m = (html =~ /const UI_VERSION = '([^']+)'/)
-            if (m.find()) {
-                String ver = m.group(1)
-                uiVersionCache = ver
-                return ver
-            }
+            if (m.find()) return m.group(1)
         }
     } catch (Exception e) {
         logDebug("getUIVersion error: ${e.message}")
@@ -1493,7 +1489,6 @@ private boolean processSyncUIResponse(String htmlText) {
     }
     state.lastInstalledVersion = APP_VERSION
     state.lastUIUpdateCheck = now()
-    uiVersionCache = APP_VERSION
     logInfo("Dashboard UI updated from GitHub to match App v${APP_VERSION} (${htmlText.length()} bytes)")
     return true
 }
