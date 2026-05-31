@@ -17,7 +17,7 @@ import com.hubitat.hub.domain.Event
 import java.nio.file.AccessDeniedException
 
 @Field static final String APP_NAME = "Well Monitor"
-@Field static final String APP_VERSION = "0.9.0"
+@Field static final String APP_VERSION = "0.10.0"
 @Field static final String DASHBOARD_FILE = "wellmonitor-dashboard.html"
 @Field static final String CHARTJS_FILE = "wellpump-chart.min.js"
 
@@ -27,6 +27,9 @@ import java.nio.file.AccessDeniedException
 // In-flight flag for the GitHub version probe; `volatile` because OAuth endpoint handlers
 // can race on it across threads.
 @Field static volatile boolean githubVersionRefreshPending = false
+
+// Cached UI_VERSION extracted from the dashboard HTML in File Manager; invalidated on sync.
+@Field static volatile String uiVersionCache = null
 
 definition(
     name: APP_NAME,
@@ -50,6 +53,7 @@ mappings {
     path('/api/flow')    { action: [GET: 'getFlowJson'] }
     path('/api/stats')   { action: [GET: 'getStatsJson'] }
     path('/api/version') { action: [GET: 'getVersionJson'] }
+    path('/api/ui/sync') { action: [POST: 'apiSyncUI'] }
     path('/csv/cycles')  { action: [GET: 'getCyclesCsv'] }
     path('/csv/flow')    { action: [GET: 'getFlowCsv'] }
 }
@@ -1210,6 +1214,7 @@ Map getChartJs() {
 }
 
 Map getStatusJson() {
+    def hub = location.hubs ? location.hubs[0] : null
     Map status = [
         pumpRunning: state.pumpRunning ?: false,
         flowActive: state.flowActive ?: false,
@@ -1223,8 +1228,12 @@ Map getStatusJson() {
         lastFlowVolumeL: state.lastFlowVolume,
         pumpDeviceName: pumpSwitch?.displayName ?: "",
         meterDeviceName: waterMeter?.displayName ?: "",
+        pumpSwitchState: pumpSwitch?.currentValue("switch"),
         flowTrackingEnabled: enableFlowTracking != false,
+        hubName: hub?.name,
+        hubFirmware: hub?.firmwareVersionString,
         appVersion: APP_VERSION,
+        uiVersion: getUIVersion(),
         timestamp: now()
     ]
     return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson(status))
@@ -1361,6 +1370,28 @@ void githubVersionCallback(resp, data) {
     }
 }
 
+// Reads UI_VERSION from the dashboard HTML in File Manager. Cached after first read;
+// invalidated by processSyncUIResponse() on successful sync. Returns "Unknown" on miss.
+String getUIVersion() {
+    String cached = uiVersionCache
+    if (cached) return cached
+    try {
+        byte[] bytes = downloadHubFile(DASHBOARD_FILE)
+        if (bytes) {
+            String html = new String(bytes, "UTF-8")
+            java.util.regex.Matcher m = (html =~ /const UI_VERSION = '([^']+)'/)
+            if (m.find()) {
+                String ver = m.group(1)
+                uiVersionCache = ver
+                return ver
+            }
+        }
+    } catch (Exception e) {
+        logDebug("getUIVersion error: ${e.message}")
+    }
+    return "Unknown"
+}
+
 // Lexical-by-component compare of dotted version strings; returns true iff v1 > v2.
 boolean isNewerVersion(String v1, String v2) {
     if (!v1 || !v2 || v1 == "Unknown" || v2 == "Unknown") return false
@@ -1384,6 +1415,15 @@ Map getVersionJson() {
         updateAvailable: latest ? isNewerVersion(latest, APP_VERSION) : false,
         lastChecked: (state.lastGithubVersionCheck ?: 0L) as long
     ]
+    return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson(payload))
+}
+
+// Manual UI sync trigger — SPA "Check for updates" button POSTs here. Wraps the existing
+// blocking pull (validates UI_VERSION == APP_VERSION before writing).
+Map apiSyncUI() {
+    logInfo("Manual UI sync requested via /api/ui/sync")
+    boolean success = syncUIBlocking()
+    Map payload = [success: success, version: APP_VERSION]
     return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson(payload))
 }
 
@@ -1453,6 +1493,7 @@ private boolean processSyncUIResponse(String htmlText) {
     }
     state.lastInstalledVersion = APP_VERSION
     state.lastUIUpdateCheck = now()
+    uiVersionCache = APP_VERSION
     logInfo("Dashboard UI updated from GitHub to match App v${APP_VERSION} (${htmlText.length()} bytes)")
     return true
 }

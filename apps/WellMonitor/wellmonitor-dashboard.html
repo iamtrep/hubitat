@@ -29,12 +29,20 @@ SPDX-License-Identifier: MIT
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
 
         header { background: var(--card-bg); border-bottom: 1px solid var(--border); padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+        .header-left { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
         header h1 { font-size: 1.25rem; font-weight: 600; }
-        .header-right { display: flex; align-items: center; gap: 12px; font-size: 0.85rem; }
+        .hub-info { font-size: 0.8rem; color: var(--text-muted); }
+        .docs-link { font-size: 0.8rem; color: var(--text-muted); text-decoration: none; }
+        .docs-link:hover { color: var(--primary); }
+        .header-right { display: flex; align-items: center; gap: 12px; font-size: 0.85rem; flex-wrap: wrap; }
         .status-badge { padding: 3px 10px; border-radius: 12px; font-weight: 600; font-size: 0.75rem; text-transform: uppercase; }
         .badge-idle { background: var(--success-light); color: var(--success); }
         .badge-running { background: var(--danger-light); color: var(--danger); animation: pulse 1.5s infinite; }
         .badge-flowing { background: var(--info-light); color: var(--info); }
+        .badge-off { background: var(--bg); color: var(--text-muted); }
+        .badge-sync-ok { background: var(--success-light); color: var(--success); cursor: pointer; }
+        .badge-sync-warn { background: #fef3c7; color: var(--warn); cursor: pointer; }
+        .badge-sync-err { background: var(--danger-light); color: var(--danger); cursor: pointer; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
 
         nav { background: var(--card-bg); border-bottom: 1px solid var(--border); display: flex; overflow-x: auto; }
@@ -108,10 +116,15 @@ SPDX-License-Identifier: MIT
 <body>
 
 <header>
-    <h1>Well Monitor</h1>
+    <div class="header-left">
+        <h1>Well Monitor</h1>
+        <span id="hubInfo" class="hub-info"></span>
+        <a class="docs-link" href="https://github.com/iamtrep/hubitat/blob/main/apps/WellMonitor/README.md" target="_blank" rel="noopener">Docs &#8599;</a>
+    </div>
     <div class="header-right">
-        <span id="pumpBadge" class="status-badge badge-idle">Pump Idle</span>
+        <span id="pumpBadge" class="status-badge badge-idle">Pump Inactive</span>
         <span id="flowBadge" class="status-badge" style="display:none"></span>
+        <span id="versionBadge" class="status-badge" style="display:none" title="Click to check for updates"></span>
         <span id="powerDisplay" style="font-size:0.8rem;color:var(--text-muted)"></span>
     </div>
 </header>
@@ -245,7 +258,13 @@ SPDX-License-Identifier: MIT
 
     const ACCESS_TOKEN = '${access_token}';
     const BASE_URL = window.location.pathname.replace(/\/dashboard\/?$/, '');
-    const UI_VERSION = '0.9.0';
+    const UI_VERSION = '0.10.0';
+
+    // Latest /api/version probe (latestVersion + updateAvailable). Cached so the version
+    // badge can be re-rendered from /api/status updates without re-hitting /api/version.
+    let lastVersionInfo = null;
+    // Latest /api/status (for re-renders from /api/version updates).
+    let lastStatus = null;
 
     // ==================== Helpers ====================
 
@@ -257,6 +276,18 @@ SPDX-License-Identifier: MIT
         const resp = await fetch(apiUrl(path));
         if (!resp.ok) throw new Error(`API error: ${resp.status}`);
         return resp.json();
+    }
+
+    // Lexical-by-component compare of dotted version strings; true iff v1 > v2.
+    function isNewer(v1, v2) {
+        if (!v1 || v1 === 'Unknown' || !v2 || v2 === 'Unknown') return false;
+        const p1 = v1.split('.').map(Number), p2 = v2.split('.').map(Number);
+        for (let i = 0; i < Math.max(p1.length, p2.length); i++) {
+            const n1 = p1[i] || 0, n2 = p2[i] || 0;
+            if (n1 > n2) return true;
+            if (n1 < n2) return false;
+        }
+        return false;
     }
 
     function fmtDec(v) {
@@ -860,20 +891,31 @@ SPDX-License-Identifier: MIT
     // ==================== Status Updates ====================
 
     function updateStatus(status) {
+        lastStatus = status;
         const pumpBadge = document.getElementById('pumpBadge');
         const flowBadge = document.getElementById('flowBadge');
         const powerDisplay = document.getElementById('powerDisplay');
+        const hubInfo = document.getElementById('hubInfo');
 
+        // Three-state pump pill: active (drawing power) > off (relay cut) > inactive (everything else).
+        // Power wins because it's the ground truth — relay state can lie.
         if (status.pumpRunning) {
-            pumpBadge.textContent = 'Pump Running';
+            pumpBadge.textContent = 'Pump Active';
             pumpBadge.className = 'status-badge badge-running';
+        } else if (status.pumpSwitchState === 'off') {
+            pumpBadge.textContent = 'Pump Off';
+            pumpBadge.className = 'status-badge badge-off';
         } else {
-            pumpBadge.textContent = 'Pump Idle';
+            pumpBadge.textContent = 'Pump Inactive';
             pumpBadge.className = 'status-badge badge-idle';
         }
 
         if (status.flowTrackingEnabled) {
             flowBadge.style.display = '';
+            // Clear any inline colour overrides left over from a previous "No Flow" render —
+            // inline styles win over .badge-flowing, so without this the pill stays grey.
+            flowBadge.style.color = '';
+            flowBadge.style.background = '';
             if (status.flowActive) {
                 flowBadge.textContent = 'Water Flowing';
                 flowBadge.className = 'status-badge badge-flowing';
@@ -889,15 +931,93 @@ SPDX-License-Identifier: MIT
             powerDisplay.textContent = fmtDec(status.currentPowerW) + 'W';
         }
 
+        if (hubInfo && status.hubName) {
+            hubInfo.textContent = status.hubName + ' · fw ' + (status.hubFirmware || '?') + ' · app v' + status.appVersion;
+        }
+
+        renderVersionBadge();
+
         if (status.appVersion && status.appVersion !== UI_VERSION) {
             const main = document.querySelector('main');
             if (!document.getElementById('versionMismatchBanner')) {
                 const banner = document.createElement('div');
                 banner.id = 'versionMismatchBanner';
                 banner.className = 'error';
-                banner.textContent = 'App/UI version mismatch (app ' + status.appVersion + ', UI ' + UI_VERSION + '). Re-upload the dashboard HTML and hard-refresh.';
+                banner.style.display = 'flex';
+                banner.style.alignItems = 'center';
+                banner.style.gap = '12px';
+                banner.style.flexWrap = 'wrap';
+                const msg = document.createElement('span');
+                msg.style.flex = '1';
+                msg.textContent = 'App/UI version mismatch (app ' + status.appVersion + ', UI ' + UI_VERSION + '). The dashboard UI is out of date.';
+                const btn = document.createElement('button');
+                btn.className = 'btn btn-sm';
+                btn.textContent = 'Sync UI from GitHub';
+                btn.onclick = syncUI;
+                banner.appendChild(msg);
+                banner.appendChild(btn);
                 main.insertBefore(banner, main.firstChild);
             }
+        }
+    }
+
+    function renderVersionBadge() {
+        const badge = document.getElementById('versionBadge');
+        if (!badge) return;
+        const s = lastStatus || {};
+        const v = lastVersionInfo || {};
+        const appV = s.appVersion;
+        const uiV = s.uiVersion;
+        const latest = v.latestVersion;
+        const updateAvailable = !!v.updateAvailable;
+
+        if (!appV) { badge.style.display = 'none'; return; }
+        badge.style.display = '';
+
+        // 1) SPA<->Groovy mismatch wins — that's the loudest desync.
+        if (uiV && uiV !== 'Unknown' && uiV !== appV) {
+            badge.textContent = 'UI v' + uiV + ' ≠ App v' + appV;
+            badge.className = 'status-badge badge-sync-err';
+            badge.onclick = syncUI;
+            return;
+        }
+        // 2) GitHub has a newer App than installed.
+        if (updateAvailable && latest) {
+            badge.textContent = 'Update v' + latest;
+            badge.className = 'status-badge badge-sync-warn';
+            badge.onclick = function() { recheckVersion(); };
+            return;
+        }
+        // 3) Everything in sync — quiet green chip; click triggers a recheck.
+        badge.textContent = 'v' + appV;
+        badge.className = 'status-badge badge-sync-ok';
+        badge.onclick = function() { recheckVersion(); };
+    }
+
+    async function recheckVersion() {
+        try {
+            lastVersionInfo = await fetchJson('/api/version');
+            renderVersionBadge();
+        } catch (e) { /* silent */ }
+    }
+
+    async function syncUI() {
+        const badge = document.getElementById('versionBadge');
+        const prevText = badge ? badge.textContent : '';
+        if (!confirm('Pull the matching dashboard UI from GitHub? If a matching version is found, the page will reload.')) return;
+        if (badge) { badge.textContent = 'Syncing…'; badge.onclick = null; }
+        try {
+            const resp = await fetch(apiUrl('/api/ui/sync'), { method: 'POST' });
+            const res = await resp.json();
+            if (res && res.success) {
+                location.reload();
+                return;
+            }
+            alert('UI sync failed. The matching version may not be on GitHub yet, or the download was invalid. See the Hubitat logs for details.');
+        } catch (e) {
+            alert('UI sync failed: ' + e.message);
+        } finally {
+            if (badge) { badge.textContent = prevText; renderVersionBadge(); }
         }
     }
 
@@ -997,6 +1117,8 @@ SPDX-License-Identifier: MIT
     async function checkAppUpdate(retried) {
         try {
             const info = await fetchJson('/api/version');
+            lastVersionInfo = info;
+            renderVersionBadge();
             if (info && info.updateAvailable && info.latestVersion) {
                 showAppUpdateBanner(info);
                 return;
