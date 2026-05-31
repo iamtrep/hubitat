@@ -4,7 +4,7 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String APP_VERSION = "0.2.1"
+@Field static final String APP_VERSION = "0.2.2"
 
 // Attributes (beyond the universal "motion") that some presence sensors expose.
 // Subscribed opportunistically per device and surfaced as extra context.
@@ -135,6 +135,10 @@ void motionHandler(evt) {
     // Integrate agreement over the interval that just ended, then update state.
     integrateAgreement(t)
     Map cs = (state.curStates as Map) ?: [:]
+    // Snapshot before mutating cs: if any *other* sensor is already active,
+    // the prior wave's real-world motion event is still ongoing — a fresh
+    // activation here is a delayed joiner, not a new "1st".
+    boolean ongoing = cs.any { k, v -> k != devId && (v as boolean) }
     cs[devId] = active
     state.curStates = cs
 
@@ -148,7 +152,7 @@ void motionHandler(evt) {
         }
         stats[devId] = s
         state.stats = stats
-        recordActivationWave(devId, t)
+        recordActivationWave(devId, t, ongoing)
     } else {
         if (s.curActive as boolean) {
             s.curActive = false
@@ -187,13 +191,17 @@ void auxHandler(evt) {
 //   {n, t0, leaderId, dev:{ devId:{off, holdMs} }}
 // off = ms behind the wave's first detection; holdMs filled when that device
 // later goes inactive (fillWaveHold). A device absent from .dev missed the wave.
-private void recordActivationWave(String devId, long t) {
+private void recordActivationWave(String devId, long t, boolean ongoing) {
     int win = (settings.corrWindowMs ?: 5000) as int
     List waves = (state.waves as List) ?: []
     Map cur = waves ? (waves[-1] as Map) : null
     Long t0 = cur != null ? (cur.t0 as Long) : null
 
-    if (t0 == null || (t - t0) > win) {
+    // A new wave only starts when the prior wave's window has expired AND no
+    // sensor is still actively holding. Otherwise the current real-world
+    // motion event is still in progress — fold this activation in as a
+    // delayed joiner so late starters don't get credited as "1st".
+    if (t0 == null || ((t - t0) > win && !ongoing)) {
         // New wave — this sensor fired first (leader).
         int n = ((state.totalWaves ?: 0) as int) + 1
         state.totalWaves = n
