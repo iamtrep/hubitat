@@ -14,7 +14,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String constDriverVersion = "0.0.13"
+@Field static final String constDriverVersion = "0.0.15"
 
 metadata {
     definition(
@@ -243,14 +243,31 @@ void on() {
     List<String> cmds = []
     cmds += zigbee.command(0x0006, 0x01)
     sendZigbeeCommands(cmds)
-    state.switchTypeDigital = true
+    markPendingDigitalSwitchChange()
 }
 
 void off() {
     List<String> cmds = []
     cmds += zigbee.command(0x0006, 0x00)
     sendZigbeeCommands(cmds)
+    markPendingDigitalSwitchChange()
+}
+
+// Set switchTypeDigital and arm a safety-net clear. The flag is normally
+// cleared by parseAttributeReport on the next 0006/0000 state report — but a
+// digital command issued when the device is already in the target state is a
+// no-op at the device, so no state report follows and the flag would otherwise
+// sit true until the next real state change (which then gets mislabeled as
+// digital). The 5s runIn covers any normal Zigbee round-trip; the clear is
+// idempotent so the fast path (state report arrives before the timer fires)
+// keeps working unchanged.
+private void markPendingDigitalSwitchChange() {
     state.switchTypeDigital = true
+    runInMillis 5000, 'clearSwitchTypeDigital'
+}
+
+private void clearSwitchTypeDigital() {
+    state.switchTypeDigital = false
 }
 
 void push(Integer buttonNumber) {
@@ -424,11 +441,19 @@ private Map parseAttributeReport(Map descMap) {
 
         case "0006": // On/Off cluster
             if (descMap.attrId == "0000") {
+                String newVal = descMap.value == "00" ? "off" : "on"
+                String curVal = device.currentValue("switch")
+                boolean changed = (curVal != newVal)
                 map.name = "switch"
-                map.value = descMap.value == "00" ? "off" : "on"
+                map.value = newVal
                 map.type = state.switchTypeDigital ? "digital" : "physical"
                 state.switchTypeDigital = false
-                map.descriptionText = "Switch ${descMap.commandInt == 0x0A ? 'is' : 'was turned'} ${map.value} [${map.type}]"
+                // "was turned" only when this report represents a real state change vs the
+                // platform's current value; otherwise it's a status/scheduled report and the
+                // digital-vs-physical label doesn't apply (no source action triggered it).
+                map.descriptionText = changed
+                    ? "Switch was turned ${newVal} [${map.type}]"
+                    : "Switch is ${newVal}"
             }
             break
 

@@ -14,7 +14,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String constDriverVersion = "0.0.13"
+@Field static final String constDriverVersion = "0.0.15"
 
 metadata {
     definition(
@@ -249,14 +249,14 @@ void on() {
     List<String> cmds = []
     cmds += zigbee.command(0x0006, 0x01)
     sendZigbeeCommands(cmds)
-    state.switchTypeDigital = true
+    markPendingDigitalSwitchChange()
 }
 
 void off() {
     List<String> cmds = []
     cmds += zigbee.command(0x0006, 0x00)
     sendZigbeeCommands(cmds)
-    state.switchTypeDigital = true
+    markPendingDigitalSwitchChange()
 }
 
 void setLevel(String level, String duration = '0') {
@@ -264,11 +264,37 @@ void setLevel(String level, String duration = '0') {
 }
 
 void setLevel(BigDecimal level, BigDecimal duration = 0) {
-    state.levelTypeDigital = true
+    markPendingDigitalLevelChange()
     List<String> cmds = []
     cmds += zigbee.setLevel(level, duration)
     //logTrace("zigbee.setLevel($level,$duration) = $cmds")
     sendZigbeeCommands(cmds)
+}
+
+// Arm the digital-state flags with a safety-net clear. Normally the flag is
+// cleared by parseAttributeReport on the next 0006/0000 (switch) or 0008/0000
+// (level) state report — but a digital command issued when the device is
+// already in the target state is a no-op at the device, so no state report
+// follows and the flag would otherwise sit true until the next real state
+// change (which then gets mislabeled as digital). The 5s runIn covers any
+// normal Zigbee round-trip; the clear is idempotent so the fast path (state
+// report arrives before the timer fires) keeps working unchanged.
+private void markPendingDigitalSwitchChange() {
+    state.switchTypeDigital = true
+    runInMillis 5000, 'clearSwitchTypeDigital'
+}
+
+private void markPendingDigitalLevelChange() {
+    state.levelTypeDigital = true
+    runInMillis 5000, 'clearLevelTypeDigital'
+}
+
+private void clearSwitchTypeDigital() {
+    state.switchTypeDigital = false
+}
+
+private void clearLevelTypeDigital() {
+    state.levelTypeDigital = false
 }
 
 void push(Integer buttonNumber) {
@@ -446,11 +472,19 @@ private Map parseAttributeReport(Map descMap) {
 
         case "0006": // On/Off cluster
             if (descMap.attrId == "0000") {
+                String newVal = descMap.value == "00" ? "off" : "on"
+                String curVal = device.currentValue("switch")
+                boolean changed = (curVal != newVal)
                 map.name = "switch"
-                map.value = descMap.value == "00" ? "off" : "on"
+                map.value = newVal
                 map.type = state.switchTypeDigital ? "digital" : "physical"
                 state.switchTypeDigital = false
-                map.descriptionText = "Switch is ${map.value} [${map.type}]"
+                // "was turned" only when this report represents a real state change vs the
+                // platform's current value; otherwise it's a status/scheduled report and the
+                // digital-vs-physical label doesn't apply (no source action triggered it).
+                map.descriptionText = changed
+                    ? "Switch was turned ${newVal} [${map.type}]"
+                    : "Switch is ${newVal}"
             }
             break
 
@@ -459,12 +493,16 @@ private Map parseAttributeReport(Map descMap) {
                 case "0000":
                     // Current level (0-255)
                     Integer dimmerLevel = scaleHexValue(descMap.value)
+                    Integer curLevel = device.currentValue("level") as Integer
+                    boolean changed = (curLevel != dimmerLevel)
                     map.name = "level"
                     map.value = dimmerLevel
                     map.unit = "%"
-                    map.descriptionText = "Dimmer level was set to ${map.value}${map.unit}"
                     map.type = state.levelTypeDigital ? "digital" : "physical"
                     state.levelTypeDigital = false
+                    map.descriptionText = changed
+                        ? "Dimmer level was set to ${dimmerLevel}% [${map.type}]"
+                        : "Dimmer level is ${dimmerLevel}%"
                     break
 
                 case "0011":
