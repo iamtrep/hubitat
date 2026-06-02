@@ -4,7 +4,7 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String APP_VERSION = "0.0.2"
+@Field static final String APP_VERSION = "0.1.0"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
 
 definition(
@@ -237,34 +237,15 @@ Map previewPage() {
                 (sub as Map).name as String
             }.unique().sort()
 
-            // Get configure/json to check if inputs are on the main config page
-            Map configData = null
-            try {
-                httpGet("${BASE_URL}/installedapp/configure/json/${appId}") { response ->
-                    if (response.status == 200) {
-                        configData = response.data as Map
-                    }
-                }
-            } catch (Exception e) {
-                logWarn "Error fetching configure/json for app ${appId}: ${e.message}"
-            }
-
-            // Extract input names from configure/json
-            Set<String> configInputNames = [] as Set
-            if (configData) {
-                Map configPage = (configData.configPage ?: [:]) as Map
-                List sections = (configPage.sections ?: []) as List
-                sections.each { sec ->
-                    List inputs = ((sec as Map).input ?: []) as List
-                    inputs.each { inp ->
-                        configInputNames << ((inp as Map).name as String)
-                    }
-                }
-            }
+            // Walk the app's full page graph so we can locate each input's home page.
+            Map<String,Map> pageGraph = discoverPageGraph(appId)
 
             matchingInputs.each { Map inputMatch ->
                 String inputName = inputMatch.name
-                boolean isOnConfigPage = configInputNames.contains(inputName)
+                Map loc = locateInputPage(pageGraph, inputName)
+                String homePage = loc.page as String
+                List<String> homeBreadcrumbs = (loc.breadcrumbs ?: []) as List<String>
+                boolean isOnMainPage = (homePage == "mainPage")
 
                 // Capability compatibility check
                 String capWarning = null
@@ -296,6 +277,10 @@ Map previewPage() {
                 // App state warning
                 String stateWarning = stateHasDeviceRef ? "App state references device ID; may need manual attention" : null
 
+                // Deeplink straight to the page that holds this input (mainPage if unknown)
+                String pageForLink = homePage ?: "mainPage"
+                String pageDeepLink = "/installedapp/configure/${appId}/${pageForLink}"
+
                 Map entry = [
                     appId: appId,
                     appLabel: appLabel,
@@ -309,13 +294,18 @@ Map previewPage() {
                     capWarning: capWarning,
                     targetWarning: targetWarning,
                     singleSelectWarning: singleSelectWarning,
-                    stateWarning: stateWarning
+                    stateWarning: stateWarning,
+                    homePage: homePage,
+                    homeBreadcrumbs: homeBreadcrumbs,
+                    pageDeepLink: pageDeepLink
                 ]
 
-                if (isOnConfigPage) {
+                if (isOnMainPage) {
                     swappable << entry
                 } else {
-                    entry.reason = "Device input not on main config page (multi-page app)"
+                    entry.reason = homePage
+                        ? "Input lives on sub-page '${homePage}' — auto-swap not supported; use deeplink"
+                        : "Input not on any discoverable page (dynamic render path) — open the app to edit"
                     manual << entry
                 }
             }
@@ -341,12 +331,12 @@ Map previewPage() {
             String X = "<i class='he-checkbox-checked'></i>"
             String O = "<i class='he-checkbox-unchecked'></i>"
 
-            section("Swappable Apps (${swappable.size()})") {
+            section("Auto-Swap Eligible — on mainPage (${swappable.size()})") {
                 String table = "<style>.mdl-data-table tbody tr:hover{background-color:inherit} .swap-tbl td,.swap-tbl th {padding:8px;text-align:left;font-size:14px}</style>" +
                     "<div style='overflow-x:auto'><table class='mdl-data-table swap-tbl' style='border:2px solid black;width:100%'>" +
                     "<thead><tr style='border-bottom:2px solid black'>" +
                     "<th style='text-align:center;border-right:2px solid black'><strong>Swap</strong></th>" +
-                    "<th><strong>App</strong></th><th><strong>Type</strong></th><th><strong>Input</strong></th><th><strong>Capability</strong></th><th><strong>Subscriptions</strong></th><th><strong>Warnings</strong></th>" +
+                    "<th><strong>App</strong></th><th><strong>Type</strong></th><th><strong>Page</strong></th><th><strong>Input</strong></th><th><strong>Capability</strong></th><th><strong>Subscriptions</strong></th><th><strong>Warnings</strong></th>" +
                     "</tr></thead><tbody>"
                 swappable.eachWithIndex { Map entry, int idx ->
                     List<String> entryWarnings = []
@@ -362,6 +352,7 @@ Map previewPage() {
                         "<td style='text-align:center;border-right:2px solid black'>${buttonLink("btnSwapSel:${idx}", selected ? X : O, "#1A77C9")}</td>" +
                         "<td><a href='/installedapp/configure/${entry.appId}' target='_blank'>${entry.appLabel}</a></td>" +
                         "<td>${entry.appType}</td>" +
+                        "<td><a href='${entry.pageDeepLink}' target='_blank'>${entry.homePage ?: 'mainPage'}</a></td>" +
                         "<td>${entry.inputName}</td>" +
                         "<td>${entry.inputType}</td>" +
                         "<td>${subsCell}</td>" +
@@ -374,20 +365,33 @@ Map previewPage() {
         }
 
         if (manual) {
-            section("Manual Swap Required (${manual.size()})") {
+            section("Manual Edit Required (${manual.size()})") {
+                paragraph "These inputs live on sub-pages or in app state that the auto-swap can't safely write to. Use the <b>Edit</b> deeplink to open the right page directly — set the input to <b>${targetDevice.displayName}</b> (ID ${targetId}) and remove <b>${sourceDevice.displayName}</b> (ID ${sourceId})."
                 String table = "<table style='border-collapse:collapse;width:100%'>" +
                     "<thead><tr style='background:#ddd'>" +
-                    "<th ${td}>App</th><th ${td}>Type</th><th ${td}>Input</th><th ${td}>Subscriptions</th><th ${td}>Reason</th>" +
+                    "<th ${td}>App</th><th ${td}>Type</th><th ${td}>Page</th><th ${td}>Input</th><th ${td}>Capability</th><th ${td}>Current Devices</th><th ${td}>Subscriptions</th><th ${td}>Reason</th><th ${tdC}>Edit</th>" +
                     "</tr></thead><tbody>"
                 manual.each { Map entry ->
                     List<String> attrs = (entry.subscribedAttrs ?: []) as List<String>
                     String subsCell = attrs ? attrs.join(", ") : "<span style='color:gray'>-</span>"
+                    List currentIds = (entry.currentDeviceIds ?: []) as List
+                    String currentCell = currentIds ? currentIds.collect { id ->
+                        ((id as int) == sourceId)
+                            ? "<b style='color:red'>${id}</b>"
+                            : id.toString()
+                    }.join(", ") : "<span style='color:gray'>-</span>"
+                    String pageLabel = (entry.homePage ?: '(unknown)') as String
+                    String editBtn = "<a href='${entry.pageDeepLink}' target='_blank' style='display:inline-block;padding:4px 10px;background:#1A77C9;color:white;border-radius:3px;text-decoration:none'>Edit &rarr;</a>"
                     table += "<tr>" +
                         "<td ${td}><a href='/installedapp/configure/${entry.appId}' target='_blank'>${entry.appLabel}</a></td>" +
                         "<td ${td}>${entry.appType}</td>" +
+                        "<td ${td}>${pageLabel}</td>" +
                         "<td ${td}>${entry.inputName}</td>" +
+                        "<td ${td}>${entry.inputType}</td>" +
+                        "<td ${td}>${currentCell}</td>" +
                         "<td ${td}>${subsCell}</td>" +
                         "<td ${td}>${entry.reason}</td>" +
+                        "<td ${tdC}>${editBtn}</td>" +
                         "</tr>"
                 }
                 table += "</tbody></table>"
@@ -530,6 +534,83 @@ Map resultsPage() {
     }
 }
 
+// ---- Page Graph Discovery ----
+
+// Recursively walks an app's preference pages starting at mainPage, following
+// every body element with element=='href' and a 'page' attribute. Returns a map
+// keyed by page name with rendered input names and the parent-page breadcrumb
+// chain that leads to it (mainPage's chain is empty). Cycles are protected by
+// a visited set; total pages capped at 30 for safety.
+private Map<String,Map> discoverPageGraph(int appId) {
+    Map<String,Map> graph = [:]
+    List<List> queue = []
+    queue << ["mainPage", [] as List<String>]
+    Set<String> seen = [] as Set<String>
+    int hardCap = 30
+
+    while (!queue.isEmpty() && graph.size() < hardCap) {
+        List head = queue.remove(0)
+        String pageName = head[0] as String
+        List<String> parents = head[1] as List<String>
+        if (seen.contains(pageName)) continue
+        seen << pageName
+
+        Map pageData = null
+        try {
+            httpGet("${BASE_URL}/installedapp/configure/json/${appId}/${pageName}") { response ->
+                if (response.status == 200) pageData = response.data as Map
+            }
+        } catch (Exception e) {
+            logDebug "discoverPageGraph: cannot fetch ${pageName}: ${e.message}"
+            continue
+        }
+        if (!pageData) continue
+
+        Map cp = (pageData.configPage ?: [:]) as Map
+        String actualName = (cp.name ?: pageName) as String
+        Set<String> inputs = [] as Set<String>
+        List<String> hrefPages = []
+        ((cp.sections ?: []) as List).each { sec ->
+            ((sec as Map).input ?: []).each { inp ->
+                inputs << (((inp as Map).name) as String)
+            }
+            ((sec as Map).body ?: []).each { b ->
+                Map elem = b as Map
+                if (elem.element == "href" && elem.page) {
+                    hrefPages << (elem.page as String)
+                }
+            }
+        }
+        graph[actualName] = [breadcrumbs: parents, inputs: inputs, hrefs: hrefPages]
+
+        List<String> childParents = (parents + [actualName]) as List<String>
+        hrefPages.each { String childPage ->
+            if (!seen.contains(childPage)) {
+                queue << [childPage, childParents]
+            }
+        }
+    }
+    return graph
+}
+
+// Resolves the home page for a settings input by scanning the page graph.
+// Returns null if the input doesn't appear on any discoverable page (e.g. it
+// only exists in stored settings but the page that renders it isn't reachable
+// without further user input).
+private Map locateInputPage(Map<String,Map> graph, String inputName) {
+    String home = null
+    List<String> breadcrumbs = []
+    graph.each { String page, Map info ->
+        if (home != null) return
+        Set inputs = (info.inputs ?: ([] as Set)) as Set
+        if (inputs.contains(inputName)) {
+            home = page
+            breadcrumbs = (info.breadcrumbs ?: []) as List<String>
+        }
+    }
+    return [page: home, breadcrumbs: breadcrumbs]
+}
+
 // ---- POST Body Construction & Execution ----
 
 private String buildAndSendSwap(Map configData, int appId, String inputName, int sourceId, int targetId, boolean targetAlreadyPresent) {
@@ -585,10 +666,17 @@ private String buildAndSendSwap(Map configData, int appId, String inputName, int
                 String val = settingToString(settings[name])
                 fields << ["settings[${name}]", val]
             } else if (type.startsWith("capability.")) {
-                // Device input — compute new device ID list
+                // Device input — compute new device ID list. The settings value
+                // can be a Map (device id -> label), a scalar Long/Integer for
+                // a single device, or a comma-separated String.
                 List<Integer> currentIds = []
-                if (settings[name] instanceof Map) {
-                    currentIds = (settings[name] as Map).keySet().collect { it.toString().toInteger() }
+                Object curVal = settings[name]
+                if (curVal instanceof Map) {
+                    currentIds = (curVal as Map).keySet().collect { it.toString().toInteger() }
+                } else if (curVal instanceof List) {
+                    currentIds = (curVal as List).collect { it.toString().toInteger() }
+                } else if (curVal != null && curVal.toString() != "" && curVal.toString() != "null") {
+                    currentIds = curVal.toString().split(",").findAll { it.trim() }.collect { it.trim().toInteger() }
                 }
 
                 List<Integer> newIds

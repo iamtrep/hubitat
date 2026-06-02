@@ -29,23 +29,21 @@ Generates an HTML report showing which installed apps reference each device.
 
 ### Device Replacement Helper (`DeviceReplacement.groovy`)
 
-Replaces one device with another across all installed apps in a single operation — useful when swapping out hardware (e.g. replacing a failed sensor with a new one).
+Helps replace one device with another across every installed app — auto-swapping where it can, and producing a deeplinked punch list for everything else.
 
 **Three-page workflow:**
 
 1. **Device Selection** — pick the source (old) device and target (new) device. Displays a capability comparison highlighting any mismatches.
-2. **Scan & Preview** — queries every app that references the source device, checks whether each device input is on the app's main config page (and therefore automatable), and presents a table with per-app warnings:
-   - Capability incompatibility
-   - Target already present in the input
-   - Single-device inputs
-   - App state referencing the device ID (may need manual attention)
-   - Multi-page apps where the input is not on the main config page (flagged for manual swap)
-   - Per-app checkboxes to include/exclude from the swap
-3. **Execute & Report** — performs the swap via `POST /installedapp/update/json`, verifies each result by re-reading `statusJson`, and displays a pass/fail table.
+2. **Scan & Preview** — for every app that references the source device, walks the app's full preference page graph (`mainPage` plus every sub-page reachable via `href`), then locates each affected input on its home page. Findings split into two tables:
+   - **Auto-Swap Eligible (mainPage)** — inputs on the main page, with per-row checkboxes to include/exclude from the swap. Per-app warnings flag capability mismatch, target already present, single-device inputs, and `state.*` references to the device ID.
+   - **Manual Edit Required** — inputs on sub-pages or in places the auto-swap can't safely write. Each row carries an **Edit →** deeplink straight to the right page (`/installedapp/configure/{id}/{pageName}`), the current device list with the source highlighted, and the same warning columns.
+3. **Execute & Report** — performs the auto-swap via `POST /installedapp/update/json` for selected eligible entries, verifies each by re-reading `statusJson`, and displays a pass/fail table.
 
 Additional features:
-- **Undo** — stores the last swap and offers a one-click undo from the main page.
+- **Undo** — stores the last auto-swap and offers a one-click undo from the main page.
 - Recommends creating a hub backup before executing.
+
+**Why some apps still need a manual edit.** The hub's form-save endpoint (`/installedapp/update/json`) addresses one page at a time, and the wire format for sub-page saves (`pageBreadcrumbs`, `_action_previous`, conditionally-rendered dynamic input names) is per-app-family — generalizing the write path across every built-in (Basic Rule, Notifier, Rule Machine, …) would mean re-validating undocumented form shapes on every firmware release. The deeplinked punch list trades clicks for stability: zero firmware-coupling, and the user stays in the loop for ambiguous cases.
 
 ### Rule Logging Manager (`RuleLoggingManager.groovy`)
 
