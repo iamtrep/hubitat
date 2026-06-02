@@ -5,6 +5,33 @@
  *  Sinope Switch SW2500ZB Device Driver for Hubitat Elevation
  *
  *  Specs for this device : https://support.sinopetech.com/en/1.2.2.5/
+ *
+ *  Power vs energy reporting (for reference):
+ *  This driver implements EnergyMeter only (cumulative kWh), not PowerMeter. That
+ *  matches the device's real behaviour: the SW2500ZB firmware does not support the
+ *  standard Zigbee instantaneous-power attributes (seMetering 0x0702 instantaneousDemand
+ *  and haElectricalMeasurement 0x0B04 activePower both return UNSUPPORTED_ATTRIBUTE),
+ *  so other integrations also settle on energy-only. Energy here is read from the
+ *  Sinope manufacturer-specific cluster 0xFF01 attribute 0x0090 (mfgCode 0x119C);
+ *  the standard metering cluster (0x0702) is intentionally ignored as some firmware
+ *  variants are unreliable on it. Note 0xFF01/0x0119 ("connected load", watts) reads
+ *  zero on this device.
+ *
+ *  Sinope's own cloud (Neviweb) does surface a wattage value plus kWh history for this
+ *  switch, but the power figure comes from the manufacturer attribute "loadWattOutput1"
+ *  (a coarse load-output value) - not the dedicated real-time "wattageInstant" meter that
+ *  newer hardware (e.g. DM2550ZB dimmer) exposes.
+ *
+ *  References:
+ *   - Zigbee2MQTT converter (power: false + firmware note):
+ *       https://github.com/Koenkk/zigbee-herdsman-converters/blob/master/src/devices/sinope.ts
+ *   - ZHA quirks (energy via current_summ_delivered only):
+ *       https://github.com/claudegel/sinope-zha/blob/master/switch.py
+ *   - Neviweb130 integration (attribute mappings for SW2500ZB):
+ *       https://github.com/claudegel/sinope-130/blob/master/custom_components/neviweb130/light.py
+ *       https://github.com/claudegel/sinope-130/blob/master/custom_components/neviweb130/const.py
+ *   - ZHA instantaneous_demand UNSUPPORTED_ATTRIBUTE report:
+ *       https://github.com/zigpy/zha-device-handlers/issues/2165
  */
 
 import groovy.transform.Field
