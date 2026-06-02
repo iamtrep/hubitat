@@ -17,7 +17,21 @@
 
     Activation threshold:
       bathroom >= absoluteLow + tolerance
-      AND (bathroom > reference + highOffset OR bathroom > absoluteHigh)
+      AND (bathroom > reference + highOffset
+           OR bathroom > absoluteHigh
+           OR fast-climb)
+
+    Fast-climb (rate-based) — both must hold:
+      >= burstEventCount bathroom events within burstWindowSeconds
+      AND slope across the last burstEventCount samples
+          (within slopeWindowSeconds) >= slopeActivationThreshold %RH/min
+    When fast-climb fires, the activation delay is bypassed (NORMAL → HIGH
+    or PENDING_HIGH → HIGH directly).
+
+    Occupancy gate (optional): when occupancySensors is configured, the
+    fast-climb bypass requires motion to be currently active OR to have
+    been active within occupancyWindowSeconds. With no sensors configured
+    the gate is dormant.
 
     Deactivation threshold:
       bathroom < absoluteLow - tolerance
@@ -62,10 +76,11 @@
     Turned ON when humidity state is HIGH or PENDING_NORMAL.
     Turned OFF when humidity state is NORMAL or PENDING_HIGH.
  */
+import groovy.transform.CompileStatic
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Humidity-Based Fan Controller"
-@Field static final String APP_VERSION = "0.6.1"
+@Field static final String APP_VERSION = "0.7.0"
 
 // Humidity state machine states
 @Field static final String HUMIDITY_NORMAL = "NORMAL"
@@ -84,6 +99,12 @@ import groovy.transform.Field
 @Field static final Integer DEFAULT_SWITCH_VERIFICATION_TIMEOUT_SECONDS = 30
 @Field static final Integer DEFAULT_SENSOR_INACTIVITY_TIMEOUT_MINUTES = 60
 @Field static final Integer DEFAULT_MAX_FAN_RUN_TIME_MINUTES = 120
+@Field static final BigDecimal DEFAULT_SLOPE_ACTIVATION_THRESHOLD = 2.5G
+@Field static final Integer DEFAULT_BURST_EVENT_COUNT = 3
+@Field static final Integer DEFAULT_BURST_WINDOW_SECONDS = 60
+@Field static final Integer DEFAULT_SLOPE_WINDOW_SECONDS = 180
+@Field static final Integer SAMPLE_BUFFER_CAP = 20
+@Field static final Integer DEFAULT_OCCUPANCY_WINDOW_SECONDS = 600
 
 definition(
     name: APP_NAME,
@@ -127,6 +148,20 @@ Map mainPage() {
             input "absoluteHighThreshold", "number", title: "Absolute High Threshold", description: "Turn ON if humidity exceeds this regardless of reference", defaultValue: DEFAULT_ABSOLUTE_HIGH_THRESHOLD, required: true
             input "absoluteLowThreshold", "number", title: "Absolute Low Threshold", description: "Center of the absolute low threshold band", defaultValue: DEFAULT_ABSOLUTE_LOW_THRESHOLD, required: true
             input "absoluteLowTolerance", "number", title: "Absolute Low Tolerance", description: "Tolerance band around absolute low (activation blocked below threshold+tolerance, deactivation triggered below threshold-tolerance)", defaultValue: DEFAULT_ABSOLUTE_LOW_TOLERANCE, required: true
+        }
+
+        section("Fast-Climb Detection", hideable: true, hidden: true) {
+            paragraph "Rate-based activation: trigger HIGH (skipping activation delay) when the bathroom sensor reports a burst of rising humidity events. Both conditions must hold."
+            input "slopeActivationThreshold", "decimal", title: "Minimum Slope (%RH/min)", description: "Set to 0 to disable rate-based activation", defaultValue: DEFAULT_SLOPE_ACTIVATION_THRESHOLD, required: true
+            input "burstEventCount", "number", title: "Burst Event Count", description: "Minimum bathroom events in the burst window", defaultValue: DEFAULT_BURST_EVENT_COUNT, required: true
+            input "burstWindowSeconds", "number", title: "Burst Window (seconds)", description: "Lookback window for the burst count", defaultValue: DEFAULT_BURST_WINDOW_SECONDS, required: true
+            input "slopeWindowSeconds", "number", title: "Slope Window (seconds)", description: "Lookback window for the slope computation", defaultValue: DEFAULT_SLOPE_WINDOW_SECONDS, required: true
+        }
+
+        section("Occupancy Gating (optional)", hideable: true, hidden: true) {
+            paragraph "Restrict the fast-climb bypass to periods when motion has been detected, suppressing FPs from cooking steam or HVAC humidity drift. Leave the sensor list empty to disable the gate (fast-climb fires unconditionally)."
+            input "occupancySensors", "capability.motionSensor", title: "Occupancy Motion Sensors", multiple: true, required: false
+            input "occupancyWindowSeconds", "number", title: "Occupancy Window (seconds)", description: "Bypass remains armed for this long after the last motion-active event", defaultValue: DEFAULT_OCCUPANCY_WINDOW_SECONDS, required: true
         }
 
         section("Timing", hideable: true, hidden: true) {
@@ -210,6 +245,11 @@ void initialize() {
         subscribe(restrictionSwitchesMustBeOn, "switch", restrictionSwitchHandler)
     }
 
+    // Subscribe to occupancy motion (gates the fast-climb bypass)
+    if (occupancySensors) {
+        subscribe(occupancySensors, "motion.active", occupancyHandler)
+    }
+
     // Reschedule pending timers if we're in a pending state (timers were cleared by unschedule())
     reschedulePendingTimers()
 
@@ -257,6 +297,7 @@ void initialize() {
 void bathroomHumidityHandler(evt) {
     logDebug("Bathroom humidity event from ${evt.device}: ${evt.value}%")
     state.lastHumidityEventTime = now()
+    recordBathroomSample(evt.value as BigDecimal)
 
     // Reset max fan run timer on every humidity event if fan is running
     if (state.fanTurnedOnByApp) {
@@ -264,6 +305,38 @@ void bathroomHumidityHandler(evt) {
     }
 
     evaluateHumidityStateMachine(evt.device)
+}
+
+private void recordBathroomSample(BigDecimal value) {
+    Integer slopeWin = (slopeWindowSeconds != null ? slopeWindowSeconds : DEFAULT_SLOPE_WINDOW_SECONDS) as Integer
+    Integer burstWin = (burstWindowSeconds != null ? burstWindowSeconds : DEFAULT_BURST_WINDOW_SECONDS) as Integer
+    state.bathroomSamples = appendSample(
+        (state.bathroomSamples ?: []) as List,
+        now(),
+        value,
+        Math.max(slopeWin, burstWin) * 1000L,
+        SAMPLE_BUFFER_CAP
+    )
+}
+
+// Pure: prune samples older than (nowMs - maxWindowMs), append (nowMs, value),
+// then cap the buffer. Used by the dynamic recordBathroomSample wrapper.
+@CompileStatic
+private static List appendSample(List samples, long nowMs, BigDecimal value, long maxWindowMs, int cap) {
+    long cutoff = nowMs - maxWindowMs
+    List pruned = []
+    for (Object s : samples) {
+        List entry = (List) s
+        if (((Number) entry[0]).longValue() >= cutoff) {
+            pruned.add(entry)
+        }
+    }
+    pruned.add([nowMs, value])
+    int n = pruned.size()
+    if (n > cap) {
+        return pruned.subList(n - cap, n)
+    }
+    return pruned
 }
 
 void referenceHumidityHandler(evt) {
@@ -308,6 +381,11 @@ void fanSwitchHandler(evt) {
             state.fanTurnedOnByApp = false
         }
     }
+}
+
+void occupancyHandler(evt) {
+    logDebug("Occupancy motion event from ${evt.device}: ${evt.value}")
+    state.lastMotionActiveTime = now()
 }
 
 void restrictionSwitchHandler(evt) {
@@ -373,11 +451,19 @@ private void evaluateHumidityStateMachine(reportingDevice = null) {
 
 private void evaluateNormalState(BigDecimal bathroomHumidity, BigDecimal referenceHumidity) {
     if (isAboveActivationThreshold(bathroomHumidity, referenceHumidity)) {
-        String reason = getActivationReason(bathroomHumidity, referenceHumidity)
-        logInfo("Humidity above activation threshold: ${reason} - starting ${activationDelay}s delay")
-
         // Snapshot the reference humidity at activation time
         state.referenceHumiditySnapshot = referenceHumidity
+
+        // Fast-climb bypass: rapid rising burst skips the activation delay.
+        if (isFastClimb()) {
+            logInfo("Fast humidity climb detected (bath=${bathroomHumidity}%) - bypassing activation delay")
+            transitionHumidityState(HUMIDITY_HIGH)
+            onHumidityBecameHigh()
+            return
+        }
+
+        String reason = getActivationReason(bathroomHumidity, referenceHumidity)
+        logInfo("Humidity above activation threshold: ${reason} - starting ${activationDelay}s delay")
         state.pendingStateSince = now()
 
         transitionHumidityState(HUMIDITY_PENDING_HIGH)
@@ -401,6 +487,16 @@ private void evaluatePendingHighState(BigDecimal bathroomHumidity, BigDecimal re
     // Above absolute high - bypass activation delay, go straight to HIGH
     if (bathroomHumidity > absoluteHighThreshold) {
         logInfo("Humidity ${bathroomHumidity}% above absolute high ${absoluteHighThreshold}% - bypassing activation delay")
+        unschedule("delayedTransitionToHigh")
+        state.pendingStateSince = null
+        transitionHumidityState(HUMIDITY_HIGH)
+        onHumidityBecameHigh()
+        return
+    }
+
+    // Fast humidity climb detected mid-pending - bypass activation delay
+    if (isFastClimb()) {
+        logInfo("Fast humidity climb detected (bath=${bathroomHumidity}%) - bypassing activation delay")
         unschedule("delayedTransitionToHigh")
         state.pendingStateSince = null
         transitionHumidityState(HUMIDITY_HIGH)
@@ -547,7 +643,91 @@ private Boolean isAboveActivationThreshold(BigDecimal bathroomHumidity, BigDecim
 
     // Activate if bathroom > reference + high offset
     BigDecimal highThreshold = referenceHumidity + highHumidityOffset
-    return bathroomHumidity > highThreshold
+    if (bathroomHumidity > highThreshold) {
+        return true
+    }
+
+    // Activate on fast humidity climb (rate-of-change)
+    return isFastClimb()
+}
+
+// Burst + slope detector: returns true only when BOTH conditions hold —
+// (a) at least burstEventCount bathroom events in the last burstWindowSeconds,
+// (b) slope across the last burstEventCount samples (within slopeWindowSeconds)
+// is ≥ slopeActivationThreshold %RH/min. Combined-AND keeps false-positive
+// rate low while catching the fast-onset shower bursts (~75% of episodes in
+// 30-day data).
+private Boolean isFastClimb() {
+    // Occupancy gate: if any sensors are configured, block the bypass when
+    // none has been active within the window. No sensors = always armed.
+    if (occupancySensors && !isOccupiedRecently()) {
+        logDebug("Fast-climb blocked by occupancy gate")
+        return false
+    }
+
+    // Treat unset prefs as the defined defaults; only an explicit 0 disables.
+    BigDecimal slopeThresh = (slopeActivationThreshold != null ? slopeActivationThreshold : DEFAULT_SLOPE_ACTIVATION_THRESHOLD) as BigDecimal
+    Integer burstCount = (burstEventCount != null ? burstEventCount : DEFAULT_BURST_EVENT_COUNT) as Integer
+    Integer burstWin = (burstWindowSeconds != null ? burstWindowSeconds : DEFAULT_BURST_WINDOW_SECONDS) as Integer
+    Integer slopeWin = (slopeWindowSeconds != null ? slopeWindowSeconds : DEFAULT_SLOPE_WINDOW_SECONDS) as Integer
+    return computeFastClimb(
+        (state.bathroomSamples ?: []) as List,
+        now(),
+        slopeThresh,
+        burstCount,
+        burstWin,
+        slopeWin
+    )
+}
+
+private Boolean isOccupiedRecently() {
+    // Currently-active sensor counts immediately, even if we never received
+    // a motion.active event (e.g. first run after install).
+    if (occupancySensors.any { it.currentValue("motion") == "active" }) return true
+    Long lastMotion = (state.lastMotionActiveTime ?: 0L) as Long
+    if (lastMotion <= 0L) return false
+    Integer winSec = (occupancyWindowSeconds != null ? occupancyWindowSeconds : DEFAULT_OCCUPANCY_WINDOW_SECONDS) as Integer
+    return (now() - lastMotion) <= winSec * 1000L
+}
+
+// Pure: combined burst+slope detector. Returns true iff at least
+// burstCount samples lie within burstWin seconds of nowMs AND the slope
+// across the last burstCount samples (within slopeWin seconds) is
+// >= slopeThresh %RH/min. Caller passes settings + state snapshot.
+@CompileStatic
+private static boolean computeFastClimb(List samples, long nowMs,
+                                        BigDecimal slopeThresh, int burstCount,
+                                        int burstWin, int slopeWin) {
+    if (slopeThresh <= 0G) return false
+    if (burstCount < 2) return false
+    if (samples.size() < burstCount) return false
+
+    long burstCutoff = nowMs - burstWin * 1000L
+    int recent = 0
+    for (Object s : samples) {
+        List entry = (List) s
+        if (((Number) entry[0]).longValue() >= burstCutoff) recent++
+    }
+    if (recent < burstCount) return false
+
+    long slopeCutoff = nowMs - slopeWin * 1000L
+    List slopeSamples = []
+    for (Object s : samples) {
+        List entry = (List) s
+        if (((Number) entry[0]).longValue() >= slopeCutoff) slopeSamples.add(entry)
+    }
+    int n = slopeSamples.size()
+    if (n < burstCount) return false
+
+    List firstEntry = (List) slopeSamples[n - burstCount]
+    List lastEntry = (List) slopeSamples[n - 1]
+    long spanMs = ((Number) lastEntry[0]).longValue() - ((Number) firstEntry[0]).longValue()
+    if (spanMs <= 0L) return false
+
+    BigDecimal spanMin = (spanMs as BigDecimal) / 60000.0G
+    BigDecimal slope = (((Number) lastEntry[1]) as BigDecimal) - (((Number) firstEntry[1]) as BigDecimal)
+    slope = slope / spanMin
+    return slope >= slopeThresh
 }
 
 private BigDecimal getEffectiveReferenceSnapshot() {

@@ -37,11 +37,13 @@ app:
     switchVerificationTimeout: 5
     sensorInactivityTimeout: 60
     maxFanRunTime: 0
+    occupancyWindowSeconds: 5    # shortened from 600 default for testable gate-expiry timing
 
 inputs:
   - { name: test-hfc-bath,     driver: Virtual Humidity Sensor, role: bathroomHumiditySensors }
   - { name: test-hfc-ref,      driver: Virtual Humidity Sensor, role: referenceHumiditySensors }
   - { name: test-hfc-restrict, driver: Virtual Switch,          role: restrictionSwitchesMustBeOff }
+  - { name: test-hfc-motion,   driver: Virtual Motion Sensor,   role: occupancySensors }
 
 outputs:
   - { name: test-hfc-fan,   driver: Virtual Switch, role: fanSwitch }
@@ -180,4 +182,58 @@ cases:
       - { device: test-hfc-fan,   attribute: switch, value: "off" }
       - { device: test-hfc-hi-sw, attribute: switch, value: "off" }
 
-runtime_budget_seconds: 50
+  # NORMAL → HIGH fast-climb bypass. Three rising events within 60s with
+  # slope ≥ 2.5 %/min skip the 2s activationDelay entirely. The 1s wait
+  # is half the activationDelay, so this case only passes if the fast-climb
+  # bypass actually fires; a regression would leave hi-sw=off (state still
+  # PENDING_HIGH) and the fast-climb log absent.
+  - name: fast-climb-bypasses-activation-delay
+    setup:
+      - { device: test-hfc-bath,     command: setHumidity, args: [40] }
+      - { device: test-hfc-ref,      command: setHumidity, args: [50] }
+      - { device: test-hfc-restrict, command: "off" }
+      - { device: test-hfc-fan,      command: "off" }
+      - { device: test-hfc-hi-sw,    command: "off" }
+      - { device: test-hfc-motion,   command: active }
+    setup_wait_seconds: 4
+    actions:
+      - { device: test-hfc-bath, command: setHumidity, args: [50] }
+      - { device: test-hfc-bath, command: setHumidity, args: [65] }
+      - { device: test-hfc-bath, command: setHumidity, args: [75] }
+    # Spacing 0.7s is the floor — at 0.6s Hubitat coalesces the middle event
+    # and the burst falls below burstEventCount.
+    command_spacing_seconds: 0.7
+    wait_seconds: 1
+    assert:
+      - { device: test-hfc-fan,   attribute: switch, value: "on" }
+      - { device: test-hfc-hi-sw, attribute: switch, value: "on" }
+    assert_logs:
+      - { pattern: "Fast humidity climb detected", level: info }
+      - { pattern: "bypassing activation delay", level: info }
+
+  # Occupancy gate: with occupancySensors configured and the motion-active
+  # window expired (occupancyWindowSeconds=5), the same burst as above must
+  # NOT bypass. State falls through to the threshold path (PENDING_HIGH +
+  # 2s delay); with wait_seconds=1 the delay hasn't fired, so fan stays
+  # off and hi-sw stays off. Prior case left motion=active; setup_wait=4
+  # plus inter-case overhead pushes lastMotionActiveTime > 5s stale.
+  - name: occupancy-gate-blocks-fast-climb
+    setup:
+      - { device: test-hfc-bath,   command: setHumidity, args: [40] }
+      - { device: test-hfc-motion, command: inactive }
+      - { device: test-hfc-fan,    command: "off" }
+      - { device: test-hfc-hi-sw,  command: "off" }
+    setup_wait_seconds: 4
+    actions:
+      - { device: test-hfc-bath, command: setHumidity, args: [50] }
+      - { device: test-hfc-bath, command: setHumidity, args: [65] }
+      - { device: test-hfc-bath, command: setHumidity, args: [75] }
+    command_spacing_seconds: 0.7
+    wait_seconds: 1
+    assert:
+      - { device: test-hfc-fan,   attribute: switch, value: "off" }
+      - { device: test-hfc-hi-sw, attribute: switch, value: "off" }
+    assert_logs:
+      - { pattern: "Fast humidity climb detected", level: info, negate: true }
+
+runtime_budget_seconds: 70
