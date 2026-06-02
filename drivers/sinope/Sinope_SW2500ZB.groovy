@@ -14,7 +14,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String constDriverVersion = "0.0.11"
+@Field static final String constDriverVersion = "0.0.12"
 
 metadata {
     definition(
@@ -45,6 +45,8 @@ metadata {
         command "setOnLedColor", [[name:"On LED Color*", type:"ENUM", description:"Color of the LED when the device is off", constraints:["Amber","Fuchsia","Lime","Pearl","Blue"]]]
         command "setOffLedIntensity", [[name: "offLedIntensity", type: "NUMBER", description: "LED intensity when switch is OFF", constraints: ["NUMBER"]]]
         command "setOffLedColor", [[name:"Off LED Color*", type:"ENUM", description:"Color of the LED when the device is off", constraints:["Amber","Fuchsia","Lime","Pearl","Blue"]]]
+
+        command "getNeighbors", [[name: "Request the device's neighbor table via Mgmt_Lqi_req. Result logged at info level and stored in state.neighborTable (LQI from the device's perspective, complementing the hub-side neighbor table)."]]
 
         preferences {
             input(name: "prefKeypadLock", title: "Disconnect paddle from relay", type: "bool", defaultValue: false,
@@ -349,8 +351,14 @@ List parse(String description) {
             if (addEvent) result << addEvent
         }
     } else if (descMap.profileId == "0000") {
-        // ZigBee Device Object (ZDO) command
-        logTrace("Unhandled ZDO command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
+        // ZigBee Device Object (ZDO) command/response
+        if (descMap.clusterId == "8031") {
+            decodeMgmtLqiRsp(descMap.data)
+        } else if (descMap.clusterId?.startsWith("8") && descMap.data?.size() >= 2 && descMap.data[1] != "00") {
+            logWarn("ZDO ${descMap.clusterId} returned non-success status=0x${descMap.data[1]} data=${descMap.data}")
+        } else {
+            logTrace("Unhandled ZDO command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
+        }
     } else if (descMap.profileId == "0104" && descMap.clusterId != null) {
         // ZigBee Home Automation (ZHA) global command
         String ackName = constZclAckCmdNames[descMap.command]
@@ -526,6 +534,80 @@ private Map parseAttributeReport(Map descMap) {
 private void autoConfigure() {
     logWarn "Detected driver version change"
     configure()
+}
+
+// === Mgmt_Lqi (device-side neighbor table) ==================================
+// `getNeighbors` sends a Mgmt_Lqi_req (ZDP cluster 0x0031). The device responds
+// with one or more Mgmt_Lqi_rsp (cluster 0x8031) frames; decodeMgmtLqiRsp logs
+// each entry and stores the table in state.neighborTable. Complements the
+// hub-side neighbor table by showing each neighbor's LQI from the *device*'s
+// perspective — useful for mesh diagnostics (e.g. why one device routes
+// through a strong repeater while a co-located device talks direct).
+
+void getNeighbors() {
+    state.remove('neighborTable')
+    sendNeighborQuery(0)
+}
+
+private void sendNeighborQuery(int startIndex) {
+    String startByte = String.format('%02X', startIndex)
+    List<String> cmds = ["he raw 0x${device.deviceNetworkId} 0 0 0x0031 {00 ${startByte}} {0x0000}".toString()]
+    sendZigbeeCommands(cmds)
+    logInfo("Mgmt_Lqi_req sent (startIndex=${startIndex})")
+}
+
+@Field static final List<String> constNeighborTypeMap = ["coordinator", "router", "end-device", "unknown"]
+@Field static final List<String> constNeighborRelationshipMap = ["parent", "child", "sibling", "former-child", "none", "?", "?", "?"]
+
+private void decodeMgmtLqiRsp(List data) {
+    if (!data || data.size() < 5) {
+        logWarn("Mgmt_Lqi_rsp truncated: data=${data}")
+        return
+    }
+    if (data[1] != "00") {
+        logWarn("Mgmt_Lqi_rsp failed: status=0x${data[1]}")
+        return
+    }
+    int totalEntries = Integer.parseInt(data[2], 16)
+    int startIndex = Integer.parseInt(data[3], 16)
+    int count = Integer.parseInt(data[4], 16)
+
+    List<Map> entries = []
+    if (startIndex > 0 && state.neighborTable?.entries) entries.addAll((state.neighborTable.entries as List<Map>))
+
+    int offset = 5
+    for (int i = 0; i < count && offset + 22 <= data.size(); i++) {
+        String ieee = hexLeJoin(data, offset + 8, 8)
+        String nwk = hexLeJoin(data, offset + 16, 2)
+        int misc1 = Integer.parseInt(data[offset + 18], 16)
+        int depth = Integer.parseInt(data[offset + 20], 16)
+        int lqi = Integer.parseInt(data[offset + 21], 16)
+        entries << [
+            nwk: nwk, ieee: ieee,
+            type: constNeighborTypeMap[misc1 & 0x03],
+            relationship: constNeighborRelationshipMap[(misc1 >> 4) & 0x07],
+            depth: depth, lqi: lqi
+        ]
+        offset += 22
+    }
+
+    state.neighborTable = [at: now(), totalEntries: totalEntries, entries: entries]
+
+    int nextIndex = startIndex + count
+    if (nextIndex < totalEntries) {
+        sendNeighborQuery(nextIndex)
+    } else {
+        logInfo("Neighbor table: ${entries.size()} of ${totalEntries} entries")
+        entries.eachWithIndex { Map e, int idx ->
+            logInfo("  #${idx}: nwk=${e.nwk} type=${e.type} rel=${e.relationship} depth=${e.depth} lqi=${e.lqi}")
+        }
+    }
+}
+
+private String hexLeJoin(List data, int from, int len) {
+    StringBuilder sb = new StringBuilder()
+    for (int i = from + len - 1; i >= from; i--) sb.append((String) data[i])
+    return sb.toString()
 }
 
 private void sendZigbeeCommands(List cmds) {
