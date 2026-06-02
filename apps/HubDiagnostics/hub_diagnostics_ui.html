@@ -50,7 +50,7 @@ td{padding:6px 9px;border-bottom:1px solid #eee}
 tr:nth-child(even){background:var(--alt)} tr:hover{background:var(--hover)}
 
 .badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
-.b-ok{background:#e8f5e9;color:var(--ok)} .b-warn{background:#fff3e0;color:var(--warn)} .b-crit{background:#ffebee;color:var(--crit)}
+.b-ok{background:#e8f5e9;color:var(--ok)} .b-warn{background:#fff3e0;color:var(--warn)} .b-crit{background:#ffebee;color:var(--crit)} .b-muted{background:#eeeeee;color:var(--muted)}
 .b-builtin{background:#e8eaf6;color:#3949ab} .b-community{background:#fce4ec;color:#c62828} .b-platform{background:#f3e8ff;color:#7c3aed}
 
 .alert{padding:8px 12px;border-radius:6px;margin-bottom:6px;font-size:13px;display:flex;align-items:center;gap:6px}
@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.65.3";
+const UI_VERSION = "5.66.5";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -1026,7 +1026,7 @@ function assembleForumData(r){
     networkData: { network: net.network||{}, zwave: zw, zigbee: zb, hubMesh: net.hubMesh||null, matter: net.matter||null },
     zwaveMesh: (zw&&zw.mesh)||null,
     ghostNodes: (zw&&zw.ghostNodes)||[],
-    zigbeeMesh: (zb&&zb.mesh) ? {...zb.mesh, neighbors: zb.mesh.neighborDetails||[]} : null,
+    zigbeeMesh: (zb&&zb.mesh) ? {...zb.mesh, neighbors: zb.mesh.neighborDetails||[], routesParsed: zb.mesh.routeDetails||[]} : null,
     zwaveVersion: (zw&&zw.version)||null,
     stats: perf.stats||null,
     radioStats: perf.radioStats||null,
@@ -2173,11 +2173,28 @@ async function rCode(){const P='p-code';loading(P);try{
 // ===== TAB: NETWORK =====
 async function rNetwork(){const P='p-network';loading(P);try{
   const d=await api('network');let o='';
-  // Radio health badges (v5.9.0)
+  // Radio + transport health badges (v5.9.0; Matter v5.66.2; Hub Mesh v5.66.3;
+  // three-state model v5.66.4 — DISABLED/ONLINE/OFFLINE, always shown so the operator can
+  // see what's actually enabled at a glance. Per-subsystem signals:
+  //  Z-Wave/Zigbee: d.{sys}.enabled + rh.{sys} (/hub/{sys}/healthStatus boolean)
+  //  Matter:        d.matter.enabled + d.matter.networkState==='Online'
+  //  Hub Mesh:      d.hubMesh.enabled + every peer .offline===false (no peers => ONLINE,
+  //                 since the local feature is up even if no other hub has joined)
   if(d.radioHealth){const rh=d.radioHealth;
     if(rh.supported){
-      const badge=(name,val)=>{if(val===true)return '<span class="badge b-ok">'+name+': UP</span>';if(val===false)return '<span class="badge b-crit">'+name+': DOWN</span>';return '<span class="badge b-warn">'+name+': N/A</span>'};
-      o+='<div class="card"><div class="card-b"><div style="display:flex;gap:8px;flex-wrap:wrap">'+badge('Z-Wave',rh.zwave)+badge('Zigbee',rh.zigbee)+'</div></div></div>';
+      const badge=(name,state)=>{
+        const cls=state==='online'?'b-ok':state==='offline'?'b-crit':state==='disabled'?'b-muted':'b-warn';
+        const lbl=state==='online'?'ONLINE':state==='offline'?'OFFLINE':state==='disabled'?'DISABLED':'N/A';
+        return '<span class="badge '+cls+'">'+name+': '+lbl+'</span>';
+      };
+      const radioState=(enabled,health)=>enabled===false?'disabled':health===true?'online':health===false?'offline':'unknown';
+      const matterState=()=>!d.matter||d.matter.enabled===false?'disabled':d.matter.networkState==='Online'?'online':'offline';
+      const hubMeshState=()=>!d.hubMesh||d.hubMesh.enabled===false?'disabled':(d.hubMesh.peers||[]).some(p=>p.offline)?'offline':'online';
+      let badges=badge('Z-Wave',radioState(d.zwave&&d.zwave.enabled,rh.zwave))
+               + badge('Zigbee',radioState(d.zigbee&&d.zigbee.enabled,rh.zigbee))
+               + badge('Matter',matterState())
+               + badge('Hub Mesh',hubMeshState());
+      o+='<div class="card"><div class="card-b"><div style="display:flex;gap:8px;flex-wrap:wrap">'+badges+'</div></div></div>';
     }
   }
   // Network config
@@ -2229,6 +2246,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
       if(weakNbrs.length){o+='<details style="margin-top:6px"><summary>Weak Neighbor Details</summary>';
         weakNbrs.forEach(n=>{o+='<div style="margin:3px 0;color:var(--crit)">'+h(n.shortId)+' &mdash; LQI: '+n.lqi+'</div>'});o+='</details>'}
       if(m.neighborDetails&&m.neighborDetails.length)o+='<div id="zbNeighborTbl" style="margin-top:8px"></div>';
+      if(m.routeDetails&&m.routeDetails.length)o+='<div id="zbRouteTbl" style="margin-top:8px"></div>';
       o+='</div>'}
     o+='<div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap">';
     o+='<button class="btn btn-p" id="btnZbScan">Run channel scan</button>';
@@ -2308,10 +2326,28 @@ async function rNetwork(){const P='p-network';loading(P);try{
   // Z-Wave Topology (v5.12.0) — embedded HTML adjacency matrix from /hub/zwaveTopology.
   // Hub returns a degenerate self-only matrix (with malformed unclosed <table>) when no nodes are paired,
   // which both renders empty AND breaks the DOM for following cards. Gate on real-node presence.
+  // v5.66.2: substitute hex node IDs in <td> label cells with linked device names from d.zwave.mesh.nodes.
   if(d.zwaveTopologyHtml&&d.zwave&&d.zwave.nodeCount>0){
     o+='<div class="card"><div class="card-h">Z-Wave Topology</div><div class="card-b">';
     o+='<div class="muted" style="margin-bottom:8px;font-size:12px">Pairwise neighbor matrix as reported by the Z-Wave controller. Each cell\'s background colour encodes the connectivity between two nodes.</div>';
-    o+='<div class="tbl-wrap" style="overflow-x:auto;max-width:100%">'+d.zwaveTopologyHtml+'</div>';
+    let topo=d.zwaveTopologyHtml;
+    const byHex={};
+    ((d.zwave.mesh&&d.zwave.mesh.nodes)||[]).forEach(n=>{
+      const nid=(n.id!=null?n.id:n.nodeId);
+      if(nid!=null){
+        const hex=Number(nid).toString(16).toUpperCase().padStart(2,'0');
+        byHex[hex]={name:n.name,deviceId:n.deviceId};
+      }
+    });
+    topo=topo.replace(/<td>([0-9A-Fa-f]{2})<\/td>/g,(m,hex)=>{
+      const u=hex.toUpperCase();
+      if(u==='01')return '<td><span class="muted">Hub</span></td>';
+      const e=byHex[u];
+      if(!e)return m;
+      const label=h(Obf.nm(e.name||u));
+      return '<td>'+(e.deviceId?dlink(e.deviceId,label):label)+'</td>';
+    });
+    o+='<div class="tbl-wrap" style="overflow-x:auto;max-width:100%">'+topo+'</div>';
     o+='</div></div>';
   }
   // Matter
@@ -2405,8 +2441,21 @@ async function rNetwork(){const P='p-network';loading(P);try{
       {l:'LQI',f:'lqi',t:'n',r:r=>r.lqi!=null?'<span style="color:'+(r.lqi<150?'var(--crit)':r.lqi<200?'var(--warn)':'var(--ok)')+'">'+r.lqi+'</span>':'N/A'},
       {l:'Age',f:'age',t:'n',r:r=>r.stale?'<span class="badge b-warn">'+r.age+' (Stale)</span>':(r.age!=null?''+r.age:'N/A')},
       {l:'In Cost',f:'inCost',t:'n',r:r=>r.inCost!=null?''+r.inCost:'\u2014'},
-      {l:'Out Cost',f:'outCost',t:'n',r:r=>r.outCost!=null?''+r.outCost:'\u2014'}
+      {l:'Out Cost',f:'outCost',t:'n',r:r=>r.outCost!=null?''+r.outCost:'\u2014'},
+      {l:'Route',f:'viaName',r:r=>{if(!r.direct&&r.viaName)return 'via '+(r.viaDeviceId?dlink(r.viaDeviceId,r.viaName):h(Obf.nm(r.viaName)));if(r.noLearnedRoute)return '<span class="badge b-warn">direct (no learned route)</span>';return '<span class="muted">direct</span>'}}
     ],d.zigbee.mesh.neighborDetails,{sc:1,sd:'desc',collapse:1,collapseLabel:'Zigbee Neighbor Details'});
+  // Zigbee route detail table
+  if(d.zigbee&&d.zigbee.mesh&&d.zigbee.mesh.routeDetails&&d.zigbee.mesh.routeDetails.length)
+    tbl('zbRouteTbl',[
+      {l:'Destination',f:'destinationName',r:r=>r.destinationDeviceId?dlink(r.destinationDeviceId,r.destinationName||r.destinationShortId):h(Obf.nm(r.destinationName||r.destinationShortId||'\u2014'))},
+      {l:'Dest ID',f:'destinationShortId',r:r=>h(r.destinationShortId||'\u2014')},
+      {l:'Via',f:'viaName',r:r=>r.direct?'<span class="muted">(direct)</span>':(r.viaDeviceId?dlink(r.viaDeviceId,r.viaName||r.viaShortId):h(Obf.nm(r.viaName||r.viaShortId||'\u2014')))},
+      {l:'Via ID',f:'viaShortId',r:r=>r.direct?'\u2014':h(r.viaShortId||'\u2014')},
+      {l:'Direct',f:'direct',r:r=>r.direct?'<span class="badge b-warn">Direct</span>':'\u2014'},
+      {l:'Status',f:'status',r:r=>r.status?'<span style="color:'+(r.status==='Active'?'var(--ok)':'var(--muted)')+'">'+h(r.status)+'</span>':'\u2014'},
+      {l:'Age',f:'age',t:'n',r:r=>r.age!=null?''+r.age:'\u2014'},
+      {l:'Concentrator',f:'concentratorType',r:r=>h(r.concentratorType||'\u2014')}
+    ],d.zigbee.mesh.routeDetails,{sc:0,sd:'asc',collapse:1,collapseLabel:'Zigbee Route Details'});
   // Zigbee message counts
   if(d.zigbee&&d.zigbee.messageCounts&&d.zigbee.messageCounts.length)
     tbl('zbMsgTbl',[

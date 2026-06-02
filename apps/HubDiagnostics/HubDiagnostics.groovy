@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.65.3"
+@Field static final String APP_VERSION = "5.66.5"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -1225,6 +1225,10 @@ Map getNetworkData(Map shared = [:]) {
     Map zigbeeRaw = networkData.zigbee ?: [:]
     Map zigbeeDeviceByShortId = [:]
     (zigbeeRaw.devices ?: []).each { Map d -> if (d.shortZigbeeId) zigbeeDeviceByShortId[((String)d.shortZigbeeId).toUpperCase()] = d }
+    Map zigbeeRouteByDest = [:]
+    (zigbeeMesh?.routes ?: []).each { Map r ->
+        if (r.destinationShortId && r.status == "Active") zigbeeRouteByDest[(String)r.destinationShortId] = r
+    }
     Map hubMeshRaw = networkData.hubMesh ?: [:]
     List hubMeshPeers = hubMeshRaw.hubList ? hubMeshRaw.hubList.collect { Map hub ->
         [name: hub.name, ip: hub.ipAddress, offline: hub.offline,
@@ -1253,8 +1257,29 @@ Map getNetworkData(Map shared = [:]) {
                 neighbors: zigbeeMesh.neighbors?.size() ?: 0, routes: zigbeeMesh.routes?.size() ?: 0,
                 avgLqi: zigbeeMesh.avgLqi, minLqi: zigbeeMesh.minLqi, maxLqi: zigbeeMesh.maxLqi,
                 neighborDetails: (zigbeeMesh.neighbors ?: []).collect { Map n ->
-                    Map zdev = zigbeeDeviceByShortId[n.shortId?.toUpperCase()]
-                    [shortId: n.shortId, name: n.name, deviceId: zdev?.id, lqi: n.lqi, age: n.age, inCost: n.inCost, outCost: n.outCost, stale: n.stale ?: false]
+                    String sid = n.shortId ? ((String)n.shortId).toUpperCase() : null
+                    Map zdev = sid ? zigbeeDeviceByShortId[sid] : null
+                    Map route = sid ? zigbeeRouteByDest[sid] : null
+                    boolean isDirect = route ? (route.direct ?: false) : true
+                    String viaName = (route && !isDirect) ? (String)route.viaName : null
+                    String viaShortId = (route && !isDirect) ? (String)route.viaShortId : null
+                    Map viaDev = viaShortId ? zigbeeDeviceByShortId[viaShortId] : null
+                    [
+                        shortId: n.shortId, name: n.name, deviceId: zdev?.id,
+                        lqi: n.lqi, age: n.age, inCost: n.inCost, outCost: n.outCost, stale: n.stale ?: false,
+                        direct: isDirect, noLearnedRoute: (route == null),
+                        viaName: viaName, viaShortId: viaShortId, viaDeviceId: viaDev?.id
+                    ]
+                },
+                routeDetails: (zigbeeMesh.routes ?: []).findAll { Map r -> r.destinationShortId }.collect { Map r ->
+                    Map dstDev = zigbeeDeviceByShortId[r.destinationShortId]
+                    Map viaDev = r.viaShortId ? zigbeeDeviceByShortId[r.viaShortId] : null
+                    [
+                        status: r.status, age: r.age, concentratorType: r.concentratorType,
+                        destinationName: r.destinationName, destinationShortId: r.destinationShortId, destinationDeviceId: dstDev?.id,
+                        viaName: r.viaName, viaShortId: r.viaShortId, viaDeviceId: viaDev?.id,
+                        direct: r.direct ?: false
+                    ]
                 },
                 childDevices: zigbeeMesh.childDevices?.size() ?: 0
             ] : null
@@ -2340,6 +2365,38 @@ Map fetchZigbeeMeshInfo() {
             result.neighbors << neighbor
         } else if (currentSection == "child") {
             result.childDevices << [raw: line]
+        } else if (currentSection == "route" && line.contains("status:")) {
+            // Parse route entries: "status:Active, age:64, routeRecordState:0, concentratorType:None, [Dest Name, ABCD] via [Via Name, EF01]"
+            Map route = [raw: line]
+            java.util.regex.Matcher statusMatch = (line =~ /status:\s*(\w+)/)
+            java.util.regex.Matcher ageMatch = (line =~ /age:\s*(\d+|null)/)
+            java.util.regex.Matcher rrsMatch = (line =~ /routeRecordState:\s*(\d+|null)/)
+            java.util.regex.Matcher ctMatch = (line =~ /concentratorType:\s*(\w+)/)
+            if (statusMatch.find()) route.status = statusMatch.group(1)
+            if (ageMatch.find())    route.age = (ageMatch.group(1) == 'null') ? null : ageMatch.group(1).toInteger()
+            if (rrsMatch.find())    route.routeRecordState = (rrsMatch.group(1) == 'null') ? null : rrsMatch.group(1).toInteger()
+            if (ctMatch.find())     route.concentratorType = ctMatch.group(1)
+            // Two [name, shortId] groups: destination then via
+            java.util.regex.Matcher bracketMatch = (line =~ /\[([^\]]+),\s*([^\]]+)\]/)
+            List bracketHits = []
+            while (bracketMatch.find()) {
+                bracketHits << [bracketMatch.group(1).trim(), bracketMatch.group(2).trim()]
+            }
+            if (bracketHits.size() >= 1) {
+                String name = bracketHits[0][0]
+                String sid = bracketHits[0][1]
+                route.destinationName = (name == 'Unknown') ? null : name
+                route.destinationShortId = (sid == 'null') ? null : sid.toUpperCase()
+            }
+            if (bracketHits.size() >= 2) {
+                String name = bracketHits[1][0]
+                String sid = bracketHits[1][1]
+                route.viaName = (name == 'Unknown') ? null : name
+                route.viaShortId = (sid == 'null') ? null : sid.toUpperCase()
+            }
+            // Direct route convention: destination == via means hub talks straight to the device
+            route.direct = (route.destinationShortId && route.destinationShortId == route.viaShortId)
+            result.routes << route
         } else if (currentSection == "route") {
             result.routes << [raw: line]
         }
