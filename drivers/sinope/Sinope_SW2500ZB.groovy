@@ -14,7 +14,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String constDriverVersion = "0.0.9"
+@Field static final String constDriverVersion = "0.0.11"
 
 metadata {
     definition(
@@ -73,6 +73,16 @@ metadata {
 }
 
 // Constants
+
+// ZCL global command codes the device sends back as routine acks to outbound writes/configures.
+// Recognized so parse() can log them concisely (with status) rather than as "Unhandled".
+@Field static final Map<String, String> constZclAckCmdNames = [
+    "04": "Write Attributes Response",
+    "07": "Configure Reporting Response",
+    "09": "Read Reporting Configuration Response",
+    "0B": "Default Response"
+]
+
 @Field static final Map constLedColorMap = ["0AFFDC": "Lime", "Lime": "0AFFDC",
                                             "000A4B": "Amber", "Amber" : "000A4B",
                                             "0100A5": "Fuchsia", "Fuchsia": "0100A5",
@@ -117,31 +127,33 @@ void installed() {
 
 void updated() {
     // called when preferences are saved.
-    if (settings.prefKeypadLock != null) {
-        settings.prefKeypadLock ? keypadLock() : keypadUnlock()
-    }
+    try {
+        if (settings.prefKeypadLock != null) {
+            settings.prefKeypadLock ? keypadLock() : keypadUnlock()
+        }
 
-    if (settings.prefAutoOffTimer != null) {
-        setAutoOffTimer(constTimerValueMap[settings.prefAutoOffTimer as int])
-    }
+        if (settings.prefAutoOffTimer != null) {
+            setAutoOffTimer(constTimerValueMap[settings.prefAutoOffTimer as int])
+        }
 
-    if (settings.prefOnLedColor != null) {
-        setOnLedColor(constLedColorPrefMap[settings.prefOnLedColor as int])
-    }
+        if (settings.prefOnLedColor != null) {
+            setOnLedColor(constLedColorPrefMap[settings.prefOnLedColor as int])
+        }
 
-    if (settings.prefOffLedColor != null) {
-        setOffLedColor(constLedColorPrefMap[settings.prefOffLedColor as int])
-    }
+        if (settings.prefOffLedColor != null) {
+            setOffLedColor(constLedColorPrefMap[settings.prefOffLedColor as int])
+        }
 
-    if (settings.prefOnLedIntensity != null) {
-        setOnLedIntensity(settings.prefOnLedIntensity)
-    }
+        if (settings.prefOnLedIntensity != null) {
+            setOnLedIntensity(settings.prefOnLedIntensity as int)
+        }
 
-    if (settings.prefOffLedIntensity != null) {
-        setOffLedIntensity(settings.prefOffLedIntensity)
+        if (settings.prefOffLedIntensity != null) {
+            setOffLedIntensity(settings.prefOffLedIntensity as int)
+        }
+    } catch (Throwable t) {
+        log.error("updated() failed: ${t.message}", t)
     }
-
-    //configure()
 }
 
 void uninstalled() {
@@ -176,7 +188,9 @@ void configure() {
     cmds += zigbee.configureReporting(0x0006, 0x0000, DataType.BOOLEAN, 0, 43200)  // switch state
     cmds += zigbee.configureReporting(0x0702, 0x0000, DataType.UINT48, 0, 1800)     // energy consumed
     cmds += zigbee.configureReporting(0xFF01, 0x0054, DataType.ENUM8, 0, 0, null, [mfgCode: "0x119C"])  // button action report
-    // device accepts this report configuration but does not appear to honor it
+    // device rejects this report config with UNSUPPORTED_ATTRIBUTE (status 0x85 in the Configure
+    // Reporting Response); kept so the request is on record and so a future firmware that lifts
+    // the restriction starts honoring it without a driver change
     cmds += zigbee.configureReporting(0xFF01, 0x0090, DataType.UINT32, 0, 1800, null, [mfgCode: "0x119C"])  // energy
 
     sendZigbeeCommands(cmds)
@@ -339,7 +353,13 @@ List parse(String description) {
         logTrace("Unhandled ZDO command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     } else if (descMap.profileId == "0104" && descMap.clusterId != null) {
         // ZigBee Home Automation (ZHA) global command
-        logTrace("Unhandled ZHA global command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
+        String ackName = constZclAckCmdNames[descMap.command]
+        if (ackName) {
+            String status = descMap.data ? descMap.data[0] : "?"
+            logTrace("${ackName} for cluster ${descMap.clusterId} status=${status}")
+        } else {
+            logTrace("Unhandled ZHA global command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
+        }
     } else if (description?.startsWith('enroll request')) {
         logDebug "Received enroll request"
     } else if (description?.startsWith('zone status')  || description?.startsWith('zone report')) {
@@ -435,13 +455,13 @@ private Map parseAttributeReport(Map descMap) {
 
                 case "0052": // on LED intensity
                     Integer ledIntensity = scaleHexValue(descMap.value)
-                    device.updateSetting('prefOnLedIntensity', ledIntensity.toString())
+                    device.updateSetting('prefOnLedIntensity', [value: ledIntensity, type: 'number'])
                     logDebug("On LED intensity was set to $ledIntensity% (0x${descMap.value})")
                     return null // return directly, no event to generate
 
                 case "0053": // off LED intensity
                     Integer ledIntensity = scaleHexValue(descMap.value)
-                    device.updateSetting('prefOffLedIntensity', ledIntensity.toString())
+                    device.updateSetting('prefOffLedIntensity', [value: ledIntensity, type: 'number'])
                     logDebug("Off LED intensity was set to $ledIntensity% (0x${descMap.value})")
                     return null // return directly, no event to generate
 
