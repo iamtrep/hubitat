@@ -14,7 +14,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String constDriverVersion = "0.0.12"
+@Field static final String constDriverVersion = "0.0.13"
 
 metadata {
     definition(
@@ -385,7 +385,13 @@ List parse(String description) {
         // ZigBee Home Automation (ZHA) global command
         String ackName = constZclAckCmdNames[descMap.command]
         if (ackName) {
-            String status = descMap.data ? descMap.data[0] : "?"
+            // Default Response (0x0B) payload is [cmd-being-acked, status]; everything else (04/07/09) starts with status
+            String status
+            if (descMap.command == "0B" && descMap.data?.size() >= 2) {
+                status = "${descMap.data[1]} (ack of cmd=${descMap.data[0]})"
+            } else {
+                status = descMap.data ? descMap.data[0] : "?"
+            }
             logTrace("${ackName} for cluster ${descMap.clusterId} status=${status}")
         } else {
             logTrace("Unhandled ZHA global command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
