@@ -482,6 +482,17 @@ private void evaluateNormalState(BigDecimal bathroomHumidity, BigDecimal referen
         // Snapshot the reference humidity at activation time
         state.referenceHumiditySnapshot = referenceHumidity
 
+        // Excessive-change bypass: single-event Δ ≥ threshold skips the
+        // activation delay. Covers slow-sensor one-shot spikes that
+        // fast-climb (which needs ≥burstEventCount samples) cannot detect.
+        if (isExcessiveChange(bathroomHumidity)) {
+            BigDecimal prevValue = previousBathroomSample()
+            logInfo("Excessive humidity change (bath=${bathroomHumidity}%, Δ=${bathroomHumidity - prevValue}%) - bypassing activation delay")
+            transitionHumidityState(HUMIDITY_HIGH)
+            onHumidityBecameHigh()
+            return
+        }
+
         // Fast-climb bypass: rapid rising burst skips the activation delay.
         if (isFastClimb()) {
             logInfo("Fast humidity climb detected (bath=${bathroomHumidity}%) - bypassing activation delay")
@@ -515,6 +526,17 @@ private void evaluatePendingHighState(BigDecimal bathroomHumidity, BigDecimal re
     // Above absolute high - bypass activation delay, go straight to HIGH
     if (bathroomHumidity > absoluteHighThreshold) {
         logInfo("Humidity ${bathroomHumidity}% above absolute high ${absoluteHighThreshold}% - bypassing activation delay")
+        unschedule("delayedTransitionToHigh")
+        state.pendingStateSince = null
+        transitionHumidityState(HUMIDITY_HIGH)
+        onHumidityBecameHigh()
+        return
+    }
+
+    // Excessive-change bypass mid-pending - single-event Δ ≥ threshold
+    if (isExcessiveChange(bathroomHumidity)) {
+        BigDecimal prevValue = previousBathroomSample()
+        logInfo("Excessive humidity change (bath=${bathroomHumidity}%, Δ=${bathroomHumidity - prevValue}%) - bypassing activation delay")
         unschedule("delayedTransitionToHigh")
         state.pendingStateSince = null
         transitionHumidityState(HUMIDITY_HIGH)
@@ -677,6 +699,27 @@ private Boolean isAboveActivationThreshold(BigDecimal bathroomHumidity, BigDecim
 
     // Activate on fast humidity climb (rate-of-change)
     return isFastClimb()
+}
+
+// Returns the bathroom sample BEFORE the most recent one, or null if
+// fewer than 2 samples exist. recordBathroomSample appends the current
+// reading before the state machine evaluates, so [-2] is the prior one.
+private BigDecimal previousBathroomSample() {
+    List samples = (state.bathroomSamples ?: []) as List
+    if (samples.size() < 2) return null
+    List prev = (List) samples[samples.size() - 2]
+    return ((Number) prev[1]) as BigDecimal
+}
+
+// Single-event bypass: returns true when the current reading exceeds the
+// previous bathroom sample by at least excessiveChangeThreshold. Returns
+// false when threshold is 0 (disabled) or no prior sample exists.
+private Boolean isExcessiveChange(BigDecimal currentValue) {
+    BigDecimal threshold = (excessiveChangeThreshold ?: DEFAULT_EXCESSIVE_CHANGE_THRESHOLD) as BigDecimal
+    if (threshold <= 0G) return false
+    BigDecimal prevValue = previousBathroomSample()
+    if (prevValue == null) return false
+    return (currentValue - prevValue) >= threshold
 }
 
 // Burst + slope detector: returns true only when BOTH conditions hold —
