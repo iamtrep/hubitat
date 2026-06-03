@@ -86,7 +86,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Humidity-Based Fan Controller"
-@Field static final String APP_VERSION = "0.8.0"
+@Field static final String APP_VERSION = "0.9.0"
 
 // Humidity state machine states
 @Field static final String HUMIDITY_NORMAL = "NORMAL"
