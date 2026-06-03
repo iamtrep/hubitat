@@ -104,6 +104,7 @@ import groovy.transform.Field
 @Field static final Integer DEFAULT_BURST_EVENT_COUNT = 3
 @Field static final Integer DEFAULT_BURST_WINDOW_SECONDS = 60
 @Field static final Integer DEFAULT_SLOPE_WINDOW_SECONDS = 180
+@Field static final BigDecimal DEFAULT_EXCESSIVE_CHANGE_THRESHOLD = 0G
 @Field static final Integer SAMPLE_BUFFER_CAP = 20
 @Field static final Integer DEFAULT_OCCUPANCY_WINDOW_SECONDS = 600
 
@@ -149,6 +150,11 @@ Map mainPage() {
             input "absoluteHighThreshold", "number", title: "Absolute High Threshold", description: "Turn ON if humidity exceeds this regardless of reference", defaultValue: DEFAULT_ABSOLUTE_HIGH_THRESHOLD, required: true
             input "absoluteLowThreshold", "number", title: "Absolute Low Threshold", description: "Center of the absolute low threshold band", defaultValue: DEFAULT_ABSOLUTE_LOW_THRESHOLD, required: true
             input "absoluteLowTolerance", "number", title: "Absolute Low Tolerance", description: "Tolerance band around absolute low (activation blocked below threshold+tolerance, deactivation triggered below threshold-tolerance)", defaultValue: DEFAULT_ABSOLUTE_LOW_TOLERANCE, required: true
+        }
+
+        section("Single-Event Bypass", hideable: true, hidden: true) {
+            paragraph "Bypass the activation delay when a single bathroom humidity reading jumps by at least this much from the previous reading. Complements fast-climb (which needs ≥3 events) for slow-reporting sensors. Set to 0 to disable."
+            input "excessiveChangeThreshold", "decimal", title: "Excessive Change Threshold (%RH)", description: "Single-event Δ that bypasses activation delay; 0 disables", defaultValue: DEFAULT_EXCESSIVE_CHANGE_THRESHOLD, required: true
         }
 
         section("Fast-Climb Detection", hideable: true, hidden: true) {
