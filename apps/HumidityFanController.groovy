@@ -21,12 +21,18 @@
            OR bathroom > absoluteHigh
            OR fast-climb)
 
-    Fast-climb (rate-based) — both must hold:
-      >= burstEventCount bathroom events within burstWindowSeconds
-      AND slope across the last burstEventCount samples
-          (within slopeWindowSeconds) >= slopeActivationThreshold %RH/min
-    When fast-climb fires, the activation delay is bypassed (NORMAL → HIGH
-    or PENDING_HIGH → HIGH directly).
+    Activation-delay bypasses (NORMAL → HIGH or PENDING_HIGH → HIGH
+    directly, all evaluated AFTER the snapshot is captured):
+      - fast-climb (rate-based, multi-event):
+          >= burstEventCount events within burstWindowSeconds AND
+          slope across the last burstEventCount samples (within
+          slopeWindowSeconds) >= slopeActivationThreshold %RH/min
+      - excessive-change (delta-based, single-event):
+          current bathroom sample - previous sample >= excessiveChangeThreshold
+          Complements fast-climb for slow sensors that report one big
+          jump rather than a burst. Disabled by default (threshold = 0).
+      - absolute-high (mid-pending only): bathroom > absoluteHigh while
+          already in PENDING_HIGH.
 
     Occupancy gate (optional): when occupancySensors is configured, the
     fast-climb bypass requires motion to be currently active OR to have
