@@ -80,7 +80,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Humidity-Based Fan Controller"
-@Field static final String APP_VERSION = "0.7.0"
+@Field static final String APP_VERSION = "0.8.0"
 
 // Humidity state machine states
 @Field static final String HUMIDITY_NORMAL = "NORMAL"
@@ -99,6 +99,7 @@ import groovy.transform.Field
 @Field static final Integer DEFAULT_SWITCH_VERIFICATION_TIMEOUT_SECONDS = 30
 @Field static final Integer DEFAULT_SENSOR_INACTIVITY_TIMEOUT_MINUTES = 60
 @Field static final Integer DEFAULT_MAX_FAN_RUN_TIME_MINUTES = 120
+@Field static final Integer DEFAULT_PHYSICAL_RUN_TIMER_MINUTES = 30
 @Field static final BigDecimal DEFAULT_SLOPE_ACTIVATION_THRESHOLD = 2.5G
 @Field static final Integer DEFAULT_BURST_EVENT_COUNT = 3
 @Field static final Integer DEFAULT_BURST_WINDOW_SECONDS = 60
@@ -172,6 +173,14 @@ Map mainPage() {
             input "maxFanRunTime", "number", title: "Maximum Fan Run Time (minutes)", description: "Turn off fan after this time if no humidity events received (0 to disable)", defaultValue: DEFAULT_MAX_FAN_RUN_TIME_MINUTES, required: true
         }
 
+        section("Manual Activation", hideable: true, hidden: true) {
+            paragraph "When the fan is turned on with a physical paddle press (not by this app, not by another automation), schedule an automatic off after this many minutes. The timer acts as a <b>minimum run floor</b>: humidity-driven and restriction-driven off requests are deferred until the floor elapses. The human paddle press still cancels it immediately. The hub-side Max Fan Run Time still applies as the upper bound."
+            input "physicalRunTimerEnabled", "bool", title: "Auto-off after physical activation", defaultValue: false, submitOnChange: true
+            if (physicalRunTimerEnabled) {
+                input "physicalRunTimerMinutes", "number", title: "Run time after physical activation (minutes)", defaultValue: DEFAULT_PHYSICAL_RUN_TIMER_MINUTES, range: "1..240", required: true
+            }
+        }
+
         section("Restrictions", hideable: true, hidden: true) {
             input "restrictionSwitchesMustBeOff", "capability.switch", title: "Restriction Switches (Must Be OFF)", description: "Fan automation paused if ANY of these is ON", multiple: true, required: false
             input "restrictionSwitchesMustBeOn", "capability.switch", title: "Restriction Switches (Must Be ON)", description: "Fan automation paused if ANY of these is OFF", multiple: true, required: false
@@ -226,6 +235,10 @@ void initialize() {
 
     // Clear stale pending command (verification timers were killed by unschedule())
     state.pendingCommand = null
+
+    // Clear stale physical-run-floor state (the runIn timer was killed by unschedule())
+    state.physicalRunStartedAt = null
+    state.deferredOffReason = null
 
     // Sync high humidity switch with current state
     syncHighHumiditySwitch()
@@ -363,9 +376,18 @@ void fanSwitchHandler(evt) {
             // We requested OFF but the switch went ON — externally countermanded.
             logInfo("Pending OFF countermanded by external ON event - clearing")
             state.pendingCommand = null
+        } else if (evt.type == "physical") {
+            // Human paddle press with no app activity in flight — arm the run floor.
+            armPhysicalRunFloor()
         }
-        // else: external on with no pending command — leave state alone
+        // else: external (non-physical) on with no pending command — leave state alone
     } else if (evt.value == "off") {
+        // Any off event clears the physical floor and any deferred automation off,
+        // regardless of source. A human off is honored immediately; an automation off
+        // arrived via requestFanOff()/turnOffFan() so the floor is already satisfied
+        // (or this is the deferred off being executed now).
+        cancelPhysicalRunFloor("fan went off")
+
         if (state.pendingCommand == "off") {
             logInfo("Fan verified OFF")
             state.fanTurnedOnByApp = false
@@ -396,7 +418,7 @@ void restrictionSwitchHandler(evt) {
     if (nowRestricted && state.fanTurnedOnByApp) {
         // Restriction activated and we have the fan on - turn it off
         logInfo("Restriction activated - turning off fan")
-        turnOffFan()
+        requestFanOff("restriction activated")
     } else if (!nowRestricted && isHumidityHigh()) {
         // Restriction lifted and humidity is high - turn fan on
         logInfo("Restriction lifted while humidity is high - turning on fan")
@@ -789,7 +811,7 @@ private void onHumidityBecameHigh() {
 
 private void onHumidityBecameNormal() {
     if (state.fanTurnedOnByApp) {
-        turnOffFan()
+        requestFanOff("humidity normalized")
     } else {
         logDebug("Humidity became NORMAL but fan was not turned on by app - leaving it alone")
     }
@@ -915,7 +937,109 @@ void maxFanRunTimeExpired() {
     state.referenceHumiditySnapshot = null
     transitionHumidityState(HUMIDITY_NORMAL)
 
+    // Direct turnOffFan() — Max Fan Run Time is the safety ceiling and overrides
+    // the physical-run floor. The fanSwitchHandler will clean up any pending
+    // floor state when the off event lands.
     turnOffFan()
+}
+
+// ==================== Physical-Run Floor ====================
+//
+// When the fan is turned on with a physical paddle press (evt.type == 'physical'),
+// guarantee a minimum run time before any automation-driven off can take effect.
+// The human paddle press still cancels immediately (fanSwitchHandler 'off' branch
+// clears the floor unconditionally). The Max Fan Run Time safety ceiling
+// (maxFanRunTimeExpired) bypasses the floor.
+//
+// Flow:
+//   - armPhysicalRunFloor()   : called from fanSwitchHandler on physical-on
+//   - cancelPhysicalRunFloor(): called from fanSwitchHandler on any off
+//   - requestFanOff(reason)   : wrapper used by automation-side off paths
+//                               (humidity-normalize, restriction-enforce). If
+//                               the floor is active, defers; the deferred off
+//                               fires when physicalRunFloorReached() runs.
+//   - physicalRunFloorReached(): runIn callback — honors deferred off if set,
+//                                else if no app ownership and fan still on,
+//                                turns it off.
+
+private Boolean isPhysicalRunFloorEnabled() {
+    return settings.physicalRunTimerEnabled
+}
+
+private Boolean isPhysicalRunFloorActive() {
+    return state.physicalRunStartedAt != null
+}
+
+private void armPhysicalRunFloor() {
+    if (!isPhysicalRunFloorEnabled()) {
+        logDebug("Physical activation detected but auto-off feature is disabled")
+        return
+    }
+    Integer mins = (settings.physicalRunTimerMinutes ?: DEFAULT_PHYSICAL_RUN_TIMER_MINUTES) as Integer
+    state.physicalRunStartedAt = now()
+    state.deferredOffReason = null
+    unschedule("physicalRunFloorReached")
+    runIn(mins * 60, "physicalRunFloorReached")
+    logInfo("Physical activation detected — auto-off in ${mins} min (minimum run floor)")
+}
+
+private void cancelPhysicalRunFloor(String reason) {
+    if (!isPhysicalRunFloorActive() && !state.deferredOffReason) return
+    unschedule("physicalRunFloorReached")
+    String deferred = state.deferredOffReason
+    state.physicalRunStartedAt = null
+    state.deferredOffReason = null
+    if (deferred) {
+        logInfo("Physical-run floor cleared (${reason}); deferred off (${deferred}) abandoned")
+    } else {
+        logDebug("Physical-run floor cleared (${reason})")
+    }
+}
+
+// Wrapper for automation-side fan-off requests. When the physical-run floor
+// is active, the off is deferred and recorded as state.deferredOffReason;
+// physicalRunFloorReached() will fire it when the floor elapses. When no
+// floor is active, this is just a passthrough to turnOffFan().
+private void requestFanOff(String reason) {
+    if (isPhysicalRunFloorActive()) {
+        Long startedAt = state.physicalRunStartedAt as Long
+        Integer mins = (settings.physicalRunTimerMinutes ?: DEFAULT_PHYSICAL_RUN_TIMER_MINUTES) as Integer
+        Long remainingMs = (startedAt + mins * 60000L) - now()
+        Long remainingSec = Math.max(0L, remainingMs / 1000L) as Long
+        logInfo("Off request from '${reason}' deferred — physical-run floor has ~${remainingSec}s remaining")
+        state.deferredOffReason = reason
+        return
+    }
+    turnOffFan()
+}
+
+void physicalRunFloorReached() {
+    String deferred = state.deferredOffReason
+    state.physicalRunStartedAt = null
+    state.deferredOffReason = null
+
+    if (deferred) {
+        // An automation wanted off while the floor was active — honor it now.
+        logInfo("Physical-run floor reached; executing deferred OFF (was: ${deferred})")
+        turnOffFan()
+        return
+    }
+    if (state.fanTurnedOnByApp) {
+        // HFC took ownership during the physical run (humidity went HIGH) and
+        // humidity is still managing the fan. Defer to the humidity state
+        // machine — when humidity normalizes, onHumidityBecameNormal() will
+        // request the off through the normal path (no floor in the way now).
+        logDebug("Physical-run floor reached; HFC owns fan, leaving humidity in control")
+        return
+    }
+    // No automation owns the fan, no deferred off pending. This is the original
+    // "physical activation, no humidity event ever fired" case — auto-off.
+    if (fanSwitch.currentValue("switch") == "on") {
+        logInfo("Physical-run floor reached (${settings.physicalRunTimerMinutes ?: DEFAULT_PHYSICAL_RUN_TIMER_MINUTES} min); turning off fan")
+        turnOffFan()
+    } else {
+        logDebug("Physical-run floor reached but fan is already off")
+    }
 }
 
 // ==================== Restrictions ====================
