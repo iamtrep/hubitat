@@ -14,7 +14,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String constDriverVersion = "0.0.16"
+@Field static final String constDriverVersion = "0.0.17"
 
 metadata {
     definition(
@@ -46,8 +46,6 @@ metadata {
         command "setOffLedIntensity", [[name: "offLedIntensity", type: "NUMBER", description: "LED intensity when switch is OFF", constraints: ["NUMBER"]]]
         command "setOffLedColor", [[name:"Off LED Color*", type:"ENUM", description:"Color of the LED when the device is off", constraints:["Amber","Fuchsia","Lime","Pearl","Blue"]]]
 
-        command "getNeighbors", [[name: "Request the device's neighbor table via Mgmt_Lqi_req. Result logged at info level and stored in state.neighborTable (LQI from the device's perspective, complementing the hub-side neighbor table)."]]
-        command "getRoutes", [[name: "Request the device's routing table via Mgmt_Rtg_req. Result logged at info level and stored in state.routeTable (next-hop view from the device, complementing the hub-side route table)."]]
 
         preferences {
             input(name: "prefKeypadLock", title: "Disconnect paddle from relay", type: "bool", defaultValue: false,
@@ -369,16 +367,8 @@ List parse(String description) {
             if (addEvent) result << addEvent
         }
     } else if (descMap.profileId == "0000") {
-        // ZigBee Device Object (ZDO) command/response
-        if (descMap.clusterId == "8031") {
-            decodeMgmtLqiRsp(descMap.data)
-        } else if (descMap.clusterId == "8032") {
-            decodeMgmtRtgRsp(descMap.data)
-        } else if (descMap.clusterId?.startsWith("8") && descMap.data?.size() >= 2 && descMap.data[1] != "00") {
-            logWarn("ZDO ${descMap.clusterId} returned non-success status=0x${descMap.data[1]} (${constZdpStatusMap[descMap.data[1]] ?: '?'}) data=${descMap.data}")
-        } else {
-            logTrace("Unhandled ZDO command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
-        }
+        // ZigBee Device Object (ZDO) command
+        logTrace("Unhandled ZDO command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     } else if (descMap.profileId == "0104" && descMap.clusterId != null) {
         // ZigBee Home Automation (ZHA) global command
         String ackName = constZclAckCmdNames[descMap.command]
@@ -568,174 +558,6 @@ private Map parseAttributeReport(Map descMap) {
 private void autoConfigure() {
     logWarn "Detected driver version change"
     configure()
-}
-
-// === Mgmt_Lqi (device-side neighbor table) ==================================
-// `getNeighbors` sends a Mgmt_Lqi_req (ZDP cluster 0x0031). The device responds
-// with one or more Mgmt_Lqi_rsp (cluster 0x8031) frames; decodeMgmtLqiRsp logs
-// each entry and stores the table in state.neighborTable. Complements the
-// hub-side neighbor table by showing each neighbor's LQI from the *device*'s
-// perspective — useful for mesh diagnostics (e.g. why one device routes
-// through a strong repeater while a co-located device talks direct).
-
-void getNeighbors() {
-    state.remove('neighborTable')
-    sendNeighborQuery(0)
-}
-
-private void sendNeighborQuery(int startIndex) {
-    String startByte = String.format('%02X', startIndex)
-    List<String> cmds = ["he raw 0x${device.deviceNetworkId} 0 0 0x0031 {00 ${startByte}} {0x0000}".toString()]
-    sendZigbeeCommands(cmds)
-    logInfo("Mgmt_Lqi_req sent (startIndex=${startIndex})")
-}
-
-@Field static final List<String> constNeighborTypeMap = ["coordinator", "router", "end-device", "unknown"]
-@Field static final List<String> constNeighborRelationshipMap = ["parent", "child", "sibling", "former-child", "none", "?", "?", "?"]
-
-// ZDP status codes (Zigbee Spec, Table 2.137). Used to label non-success Mgmt_*_rsp.
-// 0x84 NOT_SUPPORTED is the key one — it distinguishes "device does not implement
-// this ZDP request" from a transient failure.
-@Field static final Map<String, String> constZdpStatusMap = [
-    "00": "SUCCESS", "80": "INV_REQUESTTYPE", "81": "DEVICE_NOT_FOUND",
-    "82": "INVALID_EP", "83": "NOT_ACTIVE", "84": "NOT_SUPPORTED",
-    "85": "TIMEOUT", "86": "NO_MATCH", "88": "NO_ENTRY", "89": "NO_DESCRIPTOR",
-    "8A": "INSUFFICIENT_SPACE", "8B": "NOT_PERMITTED", "8C": "TABLE_FULL",
-    "8D": "NOT_AUTHORIZED", "8E": "DEVICE_BINDING_TABLE_FULL"
-]
-
-private void decodeMgmtLqiRsp(List data) {
-    if (!data || data.size() < 5) {
-        logWarn("Mgmt_Lqi_rsp truncated: data=${data}")
-        return
-    }
-    if (data[1] != "00") {
-        logWarn("Mgmt_Lqi_rsp failed: status=0x${data[1]} (${constZdpStatusMap[data[1]] ?: '?'})")
-        return
-    }
-    int totalEntries = Integer.parseInt(data[2], 16)
-    int startIndex = Integer.parseInt(data[3], 16)
-    int count = Integer.parseInt(data[4], 16)
-
-    List<Map> entries = []
-    if (startIndex > 0 && state.neighborTable?.entries) entries.addAll((state.neighborTable.entries as List<Map>))
-
-    int offset = 5
-    for (int i = 0; i < count && offset + 22 <= data.size(); i++) {
-        String ieee = hexLeJoin(data, offset + 8, 8)
-        String nwk = hexLeJoin(data, offset + 16, 2)
-        int misc1 = Integer.parseInt(data[offset + 18], 16)
-        int depth = Integer.parseInt(data[offset + 20], 16)
-        int lqi = Integer.parseInt(data[offset + 21], 16)
-        String type = constNeighborTypeMap[misc1 & 0x03]
-        int rxOnBits = (misc1 >> 2) & 0x03  // 0=off, 1=on, 2=unknown
-        // Refine end-device → sleepy-end-device when the neighbor reports rxOnWhenIdle=off.
-        // Sleepy nodes only listen briefly after polling their parent, so a "weak link"
-        // reading against a sleepy neighbor reflects parent-relay quality, not direct RF.
-        if (type == "end-device" && rxOnBits == 0) type = "sleepy-end-device"
-        entries << [
-            nwk: nwk, ieee: ieee,
-            type: type,
-            relationship: constNeighborRelationshipMap[(misc1 >> 4) & 0x07],
-            depth: depth, lqi: lqi
-        ]
-        offset += 22
-    }
-
-    state.neighborTable = [at: now(), totalEntries: totalEntries, entries: entries]
-
-    int nextIndex = startIndex + count
-    if (nextIndex < totalEntries) {
-        sendNeighborQuery(nextIndex)
-    } else {
-        logInfo("Neighbor table: ${entries.size()} of ${totalEntries} entries")
-        entries.eachWithIndex { Map e, int idx ->
-            logInfo("  #${idx}: nwk=${e.nwk} type=${e.type} rel=${e.relationship} depth=${e.depth} lqi=${e.lqi}")
-        }
-    }
-}
-
-// === Mgmt_Rtg (device-side routing table) ===================================
-// `getRoutes` sends a Mgmt_Rtg_req (ZDP cluster 0x0032). The device responds
-// with one or more Mgmt_Rtg_rsp (cluster 0x8032) frames; decodeMgmtRtgRsp logs
-// each entry and stores the table in state.routeTable. Each entry says, from
-// the device's perspective, what next-hop it uses to reach a given destination
-// — complementing the hub-side /hub/zigbee/getChildAndRouteInfo view.
-
-@Field static final List<String> constRouteStatusMap = [
-    "active", "discovery-underway", "discovery-failed", "inactive",
-    "validation-underway", "?", "?", "?"
-]
-
-void getRoutes() {
-    state.remove('routeTable')
-    sendRouteQuery(0)
-}
-
-private void sendRouteQuery(int startIndex) {
-    String startByte = String.format('%02X', startIndex)
-    List<String> cmds = ["he raw 0x${device.deviceNetworkId} 0 0 0x0032 {00 ${startByte}} {0x0000}".toString()]
-    sendZigbeeCommands(cmds)
-    logInfo("Mgmt_Rtg_req sent (startIndex=${startIndex})")
-}
-
-private void decodeMgmtRtgRsp(List data) {
-    if (!data || data.size() < 5) {
-        logWarn("Mgmt_Rtg_rsp truncated: data=${data}")
-        return
-    }
-    if (data[1] != "00") {
-        logWarn("Mgmt_Rtg_rsp failed: status=0x${data[1]} (${constZdpStatusMap[data[1]] ?: '?'})")
-        return
-    }
-    int totalEntries = Integer.parseInt(data[2], 16)
-    int startIndex = Integer.parseInt(data[3], 16)
-    int count = Integer.parseInt(data[4], 16)
-
-    List<Map> entries = []
-    if (startIndex > 0 && state.routeTable?.entries) entries.addAll((state.routeTable.entries as List<Map>))
-
-    // Each RoutingTableList entry is 5 bytes:
-    //   destination addr (2 LE) | status byte | next-hop addr (2 LE)
-    // status byte bits: 0-2 routeStatus, 3 memoryConstrained, 4 manyToOne, 5 routeRecordRequired
-    int offset = 5
-    for (int i = 0; i < count && offset + 5 <= data.size(); i++) {
-        String dest = hexLeJoin(data, offset, 2)
-        int statusByte = Integer.parseInt(data[offset + 2], 16)
-        String nextHop = hexLeJoin(data, offset + 3, 2)
-        entries << [
-            dest: dest,
-            status: constRouteStatusMap[statusByte & 0x07],
-            memoryConstrained: (statusByte & 0x08) != 0,
-            manyToOne: (statusByte & 0x10) != 0,
-            routeRecordRequired: (statusByte & 0x20) != 0,
-            nextHop: nextHop
-        ]
-        offset += 5
-    }
-
-    state.routeTable = [at: now(), totalEntries: totalEntries, entries: entries]
-
-    int nextIndex = startIndex + count
-    if (nextIndex < totalEntries) {
-        sendRouteQuery(nextIndex)
-    } else {
-        logInfo("Route table: ${entries.size()} of ${totalEntries} entries")
-        entries.eachWithIndex { Map e, int idx ->
-            List<String> flags = []
-            if (e.memoryConstrained) flags << 'mem-constrained'
-            if (e.manyToOne) flags << 'many-to-one'
-            if (e.routeRecordRequired) flags << 'route-record-req'
-            String flagStr = flags ? " [${flags.join(',')}]" : ""
-            logInfo("  #${idx}: dest=${e.dest} via ${e.nextHop} status=${e.status}${flagStr}")
-        }
-    }
-}
-
-private String hexLeJoin(List data, int from, int len) {
-    StringBuilder sb = new StringBuilder()
-    for (int i = from + len - 1; i >= from; i--) sb.append((String) data[i])
-    return sb.toString()
 }
 
 private void sendZigbeeCommands(List cmds) {
