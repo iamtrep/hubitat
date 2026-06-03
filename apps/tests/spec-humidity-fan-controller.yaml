@@ -37,6 +37,7 @@ app:
     switchVerificationTimeout: 5
     sensorInactivityTimeout: 60
     maxFanRunTime: 0
+    excessiveChangeThreshold: 50    # high enough to not disturb existing-case Δs (max 30); new case uses Δ=60
     occupancyWindowSeconds: 5    # shortened from 600 default for testable gate-expiry timing
 
 inputs:
@@ -235,5 +236,39 @@ cases:
       - { device: test-hfc-hi-sw, attribute: switch, value: "off" }
     assert_logs:
       - { pattern: "Fast humidity climb detected", level: info, negate: true }
+
+  # NORMAL → HIGH excessive-change bypass. Single bath event with Δ ≥
+  # excessiveChangeThreshold (50) skips the 2s activationDelay entirely.
+  # Bath 30 → 92 = Δ 62 (above threshold) AND 92 > activation line 70
+  # AND 92 > activation floor 62. The 0.5s wait is much shorter than
+  # activationDelay=2s, so this case only passes if the excessive-change
+  # bypass actually fires; a regression would leave fan=off (state still
+  # PENDING_HIGH) and the excessive-change log absent.
+  #
+  # Setup forces NORMAL via a low-bath reading first (30 < activation
+  # floor 62, so isAboveActivationThreshold returns false and state stays
+  # NORMAL even if it was HIGH from prior cases).
+  #
+  # Gap (intentional, not a TODO): PENDING_HIGH → HIGH excessive-change
+  # bypass cannot be behavior-tested at this threshold without unphysical
+  # humidity values (would need bath > 120%). The hook IS present in
+  # evaluatePendingHighState; verify by code review + parse-check.
+  - name: excessive-change-bypasses-from-normal
+    setup:
+      - { device: test-hfc-bath,     command: setHumidity, args: [30] }
+      - { device: test-hfc-ref,      command: setHumidity, args: [50] }
+      - { device: test-hfc-restrict, command: "off" }
+      - { device: test-hfc-fan,      command: "off" }
+      - { device: test-hfc-hi-sw,    command: "off" }
+    setup_wait_seconds: 4
+    actions:
+      - { device: test-hfc-bath, command: setHumidity, args: [92] }
+    wait_seconds: 0.5
+    assert:
+      - { device: test-hfc-fan,   attribute: switch, value: "on" }
+      - { device: test-hfc-hi-sw, attribute: switch, value: "on" }
+    assert_logs:
+      - { pattern: "Excessive humidity change", level: info }
+      - { pattern: "bypassing activation delay", level: info }
 
 runtime_budget_seconds: 70
