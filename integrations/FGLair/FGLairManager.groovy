@@ -30,7 +30,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String APP_VERSION = "0.1.1"
+@Field static final String APP_VERSION = "0.1.3"
 
 // Region-specific Ayla endpoints + app credentials, lifted from
 // ayla-iot-unofficial/src/ayla_iot_unofficial/const.py and fujitsu_consts.py.
@@ -457,18 +457,19 @@ private void handleDeviceList(List rawDevices) {
     }
 }
 
+// Plain GET — mirrors ayla-iot-unofficial's device.async_update(), which does
+// no trigger write before reading. Earlier versions wrote refresh=1 (v0.1.1)
+// then get_prop=1 (v0.1.2) before each GET, on the theory that the cloud
+// would otherwise return stale values; both turned out to feed the Fujitsu
+// WLAN module's per-DSN write queue once per minute and could jam setpoint
+// writes from any source (driver or the FGLair app on cloud). The lib
+// applies refresh=1 only narrowly, inside refresh_sensed_temp(), to wake a
+// single sensor reading — not before a full poll. We follow that.
+//
+// If display_temperature staleness is later observed in normal operation,
+// add a separate refreshSensedTemp() that mirrors the lib's narrow pattern.
 void fetchProperties(String dsn) {
     if (tokenNearExpiry()) { refreshToken(); runIn(3, "fetchProperties", [data: [dsn: dsn]]); return }
-    // Ayla caches property values for long stretches (hours). The Python lib
-    // ayla-iot-unofficial works around this by POSTing refresh=1 to wake the
-    // unit before every GET. We do the same: trigger, wait 2s for ingest,
-    // then GET. Fail-soft — if the trigger write fails, the GET still runs.
-    writeDatapoint(dsn, "refresh", 1)
-    runIn(2, "fetchPropertiesGet", [data: [dsn: dsn]])
-}
-
-void fetchPropertiesGet(Map data) {
-    String dsn = (String) data.dsn
     Map<String, String> rc = regionConfig()
     Map params = [
         uri: "${rc.ads}/apiv1/dsns/${dsn}/properties.json",

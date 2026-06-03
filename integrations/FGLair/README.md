@@ -89,9 +89,7 @@ The `optimisticUpdates` driver preference (default **on**) controls how non-setp
 
 ## Polling
 
-Default poll interval is 60 s. Configurable to 30 / 60 / 120 / 300 s. Each cycle fetches the device list, then issues one `properties.json` request per indoor unit.
-
-The Ayla cloud caches property values aggressively (raw values can sit unchanged for hours despite real-world change), so before every property read the manager POSTs `refresh: 1` to the unit's `refresh` property and waits 2 seconds before issuing the GET. This forces the unit to publish fresh values to the cloud. Effective end-to-end staleness from physical event to Hubitat event is bounded by `pollRate + ~2 s`.
+Default poll interval is 60 s. Configurable to 30 / 60 / 120 / 300 s. Each cycle fetches the device list, then issues one plain `properties.json` GET per indoor unit — mirroring `ayla-iot-unofficial`'s `device.async_update()`. End-to-end freshness depends on the unit's own cadence for publishing state changes to the cloud (Ayla pushes propagate within seconds for state changes; passive sensor readings can lag longer).
 
 ## Orphans
 

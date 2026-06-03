@@ -65,7 +65,7 @@ metadata {
     }
 }
 
-@Field static final String DRIVER_VERSION = "0.1.1"
+@Field static final String DRIVER_VERSION = "0.1.2"
 
 @Field static final List<String> SUPPORTED_STD_MODES = ["\"off\"", "\"heat\"", "\"cool\"", "\"auto\""]
 @Field static final List<String> SUPPORTED_STD_FAN_MODES = ["\"auto\""]
@@ -399,12 +399,18 @@ private BigDecimal aylaSetpointToScale(Object raw) {
     return celsius.setScale(1, java.math.RoundingMode.HALF_UP)
 }
 
+// Fujitsu units accept setpoints only in 0.5°C increments. Writing a finer
+// value (e.g. 228 = 22.8°C from a 73°F hub setting) causes the Ayla cloud to
+// queue the datapoint as pending-to-unit indefinitely, blocking every later
+// setpoint write — including from the FGLair app — until the unit's account
+// binding is reset or the queue drains (a few minutes after writes stop).
+// Snap to the nearest 0.5°C before scaling to tenths.
 private BigDecimal scaleToAylaSetpoint(BigDecimal scaleValue) {
     BigDecimal celsius = scaleValue
     if (getTemperatureScale() == 'F') {
         celsius = (scaleValue - 32) * 5 / 9
     }
-    return (celsius * 10).setScale(0, java.math.RoundingMode.HALF_UP)
+    return (celsius * 2).setScale(0, java.math.RoundingMode.HALF_UP) * 5
 }
 
 private void logTrace(String msg) { if (settings.traceEnable) log.trace "${device} ${msg}" }
