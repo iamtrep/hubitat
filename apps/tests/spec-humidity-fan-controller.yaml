@@ -249,10 +249,7 @@ cases:
   # floor 62, so isAboveActivationThreshold returns false and state stays
   # NORMAL even if it was HIGH from prior cases).
   #
-  # Gap (intentional, not a TODO): PENDING_HIGH → HIGH excessive-change
-  # bypass cannot be behavior-tested at this threshold without unphysical
-  # humidity values (would need bath > 120%). The hook IS present in
-  # evaluatePendingHighState; verify by code review + parse-check.
+  # PENDING_HIGH entry path is exercised by code review only — no realistic humidity Δ available.
   - name: excessive-change-bypasses-from-normal
     setup:
       - { device: test-hfc-bath,     command: setHumidity, args: [30] }
