@@ -31,7 +31,7 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String version = "0.0.3"
+@Field static final String version = "0.0.4"
 
 
 metadata {
@@ -76,6 +76,9 @@ metadata {
                 input(name: "traceEnable", type: "bool", title: "Enable trace logging info (for development purposes)", defaultValue: false)
             }
         }
+
+        command "getNeighbors", [[name: "Request the device's neighbor table via Mgmt_Lqi_req. Valves are battery-powered end-devices; expect NOT_SUPPORTED or no response."]]
+        command "getRoutes", [[name: "Request the device's routing table via Mgmt_Rtg_req. Valves are battery-powered end-devices; expect NOT_SUPPORTED or no response."]]
 
         // VA4220ZB is the 3/4 inch valve
         fingerprint profileId: "0104", endpointId:"01", inClusters: "0000,0001,0003,0004,0005,0006,0008,0402,0500,0702,0B05,FF01", outClusters: "0003,0006,0019", manufacturer: "Sinope Technologies", model: "VA4220ZB", deviceJoinName: "Sinope Water Valve VA4220ZB"
@@ -233,8 +236,16 @@ List parse(String description) {
             if (addEvent) result << addEvent
         }
     } else if (descMap.profileId == "0000") {
-        // ZigBee Device Object (ZDO) command
-        //logTrace("Unhandled ZDO command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
+        // ZigBee Device Object (ZDO) command/response
+        if (descMap.clusterId == "8031") {
+            decodeMgmtLqiRsp(descMap.data)
+        } else if (descMap.clusterId == "8032") {
+            decodeMgmtRtgRsp(descMap.data)
+        } else if (descMap.clusterId?.startsWith("8") && descMap.data?.size() >= 2 && descMap.data[1] != "00") {
+            logWarn("ZDO ${descMap.clusterId} returned non-success status=0x${descMap.data[1]} (${constZdpStatusMap[descMap.data[1]] ?: '?'}) data=${descMap.data}")
+        } else {
+            logTrace("Unhandled ZDO command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
+        }
     } else if (descMap.profileId == "0104" && descMap.clusterId != null) {
         // ZigBee Home Automation (ZHA) global command
         //logTrace("Unhandled ZHA global command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
@@ -693,6 +704,153 @@ private void logInfo(String message) {
 
 private void logWarn(String message) {
     log.warn("${device} : ${message}")
+}
+
+// === Mesh diagnostics: Mgmt_Lqi (0x0031/0x8031) + Mgmt_Rtg (0x0032/0x8032) ==
+// Valves are battery-powered end-devices, so these will usually return
+// NOT_SUPPORTED (or no response). The commands are still useful for documenting
+// the limitation explicitly when the question comes up during diagnostics.
+
+@Field static final List<String> constNeighborTypeMap = ["coordinator", "router", "end-device", "unknown"]
+@Field static final List<String> constNeighborRelationshipMap = ["parent", "child", "sibling", "former-child", "none", "?", "?", "?"]
+@Field static final List<String> constRouteStatusMap = [
+    "active", "discovery-underway", "discovery-failed", "inactive",
+    "validation-underway", "?", "?", "?"
+]
+@Field static final Map<String, String> constZdpStatusMap = [
+    "00": "SUCCESS", "80": "INV_REQUESTTYPE", "81": "DEVICE_NOT_FOUND",
+    "82": "INVALID_EP", "83": "NOT_ACTIVE", "84": "NOT_SUPPORTED",
+    "85": "TIMEOUT", "86": "NO_MATCH", "88": "NO_ENTRY", "89": "NO_DESCRIPTOR",
+    "8A": "INSUFFICIENT_SPACE", "8B": "NOT_PERMITTED", "8C": "TABLE_FULL",
+    "8D": "NOT_AUTHORIZED", "8E": "DEVICE_BINDING_TABLE_FULL"
+]
+
+void getNeighbors() {
+    state.remove('neighborTable')
+    sendNeighborQuery(0)
+}
+
+private void sendNeighborQuery(int startIndex) {
+    String startByte = String.format('%02X', startIndex)
+    List<String> cmds = ["he raw 0x${device.deviceNetworkId} 0 0 0x0031 {00 ${startByte}} {0x0000}".toString()]
+    sendZigbeeCommands(cmds)
+    logInfo("Mgmt_Lqi_req sent (startIndex=${startIndex})")
+}
+
+private void decodeMgmtLqiRsp(List data) {
+    if (!data || data.size() < 5) {
+        logWarn("Mgmt_Lqi_rsp truncated: data=${data}")
+        return
+    }
+    if (data[1] != "00") {
+        logWarn("Mgmt_Lqi_rsp failed: status=0x${data[1]} (${constZdpStatusMap[data[1]] ?: '?'})")
+        return
+    }
+    int totalEntries = Integer.parseInt(data[2], 16)
+    int startIndex = Integer.parseInt(data[3], 16)
+    int count = Integer.parseInt(data[4], 16)
+
+    List<Map> entries = []
+    if (startIndex > 0 && state.neighborTable?.entries) entries.addAll((state.neighborTable.entries as List<Map>))
+
+    int offset = 5
+    for (int i = 0; i < count && offset + 22 <= data.size(); i++) {
+        String ieee = hexLeJoin(data, offset + 8, 8)
+        String nwk = hexLeJoin(data, offset + 16, 2)
+        int misc1 = Integer.parseInt(data[offset + 18], 16)
+        int depth = Integer.parseInt(data[offset + 20], 16)
+        int lqi = Integer.parseInt(data[offset + 21], 16)
+        String type = constNeighborTypeMap[misc1 & 0x03]
+        int rxOnBits = (misc1 >> 2) & 0x03
+        if (type == "end-device" && rxOnBits == 0) type = "sleepy-end-device"
+        entries << [
+            nwk: nwk, ieee: ieee,
+            type: type,
+            relationship: constNeighborRelationshipMap[(misc1 >> 4) & 0x07],
+            depth: depth, lqi: lqi
+        ]
+        offset += 22
+    }
+
+    state.neighborTable = [at: now(), totalEntries: totalEntries, entries: entries]
+
+    int nextIndex = startIndex + count
+    if (nextIndex < totalEntries) {
+        sendNeighborQuery(nextIndex)
+    } else {
+        logInfo("Neighbor table: ${entries.size()} of ${totalEntries} entries")
+        entries.eachWithIndex { Map e, int idx ->
+            logInfo("  #${idx}: nwk=${e.nwk} type=${e.type} rel=${e.relationship} depth=${e.depth} lqi=${e.lqi}")
+        }
+    }
+}
+
+void getRoutes() {
+    state.remove('routeTable')
+    sendRouteQuery(0)
+}
+
+private void sendRouteQuery(int startIndex) {
+    String startByte = String.format('%02X', startIndex)
+    List<String> cmds = ["he raw 0x${device.deviceNetworkId} 0 0 0x0032 {00 ${startByte}} {0x0000}".toString()]
+    sendZigbeeCommands(cmds)
+    logInfo("Mgmt_Rtg_req sent (startIndex=${startIndex})")
+}
+
+private void decodeMgmtRtgRsp(List data) {
+    if (!data || data.size() < 5) {
+        logWarn("Mgmt_Rtg_rsp truncated: data=${data}")
+        return
+    }
+    if (data[1] != "00") {
+        logWarn("Mgmt_Rtg_rsp failed: status=0x${data[1]} (${constZdpStatusMap[data[1]] ?: '?'})")
+        return
+    }
+    int totalEntries = Integer.parseInt(data[2], 16)
+    int startIndex = Integer.parseInt(data[3], 16)
+    int count = Integer.parseInt(data[4], 16)
+
+    List<Map> entries = []
+    if (startIndex > 0 && state.routeTable?.entries) entries.addAll((state.routeTable.entries as List<Map>))
+
+    int offset = 5
+    for (int i = 0; i < count && offset + 5 <= data.size(); i++) {
+        String dest = hexLeJoin(data, offset, 2)
+        int statusByte = Integer.parseInt(data[offset + 2], 16)
+        String nextHop = hexLeJoin(data, offset + 3, 2)
+        entries << [
+            dest: dest,
+            status: constRouteStatusMap[statusByte & 0x07],
+            memoryConstrained: (statusByte & 0x08) != 0,
+            manyToOne: (statusByte & 0x10) != 0,
+            routeRecordRequired: (statusByte & 0x20) != 0,
+            nextHop: nextHop
+        ]
+        offset += 5
+    }
+
+    state.routeTable = [at: now(), totalEntries: totalEntries, entries: entries]
+
+    int nextIndex = startIndex + count
+    if (nextIndex < totalEntries) {
+        sendRouteQuery(nextIndex)
+    } else {
+        logInfo("Route table: ${entries.size()} of ${totalEntries} entries")
+        entries.eachWithIndex { Map e, int idx ->
+            List<String> flags = []
+            if (e.memoryConstrained) flags << 'mem-constrained'
+            if (e.manyToOne) flags << 'many-to-one'
+            if (e.routeRecordRequired) flags << 'route-record-req'
+            String flagStr = flags ? " [${flags.join(',')}]" : ""
+            logInfo("  #${idx}: dest=${e.dest} via ${e.nextHop} status=${e.status}${flagStr}")
+        }
+    }
+}
+
+private String hexLeJoin(List data, int from, int len) {
+    StringBuilder sb = new StringBuilder()
+    for (int i = from + len - 1; i >= from; i--) sb.append((String) data[i])
+    return sb.toString()
 }
 
 private void logError(String message) {
