@@ -64,6 +64,7 @@ metadata {
 		attribute "restoredCounter", "number"
 
 		command "resetMeshCounters"
+		command "setBatteryReplacementDate"
 
 		fingerprint profileId: "0104", inClusters: "0000,0003,FFFF,0402,0403,0405", outClusters: "0000,0004,FFFF", manufacturer: "LUMI", model: "lumi.weather", deviceJoinName: "WSDCGQ11LM", application: "05"
 
@@ -481,6 +482,14 @@ void resetMeshCounters() {
 	sendEvent(name: "notPresentCounter", value: 0)
 	sendEvent(name: "restoredCounter", value: 0)
 	logInfo("Mesh counters reset")
+}
+
+
+void setBatteryReplacementDate(Date date = null) {
+	if (date == null) date = new Date()
+	String dateStr = date.format('yyyy-MM-dd')
+	device.updateDataValue("batteryReplacementDate", dateStr)
+	logInfo("Battery replacement date set to ${dateStr}")
 }
 
 
