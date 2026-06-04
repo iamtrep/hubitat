@@ -1,13 +1,27 @@
+// Copyright (c) 2022 Andrew Davison
+// Copyright (c) 2025-2026 PJ
+// SPDX-License-Identifier: GPL-3.0-only
+
 /*
- *
  *  Aqara Weather Sensor WSDCGQ11LM Driver (monolithic build)
  *
  *  Derivative of Andrew Davison's BirdsLikeWires Xiaomi Aqara Temperature and
- *  Humidity Sensor WSDCGQ11LM driver. The two BirdsLikeWires libraries this
- *  driver depended on are inlined below — no Hubitat library types required.
+ *  Humidity Sensor WSDCGQ11LM driver:
+ *    https://github.com/birdslikewires/hubitat
+ *
+ *  Built from a locally-modified copy of the upstream sources; the two
+ *  BirdsLikeWires libraries the upstream driver depended on are inlined
+ *  below — no Hubitat library types required at install time:
  *    - BirdsLikeWires.library v1.17 (8th November 2022)
  *    - BirdsLikeWires.xiaomi  v1.12 (8th November 2022)
  *
+ *  Portions (reverseHexString, parseCheckinMessageSpecifics) were originally
+ *  adapted by Andrew Davison from veeceeoh's WSDCGQ11LM driver; the inline
+ *  attribution comments are preserved.
+ *
+ *  Licensed under GPL-3.0-only (inherited from upstream — this per-file
+ *  notice overrides the iamtrep repo's MIT default for this file). Full
+ *  license text: https://www.gnu.org/licenses/gpl-3.0.html
  */
 
 
