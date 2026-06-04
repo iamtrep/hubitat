@@ -42,11 +42,18 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.math.RoundingMode
 
-@Field static final String DRIVER_VERSION = "2.10.0"
+@Field static final String DRIVER_VERSION = "2.11.0"
 
 @Field static final int REPORT_INTERVAL_MINUTES = 60
 @Field static final int CHECK_EVERY_MINUTES = 10
 @Field static final int RECOVERY_PROBE_INTERVAL_SECONDS = 120
+
+// checkHealth() treats the device as offline if its last message is older
+// than 2 report intervals + a 20-minute slack window (covers one missed
+// report plus jitter). After a hub reboot we wait HUB_REBOOT_ALLOWANCE_MINUTES
+// for the device to re-announce before declaring it offline.
+@Field static final int HEALTH_TIMEOUT_SLACK_MINUTES = 20
+@Field static final int HUB_REBOOT_ALLOWANCE_MINUTES = 20
 
 @Field static final Random RANDOM = new Random()
 
@@ -113,19 +120,12 @@ void initialize() {
 
     unschedule()
 
-    // Migrate from PresenceSensor to healthStatus (one-time, idempotent on re-runs).
-    if (state.presenceUpdated != null) {
-        state.lastMessageMillis = state.presenceUpdated
-        state.remove("presenceUpdated")
-    }
-    device.deleteCurrentState("presence")
-
     if (state.lastMessageMillis == null) state.lastMessageMillis = 0
 
     // Counters survive code pushes — only seed them when they don't already exist.
     if (device.currentValue("notPresentCounter") == null) sendEvent(name: "notPresentCounter", value: 0, isStateChange: false)
     if (device.currentValue("restoredCounter")  == null) sendEvent(name: "restoredCounter",  value: 0, isStateChange: false)
-    sendEvent(name: "healthStatus", value: "online", isStateChange: false)
+    if (device.currentValue("healthStatus") != "online") sendEvent(name: "healthStatus", value: "online", isStateChange: false)
 
     // Schedule health checking with random jitter so multiple devices don't stampede.
     int randomSixty = RANDOM.nextInt(60)
@@ -134,7 +134,6 @@ void initialize() {
     updateDataValue("driver", DRIVER_VERSION)
     sendEvent(name: "numberOfButtons", value: 1, isStateChange: false)
 
-    sendEvent(name: "configuration", value: "complete", isStateChange: false)
     state.remove("reconfigurePending")
 
     // Drop legacy state keys — FF01 tags 0x05/0x06 were misnamed RSSI/LQI in
@@ -149,9 +148,9 @@ void initialize() {
 void updated() {
     // Runs when preferences are saved. Re-converge, then arm log-off.
     logInfo "Preferences Updated"
-    logInfo "Info Logging:  ${txtEnable == true}"
-    logInfo "Debug Logging: ${debugEnable == true}"
-    logInfo "Trace Logging: ${traceEnable == true}"
+    logInfo "Info Logging:  ${txtEnable}"
+    logInfo "Debug Logging: ${debugEnable}"
+    logInfo "Trace Logging: ${traceEnable}"
 
     initialize()
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
@@ -173,8 +172,8 @@ void runVersionReconfigure() {
 
 // ─── Capability commands ───────────────────────────────────────────────────
 
-void push(buttonId) {
-    sendEvent(name:"pushed", value: buttonId, isStateChange:true)
+void push(Integer buttonId) {
+    sendEvent(name: "pushed", value: buttonId, isStateChange: true)
 }
 
 void resetMeshCounters() {
@@ -193,38 +192,37 @@ void setBatteryReplacementDate(Date date = null) {
 // ─── Health monitoring ─────────────────────────────────────────────────────
 
 void checkHealth() {
-    long millisNow = new Date().time
-    int uptimeAllowanceMinutes = 20
-
-    if (state.lastMessageMillis > 0) {
-        long millisElapsed = millisNow - state.lastMessageMillis
-        long timeoutMillis = ((REPORT_INTERVAL_MINUTES * 2) + 20) * 60000L
-        long secondsElapsed = millisElapsed / 1000
-        long hubUptime = location.hub.uptime
-
-        if (millisElapsed > timeoutMillis) {
-            if (hubUptime > uptimeAllowanceMinutes * 60) {
-                if (device.currentValue("healthStatus") != "offline") {
-                    sendEvent(name: "healthStatus", value: "offline")
-                    int npc = (device.currentValue("notPresentCounter") ?: 0) + 1
-                    sendEvent(name: "notPresentCounter", value: npc)
-                }
-                logWarn("Health : Offline. Last message ${secondsElapsed} seconds ago.")
-                startRecovery()
-            } else {
-                logDebug("Health : Ignoring overdue reports for ${uptimeAllowanceMinutes} minutes after hub reboot (uptime ${hubUptime}s).")
-            }
-        } else {
-            if (device.currentValue("healthStatus") != "online") {
-                sendEvent(name: "healthStatus", value: "online")
-            }
-            logDebug("Health : Last message ${secondsElapsed} seconds ago.")
-        }
-
-        logTrace("checkHealth() : elapsed=${millisElapsed}ms, timeout=${timeoutMillis}ms")
-    } else {
+    if (state.lastMessageMillis == 0) {
         logWarn("Health : Waiting for first message from device.")
+        return
     }
+
+    long millisElapsed = new Date().time - state.lastMessageMillis
+    long timeoutMillis = (REPORT_INTERVAL_MINUTES * 2 + HEALTH_TIMEOUT_SLACK_MINUTES) * 60000L
+    long secondsElapsed = millisElapsed / 1000
+    long hubUptime = location.hub.uptime
+
+    if (millisElapsed <= timeoutMillis) {
+        // Device is reporting on schedule. updateHealthStatus() in parse() has
+        // already flipped healthStatus to "online", so nothing to do here.
+        logDebug("Health : Last message ${secondsElapsed} seconds ago.")
+        logTrace("checkHealth() : elapsed=${millisElapsed}ms, timeout=${timeoutMillis}ms")
+        return
+    }
+
+    if (hubUptime <= HUB_REBOOT_ALLOWANCE_MINUTES * 60) {
+        logDebug("Health : Ignoring overdue reports for ${HUB_REBOOT_ALLOWANCE_MINUTES} minutes after hub reboot (uptime ${hubUptime}s).")
+        return
+    }
+
+    if (device.currentValue("healthStatus") != "offline") {
+        sendEvent(name: "healthStatus", value: "offline")
+        int npc = (device.currentValue("notPresentCounter") ?: 0) + 1
+        sendEvent(name: "notPresentCounter", value: npc)
+    }
+    logWarn("Health : Offline. Last message ${secondsElapsed} seconds ago.")
+    logTrace("checkHealth() : elapsed=${millisElapsed}ms, timeout=${timeoutMillis}ms")
+    startRecovery()
 }
 
 private void updateHealthStatus() {
@@ -303,16 +301,18 @@ void parse(String description) {
         logDebug "Parse (Xiaomi check-in): ${xiaomiMap}"
         parseCheckin(xiaomiMap)
 
+        Date now = new Date()
+
         // Re-bind if previous check-in was overdue (>90 min gap)
         if (state.lastCheckinMillis) {
-            long millisSinceLastCheckin = new Date().time - state.lastCheckinMillis
+            long millisSinceLastCheckin = now.time - state.lastCheckinMillis
             if (millisSinceLastCheckin > 90 * 60 * 1000) {
                 logInfo "Recovery : Check-in was ${(millisSinceLastCheckin / 60000).intValue()} min overdue, re-binding clusters"
                 rebindClusters()
             }
         }
-        String updateTime = new Date().toLocaleString()
-        state.lastCheckinMillis = new Date().time
+        String updateTime = now.toLocaleString()
+        state.lastCheckinMillis = now.time
         state.lastCheckin = updateTime
         state.lastUpdate  = updateTime
         return
@@ -493,34 +493,30 @@ private void parseCheckin(Map map) {
 private void parseAttributeReport(Map map) {
     logTrace("parseAttributeReport() : ${map}")
 
-    String receivedValue = map.value
-
     // For the temp/pressure/humidity clusters only attr 0x0000 (MeasuredValue)
     // carries the sensor reading. WSDCGQ11LM also emits the pressure-cluster
     // metadata attrs 0x0010 (ScaledValue, INT16) and 0x0014 (Scale, INT8 = "FE"),
     // and the INT8 width would crash the 4-hex byte-flip with IndexOutOfBounds.
     if ((map.cluster == "0402" || map.cluster == "0403" || map.cluster == "0405") && map.attrId != "0000") {
-        logDebug("parseAttributeReport() : ignoring cluster ${map.cluster} metadata attrId=${map.attrId} value=${receivedValue}")
+        logDebug("parseAttributeReport() : ignoring cluster ${map.cluster} metadata attrId=${map.attrId} value=${map.value}")
         return
     }
 
-    if (map.cluster == "0402") {
-        String temperatureFlippedHex = receivedValue[2..3] + receivedValue[0..1]
-        logTrace("parseAttributeReport() : temperature ${temperatureFlippedHex}")
-        parseTemperature(temperatureFlippedHex)
-    } else if (map.cluster == "0403") {
-        String pressureFlippedHex = receivedValue[2..3] + receivedValue[0..1]
-        logTrace("parseAttributeReport() : pressure ${pressureFlippedHex}")
-        parsePressure(pressureFlippedHex)
-    } else if (map.cluster == "0405") {
-        String humidityFlippedHex = receivedValue[2..3] + receivedValue[0..1]
-        logTrace("parseAttributeReport() : humidity ${humidityFlippedHex}")
-        parseHumidity(humidityFlippedHex)
-    } else if (map.cluster == "0000") {
-        parseBasic(map)
-    } else {
-        logUnhandledMessage(map)
+    switch (map.cluster) {
+        case "0402":
+            parseTemperature(flipInt16Hex(map.value))
+            return
+        case "0403":
+            parsePressure(flipInt16Hex(map.value))
+            return
+        case "0405":
+            parseHumidity(flipInt16Hex(map.value))
+            return
+        case "0000":
+            parseBasic(map)
+            return
     }
+    logUnhandledMessage(map)
 }
 
 private void parseBasic(Map map) {
@@ -605,7 +601,7 @@ private void logUnhandledMessage(Map map) {
             logDebug("Skipped : Bind Response"); return
     }
 
-    String dataCount = (map.data != null) ? "${map.data.length} bits of " : ""
+    String dataCount = (map.data != null) ? "${map.data.size()} bytes of " : ""
     logWarn("UNKNOWN DATA - Please report these messages to the developer.")
     logWarn("Received : endpoint: ${map.endpoint}, cluster: ${map.cluster}, clusterId: ${map.clusterId}, attrId: ${map.attrId}, command: ${map.command} with value: ${map.value} and ${dataCount}data: ${map.data}")
     logTrace("Full message map : ${map}")
@@ -614,8 +610,7 @@ private void logUnhandledMessage(Map map) {
 // ─── Sensor value processors ───────────────────────────────────────────────
 
 private void parseTemperature(String temperatureFlippedHex) {
-    BigDecimal temperature = hexStrToSignedInt(temperatureFlippedHex)
-    temperature = temperature.setScale(2, BigDecimal.ROUND_HALF_UP) / 100
+    BigDecimal temperature = BigDecimal.valueOf(hexStrToSignedInt(temperatureFlippedHex)) / 100
 
     logTrace("temperature : ${temperature} from hex value ${temperatureFlippedHex}")
 
@@ -632,13 +627,12 @@ private void parseTemperature(String temperatureFlippedHex) {
         logWarn("Temperature : Value of ${temperature}°${temperatureScale} is unusual. Watch out for batteries failing on this device.")
     } else {
         logInfo("Temperature : ${temperature} °${temperatureScale}")
-        sendEvent(name: "temperature", value: temperature.setScale(2, BigDecimal.ROUND_HALF_UP), unit: "${temperatureScale}")
+        sendEvent(name: "temperature", value: temperature.setScale(2, RoundingMode.HALF_UP), unit: "${temperatureScale}")
     }
 }
 
 private void parseHumidity(String humidityFlippedHex) {
-    BigDecimal humidity = hexStrToSignedInt(humidityFlippedHex)
-    humidity = humidity.setScale(2, BigDecimal.ROUND_HALF_UP) / 100
+    BigDecimal humidity = BigDecimal.valueOf(hexStrToSignedInt(humidityFlippedHex)) / 100
 
     if (humidityOffset) humidity = humidity + humidityOffset
 
@@ -670,7 +664,7 @@ private void parseHumidity(String humidityFlippedHex) {
     // Sonntag (1990). RH is in %, lastTemperature in °C.
     BigDecimal numerator = (6.112 * Math.exp((17.67 * lastTemperature) / (lastTemperature + 243.5)) * humidity * 2.1674)
     BigDecimal denominator = lastTemperature + 273.15
-    BigDecimal absoluteHumidity = (numerator / denominator).setScale(1, BigDecimal.ROUND_HALF_UP)
+    BigDecimal absoluteHumidity = (numerator / denominator).setScale(1, RoundingMode.HALF_UP)
 
     String cubedChar = String.valueOf((char)(179))
     logInfo("Humidity (Absolute) : ${absoluteHumidity} g/m${cubedChar}")
@@ -690,17 +684,17 @@ private void parsePressure(String pressureFlippedHex, boolean checkin = false) {
     BigDecimal pressure
     switch (unit) {
         case "mbar":
-            pressure = (pressurePa / 100).setScale(1, BigDecimal.ROUND_HALF_UP)
+            pressure = (pressurePa / 100).setScale(1, RoundingMode.HALF_UP)
             break
         case "inHg":
-            pressure = ((pressurePa / 100) * 0.0295300).setScale(2, BigDecimal.ROUND_HALF_UP)
+            pressure = ((pressurePa / 100) * 0.0295300).setScale(2, RoundingMode.HALF_UP)
             break
         case "mmHg":
-            pressure = ((pressurePa / 100) * 0.750062).setScale(1, BigDecimal.ROUND_HALF_UP)
+            pressure = ((pressurePa / 100) * 0.750062).setScale(1, RoundingMode.HALF_UP)
             break
         default: // kPa
             unit = "kPa"
-            pressure = (pressurePa / 1000).setScale(2, BigDecimal.ROUND_HALF_UP)
+            pressure = (pressurePa / 1000).setScale(2, RoundingMode.HALF_UP)
             break
     }
 
@@ -709,16 +703,9 @@ private void parsePressure(String pressureFlippedHex, boolean checkin = false) {
     }
 
     BigDecimal lastPressure = device.currentState("pressure")?.value?.toBigDecimal()
-    String pressureDirection
-    if (lastPressure == null) {
-        pressureDirection = "steady"
-    } else if (pressure > lastPressure) {
-        pressureDirection = "rising"
-    } else if (pressure < lastPressure) {
-        pressureDirection = "falling"
-    } else {
-        pressureDirection = "steady"
-    }
+    String pressureDirection = lastPressure == null
+        ? "steady"
+        : ["falling", "steady", "rising"][(pressure <=> lastPressure) + 1]
 
     logTrace("pressure : ${pressure} from hex value ${pressureFlippedHex}")
     logInfo("Pressure : ${pressure} ${unit} (${pressureDirection})")
@@ -739,7 +726,7 @@ private void parseBattery(String batteryVoltageHex, int batteryVoltageDivisor, B
 
     if (batteryVoltage >= batteryVoltageScaleMin) {
         BigDecimal batteryPercentage = ((batteryVoltage - batteryVoltageScaleMin) / (batteryVoltageScaleMax - batteryVoltageScaleMin)) * 100.0
-        batteryPercentage = batteryPercentage.setScale(0, BigDecimal.ROUND_HALF_UP)
+        batteryPercentage = batteryPercentage.setScale(0, RoundingMode.HALF_UP)
         if (batteryPercentage > 100) batteryPercentage = 100
         if (batteryPercentage < 0)   batteryPercentage = 0
 
@@ -781,6 +768,11 @@ private String reverseHexString(String hexString) {
     }
     return reversed
 }
+
+// Flip a 4-hex-char INT16 from little-endian wire order to big-endian for parse.
+// Cluster 0x0402 / 0x0403 / 0x0405 MeasuredValue attributes arrive in this shape.
+@CompileStatic
+private String flipInt16Hex(String hex) { hex[2..3] + hex[0..1] }
 
 // Decode a ZCL Character String hex payload to ASCII text. Skips non-printable
 // bytes — including the leading 1-byte length prefix that ZCL prepends to
@@ -836,7 +828,7 @@ private void logError(String message) {
 }
 
 void logsOff() {
-    log.warn "${device} : Auto-disabling debug + trace logging"
-    device.updateSetting("debugEnable", [value:"false", type:"bool"])
-    device.updateSetting("traceEnable", [value:"false", type:"bool"])
+    logWarn("Auto-disabling debug + trace logging")
+    device.updateSetting("debugEnable", [value: "false", type: "bool"])
+    device.updateSetting("traceEnable", [value: "false", type: "bool"])
 }
