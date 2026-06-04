@@ -28,7 +28,7 @@
  *  periodically poll readAttribute(0x0000, 0x0004) until the device returns)
  *  was adapted from kkossev's Aqara/Zigbee driver work in the Hubitat
  *  community. Code was rewritten locally — this is idea attribution, not
- *  code derivation, and carries no additional license obligation.
+ *  code derivation.
  *
  *  Licensed under GPL-3.0-only (combined-work license, inherited from the
  *  BirdsLikeWires upstream). This per-file notice overrides the iamtrep
@@ -42,7 +42,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.math.RoundingMode
 
-@Field static final String DRIVER_VERSION = "v2.10 (4th June 2026)"
+@Field static final String DRIVER_VERSION = "2.10.0"
 
 @Field static final int REPORT_INTERVAL_MINUTES = 60
 @Field static final int CHECK_EVERY_MINUTES = 10
@@ -131,16 +131,15 @@ void initialize() {
     int randomSixty = RANDOM.nextInt(60)
     schedule("${randomSixty} 0/${CHECK_EVERY_MINUTES} * * * ? *", "checkHealth")
 
-    // Record driver provenance + device-specific data.
     updateDataValue("driver", DRIVER_VERSION)
-    updateDataValue("encoding", "Xiaomi")
     sendEvent(name: "numberOfButtons", value: 1, isStateChange: false)
 
     sendEvent(name: "configuration", value: "complete", isStateChange: false)
     state.remove("reconfigurePending")
 
-    // Shed mislabelled keys from pre-v2.5 (RSSI/LQI were always power_outage_count
-    // and a proprietary Xiaomi counter, not radio signal metrics).
+    // Drop legacy state keys — FF01 tags 0x05/0x06 were misnamed RSSI/LQI in
+    // an earlier driver version (see parseCheckin header for the corrected
+    // semantics).
     state.remove("RSSI")
     state.remove("LQI")
 
@@ -159,15 +158,15 @@ void updated() {
 }
 
 void configure() {
-    // Exposed by the Configuration capability. WSDCGQ11LM relies on the pairing-time
-    // reporting setup the device performs autonomously — no zigbee.configureReporting
-    // is required here today. Future device-side setup belongs in this method.
+    // Required by the Configuration capability. WSDCGQ11LM sets up its own
+    // reporting at pairing time — no zigbee.configureReporting needed here.
     logInfo "Configuring."
     initialize()
 }
 
 void runVersionReconfigure() {
-    // runInMillis target — keeps the reconfigure off the parser thread.
+    // runInMillis target — lets parse() return immediately so the reconfigure
+    // runs on a fresh dispatch instead of inside the inbound frame's handler.
     logWarn "Driver upgraded from ${getDeviceDataByName('driver')} to ${DRIVER_VERSION}, reconfiguring."
     initialize()
 }
@@ -532,7 +531,7 @@ private void parseBasic(Map map) {
     // attrId 0x0005 is overloaded. It is the standard ZCL ModelIdentifier, but
     // pressing the physical reset button on the WSDCGQ11LM appears to cause
     // the device to re-announce its Basic cluster — and that re-announcement
-    // surfaces as a frame on attr 0x0005. The original BLW dev noticed this
+    // surfaces as a frame on attr 0x0005. The original dev noticed this
     // and made the button useful by emitting a `pushed` event on every such
     // frame. We preserve that behaviour (no encoding discriminator — we don't
     // have evidence that the button frame uses a different encoding than a
@@ -728,7 +727,6 @@ private void parsePressure(String pressureFlippedHex, boolean checkin = false) {
 }
 
 private void parseBattery(String batteryVoltageHex, int batteryVoltageDivisor, BigDecimal batteryVoltageScaleMin, BigDecimal batteryVoltageScaleMax) {
-    // Report the battery voltage and calculated percentage.
     logTrace("batteryVoltageHex : ${batteryVoltageHex}")
 
     int rawMv = zigbee.convertHexToInt(batteryVoltageHex)
@@ -766,7 +764,8 @@ private void parseBattery(String batteryVoltageHex, int batteryVoltageDivisor, B
 // ─── Zigbee command primitives ─────────────────────────────────────────────
 
 private void sendZigbeeCommands(List<String> cmds) {
-    // All hub commands go through here for immediate transmission and to avoid some method() weirdness.
+    // sendHubCommand dispatches immediately, unlike returning a List from a
+    // command handler (which the platform queues and flushes later).
 
     logTrace("sendZigbeeCommands received : ${cmds}")
     sendHubCommand(new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE))
