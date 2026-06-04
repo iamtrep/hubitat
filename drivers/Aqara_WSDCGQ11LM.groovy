@@ -86,16 +86,6 @@ preferences {
 }
 
 
-void configureSpecifics() {
-	// Called by main configure() method in BirdsLikeWires.xiaomi
-
-	updateDataValue("encoding", "Xiaomi")
-	device.name = "Xiaomi Aqara Temperature and Humidity Sensor WSDCGQ11LM"
-	sendEvent(name: "numberOfButtons", value: 1, isStateChange: false)
-
-}
-
-
 void processTemperature(temperatureFlippedHex) {
 
     BigDecimal temperature = hexStrToSignedInt(temperatureFlippedHex)
@@ -317,7 +307,7 @@ def parseCheckinMessageSpecifics(hexString) {
 			switch (dataTag) {
 				case 0x01:  // Battery voltage
 					logging("$dataDebug1 (battery), $dataDebug2","trace")
-                    //reportBattery(dataPayload, 1000, 2.8, 3.0) // already done in parent call xiaomiDeviceStatus()
+                    //reportBattery(dataPayload, 1000, 2.8, 3.0) // already done in parent call processCheckin()
 					break
 				case 0x03:  // Device chip temperature (°C, internal NCP — not the external sensor)
 					def chipTemp = Integer.parseInt(dataPayload, 16)
@@ -716,8 +706,6 @@ void installed() {
 
 void configure() {
 
-	int randomSixty
-
 	// Tidy up.
 	unschedule()
 	state.clear()
@@ -726,19 +714,18 @@ void configure() {
 	if (device.currentValue("restoredCounter") == null) sendEvent(name: "restoredCounter", value: 0, isStateChange: false)
 	sendEvent(name: "presence", value: "present", isStateChange: false)
 
-	// Schedule presence checking.
-	randomSixty = Math.abs(new Random().nextInt() % 60)
+	// Schedule presence checking with random jitter so multiple devices don't stampede.
+	int randomSixty = Math.abs(new Random().nextInt() % 60)
 	schedule("${randomSixty} 0/${checkEveryMinutes} * * * ? *", checkPresence)
 
-	// Set device specifics.
+	// Record driver provenance and device-specific data.
 	updateDataValue("driver", "$driverVersion")
-	configureSpecifics()
+	updateDataValue("encoding", "Xiaomi")
+	device.name = "Xiaomi Aqara Temperature and Humidity Sensor WSDCGQ11LM"
+	sendEvent(name: "numberOfButtons", value: 1, isStateChange: false)
 
-	// Notify.
 	sendEvent(name: "configuration", value: "complete", isStateChange: false)
 	logging("${device} : Configuration complete.", "info")
-
-	updated()
 
 }
 
@@ -786,7 +773,7 @@ void parse(String description) {
 		if (descriptionMap.cluster == "0000" && descriptionMap.attrId == "FF01") {
 
 			// Device Status Cluster
-			xiaomiDeviceStatus(descriptionMap)
+			processCheckin(descriptionMap)
 
 			// Re-bind if previous check-in was overdue (>90 min gap)
 			if (state.lastCheckinMillis) {
@@ -828,15 +815,15 @@ void parse(String description) {
 }
 
 
-void xiaomiDeviceStatus(Map map) {
+void processCheckin(Map map) {
 
 	def dataSize = map.value.size()
 
 	logging("${device} check-in message.", "info")
-	logging("${device} : xiaomiDeviceStatus : Received $dataSize character message.", "debug")
+	logging("${device} : processCheckin : Received $dataSize character message.", "debug")
 
 	if (dataSize <= 20) {
-		logging("${device} : xiaomiDeviceStatus : No device information in this $dataSize character message.", "debug")
+		logging("${device} : processCheckin : No device information in this $dataSize character message.", "debug")
 		return
 	}
 
