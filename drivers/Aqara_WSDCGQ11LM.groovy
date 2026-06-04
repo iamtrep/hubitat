@@ -285,6 +285,7 @@ String reverseHexString(String hexString) {
 // The dataPayload hex string has already been byte-reversed to big-endian.
 // ZCL unsigned types (0x20–0x27): parse as unsigned.
 // ZCL signed types   (0x28–0x2F): parse as signed (two's complement).
+@CompileStatic
 private long parseCheckinInt(String dataPayload, int dataType) {
     long raw = Long.parseLong(dataPayload, 16)
     // Signed types: 0x28 (INT8), 0x29 (INT16), 0x2A (INT24), 0x2B (INT32), ...
