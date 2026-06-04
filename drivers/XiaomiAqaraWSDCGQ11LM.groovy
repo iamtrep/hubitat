@@ -54,10 +54,10 @@ metadata {
 		capability "RelativeHumidityMeasurement"
 		capability "Sensor"
 		capability "TemperatureMeasurement"
-		capability "VoltageMeasurement"
 		capability "PushableButton"
 
 		attribute "absoluteHumidity", "number"
+		attribute "batteryVoltage", "number"
 		attribute "pressureDirection", "string"
 		attribute "notPresentCounter", "number"
 		attribute "restoredCounter", "number"
@@ -531,7 +531,7 @@ void reportBattery(String batteryVoltageHex, int batteryVoltageDivisor, BigDecim
 	batteryVoltage = batteryVoltage.setScale(2, BigDecimal.ROUND_HALF_UP) / batteryVoltageDivisor
 
 	logging("${device} : batteryVoltage : ${batteryVoltage}", "debug")
-	sendEvent(name: "voltage", value: batteryVoltage, unit: "V")
+	sendEvent(name: "batteryVoltage", value: batteryVoltage, unit: "V")
 
 	BigDecimal batteryPercentage = 0
 
