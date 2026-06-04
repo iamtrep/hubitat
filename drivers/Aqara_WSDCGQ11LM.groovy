@@ -32,19 +32,20 @@
  */
 
 
-@Field String driverVersion = "v2.0 (3rd June 2026)"
-
-
 import groovy.transform.Field
+import groovy.transform.CompileStatic
 
-@Field int reportIntervalMinutes = 60
-@Field int checkEveryMinutes = 10
-@Field int recoveryProbeIntervalSeconds = 120
+@Field static final String DRIVER_VERSION = "v2.0 (3rd June 2026)"
+
+@Field static final int REPORT_INTERVAL_MINUTES = 60
+@Field static final int CHECK_EVERY_MINUTES = 10
+@Field static final int RECOVERY_PROBE_INTERVAL_SECONDS = 120
 
 
 metadata {
 
-	definition (name: "Aqara Weather Sensor WSDCGQ11LM", namespace: "iamtrep", author: "Andrew Davison") {
+	definition (name: "Aqara Weather Sensor WSDCGQ11LM", namespace: "iamtrep", author: "Andrew Davison",
+	            importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/Aqara_WSDCGQ11LM.groovy") {
 
 		capability "Battery"
 		capability "Configuration"
@@ -266,11 +267,12 @@ void processMap(Map map) {
 
 // Adapted from WSDCGQ11LM driver from veeceeoh (https://raw.githubusercontent.com/veeceeoh/xiaomi-hubitat/master/devicedrivers/xiaomi-temperature-humidity-sensor-hubitat.src/xiaomi-temperature-humidity-sensor-hubitat.groovy)
 //
-// Reverses order of bytes in hex string
-def reverseHexString(hexString) {
-	def reversed = ""
+// Reverses order of bytes in hex string.
+@CompileStatic
+String reverseHexString(String hexString) {
+	String reversed = ""
 	for (int i = hexString.length(); i > 0; i -= 2) {
-		reversed += hexString.substring(i - 2, i )
+		reversed += hexString.substring(i - 2, i)
 	}
 	return reversed
 }
@@ -280,18 +282,17 @@ def reverseHexString(hexString) {
 //
 // Parse checkin message from lumi.weather device (WSDCGQ11LM) which contains
 // a full set of sensor readings.
-def parseCheckinMessageSpecifics(hexString) {
+void parseCheckinMessageSpecifics(String hexString) {
 
 	logging("Received check-in message","debug")
-	def result
 	// First byte of hexString is UINT8 of payload length in bytes, so it is skipped
-	def strPosition = 2
-	def strLength = hexString.size() - 2
+	int strPosition = 2
+	int strLength = hexString.size() - 2
 	while (strPosition < strLength) {
-		def dataTag = Integer.parseInt(hexString[strPosition++..strPosition++], 16)  // Each attribute of the check-in message payload is preceded by a unique 1-byte tag value
-		def dataType = Integer.parseInt(hexString[strPosition++..strPosition++], 16)  // After each attribute tag, the following byte gives the data type of the attribute data
-		def dataLength = DataType.getLength(dataType)  // This looks up the length of data for the determined data type
-		def dataPayload  // This is used to collect the payload data of each check-in message attribute
+		int dataTag = Integer.parseInt(hexString[strPosition++..strPosition++], 16)  // Each attribute of the check-in message payload is preceded by a unique 1-byte tag value
+		int dataType = Integer.parseInt(hexString[strPosition++..strPosition++], 16)  // After each attribute tag, the following byte gives the data type of the attribute data
+		Integer dataLength = DataType.getLength(dataType)  // platform helper returns null for variable-length types
+		String dataPayload  // collected per-attribute below
 		if (dataLength == null || dataLength == -1 || dataLength == 0) {  // A length of null or -1 means the data type is probably variable-length, and 0 length is invalid
 			logging("Check-in message contains unsupported dataType 0x${Integer.toHexString(dataType)} for dataTag 0x${Integer.toHexString(dataTag)} with dataLength $dataLength","debug")
 			return
@@ -302,25 +303,25 @@ def parseCheckinMessageSpecifics(hexString) {
 			}
 			dataPayload = hexString[strPosition++..(strPosition+=(dataLength * 2) - 1)-1]  // Collect attribute tag payload according to data length of its data type
 			dataPayload = reverseHexString(dataPayload)  // Reverse order of bytes for big endian payload
-			def dataDebug1 = "Check-in message: Found dataTag 0x${Integer.toHexString(dataTag)}"
-			def dataDebug2 = "dataType 0x${Integer.toHexString(dataType)}, dataLength $dataLength, dataPayload $dataPayload"
+			String dataDebug1 = "Check-in message: Found dataTag 0x${Integer.toHexString(dataTag)}"
+			String dataDebug2 = "dataType 0x${Integer.toHexString(dataType)}, dataLength $dataLength, dataPayload $dataPayload"
 			switch (dataTag) {
 				case 0x01:  // Battery voltage
 					logging("$dataDebug1 (battery), $dataDebug2","trace")
                     //reportBattery(dataPayload, 1000, 2.8, 3.0) // already done in parent call processCheckin()
 					break
 				case 0x03:  // Device chip temperature (°C, internal NCP — not the external sensor)
-					def chipTemp = Integer.parseInt(dataPayload, 16)
+					int chipTemp = Integer.parseInt(dataPayload, 16)
 					logging("$dataDebug1 (chip temperature), $dataDebug2 (${chipTemp}°C)", "debug")
 					state.chipTemperature = chipTemp
 					break
 				case 0x05:  // RSSI dB
-					def convertedPayload = Integer.parseInt(dataPayload,16)
+					int convertedPayload = Integer.parseInt(dataPayload,16)
 					logging("$dataDebug1 (RSSI dB), $dataDebug2 ($convertedPayload)","trace")
 					state.RSSI = convertedPayload
 					break
 				case 0x06:  // LQI
-					def convertedPayload = Integer.parseInt(dataPayload,16)
+					int convertedPayload = Integer.parseInt(dataPayload,16)
 					logging("$dataDebug1 (LQI), $dataDebug2 ($convertedPayload)","trace")
 					state.LQI = convertedPayload
 					break
@@ -414,8 +415,8 @@ void checkPresence() {
 	if (state.presenceUpdated > 0) {
 
 		long millisElapsed = millisNow - state.presenceUpdated
-		long presenceTimeoutMillis = ((reportIntervalMinutes * 2) + 20) * 60000
-		long reportIntervalMillis = reportIntervalMinutes * 60000
+		long presenceTimeoutMillis = ((REPORT_INTERVAL_MINUTES * 2) + 20) * 60000
+		long reportIntervalMillis = REPORT_INTERVAL_MINUTES * 60000
 		BigInteger secondsElapsed = BigDecimal.valueOf(millisElapsed / 1000)
 		BigInteger hubUptime = location.hub.uptime
 
@@ -556,11 +557,10 @@ void reportBattery(String batteryVoltageHex, int batteryVoltageDivisor, BigDecim
 }
 
 
+@CompileStatic
 private BigDecimal hexToBigDecimal(String hex) {
-
-    int d = Integer.parseInt(hex, 16) << 21 >> 21
-    return BigDecimal.valueOf(d)
-
+	int d = Integer.parseInt(hex, 16) << 21 >> 21
+	return BigDecimal.valueOf(d)
 }
 
 
@@ -690,10 +690,10 @@ void configure() {
 
 	// Schedule presence checking with random jitter so multiple devices don't stampede.
 	int randomSixty = Math.abs(new Random().nextInt() % 60)
-	schedule("${randomSixty} 0/${checkEveryMinutes} * * * ? *", checkPresence)
+	schedule("${randomSixty} 0/${CHECK_EVERY_MINUTES} * * * ? *", checkPresence)
 
 	// Record driver provenance and device-specific data.
-	updateDataValue("driver", "$driverVersion")
+	updateDataValue("driver", "$DRIVER_VERSION")
 	updateDataValue("encoding", "Xiaomi")
 	sendEvent(name: "numberOfButtons", value: 1, isStateChange: false)
 
@@ -729,13 +729,13 @@ void parse(String description) {
 	updatePresence()
 
 	// Xiaomi devices don't follow the ZCL spec, so we slice-and-dice the description string.
-	Map descriptionMap = description.split(', ').collectEntries {
-		entry -> def pair = entry.split(': ')
+	Map descriptionMap = description.split(', ').collectEntries { String entry ->
+		String[] pair = entry.split(': ')
 		[(pair.first()): pair.last()]
 	}
 
 	logging("${device} : Parse : Interpreting as Xiaomi cluster specification.", "debug")
-    updateTime = new Date().toLocaleString()
+    String updateTime = new Date().toLocaleString()
 
 	if (descriptionMap) {
 
@@ -776,9 +776,9 @@ void parse(String description) {
 	String versionCheck = "unknown"
 	versionCheck = "${getDeviceDataByName('driver')}"
 
-	if ("$versionCheck" != "$driverVersion") {
+	if ("$versionCheck" != "$DRIVER_VERSION") {
 
-		logging("${device} : Driver : Updating configuration from $versionCheck to $driverVersion.", "info")
+		logging("${device} : Driver : Updating configuration from $versionCheck to $DRIVER_VERSION.", "info")
 		configure()
 
 	}
@@ -788,7 +788,7 @@ void parse(String description) {
 
 void processCheckin(Map map) {
 
-	def dataSize = map.value.size()
+	int dataSize = map.value.size()
 
 	logging("${device} check-in message.", "info")
 	logging("${device} : processCheckin : Received $dataSize character message.", "debug")
