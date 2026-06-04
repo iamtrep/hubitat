@@ -73,9 +73,11 @@ metadata {
 
 preferences {
 
-	input name: "infoLogging", type: "bool", title: "Enable logging", defaultValue: true
-	input name: "debugLogging", type: "bool", title: "Enable debug logging", defaultValue: false
-	input name: "traceLogging", type: "bool", title: "Enable trace logging", defaultValue: false
+	input name: "txtEnable",   type: "bool", title: "Enable descriptionText logging", defaultValue: true
+	input name: "debugEnable", type: "bool", title: "Enable debug logging",           defaultValue: false, submitOnChange: true
+	if (debugEnable) {
+		input name: "traceEnable", type: "bool", title: "Enable trace logging",       defaultValue: false
+	}
 
 	input name: "tempOffset", type: "decimal", title: "Temperature offset", description: "Adjustment in display units (°C or °F)", defaultValue: 0
 	input name: "humidityOffset", type: "decimal", title: "Humidity offset", description: "Adjustment in %", defaultValue: 0
@@ -92,7 +94,7 @@ void processTemperature(temperatureFlippedHex) {
     BigDecimal temperature = hexStrToSignedInt(temperatureFlippedHex)
     temperature = temperature.setScale(2, BigDecimal.ROUND_HALF_UP) / 100
 
-    logging("${device} : temperature : ${temperature} from hex value ${temperatureFlippedHex}", "trace")
+    logTrace("temperature : ${temperature} from hex value ${temperatureFlippedHex}")
 
     String temperatureScale = location.temperatureScale
     if (temperatureScale == "F") {
@@ -105,11 +107,11 @@ void processTemperature(temperatureFlippedHex) {
 
     if (temperature > 200 || temperature < -200) {
 
-        logging("${device} : Temperature : Value of ${temperature}°${temperatureScale} is unusual. Watch out for batteries failing on this device.", "warn")
+        logWarn("Temperature : Value of ${temperature}°${temperatureScale} is unusual. Watch out for batteries failing on this device.")
 
     } else {
 
-        logging("${device} : Temperature : ${temperature} °${temperatureScale}", "info")
+        logInfo("Temperature : ${temperature} °${temperatureScale}")
         sendEvent(name: "temperature", value: temperature.setScale(2, BigDecimal.ROUND_HALF_UP), unit: "${temperatureScale}")
 
     }
@@ -165,8 +167,8 @@ void processPressure(pressureFlippedHex, checkin=false) {
         pressureDirection = "steady"
     }
 
-    logging("${device} : pressure : ${pressure} from hex value ${pressureFlippedHex}", "trace")
-    logging("${device} : Pressure : ${pressure} ${unit} (${pressureDirection})", "info")
+    logTrace("pressure : ${pressure} from hex value ${pressureFlippedHex}")
+    logInfo("Pressure : ${pressure} ${unit} (${pressureDirection})")
     sendEvent(name: "pressure", value: pressure, unit: unit)
     sendEvent(name: "pressureDirection", value: pressureDirection)
 }
@@ -181,7 +183,7 @@ void processHumidity(humidityFlippedHex) {
         humidity = humidity + humidityOffset
     }
 
-    logging("${device} : humidity : ${humidity} from hex value ${humidityFlippedHex}", "trace")
+    logTrace("humidity : ${humidity} from hex value ${humidityFlippedHex}")
 
     BigDecimal lastTemperature = device.currentState("temperature") ? device.currentState("temperature").value.toBigDecimal() : 0
 
@@ -199,12 +201,12 @@ void processHumidity(humidityFlippedHex) {
 
     if (humidity > 100 || humidity < 0) {
 
-        logging("${device} : Humidity : Value of ${humidity} is out of bounds. Watch out for batteries failing on this device.", "warn")
+        logWarn("Humidity : Value of ${humidity} is out of bounds. Watch out for batteries failing on this device.")
 
     } else {
 
-        logging("${device} : Humidity (Relative) : ${humidity} %", "info")
-        logging("${device} : Humidity (Absolute) : ${absoluteHumidity} g/m${cubedChar}", "info")
+        logInfo("Humidity (Relative) : ${humidity} %")
+        logInfo("Humidity (Absolute) : ${absoluteHumidity} g/m${cubedChar}")
         sendEvent(name: "humidity", value: humidity, unit: "%")
         sendEvent(name: "absoluteHumidity", value: absoluteHumidity, unit: "g/m${cubedChar}")
 
@@ -214,7 +216,7 @@ void processHumidity(humidityFlippedHex) {
 
 void processMap(Map map) {
 
-	logging("${device} : processMap() : ${map}", "trace")
+	logTrace("processMap() : ${map}")
 
 	String[] receivedValue = map.value
 
@@ -223,7 +225,7 @@ void processMap(Map map) {
 		// Received temperature data.
         String[] temperatureHex = receivedValue[2..3] + receivedValue[0..1]
         String temperatureFlippedHex = temperatureHex.join()
-        logging("${device} : processMap() : temperature ${temperatureFlippedHex}", "trace")
+        logTrace("processMap() : temperature ${temperatureFlippedHex}")
         processTemperature(temperatureFlippedHex)
 
 	} else if (map.cluster == "0403") {
@@ -231,7 +233,7 @@ void processMap(Map map) {
 		// Received pressure data.
         String[] pressureHex = receivedValue[2..3] + receivedValue[0..1]
         String pressureFlippedHex = pressureHex.join()
-        logging("${device} : processMap() : pressure ${pressureFlippedHex}", "trace")
+        logTrace("processMap() : pressure ${pressureFlippedHex}")
         processPressure(pressureFlippedHex)
 
 	} else if (map.cluster == "0405") {
@@ -239,7 +241,7 @@ void processMap(Map map) {
 		// Received humidity data.
         String[] humidityHex = receivedValue[2..3] + receivedValue[0..1]
         String humidityFlippedHex = humidityHex.join()
-        logging("${device} : processMap() : humidity ${humidityFlippedHex}", "trace")
+        logTrace("processMap() : humidity ${humidityFlippedHex}")
         processHumidity(humidityFlippedHex)
 
 	} else if (map.cluster == "0000") {
@@ -247,7 +249,7 @@ void processMap(Map map) {
 		if (map.attrId == "0005") {
 
 			// Scrounge more value! We can capture a short press of the reset button and make it useful.
-			logging("${device} : Trigger : Button Pressed", "info")
+			logInfo("Trigger : Button Pressed")
 			sendEvent(name: "pushed", value: 1, isStateChange: true)
 
 		} else {
@@ -284,7 +286,7 @@ String reverseHexString(String hexString) {
 // a full set of sensor readings.
 void parseCheckinMessageSpecifics(String hexString) {
 
-	logging("Received check-in message","debug")
+	logDebug("Received check-in message")
 	// First byte of hexString is UINT8 of payload length in bytes, so it is skipped
 	int strPosition = 2
 	int strLength = hexString.size() - 2
@@ -294,11 +296,11 @@ void parseCheckinMessageSpecifics(String hexString) {
 		Integer dataLength = DataType.getLength(dataType)  // platform helper returns null for variable-length types
 		String dataPayload  // collected per-attribute below
 		if (dataLength == null || dataLength == -1 || dataLength == 0) {  // A length of null or -1 means the data type is probably variable-length, and 0 length is invalid
-			logging("Check-in message contains unsupported dataType 0x${Integer.toHexString(dataType)} for dataTag 0x${Integer.toHexString(dataTag)} with dataLength $dataLength","debug")
+			logDebug("Check-in message contains unsupported dataType 0x${Integer.toHexString(dataType)} for dataTag 0x${Integer.toHexString(dataTag)} with dataLength $dataLength")
 			return
 		} else {
 			if (strPosition > (strLength - dataLength)) {
-				logging("Ran out of data before finishing parse of check-in message","debug")
+				logDebug("Ran out of data before finishing parse of check-in message")
 				return
 			}
 			dataPayload = hexString[strPosition++..(strPosition+=(dataLength * 2) - 1)-1]  // Collect attribute tag payload according to data length of its data type
@@ -307,38 +309,38 @@ void parseCheckinMessageSpecifics(String hexString) {
 			String dataDebug2 = "dataType 0x${Integer.toHexString(dataType)}, dataLength $dataLength, dataPayload $dataPayload"
 			switch (dataTag) {
 				case 0x01:  // Battery voltage
-					logging("$dataDebug1 (battery), $dataDebug2","trace")
+					logTrace("$dataDebug1 (battery), $dataDebug2")
                     //reportBattery(dataPayload, 1000, 2.8, 3.0) // already done in parent call processCheckin()
 					break
 				case 0x03:  // Device chip temperature (°C, internal NCP — not the external sensor)
 					int chipTemp = Integer.parseInt(dataPayload, 16)
-					logging("$dataDebug1 (chip temperature), $dataDebug2 (${chipTemp}°C)", "debug")
+					logDebug("$dataDebug1 (chip temperature), $dataDebug2 (${chipTemp}°C)")
 					state.chipTemperature = chipTemp
 					break
 				case 0x05:  // RSSI dB
 					int convertedPayload = Integer.parseInt(dataPayload,16)
-					logging("$dataDebug1 (RSSI dB), $dataDebug2 ($convertedPayload)","trace")
+					logTrace("$dataDebug1 (RSSI dB), $dataDebug2 ($convertedPayload)")
 					state.RSSI = convertedPayload
 					break
 				case 0x06:  // LQI
 					int convertedPayload = Integer.parseInt(dataPayload,16)
-					logging("$dataDebug1 (LQI), $dataDebug2 ($convertedPayload)","trace")
+					logTrace("$dataDebug1 (LQI), $dataDebug2 ($convertedPayload)")
 					state.LQI = convertedPayload
 					break
 				case 0x64:  // Temperature in Celcius
-					logging("$dataDebug1 (temperature), $dataDebug2","trace")
+					logTrace("$dataDebug1 (temperature), $dataDebug2")
 					processTemperature(dataPayload)
 					break
 				case 0x65:  // Relative humidity
-					logging("$dataDebug1 (humidity), $dataDebug2","trace")
+					logTrace("$dataDebug1 (humidity), $dataDebug2")
 					processHumidity(dataPayload)
 					break
 				case 0x66:  // Atmospheric pressure
-					logging("$dataDebug1 (pressure), $dataDebug2","trace")
+					logTrace("$dataDebug1 (pressure), $dataDebug2")
 					processPressure(dataPayload,true)
 					break
 				case 0x0A:  // ZigBee parent DNI (device network identifier)
-					logging("$dataDebug1 (ZigBee parent DNI), $dataDebug2","trace")
+					logTrace("$dataDebug1 (ZigBee parent DNI), $dataDebug2")
 					state.zigbeeParentDNI = dataPayload
 					break
 				case 0x04:  // Unknown (appears consistently in WSDCGQ11LM payloads)
@@ -347,10 +349,10 @@ void parseCheckinMessageSpecifics(String hexString) {
 				case 0x09:  // Unknown
 				case 0x0B:  // Unknown
 				case 0x0C:  // Unknown
-					logging("$dataDebug1 (known unhandled), $dataDebug2", "trace")
+					logTrace("$dataDebug1 (known unhandled), $dataDebug2")
 					break
 				default:
-					logging("$dataDebug1 (unexpected), $dataDebug2", "debug")
+					logDebug("$dataDebug1 (unexpected), $dataDebug2")
 			}
 		}
 	}
@@ -373,7 +375,7 @@ void parseCheckinMessageSpecifics(String hexString) {
 void sendZigbeeCommands(List<String> cmds) {
 	// All hub commands go through here for immediate transmission and to avoid some method() weirdness.
 
-    logging("${device} : sendZigbeeCommands received : ${cmds}", "trace")
+    logTrace("sendZigbeeCommands received : ${cmds}")
     sendHubCommand(new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE))
 
 }
@@ -394,13 +396,13 @@ void updatePresence() {
 		sendEvent(name: "presence", value: "present")
 		int rc = (device.currentValue("restoredCounter") ?: 0) + 1
 		sendEvent(name: "restoredCounter", value: rc)
-		logging("${device} : Presence : Restored (${rc} total recoveries)", "info")
+		logInfo("Presence : Restored (${rc} total recoveries)")
 	}
 
 	if (state.recoveryActive) {
 		unschedule("recoveryProbe")
 		state.recoveryActive = false
-		logging("${device} : Recovery : Device returned, stopping probes", "info")
+		logInfo("Recovery : Device returned, stopping probes")
 	}
 
 }
@@ -430,12 +432,12 @@ void checkPresence() {
                     int npc = (device.currentValue("notPresentCounter") ?: 0) + 1
                     sendEvent(name: "notPresentCounter", value: npc)
                 }
-                logging("${device} : Presence : Not Present! Last report received ${secondsElapsed} seconds ago.", "warn")
+                logWarn("Presence : Not Present! Last report received ${secondsElapsed} seconds ago.")
                 startRecovery()
 
 			} else {
 
-				logging("${device} : Presence : Ignoring overdue presence reports for ${uptimeAllowanceMinutes} minutes. The hub was rebooted ${hubUptime} seconds ago.", "debug")
+				logDebug("Presence : Ignoring overdue presence reports for ${uptimeAllowanceMinutes} minutes. The hub was rebooted ${hubUptime} seconds ago.")
 
 			}
 
@@ -444,16 +446,16 @@ void checkPresence() {
                 // only send event if there is a change, otherwise lastActivity will update...
                 sendEvent(name: "presence", value: "present")
             }
-			logging("${device} : Presence : Last presence report ${secondsElapsed} seconds ago.", "debug")
+			logDebug("Presence : Last presence report ${secondsElapsed} seconds ago.")
 
 		}
 
-		logging("${device} : checkPresence() : ${millisNow} - ${state.presenceUpdated} = ${millisElapsed}", "trace")
-		logging("${device} : checkPresence() : Report interval is ${reportIntervalMillis} ms, timeout is ${presenceTimeoutMillis} ms.", "trace")
+		logTrace("checkPresence() : ${millisNow} - ${state.presenceUpdated} = ${millisElapsed}")
+		logTrace("checkPresence() : Report interval is ${reportIntervalMillis} ms, timeout is ${presenceTimeoutMillis} ms.")
 
 	} else {
 
-		logging("${device} : Presence : Waiting for first presence report.", "warn")
+		logWarn("Presence : Waiting for first presence report.")
 
 	}
 
@@ -463,12 +465,12 @@ void checkPresence() {
 void resetMeshCounters() {
 	sendEvent(name: "notPresentCounter", value: 0)
 	sendEvent(name: "restoredCounter", value: 0)
-	logging("${device} : Mesh counters reset", "info")
+	logInfo("Mesh counters reset")
 }
 
 
 void rebindClusters() {
-	logging("${device} : Recovery : Re-binding reporting clusters", "info")
+	logInfo("Recovery : Re-binding reporting clusters")
 	List<String> cmds = []
 	cmds += "zdo bind 0x${device.deviceNetworkId} 0x01 0x01 0x0000 {${device.zigbeeId}} {}"
 	cmds += "zdo bind 0x${device.deviceNetworkId} 0x01 0x01 0x0402 {${device.zigbeeId}} {}"
@@ -480,12 +482,12 @@ void rebindClusters() {
 
 void recoveryProbe() {
 	if (device.currentValue("presence") == "present") {
-		logging("${device} : Recovery : Device is present, stopping probes", "debug")
+		logDebug("Recovery : Device is present, stopping probes")
 		unschedule("recoveryProbe")
 		state.recoveryActive = false
 		return
 	}
-	logging("${device} : Recovery : Sending probe (readAttribute 0x0000/0x0004)", "info")
+	logInfo("Recovery : Sending probe (readAttribute 0x0000/0x0004)")
 	sendZigbeeCommands(zigbee.readAttribute(0x0000, 0x0004))
 }
 
@@ -502,7 +504,7 @@ void startRecovery() {
 	}
 
 	state.recoveryActive = true
-	logging("${device} : Recovery : Starting ${mode} mode (every ${intervalSeconds}s)", "info")
+	logInfo("Recovery : Starting ${mode} mode (every ${intervalSeconds}s)")
 	rebindClusters()
 	schedule("0/${intervalSeconds} * * * * ?", "recoveryProbe")
 }
@@ -513,14 +515,14 @@ void reportBattery(String batteryVoltageHex, int batteryVoltageDivisor, BigDecim
 	// Report the battery voltage and calculated percentage.
 	BigDecimal batteryVoltage = 0
 
-	logging("${device} : batteryVoltageHex : ${batteryVoltageHex}", "trace")
+	logTrace("batteryVoltageHex : ${batteryVoltageHex}")
 
 	batteryVoltage = zigbee.convertHexToInt(batteryVoltageHex)
-	logging("${device} : batteryVoltage raw value : ${batteryVoltage}", "debug")
+	logDebug("batteryVoltage raw value : ${batteryVoltage}")
 
 	batteryVoltage = batteryVoltage.setScale(2, BigDecimal.ROUND_HALF_UP) / batteryVoltageDivisor
 
-	logging("${device} : batteryVoltage : ${batteryVoltage}", "debug")
+	logDebug("batteryVoltage : ${batteryVoltage}")
 	sendEvent(name: "batteryVoltage", value: batteryVoltage, unit: "V")
 
 	BigDecimal batteryPercentage = 0
@@ -533,9 +535,9 @@ void reportBattery(String batteryVoltageHex, int batteryVoltageDivisor, BigDecim
 		batteryPercentage = batteryPercentage < 0 ? 0 : batteryPercentage
 
 		if (batteryPercentage > 20) {
-			logging("${device} : Battery : $batteryPercentage% ($batteryVoltage V)", "info")
+			logInfo("Battery : $batteryPercentage% ($batteryVoltage V)")
 		} else {
-			logging("${device} : Battery : $batteryPercentage% ($batteryVoltage V)", "warn")
+			logWarn("Battery : $batteryPercentage% ($batteryVoltage V)")
 		}
 
 		sendEvent(name: "battery", value:batteryPercentage, unit: "%")
@@ -547,8 +549,8 @@ void reportBattery(String batteryVoltageHex, int batteryVoltageDivisor, BigDecim
 
 		batteryPercentage = 0
 
-		logging("${device} : Battery : Exhausted battery requires replacement.", "warn")
-		logging("${device} : Battery : $batteryPercentage% ($batteryVoltage V)", "warn")
+		logWarn("Battery : Exhausted battery requires replacement.")
+		logWarn("Battery : $batteryPercentage% ($batteryVoltage V)")
 		sendEvent(name: "battery", value:batteryPercentage, unit: "%")
 		state.battery = "exhausted"
 
@@ -567,43 +569,30 @@ private BigDecimal hexToBigDecimal(String hex) {
 void logsOff() {
 
 	log.warn "${device} : Auto-disabling debug + trace logging"
-	device.updateSetting("debugLogging", [value:"false", type:"bool"])
-	device.updateSetting("traceLogging", [value:"false", type:"bool"])
+	device.updateSetting("debugEnable", [value:"false", type:"bool"])
+	device.updateSetting("traceEnable", [value:"false", type:"bool"])
 
 }
 
 
-private boolean logging(String message, String level) {
+private void logTrace(String message) {
+	if (traceEnable) log.trace "${device.displayName}: ${message}"
+}
 
-	boolean didLog = false
+private void logDebug(String message) {
+	if (debugEnable) log.debug "${device.displayName}: ${message}"
+}
 
-	if (level == "error") {
-		log.error "$message"
-		didLog = true
-	}
+private void logInfo(String message) {
+	if (txtEnable) log.info "${device.displayName}: ${message}"
+}
 
-	if (level == "warn") {
-		log.warn "$message"
-		didLog = true
-	}
+private void logWarn(String message) {
+	log.warn "${device.displayName}: ${message}"
+}
 
-	if (traceLogging && level == "trace") {
-		log.trace "$message"
-		didLog = true
-	}
-
-	if (debugLogging && level == "debug") {
-		log.debug "$message"
-		didLog = true
-	}
-
-	if (infoLogging && level == "info") {
-		log.info "$message"
-		didLog = true
-	}
-
-	return didLog
-
+private void logError(String message) {
+	log.error "${device.displayName}: ${message}"
 }
 
 
@@ -612,42 +601,42 @@ void filterThis(Map map) {
 
 	if (map.clusterId == "0001") {
 
-		logging("${device} : Skipped : Power Configuration Response", "debug")
+		logDebug("Skipped : Power Configuration Response")
 
 	} else if (map.clusterId == "0006") {
 
-		logging("${device} : Skipped : Match Descriptor Request", "debug")
+		logDebug("Skipped : Match Descriptor Request")
 
 	} else if (map.clusterId == "0013") {
 
-		logging("${device} : Skipped : Device Announce Broadcast", "debug")
+		logDebug("Skipped : Device Announce Broadcast")
 
 	} else if (map.clusterId == "0400") {
 
-		logging("${device} : Skipped : Illuminance Response", "debug")
+		logDebug("Skipped : Illuminance Response")
 
 	} else if (map.clusterId == "8004") {
 
-		logging("${device} : Skipped : Simple Descriptor Response", "debug")
+		logDebug("Skipped : Simple Descriptor Response")
 
 	} else if (map.clusterId == "8005") {
 
-		logging("${device} : Skipped : Active End Point Response", "debug")
+		logDebug("Skipped : Active End Point Response")
 
 	} else if (map.clusterId == "8021") {
 
-		logging("${device} : Skipped : Bind Response", "debug")
+		logDebug("Skipped : Bind Response")
 
 	} else if (map.cluster == null && map.clusterId == null) {
 
-		logging("${device} : Skipped : Empty Message", "debug")
+		logDebug("Skipped : Empty Message")
 
 	} else {
 
 		String dataCount = (map.data != null) ? "${map.data.length} bits of " : ""
-		logging("${device} : UNKNOWN DATA! Please report these messages to the developer.", "warn")
-		logging("${device} : Received : endpoint: ${map.endpoint}, cluster: ${map.cluster}, clusterId: ${map.clusterId}, attrId: ${map.attrId}, command: ${map.command} with value: ${map.value} and ${dataCount}data: ${map.data}", "warn")
-		logging("${device} : Splurge! : ${map}", "trace")
+		logWarn("UNKNOWN DATA! Please report these messages to the developer.")
+		logWarn("Received : endpoint: ${map.endpoint}, cluster: ${map.cluster}, clusterId: ${map.clusterId}, attrId: ${map.attrId}, command: ${map.command} with value: ${map.value} and ${dataCount}data: ${map.data}")
+		logTrace("Splurge! : ${map}")
 
 	}
 
@@ -672,7 +661,7 @@ void filterThis(Map map) {
 void installed() {
 
 	// Runs after first installation.
-	logging("${device} : Installed", "info")
+	logInfo("Installed")
 	configure()
 
 }
@@ -698,7 +687,7 @@ void configure() {
 	sendEvent(name: "numberOfButtons", value: 1, isStateChange: false)
 
 	sendEvent(name: "configuration", value: "complete", isStateChange: false)
-	logging("${device} : Configuration complete.", "info")
+	logInfo("Configuration complete.")
 
 }
 
@@ -707,19 +696,19 @@ void updated() {
 	// Runs when preferences are saved.
 
 	unschedule(logsOff)
-	if (debugLogging || traceLogging) runIn(1800, logsOff)
+	if (debugEnable || traceEnable) runIn(1800, "logsOff")
 
-	logging("${device} : Preferences Updated", "info")
-	log.info  "${device} :  Info Logging : ${infoLogging == true}"
-	log.debug "${device} : Debug Logging : ${debugLogging == true}"
-	log.trace "${device} : Trace Logging : ${traceLogging == true}"
+	logInfo "Preferences Updated"
+	logInfo "Info Logging:  ${txtEnable == true}"
+	logInfo "Debug Logging: ${debugEnable == true}"
+	logInfo "Trace Logging: ${traceEnable == true}"
 
 }
 
 
 void refresh() {
 
-	logging("${device} : Refreshing", "info")
+	logInfo("Refreshing")
 
 }
 
@@ -734,12 +723,12 @@ void parse(String description) {
 		[(pair.first()): pair.last()]
 	}
 
-	logging("${device} : Parse : Interpreting as Xiaomi cluster specification.", "debug")
+	logDebug("Parse : Interpreting as Xiaomi cluster specification.")
     String updateTime = new Date().toLocaleString()
 
 	if (descriptionMap) {
 
-		logging("${device} : Parse : ${descriptionMap}", "debug")
+		logDebug("Parse : ${descriptionMap}")
 
 		if (descriptionMap.cluster == "0000" && descriptionMap.attrId == "FF01") {
 
@@ -750,7 +739,7 @@ void parse(String description) {
 			if (state.lastCheckinMillis) {
 				long millisSinceLastCheckin = new Date().time - state.lastCheckinMillis
 				if (millisSinceLastCheckin > 90 * 60 * 1000) {
-					logging("${device} : Recovery : Check-in was ${(millisSinceLastCheckin / 60000).intValue()} min overdue, re-binding clusters", "info")
+					logInfo("Recovery : Check-in was ${(millisSinceLastCheckin / 60000).intValue()} min overdue, re-binding clusters")
 					rebindClusters()
 				}
 			}
@@ -768,8 +757,8 @@ void parse(String description) {
 
 	} else {
 
-		logging("${device} : Parse : Failed to parse Xiaomi cluster specification data. Please report these messages to the developer.", "error")
-		logging("${device} : Parse : ${description}", "error")
+		logError("Parse : Failed to parse Xiaomi cluster specification data. Please report these messages to the developer.")
+		logError("Parse : ${description}")
 
 	}
 
@@ -778,7 +767,7 @@ void parse(String description) {
 
 	if ("$versionCheck" != "$DRIVER_VERSION") {
 
-		logging("${device} : Driver : Updating configuration from $versionCheck to $DRIVER_VERSION.", "info")
+		logInfo("Driver : Updating configuration from $versionCheck to $DRIVER_VERSION.")
 		configure()
 
 	}
@@ -790,11 +779,11 @@ void processCheckin(Map map) {
 
 	int dataSize = map.value.size()
 
-	logging("${device} check-in message.", "info")
-	logging("${device} : processCheckin : Received $dataSize character message.", "debug")
+	logInfo("Check-in message.")
+	logDebug("processCheckin : Received $dataSize character message.")
 
 	if (dataSize <= 20) {
-		logging("${device} : processCheckin : No device information in this $dataSize character message.", "debug")
+		logDebug("processCheckin : No device information in this $dataSize character message.")
 		return
 	}
 
