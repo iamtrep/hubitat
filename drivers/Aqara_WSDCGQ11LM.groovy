@@ -501,7 +501,7 @@ void startRecovery() {
 	switch (mode) {
 		case "Slow":       intervalSeconds = 180; break
 		case "Aggressive": intervalSeconds = 30;  break
-		default:           intervalSeconds = 120; break  // Normal
+		default:           intervalSeconds = RECOVERY_PROBE_INTERVAL_SECONDS; break  // Normal
 	}
 
 	state.recoveryActive = true
