@@ -37,7 +37,6 @@
 
 import groovy.transform.Field
 
-@Field boolean debugMode = false
 @Field int reportIntervalMinutes = 60
 @Field int checkEveryMinutes = 10
 @Field int recoveryProbeIntervalSeconds = 120
@@ -61,14 +60,8 @@ metadata {
 		attribute "pressureDirection", "string"
 		attribute "notPresentCounter", "number"
 		attribute "restoredCounter", "number"
-		//attribute "pressurePrevious", "string"
 
 		command "resetMeshCounters"
-
-		if (debugMode) {
-			command "checkPresence"
-			command "testCommand"
-		}
 
 		fingerprint profileId: "0104", inClusters: "0000,0003,FFFF,0402,0403,0405", outClusters: "0000,0004,FFFF", manufacturer: "LUMI", model: "lumi.weather", deviceJoinName: "WSDCGQ11LM", application: "05"
 
@@ -89,13 +82,6 @@ preferences {
 	input name: "pressureUnits", type: "enum", title: "Pressure units", options: ["kPa", "mbar", "inHg", "mmHg"], defaultValue: "kPa"
 
 	input name: "recoveryMode", type: "enum", title: "Mesh recovery mode", options: ["Disabled", "Slow", "Normal", "Aggressive"], defaultValue: "Normal", description: "How aggressively to probe when check-ins are missed"
-
-}
-
-
-void testCommand() {
-
-	logging("${device} : Test Command", "info")
 
 }
 
@@ -626,14 +612,6 @@ void debugLogOff(){
 }
 
 
-void infoLogOff(){
-	
-	log.info "${device} : Info  Logging : Automatically Disabled"
-	device.updateSetting("infoLogging",[value:"false",type:"bool"])
-
-}
-
-
 private boolean logging(String message, String level) {
 
 	boolean didLog = false
@@ -768,14 +746,11 @@ void configure() {
 void updated() {
 	// Runs when preferences are saved.
 
-	unschedule(infoLogOff)
 	unschedule(debugLogOff)
 	unschedule(traceLogOff)
 
-	if (!debugMode) {
-		runIn(2400,debugLogOff)
-		runIn(1200,traceLogOff)
-	}
+	runIn(2400, debugLogOff)
+	runIn(1200, traceLogOff)
 
 	logging("${device} : Preferences Updated", "info")
 
@@ -795,34 +770,13 @@ void parse(String description) {
 
 	updatePresence()
 
-	String encodingCheck = "unknown"
-	encodingCheck = "${getDeviceDataByName('encoding')}"
-
-	Map descriptionMap = null
-
-	if (encodingCheck == "Xiaomi") {
-
-		// Most Xiaomi devices don't follow the spec, so we slice-and-dice the string we receive.
-		descriptionMap = description.split(', ').collectEntries {
-			entry -> def pair = entry.split(': ')
-			[(pair.first()): pair.last()]
-		}
-
-	} else if (encodingCheck == "Zigbee") {
-
-		// These devices appear to follow the Zigbee Cluster Library Specification
-		descriptionMap = zigbee.parseDescriptionAsMap(description)
-
-	} else {
-
-		logging("${device} : Parse : Cannot parse message, encoding type is $encodingCheck.", "error")
-		logging("${device} : Parse : Attempting to configure device.", "info")
-		configure()
-		return
-
+	// Xiaomi devices don't follow the ZCL spec, so we slice-and-dice the description string.
+	Map descriptionMap = description.split(', ').collectEntries {
+		entry -> def pair = entry.split(': ')
+		[(pair.first()): pair.last()]
 	}
 
-	logging("${device} : Parse : Interpreting against $encodingCheck cluster specification.", "debug")
+	logging("${device} : Parse : Interpreting as Xiaomi cluster specification.", "debug")
     updateTime = new Date().toLocaleString()
 
 	if (descriptionMap) {
@@ -856,7 +810,7 @@ void parse(String description) {
 
 	} else {
 
-		logging("${device} : Parse : Failed to parse $encodingCheck cluster specification data. Please report these messages to the developer.", "error")
+		logging("${device} : Parse : Failed to parse Xiaomi cluster specification data. Please report these messages to the developer.", "error")
 		logging("${device} : Parse : ${description}", "error")
 
 	}
@@ -876,62 +830,23 @@ void parse(String description) {
 
 void xiaomiDeviceStatus(Map map) {
 
-	int batteryDivisor = 1
-	String batteryVoltageHex = "undefined"
-	String modelCheck = "${getDeviceDataByName('model')}"
 	def dataSize = map.value.size()
 
-        logging("${device} check-in message.", "info")
+	logging("${device} check-in message.", "info")
 	logging("${device} : xiaomiDeviceStatus : Received $dataSize character message.", "debug")
 
-	if (modelCheck == "lumi.sen_ill.mgl01") {
-		// The Mijia Smart Light Sensor neatly reports its battery hex values on attrId 0020 of cluster 0001.
-
-		batteryVoltageHex = map.value
-		batteryDivisor = 10
-
-	} else {
-		// Everything else mushes it into the status data on attrId FF01 of cluster 0000.
-
-		if (dataSize > 20) {
-
-			batteryVoltageHex = map.value[8..9] + map.value[6..7]
-			batteryDivisor = 1000
-
-		} else {
-
-			logging("${device} : xiaomiDeviceStatus : No device information in this $dataSize character message.", "debug")
-			return
-
-		}
-
+	if (dataSize <= 20) {
+		logging("${device} : xiaomiDeviceStatus : No device information in this $dataSize character message.", "debug")
+		return
 	}
 
-	reportBattery(batteryVoltageHex, batteryDivisor, 2.8, 3.0)
+	// WSDCGQ11LM mushes battery voltage into the status data on attrId FF01 of cluster 0000.
+	String batteryVoltageHex = map.value[8..9] + map.value[6..7]
+	reportBattery(batteryVoltageHex, 1000, 2.8, 3.0)
 
-    try {
-
-        if (modelCheck == "lumi.weather") {
-            // decode sensor values, which are part of the checkin message
-            parseCheckinMessageSpecifics(map.value)
-        } else {
-            // On some devices (buttons for one) there's a wildly inaccurate temperature sensor.
-            // We may as well throw this out in the log for comedy value as it's rarely reported.
-            // Who knows. We may learn something.
-
-            String temperatureValue = "undefined"
-            temperatureValue = map.value[14..15]
-            BigDecimal temperatureCelsius = hexToBigDecimal(temperatureValue)
-
-            logging("${device} : temperatureValue : ${temperatureValue}", "trace")
-            logging("${device} : temperatureCelsius sensor value : ${temperatureCelsius}", "trace")
-
-            logging("${device} : Inaccurate Temperature : $temperatureCelsius °C", "info")
-            // sendEvent(name: "temperature", value: temperatureCelsius, unit: "C")			// No, don't do that. That would be silly.
-        }
-    } catch (Exception e) {
-
-        return
-
-    }
+	try {
+		parseCheckinMessageSpecifics(map.value)
+	} catch (Exception e) {
+		return
+	}
 }
