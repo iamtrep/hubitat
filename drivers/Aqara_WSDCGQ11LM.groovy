@@ -39,6 +39,7 @@
 metadata {
     definition (
         name: "Aqara Weather Sensor WSDCGQ11LM",
+        description: "Aqara Zigbee Temperature/Humidity/Pressure Environmental Sensor Driver - WSDCGQ11LM",
         namespace: "iamtrep",
         author: "pj",
         singleThreaded: true,
@@ -85,7 +86,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.math.RoundingMode
 
-@Field static final String DRIVER_VERSION = "2.13.0"
+@Field static final String DRIVER_VERSION = "2.14.0"
 
 @Field static final int REPORT_INTERVAL_MINUTES = 60
 @Field static final int CHECK_EVERY_MINUTES = 10
@@ -610,8 +611,9 @@ private void parseTemperature(String temperatureFlippedHex) {
     if (temperature > 200 || temperature < -200) {
         logWarn("Temperature : Value of ${temperature}°${temperatureScale} is unusual. Watch out for batteries failing on this device.")
     } else {
-        logInfo("Temperature : ${temperature} °${temperatureScale}")
-        sendEvent(name: "temperature", value: temperature.setScale(2, RoundingMode.HALF_UP), unit: "${temperatureScale}")
+        BigDecimal rounded = temperature.setScale(1, RoundingMode.HALF_UP)
+        logInfo("Temperature : ${rounded} °${temperatureScale}")
+        sendEvent(name: "temperature", value: rounded, unit: "${temperatureScale}")
     }
 }
 
@@ -627,8 +629,9 @@ private void parseHumidity(String humidityFlippedHex) {
         return
     }
 
-    logInfo("Humidity (Relative) : ${humidity} %")
-    sendEvent(name: "humidity", value: humidity, unit: "%")
+    BigDecimal humidityRounded = humidity.setScale(1, RoundingMode.HALF_UP)
+    logInfo("Humidity (Relative) : ${humidityRounded} %")
+    sendEvent(name: "humidity", value: humidityRounded, unit: "%")
 
     def tempState = device.currentState("temperature")
     if (tempState == null) {
@@ -678,7 +681,7 @@ private void parsePressure(String pressureFlippedHex, boolean checkin = false) {
             break
         default: // kPa
             unit = "kPa"
-            pressure = (pressurePa / 1000).setScale(2, RoundingMode.HALF_UP)
+            pressure = (pressurePa / 1000).setScale(1, RoundingMode.HALF_UP)
             break
     }
 
