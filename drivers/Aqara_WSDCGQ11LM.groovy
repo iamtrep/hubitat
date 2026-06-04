@@ -326,9 +326,9 @@ void parseCheckinMessageSpecifics(String hexString) {
 			String dataDebug1 = "Check-in message: Found dataTag 0x${Integer.toHexString(dataTag)}"
 			String dataDebug2 = "dataType 0x${Integer.toHexString(dataType)}, dataLength $dataLength, dataPayload $dataPayload"
 			switch (dataTag) {
-				case 0x01:  // Battery voltage
+				case 0x01:  // Battery voltage (mV as UINT16)
 					logTrace("$dataDebug1 (battery), $dataDebug2")
-                    //reportBattery(dataPayload, 1000, 2.8, 3.0) // already done in parent call processCheckin()
+					reportBattery(dataPayload, 1000, 2.8, 3.0)
 					break
 				case 0x03:  // Device chip temperature (°C, internal NCP — not the external sensor)
 					long chipTemp = parseCheckinInt(dataPayload, dataType)
@@ -862,9 +862,7 @@ void processCheckin(Map map) {
 		return
 	}
 
-	// WSDCGQ11LM mushes battery voltage into the status data on attrId FF01 of cluster 0000.
-	String batteryVoltageHex = map.value[8..9] + map.value[6..7]
-	reportBattery(batteryVoltageHex, 1000, 2.8, 3.0)
+	// Battery voltage is extracted by tag 0x01 inside parseCheckinMessageSpecifics().
 
 	try {
 		parseCheckinMessageSpecifics(map.value)
