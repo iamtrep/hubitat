@@ -672,6 +672,7 @@ void initialize() {
 	// version-change. Does NOT issue device-side Zigbee reporting (that's configure()).
 
 	unschedule()
+	if (state.presenceUpdated == null) state.presenceUpdated = 0
 
 	// Counters survive code pushes — only seed them when they don't already exist.
 	if (device.currentValue("notPresentCounter") == null) sendEvent(name: "notPresentCounter", value: 0, isStateChange: false)
