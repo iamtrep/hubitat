@@ -659,50 +659,58 @@ void filterThis(Map map) {
 
 
 void installed() {
-
-	// Runs after first installation.
-	logInfo("Installed")
-	configure()
-
+	// Runs once at pairing/install. Route through initialize() so install
+	// and updated paths converge.
+	logInfo "Installed"
+	state.clear()
+	initialize()
 }
 
 
-void configure() {
+void initialize() {
+	// Idempotent setup — entered from installed(), updated(), and runInMillis on
+	// version-change. Does NOT issue device-side Zigbee reporting (that's configure()).
 
-	// Tidy up.
 	unschedule()
-	state.clear()
-	state.presenceUpdated = 0
+
+	// Counters survive code pushes — only seed them when they don't already exist.
 	if (device.currentValue("notPresentCounter") == null) sendEvent(name: "notPresentCounter", value: 0, isStateChange: false)
-	if (device.currentValue("restoredCounter") == null) sendEvent(name: "restoredCounter", value: 0, isStateChange: false)
+	if (device.currentValue("restoredCounter")  == null) sendEvent(name: "restoredCounter",  value: 0, isStateChange: false)
 	sendEvent(name: "presence", value: "present", isStateChange: false)
 
 	// Schedule presence checking with random jitter so multiple devices don't stampede.
 	int randomSixty = Math.abs(new Random().nextInt() % 60)
-	schedule("${randomSixty} 0/${CHECK_EVERY_MINUTES} * * * ? *", checkPresence)
+	schedule("${randomSixty} 0/${CHECK_EVERY_MINUTES} * * * ? *", "checkPresence")
 
-	// Record driver provenance and device-specific data.
-	updateDataValue("driver", "$DRIVER_VERSION")
+	// Record driver provenance + device-specific data.
+	updateDataValue("driver", DRIVER_VERSION)
 	updateDataValue("encoding", "Xiaomi")
 	sendEvent(name: "numberOfButtons", value: 1, isStateChange: false)
 
 	sendEvent(name: "configuration", value: "complete", isStateChange: false)
-	logInfo("Configuration complete.")
+	logInfo "Initialised."
+}
 
+
+void configure() {
+	// Exposed by the Configuration capability. WSDCGQ11LM relies on the pairing-time
+	// reporting setup the device performs autonomously — no zigbee.configureReporting
+	// is required here today. Future device-side setup belongs in this method.
+	logInfo "Configure pressed."
+	initialize()
 }
 
 
 void updated() {
-	// Runs when preferences are saved.
-
-	unschedule(logsOff)
-	if (debugEnable || traceEnable) runIn(1800, "logsOff")
-
+	// Runs when preferences are saved. Reset, then re-converge.
 	logInfo "Preferences Updated"
 	logInfo "Info Logging:  ${txtEnable == true}"
 	logInfo "Debug Logging: ${debugEnable == true}"
 	logInfo "Trace Logging: ${traceEnable == true}"
 
+	unschedule()
+	if (debugEnable || traceEnable) runIn(1800, "logsOff")
+	initialize()
 }
 
 
@@ -768,7 +776,7 @@ void parse(String description) {
 	if ("$versionCheck" != "$DRIVER_VERSION") {
 
 		logInfo("Driver : Updating configuration from $versionCheck to $DRIVER_VERSION.")
-		configure()
+		initialize()
 
 	}
 
