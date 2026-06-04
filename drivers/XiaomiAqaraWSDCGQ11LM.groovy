@@ -40,6 +40,7 @@ import groovy.transform.Field
 @Field boolean debugMode = false
 @Field int reportIntervalMinutes = 60
 @Field int checkEveryMinutes = 10
+@Field int recoveryProbeIntervalSeconds = 120
 
 
 metadata {
@@ -82,6 +83,8 @@ preferences {
 	input name: "humidityOffset", type: "decimal", title: "Humidity offset", description: "Adjustment in %", defaultValue: 0
 	input name: "pressureOffset", type: "decimal", title: "Pressure offset", description: "Adjustment in display units", defaultValue: 0
 	input name: "pressureUnits", type: "enum", title: "Pressure units", options: ["kPa", "mbar", "inHg", "mmHg"], defaultValue: "kPa"
+
+	input name: "recoveryMode", type: "enum", title: "Mesh recovery mode", options: ["Disabled", "Slow", "Normal", "Aggressive"], defaultValue: "Normal", description: "How aggressively to probe when check-ins are missed"
 
 }
 
@@ -395,6 +398,12 @@ void updatePresence() {
 	state.presenceUpdated = millisNow
 	sendEvent(name: "presence", value: "present")
 
+	if (state.recoveryActive) {
+		unschedule("recoveryProbe")
+		state.recoveryActive = false
+		logging("${device} : Recovery : Device returned, stopping probes", "info")
+	}
+
 }
 
 
@@ -421,6 +430,7 @@ void checkPresence() {
 					sendEvent(name: "presence", value: "not present")
                 }
                 logging("${device} : Presence : Not Present! Last report received ${secondsElapsed} seconds ago.", "warn")
+                startRecovery()
 
 			} else {
 
@@ -446,6 +456,47 @@ void checkPresence() {
 
 	}
 
+}
+
+
+void rebindClusters() {
+	logging("${device} : Recovery : Re-binding reporting clusters", "info")
+	List<String> cmds = []
+	cmds += "zdo bind 0x${device.deviceNetworkId} 0x01 0x01 0x0000 {${device.zigbeeId}} {}"
+	cmds += "zdo bind 0x${device.deviceNetworkId} 0x01 0x01 0x0402 {${device.zigbeeId}} {}"
+	cmds += "zdo bind 0x${device.deviceNetworkId} 0x01 0x01 0x0403 {${device.zigbeeId}} {}"
+	cmds += "zdo bind 0x${device.deviceNetworkId} 0x01 0x01 0x0405 {${device.zigbeeId}} {}"
+	sendZigbeeCommands(cmds)
+}
+
+
+void recoveryProbe() {
+	if (device.currentValue("presence") == "present") {
+		logging("${device} : Recovery : Device is present, stopping probes", "debug")
+		unschedule("recoveryProbe")
+		state.recoveryActive = false
+		return
+	}
+	logging("${device} : Recovery : Sending probe (readAttribute 0x0000/0x0004)", "info")
+	sendZigbeeCommands(zigbee.readAttribute(0x0000, 0x0004))
+}
+
+
+void startRecovery() {
+	String mode = recoveryMode ?: "Normal"
+	if (mode == "Disabled" || state.recoveryActive) return
+
+	int intervalSeconds
+	switch (mode) {
+		case "Slow":       intervalSeconds = 180; break
+		case "Aggressive": intervalSeconds = 30;  break
+		default:           intervalSeconds = 120; break  // Normal
+	}
+
+	state.recoveryActive = true
+	logging("${device} : Recovery : Starting ${mode} mode (every ${intervalSeconds}s)", "info")
+	rebindClusters()
+	schedule("0/${intervalSeconds} * * * * ?", "recoveryProbe")
 }
 
 
@@ -749,6 +800,16 @@ void parse(String description) {
 
 			// Device Status Cluster
 			xiaomiDeviceStatus(descriptionMap)
+
+			// Re-bind if previous check-in was overdue (>90 min gap)
+			if (state.lastCheckinMillis) {
+				long millisSinceLastCheckin = new Date().time - state.lastCheckinMillis
+				if (millisSinceLastCheckin > 90 * 60 * 1000) {
+					logging("${device} : Recovery : Check-in was ${(millisSinceLastCheckin / 60000).intValue()} min overdue, re-binding clusters", "info")
+					rebindClusters()
+				}
+			}
+			state.lastCheckinMillis = new Date().time
             state.lastCheckin = updateTime
 
 		} else {
