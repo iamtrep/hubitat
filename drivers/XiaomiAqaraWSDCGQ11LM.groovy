@@ -59,7 +59,11 @@ metadata {
 
 		attribute "absoluteHumidity", "number"
 		attribute "pressureDirection", "string"
+		attribute "notPresentCounter", "number"
+		attribute "restoredCounter", "number"
 		//attribute "pressurePrevious", "string"
+
+		command "resetMeshCounters"
 
 		if (debugMode) {
 			command "checkPresence"
@@ -396,7 +400,12 @@ void updatePresence() {
 
 	long millisNow = new Date().time
 	state.presenceUpdated = millisNow
-	sendEvent(name: "presence", value: "present")
+	if (device.currentValue("presence") != "present") {
+		sendEvent(name: "presence", value: "present")
+		int rc = (device.currentValue("restoredCounter") ?: 0) + 1
+		sendEvent(name: "restoredCounter", value: rc)
+		logging("${device} : Presence : Restored (${rc} total recoveries)", "info")
+	}
 
 	if (state.recoveryActive) {
 		unschedule("recoveryProbe")
@@ -428,6 +437,8 @@ void checkPresence() {
                 if (device.currentValue("presence") != "not present") {
                     // only send event if there is a change, otherwise lastActivity will update...
 					sendEvent(name: "presence", value: "not present")
+                    int npc = (device.currentValue("notPresentCounter") ?: 0) + 1
+                    sendEvent(name: "notPresentCounter", value: npc)
                 }
                 logging("${device} : Presence : Not Present! Last report received ${secondsElapsed} seconds ago.", "warn")
                 startRecovery()
@@ -456,6 +467,13 @@ void checkPresence() {
 
 	}
 
+}
+
+
+void resetMeshCounters() {
+	sendEvent(name: "notPresentCounter", value: 0)
+	sendEvent(name: "restoredCounter", value: 0)
+	logging("${device} : Mesh counters reset", "info")
 }
 
 
@@ -713,6 +731,8 @@ void configure() {
 	unschedule()
 	state.clear()
 	state.presenceUpdated = 0
+	if (device.currentValue("notPresentCounter") == null) sendEvent(name: "notPresentCounter", value: 0, isStateChange: false)
+	if (device.currentValue("restoredCounter") == null) sendEvent(name: "restoredCounter", value: 0, isStateChange: false)
 	sendEvent(name: "presence", value: "present", isStateChange: false)
 
 	// Schedule presence checking.
