@@ -91,345 +91,96 @@ preferences {
 }
 
 
-void processTemperature(String temperatureFlippedHex) {
+// ─── Lifecycle ─────────────────────────────────────────────────────────────
 
-    BigDecimal temperature = hexStrToSignedInt(temperatureFlippedHex)
-    temperature = temperature.setScale(2, BigDecimal.ROUND_HALF_UP) / 100
-
-    logTrace("temperature : ${temperature} from hex value ${temperatureFlippedHex}")
-
-    String temperatureScale = location.temperatureScale
-    if (temperatureScale == "F") {
-        temperature = (temperature * 1.8) + 32
-    }
-
-    if (tempOffset) {
-        temperature = temperature + tempOffset
-    }
-
-    if (temperature > 200 || temperature < -200) {
-
-        logWarn("Temperature : Value of ${temperature}°${temperatureScale} is unusual. Watch out for batteries failing on this device.")
-
-    } else {
-
-        logInfo("Temperature : ${temperature} °${temperatureScale}")
-        sendEvent(name: "temperature", value: temperature.setScale(2, BigDecimal.ROUND_HALF_UP), unit: "${temperatureScale}")
-
-    }
+void installed() {
+	// Runs once at pairing/install. Route through initialize() so install
+	// and updated paths converge.
+	logInfo "Installed"
+	state.clear()
+	initialize()
 }
 
+void initialize() {
+	// Idempotent setup — entered from installed(), updated(), and runInMillis on
+	// version-change. Does NOT issue device-side Zigbee reporting (that's configure()).
 
-void processPressure(String pressureFlippedHex, boolean checkin = false) {
+	unschedule()
 
-    BigDecimal pressurePa = hexStrToSignedInt(pressureFlippedHex)
-    if (checkin) {
-        // Check-in blob value is in Pa (already)
-    } else {
-        // Cluster 0x0403 value is in tenths of hPa → convert to Pa
-        pressurePa = pressurePa * 10
-    }
-
-    // Convert Pa to display unit
-    String unit = pressureUnits ?: "kPa"
-    BigDecimal pressure
-    switch (unit) {
-        case "mbar":
-            pressure = pressurePa / 100
-            pressure = pressure.setScale(1, BigDecimal.ROUND_HALF_UP)
-            break
-        case "inHg":
-            pressure = (pressurePa / 100) * 0.0295300
-            pressure = pressure.setScale(2, BigDecimal.ROUND_HALF_UP)
-            break
-        case "mmHg":
-            pressure = (pressurePa / 100) * 0.750062
-            pressure = pressure.setScale(1, BigDecimal.ROUND_HALF_UP)
-            break
-        default: // kPa
-            unit = "kPa"
-            pressure = pressurePa / 1000
-            pressure = pressure.setScale(2, BigDecimal.ROUND_HALF_UP)
-            break
-    }
-
-    if (pressureOffset) {
-        pressure = pressure + pressureOffset
-    }
-
-    BigDecimal lastPressure = device.currentState("pressure")?.value?.toBigDecimal()
-    String pressureDirection
-    if (lastPressure == null) {
-        pressureDirection = "steady"
-    } else if (pressure > lastPressure) {
-        pressureDirection = "rising"
-    } else if (pressure < lastPressure) {
-        pressureDirection = "falling"
-    } else {
-        pressureDirection = "steady"
-    }
-
-    logTrace("pressure : ${pressure} from hex value ${pressureFlippedHex}")
-    logInfo("Pressure : ${pressure} ${unit} (${pressureDirection})")
-    sendEvent(name: "pressure", value: pressure, unit: unit)
-    sendEvent(name: "pressureDirection", value: pressureDirection)
-}
-
-
-void processHumidity(String humidityFlippedHex) {
-
-    BigDecimal humidity = hexStrToSignedInt(humidityFlippedHex)
-    humidity = humidity.setScale(2, BigDecimal.ROUND_HALF_UP) / 100
-
-    if (humidityOffset) {
-        humidity = humidity + humidityOffset
-    }
-
-    logTrace("humidity : ${humidity} from hex value ${humidityFlippedHex}")
-
-    BigDecimal lastTemperature = device.currentState("temperature") ? device.currentState("temperature").value.toBigDecimal() : 0
-
-    String temperatureScale = location.temperatureScale
-    if (temperatureScale == "F") {
-        lastTemperature = (lastTemperature - 32) / 1.8
-    }
-
-    BigDecimal numerator = (6.112 * Math.exp((17.67 * lastTemperature) / (lastTemperature + 243.5)) * humidity * 2.1674)
-    BigDecimal denominator = lastTemperature + 273.15
-    BigDecimal absoluteHumidity = numerator / denominator
-    absoluteHumidity = absoluteHumidity.setScale(1, BigDecimal.ROUND_HALF_UP)
-
-    String cubedChar = String.valueOf((char)(179))
-
-    if (humidity > 100 || humidity < 0) {
-
-        logWarn("Humidity : Value of ${humidity} is out of bounds. Watch out for batteries failing on this device.")
-
-    } else {
-
-        logInfo("Humidity (Relative) : ${humidity} %")
-        logInfo("Humidity (Absolute) : ${absoluteHumidity} g/m${cubedChar}")
-        sendEvent(name: "humidity", value: humidity, unit: "%")
-        sendEvent(name: "absoluteHumidity", value: absoluteHumidity, unit: "g/m${cubedChar}")
-
-    }
-}
-
-
-void processMap(Map map) {
-
-	logTrace("processMap() : ${map}")
-
-	String[] receivedValue = map.value
-
-	if (map.cluster == "0402") {
-
-		// Received temperature data.
-        String[] temperatureHex = receivedValue[2..3] + receivedValue[0..1]
-        String temperatureFlippedHex = temperatureHex.join()
-        logTrace("processMap() : temperature ${temperatureFlippedHex}")
-        processTemperature(temperatureFlippedHex)
-
-	} else if (map.cluster == "0403") {
-
-		// Received pressure data.
-        String[] pressureHex = receivedValue[2..3] + receivedValue[0..1]
-        String pressureFlippedHex = pressureHex.join()
-        logTrace("processMap() : pressure ${pressureFlippedHex}")
-        processPressure(pressureFlippedHex)
-
-	} else if (map.cluster == "0405") {
-
-		// Received humidity data.
-        String[] humidityHex = receivedValue[2..3] + receivedValue[0..1]
-        String humidityFlippedHex = humidityHex.join()
-        logTrace("processMap() : humidity ${humidityFlippedHex}")
-        processHumidity(humidityFlippedHex)
-
-	} else if (map.cluster == "0000") {
-
-		if (map.attrId == "0005") {
-
-			// Scrounge more value! We can capture a short press of the reset button and make it useful.
-			logInfo("Trigger : Button Pressed")
-			sendEvent(name: "pushed", value: 1, isStateChange: true)
-
-		} else {
-
-			filterThis(map)
-
-		}
-
-	} else {
-
-		filterThis(map)
-
+	// Migrate from PresenceSensor to healthStatus (one-time, idempotent on re-runs).
+	if (state.presenceUpdated != null) {
+		state.lastMessageMillis = state.presenceUpdated
+		state.remove("presenceUpdated")
 	}
+	device.deleteCurrentState("presence")
 
+	if (state.lastMessageMillis == null) state.lastMessageMillis = 0
+
+	// Counters survive code pushes — only seed them when they don't already exist.
+	if (device.currentValue("notPresentCounter") == null) sendEvent(name: "notPresentCounter", value: 0, isStateChange: false)
+	if (device.currentValue("restoredCounter")  == null) sendEvent(name: "restoredCounter",  value: 0, isStateChange: false)
+	sendEvent(name: "healthStatus", value: "online", isStateChange: false)
+
+	// Schedule health checking with random jitter so multiple devices don't stampede.
+	int randomSixty = Math.abs(new Random().nextInt() % 60)
+	schedule("${randomSixty} 0/${CHECK_EVERY_MINUTES} * * * ? *", "checkHealth")
+
+	// Record driver provenance + device-specific data.
+	updateDataValue("driver", DRIVER_VERSION)
+	updateDataValue("encoding", "Xiaomi")
+	sendEvent(name: "numberOfButtons", value: 1, isStateChange: false)
+
+	sendEvent(name: "configuration", value: "complete", isStateChange: false)
+	logInfo "Initialized."
 }
 
+void updated() {
+	// Runs when preferences are saved. Re-converge, then arm log-off.
+	logInfo "Preferences Updated"
+	logInfo "Info Logging:  ${txtEnable == true}"
+	logInfo "Debug Logging: ${debugEnable == true}"
+	logInfo "Trace Logging: ${traceEnable == true}"
 
-// Adapted from WSDCGQ11LM driver from veeceeoh (https://raw.githubusercontent.com/veeceeoh/xiaomi-hubitat/master/devicedrivers/xiaomi-temperature-humidity-sensor-hubitat.src/xiaomi-temperature-humidity-sensor-hubitat.groovy)
-//
-// Reverses order of bytes in hex string.
-@CompileStatic
-String reverseHexString(String hexString) {
-	String reversed = ""
-	for (int i = hexString.length(); i > 0; i -= 2) {
-		reversed += hexString.substring(i - 2, i)
-	}
-	return reversed
+	initialize()
+	if (debugEnable || traceEnable) runIn(1800, "logsOff")
 }
 
-
-// Type-aware integer parse for Xiaomi check-in TLV payloads.
-// The dataPayload hex string has already been byte-reversed to big-endian.
-// ZCL unsigned types (0x20–0x27): parse as unsigned.
-// ZCL signed types   (0x28–0x2F): parse as signed (two's complement).
-@CompileStatic
-private long parseCheckinInt(String dataPayload, int dataType) {
-    long raw = Long.parseLong(dataPayload, 16)
-    // Signed types: 0x28 (INT8), 0x29 (INT16), 0x2A (INT24), 0x2B (INT32), ...
-    if (dataType >= 0x28 && dataType <= 0x2F) {
-        int bits = dataPayload.length() * 4
-        if (raw >= (1L << (bits - 1))) {
-            raw -= (1L << bits)
-        }
-    }
-    return raw
+void configure() {
+	// Exposed by the Configuration capability. WSDCGQ11LM relies on the pairing-time
+	// reporting setup the device performs autonomously — no zigbee.configureReporting
+	// is required here today. Future device-side setup belongs in this method.
+	logInfo "Configuring."
+	initialize()
 }
 
-
-// Adapted from WSDCGQ11LM driver from veeceeoh (https://raw.githubusercontent.com/veeceeoh/xiaomi-hubitat/master/devicedrivers/xiaomi-temperature-humidity-sensor-hubitat.src/xiaomi-temperature-humidity-sensor-hubitat.groovy)
-//
-// Parse checkin message from lumi.weather device (WSDCGQ11LM) which contains
-// a full set of sensor readings.
-void parseCheckinMessageSpecifics(String hexString) {
-
-	logDebug("Received check-in message")
-	// First byte of hexString is UINT8 of payload length in bytes, so it is skipped
-	int strPosition = 2
-	int strLength = hexString.size()
-	while (strPosition < strLength) {
-		int dataTag = Integer.parseInt(hexString[strPosition++..strPosition++], 16)  // Each attribute of the check-in message payload is preceded by a unique 1-byte tag value
-		int dataType = Integer.parseInt(hexString[strPosition++..strPosition++], 16)  // After each attribute tag, the following byte gives the data type of the attribute data
-		Integer dataLength = DataType.getLength(dataType)  // platform helper returns null for variable-length types
-		String dataPayload  // collected per-attribute below
-		if (dataLength == null || dataLength == -1 || dataLength == 0) {  // A length of null or -1 means the data type is probably variable-length, and 0 length is invalid
-			logDebug("Check-in message contains unsupported dataType 0x${Integer.toHexString(dataType)} for dataTag 0x${Integer.toHexString(dataTag)} with dataLength $dataLength")
-			return
-		} else {
-			if (strPosition > (strLength - dataLength)) {
-				logDebug("Ran out of data before finishing parse of check-in message")
-				return
-			}
-			dataPayload = hexString[strPosition++..(strPosition+=(dataLength * 2) - 1)-1]  // Collect attribute tag payload according to data length of its data type
-			dataPayload = reverseHexString(dataPayload)  // Reverse order of bytes for big endian payload
-			String dataDebug1 = "Check-in message: Found dataTag 0x${Integer.toHexString(dataTag)}"
-			String dataDebug2 = "dataType 0x${Integer.toHexString(dataType)}, dataLength $dataLength, dataPayload $dataPayload"
-			switch (dataTag) {
-				case 0x01:  // Battery voltage (mV as UINT16)
-					logTrace("$dataDebug1 (battery), $dataDebug2")
-					reportBattery(dataPayload, 1000, 2.8, 3.0)
-					break
-				case 0x03:  // Device chip temperature (°C, internal NCP — not the external sensor)
-					long chipTemp = parseCheckinInt(dataPayload, dataType)
-					logDebug("$dataDebug1 (chip temperature), $dataDebug2 (${chipTemp}°C)")
-					state.chipTemperature = chipTemp
-					break
-				case 0x05:  // RSSI dB
-					long rssi = parseCheckinInt(dataPayload, dataType)
-					logTrace("$dataDebug1 (RSSI dB), $dataDebug2 ($rssi)")
-					state.RSSI = rssi
-					break
-				case 0x06:  // LQI
-					long lqi = parseCheckinInt(dataPayload, dataType)
-					logTrace("$dataDebug1 (LQI), $dataDebug2 ($lqi)")
-					state.LQI = lqi
-					break
-				case 0x64:  // Temperature in Celcius
-					logTrace("$dataDebug1 (temperature), $dataDebug2")
-					processTemperature(dataPayload)
-					break
-				case 0x65:  // Relative humidity
-					logTrace("$dataDebug1 (humidity), $dataDebug2")
-					processHumidity(dataPayload)
-					break
-				case 0x66:  // Atmospheric pressure
-					logTrace("$dataDebug1 (pressure), $dataDebug2")
-					processPressure(dataPayload,true)
-					break
-				case 0x0A:  // ZigBee parent DNI (device network identifier)
-					logTrace("$dataDebug1 (ZigBee parent DNI), $dataDebug2")
-					state.zigbeeParentDNI = dataPayload
-					break
-				case 0x04:  // Unknown (appears consistently in WSDCGQ11LM payloads)
-				case 0x07:  // Unknown
-				case 0x08:  // Unknown
-				case 0x09:  // Unknown
-				case 0x0B:  // Unknown
-				case 0x0C:  // Unknown
-					logTrace("$dataDebug1 (known unhandled), $dataDebug2")
-					break
-				default:
-					logDebug("$dataDebug1 (unexpected), $dataDebug2")
-			}
-		}
-	}
+void runVersionReconfigure() {
+	// runInMillis target — keeps the reconfigure off the parser thread.
+	logWarn "Driver upgraded from ${getDeviceDataByName('driver')} to ${DRIVER_VERSION}, reconfiguring."
+	initialize()
 }
 
-
-// ════════════════════════════════════════════════════════════════════
-// Inlined from BirdsLikeWires.library v1.17 (8th November 2022)
-// ════════════════════════════════════════════════════════════════════
-
-/*
- * 
- *  BirdsLikeWires Library v1.17 (8th November 2022)
- *	
- */
-
-
-
-
-void sendZigbeeCommands(List<String> cmds) {
-	// All hub commands go through here for immediate transmission and to avoid some method() weirdness.
-
-    logTrace("sendZigbeeCommands received : ${cmds}")
-    sendHubCommand(new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE))
-
-}
-
+// ─── Capability commands ───────────────────────────────────────────────────
 
 void push(buttonId) {
-	
 	sendEvent(name:"pushed", value: buttonId, isStateChange:true)
-	
 }
 
-
-void updateHealthStatus() {
-
-	long millisNow = new Date().time
-	state.lastMessageMillis = millisNow
-	if (device.currentValue("healthStatus") != "online") {
-		sendEvent(name: "healthStatus", value: "online")
-		int rc = (device.currentValue("restoredCounter") ?: 0) + 1
-		sendEvent(name: "restoredCounter", value: rc)
-		logInfo("Health : Online (${rc} total recoveries)")
-	}
-
-	if (state.recoveryActive) {
-		unschedule("recoveryProbe")
-		state.recoveryActive = false
-		logInfo("Recovery : Device returned, stopping probes")
-	}
-
+void resetMeshCounters() {
+	sendEvent(name: "notPresentCounter", value: 0)
+	sendEvent(name: "restoredCounter", value: 0)
+	logInfo("Mesh counters reset")
 }
 
+void setBatteryReplacementDate(Date date = null) {
+	if (date == null) date = new Date()
+	String dateStr = date.format('yyyy-MM-dd')
+	device.updateDataValue("batteryReplacementDate", dateStr)
+	logInfo("Battery replacement date set to ${dateStr}")
+}
+
+// ─── Health monitoring ─────────────────────────────────────────────────────
 
 void checkHealth() {
-
 	long millisNow = new Date().time
 	int uptimeAllowanceMinutes = 20
 
@@ -474,47 +225,26 @@ void checkHealth() {
 		logWarn("Health : Waiting for first message from device.")
 
 	}
-
 }
 
+void updateHealthStatus() {
+	long millisNow = new Date().time
+	state.lastMessageMillis = millisNow
+	if (device.currentValue("healthStatus") != "online") {
+		sendEvent(name: "healthStatus", value: "online")
+		int rc = (device.currentValue("restoredCounter") ?: 0) + 1
+		sendEvent(name: "restoredCounter", value: rc)
+		logInfo("Health : Online (${rc} total recoveries)")
+	}
 
-void resetMeshCounters() {
-	sendEvent(name: "notPresentCounter", value: 0)
-	sendEvent(name: "restoredCounter", value: 0)
-	logInfo("Mesh counters reset")
-}
-
-
-void setBatteryReplacementDate(Date date = null) {
-	if (date == null) date = new Date()
-	String dateStr = date.format('yyyy-MM-dd')
-	device.updateDataValue("batteryReplacementDate", dateStr)
-	logInfo("Battery replacement date set to ${dateStr}")
-}
-
-
-void rebindClusters() {
-	logInfo("Recovery : Re-binding reporting clusters")
-	List<String> cmds = []
-	cmds += "zdo bind 0x${device.deviceNetworkId} 0x01 0x01 0x0000 {${device.zigbeeId}} {}"
-	cmds += "zdo bind 0x${device.deviceNetworkId} 0x01 0x01 0x0402 {${device.zigbeeId}} {}"
-	cmds += "zdo bind 0x${device.deviceNetworkId} 0x01 0x01 0x0403 {${device.zigbeeId}} {}"
-	cmds += "zdo bind 0x${device.deviceNetworkId} 0x01 0x01 0x0405 {${device.zigbeeId}} {}"
-	sendZigbeeCommands(cmds)
-}
-
-
-void recoveryProbe() {
-	if (device.currentValue("healthStatus") == "online") {
-		logDebug("Recovery : Device is present, stopping probes")
+	if (state.recoveryActive) {
 		unschedule("recoveryProbe")
 		state.recoveryActive = false
-		return
+		logInfo("Recovery : Device returned, stopping probes")
 	}
-	logInfo("Recovery : Sending probe (readAttribute 0x0000/0x0004)")
-	sendZigbeeCommands(zigbee.readAttribute(0x0000, 0x0004))
 }
 
+// ─── Mesh recovery ─────────────────────────────────────────────────────────
 
 void startRecovery() {
 	String mode = recoveryMode ?: "Normal"
@@ -533,243 +263,28 @@ void startRecovery() {
 	schedule("0/${intervalSeconds} * * * * ?", "recoveryProbe")
 }
 
-
-void reportBattery(String batteryVoltageHex, int batteryVoltageDivisor, BigDecimal batteryVoltageScaleMin, BigDecimal batteryVoltageScaleMax) {
-
-	// Report the battery voltage and calculated percentage.
-	BigDecimal batteryVoltage = 0
-
-	logTrace("batteryVoltageHex : ${batteryVoltageHex}")
-
-	batteryVoltage = zigbee.convertHexToInt(batteryVoltageHex)
-	logDebug("batteryVoltage raw value : ${batteryVoltage}")
-
-	batteryVoltage = batteryVoltage.setScale(2, BigDecimal.ROUND_HALF_UP) / batteryVoltageDivisor
-
-	logDebug("batteryVoltage : ${batteryVoltage}")
-	sendEvent(name: "batteryVoltage", value: batteryVoltage, unit: "V")
-
-	BigDecimal batteryPercentage = 0
-
-	if (batteryVoltage >= batteryVoltageScaleMin) {
-
-		batteryPercentage = ((batteryVoltage - batteryVoltageScaleMin) / (batteryVoltageScaleMax - batteryVoltageScaleMin)) * 100.0
-		batteryPercentage = batteryPercentage.setScale(0, BigDecimal.ROUND_HALF_UP)
-		batteryPercentage = batteryPercentage > 100 ? 100 : batteryPercentage
-		batteryPercentage = batteryPercentage < 0 ? 0 : batteryPercentage
-
-		if (batteryPercentage > 20) {
-			logInfo("Battery : $batteryPercentage% ($batteryVoltage V)")
-		} else {
-			logWarn("Battery : $batteryPercentage% ($batteryVoltage V)")
-		}
-
-		sendEvent(name: "battery", value:batteryPercentage, unit: "%")
-		state.battery = "discharging"
-
-	} else {
-
-		// Very low voltages indicate an exhausted battery which requires replacement.
-
-		batteryPercentage = 0
-
-		logWarn("Battery : Exhausted battery requires replacement.")
-		logWarn("Battery : $batteryPercentage% ($batteryVoltage V)")
-		sendEvent(name: "battery", value:batteryPercentage, unit: "%")
-		state.battery = "exhausted"
-
+void recoveryProbe() {
+	if (device.currentValue("healthStatus") == "online") {
+		logDebug("Recovery : Device is present, stopping probes")
+		unschedule("recoveryProbe")
+		state.recoveryActive = false
+		return
 	}
-
+	logInfo("Recovery : Sending probe (readAttribute 0x0000/0x0004)")
+	sendZigbeeCommands(zigbee.readAttribute(0x0000, 0x0004))
 }
 
-
-@CompileStatic
-private BigDecimal hexToBigDecimal(String hex) {
-	int d = Integer.parseInt(hex, 16) << 21 >> 21
-	return BigDecimal.valueOf(d)
+void rebindClusters() {
+	logInfo("Recovery : Re-binding reporting clusters")
+	List<String> cmds = []
+	cmds += "zdo bind 0x${device.deviceNetworkId} 0x01 0x01 0x0000 {${device.zigbeeId}} {}"
+	cmds += "zdo bind 0x${device.deviceNetworkId} 0x01 0x01 0x0402 {${device.zigbeeId}} {}"
+	cmds += "zdo bind 0x${device.deviceNetworkId} 0x01 0x01 0x0403 {${device.zigbeeId}} {}"
+	cmds += "zdo bind 0x${device.deviceNetworkId} 0x01 0x01 0x0405 {${device.zigbeeId}} {}"
+	sendZigbeeCommands(cmds)
 }
 
-
-void logsOff() {
-
-	log.warn "${device} : Auto-disabling debug + trace logging"
-	device.updateSetting("debugEnable", [value:"false", type:"bool"])
-	device.updateSetting("traceEnable", [value:"false", type:"bool"])
-
-}
-
-
-private void logTrace(String message) {
-	if (traceEnable) log.trace "${device.displayName}: ${message}"
-}
-
-private void logDebug(String message) {
-	if (debugEnable) log.debug "${device.displayName}: ${message}"
-}
-
-private void logInfo(String message) {
-	if (txtEnable) log.info "${device.displayName}: ${message}"
-}
-
-private void logWarn(String message) {
-	log.warn "${device.displayName}: ${message}"
-}
-
-private void logError(String message) {
-	log.error "${device.displayName}: ${message}"
-}
-
-
-void filterThis(Map map) {
-	// Everything that hasn't been caught or rejected ends up in this filter.
-
-	if (map.clusterId == "0001") {
-
-		logDebug("Skipped : Power Configuration Response")
-
-	} else if (map.clusterId == "0006") {
-
-		logDebug("Skipped : Match Descriptor Request")
-
-	} else if (map.clusterId == "0013") {
-
-		logDebug("Skipped : Device Announce Broadcast")
-
-	} else if (map.clusterId == "0400") {
-
-		logDebug("Skipped : Illuminance Response")
-
-	} else if (map.clusterId == "8004") {
-
-		logDebug("Skipped : Simple Descriptor Response")
-
-	} else if (map.clusterId == "8005") {
-
-		logDebug("Skipped : Active End Point Response")
-
-	} else if (map.clusterId == "8021") {
-
-		logDebug("Skipped : Bind Response")
-
-	} else if (map.cluster == null && map.clusterId == null) {
-
-		logDebug("Skipped : Empty Message")
-
-	} else {
-
-		String dataCount = (map.data != null) ? "${map.data.length} bits of " : ""
-		logWarn("UNKNOWN DATA! Please report these messages to the developer.")
-		logWarn("Received : endpoint: ${map.endpoint}, cluster: ${map.cluster}, clusterId: ${map.clusterId}, attrId: ${map.attrId}, command: ${map.command} with value: ${map.value} and ${dataCount}data: ${map.data}")
-		logTrace("Splurge! : ${map}")
-
-	}
-
-}
-
-
-
-
-// ════════════════════════════════════════════════════════════════════
-// Inlined from BirdsLikeWires.xiaomi v1.12 (8th November 2022)
-// ════════════════════════════════════════════════════════════════════
-
-/*
- *
- *  BirdsLikeWires Xiaomi Library v1.12 (8th November 2022)
- *
- */
-
-
-
-
-void runVersionReconfigure() {
-	// runInMillis target — keeps the reconfigure off the parser thread.
-	logWarn "Driver upgraded from ${getDeviceDataByName('driver')} to ${DRIVER_VERSION}, reconfiguring."
-	initialize()
-}
-
-
-void installed() {
-	// Runs once at pairing/install. Route through initialize() so install
-	// and updated paths converge.
-	logInfo "Installed"
-	state.clear()
-	initialize()
-}
-
-
-void initialize() {
-	// Idempotent setup — entered from installed(), updated(), and runInMillis on
-	// version-change. Does NOT issue device-side Zigbee reporting (that's configure()).
-
-	unschedule()
-
-	// Migrate from PresenceSensor to healthStatus (one-time, idempotent on re-runs).
-	if (state.presenceUpdated != null) {
-		state.lastMessageMillis = state.presenceUpdated
-		state.remove("presenceUpdated")
-	}
-	device.deleteCurrentState("presence")
-
-	if (state.lastMessageMillis == null) state.lastMessageMillis = 0
-
-	// Counters survive code pushes — only seed them when they don't already exist.
-	if (device.currentValue("notPresentCounter") == null) sendEvent(name: "notPresentCounter", value: 0, isStateChange: false)
-	if (device.currentValue("restoredCounter")  == null) sendEvent(name: "restoredCounter",  value: 0, isStateChange: false)
-	sendEvent(name: "healthStatus", value: "online", isStateChange: false)
-
-	// Schedule health checking with random jitter so multiple devices don't stampede.
-	int randomSixty = Math.abs(new Random().nextInt() % 60)
-	schedule("${randomSixty} 0/${CHECK_EVERY_MINUTES} * * * ? *", "checkHealth")
-
-	// Record driver provenance + device-specific data.
-	updateDataValue("driver", DRIVER_VERSION)
-	updateDataValue("encoding", "Xiaomi")
-	sendEvent(name: "numberOfButtons", value: 1, isStateChange: false)
-
-	sendEvent(name: "configuration", value: "complete", isStateChange: false)
-	logInfo "Initialized."
-}
-
-
-void configure() {
-	// Exposed by the Configuration capability. WSDCGQ11LM relies on the pairing-time
-	// reporting setup the device performs autonomously — no zigbee.configureReporting
-	// is required here today. Future device-side setup belongs in this method.
-	logInfo "Configuring."
-	initialize()
-}
-
-
-void updated() {
-	// Runs when preferences are saved. Re-converge, then arm log-off.
-	logInfo "Preferences Updated"
-	logInfo "Info Logging:  ${txtEnable == true}"
-	logInfo "Debug Logging: ${debugEnable == true}"
-	logInfo "Trace Logging: ${traceEnable == true}"
-
-	initialize()
-	if (debugEnable || traceEnable) runIn(1800, "logsOff")
-}
-
-
-void refresh() {
-
-	logInfo("Refreshing")
-
-}
-
-
-private void parseAttributeReport(Map descMap) {
-	// Builds a one-row description, the same shape processMap() expects today.
-	Map row = [
-		cluster: descMap.cluster,
-		attrId:  descMap.attrId,
-		value:   descMap.value
-	]
-	processMap(row)
-}
-
+// ─── Zigbee message pipeline ───────────────────────────────────────────────
 
 void parse(String description) {
 
@@ -856,13 +371,11 @@ void parse(String description) {
 	runVersionCheck()
 }
 
-
 private void runVersionCheck() {
 	if (getDeviceDataByName('driver') != DRIVER_VERSION) {
 		runInMillis(100, "runVersionReconfigure")
 	}
 }
-
 
 void processCheckin(Map map) {
 
@@ -884,3 +397,436 @@ void processCheckin(Map map) {
 		return
 	}
 }
+
+// Parse checkin message from lumi.weather device (WSDCGQ11LM) which contains
+// a full set of sensor readings.
+void parseCheckinMessageSpecifics(String hexString) {
+
+	logDebug("Received check-in message")
+	// First byte of hexString is UINT8 of payload length in bytes, so it is skipped
+	int strPosition = 2
+	int strLength = hexString.size()
+	while (strPosition < strLength) {
+		int dataTag = Integer.parseInt(hexString[strPosition++..strPosition++], 16)  // Each attribute of the check-in message payload is preceded by a unique 1-byte tag value
+		int dataType = Integer.parseInt(hexString[strPosition++..strPosition++], 16)  // After each attribute tag, the following byte gives the data type of the attribute data
+		Integer dataLength = DataType.getLength(dataType)  // platform helper returns null for variable-length types
+		String dataPayload  // collected per-attribute below
+		if (dataLength == null || dataLength == -1 || dataLength == 0) {  // A length of null or -1 means the data type is probably variable-length, and 0 length is invalid
+			logDebug("Check-in message contains unsupported dataType 0x${Integer.toHexString(dataType)} for dataTag 0x${Integer.toHexString(dataTag)} with dataLength $dataLength")
+			return
+		} else {
+			if (strPosition > (strLength - dataLength)) {
+				logDebug("Ran out of data before finishing parse of check-in message")
+				return
+			}
+			dataPayload = hexString[strPosition++..(strPosition+=(dataLength * 2) - 1)-1]  // Collect attribute tag payload according to data length of its data type
+			dataPayload = reverseHexString(dataPayload)  // Reverse order of bytes for big endian payload
+			String dataDebug1 = "Check-in message: Found dataTag 0x${Integer.toHexString(dataTag)}"
+			String dataDebug2 = "dataType 0x${Integer.toHexString(dataType)}, dataLength $dataLength, dataPayload $dataPayload"
+			switch (dataTag) {
+				case 0x01:  // Battery voltage (mV as UINT16)
+					logTrace("$dataDebug1 (battery), $dataDebug2")
+					reportBattery(dataPayload, 1000, 2.8, 3.0)
+					break
+				case 0x03:  // Device chip temperature (°C, internal NCP — not the external sensor)
+					long chipTemp = parseCheckinInt(dataPayload, dataType)
+					logDebug("$dataDebug1 (chip temperature), $dataDebug2 (${chipTemp}°C)")
+					state.chipTemperature = chipTemp
+					break
+				case 0x05:  // RSSI dB
+					long rssi = parseCheckinInt(dataPayload, dataType)
+					logTrace("$dataDebug1 (RSSI dB), $dataDebug2 ($rssi)")
+					state.RSSI = rssi
+					break
+				case 0x06:  // LQI
+					long lqi = parseCheckinInt(dataPayload, dataType)
+					logTrace("$dataDebug1 (LQI), $dataDebug2 ($lqi)")
+					state.LQI = lqi
+					break
+				case 0x64:  // Temperature in Celcius
+					logTrace("$dataDebug1 (temperature), $dataDebug2")
+					processTemperature(dataPayload)
+					break
+				case 0x65:  // Relative humidity
+					logTrace("$dataDebug1 (humidity), $dataDebug2")
+					processHumidity(dataPayload)
+					break
+				case 0x66:  // Atmospheric pressure
+					logTrace("$dataDebug1 (pressure), $dataDebug2")
+					processPressure(dataPayload,true)
+					break
+				case 0x0A:  // ZigBee parent DNI (device network identifier)
+					logTrace("$dataDebug1 (ZigBee parent DNI), $dataDebug2")
+					state.zigbeeParentDNI = dataPayload
+					break
+				case 0x04:  // Unknown (appears consistently in WSDCGQ11LM payloads)
+				case 0x07:  // Unknown
+				case 0x08:  // Unknown
+				case 0x09:  // Unknown
+				case 0x0B:  // Unknown
+				case 0x0C:  // Unknown
+					logTrace("$dataDebug1 (known unhandled), $dataDebug2")
+					break
+				default:
+					logDebug("$dataDebug1 (unexpected), $dataDebug2")
+			}
+		}
+	}
+}
+
+private void parseAttributeReport(Map descMap) {
+	// Builds a one-row description, the same shape processMap() expects today.
+	Map row = [
+		cluster: descMap.cluster,
+		attrId:  descMap.attrId,
+		value:   descMap.value
+	]
+	processMap(row)
+}
+
+void processMap(Map map) {
+
+	logTrace("processMap() : ${map}")
+
+	String[] receivedValue = map.value
+
+	if (map.cluster == "0402") {
+
+		// Received temperature data.
+        String[] temperatureHex = receivedValue[2..3] + receivedValue[0..1]
+        String temperatureFlippedHex = temperatureHex.join()
+        logTrace("processMap() : temperature ${temperatureFlippedHex}")
+        processTemperature(temperatureFlippedHex)
+
+	} else if (map.cluster == "0403") {
+
+		// Received pressure data.
+        String[] pressureHex = receivedValue[2..3] + receivedValue[0..1]
+        String pressureFlippedHex = pressureHex.join()
+        logTrace("processMap() : pressure ${pressureFlippedHex}")
+        processPressure(pressureFlippedHex)
+
+	} else if (map.cluster == "0405") {
+
+		// Received humidity data.
+        String[] humidityHex = receivedValue[2..3] + receivedValue[0..1]
+        String humidityFlippedHex = humidityHex.join()
+        logTrace("processMap() : humidity ${humidityFlippedHex}")
+        processHumidity(humidityFlippedHex)
+
+	} else if (map.cluster == "0000") {
+
+		if (map.attrId == "0005") {
+
+			// Scrounge more value! We can capture a short press of the reset button and make it useful.
+			logInfo("Trigger : Button Pressed")
+			sendEvent(name: "pushed", value: 1, isStateChange: true)
+
+		} else {
+
+			filterThis(map)
+
+		}
+
+	} else {
+
+		filterThis(map)
+
+	}
+
+}
+
+void filterThis(Map map) {
+	// Everything that hasn't been caught or rejected ends up in this filter.
+
+	if (map.clusterId == "0001") {
+
+		logDebug("Skipped : Power Configuration Response")
+
+	} else if (map.clusterId == "0006") {
+
+		logDebug("Skipped : Match Descriptor Request")
+
+	} else if (map.clusterId == "0013") {
+
+		logDebug("Skipped : Device Announce Broadcast")
+
+	} else if (map.clusterId == "0400") {
+
+		logDebug("Skipped : Illuminance Response")
+
+	} else if (map.clusterId == "8004") {
+
+		logDebug("Skipped : Simple Descriptor Response")
+
+	} else if (map.clusterId == "8005") {
+
+		logDebug("Skipped : Active End Point Response")
+
+	} else if (map.clusterId == "8021") {
+
+		logDebug("Skipped : Bind Response")
+
+	} else if (map.cluster == null && map.clusterId == null) {
+
+		logDebug("Skipped : Empty Message")
+
+	} else {
+
+		String dataCount = (map.data != null) ? "${map.data.length} bits of " : ""
+		logWarn("UNKNOWN DATA! Please report these messages to the developer.")
+		logWarn("Received : endpoint: ${map.endpoint}, cluster: ${map.cluster}, clusterId: ${map.clusterId}, attrId: ${map.attrId}, command: ${map.command} with value: ${map.value} and ${dataCount}data: ${map.data}")
+		logTrace("Splurge! : ${map}")
+
+	}
+
+}
+
+// ─── Sensor value processors ───────────────────────────────────────────────
+
+void processTemperature(String temperatureFlippedHex) {
+
+    BigDecimal temperature = hexStrToSignedInt(temperatureFlippedHex)
+    temperature = temperature.setScale(2, BigDecimal.ROUND_HALF_UP) / 100
+
+    logTrace("temperature : ${temperature} from hex value ${temperatureFlippedHex}")
+
+    String temperatureScale = location.temperatureScale
+    if (temperatureScale == "F") {
+        temperature = (temperature * 1.8) + 32
+    }
+
+    if (tempOffset) {
+        temperature = temperature + tempOffset
+    }
+
+    if (temperature > 200 || temperature < -200) {
+
+        logWarn("Temperature : Value of ${temperature}°${temperatureScale} is unusual. Watch out for batteries failing on this device.")
+
+    } else {
+
+        logInfo("Temperature : ${temperature} °${temperatureScale}")
+        sendEvent(name: "temperature", value: temperature.setScale(2, BigDecimal.ROUND_HALF_UP), unit: "${temperatureScale}")
+
+    }
+}
+
+void processHumidity(String humidityFlippedHex) {
+
+    BigDecimal humidity = hexStrToSignedInt(humidityFlippedHex)
+    humidity = humidity.setScale(2, BigDecimal.ROUND_HALF_UP) / 100
+
+    if (humidityOffset) {
+        humidity = humidity + humidityOffset
+    }
+
+    logTrace("humidity : ${humidity} from hex value ${humidityFlippedHex}")
+
+    BigDecimal lastTemperature = device.currentState("temperature") ? device.currentState("temperature").value.toBigDecimal() : 0
+
+    String temperatureScale = location.temperatureScale
+    if (temperatureScale == "F") {
+        lastTemperature = (lastTemperature - 32) / 1.8
+    }
+
+    BigDecimal numerator = (6.112 * Math.exp((17.67 * lastTemperature) / (lastTemperature + 243.5)) * humidity * 2.1674)
+    BigDecimal denominator = lastTemperature + 273.15
+    BigDecimal absoluteHumidity = numerator / denominator
+    absoluteHumidity = absoluteHumidity.setScale(1, BigDecimal.ROUND_HALF_UP)
+
+    String cubedChar = String.valueOf((char)(179))
+
+    if (humidity > 100 || humidity < 0) {
+
+        logWarn("Humidity : Value of ${humidity} is out of bounds. Watch out for batteries failing on this device.")
+
+    } else {
+
+        logInfo("Humidity (Relative) : ${humidity} %")
+        logInfo("Humidity (Absolute) : ${absoluteHumidity} g/m${cubedChar}")
+        sendEvent(name: "humidity", value: humidity, unit: "%")
+        sendEvent(name: "absoluteHumidity", value: absoluteHumidity, unit: "g/m${cubedChar}")
+
+    }
+}
+
+void processPressure(String pressureFlippedHex, boolean checkin = false) {
+
+    BigDecimal pressurePa = hexStrToSignedInt(pressureFlippedHex)
+    if (checkin) {
+        // Check-in blob value is in Pa (already)
+    } else {
+        // Cluster 0x0403 value is in tenths of hPa → convert to Pa
+        pressurePa = pressurePa * 10
+    }
+
+    // Convert Pa to display unit
+    String unit = pressureUnits ?: "kPa"
+    BigDecimal pressure
+    switch (unit) {
+        case "mbar":
+            pressure = pressurePa / 100
+            pressure = pressure.setScale(1, BigDecimal.ROUND_HALF_UP)
+            break
+        case "inHg":
+            pressure = (pressurePa / 100) * 0.0295300
+            pressure = pressure.setScale(2, BigDecimal.ROUND_HALF_UP)
+            break
+        case "mmHg":
+            pressure = (pressurePa / 100) * 0.750062
+            pressure = pressure.setScale(1, BigDecimal.ROUND_HALF_UP)
+            break
+        default: // kPa
+            unit = "kPa"
+            pressure = pressurePa / 1000
+            pressure = pressure.setScale(2, BigDecimal.ROUND_HALF_UP)
+            break
+    }
+
+    if (pressureOffset) {
+        pressure = pressure + pressureOffset
+    }
+
+    BigDecimal lastPressure = device.currentState("pressure")?.value?.toBigDecimal()
+    String pressureDirection
+    if (lastPressure == null) {
+        pressureDirection = "steady"
+    } else if (pressure > lastPressure) {
+        pressureDirection = "rising"
+    } else if (pressure < lastPressure) {
+        pressureDirection = "falling"
+    } else {
+        pressureDirection = "steady"
+    }
+
+    logTrace("pressure : ${pressure} from hex value ${pressureFlippedHex}")
+    logInfo("Pressure : ${pressure} ${unit} (${pressureDirection})")
+    sendEvent(name: "pressure", value: pressure, unit: unit)
+    sendEvent(name: "pressureDirection", value: pressureDirection)
+}
+
+void reportBattery(String batteryVoltageHex, int batteryVoltageDivisor, BigDecimal batteryVoltageScaleMin, BigDecimal batteryVoltageScaleMax) {
+
+	// Report the battery voltage and calculated percentage.
+	BigDecimal batteryVoltage = 0
+
+	logTrace("batteryVoltageHex : ${batteryVoltageHex}")
+
+	batteryVoltage = zigbee.convertHexToInt(batteryVoltageHex)
+	logDebug("batteryVoltage raw value : ${batteryVoltage}")
+
+	batteryVoltage = batteryVoltage.setScale(2, BigDecimal.ROUND_HALF_UP) / batteryVoltageDivisor
+
+	logDebug("batteryVoltage : ${batteryVoltage}")
+	sendEvent(name: "batteryVoltage", value: batteryVoltage, unit: "V")
+
+	BigDecimal batteryPercentage = 0
+
+	if (batteryVoltage >= batteryVoltageScaleMin) {
+
+		batteryPercentage = ((batteryVoltage - batteryVoltageScaleMin) / (batteryVoltageScaleMax - batteryVoltageScaleMin)) * 100.0
+		batteryPercentage = batteryPercentage.setScale(0, BigDecimal.ROUND_HALF_UP)
+		batteryPercentage = batteryPercentage > 100 ? 100 : batteryPercentage
+		batteryPercentage = batteryPercentage < 0 ? 0 : batteryPercentage
+
+		if (batteryPercentage > 20) {
+			logInfo("Battery : $batteryPercentage% ($batteryVoltage V)")
+		} else {
+			logWarn("Battery : $batteryPercentage% ($batteryVoltage V)")
+		}
+
+		sendEvent(name: "battery", value:batteryPercentage, unit: "%")
+		state.battery = "discharging"
+
+	} else {
+
+		// Very low voltages indicate an exhausted battery which requires replacement.
+
+		batteryPercentage = 0
+
+		logWarn("Battery : Exhausted battery requires replacement.")
+		logWarn("Battery : $batteryPercentage% ($batteryVoltage V)")
+		sendEvent(name: "battery", value:batteryPercentage, unit: "%")
+		state.battery = "exhausted"
+
+	}
+
+}
+
+// ─── Zigbee command primitives ─────────────────────────────────────────────
+
+void sendZigbeeCommands(List<String> cmds) {
+	// All hub commands go through here for immediate transmission and to avoid some method() weirdness.
+
+    logTrace("sendZigbeeCommands received : ${cmds}")
+    sendHubCommand(new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE))
+}
+
+// ─── Pure-computation utilities ────────────────────────────────────────────
+
+// Adapted from WSDCGQ11LM driver from veeceeoh (https://raw.githubusercontent.com/veeceeoh/xiaomi-hubitat/master/devicedrivers/xiaomi-temperature-humidity-sensor-hubitat.src/xiaomi-temperature-humidity-sensor-hubitat.groovy)
+//
+// Reverses order of bytes in hex string.
+@CompileStatic
+String reverseHexString(String hexString) {
+	String reversed = ""
+	for (int i = hexString.length(); i > 0; i -= 2) {
+		reversed += hexString.substring(i - 2, i)
+	}
+	return reversed
+}
+
+// Type-aware integer parse for Xiaomi check-in TLV payloads.
+// The dataPayload hex string has already been byte-reversed to big-endian.
+// ZCL unsigned types (0x20–0x27): parse as unsigned.
+// ZCL signed types   (0x28–0x2F): parse as signed (two's complement).
+@CompileStatic
+private long parseCheckinInt(String dataPayload, int dataType) {
+    long raw = Long.parseLong(dataPayload, 16)
+    // Signed types: 0x28 (INT8), 0x29 (INT16), 0x2A (INT24), 0x2B (INT32), ...
+    if (dataType >= 0x28 && dataType <= 0x2F) {
+        int bits = dataPayload.length() * 4
+        if (raw >= (1L << (bits - 1))) {
+            raw -= (1L << bits)
+        }
+    }
+    return raw
+}
+
+@CompileStatic
+private BigDecimal hexToBigDecimal(String hex) {
+	int d = Integer.parseInt(hex, 16) << 21 >> 21
+	return BigDecimal.valueOf(d)
+}
+
+// ─── Logging ───────────────────────────────────────────────────────────────
+
+private void logTrace(String message) {
+	if (traceEnable) log.trace "${device.displayName}: ${message}"
+}
+
+private void logDebug(String message) {
+	if (debugEnable) log.debug "${device.displayName}: ${message}"
+}
+
+private void logInfo(String message) {
+	if (txtEnable) log.info "${device.displayName}: ${message}"
+}
+
+private void logWarn(String message) {
+	log.warn "${device.displayName}: ${message}"
+}
+
+private void logError(String message) {
+	log.error "${device.displayName}: ${message}"
+}
+
+void logsOff() {
+
+	log.warn "${device} : Auto-disabling debug + trace logging"
+	device.updateSetting("debugEnable", [value:"false", type:"bool"])
+	device.updateSetting("traceEnable", [value:"false", type:"bool"])
+
+}
+
