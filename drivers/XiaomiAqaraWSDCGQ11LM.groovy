@@ -78,6 +78,11 @@ preferences {
 	input name: "debugLogging", type: "bool", title: "Enable debug logging", defaultValue: false
 	input name: "traceLogging", type: "bool", title: "Enable trace logging", defaultValue: false
 
+	input name: "tempOffset", type: "decimal", title: "Temperature offset", description: "Adjustment in display units (°C or °F)", defaultValue: 0
+	input name: "humidityOffset", type: "decimal", title: "Humidity offset", description: "Adjustment in %", defaultValue: 0
+	input name: "pressureOffset", type: "decimal", title: "Pressure offset", description: "Adjustment in display units", defaultValue: 0
+	input name: "pressureUnits", type: "enum", title: "Pressure units", options: ["kPa", "mbar", "inHg", "mmHg"], defaultValue: "kPa"
+
 }
 
 
@@ -110,6 +115,10 @@ void processTemperature(temperatureFlippedHex) {
         temperature = (temperature * 1.8) + 32
     }
 
+    if (tempOffset) {
+        temperature = temperature + tempOffset
+    }
+
     if (temperature > 200 || temperature < -200) {
 
         logging("${device} : Temperature : Value of ${temperature}°${temperatureScale} is unusual. Watch out for batteries failing on this device.", "warn")
@@ -117,34 +126,65 @@ void processTemperature(temperatureFlippedHex) {
     } else {
 
         logging("${device} : Temperature : ${temperature} °${temperatureScale}", "info")
-        sendEvent(name: "temperature", value: temperature, unit: "${temperatureScale}")
+        sendEvent(name: "temperature", value: temperature.setScale(2, BigDecimal.ROUND_HALF_UP), unit: "${temperatureScale}")
 
     }
 }
 
 
-void processPressure(pressureFlippedHex,checkin=false) {
+void processPressure(pressureFlippedHex, checkin=false) {
 
-    BigDecimal pressure = hexStrToSignedInt(pressureFlippedHex)
+    BigDecimal pressurePa = hexStrToSignedInt(pressureFlippedHex)
     if (checkin) {
-        pressure = pressure / 100
+        // Check-in blob value is in Pa (already)
+    } else {
+        // Cluster 0x0403 value is in tenths of hPa → convert to Pa
+        pressurePa = pressurePa * 10
     }
-    pressure = pressure.setScale(1, BigDecimal.ROUND_HALF_UP) / 10
-    BigDecimal lastPressure = device.currentState("pressure") ? device.currentState("pressure").value.toBigDecimal() : 0
 
-    ////////// WORK TO DO - RECORD PREVIOUS PRESSURE AS LASTPRESSURE IF PRESSURE HAS CHANGED OR SOMETHING - TOO TIRED!
+    // Convert Pa to display unit
+    String unit = pressureUnits ?: "kPa"
+    BigDecimal pressure
+    switch (unit) {
+        case "mbar":
+            pressure = pressurePa / 100
+            pressure = pressure.setScale(1, BigDecimal.ROUND_HALF_UP)
+            break
+        case "inHg":
+            pressure = (pressurePa / 100) * 0.0295300
+            pressure = pressure.setScale(2, BigDecimal.ROUND_HALF_UP)
+            break
+        case "mmHg":
+            pressure = (pressurePa / 100) * 0.750062
+            pressure = pressure.setScale(1, BigDecimal.ROUND_HALF_UP)
+            break
+        default: // kPa
+            unit = "kPa"
+            pressure = pressurePa / 1000
+            pressure = pressure.setScale(2, BigDecimal.ROUND_HALF_UP)
+            break
+    }
 
-    // BigDecimal pressurePrevious = device.currentState("pressurePrevious").value.toBigDecimal()
-    // if (pressurePrevious != null && pressure != lastPressure) {
-    // 	endEvent(name: "pressurePrevious", value: lastPressure, unit: "kPa")
-    // } else if
+    if (pressureOffset) {
+        pressure = pressure + pressureOffset
+    }
 
-    String pressureDirection = pressure > lastPressure ? "rising" : "falling"
+    BigDecimal lastPressure = device.currentState("pressure")?.value?.toBigDecimal()
+    String pressureDirection
+    if (lastPressure == null) {
+        pressureDirection = "steady"
+    } else if (pressure > lastPressure) {
+        pressureDirection = "rising"
+    } else if (pressure < lastPressure) {
+        pressureDirection = "falling"
+    } else {
+        pressureDirection = "steady"
+    }
 
     logging("${device} : pressure : ${pressure} from hex value ${pressureFlippedHex}", "trace")
-    logging("${device} : Pressure : ${pressure} kPa", "info")
-    sendEvent(name: "pressure", value: pressure, unit: "kPa")
-    sendEvent(name: "pressureDirection", value: "${pressureDirection}")
+    logging("${device} : Pressure : ${pressure} ${unit} (${pressureDirection})", "info")
+    sendEvent(name: "pressure", value: pressure, unit: unit)
+    sendEvent(name: "pressureDirection", value: pressureDirection)
 }
 
 
@@ -152,6 +192,10 @@ void processHumidity(humidityFlippedHex) {
 
     BigDecimal humidity = hexStrToSignedInt(humidityFlippedHex)
     humidity = humidity.setScale(2, BigDecimal.ROUND_HALF_UP) / 100
+
+    if (humidityOffset) {
+        humidity = humidity + humidityOffset
+    }
 
     logging("${device} : humidity : ${humidity} from hex value ${humidityFlippedHex}", "trace")
 
