@@ -177,7 +177,7 @@ void refresh() {
 
 // Parse
 
-List parse(String description) {
+void parse(String description) {
     if (state.codeVersion != version) {
         state.codeVersion = version
         runInMillis(1500, "autoConfigure")
@@ -186,15 +186,11 @@ List parse(String description) {
     Map descMap = zigbee.parseDescriptionAsMap(description)
     logTrace "parse() - ${descMap}"
 
-    List result = []
-
     if (descMap.attrId != null) {
-        Map event = parseAttributeReport(descMap)
-        if (event) result << event
+        parseAttributeReport(descMap)
         descMap.additionalAttrs?.each { add ->
             add.cluster = descMap.cluster
-            Map addEvent = parseAttributeReport(add)
-            if (addEvent) result << addEvent
+            parseAttributeReport(add)
         }
     } else if (descMap.profileId == "0000") {
         logTrace "Unhandled ZDO command: cluster=${descMap.clusterId} command=${descMap.command}"
@@ -203,11 +199,9 @@ List parse(String description) {
     } else {
         logDebug "Unhandled message: ${descMap}"
     }
-
-    return result
 }
 
-private Map parseAttributeReport(Map descMap) {
+private void parseAttributeReport(Map descMap) {
     Map map = [:]
 
     switch (descMap.cluster) {
@@ -270,10 +264,8 @@ private Map parseAttributeReport(Map descMap) {
 
     if (map?.name) {
         logInfo "${map.descriptionText}"
-        return createEvent(map)
+        sendEvent(map)
     }
-
-    return null
 }
 
 private Map parseColorAttribute(Map descMap) {

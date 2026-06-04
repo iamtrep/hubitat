@@ -217,20 +217,16 @@ void close() {
 
 // Device Event Parsing
 
-List parse(String description) {
+void parse(String description) {
     Map descMap = zigbee.parseDescriptionAsMap(description)
     logTrace("parse() - description = ${descMap}")
 
-    List result = []
-
     if (descMap.attrId != null) {
         // device attribute report
-        Map event = parseAttributeReport(descMap)
-        if (event) result << event
+        parseAttributeReport(descMap)
         descMap.additionalAttrs?.each { add ->
             add.cluster = descMap.cluster
-            Map addEvent = parseAttributeReport(add)
-            if (addEvent) result << addEvent
+            parseAttributeReport(add)
         }
     } else if (descMap.profileId == "0000") {
         // ZigBee Device Object (ZDO) command
@@ -249,8 +245,6 @@ List parse(String description) {
     } else {
         logWarn("Unhandled unknown command ($description): cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     }
-
-    return result
 }
 
 
@@ -270,7 +264,7 @@ private void parseIASMessage(String description) {
 }
 
 
-private Map parseAttributeReport(Map descMap) {
+private void parseAttributeReport(Map descMap) {
     Map map = [:]
 
     // Main switch over all available cluster IDs
@@ -373,7 +367,7 @@ private Map parseAttributeReport(Map descMap) {
                     // IAS enroll response
                     boolean enrolled = descMap.value == "01"
                     logDebug("IAS Zone cluster enrolled = $enrolled")
-                    return null
+                    return
 
                 case "0002":
                     String status = descMap.value
@@ -440,23 +434,18 @@ private Map parseAttributeReport(Map descMap) {
                     logDebug("Unknown manufacturer specific attribute report: ${descMap}")
                     break
             }
-            return null
-            break
+            return
 
         default:
             break
     }
 
-    Map result = null
-
     if (map) {
         if (map.descriptionText) logInfo("${map.descriptionText}")
-        result = createEvent(map)
+        sendEvent(map)
     } else {
         logDebug("Unhandled attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
     }
-
-    return result
 }
 
 void computeBatteryLevel() {

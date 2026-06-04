@@ -136,7 +136,7 @@ void setBatteryReplacementDate(Date date = null) {
     logDebug "setting Battery Last Replaced Date to $dateStr"
 }
 
-List parse(String description) {
+void parse(String description) {
     state.lastRx = now()
     logTrace "parsing message: ${description}"
 
@@ -149,16 +149,12 @@ List parse(String description) {
     Map descMap = zigbee.parseDescriptionAsMap(description)
     logTrace "Receiving Zigbee message️ ⬅️ device: ${descMap}"
 
-    List result = []
-
     if (descMap.attrId != null) {
         // device attribute report
-        Map event = parseAttributeReport(descMap)
-        if (event) result << event
+        parseAttributeReport(descMap)
         descMap.additionalAttrs?.each { add ->
             add.cluster = descMap.cluster
-            Map addEvent = parseAttributeReport(add)
-            if (addEvent) result << addEvent
+            parseAttributeReport(add)
         }
     } else if (descMap.profileId == "0000") {
         // ZigBee Device Object (ZDO) command
@@ -172,13 +168,10 @@ List parse(String description) {
         cmds += zigbee.enrollResponse(1200)
         sendZigbeeCommands(cmds)
     } else if (description?.startsWith('zone status')  || description?.startsWith('zone report')) {
-        //result += parseIasMessage(description)
         parseIasMessage(description)
     } else {
         logWarn("Unhandled unknown command ($description): cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     }
-
-    return result
 }
 
 @Field static final Map ATTRIBUTE_CONFIG = [
@@ -244,7 +237,7 @@ private void updateIfChanged(String attribute, Boolean isTrue, Closure onClear =
     }
 }
 
-private Map parseAttributeReport(Map descMap) {
+private void parseAttributeReport(Map descMap) {
     Map map = [:]
 
     switch (descMap.cluster) {
@@ -295,10 +288,8 @@ private Map parseAttributeReport(Map descMap) {
 
     if (map.name) {
         logInfo "${map.descriptionText}"
-        return createEvent(map)
+        sendEvent(map)
     }
-
-    return null
 }
 
 private void autoConfigure() {

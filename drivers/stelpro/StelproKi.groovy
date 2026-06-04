@@ -323,7 +323,7 @@ void setThermostatMode(String value) {
 
 // Event parsing
 
-List parse(String description) {
+void parse(String description) {
     if (state.codeVersion != constCodeVersion) {
         state.codeVersion = constCodeVersion
         runInMillis 1500, 'autoConfigure'
@@ -334,16 +334,12 @@ List parse(String description) {
     Map descMap = zigbee.parseDescriptionAsMap(description)
     logTrace("parse() - description = ${descMap}")
 
-    List result = []
-
     if (descMap.attrId != null) {
         // device attribute report
-        Map event = parseAttributeReport(descMap)
-        if (event) result << event
+        parseAttributeReport(descMap)
         descMap.additionalAttrs?.each { add ->
             add.cluster = descMap.cluster
-            Map addEvent = parseAttributeReport(add)
-            if (addEvent) result << addEvent
+            parseAttributeReport(add)
         }
     } else if (descMap.profileId == "0000") {
         // ZigBee Device Object (ZDO) command
@@ -362,11 +358,9 @@ List parse(String description) {
     } else {
         logWarn("Unhandled unknown command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     }
-
-    return result
 }
 
-private Map parseAttributeReport(Map descMap) {
+private void parseAttributeReport(Map descMap) {
     Map map = [:]
 
     // Main switch over all available cluster IDs
@@ -470,7 +464,7 @@ private Map parseAttributeReport(Map descMap) {
                         state.storedSystemMode = constModeMap[descMap.value]
                         logDebug "System mode is ${descMap.value} (${state.storedSystemMode}), requesting setpoint mode"
                         sendZigbeeCommands(zigbee.readAttribute(0x201, 0x401C, [mfgCode: "0x1185"]))
-                        return null
+                        return
                     }
                     break
 
@@ -484,7 +478,7 @@ private Map parseAttributeReport(Map descMap) {
                     } else {
                         // System was off — ignore the setpoint mode
                         logDebug "Ignoring setpoint mode ${descMap.value} because system mode is ${state.storedSystemMode}"
-                        return null
+                        return
                     }
                     break
 
@@ -519,17 +513,13 @@ private Map parseAttributeReport(Map descMap) {
             break
     }
 
-    Map result = null
-
     if (map) {
-        result = createEvent(map)
+        sendEvent(map)
         if (map.descriptionText && txtEnable) logInfo("${map.descriptionText}")
-        logDebug("event created: ${result}")
+        logDebug("event sent: ${map}")
     } else {
         logTrace("Unhandled attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
     }
-
-    return result
 }
 
 void parseResponse(Map descMap) {

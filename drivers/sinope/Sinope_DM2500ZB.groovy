@@ -377,7 +377,7 @@ void setOffLedIntensity(Integer intensity) {
 
 // Device Event Parsing
 
-List parse(String description) {
+void parse(String description) {
     if (state.codeVersion != constDriverVersion) {
         state.codeVersion = constDriverVersion
         runInMillis 1500, 'autoConfigure'
@@ -386,16 +386,12 @@ List parse(String description) {
     Map descMap = zigbee.parseDescriptionAsMap(description)
     logTrace("parse() - description = ${descMap}")
 
-    List result = []
-
     if (descMap.attrId != null) {
         // device attribute report
-        Map event = parseAttributeReport(descMap)
-        if (event) result << event
+        parseAttributeReport(descMap)
         descMap.additionalAttrs?.each { add ->
             add.cluster = descMap.cluster
-            Map addEvent = parseAttributeReport(add)
-            if (addEvent) result << addEvent
+            parseAttributeReport(add)
         }
     } else if (descMap.profileId == "0000") {
         // ZigBee Device Object (ZDO) command
@@ -422,8 +418,6 @@ List parse(String description) {
     } else {
         logWarn("Unhandled unknown command ($description): cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     }
-
-    return result
 }
 
 
@@ -438,7 +432,7 @@ List parse(String description) {
     "14": [buttonEvent: "doubleTapped", buttonIndex: 1, description: "Down was double-tapped"]
 ]
 
-private Map parseAttributeReport(Map descMap) {
+private void parseAttributeReport(Map descMap) {
     Map map = [:]
 
     // Main switch over all available cluster IDs
@@ -513,7 +507,7 @@ private Map parseAttributeReport(Map descMap) {
             switch (descMap.attrId) {
                 case "0000":
                     // Energy report is in manufacturer-specific cluster/attr (0xFF01/0x0090), ignore standard metering
-                    return null
+                    return
 
                 default:
                     break
@@ -536,25 +530,25 @@ private Map parseAttributeReport(Map descMap) {
                     String color = constLedColorMap[descMap.value]
                     device.updateSetting('prefOnLedColor', [value: "${constLedColorPrefMap[color]}", type: 'enum'])
                     logDebug("On LED color was set to $color => ${constLedColorPrefMap[color]} (${descMap.value})")
-                    return null // return directly, no event to generate
+                    return
 
                 case "0051": // off LED color
                     String color = constLedColorMap[descMap.value]
                     device.updateSetting('prefOffLedColor', [value: "${constLedColorPrefMap[color]}", type: 'enum'])
                     logDebug("Off LED color was set to $color => ${constLedColorPrefMap[color]} (${descMap.value})")
-                    return null // return directly, no event to generate
+                    return
 
                 case "0052": // on LED intensity
                     Integer ledIntensity = scaleHexValue(descMap.value)
                     device.updateSetting('prefOnLedIntensity', [value: ledIntensity, type: 'number'])
                     logDebug("On LED intensity was set to $ledIntensity% (0x${descMap.value})")
-                    return null // return directly, no event to generate
+                    return
 
                 case "0053": // off LED intensity
                     Integer ledIntensity = scaleHexValue(descMap.value)
                     device.updateSetting('prefOffLedIntensity', [value: ledIntensity, type: 'number'])
                     logDebug("Off LED intensity was set to $ledIntensity% (0x${descMap.value})")
-                    return null // return directly, no event to generate
+                    return
 
                 case "0054": // action report (pushed/released/double tapped)
                     Map<String, Object> action = buttonActionMap[descMap.value]
@@ -600,16 +594,12 @@ private Map parseAttributeReport(Map descMap) {
             break
     }
 
-    Map result = null
-
     if (map) {
         if (map.descriptionText) logInfo("${map.descriptionText}")
-        result = createEvent(map)
+        sendEvent(map)
     } else {
         logDebug("Unhandled attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
     }
-
-    return result
 }
 
 // Private methods
