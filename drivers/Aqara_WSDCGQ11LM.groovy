@@ -50,7 +50,7 @@ metadata {
 
 		capability "Battery"
 		capability "Configuration"
-		capability "PresenceSensor"
+		attribute "healthStatus", "enum", ["online", "offline"]
 		capability "PressureMeasurement"
 		capability "RelativeHumidityMeasurement"
 		capability "Sensor"
@@ -407,15 +407,15 @@ void push(buttonId) {
 }
 
 
-void updatePresence() {
+void updateHealthStatus() {
 
 	long millisNow = new Date().time
-	state.presenceUpdated = millisNow
-	if (device.currentValue("presence") != "present") {
-		sendEvent(name: "presence", value: "present")
+	state.lastMessageMillis = millisNow
+	if (device.currentValue("healthStatus") != "online") {
+		sendEvent(name: "healthStatus", value: "online")
 		int rc = (device.currentValue("restoredCounter") ?: 0) + 1
 		sendEvent(name: "restoredCounter", value: rc)
-		logInfo("Presence : Restored (${rc} total recoveries)")
+		logInfo("Health : Online (${rc} total recoveries)")
 	}
 
 	if (state.recoveryActive) {
@@ -427,54 +427,50 @@ void updatePresence() {
 }
 
 
-void checkPresence() {
-	// Check how long ago the presence state was updated.
+void checkHealth() {
 
 	long millisNow = new Date().time
-	int uptimeAllowanceMinutes = 20			// The hub takes a while to settle after a reboot.
+	int uptimeAllowanceMinutes = 20
 
-	if (state.presenceUpdated > 0) {
+	if (state.lastMessageMillis > 0) {
 
-		long millisElapsed = millisNow - state.presenceUpdated
-		long presenceTimeoutMillis = ((REPORT_INTERVAL_MINUTES * 2) + 20) * 60000
-		long reportIntervalMillis = REPORT_INTERVAL_MINUTES * 60000
+		long millisElapsed = millisNow - state.lastMessageMillis
+		long timeoutMillis = ((REPORT_INTERVAL_MINUTES * 2) + 20) * 60000
 		BigInteger secondsElapsed = BigDecimal.valueOf(millisElapsed / 1000)
 		BigInteger hubUptime = location.hub.uptime
 
-		if (millisElapsed > presenceTimeoutMillis) {
+		if (millisElapsed > timeoutMillis) {
 
 			if (hubUptime > uptimeAllowanceMinutes * 60) {
 
-                if (device.currentValue("presence") != "not present") {
-                    // only send event if there is a change, otherwise lastActivity will update...
-					sendEvent(name: "presence", value: "not present")
-                    int npc = (device.currentValue("notPresentCounter") ?: 0) + 1
-                    sendEvent(name: "notPresentCounter", value: npc)
-                }
-                logWarn("Presence : Not Present! Last report received ${secondsElapsed} seconds ago.")
-                startRecovery()
+				if (device.currentValue("healthStatus") != "offline") {
+					sendEvent(name: "healthStatus", value: "offline")
+					int npc = (device.currentValue("notPresentCounter") ?: 0) + 1
+					sendEvent(name: "notPresentCounter", value: npc)
+				}
+				logWarn("Health : Offline. Last message ${secondsElapsed} seconds ago.")
+				startRecovery()
 
 			} else {
 
-				logDebug("Presence : Ignoring overdue presence reports for ${uptimeAllowanceMinutes} minutes. The hub was rebooted ${hubUptime} seconds ago.")
+				logDebug("Health : Ignoring overdue reports for ${uptimeAllowanceMinutes} minutes after hub reboot (uptime ${hubUptime}s).")
 
 			}
 
 		} else {
-            if (device.currentValue("presence") != "present") {
-                // only send event if there is a change, otherwise lastActivity will update...
-                sendEvent(name: "presence", value: "present")
-            }
-			logDebug("Presence : Last presence report ${secondsElapsed} seconds ago.")
+
+			if (device.currentValue("healthStatus") != "online") {
+				sendEvent(name: "healthStatus", value: "online")
+			}
+			logDebug("Health : Last message ${secondsElapsed} seconds ago.")
 
 		}
 
-		logTrace("checkPresence() : ${millisNow} - ${state.presenceUpdated} = ${millisElapsed}")
-		logTrace("checkPresence() : Report interval is ${reportIntervalMillis} ms, timeout is ${presenceTimeoutMillis} ms.")
+		logTrace("checkHealth() : elapsed=${millisElapsed}ms, timeout=${timeoutMillis}ms")
 
 	} else {
 
-		logWarn("Presence : Waiting for first presence report.")
+		logWarn("Health : Waiting for first message from device.")
 
 	}
 
@@ -500,7 +496,7 @@ void rebindClusters() {
 
 
 void recoveryProbe() {
-	if (device.currentValue("presence") == "present") {
+	if (device.currentValue("healthStatus") == "online") {
 		logDebug("Recovery : Device is present, stopping probes")
 		unschedule("recoveryProbe")
 		state.recoveryActive = false
@@ -698,16 +694,24 @@ void initialize() {
 	// version-change. Does NOT issue device-side Zigbee reporting (that's configure()).
 
 	unschedule()
-	if (state.presenceUpdated == null) state.presenceUpdated = 0
+
+	// Migrate from PresenceSensor to healthStatus (one-time, idempotent on re-runs).
+	if (state.presenceUpdated != null) {
+		state.lastMessageMillis = state.presenceUpdated
+		state.remove("presenceUpdated")
+	}
+	device.deleteCurrentState("presence")
+
+	if (state.lastMessageMillis == null) state.lastMessageMillis = 0
 
 	// Counters survive code pushes — only seed them when they don't already exist.
 	if (device.currentValue("notPresentCounter") == null) sendEvent(name: "notPresentCounter", value: 0, isStateChange: false)
 	if (device.currentValue("restoredCounter")  == null) sendEvent(name: "restoredCounter",  value: 0, isStateChange: false)
-	sendEvent(name: "presence", value: "present", isStateChange: false)
+	sendEvent(name: "healthStatus", value: "online", isStateChange: false)
 
-	// Schedule presence checking with random jitter so multiple devices don't stampede.
+	// Schedule health checking with random jitter so multiple devices don't stampede.
 	int randomSixty = Math.abs(new Random().nextInt() % 60)
-	schedule("${randomSixty} 0/${CHECK_EVERY_MINUTES} * * * ? *", "checkPresence")
+	schedule("${randomSixty} 0/${CHECK_EVERY_MINUTES} * * * ? *", "checkHealth")
 
 	// Record driver provenance + device-specific data.
 	updateDataValue("driver", DRIVER_VERSION)
@@ -760,7 +764,7 @@ private void parseAttributeReport(Map descMap) {
 
 void parse(String description) {
 
-	updatePresence()
+	updateHealthStatus()
 
 	// --- Xiaomi check-in (cluster 0x0000 attr 0xFF01) is delivered in a
 	// non-ZCL description format. Slice it and hand off to the check-in decoder.
