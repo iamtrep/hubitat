@@ -333,6 +333,11 @@ def parseCheckinMessageSpecifics(hexString) {
 					logging("$dataDebug1 (battery), $dataDebug2","trace")
                     //reportBattery(dataPayload, 1000, 2.8, 3.0) // already done in parent call xiaomiDeviceStatus()
 					break
+				case 0x03:  // Device chip temperature (°C, internal NCP — not the external sensor)
+					def chipTemp = Integer.parseInt(dataPayload, 16)
+					logging("$dataDebug1 (chip temperature), $dataDebug2 (${chipTemp}°C)", "debug")
+					state.chipTemperature = chipTemp
+					break
 				case 0x05:  // RSSI dB
 					def convertedPayload = Integer.parseInt(dataPayload,16)
 					logging("$dataDebug1 (RSSI dB), $dataDebug2 ($convertedPayload)","trace")
@@ -359,8 +364,16 @@ def parseCheckinMessageSpecifics(hexString) {
 					logging("$dataDebug1 (ZigBee parent DNI), $dataDebug2","trace")
 					state.zigbeeParentDNI = dataPayload
 					break
+				case 0x04:  // Unknown (appears consistently in WSDCGQ11LM payloads)
+				case 0x07:  // Unknown
+				case 0x08:  // Unknown
+				case 0x09:  // Unknown
+				case 0x0B:  // Unknown
+				case 0x0C:  // Unknown
+					logging("$dataDebug1 (known unhandled), $dataDebug2", "trace")
+					break
 				default:
-					logging("$dataDebug1 (unknown), $dataDebug2","trace")
+					logging("$dataDebug1 (unexpected), $dataDebug2", "debug")
 			}
 		}
 	}
