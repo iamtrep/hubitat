@@ -658,6 +658,13 @@ void filterThis(Map map) {
 
 
 
+void runVersionReconfigure() {
+	// runInMillis target — keeps the reconfigure off the parser thread.
+	logWarn "Driver upgraded from ${getDeviceDataByName('driver')} to ${DRIVER_VERSION}, reconfiguring."
+	initialize()
+}
+
+
 void installed() {
 	// Runs once at pairing/install. Route through initialize() so install
 	// and updated paths converge.
@@ -770,14 +777,8 @@ void parse(String description) {
 
 	}
 
-	String versionCheck = "unknown"
-	versionCheck = "${getDeviceDataByName('driver')}"
-
-	if ("$versionCheck" != "$DRIVER_VERSION") {
-
-		logInfo("Driver : Updating configuration from $versionCheck to $DRIVER_VERSION.")
-		initialize()
-
+	if (getDeviceDataByName('driver') != DRIVER_VERSION) {
+		runInMillis(100, "runVersionReconfigure")
 	}
 
 }
