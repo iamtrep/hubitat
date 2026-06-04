@@ -689,7 +689,7 @@ void initialize() {
 	sendEvent(name: "numberOfButtons", value: 1, isStateChange: false)
 
 	sendEvent(name: "configuration", value: "complete", isStateChange: false)
-	logInfo "Initialised."
+	logInfo "Initialized."
 }
 
 
@@ -697,21 +697,20 @@ void configure() {
 	// Exposed by the Configuration capability. WSDCGQ11LM relies on the pairing-time
 	// reporting setup the device performs autonomously — no zigbee.configureReporting
 	// is required here today. Future device-side setup belongs in this method.
-	logInfo "Configure pressed."
+	logInfo "Configuring."
 	initialize()
 }
 
 
 void updated() {
-	// Runs when preferences are saved. Reset, then re-converge.
+	// Runs when preferences are saved. Re-converge, then arm log-off.
 	logInfo "Preferences Updated"
 	logInfo "Info Logging:  ${txtEnable == true}"
 	logInfo "Debug Logging: ${debugEnable == true}"
 	logInfo "Trace Logging: ${traceEnable == true}"
 
-	unschedule()
-	if (debugEnable || traceEnable) runIn(1800, "logsOff")
 	initialize()
+	if (debugEnable || traceEnable) runIn(1800, "logsOff")
 }
 
 
