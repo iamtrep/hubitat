@@ -556,20 +556,6 @@ void reportBattery(String batteryVoltageHex, int batteryVoltageDivisor, BigDecim
 }
 
 
-void reportToDev(map) {
-
-	def dataCount = ""
-	if (map.data != null) {
-		dataCount = "${map.data.length} bits of "
-	}
-
-	logging("${device} : UNKNOWN DATA! Please report these messages to the developer.", "warn")
-	logging("${device} : Received : endpoint: ${map.endpoint}, cluster: ${map.cluster}, clusterId: ${map.clusterId}, attrId: ${map.attrId}, command: ${map.command} with value: ${map.value} and ${dataCount}data: ${map.data}", "warn")
-	logging("${device} : Splurge! : ${map}", "trace")
-
-}
-
-
 private BigDecimal hexToBigDecimal(String hex) {
 
     int d = Integer.parseInt(hex, 16) << 21 >> 21
@@ -578,26 +564,11 @@ private BigDecimal hexToBigDecimal(String hex) {
 }
 
 
-void loggingStatus() {
+void logsOff() {
 
-	log.info  "${device} :  Info Logging : ${infoLogging == true}"
-	log.debug "${device} : Debug Logging : ${debugLogging == true}"
-	log.trace "${device} : Trace Logging : ${traceLogging == true}"
-
-}
-
-
-void traceLogOff(){
-	
-	log.trace "${device} : Trace Logging : Automatically Disabled"
-	device.updateSetting("traceLogging",[value:"false",type:"bool"])
-
-}
-
-void debugLogOff(){
-	
-	log.debug "${device} : Debug Logging : Automatically Disabled"
-	device.updateSetting("debugLogging",[value:"false",type:"bool"])
+	log.warn "${device} : Auto-disabling debug + trace logging"
+	device.updateSetting("debugLogging", [value:"false", type:"bool"])
+	device.updateSetting("traceLogging", [value:"false", type:"bool"])
 
 }
 
@@ -673,7 +644,10 @@ void filterThis(Map map) {
 
 	} else {
 
-		reportToDev(map)
+		String dataCount = (map.data != null) ? "${map.data.length} bits of " : ""
+		logging("${device} : UNKNOWN DATA! Please report these messages to the developer.", "warn")
+		logging("${device} : Received : endpoint: ${map.endpoint}, cluster: ${map.cluster}, clusterId: ${map.clusterId}, attrId: ${map.attrId}, command: ${map.command} with value: ${map.value} and ${dataCount}data: ${map.data}", "warn")
+		logging("${device} : Splurge! : ${map}", "trace")
 
 	}
 
@@ -733,15 +707,13 @@ void configure() {
 void updated() {
 	// Runs when preferences are saved.
 
-	unschedule(debugLogOff)
-	unschedule(traceLogOff)
-
-	runIn(2400, debugLogOff)
-	runIn(1200, traceLogOff)
+	unschedule(logsOff)
+	if (debugLogging || traceLogging) runIn(1800, logsOff)
 
 	logging("${device} : Preferences Updated", "info")
-
-	loggingStatus()
+	log.info  "${device} :  Info Logging : ${infoLogging == true}"
+	log.debug "${device} : Debug Logging : ${debugLogging == true}"
+	log.trace "${device} : Trace Logging : ${traceLogging == true}"
 
 }
 
