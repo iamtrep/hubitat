@@ -44,7 +44,7 @@ import groovy.transform.CompileStatic
 
 metadata {
 
-	definition (name: "Aqara Weather Sensor WSDCGQ11LM", namespace: "iamtrep", author: "Andrew Davison",
+	definition (name: "Aqara Weather Sensor WSDCGQ11LM", namespace: "iamtrep", author: "pj",
 	            singleThreaded: true,
 	            importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/Aqara_WSDCGQ11LM.groovy") {
 
