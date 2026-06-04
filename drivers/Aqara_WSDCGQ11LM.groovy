@@ -336,15 +336,9 @@ void parse(String description) {
         return
     }
 
-    // IAS Zone enroll request — WSDCGQ11LM does not use IAS, log if it appears.
-    if (descMap.clusterId == "0500" && descMap.command == "01") {
-        logDebug "Received enroll request (unexpected for this device): ${descMap}"
-        return
-    }
-
-    // IAS Zone status change notification — same: log if it appears.
-    if (descMap.clusterId == "0500" && (descMap.command == "00" || descMap.attrId == "0002")) {
-        logDebug "Zone status (unexpected for this device): ${descMap}"
+    // IAS Zone — WSDCGQ11LM does not use IAS, log if any frame appears.
+    if (descMap.clusterId == "0500") {
+        logDebug "IAS Zone message (unexpected for this device): ${descMap}"
         return
     }
 
