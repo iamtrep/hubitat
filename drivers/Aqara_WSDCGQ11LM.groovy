@@ -804,7 +804,7 @@ void parse(String description) {
 
 	// IAS Zone status change notification — same: log if it appears.
 	if (descMap.clusterId == "0500" && (descMap.command == "00" || descMap.attrId == "0002")) {
-		logDebug "Zone status (unexpected for this device): ${description}"
+		logDebug "Zone status (unexpected for this device): ${descMap}"
 		runVersionCheck()
 		return
 	}
