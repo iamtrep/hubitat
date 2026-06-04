@@ -695,7 +695,6 @@ void configure() {
 	// Record driver provenance and device-specific data.
 	updateDataValue("driver", "$driverVersion")
 	updateDataValue("encoding", "Xiaomi")
-	device.name = "Xiaomi Aqara Temperature and Humidity Sensor WSDCGQ11LM"
 	sendEvent(name: "numberOfButtons", value: 1, isStateChange: false)
 
 	sendEvent(name: "configuration", value: "complete", isStateChange: false)
