@@ -307,7 +307,7 @@ void parseCheckinMessageSpecifics(String hexString) {
 	logDebug("Received check-in message")
 	// First byte of hexString is UINT8 of payload length in bytes, so it is skipped
 	int strPosition = 2
-	int strLength = hexString.size() - 2
+	int strLength = hexString.size()
 	while (strPosition < strLength) {
 		int dataTag = Integer.parseInt(hexString[strPosition++..strPosition++], 16)  // Each attribute of the check-in message payload is preceded by a unique 1-byte tag value
 		int dataType = Integer.parseInt(hexString[strPosition++..strPosition++], 16)  // After each attribute tag, the following byte gives the data type of the attribute data
