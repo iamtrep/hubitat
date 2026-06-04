@@ -281,6 +281,23 @@ String reverseHexString(String hexString) {
 }
 
 
+// Type-aware integer parse for Xiaomi check-in TLV payloads.
+// The dataPayload hex string has already been byte-reversed to big-endian.
+// ZCL unsigned types (0x20–0x27): parse as unsigned.
+// ZCL signed types   (0x28–0x2F): parse as signed (two's complement).
+private long parseCheckinInt(String dataPayload, int dataType) {
+    long raw = Long.parseLong(dataPayload, 16)
+    // Signed types: 0x28 (INT8), 0x29 (INT16), 0x2A (INT24), 0x2B (INT32), ...
+    if (dataType >= 0x28 && dataType <= 0x2F) {
+        int bits = dataPayload.length() * 4
+        if (raw >= (1L << (bits - 1))) {
+            raw -= (1L << bits)
+        }
+    }
+    return raw
+}
+
+
 // Adapted from WSDCGQ11LM driver from veeceeoh (https://raw.githubusercontent.com/veeceeoh/xiaomi-hubitat/master/devicedrivers/xiaomi-temperature-humidity-sensor-hubitat.src/xiaomi-temperature-humidity-sensor-hubitat.groovy)
 //
 // Parse checkin message from lumi.weather device (WSDCGQ11LM) which contains
@@ -314,19 +331,19 @@ void parseCheckinMessageSpecifics(String hexString) {
                     //reportBattery(dataPayload, 1000, 2.8, 3.0) // already done in parent call processCheckin()
 					break
 				case 0x03:  // Device chip temperature (°C, internal NCP — not the external sensor)
-					int chipTemp = Integer.parseInt(dataPayload, 16)
+					long chipTemp = parseCheckinInt(dataPayload, dataType)
 					logDebug("$dataDebug1 (chip temperature), $dataDebug2 (${chipTemp}°C)")
 					state.chipTemperature = chipTemp
 					break
 				case 0x05:  // RSSI dB
-					int convertedPayload = Integer.parseInt(dataPayload,16)
-					logTrace("$dataDebug1 (RSSI dB), $dataDebug2 ($convertedPayload)")
-					state.RSSI = convertedPayload
+					long rssi = parseCheckinInt(dataPayload, dataType)
+					logTrace("$dataDebug1 (RSSI dB), $dataDebug2 ($rssi)")
+					state.RSSI = rssi
 					break
 				case 0x06:  // LQI
-					int convertedPayload = Integer.parseInt(dataPayload,16)
-					logTrace("$dataDebug1 (LQI), $dataDebug2 ($convertedPayload)")
-					state.LQI = convertedPayload
+					long lqi = parseCheckinInt(dataPayload, dataType)
+					logTrace("$dataDebug1 (LQI), $dataDebug2 ($lqi)")
+					state.LQI = lqi
 					break
 				case 0x64:  // Temperature in Celcius
 					logTrace("$dataDebug1 (temperature), $dataDebug2")
