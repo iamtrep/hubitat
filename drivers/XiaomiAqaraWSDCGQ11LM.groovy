@@ -1,12 +1,13 @@
-// Copyright (c) 2022 Andrew Davison
-// Copyright (c) 2025-2026 PJ
+// Copyright (c) 2022 Andrew Davison           (BirdsLikeWires, GPL-3.0)
+// Copyright (c)      veeceeoh                 (check-in decoder, Apache-2.0)
+// Copyright (c) 2022-2026 PJ                  (local modifications, monolithic build)
 // SPDX-License-Identifier: GPL-3.0-only
 
 /*
  *  Aqara Weather Sensor WSDCGQ11LM Driver (monolithic build)
  *
  *  Derivative of Andrew Davison's BirdsLikeWires Xiaomi Aqara Temperature and
- *  Humidity Sensor WSDCGQ11LM driver:
+ *  Humidity Sensor WSDCGQ11LM driver (GPL-3.0):
  *    https://github.com/birdslikewires/hubitat
  *
  *  Built from a locally-modified copy of the upstream sources; the two
@@ -15,13 +16,19 @@
  *    - BirdsLikeWires.library v1.17 (8th November 2022)
  *    - BirdsLikeWires.xiaomi  v1.12 (8th November 2022)
  *
- *  Portions (reverseHexString, parseCheckinMessageSpecifics) were originally
- *  adapted by Andrew Davison from veeceeoh's WSDCGQ11LM driver; the inline
- *  attribution comments are preserved.
+ *  The check-in payload decoder (reverseHexString, parseCheckinMessageSpecifics)
+ *  was incorporated by PJ from veeceeoh's WSDCGQ11LM driver (Apache-2.0):
+ *    https://github.com/veeceeoh/xiaomi-hubitat
+ *  Inline `// Adapted from ...` attribution comments are preserved at each
+ *  function definition. Apache-2.0 is one-way GPL-3.0 compatible; the
+ *  combined work is distributed under GPL-3.0-only while the veeceeoh-derived
+ *  portions retain their original Apache-2.0 attribution requirements.
  *
- *  Licensed under GPL-3.0-only (inherited from upstream — this per-file
- *  notice overrides the iamtrep repo's MIT default for this file). Full
- *  license text: https://www.gnu.org/licenses/gpl-3.0.html
+ *  Licensed under GPL-3.0-only (combined-work license, inherited from the
+ *  BirdsLikeWires upstream). This per-file notice overrides the iamtrep
+ *  repo's MIT default. Full license texts:
+ *    GPL-3.0:    https://www.gnu.org/licenses/gpl-3.0.html
+ *    Apache-2.0: https://www.apache.org/licenses/LICENSE-2.0
  */
 
 
