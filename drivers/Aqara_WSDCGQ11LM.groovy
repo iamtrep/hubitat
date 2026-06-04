@@ -729,59 +729,107 @@ void refresh() {
 }
 
 
+private void parseAttributeReport(Map descMap) {
+	// Builds a one-row description, the same shape processMap() expects today.
+	Map row = [
+		cluster: descMap.cluster,
+		attrId:  descMap.attrId,
+		value:   descMap.value
+	]
+	processMap(row)
+}
+
+
 void parse(String description) {
 
 	updatePresence()
 
-	// Xiaomi devices don't follow the ZCL spec, so we slice-and-dice the description string.
-	Map descriptionMap = description.split(', ').collectEntries { String entry ->
-		String[] pair = entry.split(': ')
-		[(pair.first()): pair.last()]
-	}
-
-	logDebug("Parse : Interpreting as Xiaomi cluster specification.")
-    String updateTime = new Date().toLocaleString()
-
-	if (descriptionMap) {
-
-		logDebug("Parse : ${descriptionMap}")
-
-		if (descriptionMap.cluster == "0000" && descriptionMap.attrId == "FF01") {
-
-			// Device Status Cluster
-			processCheckin(descriptionMap)
-
-			// Re-bind if previous check-in was overdue (>90 min gap)
-			if (state.lastCheckinMillis) {
-				long millisSinceLastCheckin = new Date().time - state.lastCheckinMillis
-				if (millisSinceLastCheckin > 90 * 60 * 1000) {
-					logInfo("Recovery : Check-in was ${(millisSinceLastCheckin / 60000).intValue()} min overdue, re-binding clusters")
-					rebindClusters()
-				}
-			}
-			state.lastCheckinMillis = new Date().time
-            state.lastCheckin = updateTime
-
-		} else {
-
-			// Hand back to the driver for processing.
-			processMap(descriptionMap)
+	// --- Xiaomi check-in (cluster 0x0000 attr 0xFF01) is delivered in a
+	// non-ZCL description format. Slice it and hand off to the check-in decoder.
+	if (description?.contains("attrId: FF01")) {
+		Map xiaomiMap = description.split(', ').collectEntries { String entry ->
+			String[] pair = entry.split(': ')
+			[(pair.first()): pair.last()]
 		}
+		logDebug "Parse (Xiaomi check-in): ${xiaomiMap}"
+		processCheckin(xiaomiMap)
 
-        state.lastUpdate = updateTime
+		// Re-bind if previous check-in was overdue (>90 min gap)
+		if (state.lastCheckinMillis) {
+			long millisSinceLastCheckin = new Date().time - state.lastCheckinMillis
+			if (millisSinceLastCheckin > 90 * 60 * 1000) {
+				logInfo "Recovery : Check-in was ${(millisSinceLastCheckin / 60000).intValue()} min overdue, re-binding clusters"
+				rebindClusters()
+			}
+		}
+		String updateTime = new Date().toLocaleString()
+		state.lastCheckinMillis = new Date().time
+		state.lastCheckin = updateTime
+		state.lastUpdate  = updateTime
 
-
-	} else {
-
-		logError("Parse : Failed to parse Xiaomi cluster specification data. Please report these messages to the developer.")
-		logError("Parse : ${description}")
-
+		runVersionCheck()
+		return
 	}
 
+	// --- Standard ZCL paths
+	Map descMap = zigbee.parseDescriptionAsMap(description)
+	if (!descMap) {
+		logError "Parse : Failed to interpret description: ${description}"
+		runVersionCheck()
+		return
+	}
+
+	logDebug "Parse: ${descMap}"
+
+	// ZDO command (profile 0x0000) — bind responses, mgmt responses, etc.
+	if (descMap.profileId == "0000") {
+		logTrace "Unhandled ZDO command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}"
+		runVersionCheck()
+		return
+	}
+
+	// ZHA global command (profile 0x0104, no attrId) — Configure Reporting Response etc.
+	if (descMap.profileId == "0104" && descMap.attrId == null) {
+		logTrace "Unhandled ZHA global command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}"
+		runVersionCheck()
+		return
+	}
+
+	// IAS Zone enroll request — WSDCGQ11LM does not use IAS, log if it appears.
+	if (descMap.clusterId == "0500" && descMap.command == "01") {
+		logDebug "Received enroll request (unexpected for this device): ${descMap}"
+		runVersionCheck()
+		return
+	}
+
+	// IAS Zone status change notification — same: log if it appears.
+	if (descMap.clusterId == "0500" && (descMap.command == "00" || descMap.attrId == "0002")) {
+		logDebug "Zone status (unexpected for this device): ${description}"
+		runVersionCheck()
+		return
+	}
+
+	// Attribute report — primary + every entry in additionalAttrs.
+	if (descMap.attrId != null) {
+		parseAttributeReport(descMap)
+		descMap.additionalAttrs?.each { Map extra ->
+			parseAttributeReport(descMap + extra)
+		}
+		String updateTime = new Date().toLocaleString()
+		state.lastUpdate = updateTime
+		runVersionCheck()
+		return
+	}
+
+	logTrace "Unhandled message: ${descMap}"
+	runVersionCheck()
+}
+
+
+private void runVersionCheck() {
 	if (getDeviceDataByName('driver') != DRIVER_VERSION) {
 		runInMillis(100, "runVersionReconfigure")
 	}
-
 }
 
 
