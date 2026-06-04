@@ -85,7 +85,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.math.RoundingMode
 
-@Field static final String DRIVER_VERSION = "2.11.0"
+@Field static final String DRIVER_VERSION = "2.13.0"
 
 @Field static final int REPORT_INTERVAL_MINUTES = 60
 @Field static final int CHECK_EVERY_MINUTES = 10
@@ -116,6 +116,7 @@ void initialize() {
     // version-change. Does NOT issue device-side Zigbee reporting (that's configure()).
 
     unschedule()
+    state.recoveryActive = false
 
     if (state.lastMessageMillis == null) state.lastMessageMillis = 0
 
@@ -493,15 +494,17 @@ private void parseAttributeReport(Map map) {
         return
     }
 
+    // descMap.value from parseDescriptionAsMap is already big-endian — the
+    // platform flips the LE wire bytes for us. Pass straight through.
     switch (map.cluster) {
         case "0402":
-            parseTemperature(flipInt16Hex(map.value))
+            parseTemperature(map.value)
             return
         case "0403":
-            parsePressure(flipInt16Hex(map.value))
+            parsePressure(map.value)
             return
         case "0405":
-            parseHumidity(flipInt16Hex(map.value))
+            parseHumidity(map.value)
             return
         case "0000":
             parseBasic(map)
@@ -511,21 +514,11 @@ private void parseAttributeReport(Map map) {
 }
 
 private void parseBasic(Map map) {
-    // ZCL Basic cluster (0x0000) attribute reports. The Xiaomi 0xFF01 check-in
-    // is handled earlier in parse() before parseDescriptionAsMap, so it never
-    // reaches here.
-    //
-    // attrId 0x0005 is overloaded. It is the standard ZCL ModelIdentifier, but
-    // pressing the physical reset button on the WSDCGQ11LM appears to cause
-    // the device to re-announce its Basic cluster — and that re-announcement
-    // surfaces as a frame on attr 0x0005. The original dev noticed this
-    // and made the button useful by emitting a `pushed` event on every such
-    // frame. We preserve that behaviour (no encoding discriminator — we don't
-    // have evidence that the button frame uses a different encoding than a
-    // genuine model-read response, and silently breaking the button if we
-    // guess wrong is the worst failure mode). Model capture below is purely
-    // additive: a string-typed value updates the model data value too, with
-    // the button event firing either way.
+    // ZCL Basic cluster (0x0000) attribute reports. attrId 0x0005 is overloaded:
+    // it is the standard ZCL ModelIdentifier, but pressing the physical reset
+    // button on the WSDCGQ11LM also surfaces as a frame on this attribute. Every
+    // such frame fires a `pushed` event; model capture is additive when the
+    // value is string-typed (encoding 0x42).
 
     String value = map.value
     String encoding = map.encoding
@@ -759,11 +752,6 @@ private String reverseHexString(String hexString) {
     }
     return reversed
 }
-
-// Flip a 4-hex-char INT16 from little-endian wire order to big-endian for parse.
-// Cluster 0x0402 / 0x0403 / 0x0405 MeasuredValue attributes arrive in this shape.
-@CompileStatic
-private String flipInt16Hex(String hex) { hex[2..3] + hex[0..1] }
 
 // Decode a ZCL Character String hex payload to ASCII text. Skips non-printable
 // bytes — including the leading 1-byte length prefix that ZCL prepends to
