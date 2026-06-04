@@ -90,7 +90,7 @@ preferences {
 }
 
 
-void processTemperature(temperatureFlippedHex) {
+void processTemperature(String temperatureFlippedHex) {
 
     BigDecimal temperature = hexStrToSignedInt(temperatureFlippedHex)
     temperature = temperature.setScale(2, BigDecimal.ROUND_HALF_UP) / 100
@@ -119,7 +119,7 @@ void processTemperature(temperatureFlippedHex) {
 }
 
 
-void processPressure(pressureFlippedHex, checkin=false) {
+void processPressure(String pressureFlippedHex, boolean checkin = false) {
 
     BigDecimal pressurePa = hexStrToSignedInt(pressureFlippedHex)
     if (checkin) {
@@ -175,7 +175,7 @@ void processPressure(pressureFlippedHex, checkin=false) {
 }
 
 
-void processHumidity(humidityFlippedHex) {
+void processHumidity(String humidityFlippedHex) {
 
     BigDecimal humidity = hexStrToSignedInt(humidityFlippedHex)
     humidity = humidity.setScale(2, BigDecimal.ROUND_HALF_UP) / 100
