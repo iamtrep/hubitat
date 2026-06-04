@@ -194,7 +194,7 @@ List<String> updateFirmware() {
 
 // device message parsing
 
-List parse(String description) {
+void parse(String description) {
 
     // Auto-Configure device: configure() was not called for this driver version
     if (state.codeVersion != version) {
@@ -206,16 +206,12 @@ List parse(String description) {
     Map descMap = zigbee.parseDescriptionAsMap(description)
     logTrace "Receiving Zigbee message️ ⬅️ device: ${descMap}"
 
-    List result = []
-
     if (descMap.attrId != null) {
         // device attribute report
-        Map event = parseAttributeReport(descMap)
-        if (event) result << event
+        parseAttributeReport(descMap)
         descMap.additionalAttrs?.each { add ->
             add.cluster = descMap.cluster
-            Map addEvent = parseAttributeReport(add)
-            if (addEvent) result << addEvent
+            parseAttributeReport(add)
         }
     } else if (descMap.profileId == "0000") {
         // ZigBee Device Object (ZDO) command
@@ -230,11 +226,9 @@ List parse(String description) {
     } else {
         logWarn("Unhandled unknown command ($description): cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     }
-
-    return result
 }
 
-private Map parseAttributeReport(Map descMap){
+private void parseAttributeReport(Map descMap){
     Map map = [: ]
 
     // Main switch over all available cluster IDs
@@ -264,11 +258,11 @@ private Map parseAttributeReport(Map descMap){
             switch (descMap.attrId) {
                 case "0007":
                     handleConfigStatus(descMap)
-                    return null
+                    return
 
                 case "0008":
                     handleLiftPositionEvent(descMap)
-                    return null
+                    return
 
                 default:
                     break
@@ -281,16 +275,11 @@ private Map parseAttributeReport(Map descMap){
             break
     }
 
-    Map result = null
-
     if (map) {
-        if (map.descriptionText) logInfo("${map.descriptionText}")
-        result = createEvent(map)
+        updateDeviceAttribute(map)
     } else {
         logDebug("Unhandled attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
     }
-
-    return result
 }
 
 private void handleLiftPositionEvent(Map descMap) {
