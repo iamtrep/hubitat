@@ -17,12 +17,10 @@
  *    - BirdsLikeWires.xiaomi  v1.12 (8th November 2022)
  *
  *  The check-in payload decoder (reverseHexString and the FF01 TLV walker in
- *  parseCheckin) was incorporated by PJ from veeceeoh's WSDCGQ11LM driver (Apache-2.0):
+ *  parseCheckin) was originally incorporated from veeceeoh's WSDCGQ11LM driver (Apache-2.0):
  *    https://github.com/veeceeoh/xiaomi-hubitat
  *  Inline `// Adapted from ...` attribution comments are preserved where
- *  applicable. Apache-2.0 is one-way GPL-3.0 compatible; the combined work
- *  is distributed under GPL-3.0-only while the veeceeoh-derived portions
- *  retain their original Apache-2.0 attribution requirements.
+ *  applicable. 
  *
  *  The mesh-recovery pattern (re-bind reporting clusters on disconnect, then
  *  periodically poll readAttribute(0x0000, 0x0004) until the device returns)
@@ -31,31 +29,11 @@
  *  code derivation.
  *
  *  Licensed under GPL-3.0-only (combined-work license, inherited from the
- *  BirdsLikeWires upstream). This per-file notice overrides the iamtrep
+ *  BirdsLikeWires upstream). This per-file notice overrides the
  *  repo's MIT default. Full license texts:
  *    GPL-3.0:    https://www.gnu.org/licenses/gpl-3.0.html
  *    Apache-2.0: https://www.apache.org/licenses/LICENSE-2.0
  */
-
-
-import groovy.transform.Field
-import groovy.transform.CompileStatic
-import java.math.RoundingMode
-
-@Field static final String DRIVER_VERSION = "2.11.0"
-
-@Field static final int REPORT_INTERVAL_MINUTES = 60
-@Field static final int CHECK_EVERY_MINUTES = 10
-@Field static final int RECOVERY_PROBE_INTERVAL_SECONDS = 120
-
-// checkHealth() treats the device as offline if its last message is older
-// than 2 report intervals + a 20-minute slack window (covers one missed
-// report plus jitter). After a hub reboot we wait HUB_REBOOT_ALLOWANCE_MINUTES
-// for the device to re-announce before declaring it offline.
-@Field static final int HEALTH_TIMEOUT_SLACK_MINUTES = 20
-@Field static final int HUB_REBOOT_ALLOWANCE_MINUTES = 20
-
-@Field static final Random RANDOM = new Random()
 
 
 metadata {
@@ -102,6 +80,25 @@ metadata {
         input name: "recoveryMode", type: "enum", title: "Mesh recovery mode", options: ["Disabled", "Slow", "Normal", "Aggressive"], defaultValue: "Normal", description: "How aggressively to probe when check-ins are missed"
     }
 }
+
+import groovy.transform.CompileStatic
+import groovy.transform.Field
+import java.math.RoundingMode
+
+@Field static final String DRIVER_VERSION = "2.11.0"
+
+@Field static final int REPORT_INTERVAL_MINUTES = 60
+@Field static final int CHECK_EVERY_MINUTES = 10
+@Field static final int RECOVERY_PROBE_INTERVAL_SECONDS = 120
+
+// checkHealth() treats the device as offline if its last message is older
+// than 2 report intervals + a 20-minute slack window (covers one missed
+// report plus jitter). After a hub reboot we wait HUB_REBOOT_ALLOWANCE_MINUTES
+// for the device to re-announce before declaring it offline.
+@Field static final int HEALTH_TIMEOUT_SLACK_MINUTES = 20
+@Field static final int HUB_REBOOT_ALLOWANCE_MINUTES = 20
+
+@Field static final Random RANDOM = new Random()
 
 
 // ─── Lifecycle ─────────────────────────────────────────────────────────────
