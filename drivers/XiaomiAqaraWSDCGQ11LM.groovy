@@ -32,7 +32,7 @@
  */
 
 
-@Field String driverVersion = "v1.11 (12th October 2022)"
+@Field String driverVersion = "v2.0 (3rd June 2026)"
 
 
 import groovy.transform.Field
