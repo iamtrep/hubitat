@@ -35,7 +35,7 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String DRIVER_VERSION = "v2.1 (3rd June 2026)"
+@Field static final String DRIVER_VERSION = "v2.2 (4th June 2026)"
 
 @Field static final int REPORT_INTERVAL_MINUTES = 60
 @Field static final int CHECK_EVERY_MINUTES = 10
