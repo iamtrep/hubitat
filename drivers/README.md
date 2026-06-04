@@ -12,6 +12,7 @@ Hubitat Elevation device drivers for Zigbee devices, BLE sensors, and cloud APIs
 <!-- AUTO:drivers-standalone -->
 | Driver | Description |
 |---|---|
+| **Aqara Weather Sensor WSDCGQ11LM** | Aqara Zigbee Temperature/Humidity/Pressure Environmental Sensor Driver - WSDCGQ11LM |
 | **Awair Element** | Local API driver for Awair Element air quality monitors |
 | **Bluetooth Home v2 Motion/Occupancy Sensor** | BLE motion/occupancy sensor via BTHome v2 |
 | **Device Ping** | Pings a device and reports connectivity as a contact sensor |
@@ -22,6 +23,7 @@ Hubitat Elevation device drivers for Zigbee devices, BLE sensors, and cloud APIs
 | **ThirdReality Presence Sensor R3 (3RPL01084Z)** | 60 GHz mmWave presence sensor with RGB night light, illuminance, and TVOC air quality (Zigbee 3.0) |
 | **Universal Electronics / Visonic / Xfinity Contact Sensor** | Zigbee contact sensor with battery, tamper, and temperature |
 | **Virtual Switch + PowerSource** | Virtual device with synced Switch and PowerSource capabilities for testing power outage detection |
+| **Zigbee Mesh Probe** | Issues ZDO neighbor-table and routing-table queries for external mesh-mapping tools |
 <!-- /AUTO -->
 
 ## Sinopé
