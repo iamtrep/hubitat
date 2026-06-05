@@ -23,7 +23,7 @@ import hubitat.zigbee.zcl.DataType
 import hubitat.zigbee.clusters.iaszone.ZoneStatus
 import com.hubitat.hub.domain.Event
 
-@Field static final String version = "0.1.2"
+@Field static final String version = "0.1.3"
 
 metadata {
 	definition (
@@ -43,6 +43,7 @@ metadata {
 
         attribute "lowBattery", "enum", ["true","false"]
         attribute "batteryDefect", "enum", ["detected","clear"]
+        attribute "batteryVoltage", "number"
 
         command "setBatteryReplacementDate", [[name: "Date Changed", type: "DATE", description: "Enter the date the battery was last changed. If blank will use current date."]]
 
@@ -253,6 +254,9 @@ private void parseAttributeReport(Map descMap) {
                 map.value = roundedPct
                 map.unit = '%'
                 map.descriptionText = "${device.displayName} battery is ${roundedPct}%"
+
+                sendEvent(name: 'batteryVoltage', value: voltage, unit: 'V',
+                    descriptionText: "${device.displayName} battery voltage is ${voltage}V")
 
                 state.lastBatteryVoltage = voltage
                 state.lastBatteryDate = (new Date()).format('yyyy-MM-dd')
