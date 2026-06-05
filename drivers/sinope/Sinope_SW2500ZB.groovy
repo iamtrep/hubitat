@@ -14,7 +14,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String constDriverVersion = "0.0.17"
+@Field static final String constDriverVersion = "0.0.18"
 
 metadata {
     definition(
@@ -172,6 +172,7 @@ void configure() {
     logTrace("configure()")
 
     state.codeVersion = constDriverVersion
+    state.remove('energyDelivered')
 
     try
     {
@@ -505,9 +506,6 @@ private void parseAttributeReport(Map descMap) {
                     break
 
                 case "0090": // watt-hours delivered
-                    state.energyDelivered = getEnergy(descMap.value)
-                    //logInfo("Energy report: ${state.energyDelivered}")
-                    //return null // return directly, no event to generate
                     map.name = "energy"
                     map.value = getEnergy(descMap.value)
                     map.unit = "kWh"
