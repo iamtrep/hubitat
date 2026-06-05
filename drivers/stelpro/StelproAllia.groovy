@@ -33,7 +33,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import groovy.json.JsonOutput
 
-@Field static final String constDriverVersion = "0.0.6"
+@Field static final String constDriverVersion = "0.0.7"
 
 metadata {
     definition (name: "Stelpro Allia Zigbee Thermostat",
@@ -646,7 +646,10 @@ private boolean temperatureScaleIsCelsius() {
 private BigDecimal getTemperature(String value) {
     if (value != null) {
         logTrace("getTemperature: value $value")
-        BigDecimal celsius = new BigDecimal(Integer.parseInt(value, 16)) / 100
+        // Cluster 0x0201 LocalTemperature: signed int16, hundredths of °C.
+        // Caller filters 0x7FFD/0x7FFF/0x8000 alarm sentinels before invoking
+        // this; sign-extension here is defence in depth for future call sites.
+        BigDecimal celsius = new BigDecimal(hexToSignedInt16(value)) / 100
 
         if (temperatureScaleIsCelsius()) {
             return celsius.setScale(1, BigDecimal.ROUND_HALF_UP)
@@ -655,6 +658,12 @@ private BigDecimal getTemperature(String value) {
         BigDecimal fahrenheit = celsiusToFahrenheit(celsius)
         return fahrenheit.setScale(1, BigDecimal.ROUND_HALF_UP)
     }
+}
+
+@CompileStatic
+private static int hexToSignedInt16(String hex) {
+    int v = Integer.parseInt(hex, 16)
+    return v > 0x7FFF ? v - 0x10000 : v
 }
 
 private void sendZigbeeCommands(cmds) {

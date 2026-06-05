@@ -31,9 +31,10 @@
  *
  */
 
+import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String constCodeVersion = "0.1.2"
+@Field static final String constCodeVersion = "0.1.3"
 
 metadata {
     definition (
@@ -581,7 +582,10 @@ private void sendZigbeeCommands(List<String> cmds) {
 
 private BigDecimal getTemperature(String value) {
     try {
-        BigDecimal celsius = new BigDecimal(Integer.parseInt(value, 16)) / 100
+        // Cluster 0x0201 LocalTemperature: signed int16, hundredths of °C.
+        // Caller filters 0x7FFD/0x7FFF/0x8000 alarm sentinels before invoking
+        // this; sign-extension here is defence in depth for future call sites.
+        BigDecimal celsius = new BigDecimal(hexToSignedInt16(value)) / 100
 
         if (getTemperatureScale() == "C") {
             return celsius.setScale(1, BigDecimal.ROUND_HALF_UP)
@@ -593,6 +597,12 @@ private BigDecimal getTemperature(String value) {
         log.error "getTemperature: Cannot parse '${value}' as hex", e
         return null
     }
+}
+
+@CompileStatic
+private static int hexToSignedInt16(String hex) {
+    int v = Integer.parseInt(hex, 16)
+    return v > 0x7FFF ? v - 0x10000 : v
 }
 
 // Due to a bug in this model's firmware, sometimes we don't get

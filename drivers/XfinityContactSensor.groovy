@@ -23,7 +23,7 @@ import hubitat.zigbee.zcl.DataType
 import hubitat.zigbee.clusters.iaszone.ZoneStatus
 import com.hubitat.hub.domain.Event
 
-@Field static final String version = "0.1.3"
+@Field static final String version = "0.1.4"
 
 metadata {
 	definition (
@@ -70,9 +70,26 @@ metadata {
   }
 }
 
-@Field static final Double constMinBatteryVoltage = 2.3
-@Field static final Double constMaxBatteryVoltage = 3.0
+@Field static final double constMinBatteryVoltage = 2.3
+@Field static final double constMaxBatteryVoltage = 3.0
 @Field static final Integer constDefaultDelay = 333
+
+// Linear voltage→percentage mapping for CR2032-style cells. Clamped to [0, 100]:
+// below minV reads 0% (depleted), above maxV reads 100% (fresh).
+@CompileStatic
+private static int batteryPctFromVoltage(double voltage, double minV, double maxV) {
+    double pct = (voltage - minV) / (maxV - minV)
+    int rounded = (int) Math.round(pct * 100)
+    return Math.max(0, Math.min(100, rounded))
+}
+
+// Decode a hex string into a signed int16 (Zigbee temperature/pressure values
+// arrive as unsigned hex but are signed two's complement on the wire).
+@CompileStatic
+private static int hexToSignedInt16(String hex) {
+    int v = Integer.parseInt(hex, 16)
+    return v > 0x7FFF ? v - 0x10000 : v
+}
 
 
 void installed(){
@@ -245,10 +262,8 @@ private void parseAttributeReport(Map descMap) {
         case "0001": // Power Configuration cluster
             if (descMap.attrId == "0020") {
                 // Battery voltage (in 100mV units)
-                Double voltage = Integer.parseInt(descMap.value, 16) / 10.0
-                Double pct = (voltage - constMinBatteryVoltage) / (constMaxBatteryVoltage - constMinBatteryVoltage)
-                Integer roundedPct = Math.round(pct * 100)
-                roundedPct = Math.max(1, Math.min(100, roundedPct))
+                double voltage = Integer.parseInt(descMap.value, 16) / 10.0
+                int roundedPct = batteryPctFromVoltage(voltage, constMinBatteryVoltage, constMaxBatteryVoltage)
 
                 map.name = 'battery'
                 map.value = roundedPct
@@ -265,8 +280,8 @@ private void parseAttributeReport(Map descMap) {
 
         case "0402": // Temperature Measurement cluster
             if (descMap.attrId == "0000") {
-                // Temperature in hundredths of degrees Celsius
-                Double tempC = Integer.parseInt(descMap.value, 16) / 100.0
+                // Temperature in hundredths of degrees Celsius (signed int16)
+                double tempC = hexToSignedInt16(descMap.value) / 100.0d
                 Double tempValue = (getTemperatureScale() == "C") ? tempC : celsiusToFahrenheit(tempC)
                 tempValue = Math.round(tempValue * 10) / 10.0  // round to 1 decimal
 

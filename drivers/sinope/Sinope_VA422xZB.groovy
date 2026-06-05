@@ -31,7 +31,7 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String version = "0.0.5"
+@Field static final String version = "0.0.6"
 
 
 metadata {
@@ -581,13 +581,19 @@ private Double getTemperature(String value) {
     if (value == null) {
         return null
     }
-    // ZCL spec says temperature is in hundredths of C
-    double celsius = Integer.parseInt(value, 16) / 100.0d
+    // ZCL spec says temperature is in hundredths of C (signed int16)
+    double celsius = hexToSignedInt16(value) / 100.0d
     if (getTemperatureScale() == "C") {
         return celsius
     } else {
         return Math.round(celsiusToFahrenheit(celsius)) as Double
     }
+}
+
+@CompileStatic
+private static int hexToSignedInt16(String hex) {
+    int v = Integer.parseInt(hex, 16)
+    return v > 0x7FFF ? v - 0x10000 : v
 }
 
 private boolean isFlowSensorEnabled() {

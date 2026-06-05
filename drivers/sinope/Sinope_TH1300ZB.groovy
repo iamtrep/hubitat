@@ -25,7 +25,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.math.RoundingMode
 
-@Field static final String version = "0.0.3"
+@Field static final String version = "0.0.4"
 
 metadata
 {
@@ -824,7 +824,8 @@ private Double getTemperature(String value) {
     if (value == null) {
         return null
     }
-    double celsius = Integer.parseInt(value, 16) / 100.0d
+    // Cluster 0x0201 LocalTemperature: signed int16, hundredths of °C
+    double celsius = hexToSignedInt16(value) / 100.0d
     if (getTemperatureScale() == 'C') {
         return celsius
     } else {
@@ -836,12 +837,25 @@ private Double getTemperatureOffset(String value) {
     if (value == null) {
         return null
     }
-    double celsius = Integer.parseInt(value, 16) / 10.0d
+    // Cluster 0x0201 LocalTemperatureCalibration: signed int8, tenths of °C
+    double celsius = hexToSignedInt8(value) / 10.0d
     if (getTemperatureScale() == 'C') {
         return celsius
     } else {
         return roundToTwoDecimalPlaces(celsiusToFahrenheit(celsius) as Double)
     }
+}
+
+@CompileStatic
+private static int hexToSignedInt16(String hex) {
+    int v = Integer.parseInt(hex, 16)
+    return v > 0x7FFF ? v - 0x10000 : v
+}
+
+@CompileStatic
+private static int hexToSignedInt8(String hex) {
+    int v = Integer.parseInt(hex, 16)
+    return v > 0x7F ? v - 0x100 : v
 }
 
 private Integer getActivePower(String value) {
