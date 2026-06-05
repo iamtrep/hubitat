@@ -15,7 +15,7 @@ SPDX-License-Identifier: MIT
 <link rel="mask-icon" href="/ui2/images/safari-pinned-tab.svg" color="#5bbad5">
 <script>if(window.REPORT_DATA)document.documentElement.classList.add('report-mode')</script>
 <style>
-:root { --primary:#1A77C9; --ok:#388e3c; --warn:#ff9800; --crit:#d32f2f; --bg:#f5f5f5; --card:#fff; --border:#ddd; --text:#333; --muted:#777; --alt:#f9f9f9; --hover:#e3f2fd; }
+:root { --primary:#1A77C9; --ok:#388e3c; --warn:#ff9800; --crit:#d32f2f; --bg:#f5f5f5; --card:#fff; --border:#ddd; --text:#333; --muted:#777; --alt:#f9f9f9; --hover:#e3f2fd; --lqi-poor:#d32f2f; --lqi-marginal:#f57c00; --lqi-acceptable:#fbc02d; --lqi-good:#7cb342; --lqi-excellent:#388e3c; }
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:14px}
 a{color:var(--primary);text-decoration:none} a:hover{text-decoration:underline}
@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "5.66.5";
+const UI_VERSION = "5.67.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -204,6 +204,14 @@ function fmsDuration(ms){
 // network payload already carries (zwave.mesh.nodes; the zigbee neighbor list). The hub ships the
 // raw mesh; the SPA applies the thresholds and assembles the issue strings here.
 const ZWAVE_PER_CRIT=1.0, ZIGBEE_LQI_CRIT=150;
+function lqiBandColor(lqi){
+  if(lqi==null) return 'var(--muted)';
+  if(lqi<30)  return 'var(--lqi-poor)';
+  if(lqi<70)  return 'var(--lqi-marginal)';
+  if(lqi<130) return 'var(--lqi-acceptable)';
+  if(lqi<200) return 'var(--lqi-good)';
+  return 'var(--lqi-excellent)';
+}
 function zwProblemNodes(nodes){
   return (nodes||[]).filter(n=>n.state!=='OK'||(n.per||0)>ZWAVE_PER_CRIT).map(n=>{
     const issues=[];
@@ -2438,7 +2446,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
     tbl('zbNeighborTbl',[
       {l:'Device',f:'name',r:r=>r.deviceId?dlink(r.deviceId,r.name||r.shortId):h(Obf.nm(r.name||r.shortId||'\u2014'))},
       {l:'Short ID',f:'shortId',r:r=>h(r.shortId||'\u2014')},
-      {l:'LQI',f:'lqi',t:'n',r:r=>r.lqi!=null?'<span style="color:'+(r.lqi<150?'var(--crit)':r.lqi<200?'var(--warn)':'var(--ok)')+'">'+r.lqi+'</span>':'N/A'},
+      {l:'LQI',f:'lqi',t:'n',r:r=>r.lqi!=null?'<span style="color:'+lqiBandColor(r.lqi)+'">'+r.lqi+'</span>':'N/A'},
       {l:'Age',f:'age',t:'n',r:r=>r.stale?'<span class="badge b-warn">'+r.age+' (Stale)</span>':(r.age!=null?''+r.age:'N/A')},
       {l:'In Cost',f:'inCost',t:'n',r:r=>r.inCost!=null?''+r.inCost:'\u2014'},
       {l:'Out Cost',f:'outCost',t:'n',r:r=>r.outCost!=null?''+r.outCost:'\u2014'},

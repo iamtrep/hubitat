@@ -30,8 +30,8 @@ function extractFn(name) {
 const consts = (src.match(/const ZWAVE_PER_CRIT=[^;]+;/) || [])[0];
 assert(consts, 'threshold consts not found in HTML');
 const harness = consts + '\n' +
-  ['zwProblemNodes', 'zbWeakNeighbors', 'zbStaleNeighbors'].map(extractFn).join('\n') +
-  '\nmodule.exports = { zwProblemNodes, zbWeakNeighbors, zbStaleNeighbors };';
+  ['zwProblemNodes', 'zbWeakNeighbors', 'zbStaleNeighbors', 'lqiBandColor'].map(extractFn).join('\n') +
+  '\nmodule.exports = { zwProblemNodes, zbWeakNeighbors, zbStaleNeighbors, lqiBandColor };';
 const tmp = path.join(os.tmpdir(), 'hd_net_' + process.pid + '.js');
 fs.writeFileSync(tmp, harness);
 const N = require(tmp);
@@ -81,6 +81,23 @@ t('zbWeakNeighbors: lqi<150, null lqi excluded', () => {
 t('zbStaleNeighbors: age>6, null age excluded', () => {
   assert.deepStrictEqual(N.zbStaleNeighbors(neighbors).map(x => x.shortId), ['C3']);
   assert.deepStrictEqual(N.zbStaleNeighbors(null), []);
+});
+
+// ---- lqiBandColor (5-band gradient for the Zigbee Neighbor Details LQI column) ----
+t('lqiBandColor: null lqi -> muted', () => {
+  assert.strictEqual(N.lqiBandColor(null), 'var(--muted)');
+});
+t('lqiBandColor: band boundaries (strict <)', () => {
+  assert.strictEqual(N.lqiBandColor(0),   'var(--lqi-poor)');
+  assert.strictEqual(N.lqiBandColor(29),  'var(--lqi-poor)');
+  assert.strictEqual(N.lqiBandColor(30),  'var(--lqi-marginal)');
+  assert.strictEqual(N.lqiBandColor(69),  'var(--lqi-marginal)');
+  assert.strictEqual(N.lqiBandColor(70),  'var(--lqi-acceptable)');
+  assert.strictEqual(N.lqiBandColor(129), 'var(--lqi-acceptable)');
+  assert.strictEqual(N.lqiBandColor(130), 'var(--lqi-good)');
+  assert.strictEqual(N.lqiBandColor(199), 'var(--lqi-good)');
+  assert.strictEqual(N.lqiBandColor(200), 'var(--lqi-excellent)');
+  assert.strictEqual(N.lqiBandColor(255), 'var(--lqi-excellent)');
 });
 
 console.log(`\n${pass}/${pass + fail} passed${fail ? `, ${fail} failed` : ''}`);
