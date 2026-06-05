@@ -14,6 +14,7 @@ Notes on Hubitat's Groovy sandbox and platform behavior. Reverse-engineered or l
 - Hubitat async callback parameters (`resp`, `data`) stay untyped — platform convention
 - Use `capability "Refresh"` (not deprecated `capability "Polling"`) for pollable devices
 - `@CompileStatic` on pure computation methods that don't access Hubitat dynamic properties
+- `@TypeChecked` is **not** available — the sandbox rejects `import groovy.transform.TypeChecked` at compile time (`Importing [groovy.transform.TypeChecked] is not allowed`, verified on firmware 2.5.0.148). Use `@CompileStatic` instead; it's the same family and is approved.
 - `getObjectClassName(value)` — global method injected into script context; use instead of `value.getClass()` (which is sandbox-blocked) to get the runtime class name of any object
 
 ## Platform behavior
