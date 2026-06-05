@@ -15,7 +15,14 @@ Notes on Hubitat's Groovy sandbox and platform behavior. Reverse-engineered or l
 - Use `capability "Refresh"` (not deprecated `capability "Polling"`) for pollable devices
 - `@CompileStatic` on pure computation methods that don't access Hubitat dynamic properties
 - `@TypeChecked` is **not** available — the sandbox rejects `import groovy.transform.TypeChecked` at compile time (`Importing [groovy.transform.TypeChecked] is not allowed`, verified on firmware 2.5.0.148). Use `@CompileStatic` instead; it's the same family and is approved.
-- `getObjectClassName(value)` — global method injected into script context; use instead of `value.getClass()` (which is sandbox-blocked) to get the runtime class name of any object
+
+## Object introspection
+
+Three sandbox-safe ways to look at an object's surface, picked by what you need.
+
+- **Just the runtime class name** — `getObjectClassName(value)` is a platform-injected global that returns the FQN as a String. Use it instead of `value.getClass()`, which is sandbox-blocked as a `MethodCallExpression`. Routine pattern in exception handlers: `"${getObjectClassName(e)}: ${e.message}"`.
+- **Live bean-property snapshot** — `obj.properties.each { k, v -> ... }`. Returns the Groovy bean-accessor map of every readable getter with its current value. Used by `drivers/tests/DeviceInspector.groovy` to dump the full `DeviceWrapper` surface in one line. Best for objects whose useful state IS bean properties (`device`, `location`, `hub`, parsed Maps); much smaller surface for objects whose API is parameterized methods (e.g. `zigbee.properties` returns only 6 entries while reflection finds 115 methods).
+- **Full API surface with signatures** — `obj.class.getMethods()` / `getFields()` / `getSuperclass()` / `getInterfaces()`. Needed only when you want overload signatures, parameter types, or static fields. The sandbox blocks several routes here: `Class.forName` is rejected at AST level, `java.lang.Class` can't be imported (which kills `Class cls` type annotations — use `def`), `java.lang.reflect.Modifier.isStatic(...)` is rejected (bitmask directly: `(f.modifiers & 0x08) != 0`), and `ArrayDeque` is rejected (use `[]` with `.remove(0)` as a FIFO). `obj.class` (PropertyExpression) returns the Class object fine, and Class/Method/Field getter chains work from there. Reach related classes via factory methods, not `forName`. See `drivers/tests/ZigbeeIntrospect.groovy` and `docs/hubitat-zigbee-helper.md` for a worked example.
 
 ## Platform behavior
 
