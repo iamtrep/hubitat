@@ -249,19 +249,19 @@ private void parseIasMessage(String description) {
     ZoneStatus zs = zigbee.parseZoneStatus(description)
     //logTrace "Zone Status: ${zs.properties}"
 
-    updateIfChanged('contact', zs.alarm1Set)
-    updateIfChanged('tamper', zs.tamperSet) {
+    updateZoneStatusIfChanged('contact', zs.alarm1Set)
+    updateZoneStatusIfChanged('tamper', zs.tamperSet) {
         state.lastTamperClear = now()
     }
-    updateIfChanged('lowBattery', zs.batterySet) {
+    updateZoneStatusIfChanged('lowBattery', zs.batterySet) {
         state.lastBatteryOk = now()
     }
-    updateIfChanged('batteryDefect', zs.batteryDefectSet) {
+    updateZoneStatusIfChanged('batteryDefect', zs.batteryDefectSet) {
         state.lastBatteryDefectClear = now()
     }
 }
 
-private void updateIfChanged(String attribute, Boolean isTrue, Closure onClear = null) {
+private void updateZoneStatusIfChanged(String attribute, Boolean isTrue, Closure onClear = null) {
     Map config = ATTRIBUTE_CONFIG[attribute]
     String newValue = isTrue ? config.trueValue : config.falseValue
 
