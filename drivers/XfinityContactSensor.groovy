@@ -322,8 +322,11 @@ private void parseAttributeReport(Map descMap) {
 
                 sendEvent(name: 'batteryVoltage', value: voltage, unit: 'V',
                     descriptionText: "${device.displayName} battery voltage is ${voltage}V")
-                sendEvent(name: 'battery', value: smoothedPct, unit: '%',
-                    descriptionText: "${device.displayName} battery is ${smoothedPct}%")
+
+                map.name = 'battery'
+                map.value = smoothedPct
+                map.unit = '%'
+                map.descriptionText = "${device.displayName} battery is ${smoothedPct}%"
 
                 logTrace "battery EMA: v=${voltage}V action=${emaAction} smoothed=${String.format('%.3f', smoothed)}V pct=${smoothedPct}%"
 
