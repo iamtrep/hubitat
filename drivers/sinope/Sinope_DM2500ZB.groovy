@@ -126,6 +126,7 @@ metadata {
 void installed() {
     // called when device is first created with this driver
     initialize()
+    configure()
 }
 
 void updated() {
@@ -209,15 +210,14 @@ void configure() {
 }
 
 void initialize() {
+    // Convergence body — install + hub-restart route here. configure() is
+    // NOT called from initialize(): re-binding + reconfiguring on every hub
+    // startup wastes radio bandwidth (ARCHITECTURE.md "Driver lifecycle").
     logTrace("initialize()")
 
-    // state.clear()
     state.switchTypeDigital = false
     state.levelTypeDigital = false
-
     sendEvent(name:"numberOfButtons", value: 2, isStateChange: true)
-
-    configure()
 }
 
 void refresh() {

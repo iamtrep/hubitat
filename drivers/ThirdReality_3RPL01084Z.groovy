@@ -89,7 +89,7 @@ metadata {
 
 void installed() {
     logDebug "installed()"
-    initialize()
+    configure()
 }
 
 void updated() {
@@ -114,11 +114,6 @@ void updated() {
     }
 
     if (cmds) sendZigbeeCommands(cmds)
-}
-
-void initialize() {
-    logDebug "initialize()"
-    configure()
 }
 
 void configure() {

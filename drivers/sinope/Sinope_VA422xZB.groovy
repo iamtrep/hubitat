@@ -112,6 +112,7 @@ metadata {
 void installed() {
     // called when device is first created with this driver
     initialize()
+    configure()
 }
 
 void updated() {
@@ -171,15 +172,16 @@ void configure() {
 }
 
 void initialize() {
+    // Convergence body — install + hub-restart route here. configure() is
+    // NOT called from initialize(): re-binding + reconfiguring on every hub
+    // startup wastes radio bandwidth (ARCHITECTURE.md "Driver lifecycle").
     logTrace("initialize()")
 
-    // state.clear()
     state.switchTypeDigital = false
     state.remove("lastVolumeRecorded")     // built-in driver uses lastValue
     state.remove("lastVolumeRecordedTime") // built-in driver uses lastSample
     state.remove("volumeSinceLastEvent")
 
-    configure()
     refresh()
 }
 

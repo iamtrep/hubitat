@@ -273,7 +273,7 @@ The mechanics of nested apps (`app(...)` declaration, `parent: "ns:Name"`) and c
 
 The platform defines what `configure()`, `initialize()`, `refresh()`, and `deviceTypeUpdated()` mean. Two project-specific rules:
 
-- **`initialize()` should `refresh()`, not `configure()`.** It runs on every hub startup. Reconfiguring on each restart wastes Zigbee bandwidth and can race with other devices joining the mesh.
+- **`initialize()` is for work that must re-execute after hub startup.** The platform calls it on hub start, install, and as part of the `updated()` convergence. Use it for LAN/cloud reconnection, re-arming any housekeeping the hub doesn't already persist (most `schedule`/`runIn` calls already survive reboot), and idempotent state/counter seeding. For a pure local-radio (Zigbee/Z-Wave) driver with no such startup work, omitting `initialize()` is fine — don't add an empty stub or one that only calls `configure()`. When it does exist, **`refresh()`, not `configure()`** — reconfiguring on each restart wastes radio bandwidth and can race with other devices joining the mesh.
 - **`deviceTypeUpdated()` should warn and reconfigure.** The convention is `logWarn "driver change detected"; configure()`, so that switching a device's driver type re-applies device-side reporting and defaults.
 
 ### Zigbee parse skeleton

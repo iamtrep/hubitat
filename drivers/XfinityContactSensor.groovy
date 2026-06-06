@@ -137,11 +137,20 @@ void deviceTypeUpdated() {
     configure()
 }
 
+// User-facing capability. Sleepy end-devices are usually asleep when the UI button
+// is clicked, so we defer the reads until the device next transmits — parse() drains
+// the flag inside the awake window.
 void refresh() {
-	logDebug "refresh()"
+    logDebug "refresh() requested — will issue on next device wake"
+    state.refreshRequested = true
+}
+
+private void issueAttributeReads() {
+    logDebug "issuing attribute reads (temperature, battery voltage, IAS zone status)"
     List<String> cmds = []
-    cmds += zigbee.readAttribute(0x0402, 0x0000, [:], constDefaultDelay) // temperature
-    cmds += zigbee.readAttribute(zigbee.POWER_CONFIGURATION_CLUSTER, 0x0020, [:], constDefaultDelay)
+    cmds += zigbee.readAttribute(0x0402, 0x0000, [:], constDefaultDelay)                          // temperature
+    cmds += zigbee.readAttribute(zigbee.POWER_CONFIGURATION_CLUSTER, 0x0020, [:], constDefaultDelay) // battery voltage
+    cmds += zigbee.readAttribute(0x0500, 0x0002, [:], constDefaultDelay)                          // IAS ZoneStatus bitmap
     sendZigbeeCommands(cmds)
 }
 
@@ -170,7 +179,7 @@ void configure() {
     cmds += zigbee.temperatureConfig(3600,((tempInterval != null ? tempInterval : 12).toInteger() * 60)) // Temperature Reporting
 
     sendZigbeeCommands(cmds)
-    refresh()
+    issueAttributeReads()
 }
 
 void setBatteryReplacementDate(Date date = null) {
@@ -183,6 +192,12 @@ void setBatteryReplacementDate(Date date = null) {
 void parse(String description) {
     state.lastRx = now()
     logTrace "parsing message: ${description}"
+
+    // Drain pending refresh request inside the device's post-transmit awake window
+    if (state.refreshRequested) {
+        state.refreshRequested = false
+        issueAttributeReads()
+    }
 
     // Auto-Configure device: configure() was not called for this driver version
     if (state.codeVersion != version) {
@@ -261,23 +276,26 @@ private void parseIasMessage(String description) {
     }
 }
 
+private void emitZoneStatusEvent(String attribute, Boolean isTrue, Closure onClear = null) {
+    Map config = ATTRIBUTE_CONFIG[attribute]
+    String descriptionText = "${device.displayName} ${isTrue ? config.trueDesc : config.falseDesc}"
+    logInfo descriptionText
+    sendEvent(
+        name: attribute,
+        value: isTrue ? config.trueValue : config.falseValue,
+        descriptionText: descriptionText,
+        type: 'physical'
+    )
+    if (!isTrue && onClear) {
+        onClear()
+    }
+}
+
 private void updateZoneStatusIfChanged(String attribute, Boolean isTrue, Closure onClear = null) {
     Map config = ATTRIBUTE_CONFIG[attribute]
     String newValue = isTrue ? config.trueValue : config.falseValue
-
     if (device.currentValue(attribute) != newValue) {
-        String action = isTrue ? config.trueDesc : config.falseDesc
-        logInfo action
-        sendEvent(
-            name: attribute,
-            value: newValue,
-            descriptionText: "${device.displayName} ${action}",
-            type: 'physical'
-        )
-
-        if (!isTrue && onClear) {
-            onClear()
-        }
+        emitZoneStatusEvent(attribute, isTrue, onClear)
     }
 }
 
@@ -354,7 +372,32 @@ private void parseAttributeReport(Map descMap) {
             }
             break
 
-        case "0500": // IAS Zone cluster - handled by parseIasMessage
+        case "0500": // IAS Zone cluster
+            // Unsolicited Status Change Notifications go through parseIasMessage from
+            // parse() directly (and are deduped via updateZoneStatusIfChanged). This branch
+            // handles solicited reads of the ZoneStatus bitmap (attrId 0x0002) issued by
+            // issueAttributeReads(); we asked for the answer, so emit unconditionally.
+            // Primary attribute (contact) rides the map for the trailing sendEvent path;
+            // the bitmap's other three bits go through emitZoneStatusEvent as side channels.
+            if (descMap.attrId == "0002") {
+                int zs = Integer.parseInt(descMap.value, 16)
+                emitZoneStatusEvent('tamper', (zs & 0x0004) != 0) {
+                    state.lastTamperClear = now()
+                }
+                emitZoneStatusEvent('lowBattery', (zs & 0x0008) != 0) {
+                    state.lastBatteryOk = now()
+                }
+                emitZoneStatusEvent('batteryDefect', (zs & 0x0200) != 0) {
+                    state.lastBatteryDefectClear = now()
+                }
+
+                Map cfg = ATTRIBUTE_CONFIG['contact']
+                boolean isOpen = (zs & 0x0001) != 0
+                map.name = 'contact'
+                map.value = isOpen ? cfg.trueValue : cfg.falseValue
+                map.descriptionText = "${device.displayName} ${isOpen ? cfg.trueDesc : cfg.falseDesc}"
+                map.type = 'physical'
+            }
             break
 
         default:

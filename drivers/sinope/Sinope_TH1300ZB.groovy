@@ -293,12 +293,13 @@ void refresh() {
 void installed() {
     logInfo('installed()')
     configure()
-    refresh() // TODO
+    refresh()
 }
 
 void initialize() {
+    // initialize() runs on hub startup — refresh() only, not configure().
+    // Reconfiguring on every restart wastes radio bandwidth.
     logInfo('initialize()')
-    //configure()  // initialize() is run on system startup, no need to configure()
     refresh()
 }
 

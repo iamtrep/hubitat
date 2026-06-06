@@ -60,6 +60,8 @@ metadata {
         attribute "notPresentCounter", "number"
         attribute "restoredCounter", "number"
 
+        command "startRecovery"
+        command "stopRecovery"
         command "resetMeshCounters"
         command "setBatteryReplacementDate"
 
@@ -86,11 +88,22 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.math.RoundingMode
 
-@Field static final String DRIVER_VERSION = "2.14.1"
+@Field static final String DRIVER_VERSION = "2.15.0"
 
 @Field static final int REPORT_INTERVAL_MINUTES = 60
 @Field static final int CHECK_EVERY_MINUTES = 10
 @Field static final int RECOVERY_PROBE_INTERVAL_SECONDS = 120
+
+// CR2032 discharge curve, Z2M "3V_2100" preset (knot voltages in V, percent at knot).
+// Piecewise linear; clamped at endpoints. Same curve as XfinityContactSensor.
+@Field static final double[] constBatteryCurveV   = [2.10d, 2.44d, 2.74d, 2.90d, 3.00d] as double[]
+@Field static final double[] constBatteryCurvePct = [ 0.0d,  6.0d, 18.0d, 42.0d, 100.0d] as double[]
+
+// Monotonic EMA on battery voltage. The smoothed value never rises (cells discharge,
+// they don't charge) except on a big jump (>= constBatteryBigJumpV) which we treat as a
+// battery replacement and snap the smoothed value to the new raw voltage.
+@Field static final double constBatteryEmaAlpha = 0.30d
+@Field static final double constBatteryBigJumpV = 0.15d
 
 // checkHealth() treats the device as offline if its last message is older
 // than 2 report intervals + a 20-minute slack window (covers one missed
@@ -119,7 +132,10 @@ void initialize() {
     unschedule()
     state.recoveryActive = false
 
-    if (state.lastMessageMillis == null) state.lastMessageMillis = 0
+    // Seed to install/upgrade time so the normal "overdue" grace window
+    // applies cleanly even if the device has never spoken — without it,
+    // checkHealth() can never flip offline and recovery never engages.
+    if (!state.lastMessageMillis) state.lastMessageMillis = new Date().time
 
     // Counters survive code pushes — only seed them when they don't already exist.
     if (device.currentValue("notPresentCounter") == null) sendEvent(name: "notPresentCounter", value: 0, isStateChange: false)
@@ -191,11 +207,6 @@ void setBatteryReplacementDate(Date date = null) {
 // ─── Health monitoring ─────────────────────────────────────────────────────
 
 void checkHealth() {
-    if (state.lastMessageMillis == 0) {
-        logWarn("Health : Waiting for first message from device.")
-        return
-    }
-
     long millisElapsed = new Date().time - state.lastMessageMillis
     long timeoutMillis = (REPORT_INTERVAL_MINUTES * 2 + HEALTH_TIMEOUT_SLACK_MINUTES) * 60000L
     long secondsElapsed = millisElapsed / 1000
@@ -221,7 +232,7 @@ void checkHealth() {
     }
     logWarn("Health : Offline. Last message ${secondsElapsed} seconds ago.")
     logTrace("checkHealth() : elapsed=${millisElapsed}ms, timeout=${timeoutMillis}ms")
-    startRecovery()
+    tryAutoRecovery()
 }
 
 private void updateHealthStatus() {
@@ -243,7 +254,9 @@ private void updateHealthStatus() {
 
 // ─── Mesh recovery ─────────────────────────────────────────────────────────
 
-private void startRecovery() {
+private void tryAutoRecovery() {
+    // Automatic path from checkHealth() — respects the user's recoveryMode
+    // preference and won't double-start an already-active probe loop.
     String mode = recoveryMode ?: "Normal"
     if (mode == "Disabled" || state.recoveryActive) return
 
@@ -255,12 +268,28 @@ private void startRecovery() {
     runIn(intervalSeconds, "recoveryProbe")
 }
 
+void startRecovery() {
+    // Manual command — bypasses the Disabled-mode and recoveryActive guards
+    // so the user can kick a stuck sensor regardless of preference state.
+    unschedule("recoveryProbe")
+    int intervalSeconds = (recoveryMode ?: "Normal") == "Disabled" ? RECOVERY_PROBE_INTERVAL_SECONDS : recoveryIntervalForMode()
+    state.recoveryActive = true
+    logInfo("Recovery : Manual start (probing every ${intervalSeconds}s)")
+    rebindClusters()
+    sendZigbeeCommands(zigbee.readAttribute(0x0000, 0x0004))
+    runIn(intervalSeconds, "recoveryProbe")
+}
+
+void stopRecovery() {
+    unschedule("recoveryProbe")
+    state.recoveryActive = false
+    logInfo("Recovery : Stopped")
+}
+
 void recoveryProbe() {
-    if (device.currentValue("healthStatus") == "online") {
-        logDebug("Recovery : Device is present, stopping probes")
-        state.recoveryActive = false
-        return
-    }
+    // No early-exit check here — updateHealthStatus() unschedules this when a
+    // frame arrives. Using healthStatus as a stop signal is unreliable for
+    // devices that were silent at install (it stays at the seeded "online").
     logInfo("Recovery : Sending probe (readAttribute 0x0000/0x0004)")
     sendZigbeeCommands(zigbee.readAttribute(0x0000, 0x0004))
     runIn(recoveryIntervalForMode(), "recoveryProbe")
@@ -441,7 +470,7 @@ private void parseCheckin(Map map) {
         switch (dataTag) {
             case 0x01:
                 logTrace("$tagDebug (battery voltage)")
-                parseBattery(dataPayload, 1000, 2.8, 3.0)
+                parseBattery(dataPayload, 1000)
                 break
             case 0x03:
                 long chipTemp = parseCheckinInt(dataPayload, dataType)
@@ -700,39 +729,70 @@ private void parsePressure(String pressureFlippedHex, boolean checkin = false) {
     sendEvent(name: "pressureDirection", value: pressureDirection)
 }
 
-private void parseBattery(String batteryVoltageHex, int batteryVoltageDivisor, BigDecimal batteryVoltageScaleMin, BigDecimal batteryVoltageScaleMax) {
+@CompileStatic
+private static int batteryPctFromVoltage(double voltage, double[] curveV, double[] curvePct) {
+    int n = curveV.length
+    if (voltage <= curveV[0]) return 0
+    if (voltage >= curveV[n - 1]) return 100
+    for (int i = 1; i < n; i++) {
+        if (voltage <= curveV[i]) {
+            double vLo = curveV[i - 1]
+            double vHi = curveV[i]
+            double pLo = curvePct[i - 1]
+            double pHi = curvePct[i]
+            double pct = pLo + (voltage - vLo) * (pHi - pLo) / (vHi - vLo)
+            return (int) Math.round(pct)
+        }
+    }
+    return 100
+}
+
+private void parseBattery(String batteryVoltageHex, int batteryVoltageDivisor) {
     logTrace("batteryVoltageHex : ${batteryVoltageHex}")
 
     int rawMv = zigbee.convertHexToInt(batteryVoltageHex)
     logDebug("batteryVoltage raw value : ${rawMv}")
 
-    BigDecimal batteryVoltage = BigDecimal.valueOf(rawMv).divide(BigDecimal.valueOf(batteryVoltageDivisor), 2, RoundingMode.HALF_UP)
+    double voltage = ((double) rawMv) / batteryVoltageDivisor
+    BigDecimal voltageRounded = BigDecimal.valueOf(voltage).setScale(2, RoundingMode.HALF_UP)
+    sendEvent(name: "batteryVoltage", value: voltageRounded, unit: "V")
+    logDebug("batteryVoltage : ${voltageRounded}")
 
-    logDebug("batteryVoltage : ${batteryVoltage}")
-    sendEvent(name: "batteryVoltage", value: batteryVoltage, unit: "V")
-
-    if (batteryVoltage >= batteryVoltageScaleMin) {
-        BigDecimal batteryPercentage = ((batteryVoltage - batteryVoltageScaleMin) / (batteryVoltageScaleMax - batteryVoltageScaleMin)) * 100.0
-        batteryPercentage = batteryPercentage.setScale(0, RoundingMode.HALF_UP)
-        if (batteryPercentage > 100) batteryPercentage = 100
-        if (batteryPercentage < 0)   batteryPercentage = 0
-
-        if (batteryPercentage > 20) {
-            logInfo("Battery : $batteryPercentage% ($batteryVoltage V)")
-        } else {
-            logWarn("Battery : $batteryPercentage% ($batteryVoltage V)")
-        }
-
-        sendEvent(name: "battery", value: batteryPercentage, unit: "%")
-        state.batteryStatus = "discharging"
+    Double prevSmoothed = (state.smoothedBatteryVoltage instanceof Number) ?
+        ((Number) state.smoothedBatteryVoltage).doubleValue() : null
+    double smoothed
+    String emaAction
+    if (prevSmoothed == null) {
+        smoothed = voltage
+        emaAction = "init"
+    } else if (voltage - prevSmoothed >= constBatteryBigJumpV) {
+        smoothed = voltage
+        emaAction = "snap-up"
+        Date now = new Date()
+        setBatteryReplacementDate(now)
+        device.updateDataValue("batteryReplacementDetected",
+            "auto: V_prev=${String.format('%.2f', prevSmoothed)} → V_new=${String.format('%.2f', voltage)} @ ${now.format('yyyy-MM-dd HH:mm:ss zzz')}")
+        logInfo("Battery replacement detected: ${String.format('%.2f', prevSmoothed)}V → ${String.format('%.2f', voltage)}V")
+    } else if (voltage < prevSmoothed) {
+        smoothed = constBatteryEmaAlpha * voltage + (1.0d - constBatteryEmaAlpha) * prevSmoothed
+        emaAction = "down"
     } else {
-        // Very low voltages indicate an exhausted battery which requires replacement.
-
-        logWarn("Battery : Exhausted battery requires replacement.")
-        logWarn("Battery : 0% ($batteryVoltage V)")
-        sendEvent(name: "battery", value: 0, unit: "%")
-        state.batteryStatus = "exhausted"
+        smoothed = prevSmoothed
+        emaAction = "hold"
     }
+    state.smoothedBatteryVoltage = smoothed
+
+    int batteryPct = batteryPctFromVoltage(smoothed, constBatteryCurveV, constBatteryCurvePct)
+
+    String desc = "$batteryPct% (${voltageRounded}V, smoothed ${String.format('%.3f', smoothed)}V, EMA ${emaAction})"
+    if (batteryPct > 20) {
+        logInfo("Battery : ${desc}")
+    } else {
+        logWarn("Battery : ${desc}")
+    }
+
+    sendEvent(name: "battery", value: batteryPct, unit: "%")
+    state.batteryStatus = batteryPct > 0 ? "discharging" : "exhausted"
 }
 
 // ─── Zigbee command primitives ─────────────────────────────────────────────
