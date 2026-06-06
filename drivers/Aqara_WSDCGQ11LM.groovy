@@ -86,7 +86,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.math.RoundingMode
 
-@Field static final String DRIVER_VERSION = "2.14.0"
+@Field static final String DRIVER_VERSION = "2.14.1"
 
 @Field static final int REPORT_INTERVAL_MINUTES = 60
 @Field static final int CHECK_EVERY_MINUTES = 10
@@ -762,6 +762,10 @@ private String reverseHexString(String hexString) {
 @CompileStatic
 private String hexToText(String hex) {
     if (!hex) return ""
+    // Char-string attrs sometimes arrive already decoded (e.g. "lumi.weather")
+    // and other times as length-prefixed hex — return the input untouched if
+    // it isn't pure hex.
+    if (!(hex ==~ /[0-9a-fA-F]+/)) return hex
     StringBuilder out = new StringBuilder()
     for (int i = 0; i + 1 < hex.length(); i += 2) {
         int c = Integer.parseInt(hex.substring(i, i + 2), 16)
