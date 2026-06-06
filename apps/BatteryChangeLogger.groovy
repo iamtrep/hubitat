@@ -5,7 +5,7 @@ import groovy.transform.Field
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 
-@Field static final String app_version = "0.0.1"
+@Field static final String app_version = "0.0.2"
 
 // File name used by uploadHubFile / downloadHubFile for durable history storage.
 // The file survives app reinstall and can be inspected/downloaded from File Manager.
@@ -26,6 +26,7 @@ definition(
     description: "Monitors battery levels and logs replacements to app history and an on-hub JSON file",
     menu: "Apps", // new in platform 2.5.0
     category: "Utility",
+    singleThreaded: true,
     iconUrl: "",
     iconX2Url: ""
 )

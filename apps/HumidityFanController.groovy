@@ -86,7 +86,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Humidity-Based Fan Controller"
-@Field static final String APP_VERSION = "0.9.0"
+@Field static final String APP_VERSION = "0.9.1"
 
 // Humidity state machine states
 @Field static final String HUMIDITY_NORMAL = "NORMAL"
@@ -122,6 +122,7 @@ definition(
     menu: "Automations", // new in platform 2.5.0
     category: "Convenience",
     singleInstance: false,
+    singleThreaded: true,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/HumidityFanController.groovy",
     iconUrl: "",
     iconX2Url: "",

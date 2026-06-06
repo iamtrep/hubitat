@@ -54,7 +54,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Switch Monitor"
-@Field static final String APP_VERSION = "3.0.0"
+@Field static final String APP_VERSION = "3.0.1"
 
 @Field static final Integer DEFAULT_GRACE_MINUTES = 5
 @Field static final Integer DEFAULT_GRACE_SECONDS = 0
@@ -74,6 +74,7 @@ definition(
     menu: "Automations", // new in platform 2.5.0
     category: "Convenience",
     singleInstance: false,
+    singleThreaded: true,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/SwitchMonitor.groovy",
     iconUrl: "",
     iconX2Url: "",
