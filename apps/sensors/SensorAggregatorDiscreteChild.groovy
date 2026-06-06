@@ -14,6 +14,7 @@ definition(
     description: "Aggregate discrete sensor values (contact, motion, tilt, etc) and save to a single virtual device",
     menu: "Automations", // new in platform 2.5.0
     category: "Convenience",
+    singleThreaded: true,
     iconUrl: "",
     iconX2Url: "",
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/sensors/SensorAggregatorDiscreteChild.groovy"
@@ -27,7 +28,7 @@ import com.hubitat.app.ChildDeviceWrapper
 //import com.hubitat.hub.domain.Capability // only available from 2.4.3.148 onward
 import com.hubitat.hub.domain.Event
 
-@Field static final String child_app_version = "0.3.2"
+@Field static final String child_app_version = "0.3.4"
 
 @Field static final Map<String, String> CAPABILITY_ATTRIBUTES = [
     "capability.accelerationSensor"  : [ attribute: "acceleration", values: ["inactive", "active"], driver: "Virtual Acceleration Sensor" ],
@@ -172,8 +173,8 @@ void initialize() {
     if (state.aggregateValue == null) { state.aggregateValue = "" }
     if (state.createChild == null) { state.createChild = false }
     if (state.previousExcludedSensors == null) { state.previousExcludedSensors = [] }
-    if (atomicState.stuckState == null) { atomicState.stuckState = [:] }
-    if (atomicState.pendingSeq == null) { atomicState.pendingSeq = [:] }
+    if (state.stuckState == null) { state.stuckState = [:] }
+    if (state.pendingSeq == null) { state.pendingSeq = [:] }
 
     if (!outputSensor && state.createChild && !state.testingInProgress) {
         fetchChildDevice()
@@ -191,8 +192,8 @@ void initialize() {
                 String liveValue = sensor.currentValue(attributeName) as String
                 if (liveValue != null) seededStuck[sid] = liveValue
             }
-            atomicState.stuckState = seededStuck
-            atomicState.pendingSeq = [:]
+            state.stuckState = seededStuck
+            state.pendingSeq = [:]
 
             subscribe(inputSensors, attributeName, sensorEventHandler)
             logTrace "Subscribed to ${attributeName} events for ${inputSensors.collect { it.displayName}}."
@@ -239,8 +240,8 @@ void sensorEventHandler(Event evt=null) {
     // Defensive — these maps are normally seeded by initialize(), but a fresh code
     // push doesn't fire updated(), so we may receive events on an upgraded instance
     // before re-save. Idempotent.
-    if (atomicState.stuckState == null) atomicState.stuckState = [:]
-    if (atomicState.pendingSeq == null) atomicState.pendingSeq = [:]
+    if (state.stuckState == null) state.stuckState = [:]
+    if (state.pendingSeq == null) state.pendingSeq = [:]
 
     logTrace "sensorEventHandler() called: ${evt.name} ${evt.getDevice().getLabel()} ${evt.value} ${evt.descriptionText}"
 
@@ -253,19 +254,19 @@ void sensorEventHandler(Event evt=null) {
         return
     }
 
-    Map pending = (atomicState.pendingSeq as Map) ?: [:]
+    Map pending = (state.pendingSeq as Map) ?: [:]
     int seq = ((pending[sid] ?: 0) as int) + 1
-    atomicState.pendingSeq = pending + [(sid): seq]
+    state.pendingSeq = pending + [(sid): seq]
     runIn(seconds, "commitStuckState",
           [data: [sensorId: sid, seq: seq, value: newValue], overwrite: false])
     logDebug "Sticky scheduled: ${evt.getDevice().getLabel()} -> ${newValue} in ${seconds}s (seq ${seq})"
 }
 
 void commitStuckState(Map data) {
-    if (atomicState.pendingSeq == null) atomicState.pendingSeq = [:]
-    if (atomicState.stuckState == null) atomicState.stuckState = [:]
+    if (state.pendingSeq == null) state.pendingSeq = [:]
+    if (state.stuckState == null) state.stuckState = [:]
     String sid = data.sensorId as String
-    Integer expectedSeq = (atomicState.pendingSeq as Map)?.get(sid) as Integer
+    Integer expectedSeq = (state.pendingSeq as Map)?.get(sid) as Integer
     if (expectedSeq == null || (data.seq as int) != expectedSeq) {
         logTrace "Stale sticky commit ignored: sensor ${sid} seq ${data.seq} (current ${expectedSeq})"
         return
@@ -274,12 +275,12 @@ void commitStuckState(Map data) {
 }
 
 private void commitState(String sid, String newValue) {
-    Map<String, String> current = ((atomicState.stuckState ?: [:]) as Map<String, String>)
+    Map<String, String> current = ((state.stuckState ?: [:]) as Map<String, String>)
     if (current[sid] == newValue) {
         logTrace "Sticky commit no-op: sensor ${sid} already ${newValue}"
         return
     }
-    atomicState.stuckState = current + [(sid): newValue]
+    state.stuckState = current + [(sid): newValue]
     logDebug "Sticky committed: sensor ${sid} -> ${newValue}"
     publishAggregate()
 }
@@ -313,7 +314,7 @@ private int effectiveStaysSeconds(sensor) {
 }
 
 private String stuckValueFor(DeviceWrapper sensor, String attributeName) {
-    String stuck = atomicState.stuckState?.get(sensor.id as String)
+    String stuck = state.stuckState?.get(sensor.id as String)
     return stuck != null ? stuck : (sensor.currentValue(attributeName) as String)
 }
 
@@ -824,8 +825,8 @@ void configureForTest(Map config) {
         }
     }
     if (config.clearStuckState) {
-        atomicState.stuckState = [:]
-        atomicState.pendingSeq = [:]
+        state.stuckState = [:]
+        state.pendingSeq = [:]
     }
     if (config.containsKey('excludeAfter')) {
         app.updateSetting("excludeAfter", [type: "number", value: config.excludeAfter])
@@ -860,13 +861,9 @@ void setTestInputSensors(List<Integer> openIndices) {
         return
     }
 
-    // Set all to closed first. Pace events apart — real-world sensor activity is
-    // never sub-millisecond, and bunching events triggers concurrent handler races
-    // (multiple commitState calls reading the same atomicState snapshot).
     devices.each { it.close(); pauseExecution(150) }
     pauseExecution(400)
 
-    // Open specified sensors (same pacing).
     openIndices.each { index ->
         if (index >= 0 && index < devices.size()) {
             devices[index].open()
@@ -1116,8 +1113,8 @@ private void prepareStickyTest(int defaultSeconds, Map<Integer,Integer> override
     pauseExecution(300)
 
     // Clear sticky internal state and overrides
-    atomicState.stuckState = [:]
-    atomicState.pendingSeq = [:]
+    state.stuckState = [:]
+    state.pendingSeq = [:]
     for (int i = 1; i <= 5; i++) {
         ChildDeviceWrapper d = getTestSensor(i)
         if (d) app.removeSetting("staysOverride_${d.id}")
@@ -1273,13 +1270,13 @@ void test_Stays_RemovedSensorIsPruned() {
 
     // Verify the stuck entry exists pre-prune
     state.testsTotal++
-    if ((atomicState.stuckState as Map)?.containsKey(s1id)) {
+    if ((state.stuckState as Map)?.containsKey(s1id)) {
         state.testsPassed++
         logInfo "✓ PASS: ${testName} - precondition: s1 in stuckState"
     } else {
         state.testsFailed++
         state.failedTests = state.failedTests + ["${testName} - precondition"]
-        logError "✗ FAIL: ${testName} - s1 (${s1id}) missing from stuckState: ${atomicState.stuckState}"
+        logError "✗ FAIL: ${testName} - s1 (${s1id}) missing from stuckState: ${state.stuckState}"
     }
 
     // Drop sensor 1 from inputSensors and re-init
@@ -1295,15 +1292,15 @@ void test_Stays_RemovedSensorIsPruned() {
 
     // Verify pruning
     state.testsTotal++
-    boolean stuckPruned = !((atomicState.stuckState as Map)?.containsKey(s1id))
-    boolean seqPruned = !((atomicState.pendingSeq as Map)?.containsKey(s1id))
+    boolean stuckPruned = !((state.stuckState as Map)?.containsKey(s1id))
+    boolean seqPruned = !((state.pendingSeq as Map)?.containsKey(s1id))
     if (stuckPruned && seqPruned) {
         state.testsPassed++
         logInfo "✓ PASS: ${testName} - s1 pruned from stuckState and pendingSeq"
     } else {
         state.testsFailed++
         state.failedTests = state.failedTests + [testName]
-        logError "✗ FAIL: ${testName} - prune failed (stuck=${stuckPruned}, seq=${seqPruned}, stuckState=${atomicState.stuckState}, pendingSeq=${atomicState.pendingSeq})"
+        logError "✗ FAIL: ${testName} - prune failed (stuck=${stuckPruned}, seq=${seqPruned}, stuckState=${state.stuckState}, pendingSeq=${state.pendingSeq})"
     }
 
     // Restore all 5 sensors for subsequent tests
@@ -1328,7 +1325,7 @@ void test_Stays_ExcludeAfterStillWins() {
     pauseExecution(300)
     fireSensor(1, "open")
     pauseExecution(3000)
-    // Sensor 1 is "stuck open" in atomicState.stuckState BUT excludeAfter=0 drops it from aggregation
+    // Sensor 1 is "stuck open" in state.stuckState BUT excludeAfter=0 drops it from aggregation
     // computeAggregateSensorValue returns false (no sensors included), aggregate value unchanged from prep ("closed")
     assertAggregateValue("closed", testName)
     // Restore for subsequent tests
