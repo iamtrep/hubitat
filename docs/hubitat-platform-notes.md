@@ -26,7 +26,7 @@ Three sandbox-safe ways to look at an object's surface, picked by what you need.
 
 ## Platform behavior
 
-- `sendEvent()` automatically deduplicates: if the value hasn't changed and `isStateChange` is not set to `true`, the event is filtered out (not fired)
+- `sendEvent()` automatically deduplicates: if the value hasn't changed and `isStateChange` is not set to `true`, the event is filtered out of event history and the *default* subscriber path. But: (a) `device.lastActivity` updates on every `sendEvent()` call regardless of dedup, and (b) subscribers that pass `filterEvents: false` to `subscribe()` receive every call including dedup'd ones. So dedup is a UI/default-subscriber convenience, not a "device didn't communicate" signal. **In drivers, just call `sendEvent` on every device report — don't suppress driver-side, and don't override with `isStateChange: true`.** Suppression hides the call from `filterEvents:false` subscribers; forcing `isStateChange:true` removes default subscribers' opt-in to dedup. Apply any value smoothing to the *value* being emitted, not to whether the event fires.
 - `state` object is committed to the database when the method exits (not on each write). `atomicState` commits immediately on each write.
 - In-place mutation of state values (e.g., `state.list << item`) may go undetected and not persist — always use explicit reassignment (`state.list = modifiedList`) to ensure the change is tracked.
 - **Code push does NOT trigger `updated()`**: pushing new source code takes effect immediately (Groovy is interpreted), but does NOT call `updated()`/`initialize()`. Subscriptions and `state` from the old code persist. Must re-save app preferences to trigger a clean re-init.
