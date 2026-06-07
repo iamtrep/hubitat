@@ -125,7 +125,7 @@ Map bridgePage(Map params) {
     dynamicPage(name: "bridgePage", title: isNew ? "New Bridge" : "Edit Bridge", install: false, uninstall: false, nextPage: "mainPage") {
         section("Bridge Settings") {
             input name: "bLabel", type: "text", title: "Bridge name", required: true,
-                description: "e.g., maison, chalet, local"
+                description: "e.g., home, lab, cottage"
             input name: "bHubAddress", type: "text", title: "Hub IP address (leave blank for local hub)",
                 required: false, description: "e.g., 192.0.2.10"
         }

@@ -86,7 +86,7 @@ metadata {
 // resolution, and a cell parked near a knot boundary alternates between two grid steps
 // based on instantaneous load / temperature). α=0.30 converges in ~5 reports.
 // Big-jump threshold 0.15V is the natural boundary between one-grid-step dither (0.1V)
-// and a genuine 2+ grid step move; validated against the maison fleet — zero false snaps
+// and a genuine 2+ grid step move; validated empirically — zero false snaps
 // across 14 devices over ~28 days.
 @Field static final double constBatteryEmaAlpha = 0.30d
 @Field static final double constBatteryBigJumpV = 0.15d
