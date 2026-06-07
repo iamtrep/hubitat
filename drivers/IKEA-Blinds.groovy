@@ -2,9 +2,13 @@
  *
  *  IKEA Window Blind driver for Hubitat Elevation
  *
- *  Inspired from driver found here:
- *    https://github.com/a4refillpad/hubitat-IKEA-window-blinds/blob/master/IKEA-window-blind-driver-code
- *    code copyright Wayne Man
+ *  Originally inspired by a4refillpad's IKEA Window Blinds driver
+ *  (Wayne Man, Apache-2.0):
+ *    https://github.com/a4refillpad/hubitat-IKEA-window-blinds
+ *
+ *  Copyright (c) Wayne Man — original
+ *  Copyright (c) 2025-2026 PJ (iamtrep) — modifications and additions
+ *  SPDX-License-Identifier: Apache-2.0
  *
  *	Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *	in compliance with the License. You may obtain a copy of the License at:
@@ -22,7 +26,7 @@ import groovy.transform.Field
 import hubitat.zigbee.zcl.DataType
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.0.3"
+@Field static final String CODE_VERSION = "0.0.4"
 
 metadata {
     definition(
@@ -62,7 +66,7 @@ metadata {
         input name: "closedThreshold", type: "number", defaultValue: 3, range: "0..5", title: "Shade Closed Threshold",
             description: "Threshold beyond which shade is considered closed (%)"
 
-        input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: false
+        input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
         input name: "debugEnable", type: "bool", title: "Enable debug logging info", defaultValue: false, required: true, submitOnChange: true
         if (debugEnable) {
             input name: "traceEnable", type: "bool", title: "Enable trace logging info (for development purposes)", defaultValue: false
@@ -116,8 +120,9 @@ void refresh() {
 }
 
 void updated() {
-	unschedule()
-	if (debugEnable || traceEnable) runIn(1800,"logsOff")
+    unschedule()
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
+    configure()
 }
 
 void deviceTypeUpdated() {
@@ -130,7 +135,7 @@ void open() {
     sendZigbeeCommands(zigbee.command(WINDOW_COVERING_CLUSTER, WC_OPEN_COMMAND))
 }
 
-List<String> on() {
+void on() {
     open()
 }
 
@@ -196,9 +201,10 @@ List<String> updateFirmware() {
 
 void parse(String description) {
 
-    // Auto-Configure device: configure() was not called for this driver version
+    // Auto-Configure device after a code push: configure() will reset state.codeVersion.
+    // runInMillis is overwrite-by-default, so a burst of parse() calls collapses to one
+    // deferred configure once traffic settles.
     if (state.codeVersion != CODE_VERSION) {
-        state.codeVersion = CODE_VERSION
         runInMillis 1500, 'autoConfigure'
     }
 
@@ -284,51 +290,52 @@ private void parseAttributeReport(Map descMap){
 
 private void handleLiftPositionEvent(Map descMap) {
     int currentLevel = 100 - zigbee.convertHexToInt(descMap.value)
-    int lastLevel = (device.currentValue("level") ?: 0) as int
+    Integer lastLevel = device.currentValue("level") as Integer
+    boolean moved = (lastLevel != null && lastLevel != currentLevel)
 
-    logDebug "handleLiftPositionEvent - currentLevel: ${currentLevel} lastLevel: ${lastLevel}"
-
-    if (lastLevel == "undefined" || lastLevel == null || currentLevel == lastLevel) {
-        runIn(3, "updateFinalState", [overwrite: true])
-        return
-    }
+    logDebug "handleLiftPositionEvent - currentLevel: ${currentLevel} lastLevel: ${lastLevel} moved: ${moved}"
 
     updateDeviceAttribute(name: "level", value: currentLevel)
     updateDeviceAttribute(name: "position", value: currentLevel)
 
-    if (currentLevel > openThreshold) {
+    if (currentLevel >= openThreshold) {
         updateDeviceAttribute(name: "windowShade", value: "open")
         updateDeviceAttribute(name: "switch", value: "on")
-    } else if (currentLevel < closedThreshold) {
+    } else if (currentLevel <= closedThreshold) {
         updateDeviceAttribute(name: "windowShade", value: "closed")
         updateDeviceAttribute(name: "switch", value: "off")
-    } else {
+    } else if (moved) {
         String direction = (lastLevel < currentLevel) ? "opening" : "closing"
         updateDeviceAttribute(name: "windowShade", value: direction)
     }
 
-    runIn(5, "refresh")
+    if (moved) {
+        runIn(5, "refresh")
+    } else {
+        // settle windowShade to "partially open" once movement has stopped mid-range
+        runIn(3, "updateFinalState", [overwrite: true])
+    }
 }
 
 private void updateFinalState() {
-    int level = device.currentValue("level") as int
+    Integer level = device.currentValue("level") as Integer
     logDebug "updateFinalState: ${level}"
 
     // windowShade - ENUM ["opening", "partially open", "closed", "open", "closing", "unknown"]
 
-    if (level == "unknown") {
-        // TODO
+    if (level == null) {
         logWarn "Shade level unknown"
-    } else if (level > openThreshold) {
-        // open
+        updateDeviceAttribute(name: "windowShade", value: "unknown")
+        return
+    }
+
+    if (level >= openThreshold) {
         updateDeviceAttribute(name: "windowShade", value: "open")
         updateDeviceAttribute(name: "switch", value: "on")
-    } else if (level < closedThreshold) {
-        // closed
+    } else if (level <= closedThreshold) {
         updateDeviceAttribute(name: "windowShade", value: "closed")
         updateDeviceAttribute(name: "switch", value: "off")
     } else {
-        // partially open
         updateDeviceAttribute(name: "windowShade", value: "partially open")
         updateDeviceAttribute(name: "switch", value: "off")
     }
@@ -401,10 +408,9 @@ private double roundToDecimalPlaces(double decimalNumber, int decimalPlaces = 2)
 
 private void sendZigbeeCommands(List<String> cmds) {
     if (cmds.empty) return
-    List<String> send = delayBetween(cmds.findAll { !it.startsWith('delay') }, 1000)
-    logTrace "Sending Zigbee messages ➡️ device: ${send}"
+    logTrace "Sending Zigbee messages ➡️ device: ${cmds}"
     state.lastTx = now()
-    sendHubCommand(new hubitat.device.HubMultiAction(send, hubitat.device.Protocol.ZIGBEE))
+    sendHubCommand(new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE))
 }
 
 // Logging helpers
