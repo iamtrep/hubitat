@@ -7,13 +7,13 @@ SPDX-License-Identifier: MIT
 
 A Hubitat Elevation app that taps the hub's live `/logsocket` WebSocket stream and routes matching log entries to one or more output actions. Supports connections to multiple hubs simultaneously through child bridge devices, and an arbitrary set of independently-configured filters layered over those bridges.
 
-The parent app (`Log Monitor`) is `singleInstance: true` and orchestrates everything. Each WebSocket connection is owned by a child `Log Monitor Bridge` device — purely a transport, no filtering. Filtering, deduplication, rate-limiting, and output dispatch all happen in the parent.
+The parent app (`Log Monitor`) orchestrates everything. Each WebSocket connection is owned by a child `Log Monitor Bridge` device — purely a transport, no filtering. Filtering, deduplication, rate-limiting, and output dispatch all happen in the parent.
 
 ## Features
 
 ### Bridges (WebSocket sources)
 - Up to **5 bridges**, each connecting to one hub's `/logsocket`
-- Local hub uses `127.0.0.1:8080` (no hub-security credentials needed); remote hubs connect to `ws://{ip}/logsocket` on port 80
+- Local hub uses `127.0.0.1:8080`, remote hubs connect to `ws://{ip}/logsocket` on port 80
 - Auto-reconnect with exponential backoff (5 → 60s cap), configurable ping interval, intentional-disconnect handling
 - 60-second cold-start delay when hub uptime is below 60s, so the connection isn't initiated before the platform's WebSocket stack is ready
 - HTML entities arriving from remote hubs (often double-encoded over port 80) are unescaped at the bridge
@@ -47,7 +47,7 @@ Each filter tracks an `eventsMatched` running counter (visible on the filter edi
 ## Requirements
 
 - **Hubitat platform 2.5.0 or newer** — the app uses the `menu: "Apps"` definition field added in 2.5.0
-- **Per-bridge IP and port** — local bridge needs no preference (loopback); remote bridges connect over port 80 (no hub-security credentials used)
+- **Per-bridge IP and port** — local bridge needs no preference (loopback); remote bridges connect over port 80
 
 No external devices are required to run the parent app — the default install creates one local bridge automatically.
 
