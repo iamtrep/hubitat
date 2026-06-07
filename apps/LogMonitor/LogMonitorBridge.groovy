@@ -14,7 +14,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String DRIVER_VERSION = "1.0.1"
+@Field static final String CODE_VERSION = "1.0.1"
 @Field static final int STARTUP_DELAY_SECS = 60
 @Field static final AtomicInteger LOGS_RECEIVED = new AtomicInteger()
 
@@ -58,7 +58,7 @@ metadata {
 
 void installed() {
     logDebug "installed()"
-    state.codeVersion = DRIVER_VERSION
+    state.codeVersion = CODE_VERSION
     initialize()
 }
 

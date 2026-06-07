@@ -26,7 +26,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String APP_VERSION = "1.0.0"
+@Field static final String CODE_VERSION = "1.0.0"
 @Field static final String VISIBLAIR_API = "https://api.visiblair.com:11000/api/v1"
 @Field static final int HTTP_TIMEOUT = 15
 @Field static final String DNI_PREFIX = "visiblair-"
@@ -84,7 +84,7 @@ Map mainPage() {
 
 void installed() {
     logDebug "installed"
-    state.version = APP_VERSION
+    state.version = CODE_VERSION
     updated()
 }
 

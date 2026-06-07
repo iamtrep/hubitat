@@ -78,12 +78,12 @@ The standard lifecycle methods (`installed`, `updated`, `uninstalled`, `initiali
 Because pushing source code does not trigger `updated()`, code-aware reconfigure is up to the file itself. The idiom: declare a version constant, and on every entry into a known-reachable lifecycle path, compare it against `state.version` and run any necessary reconfigure.
 
 ```groovy
-@Field static final String DRIVER_VERSION = "1.2.0"
+@Field static final String CODE_VERSION = "1.2.0"
 
 void initialize() {
-    if (state.version != DRIVER_VERSION) {
-        log.warn "New version: ${DRIVER_VERSION} (was: ${state.version})"
-        state.version = DRIVER_VERSION
+    if (state.version != CODE_VERSION) {
+        log.warn "New version: ${CODE_VERSION} (was: ${state.version})"
+        state.version = CODE_VERSION
         // run reconfigure if needed
     }
     ...
@@ -250,10 +250,7 @@ If a new route would be a pure passthrough, do not add it. Fold it into an aggre
 
 ### App and UI version sync
 
-When a Groovy app is paired with a UI artifact (single-page app, dashboard tile, file-manager HTML), the two are version-coupled by design. Any change that alters the API/UI contract or UI behavior must:
-
-- bump the app's `APP_VERSION` constant
-- bump the UI's `UI_VERSION` constant
+When a Groovy app is paired with a UI artifact (single-page app, dashboard tile, file-manager HTML), the two are version-coupled by design. Any change that alters the API/UI contract or UI behavior must bump **both** `CODE_VERSION` constants — the Groovy one and the HTML one — in lockstep.
 
 ### Settings migration
 

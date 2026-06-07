@@ -23,7 +23,7 @@ definition(
 import groovy.transform.Field
 import com.hubitat.hub.domain.Event
 
-@Field static final String APP_VERSION = "0.1.1"
+@Field static final String CODE_VERSION = "0.1.1"
 
 @Field static final Map<String, String> FUSION_MODES = [
     "pirOnly"              : "PIR Only",
@@ -95,7 +95,7 @@ Map mainPage() {
         }
         section("Logging") {
             input name: "logLevel", type: "enum", options: ["warn", "info", "debug"], title: "Log level", defaultValue: "info", required: true
-            paragraph "<small>Motion Fusion v${APP_VERSION}</small>"
+            paragraph "<small>Motion Fusion v${CODE_VERSION}</small>"
         }
     }
 }

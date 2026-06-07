@@ -21,7 +21,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import hubitat.helper.HexUtils
 
-@Field static final String DRIVER_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.0"
 
 @Field static final String CLUSTER_MGMT_LQI_REQ = "0031"
 @Field static final String CLUSTER_MGMT_RTG_REQ = "0032"

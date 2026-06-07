@@ -62,8 +62,8 @@ of its own peer entries pointing at its co-located Hub Diagnostics instance, so 
 
 3. **The SPA self-syncs.** On install and on every save, the app downloads the matching
    `multi_hub_inventory_ui.html` from GitHub into File Manager — you don't normally upload it by
-   hand. The download is version-gated: only HTML whose `UI_VERSION` matches the app's `APP_VERSION`
-   is stored, and the config page warns on a mismatch. If you're running an unpublished local build
+   hand. The download is version-gated: only HTML whose `CODE_VERSION` matches the app's is stored,
+   and the config page warns on a mismatch. If you're running an unpublished local build
    (or the hub is offline), upload the HTML to File Manager manually under that exact filename.
 
 4. **Install the app** (Apps → Add User App → Multi-Hub Inventory). Once installed, the

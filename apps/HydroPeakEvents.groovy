@@ -12,7 +12,7 @@ import groovy.json.JsonOutput
 import java.text.SimpleDateFormat
 
 @Field static final String APP_NAME = "Hydro-Québec Peak Period Manager"
-@Field static final String APP_VERSION = "0.2.0"
+@Field static final String CODE_VERSION = "0.2.0"
 
 definition(
     name: APP_NAME,
@@ -100,7 +100,7 @@ Map mainPage() {
             input "enableDebug", "bool", title: "Enable debug logging", defaultValue: true
         }
         section("") {
-            paragraph "<small>${APP_NAME} v${APP_VERSION}</small>"
+            paragraph "<small>${APP_NAME} v${CODE_VERSION}</small>"
         }
     }
 }

@@ -15,8 +15,8 @@ follow when contributing or adapting the code.
 
 - **Statically typed Groovy** — declare concrete types, avoid `def`; the more involved
   apps/drivers use `@CompileStatic` where the platform allows it.
-- **A single version constant** per app/driver (e.g. `APP_VERSION` / `DRIVER_VERSION`),
-  bumped with every functional change.
+- **A single version constant** per source file — `@Field static final String CODE_VERSION = "x.y.z"` for
+  Groovy, `const CODE_VERSION = "x.y.z"` for companion HTML/JS — bumped with every functional change.
 - **One convergence point:** `installed()` and `updated()` both delegate to `initialize()`
   so configuration and subscriptions are wired up in exactly one place.
 - **Three-bool logging discipline** — `txtEnable` / `debugEnable` / `traceEnable` gate
@@ -53,7 +53,7 @@ Some apps in this repo aren't automations — they're **dashboards**: a Groovy a
 
 - The HTML lives in the hub's File Manager; the Groovy serves it via `downloadHubFile()` from a `mappings` route (`path('/ui.html') { action: [GET: 'serveUI'] }`) behind an OAuth check.
 - `serveUI()` substitutes `${access_token}` and `${api_base}` placeholders into the HTML so the page can call its own `/api/*` endpoints **same-origin** (browsers can't reach another hub directly — see [`ARCHITECTURE.md`](ARCHITECTURE.md) "Cross-origin (CORS)…").
-- **Two-part deploy:** push the Groovy *and* upload the HTML to File Manager — pushing only the Groovy leaves the UI stale. Keep `APP_VERSION` (Groovy) and `UI_VERSION` (HTML) in lockstep.
+- **Two-part deploy:** push the Groovy *and* upload the HTML to File Manager — pushing only the Groovy leaves the UI stale. Keep both files' `CODE_VERSION` constants in lockstep.
 - Develop hub-free behind a `WORKBENCH = true` toggle + mock data, and unit-test the pure SPA helpers in Node (Mode 3 — see [`TESTING.md`](TESTING.md) §2.1).
 
 **Display conventions (these are the difference between a demo and a usable tool)**

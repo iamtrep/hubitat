@@ -30,7 +30,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String APP_VERSION = "0.1.4"
+@Field static final String CODE_VERSION = "0.1.4"
 
 // Region-specific Ayla endpoints + app credentials, lifted from
 // ayla-iot-unofficial/src/ayla_iot_unofficial/const.py and fujitsu_consts.py.
@@ -140,14 +140,14 @@ Map loginPage() {
 
 // --- Lifecycle ---
 
-void installed()   { logDebug "installed"; state.version = APP_VERSION; initialize() }
+void installed()   { logDebug "installed"; state.version = CODE_VERSION; initialize() }
 void updated()     { logDebug "updated"; unsubscribe(); unschedule(); initialize() }
 void uninstalled() { logDebug "uninstalled" }
 void initialize()  {
     logDebug "initialize"
-    if (state.version != APP_VERSION) {
-        logWarn "new version: ${APP_VERSION} (was: ${state.version})"
-        state.version = APP_VERSION
+    if (state.version != CODE_VERSION) {
+        logWarn "new version: ${CODE_VERSION} (was: ${state.version})"
+        state.version = CODE_VERSION
     }
     if (isAuthenticated()) {
         scheduleTokenRefresh()

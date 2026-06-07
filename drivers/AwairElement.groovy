@@ -56,7 +56,7 @@ metadata {
     }
 }
 
-@Field static final String driver_version = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.0"
 @Field static final String constLocalPathToAirData = "/air-data/latest"
 @Field static final String constLocalPathToConfig = "/settings/config/data"
 
@@ -64,7 +64,7 @@ metadata {
 void installed() {
     logDebug "installed..."
     resetAttributes()
-    state.version = driver_version
+    state.version = CODE_VERSION
     runIn(2, "poll")
 }
 
@@ -99,10 +99,10 @@ void uninstalled() {
 }
 
 private void initState() {
-    if (state.version != driver_version) {
-        logWarn "New driver version detected: ${driver_version} (previous: ${state.version})"
+    if (state.version != CODE_VERSION) {
+        logWarn "New driver version detected: ${CODE_VERSION} (previous: ${state.version})"
         unschedule("poll")
-        state.version = driver_version
+        state.version = CODE_VERSION
     }
     if (state.pm25readings == null) state.pm25readings = []
 }

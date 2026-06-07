@@ -4,7 +4,7 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String APP_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.0"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
 
 definition(
@@ -118,7 +118,7 @@ Map mainPage() {
             }
         }
         section("") {
-            paragraph "Version ${APP_VERSION}"
+            paragraph "Version ${CODE_VERSION}"
         }
     }
 }
@@ -877,9 +877,9 @@ void uninstalled() {
 
 void initialize() {
     logDebug "initialize()"
-    if (state.version != APP_VERSION) {
-        logWarn "New version: ${APP_VERSION} (was: ${state.version})"
-        state.version = APP_VERSION
+    if (state.version != CODE_VERSION) {
+        logWarn "New version: ${CODE_VERSION} (was: ${state.version})"
+        state.version = CODE_VERSION
     }
 }
 

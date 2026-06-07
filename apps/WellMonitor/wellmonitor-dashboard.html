@@ -263,7 +263,7 @@ SPDX-License-Identifier: MIT
 
     const ACCESS_TOKEN = '${access_token}';
     const BASE_URL = window.location.pathname.replace(/\/dashboard\/?$/, '');
-    const UI_VERSION = '0.11.2';
+    const CODE_VERSION = '0.11.2';
 
     // Latest /api/version probe (latestVersion + updateAvailable). Cached so the version
     // badge can be re-rendered from /api/status updates without re-hitting /api/version.
@@ -957,7 +957,7 @@ SPDX-License-Identifier: MIT
 
         renderVersionBadge();
 
-        if (status.appVersion && status.appVersion !== UI_VERSION) {
+        if (status.appVersion && status.appVersion !== CODE_VERSION) {
             const main = document.querySelector('main');
             if (!document.getElementById('versionMismatchBanner')) {
                 const banner = document.createElement('div');
@@ -969,7 +969,7 @@ SPDX-License-Identifier: MIT
                 banner.style.flexWrap = 'wrap';
                 const msg = document.createElement('span');
                 msg.style.flex = '1';
-                msg.textContent = 'App/UI version mismatch (app ' + status.appVersion + ', UI ' + UI_VERSION + '). The dashboard UI is out of date.';
+                msg.textContent = 'App/UI version mismatch (app ' + status.appVersion + ', UI ' + CODE_VERSION + '). The dashboard UI is out of date.';
                 const btn = document.createElement('button');
                 btn.className = 'btn btn-sm';
                 btn.textContent = 'Sync UI from GitHub';

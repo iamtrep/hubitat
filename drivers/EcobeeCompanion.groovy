@@ -96,7 +96,7 @@ metadata {
     }
 }
 
-@Field static final String DRIVER_VERSION = "0.0.6"
+@Field static final String CODE_VERSION = "0.0.6"
 
 // OAuth and API endpoints
 @Field static final String ECOBEE_API_BASE= "https://api.ecobee.com"
@@ -169,9 +169,9 @@ void refresh() {
 }
 
 private void checkVersion() {
-    if (state.version != DRIVER_VERSION) {
-        logWarn "New version: ${DRIVER_VERSION} (was: ${state.version})"
-        state.version = DRIVER_VERSION
+    if (state.version != CODE_VERSION) {
+        logWarn "New version: ${CODE_VERSION} (was: ${state.version})"
+        state.version = CODE_VERSION
     }
 }
 

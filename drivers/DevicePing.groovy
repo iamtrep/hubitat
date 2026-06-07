@@ -55,7 +55,7 @@ import hubitat.helper.NetworkUtils
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String driver_version = "0.0.6"
+@Field static final String CODE_VERSION = "0.0.6"
 @Field static final int RESPONSE_HISTORY_SIZE = 21
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int INITIAL_PING_DELAY = 2
@@ -88,10 +88,10 @@ void initialize() {
 }
 
 private void initState() {
-    if (state.version != driver_version) {
-        log.warn("New driver version detected: ${driver_version} (previous: ${state.version})")
+    if (state.version != CODE_VERSION) {
+        log.warn("New driver version detected: ${CODE_VERSION} (previous: ${state.version})")
         unschedule("ping")
-        state.version = driver_version
+        state.version = CODE_VERSION
     }
     if (state.currentRetryCount == null) state.currentRetryCount = 0
     if (state.retryThreshold == null) state.retryThreshold = settings.retryThreshold ?: DEFAULT_RETRY_THRESHOLD

@@ -121,7 +121,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const UI_VERSION = "0.6.3";
+const CODE_VERSION = "0.6.3";
 const APP_VERSION = '${app_version}';   // injected by serveUI; stays literal in workbench/dev
 
 // ===== Z-WAVE MANUFACTURER TABLE (decimal maker-id -> name, from zwave-js) =====
@@ -440,9 +440,9 @@ async function boot(){
   // Version chip — App (Groovy code, injected by serveUI) vs UI (this SPA); warns on mismatch.
   const appVer = (APP_VERSION && APP_VERSION[0] !== '$') ? APP_VERSION : null;
   let verTxt, verStyle = linkStyle;
-  if (!appVer)                   verTxt = 'UI v' + UI_VERSION;                              // workbench/dev: app version not injected
-  else if (appVer === UI_VERSION) verTxt = 'v' + UI_VERSION;
-  else { verTxt = '⚠️ App v' + appVer + ' / UI v' + UI_VERSION; verStyle = 'color:#ffd24a;opacity:1;font-size:12px;white-space:nowrap'; }
+  if (!appVer)                   verTxt = 'UI v' + CODE_VERSION;                              // workbench/dev: app version not injected
+  else if (appVer === CODE_VERSION) verTxt = 'v' + CODE_VERSION;
+  else { verTxt = '⚠️ App v' + appVer + ' / UI v' + CODE_VERSION; verStyle = 'color:#ffd24a;opacity:1;font-size:12px;white-space:nowrap'; }
   linksEl.insertAdjacentHTML('beforeend',
     `<span style="${verStyle}" title="App version (Groovy code) vs UI version (this dashboard)">${esc(verTxt)}</span>`);
   renderAll();

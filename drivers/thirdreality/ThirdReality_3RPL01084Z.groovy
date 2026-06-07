@@ -16,7 +16,7 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String constDriverVersion = "0.2.6"
+@Field static final String CODE_VERSION = "0.2.6"
 
 // Custom cluster for radar config and TVOC
 @Field static final int CLUSTER_RADAR = 0x042E
@@ -149,7 +149,7 @@ metadata {
 
 void installed() {
     logDebug "installed()"
-    state.codeVersion = constDriverVersion
+    state.codeVersion = CODE_VERSION
     updated()
 }
 
@@ -236,7 +236,7 @@ private List<String> buildPreferenceWrites() {
 void configure() {
     logTrace "configure()"
 
-    state.codeVersion = constDriverVersion
+    state.codeVersion = CODE_VERSION
 
     List<String> cmds = []
 
@@ -281,8 +281,8 @@ void refresh() {
 // Parse
 
 void parse(String description) {
-    if (state.codeVersion != constDriverVersion) {
-        state.codeVersion = constDriverVersion
+    if (state.codeVersion != CODE_VERSION) {
+        state.codeVersion = CODE_VERSION
         runInMillis(1500, "autoConfigure")
     }
 

@@ -22,7 +22,7 @@ import groovy.transform.Field
 import hubitat.zigbee.zcl.DataType
 import com.hubitat.hub.domain.Event
 
-@Field static final String version = "0.0.3"
+@Field static final String CODE_VERSION = "0.0.3"
 
 metadata {
     definition(
@@ -90,7 +90,7 @@ void configure() {
     state.clear()
     state.lastTx = 0
     state.lastRx = 0
-    state.codeVersion = version
+    state.codeVersion = CODE_VERSION
     state.batteryDivisor = 1.0
     if (getDataValue("softwareBuild") > "23079631") {
         state.batteryDivisor = 2.0
@@ -197,8 +197,8 @@ List<String> updateFirmware() {
 void parse(String description) {
 
     // Auto-Configure device: configure() was not called for this driver version
-    if (state.codeVersion != version) {
-        state.codeVersion = version
+    if (state.codeVersion != CODE_VERSION) {
+        state.codeVersion = CODE_VERSION
         runInMillis 1500, 'autoConfigure'
     }
 

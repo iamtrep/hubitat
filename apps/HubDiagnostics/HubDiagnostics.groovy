@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_VERSION = "5.67.0"
+@Field static final String CODE_VERSION = "5.67.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -420,9 +420,9 @@ Map dashboardPage() {
 
     dynamicPage(name: "dashboardPage", title: "Hub Diagnostics", install: true, uninstall: true) {
         String uiVer = getUIVersion()
-        boolean appUpdateNeeded = isNewer(uiVer, APP_VERSION)
+        boolean appUpdateNeeded = isNewer(uiVer, CODE_VERSION)
         String remoteVersion = checkGithubVersion()
-        boolean githubUpdateAvailable = remoteVersion && isNewer(remoteVersion, APP_VERSION)
+        boolean githubUpdateAvailable = remoteVersion && isNewer(remoteVersion, CODE_VERSION)
 
         String hubFw = getHubFirmwareVersion()
         boolean firmwareUnsupported = hubFw && !isVersionAtLeast(hubFw, MIN_FW_SUPPORTED)
@@ -434,12 +434,12 @@ Map dashboardPage() {
             if (githubUpdateAvailable) {
                 String editorPath = getAppEditorPath()
                 String importLink = editorPath ? "<a href='${editorPath}' target='_blank'>Open Apps Code</a> and use Import to update." : "Update via Apps Code using Import."
-                paragraph "<span style='color:orange; font-weight:bold;'>\u26A0 New version available:</span> v${remoteVersion} (you have v${APP_VERSION}). ${importLink}"
+                paragraph "<span style='color:orange; font-weight:bold;'>\u26A0 New version available:</span> v${remoteVersion} (you have v${CODE_VERSION}). ${importLink}"
             }
             if (appUpdateNeeded) {
-                paragraph "<span style='color:red; font-weight:bold;'>\u26A0 Update Recommended:</span> A newer UI version (${uiVer}) is active than this App code (${APP_VERSION}). Please update the Groovy App Code in Hubitat."
+                paragraph "<span style='color:red; font-weight:bold;'>\u26A0 Update Recommended:</span> A newer UI version (${uiVer}) is active than this App code (${CODE_VERSION}). Please update the Groovy App Code in Hubitat."
             }
-            paragraph "<b>App Version:</b> ${APP_VERSION}\n<b>UI Version:</b> ${uiVer}\n<b>Hub Firmware:</b> ${hubFw ?: 'Unknown'}"
+            paragraph "<b>App Version:</b> ${CODE_VERSION}\n<b>UI Version:</b> ${uiVer}\n<b>Hub Firmware:</b> ${hubFw ?: 'Unknown'}"
             if (!githubUpdateAvailable) {
                 String editorPath = getAppEditorPath()
                 if (editorPath) {
@@ -603,7 +603,7 @@ void githubVersionCallback(resp, data) {
     }
     try {
         String text = resp.data ?: ""
-        java.util.regex.Matcher m = text =~ /APP_VERSION\s*=\s*"([^"]+)"/
+        java.util.regex.Matcher m = text =~ /CODE_VERSION\s*=\s*"([^"]+)"/
         if (m.find()) {
             state.lastGithubVersion = m.group(1)
             state.lastGithubVersionCheck = now()
@@ -626,16 +626,16 @@ Map apiSyncUI() {
 Map apiReinit() {
     logInfo "Reinitialize requested via API (running updated())"
     updated()
-    return jsonResponse([success: true, version: APP_VERSION])
+    return jsonResponse([success: true, version: CODE_VERSION])
 }
 
 Map apiVersionCheck() {
     String latestVersion = checkGithubVersion()
     if (!latestVersion) return jsonResponse([error: "Unable to check for updates"])
 
-    boolean updateAvailable = isNewer(latestVersion, APP_VERSION)
+    boolean updateAvailable = isNewer(latestVersion, CODE_VERSION)
     return jsonResponse([
-        currentVersion: APP_VERSION,
+        currentVersion: CODE_VERSION,
         latestVersion: latestVersion,
         updateAvailable: updateAvailable,
         editorPath: getAppEditorPath()
@@ -650,7 +650,7 @@ private void refreshUpdateLabel() {
         String current = (app.getLabel() ?: "") as String
         String base = stripUpdateBadge(current)
         String remote = state.lastGithubVersion as String
-        boolean outdated = remote && isNewer(remote, APP_VERSION)
+        boolean outdated = remote && isNewer(remote, CODE_VERSION)
         String desired = outdated ? (base + UPDATE_AVAILABLE_BADGE) : base
         if (current != desired) {
             app.updateLabel(desired)
@@ -710,7 +710,7 @@ String getUIVersion() {
         byte[] htmlBytes = downloadHubFile('hub_diagnostics_ui.html')
         if (htmlBytes) {
             String html = new String(htmlBytes, 'UTF-8')
-            java.util.regex.Matcher m = (html =~ /const UI_VERSION = "([^"]+)"/)
+            java.util.regex.Matcher m = (html =~ /const CODE_VERSION = "([^"]+)"/)
             if (m.find()) {
                 String ver = m.group(1)
                 uiVersionCache = ver
@@ -1137,7 +1137,7 @@ Map getDashboardData(Map shared = [:]) {
     Float temperature    = (shared.temperature as Float)    ?: fetchTemperature()
     Integer databaseSize = (shared.databaseSize as Integer) ?: fetchDatabaseSize()
     return [
-        hub: buildHubMap(hubInfo, hub), appVersion: APP_VERSION, uiVersion: getUIVersion(),
+        hub: buildHubMap(hubInfo, hub), appVersion: CODE_VERSION, uiVersion: getUIVersion(),
         devices: [
             total: deviceStats.totalDevices, active: deviceStats.activeDevices,
             inactive: deviceStats.inactiveDevices, disabled: deviceStats.disabledDevices,
@@ -4773,7 +4773,7 @@ private boolean checkOAuth() {
 
 // Async UI sync — used by scheduled job and lifecycle paths. Fire-and-forget.
 void syncUI(boolean force = false) {
-    if (!force && state.lastInstalledVersion == APP_VERSION) {
+    if (!force && state.lastInstalledVersion == CODE_VERSION) {
         long lastCheck = state.lastUIUpdateCheck ?: 0
         if (now() - lastCheck < 86400000) return
     }
@@ -4809,16 +4809,16 @@ private boolean processSyncUIResponse(String htmlText) {
         logWarn "Sync failed: Downloaded content appears invalid"
         return false
     }
-    if (!htmlText.contains("const UI_VERSION = \"${APP_VERSION}\"")) {
-        logWarn "Sync failed: GitHub UI version does not match App v${APP_VERSION}"
+    if (!htmlText.contains("const CODE_VERSION = \"${CODE_VERSION}\"")) {
+        logWarn "Sync failed: GitHub UI version does not match App v${CODE_VERSION}"
         return false
     }
     byte[] htmlBytes = htmlText.getBytes("UTF-8")
     uploadHubFile("hub_diagnostics_ui.html", htmlBytes)
-    state.lastInstalledVersion = APP_VERSION
+    state.lastInstalledVersion = CODE_VERSION
     state.lastUIUpdateCheck = now()
-    uiVersionCache = APP_VERSION
-    logInfo "UI updated from GitHub to match App v${APP_VERSION} (${htmlBytes.length} bytes)"
+    uiVersionCache = CODE_VERSION
+    logInfo "UI updated from GitHub to match App v${CODE_VERSION} (${htmlBytes.length} bytes)"
     return true
 }
 
@@ -4939,6 +4939,6 @@ void migrateStorageIfNeeded() {
 
     state.storageSchemaVersion = STORAGE_SCHEMA_VERSION
     if (migratedLegacyState) {
-        logInfo "Migrated legacy comparison state to file-backed storage for v${APP_VERSION}"
+        logInfo "Migrated legacy comparison state to file-backed storage for v${CODE_VERSION}"
     }
 }

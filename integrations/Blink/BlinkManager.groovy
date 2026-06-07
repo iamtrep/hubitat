@@ -35,7 +35,7 @@ definition(
 
 // --- Constants ---
 
-@Field static final String APP_VERSION = "1.0.0"
+@Field static final String CODE_VERSION = "1.0.0"
 
 @Field static final String OAUTH_BASE_URL = "https://api.oauth.blink.com"
 @Field static final String CLIENT_ID = "ios"
@@ -236,7 +236,7 @@ Map loginPage() {
 
 void installed() {
     logDebug "installed"
-    state.version = APP_VERSION
+    state.version = CODE_VERSION
     initialize()
 }
 
@@ -259,9 +259,9 @@ void uninstalled() {
 
 void initialize() {
     logDebug "initialize"
-    if (state.version != APP_VERSION) {
-        logWarn "version change: ${state.version} -> ${APP_VERSION}"
-        state.version = APP_VERSION
+    if (state.version != CODE_VERSION) {
+        logWarn "version change: ${state.version} -> ${CODE_VERSION}"
+        state.version = CODE_VERSION
     }
     subscribe(location, "systemStart", "systemStartHandler")
     if (!isAuthenticated()) {

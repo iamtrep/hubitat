@@ -64,7 +64,7 @@ The flow meter sits *downstream* of the pressure tank, so it measures household 
 
 ### Dashboard Auto-Sync
 - On first install and on every "Done" save, the app fetches its dashboard HTML from GitHub and writes it to File Manager — no manual upload step required
-- Validates the downloaded file (must contain the app name AND a matching `UI_VERSION`) before overwriting the local copy
+- Validates the downloaded file (must contain the app name AND a `CODE_VERSION` matching the app's) before overwriting the local copy
 - Daily scheduled re-check at 03:17 local for slow drift catch-up
 - Emergency recovery: if `/dashboard` is requested and the local file is missing, a blocking GitHub fetch is attempted before failing
 
@@ -166,7 +166,7 @@ The app exposes the following endpoints via OAuth-secured mappings. The access t
 | `/api/cycles` | application/json | Cycle history (100 entries) with derived tank usage |
 | `/api/flow` | application/json | Flow history (100 entries) |
 | `/api/stats` | application/json | All-time + recent stats, daily summaries, hourly distribution, 24h/7d windows |
-| `/api/version` | application/json | Installed APP_VERSION, latest version on GitHub, updateAvailable flag |
+| `/api/version` | application/json | Installed `CODE_VERSION`, latest version on GitHub, updateAvailable flag |
 | `/csv/cycles` | text/csv | Full pump cycle CSV file |
 | `/csv/flow` | text/csv | Full flow event CSV file |
 

@@ -31,7 +31,7 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String version = "0.0.6"
+@Field static final String CODE_VERSION = "0.0.6"
 
 
 metadata {
@@ -140,7 +140,7 @@ void deviceTypeUpdated() {
 void configure() {
     logTrace("configure()")
 
-    state.codeVersion = version
+    state.codeVersion = CODE_VERSION
     state.debugMode = debugMode
 
     try {

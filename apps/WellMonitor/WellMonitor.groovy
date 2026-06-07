@@ -17,7 +17,7 @@ import com.hubitat.hub.domain.Event
 import java.nio.file.AccessDeniedException
 
 @Field static final String APP_NAME = "Well Monitor"
-@Field static final String APP_VERSION = "0.11.2"
+@Field static final String CODE_VERSION = "0.11.2"
 @Field static final String DASHBOARD_FILE = "wellmonitor-dashboard.html"
 @Field static final String CHARTJS_FILE = "wellpump-chart.min.js"
 
@@ -231,7 +231,7 @@ Map mainPage() {
         }
 
         section("") {
-            paragraph "<small>${APP_NAME} v${APP_VERSION}</small>"
+            paragraph "<small>${APP_NAME} v${CODE_VERSION}</small>"
         }
     }
 }
@@ -334,9 +334,9 @@ void updated() {
 void initialize() {
     logDebug("Initializing...")
 
-    if (state.version != APP_VERSION) {
-        log.warn "${APP_NAME}: version ${APP_VERSION} (was: ${state.version})"
-        state.version = APP_VERSION
+    if (state.version != CODE_VERSION) {
+        log.warn "${APP_NAME}: version ${CODE_VERSION} (was: ${state.version})"
+        state.version = CODE_VERSION
         // Version-aware reconfigure hook: add per-version migrations here when needed.
     }
 
@@ -1232,7 +1232,7 @@ Map getStatusJson() {
         flowTrackingEnabled: enableFlowTracking != false,
         hubName: hub?.name,
         hubFirmware: hub?.firmwareVersionString,
-        appVersion: APP_VERSION,
+        appVersion: CODE_VERSION,
         uiVersion: getUIVersion(),
         timestamp: now()
     ]
@@ -1341,7 +1341,7 @@ private void appendToCsvLog(long timestamp, BigDecimal durationSeconds, BigDecim
 
 // ==================== GitHub version probe ====================
 
-// Returns the last-known GitHub APP_VERSION immediately (stale-while-revalidate).
+// Returns the last-known GitHub CODE_VERSION immediately (stale-while-revalidate).
 // Fires an async refresh if the cache is older than 1 hour.
 String checkGithubVersion() {
     long lastCheck = (state.lastGithubVersionCheck ?: 0L) as long
@@ -1360,7 +1360,7 @@ void githubVersionCallback(resp, data) {
     }
     try {
         String text = resp.data ?: ""
-        java.util.regex.Matcher m = (text =~ /APP_VERSION\s*=\s*"([^"]+)"/)
+        java.util.regex.Matcher m = (text =~ /CODE_VERSION\s*=\s*"([^"]+)"/)
         if (m.find()) {
             state.lastGithubVersion = m.group(1)
             state.lastGithubVersionCheck = now()
@@ -1370,7 +1370,7 @@ void githubVersionCallback(resp, data) {
     }
 }
 
-// Reads UI_VERSION from the dashboard HTML in File Manager. Not cached — direct uploads
+// Reads CODE_VERSION from the dashboard HTML in File Manager. Not cached — direct uploads
 // (filemanager skill, manual UI upload) bypass any invalidation hook we could install,
 // so a cache would go stale silently. /api/status polling is infrequent enough that the
 // re-read cost is invisible.
@@ -1379,7 +1379,7 @@ String getUIVersion() {
         byte[] bytes = downloadHubFile(DASHBOARD_FILE)
         if (bytes) {
             String html = new String(bytes, "UTF-8")
-            java.util.regex.Matcher m = (html =~ /const UI_VERSION = '([^']+)'/)
+            java.util.regex.Matcher m = (html =~ /const CODE_VERSION = '([^']+)'/)
             if (m.find()) return m.group(1)
         }
     } catch (Exception e) {
@@ -1406,20 +1406,20 @@ boolean isNewerVersion(String v1, String v2) {
 Map getVersionJson() {
     String latest = checkGithubVersion()
     Map payload = [
-        currentVersion: APP_VERSION,
+        currentVersion: CODE_VERSION,
         latestVersion: latest,
-        updateAvailable: latest ? isNewerVersion(latest, APP_VERSION) : false,
+        updateAvailable: latest ? isNewerVersion(latest, CODE_VERSION) : false,
         lastChecked: (state.lastGithubVersionCheck ?: 0L) as long
     ]
     return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson(payload))
 }
 
 // Manual UI sync trigger — SPA "Check for updates" button POSTs here. Wraps the existing
-// blocking pull (validates UI_VERSION == APP_VERSION before writing).
+// blocking pull (validates HTML CODE_VERSION matches the app's, before writing).
 Map apiSyncUI() {
     logInfo("Manual UI sync requested via /api/ui/sync")
     boolean success = syncUIBlocking()
-    Map payload = [success: success, version: APP_VERSION]
+    Map payload = [success: success, version: CODE_VERSION]
     return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson(payload))
 }
 
@@ -1428,7 +1428,7 @@ Map apiSyncUI() {
 // Async UI sync — used by lifecycle paths (installed/updated → runIn(1, 'syncUIForced')) and the
 // daily off-peak schedule. Fire-and-forget; the callback validates content before writing.
 void syncUI(boolean force = false) {
-    if (!force && state.lastInstalledVersion == APP_VERSION) {
+    if (!force && state.lastInstalledVersion == CODE_VERSION) {
         long lastCheck = (state.lastUIUpdateCheck ?: 0L) as long
         if (now() - lastCheck < 86400000L) return
     }
@@ -1469,16 +1469,16 @@ private boolean syncUIBlocking() {
     }
 }
 
-// Validates downloaded HTML — must look like our dashboard AND carry a UI_VERSION matching
-// this app's APP_VERSION — before writing to File Manager. Prevents loading a partial body
+// Validates downloaded HTML — must look like our dashboard AND carry a CODE_VERSION matching
+// this app's CODE_VERSION — before writing to File Manager. Prevents loading a partial body
 // or an in-progress GitHub commit where APP and UI haven't been bumped together yet.
 private boolean processSyncUIResponse(String htmlText) {
     if (!htmlText || !htmlText.contains(APP_NAME)) {
         logWarn("UI sync rejected: downloaded content does not look like the ${APP_NAME} dashboard")
         return false
     }
-    if (!htmlText.contains("const UI_VERSION = '${APP_VERSION}'")) {
-        logWarn("UI sync rejected: GitHub UI version does not match App v${APP_VERSION}")
+    if (!htmlText.contains("const CODE_VERSION = '${CODE_VERSION}'")) {
+        logWarn("UI sync rejected: GitHub UI version does not match App v${CODE_VERSION}")
         return false
     }
     try {
@@ -1487,9 +1487,9 @@ private boolean processSyncUIResponse(String htmlText) {
         logWarn("UI sync upload failed: ${e.message}")
         return false
     }
-    state.lastInstalledVersion = APP_VERSION
+    state.lastInstalledVersion = CODE_VERSION
     state.lastUIUpdateCheck = now()
-    logInfo("Dashboard UI updated from GitHub to match App v${APP_VERSION} (${htmlText.length()} bytes)")
+    logInfo("Dashboard UI updated from GitHub to match App v${CODE_VERSION} (${htmlText.length()} bytes)")
     return true
 }
 

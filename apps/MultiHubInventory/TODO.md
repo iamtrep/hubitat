@@ -23,9 +23,9 @@ MHI renders the `integration` column + a `connectionType` (CONN_DISPLAY) column,
 - **SPA self-sync** — `installed()`/`updated()` trigger a version-change download of
   `multi_hub_inventory_ui.html` from GitHub into File Manager (mirrors Hub Diagnostics' `syncUI`), so
   the dashboard HTML no longer has to be uploaded by hand; `serveUI` emergency-syncs if it's missing.
-- **Version lockstep guard** — `processSyncUIResponse` refuses a GitHub UI whose `UI_VERSION` !=
-  `APP_VERSION`, and the config page shows App vs UI version + warns on mismatch. (MHI previously
-  lacked the guard Hub Diagnostics has — which is how the versions drifted.)
+- **Version lockstep guard** — `processSyncUIResponse` refuses a GitHub UI whose `CODE_VERSION`
+  doesn't match the app's, and the config page shows App vs UI version + warns on mismatch. (MHI
+  previously lacked the guard Hub Diagnostics has — which is how the versions drifted.)
 - **Self-peer loopback** — `initialize()` detects a peer pointing at this hub's own `localIP` and
   routes its server-side calls via `127.0.0.1:8080` (browser device links keep the real IP).
 - **Reachability probe** — `probePeers()` (runIn off `initialize`) hits each peer's `audit/status`

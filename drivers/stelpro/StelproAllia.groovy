@@ -33,7 +33,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import groovy.json.JsonOutput
 
-@Field static final String constDriverVersion = "0.0.7"
+@Field static final String CODE_VERSION = "0.0.7"
 
 metadata {
     definition (name: "Stelpro Allia Zigbee Thermostat",
@@ -116,7 +116,7 @@ void installed() {
 
 void initialize() {
     logInfo('initialize()')
-    if (state.driverVersion != constDriverVersion) {
+    if (state.driverVersion != CODE_VERSION) {
         logWarn "New/different driver installed since last configure()"
     }
     refresh()
@@ -138,7 +138,7 @@ void deviceTypeUpdated() {
 
 void configure(){
     logWarn "configure..."
-    state.driverVersion = constDriverVersion
+    state.driverVersion = CODE_VERSION
 
     unschedule()
     runIn(1800,debugLogsOff)
@@ -386,8 +386,8 @@ void setOutdoorTemperature(BigDecimal preciseDegrees) {
 // Zigbee message parsing
 
 void parse(String description) {
-    if (state.driverVersion != constDriverVersion) {
-        state.driverVersion = constDriverVersion
+    if (state.driverVersion != CODE_VERSION) {
+        state.driverVersion = CODE_VERSION
         runInMillis 1500, 'autoConfigure'
     }
 

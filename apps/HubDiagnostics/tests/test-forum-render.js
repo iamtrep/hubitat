@@ -28,7 +28,7 @@ assert(CD, 'CD const not found');
 const THRESHOLDS = (src.match(/const ZWAVE_PER_CRIT=[^;]+;/) || [])[0];
 assert(THRESHOLDS, 'threshold consts not found');
 const harness =
-  'const UI_VERSION="5.58.0";\n' +
+  'const CODE_VERSION="5.58.0";\n' +
   'let TH={temperatureScale:"C",critMemMb:75,warnMemMb:100,warnCpuLoad:4,critCpuLoad:8,warnTempC:50,critTempC:60,chattyDeviceThreshold:10};\n' +
   THRESHOLDS + '\n' + CD + '\n' + HELPERS.map(extractFn).join('\n') +
   '\nconst Obf = makeObf();' +

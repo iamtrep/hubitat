@@ -4,7 +4,7 @@
  */
 import groovy.transform.Field
 
-@Field static final String APP_VERSION = "0.6.3"
+@Field static final String CODE_VERSION = "0.6.3"
 @Field static final String UI_FILE = "multi_hub_inventory_ui.html"
 @Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/MultiHubInventory.groovy"
 @Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/multi_hub_inventory_ui.html"
@@ -41,7 +41,7 @@ mappings {
 // ===== CONFIG PAGE =====
 def mainPage() {
     if (state.peerIds == null) state.peerIds = [1]
-    dynamicPage(name: "mainPage", title: "Multi-Hub Inventory v${APP_VERSION}", install: true, uninstall: true) {
+    dynamicPage(name: "mainPage", title: "Multi-Hub Inventory v${CODE_VERSION}", install: true, uninstall: true) {
         section("Hubs") {
             paragraph "For each hub running Hub Diagnostics, paste its API base URL with the access token, e.g.<br><code>http://192.168.0.10/apps/api/247/api/?access_token=abcd…</code><br>(the <code>/api/</code> path, not the <code>ui.html</code> link). Include this hub as a peer too, pointing at its own Hub Diagnostics."
             (state.peerIds as List).each { Integer p ->
@@ -68,13 +68,13 @@ def mainPage() {
         section {
             String uiVer = getUIVersion()
             String latest = checkGithubVersion()
-            if (uiVer != "Unknown" && uiVer != APP_VERSION) {
-                paragraph "⚠️ <b>Version mismatch:</b> dashboard HTML is v${uiVer} but the app is v${APP_VERSION}. It auto-syncs from GitHub on save; if this persists, re-open the app or upload the HTML to File Manager manually."
+            if (uiVer != "Unknown" && uiVer != CODE_VERSION) {
+                paragraph "⚠️ <b>Version mismatch:</b> dashboard HTML is v${uiVer} but the app is v${CODE_VERSION}. It auto-syncs from GitHub on save; if this persists, re-open the app or upload the HTML to File Manager manually."
             } else {
-                paragraph "<small>App v${APP_VERSION} · Dashboard UI v${uiVer}</small>"
+                paragraph "<small>App v${CODE_VERSION} · Dashboard UI v${uiVer}</small>"
             }
-            if (isNewer(latest, APP_VERSION)) {
-                paragraph "🔄 <b>Update available:</b> v${latest} on GitHub (you have v${APP_VERSION}). Use <b>Import</b> on the Apps Code page to update."
+            if (isNewer(latest, CODE_VERSION)) {
+                paragraph "🔄 <b>Update available:</b> v${latest} on GitHub (you have v${CODE_VERSION}). Use <b>Import</b> on the Apps Code page to update."
             }
         }
     }
@@ -215,7 +215,7 @@ private void logDebug(String m) { log.debug "MultiHubInventory: ${m}" }
 void syncUIForced() { syncUI(true) }
 
 void syncUI(boolean force = false) {
-    if (!force && state.lastInstalledUIVersion == APP_VERSION && (now() - (state.lastUISyncCheck ?: 0) < 86400000)) return
+    if (!force && state.lastInstalledUIVersion == CODE_VERSION && (now() - (state.lastUISyncCheck ?: 0) < 86400000)) return
     logInfo "Syncing dashboard UI from GitHub (async)..."
     asynchttpGet('syncUICallback', [uri: IMPORT_URL_WEB, contentType: "text/plain", timeout: 30])
 }
@@ -239,30 +239,30 @@ private boolean syncUIBlocking() {
     }
 }
 
-// Validate the download (right app + UI_VERSION matches APP_VERSION) before storing it. The version
-// gate is the lockstep guard: a GitHub UI whose UI_VERSION != APP_VERSION is refused, so File Manager
-// never holds a SPA that mismatches the installed app.
+// Validate the download (right app + HTML CODE_VERSION matches this app's) before storing it. The
+// version gate is the lockstep guard: a GitHub UI whose CODE_VERSION mismatches the app is refused,
+// so File Manager never holds a SPA that mismatches the installed app.
 private boolean processSyncUIResponse(String html) {
     if (!html || !html.contains("Multi-Hub Inventory")) { logWarn "UI sync: downloaded content looks invalid"; return false }
-    if (!html.contains("const UI_VERSION = \"${APP_VERSION}\"")) {
-        logWarn "UI sync: GitHub UI version does not match app v${APP_VERSION} — not storing"
+    if (!html.contains("const CODE_VERSION = \"${CODE_VERSION}\"")) {
+        logWarn "UI sync: GitHub UI version does not match app v${CODE_VERSION} — not storing"
         return false
     }
     uploadHubFile(UI_FILE, html.getBytes("UTF-8"))
-    state.lastInstalledUIVersion = APP_VERSION
+    state.lastInstalledUIVersion = CODE_VERSION
     state.lastUISyncCheck = now()
-    uiVersionCache = APP_VERSION
-    logInfo "Dashboard UI synced from GitHub to v${APP_VERSION}"
+    uiVersionCache = CODE_VERSION
+    logInfo "Dashboard UI synced from GitHub to v${CODE_VERSION}"
     return true
 }
 
-// UI_VERSION embedded in the File Manager copy — for display + drift detection on the config page.
+// CODE_VERSION embedded in the File Manager copy — for display + drift detection on the config page.
 private String getUIVersion() {
     if (uiVersionCache) return uiVersionCache
     try {
         byte[] bytes = downloadHubFile(UI_FILE)
         if (bytes) {
-            java.util.regex.Matcher m = (new String(bytes, 'UTF-8') =~ /const UI_VERSION = "([^"]+)"/)
+            java.util.regex.Matcher m = (new String(bytes, 'UTF-8') =~ /const CODE_VERSION = "([^"]+)"/)
             if (m.find()) { uiVersionCache = m.group(1); return uiVersionCache }
         }
     } catch (Exception e) { logDebug "Error reading UI version: ${e.message}" }
@@ -270,7 +270,7 @@ private String getUIVersion() {
 }
 
 // Stale-while-revalidate GitHub version check: returns the last-known latest version immediately and
-// kicks off an async refresh at most hourly. The config page compares it against APP_VERSION.
+// kicks off an async refresh at most hourly. The config page compares it against CODE_VERSION.
 String checkGithubVersion() {
     if (now() - (state.lastGithubVersionCheck ?: 0) >= 3600000 && !githubVersionRefreshPending) {
         githubVersionRefreshPending = true
@@ -284,7 +284,7 @@ void githubVersionCallback(resp, data) {
     githubVersionRefreshPending = false
     if (resp.hasError() || resp.status != 200) { logDebug "GitHub version check failed: HTTP ${resp?.status}"; return }
     try {
-        java.util.regex.Matcher m = ((resp.data?.toString() ?: '') =~ /APP_VERSION = "([^"]+)"/)
+        java.util.regex.Matcher m = ((resp.data?.toString() ?: '') =~ /CODE_VERSION = "([^"]+)"/)
         if (m.find()) { state.lastGithubVersion = m.group(1); refreshUpdateLabel() }
     } catch (Exception e) { logDebug "GitHub version parse failed: ${e.message}" }
 }
@@ -297,7 +297,7 @@ private void refreshUpdateLabel() {
         String current = (app.getLabel() ?: "") as String
         String base = stripUpdateBadge(current)
         String remote = state.lastGithubVersion as String
-        boolean outdated = remote && isNewer(remote, APP_VERSION)
+        boolean outdated = remote && isNewer(remote, CODE_VERSION)
         String desired = outdated ? (base + UPDATE_AVAILABLE_BADGE) : base
         if (current != desired) {
             app.updateLabel(desired)
@@ -358,7 +358,7 @@ Map apiReinit() {
     if (!checkOAuth()) return render(status: 403, contentType: 'text/plain', data: 'OAuth not enabled')
     logInfo "Reinitialize requested via API (running updated())"
     updated()
-    return jsonResponse([success: true, version: APP_VERSION])
+    return jsonResponse([success: true, version: CODE_VERSION])
 }
 
 // GET /api/peers — labels + index + reachability. NEVER returns tokens.
@@ -411,7 +411,7 @@ Map serveUI() {
         String html = new String(bytes, 'UTF-8')
             .replace('${access_token}', state.accessToken)
             .replace('${api_base}', fullLocalApiServerUrl)
-            .replace('${app_version}', APP_VERSION)
+            .replace('${app_version}', CODE_VERSION)
         return render(status: 200, contentType: 'text/html', data: html)
     } catch (Exception e) {
         logError "serveUI: ${e.message}"

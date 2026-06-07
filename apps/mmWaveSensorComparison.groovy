@@ -4,7 +4,7 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String APP_VERSION = "0.2.2"
+@Field static final String CODE_VERSION = "0.2.2"
 
 // Attributes (beyond the universal "motion") that some presence sensors expose.
 // Subscribed opportunistically per device and surfaced as extra context.
@@ -74,9 +74,9 @@ void initialize() {
 }
 
 private void checkVersion() {
-    if (state.version != APP_VERSION) {
-        logInfo "version ${state.version} -> ${APP_VERSION}"
-        state.version = APP_VERSION
+    if (state.version != CODE_VERSION) {
+        logInfo "version ${state.version} -> ${CODE_VERSION}"
+        state.version = CODE_VERSION
     }
 }
 
@@ -370,7 +370,7 @@ private void resetStats() {
 // ─── UI ─────────────────────────────────────────────────────────────────────
 
 Map mainPage() {
-    dynamicPage(name: "mainPage", title: "mmWave Sensor Comparison v${APP_VERSION}", install: true, uninstall: true) {
+    dynamicPage(name: "mainPage", title: "mmWave Sensor Comparison v${CODE_VERSION}", install: true, uninstall: true) {
         section("App Name", hideable: true, hidden: true) {
             label title: "Set App Label", required: false
         }

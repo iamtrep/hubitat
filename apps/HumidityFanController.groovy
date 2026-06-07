@@ -86,7 +86,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Humidity-Based Fan Controller"
-@Field static final String APP_VERSION = "0.9.1"
+@Field static final String CODE_VERSION = "0.9.1"
 
 // Humidity state machine states
 @Field static final String HUMIDITY_NORMAL = "NORMAL"
@@ -208,7 +208,7 @@ Map mainPage() {
         }
 
         section("") {
-            paragraph "<small>${APP_NAME} v${APP_VERSION}</small>"
+            paragraph "<small>${APP_NAME} v${CODE_VERSION}</small>"
         }
     }
 }

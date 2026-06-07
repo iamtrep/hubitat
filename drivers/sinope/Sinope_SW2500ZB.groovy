@@ -14,7 +14,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String constDriverVersion = "0.0.18"
+@Field static final String CODE_VERSION = "0.0.18"
 
 metadata {
     definition(
@@ -172,7 +172,7 @@ void deviceTypeUpdated() {
 void configure() {
     logTrace("configure()")
 
-    state.codeVersion = constDriverVersion
+    state.codeVersion = CODE_VERSION
     state.remove('energyDelivered')
 
     try
@@ -348,8 +348,8 @@ void setOffLedIntensity(Integer intensity) {
 // Device Event Parsing
 
 void parse(String description) {
-    if (state.codeVersion != constDriverVersion) {
-        state.codeVersion = constDriverVersion
+    if (state.codeVersion != CODE_VERSION) {
+        state.codeVersion = CODE_VERSION
         runInMillis 1500, 'autoConfigure'
     }
 

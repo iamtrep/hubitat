@@ -88,7 +88,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.math.RoundingMode
 
-@Field static final String DRIVER_VERSION = "2.15.0"
+@Field static final String CODE_VERSION = "2.15.0"
 
 @Field static final int REPORT_INTERVAL_MINUTES = 60
 @Field static final int CHECK_EVERY_MINUTES = 10
@@ -146,7 +146,7 @@ void initialize() {
     int randomSixty = RANDOM.nextInt(60)
     schedule("${randomSixty} 0/${CHECK_EVERY_MINUTES} * * * ? *", "checkHealth")
 
-    updateDataValue("driver", DRIVER_VERSION)
+    updateDataValue("driver", CODE_VERSION)
     sendEvent(name: "numberOfButtons", value: 1, isStateChange: false)
 
     state.remove("reconfigurePending")
@@ -181,7 +181,7 @@ void configure() {
 void runVersionReconfigure() {
     // runInMillis target — lets parse() return immediately so the reconfigure
     // runs on a fresh dispatch instead of inside the inbound frame's handler.
-    logWarn "Driver upgraded from ${getDeviceDataByName('driver')} to ${DRIVER_VERSION}, reconfiguring."
+    logWarn "Driver upgraded from ${getDeviceDataByName('driver')} to ${CODE_VERSION}, reconfiguring."
     initialize()
 }
 
@@ -390,7 +390,7 @@ private void runVersionCheck() {
     // Auto-reconfigure after a publishCode push (which doesn't fire updated()
     // on the receiving hub). Guarded so a burst of frames only schedules once.
     if (state.reconfigurePending) return
-    if (getDeviceDataByName('driver') != DRIVER_VERSION) {
+    if (getDeviceDataByName('driver') != CODE_VERSION) {
         state.reconfigurePending = true
         runInMillis(100, "runVersionReconfigure")
     }

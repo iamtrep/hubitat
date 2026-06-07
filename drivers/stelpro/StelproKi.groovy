@@ -34,7 +34,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String constCodeVersion = "0.1.3"
+@Field static final String CODE_VERSION = "0.1.3"
 
 metadata {
     definition (
@@ -132,7 +132,7 @@ void configure() {
     state.lastTx = 0
     state.lastRx = 0
     state.lastOperatingStateRequest = 0
-    state.codeVersion = constCodeVersion
+    state.codeVersion = CODE_VERSION
 
     // automatically turn off debug logs after 30 minutes
     //runIn(1800,logsOff, [overwrite: true, misfire: "ignore"])
@@ -325,8 +325,8 @@ void setThermostatMode(String value) {
 // Event parsing
 
 void parse(String description) {
-    if (state.codeVersion != constCodeVersion) {
-        state.codeVersion = constCodeVersion
+    if (state.codeVersion != CODE_VERSION) {
+        state.codeVersion = CODE_VERSION
         runInMillis 1500, 'autoConfigure'
     }
 

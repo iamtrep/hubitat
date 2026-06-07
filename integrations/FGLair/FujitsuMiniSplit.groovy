@@ -65,20 +65,20 @@ metadata {
     }
 }
 
-@Field static final String DRIVER_VERSION = "0.1.2"
+@Field static final String CODE_VERSION = "0.1.2"
 
 @Field static final List<String> SUPPORTED_STD_MODES = ["\"off\"", "\"heat\"", "\"cool\"", "\"auto\""]
 @Field static final List<String> SUPPORTED_STD_FAN_MODES = ["\"auto\""]
 @Field static final List<String> FUJITSU_MODES = ["off","heat","cool","auto","dry","fan_only"]
 @Field static final List<String> FUJITSU_FAN_SPEEDS = ["auto","quiet","low","medium","high"]
 
-void installed() { logDebug "installed"; state.version = DRIVER_VERSION; initialize() }
+void installed() { logDebug "installed"; state.version = CODE_VERSION; initialize() }
 void updated()   { logDebug "updated"; unschedule(); initialize() }
 void initialize() {
     logDebug "initialize"
-    if (state.version != DRIVER_VERSION) {
-        logWarn "new version: ${DRIVER_VERSION} (was: ${state.version})"
-        state.version = DRIVER_VERSION
+    if (state.version != CODE_VERSION) {
+        logWarn "new version: ${CODE_VERSION} (was: ${state.version})"
+        state.version = CODE_VERSION
     }
     sendEvent(name: "supportedThermostatModes",    value: SUPPORTED_STD_MODES)
     sendEvent(name: "supportedThermostatFanModes", value: SUPPORTED_STD_FAN_MODES)

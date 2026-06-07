@@ -18,7 +18,7 @@ import com.hubitat.hub.domain.Event
 import hubitat.zigbee.zcl.DataType
 import java.math.RoundingMode
 
-@Field static final String constDriverVersion = "0.0.5"
+@Field static final String CODE_VERSION = "0.0.5"
 
 // Third Reality proprietary cluster (no Hubitat constant)
 @Field static final int CLUSTER_MFG                 = 0xFF03
@@ -216,7 +216,7 @@ void installed() {
     logInfo "installed"
     // state.attributes: diagnostic cache of device-reported divisors, overwritten on each refresh.
     state.attributes = [:]
-    state.codeVersion = constDriverVersion
+    state.codeVersion = CODE_VERSION
     state.lastRx = 0
     state.lastTx = 0
 
@@ -283,7 +283,7 @@ void logsOff() {
 
 void configure() {
     logTrace "configure()"
-    state.codeVersion = constDriverVersion
+    state.codeVersion = CODE_VERSION
 
     List<String> cmds = []
 
@@ -329,7 +329,7 @@ void configure() {
 }
 
 void configureApply() {
-    logInfo "configured (version ${constDriverVersion})"
+    logInfo "configured (version ${CODE_VERSION})"
 }
 
 List<String> refresh() {
@@ -408,8 +408,8 @@ void startBind() {
 // Device Event Parsing
 
 void parse(String description) {
-    if (state.codeVersion != constDriverVersion) {
-        state.codeVersion = constDriverVersion
+    if (state.codeVersion != CODE_VERSION) {
+        state.codeVersion = CODE_VERSION
         runInMillis(1500, "autoConfigure")
     }
 

@@ -25,7 +25,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.math.RoundingMode
 
-@Field static final String version = "0.0.4"
+@Field static final String CODE_VERSION = "0.0.4"
 
 metadata
 {

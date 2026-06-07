@@ -14,7 +14,7 @@
 import groovy.transform.Field
 import com.hubitat.hub.domain.Event
 
-@Field static final String app_version = "0.0.1"
+@Field static final String CODE_VERSION = "0.0.1"
 
 definition(
     name: "Startup and Shutdown Monitor",

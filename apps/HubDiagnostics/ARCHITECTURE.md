@@ -346,7 +346,7 @@ Before pushing a feature, answer these:
 - Is the UI reusing `tbl()`, existing cards, and existing badge/metric patterns?
 - If `tbl()` is used on potentially unbounded data, has the row-cap question been discussed?
 - Does any new cache have explicit expiration and invalidation behavior?
-- If API/UI contract changed, were both `APP_VERSION` and `UI_VERSION` updated?
+- If API/UI contract changed, were both `CODE_VERSION` constants (Groovy and HTML) bumped in lockstep?
 - Did `tests/test-hub-diagnostics-api.sh` gain or update coverage where needed?
 - Would this change still behave acceptably if the new endpoint timed out, returned an empty payload, or changed shape slightly?
 

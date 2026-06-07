@@ -4,7 +4,7 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String app_version = "0.0.1"
+@Field static final String CODE_VERSION = "0.0.1"
 
 definition(
     name: "Attribute Logger",

@@ -13,7 +13,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String APP_VERSION = "1.1.0"
+@Field static final String CODE_VERSION = "1.1.0"
 @Field static final int MAX_BRIDGES = 5
 @Field static final int MAX_FILTERS = 10
 
@@ -102,7 +102,7 @@ Map mainPage() {
                 title: "Enable debug logging", defaultValue: false
         }
         section {
-            paragraph "Version ${APP_VERSION}"
+            paragraph "Version ${CODE_VERSION}"
         }
     }
 }

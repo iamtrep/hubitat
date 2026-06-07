@@ -5,7 +5,7 @@ import groovy.transform.Field
 import com.hubitat.hub.domain.Event
 import java.nio.file.AccessDeniedException
 
-@Field static final String APP_VERSION = "0.0.2"
+@Field static final String CODE_VERSION = "0.0.2"
 
 @Field static final List<String> MONITORED_ATTRIBUTES = ["battery", "batteryVoltage", "lowBattery", "batteryDefect"]
 @Field static final String CSV_HEADER = "timestamp,deviceId,deviceLabel,attribute,value"
@@ -67,7 +67,7 @@ Map mainPage() {
                 defaultValue: "info", required: true
         }
         section("") {
-            paragraph "Version ${APP_VERSION}"
+            paragraph "Version ${CODE_VERSION}"
         }
     }
 }

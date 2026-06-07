@@ -11,7 +11,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String DRIVER_VERSION = "0.3.0"
+@Field static final String CODE_VERSION = "0.3.0"
 @Field static final String API_BASE = "https://api.weather.gc.ca/collections"
 @Field static final String ALERT_API_BASE = "https://weather.gc.ca/api/app/v3"
 @Field static final int HTTP_TIMEOUT = 15
@@ -146,7 +146,7 @@ preferences {
 // Lifecycle
 
 void installed() {
-    state.version = DRIVER_VERSION
+    state.version = CODE_VERSION
     initialize()
 }
 
@@ -160,9 +160,9 @@ void updated() {
 }
 
 void initialize() {
-    if (state.version != DRIVER_VERSION) {
-        logWarn "New driver version: ${DRIVER_VERSION} (was: ${state.version})"
-        state.version = DRIVER_VERSION
+    if (state.version != CODE_VERSION) {
+        logWarn "New driver version: ${CODE_VERSION} (was: ${state.version})"
+        state.version = CODE_VERSION
     }
 
     if (debugEnable) {

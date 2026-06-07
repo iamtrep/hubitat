@@ -23,7 +23,7 @@ import hubitat.zigbee.zcl.DataType
 import hubitat.zigbee.clusters.iaszone.ZoneStatus
 import com.hubitat.hub.domain.Event
 
-@Field static final String version = "0.1.5"
+@Field static final String CODE_VERSION = "0.1.5"
 
 metadata {
 	definition (
@@ -159,7 +159,7 @@ void configure() {
 
     state.clear()
     state.lastRx = 0
-    state.codeVersion = version
+    state.codeVersion = CODE_VERSION
 
     int reportInterval = (batteryInterval == null ? 12 : batteryInterval).toInteger() * 60 * 60
     List<String> cmds = []
@@ -200,8 +200,8 @@ void parse(String description) {
     }
 
     // Auto-Configure device: configure() was not called for this driver version
-    if (state.codeVersion != version) {
-        state.codeVersion = version
+    if (state.codeVersion != CODE_VERSION) {
+        state.codeVersion = CODE_VERSION
         runInMillis 1500, 'autoConfigure'
     }
 

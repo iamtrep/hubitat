@@ -5,7 +5,7 @@ import groovy.transform.Field
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 
-@Field static final String app_version = "0.0.2"
+@Field static final String CODE_VERSION = "0.0.2"
 
 // File name used by uploadHubFile / downloadHubFile for durable history storage.
 // The file survives app reinstall and can be inspected/downloaded from File Manager.
@@ -118,7 +118,7 @@ Map mainPage() {
         }
         
         section("") {
-            paragraph "Version ${app_version}"
+            paragraph "Version ${CODE_VERSION}"
         }
         
     }

@@ -9,7 +9,7 @@
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String DRIVER_VERSION = "1.9.0"
+@Field static final String CODE_VERSION = "1.9.0"
 @Field static final int STARTUP_DELAY_SECS = 60
 @Field static final JsonSlurper JSON_SLURPER = new JsonSlurper()
 @Field static final Map<String, Long> totalLogsReceived = [:].asSynchronized()
@@ -110,7 +110,7 @@ void uninstalled() {
 void initialize() {
     logDebug "initialize()"
 
-    state.codeVersion = DRIVER_VERSION
+    state.codeVersion = CODE_VERSION
 
     // Initialize state
     atomicState.intentionalDisconnect = false

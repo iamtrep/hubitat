@@ -7,7 +7,7 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CHILD_APP_VERSION = "0.0.2"
+@Field static final String CODE_VERSION = "0.0.2"
 
 definition(
     name: "Sensor Filter Child",
@@ -141,9 +141,9 @@ void updated() {
 }
 
 void initialize() {
-    if (state.version != CHILD_APP_VERSION) {
-        logWarn "New version: ${CHILD_APP_VERSION} (was: ${state.version})"
-        state.version = CHILD_APP_VERSION
+    if (state.version != CODE_VERSION) {
+        logWarn "New version: ${CODE_VERSION} (was: ${state.version})"
+        state.version = CODE_VERSION
     }
 
     if (state.valueWindow == null) state.valueWindow = []
