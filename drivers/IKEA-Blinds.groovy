@@ -7,7 +7,7 @@
  *    https://github.com/a4refillpad/hubitat-IKEA-window-blinds
  *
  *  Copyright (c) Wayne Man — original
- *  Copyright (c) 2025-2026 PJ (iamtrep) — modifications and additions
+ *  Copyright (c) 2025-2026 PJ — modifications and additions
  *  SPDX-License-Identifier: Apache-2.0
  *
  *	Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
