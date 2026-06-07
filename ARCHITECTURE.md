@@ -37,6 +37,13 @@ Three storage options are available, with very different durability and cost:
 
 Choosing the wrong tier is a real bug source: transient per-scan data in `state` causes unnecessary DB writes; async-written plain `state` silently loses writes; long-lived configuration in `@Field static` is lost on every reboot.
 
+**`singleThreaded: true` makes `atomicState` unnecessary — within that file.** When `definition()` declares `singleThreaded: true`, the platform serializes every handler invocation in that app/driver: commands, `parse()`, scheduled callbacks, event handlers, OAuth endpoint dispatches all run one-at-a-time. The race `atomicState` protects against — a callback firing while an earlier method is still in flight and the two clobbering each other's `state` writes — cannot occur in a singleThreaded file, so plain `state` is sufficient and `atomicState` only adds per-write DB cost. **This relaxation applies *only* inside a singleThreaded definition.** In any file that does not declare it (the default), the bullet above still holds — async-callback writes must use `atomicState` or they may silently vanish.
+
+Two narrower scopes the relaxation does NOT cover, even inside a singleThreaded file:
+
+- **In-place mutation of `state` collections** (`state.myMap[k] = v`, `state.myList << item`) is a Hubitat change-detection quirk, not a concurrency one — the read-mutate-reassign pattern still applies regardless of threading mode.
+- **`@Field static volatile`** — `singleThreaded` serializes Groovy handler dispatch, but `@Field static` lives in the JVM and can still be touched by concurrent threads outside that dispatch (e.g. async HTTP callback threads). `volatile` is still required where concurrent reads are possible.
+
 ### Hubitat libraries are not real modularity
 
 Moving Groovy code into Hubitat libraries does not provide architectural separation. Library code shares the host's namespace, lifecycle, and sandbox. Treat libraries as include files for code reuse, not as modules with enforced boundaries.
@@ -61,8 +68,10 @@ Two exceptions: Hubitat callback parameters (`evt`, `resp`, `data`) stay untyped
 
 The standard lifecycle methods (`installed`, `updated`, `uninstalled`, `initialize`) are platform-defined; two project conventions matter on top:
 
-- **`initialize()` is the convergence point.** Both the install path and the preferences-saved path route through it, so subscriptions, schedules, and version checks live there exactly once.
-- **`updated()` resets before reinitializing** — `unsubscribe(); unschedule(); initialize()` (drivers omit `unsubscribe()`). Same-handler-name `runIn`/`runInMillis`/`runOnce`/`schedule` calls are self-cancelling because the platform's `options.overwrite` defaults to `true` — so a static handler name re-scheduled in the new config does not need `unschedule()` to avoid accumulation. The defensive `unschedule()` matters in narrower cases: handler names that change across configs (e.g., `"check_${index}"` when the index shifts), handlers scheduled from event handlers that the new config no longer fires, and any call site that passes `[overwrite: false]`. Calling `unschedule()` unconditionally remains the convention because it's cheap and protects against all three.
+- **The lifecycle has a single convergence point.** Both the install path and the preferences-saved path route through it so subscriptions, schedules, and version checks live there exactly once. The convergence method depends on the file shape:
+  - **Apps** and **drivers with persistent runtime state** (LAN/cloud sockets, OAuth tokens, reconnect logic): `initialize()`.
+  - **Local-radio drivers** (Zigbee, Z-Wave) with no startup work: `configure()`. `initialize()` is omitted — don't add an empty stub or one that only calls `configure()`. `Drivers → Driver lifecycle` expands on this.
+- **`updated()` resets before reinitializing** — `unsubscribe(); unschedule(); <convergence>` (drivers omit `unsubscribe()`). Same-handler-name `runIn`/`runInMillis`/`runOnce`/`schedule` calls are self-cancelling because the platform's `options.overwrite` defaults to `true` — so a static handler name re-scheduled in the new config does not need `unschedule()` to avoid accumulation. The defensive `unschedule()` matters in narrower cases: handler names that change across configs (e.g., `"check_${index}"` when the index shifts), handlers scheduled from event handlers that the new config no longer fires, and any call site that passes `[overwrite: false]`. Calling `unschedule()` unconditionally remains the convention because it's cheap and protects against all three.
 
 ### Version constants and code-push detection
 
@@ -273,7 +282,7 @@ The mechanics of nested apps (`app(...)` declaration, `parent: "ns:Name"`) and c
 
 The platform defines what `configure()`, `initialize()`, `refresh()`, and `deviceTypeUpdated()` mean. Two project-specific rules:
 
-- **`initialize()` is for work that must re-execute after hub startup.** The platform calls it on hub start, install, and as part of the `updated()` convergence. Use it for LAN/cloud reconnection, re-arming any housekeeping the hub doesn't already persist (most `schedule`/`runIn` calls already survive reboot), and idempotent state/counter seeding. For a pure local-radio (Zigbee/Z-Wave) driver with no such startup work, omitting `initialize()` is fine — don't add an empty stub or one that only calls `configure()`. When it does exist, **`refresh()`, not `configure()`** — reconfiguring on each restart wastes radio bandwidth and can race with other devices joining the mesh.
+- **`initialize()` is for work that must re-execute after hub startup.** The platform calls it on hub start, install, and as part of the `updated()` convergence. Use it for LAN/cloud reconnection, re-arming any housekeeping the hub doesn't already persist (most `schedule`/`runIn` calls already survive reboot), and idempotent state/counter seeding. For a pure local-radio (Zigbee/Z-Wave) driver with no such startup work, omitting `initialize()` is fine — and is the common case for plugs, switches, sensors, and locks. **Don't add an empty stub or one that only calls `configure()`.** When `initialize()` is omitted, `configure()` becomes the convergence point: `installed()` routes to it (typically via `runInMillis` so it doesn't run inline with the install transaction), `updated()` does its `unschedule(); <preference writes>; configure()` sequence, and `deviceTypeUpdated()` calls `configure()`. When `initialize()` *is* present, call **`refresh()`, not `configure()`** from it — reconfiguring on each hub restart wastes radio bandwidth and can race with other devices joining the mesh.
 - **`deviceTypeUpdated()` should warn and reconfigure.** The convention is `logWarn "driver change detected"; configure()`, so that switching a device's driver type re-applies device-side reporting and defaults.
 
 ### Zigbee parse skeleton
