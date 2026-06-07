@@ -56,7 +56,7 @@ The flow meter sits *downstream* of the pressure tank, so it measures household 
 - **Cycles tab**: sortable table of all recorded pump cycles with tank usage
 - **Flow tab**: sortable table of all flow events
 - **Statistics tab**: all-time and recent-window stats with sample-size annotations
-- Auto-refreshing pump status (every 10 seconds)
+- Live status updates via the hub's `/eventsocket` WebSocket, with a 60-second slow-poll safety net for dropped sockets and a tab-hidden pause
 - Update banner when a newer app version is published on GitHub
 - CSV full-history loading via button click
 - Responsive mobile-first layout
@@ -66,6 +66,7 @@ The flow meter sits *downstream* of the pressure tank, so it measures household 
 - On first install and on every "Done" save, the app fetches its dashboard HTML from GitHub and writes it to File Manager — no manual upload step required
 - Validates the downloaded file (must contain the app name AND a `CODE_VERSION` matching the app's) before overwriting the local copy
 - Daily scheduled re-check at 03:17 local for slow drift catch-up
+- An in-SPA **Sync UI from GitHub** button forces an immediate refresh from the dashboard itself
 - Emergency recovery: if `/dashboard` is requested and the local file is missing, a blocking GitHub fetch is attempted before failing
 
 ### CSV Logging

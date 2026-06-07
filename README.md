@@ -17,7 +17,7 @@ Comprehensive diagnostic dashboard served from the hub itself — devices, apps,
 
 ## Drivers
 
-Zigbee, BLE, and cloud API device drivers — including families for Sinopé and Stelpro, and standalone devices like the ThirdReality smart plug, Awair Element, Ecobee, and Environment Canada AQHI. See [`drivers/`](drivers/README.md) for the full list.
+Zigbee, BLE, and cloud API device drivers — including families for Sinopé and Stelpro, and standalone devices like ThirdReality plugs and presence sensors, Awair Element, Ecobee, and Environment Canada AQHI. See [`drivers/`](drivers/README.md) for the full list.
 
 ## Integrations
 

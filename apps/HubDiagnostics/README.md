@@ -270,7 +270,7 @@ Detailed status for all network interfaces and radio protocols. Card order: **Ra
 
 ### Radio Health Badges
 
-Strip at the very top with a green / red / N/A badge for Z-Wave and Zigbee, fed by `/hub/zwave/healthStatus` and `/hub/zigbee/healthStatus`. Version-gated to firmware ≥ 2.4.1.154; on older firmware the card is not rendered.
+Strip at the very top with a badge for **Z-Wave, Zigbee, Matter, and Hub Mesh** — each in a three-state DISABLED / ONLINE / OFFLINE model, always shown so you can see what's actually enabled at a glance. Z-Wave and Zigbee combine the enabled flag with `/hub/zwave/healthStatus` / `/hub/zigbee/healthStatus`; Matter folds in `networkState`; Hub Mesh reports OFFLINE if any peer is offline (no peers ⇒ ONLINE). Version-gated to firmware ≥ 2.4.1.154; on older firmware the card is not rendered.
 
 ### Network Configuration
 
@@ -280,6 +280,7 @@ Strip at the very top with a green / red / N/A badge for Z-Wave and Zigbee, fed 
 - **Limited Access** — green when IP allowlist is enabled (with the allowed IPs listed), orange-warn when off ("any LAN IP can reach the hub UI")
 - **Allowed Subnets** — comma-separated subnet allowlist, or "(none restricted)"
 - **DNS Fallback** — Enabled / Disabled
+- **Hubitat Cloud** — Enabled, or "Disabled (local-only)" when the hub is configured for local-only operation
 
 Shows a warning if both Ethernet and WiFi are active simultaneously (known to cause instability on some hub models).
 
@@ -314,7 +315,7 @@ The user's own channel is annotated with "(your channel)" when it appears in the
 
 **Problem Nodes** — Nodes with state ≠ OK or packet error rate > 1%.
 
-**Mesh Quality table** columns: Device, Security (S0/S2/None — S0 on non-lock devices is flagged), RTT (ms), RSSI (dBm), PER %, Neighbors, Route, Route Changes, Messages, Driver (Built-in/User), State.
+**Mesh Quality table** columns: Device, Node, Security (S0/S2/None — S0 on non-lock devices is flagged), RTT (ms), RSSI (dBm), PER %, Neighbors, Route, Route Changes, Msgs, Msgs/Min, Driver (Built-in/User), State.
 
 **Message Counts table** — Devices ranked by message volume, with messages/minute color-coded against the chatty device threshold.
 
@@ -430,7 +431,7 @@ Live capture of radio traffic from the hub's internal log sockets, intended for 
 - **Start capture** opens a WebSocket to the hub's `/zigbeeLogsocket` endpoint directly from your browser. Each click begins a fresh capture — any prior buffer is discarded, so Download first if you want to keep it. All frames are buffered client-side; the hub does not relay or transform anything. Closing the browser tab ends the capture and discards the buffer.
 - **Pause capture** toggles ingest. While paused, incoming frames are dropped and the frame-rate counter falls to zero; click again to resume. The recording buffer is preserved across pause.
 - **Stop capture** closes the socket but keeps the recording buffer, so Download remains useful afterwards.
-- **Download** is enabled as soon as the buffer has any frames (running or stopped). It saves the recording as a JSON-lines file (`zigbee-capture-<hub>-<timestamp>.jsonl`) compatible with `scripts/zigbee-ota-analyser.py`. The first line is a `#`-prefixed JSON metadata header that the analyser silently skips.
+- **Download** is enabled as soon as the buffer has any frames (running or stopped). It saves the recording as a JSON-lines file (`zigbee-capture-<hub>-<timestamp>.jsonl`). The first line is a `#`-prefixed JSON metadata header that downstream tools can skip.
 - **Clear buffer** empties the recording buffer without disconnecting.
 - **Recording cap** selects the recording buffer's byte cap (10 / 50 / 200 MB). When the buffer is full, oldest frames are dropped and the "Dropped: N" counter advances so you know the capture is no longer complete from `t0`.
 

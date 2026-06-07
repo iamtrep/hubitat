@@ -49,7 +49,7 @@ Region (US / EU) is configurable on the manager page; the region setting drives 
 
 The standard surface keeps dashboards, Rule Machine triggers, and Alexa/Google integrations working for the canonical 80% case. The custom surface gives full access to `dry`/`fan_only` modes and `quiet`/`low`/`medium`/`high` fan speeds for automations that need them.
 
-Setpoint range: 16–30°C (heat), 18–30°C (cool). Values outside the range are clamped with a warning logged.
+Setpoint range: 16–30°C (heat), 18–30°C (cool). Values outside the range are clamped with a warning logged. Setpoints are also **snapped to the nearest 0.5°C** before being sent to the unit — Fujitsu only accepts half-degree-Celsius increments, and a finer value will jam the Ayla cloud's datapoint queue.
 
 **Device metadata** (visible on the device edit page's **Data** section, written via `device.updateDataValue`):
 - `modelName` — e.g. `ASUG15LZTD : AP-WF1E`

@@ -45,16 +45,6 @@ Additional features:
 
 **Why some apps still need a manual edit.** The hub's form-save endpoint (`/installedapp/update/json`) addresses one page at a time, and the wire format for sub-page saves (`pageBreadcrumbs`, `_action_previous`, conditionally-rendered dynamic input names) is per-app-family — generalizing the write path across every built-in (Basic Rule, Notifier, Rule Machine, …) would mean re-validating undocumented form shapes on every firmware release. The deeplinked punch list trades clicks for stability: zero firmware-coupling, and the user stays in the loop for ambiguous cases.
 
-### Rule Logging Manager (`RuleLoggingManager.groovy`)
-
-Audits every Rule Machine and Button Controller rule on the hub and reports which ones have **Actions**, **Events**, or **Triggers** logging enabled — a frequent cause of log noise and hub overhead.
-
-- Async HTTP fan-out over `/hub2/appsList` and `/installedapp/statusJson/{id}` scans the full rule set in one pass.
-- Results table shows each rule with Disabled, Paused, Last Run, and the three logging flags. Columns and row groups (Disabled, Paused, "No logging ON") can be toggled to filter the view.
-- **Click a logging cell to flip it in place** — the toggle posts to `/installedapp/configure/json/{id}` + `/installedapp/update/json` without leaving the page. Disabled and Paused cells are click-toggleable the same way.
-- **Turn OFF All Logging (All Rules)** runs an async batch to disable Actions/Events/Triggers logging across every rule in one shot.
-- `singleInstance: true`. Uses undocumented internal hub endpoints that could change in a future platform release.
-
 ## Installation
 
 1. Install the app code on your hub.
