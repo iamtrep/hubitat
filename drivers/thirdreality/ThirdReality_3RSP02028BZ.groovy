@@ -18,7 +18,7 @@ import com.hubitat.hub.domain.Event
 import hubitat.zigbee.zcl.DataType
 import java.math.RoundingMode
 
-@Field static final String constDriverVersion = "0.0.4"
+@Field static final String constDriverVersion = "0.0.5"
 
 // Third Reality proprietary cluster (no Hubitat constant)
 @Field static final int CLUSTER_MFG                 = 0xFF03
@@ -105,10 +105,13 @@ import java.math.RoundingMode
 ]
 
 @Field static final Map<Integer, String> constReportingMaxOpts = [
-    300:  "5 minutes",
-    600:  "10 minutes",
-    1800: "30 minutes",
-    3600: "1 hour"
+    300:   "5 minutes",
+    600:   "10 minutes",
+    1800:  "30 minutes",
+    3600:  "1 hour",
+    10800: "3 hours",
+    21600: "6 hours",
+    43200: "12 hours"
 ]
 
 metadata {
@@ -185,14 +188,14 @@ metadata {
                   description: "Minimum energy change in kWh to emit an event.")
 
             input(name: "prefReportingMin", type: "enum", title: "<b>Reporting Minimum Interval</b>",
-                  options: constReportingMinOpts, defaultValue: 5)
+                  options: constReportingMinOpts, defaultValue: 10)
 
             input(name: "prefReportingMax", type: "enum", title: "<b>Reporting Maximum Interval</b>",
                   options: constReportingMaxOpts, defaultValue: 3600)
 
             input(name: "prefHealthCheckInterval", type: "enum", title: "<b>Health Check Interval</b>",
-                  options: constHealthCheckIntervalOpts, defaultValue: 10,
-                  description: "How often to check whether the device is still talking.")
+                  options: constHealthCheckIntervalOpts, defaultValue: 0,
+                  description: "How often to check whether the device is still talking. Disabled by default — mains-powered routers rarely go silent.")
 
             input(name: "txtEnable", type: "bool", title: "<b>Enable descriptionText logging</b>",
                   defaultValue: true)
@@ -238,7 +241,7 @@ void updated() {
         runIn(1800, "logsOff")
     }
 
-    int healthInterval = intSetting(settings.prefHealthCheckInterval, 10)
+    int healthInterval = intSetting(settings.prefHealthCheckInterval, 0)
     if (healthInterval > 0) {
         scheduleDeviceHealthCheck(healthInterval)
     }
@@ -284,7 +287,7 @@ void configure() {
 
     List<String> cmds = []
 
-    int minInterval = intSetting(settings.prefReportingMin, 5)
+    int minInterval = intSetting(settings.prefReportingMin, 10)
     int maxInterval = intSetting(settings.prefReportingMax, 3600)
 
     BigDecimal powerDelta   = decSetting(settings.prefPowerDelta,   1.0)
@@ -723,7 +726,7 @@ private void setPresent() {
 void checkPresence() {
     long lastRx = (state.lastRx ?: 0) as long
     if (lastRx == 0) return  // no parse yet --- preserve initial healthStatus
-    int intervalMin = intSetting(settings.prefHealthCheckInterval, 10)
+    int intervalMin = intSetting(settings.prefHealthCheckInterval, 0)
     long thresholdMs = (intervalMin as long) * 60000L * PRESENT_THRESHOLD
     long silenceMs = now() - lastRx
     if (silenceMs > thresholdMs && device.currentValue("healthStatus") != "offline") {
