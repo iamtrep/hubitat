@@ -30,7 +30,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String APP_VERSION = "0.1.3"
+@Field static final String APP_VERSION = "0.1.4"
 
 // Region-specific Ayla endpoints + app credentials, lifted from
 // ayla-iot-unofficial/src/ayla_iot_unofficial/const.py and fujitsu_consts.py.
@@ -56,6 +56,10 @@ definition(
 @Field static final long TOKEN_REFRESH_BUFFER_MS = 300_000L
 @Field static final int HTTP_TIMEOUT = 15
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
+// Transient cloud failures (timeouts, 5xx) are common with Ayla and self-clear on
+// the next poll. Log at warn until this many in a row, then escalate to error so a
+// real outage surfaces.
+@Field static final int FAILURE_ERROR_THRESHOLD = 5
 
 preferences {
     page(name: "mainPage")
@@ -402,7 +406,7 @@ void fetchDevices() {
 
 void fetchDevicesCallback(resp, data) {
     if (resp.hasError()) {
-        logError "fetchDevices HTTP error: ${resp.getErrorMessage()}"
+        noteTransientFailure "fetchDevices HTTP error: ${resp.getErrorMessage()}"
         return
     }
     int status = resp.getStatus()
@@ -410,6 +414,10 @@ void fetchDevicesCallback(resp, data) {
         logWarn "fetchDevices HTTP 401 — refreshing token and retrying"
         refreshToken()
         runIn(3, "fetchDevices")
+        return
+    }
+    if (status >= 500) {
+        noteTransientFailure "fetchDevices HTTP ${status}"
         return
     }
     if (status != 200) {
@@ -423,6 +431,7 @@ void fetchDevicesCallback(resp, data) {
         logError "fetchDevices JSON parse error: ${e.message}"
         return
     }
+    clearTransientFailureStreak()
     handleDeviceList(parsed)
 }
 
@@ -482,13 +491,15 @@ void fetchProperties(String dsn) {
 
 void fetchPropertiesCallback(resp, data) {
     String dsn = data?.dsn
-    if (resp.hasError()) { logError "fetchProperties(${dsn}) error: ${resp.getErrorMessage()}"; return }
+    if (resp.hasError()) { noteTransientFailure "fetchProperties(${dsn}) HTTP error: ${resp.getErrorMessage()}"; return }
     int status = resp.getStatus()
     if (status == 401) { logWarn "fetchProperties(${dsn}) 401 — refresh"; refreshToken(); runIn(3, "fetchProperties", [data: [dsn: dsn]]); return }
+    if (status >= 500) { noteTransientFailure "fetchProperties(${dsn}) HTTP ${status}"; return }
     if (status != 200) { logError "fetchProperties(${dsn}) HTTP ${status}"; return }
     List parsed
     try { parsed = (List) new JsonSlurper().parseText(resp.getData()) }
     catch (Exception e) { logError "fetchProperties parse: ${e.message}"; return }
+    clearTransientFailureStreak()
 
     Map<String, Object> props = [:]
     parsed.each { item ->
@@ -555,13 +566,17 @@ private void writeDatapoint(String dsn, String propertyName, Object value) {
 
 void writeDatapointCallback(resp, data) {
     if (resp.hasError()) {
-        logError "writeDatapoint(${data?.name}) HTTP error: ${resp.getErrorMessage()}"
+        logWarn "writeDatapoint(${data?.name}) HTTP error: ${resp.getErrorMessage()}"
         return
     }
     int status = resp.getStatus()
     if (status == 401) {
         logWarn "writeDatapoint(${data?.name}) 401 — refresh and retry once"
         refreshToken()
+        return
+    }
+    if (status >= 500) {
+        logWarn "writeDatapoint(${data?.name}) HTTP ${status}"
         return
     }
     if (status != 200 && status != 201) {
@@ -598,3 +613,17 @@ private void logDebug(String msg) { if (settings.debugEnable) log.debug "${app.l
 private void logInfo(String msg)  { if (settings.txtEnable)   log.info  "${app.label} ${msg}" }
 private void logWarn(String msg)  { log.warn  "${app.label} ${msg}" }
 private void logError(String msg) { log.error "${app.label} ${msg}" }
+
+private void noteTransientFailure(String msg) {
+    int n = ((state.consecutiveFetchFailures ?: 0) as int) + 1
+    state.consecutiveFetchFailures = n
+    if (n >= FAILURE_ERROR_THRESHOLD) {
+        logError "${msg} (failure streak: ${n})"
+    } else {
+        logWarn msg
+    }
+}
+
+private void clearTransientFailureStreak() {
+    if (state.consecutiveFetchFailures) state.consecutiveFetchFailures = 0
+}
