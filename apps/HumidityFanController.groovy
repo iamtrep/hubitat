@@ -86,7 +86,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Humidity-Based Fan Controller"
-@Field static final String CODE_VERSION = "0.9.1"
+@Field static final String CODE_VERSION = "0.9.2"
 
 // Humidity state machine states
 @Field static final String HUMIDITY_NORMAL = "NORMAL"
@@ -113,6 +113,16 @@ import groovy.transform.Field
 @Field static final BigDecimal DEFAULT_EXCESSIVE_CHANGE_THRESHOLD = 0G
 @Field static final Integer SAMPLE_BUFFER_CAP = 20
 @Field static final Integer DEFAULT_OCCUPANCY_WINDOW_SECONDS = 600
+
+// Dew-point mode (opt-in): thresholds/offsets are °C; replaces the %RH set when enabled.
+@Field static final BigDecimal DEFAULT_DEWPOINT_HIGH_OFFSET = 4.0G
+@Field static final BigDecimal DEFAULT_DEWPOINT_NORMAL_OFFSET = 3.0G
+@Field static final BigDecimal DEFAULT_DEWPOINT_ABSOLUTE_HIGH = 22.0G
+@Field static final BigDecimal DEFAULT_DEWPOINT_ABSOLUTE_LOW = 12.0G
+@Field static final BigDecimal DEFAULT_DEWPOINT_LOW_TOLERANCE = 0.5G
+// Magnus coefficients (Tetens form). Td = (b·γ)/(a−γ), γ = ln(RH/100) + a·T/(b+T)
+@Field static final double MAGNUS_A = 17.67d
+@Field static final double MAGNUS_B = 243.5d
 
 definition(
     name: APP_NAME,
@@ -157,6 +167,18 @@ Map mainPage() {
             input "absoluteHighThreshold", "number", title: "Absolute High Threshold", description: "Turn ON if humidity exceeds this regardless of reference", defaultValue: DEFAULT_ABSOLUTE_HIGH_THRESHOLD, required: true
             input "absoluteLowThreshold", "number", title: "Absolute Low Threshold", description: "Center of the absolute low threshold band", defaultValue: DEFAULT_ABSOLUTE_LOW_THRESHOLD, required: true
             input "absoluteLowTolerance", "number", title: "Absolute Low Tolerance", description: "Tolerance band around absolute low (activation blocked below threshold+tolerance, deactivation triggered below threshold-tolerance)", defaultValue: DEFAULT_ABSOLUTE_LOW_TOLERANCE, required: true
+        }
+
+        section("Dew-Point Comparison (experimental)", hideable: true, hidden: true) {
+            paragraph "Compare absolute moisture (dew point) instead of relative humidity. Removes temperature-driven RH gaps between rooms and avoids spurious deactivation as the bathroom warms during a shower. Requires that bathroom and reference sensors also report temperature; sensors missing temperature are skipped from the median."
+            input "useDewPoint", "bool", title: "Use dew-point comparison", defaultValue: false, submitOnChange: true
+            if (useDewPoint) {
+                input "dewPointHighOffset", "decimal", title: "High Dew-Point Offset (°C)", description: "Turn ON when bathroom dew point > reference + this value", defaultValue: DEFAULT_DEWPOINT_HIGH_OFFSET, required: true
+                input "dewPointNormalOffset", "decimal", title: "Normal Dew-Point Offset (°C)", description: "Turn OFF when bathroom dew point < snapshot + this value", defaultValue: DEFAULT_DEWPOINT_NORMAL_OFFSET, required: true
+                input "dewPointAbsoluteHigh", "decimal", title: "Absolute High Dew Point (°C)", description: "Turn ON if dew point exceeds this regardless of reference", defaultValue: DEFAULT_DEWPOINT_ABSOLUTE_HIGH, required: true
+                input "dewPointAbsoluteLow", "decimal", title: "Absolute Low Dew Point (°C)", description: "Center of the absolute low dew-point band", defaultValue: DEFAULT_DEWPOINT_ABSOLUTE_LOW, required: true
+                input "dewPointLowTolerance", "decimal", title: "Absolute Low Tolerance (°C)", description: "Tolerance band around absolute low dew point", defaultValue: DEFAULT_DEWPOINT_LOW_TOLERANCE, required: true
+            }
         }
 
         section("Single-Event Bypass", hideable: true, hidden: true) {
@@ -442,27 +464,30 @@ void restrictionSwitchHandler(evt) {
 // ==================== Humidity State Machine ====================
 
 private void evaluateHumidityStateMachine(reportingDevice = null) {
-    BigDecimal bathroomHumidity = computeMedianHumidity(bathroomHumiditySensors, reportingDevice)
-    BigDecimal referenceHumidity = computeMedianHumidity(referenceHumiditySensors, reportingDevice)
+    // bathroomHumidity / referenceHumidity are the comparison metric for the
+    // current mode — %RH in default mode, °C dew point when useDewPoint is on.
+    BigDecimal bathroomHumidity = computeBathroomMetric(reportingDevice)
+    BigDecimal referenceHumidity = computeReferenceMetric(reportingDevice)
+    String unit = metricUnit()
 
     if (bathroomHumidity == null) {
-        logWarn("No active bathroom sensors - skipping humidity evaluation")
+        logWarn("No active bathroom sensors - skipping ${metricLabel()} evaluation")
         return
     }
 
     String oldState = state.humidityState
-    logDebug("Humidity state machine: state=${oldState}, bathroom=${bathroomHumidity}% (median), reference=${referenceHumidity}% (median)")
+    logDebug("Humidity state machine: state=${oldState}, bathroom=${bathroomHumidity}${unit} (median), reference=${referenceHumidity}${unit} (median)")
 
     switch (state.humidityState) {
         case HUMIDITY_NORMAL:
-            if (referenceHumidity == null && bathroomHumidity <= absoluteHighThreshold) {
+            if (referenceHumidity == null && bathroomHumidity <= effectiveAbsoluteHigh()) {
                 logWarn("No active reference sensors - cannot evaluate activation threshold")
                 return
             }
-            evaluateNormalState(bathroomHumidity, referenceHumidity ?: absoluteLowThreshold)
+            evaluateNormalState(bathroomHumidity, referenceHumidity ?: effectiveAbsoluteLow())
             break
         case HUMIDITY_PENDING_HIGH:
-            if (referenceHumidity == null && bathroomHumidity <= absoluteHighThreshold) {
+            if (referenceHumidity == null && bathroomHumidity <= effectiveAbsoluteHigh()) {
                 logInfo("Reference sensors lost during activation delay - returning to NORMAL")
                 unschedule("delayedTransitionToHigh")
                 state.pendingStateSince = null
@@ -470,7 +495,7 @@ private void evaluateHumidityStateMachine(reportingDevice = null) {
                 transitionHumidityState(HUMIDITY_NORMAL)
                 return
             }
-            evaluatePendingHighState(bathroomHumidity, referenceHumidity ?: absoluteLowThreshold)
+            evaluatePendingHighState(bathroomHumidity, referenceHumidity ?: effectiveAbsoluteLow())
             break
         case HUMIDITY_HIGH:
             evaluateHighState(bathroomHumidity)
@@ -531,8 +556,10 @@ private void evaluatePendingHighState(BigDecimal bathroomHumidity, BigDecimal re
     }
 
     // Above absolute high - bypass activation delay, go straight to HIGH
-    if (bathroomHumidity > absoluteHighThreshold) {
-        logInfo("Humidity ${bathroomHumidity}% above absolute high ${absoluteHighThreshold}% - bypassing activation delay")
+    BigDecimal absHigh = effectiveAbsoluteHigh()
+    if (bathroomHumidity > absHigh) {
+        String unit = metricUnit()
+        logInfo("${metricLabel().capitalize()} ${bathroomHumidity}${unit} above absolute high ${absHigh}${unit} - bypassing activation delay")
         unschedule("delayedTransitionToHigh")
         state.pendingStateSince = null
         transitionHumidityState(HUMIDITY_HIGH)
@@ -687,24 +714,26 @@ private void reschedulePendingTimers() {
 
 private Boolean isAboveActivationThreshold(BigDecimal bathroomHumidity, BigDecimal referenceHumidity) {
     // Never activate if below absolute low threshold + tolerance
-    BigDecimal activationFloor = absoluteLowThreshold + absoluteLowTolerance
+    BigDecimal activationFloor = effectiveAbsoluteLow() + effectiveAbsoluteLowTolerance()
     if (bathroomHumidity < activationFloor) {
-        logDebug("Below activation floor (${activationFloor}%) - not activating")
+        logDebug("Below activation floor (${activationFloor}${metricUnit()}) - not activating")
         return false
     }
 
     // Activate if above absolute high threshold
-    if (bathroomHumidity > absoluteHighThreshold) {
+    if (bathroomHumidity > effectiveAbsoluteHigh()) {
         return true
     }
 
     // Activate if bathroom > reference + high offset
-    BigDecimal highThreshold = referenceHumidity + highHumidityOffset
+    BigDecimal highThreshold = referenceHumidity + effectiveHighOffset()
     if (bathroomHumidity > highThreshold) {
         return true
     }
 
-    // Activate on fast humidity climb (rate-of-change)
+    // Activate on fast humidity climb (rate-of-change). Bathroom samples and
+    // slope are %RH-based regardless of comparison mode — fast-climb stays
+    // a leading indicator on raw RH even when thresholds are dew-point.
     return isFastClimb()
 }
 
@@ -808,22 +837,25 @@ private static boolean computeFastClimb(List samples, long nowMs,
     return slope >= slopeThresh
 }
 
+// The snapshot stores whichever metric was active at activation time —
+// %RH in default mode, °C dew point when useDewPoint was on. Toggling the
+// mode mid-cycle is not supported; the snapshot is cleared on deactivation.
 private BigDecimal getEffectiveReferenceSnapshot() {
-    return (state.referenceHumiditySnapshot ?: absoluteLowThreshold) as BigDecimal
+    return (state.referenceHumiditySnapshot ?: effectiveAbsoluteLow()) as BigDecimal
 }
 
 private Boolean isBelowDeactivationThreshold(BigDecimal bathroomHumidity) {
     // Never deactivate if above absolute high threshold
-    if (bathroomHumidity > absoluteHighThreshold) {
+    if (bathroomHumidity > effectiveAbsoluteHigh()) {
         return false
     }
 
     // Use the snapshot reference for deactivation calculation
     BigDecimal effectiveReference = getEffectiveReferenceSnapshot()
-    BigDecimal normalThreshold = effectiveReference + normalHumidityOffset
+    BigDecimal normalThreshold = effectiveReference + effectiveNormalOffset()
 
     // Deactivate if below absolute low threshold - tolerance
-    BigDecimal deactivationFloor = absoluteLowThreshold - absoluteLowTolerance
+    BigDecimal deactivationFloor = effectiveAbsoluteLow() - effectiveAbsoluteLowTolerance()
     if (bathroomHumidity < deactivationFloor) {
         return true
     }
@@ -833,21 +865,26 @@ private Boolean isBelowDeactivationThreshold(BigDecimal bathroomHumidity) {
 }
 
 private String getActivationReason(BigDecimal bathroomHumidity, BigDecimal referenceHumidity) {
-    if (bathroomHumidity > absoluteHighThreshold) {
-        return "bathroom ${bathroomHumidity}% > absolute high ${absoluteHighThreshold}%"
+    String u = metricUnit()
+    BigDecimal absHigh = effectiveAbsoluteHigh()
+    if (bathroomHumidity > absHigh) {
+        return "bathroom ${bathroomHumidity}${u} > absolute high ${absHigh}${u}"
     }
-    BigDecimal highThreshold = referenceHumidity + highHumidityOffset
-    return "bathroom ${bathroomHumidity}% > (reference ${referenceHumidity}% + ${highHumidityOffset}%) = ${highThreshold}%"
+    BigDecimal offset = effectiveHighOffset()
+    BigDecimal highThreshold = referenceHumidity + offset
+    return "bathroom ${bathroomHumidity}${u} > (reference ${referenceHumidity}${u} + ${offset}${u}) = ${highThreshold}${u}"
 }
 
 private String getDeactivationReason(BigDecimal bathroomHumidity) {
-    BigDecimal deactivationFloor = absoluteLowThreshold - absoluteLowTolerance
+    String u = metricUnit()
+    BigDecimal deactivationFloor = effectiveAbsoluteLow() - effectiveAbsoluteLowTolerance()
     if (bathroomHumidity < deactivationFloor) {
-        return "bathroom ${bathroomHumidity}% < deactivation floor ${deactivationFloor}%"
+        return "bathroom ${bathroomHumidity}${u} < deactivation floor ${deactivationFloor}${u}"
     }
     BigDecimal effectiveReference = getEffectiveReferenceSnapshot()
-    BigDecimal normalThreshold = effectiveReference + normalHumidityOffset
-    return "bathroom ${bathroomHumidity}% < (snapshot ${effectiveReference}% + ${normalHumidityOffset}%) = ${normalThreshold}%"
+    BigDecimal offset = effectiveNormalOffset()
+    BigDecimal normalThreshold = effectiveReference + offset
+    return "bathroom ${bathroomHumidity}${u} < (snapshot ${effectiveReference}${u} + ${offset}${u}) = ${normalThreshold}${u}"
 }
 
 private Boolean isHumidityHigh() {
@@ -1180,9 +1217,16 @@ private String getStatusText() {
     // Current readings with sensor health
     Map bathroomStatus = getSensorStatus(bathroomHumiditySensors)
     Map referenceStatus = getSensorStatus(referenceHumiditySensors)
+    String unit = metricUnit()
+    Boolean dpMode = useDewPointMode()
+    BigDecimal bathroomMetric = dpMode ? computeMedianDewPoint(bathroomHumiditySensors) : bathroomStatus.median
+    BigDecimal referenceMetric = dpMode ? computeMedianDewPoint(referenceHumiditySensors) : referenceStatus.median
 
-    if (bathroomStatus.median != null) {
-        status.append("Bathroom: ${bathroomStatus.median}%")
+    if (bathroomMetric != null) {
+        status.append("Bathroom: ${bathroomMetric}${unit}")
+        if (dpMode && bathroomStatus.median != null) {
+            status.append(" <small>(${bathroomStatus.median}% RH)</small>")
+        }
         if (bathroomStatus.total > 1) {
             status.append(" <small>(${bathroomStatus.active}/${bathroomStatus.total} sensors)</small>")
         }
@@ -1192,8 +1236,11 @@ private String getStatusText() {
         status.append("<span style='color:orange'><small>Inactive: ${bathroomStatus.excluded.join(', ')}</small></span><br/>")
     }
 
-    if (referenceStatus.median != null) {
-        status.append("Reference: ${referenceStatus.median}%")
+    if (referenceMetric != null) {
+        status.append("Reference: ${referenceMetric}${unit}")
+        if (dpMode && referenceStatus.median != null) {
+            status.append(" <small>(${referenceStatus.median}% RH)</small>")
+        }
         if (referenceStatus.total > 1) {
             status.append(" <small>(${referenceStatus.active}/${referenceStatus.total} sensors)</small>")
         }
@@ -1204,7 +1251,7 @@ private String getStatusText() {
     }
 
     if (state.referenceHumiditySnapshot != null) {
-        status.append("Snapshot: ${state.referenceHumiditySnapshot}%<br/>")
+        status.append("Snapshot: ${state.referenceHumiditySnapshot}${unit}<br/>")
     }
 
     // Fan state
@@ -1296,6 +1343,91 @@ private BigDecimal computeMedianHumidity(List sensors, reportingDevice = null) {
         return values[(n / 2) as int]
     }
 }
+
+// Magnus-Tetens dew point. Returns null on invalid inputs (RH ≤ 0 or > 100, missing).
+@CompileStatic
+private static BigDecimal computeDewPoint(BigDecimal humidityPct, BigDecimal tempC) {
+    if (humidityPct == null || tempC == null) return null
+    if (humidityPct <= 0G || humidityPct > 100G) return null
+    double rh = humidityPct.doubleValue() / 100.0d
+    double t = tempC.doubleValue()
+    double gamma = Math.log(rh) + (MAGNUS_A * t) / (MAGNUS_B + t)
+    double denom = MAGNUS_A - gamma
+    if (denom == 0.0d) return null
+    double td = (MAGNUS_B * gamma) / denom
+    return new BigDecimal(td).setScale(2, java.math.RoundingMode.HALF_UP)
+}
+
+// Median dew point across a sensor list, pairing each sensor's own (humidity, temperature).
+// Sensors lacking either attribute are skipped. Null if no usable pair.
+private BigDecimal computeMedianDewPoint(List sensors, reportingDevice = null) {
+    List activeSensors = getActiveSensors(sensors, reportingDevice)
+    if (activeSensors.size() == 0) return null
+
+    List<BigDecimal> dewPoints = []
+    activeSensors.each { sensor ->
+        def h = sensor.currentValue("humidity")
+        def t = sensor.currentValue("temperature")
+        if (h != null && t != null) {
+            BigDecimal dp = computeDewPoint(h as BigDecimal, t as BigDecimal)
+            if (dp != null) dewPoints.add(dp)
+        }
+    }
+    if (dewPoints.size() == 0) return null
+    dewPoints.sort()
+    int n = dewPoints.size()
+    if (n % 2 == 0) {
+        return (dewPoints[(n / 2 - 1) as int] + dewPoints[(n / 2) as int]) / 2.0G
+    }
+    return dewPoints[(n / 2) as int]
+}
+
+private Boolean useDewPointMode() { return settings.useDewPoint as Boolean }
+
+private BigDecimal computeBathroomMetric(reportingDevice = null) {
+    return useDewPointMode()
+        ? computeMedianDewPoint(bathroomHumiditySensors, reportingDevice)
+        : computeMedianHumidity(bathroomHumiditySensors, reportingDevice)
+}
+
+private BigDecimal computeReferenceMetric(reportingDevice = null) {
+    return useDewPointMode()
+        ? computeMedianDewPoint(referenceHumiditySensors, reportingDevice)
+        : computeMedianHumidity(referenceHumiditySensors, reportingDevice)
+}
+
+private BigDecimal effectiveHighOffset() {
+    return useDewPointMode()
+        ? ((dewPointHighOffset ?: DEFAULT_DEWPOINT_HIGH_OFFSET) as BigDecimal)
+        : ((highHumidityOffset ?: DEFAULT_HIGH_HUMIDITY_OFFSET) as BigDecimal)
+}
+
+private BigDecimal effectiveNormalOffset() {
+    return useDewPointMode()
+        ? ((dewPointNormalOffset ?: DEFAULT_DEWPOINT_NORMAL_OFFSET) as BigDecimal)
+        : ((normalHumidityOffset ?: DEFAULT_NORMAL_HUMIDITY_OFFSET) as BigDecimal)
+}
+
+private BigDecimal effectiveAbsoluteHigh() {
+    return useDewPointMode()
+        ? ((dewPointAbsoluteHigh ?: DEFAULT_DEWPOINT_ABSOLUTE_HIGH) as BigDecimal)
+        : ((absoluteHighThreshold ?: DEFAULT_ABSOLUTE_HIGH_THRESHOLD) as BigDecimal)
+}
+
+private BigDecimal effectiveAbsoluteLow() {
+    return useDewPointMode()
+        ? ((dewPointAbsoluteLow ?: DEFAULT_DEWPOINT_ABSOLUTE_LOW) as BigDecimal)
+        : ((absoluteLowThreshold ?: DEFAULT_ABSOLUTE_LOW_THRESHOLD) as BigDecimal)
+}
+
+private BigDecimal effectiveAbsoluteLowTolerance() {
+    return useDewPointMode()
+        ? ((dewPointLowTolerance ?: DEFAULT_DEWPOINT_LOW_TOLERANCE) as BigDecimal)
+        : ((absoluteLowTolerance ?: DEFAULT_ABSOLUTE_LOW_TOLERANCE) as BigDecimal)
+}
+
+private String metricUnit()  { return useDewPointMode() ? "°C" : "%" }
+private String metricLabel() { return useDewPointMode() ? "dew point" : "humidity" }
 
 private Map getSensorStatus(List sensors) {
     if (!sensors) {
