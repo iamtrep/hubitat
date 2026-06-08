@@ -14,7 +14,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.19"
+@Field static final String CODE_VERSION = "0.0.20"
 
 metadata {
     definition(
@@ -239,17 +239,24 @@ void refreshEnergyReport() {
     runIn(1800, "refreshEnergyReport")
 }
 
-// zigbee.on()/off() chain a readAttribute(0x0006, 0x0000) after the command,
-// so the device responds with its current switch state even when the command
-// was a no-op (already in target state). Without that read, the platform's
-// command-retry watchdog sees no switch event and retries 5x before giving up.
+// Chain an explicit readAttribute(0x0006, 0x0000) after the on/off command.
+// Without it, a no-op command (device already in target state) emits a
+// Default Response but no on-change attribute report — and the platform's
+// command-retry watchdog gives up after 5 retries. The read is a directed
+// query the device must answer regardless of state transition.
 void on() {
-    sendZigbeeCommands(zigbee.on())
+    List<String> cmds = []
+    cmds += zigbee.on()
+    cmds += zigbee.readAttribute(0x0006, 0x0000)
+    sendZigbeeCommands(cmds)
     markPendingDigitalSwitchChange()
 }
 
 void off() {
-    sendZigbeeCommands(zigbee.off())
+    List<String> cmds = []
+    cmds += zigbee.off()
+    cmds += zigbee.readAttribute(0x0006, 0x0000)
+    sendZigbeeCommands(cmds)
     markPendingDigitalSwitchChange()
 }
 
