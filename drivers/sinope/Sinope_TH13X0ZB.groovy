@@ -25,7 +25,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.14"
+@Field static final String CODE_VERSION = "0.0.15"
 
 @Field static final List<String> SUPPORTED_THERMOSTAT_MODES     = ['"off"', '"heat"']
 @Field static final List<String> SUPPORTED_THERMOSTAT_FAN_MODES = ['"auto"']
@@ -36,7 +36,7 @@ metadata
         name: 'Sinope Floor Thermostat (TH13X0ZB)',
         namespace: 'iamtrep',
         author: 'pj',
-        description: 'Zigbee thermostat',
+        description: 'Sinope Zigbee Floor Thermostat (TH13X0ZB)',
         singleThreaded: true,
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/sinope/Sinope_TH13X0ZB.groovy"
     ) {
@@ -141,7 +141,6 @@ void configure() {
 
     unschedule()
 
-    state.setTemperatureTypeDigital = false
     state.voltageDivider = 10 as Float
     state.powerDivider = 1 as Integer
 
@@ -411,19 +410,24 @@ void setCoolingSetpoint(BigDecimal degrees) {
 
 void setHeatingSetpoint(BigDecimal preciseDegrees) {
     if (preciseDegrees != null) {
-        unschedule('setThermostatSetpoint')
+        unschedule('applyHeatingSetpoint')
         state.setPoint = preciseDegrees
-        runInMillis(500, 'setThermostatSetpoint')
+        runInMillis(500, 'applyHeatingSetpoint')
     }
 }
 
-void setThermostatSetpoint() {
+// Internal handler renamed away from the public 'setThermostatSetpoint' name —
+// the platform's command-retry watchdog was treating that name as a tracked
+// command and firing "failed after 5 retries" warnings despite the Zigbee
+// write succeeding. Plain Hubitat thermostat capability uses setHeatingSetpoint
+// as the public command; the rename keeps the public surface clean.
+private void applyHeatingSetpoint() {
     if (state.setPoint != device.currentValue('heatingSetpoint')) {
         String temperatureScale = getTemperatureScale()
         BigDecimal degrees = state.setPoint as BigDecimal
 
         logInfo("setHeatingSetpoint(${degrees}:${temperatureScale})")
-        state.setTemperatureTypeDigital = true
+        state.lastDigitalSetpointAt = now()
 
         Float celsius = (temperatureScale == 'C') ? degrees.floatValue() : (fahrenheitToCelsius(degrees) as Float).round(2)
         int celsius100 = Math.round(celsius * 100)
@@ -549,8 +553,11 @@ private void parseAttributeReport(Map descMap) {
                     map.name = 'heatingSetpoint'
                     map.value = getTemperature(descMap.value)
                     map.unit = getTemperatureScale()
-                    map.type = state.setTemperatureTypeDigital ? 'digital' : 'physical'
-                    state.setTemperatureTypeDigital = false
+                    // Timestamp-based digital window: the chained writeAttribute+readAttribute
+                    // pattern produces two echoes (CoV report + Read Response), so a
+                    // single-shot flag mistags the second echo as 'physical'.
+                    long sincedigital = now() - ((state.lastDigitalSetpointAt ?: 0L) as long)
+                    map.type = (sincedigital < 5000L) ? 'digital' : 'physical'
                     map.descriptionText = "${device.displayName} heating setpoint is ${map.value}${map.unit} [${map.type}]"
                     sendEvent(name: 'thermostatSetpoint', value: map.value, unit: getTemperatureScale()) // For interoperability with SharpTools
                     break
