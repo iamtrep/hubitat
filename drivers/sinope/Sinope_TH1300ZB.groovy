@@ -25,7 +25,10 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.5"
+@Field static final String CODE_VERSION = "0.0.6"
+
+@Field static final List<String> SUPPORTED_THERMOSTAT_MODES     = ['"off"', '"heat"']
+@Field static final List<String> SUPPORTED_THERMOSTAT_FAN_MODES = ['"auto"']
 
 metadata
 {
@@ -100,10 +103,11 @@ metadata
     }
 }
 
+// TH1300ZB/TH1320ZB hardware exposes only On-Demand (0x0) and Always-On (0x1) via
+// the Sinopé Simplebacklight enum. 'adaptive' is retained as a sacua-migration alias
+// for 'on' so existing configs keep working.
 @Field static final Map constBacklightModes = [ 'off': 0x0, 'adaptive': 0x1, 'on': 0x1,
-                                               0x0: 'off', 0x1: 'on' ]
-@Field static final Map constBacklightModesG2 = [ 'off': 0x2, 'adaptive': 0x0, 'on': 0x1,
-                                                 0x2: 'off', 0x0: 'adaptive', 0x1: 'on' ]
+                                                0x0: 'off', 0x1: 'on' ]
 @Field static final Map constSecondTempDisplayModes =  [ 0x0 : 'auto', 0x01: 'setpoint', 0x02: 'outdoor',
                                                         'auto': 0x0, 'setpoint': 0x1, 'outdoor': 0x2 ]
 @Field static final Map constThermostatCycles = [ 'short': 0x000F, 'long': 0x0384,
@@ -125,35 +129,25 @@ void configure() {
     // Set unused default values
     sendEvent(name: 'coolingSetpoint', value:getTemperature('0BB8')) // 0x0BB8 =  30 Celsius
     sendEvent(name: 'thermostatFanMode', value:'auto') // We dont have a fan, so auto it is
-    setSupportedThermostatFanModes(JsonOutput.toJson(["auto"]))
-	setSupportedThermostatModes(JsonOutput.toJson(["heat", "off"]))
+    sendEvent(name: 'supportedThermostatFanModes', value: SUPPORTED_THERMOSTAT_FAN_MODES)
+    sendEvent(name: 'supportedThermostatModes',    value: SUPPORTED_THERMOSTAT_MODES)
 
     unschedule()
 
     state.setTemperatureTypeDigital = false
     state.voltageDivider = 10 as Float
+    state.powerDivider = 1 as Integer
 
     runIn(10, 'refreshClockTime')
     runIn(12, 'refreshMaxPower')
 
-    // Configure Reporting
-    if (prefMinTempChange == null) {
-        prefMinTempChange = 50 as int
-    }
-    if (prefMinPIChange == null) {
-        prefMinPIChange = 5 as int
-    }
-    if (prefMinEnergyChange == null) {
-        prefMinEnergyChange = 10 as int
-    }
-
     List<String> cmds = []
-    cmds += zigbee.configureReporting(0x0201, 0x0000, 0x29, 30, 580, (int) prefMinTempChange)           // local temperature
-    cmds += zigbee.configureReporting(0x0201, 0x0008, 0x20, 59, 590, (int) prefMinPIChange)             // PI heating demand
+    cmds += zigbee.configureReporting(0x0201, 0x0000, 0x29, 30, 580, (int) (prefMinTempChange ?: 50))   // local temperature
+    cmds += zigbee.configureReporting(0x0201, 0x0008, 0x20, 59, 590, (int) (prefMinPIChange ?: 5))      // PI heating demand
     cmds += zigbee.configureReporting(0x0201, 0x0012, 0x29, 15, 302, 40)                                // occupied heating setpoint
     cmds += zigbee.configureReporting(0x0204, 0x0000, 0x30, 1, 0)                                       // temperature display mode
     cmds += zigbee.configureReporting(0x0204, 0x0001, 0x30, 1, 0)                                       // keypad lockout
-    cmds += zigbee.configureReporting(0x0702, 0x0000, 0x25, 59, 1799, (int) prefMinEnergyChange)        // Energy reading
+    cmds += zigbee.configureReporting(0x0702, 0x0000, 0x25, 59, 1799, (int) (prefMinEnergyChange ?: 10)) // Energy reading
     cmds += zigbee.configureReporting(0x0B04, 0x0505, 0x29, 30, 600, 1)                                 // Voltage
     cmds += zigbee.configureReporting(0xFF01, 0x0115, 0x30, 10, 3600, 1)                                // report gfci status each hours
     cmds += zigbee.configureReporting(0xFF01, 0x010C, 0x30, 10, 3600, 1)                                // floor limit status each hours
@@ -166,21 +160,12 @@ void configure() {
     }
 
     // Configure display mode
-    if (prefBacklightMode == null) {
-        prefBacklightMode = 'adaptive' as String
-    }
     runIn(1, 'setBacklightMode')
 
     // Configure secondary display
-    if (prefSecondTempDisplay == null) {
-        prefSecondTempDisplay = 'setpoint' as String
-    }
     runIn(1, 'setSecondTempDisplay')
 
     //Configure Clock Format
-    if (prefTimeFormatParam == null) {
-        prefTimeFormatParam = '24h' as String
-    }
     if (prefTimeFormatParam == '12h AM/PM') { //12h AM/PM "24h"
         logInfo('Set to 12h AM/PM')
         cmds += zigbee.writeAttribute(0xFF01, 0x0114, 0x30, 0x0001)
@@ -197,9 +182,6 @@ void configure() {
     }
 
     //Set the control heating mode
-    if (prefAirFloorModeParam == null) {
-        prefAirFloorModeParam = 'Ambient' as String
-    }
     if (prefAirFloorModeParam == 'Ambient') { //Air mode
         logInfo('Set to Ambient mode')
         cmds += zigbee.writeAttribute(0xFF01, 0x0105, 0x30, 0x0001)
@@ -209,9 +191,6 @@ void configure() {
     }
 
     //set the type of sensor
-    if (prefFloorSensorTypeParam == null) {
-        prefFloorSensorTypeParam = '10k' as String
-    }
     if (prefFloorSensorTypeParam == '12k') { //sensor type = 12k
         logInfo('Sensor type is 12k')
         cmds += zigbee.writeAttribute(0xFF01, 0x010B, 0x30, 0x0001)
@@ -328,8 +307,7 @@ void heat() {
     logInfo('heat(): mode set')
 
     List<String> cmds = []
-    cmds += zigbee.writeAttribute(0x0201, 0x001C, 0x30, 04, [:], 1000) // MODE
-    cmds += zigbee.writeAttribute(0x0201, 0x401C, 0x30, 04, [mfgCode: '0x1185']) // SETPOINT MODE
+    cmds += zigbee.writeAttribute(0x0201, 0x001C, 0x30, 04, [:], 1000)
     cmds += zigbee.readAttribute(0x0201, 0x001C)
 
     sendZigbeeCommands(cmds)
@@ -432,6 +410,12 @@ void setThermostatMode(String value) {
 // Zigbee message parsing
 
 void parse(String description) {
+    if (state.version != CODE_VERSION) {
+        logWarn("new version: ${CODE_VERSION} (was: ${state.version})")
+        state.version = CODE_VERSION
+        runInMillis(1, 'configure')
+    }
+
     Map descMap = zigbee.parseDescriptionAsMap(description)
     logTrace("parse() - description = ${descMap}")
 
@@ -440,6 +424,7 @@ void parse(String description) {
         parseAttributeReport(descMap)
         descMap.additionalAttrs?.each { add ->
             add.cluster = descMap.cluster
+            add.clusterInt = descMap.clusterInt
             parseAttributeReport(add)
         }
     } else if (descMap.profileId == "0000") {
@@ -474,12 +459,17 @@ private void parseAttributeReport(Map descMap) {
         case 0x0201: // Thermostat cluster
             switch (descMap.attrInt) {
                 case 0x0000:
+                    // Detect sensor-error sentinels on the raw int16, before scaling.
+                    // Sinopé reports 0x7FFD on a faulted probe; the ZCL "invalid" sentinel is 0x8000.
+                    int raw0000 = hexToSignedInt16(descMap.value)
+                    if (raw0000 == 0x7FFD || raw0000 == 0x7FFF || raw0000 == -32768) {
+                        logWarn("Sensor error on cluster ${descMap.cluster}")
+                        map = [:]
+                        break
+                    }
                     map.name = 'temperature'
                     map.value = getTemperature(descMap.value)
                     map.unit = getTemperatureScale()
-                    if (map.value > 158) {
-                        map.value = 'Sensor Error'
-                    }
                     map.descriptionText = "Temperature of ${device.displayName} is at ${map.value}${map.unit}"
                     if (prefAirFloorModeParam != null) { // If floor heating device, refresh secondary temperature
                         runIn(1, refreshSecondTemp)
@@ -516,14 +506,19 @@ private void parseAttributeReport(Map descMap) {
                     break
 
                 case 0x0401: // thermostat cycle
-                    logTrace("Thermostat cycle length is ${constThermostatCycles[descMap.value]}")
-                    device.updateSetting('prefCycleLength', [value: constThermostatCycles[descMap.value], type: 'enum'])
+                    String cycleLabel = constThermostatCycles[Integer.parseInt(descMap.value, 16)]
+                    logTrace("Thermostat cycle length is ${cycleLabel}")
+                    if (cycleLabel != null) {
+                        device.updateSetting('prefCycleLength', [value: cycleLabel, type: 'enum'])
+                    }
                     break
 
                 case 0x0402: // display backlight
-                    // TODO - G2
-                    logTrace("Display backlight set to ${constBacklightModes[descMap.value]}")
-                    device.updateSetting('prefBacklightMode', [value: constBacklightModes[descMap.value], type: 'enum'])
+                    String backlightLabel = constBacklightModes[Integer.parseInt(descMap.value, 16)]
+                    logTrace("Display backlight set to ${backlightLabel}")
+                    if (backlightLabel != null) {
+                        device.updateSetting('prefBacklightMode', [value: backlightLabel, type: 'enum'])
+                    }
                     // no event needed
                     break
 
@@ -544,12 +539,15 @@ private void parseAttributeReport(Map descMap) {
 
         case 0x0402: // Temperature measurement cluster
             if (descMap.attrInt == 0x0000) {
+                int raw0402 = hexToSignedInt16(descMap.value)
+                if (raw0402 == 0x7FFD || raw0402 == 0x7FFF || raw0402 == -32768) {
+                    logWarn("Sensor error on cluster ${descMap.cluster}")
+                    map = [:]
+                    break
+                }
                 map.name = 'temperature' // TODO - already sending a temperature event on cluster 0x0201 attr 0x0000
                 map.value = getTemperature(descMap.value)
                 map.unit = getTemperatureScale()
-                if (map.value > 158) {
-                    map.value = 'Sensor Error'
-                }
                 map.descriptionText = "${device.displayName} temperature is ${map.value}${map.unit}"
                 break
             }
@@ -612,7 +610,7 @@ private void parseAttributeReport(Map descMap) {
 
                 case 0x010C: // Floor limit status
                     map.name = 'floorLimitStatus'
-                    map.value = constFloorLimitStatus[descMap.value.toInteger()]
+                    map.value = constFloorLimitStatus[Integer.parseInt(descMap.value, 16)]
                     map.descriptionText = "${device.displayName} floor limit status is ${map.value}"
                     break
 
@@ -624,9 +622,11 @@ private void parseAttributeReport(Map descMap) {
                     break
 
                 case 0x0012: // secondary temperature display update
-                    String secondTempMode = constSecondTempDisplayModes[descMap.value.toInteger()]
+                    String secondTempMode = constSecondTempDisplayModes[Integer.parseInt(descMap.value, 16)]
                     logTrace("Secondary temp display mode is ${secondTempMode}")
-                    device.updateSetting('prefSecondTempDisplay', [value: secondTempMode, type: 'enum'])
+                    if (secondTempMode != null) {
+                        device.updateSetting('prefSecondTempDisplay', [value: secondTempMode, type: 'enum'])
+                    }
                     // no event needed
                     break
 
@@ -643,11 +643,7 @@ private void parseAttributeReport(Map descMap) {
 
                 case 0x0115:
                     map.name = 'gfciStatus'
-                    if (descMap.value.toInteger() == 0) {
-                        map.value = 'OK'
-                    } else { // descMap.value.toInteger() == 1
-                        map.value = 'error'
-                    }
+                    map.value = (Integer.parseInt(descMap.value, 16) == 0) ? 'OK' : 'error'
                     map.descriptionText = "${device.displayName} GFCI status is ${map.value}"
                     break
 
@@ -750,12 +746,7 @@ void setOutdoorTemperature(BigDecimal outdoorTemperature) {
 }
 
 void setBacklightMode(String mode = prefBacklightMode) {
-    Integer backlightModeAttr = null
-    if (isG2Model()) {
-        backlightModeAttr = constBacklightModesG2[mode] as Integer
-    } else {
-        backlightModeAttr = constBacklightModes[mode] as Integer
-    }
+    Integer backlightModeAttr = constBacklightModes[mode] as Integer
 
     if (backlightModeAttr == null) {
         logWarn("invalid display mode ${mode}")
@@ -803,10 +794,6 @@ private void setSecondTempDisplay(String mode = prefSecondTempDisplay) {
     } else {
         logWarn("invalid secondary temperature display mode ${mode}")
     }
-}
-
-private boolean isG2Model() {
-    return device.getDataValue('model')?.contains('-G2')
 }
 
 private void setThermostatCycle(String cycle = prefCycleLength) {
