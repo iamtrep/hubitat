@@ -25,7 +25,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.17"
+@Field static final String CODE_VERSION = "0.0.18"
 
 @Field static final List<String> SUPPORTED_THERMOSTAT_MODES     = ['"off"', '"heat"']
 @Field static final List<String> SUPPORTED_THERMOSTAT_FAN_MODES = ['"auto"']
@@ -122,13 +122,14 @@ metadata
 @Field static final Map constFloorLimitStatus = [ 'OK': 0, 'floorLimitLowReached': 1, 'floorLimitMaxReached': 2, 'floorAirLimitMaxReached': 3,
                                                  0: 'OK', 1: 'floorLimitLowReached', 2: 'floorLimitMaxReached', 3: 'floorAirLimitMaxReached']
 
-@Field static final Map constKeypadLockoutMap = [ '00': 'unlocked ', '01': 'locked ' ]
+@Field static final Map constKeypadLockoutMap = [ '00': 'unlocked', '01': 'locked' ]
 
 
 //-- Capabilities -----------------------------------------------------------------------------------------
 
 void configure() {
     logInfo('configure()')
+    state.version = CODE_VERSION  // installed()/updated() route here; keep parse() from re-firing configure()
 
     // Set unused default values
     sendEvent(name: 'coolingSetpoint', value:getTemperature('0BB8')) // 0x0BB8 =  30 Celsius
@@ -561,13 +562,8 @@ private void parseAttributeReport(Map descMap) {
                     }
                     break
 
-                case 0x0402: // display backlight
-                    String backlightLabel = constBacklightModes[Integer.parseInt(descMap.value, 16)]
-                    logTrace("Display backlight set to ${backlightLabel}")
-                    if (backlightLabel != null) {
-                        device.updateSetting('prefBacklightMode', [value: backlightLabel, type: 'enum'])
-                    }
-                    // no event needed
+                case 0x0402: // display backlight echo — no updateSetting; 'adaptive'/'on' collide on 0x1
+                    logTrace("Display backlight echo: ${descMap.value}")
                     break
 
                 default:
@@ -678,12 +674,22 @@ private void parseAttributeReport(Map descMap) {
                     break
 
                 case 0x010C: // Floor limit status
+                    String floorLimit = constFloorLimitStatus[Integer.parseInt(descMap.value, 16)]
+                    if (floorLimit == null) {
+                        logWarn("Unknown floor limit status code: ${descMap.value}")
+                        break
+                    }
                     map.name = 'floorLimitStatus'
-                    map.value = constFloorLimitStatus[Integer.parseInt(descMap.value, 16)]
+                    map.value = floorLimit
                     map.descriptionText = "${device.displayName} floor limit status is ${map.value}"
                     break
 
                 case 0x010D:
+                    int raw010D = hexToSignedInt16(descMap.value)
+                    if (raw010D == 0x7FFD || raw010D == 0x7FFF || raw010D == -32768) {
+                        logWarn("Room sensor error")
+                        break
+                    }
                     map.name = 'roomTemperature'
                     map.value = getTemperature(descMap.value)
                     map.unit = getTemperatureScale()
@@ -704,6 +710,11 @@ private void parseAttributeReport(Map descMap) {
                     break
 
                 case 0x0107:
+                    int raw0107 = hexToSignedInt16(descMap.value)
+                    if (raw0107 == 0x7FFD || raw0107 == 0x7FFF || raw0107 == -32768) {
+                        logWarn("Floor sensor error")
+                        break
+                    }
                     map.name = 'floorTemperature'
                     map.value = getTemperature(descMap.value)
                     map.unit = getTemperatureScale()
@@ -908,7 +919,7 @@ private static String decodeZigbeeCharString(String raw) {
     if (!raw.matches('[0-9A-Fa-f]+')) return raw
     if (raw.length() < 2) return null
     int length = Integer.parseInt(raw.substring(0, 2), 16)
-    if (raw.length() < 2 + length * 2) return raw
+    if (raw.length() < 2 + length * 2) return null
     StringBuilder sb = new StringBuilder(length)
     for (int i = 0; i < length; i++) {
         int code = Integer.parseInt(raw.substring(2 + i * 2, 4 + i * 2), 16)
