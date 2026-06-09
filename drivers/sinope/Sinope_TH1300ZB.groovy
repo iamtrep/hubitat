@@ -25,7 +25,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.4"
+@Field static final String CODE_VERSION = "0.0.5"
 
 metadata
 {
@@ -387,11 +387,6 @@ void setHeatingSetpoint(BigDecimal preciseDegrees) {
 
 void setThermostatSetpoint() {
     if (state.setPoint != device.currentValue('heatingSetpoint')) {
-        // To make sure that set point temperature is always received by the device.
-        // Pacing of 30 seconds to not overload in case of power outage when device is not responding
-        // TODO
-        runIn(30, 'setThermostatSetpoint')
-
         String temperatureScale = getTemperatureScale()
         BigDecimal degrees = state.setPoint as BigDecimal
 
@@ -401,8 +396,13 @@ void setThermostatSetpoint() {
         Float celsius = (temperatureScale == 'C') ? degrees.floatValue() : (fahrenheitToCelsius(degrees) as Float).round(2)
         int celsius100 = Math.round(celsius * 100)
 
+        // Chain readAttribute(0x0201, 0x0012) so a no-op write (setpoint already
+        // at target) still produces a Read Response — without it, the platform's
+        // command-retry watchdog gives up after 5 retries. Replaces the previous
+        // 30s self-rescheduling runIn, which was a workaround for this same gap.
         List<String> cmds = []
-        cmds += zigbee.writeAttribute(0x0201, 0x0012, 0x29, celsius100) //Write Heat Setpoint
+        cmds += zigbee.writeAttribute(0x0201, 0x0012, 0x29, celsius100)
+        cmds += zigbee.readAttribute(0x0201, 0x0012)
         sendZigbeeCommands(cmds)
     }
 }
