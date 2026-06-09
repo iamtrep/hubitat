@@ -16,7 +16,7 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.2.6"
+@Field static final String CODE_VERSION = "0.2.7"
 
 // Custom cluster for radar config and TVOC
 @Field static final int CLUSTER_RADAR = 0x042E
@@ -555,19 +555,34 @@ private Integer decodeTvocFloat(String hex) {
 
 // Light Commands
 
+// Chain an explicit readAttribute after the on/off/setLevel command. Without
+// it, a no-op command (device already in target state/level) emits a Default
+// Response but no on-change attribute report — and the platform's
+// command-retry watchdog gives up after 5 retries. The read is a directed
+// query the device must answer regardless of state transition.
 void on() {
     logDebug "on()"
-    sendZigbeeCommands(zigbee.on())
+    List<String> cmds = []
+    cmds += zigbee.on()
+    cmds += zigbee.readAttribute(0x0006, 0x0000)
+    sendZigbeeCommands(cmds)
 }
 
 void off() {
     logDebug "off()"
-    sendZigbeeCommands(zigbee.off())
+    List<String> cmds = []
+    cmds += zigbee.off()
+    cmds += zigbee.readAttribute(0x0006, 0x0000)
+    sendZigbeeCommands(cmds)
 }
 
 void setLevel(BigDecimal level, BigDecimal duration = 0) {
     logDebug "setLevel(${level}, ${duration})"
-    sendZigbeeCommands(zigbee.setLevel(level.intValue(), duration.intValue()))
+    List<String> cmds = []
+    cmds += zigbee.setLevel(level.intValue(), duration.intValue())
+    cmds += zigbee.readAttribute(0x0008, 0x0000)
+    cmds += zigbee.readAttribute(0x0006, 0x0000)  // setLevel(0) turns off; setLevel(>0) from off turns on
+    sendZigbeeCommands(cmds)
 }
 
 void setLevel(Number level, Number duration = 0) {
@@ -599,6 +614,7 @@ void setColor(Map value) {
 
     if (value.level) {
         cmds += zigbee.setLevel(value.level.toInteger(), 0)
+        cmds += zigbee.readAttribute(0x0008, 0x0000)
     }
 
     cmds += zigbee.readAttribute(0x0300, 0x0000)  // Hue
@@ -649,6 +665,7 @@ void setColorTemperature(BigDecimal temperature, BigDecimal level = null, BigDec
 
     if (level != null) {
         cmds += zigbee.setLevel(level.intValue(), 0)
+        cmds += zigbee.readAttribute(0x0008, 0x0000)
     }
 
     cmds += zigbee.readAttribute(0x0300, ATTR_COLOR_TEMP_MIREDS)
