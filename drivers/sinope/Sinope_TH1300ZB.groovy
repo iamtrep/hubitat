@@ -25,7 +25,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.9"
+@Field static final String CODE_VERSION = "0.0.11"
 
 @Field static final List<String> SUPPORTED_THERMOSTAT_MODES     = ['"off"', '"heat"']
 @Field static final List<String> SUPPORTED_THERMOSTAT_FAN_MODES = ['"auto"']
@@ -525,7 +525,7 @@ private void parseAttributeReport(Map descMap) {
                     map.unit = getTemperatureScale()
                     map.descriptionText = "Temperature of ${device.displayName} is at ${map.value}${map.unit}"
                     if (prefAirFloorModeParam != null) { // If floor heating device, refresh secondary temperature
-                        runIn(1, refreshSecondTemp)
+                        runIn(1, 'refreshSecondTemp')
                     }
                     break
 
@@ -589,12 +589,19 @@ private void parseAttributeReport(Map descMap) {
             }
             break
 
-        case 0x0204: // thermostat control
-            if (descMap.attrInt == 0x0001) {
-                map.name = 'keypad'
-                map.value = constKeypadLockoutMap[descMap.value]
-                map.descriptionText = "${device.displayName} is ${map.value}"
-                // no corresponding preference to update
+        case 0x0204: // thermostat user interface config
+            switch (descMap.attrInt) {
+                case 0x0000: // temperature display mode echo — no event, no setting drift to sync
+                    logTrace("Temperature display mode echo: ${descMap.value}")
+                    break
+                case 0x0001:
+                    map.name = 'keypad'
+                    map.value = constKeypadLockoutMap[descMap.value]
+                    map.descriptionText = "${device.displayName} is ${map.value}"
+                    break
+                default:
+                    logTrace("Unhandled thermostat UI cluster attribute - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
+                    break
             }
             break
 
@@ -745,9 +752,10 @@ private void parseAttributeReport(Map descMap) {
     if (map) {
         if (map.descriptionText) logInfo("${map.descriptionText}")
         sendEvent(map)
-    } else {
-        logDebug("Unhandled attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
     }
+    // Empty `map` is normal for cases that side-effect via sendEvent/updateDataValue/
+    // updateSetting (firmware data, device status, calibration, etc.). Inner switch
+    // defaults already log genuine fall-throughs at trace level.
 }
 
 // Custom commands
