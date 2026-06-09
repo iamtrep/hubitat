@@ -25,7 +25,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.11"
+@Field static final String CODE_VERSION = "0.0.12"
 
 @Field static final List<String> SUPPORTED_THERMOSTAT_MODES     = ['"off"', '"heat"']
 @Field static final List<String> SUPPORTED_THERMOSTAT_FAN_MODES = ['"auto"']
@@ -37,7 +37,7 @@ metadata
         namespace: 'iamtrep',
         author: 'pj',
         description: 'Zigbee thermostat',
-        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/sinope/Sinope_TH1300ZB.groovy"
+        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/sinope/Sinope_TH13X0ZB.groovy"
     ) {
         capability 'Actuator'
         capability 'Configuration'
@@ -750,7 +750,10 @@ private void parseAttributeReport(Map descMap) {
     }
 
     if (map) {
-        if (map.descriptionText) logInfo("${map.descriptionText}")
+        // descriptionText already embeds the device label, so log it directly
+        // instead of via logInfo() — otherwise the helper's `${device} : ` prefix
+        // doubles the device name in every log line.
+        if (map.descriptionText && txtEnable) log.info(map.descriptionText)
         sendEvent(map)
     }
     // Empty `map` is normal for cases that side-effect via sendEvent/updateDataValue/

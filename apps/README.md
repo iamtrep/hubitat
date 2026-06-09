@@ -17,6 +17,7 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 | **Humidity-Based Fan Controller** | Controls a bathroom extractor fan based on humidity levels compared to a reference sensor |
 | **Hydro-Québec Peak Period Manager** | Manages devices during Hydro-Québec peak periods |
 | **Location Event Mapper (parent/child)** | TBD |
+| **mmWave Sensor Comparison** | Subscribes to several co-located presence/motion sensors and derives comparative metrics: activation latency, agreement, and sustained-occupancy hold. |
 | **Startup and Shutdown Monitor** | Controls a virtual contact sensor based on system events related to startup, shutdown and reboot |
 | **Switch Monitor** | Monitors switches that must remain on or off, organized in groups with independent timing, notifications, and load monitoring. |
 <!-- /AUTO -->

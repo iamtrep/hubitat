@@ -14,7 +14,6 @@ Hubitat Elevation apps for hub administration and maintenance. These are not aut
 |---|---|---|
 | `DeviceInUseEnumerator.groovy` | **Device "in use by" Enumerator** | For each device, enumerates the apps referencing them |
 | `DeviceReplacement.groovy` | **Device Replacement Helper** | Replace a device across all installed apps in one shot |
-| `RuleLoggingManager.groovy` | **Rule Logging Manager** | Reports Rule Machine and Button Controller rules that have Actions, Events, or Triggers logging selected. |
 <!-- /AUTO -->
 
 ### Device "in use by" Enumerator (`DeviceInUseEnumerator.groovy`)

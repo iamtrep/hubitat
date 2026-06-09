@@ -35,7 +35,7 @@ A small number of files under `drivers/` are derived from upstream community wor
 
 - `drivers/IKEA-Blinds.groovy` (Wayne Man)
 - `drivers/XfinityContactSensor.groovy` (John Goughenour)
-- `drivers/sinope/Sinope_TH1300ZB.groovy` (community)
+- `drivers/sinope/Sinope_TH13X0ZB.groovy` (community)
 - `drivers/sinope/Sinope_VA422xZB.groovy` (sacua, kkossev, thebearmay)
 - `drivers/stelpro/StelproKi.groovy` (Philippe Charette, Stelpro)
 - `drivers/stelpro/StelproAllia.groovy` (Maxime Boissonneault, Philippe Charette, Stelpro)

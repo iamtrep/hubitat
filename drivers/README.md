@@ -20,7 +20,6 @@ Hubitat Elevation device drivers for Zigbee devices, BLE sensors, and cloud APIs
 | **Environment Canada AQHI** | Air Quality Health Index driver using the Environment Canada GeoMet OGC API — current observations, hourly forecasts, and alerts |
 | **IKEA Window Blinds** | Zigbee driver for IKEA window blinds |
 | **Log Event Monitor** | Monitors the hub log stream and fires events on pattern matches |
-| **ThirdReality Presence Sensor R3 (3RPL01084Z)** | 60 GHz mmWave presence sensor with RGB night light, illuminance, and TVOC air quality (Zigbee 3.0) |
 | **Universal Electronics / Visonic / Xfinity Contact Sensor** | Zigbee contact sensor with battery, tamper, and temperature |
 | **Virtual Switch + PowerSource** | Virtual device with synced Switch and PowerSource capabilities for testing power outage detection |
 | **Zigbee Mesh Probe** | Issues ZDO neighbor-table and routing-table queries for external mesh-mapping tools |
@@ -32,8 +31,8 @@ Hubitat Elevation device drivers for Zigbee devices, BLE sensors, and cloud APIs
 | Driver | Description |
 |---|---|
 | **Sinope Dimmer (DM2500ZB)** | Zigbee dimmer switch |
+| **Sinope Floor Thermostat (TH13X0ZB)** | Zigbee thermostat |
 | **Sinope Switch (SW2500ZB)** | Zigbee on/off switch |
-| **Sinope Thermostat TH13X0ZB DEV** | Zigbee thermostat |
 | **Sinope Water Valve (VA422xZB)** | Zigbee water valve with optional flow sensor support |
 <!-- /AUTO -->
 
@@ -57,6 +56,8 @@ Hubitat Elevation device drivers for Zigbee devices, BLE sensors, and cloud APIs
 | **Virtual Flow Meter (Test)** | Virtual liquid-flow-rate device for testing Well Monitor flow tracking |
 | **Virtual mmWave PIR Sensor** | Virtual device combining PIR + mmWave motion attributes for testing Motion Fusion |
 | **Virtual Well Pump Switch (Test)** | Virtual switch + powerMeter device for testing Well Monitor pump cycle detection |
+| **Xfinity Contact Sensor Monitor** | Logs battery, batteryVoltage, lowBattery and batteryDefect events for Xfinity contact sensors and optionally notifies |
+| **Zigbee Introspect** |  |
 <!-- /AUTO -->
 
 ## VisiblAir
