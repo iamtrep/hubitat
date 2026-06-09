@@ -25,7 +25,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.15"
+@Field static final String CODE_VERSION = "0.0.17"
 
 @Field static final List<String> SUPPORTED_THERMOSTAT_MODES     = ['"off"', '"heat"']
 @Field static final List<String> SUPPORTED_THERMOSTAT_FAN_MODES = ['"auto"']
@@ -110,9 +110,6 @@ metadata
     }
 }
 
-// TH1300ZB/TH1320ZB hardware exposes only On-Demand (0x0) and Always-On (0x1) via
-// the Sinopé Simplebacklight enum. 'adaptive' is retained as a sacua-migration alias
-// for 'on' so existing configs keep working.
 @Field static final Map constBacklightModes = [ 'off': 0x0, 'adaptive': 0x1, 'on': 0x1,
                                                 0x0: 'off', 0x1: 'on' ]
 @Field static final Map constSecondTempDisplayModes =  [ 0x0 : 'auto', 0x01: 'setpoint', 0x02: 'outdoor', 0x04: 'roomTemperature',
@@ -141,7 +138,7 @@ void configure() {
 
     unschedule()
 
-    state.voltageDivider = 10 as Float
+    state.voltageDivider = 1 as Float
     state.powerDivider = 1 as Integer
 
     runIn(10, 'refreshClockTime')
@@ -159,9 +156,8 @@ void configure() {
     cmds += zigbee.configureReporting(0xFF01, 0x010C, 0x30, 10, 3600, 1, [mfgCode: '0x119C'])           // floor limit status
     cmds += zigbee.configureReporting(0xFF01, 0x0200, 0x1b, 10, 3600, 0x60, [mfgCode: '0x119C'])        // device status bitmap — watch bits 5 (floor) + 6 (temp)
 
-    // Pull firmware identifiers (stored as device data values for visibility in device edit page)
-    cmds += zigbee.readAttribute(0xFF01, 0x0003, [mfgCode: '0x119C'])
-    cmds += zigbee.readAttribute(0xFF01, 0x0004, [mfgCode: '0x119C'])
+    cmds += zigbee.readAttribute(0xFF01, 0x0003, [mfgCode: '0x119C'])  // firmware number
+    cmds += zigbee.readAttribute(0xFF01, 0x0004, [mfgCode: '0x119C'])  // firmware version
 
     // Configure displayed scale
     if (getTemperatureScale() == 'C') {
@@ -259,7 +255,6 @@ void configure() {
         cmds += zigbee.writeAttribute(0xFF01, 0x010A, 0x29, 0x8000, [mfgCode: '0x119C'])
     }
 
-    // Min/max heat setpoint clamp on the standard ZCL Thermostat cluster.
     if (prefMinHeatingSetpoint) {
         Integer minSetpoint = (getTemperatureScale() == 'F')
             ? fahrenheitToCelsius(prefMinHeatingSetpoint).toInteger()
@@ -275,7 +270,6 @@ void configure() {
         cmds += zigbee.writeAttribute(0x0201, 0x0016, 0x29, maxSetpoint)
     }
 
-    // Heating cycle length (short/long)
     if (prefCycleLength) {
         Integer cycleAttr = constThermostatCycles[prefCycleLength] as Integer
         if (cycleAttr != null) {
@@ -283,9 +277,7 @@ void configure() {
         }
     }
 
-    // Local temperature calibration — signed int8, tenths of °C, valid ±25 (±2.5 °C).
-    // Calibration is a delta, NOT an absolute temperature, so scale linearly without the °F offset.
-    if (prefTempCalibration != null) {
+    if (prefTempCalibration != null) {  // delta, scale linearly °F↔°C
         Double calibCelsius = (getTemperatureScale() == 'F')
             ? (prefTempCalibration as Double) * 5.0d / 9.0d
             : (prefTempCalibration as Double)
@@ -329,8 +321,7 @@ void installed() {
 }
 
 void initialize() {
-    // initialize() runs on hub startup — refresh() only, not configure().
-    // Reconfiguring on every restart wastes radio bandwidth.
+    // refresh() not configure() — Zigbee reconfigure on every hub startup wastes radio bandwidth
     logInfo('initialize()')
     refresh()
 }
@@ -338,7 +329,6 @@ void initialize() {
 void updated() {
     logInfo('updated()')
 
-    // preferences have changed.
     if (!state.updatedLastRanAt || now() >= state.updatedLastRanAt + 5000) {
         state.updatedLastRanAt = now()
         configure()
@@ -416,11 +406,6 @@ void setHeatingSetpoint(BigDecimal preciseDegrees) {
     }
 }
 
-// Internal handler renamed away from the public 'setThermostatSetpoint' name —
-// the platform's command-retry watchdog was treating that name as a tracked
-// command and firing "failed after 5 retries" warnings despite the Zigbee
-// write succeeding. Plain Hubitat thermostat capability uses setHeatingSetpoint
-// as the public command; the rename keeps the public surface clean.
 private void applyHeatingSetpoint() {
     if (state.setPoint != device.currentValue('heatingSetpoint')) {
         String temperatureScale = getTemperatureScale()
@@ -432,10 +417,8 @@ private void applyHeatingSetpoint() {
         Float celsius = (temperatureScale == 'C') ? degrees.floatValue() : (fahrenheitToCelsius(degrees) as Float).round(2)
         int celsius100 = Math.round(celsius * 100)
 
-        // Chain readAttribute(0x0201, 0x0012) so a no-op write (setpoint already
-        // at target) still produces a Read Response — without it, the platform's
-        // command-retry watchdog gives up after 5 retries. Replaces the previous
-        // 30s self-rescheduling runIn, which was a workaround for this same gap.
+        // Chained readAttribute forces a Read Response on no-op writes
+        // (same setpoint) — otherwise the command-retry watchdog times out.
         List<String> cmds = []
         cmds += zigbee.writeAttribute(0x0201, 0x0012, 0x29, celsius100)
         cmds += zigbee.readAttribute(0x0201, 0x0012)
@@ -468,8 +451,6 @@ void setThermostatMode(String value) {
 // Zigbee message parsing
 
 void parse(String description) {
-    // singleThreaded: true serializes every handler in this file, so plain state is
-    // safe — no race between concurrent parse() calls reading the old version.
     if (state.version != CODE_VERSION) {
         logWarn("new version: ${CODE_VERSION} (was: ${state.version})")
         state.version = CODE_VERSION
@@ -519,8 +500,6 @@ private void parseAttributeReport(Map descMap) {
         case 0x0201: // Thermostat cluster
             switch (descMap.attrInt) {
                 case 0x0000:
-                    // Detect sensor-error sentinels on the raw int16, before scaling.
-                    // Sinopé reports 0x7FFD on a faulted probe; the ZCL "invalid" sentinel is 0x8000.
                     int raw0000 = hexToSignedInt16(descMap.value)
                     if (raw0000 == 0x7FFD || raw0000 == 0x7FFF || raw0000 == -32768) {
                         logWarn("Sensor error on cluster ${descMap.cluster}")
@@ -553,9 +532,7 @@ private void parseAttributeReport(Map descMap) {
                     map.name = 'heatingSetpoint'
                     map.value = getTemperature(descMap.value)
                     map.unit = getTemperatureScale()
-                    // Timestamp-based digital window: the chained writeAttribute+readAttribute
-                    // pattern produces two echoes (CoV report + Read Response), so a
-                    // single-shot flag mistags the second echo as 'physical'.
+                    // 5s digital window — chained write+read produces two echoes
                     long sincedigital = now() - ((state.lastDigitalSetpointAt ?: 0L) as long)
                     map.type = (sincedigital < 5000L) ? 'digital' : 'physical'
                     map.descriptionText = "${device.displayName} heating setpoint is ${map.value}${map.unit} [${map.type}]"
@@ -760,15 +737,10 @@ private void parseAttributeReport(Map descMap) {
     }
 
     if (map) {
-        // descriptionText already embeds the device label, so log it directly
-        // instead of via logInfo() — otherwise the helper's `${device} : ` prefix
-        // doubles the device name in every log line.
+        // descriptionText already includes the device label — bypass logInfo() to avoid doubling
         if (map.descriptionText && txtEnable) log.info(map.descriptionText)
         sendEvent(map)
     }
-    // Empty `map` is normal for cases that side-effect via sendEvent/updateDataValue/
-    // updateSetting (firmware data, device status, calibration, etc.). Inner switch
-    // defaults already log genuine fall-throughs at trace level.
 }
 
 // Custom commands
@@ -924,12 +896,8 @@ private Double getTemperature(String value) {
 }
 
 private Double getTemperatureOffset(String value) {
-    if (value == null) {
-        return null
-    }
-    // Cluster 0x0201 LocalTemperatureCalibration: signed int8, tenths of °C.
-    // Calibration is a delta, NOT an absolute temperature, so the C↔F conversion
-    // is the linear scale factor only — never apply the 32° offset to a delta.
+    if (value == null) return null
+    // delta in tenths of °C — scale linearly °C↔°F, no 32° offset
     double celsius = hexToSignedInt8(value) / 10.0d
     return (getTemperatureScale() == 'C') ? celsius : roundToTwoDecimalPlaces(celsius * 9.0d / 5.0d)
 }
@@ -937,10 +905,10 @@ private Double getTemperatureOffset(String value) {
 @CompileStatic
 private static String decodeZigbeeCharString(String raw) {
     if (raw == null || raw.isEmpty()) return null
-    if (!raw.matches('[0-9A-Fa-f]+')) return raw       // already decoded by the platform
+    if (!raw.matches('[0-9A-Fa-f]+')) return raw
     if (raw.length() < 2) return null
     int length = Integer.parseInt(raw.substring(0, 2), 16)
-    if (raw.length() < 2 + length * 2) return raw      // malformed; surface raw for debugging
+    if (raw.length() < 2 + length * 2) return raw
     StringBuilder sb = new StringBuilder(length)
     for (int i = 0; i < length; i++) {
         int code = Integer.parseInt(raw.substring(2 + i * 2, 4 + i * 2), 16)
