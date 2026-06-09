@@ -33,7 +33,7 @@ import java.math.RoundingMode
 metadata
 {
     definition(
-        name: 'Sinope Thermostat TH13X0ZB DEV',
+        name: 'Sinope Floor Thermostat (TH13X0ZB)',
         namespace: 'iamtrep',
         author: 'pj',
         description: 'Zigbee thermostat',
