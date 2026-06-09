@@ -25,7 +25,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.7"
+@Field static final String CODE_VERSION = "0.0.8"
 
 @Field static final List<String> SUPPORTED_THERMOSTAT_MODES     = ['"off"', '"heat"']
 @Field static final List<String> SUPPORTED_THERMOSTAT_FAN_MODES = ['"auto"']
@@ -58,6 +58,8 @@ metadata
         attribute 'heatingDemand', 'number'
         attribute 'maxPower', 'number'
         attribute 'gfciStatus', 'enum', ['OK', 'error']
+        attribute 'floorSensorStatus', 'enum', ['OK', 'error']
+        attribute 'tempSensorStatus', 'enum', ['OK', 'error']
         attribute 'floorLimitStatus', 'enum', ['OK', 'floorLimitLowReached', 'floorLimitMaxReached', 'floorAirLimitMaxReached']
 
         command 'setClockTime'
@@ -94,6 +96,8 @@ metadata
         input name: 'prefMaxFloorTemperature', type: 'number', title:'Floor high limit (5C to 36C / 41F to 97F)', description: 'The maximum temperature limit of the floor when in ambient control mode.', range:'5..97', required: false
         input name: 'prefMinHeatingSetpoint', type: 'number', title: 'Min heat setpoint (5C to 36C / 41F to 97F)', description: 'Clamps the lowest heat setpoint the device will accept.', range: '5..97', required: false
         input name: 'prefMaxHeatingSetpoint', type: 'number', title: 'Max heat setpoint (5C to 36C / 41F to 97F)', description: 'Clamps the highest heat setpoint the device will accept.', range: '5..97', required: false
+        input name: 'prefCycleLength', type: 'enum', title: 'Heating cycle length', options: ['short': 'Short (15s)', 'long': 'Long (15 min)'], required: false
+        input name: 'prefTempCalibration', type: 'number', title: 'Local temperature calibration', description: 'Offset applied to the local temperature reading (±2.5 °C / ±4.5 °F).', range: '-5..5', required: false
         input name: 'prefDynamicRatingPI', type: 'enum', title: 'Limit PI heating', description: 'Limit PI heating when DR Icon is on', options:[255: '100 (default)', 75: '75', 50: '50', 25: '25'], defaultValue: '255', required: true
 
         input name: 'prefMinTempChange', type: 'number', title: 'Temperature change', description: 'Minumum change of temperature reading to trigger report in Celsius/100, 5..50', range: '5..50', defaultValue: 50
@@ -151,6 +155,11 @@ void configure() {
     cmds += zigbee.configureReporting(0x0B04, 0x0505, 0x29, 30, 600, 1)                                 // Voltage
     cmds += zigbee.configureReporting(0xFF01, 0x0115, 0x30, 10, 3600, 1, [mfgCode: '0x119C'])           // gfci status
     cmds += zigbee.configureReporting(0xFF01, 0x010C, 0x30, 10, 3600, 1, [mfgCode: '0x119C'])           // floor limit status
+    cmds += zigbee.configureReporting(0xFF01, 0x0200, 0x1b, 10, 3600, 0x60, [mfgCode: '0x119C'])        // device status bitmap — watch bits 5 (floor) + 6 (temp)
+
+    // Pull firmware identifiers (stored as device data values for visibility in device edit page)
+    cmds += zigbee.readAttribute(0xFF01, 0x0003, [mfgCode: '0x119C'])
+    cmds += zigbee.readAttribute(0xFF01, 0x0004, [mfgCode: '0x119C'])
 
     // Configure displayed scale
     if (getTemperatureScale() == 'C') {
@@ -264,6 +273,25 @@ void configure() {
         cmds += zigbee.writeAttribute(0x0201, 0x0016, 0x29, maxSetpoint)
     }
 
+    // Heating cycle length (short/long)
+    if (prefCycleLength) {
+        Integer cycleAttr = constThermostatCycles[prefCycleLength] as Integer
+        if (cycleAttr != null) {
+            cmds += zigbee.writeAttribute(0x0201, 0x0401, 0x21, cycleAttr, [mfgCode: '0x119C'])
+        }
+    }
+
+    // Local temperature calibration — signed int8, tenths of °C, valid ±25 (±2.5 °C).
+    // Calibration is a delta, NOT an absolute temperature, so scale linearly without the °F offset.
+    if (prefTempCalibration != null) {
+        Double calibCelsius = (getTemperatureScale() == 'F')
+            ? (prefTempCalibration as Double) * 5.0d / 9.0d
+            : (prefTempCalibration as Double)
+        int calibTenths = Math.round(calibCelsius * 10) as int
+        calibTenths = Math.min(Math.max(-25, calibTenths), 25)
+        cmds += zigbee.writeAttribute(0x0201, 0x0010, 0x28, calibTenths)
+    }
+
     if (debugEnable || traceEnable) {
         runIn(1800, 'logsOff')
     }
@@ -285,7 +313,9 @@ void refresh() {
     cmds += zigbee.readAttribute(0x0B04, 0x050D)    // Read highest power delivered
     cmds += zigbee.readAttribute(0x0B04, 0x050B)    // Read thermostat Active power
     cmds += zigbee.readAttribute(0x0B04, 0x0505)    // Read voltage
+    cmds += zigbee.readAttribute(0x0201, 0x0010)    // Read local temperature calibration
     cmds += zigbee.readAttribute(0xFF01, 0x0107, [mfgCode: '0x119C'])    // Read floor temperature
+    cmds += zigbee.readAttribute(0xFF01, 0x0200, [mfgCode: '0x119C'])    // Read device status bitmap
 
     sendZigbeeCommands(cmds) // Submit zigbee commands
 }
@@ -526,6 +556,14 @@ private void parseAttributeReport(Map descMap) {
                     map.descriptionText = "${device.displayName} mode is set to ${map.value}"
                     break
 
+                case 0x0010: // local temperature calibration
+                    Double offset = getTemperatureOffset(descMap.value)
+                    logTrace("Local temperature calibration is ${offset}")
+                    if (offset != null) {
+                        device.updateSetting('prefTempCalibration', [value: offset, type: 'number'])
+                    }
+                    break
+
                 case 0x0401: // thermostat cycle
                     String cycleLabel = constThermostatCycles[Integer.parseInt(descMap.value, 16)]
                     logTrace("Thermostat cycle length is ${cycleLabel}")
@@ -624,6 +662,20 @@ private void parseAttributeReport(Map descMap) {
 
         case 0xFF01: // Sinope custom cluster
             switch (descMap.attrInt) {
+                case 0x0003: // firmware number (uint16)
+                    String fwNumber = Integer.parseInt(descMap.value, 16).toString()
+                    logTrace("Firmware number: ${fwNumber}")
+                    device.updateDataValue('firmwareNumber', fwNumber)
+                    break
+
+                case 0x0004: // firmware version (CharacterString)
+                    String fwVersion = decodeZigbeeCharString(descMap.value)
+                    logTrace("Firmware version: ${fwVersion} (raw=${descMap.value})")
+                    if (fwVersion != null && !fwVersion.isEmpty()) {
+                        device.updateDataValue('firmwareVersion', fwVersion)
+                    }
+                    break
+
                 case 0x0010: // outdoor temperature update
                     logTrace("Outdoor temperature updated to ${descMap.value}")
                     // no event needed
@@ -666,6 +718,15 @@ private void parseAttributeReport(Map descMap) {
                     map.name = 'gfciStatus'
                     map.value = (Integer.parseInt(descMap.value, 16) == 0) ? 'OK' : 'error'
                     map.descriptionText = "${device.displayName} GFCI status is ${map.value}"
+                    break
+
+                case 0x0200: // device status bitmap32 — bit 5 = floor sensor, bit 6 = temp sensor (bit set = error)
+                    long status = Long.parseLong(descMap.value, 16)
+                    String floorState = ((status & 0x20L) != 0L) ? 'error' : 'OK'
+                    String tempState  = ((status & 0x40L) != 0L) ? 'error' : 'OK'
+                    logTrace("device status bitmap: 0x${descMap.value} (floor=${floorState}, temp=${tempState})")
+                    sendEvent(name: 'floorSensorStatus', value: floorState, descriptionText: "${device.displayName} floor sensor is ${floorState}")
+                    sendEvent(name: 'tempSensorStatus',  value: tempState,  descriptionText: "${device.displayName} temperature sensor is ${tempState}")
                     break
 
                 default:
@@ -843,13 +904,26 @@ private Double getTemperatureOffset(String value) {
     if (value == null) {
         return null
     }
-    // Cluster 0x0201 LocalTemperatureCalibration: signed int8, tenths of °C
+    // Cluster 0x0201 LocalTemperatureCalibration: signed int8, tenths of °C.
+    // Calibration is a delta, NOT an absolute temperature, so the C↔F conversion
+    // is the linear scale factor only — never apply the 32° offset to a delta.
     double celsius = hexToSignedInt8(value) / 10.0d
-    if (getTemperatureScale() == 'C') {
-        return celsius
-    } else {
-        return roundToTwoDecimalPlaces(celsiusToFahrenheit(celsius) as Double)
+    return (getTemperatureScale() == 'C') ? celsius : roundToTwoDecimalPlaces(celsius * 9.0d / 5.0d)
+}
+
+@CompileStatic
+private static String decodeZigbeeCharString(String raw) {
+    if (raw == null || raw.isEmpty()) return null
+    if (!raw.matches('[0-9A-Fa-f]+')) return raw       // already decoded by the platform
+    if (raw.length() < 2) return null
+    int length = Integer.parseInt(raw.substring(0, 2), 16)
+    if (raw.length() < 2 + length * 2) return raw      // malformed; surface raw for debugging
+    StringBuilder sb = new StringBuilder(length)
+    for (int i = 0; i < length; i++) {
+        int code = Integer.parseInt(raw.substring(2 + i * 2, 4 + i * 2), 16)
+        sb.append((char) code)
     }
+    return sb.toString()
 }
 
 @CompileStatic
