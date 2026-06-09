@@ -25,7 +25,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.12"
+@Field static final String CODE_VERSION = "0.0.14"
 
 @Field static final List<String> SUPPORTED_THERMOSTAT_MODES     = ['"off"', '"heat"']
 @Field static final List<String> SUPPORTED_THERMOSTAT_FAN_MODES = ['"auto"']
@@ -37,6 +37,7 @@ metadata
         namespace: 'iamtrep',
         author: 'pj',
         description: 'Zigbee thermostat',
+        singleThreaded: true,
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/sinope/Sinope_TH13X0ZB.groovy"
     ) {
         capability 'Actuator'
@@ -463,6 +464,8 @@ void setThermostatMode(String value) {
 // Zigbee message parsing
 
 void parse(String description) {
+    // singleThreaded: true serializes every handler in this file, so plain state is
+    // safe — no race between concurrent parse() calls reading the old version.
     if (state.version != CODE_VERSION) {
         logWarn("new version: ${CODE_VERSION} (was: ${state.version})")
         state.version = CODE_VERSION
