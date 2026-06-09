@@ -25,7 +25,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.18"
+@Field static final String CODE_VERSION = "0.0.19"
 
 @Field static final List<String> SUPPORTED_THERMOSTAT_MODES     = ['"off"', '"heat"']
 @Field static final List<String> SUPPORTED_THERMOSTAT_FAN_MODES = ['"auto"']
@@ -830,7 +830,7 @@ void setOutdoorTemperature(BigDecimal outdoorTemperature) {
     sendZigbeeCommands(cmds)
 }
 
-void setBacklightMode(String mode = prefBacklightMode) {
+void setBacklightMode(String mode = (prefBacklightMode ?: 'adaptive')) {
     Integer backlightModeAttr = constBacklightModes[mode] as Integer
 
     if (backlightModeAttr == null) {
@@ -867,7 +867,7 @@ private void refreshMaxPower() {
     runIn(12*3600, 'refreshMaxPower')
 }
 
-private void setSecondTempDisplay(String mode = prefSecondTempDisplay) {
+private void setSecondTempDisplay(String mode = (prefSecondTempDisplay ?: 'auto')) {
     Integer secondDisplaySetting = constSecondTempDisplayModes[mode] as Integer
 
     if (secondDisplaySetting != null) {
