@@ -18,7 +18,7 @@ import com.hubitat.hub.domain.Event
 import hubitat.zigbee.zcl.DataType
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.5"
+@Field static final String CODE_VERSION = "0.0.6"
 
 // Third Reality proprietary cluster (no Hubitat constant)
 @Field static final int CLUSTER_MFG                 = 0xFF03
@@ -341,6 +341,11 @@ List<String> refresh() {
     return cmds
 }
 
+// Chain an explicit readAttribute(0x0006, 0x0000) after the on/off/toggle
+// command. Without it, a no-op command (device already in target state)
+// emits a Default Response but no on-change attribute report — and the
+// platform's command-retry watchdog gives up after 5 retries. The read is
+// a directed query the device must answer regardless of state transition.
 List<String> on() {
     if (settings.prefDisableOnOff) {
         logInfo "on() ignored (Disable Power Commands is on)"
@@ -348,7 +353,10 @@ List<String> on() {
     }
     logInfo "on"
     markPendingDigital()
-    return zigbee.on()
+    List<String> cmds = []
+    cmds += zigbee.on()
+    cmds += zigbee.readAttribute(zigbee.ON_OFF_CLUSTER, ATTR_ON_OFF)
+    return cmds
 }
 
 List<String> off() {
@@ -358,7 +366,10 @@ List<String> off() {
     }
     logInfo "off"
     markPendingDigital()
-    return zigbee.off()
+    List<String> cmds = []
+    cmds += zigbee.off()
+    cmds += zigbee.readAttribute(zigbee.ON_OFF_CLUSTER, ATTR_ON_OFF)
+    return cmds
 }
 
 List<String> toggle() {
@@ -368,7 +379,10 @@ List<String> toggle() {
     }
     logInfo "toggle"
     markPendingDigital()
-    return zigbee.command(zigbee.ON_OFF_CLUSTER, 0x02)
+    List<String> cmds = []
+    cmds += zigbee.command(zigbee.ON_OFF_CLUSTER, 0x02)
+    cmds += zigbee.readAttribute(zigbee.ON_OFF_CLUSTER, ATTR_ON_OFF)
+    return cmds
 }
 
 // Safety-net clears state.isDigital if no state report follows
