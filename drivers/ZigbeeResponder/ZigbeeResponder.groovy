@@ -19,11 +19,14 @@
  *  0.1.0    2026-06-09    PJ    Initial — Time cluster (0x000A) responder via /zigbeeLogsocket.
  *  0.2.0    2026-06-09    PJ    OTA (0x0019) Query Next Image responder — NO_IMAGE_AVAILABLE replies to quiet retry chatter.
  *  0.2.1    2026-06-09    PJ    Drop per-cluster counter and last-request attributes; only wsStatus remains.
+ *  0.2.2    2026-06-09    PJ    OTA NO_IMAGE_AVAILABLE response: include conditional mfrCode/imageType/fileVersion/imageSize fields with 0xFFFF/0xFFFFFFFF sentinels — some firmwares retry indefinitely on the bare 4-byte form.
+ *  0.2.3    2026-06-09    PJ    OTA NO_IMAGE_AVAILABLE response: echo request's mfrCode/imageType/fileVersion (firmware sentinel-rejects), keep imageSize=0xFFFFFFFF.
+ *  0.2.4    2026-06-09    PJ    OTA NO_IMAGE_AVAILABLE response: drop DDR bit (FC 0x09 vs 0x19) so the device can complete the transaction via Default Response.
  */
 
 import groovy.transform.Field
 
-static String version()   { '0.2.1' }
+static String version()   { '0.2.4' }
 static String timeStamp() { '2026/06/09' }
 
 metadata {
@@ -434,19 +437,28 @@ private void processOtaQueryNextImageRequest(Map entry) {
     String imgType = "0x${rawPayload[7]}${rawPayload[6]}"
     String fileVer = "0x${rawPayload[11]}${rawPayload[10]}${rawPayload[9]}${rawPayload[8]}"
 
+    // LE byte strings from the request — echoed verbatim into the response so the device's
+    // round-trip validator (mfr/type/version must match the request) is satisfied.
+    String mfrLE  = "${rawPayload[4]} ${rawPayload[5]}"
+    String typeLE = "${rawPayload[6]} ${rawPayload[7]}"
+    String verLE  = "${rawPayload[8]} ${rawPayload[9]} ${rawPayload[10]} ${rawPayload[11]}"
+
     String devLabel = entry?.name?.toString() ?: "id=${entryDeviceId}"
     logInfo "<b>OTA Query Next Image</b> from ${devLabel} (dni=0x${srcDniHex}, seq=0x${zclSeq}, mfr=${mfrCode}, imgType=${imgType}, fileVer=${fileVer})"
 
-    sendOtaNoImageResponse(srcDniHex, zclSeq, srcEp, dstEp)
+    sendOtaNoImageResponse(srcDniHex, zclSeq, srcEp, dstEp, mfrLE, typeLE, verLE)
 }
 
-private void sendOtaNoImageResponse(String srcDniHex, String zclSeq, Integer srcEp, Integer dstEp) {
-    // FC 0x19 = cluster-specific | server-to-client | disable-default-response
+private void sendOtaNoImageResponse(String srcDniHex, String zclSeq, Integer srcEp, Integer dstEp,
+                                     String mfrLE, String typeLE, String verLE) {
+    // FC 0x09 = cluster-specific | server-to-client | DDR CLEAR (device sends Default Response)
     // cmd 0x02 = Query Next Image Response; status 0x98 = NO_IMAGE_AVAILABLE.
-    // Per ZCL spec, on non-SUCCESS status the response body ends at the status byte.
+    // Echo request's mfrCode/imageType/fileVersion; imageSize=0xFFFFFFFF (no image).
+    // DDR was set in earlier versions; ThirdReality (0x1233) firmware appears to require the
+    // Default Response chain to consider the OTA transaction complete.
     int responseSrcEp = dstEp
     int responseDstEp = srcEp
-    String payload = "19 ${zclSeq} 02 98"
+    String payload = "09 ${zclSeq} 02 98 ${mfrLE} ${typeLE} ${verLE} FF FF FF FF"
     List<String> cmds = ["he raw 0x${srcDniHex} ${responseSrcEp} ${responseDstEp} 0x0019 {${payload}} {0x0104}"]
     logInfo "OTA response → 0x${srcDniHex}: seq=0x${zclSeq}, status=0x98 NO_IMAGE_AVAILABLE"
     logDebug "OTA response payload: ${payload}"
