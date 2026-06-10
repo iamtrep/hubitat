@@ -22,11 +22,12 @@
  *  0.2.2    2026-06-09    PJ    OTA NO_IMAGE_AVAILABLE response: include conditional mfrCode/imageType/fileVersion/imageSize fields with 0xFFFF/0xFFFFFFFF sentinels — some firmwares retry indefinitely on the bare 4-byte form.
  *  0.2.3    2026-06-09    PJ    OTA NO_IMAGE_AVAILABLE response: echo request's mfrCode/imageType/fileVersion (firmware sentinel-rejects), keep imageSize=0xFFFFFFFF.
  *  0.2.4    2026-06-09    PJ    OTA NO_IMAGE_AVAILABLE response: drop DDR bit (FC 0x09 vs 0x19) so the device can complete the transaction via Default Response.
+ *  0.3.0    2026-06-09    PJ    Time cluster: add TimeStatus (0x01=0x0D Master+MasterZoneDst+Superseding), LastSetTime (0x08), ValidUntilTime (0x09=time+24h) per Z2M's timeService baseline. Add per-device Unix-epoch (1970) override mode for firmware that misinterprets the spec (Z2M's customTimeResponse "1970_UTC" mode equivalent).
  */
 
 import groovy.transform.Field
 
-static String version()   { '0.2.4' }
+static String version()   { '0.3.0' }
 static String timeStamp() { '2026/06/09' }
 
 metadata {
@@ -58,6 +59,11 @@ metadata {
               description: 'Comma-separated hub device IDs to respond on behalf of. Empty = respond to no one (safe default). Use the integer id from the device page URL.',
               defaultValue: ''
 
+        input name: 'timeResponderUnixEpochDeviceIds', type: 'string',
+              title: '<b>Unix-epoch device IDs (Time)</b>',
+              description: 'Comma-separated device IDs that should receive Unix-epoch (1970) seconds instead of ZigBee-epoch (2000). Used for firmware that misinterprets the ZCL Time spec — equivalent to Z2M\'s customTimeResponse("1970_UTC") mode. WRONG for spec-compliant devices: they will see a clock ~30 years in the future. Subset of the Allowed Device IDs list.',
+              defaultValue: ''
+
         input name: 'enableOtaResponder', type: 'bool',
               title: '<b>Enable OTA (0x0019) Query-Next-Image responder</b>',
               description: 'When on, replies NO_IMAGE_AVAILABLE (status 0x98) to OTA Query Next Image requests from devices listed below. Quiets the per-second retry chatter from devices that have no Hubitat-side OTA image.',
@@ -85,10 +91,11 @@ void updated() {
     if (settings?.logEnable) runIn(1800, 'logsOff', [overwrite: true])
     else                     unschedule('logsOff')
     // Rebuild parsed allowlists so the hot path doesn't re-parse settings each frame
-    state.timeAllowedIds = parseAllowedIds(settings?.timeResponderDeviceIds)
-    state.otaAllowedIds  = parseAllowedIds(settings?.otaResponderDeviceIds)
+    state.timeAllowedIds   = parseAllowedIds(settings?.timeResponderDeviceIds)
+    state.timeUnixEpochIds = parseAllowedIds(settings?.timeResponderUnixEpochDeviceIds)
+    state.otaAllowedIds    = parseAllowedIds(settings?.otaResponderDeviceIds)
     logInfo "Time responder: ${settings?.enableTimeResponder ? 'ENABLED' : 'disabled'}, " +
-            "allowedIds=${state.timeAllowedIds}"
+            "allowedIds=${state.timeAllowedIds}, unixEpochIds=${state.timeUnixEpochIds}"
     logInfo "OTA responder:  ${settings?.enableOtaResponder ? 'ENABLED' : 'disabled'}, " +
             "allowedIds=${state.otaAllowedIds}"
     runIn(2, 'connectZigbeeLogSocket', [overwrite: true])
@@ -96,8 +103,9 @@ void updated() {
 
 void initialize() {
     log.info "${device.displayName} initialize v${version()}"
-    state.timeAllowedIds = parseAllowedIds(settings?.timeResponderDeviceIds)
-    state.otaAllowedIds  = parseAllowedIds(settings?.otaResponderDeviceIds)
+    state.timeAllowedIds   = parseAllowedIds(settings?.timeResponderDeviceIds)
+    state.timeUnixEpochIds = parseAllowedIds(settings?.timeResponderUnixEpochDeviceIds)
+    state.otaAllowedIds    = parseAllowedIds(settings?.otaResponderDeviceIds)
     runIn(2, 'connectZigbeeLogSocket', [overwrite: true])
 }
 
@@ -113,7 +121,7 @@ void configure() {
 
 void refresh() {
     logInfo "ws=${state.wsConnected}, " +
-            "time=${settings?.enableTimeResponder ? 'on' : 'off'} allowed=${state.timeAllowedIds}, " +
+            "time=${settings?.enableTimeResponder ? 'on' : 'off'} allowed=${state.timeAllowedIds} unixEpoch=${state.timeUnixEpochIds}, " +
             "ota=${settings?.enableOtaResponder ? 'on' : 'off'} allowed=${state.otaAllowedIds}"
 }
 
@@ -312,29 +320,39 @@ private void processTimeReadRequest(Map entry) {
 
     def attrHexList = requestedAttrs.collect { String.format('0x%04X', it) }
     String devLabel = entry?.name?.toString() ?: "id=${entryDeviceId}"
-    logInfo "<b>Time read</b> from ${devLabel} (dni=0x${srcDniHex}, seq=0x${zclSeq}, attrs=${attrHexList})"
+    boolean useUnixEpoch = ((state.timeUnixEpochIds ?: []) as List<String>).contains(entryDeviceId)
+    String epochTag = useUnixEpoch ? ' [unix-epoch]' : ''
+    logInfo "<b>Time read</b>${epochTag} from ${devLabel} (dni=0x${srcDniHex}, seq=0x${zclSeq}, attrs=${attrHexList})"
 
-    sendTimeClusterResponse(srcDniHex, zclSeq, requestedAttrs, srcEp, dstEp)
+    sendTimeClusterResponse(srcDniHex, zclSeq, requestedAttrs, srcEp, dstEp, useUnixEpoch)
 }
 
 // Build the response payload and send `he raw` to the requesting device's DNI.
-// Response is attribute-aware: only the four most likely attrs return success;
-// anything else returns UNSUP_ATTRIBUTE (0x86) so the device sees a well-formed reply.
+// Attribute-aware: handles 0x0000-0x0002, 0x0005-0x0009; unknown attrs return UNSUP_ATTRIBUTE.
+// useUnixEpoch=true sends 1970-based seconds in time/lastSetTime/validUntilTime and recomputes
+// standardTime/localTime around that base. Matches Z2M's customTimeResponse("1970_UTC") mode.
+// Use only for firmware known to misinterpret the ZCL Time spec.
 private void sendTimeClusterResponse(String srcDniHex, String zclSeq, List<Integer> requestedAttrs,
-                                     Integer srcEp, Integer dstEp) {
+                                     Integer srcEp, Integer dstEp, boolean useUnixEpoch = false) {
     final long ZIGBEE_EPOCH_OFFSET = 946684800L
-    long utcSec     = (now() / 1000L).toLong() - ZIGBEE_EPOCH_OFFSET
+    long unixSec  = (now() / 1000L).toLong()
+    long zbUtcSec = unixSec - ZIGBEE_EPOCH_OFFSET
     int  tzOffsetSec = location.timeZone.rawOffset.intdiv(1000)
-    int  dstSec     = location.timeZone.inDaylightTime(new Date())
+    int  dstSec      = location.timeZone.inDaylightTime(new Date())
                           ? location.timeZone.getDSTSavings().intdiv(1000) : 0
-    long localSec    = utcSec + tzOffsetSec + dstSec        // attr 0x0007 LocalTime
-    long standardSec = utcSec + tzOffsetSec                 // attr 0x0006 StandardTime
 
-    String utcHex      = toLEHex32(utcSec)
+    // Pick which epoch base the device expects. Spec-compliant = ZigBee 2000.
+    long timeBase    = useUnixEpoch ? unixSec : zbUtcSec
+    long localSec    = timeBase + tzOffsetSec + dstSec      // attr 0x0007 LocalTime
+    long standardSec = timeBase + tzOffsetSec               // attr 0x0006 StandardTime
+    long validUntil  = timeBase + 86400L                    // attr 0x0009 ValidUntilTime (24h ahead)
+
+    String tHex        = toLEHex32(timeBase)
     String tzHex       = toLEHex32(tzOffsetSec)
     String dstHex      = toLEHex32(dstSec)
     String localHex    = toLEHex32(localSec)
     String standardHex = toLEHex32(standardSec)
+    String validHex    = toLEHex32(validUntil)
 
     // Response endpoints reverse the request's
     int responseSrcEp = dstEp
@@ -344,16 +362,28 @@ private void sendTimeClusterResponse(String srcDniHex, String zclSeq, List<Integ
     StringBuilder sb = new StringBuilder("18 ${zclSeq} 01")
     requestedAttrs.each { Integer attrId ->
         switch (attrId) {
-            case 0x0000:                                        // Time (UTCTime)
-                sb.append(" 00 00 00 E2 ${utcHex}"); break
-            case 0x0002:                                        // TimeZone
+            case 0x0000:                                        // Time (UTCTime, 0xE2)
+                sb.append(" 00 00 00 E2 ${tHex}"); break
+            case 0x0001:                                        // TimeStatus (BITMAP8, 0x18)
+                // 0x0D = Master(bit0) + MasterZoneDst(bit2) + Superseding(bit3)
+                // Matches Z2M's timeService baseline. Bit 1 Synchronized stays clear because
+                // we ARE the master clock, not synced TO one.
+                sb.append(" 01 00 00 18 0D"); break
+            case 0x0002:                                        // TimeZone (INT32, 0x2B)
                 sb.append(" 02 00 00 2B ${tzHex}"); break
-            case 0x0005:                                        // DstShift
+            case 0x0005:                                        // DstShift (INT32, 0x2B)
                 sb.append(" 05 00 00 2B ${dstHex}"); break
-            case 0x0006:                                        // StandardTime
+            case 0x0006:                                        // StandardTime (UINT32, 0x23)
                 sb.append(" 06 00 00 23 ${standardHex}"); break
-            case 0x0007:                                        // LocalTime
+            case 0x0007:                                        // LocalTime (UINT32, 0x23)
                 sb.append(" 07 00 00 23 ${localHex}"); break
+            case 0x0008:                                        // LastSetTime (UTCTime, 0xE2)
+                sb.append(" 08 00 00 E2 ${tHex}"); break
+            case 0x0009:                                        // ValidUntilTime (UTCTime, 0xE2)
+                sb.append(" 09 00 00 E2 ${validHex}"); break
+            // 0x0003 DstStart and 0x0004 DstEnd intentionally fall through to UNSUP_ATTRIBUTE —
+            // computing next DST transition needs ZoneRules and no currently-seen device asks
+            // for them. Add when a real device requests them.
             default:                                            // status 0x86 UNSUP_ATTRIBUTE
                 String le = String.format('%02X %02X', attrId & 0xFF, (attrId >> 8) & 0xFF)
                 sb.append(" ${le} 86"); break
@@ -362,7 +392,8 @@ private void sendTimeClusterResponse(String srcDniHex, String zclSeq, List<Integ
 
     String payload = sb.toString()
     List<String> cmds = ["he raw 0x${srcDniHex} ${responseSrcEp} ${responseDstEp} 0x000A {${payload}} {0x0104}"]
-    logInfo "Time response → 0x${srcDniHex}: seq=0x${zclSeq}, UTC=${utcSec}, TZ=${tzOffsetSec}s, DST=${dstSec}s"
+    String epochLabel = useUnixEpoch ? '1970' : '2000'
+    logInfo "Time response → 0x${srcDniHex}: seq=0x${zclSeq}, epoch=${epochLabel}, time=${timeBase}, TZ=${tzOffsetSec}s, DST=${dstSec}s"
     logDebug "Time response payload: ${payload}"
     sendHubCommand(new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE))
 }
