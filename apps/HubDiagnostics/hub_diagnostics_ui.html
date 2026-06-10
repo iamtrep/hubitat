@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.67.1";
+const CODE_VERSION = "5.67.2";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -631,6 +631,9 @@ function clusterLabel(id,mfrCode){
   if(!id)return'';
   const k=String(id).toUpperCase().padStart(4,'0');
   if(ZB_CLUSTERS[k])return ZB_CLUSTERS[k]+' (0x'+k+')';
+  // ZDO response range (0x8000-0x80FF): network-layer, not ZCL. Label as ZDO so the
+  // row is visually distinct from device-application traffic.
+  if(/^80[0-9A-F]{2}$/.test(k))return'ZDO (0x'+k+')';
   // Spec: 0xFC00-0xFFFF is the manufacturer-specific cluster range. These collide across vendors
   // and aren't in the standard library, so label generically — with the vendor name when the
   // frame carried a mfr code (ZB_MFR), otherwise just 'Mfr-specific' — rather than bare hex.
@@ -680,6 +683,27 @@ const ZB_CLUSTER_CMDS={
   '0500':{c2s:{'00':'Zone Enroll Response','01':'Initiate Normal Operation Mode','02':'Initiate Test Mode'},s2c:{'00':'Zone Status Change Notification','01':'Zone Enroll Request'}},
   '0501':{c2s:{'00':'Arm','01':'Bypass','02':'Emergency','03':'Fire','04':'Panic','05':'Get Zone ID Map','06':'Get Zone Information'},
           s2c:{'00':'Arm Response','01':'Get Zone ID Map Response','02':'Get Zone Information Response','03':'Zone Status Changed','04':'Panel Status Changed'}}
+};
+
+// ZDO (Zigbee Device Object) clusters — network-layer messages, not ZCL. The cluster ID itself
+// IS the message type (request 0x0000-0x7FFF / response 0x8000-0x80FF). Requests 0x0000-0x003F
+// overlap with ZCL cluster IDs (Basic, PowerCfg, Identify, etc.) and /zigbeeLogsocket doesn't
+// expose the endpoint that would disambiguate them, so we only recognize the response range here.
+const ZDO_CLUSTERS={
+  '8000':'NWK_addr_rsp','8001':'IEEE_addr_rsp','8002':'Node_Desc_rsp','8003':'Power_Desc_rsp',
+  '8004':'Simple_Desc_rsp','8005':'Active_EP_rsp','8006':'Match_Desc_rsp',
+  '8010':'Complex_Desc_rsp','8011':'User_Desc_rsp','8015':'System_Server_Discovery_rsp',
+  '8020':'End_Device_Bind_rsp','8021':'Bind_rsp','8022':'Unbind_rsp',
+  '8030':'Mgmt_NWK_Disc_rsp','8031':'Mgmt_Lqi_rsp','8032':'Mgmt_Rtg_rsp','8033':'Mgmt_Bind_rsp',
+  '8034':'Mgmt_Leave_rsp','8036':'Mgmt_Permit_Joining_rsp','8038':'Mgmt_NWK_Update_rsp'
+};
+
+// ZDP status byte (first payload byte after TSN in response frames).
+const ZDO_STATUS={
+  '00':'SUCCESS','80':'INV_REQUESTTYPE','81':'DEVICE_NOT_FOUND','82':'INVALID_EP',
+  '83':'NOT_ACTIVE','84':'NOT_SUPPORTED','85':'TIMEOUT','86':'NO_MATCH','88':'NO_ENTRY',
+  '89':'NO_DESCRIPTOR','8A':'INSUFFICIENT_SPACE','8B':'NOT_PERMITTED','8C':'TABLE_FULL',
+  '8D':'NOT_AUTHORIZED','8E':'DEVICE_BINDING_TABLE_FULL'
 };
 
 // ZCL data types: hex type id -> {len in bytes (-1 = length-prefixed), kind for value formatting, name shown as [type]}.
@@ -733,7 +757,11 @@ function zb4(id){return String(id||'').toUpperCase().replace(/^0X/,'').padStart(
 
 // Parse a ZCL frame (payload = array of hex-string bytes). Returns a decoded header or null.
 // Handles the manufacturer-specific offset (2-byte mfr code between frame control and TSN).
+// ZDO frames (cluster 0x8000-0x80FF) are dispatched to rcZbParseZdo — they have no ZCL
+// frame-control byte, so applying ZCL parsing produces garbage (bogus mfr flag, wrong dir).
 function rcZbParseZcl(payload,clusterId){
+  const c4=zb4(clusterId);
+  if(/^80[0-9A-F]{2}$/.test(c4))return rcZbParseZdo(payload,clusterId);
   if(!Array.isArray(payload)||!payload.length)return null;
   const b=payload.map(zbHx2);
   const fc=parseInt(b[0],16);
@@ -755,23 +783,40 @@ function rcZbParseZcl(payload,clusterId){
   return{fc,global,mfrSpecific,dir,disableDefault,mfrCode,tsn,cmd,cluster,body,raw:b,truncated:(tsn==null||cmd==null)};
 }
 
+// Parse a ZDO response frame. Layout: [TSN(1)] [Status(1)] [per-cluster payload...].
+// We surface TSN + status only; per-cluster payload unpacking (LQI table rows, IEEE addr, etc.)
+// is intentionally left to the radio-snapshot code path, which already decodes Mgmt_Lqi/Rtg responses.
+function rcZbParseZdo(payload,clusterId){
+  const cluster=zb4(clusterId);
+  if(!Array.isArray(payload)||!payload.length)return{isZdo:true,cluster,tsn:null,status:null,body:[],raw:[],truncated:true};
+  const b=payload.map(zbHx2);
+  const tsn=b[0]||null;
+  const status=b.length>1?b[1].toUpperCase():null;
+  return{isZdo:true,cluster,tsn,status,body:b.slice(2),raw:b,truncated:(tsn==null)};
+}
+
 // Friendly cluster-command name (tries the frame's direction first, then the other). Null if unknown.
 function zbClusterCmdName(cluster,code,dir){
   const cl=ZB_CLUSTER_CMDS[zb4(cluster)];if(!cl)return null;
   const pri=dir?'s2c':'c2s',alt=dir?'c2s':'s2c';
   return(cl[pri]&&cl[pri][code])||(cl[alt]&&cl[alt][code])||null;
 }
-// "Report Attributes (0x0A)" / "On (0x01)" / "0x42" (unknown).
+// "Report Attributes (0x0A)" / "On (0x01)" / "0x42" (unknown). For ZDO frames the cluster ID IS
+// the message type (e.g. 0x8001 = IEEE_addr_rsp), so we render the cluster name instead of a command.
 function resolveCmd(zcl){
-  if(!zcl||zcl.cmd==null)return'';
+  if(!zcl)return'';
+  if(zcl.isZdo)return ZDO_CLUSTERS[zcl.cluster]||('0x'+zcl.cluster);
+  if(zcl.cmd==null)return'';
   const c=zcl.cmd;
   const name=zcl.global?ZB_GLOBAL_CMDS[c]:zbClusterCmdName(zcl.cluster,c,zcl.dir);
   return name?name+' (0x'+c+')':'0x'+c;
 }
 
 // Direction arrow for the Command column. Device is the cluster server by default; for OTA (0019) the device is the client.
+// ZDO frames have no ZCL frame-control byte and /zigbeeLogsocket doesn't carry src/dst, so direction
+// can't be reliably inferred — return blank rather than emit a misleading arrow.
 function rcZbDirArrow(zcl){
-  if(!zcl)return'';
+  if(!zcl||zcl.isZdo)return'';
   const deviceIsClient=(zcl.cluster==='0019');
   const fromDevice=deviceIsClient?(zcl.dir===0):(zcl.dir===1);
   return fromDevice?'←hub':'→dev';   // <-hub = device->hub ; ->dev = hub->device
@@ -822,7 +867,13 @@ function rcZbDecodeAttrs(body,isReadResp){
 
 // Compact + full decoded-payload strings for the Decoded column (short = cell text, full = title/expand).
 function rcZbDecodedSummary(zcl){
-  if(!zcl||zcl.cmd==null||zcl.truncated)return{short:'',full:''};
+  if(!zcl||zcl.truncated)return{short:'',full:''};
+  if(zcl.isZdo){
+    if(!zcl.status)return{short:'',full:''};
+    const st=ZDO_STATUS[zcl.status]||('0x'+zcl.status);
+    return{short:st,full:'Status: '+st+' (0x'+zcl.status+')'};
+  }
+  if(zcl.cmd==null)return{short:'',full:''};
   const c=zcl.cmd;
   if(zcl.global&&(c==='0A'||c==='02'||c==='01')){
     const attrs=rcZbDecodeAttrs(zcl.body,c==='01');
@@ -850,15 +901,24 @@ function rcZbDecodedSummary(zcl){
 function rcZbDecodeHtml(rawText){
   let f;try{f=JSON.parse(rawText)}catch(e){return''}
   const zcl=rcZbParseZcl(f.payload,f.clusterId);if(!zcl)return'';
-  const fcHex='0x'+zcl.fc.toString(16).toUpperCase().padStart(2,'0');
-  const parts=[zcl.global?'Global':'Cluster-specific',zcl.dir?'server→client':'client→server'];
-  if(zcl.mfrSpecific)parts.push('Mfr-specific '+mfrLabel(zcl.mfrCode));
-  if(zcl.disableDefault)parts.push('Default-resp disabled');
-  const lines=['<b>Frame control:</b> '+h(fcHex)+' — '+h(parts.join(', ')),
-               '<b>Command:</b> '+h(rcZbDirArrow(zcl)+' '+(resolveCmd(zcl)||'—'))];
-  if(zcl.truncated)lines.push('<span style="color:var(--warn,#e0a800)">Frame truncated</span>');
-  const sum=rcZbDecodedSummary(zcl);
-  if(sum.full)lines.push('<b>'+((zcl.global&&zcl.cmd==='0B')?'Default response':'Attributes')+':</b> '+h(sum.full));
+  const lines=[];
+  if(zcl.isZdo){
+    lines.push('<b>ZDO message:</b> '+h(ZDO_CLUSTERS[zcl.cluster]||'unknown')+' (0x'+zcl.cluster+')');
+    if(zcl.tsn)lines.push('<b>TSN:</b> 0x'+h(zcl.tsn));
+    if(zcl.truncated)lines.push('<span style="color:var(--warn,#e0a800)">Frame truncated</span>');
+    const sum=rcZbDecodedSummary(zcl);
+    if(sum.full)lines.push('<b>Status:</b> '+h(sum.full.replace(/^Status:\s*/,'')));
+  }else{
+    const fcHex='0x'+zcl.fc.toString(16).toUpperCase().padStart(2,'0');
+    const parts=[zcl.global?'Global':'Cluster-specific',zcl.dir?'server→client':'client→server'];
+    if(zcl.mfrSpecific)parts.push('Mfr-specific '+mfrLabel(zcl.mfrCode));
+    if(zcl.disableDefault)parts.push('Default-resp disabled');
+    lines.push('<b>Frame control:</b> '+h(fcHex)+' — '+h(parts.join(', ')));
+    lines.push('<b>Command:</b> '+h(rcZbDirArrow(zcl)+' '+(resolveCmd(zcl)||'—')));
+    if(zcl.truncated)lines.push('<span style="color:var(--warn,#e0a800)">Frame truncated</span>');
+    const sum=rcZbDecodedSummary(zcl);
+    if(sum.full)lines.push('<b>'+((zcl.global&&zcl.cmd==='0B')?'Default response':'Attributes')+':</b> '+h(sum.full));
+  }
   return'<div style="margin-bottom:8px;padding:8px 10px;background:rgba(33,150,243,0.06);border-radius:4px;font-size:11px;line-height:1.6;color:var(--text)">'+lines.join('<br>')+'</div>';
 }
 // ===== ZCL DECODE (END) =====
