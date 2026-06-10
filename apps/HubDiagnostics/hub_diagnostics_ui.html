@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.67.2";
+const CODE_VERSION = "5.67.3";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -722,18 +722,27 @@ const ZB_DTYPE={
 
 // Headline attributes per cluster (4-hex cluster -> 4-hex attr -> name). Extend over time; unmapped renders as 0xNNNN.
 const ZB_ATTRS={
-  '0000':{'0000':'ZCLVersion','0001':'AppVersion','0004':'ManufacturerName','0005':'ModelIdentifier','0007':'PowerSource'},
-  '0001':{'0020':'BatteryVoltage','0021':'BatteryPercentage'},
-  '0006':{'0000':'OnOff','4001':'OnTime','4002':'OffWaitTime'},
-  '0008':{'0000':'CurrentLevel'},
-  '0102':{'0008':'CurrentPositionLiftPercentage','0009':'CurrentPositionTiltPercentage'},
-  '0201':{'0000':'LocalTemperature','0008':'PIHeatingDemand','0009':'PICoolingDemand','0011':'OccupiedCoolingSetpoint','0012':'OccupiedHeatingSetpoint','001C':'SystemMode','0029':'ThermostatRunningState'},
-  '0300':{'0000':'CurrentHue','0001':'CurrentSaturation','0003':'CurrentX','0004':'CurrentY','0007':'ColorTempMireds','4000':'EnhancedCurrentHue'},
-  '0400':{'0000':'MeasuredValue'},'0402':{'0000':'MeasuredValue'},'0403':{'0000':'MeasuredValue'},'0405':{'0000':'MeasuredValue'},
-  '0406':{'0000':'Occupancy'},
-  '0500':{'0000':'ZoneState','0001':'ZoneType','0002':'ZoneStatus'},
-  '0702':{'0000':'CurrentSummationDelivered','0400':'InstantaneousDemand'},
-  '0B04':{'0505':'RMSVoltage','0508':'RMSCurrent','050B':'ActivePower','050E':'ReactivePower','050F':'ApparentPower','0510':'PowerFactor'},
+  '0000':{'0000':'ZCLVersion','0001':'AppVersion','0002':'StackVersion','0003':'HWVersion','0004':'ManufacturerName','0005':'ModelIdentifier','0006':'DateCode','0007':'PowerSource','4000':'SWBuildID'},
+  '0001':{'0000':'MainsVoltage','0001':'MainsFrequency','0010':'MainsAlarmMask','0020':'BatteryVoltage','0021':'BatteryPercentage','0031':'BatterySize','0033':'BatteryQuantity','0034':'BatteryRatedVoltage','0035':'BatteryAlarmMask','003E':'BatteryAlarmState'},
+  '0003':{'0000':'IdentifyTime'},
+  '0006':{'0000':'OnOff','4001':'OnTime','4002':'OffWaitTime','4003':'StartUpOnOff'},
+  '0008':{'0000':'CurrentLevel','0001':'RemainingTime','000F':'Options','0010':'OnOffTransitionTime','0011':'OnLevel','0012':'OnTransitionTime','0013':'OffTransitionTime','0014':'DefaultMoveRate','4000':'StartUpCurrentLevel'},
+  '000A':{'0000':'Time','0001':'TimeStatus','0002':'TimeZone','0003':'DstStart','0004':'DstEnd','0005':'DstShift','0006':'StandardTime','0007':'LocalTime','0008':'LastSetTime','0009':'ValidUntilTime'},
+  '0019':{'0000':'UpgradeServerID','0001':'FileOffset','0002':'CurrentFileVersion','0003':'CurrentZigBeeStackVersion','0004':'DownloadedFileVersion','0005':'DownloadedZigBeeStackVersion','0006':'ImageUpgradeStatus','0007':'ManufacturerID','0008':'ImageTypeID','0009':'MinimumBlockPeriod','000A':'ImageStamp'},
+  '0020':{'0000':'CheckinInterval','0001':'LongPollInterval','0002':'ShortPollInterval','0003':'FastPollTimeout','0004':'CheckinIntervalMin','0005':'LongPollIntervalMin','0006':'FastPollTimeoutMax'},
+  '0102':{'0000':'WindowCoveringType','0007':'ConfigStatus','0008':'CurrentPositionLiftPercentage','0009':'CurrentPositionTiltPercentage','000A':'OperationalStatus','000B':'TargetPositionLiftPercentage','000C':'TargetPositionTiltPercentage','0017':'Mode'},
+  '0201':{'0000':'LocalTemperature','0001':'OutdoorTemperature','0002':'Occupancy','0003':'AbsMinHeatSetpointLimit','0004':'AbsMaxHeatSetpointLimit','0005':'AbsMinCoolSetpointLimit','0006':'AbsMaxCoolSetpointLimit','0007':'PICoolingDemand','0008':'PIHeatingDemand','0010':'LocalTemperatureCalibration','0011':'OccupiedCoolingSetpoint','0012':'OccupiedHeatingSetpoint','0013':'UnoccupiedCoolingSetpoint','0014':'UnoccupiedHeatingSetpoint','0015':'MinHeatSetpointLimit','0016':'MaxHeatSetpointLimit','0017':'MinCoolSetpointLimit','0018':'MaxCoolSetpointLimit','0019':'MinSetpointDeadBand','001A':'RemoteSensing','001B':'ControlSequenceOfOperation','001C':'SystemMode','001E':'ThermostatRunningMode','0029':'ThermostatRunningState'},
+  '0202':{'0000':'FanMode','0001':'FanModeSequence'},
+  '0204':{'0000':'TemperatureDisplayMode','0001':'KeypadLockout','0002':'ScheduleProgrammingVisibility'},
+  '0300':{'0000':'CurrentHue','0001':'CurrentSaturation','0002':'RemainingTime','0003':'CurrentX','0004':'CurrentY','0007':'ColorTempMireds','0008':'ColorMode','000F':'Options','4000':'EnhancedCurrentHue','4001':'EnhancedColorMode','4002':'ColorLoopActive','400A':'ColorCapabilities','400B':'ColorTempPhysicalMinMireds','400C':'ColorTempPhysicalMaxMireds'},
+  '0400':{'0000':'MeasuredValue','0001':'MinMeasuredValue','0002':'MaxMeasuredValue','0003':'Tolerance','0004':'LightSensorType'},
+  '0402':{'0000':'MeasuredValue','0001':'MinMeasuredValue','0002':'MaxMeasuredValue','0003':'Tolerance'},
+  '0403':{'0000':'MeasuredValue','0001':'MinMeasuredValue','0002':'MaxMeasuredValue','0010':'ScaledValue','0011':'MinScaledValue','0012':'MaxScaledValue','0014':'Scale'},
+  '0405':{'0000':'MeasuredValue','0001':'MinMeasuredValue','0002':'MaxMeasuredValue','0003':'Tolerance'},
+  '0406':{'0000':'Occupancy','0001':'OccupancySensorType','0010':'PIROccupiedToUnoccupiedDelay','0011':'PIRUnoccupiedToOccupiedDelay'},
+  '0500':{'0000':'ZoneState','0001':'ZoneType','0002':'ZoneStatus','0010':'IAS_CIE_Address','0011':'ZoneID'},
+  '0702':{'0000':'CurrentSummationDelivered','0001':'CurrentSummationReceived','0200':'Status','0400':'InstantaneousDemand','0300':'UnitofMeasure','0301':'Multiplier','0302':'Divisor','0303':'SummationFormatting','0304':'DemandFormatting','0306':'MeteringDeviceType'},
+  '0B04':{'0000':'MeasurementType','0300':'ACFrequency','0501':'LineCurrent','0502':'ActiveCurrent','0503':'ReactiveCurrent','0505':'RMSVoltage','0508':'RMSCurrent','050B':'ActivePower','050E':'ReactivePower','050F':'ApparentPower','0510':'PowerFactor','0600':'ACVoltageMultiplier','0601':'ACVoltageDivisor','0602':'ACCurrentMultiplier','0603':'ACCurrentDivisor','0604':'ACPowerMultiplier','0605':'ACPowerDivisor'},
   '0B05':{'0000':'NumberOfResets','0100':'MacRxBcast','0101':'MacTxBcast','0102':'MacRxUcast','0103':'MacTxUcast','0104':'MacTxUcastRetry','0105':'MacTxUcastFail','0106':'APSRxBcast','0107':'APSTxBcast','0108':'APSRxUcast','0109':'APSTxUcastSuccess','010A':'APSTxUcastRetry','010B':'APSTxUcastFail','0112':'NWKFCFailure','0113':'APSFCFailure','0117':'PacketBufferAllocFailures','011B':'AvgMACRetryPerAPSMsg','011C':'LastMessageLQI','011D':'LastMessageRSSI'}
 };
 
