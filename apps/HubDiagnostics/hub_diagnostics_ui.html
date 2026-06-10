@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.67.0";
+const CODE_VERSION = "5.67.1";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -702,13 +702,15 @@ const ZB_ATTRS={
   '0001':{'0020':'BatteryVoltage','0021':'BatteryPercentage'},
   '0006':{'0000':'OnOff','4001':'OnTime','4002':'OffWaitTime'},
   '0008':{'0000':'CurrentLevel'},
-  '0201':{'0000':'LocalTemperature','0011':'OccupiedCoolingSetpoint','0012':'OccupiedHeatingSetpoint','001C':'SystemMode'},
+  '0102':{'0008':'CurrentPositionLiftPercentage','0009':'CurrentPositionTiltPercentage'},
+  '0201':{'0000':'LocalTemperature','0008':'PIHeatingDemand','0009':'PICoolingDemand','0011':'OccupiedCoolingSetpoint','0012':'OccupiedHeatingSetpoint','001C':'SystemMode','0029':'ThermostatRunningState'},
   '0300':{'0000':'CurrentHue','0001':'CurrentSaturation','0003':'CurrentX','0004':'CurrentY','0007':'ColorTempMireds','4000':'EnhancedCurrentHue'},
   '0400':{'0000':'MeasuredValue'},'0402':{'0000':'MeasuredValue'},'0403':{'0000':'MeasuredValue'},'0405':{'0000':'MeasuredValue'},
   '0406':{'0000':'Occupancy'},
   '0500':{'0000':'ZoneState','0001':'ZoneType','0002':'ZoneStatus'},
   '0702':{'0000':'CurrentSummationDelivered','0400':'InstantaneousDemand'},
-  '0B04':{'0505':'RMSVoltage','0508':'RMSCurrent','050B':'ActivePower'}
+  '0B04':{'0505':'RMSVoltage','0508':'RMSCurrent','050B':'ActivePower','050E':'ReactivePower','050F':'ApparentPower','0510':'PowerFactor'},
+  '0B05':{'0000':'NumberOfResets','0100':'MacRxBcast','0101':'MacTxBcast','0102':'MacRxUcast','0103':'MacTxUcast','0104':'MacTxUcastRetry','0105':'MacTxUcastFail','0106':'APSRxBcast','0107':'APSTxBcast','0108':'APSRxUcast','0109':'APSTxUcastSuccess','010A':'APSTxUcastRetry','010B':'APSTxUcastFail','0112':'NWKFCFailure','0113':'APSFCFailure','0117':'PacketBufferAllocFailures','011B':'AvgMACRetryPerAPSMsg','011C':'LastMessageLQI','011D':'LastMessageRSSI'}
 };
 
 // ZCL status codes (Default Response etc.). Standard names.
