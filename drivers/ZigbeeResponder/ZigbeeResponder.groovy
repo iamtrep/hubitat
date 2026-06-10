@@ -17,11 +17,13 @@
  *
  *  Version  Date          Who   What
  *  0.1.0    2026-06-09    PJ    Initial — Time cluster (0x000A) responder via /zigbeeLogsocket.
+ *  0.2.0    2026-06-09    PJ    OTA (0x0019) Query Next Image responder — NO_IMAGE_AVAILABLE replies to quiet retry chatter.
+ *  0.2.1    2026-06-09    PJ    Drop per-cluster counter and last-request attributes; only wsStatus remains.
  */
 
 import groovy.transform.Field
 
-static String version()   { '0.1.0' }
+static String version()   { '0.2.1' }
 static String timeStamp() { '2026/06/09' }
 
 metadata {
@@ -32,12 +34,9 @@ metadata {
         capability 'Configuration'
         capability 'Refresh'
 
-        attribute 'wsStatus',          'enum', ['disconnected', 'connecting', 'connected', 'failed']
-        attribute 'lastTimeRequest',   'string'    // ISO timestamp of last accepted Time read
-        attribute 'timeResponseCount', 'number'    // total Time-cluster responses sent since install
+        attribute 'wsStatus', 'enum', ['disconnected', 'connecting', 'connected', 'failed']
 
-        command 'reconnect',           [[name: 'Force a WebSocket reconnect']]
-        command 'resetCounters',       [[name: 'Reset response counters and last-seen state']]
+        command 'reconnect', [[name: 'Force a WebSocket reconnect']]
     }
 
     preferences {
@@ -55,6 +54,16 @@ metadata {
               title: '<b>Allowed device IDs (Time)</b>',
               description: 'Comma-separated hub device IDs to respond on behalf of. Empty = respond to no one (safe default). Use the integer id from the device page URL.',
               defaultValue: ''
+
+        input name: 'enableOtaResponder', type: 'bool',
+              title: '<b>Enable OTA (0x0019) Query-Next-Image responder</b>',
+              description: 'When on, replies NO_IMAGE_AVAILABLE (status 0x98) to OTA Query Next Image requests from devices listed below. Quiets the per-second retry chatter from devices that have no Hubitat-side OTA image.',
+              defaultValue: false
+
+        input name: 'otaResponderDeviceIds', type: 'string',
+              title: '<b>Allowed device IDs (OTA)</b>',
+              description: 'Comma-separated hub device IDs. Empty = respond to no one.',
+              defaultValue: ''
     }
 }
 
@@ -65,7 +74,6 @@ metadata {
 void installed() {
     log.info "${device.displayName} installed v${version()}"
     state.clear()
-    state.timeResponseCount = 0
     initialize()
 }
 
@@ -73,20 +81,20 @@ void updated() {
     log.info "${device.displayName} updated"
     if (settings?.logEnable) runIn(1800, 'logsOff', [overwrite: true])
     else                     unschedule('logsOff')
-    // Rebuild the parsed allowlist into state so the hot path doesn't re-parse settings each frame
+    // Rebuild parsed allowlists so the hot path doesn't re-parse settings each frame
     state.timeAllowedIds = parseAllowedIds(settings?.timeResponderDeviceIds)
+    state.otaAllowedIds  = parseAllowedIds(settings?.otaResponderDeviceIds)
     logInfo "Time responder: ${settings?.enableTimeResponder ? 'ENABLED' : 'disabled'}, " +
             "allowedIds=${state.timeAllowedIds}"
+    logInfo "OTA responder:  ${settings?.enableOtaResponder ? 'ENABLED' : 'disabled'}, " +
+            "allowedIds=${state.otaAllowedIds}"
     runIn(2, 'connectZigbeeLogSocket', [overwrite: true])
 }
 
 void initialize() {
     log.info "${device.displayName} initialize v${version()}"
     state.timeAllowedIds = parseAllowedIds(settings?.timeResponderDeviceIds)
-    if (state.timeResponseCount == null) state.timeResponseCount = 0
-    if (device.currentValue('timeResponseCount') == null) {
-        sendEvent(name: 'timeResponseCount', value: state.timeResponseCount)
-    }
+    state.otaAllowedIds  = parseAllowedIds(settings?.otaResponderDeviceIds)
     runIn(2, 'connectZigbeeLogSocket', [overwrite: true])
 }
 
@@ -101,22 +109,15 @@ void configure() {
 }
 
 void refresh() {
-    logInfo "ws=${state.wsConnected}, timeAllowedIds=${state.timeAllowedIds}, " +
-            "timeResponseCount=${state.timeResponseCount}, lastTimeRequest=${device.currentValue('lastTimeRequest')}"
+    logInfo "ws=${state.wsConnected}, " +
+            "time=${settings?.enableTimeResponder ? 'on' : 'off'} allowed=${state.timeAllowedIds}, " +
+            "ota=${settings?.enableOtaResponder ? 'on' : 'off'} allowed=${state.otaAllowedIds}"
 }
 
 void reconnect() {
     logInfo 'reconnect requested'
     disconnectZigbeeLogSocket()
     runIn(2, 'connectZigbeeLogSocket', [overwrite: true])
-}
-
-void resetCounters() {
-    state.timeResponseCount = 0
-    state.lastRequestByDevice = [:]
-    sendEvent(name: 'timeResponseCount', value: 0)
-    sendEvent(name: 'lastTimeRequest', value: '')
-    logInfo 'counters reset'
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -226,8 +227,9 @@ void parse(String description) {
         case '000A':
             processTimeReadRequest(entry)
             return
-        // case '0019':  // OTA Upgrade — request handler intentionally not implemented yet
-        //     processOtaRequest(entry); return
+        case '0019':
+            processOtaQueryNextImageRequest(entry)
+            return
         default:
             return
     }
@@ -310,10 +312,6 @@ private void processTimeReadRequest(Map entry) {
     logInfo "<b>Time read</b> from ${devLabel} (dni=0x${srcDniHex}, seq=0x${zclSeq}, attrs=${attrHexList})"
 
     sendTimeClusterResponse(srcDniHex, zclSeq, requestedAttrs, srcEp, dstEp)
-
-    state.timeResponseCount = (state.timeResponseCount ?: 0) + 1
-    sendEvent(name: 'timeResponseCount', value: state.timeResponseCount)
-    sendEvent(name: 'lastTimeRequest',   value: new Date(nowMs).format("yyyy-MM-dd'T'HH:mm:ss"))
 }
 
 // Build the response payload and send `he raw` to the requesting device's DNI.
@@ -363,6 +361,95 @@ private void sendTimeClusterResponse(String srcDniHex, String zclSeq, List<Integ
     List<String> cmds = ["he raw 0x${srcDniHex} ${responseSrcEp} ${responseDstEp} 0x000A {${payload}} {0x0104}"]
     logInfo "Time response → 0x${srcDniHex}: seq=0x${zclSeq}, UTC=${utcSec}, TZ=${tzOffsetSec}s, DST=${dstSec}s"
     logDebug "Time response payload: ${payload}"
+    sendHubCommand(new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE))
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// CLUSTER 0x0019 — OTA Upgrade (Query Next Image only)
+// ══════════════════════════════════════════════════════════════════════════
+// Devices with no matching Hubitat-side OTA image will retry Query Next Image
+// every few seconds indefinitely (proven on ThirdReality plugs + vibration
+// sensors here). Replying NO_IMAGE_AVAILABLE (status 0x98) is the polite
+// "stop asking" and pushes the device's next attempt out to its long-poll
+// interval (typically 24h). We do NOT implement Image Block (0x03) or
+// Upgrade End (0x06) — those only fire after a SUCCESS response, which we
+// never send.
+
+private void processOtaQueryNextImageRequest(Map entry) {
+    if (settings?.enableOtaResponder == false) return
+
+    List<String> allowedIds = (state.otaAllowedIds ?: []) as List<String>
+    String entryDeviceId = entry?.deviceId?.toString()
+    if (!entryDeviceId) return
+    if (!allowedIds.contains(entryDeviceId)) {
+        logDebug "OTA from non-allowed device ${entryDeviceId} ignored"
+        return
+    }
+
+    List<String> rawPayload = (entry.payload as List).collect {
+        it.toString().trim().toUpperCase().padLeft(2, '0')
+    }
+    if (rawPayload.size() < 12) {
+        logDebug "OTA: short payload (${rawPayload.size()}) from device ${entryDeviceId} - ignoring"
+        return
+    }
+
+    // FC bit 0 must be 1 (cluster-specific), bit 3 must be 0 (client→server). DDR bit is don't-care.
+    int fcInt
+    try { fcInt = Integer.parseInt(rawPayload[0], 16) }
+    catch (e) { logDebug "OTA: FC parse error: ${e.message}"; return }
+    if ((fcInt & 0x09) != 0x01) {
+        logDebug "OTA: unexpected FC 0x${rawPayload[0]} from device ${entryDeviceId} - ignoring"
+        return
+    }
+    String zclSeq = rawPayload[1]
+    if (rawPayload[2] != '01') {
+        // Only Query Next Image Request (0x01) is handled. Image Block, Upgrade End etc. are ignored.
+        logDebug "OTA: cmd 0x${rawPayload[2]} not handled from device ${entryDeviceId}"
+        return
+    }
+
+    String sig = "0019|${entryDeviceId}|${zclSeq}|${rawPayload.join(',')}"
+    Map last = (state.lastOtaByDevice ?: [:]) as Map
+    long nowMs = now()
+    Map prev = last[entryDeviceId] as Map
+    if (prev?.sig == sig && (nowMs - ((prev?.ts ?: 0L) as long)) < 2000L) {
+        logDebug "OTA: duplicate (dev=${entryDeviceId}, seq=0x${zclSeq}) suppressed"
+        return
+    }
+    last[entryDeviceId] = [sig: sig, ts: nowMs]
+    state.lastOtaByDevice = last
+
+    Integer srcEp = Integer.parseInt(entry.sourceEndpoint?.toString() ?: '01', 16)
+    Integer dstEp = Integer.parseInt(entry.destinationEndpoint?.toString() ?: '01', 16)
+    Integer srcDniInt = (entry.id as Number)?.intValue()
+    if (srcDniInt == null) {
+        logWarn "OTA: missing source DNI in frame from device ${entryDeviceId}"
+        return
+    }
+    String srcDniHex = String.format('%04X', srcDniInt & 0xFFFF)
+
+    // Decode request fields for the info log line (LE encodings)
+    String mfrCode = "0x${rawPayload[5]}${rawPayload[4]}"
+    String imgType = "0x${rawPayload[7]}${rawPayload[6]}"
+    String fileVer = "0x${rawPayload[11]}${rawPayload[10]}${rawPayload[9]}${rawPayload[8]}"
+
+    String devLabel = entry?.name?.toString() ?: "id=${entryDeviceId}"
+    logInfo "<b>OTA Query Next Image</b> from ${devLabel} (dni=0x${srcDniHex}, seq=0x${zclSeq}, mfr=${mfrCode}, imgType=${imgType}, fileVer=${fileVer})"
+
+    sendOtaNoImageResponse(srcDniHex, zclSeq, srcEp, dstEp)
+}
+
+private void sendOtaNoImageResponse(String srcDniHex, String zclSeq, Integer srcEp, Integer dstEp) {
+    // FC 0x19 = cluster-specific | server-to-client | disable-default-response
+    // cmd 0x02 = Query Next Image Response; status 0x98 = NO_IMAGE_AVAILABLE.
+    // Per ZCL spec, on non-SUCCESS status the response body ends at the status byte.
+    int responseSrcEp = dstEp
+    int responseDstEp = srcEp
+    String payload = "19 ${zclSeq} 02 98"
+    List<String> cmds = ["he raw 0x${srcDniHex} ${responseSrcEp} ${responseDstEp} 0x0019 {${payload}} {0x0104}"]
+    logInfo "OTA response → 0x${srcDniHex}: seq=0x${zclSeq}, status=0x98 NO_IMAGE_AVAILABLE"
+    logDebug "OTA response payload: ${payload}"
     sendHubCommand(new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE))
 }
 
