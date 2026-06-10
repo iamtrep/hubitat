@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.67.3";
+const CODE_VERSION = "5.67.4";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -3604,8 +3604,10 @@ function rcZbFrameToRow(text){
   let f;try{f=JSON.parse(text)}catch(e){return null}
   const zcl=rcZbParseZcl(f.payload,f.clusterId);
   const sum=zcl?rcZbDecodedSummary(zcl):{short:'',full:''};
+  // Platform inconsistently prefixes the timestamp with the date (YYYY-MM-DD ); strip it.
+  const tRaw=f.time||'';
   return{
-    time:f.time||'',
+    time:tRaw.replace(/^\d{4}-\d{2}-\d{2}\s+/,''),
     id:rcZbDniHex(f.id),
     name:f.name||'',
     _deviceId:f.deviceId,
@@ -3643,7 +3645,7 @@ function rcZbFrameHaystack(frame){
   const zcl=rcZbParseZcl(frame.payload,frame.clusterId);
   const sum=zcl?rcZbDecodedSummary(zcl):{short:''};
   return [
-    frame.time, frame.name, rcZbDniHex(frame.id),
+    (frame.time||'').replace(/^\d{4}-\d{2}-\d{2}\s+/,''), frame.name, rcZbDniHex(frame.id),
     clusterLabel(frame.clusterId||'',zcl&&zcl.mfrCode),
     zcl?rcZbDirArrow(zcl):'', zcl?resolveCmd(zcl):'', zcl&&zcl.mfrSpecific?'mfr':'',
     sum.short, frame.lastHopLqi, frame.lastHopRssi
@@ -3895,7 +3897,7 @@ function rcZbRenderTailHtml(rows, selectedRaw){
     const rowBg=sel?'background:rgba(33,150,243,0.18)':'';
     const cmdCell=(r.dirArrow?'<span style="opacity:.65">'+h(r.dirArrow)+'</span> ':'')+h(r.cmd||'')+(r.mfrMark?'<span style="opacity:.6">'+h(r.mfrMark)+'</span>':'');
     html+='<tr data-idx="'+idx+'" style="cursor:pointer;'+rowBg+'">';
-    html+='<td style="'+td+'">'+h(r.time)+'</td>';
+    html+='<td style="'+td+';white-space:nowrap">'+h(r.time)+'</td>';
     html+='<td style="'+td+'">'+(r._deviceId?dlink(r._deviceId,r.name):h(Obf.nm(r.name)))+'</td>';
     html+='<td style="'+tdMono+'">'+h(r.id)+'</td>';
     html+='<td style="'+td+';text-align:right">'+h(String(r.lqi))+'</td>';
