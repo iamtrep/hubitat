@@ -1,37 +1,44 @@
-/**
+// Copyright (c) 2025-2026 PJ
+// SPDX-License-Identifier: MIT
+
+/*
  *  Zigbee Responder — hub-wide responder for Zigbee cluster reads Hubitat does not
- *  forward to driver parse() (currently Time cluster 0x000A; OTA 0x0019 stub for later).
+ *  forward to driver parse() (currently Time cluster 0x000A; OTA 0x0019 stub).
  *
  *  One virtual-device instance opens a single WebSocket to the hub's /zigbeeLogsocket,
- *  filters inbound frames by cluster + opt-in deviceId, and emits a ZCL response
- *  on behalf of the originating device using `he raw 0x${srcDni}`. This replaces the
- *  per-driver WebSocket pattern that doesn't scale to many devices.
+ *  filters inbound frames by cluster + opt-in deviceId, and emits a ZCL response on
+ *  behalf of the originating device using `he raw 0x${srcDni}`. Replaces the
+ *  per-driver WebSocket pattern, which doesn't scale to many devices.
  *
  *  Design reference: kkossev Aqara P1 Motion Sensor v2.1.5 (websocket + payload[1]
- *  seq echo). The Time cluster response byte layout matches that driver's; this one
+ *  seq echo). The Time cluster response byte layout matches that driver's; this
  *  factors out the cluster routing and per-device addressing into a single instance.
- *
- *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use
- *  this file except in compliance with the License. You may obtain a copy of the
- *  License at http://www.apache.org/licenses/LICENSE-2.0
  *
  *  Version  Date          Who   What
  *  0.1.0    2026-06-09    PJ    Initial — Time cluster (0x000A) responder via /zigbeeLogsocket.
- *  0.2.0    2026-06-09    PJ    OTA (0x0019) Query Next Image responder — NO_IMAGE_AVAILABLE replies to quiet retry chatter.
+ *  0.2.0    2026-06-09    PJ    OTA (0x0019) Query Next Image responder — NO_IMAGE_AVAILABLE replies.
  *  0.2.1    2026-06-09    PJ    Drop per-cluster counter and last-request attributes; only wsStatus remains.
- *  0.2.2    2026-06-09    PJ    OTA NO_IMAGE_AVAILABLE response: include conditional mfrCode/imageType/fileVersion/imageSize fields with 0xFFFF/0xFFFFFFFF sentinels — some firmwares retry indefinitely on the bare 4-byte form.
- *  0.2.3    2026-06-09    PJ    OTA NO_IMAGE_AVAILABLE response: echo request's mfrCode/imageType/fileVersion (firmware sentinel-rejects), keep imageSize=0xFFFFFFFF.
- *  0.2.4    2026-06-09    PJ    OTA NO_IMAGE_AVAILABLE response: drop DDR bit (FC 0x09 vs 0x19) so the device can complete the transaction via Default Response.
- *  0.3.0    2026-06-09    PJ    Time cluster: add TimeStatus (0x01=0x0D Master+MasterZoneDst+Superseding), LastSetTime (0x08), ValidUntilTime (0x09=time+24h) per Z2M's timeService baseline. Add per-device Unix-epoch (1970) override mode for firmware that misinterprets the spec (Z2M's customTimeResponse "1970_UTC" mode equivalent).
+ *  0.2.2    2026-06-09    PJ    OTA: conditional mfrCode/imageType/fileVersion/imageSize fields.
+ *  0.2.3    2026-06-09    PJ    OTA: echo request's mfrCode/imageType/fileVersion.
+ *  0.2.4    2026-06-09    PJ    OTA: drop DDR bit (FC 0x09 vs 0x19).
+ *  0.3.0    2026-06-09    PJ    Time: add TimeStatus (0x0D), LastSetTime, ValidUntilTime per Z2M timeService baseline; per-device Unix-epoch override.
+ *  0.3.1    2026-06-10    PJ    MIT header; standard log block (debugEnable/traceEnable + logTrace/logError); single convergence through initialize(); CODE_VERSION + state.version check; dedup caches → @Field static; @CompileStatic on pure helpers.
+ *  0.3.2    2026-06-10    PJ    Code-push detection: version check moved to parse() so a code push reconfigures on the first inbound frame (incl. the logEnable→debugEnable migration). Standardize device.updateSetting values to boolean.
  */
 
+import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-static String version()   { '0.3.0' }
-static String timeStamp() { '2026/06/09' }
+@Field static final String CODE_VERSION = '0.3.2'
+
+// Sub-second WS re-delivery dedup, keyed by hub device id, value = [sig, ts].
+// In-JVM only — lost on hub reboot, which is fine for sub-second dedup. Bounded
+// by the operator-configured allowlist size, so unbounded growth isn't a risk.
+@Field static Map timeRequestDedup = [:]
+@Field static Map otaRequestDedup  = [:]
 
 metadata {
-    definition(name: 'Zigbee Responder', namespace: 'iamtrep', author: 'PJ',
+    definition(name: 'Zigbee Responder', namespace: 'iamtrep', author: 'pj',
                importUrl: 'https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/ZigbeeResponder/ZigbeeResponder.groovy',
                singleThreaded: true) {
         capability 'Initialize'
@@ -44,10 +51,14 @@ metadata {
     }
 
     preferences {
-        input name: 'logEnable',  type: 'bool', title: '<b>Enable debug logging</b>',
-              description: 'Auto-disables after 30 minutes.', defaultValue: true
-        input name: 'txtEnable',  type: 'bool', title: '<b>Enable info logging</b>',
+        input name: 'txtEnable',   type: 'bool', title: '<b>Enable descriptionText logging</b>',
               defaultValue: true
+        input name: 'debugEnable', type: 'bool', title: '<b>Enable debug logging</b>',
+              description: 'Auto-disables after 30 minutes.', defaultValue: false, submitOnChange: true
+        if (debugEnable) {
+            input name: 'traceEnable', type: 'bool', title: '<b>Enable trace logging</b>',
+                  defaultValue: false
+        }
 
         input name: 'enableTimeResponder', type: 'bool',
               title: '<b>Enable Time cluster (0x000A) responder</b>',
@@ -81,31 +92,41 @@ metadata {
 // ══════════════════════════════════════════════════════════════════════════
 
 void installed() {
-    log.info "${device.displayName} installed v${version()}"
+    log.info "${device.displayName} installed v${CODE_VERSION}"
     state.clear()
     initialize()
 }
 
 void updated() {
     log.info "${device.displayName} updated"
-    if (settings?.logEnable) runIn(1800, 'logsOff', [overwrite: true])
-    else                     unschedule('logsOff')
-    // Rebuild parsed allowlists so the hot path doesn't re-parse settings each frame
-    state.timeAllowedIds   = parseAllowedIds(settings?.timeResponderDeviceIds)
-    state.timeUnixEpochIds = parseAllowedIds(settings?.timeResponderUnixEpochDeviceIds)
-    state.otaAllowedIds    = parseAllowedIds(settings?.otaResponderDeviceIds)
+    unschedule()
+    initialize()
+}
+
+void initialize() {
+    log.info "${device.displayName} initialize v${CODE_VERSION}"
+
+    // One-time rename of the prior `logEnable` pref to the standard `debugEnable`.
+    if (settings?.logEnable != null) {
+        device.updateSetting('debugEnable', [type: 'bool', value: settings.logEnable as Boolean])
+        device.removeSetting('logEnable')
+    }
+
+    if (state.version != CODE_VERSION) {
+        logWarn "New version: ${CODE_VERSION} (was: ${state.version})"
+        state.version = CODE_VERSION
+    }
+
+    if (settings?.debugEnable) runIn(1800, 'logsOff', [overwrite: true])
+
+    state.timeAllowedIds   = parseAllowedIds(settings?.timeResponderDeviceIds as String)
+    state.timeUnixEpochIds = parseAllowedIds(settings?.timeResponderUnixEpochDeviceIds as String)
+    state.otaAllowedIds    = parseAllowedIds(settings?.otaResponderDeviceIds as String)
     logInfo "Time responder: ${settings?.enableTimeResponder ? 'ENABLED' : 'disabled'}, " +
             "allowedIds=${state.timeAllowedIds}, unixEpochIds=${state.timeUnixEpochIds}"
     logInfo "OTA responder:  ${settings?.enableOtaResponder ? 'ENABLED' : 'disabled'}, " +
             "allowedIds=${state.otaAllowedIds}"
-    runIn(2, 'connectZigbeeLogSocket', [overwrite: true])
-}
 
-void initialize() {
-    log.info "${device.displayName} initialize v${version()}"
-    state.timeAllowedIds   = parseAllowedIds(settings?.timeResponderDeviceIds)
-    state.timeUnixEpochIds = parseAllowedIds(settings?.timeResponderUnixEpochDeviceIds)
-    state.otaAllowedIds    = parseAllowedIds(settings?.otaResponderDeviceIds)
     runIn(2, 'connectZigbeeLogSocket', [overwrite: true])
 }
 
@@ -136,7 +157,6 @@ void reconnect() {
 // ══════════════════════════════════════════════════════════════════════════
 
 void connectZigbeeLogSocket() {
-    try { unschedule('connectZigbeeLogSocket') } catch (ignored) { }
     state.wsReconnectPending = false
     state.wsIntentionalClose = false
     state.wsConnected = false
@@ -154,7 +174,7 @@ void connectZigbeeLogSocket() {
 }
 
 void disconnectZigbeeLogSocket() {
-    try { unschedule('connectZigbeeLogSocket') } catch (ignored) { }
+    unschedule('connectZigbeeLogSocket')
     state.wsReconnectPending = false
     state.wsIntentionalClose = true
     state.wsConnected = false
@@ -184,7 +204,7 @@ void webSocketStatus(String status) {
         state.wsIntentionalClose = false
         sendEvent(name: 'wsStatus', value: 'connected')
         logInfo 'zigbeeLogsocket connected'
-        try { unschedule('connectZigbeeLogSocket') } catch (ignored) { }
+        unschedule('connectZigbeeLogSocket')
         return
     }
     if (normalized in ['closing', 'status: closing']) return
@@ -211,6 +231,11 @@ void webSocketStatus(String status) {
 // ══════════════════════════════════════════════════════════════════════════
 
 void parse(String description) {
+    // Code-push detection: initialize() doesn't run on a code push, but parse() does
+    // as soon as the next WS frame arrives. Kick reconfigure via runInMillis so it
+    // doesn't run inline; keep processing this frame against the prior config.
+    if (state.version != CODE_VERSION) runInMillis(100, 'initialize')
+
     // The only thing reaching parse() on this virtual device is the WebSocket
     // text frame (JSON). Anything else is a hub anomaly and gets dropped.
     String trimmed = description?.trim()
@@ -285,15 +310,13 @@ private void processTimeReadRequest(Map entry) {
     // Dedup: the WS can re-deliver the same frame within a few ms. 2s window keyed
     // by deviceId+seq+payload covers it without rejecting genuine new reads.
     String sig = "${entryDeviceId}|${zclSeq}|${rawPayload.join(',')}"
-    Map last = (state.lastRequestByDevice ?: [:]) as Map
     long nowMs = now()
-    Map prev = last[entryDeviceId] as Map
+    Map prev = timeRequestDedup[entryDeviceId] as Map
     if (prev?.sig == sig && (nowMs - ((prev?.ts ?: 0L) as long)) < 2000L) {
         logDebug "Time: duplicate (dev=${entryDeviceId}, seq=0x${zclSeq}) suppressed"
         return
     }
-    last[entryDeviceId] = [sig: sig, ts: nowMs]
-    state.lastRequestByDevice = last
+    timeRequestDedup[entryDeviceId] = [sig: sig, ts: nowMs]
 
     // Parse requested attribute IDs (LE 16-bit pairs starting at byte 3)
     List<String> attrBytes = rawPayload.drop(3)
@@ -318,7 +341,7 @@ private void processTimeReadRequest(Map entry) {
     }
     String srcDniHex = String.format('%04X', srcDniInt & 0xFFFF)
 
-    def attrHexList = requestedAttrs.collect { String.format('0x%04X', it) }
+    List<String> attrHexList = requestedAttrs.collect { String.format('0x%04X', it) }
     String devLabel = entry?.name?.toString() ?: "id=${entryDeviceId}"
     boolean useUnixEpoch = ((state.timeUnixEpochIds ?: []) as List<String>).contains(entryDeviceId)
     String epochTag = useUnixEpoch ? ' [unix-epoch]' : ''
@@ -431,7 +454,7 @@ private void processOtaQueryNextImageRequest(Map entry) {
     // FC bit 0 must be 1 (cluster-specific), bit 3 must be 0 (client→server). DDR bit is don't-care.
     int fcInt
     try { fcInt = Integer.parseInt(rawPayload[0], 16) }
-    catch (e) { logDebug "OTA: FC parse error: ${e.message}"; return }
+    catch (Exception e) { logDebug "OTA: FC parse error: ${e.message}"; return }
     if ((fcInt & 0x09) != 0x01) {
         logDebug "OTA: unexpected FC 0x${rawPayload[0]} from device ${entryDeviceId} - ignoring"
         return
@@ -444,15 +467,13 @@ private void processOtaQueryNextImageRequest(Map entry) {
     }
 
     String sig = "0019|${entryDeviceId}|${zclSeq}|${rawPayload.join(',')}"
-    Map last = (state.lastOtaByDevice ?: [:]) as Map
     long nowMs = now()
-    Map prev = last[entryDeviceId] as Map
+    Map prev = otaRequestDedup[entryDeviceId] as Map
     if (prev?.sig == sig && (nowMs - ((prev?.ts ?: 0L) as long)) < 2000L) {
         logDebug "OTA: duplicate (dev=${entryDeviceId}, seq=0x${zclSeq}) suppressed"
         return
     }
-    last[entryDeviceId] = [sig: sig, ts: nowMs]
-    state.lastOtaByDevice = last
+    otaRequestDedup[entryDeviceId] = [sig: sig, ts: nowMs]
 
     Integer srcEp = Integer.parseInt(entry.sourceEndpoint?.toString() ?: '01', 16)
     Integer dstEp = Integer.parseInt(entry.destinationEndpoint?.toString() ?: '01', 16)
@@ -485,8 +506,6 @@ private void sendOtaNoImageResponse(String srcDniHex, String zclSeq, Integer src
     // FC 0x09 = cluster-specific | server-to-client | DDR CLEAR (device sends Default Response)
     // cmd 0x02 = Query Next Image Response; status 0x98 = NO_IMAGE_AVAILABLE.
     // Echo request's mfrCode/imageType/fileVersion; imageSize=0xFFFFFFFF (no image).
-    // DDR was set in earlier versions; ThirdReality (0x1233) firmware appears to require the
-    // Default Response chain to consider the OTA transaction complete.
     int responseSrcEp = dstEp
     int responseDstEp = srcEp
     String payload = "09 ${zclSeq} 02 98 ${mfrLE} ${typeLE} ${verLE} FF FF FF FF"
@@ -500,22 +519,27 @@ private void sendOtaNoImageResponse(String srcDniHex, String zclSeq, Integer src
 // HELPERS
 // ══════════════════════════════════════════════════════════════════════════
 
-private List<String> parseAllowedIds(String csv) {
+@CompileStatic
+private static List<String> parseAllowedIds(String csv) {
     if (!csv) return []
-    return csv.split(',')*.trim().findAll { it }*.toString()
+    return csv.split(',').collect { String it -> it.trim() }.findAll { String it -> it as boolean }
 }
 
-private String toLEHex32(long value) {
+@CompileStatic
+private static String toLEHex32(long value) {
     long v = value & 0xFFFFFFFFL
     return String.format('%02X %02X %02X %02X',
         (v & 0xFF), ((v >> 8) & 0xFF), ((v >> 16) & 0xFF), ((v >> 24) & 0xFF))
 }
 
 void logsOff() {
-    log.info "${device.displayName} debug logging disabled"
-    device.updateSetting('logEnable', [value: 'false', type: 'bool'])
+    logWarn 'debug/trace logging disabled'
+    device.updateSetting('debugEnable', [value: false, type: 'bool'])
+    device.updateSetting('traceEnable', [value: false, type: 'bool'])
 }
 
-void logDebug(String msg) { if (settings?.logEnable) log.debug "${device.displayName} ${msg}" }
-void logInfo(String msg)  { if (settings?.txtEnable) log.info  "${device.displayName} ${msg}" }
-void logWarn(String msg)  { if (settings?.logEnable) log.warn  "${device.displayName} ${msg}" }
+private void logTrace(String message) { if (settings?.traceEnable) log.trace "${device} : ${message}" }
+private void logDebug(String message) { if (settings?.debugEnable) log.debug "${device} : ${message}" }
+private void logInfo(String message)  { if (settings?.txtEnable)   log.info  "${device} : ${message}" }
+private void logWarn(String message)  { log.warn  "${device} : ${message}" }
+private void logError(String message) { log.error "${device} : ${message}" }
