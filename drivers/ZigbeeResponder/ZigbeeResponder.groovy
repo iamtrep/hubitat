@@ -10,20 +10,6 @@
  *  behalf of the originating device using `he raw 0x${srcDni}`. Replaces the
  *  per-driver WebSocket pattern, which doesn't scale to many devices.
  *
- *  Design reference: kkossev Aqara P1 Motion Sensor v2.1.5 (websocket + payload[1]
- *  seq echo). The Time cluster response byte layout matches that driver's; this
- *  factors out the cluster routing and per-device addressing into a single instance.
- *
- *  Version  Date          Who   What
- *  0.1.0    2026-06-09    PJ    Initial — Time cluster (0x000A) responder via /zigbeeLogsocket.
- *  0.2.0    2026-06-09    PJ    OTA (0x0019) Query Next Image responder — NO_IMAGE_AVAILABLE replies.
- *  0.2.1    2026-06-09    PJ    Drop per-cluster counter and last-request attributes; only wsStatus remains.
- *  0.2.2    2026-06-09    PJ    OTA: conditional mfrCode/imageType/fileVersion/imageSize fields.
- *  0.2.3    2026-06-09    PJ    OTA: echo request's mfrCode/imageType/fileVersion.
- *  0.2.4    2026-06-09    PJ    OTA: drop DDR bit (FC 0x09 vs 0x19).
- *  0.3.0    2026-06-09    PJ    Time: add TimeStatus (0x0D), LastSetTime, ValidUntilTime per Z2M timeService baseline; per-device Unix-epoch override.
- *  0.3.1    2026-06-10    PJ    MIT header; standard log block (debugEnable/traceEnable + logTrace/logError); single convergence through initialize(); CODE_VERSION + state.version check; dedup caches → @Field static; @CompileStatic on pure helpers.
- *  0.3.2    2026-06-10    PJ    Code-push detection: version check moved to parse() so a code push reconfigures on the first inbound frame (incl. the logEnable→debugEnable migration). Standardize device.updateSetting values to boolean.
  */
 
 import groovy.transform.CompileStatic
@@ -231,9 +217,6 @@ void webSocketStatus(String status) {
 // ══════════════════════════════════════════════════════════════════════════
 
 void parse(String description) {
-    // Code-push detection: initialize() doesn't run on a code push, but parse() does
-    // as soon as the next WS frame arrives. Kick reconfigure via runInMillis so it
-    // doesn't run inline; keep processing this frame against the prior config.
     if (state.version != CODE_VERSION) runInMillis(100, 'initialize')
 
     // The only thing reaching parse() on this virtual device is the WebSocket
