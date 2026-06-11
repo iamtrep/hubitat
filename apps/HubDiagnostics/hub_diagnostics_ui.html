@@ -3405,7 +3405,7 @@ const RC={
     buf:null,                  // FrameBuffer (line-oriented, one push per CHIP line)
     pollTimer:null,            // setInterval id
     intervalMs:2000,           // poll cadence (~native page cadence)
-    state:'idle',              // idle|polling|paused|disconnected
+    state:'idle',              // idle|polling
     pausedCapture:false,
     lastTail:[],               // last K lines of the previous poll's buffer (dedup anchor)
     dedupK:30,                 // anchor block size — large enough that contiguous-run collisions are vanishingly rare
@@ -4302,10 +4302,10 @@ function matterCommandName(clusterId, cmdId){
   return MATTER_GLOBAL_COMMANDS[cmdId] || null;
 }
 
-// ANSI CSI strip — only the SGR sequences CHIP emits ([<digits>;<digits>m...[0m).
-// Conservative regex, no \x1b shorthand needed.
+// ANSI CSI strip — strips both the bracket-only form CHIP emits in hub JSON
+// and the full ESC+bracket form emitted by the SDK directly.
 function stripAnsi(text){
-  return text.replace(/\[[0-9;]*m/g, '');
+  return text.replace(/\x1b?\[[0-9;]*m/g, '');
 }
 
 // Parse a single CHIP log line.
@@ -4319,7 +4319,7 @@ function parseChipLine(raw){
   // progress 0;32, detail 0;34. We pass the raw code through; the renderer maps to CSS color.
   const CHIP_HEAD_RE = /^\[(\d+)\.(\d+)\] \[(\d+):(\d+)\] \[([A-Z]+)\] ?(.*)$/;
   let ansi=null;
-  const m=raw.match(/\[([0-9;]+)m/);
+  const m=raw.match(/\x1b?\[([0-9;]+)m/);
   if(m)ansi=m[1];
   const stripped=stripAnsi(raw);
   const h=stripped.match(CHIP_HEAD_RE);
@@ -4744,7 +4744,7 @@ function rcMatterRenderRawHtml(lines){
   let html='<div style="background:#0d1117">';
   for(const ln of lines){
     let color='var(--text)';
-    const m=ln.match(/\[([0-9;]+)m/);
+    const m=ln.match(/\x1b?\[([0-9;]+)m/);
     if(m){
       const c=m[1];
       if(c.indexOf('31')>=0)      color='#ff6b6b';
