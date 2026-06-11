@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.68.2";
+const CODE_VERSION = "5.68.3";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -3417,6 +3417,7 @@ const RC={
     pinBaselineLen:0,
     _suppressScrollUntil:0,
     filters:{component:null, op:null},
+    deviceByNode:new Map(),     // nodeId(int) → {id, name, model, manufacturer} — populated by rcMatterFetchDeviceMap on Start
     components:[],             // unioned component set from observed heads (UI-sorted)
     framesLastSec:[],
     rotations:0,               // count of polls where the anchor missed (full-buffer rotations)
@@ -4449,6 +4450,19 @@ function extractExchangeId(body){
   return m ? m[1] : null;
 }
 
+// Pull the peer Matter NodeID from a CHIP EM line. The hub's own NodeID is the local side
+// of each message; the peer is the other end (a commissioned device). On RX the peer is the
+// 'from' end; on TX the peer is the 'to' end. Returns the 64-bit NodeID as a JS integer or
+// null when the line has no Msg RX/TX marker (DMG decode lines, RMI calls, etc.).
+function extractPeerNodeId(body){
+  if(!body) return null;
+  let m = body.match(/Msg RX from \d+:([0-9A-Fa-f]+)/);
+  if(m) return parseInt(m[1], 16);
+  m = body.match(/Msg TX from [0-9A-Fa-f]+ to \d+:([0-9A-Fa-f]+)/);
+  if(m) return parseInt(m[1], 16);
+  return null;
+}
+
 // Group raw CHIP lines into entries by exchange ID. Walks lines oldest-first;
 // maintains the most-recent exchange seen per thread-id (CHIP processes one IM
 // message at a time per delegate, so a DMG decode line that follows an EM
@@ -4629,6 +4643,8 @@ function rcMatterStart(){
   m.firstPollDone=false;
   m.lastErr=null;
   m.components=[];
+  m.deviceByNode = new Map();
+  rcMatterFetchDeviceMap();
   document.getElementById('rc-m-pause').textContent='Pause capture';
   rcMatterRenderTail({repin:true});
   rcMatterConnect();
@@ -4647,7 +4663,7 @@ function rcMatterPause(){
 }
 
 function rcMatterClear(){
-  const m=RC.matter;if(m.buf)m.buf.clear();m.displayBuf=[];m.framesLastSec=[];m.lastTail=[];m.components=[];m.rotations=0;m.firstPollDone=false;m.lastErr=null;
+  const m=RC.matter;if(m.buf)m.buf.clear();m.displayBuf=[];m.framesLastSec=[];m.lastTail=[];m.components=[];m.deviceByNode=new Map();m.rotations=0;m.firstPollDone=false;m.lastErr=null;
   rcMatterUpdateMetrics();rcMatterRenderTail({repin:true});
 }
 
@@ -4744,6 +4760,28 @@ function rcMatterPoll(){
     });
 }
 
+// One-shot fetch of the Matter commissioned-device list. Populates RC.matter.deviceByNode
+// so the Structured renderer can resolve peer NodeIDs to Hubitat device labels. Failures are
+// silent — the table just shows the bare NodeID hex. Triggers a re-render on success so
+// already-painted rows pick up the names without waiting for the next 1 Hz tick.
+function rcMatterFetchDeviceMap(){
+  const m = RC.matter;
+  if(!RC.hubIp) return;
+  fetch('http://' + RC.hubIp + '/hub/matterDetails/json', {credentials:'include'})
+    .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+    .then(j => {
+      const map = new Map();
+      for(const d of (j.devices || [])){
+        if(typeof d.nodeId === 'number'){
+          map.set(d.nodeId, {id:d.id, name:d.name, model:d.model, manufacturer:d.manufacturer});
+        }
+      }
+      m.deviceByNode = map;
+      if(m.state === 'polling') rcMatterRenderTail({});
+    })
+    .catch(err => { console.warn('rcMatterFetchDeviceMap failed:', err.message); });
+}
+
 // Map a CHIP entry group → display row for the Structured table.
 // Map a CHIP entry → ARRAY of display rows for the Structured table. Most entries produce
 // one row, but a multi-attribute ReportData produces one row per AttributeReportIB so the
@@ -4778,6 +4816,9 @@ function rcMatterFrameToRow(entry){
       endpoint:ep, cluster:cl, clusterName,
       attribute:at, attrName, command:cmd, cmdName,
       exchange, session:f.session, fabric:f.fabric,
+      deviceNodeId: peerNodeId,
+      deviceId: peerDev ? peerDev.id : null,
+      deviceName: peerDev ? peerDev.name : null,
       summary: sub || summary,
       _raw:rawBlock,
       _headRaw:entry.raw,
@@ -4787,6 +4828,8 @@ function rcMatterFrameToRow(entry){
 
   // Multi-attribute path: scan for AttributeReportIB blocks and emit one row each.
   const text = (entry.body || '') + (entry.continuations.length ? '\n' + entry.continuations.join('\n') : '');
+  const peerNodeId = extractPeerNodeId(text);
+  const peerDev = peerNodeId != null ? RC.matter.deviceByNode.get(peerNodeId) : null;
   const reports = findAttributeReports(text);
   if(reports.length >= 2){
     return reports.map((r, i) => {
@@ -4815,7 +4858,7 @@ function rcMatterRenderStructuredHtml(rows, selectedRowKey){
   const td='padding:5px 10px;font-size:12px;border-top:1px solid rgba(255,255,255,0.05);vertical-align:top';
   const tdMono=td+';font-family:ui-monospace,SFMono-Regular,Menlo,monospace';
   let html='<table style="width:100%;border-collapse:collapse"><thead><tr>';
-  ['Time','Sev','Comp','Op','Exchange','Endpoint','Cluster','Attr/Cmd','Summary'].forEach(l=>html+='<th style="'+th+'">'+l+'</th>');
+  ['Time','Sev','Comp','Op','Device','Exchange','Endpoint','Cluster','Attr/Cmd','Summary'].forEach(l=>html+='<th style="'+th+'">'+l+'</th>');
   html+='</tr></thead><tbody>';
   function sevBadge(s){
     if(s==='E')return '<span class="badge b-crit" style="font-size:10px">E</span>';
@@ -4842,6 +4885,12 @@ function rcMatterRenderStructuredHtml(rows, selectedRowKey){
     html+='<td style="'+td+'">'+sevBadge(r.sev)+'</td>';
     html+='<td style="'+tdMono+'">'+h(r.component||'')+'</td>';
     html+='<td style="'+td+'">'+h(r.op||'')+'</td>';
+    let devCell='';
+    if(r.deviceNodeId!=null){
+      const hex='0x'+r.deviceNodeId.toString(16).toUpperCase();
+      devCell = r.deviceId ? dlink(r.deviceId, r.deviceName || hex) : h(hex);
+    }
+    html+='<td style="'+td+'">'+devCell+'</td>';
     html+='<td style="'+tdMono+'">'+h(r.exchange||'')+'</td>';
     html+='<td style="'+tdMono+'">'+h(ep)+'</td>';
     html+='<td style="'+tdMono+'">'+clCell+'</td>';
@@ -4849,7 +4898,7 @@ function rcMatterRenderStructuredHtml(rows, selectedRowKey){
     html+='<td style="'+td+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:520px">'+h(r.summary||'')+'</td>';
     html+='</tr>';
     if(sel){
-      html+='<tr style="background:rgba(33,150,243,0.08)"><td colspan="8" style="padding:8px 14px"><pre style="margin:0;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-all;color:var(--text)">'+h(stripAnsi(r._raw))+'</pre></td></tr>';
+      html+='<tr style="background:rgba(33,150,243,0.08)"><td colspan="10" style="padding:8px 14px"><pre style="margin:0;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-all;color:var(--text)">'+h(stripAnsi(r._raw))+'</pre></td></tr>';
     }
   });
   html+='</tbody></table>';

@@ -56,7 +56,8 @@ const harness =
   extractFn('extractExchangeId') + '\n' +
   extractFn('groupChipByExchange') + '\n' +
   extractFn('findAttributeReports') + '\n' +
-  'module.exports = { MATTER_CLUSTERS, MATTER_GLOBAL_COMMANDS, matterClusterName, matterAttrName, matterCommandName, stripAnsi, parseChipLine, groupChipEntries, extractMatterFields, matterDedupAppend, extractExchangeId, groupChipByExchange, findAttributeReports };';
+  extractFn('extractPeerNodeId') + '\n' +
+  'module.exports = { MATTER_CLUSTERS, MATTER_GLOBAL_COMMANDS, matterClusterName, matterAttrName, matterCommandName, stripAnsi, parseChipLine, groupChipEntries, extractMatterFields, matterDedupAppend, extractExchangeId, groupChipByExchange, findAttributeReports, extractPeerNodeId };';
 const tmp = path.join(os.tmpdir(), 'hd_matter_' + process.pid + '.js');
 fs.writeFileSync(tmp, harness);
 const M = require(tmp);
@@ -456,6 +457,27 @@ t('matterAttrName: ElectricalPowerMeasurement.RMSCurrent (0x0091/0x000C)', () =>
 });
 t('matterAttrName: ElectricalPowerMeasurement.ActivePower (0x0091/0x0008)', () => {
   assert.strictEqual(M.matterAttrName(0x0091, 0x0008), 'ActivePower');
+});
+
+console.log('\nextractPeerNodeId');
+
+t('extractPeerNodeId: RX header captures peer (= the from end)', () => {
+  const body = '>>> [E:36698r S:52787 M:165512360] (S) Msg RX from 1:0000000000000BBC [3D3C] to 000000000001B669 --- Type 0001:05 (IM:ReportData) (B:100)';
+  assert.strictEqual(M.extractPeerNodeId(body), 0xBBC);
+});
+t('extractPeerNodeId: TX header captures peer (= the to end)', () => {
+  const body = '<<< [E:36698r S:52787 M:234532982 (Ack:165512360)] (S) Msg TX from 000000000001B669 to 1:0000000000000BBC [3D3C] [UDP:[fd9e:...]:5540] --- Type 0001:01 (IM:StatusResponse) (B:42)';
+  assert.strictEqual(M.extractPeerNodeId(body), 0xBBC);
+});
+t('extractPeerNodeId: line with no Msg marker → null', () => {
+  assert.strictEqual(M.extractPeerNodeId('Refresh LivenessCheckTime for 344277 ms with SubscriptionId = 0x2f9b16cf'), null);
+});
+t('extractPeerNodeId: empty body → null', () => {
+  assert.strictEqual(M.extractPeerNodeId(''), null);
+});
+t('extractPeerNodeId: SecureChannel StandaloneAck RX still resolves peer', () => {
+  const body = '>>> [E:36698r S:52787 M:165512361 (Ack:234532982)] (S) Msg RX from 1:0000000000000BBC [3D3C] to 000000000001B669 --- Type 0000:10 (SecureChannel:StandaloneAck) (B:34)';
+  assert.strictEqual(M.extractPeerNodeId(body), 0xBBC);
 });
 
 console.log('\n  ' + pass + ' passed, ' + fail + ' failed');
