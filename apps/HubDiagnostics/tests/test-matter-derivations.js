@@ -53,7 +53,9 @@ const harness =
   extractFn('groupChipEntries') + '\n' +
   extractFn('extractMatterFields') + '\n' +
   extractFn('matterDedupAppend') + '\n' +
-  'module.exports = { MATTER_CLUSTERS, MATTER_GLOBAL_COMMANDS, matterClusterName, matterAttrName, matterCommandName, stripAnsi, parseChipLine, groupChipEntries, extractMatterFields, matterDedupAppend };';
+  extractFn('extractExchangeId') + '\n' +
+  extractFn('groupChipByExchange') + '\n' +
+  'module.exports = { MATTER_CLUSTERS, MATTER_GLOBAL_COMMANDS, matterClusterName, matterAttrName, matterCommandName, stripAnsi, parseChipLine, groupChipEntries, extractMatterFields, matterDedupAppend, extractExchangeId, groupChipByExchange };';
 const tmp = path.join(os.tmpdir(), 'hd_matter_' + process.pid + '.js');
 fs.writeFileSync(tmp, harness);
 const M = require(tmp);
@@ -303,6 +305,88 @@ t('matterDedupAppend: last occurrence wins when anchor repeats in next', () => {
   const r = M.matterDedupAppend(['a','b'], ['x','a','b','c','a','b'], 2);
   assert.deepStrictEqual(r.appended, []);
   assert.deepStrictEqual(r.lastTail, ['a','b']);
+});
+
+console.log('\nextractExchangeId / groupChipByExchange');
+
+t('extractExchangeId: [E:36698r ...] form', () => {
+  assert.strictEqual(M.extractExchangeId('>>> [E:36698r S:52787 M:165512360]'), '36698r');
+});
+t('extractExchangeId: "Handling via exchange: 36698r" form', () => {
+  assert.strictEqual(M.extractExchangeId('Handling via exchange: 36698r, Delegate: 0x7fa00c0fe0'), '36698r');
+});
+t('extractExchangeId: "on exchange 36698r" form (no colon)', () => {
+  assert.strictEqual(M.extractExchangeId('Rxd Ack; Removing MessageCounter:234532982 from Retrans Table on exchange 36698r'), '36698r');
+});
+t('extractExchangeId: no match returns null', () => {
+  assert.strictEqual(M.extractExchangeId('Refresh LivenessCheckTime for 344277 ms with SubscriptionId = 0x2f9b16cf'), null);
+});
+
+t('groupChipByExchange: DMG decode inherits exchange from preceding EM Handling line', () => {
+  const lines = [
+    '[1716491823.482] [1:2] [EM] Report                >>> [E:36698r S:52787 M:165512360] (S) Msg RX from 1:0000000000000BBC',
+    '[1716491823.482] [1:2] [EM]                     Handling via exchange: 36698r, Delegate: 0x7fa00c0fe0',
+    '[1716491823.482] [1:2] [DMG] Report                ReportDataMessage =',
+    '[1716491823.482] [1:2] [DMG]                     {',
+    '[1716491823.482] [1:2] [DMG]                     SubscriptionId = 0x2f9b16cf,',
+    '[1716491823.482] [1:2] [DMG]                     Endpoint = 0x1,',
+    '[1716491823.482] [1:2] [DMG]                     Cluster = 0x0402,',
+    '[1716491823.482] [1:2] [DMG]                     Attribute = 0x0000_0000,',
+    '[1716491823.482] [1:2] [DMG]                     Data = 2439 (signed),'
+  ];
+  const g = M.groupChipByExchange(lines);
+  // All nine lines share exchange 36698r → one group.
+  assert.strictEqual(g.length, 1);
+  assert.strictEqual(g[0].exchange, '36698r');
+  assert.strictEqual(g[0].continuations.length, 8);
+});
+
+t('groupChipByExchange: exchange change → boundary', () => {
+  const lines = [
+    '[1716491823.000] [1:2] [EM] >>> [E:36698r S:52787 M:1]',
+    '[1716491823.001] [1:2] [DMG] decode line (inherits 36698r)',
+    '[1716491823.005] [1:2] [EM] >>> [E:47791r S:99 M:2]',
+    '[1716491823.006] [1:2] [DMG] decode line (inherits 47791r)'
+  ];
+  const g = M.groupChipByExchange(lines);
+  assert.strictEqual(g.length, 2);
+  assert.strictEqual(g[0].exchange, '36698r');
+  assert.strictEqual(g[0].continuations.length, 1);
+  assert.strictEqual(g[1].exchange, '47791r');
+  assert.strictEqual(g[1].continuations.length, 1);
+});
+
+t('groupChipByExchange: lines before any exchange marker stand alone (null exchange, singletons)', () => {
+  const lines = [
+    '[1716491823.000] [1:2] [DMG] orphan line one',
+    '[1716491823.001] [1:2] [DMG] orphan line two'
+  ];
+  const g = M.groupChipByExchange(lines);
+  // Both have null exchange → boundary between them (null!==null is false but the condition
+  // requires non-null match), so each stands alone.
+  assert.strictEqual(g.length, 2);
+  assert.strictEqual(g[0].exchange, null);
+  assert.strictEqual(g[1].exchange, null);
+});
+
+t('groupChipByExchange: different threads → different groups even with same exchange', () => {
+  const lines = [
+    '[1716491823.000] [1:2] [EM] >>> [E:36698r S:1 M:1]',
+    '[1716491823.001] [1:3] [EM] >>> [E:36698r S:1 M:2]'
+  ];
+  const g = M.groupChipByExchange(lines);
+  assert.strictEqual(g.length, 2);
+  assert.strictEqual(g[0].tid, '2');
+  assert.strictEqual(g[1].tid, '3');
+});
+
+t('extractMatterFields: underscore-separated hex parses correctly (0x0000_0000 → 0)', () => {
+  // Synthetic group: a single head line whose body contains the underscore form.
+  const g = M.groupChipByExchange([
+    '[1716491823.482] [1:2] [DMG]                     Attribute = 0x0000_0001,'
+  ]);
+  const f = M.extractMatterFields(g[0]);
+  assert.strictEqual(f.attribute, 1);
 });
 
 console.log('\n  ' + pass + ' passed, ' + fail + ' failed');

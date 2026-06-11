@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.68.0";
+const CODE_VERSION = "5.68.1";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -3933,7 +3933,7 @@ function rcZbRenderTailHtml(rows, selectedRaw){
     html+='</tr>';
     if(sel){
       let pretty;try{pretty=JSON.stringify(JSON.parse(r._raw),null,2)}catch(e){pretty=r._raw}
-      html+='<tr style="background:rgba(33,150,243,0.08)"><td colspan="8" style="padding:8px 14px">'+rcZbDecodeHtml(r._raw)+'<pre style="margin:0;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-all;color:var(--text)">'+h(pretty)+'</pre></td></tr>';
+      html+='<tr style="background:rgba(33,150,243,0.08)"><td colspan="9" style="padding:8px 14px">'+rcZbDecodeHtml(r._raw)+'<pre style="margin:0;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-all;color:var(--text)">'+h(pretty)+'</pre></td></tr>';
     }
   });
   html+='</tbody></table>';
@@ -4376,18 +4376,18 @@ function extractMatterFields(entry){
   function pick(re){
     const m = text.match(re);
     if(!m) return null;
-    const v = m[1];
+    const v = m[1].replace(/_/g,'');
     return v.startsWith('0x') || v.startsWith('0X') ? parseInt(v,16) : parseInt(v,10);
   }
   return {
     op,
-    endpoint:  pick(/Endpoint\s*=\s*(0x[0-9A-Fa-f]+|\d+)/),
-    cluster:   pick(/Cluster\s*=\s*(0x[0-9A-Fa-f]+|\d+)/),
-    attribute: pick(/Attribute\s*=\s*(0x[0-9A-Fa-f]+|\d+)/),
-    command:   pick(/Command\s*=\s*(0x[0-9A-Fa-f]+|\d+)/),
-    exchange:  pick(/Exchange[:=]\s*(0x[0-9A-Fa-f]+|\d+)/),
-    session:   pick(/Session[:=]\s*(0x[0-9A-Fa-f]+|\d+)/),
-    fabric:    pick(/Fabric(?:Index)?\s*=\s*(0x[0-9A-Fa-f]+|\d+)/)
+    endpoint:  pick(/Endpoint\s*=\s*(0x[0-9A-Fa-f_]+|\d+)/),
+    cluster:   pick(/Cluster\s*=\s*(0x[0-9A-Fa-f_]+|\d+)/),
+    attribute: pick(/Attribute\s*=\s*(0x[0-9A-Fa-f_]+|\d+)/),
+    command:   pick(/Command\s*=\s*(0x[0-9A-Fa-f_]+|\d+)/),
+    exchange:  pick(/Exchange[:=]\s*(0x[0-9A-Fa-f_]+|\d+)/),
+    session:   pick(/Session[:=]\s*(0x[0-9A-Fa-f_]+|\d+)/),
+    fabric:    pick(/Fabric(?:Index)?\s*=\s*(0x[0-9A-Fa-f_]+|\d+)/)
   };
 }
 
@@ -4419,6 +4419,59 @@ function matterDedupAppend(prevTail, next, k){
   }
   // Anchor block missing — ingest everything (rare; logs as "rotation" in the UI metrics).
   return { appended: next.slice(), lastTail };
+}
+
+// Extract a Matter exchange ID from a line body if present. Patterns observed on
+// /hub/matterLogs/json (C-8 Pro firmware 2.5.0.148):
+//   '>>> [E:36698r S:52787 M:165512360]'          — EM Msg TX/RX header
+//   'Handling via exchange: 36698r, Delegate:…'  — EM dispatch
+//   'Found matching exchange: 36698r, Delegate:'  — EM ack-match
+//   'Rxd Ack; … on exchange 36698r'              — EM ack-receive
+// The trailing 'r' on the ID is the responder marker; kept verbatim so users can
+// match it against IDs in the raw expand view.
+function extractExchangeId(body){
+  if(!body) return null;
+  const m = body.match(/(?:\[E:|exchange[:\s]+)(\d+r?)/);
+  return m ? m[1] : null;
+}
+
+// Group raw CHIP lines into entries by exchange ID. Walks lines oldest-first;
+// maintains the most-recent exchange seen per thread-id (CHIP processes one IM
+// message at a time per delegate, so a DMG decode line that follows an EM
+// 'Handling via exchange: NNNNr' line correctly inherits that exchange).
+// Consecutive lines sharing the same (tid, exchange) become one entry.
+// Lines that never see an exchange marker stand alone as singletons.
+function groupChipByExchange(lines){
+  const groups = [];
+  const lastExchangeByTid = new Map();
+  let current = null;
+  for(const raw of lines){
+    const p = parseChipLine(raw);
+    if(!p.isHead){
+      if(current) current.continuations.push(raw);
+      continue;
+    }
+    let exchange = extractExchangeId(p.body);
+    if(exchange){
+      lastExchangeByTid.set(p.tid, exchange);
+    } else {
+      exchange = lastExchangeByTid.get(p.tid) || null;
+    }
+    const sameGroup = current && exchange != null && exchange === current.exchange && p.tid === current.tid;
+    if(sameGroup){
+      current.continuations.push(raw);
+    } else {
+      if(current) groups.push(current);
+      current = {
+        epoch:p.epoch, ms:p.ms, pid:p.pid, tid:p.tid,
+        component:p.component, body:p.body, ansi:p.ansi, raw:p.raw,
+        exchange,
+        continuations:[]
+      };
+    }
+  }
+  if(current) groups.push(current);
+  return groups;
 }
 
 function renderMatterSubTab(){
@@ -4673,7 +4726,8 @@ function rcMatterFrameToRow(entry){
     sev, component:entry.component, op:f.op || '',
     endpoint:f.endpoint, cluster:f.cluster, clusterName,
     attribute:f.attribute, attrName, command:f.command, cmdName,
-    exchange:f.exchange, session:f.session, fabric:f.fabric,
+    exchange: entry.exchange || (f.exchange != null ? String(f.exchange) : null),
+    session:f.session, fabric:f.fabric,
     summary,
     _raw:rawBlock,
     _headRaw:entry.raw   // ANSI-bearing for Raw renderer use
@@ -4695,7 +4749,7 @@ function rcMatterRenderStructuredHtml(rows, selectedRaw){
   const td='padding:5px 10px;font-size:12px;border-top:1px solid rgba(255,255,255,0.05);vertical-align:top';
   const tdMono=td+';font-family:ui-monospace,SFMono-Regular,Menlo,monospace';
   let html='<table style="width:100%;border-collapse:collapse"><thead><tr>';
-  ['Time','Sev','Comp','Op','Endpoint','Cluster','Attr/Cmd','Summary'].forEach(l=>html+='<th style="'+th+'">'+l+'</th>');
+  ['Time','Sev','Comp','Op','Exchange','Endpoint','Cluster','Attr/Cmd','Summary'].forEach(l=>html+='<th style="'+th+'">'+l+'</th>');
   html+='</tr></thead><tbody>';
   function sevBadge(s){
     if(s==='E')return '<span class="badge b-crit" style="font-size:10px">E</span>';
@@ -4722,6 +4776,7 @@ function rcMatterRenderStructuredHtml(rows, selectedRaw){
     html+='<td style="'+td+'">'+sevBadge(r.sev)+'</td>';
     html+='<td style="'+tdMono+'">'+h(r.component||'')+'</td>';
     html+='<td style="'+td+'">'+h(r.op||'')+'</td>';
+    html+='<td style="'+tdMono+'">'+h(r.exchange||'')+'</td>';
     html+='<td style="'+tdMono+'">'+h(ep)+'</td>';
     html+='<td style="'+tdMono+'">'+clCell+'</td>';
     html+='<td style="'+tdMono+'">'+attrCell+'</td>';
@@ -4773,7 +4828,7 @@ function rcMatterRenderTail(opt){
   // Structured: group lines into entries, then map → rows. Buffer is line-ordered (oldest first),
   // so we group in-order and reverse the resulting entries to put newest first.
   const rawLines=src.map(f=>f.line);
-  const entries=groupChipEntries(rawLines);
+  const entries=groupChipByExchange(rawLines);
   // Component-set maintenance (drives the filter dropdown).
   const compSet=new Set();
   entries.forEach(e=>{if(e.component)compSet.add(e.component)});
