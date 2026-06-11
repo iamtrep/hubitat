@@ -4500,6 +4500,87 @@ function renderMatterSubTab(){
   rcMatterRenderTail({repin:true});
 }
 
+function rcMatterUpdateBadge(){
+  const el=document.getElementById('rc-m-state');if(!el)return;
+  const m=RC.matter;
+  const s=m.state;
+  const cls=s==='polling'?'b-ok':'b-warn';
+  el.className='badge '+cls;el.textContent=s;
+  const idle=s==='idle'||s==='disconnected';
+  const hasFrames=!!m.buf&&m.buf.count()>0;
+  document.getElementById('rc-m-start').disabled=!idle;
+  document.getElementById('rc-m-stop').disabled=idle;
+  document.getElementById('rc-m-pause').disabled=idle;
+  document.getElementById('rc-m-clear').disabled=idle&&!m.buf;
+  document.getElementById('rc-m-dl').disabled=!hasFrames;
+}
+
+function rcMatterStart(){
+  const m=RC.matter;
+  if(!RC.hubIp){alert('Hub IP unknown — open the Dashboard tab once first.');return}
+  const mb=parseInt(document.getElementById('rc-m-cap').value,10);
+  m.buf=new FrameBuffer(mb*1024*1024);
+  m.displayBuf=[];
+  m.framesLastSec=[];
+  m.pausedCapture=false;
+  m.lastTail=[];
+  m.rotations=0;
+  m.firstPollDone=false;
+  m.lastErr=null;
+  m.components=[];
+  document.getElementById('rc-m-pause').textContent='Pause capture';
+  rcMatterRenderTail({repin:true});
+  rcMatterConnect();
+}
+
+function rcMatterStop(){
+  const m=RC.matter;
+  if(m.pollTimer){clearInterval(m.pollTimer);m.pollTimer=null}
+  m.state='idle';
+  rcMatterUpdateBadge();rcMatterUpdateMetrics();
+}
+
+function rcMatterPause(){
+  const m=RC.matter;m.pausedCapture=!m.pausedCapture;
+  document.getElementById('rc-m-pause').textContent=m.pausedCapture?'Resume capture':'Pause capture';
+}
+
+function rcMatterClear(){
+  const m=RC.matter;if(m.buf)m.buf.clear();m.displayBuf=[];m.framesLastSec=[];m.lastTail=[];m.components=[];m.rotations=0;m.firstPollDone=false;
+  rcMatterUpdateMetrics();rcMatterRenderTail({repin:true});
+}
+
+function rcMatterCaptureMeta(){
+  const m=RC.matter;
+  return{
+    hubName:RC.hubName,hubIp:RC.hubIp,firmware:null,protocol:'matter',
+    appVersion:CODE_VERSION,uiVersion:CODE_VERSION,
+    captureDurationS:m.buf&&m.buf.startedAt?Math.round((Date.now()-m.buf.startedAt)/1000):null,
+    rotations:m.rotations
+  };
+}
+
+function rcMatterDownload(){
+  const m=RC.matter;if(!m.buf||m.buf.count()===0)return;
+  const fn=downloadRecording(m.buf,rcMatterCaptureMeta(),'matter');
+  console.log('Saved',fn);
+}
+
+function rcMatterUpdateMetrics(){
+  const m=RC.matter;
+  const rate=m.framesLastSec.length/5;
+  const rateEl=document.getElementById('rc-m-rate');if(rateEl)rateEl.textContent=rate.toFixed(1);
+  const bufEl=document.getElementById('rc-m-buffered');
+  if(bufEl)bufEl.textContent=(m.buf?m.buf.count():0)+' lines / '+fbytes(m.buf?m.buf.bytes:0);
+  const dropEl=document.getElementById('rc-m-dropped');
+  if(dropEl)dropEl.textContent=m.buf?m.buf.dropped:0;
+  const rotEl=document.getElementById('rc-m-rot');
+  if(rotEl)rotEl.textContent=m.rotations;
+  const hasFrames=!!m.buf&&m.buf.count()>0;
+  const cl=document.getElementById('rc-m-clear');if(cl)cl.disabled=!m.buf||m.buf.count()===0;
+  const dl=document.getElementById('rc-m-dl');if(dl)dl.disabled=!hasFrames;
+}
+
 // ===== TAB MANAGEMENT =====
 const R={dashboard:rDashboard,devices:rDevices,apps:rApps,code:rCode,network:rNetwork,health:rHealth,performance:rPerf,config:rConfig,snapshots:rSnap,'radio-capture':rRadioCapture};
 function go(t){
