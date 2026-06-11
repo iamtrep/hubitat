@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "5.68.6"
+@Field static final String CODE_VERSION = "5.68.7"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -1231,9 +1231,24 @@ Map getNetworkData(Map shared = [:]) {
     }
     Map hubMeshRaw = networkData.hubMesh ?: [:]
     List hubMeshPeers = hubMeshRaw.hubList ? hubMeshRaw.hubList.collect { Map hub ->
-        [name: hub.name, ip: hub.ipAddress, offline: hub.offline,
+        [name: hub.name, ip: hub.ipAddress, offline: hub.offline, hubId: hub.hubId,
          deviceCount: hub.deviceIds?.size() ?: 0, varCount: hub.hubVarNames?.size() ?: 0]
     } : []
+    List sharedDeviceList = (hubMeshRaw.sharedDevices ?: []).collect { Map sd ->
+        [id: sd.id, name: sd.name, appsUsing: sd.appsUsing ?: [], childCount: sd.childCount ?: 0]
+    }
+    List linkedDeviceList = (hubMeshRaw.localLinkedDevices ?: []).collect { Map ld ->
+        [id: ld.id, name: ld.name, appsUsing: ld.appsUsing ?: [],
+         childCount: ld.childCount ?: 0, sourceHubId: ld.sourceHubId]
+    }
+    List sharedVarList = (hubMeshRaw.sharedHubVariables ?: []).collect { Map sv ->
+        [name: sv.name, type: sv.type]
+    }
+    List linkedVarList = (hubMeshRaw.localLinkedHubVariables ?: []).collect { Map lv ->
+        [name: lv.name, type: lv.type,
+         sourceHubName: lv.sourceHubName, sourceVarName: lv.sourceVarName,
+         inUseByApps: lv.inUseByApps, hubAvailable: lv.hubAvailable]
+    }
     return [
         uptimeSeconds: uptimeSeconds,
         network: networkData.network ?: null,
@@ -1287,10 +1302,15 @@ Map getNetworkData(Map shared = [:]) {
         matter: networkData.matter ?: null,
         hubMesh: networkData.hubMesh ? [
             enabled: hubMeshRaw.hubMeshEnabled != null ? hubMeshRaw.hubMeshEnabled : hubMeshRaw.enabled,
-            sharedDevices: hubMeshRaw.sharedDevices?.size() ?: 0,
-            linkedDevices: hubMeshRaw.linkedDevices?.size() ?: 0,
-            sharedVars: hubMeshRaw.sharedVars?.size() ?: 0, linkedVars: hubMeshRaw.linkedVars?.size() ?: 0,
-            peers: hubMeshPeers
+            sharedDevices: sharedDeviceList.size(),
+            linkedDevices: linkedDeviceList.size(),
+            sharedVars: sharedVarList.size(),
+            linkedVars: linkedVarList.size(),
+            peers: hubMeshPeers,
+            sharedDeviceList: sharedDeviceList,
+            linkedDeviceList: linkedDeviceList,
+            sharedVarList: sharedVarList,
+            linkedVarList: linkedVarList
         ] : null,
         radioHealth: fetchRadioHealth(),
         zwaveJs: fetchZwaveJsState(),

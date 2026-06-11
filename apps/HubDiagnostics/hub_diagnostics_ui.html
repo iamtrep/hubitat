@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.68.6";
+const CODE_VERSION = "5.68.7";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -2463,6 +2463,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
     if(hm.peers&&hm.peers.length){
       o+='<div id="hmPeerTbl" style="margin-top:12px"></div>';
     }
+    o+='<div id="hmResTbl" style="margin-top:12px"></div>';
     o+='</div></div>';
   }
   // mDNS Discovery (v5.9.1)
@@ -2482,6 +2483,46 @@ async function rNetwork(){const P='p-network';loading(P);try{
       {l:'Shared Devices', f:'deviceCount', t:'n', r:r=>r.deviceCount!=null?r.deviceCount:0},
       {l:'Shared Variables', f:'varCount', t:'n', r:r=>r.varCount!=null?r.varCount:0}
     ], d.hubMesh.peers, {sc:0, sd:'asc', collapse:1, collapseLabel:'Linked Hubs'});
+  }
+  // Hub Mesh shared/linked resources — one unified table for devices + variables, with Direction
+  // and Peer columns to disambiguate flow. Peer name resolves via hubId for linked devices and
+  // via the cached sourceHubName for linked variables.
+  if(d.hubMesh){
+    const hm=d.hubMesh;
+    const peerNameById=new Map();
+    (hm.peers||[]).forEach(p=>{ if(p.hubId) peerNameById.set(p.hubId, p.name); });
+    const rows=[];
+    (hm.sharedDeviceList||[]).forEach(sd => rows.push({
+      _kind:'Device', _dir:'Shared', _name:sd.name, _id:sd.id,
+      _peer:'',
+      _type: sd.childCount ? (sd.childCount+' children') : '',
+      _apps: (sd.appsUsing||[]).join(', ')
+    }));
+    (hm.linkedDeviceList||[]).forEach(ld => rows.push({
+      _kind:'Device', _dir:'Linked', _name:ld.name, _id:null,
+      _peer: peerNameById.get(ld.sourceHubId) || '',
+      _type: ld.childCount ? (ld.childCount+' children') : '',
+      _apps: (ld.appsUsing||[]).join(', ')
+    }));
+    (hm.sharedVarList||[]).forEach(sv => rows.push({
+      _kind:'Variable', _dir:'Shared', _name:sv.name, _id:null,
+      _peer:'', _type: sv.type||'', _apps:''
+    }));
+    (hm.linkedVarList||[]).forEach(lv => rows.push({
+      _kind:'Variable', _dir:'Linked', _name:lv.name, _id:null,
+      _peer: lv.sourceHubName||'', _type: lv.type||'',
+      _apps: lv.inUseByApps ? 'Yes' : 'No'
+    }));
+    if(rows.length){
+      tbl('hmResTbl',[
+        {l:'Kind', f:'_kind', r:r=>h(r._kind)},
+        {l:'Direction', f:'_dir', r:r=>r._dir==='Shared'?'<span class="badge b-ok">Shared</span>':'<span class="badge">Linked</span>'},
+        {l:'Name', f:'_name', r:r=>r._id?dlink(r._id, r._name||'-'):h(r._name||'-')},
+        {l:'Peer', f:'_peer', r:r=>h(r._peer||'-')},
+        {l:'Type', f:'_type', r:r=>h(r._type||'-')},
+        {l:'Apps Using', f:'_apps', r:r=>h(r._apps||'-')}
+      ], rows, {sc:2, sd:'asc', filter:true, collapse:1, collapseLabel:'Shared / Linked Resources'});
+    }
   }
   // Matter devices table
   if(d.matter&&d.matter.devices&&d.matter.devices.length){
