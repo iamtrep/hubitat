@@ -273,6 +273,7 @@ t('matterDedupAppend: identical poll → 0 appended', () => {
   const tail = prev.slice(-5);
   const r = M.matterDedupAppend(tail, prev, 5);
   assert.deepStrictEqual(r.appended, []);
+  assert.deepStrictEqual(r.lastTail, prev.slice(-5));
 });
 t('matterDedupAppend: extended tail — only new lines returned', () => {
   const prev  = ['a','b','c','d','e','f','g','h','i','j'];
@@ -294,6 +295,14 @@ t('matterDedupAppend: lines shorter than K — uses whatever is available', () =
   const next = ['a','b','c','d'];
   const r = M.matterDedupAppend(tail, next, 5);
   assert.deepStrictEqual(r.appended, ['d']);
+});
+t('matterDedupAppend: last occurrence wins when anchor repeats in next', () => {
+  // anchor 'a','b' appears twice in `next` — function anchors on the LATER one, treating
+  // the earlier match as old data that wrapped through the buffer. This bounds at K=30
+  // in production but the semantic is the same: freshest match is the boundary.
+  const r = M.matterDedupAppend(['a','b'], ['x','a','b','c','a','b'], 2);
+  assert.deepStrictEqual(r.appended, []);
+  assert.deepStrictEqual(r.lastTail, ['a','b']);
 });
 
 console.log('\n  ' + pass + ' passed, ' + fail + ' failed');

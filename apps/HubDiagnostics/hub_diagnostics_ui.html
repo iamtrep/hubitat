@@ -4378,7 +4378,9 @@ function matterDedupAppend(prevTail, next, k){
   if(!prevTail || prevTail.length === 0){
     return { appended: next.slice(), lastTail };
   }
-  // Search `next` from the end for a contiguous slice equal to prevTail.
+  // Search `next` from the end for a contiguous slice equal to prevTail. Last occurrence wins
+  // (start = next.length - ptLen, count down): if the same block appears earlier in the buffer,
+  // anchoring on the freshest one prevents over-counting.
   const pt = prevTail.slice(Math.max(0, prevTail.length - k));    // honor caller's K
   const ptLen = pt.length;
   for(let start = next.length - ptLen; start >= 0; start--){
