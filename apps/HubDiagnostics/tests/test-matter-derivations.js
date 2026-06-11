@@ -115,13 +115,14 @@ t('parseChipLine: head line with single-digit pid:tid', () => {
   assert.strictEqual(r.tid, '1235');
   assert.strictEqual(r.component, 'DMG');
   assert.strictEqual(r.body, 'AttributeReportIBs =');
+  assert.strictEqual(r.ansi, null);
 });
 t('parseChipLine: head line stripped of ANSI is parsed', () => {
   const r = M.parseChipLine('[0;34m[1716491823.456] [1234:1235] [EM] Sent message[0m');
   assert.strictEqual(r.isHead, true);
   assert.strictEqual(r.component, 'EM');
   assert.strictEqual(r.body, 'Sent message');
-  assert.ok(r.ansi);    // ANSI severity hint captured for Raw view
+  assert.strictEqual(r.ansi, '0;34');
 });
 t('parseChipLine: continuation line (indented, no prefix)', () => {
   const r = M.parseChipLine('    Endpoint = 0x1,');

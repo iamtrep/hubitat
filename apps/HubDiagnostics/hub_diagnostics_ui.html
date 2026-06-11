@@ -4280,7 +4280,6 @@ function matterCommandName(clusterId, cmdId){
 // ANSI CSI strip — only the SGR sequences CHIP emits ([<digits>;<digits>m...[0m).
 // Conservative regex, no \x1b shorthand needed.
 function stripAnsi(text){
-  // eslint-disable-next-line no-control-regex
   return text.replace(/\[[0-9;]*m/g, '');
 }
 
