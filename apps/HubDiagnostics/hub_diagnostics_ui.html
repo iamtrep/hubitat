@@ -4643,6 +4643,98 @@ function rcMatterPoll(){
     });
 }
 
+// Map a CHIP entry group → display row for the Structured table.
+// Pre-resolves cluster/attr/cmd names; the raw block (head + continuations) is kept on _raw
+// so the row-click-to-expand handler can pretty-print it.
+function rcMatterFrameToRow(entry){
+  const f = extractMatterFields(entry);
+  const clusterName = f.cluster != null ? matterClusterName(f.cluster) : null;
+  const attrName    = (f.cluster != null && f.attribute != null) ? matterAttrName(f.cluster, f.attribute) : null;
+  const cmdName     = f.command != null ? matterCommandName(f.cluster, f.command) : null;
+  // Severity from the captured ANSI code on the head line.
+  // 0;31 → error, 0;33 → warning, 0;32 → progress, 0;34 → detail.
+  let sev = null;
+  if(entry.ansi){
+    if(entry.ansi.indexOf('31') >= 0) sev = 'E';
+    else if(entry.ansi.indexOf('33') >= 0) sev = 'W';
+    else if(entry.ansi.indexOf('32') >= 0) sev = 'P';
+    else if(entry.ansi.indexOf('34') >= 0) sev = 'D';
+  }
+  const rawBlock = entry.raw + (entry.continuations.length ? '\n' + entry.continuations.join('\n') : '');
+  // Summary: when the body is a short marker line ("AttributeReportIBs ="), prefer it. Otherwise
+  // pick the first non-{} continuation as a quick teaser. Truncated by CSS in the table cell.
+  let summary = entry.body || '';
+  if(!summary || /^[{}]\s*$/.test(summary)){
+    const firstNonBrace = (entry.continuations || []).find(l => !/^\s*[{}]\s*$/.test(l));
+    if(firstNonBrace) summary = firstNonBrace.replace(/^\s+/,'');
+  }
+  return {
+    time:entry.epoch, ms:entry.ms,
+    sev, component:entry.component, op:f.op || '',
+    endpoint:f.endpoint, cluster:f.cluster, clusterName,
+    attribute:f.attribute, attrName, command:f.command, cmdName,
+    exchange:f.exchange, session:f.session, fabric:f.fabric,
+    summary,
+    _raw:rawBlock,
+    _headRaw:entry.raw   // ANSI-bearing for Raw renderer use
+  };
+}
+
+function rcMatterFmtTime(epoch, ms){
+  if(!epoch)return '';
+  const d=new Date(epoch*1000);
+  const hh=String(d.getHours()).padStart(2,'0');
+  const mm=String(d.getMinutes()).padStart(2,'0');
+  const ss=String(d.getSeconds()).padStart(2,'0');
+  return hh+':'+mm+':'+ss+'.'+String(ms||0).padStart(3,'0');
+}
+
+function rcMatterRenderStructuredHtml(rows, selectedRaw){
+  if(!rows.length)return '<p style="color:var(--muted,#888);padding:16px;margin:0">No entries yet</p>';
+  const th='padding:6px 10px;text-align:left;font-size:12px;background:#1a1d24;position:sticky;top:0;z-index:1;border-bottom:1px solid rgba(255,255,255,0.12)';
+  const td='padding:5px 10px;font-size:12px;border-top:1px solid rgba(255,255,255,0.05);vertical-align:top';
+  const tdMono=td+';font-family:ui-monospace,SFMono-Regular,Menlo,monospace';
+  let html='<table style="width:100%;border-collapse:collapse"><thead><tr>';
+  ['Time','Sev','Comp','Op','Endpoint','Cluster','Attr/Cmd','Summary'].forEach(l=>html+='<th style="'+th+'">'+l+'</th>');
+  html+='</tr></thead><tbody>';
+  function sevBadge(s){
+    if(s==='E')return '<span class="badge b-crit" style="font-size:10px">E</span>';
+    if(s==='W')return '<span class="badge b-warn" style="font-size:10px">W</span>';
+    if(s==='P')return '<span class="badge b-ok"   style="font-size:10px">P</span>';
+    if(s==='D')return '<span class="badge"        style="font-size:10px;opacity:.7">D</span>';
+    return '';
+  }
+  rows.forEach((r,idx)=>{
+    const sel=r._raw===selectedRaw;
+    const rowBg=sel?'background:rgba(33,150,243,0.18)':'';
+    const ep=r.endpoint!=null?('0x'+r.endpoint.toString(16)):'';
+    const clCell=r.cluster!=null
+      ? '0x'+r.cluster.toString(16).padStart(4,'0').toUpperCase()+(r.clusterName?' <span style="opacity:.7">'+h(r.clusterName)+'</span>':'')
+      : '';
+    let attrCell='';
+    if(r.attribute!=null){
+      attrCell='0x'+r.attribute.toString(16).padStart(4,'0').toUpperCase()+(r.attrName?' <span style="opacity:.7">'+h(r.attrName)+'</span>':'');
+    }else if(r.command!=null){
+      attrCell='cmd 0x'+r.command.toString(16).padStart(2,'0').toUpperCase()+(r.cmdName?' <span style="opacity:.7">'+h(r.cmdName)+'</span>':'');
+    }
+    html+='<tr data-idx="'+idx+'" style="cursor:pointer;'+rowBg+'">';
+    html+='<td style="'+tdMono+';white-space:nowrap">'+h(rcMatterFmtTime(r.time,r.ms))+'</td>';
+    html+='<td style="'+td+'">'+sevBadge(r.sev)+'</td>';
+    html+='<td style="'+tdMono+'">'+h(r.component||'')+'</td>';
+    html+='<td style="'+td+'">'+h(r.op||'')+'</td>';
+    html+='<td style="'+tdMono+'">'+h(ep)+'</td>';
+    html+='<td style="'+tdMono+'">'+clCell+'</td>';
+    html+='<td style="'+tdMono+'">'+attrCell+'</td>';
+    html+='<td style="'+td+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:520px">'+h(r.summary||'')+'</td>';
+    html+='</tr>';
+    if(sel){
+      html+='<tr style="background:rgba(33,150,243,0.08)"><td colspan="8" style="padding:8px 14px"><pre style="margin:0;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-all;color:var(--text)">'+h(stripAnsi(r._raw))+'</pre></td></tr>';
+    }
+  });
+  html+='</tbody></table>';
+  return html;
+}
+
 // ===== TAB MANAGEMENT =====
 const R={dashboard:rDashboard,devices:rDevices,apps:rApps,code:rCode,network:rNetwork,health:rHealth,performance:rPerf,config:rConfig,snapshots:rSnap,'radio-capture':rRadioCapture};
 function go(t){
