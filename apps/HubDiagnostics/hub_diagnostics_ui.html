@@ -4599,6 +4599,7 @@ function rcMatterPoll(){
       return r.json();
     })
     .then(j=>{
+      if(m.state!=='polling')return;   // Stop ran between fetch dispatch and resolution.
       m.lastErr=null;
       const text=(j&&j.text)||'';
       const lines=text.split('\n');
