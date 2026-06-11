@@ -4202,6 +4202,81 @@ function rcZwHandleTailClick(e){
   rcZwRenderTail({});
 }
 
+// ===== RADIO CAPTURE: MATTER SUB-TAB =====
+// Standalone Matter cluster / attribute / global-command tables.
+// Standalone (not reusing the Zigbee cluster table) because Matter cluster definitions are owned
+// by the CSA Matter spec; some IDs overlap with Zigbee Cluster Library but the namespaces and
+// attribute lists diverge (e.g. BasicInformation 0x0028, OperationalCredentials 0x003E).
+const MATTER_CLUSTERS = {
+  0x0003: {name:'Identify', attrs:{0x0000:'IdentifyTime', 0x0001:'IdentifyType'}, cmds:{0x00:'Identify', 0x40:'TriggerEffect'}},
+  0x0004: {name:'Groups', attrs:{0x0000:'NameSupport'}, cmds:{0x00:'AddGroup', 0x01:'ViewGroup', 0x02:'GetGroupMembership', 0x03:'RemoveGroup', 0x04:'RemoveAllGroups', 0x05:'AddGroupIfIdentifying'}},
+  0x0006: {name:'OnOff', attrs:{0x0000:'OnOff', 0x4000:'GlobalSceneControl', 0x4001:'OnTime', 0x4002:'OffWaitTime', 0x4003:'StartUpOnOff'}, cmds:{0x00:'Off', 0x01:'On', 0x02:'Toggle', 0x40:'OffWithEffect', 0x41:'OnWithRecallGlobalScene', 0x42:'OnWithTimedOff'}},
+  0x0008: {name:'LevelControl', attrs:{0x0000:'CurrentLevel', 0x0001:'RemainingTime', 0x0002:'MinLevel', 0x0003:'MaxLevel', 0x000F:'Options', 0x0010:'OnOffTransitionTime', 0x0011:'OnLevel'}, cmds:{0x00:'MoveToLevel', 0x01:'Move', 0x02:'Step', 0x03:'Stop', 0x04:'MoveToLevelWithOnOff', 0x05:'MoveWithOnOff', 0x06:'StepWithOnOff', 0x07:'StopWithOnOff'}},
+  0x001D: {name:'Descriptor', attrs:{0x0000:'DeviceTypeList', 0x0001:'ServerList', 0x0002:'ClientList', 0x0003:'PartsList'}, cmds:{}},
+  0x001E: {name:'Binding', attrs:{0x0000:'Binding'}, cmds:{}},
+  0x001F: {name:'AccessControl', attrs:{0x0000:'ACL', 0x0001:'Extension', 0x0002:'SubjectsPerAccessControlEntry', 0x0003:'TargetsPerAccessControlEntry', 0x0004:'AccessControlEntriesPerFabric'}, cmds:{}},
+  0x0028: {name:'BasicInformation', attrs:{0x0000:'DataModelRevision', 0x0001:'VendorName', 0x0002:'VendorID', 0x0003:'ProductName', 0x0004:'ProductID', 0x0005:'NodeLabel', 0x0006:'Location', 0x0007:'HardwareVersion', 0x0008:'HardwareVersionString', 0x0009:'SoftwareVersion', 0x000A:'SoftwareVersionString'}, cmds:{}},
+  0x0029: {name:'OTASoftwareUpdateProvider', attrs:{}, cmds:{0x00:'QueryImage', 0x02:'ApplyUpdateRequest', 0x04:'NotifyUpdateApplied'}},
+  0x002A: {name:'OTASoftwareUpdateRequestor', attrs:{0x0000:'DefaultOTAProviders', 0x0001:'UpdatePossible', 0x0002:'UpdateState', 0x0003:'UpdateStateProgress'}, cmds:{0x00:'AnnounceOTAProvider'}},
+  0x002B: {name:'LocalizationConfiguration', attrs:{0x0000:'ActiveLocale', 0x0001:'SupportedLocales'}, cmds:{}},
+  0x002C: {name:'TimeFormatLocalization', attrs:{0x0000:'HourFormat', 0x0001:'ActiveCalendarType', 0x0002:'SupportedCalendarTypes'}, cmds:{}},
+  0x002F: {name:'PowerSource', attrs:{0x0000:'Status', 0x0001:'Order', 0x0002:'Description', 0x000B:'BatVoltage', 0x000C:'BatPercentRemaining', 0x000E:'BatChargeLevel'}, cmds:{}},
+  0x0030: {name:'GeneralCommissioning', attrs:{0x0000:'Breadcrumb', 0x0001:'BasicCommissioningInfo', 0x0002:'RegulatoryConfig', 0x0003:'LocationCapability'}, cmds:{0x00:'ArmFailSafe', 0x02:'SetRegulatoryConfig', 0x04:'CommissioningComplete'}},
+  0x0031: {name:'NetworkCommissioning', attrs:{0x0000:'MaxNetworks', 0x0001:'Networks', 0x0004:'ConnectMaxTimeSeconds', 0x0005:'InterfaceEnabled', 0x0006:'LastNetworkingStatus', 0x0007:'LastNetworkID', 0x0008:'LastConnectErrorValue'}, cmds:{0x00:'ScanNetworks', 0x02:'AddOrUpdateWiFiNetwork', 0x03:'AddOrUpdateThreadNetwork', 0x04:'RemoveNetwork', 0x06:'ConnectNetwork'}},
+  0x0032: {name:'DiagnosticLogs', attrs:{}, cmds:{0x00:'RetrieveLogsRequest'}},
+  0x0033: {name:'GeneralDiagnostics', attrs:{0x0000:'NetworkInterfaces', 0x0001:'RebootCount', 0x0002:'UpTime', 0x0003:'TotalOperationalHours', 0x0008:'TestEventTriggersEnabled'}, cmds:{0x00:'TestEventTrigger'}},
+  0x0034: {name:'SoftwareDiagnostics', attrs:{0x0000:'ThreadMetrics', 0x0001:'CurrentHeapFree', 0x0002:'CurrentHeapUsed', 0x0003:'CurrentHeapHighWatermark'}, cmds:{0x00:'ResetWatermarks'}},
+  0x0035: {name:'ThreadNetworkDiagnostics', attrs:{0x0000:'Channel', 0x0001:'RoutingRole', 0x0002:'NetworkName'}, cmds:{0x00:'ResetCounts'}},
+  0x0036: {name:'WiFiNetworkDiagnostics', attrs:{0x0000:'BSSID', 0x0001:'SecurityType', 0x0007:'RSSI'}, cmds:{0x00:'ResetCounts'}},
+  0x0037: {name:'EthernetNetworkDiagnostics', attrs:{0x0000:'PHYRate', 0x0001:'FullDuplex'}, cmds:{0x00:'ResetCounts'}},
+  0x003C: {name:'AdministratorCommissioning', attrs:{0x0000:'WindowStatus', 0x0001:'AdminFabricIndex', 0x0002:'AdminVendorId'}, cmds:{0x00:'OpenCommissioningWindow', 0x01:'OpenBasicCommissioningWindow', 0x02:'RevokeCommissioning'}},
+  0x003E: {name:'OperationalCredentials', attrs:{0x0000:'NOCs', 0x0001:'Fabrics', 0x0002:'SupportedFabrics', 0x0003:'CommissionedFabrics', 0x0004:'TrustedRootCertificates', 0x0005:'CurrentFabricIndex'}, cmds:{0x00:'AttestationRequest', 0x02:'CertificateChainRequest', 0x04:'CSRRequest', 0x06:'AddNOC', 0x07:'UpdateNOC', 0x09:'UpdateFabricLabel', 0x0A:'RemoveFabric', 0x0B:'AddTrustedRootCertificate'}},
+  0x003F: {name:'GroupKeyManagement', attrs:{0x0000:'GroupKeyMap', 0x0001:'GroupTable', 0x0002:'MaxGroupsPerFabric', 0x0003:'MaxGroupKeysPerFabric'}, cmds:{0x00:'KeySetWrite', 0x01:'KeySetRead', 0x03:'KeySetRemove', 0x04:'KeySetReadAllIndices'}},
+  0x0045: {name:'BooleanState', attrs:{0x0000:'StateValue'}, cmds:{}},
+  0x0050: {name:'ModeSelect', attrs:{0x0000:'Description', 0x0001:'StandardNamespace', 0x0002:'SupportedModes', 0x0003:'CurrentMode', 0x0004:'StartUpMode', 0x0005:'OnMode'}, cmds:{0x00:'ChangeToMode'}},
+  0x0101: {name:'DoorLock', attrs:{0x0000:'LockState', 0x0001:'LockType', 0x0002:'ActuatorEnabled'}, cmds:{0x00:'LockDoor', 0x01:'UnlockDoor'}},
+  0x0102: {name:'WindowCovering', attrs:{0x0000:'Type', 0x000A:'OperationalStatus', 0x000B:'TargetPositionLiftPercent100ths', 0x000E:'CurrentPositionLiftPercent100ths'}, cmds:{0x00:'UpOrOpen', 0x01:'DownOrClose', 0x02:'StopMotion', 0x05:'GoToLiftPercentage'}},
+  0x0200: {name:'PumpConfigAndControl', attrs:{0x0000:'MaxPressure', 0x0001:'MaxSpeed'}, cmds:{}},
+  0x0201: {name:'Thermostat', attrs:{0x0000:'LocalTemperature', 0x0011:'OccupiedCoolingSetpoint', 0x0012:'OccupiedHeatingSetpoint', 0x001B:'ControlSequenceOfOperation', 0x001C:'SystemMode'}, cmds:{0x00:'SetpointRaiseLower', 0x01:'SetWeeklySchedule', 0x02:'GetWeeklySchedule', 0x03:'ClearWeeklySchedule'}},
+  0x0202: {name:'FanControl', attrs:{0x0000:'FanMode', 0x0001:'FanModeSequence', 0x0002:'PercentSetting', 0x0003:'PercentCurrent', 0x0004:'SpeedMax', 0x0005:'SpeedSetting', 0x0006:'SpeedCurrent'}, cmds:{}},
+  0x0204: {name:'ThermostatUIConfig', attrs:{0x0000:'TemperatureDisplayMode', 0x0001:'KeypadLockout'}, cmds:{}},
+  0x0300: {name:'ColorControl', attrs:{0x0000:'CurrentHue', 0x0001:'CurrentSaturation', 0x0003:'CurrentX', 0x0004:'CurrentY', 0x0007:'ColorTemperatureMireds', 0x0008:'ColorMode', 0x4001:'EnhancedColorMode'}, cmds:{0x00:'MoveToHue', 0x04:'MoveToSaturation', 0x07:'MoveToColor', 0x0A:'MoveToColorTemperature', 0x40:'EnhancedMoveToHue', 0x47:'StopMoveStep'}},
+  0x0400: {name:'IlluminanceMeasurement', attrs:{0x0000:'MeasuredValue', 0x0001:'MinMeasuredValue', 0x0002:'MaxMeasuredValue'}, cmds:{}},
+  0x0402: {name:'TemperatureMeasurement', attrs:{0x0000:'MeasuredValue', 0x0001:'MinMeasuredValue', 0x0002:'MaxMeasuredValue'}, cmds:{}},
+  0x0403: {name:'PressureMeasurement', attrs:{0x0000:'MeasuredValue'}, cmds:{}},
+  0x0405: {name:'RelativeHumidityMeasurement', attrs:{0x0000:'MeasuredValue', 0x0001:'MinMeasuredValue', 0x0002:'MaxMeasuredValue'}, cmds:{}},
+  0x0406: {name:'OccupancySensing', attrs:{0x0000:'Occupancy', 0x0001:'OccupancySensorType'}, cmds:{}},
+  0x040C: {name:'CarbonMonoxideConcentrationMeasurement', attrs:{0x0000:'MeasuredValue'}, cmds:{}},
+  0x040D: {name:'CarbonDioxideConcentrationMeasurement', attrs:{0x0000:'MeasuredValue'}, cmds:{}},
+  0x0413: {name:'PM25ConcentrationMeasurement', attrs:{0x0000:'MeasuredValue'}, cmds:{}}
+};
+
+// Matter Interaction Model global commands — names per spec §8 (Interaction Model). Used when a
+// command is not cluster-scoped (e.g. ReadRequest, SubscribeRequest, InvokeRequest).
+const MATTER_GLOBAL_COMMANDS = {
+  0x01:'StatusResponse', 0x02:'ReadRequest', 0x03:'SubscribeRequest', 0x04:'SubscribeResponse',
+  0x05:'ReportData', 0x06:'WriteRequest', 0x07:'WriteResponse', 0x08:'InvokeRequest',
+  0x09:'InvokeResponse', 0x0A:'TimedRequest'
+};
+
+function matterClusterName(id){
+  const e = MATTER_CLUSTERS[id];
+  return e ? e.name : null;
+}
+function matterAttrName(clusterId, attrId){
+  const e = MATTER_CLUSTERS[clusterId];
+  if(!e || !e.attrs) return null;
+  return e.attrs[attrId] || null;
+}
+// clusterId may be null for IM global commands. When non-null, prefer the cluster-scoped name.
+function matterCommandName(clusterId, cmdId){
+  if(clusterId != null){
+    const e = MATTER_CLUSTERS[clusterId];
+    if(e && e.cmds && e.cmds[cmdId]) return e.cmds[cmdId];
+  }
+  return MATTER_GLOBAL_COMMANDS[cmdId] || null;
+}
+
 // ===== TAB MANAGEMENT =====
 const R={dashboard:rDashboard,devices:rDevices,apps:rApps,code:rCode,network:rNetwork,health:rHealth,performance:rPerf,config:rConfig,snapshots:rSnap,'radio-capture':rRadioCapture};
 function go(t){
