@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.68.5";
+const CODE_VERSION = "5.68.6";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -2454,15 +2454,17 @@ async function rNetwork(){const P='p-network';loading(P);try{
   }
   // Hub Mesh
   if(d.hubMesh){const hm=d.hubMesh;
-    o+='<div class="card"><div class="card-h">Hub Mesh</div><div class="card-b"><div class="ng">';
+    o+='<div class="card"><div class="card-h">Hub Mesh</div><div class="card-b">';
+    o+='<div class="ng">';
     o+=ni('Status',hm.enabled?'Enabled':'Disabled',hm.enabled?'var(--ok)':'var(--warn)');
     o+=ni('Shared Devices',hm.sharedDevices);o+=ni('Linked Devices',hm.linkedDevices);
     o+=ni('Shared Variables',hm.sharedVars);o+=ni('Linked Variables',hm.linkedVars);
     o+='</div>';
-    if(hm.peers&&hm.peers.length){o+='<div style="margin-top:10px"><b>Linked Hubs ('+hm.peers.length+')</b>';
-      hm.peers.forEach(p=>{const st=p.offline?'Offline':'Online';const sc=p.offline?'var(--crit)':'var(--ok)';
-        o+='<div style="margin:4px 0"><b>'+h(p.name)+'</b> ('+h(p.ip)+') &mdash; <span style="color:'+sc+'">'+st+'</span> | '+p.deviceCount+' devices, '+p.varCount+' variables</div>'});o+='</div>'}
-    o+='</div></div>'}
+    if(hm.peers&&hm.peers.length){
+      o+='<div id="hmPeerTbl" style="margin-top:12px"></div>';
+    }
+    o+='</div></div>';
+  }
   // mDNS Discovery (v5.9.1)
   if(d.mdns&&d.mdns.endpoints){const md=d.mdns;
     o+='<div class="card"><div class="card-h">mDNS Discovery ('+md.totalEndpoints+' endpoints, '+md.totalServiceTypes+' service types)</div><div class="card-b">';
@@ -2471,6 +2473,16 @@ async function rNetwork(){const P='p-network';loading(P);try{
     o+='</div></div>';
   }
   document.getElementById(P).innerHTML=o;
+  // Hub Mesh peer table
+  if(d.hubMesh&&d.hubMesh.peers&&d.hubMesh.peers.length){
+    tbl('hmPeerTbl',[
+      {l:'Name', f:'name', r:r=>h(r.name||'-')},
+      {l:'IP', f:'ip', r:r=>r.ip?'<span style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px">'+h(r.ip)+'</span>':'-'},
+      {l:'Status', f:'offline', r:r=>r.offline?'<span class="badge b-crit">Offline</span>':'<span class="badge b-ok">Online</span>'},
+      {l:'Shared Devices', f:'deviceCount', t:'n', r:r=>r.deviceCount!=null?r.deviceCount:0},
+      {l:'Shared Variables', f:'varCount', t:'n', r:r=>r.varCount!=null?r.varCount:0}
+    ], d.hubMesh.peers, {sc:0, sd:'asc', collapse:1, collapseLabel:'Linked Hubs'});
+  }
   // Matter devices table
   if(d.matter&&d.matter.devices&&d.matter.devices.length){
     tbl('matterDevTbl',[
@@ -2481,7 +2493,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
       {l:'Model', f:'model', r:r=>h(r.model||'-')},
       {l:'Online', f:'online', r:r=>r.online?'<span class="badge b-ok">Yes</span>':'<span class="badge b-crit">No</span>'},
       {l:'IPv6 Address', f:'ipAddress', r:r=>'<span style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px">'+h(r.ipAddress||'-')+'</span>'}
-    ], d.matter.devices, {sc:0, sd:'asc', filter:true, collapse:10, collapseLabel:'Matter Devices'});
+    ], d.matter.devices, {sc:0, sd:'asc', filter:true, collapse:1, collapseLabel:'Matter Devices'});
   }
   // mDNS table (v5.9.1)
   if(d.mdns&&d.mdns.endpoints&&d.mdns.endpoints.length){
