@@ -4666,7 +4666,7 @@ function rcMatterFrameToRow(entry){
   let summary = entry.body || '';
   if(!summary || /^[{}]\s*$/.test(summary)){
     const firstNonBrace = (entry.continuations || []).find(l => !/^\s*[{}]\s*$/.test(l));
-    if(firstNonBrace) summary = firstNonBrace.replace(/^\s+/,'');
+    if(firstNonBrace) summary = stripAnsi(firstNonBrace).replace(/^\s+/,'');
   }
   return {
     time:entry.epoch, ms:entry.ms,
