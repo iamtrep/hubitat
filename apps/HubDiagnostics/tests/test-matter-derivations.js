@@ -51,7 +51,8 @@ const harness =
   extractFn('stripAnsi') + '\n' +
   extractFn('parseChipLine') + '\n' +
   extractFn('groupChipEntries') + '\n' +
-  'module.exports = { MATTER_CLUSTERS, MATTER_GLOBAL_COMMANDS, matterClusterName, matterAttrName, matterCommandName, stripAnsi, parseChipLine, groupChipEntries };';
+  extractFn('extractMatterFields') + '\n' +
+  'module.exports = { MATTER_CLUSTERS, MATTER_GLOBAL_COMMANDS, matterClusterName, matterAttrName, matterCommandName, stripAnsi, parseChipLine, groupChipEntries, extractMatterFields };';
 const tmp = path.join(os.tmpdir(), 'hd_matter_' + process.pid + '.js');
 fs.writeFileSync(tmp, harness);
 const M = require(tmp);
@@ -186,6 +187,76 @@ t('groupChipEntries: full raw block reconstructible from head + continuations', 
   // Reconstruct the second entry's full block: head raw + continuations joined with \n.
   const reconstructed = g[1].raw + '\n' + g[1].continuations.join('\n');
   assert.ok(reconstructed.indexOf('Endpoint = 0x1,') >= 0);
+});
+
+console.log('\nextractMatterFields');
+
+t('extractMatterFields: AttributeReportIBs → Op=Report + endpoint/cluster/attr', () => {
+  const g = M.groupChipEntries([
+    '[1716491823.456] [1:2] [DMG] AttributeReportIBs =',
+    '   Endpoint = 0x1,',
+    '   Cluster = 0x6,',
+    '   Attribute = 0x0,'
+  ]);
+  const f = M.extractMatterFields(g[0]);
+  assert.strictEqual(f.op, 'Report');
+  assert.strictEqual(f.endpoint, 0x1);
+  assert.strictEqual(f.cluster, 0x6);
+  assert.strictEqual(f.attribute, 0x0);
+});
+t('extractMatterFields: InvokeRequestMessage → Op=Invoke + command', () => {
+  const g = M.groupChipEntries([
+    '[1716491823.456] [1:2] [DMG] InvokeRequestMessage =',
+    '   Endpoint = 0x1,',
+    '   Cluster = 0x6,',
+    '   Command = 0x1,'
+  ]);
+  const f = M.extractMatterFields(g[0]);
+  assert.strictEqual(f.op, 'Invoke');
+  assert.strictEqual(f.command, 0x1);
+});
+t('extractMatterFields: ReadRequestMessage → Op=Read', () => {
+  const g = M.groupChipEntries([
+    '[1716491823.456] [1:2] [DMG] ReadRequestMessage =',
+    '   Cluster = 0x28,'
+  ]);
+  assert.strictEqual(M.extractMatterFields(g[0]).op, 'Read');
+});
+t('extractMatterFields: WriteRequestMessage → Op=Write', () => {
+  const g = M.groupChipEntries([
+    '[1716491823.456] [1:2] [DMG] WriteRequestMessage =',
+  ]);
+  assert.strictEqual(M.extractMatterFields(g[0]).op, 'Write');
+});
+t('extractMatterFields: SubscribeRequestMessage → Op=Subscribe', () => {
+  const g = M.groupChipEntries([
+    '[1716491823.456] [1:2] [DMG] SubscribeRequestMessage =',
+  ]);
+  assert.strictEqual(M.extractMatterFields(g[0]).op, 'Subscribe');
+});
+t('extractMatterFields: EM line with Exchange and Session', () => {
+  const g = M.groupChipEntries([
+    '[1716491823.456] [1:2] [EM] Sent secure message Exchange:42 Session:7'
+  ]);
+  const f = M.extractMatterFields(g[0]);
+  assert.strictEqual(f.exchange, 42);
+  assert.strictEqual(f.session, 7);
+});
+t('extractMatterFields: decimal endpoint accepted', () => {
+  const g = M.groupChipEntries([
+    '[1716491823.456] [1:2] [DMG] AttributeReportIBs =',
+    '   Endpoint = 1,'
+  ]);
+  assert.strictEqual(M.extractMatterFields(g[0]).endpoint, 1);
+});
+t('extractMatterFields: no matchable shape → op=null, all fields null', () => {
+  const g = M.groupChipEntries([
+    '[1716491823.456] [1:2] [DL] Generic info line'
+  ]);
+  const f = M.extractMatterFields(g[0]);
+  assert.strictEqual(f.op, null);
+  assert.strictEqual(f.endpoint, null);
+  assert.strictEqual(f.cluster, null);
 });
 
 console.log('\n  ' + pass + ' passed, ' + fail + ' failed');

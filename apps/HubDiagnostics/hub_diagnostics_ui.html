@@ -4333,6 +4333,39 @@ function groupChipEntries(lines){
   return groups;
 }
 
+// Extract structured fields from a CHIP entry (head + continuations).
+// Searches the joined body+continuations text for the standard IM markers and the
+// Endpoint/Cluster/Attribute/Command/Exchange/Session integer fields. All integer
+// captures accept either 0x-prefixed hex or plain decimal — CHIP emits both depending
+// on the SDK version.
+function extractMatterFields(entry){
+  const text = (entry.body || '') + (entry.continuations.length ? '\n' + entry.continuations.join('\n') : '');
+  let op = null;
+  if(/AttributeReportIBs|ReportData(?:Message)?/.test(text)) op = 'Report';
+  else if(/ReadRequestMessage/.test(text)) op = 'Read';
+  else if(/SubscribeRequestMessage/.test(text)) op = 'Subscribe';
+  else if(/InvokeRequestMessage/.test(text)) op = 'Invoke';
+  else if(/WriteRequestMessage/.test(text)) op = 'Write';
+  else if(/TimedRequestMessage/.test(text)) op = 'TimedReq';
+  else if(/StatusResponseMessage/.test(text)) op = 'Status';
+  function pick(re){
+    const m = text.match(re);
+    if(!m) return null;
+    const v = m[1];
+    return v.startsWith('0x') || v.startsWith('0X') ? parseInt(v,16) : parseInt(v,10);
+  }
+  return {
+    op,
+    endpoint:  pick(/Endpoint\s*=\s*(0x[0-9A-Fa-f]+|\d+)/),
+    cluster:   pick(/Cluster\s*=\s*(0x[0-9A-Fa-f]+|\d+)/),
+    attribute: pick(/Attribute\s*=\s*(0x[0-9A-Fa-f]+|\d+)/),
+    command:   pick(/Command\s*=\s*(0x[0-9A-Fa-f]+|\d+)/),
+    exchange:  pick(/Exchange[:=]\s*(0x[0-9A-Fa-f]+|\d+)/),
+    session:   pick(/Session[:=]\s*(0x[0-9A-Fa-f]+|\d+)/),
+    fabric:    pick(/Fabric(?:Index)?\s*=\s*(0x[0-9A-Fa-f]+|\d+)/)
+  };
+}
+
 // ===== TAB MANAGEMENT =====
 const R={dashboard:rDashboard,devices:rDevices,apps:rApps,code:rCode,network:rNetwork,health:rHealth,performance:rPerf,config:rConfig,snapshots:rSnap,'radio-capture':rRadioCapture};
 function go(t){
