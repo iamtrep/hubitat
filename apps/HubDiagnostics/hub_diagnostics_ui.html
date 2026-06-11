@@ -4366,6 +4366,34 @@ function extractMatterFields(entry){
   };
 }
 
+// Dedup-append: given the previous poll's tail (last K lines) and the current poll's full
+// line array, return the lines appended since last poll plus the new tail to remember.
+// Searches `next` from the end for the contiguous K-line block matching `prevTail`; if found,
+// returns everything after it. If not found (full buffer rotation between polls — improbable
+// with a 2 s poll on a ~2 h rolling buffer) or on the first poll (empty prevTail), ingests
+// the entire `next` array. K-line block anchoring is required because individual CHIP lines
+// repeat verbatim (e.g. 'put : 0, status Success...'); single-line dedup would mis-splice.
+function matterDedupAppend(prevTail, next, k){
+  const lastTail = next.slice(Math.max(0, next.length - k));
+  if(!prevTail || prevTail.length === 0){
+    return { appended: next.slice(), lastTail };
+  }
+  // Search `next` from the end for a contiguous slice equal to prevTail.
+  const pt = prevTail.slice(Math.max(0, prevTail.length - k));    // honor caller's K
+  const ptLen = pt.length;
+  for(let start = next.length - ptLen; start >= 0; start--){
+    let ok = true;
+    for(let i = 0; i < ptLen; i++){
+      if(next[start + i] !== pt[i]){ ok = false; break; }
+    }
+    if(ok){
+      return { appended: next.slice(start + ptLen), lastTail };
+    }
+  }
+  // Anchor block missing — ingest everything (rare; logs as "rotation" in the UI metrics).
+  return { appended: next.slice(), lastTail };
+}
+
 // ===== TAB MANAGEMENT =====
 const R={dashboard:rDashboard,devices:rDevices,apps:rApps,code:rCode,network:rNetwork,health:rHealth,performance:rPerf,config:rConfig,snapshots:rSnap,'radio-capture':rRadioCapture};
 function go(t){

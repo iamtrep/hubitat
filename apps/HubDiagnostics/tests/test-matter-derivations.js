@@ -52,7 +52,8 @@ const harness =
   extractFn('parseChipLine') + '\n' +
   extractFn('groupChipEntries') + '\n' +
   extractFn('extractMatterFields') + '\n' +
-  'module.exports = { MATTER_CLUSTERS, MATTER_GLOBAL_COMMANDS, matterClusterName, matterAttrName, matterCommandName, stripAnsi, parseChipLine, groupChipEntries, extractMatterFields };';
+  extractFn('matterDedupAppend') + '\n' +
+  'module.exports = { MATTER_CLUSTERS, MATTER_GLOBAL_COMMANDS, matterClusterName, matterAttrName, matterCommandName, stripAnsi, parseChipLine, groupChipEntries, extractMatterFields, matterDedupAppend };';
 const tmp = path.join(os.tmpdir(), 'hd_matter_' + process.pid + '.js');
 fs.writeFileSync(tmp, harness);
 const M = require(tmp);
@@ -257,6 +258,42 @@ t('extractMatterFields: no matchable shape → op=null, all fields null', () => 
   assert.strictEqual(f.op, null);
   assert.strictEqual(f.endpoint, null);
   assert.strictEqual(f.cluster, null);
+});
+
+console.log('\nmatterDedupAppend');
+
+t('matterDedupAppend: first poll — full ingest (cold start)', () => {
+  const newLines = ['a','b','c','d','e','f','g','h','i','j','k','l','m','n','o'];
+  const r = M.matterDedupAppend([], newLines, 5);
+  assert.deepStrictEqual(r.appended, newLines);
+  assert.deepStrictEqual(r.lastTail, newLines.slice(-5));
+});
+t('matterDedupAppend: identical poll → 0 appended', () => {
+  const prev = ['a','b','c','d','e','f','g','h','i','j'];
+  const tail = prev.slice(-5);
+  const r = M.matterDedupAppend(tail, prev, 5);
+  assert.deepStrictEqual(r.appended, []);
+});
+t('matterDedupAppend: extended tail — only new lines returned', () => {
+  const prev  = ['a','b','c','d','e','f','g','h','i','j'];
+  const next  = ['a','b','c','d','e','f','g','h','i','j','k','l','m'];
+  const tail  = prev.slice(-5);
+  const r = M.matterDedupAppend(tail, next, 5);
+  assert.deepStrictEqual(r.appended, ['k','l','m']);
+  assert.deepStrictEqual(r.lastTail, next.slice(-5));
+});
+t('matterDedupAppend: anchor block not found → ingest all (full buffer rotation)', () => {
+  const tail  = ['x','y','z','w','q'];          // no overlap with next
+  const next  = ['p','o','i','u','y','t','r','e','w','q'];
+  const r = M.matterDedupAppend(tail, next, 5);
+  // Block ('x','y','z','w','q') is not present in `next` as a contiguous run, so we ingest all.
+  assert.deepStrictEqual(r.appended, next);
+});
+t('matterDedupAppend: lines shorter than K — uses whatever is available', () => {
+  const tail = ['a','b','c'];
+  const next = ['a','b','c','d'];
+  const r = M.matterDedupAppend(tail, next, 5);
+  assert.deepStrictEqual(r.appended, ['d']);
 });
 
 console.log('\n  ' + pass + ' passed, ' + fail + ' failed');
