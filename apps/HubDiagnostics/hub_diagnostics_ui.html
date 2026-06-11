@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.68.4";
+const CODE_VERSION = "5.68.5";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -2431,14 +2431,27 @@ async function rNetwork(){const P='p-network';loading(P);try{
   }
   // Matter
   if(d.matter){const m=d.matter;
-    o+='<div class="card"><div class="card-h">Matter</div><div class="card-b"><div class="ng">';
+    o+='<div class="card"><div class="card-h">Matter</div><div class="card-b">';
+    o+='<div class="ng">';
     o+=ni('Enabled',m.enabled!=null?(m.enabled?'Yes':'No'):'N/A');
     o+=ni('Installed',m.installed!=null?(m.installed?'Yes':'No'):'N/A');
     if(m.networkState)o+=ni('Network State',m.networkState);
     if(m.fabricId)o+=ni('Fabric ID',m.fabricId);
     if(m.devices)o+=ni('Devices',m.devices.length);
-    if(m.rebootRequired)o+='</div><div class="alert a-warn" style="margin-top:8px">\u26A0 Reboot required for Matter changes</div><div class="ng">';
-    o+='</div></div></div>'}
+    if(m.ipAddresses&&m.ipAddresses.length){
+      m.ipAddresses.forEach(ip=>{
+        o+=ni('Listener ('+h(ip.interface||'?')+')', ip.address||'-');
+      });
+    }
+    o+='</div>';
+    if(m.rebootRequired){
+      o+='<div class="alert a-warn" style="margin-top:8px">\u26A0 Reboot required for Matter changes</div>';
+    }
+    if(m.devices&&m.devices.length){
+      o+='<div id="matterDevTbl" style="margin-top:12px"></div>';
+    }
+    o+='</div></div>';
+  }
   // Hub Mesh
   if(d.hubMesh){const hm=d.hubMesh;
     o+='<div class="card"><div class="card-h">Hub Mesh</div><div class="card-b"><div class="ng">';
@@ -2458,6 +2471,18 @@ async function rNetwork(){const P='p-network';loading(P);try{
     o+='</div></div>';
   }
   document.getElementById(P).innerHTML=o;
+  // Matter devices table
+  if(d.matter&&d.matter.devices&&d.matter.devices.length){
+    tbl('matterDevTbl',[
+      {l:'Name', f:'name', r:r=>r.id?dlink(r.id, r.name||'-'):h(r.name||'-')},
+      {l:'NodeID', f:'nodeId', t:'n', r:r=>r.nodeId!=null?'0x'+r.nodeId.toString(16).toUpperCase():'-'},
+      {l:'DNI', f:'dni', r:r=>h(r.dni||'-')},
+      {l:'Manufacturer', f:'manufacturer', r:r=>h(r.manufacturer||'-')},
+      {l:'Model', f:'model', r:r=>h(r.model||'-')},
+      {l:'Online', f:'online', r:r=>r.online?'<span class="badge b-ok">Yes</span>':'<span class="badge b-crit">No</span>'},
+      {l:'IPv6 Address', f:'ipAddress', r:r=>'<span style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px">'+h(r.ipAddress||'-')+'</span>'}
+    ], d.matter.devices, {sc:0, sd:'asc', filter:true, collapse:10, collapseLabel:'Matter Devices'});
+  }
   // mDNS table (v5.9.1)
   if(d.mdns&&d.mdns.endpoints&&d.mdns.endpoints.length){
     tbl('mdnsTbl',[
