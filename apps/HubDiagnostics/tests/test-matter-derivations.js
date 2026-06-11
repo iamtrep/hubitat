@@ -178,6 +178,9 @@ t('groupChipEntries: leading orphan continuations are dropped (no head context)'
 t('groupChipEntries: empty input returns []', () => {
   assert.deepStrictEqual(M.groupChipEntries([]), []);
 });
+t('groupChipEntries: all-continuations-no-heads returns []', () => {
+  assert.deepStrictEqual(M.groupChipEntries(['   orphan1', '   orphan2', '   orphan3']), []);
+});
 t('groupChipEntries: full raw block reconstructible from head + continuations', () => {
   const g = M.groupChipEntries(sample);
   // Reconstruct the second entry's full block: head raw + continuations joined with \n.

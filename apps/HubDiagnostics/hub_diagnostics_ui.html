@@ -4326,8 +4326,8 @@ function groupChipEntries(lines){
       };
     }else if(cur){
       cur.continuations.push(raw);
-    }
     // else: orphan continuation before any head — drop.
+    }
   }
   if(cur)groups.push(cur);
   return groups;
