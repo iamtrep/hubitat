@@ -3400,6 +3400,28 @@ const RC={
     _suppressScrollUntil:0, // perf.now() horizon during which the scroll handler ignores our own scrollTop writes
     framesLastSec:[],     // sliding window for frames/s counter
     stack:null            // resolved at Start time from RC.zwaveStack — picks the per-stack row mapper
+  },
+  matter:{                                       // sub-tab state — poll-based capture
+    buf:null,                  // FrameBuffer (line-oriented, one push per CHIP line)
+    pollTimer:null,            // setInterval id
+    intervalMs:2000,           // poll cadence (~native page cadence)
+    state:'idle',              // idle|polling|paused|disconnected
+    pausedCapture:false,
+    lastTail:[],               // last K lines of the previous poll's buffer (dedup anchor)
+    dedupK:30,                 // anchor block size — large enough that contiguous-run collisions are vanishingly rare
+    displayBuf:[],             // grouped entries (newest first) for the Structured renderer
+    selectedRaw:null,          // raw block of the currently expanded row (or null)
+    viewMode:'structured',     // 'structured' | 'raw'
+    lastTailRenderAt:0,
+    pinnedToLive:true,
+    pinBaselineLen:0,
+    _suppressScrollUntil:0,
+    filters:{component:null, op:null},
+    components:[],             // unioned component set from observed heads (UI-sorted)
+    framesLastSec:[],
+    rotations:0,               // count of polls where the anchor missed (full-buffer rotations)
+    firstPollDone:false,
+    lastErr:null
   }
 };
 
@@ -3411,20 +3433,23 @@ async function rRadioCapture(){
     <div class="tabs" id="rc-subtabs" style="margin-bottom:12px">
       <div class="tab active" data-rcsub="zigbee">Zigbee</div>
       <div class="tab" data-rcsub="zwave">Z-Wave</div>
+      <div class="tab" data-rcsub="matter">Matter</div>
     </div>
     <div id="rc-zigbee"></div>
     <div id="rc-zwave" style="display:none"></div>
+    <div id="rc-matter" style="display:none"></div>
   `;
   document.getElementById('rc-subtabs').addEventListener('click',e=>{
     const s=e.target.dataset.rcsub;if(!s)return;
     document.querySelectorAll('#rc-subtabs .tab').forEach(t=>t.classList.toggle('active',t.dataset.rcsub===s));
-    ['zigbee','zwave'].forEach(k=>{
+    ['zigbee','zwave','matter'].forEach(k=>{
       document.getElementById('rc-'+k).style.display=k===s?'':'none';
     });
     RC.subTab=s;
   });
   renderZigbeeSubTab();
   renderZwaveSubTab();
+  renderMatterSubTab();
 }
 
 function renderZigbeeSubTab(){
