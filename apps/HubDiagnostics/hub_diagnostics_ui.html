@@ -4421,6 +4421,85 @@ function matterDedupAppend(prevTail, next, k){
   return { appended: next.slice(), lastTail };
 }
 
+function renderMatterSubTab(){
+  const m=RC.matter;
+  document.getElementById('rc-matter').innerHTML=`
+    <div class="card" style="margin-bottom:12px">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button id="rc-m-start" class="btn-primary">Start capture</button>
+        <button id="rc-m-pause" disabled>Pause capture</button>
+        <button id="rc-m-stop" disabled>Stop capture</button>
+        <button id="rc-m-dl" disabled title="Download the current buffer">Download</button>
+        <button id="rc-m-clear" disabled>Clear buffer</button>
+        <span style="margin-left:auto">Recording cap:
+          <select id="rc-m-cap">
+            <option value="10">10 MB</option>
+            <option value="50" selected>50 MB</option>
+            <option value="200">200 MB</option>
+          </select>
+        </span>
+      </div>
+      <div style="margin-top:8px;display:flex;gap:16px;flex-wrap:wrap;font-size:13px;align-items:center">
+        <span>State: <span id="rc-m-state" class="badge b-warn">idle</span></span>
+        <span>Lines/s: <span id="rc-m-rate">0</span></span>
+        <span>Buffered: <span id="rc-m-buffered">0 lines / 0 MB</span></span>
+        <span>Dropped: <span id="rc-m-dropped">0</span></span>
+        <span title="Polls where the K-line dedup anchor was not found in the new buffer (rare; indicates ≥2 h elapsed between polls).">Rotations: <span id="rc-m-rot">0</span></span>
+      </div>
+      <div style="margin-top:8px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:13px">
+        <span>View:
+          <select id="rc-m-view">
+            <option value="structured" selected>Structured</option>
+            <option value="raw">Raw</option>
+          </select>
+        </span>
+        <span>Component:
+          <select id="rc-m-fcomp"><option value="">All</option></select>
+        </span>
+        <span>Op:
+          <select id="rc-m-fop">
+            <option value="">All</option>
+            <option value="Report">Report</option>
+            <option value="Read">Read</option>
+            <option value="Write">Write</option>
+            <option value="Subscribe">Subscribe</option>
+            <option value="Invoke">Invoke</option>
+            <option value="Status">Status</option>
+            <option value="TimedReq">TimedRequest</option>
+          </select>
+        </span>
+      </div>
+      <div style="margin-top:6px;font-size:12px;opacity:.7">Polls /hub/matterLogs/json every 2 s. LAN-only — won't work via the Hubitat cloud URL.</div>
+    </div>
+    <div id="rc-m-live"></div>
+  `;
+  document.getElementById('rc-m-start').addEventListener('click',rcMatterStart);
+  document.getElementById('rc-m-stop').addEventListener('click',rcMatterStop);
+  document.getElementById('rc-m-dl').addEventListener('click',rcMatterDownload);
+  document.getElementById('rc-m-pause').addEventListener('click',rcMatterPause);
+  document.getElementById('rc-m-clear').addEventListener('click',rcMatterClear);
+  document.getElementById('rc-m-cap').addEventListener('change',e=>{
+    const mb=parseInt(e.target.value,10);
+    if(m.buf)m.buf.setMaxBytes(mb*1024*1024);
+  });
+  document.getElementById('rc-m-view').addEventListener('change',e=>{
+    m.viewMode=e.target.value;
+    m.selectedRaw=null;
+    rcMatterRenderTail({repin:true});
+  });
+  document.getElementById('rc-m-fcomp').addEventListener('change',e=>{
+    m.filters.component=e.target.value||null;
+    rcMatterRenderTail({repin:true});
+  });
+  document.getElementById('rc-m-fop').addEventListener('change',e=>{
+    m.filters.op=e.target.value||null;
+    rcMatterRenderTail({repin:true});
+  });
+  document.getElementById('rc-m-live').addEventListener('click',rcMatterHandleTailClick);
+  rcMatterUpdateBadge();
+  rcMatterRenderTail({repin:true});
+}
+
 // ===== TAB MANAGEMENT =====
 const R={dashboard:rDashboard,devices:rDevices,apps:rApps,code:rCode,network:rNetwork,health:rHealth,performance:rPerf,config:rConfig,snapshots:rSnap,'radio-capture':rRadioCapture};
 function go(t){
