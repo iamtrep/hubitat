@@ -48,7 +48,9 @@ const harness =
   extractFn('matterClusterName') + '\n' +
   extractFn('matterAttrName') + '\n' +
   extractFn('matterCommandName') + '\n' +
-  'module.exports = { MATTER_CLUSTERS, MATTER_GLOBAL_COMMANDS, matterClusterName, matterAttrName, matterCommandName };';
+  extractFn('stripAnsi') + '\n' +
+  extractFn('parseChipLine') + '\n' +
+  'module.exports = { MATTER_CLUSTERS, MATTER_GLOBAL_COMMANDS, matterClusterName, matterAttrName, matterCommandName, stripAnsi, parseChipLine };';
 const tmp = path.join(os.tmpdir(), 'hd_matter_' + process.pid + '.js');
 fs.writeFileSync(tmp, harness);
 const M = require(tmp);
@@ -94,6 +96,47 @@ t('matterAttrName: null cluster returns null', () => {
 t('matterCommandName: known cluster, command absent → falls through to globals', () => {
   // Descriptor (0x001D) has no cmds; an IM-layer ReadRequest (0x02) should still resolve.
   assert.strictEqual(M.matterCommandName(0x001D, 0x02), 'ReadRequest');
+});
+
+console.log('\nstripAnsi / parseChipLine');
+
+t('stripAnsi: removes color codes', () => {
+  assert.strictEqual(M.stripAnsi('[0;34mhello[0m world'), 'hello world');
+});
+t('stripAnsi: plain string unchanged', () => {
+  assert.strictEqual(M.stripAnsi('no codes here'), 'no codes here');
+});
+t('parseChipLine: head line with single-digit pid:tid', () => {
+  const r = M.parseChipLine('[1716491823.456] [1234:1235] [DMG] AttributeReportIBs =');
+  assert.strictEqual(r.isHead, true);
+  assert.strictEqual(r.epoch, 1716491823);
+  assert.strictEqual(r.ms, 456);
+  assert.strictEqual(r.pid, '1234');
+  assert.strictEqual(r.tid, '1235');
+  assert.strictEqual(r.component, 'DMG');
+  assert.strictEqual(r.body, 'AttributeReportIBs =');
+});
+t('parseChipLine: head line stripped of ANSI is parsed', () => {
+  const r = M.parseChipLine('[0;34m[1716491823.456] [1234:1235] [EM] Sent message[0m');
+  assert.strictEqual(r.isHead, true);
+  assert.strictEqual(r.component, 'EM');
+  assert.strictEqual(r.body, 'Sent message');
+  assert.ok(r.ansi);    // ANSI severity hint captured for Raw view
+});
+t('parseChipLine: continuation line (indented, no prefix)', () => {
+  const r = M.parseChipLine('    Endpoint = 0x1,');
+  assert.strictEqual(r.isHead, false);
+  assert.strictEqual(r.body, '    Endpoint = 0x1,');
+});
+t('parseChipLine: blank line is a non-head (continuation passthrough)', () => {
+  const r = M.parseChipLine('');
+  assert.strictEqual(r.isHead, false);
+  assert.strictEqual(r.body, '');
+});
+t('parseChipLine: head with empty body', () => {
+  const r = M.parseChipLine('[1716491823.001] [1:2] [DMG] ');
+  assert.strictEqual(r.isHead, true);
+  assert.strictEqual(r.body, '');
 });
 
 console.log('\n  ' + pass + ' passed, ' + fail + ' failed');

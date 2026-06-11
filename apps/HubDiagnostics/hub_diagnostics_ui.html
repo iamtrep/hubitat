@@ -4277,6 +4277,40 @@ function matterCommandName(clusterId, cmdId){
   return MATTER_GLOBAL_COMMANDS[cmdId] || null;
 }
 
+// ANSI CSI strip — only the SGR sequences CHIP emits ([<digits>;<digits>m...[0m).
+// Conservative regex, no \x1b shorthand needed.
+function stripAnsi(text){
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/\[[0-9;]*m/g, '');
+}
+
+// Parse a single CHIP log line.
+//   Head form (ANSI-stripped):  [<epoch>.<ms>] [<pid>:<tid>] [<COMPONENT>] <body>
+//   Continuation: any line that doesn't match the head regex (indented continuation lines + blanks).
+// Returns:
+//   head:        { isHead:true, epoch, ms, pid, tid, component, body, ansi:'<first SGR code seen>' | null, raw }
+//   continuation:{ isHead:false, body, ansi, raw }
+function parseChipLine(raw){
+  // Capture first SGR code (severity hint) before stripping. Errors are 0;31, warnings 0;33,
+  // progress 0;32, detail 0;34. We pass the raw code through; the renderer maps to CSS color.
+  const CHIP_HEAD_RE = /^\[(\d+)\.(\d+)\] \[(\d+):(\d+)\] \[([A-Z]+)\] ?(.*)$/;
+  let ansi=null;
+  const m=raw.match(/\[([0-9;]+)m/);
+  if(m)ansi=m[1];
+  const stripped=stripAnsi(raw);
+  const h=stripped.match(CHIP_HEAD_RE);
+  if(h){
+    return {
+      isHead:true,
+      epoch:parseInt(h[1],10),
+      ms:parseInt(h[2],10),
+      pid:h[3], tid:h[4], component:h[5],
+      body:h[6], ansi, raw
+    };
+  }
+  return { isHead:false, body:stripped, ansi, raw };
+}
+
 // ===== TAB MANAGEMENT =====
 const R={dashboard:rDashboard,devices:rDevices,apps:rApps,code:rCode,network:rNetwork,health:rHealth,performance:rPerf,config:rConfig,snapshots:rSnap,'radio-capture':rRadioCapture};
 function go(t){
