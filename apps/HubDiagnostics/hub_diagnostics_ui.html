@@ -4735,6 +4735,86 @@ function rcMatterRenderStructuredHtml(rows, selectedRaw){
   return html;
 }
 
+// Raw colored-tail renderer — preserves leading whitespace + maps ANSI to CSS color.
+// Operates on the FrameBuffer line-by-line (not on grouped entries) so it's a faithful
+// view of what /hub/matterLogs/json returned.
+function rcMatterRenderRawHtml(lines){
+  if(!lines.length)return '<p style="color:var(--muted,#888);padding:16px;margin:0">No lines yet</p>';
+  const tdMono='padding:2px 10px;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre;border-top:1px solid rgba(255,255,255,0.04)';
+  let html='<div style="background:#0d1117">';
+  for(const ln of lines){
+    let color='var(--text)';
+    const m=ln.match(/\[([0-9;]+)m/);
+    if(m){
+      const c=m[1];
+      if(c.indexOf('31')>=0)      color='#ff6b6b';
+      else if(c.indexOf('33')>=0) color='#f0b400';
+      else if(c.indexOf('32')>=0) color='#5dd66c';
+      else if(c.indexOf('34')>=0) color='#8aaecf';
+    }
+    html+='<div style="'+tdMono+';color:'+color+'">'+h(stripAnsi(ln))+'</div>';
+  }
+  html+='</div>';
+  return html;
+}
+
+function rcMatterRenderTail(opt){
+  const m=RC.matter;
+  const src=m.buf?m.buf.frames:[];
+  if(m.viewMode==='raw'){
+    // Newest-first to match the sibling sub-tabs.
+    const lines=[];
+    for(let i=src.length-1;i>=0;i--)lines.push(src[i].line);
+    // Update displayBuf to the (filtered) lines for pin-baseline arithmetic.
+    m.displayBuf = lines;
+    rcTailPaint({liveId:'rc-m-live',tblId:'rc-m-tail-tbl',z:m,rowsHtml:rcMatterRenderRawHtml(lines)},opt);
+    return;
+  }
+  // Structured: group lines into entries, then map → rows. Buffer is line-ordered (oldest first),
+  // so we group in-order and reverse the resulting entries to put newest first.
+  const rawLines=src.map(f=>f.line);
+  const entries=groupChipEntries(rawLines);
+  // Component-set maintenance (drives the filter dropdown).
+  const compSet=new Set();
+  entries.forEach(e=>{if(e.component)compSet.add(e.component)});
+  const comps=Array.from(compSet).sort();
+  if(comps.length !== m.components.length || comps.some((c,i)=>c !== m.components[i])){
+    m.components=comps;
+    const sel=document.getElementById('rc-m-fcomp');
+    if(sel){
+      const cur=sel.value;
+      sel.innerHTML='<option value="">All</option>'+comps.map(c=>'<option value="'+c+'"'+(c===cur?' selected':'')+'>'+h(c)+'</option>').join('');
+    }
+  }
+  // Apply filters before mapping → cheaper.
+  const fComp=m.filters.component, fOp=m.filters.op;
+  const rows=[];
+  for(let i=entries.length-1;i>=0;i--){
+    const e=entries[i];
+    if(fComp && e.component !== fComp)continue;
+    const row=rcMatterFrameToRow(e);
+    if(fOp && row.op !== fOp)continue;
+    rows.push(row);
+  }
+  m.displayBuf=rows;
+  if(m.selectedRaw && !rows.some(r=>r._raw===m.selectedRaw))m.selectedRaw=null;
+  rcTailPaint({liveId:'rc-m-live',tblId:'rc-m-tail-tbl',z:m,rowsHtml:rcMatterRenderStructuredHtml(rows,m.selectedRaw)},opt);
+}
+
+function rcMatterHandleTailClick(e){
+  // Raw mode doesn't have data-idx rows — nothing to expand. Bail early.
+  if(RC.matter.viewMode==='raw')return;
+  if(e.target.closest('a'))return;
+  const tr=e.target.closest('tr[data-idx]');if(!tr)return;
+  const m=RC.matter;
+  const idx=parseInt(tr.dataset.idx,10);
+  const row=m.displayBuf[idx];if(!row)return;
+  const expanding=(m.selectedRaw!==row._raw);
+  m.selectedRaw=expanding?row._raw:null;
+  if(expanding&&m.pinnedToLive){m.pinnedToLive=false;m.pinBaselineLen=m.displayBuf.length;}
+  rcMatterRenderTail({});
+}
+
 // ===== TAB MANAGEMENT =====
 const R={dashboard:rDashboard,devices:rDevices,apps:rApps,code:rCode,network:rNetwork,health:rHealth,performance:rPerf,config:rConfig,snapshots:rSnap,'radio-capture':rRadioCapture};
 function go(t){
