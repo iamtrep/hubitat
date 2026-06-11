@@ -4546,7 +4546,7 @@ function rcMatterPause(){
 }
 
 function rcMatterClear(){
-  const m=RC.matter;if(m.buf)m.buf.clear();m.displayBuf=[];m.framesLastSec=[];m.lastTail=[];m.components=[];m.rotations=0;m.firstPollDone=false;
+  const m=RC.matter;if(m.buf)m.buf.clear();m.displayBuf=[];m.framesLastSec=[];m.lastTail=[];m.components=[];m.rotations=0;m.firstPollDone=false;m.lastErr=null;
   rcMatterUpdateMetrics();rcMatterRenderTail({repin:true});
 }
 
