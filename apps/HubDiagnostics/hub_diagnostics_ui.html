@@ -4581,6 +4581,67 @@ function rcMatterUpdateMetrics(){
   const dl=document.getElementById('rc-m-dl');if(dl)dl.disabled=!hasFrames;
 }
 
+function rcMatterConnect(){
+  const m=RC.matter;
+  m.state='polling';rcMatterUpdateBadge();
+  // Kick off immediately, then on interval. Keep polling even when the tab is hidden so the
+  // recording stays continuous (capture semantics, unlike refreshLive which skips hidden tabs).
+  rcMatterPoll();
+  m.pollTimer=setInterval(rcMatterPoll, m.intervalMs);
+}
+
+function rcMatterPoll(){
+  const m=RC.matter;
+  if(!m.buf)return;     // Stopped between scheduled ticks.
+  fetch('http://'+RC.hubIp+'/hub/matterLogs/json',{credentials:'include'})
+    .then(r=>{
+      if(!r.ok)throw new Error('HTTP '+r.status);
+      return r.json();
+    })
+    .then(j=>{
+      m.lastErr=null;
+      const text=(j&&j.text)||'';
+      const lines=text.split('\n');
+      // Drop a trailing empty entry if the buffer ended on \n.
+      if(lines.length&&lines[lines.length-1]==='')lines.pop();
+      const r=matterDedupAppend(m.lastTail, lines, m.dedupK);
+      m.lastTail=r.lastTail;
+      if(!m.firstPollDone){
+        m.firstPollDone=true;
+        // First poll: prime lastTail and ingest the whole backlog (rate will spike once; intended).
+      }else if(r.appended.length===lines.length&&lines.length>0&&m.lastTail.length){
+        // Anchor was searched but not matched even though we had a tail to anchor on:
+        // treat as a full-buffer rotation (improbable at 2 s vs ~2 h buffer).
+        m.rotations++;
+      }
+      if(!m.pausedCapture){
+        const now=Date.now();
+        for(const ln of r.appended){
+          m.buf.push(ln);
+          m.framesLastSec.push(now);
+        }
+        while(m.framesLastSec.length&&m.framesLastSec[0]<now-5000)m.framesLastSec.shift();
+      }
+      rcMatterUpdateMetrics();
+      const t=Date.now();
+      if(t-m.lastTailRenderAt>1000){m.lastTailRenderAt=t;rcMatterRenderTail({fromTick:true})}
+    })
+    .catch(err=>{
+      m.lastErr=err.message||String(err);
+      if(!m.firstPollDone){
+        // First poll error → surface clearly and stop. Most likely cause: endpoint disabled
+        // (Matter not enabled on this hub), or hub security needs an admin session cookie.
+        m.firstPollDone=true;
+        alert('Matter logging unavailable on this hub ('+m.lastErr+').\n\nIf this is a security-enabled hub, log into hub admin in this browser first; otherwise Matter may be disabled.');
+        rcMatterStop();
+        return;
+      }
+      // Mid-stream: keep polling, surface in the badge area on the next metrics tick.
+      const st=document.getElementById('rc-m-state');
+      if(st){st.title=m.lastErr;}
+    });
+}
+
 // ===== TAB MANAGEMENT =====
 const R={dashboard:rDashboard,devices:rDevices,apps:rApps,code:rCode,network:rNetwork,health:rHealth,performance:rPerf,config:rConfig,snapshots:rSnap,'radio-capture':rRadioCapture};
 function go(t){
