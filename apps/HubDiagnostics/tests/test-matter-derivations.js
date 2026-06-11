@@ -88,5 +88,13 @@ t('matterCommandName: OnOff cluster command On (0x01)', () => {
   assert.strictEqual(M.matterCommandName(0x0006, 0x01), 'On');
 });
 
+t('matterAttrName: null cluster returns null', () => {
+  assert.strictEqual(M.matterAttrName(null, 0x0000), null);
+});
+t('matterCommandName: known cluster, command absent → falls through to globals', () => {
+  // Descriptor (0x001D) has no cmds; an IM-layer ReadRequest (0x02) should still resolve.
+  assert.strictEqual(M.matterCommandName(0x001D, 0x02), 'ReadRequest');
+});
+
 console.log('\n  ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
