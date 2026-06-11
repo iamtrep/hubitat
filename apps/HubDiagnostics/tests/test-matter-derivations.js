@@ -50,7 +50,8 @@ const harness =
   extractFn('matterCommandName') + '\n' +
   extractFn('stripAnsi') + '\n' +
   extractFn('parseChipLine') + '\n' +
-  'module.exports = { MATTER_CLUSTERS, MATTER_GLOBAL_COMMANDS, matterClusterName, matterAttrName, matterCommandName, stripAnsi, parseChipLine };';
+  extractFn('groupChipEntries') + '\n' +
+  'module.exports = { MATTER_CLUSTERS, MATTER_GLOBAL_COMMANDS, matterClusterName, matterAttrName, matterCommandName, stripAnsi, parseChipLine, groupChipEntries };';
 const tmp = path.join(os.tmpdir(), 'hd_matter_' + process.pid + '.js');
 fs.writeFileSync(tmp, harness);
 const M = require(tmp);
@@ -138,6 +139,50 @@ t('parseChipLine: head with empty body', () => {
   const r = M.parseChipLine('[1716491823.001] [1:2] [DMG] ');
   assert.strictEqual(r.isHead, true);
   assert.strictEqual(r.body, '');
+});
+
+console.log('\ngroupChipEntries');
+
+const sample = [
+  '[1716491823.456] [1:2] [DMG] AttributeReportIBs =',
+  '[1716491823.457] [1:2] [DMG] {',
+  '   Endpoint = 0x1,',
+  '   Cluster = 0x6,',
+  '   Attribute = 0x0,',
+  '}',
+  '[1716491824.000] [1:2] [EM] Sent message Exchange:42',
+  '   to 0xABC',
+  '[1716491825.000] [1:2] [DMG] solo line'
+];
+
+t('groupChipEntries: head + continuations = one entry; next head closes', () => {
+  const g = M.groupChipEntries(sample);
+  // The second line is also a head (CHIP commonly emits a sequence of heads). We get 4 entries:
+  //   head 0 (AttributeReportIBs =) — no continuations
+  //   head 1 ('{') + 4 continuations (Endpoint/Cluster/Attribute/})
+  //   head 2 (Sent message) + 1 continuation (to 0xABC)
+  //   head 3 (solo line) — no continuations
+  assert.strictEqual(g.length, 4);
+  assert.strictEqual(g[0].continuations.length, 0);
+  assert.strictEqual(g[1].continuations.length, 4);
+  assert.strictEqual(g[1].body, '{');
+  assert.strictEqual(g[2].continuations.length, 1);
+  assert.strictEqual(g[2].continuations[0], '   to 0xABC');
+  assert.strictEqual(g[3].continuations.length, 0);
+});
+t('groupChipEntries: leading orphan continuations are dropped (no head context)', () => {
+  const g = M.groupChipEntries(['   orphan line', '[1716491823.456] [1:2] [DMG] ok']);
+  assert.strictEqual(g.length, 1);
+  assert.strictEqual(g[0].body, 'ok');
+});
+t('groupChipEntries: empty input returns []', () => {
+  assert.deepStrictEqual(M.groupChipEntries([]), []);
+});
+t('groupChipEntries: full raw block reconstructible from head + continuations', () => {
+  const g = M.groupChipEntries(sample);
+  // Reconstruct the second entry's full block: head raw + continuations joined with \n.
+  const reconstructed = g[1].raw + '\n' + g[1].continuations.join('\n');
+  assert.ok(reconstructed.indexOf('Endpoint = 0x1,') >= 0);
 });
 
 console.log('\n  ' + pass + ' passed, ' + fail + ' failed');

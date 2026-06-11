@@ -4310,6 +4310,29 @@ function parseChipLine(raw){
   return { isHead:false, body:stripped, ansi, raw };
 }
 
+// Group an array of ANSI-stripped (or ANSI-bearing) raw lines into logical CHIP entries:
+// one head + zero-or-more continuation lines, terminated by the next head line.
+// Continuation lines that appear before any head are dropped (no parent to attach to).
+function groupChipEntries(lines){
+  const groups=[];
+  let cur=null;
+  for(const raw of lines){
+    const p=parseChipLine(raw);
+    if(p.isHead){
+      if(cur)groups.push(cur);
+      cur={
+        epoch:p.epoch, ms:p.ms, pid:p.pid, tid:p.tid, component:p.component,
+        body:p.body, ansi:p.ansi, raw:p.raw, continuations:[]
+      };
+    }else if(cur){
+      cur.continuations.push(raw);
+    }
+    // else: orphan continuation before any head — drop.
+  }
+  if(cur)groups.push(cur);
+  return groups;
+}
+
 // ===== TAB MANAGEMENT =====
 const R={dashboard:rDashboard,devices:rDevices,apps:rApps,code:rCode,network:rNetwork,health:rHealth,performance:rPerf,config:rConfig,snapshots:rSnap,'radio-capture':rRadioCapture};
 function go(t){
