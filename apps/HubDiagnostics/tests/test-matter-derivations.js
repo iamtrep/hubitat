@@ -55,7 +55,8 @@ const harness =
   extractFn('matterDedupAppend') + '\n' +
   extractFn('extractExchangeId') + '\n' +
   extractFn('groupChipByExchange') + '\n' +
-  'module.exports = { MATTER_CLUSTERS, MATTER_GLOBAL_COMMANDS, matterClusterName, matterAttrName, matterCommandName, stripAnsi, parseChipLine, groupChipEntries, extractMatterFields, matterDedupAppend, extractExchangeId, groupChipByExchange };';
+  extractFn('findAttributeReports') + '\n' +
+  'module.exports = { MATTER_CLUSTERS, MATTER_GLOBAL_COMMANDS, matterClusterName, matterAttrName, matterCommandName, stripAnsi, parseChipLine, groupChipEntries, extractMatterFields, matterDedupAppend, extractExchangeId, groupChipByExchange, findAttributeReports };';
 const tmp = path.join(os.tmpdir(), 'hd_matter_' + process.pid + '.js');
 fs.writeFileSync(tmp, harness);
 const M = require(tmp);
@@ -387,6 +388,74 @@ t('extractMatterFields: underscore-separated hex parses correctly (0x0000_0000 �
   ]);
   const f = M.extractMatterFields(g[0]);
   assert.strictEqual(f.attribute, 1);
+});
+
+console.log('\nfindAttributeReports / multi-cluster lookups');
+
+t('findAttributeReports: two-attr ReportData yields two triplets', () => {
+  const text = [
+    'ReportDataMessage =',
+    '{',
+    '  SubscriptionId = 0x2f9b16cf,',
+    '  AttributeReportIBs =',
+    '  [',
+    '    AttributeReportIB =',
+    '    {',
+    '      AttributeDataIB =',
+    '      {',
+    '        DataVersion = 0x2448e948,',
+    '        AttributePathIB =',
+    '        {',
+    '          Endpoint = 0x2,',
+    '          Cluster = 0x405,',
+    '          Attribute = 0x0000_0000,',
+    '        }',
+    '        Data = 4363 (unsigned), ',
+    '      },',
+    '    },',
+    '    AttributeReportIB =',
+    '    {',
+    '      AttributeDataIB =',
+    '      {',
+    '        DataVersion = 0xafbe7f4a,',
+    '        AttributePathIB =',
+    '        {',
+    '          Endpoint = 0x1,',
+    '          Cluster = 0x402,',
+    '          Attribute = 0x0000_0000,',
+    '        }',
+    '        Data = 2443 (signed), ',
+    '      },',
+    '    },',
+    '  ],',
+    '}'
+  ].join('\n');
+  const r = M.findAttributeReports(text);
+  assert.strictEqual(r.length, 2);
+  assert.deepStrictEqual({endpoint:r[0].endpoint, cluster:r[0].cluster, attribute:r[0].attribute, data:r[0].data, dataType:r[0].dataType},
+    {endpoint:0x2, cluster:0x405, attribute:0, data:'4363', dataType:'unsigned'});
+  assert.deepStrictEqual({endpoint:r[1].endpoint, cluster:r[1].cluster, attribute:r[1].attribute, data:r[1].data, dataType:r[1].dataType},
+    {endpoint:0x1, cluster:0x402, attribute:0, data:'2443', dataType:'signed'});
+});
+t('findAttributeReports: non-Report text returns []', () => {
+  assert.deepStrictEqual(M.findAttributeReports('Refresh LivenessCheckTime for 344277 ms'), []);
+});
+t('findAttributeReports: split key does NOT match AttributeReportIBs container', () => {
+  // The outer 'AttributeReportIBs =' shouldn't be a split anchor — only the inner IB blocks are.
+  const text = 'AttributeReportIBs = [ ] (no inner IB blocks here)';
+  assert.deepStrictEqual(M.findAttributeReports(text), []);
+});
+t('matterClusterName: ElectricalEnergyMeasurement (0x0090) — Matter 1.3 cluster newly added', () => {
+  assert.strictEqual(M.matterClusterName(0x0090), 'ElectricalEnergyMeasurement');
+});
+t('matterClusterName: ElectricalPowerMeasurement (0x0091)', () => {
+  assert.strictEqual(M.matterClusterName(0x0091), 'ElectricalPowerMeasurement');
+});
+t('matterAttrName: ElectricalPowerMeasurement.RMSCurrent (0x0091/0x000C)', () => {
+  assert.strictEqual(M.matterAttrName(0x0091, 0x000C), 'RMSCurrent');
+});
+t('matterAttrName: ElectricalPowerMeasurement.ActivePower (0x0091/0x0008)', () => {
+  assert.strictEqual(M.matterAttrName(0x0091, 0x0008), 'ActivePower');
 });
 
 console.log('\n  ' + pass + ' passed, ' + fail + ' failed');

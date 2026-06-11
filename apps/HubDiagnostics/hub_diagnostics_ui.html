@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.68.1";
+const CODE_VERSION = "5.68.2";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -3410,7 +3410,7 @@ const RC={
     lastTail:[],               // last K lines of the previous poll's buffer (dedup anchor)
     dedupK:30,                 // anchor block size — large enough that contiguous-run collisions are vanishingly rare
     displayBuf:[],             // grouped entries (newest first) for the Structured renderer
-    selectedRaw:null,          // raw block of the currently expanded row (or null)
+    selectedRowKey:null,       // synthetic id of the currently expanded row (or null)
     viewMode:'structured',     // 'structured' | 'raw'
     lastTailRenderAt:0,
     pinnedToLive:true,
@@ -4258,7 +4258,21 @@ const MATTER_CLUSTERS = {
   0x003E: {name:'OperationalCredentials', attrs:{0x0000:'NOCs', 0x0001:'Fabrics', 0x0002:'SupportedFabrics', 0x0003:'CommissionedFabrics', 0x0004:'TrustedRootCertificates', 0x0005:'CurrentFabricIndex'}, cmds:{0x00:'AttestationRequest', 0x02:'CertificateChainRequest', 0x04:'CSRRequest', 0x06:'AddNOC', 0x07:'UpdateNOC', 0x09:'UpdateFabricLabel', 0x0A:'RemoveFabric', 0x0B:'AddTrustedRootCertificate'}},
   0x003F: {name:'GroupKeyManagement', attrs:{0x0000:'GroupKeyMap', 0x0001:'GroupTable', 0x0002:'MaxGroupsPerFabric', 0x0003:'MaxGroupKeysPerFabric'}, cmds:{0x00:'KeySetWrite', 0x01:'KeySetRead', 0x03:'KeySetRemove', 0x04:'KeySetReadAllIndices'}},
   0x0045: {name:'BooleanState', attrs:{0x0000:'StateValue'}, cmds:{}},
+  0x0046: {name:'SmokeCoAlarm', attrs:{0x0000:'ExpressedState', 0x0001:'SmokeState', 0x0002:'COState', 0x0003:'BatteryAlert'}, cmds:{}},
   0x0050: {name:'ModeSelect', attrs:{0x0000:'Description', 0x0001:'StandardNamespace', 0x0002:'SupportedModes', 0x0003:'CurrentMode', 0x0004:'StartUpMode', 0x0005:'OnMode'}, cmds:{0x00:'ChangeToMode'}},
+  0x005B: {name:'AirQuality', attrs:{0x0000:'AirQuality'}, cmds:{}},
+  0x0071: {name:'HepaFilterMonitoring', attrs:{0x0000:'Condition', 0x0001:'DegradationDirection', 0x0002:'ChangeIndication', 0x0003:'InPlaceIndicator'}, cmds:{0x00:'ResetCondition'}},
+  0x0072: {name:'ActivatedCarbonFilterMonitoring', attrs:{0x0000:'Condition', 0x0001:'DegradationDirection', 0x0002:'ChangeIndication', 0x0003:'InPlaceIndicator'}, cmds:{0x00:'ResetCondition'}},
+  0x0080: {name:'BooleanStateConfiguration', attrs:{0x0000:'CurrentSensitivityLevel', 0x0001:'SupportedSensitivityLevels', 0x0002:'DefaultSensitivityLevel'}, cmds:{}},
+  0x0081: {name:'ValveConfigurationAndControl', attrs:{0x0000:'OpenDuration', 0x0001:'DefaultOpenDuration', 0x0002:'AutoCloseTime', 0x0003:'RemainingDuration', 0x0004:'CurrentState', 0x0005:'TargetState'}, cmds:{0x00:'Open', 0x01:'Close'}},
+  0x0090: {name:'ElectricalEnergyMeasurement', attrs:{0x0000:'Accuracy', 0x0001:'CumulativeEnergyImported', 0x0002:'CumulativeEnergyExported', 0x0003:'PeriodicEnergyImported', 0x0004:'PeriodicEnergyExported', 0x0005:'CumulativeEnergyReset'}, cmds:{}},
+  0x0091: {name:'ElectricalPowerMeasurement', attrs:{0x0000:'PowerMode', 0x0001:'NumberOfMeasurementTypes', 0x0002:'Accuracy', 0x0003:'Ranges', 0x0004:'Voltage', 0x0005:'ActiveCurrent', 0x0006:'ReactiveCurrent', 0x0007:'ApparentCurrent', 0x0008:'ActivePower', 0x0009:'ReactivePower', 0x000A:'ApparentPower', 0x000B:'RMSVoltage', 0x000C:'RMSCurrent', 0x000D:'RMSPower', 0x000E:'Frequency'}, cmds:{}},
+  0x0093: {name:'DeviceEnergyManagement', attrs:{0x0000:'ESAType', 0x0001:'ESACanGenerate', 0x0002:'ESAState', 0x0003:'AbsMinPower', 0x0004:'AbsMaxPower'}, cmds:{}},
+  0x0094: {name:'EnergyEvse', attrs:{0x0000:'State', 0x0001:'SupplyState', 0x0002:'FaultState'}, cmds:{0x00:'Disable', 0x02:'EnableCharging', 0x03:'EnableDischarging'}},
+  0x0096: {name:'PowerTopology', attrs:{0x0000:'AvailableEndpoints', 0x0001:'ActiveEndpoints'}, cmds:{}},
+  0x0097: {name:'EnergyEvseMode', attrs:{0x0000:'SupportedModes', 0x0001:'CurrentMode'}, cmds:{0x00:'ChangeToMode'}},
+  0x0098: {name:'EnergyPreference', attrs:{0x0000:'EnergyBalances', 0x0001:'CurrentEnergyBalance'}, cmds:{}},
+  0x0099: {name:'DeviceEnergyManagementMode', attrs:{0x0000:'SupportedModes', 0x0001:'CurrentMode'}, cmds:{0x00:'ChangeToMode'}},
   0x0101: {name:'DoorLock', attrs:{0x0000:'LockState', 0x0001:'LockType', 0x0002:'ActuatorEnabled'}, cmds:{0x00:'LockDoor', 0x01:'UnlockDoor'}},
   0x0102: {name:'WindowCovering', attrs:{0x0000:'Type', 0x000A:'OperationalStatus', 0x000B:'TargetPositionLiftPercent100ths', 0x000E:'CurrentPositionLiftPercent100ths'}, cmds:{0x00:'UpOrOpen', 0x01:'DownOrClose', 0x02:'StopMotion', 0x05:'GoToLiftPercentage'}},
   0x0200: {name:'PumpConfigAndControl', attrs:{0x0000:'MaxPressure', 0x0001:'MaxSpeed'}, cmds:{}},
@@ -4474,6 +4488,40 @@ function groupChipByExchange(lines){
   return groups;
 }
 
+// Scan an entry's combined text for every individual AttributeReportIB block and pull out
+// the (endpoint, cluster, attribute, data) tuple from each. A single ReportDataMessage can
+// carry multiple AttributeReportIBs (e.g. one sensor reporting humidity and temperature
+// together), so this is what feeds the multi-row split in rcMatterFrameToRow. Returns []
+// when there are no AttributeReportIB blocks (StatusResponse, retransmission scheduling, etc.).
+function findAttributeReports(text){
+  if(!text) return [];
+  // Split on "AttributeReportIB =" but not "AttributeReportIBs =" (the outer container).
+  const parts = text.split(/AttributeReportIB(?!s)\s*=/);
+  const reports = [];
+  function pickHex(s, re){
+    const m = s.match(re);
+    if(!m) return null;
+    const v = m[1].replace(/_/g,'');
+    return v.startsWith('0x') || v.startsWith('0X') ? parseInt(v,16) : parseInt(v,10);
+  }
+  // parts[0] is everything before the first AttributeReportIB (or the whole text if none).
+  for(let i = 1; i < parts.length; i++){
+    const p = parts[i];
+    const ep = pickHex(p, /Endpoint\s*=\s*(0x[0-9A-Fa-f_]+|\d+)/);
+    const cl = pickHex(p, /Cluster\s*=\s*(0x[0-9A-Fa-f_]+|\d+)/);
+    const at = pickHex(p, /Attribute\s*=\s*(0x[0-9A-Fa-f_]+|\d+)/);
+    const dm = p.match(/Data\s*=\s*(-?\d+)\s*\((signed|unsigned|boolean|null|float)\)/);
+    if(ep != null || cl != null || at != null || dm){
+      reports.push({
+        endpoint: ep, cluster: cl, attribute: at,
+        data: dm ? dm[1] : null,
+        dataType: dm ? dm[2] : null
+      });
+    }
+  }
+  return reports;
+}
+
 function renderMatterSubTab(){
   const m=RC.matter;
   document.getElementById('rc-matter').innerHTML=`
@@ -4537,7 +4585,7 @@ function renderMatterSubTab(){
   });
   document.getElementById('rc-m-view').addEventListener('change',e=>{
     m.viewMode=e.target.value;
-    m.selectedRaw=null;
+    m.selectedRowKey=null;
     rcMatterRenderTail({repin:true});
   });
   document.getElementById('rc-m-fcomp').addEventListener('change',e=>{
@@ -4697,15 +4745,13 @@ function rcMatterPoll(){
 }
 
 // Map a CHIP entry group → display row for the Structured table.
-// Pre-resolves cluster/attr/cmd names; the raw block (head + continuations) is kept on _raw
-// so the row-click-to-expand handler can pretty-print it.
+// Map a CHIP entry → ARRAY of display rows for the Structured table. Most entries produce
+// one row, but a multi-attribute ReportData produces one row per AttributeReportIB so the
+// table shows each (endpoint, cluster, attribute) tuple in its own row. All sub-rows share
+// the same exchange, time, op, and full raw block — only the per-attribute columns differ.
 function rcMatterFrameToRow(entry){
   const f = extractMatterFields(entry);
-  const clusterName = f.cluster != null ? matterClusterName(f.cluster) : null;
-  const attrName    = (f.cluster != null && f.attribute != null) ? matterAttrName(f.cluster, f.attribute) : null;
-  const cmdName     = f.command != null ? matterCommandName(f.cluster, f.command) : null;
   // Severity from the captured ANSI code on the head line.
-  // 0;31 → error, 0;33 → warning, 0;32 → progress, 0;34 → detail.
   let sev = null;
   if(entry.ansi){
     if(entry.ansi.indexOf('31') >= 0) sev = 'E';
@@ -4714,24 +4760,44 @@ function rcMatterFrameToRow(entry){
     else if(entry.ansi.indexOf('34') >= 0) sev = 'D';
   }
   const rawBlock = entry.raw + (entry.continuations.length ? '\n' + entry.continuations.join('\n') : '');
-  // Summary: when the body is a short marker line ("AttributeReportIBs ="), prefer it. Otherwise
-  // pick the first non-{} continuation as a quick teaser. Truncated by CSS in the table cell.
+  // Default summary
   let summary = entry.body || '';
   if(!summary || /^[{}]\s*$/.test(summary)){
     const firstNonBrace = (entry.continuations || []).find(l => !/^\s*[{}]\s*$/.test(l));
     if(firstNonBrace) summary = stripAnsi(firstNonBrace).replace(/^\s+/,'');
   }
-  return {
-    time:entry.epoch, ms:entry.ms,
-    sev, component:entry.component, op:f.op || '',
-    endpoint:f.endpoint, cluster:f.cluster, clusterName,
-    attribute:f.attribute, attrName, command:f.command, cmdName,
-    exchange: entry.exchange || (f.exchange != null ? String(f.exchange) : null),
-    session:f.session, fabric:f.fabric,
-    summary,
-    _raw:rawBlock,
-    _headRaw:entry.raw   // ANSI-bearing for Raw renderer use
-  };
+  const exchange = entry.exchange || (f.exchange != null ? String(f.exchange) : null);
+
+  function makeRow(idx, ep, cl, at, cmd, sub){
+    const clusterName = cl != null ? matterClusterName(cl) : null;
+    const attrName    = (cl != null && at != null) ? matterAttrName(cl, at) : null;
+    const cmdName     = cmd != null ? matterCommandName(cl, cmd) : null;
+    return {
+      time:entry.epoch, ms:entry.ms,
+      sev, component:entry.component, op:f.op || '',
+      endpoint:ep, cluster:cl, clusterName,
+      attribute:at, attrName, command:cmd, cmdName,
+      exchange, session:f.session, fabric:f.fabric,
+      summary: sub || summary,
+      _raw:rawBlock,
+      _headRaw:entry.raw,
+      _rowKey: rawBlock + '#' + idx
+    };
+  }
+
+  // Multi-attribute path: scan for AttributeReportIB blocks and emit one row each.
+  const text = (entry.body || '') + (entry.continuations.length ? '\n' + entry.continuations.join('\n') : '');
+  const reports = findAttributeReports(text);
+  if(reports.length >= 2){
+    return reports.map((r, i) => {
+      const sub = r.data != null
+        ? ('Data = ' + r.data + (r.dataType ? ' (' + r.dataType + ')' : ''))
+        : summary;
+      return makeRow(i, r.endpoint, r.cluster, r.attribute, null, sub);
+    });
+  }
+  // Single-attribute (or non-Report) — extractMatterFields' first-match values are correct.
+  return [makeRow(0, f.endpoint, f.cluster, f.attribute, f.command, null)];
 }
 
 function rcMatterFmtTime(epoch, ms){
@@ -4743,7 +4809,7 @@ function rcMatterFmtTime(epoch, ms){
   return hh+':'+mm+':'+ss+'.'+String(ms||0).padStart(3,'0');
 }
 
-function rcMatterRenderStructuredHtml(rows, selectedRaw){
+function rcMatterRenderStructuredHtml(rows, selectedRowKey){
   if(!rows.length)return '<p style="color:var(--muted,#888);padding:16px;margin:0">No entries yet</p>';
   const th='padding:6px 10px;text-align:left;font-size:12px;background:#1a1d24;position:sticky;top:0;z-index:1;border-bottom:1px solid rgba(255,255,255,0.12)';
   const td='padding:5px 10px;font-size:12px;border-top:1px solid rgba(255,255,255,0.05);vertical-align:top';
@@ -4759,7 +4825,7 @@ function rcMatterRenderStructuredHtml(rows, selectedRaw){
     return '';
   }
   rows.forEach((r,idx)=>{
-    const sel=r._raw===selectedRaw;
+    const sel=r._rowKey===selectedRowKey;
     const rowBg=sel?'background:rgba(33,150,243,0.18)':'';
     const ep=r.endpoint!=null?('0x'+r.endpoint.toString(16)):'';
     const clCell=r.cluster!=null
@@ -4847,13 +4913,15 @@ function rcMatterRenderTail(opt){
   for(let i=entries.length-1;i>=0;i--){
     const e=entries[i];
     if(fComp && e.component !== fComp)continue;
-    const row=rcMatterFrameToRow(e);
-    if(fOp && row.op !== fOp)continue;
-    rows.push(row);
+    const newRows=rcMatterFrameToRow(e);
+    for(const row of newRows){
+      if(fOp && row.op !== fOp)continue;
+      rows.push(row);
+    }
   }
   m.displayBuf=rows;
-  if(m.selectedRaw && !rows.some(r=>r._raw===m.selectedRaw))m.selectedRaw=null;
-  rcTailPaint({liveId:'rc-m-live',tblId:'rc-m-tail-tbl',z:m,rowsHtml:rcMatterRenderStructuredHtml(rows,m.selectedRaw)},opt);
+  if(m.selectedRowKey && !rows.some(r=>r._rowKey===m.selectedRowKey))m.selectedRowKey=null;
+  rcTailPaint({liveId:'rc-m-live',tblId:'rc-m-tail-tbl',z:m,rowsHtml:rcMatterRenderStructuredHtml(rows,m.selectedRowKey)},opt);
 }
 
 function rcMatterHandleTailClick(e){
@@ -4864,8 +4932,8 @@ function rcMatterHandleTailClick(e){
   const m=RC.matter;
   const idx=parseInt(tr.dataset.idx,10);
   const row=m.displayBuf[idx];if(!row)return;
-  const expanding=(m.selectedRaw!==row._raw);
-  m.selectedRaw=expanding?row._raw:null;
+  const expanding=(m.selectedRowKey!==row._rowKey);
+  m.selectedRowKey=expanding?row._rowKey:null;
   if(expanding&&m.pinnedToLive){m.pinnedToLive=false;m.pinBaselineLen=m.displayBuf.length;}
   rcMatterRenderTail({});
 }
