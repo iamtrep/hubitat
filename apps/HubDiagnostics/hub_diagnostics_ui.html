@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.68.3";
+const CODE_VERSION = "5.68.4";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -3416,7 +3416,7 @@ const RC={
     pinnedToLive:true,
     pinBaselineLen:0,
     _suppressScrollUntil:0,
-    filters:{component:null, op:null},
+    filters:{component:null, op:null, q:null},  // q: array of lowercased search terms, ANDed
     deviceByNode:new Map(),     // nodeId(int) → {id, name, model, manufacturer} — populated by rcMatterFetchDeviceMap on Start
     components:[],             // unioned component set from observed heads (UI-sorted)
     framesLastSec:[],
@@ -4586,6 +4586,7 @@ function renderMatterSubTab(){
       </div>
       <div style="margin-top:6px;font-size:12px;opacity:.7">Polls /hub/matterLogs/json every 2 s. LAN-only — won't work via the Hubitat cloud URL.</div>
     </div>
+    ${rcMatterFilterCard()}
     <div id="rc-m-live"></div>
   `;
   document.getElementById('rc-m-start').addEventListener('click',rcMatterStart);
@@ -4608,6 +4609,10 @@ function renderMatterSubTab(){
   });
   document.getElementById('rc-m-fop').addEventListener('change',e=>{
     m.filters.op=e.target.value||null;
+    rcMatterRenderTail({repin:true});
+  });
+  document.getElementById('rc-m-f-q').addEventListener('input', () => {
+    rcMatterReadFilters();
     rcMatterRenderTail({repin:true});
   });
   document.getElementById('rc-m-live').addEventListener('click',rcMatterHandleTailClick);
@@ -4843,6 +4848,46 @@ function rcMatterFrameToRow(entry){
   return [makeRow(0, f.endpoint, f.cluster, f.attribute, f.command, null)];
 }
 
+function rcMatterFilterCard(){
+  return `
+    <div class="card" style="margin-bottom:12px">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <input id="rc-m-f-q" type="text" placeholder="Filter live tail… (device, exchange, op, endpoint, cluster, attribute, summary)" style="flex:1;min-width:260px;padding:6px 10px">
+        <span style="font-size:12px;opacity:.7">Substring match across all columns; space-separated terms all must match. Filters the live tail only — the recording stays full-fidelity.</span>
+      </div>
+    </div>`;
+}
+
+function rcMatterReadFilters(){
+  const el=document.getElementById('rc-m-f-q');
+  const v=el?el.value.trim().toLowerCase():'';
+  RC.matter.filters.q = v ? v.split(/\s+/).filter(Boolean) : null;
+}
+
+// Build the same flattened text the user sees in the row, so the single filter box matches what's visible.
+function rcMatterRowHaystack(r){
+  const ep   = r.endpoint  != null ? '0x'+r.endpoint.toString(16)              : '';
+  const cl   = r.cluster   != null ? '0x'+r.cluster.toString(16).padStart(4,'0').toUpperCase() : '';
+  const at   = r.attribute != null ? '0x'+r.attribute.toString(16).padStart(4,'0').toUpperCase() : '';
+  const cmd  = r.command   != null ? '0x'+r.command.toString(16).padStart(2,'0').toUpperCase() : '';
+  const node = r.deviceNodeId != null ? '0x'+r.deviceNodeId.toString(16).toUpperCase() : '';
+  return [
+    rcMatterFmtTime(r.time, r.ms),
+    r.sev || '', r.component || '', r.op || '',
+    r.deviceName || '', node,
+    r.exchange || '',
+    ep, cl, r.clusterName || '',
+    at, r.attrName || '', cmd, r.cmdName || '',
+    r.summary || ''
+  ].join(' ').toLowerCase();
+}
+
+function rcMatterRowMatchesFilter(r, f){
+  if(!f || !f.q || !f.q.length) return true;
+  const hay = rcMatterRowHaystack(r);
+  return f.q.every(t => hay.includes(t));
+}
+
 function rcMatterFmtTime(epoch, ms){
   if(!epoch)return '';
   const d=new Date(epoch*1000);
@@ -4957,7 +5002,7 @@ function rcMatterRenderTail(opt){
     }
   }
   // Apply filters before mapping → cheaper.
-  const fComp=m.filters.component, fOp=m.filters.op;
+  const fComp=m.filters.component, fOp=m.filters.op, f=m.filters;
   const rows=[];
   for(let i=entries.length-1;i>=0;i--){
     const e=entries[i];
@@ -4965,6 +5010,7 @@ function rcMatterRenderTail(opt){
     const newRows=rcMatterFrameToRow(e);
     for(const row of newRows){
       if(fOp && row.op !== fOp)continue;
+      if(!rcMatterRowMatchesFilter(row, f))continue;
       rows.push(row);
     }
   }

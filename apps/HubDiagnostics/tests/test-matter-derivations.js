@@ -57,7 +57,10 @@ const harness =
   extractFn('groupChipByExchange') + '\n' +
   extractFn('findAttributeReports') + '\n' +
   extractFn('extractPeerNodeId') + '\n' +
-  'module.exports = { MATTER_CLUSTERS, MATTER_GLOBAL_COMMANDS, matterClusterName, matterAttrName, matterCommandName, stripAnsi, parseChipLine, groupChipEntries, extractMatterFields, matterDedupAppend, extractExchangeId, groupChipByExchange, findAttributeReports, extractPeerNodeId };';
+  extractFn('rcMatterFmtTime') + '\n' +
+  extractFn('rcMatterRowHaystack') + '\n' +
+  extractFn('rcMatterRowMatchesFilter') + '\n' +
+  'module.exports = { MATTER_CLUSTERS, MATTER_GLOBAL_COMMANDS, matterClusterName, matterAttrName, matterCommandName, stripAnsi, parseChipLine, groupChipEntries, extractMatterFields, matterDedupAppend, extractExchangeId, groupChipByExchange, findAttributeReports, extractPeerNodeId, rcMatterFmtTime, rcMatterRowHaystack, rcMatterRowMatchesFilter };';
 const tmp = path.join(os.tmpdir(), 'hd_matter_' + process.pid + '.js');
 fs.writeFileSync(tmp, harness);
 const M = require(tmp);
@@ -478,6 +481,48 @@ t('extractPeerNodeId: empty body → null', () => {
 t('extractPeerNodeId: SecureChannel StandaloneAck RX still resolves peer', () => {
   const body = '>>> [E:36698r S:52787 M:165512361 (Ack:234532982)] (S) Msg RX from 1:0000000000000BBC [3D3C] to 000000000001B669 --- Type 0000:10 (SecureChannel:StandaloneAck) (B:34)';
   assert.strictEqual(M.extractPeerNodeId(body), 0xBBC);
+});
+
+console.log('\nrcMatterRowMatchesFilter');
+
+const sampleRow = {
+  time: 1716491823, ms: 482,
+  sev: 'P', component: 'EM', op: 'Report',
+  endpoint: 0x2, cluster: 0x0405, clusterName: 'RelativeHumidityMeasurement',
+  attribute: 0x0000, attrName: 'MeasuredValue',
+  command: null, cmdName: null,
+  exchange: '36698r',
+  deviceNodeId: 0xBBC, deviceName: 'THR Salon', deviceId: 148,
+  session: null, fabric: null,
+  summary: 'Data = 4363 (unsigned)',
+  _raw: '', _headRaw: '', _rowKey: 'k'
+};
+
+t('rcMatterRowMatchesFilter: null filter passes', () => {
+  assert.strictEqual(M.rcMatterRowMatchesFilter(sampleRow, null), true);
+  assert.strictEqual(M.rcMatterRowMatchesFilter(sampleRow, {q:null}), true);
+  assert.strictEqual(M.rcMatterRowMatchesFilter(sampleRow, {q:[]}), true);
+});
+t('rcMatterRowMatchesFilter: single term matches summary', () => {
+  assert.strictEqual(M.rcMatterRowMatchesFilter(sampleRow, {q:['4363']}), true);
+});
+t('rcMatterRowMatchesFilter: single term matches cluster name (case-insensitive)', () => {
+  assert.strictEqual(M.rcMatterRowMatchesFilter(sampleRow, {q:['humidity']}), true);
+});
+t('rcMatterRowMatchesFilter: multiple terms AND', () => {
+  assert.strictEqual(M.rcMatterRowMatchesFilter(sampleRow, {q:['report','salon']}), true);
+  assert.strictEqual(M.rcMatterRowMatchesFilter(sampleRow, {q:['report','nonexistent']}), false);
+});
+t('rcMatterRowMatchesFilter: device hex NodeID matches', () => {
+  assert.strictEqual(M.rcMatterRowMatchesFilter(sampleRow, {q:['0xbbc']}), true);
+});
+t('rcMatterRowMatchesFilter: exchange id matches', () => {
+  assert.strictEqual(M.rcMatterRowMatchesFilter(sampleRow, {q:['36698r']}), true);
+});
+t('rcMatterRowMatchesFilter: time formatted in haystack', () => {
+  // Whatever rcMatterFmtTime produces for the sample epoch+ms should be searchable.
+  const stamp = M.rcMatterFmtTime(sampleRow.time, sampleRow.ms);
+  assert.strictEqual(M.rcMatterRowMatchesFilter(sampleRow, {q:[stamp.toLowerCase()]}), true);
 });
 
 console.log('\n  ' + pass + ' passed, ' + fail + ' failed');
