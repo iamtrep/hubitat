@@ -41,8 +41,10 @@
 
     Deactivation threshold:
       bathroom < absoluteLow - tolerance
-      OR bathroom < snapshot + normalOffset
-      (snapshot = reference humidity captured at activation time)
+      OR bathroom < max(snapshot, liveReference) + normalOffset
+      (snapshot = reference humidity captured at activation time; the live
+       reference takes over as the floor if it rises above the snapshot
+       mid-cycle, since the bathroom cannot dry below outside humidity)
 
                   above activation                    activation delay
                     threshold                           expires
@@ -86,7 +88,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Humidity-Based Fan Controller"
-@Field static final String CODE_VERSION = "0.9.2"
+@Field static final String CODE_VERSION = "0.9.3"
 
 // Humidity state machine states
 @Field static final String HUMIDITY_NORMAL = "NORMAL"
@@ -498,10 +500,10 @@ private void evaluateHumidityStateMachine(reportingDevice = null) {
             evaluatePendingHighState(bathroomHumidity, referenceHumidity ?: effectiveAbsoluteLow())
             break
         case HUMIDITY_HIGH:
-            evaluateHighState(bathroomHumidity)
+            evaluateHighState(bathroomHumidity, referenceHumidity)
             break
         case HUMIDITY_PENDING_NORMAL:
-            evaluatePendingNormalState(bathroomHumidity)
+            evaluatePendingNormalState(bathroomHumidity, referenceHumidity)
             break
         default:
             logWarn("Unknown humidity state: ${state.humidityState}, resetting to NORMAL")
@@ -611,9 +613,9 @@ void delayedTransitionToHigh() {
     onHumidityBecameHigh()
 }
 
-private void evaluateHighState(BigDecimal bathroomHumidity) {
-    if (isBelowDeactivationThreshold(bathroomHumidity)) {
-        String reason = getDeactivationReason(bathroomHumidity)
+private void evaluateHighState(BigDecimal bathroomHumidity, BigDecimal liveReference) {
+    if (isBelowDeactivationThreshold(bathroomHumidity, liveReference)) {
+        String reason = getDeactivationReason(bathroomHumidity, liveReference)
         logInfo("Humidity below deactivation threshold: ${reason} - starting ${deactivationDelay}s delay")
 
         state.pendingStateSince = now()
@@ -624,8 +626,8 @@ private void evaluateHighState(BigDecimal bathroomHumidity) {
     }
 }
 
-private void evaluatePendingNormalState(BigDecimal bathroomHumidity) {
-    if (!isBelowDeactivationThreshold(bathroomHumidity)) {
+private void evaluatePendingNormalState(BigDecimal bathroomHumidity, BigDecimal liveReference) {
+    if (!isBelowDeactivationThreshold(bathroomHumidity, liveReference)) {
         // Humidity rose - cancel pending deactivation
         logInfo("Humidity rose during deactivation delay - returning to HIGH")
         unschedule("delayedTransitionToNormal")
@@ -844,14 +846,15 @@ private BigDecimal getEffectiveReferenceSnapshot() {
     return (state.referenceHumiditySnapshot ?: effectiveAbsoluteLow()) as BigDecimal
 }
 
-private Boolean isBelowDeactivationThreshold(BigDecimal bathroomHumidity) {
+private Boolean isBelowDeactivationThreshold(BigDecimal bathroomHumidity, BigDecimal liveReference) {
     // Never deactivate if above absolute high threshold
     if (bathroomHumidity > effectiveAbsoluteHigh()) {
         return false
     }
 
-    // Use the snapshot reference for deactivation calculation
-    BigDecimal effectiveReference = getEffectiveReferenceSnapshot()
+    // Floor = max(snapshot, live): bathroom can't dry below outside if it rises mid-cycle.
+    BigDecimal snapshot = getEffectiveReferenceSnapshot()
+    BigDecimal effectiveReference = (liveReference != null && liveReference > snapshot) ? liveReference : snapshot
     BigDecimal normalThreshold = effectiveReference + effectiveNormalOffset()
 
     // Deactivate if below absolute low threshold - tolerance
@@ -860,7 +863,6 @@ private Boolean isBelowDeactivationThreshold(BigDecimal bathroomHumidity) {
         return true
     }
 
-    // Deactivate if bathroom < snapshot reference + normal offset
     return bathroomHumidity < normalThreshold
 }
 
@@ -875,16 +877,19 @@ private String getActivationReason(BigDecimal bathroomHumidity, BigDecimal refer
     return "bathroom ${bathroomHumidity}${u} > (reference ${referenceHumidity}${u} + ${offset}${u}) = ${highThreshold}${u}"
 }
 
-private String getDeactivationReason(BigDecimal bathroomHumidity) {
+private String getDeactivationReason(BigDecimal bathroomHumidity, BigDecimal liveReference) {
     String u = metricUnit()
     BigDecimal deactivationFloor = effectiveAbsoluteLow() - effectiveAbsoluteLowTolerance()
     if (bathroomHumidity < deactivationFloor) {
         return "bathroom ${bathroomHumidity}${u} < deactivation floor ${deactivationFloor}${u}"
     }
-    BigDecimal effectiveReference = getEffectiveReferenceSnapshot()
+    BigDecimal snapshot = getEffectiveReferenceSnapshot()
+    Boolean useLive = liveReference != null && liveReference > snapshot
+    BigDecimal effectiveReference = useLive ? liveReference : snapshot
+    String floorLabel = useLive ? "live ref" : "snapshot"
     BigDecimal offset = effectiveNormalOffset()
     BigDecimal normalThreshold = effectiveReference + offset
-    return "bathroom ${bathroomHumidity}${u} < (snapshot ${effectiveReference}${u} + ${offset}${u}) = ${normalThreshold}${u}"
+    return "bathroom ${bathroomHumidity}${u} < (${floorLabel} ${effectiveReference}${u} + ${offset}${u}) = ${normalThreshold}${u}"
 }
 
 private Boolean isHumidityHigh() {
