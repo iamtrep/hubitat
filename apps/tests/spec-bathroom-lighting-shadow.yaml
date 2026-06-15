@@ -118,25 +118,49 @@ cases:
 
   - name: anticipated-user-shadow-off-while-wall-still-on
     setup:
-      - { device: test-bls-wall,         command: "on" }   # user has lights on
+      - { device: test-bls-wall,         command: "off" }
       - { device: test-bls-hue,          command: "inactive" }
       - { device: test-bls-fp300-pir,    command: "inactive" }
       - { device: test-bls-fp300-mm,     command: "inactive" }
       - { device: test-bls-out-hueOnly,  command: "off" }
     actions:
-      # Person enters briefly, leaves
-      - { device: test-bls-hue, command: "active" }
-      - { device: test-bls-hue, command: "inactive" }
+      # Person enters; wall-on follows within wOn=10s window so scoreOn
+      # classifies the shadow ON as correctOn (preventing the falseOn
+      # resolver from preempting classifyOff). Then user is still on
+      # when shadow times out → correctOff_anticipatedUser.
+      - { device: test-bls-hue,  command: "active" }
+      - { device: test-bls-wall, command: "on" }
+      - { device: test-bls-hue,  command: "inactive" }
     command_spacing_seconds: 1.0
-    # Wait past holdSec=8 plus tQuiet=5 — so when hueOnly OFFs at t≈8s,
-    # tQuietSince was already 7s old (set when hue went inactive), so
-    # (tOff - tLastActivity) > tQuiet → not premature.
-    # Wall switch is still "on" → correctOff_anticipatedUser.
-    # Use assert_events (not assert_logs): the OFF fires ~8s into the case,
-    # past LogCapture's reliable window per hubitat_logcapture_late_firing memory.
+    # Wait past holdSec=8 plus tQuiet=5 — so when hueOnly OFFs at t≈9s,
+    # (tOff - tLastActivity) > tQuiet → not premature; wall still "on"
+    # → correctOff_anticipatedUser.
     wait_seconds: 12
     assert_events:
       - { attribute: "policy_hueOnly_lastOffClass", value: "correctOff_anticipatedUser" }
+
+  - name: false-on-fp300-glitch-no-wall
+    setup:
+      - { device: test-bls-wall,            command: "off" }
+      - { device: test-bls-hue,             command: "inactive" }
+      - { device: test-bls-fp300-pir,       command: "inactive" }
+      - { device: test-bls-fp300-mm,        command: "inactive" }
+      - { device: test-bls-out-fp300Mm,     command: "off" }
+    actions:
+      - { device: test-bls-fp300-mm, command: "active" }
+      - { device: test-bls-fp300-mm, command: "inactive" }
+    command_spacing_seconds: 1.0
+    # Resolver self-reschedules every wOn=10s, but its phase relative to the
+    # case is unpredictable. Wait long enough to span 3+ resolver cycles
+    # after the ON transition matures past wOn so we don't race the resolver:
+    #   action(1) + spacing(1) + wOn(10) + 3 ticks slack(30) = 42s.
+    # assert_events on the attribute alone (no value): the falseOn sendEvent
+    # fires when the resolver bumps the counter — exact resulting value
+    # depends on prior case ordering, so we just confirm the attribute event
+    # was emitted in this case's capture window.
+    wait_seconds: 42
+    assert_events:
+      - { attribute: "policy_fp300Mm_falseOn" }
 
   - name: composite-holds-through-hfc-active
     setup:

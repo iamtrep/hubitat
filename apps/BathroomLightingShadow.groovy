@@ -98,6 +98,8 @@ void initialize() {
     if (doorContact)   subscribe(doorContact, "contact", "doorHandler")
     if (humiditySensor) subscribe(humiditySensor, "humidity", "humidityHandler")
     if (hfcActive)     subscribe(hfcActive, "switch", "hfcHandler")
+
+    runIn((settings.wOn ?: 60) as Integer, "resolveUnresolvedOns")
 }
 
 private void checkVersion() {
@@ -352,4 +354,36 @@ private void refreshDerivedTimestamps() {
     } else if (state.tQuietSince == null) {
         state.tQuietSince = now()
     }
+}
+
+void resolveUnresolvedOns() {
+    Long windowMs = (settings.wOn ?: 60) * 1000L
+    Long cutoff = now() - windowMs
+    POLICIES.each { Map p ->
+        if (!policyEnabled(p.key)) return
+        Map ps = state.policyState[p.key]
+        boolean changed = false
+        ps.transitions?.each { Map t ->
+            if (t.edge != "on") return
+            if ((t.ts as Long) > cutoff) return  // window not yet closed
+            if (t.resolved == true) return
+            // If lastOnClass was set to correctOn by scoreOn, skip.
+            // Otherwise classify falseOn.
+            if (ps.lastOnClass != "correctOn" || ps.lastTransitionTs != t.ts) {
+                Map s = state.scores[p.key]
+                s.falseOn = (s.falseOn ?: 0) + 1
+                if (ps.decision == "on" && ps.lastTransitionTs == t.ts) {
+                    ps.lastOnClass = "falseOn"
+                }
+                changed = true
+                logInfo "falseOn classified for policy ${p.key}"
+            }
+            t.resolved = true
+        }
+        // Coalesce emitScore to once per policy per tick. Emitting after each
+        // transition can hit LimitExceededException when a backlog of unresolved
+        // transitions builds up (e.g. across test runs).
+        if (changed) emitScore(p.key)
+    }
+    runIn((settings.wOn ?: 60) as Integer, "resolveUnresolvedOns")
 }
