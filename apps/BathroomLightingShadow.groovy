@@ -75,6 +75,7 @@ void initialize() {
     if (state.sensorState == null)    state.sensorState = [:]
     if (state.tLastActivity == null)  state.tLastActivity = null
     if (state.tQuietSince == null)    state.tQuietSince = null
+    if (state.humidityBaseline == null) state.humidityBaseline = null  // null until first reading
 
     POLICIES.each { Map p ->
         if (state.scores[p.key] == null) {
@@ -129,13 +130,19 @@ void doorHandler(evt) {
 }
 
 void humidityHandler(evt) {
-    state.sensorState["humidity"] = [value: (evt.value as BigDecimal), ts: now()]
+    BigDecimal h = evt.value as BigDecimal
+    state.sensorState["humidity"] = [value: h, ts: now()]
+    BigDecimal prev = state.humidityBaseline as BigDecimal
+    // EMA alpha = 0.05 — slow baseline (~20 readings to track a step change)
+    state.humidityBaseline = (prev == null) ? h : (prev * 0.95 + h * 0.05)
     recordEvent("humidity", evt.device.displayName, evt.value)
+    evaluatePolicies()
 }
 
 void hfcHandler(evt) {
     state.sensorState["hfc"] = [value: evt.value, ts: now()]
     recordEvent("hfc", evt.device.displayName, evt.value)
+    evaluatePolicies()
 }
 
 private void recordEvent(String source, String device, String detail) {
@@ -151,6 +158,7 @@ private Map snapshot() {
         doorContact:   doorContact?.currentValue("contact"),
         humidity:      (humiditySensor?.currentValue("humidity") as BigDecimal),
         hfcActive:     hfcActive?.currentValue("switch"),
+        humidityBaseline: (state.humidityBaseline as BigDecimal),
     ]
 }
 
@@ -231,4 +239,16 @@ private void reevaluateOff(String key) {
         // Sensor became active again before hold expired — stay on, no action.
         logDebug "policy ${key}: off-check fired but policy still wants ON"
     }
+}
+
+@Field static final BigDecimal HUMIDITY_OVER_BASELINE = 5.0  // %RH above baseline = "shower active"
+
+Boolean policyComposite(Map snap) {
+    boolean anyActive = (snap.hueMotion == "active" || snap.fp300Motion == "active" || snap.fp300Presence == "active")
+    if (anyActive) return true
+    if (snap.hfcActive == "on") return true
+    BigDecimal h = snap.humidity as BigDecimal
+    BigDecimal baseline = snap.humidityBaseline as BigDecimal
+    if (h != null && baseline != null && h > baseline + HUMIDITY_OVER_BASELINE) return true
+    return false
 }
