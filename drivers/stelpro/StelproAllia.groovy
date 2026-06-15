@@ -172,8 +172,8 @@ void configure(){
     cmds += zigbee.configureReporting(0x201, 0x0000, 0x29, 0, reportingSeconds as int, tempChange as int)   //Attribute ID 0x0000 = local temperature, Data Type: S16BIT
     cmds += zigbee.configureReporting(0x201, 0x0008, 0x20, 0, reportingSeconds as int, 5)   //Attribute ID 0x0008 = pi heating demand, Data Type: U8BIT
     cmds += zigbee.configureReporting(0x201, 0x0012, 0x29, 0, reportingSeconds as int, 1)     //Attribute ID 0x0012 = occupied heat setpoint, Data Type: S16BIT
-    cmds += zigbee.configureReporting(0x201, 0x4008, 0x29, 0, reportingSeconds as int, powerReport as int)     //Attribute ID 0x4008 = power usage, Data Type: S16BIT
-    cmds += zigbee.configureReporting(0x201, 0x4009, 0x29, 0, reportingSeconds as int, 10)     //Attribute ID 0x4009 = energy usage, Data Type: S16BIT
+    cmds += zigbee.configureReporting(0x201, 0x4008, 0x23, 0, reportingSeconds as int, powerReport as int)     //Attribute ID 0x4008 = power usage, Data Type: UINT32 (device encodes as 0x23, not S16 as Z2M's UINT16 would suggest)
+    cmds += zigbee.configureReporting(0x201, 0x4009, 0x23, 0, reportingSeconds as int, 10)     //Attribute ID 0x4009 = energy usage, Data Type: UINT32
 
     cmds += zigbee.configureReporting(0x204, 0x0000, 0x30, 0, reportingSeconds as int)         //Attribute ID 0x0000 = temperature display mode, Data Type: 8 bits enum
     cmds += zigbee.configureReporting(0x204, 0x0001, 0x30, 0, reportingSeconds as int)         //Attribute ID 0x0001 = keypad lockout, Data Type: 8 bits enum
