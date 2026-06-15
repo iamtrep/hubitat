@@ -118,6 +118,7 @@ private void logInfo(String msg)  { log.info msg }
 void sensorHandler(evt) {
     state.sensorState[evt.device.id as String] = [name: evt.name, value: evt.value, ts: now()]
     recordEvent("sensor", evt.device.displayName, "${evt.name}=${evt.value}")
+    refreshDerivedTimestamps()
     evaluatePolicies()
 }
 
@@ -296,4 +297,19 @@ Boolean policyComposite(Map snap) {
     BigDecimal baseline = snap.humidityBaseline as BigDecimal
     if (h != null && baseline != null && h > baseline + HUMIDITY_OVER_BASELINE) return true
     return false
+}
+
+private boolean anyPresenceActive() {
+    return (hueMotion?.currentValue("motion") == "active") ||
+           (fp300Motion?.currentValue("motion") == "active") ||
+           (fp300Presence?.currentValue("motion") == "active")
+}
+
+private void refreshDerivedTimestamps() {
+    if (anyPresenceActive()) {
+        state.tLastActivity = now()
+        state.tQuietSince = null
+    } else if (state.tQuietSince == null) {
+        state.tQuietSince = now()
+    }
 }
