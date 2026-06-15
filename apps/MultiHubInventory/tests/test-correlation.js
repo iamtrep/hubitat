@@ -145,6 +145,29 @@ t('firmwareDrift — consistent group and singleton are excluded; interesting gr
   assert.strictEqual(s1.devices.length, 2);
 });
 
+t('firmwareDrift — empty model: same-mfr different-product devices do NOT bucket together', () => {
+  // Regression: some Zigbee devices (e.g. IKEA contact sensor + dimmer) expose no `model`
+  // data value. Grouping by `mfr + ' ' + model` with only-both-empty guard collapsed every
+  // model-less device from one manufacturer into one bucket, falsely flagging mismatched
+  // firmware streams (contact sensor 1.0.19 vs dimmer 1.0.4) as drift. Require BOTH fields.
+  const rows = [
+    {manufacturer:'IKEA of Sweden', model:'', firmware:'1.0.19', firmwareSource:'softwareBuild', firmwareOta:null, hub:'a'},
+    {manufacturer:'IKEA of Sweden', model:'', firmware:'1.0.4',  firmwareSource:'softwareBuild', firmwareOta:null, hub:'a'},
+    {manufacturer:'IKEA of Sweden', model:'', firmware:'1.0.4',  firmwareSource:'softwareBuild', firmwareOta:null, hub:'a'},
+  ];
+  const d = C.firmwareDrift(rows);
+  assert.strictEqual(d.length, 0, 'model-less rows are excluded from drift comparison');
+});
+
+t('driverDrift — empty model: same-mfr different-product devices do NOT bucket together', () => {
+  const rows = [
+    {manufacturer:'IKEA of Sweden', model:'', deviceTypeName:'Generic Zigbee Contact Sensor', hub:'a'},
+    {manufacturer:'IKEA of Sweden', model:'', deviceTypeName:'IKEA Dimmer',                    hub:'a'},
+  ];
+  const d = C.driverDrift(rows);
+  assert.strictEqual(d.length, 0, 'model-less rows are excluded from driver-drift comparison');
+});
+
 t('attentionItems classifies by reason with injectable now + staleDays', () => {
   const NOW = 1_000_000_000_000, day = 86400000;
   const rows = [

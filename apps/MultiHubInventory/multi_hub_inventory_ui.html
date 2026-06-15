@@ -121,7 +121,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "0.6.4";
+const CODE_VERSION = "0.6.5";
 const APP_VERSION = '${app_version}';   // injected by serveUI; stays literal in workbench/dev
 
 // ===== Z-WAVE MANUFACTURER TABLE (decimal maker-id -> name, from zwave-js) =====
@@ -221,7 +221,10 @@ function firmwareDrift(rows){
   const groups = {};
   for (const r of rows){
     const mfr=(r.manufacturer||'').trim(), model=(r.model||'').trim();
-    if (!mfr && !model) continue;
+    // Require BOTH fields: model-less devices (some Zigbee pairings expose no `model`
+    // data value) would otherwise bucket every same-mfr product into one group, falsely
+    // flagging different products (contact sensor vs dimmer) as firmware drift.
+    if (!mfr || !model) continue;
     const key = mfr + ' ' + model;
     (groups[key] = groups[key] || {key, manufacturer:mfr, model, devices:[]}).devices.push(r);
   }
@@ -250,7 +253,8 @@ function driverDrift(rows){
   const groups = {};
   for (const r of rows){
     const mfr=(r.manufacturer||'').trim(), model=(r.model||'').trim();
-    if (!mfr && !model) continue;
+    // Require BOTH fields — see firmwareDrift for rationale (same false-positive class).
+    if (!mfr || !model) continue;
     const key = mfr + ' ' + model;
     (groups[key] = groups[key] || {key, manufacturer:mfr, model, devices:[]}).devices.push(r);
   }
