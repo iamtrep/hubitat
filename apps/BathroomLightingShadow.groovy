@@ -117,6 +117,7 @@ private void logInfo(String msg)  { log.info msg }
 void sensorHandler(evt) {
     state.sensorState[evt.device.id as String] = [name: evt.name, value: evt.value, ts: now()]
     recordEvent("sensor", evt.device.displayName, "${evt.name}=${evt.value}")
+    evaluatePolicies()
 }
 
 void wallSwitchHandler(evt) {
@@ -139,4 +140,62 @@ void hfcHandler(evt) {
 
 private void recordEvent(String source, String device, String detail) {
     state.recent = ((state.recent ?: []) + [[ts: now(), source: source, device: device, detail: detail]]).takeRight(100)
+}
+
+private Map snapshot() {
+    [
+        hueMotion:     hueMotion?.currentValue("motion"),
+        fp300Motion:   fp300Motion?.currentValue("motion"),
+        fp300Presence: fp300Presence?.currentValue("motion"),
+        wallSwitch:    wallSwitch?.currentValue("switch"),
+        doorContact:   doorContact?.currentValue("contact"),
+        humidity:      (humiditySensor?.currentValue("humidity") as BigDecimal),
+        hfcActive:     hfcActive?.currentValue("switch"),
+    ]
+}
+
+Boolean policyHueOnly(Map snap) {
+    return snap.hueMotion == "active"
+}
+
+private boolean policyEnabled(String key) {
+    return settings."policy_${key}_enabled" == true && settings."policy_${key}_outputSwitch" != null
+}
+
+private void evaluatePolicies() {
+    Map snap = snapshot()
+    POLICIES.each { Map p ->
+        if (!policyEnabled(p.key)) return
+        // Don't use `as Boolean` here — it coerces null to false and silently
+        // breaks the abstain contract that the next branch relies on.
+        Boolean wantOn = (Boolean) this."${p.onMethod}"(snap)
+        Map ps = state.policyState[p.key]
+        // Re-sync the decision tracker with the actual output switch state.
+        // The output switch is the source of truth; ps.decision mirrors it.
+        // Handles drift from test setups, manual overrides, and code pushes.
+        String swState = settings."policy_${p.key}_outputSwitch"?.currentValue("switch")
+        if (swState != null && swState != ps.decision) {
+            ps.decision = swState
+        }
+        String current = ps.decision
+        if (wantOn == null) return  // abstain
+        if (wantOn && current == "off") {
+            drivePolicy(p.key, "on")
+        } else if (!wantOn && current == "on") {
+            // Schedule the off-check; same-handler-name overwrite cancels-and-rearms for free.
+            Integer holdSec = (settings."policy_${p.key}_holdSec" ?: p.defaultHoldSec) as Integer
+            runIn(holdSec, p.offHandler as String)
+        }
+    }
+}
+
+private void drivePolicy(String key, String edge) {
+    def sw = settings."policy_${key}_outputSwitch"
+    if (sw == null) return
+    if (edge == "on") sw.on() else sw.off()
+    Map ps = state.policyState[key]
+    ps.decision = edge
+    ps.lastTransitionTs = now()
+    ps.transitions = ((ps.transitions ?: []) + [[ts: now(), edge: edge]]).takeRight(50)
+    logInfo "policy ${key} -> ${edge}"
 }

@@ -56,7 +56,7 @@ APP_INSTANCE_LABEL    = "test-bls-app"
 MAKER_API_LABEL       = "test-bls-maker"
 INPUT_DEVICE_LABELS   = ["test-bls-hue", "test-bls-fp300-pir", "test-bls-fp300-mm", "test-bls-wall", "test-bls-door", "test-bls-hum", "test-bls-hfc"]
 OUTPUT_DEVICE_LABELS  = ["test-bls-out-hueOnly", "test-bls-out-fp300Hybrid", "test-bls-out-fp300Mm", "test-bls-out-anyMotion", "test-bls-out-composite"]
-CASES                 = [{'name': 'smoke-rig-boots', 'setup': [{'device': 'test-bls-wall', 'command': 'off'}, {'device': 'test-bls-hue', 'command': 'inactive'}, {'device': 'test-bls-fp300-pir', 'command': 'inactive'}, {'device': 'test-bls-fp300-mm', 'command': 'inactive'}], 'wait_seconds': 2, 'assert': [{'device': 'test-bls-wall', 'attribute': 'switch', 'value': 'off'}]}]
+CASES                 = [{'name': 'smoke-rig-boots', 'setup': [{'device': 'test-bls-wall', 'command': 'off'}, {'device': 'test-bls-hue', 'command': 'inactive'}, {'device': 'test-bls-fp300-pir', 'command': 'inactive'}, {'device': 'test-bls-fp300-mm', 'command': 'inactive'}], 'wait_seconds': 2, 'assert': [{'device': 'test-bls-wall', 'attribute': 'switch', 'value': 'off'}]}, {'name': 'walkin-hue-fires-output', 'setup': [{'device': 'test-bls-wall', 'command': 'off'}, {'device': 'test-bls-hue', 'command': 'inactive'}, {'device': 'test-bls-out-hueOnly', 'command': 'off'}], 'actions': [{'device': 'test-bls-hue', 'command': 'active'}], 'wait_seconds': 2, 'assert': [{'device': 'test-bls-out-hueOnly', 'attribute': 'switch', 'value': 'on'}]}]
 RUNTIME_BUDGET_SECONDS = 30
 
 # ── Stdin args ────────────────────────────────────────────────────────
