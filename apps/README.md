@@ -13,6 +13,7 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 | App | Description |
 |---|---|
 | **Attribute Logger (parent/child)** | Manages multiple Attribute Logger app instances |
+| **Bathroom Lighting Shadow** | Runs multiple lighting-control policies in parallel against shared sensors, drives a virtual switch per policy, and scores each policy without touching real lights. |
 | **Battery Change Logger** | Monitors battery levels and logs replacements to app history and an on-hub JSON file |
 | **Humidity-Based Fan Controller** | Controls a bathroom extractor fan based on humidity levels compared to a reference sensor |
 | **Hydro-Québec Peak Period Manager** | Manages devices during Hydro-Québec peak periods |
