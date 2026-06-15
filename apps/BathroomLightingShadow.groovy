@@ -99,8 +99,7 @@ void initialize() {
     if (humiditySensor) subscribe(humiditySensor, "humidity", "humidityHandler")
     if (hfcActive)     subscribe(hfcActive, "switch", "hfcHandler")
 
-    // resolveUnresolvedOns kickoff disabled — flooded sendEvent with backlogged
-    // transitions and hit LimitExceededException. Will re-enable with throttling.
+    runIn((settings.wOn ?: 60) as Integer, "resolveUnresolvedOns")
 }
 
 private void checkVersion() {
@@ -331,6 +330,7 @@ private void reevaluateOff(String key) {
 }
 
 @Field static final BigDecimal HUMIDITY_OVER_BASELINE = 5.0  // %RH above baseline = "shower active"
+@Field static final Integer RESOLVER_MAX_PER_TICK = 10
 
 Boolean policyComposite(Map snap) {
     boolean anyActive = (snap.hueMotion == "active" || snap.fp300Motion == "active" || snap.fp300Presence == "active")
@@ -357,10 +357,39 @@ private void refreshDerivedTimestamps() {
     }
 }
 
-// DISABLED: this method flooded sendEvent and hit LimitExceededException.
-// Kept as a method body that breaks the runIn self-rescheduling chain on next firing.
-// Will be re-enabled with throttling + transition-resolved-marker hygiene in a follow-up.
 void resolveUnresolvedOns() {
-    unschedule("resolveUnresolvedOns")
-    logInfo "resolveUnresolvedOns disabled — exiting without rescheduling"
+    Long windowMs = (settings.wOn ?: 60) * 1000L
+    Long cutoff = now() - windowMs
+    int processed = 0
+    POLICIES.each { Map p ->
+        if (processed >= RESOLVER_MAX_PER_TICK) return
+        if (!policyEnabled(p.key)) return
+        Map ps = state.policyState[p.key]
+        boolean falseOnChanged = false
+        ps.transitions?.each { Map t ->
+            if (processed >= RESOLVER_MAX_PER_TICK) return
+            if (t.edge != "on") return
+            if ((t.ts as Long) > cutoff) return  // window not yet closed
+            if (t.resolved == true) return
+            // If lastOnClass was set to correctOn by scoreOn, skip.
+            // Otherwise classify falseOn.
+            if (ps.lastOnClass != "correctOn" || ps.lastTransitionTs != t.ts) {
+                Map s = state.scores[p.key]
+                s.falseOn = (s.falseOn ?: 0) + 1
+                if (ps.decision == "on" && ps.lastTransitionTs == t.ts) {
+                    ps.lastOnClass = "falseOn"
+                }
+                falseOnChanged = true
+            }
+            t.resolved = true
+            processed++
+        }
+        // Emit only the changed attribute. Calling emitScore per tick would burst
+        // 10 sendEvents per policy and exhaust the event queue.
+        if (falseOnChanged) {
+            sendEvent(name: "policy_${p.key}_falseOn", value: state.scores[p.key].falseOn)
+            logInfo "falseOn classified for policy ${p.key} (count=${state.scores[p.key].falseOn})"
+        }
+    }
+    runIn((settings.wOn ?: 60) as Integer, "resolveUnresolvedOns")
 }
