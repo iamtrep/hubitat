@@ -1,0 +1,61 @@
+# Copyright (c) 2026 PJ
+# SPDX-License-Identifier: MIT
+
+# BathroomLightingShadow — Mode 1 behavior test spec
+#
+# Exercises the multi-policy harness from
+# apps/BathroomLightingShadow.groovy. Each policy gets its own virtual
+# output switch; ground truth is the virtual wall switch. Test-friendly
+# timing: wOn=10s, tQuiet=5s, tForgot=20s, per-policy holdSec shortened
+# to 8s (fast policies) and 25s (composite).
+#
+# Generate with: /hubitat-behavior-test apps/tests/spec-bathroom-lighting-shadow.yaml
+
+app:
+  source: apps/BathroomLightingShadow.groovy
+  type_name: "Bathroom Lighting Shadow"
+  instance_label: test-bls-app
+  config:
+    wOn: 10
+    tQuiet: 5
+    tForgot: 20
+    policy_hueOnly_enabled: true
+    policy_hueOnly_holdSec: 8
+    policy_fp300Hybrid_enabled: true
+    policy_fp300Hybrid_holdSec: 8
+    policy_fp300Mm_enabled: true
+    policy_fp300Mm_holdSec: 8
+    policy_anyMotion_enabled: true
+    policy_anyMotion_holdSec: 8
+    policy_composite_enabled: true
+    policy_composite_holdSec: 25
+
+inputs:
+  - { name: test-bls-hue,        driver: Virtual Motion Sensor,   role: hueMotion }
+  - { name: test-bls-fp300-pir,  driver: Virtual Motion Sensor,   role: fp300Motion }
+  - { name: test-bls-fp300-mm,   driver: Virtual Motion Sensor,   role: fp300Presence }
+  - { name: test-bls-wall,       driver: Virtual Switch,          role: wallSwitch }
+  - { name: test-bls-door,       driver: Virtual Contact Sensor,  role: doorContact }
+  - { name: test-bls-hum,        driver: Virtual Humidity Sensor, role: humiditySensor }
+  - { name: test-bls-hfc,        driver: Virtual Switch,          role: hfcActive }
+
+outputs:
+  - { name: test-bls-out-hueOnly,     driver: Virtual Switch, role: policy_hueOnly_outputSwitch }
+  - { name: test-bls-out-fp300Hybrid, driver: Virtual Switch, role: policy_fp300Hybrid_outputSwitch }
+  - { name: test-bls-out-fp300Mm,     driver: Virtual Switch, role: policy_fp300Mm_outputSwitch }
+  - { name: test-bls-out-anyMotion,   driver: Virtual Switch, role: policy_anyMotion_outputSwitch }
+  - { name: test-bls-out-composite,   driver: Virtual Switch, role: policy_composite_outputSwitch }
+
+maker_api:
+  label: test-bls-maker
+
+cases:
+  - name: smoke-rig-boots
+    setup:
+      - { device: test-bls-wall, command: "off" }
+      - { device: test-bls-hue,        command: "inactive" }
+      - { device: test-bls-fp300-pir,  command: "inactive" }
+      - { device: test-bls-fp300-mm,   command: "inactive" }
+    wait_seconds: 2
+    assert:
+      - { device: test-bls-wall, attribute: switch, value: "off" }
