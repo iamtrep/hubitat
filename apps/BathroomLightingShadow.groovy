@@ -29,6 +29,7 @@ definition(
 
 preferences {
     page(name: "mainPage")
+    page(name: "recentEventsPage")
 }
 
 Map mainPage() {
@@ -44,9 +45,9 @@ Map mainPage() {
         }
         section("Policies") {
             POLICIES.each { Map p ->
-                input "policy_${p.key}_enabled",    "bool",            title: "${p.label}: enabled", defaultValue: false
-                input "policy_${p.key}_outputSwitch", "capability.switch", title: "${p.label}: output virtual switch (pick a System Virtual Switch)", required: false
-                input "policy_${p.key}_holdSec",    "number",          title: "${p.label}: hold seconds", defaultValue: p.defaultHoldSec
+                input "policy_${p.key}_enabled",      "bool",              title: "${p.label}: enabled", defaultValue: false
+                input "policy_${p.key}_outputSwitch", "capability.switch", title: "${p.label}: output virtual switch (System Virtual Switch)", required: false
+                input "policy_${p.key}_holdSec",      "number",            title: "${p.label}: hold seconds", defaultValue: p.defaultHoldSec
             }
         }
         section("Tunables") {
@@ -54,8 +55,21 @@ Map mainPage() {
             input "tQuiet",  "number", title: "Sensor-quiet threshold T_quiet (seconds)", defaultValue: 60
             input "tForgot", "number", title: "User-forgot threshold T_forgot (seconds)", defaultValue: 600
         }
+        section("Results") {
+            paragraph buildScoreTable()
+            input "btnReset", "button", title: "Reset counters"
+            href "recentEventsPage", title: "Recent events", description: "Last 100 entries in the ring buffer"
+        }
         section("Diagnostics") {
             input "debugEnable", "bool", title: "Enable debug logging", defaultValue: false
+        }
+    }
+}
+
+Map recentEventsPage() {
+    dynamicPage(name: "recentEventsPage", title: "Recent events") {
+        section {
+            paragraph buildRecentTable()
         }
     }
 }
@@ -432,4 +446,70 @@ void resolveUnresolvedOns() {
         }
     }
     runIn((settings.wOn ?: 60) as Integer, "resolveUnresolvedOns")
+}
+
+private String buildScoreTable() {
+    Long count = (state.userForgotOff?.count ?: 0) as Long
+    Long avgLapse = count > 0 ? Math.round((state.userForgotOff.lapseSecSum / count) / 60.0) : 0
+    StringBuilder sb = new StringBuilder()
+
+    // Warnings for policies enabled without an output switch picked.
+    List<String> halfConfigured = POLICIES.findAll { Map p ->
+        settings."policy_${p.key}_enabled" == true && settings."policy_${p.key}_outputSwitch" == null
+    }.collect { it.label as String }
+    if (!halfConfigured.isEmpty()) {
+        sb << "<p style='color:#a00;'><b>Auto-disabled (no output switch picked):</b> ${halfConfigured.join(', ')}</p>"
+    }
+
+    sb << "<p><b>userForgotOff:</b> count=${count}, avgLapseMin=${avgLapse}</p>"
+    sb << "<table border='1' cellpadding='4' style='border-collapse:collapse;'>"
+    sb << "<tr><th>policy</th><th>correctOn</th><th style='background:#fdd'>missedOn</th><th>falseOn</th>"
+    sb << "<th style='background:#fdd'>prematureOff</th><th>correctOff_qC</th><th style='background:#dfd'>correctOff_aU</th>"
+    sb << "<th>overHold</th><th>avgLatencyMs</th></tr>"
+    POLICIES.each { Map p ->
+        if (!policyEnabled(p.key)) return
+        Map s = state.scores[p.key]
+        Long avgLat = s.latencySamples > 0 ? Math.round(s.latencyMsSum / s.latencySamples) : 0L
+        sb << "<tr><td>${p.label}</td><td>${s.correctOn}</td><td style='background:#fdd'>${s.missedOn}</td><td>${s.falseOn}</td>"
+        sb << "<td style='background:#fdd'>${s.prematureOff}</td><td>${s.correctOff_quietConfirmed}</td><td style='background:#dfd'>${s.correctOff_anticipatedUser}</td>"
+        sb << "<td>${s.overHold}</td><td>${avgLat}</td></tr>"
+    }
+    sb << "</table>"
+    Long since = state.observingSince as Long
+    if (since != null) {
+        sb << "<p><i>Observing since ${new Date(since)}</i></p>"
+    }
+    return sb.toString()
+}
+
+private String buildRecentTable() {
+    StringBuilder sb = new StringBuilder()
+    sb << "<table border='1' cellpadding='4' style='border-collapse:collapse;'>"
+    sb << "<tr><th>ts</th><th>source</th><th>device</th><th>detail</th></tr>"
+    (state.recent ?: []).reverse().each { Map e ->
+        sb << "<tr><td>${new Date(e.ts as Long)}</td><td>${e.source}</td><td>${e.device}</td><td>${e.detail}</td></tr>"
+    }
+    sb << "</table>"
+    return sb.toString()
+}
+
+void appButtonHandler(String btn) {
+    if (btn == "btnReset") {
+        logInfo "reset counters"
+        POLICIES.each { Map p ->
+            state.scores[p.key] = [
+                correctOn: 0, missedOn: 0, falseOn: 0,
+                prematureOff: 0, correctOff_quietConfirmed: 0, correctOff_anticipatedUser: 0,
+                overHold: 0,
+                latencyMsSum: 0L, latencySamples: 0
+            ]
+            // Emit reset values for all attributes. This is a single user-triggered event,
+            // so the batch emit is fine here (unlike the resolver's periodic sweep).
+            emitScore(p.key)
+        }
+        state.userForgotOff = [count: 0, lapseSecSum: 0L]
+        state.observingSince = now()
+        sendEvent(name: "userForgotOff_count", value: 0)
+        sendEvent(name: "userForgotOff_avgLapseMin", value: 0)
+    }
 }
