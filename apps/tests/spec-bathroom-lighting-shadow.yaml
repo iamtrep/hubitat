@@ -116,6 +116,28 @@ cases:
     assert_logs:
       - { pattern: "missedOn:[1-9]", level: info }
 
+  - name: anticipated-user-shadow-off-while-wall-still-on
+    setup:
+      - { device: test-bls-wall,         command: "on" }   # user has lights on
+      - { device: test-bls-hue,          command: "inactive" }
+      - { device: test-bls-fp300-pir,    command: "inactive" }
+      - { device: test-bls-fp300-mm,     command: "inactive" }
+      - { device: test-bls-out-hueOnly,  command: "off" }
+    actions:
+      # Person enters briefly, leaves
+      - { device: test-bls-hue, command: "active" }
+      - { device: test-bls-hue, command: "inactive" }
+    command_spacing_seconds: 1.0
+    # Wait past holdSec=8 plus tQuiet=5 — so when hueOnly OFFs at t≈8s,
+    # tQuietSince was already 7s old (set when hue went inactive), so
+    # (tOff - tLastActivity) > tQuiet → not premature.
+    # Wall switch is still "on" → correctOff_anticipatedUser.
+    # Use assert_events (not assert_logs): the OFF fires ~8s into the case,
+    # past LogCapture's reliable window per hubitat_logcapture_late_firing memory.
+    wait_seconds: 12
+    assert_events:
+      - { attribute: "policy_hueOnly_lastOffClass", value: "correctOff_anticipatedUser" }
+
   - name: composite-holds-through-hfc-active
     setup:
       - { device: test-bls-wall,             command: "off" }

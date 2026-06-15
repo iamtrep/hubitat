@@ -260,10 +260,50 @@ private void drivePolicy(String key, String edge) {
     if (sw == null) return
     if (edge == "on") sw.on() else sw.off()
     Map ps = state.policyState[key]
+    String prev = ps.decision
     ps.decision = edge
     ps.lastTransitionTs = now()
     ps.transitions = ((ps.transitions ?: []) + [[ts: now(), edge: edge]]).takeRight(50)
     logInfo "policy ${key} -> ${edge}"
+    if (edge == "off" && prev == "on") {
+        classifyOff(key, now() as Long)
+    } else if (edge == "on") {
+        ps.lastOnClass = null  // pending — resolver or scoreOn will set it
+    }
+}
+
+// NOTE: prematureOff is unreachable for all currently-defined policies because each policy's
+// on-condition is sensor-driven; the off-check re-evaluates and stays ON if sensors are still firing.
+// The counter exists to catch future policies (e.g., time-of-day) that might decide OFF
+// without consulting presence.
+private void classifyOff(String key, Long tOff) {
+    Map ps = state.policyState[key]
+    if (ps.lastOnClass == "falseOn") return  // bookkeeping-only — don't score
+
+    Long tQuietMs = (settings.tQuiet ?: 60) * 1000L
+    Long lastAct = state.tLastActivity as Long
+    boolean prematureCondition = lastAct != null && (tOff - lastAct) < tQuietMs
+
+    Map s = state.scores[key]
+    String offClass
+    if (prematureCondition) {
+        s.prematureOff = (s.prematureOff ?: 0) + 1
+        offClass = "prematureOff"
+    } else {
+        String wallState = wallSwitch?.currentValue("switch")
+        if (wallState == "off") {
+            s.correctOff_quietConfirmed = (s.correctOff_quietConfirmed ?: 0) + 1
+            offClass = "correctOff_quietConfirmed"
+        } else {
+            s.correctOff_anticipatedUser = (s.correctOff_anticipatedUser ?: 0) + 1
+            offClass = "correctOff_anticipatedUser"
+        }
+    }
+    // Surface the latest OFF classification as its own attribute — both a stable
+    // observable for behavior tests and a useful operator-visible signal.
+    sendEvent(name: "policy_${key}_lastOffClass", value: offClass)
+    emitScore(key)
+    logInfo "classifyOff ${key}: prematureOff=${s.prematureOff} correctOff_quietConfirmed=${s.correctOff_quietConfirmed} correctOff_anticipatedUser=${s.correctOff_anticipatedUser}"
 }
 
 void offCheckHueOnly()     { reevaluateOff("hueOnly") }
