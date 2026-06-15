@@ -70,3 +70,16 @@ cases:
     wait_seconds: 2
     assert:
       - { device: test-bls-out-hueOnly, attribute: switch, value: "on" }
+
+  - name: hueonly-holds-then-times-out
+    setup:
+      - { device: test-bls-wall, command: "off" }
+      - { device: test-bls-hue,  command: "inactive" }
+      - { device: test-bls-out-hueOnly, command: "off" }
+    actions:
+      - { device: test-bls-hue, command: "active" }
+      - { device: test-bls-hue, command: "inactive" }
+    command_spacing_seconds: 1.0
+    wait_seconds: 12
+    assert:
+      - { device: test-bls-out-hueOnly, attribute: switch, value: "off" }

@@ -199,3 +199,24 @@ private void drivePolicy(String key, String edge) {
     ps.transitions = ((ps.transitions ?: []) + [[ts: now(), edge: edge]]).takeRight(50)
     logInfo "policy ${key} -> ${edge}"
 }
+
+void offCheckHueOnly()     { reevaluateOff("hueOnly") }
+void offCheckFp300Hybrid() { reevaluateOff("fp300Hybrid") }
+void offCheckFp300Mm()     { reevaluateOff("fp300Mm") }
+void offCheckAnyMotion()   { reevaluateOff("anyMotion") }
+void offCheckComposite()   { reevaluateOff("composite") }
+
+private void reevaluateOff(String key) {
+    if (!policyEnabled(key)) return
+    Map p = POLICIES.find { it.key == key }
+    Map snap = snapshot()
+    Boolean wantOn = (Boolean) this."${p.onMethod}"(snap)
+    if (wantOn == null) return
+    Map ps = state.policyState[key]
+    if (!wantOn && ps.decision == "on") {
+        drivePolicy(key, "off")
+    } else if (wantOn && ps.decision == "on") {
+        // Sensor became active again before hold expired — stay on, no action.
+        logDebug "policy ${key}: off-check fired but policy still wants ON"
+    }
+}
