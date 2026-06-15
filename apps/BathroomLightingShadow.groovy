@@ -158,6 +158,18 @@ Boolean policyHueOnly(Map snap) {
     return snap.hueMotion == "active"
 }
 
+Boolean policyFp300Hybrid(Map snap) {
+    return snap.fp300Motion == "active" || snap.fp300Presence == "active"
+}
+
+Boolean policyFp300Mm(Map snap) {
+    return snap.fp300Presence == "active"
+}
+
+Boolean policyAnyMotion(Map snap) {
+    return snap.hueMotion == "active" || snap.fp300Motion == "active" || snap.fp300Presence == "active"
+}
+
 private boolean policyEnabled(String key) {
     return settings."policy_${key}_enabled" == true && settings."policy_${key}_outputSwitch" != null
 }

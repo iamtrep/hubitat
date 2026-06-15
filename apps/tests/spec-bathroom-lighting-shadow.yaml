@@ -21,11 +21,11 @@ app:
     tForgot: 20
     policy_hueOnly_enabled: true
     policy_hueOnly_holdSec: 8
-    policy_fp300Hybrid_enabled: false
+    policy_fp300Hybrid_enabled: true
     policy_fp300Hybrid_holdSec: 8
-    policy_fp300Mm_enabled: false
+    policy_fp300Mm_enabled: true
     policy_fp300Mm_holdSec: 8
-    policy_anyMotion_enabled: false
+    policy_anyMotion_enabled: true
     policy_anyMotion_holdSec: 8
     policy_composite_enabled: false
     policy_composite_holdSec: 25
@@ -83,3 +83,22 @@ cases:
     wait_seconds: 12
     assert:
       - { device: test-bls-out-hueOnly, attribute: switch, value: "off" }
+
+  - name: fp300-mm-only-fires-mm-policy
+    setup:
+      - { device: test-bls-wall,        command: "off" }
+      - { device: test-bls-hue,         command: "inactive" }
+      - { device: test-bls-fp300-pir,   command: "inactive" }
+      - { device: test-bls-fp300-mm,    command: "inactive" }
+      - { device: test-bls-out-hueOnly,     command: "off" }
+      - { device: test-bls-out-fp300Hybrid, command: "off" }
+      - { device: test-bls-out-fp300Mm,     command: "off" }
+      - { device: test-bls-out-anyMotion,   command: "off" }
+    actions:
+      - { device: test-bls-fp300-mm, command: "active" }
+    wait_seconds: 2
+    assert:
+      - { device: test-bls-out-hueOnly,     attribute: switch, value: "off" }
+      - { device: test-bls-out-fp300Hybrid, attribute: switch, value: "on" }
+      - { device: test-bls-out-fp300Mm,     attribute: switch, value: "on" }
+      - { device: test-bls-out-anyMotion,   attribute: switch, value: "on" }
