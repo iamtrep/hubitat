@@ -123,6 +123,51 @@ void sensorHandler(evt) {
 
 void wallSwitchHandler(evt) {
     recordEvent("wallSwitch", evt.device.displayName, evt.value)
+    if (evt.value == "on") {
+        scoreOn(now())
+    }
+    // OFF scoring is folded into the policy-OFF path (Task 10); the wall switch state at
+    // policy-OFF time disambiguates correctOff_quietConfirmed vs correctOff_anticipatedUser.
+    // The wall-switch OFF edge is also consulted by userForgotOff (Task 13).
+}
+
+private void scoreOn(Long wallOnTs) {
+    Long windowMs = (settings.wOn ?: 60) * 1000L
+    POLICIES.each { Map p ->
+        if (!policyEnabled(p.key)) return
+        Map ps = state.policyState[p.key]
+        Map matchOn = ps.transitions?.reverse()?.find {
+            it.edge == "on" && Math.abs((it.ts as Long) - wallOnTs) <= windowMs
+        }
+        Map s = state.scores[p.key]
+        if (matchOn != null) {
+            s.correctOn = (s.correctOn ?: 0) + 1
+            Long lat = (matchOn.ts as Long) - wallOnTs
+            // Latency: shadow earlier than wall = negative; positive = shadow late
+            s.latencyMsSum = (s.latencyMsSum ?: 0L) + lat
+            s.latencySamples = (s.latencySamples ?: 0) + 1
+            ps.lastOnClass = "correctOn"
+        } else {
+            s.missedOn = (s.missedOn ?: 0) + 1
+        }
+        emitScore(p.key)
+    }
+    logInfo "scoreOn: tallies updated; per-policy: ${state.scores.collectEntries { k, v -> [k, [correctOn: v.correctOn, missedOn: v.missedOn]] }}"
+}
+
+private void emitScore(String key) {
+    Map s = state.scores[key]
+    Map ps = state.policyState[key]
+    sendEvent(name: "policy_${key}_correctOn",    value: s.correctOn)
+    sendEvent(name: "policy_${key}_missedOn",     value: s.missedOn)
+    sendEvent(name: "policy_${key}_falseOn",      value: s.falseOn)
+    sendEvent(name: "policy_${key}_prematureOff", value: s.prematureOff)
+    sendEvent(name: "policy_${key}_correctOff_quietConfirmed",  value: s.correctOff_quietConfirmed)
+    sendEvent(name: "policy_${key}_correctOff_anticipatedUser", value: s.correctOff_anticipatedUser)
+    sendEvent(name: "policy_${key}_overHold", value: s.overHold)
+    Long avg = s.latencySamples > 0 ? Math.round(s.latencyMsSum / s.latencySamples) : 0L
+    sendEvent(name: "policy_${key}_avgLatencyMs", value: avg)
+    sendEvent(name: "policy_${key}_lastDecision", value: "${ps.decision}@${ps.lastTransitionTs ?: 0}")
 }
 
 void doorHandler(evt) {

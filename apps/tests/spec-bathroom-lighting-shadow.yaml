@@ -103,6 +103,19 @@ cases:
       - { device: test-bls-out-fp300Mm,     attribute: switch, value: "on" }
       - { device: test-bls-out-anyMotion,   attribute: switch, value: "on" }
 
+  - name: missed-on-no-sensors-fire
+    setup:
+      - { device: test-bls-wall,        command: "off" }
+      - { device: test-bls-hue,         command: "inactive" }
+      - { device: test-bls-fp300-pir,   command: "inactive" }
+      - { device: test-bls-fp300-mm,    command: "inactive" }
+      - { device: test-bls-out-hueOnly, command: "off" }
+    actions:
+      - { device: test-bls-wall, command: "on" }
+    wait_seconds: 2
+    assert_logs:
+      - { pattern: "missedOn:1", level: info }
+
   - name: composite-holds-through-hfc-active
     setup:
       - { device: test-bls-wall,             command: "off" }
