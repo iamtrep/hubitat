@@ -127,6 +127,14 @@ void sensorHandler(evt) {
 
 void wallSwitchHandler(evt) {
     recordEvent("wallSwitch", evt.device.displayName, evt.value)
+
+    Long lastAct = state.tLastActivity as Long
+    Long thresholdMs = 5000L
+    if (lastAct == null || (now() - lastAct) > thresholdMs) {
+        recordEvent("manualOverride", evt.device.displayName, "wallSwitch=${evt.value} (no recent sensor activity)")
+        logInfo "manualOverride: wallSwitch ${evt.value} with no sensor activity in last ${thresholdMs}ms"
+    }
+
     if (evt.value == "on") {
         scoreOn(now())
     } else if (evt.value == "off") {

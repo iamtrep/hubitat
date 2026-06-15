@@ -206,3 +206,21 @@ cases:
     wait_seconds: 2
     assert_logs:
       - { pattern: "userForgotOff: count=", level: info }
+
+  - name: manual-override-arm-quiet
+    setup:
+      - { device: test-bls-wall,        command: "off" }
+      - { device: test-bls-hue,         command: "inactive" }
+      - { device: test-bls-fp300-pir,   command: "inactive" }
+      - { device: test-bls-fp300-mm,    command: "inactive" }
+    # Let tLastActivity from prior cases age past the 5s threshold.
+    wait_seconds: 6
+    assert:
+      - { device: test-bls-wall, attribute: switch, value: "off" }
+
+  - name: manual-override-fires
+    actions:
+      - { device: test-bls-wall, command: "on" }
+    wait_seconds: 2
+    assert_logs:
+      - { pattern: "manualOverride", level: info }
