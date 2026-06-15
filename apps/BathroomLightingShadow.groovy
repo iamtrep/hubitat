@@ -371,8 +371,6 @@ void resolveUnresolvedOns() {
             if (t.edge != "on") return
             if ((t.ts as Long) > cutoff) return  // window not yet closed
             if (t.resolved == true) return
-            // If lastOnClass was set to correctOn by scoreOn, skip.
-            // Otherwise classify falseOn.
             if (ps.lastOnClass != "correctOn" || ps.lastTransitionTs != t.ts) {
                 Map s = state.scores[p.key]
                 s.falseOn = (s.falseOn ?: 0) + 1
@@ -384,11 +382,34 @@ void resolveUnresolvedOns() {
             t.resolved = true
             processed++
         }
-        // Emit only the changed attribute. Calling emitScore per tick would burst
-        // 10 sendEvents per policy and exhaust the event queue.
         if (falseOnChanged) {
             sendEvent(name: "policy_${p.key}_falseOn", value: state.scores[p.key].falseOn)
             logInfo "falseOn classified for policy ${p.key} (count=${state.scores[p.key].falseOn})"
+        }
+
+        // overHold: policy is ON, wall switch is OFF, room has been quiet > holdSec.
+        // Increment + emit only when the condition is freshly met (avoid re-incrementing
+        // every tick while the over-hold continues).
+        if (ps.decision == "on") {
+            String wallState = wallSwitch?.currentValue("switch")
+            Long tQuietSince = state.tQuietSince as Long
+            if (wallState == "off" && tQuietSince != null) {
+                Integer holdSec = (settings."policy_${p.key}_holdSec" ?: p.defaultHoldSec) as Integer
+                if ((now() - tQuietSince) > (holdSec * 1000L)) {
+                    // Only count an over-hold once per ON-cycle: don't re-increment if
+                    // we've already flagged this current cycle.
+                    if (ps.overHoldFlagged != true) {
+                        Map s = state.scores[p.key]
+                        s.overHold = (s.overHold ?: 0) + 1
+                        ps.overHoldFlagged = true
+                        sendEvent(name: "policy_${p.key}_overHold", value: s.overHold)
+                        logInfo "overHold classified for policy ${p.key} (count=${s.overHold})"
+                    }
+                }
+            }
+        } else {
+            // Reset flag when the policy goes OFF — next ON-cycle can fire overHold again.
+            ps.overHoldFlagged = false
         }
     }
     runIn((settings.wOn ?: 60) as Integer, "resolveUnresolvedOns")
