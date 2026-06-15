@@ -76,6 +76,7 @@ void initialize() {
     if (state.tLastActivity == null)  state.tLastActivity = null
     if (state.tQuietSince == null)    state.tQuietSince = null
     if (state.humidityBaseline == null) state.humidityBaseline = null  // null until first reading
+    if (state.userForgotOff == null) state.userForgotOff = [count: 0, lapseSecSum: 0L]
 
     POLICIES.each { Map p ->
         if (state.scores[p.key] == null) {
@@ -128,10 +129,20 @@ void wallSwitchHandler(evt) {
     recordEvent("wallSwitch", evt.device.displayName, evt.value)
     if (evt.value == "on") {
         scoreOn(now())
+    } else if (evt.value == "off") {
+        Long tQuietSince = state.tQuietSince as Long
+        Long tForgotMs = ((settings.tForgot ?: 600) as Long) * 1000L
+        if (tQuietSince != null && (now() - tQuietSince) >= tForgotMs) {
+            if (state.userForgotOff == null) state.userForgotOff = [count: 0, lapseSecSum: 0L]
+            Long lapseSec = ((now() - tQuietSince) / 1000L) as Long
+            state.userForgotOff.count = (state.userForgotOff.count ?: 0) + 1
+            state.userForgotOff.lapseSecSum = (state.userForgotOff.lapseSecSum ?: 0L) + lapseSec
+            Long avgLapseMin = Math.round((state.userForgotOff.lapseSecSum / state.userForgotOff.count) / 60.0)
+            sendEvent(name: "userForgotOff_count", value: state.userForgotOff.count)
+            sendEvent(name: "userForgotOff_avgLapseMin", value: avgLapseMin)
+            logInfo "userForgotOff: count=${state.userForgotOff.count} lapseSec=${lapseSec}"
+        }
     }
-    // OFF scoring is folded into the policy-OFF path (Task 10); the wall switch state at
-    // policy-OFF time disambiguates correctOff_quietConfirmed vs correctOff_anticipatedUser.
-    // The wall-switch OFF edge is also consulted by userForgotOff (Task 13).
 }
 
 private void scoreOn(Long wallOnTs) {

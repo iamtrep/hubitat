@@ -184,3 +184,25 @@ cases:
       - { device: test-bls-out-hueOnly,   attribute: switch, value: "off" }
       # composite still ON (holdSec=25 hasn't fired, AND HFC active keeps the policy wanting ON)
       - { device: test-bls-out-composite, attribute: switch, value: "on" }
+
+  - name: user-forgot-arm-quiet
+    setup:
+      - { device: test-bls-wall,        command: "on" }
+      - { device: test-bls-hue,         command: "inactive" }
+      - { device: test-bls-fp300-pir,   command: "inactive" }
+      - { device: test-bls-fp300-mm,    command: "inactive" }
+    actions:
+      - { device: test-bls-hue, command: "active" }
+      - { device: test-bls-hue, command: "inactive" }
+    command_spacing_seconds: 1.0
+    # Let tQuietSince age past tForgot=20.
+    wait_seconds: 22
+    assert:
+      - { device: test-bls-wall, attribute: switch, value: "on" }
+
+  - name: user-forgot-trigger-off
+    actions:
+      - { device: test-bls-wall, command: "off" }
+    wait_seconds: 2
+    assert_logs:
+      - { pattern: "userForgotOff: count=", level: info }
