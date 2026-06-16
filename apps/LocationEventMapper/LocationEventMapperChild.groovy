@@ -11,7 +11,7 @@ import groovy.transform.Field
 
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.0.1"
+@Field static final String CODE_VERSION = "0.0.2"
 
 definition(
     name: "Location Event Mapper Child",
@@ -105,10 +105,21 @@ void eventHandler(Event evt) {
     }
 
     if (evt.name in triggerEventsClose) {
-        closeContact(evt.descriptionText)
+        // The startup delay only applies to systemStart -- the rationale (hub
+        // is busy coming back up) doesn't generalize to other close events the
+        // user might pick (zigbeeOn, sunrise, ...).
+        Integer delay = (evt.name == "systemStart") ? ((settings.startupDelay ?: 0) as Integer) : 0
+        if (delay > 0) {
+            logInfo "${evt.descriptionText} - Deferring close by ${delay}s"
+            runIn(delay, "closeContactDelayed", [data: [message: evt.descriptionText]])
+        } else {
+            closeContact(evt.descriptionText)
+        }
     }
+}
 
-    //logTrace("Unhandled location event: ${evt.name}")
+void closeContactDelayed(Map data) {
+    closeContact((data?.message as String) ?: "delayed close")
 }
 
 void openContact(String message) {

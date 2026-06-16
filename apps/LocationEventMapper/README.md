@@ -26,6 +26,10 @@ A single child can map any subset of these to OPEN and any subset to CLOSE — t
 
 The handler checks the sensor's current state before issuing `open()` or `close()` and logs a warning if the sensor was already in the target state. A warning on `already open — missed systemStart event?` is the typical signal that a shutdown-without-restart happened.
 
+### Startup delay
+
+The CLOSE for a `systemStart` event can be deferred by up to 3600 seconds so the sensor stays in its "hub restarting" state long enough for the platform to finish initializing apps, devices, and radios. The delay only applies when the close-triggering event is `systemStart`; other CLOSE events fire immediately.
+
 ### Per-instance logging
 
 Each child has its own log-level selector (`warn`, `info`, `debug`, `trace`).
@@ -81,6 +85,7 @@ The defaults wire up a restart-state sensor: it opens when the hub is asked to s
 | Virtual Contact Sensor | _(required)_ | Sensor the mapping drives |
 | Events to OPEN the device | `manualReboot`, `manualShutdown`, `update` | Multi-select from the supported location events |
 | Events to CLOSE the device | `systemStart` | Multi-select from the supported location events |
+| Startup delay (seconds) | `0` | Defer CLOSE on a `systemStart` event by this many seconds (0–3600); ignored for non-`systemStart` CLOSE events |
 | Logging level | `info` | `warn`, `info`, `debug`, `trace` |
 
 ## File Structure
