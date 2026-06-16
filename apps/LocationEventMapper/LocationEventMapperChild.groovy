@@ -11,7 +11,7 @@ import groovy.transform.Field
 
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.0.2"
+@Field static final String CODE_VERSION = "0.0.3"
 
 definition(
     name: "Location Event Mapper Child",
@@ -68,7 +68,6 @@ Map mainPage() {
                 options: constLocationEvents, required: false, multiple: true, defaultValue: ["manualReboot","manualShutdown","update"]
              input "triggerEventsClose", "enum", title: "Events to CLOSE the device",
                 options: constLocationEvents, required: false, multiple: true, defaultValue: ["systemStart"]
-            input name: "startupDelay", title: "Wait this many seconds after systemStartup event to close the contact sensor", type: "number", defaultValue: 0, range: "0..3600", required: true
         }
         section("Logging") {
             input name: "logLevel", type: "enum", options: ["warn","info","debug","trace"], title: "Enable logging?", defaultValue: "info", required: true, submitOnChange: true
@@ -105,21 +104,8 @@ void eventHandler(Event evt) {
     }
 
     if (evt.name in triggerEventsClose) {
-        // The startup delay only applies to systemStart -- the rationale (hub
-        // is busy coming back up) doesn't generalize to other close events the
-        // user might pick (zigbeeOn, sunrise, ...).
-        Integer delay = (evt.name == "systemStart") ? ((settings.startupDelay ?: 0) as Integer) : 0
-        if (delay > 0) {
-            logInfo "${evt.descriptionText} - Deferring close by ${delay}s"
-            runIn(delay, "closeContactDelayed", [data: [message: evt.descriptionText]])
-        } else {
-            closeContact(evt.descriptionText)
-        }
+        closeContact(evt.descriptionText)
     }
-}
-
-void closeContactDelayed(Map data) {
-    closeContact((data?.message as String) ?: "delayed close")
 }
 
 void openContact(String message) {
