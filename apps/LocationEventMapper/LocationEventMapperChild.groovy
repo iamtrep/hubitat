@@ -23,7 +23,7 @@ definition(
     category: "Utility",
     iconUrl: "",
     iconX2Url: "",
-    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/LocationEventMapperChild.groovy"
+    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/LocationEventMapper/LocationEventMapperChild.groovy"
 )
 
 preferences {
