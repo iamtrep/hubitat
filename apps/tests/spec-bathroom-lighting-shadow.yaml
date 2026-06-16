@@ -4,10 +4,11 @@
 # BathroomLightingShadow — Mode 1 behavior test spec
 #
 # Exercises the multi-policy harness from
-# apps/BathroomLightingShadow.groovy. Each policy gets its own virtual
-# output switch; ground truth is the virtual wall switch. Test-friendly
-# timing: wOn=10s, tQuiet=5s, tForgot=20s, per-policy holdSec shortened
-# to 8s (fast policies) and 25s (composite).
+# apps/BathroomLightingShadow.groovy. The app auto-creates one Virtual
+# Switch child per policy on Done; the rig discovers them via the
+# instance's childDevices list and adds them to the Maker API.
+# Test-friendly timing: wOn=10s, tQuiet=5s, tForgot=20s, per-policy
+# holdSec shortened to 8s (fast policies) and 25s (composite).
 #
 # Generate with: /hubitat-behavior-test apps/tests/spec-bathroom-lighting-shadow.yaml
 
@@ -19,32 +20,29 @@ app:
     wOn: 10
     tQuiet: 5
     tForgot: 20
-    policy_hueOnly_enabled: true
     policy_hueOnly_holdSec: 8
-    policy_fp300Hybrid_enabled: true
     policy_fp300Hybrid_holdSec: 8
-    policy_fp300Mm_enabled: true
     policy_fp300Mm_holdSec: 8
-    policy_anyMotion_enabled: true
     policy_anyMotion_holdSec: 8
-    policy_composite_enabled: true
     policy_composite_holdSec: 25
 
 inputs:
-  - { name: test-bls-hue,        driver: Virtual Motion Sensor,   role: hueMotion }
-  - { name: test-bls-fp300-pir,  driver: Virtual Motion Sensor,   role: fp300Motion }
-  - { name: test-bls-fp300-mm,   driver: Virtual Motion Sensor,   role: fp300Presence }
-  - { name: test-bls-wall,       driver: Virtual Switch,          role: wallSwitch }
-  - { name: test-bls-door,       driver: Virtual Contact Sensor,  role: doorContact }
-  - { name: test-bls-hum,        driver: Virtual Humidity Sensor, role: humiditySensor }
-  - { name: test-bls-hfc,        driver: Virtual Switch,          role: hfcActive }
+  - { name: test-bls-hue,        driver: Virtual Motion Sensor,  role: hueMotion }
+  - { name: test-bls-fp300-pir,  driver: Virtual Motion Sensor,  role: fp300Motion }
+  - { name: test-bls-fp300-mm,   driver: Virtual Motion Sensor,  role: fp300Presence }
+  - { name: test-bls-wall,       driver: Virtual Switch,         role: wallSwitch }
+  - { name: test-bls-door,       driver: Virtual Contact Sensor, role: doorContact }
+  - { name: test-bls-hfc,        driver: Virtual Switch,         role: hfcActive }
 
+# Outputs are auto-created by the app as Virtual Switch children;
+# labels follow "{app.label} {policy_key}". The rig must discover them
+# (not pre-create) and add to the Maker API.
 outputs:
-  - { name: test-bls-out-hueOnly,     driver: Virtual Switch, role: policy_hueOnly_outputSwitch }
-  - { name: test-bls-out-fp300Hybrid, driver: Virtual Switch, role: policy_fp300Hybrid_outputSwitch }
-  - { name: test-bls-out-fp300Mm,     driver: Virtual Switch, role: policy_fp300Mm_outputSwitch }
-  - { name: test-bls-out-anyMotion,   driver: Virtual Switch, role: policy_anyMotion_outputSwitch }
-  - { name: test-bls-out-composite,   driver: Virtual Switch, role: policy_composite_outputSwitch }
+  - { name: test-bls-app hueOnly,     auto_created: true }
+  - { name: test-bls-app fp300Hybrid, auto_created: true }
+  - { name: test-bls-app fp300Mm,     auto_created: true }
+  - { name: test-bls-app anyMotion,   auto_created: true }
+  - { name: test-bls-app composite,   auto_created: true }
 
 maker_api:
   label: test-bls-maker
@@ -64,25 +62,25 @@ cases:
     setup:
       - { device: test-bls-wall, command: "off" }
       - { device: test-bls-hue,  command: "inactive" }
-      - { device: test-bls-out-hueOnly, command: "off" }
+      - { device: test-bls-app hueOnly, command: "off" }
     actions:
       - { device: test-bls-hue, command: "active" }
     wait_seconds: 2
     assert:
-      - { device: test-bls-out-hueOnly, attribute: switch, value: "on" }
+      - { device: test-bls-app hueOnly, attribute: switch, value: "on" }
 
   - name: hueonly-holds-then-times-out
     setup:
       - { device: test-bls-wall, command: "off" }
       - { device: test-bls-hue,  command: "inactive" }
-      - { device: test-bls-out-hueOnly, command: "off" }
+      - { device: test-bls-app hueOnly, command: "off" }
     actions:
       - { device: test-bls-hue, command: "active" }
       - { device: test-bls-hue, command: "inactive" }
     command_spacing_seconds: 1.0
     wait_seconds: 12
     assert:
-      - { device: test-bls-out-hueOnly, attribute: switch, value: "off" }
+      - { device: test-bls-app hueOnly, attribute: switch, value: "off" }
 
   - name: fp300-mm-only-fires-mm-policy
     setup:
@@ -90,18 +88,18 @@ cases:
       - { device: test-bls-hue,         command: "inactive" }
       - { device: test-bls-fp300-pir,   command: "inactive" }
       - { device: test-bls-fp300-mm,    command: "inactive" }
-      - { device: test-bls-out-hueOnly,     command: "off" }
-      - { device: test-bls-out-fp300Hybrid, command: "off" }
-      - { device: test-bls-out-fp300Mm,     command: "off" }
-      - { device: test-bls-out-anyMotion,   command: "off" }
+      - { device: test-bls-app hueOnly,     command: "off" }
+      - { device: test-bls-app fp300Hybrid, command: "off" }
+      - { device: test-bls-app fp300Mm,     command: "off" }
+      - { device: test-bls-app anyMotion,   command: "off" }
     actions:
       - { device: test-bls-fp300-mm, command: "active" }
     wait_seconds: 2
     assert:
-      - { device: test-bls-out-hueOnly,     attribute: switch, value: "off" }
-      - { device: test-bls-out-fp300Hybrid, attribute: switch, value: "on" }
-      - { device: test-bls-out-fp300Mm,     attribute: switch, value: "on" }
-      - { device: test-bls-out-anyMotion,   attribute: switch, value: "on" }
+      - { device: test-bls-app hueOnly,     attribute: switch, value: "off" }
+      - { device: test-bls-app fp300Hybrid, attribute: switch, value: "on" }
+      - { device: test-bls-app fp300Mm,     attribute: switch, value: "on" }
+      - { device: test-bls-app anyMotion,   attribute: switch, value: "on" }
 
   - name: missed-on-no-sensors-fire
     setup:
@@ -109,7 +107,7 @@ cases:
       - { device: test-bls-hue,         command: "inactive" }
       - { device: test-bls-fp300-pir,   command: "inactive" }
       - { device: test-bls-fp300-mm,    command: "inactive" }
-      - { device: test-bls-out-hueOnly, command: "off" }
+      - { device: test-bls-app hueOnly, command: "off" }
     actions:
       - { device: test-bls-wall, command: "on" }
     wait_seconds: 2
@@ -122,7 +120,7 @@ cases:
       - { device: test-bls-hue,          command: "inactive" }
       - { device: test-bls-fp300-pir,    command: "inactive" }
       - { device: test-bls-fp300-mm,     command: "inactive" }
-      - { device: test-bls-out-hueOnly,  command: "off" }
+      - { device: test-bls-app hueOnly,  command: "off" }
     actions:
       # Person enters; wall-on follows within wOn=10s window so scoreOn
       # classifies the shadow ON as correctOn (preventing the falseOn
@@ -145,7 +143,7 @@ cases:
       - { device: test-bls-hue,             command: "inactive" }
       - { device: test-bls-fp300-pir,       command: "inactive" }
       - { device: test-bls-fp300-mm,        command: "inactive" }
-      - { device: test-bls-out-fp300Mm,     command: "off" }
+      - { device: test-bls-app fp300Mm,     command: "off" }
     actions:
       - { device: test-bls-fp300-mm, command: "active" }
       - { device: test-bls-fp300-mm, command: "inactive" }
@@ -160,13 +158,13 @@ cases:
 
   - name: composite-holds-through-hfc-active
     setup:
-      - { device: test-bls-wall,             command: "off" }
-      - { device: test-bls-hue,              command: "inactive" }
-      - { device: test-bls-fp300-pir,        command: "inactive" }
-      - { device: test-bls-fp300-mm,         command: "inactive" }
-      - { device: test-bls-hfc,              command: "off" }
-      - { device: test-bls-out-hueOnly,      command: "off" }
-      - { device: test-bls-out-composite,    command: "off" }
+      - { device: test-bls-wall,              command: "off" }
+      - { device: test-bls-hue,               command: "inactive" }
+      - { device: test-bls-fp300-pir,         command: "inactive" }
+      - { device: test-bls-fp300-mm,          command: "inactive" }
+      - { device: test-bls-hfc,               command: "off" }
+      - { device: test-bls-app hueOnly,       command: "off" }
+      - { device: test-bls-app composite,     command: "off" }
     actions:
       # Walk in: Hue fires, then goes inactive (person steps into shower)
       - { device: test-bls-hue, command: "active" }
@@ -177,9 +175,9 @@ cases:
     wait_seconds: 12
     assert:
       # hueOnly times out at +8s (holdSec=8)
-      - { device: test-bls-out-hueOnly,   attribute: switch, value: "off" }
+      - { device: test-bls-app hueOnly,   attribute: switch, value: "off" }
       # composite still ON (holdSec=25 hasn't fired, AND HFC active keeps the policy wanting ON)
-      - { device: test-bls-out-composite, attribute: switch, value: "on" }
+      - { device: test-bls-app composite, attribute: switch, value: "on" }
 
   - name: user-forgot-arm-quiet
     setup:

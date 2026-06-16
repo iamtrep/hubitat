@@ -2,17 +2,17 @@
 // SPDX-License-Identifier: MIT
 
 import groovy.transform.Field
-import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.2.0"
 @Field static final Integer SCORING_SCHEMA_VERSION = 1
+@Field static final Integer RESOLVER_MAX_PER_TICK = 10
 
 @Field static final List<Map> POLICIES = [
     [key: "hueOnly",     label: "Hue PIR only (baseline)",        onMethod: "policyHueOnly",     offHandler: "offCheckHueOnly",     defaultHoldSec: 300],
     [key: "fp300Hybrid", label: "FP300 motion OR presence",       onMethod: "policyFp300Hybrid", offHandler: "offCheckFp300Hybrid", defaultHoldSec: 600],
     [key: "fp300Mm",     label: "FP300 mmWave-only (presence)",   onMethod: "policyFp300Mm",     offHandler: "offCheckFp300Mm",     defaultHoldSec: 600],
     [key: "anyMotion",   label: "Any sensor fires",               onMethod: "policyAnyMotion",   offHandler: "offCheckAnyMotion",   defaultHoldSec: 600],
-    [key: "composite",   label: "Composite + HFC/humidity hold",  onMethod: "policyComposite",   offHandler: "offCheckComposite",   defaultHoldSec: 1800],
+    [key: "composite",   label: "Composite + HFC hold",           onMethod: "policyComposite",   offHandler: "offCheckComposite",   defaultHoldSec: 1800],
 ]
 
 definition(
@@ -20,7 +20,7 @@ definition(
     namespace: "iamtrep",
     author: "pj",
     singleThreaded: true,
-    description: "Runs multiple lighting-control policies in parallel against shared sensors, drives a virtual switch per policy, and scores each policy without touching real lights.",
+    description: "Runs multiple lighting-control policies in parallel against shared sensors, drives an auto-created virtual switch per policy, and scores each policy without touching real lights.",
     category: "Utility",
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/BathroomLightingShadow.groovy",
     iconUrl: "",
@@ -35,25 +35,22 @@ preferences {
 Map mainPage() {
     dynamicPage(name: "mainPage", title: "Bathroom Lighting Shadow v${CODE_VERSION}", install: true, uninstall: true) {
         section("Sensors") {
-            input "hueMotion",      "capability.motionSensor",                title: "Hue PIR (over door)",              required: false
-            input "fp300Motion",    "capability.motionSensor",                title: "FP300 PIR channel",                required: false
-            input "fp300Presence",  "capability.motionSensor",                title: "FP300 mmWave channel (motion attr)", required: false
-            input "wallSwitch",     "capability.switch",                      title: "Bathroom wall switch (ground truth)", required: true
-            input "doorContact",    "capability.contactSensor",               title: "Bathroom door contact (optional)", required: false
-            input "humiditySensor", "capability.relativeHumidityMeasurement", title: "Bathroom humidity sensor (optional)", required: false
-            input "hfcActive",      "capability.switch",                      title: "HFC active indicator (optional)",  required: false
+            input "hueMotion",      "capability.motionSensor",  title: "Hue PIR (over door)",                  required: false
+            input "fp300Motion",    "capability.motionSensor",  title: "FP300 PIR channel",                    required: false
+            input "fp300Presence",  "capability.motionSensor",  title: "FP300 mmWave channel (motion attr)",   required: false
+            input "wallSwitch",     "capability.switch",        title: "Bathroom wall switch (ground truth)",  required: true
+            input "doorContact",    "capability.contactSensor", title: "Bathroom door contact (optional)",     required: false
+            input "hfcActive",      "capability.switch",        title: "HFC active indicator (optional)",      required: false
         }
-        section("Policies") {
+        section("Policy hold seconds") {
             POLICIES.each { Map p ->
-                input "policy_${p.key}_enabled",      "bool",              title: "${p.label}: enabled", defaultValue: false
-                input "policy_${p.key}_outputSwitch", "capability.switch", title: "${p.label}: output virtual switch (System Virtual Switch)", required: false
-                input "policy_${p.key}_holdSec",      "number",            title: "${p.label}: hold seconds", defaultValue: p.defaultHoldSec
+                input "policy_${p.key}_holdSec", "number", title: "${p.label}", defaultValue: p.defaultHoldSec
             }
         }
         section("Tunables") {
-            input "wOn",     "number", title: "ON match window W_on (seconds)",         defaultValue: 60
-            input "tQuiet",  "number", title: "Sensor-quiet threshold T_quiet (seconds)", defaultValue: 60
-            input "tForgot", "number", title: "User-forgot threshold T_forgot (seconds)", defaultValue: 600
+            input "wOn",     "number", title: "ON match window W_on (seconds)",            defaultValue: 60
+            input "tQuiet",  "number", title: "Sensor-quiet threshold T_quiet (seconds)",  defaultValue: 60
+            input "tForgot", "number", title: "User-forgot threshold T_forgot (seconds)",  defaultValue: 600
         }
         section("Results") {
             paragraph buildScoreTable()
@@ -74,13 +71,17 @@ Map recentEventsPage() {
     }
 }
 
-void installed() { logDebug "installed()"; initialize() }
-void updated()   { logDebug "updated()"; unsubscribe(); unschedule(); initialize() }
-void uninstalled() { logDebug "uninstalled()" }
+void installed()   { logDebug "installed()"; initialize() }
+void updated()     { logDebug "updated()"; unsubscribe(); unschedule(); initialize() }
+void uninstalled() {
+    logDebug "uninstalled()"
+    getChildDevices().each { deleteChildDevice(it.deviceNetworkId) }
+}
 
 void initialize() {
     logDebug "initialize()"
     checkVersion()
+    ensurePolicyChildren()
 
     if (state.observingSince == null) state.observingSince = now()
     if (state.scores == null)         state.scores = [:]
@@ -89,8 +90,7 @@ void initialize() {
     if (state.sensorState == null)    state.sensorState = [:]
     if (state.tLastActivity == null)  state.tLastActivity = null
     if (state.tQuietSince == null)    state.tQuietSince = null
-    if (state.humidityBaseline == null) state.humidityBaseline = null  // null until first reading
-    if (state.userForgotOff == null) state.userForgotOff = [count: 0, lapseSecSum: 0L]
+    if (state.userForgotOff == null)  state.userForgotOff = [count: 0, lapseSecSum: 0L]
 
     POLICIES.each { Map p ->
         if (state.scores[p.key] == null) {
@@ -111,10 +111,23 @@ void initialize() {
     if (fp300Presence) subscribe(fp300Presence, "motion", "sensorHandler")
     if (wallSwitch)    subscribe(wallSwitch, "switch", "wallSwitchHandler")
     if (doorContact)   subscribe(doorContact, "contact", "doorHandler")
-    if (humiditySensor) subscribe(humiditySensor, "humidity", "humidityHandler")
     if (hfcActive)     subscribe(hfcActive, "switch", "hfcHandler")
 
     runIn((settings.wOn ?: 60) as Integer, "resolveUnresolvedOns")
+}
+
+private String childDni(String key) { "${app.id}-bls-${key}" }
+private String childLabel(String key) { "${app.label} ${key}" }
+
+private void ensurePolicyChildren() {
+    POLICIES.each { Map p ->
+        String dni = childDni(p.key)
+        if (getChildDevice(dni) == null) {
+            addChildDevice("hubitat", "Virtual Switch", dni,
+                [name: childLabel(p.key), label: childLabel(p.key), isComponent: true])
+            logInfo "created child ${childLabel(p.key)} (${dni})"
+        }
+    }
 }
 
 private void checkVersion() {
@@ -167,7 +180,6 @@ void wallSwitchHandler(evt) {
 private void scoreOn(Long wallOnTs) {
     Long windowMs = (settings.wOn ?: 60) * 1000L
     POLICIES.each { Map p ->
-        if (!policyEnabled(p.key)) return
         Map ps = state.policyState[p.key]
         Map matchOn = ps.transitions?.reverse()?.find {
             it.edge == "on" && Math.abs((it.ts as Long) - wallOnTs) <= windowMs
@@ -191,16 +203,6 @@ void doorHandler(evt) {
     recordEvent("door", evt.device.displayName, evt.value)
 }
 
-void humidityHandler(evt) {
-    BigDecimal h = evt.value as BigDecimal
-    state.sensorState["humidity"] = [value: h, ts: now()]
-    BigDecimal prev = state.humidityBaseline as BigDecimal
-    // EMA alpha = 0.05 — slow baseline (~20 readings to track a step change)
-    state.humidityBaseline = (prev == null) ? h : (prev * 0.95 + h * 0.05)
-    recordEvent("humidity", evt.device.displayName, evt.value)
-    evaluatePolicies()
-}
-
 void hfcHandler(evt) {
     state.sensorState["hfc"] = [value: evt.value, ts: now()]
     recordEvent("hfc", evt.device.displayName, evt.value)
@@ -218,9 +220,7 @@ private Map snapshot() {
         fp300Presence: fp300Presence?.currentValue("motion"),
         wallSwitch:    wallSwitch?.currentValue("switch"),
         doorContact:   doorContact?.currentValue("contact"),
-        humidity:      (humiditySensor?.currentValue("humidity") as BigDecimal),
         hfcActive:     hfcActive?.currentValue("switch"),
-        humidityBaseline: (state.humidityBaseline as BigDecimal),
     ]
 }
 
@@ -240,22 +240,24 @@ Boolean policyAnyMotion(Map snap) {
     return snap.hueMotion == "active" || snap.fp300Motion == "active" || snap.fp300Presence == "active"
 }
 
-private boolean policyEnabled(String key) {
-    return settings."policy_${key}_enabled" == true && settings."policy_${key}_outputSwitch" != null
+Boolean policyComposite(Map snap) {
+    boolean anyActive = (snap.hueMotion == "active" || snap.fp300Motion == "active" || snap.fp300Presence == "active")
+    if (anyActive) return true
+    if (snap.hfcActive == "on") return true
+    return false
 }
 
 private void evaluatePolicies() {
     Map snap = snapshot()
     POLICIES.each { Map p ->
-        if (!policyEnabled(p.key)) return
-        // Don't use `as Boolean` here — it coerces null to false and silently
-        // breaks the abstain contract that the next branch relies on.
+        // Don't use `as Boolean` — it coerces null to false and breaks the abstain contract.
         Boolean wantOn = (Boolean) this."${p.onMethod}"(snap)
         Map ps = state.policyState[p.key]
-        // Re-sync the decision tracker with the actual output switch state.
-        // The output switch is the source of truth; ps.decision mirrors it.
-        // Handles drift from test setups, manual overrides, and code pushes.
-        String swState = settings."policy_${p.key}_outputSwitch"?.currentValue("switch")
+        // Re-sync decision tracker with the child switch's actual state. The
+        // child is the source of truth; ps.decision mirrors it. Handles drift
+        // from test setups, manual overrides, and code pushes.
+        def child = getChildDevice(childDni(p.key))
+        String swState = child?.currentValue("switch")
         if (swState != null && swState != ps.decision) {
             ps.decision = swState
         }
@@ -264,7 +266,7 @@ private void evaluatePolicies() {
         if (wantOn && current == "off") {
             drivePolicy(p.key, "on")
         } else if (!wantOn && current == "on") {
-            // Schedule the off-check; same-handler-name overwrite cancels-and-rearms for free.
+            // Same-handler-name reschedule auto-cancels the previous runIn.
             Integer holdSec = (settings."policy_${p.key}_holdSec" ?: p.defaultHoldSec) as Integer
             runIn(holdSec, p.offHandler as String)
         }
@@ -272,9 +274,9 @@ private void evaluatePolicies() {
 }
 
 private void drivePolicy(String key, String edge) {
-    def sw = settings."policy_${key}_outputSwitch"
-    if (sw == null) return
-    if (edge == "on") sw.on() else sw.off()
+    def child = getChildDevice(childDni(key))
+    if (child == null) return
+    if (edge == "on") child.on() else child.off()
     Map ps = state.policyState[key]
     String prev = ps.decision
     ps.decision = edge
@@ -326,7 +328,6 @@ void offCheckAnyMotion()   { reevaluateOff("anyMotion") }
 void offCheckComposite()   { reevaluateOff("composite") }
 
 private void reevaluateOff(String key) {
-    if (!policyEnabled(key)) return
     Map p = POLICIES.find { it.key == key }
     Map snap = snapshot()
     Boolean wantOn = (Boolean) this."${p.onMethod}"(snap)
@@ -335,22 +336,8 @@ private void reevaluateOff(String key) {
     if (!wantOn && ps.decision == "on") {
         drivePolicy(key, "off")
     } else if (wantOn && ps.decision == "on") {
-        // Sensor became active again before hold expired — stay on, no action.
         logDebug "policy ${key}: off-check fired but policy still wants ON"
     }
-}
-
-@Field static final BigDecimal HUMIDITY_OVER_BASELINE = 5.0  // %RH above baseline = "shower active"
-@Field static final Integer RESOLVER_MAX_PER_TICK = 10
-
-Boolean policyComposite(Map snap) {
-    boolean anyActive = (snap.hueMotion == "active" || snap.fp300Motion == "active" || snap.fp300Presence == "active")
-    if (anyActive) return true
-    if (snap.hfcActive == "on") return true
-    BigDecimal h = snap.humidity as BigDecimal
-    BigDecimal baseline = snap.humidityBaseline as BigDecimal
-    if (h != null && baseline != null && h > baseline + HUMIDITY_OVER_BASELINE) return true
-    return false
 }
 
 private boolean anyPresenceActive() {
@@ -374,7 +361,6 @@ void resolveUnresolvedOns() {
     int processed = 0
     POLICIES.each { Map p ->
         if (processed >= RESOLVER_MAX_PER_TICK) return
-        if (!policyEnabled(p.key)) return
         Map ps = state.policyState[p.key]
         boolean falseOnChanged = false
         ps.transitions?.each { Map t ->
@@ -398,16 +384,13 @@ void resolveUnresolvedOns() {
         }
 
         // overHold: policy is ON, wall switch is OFF, room has been quiet > holdSec.
-        // Increment + emit only when the condition is freshly met (avoid re-incrementing
-        // every tick while the over-hold continues).
+        // Latch via overHoldFlagged so we only count once per ON-cycle.
         if (ps.decision == "on") {
             String wallState = wallSwitch?.currentValue("switch")
             Long tQuietSince = state.tQuietSince as Long
             if (wallState == "off" && tQuietSince != null) {
                 Integer holdSec = (settings."policy_${p.key}_holdSec" ?: p.defaultHoldSec) as Integer
                 if ((now() - tQuietSince) > (holdSec * 1000L)) {
-                    // Only count an over-hold once per ON-cycle: don't re-increment if
-                    // we've already flagged this current cycle.
                     if (ps.overHoldFlagged != true) {
                         Map s = state.scores[p.key]
                         s.overHold = (s.overHold ?: 0) + 1
@@ -417,7 +400,6 @@ void resolveUnresolvedOns() {
                 }
             }
         } else {
-            // Reset flag when the policy goes OFF — next ON-cycle can fire overHold again.
             ps.overHoldFlagged = false
         }
     }
@@ -429,22 +411,15 @@ private String buildScoreTable() {
     Long avgLapse = count > 0 ? Math.round((state.userForgotOff.lapseSecSum / count) / 60.0) : 0
     StringBuilder sb = new StringBuilder()
 
-    // Warnings for policies enabled without an output switch picked.
-    List<String> halfConfigured = POLICIES.findAll { Map p ->
-        settings."policy_${p.key}_enabled" == true && settings."policy_${p.key}_outputSwitch" == null
-    }.collect { it.label as String }
-    if (!halfConfigured.isEmpty()) {
-        sb << "<p style='color:#a00;'><b>Auto-disabled (no output switch picked):</b> ${halfConfigured.join(', ')}</p>"
-    }
-
     sb << "<p><b>userForgotOff:</b> count=${count}, avgLapseMin=${avgLapse}</p>"
     sb << "<table border='1' cellpadding='4' style='border-collapse:collapse;'>"
     sb << "<tr><th>policy</th><th>correctOn</th><th style='background:#fdd'>missedOn</th><th>falseOn</th>"
     sb << "<th style='background:#fdd'>prematureOff</th><th>correctOff_qC</th><th style='background:#dfd'>correctOff_aU</th>"
     sb << "<th>overHold</th><th>avgLatencyMs</th></tr>"
     POLICIES.each { Map p ->
-        if (!policyEnabled(p.key)) return
+        if (state.scores == null) return
         Map s = state.scores[p.key]
+        if (s == null) return
         Long avgLat = s.latencySamples > 0 ? Math.round(s.latencyMsSum / s.latencySamples) : 0L
         sb << "<tr><td>${p.label}</td><td>${s.correctOn}</td><td style='background:#fdd'>${s.missedOn}</td><td>${s.falseOn}</td>"
         sb << "<td style='background:#fdd'>${s.prematureOff}</td><td>${s.correctOff_quietConfirmed}</td><td style='background:#dfd'>${s.correctOff_anticipatedUser}</td>"
