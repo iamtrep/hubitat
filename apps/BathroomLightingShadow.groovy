@@ -159,9 +159,6 @@ void wallSwitchHandler(evt) {
             Long lapseSec = ((now() - tQuietSince) / 1000L) as Long
             state.userForgotOff.count = (state.userForgotOff.count ?: 0) + 1
             state.userForgotOff.lapseSecSum = (state.userForgotOff.lapseSecSum ?: 0L) + lapseSec
-            Long avgLapseMin = Math.round((state.userForgotOff.lapseSecSum / state.userForgotOff.count) / 60.0)
-            sendEvent(name: "userForgotOff_count", value: state.userForgotOff.count)
-            sendEvent(name: "userForgotOff_avgLapseMin", value: avgLapseMin)
             logInfo "userForgotOff: count=${state.userForgotOff.count} lapseSec=${lapseSec}"
         }
     }
@@ -186,24 +183,8 @@ private void scoreOn(Long wallOnTs) {
         } else {
             s.missedOn = (s.missedOn ?: 0) + 1
         }
-        emitScore(p.key)
     }
     logInfo "scoreOn: tallies updated; per-policy: ${state.scores.collectEntries { k, v -> [k, [correctOn: v.correctOn, missedOn: v.missedOn]] }}"
-}
-
-private void emitScore(String key) {
-    Map s = state.scores[key]
-    Map ps = state.policyState[key]
-    sendEvent(name: "policy_${key}_correctOn",    value: s.correctOn)
-    sendEvent(name: "policy_${key}_missedOn",     value: s.missedOn)
-    sendEvent(name: "policy_${key}_falseOn",      value: s.falseOn)
-    sendEvent(name: "policy_${key}_prematureOff", value: s.prematureOff)
-    sendEvent(name: "policy_${key}_correctOff_quietConfirmed",  value: s.correctOff_quietConfirmed)
-    sendEvent(name: "policy_${key}_correctOff_anticipatedUser", value: s.correctOff_anticipatedUser)
-    sendEvent(name: "policy_${key}_overHold", value: s.overHold)
-    Long avg = s.latencySamples > 0 ? Math.round(s.latencyMsSum / s.latencySamples) : 0L
-    sendEvent(name: "policy_${key}_avgLatencyMs", value: avg)
-    sendEvent(name: "policy_${key}_lastDecision", value: "${ps.decision}@${ps.lastTransitionTs ?: 0}")
 }
 
 void doorHandler(evt) {
@@ -334,11 +315,8 @@ private void classifyOff(String key, Long tOff) {
             offClass = "correctOff_anticipatedUser"
         }
     }
-    // Surface the latest OFF classification as its own attribute — both a stable
-    // observable for behavior tests and a useful operator-visible signal.
-    sendEvent(name: "policy_${key}_lastOffClass", value: offClass)
-    emitScore(key)
-    logInfo "classifyOff ${key}: prematureOff=${s.prematureOff} correctOff_quietConfirmed=${s.correctOff_quietConfirmed} correctOff_anticipatedUser=${s.correctOff_anticipatedUser}"
+    ps.lastOffClass = offClass
+    logInfo "classifyOff ${key} class=${offClass}"
 }
 
 void offCheckHueOnly()     { reevaluateOff("hueOnly") }
@@ -416,7 +394,6 @@ void resolveUnresolvedOns() {
             processed++
         }
         if (falseOnChanged) {
-            sendEvent(name: "policy_${p.key}_falseOn", value: state.scores[p.key].falseOn)
             logInfo "falseOn classified for policy ${p.key} (count=${state.scores[p.key].falseOn})"
         }
 
@@ -435,7 +412,6 @@ void resolveUnresolvedOns() {
                         Map s = state.scores[p.key]
                         s.overHold = (s.overHold ?: 0) + 1
                         ps.overHoldFlagged = true
-                        sendEvent(name: "policy_${p.key}_overHold", value: s.overHold)
                         logInfo "overHold classified for policy ${p.key} (count=${s.overHold})"
                     }
                 }
@@ -503,13 +479,8 @@ void appButtonHandler(String btn) {
                 overHold: 0,
                 latencyMsSum: 0L, latencySamples: 0
             ]
-            // Emit reset values for all attributes. This is a single user-triggered event,
-            // so the batch emit is fine here (unlike the resolver's periodic sweep).
-            emitScore(p.key)
         }
         state.userForgotOff = [count: 0, lapseSecSum: 0L]
         state.observingSince = now()
-        sendEvent(name: "userForgotOff_count", value: 0)
-        sendEvent(name: "userForgotOff_avgLapseMin", value: 0)
     }
 }

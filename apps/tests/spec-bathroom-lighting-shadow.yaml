@@ -136,8 +136,8 @@ cases:
     # (tOff - tLastActivity) > tQuiet → not premature; wall still "on"
     # → correctOff_anticipatedUser.
     wait_seconds: 12
-    assert_events:
-      - { attribute: "policy_hueOnly_lastOffClass", value: "correctOff_anticipatedUser" }
+    assert_logs:
+      - { pattern: "classifyOff hueOnly class=correctOff_anticipatedUser", level: info }
 
   - name: false-on-fp300-glitch-no-wall
     setup:
@@ -154,13 +154,9 @@ cases:
     # case is unpredictable. Wait long enough to span 3+ resolver cycles
     # after the ON transition matures past wOn so we don't race the resolver:
     #   action(1) + spacing(1) + wOn(10) + 3 ticks slack(30) = 42s.
-    # assert_events on the attribute alone (no value): the falseOn sendEvent
-    # fires when the resolver bumps the counter — exact resulting value
-    # depends on prior case ordering, so we just confirm the attribute event
-    # was emitted in this case's capture window.
     wait_seconds: 42
-    assert_events:
-      - { attribute: "policy_fp300Mm_falseOn" }
+    assert_logs:
+      - { pattern: "falseOn classified for policy fp300Mm", level: info }
 
   - name: composite-holds-through-hfc-active
     setup:
