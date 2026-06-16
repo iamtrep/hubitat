@@ -37,6 +37,7 @@ preferences {
     "lowMemory",
     "manualReboot",
     "manualShutdown",
+    "schedulerFailed",
     "severeLoad",
     "sunrise",
     "sunriseSunsetUpdated",
