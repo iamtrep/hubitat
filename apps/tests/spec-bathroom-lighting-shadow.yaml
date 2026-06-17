@@ -20,6 +20,7 @@ app:
     wOn: 10
     tQuiet: 5
     tForgot: 20
+    tManualOverride: 5
     policy_hueOnly_holdSec: 8
     policy_fp300Hybrid_holdSec: 8
     policy_fp300Mm_holdSec: 8
@@ -207,7 +208,7 @@ cases:
       - { device: test-bls-hue,         command: "inactive" }
       - { device: test-bls-fp300-pir,   command: "inactive" }
       - { device: test-bls-fp300-mm,    command: "inactive" }
-    # Let tLastActivity from prior cases age past the 5s threshold.
+    # Let tLastActivity from prior cases age past the tManualOverride (5s test override).
     wait_seconds: 6
     assert:
       - { device: test-bls-wall, attribute: switch, value: "off" }

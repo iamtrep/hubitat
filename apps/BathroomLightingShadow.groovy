@@ -3,7 +3,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.2.0"
+@Field static final String CODE_VERSION = "0.2.1"
 @Field static final Integer SCORING_SCHEMA_VERSION = 1
 @Field static final Integer RESOLVER_MAX_PER_TICK = 10
 
@@ -51,6 +51,7 @@ Map mainPage() {
             input "wOn",     "number", title: "ON match window W_on (seconds)",            defaultValue: 60
             input "tQuiet",  "number", title: "Sensor-quiet threshold T_quiet (seconds)",  defaultValue: 60
             input "tForgot", "number", title: "User-forgot threshold T_forgot (seconds)",  defaultValue: 600
+            input "tManualOverride", "number", title: "Manual-override threshold (seconds) — wall event N seconds after last motion classifies as manual override", defaultValue: 60
         }
         section("Results") {
             paragraph buildScoreTable()
@@ -156,7 +157,7 @@ void wallSwitchHandler(evt) {
     recordEvent("wallSwitch", evt.device.displayName, evt.value)
 
     Long lastAct = state.tLastActivity as Long
-    Long thresholdMs = 5000L
+    Long thresholdMs = ((settings.tManualOverride ?: 60) as Long) * 1000L
     if (lastAct == null || (now() - lastAct) > thresholdMs) {
         recordEvent("manualOverride", evt.device.displayName, "wallSwitch=${evt.value} (no recent sensor activity)")
         logInfo "manualOverride: wallSwitch ${evt.value} with no sensor activity in last ${thresholdMs}ms"
