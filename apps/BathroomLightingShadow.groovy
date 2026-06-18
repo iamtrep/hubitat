@@ -3,7 +3,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.2.1"
+@Field static final String CODE_VERSION = "0.2.2"
 @Field static final Integer SCORING_SCHEMA_VERSION = 1
 @Field static final Integer RESOLVER_MAX_PER_TICK = 10
 
@@ -182,22 +182,47 @@ private void scoreOn(Long wallOnTs) {
     Long windowMs = (settings.wOn ?: 60) * 1000L
     POLICIES.each { Map p ->
         Map ps = state.policyState[p.key]
+        syncDecision(p.key)
+        // "Caught the user" = lights would have been on when they arrived.
+        // Two ways that's true: (a) policy already ON at wall-on time;
+        // (b) policy transitioned ON within wOn seconds before OR after
+        // the wall-on (slight slack for sensor-fires-just-after-wall).
+        boolean isOn = (ps.decision == "on")
         Map matchOn = ps.transitions?.reverse()?.find {
             it.edge == "on" && Math.abs((it.ts as Long) - wallOnTs) <= windowMs
         }
+        Map lastOn = ps.transitions?.reverse()?.find { it.edge == "on" }
         Map s = state.scores[p.key]
-        if (matchOn != null) {
+        if (isOn || matchOn != null) {
             s.correctOn = (s.correctOn ?: 0) + 1
-            Long lat = (matchOn.ts as Long) - wallOnTs
-            // Latency: shadow earlier than wall = negative; positive = shadow late
-            s.latencyMsSum = (s.latencyMsSum ?: 0L) + lat
-            s.latencySamples = (s.latencySamples ?: 0) + 1
+            // If the resolver already classified this ON cycle as falseOn,
+            // undo it — the wall came later, so this cycle was a catch.
+            if (isOn && ps.lastOnClass == "falseOn") {
+                s.falseOn = Math.max(0, (s.falseOn ?: 0) - 1)
+            }
+            // Latency uses the in-window transition when present, else the
+            // most recent ON transition (older than wOn but still this cycle).
+            Map ref = matchOn ?: lastOn
+            if (ref != null) {
+                Long lat = (ref.ts as Long) - wallOnTs
+                s.latencyMsSum = (s.latencyMsSum ?: 0L) + lat
+                s.latencySamples = (s.latencySamples ?: 0) + 1
+            }
             ps.lastOnClass = "correctOn"
         } else {
             s.missedOn = (s.missedOn ?: 0) + 1
         }
     }
     logInfo "scoreOn: tallies updated; per-policy: ${state.scores.collectEntries { k, v -> [k, [correctOn: v.correctOn, missedOn: v.missedOn]] }}"
+}
+
+private void syncDecision(String key) {
+    Map ps = state.policyState[key]
+    def child = getChildDevice(childDni(key))
+    String swState = child?.currentValue("switch")
+    if (swState != null && swState != ps.decision) {
+        ps.decision = swState
+    }
 }
 
 void doorHandler(evt) {
@@ -254,14 +279,7 @@ private void evaluatePolicies() {
         // Don't use `as Boolean` — it coerces null to false and breaks the abstain contract.
         Boolean wantOn = (Boolean) this."${p.onMethod}"(snap)
         Map ps = state.policyState[p.key]
-        // Re-sync decision tracker with the child switch's actual state. The
-        // child is the source of truth; ps.decision mirrors it. Handles drift
-        // from test setups, manual overrides, and code pushes.
-        def child = getChildDevice(childDni(p.key))
-        String swState = child?.currentValue("switch")
-        if (swState != null && swState != ps.decision) {
-            ps.decision = swState
-        }
+        syncDecision(p.key)
         String current = ps.decision
         if (wantOn == null) return  // abstain
         if (wantOn && current == "off") {
