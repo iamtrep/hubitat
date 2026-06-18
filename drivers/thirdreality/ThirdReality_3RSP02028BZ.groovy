@@ -8,7 +8,10 @@
  *    0x0006  On/Off
  *    0x0B04  Electrical Measurement (rms voltage/current, active power, frequency, power factor)
  *    0x0702  Metering (energy summation)
- *    0xFF03  Third Reality proprietary "Plug Gen2 special cluster" (mfg 0x1233)
+ *    0xFF03  Third Reality proprietary special cluster — mfg code is generation-keyed:
+ *            Gen2 = 0x1233, Gen3 = 0x1407. Writing FF03 with the wrong mfg code is
+ *            rejected as Unsupported Attribute. Gen3 also moved LED brightness out of
+ *            FF03 to genBasic (0x0000) attr 0xFF01. See mfgCode()/isGen3().
  */
 
 import groovy.transform.Field
@@ -18,11 +21,18 @@ import com.hubitat.hub.domain.Event
 import hubitat.zigbee.zcl.DataType
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.6"
+@Field static final String CODE_VERSION = "0.0.7"
 
-// Third Reality proprietary cluster (no Hubitat constant)
+// Third Reality proprietary cluster (no Hubitat constant). The mfg code differs by
+// generation; resolve per-device via mfgCode() rather than a single constant.
 @Field static final int CLUSTER_MFG                 = 0xFF03
-@Field static final String MFG_CODE                 = "0x1233"
+@Field static final String MFG_CODE_GEN2            = "0x1233"
+@Field static final String MFG_CODE_GEN3            = "0x1407"
+
+// Gen3 SKUs (Z2M 3rPlugGen3Specialcluster grouping). Everything else is treated as Gen2.
+@Field static final List<String> GEN3_MODELS        = [
+    "3RSP02064Z", "3RSPE02065Z", "3RSPU01080Z", "3RSP0186Z", "3RSPJ0187Z"
+]
 
 // ZCL attribute IDs (standard clusters use zigbee.{BASIC,ON_OFF,ELECTRICAL_MEASUREMENT,METERING}_CLUSTER)
 @Field static final int ATTR_FW_VERSION             = 0x4000
@@ -39,8 +49,10 @@ import java.math.RoundingMode
 @Field static final int ATTR_MFG_RESET_ENERGY       = 0x0000
 @Field static final int ATTR_MFG_ON_TO_OFF_DELAY    = 0x0001
 @Field static final int ATTR_MFG_OFF_TO_ON_DELAY    = 0x0002
-@Field static final int ATTR_MFG_LED_BRIGHTNESS     = 0x0010
+@Field static final int ATTR_MFG_LED_BRIGHTNESS     = 0x0010      // Gen2: on FF03
 @Field static final int ATTR_MFG_ALLOW_BIND         = 0x0020
+// Gen3 relocated LED brightness to genBasic (0x0000) attr 0xFF01, mfg 0x1407
+@Field static final int ATTR_BASIC_LED_BRIGHTNESS_GEN3 = 0xFF01
 
 // Device-reported divisors are unreliable on this hardware; baked in.
 @Field static final int POWER_DIVISOR               = 10        // W
@@ -250,14 +262,15 @@ void updated() {
     int powerRestore = intSetting(settings.prefPowerRestore, 0xFF)
     cmds += zigbee.writeAttribute(zigbee.ON_OFF_CLUSTER, ATTR_POWER_RESTORE, DataType.ENUM8, powerRestore)
 
+    String mfg = mfgCode()
     int onToOff = intSetting(settings.prefOnToOffDelay, 0)
-    cmds += zigbee.writeAttribute(CLUSTER_MFG, ATTR_MFG_ON_TO_OFF_DELAY, DataType.UINT16, onToOff, [mfgCode: MFG_CODE])
+    cmds += zigbee.writeAttribute(CLUSTER_MFG, ATTR_MFG_ON_TO_OFF_DELAY, DataType.UINT16, onToOff, [mfgCode: mfg])
 
     int offToOn = intSetting(settings.prefOffToOnDelay, 0)
-    cmds += zigbee.writeAttribute(CLUSTER_MFG, ATTR_MFG_OFF_TO_ON_DELAY, DataType.UINT16, offToOn, [mfgCode: MFG_CODE])
+    cmds += zigbee.writeAttribute(CLUSTER_MFG, ATTR_MFG_OFF_TO_ON_DELAY, DataType.UINT16, offToOn, [mfgCode: mfg])
 
     int ledBrightness = intSetting(settings.prefLedBrightness, 100)
-    cmds += zigbee.writeAttribute(CLUSTER_MFG, ATTR_MFG_LED_BRIGHTNESS, DataType.UINT8, ledBrightness, [mfgCode: MFG_CODE])
+    cmds += ledBrightnessWrite(ledBrightness)
 
     sendZigbeeCommands(cmds)
     runInMillis(1000, "configure")
@@ -406,8 +419,8 @@ List<String> updateFirmware() {
 void resetEnergy() {
     logInfo "resetEnergy"
     List<String> cmds = []
-    // Device-side reset (Gen2 only; older firmware silently ignores)
-    cmds += zigbee.writeAttribute(CLUSTER_MFG, ATTR_MFG_RESET_ENERGY, DataType.UINT8, 1, [mfgCode: MFG_CODE])
+    // Device-side reset (older Gen1 firmware silently ignores)
+    cmds += zigbee.writeAttribute(CLUSTER_MFG, ATTR_MFG_RESET_ENERGY, DataType.UINT8, 1, [mfgCode: mfgCode()])
     // Driver-side offset
     cmds += zigbee.readAttribute(zigbee.METERING_CLUSTER, ATTR_SUMMATION)
     state.captureEnergyOffset = true
@@ -416,7 +429,7 @@ void resetEnergy() {
 
 void startBind() {
     logInfo "startBind: writing 0xFF03/0x0020 = 1"
-    sendZigbeeCommands(zigbee.writeAttribute(CLUSTER_MFG, ATTR_MFG_ALLOW_BIND, DataType.UINT8, 1, [mfgCode: MFG_CODE]))
+    sendZigbeeCommands(zigbee.writeAttribute(CLUSTER_MFG, ATTR_MFG_ALLOW_BIND, DataType.UINT8, 1, [mfgCode: mfgCode()]))
 }
 
 // Device Event Parsing
@@ -556,6 +569,10 @@ private void parseAttributeReport(Map descMap) {
                 String version = descMap.value ?: "unknown"
                 logInfo "firmware version: ${version}"
                 updateDataValue("softwareBuild", version)
+            } else if (attrId == "FF01" && descMap.value != null) { // Gen3 LED brightness
+                int raw = Integer.parseInt(descMap.value, 16)
+                device.updateSetting("prefLedBrightness", [value: raw, type: "number"])
+                logDebug "led brightness is ${raw}%"
             }
             return
 
@@ -764,6 +781,25 @@ private void scheduleDeviceHealthCheck(int intervalMin) {
 private void autoConfigure() {
     logWarn "driver version change detected"
     configure()
+}
+
+// Gen3 SKUs register their proprietary attributes under mfg code 0x1407; Gen1/Gen2 use 0x1233.
+private boolean isGen3() {
+    GEN3_MODELS.contains(device.getDataValue("model"))
+}
+
+private String mfgCode() {
+    isGen3() ? MFG_CODE_GEN3 : MFG_CODE_GEN2
+}
+
+// LED brightness lives on different cluster/attr per generation (see header).
+private List<String> ledBrightnessWrite(int brightness) {
+    if (isGen3()) {
+        return zigbee.writeAttribute(zigbee.BASIC_CLUSTER, ATTR_BASIC_LED_BRIGHTNESS_GEN3,
+                                     DataType.UINT8, brightness, [mfgCode: MFG_CODE_GEN3])
+    }
+    return zigbee.writeAttribute(CLUSTER_MFG, ATTR_MFG_LED_BRIGHTNESS,
+                                 DataType.UINT8, brightness, [mfgCode: MFG_CODE_GEN2])
 }
 
 private void sendZigbeeCommands(List cmds) {
