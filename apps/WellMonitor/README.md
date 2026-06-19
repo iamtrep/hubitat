@@ -168,6 +168,7 @@ The app exposes the following endpoints via OAuth-secured mappings. The access t
 | `/api/flow` | application/json | Flow history (100 entries) |
 | `/api/stats` | application/json | All-time + recent stats, daily summaries, hourly distribution, 24h/7d windows |
 | `/api/version` | application/json | Installed `CODE_VERSION`, latest version on GitHub, updateAvailable flag |
+| `/api/ui/sync` (POST) | application/json | Force an immediate dashboard re-fetch from GitHub — backs the in-SPA "Sync UI from GitHub" button |
 | `/csv/cycles` | text/csv | Full pump cycle CSV file |
 | `/csv/flow` | text/csv | Full flow event CSV file |
 
