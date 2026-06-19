@@ -1,0 +1,64 @@
+# Mirror Switch — Mode 1 behavior test spec
+# Three virtual switches form one mirror group. Changing any member must drive
+# the others to match (idempotent propagation, no ping-pong).
+app:
+  source: apps/MirrorSwitch.groovy
+  type_name: Mirror Switch
+  instance_label: Mirror Switch (test)
+  config:
+    debugLogging: true
+
+# All three devices share the single "switches" preference. Each is both a
+# stimulus (we command it) and an observation point (we assert on it), so they
+# are all listed as inputs; outputs is empty.
+inputs:
+  - { name: mirror-test-a, driver: Virtual Switch, role: switches }
+  - { name: mirror-test-b, driver: Virtual Switch, role: switches }
+  - { name: mirror-test-c, driver: Virtual Switch, role: switches }
+outputs: []
+
+maker_api:
+  label: Mirror Switch Test Maker API
+
+cases:
+  # A member turning ON drives the rest ON.
+  - name: propagate-on
+    setup:
+      - { device: mirror-test-a, command: "off" }
+      - { device: mirror-test-b, command: "off" }
+      - { device: mirror-test-c, command: "off" }
+    actions:
+      - { device: mirror-test-a, command: "on" }
+    wait_seconds: 5
+    assert:
+      - { device: mirror-test-b, attribute: switch, value: "on" }
+      - { device: mirror-test-c, attribute: switch, value: "on" }
+
+  # A member turning OFF drives the rest OFF.
+  - name: propagate-off
+    setup:
+      - { device: mirror-test-a, command: "on" }
+      - { device: mirror-test-b, command: "on" }
+      - { device: mirror-test-c, command: "on" }
+    actions:
+      - { device: mirror-test-b, command: "off" }
+    wait_seconds: 5
+    assert:
+      - { device: mirror-test-a, attribute: switch, value: "off" }
+      - { device: mirror-test-c, attribute: switch, value: "off" }
+
+  # Commanding a member to a value the group already holds keeps the group
+  # stable (no flip). The idempotent compare means the others are never churned.
+  - name: already-matching-no-churn
+    setup:
+      - { device: mirror-test-a, command: "on" }
+      - { device: mirror-test-b, command: "on" }
+      - { device: mirror-test-c, command: "on" }
+    actions:
+      - { device: mirror-test-a, command: "on" }
+    wait_seconds: 4
+    assert:
+      - { device: mirror-test-b, attribute: switch, value: "on" }
+      - { device: mirror-test-c, attribute: switch, value: "on" }
+
+runtime_budget_seconds: 60
