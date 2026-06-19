@@ -65,7 +65,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "1.2.1"
+@Field static final String CODE_VERSION = "1.2.2"
 
 @Field static final String MFG_CODE = "0x115F"
 
@@ -305,7 +305,14 @@ private void parseLumiAttribute(Integer attrInt, String value) {
     switch (attrInt) {
         case LUMI_ATTR_OPERATION_MODE:
             String mode = (value == "00") ? "decoupled" : "control_relay"
-            logInfo "Operation mode: ${mode}"
+            // configure() writes + reads 0x0200 and the device also reports it on
+            // its own, so a single configure yields several frames. sendEvent dedups
+            // the event; log at info only on a real change to avoid repeats.
+            if (device.currentValue("operationMode") != mode) {
+                logInfo "Operation mode: ${mode}"
+            } else {
+                logDebug "Operation mode: ${mode} (confirmation)"
+            }
             sendEvent(name: "operationMode", value: mode)
             // Keep the preferences UI in sync with the device (bidirectional sync).
             if ((operationMode ?: "control_relay") != mode) {
