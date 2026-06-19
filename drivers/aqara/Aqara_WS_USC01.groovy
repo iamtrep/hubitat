@@ -38,6 +38,7 @@ metadata {
         capability "Configuration"
         capability "Refresh"
         capability "PushableButton"
+        capability "DoubleTapableButton"
 
         attribute "deviceTemperature", "number"   // internal chip temperature, °C (ZCL DeviceTemperature 0x0002)
         attribute "operationMode", "enum", ["control_relay", "decoupled"]
@@ -65,7 +66,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "1.2.2"
+@Field static final String CODE_VERSION = "1.3.0"
 
 @Field static final String MFG_CODE = "0x115F"
 
@@ -167,6 +168,10 @@ void off() {
 
 void push(Integer buttonId = 1) {
     sendEvent(name: "pushed", value: buttonId, isStateChange: true)
+}
+
+void doubleTap(Integer buttonId = 1) {
+    sendEvent(name: "doubleTapped", value: buttonId, isStateChange: true)
 }
 
 // ─── Zigbee message pipeline ──────────────────────────────────────────────────
@@ -311,10 +316,22 @@ private void reportDeviceTemperature(String value) {
 }
 
 private void reportButton(String value) {
-    // 0xFF (255) is the idle/no-press value; any other value is an action.
-    if (value == null || value == "00FF" || value == "FF") return
-    logInfo "Button: pressed (decoupled, multistate value ${value})"
-    sendEvent(name: "pushed", value: 1, isStateChange: true)
+    // Multistate Input PresentValue carries the rocker action (Z2M action enum):
+    // 1 = single press, 2 = double press. Fires on a physical press in either
+    // operation mode. Other values aren't documented for this model — ignore them.
+    if (value == null) return
+    switch (Integer.parseInt(value, 16)) {
+        case 1:
+            logInfo "Button 1 pushed"
+            sendEvent(name: "pushed", value: 1, isStateChange: true)
+            break
+        case 2:
+            logInfo "Button 1 double-tapped"
+            sendEvent(name: "doubleTapped", value: 1, isStateChange: true)
+            break
+        default:
+            logTrace "Multistate present value ${value} (unmapped action)"
+    }
 }
 
 private void parseLumiAttribute(Integer attrInt, String value) {
