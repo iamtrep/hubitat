@@ -41,7 +41,7 @@ metadata {
 
         attribute "deviceTemperature", "number"   // internal chip temperature, °C (ZCL DeviceTemperature 0x0002)
         attribute "operationMode", "enum", ["control_relay", "decoupled"]
-        attribute "powerOutageCount", "number"     // from the Aqara 0xFCC0/0x00F7 heartbeat; increments on each power interruption
+        attribute "rebootCount", "number"          // Aqara 0xFCC0/0x00F7 tag 0x05 (raw; Z2M calls it power_outage_count): device restart counter, each increment also appears as a mesh rejoin
 
         fingerprint profileId: "0104", inClusters: "0000,0002,0003,0004,0005,0006,0009", outClusters: "000A,0019",
             manufacturer: "LUMI", model: "lumi.switch.b1laus01", deviceJoinName: "Aqara Wall Switch WS-USC01"
@@ -65,7 +65,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "1.2.0"
+@Field static final String CODE_VERSION = "1.2.1"
 
 @Field static final String MFG_CODE = "0x115F"
 
@@ -328,21 +328,26 @@ private void parseLumiAttribute(Integer attrInt, String value) {
 
 private void parseLumiHeartbeat(String value) {
     // The 0x00F7 octet string is a [tag][type][little-endian value]... TLV blob.
-    // Tags of interest: 0x05 power-outage count, 0x0A Zigbee parent DNI. (0x03 chip
-    // temp and 0x64 relay state are also present but already covered by 0x0002/0x0006.)
+    // Tags decoded here, consistent with the WSDCGQ11LM check-in decoder:
+    //   0x05 device restart counter — Z2M calls this power_outage_count and reports
+    //        value-1; we store the raw value (matching the sibling driver). Each
+    //        increment coincides 1:1 with a mesh rejoin (verified against the capture).
+    //   0x0A Zigbee parent DNI — the router this sleepy end-device joins through.
+    //        Z2M leaves tag 0x0A unmapped, but it's verified on-mesh (the reported
+    //        DNI matched the parent's neighbor-table child entry).
+    //   0x03 chip temp / 0x64 relay state are redundant with 0x0002 / 0x0006.
     if (!value) return
     Map<Integer, Long> tags = walkLumiTlv(value)
-    // Some stacks prepend the octet-string length byte; if the known tags are
-    // absent, retry one byte in.
+    // Some stacks prepend the octet-string length byte; if known tags are absent, retry one byte in.
     if (!tags.containsKey(0x05) && !tags.containsKey(0x0A) && value.length() > 2) {
         tags = walkLumiTlv(value.substring(2))
     }
     logTrace "Lumi heartbeat tags: ${tags}"
     if (tags.containsKey(0x05)) {
-        sendEvent(name: "powerOutageCount", value: tags[0x05])
+        sendEvent(name: "rebootCount", value: tags[0x05])
     }
     if (tags.containsKey(0x0A)) {
-        updateDataValue("zigbeeParentDNI", String.format("%04X", tags[0x0A]))
+        state.zigbeeParentDNI = String.format("%04X", tags[0x0A])
     }
 }
 
