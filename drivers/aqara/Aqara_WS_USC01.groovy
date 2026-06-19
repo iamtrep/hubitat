@@ -41,6 +41,7 @@ metadata {
 
         attribute "deviceTemperature", "number"   // internal chip temperature, °C (ZCL DeviceTemperature 0x0002)
         attribute "operationMode", "enum", ["control_relay", "decoupled"]
+        attribute "powerOutageCount", "number"     // from the Aqara 0xFCC0/0x00F7 heartbeat; increments on each power interruption
 
         fingerprint profileId: "0104", inClusters: "0000,0002,0003,0004,0005,0006,0009", outClusters: "000A,0019",
             manufacturer: "LUMI", model: "lumi.switch.b1laus01", deviceJoinName: "Aqara Wall Switch WS-USC01"
@@ -64,7 +65,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "1.0.1"
+@Field static final String CODE_VERSION = "1.2.0"
 
 @Field static final String MFG_CODE = "0x115F"
 
@@ -78,6 +79,7 @@ metadata {
 @Field static final int ATTR_PRESENT_VALUE       = 0x0055
 @Field static final int LUMI_ATTR_MODE           = 0x0009   // event-mode init (write 1)
 @Field static final int LUMI_ATTR_FLIP_INDICATOR = 0x00F0   // boolean
+@Field static final int LUMI_ATTR_HEARTBEAT      = 0x00F7   // aggregated TLV report (temp, power-outage count, parent DNI, ...)
 @Field static final int LUMI_ATTR_OPERATION_MODE = 0x0200   // 0 = decoupled, 1 = control_relay
 @Field static final int LUMI_ATTR_POWER_OUTAGE   = 0x0201   // boolean
 
@@ -139,6 +141,12 @@ void refresh() {
     cmds += zigbee.readAttribute(CLUSTER_ON_OFF, ATTR_ON_OFF)
     cmds += zigbee.readAttribute(CLUSTER_DEVICE_TEMP, ATTR_MEASURED_VALUE)
     cmds += zigbee.readAttribute(CLUSTER_LUMI, LUMI_ATTR_OPERATION_MODE, [mfgCode: MFG_CODE])
+    // Basic-cluster identity → device data (app version, manufacturer, model, build date).
+    cmds += zigbee.readAttribute(0x0000, 0x0001)
+    cmds += zigbee.readAttribute(0x0000, 0x0004)
+    cmds += zigbee.readAttribute(0x0000, 0x0005)
+    cmds += zigbee.readAttribute(0x0000, 0x0006)
+    cmds += zigbee.readAttribute(0x0000, 0x4000)
     sendZigbeeCommands(cmds)
 }
 
@@ -203,6 +211,9 @@ private void parseAttributeReport(Map descMap) {
     switch (clusterInt) {
         case CLUSTER_ON_OFF:
             if (attrInt == ATTR_ON_OFF) reportSwitch(value)
+            // 0x00F5 is an Aqara proprietary uint32 piggybacked on on/off reports
+            // (a heartbeat/run counter; not in the ZCL spec). Carries no state we act on.
+            else if (attrInt == 0x00F5) logTrace "On/Off: Aqara proprietary attr 0x00F5 = ${value}"
             else logTrace "On/Off cluster: unhandled attr ${descMap.attrId} = ${value}"
             return
 
@@ -222,10 +233,40 @@ private void parseAttributeReport(Map descMap) {
             return
 
         case 0x0000:
-            logTrace "Basic cluster: attr ${descMap.attrId} = ${value}"
+            parseBasic(attrInt, value, descMap.encoding as String)
             return
     }
     logTrace "Unhandled attribute report: cluster=${descMap.cluster} attr=${descMap.attrId} value=${value}"
+}
+
+private void parseBasic(Integer attrInt, String value, String encoding) {
+    // Capture device identity/metadata as device data — survives driver swaps and
+    // shows on the device edit page. Aqara frames these reports manufacturer-specific
+    // (mfg 0x115F) but the attribute ids are standard ZCL Basic-cluster ids.
+    if (attrInt == null || value == null) return
+    switch (attrInt) {
+        case 0x0001:  // ApplicationVersion (uint8)
+            updateDataValue("applicationVersion", Integer.parseInt(value, 16).toString())
+            return
+        case 0x0004:  // ManufacturerName (char string)
+            String mfg = hexToText(value)
+            if (mfg) updateDataValue("manufacturer", mfg)
+            return
+        case 0x0005:  // ModelIdentifier (char string)
+            String model = hexToText(value)
+            if (model) updateDataValue("model", model)
+            return
+        case 0x0006:  // DateCode (char string) — manufacture/build date, e.g. "05-04-2023"
+            String dc = hexToText(value)
+            if (dc) updateDataValue("dateCode", dc)
+            return
+        case 0x4000:  // SWBuildID (char string)
+            String sw = hexToText(value)
+            if (sw) updateDataValue("softwareBuildId", sw)
+            return
+        default:
+            logTrace "Basic cluster: unhandled attr 0x${Integer.toHexString(attrInt)} (encoding ${encoding}) = ${value}"
+    }
 }
 
 private void reportSwitch(String value) {
@@ -277,8 +318,31 @@ private void parseLumiAttribute(Integer attrInt, String value) {
         case LUMI_ATTR_FLIP_INDICATOR:
             logDebug "LED indicator inverted: ${value}"
             return
+        case LUMI_ATTR_HEARTBEAT:
+            parseLumiHeartbeat(value)
+            return
         default:
             logTrace "Lumi cluster: unhandled attr 0x${Integer.toHexString(attrInt)} = ${value}"
+    }
+}
+
+private void parseLumiHeartbeat(String value) {
+    // The 0x00F7 octet string is a [tag][type][little-endian value]... TLV blob.
+    // Tags of interest: 0x05 power-outage count, 0x0A Zigbee parent DNI. (0x03 chip
+    // temp and 0x64 relay state are also present but already covered by 0x0002/0x0006.)
+    if (!value) return
+    Map<Integer, Long> tags = walkLumiTlv(value)
+    // Some stacks prepend the octet-string length byte; if the known tags are
+    // absent, retry one byte in.
+    if (!tags.containsKey(0x05) && !tags.containsKey(0x0A) && value.length() > 2) {
+        tags = walkLumiTlv(value.substring(2))
+    }
+    logTrace "Lumi heartbeat tags: ${tags}"
+    if (tags.containsKey(0x05)) {
+        sendEvent(name: "powerOutageCount", value: tags[0x05])
+    }
+    if (tags.containsKey(0x0A)) {
+        updateDataValue("zigbeeParentDNI", String.format("%04X", tags[0x0A]))
     }
 }
 
@@ -307,6 +371,58 @@ private void sendZigbeeCommands(List<String> cmds) {
 private static int signedInt16(String hex) {
     int raw = Integer.parseInt(hex, 16)
     return (raw >= 0x8000) ? raw - 0x10000 : raw
+}
+
+@CompileStatic
+private static int zclTypeLen(int type) {
+    // Byte width of the common fixed-length ZCL data types; -1 = unknown/variable.
+    switch (type) {
+        case 0x10: case 0x18: case 0x20: case 0x28: return 1
+        case 0x19: case 0x21: case 0x29: return 2
+        case 0x22: case 0x2A: return 3
+        case 0x23: case 0x2B: case 0x39: return 4
+        case 0x24: case 0x2C: return 5
+        case 0x25: case 0x2D: return 6
+        default: return -1
+    }
+}
+
+@CompileStatic
+private static Map<Integer, Long> walkLumiTlv(String hex) {
+    // Walk a [tag(1)][type(1)][value(little-endian, type-width)] sequence. Stops
+    // cleanly on an unknown/variable type or a truncated record — never throws.
+    Map<Integer, Long> out = [:]
+    int i = 0
+    int n = hex.length()
+    while (i + 4 <= n) {
+        int tag = Integer.parseInt(hex.substring(i, i + 2), 16)
+        int type = Integer.parseInt(hex.substring(i + 2, i + 4), 16)
+        i += 4
+        int len = zclTypeLen(type)
+        if (len <= 0 || i + len * 2 > n) break
+        long val = 0
+        for (int b = i + len * 2; b > i; b -= 2) {
+            val = (val << 8) | Integer.parseInt(hex.substring(b - 2, b), 16)
+        }
+        i += len * 2
+        out[tag] = val
+    }
+    return out
+}
+
+@CompileStatic
+private static String hexToText(String hex) {
+    // Decode a ZCL character-string hex payload to ASCII, skipping non-printable
+    // bytes (including the leading length prefix). Returns the input unchanged if
+    // it isn't pure hex (some char-string attrs arrive already decoded).
+    if (!hex) return ""
+    if (!(hex ==~ /[0-9a-fA-F]+/)) return hex
+    StringBuilder out = new StringBuilder()
+    for (int i = 0; i + 1 < hex.length(); i += 2) {
+        int c = Integer.parseInt(hex.substring(i, i + 2), 16)
+        if (c >= 0x20 && c < 0x7F) out.append((char) c)
+    }
+    return out.toString()
 }
 
 // ─── Logging ────────────────────────────────────────────────────────────────
