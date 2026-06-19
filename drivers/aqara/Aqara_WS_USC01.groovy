@@ -170,6 +170,23 @@ void push(Integer buttonId = 1) {
 }
 
 // ─── Zigbee message pipeline ──────────────────────────────────────────────────
+//
+// Observed-but-undecoded frames. This device emits several Aqara-proprietary
+// frames whose contents are not documented (zigbee-herdsman-converters does not
+// decode them either). The driver intentionally ignores them; they are recorded
+// here so they aren't mistaken for new/unhandled behavior:
+//   FCC0 0x00DF — periodic (~25 min) two-part diagnostics/statistics report: a
+//       TLV of per-interval counters. Part A tags 0x00–0x09 vary each interval
+//       (e.g. tag 0x02 == tag 0x08 + 2 consistently); part B is mostly zero with
+//       a constant 0xFE marker. Shape resembles the ZCL Diagnostics cluster
+//       (0x0B05), but the tag meanings are unverified — do not guess them.
+//   FCC0 0x00F7 tags 0x08/0x0B/0x0C/0x9A — unmapped fields in the heartbeat
+//       (we decode only 0x05 rebootCount and 0x0A parent DNI from it).
+//   FCC0 0x00F6 — config echo (uint16, observed 1000); basic 0xFF22 — legacy
+//       Xiaomi mode echo.
+//   Time cluster 0x000A reads — the device periodically polls the hub for the
+//       time; Hubitat does not deliver inbound Time-cluster reads to parse(), so
+//       they cannot be answered here.
 
 void parse(String description) {
     if (!description) return
