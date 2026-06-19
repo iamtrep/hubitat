@@ -43,7 +43,7 @@ metadata {
         namespace: "iamtrep",
         author: "pj",
         singleThreaded: true,
-        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/Aqara_WSDCGQ11LM.groovy"
+        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/aqara/Aqara_WSDCGQ11LM.groovy"
     ) {
         capability "Battery"
         capability "Configuration"

@@ -12,7 +12,6 @@ Hubitat Elevation device drivers for Zigbee devices, BLE sensors, and cloud APIs
 <!-- AUTO:drivers-standalone -->
 | Driver | Description |
 |---|---|
-| **Aqara Weather Sensor WSDCGQ11LM** | Aqara Zigbee Temperature/Humidity/Pressure Environmental Sensor Driver - WSDCGQ11LM |
 | **Awair Element** | Local API driver for Awair Element air quality monitors |
 | **Bluetooth Home v2 Motion/Occupancy Sensor** | BLE motion/occupancy sensor via BTHome v2 |
 | **Device Ping** | Pings a device and reports connectivity as a contact sensor |
@@ -22,47 +21,23 @@ Hubitat Elevation device drivers for Zigbee devices, BLE sensors, and cloud APIs
 | **Log Event Monitor** | Monitors the hub log stream and fires events on pattern matches |
 | **Universal Electronics / Visonic / Xfinity Contact Sensor** | Zigbee contact sensor with battery, tamper, and temperature |
 | **Virtual Switch + PowerSource** | Virtual device with synced Switch and PowerSource capabilities for testing power outage detection |
-| **Zigbee Mesh Probe** | Issues ZDO neighbor-table and routing-table queries for external mesh-mapping tools |
 <!-- /AUTO -->
 
-## Sinopé
+## Subfolders
 
-<!-- AUTO:drivers-sinope -->
-| Driver | Description |
+Vendor and utility driver groups. Each subfolder's own README lists its drivers.
+
+<!-- AUTO:drivers-subfolders -->
+| Folder | Description |
 |---|---|
-| **Sinope Dimmer (DM2500ZB)** | Zigbee dimmer switch |
-| **Sinope Floor Thermostat (TH13X0ZB)** | Zigbee thermostat |
-| **Sinope Switch (SW2500ZB)** | Zigbee on/off switch |
-| **Sinope Water Valve (VA422xZB)** | Zigbee water valve with optional flow sensor support |
+| [aqara/](./aqara/) |  |
+| [sinope/](./sinope/) |  |
+| [stelpro/](./stelpro/) |  |
+| [tests/](./tests/) |  |
+| [thirdreality/](./thirdreality/) |  |
+| [visiblair/](./visiblair/) | Standalone single-device driver for a VisiblAir indoor air quality sensor |
+| [zigbee_helpers/](./zigbee_helpers/) |  |
 <!-- /AUTO -->
-
-## Stelpro
-
-<!-- AUTO:drivers-stelpro -->
-| Driver | Description |
-|---|---|
-| **Stelpro Allia Zigbee Thermostat** | Zigbee thermostat for Allia / Stello Hilo HT402 |
-| **Stelpro Ki ZigBee Thermostat** | Zigbee thermostat for Stelpro Ki |
-<!-- /AUTO -->
-
-## Tests & Utilities
-
-<!-- AUTO:drivers-tests -->
-| Driver | Description |
-|---|---|
-| **Device Inspector** | Diagnostic driver that dumps DeviceWrapper properties to logs |
-| **Generic WebSocket Test** | Development driver for testing WebSocket connections |
-| **Log Event Monitor Test** | Companion test device for Log Event Monitor |
-| **Virtual Flow Meter (Test)** | Virtual liquid-flow-rate device for testing Well Monitor flow tracking |
-| **Virtual mmWave PIR Sensor** | Virtual device combining PIR + mmWave motion attributes for testing Motion Fusion |
-| **Virtual Well Pump Switch (Test)** | Virtual switch + powerMeter device for testing Well Monitor pump cycle detection |
-| **Xfinity Contact Sensor Monitor** | Logs battery, batteryVoltage, lowBattery and batteryDefect events for Xfinity contact sensors and optionally notifies |
-| **Zigbee Introspect** |  |
-<!-- /AUTO -->
-
-## VisiblAir
-
-A standalone single-device driver for VisiblAir indoor air quality sensors lives at `visiblair/visiblair.groovy`. For multi-sensor setups, see the full [VisiblAir integration](../integrations/visiblair/).
 
 ## License
 
