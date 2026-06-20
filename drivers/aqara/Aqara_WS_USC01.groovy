@@ -57,7 +57,9 @@ metadata {
             input name: "traceEnable", type: "bool", title: "Enable trace logging",       defaultValue: false
         }
 
-        input name: "operationMode", type: "enum", title: "Rocker mode",
+        // Named operationModePref (not operationMode) to avoid colliding with the
+        // operationMode *attribute* above — the bareword would otherwise be ambiguous.
+        input name: "operationModePref", type: "enum", title: "Rocker mode",
             options: ["control_relay": "Control relay (rocker switches the load)", "decoupled": "Decoupled (rocker is a scene button)"],
             defaultValue: "control_relay",
             description: "Decoupled detaches the rocker from the internal relay so it can drive automations instead."
@@ -66,7 +68,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "1.3.0"
+@Field static final String CODE_VERSION = "1.4.0"
 
 @Field static final String MFG_CODE = "0x115F"
 
@@ -110,11 +112,16 @@ void deviceTypeUpdated() {
 }
 
 void configure() {
-    logInfo "Configuring (operationMode=${operationMode ?: 'control_relay'}, version ${CODE_VERSION})"
+    // User preference wins; fall back to the last mode the device reported (the
+    // operationMode attribute survives code pushes) so a decoupled device isn't
+    // forced back to control_relay on upgrade. Default to control_relay on a fresh
+    // install where neither is set.
+    String desiredMode = operationModePref ?: device.currentValue("operationMode") ?: "control_relay"
+    logInfo "Configuring (operationMode=${desiredMode}, version ${CODE_VERSION})"
     sendEvent(name: "numberOfButtons", value: 1, isStateChange: false)
     state.version = CODE_VERSION
 
-    int opMode  = (operationMode == "decoupled") ? 0x00 : 0x01
+    int opMode  = (desiredMode == "decoupled") ? 0x00 : 0x01
     int outage  = powerOutageMemory == false ? 0x00 : 0x01
     int ledFlip = ledIndicatorInverted ? 0x01 : 0x00
 
@@ -349,8 +356,8 @@ private void parseLumiAttribute(Integer attrInt, String value) {
             }
             sendEvent(name: "operationMode", value: mode)
             // Keep the preferences UI in sync with the device (bidirectional sync).
-            if ((operationMode ?: "control_relay") != mode) {
-                device.updateSetting("operationMode", [value: mode, type: "enum"])
+            if ((operationModePref ?: "control_relay") != mode) {
+                device.updateSetting("operationModePref", [value: mode, type: "enum"])
             }
             return
         case LUMI_ATTR_POWER_OUTAGE:
