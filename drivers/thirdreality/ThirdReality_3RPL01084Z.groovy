@@ -16,7 +16,7 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.2.7"
+@Field static final String CODE_VERSION = "0.2.9"
 
 // Custom cluster for radar config and TVOC
 @Field static final int CLUSTER_RADAR = 0x042E
@@ -29,7 +29,7 @@ import groovy.transform.CompileStatic
 @Field static final int ATTR_TVOC_THRESHOLD     = 0xF003  // uint16 3000..50000 ppb
 @Field static final int ATTR_MOTION_SENS        = 0xF004  // uint8 0..20
 @Field static final int ATTR_PRESENCE_SENS      = 0xF005  // uint8 0..20
-@Field static final int ATTR_HOLD_TIME          = 0xF006  // uint8 1..6 (per TR firmware 1.00.35)
+@Field static final int ATTR_HOLD_TIME          = 0xF006  // uint8 1..4
 @Field static final int ATTR_TVOC_ALERT_ENABLE  = 0xF007  // uint8 0/1
 
 // Standard ZCL attributes used for bulb features
@@ -83,6 +83,7 @@ metadata {
         attribute "tvoc", "number"
 
         command "resetTVOCCalibration", [[name: "Reset the TVOC sensor calibration baseline"]]
+        command "updateFirmware"
 
         fingerprint profileId: "0104", endpointId: "01",
             inClusters: "0000,0003,0004,0005,0006,0008,0300,0400,0406,042E,1000",
@@ -104,10 +105,8 @@ metadata {
             defaultValue: 10, range: "0..20",
             description: "Motion detection sensitivity (0-20, higher = more sensitive)"
 
-        // ZHA/Z2M references advertise 1-4; ThirdReality firmware 1.00.35 release notes
-        // document 1-6 ("Presence exit time"). Trusting the manufacturer's spec.
         input name: "presenceHoldTime", type: "enum", title: "Presence Exit Time",
-            options: ["1": "1 (shortest)", "2": "2", "3": "3", "4": "4", "5": "5", "6": "6 (longest)"],
+            options: ["1": "1 (shortest)", "2": "2", "3": "3", "4": "4 (longest)"],
             defaultValue: "2", description: "How long presence stays active after motion stops"
 
         input name: "airQualityThreshold", type: "number", title: "TVOC Alarm Threshold (ppb)",
@@ -179,58 +178,77 @@ void logsOff() {
 private List<String> buildPreferenceWrites() {
     List<String> cmds = []
 
-    if (settings.detectDistance != null) {
-        cmds += zigbee.writeAttribute(CLUSTER_RADAR, ATTR_DETECT_DISTANCE, DataType.UINT8,
-            settings.detectDistance as int, [mfgCode: MFG_CODE])
-    }
-    if (settings.presenceSensitivity != null) {
-        cmds += zigbee.writeAttribute(CLUSTER_RADAR, ATTR_PRESENCE_SENS, DataType.UINT8,
-            settings.presenceSensitivity as int, [mfgCode: MFG_CODE])
-    }
-    if (settings.motionSensitivity != null) {
-        cmds += zigbee.writeAttribute(CLUSTER_RADAR, ATTR_MOTION_SENS, DataType.UINT8,
-            settings.motionSensitivity as int, [mfgCode: MFG_CODE])
-    }
-    if (settings.presenceHoldTime != null) {
-        cmds += zigbee.writeAttribute(CLUSTER_RADAR, ATTR_HOLD_TIME, DataType.UINT8,
-            settings.presenceHoldTime as int, [mfgCode: MFG_CODE])
-    }
-    if (settings.airQualityThreshold != null) {
-        cmds += zigbee.writeAttribute(CLUSTER_RADAR, ATTR_TVOC_THRESHOLD, DataType.UINT16,
-            settings.airQualityThreshold as int, [mfgCode: MFG_CODE])
-    }
+    Integer dist = toIntOrNull(settings.detectDistance)
+    if (dist != null) cmds += zigbee.writeAttribute(CLUSTER_RADAR, ATTR_DETECT_DISTANCE, DataType.UINT8, dist, [mfgCode: MFG_CODE])
+
+    Integer pSens = toIntOrNull(settings.presenceSensitivity)
+    if (pSens != null) cmds += zigbee.writeAttribute(CLUSTER_RADAR, ATTR_PRESENCE_SENS, DataType.UINT8, pSens, [mfgCode: MFG_CODE])
+
+    Integer mSens = toIntOrNull(settings.motionSensitivity)
+    if (mSens != null) cmds += zigbee.writeAttribute(CLUSTER_RADAR, ATTR_MOTION_SENS, DataType.UINT8, mSens, [mfgCode: MFG_CODE])
+
+    Integer hold = toIntOrNull(settings.presenceHoldTime)
+    if (hold != null) cmds += zigbee.writeAttribute(CLUSTER_RADAR, ATTR_HOLD_TIME, DataType.UINT8, hold, [mfgCode: MFG_CODE])
+
+    Integer thr = toIntOrNull(settings.airQualityThreshold)
+    if (thr != null) cmds += zigbee.writeAttribute(CLUSTER_RADAR, ATTR_TVOC_THRESHOLD, DataType.UINT16, thr, [mfgCode: MFG_CODE])
+
     if (settings.tvocAlertEnable != null) {
         cmds += zigbee.writeAttribute(CLUSTER_RADAR, ATTR_TVOC_ALERT_ENABLE, DataType.UINT8,
             settings.tvocAlertEnable ? 1 : 0, [mfgCode: MFG_CODE])
     }
-    if (settings.powerOnBehavior != null) {
-        cmds += zigbee.writeAttribute(0x0006, 0x4003, DataType.ENUM8, settings.powerOnBehavior as int)
-    }
 
-    if (settings.onLevel != null) {
-        int pct = Math.max(1, Math.min(100, settings.onLevel as int))
+    Integer pob = toIntOrNull(settings.powerOnBehavior)
+    if (pob != null) cmds += zigbee.writeAttribute(0x0006, 0x4003, DataType.ENUM8, pob)
+
+    Integer onLvl = toIntOrNull(settings.onLevel)
+    if (onLvl != null) {
+        int pct = Math.max(1, Math.min(100, onLvl))
         int raw = Math.max(1, Math.min(254, Math.round(pct * 2.54) as int))
         cmds += zigbee.writeAttribute(0x0008, ATTR_ON_LEVEL, DataType.UINT8, raw)
     }
 
-    if (settings.startUpLevel != null) {
-        int pct = Math.max(0, Math.min(100, settings.startUpLevel as int))
+    Integer suLvl = toIntOrNull(settings.startUpLevel)
+    if (suLvl != null) {
+        int pct = Math.max(0, Math.min(100, suLvl))
         int raw = pct == 0 ? 0 : Math.min(254, Math.round(pct * 2.54) as int)
         cmds += zigbee.writeAttribute(0x0008, ATTR_STARTUP_LEVEL, DataType.UINT8, raw)
     }
 
-    if (settings.onTransitionTime != null) {
-        int tenths = Math.max(0, Math.min(300, (settings.onTransitionTime as int) * 10))
+    Integer tt = toIntOrNull(settings.onTransitionTime)
+    if (tt != null) {
+        int tenths = Math.max(0, Math.min(300, tt * 10))
         cmds += zigbee.writeAttribute(0x0008, ATTR_ONOFF_TRANSITION, DataType.UINT16, tenths)
     }
 
-    if (settings.startUpColorTempK != null) {
-        int kelvin = Math.max(CT_MIN_KELVIN, Math.min(CT_MAX_KELVIN, settings.startUpColorTempK as int))
-        int mireds = kelvinToMireds(kelvin)
-        cmds += zigbee.writeAttribute(0x0300, ATTR_STARTUP_CT_MIREDS, DataType.UINT16, mireds)
+    Integer ctK = toIntOrNull(settings.startUpColorTempK)
+    if (ctK != null) {
+        int kelvin = Math.max(CT_MIN_KELVIN, Math.min(CT_MAX_KELVIN, ctK))
+        cmds += zigbee.writeAttribute(0x0300, ATTR_STARTUP_CT_MIREDS, DataType.UINT16, kelvinToMireds(kelvin))
     }
 
     return cmds
+}
+
+// Coerce a setting to int; ignore non-numeric values.
+private static Integer toIntOrNull(def v) {
+    if (v == null) return null
+    if (v instanceof Number) return ((Number) v).intValue()
+    String s = v.toString().trim()
+    if (!s || s == "null") return null
+    return s.isInteger() ? s.toInteger() : null
+}
+
+// Write Attributes Response: single 0x00 = all ok; failures are {status, attrId-LE} triples.
+private void reportRadarWriteStatus(List data) {
+    if (!data || data.size() < 3) return
+    for (int i = 0; i + 2 < data.size(); i += 3) {
+        String status = data[i] as String
+        if (status == "00") continue
+        String attrId = "${data[i + 2]}${data[i + 1]}"
+        logWarn "Radar config write to 0x${attrId} rejected (status 0x${status})" +
+            (status == "86" ? " — attribute not supported on this firmware" : "")
+    }
 }
 
 void configure() {
@@ -249,7 +267,7 @@ void configure() {
     cmds += "zdo bind 0x${device.deviceNetworkId} 1 1 0x${Integer.toHexString(CLUSTER_RADAR)} {${device.zigbeeId}} {}"  // Radar
 
     // Configure reporting
-    cmds += zigbee.configureReporting(0x0406, 0x0000, DataType.BITMAP8, 0, 3600, 1)    // Occupancy
+    cmds += zigbee.configureReporting(0x0406, 0x0000, DataType.BITMAP8, 0, 3600)       // Occupancy
     cmds += zigbee.configureReporting(0x0400, 0x0000, DataType.UINT16, 10, 3600, 100)  // Illuminance
     cmds += zigbee.configureReporting(0x0006, 0x0000, DataType.BOOLEAN, 0, 3600)       // OnOff
     cmds += zigbee.configureReporting(0x0008, 0x0000, DataType.UINT8, 1, 3600, 1)      // Level
@@ -289,6 +307,12 @@ void parse(String description) {
     Map descMap = zigbee.parseDescriptionAsMap(description)
     logTrace "parse() - ${descMap}"
 
+    // Write Attributes Response (command 04) — report any error status.
+    if (descMap.attrId == null && descMap.command == "04" && descMap.clusterId == "042E") {
+        reportRadarWriteStatus(descMap.data as List)
+        return
+    }
+
     if (descMap.attrId != null) {
         parseAttributeReport(descMap)
         descMap.additionalAttrs?.each { add ->
@@ -313,7 +337,12 @@ private void parseAttributeReport(Map descMap) {
     // attribute on pre-1.00.35 firmware for F004-F007) arrives with attrId set
     // but value null. Bail before any case tries to parse it.
     if (descMap.value == null) {
-        logDebug "No value: cluster=${descMap.cluster} attrId=${descMap.attrId} status=${descMap.status}"
+        // 0x86 = attribute not implemented by this firmware.
+        if (descMap.cluster == "042E" && descMap.status == "86") {
+            logInfo "Radar config attribute 0x${descMap.attrId} not supported on this firmware — distance/sensitivity/threshold tuning needs a newer firmware"
+        } else {
+            logDebug "No value: cluster=${descMap.cluster} attrId=${descMap.attrId} status=${descMap.status}"
+        }
         return
     }
 
@@ -688,6 +717,12 @@ void resetTVOCCalibration() {
     logInfo "Resetting TVOC calibration baseline"
     List<String> cmds = zigbee.writeAttribute(CLUSTER_RADAR, ATTR_TVOC_CALIBRATE, DataType.UINT8, 1, [mfgCode: MFG_CODE])
     sendZigbeeCommands(cmds)
+}
+
+// Zigbee OTA firmware check (cluster 0x0019).
+void updateFirmware() {
+    logInfo "Requesting Zigbee OTA firmware update"
+    sendZigbeeCommands(zigbee.updateFirmware())
 }
 
 // Helpers
