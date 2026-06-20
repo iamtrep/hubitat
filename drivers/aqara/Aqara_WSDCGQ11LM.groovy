@@ -88,7 +88,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "2.15.0"
+@Field static final String CODE_VERSION = "2.15.1"
 
 @Field static final int REPORT_INTERVAL_MINUTES = 60
 @Field static final int CHECK_EVERY_MINUTES = 10
@@ -662,15 +662,14 @@ private void parseHumidity(String humidityFlippedHex) {
     logInfo("Humidity (Relative) : ${humidityRounded} %")
     sendEvent(name: "humidity", value: humidityRounded, unit: "%")
 
-    def tempState = device.currentState("temperature")
-    if (tempState == null) {
+    BigDecimal lastTemperature = device.currentState("temperature")?.value?.toBigDecimal()
+    if (lastTemperature == null) {
         // First check-in or first humidity report before any temperature has
         // landed — skip absoluteHumidity rather than emit a 0°C-based value.
         logDebug("Skipping absoluteHumidity (no temperature reading yet)")
         return
     }
 
-    BigDecimal lastTemperature = tempState.value.toBigDecimal()
     String temperatureScale = location.temperatureScale
     if (temperatureScale == "F") {
         lastTemperature = (lastTemperature - 32) / 1.8
@@ -809,11 +808,12 @@ private void sendZigbeeCommands(List<String> cmds) {
 
 @CompileStatic
 private String reverseHexString(String hexString) {
-    String reversed = ""
+    // Byte-swap a big/little-endian hex string (even-length, byte pairs).
+    StringBuilder reversed = new StringBuilder(hexString.length())
     for (int i = hexString.length(); i > 0; i -= 2) {
-        reversed += hexString.substring(i - 2, i)
+        reversed.append(hexString.substring(i - 2, i))
     }
-    return reversed
+    return reversed.toString()
 }
 
 // Decode a ZCL Character String hex payload to ASCII text. Skips non-printable
