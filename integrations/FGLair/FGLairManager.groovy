@@ -30,7 +30,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "0.1.4"
+@Field static final String CODE_VERSION = "0.1.7"
 
 // Region-specific Ayla endpoints + app credentials, lifted from
 // ayla-iot-unofficial/src/ayla_iot_unofficial/const.py and fujitsu_consts.py.
@@ -60,6 +60,12 @@ definition(
 // the next poll. Log at warn until this many in a row, then escalate to error so a
 // real outage surfaces.
 @Field static final int FAILURE_ERROR_THRESHOLD = 5
+// display_temperature / outdoor_temperature are "sensed" properties: the Ayla cloud
+// only returns a fresh reading after the unit is told to wake its sensors (refresh=1).
+// Without that, a plain GET serves the last cached value — which the cloud refreshes
+// on its own roughly once a day, so the temps look frozen. We wake them once every
+// settings.sensedPolls polls — NOT every poll, which jammed the per-DSN write queue
+// in v0.1.1/v0.1.2 — and the next poll's GET picks up the woken values.
 
 preferences {
     page(name: "mainPage")
@@ -80,6 +86,8 @@ Map mainPage() {
             section("Polling") {
                 input "pollRate", "enum", title: "Poll interval (seconds)",
                       options: ["30", "60", "120", "300"], defaultValue: "60", submitOnChange: true
+                input "sensedPolls", "enum", title: "Wake sensed temps every N polls",
+                      options: ["5", "10", "15", "30"], defaultValue: "15"
                 input "btnRefreshNow", "button", title: "Refresh now"
             }
             section("Devices") {
@@ -255,11 +263,24 @@ private void schedulePolling() {
 
 void pollTick() {
     logTrace "pollTick"
-    fetchDevices()
     int rate = (settings.pollRate ?: "60") as int
+    int every = (settings.sensedPolls ?: "15") as int
+    int n = ((state.pollCount ?: 0) as int) + 1
+    state.pollCount = n
+    // Every Nth poll, wake the sensed temps; this poll's GET still reads the
+    // current values and the next poll picks up the woken ones.
+    if (n % every == 0) wakeSensors()
+    fetchDevices()
     if (rate < 60) {
         int jitter = -7 + new Random().nextInt(15)
         runIn(Math.max(15, rate + jitter), "pollTick")
+    }
+}
+
+private void wakeSensors() {
+    getChildDevices().each { ChildDeviceWrapper c ->
+        String dni = c.deviceNetworkId
+        if (dni?.startsWith(DNI_PREFIX_UNIT)) sendCommand(dni, "refresh", 1)
     }
 }
 
