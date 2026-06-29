@@ -171,6 +171,11 @@ void updated() {
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
 }
 
+void deviceTypeUpdated() {
+    logWarn "driver change detected"
+    configure()
+}
+
 void configure() {
     // Required by the Configuration capability. WSDCGQ11LM sets up its own
     // reporting at pairing time — no zigbee.configureReporting needed here.
