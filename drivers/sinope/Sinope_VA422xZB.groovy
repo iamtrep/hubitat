@@ -19,19 +19,20 @@
  *    (kkossev) Hubitat zigbee drivers (https://github.com/kkossev/Hubitat)
  *    (thebearmay) Hubitat zigbee drivers (https://github.com/thebearmay/hubitat)
  *
- * TODO
- * - battery volage as VoltageMeasurement capability OK, or move to custom batteryVoltage attribute ?
- *
  * v0.0.1 Initial version
  * v0.0.2 Added IAS Zone enrollment to enable leak detection
  * v0.0.3 custom attribute for battery voltage, code cleanup
+ * v0.0.4 Mesh-diagnostic route query + ZDP status text (removed in v0.0.5)
+ * v0.0.5 Emit events via sendEvent directly from parse(); drop device-side mesh-diag commands
+ * v0.0.6 Signed int16/int8 temperature decoding; configure() no longer runs on every hub restart
+ * v0.0.7 Leak detection reacts to both IAS alarm bits; fix Level Control fall-through and abnormal-flow-duration default; dormant Flow Measurement (0x0404) decoding; cleanup
  *
  */
 
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.0.6"
+@Field static final String CODE_VERSION = "0.0.7"
 
 
 metadata {
@@ -68,7 +69,7 @@ metadata {
                 input(name: "prefMinVolumeChange", type: "number", title: "Volume", description: "Minimum change (in mL) to trigger water volume auto reporting", defaultValue: 100, range: "0..1000")
                 input(name: "prefMinRateChange", type: "number", title: "Flow Rate", description: "Minimum change (in mL/h) to trigger flow rate auto reporting", defaultValue: 1, range: "0..1000")
                 input(name: "prefAbnormalFlowAction", type: "enum", title: "Abnormal Flow Action", options: ["off": "No action", "alert": "Send alert", "close": "Close valve and send alert"], defaultValue: "off", required: false)
-                input(name: "prefAbnormalFlowDuration", type: "number", title: "Abnormal Flow Duration (s)", range: "900..86400", default: 3600)
+                input(name: "prefAbnormalFlowDuration", type: "number", title: "Abnormal Flow Duration (s)", range: "900..86400", defaultValue: 3600)
             }
             input(name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true)
             input(name: "debugEnable", type: "bool", title: "Enable debug logging info", defaultValue: false, required: true, submitOnChange: true)
@@ -91,11 +92,9 @@ metadata {
 // Battery pack is 4x Lithium AAA batteries - rated from 1.8V to 1.4V on small loads (https://data.energizer.com/pdfs/l92.pdf)
 @Field static final float constBatteryVoltageMin = 4.0f * 1.4f
 @Field static final float constBatteryVoltageMax = 4.0f * 1.8f
-@Field static final Map constBatteryAlarmValues = [ "00000000": "clear", "0000000F": "detected"]  // TBC
+@Field static final Map constBatteryAlarmValues = [ "00000000": "clear", "0000000F": "detected"]  // 0x0F = a battery is missing
 
 @Field static final Map constValveValues =  [ "00": "closed", "01": "open" ]
-
-@Field static final Map constWaterSensorValues =  [ "0030": "dry", "0031": "wet" ]
 
 // See ZCL 3.2.2.2.8 - bit 7 (0x80) is set when battery backup is present.  Handling this the lazy way.
 @Field static final Map constPowerSources = ["00": "unknown", "01": "mains", "02": "mains", "03": "battery", "04": "dc", "05": "emergency", "06": "emergency",
@@ -141,7 +140,6 @@ void configure() {
     logTrace("configure()")
 
     state.codeVersion = CODE_VERSION
-    state.debugMode = debugMode
 
     try {
         unschedule()
@@ -198,6 +196,7 @@ void refresh() {
     if (isFlowSensorEnabled()) {
         cmds += zigbee.readAttribute(0x0702, 0x0000) // total volume delivered in mL
         cmds += zigbee.readAttribute(0x0702, 0x0400) // flow rate in mL/h
+        //cmds += zigbee.readAttribute(0x0404, 0x0000) // dormant - reference-standard flow source, validate on-premise
     }
 
     sendZigbeeCommands(cmds)
@@ -253,7 +252,8 @@ void parse(String description) {
 private void parseIASMessage(String description) {
     Map zs = zigbee.parseZoneStatusChange(description)
     logDebug("parseIASMessage zs = $zs")
-    if (zs.alarm1Set) {
+    // Firmware variants signal a leak on either alarm bit (some report 0x31 / bit 0, others 0x32 / bit 1), so react to both.
+    if (zs.alarm1Set || zs.alarm2Set) {
         sendEvent(name: "water", value: 'wet', descriptionText: "Flow sensor leak detection: detected")
     } else {
         sendEvent(name: "water", value: 'dry', descriptionText: "Flow sensor leak detection: clear")
@@ -293,19 +293,12 @@ private void parseAttributeReport(Map descMap) {
                     break
 
                 case "0021":
-                    // Battery percentage remaining
-                    // TODO - ignore for now, as the report is always zero.  Will get trace-logged at end of this function.
-                    //map.name = "batteryAlt"
-                    //map.value = getBatteryLevel(descMap.value)
-                    //map.unit = "%"
-                    //map.descriptionText = "Battery (alt) percentage remaining is ${map.value} ${map.unit}"
+                    // Battery percentage remaining - device always reports 0, so battery % is derived from voltage instead.
                     break
 
                 case "003E":
-                    // Alarm states reported as a 32-bit bitfield
-                    // - 0x00000000 : battery is good.
-                    // - 0x0000000F : reported when pulling one of the four batteries
-                    // other states TBC (e.g. battery low)
+                    // Alarm states reported as a 32-bit bitfield:
+                    // 0x00 = no alarm, 0x01 = low battery, 0x0F = a battery is missing
                     map.name = "batteryAlarm"
                     map.value = constBatteryAlarmValues[descMap.value]
                     if (map.value == null) {
@@ -351,6 +344,7 @@ private void parseAttributeReport(Map descMap) {
                     // "On" level (can be configured ?)
                     break
             }
+            break
 
         case "0402": // Temperature measurement cluster
             // Appears to be a temperature probe on the device (a priori it's not the water temp)
@@ -362,6 +356,15 @@ private void parseAttributeReport(Map descMap) {
             }
             break
 
+        case "0404": // Flow Measurement cluster
+            // Reference drivers (Z2M, ZHA) source flow rate here (uint16, 0.1 L/h) rather than from Metering 0x0400.
+            // Dormant: decoded and logged only. Not solicited (see refresh()/configureFlowSensor) and not emitted as
+            // "rate" to avoid colliding with the working 0x0702/0x0400 path. Validate on-premise before switching source.
+            if (descMap.attrId == "0000") {
+                logTrace("Flow Measurement 0x0404/0x0000 raw=${descMap.value} -> ${getFlowRateFromMeasurement(descMap.value)} LPM")
+            }
+            return
+
         case "0500": // IAS Zone cluster
             // Water leak detection.  The valve detects continuous flow over a (configurable) period of time as a leak.
             switch (descMap.attrId) {
@@ -372,14 +375,11 @@ private void parseAttributeReport(Map descMap) {
                     return
 
                 case "0002":
-                    String status = descMap.value
-                    if (status == "01") {
-                        map.name = "water"
-                        map.value = "wet"
-                    } else if (status == "00") {
-                        map.name = "water"
-                        map.value = "dry"
-                    }
+                    // ZoneStatus bitmap. Leak is signalled on either alarm bit (firmware variants differ), so check both.
+                    int zoneStatus = Integer.parseInt(descMap.value, 16)
+                    map.name = "water"
+                    map.value = (zoneStatus & 0x0003) != 0 ? "wet" : "dry"
+                    map.descriptionText = "Flow sensor leak detection: ${map.value == 'wet' ? 'detected' : 'clear'}"
                     break
 
                 default:
@@ -536,27 +536,21 @@ private Double getFlowRate(String value) {
 }
 
 @CompileStatic
+private Double getFlowRateFromMeasurement(String value) {
+    if (value == null) {
+        return null
+    }
+    // Flow Measurement cluster reports uint16 in 0.1 L/h. Capability unit is LPM: (raw / 10) / 60.
+    return Math.round(100.0d * Integer.parseInt(value, 16) / 600.0d) / 100.0d
+}
+
+@CompileStatic
 private Double getBatteryVoltage(String value) {
     if (value == null) {
         return null
     }
     // Capability units are V, device reports in tenths of V
     return Integer.parseInt(value, 16) / 10.0d
-}
-
-@CompileStatic
-private Object getBatteryLevel(String value) {
-    if (value == null) {
-        return null
-    }
-    // from the ZCL: 0x00 = 0%, 0x64 (100) = 50%, 0xC8 (200) = 100%, 0xFF (255) = invalid/unknown
-    int battLevel = Integer.parseInt(value, 16)
-
-    if (battLevel == 255) {
-        return "unknown"
-    }
-
-    return Math.round(battLevel / 2.0d) as Integer
 }
 
 private Integer getBatteryLevelFromVoltage() {
@@ -645,6 +639,7 @@ private List<String> configureFlowSensor(String flowSensorDiameter) {
         // This driver acquires both directly from the device.
         cmds += zigbee.configureReporting(0x0702, 0x0000, DataType.UINT48, 0, 1800, (int)prefMinVolumeChange) // volume delivered (in ml)
         cmds += zigbee.configureReporting(0x0702, 0x0400, DataType.INT24, 5, 300, (int)prefMinRateChange)     // flow rate in mL/h (see InstantaneousDemand - ZCL 10.4.2.2.5)
+        //cmds += zigbee.configureReporting(0x0404, 0x0000, DataType.UINT16, 30, 600, 1) // dormant - reference-standard flow source, validate on-premise
 
         // Abnormal flow detection setup
         cmds += zigbee.writeAttribute(0xFF01, 0x0252, DataType.UINT32, (int)prefAbnormalFlowDuration, [mfgCode: "0x119C"])
@@ -662,16 +657,6 @@ private List<String> configureFlowSensor(String flowSensorDiameter) {
     }
 
     return cmds
-}
-
-// Reverses order of bytes in hex string
-@CompileStatic
-private String reverseHexString(String hexString) {
-	String reversed = ""
-	for (int i = hexString.length(); i > 0; i -= 2) {
-		reversed += hexString.substring(i - 2, i)
-	}
-	return reversed
 }
 
 // Logging helpers
