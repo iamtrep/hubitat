@@ -26,13 +26,14 @@
  * v0.0.5 Emit events via sendEvent directly from parse(); drop device-side mesh-diag commands
  * v0.0.6 Signed int16/int8 temperature decoding; configure() no longer runs on every hub restart
  * v0.0.7 Leak detection reacts to both IAS alarm bits; fix Level Control fall-through and abnormal-flow-duration default; dormant Flow Measurement (0x0404) decoding; cleanup
+ * v0.0.8 Auto-reconfigure on code push (version check in parse())
  *
  */
 
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.0.7"
+@Field static final String CODE_VERSION = "0.0.8"
 
 
 metadata {
@@ -219,6 +220,11 @@ void close() {
 // Device Event Parsing
 
 void parse(String description) {
+    if (state.codeVersion != CODE_VERSION) {
+        state.codeVersion = CODE_VERSION
+        runInMillis 1500, 'autoConfigure'
+    }
+
     Map descMap = zigbee.parseDescriptionAsMap(description)
     logTrace("parse() - description = ${descMap}")
 
@@ -495,6 +501,11 @@ void computeFlowRate(String volumeAttr) {
 }
 
 // Scheduled callbacks
+
+private void autoConfigure() {
+    logWarn "Detected driver version change"
+    configure()
+}
 
 void requestPowerSourceReport() {
     List<String> cmds = []
