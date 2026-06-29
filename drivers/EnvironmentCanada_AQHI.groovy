@@ -159,6 +159,10 @@ void updated() {
     initialize()
 }
 
+void deviceTypeUpdated() {
+    logDebug "driver change detected"
+}
+
 void initialize() {
     if (state.version != CODE_VERSION) {
         logWarn "New driver version: ${CODE_VERSION} (was: ${state.version})"

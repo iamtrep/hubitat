@@ -342,7 +342,7 @@ void uninstalled() {
 }
 
 void deviceTypeUpdated() {
-    logWarn "driver change detected"
+    logDebug "driver change detected"
     configure()
 }
 

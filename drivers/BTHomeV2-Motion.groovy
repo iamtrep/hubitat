@@ -42,6 +42,10 @@ void updated() {
     // runIn(1800, logsOff)
 }
 
+void deviceTypeUpdated() {
+    if (logEnable) log.debug "driver change detected"
+}
+
 void uninstalled() {
     // nothing for now
 }
