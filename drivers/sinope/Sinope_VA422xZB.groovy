@@ -82,7 +82,7 @@ metadata {
         // VA4220ZB is the 3/4 inch valve
         fingerprint profileId: "0104", endpointId:"01", inClusters: "0000,0001,0003,0004,0005,0006,0008,0402,0500,0702,0B05,FF01", outClusters: "0003,0006,0019", manufacturer: "Sinope Technologies", model: "VA4220ZB", deviceJoinName: "Sinope Water Valve VA4220ZB"
 
-        // VA4221ZB is the 1 inch valve (seemingly identical to VA4220ZB other than pipe diameter)
+        // VA4221ZB is the 1 inch valve (differs from VA4220ZB only in pipe diameter)
         fingerprint profileId: "0104", endpointId:"01", inClusters: "0000,0001,0003,0004,0005,0006,0008,0402,0500,0702,0B05,FF01", outClusters: "0003,0006,0019", manufacturer: "Sinope Technologies", model: "VA4221ZB", deviceJoinName: "Sinope Water Valve VA4221ZB"
 
     }
@@ -97,31 +97,28 @@ metadata {
 
 @Field static final Map constValveValues =  [ "00": "closed", "01": "open" ]
 
-// See ZCL 3.2.2.2.8 - bit 7 (0x80) is set when battery backup is present.  Handling this the lazy way.
+// High bit (0x80) signals battery backup present; those entries map to the same sources as 0x00-0x06.
 @Field static final Map constPowerSources = ["00": "unknown", "01": "mains", "02": "mains", "03": "battery", "04": "dc", "05": "emergency", "06": "emergency",
                                              "80": "unknown", "81": "mains", "82": "mains", "83": "battery", "84": "dc", "85": "emergency", "86": "emergency" ]
 
 @Field static final Map constAbnormalFlowActions = [ "0000": "off", "0001": "alert", "0003": "close", "off": "0000", "alert": "0001", "close": "0003"]
 
-// Some constants to avoid divide by zero, etc. tbc.
+// Guards against divide-by-zero in the flow-rate computation.
 @Field static final float constMinVolumeDiff = 0.0001f
 @Field static final float constMinSampleTimeDiff = 0.0001f
 
 // Driver installation
 
 void installed() {
-    // called when device is first created with this driver
     initialize()
     configure()
 }
 
 void updated() {
-    // called when preferences are saved.
     configure()
 }
 
 void uninstalled() {
-    // called when device is removed
     try {
         unschedule()
     }
@@ -154,8 +151,8 @@ void configure() {
     // Configure device attribute self-reporting
     cmds += zigbee.configureReporting(0x0000, 0x0007, DataType.ENUM8, 0, 7200)               // power source
     cmds += zigbee.configureReporting(0x0001, 0x0020, DataType.UINT8, 300, 3600)             // battery voltage
-    cmds += zigbee.configureReporting(0x0001, 0x0021, DataType.UINT8, 300, 3600)             // battery level (apparently not supported by device, always returns 0)
-    cmds += zigbee.configureReporting(0x0001, 0x003E, DataType.BITMAP32, 0, 7200)            // battery alarm states (tbc)
+    cmds += zigbee.configureReporting(0x0001, 0x0021, DataType.UINT8, 300, 3600)             // battery level (device always returns 0)
+    cmds += zigbee.configureReporting(0x0001, 0x003E, DataType.BITMAP32, 0, 7200)            // battery alarm states
     cmds += zigbee.configureReporting(0x0006, 0x0000, DataType.BOOLEAN, 0, 3600)             // valve state
     cmds += zigbee.configureReporting(0x0402, 0x0000, DataType.INT16, 0, 3600, 1)            // (device) temperature (in 1/100ths C)
 
@@ -165,20 +162,19 @@ void configure() {
 
     sendZigbeeCommands(cmds)
 
-    // Schedule refresh requests for power source and battery alarm, since the self-reporting appears not to work.
+    // Poll power source and battery alarm; the device's self-reporting for these is unreliable.
     runIn(prefPowerSourceSchedule*60, requestPowerSourceReport, [overwrite: true, misfire: "ignore"])
     runIn(prefBatteryAlarmSchedule*3600, requestBatteryAlarmReport, [overwrite: true, misfire: "ignore"])
 }
 
 void initialize() {
-    // Convergence body — install + hub-restart route here. configure() is
-    // NOT called from initialize(): re-binding + reconfiguring on every hub
-    // startup wastes radio bandwidth (ARCHITECTURE.md "Driver lifecycle").
+    // configure() is intentionally not called here: reconfiguring the device on every
+    // hub startup wastes radio bandwidth.
     logTrace("initialize()")
 
     state.switchTypeDigital = false
-    state.remove("lastVolumeRecorded")     // built-in driver uses lastValue
-    state.remove("lastVolumeRecordedTime") // built-in driver uses lastSample
+    state.remove("lastVolumeRecorded")
+    state.remove("lastVolumeRecordedTime")
     state.remove("volumeSinceLastEvent")
 
     refresh()
@@ -189,7 +185,7 @@ void refresh() {
 
     cmds += zigbee.readAttribute(0x0000, 0x0007) // power source
     cmds += zigbee.readAttribute(0x0001, 0x0020) // battery voltage
-    cmds += zigbee.readAttribute(0x0001, 0x0021) // battery level (apparently not supported by device, appears to always return 0)
+    cmds += zigbee.readAttribute(0x0001, 0x0021) // battery level (device always returns 0)
     cmds += zigbee.readAttribute(0x0001, 0x003E) // battery alarm state
     cmds += zigbee.readAttribute(0x0006, 0x0000) // valve state
     cmds += zigbee.readAttribute(0x0402, 0x0000) // (device) temperature
@@ -243,9 +239,6 @@ void parse(String description) {
         //logTrace("Unhandled ZHA global command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     } else if (description?.startsWith('enroll request')) {
         logDebug "Received enroll request"
-        //def cmds = zigbee.enrollResponse() + zigbee.readAttribute(0x0500, 0x0000)
-        //logDebug "enroll response: ${cmds}"
-        //sendZigbeeCommands(cmds)
     } else if (description?.startsWith('zone status')  || description?.startsWith('zone report')) {
         logDebug "Zone status: $description"
         parseIASMessage(description)
@@ -275,10 +268,6 @@ private void parseIASMessage(String description) {
 private void parseAttributeReport(Map descMap) {
     Map map = [:]
 
-    // Main switch over all available cluster IDs
-    //
-    // fingerprint : inClusters: "0000,0001,0003,0004,0005,0006,0008,0402,0500,0702,0B05,FF01"
-    //
     switch (descMap.cluster) {
         case "0000":  // Basic cluster
             if (descMap.attrId == "0007") {
@@ -336,24 +325,21 @@ private void parseAttributeReport(Map descMap) {
             break
 
         case "0008": // Level Control cluster
-            // According to ZCL : "Attributes and commands for controlling a characteristic of devices that can be set to a level between fully ‘On’ and fully ‘Off’."
-            // Unknown use for this device.  However valve has LED indicators for progress from open to close...
+            // Purpose on this device is unconfirmed; decoded as a 0-255 level scaled to a percentage.
             switch (descMap.attrId) {
                 case "0000":
-                    // Current level
                     map.name = "level"
                     map.value = (descMap.value.toDouble() * 100.0 / 255.0).round()
                     map.unit = "%"
                     map.descriptionText = "Valve is ${map.value}% open"
                    break
-                case "0011":
-                    // "On" level (can be configured ?)
+                case "0011": // "On" level
                     break
             }
             break
 
         case "0402": // Temperature measurement cluster
-            // Appears to be a temperature probe on the device (a priori it's not the water temp)
+            // Device temperature probe, not water temperature.
             if (descMap.attrId == "0000") {
                 map.name = "temperature"
                 map.value = getTemperature(descMap.value)
@@ -363,9 +349,8 @@ private void parseAttributeReport(Map descMap) {
             break
 
         case "0404": // Flow Measurement cluster
-            // Reference drivers (Z2M, ZHA) source flow rate here (uint16, 0.1 L/h) rather than from Metering 0x0400.
-            // Dormant: decoded and logged only. Not solicited (see refresh()/configureFlowSensor) and not emitted as
-            // "rate" to avoid colliding with the working 0x0702/0x0400 path. Validate on-premise before switching source.
+            // uint16 in 0.1 L/h. Dormant: logged only, not emitted as "rate", to avoid colliding
+            // with the active 0x0702/0x0400 flow path.
             if (descMap.attrId == "0000") {
                 logTrace("Flow Measurement 0x0404/0x0000 raw=${descMap.value} -> ${getFlowRateFromMeasurement(descMap.value)} LPM")
             }
@@ -407,7 +392,7 @@ private void parseAttributeReport(Map descMap) {
                     map.name = "rate"
                     map.value = getFlowRate(descMap.value)
                     if (map.value > 0) {
-                        map.isStateChange = true  // force state change when there is flow, so RM rules are triggered, etc.
+                        map.isStateChange = true  // force a state change on flow so subscribed rules re-trigger
                     }
                     map.unit = "LPM"
                     map.descriptionText = "Water flow rate is ${map.value} ${map.unit}"
@@ -466,13 +451,13 @@ void computeBatteryLevel() {
 void computeFlowRate(String volumeAttr) {
     BigInteger volumeDiff = 0
     long sampleTimeDiff = 0
-    long sampleTimeNow = new Date().time  // TODO: find out if there a way to get a timestamp from the zigbee attribute report
+    long sampleTimeNow = new Date().time
 
     BigInteger currentVolume = new BigInteger(volumeAttr, 16)
     if (state.lastVolumeRecorded) {
         volumeDiff = currentVolume - (state.lastVolumeRecorded as BigInteger)
     }
-    state.volumeSinceLastEvent = volumeDiff  // keep track for now.
+    state.volumeSinceLastEvent = volumeDiff
 
     // Compute flow
     float computedFlowRate = 0f
@@ -482,8 +467,7 @@ void computeFlowRate(String volumeAttr) {
         }
 
         if (sampleTimeDiff > constMinSampleTimeDiff) {
-            // We have a volume difference in mL, and a time difference in ms
-            // We want flow rate in LPM, two decimal places (probably should be 1 decimal place, tbd)
+            // volumeDiff (mL) over sampleTimeDiff (ms) -> LPM, 2 decimal places
             computedFlowRate = Math.round(100 * (volumeDiff.floatValue() * 60f) / sampleTimeDiff) / 100f
         } else {
             logDebug("positive but instantaneous volume change ?!?")
@@ -495,7 +479,6 @@ void computeFlowRate(String volumeAttr) {
     sendEvent(name: "rateFromVolume", value: computedFlowRate, unit: "LPM", descriptionText: eventDescriptionText)
     logInfo(eventDescriptionText)
 
-    // cleanup
     state.lastVolumeRecorded = currentVolume
     state.lastVolumeRecordedTime = sampleTimeNow
 }
@@ -541,8 +524,7 @@ private Double getFlowRate(String value) {
     if (value == null) {
         return null
     }
-    // Capability unit is LPM, device reports in ml/hour
-    // Convert and round to two decimal places
+    // Device reports mL/h; capability unit is LPM.
     return Math.round(100.0d * Integer.parseInt(value, 16) / (60.0d * 1000.0d)) / 100.0d
 }
 
@@ -588,7 +570,7 @@ private Double getTemperature(String value) {
     if (value == null) {
         return null
     }
-    // ZCL spec says temperature is in hundredths of C (signed int16)
+    // Temperature is hundredths of a degree C, signed int16.
     double celsius = hexToSignedInt16(value) / 100.0d
     if (getTemperatureScale() == "C") {
         return celsius
@@ -641,30 +623,22 @@ private List<String> configureFlowSensor(String flowSensorDiameter) {
         return cmds
     }
 
-    //logDebug("Flow Sensor diameter config - ${testCmd}")
     List<String> configCmd = zigbee.writeAttribute(0xFF01, 0x0240, DataType.ARRAY, flowSensorConfigMsg, [mfgCode: "0x119C"])
     cmds += configCmd
 
     if (flowSensorDiameter != "off") {
-        // The built-in Hubitat driver appears to compute flow from volume (cluster 0x0702, attribute 0x0000)
-        // This driver acquires both directly from the device.
+        // Read volume and flow rate directly from the device.
         cmds += zigbee.configureReporting(0x0702, 0x0000, DataType.UINT48, 0, 1800, (int)prefMinVolumeChange) // volume delivered (in ml)
-        cmds += zigbee.configureReporting(0x0702, 0x0400, DataType.INT24, 5, 300, (int)prefMinRateChange)     // flow rate in mL/h (see InstantaneousDemand - ZCL 10.4.2.2.5)
+        cmds += zigbee.configureReporting(0x0702, 0x0400, DataType.INT24, 5, 300, (int)prefMinRateChange)     // flow rate in mL/h
         //cmds += zigbee.configureReporting(0x0404, 0x0000, DataType.UINT16, 30, 600, 1) // dormant - reference-standard flow source, validate on-premise
 
         // Abnormal flow detection setup
         cmds += zigbee.writeAttribute(0xFF01, 0x0252, DataType.UINT32, (int)prefAbnormalFlowDuration, [mfgCode: "0x119C"])
         cmds += zigbee.writeAttribute(0xFF01, 0x0253, DataType.BITMAP16, zigbee.swapOctets(constAbnormalFlowActions[prefAbnormalFlowAction]), [mfgCode: "0x119C"])
-        //cmds += zigbee.readAttribute(0xFF01, 0x0200, [mfgCode: "0x119C"])
-        //cmds += zigbee.readAttribute(0xFF01, 0x0230, [mfgCode: "0x119C"])
-        //cmds += zigbee.readAttribute(0xFF01, 0x0231, [mfgCode: "0x119C"])
 
         // IAS zone setup for water leak detection
         cmds += zigbee.enrollResponse()
-        //cmds += zigbee.configureReporting(0x0500, 0x0002, DataType.BITMAP16, 0, 10800, 0) // zone status every 3 hours
         cmds += zigbee.readAttribute(0x0500, 0x0000)
-    } else {
-        // turn off reporting?
     }
 
     return cmds
