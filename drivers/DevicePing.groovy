@@ -73,6 +73,10 @@ void updated() {
     initialize()
 }
 
+void deviceTypeUpdated() {
+    logDebug "driver change detected"
+}
+
 void initialize() {
     logDebug("initialize()")
 

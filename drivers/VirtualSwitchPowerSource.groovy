@@ -36,6 +36,10 @@ void installed() {
 void updated() {
 }
 
+void deviceTypeUpdated() {
+    log.debug "driver change detected"
+}
+
 void parse(String description) {
 }
 

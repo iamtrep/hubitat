@@ -110,6 +110,10 @@ void updated() {
     refresh()
 }
 
+void deviceTypeUpdated() {
+    logDebug "driver change detected"
+}
+
 void poll() {
     refresh()
 }

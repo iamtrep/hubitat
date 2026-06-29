@@ -55,6 +55,10 @@ void installed() { }
 void updated()   { }
 void parse(String description) { }
 
+void deviceTypeUpdated() {
+    if (txtEnable) log.debug "driver change detected"
+}
+
 void requestNeighborTable(String addr, BigDecimal startIndex = 0) {
     sendZdoRequest(addr, CLUSTER_MGMT_LQI_REQ, startIndex == null ? 0 : startIndex.intValue())
 }

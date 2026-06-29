@@ -121,6 +121,11 @@ void uninstalled() {
     disconnectZigbeeLogSocket()
 }
 
+void deviceTypeUpdated() {
+    logDebug "driver change detected"
+    configure()
+}
+
 void configure() {
     log.info "${device.displayName} configure"
     initialize()

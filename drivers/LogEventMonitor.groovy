@@ -102,6 +102,10 @@ void updated() {
     initialize()
 }
 
+void deviceTypeUpdated() {
+    logDebug "driver change detected"
+}
+
 void uninstalled() {
     logDebug "uninstalled()"
     disconnect()
