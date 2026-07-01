@@ -13,7 +13,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "1.1.0"
+@Field static final String CODE_VERSION = "1.1.1"
 @Field static final int MAX_BRIDGES = 5
 @Field static final int MAX_FILTERS = 10
 
@@ -350,6 +350,30 @@ private void initialize() {
 
     unschedule("resetRateLimitCounters")
     runEvery1Minute("resetRateLimitCounters")
+
+    refreshNotifyDeviceIds()
+}
+
+// IDs of every device used as a notification target, for the loop guard in
+// executeOutputs. Rebuilt on updated(), and lazily if a code push (which does
+// not run initialize()) left the cache empty.
+private List refreshNotifyDeviceIds() {
+    Set<String> notifyIds = [] as Set
+    (state.filters as List ?: []).each { Map f ->
+        if (f.outputNotify && f.notifySettingsKey) {
+            (settings[f.notifySettingsKey as String] ?: []).each { dev ->
+                if (dev?.id != null) notifyIds << dev.id.toString()
+            }
+        }
+    }
+    List result = notifyIds as List
+    state.notifyDeviceIds = result
+    return result
+}
+
+private List currentNotifyDeviceIds() {
+    List ids = state.notifyDeviceIds
+    return ids != null ? ids : refreshNotifyDeviceIds()
 }
 
 void uninstalled() {
@@ -631,8 +655,13 @@ private Map executeOutputs(Map logEntry, Map filter, String bridgeDni) {
     String formatted = "[${bridgeLabel}/${logEntry.type}/${logEntry.level}] ${logEntry.name}: ${logEntry.msg}"
     logInfo "${filter.label}: ${formatted}"
 
-    // Notification
-    if (filter.outputNotify && filter.notifySettingsKey) {
+    // Notification — but never notify about a log line that came from a
+    // notification device. A failed send (e.g. the notifier is offline) logs an
+    // error, which would match and re-notify, feeding itself into a storm. The
+    // log/HTTP outputs below don't loop, so they still run for such entries.
+    boolean fromNotifier = logEntry.type == "dev" &&
+        currentNotifyDeviceIds().contains(logEntry.id?.toString())
+    if (filter.outputNotify && filter.notifySettingsKey && !fromNotifier) {
         try {
             List devices = settings[filter.notifySettingsKey] ?: []
             devices.each { dev ->
