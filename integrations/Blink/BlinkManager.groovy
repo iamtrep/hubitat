@@ -35,7 +35,7 @@ definition(
 
 // --- Constants ---
 
-@Field static final String CODE_VERSION = "1.0.0"
+@Field static final String CODE_VERSION = "1.0.1"
 
 @Field static final String OAUTH_BASE_URL = "https://api.oauth.blink.com"
 @Field static final String CLIENT_ID = "ios"
@@ -1242,16 +1242,16 @@ void cameraSignalsResponse(resp, data) {
 private void fetchRecentClips() {
     if (!isAuthenticated() || !state.accountId || !state.tier) return
     long sinceUnix = ((atomicState.lastClipFetchTime ?: ((now() / 1000L) - CLIP_INITIAL_WINDOW_SEC)) as Number).longValue()
-    // Blink expects ISO 8601 with a timezone offset ("YYYY-MM-DDTHH:MM:SS+0000")
-    // per blinkpy helpers/util.py:69 + constants.TIMESTAMP_FORMAT. A raw Unix
-    // epoch is rejected with HTTP 400. URL-encode because the "+" sign in the
-    // offset would otherwise be decoded as a literal space by Blink's parser.
+    // since = ISO 8601 with a UTC offset ("YYYY-MM-DDTHH:MM:SS+0000"); a raw Unix
+    // epoch is rejected. Pass the query via the `query:` map, NOT inline in the URI:
+    // the 2.5.1.x asynchttpGet path drops an inline query string, so Blink sees no
+    // `since` and returns "Bad Time Format" (809); the query map is sent intact.
     String sinceIso = new Date(sinceUnix * 1000L).format("yyyy-MM-dd'T'HH:mm:ssZ", TimeZone.getTimeZone("UTC"))
-    String sinceEnc = URLEncoder.encode(sinceIso, "UTF-8")
-    String url = "https://rest-${state.tier}.immedia-semi.com/api/v1/accounts/${state.accountId}/media/changed?since=${sinceEnc}&page=1"
+    String url = "https://rest-${state.tier}.immedia-semi.com/api/v1/accounts/${state.accountId}/media/changed"
     logTrace "fetchRecentClips: since=${sinceIso}"
     asynchttpGet("recentClipsResponse", [
         uri        : url,
+        query      : [since: sinceIso, page: 1],
         headers    : bearerHeaders(),
         contentType: "application/json",
         timeout    : HTTP_TIMEOUT
