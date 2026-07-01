@@ -52,7 +52,8 @@ void httpStressTest() {
 void apiGet(int i, int n) {
     Map requestParams =
 	[
-        uri: "https://httpstat.us/200?sleep=60000",
+        uri: "https://httpstat.us/200",
+        query: [sleep: 60000],   // via query map: 2.5.1.x asynchttpGet drops an inline URI query
         headers: [
             requestContentType: 'application/json',
 		    contentType: 'application/json',

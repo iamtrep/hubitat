@@ -61,14 +61,29 @@ void httpStressTest() {
 }
 
 void apiGet(int i, int n) {
+    // Split any inline "?a=b" from the configured URL into a query map: 2.5.1.x
+    // asynchttpGet drops an inline URI query string (which would defeat ?sleep=).
+    String base = requestURL
+    Map<String, String> query = [:]
+    int q = (requestURL ?: "").indexOf('?')
+    if (q >= 0) {
+        base = requestURL.substring(0, q)
+        for (String pair : requestURL.substring(q + 1).split('&')) {
+            if (!pair) continue
+            String[] kv = pair.split('=', 2)
+            query[kv[0]] = (kv.length > 1) ? kv[1] : ''
+        }
+    }
+
     Map requestParams =
 	[
-        uri: requestURL,
+        uri: base,
         requestContentType: 'application/json',
 		contentType: 'application/json',
         headers: [:], // [ X-HttpStatus-Sleep: 60000 ],
         timeout: httpTimeout
 	]
+    if (query) requestParams.put('query', query)
 
     asynchttpGet("getApi", requestParams, [call: i, total: n, timestamp: now()])
 }
