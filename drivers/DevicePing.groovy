@@ -55,7 +55,7 @@ import hubitat.helper.NetworkUtils
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.0.6"
+@Field static final String CODE_VERSION = "0.0.7"
 @Field static final int RESPONSE_HISTORY_SIZE = 21
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int INITIAL_PING_DELAY = 2
@@ -181,10 +181,9 @@ long sendHttpRequest() {
     long result = -1
     try {
         Map params = [
-            uri: httpURL,
             timeout: httpTimeout ?: DEFAULT_HTTP_TIMEOUT,
             ignoreSSLIssues: true
-        ]
+        ] + splitQuery(httpURL)
         long timeBefore = now()
         httpGet(params) { response ->
             if (response.status >= 200 && response.status < 300) {
@@ -201,6 +200,21 @@ long sendHttpRequest() {
         logInfo "Error sending HTTP request: ${e}"
         return -1
     }
+}
+
+// Firmware 2.5.1.x (Apache HttpClient 5.x) drops a query string embedded in the
+// uri, so split it into a query: map, which is sent correctly. Values pass through
+// as-is — clean for Hubitat cloud tokens (UUIDs) and other reserved-char-free values.
+private Map splitQuery(String url) {
+    int q = url.indexOf('?')
+    if (q < 0) { return [uri: url] }
+    Map qs = [:]
+    url.substring(q + 1).tokenize('&').each { pair ->
+        int eq = pair.indexOf('=')
+        if (eq >= 0) { qs[pair.substring(0, eq)] = pair.substring(eq + 1) }
+        else         { qs[pair] = '' }
+    }
+    return [uri: url.substring(0, q), query: qs]
 }
 
 void updateDeviceStatus(boolean online) {
