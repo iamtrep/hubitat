@@ -26,7 +26,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "1.0.0"
+@Field static final String CODE_VERSION = "1.0.1"
 @Field static final String VISIBLAIR_API = "https://api.visiblair.com:11000/api/v1"
 @Field static final int HTTP_TIMEOUT = 15
 @Field static final String DNI_PREFIX = "visiblair-"
@@ -139,7 +139,8 @@ void pollSensors() {
     if (!userId) return
 
     Map requestParams = [
-        uri: "${VISIBLAIR_API}/sensors/getForUser?enc=true&userID=${userId}",
+        uri: "${VISIBLAIR_API}/sensors/getForUser",
+        query: [enc: "true", userID: userId],
         requestContentType: "application/json",
         contentType: "application/json",
         timeout: HTTP_TIMEOUT
@@ -290,7 +291,8 @@ void sendFirmwareCommand(String uuid, String command) {
     logDebug "firmware command '${command}' for ${uuid}"
 
     Map requestParams = [
-        uri: "${VISIBLAIR_API}/firmware/${command}?uuid=${uuid}",
+        uri: "${VISIBLAIR_API}/firmware/${command}",
+        query: [uuid: uuid],
         requestContentType: "application/json",
         contentType: "application/json",
         body: "",
@@ -417,24 +419,20 @@ private void fetchAndUpdateConfig(String uuid, Map overrides) {
 }
 
 private void sendConfigUpdate(String uuid, Map config, Map overrides) {
-    // Build query string — API requires full config or it drops the connection
-    StringBuilder query = new StringBuilder()
-    query.append("enc=true&uuid=${uuid}&associatedUserID=${userId}")
+    // Build the full config as a query map — the API requires the full config or it
+    // drops the connection. Pass via query:, not inline in the URI: 2.5.1.x asynchttpPut
+    // silently drops an inline URI query string. The platform URL-encodes map values,
+    // so pass raw values (encoding here would double-encode).
+    Map<String, String> query = [enc: "true", uuid: uuid, associatedUserID: userId?.toString()]
     config.each { String key, value ->
-        String strVal
-        if (value instanceof Map || value instanceof List) {
-            strVal = JsonOutput.toJson(value)
-        } else {
-            strVal = value?.toString() ?: ""
-        }
-        query.append("&${key}=${URLEncoder.encode(strVal, 'UTF-8')}")
+        query[key] = (value instanceof Map || value instanceof List) ? JsonOutput.toJson(value) : (value?.toString() ?: "")
     }
 
-    String url = "${VISIBLAIR_API}/sensors/assign?${query}"
-    logDebug "updating sensor config for ${uuid}: ${overrides} (${config.size()} fields, URL length: ${url.length()})"
+    logDebug "updating sensor config for ${uuid}: ${overrides} (${config.size()} fields)"
 
     Map requestParams = [
-        uri: url,
+        uri: "${VISIBLAIR_API}/sensors/assign",
+        query: query,
         requestContentType: "application/json",
         contentType: "application/json",
         timeout: HTTP_TIMEOUT

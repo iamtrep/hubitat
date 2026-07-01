@@ -40,7 +40,7 @@ metadata {
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 @Field static final String constCO2ClickURL = 'https://environment-monitor-01.co2.click:11000/api/v1'
 @Field static final String constVisiblairURL = 'https://api.visiblair.com:11000/api/v1'
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
@@ -195,14 +195,29 @@ void refreshSensorData(Map retData) {
 
 
 void getDeviceValuesFromAPI(String command) {
+    // Split any inline "?a=b&c=d" into a query map. On 2.5.1.x asynchttpGet silently
+    // drops an inline URI query string, so the params must go via the query: key.
+    String path = command
+    Map<String, String> query = [:]
+    int q = command.indexOf('?')
+    if (q >= 0) {
+        path = command.substring(0, q)
+        for (String pair : command.substring(q + 1).split('&')) {
+            if (!pair) continue
+            String[] kv = pair.split('=', 2)
+            query[kv[0]] = (kv.length > 1) ? kv[1] : ''
+        }
+    }
+
     Map requestParams = [
-        uri: "${constVisiblairURL}/${command}",
+        uri: "${constVisiblairURL}/${path}",
         headers: [
             requestContentType: 'application/json',
             contentType: 'application/json'
         ],
         timeout: HTTP_TIMEOUT
     ]
+    if (query) requestParams.put('query', query)
 
     asynchttpGet("getDeviceValuesFromAPI_async", requestParams, [cmd: command])
 }
@@ -274,10 +289,11 @@ void processPutRequest_async(response, data) {
 }
 
 void callPutRequest(String command) {
-    String target = "firmware/${command}?uuid=${uuid}"  // no security!  (no token required)
-
+    // uuid goes via the query map, not inline in the URI: 2.5.1.x asynchttpPut drops
+    // an inline URI query string. (No security here — no token required.)
     Map requestParams = [
-        uri: "${constVisiblairURL}/${target}",
+        uri: "${constVisiblairURL}/firmware/${command}",
+        query: [uuid: uuid],
         headers: [
             requestContentType: 'application/json',
             contentType: 'application/json'
