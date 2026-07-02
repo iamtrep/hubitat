@@ -26,7 +26,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "1.0.1"
+@Field static final String CODE_VERSION = "1.0.2"
 @Field static final String VISIBLAIR_API = "https://api.visiblair.com:11000/api/v1"
 @Field static final int HTTP_TIMEOUT = 15
 @Field static final String DNI_PREFIX = "visiblair-"
@@ -389,8 +389,10 @@ void updateSensorConfig(String uuid, Map overrides) {
 }
 
 private void fetchAndUpdateConfig(String uuid, Map overrides) {
+    // Query via the query: map, not inline in the uri: 2.5.1.x drops an inline uri query.
     Map requestParams = [
-        uri: "${VISIBLAIR_API}/sensors/getForUser?enc=true&userID=${userId}",
+        uri: "${VISIBLAIR_API}/sensors/getForUser",
+        query: [enc: "true", userID: userId],
         requestContentType: "application/json",
         contentType: "application/json",
         timeout: HTTP_TIMEOUT

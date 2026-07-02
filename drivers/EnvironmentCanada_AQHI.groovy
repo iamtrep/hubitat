@@ -11,7 +11,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.3.0"
+@Field static final String CODE_VERSION = "0.3.1"
 @Field static final String API_BASE = "https://api.weather.gc.ca/collections"
 @Field static final String ALERT_API_BASE = "https://weather.gc.ca/api/app/v3"
 @Field static final int HTTP_TIMEOUT = 15
@@ -231,11 +231,13 @@ void refresh() {
 // ---------- Observation ----------
 
 void fetchObservation(String sid) {
-    String url = "${API_BASE}/aqhi-observations-realtime/items?f=json&location_id=${sid}&latest=true&limit=1"
-    logDebug "Fetching observation: ${url}"
+    logDebug "Fetching observation for ${sid}"
 
+    // Query goes in the query: map, not inline in the uri: firmware 2.5.1.x drops an
+    // inline uri query string. All values here are URL-safe.
     Map params = [
-        uri: url,
+        uri: "${API_BASE}/aqhi-observations-realtime/items",
+        query: [f: "json", location_id: sid, latest: "true", limit: 1],
         contentType: "application/json",
         timeout: HTTP_TIMEOUT
     ]
@@ -326,11 +328,11 @@ private void checkObservationStaleness() {
 // ---------- Forecast ----------
 
 void fetchForecast(String sid) {
-    String url = "${API_BASE}/aqhi-forecasts-realtime/items?f=json&location_id=${sid}&sortby=-forecast_datetime&limit=48"
-    logDebug "Fetching forecast: ${url}"
+    logDebug "Fetching forecast for ${sid}"
 
     Map params = [
-        uri: url,
+        uri: "${API_BASE}/aqhi-forecasts-realtime/items",
+        query: [f: "json", location_id: sid, sortby: "-forecast_datetime", limit: 48],
         contentType: "application/json",
         timeout: HTTP_TIMEOUT
     ]
@@ -579,9 +581,9 @@ void findNearestStation() {
 
     logInfo "Finding nearest AQHI station to hub location (${hubLat}, ${hubLon})..."
 
-    String url = "${API_BASE}/aqhi-stations/items?f=json&limit=200"
     Map params = [
-        uri: url,
+        uri: "${API_BASE}/aqhi-stations/items",
+        query: [f: "json", limit: 200],
         contentType: "application/json",
         timeout: HTTP_TIMEOUT
     ]

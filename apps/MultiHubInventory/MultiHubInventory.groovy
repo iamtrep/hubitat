@@ -4,7 +4,7 @@
  */
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.6.5"
+@Field static final String CODE_VERSION = "0.6.6"
 @Field static final String UI_FILE = "multi_hub_inventory_ui.html"
 @Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/MultiHubInventory.groovy"
 @Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/multi_hub_inventory_ui.html"
@@ -339,7 +339,7 @@ void probePeers() {
     List peers = (state.peerList ?: []) as List
     peers.each { Map peer ->
         try {
-            httpGet([uri: "${peer.baseUrl}/audit/status?access_token=${peer.token}", contentType: 'application/json', timeout: 8]) { resp ->
+            httpGet([uri: "${peer.baseUrl}/audit/status", query: [access_token: peer.token], contentType: 'application/json', timeout: 8]) { resp ->
                 peer.reachable = (resp.status == 200) ? 'ok' : "http ${resp.status}"
             }
         } catch (Exception e) {
@@ -381,15 +381,18 @@ Map apiPeer() {
     if (idx == null || idx < 0 || idx >= peers.size()) return jsonResponse([error: "unknown hub"])
     Map peer = peers[idx] as Map
     String base = peer.baseUrl, token = peer.token
+    // Query via the query: map, not inline in the uri: 2.5.1.x drops an inline uri query
+    // string (token/scanId are URL-safe, so the map carries them cleanly).
     String url; String method = 'GET'
-    if (op == 'start')       { url = "${base}/audit/start?access_token=${token}"; method = 'POST' }
-    else if (op == 'status') { String rawSid = params.scanId as String; String sid = (rawSid && rawSid ==~ /[A-Za-z0-9_\-]+/) ? "&scanId=${rawSid}" : ''; url = "${base}/audit/status?access_token=${token}${sid}" }
-    else                     { url = "${base}/audit/data?access_token=${token}" }
+    Map q = [access_token: token]
+    if (op == 'start')       { url = "${base}/audit/start"; method = 'POST' }
+    else if (op == 'status') { url = "${base}/audit/status"; String rawSid = params.scanId as String; if (rawSid && rawSid ==~ /[A-Za-z0-9_\-]+/) q.scanId = rawSid }
+    else                     { url = "${base}/audit/data" }
     try {
         Object body = null
         Closure handler = { resp -> body = resp.data }
-        if (method == 'POST') httpPost([uri: url, requestContentType: 'application/json', contentType: 'application/json', timeout: 30], handler)
-        else                  httpGet([uri: url, contentType: 'application/json', timeout: 90], handler)
+        if (method == 'POST') httpPost([uri: url, query: q, requestContentType: 'application/json', contentType: 'application/json', timeout: 30], handler)
+        else                  httpGet([uri: url, query: q, contentType: 'application/json', timeout: 90], handler)
         return jsonResponse(body ?: [:])
     } catch (Exception e) {
         String safeMsg = (e.message ?: '')?.replaceAll(/access_token=[^&\s]+/, 'access_token=REDACTED')
