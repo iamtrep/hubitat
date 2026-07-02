@@ -48,6 +48,10 @@ metadata {
         input name: "ip", type: "text", title: "IP Address", description: "IP of Awair Device", required: true, defaultValue: "192.168.1.3"
         input name: "pollingInterval", type: "number", title: "Time (seconds) between status checks", defaultValue: 300
 
+        input name: "tempOffset", type: "decimal", title: "Temperature offset (°${location.temperatureScale}, signed)", defaultValue: 0
+        input name: "correctHumidityForTemp", type: "bool", title: "Correct humidity for the temperature offset", defaultValue: false
+        input name: "humidityOffset", type: "decimal", title: "Humidity offset (% RH, signed)", defaultValue: 0
+
         input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: false
         input name: "debugEnable", type: "bool", title: "Enable debug logging info", defaultValue: false, required: true, submitOnChange: true
         if (debugEnable) {
@@ -56,7 +60,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.2.0"
 @Field static final String constLocalPathToAirData = "/air-data/latest"
 @Field static final String constLocalPathToConfig = "/settings/config/data"
 
@@ -198,6 +202,19 @@ private void parseConfig(response, data) {
 }
 
 
+// Temperature offset is entered in the hub display scale; convert the delta to Celsius for the correction math.
+// A temperature *difference* of N °F equals N / 1.8 °C.
+private double tempOffsetCelsius() {
+    double off = (tempOffset ?: 0) as double
+    return (location.temperatureScale == "F") ? (off / 1.8d) : off
+}
+
+// Magnus-Tetens saturation vapor pressure (hPa) as a function of temperature in °C.
+@CompileStatic
+private static double satVaporPressure(double tempC) {
+    return 6.1094d * Math.exp((17.625d * tempC) / (tempC + 243.04d))
+}
+
 private void processEvent(String name, Object value, String unit = null, String description = null) {
     Map evt = [
         name : name,
@@ -255,15 +272,29 @@ private void processAwairData(response, data) {
             // AIQ Score - https://support.getawair.com/hc/en-us/articles/19504367520023-Understanding-Awair-Score-and-Air-Quality-Factors-Measured-By-Awair-Element
             processAirQualityMetric("awairScore", awairData.score, "", AIQ_THRESHOLDS, "poor", "aiq_desc")
 
-            // Temperature
-            String temperature = convertTemperatureIfNeeded(awairData.temp, "c", 1)
-            processEvent("temperature", temperature, "°${location.temperatureScale}", "Temperature is ${temperature}°${location.temperatureScale}")
+            // Temperature — device reports °C; apply the offset in Celsius, convert to display scale at the emit edge
+            Double rawTempC = (awairData.temp != null) ? (awairData.temp as double) : null
+            double offsetC = tempOffsetCelsius()
+            Double correctedTempC = (rawTempC != null) ? (rawTempC + offsetC) : null
+            if (correctedTempC != null) {
+                String temperature = convertTemperatureIfNeeded(correctedTempC as BigDecimal, "c", 1)
+                processEvent("temperature", temperature, "°${location.temperatureScale}", "Temperature is ${temperature}°${location.temperatureScale}")
+            }
 
             // CO2
             processAirQualityMetric("carbonDioxide", awairData.co2, "ppm", CO2_THRESHOLDS, "good", "co2_desc")
 
-            // Humidity
-            processEvent("humidity", Math.round(awairData.humid as double) as int, "%", "humidity is ${awairData.humid}")
+            // Humidity — optionally correct RH for the temperature offset (hold absolute humidity constant), then apply the flat offset
+            if (awairData.humid != null) {
+                double rh = awairData.humid as double
+                if (correctHumidityForTemp && rawTempC != null && offsetC != 0.0d) {
+                    rh = rh * satVaporPressure(rawTempC) / satVaporPressure(correctedTempC)
+                }
+                rh += (humidityOffset ?: 0) as double
+                rh = Math.max(0.0d, Math.min(100.0d, rh))
+                int humidity = Math.round(rh) as int
+                processEvent("humidity", humidity, "%", "humidity is ${humidity}%")
+            }
         } catch (groovy.json.JsonException e) {
             logError "Malformed JSON from air-data endpoint: ${e.message} - raw: ${response.data}"
         } catch (Exception e) {
