@@ -14,7 +14,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.20"
+@Field static final String CODE_VERSION = "0.0.21"
 
 metadata {
     definition(
@@ -37,7 +37,8 @@ metadata {
         capability "ReleasableButton"
         capability "Switch"
         capability "SwitchLevel"
-        capability "TemperatureMeasurement"
+
+        attribute "deviceTemperature", "number"
 
         command "keypadLock", [[name: "Disconnect paddle from relay so it no longer operates the load (a.k.a. smart bulb mode - button events are still sent when the paddle is operated)"]]
         command "keypadUnlock", [[name: "Connect paddle to relay so that the paddle will operate the load."]]
@@ -453,7 +454,7 @@ private void parseAttributeReport(Map descMap) {
 
         case "0002": // Device Temperature Configuration cluster
             if (descMap.attrId == "0000") {
-                map.name = "temperature"
+                map.name = "deviceTemperature"
                 map.value = getTemperature(descMap.value)
                 map.unit = getTemperatureScale()
                 map.descriptionText = "Device temperature is ${map.value}${map.unit}"
