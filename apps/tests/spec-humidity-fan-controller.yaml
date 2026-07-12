@@ -89,9 +89,14 @@ cases:
     assert_logs:
       - { pattern: "Humidity rose during deactivation delay", level: info }
 
+  # HIGH → PENDING_NORMAL → NORMAL. The second in-window reading exercises the
+  # servicePendingTransition() re-arm during the 2s deactivation delay; the fan
+  # must still turn off (the re-arm targets the same pendingStateSince deadline).
   - name: deactivate-via-snapshot
     actions:
-      - { device: test-hfc-bath, command: setHumidity, args: [60] }
+      - { device: test-hfc-bath, command: setHumidity, args: [60] }   # -> PENDING_NORMAL, arm timer
+      - { device: test-hfc-bath, command: setHumidity, args: [60] }   # ~1s later, in-window -> re-arm
+    command_spacing_seconds: 1.0
     wait_seconds: 4
     assert:
       - { device: test-hfc-fan,   attribute: switch, value: "off" }
