@@ -219,6 +219,13 @@ function fwBasis(d){
   if (fw) return { basis: d.firmwareSource || 'firmware', value: fw };
   return { basis: null, value: null };
 }
+// Parse a Hub Mesh remote's remoteDeviceUrl (http://<sourceIP>:<port>/device/edit/<id>) into its
+// source host + source device id. Returns null for '', '#', or any non-matching value.
+function parseRemoteUrl(url){
+  if (!url || url === '#') return null;
+  const m = /^https?:\/\/([^:/]+)(?::\d+)?\/device\/edit\/(\d+)/.exec(url);
+  return m ? { sourceHost: m[1], sourceDeviceId: Number(m[2]) } : null;
+}
 function firmwareDrift(rows){
   const groups = {};
   for (const r of rows){

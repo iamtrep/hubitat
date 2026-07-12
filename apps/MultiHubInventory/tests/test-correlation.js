@@ -32,7 +32,7 @@ function extractConstLine(prefix) {
   return src.slice(i, j < 0 ? src.length : j);
 }
 
-const FNS = ['filterLinked', 'mergeFleet', 'fwBasis', 'firmwareDrift', 'driverDrift', 'attentionItems', 'fleetSummary'];
+const FNS = ['filterLinked', 'mergeFleet', 'fwBasis', 'firmwareDrift', 'driverDrift', 'attentionItems', 'fleetSummary', 'parseRemoteUrl'];
 const harness = extractConstLine('const CD =') + '\n' + extractConstLine('const integLabel') + '\n'
   + FNS.map(extractFn).join('\n') + '\nmodule.exports = { ' + FNS.join(', ') + ' };';
 const tmp = path.join(os.tmpdir(), 'mhi_corr_' + process.pid + '.js');
@@ -248,6 +248,17 @@ t('driverDrift — two devices, one blank deviceTypeName → only one distinct d
   ];
   const d = C.driverDrift(rows);
   assert.strictEqual(d.length, 0, 'blank deviceTypeName → only one named driver → not returned');
+});
+
+t('parseRemoteUrl extracts host + id, and rejects broken links', () => {
+  assert.deepStrictEqual(C.parseRemoteUrl('http://203.0.113.213:8080/device/edit/491'),
+    { sourceHost:'203.0.113.213', sourceDeviceId:491 });
+  assert.deepStrictEqual(C.parseRemoteUrl('https://10.0.0.5/device/edit/12'),
+    { sourceHost:'10.0.0.5', sourceDeviceId:12 });
+  assert.strictEqual(C.parseRemoteUrl('#'), null);
+  assert.strictEqual(C.parseRemoteUrl(''), null);
+  assert.strictEqual(C.parseRemoteUrl(null), null);
+  assert.strictEqual(C.parseRemoteUrl('http://x/nope'), null);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
