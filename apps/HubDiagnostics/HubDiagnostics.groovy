@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "5.68.7"
+@Field static final String CODE_VERSION = "5.69.0"
 @Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
@@ -4203,6 +4203,35 @@ def readFile(String fileName) {
 // ===== DEVICE USAGE AUDIT =====
 
 /**
+ * id -> Hub Mesh linkage fields, read off the bulk /hub2/devicesList. remoteDeviceUrl / isLinked /
+ * hubMesh live on each entry's `data`; onOffState + hubMeshDisabled come from `data.currentStates`.
+ * These aren't in fullJson (or read null there), so the bulk list is the source of truth.
+ */
+private Map<Long, Map> buildMeshFieldsMap() {
+    Map<Long, Map> out = [:]
+    Map wrap = hubMapRequest(DEVICES_LIST_PATH, "devices list (mesh enrichment)", 30)
+    if (!wrap.ok) { logWarn "mesh enrichment: device list fetch failed: ${wrap.error}"; return out }
+    List entries = flattenDeviceList((wrap.data?.devices ?: []) as List)
+    entries.each { Object e ->
+        Map d = ((e instanceof Map && ((Map) e).data instanceof Map) ? ((Map) e).data : e) as Map
+        Long id = d.id as Long
+        if (id == null) return
+        List cs = (d.currentStates ?: []) as List
+        Map swState  = cs.find { ((Map) it).key == 'switch' } as Map
+        Map hmdState = cs.find { ((Map) it).key == 'hubMeshDisabled' } as Map
+        String sw = (swState != null) ? safeToString(swState.value, null) : null
+        out[id] = [
+            remoteDeviceUrl: safeToString(d.remoteDeviceUrl, null),
+            isLinked:        (d.isLinked == true) || (d.linked == true),
+            hubMeshShared:   (d.hubMesh == true),
+            onOffState:      (sw == 'on' || sw == 'off') ? sw : null,
+            hubMeshDisabled: (hmdState != null) && (safeToString(hmdState.value, 'false') == 'true')
+        ]
+    }
+    return out
+}
+
+/**
  * Extract Section A/B/C fields from a /device/fullJson/{id} response.
  * Pure function; safe to call from async callbacks.
  *
@@ -4314,6 +4343,16 @@ private Map extractAuditFields(Map fj, Long did) {
         // analyzeDevices()'s classifyDevice result (the raw `protocol` above is null on many hubs).
         connectionType:      null,
         integration:         null,
+
+        // Hub Mesh linkage (v5.69.0) — filled in finalizeAudit() from the bulk /hub2/devicesList.
+        // fullJson carries remoteDeviceUrl but null isLinked/hubMesh/currentStates, so the bulk list
+        // is authoritative. Cross-hub consumers (Multi-Hub Inventory) stitch the source↔remote graph
+        // from remoteDeviceUrl (http://<sourceIP>:<port>/device/edit/<sourceDeviceId>).
+        remoteDeviceUrl:     null,
+        isLinked:            false,
+        hubMeshShared:       false,
+        onOffState:          null,
+        hubMeshDisabled:     false,
 
         // Section B
         orphan:              dev.orphan == true,
@@ -4542,6 +4581,26 @@ private void finalizeAudit(String scanId) {
         }
     } catch (Exception e) {
         logWarn "[audit ${scanId}] classification enrichment failed: ${e.message}"
+    }
+
+    // Hub Mesh linkage enrichment (v5.69.0) — join remoteDeviceUrl / isLinked / hubMeshShared /
+    // switch state / hubMeshDisabled off the bulk /hub2/devicesList so cross-hub consumers can
+    // reconstruct the source↔remote graph. Keyed by device id, same shape as the join above.
+    try {
+        Map<Long, Map> meshById = buildMeshFieldsMap()
+        devices.each { Object devId, Object recObj ->
+            Map mf = (Map) meshById[devId as Long]
+            if (mf) {
+                Map rec = (Map) recObj
+                rec.remoteDeviceUrl = mf.remoteDeviceUrl
+                rec.isLinked        = mf.isLinked
+                rec.hubMeshShared   = mf.hubMeshShared
+                rec.onOffState      = mf.onOffState
+                rec.hubMeshDisabled = mf.hubMeshDisabled
+            }
+        }
+    } catch (Exception e) {
+        logWarn "[audit ${scanId}] hub mesh enrichment failed: ${e.message}"
     }
 
     logDebug "Audit Phase 4 enrichment finished in ${now() - enrichStart}ms"

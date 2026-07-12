@@ -20,8 +20,8 @@
 #
 # Usage:
 #   bash tests/test-hub-diagnostics-api.sh                    # default hub
-#   bash tests/test-hub-diagnostics-api.sh @maison-pro        # specific hub
-#   bash tests/test-hub-diagnostics-api.sh @maison-pro 247    # specific hub + instance
+#   bash tests/test-hub-diagnostics-api.sh @hubname          # specific hub
+#   bash tests/test-hub-diagnostics-api.sh @hubname 247      # specific hub + instance
 #   RUN_SLOW_TESTS=1 bash tests/test-hub-diagnostics-api.sh   # also run the Zigbee scan (~30s)
 #
 
@@ -1319,7 +1319,9 @@ else:
             # analyzeDevices(); external consumers (Multi-Hub Inventory) render these over raw protocol.
             raw_fields = ["appsUsingCount", "parentApp", "orphan", "dashboards",
                           "spammyThreshold", "maxStates", "maxEvents", "lastActivityTimeMs",
-                          "connectionType", "integration"]
+                          "connectionType", "integration",
+                          "remoteDeviceUrl", "isLinked", "hubMeshShared",
+                          "onOffState", "hubMeshDisabled"]
             missing = [f for f in raw_fields if f not in sample]
             if not missing:
                 ok("allDevices entries carry the raw cross-reference fields the SPA derives from")
