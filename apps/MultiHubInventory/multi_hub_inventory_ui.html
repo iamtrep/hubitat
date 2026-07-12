@@ -193,22 +193,24 @@ const MOCK_AUDIT = {
 const integLabel = r => r.integration || '';
 function filterLinked(rows){ return rows.filter(r => r.protocol !== 'Linked'); }
 function mergeFleet(hubResults){
-  const rows = [], hubs = [];
+  const rows = [], hubs = [], all = [];
   for (const h of hubResults){
-    const info = { label:h.label, ok:!!h.ok, error:h.error||null, hubName:null, generatedAt:null, deviceCount:0, hubModel:null, hubFirmware:null };
+    const info = { label:h.label, ok:!!h.ok, error:h.error||null, hubName:null, generatedAt:null, generatedMs:null, deviceCount:0, hubModel:null, hubFirmware:null };
     if (h.ok && h.data && h.data.allDevices){
       info.hubName = h.data.hubName || null;
+      info.generatedMs = (typeof h.data.generatedMs === 'number') ? h.data.generatedMs : null;
       info.generatedAt = h.data.generatedMs ? new Date(h.data.generatedMs).toLocaleString() : (h.data.generatedAt || null);
       info.hubModel = (h.data && h.data.hubModel) || null;
       info.hubFirmware = (h.data && h.data.hubFirmware) || null;
       const tagged = Object.values(h.data.allDevices).map(r => Object.assign({}, r, { hub:h.label }));
+      for (const r of tagged) all.push(r);
       const kept = filterLinked(tagged);
       info.deviceCount = kept.length;
       for (const r of kept) rows.push(r);
     }
     hubs.push(info);
   }
-  return { rows, hubs };
+  return { rows, hubs, all };
 }
 function fwBasis(d){
   const ota = (d.firmwareOta||'').trim();
@@ -346,7 +348,7 @@ function isFlagged(r){
 }
 
 // ===== ORCHESTRATION =====
-let FLEET = { rows: [], hubs: [] };
+let FLEET = { rows: [], hubs: [], all: [] };
 
 function peerUrl(hubIdx, op, extra){
   let u = `${B}/api/peer?hub=${hubIdx}&op=${op}&access_token=${T}`;

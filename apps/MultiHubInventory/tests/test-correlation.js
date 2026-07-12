@@ -52,6 +52,15 @@ t('filterLinked drops protocol === Linked', () => {
   assert.deepStrictEqual(out.map(r=>r.id), [1,3]);
 });
 
+t('mergeFleet keeps Linked rows in .all but not .rows, and carries generatedMs', () => {
+  const res = [{ label:'H', ok:true, data:{ hubName:'H', generatedMs:1000, allDevices:{
+    1:{id:1,protocol:'Zigbee'}, 2:{id:2,protocol:'Linked'} } } }];
+  const m = C.mergeFleet(res);
+  assert.deepStrictEqual(m.rows.map(r=>r.id), [1]);
+  assert.deepStrictEqual(m.all.map(r=>r.id).sort(), [1,2]);
+  assert.strictEqual(m.hubs[0].generatedMs, 1000);
+});
+
 t('mergeFleet flattens allDevices, tags hub, drops Linked, records hub status', () => {
   const hubResults = [
     { label:'pro', ok:true, data:{ hubName:'Pro', generatedMs:1747999200000,
