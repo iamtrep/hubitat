@@ -1103,7 +1103,7 @@ private void requestFanOff(String reason) {
         Long startedAt = state.physicalRunStartedAt as Long
         Integer mins = (settings.physicalRunTimerMinutes ?: DEFAULT_PHYSICAL_RUN_TIMER_MINUTES) as Integer
         Long remainingMs = (startedAt + mins * 60000L) - now()
-        Long remainingSec = Math.max(0L, remainingMs / 1000L) as Long
+        Long remainingSec = Math.max(0L, remainingMs.intdiv(1000L))
         logInfo("Off request from '${reason}' deferred — physical-run floor has ~${remainingSec}s remaining")
         state.deferredOffReason = reason
         return
