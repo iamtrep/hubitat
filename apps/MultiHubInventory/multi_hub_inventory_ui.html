@@ -226,6 +226,70 @@ function parseRemoteUrl(url){
   const m = /^https?:\/\/([^:/]+)(?::\d+)?\/device\/edit\/(\d+)/.exec(url);
   return m ? { sourceHost: m[1], sourceDeviceId: Number(m[2]) } : null;
 }
+// Reconstruct the cross-hub Hub Mesh source<->remote graph from the merged fleet union.
+//  all: unfiltered device rows (each tagged .hub); hubs: [{label,generatedMs}];
+//  webBaseByLabel: { label -> 'http://host' } (HUB_WEBBASE). Pure — no globals, no storage.
+function meshGraph(all, hubs, webBaseByLabel){
+  const GRACE_MS = 60000;
+  const hostToLabel = {}, genByLabel = {};
+  for (const p in (webBaseByLabel||{})){
+    const m = /^https?:\/\/([^:/]+)/.exec(webBaseByLabel[p]||''); if (m) hostToLabel[m[1]] = p;
+  }
+  for (const h of (hubs||[])) genByLabel[h.label] = (typeof h.generatedMs === 'number') ? h.generatedMs : null;
+  const byHubId = {}; for (const d of all) byHubId[d.hub + '\0' + d.id] = d;
+
+  const edges = [], consumers = {};   // consumers: 'label\0id' -> count (source side)
+  for (const r of all){
+    if (!r.isLinked) continue;
+    const edgeKey = r.hub + '\0' + r.id;
+    let status, source = null, sourceHub = null, sourceId = null;
+    if (r.hubMeshDisabled === true){ status = 'disabled-at-remote'; }
+    else {
+      const parsed = parseRemoteUrl(r.remoteDeviceUrl);
+      if (!parsed){ status = 'orphaned'; }
+      else {
+        sourceId = parsed.sourceDeviceId;
+        sourceHub = hostToLabel[parsed.sourceHost] || null;
+        if (!sourceHub){ status = 'source-not-in-fleet'; }
+        else {
+          source = byHubId[sourceHub + '\0' + sourceId];
+          if (!source){ status = 'orphaned'; }
+          else {
+            consumers[sourceHub + '\0' + sourceId] = (consumers[sourceHub + '\0' + sourceId] || 0) + 1;
+            if (r.onOffState != null && source.onOffState != null && r.onOffState !== source.onOffState){
+              const scans = [genByLabel[r.hub], genByLabel[sourceHub]].filter(v => typeof v === 'number');
+              const earliest = scans.length ? Math.min.apply(null, scans) : null;
+              const settled = earliest != null
+                && (r.lastActivityTimeMs || 0) < earliest - GRACE_MS
+                && (source.lastActivityTimeMs || 0) < earliest - GRACE_MS;
+              status = settled ? 'mismatch' : 'mismatch-recent';
+            } else status = 'healthy';
+          }
+        }
+      }
+    }
+    edges.push({ edgeKey, remoteHub:r.hub, remoteId:r.id, remoteLabel:r.label||r.displayName||('#'+r.id),
+      remoteOnOff:r.onOffState||null, sourceHub, sourceId,
+      sourceLabel: source ? (source.label||source.displayName||('#'+sourceId)) : null,
+      sourceOnOff: source ? (source.onOffState||null) : null, status });
+  }
+
+  const sourceIssues = [];
+  for (const d of all){
+    if (d.hubMeshShared !== true) continue;
+    const cnt = consumers[d.hub + '\0' + d.id] || 0;
+    if (cnt === 0) sourceIssues.push({ hub:d.hub, id:d.id, label:d.label||('#'+d.id), consumers:0, status:'zero-consumer' });
+    else if (d.disabled === true) sourceIssues.push({ hub:d.hub, id:d.id, label:d.label||('#'+d.id), consumers:cnt, status:'source-disabled-with-remotes' });
+  }
+
+  const c = { total:edges.length, healthy:0, mismatch:0, mismatchRecent:0, disabledAtRemote:0,
+    orphaned:0, sourceNotInFleet:0, zeroConsumer:0, sourceDisabledWithRemotes:0 };
+  const K = { 'healthy':'healthy','mismatch':'mismatch','mismatch-recent':'mismatchRecent',
+    'disabled-at-remote':'disabledAtRemote','orphaned':'orphaned','source-not-in-fleet':'sourceNotInFleet' };
+  for (const e of edges) c[K[e.status]]++;
+  for (const s of sourceIssues){ if (s.status==='zero-consumer') c.zeroConsumer++; else c.sourceDisabledWithRemotes++; }
+  return { edges, sourceIssues, counts:c };
+}
 function firmwareDrift(rows){
   const groups = {};
   for (const r of rows){

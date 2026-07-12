@@ -32,7 +32,7 @@ function extractConstLine(prefix) {
   return src.slice(i, j < 0 ? src.length : j);
 }
 
-const FNS = ['filterLinked', 'mergeFleet', 'fwBasis', 'firmwareDrift', 'driverDrift', 'attentionItems', 'fleetSummary', 'parseRemoteUrl'];
+const FNS = ['filterLinked', 'mergeFleet', 'fwBasis', 'firmwareDrift', 'driverDrift', 'attentionItems', 'fleetSummary', 'parseRemoteUrl', 'meshGraph'];
 const harness = extractConstLine('const CD =') + '\n' + extractConstLine('const integLabel') + '\n'
   + FNS.map(extractFn).join('\n') + '\nmodule.exports = { ' + FNS.join(', ') + ' };';
 const tmp = path.join(os.tmpdir(), 'mhi_corr_' + process.pid + '.js');
@@ -259,6 +259,70 @@ t('parseRemoteUrl extracts host + id, and rejects broken links', () => {
   assert.strictEqual(C.parseRemoteUrl(''), null);
   assert.strictEqual(C.parseRemoteUrl(null), null);
   assert.strictEqual(C.parseRemoteUrl('http://x/nope'), null);
+});
+
+// Shared fixture builders for meshGraph. Scans at t=1_000_000; "old" activity well before that.
+const WB = { A:'http://10.0.0.1', B:'http://10.0.0.2' };
+const HUBS = [{label:'A', generatedMs:1000000}, {label:'B', generatedMs:1000000}];
+function remote(o){ return Object.assign({ hub:'A', isLinked:true, hubMeshShared:false, disabled:false,
+  hubMeshDisabled:false, onOffState:null, lastActivityTimeMs:1, remoteDeviceUrl:null }, o); }
+function source(o){ return Object.assign({ hub:'B', isLinked:false, hubMeshShared:true, disabled:false,
+  hubMeshDisabled:false, onOffState:null, lastActivityTimeMs:1 }, o); }
+
+t('meshGraph: healthy edge when states match', () => {
+  const all = [ remote({id:1,label:'R',remoteDeviceUrl:'http://10.0.0.2/device/edit/9',onOffState:'off'}),
+                source({id:9,label:'S',onOffState:'off'}) ];
+  const g = C.meshGraph(all, HUBS, WB);
+  assert.strictEqual(g.edges[0].status, 'healthy');
+  assert.strictEqual(g.counts.healthy, 1);
+});
+
+t('meshGraph: confirmed mismatch when values differ and neither end active near scan', () => {
+  const all = [ remote({id:1,label:'R',remoteDeviceUrl:'http://10.0.0.2/device/edit/9',onOffState:'on',lastActivityTimeMs:1}),
+                source({id:9,label:'S',onOffState:'off',lastActivityTimeMs:1}) ];
+  const g = C.meshGraph(all, HUBS, WB);
+  assert.strictEqual(g.edges[0].status, 'mismatch');
+  assert.strictEqual(g.counts.mismatch, 1);
+});
+
+t('meshGraph: mismatch-recent when an end changed near scan time', () => {
+  const all = [ remote({id:1,remoteDeviceUrl:'http://10.0.0.2/device/edit/9',onOffState:'on',lastActivityTimeMs:999999}),
+                source({id:9,onOffState:'off',lastActivityTimeMs:1}) ];
+  const g = C.meshGraph(all, HUBS, WB);
+  assert.strictEqual(g.edges[0].status, 'mismatch-recent');
+  assert.strictEqual(g.counts.mismatchRecent, 1);
+});
+
+t('meshGraph: disabled-at-remote wins over url parsing', () => {
+  const all = [ remote({id:1,hubMeshDisabled:true,remoteDeviceUrl:'#'}) ];
+  const g = C.meshGraph(all, HUBS, WB);
+  assert.strictEqual(g.edges[0].status, 'disabled-at-remote');
+});
+
+t('meshGraph: orphaned on broken url and on deleted source device', () => {
+  const broken = C.meshGraph([ remote({id:1,remoteDeviceUrl:'#'}) ], HUBS, WB);
+  assert.strictEqual(broken.edges[0].status, 'orphaned');
+  const deleted = C.meshGraph([ remote({id:1,remoteDeviceUrl:'http://10.0.0.2/device/edit/404'}) ], HUBS, WB);
+  assert.strictEqual(deleted.edges[0].status, 'orphaned');
+});
+
+t('meshGraph: source-not-in-fleet when host matches no peer', () => {
+  const g = C.meshGraph([ remote({id:1,remoteDeviceUrl:'http://10.9.9.9/device/edit/9'}) ], HUBS, WB);
+  assert.strictEqual(g.edges[0].status, 'source-not-in-fleet');
+});
+
+t('meshGraph: zero-consumer and disabled-with-remotes source issues', () => {
+  const all = [ source({id:9,label:'lonely'}),                                   // shared, nobody links it
+                source({id:8,label:'off-src',disabled:true}),                    // shared+disabled, has a remote
+                remote({id:1,remoteDeviceUrl:'http://10.0.0.2/device/edit/8',onOffState:'off'}) ];
+  // give the id:8 source a matching onOffState so its edge is healthy, not mismatch
+  all.find(x=>x.id===8).onOffState='off';
+  const g = C.meshGraph(all, HUBS, WB);
+  const kinds = g.sourceIssues.reduce((m,s)=>(m[s.status]=(m[s.status]||0)+1,m),{});
+  assert.strictEqual(kinds['zero-consumer'], 1);
+  assert.strictEqual(kinds['source-disabled-with-remotes'], 1);
+  assert.strictEqual(g.counts.zeroConsumer, 1);
+  assert.strictEqual(g.counts.sourceDisabledWithRemotes, 1);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
