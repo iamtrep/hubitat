@@ -590,10 +590,9 @@ private void evaluatePendingHighState(BigDecimal bathroomHumidity, BigDecimal re
         return
     }
 
-    // Still above threshold - wait for timer
-    Long elapsedSeconds = (now() - (state.pendingStateSince as Long)) / 1000
-    Long remainingSeconds = (activationDelay as Integer) - elapsedSeconds
-    logDebug("Humidity still above threshold, waiting for activation delay (${remainingSeconds}s remaining)")
+    // Still above threshold - re-derive due-ness and complete-or-re-arm the
+    // transition timer, so a lost callback self-heals on this event.
+    servicePendingTransition()
 }
 
 void delayedTransitionToHigh() {
@@ -639,10 +638,9 @@ private void evaluatePendingNormalState(BigDecimal bathroomHumidity, BigDecimal 
         return
     }
 
-    // Still below threshold - wait for timer
-    Long elapsedSeconds = (now() - (state.pendingStateSince as Long)) / 1000
-    Long remainingSeconds = (deactivationDelay as Integer) - elapsedSeconds
-    logDebug("Humidity still below threshold, waiting for deactivation delay (${remainingSeconds}s remaining)")
+    // Still below threshold - re-derive due-ness and complete-or-re-arm the
+    // transition timer, so a lost callback self-heals on this event.
+    servicePendingTransition()
 }
 
 void delayedTransitionToNormal() {
