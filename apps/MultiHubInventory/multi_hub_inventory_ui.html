@@ -123,7 +123,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "0.6.6";
+const CODE_VERSION = "0.7.0";
 const APP_VERSION = '${app_version}';   // injected by serveUI; stays literal in workbench/dev
 
 // ===== Z-WAVE MANUFACTURER TABLE (decimal maker-id -> name, from zwave-js) =====
@@ -781,6 +781,14 @@ function meshStatusBadge(st){
 
 function renderMesh(){
   const g = meshGraph(FLEET.all, FLEET.hubs, HUB_WEBBASE), c = g.counts;
+  // A reachable peer whose devices lack the mesh fields is on pre-5.69.0 HubDiag — flag it so an
+  // empty/partial tab isn't misread as "no mesh". Detect by absence of the isLinked key on its rows.
+  const staleHubs = FLEET.hubs.filter(h => h.ok &&
+    FLEET.all.some(d => d.hub === h.label) &&
+    !FLEET.all.some(d => d.hub === h.label && Object.prototype.hasOwnProperty.call(d, 'isLinked')));
+  const staleNote = staleHubs.length
+    ? `<div class="card"><div class="card-b warn">Mesh data unavailable for: ${esc(staleHubs.map(h=>h.label).join(', '))} — update Hub Diagnostics on ${staleHubs.length>1?'those hubs':'that hub'} to ≥ 5.69.0.</div></div>`
+    : '';
   const pill = (label, n, cls) => `<span class="pill ${n && cls ? cls : ''}">${label}<b>${n}</b></span>`;
   const pills = '<div class="pills">'
     + pill('Links', c.total, '') + pill('Healthy', c.healthy, '')
@@ -793,7 +801,7 @@ function renderMesh(){
     + `<div class="card"><div class="card-h">Links</div><div class="card-b"><div id="meshTbl"></div></div></div>`;
   if (g.sourceIssues.length)
     html += `<div class="card"><div class="card-h">Source issues</div><div class="card-b"><div id="meshSrcTbl"></div></div></div>`;
-  document.getElementById('p-mesh').innerHTML = html;
+  document.getElementById('p-mesh').innerHTML = staleNote + html;
 
   tbl('meshTbl', [
     { l:'Remote hub',    f:'remoteHub' },
