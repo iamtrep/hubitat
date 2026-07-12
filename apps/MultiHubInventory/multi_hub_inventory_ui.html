@@ -113,11 +113,13 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
   <div class="tab active" data-tab="summary">Summary</div>
   <div class="tab" data-tab="register">Device Register</div>
   <div class="tab" data-tab="drift">Device Drift</div>
+  <div class="tab" data-tab="mesh">Hub Mesh</div>
 </div>
 <div class="content">
   <div class="panel active" id="p-summary"></div>
   <div class="panel" id="p-register"></div>
   <div class="panel" id="p-drift"></div>
+  <div class="panel" id="p-mesh"></div>
 </div>
 <script>
 // ===== VERSION =====
@@ -163,7 +165,12 @@ const MOCK_AUDIT = {
        // TH01 driver drift: same mfr+model, two different drivers across hubs
        '5':{id:5,label:'Temp Sensor A',deviceTypeName:'Tuya Temp/Humidity',manufacturer:'Tuya',model:'TH01',
             firmware:'1.0',firmwareSource:'softwareBuild',firmwareOta:null,
-            protocol:'Zigbee',connectionType:'paired',integration:'Zigbee',orphan:false,disabled:false,appsUsingCount:1,dashboards:[1],lastActivityTimeMs:Date.now()-1*86400000} } },
+            protocol:'Zigbee',connectionType:'paired',integration:'Zigbee',orphan:false,disabled:false,appsUsingCount:1,dashboards:[1],lastActivityTimeMs:Date.now()-1*86400000},
+       // Hub Mesh source: shared with Hub B (see id 77 there); different onOffState -> confirmed mismatch
+       '99':{ id:99, label:'Shared Plug', deviceTypeName:'Zigbee Outlet', manufacturer:'Acme', model:'P1',
+            protocol:'Zigbee', connectionType:'paired', integration:'Zigbee', orphan:false, disabled:false,
+            appsUsingCount:1, dashboards:[], lastActivityTimeMs:Date.now()-999999999,
+            isLinked:false, hubMeshShared:true, remoteDeviceUrl:null, onOffState:'on', hubMeshDisabled:false } } },
   1: { hubName:'Hub B', generatedMs:Date.now()-240000, hubModel:'C-8', hubFirmware:'2.4.4.155', deviceCount:3, allDevices:{
        // P1 — real drift: same hub, same source, yet another value
        '7':{id:7,label:'Office Plug C',deviceTypeName:'Zigbee Outlet',manufacturer:'Acme',model:'P1',
@@ -183,7 +190,13 @@ const MOCK_AUDIT = {
        '10':{id:10,label:'Zooz ZEN55',deviceTypeName:'Z-Wave Switch',manufacturer:'634',model:'ZEN55',
              firmware:'1.05',firmwareSource:'softwareBuild',firmwareOta:null,
              firmwareTargets:{'0':'1.05','1':'2.01'},
-             protocol:'Z-Wave',connectionType:'paired',integration:'Z-Wave',orphan:false,disabled:false,appsUsingCount:1,dashboards:[1],lastActivityTimeMs:Date.now()-1*86400000} } },
+             protocol:'Z-Wave',connectionType:'paired',integration:'Z-Wave',orphan:false,disabled:false,appsUsingCount:1,dashboards:[1],lastActivityTimeMs:Date.now()-1*86400000},
+       // Hub Mesh remote pointing back at Hub A's id 99 (see MOCK_PEERS webBase); different onOffState -> confirmed mismatch
+       '77':{ id:77, label:'Shared Plug (remote)', deviceTypeName:'Zigbee Outlet', protocol:'Linked',
+             connectionType:'hubmesh', integration:null, orphan:false, disabled:false, appsUsingCount:0,
+             dashboards:[], lastActivityTimeMs:Date.now()-999999999,
+             isLinked:true, hubMeshShared:false, remoteDeviceUrl:'http://192.168.0.10/device/edit/99',
+             onOffState:'off', hubMeshDisabled:false } } },
 };
 
 // ===== CORRELATION ===== (pure functions; unit-tested in tests/test-correlation.js)
@@ -747,10 +760,59 @@ function renderDeviceDrift(){
   });
 }
 
+function meshStatusBadge(st){
+  const map = {
+    'healthy':            ['', 'healthy'],
+    'mismatch':           ['crit', '⚠ state mismatch'],
+    'mismatch-recent':    ['warn', 'mismatch (recent?)'],
+    'disabled-at-remote': ['warn', 'disabled at remote'],
+    'orphaned':           ['crit', '⚠ orphaned'],
+    'source-not-in-fleet':['muted', 'source not in fleet'],
+  };
+  const [cls, txt] = map[st] || ['', st];
+  return `<span class="${cls}">${esc(txt)}</span>`;
+}
+
+function renderMesh(){
+  const g = meshGraph(FLEET.all, FLEET.hubs, HUB_WEBBASE), c = g.counts;
+  const pill = (label, n, cls) => `<span class="pill ${n && cls ? cls : ''}">${label}<b>${n}</b></span>`;
+  const pills = '<div class="pills">'
+    + pill('Links', c.total, '') + pill('Healthy', c.healthy, '')
+    + pill('State mismatch', c.mismatch, 'crit') + pill('Mismatch (recent?)', c.mismatchRecent, 'warn')
+    + pill('Disabled at remote', c.disabledAtRemote, 'warn') + pill('Orphaned', c.orphaned, 'crit')
+    + pill('Zero-consumer src', c.zeroConsumer, '') + pill('Disabled src w/ remotes', c.sourceDisabledWithRemotes, 'warn')
+    + pill('Source not in fleet', c.sourceNotInFleet, '') + '</div>';
+
+  let html = `<div class="card"><div class="card-h">Hub Mesh — ${c.total} links</div><div class="card-b">${pills}</div></div>`
+    + `<div class="card"><div class="card-h">Links</div><div class="card-b"><div id="meshTbl"></div></div></div>`;
+  if (g.sourceIssues.length)
+    html += `<div class="card"><div class="card-h">Source issues</div><div class="card-b"><div id="meshSrcTbl"></div></div></div>`;
+  document.getElementById('p-mesh').innerHTML = html;
+
+  tbl('meshTbl', [
+    { l:'Remote hub',    f:'remoteHub' },
+    { l:'Remote device', f:'remoteLabel', ff:r=>r.remoteLabel||'', r:r=>dlink(r.remoteId, r.remoteLabel, r.remoteHub) },
+    { l:'Remote',        f:'remoteOnOff', r:r=>esc(r.remoteOnOff||'') },
+    { l:'Source hub',    f:'sourceHub',   r:r=>esc(r.sourceHub||'—') },
+    { l:'Source device', f:'sourceLabel', ff:r=>r.sourceLabel||'', r:r=> r.sourceId!=null ? dlink(r.sourceId, r.sourceLabel||('#'+r.sourceId), r.sourceHub) : '—' },
+    { l:'Source',        f:'sourceOnOff', r:r=>esc(r.sourceOnOff||'') },
+    { l:'Status',        f:'status',      r:r=>meshStatusBadge(r.status) },
+  ], g.edges, {filter:true});
+
+  if (g.sourceIssues.length) tbl('meshSrcTbl', [
+    { l:'Hub',    f:'hub' },
+    { l:'Device', f:'label', r:r=>dlink(r.id, r.label, r.hub) },
+    { l:'Consumers', f:'consumers', t:'n' },
+    { l:'Issue',  f:'status', r:r=> r.status==='zero-consumer'
+        ? '<span class="muted">no consumers — candidate to disable mesh</span>'
+        : '<span class="warn">⚠ source disabled but still has remotes</span>' },
+  ], g.sourceIssues, {});
+}
+
 function renderAll(){
   document.getElementById('hubInfo').textContent =
     `${FLEET.hubs.filter(h=>h.ok).length}/${FLEET.hubs.length} hubs · ${FLEET.rows.length} devices`;
-  renderSummary(); renderRegister(); renderDeviceDrift();
+  renderSummary(); renderRegister(); renderDeviceDrift(); renderMesh();
 }
 
 // ===== BOOTSTRAP =====
