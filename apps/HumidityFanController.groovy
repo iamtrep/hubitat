@@ -88,7 +88,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Humidity-Based Fan Controller"
-@Field static final String CODE_VERSION = "0.9.3"
+@Field static final String CODE_VERSION = "0.9.4"
 
 // Humidity state machine states
 @Field static final String HUMIDITY_NORMAL = "NORMAL"
@@ -300,8 +300,8 @@ void initialize() {
         subscribe(occupancySensors, "motion.active", occupancyHandler)
     }
 
-    // Reschedule pending timers if we're in a pending state (timers were cleared by unschedule())
-    reschedulePendingTimers()
+    // Service any pending-state transition (timers were cleared by unschedule())
+    servicePendingTransition()
 
     // Consistency check: if in HIGH/PENDING_NORMAL but snapshot is missing, reset to NORMAL
     if ((state.humidityState == HUMIDITY_HIGH || state.humidityState == HUMIDITY_PENDING_NORMAL)
@@ -673,7 +673,14 @@ private void transitionHumidityState(String newState) {
     }
 }
 
-private void reschedulePendingTimers() {
+// Ensure the pending-state transition timer is armed. Called from initialize()
+// AND from the tail of each pending-state evaluation, so a callback lost to a
+// crash, a missed schedule, or a code push self-heals on the next event rather
+// than stranding the app. Idempotent: each call re-derives the remaining time
+// from the fixed pendingStateSince, so repeated calls target the same deadline
+// (completion can lag it by ~1s from runIn's whole-second rounding). Does not
+// perform the transition — the delayedTransitionTo* callbacks remain that path.
+private void servicePendingTransition() {
     if (state.pendingStateSince == null) {
         return
     }
@@ -687,11 +694,10 @@ private void reschedulePendingTimers() {
             Long remainingMs = activationDelayMs - elapsedMs
             if (remainingMs > 0) {
                 Integer remainingSeconds = (remainingMs / 1000).toInteger() + 1  // Round up
-                logInfo("Rescheduling activation timer: ${remainingSeconds}s remaining")
+                logDebug("Servicing activation timer: ${remainingSeconds}s remaining")
                 runIn(remainingSeconds, "delayedTransitionToHigh")
             } else {
-                // Timer should have already fired - trigger it now
-                logInfo("Activation timer expired during reconfiguration - triggering now")
+                logDebug("Activation delay elapsed - triggering transition now")
                 runIn(1, "delayedTransitionToHigh")
             }
             break
@@ -701,11 +707,10 @@ private void reschedulePendingTimers() {
             Long remainingMsDeact = deactivationDelayMs - elapsedMs
             if (remainingMsDeact > 0) {
                 Integer remainingSeconds = (remainingMsDeact / 1000).toInteger() + 1  // Round up
-                logInfo("Rescheduling deactivation timer: ${remainingSeconds}s remaining")
+                logDebug("Servicing deactivation timer: ${remainingSeconds}s remaining")
                 runIn(remainingSeconds, "delayedTransitionToNormal")
             } else {
-                // Timer should have already fired - trigger it now
-                logInfo("Deactivation timer expired during reconfiguration - triggering now")
+                logDebug("Deactivation delay elapsed - triggering transition now")
                 runIn(1, "delayedTransitionToNormal")
             }
             break
