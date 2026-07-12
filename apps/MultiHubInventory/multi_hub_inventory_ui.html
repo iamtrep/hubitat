@@ -372,7 +372,7 @@ function attentionItems(rows, opts){
   }
   return res;
 }
-function fleetSummary(merged){
+function fleetSummary(merged, webBaseByLabel){
   const rows = merged.rows, byHub = {}, byIntegration = {}, byConnection = {}, byMfr = {};
   for (const r of rows){
     byHub[r.hub] = (byHub[r.hub] || 0) + 1;
@@ -381,9 +381,12 @@ function fleetSummary(merged){
     const m = (r.manufacturer||'').trim() || 'Unknown'; byMfr[m] = (byMfr[m] || 0) + 1;
   }
   const att = attentionItems(rows, {});
+  const mg = meshGraph(merged.all || [], merged.hubs || [], webBaseByLabel || {});
   return { total: rows.length, byHub, byIntegration, byConnection, byManufacturer: byMfr,
     attentionCounts: { stale:att.stale.length, orphaned:att.orphaned.length,
-      disabled:att.disabled.length, unreferenced:att.unreferenced.length } };
+      disabled:att.disabled.length, unreferenced:att.unreferenced.length },
+    meshAttention: { mismatch: mg.counts.mismatch, orphaned: mg.counts.orphaned,
+      disabledWithRemotes: mg.counts.sourceDisabledWithRemotes } };
 }
 
 // ===== HELPERS =====
@@ -617,7 +620,7 @@ function tbl(cid,cols,rows,opts={}){
 }
 
 function renderSummary(){
-  const s = fleetSummary(FLEET);
+  const s = fleetSummary(FLEET, HUB_WEBBASE);
   const hubLines = FLEET.hubs.map(h => `<div class="ni"><div class="nl">${esc(h.label)}${h.ok?'':' ⚠'}</div>`
     + `<div class="nv">${h.ok?h.deviceCount+' devices':'<span class="crit">'+esc(h.error)+'</span>'}</div>`
     + `<div class="nl">${h.ok?('as of '+esc(h.generatedAt||'?')):''}</div>`
@@ -629,7 +632,10 @@ function renderSummary(){
        <div class="ng">${hubLines}</div></div></div>
      <div class="card"><div class="card-h">Attention</div><div class="card-b"><div class="pills">
        <span class="pill">Stale<b>${a.stale}</b></span>
-       <span class="pill">Disabled<b>${a.disabled}</b></span><span class="pill">Unreferenced<b>${a.unreferenced}</b></span></div></div></div>
+       <span class="pill">Disabled<b>${a.disabled}</b></span><span class="pill">Unreferenced<b>${a.unreferenced}</b></span>
+       <span class="pill ${s.meshAttention.mismatch?'crit':''}">Mesh mismatch<b>${s.meshAttention.mismatch}</b></span>
+       <span class="pill ${s.meshAttention.orphaned?'crit':''}">Mesh orphaned<b>${s.meshAttention.orphaned}</b></span>
+       <span class="pill ${s.meshAttention.disabledWithRemotes?'warn':''}">Mesh src disabled<b>${s.meshAttention.disabledWithRemotes}</b></span></div></div></div>
      <div class="card"><div class="card-h">By connection</div><div class="card-b"><div class="pills">${kv(s.byConnection)}</div></div></div>
      <div class="card"><div class="card-h">By integration</div><div class="card-b"><div class="pills">${kv(s.byIntegration)}</div></div></div>
      <div class="card"><div class="card-h">By manufacturer</div><div class="card-b"><div class="pills">${kv(s.byManufacturer)}</div></div></div>`;

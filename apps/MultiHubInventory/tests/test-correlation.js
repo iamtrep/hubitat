@@ -325,5 +325,14 @@ t('meshGraph: zero-consumer and disabled-with-remotes source issues', () => {
   assert.strictEqual(g.counts.sourceDisabledWithRemotes, 1);
 });
 
+t('fleetSummary surfaces mesh attention counts', () => {
+  const all = [ remote({id:1,remoteDeviceUrl:'#'}),                          // orphaned
+                source({id:9,label:'lonely'}) ];                             // zero-consumer (not attention)
+  const merged = { rows:[], hubs:HUBS, all };
+  const s = C.fleetSummary(merged, WB);
+  assert.strictEqual(s.meshAttention.orphaned, 1);
+  assert.strictEqual(s.meshAttention.mismatch, 0);
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
