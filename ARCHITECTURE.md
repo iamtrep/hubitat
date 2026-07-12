@@ -224,6 +224,16 @@ subscribe(location, "systemStart", "systemStartHandler")
 
 The handler typically refreshes devices and re-evaluates the app's monitored conditions.
 
+**Self-healing transient states.** A time-delayed state transition must never
+depend solely on a single scheduled callback. Persist the transition's start
+timestamp; on *every* evaluation of a transient state — and on `initialize()` —
+re-derive due-ness from the timestamp and either complete or re-arm. A callback
+lost to a crash mid-handler, a missed schedule, or a code push then self-heals on
+the next event instead of stranding the app. Reference: HFC
+`servicePendingTransition()`. Contrast with SensorAggregatorDiscreteChild's
+stale-sequence approach (let orphan timers no-op and re-derive), which suits apps
+where the transition is cheap to recompute from scratch.
+
 ### OAuth-served HTTP endpoints
 
 App-served UIs and programmatic APIs use Hubitat's per-app OAuth path (`oauth: true` + `mappings { }` + `createAccessToken()`). The architectural property that matters: endpoints reachable via `${getFullLocalApiServerUrl()}/...?access_token=${state.accessToken}` work without an active hub admin session — that is what makes app-served UIs viable for users.
@@ -327,6 +337,7 @@ Avoid these unless there is a deliberate, documented exception:
 - treating Hubitat libraries as architectural module boundaries
 - per-device async fan-out that exceeds the 8-call concurrency ceiling
 - skipping `unschedule()` in `updated()` (produces orphan timers)
+- a transient state whose only exit is an unrescheduled `runIn` callback
 - writing async-callback state with `state` instead of `atomicState`
 - storing transient per-scan or per-request data in `state` instead of `@Field static`
 - omitting `volatile` on `@Field static` fields read by concurrent endpoint handlers
