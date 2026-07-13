@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.73.1";
+const CODE_VERSION = "5.73.2";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -4143,7 +4143,7 @@ function rcZwReadFilters(){
 // Match against the same fields the tail shows for this row (stack-dependent), so the box filters what the user sees.
 function rcZwRowMatchesFilter(r,f){
   if(!f||!f.q||!f.q.length)return true;
-  const hay=[r.time,r.node,r.device,r.type,r.rssi,r.seq,r.src,r.dir,r.kind,r.summary,r.raw,r._deviceId]
+  const hay=[r.time,r.node,r.nodeHex,r.device,r.type,r.rssi,r.seq,r.src,r.dir,r.kind,r.summary,r.raw,r._deviceId]
     .filter(v=>v!=null&&v!=='').join(' ').toLowerCase();
   return f.q.every(t=>hay.includes(t));
 }
@@ -4271,14 +4271,19 @@ function rcZwLegacyFrameToRow(text){
   let f;try{f=JSON.parse(text)}catch(e){return rcZwRawFrameToRow(text)}
   const ime=f.imeReport||{};
   const hops=Array.isArray(ime['3'])?ime['3']:[];
-  const rssi=hops.filter(v=>v!=null&&v!==127).join('/');
+  const used=hops.filter(v=>v!=null&&v!==127);   // drop unused hops (127 = N/A)
+  const node=(f.id!=null?String(f.id):'');
+  const t=f.type||'';
   return{
     time:f.time||'',
-    node:(f.id!=null?String(f.id):''),
+    node:node,
+    nodeHex:(node!==''&&!isNaN(+node))?'0x'+Number(node).toString(16).toUpperCase().padStart(2,'0'):'',
     device:f.name||'',
     _deviceId:f.deviceId,
-    type:f.type||'',
-    rssi:rssi,
+    type:t,
+    dir:t==='zwaveTx'?'TX':t==='zwaveRx'?'RX':'',   // socket carries direction, not a command type
+    rssi:used.join('/'),                            // per-hop, joined for routed frames
+    rssiVal:used.length?used[0]:null,               // first-hop numeric, for colour thresholds
     seq:(f.seqNo!=null?f.seqNo:''),
     _raw:text
   };
@@ -4343,7 +4348,7 @@ function rcZwRenderTailHtml(rows, selectedRaw, stack){
   const tdFlex=tdMono+';width:100%;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'; // absorb slack + ellipsis
   const legacy=stack==='legacy';
   const js=stack==='js';
-  const cols=legacy?['Time','Node','Device','Type','RSSI','Seq']
+  const cols=legacy?['Time','Node','Device','Dir','RSSI','Seq']
     :js?['Time','Src','Dir','Kind','Node/Device','Summary']
     :['Time','Raw'];
   let html='<table style="width:100%;border-collapse:collapse"><thead><tr>';
@@ -4354,11 +4359,15 @@ function rcZwRenderTailHtml(rows, selectedRaw, stack){
     const rowBg=sel?'background:rgba(33,150,243,0.18)':'';
     html+='<tr data-idx="'+idx+'" style="cursor:pointer;'+rowBg+'">';
     if(legacy){
+      const dirCls=r.dir==='TX'?'color:#e0a458':r.dir==='RX'?'color:#5aa9e6':'';
+      const rssiCell=r.rssiVal!=null
+        ? '<span style="color:'+(r.rssiVal<-80?'var(--crit)':r.rssiVal<-60?'var(--warn)':'var(--ok)')+'">'+h(r.rssi)+' dBm</span>'
+        : h(r.rssi||'');
       html+='<td style="'+tdT+'">'+h(r.time)+'</td>';
-      html+='<td style="'+tdTMono+'">'+h(r.node)+'</td>';
+      html+='<td style="'+tdTMono+'">'+h(r.node)+(r.nodeHex?' <span style="opacity:.55">('+r.nodeHex+')</span>':'')+'</td>';
       html+='<td style="'+td+'">'+(r._deviceId?dlink(r._deviceId,r.device):h(r.device||''))+'</td>';
-      html+='<td style="'+td+'">'+h(r.type)+'</td>';
-      html+='<td style="'+tdT+';text-align:right">'+h(String(r.rssi||''))+'</td>';
+      html+='<td style="'+tdT+';'+dirCls+'">'+h(r.dir||'')+'</td>';
+      html+='<td style="'+tdT+';text-align:right">'+rssiCell+'</td>';
       html+='<td style="'+tdT+';text-align:right">'+h(String(r.seq))+'</td>';
     }else if(js){
       const dirCls=r.dir==='TX'?'color:#e0a458':r.dir==='RX'?'color:#5aa9e6':'';
