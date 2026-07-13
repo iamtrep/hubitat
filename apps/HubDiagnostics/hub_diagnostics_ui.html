@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.73.2";
+const CODE_VERSION = "5.74.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -3501,6 +3501,7 @@ const RC={
     _suppressScrollUntil:0, // perf.now() horizon during which the scroll handler ignores our own scrollTop writes
     totalRx:0, peakRate:0, rateSecStart:null, rateSecCount:0, firstRxAt:null, lastRxAt:null,   // avg (over active span) + peak rate accounting
     filters:null,         // {q:[terms]} free-text tail filter (mirrors the Zigbee sub-tab)
+    lastAggregateAt:0,    // throttle the kind-breakdown re-render to ~1 Hz during ingest
     stack:null            // resolved at Start time from RC.zwaveStack — picks the per-stack row mapper
   },
   matter:{                                       // sub-tab state — poll-based capture
@@ -4105,6 +4106,7 @@ function renderZwaveSubTab(){
     </div>
     ${rcZwFilterCard()}
     <div id="rc-zw-live"></div>
+    <div id="rc-zw-aggregates"></div>
   `;
   document.getElementById('rc-zw-start').addEventListener('click',rcZwStart);
   document.getElementById('rc-zw-stop').addEventListener('click',rcZwStop);
@@ -4121,6 +4123,7 @@ function renderZwaveSubTab(){
   rcZwReadFilters();
   rcZwUpdateBadge();
   rcZwRenderTail({repin:true});
+  rcZwRenderAggregates();
 }
 
 function rcZwFilterCard(){
@@ -4195,7 +4198,7 @@ function rcZwPause(){
 
 function rcZwClear(){
   const z=RC.zwave;if(z.buf)z.buf.clear();z.displayBuf=[];rcResetRate(z);
-  rcZwUpdateMetrics();rcZwRenderTail({repin:true});
+  rcZwUpdateMetrics();rcZwRenderTail({repin:true});rcZwRenderAggregates();
 }
 
 function rcZwCaptureMeta(){
@@ -4241,6 +4244,7 @@ function rcZwOnFrame(text){
     z._tailPending=false;rcZwUpdateMetrics();
     const t=Date.now();
     if(t-z.lastTailRenderAt>1000){z.lastTailRenderAt=t;rcZwRenderTail({fromTick:true})}
+    if(t-z.lastAggregateAt>1000){z.lastAggregateAt=t;rcZwRenderAggregates()}
   })}
 }
 
@@ -4402,6 +4406,26 @@ function rcZwHandleTailClick(e){
   // Expanding means "I'm reading this" — freeze auto-follow so the row doesn't get scrolled away.
   if(expanding&&z.pinnedToLive){z.pinnedToLive=false;z.pinBaselineLen=z.displayBuf.length;}  // only when following; if already in history, keep the pill's running count
   rcZwRenderTail({});
+}
+
+// Kind-breakdown card (JS stack only): frame-type mix over the recent window. Legacy frames have no
+// Kind concept, so the card is empty for that stack. Reuses the generic aggregator + bar chart; the
+// breakdown reflects the full recording window, independent of the tail filter (matches Zigbee).
+function rcZwRenderAggregates(){
+  const z=RC.zwave;
+  const container=document.getElementById('rc-zw-aggregates');
+  if(!container)return;
+  const stk=z.stack||RC.zwaveStack;
+  if(stk!=='js'||!z.buf||z.buf.count()===0){container.innerHTML='';return}
+  const win=z.buf.window(5*60*1000);
+  const rows=win.frames.map(fr=>rcZwJsFrameToRow(fr.line)).filter(Boolean);
+  const kinds=rcZbAggregateBy(rows,r=>r.kind||null);
+  if(!kinds.length){container.innerHTML='';return}
+  const truncNote=win.fullCoverage?'':'<div style="font-size:12px;color:var(--warn);margin-bottom:4px">Window truncated to last '+Math.round((Date.now()-win.coverFrom)/1000)+' s of buffer.</div>';
+  container.innerHTML='<div class="card" style="margin-top:12px"><h3 style="margin-top:0">Kind breakdown '
+    +'<span style="font-weight:normal;font-size:12px;opacity:.7">— frame types over the last 5 min</span></h3>'
+    +truncNote+'<div id="rc-zw-kinds"></div></div>';
+  renderBarChart(kinds.map(k=>({label:k.k,value:k.v})),'rc-zw-kinds',{labelWidth:70});
 }
 
 // ===== RADIO CAPTURE: MATTER SUB-TAB =====
