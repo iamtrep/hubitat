@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.70.0";
+const CODE_VERSION = "5.71.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -963,6 +963,25 @@ class FrameBuffer{
     const fullCoverage=this.frames.length===0||this.frames[0].t<=cutoff;
     return{frames:out,coverFrom,fullCoverage};
   }
+}
+
+// ===== RADIO CAPTURE: RATE ACCOUNTING (shared by all sub-tabs) =====
+// Headline rate is a cumulative session average (totalRx / elapsed), derived at render time and
+// updated only when data arrives — no sliding-window array, no background timer, so it doesn't
+// flicker or decay with passing time. peakRate is a separate burst signal: the max count seen in
+// any ~1 s tumbling bucket this session (monotonic, so idle time never erodes it).
+function rcTallyRate(st, now){
+  st.totalRx=(st.totalRx||0)+1;
+  if(st.rateSecStart==null||now-st.rateSecStart>=1000){st.rateSecStart=now;st.rateSecCount=0}
+  st.rateSecCount++;
+  if(st.rateSecCount>(st.peakRate||0))st.peakRate=st.rateSecCount;
+}
+function rcResetRate(st){st.totalRx=0;st.peakRate=0;st.rateSecStart=null;st.rateSecCount=0}
+function rcRateText(st){
+  const secs=st.buf&&st.buf.startedAt?(Date.now()-st.buf.startedAt)/1000:0;
+  const avg=secs>0?(st.totalRx||0)/secs:0;
+  const a=avg<10?avg.toFixed(2):avg.toFixed(1);
+  return a+'/s avg · '+(st.peakRate||0)+'/s peak';
 }
 
 // ===== RADIO CAPTURE: RECORDING FILE =====
@@ -3457,7 +3476,7 @@ const RC={
     pinBaselineLen:0,     // displayBuf length captured when un-pinning; drives the "N new frames" pill
     _suppressScrollUntil:0, // perf.now() horizon during which the scroll handler ignores our own scrollTop writes
     filters:{cluster:null,cmd:null,dni:'',mfr:null,minLqi:null,maxRssi:null},
-    framesLastSec:[],     // sliding window for frames/s counter
+    totalRx:0, peakRate:0, rateSecStart:null, rateSecCount:0,   // cumulative-avg + peak rate accounting
     lastAggregateAt:0,
     // Per-table sort state for aggregate tables; persisted across re-renders so the user's column choice survives 1Hz ticks.
     // Top tables default to descending Frames (col 1); OTA defaults to descending Frames (col 2).
@@ -3476,7 +3495,7 @@ const RC={
     pinnedToLive:true,    // auto-follow newest (top); false while reading history or a row is expanded
     pinBaselineLen:0,     // displayBuf length captured when un-pinning; drives the "N new frames" pill
     _suppressScrollUntil:0, // perf.now() horizon during which the scroll handler ignores our own scrollTop writes
-    framesLastSec:[],     // sliding window for frames/s counter
+    totalRx:0, peakRate:0, rateSecStart:null, rateSecCount:0,   // cumulative-avg + peak rate accounting
     stack:null            // resolved at Start time from RC.zwaveStack — picks the per-stack row mapper
   },
   matter:{                                       // sub-tab state — poll-based capture
@@ -3497,7 +3516,7 @@ const RC={
     filters:{component:null, op:null, q:null},  // q: array of lowercased search terms, ANDed
     deviceByNode:new Map(),     // nodeId(int) → {id, name, model, manufacturer} — populated by rcMatterFetchDeviceMap on Start
     components:[],             // unioned component set from observed heads (UI-sorted)
-    framesLastSec:[],
+    totalRx:0, peakRate:0, rateSecStart:null, rateSecCount:0,   // cumulative-avg + peak rate accounting
     rotations:0,               // count of polls where the anchor missed (full-buffer rotations)
     firstPollDone:false,
     lastErr:null
@@ -3551,7 +3570,7 @@ function renderZigbeeSubTab(){
       </div>
       <div style="margin-top:8px;display:flex;gap:16px;flex-wrap:wrap;font-size:13px">
         <span>State: <span id="rc-zb-state" class="badge b-warn">idle</span></span>
-        <span>Frames/s: <span id="rc-zb-rate">0</span></span>
+        <span>Rate: <span id="rc-zb-rate">0/s avg · 0/s peak</span></span>
         <span>Buffered: <span id="rc-zb-buffered">0 frames / 0 MB</span></span>
         <span>Dropped: <span id="rc-zb-dropped">0</span></span>
       </div>
@@ -3604,7 +3623,7 @@ function rcZbStart(){
   const mb=parseInt(document.getElementById('rc-zb-cap').value,10);
   z.buf=new FrameBuffer(mb*1024*1024);
   z.displayBuf=[];
-  z.framesLastSec=[];
+  rcResetRate(z);
   z.pausedCapture=false;
   document.getElementById('rc-zb-pause').textContent='Pause capture';
   z.reconnectMs=1000;
@@ -3627,7 +3646,7 @@ function rcZbPause(){
 }
 
 function rcZbClear(){
-  const z=RC.zigbee;if(z.buf)z.buf.clear();z.displayBuf=[];z.framesLastSec=[];
+  const z=RC.zigbee;if(z.buf)z.buf.clear();z.displayBuf=[];rcResetRate(z);
   rcZbUpdateMetrics();rcZbRenderTail({repin:true});
 }
 
@@ -3668,9 +3687,7 @@ function rcZbOnFrame(text){
   const z=RC.zigbee;if(!z.buf||z.pausedCapture)return;
   z.buf.push(text);
   const now=Date.now();
-  z.framesLastSec.push(now);
-  // prune to 5 s window for rate calc
-  while(z.framesLastSec.length&&z.framesLastSec[0]<now-5000)z.framesLastSec.shift();
+  rcTallyRate(z,now);
   // Metrics throttled to ~10 Hz via rAF; tail + aggregates each throttled to ~1 Hz to stay cheap as the buffer grows.
   if(!z._tailPending){z._tailPending=true;requestAnimationFrame(()=>{
     z._tailPending=false;rcZbUpdateMetrics();
@@ -3682,8 +3699,7 @@ function rcZbOnFrame(text){
 
 function rcZbUpdateMetrics(){
   const z=RC.zigbee;
-  const rate=z.framesLastSec.length/5;
-  const rateEl=document.getElementById('rc-zb-rate');if(rateEl)rateEl.textContent=rate.toFixed(1);
+  const rateEl=document.getElementById('rc-zb-rate');if(rateEl)rateEl.textContent=rcRateText(z);
   const bufEl=document.getElementById('rc-zb-buffered');
   if(bufEl)bufEl.textContent=(z.buf?z.buf.count():0)+' frames / '+fbytes(z.buf?z.buf.bytes:0);
   const dropEl=document.getElementById('rc-zb-dropped');
@@ -4076,7 +4092,7 @@ function renderZwaveSubTab(){
       <div style="margin-top:8px;display:flex;gap:16px;flex-wrap:wrap;font-size:13px;align-items:center">
         <span>State: <span id="rc-zw-state" class="badge b-warn">idle</span></span>
         <span>Stack: <span class="badge ${stkCls}">${h(stk)}</span></span>
-        <span>Frames/s: <span id="rc-zw-rate">0</span></span>
+        <span>Rate: <span id="rc-zw-rate">0/s avg · 0/s peak</span></span>
         <span>Buffered: <span id="rc-zw-buffered">0 frames / 0 MB</span></span>
         <span>Dropped: <span id="rc-zw-dropped">0</span></span>
       </div>
@@ -4120,7 +4136,7 @@ function rcZwStart(){
   const mb=parseInt(document.getElementById('rc-zw-cap').value,10);
   z.buf=new FrameBuffer(mb*1024*1024);
   z.displayBuf=[];
-  z.framesLastSec=[];
+  rcResetRate(z);
   z.pausedCapture=false;
   z.stack=RC.zwaveStack;          // freeze the per-stack mapper choice for this session
   document.getElementById('rc-zw-pause').textContent='Pause capture';
@@ -4144,7 +4160,7 @@ function rcZwPause(){
 }
 
 function rcZwClear(){
-  const z=RC.zwave;if(z.buf)z.buf.clear();z.displayBuf=[];z.framesLastSec=[];
+  const z=RC.zwave;if(z.buf)z.buf.clear();z.displayBuf=[];rcResetRate(z);
   rcZwUpdateMetrics();rcZwRenderTail({repin:true});
 }
 
@@ -4185,8 +4201,7 @@ function rcZwOnFrame(text){
   const z=RC.zwave;if(!z.buf||z.pausedCapture)return;
   z.buf.push(text);          // raw, unmodified — keeps the recording full-fidelity
   const now=Date.now();
-  z.framesLastSec.push(now);
-  while(z.framesLastSec.length&&z.framesLastSec[0]<now-5000)z.framesLastSec.shift();
+  rcTallyRate(z,now);
   // Metrics throttled via rAF; tail re-render throttled to ~1 Hz to stay cheap as the buffer grows.
   if(!z._tailPending){z._tailPending=true;requestAnimationFrame(()=>{
     z._tailPending=false;rcZwUpdateMetrics();
@@ -4197,8 +4212,7 @@ function rcZwOnFrame(text){
 
 function rcZwUpdateMetrics(){
   const z=RC.zwave;
-  const rate=z.framesLastSec.length/5;
-  const rateEl=document.getElementById('rc-zw-rate');if(rateEl)rateEl.textContent=rate.toFixed(1);
+  const rateEl=document.getElementById('rc-zw-rate');if(rateEl)rateEl.textContent=rcRateText(z);
   const bufEl=document.getElementById('rc-zw-buffered');
   if(bufEl)bufEl.textContent=(z.buf?z.buf.count():0)+' frames / '+fbytes(z.buf?z.buf.bytes:0);
   const dropEl=document.getElementById('rc-zw-dropped');
@@ -4669,7 +4683,7 @@ function renderMatterSubTab(){
       </div>
       <div style="margin-top:8px;display:flex;gap:16px;flex-wrap:wrap;font-size:13px;align-items:center">
         <span>State: <span id="rc-m-state" class="badge b-warn">idle</span></span>
-        <span>Lines/s: <span id="rc-m-rate">0</span></span>
+        <span>Rate: <span id="rc-m-rate">0/s avg · 0/s peak</span></span>
         <span>Buffered: <span id="rc-m-buffered">0 lines / 0 MB</span></span>
         <span>Dropped: <span id="rc-m-dropped">0</span></span>
         <span title="Polls where the K-line dedup anchor was not found in the new buffer (rare; indicates ≥2 h elapsed between polls).">Rotations: <span id="rc-m-rot">0</span></span>
@@ -4754,7 +4768,7 @@ function rcMatterStart(){
   const mb=parseInt(document.getElementById('rc-m-cap').value,10);
   m.buf=new FrameBuffer(mb*1024*1024);
   m.displayBuf=[];
-  m.framesLastSec=[];
+  rcResetRate(m);
   m.pausedCapture=false;
   m.lastTail=[];
   m.rotations=0;
@@ -4781,7 +4795,7 @@ function rcMatterPause(){
 }
 
 function rcMatterClear(){
-  const m=RC.matter;if(m.buf)m.buf.clear();m.displayBuf=[];m.framesLastSec=[];m.lastTail=[];m.components=[];m.deviceByNode=new Map();m.rotations=0;m.firstPollDone=false;m.lastErr=null;
+  const m=RC.matter;if(m.buf)m.buf.clear();m.displayBuf=[];rcResetRate(m);m.lastTail=[];m.components=[];m.deviceByNode=new Map();m.rotations=0;m.firstPollDone=false;m.lastErr=null;
   rcMatterUpdateMetrics();rcMatterRenderTail({repin:true});
 }
 
@@ -4803,8 +4817,7 @@ function rcMatterDownload(){
 
 function rcMatterUpdateMetrics(){
   const m=RC.matter;
-  const rate=m.framesLastSec.length/5;
-  const rateEl=document.getElementById('rc-m-rate');if(rateEl)rateEl.textContent=rate.toFixed(1);
+  const rateEl=document.getElementById('rc-m-rate');if(rateEl)rateEl.textContent=rcRateText(m);
   const bufEl=document.getElementById('rc-m-buffered');
   if(bufEl)bufEl.textContent=(m.buf?m.buf.count():0)+' lines / '+fbytes(m.buf?m.buf.bytes:0);
   const dropEl=document.getElementById('rc-m-dropped');
@@ -4854,9 +4867,8 @@ function rcMatterPoll(){
         const now=Date.now();
         for(const ln of r.appended){
           m.buf.push(ln);
-          m.framesLastSec.push(now);
+          rcTallyRate(m,now);
         }
-        while(m.framesLastSec.length&&m.framesLastSec[0]<now-5000)m.framesLastSec.shift();
       }
       rcMatterUpdateMetrics();
       const t=Date.now();
