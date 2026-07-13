@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.71.0";
+const CODE_VERSION = "5.72.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -966,21 +966,25 @@ class FrameBuffer{
 }
 
 // ===== RADIO CAPTURE: RATE ACCOUNTING (shared by all sub-tabs) =====
-// Headline rate is a cumulative session average (totalRx / elapsed), derived at render time and
-// updated only when data arrives — no sliding-window array, no background timer, so it doesn't
-// flicker or decay with passing time. peakRate is a separate burst signal: the max count seen in
-// any ~1 s tumbling bucket this session (monotonic, so idle time never erodes it).
+// avg is the mean rate over the ACTIVE span only: (totalRx-1) intervals ÷ (last-first arrival).
+// This is undefined for <2 frames (shown "—", no divide-by-~0 spike on the first frame) and uses
+// only arrival timestamps — never Date.now() — so the value cannot change without a new frame
+// (no flicker/decay with passing time). peakRate is a separate burst signal: the max count in any
+// ~1 s tumbling bucket this session (monotonic, so idle time never erodes it).
 function rcTallyRate(st, now){
   st.totalRx=(st.totalRx||0)+1;
+  if(st.firstRxAt==null)st.firstRxAt=now;
+  st.lastRxAt=now;
   if(st.rateSecStart==null||now-st.rateSecStart>=1000){st.rateSecStart=now;st.rateSecCount=0}
   st.rateSecCount++;
   if(st.rateSecCount>(st.peakRate||0))st.peakRate=st.rateSecCount;
 }
-function rcResetRate(st){st.totalRx=0;st.peakRate=0;st.rateSecStart=null;st.rateSecCount=0}
+function rcResetRate(st){st.totalRx=0;st.peakRate=0;st.rateSecStart=null;st.rateSecCount=0;st.firstRxAt=null;st.lastRxAt=null}
 function rcRateText(st){
-  const secs=st.buf&&st.buf.startedAt?(Date.now()-st.buf.startedAt)/1000:0;
-  const avg=secs>0?(st.totalRx||0)/secs:0;
-  const a=avg<10?avg.toFixed(2):avg.toFixed(1);
+  const n=st.totalRx||0;
+  const span=(st.firstRxAt!=null&&st.lastRxAt!=null)?(st.lastRxAt-st.firstRxAt)/1000:0;
+  let a='—';
+  if(n>=2&&span>0){const avg=(n-1)/span;a=avg<10?avg.toFixed(2):avg.toFixed(1);}
   return a+'/s avg · '+(st.peakRate||0)+'/s peak';
 }
 
@@ -3476,7 +3480,7 @@ const RC={
     pinBaselineLen:0,     // displayBuf length captured when un-pinning; drives the "N new frames" pill
     _suppressScrollUntil:0, // perf.now() horizon during which the scroll handler ignores our own scrollTop writes
     filters:{cluster:null,cmd:null,dni:'',mfr:null,minLqi:null,maxRssi:null},
-    totalRx:0, peakRate:0, rateSecStart:null, rateSecCount:0,   // cumulative-avg + peak rate accounting
+    totalRx:0, peakRate:0, rateSecStart:null, rateSecCount:0, firstRxAt:null, lastRxAt:null,   // avg (over active span) + peak rate accounting
     lastAggregateAt:0,
     // Per-table sort state for aggregate tables; persisted across re-renders so the user's column choice survives 1Hz ticks.
     // Top tables default to descending Frames (col 1); OTA defaults to descending Frames (col 2).
@@ -3495,7 +3499,7 @@ const RC={
     pinnedToLive:true,    // auto-follow newest (top); false while reading history or a row is expanded
     pinBaselineLen:0,     // displayBuf length captured when un-pinning; drives the "N new frames" pill
     _suppressScrollUntil:0, // perf.now() horizon during which the scroll handler ignores our own scrollTop writes
-    totalRx:0, peakRate:0, rateSecStart:null, rateSecCount:0,   // cumulative-avg + peak rate accounting
+    totalRx:0, peakRate:0, rateSecStart:null, rateSecCount:0, firstRxAt:null, lastRxAt:null,   // avg (over active span) + peak rate accounting
     stack:null            // resolved at Start time from RC.zwaveStack — picks the per-stack row mapper
   },
   matter:{                                       // sub-tab state — poll-based capture
@@ -3516,7 +3520,7 @@ const RC={
     filters:{component:null, op:null, q:null},  // q: array of lowercased search terms, ANDed
     deviceByNode:new Map(),     // nodeId(int) → {id, name, model, manufacturer} — populated by rcMatterFetchDeviceMap on Start
     components:[],             // unioned component set from observed heads (UI-sorted)
-    totalRx:0, peakRate:0, rateSecStart:null, rateSecCount:0,   // cumulative-avg + peak rate accounting
+    totalRx:0, peakRate:0, rateSecStart:null, rateSecCount:0, firstRxAt:null, lastRxAt:null,   // avg (over active span) + peak rate accounting
     rotations:0,               // count of polls where the anchor missed (full-buffer rotations)
     firstPollDone:false,
     lastErr:null
@@ -3570,7 +3574,7 @@ function renderZigbeeSubTab(){
       </div>
       <div style="margin-top:8px;display:flex;gap:16px;flex-wrap:wrap;font-size:13px">
         <span>State: <span id="rc-zb-state" class="badge b-warn">idle</span></span>
-        <span>Rate: <span id="rc-zb-rate">0/s avg · 0/s peak</span></span>
+        <span>Rate: <span id="rc-zb-rate">—/s avg · 0/s peak</span></span>
         <span>Buffered: <span id="rc-zb-buffered">0 frames / 0 MB</span></span>
         <span>Dropped: <span id="rc-zb-dropped">0</span></span>
       </div>
@@ -4092,7 +4096,7 @@ function renderZwaveSubTab(){
       <div style="margin-top:8px;display:flex;gap:16px;flex-wrap:wrap;font-size:13px;align-items:center">
         <span>State: <span id="rc-zw-state" class="badge b-warn">idle</span></span>
         <span>Stack: <span class="badge ${stkCls}">${h(stk)}</span></span>
-        <span>Rate: <span id="rc-zw-rate">0/s avg · 0/s peak</span></span>
+        <span>Rate: <span id="rc-zw-rate">—/s avg · 0/s peak</span></span>
         <span>Buffered: <span id="rc-zw-buffered">0 frames / 0 MB</span></span>
         <span>Dropped: <span id="rc-zw-dropped">0</span></span>
       </div>
@@ -4683,7 +4687,7 @@ function renderMatterSubTab(){
       </div>
       <div style="margin-top:8px;display:flex;gap:16px;flex-wrap:wrap;font-size:13px;align-items:center">
         <span>State: <span id="rc-m-state" class="badge b-warn">idle</span></span>
-        <span>Rate: <span id="rc-m-rate">0/s avg · 0/s peak</span></span>
+        <span>Rate: <span id="rc-m-rate">—/s avg · 0/s peak</span></span>
         <span>Buffered: <span id="rc-m-buffered">0 lines / 0 MB</span></span>
         <span>Dropped: <span id="rc-m-dropped">0</span></span>
         <span title="Polls where the K-line dedup anchor was not found in the new buffer (rare; indicates ≥2 h elapsed between polls).">Rotations: <span id="rc-m-rot">0</span></span>
