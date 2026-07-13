@@ -15,6 +15,7 @@ Notes on Hubitat's Groovy sandbox and platform behavior. Reverse-engineered or l
 - Use `capability "Refresh"` (not deprecated `capability "Polling"`) for pollable devices
 - `@CompileStatic` on pure computation methods that don't access Hubitat dynamic properties
 - `@TypeChecked` is **not** available — the sandbox rejects `import groovy.transform.TypeChecked` at compile time (`Importing [groovy.transform.TypeChecked] is not allowed`, verified on firmware 2.5.0.148). Use `@CompileStatic` instead; it's the same family and is approved.
+- **Integer division yields `BigDecimal`**: `Long / Long` (and `int / int`) evaluates to a `BigDecimal` in Groovy, not an integer. This silently breaks numeric-method overload resolution — e.g. `Math.max(0L, someLong / 1000L)` becomes `Math.max(Long, BigDecimal)`, which the platform dispatcher throws on at runtime (`Ambiguous method overloading for method java.lang.Math#max … [double,double] / [float,float]`). Use `.intdiv(1000L)` (returns the integral type) when you want integer division, or cast, so both args share a type.
 
 ## Object introspection
 
