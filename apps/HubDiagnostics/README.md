@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
 <!-- AUTO:hubdiag-version -->
-_(version not found)_
+**Current version:** 5.69.0
 <!-- /AUTO -->
 
 ---
@@ -47,15 +47,16 @@ You only need to install one file — the Groovy app. The app downloads and inst
    https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/HubDiagnostics/HubDiagnostics.groovy
    ```
 3. Click **Save**
-4. **Enable OAuth**: on the app code page, click **OAuth** and enable it. This is required — the dashboard communicates with the app via OAuth-protected API calls.
+
+You don't need to enable OAuth by hand — the app enables OAuth for itself the first time it needs it (see Step 2).
 
 ### Step 2 — Create an app instance
 
 1. Go to **Apps → + Add User App → Hub Diagnostics**
-2. On first run the app initializes, configures OAuth, and automatically downloads its web dashboard to the hub's File Manager — you don't need to install that file yourself.
+2. On first run the app initializes, **enables its own OAuth**, and automatically downloads its web dashboard to the hub's File Manager — you don't need to install that file or touch OAuth yourself. (The dashboard talks to the app over OAuth-protected API calls, so OAuth must be on; the app turns it on for you.)
 3. A link to open the dashboard appears on the main page.
 
-> **Note:** If OAuth auto-enable fails during install, the app will show instructions to enable it manually from the Apps Code page.
+> **Note:** In the rare case the app can't enable OAuth itself, it shows instructions to enable it manually from the **Apps Code → Hub Diagnostics → OAuth** page.
 
 ---
 
@@ -336,11 +337,11 @@ Pairwise neighbor adjacency matrix as reported by the Z-Wave controller (`/hub/z
 
 ### Matter
 
-Enabled / installed flags, network state, fabric ID, device count.
+Enabled / installed flags, network state, fabric ID, device count, and per-interface listener IP addresses. When Matter devices are present, a collapsible **Matter Devices** table lists each with Name (linked to its Hubitat device), Node ID (hex), DNI, Manufacturer, Model, Online status, and IPv6 address.
 
 ### Hub Mesh
 
-Enabled status, shared/linked device and variable counts. Table of peer hubs with name, IP, online status, and their device/variable counts.
+Enabled status, shared/linked device and variable counts. A collapsible peer-hub table (**Linked Hubs**) lists each peer's name, IP, online status, and shared device/variable counts. A second collapsible, filterable **Shared / Linked Resources** table unifies the actual shared and linked resources with Kind (Device/Variable), Direction (Shared/Linked), Name, Peer hub, Type, and the apps using each.
 
 ### mDNS Discovery
 
@@ -425,6 +426,8 @@ Changes are color-coded: green for additions/improvements, red for removals/degr
 ## Radio Capture Tab
 
 Live capture of radio traffic from the hub's internal log sockets, intended for mesh troubleshooting. **Zigbee** capture (via `ws://${hub_ip}/zigbeeLogsocket`) is fully featured. A **Z-Wave** sub-tab (via `ws://${hub_ip}/zwaveLogsocket`) provides capture, live tail, and download; it auto-detects the active Z-Wave stack and picks a per-stack renderer. On the **Z/IP (legacy)** stack the tail shows the per-message IME radio telemetry — **Time · Node · Device · Type · RSSI · Seq** (RSSI per hop, in dBm). On the **Z-Wave JS** stack frames are shown raw for now (field mapping pending a sample). Aggregates and command-level decoding are not yet built for Z-Wave; the recording is full-fidelity raw lines on both stacks. The capture controls, recording cap, pause/stop/clear/download semantics, and the click-to-expand raw JSON behaviour match the Zigbee sub-tab described below.
+
+A **Matter** sub-tab captures the hub's Matter (CHIP) SDK log. Unlike the Zigbee and Z-Wave sub-tabs — which stream from a WebSocket log socket — Matter has no log socket, so this sub-tab **polls `/hub/matterLogs/json` every 2 s** and dedup-appends new lines to the buffer; it is **LAN-only and won't work over the Hubitat cloud URL**. Two views: **Structured** parses each CHIP entry into a row grouped by exchange ID, with the Interaction Model op (Report / Read / Write / Subscribe / Invoke / Status / TimedReq), endpoint / cluster / attribute / command, multi-attribute Reports split into one row per attribute, and rows linked back to the matching Hubitat device; **Raw** shows the colored log tail. Filter by **Component**, by **Op**, or by free-text substring. The capture controls (Start / Pause / Stop / Download / Clear buffer), the recording cap (10 / 50 / 200 MB), and the buffered/dropped counters mirror the Zigbee sub-tab; an added **Rotations** counter tracks polls where the dedup anchor wasn't found (≥ 2 h between polls).
 
 **Capture controls** — in order: Start capture, Pause capture, Stop capture, Download, Clear buffer.
 
