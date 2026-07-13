@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.69.0";
+const CODE_VERSION = "5.70.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -4054,7 +4054,7 @@ function renderZwaveSubTab(){
   const z=RC.zwave;
   const stk=RC.zwaveStack||'unknown';
   const stkCls=(stk==='js'||stk==='legacy')?'b-ok':'b-warn';
-  const stkNote=stk==='js'?'Z-Wave JS — frame mapping deferred (no sample yet); frames shown raw'
+  const stkNote=stk==='js'?'Z-Wave JS — envelope parsed (time/source/direction/kind); zwave-js message shown as-is. Command decoding and node telemetry deferred pending a device-traffic sample.'
     :stk==='legacy'?'Z/IP (legacy) — per-message IME radio telemetry (RSSI per hop, route/speed)'
     :'unknown stack — frames shown raw';
   document.getElementById('rc-zwave').innerHTML=`
@@ -4236,9 +4236,33 @@ function rcZwLegacyFrameToRow(text){
   };
 }
 
-// STUB: no Z-Wave JS zwaveLogsocket sample yet (needs a JS-stack hub with paired nodes).
-// Finalize the named-field extraction here once a sample is captured. Until then, show JS frames raw.
-function rcZwJsFrameToRow(text){return rcZwRawFrameToRow(text)}
+// Z-Wave JS zwaveLogsocket frame: {sourceLabel, plainTextMessage, deviceId, time}.
+// plainTextMessage is pre-rendered zwave-js text, not structured JSON — so we parse only its
+// deterministic envelope (direction glyph, frame kind, byte-count vs state) and surface the text
+// as-is. Command-class decoding and node radio telemetry are deferred until a device-traffic
+// sample exists (this capture was an idle mesh: every frame deviceId -999, controller-internal).
+function rcZwJsFrameToRow(text){
+  let f;try{f=JSON.parse(text)}catch(e){return rcZwRawFrameToRow(text)}
+  const msg=f.plainTextMessage||'';
+  const first=msg.split('\n')[0];
+  const s=first.replace(/^\s+/,'');
+  const g=s.charCodeAt(0);
+  const dir=g===0x00BB?'TX':g===0x00AB?'RX':'';        // » outbound / « inbound (host↔controller)
+  const tags=first.match(/\[[^\]]+\]/g)||[];
+  const kind=tags.length?tags[0].slice(1,-1)           // REQ / RES / ACK
+    :/\(\d+ bytes\)/.test(first)?'bytes'               // raw serial data frame
+    :'state';                                          // queue-idle/busy and other bare lines
+  return{
+    time:f.time||'',
+    src:f.sourceLabel||'',
+    dir:dir,
+    kind:kind,
+    _deviceId:(f.deviceId>0?f.deviceId:null),          // link only real Hubitat device ids (untested: none in sample)
+    summary:s.replace(/^[»«]\s*/,'').replace(/\s{2,}/g,'  '),
+    multiline:msg.indexOf('\n')!==-1,
+    _raw:text
+  };
+}
 
 // Universal fallback: pull a timestamp if the line is JSON, otherwise show the raw line verbatim.
 function rcZwRawFrameToRow(text){
@@ -4264,7 +4288,10 @@ function rcZwRenderTailHtml(rows, selectedRaw, stack){
   const td='padding:5px 10px;font-size:12px;border-top:1px solid rgba(255,255,255,0.05);vertical-align:top';
   const tdMono=td+';font-family:ui-monospace,SFMono-Regular,Menlo,monospace';
   const legacy=stack==='legacy';
-  const cols=legacy?['Time','Node','Device','Type','RSSI','Seq']:['Time','Raw'];
+  const js=stack==='js';
+  const cols=legacy?['Time','Node','Device','Type','RSSI','Seq']
+    :js?['Time','Src','Dir','Kind','Node/Device','Summary']
+    :['Time','Raw'];
   let html='<table style="width:100%;border-collapse:collapse"><thead><tr>';
   cols.forEach(l=>html+='<th style="'+th+'">'+l+'</th>');
   html+='</tr></thead><tbody>';
@@ -4279,6 +4306,14 @@ function rcZwRenderTailHtml(rows, selectedRaw, stack){
       html+='<td style="'+td+'">'+h(r.type)+'</td>';
       html+='<td style="'+td+';text-align:right">'+h(String(r.rssi||''))+'</td>';
       html+='<td style="'+td+';text-align:right">'+h(String(r.seq))+'</td>';
+    }else if(js){
+      const dirCls=r.dir==='TX'?'color:#e0a458':r.dir==='RX'?'color:#5aa9e6':'';
+      html+='<td style="'+td+';white-space:nowrap">'+h(r.time)+'</td>';
+      html+='<td style="'+td+'"><span class="badge">'+h(r.src)+'</span></td>';
+      html+='<td style="'+td+';'+dirCls+'">'+h(r.dir||'')+'</td>';
+      html+='<td style="'+td+'">'+h(r.kind||'')+'</td>';
+      html+='<td style="'+td+'">'+(r._deviceId?dlink(r._deviceId,String(r._deviceId)):'<span style="color:var(--muted,#888)">—</span>')+'</td>';
+      html+='<td style="'+tdMono+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:560px">'+h(r.summary||'')+(r.multiline?' <span style="color:var(--muted,#888)">⋯</span>':'')+'</td>';
     }else{
       html+='<td style="'+td+';white-space:nowrap">'+h(r.time)+'</td>';
       html+='<td style="'+tdMono+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:640px">'+h(r.raw||'')+'</td>';
