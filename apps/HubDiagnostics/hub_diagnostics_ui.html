@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.73.0";
+const CODE_VERSION = "5.73.1";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -4338,6 +4338,9 @@ function rcZwRenderTailHtml(rows, selectedRaw, stack){
   const th='padding:6px 10px;text-align:left;font-size:12px;background:#1a1d24;position:sticky;top:0;z-index:1;border-bottom:1px solid rgba(255,255,255,0.12)';
   const td='padding:5px 10px;font-size:12px;border-top:1px solid rgba(255,255,255,0.05);vertical-align:top';
   const tdMono=td+';font-family:ui-monospace,SFMono-Regular,Menlo,monospace';
+  const tdT=td+';width:1%;white-space:nowrap';                                                    // hug content (fixed-length cols)
+  const tdTMono=tdMono+';width:1%;white-space:nowrap';
+  const tdFlex=tdMono+';width:100%;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'; // absorb slack + ellipsis
   const legacy=stack==='legacy';
   const js=stack==='js';
   const cols=legacy?['Time','Node','Device','Type','RSSI','Seq']
@@ -4351,23 +4354,23 @@ function rcZwRenderTailHtml(rows, selectedRaw, stack){
     const rowBg=sel?'background:rgba(33,150,243,0.18)':'';
     html+='<tr data-idx="'+idx+'" style="cursor:pointer;'+rowBg+'">';
     if(legacy){
-      html+='<td style="'+td+'">'+h(r.time)+'</td>';
-      html+='<td style="'+tdMono+'">'+h(r.node)+'</td>';
+      html+='<td style="'+tdT+'">'+h(r.time)+'</td>';
+      html+='<td style="'+tdTMono+'">'+h(r.node)+'</td>';
       html+='<td style="'+td+'">'+(r._deviceId?dlink(r._deviceId,r.device):h(r.device||''))+'</td>';
       html+='<td style="'+td+'">'+h(r.type)+'</td>';
-      html+='<td style="'+td+';text-align:right">'+h(String(r.rssi||''))+'</td>';
-      html+='<td style="'+td+';text-align:right">'+h(String(r.seq))+'</td>';
+      html+='<td style="'+tdT+';text-align:right">'+h(String(r.rssi||''))+'</td>';
+      html+='<td style="'+tdT+';text-align:right">'+h(String(r.seq))+'</td>';
     }else if(js){
       const dirCls=r.dir==='TX'?'color:#e0a458':r.dir==='RX'?'color:#5aa9e6':'';
-      html+='<td style="'+td+';white-space:nowrap">'+h(r.time)+'</td>';
-      html+='<td style="'+td+'"><span class="badge">'+h(r.src)+'</span></td>';
-      html+='<td style="'+td+';'+dirCls+'">'+h(r.dir||'')+'</td>';
-      html+='<td style="'+td+'">'+h(r.kind||'')+'</td>';
-      html+='<td style="'+td+'">'+(r._deviceId?dlink(r._deviceId,String(r._deviceId)):'<span style="color:var(--muted,#888)">—</span>')+'</td>';
-      html+='<td style="'+tdMono+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:560px">'+h(r.summary||'')+(r.multiline?' <span style="color:var(--muted,#888)">⋯</span>':'')+'</td>';
+      html+='<td style="'+tdT+'">'+h(r.time)+'</td>';
+      html+='<td style="'+tdT+'"><span class="badge">'+h(r.src)+'</span></td>';
+      html+='<td style="'+tdT+';'+dirCls+'">'+h(r.dir||'')+'</td>';
+      html+='<td style="'+tdT+'">'+h(r.kind||'')+'</td>';
+      html+='<td style="'+tdT+'">'+(r._deviceId?dlink(r._deviceId,String(r._deviceId)):'<span style="color:var(--muted,#888)">—</span>')+'</td>';
+      html+='<td style="'+tdFlex+'">'+h(r.summary||'')+(r.multiline?' <span style="color:var(--muted,#888)">⋯</span>':'')+'</td>';
     }else{
-      html+='<td style="'+td+';white-space:nowrap">'+h(r.time)+'</td>';
-      html+='<td style="'+tdMono+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:640px">'+h(r.raw||'')+'</td>';
+      html+='<td style="'+tdT+'">'+h(r.time)+'</td>';
+      html+='<td style="'+tdFlex+'">'+h(r.raw||'')+'</td>';
     }
     html+='</tr>';
     if(sel){
