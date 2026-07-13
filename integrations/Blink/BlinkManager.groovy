@@ -35,7 +35,7 @@ definition(
 
 // --- Constants ---
 
-@Field static final String CODE_VERSION = "1.0.1"
+@Field static final String CODE_VERSION = "1.0.2"
 
 @Field static final String OAUTH_BASE_URL = "https://api.oauth.blink.com"
 @Field static final String CLIENT_ID = "ios"
@@ -1703,8 +1703,9 @@ private void captureCookies(response) {
 }
 
 private static String headerName(header) {
-    try { return header.name } catch (Exception ignored) {}
+    try { return header.name } catch (Exception ignored) {}      // HttpClient 4.5: org.apache.http.Header
     try { return header.getName() } catch (Exception ignored) {}
+    try { return header.key } catch (Exception ignored) {}        // 2.5.1.x/HttpClient 5.6: LinkedHashMap$Entry
     return null
 }
 
@@ -1770,8 +1771,8 @@ private static String extractCodeFromUrl(String url) {
 
 private String getRedirectLocation(response) {
     try {
-        def location = response?.headers?.find { it.name?.equalsIgnoreCase("Location") }
-        return location?.value ?: location?.getValue()
+        def location = response?.headers?.find { headerName(it)?.equalsIgnoreCase("Location") }
+        return location ? headerValue(location) : null
     } catch (Exception ignored) {
         return null
     }
