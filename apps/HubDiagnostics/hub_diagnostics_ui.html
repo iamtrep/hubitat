@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.72.0";
+const CODE_VERSION = "5.73.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -3500,6 +3500,7 @@ const RC={
     pinBaselineLen:0,     // displayBuf length captured when un-pinning; drives the "N new frames" pill
     _suppressScrollUntil:0, // perf.now() horizon during which the scroll handler ignores our own scrollTop writes
     totalRx:0, peakRate:0, rateSecStart:null, rateSecCount:0, firstRxAt:null, lastRxAt:null,   // avg (over active span) + peak rate accounting
+    filters:null,         // {q:[terms]} free-text tail filter (mirrors the Zigbee sub-tab)
     stack:null            // resolved at Start time from RC.zwaveStack — picks the per-stack row mapper
   },
   matter:{                                       // sub-tab state — poll-based capture
@@ -4102,6 +4103,7 @@ function renderZwaveSubTab(){
       </div>
       <div style="margin-top:6px;font-size:12px;opacity:.7">${h(stkNote)}</div>
     </div>
+    ${rcZwFilterCard()}
     <div id="rc-zw-live"></div>
   `;
   document.getElementById('rc-zw-start').addEventListener('click',rcZwStart);
@@ -4113,9 +4115,37 @@ function renderZwaveSubTab(){
     const mb=parseInt(e.target.value,10);
     if(z.buf)z.buf.setMaxBytes(mb*1024*1024);
   });
+  const fq=document.getElementById('rc-zw-f-q');
+  if(fq){let t=null;fq.addEventListener('input',()=>{clearTimeout(t);t=setTimeout(()=>{rcZwReadFilters();rcZwRenderTail({repin:true})},150)})}
   document.getElementById('rc-zw-live').addEventListener('click',rcZwHandleTailClick);
+  rcZwReadFilters();
   rcZwUpdateBadge();
   rcZwRenderTail({repin:true});
+}
+
+function rcZwFilterCard(){
+  return `
+    <div class="card" style="margin-bottom:12px">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <input id="rc-zw-f-q" type="text" placeholder="Filter live tail… (time, source, direction, kind, node, device, summary)" style="flex:1;min-width:260px;padding:6px 10px">
+        <span style="font-size:12px;opacity:.7">Substring match across all columns; space-separated terms all must match. Filters the live tail only — the recording stays full-fidelity.</span>
+      </div>
+    </div>`;
+}
+
+function rcZwReadFilters(){
+  const el=document.getElementById('rc-zw-f-q');
+  const v=el?el.value.trim().toLowerCase():'';
+  // Space-separated terms, AND-matched against a per-row search string. Null = no filter.
+  RC.zwave.filters=v?{q:v.split(/\s+/).filter(Boolean)}:null;
+}
+
+// Match against the same fields the tail shows for this row (stack-dependent), so the box filters what the user sees.
+function rcZwRowMatchesFilter(r,f){
+  if(!f||!f.q||!f.q.length)return true;
+  const hay=[r.time,r.node,r.device,r.type,r.rssi,r.seq,r.src,r.dir,r.kind,r.summary,r.raw,r._deviceId]
+    .filter(v=>v!=null&&v!=='').join(' ').toLowerCase();
+  return f.q.every(t=>hay.includes(t));
 }
 
 function rcZwUpdateBadge(){
@@ -4292,9 +4322,12 @@ function rcZwRenderTail(opt){
   const z=RC.zwave;
   // Rebuild displayBuf from the full recording buffer, newest first.
   const src=z.buf?z.buf.frames:[];
+  const filters=z.filters;
   z.displayBuf=[];
   for(let i=src.length-1;i>=0;i--){
-    const r=rcZwFrameToRow(src[i].line);if(r)z.displayBuf.push(r);
+    const r=rcZwFrameToRow(src[i].line);if(!r)continue;
+    if(!rcZwRowMatchesFilter(r,filters))continue;
+    z.displayBuf.push(r);
   }
   if(z.selectedRaw&&!z.displayBuf.some(r=>r._raw===z.selectedRaw))z.selectedRaw=null;
   rcTailPaint({liveId:'rc-zw-live',tblId:'rc-zw-tail-tbl',z:z,rowsHtml:rcZwRenderTailHtml(z.displayBuf,z.selectedRaw,z.stack)},opt);
