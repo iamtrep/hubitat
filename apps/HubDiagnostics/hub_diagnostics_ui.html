@@ -2091,7 +2091,7 @@ async function rDevices(){const P='p-devices';loading(P);try{
   const bt=d.byType||{},it=d.idsByType||{};
   const dt=Object.keys(bt).length?Object.entries(bt).map(([k,v])=>({name:k,count:v,ids:it[k]||[]})).sort((a,b)=>b.count-a.count):[];
   const staleCutoff=Date.now()-2*(d.inactivityDays||7)*86400000;
-  const stale=d.deviceRows.filter(r=>{if(r.lastActivity==='Never')return true;const t=new Date(r.lastActivity).getTime();return !isNaN(t)&&t<staleCutoff});
+  const stale=d.deviceRows.filter(r=>!r.lastActivityMs||r.lastActivityMs<staleCutoff);
   // Device types
   if(dt.length)o+='<div class="card"><div class="card-h">Device Types ('+dt.length+')</div><div class="card-b"><div id="dtTbl"></div></div></div>';
   // Low battery
@@ -2109,17 +2109,17 @@ async function rDevices(){const P='p-devices';loading(P);try{
   // Stale devices table
   if(stale.length)
     tbl('staleTbl',[
-      {l:'Name',f:'name',r:r=>dlink(r.id,r.name)},{l:'Type',f:'type'},{l:'Connection',f:'connectionTypeDisplay'},{l:'Integration',f:'integration',r:r=>h(r.integration||'-')},
-      {l:'Last Activity',f:'lastActivity'},{l:'Room',f:'room',r:r=>h(r.room||'-')}
+      {l:'Name',f:'name',r:r=>dlink(r.id,r.name)},{l:'Type',f:'type'},{l:'Connection',f:'connectionType',r:r=>CD[r.connectionType]||r.connectionType||'-'},{l:'Integration',f:'integration',r:r=>h(r.integration||'-')},
+      {l:'Last Activity',f:'lastActivityMs',r:r=>r.lastActivityMs?new Date(r.lastActivityMs).toLocaleString():'Never'},{l:'Room',f:'room',r:r=>h(r.room||'-')}
     ],stale,{sc:3,sd:'asc',filter:true,collapse:10,collapseLabel:'Stale Devices'});
   tbl('devTbl',[
     {l:'Name',f:'name',r:r=>dlink(r.id,r.name)},
     {l:'Type',f:'type',r:r=>r.userType&&r.deviceTypeId?'<a href="/driver/editor/'+r.deviceTypeId+'" target="_blank">'+h(r.type)+'</a>':h(r.type)},
-    {l:'Connection',f:'connectionTypeDisplay'},
+    {l:'Connection',f:'connectionType',r:r=>CD[r.connectionType]||r.connectionType||'-'},
     {l:'Integration',f:'integration',r:r=>h(r.integration||'-')},
     {l:'Room',f:'room',r:r=>h(r.room||'-')},
     {l:'Status',f:'status',r:r=>sbadge(r.status)},
-    {l:'Last Activity',f:'lastActivity'},
+    {l:'Last Activity',f:'lastActivityMs',r:r=>r.lastActivityMs?new Date(r.lastActivityMs).toLocaleString():'Never'},
     {l:'Battery',f:'battery',t:'n',r:r=>bat(r.battery)},
     {l:'Parent',f:'parentAppName',r:r=>r.parentAppName?alink(r.parentAppId,r.parentAppName):r.parentDeviceName?dlink(r.parentDeviceId,r.parentDeviceName):'-'}
   ],d.deviceRows,{filter:true,sc:0,sd:'asc',collapse:10,collapseLabel:'All Devices'});

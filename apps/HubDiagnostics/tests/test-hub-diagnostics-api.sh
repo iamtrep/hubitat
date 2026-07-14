@@ -884,10 +884,10 @@ else:
         for ep in ["dashboard", "devices", "apps"]:
             if ep in timings:
                 t = timings[ep]
-                if "median" in t and "count" in t:
-                    ok(f"{ep}: median={t['median']}ms, count={t['count']}")
+                if "lastSamples" in t and "count" in t:
+                    ok(f"{ep}: count={t['count']}, recent={t.get('recent')}")
                 else:
-                    fail(f"{ep} timing missing median/count fields")
+                    fail(f"{ep} timing missing lastSamples/count fields")
     else:
         warn("No timings yet (may be expected on first run)")
 

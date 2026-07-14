@@ -202,21 +202,6 @@ private void cachePut(String key, Object data) {
 @Field static final String UPDATE_AVAILABLE_BADGE = ' <span style="color:green; font-weight:bold;">update available</span>'
 @Field static final java.util.regex.Pattern UPDATE_BADGE_RE = ~/(?i)\s*<span\b[^>]*>\s*update available\s*<\/span>\s*$/
 
-// Connection type display names
-@Field static final Map CONN_DISPLAY = [
-    "zigbee": "Zigbee",
-    "zwave": "Z-Wave",
-    "matter": "Matter",
-    "bluetooth": "Bluetooth",
-    "homekit": "HomeKit",
-    "lan_direct": "LAN (Direct)",
-    "lan_bridge": "LAN (Bridge)",
-    "cloud": "Cloud",
-    "virtual": "Virtual",
-    "hubmesh": "Hub Mesh",
-    "other": "Other"
-]
-
 // Legacy protocol display names (for migrating old snapshots)
 @Field static final Map LEGACY_PROTOCOL_DISPLAY = [
     "zwave": "Z-Wave",
@@ -1154,9 +1139,8 @@ Map getDevicesData() {
     List deviceRows = (deviceStats.allDevices ?: []).collect { Map dev ->
         [id: dev.id, name: dev.name, type: dev.type,
          connectionType: dev.connectionType,
-         connectionTypeDisplay: CONN_DISPLAY[dev.connectionType] ?: dev.connectionType,
          integration: dev.integration,
-         room: dev.room, status: dev.status ?: "", lastActivity: dev.lastActivity ?: "Never",
+         room: dev.room, status: dev.status ?: "", lastActivityMs: dev.lastActivityMs,
          battery: dev.battery, parentAppId: dev.parentAppId, parentAppName: dev.parentAppName,
          parentDeviceId: dev.parentDeviceId, parentDeviceName: dev.parentDeviceName,
          userType: dev.userType ?: false, deviceTypeId: dev.deviceTypeId]
@@ -1508,19 +1492,11 @@ Map computeZwaveSignals(Map zwRaw) {
 void recordApiTiming(String endpoint, long elapsedMs) {
     synchronized (apiTimings) {
         Map entry = apiTimings[endpoint]
-        if (!entry) {
-            entry = [samples: [], median: 0, count: 0]
-            apiTimings[endpoint] = entry
-        }
+        if (!entry) { entry = [samples: [], count: 0]; apiTimings[endpoint] = entry }
         List samples = entry.samples
         samples << elapsedMs
-        if (samples.size() > API_TIMING_WINDOW) {
-            samples.remove(0)
-        }
+        if (samples.size() > API_TIMING_WINDOW) samples.remove(0)
         entry.count = (entry.count as int) + 1
-        List sorted = samples.collect().sort()
-        int mid = sorted.size() / 2
-        entry.median = sorted.size() % 2 == 0 ? ((sorted[mid - 1] + sorted[mid]) / 2) as long : sorted[mid]
     }
 }
 
@@ -1528,12 +1504,7 @@ Map apiStats() {
     Map stats = [:]
     synchronized (apiTimings) {
         apiTimings.each { String endpoint, Map entry ->
-            stats[endpoint] = [
-                median: entry.median,
-                count: entry.count,
-                recent: entry.samples.size(),
-                lastSamples: entry.samples.collect()
-            ]
+            stats[endpoint] = [count: entry.count, recent: entry.samples.size(), lastSamples: entry.samples.collect()]
         }
     }
     return jsonResponse([timings: stats])
@@ -2035,7 +2006,7 @@ Map fetchHubVariables() {
             Map m = (meta instanceof Map) ? (Map) meta : [value: meta]
             [name: name, value: m.value, type: m.type, lastUpdated: m.lastUpdated]
         }
-        return [count: entries.size(), supported: true, variables: entries.sort { it.name }]
+        return [count: entries.size(), supported: true, variables: entries]
     } catch (MissingMethodException mme) {
         return [count: 0, supported: false, variables: []]
     } catch (Exception e) {
@@ -2553,7 +2524,7 @@ Map analyzeDevices(boolean deep = true) {
                     type: typeName, userType: device.user ?: false, deviceTypeId: device.deviceTypeId,
                     connectionType: connectionType, integration: integration,
                     status: device.disabled ? "Disabled" : (lastActivity && lastActivity > inactivityThresholdMs ? "Active" : "Inactive"),
-                    lastActivity: lastActivity ? new Date(lastActivity).format("yyyy-MM-dd HH:mm") : "Never",
+                    lastActivityMs: lastActivity,
                     battery: batteryLevel,
                     isParent: deviceEntry.parent ?: false, isChild: deviceEntry.child ?: false,
                     linked: device.linked ?: false, room: device.roomName ?: "",
@@ -3115,7 +3086,7 @@ Map enrichDevices(Map uncertainDevices, Set communityAppTypeNames = [] as Set) {
                     if (dataJson?.startsWith("{")) {
                         Map dataValues = (Map) new groovy.json.JsonSlurper().parseText(dataJson)
                         String hint = safeToString(dataValues?.get("hubdiag:conn"), "")
-                        if (hint && CONN_DISPLAY.containsKey(hint)) connHint = hint
+                        if (hint && VALID_CONN.contains(hint)) connHint = hint
                     }
                 } catch (Exception ignored) {}
                 cacheUpdates[idStr] = groovy.json.JsonOutput.toJson([
