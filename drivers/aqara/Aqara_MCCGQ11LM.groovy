@@ -401,13 +401,26 @@ private void parseBasic(Map map) {
                 logDebug("ManufacturerName : ${mfg}")
             }
             break
-        case "0005":  // ModelIdentifier (button-press discrimination added in Task 4)
+        case "0005":  // ModelIdentifier + Xiaomi mfr-specific button-press quirk.
             if (encoding == "42") {
                 String model = hexToText(value)
                 if (model) {
                     updateDataValue("model", model)
                     logDebug("ModelIdentifier : ${model}")
                 }
+            }
+            // The button/reset-press frame is a mfr-specific (Lumi 0x115F)
+            // Report Attributes bundling 0x0005 + an FF01 additionalAttr; the
+            // join announce instead bundles 0x0005 + 0x0001 (ApplicationVersion).
+            // Only the FF01-bundled variant is a press — the FF01 itself is
+            // still separately routed to parseCheckinFromMap via parse()'s
+            // additionalAttrs iteration, so diagnostics decode regardless.
+            boolean hasFF01 = map.additionalAttrs?.any { it.attrId == "FF01" }
+            if (hasFF01) {
+                logInfo("Trigger : Button pressed (0x0005 + FF01)")
+                sendEvent(name: "pushed", value: 1, isStateChange: true)
+            } else {
+                logDebug("Basic 0x0005 announce (no FF01 bundled) — no button event")
             }
             break
         case "4000":  // SWBuildID (Character String)
