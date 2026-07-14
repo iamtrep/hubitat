@@ -396,13 +396,15 @@ else:
     else:
         fail(f"Connection-type counts sum {conn_sum} != {gt_devices}")
 
-    # Integration counts should also sum to total
+    # Integration counts sum to the number of integration-member rows (standalone devices —
+    # radio-paired, virtual, hub-mesh — carry integration=null and are intentionally excluded)
     bi = devs.get("byIntegration", {})
     integ_sum = sum(bi.values())
-    if integ_sum == gt_devices:
-        ok(f"Integration counts sum to total ({integ_sum})")
+    integ_rows = len([r for r in rows if r.get("integration")])
+    if integ_sum == integ_rows:
+        ok(f"Integration counts sum to integration-member rows ({integ_sum})")
     else:
-        fail(f"Integration counts sum {integ_sum} != {gt_devices}")
+        fail(f"Integration counts sum {integ_sum} != {integ_rows} integration-member rows")
 
     # Device type breakdown
     bt = devs.get("byType", {})
