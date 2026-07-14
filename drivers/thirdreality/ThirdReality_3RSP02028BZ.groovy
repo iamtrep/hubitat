@@ -21,7 +21,7 @@ import com.hubitat.hub.domain.Event
 import hubitat.zigbee.zcl.DataType
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.7"
+@Field static final String CODE_VERSION = "0.0.8"
 
 // Third Reality proprietary cluster (no Hubitat constant). The mfg code differs by
 // generation; resolve per-device via mfgCode() rather than a single constant.
@@ -62,6 +62,9 @@ import java.math.RoundingMode
 
 // Sentinel for invalid UINT16 (ZCL "no measurement")
 @Field static final int INVALID_UINT16              = 0xFFFF
+
+// Below this real-power draw, power factor is undefined (idle load); report 0.
+@Field static final BigDecimal IDLE_POWER_W         = 1.0
 
 // Health/presence
 @Field static final int PRESENT_THRESHOLD           = 3
@@ -318,12 +321,15 @@ void configure() {
     cmds += zigbee.configureReporting(zigbee.ELECTRICAL_MEASUREMENT_CLUSTER, ATTR_ACTIVE_POWER,  DataType.INT16,   minInterval, maxInterval, powerDeltaRaw)
     cmds += zigbee.configureReporting(zigbee.ELECTRICAL_MEASUREMENT_CLUSTER, ATTR_RMS_CURRENT,   DataType.UINT16,  minInterval, maxInterval, currentDeltaRaw)
     cmds += zigbee.configureReporting(zigbee.ELECTRICAL_MEASUREMENT_CLUSTER, ATTR_RMS_VOLTAGE,   DataType.UINT16,  minInterval, maxInterval, voltageDeltaRaw)
+    // PF: large reportable change (0.25) so idle-load jitter is silenced but a real load transition still reports.
+    cmds += zigbee.configureReporting(zigbee.ELECTRICAL_MEASUREMENT_CLUSTER, ATTR_POWER_FACTOR,  DataType.INT8,    minInterval, maxInterval, 25)
     cmds += zigbee.configureReporting(zigbee.METERING_CLUSTER,        ATTR_SUMMATION,     DataType.UINT48,  minInterval, maxInterval, energyDeltaRaw)
 
     cmds += zigbee.reportingConfiguration(zigbee.ON_OFF_CLUSTER,          ATTR_ON_OFF)
     cmds += zigbee.reportingConfiguration(zigbee.ELECTRICAL_MEASUREMENT_CLUSTER, ATTR_ACTIVE_POWER)
     cmds += zigbee.reportingConfiguration(zigbee.ELECTRICAL_MEASUREMENT_CLUSTER, ATTR_RMS_CURRENT)
     cmds += zigbee.reportingConfiguration(zigbee.ELECTRICAL_MEASUREMENT_CLUSTER, ATTR_RMS_VOLTAGE)
+    cmds += zigbee.reportingConfiguration(zigbee.ELECTRICAL_MEASUREMENT_CLUSTER, ATTR_POWER_FACTOR)
     cmds += zigbee.reportingConfiguration(zigbee.METERING_CLUSTER,        ATTR_SUMMATION)
 
     // Diagnostic read: device-reported V/I/P multipliers and divisors
@@ -656,7 +662,12 @@ private void handleElectricalCluster(Map descMap) {
         case "0510": // Power factor (INT8 signed, hundredths)
             int pfRaw = parseSignedHex8(descMap.value)
             if (pfRaw < -100 || pfRaw > 100) return  // outside valid PF range (incl. 0x80 = -128)
-            BigDecimal pf = new BigDecimal(pfRaw).divide(new BigDecimal(100), 2, RoundingMode.HALF_UP)
+            // At near-zero real load PF is undefined and the device streams noise;
+            // clamp to a stable 0 so the platform coalesces the repeats.
+            BigDecimal power = (device.currentValue("power") ?: 0) as BigDecimal
+            BigDecimal pf = (power < IDLE_POWER_W)
+                ? 0
+                : new BigDecimal(pfRaw).divide(new BigDecimal(100), 2, RoundingMode.HALF_UP)
             sendEvent(name: "powerFactor", value: pf)
             return
 
