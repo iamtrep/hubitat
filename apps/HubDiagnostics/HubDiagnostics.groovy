@@ -2395,31 +2395,82 @@ Map analyzeDevices(boolean deep = true) {
     }
 
     // includeParentContext=true (not just deep) so child devices carry their parentDeviceId in
-    // both passes — needed for parent-device inheritance below (the parent-device analog of
-    // parent-app grouping). The richer entry shape is otherwise consumed identically.
+    // both passes — needed for parent-device inheritance below.
     List devicesList = flattenDeviceEntries(respWrap.data.devices as List, true)
-
-    Map stats = getEmptyDeviceStats()
 
     long inactivityThresholdMs = now() - ((settings.inactivityDays ?: 7) * ONE_DAY_MS)
     Map appLookup = buildAppLookupMap()
     Set communityDrivers = buildCommunityDriverSet()
-    // Set of community app type names (app.name where app.user == true) — used as fallback in enrichDevices()
-    // to determine builtin status when per-device fullJson cache is stale or missing the field.
+    // Community app type names (app.name where app.user == true) — fallback in enrichDevices()
+    // when the per-device fullJson cache is stale or missing the builtin field.
     Set communityAppTypeNames = appLookup.values()
         .findAll { (it as Map)?.user == true }
         .collect { (String)((it as Map)?.type ?: "") }
         .findAll { it } as Set
-    // Collects devices needing deep enrichment (isNetwork + CONN_OTHER): deviceId → [appInfo, currentIntegration, currentConn, deviceId]
-    Map uncertainDevices = [:]
-    // deviceId(String) → its classification [connectionType, integration, builtin], so a child
-    // device can inherit its parent DEVICE's classification after the pass.
-    Map classByDeviceId = [:]
 
+    // ---- Pass 1: classify every device. No aggregation yet — buckets are built exactly once,
+    // after enrichment, so there is no decrement/patch step that can drift out of sync.
+    Map classByDeviceId = [:]   // id(String) → [connectionType, integration, builtin(, tentative)]
+    Map uncertainDevices = [:]  // id(String) → [appInfo, deviceId] — needs the fullJson pass
     devicesList.each { deviceEntry ->
         try {
-            Map device = deviceEntry.data
-            if (!device || !(device instanceof Map)) return
+            Map device = deviceEntry.data instanceof Map ? (Map) deviceEntry.data : null
+            if (!device) return
+            Map classification = classifyDevice(device, appLookup, communityDrivers)
+            classByDeviceId[device.id?.toString()] = classification
+            if (classification.connectionType == CONN_OTHER || classification.tentative == true) {
+                String normalizedParentAppId = normalizeAppLookupId(extractParentAppId(device))
+                uncertainDevices[device.id.toString()] = [
+                    appInfo: normalizedParentAppId ? (Map) appLookup[normalizedParentAppId] : null,
+                    deviceId: device.id
+                ]
+            }
+        } catch (Exception e) {
+            logWarn "Error classifying device ${deviceEntry.key}: ${e.message}"
+        }
+    }
+
+    // ---- Pass 2: parent-device inheritance, then fullJson enrichment for the rest.
+    if (uncertainDevices) {
+        // A child device the bulk pass couldn't place inherits its parent DEVICE's classification
+        // (e.g. a Blink/Lutron parent fronting child cameras/dimmers). Inherited children skip
+        // the per-device fullJson fetch entirely.
+        Map inherited = [:]
+        devicesList.each { deviceEntry ->
+            Object pid = deviceEntry.parentDeviceId
+            Object cid = (deviceEntry.data instanceof Map) ? ((Map) deviceEntry.data).id : null
+            if (pid == null || cid == null) return
+            String cidStr = cid.toString()
+            if (!uncertainDevices.containsKey(cidStr)) return
+            Map parentClass = (Map) classByDeviceId[pid.toString()]
+            if (parentClass && parentClass.integration && parentClass.integration != "Other") {
+                inherited[cidStr] = parentClass
+            }
+        }
+
+        Map enrichedAppInfos = (Map) uncertainDevices
+            .findAll { k, v -> !inherited.containsKey(k) }
+            .collectEntries { k, v -> [k, ((Map) v).appInfo] }
+        Map enrichments = enrichDevices(enrichedAppInfos, communityAppTypeNames)
+        if (inherited) enrichments.putAll(inherited)   // inheritance wins over the (empty) fullJson result
+
+        enrichments.each { String idStr, Map newClass ->
+            Map cur = (Map) classByDeviceId[idStr]
+            if (cur == null) return
+            classByDeviceId[idStr] = [
+                connectionType: (newClass.connectionType ?: cur.connectionType),
+                integration:    newClass.integration,
+                builtin:        (newClass.builtin != null ? newClass.builtin : cur.builtin)
+            ]
+        }
+    }
+
+    // ---- Pass 3: single aggregation over the final classifications.
+    Map stats = getEmptyDeviceStats()
+    devicesList.each { deviceEntry ->
+        try {
+            Map device = deviceEntry.data instanceof Map ? (Map) deviceEntry.data : null
+            if (!device) return
 
             stats.totalDevices++
 
@@ -2441,39 +2492,23 @@ Map analyzeDevices(boolean deep = true) {
                 stats.idsByStatus.inactive << device.id
             }
 
-            // Two-dimension classification: connectionType + integration
-            Map classification = classifyDevice(device, appLookup, communityDrivers)
-            String connectionType = classification.connectionType
-            String integration = classification.integration
-            classByDeviceId[device.id?.toString()] = [connectionType: connectionType, integration: integration, builtin: classification.builtin]
+            Map cls = (Map) classByDeviceId[device.id?.toString()] ?: [connectionType: CONN_OTHER, integration: null, builtin: null]
+            String connectionType = cls.connectionType
+            String integration = cls.integration
 
             stats.byConnectionType[connectionType] = (stats.byConnectionType[connectionType] ?: 0) + 1
             if (!stats.idsByConnectionType.containsKey(connectionType)) stats.idsByConnectionType[connectionType] = []
             stats.idsByConnectionType[connectionType] << device.id
 
-            // integration is null for standalone devices (connection-type-only override): counted in
-            // the connection-type breakdown above, but intentionally omitted from the integration breakdown.
+            // integration is null for standalone devices: counted in the connection-type breakdown,
+            // intentionally omitted from the integration breakdown.
             if (integration) {
                 stats.byIntegration[integration] = (stats.byIntegration[integration] ?: 0) + 1
                 if (!stats.idsByIntegration.containsKey(integration)) stats.idsByIntegration[integration] = []
                 stats.idsByIntegration[integration] << device.id
-
-                // Track whether each integration is built-in or community (first definitive value wins)
-                if (classification.builtin != null && !stats.integrationSources.containsKey(integration)) {
-                    stats.integrationSources[integration] = classification.builtin ? "builtin" : "community"
+                if (cls.builtin != null && !stats.integrationSources.containsKey(integration)) {
+                    stats.integrationSources[integration] = cls.builtin ? "builtin" : "community"
                 }
-            }
-
-            Object parentAppId = extractParentAppId(device)
-            String normalizedParentAppId = normalizeAppLookupId(parentAppId)
-            Map parentAppInfo = normalizedParentAppId ? (Map) appLookup[normalizedParentAppId] : null
-            // Devices whose bulk metadata cannot fully resolve classification need the per-device fullJson
-            // correction pass so Dashboard and Devices summaries stay in sync.
-            boolean needsEnrichment = (connectionType == CONN_OTHER) || (classification.tentative == true)
-            if (needsEnrichment) {
-                uncertainDevices[device.id.toString()] = [
-                    appInfo: parentAppInfo, currentIntegration: integration, currentConn: connectionType, deviceId: device.id
-                ]
             }
 
             // Deep-only: parent/child, battery, type breakdown, full device list
@@ -2506,6 +2541,8 @@ Map analyzeDevices(boolean deep = true) {
                     }
                 }
 
+                String normalizedParentAppId = normalizeAppLookupId(extractParentAppId(device))
+                Map parentAppInfo = normalizedParentAppId ? (Map) appLookup[normalizedParentAppId] : null
                 String parentAppName = parentAppInfo?.label ?: (normalizedParentAppId ? "App ${normalizedParentAppId}" : null)
                 stats.allDevices << [
                     id: device.id, name: device.name ?: "Unknown",
@@ -2523,80 +2560,6 @@ Map analyzeDevices(boolean deep = true) {
             }
         } catch (Exception e) {
             logWarn "Error processing device ${deviceEntry.key}: ${e.message}"
-        }
-    }
-
-    // Pass 2: enrich uncertain devices via device/fullJson (parentApp + controllerType).
-    // This updates summary buckets for both shallow Dashboard and deep Devices calls.
-    if (uncertainDevices) {
-        // Parent-device inheritance: a child device the bulk pass couldn't place (it landed in
-        // uncertainDevices) inherits its parent DEVICE's classification — the parent-device analog
-        // of parent-app grouping (e.g. a Blink/Lutron parent device fronting child cameras/dimmers,
-        // where the children share no driver-type token with the parent). Computed from the
-        // pre-enrichment classifications and applied before fullJson enrichment, so inherited
-        // children skip pointless per-device fetches and ride the same reassignment loop below.
-        Map inherited = [:]
-        devicesList.each { deviceEntry ->
-            Object pid = deviceEntry.parentDeviceId
-            Object cid = (deviceEntry.data instanceof Map) ? ((Map) deviceEntry.data).id : null
-            if (pid == null || cid == null) return
-            String cidStr = cid.toString()
-            if (!uncertainDevices.containsKey(cidStr)) return    // only fill devices we couldn't place
-            Map parentClass = (Map) classByDeviceId[pid.toString()]
-            if (parentClass && parentClass.integration && parentClass.integration != "Other") {
-                inherited[cidStr] = parentClass
-            }
-        }
-
-        Map enrichedAppInfos = (Map) uncertainDevices
-            .findAll { k, v -> !inherited.containsKey(k) }
-            .collectEntries { k, v -> [k, ((Map)v).appInfo] }
-        Map enrichments = enrichDevices(enrichedAppInfos, communityAppTypeNames)
-        if (inherited) enrichments.putAll(inherited)   // parent-device inheritance wins over the (empty) fullJson result
-
-        enrichments.each { String idStr, Map newClass ->
-            Map uncertain = (Map) uncertainDevices[idStr]
-            if (!uncertain) return
-
-            Object deviceId = uncertain.deviceId
-            String oldConn = (String) uncertain.currentConn
-            String oldIntegration = (String) uncertain.currentIntegration
-            String newConn = (String) newClass.connectionType
-            String newInteg = (String) newClass.integration
-
-            if (newConn == oldConn && newInteg == oldIntegration) return  // no change
-
-            // Update connection type stats (rebuild lists to avoid Integer/index remove ambiguity)
-            stats.idsByConnectionType[oldConn] = ((List) stats.idsByConnectionType[oldConn]).findAll { it?.toString() != idStr }
-            stats.byConnectionType[oldConn] = Math.max(0, ((stats.byConnectionType[oldConn] ?: 0) as int) - 1)
-            if (!stats.idsByConnectionType.containsKey(newConn)) stats.idsByConnectionType[newConn] = []
-            ((List) stats.idsByConnectionType[newConn]) << deviceId
-            stats.byConnectionType[newConn] = ((stats.byConnectionType[newConn] ?: 0) as int) + 1
-
-            // Update integration stats (oldIntegration/newInteg are null for standalone devices,
-            // which never entered the integration breakdown — guard so we don't touch a null bucket)
-            if (oldIntegration) {
-                stats.idsByIntegration[oldIntegration] = ((List) stats.idsByIntegration[oldIntegration]).findAll { it?.toString() != idStr }
-                stats.byIntegration[oldIntegration] = Math.max(0, ((stats.byIntegration[oldIntegration] ?: 0) as int) - 1)
-            }
-            if (newInteg) {
-                if (!stats.idsByIntegration.containsKey(newInteg)) stats.idsByIntegration[newInteg] = []
-                ((List) stats.idsByIntegration[newInteg]) << deviceId
-                stats.byIntegration[newInteg] = ((stats.byIntegration[newInteg] ?: 0) as int) + 1
-            }
-
-            // Update allDevices record in place
-            Map deviceRecord = (Map) stats.allDevices.find { ((Map)it).id?.toString() == idStr }
-            if (deviceRecord) {
-                deviceRecord.connectionType = newConn
-                deviceRecord.integration = newInteg
-            }
-
-            // Update integrationSources for the new integration name
-            Object newBuiltin = newClass.builtin
-            if (newBuiltin != null && !stats.integrationSources.containsKey(newInteg)) {
-                stats.integrationSources[newInteg] = (newBuiltin == true) ? "builtin" : "community"
-            }
         }
     }
 
