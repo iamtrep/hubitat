@@ -292,16 +292,24 @@ private void runVersionCheck() {
  * The hex value carried by the FF01 attribute is a length-prefixed sequence
  * of TLV records:
  *
- *     [tag][type][value(little-endian)][tag][type][value]...
- *      1B   1B    DataType.getLength(type) bytes
+ *     [len][tag][type][value(little-endian)][tag][type][value]...
+ *      1B   1B   1B    DataType.getLength(type) bytes
  *
- *   NOTE: unlike WSDCGQ11LM's FF01 payload, MCCGQ11LM's raw value carries no
- *   leading length-count byte — the TLV records start at the first hex
- *   character. Confirmed empirically: the captured check-in string
- *   0121170C0328230421A81305217C00062404000300000A210000641000 only decodes
- *   to the expected battery/chip/power-outage/parentDNI/contact values (and
- *   consumes exactly to end-of-string) when the walker starts at position 0.
+ *   The length-prefix byte is present on the wire, but this driver receives
+ *   the payload via two different paths that don't agree on whether it's
+ *   still there by the time parseCheckin() sees it:
+ *   - Hourly check-in: FF01 is the *primary* attribute (cluster 0000, attrId
+ *     FF01) and arrives via parse()'s non-ZCL string branch, where the raw
+ *     `value:` field still carries the length prefix -> parseCheckin() skips
+ *     it (strPosition = 2), same as the sibling WSDCGQ11LM driver.
+ *   - Button press: FF01 rides as an *additionalAttr* alongside a primary
+ *     0x0005 (ModelIdentifier) mfr-specific report; the platform has already
+ *     stripped the length prefix from descMap.additionalAttrs by the time it
+ *     reaches parseCheckinFromMap(), so that method re-adds a one-byte "00"
+ *     placeholder before delegating to parseCheckin(), keeping both paths
+ *     aligned on the same strPosition = 2 skip.
  *
+ *   • len     — UINT8 byte count of everything that follows. Skipped.
  *   • tag     — 1-byte Xiaomi-proprietary attribute id (see table below).
  *   • type    — 1-byte ZCL data type; DataType.getLength() returns the value
  *               width in bytes (null for variable-length, which we abort on).
@@ -344,7 +352,7 @@ private void parseCheckin(Map map) {
         return
     }
 
-    int strPosition = 0  // No length-prefix byte on this device's FF01 payload — see doc comment above.
+    int strPosition = 2  // Skip the length-prefix byte.
 
     while (strPosition < strLength) {
         int dataTag  = Integer.parseInt(hexString.substring(strPosition,     strPosition + 2), 16)
@@ -413,7 +421,10 @@ private void parseCheckinFromMap(Map map) {
     String hex = map.value
     if (!hex) { logDebug("FF01(map): empty value"); return }
     logDebug("FF01 via additionalAttr (button frame): ${hex}")
-    parseCheckin([value: hex])
+    // The additionalAttrs path arrives with the ZCL char-string length prefix
+    // already stripped by the platform, so prepend a placeholder byte that
+    // parseCheckin()'s uniform prefix-skip (strPosition=2) discards.
+    parseCheckin([value: "00" + hex])
 }
 
 private void parseAttributeReport(Map map) {
@@ -530,6 +541,24 @@ private void parseContact(Map map) {
     sendEvent(name: "contact", value: contact)
 }
 
+@CompileStatic
+private static int batteryPctFromVoltage(double voltage, double[] curveV, double[] curvePct) {
+    int n = curveV.length
+    if (voltage <= curveV[0]) return 0
+    if (voltage >= curveV[n - 1]) return 100
+    for (int i = 1; i < n; i++) {
+        if (voltage <= curveV[i]) {
+            double vLo = curveV[i - 1]
+            double vHi = curveV[i]
+            double pLo = curvePct[i - 1]
+            double pHi = curvePct[i]
+            double pct = pLo + (voltage - vLo) * (pHi - pLo) / (vHi - vLo)
+            return (int) Math.round(pct)
+        }
+    }
+    return 100
+}
+
 private void parseBattery(String batteryVoltageHex, int batteryVoltageDivisor) {
     logTrace("batteryVoltageHex : ${batteryVoltageHex}")
 
@@ -633,24 +662,6 @@ private long parseCheckinInt(String dataPayload, int dataType) {
         }
     }
     return raw
-}
-
-@CompileStatic
-private static int batteryPctFromVoltage(double voltage, double[] curveV, double[] curvePct) {
-    int n = curveV.length
-    if (voltage <= curveV[0]) return 0
-    if (voltage >= curveV[n - 1]) return 100
-    for (int i = 1; i < n; i++) {
-        if (voltage <= curveV[i]) {
-            double vLo = curveV[i - 1]
-            double vHi = curveV[i]
-            double pLo = curvePct[i - 1]
-            double pHi = curvePct[i]
-            double pct = pLo + (voltage - vLo) * (pHi - pLo) / (vHi - vLo)
-            return (int) Math.round(pct)
-        }
-    }
-    return 100
 }
 
 // ─── Logging ───────────────────────────────────────────────────────────────
