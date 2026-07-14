@@ -2988,6 +2988,17 @@ String cleanIntegrationName(String raw) {
     return s ?: raw
 }
 
+// Shared parent-app classification: override wins, else cleaned app name + LAN-signal-derived
+// connection. Used by classifyDevice (bulk pass, isLan = device.isNetwork) and enrichDevices
+// (fullJson pass, isLan = controllerType NET/LAN) so the two passes cannot drift.
+private Map classifyFromParentApp(String appType, String appLabel, boolean isLan, Boolean builtin) {
+    Map ov = lookupIntegration(appType) ?: (appLabel ? lookupIntegration(appLabel) : null)
+    String raw = appType ?: appLabel
+    String integration = (ov?.name) ? (String) ov.name : cleanIntegrationName(raw)
+    String connectionType = ov?.conn ? (String) ov.conn : (isLan ? CONN_LAN_DIRECT : CONN_CLOUD)
+    return [connectionType: connectionType, integration: integration ?: raw, builtin: builtin]
+}
+
 // Returns [connectionType, integration, builtin]. Two orthogonal axes:
 //   connectionType = how the hub reaches the device (the specific radio for commissioned devices,
 //                    homekit for HAP, else lan_direct/lan_bridge/cloud/virtual/hubmesh/other);
@@ -3030,21 +3041,8 @@ Map classifyDevice(Map device, Map appLookup, Set communityDrivers) {
     if (normalizedParentAppId) {
         Map appInfo = (Map) appLookup[normalizedParentAppId]
         if (appInfo) {
-            String appType  = (appInfo.type  ?: "").toString()
-            String appLabel = (appInfo.label ?: "").toString()
-            boolean isBuiltin = !(appInfo.user == true)
-            // Check override map first (bridges, AirPlay) — falls back to algorithmic derivation
-            Map ov = lookupIntegration(appType) ?: lookupIntegration(appLabel)
-            String raw = appType ?: appLabel
-            String integration = (ov?.name) ? (String) ov.name : cleanIntegrationName(raw)
-            // Connection type: override wins; otherwise LAN signal ⇒ local, no LAN ⇒ cloud
-            String connectionType
-            if (ov?.conn) {
-                connectionType = (String) ov.conn
-            } else {
-                connectionType = (device.isNetwork == true) ? CONN_LAN_DIRECT : CONN_CLOUD
-            }
-            return [connectionType: connectionType, integration: integration ?: raw, builtin: isBuiltin]
+            return classifyFromParentApp((appInfo.type ?: "").toString(), (appInfo.label ?: "").toString(),
+                                         device.isNetwork == true, !(appInfo.user == true))
         }
     }
 
@@ -3148,18 +3146,9 @@ Map enrichDevices(Map uncertainDevices, Set communityAppTypeNames = [] as Set) {
             return
         }
 
-        // Primary: algorithm-primary parent-app classification (mirrors classifyDevice branch 2)
+        // Primary: parent-app classification — same rules as classifyDevice branch 2.
         if (parentAppTypeName) {
-            Map ov = lookupIntegration(parentAppTypeName)
-            String integration = (ov?.name) ? (String) ov.name : cleanIntegrationName(parentAppTypeName)
-            // Connection type: override wins; LAN controllerType ⇒ lan_direct; else cloud
-            String connectionType
-            if (ov?.conn) {
-                connectionType = (String) ov.conn
-            } else {
-                connectionType = (ct == "NET" || ct == "LAN") ? CONN_LAN_DIRECT : CONN_CLOUD
-            }
-            result[idStr] = [connectionType: connectionType, integration: integration ?: parentAppTypeName, builtin: isBuiltin]
+            result[idStr] = classifyFromParentApp(parentAppTypeName, null, (ct == "NET" || ct == "LAN"), isBuiltin)
             return
         }
 
