@@ -292,10 +292,16 @@ private void runVersionCheck() {
  * The hex value carried by the FF01 attribute is a length-prefixed sequence
  * of TLV records:
  *
- *     [len][tag][type][value(little-endian)][tag][type][value]...
- *      1B   1B   1B    DataType.getLength(type) bytes
+ *     [tag][type][value(little-endian)][tag][type][value]...
+ *      1B   1B    DataType.getLength(type) bytes
  *
- *   • len     — UINT8 byte count of everything that follows. Skipped.
+ *   NOTE: unlike WSDCGQ11LM's FF01 payload, MCCGQ11LM's raw value carries no
+ *   leading length-count byte — the TLV records start at the first hex
+ *   character. Confirmed empirically: the captured check-in string
+ *   0121170C0328230421A81305217C00062404000300000A210000641000 only decodes
+ *   to the expected battery/chip/power-outage/parentDNI/contact values (and
+ *   consumes exactly to end-of-string) when the walker starts at position 0.
+ *
  *   • tag     — 1-byte Xiaomi-proprietary attribute id (see table below).
  *   • type    — 1-byte ZCL data type; DataType.getLength() returns the value
  *               width in bytes (null for variable-length, which we abort on).
@@ -338,7 +344,7 @@ private void parseCheckin(Map map) {
         return
     }
 
-    int strPosition = 2  // Skip the length-prefix byte.
+    int strPosition = 0  // No length-prefix byte on this device's FF01 payload — see doc comment above.
 
     while (strPosition < strLength) {
         int dataTag  = Integer.parseInt(hexString.substring(strPosition,     strPosition + 2), 16)
@@ -424,8 +430,8 @@ private void parseAttributeReport(Map map) {
 private void parseBasic(Map map) {
     // ZCL Basic cluster (0x0000) attribute reports. attrId 0xFF01 carries the
     // Xiaomi check-in payload when it rides bundled with a mfr-specific
-    // report (see parseCheckinFromMap). attrId 0x0005 (ModelIdentifier) gets
-    // button-press discrimination in Task 4.
+    // report (see parseCheckinFromMap). attrId 0x0005 (ModelIdentifier) is
+    // discriminated for the button-press quirk below.
 
     String value = map.value
     String encoding = map.encoding
