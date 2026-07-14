@@ -378,6 +378,27 @@ function alink(id,n){return'<a href="/installedapp/configure/'+id+'" target="_bl
 function dlistlink(count,ids){if(ids===true)return'<a href="/device/list" target="_blank">'+(count??0)+'</a>';if(!ids||!ids.length)return String(count??0);return'<a href="/device/list?ids='+ids.join(',')+'" target="_blank">'+count+'</a>'}
 function alistlink(count){return'<a href="/installedapp/list" target="_blank">'+(count??0)+'</a>'}
 const CD={zigbee:'Zigbee',zwave:'Z-Wave',matter:'Matter',bluetooth:'Bluetooth',homekit:'HomeKit',lan_direct:'LAN (Direct)',lan_bridge:'LAN (Bridge)',cloud:'Cloud',virtual:'Virtual',hubmesh:'Hub Mesh',other:'Other'};
+// Join the raw mesh neighbor/route lists against the zigbee device list (all shipped in the
+// same /api/network payload). Produces the same neighborDetails/routeDetails shapes the hub
+// used to assemble. Idempotent: no-op if details are already attached.
+function zbMeshDetails(zb){
+  if(!zb||!zb.mesh||zb.mesh.neighborDetails)return;
+  const m=zb.mesh;
+  const devByShort={};(zb.devicesSlim||[]).forEach(d=>{if(d.shortZigbeeId)devByShort[String(d.shortZigbeeId).toUpperCase()]=d});
+  const routeByDest={};(m.routeList||[]).forEach(r=>{if(r.destinationShortId&&r.status==='Active')routeByDest[r.destinationShortId]=r});
+  m.neighborDetails=(m.neighborList||[]).map(n=>{
+    const sid=n.shortId?String(n.shortId).toUpperCase():null;
+    const zdev=sid?devByShort[sid]:null,route=sid?routeByDest[sid]:null;
+    const isDirect=route?(route.direct||false):true;
+    const viaShortId=(route&&!isDirect)?route.viaShortId:null;
+    const viaDev=viaShortId?devByShort[viaShortId]:null;
+    return{shortId:n.shortId,name:n.name,deviceId:zdev?zdev.id:null,lqi:n.lqi,age:n.age,inCost:n.inCost,outCost:n.outCost,stale:n.stale||false,direct:isDirect,noLearnedRoute:route==null,viaName:(route&&!isDirect)?route.viaName:null,viaShortId:viaShortId,viaDeviceId:viaDev?viaDev.id:null};
+  });
+  m.routeDetails=(m.routeList||[]).map(r=>{
+    const dstDev=devByShort[r.destinationShortId],viaDev=r.viaShortId?devByShort[r.viaShortId]:null;
+    return Object.assign({},r,{destinationDeviceId:dstDev?dstDev.id:null,viaDeviceId:viaDev?viaDev.id:null});
+  });
+}
 const BADGE={builtin:'<span class="badge b-builtin">Built-in</span>',community:'<span class="badge b-community">Community</span>',platform:'<span class="badge b-platform">Platform</span>'};
 // Source classification → badge markup. emptyAsBuiltin=true renders Built-in for a missing source (apps); false renders nothing (perf rows).
 function srcBadge(source,emptyAsBuiltin){if(source==='platform')return BADGE.platform;if(source==='community')return BADGE.community;if(!source&&!emptyAsBuiltin)return'';return BADGE.builtin;}
@@ -1104,6 +1125,7 @@ function assembleForumData(r){
         hlth=r.health||{}, perf=r.performance||{}, set=r.settings||{};
   const ds=dev.summary||{}, as=app.summary||{};
   const zw=net.zwave||null, zb=net.zigbee||null;
+  zbMeshDetails(zb);
   return {
     hubInfo: hlth.hub||dash.hub||{},
     appVersion: dash.appVersion,
@@ -2275,6 +2297,7 @@ async function rCode(){const P='p-code';loading(P);try{
 // ===== TAB: NETWORK =====
 async function rNetwork(){const P='p-network';loading(P);try{
   const d=await api('network');let o='';
+  zbMeshDetails(d.zigbee);
   // Radio + transport health badges (v5.9.0; Matter v5.66.2; Hub Mesh v5.66.3;
   // three-state model v5.66.4 — DISABLED/ONLINE/OFFLINE, always shown so the operator can
   // see what's actually enabled at a glance. Per-subsystem signals:

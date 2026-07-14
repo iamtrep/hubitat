@@ -1162,12 +1162,6 @@ Map getNetworkData(Map shared = [:]) {
     Map zwaveMesh = extractZwaveMeshQuality(networkData.zwave ?: [:])
     List ghostNodes = buildZwaveGhostNodes(networkData.zwave ?: [:])
     Map zigbeeRaw = networkData.zigbee ?: [:]
-    Map zigbeeDeviceByShortId = [:]
-    (zigbeeRaw.devices ?: []).each { Map d -> if (d.shortZigbeeId) zigbeeDeviceByShortId[((String)d.shortZigbeeId).toUpperCase()] = d }
-    Map zigbeeRouteByDest = [:]
-    (zigbeeMesh?.routes ?: []).each { Map r ->
-        if (r.destinationShortId && r.status == "Active") zigbeeRouteByDest[(String)r.destinationShortId] = r
-    }
     Map hubMeshRaw = networkData.hubMesh ?: [:]
     List hubMeshPeers = hubMeshRaw.hubList ? hubMeshRaw.hubList.collect { Map hub ->
         [name: hub.name, ip: hub.ipAddress, offline: hub.offline, hubId: hub.hubId,
@@ -1207,33 +1201,22 @@ Map getNetworkData(Map shared = [:]) {
             deviceCount: (zigbeeRaw.devices ?: []).size(), joinMode: zigbeeRaw.inJoinMode,
             powerLevel: zigbeeRaw.powerLevel,
             messageCounts: extractZigbeeMessageCounts(networkData.zigbee ?: [:]),
+            // Raw device identity list — the SPA joins neighbors/routes to devices by shortId
+            // (both payloads ride this same response, so the join is a pure client derivation).
+            devicesSlim: (zigbeeRaw.devices ?: []).collect { Map d ->
+                [id: d.id, name: d.name, shortZigbeeId: d.shortZigbeeId]
+            },
             mesh: zigbeeMesh ? [
                 neighbors: zigbeeMesh.neighbors?.size() ?: 0, routes: zigbeeMesh.routes?.size() ?: 0,
                 avgLqi: zigbeeMesh.avgLqi, minLqi: zigbeeMesh.minLqi, maxLqi: zigbeeMesh.maxLqi,
-                neighborDetails: (zigbeeMesh.neighbors ?: []).collect { Map n ->
-                    String sid = n.shortId ? ((String)n.shortId).toUpperCase() : null
-                    Map zdev = sid ? zigbeeDeviceByShortId[sid] : null
-                    Map route = sid ? zigbeeRouteByDest[sid] : null
-                    boolean isDirect = route ? (route.direct ?: false) : true
-                    String viaName = (route && !isDirect) ? (String)route.viaName : null
-                    String viaShortId = (route && !isDirect) ? (String)route.viaShortId : null
-                    Map viaDev = viaShortId ? zigbeeDeviceByShortId[viaShortId] : null
-                    [
-                        shortId: n.shortId, name: n.name, deviceId: zdev?.id,
-                        lqi: n.lqi, age: n.age, inCost: n.inCost, outCost: n.outCost, stale: n.stale ?: false,
-                        direct: isDirect, noLearnedRoute: (route == null),
-                        viaName: viaName, viaShortId: viaShortId, viaDeviceId: viaDev?.id
-                    ]
+                neighborList: (zigbeeMesh.neighbors ?: []).collect { Map n ->
+                    [shortId: n.shortId, name: n.name, lqi: n.lqi, age: n.age,
+                     inCost: n.inCost, outCost: n.outCost, stale: n.stale ?: false]
                 },
-                routeDetails: (zigbeeMesh.routes ?: []).findAll { Map r -> r.destinationShortId }.collect { Map r ->
-                    Map dstDev = zigbeeDeviceByShortId[r.destinationShortId]
-                    Map viaDev = r.viaShortId ? zigbeeDeviceByShortId[r.viaShortId] : null
-                    [
-                        status: r.status, age: r.age, concentratorType: r.concentratorType,
-                        destinationName: r.destinationName, destinationShortId: r.destinationShortId, destinationDeviceId: dstDev?.id,
-                        viaName: r.viaName, viaShortId: r.viaShortId, viaDeviceId: viaDev?.id,
-                        direct: r.direct ?: false
-                    ]
+                routeList: (zigbeeMesh.routes ?: []).findAll { Map r -> r.destinationShortId }.collect { Map r ->
+                    [status: r.status, age: r.age, concentratorType: r.concentratorType,
+                     destinationName: r.destinationName, destinationShortId: r.destinationShortId,
+                     viaName: r.viaName, viaShortId: r.viaShortId, direct: r.direct ?: false]
                 },
                 childDevices: zigbeeMesh.childDevices ?: 0
             ] : null
