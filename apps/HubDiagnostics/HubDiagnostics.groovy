@@ -147,18 +147,6 @@ import java.util.concurrent.atomic.AtomicInteger
 // In-memory caches (survive within a JVM session; cleared on hub reboot/app reload)
 @Field static volatile String  uiVersionCache
 @Field static volatile String  zwaveStackCache
-@Field static volatile Map     fwUpdateCache
-@Field static volatile Long    fwUpdateCacheAt
-@Field static volatile Map     cachedZwaveData
-@Field static volatile Long    cachedZwaveAt
-@Field static volatile Map     cachedZigbeeData
-@Field static volatile Long    cachedZigbeeAt
-@Field static volatile Map     cachedAppsListData
-@Field static volatile Long    cachedAppsListAt
-@Field static volatile Map     cachedDevicesListData
-@Field static volatile Long    cachedDevicesListAt
-@Field static volatile Map     cachedSystemResources
-@Field static volatile Long    cachedSystemResourcesAt
 // v5.33.0: split-file storage replaces the single-blob cachedCheckpoints. Only the
 // slim index is cached in memory; per-checkpoint detail is read on demand.
 @Field static volatile List    cachedCheckpointIndex
@@ -183,14 +171,29 @@ import java.util.concurrent.atomic.AtomicInteger
 // Optional integration-overrides file: re-read at most this often so an uploaded/edited file is
 // picked up without a full Done. updated()/apiClearCache() reset it for an immediate reload.
 @Field static final long       INTEGRATION_OVERRIDES_CACHE_TTL_MS = 300_000L
-@Field static volatile Float   cachedTemperature
-@Field static volatile Long    cachedTemperatureAt
-@Field static volatile Integer cachedDatabaseSize
-@Field static volatile Long    cachedDatabaseSizeAt
-@Field static volatile Map     cachedCpuInfo
-@Field static volatile Long    cachedCpuInfoAt
-@Field static volatile Integer cachedLoadThreshold
-@Field static volatile Long    cachedLoadThresholdAt
+
+// Unified session-scoped TTL cache (Tier 2 — see ARCHITECTURE.md "Caching Strategy").
+// Key → [data: Object, at: Long]. Wiped on reboot/code push; cleared wholesale in updated().
+// Fetch closures MUST return null (not an empty map) on failure so misses are never cached.
+@Field static final ConcurrentHashMap<String, Map> TTL_CACHE = new ConcurrentHashMap<>()
+
+private Object cachedFetch(String key, long ttlMs, Closure fetch) {
+    Object hit = cachePeek(key, ttlMs)
+    if (hit != null) return hit
+    Object data = fetch()
+    if (data != null) TTL_CACHE[key] = [data: data, at: now()]
+    return data
+}
+
+private Object cachePeek(String key, long ttlMs) {
+    Map slot = TTL_CACHE[key]
+    return (slot != null && (now() - (slot.at as long)) < ttlMs) ? slot.data : null
+}
+
+private void cachePut(String key, Object data) {
+    if (data != null) TTL_CACHE[key] = [data: data, at: now()]
+}
+
 @Field static volatile boolean githubVersionRefreshPending = false
 @Field static final java.util.regex.Pattern HTML_TAG_RE = ~/<[^>]+>/
 // Green badge appended to the app label (visible in the Apps list) when a newer release is
@@ -274,11 +277,6 @@ import java.util.concurrent.atomic.AtomicInteger
     "zigbee", "zwave", "matter", "bluetooth", "homekit",
     "lan_direct", "lan_bridge", "cloud", "virtual", "hubmesh", "other"
 ] as Set
-
-// Cache for the merged (built-in + user file) integration overrides map.
-// Null means "not yet loaded"; set to null in updated() to force a reload.
-@Field static volatile Map  integrationOverridesCache = null
-@Field static volatile Long integrationOverridesCacheAt = null
 
 // File names for persistence
 @Field static final String SNAPSHOTS_FILE = "hub_diagnostics_snapshots.json"
@@ -827,8 +825,8 @@ Map apiPerformanceCompare() {
         // v5.32.6: cache-first radio fetch with bounded budget (8s, no retry) — same
         // pattern as scheduled createCheckpoint. Keeps Compare → Now from pinning the
         // app thread for tens of seconds on a stressed hub.
-        Map zwaveData = fetchZwaveDataForCheckpoint() ?: [:]
-        Map zigbeeData = fetchZigbeeDataForCheckpoint() ?: [:]
+        Map zwaveData = fetchRadioForCheckpoint(true) ?: [:]
+        Map zigbeeData = fetchRadioForCheckpoint(false) ?: [:]
         checkpointStats.radioStats = [
             zwave: extractZwaveMessageCounts(zwaveData),
             zigbee: extractZigbeeMessageCounts(zigbeeData)
@@ -1113,8 +1111,7 @@ Map apiClearCache() {
     state.controllerTypeCache = [:]
     // Also drop the integration-overrides cache so this re-reads the File Manager config on next
     // use — the intuitive "apply my override edits" action, no full Done required.
-    integrationOverridesCache = null
-    integrationOverridesCacheAt = null
+    TTL_CACHE.remove('integrationOverrides')
     return jsonResponse([success: true, cleared: cleared])
 }
 
@@ -1343,92 +1340,41 @@ Map getHealthData(Map shared = [:]) {
 }
 
 Map getPerformanceData(Map shared = [:]) {
-    // v5.33.1: per-phase timing instrumentation to break down cold-load wall time.
-    // Each phase records (a) elapsed ms, (b) whether the fetch hit the @Field static
-    // cache or made a fresh httpGet. Summary logged at end as a single info line.
-    Map t = [:]
-    long t1
-    boolean zwaveCache = false, zigbeeCache = false, appsCache = false, devicesCache = false
-
-    t1 = now()
     Map stats
-    if (shared.runtimeStats) { stats = (Map) shared.runtimeStats } else { Map r = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats"); stats = r.ok ? r.data : null }
-    t.runtime = now() - t1
+    if (shared.runtimeStats) { stats = (Map) shared.runtimeStats }
+    else { Map r = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats"); stats = r.ok ? r.data : null }
 
-    t1 = now()
-    Map resources  = (shared.resources as Map) ?: fetchSystemResources()
-    t.resources = now() - t1
+    Map resources = (shared.resources as Map) ?: fetchSystemResources()
 
-    t1 = now()
-    Map zwaveData
-    if (shared.network?.zwave) {
-        zwaveData = (Map) shared.network.zwave
-        zwaveCache = true
-    } else {
-        long nowMs = now()
-        if (cachedZwaveData && cachedZwaveAt && (nowMs - cachedZwaveAt) < RADIO_CACHE_TTL_MS) {
-            zwaveData = cachedZwaveData
-            zwaveCache = true
-            logDebug "Using cached Z-Wave data (age ${nowMs - cachedZwaveAt}ms)"
-        } else {
-            Map r = hubMapRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", 20)
-            zwaveData = r.ok ? r.data : null
-            if (zwaveData) { cachedZwaveData = zwaveData; cachedZwaveAt = nowMs }
-        }
+    Map zwaveData = (shared.network?.zwave as Map) ?: (Map) cachedFetch('zwaveDetails', RADIO_CACHE_TTL_MS) {
+        Map r = hubMapRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", 20)
+        return (r.ok && r.data) ? r.data : null
     }
-    t.zwave = now() - t1
-
-    t1 = now()
-    Map zigbeeData
-    if (shared.network?.zigbee) {
-        zigbeeData = (Map) shared.network.zigbee
-        zigbeeCache = true
-    } else {
-        long nowMs = now()
-        if (cachedZigbeeData && cachedZigbeeAt && (nowMs - cachedZigbeeAt) < RADIO_CACHE_TTL_MS) {
-            zigbeeData = cachedZigbeeData
-            zigbeeCache = true
-            logDebug "Using cached Zigbee data (age ${nowMs - cachedZigbeeAt}ms)"
-        } else {
-            Map r = hubMapRequest(ZIGBEE_DETAILS_PATH, "Zigbee details", 20)
-            zigbeeData = r.ok ? r.data : null
-            if (zigbeeData) { cachedZigbeeData = zigbeeData; cachedZigbeeAt = nowMs }
-        }
+    Map zigbeeData = (shared.network?.zigbee as Map) ?: (Map) cachedFetch('zigbeeDetails', RADIO_CACHE_TTL_MS) {
+        Map r = hubMapRequest(ZIGBEE_DETAILS_PATH, "Zigbee details", 20)
+        return (r.ok && r.data) ? r.data : null
     }
-    t.zigbee = now() - t1
-
-    t1 = now()
-    List zwaveMsgCounts = extractZwaveMessageCounts(zwaveData)
-    List zigbeeMsgCounts = extractZigbeeMessageCounts(zigbeeData)
-    Map radioStats = [zwave: zwaveMsgCounts, zigbee: zigbeeMsgCounts]
     // Ship the raw per-device message counts; the SPA ranks the top talkers (sort + top-N).
-    t.radioCalc = now() - t1
+    Map radioStats = [zwave: extractZwaveMessageCounts(zwaveData), zigbee: extractZigbeeMessageCounts(zigbeeData)]
 
-    t1 = now()
-    // Enrich appStats with source labels (community/builtin/platform)
+    Map appsListResp = ((Map) cachedFetch('appsList', HUB_LIST_CACHE_TTL_MS) {
+        Map w = hubMapRequest(APPS_LIST_PATH, "apps list")
+        return (w.ok && w.data) ? w.data : null
+    }) ?: [:]
+
+    // R-7 B2: id → source / root-parent-label maps so the SPA doesn't cross-fetch /api/devices
+    // and /api/apps just to label the Performance tab's CPU charts. One walk builds both.
     Map appSourceById = [:]
-    long nowApps = now()
-    Map appsListResp
-    if (cachedAppsListData && cachedAppsListAt && (nowApps - cachedAppsListAt) < HUB_LIST_CACHE_TTL_MS) {
-        logDebug "Using cached apps list (age ${nowApps - cachedAppsListAt}ms)"
-        appsListResp = cachedAppsListData
-        appsCache = true
-    } else {
-        Map appsListWrap = hubMapRequest(APPS_LIST_PATH, "apps list")
-        appsListResp = appsListWrap.ok ? appsListWrap.data : [:]
-        if (appsListWrap.ok) { cachedAppsListData = appsListResp; cachedAppsListAt = nowApps }
-    }
-    t.appsFetch = now() - t1
-
-    t1 = now()
+    Map appParentTypeById = [:]
     if (appsListResp.apps) {
-        visitAppEntries(appsListResp.apps as List) { Map appEntry, Map app, boolean isChildLevel, List _ ->
-            if (app?.id != null) appSourceById[app.id] = (app.user ? "community" : "builtin")
+        visitAppEntries(appsListResp.apps as List) { Map appEntry, Map app, boolean isChildLevel, List parents ->
+            if (app?.id == null) return
+            appSourceById[app.id] = (app.user ? "community" : "builtin")
+            Map root = parents ? (Map) parents[0] : app
+            appParentTypeById[app.id] = (root.label ?: root.name ?: 'Unknown') as String
         }
     }
-    t.appsSourceWalk = now() - t1
 
-    t1 = now()
     if (stats) {
         stats.radioStats = radioStats
         stats.uptimeSeconds = parseUptime(stats.uptime as String)
@@ -1440,72 +1386,20 @@ Map getPerformanceData(Map shared = [:]) {
             }
         }
     }
-    t.statsEnrich = now() - t1
 
-    // R-7 B2 (v5.20.0): build small id→label maps for the Performance tab's CPU charts so the
-    // SPA doesn't cross-fetch /api/devices and /api/apps just to look up names. Tiny payload
-    // (counts × ~20 bytes), saves 2 client round trips of much heavier endpoints.
-    // Walk /hub2/devicesList directly to build id→type map. Skips analyzeDevices' enrichment overhead
-    // (we only need the raw type/name from the bulk endpoint, not the cross-classification work).
-    t1 = now()
+    Map devListData = ((Map) cachedFetch('devicesList', HUB_LIST_CACHE_TTL_MS) {
+        Map w = hubMapRequest(DEVICES_LIST_PATH, "devices list (B2 labels)", 15)
+        return (w.ok && w.data) ? w.data : null
+    }) ?: [:]
     Map deviceTypeById = [:]
-    long nowDev = now()
-    Map devListData
-    if (cachedDevicesListData && cachedDevicesListAt && (nowDev - cachedDevicesListAt) < HUB_LIST_CACHE_TTL_MS) {
-        logDebug "Using cached devices list (age ${nowDev - cachedDevicesListAt}ms)"
-        devListData = cachedDevicesListData
-        devicesCache = true
-    } else {
-        Map devWrap = hubMapRequest(DEVICES_LIST_PATH, "devices list (B2 labels)", 15)
-        devListData = devWrap.ok ? devWrap.data : [:]
-        if (devWrap.ok) { cachedDevicesListData = devListData; cachedDevicesListAt = nowDev }
-    }
-    t.devicesFetch = now() - t1
-
-    t1 = now()
     if (devListData.devices) {
         flattenDeviceEntries(devListData.devices as List).each { Map entry ->
             Map dev = entry?.data instanceof Map ? (Map) entry.data : null
             if (dev?.id != null) deviceTypeById[dev.id] = (dev.type ?: 'Unknown') as String
         }
     }
-    t.devicesWalk = now() - t1
 
-    t1 = now()
-    // Walk /hub2/appsList directly for parent→child label association — reuse the response already
-    // fetched above for appSourceById rather than making a second round trip.
-    Map appParentTypeById = [:]
-    if (appsListResp?.apps) {
-        Closure walkApps
-        walkApps = { List apps, String parentLabel = null ->
-            (apps ?: []).each { Map entry ->
-                Map data = entry?.data instanceof Map ? (Map) entry.data : null
-                if (!data) return
-                Object id = data.id
-                String myLabel = (data.label ?: data.name ?: 'Unknown') as String
-                String labelForChildren = parentLabel ?: myLabel
-                if (id != null) appParentTypeById[id] = labelForChildren
-                if (entry.children) walkApps(entry.children as List, labelForChildren)
-            }
-        }
-        walkApps(appsListResp.apps as List, null)
-    }
-    t.appsParentWalk = now() - t1
-
-    t1 = now()
-    // v5.33.0: read the slim checkpoint index. Backed by loadCheckpointIndex which
-    // reads a small per-app index file (or migrates the legacy single-blob file once).
-    // The Performance tab API never touches the full per-checkpoint detail files.
     List indexEntries = getCheckpointIndex()
-    t.indexRead = now() - t1
-
-    long totalMs = (t.values().sum() ?: 0) as long
-    logDebug "getPerformanceData breakdown (sum ${totalMs}ms): " +
-        "runtime=${t.runtime}ms resources=${t.resources}ms " +
-        "zwave=${t.zwave}ms${zwaveCache ? '(cache)' : ''} zigbee=${t.zigbee}ms${zigbeeCache ? '(cache)' : ''} radioCalc=${t.radioCalc}ms " +
-        "appsFetch=${t.appsFetch}ms${appsCache ? '(cache)' : ''} appsSourceWalk=${t.appsSourceWalk}ms statsEnrich=${t.statsEnrich}ms " +
-        "devicesFetch=${t.devicesFetch}ms${devicesCache ? '(cache)' : ''} devicesWalk=${t.devicesWalk}ms appsParentWalk=${t.appsParentWalk}ms " +
-        "indexRead=${t.indexRead}ms"
     return [
         stats: stats, resources: resources,
         radioStats: radioStats,
@@ -1561,19 +1455,16 @@ Map getAlertSignals(Map shared = [:]) {
     }
     boolean ethernetAndWifi = (networkConfig && networkConfig.hasEthernet && networkConfig.hasWiFi) as boolean
 
-    // Z-Wave ghost nodes \u2014 cached 60 s to avoid an 8-second fetch on every
-    // Dashboard/Health load when the shared cache was built without includeNetwork.
+    // Z-Wave ghost/failed/problem signals \u2014 served from the shared 60s radio cache so
+    // Dashboard/Health loads never pay a cold 8s fetch more than once per window.
+    // state.cachedZwaveSignals persists the last computed signals across reboots.
     Map zwRaw = (shared.network?.zwave as Map)
     if (!zwRaw) {
-        long lastZwCheck = state.lastZwaveGhostCheckMs ?: 0
-        if (now() - lastZwCheck > 60000) {
+        zwRaw = (Map) cachedFetch('zwaveDetails', RADIO_CACHE_TTL_MS) {
             Map zwWrap = hubMapRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", 8)
-            zwRaw = zwWrap.ok ? zwWrap.data : null
-            if (zwRaw) {
-                state.lastZwaveGhostCheckMs = now()
-                state.cachedZwaveSignals = computeZwaveSignals(zwRaw)
-            }
+            return (zwWrap.ok && zwWrap.data) ? zwWrap.data : null
         }
+        if (zwRaw) state.cachedZwaveSignals = computeZwaveSignals(zwRaw)
     }
     Map zwSignals = zwRaw ? computeZwaveSignals(zwRaw) : ((state.cachedZwaveSignals as Map) ?: [:])
 
@@ -1801,36 +1692,21 @@ private Map parseResourceRow(Map row) {
 }
 
 Map fetchSystemResources() {
-    long nowMs = now()
-    if (cachedSystemResources && cachedSystemResourcesAt && (nowMs - cachedSystemResourcesAt) < SYSTEM_RESOURCES_CACHE_TTL_MS) {
-        return cachedSystemResources
-    }
-    String text = (String) hubRequest(FREE_MEMORY_PATH, "system resources", "text", 15)
-    if (!text) return null
-    try {
-        Map parsed = parseHubCsv(text)
-        if (!parsed || !parsed.rows) return null
-        Map row = (Map) ((List) parsed.rows)[0]
-        Map p = parseResourceRow(row)
-        if (p == null) {
-            logWarn "system resources CSV missing expected columns; header=${parsed.header}"
+    return (Map) cachedFetch('systemResources', SYSTEM_RESOURCES_CACHE_TTL_MS) {
+        String text = (String) hubRequest(FREE_MEMORY_PATH, "system resources", "text", 15)
+        if (!text) return null
+        try {
+            Map parsed = parseHubCsv(text)
+            if (!parsed || !parsed.rows) return null
+            Map p = parseResourceRow((Map) ((List) parsed.rows)[0])
+            if (p == null) { logWarn "system resources CSV missing expected columns; header=${parsed.header}"; return null }
+            return [timestamp: p.timestamp, freeOSMemory: p.freeOS, cpuAvg5min: p.cpu,
+                    totalJavaMemory: p.totalJava, freeJavaMemory: p.freeJava, directJavaMemory: p.directJava]
+        } catch (Exception e) {
+            logError "Error parsing system resources: ${e.message}"
             return null
         }
-        Map data = [
-            timestamp:        p.timestamp,
-            freeOSMemory:     p.freeOS,
-            cpuAvg5min:       p.cpu,
-            totalJavaMemory:  p.totalJava,
-            freeJavaMemory:   p.freeJava,
-            directJavaMemory: p.directJava
-        ]
-        cachedSystemResources = data
-        cachedSystemResourcesAt = nowMs
-        return data
-    } catch (Exception e) {
-        logError "Error parsing system resources: ${e.message}"
     }
-    return null
 }
 
 List fetchMemoryHistory() {
@@ -1872,20 +1748,10 @@ Map fetchStateCompression() {
 }
 
 Integer fetchDatabaseSize() {
-    long nowMs = now()
-    if (cachedDatabaseSizeAt != null && (nowMs - cachedDatabaseSizeAt) < DATABASE_SIZE_CACHE_TTL_MS) {
-        return cachedDatabaseSize
+    return (Integer) cachedFetch('databaseSize', DATABASE_SIZE_CACHE_TTL_MS) {
+        String text = (String) hubRequest(DATABASE_SIZE_PATH, "database size", "text")
+        try { return text?.toInteger() } catch (Exception e) { return null }
     }
-    String text = (String) hubRequest(DATABASE_SIZE_PATH, "database size", "text")
-    if (text) {
-        try {
-            Integer v = text.toInteger()
-            cachedDatabaseSize = v
-            cachedDatabaseSizeAt = nowMs
-            return v
-        } catch (Exception e) { /* ignore */ }
-    }
-    return null
 }
 
 Map fetchFileManagerStats() {
@@ -1898,20 +1764,10 @@ Map fetchFileManagerStats() {
 }
 
 Float fetchTemperature() {
-    long nowMs = now()
-    if (cachedTemperatureAt != null && (nowMs - cachedTemperatureAt) < TEMPERATURE_CACHE_TTL_MS) {
-        return cachedTemperature
+    return (Float) cachedFetch('temperature', TEMPERATURE_CACHE_TTL_MS) {
+        String text = (String) hubRequest(INTERNAL_TEMP_PATH, "internal temperature", "text")
+        try { return text?.toFloat() } catch (Exception e) { return null }
     }
-    String text = (String) hubRequest(INTERNAL_TEMP_PATH, "internal temperature", "text")
-    if (text) {
-        try {
-            Float v = text.toFloat()
-            cachedTemperature = v
-            cachedTemperatureAt = nowMs
-            return v
-        } catch (Exception e) { /* ignore */ }
-    }
-    return null
 }
 
 // ===== TEMPERATURE THRESHOLDS =====
@@ -2043,18 +1899,10 @@ Map fetchZwaveJsState() {
 }
 
 Integer fetchExcessiveLoadThreshold() {
-    long nowMs = now()
-    if (cachedLoadThresholdAt != null && (nowMs - cachedLoadThresholdAt) < LOAD_THRESHOLD_CACHE_TTL_MS) {
-        return cachedLoadThreshold
+    return (Integer) cachedFetch('loadThreshold', LOAD_THRESHOLD_CACHE_TTL_MS) {
+        String txt = (String) hubRequest(LOAD_THRESHOLD_PATH, "excessive load threshold", "text", 5)
+        try { return txt?.trim()?.toInteger() } catch (Exception e) { return null }
     }
-    String txt = (String) hubRequest(LOAD_THRESHOLD_PATH, "excessive load threshold", "text", 5)
-    if (!txt) return null
-    try {
-        Integer v = txt.trim().toInteger()
-        cachedLoadThreshold = v
-        cachedLoadThresholdAt = nowMs
-        return v
-    } catch (Exception e) { return null }
 }
 
 String fetchNtpServer() {
@@ -2066,25 +1914,14 @@ String fetchNtpServer() {
 }
 
 Map fetchFirmwareUpdate() {
-    long nowMs = now()
-    if (fwUpdateCache && fwUpdateCacheAt &&
-        (nowMs - fwUpdateCacheAt) < FW_UPDATE_CACHE_TTL_MS) {
-        return fwUpdateCache
+    return (Map) cachedFetch('fwUpdate', FW_UPDATE_CACHE_TTL_MS) {
+        Map wrap = hubMapRequest(FIRMWARE_UPDATE_PATH, "firmware update check", 15)
+        if (!wrap.ok) return null
+        Map resp = wrap.data
+        return [currentVersion: getHubFirmwareVersion(), availableVersion: resp.version,
+                updateAvailable: resp.upgrade == true, status: resp.status,
+                beta: resp.beta == true, releaseNotesUrl: resp.releaseNotesUrl]
     }
-    Map wrap = hubMapRequest(FIRMWARE_UPDATE_PATH, "firmware update check", 15)
-    if (!wrap.ok) return null
-    Map resp = wrap.data
-    Map result = [
-        currentVersion: getHubFirmwareVersion(),
-        availableVersion: resp.version,
-        updateAvailable: resp.upgrade == true,
-        status: resp.status,
-        beta: resp.beta == true,
-        releaseNotesUrl: resp.releaseNotesUrl
-    ]
-    fwUpdateCache = result
-    fwUpdateCacheAt = nowMs
-    return result
 }
 
 /**
@@ -2234,26 +2071,21 @@ Map fetchMdns() {
 // ===== Phase 5 fetch methods (v5.11.1) =====
 
 Map fetchCpuInfo() {
-    long nowMs = now()
-    if (cachedCpuInfoAt != null && (nowMs - cachedCpuInfoAt) < CPU_INFO_CACHE_TTL_MS) {
-        return cachedCpuInfo
-    }
-    String txt = (String) hubRequest(CPU_INFO_PATH, "CPU info", "text", 5)
-    if (!txt) return null
-    Map result = [:]
-    txt.split('\n').each { String line ->
-        String trimmed = line.trim()
-        if (!trimmed) return
-        if (trimmed.startsWith("Processors")) {
-            try { result.processors = trimmed.replaceAll(/[^\d]/, '').toInteger() } catch (Exception e) { /* skip */ }
-        } else if (trimmed.startsWith("Load Average")) {
-            try { result.loadAverage = trimmed.replaceAll(/[^\d.]/, '').toFloat() } catch (Exception e) { /* skip */ }
+    return (Map) cachedFetch('cpuInfo', CPU_INFO_CACHE_TTL_MS) {
+        String txt = (String) hubRequest(CPU_INFO_PATH, "CPU info", "text", 5)
+        if (!txt) return null
+        Map result = [:]
+        txt.split('\n').each { String line ->
+            String trimmed = line.trim()
+            if (!trimmed) return
+            if (trimmed.startsWith("Processors")) {
+                try { result.processors = trimmed.replaceAll(/[^\d]/, '').toInteger() } catch (Exception e) { /* skip */ }
+            } else if (trimmed.startsWith("Load Average")) {
+                try { result.loadAverage = trimmed.replaceAll(/[^\d.]/, '').toFloat() } catch (Exception e) { /* skip */ }
+            }
         }
+        return result.isEmpty() ? null : result
     }
-    if (result.isEmpty()) return null
-    cachedCpuInfo = result
-    cachedCpuInfoAt = nowMs
-    return result
 }
 
 String fetchZipgatewayVersion() {
@@ -3112,58 +2944,47 @@ Object extractParentAppId(Map device) {
 /**
  * Returns the merged integration-overrides map: user file entries first (so user wins on
  * substring-match precedence and on key collision), then built-in entries not overridden.
- * Result is cached in integrationOverridesCache for INTEGRATION_OVERRIDES_CACHE_TTL_MS so a file
- * uploaded/edited after first load is picked up without a full Done; updated() and apiClearCache()
- * reset it for an immediate reload. A parse error falls back to the built-in defaults.
+ * Result is cached in TTL_CACHE['integrationOverrides'] for INTEGRATION_OVERRIDES_CACHE_TTL_MS so a
+ * file uploaded/edited after first load is picked up without a full Done; updated() and
+ * apiClearCache() reset it for an immediate reload. A parse error falls back to the built-in defaults.
  */
 private Map getIntegrationOverrides() {
-    if (integrationOverridesCache != null && integrationOverridesCacheAt != null &&
-        (now() - integrationOverridesCacheAt) < INTEGRATION_OVERRIDES_CACHE_TTL_MS) {
-        return integrationOverridesCache
-    }
-    // The override file is OPTIONAL. downloadHubFile throws when it's absent (with the bare
-    // filename as the message) — the normal case on most hubs — so log that at debug, not warn.
-    // A WARN is reserved for a file that IS present but can't be parsed (a real misconfiguration).
-    byte[] fileData = null
-    try {
-        fileData = downloadHubFile(INTEGRATION_OVERRIDES_FILE)
-    } catch (Exception e) {
-        logDebug "No ${INTEGRATION_OVERRIDES_FILE} in File Manager — using built-in defaults"
-    }
-    if (fileData) {
+    return (Map) cachedFetch('integrationOverrides', INTEGRATION_OVERRIDES_CACHE_TTL_MS) {
+        // The override file is OPTIONAL. downloadHubFile throws when it's absent — the normal
+        // case on most hubs — so log that at debug. A WARN is reserved for a file that IS
+        // present but can't be parsed (a real misconfiguration).
+        byte[] fileData = null
         try {
-            String jsonString = new String(fileData, "UTF-8")
-            Map userRaw = (Map) new groovy.json.JsonSlurper().parseText(jsonString)
-            // Build merged map: user entries first, then built-in entries not overridden.
-            Map merged = new LinkedHashMap()
-            userRaw.each { rawKey, rawVal ->
-                if (rawKey.toString().startsWith("_")) return   // skip documentation / commented-out keys
-                String key = rawKey.toString().toLowerCase().trim()
-                if (!key) return
-                Map entry = [:]
-                if (rawVal instanceof Map) {
-                    String conn = rawVal?.conn?.toString()?.trim()
-                    if (conn && VALID_CONN.contains(conn)) entry.conn = conn
-                    String nm = rawVal?.name?.toString()?.trim()
-                    if (nm) entry.name = nm
-                }
-                if (!entry.isEmpty()) merged[key] = entry
-            }
-            INTEGRATION_OVERRIDES.each { k, v ->
-                if (!merged.containsKey(k)) merged[k] = v
-            }
-            int userEntryCount = userRaw.keySet().count { !it.toString().startsWith("_") } as int
-            logDebug "Loaded integration overrides: ${merged.size()} entries (${userEntryCount} from user file)"
-            integrationOverridesCache = merged
-            integrationOverridesCacheAt = now()
-            return merged
+            fileData = downloadHubFile(INTEGRATION_OVERRIDES_FILE)
         } catch (Exception e) {
-            logWarn "Found ${INTEGRATION_OVERRIDES_FILE} but could not parse it (${e.message}) — using built-in defaults"
+            logDebug "No ${INTEGRATION_OVERRIDES_FILE} in File Manager — using built-in defaults"
         }
+        if (fileData) {
+            try {
+                Map userRaw = (Map) new groovy.json.JsonSlurper().parseText(new String(fileData, "UTF-8"))
+                Map merged = new LinkedHashMap()
+                userRaw.each { rawKey, rawVal ->
+                    if (rawKey.toString().startsWith("_")) return   // skip documentation keys
+                    String key = rawKey.toString().toLowerCase().trim()
+                    if (!key) return
+                    Map entry = [:]
+                    if (rawVal instanceof Map) {
+                        String conn = rawVal?.conn?.toString()?.trim()
+                        if (conn && VALID_CONN.contains(conn)) entry.conn = conn
+                        String nm = rawVal?.name?.toString()?.trim()
+                        if (nm) entry.name = nm
+                    }
+                    if (!entry.isEmpty()) merged[key] = entry
+                }
+                INTEGRATION_OVERRIDES.each { k, v -> if (!merged.containsKey(k)) merged[k] = v }
+                logDebug "Loaded integration overrides: ${merged.size()} entries"
+                return merged
+            } catch (Exception e) {
+                logWarn "Found ${INTEGRATION_OVERRIDES_FILE} but could not parse it (${e.message}) — using built-in defaults"
+            }
+        }
+        return INTEGRATION_OVERRIDES
     }
-    integrationOverridesCache = INTEGRATION_OVERRIDES
-    integrationOverridesCacheAt = now()
-    return INTEGRATION_OVERRIDES
 }
 
 Map lookupIntegration(String text) {
@@ -3485,12 +3306,11 @@ void asyncOnRuntimeStats(resp, data) {
 }
 
 private void chainNextRadio(boolean zwave) {
-    long nowMs = now()
-    Map cached = zwave ? cachedZwaveData : cachedZigbeeData
-    Long cachedAt = zwave ? cachedZwaveAt  : cachedZigbeeAt
+    String key = zwave ? 'zwaveDetails' : 'zigbeeDetails'
     String path = zwave ? ZWAVE_DETAILS_PATH : ZIGBEE_DETAILS_PATH
     String cbName = zwave ? "asyncOnZwave" : "asyncOnZigbee"
-    if (cached && cachedAt && (nowMs - cachedAt) < RADIO_CACHE_TTL_MS) {
+    Map cached = (Map) cachePeek(key, RADIO_CACHE_TTL_MS)
+    if (cached != null) {
         // Cache hit — invoke callback synchronously with a cached carrier so the
         // callback shape stays uniform across cache hit and async fetch.
         this."${cbName}"(null, [cached: true, body: cached])
@@ -3501,21 +3321,20 @@ private void chainNextRadio(boolean zwave) {
         asynchttpGet(cbName, params, null)
     } catch (Exception e) {
         logError "scheduledCheckpoint: dispatch ${zwave ? 'Z-Wave' : 'Zigbee'}: ${e.message}"
-        // Continue chain with empty data rather than abort
         this."${cbName}"(null, [cached: true, body: [:]])
     }
 }
 
 void asyncOnZwave(resp, data) {
     Map zw = extractAsyncBody(resp, data, "Z-Wave")
-    if (zw != null && !data?.cached) { cachedZwaveData = zw; cachedZwaveAt = now() }
+    if (zw && !data?.cached) cachePut('zwaveDetails', zw)
     asyncCheckpointStaging.zwaveRaw = zw ?: [:]
     chainNextRadio(false)
 }
 
 void asyncOnZigbee(resp, data) {
     Map zb = extractAsyncBody(resp, data, "Zigbee")
-    if (zb != null && !data?.cached) { cachedZigbeeData = zb; cachedZigbeeAt = now() }
+    if (zb && !data?.cached) cachePut('zigbeeDetails', zb)
     asyncCheckpointStaging.zigbeeRaw = zb ?: [:]
     finalizeAsyncCheckpoint()
 }
@@ -3567,31 +3386,15 @@ private void abortAsyncChain() {
     atomicState.checkpointInFlight = null
 }
 
-// v5.32.6: radio fetch with cache-first + bounded budget. Used by checkpoint paths
-// (createCheckpoint, apiPerformanceCompare 'now') where blocking the app thread for
-// tens of seconds contributes to hub-wide overload. getPerformanceData has its own
-// cache check inline (it returns the data directly into the response) so it keeps
-// the longer 20s timeout — the user explicitly opened the tab and wants the data.
-private Map fetchZwaveDataForCheckpoint() {
-    long nowMs = now()
-    if (cachedZwaveData && cachedZwaveAt && (nowMs - cachedZwaveAt) < RADIO_CACHE_TTL_MS) {
-        logDebug "Using cached Z-Wave data for checkpoint (age ${nowMs - cachedZwaveAt}ms)"
-        return cachedZwaveData
+// Radio fetch with cache-first + bounded budget (8s, no retry) for checkpoint paths, where
+// blocking the app thread for tens of seconds contributes to hub-wide overload.
+// getPerformanceData keeps its 20s timeout — the user explicitly opened the tab.
+private Map fetchRadioForCheckpoint(boolean zwave) {
+    return (Map) cachedFetch(zwave ? 'zwaveDetails' : 'zigbeeDetails', RADIO_CACHE_TTL_MS) {
+        Map r = hubMapRequest(zwave ? ZWAVE_DETAILS_PATH : ZIGBEE_DETAILS_PATH,
+                              "${zwave ? 'Z-Wave' : 'Zigbee'} details (checkpoint)", 8, false)
+        return (r.ok && r.data) ? r.data : null
     }
-    Map r = hubMapRequest(ZWAVE_DETAILS_PATH, "Z-Wave details (checkpoint)", 8, false)
-    if (r.ok) { cachedZwaveData = r.data; cachedZwaveAt = nowMs; return r.data }
-    return null
-}
-
-private Map fetchZigbeeDataForCheckpoint() {
-    long nowMs = now()
-    if (cachedZigbeeData && cachedZigbeeAt && (nowMs - cachedZigbeeAt) < RADIO_CACHE_TTL_MS) {
-        logDebug "Using cached Zigbee data for checkpoint (age ${nowMs - cachedZigbeeAt}ms)"
-        return cachedZigbeeData
-    }
-    Map r = hubMapRequest(ZIGBEE_DETAILS_PATH, "Zigbee details (checkpoint)", 8, false)
-    if (r.ok) { cachedZigbeeData = r.data; cachedZigbeeAt = nowMs; return r.data }
-    return null
 }
 
 private boolean doCreateCheckpoint() {
@@ -3608,12 +3411,12 @@ private boolean doCreateCheckpoint() {
     Float temperature = fetchTemperature()
     Integer databaseSize = fetchDatabaseSize()
 
-    // v5.32.6: capture radio message counts via the same 60s @Field static cache used by
+    // v5.32.6: capture radio message counts via the same 60s TTL cache used by
     // getPerformanceData. On a cold cache, bound the fetch to 8s with no retry — worst-case
     // per-radio blocking drops from ~40s (20s × once-retry) to 8s, halving total checkpoint
     // app-thread time. If the call still fails, store empty arrays rather than crashing.
-    Map zwaveData = fetchZwaveDataForCheckpoint()
-    Map zigbeeData = fetchZigbeeDataForCheckpoint()
+    Map zwaveData = fetchRadioForCheckpoint(true)
+    Map zigbeeData = fetchRadioForCheckpoint(false)
     List zwaveRadio = extractZwaveMessageCounts(zwaveData)
     List zigbeeRadio = extractZigbeeMessageCounts(zigbeeData)
 
@@ -4796,23 +4599,12 @@ void updated() {
     unschedule()
     // clear session-scoped caches so config/hardware changes take effect immediately
     zwaveStackCache  = null   // re-detect Z-Wave stack on next use (handles user switching legacy ↔ JS)
-    fwUpdateCache    = null   // force fresh cloud fetch on next dashboard render
-    fwUpdateCacheAt  = null
     state.remove('controllerTypeCache') // evict per-device classification cache; rebuilds on next analysis pass
     apiTimings.clear()                  // drop stats for renamed/removed endpoints; fresh measurements from now
-    // N1: clear the TTL'd radio/list/resource caches too, so a settings change isn't masked by
-    // stale data for up to the cache TTL. Matches the A3/A7/B5 invalidation discipline.
-    cachedZwaveData = null;        cachedZwaveAt = null
-    cachedZigbeeData = null;       cachedZigbeeAt = null
-    cachedAppsListData = null;     cachedAppsListAt = null
-    cachedDevicesListData = null;  cachedDevicesListAt = null
-    cachedSystemResources = null;  cachedSystemResourcesAt = null
-    cachedTemperature = null;      cachedTemperatureAt = null
-    cachedDatabaseSize = null;     cachedDatabaseSizeAt = null
-    cachedCpuInfo = null;          cachedCpuInfoAt = null
-    cachedLoadThreshold = null;    cachedLoadThresholdAt = null
+    // N1: clear the TTL'd radio/list/resource/fwUpdate/integrationOverrides caches too, so a
+    // settings change isn't masked by stale data for up to the cache TTL.
+    TTL_CACHE.clear()   // N1: one wholesale clear — a new cache can never be missed here again
     cachedCheckpointIndex = null   // re-read the checkpoint index from FileManager on next access
-    integrationOverridesCache = null; integrationOverridesCacheAt = null  // reload user integration-overrides file on next use
     // C2: auto-disable debug logging after 30 min so it can't be left on indefinitely
     if (settings.debugLogging) runIn(1800, 'logsOff')
     runIn(1, 'syncUIForced')
