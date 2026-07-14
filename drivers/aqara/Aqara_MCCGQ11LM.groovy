@@ -324,7 +324,7 @@ private void parseCheckin(Map map) {
         switch (dataTag) {
             case 0x01:
                 logTrace("$tagDebug (battery voltage)")
-                // parseBattery(dataPayload, 1000)   // wired in Task 3
+                parseBattery(dataPayload, 1000)
                 break
             case 0x03:
                 long chipTemp = parseCheckinInt(dataPayload, dataType)
@@ -346,7 +346,9 @@ private void parseCheckin(Map map) {
                 state.zigbeeParentDNI = dataPayload
                 break
             case 0x64:
-                logTrace("$tagDebug (contact state — decoded in Task 3)")
+                String contact = (parseCheckinInt(dataPayload, dataType) == 1) ? "open" : "closed"
+                logInfo("Contact (check-in) : ${contact}")
+                sendEvent(name: "contact", value: contact)
                 break
             case 0x04: case 0x07: case 0x08: case 0x09: case 0x0B: case 0x0C:
                 logTrace("$tagDebug (known unhandled)")
@@ -357,7 +359,15 @@ private void parseCheckin(Map map) {
     }
 }
 
-private void parseCheckinFromMap(Map map) { /* Task 3 */ }
+private void parseCheckinFromMap(Map map) {
+    // The FF01 that rides bundled with a button-press's 0x0005 frame reaches
+    // here as an additionalAttr (map.value = the raw TLV hex). Normalize into
+    // the shape parseCheckin() expects (it only reads map.value).
+    String hex = map.value
+    if (!hex) { logDebug("FF01(map): empty value"); return }
+    logDebug("FF01 via additionalAttr (button frame): ${hex}")
+    parseCheckin([value: hex])
+}
 
 private void parseAttributeReport(Map map) {
     logTrace("parseAttributeReport() : ${map}")
@@ -458,6 +468,54 @@ private void parseContact(Map map) {
     String contact = (map.value == "01") ? "open" : "closed"
     logInfo("Contact : ${contact}")
     sendEvent(name: "contact", value: contact)
+}
+
+private void parseBattery(String batteryVoltageHex, int batteryVoltageDivisor) {
+    logTrace("batteryVoltageHex : ${batteryVoltageHex}")
+
+    int rawMv = zigbee.convertHexToInt(batteryVoltageHex)
+    logDebug("batteryVoltage raw value : ${rawMv}")
+
+    double voltage = ((double) rawMv) / batteryVoltageDivisor
+    BigDecimal voltageRounded = BigDecimal.valueOf(voltage).setScale(2, RoundingMode.HALF_UP)
+    sendEvent(name: "batteryVoltage", value: voltageRounded, unit: "V")
+    logDebug("batteryVoltage : ${voltageRounded}")
+
+    Double prevSmoothed = (state.smoothedBatteryVoltage instanceof Number) ?
+        ((Number) state.smoothedBatteryVoltage).doubleValue() : null
+    double smoothed
+    String emaAction
+    if (prevSmoothed == null) {
+        smoothed = voltage
+        emaAction = "init"
+    } else if (voltage - prevSmoothed >= constBatteryBigJumpV) {
+        smoothed = voltage
+        emaAction = "snap-up"
+        Date now = new Date()
+        setBatteryReplacementDate(now)
+        device.updateDataValue("batteryReplacementDetected",
+            "auto: V_prev=${String.format('%.2f', prevSmoothed)} → V_new=${String.format('%.2f', voltage)} @ ${now.format('yyyy-MM-dd HH:mm:ss zzz')}")
+        logInfo("Battery replacement detected: ${String.format('%.2f', prevSmoothed)}V → ${String.format('%.2f', voltage)}V")
+    } else if (voltage < prevSmoothed) {
+        smoothed = constBatteryEmaAlpha * voltage + (1.0d - constBatteryEmaAlpha) * prevSmoothed
+        emaAction = "down"
+    } else {
+        smoothed = prevSmoothed
+        emaAction = "hold"
+    }
+    state.smoothedBatteryVoltage = smoothed
+
+    int batteryPct = batteryPctFromVoltage(smoothed, constBatteryCurveV, constBatteryCurvePct)
+
+    String desc = "$batteryPct% (${voltageRounded}V, smoothed ${String.format('%.3f', smoothed)}V, EMA ${emaAction})"
+    if (batteryPct > 20) {
+        logInfo("Battery : ${desc}")
+    } else {
+        logWarn("Battery : ${desc}")
+    }
+
+    sendEvent(name: "battery", value: batteryPct, unit: "%")
+    state.batteryStatus = batteryPct > 0 ? "discharging" : "exhausted"
 }
 
 // ─── Zigbee command primitives ─────────────────────────────────────────────
