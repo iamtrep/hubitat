@@ -3117,7 +3117,7 @@ function renderSnapshotView(s,elId){
 
 // Compute snapshot diff client-side. Mirrors the structure that renderDiff() expects;
 // hub no longer ships /api/snapshot/diff. Inputs are two full snapshots fetched via
-// /api/snapshot/view (which already runs migrateSnapshotDevices on the way out).
+// /api/snapshot/view.
 function computeSnapshotDiff(older, newer){
   // Chronological order
   if((older.timestampMs||0) > (newer.timestampMs||0)){const tmp=older;older=newer;newer=tmp}
