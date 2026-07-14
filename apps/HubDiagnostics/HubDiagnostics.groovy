@@ -19,7 +19,6 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
 @Field static final String CODE_VERSION = "5.76.0"
-@Field static final String STORAGE_SCHEMA_VERSION = "5.0.0"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -202,19 +201,6 @@ private void cachePut(String key, Object data) {
 @Field static final String UPDATE_AVAILABLE_BADGE = ' <span style="color:green; font-weight:bold;">update available</span>'
 @Field static final java.util.regex.Pattern UPDATE_BADGE_RE = ~/(?i)\s*<span\b[^>]*>\s*update available\s*<\/span>\s*$/
 
-// Legacy protocol display names (for migrating old snapshots)
-@Field static final Map LEGACY_PROTOCOL_DISPLAY = [
-    "zwave": "Z-Wave",
-    "zigbee": "Zigbee",
-    "matter": "Matter",
-    "hubmesh": "Hub Mesh",
-    "lan": "LAN/IP",
-    "virtual": "Virtual",
-    "cloud": "Cloud",
-    "maker": "Maker API",
-    "other": "Other"
-]
-
 // Built-in integration overrides: lowercase keyword → [conn, name]. These are Hubitat-native
 // parent-managed integrations whose devices arrive without a parentAppId in the bulk list (so the
 // parent-app derivation can't see them and the deep-enrich pass never runs on them). Each entry
@@ -268,8 +254,6 @@ private void cachePut(String key, Object data) {
 // v5.33.0 split-file checkpoint storage:
 //   index file: small list of slim records (one per checkpoint) + detailFile pointer
 //   detail files: one per checkpoint, named with timestampMs, holds full content
-// The legacy CHECKPOINTS_FILE name is kept only for one-shot migration detection.
-@Field static final String CHECKPOINTS_FILE = "hub_diagnostics_checkpoints.json"
 @Field static final String CHECKPOINT_INDEX_FILE = "hub_diagnostics_checkpoints_index.json"
 @Field static final String CHECKPOINT_DETAIL_PREFIX = "hub_diagnostics_checkpoint_"
 @Field static final String PERFORMANCE_COMPARISON_FILE = "hub_diagnostics_performance_comparison.json"
@@ -857,32 +841,6 @@ Map apiPerformanceCompare() {
     ])
 }
 
-Map migrateSnapshotDevices(Map snapshotDevices) {
-    if (!snapshotDevices?.byProtocol || snapshotDevices?.byConnectionType) return snapshotDevices
-    Map protoToConn = [
-        zigbee: CONN_ZIGBEE, zwave: CONN_ZWAVE, matter: CONN_MATTER,
-        lan: CONN_LAN_DIRECT, virtual: CONN_VIRTUAL,
-        cloud: CONN_CLOUD, hubmesh: CONN_HUBMESH, maker: CONN_OTHER, other: CONN_OTHER
-    ]
-    Map byConn = [:]
-    snapshotDevices.byProtocol.each { k, v ->
-        String conn = protoToConn[k] ?: CONN_OTHER
-        byConn[conn] = (byConn[conn] ?: 0) + (v ?: 0)
-    }
-    snapshotDevices.byConnectionType = byConn
-    snapshotDevices.byIntegration = snapshotDevices.byProtocol.collectEntries { k, v ->
-        [(LEGACY_PROTOCOL_DISPLAY[k] ?: k): v]
-    }
-    snapshotDevices.allDevices = (snapshotDevices.allDevices ?: []).collect { Map dev ->
-        if (dev.protocol && !dev.connectionType) {
-            dev.connectionType = protoToConn[dev.protocol] ?: CONN_OTHER
-            dev.integration = LEGACY_PROTOCOL_DISPLAY[dev.protocol] ?: dev.protocol
-        }
-        return dev
-    }
-    return snapshotDevices
-}
-
 Map apiSnapshots() {
     return jsonResponse(getSnapshotsData())
 }
@@ -894,7 +852,6 @@ Map apiSnapshotView() {
     List snapshots = loadSnapshots()
     if (idx < 0 || idx >= snapshots.size()) return jsonResponse([error: "Invalid snapshot index"])
     Map snap = snapshots[idx]
-    if (snap.devices) snap.devices = migrateSnapshotDevices(snap.devices)
 
     Map snapNet = snap.network ?: [:]
     return jsonResponse([
@@ -968,7 +925,7 @@ Map apiDeleteSnapshot() {
 
 Map apiCreateCheckpoint() {
     if (!createCheckpoint()) return jsonResponse([success: false, error: "Checkpoint creation failed or already in progress"])
-    return jsonResponse([success: true, checkpointCount: getCheckpointIndex().size()])
+    return jsonResponse([success: true, checkpointCount: loadCheckpointIndex().size()])
 }
 
 Map apiDeleteCheckpoint() {
@@ -1383,7 +1340,7 @@ Map getPerformanceData(Map shared = [:]) {
         }
     }
 
-    List indexEntries = getCheckpointIndex()
+    List indexEntries = loadCheckpointIndex()
     return [
         stats: stats, resources: resources,
         radioStats: radioStats,
@@ -3382,7 +3339,6 @@ void clearAllCheckpoints() {
     deleteFile(CHECKPOINT_INDEX_FILE)
     deleteFile(PERFORMANCE_COMPARISON_FILE)
     cachedCheckpointIndex = []
-    state.checkpointIndex = []
     logInfo "All perf checkpoints cleared (${detailFiles.size()} detail file(s) removed)"
 }
 
@@ -3735,33 +3691,26 @@ private String detailFilenameFor(Object timestampMs) {
 }
 
 List loadCheckpointIndex() {
-    // N4: return a defensive copy so a caller doing `loadCheckpointIndex() << x` can't mutate the
-    // shared cache (which would also bypass the FileManager write in saveCheckpointIndex).
+    // Defensive copies both ways (N4): callers can never mutate the shared cache.
     if (cachedCheckpointIndex != null) return new ArrayList(cachedCheckpointIndex)
     try {
         List data = (List) readFile(CHECKPOINT_INDEX_FILE)
         if (data != null) {
             cachedCheckpointIndex = data
-            state.checkpointIndex = cachedCheckpointIndex
             return new ArrayList(cachedCheckpointIndex)
         }
     } catch (Exception e) {
         logDebug "No existing checkpoint index: ${e.message}"
     }
-    // No new index file — check for a legacy blob and migrate if found.
-    List migrated = migrateLegacyCheckpointsIfPresent()
-    cachedCheckpointIndex = migrated
-    state.checkpointIndex = cachedCheckpointIndex
-    return cachedCheckpointIndex == null ? null : new ArrayList(cachedCheckpointIndex)
+    // First run or index missing: start an empty index file so later reads short-circuit.
+    saveCheckpointIndex([])
+    return []
 }
 
 void saveCheckpointIndex(List index) {
     try {
-        String json = groovy.json.JsonOutput.toJson(index)
-        writeFile(CHECKPOINT_INDEX_FILE, json)
-        // N4: store our own copy so the caller's ongoing reference can't later mutate the cache.
+        writeFile(CHECKPOINT_INDEX_FILE, groovy.json.JsonOutput.toJson(index))
         cachedCheckpointIndex = (index == null ? null : new ArrayList(index))
-        state.checkpointIndex = cachedCheckpointIndex
     } catch (Exception e) {
         logError "Error saving checkpoint index: ${e}"
     }
@@ -3799,46 +3748,6 @@ void deleteCheckpointDetail(String filename) {
     }
 }
 
-// One-shot legacy migration. Reads the v5.32.x single-blob file, splits it into
-// per-checkpoint detail files + the new index, then deletes the legacy file.
-// Idempotent: returns [] if nothing legacy is present.
-private List migrateLegacyCheckpointsIfPresent() {
-    List legacy
-    try {
-        List data = (List) readFile(CHECKPOINTS_FILE)
-        if (data == null) {
-            // No legacy file. First-time install — start with an empty index file
-            // so subsequent reads short-circuit without a migration probe.
-            saveCheckpointIndex([])
-            return []
-        }
-        legacy = data
-    } catch (Exception e) {
-        logDebug "Legacy migration: no legacy file: ${e.message}"
-        saveCheckpointIndex([])
-        return []
-    }
-    if (!legacy) {
-        saveCheckpointIndex([])
-        deleteCheckpointDetail(CHECKPOINTS_FILE)
-        return []
-    }
-    logInfo "Migrating ${legacy.size()} checkpoint(s) to split-file storage..."
-    List newIndex = []
-    legacy.each { Map cp ->
-        String filename = saveCheckpointDetail(cp)
-        if (filename) {
-            newIndex << buildCheckpointIndexEntry(cp, filename)
-        } else {
-            logError "Migration: failed to write detail file for checkpoint ${cp.timestampMs}"
-        }
-    }
-    saveCheckpointIndex(newIndex)
-    deleteCheckpointDetail(CHECKPOINTS_FILE)
-    logInfo "Migration complete: ${newIndex.size()} checkpoint detail file(s) + index"
-    return newIndex
-}
-
 // v5.33.0: write a new checkpoint to disk. Used by both the sync (apiCreateCheckpoint)
 // and async (scheduledCheckpoint) paths. Persists detail file first, then updates the
 // index. Trims oldest entries beyond settings.maxCheckpoints, deleting their detail files.
@@ -3858,21 +3767,6 @@ void persistCheckpoint(Map cp) {
         idx = idx.take(cap)
     }
     saveCheckpointIndex(idx)
-}
-
-List getCheckpointIndex() {
-    List idx = state.checkpointIndex as List
-    // v5.33.0 upgrade-from-v5.32.6 detection: v5.32.6 populated state.checkpointIndex
-    // with entries that lack the detailFile pointer. Treat as cold start so
-    // loadCheckpointIndex runs migration of the legacy single-blob file.
-    if (idx != null && !idx.isEmpty() && idx[0]?.detailFile == null) {
-        logInfo "v5.33.0 upgrade detected: forcing migration of legacy checkpoint blob"
-        state.checkpointIndex = null
-        cachedCheckpointIndex = null
-        idx = null
-    }
-    if (idx != null) return idx
-    return loadCheckpointIndex()
 }
 
 List loadSnapshots() {
@@ -4526,6 +4420,12 @@ void updated() {
     // clear session-scoped caches so config/hardware changes take effect immediately
     zwaveStackCache  = null   // re-detect Z-Wave stack on next use (handles user switching legacy ↔ JS)
     state.remove('controllerTypeCache') // evict per-device classification cache; rebuilds on next analysis pass
+    // Retired state keys (v5.77.0): the checkpoint index lives in File Manager + a session cache
+    // only — keeping a copy in state taxed every app invocation. lastZwaveGhostCheckMs was
+    // replaced by the shared TTL cache; storageSchemaVersion by the ≥5.33 upgrade floor.
+    state.remove('checkpointIndex')
+    state.remove('storageSchemaVersion')
+    state.remove('lastZwaveGhostCheckMs')
     apiTimings.clear()                  // drop stats for renamed/removed endpoints; fresh measurements from now
     // N1: clear the TTL'd radio/list/resource/fwUpdate/integrationOverrides caches too, so a
     // settings change isn't masked by stale data for up to the cache TTL.
@@ -4621,7 +4521,6 @@ private boolean processSyncUIResponse(String htmlText) {
 
 void initialize() {
     logInfo "Hub Diagnostics initialized"
-    migrateStorageIfNeeded()
 
     // Reconcile audit state: if a scan was in-flight when the app reloaded, AUDIT_SCANS is now
     // empty and the scan can never complete — mark it failed so the UI doesn't get stuck.
@@ -4718,24 +4617,3 @@ void syncUIForced() {
     syncUI(true)
 }
 
-void migrateStorageIfNeeded() {
-    String currentSchema = (state.storageSchemaVersion ?: "") as String
-    if (currentSchema == STORAGE_SCHEMA_VERSION) {
-        return
-    }
-
-    boolean migratedLegacyState = false
-    if (state.lastPerformanceComparison != null) {
-        state.remove("lastPerformanceComparison")
-        migratedLegacyState = true
-    }
-    if (state.lastSnapshotDiff != null) {
-        state.remove("lastSnapshotDiff")
-        migratedLegacyState = true
-    }
-
-    state.storageSchemaVersion = STORAGE_SCHEMA_VERSION
-    if (migratedLegacyState) {
-        logInfo "Migrated legacy comparison state to file-backed storage for v${CODE_VERSION}"
-    }
-}

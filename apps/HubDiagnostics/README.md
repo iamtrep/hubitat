@@ -83,6 +83,10 @@ When a newer release is published on GitHub, the app appends a green **update av
 ### Updating the Groovy app
 Use **Apps Code → Hub Diagnostics → Import** (same import URL as above). After saving, re-open the app preferences page once to re-initialize.
 
+> **Upgrade floor:** v5.77.0 removed the one-shot storage migrations for pre-v5.33.0 checkpoint
+> and snapshot formats. Upgrading from a version older than 5.33.0? Install any 5.7x release
+> ≤ 5.76.x first (it migrates on first run), then update to the latest.
+
 ### Updating the UI
 The app keeps the UI in sync with the app version automatically: a nightly job downloads the latest UI from GitHub and installs it once its version matches the installed app. In practice: after updating the Groovy app code, open the app preferences once and re-save (or wait for the nightly job) and the matching UI will install automatically. You can also trigger an immediate sync via **Sync UI from GitHub** on the Dashboard tab.
 
