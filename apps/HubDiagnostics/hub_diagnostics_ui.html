@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.74.0";
+const CODE_VERSION = "5.75.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -3516,6 +3516,7 @@ const RC={
     selectedRowKey:null,       // synthetic id of the currently expanded row (or null)
     viewMode:'structured',     // 'structured' | 'raw'
     lastTailRenderAt:0,
+    lastAggregateAt:0,         // throttle the breakdown cards to ~1 Hz
     pinnedToLive:true,
     pinBaselineLen:0,
     _suppressScrollUntil:0,
@@ -4788,6 +4789,7 @@ function renderMatterSubTab(){
     </div>
     ${rcMatterFilterCard()}
     <div id="rc-m-live"></div>
+    <div id="rc-m-aggregates"></div>
   `;
   document.getElementById('rc-m-start').addEventListener('click',rcMatterStart);
   document.getElementById('rc-m-stop').addEventListener('click',rcMatterStop);
@@ -4818,6 +4820,7 @@ function renderMatterSubTab(){
   document.getElementById('rc-m-live').addEventListener('click',rcMatterHandleTailClick);
   rcMatterUpdateBadge();
   rcMatterRenderTail({repin:true});
+  rcMatterRenderAggregates();
 }
 
 function rcMatterUpdateBadge(){
@@ -4869,6 +4872,7 @@ function rcMatterPause(){
 
 function rcMatterClear(){
   const m=RC.matter;if(m.buf)m.buf.clear();m.displayBuf=[];rcResetRate(m);m.lastTail=[];m.components=[];m.deviceByNode=new Map();m.rotations=0;m.firstPollDone=false;m.lastErr=null;
+  rcMatterRenderAggregates();
   rcMatterUpdateMetrics();rcMatterRenderTail({repin:true});
 }
 
@@ -4946,6 +4950,7 @@ function rcMatterPoll(){
       rcMatterUpdateMetrics();
       const t=Date.now();
       if(t-m.lastTailRenderAt>1000){m.lastTailRenderAt=t;rcMatterRenderTail({fromTick:true})}
+      if(t-m.lastAggregateAt>1000){m.lastAggregateAt=t;rcMatterRenderAggregates()}
     })
     .catch(err=>{
       m.lastErr=err.message||String(err);
@@ -5215,6 +5220,39 @@ function rcMatterRenderTail(opt){
   m.displayBuf=rows;
   if(m.selectedRowKey && !rows.some(r=>r._rowKey===m.selectedRowKey))m.selectedRowKey=null;
   rcTailPaint({liveId:'rc-m-live',tblId:'rc-m-tail-tbl',z:m,rowsHtml:rcMatterRenderStructuredHtml(rows,m.selectedRowKey)},opt);
+}
+
+// Breakdown cards below the tail: Op mix, cluster mix, top talkers by device. Aggregates the full
+// recording window through the same CHIP parse pipeline as the tail, independent of the tail filter.
+// CHIP app logs carry no radio metrics, so there is deliberately no signal-quality card.
+function rcMatterRenderAggregates(){
+  const m=RC.matter;
+  const container=document.getElementById('rc-m-aggregates');
+  if(!container)return;
+  if(!m.buf||m.buf.count()===0){container.innerHTML='';return}
+  const win=m.buf.window(5*60*1000);
+  const entries=groupChipByExchange(win.frames.map(f=>f.line));
+  const rows=[];
+  for(const e of entries)for(const r of rcMatterFrameToRow(e))rows.push(r);
+  if(!rows.length){container.innerHTML='';return}
+  const ops=rcZbAggregateBy(rows,r=>r.op||null);
+  const clusters=rcZbAggregateBy(rows,r=>r.cluster!=null?(r.clusterName||('0x'+r.cluster.toString(16).padStart(4,'0').toUpperCase())):null).slice(0,15);
+  const attributed=rows.filter(r=>r.deviceName||r.deviceNodeId!=null);
+  const talkers=rcZbAggregateBy(attributed,r=>r.deviceName||('Node 0x'+r.deviceNodeId.toString(16).toUpperCase()),r=>({deviceId:r.deviceId})).slice(0,10);
+  const unattr=rows.length-attributed.length;
+  const truncNote=win.fullCoverage?'':'<div style="font-size:12px;color:var(--warn);margin-bottom:4px">Window truncated to last '+Math.round((Date.now()-win.coverFrom)/1000)+' s of buffer.</div>';
+  const unattrNote=unattr?'<div style="font-size:12px;opacity:.7;margin-bottom:4px">'+unattr+' of '+rows.length+' frames unattributed (no peer node)</div>':'';
+  container.innerHTML='<div class="card" style="margin-top:12px"><h3 style="margin-top:0">Aggregates '
+    +'<span style="font-weight:normal;font-size:12px;opacity:.7">— last 5 min</span></h3>'+truncNote
+    +'<div style="display:grid;grid-template-columns:1fr 1.5fr 1.5fr;gap:16px">'
+    +'<div><h4 style="margin-top:0">Op breakdown</h4><div id="rc-m-ops"></div></div>'
+    +'<div><h4 style="margin-top:0">Cluster breakdown</h4><div id="rc-m-clusters"></div></div>'
+    +'<div><h4 style="margin-top:0">Top talkers</h4>'+unattrNote+'<div id="rc-m-talkers"></div></div>'
+    +'</div></div>';
+  renderBarChart(ops.map(o=>({label:o.k,value:o.v})),'rc-m-ops',{labelWidth:80});
+  renderBarChart(clusters.map(c=>({label:c.k,value:c.v})),'rc-m-clusters',{labelWidth:150});
+  if(talkers.length)tbl('rc-m-talkers',[{l:'Device',f:'k',r:r=>r.deviceId?dlink(r.deviceId,r.k):h(r.k)},{l:'Frames',f:'v',t:'n'}],talkers,{filter:false,sc:1,sd:'desc'});
+  else document.getElementById('rc-m-talkers').innerHTML='<span style="opacity:.6;font-size:12px">no device-attributed frames</span>';
 }
 
 function rcMatterHandleTailClick(e){
