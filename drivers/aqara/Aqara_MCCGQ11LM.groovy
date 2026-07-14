@@ -177,6 +177,47 @@ void setBatteryReplacementDate(Date date = null) {
     logInfo("Battery replacement date set to ${dateStr}")
 }
 
+// ─── Health monitoring ─────────────────────────────────────────────────────
+
+void checkHealth() {
+    long millisElapsed = new Date().time - state.lastMessageMillis
+    long timeoutMillis = (REPORT_INTERVAL_MINUTES * 2 + HEALTH_TIMEOUT_SLACK_MINUTES) * 60000L
+    long secondsElapsed = millisElapsed / 1000
+    long hubUptime = location.hub.uptime
+
+    if (millisElapsed <= timeoutMillis) {
+        // Device is reporting on schedule. updateHealthStatus() in parse() has
+        // already flipped healthStatus to "online", so nothing to do here.
+        logDebug("Health : Last message ${secondsElapsed} seconds ago.")
+        logTrace("checkHealth() : elapsed=${millisElapsed}ms, timeout=${timeoutMillis}ms")
+        return
+    }
+
+    if (hubUptime <= HUB_REBOOT_ALLOWANCE_MINUTES * 60) {
+        logDebug("Health : Ignoring overdue reports for ${HUB_REBOOT_ALLOWANCE_MINUTES} minutes after hub reboot (uptime ${hubUptime}s).")
+        return
+    }
+
+    if (device.currentValue("healthStatus") != "offline") {
+        sendEvent(name: "healthStatus", value: "offline")
+        int npc = (device.currentValue("notPresentCounter") ?: 0) + 1
+        sendEvent(name: "notPresentCounter", value: npc)
+    }
+    logWarn("Health : Offline. Last message ${secondsElapsed} seconds ago.")
+    logTrace("checkHealth() : elapsed=${millisElapsed}ms, timeout=${timeoutMillis}ms")
+}
+
+private void updateHealthStatus() {
+    long millisNow = new Date().time
+    state.lastMessageMillis = millisNow
+    if (device.currentValue("healthStatus") != "online") {
+        sendEvent(name: "healthStatus", value: "online")
+        int rc = (device.currentValue("restoredCounter") ?: 0) + 1
+        sendEvent(name: "restoredCounter", value: rc)
+        logInfo("Health : Online (${rc} total recoveries)")
+    }
+}
+
 // ─── Zigbee message pipeline ───────────────────────────────────────────────
 
 void parse(String description) {
