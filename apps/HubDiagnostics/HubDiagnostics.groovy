@@ -2460,7 +2460,10 @@ Map analyzeDevices(boolean deep = true) {
             classByDeviceId[idStr] = [
                 connectionType: (newClass.connectionType ?: cur.connectionType),
                 integration:    newClass.integration,
-                builtin:        (newClass.builtin != null ? newClass.builtin : cur.builtin)
+                // builtin taken verbatim (may be null): its only consumer is the
+                // integrationSources guard below, and a null must stay null — the
+                // controllerType-fallback path intentionally sets no source entry.
+                builtin:        newClass.builtin
             ]
         }
     }
