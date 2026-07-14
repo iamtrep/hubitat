@@ -752,6 +752,7 @@ Map apiZigbeeScan() {
     Map result = runZigbeeChannelScan()
     long elapsed = now() - start
     logDebug "apiZigbeeScan completed in ${elapsed}ms"
+    recordApiTiming("zigbeeScan", elapsed)
     boolean ok = result.error == null
     return jsonResponse([success: ok, scan: result, elapsedMs: elapsed])
 }
@@ -1234,7 +1235,7 @@ Map getNetworkData(Map shared = [:]) {
                         direct: r.direct ?: false
                     ]
                 },
-                childDevices: zigbeeMesh.childDevices?.size() ?: 0
+                childDevices: zigbeeMesh.childDevices ?: 0
             ] : null
         ] : null,
         matter: networkData.matter ?: null,
@@ -1442,8 +1443,6 @@ Map computeZwaveSignals(Map zwRaw) {
     ]
 }
 
-// ===== BUTTON HANDLER =====
-
 // ===== API TIMING =====
 
 void recordApiTiming(String endpoint, long elapsedMs) {
@@ -1542,20 +1541,7 @@ private String getHubFirmwareVersion() {
 
 private boolean isVersionAtLeast(String actual, String required) {
     if (!actual || !required) return false
-    List<Integer> a = actual.split('\\.').collect { String s ->
-        try { return s.toInteger() } catch (Exception e) { return 0 }
-    }
-    List<Integer> r = required.split('\\.').collect { String s ->
-        try { return s.toInteger() } catch (Exception e) { return 0 }
-    }
-    int n = Math.max(a.size(), r.size())
-    for (int i = 0; i < n; i++) {
-        int av = i < a.size() ? a[i] : 0
-        int rv = i < r.size() ? r[i] : 0
-        if (av > rv) return true
-        if (av < rv) return false
-    }
-    return true
+    return compareVersions(actual, required) >= 0
 }
 
 private String detectZwaveStack() {
@@ -1736,8 +1722,7 @@ List fetchHubEvents() {
         if (!(raw instanceof List)) return []
         return ((List) raw).collect { Object e ->
             Map ev = (Map) e
-            long ts = 0
-            try { ts = Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", (String) ev.date).time } catch (Exception ignored) {}
+            Long ts = parseDate(ev.date) ?: 0L
             [id: ev.id, name: ev.name, description: ev.descriptionText, ts: ts, value: ev.value]
         }
     } catch (Exception e) {
@@ -2112,7 +2097,7 @@ Map fetchZigbeeMeshInfo() {
     String text = (String) hubRequest(ZIGBEE_CHILD_ROUTE_PATH, "zigbee child/route info", "text", 15)
     if (!text) return [:]
 
-    Map result = [childDevices: [], neighbors: [], routes: [], raw: text]
+    Map result = [childDevices: 0, neighbors: [], routes: []]
 
     String currentSection = ""
     text.split('\n').each { String line ->
@@ -2127,7 +2112,7 @@ Map fetchZigbeeMeshInfo() {
             currentSection = "route"
         } else if (currentSection == "neighbor" && line.contains("LQI:")) {
             // Parse neighbor entries: "[Device Name, ABCD], LQI:255, age:4, inCost:1, outCost:1"
-            Map neighbor = [raw: line]
+            Map neighbor = [:]
             java.util.regex.Matcher bracketMatch = (line =~ /^\[([^\]]+),\s*([0-9A-Fa-f]{4})\]/)
             java.util.regex.Matcher lqiMatch = (line =~ /LQI:\s*(\d+)/)
             java.util.regex.Matcher ageMatch = (line =~ /age:\s*(\d+)/)
@@ -2144,10 +2129,10 @@ Map fetchZigbeeMeshInfo() {
             neighbor.stale = (neighbor.age != null && neighbor.age >= 7)
             result.neighbors << neighbor
         } else if (currentSection == "child") {
-            result.childDevices << [raw: line]
+            result.childDevices = (result.childDevices as int) + 1
         } else if (currentSection == "route" && line.contains("status:")) {
             // Parse route entries: "status:Active, age:64, routeRecordState:0, concentratorType:None, [Dest Name, ABCD] via [Via Name, EF01]"
-            Map route = [raw: line]
+            Map route = [:]
             java.util.regex.Matcher statusMatch = (line =~ /status:\s*(\w+)/)
             java.util.regex.Matcher ageMatch = (line =~ /age:\s*(\d+|null)/)
             java.util.regex.Matcher rrsMatch = (line =~ /routeRecordState:\s*(\d+|null)/)
@@ -3015,10 +3000,15 @@ Map enrichDevices(Map uncertainDevices, Set communityAppTypeNames = [] as Set) {
     Map result = [:]
 
     uncertainDevices.each { String idStr, Map appInfo ->
-        String cachedJson = (String) cache[idStr]
+        // v5.77.0: entries are plain maps (state is JSON-serialized anyway — the old JSON-string
+        // encoding double-parsed on every pass). Legacy string entries survive a code push
+        // (updated() doesn't fire), so read both formats; unreadable ones re-fetch.
+        Object cachedVal = cache[idStr]
         Map cachedEntry = null
-        if (cachedJson?.startsWith("{")) {
-            try { cachedEntry = (Map) new groovy.json.JsonSlurper().parseText(cachedJson) }
+        if (cachedVal instanceof Map) {
+            cachedEntry = (Map) cachedVal
+        } else if (cachedVal instanceof String && ((String) cachedVal).startsWith("{")) {
+            try { cachedEntry = (Map) new groovy.json.JsonSlurper().parseText((String) cachedVal) }
             catch (Exception ignored) { /* stale/invalid format — re-fetch */ }
         }
 
@@ -3047,12 +3037,12 @@ Map enrichDevices(Map uncertainDevices, Set communityAppTypeNames = [] as Set) {
                         if (hint && VALID_CONN.contains(hint)) connHint = hint
                     }
                 } catch (Exception ignored) {}
-                cacheUpdates[idStr] = groovy.json.JsonOutput.toJson([
+                cacheUpdates[idStr] = [
                     parentAppTypeName: parentAppTypeName ?: "",
                     controllerType: ct ?: "",
                     connHint: connHint ?: "",
                     builtin: isBuiltin == null ? "" : (isBuiltin ? "true" : "false")
-                ])
+                ]
             } catch (Exception e) {
                 logDebug "enrichDevices: could not fetch device ${idStr}: ${e.message}"
                 return
@@ -3567,31 +3557,21 @@ int parseUptime(String uptime) {
     return seconds
 }
 
-String formatMemory(int kb) {
-    if (Math.abs(kb) >= 1024 * 1024) {
-        return String.format("%.2f GB", kb / (1024.0 * 1024.0))
-    } else if (Math.abs(kb) >= 1024) {
-        return String.format("%.2f MB", kb / 1024.0)
-    } else {
-        return "${kb} KB"
+// Numeric dotted-version compare; non-numeric or missing segments count as 0.
+private int compareVersions(String a, String b) {
+    List ap = a.tokenize('.'), bp = b.tokenize('.')
+    int n = Math.max(ap.size(), bp.size())
+    for (int i = 0; i < n; i++) {
+        int av = (i < ap.size() && ((String) ap[i]).isInteger()) ? ((String) ap[i]).toInteger() : 0
+        int bv = (i < bp.size() && ((String) bp[i]).isInteger()) ? ((String) bp[i]).toInteger() : 0
+        if (av != bv) return (av < bv) ? -1 : 1
     }
+    return 0
 }
 
 boolean isNewer(String v1, String v2) {
     if (!v1 || v1 == "Unknown" || !v2 || v2 == "Unknown") return false
-    List v1p = v1.tokenize('.'), v2p = v2.tokenize('.')
-    for (int i = 0; i < Math.max(v1p.size(), v2p.size()); i++) {
-        String s1 = i < v1p.size() ? v1p[i] : "0"
-        String s2 = i < v2p.size() ? v2p[i] : "0"
-        int n1 = s1.isInteger() ? s1.toInteger() : 0
-        int n2 = s2.isInteger() ? s2.toInteger() : 0
-        if (n1 > n2) return true
-        if (n1 < n2) return false
-    }
-    return false
-}
-
-void appButtonHandler(String btn) {
+    return compareVersions(v1, v2) > 0
 }
 
 private String getAppTypeId() {
@@ -3836,7 +3816,7 @@ private Map<Long, Map> buildMeshFieldsMap(Map prefetchedDevices = null) {
     Map wrap = (prefetchedDevices != null) ? [ok: true, data: prefetchedDevices, error: null]
                                            : hubMapRequest(DEVICES_LIST_PATH, "devices list (mesh enrichment)", 30)
     if (!wrap.ok) { logWarn "mesh enrichment: device list fetch failed: ${wrap.error}"; return out }
-    List entries = flattenDeviceList((wrap.data?.devices ?: []) as List)
+    List entries = flattenDeviceEntries((wrap.data?.devices ?: []) as List)
     entries.each { Object e ->
         Map d = ((e instanceof Map && ((Map) e).data instanceof Map) ? ((Map) e).data : e) as Map
         Long id = d.id as Long
@@ -3950,7 +3930,7 @@ private Map extractAuditFields(Map fj, Long did) {
         createTime:          dev.createTime,
         updateTime:          dev.updateTime,
         lastActivityTime:    dev.lastActivityTime,
-        lastActivityTimeMs:  parseHubitatTimestamp(dev.lastActivityTime as String),  // epoch for SPA-side unreferenced sort
+        lastActivityTimeMs:  parseDate(dev.lastActivityTime),  // epoch for SPA-side unreferenced sort
         parentDeviceId:      (dev.parentDeviceId as Long),
         childDeviceIds:      ((fj?.childDevices ?: [:]) as Map).keySet()?.collect { it as Long } ?: [],
         notes:               dev.notes,
@@ -4029,19 +4009,6 @@ private String controllerTypeLabel(String ct) {
         case 'BLE':
         case 'BTH': return 'Bluetooth'
         default:    return ct
-    }
-}
-
-/**
- * Parse a Hubitat ISO-8601 timestamp ("2026-05-08T00:27:27+0000") to epoch millis.
- * Returns null on parse failure (don't fail the report — just skip the value).
- */
-private Long parseHubitatTimestamp(String s) {
-    if (!s) return null
-    try {
-        return Date.parse("yyyy-MM-dd'T'HH:mm:ssZ", s).time
-    } catch (Exception e) {
-        return null
     }
 }
 
@@ -4301,7 +4268,7 @@ Map apiAuditStart() {
     if (!bulkWrap.ok) {
         return jsonResponse([error: "Failed to fetch device list", detail: bulkWrap.error])
     }
-    List devs = flattenDeviceList((bulkWrap.data.devices ?: []) as List)
+    List devs = flattenDeviceEntries((bulkWrap.data.devices ?: []) as List)
     List<Long> ids = devs.collect { ((it.data ?: it) as Map).id as Long }.findAll { it != null }
     if (ids.isEmpty()) {
         return jsonResponse([error: "No devices to audit"])
@@ -4332,19 +4299,6 @@ Map apiAuditStart() {
 
     logInfo "[audit ${scanId}] started — ${ids.size()} devices to scan"
     return jsonResponse([scanId: scanId, total: ids.size(), alreadyRunning: false])
-}
-
-/**
- * Flatten the parent/child/grandchild structure returned by /hub2/devicesList into a flat list.
- */
-private List flattenDeviceList(List items) {
-    List out = []
-    items.each { Map item ->
-        out << item
-        List children = (item.children ?: []) as List
-        if (children) out.addAll(flattenDeviceList(children))
-    }
-    return out
 }
 
 /**
