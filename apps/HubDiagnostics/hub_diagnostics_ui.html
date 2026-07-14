@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.75.0";
+const CODE_VERSION = "5.76.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -5240,19 +5240,36 @@ function rcMatterRenderAggregates(){
   const attributed=rows.filter(r=>r.deviceName||r.deviceNodeId!=null);
   const talkers=rcZbAggregateBy(attributed,r=>r.deviceName||('Node 0x'+r.deviceNodeId.toString(16).toUpperCase()),r=>({deviceId:r.deviceId})).slice(0,10);
   const unattr=rows.length-attributed.length;
+  // Errors & warnings: severity comes from the CHIP line's ANSI colour (E=red, W=yellow). Group by
+  // component + digit-normalised message so repeats of the same problem collapse to one row + count.
+  const errRows=rows.filter(r=>r.sev==='E'), warnRows=rows.filter(r=>r.sev==='W');
+  const ewGroups=rcZbAggregateBy(errRows.concat(warnRows),
+    r=>r.sev+'|'+(r.component||'')+'|'+String(r.summary||'').replace(/[0-9]+/g,'#'),
+    r=>({sev:r.sev,component:r.component,msg:String(r.summary||'').trim()}));
+  const nE=errRows.length, nW=warnRows.length;
+  const sevSummary=' · '+(nE?'<span style="color:var(--crit)">'+nE+' error'+(nE>1?'s':'')+'</span>':'0 errors')
+    +' · '+(nW?'<span style="color:var(--warn)">'+nW+' warning'+(nW>1?'s':'')+'</span>':'0 warnings');
   const truncNote=win.fullCoverage?'':'<div style="font-size:12px;color:var(--warn);margin-bottom:4px">Window truncated to last '+Math.round((Date.now()-win.coverFrom)/1000)+' s of buffer.</div>';
   const unattrNote=unattr?'<div style="font-size:12px;opacity:.7;margin-bottom:4px">'+unattr+' of '+rows.length+' frames unattributed (no peer node)</div>':'';
+  const ewCard=(nE+nW)?'<div class="card" style="margin-top:12px"><h3 style="margin-top:0">Errors &amp; Warnings '
+    +'<span style="font-weight:normal;font-size:12px;opacity:.7">— last 5 min; the CHIP log does not name the device, cross-reference the node against the Matter device list</span></h3><div id="rc-m-ew"></div></div>':'';
   container.innerHTML='<div class="card" style="margin-top:12px"><h3 style="margin-top:0">Aggregates '
-    +'<span style="font-weight:normal;font-size:12px;opacity:.7">— last 5 min</span></h3>'+truncNote
+    +'<span style="font-weight:normal;font-size:12px;opacity:.7">— last 5 min'+sevSummary+'</span></h3>'+truncNote
     +'<div style="display:grid;grid-template-columns:1fr 1.5fr 1.5fr;gap:16px">'
     +'<div><h4 style="margin-top:0">Op breakdown</h4><div id="rc-m-ops"></div></div>'
     +'<div><h4 style="margin-top:0">Cluster breakdown</h4><div id="rc-m-clusters"></div></div>'
     +'<div><h4 style="margin-top:0">Top talkers</h4>'+unattrNote+'<div id="rc-m-talkers"></div></div>'
-    +'</div></div>';
+    +'</div></div>'+ewCard;
   renderBarChart(ops.map(o=>({label:o.k,value:o.v})),'rc-m-ops',{labelWidth:80});
   renderBarChart(clusters.map(c=>({label:c.k,value:c.v})),'rc-m-clusters',{labelWidth:150});
   if(talkers.length)tbl('rc-m-talkers',[{l:'Device',f:'k',r:r=>r.deviceId?dlink(r.deviceId,r.k):h(r.k)},{l:'Frames',f:'v',t:'n'}],talkers,{filter:false,sc:1,sd:'desc'});
   else document.getElementById('rc-m-talkers').innerHTML='<span style="opacity:.6;font-size:12px">no device-attributed frames</span>';
+  if(nE+nW)tbl('rc-m-ew',[
+    {l:'Sev',f:'sev',r:r=>r.sev==='E'?'<span class="badge b-crit">E</span>':'<span class="badge b-warn">W</span>'},
+    {l:'Component',f:'component',r:r=>h(r.component||'—')},
+    {l:'Message',f:'msg',r:r=>h(r.msg||'')},
+    {l:'Count',f:'v',t:'n'}
+  ],ewGroups,{filter:false,sc:3,sd:'desc'});
 }
 
 function rcMatterHandleTailClick(e){
