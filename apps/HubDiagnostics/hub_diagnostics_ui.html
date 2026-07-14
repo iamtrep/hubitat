@@ -2110,7 +2110,7 @@ async function rDevices(){const P='p-devices';loading(P);try{
   if(stale.length)
     tbl('staleTbl',[
       {l:'Name',f:'name',r:r=>dlink(r.id,r.name)},{l:'Type',f:'type'},{l:'Connection',f:'connectionType',r:r=>CD[r.connectionType]||r.connectionType||'-'},{l:'Integration',f:'integration',r:r=>h(r.integration||'-')},
-      {l:'Last Activity',f:'lastActivityMs',r:r=>r.lastActivityMs?new Date(r.lastActivityMs).toLocaleString():'Never'},{l:'Room',f:'room',r:r=>h(r.room||'-')}
+      {l:'Last Activity',f:'lastActivityMs',t:'n',r:r=>r.lastActivityMs?new Date(r.lastActivityMs).toLocaleString():'Never'},{l:'Room',f:'room',r:r=>h(r.room||'-')}
     ],stale,{sc:3,sd:'asc',filter:true,collapse:10,collapseLabel:'Stale Devices'});
   tbl('devTbl',[
     {l:'Name',f:'name',r:r=>dlink(r.id,r.name)},
@@ -2119,7 +2119,7 @@ async function rDevices(){const P='p-devices';loading(P);try{
     {l:'Integration',f:'integration',r:r=>h(r.integration||'-')},
     {l:'Room',f:'room',r:r=>h(r.room||'-')},
     {l:'Status',f:'status',r:r=>sbadge(r.status)},
-    {l:'Last Activity',f:'lastActivityMs',r:r=>r.lastActivityMs?new Date(r.lastActivityMs).toLocaleString():'Never'},
+    {l:'Last Activity',f:'lastActivityMs',t:'n',r:r=>r.lastActivityMs?new Date(r.lastActivityMs).toLocaleString():'Never'},
     {l:'Battery',f:'battery',t:'n',r:r=>bat(r.battery)},
     {l:'Parent',f:'parentAppName',r:r=>r.parentAppName?alink(r.parentAppId,r.parentAppName):r.parentDeviceName?dlink(r.parentDeviceId,r.parentDeviceName):'-'}
   ],d.deviceRows,{filter:true,sc:0,sd:'asc',collapse:10,collapseLabel:'All Devices'});
