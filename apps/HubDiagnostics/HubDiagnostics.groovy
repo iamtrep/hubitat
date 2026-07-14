@@ -2314,8 +2314,9 @@ List extractZigbeeMessageCounts(Map zigbeeData) {
 
 // ===== ANALYSIS MODULES =====
 
-Map analyzeDevices(boolean deep = true) {
-    Map respWrap = hubMapRequest(DEVICES_LIST_PATH, "devices list")
+Map analyzeDevices(boolean deep = true, Map prefetchedDevices = null) {
+    Map respWrap = (prefetchedDevices != null) ? [ok: true, data: prefetchedDevices, error: null]
+                                               : hubMapRequest(DEVICES_LIST_PATH, "devices list")
 
     if (!respWrap.ok || !respWrap.data.devices) {
         logWarn "Failed to fetch devices list"
@@ -3830,9 +3831,10 @@ def readFile(String fileName) {
  * hubMesh live on each entry's `data`; onOffState + hubMeshDisabled come from `data.currentStates`.
  * These aren't in fullJson (or read null there), so the bulk list is the source of truth.
  */
-private Map<Long, Map> buildMeshFieldsMap() {
+private Map<Long, Map> buildMeshFieldsMap(Map prefetchedDevices = null) {
     Map<Long, Map> out = [:]
-    Map wrap = hubMapRequest(DEVICES_LIST_PATH, "devices list (mesh enrichment)", 30)
+    Map wrap = (prefetchedDevices != null) ? [ok: true, data: prefetchedDevices, error: null]
+                                           : hubMapRequest(DEVICES_LIST_PATH, "devices list (mesh enrichment)", 30)
     if (!wrap.ok) { logWarn "mesh enrichment: device list fetch failed: ${wrap.error}"; return out }
     List entries = flattenDeviceList((wrap.data?.devices ?: []) as List)
     entries.each { Object e ->
@@ -4152,6 +4154,11 @@ private void finalizeAudit(String scanId) {
     long enrichStart = now()
     xref.rooms = fetchRoomsForAudit()
 
+    // One fresh devicesList for the whole finalize phase — shared request-scoped (NOT via the
+    // TTL cache: buildMeshFieldsMap extracts live switch state that must not be minutes old).
+    Map finalizeDevWrap = hubMapRequest(DEVICES_LIST_PATH, "devices list (audit finalize)", 30)
+    Map finalizeDevList = finalizeDevWrap.ok ? finalizeDevWrap.data : null
+
     // Z-Wave JS per-node enrichment (only when Z-Wave JS stack is active)
     if (detectZwaveStack() == "js") {
         Map zwData = reqData(ZWAVE_DETAILS_PATH, "Z-Wave details (audit enrichment)", 10)
@@ -4193,7 +4200,7 @@ private void finalizeAudit(String scanId) {
     // result onto the audit records by id so external consumers (e.g. Multi-Hub Inventory) get the
     // same connectionType/integration the SPA shows — without duplicating the classification logic.
     try {
-        List classified = (analyzeDevices(true)?.allDevices ?: []) as List
+        List classified = (analyzeDevices(true, finalizeDevList)?.allDevices ?: []) as List
         Map classById = classified.collectEntries { Map d -> [(d.id?.toString()): d] }
         devices.each { Object devId, Object recObj ->
             Map cls = (Map) classById[devId?.toString()]
@@ -4210,7 +4217,7 @@ private void finalizeAudit(String scanId) {
     // switch state / hubMeshDisabled off the bulk /hub2/devicesList so cross-hub consumers can
     // reconstruct the source↔remote graph. Keyed by device id, same shape as the join above.
     try {
-        Map<Long, Map> meshById = buildMeshFieldsMap()
+        Map<Long, Map> meshById = buildMeshFieldsMap(finalizeDevList)
         devices.each { Object devId, Object recObj ->
             Map mf = (Map) meshById[devId as Long]
             if (mf) {
