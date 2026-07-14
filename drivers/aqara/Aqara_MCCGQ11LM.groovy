@@ -177,6 +177,289 @@ void setBatteryReplacementDate(Date date = null) {
     logInfo("Battery replacement date set to ${dateStr}")
 }
 
+// ─── Zigbee message pipeline ───────────────────────────────────────────────
+
+void parse(String description) {
+    updateHealthStatus()
+    runVersionCheck()
+
+    // --- Xiaomi check-in (cluster 0x0000 attr 0xFF01) is delivered in a
+    // non-ZCL description format. Slice it and hand off to the check-in decoder.
+    if (description?.contains("attrId: FF01")) {
+        Map xiaomiMap = description.split(', ').collectEntries { String entry ->
+            String[] pair = entry.split(': ')
+            [(pair.first()): pair.last()]
+        }
+        logDebug "Parse (Xiaomi check-in): ${xiaomiMap}"
+        parseCheckin(xiaomiMap)
+
+        Date now = new Date()
+        String updateTime = now.toLocaleString()
+        state.lastCheckinMillis = now.time
+        state.lastCheckin = updateTime
+        state.lastUpdate  = updateTime
+        return
+    }
+
+    // --- Standard ZCL paths
+    Map descMap = zigbee.parseDescriptionAsMap(description)
+    if (!descMap) {
+        logError "Parse : Failed to interpret description: ${description}"
+        return
+    }
+
+    logDebug "Parse: ${descMap}"
+
+    // ZDO command (profile 0x0000) — bind responses, mgmt responses, etc.
+    if (descMap.profileId == "0000") {
+        logTrace "Unhandled ZDO command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}"
+        return
+    }
+
+    // ZHA global command (profile 0x0104, no attrId) — Configure Reporting Response etc.
+    if (descMap.profileId == "0104" && descMap.attrId == null) {
+        logTrace "Unhandled ZHA global command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}"
+        return
+    }
+
+    // Attribute report — primary + every entry in additionalAttrs.
+    if (descMap.attrId != null) {
+        parseAttributeReport(descMap)
+        descMap.additionalAttrs?.each { Map extra ->
+            parseAttributeReport(descMap + extra)
+        }
+        state.lastUpdate = new Date().toLocaleString()
+        return
+    }
+
+    logTrace "Unhandled message: ${descMap}"
+}
+
+private void runVersionCheck() {
+    // Auto-reconfigure after a publishCode push (which doesn't fire updated()
+    // on the receiving hub). Guarded so a burst of frames only schedules once.
+    if (state.reconfigurePending) return
+    if (getDeviceDataByName('driver') != CODE_VERSION) {
+        state.reconfigurePending = true
+        runInMillis(100, "runVersionReconfigure")
+    }
+}
+
+/*
+ * Xiaomi/Aqara 0xFF01 check-in payload (cluster 0x0000 attribute 0xFF01)
+ * ─────────────────────────────────────────────────────────────────────
+ * The hex value carried by the FF01 attribute is a length-prefixed sequence
+ * of TLV records:
+ *
+ *     [len][tag][type][value(little-endian)][tag][type][value]...
+ *      1B   1B   1B    DataType.getLength(type) bytes
+ *
+ *   • len     — UINT8 byte count of everything that follows. Skipped.
+ *   • tag     — 1-byte Xiaomi-proprietary attribute id (see table below).
+ *   • type    — 1-byte ZCL data type; DataType.getLength() returns the value
+ *               width in bytes (null for variable-length, which we abort on).
+ *   • value   — little-endian; reverseHexString() flips to big-endian for parse.
+ *
+ * Two delivery paths bundle this payload on MCCGQ11LM:
+ *   - Hourly check-in: FF01 is the *primary* attribute (cluster 0000, attrId
+ *     FF01) and arrives via parse()'s non-ZCL string branch -> parseCheckin().
+ *   - Button press: FF01 rides as an *additionalAttr* alongside a primary
+ *     0x0005 (ModelIdentifier) mfr-specific report -> parseBasic() routes it
+ *     to parseCheckinFromMap(), which normalizes into the same parseCheckin().
+ *
+ * Tag table for lumi.sensor_magnet.aq2 (MCCGQ11LM). Tags 0x64+ are reused
+ * across the lumi.* family for different sensors — do not copy this table
+ * verbatim into a sibling driver; cross-check Z2M's lumi.ts
+ * numericAttributes2Payload first.
+ *
+ *   0x01  battery voltage (mV, UINT16)
+ *   0x03  device chip temperature (°C, INT8; internal NCP, not the sensor)
+ *   0x04  unknown (present in every payload — purpose undocumented)
+ *   0x05  power_outage_count (UINT16) — community drivers mislabel as RSSI dB
+ *   0x06  Xiaomi proprietary cumulative counter (UINT40, model-specific) —
+ *         community drivers mislabel as LQI
+ *   0x07–0x09, 0x0B–0x0C  unknown
+ *   0x0A  Zigbee parent DNI (network identifier)
+ *   0x64  contact state (0 = closed, 1 = open)
+ *
+ * Authoritative reference for the corrected 0x05 / 0x06 semantics:
+ *   zigbee-herdsman-converters/src/lib/lumi.ts (numericAttributes2Payload).
+ */
+private void parseCheckin(Map map) {
+    String hexString = map.value
+    int strLength = hexString.size()
+
+    logInfo("Check-in message.")
+    logDebug("parseCheckin : ${strLength}-char payload")
+
+    if (strLength <= 20) {
+        logDebug("parseCheckin : payload too short to carry sensor data")
+        return
+    }
+
+    int strPosition = 2  // Skip the length-prefix byte.
+
+    while (strPosition < strLength) {
+        int dataTag  = Integer.parseInt(hexString.substring(strPosition,     strPosition + 2), 16)
+        int dataType = Integer.parseInt(hexString.substring(strPosition + 2, strPosition + 4), 16)
+        strPosition += 4
+
+        Integer dataLength = DataType.getLength(dataType)
+        if (dataLength == null || dataLength == -1 || dataLength == 0) {
+            logDebug("Unsupported dataType 0x${Integer.toHexString(dataType)} for tag 0x${Integer.toHexString(dataTag)} (length=${dataLength})")
+            return
+        }
+
+        int payloadEnd = strPosition + dataLength * 2
+        if (payloadEnd > strLength) {
+            logDebug("Ran out of bytes mid-record at tag 0x${Integer.toHexString(dataTag)}")
+            return
+        }
+
+        String dataPayload = reverseHexString(hexString.substring(strPosition, payloadEnd))
+        strPosition = payloadEnd
+
+        String tagDebug = "tag 0x${Integer.toHexString(dataTag)} type 0x${Integer.toHexString(dataType)} payload ${dataPayload}"
+
+        switch (dataTag) {
+            case 0x01:
+                logTrace("$tagDebug (battery voltage)")
+                // parseBattery(dataPayload, 1000)   // wired in Task 3
+                break
+            case 0x03:
+                long chipTemp = parseCheckinInt(dataPayload, dataType)
+                logDebug("$tagDebug (chip temperature ${chipTemp}°C)")
+                state.chipTemperature = chipTemp
+                break
+            case 0x05:
+                long powerOutageCount = parseCheckinInt(dataPayload, dataType)
+                logTrace("$tagDebug (power_outage_count ${powerOutageCount})")
+                state.powerOutageCount = powerOutageCount
+                break
+            case 0x06:
+                long tag06 = parseCheckinInt(dataPayload, dataType)
+                logTrace("$tagDebug (proprietary counter ${tag06})")
+                state.proprietaryCounter06 = tag06
+                break
+            case 0x0A:
+                logTrace("$tagDebug (Zigbee parent DNI)")
+                state.zigbeeParentDNI = dataPayload
+                break
+            case 0x64:
+                logTrace("$tagDebug (contact state — decoded in Task 3)")
+                break
+            case 0x04: case 0x07: case 0x08: case 0x09: case 0x0B: case 0x0C:
+                logTrace("$tagDebug (known unhandled)")
+                break
+            default:
+                logDebug("$tagDebug (unexpected tag)")
+        }
+    }
+}
+
+private void parseCheckinFromMap(Map map) { /* Task 3 */ }
+
+private void parseAttributeReport(Map map) {
+    logTrace("parseAttributeReport() : ${map}")
+    switch (map.cluster) {
+        case "0006":                       // On/Off — contact state
+            parseContact(map); return
+        case "0000":
+            parseBasic(map); return        // Basic cluster; FF01 (attrId) handled inside parseBasic
+    }
+    logUnhandledMessage(map)
+}
+
+private void parseBasic(Map map) {
+    // ZCL Basic cluster (0x0000) attribute reports. attrId 0xFF01 carries the
+    // Xiaomi check-in payload when it rides bundled with a mfr-specific
+    // report (see parseCheckinFromMap). attrId 0x0005 (ModelIdentifier) gets
+    // button-press discrimination in Task 4.
+
+    String value = map.value
+    String encoding = map.encoding
+    switch (map.attrId) {
+        case "0001":  // ApplicationVersion (UINT8)
+            int appVersion = Integer.parseInt(value, 16)
+            updateDataValue("applicationVersion", appVersion.toString())
+            logDebug("ApplicationVersion : ${appVersion}")
+            break
+        case "0004":  // ManufacturerName (Character String)
+            String mfg = hexToText(value)
+            if (mfg) {
+                updateDataValue("manufacturer", mfg)
+                logDebug("ManufacturerName : ${mfg}")
+            }
+            break
+        case "0005":  // ModelIdentifier (button-press discrimination added in Task 4)
+            if (encoding == "42") {
+                String model = hexToText(value)
+                if (model) {
+                    updateDataValue("model", model)
+                    logDebug("ModelIdentifier : ${model}")
+                }
+            }
+            break
+        case "4000":  // SWBuildID (Character String)
+            String sw = hexToText(value)
+            if (sw) {
+                updateDataValue("softwareBuildId", sw)
+                logDebug("SWBuildID : ${sw}")
+            }
+            break
+        case "FF01":  // Bundled check-in TLV (see the parseCheckin doc comment above)
+            parseCheckinFromMap(map)
+            break
+        default:
+            logDebug("Basic cluster : unhandled attrId=${map.attrId} encoding=${encoding} value=${value}")
+    }
+}
+
+private void logUnhandledMessage(Map map) {
+    // Fallthrough logger: messages that didn't match a handled cluster above.
+    // Known ZDO/ZHA admin responses are logged at debug; anything else is a
+    // genuinely-unknown frame and gets a warn that asks the user to report it.
+
+    if (map.cluster == null && map.clusterId == null) {
+        logDebug("Skipped : Empty Message")
+        return
+    }
+
+    switch (map.clusterId) {
+        case "0001":
+            logDebug("Skipped : Power Configuration Response"); return
+        case "0006":
+            logDebug("Skipped : Match Descriptor Request"); return
+        case "0013":
+            logDebug("Skipped : Device Announce Broadcast"); return
+        case "0400":
+            logDebug("Skipped : Illuminance Response"); return
+        case "8004":
+            logDebug("Skipped : Simple Descriptor Response"); return
+        case "8005":
+            logDebug("Skipped : Active End Point Response"); return
+        case "8021":
+            logDebug("Skipped : Bind Response"); return
+    }
+
+    String dataCount = (map.data != null) ? "${map.data.size()} bytes of " : ""
+    logWarn("UNKNOWN DATA - Please report these messages to the developer.")
+    logWarn("Received : endpoint: ${map.endpoint}, cluster: ${map.cluster}, clusterId: ${map.clusterId}, attrId: ${map.attrId}, command: ${map.command} with value: ${map.value} and ${dataCount}data: ${map.data}")
+    logTrace("Full message map : ${map}")
+}
+
+// ─── Sensor value processors ───────────────────────────────────────────────
+
+private void parseContact(Map map) {
+    // On/Off cluster 0x0006 attr 0x0000: 0 = closed, 1 = open. No dedup —
+    // Hubitat coalesces same-value events; the ZHA "open/close/open" phantom
+    // is not present on this app:03 firmware.
+    if (map.attrId != "0000") { logDebug("Contact: ignoring 0006 attr ${map.attrId}"); return }
+    String contact = (map.value == "01") ? "open" : "closed"
+    logInfo("Contact : ${contact}")
+    sendEvent(name: "contact", value: contact)
+}
+
 // ─── Zigbee command primitives ─────────────────────────────────────────────
 
 private void sendZigbeeCommands(List<String> cmds) {
