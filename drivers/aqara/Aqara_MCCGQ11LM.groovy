@@ -263,6 +263,12 @@ void parse(String description) {
         return
     }
 
+    // IAS Zone — MCCGQ11LM does not use IAS, log if any frame appears.
+    if (descMap.clusterId == "0500") {
+        logDebug "IAS Zone message (unexpected for this device): ${descMap}"
+        return
+    }
+
     // Attribute report — primary + every entry in additionalAttrs.
     if (descMap.attrId != null) {
         parseAttributeReport(descMap)
@@ -605,16 +611,6 @@ private void parseBattery(String batteryVoltageHex, int batteryVoltageDivisor) {
 
     sendEvent(name: "battery", value: batteryPct, unit: "%")
     state.batteryStatus = batteryPct > 0 ? "discharging" : "exhausted"
-}
-
-// ─── Zigbee command primitives ─────────────────────────────────────────────
-
-private void sendZigbeeCommands(List<String> cmds) {
-    // sendHubCommand dispatches immediately, unlike returning a List from a
-    // command handler (which the platform queues and flushes later).
-
-    logTrace("sendZigbeeCommands received : ${cmds}")
-    sendHubCommand(new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE))
 }
 
 // ─── Pure-computation utilities ────────────────────────────────────────────
