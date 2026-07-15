@@ -45,6 +45,7 @@ metadata {
         attribute "batteryVoltage", "number"
         attribute "notPresentCounter", "number"
         attribute "restoredCounter", "number"
+        attribute "rejoinCount", "number"
 
         command "resetMeshCounters"
         command "setBatteryReplacementDate"
@@ -65,7 +66,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "1.0.0"
+@Field static final String CODE_VERSION = "1.1.0"
 
 @Field static final int REPORT_INTERVAL_MINUTES = 60
 @Field static final int CHECK_EVERY_MINUTES = 10
@@ -114,6 +115,7 @@ void initialize() {
     // Counters survive code pushes — only seed them when they don't already exist.
     if (device.currentValue("notPresentCounter") == null) sendEvent(name: "notPresentCounter", value: 0, isStateChange: false)
     if (device.currentValue("restoredCounter")  == null) sendEvent(name: "restoredCounter",  value: 0, isStateChange: false)
+    if (device.currentValue("rejoinCount")      == null) sendEvent(name: "rejoinCount",      value: 0, isStateChange: false)
     if (device.currentValue("healthStatus") != "online") sendEvent(name: "healthStatus", value: "online", isStateChange: false)
 
     // Schedule health checking with random jitter so multiple devices don't stampede.
@@ -167,6 +169,7 @@ void push(Integer buttonId) {
 void resetMeshCounters() {
     sendEvent(name: "notPresentCounter", value: 0)
     sendEvent(name: "restoredCounter", value: 0)
+    sendEvent(name: "rejoinCount", value: 0)
     logInfo("Mesh counters reset")
 }
 
@@ -253,6 +256,18 @@ void parse(String description) {
 
     // ZDO command (profile 0x0000) — bind responses, mgmt responses, etc.
     if (descMap.profileId == "0000") {
+        // Device_annce (cluster 0x0013): broadcast by the device on each
+        // (re)join; Hubitat routes this device's own announce here. Use it as a
+        // rejoin marker — the payload carries the new NWK address, not the new
+        // parent (that arrives in the next FF01 check-in, tag 0x0A). No refresh:
+        // this sleepy end device does not usefully answer reads.
+        if (descMap.clusterId == "0013") {
+            int count = (device.currentValue("rejoinCount") ?: 0) + 1
+            sendEvent(name: "rejoinCount", value: count)
+            state.lastRejoin = new Date().toLocaleString()
+            logInfo "Device announce — rejoined the mesh (rejoin #${count}), address ${device.deviceNetworkId}"
+            return
+        }
         logTrace "Unhandled ZDO command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}"
         return
     }
