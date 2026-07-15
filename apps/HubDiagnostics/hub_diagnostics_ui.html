@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.77.0";
+const CODE_VERSION = "5.78.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -666,6 +666,13 @@ function clusterLabel(id,mfrCode){
   return '0x'+k;
 }
 function mfrLabel(code){if(!code)return'';const k=String(code).toUpperCase().padStart(4,'0');return ZB_MFR[k]?ZB_MFR[k]+' ('+k+')':k}
+// Cluster column label. ZDO frames (incl. request-range clusters reached via endpoint 0) render as
+// "ZDO (0xNNNN)" so they never surface the colliding ZCL cluster name — the ZDO message type is shown
+// in the Command column. Non-ZDO frames fall through to the standard ZCL cluster label.
+function rcZbClusterCell(clusterId,zcl){
+  if(zcl&&zcl.isZdo)return'ZDO (0x'+zb4(clusterId)+')';
+  return clusterLabel(clusterId,zcl&&zcl.mfrCode);
+}
 
 // ===== ZCL DECODE (BEGIN) =====
 // Pure ZCL frame decoders for the Zigbee live tail. No DOM deps except rcZbDecodeHtml (uses h()/mfrLabel).
@@ -708,8 +715,9 @@ const ZB_CLUSTER_CMDS={
 
 // ZDO (Zigbee Device Object) clusters — network-layer messages, not ZCL. The cluster ID itself
 // IS the message type (request 0x0000-0x7FFF / response 0x8000-0x80FF). Requests 0x0000-0x003F
-// overlap with ZCL cluster IDs (Basic, PowerCfg, Identify, etc.) and /zigbeeLogsocket doesn't
-// expose the endpoint that would disambiguate them, so we only recognize the response range here.
+// overlap with ZCL cluster IDs (Basic, PowerCfg, Identify, etc.); we only recognize the response
+// range here. (ZDO frames arrive on endpoint 0 — see the EP column — but rcZbParseZcl keys off the
+// cluster ID alone, so request-range collisions stay ambiguous until that dispatch consults the EP.)
 const ZDO_CLUSTERS={
   '8000':'NWK_addr_rsp','8001':'IEEE_addr_rsp','8002':'Node_Desc_rsp','8003':'Power_Desc_rsp',
   '8004':'Simple_Desc_rsp','8005':'Active_EP_rsp','8006':'Match_Desc_rsp',
@@ -718,6 +726,20 @@ const ZDO_CLUSTERS={
   '8030':'Mgmt_NWK_Disc_rsp','8031':'Mgmt_Lqi_rsp','8032':'Mgmt_Rtg_rsp','8033':'Mgmt_Bind_rsp',
   '8034':'Mgmt_Leave_rsp','8036':'Mgmt_Permit_Joining_rsp','8038':'Mgmt_NWK_Update_rsp'
 };
+
+// ZDO request clusters (0x0000-0x7FFF). These share cluster IDs with ZCL application clusters
+// (0x0006 = ZDO Match_Desc_req AND ZCL On/Off), so a frame is only known to be ZDO by its endpoint
+// (0 = ZDO). Endpoint-0 frames are routed here regardless of cluster ID; on this hub-RX socket the
+// common one is Device_annce (a rejoining device broadcasts it).
+const ZDO_REQ={
+  '0000':'NWK_addr_req','0001':'IEEE_addr_req','0002':'Node_Desc_req','0003':'Power_Desc_req',
+  '0004':'Simple_Desc_req','0005':'Active_EP_req','0006':'Match_Desc_req','0013':'Device_annce',
+  '0020':'End_Device_Bind_req','0021':'Bind_req','0022':'Unbind_req','0031':'Mgmt_Lqi_req',
+  '0032':'Mgmt_Rtg_req','0033':'Mgmt_Bind_req','0034':'Mgmt_Leave_req','0036':'Mgmt_Permit_Joining_req',
+  '0038':'Mgmt_NWK_Update_req'
+};
+// Friendly ZDO message name for either range, falling back to raw hex.
+function zdoName(cluster){const k=zb4(cluster);return ZDO_CLUSTERS[k]||ZDO_REQ[k]||('0x'+k)}
 
 // ZDP status byte (first payload byte after TSN in response frames).
 const ZDO_STATUS={
@@ -784,14 +806,24 @@ function zbHx2(x){
   return String(x).trim().replace(/^0x/i,'').toUpperCase().padStart(2,'0');
 }
 function zb4(id){return String(id||'').toUpperCase().replace(/^0X/,'').padStart(4,'0')}
+// Source/destination endpoint (8-bit, 2-hex on the socket, e.g. "01","19","00"). Blank when absent.
+function rcZbEp(ep){
+  if(ep==null||ep==='')return'';
+  if(typeof ep==='number')return(ep&0xFF).toString(16).toUpperCase().padStart(2,'0');
+  return String(ep).trim().replace(/^0x/i,'').toUpperCase().padStart(2,'0');
+}
 
 // Parse a ZCL frame (payload = array of hex-string bytes). Returns a decoded header or null.
 // Handles the manufacturer-specific offset (2-byte mfr code between frame control and TSN).
 // ZDO frames (cluster 0x8000-0x80FF) are dispatched to rcZbParseZdo — they have no ZCL
 // frame-control byte, so applying ZCL parsing produces garbage (bogus mfr flag, wrong dir).
-function rcZbParseZcl(payload,clusterId){
+function rcZbParseZcl(payload,clusterId,endpoint){
   const c4=zb4(clusterId);
-  if(/^80[0-9A-F]{2}$/.test(c4))return rcZbParseZdo(payload,clusterId);
+  // Endpoint 0 is the ZDO endpoint: those frames are network-layer regardless of cluster ID, and
+  // request-range ZDO clusters (0x0000-0x003F) collide with ZCL clusters, so the endpoint is the
+  // only reliable discriminator. Fall back to the 0x80xx response-range test when the socket
+  // didn't carry an endpoint (older platforms / replayed recordings).
+  if(rcZbEp(endpoint)==='00'||/^80[0-9A-F]{2}$/.test(c4))return rcZbParseZdo(payload,clusterId);
   if(!Array.isArray(payload)||!payload.length)return null;
   const b=payload.map(zbHx2);
   const fc=parseInt(b[0],16);
@@ -813,16 +845,18 @@ function rcZbParseZcl(payload,clusterId){
   return{fc,global,mfrSpecific,dir,disableDefault,mfrCode,tsn,cmd,cluster,body,raw:b,truncated:(tsn==null||cmd==null)};
 }
 
-// Parse a ZDO response frame. Layout: [TSN(1)] [Status(1)] [per-cluster payload...].
-// We surface TSN + status only; per-cluster payload unpacking (LQI table rows, IEEE addr, etc.)
-// is intentionally left to the radio-snapshot code path, which already decodes Mgmt_Lqi/Rtg responses.
+// Parse a ZDO frame. Responses (cluster 0x80xx) are [TSN(1)] [Status(1)] [payload...]; requests
+// (cluster 0x00xx, reached via endpoint 0) are [TSN(1)] [request payload...] with NO status byte —
+// reading b[1] as a status there would surface a bogus code. We surface TSN + (response) status only;
+// per-cluster payload unpacking is left to the radio-snapshot path, which decodes Mgmt_Lqi/Rtg responses.
 function rcZbParseZdo(payload,clusterId){
   const cluster=zb4(clusterId);
-  if(!Array.isArray(payload)||!payload.length)return{isZdo:true,cluster,tsn:null,status:null,body:[],raw:[],truncated:true};
+  const isResponse=/^80[0-9A-F]{2}$/.test(cluster);
+  if(!Array.isArray(payload)||!payload.length)return{isZdo:true,isZdoResponse:isResponse,cluster,tsn:null,status:null,body:[],raw:[],truncated:true};
   const b=payload.map(zbHx2);
   const tsn=b[0]||null;
-  const status=b.length>1?b[1].toUpperCase():null;
-  return{isZdo:true,cluster,tsn,status,body:b.slice(2),raw:b,truncated:(tsn==null)};
+  const status=(isResponse&&b.length>1)?b[1].toUpperCase():null;
+  return{isZdo:true,isZdoResponse:isResponse,cluster,tsn,status,body:b.slice(isResponse?2:1),raw:b,truncated:(tsn==null)};
 }
 
 // Friendly cluster-command name (tries the frame's direction first, then the other). Null if unknown.
@@ -835,7 +869,7 @@ function zbClusterCmdName(cluster,code,dir){
 // the message type (e.g. 0x8001 = IEEE_addr_rsp), so we render the cluster name instead of a command.
 function resolveCmd(zcl){
   if(!zcl)return'';
-  if(zcl.isZdo)return ZDO_CLUSTERS[zcl.cluster]||('0x'+zcl.cluster);
+  if(zcl.isZdo)return zdoName(zcl.cluster);
   if(zcl.cmd==null)return'';
   const c=zcl.cmd;
   const name=zcl.global?ZB_GLOBAL_CMDS[c]:zbClusterCmdName(zcl.cluster,c,zcl.dir);
@@ -843,8 +877,9 @@ function resolveCmd(zcl){
 }
 
 // Direction arrow for the Command column. Device is the cluster server by default; for OTA (0019) the device is the client.
-// ZDO frames have no ZCL frame-control byte and /zigbeeLogsocket doesn't carry src/dst, so direction
-// can't be reliably inferred — return blank rather than emit a misleading arrow.
+// ZDO frames have no ZCL frame-control byte, so we can't read a direction bit from them — return
+// blank rather than emit a misleading arrow. (The socket carries src/dst endpoints but not src/dst
+// node addresses; all frames are zigbeeRx, i.e. device→hub, which the ZCL dir bit already reflects.)
 function rcZbDirArrow(zcl){
   if(!zcl||zcl.isZdo)return'';
   const deviceIsClient=(zcl.cluster==='0019');
@@ -930,10 +965,10 @@ function rcZbDecodedSummary(zcl){
 // Expanded-row "Decoded" breakdown (frame-control flags + command + payload summary). Browser-only (uses h()/mfrLabel).
 function rcZbDecodeHtml(rawText){
   let f;try{f=JSON.parse(rawText)}catch(e){return''}
-  const zcl=rcZbParseZcl(f.payload,f.clusterId);if(!zcl)return'';
+  const zcl=rcZbParseZcl(f.payload,f.clusterId,f.sourceEndpoint);if(!zcl)return'';
   const lines=[];
   if(zcl.isZdo){
-    lines.push('<b>ZDO message:</b> '+h(ZDO_CLUSTERS[zcl.cluster]||'unknown')+' (0x'+zcl.cluster+')');
+    lines.push('<b>ZDO message:</b> '+h(zdoName(zcl.cluster))+' (0x'+zcl.cluster+')');
     if(zcl.tsn)lines.push('<b>TSN:</b> 0x'+h(zcl.tsn));
     if(zcl.truncated)lines.push('<span style="color:var(--warn,#e0a800)">Frame truncated</span>');
     const sum=rcZbDecodedSummary(zcl);
@@ -3752,16 +3787,17 @@ function rcZbDniHex(id){
 
 function rcZbFrameToRow(text){
   let f;try{f=JSON.parse(text)}catch(e){return null}
-  const zcl=rcZbParseZcl(f.payload,f.clusterId);
+  const zcl=rcZbParseZcl(f.payload,f.clusterId,f.sourceEndpoint);
   const sum=zcl?rcZbDecodedSummary(zcl):{short:'',full:''};
   // Platform inconsistently prefixes the timestamp with the date (YYYY-MM-DD ); strip it.
   const tRaw=f.time||'';
   return{
     time:tRaw.replace(/^\d{4}-\d{2}-\d{2}\s+/,''),
     id:rcZbDniHex(f.id),
+    ep:rcZbEp(f.sourceEndpoint),                      // source endpoint — disambiguates multi-endpoint devices (00 = ZDO)
     name:f.name||'',
     _deviceId:f.deviceId,
-    cluster:f.clusterId?clusterLabel(f.clusterId,zcl&&zcl.mfrCode):'',
+    cluster:f.clusterId?rcZbClusterCell(f.clusterId,zcl):'',
     cmd:zcl?resolveCmd(zcl):'',                       // decoded, offset-correct command
     dirArrow:zcl?rcZbDirArrow(zcl):'',                // ←hub / →dev, folded into the Command cell
     mfrMark:zcl&&zcl.mfrSpecific?' (mfr)':'',
@@ -3777,7 +3813,7 @@ function rcZbFilterCard(){
   return `
     <div class="card" style="margin-bottom:12px">
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <input id="rc-zb-f-q" type="text" placeholder="Filter live tail… (name, DNI, cluster, command, decoded value, LQI, RSSI)" style="flex:1;min-width:260px;padding:6px 10px">
+        <input id="rc-zb-f-q" type="text" placeholder="Filter live tail… (name, DNI, EP, cluster, command, decoded value, LQI, RSSI)" style="flex:1;min-width:260px;padding:6px 10px">
         <span style="font-size:12px;opacity:.7">Substring match across all columns; space-separated terms all must match. Filters the live tail only — the recording stays full-fidelity.</span>
       </div>
     </div>`;
@@ -3792,11 +3828,12 @@ function rcZbReadFilters(){
 
 // Compose the same text the live tail shows for a frame, so the single filter box matches what the user sees.
 function rcZbFrameHaystack(frame){
-  const zcl=rcZbParseZcl(frame.payload,frame.clusterId);
+  const zcl=rcZbParseZcl(frame.payload,frame.clusterId,frame.sourceEndpoint);
   const sum=zcl?rcZbDecodedSummary(zcl):{short:''};
   return [
     (frame.time||'').replace(/^\d{4}-\d{2}-\d{2}\s+/,''), frame.name, rcZbDniHex(frame.id),
-    clusterLabel(frame.clusterId||'',zcl&&zcl.mfrCode),
+    rcZbEp(frame.sourceEndpoint),
+    rcZbClusterCell(frame.clusterId||'',zcl),
     zcl?rcZbDirArrow(zcl):'', zcl?resolveCmd(zcl):'', zcl&&zcl.mfrSpecific?'mfr':'',
     sum.short, frame.lastHopLqi, frame.lastHopRssi
   ].join(' ').toLowerCase();
@@ -3873,7 +3910,7 @@ function rcZbRenderAggregates(){
   const devExtra=f=>({deviceId:f.deviceId});
   const top1=rcZbAggregateBy(parsed1,devKey,devExtra).slice(0,10);
   const top5=rcZbAggregateBy(parsed5,devKey,devExtra).slice(0,10);
-  const clusters=rcZbAggregateBy(parsed5,f=>{if(!f.clusterId)return null;const z=rcZbParseZcl(f.payload,f.clusterId);return clusterLabel(f.clusterId,z&&z.mfrCode)}).slice(0,15);
+  const clusters=rcZbAggregateBy(parsed5,f=>{if(!f.clusterId)return null;const z=rcZbParseZcl(f.payload,f.clusterId,f.sourceEndpoint);return rcZbClusterCell(f.clusterId,z)}).slice(0,15);
 
   const truncNote1=win1.fullCoverage?'':'<div class="warn-note" style="font-size:12px;color:var(--warn);margin-bottom:4px">Window truncated to last '+Math.round((Date.now()-win1.coverFrom)/1000)+' s of buffer.</div>';
   const truncNote5=win5.fullCoverage?'':'<div class="warn-note" style="font-size:12px;color:var(--warn);margin-bottom:4px">Window truncated to last '+Math.round((Date.now()-win5.coverFrom)/1000)+' s of buffer.</div>';
@@ -4040,7 +4077,7 @@ function rcZbRenderTailHtml(rows, selectedRaw){
   const td='padding:5px 10px;font-size:12px;border-top:1px solid rgba(255,255,255,0.05);vertical-align:top';
   const tdMono=td+';font-family:ui-monospace,SFMono-Regular,Menlo,monospace';
   let html='<table style="width:100%;border-collapse:collapse"><thead><tr>';
-  ['Time','Name','DNI','LQI','RSSI','Cluster','Command','Decoded'].forEach(l=>html+='<th style="'+th+'">'+l+'</th>');
+  ['Time','Name','DNI','EP','LQI','RSSI','Cluster','Command','Decoded'].forEach(l=>html+='<th style="'+th+'">'+l+'</th>');
   html+='</tr></thead><tbody>';
   rows.forEach((r,idx)=>{
     const sel=r._raw===selectedRaw;
@@ -4050,6 +4087,7 @@ function rcZbRenderTailHtml(rows, selectedRaw){
     html+='<td style="'+td+';white-space:nowrap">'+h(r.time)+'</td>';
     html+='<td style="'+td+'">'+(r._deviceId?dlink(r._deviceId,r.name):h(Obf.nm(r.name)))+'</td>';
     html+='<td style="'+tdMono+'">'+h(r.id)+'</td>';
+    html+='<td style="'+tdMono+';text-align:right">'+h(r.ep||'')+'</td>';
     html+='<td style="'+td+';text-align:right">'+h(String(r.lqi))+'</td>';
     html+='<td style="'+td+';text-align:right">'+h(String(r.rssi))+'</td>';
     html+='<td style="'+td+'">'+h(r.cluster)+'</td>';
