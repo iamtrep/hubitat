@@ -140,6 +140,7 @@ preferences {
     section("Logging") {
         input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
         input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
+        input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
     }
 }
 
@@ -160,12 +161,12 @@ void updated() {
 }
 
 void deviceTypeUpdated() {
-    logDebug "driver change detected"
+    logCfg "driver change detected"
 }
 
 void initialize() {
     if (state.version != CODE_VERSION) {
-        logWarn "New driver version: ${CODE_VERSION} (was: ${state.version})"
+        logVer "New driver version: ${CODE_VERSION} (was: ${state.version})"
         state.version = CODE_VERSION
     }
 
@@ -175,7 +176,7 @@ void initialize() {
 
     String sid = resolveStationId()
     if (!sid) {
-        logInfo "No station configured — auto-detecting nearest station from hub location"
+        logCfg "No station configured — auto-detecting nearest station from hub location"
         findNearestStation()
         return
     }
@@ -207,7 +208,7 @@ void schedulePoll() {
             cron = "${rng.nextInt(60)} ${rng.nextInt(60)} */${hours} ? * *"
         }
         schedule(cron, "refresh")
-        logDebug "Scheduled polling every ${rate} minutes"
+        logSched "Scheduled polling every ${rate} minutes"
     }
 }
 
@@ -231,7 +232,7 @@ void refresh() {
 // ---------- Observation ----------
 
 void fetchObservation(String sid) {
-    logDebug "Fetching observation for ${sid}"
+    logNet "Fetching observation for ${sid}"
 
     // Query goes in the query: map, not inline in the uri: firmware 2.5.1.x drops an
     // inline uri query string. All values here are URL-safe.
@@ -328,7 +329,7 @@ private void checkObservationStaleness() {
 // ---------- Forecast ----------
 
 void fetchForecast(String sid) {
-    logDebug "Fetching forecast for ${sid}"
+    logNet "Fetching forecast for ${sid}"
 
     Map params = [
         uri: "${API_BASE}/aqhi-forecasts-realtime/items",
@@ -521,7 +522,7 @@ void buildForecastHtml(List<Map> forecasts) {
 
 void fetchAlerts(String zoneCode) {
     String url = "${ALERT_API_BASE}/en/AQHIAlert/${zoneCode}"
-    logDebug "Fetching alerts: ${url}"
+    logNet "Fetching alerts: ${url}"
 
     Map params = [
         uri: url,
@@ -579,7 +580,7 @@ void findNearestStation() {
         return
     }
 
-    logInfo "Finding nearest AQHI station to hub location (${hubLat}, ${hubLon})..."
+    logNet "Finding nearest AQHI station to hub location (${hubLat}, ${hubLon})..."
 
     Map params = [
         uri: "${API_BASE}/aqhi-stations/items",
@@ -638,7 +639,7 @@ void parseStationsResponse(resp, BigDecimal hubLat, BigDecimal hubLon) {
         state.autoStationId = nearestId
         state.autoStationName = nearestName
         state.autoStationDistance = Math.round(nearestDist) as int
-        logInfo "Nearest station: ${nearestName} (${nearestId}), ${Math.round(nearestDist)} km away"
+        logNet "Nearest station: ${nearestName} (${nearestId}), ${Math.round(nearestDist)} km away"
         sendEvent(name: "stationName", value: nearestName)
 
         schedulePoll()
@@ -697,11 +698,23 @@ long parseISO8601(String dt) {
     }
 }
 
-// Logging
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
 
-void logInfo(String msg) { log.info "${device.displayName}: ${msg}" }
-void logWarn(String msg) { log.warn "${device.displayName}: ${msg}" }
-void logDebug(String msg) { if (debugEnable) log.debug "${device.displayName}: ${msg}" }
+void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { log.info  logp('⬆️') + m }
+void logCfg  (String m) { log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { log.info  logp('📦') + m }
+void logVer  (String m) { log.info  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }
 
 void turnOffDebugLogging() {
     logWarn "Debug logging disabled"
