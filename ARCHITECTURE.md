@@ -104,7 +104,13 @@ if (debugEnable) {
 }
 ```
 
-Implement private `logTrace`/`logDebug`/`logInfo`/`logWarn`/`logError` that check the corresponding preference and prefix `${device}` (drivers) or `${app.label}` (apps).
+Implement the category-based emoji log helpers defined in
+[`docs/logging-emoji-scheme.md`](docs/logging-emoji-scheme.md): one emoji per
+line encoding the line's *category* (the UI already colors by level), with
+`logWarn`/`logError` carrying severity flags and `logTrace` the raw firehose.
+Each helper checks the file's existing debug/trace gate and prefixes
+`${device.displayName}` (drivers) or `${app.getLabel()}` (apps). Plain
+`logInfo`/`logDebug` remain emoji-less for uncategorized lines.
 
 Auto-disable debug and trace after about 30 minutes:
 
