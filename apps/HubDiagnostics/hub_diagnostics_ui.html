@@ -138,7 +138,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.78.0";
+const CODE_VERSION = "5.78.1";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -783,6 +783,9 @@ const ZB_ATTRS={
   '0403':{'0000':'MeasuredValue','0001':'MinMeasuredValue','0002':'MaxMeasuredValue','0010':'ScaledValue','0011':'MinScaledValue','0012':'MaxScaledValue','0014':'Scale'},
   '0405':{'0000':'MeasuredValue','0001':'MinMeasuredValue','0002':'MaxMeasuredValue','0003':'Tolerance'},
   '0406':{'0000':'Occupancy','0001':'OccupancySensorType','0010':'PIROccupiedToUnoccupiedDelay','0011':'PIRUnoccupiedToOccupiedDelay'},
+  // 042E is ZCL tvocMeasurement (labelled VOC above); attr 0x0000 is the measured value like other 0x04xx sensors.
+  // Vendors (e.g. ThirdReality mfr 0x1407) hang radar config on 0xF001-F007 of this same cluster — those stay raw hex.
+  '042E':{'0000':'MeasuredValue'},
   '0500':{'0000':'ZoneState','0001':'ZoneType','0002':'ZoneStatus','0010':'IAS_CIE_Address','0011':'ZoneID'},
   '0702':{'0000':'CurrentSummationDelivered','0001':'CurrentSummationReceived','0200':'Status','0400':'InstantaneousDemand','0300':'UnitofMeasure','0301':'Multiplier','0302':'Divisor','0303':'SummationFormatting','0304':'DemandFormatting','0306':'MeteringDeviceType'},
   '0B04':{'0000':'MeasurementType','0300':'ACFrequency','0501':'LineCurrent','0502':'ActiveCurrent','0503':'ReactiveCurrent','0505':'RMSVoltage','0508':'RMSCurrent','050B':'ActivePower','050E':'ReactivePower','050F':'ApparentPower','0510':'PowerFactor','0600':'ACVoltageMultiplier','0601':'ACVoltageDivisor','0602':'ACCurrentMultiplier','0603':'ACCurrentDivisor','0604':'ACPowerMultiplier','0605':'ACPowerDivisor'},
