@@ -16,7 +16,7 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.2.11"
+@Field static final String CODE_VERSION = "0.2.10"
 
 // Custom cluster for radar config and TVOC
 @Field static final int CLUSTER_RADAR = 0x042E
@@ -273,17 +273,6 @@ void configure() {
     cmds += zigbee.configureReporting(0x0008, 0x0000, DataType.UINT8, 1, 3600, 1)      // Level
     cmds += zigbee.configureReporting(0x0300, ATTR_COLOR_TEMP_MIREDS, DataType.UINT16, 1, 3600, 1)
     cmds += zigbee.configureReporting(0x0300, ATTR_COLOR_MODE, DataType.ENUM8, 0, 3600)
-
-    // Radar config block F002-F007: firmware heartbeats these static config attrs ~every
-    // 10s, flooding 0x042E. COV-only reporting (max=0) stops the heartbeat while keeping
-    // change reporting. Must omit mfgCode — the 0x1407-qualified variant is silently ignored;
-    // the plain variant is honored. Re-applied here because an OTA resets reporting to the flood.
-    cmds += zigbee.configureReporting(CLUSTER_RADAR, ATTR_DETECT_DISTANCE,   DataType.UINT8,  10, 0, 1)  // F002
-    cmds += zigbee.configureReporting(CLUSTER_RADAR, ATTR_TVOC_THRESHOLD,    DataType.UINT16, 10, 0, 1)  // F003
-    cmds += zigbee.configureReporting(CLUSTER_RADAR, ATTR_MOTION_SENS,       DataType.UINT8,  10, 0, 1)  // F004
-    cmds += zigbee.configureReporting(CLUSTER_RADAR, ATTR_PRESENCE_SENS,     DataType.UINT8,  10, 0, 1)  // F005
-    cmds += zigbee.configureReporting(CLUSTER_RADAR, ATTR_HOLD_TIME,         DataType.UINT8,  10, 0, 1)  // F006
-    cmds += zigbee.configureReporting(CLUSTER_RADAR, ATTR_TVOC_ALERT_ENABLE, DataType.UINT8,  10, 0, 1)  // F007
 
     sendZigbeeCommands(cmds)
 
