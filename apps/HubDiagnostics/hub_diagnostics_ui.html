@@ -51,6 +51,10 @@ tr:nth-child(even){background:var(--alt)} tr:hover{background:var(--hover)}
 
 .badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
 .b-ok{background:#e8f5e9;color:var(--ok)} .b-warn{background:#fff3e0;color:var(--warn)} .b-crit{background:#ffebee;color:var(--crit)} .b-muted{background:#eeeeee;color:var(--muted)}
+.badge.clk{cursor:pointer} .badge.clk:hover{filter:brightness(.96);text-decoration:underline}
+@keyframes cardflash{0%{box-shadow:0 0 0 3px var(--primary)}100%{box-shadow:0 0 0 0 transparent}} .card.flash{animation:cardflash 1.4s ease-out}
+/* Clear the sticky header (.hdr 42px + .tabs ~40px) when a pill scrolls a card into view. */
+.card{scroll-margin-top:92px}
 .b-builtin{background:#e8eaf6;color:#3949ab} .b-community{background:#fce4ec;color:#c62828} .b-platform{background:#f3e8ff;color:#7c3aed}
 
 .alert{padding:8px 12px;border-radius:6px;margin-bottom:6px;font-size:13px;display:flex;align-items:center;gap:6px}
@@ -138,7 +142,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.78.2";
+const CODE_VERSION = "5.80.4";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -155,6 +159,9 @@ const MOCK_DATA = {
 };
 
 const T='${access_token}', B='${api_base}', REPORT=window.REPORT_DATA||null, cache={};
+// Hub admin-UI origin (e.g. http://192.0.2.10), derived from the API base — used to build
+// direct links into the hub's own settings pages instead of printing navigation breadcrumbs.
+const HUB_ORIGIN=(B.match(/^(https?:\/\/[^\/]+)\/apps\/api\//)||[])[1]||'';
 (function(){ const m = B.match(/^(https?:\/\/[^\/]+)\/apps\/api\/(\d+)/); const el=document.getElementById('cfgLink');
   if (m && el) el.href = m[1]+'/installedapp/configure/'+m[2]; else if (el) el.style.display='none'; })();
 let curTab = localStorage.getItem('hub_diag_tab') || 'dashboard';
@@ -1136,6 +1143,7 @@ function composeAlerts(d){
     out.push({key:'hubMessage',name:stripped,severity:'info'});
   });
   if(sig.ethernetAndWifi) out.push({severity:'warning',name:'Ethernet and WiFi both active — disable WiFi when using Ethernet'});
+  if(sig.bonjourRestartsScheduled) out.push({severity:'warning',name:'mDNS/Bonjour periodic restart is enabled — known to cause LAN multicast traffic spikes; disable unless you have HomeKit or Hub Mesh connectivity issues'});
   // Z-Wave radio health (derived hub-side from one zwaveDetails fetch).
   const ghost=sig.zwaveGhostCount||0,failed=sig.zwaveFailedCount||0,problem=sig.zwaveProblemCount||0;
   if(ghost>0) out.push({severity:'critical',name:`${ghost} Z-Wave ghost node${ghost>1?'s':''} — no Hubitat device, remove from mesh`});
@@ -1748,6 +1756,9 @@ function tbl(cid,cols,rows,opts={}){
 }
 
 // ===== LOADING / ERROR =====
+// Smooth-scroll a status pill to its detail card and briefly flash it. No-ops if the card
+// isn't rendered (e.g. Matter pill when no Matter card is present) — safe to call on any pill.
+function scrollToCard(id){const el=document.getElementById(id);if(!el)return;el.scrollIntoView({behavior:'smooth',block:'start'});el.classList.remove('flash');void el.offsetWidth;el.classList.add('flash');setTimeout(()=>el.classList.remove('flash'),1400)}
 function loading(id){document.getElementById(id).innerHTML='<div class="loading"><div class="spinner"></div><div>Loading...</div></div>'}
 function err(id,e,fn){document.getElementById(id).innerHTML='<div class="err"><div>'+h(e.message||String(e))+'</div><button onclick="('+fn.name+')()">Retry</button></div>'}
 
@@ -2345,18 +2356,26 @@ async function rNetwork(){const P='p-network';loading(P);try{
   //                 since the local feature is up even if no other hub has joined)
   if(d.radioHealth){const rh=d.radioHealth;
     if(rh.supported){
-      const badge=(name,state)=>{
+      // Each pill links to its detail card below (scrollToCard); target='' renders a plain pill.
+      const badge=(name,state,target)=>{
         const cls=state==='online'?'b-ok':state==='offline'?'b-crit':state==='disabled'?'b-muted':'b-warn';
         const lbl=state==='online'?'ONLINE':state==='offline'?'OFFLINE':state==='disabled'?'DISABLED':'N/A';
-        return '<span class="badge '+cls+'">'+name+': '+lbl+'</span>';
+        const clk=target?' clk" onclick="scrollToCard(\''+target+'\')" title="Show '+name+' details':'';
+        return '<span class="badge '+cls+clk+'">'+name+': '+lbl+'</span>';
       };
       const radioState=(enabled,health)=>enabled===false?'disabled':health===true?'online':health===false?'offline':'unknown';
       const matterState=()=>!d.matter||d.matter.enabled===false?'disabled':d.matter.networkState==='Online'?'online':'offline';
       const hubMeshState=()=>!d.hubMesh||d.hubMesh.enabled===false?'disabled':(d.hubMesh.peers||[]).some(p=>p.offline)?'offline':'online';
-      let badges=badge('Z-Wave',radioState(d.zwave&&d.zwave.enabled,rh.zwave))
-               + badge('Zigbee',radioState(d.zigbee&&d.zigbee.enabled,rh.zigbee))
-               + badge('Matter',matterState())
-               + badge('Hub Mesh',hubMeshState());
+      let badges=badge('Z-Wave',radioState(d.zwave&&d.zwave.enabled,rh.zwave),'nc-zwave')
+               + badge('Zigbee',radioState(d.zigbee&&d.zigbee.enabled,rh.zigbee),'nc-zigbee')
+               + badge('Matter',matterState(),'nc-matter')
+               + badge('Hub Mesh',hubMeshState(),'nc-hubmesh');
+      // mDNS/Bonjour is always up (the platform has no off switch), so the pill carries no
+      // ON/OFF word — bare "mDNS" when healthy. The one thing that varies is whether periodic
+      // Bonjour restarts are scheduled (a LAN multicast footgun); that surfaces as amber
+      // "mDNS: RESTARTS". Own span, not badge(): it doesn't fit the online/offline model.
+      const mdnsRestarts=!!(d.network&&d.network.restartBonjourOnSchedule);
+      badges+='<span class="badge clk '+(mdnsRestarts?'b-warn':'b-ok')+'" onclick="scrollToCard(\'nc-mdns\')" title="Show mDNS details">mDNS'+(mdnsRestarts?': RESTARTS':'')+'</span>';
       o+='<div class="card"><div class="card-b"><div style="display:flex;gap:8px;flex-wrap:wrap">'+badges+'</div></div></div>';
     }
   }
@@ -2390,7 +2409,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
     o+='</div></div>'}
   // Zigbee
   if(d.zigbee){const z=d.zigbee;
-    o+='<div class="card"><div class="card-h">Zigbee Network</div><div class="card-b"><div class="ng">';
+    o+='<div class="card" id="nc-zigbee"><div class="card-h">Zigbee Network</div><div class="card-b"><div class="ng">';
     o+=ni('Enabled',z.enabled?'Yes':'No');o+=ni('Healthy',z.healthy?'Yes':'No',z.healthy?'var(--ok)':'var(--crit)');
     o+=ni('Channel',z.channel,([15,20,25].includes(z.channel)?'var(--ok)':'var(--warn)'));
     o+=ni('PAN ID',z.panId);o+=ni('Extended PAN ID',z.extendedPanId);
@@ -2420,7 +2439,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
     o+='</div></div>'}
   // Z-Wave
   if(d.zwave){const z=d.zwave;
-    o+='<div class="card"><div class="card-h">Z-Wave Network</div><div class="card-b"><div class="ng">';
+    o+='<div class="card" id="nc-zwave"><div class="card-h">Z-Wave Network</div><div class="card-b"><div class="ng">';
     o+=ni('Enabled',z.enabled?'Yes':'No');o+=ni('Healthy',z.healthy?'Yes':'No',z.healthy?'var(--ok)':'var(--crit)');
     o+=ni('Version',z.version||'N/A');
     if(d.zipgatewayVersion)o+=ni('Zip Gateway',d.zipgatewayVersion);
@@ -2515,7 +2534,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
   }
   // Matter
   if(d.matter){const m=d.matter;
-    o+='<div class="card"><div class="card-h">Matter</div><div class="card-b">';
+    o+='<div class="card" id="nc-matter"><div class="card-h">Matter</div><div class="card-b">';
     o+='<div class="ng">';
     o+=ni('Enabled',m.enabled!=null?(m.enabled?'Yes':'No'):'N/A');
     o+=ni('Installed',m.installed!=null?(m.installed?'Yes':'No'):'N/A');
@@ -2538,7 +2557,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
   }
   // Hub Mesh
   if(d.hubMesh){const hm=d.hubMesh;
-    o+='<div class="card"><div class="card-h">Hub Mesh</div><div class="card-b">';
+    o+='<div class="card" id="nc-hubmesh"><div class="card-h">Hub Mesh</div><div class="card-b">';
     o+='<div class="ng">';
     o+=ni('Status',hm.enabled?'Enabled':'Disabled',hm.enabled?'var(--ok)':'var(--warn)');
     o+=ni('Shared Devices',hm.sharedDevices);o+=ni('Linked Devices',hm.linkedDevices);
@@ -2552,7 +2571,17 @@ async function rNetwork(){const P='p-network';loading(P);try{
   }
   // mDNS Discovery (v5.9.1)
   if(d.mdns&&d.mdns.endpoints){const md=d.mdns;
-    o+='<div class="card"><div class="card-h">mDNS Discovery ('+md.totalEndpoints+' endpoints, '+md.totalServiceTypes+' service types)</div><div class="card-b">';
+    o+='<div class="card" id="nc-mdns"><div class="card-h">mDNS Discovery ('+md.totalEndpoints+' endpoints, '+md.totalServiceTypes+' service types)</div><div class="card-b">';
+    // Surface the Bonjour-restart setting ONLY when it's ON — an actionable warning (problem +
+    // consequence + fix). When off there's nothing to report; the endpoint table stands alone.
+    // Plain divs, NOT the .alert class (display:flex would column-split the text).
+    if(d.network&&d.network.restartBonjourOnSchedule){
+      o+='<div style="margin-bottom:10px;padding:8px 12px;border-radius:6px;background:#fff3e0;border-left:4px solid var(--warn);color:#e65100;font-size:12px;line-height:1.5">'
+        +'<div style="font-weight:600;margin-bottom:5px">⚠ Periodic Bonjour restart is ON</div>'
+        +'<div style="margin-bottom:5px">Reboots the mDNS responder on a schedule — a known cause of LAN multicast traffic spikes.</div>'
+        +'<div>Turn off in the hub\'s '+(HUB_ORIGIN?'<a href="'+HUB_ORIGIN+'/hub/edit" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;font-weight:600">Network Setup</a>':'<b>Network Setup</b>')+' (Bonjour options), unless you need it to recover HomeKit or Hub Mesh connectivity.</div>'
+        +'</div>';
+    }
     if(md.endpoints.length){o+='<div id="mdnsTbl"></div>'}
     else o+='<div class="muted">No mDNS endpoints discovered.</div>';
     o+='</div></div>';

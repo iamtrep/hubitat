@@ -671,12 +671,35 @@ else:
     # v5.38.0: ghostNodeCount split into zwaveGhostCount/zwaveFailedCount/zwaveProblemCount
     # + zwaveRadioUpdate so the SPA roll-up (composeAlerts) and favicon reflect each distinctly.
     expected_sig_keys = ["platformAlerts", "hubMessages", "ethernetAndWifi",
+                         "bonjourRestartsScheduled",
                          "zwaveGhostCount", "zwaveFailedCount", "zwaveProblemCount", "zwaveRadioUpdate"]
     missing = [k for k in expected_sig_keys if k not in sig]
     if missing:
         fail(f"alertSignals missing keys: {missing}")
     else:
         ok(f"alertSignals shape ok (platformAlerts={len(sig.get('platformAlerts', []))}, hubMessages={len(sig.get('hubMessages', []))}, zwave ghost/failed/problem={sig.get('zwaveGhostCount')}/{sig.get('zwaveFailedCount')}/{sig.get('zwaveProblemCount')}, radioUpdate={sig.get('zwaveRadioUpdate')})")
+
+    # v5.79.0: bonjourRestartsScheduled — the mDNS/Bonjour periodic-restart footgun (LAN
+    # multicast spikes). Must be bool and match the raw restartBonjourOnSchedule the /api/network
+    # payload passes through (that field rides net["network"], not /api/health).
+    bonjour = sig.get("bonjourRestartsScheduled")
+    if not isinstance(bonjour, bool):
+        fail(f"alertSignals.bonjourRestartsScheduled must be bool, got {type(bonjour).__name__}")
+    else:
+        # 'net' was fetched in the /api/network section above (module scope).
+        ncfg = (net.get("network") or {}) if "_error" not in net else {}
+        src = ncfg.get("restartBonjourOnSchedule")
+        if src is None:
+            # Field absent (legacy hub without the toggle, or network fetch failed) → signal
+            # must be False, never a misread True.
+            if bonjour is not False:
+                fail("bonjourRestartsScheduled must be False when restartBonjourOnSchedule is absent")
+            else:
+                ok("bonjourRestartsScheduled ok (False; hub omits restartBonjourOnSchedule)")
+        elif bool(src) != bonjour:
+            fail(f"bonjourRestartsScheduled ({bonjour}) != networkConfiguration.restartBonjourOnSchedule ({src})")
+        else:
+            ok(f"bonjourRestartsScheduled ok ({bonjour}), matches network config")
 
     # v5.11.1+ CPU info chips
     if "cpuInfo" in health:

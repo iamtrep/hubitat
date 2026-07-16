@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "5.78.2"
+@Field static final String CODE_VERSION = "5.80.4"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -1381,6 +1381,10 @@ Map getAlertSignals(Map shared = [:]) {
         networkConfig = r.ok ? r.data : null
     }
     boolean ethernetAndWifi = (networkConfig && networkConfig.hasEthernet && networkConfig.hasWiFi) as boolean
+    // Periodic Bonjour restarts (Network Setup → Bonjour options) cause LAN multicast spikes;
+    // the platform recommends leaving it off. containsKey guard: legacy hubs omit the field —
+    // treat absent as "not applicable" (no alert), never a misread false.
+    boolean bonjourRestartsScheduled = (networkConfig?.containsKey('restartBonjourOnSchedule') && networkConfig.restartBonjourOnSchedule) as boolean
 
     // Z-Wave ghost/failed/problem signals \u2014 served from the shared 60s radio cache so
     // Dashboard/Health loads never pay a cold 8s fetch more than once per window.
@@ -1400,6 +1404,7 @@ Map getAlertSignals(Map shared = [:]) {
         spammyDevicesMessage: hubAlerts?.spammyDevicesMessage,
         hubMessages:          hubMessages,
         ethernetAndWifi:      ethernetAndWifi,
+        bonjourRestartsScheduled: bonjourRestartsScheduled,
         zwaveGhostCount:      (zwSignals.ghostCount   ?: 0) as int,
         zwaveFailedCount:     (zwSignals.failedCount  ?: 0) as int,
         zwaveProblemCount:    (zwSignals.problemCount ?: 0) as int,
