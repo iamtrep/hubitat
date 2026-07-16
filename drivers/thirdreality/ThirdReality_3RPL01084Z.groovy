@@ -16,7 +16,7 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.2.9"
+@Field static final String CODE_VERSION = "0.2.10"
 
 // Custom cluster for radar config and TVOC
 @Field static final int CLUSTER_RADAR = 0x042E
@@ -654,28 +654,30 @@ void setColor(Map value) {
     sendZigbeeCommands(cmds)
 }
 
+// Move to Hue (cmd 0x00): Hue u8 + Direction u8 (0 = shortest) + Transition u16 LE.
+// Single-channel on purpose: setHue must NOT re-send saturation. The old code rebuilt the
+// full HS pair from device.currentValue("saturation"), and because the readback is async a
+// setHue/setSaturation pair issued back-to-back would each command the OTHER channel's stale
+// cached value and clobber the first move.
 void setHue(Number value) {
     logDebug "setHue(${value})"
-    Number satPct = (device.currentValue("saturation") as Number) ?: 100
     String hexHue = pctToZigbeeHex(value)
-    String hexSat = pctToZigbeeHex(satPct)
 
     List<String> cmds = []
-    cmds += zigbee.command(0x0300, 0x06, hexHue + hexSat + uint16LE(0))
+    cmds += zigbee.command(0x0300, 0x00, hexHue + "00" + uint16LE(0))
     cmds += zigbee.readAttribute(0x0300, 0x0000)
 
     markColorMode("RGB")
     sendZigbeeCommands(cmds)
 }
 
+// Move to Saturation (cmd 0x03): Saturation u8 + Transition u16 LE. Single-channel — see setHue.
 void setSaturation(Number value) {
     logDebug "setSaturation(${value})"
-    Number huePct = (device.currentValue("hue") as Number) ?: 0
-    String hexHue = pctToZigbeeHex(huePct)
     String hexSat = pctToZigbeeHex(value)
 
     List<String> cmds = []
-    cmds += zigbee.command(0x0300, 0x06, hexHue + hexSat + uint16LE(0))
+    cmds += zigbee.command(0x0300, 0x03, hexSat + uint16LE(0))
     cmds += zigbee.readAttribute(0x0300, 0x0001)
 
     markColorMode("RGB")
