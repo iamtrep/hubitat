@@ -144,11 +144,11 @@ void initialize() {
     String cronExpression = "7 13 */${settings.updateInterval} * * ?"
     schedule(cronExpression, fetchPeakPeriods)
 
-    logDebug("Scheduled to check every ${settings.updateInterval} hour(s)")
+    logSched("Scheduled to check every ${settings.updateInterval} hour(s)")
 }
 
 void fetchPeakPeriods() {
-    logDebug("Fetching peak period data...")
+    logNet("Fetching peak period data...")
 
     try {
         asynchttpGet(handlePeakPeriodsResponse, settings.testMode ? API_TEST_PARAMS : API_PARAMS)
@@ -165,7 +165,7 @@ void handlePeakPeriodsResponse(hubitat.scheduling.AsyncResponse response, Map da
         }
 
         if (response.status == 200) {
-            logDebug("Successfully fetched data")
+            logNet("Successfully fetched data")
             String jsonText = response.data
             Map responseData = parseJson(jsonText)
             processPeakPeriods(responseData)
@@ -388,10 +388,10 @@ private void enterEventScheduledState(Date eventStart, Date eventEnd) {
         state.preEventStart = preEventTime.time
 
         runOnce(preEventTime, transitionToPreEvent)
-        logDebug("Scheduled transition to PRE_EVENT at ${preEventTime}")
+        logSched("Scheduled transition to PRE_EVENT at ${preEventTime}")
     } else {
         runOnce(eventStart, transitionToEventActive)
-        logDebug("Scheduled transition to EVENT_ACTIVE at ${eventStart}")
+        logSched("Scheduled transition to EVENT_ACTIVE at ${eventStart}")
     }
 }
 
@@ -409,7 +409,7 @@ private void enterPreEventState(Date eventStart, Date eventEnd) {
 
     // Schedule transition to event active
     runOnce(eventStart, transitionToEventActive)
-    logDebug("Scheduled transition to EVENT_ACTIVE at ${eventStart}")
+    logSched("Scheduled transition to EVENT_ACTIVE at ${eventStart}")
 }
 
 private void enterEventActiveState(Date eventEnd) {
@@ -425,7 +425,7 @@ private void enterEventActiveState(Date eventEnd) {
 
     // Schedule transition back to no events (or refetch will find next event)
     runOnce(eventEnd, transitionToNoEvents)
-    logDebug("Scheduled transition to NO_EVENTS at ${eventEnd}")
+    logSched("Scheduled transition to NO_EVENTS at ${eventEnd}")
 }
 
 // State transition handlers (called by scheduler)

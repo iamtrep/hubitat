@@ -580,7 +580,7 @@ void findNearestStation() {
         return
     }
 
-    logNet "Finding nearest AQHI station to hub location (${hubLat}, ${hubLon})..."
+    logInfo "Finding nearest AQHI station to hub location (${hubLat}, ${hubLon})..."
 
     Map params = [
         uri: "${API_BASE}/aqhi-stations/items",
@@ -639,7 +639,7 @@ void parseStationsResponse(resp, BigDecimal hubLat, BigDecimal hubLon) {
         state.autoStationId = nearestId
         state.autoStationName = nearestName
         state.autoStationDistance = Math.round(nearestDist) as int
-        logNet "Nearest station: ${nearestName} (${nearestId}), ${Math.round(nearestDist)} km away"
+        logInfo "Nearest station: ${nearestName} (${nearestId}), ${Math.round(nearestDist)} km away"
         sendEvent(name: "stationName", value: nearestName)
 
         schedulePoll()
