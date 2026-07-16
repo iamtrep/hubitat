@@ -98,6 +98,7 @@ Map mainPage() {
             paragraph "<small>When enabled, creates a test event 5 minutes from now</small>"
 
             input "enableDebug", "bool", title: "Enable debug logging", defaultValue: true
+            input name: "enableTrace", type: "bool", title: "Enable trace logging", defaultValue: false
         }
         section("") {
             paragraph "<small>${APP_NAME} v${CODE_VERSION}</small>"
@@ -152,14 +153,14 @@ void fetchPeakPeriods() {
     try {
         asynchttpGet(handlePeakPeriodsResponse, settings.testMode ? API_TEST_PARAMS : API_PARAMS)
     } catch (Exception e) {
-        log.error("Error initiating fetch of peak periods: ${e.message}")
+        logError("Error initiating fetch of peak periods: ${e.message}")
     }
 }
 
 void handlePeakPeriodsResponse(hubitat.scheduling.AsyncResponse response, Map data) {
     try {
         if (response.hasError()) {
-            log.error("HTTP error fetching peak periods: ${response.getErrorMessage()}")
+            logError("HTTP error fetching peak periods: ${response.getErrorMessage()}")
             return
         }
 
@@ -169,10 +170,10 @@ void handlePeakPeriodsResponse(hubitat.scheduling.AsyncResponse response, Map da
             Map responseData = parseJson(jsonText)
             processPeakPeriods(responseData)
         } else {
-            log.error("Failed to fetch data: HTTP ${response.status}")
+            logError("Failed to fetch data: HTTP ${response.status}")
         }
     } catch (Exception e) {
-        log.error("Error handling peak periods response: ${e.message}")
+        logError("Error handling peak periods response: ${e.message}")
     }
 }
 
@@ -208,7 +209,7 @@ private void processPeakPeriods(Map data) {
                 nextEventEnd = endTime
             }
         } catch (Exception e) {
-            log.error("Error parsing dates: ${e.message}")
+            logError("Error parsing dates: ${e.message}")
         }
     }
 
@@ -271,7 +272,7 @@ private void updateHubVariables(Date eventStart, Date eventEnd) {
             }
         }
     } catch (Exception e) {
-        log.error("Error updating hub variables: ${e.message}")
+        logError("Error updating hub variables: ${e.message}")
     }
 }
 
@@ -312,7 +313,7 @@ private String determineTargetState(Date now, Date eventStart, Date eventEnd) {
 }
 
 private void transitionToState(String newState, Date eventStart, Date eventEnd) {
-    log.info("State transition: ${state.currentState} -> ${newState}")
+    logInfo("State transition: ${state.currentState} -> ${newState}")
 
     // Exit current state
     exitState(state.currentState)
@@ -360,7 +361,7 @@ private void enterState(String newState, Date eventStart, Date eventEnd) {
 }
 
 private void enterNoEventsState() {
-    log.info("STATE: No events scheduled")
+    logCmd("STATE: No events scheduled")
 
     // Turn off all switches
     eventSwitch?.each { if (it.currentValue("switch") == "on") it.off() }
@@ -369,7 +370,7 @@ private void enterNoEventsState() {
 }
 
 private void enterEventScheduledState(Date eventStart, Date eventEnd) {
-    log.info("STATE: Event scheduled from ${eventStart} to ${eventEnd}")
+    logCmd("STATE: Event scheduled from ${eventStart} to ${eventEnd}")
 
     // Store event times
     state.eventStart = eventStart.time
@@ -395,7 +396,7 @@ private void enterEventScheduledState(Date eventStart, Date eventEnd) {
 }
 
 private void enterPreEventState(Date eventStart, Date eventEnd) {
-    log.info("STATE: Pre-event period, event starts at ${eventStart}")
+    logCmd("STATE: Pre-event period, event starts at ${eventStart}")
 
     // Store event times
     state.eventStart = eventStart.time
@@ -412,7 +413,7 @@ private void enterPreEventState(Date eventStart, Date eventEnd) {
 }
 
 private void enterEventActiveState(Date eventEnd) {
-    log.info("STATE: Event active until ${eventEnd}")
+    logCmd("STATE: Event active until ${eventEnd}")
 
     // Store event end time
     state.eventEnd = eventEnd.time
@@ -429,7 +430,7 @@ private void enterEventActiveState(Date eventEnd) {
 
 // State transition handlers (called by scheduler)
 void transitionToPreEvent() {
-    log.info("Transition handler: Moving to PRE_EVENT")
+    logInfo("Transition handler: Moving to PRE_EVENT")
 
     Date eventStart = state.eventStart ? new Date(state.eventStart as Long) : null
     Date eventEnd = state.eventEnd ? new Date(state.eventEnd as Long) : null
@@ -438,13 +439,13 @@ void transitionToPreEvent() {
         transitionToState(STATE_PRE_EVENT, eventStart, eventEnd)
         updateAppLabel()
     } else {
-        log.warn("Missing event data during transition to PRE_EVENT, refetching")
+        logWarn("Missing event data during transition to PRE_EVENT, refetching")
         fetchPeakPeriods()
     }
 }
 
 void transitionToEventActive() {
-    log.info("Transition handler: Moving to EVENT_ACTIVE")
+    logInfo("Transition handler: Moving to EVENT_ACTIVE")
 
     Date eventEnd = state.eventEnd ? new Date(state.eventEnd as Long) : null
 
@@ -452,13 +453,13 @@ void transitionToEventActive() {
         transitionToState(STATE_EVENT_ACTIVE, null, eventEnd)
         updateAppLabel()
     } else {
-        log.warn("Missing event data during transition to EVENT_ACTIVE, refetching")
+        logWarn("Missing event data during transition to EVENT_ACTIVE, refetching")
         fetchPeakPeriods()
     }
 }
 
 void transitionToNoEvents() {
-    log.info("Transition handler: Moving to NO_EVENTS")
+    logInfo("Transition handler: Moving to NO_EVENTS")
     transitionToState(STATE_NO_EVENTS, null, null)
     updateAppLabel()
 
@@ -524,12 +525,12 @@ void renameVariable(String oldName, String newName) {
     // Update settings if one of our variables was renamed
     if (settings.eventStartVariableName == oldName) {
         app.updateSetting("eventStartVariableName", newName)
-        log.info("Updated eventStartVariableName setting to: ${newName}")
+        logCfg("Updated eventStartVariableName setting to: ${newName}")
     }
 
     if (settings.eventEndVariableName == oldName) {
         app.updateSetting("eventEndVariableName", newName)
-        log.info("Updated eventEndVariableName setting to: ${newName}")
+        logCfg("Updated eventEndVariableName setting to: ${newName}")
     }
 }
 
@@ -540,7 +541,7 @@ private void generateTestFile() {
         uploadHubFile(API_TEST_FILE_NAME, jsonContent.bytes)
         logDebug("Generated test file")
     } catch (Exception e) {
-        log.error("Error generating test file: ${e}")
+        logError("Error generating test file: ${e}")
     }
 }
 
@@ -652,8 +653,19 @@ private Date parseIsoDate(String isoTimestamp) {
     return Date.parse(DATE_FORMAT_ISO8601, isoTimestamp)
 }
 
-private void logDebug(String msg) {
-    if (settings.enableDebug) {
-        log.debug(msg)
-    }
-}
+// ── Logging (app) ─────────────────────────────────────────────────────
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${app.getLabel()}: " }
+
+void logEvt  (String m) { if (settings.enableDebug) log.debug logp('⬇️') + m }
+void logCmd  (String m) { log.info  logp('⬆️') + m }
+void logCfg  (String m) { log.info  logp('🔧') + m }
+void logNet  (String m) { if (settings.enableDebug) log.debug logp('🌐') + m }
+void logSched(String m) { if (settings.enableDebug) log.debug logp('⏰') + m }
+void logVer  (String m) { log.info  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (settings.enableTrace) log.trace logp('🔬') + m }
+void logInfo (String m) { log.info  "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (settings.enableDebug) log.debug "${app.getLabel()}: ${m}" }
