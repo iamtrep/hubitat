@@ -142,7 +142,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.80.4";
+const CODE_VERSION = "5.80.5";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -2584,6 +2584,9 @@ async function rNetwork(){const P='p-network';loading(P);try{
     }
     if(md.endpoints.length){o+='<div id="mdnsTbl"></div>'}
     else o+='<div class="muted">No mDNS endpoints discovered.</div>';
+    // Per-endpoint extras (readyToPair, features, deviceId, raw record) live on the hub's own
+    // mDNS Devices page — link there for full detail rather than duplicating it row-by-row.
+    if(HUB_ORIGIN) o+='<div style="margin-top:10px;font-size:12px"><a href="'+HUB_ORIGIN+'/hub/mdnsDevices" target="_blank" rel="noopener" style="color:var(--link)">Full device details in the hub\'s mDNS Devices page ↗</a></div>';
     o+='</div></div>';
   }
   document.getElementById(P).innerHTML=o;
