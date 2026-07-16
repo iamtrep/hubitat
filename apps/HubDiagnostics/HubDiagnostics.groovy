@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "5.78.1"
+@Field static final String CODE_VERSION = "5.78.2"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -196,10 +196,12 @@ private void cachePut(String key, Object data) {
 @Field static volatile boolean githubVersionRefreshPending = false
 @Field static final java.util.regex.Pattern HTML_TAG_RE = ~/<[^>]+>/
 // Green badge appended to the app label (visible in the Apps list) when a newer release is
-// published on GitHub. UPDATE_BADGE_RE strips any prior badge so re-applying is idempotent and
-// survives the label being saved verbatim through the "Assign a name" input on Done.
+// published on GitHub. UPDATE_BADGE_RE strips any prior badge so re-applying is idempotent. The
+// span tags are optional and the match repeats so it also clears remnants when the "Assign a name"
+// input on Done saves the label with its HTML stripped to bare "update available" text — otherwise
+// each refresh would stack a fresh badge on the plain remnant ("... update available update available").
 @Field static final String UPDATE_AVAILABLE_BADGE = ' <span style="color:green; font-weight:bold;">update available</span>'
-@Field static final java.util.regex.Pattern UPDATE_BADGE_RE = ~/(?i)\s*<span\b[^>]*>\s*update available\s*<\/span>\s*$/
+@Field static final java.util.regex.Pattern UPDATE_BADGE_RE = ~/(?i)(?:\s*(?:<span\b[^>]*>)?\s*update available\s*(?:<\/span>)?)+\s*$/
 
 // Built-in integration overrides: lowercase keyword → [conn, name]. These are Hubitat-native
 // parent-managed integrations whose devices arrive without a parentAppId in the bulk list (so the
