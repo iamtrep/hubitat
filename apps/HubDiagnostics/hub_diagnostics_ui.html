@@ -142,7 +142,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.80.5";
+const CODE_VERSION = "5.81.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -3595,7 +3595,8 @@ const RC={
     totalRx:0, peakRate:0, rateSecStart:null, rateSecCount:0, firstRxAt:null, lastRxAt:null,   // avg (over active span) + peak rate accounting
     filters:null,         // {q:[terms]} free-text tail filter (mirrors the Zigbee sub-tab)
     lastAggregateAt:0,    // throttle the kind-breakdown re-render to ~1 Hz during ingest
-    stack:null            // resolved at Start time from RC.zwaveStack — picks the per-stack row mapper
+    stack:null,           // resolved at Start time from RC.zwaveStack — picks the per-stack row mapper
+    nodeById:null         // decimal nodeId → {deviceId,name}; built on load from dashboard zwaveMesh, backfills null-identity frames
   },
   matter:{                                       // sub-tab state — poll-based capture
     buf:null,                  // FrameBuffer (line-oriented, one push per CHIP line)
@@ -3626,7 +3627,8 @@ const RC={
 async function rRadioCapture(){
   const P='p-radio-capture';
   // Populate hub identity from dashboard cache (already fetched on most sessions).
-  try{const d=await api('dashboard');RC.hubName=d&&d.hub&&d.hub.name;RC.hubIp=d&&d.hub&&d.hub.ip;RC.zwaveStack=d&&d.hub&&d.hub.zwaveStack}catch(e){}
+  try{const d=await api('dashboard');RC.hubName=d&&d.hub&&d.hub.name;RC.hubIp=d&&d.hub&&d.hub.ip;RC.zwaveStack=d&&d.hub&&d.hub.zwaveStack;
+    const zn=(d&&d.zwaveMesh&&d.zwaveMesh.nodes)||[];const m={};zn.forEach(n=>{if(n.nodeId!=null)m[n.nodeId]={deviceId:n.deviceId,name:n.name}});RC.zwave.nodeById=m;}catch(e){}
   document.getElementById(P).innerHTML=`
     <div class="tabs" id="rc-subtabs" style="margin-bottom:12px">
       <div class="tab active" data-rcsub="zigbee">Zigbee</div>
@@ -4366,25 +4368,45 @@ function rcZwFrameToRow(text){
 }
 
 // Z/IP (legacy) zwaveLogsocket frame:
-//   {seqNo, name, deviceId, id:"<decimal node id>", imeReport:{...,"3":[rssiPerHop],...}, time, type}
-// imeReport["3"] is RSSI per hop in dBm; 127 = unused hop.
+//   {seqNo, name, deviceId, id:"<decimal node id>", imeReport:{...}, time, type}
+// imeReport keys, confirmed by correlating raw frames against the hub's own parsed
+// Z-Wave log (same seqNo), incl. a routed and a routeChanged frame:
+//   "0"[0] routeChanged (!=0)          "1"  transmissionTime ms (hi<<8|lo)
+//   "2"[0:4] repeater node-ids (0=none) "2"[4] speed code (0 Unknown/1 9.6k/2 40k/3 100k)
+//   "3"  per-hop RSSI dBm (127 = N/A)   "4"[0] ack channel   "5"[0] tx channel
+//   "9"/"10"/"11" unused in every sample (all 127).
+const RC_ZW_SPEED={0:'Unknown',1:'9.6k',2:'40k',3:'100k',4:'100k'};
 function rcZwLegacyFrameToRow(text){
   let f;try{f=JSON.parse(text)}catch(e){return rcZwRawFrameToRow(text)}
   const ime=f.imeReport||{};
-  const hops=Array.isArray(ime['3'])?ime['3']:[];
-  const used=hops.filter(v=>v!=null&&v!==127);   // drop unused hops (127 = N/A)
-  const node=(f.id!=null?String(f.id):'');
+  const arr=k=>Array.isArray(ime[k])?ime[k]:[];
+  const used=arr('3').filter(v=>v!=null&&v!==127);   // per-hop RSSI, drop unused hops (127 = N/A)
+  const rt=arr('2');
+  const reps=rt.slice(0,4).filter(v=>v);             // repeater node-ids; 0 = direct
+  const spd=rt.length>4?rt[4]:null;
+  const tt=arr('1');
+  const hex=v=>'0x'+Number(v).toString(16).toUpperCase().padStart(2,'0');
+  // Frame `id` is a HEX node id ("10"=16, "0D"=13); parse to decimal for display + lookup.
+  const nodeDec=f.id!=null?parseInt(String(f.id),16):NaN;
+  // First frame of each pair often has name/deviceId null — backfill from the node map.
+  const ent=(!f.deviceId&&!isNaN(nodeDec)&&RC.zwave.nodeById)?RC.zwave.nodeById[nodeDec]:null;
   const t=f.type||'';
   return{
     time:f.time||'',
-    node:node,
-    nodeHex:(node!==''&&!isNaN(+node))?'0x'+Number(node).toString(16).toUpperCase().padStart(2,'0'):'',
-    device:f.name||'',
-    _deviceId:f.deviceId,
+    node:isNaN(nodeDec)?(f.id!=null?String(f.id):''):String(nodeDec),
+    nodeHex:isNaN(nodeDec)?'':hex(nodeDec),
+    device:f.name||(ent&&ent.name)||'',
+    _deviceId:f.deviceId||(ent&&ent.deviceId)||null,
     type:t,
     dir:t==='zwaveTx'?'TX':t==='zwaveRx'?'RX':'',   // socket carries direction, not a command type
     rssi:used.join('/'),                            // per-hop, joined for routed frames
     rssiVal:used.length?used[0]:null,               // first-hop numeric, for colour thresholds
+    speed:spd!=null?(RC_ZW_SPEED[spd]||String(spd)):'',
+    txMs:tt.length>1?((tt[0]<<8)|tt[1]):null,
+    repeaters:reps.map(hex).join(' '),
+    routeChanged:arr('0').length?!!arr('0')[0]:false,
+    ackCh:arr('4').length?arr('4')[0]:null,
+    txCh:arr('5').length?arr('5')[0]:null,
     seq:(f.seqNo!=null?f.seqNo:''),
     _raw:text
   };
@@ -4449,7 +4471,7 @@ function rcZwRenderTailHtml(rows, selectedRaw, stack){
   const tdFlex=tdMono+';width:100%;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'; // absorb slack + ellipsis
   const legacy=stack==='legacy';
   const js=stack==='js';
-  const cols=legacy?['Time','Node','Device','Dir','RSSI','Seq']
+  const cols=legacy?['Time','Node','Device','Dir','Speed','RSSI','Tx','Route','Seq']
     :js?['Time','Src','Dir','Kind','Node/Device','Summary']
     :['Time','Raw'];
   let html='<table style="width:100%;border-collapse:collapse"><thead><tr>';
@@ -4464,11 +4486,16 @@ function rcZwRenderTailHtml(rows, selectedRaw, stack){
       const rssiCell=r.rssiVal!=null
         ? '<span style="color:'+(r.rssiVal<-80?'var(--crit)':r.rssiVal<-60?'var(--warn)':'var(--ok)')+'">'+h(r.rssi)+' dBm</span>'
         : h(r.rssi||'');
+      const spdCol=r.speed==='Unknown'?'var(--crit)':r.speed==='100k'?'var(--ok)':r.speed?'var(--warn)':'';
+      const route=r.repeaters?h(r.repeaters):'<span style="opacity:.4">—</span>';
       html+='<td style="'+tdT+'">'+h(r.time)+'</td>';
       html+='<td style="'+tdTMono+'">'+h(r.node)+(r.nodeHex?' <span style="opacity:.55">('+r.nodeHex+')</span>':'')+'</td>';
-      html+='<td style="'+td+'">'+(r._deviceId?dlink(r._deviceId,r.device):h(r.device||''))+'</td>';
+      html+='<td style="'+td+'">'+(r._deviceId?dlink(r._deviceId,r.device||('Node '+r.node)):h(r.device||''))+'</td>';
       html+='<td style="'+tdT+';'+dirCls+'">'+h(r.dir||'')+'</td>';
+      html+='<td style="'+tdT+';'+(spdCol?'color:'+spdCol:'')+'">'+h(r.speed||'')+'</td>';
       html+='<td style="'+tdT+';text-align:right">'+rssiCell+'</td>';
+      html+='<td style="'+tdT+';text-align:right">'+(r.txMs!=null?h(String(r.txMs))+'ms':'')+'</td>';
+      html+='<td style="'+tdTMono+'">'+(r.routeChanged?'<span title="route changed" style="color:var(--warn)">⟳ </span>':'')+route+'</td>';
       html+='<td style="'+tdT+';text-align:right">'+h(String(r.seq))+'</td>';
     }else if(js){
       const dirCls=r.dir==='TX'?'color:#e0a458':r.dir==='RX'?'color:#5aa9e6':'';
