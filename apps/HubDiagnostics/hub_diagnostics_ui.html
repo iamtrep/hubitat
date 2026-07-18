@@ -5770,7 +5770,7 @@ function buildAuditHtml(data) {
   // Per-device detail table
   o += openCard('all', `📋 Per-device detail table (${data.deviceCount})`);
   o += '<div class="filter"><input type="text" data-filter="t_all" placeholder="Filter devices…"></div>';
-  o += '<div class="tbl-wrap"><table data-sortable id="t_all"><thead><tr><th data-sd="asc">Name</th><th>Type</th><th>Source</th><th data-t="n">Apps</th><th data-t="n">Dashboards</th><th>Parent app</th><th>Last activity</th></tr></thead><tbody>';
+  o += '<div class="tbl-wrap"><table data-sortable id="t_all"><thead><tr><th data-sd="asc">Name</th><th>Label</th><th>Type</th><th>Source</th><th data-t="n">Apps</th><th data-t="n">Dashboards</th><th>Parent app</th><th>Last activity</th></tr></thead><tbody>';
   const sortedDevices = Object.values(allDevices).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   sortedDevices.forEach(d => {
     const src = driverBadge(d.driverType);
@@ -5796,6 +5796,7 @@ function buildAuditHtml(data) {
       ? `<a href="/driver/editor/${d.deviceTypeId}" target="_blank">${typeName}</a>`
       : typeName;
     o += `<tr><td>${dlink(d.id, d.label || d.name)}</td>`;
+    o += `<td>${h(d.label || '—')}</td>`;
     o += `<td>${typeCell}</td>`;
     o += `<td>${src}</td>`;
     o += `<td data-sv="${apps.length}">${appsCell}</td>`;
