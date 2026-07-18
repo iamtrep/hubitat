@@ -322,7 +322,7 @@ The user's own channel is annotated with "(your channel)" when it appears in the
 
 **Problem Nodes** — Nodes with state ≠ OK or packet error rate > 1%.
 
-**Mesh Quality table** columns: Device, Node, Security (S0/S2/None — S0 on non-lock devices is flagged), RTT (ms), RSSI (dBm), PER %, Neighbors, Route, Route Changes, Msgs, Msgs/Min, Driver (Built-in/User), State.
+**Mesh Quality table** columns: Device, Node, Security (S0/S2/None — S0 on non-lock devices is flagged), RTT (ms), RSSI (dBm), PER %, Neighbors, Route, Route Changes, Msgs, Msgs/Min, Driver (Built-in/User), State. Route Changes shows `—` when the hub reports no route-change count — expected for Z-Wave Long Range nodes (star topology, no mesh routing) and for nodes with no accumulated traffic yet; such nodes are excluded from the mesh-wide route-change total rather than counted as zero.
 
 **Message Counts table** — Devices ranked by message volume, with messages/minute color-coded against the chatty device threshold.
 

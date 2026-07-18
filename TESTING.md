@@ -142,6 +142,8 @@ The spec maps directly onto the procedure below — for [`apps/sensors/SensorAgg
 
 **Closed-loop notes:** when the Groovy is the source of truth and the Python mirror drifts, the mirror is wrong by definition. Keep the source-line-range comment in the mirror up-to-date; periodic review is a code-review concern, not an automated one.
 
+**Extraction variant (no mirror, no drift):** when the Groovy method is *self-contained* — it computes from its arguments and standard library only, calling no app-context helpers (`hubRequest`, `log*`, settings, `state`, etc.) — brace-extract it from the shipped `.groovy` and run the real method under `groovy`, the same way Mode 3 extracts named JS functions from the SPA HTML. This binds to shipped code instead of shadowing it, so there is no mirror to drift. Prefer it over a Python mirror whenever the method qualifies; fall back to the mirror when the logic is entangled with app context. Canonical example: [`apps/HubDiagnostics/tests/test-zwave-mesh-quality.groovy`](apps/HubDiagnostics/tests/test-zwave-mesh-quality.groovy) — extracts `extractZwaveMeshQuality` / `extractZwaveMessageCounts` and asserts the route-change normalization against a synthetic fixture (no hub, no Long Range hardware). Run: `groovy apps/HubDiagnostics/tests/test-zwave-mesh-quality.groovy`.
+
 #### Mode 5 — In-hub stress / diagnostic apps
 
 **Purpose:** workloads where running outside the hub JVM defeats the purpose — async-HTTP concurrency, UDP latency under load, file-manager API throughput.

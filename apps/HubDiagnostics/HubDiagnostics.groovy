@@ -2203,7 +2203,10 @@ Map extractZwaveMeshQuality(Map zwaveData) {
     zwaveData.nodes.each { Map node ->
         int per = (node.per ?: 0) as int
         int neighborCount = (node.neighbors ?: 0) as int
-        int routeChanges = node.routeChanges?.toString()?.isInteger() ? (node.routeChanges ?: 0) as int : -1
+        // null (not a sentinel int) when the hub reports no route-change count:
+        // Z-Wave Long Range nodes (star topology, no mesh routing) and nodes with
+        // no accumulated traffic yet both surface as non-numeric here.
+        Integer routeChanges = node.routeChanges?.toString()?.isInteger() ? (node.routeChanges ?: 0) as int : null
         String rssiStr = node.lwrRssi ?: ""
         Integer rssiVal = null
         if (rssiStr) {
@@ -2217,7 +2220,7 @@ Map extractZwaveMeshQuality(Map zwaveData) {
 
         totalPer += per
         if (per > 0) nodesWithErrors++
-        totalRouteChanges += routeChanges
+        if (routeChanges != null) totalRouteChanges += routeChanges
 
         // averageRtt: integer ms or empty string when unavailable
         String rttRaw = (node.averageRtt != null) ? node.averageRtt.toString() : ""
@@ -2275,7 +2278,7 @@ List extractZwaveMessageCounts(Map zwaveData) {
     if (!zwaveData || !zwaveData.nodes) return []
     return zwaveData.nodes.collect { Map node ->
         [id: node.nodeId, deviceId: node.deviceId, name: node.deviceName ?: "Node ${node.nodeId}",
-         msgCount: (node.msgCount ?: 0) as int, routeChanges: node.routeChanges?.toString()?.isInteger() ? (node.routeChanges ?: 0) as int : -1]
+         msgCount: (node.msgCount ?: 0) as int, routeChanges: node.routeChanges?.toString()?.isInteger() ? (node.routeChanges ?: 0) as int : null]
     }
 }
 
