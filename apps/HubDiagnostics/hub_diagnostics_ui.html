@@ -2188,6 +2188,7 @@ async function rDevices(){const P='p-devices';loading(P);try{
     ],stale,{sc:3,sd:'asc',filter:true,collapse:10,collapseLabel:'Stale Devices'});
   tbl('devTbl',[
     {l:'Name',f:'name',r:r=>dlink(r.id,r.name)},
+    {l:'Label',f:'label',r:r=>h(r.label||'—')},
     {l:'Type',f:'type',r:r=>r.userType&&r.deviceTypeId?'<a href="/driver/editor/'+r.deviceTypeId+'" target="_blank">'+h(r.type)+'</a>':h(r.type)},
     {l:'Connection',f:'connectionType',r:r=>CD[r.connectionType]||r.connectionType||'-'},
     {l:'Integration',f:'integration',r:r=>h(r.integration||'-')},

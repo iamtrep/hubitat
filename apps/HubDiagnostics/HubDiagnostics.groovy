@@ -1097,7 +1097,7 @@ Map getDashboardData(Map shared = [:]) {
 Map getDevicesData() {
     Map deviceStats = analyzeDevices()
     List deviceRows = (deviceStats.allDevices ?: []).collect { Map dev ->
-        [id: dev.id, name: dev.name, type: dev.type,
+        [id: dev.id, name: dev.name, label: dev.label, type: dev.type,
          connectionType: dev.connectionType,
          integration: dev.integration,
          room: dev.room, status: dev.status ?: "", lastActivityMs: dev.lastActivityMs,

@@ -129,6 +129,7 @@ A full inventory of every device on the hub.
 | Column | Description |
 |---|---|
 | Name | Linked to the device edit page |
+| Label | User-assigned device label (the name a bridge exposes downstream); falls back to the device name when unset |
 | Type | Driver type; community drivers are linked to the driver editor |
 | Connection | How the hub reaches the device: Zigbee, Z-Wave, Matter, Bluetooth, HomeKit, LAN (Direct), LAN (Bridge), Cloud, Virtual, Hub Mesh |
 | Integration | The parent integration that manages the device (Lutron, Blink, Kasa, …); blank for standalone devices |
