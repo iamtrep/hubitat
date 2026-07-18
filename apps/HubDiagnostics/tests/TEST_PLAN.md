@@ -9,7 +9,7 @@ Status as of 2026-05-08:
 
 | Phase | Title | Status |
 |---|---|---|
-| A | Refresh existing API test | ✅ shipped (`2b40427`) — 174/174 PASS on maison-pro |
+| A | Refresh existing API test | ✅ shipped (`2b40427`) |
 | B | Audit-HTML structure validator | ⏳ planned |
 | C | Snapshot capture + diff validator | ⏳ planned |
 | D | SPA pure-JS unit tests | ⏳ planned |
@@ -157,16 +157,16 @@ Stop / re-evaluate after each phase. If a phase's value isn't holding up, pivot.
 
 ```bash
 # All API tests, fast (no Zigbee scan)
-bash tests/test-hub-diagnostics-api.sh @maison-pro
+bash tests/test-hub-diagnostics-api.sh @hubname
 
 # Same, with the slow Zigbee channel scan included (~30s extra)
-RUN_SLOW_TESTS=1 bash tests/test-hub-diagnostics-api.sh @maison-pro
+RUN_SLOW_TESTS=1 bash tests/test-hub-diagnostics-api.sh @hubname
 
 # Audit-HTML validator (Phase B, when shipped)
-bash tests/test-audit-html.sh @maison-pro
+bash tests/test-audit-html.sh @hubname
 
 # Snapshot diff validator (Phase C, when shipped)
-bash tests/test-snapshot-diff.sh @maison-pro
+bash tests/test-snapshot-diff.sh @hubname
 
 # SPA unit tests (Phase D, when shipped) — open in any browser
 open tests/spa/index.html
@@ -178,6 +178,10 @@ node tests/test-network-derivations.js  # zwProblemNodes / zbWeakNeighbors / zbS
 node tests/test-forum-export.js         # assembleForumData (client-side forum-export data assembly)
 node tests/test-forum-render.js         # full forum-export render (buildForumMarkdown end-to-end)
 node tests/test-temp-scale.js           # temperature-scale helpers
+node tests/test-zwave-render.js         # routeChangesCell (Route Changes null -> em-dash)
+
+# Extraction-based Groovy test (TESTING.md Mode 4 variant — bound to shipped Groovy)
+groovy tests/test-zwave-mesh-quality.groovy  # route-change normalization: no-data -> null, excluded from total
 ```
 
 > **Phase D progress:** the SPA derivations relocated from Groovy during the v5.57.0 refactor each
