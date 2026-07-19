@@ -114,12 +114,14 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
   <div class="tab" data-tab="register">Device Register</div>
   <div class="tab" data-tab="drift">Device Drift</div>
   <div class="tab" data-tab="mesh">Hub Mesh</div>
+  <div class="tab" data-tab="config">App Settings</div>
 </div>
 <div class="content">
   <div class="panel active" id="p-summary"></div>
   <div class="panel" id="p-register"></div>
   <div class="panel" id="p-drift"></div>
   <div class="panel" id="p-mesh"></div>
+  <div class="panel" id="p-config"></div>
 </div>
 <script>
 // ===== VERSION =====
@@ -544,6 +546,18 @@ async function boot(){
 // ===== VIEWS =====
 const esc = s => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const h = esc; // alias for tbl() which uses h() for escaping
+
+// Semver-aware "a newer than b" — mirrors the Groovy isNewer().
+function isNewer(a, b){
+  if(!a || !b) return false;
+  const pa = String(a).split('.').map(n => parseInt(n,10) || 0);
+  const pb = String(b).split('.').map(n => parseInt(n,10) || 0);
+  for(let i = 0; i < Math.max(pa.length, pb.length); i++){
+    const x = pa[i] || 0, y = pb[i] || 0;
+    if(x !== y) return x > y;
+  }
+  return false;
+}
 const fmtDate = ms => (typeof ms==='number'&&ms>0) ? new Date(ms).toISOString().slice(0,10) : '—';
 
 // ===== TABLE ENGINE ===== (ported verbatim from HubDiagnostics tbl())
@@ -823,10 +837,55 @@ function renderMesh(){
   ], g.sourceIssues, {});
 }
 
+async function renderConfig(){
+  const el = document.getElementById('p-config');
+  if(!el) return;
+  const appVer = (APP_VERSION && APP_VERSION[0] !== '$') ? APP_VERSION : null;
+  let o = '<div class="card"><div class="card-h">Version</div><div class="card-b">';
+  o += `<div><b>App Version:</b> ${esc(appVer || 'Unknown')}</div>`;
+  o += `<div><b>UI Version:</b> ${esc(CODE_VERSION)}</div>`;
+  if(appVer && isNewer(CODE_VERSION, appVer))
+    o += `<div class="warn" style="margin-top:6px">⛔ <b>App Update Required:</b> the UI (v${esc(CODE_VERSION)}) is newer than the app code (v${esc(appVer)}). Update the Groovy app via Import.</div>`;
+  o += '<div id="cfgGh" style="margin-top:6px"></div>';
+  o += '<div class="actions" style="margin-top:8px"><button class="btn btn-p btn-s" id="btnSyncUI">Check for updates</button></div>';
+  o += '<div id="cfgMsg" style="margin-top:6px"></div>';
+  o += '</div></div>';
+  el.innerHTML = o;
+
+  if(!WORKBENCH){
+    try {
+      const r = await fetch(`${B}/api/version/check?access_token=${T}`);
+      if(r.ok){
+        const v = await r.json();
+        const gh = document.getElementById('cfgGh');
+        if(gh){
+          if(v.updateAvailable)
+            gh.innerHTML = `⬆ <b>v${esc(v.latestVersion)}</b> available on GitHub (you have v${esc(v.currentVersion)}).`;
+          else if(v.latestVersion)
+            gh.textContent = `Up to date (v${v.currentVersion}).`;
+        }
+      }
+    } catch(e){ /* leave the GitHub line blank on failure */ }
+  }
+
+  const btn = document.getElementById('btnSyncUI');
+  if(btn) btn.onclick = async () => {
+    if(WORKBENCH) return;
+    const msg = document.getElementById('cfgMsg');
+    btn.disabled = true; btn.textContent = 'Checking…';
+    try {
+      const r = await fetch(`${B}/api/ui/sync?access_token=${T}`, { method: 'POST' });
+      const j = await r.json();
+      if(j.success){ btn.textContent = 'Updating…'; location.reload(); }
+      else { if(msg) msg.innerHTML = '<span class="warn">No matching update found or sync failed. App and UI versions must match.</span>'; btn.disabled = false; btn.textContent = 'Check for updates'; }
+    } catch(e){ if(msg) msg.innerHTML = '<span class="warn">Sync failed: ' + esc(e.message || e) + '</span>'; btn.disabled = false; btn.textContent = 'Check for updates'; }
+  };
+}
+
 function renderAll(){
   document.getElementById('hubInfo').textContent =
     `${FLEET.hubs.filter(h=>h.ok).length}/${FLEET.hubs.length} hubs · ${FLEET.rows.length} devices`;
-  renderSummary(); renderRegister(); renderDeviceDrift(); renderMesh();
+  renderSummary(); renderRegister(); renderDeviceDrift(); renderMesh(); renderConfig();
 }
 
 // ===== BOOTSTRAP =====
