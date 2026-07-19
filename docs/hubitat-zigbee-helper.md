@@ -66,11 +66,20 @@ These all take an optional trailing `Map additionalParams = [:]` with keys `mfgC
 | `refreshData(String, String)` | Undocumented; signature suggests generic refresh dispatch. |
 | `updateFirmware([Map])` | Hubitat-only. Issues OTA Image Notify (cluster `0x0019` command `0x00`). |
 
+**Prefer these helpers over `he raw`.** The helpers are typed and endian-correct; `he raw` is hand-assembled frame strings (FCF bits, sequence byte, endianness) that are easy to get wrong and noisy to read. Reach for `he raw` only when no helper covers the operation.
+
+**ZDO has no helper — `he raw` is the only path.** `zigbee.command(cluster, …)` assembles a *ZCL* frame: FCF byte + transaction-sequence byte + command-ID byte + payload. ZDO requests carry none of that framing — just a sequence byte followed by the payload — so `zigbee.command()` produces structurally wrong frames for the ZDO clusters (`0x0031` Mgmt_Lqi_req, `0x0032` Mgmt_Rtg_req, `0x0036` Mgmt_Permit_Joining_req). Build those with `he raw` directly: `0 0` for source/dest endpoints, a `{00 …}` leading sequence byte. See [ZDO responses](#zdo-responses) for decoding the replies.
+
+**`configureReporting` intervals.** `max=0` means *report on change-of-value only* — NOT disabled. There's just no periodic heartbeat; the device still pushes every change. `0xFFFF` is what disables reporting per the ZCL spec. For discrete types (bool `0x10`, enum8 `0x30`, bitmap8 `0x18`) omit `reportableChange` — they report on any change. Reporting and refresh/polling are **not** redundant: reporting is the device pushing changes autonomously (including buffering across brief hub outages); refresh is the hub pulling current values on demand (boot rehydration, user-clicked Refresh). A Zigbee device acts independently of the hub, so the two cover different scenarios and normally coexist.
+
+**Reading the Configure Reporting Response.** The response arrives in `parse()` as profileId `0104`, `command 07`. `data[0]` = status (`0x00` success; `0x8D` INVALID_DATA_TYPE when the advertised data type doesn't match what the device actually encodes — e.g. declaring S16 `0x29` for an attribute the device sends as UINT32 `0x23`); `data[2..3]` = the attribute id, little-endian. A wrong reporting data type fails **silently** — the frame falls through to the generic unhandled-command path and the unsolicited reports simply never arrive — unless you decode this and warn on non-zero status.
+
 ### Capability convenience builders
 
 Each returns `List<String>` of pre-formatted `he raw`/ZCL commands ready to return from a driver `command`/`refresh` method.
 
 - **Switch:** `on()`, `off()`, `onOffConfig()`, `onOffConfig(min, max)`, `onOffConfig(String attr, min, max)`, `onOffRefresh()`
+  - `on()`/`off()` emit **only** the `0x0006` On/Off command — they do NOT chain a `readAttribute`. A retry/verify watchdog must watch the `switch` attribute (the device's own On/Off attribute report), not a ZCL Default Response: the Default Response only says "command received, status 00", not that the relay moved. A no-op command (device already in the target state) fires no on-change report and no Read Response, so nothing ever confirms it and the platform command-retry watchdog exhausts its retries. Chain `zigbee.readAttribute(0x0006, 0x0000)` after the command to force state confirmation even for no-ops.
 - **Level:** `setLevel(level)`, `setLevel(level, rate)` (level 0–100, rate in tenths of a second, max 100 = 10s), `levelConfig()`, `levelRefresh()`
 - **Color Temperature:** `setColorTemperature(K)` (Kelvin, ST notes "usually > 2700"), `colorTemperatureConfig()`, `colorTemperatureRefresh()`
 - **Full color** (Hubitat-only, beyond what ST documented): `setColor(Map)`, `setColorXY(Map)`, `setHue(Integer)`, `setSaturation(Integer)`
@@ -176,6 +185,36 @@ Each property has both a direct-bit getter returning `0`/`1` and a boolean `isXx
 | 9 | `batteryDefect` | 0/1 | defective battery detected |
 
 Bit semantics preserved verbatim from the SmartThings docs.
+
+## ZDO responses
+
+ZDO management responses come back through `parse()` on the mirror-of-request cluster ids (request `0x0031` → response `0x8031`, request `0x0032` → response `0x8032`). There's no `zigbee.*` decoder — walk the `data` byte list yourself. Byte-offset layouts below reviewed against Gary Milne's `Zigbee_Monitor_Driver` (`https://raw.githubusercontent.com/GaryMilne/Hubitat-Zigbee/main/Zigbee_Monitor_Driver.groovy`).
+
+### Mgmt_Lqi_rsp (`0x8031`) — 22 bytes per neighbor entry
+
+| Offset | Field | Notes |
+|--------|-------|-------|
+| 0–7   | PAN ID | little-endian on wire (reverse to read) |
+| 8–15  | EUI64 | reversed |
+| 16–17 | nwkAddr | reversed |
+| 18    | info octet | bits 5–7 relationship, bits 3–4 rxOnWhenIdle, bits 1–2 deviceType (`00`=Coordinator, `01`=Router, `10`=End Device) |
+| 19–20 | permit-join + tree depth | usually skipped |
+| 21    | LQI | raw 0–255, linear, no normalization |
+
+### Mgmt_Rtg_rsp (`0x8032`) — per routing-table entry
+
+| Offset | Field | Notes |
+|--------|-------|-------|
+| 0–1 | dest addr | reversed |
+| 2   | status octet | bits 1–3: 0=Active, 1=Discovery Underway, 2=Discovery Failed, 3=Inactive, 4=Validation Underway |
+| 3   | nextHop | reversed |
+| ext | flags | memoryConstrained / manyToOne / routeRecordRequired (when present) |
+
+Many routers (including some smart plugs) reply NOT_SUPPORTED to `Mgmt_Rtg_req` — handle that case; the request is optional per spec.
+
+### StartIndex pagination + dedup
+
+Both responses carry a `listCount` field. When non-zero, more entries exist past the current page — re-issue the request with the next StartIndex (formatted `%02X`) and loop while `listCount != 0`. Dedup across pages with a composite key (e.g. `"${lqi}-${id}"`): pages overlap when the table mutates mid-walk, and you'll double-count without it.
 
 ## `DataType` (NOT reachable via reflection)
 
