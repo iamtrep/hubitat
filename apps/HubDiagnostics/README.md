@@ -128,8 +128,7 @@ A full inventory of every device on the hub.
 
 | Column | Description |
 |---|---|
-| Name | Linked to the device edit page |
-| Label | User-assigned device label (the name a bridge exposes downstream); falls back to the device name when unset |
+| Label (Name) | The device's display name — its label, or the device name when unlabeled; linked to the device edit page |
 | Type | Driver type; community drivers are linked to the driver editor |
 | Connection | How the hub reaches the device: Zigbee, Z-Wave, Matter, Bluetooth, HomeKit, LAN (Direct), LAN (Bridge), Cloud, Virtual, Hub Mesh |
 | Integration | The parent integration that manages the device (Lutron, Blink, Kasa, …); blank for standalone devices |
@@ -474,7 +473,7 @@ Generates a one-time, per-device cross-reference report covering:
 - **Hub Mesh Linked Devices** — for each device this hub consumes from another hub via Hub Mesh, source hub + source device ID + status from `/hubMesh/localLinkedDevice/<id>`.
 - **Apps → devices** and **Dashboards → devices reverse indices** — disabled app subscribers are rendered with strikethrough so "ghost references" stand out.
 - **Device inventory** — every device's hardware identity: protocol, manufacturer, model, and firmware revision, parsed from each device's pairing-time data values (no extra hub calls — it rides on the scan the audit already runs). Sortable and filterable, with **Download CSV** / **Copy CSV** export for documentation or firmware tracking. Z-Wave manufacturer/model appear as hex IDs (shown verbatim); virtual and cloud devices have blank cells.
-- **Per-device detail table** with all subscribers as clickable links. A **Label** column shows each device's user-assigned label (blank as `—`) — the name a bridge exposes downstream — so rows line up directly when auditing against a bridge. Type cells link to `/driver/editor/<id>` for community drivers.
+- **Per-device detail table** with all subscribers as clickable links. The **Label (Name)** column shows each device's display name — its label, or the device name when unlabeled. Type cells link to `/driver/editor/<id>` for community drivers.
 
 ### How it works
 

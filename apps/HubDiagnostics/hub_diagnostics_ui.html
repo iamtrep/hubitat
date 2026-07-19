@@ -2183,12 +2183,11 @@ async function rDevices(){const P='p-devices';loading(P);try{
   // Stale devices table
   if(stale.length)
     tbl('staleTbl',[
-      {l:'Name',f:'name',r:r=>dlink(r.id,r.name)},{l:'Type',f:'type'},{l:'Connection',f:'connectionType',r:r=>CD[r.connectionType]||r.connectionType||'-'},{l:'Integration',f:'integration',r:r=>h(r.integration||'-')},
+      {l:'Label (Name)',f:'label',r:r=>dlink(r.id,r.label)},{l:'Type',f:'type'},{l:'Connection',f:'connectionType',r:r=>CD[r.connectionType]||r.connectionType||'-'},{l:'Integration',f:'integration',r:r=>h(r.integration||'-')},
       {l:'Last Activity',f:'lastActivityMs',t:'n',r:r=>r.lastActivityMs?new Date(r.lastActivityMs).toLocaleString():'Never'},{l:'Room',f:'room',r:r=>h(r.room||'-')}
     ],stale,{sc:3,sd:'asc',filter:true,collapse:10,collapseLabel:'Stale Devices'});
   tbl('devTbl',[
-    {l:'Name',f:'name',r:r=>dlink(r.id,r.name)},
-    {l:'Label',f:'label',r:r=>h(r.label||'—')},
+    {l:'Label (Name)',f:'label',r:r=>dlink(r.id,r.label)},
     {l:'Type',f:'type',r:r=>r.userType&&r.deviceTypeId?'<a href="/driver/editor/'+r.deviceTypeId+'" target="_blank">'+h(r.type)+'</a>':h(r.type)},
     {l:'Connection',f:'connectionType',r:r=>CD[r.connectionType]||r.connectionType||'-'},
     {l:'Integration',f:'integration',r:r=>h(r.integration||'-')},
@@ -5771,7 +5770,7 @@ function buildAuditHtml(data) {
   // Per-device detail table
   o += openCard('all', `📋 Per-device detail table (${data.deviceCount})`);
   o += '<div class="filter"><input type="text" data-filter="t_all" placeholder="Filter devices…"></div>';
-  o += '<div class="tbl-wrap"><table data-sortable id="t_all"><thead><tr><th data-sd="asc">Name</th><th>Label</th><th>Type</th><th>Source</th><th data-t="n">Apps</th><th data-t="n">Dashboards</th><th>Parent app</th><th>Last activity</th></tr></thead><tbody>';
+  o += '<div class="tbl-wrap"><table data-sortable id="t_all"><thead><tr><th data-sd="asc">Label (Name)</th><th>Type</th><th>Source</th><th data-t="n">Apps</th><th data-t="n">Dashboards</th><th>Parent app</th><th>Last activity</th></tr></thead><tbody>';
   const sortedDevices = Object.values(allDevices).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   sortedDevices.forEach(d => {
     const src = driverBadge(d.driverType);
@@ -5797,7 +5796,6 @@ function buildAuditHtml(data) {
       ? `<a href="/driver/editor/${d.deviceTypeId}" target="_blank">${typeName}</a>`
       : typeName;
     o += `<tr><td>${dlink(d.id, d.label || d.name)}</td>`;
-    o += `<td>${h(d.label || '—')}</td>`;
     o += `<td>${typeCell}</td>`;
     o += `<td>${src}</td>`;
     o += `<td data-sv="${apps.length}">${appsCell}</td>`;
