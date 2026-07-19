@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "5.81.0"
+@Field static final String CODE_VERSION = "5.82.0"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
