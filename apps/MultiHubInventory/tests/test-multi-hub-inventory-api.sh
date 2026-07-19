@@ -17,8 +17,8 @@
 #
 # Usage:
 #   bash tests/test-multi-hub-inventory-api.sh                    # default hub
-#   bash tests/test-multi-hub-inventory-api.sh @maison-pro        # specific hub
-#   bash tests/test-multi-hub-inventory-api.sh @maison-pro 247    # specific hub + instance
+#   bash tests/test-multi-hub-inventory-api.sh @hubname            # specific hub
+#   bash tests/test-multi-hub-inventory-api.sh @hubname 247        # specific hub + instance
 #
 
 set -euo pipefail
@@ -184,6 +184,19 @@ def api_get(endpoint, timeout=30):
     except Exception as e:
         return {"_error": str(e)}
 
+def api_post(endpoint, timeout=30):
+    """POST a JSON API endpoint with auth."""
+    sep = "&" if "?" in endpoint else "?"
+    url = f"{api_base}/api/{endpoint}{sep}access_token={access_token}"
+    try:
+        req = urllib.request.Request(url, data=b"", method="POST")
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        return {"_error": e.code}
+    except Exception as e:
+        return {"_error": str(e)}
+
 hub_data     = fetch("/hub2/hubData")
 gt_hub_name  = hub_data.get("name", "") if hub_data else hub_name
 print(f"\n{BOLD}=== Multi-Hub Inventory API Test: {gt_hub_name} ==={RESET}")
@@ -282,6 +295,43 @@ else:
             fail(f"/api/peer data response looks like a stack trace — proxy error handling missing")
         else:
             warn(f"/api/peer data returned an unexpected shape (neither allDevices nor error): {body[:200]}")
+
+# ── Test: /api/version/check ─────────────────────────────────────────
+section("/api/version/check")
+vc = api_get("version/check")
+if "_error" in vc:
+    fail(f"Request failed: {vc['_error']}")
+elif "error" in vc:
+    warn(f"version/check returned an error (GitHub unreachable?): {vc['error']}")
+else:
+    if vc.get("currentVersion"):
+        ok(f"currentVersion present: {vc['currentVersion']}")
+    else:
+        fail("currentVersion missing")
+    if "updateAvailable" in vc and isinstance(vc["updateAvailable"], bool):
+        ok(f"updateAvailable is a bool: {vc['updateAvailable']}")
+    else:
+        fail("updateAvailable missing or not a bool")
+    if "latestVersion" in vc:
+        ok(f"latestVersion present: {vc['latestVersion']}")
+    else:
+        fail("latestVersion missing")
+
+# ── Test: /api/ui/sync ───────────────────────────────────────────────
+section("/api/ui/sync")
+us = api_post("ui/sync")
+if "_error" in us:
+    fail(f"Request failed: {us['_error']}")
+elif "success" not in us:
+    fail(f"ui/sync response missing 'success': {json.dumps(us)[:200]}")
+else:
+    ok(f"ui/sync returned success={us['success']}")
+    if us.get("version"):
+        ok(f"ui/sync version present: {us['version']}")
+    else:
+        fail("ui/sync version missing")
+    if us["success"] is not True:
+        warn("ui/sync success=false — expected until the matching 0.8.0 UI is committed to GitHub main")
 
 # ── Summary ──────────────────────────────────────────────────────────
 total = passed + failed

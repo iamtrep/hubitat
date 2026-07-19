@@ -36,6 +36,8 @@ mappings {
     path('/api/peers') { action: [GET: 'apiPeers'] }
     path('/api/peer')  { action: [GET: 'apiPeer'] }
     path('/api/reinit') { action: [POST: 'apiReinit'] }
+    path('/api/version/check') { action: [GET: 'apiVersionCheck'] }
+    path('/api/ui/sync')       { action: [POST: 'apiSyncUI'] }
 }
 
 // ===== CONFIG PAGE =====
@@ -368,6 +370,27 @@ Map apiReinit() {
     logInfo "Reinitialize requested via API (running updated())"
     updated()
     return jsonResponse([success: true, version: CODE_VERSION])
+}
+
+// GET /api/version/check — current vs. latest GitHub version, for the SPA update badge.
+Map apiVersionCheck() {
+    if (!checkOAuth()) return render(status: 403, contentType: 'text/plain', data: 'OAuth not enabled')
+    String latest = checkGithubVersion()
+    if (!latest) return jsonResponse([error: "Unable to check for updates"])
+    return jsonResponse([
+        currentVersion: CODE_VERSION,
+        latestVersion: latest,
+        updateAvailable: isNewer(latest, CODE_VERSION),
+        editorPath: getAppEditorPath()
+    ])
+}
+
+// POST /api/ui/sync — manual re-download of the UI HTML from GitHub, for the SPA's Check-for-updates button.
+Map apiSyncUI() {
+    if (!checkOAuth()) return render(status: 403, contentType: 'text/plain', data: 'OAuth not enabled')
+    logInfo "Manual UI sync requested via API..."
+    boolean success = syncUIBlocking()
+    return jsonResponse([success: success, version: CODE_VERSION])
 }
 
 // GET /api/peers — labels + index + reachability. NEVER returns tokens.
