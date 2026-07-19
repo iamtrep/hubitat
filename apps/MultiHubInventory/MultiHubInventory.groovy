@@ -62,7 +62,9 @@ def mainPage() {
                 href url: "${fullLocalApiServerUrl}/ui.html?access_token=${state.accessToken}",
                      title: "Open Multi-Hub Inventory", style: "external", required: false
             } else {
-                paragraph "Enable OAuth (Apps Code → this app → OAuth) and re-open to get the dashboard link."
+                String ep0 = getAppEditorPath()
+                String codeLink0 = ep0 ? "<a href='${ep0}' target='_blank'>Apps Code</a>" : "Apps Code"
+                paragraph "Enable OAuth (${codeLink0} → this app → OAuth) and re-open to get the dashboard link."
             }
         }
         section {
@@ -74,7 +76,9 @@ def mainPage() {
                 paragraph "<small>App v${CODE_VERSION} · Dashboard UI v${uiVer}</small>"
             }
             if (isNewer(latest, CODE_VERSION)) {
-                paragraph "🔄 <b>Update available:</b> v${latest} on GitHub (you have v${CODE_VERSION}). Use <b>Import</b> on the Apps Code page to update."
+                String ep = getAppEditorPath()
+                String importLink = ep ? "<a href='${ep}' target='_blank'>Open App Code Editor</a> and use Import to update." : "Use <b>Import</b> on the Apps Code page to update."
+                paragraph "🔄 <b>Update available:</b> v${latest} on GitHub (you have v${CODE_VERSION}). ${importLink}"
             }
         }
     }
@@ -172,6 +176,11 @@ private String getAppTypeId() {
         logDebug "Failed to fetch user app types: ${e.message}"
     }
     return typeId
+}
+
+private String getAppEditorPath() {
+    String typeId = getAppTypeId()
+    return typeId ? "/app/editor/${typeId}" : null
 }
 
 // Enable OAuth on this app type via the hub loopback API (loopback is trusted, no session needed).
