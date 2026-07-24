@@ -142,7 +142,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.83.0";
+const CODE_VERSION = "5.83.1";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -2802,7 +2802,7 @@ async function rHealth(){const P='p-health';loading(P);try{
   document.getElementById(P).innerHTML=o;
   const evBadge={systemStart:'b-ok',update:'b-builtin',manualReboot:'b-warn',deviceJoin:'b-community'};
   tbl('evtTbl',[
-    {l:'Date',f:'ts',r:r=>h(r.ts?new Date(r.ts).toLocaleString():'')},
+    {l:'Date',f:'ts',t:'n',r:r=>h(r.ts?new Date(r.ts).toLocaleString():'')},
     {l:'Event',f:'name',r:r=>'<span class="badge '+(evBadge[r.name]||'')+'">'+h(r.name)+'</span>'},
     {l:'Description',f:'description'}
   ],(d.events||[]).slice(0,25),{sc:0,sd:'desc',collapse:5,collapseLabel:'Hub Events'});
