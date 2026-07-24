@@ -14,7 +14,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.21"
+@Field static final String CODE_VERSION = "0.0.22"
 
 metadata {
     definition(
@@ -246,25 +246,33 @@ void refreshEnergyReport() {
     runIn(1800, "refreshEnergyReport")
 }
 
-// Chain an explicit readAttribute(0x0006, 0x0000) after the on/off command.
-// Without it, a no-op command (device already in target state) emits a
-// Default Response but no on-change attribute report — and the platform's
-// command-retry watchdog gives up after 5 retries. The read is a directed
-// query the device must answer regardless of state transition.
+// on/off/setLevel each affect BOTH the on/off (0006) and level (0008) state on a
+// dimmer — turning on restores the level, and setLevel from off turns the load on —
+// so all three arm the digital flag for both attributes. Each chains a directed
+// readAttribute for both 0006 and 0008: the 0006 read also satisfies the platform's
+// command-retry watchdog (a no-op command emits only a Default Response, no on-change
+// report, and the watchdog gives up after 5 retries), and both reads force a report
+// that consumes the armed flag promptly instead of leaving it for the 5s safety clear.
+// A read that reflects an unchanged value is filtered by the changed-gate in
+// parseAttributeReport, so the confirming reads add no spurious events.
 void on() {
     List<String> cmds = []
     cmds += zigbee.on()
     cmds += zigbee.readAttribute(0x0006, 0x0000)
+    cmds += zigbee.readAttribute(0x0008, 0x0000)
     sendZigbeeCommands(cmds)
     markPendingDigitalSwitchChange()
+    markPendingDigitalLevelChange()
 }
 
 void off() {
     List<String> cmds = []
     cmds += zigbee.off()
     cmds += zigbee.readAttribute(0x0006, 0x0000)
+    cmds += zigbee.readAttribute(0x0008, 0x0000)
     sendZigbeeCommands(cmds)
     markPendingDigitalSwitchChange()
+    markPendingDigitalLevelChange()
 }
 
 void setLevel(String level, String duration = '0') {
@@ -272,10 +280,13 @@ void setLevel(String level, String duration = '0') {
 }
 
 void setLevel(BigDecimal level, BigDecimal duration = 0) {
+    markPendingDigitalSwitchChange()
     markPendingDigitalLevelChange()
     List<String> cmds = []
     cmds += zigbee.setLevel(level, duration)
     //logTrace("zigbee.setLevel($level,$duration) = $cmds")
+    cmds += zigbee.readAttribute(0x0006, 0x0000)
+    cmds += zigbee.readAttribute(0x0008, 0x0000)
     sendZigbeeCommands(cmds)
 }
 
@@ -306,25 +317,25 @@ private void clearLevelTypeDigital() {
 }
 
 void push(Integer buttonNumber) {
-    String buttonName = buttonNumber == 0 ? "Up" : "Down"
+    String buttonName = buttonNumber == 1 ? "Up" : "Down"
     String desc = "$buttonName was pushed"
 	sendEvent(name:"pushed", value: buttonNumber, type: "digital", descriptionText: desc, isStateChange: true)
 }
 
 void hold(Integer buttonNumber) {
-    String buttonName = buttonNumber == 0 ? "Up" : "Down"
+    String buttonName = buttonNumber == 1 ? "Up" : "Down"
     String desc = "$buttonName was held"
 	sendEvent(name:"held", value: buttonNumber, type: "digital", descriptionText: desc, isStateChange: true)
 }
 
 void release(Integer buttonNumber) {
-    String buttonName = buttonNumber == 0 ? "Up" : "Down"
+    String buttonName = buttonNumber == 1 ? "Up" : "Down"
     String desc = "$buttonName was released"
 	sendEvent(name:"released", value: buttonNumber, type: "digital", descriptionText: desc, isStateChange: true)
 }
 
 void doubleTap(Integer buttonNumber) {
-    String buttonName = buttonNumber == 0 ? "Up" : "Down"
+    String buttonName = buttonNumber == 1 ? "Up" : "Down"
     String desc = "$buttonName was double-tapped"
 	sendEvent(name:"doubleTapped", value: buttonNumber, type: "digital", descriptionText: desc, isStateChange: true)
 }
@@ -430,15 +441,16 @@ void parse(String description) {
 }
 
 
+// Button numbers are 1-based per Hubitat convention (button 1 = Up paddle, 2 = Down).
 @Field static final Map<String, Map<String, Object>> buttonActionMap = [
-    "01": [buttonEvent: "pushed", buttonIndex: 0, description: "Up was pushed"],
-    "02": [buttonEvent: "released", buttonIndex: 0, description: "Up was released"],
-    "03": [buttonEvent: "held", buttonIndex: 0, description: "Up was held"],
-    "04": [buttonEvent: "doubleTapped", buttonIndex: 0, description: "Up was double-tapped"],
-    "11": [buttonEvent: "pushed", buttonIndex: 1, description: "Down was pushed"],
-    "12": [buttonEvent: "released", buttonIndex: 1, description: "Down was released"],
-    "13": [buttonEvent: "held", buttonIndex: 1, description: "Down was held"],
-    "14": [buttonEvent: "doubleTapped", buttonIndex: 1, description: "Down was double-tapped"]
+    "01": [buttonEvent: "pushed", buttonIndex: 1, description: "Up was pushed"],
+    "02": [buttonEvent: "released", buttonIndex: 1, description: "Up was released"],
+    "03": [buttonEvent: "held", buttonIndex: 1, description: "Up was held"],
+    "04": [buttonEvent: "doubleTapped", buttonIndex: 1, description: "Up was double-tapped"],
+    "11": [buttonEvent: "pushed", buttonIndex: 2, description: "Down was pushed"],
+    "12": [buttonEvent: "released", buttonIndex: 2, description: "Down was released"],
+    "13": [buttonEvent: "held", buttonIndex: 2, description: "Down was held"],
+    "14": [buttonEvent: "doubleTapped", buttonIndex: 2, description: "Down was double-tapped"]
 ]
 
 private void parseAttributeReport(Map descMap) {
@@ -529,7 +541,7 @@ private void parseAttributeReport(Map descMap) {
         case "FF01": // Manufacturer-specific cluster
             switch (descMap.attrId) {
                 case "0002": // keypad lock
-                    boolean locked = descMap.value > 0
+                    boolean locked = (descMap.value != "00")
                     map.name = "keypadLock"
                     map.value = locked
                     map.descriptionText = locked ? "Keypad was locked" : "Keypad was unlocked"

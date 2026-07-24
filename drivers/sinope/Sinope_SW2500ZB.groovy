@@ -14,7 +14,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.21"
+@Field static final String CODE_VERSION = "0.0.22"
 
 metadata {
     definition(
@@ -279,25 +279,25 @@ private void clearSwitchTypeDigital() {
 }
 
 void push(Integer buttonNumber) {
-    String buttonName = buttonNumber == 0 ? "Up" : "Down"
+    String buttonName = buttonNumber == 1 ? "Up" : "Down"
     String desc = "$buttonName was pushed"
 	sendEvent(name:"pushed", value: buttonNumber, type: "digital", descriptionText: desc, isStateChange: true)
 }
 
 void hold(Integer buttonNumber) {
-    String buttonName = buttonNumber == 0 ? "Up" : "Down"
+    String buttonName = buttonNumber == 1 ? "Up" : "Down"
     String desc = "$buttonName was held"
 	sendEvent(name:"held", value: buttonNumber, type: "digital", descriptionText: desc, isStateChange: true)
 }
 
 void release(Integer buttonNumber) {
-    String buttonName = buttonNumber == 0 ? "Up" : "Down"
+    String buttonName = buttonNumber == 1 ? "Up" : "Down"
     String desc = "$buttonName was released"
 	sendEvent(name:"released", value: buttonNumber, type: "digital", descriptionText: desc, isStateChange: true)
 }
 
 void doubleTap(Integer buttonNumber) {
-    String buttonName = buttonNumber == 0 ? "Up" : "Down"
+    String buttonName = buttonNumber == 1 ? "Up" : "Down"
     String desc = "$buttonName was double-tapped"
 	sendEvent(name:"doubleTapped", value: buttonNumber, type: "digital", descriptionText: desc, isStateChange: true)
 }
@@ -399,15 +399,16 @@ void parse(String description) {
 }
 
 
+// Button numbers are 1-based per Hubitat convention (button 1 = Up paddle, 2 = Down).
 @Field static final Map<String, Map<String, Object>> buttonActionMap = [
-    "01": [buttonEvent: "pushed", buttonIndex: 0, description: "Up was pushed"],
-    "02": [buttonEvent: "released", buttonIndex: 0, description: "Up was released"],
-    "03": [buttonEvent: "held", buttonIndex: 0, description: "Up was held"],
-    "04": [buttonEvent: "doubleTapped", buttonIndex: 0, description: "Up was double-tapped"],
-    "11": [buttonEvent: "pushed", buttonIndex: 1, description: "Down was pushed"],
-    "12": [buttonEvent: "released", buttonIndex: 1, description: "Down was released"],
-    "13": [buttonEvent: "held", buttonIndex: 1, description: "Down was held"],
-    "14": [buttonEvent: "doubleTapped", buttonIndex: 1, description: "Down was double-tapped"]
+    "01": [buttonEvent: "pushed", buttonIndex: 1, description: "Up was pushed"],
+    "02": [buttonEvent: "released", buttonIndex: 1, description: "Up was released"],
+    "03": [buttonEvent: "held", buttonIndex: 1, description: "Up was held"],
+    "04": [buttonEvent: "doubleTapped", buttonIndex: 1, description: "Up was double-tapped"],
+    "11": [buttonEvent: "pushed", buttonIndex: 2, description: "Down was pushed"],
+    "12": [buttonEvent: "released", buttonIndex: 2, description: "Down was released"],
+    "13": [buttonEvent: "held", buttonIndex: 2, description: "Down was held"],
+    "14": [buttonEvent: "doubleTapped", buttonIndex: 2, description: "Down was double-tapped"]
 ]
 
 private void parseAttributeReport(Map descMap) {
@@ -470,7 +471,7 @@ private void parseAttributeReport(Map descMap) {
         case "FF01": // Manufacturer-specific cluster
             switch (descMap.attrId) {
                 case "0002": // keypad lock
-                    boolean locked = descMap.value > 0
+                    boolean locked = (descMap.value != "00")
                     map.name = "keypadLock"
                     map.value = locked
                     map.descriptionText = "Keypad ${descMap.commandInt == 0x0A ? 'is' : 'was'} ${locked ? 'locked' : 'unlocked'}"
