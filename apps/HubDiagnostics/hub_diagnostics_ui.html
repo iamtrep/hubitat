@@ -142,7 +142,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.83.3";
+const CODE_VERSION = "5.83.4";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -2486,7 +2486,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
     o+='</div></div>'}
   // Z-Wave JS Controller (v5.9.0) \u2014 only when Z-Wave JS stack is active
   if(d.zwaveJs&&d.zwaveJs.unavailable){
-    o+='<div class="card"><div class="card-h">Z-Wave JS Controller</div><div class="card-b"><div class="alert a-warn">\u26a0 Z-Wave JS is enabled but the controller state is unavailable \u2014 the hub returned no controller data. The Z-Wave radio may be initializing, resetting, or not responding.</div></div></div>';
+    o+='<div class="card"><div class="card-h">Z-Wave JS Controller</div><div class="card-b"><div class="alert a-warn">\u26a0 Z-Wave JS controller statistics are unavailable \u2014 the hub returned no controller state for this request (getControllerState \u2192 null). Node and mesh data below are unaffected.</div></div></div>';
   }
   else if(d.zwaveJs){const j=d.zwaveJs,s=j.statistics||{};
     o+='<div class="card"><div class="card-h">Z-Wave JS Controller</div><div class="card-b"><div class="ng">';

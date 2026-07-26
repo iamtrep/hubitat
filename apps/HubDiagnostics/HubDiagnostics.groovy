@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "5.83.3"
+@Field static final String CODE_VERSION = "5.83.4"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -1789,9 +1789,10 @@ Map fetchRadioHealth() {
 Map fetchZwaveJsState() {
     if (detectZwaveStack() != "js") return null
     Map wrap = hubMapRequest(ZWAVE_JS_CONTROLLER_PATH, "zwave JS controller", 10)
-    // Z-Wave JS is enabled but getControllerState returned no usable data — a bare `null` body
-    // (controller object not populated: radio initializing, resetting, or not responding). Flag
-    // it so the SPA surfaces it as a finding instead of silently dropping the controller card.
+    // Z-Wave JS is enabled but getControllerState returned no usable data (a bare `null` body).
+    // Observed on hubs with a healthy multi-node mesh, so this is NOT a dead radio — the cause is
+    // hub-side and unconfirmed. Flag it so the SPA notes the missing controller stats; node/mesh
+    // data (from zwaveDetails) is unaffected.
     if (!wrap.ok) return [unavailable: true]
     Map ctrl = wrap.data
     Map stats = (ctrl.statistics as Map) ?: [:]
