@@ -142,7 +142,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.83.1";
+const CODE_VERSION = "5.83.2";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -1332,8 +1332,8 @@ function buildForumMarkdown(d){
   if(zwaveRaw){
     L('');L('### Z-Wave');
     L(`- **Enabled:** ${zwaveRaw.enabled?'Yes':'No'}, **Healthy:** ${zwaveRaw.healthy?'Yes':'No'}`);
-    L(`- **Version:** ${d.zwaveVersion||'N/A'}, **Region:** ${zwaveRaw.region||'N/A'}`);
-    if(zwaveRaw.zwaveJS!=null)L(`- **Z-Wave JS:** ${zwaveRaw.zwaveJS?'Yes':'No'}`);
+    L(`- **Radio Firmware:** ${d.zwaveVersion||'N/A'}, **Region:** ${zwaveRaw.region||'N/A'}`);
+    if(zwaveRaw.zwaveJS!=null)L(`- **Z-Wave JS:** ${zwaveRaw.zwaveJS?'Yes':'No'}${zwaveRaw.zwaveJSVersion?` (v${zwaveRaw.zwaveJSVersion})`:''}`);
     L(`- **Nodes:** ${zwaveRaw.nodeCount!=null?zwaveRaw.nodeCount:Object.keys(zwaveRaw.zwDevices||{}).length}`);
     if(zwaveMesh){
       let meshLine=`- **Avg PER:** ${Number(zwaveMesh.avgPer||0).toFixed(1)}%`;
@@ -2445,10 +2445,11 @@ async function rNetwork(){const P='p-network';loading(P);try{
   if(d.zwave){const z=d.zwave;
     o+='<div class="card" id="nc-zwave"><div class="card-h">Z-Wave Network</div><div class="card-b"><div class="ng">';
     o+=ni('Enabled',z.enabled?'Yes':'No');o+=ni('Healthy',z.healthy?'Yes':'No',z.healthy?'var(--ok)':'var(--crit)');
-    o+=ni('Version',z.version||'N/A');
+    o+=ni('Radio Firmware',z.version||'N/A');
     if(d.zipgatewayVersion)o+=ni('Zip Gateway',d.zipgatewayVersion);
     o+=ni('Region',z.region||'N/A');o+=ni('Nodes',z.nodeCount);
     if(z.zwaveJS!=null){const stack=z.zwaveJS?'ZWaveJS':'Z/IP Gateway';const avail=(!z.zwaveJS&&z.zwaveJSAvailable)?' <span style="color:var(--muted);font-size:12px">(ZWaveJS available)</span>':'';o+='<div class="ni"><div class="nl">Stack</div><div class="nv">'+h(stack)+avail+'</div></div>';}
+    if(z.zwaveJSVersion)o+=ni('Z-Wave JS Version',z.zwaveJSVersion);
     if(z.isRadioUpdateNeeded)o+='</div><div class="alert a-warn" style="margin-top:8px">\u26A0 Z-Wave radio firmware update available</div><div class="ng">';
     o+='</div>';
     // Ghost / Failed nodes \u2014 split by kind so users don't force-remove recoverable nodes.
@@ -2484,7 +2485,10 @@ async function rNetwork(){const P='p-network';loading(P);try{
       probNodes.forEach(n=>{o+='<div style="margin:4px 0;color:var(--crit)">'+(n.deviceId?dlink(n.deviceId,n.name):h(Obf.nm(n.name)))+' &mdash; '+h(Obf.scrub(n.issues))+'</div>'});o+='</div>'}
     o+='</div></div>'}
   // Z-Wave JS Controller (v5.9.0) \u2014 only when Z-Wave JS stack is active
-  if(d.zwaveJs){const j=d.zwaveJs,s=j.statistics||{};
+  if(d.zwaveJs&&d.zwaveJs.unavailable){
+    o+='<div class="card"><div class="card-h">Z-Wave JS Controller</div><div class="card-b"><div class="alert a-warn">\u26a0 Z-Wave JS is enabled but the controller state is unavailable \u2014 the hub returned no controller data. The Z-Wave radio may be initializing, resetting, or not responding.</div></div></div>';
+  }
+  else if(d.zwaveJs){const j=d.zwaveJs,s=j.statistics||{};
     o+='<div class="card"><div class="card-h">Z-Wave JS Controller</div><div class="card-b"><div class="ng">';
     o+=ni('Firmware',j.firmwareVersion);o+=ni('SDK',j.sdkVersion);
     o+=ni('Home ID',j.homeId);o+=ni('Own Node',j.ownNodeId);

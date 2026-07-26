@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "5.83.1"
+@Field static final String CODE_VERSION = "5.83.2"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -884,7 +884,7 @@ Map apiSnapshotView() {
         ],
         network: snapNet ? [
             zigbee:  snapNet.zigbee  && !snapNet.zigbee.error  ? [enabled: snapNet.zigbee.enabled,  channel: snapNet.zigbee.channel]  : null,
-            zwave:   snapNet.zwave   && !snapNet.zwave.error   ? [enabled: snapNet.zwave.enabled,   region: snapNet.zwave.region,   nodeCount: (snapNet.zwave.zwDevices ?: [:]).size()] : null,
+            zwave:   snapNet.zwave   && !snapNet.zwave.error   ? [enabled: snapNet.zwave.enabled,   region: snapNet.zwave.region,   nodeCount: (snapNet.zwave.zwDevices ?: [:]).size(), zwaveJSVersion: snapNet.zwave.zwaveJSVersion] : null,
             matter:  snapNet.matter  && !snapNet.matter.error  ? [enabled: snapNet.matter.enabled,  installed: snapNet.matter.installed]  : null,
             hubMesh: snapNet.hubMesh && !snapNet.hubMesh.error ? [
                 enabled: snapNet.hubMesh.hubMeshEnabled != null ? snapNet.hubMesh.hubMeshEnabled : snapNet.hubMesh.enabled,
@@ -1192,7 +1192,7 @@ Map getNetworkData(Map shared = [:]) {
             region: networkData.zwave.region, nodeCount: (networkData.zwave.zwDevices ?: [:]).size(),
             isRadioUpdateNeeded: networkData.zwave.isRadioUpdateNeeded,
             zwaveJS: networkData.zwave.zwaveJS, zwaveJSAvailable: networkData.zwave.zwaveJSAvailable,
-            version: zwaveVersion,
+            version: zwaveVersion, zwaveJSVersion: networkData.zwave.zwaveJSVersion,
             mesh: zwaveMesh, ghostNodes: ghostNodes,
             messageCounts: extractZwaveMessageCounts(networkData.zwave ?: [:])
         ] : null,
@@ -1511,7 +1511,14 @@ private Object hubRequestInternal(String path, String name, String type, int tim
             return hubRequestInternal(path, name, type, timeout, false)
         }
         if (type == "json") {
-            logError "Error fetching ${name} (${now() - start}ms): ${exClass}: ${e.message}"
+            // A bare `null`/scalar body (e.g. Z-Wave JS getControllerState when no controller
+            // state is available) is valid JSON but fails Hubitat's object/array parse with
+            // JsonException. That's a no-data outcome, not a fault — log quietly; callers see ok:false.
+            if (exClass == 'groovy.json.JsonException') {
+                logDebug "No JSON body for ${name} (${now() - start}ms): ${e.message}"
+            } else {
+                logError "Error fetching ${name} (${now() - start}ms): ${exClass}: ${e.message}"
+            }
             return [error: true, message: e.message]
         } else {
             logDebug "Error fetching ${name}: ${e.message}"
@@ -1782,7 +1789,10 @@ Map fetchRadioHealth() {
 Map fetchZwaveJsState() {
     if (detectZwaveStack() != "js") return null
     Map wrap = hubMapRequest(ZWAVE_JS_CONTROLLER_PATH, "zwave JS controller", 10)
-    if (!wrap.ok) return null
+    // Z-Wave JS is enabled but getControllerState returned no usable data — a bare `null` body
+    // (controller object not populated: radio initializing, resetting, or not responding). Flag
+    // it so the SPA surfaces it as a finding instead of silently dropping the controller card.
+    if (!wrap.ok) return [unavailable: true]
     Map ctrl = wrap.data
     Map stats = (ctrl.statistics as Map) ?: [:]
     return [
