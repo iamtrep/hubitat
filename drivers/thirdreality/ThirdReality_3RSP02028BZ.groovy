@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: MIT
 
 /*
- *  Third Reality Smart Plug (3RSP02028BZ) Device Driver for Hubitat Elevation
+ *  Third Reality Energy-Monitoring Smart Plug Device Driver for Hubitat Elevation
+ *
+ *  Covers both metering generations. Gen2: 3RSP02028BZ (US), 3RSPE01044BZ (E2, EU).
+ *  Gen3 is one device sold as regional white labels: 3RSP02064Z (US), 3RSPU01080Z
+ *  (UZ1, UK), 3RSPE02065Z (E3), 3RSP0186Z (C1), 3RSPJ0187Z (J1). The last two are in
+ *  GEN3_MODELS but unfingerprinted — assign by hand. See docs/thirdreality-plug-model-matrix.md.
  *
  *  ZCL clusters used:
  *    0x0006  On/Off
@@ -131,7 +136,7 @@ import java.math.RoundingMode
 
 metadata {
     definition(
-        name: "Third Reality Smart Plug (3RSP02028BZ)",
+        name: "Third Reality Energy-Monitoring Smart Plug Gen2 (US/EU) and Gen3 (US/UK/EU)",
         namespace: "iamtrep",
         author: "pj",
         description: "Zigbee on/off plug with power monitoring",
