@@ -26,8 +26,8 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "1.0.2"
-@Field static final String VISIBLAIR_API = "https://api.visiblair.com:11000/api/v1"
+@Field static final String CODE_VERSION = "2.0.0"
+@Field static final String VISIBLAIR_API = "https://api.visiblair.com/api/v1"
 @Field static final int HTTP_TIMEOUT = 15
 @Field static final String DNI_PREFIX = "visiblair-"
 
@@ -38,7 +38,8 @@ preferences {
 Map mainPage() {
     dynamicPage(name: "mainPage", title: "VisiblAir Manager", install: true, uninstall: true) {
         section("API Configuration") {
-            input "userId", "text", title: "VisiblAir User ID", required: true
+            input "apiEmail", "text", title: "VisiblAir Email", required: true
+            input "apiPassword", "password", title: "VisiblAir Password", required: true
             input "pollRate", "number", title: "Poll rate (minutes)", defaultValue: 5, range: "1..60"
         }
         section("Discovered Sensors") {
@@ -92,8 +93,8 @@ void updated() {
     logDebug "updated"
     unschedule()
 
-    if (!userId) {
-        logWarn "User ID not configured"
+    if (!apiEmail || !apiPassword) {
+        logWarn "Email/password not configured"
         return
     }
 
@@ -133,47 +134,78 @@ void appButtonHandler(String buttonName) {
     }
 }
 
+// --- Authentication ---
+
+private String login() {
+    String token = null
+    Map loginParams = [
+        uri: "${VISIBLAIR_API}/auth/login",
+        requestContentType: "application/json",
+        contentType: "application/json",
+        body: JsonOutput.toJson([email: apiEmail, password: apiPassword]),
+        timeout: HTTP_TIMEOUT
+    ]
+    try {
+        httpPost(loginParams) { resp ->
+            if (resp.status == 200 && resp.data) {
+                token = resp.data.accessToken as String
+                logDebug "login successful"
+            } else {
+                logError "login failed: HTTP ${resp.status}"
+            }
+        }
+    } catch (Exception e) {
+        logError "login: ${e.message}"
+    }
+    return token
+}
+
 // --- Discovery & Polling ---
 
 void pollSensors() {
-    if (!userId) return
+    if (!apiEmail || !apiPassword) return
+
+    String token = login()
+    if (!token) {
+        logError "cannot poll sensors: login failed"
+        return
+    }
 
     Map requestParams = [
         uri: "${VISIBLAIR_API}/sensors/getForUser",
-        query: [enc: "true", userID: userId],
+        headers: [Authorization: "Bearer ${token}"],
         requestContentType: "application/json",
         contentType: "application/json",
         timeout: HTTP_TIMEOUT
     ]
 
-    asynchttpGet("handlePollResponse", requestParams)
+    try {
+        httpGet(requestParams) { resp ->
+            handlePollData(resp.status, resp.data)
+        }
+    } catch (Exception e) {
+        logError "pollSensors: ${e.message}"
+    }
 }
 
-void handlePollResponse(resp, data) {
+private void handlePollData(int status, data) {
     try {
-        if (resp.hasError()) {
-            logError "API error: ${resp.getErrorMessage()}"
+        if (status != 200 && status != 207) {
+            logWarn "API returned HTTP ${status}"
             return
         }
 
-        if (resp.getStatus() != 200 && resp.getStatus() != 207) {
-            logWarn "API returned HTTP ${resp.getStatus()}"
-            return
-        }
-
-        if (!resp.data) {
+        if (!data) {
             logWarn "empty response from API"
             return
         }
 
-        List jsonList = resp.json as List
+        List jsonList = data as List
         logDebug "received ${jsonList.size()} entries from API"
 
-        // Filter out template/placeholder sensors
         List realSensors = jsonList.findAll { Map sensor -> isRealSensor(sensor) }
         logDebug "filtered to ${realSensors.size()} real sensors"
 
-        // Store discovered sensors (explicit reassignment for state persistence)
         List<Map> discovered = []
         realSensors.each { Map sensor ->
             discovered << [
@@ -192,7 +224,7 @@ void handlePollResponse(resp, data) {
         dispatchSensorData(realSensors)
 
     } catch (Exception e) {
-        logError "handlePollResponse: ${e.message}"
+        logError "handlePollData: ${e.message}"
     }
 }
 
@@ -226,14 +258,12 @@ private void syncChildDevices(List<Map> sensors) {
             }
         }
 
-        // Update data values (viewToken may rotate)
         child.updateDataValue("uuid", uuid)
         child.updateDataValue("viewToken", viewToken)
         child.updateDataValue("model", model)
         child.updateDataValue("modelVariant", variant)
     }
 
-    // Track orphaned children in state for UI display
     List<Map> orphans = []
     List<ChildDeviceWrapper> children = getChildDevices()
     children.each { child ->
@@ -261,11 +291,9 @@ private void dispatchSensorData(List sensorList) {
 
 @CompileStatic
 static boolean isRealSensor(Map sensor) {
-    // Must have a non-empty model
     String model = sensor.get("model") as String ?: ""
     if (model.isEmpty()) return false
 
-    // Must have reported data at least once
     String ts = sensor.get("lastSampleTimeStamp") as String ?: ""
     if (ts.isEmpty() || ts.startsWith("0000")) return false
 
@@ -290,9 +318,16 @@ static String resolveDriverName(String model, String modelVariant) {
 void sendFirmwareCommand(String uuid, String command) {
     logDebug "firmware command '${command}' for ${uuid}"
 
+    String token = login()
+    if (!token) {
+        logError "cannot send firmware command: login failed"
+        return
+    }
+
     Map requestParams = [
         uri: "${VISIBLAIR_API}/firmware/${command}",
         query: [uuid: uuid],
+        headers: [Authorization: "Bearer ${token}"],
         requestContentType: "application/json",
         contentType: "application/json",
         body: "",
@@ -327,8 +362,6 @@ void refreshSensor(String dni) {
 
 // --- Sensor Configuration ---
 
-// Fields from the API that are configurable via PUT /sensors/assign
-// PUT /sensors/assign requires the full config — map API response field names to PUT param names
 @Field static final Map<String, String> CONFIG_FIELD_MAP = [
     "description": "description", "co2Offset": "co2Offset",
     "temperatureOffset": "temperatureOffset", "humidityOffset": "humidityOffset",
@@ -344,7 +377,6 @@ void refreshSensor(String dni) {
     "alertThresholds": "alertThresholds", "config": "config"
 ]
 
-// portalView is not returned by getForUser — provide default
 @Field static final Map PORTAL_VIEW_DEFAULT = [CO2: "on", T: "on", H: "on", AQI_METHOD: "us"]
 
 private void storeSensorConfigs(List sensorList) {
@@ -357,7 +389,6 @@ private void storeSensorConfigs(List sensorList) {
                 config[putParam] = sensor[apiField]
             }
         }
-        // portalView not returned by getForUser — use default
         if (!config.containsKey("portalView")) {
             config.portalView = PORTAL_VIEW_DEFAULT
         }
@@ -369,7 +400,6 @@ private void storeSensorConfigs(List sensorList) {
 void updateSensorConfig(String uuid, Map overrides) {
     if (!uuid || !overrides) return
 
-    // Merge overrides into stored config
     Map<String, Map> configs = (state.sensorConfigs ?: [:]) as Map
     Map config = (configs[uuid] ?: [:]) as Map
     overrides.each { String key, value ->
@@ -378,7 +408,6 @@ void updateSensorConfig(String uuid, Map overrides) {
     configs[uuid] = config
     state.sensorConfigs = configs
 
-    // API requires full config — if we don't have MQTT fields yet, fetch them first
     if (!config.containsKey("mqttenpoint")) {
         logDebug "stored config incomplete for ${uuid}, fetching full config first"
         fetchAndUpdateConfig(uuid, overrides)
@@ -389,10 +418,15 @@ void updateSensorConfig(String uuid, Map overrides) {
 }
 
 private void fetchAndUpdateConfig(String uuid, Map overrides) {
-    // Query via the query: map, not inline in the uri: 2.5.1.x drops an inline uri query.
+    String token = login()
+    if (!token) {
+        logError "cannot fetch config: login failed"
+        return
+    }
+
     Map requestParams = [
         uri: "${VISIBLAIR_API}/sensors/getForUser",
-        query: [enc: "true", userID: userId],
+        headers: [Authorization: "Bearer ${token}"],
         requestContentType: "application/json",
         contentType: "application/json",
         timeout: HTTP_TIMEOUT
@@ -421,11 +455,13 @@ private void fetchAndUpdateConfig(String uuid, Map overrides) {
 }
 
 private void sendConfigUpdate(String uuid, Map config, Map overrides) {
-    // Build the full config as a query map — the API requires the full config or it
-    // drops the connection. Pass via query:, not inline in the URI: 2.5.1.x asynchttpPut
-    // silently drops an inline URI query string. The platform URL-encodes map values,
-    // so pass raw values (encoding here would double-encode).
-    Map<String, String> query = [enc: "true", uuid: uuid, associatedUserID: userId?.toString()]
+    String token = login()
+    if (!token) {
+        logError "cannot update config: login failed"
+        return
+    }
+
+    Map<String, String> query = [uuid: uuid]
     config.each { String key, value ->
         query[key] = (value instanceof Map || value instanceof List) ? JsonOutput.toJson(value) : (value?.toString() ?: "")
     }
@@ -435,6 +471,7 @@ private void sendConfigUpdate(String uuid, Map config, Map overrides) {
     Map requestParams = [
         uri: "${VISIBLAIR_API}/sensors/assign",
         query: query,
+        headers: [Authorization: "Bearer ${token}"],
         requestContentType: "application/json",
         contentType: "application/json",
         timeout: HTTP_TIMEOUT
