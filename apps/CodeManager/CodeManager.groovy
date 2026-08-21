@@ -391,6 +391,11 @@ Map compact(Map m) { return m.findAll { k, v -> v != null } }
 @CompileStatic
 static String hashPrefix(String s) { return (s && s.length() > 16) ? s.substring(0, 16) : s }
 
+// The registry's one composite-key shape: a hub object's kind + its hub id. Other key shapes
+// (url:, local:, bundle:, cm_pkg_ file names) are built inline as explicitly typed String vars.
+@CompileStatic
+static String ckey(String kind, Object id) { return kind + ":" + id }
+
 String pkgFileName(String key) { return PKG_FILE_PREFIX + digest16(key) + ".json" }
 
 List listCmFiles() {
@@ -433,9 +438,9 @@ Map runInventoryPass() {
     List apps = fetchUserAppTypes(), drvs = fetchUserDriverTypes(), libs = fetchUserLibraries(), bundles = fetchBundles()
     Map<String, String> memberOf = [:]
     bundles.each { Map b ->
-        b.appTypeIds.each { memberOf[("app:${it}").toString()] = b.id }
-        b.deviceTypeIds.each { memberOf[("driver:${it}").toString()] = b.id }
-        b.libraryIds.each { memberOf[("library:${it}").toString()] = b.id }
+        b.appTypeIds.each { memberOf[ckey('app', it)] = b.id }
+        b.deviceTypeIds.each { memberOf[ckey('driver', it)] = b.id }
+        b.libraryIds.each { memberOf[ckey('library', it)] = b.id }
     }
     Map pkgs = (state.pkgs ?: [:]) as Map
     // index existing components by kind:id so bindings (ihash, iver, loc, ah) survive a pass. Origin-url
@@ -445,7 +450,7 @@ Map runInventoryPass() {
     pkgs.each { String key, Map p ->
         (p.c as List).each { Map c ->
             Map full = (p.o == 'url' && c.k != 'library' && c.loc == null) ? c + [loc: key.substring(4)] : c
-            prev[("${c.k}:${c.id}").toString()] = full + [_key: key]
+            prev[ckey(c.k as String, c.id)] = full + [_key: key]
         }
     }
     Map<String, Map> seen = [:]
@@ -454,7 +459,7 @@ Map runInventoryPass() {
     for (List pair in all) {
         String kind = pair[0] as String
         for (Map t in (pair[1] as List)) {
-            String ck = ("${kind}:${t.id}").toString()
+            String ck = ckey(kind, t.id)
             Map old = prev[ck]
             long lm = isoToMs(t.lastModified as String)
             // ih/ah are stored as 16-hex-char sha256 prefixes (state-size budget, DESIGN.md §2.4); a
@@ -476,38 +481,63 @@ Map runInventoryPass() {
     }
     // Rebuild packages: keep HPM-origin packages (Task 5 owns them), regroup everything else.
     Map next = [:]
-    pkgs.each { String key, Map p -> if (p.o == 'hpm') next[key] = compact(p + [c: (p.c as List).collect { Map c -> seen[("${c.k}:${c.id}").toString()] ?: c + [id: null] }]) }
-    Set bound = next.values().collectMany { Map p -> (p.c as List).findAll { Map c -> c.id }.collect { Map c -> ("${c.k}:${c.id}").toString() } } as Set
+    pkgs.each { String key, Map p -> if (p.o == 'hpm') next[key] = compact(p + [c: (p.c as List).collect { Map c -> seen[ckey(c.k as String, c.id)] ?: c + [id: null] }]) }
+    Set bound = next.values().collectMany { Map p -> (p.c as List).findAll { Map c -> c.id }.collect { Map c -> ckey(c.k as String, c.id) } } as Set
     bundles.each { Map b ->
         String key = "bundle:${b.id}"
         // The bundle itself is a component too (DESIGN.md §2.1 kind: bundle), distinct from its members.
         Map bundleComp = compact([k: 'bundle', id: b.id, ns: b.namespace, nm: b.name, u: (b.appTypeIds.size() + b.deviceTypeIds.size() + b.libraryIds.size()),
                                    lm: 0L, bm: null, loc: b.sourceUrl, ih: null, iv: null, ivs: null, pv: b.isPrivate == true, ah: null])
-        List comps = [bundleComp] + (b.appTypeIds.collect { seen[("app:${it}").toString()] } + b.deviceTypeIds.collect { seen[("driver:${it}").toString()] } + b.libraryIds.collect { seen[("library:${it}").toString()] }).findAll { it }
-        comps.each { Map c -> bound << ("${c.k}:${c.id}").toString() }
+        // classification priority is hpm > bundle (DESIGN.md §3): a member id already claimed by an
+        // HPM package (already in `bound`, added above) is not also added under its bundle's package.
+        List members = (b.appTypeIds.findAll { !bound.contains(ckey('app', it)) }.collect { seen[ckey('app', it)] } +
+                        b.deviceTypeIds.findAll { !bound.contains(ckey('driver', it)) }.collect { seen[ckey('driver', it)] } +
+                        b.libraryIds.findAll { !bound.contains(ckey('library', it)) }.collect { seen[ckey('library', it)] }).findAll { it }
+        List comps = [bundleComp] + members
+        comps.each { Map c -> bound << ckey(c.k as String, c.id) }
         Map p = pkgs[key] as Map
         next[key] = compact([o: 'bundle', n: b.name, v: null, g: p?.g ?: 1, url: b.sourceUrl, pv: b.isPrivate, c: comps])
     }
+    // Regroup every non-bound component fresh from `seen` each pass — never carry an old package's
+    // component list forward, so an item deleted from the hub (and so absent from `seen`) doesn't
+    // linger as a ghost member; only `g` (and, via `prev` above, each component's `ah`) survives.
+    Map grouped = [:]
     seen.each { String ck, Map c ->
         if (bound.contains(ck)) return
         String key = c.loc ? "url:${c.loc}" : "local:${c.k}/${c.ns}/${c.nm}"
         // origin url + app/driver: loc equals the key minus its "url:" prefix, so don't store it twice;
         // libraries keep loc stored (their key isn't guaranteed to carry it verbatim — see ruling).
         Map storedC = (c.loc && c.k != 'library') ? c.findAll { String k, v -> k != 'loc' } : c
-        Map p = (next[key] ?: pkgs[key] ?: [o: c.loc ? 'url' : 'local', n: c.nm, v: null, g: 1, c: []]) as Map
-        p = p + [c: ((p.c as List).findAll { Map x -> ("${x.k}:${x.id}").toString() != ck }) + [storedC]]
-        next[key] = compact(p)
+        ((grouped[key] ?: (grouped[key] = [])) as List) << storedC
+    }
+    grouped.each { String key, List comps ->
+        Map oldP = pkgs[key] as Map
+        next[key] = compact([o: key.startsWith('url:') ? 'url' : 'local', n: (comps[0] as Map).nm, v: null, g: oldP?.g ?: 1, c: comps])
     }
     // Documents: write for new packages or when the component set changed (compare by kind:id set)
     Map docsBefore = listCmFiles().collectEntries { Map f -> [(f.name as String): f] }
     next.each { String key, Map p ->
         if (p.o == 'hpm') return                               // Task 5 writes HPM documents
-        Set ids = (p.c as List).collect { Map c -> ("${c.k}:${c.id}").toString() } as Set
-        Set oldIds = ((pkgs[key] as Map)?.c as List ?: []).collect { Map c -> ("${c.k}:${c.id}").toString() } as Set
+        Set ids = (p.c as List).collect { Map c -> ckey(c.k as String, c.id) } as Set
+        Set oldIds = ((pkgs[key] as Map)?.c as List ?: []).collect { Map c -> ckey(c.k as String, c.id) } as Set
         if (ids != oldIds || !docsBefore.containsKey(pkgFileName(key))) {
             p.g = ((p.g ?: 0) as int) + 1
             writePkgDoc(key, p, degenerateManifest(p.o as String, p.n as String, p.c as List, p.url as String))
         }
+    }
+    // A url:/local: package with no components left this pass (its item(s) were deleted from the hub)
+    // is simply absent from `next` — its manifest document is now orphaned; remove it from File Manager.
+    // Own files only (cm_pkg_ prefix), guarded and logged — never touches a document this pass didn't write.
+    docsBefore.keySet().findAll { String name -> name.startsWith(PKG_FILE_PREFIX) }.each { String name ->
+        try {
+            String text = readCmFile(name); if (!text) return
+            Map doc = (Map) new JsonSlurper().parseText(text)
+            String k = doc?._cm?.key as String
+            if (k && !next.containsKey(k)) {
+                deleteHubFile(name)
+                logInfo "inventory: removed stale manifest document ${name} (package ${k} no longer exists)"
+            }
+        } catch (Exception e) { logError "prune stale manifest ${name}: ${e.message}" }
     }
     state.pkgs = next
     state.lastInventory = [at: now(), items: seen.size(), fetched: fetched, changed: changed]
@@ -520,9 +550,9 @@ Map runInventoryPass() {
 Map usedByIndex() {
     return cachedFetch("usedByIndex", 60_000L) {
         Map idx = [:]
-        fetchUserAppTypes().each { Map a -> idx[("app:${a.id}").toString()] = a.usedBy }
-        fetchUserDriverTypes().each { Map d -> idx[("driver:${d.id}").toString()] = d.usedBy }
-        fetchUserLibraries().each { Map l -> idx[("library:${l.id}").toString()] = l.usedBy }
+        fetchUserAppTypes().each { Map a -> idx[ckey('app', a.id)] = a.usedBy }
+        fetchUserDriverTypes().each { Map d -> idx[ckey('driver', d.id)] = d.usedBy }
+        fetchUserLibraries().each { Map l -> idx[ckey('library', l.id)] = l.usedBy }
         idx
     } as Map
 }
@@ -535,7 +565,7 @@ Map buildInventoryPayload() {
     List comps = []
     List packages = pkgs.collect { String key, Map p ->
         List pc = (p.c as List).collect { Map c ->
-            Map s = (sweep[("${c.k}:${c.id}").toString()] ?: [:]) as Map
+            Map s = (sweep[ckey(c.k as String, c.id)] ?: [:]) as Map
             boolean localMod = c.ah && c.ih && c.ih != c.ah
             String status = c.id == null ? 'missing' : (c.pv ? 'private' : (p.o == 'local' ? 'unknown' : freshnessStatus(c.ih as String, s.rhash as String, c.iv as String, s.rver as String, localMod)))
             if (s.broken == true) status = 'broken-source'
@@ -544,7 +574,7 @@ Map buildInventoryPayload() {
             Map row = [key: key, kind: c.k, hubId: c.id, namespace: c.ns, name: c.nm, origin: p.o, location: location, managedBy: p.o == 'hpm' ? (state.hpm?.mode == 'manage' ? 'cm' : 'hpm') : 'cm',
                        status: status, ihash: c.ih, ahash: c.ah, iver: c.iv, iverSrc: c.ivs, rhash: s.rhash, rver: s.rver, checkedAtMs: s.checkedAt, changedAtMs: s.changedAt,
                        httpStatus: s.httpStatus, failCount: s.failCount ?: 0, error: s.error, lastModifiedMs: c.lm, usedByCount: c.u ?: 0,
-                       usedBy: usedBy[("${c.k}:${c.id}").toString()] ?: [], bundleOf: c.bm, isPrivate: c.pv == true]
+                       usedBy: usedBy[ckey(c.k as String, c.id)] ?: [], bundleOf: c.bm, isPrivate: c.pv == true]
             comps << row
             return row
         }
@@ -560,7 +590,8 @@ Map buildInventoryPayload() {
 }
 Map apiInventory() {
     return timed("inventory") {
-        if (!state.pkgs || now() - ((state.lastInventory?.at ?: 0) as long) > 3600_000L) runInventoryPass()
+        boolean force = params.force == "1"
+        if (force || !state.pkgs || now() - ((state.lastInventory?.at ?: 0) as long) > 3600_000L) runInventoryPass()
         buildInventoryPayload()
     }
 }
