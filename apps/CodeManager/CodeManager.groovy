@@ -421,6 +421,70 @@ void initialize() {
 void systemStartHandler(evt) { runIn(300, 'scheduledSweep') }
 void scheduledSweep() { logSched "scheduled sweep (engine arrives in Task 6)" }
 
+// ===== Version heuristics (DESIGN.md §4) — self-contained, extracted by tests/test-version-compare.groovy =====
+
+// Ordered regex list over the first 400 lines; the first hit wins and the matched idiom is recorded.
+@CompileStatic
+static Map parseVersionLiteral(String source) {
+    if (!source) return [ver: null, src: null]
+    List<String> lines = source.readLines()
+    String head = (lines.size() > 400 ? lines.subList(0, 400) : lines).join('\n')
+    List<List> rules = [
+        ['field',      /(?m)@Field\s+(?:static\s+)?(?:final\s+)?(?:String\s+|def\s+)?\w*(?:[vV]ersion|VERSION)\w*\s*=\s*['"]([^'"]+)['"]/],
+        ['field',      /(?m)^\s*static\s+(?:final\s+)?(?:String\s+|def\s+)?\w*(?:[vV]ersion|VERSION)\w*\s*=\s*['"]([^'"]+)['"]/],
+        ['method',     /(?m)(?:def|static\s+String|String)\s+(?:version|appVersion|driverVersion)\s*\(\s*\)\s*\x7B\s*(?:return\s+)?['"]([^'"]+)['"]/],
+        ['library',    /(?s)library\s*\(.*?\bversion\s*:\s*['"]([^'"]+)['"]/],
+        ['definition', /(?s)definition\s*\(.*?\bversion\s*:\s*['"]([^'"]+)['"]/],
+        ['comment',    /(?mi)^\s*\*?\s*version\s*[:=]?\s*v?(\d+(?:\.\d+)+)/],
+    ]
+    for (List rule in rules) {
+        java.util.regex.Matcher m = head =~ (String) rule[1]
+        if (m.find()) return [ver: m.group(1).trim(), src: (String) rule[0]]
+    }
+    return [ver: null, src: null]
+}
+
+// Leading v stripped, cut at first space/paren, split on '.' or '-'; a segment that is not an
+// integer after dropping a trailing letter run makes the whole value unparsable (null).
+@CompileStatic
+static List<Integer> normalizeVersion(String v) {
+    if (!v) return null
+    String s = v.trim().replaceFirst(/^[vV]/, '')
+    int cut = s.indexOf(' '); if (cut > 0) s = s.substring(0, cut)
+    cut = s.indexOf('('); if (cut > 0) s = s.substring(0, cut)
+    if (!s) return null
+    List<Integer> out = []
+    for (String seg in s.split(/[.\-]/)) {
+        String digits = seg.replaceFirst(/[A-Za-z]+$/, '')
+        if (!digits || !digits.isInteger()) return null
+        out << digits.toInteger()
+    }
+    return out
+}
+
+// -1 when a < b, 0 when equal, 1 when a > b; null when either side is unparsable.
+@CompileStatic
+static Integer compareVersions(String a, String b) {
+    List<Integer> pa = normalizeVersion(a), pb = normalizeVersion(b)
+    if (pa == null || pb == null) return null
+    int n = Math.max(pa.size(), pb.size())
+    for (int i = 0; i < n; i++) {
+        int x = i < pa.size() ? pa[i] : 0, y = i < pb.size() ? pb[i] : 0
+        if (x != y) return x < y ? -1 : 1
+    }
+    return 0
+}
+
+// The truth table of DESIGN.md §4.2. localModified = installed source hash != ihash recorded at adoption.
+@CompileStatic
+static String freshnessStatus(String ihash, String rhash, String iver, String rver, boolean localModified) {
+    if (localModified) return 'modified-locally'
+    if (!rhash) return 'unknown'
+    if (ihash == rhash) return 'current'
+    Integer cmp = compareVersions(iver, rver)
+    return (cmp != null && cmp < 0) ? 'update-available' : 'changed-upstream'
+}
+
 // ===== Logging (docs/logging-emoji-scheme.md, app variant) =====
 private String logp(String e) { "${e} ${app.getLabel()}: " }
 private void logInfo (String m) { if (settings.txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
