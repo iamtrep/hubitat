@@ -381,6 +381,16 @@ static long isoToMs(String raw) {
     return 0L
 }
 
+// Registry compaction (state.pkgs size budget, DESIGN.md §2.4): drop null-valued fields before
+// storing a component or package map. buildInventoryPayload() reads every field via ?./?:, so a
+// missing key behaves the same as a stored null.
+Map compact(Map m) { return m.findAll { k, v -> v != null } }
+
+// ih/ah are stored as this 16-hex-char prefix of the full sha256 (state-size budget); also
+// truncates a pre-existing full-length value carried forward from before this was added.
+@CompileStatic
+static String hashPrefix(String s) { return (s && s.length() > 16) ? s.substring(0, 16) : s }
+
 String pkgFileName(String key) { return PKG_FILE_PREFIX + digest16(key) + ".json" }
 
 List listCmFiles() {
@@ -428,9 +438,16 @@ Map runInventoryPass() {
         b.libraryIds.each { memberOf[("library:${it}").toString()] = b.id }
     }
     Map pkgs = (state.pkgs ?: [:]) as Map
-    // index existing components by kind:id so bindings (ihash, iver, loc, ah) survive a pass
+    // index existing components by kind:id so bindings (ihash, iver, loc, ah) survive a pass. Origin-url
+    // app/driver components don't store loc (derivable from the package key, dropped at storage below),
+    // so reconstruct it here from the key before it's carried into this pass's comp map.
     Map<String, Map> prev = [:]
-    pkgs.each { String key, Map p -> (p.c as List).each { Map c -> prev[("${c.k}:${c.id}").toString()] = c + [_key: key] } }
+    pkgs.each { String key, Map p ->
+        (p.c as List).each { Map c ->
+            Map full = (p.o == 'url' && c.k != 'library' && c.loc == null) ? c + [loc: key.substring(4)] : c
+            prev[("${c.k}:${c.id}").toString()] = full + [_key: key]
+        }
+    }
     Map<String, Map> seen = [:]
     int fetched = 0, changed = 0
     List<List> all = [['app', apps], ['driver', drvs], ['library', libs]]
@@ -440,40 +457,46 @@ Map runInventoryPass() {
             String ck = ("${kind}:${t.id}").toString()
             Map old = prev[ck]
             long lm = isoToMs(t.lastModified as String)
+            // ih/ah are stored as 16-hex-char sha256 prefixes (state-size budget, DESIGN.md §2.4); a
+            // pre-existing full-length value is truncated here too, so the sweep (Task 6) and the
+            // item-source endpoint (Task 7) can rely on always comparing 16-char prefixes.
             Map comp = [k: kind, id: t.id, ns: t.namespace, nm: t.name, u: t.usedByCount, lm: lm, bm: memberOf[ck],
-                        loc: old?.loc, ih: old?.ih, iv: old?.iv, ivs: old?.ivs, pv: old?.pv ?: (t.isPrivate == true), ah: old?.ah]
+                        loc: old?.loc, ih: hashPrefix(old?.ih as String), iv: old?.iv, ivs: old?.ivs, pv: old?.pv ?: (t.isPrivate == true), ah: hashPrefix(old?.ah as String)]
             if (old == null || (old.lm as Long ?: 0L) != lm || old.ih == null) {
                 Map d = fetchItemDetail(kind, t.id as String); fetched++
                 if (d != null) {
                     Map pv = parseVersionLiteral(d.source as String)
-                    comp.loc = d.importUrl; comp.ih = sourceHash(d.source as String); comp.iv = (kind == 'library' && t.version) ? t.version : pv.ver; comp.ivs = pv.src; comp.pv = d.isPrivate
-                    if (old != null && old.ih != comp.ih) changed++
+                    comp.loc = d.importUrl; comp.ih = hashPrefix(sourceHash(d.source as String)); comp.iv = (kind == 'library' && t.version) ? t.version : pv.ver; comp.ivs = pv.src; comp.pv = d.isPrivate
+                    if (old != null && hashPrefix(old.ih as String) != comp.ih) changed++
                 }
             }
             if (comp.ah == null) comp.ah = comp.ih   // adoption hash: set once (new component, or migrating from a registry with none), never touched again
-            seen[ck] = comp
+            seen[ck] = compact(comp)
         }
     }
     // Rebuild packages: keep HPM-origin packages (Task 5 owns them), regroup everything else.
     Map next = [:]
-    pkgs.each { String key, Map p -> if (p.o == 'hpm') next[key] = p + [c: (p.c as List).collect { Map c -> seen[("${c.k}:${c.id}").toString()] ?: c + [id: null] }] }
+    pkgs.each { String key, Map p -> if (p.o == 'hpm') next[key] = compact(p + [c: (p.c as List).collect { Map c -> seen[("${c.k}:${c.id}").toString()] ?: c + [id: null] }]) }
     Set bound = next.values().collectMany { Map p -> (p.c as List).findAll { Map c -> c.id }.collect { Map c -> ("${c.k}:${c.id}").toString() } } as Set
     bundles.each { Map b ->
         String key = "bundle:${b.id}"
         // The bundle itself is a component too (DESIGN.md §2.1 kind: bundle), distinct from its members.
-        Map bundleComp = [k: 'bundle', id: b.id, ns: b.namespace, nm: b.name, u: (b.appTypeIds.size() + b.deviceTypeIds.size() + b.libraryIds.size()),
-                           lm: 0L, bm: null, loc: b.sourceUrl, ih: null, iv: null, ivs: null, pv: b.isPrivate == true, ah: null]
+        Map bundleComp = compact([k: 'bundle', id: b.id, ns: b.namespace, nm: b.name, u: (b.appTypeIds.size() + b.deviceTypeIds.size() + b.libraryIds.size()),
+                                   lm: 0L, bm: null, loc: b.sourceUrl, ih: null, iv: null, ivs: null, pv: b.isPrivate == true, ah: null])
         List comps = [bundleComp] + (b.appTypeIds.collect { seen[("app:${it}").toString()] } + b.deviceTypeIds.collect { seen[("driver:${it}").toString()] } + b.libraryIds.collect { seen[("library:${it}").toString()] }).findAll { it }
         comps.each { Map c -> bound << ("${c.k}:${c.id}").toString() }
         Map p = pkgs[key] as Map
-        next[key] = [o: 'bundle', n: b.name, v: null, g: p?.g ?: 1, url: b.sourceUrl, pv: b.isPrivate, c: comps]
+        next[key] = compact([o: 'bundle', n: b.name, v: null, g: p?.g ?: 1, url: b.sourceUrl, pv: b.isPrivate, c: comps])
     }
     seen.each { String ck, Map c ->
         if (bound.contains(ck)) return
         String key = c.loc ? "url:${c.loc}" : "local:${c.k}/${c.ns}/${c.nm}"
+        // origin url + app/driver: loc equals the key minus its "url:" prefix, so don't store it twice;
+        // libraries keep loc stored (their key isn't guaranteed to carry it verbatim — see ruling).
+        Map storedC = (c.loc && c.k != 'library') ? c.findAll { String k, v -> k != 'loc' } : c
         Map p = (next[key] ?: pkgs[key] ?: [o: c.loc ? 'url' : 'local', n: c.nm, v: null, g: 1, c: []]) as Map
-        p = p + [c: ((p.c as List).findAll { Map x -> ("${x.k}:${x.id}").toString() != ck }) + [c]]
-        next[key] = p
+        p = p + [c: ((p.c as List).findAll { Map x -> ("${x.k}:${x.id}").toString() != ck }) + [storedC]]
+        next[key] = compact(p)
     }
     // Documents: write for new packages or when the component set changed (compare by kind:id set)
     Map docsBefore = listCmFiles().collectEntries { Map f -> [(f.name as String): f] }
@@ -516,7 +539,9 @@ Map buildInventoryPayload() {
             boolean localMod = c.ah && c.ih && c.ih != c.ah
             String status = c.id == null ? 'missing' : (c.pv ? 'private' : (p.o == 'local' ? 'unknown' : freshnessStatus(c.ih as String, s.rhash as String, c.iv as String, s.rver as String, localMod)))
             if (s.broken == true) status = 'broken-source'
-            Map row = [key: key, kind: c.k, hubId: c.id, namespace: c.ns, name: c.nm, origin: p.o, location: c.loc, managedBy: p.o == 'hpm' ? (state.hpm?.mode == 'manage' ? 'cm' : 'hpm') : 'cm',
+            // origin-url app/driver components don't store loc — reconstruct it from the key (see runInventoryPass)
+            String location = c.loc ?: (p.o == 'url' ? key.substring(4) : null)
+            Map row = [key: key, kind: c.k, hubId: c.id, namespace: c.ns, name: c.nm, origin: p.o, location: location, managedBy: p.o == 'hpm' ? (state.hpm?.mode == 'manage' ? 'cm' : 'hpm') : 'cm',
                        status: status, ihash: c.ih, ahash: c.ah, iver: c.iv, iverSrc: c.ivs, rhash: s.rhash, rver: s.rver, checkedAtMs: s.checkedAt, changedAtMs: s.changedAt,
                        httpStatus: s.httpStatus, failCount: s.failCount ?: 0, error: s.error, lastModifiedMs: c.lm, usedByCount: c.u ?: 0,
                        usedBy: usedBy[("${c.k}:${c.id}").toString()] ?: [], bundleOf: c.bm, isPrivate: c.pv == true]
