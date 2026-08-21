@@ -24,5 +24,5 @@ v0.0.1. Remaining before release:
 - [ ] LED brightness readback (genBasic 0xFF01) — confirm the value round-trips.
 
 ## After validation
-- [ ] Mirror-publish to the other hubs.
+- [x] Mirror-publish to the other hubs.
 - [ ] Bump CODE_VERSION off 0.0.1 once load-validated.
