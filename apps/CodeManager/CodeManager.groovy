@@ -485,6 +485,32 @@ static String freshnessStatus(String ihash, String rhash, String iver, String rv
     return (cmp != null && cmp < 0) ? 'update-available' : 'changed-upstream'
 }
 
+// ===== Source normalization and hashing (DESIGN.md §4.1) =====
+@CompileStatic
+static String normalizeSource(String s) {
+    if (!s) return ""
+    String t = s.startsWith("﻿") ? s.substring(1) : s
+    t = t.replace("\r\n", "\n").replace("\r", "\n")
+    List<String> lines = t.split("\n", -1).collect { String l -> l.replaceFirst(/[ \t]+$/, '') }
+    while (lines && lines[-1] == "") lines.remove(lines.size() - 1)
+    return lines ? lines.join("\n") + "\n" : ""
+}
+@CompileStatic
+static String sha256Hex(String s) {
+    byte[] d = MessageDigest.getInstance("SHA-256").digest((s ?: "").getBytes("UTF-8"))
+    StringBuilder sb = new StringBuilder(64)
+    for (byte b in d) sb.append(String.format("%02x", b))
+    return sb.toString()
+}
+@CompileStatic static String sourceHash(String s) { return sha256Hex(normalizeSource(s)) }
+@CompileStatic static String digest16(String s) { return sha256Hex(s ?: "").substring(0, 16) }
+@CompileStatic
+static String libraryImportUrl(String librarySource) {
+    if (!librarySource) return null
+    java.util.regex.Matcher m = librarySource =~ /(?s)library\s*\(.*?\bimportUrl\s*:\s*['"]([^'"]+)['"]/
+    return m.find() ? m.group(1) : null
+}
+
 // ===== Logging (docs/logging-emoji-scheme.md, app variant) =====
 private String logp(String e) { "${e} ${app.getLabel()}: " }
 private void logInfo (String m) { if (settings.txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
