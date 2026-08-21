@@ -114,7 +114,6 @@ except urllib.error.HTTPError as e: (ok if e.code in (401, 403, 500) else fail)(
 except Exception as e: warn(f"bad token check: {e}")
 # TASK-SECTIONS-BELOW
 
-total = passed + failed
-print(f"\n=== Results: {passed}/{total} passed, {failed} failed, {warnings} warnings ===")
+print(f"\n{passed} passed, {failed} failed, {warnings} warnings")
 sys.exit(1 if failed else 0)
 PYTHON_SCRIPT
