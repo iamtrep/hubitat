@@ -436,13 +436,25 @@ static Map degenerateManifest(String origin, String name, List<Map> comps, Strin
 Map runInventoryPass() {
     long t0 = now()
     List apps = fetchUserAppTypes(), drvs = fetchUserDriverTypes(), libs = fetchUserLibraries(), bundles = fetchBundles()
+    Map pkgs = (state.pkgs ?: [:]) as Map
+    // Fail closed: hubRequest's bulk fetchers fail-soft to [] on a fetch error, indistinguishable
+    // from a genuinely empty list. If the registry already holds a component of some kind and this
+    // pass's bulk list for that kind came back empty, treat it as a suspected transient failure and
+    // abort before touching the registry or any document — never let one bad fetch prune everything.
+    Set<String> kindsPresent = pkgs.values().collectMany { Map p -> (p.c as List).collect { Map c -> c.k as String } } as Set
+    Map<String, List> bulkByKind = [app: apps, driver: drvs, library: libs, bundle: bundles]
+    for (String kind in ['app', 'driver', 'library', 'bundle']) {
+        if (kindsPresent.contains(kind) && (bulkByKind[kind] as List).isEmpty()) {
+            logWarn "inventory: aborting pass — ${kind} list came back empty but the registry has ${kind} components (suspected transient fetch failure)"
+            return [items: 0, fetched: 0, changed: 0, ms: now() - t0, aborted: "empty ${kind} list" as String]
+        }
+    }
     Map<String, String> memberOf = [:]
     bundles.each { Map b ->
         b.appTypeIds.each { memberOf[ckey('app', it)] = b.id }
         b.deviceTypeIds.each { memberOf[ckey('driver', it)] = b.id }
         b.libraryIds.each { memberOf[ckey('library', it)] = b.id }
     }
-    Map pkgs = (state.pkgs ?: [:]) as Map
     // index existing components by kind:id so bindings (ihash, iver, loc, ah) survive a pass. Origin-url
     // app/driver components don't store loc (derivable from the package key, dropped at storage below),
     // so reconstruct it here from the key before it's carried into this pass's comp map.
