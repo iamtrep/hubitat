@@ -493,7 +493,11 @@ Map runInventoryPass() {
     }
     // Rebuild packages: keep HPM-origin packages (Task 5 owns them), regroup everything else.
     Map next = [:]
-    pkgs.each { String key, Map p -> if (p.o == 'hpm') next[key] = compact(p + [c: (p.c as List).collect { Map c -> seen[ckey(c.k as String, c.id)] ?: c + [id: null] }]) }
+    // file/bundle components of an HPM package have no counterpart in `seen` (it holds only
+    // app/driver/library, DESIGN.md 2.1) — rebind only kinds this pass enumerates, or a forced
+    // pass wipes every file's hubId to null even though nothing about it changed.
+    Set rebindableKinds = ['app', 'driver', 'library'] as Set
+    pkgs.each { String key, Map p -> if (p.o == 'hpm') next[key] = compact(p + [c: (p.c as List).collect { Map c -> rebindableKinds.contains(c.k) ? (seen[ckey(c.k as String, c.id)] ?: c + [id: null]) : c }]) }
     Set bound = next.values().collectMany { Map p -> (p.c as List).findAll { Map c -> c.id }.collect { Map c -> ckey(c.k as String, c.id) } } as Set
     bundles.each { Map b ->
         String key = "bundle:${b.id}"
@@ -613,6 +617,8 @@ Map importHpm() {
     Map next = pkgs.findAll { String k, Map p -> p.o != 'hpm' }           // rebuild all hpm packages from HPM's truth
     manifests.each { String url, Map m ->
         List comps = []
+        // required unless explicitly false (HPM-PARITY.md 2); HPM itself treats a missing field as
+        // neither required nor optional — 0.3's install path decides what to do with that case.
         [['app', 'apps'], ['driver', 'drivers']].each { List pair ->
             String kind = pair[0], arr = pair[1]
             ((m[arr] ?: []) as List).each { Map item ->
@@ -620,14 +626,14 @@ Map importHpm() {
                 boolean live = heId && ((kind == 'app' ? liveApps : liveDrvs).contains(heId))
                 if (heId && !live) dangling++
                 Map prev = live ? (prevByCk[ckey(kind, heId)] as Map) : null
-                Map c = compact([k: kind, id: live ? heId : null, ns: item.namespace, nm: item.name, loc: item.location, mid: item.id, req: item.required == true || item.required == "true",
-                         beta: item.beta == true, ver: item.version, ih: prev?.ih, ah: prev?.ah, iv: prev?.iv ?: item.version, ivs: prev?.ivs, lm: prev?.lm, u: prev?.u ?: 0, pv: prev?.pv == true, bm: prev?.bm])
+                Map c = compact([k: kind, id: live ? heId : null, ns: item.namespace, nm: item.name, loc: item.location, mid: item.id, req: item.required != false && item.required != "false",
+                         beta: item.beta == true, ih: prev?.ih, ah: prev?.ah, iv: prev?.iv ?: item.version, ivs: prev?.ivs, lm: prev?.lm, u: prev?.u ?: 0, pv: prev?.pv == true, bm: prev?.bm])
                 if (live) { hpmBound << ckey(kind, heId); components++ }
                 comps << c
             }
         }
-        ((m.bundles ?: []) as List).each { Map b -> comps << compact([k: 'bundle', id: null, ns: b.namespace, nm: b.name, loc: b.location, mid: b.id, req: b.required == true, beta: b.beta == true, ver: b.version]) }
-        ((m.files ?: []) as List).each { Map f -> comps << compact([k: 'file', id: f.name, ns: null, nm: f.name, loc: f.location, mid: f.id, req: f.required != false]) }
+        ((m.bundles ?: []) as List).each { Map b -> comps << compact([k: 'bundle', id: null, ns: b.namespace, nm: b.name, loc: b.location, mid: b.id, req: b.required != false && b.required != "false", beta: b.beta == true]) }
+        ((m.files ?: []) as List).each { Map f -> comps << compact([k: 'file', id: f.name, ns: null, nm: f.name, loc: f.location, mid: f.id, req: f.required != false && f.required != "false"]) }
         Map old = pkgs[url] as Map
         Map p = compact([o: 'hpm', n: m.packageName, v: m.version, beta: m.beta == true, g: old?.g ?: 1, c: comps, auto: autoUpdate.contains(url)])
         // document: the manifest as HPM holds it (HPM already stripped releaseNotes/licenseFile; we keep what is there)

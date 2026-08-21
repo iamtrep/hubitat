@@ -127,12 +127,16 @@ else:
     comps = inv.get("components", [])
     by_kind = {}
     for c in comps: by_kind[c.get("kind")] = by_kind.get(c.get("kind"), 0) + 1
-    exp = {"app": len(gt_apps), "driver": len(gt_drvs), "library": len(gt_libs), "bundle": len(gt_bundles)}
-    for kind, n in exp.items():
-        # >= not ==: an HPM manifest can declare app/driver/bundle components with no live hub match
-        # (optional never installed, a dangling heID, or an unresolved bundle id — DESIGN.md 2.1), which
-        # persist in the registry once HPM has ever been imported (Task 5).
-        (ok if by_kind.get(kind, 0) >= n else fail)(f"{kind} count {by_kind.get(kind,0)} >= hub {n}")
+    # HPM can add app/driver/bundle components with no live hub match (optional never installed,
+    # a dangling heID, or an unresolved bundle id — DESIGN.md 2.1); compare the *bound* subset
+    # (non-null hubId) to the hub's live count for those three kinds. HPM never adds library
+    # components, so library compares its raw total.
+    bound_by_kind = {}
+    for c in comps:
+        if c.get("hubId"): bound_by_kind[c.get("kind")] = bound_by_kind.get(c.get("kind"), 0) + 1
+    for kind, n in {"app": len(gt_apps), "driver": len(gt_drvs), "bundle": len(gt_bundles)}.items():
+        (ok if bound_by_kind.get(kind, 0) == n else fail)(f"{kind} bound count {bound_by_kind.get(kind,0)} == hub {n}")
+    (ok if by_kind.get("library", 0) == len(gt_libs) else fail)(f"library count {by_kind.get('library',0)} == hub {len(gt_libs)}")
     required = {"key", "kind", "hubId", "namespace", "name", "origin", "status", "usedByCount", "lastModifiedMs", "ihash"}
     bad = [c for c in comps if not required.issubset(c.keys())]
     (ok if not bad else fail)(f"every component carries {sorted(required)} ({len(bad)} missing)")
@@ -204,6 +208,14 @@ else:
     (ok if all(c.get("managedBy") == "hpm" for c in comps) else fail)("HPM-origin components are managedBy=hpm in observe mode")
     r2 = api_post("hpm/import", timeout=180)
     (ok if r2.get("packages") == r.get("packages") else fail)("re-import is idempotent")
+    # a forced inventory pass must not wipe file-kind HPM components' hubId (runInventoryPass only
+    # rebinds app/driver/library from `seen`; file/bundle components must survive untouched)
+    inv3 = api_get("inventory?force=1", timeout=300)
+    hpm_files = [c for c in inv3.get("components", []) if c["origin"] == "hpm" and c["kind"] == "file"]
+    if not hpm_files:
+        warn("no HPM package has files on this hub; file-hubId-survives-forced-pass assertion skipped")
+    else:
+        (ok if all(c.get("hubId") for c in hpm_files) else fail)("HPM file components keep hubId after a forced inventory pass")
     files = [f["name"] for f in (fetch("/hub/fileManager/json") or {}).get("files", [])]
     (ok if "cm_hpm_import.json" in files else fail)("cm_hpm_import.json written")
 # TASK-SECTIONS-BELOW
