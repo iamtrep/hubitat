@@ -153,9 +153,19 @@ else:
     # no sources, no secrets in the payload
     leak = [c for c in comps if "source" in c or "oauthClientSecret" in json.dumps(c)]
     (ok if not leak else fail)("inventory payload carries no source text and no OAuth secrets")
-    # idempotent: second call does not change counts
-    inv2 = api_get("inventory", timeout=180)
+    # idempotent: a forced second pass (force=1 bypasses the freshness cache, so this actually
+    # re-runs runInventoryPass rather than re-serving the cached registry) does not change counts
+    inv2 = api_get("inventory?force=1", timeout=300)
     (ok if len(inv2.get("components", [])) == len(comps) else fail)("second inventory call is stable")
+    # reclassification regression guard: a url-origin app survives a forced second pass with its
+    # classification and location intact (ghost/regroup logic must not misclassify it as local)
+    url_apps = [c for c in comps if c.get("kind") == "app" and c.get("origin") == "url"]
+    if not url_apps:
+        warn("no url-origin app on this hub to exercise the reclassification regression guard")
+    else:
+        samp = url_apps[0]
+        c2 = next((x for x in inv2.get("components", []) if x.get("kind") == "app" and str(x.get("hubId")) == str(samp.get("hubId"))), None)
+        (ok if c2 and c2.get("origin") == "url" and c2.get("location") else fail)("sampled url-origin app keeps origin=url and a location after a forced second pass")
     # manifest documents exist for every package
     files = [f["name"] for f in (fetch("/hub/fileManager/json") or {}).get("files", [])]
     pkgs = inv.get("packages", [])
