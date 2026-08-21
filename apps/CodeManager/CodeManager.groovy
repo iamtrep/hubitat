@@ -288,19 +288,22 @@ private boolean autoEnableOAuth() {
 
 // ===== Hub request wrappers (HubDiagnostics pattern: one transient retry, fail-soft) =====
 
-private Object hubRequest(String path, String name, String type = "json", int timeout = 30) {
-    return hubRequestInternal(path, name, type, timeout, true)
+private Object hubRequest(String path, String name, String type = "json", int timeout = 30, Map query = null) {
+    return hubRequestInternal(path, name, type, timeout, true, query)
 }
 private Map hubMapRequest(String path, String name, int timeout = 30, boolean allowRetry = true) {
     Object raw = hubRequestInternal(path, name, "json", timeout, allowRetry)
     if (raw instanceof Map && ((Map) raw).error) return [ok: false, data: [:], error: (String) ((Map) raw).message]
     return [ok: true, data: (Map) (raw ?: [:]), error: null]
 }
-private Object hubRequestInternal(String path, String name, String type, int timeout, boolean allowRetry) {
+// query goes through httpGet's query: param, never appended to path — firmware 2.5.1.x drops an inline query string.
+private Object hubRequestInternal(String path, String name, String type, int timeout, boolean allowRetry, Map query = null) {
     long start = now()
     try {
         Object result = null
-        httpGet([uri: HUB_BASE, path: path, contentType: type == "json" ? "application/json" : "text/plain", timeout: timeout]) { resp ->
+        Map reqParams = [uri: HUB_BASE, path: path, contentType: type == "json" ? "application/json" : "text/plain", timeout: timeout]
+        if (query) reqParams.query = query
+        httpGet(reqParams) { resp ->
             if (resp.success) result = (type == "json") ? resp.data : (resp.data?.text?.trim() ?: resp.data?.toString()?.trim())
         }
         logTrace "Fetched ${name} in ${now() - start}ms"
@@ -308,7 +311,7 @@ private Object hubRequestInternal(String path, String name, String type, int tim
     } catch (Exception e) {
         String ex = getObjectClassName(e)
         boolean transientErr = (ex == 'java.net.SocketTimeoutException' || ex == 'java.net.ConnectException')
-        if (allowRetry && transientErr) { logDebug "Transient error fetching ${name}; retrying once"; return hubRequestInternal(path, name, type, timeout, false) }
+        if (allowRetry && transientErr) { logDebug "Transient error fetching ${name}; retrying once"; return hubRequestInternal(path, name, type, timeout, false, query) }
         if (type == "json") {
             if (ex == 'groovy.json.JsonException') logDebug "No JSON body for ${name}: ${e.message}"
             else logError "Error fetching ${name} (${now() - start}ms): ${ex}: ${e.message}"
@@ -318,6 +321,225 @@ private Object hubRequestInternal(String path, String name, String type, int tim
         return null
     }
 }
+
+// ===== Inventory (DESIGN.md §3) =====
+
+List fetchUserAppTypes() {
+    Object resp = hubRequest(USER_APP_TYPES_PATH, "user app types", "json", 15)
+    if (!(resp instanceof List)) return []
+    return (resp as List).collect { Map a ->
+        List used = (a.usedBy as List) ?: []
+        [id: a.id.toString(), name: a.name, namespace: a.namespace, oauth: a.oauth == "enabled", lastModified: a.lastModified,
+         usedByCount: used.size(), usedBy: used.collect { Map u -> [id: u.id, name: u.name] }]
+    }
+}
+List fetchUserDriverTypes() {
+    Object resp = hubRequest(USER_DEVICE_TYPES_PATH, "user driver types", "json", 15)
+    if (!(resp instanceof List)) return []
+    return (resp as List).collect { Map d ->
+        List used = (d.usedBy as List) ?: []
+        [id: d.id.toString(), name: d.name, namespace: d.namespace, lastModified: d.lastModified,
+         usedByCount: used.size(), usedBy: used.collect { Map u -> [id: u.id, name: u.name] }]
+    }
+}
+List fetchUserLibraries() {
+    Object resp = hubRequest(USER_LIBRARIES_PATH, "user libraries", "json", 15)
+    if (!(resp instanceof List)) return []
+    return (resp as List).collect { Map l ->
+        List usedDrv = ((l.usedByDeviceTypes as String) ?: "").split(',\\s*').findAll { it }
+        List usedApp = ((l.usedByAppTypes as String) ?: "").split(',\\s*').findAll { it }
+        [id: l.id.toString(), name: l.name, namespace: l.namespace, version: l.version?.toString(), lastModified: l.lastModified ?: l.updateTime,
+         isPrivate: l.private == true, usedByCount: usedDrv.size() + usedApp.size(), usedBy: (usedApp + usedDrv).collect { [name: it] }]
+    }
+}
+List fetchBundles() {
+    Object resp = hubRequest(BUNDLE_LIST_PATH, "bundles", "json", 15)
+    if (!(resp instanceof List)) return []
+    return (resp as List).collect { Map b ->
+        [id: b.id.toString(), name: b.name, namespace: b.namespace, isPrivate: b.private == true, sourceUrl: b.sourceUrl,
+         appTypeIds: (b.appTypeIds ?: []).collect { it.toString() }, deviceTypeIds: (b.deviceTypeIds ?: []).collect { it.toString() },
+         libraryIds: (b.libraryIds ?: []).collect { it.toString() }]
+    }
+}
+// Per-item: importUrl + source + private flag. One call per item, only for new/changed items.
+Map fetchItemDetail(String kind, String id) {
+    String path = kind == "library" ? "/library/ajax/code" : "/${kind}/list/single/data/${id}"
+    Object resp = kind == "library" ? hubRequest(path, "library ${id}", "json", 30, [id: id]) : hubRequest(path, "${kind} ${id}", "json", 30)
+    Map d = (resp instanceof List) ? ((resp as List) ? (Map) (resp as List)[0] : null) : (resp instanceof Map && !((Map) resp).error ? (Map) resp : null)
+    if (d == null) return null
+    String source = (d.source ?: "") as String
+    String importUrl = kind == "library" ? libraryImportUrl(source) : (d.importUrl as String)
+    return [importUrl: importUrl ?: null, source: source, isPrivate: d.private == true]
+}
+
+// Hubitat's ISO offset strings are not portable to browsers: convert once here (ARCHITECTURE.md "Date handling").
+@CompileStatic
+static long isoToMs(String raw) {
+    if (!raw) return 0L
+    try { return Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", raw).time } catch (Exception ignored) {}
+    try { return Date.parse("yyyy-MM-dd'T'HH:mm:ssZ", raw).time } catch (Exception ignored) {}
+    return 0L
+}
+
+String pkgFileName(String key) { return PKG_FILE_PREFIX + digest16(key) + ".json" }
+
+List listCmFiles() {
+    Map wrap = hubMapRequest(FILE_LIST_PATH, "file list", 15)
+    if (!wrap.ok) return []
+    return ((wrap.data.files ?: []) as List).findAll { Map f -> (f.name as String)?.startsWith("cm_") }
+}
+void writeCmFile(String name, String text) {
+    try { uploadHubFile(name, text.getBytes("UTF-8")) } catch (Exception e) { logError "write ${name}: ${e.message}" }
+}
+String readCmFile(String name) {
+    try { byte[] b = downloadHubFile(name); return b ? new String(b, "UTF-8") : null } catch (Exception e) { return null }
+}
+void writePkgDoc(String key, Map pkg, Map manifest) {
+    Map doc = manifest + [_cm: [key: key, gen: pkg.g, origin: pkg.o, writtenAt: now()]]
+    writeCmFile(pkgFileName(key), JsonOutput.toJson(doc))
+}
+Map readPkgDoc(String key) {
+    String t = readCmFile(pkgFileName(key)); if (!t) return null
+    try { Map d = (Map) new JsonSlurper().parseText(t); return (d?._cm?.key == key) ? d : null } catch (Exception e) { return null }
+}
+
+// Degenerate manifest for non-HPM origins (DESIGN.md §2.2).
+@CompileStatic
+static Map degenerateManifest(String origin, String name, List<Map> comps, String bundleUrl) {
+    Map m = [packageName: name, version: null, apps: [], drivers: [], libraries: [], bundles: []]
+    if (origin == 'bundle') {
+        (m.bundles as List) << [name: name, namespace: (comps ? comps[0]['ns'] : null), location: bundleUrl, required: true]
+    }
+    for (Map c in comps) {
+        String arr = c.k == 'app' ? 'apps' : c.k == 'driver' ? 'drivers' : c.k == 'library' ? 'libraries' : null
+        if (arr) (m[arr] as List) << [name: c.nm, namespace: c.ns, location: c.loc, required: true]
+    }
+    return m
+}
+
+// One inventory pass: bulk lists, per-item detail for new/changed items, registry + documents update.
+Map runInventoryPass() {
+    long t0 = now()
+    List apps = fetchUserAppTypes(), drvs = fetchUserDriverTypes(), libs = fetchUserLibraries(), bundles = fetchBundles()
+    Map<String, String> memberOf = [:]
+    bundles.each { Map b ->
+        b.appTypeIds.each { memberOf[("app:${it}").toString()] = b.id }
+        b.deviceTypeIds.each { memberOf[("driver:${it}").toString()] = b.id }
+        b.libraryIds.each { memberOf[("library:${it}").toString()] = b.id }
+    }
+    Map pkgs = (state.pkgs ?: [:]) as Map
+    // index existing components by kind:id so bindings (ihash, iver, loc, ah) survive a pass
+    Map<String, Map> prev = [:]
+    pkgs.each { String key, Map p -> (p.c as List).each { Map c -> prev[("${c.k}:${c.id}").toString()] = c + [_key: key] } }
+    Map<String, Map> seen = [:]
+    int fetched = 0, changed = 0
+    List<List> all = [['app', apps], ['driver', drvs], ['library', libs]]
+    for (List pair in all) {
+        String kind = pair[0] as String
+        for (Map t in (pair[1] as List)) {
+            String ck = ("${kind}:${t.id}").toString()
+            Map old = prev[ck]
+            long lm = isoToMs(t.lastModified as String)
+            Map comp = [k: kind, id: t.id, ns: t.namespace, nm: t.name, u: t.usedByCount, lm: lm, bm: memberOf[ck],
+                        loc: old?.loc, ih: old?.ih, iv: old?.iv, ivs: old?.ivs, pv: old?.pv ?: (t.isPrivate == true), ah: old?.ah]
+            if (old == null || (old.lm as Long ?: 0L) != lm || old.ih == null) {
+                Map d = fetchItemDetail(kind, t.id as String); fetched++
+                if (d != null) {
+                    Map pv = parseVersionLiteral(d.source as String)
+                    comp.loc = d.importUrl; comp.ih = sourceHash(d.source as String); comp.iv = (kind == 'library' && t.version) ? t.version : pv.ver; comp.ivs = pv.src; comp.pv = d.isPrivate
+                    if (old != null && old.ih != comp.ih) changed++
+                }
+            }
+            if (comp.ah == null) comp.ah = comp.ih   // adoption hash: set once (new component, or migrating from a registry with none), never touched again
+            seen[ck] = comp
+        }
+    }
+    // Rebuild packages: keep HPM-origin packages (Task 5 owns them), regroup everything else.
+    Map next = [:]
+    pkgs.each { String key, Map p -> if (p.o == 'hpm') next[key] = p + [c: (p.c as List).collect { Map c -> seen[("${c.k}:${c.id}").toString()] ?: c + [id: null] }] }
+    Set bound = next.values().collectMany { Map p -> (p.c as List).findAll { Map c -> c.id }.collect { Map c -> ("${c.k}:${c.id}").toString() } } as Set
+    bundles.each { Map b ->
+        String key = "bundle:${b.id}"
+        // The bundle itself is a component too (DESIGN.md §2.1 kind: bundle), distinct from its members.
+        Map bundleComp = [k: 'bundle', id: b.id, ns: b.namespace, nm: b.name, u: (b.appTypeIds.size() + b.deviceTypeIds.size() + b.libraryIds.size()),
+                           lm: 0L, bm: null, loc: b.sourceUrl, ih: null, iv: null, ivs: null, pv: b.isPrivate == true, ah: null]
+        List comps = [bundleComp] + (b.appTypeIds.collect { seen[("app:${it}").toString()] } + b.deviceTypeIds.collect { seen[("driver:${it}").toString()] } + b.libraryIds.collect { seen[("library:${it}").toString()] }).findAll { it }
+        comps.each { Map c -> bound << ("${c.k}:${c.id}").toString() }
+        Map p = pkgs[key] as Map
+        next[key] = [o: 'bundle', n: b.name, v: null, g: p?.g ?: 1, url: b.sourceUrl, pv: b.isPrivate, c: comps]
+    }
+    seen.each { String ck, Map c ->
+        if (bound.contains(ck)) return
+        String key = c.loc ? "url:${c.loc}" : "local:${c.k}/${c.ns}/${c.nm}"
+        Map p = (next[key] ?: pkgs[key] ?: [o: c.loc ? 'url' : 'local', n: c.nm, v: null, g: 1, c: []]) as Map
+        p = p + [c: ((p.c as List).findAll { Map x -> ("${x.k}:${x.id}").toString() != ck }) + [c]]
+        next[key] = p
+    }
+    // Documents: write for new packages or when the component set changed (compare by kind:id set)
+    Map docsBefore = listCmFiles().collectEntries { Map f -> [(f.name as String): f] }
+    next.each { String key, Map p ->
+        if (p.o == 'hpm') return                               // Task 5 writes HPM documents
+        Set ids = (p.c as List).collect { Map c -> ("${c.k}:${c.id}").toString() } as Set
+        Set oldIds = ((pkgs[key] as Map)?.c as List ?: []).collect { Map c -> ("${c.k}:${c.id}").toString() } as Set
+        if (ids != oldIds || !docsBefore.containsKey(pkgFileName(key))) {
+            p.g = ((p.g ?: 0) as int) + 1
+            writePkgDoc(key, p, degenerateManifest(p.o as String, p.n as String, p.c as List, p.url as String))
+        }
+    }
+    state.pkgs = next
+    state.lastInventory = [at: now(), items: seen.size(), fetched: fetched, changed: changed]
+    logInfo "inventory: ${seen.size()} items, ${fetched} fetched, ${changed} changed, ${bundles.size()} bundles, ${next.size()} packages in ${now() - t0}ms"
+    return [items: seen.size(), fetched: fetched, changed: changed, ms: now() - t0]
+}
+
+// usedBy names are too costly to keep in state.pkgs (2.4's ~60 KB budget) — re-read from the bulk
+// lists on demand, cached for the SPA's rapid-fire drill-down calls (short TTL, not the item's own registry binding).
+Map usedByIndex() {
+    return cachedFetch("usedByIndex", 60_000L) {
+        Map idx = [:]
+        fetchUserAppTypes().each { Map a -> idx[("app:${a.id}").toString()] = a.usedBy }
+        fetchUserDriverTypes().each { Map d -> idx[("driver:${d.id}").toString()] = d.usedBy }
+        fetchUserLibraries().each { Map l -> idx[("library:${l.id}").toString()] = l.usedBy }
+        idx
+    } as Map
+}
+
+// GET /api/inventory — aggregator: registry + sweep cache (Task 6) + HPM mode (Task 5). No sources, no secrets.
+Map buildInventoryPayload() {
+    Map pkgs = (state.pkgs ?: [:]) as Map
+    Map sweep = readSweepCache()                                  // Task 6; returns [:] until then
+    Map usedBy = usedByIndex()
+    List comps = []
+    List packages = pkgs.collect { String key, Map p ->
+        List pc = (p.c as List).collect { Map c ->
+            Map s = (sweep[("${c.k}:${c.id}").toString()] ?: [:]) as Map
+            boolean localMod = c.ah && c.ih && c.ih != c.ah
+            String status = c.id == null ? 'missing' : (c.pv ? 'private' : (p.o == 'local' ? 'unknown' : freshnessStatus(c.ih as String, s.rhash as String, c.iv as String, s.rver as String, localMod)))
+            if (s.broken == true) status = 'broken-source'
+            Map row = [key: key, kind: c.k, hubId: c.id, namespace: c.ns, name: c.nm, origin: p.o, location: c.loc, managedBy: p.o == 'hpm' ? (state.hpm?.mode == 'manage' ? 'cm' : 'hpm') : 'cm',
+                       status: status, ihash: c.ih, ahash: c.ah, iver: c.iv, iverSrc: c.ivs, rhash: s.rhash, rver: s.rver, checkedAtMs: s.checkedAt, changedAtMs: s.changedAt,
+                       httpStatus: s.httpStatus, failCount: s.failCount ?: 0, error: s.error, lastModifiedMs: c.lm, usedByCount: c.u ?: 0,
+                       usedBy: usedBy[("${c.k}:${c.id}").toString()] ?: [], bundleOf: c.bm, isPrivate: c.pv == true]
+            comps << row
+            return row
+        }
+        [key: key, origin: p.o, name: p.n, version: p.v, gen: p.g, doc: pkgFileName(key), isPrivate: p.pv == true, url: p.url, componentCount: pc.size(),
+         status: pc.collect { it.status }.contains('update-available') ? 'update-available' : pc.collect { it.status }.contains('changed-upstream') ? 'changed-upstream' : pc.collect { it.status }.contains('broken-source') ? 'broken-source' : 'current']
+    }
+    Map hub = cachedFetch("hubData", 300_000L) { Map w = hubMapRequest(HUB_DATA_PATH, "hub data", 10); w.ok ? [name: w.data.name, firmware: w.data.version, model: w.data.model] : null } as Map ?: [:]
+    Map summary = [packages: packages.size(), components: comps.size(),
+                   byOrigin: comps.countBy { it.origin }, byStatus: comps.countBy { it.status }, byKind: comps.countBy { it.kind },
+                   unused: comps.count { (it.usedByCount ?: 0) == 0 && it.kind != 'bundle' }]
+    return [generatedAt: now(), appVersion: CODE_VERSION, hub: hub, packages: packages, components: comps, summary: summary,
+            hpm: (state.hpm ?: [mode: 'absent']), sweep: (state.sweep ?: [:]), lastInventory: (state.lastInventory ?: [:])]
+}
+Map apiInventory() {
+    return timed("inventory") {
+        if (!state.pkgs || now() - ((state.lastInventory?.at ?: 0) as long) > 3600_000L) runInventoryPass()
+        buildInventoryPayload()
+    }
+}
+Map readSweepCache() { return [:] }   // replaced in Task 6
 
 // ===== Session TTL cache (Tier 2) — fetch closures return null on failure so misses are never cached =====
 private Object cachedFetch(String key, long ttlMs, Closure fetch) {

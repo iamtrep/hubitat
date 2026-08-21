@@ -112,6 +112,55 @@ try:
     urllib.request.urlopen(f"{api_base}/api/settings?access_token=bad", timeout=15); fail("bad token accepted")
 except urllib.error.HTTPError as e: (ok if e.code in (401, 403, 500) else fail)(f"bad token rejected ({e.code})")
 except Exception as e: warn(f"bad token check: {e}")
+# ── Task 4: inventory ─────────────────────────────────────────────────
+section("Inventory")
+gt_apps = fetch("/hub2/userAppTypes") or []
+gt_drvs = fetch("/hub2/userDeviceTypes") or []
+gt_libs = fetch("/hub2/userLibraries") or []
+gt_bundles = fetch("/bundle/list/json") or []
+inv = api_get("inventory", timeout=180)
+if "_error" in inv: fail(f"inventory: {inv}")
+else:
+    ok("GET /api/inventory responds")
+    for k in ("generatedAt", "hub", "packages", "components", "summary", "hpm", "sweep"):
+        (ok if k in inv else fail)(f"inventory has {k}")
+    comps = inv.get("components", [])
+    by_kind = {}
+    for c in comps: by_kind[c.get("kind")] = by_kind.get(c.get("kind"), 0) + 1
+    exp = {"app": len(gt_apps), "driver": len(gt_drvs), "library": len(gt_libs), "bundle": len(gt_bundles)}
+    for kind, n in exp.items():
+        (ok if by_kind.get(kind, 0) == n else fail)(f"{kind} count {by_kind.get(kind,0)} == hub {n}")
+    required = {"key", "kind", "hubId", "namespace", "name", "origin", "status", "usedByCount", "lastModifiedMs", "ihash"}
+    bad = [c for c in comps if not required.issubset(c.keys())]
+    (ok if not bad else fail)(f"every component carries {sorted(required)} ({len(bad)} missing)")
+    # importUrl presence must match the hub for apps (single/data is the only source of importUrl)
+    sample = [a for a in gt_apps][:5]
+    mism = 0
+    for a in sample:
+        sd = (fetch(f"/app/list/single/data/{a['id']}") or [{}])[0]
+        c = next((x for x in comps if x["kind"] == "app" and str(x["hubId"]) == str(a["id"])), None)
+        if not c or (bool(sd.get("importUrl")) != bool(c.get("location"))): mism += 1
+    (ok if mism == 0 else fail)(f"importUrl presence matches hub for {len(sample)} sampled apps")
+    # usage index equals usedBy from the bulk lists
+    gt_used = {("app", str(a["id"])): len(a.get("usedBy") or []) for a in gt_apps}
+    gt_used.update({("driver", str(d["id"])): len(d.get("usedBy") or []) for d in gt_drvs})
+    wrong = [c for c in comps if c["kind"] in ("app","driver") and gt_used.get((c["kind"], str(c["hubId"]))) != c["usedByCount"]]
+    (ok if not wrong else fail)(f"usedByCount matches hub for apps/drivers ({len(wrong)} wrong)")
+    # every bundle member is classified as bundle-member and points at its bundle
+    members = {("app", str(i)) for b in gt_bundles for i in b.get("appTypeIds", [])} | {("driver", str(i)) for b in gt_bundles for i in b.get("deviceTypeIds", [])}
+    wrongm = [c for c in comps if (c["kind"], str(c["hubId"])) in members and c["origin"] != "bundle"]
+    (ok if not wrongm else fail)(f"bundle members carry origin=bundle ({len(wrongm)} wrong)")
+    # no sources, no secrets in the payload
+    leak = [c for c in comps if "source" in c or "oauthClientSecret" in json.dumps(c)]
+    (ok if not leak else fail)("inventory payload carries no source text and no OAuth secrets")
+    # idempotent: second call does not change counts
+    inv2 = api_get("inventory", timeout=180)
+    (ok if len(inv2.get("components", [])) == len(comps) else fail)("second inventory call is stable")
+    # manifest documents exist for every package
+    files = [f["name"] for f in (fetch("/hub/fileManager/json") or {}).get("files", [])]
+    pkgs = inv.get("packages", [])
+    missing_docs = [p for p in pkgs if p.get("doc") not in files]
+    (ok if not missing_docs else fail)(f"manifest document present for every package ({len(missing_docs)} missing of {len(pkgs)})")
 # TASK-SECTIONS-BELOW
 
 print(f"\n{passed} passed, {failed} failed, {warnings} warnings")
