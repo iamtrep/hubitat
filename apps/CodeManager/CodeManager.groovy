@@ -557,6 +557,113 @@ Map runInventoryPass() {
     return [items: seen.size(), fetched: fetched, changed: changed, ms: now() - t0]
 }
 
+// ===== HPM import (DESIGN.md §8.1–8.2, HPM-PARITY.md §2) =====
+
+// HPM is singleInstance (Package_Manager.groovy:77): usedBy has at most one instance.
+Map findHpm() {
+    Map type = fetchUserAppTypes().find { Map a -> a.namespace == "dcm.hpm" } as Map
+    if (!type) return null
+    String instanceId = ((type.usedBy as List) ? ((type.usedBy as List)[0] as Map).id : null)?.toString()
+    Map out = [typeId: type.id, instanceId: instanceId, disabled: null, autoUpdateMode: null]
+    if (instanceId) {
+        Map wrap = hubMapRequest("/installedapp/statusJson/${instanceId}", "HPM status", 30)
+        if (wrap.ok) {
+            out.disabled = ((wrap.data.installedApp ?: [:]) as Map).disabled == true
+            Map setting = ((wrap.data.appSettings ?: []) as List).find { Map s -> s.name == "autoUpdateMode" } as Map
+            out.autoUpdateMode = setting?.value ?: null
+            out._statusJson = wrap.data
+        }
+    }
+    return out
+}
+
+Map apiHpmStatus() {
+    Map h = findHpm()
+    Map st = (state.hpm ?: [:]) as Map
+    if (!h) { state.hpm = [mode: 'absent']; return jsonResponse([mode: 'absent']) }
+    return jsonResponse([mode: st.mode ?: 'observe', typeId: h.typeId, instanceId: h.instanceId, disabled: h.disabled, autoUpdateMode: h.autoUpdateMode,
+                         importedAt: st.importedAt, packages: st.packages ?: 0, dangling: st.dangling ?: 0])
+}
+
+Map apiHpmImport() {
+    Map r = importHpm()
+    return jsonResponse(r ? [success: true] + r : [success: false, error: "HPM not installed"])
+}
+
+// One-to-one copy of HPM's state.manifests into origin-hpm packages. Idempotent; nothing is written to HPM.
+Map importHpm() {
+    Map h = findHpm()
+    if (!h?._statusJson) return null
+    List appState = (h._statusJson.appState ?: []) as List
+    Map manifests = (appState.find { Map e -> e.name == "manifests" } as Map)?.value as Map ?: [:]
+    Map customRepos = (appState.find { Map e -> e.name == "customRepositories" } as Map)?.value as Map ?: [:]
+    List appSettings = (h._statusJson.appSettings ?: []) as List
+    List subscribed = parseHpmListSetting(appSettings.find { Map s -> s.name == "installedRepositories" } as Map)
+    List betaOn = parseHpmListSetting(appSettings.find { Map s -> s.name == "pkgBetaOn" } as Map)
+    List autoUpdate = parseHpmListSetting(appSettings.find { Map s -> s.name == "appsToAutoUpdate" } as Map)
+
+    Set liveApps = fetchUserAppTypes().collect { Map a -> a.id as String } as Set
+    Set liveDrvs = fetchUserDriverTypes().collect { Map d -> d.id as String } as Set
+    Map pkgs = (state.pkgs ?: [:]) as Map
+    Map prevByCk = [:]
+    pkgs.each { String k, Map p -> (p.c as List).each { Map c -> if (c.id) prevByCk[ckey(c.k as String, c.id)] = c } }
+
+    int dangling = 0, components = 0
+    Set hpmBound = [] as Set
+    Map next = pkgs.findAll { String k, Map p -> p.o != 'hpm' }           // rebuild all hpm packages from HPM's truth
+    manifests.each { String url, Map m ->
+        List comps = []
+        [['app', 'apps'], ['driver', 'drivers']].each { List pair ->
+            String kind = pair[0], arr = pair[1]
+            ((m[arr] ?: []) as List).each { Map item ->
+                String heId = item.heID?.toString()
+                boolean live = heId && ((kind == 'app' ? liveApps : liveDrvs).contains(heId))
+                if (heId && !live) dangling++
+                Map prev = live ? (prevByCk[ckey(kind, heId)] as Map) : null
+                Map c = compact([k: kind, id: live ? heId : null, ns: item.namespace, nm: item.name, loc: item.location, mid: item.id, req: item.required == true || item.required == "true",
+                         beta: item.beta == true, ver: item.version, ih: prev?.ih, ah: prev?.ah, iv: prev?.iv ?: item.version, ivs: prev?.ivs, lm: prev?.lm, u: prev?.u ?: 0, pv: prev?.pv == true, bm: prev?.bm])
+                if (live) { hpmBound << ckey(kind, heId); components++ }
+                comps << c
+            }
+        }
+        ((m.bundles ?: []) as List).each { Map b -> comps << compact([k: 'bundle', id: null, ns: b.namespace, nm: b.name, loc: b.location, mid: b.id, req: b.required == true, beta: b.beta == true, ver: b.version]) }
+        ((m.files ?: []) as List).each { Map f -> comps << compact([k: 'file', id: f.name, ns: null, nm: f.name, loc: f.location, mid: f.id, req: f.required != false]) }
+        Map old = pkgs[url] as Map
+        Map p = compact([o: 'hpm', n: m.packageName, v: m.version, beta: m.beta == true, g: old?.g ?: 1, c: comps, auto: autoUpdate.contains(url)])
+        // document: the manifest as HPM holds it (HPM already stripped releaseNotes/licenseFile; we keep what is there)
+        Set ids = comps.collect { Map c -> "${c.k}:${c.mid ?: c.id}".toString() } as Set
+        Set oldIds = ((old?.c ?: []) as List).collect { Map c -> "${c.k}:${c.mid ?: c.id}".toString() } as Set
+        if (old == null || ids != oldIds || old.v != p.v) { p.g = ((old?.g ?: 0) as int) + 1; writePkgDoc(url, p, m) }
+        next[url] = p
+    }
+    // A url/local package whose component HPM now claims is folded into the HPM package (DESIGN.md §2.2).
+    next.each { String k, Map p -> if (p.o != 'hpm') p.c = (p.c as List).findAll { Map c -> !hpmBound.contains(ckey(c.k as String, c.id)) } }
+    next = next.findAll { String k, Map p -> p.o == 'hpm' || !(p.c as List).isEmpty() }
+
+    state.pkgs = next
+    state.repos = [subscribed: subscribed, custom: customRepos]
+    state.betaOn = betaOn
+    Map prevHpm = (state.hpm ?: [:]) as Map
+    state.hpm = [mode: prevHpm.mode == 'manage' ? 'manage' : 'observe', typeId: h.typeId, instanceId: h.instanceId, importedAt: now(),
+                 packages: manifests.size(), dangling: dangling, disabled: h.disabled, autoUpdateMode: h.autoUpdateMode]
+    writeCmFile(HPM_IMPORT_FILE, JsonOutput.toJson([importedAt: now(), instanceId: h.instanceId, manifests: manifests, installedRepositories: subscribed, customRepositories: customRepos, pkgBetaOn: betaOn, appsToAutoUpdate: autoUpdate]))
+    logInfo "HPM import: ${manifests.size()} packages, ${components} bound components, ${dangling} dangling, ${subscribed.size()} repositories"
+    return [packages: manifests.size(), components: components, dangling: dangling, repos: subscribed.size()]
+}
+
+void initialHpmImport() { if (findHpm()) importHpm() else state.hpm = [mode: 'absent'] }
+
+// HPM enum-multiple settings are stored as a JSON array string or a comma list, depending on firmware.
+@CompileStatic
+static List parseHpmListSetting(Map setting) {
+    Object v = setting?.value
+    if (v == null) return []
+    if (v instanceof List) return (List) v
+    String s = v.toString().trim()
+    if (s.startsWith("[")) { try { return (List) new JsonSlurper().parseText(s) } catch (Exception ignored) {} }
+    return s ? s.split(',\\s*').toList() : []
+}
+
 // usedBy names are too costly to keep in state.pkgs (2.4's ~60 KB budget) — re-read from the bulk
 // lists on demand, cached for the SPA's rapid-fire drill-down calls (short TTL, not the item's own registry binding).
 Map usedByIndex() {
@@ -706,6 +813,7 @@ void initialize() {
     schedule("0 41 3 * * ?", "scheduledVersionCheck")
     subscribe(location, "systemStart", "systemStartHandler")
     refreshUpdateLabel()
+    if (!state.hpm) runIn(30, 'initialHpmImport')
     logSched "daily sweep, UI sync and version check scheduled"
 }
 void systemStartHandler(evt) { runIn(300, 'scheduledSweep') }

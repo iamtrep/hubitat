@@ -129,7 +129,10 @@ else:
     for c in comps: by_kind[c.get("kind")] = by_kind.get(c.get("kind"), 0) + 1
     exp = {"app": len(gt_apps), "driver": len(gt_drvs), "library": len(gt_libs), "bundle": len(gt_bundles)}
     for kind, n in exp.items():
-        (ok if by_kind.get(kind, 0) == n else fail)(f"{kind} count {by_kind.get(kind,0)} == hub {n}")
+        # >= not ==: an HPM manifest can declare app/driver/bundle components with no live hub match
+        # (optional never installed, a dangling heID, or an unresolved bundle id — DESIGN.md 2.1), which
+        # persist in the registry once HPM has ever been imported (Task 5).
+        (ok if by_kind.get(kind, 0) >= n else fail)(f"{kind} count {by_kind.get(kind,0)} >= hub {n}")
     required = {"key", "kind", "hubId", "namespace", "name", "origin", "status", "usedByCount", "lastModifiedMs", "ihash"}
     bad = [c for c in comps if not required.issubset(c.keys())]
     (ok if not bad else fail)(f"every component carries {sorted(required)} ({len(bad)} missing)")
@@ -144,7 +147,7 @@ else:
     # usage index equals usedBy from the bulk lists
     gt_used = {("app", str(a["id"])): len(a.get("usedBy") or []) for a in gt_apps}
     gt_used.update({("driver", str(d["id"])): len(d.get("usedBy") or []) for d in gt_drvs})
-    wrong = [c for c in comps if c["kind"] in ("app","driver") and gt_used.get((c["kind"], str(c["hubId"]))) != c["usedByCount"]]
+    wrong = [c for c in comps if c["kind"] in ("app","driver") and c["hubId"] and gt_used.get((c["kind"], str(c["hubId"]))) != c["usedByCount"]]
     (ok if not wrong else fail)(f"usedByCount matches hub for apps/drivers ({len(wrong)} wrong)")
     # every bundle member is classified as bundle-member and points at its bundle
     members = {("app", str(i)) for b in gt_bundles for i in b.get("appTypeIds", [])} | {("driver", str(i)) for b in gt_bundles for i in b.get("deviceTypeIds", [])}
@@ -171,6 +174,38 @@ else:
     pkgs = inv.get("packages", [])
     missing_docs = [p for p in pkgs if p.get("doc") not in files]
     (ok if not missing_docs else fail)(f"manifest document present for every package ({len(missing_docs)} missing of {len(pkgs)})")
+# ── Task 5: HPM import ────────────────────────────────────────────────
+section("HPM import (observe)")
+hpm_type = next((a for a in gt_apps if a.get("namespace") == "dcm.hpm"), None)
+hs = api_get("hpm/status")
+if "_error" in hs: fail(f"hpm/status: {hs}")
+elif not hpm_type:
+    (ok if hs.get("mode") == "absent" else fail)("hpm/status mode=absent when HPM is not installed")
+    warn("HPM not installed on this hub; import assertions skipped")
+else:
+    inst = (hpm_type.get("usedBy") or [{}])[0].get("id")
+    (ok if hs.get("mode") in ("observe", "absent") and str(hs.get("instanceId")) == str(inst) else fail)(f"hpm/status finds instance {inst} (mode={hs.get('mode')})")
+    (ok if "disabled" in hs and "autoUpdateMode" in hs else fail)("hpm/status carries live disabled + autoUpdateMode")
+    r = api_post("hpm/import", timeout=180)
+    (ok if r.get("success") else fail)(f"POST /api/hpm/import: {r}")
+    st = fetch(f"/installedapp/statusJson/{inst}") or {}
+    manifests = next((e["value"] for e in st.get("appState", []) if e["name"] == "manifests"), {}) or {}
+    (ok if r.get("packages") == len(manifests) else fail)(f"imported {r.get('packages')} packages == HPM manifests {len(manifests)}")
+    inv = api_get("inventory", timeout=180)
+    hpm_pkgs = [p for p in inv.get("packages", []) if p["origin"] == "hpm"]
+    (ok if {p["key"] for p in hpm_pkgs} == set(manifests.keys()) else fail)("package keys equal HPM manifest URLs")
+    live_ids = {("app", str(a["id"])) for a in gt_apps} | {("driver", str(d["id"])) for d in gt_drvs}
+    exp_bound = sum(1 for m in manifests.values() for kind, arr in (("app","apps"),("driver","drivers")) for c in (m.get(arr) or []) if c.get("heID") and (kind, str(c["heID"])) in live_ids)
+    exp_dangling = sum(1 for m in manifests.values() for kind, arr in (("app","apps"),("driver","drivers")) for c in (m.get(arr) or []) if c.get("heID") and (kind, str(c["heID"])) not in live_ids)
+    comps = [c for c in inv.get("components", []) if c["origin"] == "hpm"]
+    bound_ad = [c for c in comps if c["kind"] in ("app", "driver")]  # files carry a hubId (filename) unconditionally, DESIGN.md 2.1
+    (ok if sum(1 for c in bound_ad if c["hubId"]) == exp_bound else fail)(f"bound HPM components {sum(1 for c in bound_ad if c['hubId'])} == {exp_bound}")
+    (ok if r.get("dangling") == exp_dangling else fail)(f"dangling heIDs reported: {r.get('dangling')} == {exp_dangling}")
+    (ok if all(c.get("managedBy") == "hpm" for c in comps) else fail)("HPM-origin components are managedBy=hpm in observe mode")
+    r2 = api_post("hpm/import", timeout=180)
+    (ok if r2.get("packages") == r.get("packages") else fail)("re-import is idempotent")
+    files = [f["name"] for f in (fetch("/hub/fileManager/json") or {}).get("files", [])]
+    (ok if "cm_hpm_import.json" in files else fail)("cm_hpm_import.json written")
 # TASK-SECTIONS-BELOW
 
 print(f"\n{passed} passed, {failed} failed, {warnings} warnings")
