@@ -142,7 +142,7 @@ else:
     for kind, n in {"app": len(gt_apps), "driver": len(gt_drvs), "bundle": len(gt_bundles)}.items():
         (ok if bound_by_kind.get(kind, 0) == n else fail)(f"{kind} bound count {bound_by_kind.get(kind,0)} == hub {n}")
     (ok if by_kind.get("library", 0) == len(gt_libs) else fail)(f"library count {by_kind.get('library',0)} == hub {len(gt_libs)}")
-    required = {"key", "kind", "hubId", "namespace", "name", "origin", "status", "usedByCount", "lastModifiedMs", "ihash"}
+    required = {"key", "kind", "hubId", "namespace", "name", "origin", "status", "usedByCount", "lastModifiedMs", "ihash", "required"}
     bad = [c for c in comps if not required.issubset(c.keys())]
     (ok if not bad else fail)(f"every component carries {sorted(required)} ({len(bad)} missing)")
     # importUrl presence must match the hub for apps and drivers (single/data is the only source of importUrl)
@@ -164,10 +164,42 @@ else:
     gt_used.update({("driver", str(d["id"])): len(d.get("usedBy") or []) for d in gt_drvs})
     wrong = [c for c in comps if c["kind"] in ("app","driver") and c["hubId"] and gt_used.get((c["kind"], str(c["hubId"]))) != c["usedByCount"]]
     (ok if not wrong else fail)(f"usedByCount matches hub for apps/drivers ({len(wrong)} wrong)")
-    # every bundle member is classified as bundle-member and points at its bundle
+    # every bundle member points at its bundle. Its origin is bundle, or hpm when an HPM package
+    # installed that bundle and the members were folded into the package.
     members = {("app", str(i)) for b in gt_bundles for i in b.get("appTypeIds", [])} | {("driver", str(i)) for b in gt_bundles for i in b.get("deviceTypeIds", [])}
-    wrongm = [c for c in comps if (c["kind"], str(c["hubId"])) in members and c["origin"] != "bundle"]
-    (ok if not wrongm else fail)(f"bundle members carry origin=bundle ({len(wrongm)} wrong)")
+    wrongm = [c for c in comps if (c["kind"], str(c["hubId"])) in members and (c["origin"] not in ("bundle", "hpm") or not c.get("bundleOf"))]
+    (ok if not wrongm else fail)(f"bundle members carry their bundle and a bundle/hpm origin ({len(wrongm)} wrong)")
+    # one item, one package: the whole point of the package model
+    owners = {}
+    for c in comps:
+        if c.get("hubId") is not None: owners.setdefault((c["kind"], str(c["hubId"])), set()).add(c["key"])
+    dupes = {k: v for k, v in owners.items() if len(v) > 1}
+    (ok if not dupes else fail)(f"no component belongs to two packages ({len(dupes)} do)")
+    # an installed bundle is bound wherever it is declared — never reported missing while it exists
+    bundle_urls = {b.get("sourceUrl"): str(b["id"]) for b in gt_bundles if b.get("sourceUrl")}
+    unbound = [c for c in comps if c["kind"] == "bundle" and c.get("location") in bundle_urls and c.get("hubId") is None]
+    (ok if not unbound else fail)(f"every declared bundle that is installed is bound to it ({len(unbound)} unbound)")
+    # file components resolve against File Manager, and nothing else claims to
+    fm_names = {f["name"] for f in (fetch("/hub/fileManager/json") or {}).get("files", [])}
+    badf = [c for c in comps if c["kind"] == "file" and ((c["hubId"] is not None) != (c["name"] in fm_names))]
+    (ok if not badf else fail)(f"file components are bound exactly when the file exists ({len(badf)} wrong)")
+    # status vocabulary is closed: the SPA has a label and a legend line for each of these
+    VOCAB = {"current", "update-available", "changed-upstream", "modified-locally", "broken-source",
+             "missing", "not-installed", "private", "unmanaged", "unknown"}
+    stray = sorted({c["status"] for c in comps} - VOCAB)
+    (ok if not stray else fail)(f"component statuses stay in the documented vocabulary (stray: {stray})")
+    PKG_VOCAB = VOCAB | {"incomplete"}
+    strayp = sorted({p["status"] for p in inv.get("packages", [])} - PKG_VOCAB)
+    (ok if not strayp else fail)(f"package statuses stay in the documented vocabulary (stray: {strayp})")
+    # a component with no import URL is never judged against an upstream it does not have
+    wrongu = [c for c in comps if c.get("origin") == "local" and c["status"] not in ("unmanaged", "private")]
+    (ok if not wrongu else fail)(f"hub-local code reads as unmanaged, never as checked ({len(wrongu)} wrong)")
+    # optional-and-absent is not an error, required-and-absent is
+    wrongm2 = [c for c in comps if c.get("hubId") is None and c["status"] != ("missing" if c.get("required") else "not-installed")]
+    (ok if not wrongm2 else fail)(f"absent components report missing or not-installed by their required flag ({len(wrongm2)} wrong)")
+    # single-component packages carry their kind so the SPA can list them without a second lookup
+    solo_nokind = [p for p in inv.get("packages", []) if p.get("componentCount") == 1 and not p.get("kind")]
+    (ok if not solo_nokind else fail)(f"single-component packages carry their kind ({len(solo_nokind)} missing)")
     # no sources, no secrets in the payload
     leak = [c for c in comps if "source" in c or "oauthClientSecret" in json.dumps(c)]
     (ok if not leak else fail)("inventory payload carries no source text and no OAuth secrets")
@@ -213,7 +245,9 @@ else:
     exp_bound = sum(1 for m in manifests.values() for kind, arr in (("app","apps"),("driver","drivers")) for c in (m.get(arr) or []) if c.get("heID") and (kind, str(c["heID"])) in live_ids)
     exp_dangling = sum(1 for m in manifests.values() for kind, arr in (("app","apps"),("driver","drivers")) for c in (m.get(arr) or []) if c.get("heID") and (kind, str(c["heID"])) not in live_ids)
     comps = [c for c in inv.get("components", []) if c["origin"] == "hpm"]
-    bound_ad = [c for c in comps if c["kind"] in ("app", "driver")]  # files carry a hubId (filename) unconditionally, DESIGN.md 2.1
+    # manifest-declared apps/drivers only: members of a bundle the package installed are folded into
+    # the package by the inventory pass and are not part of HPM's own component records.
+    bound_ad = [c for c in comps if c["kind"] in ("app", "driver") and not c.get("bundleOf")]
     (ok if sum(1 for c in bound_ad if c["hubId"]) == exp_bound else fail)(f"bound HPM components {sum(1 for c in bound_ad if c['hubId'])} == {exp_bound}")
     (ok if r.get("dangling") == exp_dangling else fail)(f"dangling heIDs reported: {r.get('dangling')} == {exp_dangling}")
     (ok if all(c.get("managedBy") == "hpm" for c in comps) else fail)("HPM-origin components are managedBy=hpm in observe mode")
@@ -243,7 +277,7 @@ if run_slow:
         (ok if k in res else fail)(f"sweep result has {k}")
     inv = api_get("inventory", timeout=180)
     comps = inv.get("components", [])
-    allowed = {"current", "update-available", "changed-upstream", "modified-locally", "broken-source", "unknown", "private", "missing"}
+    allowed = {"current", "update-available", "changed-upstream", "modified-locally", "broken-source", "unknown", "unmanaged", "private", "missing", "not-installed"}
     badst = [c for c in comps if c["status"] not in allowed]
     (ok if not badst else fail)(f"every status in the allowed set ({len(badst)} bad)")
     url_comps = [c for c in comps if c["origin"] == "url" and c.get("hubId") is not None and c.get("location") and not c.get("isPrivate")]
@@ -253,7 +287,7 @@ if run_slow:
     unchecked_pkgs = [p for p in hpm_pkgs if p.get("checkedAtMs") is None]
     (ok if not unchecked_pkgs else fail)(f"every hpm package was checked at the package row ({len(unchecked_pkgs)} unchecked of {len(hpm_pkgs)})")
     local = [c for c in comps if c["origin"] == "local"]
-    (ok if all(c["status"] in ("unknown", "missing") for c in local) else fail)("local-origin components stay unknown")
+    (ok if all(c["status"] in ("unmanaged", "private") for c in local) else fail)("hub-local code is never swept, so it stays unmanaged")
     r2 = api_post("sweep/start", timeout=60)
     j2 = poll_job(r2.get("jobId", ""), timeout_s=300)
     (ok if (j2.get("result") or {}).get("queued", 1) == 0 else fail)("second sweep inside the TTL queues nothing")

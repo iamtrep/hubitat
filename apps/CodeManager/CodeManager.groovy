@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 
 // ===== Constants =====
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -399,11 +399,12 @@ static String ckey(String kind, Object id) { return kind + ":" + id }
 
 String pkgFileName(String key) { return PKG_FILE_PREFIX + digest16(key) + ".json" }
 
-List listCmFiles() {
+// null (not []) when the listing itself failed, so callers can tell "no files" from "don't know".
+List listHubFiles() {
     Map wrap = hubMapRequest(FILE_LIST_PATH, "file list", 15)
-    if (!wrap.ok) return []
-    return ((wrap.data.files ?: []) as List).findAll { Map f -> (f.name as String)?.startsWith("cm_") }
+    return wrap.ok ? ((wrap.data.files ?: []) as List) : null
 }
+List listCmFiles() { return (listHubFiles() ?: []).findAll { Map f -> (f.name as String)?.startsWith("cm_") } }
 void writeCmFile(String name, String text) {
     try { uploadHubFile(name, text.getBytes("UTF-8")) } catch (Exception e) { logError "write ${name}: ${e.message}" }
 }
@@ -437,6 +438,10 @@ static Map degenerateManifest(String origin, String name, List<Map> comps, Strin
 Map runInventoryPass() {
     long t0 = now()
     List apps = fetchUserAppTypes(), drvs = fetchUserDriverTypes(), libs = fetchUserLibraries(), bundles = fetchBundles()
+    // One File Manager listing serves both the file-component existence check below and the stale
+    // document prune at the end of the pass; null means the listing failed and neither should act.
+    List hubFiles = listHubFiles()
+    Set<String> fmNames = hubFiles == null ? null : (hubFiles.collect { Map f -> f.name as String } as Set)
     Map pkgs = (state.pkgs ?: [:]) as Map
     // Fail closed: hubRequest's bulk fetchers fail-soft to [] on a fetch error, indistinguishable
     // from a genuinely empty list. If the registry already holds a component of some kind and this
@@ -498,8 +503,25 @@ Map runInventoryPass() {
     // app/driver/library, DESIGN.md 2.1) — rebind only kinds this pass enumerates, or a forced
     // pass wipes every file's hubId to null even though nothing about it changed.
     Set rebindableKinds = ['app', 'driver', 'library'] as Set
-    pkgs.each { String key, Map p -> if (p.o == 'hpm') next[key] = compact(p + [c: (p.c as List).collect { Map c -> rebindableKinds.contains(c.k) ? (seen[ckey(c.k as String, c.id)] ?: c + [id: null]) : c }]) }
+    // An HPM manifest names a bundle by its download location, not by the hub's bundle name (the two
+    // differ in practice), so bundles bind on sourceUrl and files on their File Manager name. Without
+    // this both read as missing forever and the installed bundle also stands as its own package.
+    Map<String, Map> bundleByUrl = [:]
+    bundles.each { Map b -> if (b.sourceUrl) bundleByUrl[b.sourceUrl as String] = b }
+    pkgs.each { String key, Map p ->
+        if (p.o != 'hpm') return
+        next[key] = compact(p + [c: (p.c as List).collect { Map c ->
+            if (rebindableKinds.contains(c.k)) return seen[ckey(c.k as String, c.id)] ?: c + [id: null]
+            if (c.k == 'bundle') { Map b = bundleByUrl[c.loc as String]; return c + [id: b?.id, ns: c.ns ?: b?.namespace] }
+            if (c.k == 'file') return fmNames == null ? c : c + [id: fmNames.contains(c.nm as String) ? c.nm : null]
+            return c
+        }])
+    }
     Set bound = next.values().collectMany { Map p -> (p.c as List).findAll { Map c -> c.id }.collect { Map c -> ckey(c.k as String, c.id) } } as Set
+    // A bundle an HPM package installed belongs to that package: its members are folded in and no
+    // separate bundle: package is built for it, so one installed bundle is never two packages at once.
+    Map<String, String> bundleOwner = [:]
+    next.each { String k, Map p -> if (p.o == 'hpm') (p.c as List).each { Map c -> if (c.k == 'bundle' && c.id) bundleOwner[c.id as String] = k } }
     bundles.each { Map b ->
         String key = "bundle:${b.id}"
         // The bundle itself is a component too (DESIGN.md §2.1 kind: bundle), distinct from its members.
@@ -510,8 +532,11 @@ Map runInventoryPass() {
         List members = (b.appTypeIds.findAll { !bound.contains(ckey('app', it)) }.collect { seen[ckey('app', it)] } +
                         b.deviceTypeIds.findAll { !bound.contains(ckey('driver', it)) }.collect { seen[ckey('driver', it)] } +
                         b.libraryIds.findAll { !bound.contains(ckey('library', it)) }.collect { seen[ckey('library', it)] }).findAll { it }
+        members.each { Map c -> bound << ckey(c.k as String, c.id) }
+        String owner = bundleOwner[b.id as String]
+        if (owner) { ((next[owner] as Map).c as List).addAll(members); return }
         List comps = [bundleComp] + members
-        comps.each { Map c -> bound << ckey(c.k as String, c.id) }
+        bound << ckey('bundle', b.id)
         Map p = pkgs[key] as Map
         next[key] = compact([o: 'bundle', n: b.name, v: null, g: p?.g ?: 1, url: b.sourceUrl, pv: b.isPrivate, c: comps])
     }
@@ -532,12 +557,14 @@ Map runInventoryPass() {
         next[key] = compact([o: key.startsWith('url:') ? 'url' : 'local', n: (comps[0] as Map).nm, v: null, g: oldP?.g ?: 1, c: comps])
     }
     // Documents: write for new packages or when the component set changed (compare by kind:id set)
-    Map docsBefore = listCmFiles().collectEntries { Map f -> [(f.name as String): f] }
+    Map docsBefore = (hubFiles ?: []).findAll { Map f -> (f.name as String)?.startsWith("cm_") }.collectEntries { Map f -> [(f.name as String): f] }
     next.each { String key, Map p ->
         if (p.o == 'hpm') return                               // Task 5 writes HPM documents
         Set ids = (p.c as List).collect { Map c -> ckey(c.k as String, c.id) } as Set
         Set oldIds = ((pkgs[key] as Map)?.c as List ?: []).collect { Map c -> ckey(c.k as String, c.id) } as Set
-        if (ids != oldIds || !docsBefore.containsKey(pkgFileName(key))) {
+        // hubFiles null = the listing failed: don't read "document absent" from a listing we don't have,
+        // or every package's document gets rewritten (and its generation bumped) on one bad fetch.
+        if (ids != oldIds || (hubFiles != null && !docsBefore.containsKey(pkgFileName(key)))) {
             p.g = ((p.g ?: 0) as int) + 1
             writePkgDoc(key, p, degenerateManifest(p.o as String, p.n as String, p.c as List, p.url as String))
         }
@@ -601,6 +628,7 @@ Map apiHpmImport() {
     Map h = findHpm()
     if (h == null) return jsonResponse([success: false, error: "HPM status unavailable"])
     Map r = importHpm(h)
+    if (r) runInventoryPass()                       // re-binds the imported packages' bundles/files to the hub
     return jsonResponse(r ? [success: true] + r : [success: false, error: "HPM not installed"])
 }
 
@@ -670,7 +698,7 @@ Map importHpm(Map h = null) {
 void initialHpmImport() {
     Map h = findHpm()
     if (h == null) return                       // fetch failed; the daily sweep retries
-    if (h.absent == true) { state.hpm = [mode: 'absent'] } else { importHpm(h) }
+    if (h.absent == true) { state.hpm = [mode: 'absent'] } else { importHpm(h); runInventoryPass() }
 }
 
 // HPM enum-multiple settings are stored as a JSON array string or a comma list, depending on firmware.
@@ -700,12 +728,15 @@ Map usedByIndex() {
 // p = package map, c = component map, s = the component's own sweep entry (null or [:] if none — both
 // tolerated), pe = the package row's sweep entry ([:] if none — HPM manifest fetch result, or empty
 // for non-hpm origins).
-private String componentStatus(Map p, Map c, Map s, Map pe) {
-    if (c.id == null) return 'missing'
+static String componentStatus(Map p, Map c, Map s, Map pe) {
+    // Declared by the package but absent from the hub. An HPM manifest declares every component the
+    // package *can* install and most are optional, so an optional one that was never installed is a
+    // normal state, not a defect — only a required one missing is.
+    if (c.id == null) return (c.req == false) ? 'not-installed' : 'missing'
     if (c.pv) return 'private'
     Map ss = s ?: [:]
     String status
-    if (p.o == 'local') status = 'unknown'
+    if (p.o == 'local') status = 'unmanaged'                  // no import URL: there is nothing upstream to compare against
     else if (p.o == 'hpm' && ss.isEmpty()) {
         // HPM component with no own sweep entry (manifest unchanged, body never fetched): derive
         // from the package manifest's declared version instead of a per-component hash compare.
@@ -725,6 +756,21 @@ private String componentStatus(Map p, Map c, Map s, Map pe) {
     return status
 }
 
+// Package roll-up over its components' statuses. The neutral ones mean "nothing to compare here",
+// which is not the same claim as "matches upstream" (I8), so a package made only of those is never
+// Current. A required component that isn't on the hub outranks a pending update: the package is not
+// fully installed, which is the rarer and more actionable fact.
+static String packageStatus(String origin, List statuses, Map pe) {
+    if (pe?.broken == true) return 'broken-source'
+    if (statuses.contains('missing')) return 'incomplete'
+    if (statuses.contains('update-available')) return 'update-available'
+    if (statuses.contains('changed-upstream')) return 'changed-upstream'
+    if (statuses.contains('broken-source')) return 'broken-source'
+    if (statuses && statuses.every { it == 'not-installed' }) return 'not-installed'
+    if (!statuses || statuses.every { it in ['unknown', 'unmanaged', 'private', 'not-installed'] }) return origin == 'local' ? 'unmanaged' : 'unknown'
+    return 'current'
+}
+
 // GET /api/inventory — aggregator: registry + sweep cache (Task 6) + HPM mode (Task 5). No sources, no secrets.
 Map buildInventoryPayload() {
     Map pkgs = (state.pkgs ?: [:]) as Map
@@ -740,22 +786,18 @@ Map buildInventoryPayload() {
             String location = c.loc ?: (p.o == 'url' ? key.substring(4) : null)
             Map row = [key: key, kind: c.k, hubId: c.id, namespace: c.ns, name: c.nm, origin: p.o, location: location, managedBy: p.o == 'hpm' ? (state.hpm?.mode == 'manage' ? 'cm' : 'hpm') : 'cm',
                        status: status, ihash: c.ih, ahash: c.ah, iver: c.iv, iverSrc: c.ivs, rhash: s.rhash, rver: s.rver, checkedAtMs: s.checkedAt, changedAtMs: s.changedAt,
-                       httpStatus: s.httpStatus, failCount: s.failCount ?: 0, error: s.error, lastModifiedMs: c.lm, usedByCount: c.u ?: 0,
+                       httpStatus: s.httpStatus, failCount: s.failCount ?: 0, error: s.error, lastModifiedMs: c.lm, usedByCount: c.u ?: 0, required: c.req != false,
                        usedBy: usedBy[ckey(c.k as String, c.id)] ?: [], bundleOf: c.bm, isPrivate: c.pv == true]
             comps << row
             return row
         }
-        List pcStatuses = pc.collect { it.status }
-        String pkgStatus
-        if (pe.broken == true) pkgStatus = 'broken-source'
-        else if (pcStatuses.contains('update-available')) pkgStatus = 'update-available'
-        else if (pcStatuses.contains('changed-upstream')) pkgStatus = 'changed-upstream'
-        else if (pcStatuses.contains('broken-source')) pkgStatus = 'broken-source'
-        // never checked, or every component is unknown/private/missing (I8) — the package itself
-        // hasn't been resolved yet, which is a different meaning than "matches upstream".
-        else if (pcStatuses.isEmpty() || pcStatuses.every { it in ['unknown', 'private', 'missing'] }) pkgStatus = 'unknown'
-        else pkgStatus = 'current'
+            // HPM decides a package by its manifest version, so the files inside a bundle it installed
+        // don't drive the package's status — an upstream file that moved without a manifest version
+        // bump is real (the component says changed-upstream) but no HPM update would fetch it.
+        List rollup = (p.o == 'hpm' ? pc.findAll { !it.bundleOf } : pc).collect { it.status }
+        String pkgStatus = packageStatus(p.o as String, rollup, pe)
         [key: key, origin: p.o, name: p.n, version: p.v, gen: p.g, doc: pkgFileName(key), isPrivate: p.pv == true, url: p.url, componentCount: pc.size(),
+         kind: pc.size() == 1 ? (pc[0] as Map).kind : null,
          checkedAtMs: pe.checkedAt, rver: pe.rver, broken: pe.broken == true, error: pe.error, httpStatus: pe.httpStatus,
          status: pkgStatus]
     }
@@ -816,9 +858,11 @@ Map startSweep(boolean force = false) {
     Map prev = (state.sweep ?: [:]) as Map
     if (prev.status == 'running' && JOBS[prev.jobId as String]?.status == 'running') return [jobId: prev.jobId, total: prev.total, alreadyRunning: true]
     readSweepCache()
-    runInventoryPass()
+    // Import first, then inventory: importHpm() rebuilds HPM packages from HPM's own records, and the
+    // inventory pass is what binds their bundle/file components to the hub and folds bundle members in.
     Map hpmProbe = findHpm()
     if (hpmProbe != null && hpmProbe.absent != true) importHpm(hpmProbe)
+    runInventoryPass()
     Map pkgs = (state.pkgs ?: [:]) as Map
     List<String> queue = []
     long cutoff = force ? Long.MAX_VALUE : now() - SWEEP_TTL_MS
@@ -826,7 +870,10 @@ Map startSweep(boolean force = false) {
         if (p.o == 'hpm') { Map e = SWEEP["pkg:" + key]; if (!e || ((e.checkedAt ?: 0) as long) < cutoff) queue << ("pkg:" + key) }
         (p.c as List).each { Map c ->
             if (!c.id || c.pv || c.k == 'bundle' || c.k == 'file' || p.o == 'local') return
-            if (p.o == 'hpm') return                         // component hashes refresh only when the manifest changed (see applyManifestResult)
+            // HPM component hashes refresh only when the manifest changed (see applyManifestResult) —
+            // except members of a bundle folded into an HPM package, which carry their own upstream
+            // file location and were swept as bundle components before the fold.
+            if (p.o == 'hpm' && !c.bm) return
             String loc = componentLoc(key, p, c); if (!loc) return
             Map e = SWEEP[ckey(c.k as String, c.id)]
             if (!e || ((e.checkedAt ?: 0) as long) < cutoff) queue << ckey(c.k as String, c.id)
