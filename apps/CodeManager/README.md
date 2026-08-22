@@ -23,7 +23,7 @@ Inventory, update detection and (from 0.2) safe updates for every app, driver, l
 
 ### Freshness <a id="freshness"></a>
 
-The content hash of the installed source (normalized: BOM stripped, CRLF→LF, trailing whitespace trimmed, one trailing newline) is compared with the hash of the upstream file. `Current` means the hashes match. `Update available` means they differ *and* the upstream version compares newer by an ordered numeric comparison. `Changed upstream` means they differ but no ordered comparison is possible (no version literal on one side, or a form that cannot be ordered such as `2.3.9l`), or the upstream version is not newer. `Modified locally` means the installed source no longer matches the hash recorded when Code Manager first saw it — it was edited in the code editor. `No upstream` is a local orphan with nowhere to check. `Private bundle` members cannot be read at all. HPM packages are judged by the manifest `version`, as HPM does; component hashes are refreshed only when the manifest changes.
+The content hash of the installed source (normalized: BOM stripped, CRLF→LF, trailing whitespace trimmed, one trailing newline) is compared with the hash of the upstream file. `Current` means the hashes match. `Update available` means they differ *and* the upstream version compares newer by an ordered numeric comparison. `Changed upstream` means they differ but no ordered comparison is possible (no version literal on one side, or a form that cannot be ordered such as `2.3.9l`), or the upstream version is not newer. `Modified locally` means the installed source no longer matches the hash recorded when Code Manager first saw it — it was edited in the code editor — unless it now matches the upstream file, in which case it is `Current`. `No upstream` is a local orphan with nowhere to check. `Private bundle` members cannot be read at all. HPM packages are judged by the manifest `version`, as HPM does; component hashes are refreshed only when the manifest changes.
 
 ### Broken sources <a id="broken-source"></a>
 
@@ -31,7 +31,7 @@ A location that answers `404` or `410`, or fails DNS/TLS, on **three consecutive
 
 ### Safe to remove <a id="safe-to-remove"></a>
 
-A component is listed as removable when it has zero usage (no instances, devices or consumer types), it is not a member of a bundle that has any used member, and no installed parent app references it as a child type. The list is advisory: the hub refuses to delete in-use types regardless, and 0.1 has no delete action.
+A component is listed as removable when it has zero usage (no instances, devices or consumer types) and it is not a member of a bundle that has any used member. The list is advisory: the hub refuses to delete in-use types regardless, and 0.1 has no delete action.
 
 ### HPM observe mode <a id="hpm-observe"></a>
 

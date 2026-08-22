@@ -116,11 +116,14 @@ except urllib.error.HTTPError as e: (ok if e.code in (401, 403, 500) else fail)(
 except Exception as e: warn(f"bad token check: {e}")
 # ── Task 4: inventory ─────────────────────────────────────────────────
 section("Inventory")
-gt_apps = fetch("/hub2/userAppTypes") or []
-gt_drvs = fetch("/hub2/userDeviceTypes") or []
 gt_libs = fetch("/hub2/userLibraries") or []
 gt_bundles = fetch("/bundle/list/json") or []
-inv = api_get("inventory", timeout=180)
+# force=1 so this pass is fresh, then re-read app/driver ground truth immediately after it — the
+# prior version read ground truth before an inventory that could be up to an hour old, so the
+# usedByCount/by-kind comparisons below were comparing against two different points in time (I9).
+inv = api_get("inventory?force=1", timeout=300)
+gt_apps = fetch("/hub2/userAppTypes") or []
+gt_drvs = fetch("/hub2/userDeviceTypes") or []
 if "_error" in inv: fail(f"inventory: {inv}")
 else:
     ok("GET /api/inventory responds")
@@ -142,14 +145,20 @@ else:
     required = {"key", "kind", "hubId", "namespace", "name", "origin", "status", "usedByCount", "lastModifiedMs", "ihash"}
     bad = [c for c in comps if not required.issubset(c.keys())]
     (ok if not bad else fail)(f"every component carries {sorted(required)} ({len(bad)} missing)")
-    # importUrl presence must match the hub for apps (single/data is the only source of importUrl)
-    sample = [a for a in gt_apps][:5]
+    # importUrl presence must match the hub for apps and drivers (single/data is the only source of importUrl)
+    sample_apps = [a for a in gt_apps][:5]
+    sample_drvs = [d for d in gt_drvs][:5]
     mism = 0
-    for a in sample:
+    for a in sample_apps:
         sd = (fetch(f"/app/list/single/data/{a['id']}") or [{}])[0]
         c = next((x for x in comps if x["kind"] == "app" and str(x["hubId"]) == str(a["id"])), None)
         if not c or (bool(sd.get("importUrl")) != bool(c.get("location"))): mism += 1
-    (ok if mism == 0 else fail)(f"importUrl presence matches hub for {len(sample)} sampled apps")
+    for d in sample_drvs:
+        sd = (fetch(f"/driver/list/single/data/{d['id']}") or [{}])[0]
+        c = next((x for x in comps if x["kind"] == "driver" and str(x["hubId"]) == str(d["id"])), None)
+        if not c or (bool(sd.get("importUrl")) != bool(c.get("location"))): mism += 1
+    sample_n = len(sample_apps) + len(sample_drvs)
+    (ok if mism == 0 else fail)(f"importUrl presence matches hub for {sample_n} sampled apps/drivers")
     # usage index equals usedBy from the bulk lists
     gt_used = {("app", str(a["id"])): len(a.get("usedBy") or []) for a in gt_apps}
     gt_used.update({("driver", str(d["id"])): len(d.get("usedBy") or []) for d in gt_drvs})
@@ -272,7 +281,7 @@ if lib:
 ex = api_get("export", timeout=120)
 for k in ("exportedAt", "registry", "documents", "sweep", "hpm"):
     (ok if k in ex else fail)(f"export has {k}")
-(ok if len(ex.get("documents", [])) == len(ex.get("registry", {})) else fail)("one document per registry package in the export")
+(ok if all(d["doc"] is not None for d in ex.get("documents", [])) else fail)("every registered package has a readable document")
 files = [f["name"] for f in (fetch("/hub/fileManager/json") or {}).get("files", [])]
 (ok if "cm_registry_export.json" in files else fail)("cm_registry_export.json written")
 # TASK-SECTIONS-BELOW

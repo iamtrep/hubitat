@@ -15,7 +15,7 @@ String extract(String name) {
     for (; i < src.length(); i++) { char c = src.charAt(i); if (c == '{') depth++; else if (c == '}') { depth--; if (depth == 0) { i++; break } } }
     return src.substring(start, i)
 }
-String code = ['parseVersionLiteral', 'normalizeVersion', 'compareVersions', 'freshnessStatus'].collect { extract(it) }.join('\n')
+String code = ['parseVersionLiteral', 'normalizeVersion', 'compareVersions', 'freshnessStatus', 'isLocallyModified'].collect { extract(it) }.join('\n')
 def H = new GroovyShell().parse("import groovy.transform.CompileStatic\nclass H {\n${code}\n}\nreturn H").run()
 
 void t(String name, Closure c) { try { c(); pass++; println "  ok   ${name}" } catch (Throwable e) { fail++; println "  FAIL ${name}\n         ${e.message}" } }
@@ -52,6 +52,11 @@ t('status changed-upstream (no compare)', { assert H.freshnessStatus('aa', 'bb',
 t('status changed-upstream (remote older)', { assert H.freshnessStatus('aa', 'bb', '2.0', '1.9', false) == 'changed-upstream' })
 t('status modified-locally wins', { assert H.freshnessStatus('aa', 'bb', '1.0', '1.1', true) == 'modified-locally' })
 t('status unknown when no remote hash', { assert H.freshnessStatus('aa', null, '1.0', null, false) == 'unknown' })
+
+t('isLocallyModified: equal to adoption -> false', { assert H.isLocallyModified('aa', 'aa', 'bb') == false })
+t('isLocallyModified: differs from adoption but equals upstream -> false', { assert H.isLocallyModified('aa', 'bb', 'aa') == false })
+t('isLocallyModified: differs from both -> true', { assert H.isLocallyModified('aa', 'bb', 'cc') == true })
+t('isLocallyModified: null rhash with differing adoption -> true', { assert H.isLocallyModified('aa', 'bb', null) == true })
 
 println "\n${pass} passed, ${fail} failed, 0 warnings"
 System.exit(fail ? 1 : 0)

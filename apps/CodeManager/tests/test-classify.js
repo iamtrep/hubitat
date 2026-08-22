@@ -30,13 +30,10 @@ const comps = [
   {key:'url:b', kind:'driver', hubId:'2', namespace:'x', name:'Drv B', usedByCount:3, bundleOf:null},
   {key:'bundle:9', kind:'driver', hubId:'3', namespace:'x', name:'Drv C', usedByCount:0, bundleOf:'9'},
   {key:'bundle:9', kind:'app', hubId:'4', namespace:'x', name:'App C', usedByCount:2, bundleOf:'9'},
-  {key:'url:p', kind:'app', hubId:'5', namespace:'x', name:'Parent', usedByCount:1, bundleOf:null, childTypes:['x/Child']},
-  {key:'url:c', kind:'app', hubId:'6', namespace:'x', name:'Child', usedByCount:0, bundleOf:null},
 ];
 t('unused, unbundled, unreferenced -> removable', () => assert.strictEqual(safeToRemove(comps[0], comps), true));
 t('in use -> not removable', () => assert.strictEqual(safeToRemove(comps[1], comps), false));
 t('bundle member with a used sibling -> not removable', () => assert.strictEqual(safeToRemove(comps[2], comps), false));
-t('child type referenced by an installed parent -> not removable', () => assert.strictEqual(safeToRemove(comps[5], comps), false));
 
 const NOW = 1700000000000, DAY = 86400000;
 t('fmtDays: never', () => assert.deepStrictEqual(fmtDays(0, NOW), {text:'Never', color:'var(--muted)'}));

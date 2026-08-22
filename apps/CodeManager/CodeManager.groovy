@@ -329,8 +329,9 @@ List fetchUserAppTypes() {
     if (!(resp instanceof List)) return []
     return (resp as List).collect { Map a ->
         List used = (a.usedBy as List) ?: []
+        // ids only (I10): the SPA's usedBy consumer (dlistlink) reads .id; names were dead weight in every payload.
         [id: a.id.toString(), name: a.name, namespace: a.namespace, oauth: a.oauth == "enabled", lastModified: a.lastModified,
-         usedByCount: used.size(), usedBy: used.collect { Map u -> [id: u.id, name: u.name] }]
+         usedByCount: used.size(), usedBy: used.collect { Map u -> [id: u.id] }]
     }
 }
 List fetchUserDriverTypes() {
@@ -339,7 +340,7 @@ List fetchUserDriverTypes() {
     return (resp as List).collect { Map d ->
         List used = (d.usedBy as List) ?: []
         [id: d.id.toString(), name: d.name, namespace: d.namespace, lastModified: d.lastModified,
-         usedByCount: used.size(), usedBy: used.collect { Map u -> [id: u.id, name: u.name] }]
+         usedByCount: used.size(), usedBy: used.collect { Map u -> [id: u.id] }]
     }
 }
 List fetchUserLibraries() {
@@ -544,18 +545,20 @@ Map runInventoryPass() {
     // A url:/local: package with no components left this pass (its item(s) were deleted from the hub)
     // is simply absent from `next` — its manifest document is now orphaned; remove it from File Manager.
     // Own files only (cm_pkg_ prefix), guarded and logged — never touches a document this pass didn't write.
+    // Delete only when the key was in the previous registry: an unregistered cm_pkg_ document is
+    // foreign (DESIGN.md §2.2) and left alone, never assumed to be this app's own orphan (C2).
     docsBefore.keySet().findAll { String name -> name.startsWith(PKG_FILE_PREFIX) }.each { String name ->
         try {
             String text = readCmFile(name); if (!text) return
             Map doc = (Map) new JsonSlurper().parseText(text)
             String k = doc?._cm?.key as String
-            if (k && !next.containsKey(k)) {
+            if (k && pkgs.containsKey(k) && !next.containsKey(k)) {
                 deleteHubFile(name)
                 logInfo "inventory: removed stale manifest document ${name} (package ${k} no longer exists)"
             }
         } catch (Exception e) { logError "prune stale manifest ${name}: ${e.message}" }
     }
-    state.pkgs = next
+    if (next != pkgs) state.pkgs = next
     state.lastInventory = [at: now(), items: seen.size(), fetched: fetched, changed: changed]
     logInfo "inventory: ${seen.size()} items, ${fetched} fetched, ${changed} changed, ${bundles.size()} bundles, ${next.size()} packages in ${now() - t0}ms"
     return [items: seen.size(), fetched: fetched, changed: changed, ms: now() - t0]
@@ -564,11 +567,15 @@ Map runInventoryPass() {
 // ===== HPM import (DESIGN.md §8.1–8.2, HPM-PARITY.md §2) =====
 
 // HPM is singleInstance (Package_Manager.groovy:77): usedBy has at most one instance.
+// Return shapes distinguish "list fetched, HPM absent" ([absent: true]) from "fetch failed" (null,
+// M1) — a transient fetchUserAppTypes() failure must never be read as "HPM is not installed".
 Map findHpm() {
-    Map type = fetchUserAppTypes().find { Map a -> a.namespace == "dcm.hpm" } as Map
-    if (!type) return null
+    Object raw = hubRequest(USER_APP_TYPES_PATH, "user app types", "json", 15)
+    if (!(raw instanceof List)) return null
+    Map type = (raw as List).find { Map a -> a.namespace == "dcm.hpm" } as Map
+    if (!type) return [absent: true]
     String instanceId = ((type.usedBy as List) ? ((type.usedBy as List)[0] as Map).id : null)?.toString()
-    Map out = [typeId: type.id, instanceId: instanceId, disabled: null, autoUpdateMode: null]
+    Map out = [typeId: type.id?.toString(), instanceId: instanceId, disabled: null, autoUpdateMode: null]
     if (instanceId) {
         Map wrap = hubMapRequest("/installedapp/statusJson/${instanceId}", "HPM status", 30)
         if (wrap.ok) {
@@ -584,19 +591,22 @@ Map findHpm() {
 Map apiHpmStatus() {
     Map h = findHpm()
     Map st = (state.hpm ?: [:]) as Map
-    if (!h) { state.hpm = [mode: 'absent']; return jsonResponse([mode: 'absent']) }
+    if (h == null) return jsonResponse([mode: st.mode ?: 'unknown', error: "HPM status unavailable"])
+    if (h.absent == true) { state.hpm = [mode: 'absent']; return jsonResponse([mode: 'absent']) }
     return jsonResponse([mode: st.mode ?: 'observe', typeId: h.typeId, instanceId: h.instanceId, disabled: h.disabled, autoUpdateMode: h.autoUpdateMode,
                          importedAt: st.importedAt, packages: st.packages ?: 0, dangling: st.dangling ?: 0])
 }
 
 Map apiHpmImport() {
-    Map r = importHpm()
+    Map h = findHpm()
+    if (h == null) return jsonResponse([success: false, error: "HPM status unavailable"])
+    Map r = importHpm(h)
     return jsonResponse(r ? [success: true] + r : [success: false, error: "HPM not installed"])
 }
 
 // One-to-one copy of HPM's state.manifests into origin-hpm packages. Idempotent; nothing is written to HPM.
-Map importHpm() {
-    Map h = findHpm()
+Map importHpm(Map h = null) {
+    h = h ?: findHpm()
     if (!h?._statusJson) return null
     List appState = (h._statusJson.appState ?: []) as List
     Map manifests = (appState.find { Map e -> e.name == "manifests" } as Map)?.value as Map ?: [:]
@@ -657,7 +667,11 @@ Map importHpm() {
     return [packages: manifests.size(), components: components, dangling: dangling, repos: subscribed.size()]
 }
 
-void initialHpmImport() { if (findHpm()) importHpm() else state.hpm = [mode: 'absent'] }
+void initialHpmImport() {
+    Map h = findHpm()
+    if (h == null) return                       // fetch failed; the daily sweep retries
+    if (h.absent == true) { state.hpm = [mode: 'absent'] } else { importHpm(h) }
+}
 
 // HPM enum-multiple settings are stored as a JSON array string or a comma list, depending on firmware.
 @CompileStatic
@@ -682,6 +696,33 @@ Map usedByIndex() {
     } as Map
 }
 
+// Single source of truth for a component's status; shared by buildInventoryPayload and finalizeSweep (I6).
+// p = package map, c = component map, s = the component's own sweep entry ([:] if none), pe = the
+// package row's sweep entry ([:] if none — HPM manifest fetch result, or empty for non-hpm origins).
+private String componentStatus(Map p, Map c, Map s, Map pe) {
+    if (c.id == null) return 'missing'
+    if (c.pv) return 'private'
+    String status
+    if (p.o == 'local') status = 'unknown'
+    else if (p.o == 'hpm' && s.isEmpty()) {
+        // HPM component with no own sweep entry (manifest unchanged, body never fetched): derive
+        // from the package manifest's declared version instead of a per-component hash compare.
+        // A manifest that answered 404/410 or has struck out never reads as current (I4).
+        boolean deadManifest = pe.broken == true || (pe.httpStatus in [404, 410])
+        Integer cmp = compareVersions(p.v as String, pe.rver as String)
+        status = deadManifest ? 'unknown' : ((cmp != null && cmp < 0) ? 'update-available' : ((pe.checkedAt && (!pe.rver || (cmp != null && cmp >= 0))) ? 'current' : 'unknown'))
+    }
+    else {
+        boolean localMod = isLocallyModified(c.ih as String, c.ah as String, s.rhash as String)
+        status = freshnessStatus(c.ih as String, s.rhash as String, c.iv as String, s.rver as String, localMod)
+    }
+    if (s.broken == true) status = 'broken-source'
+    // the package's own manifest location has struck out (3 consecutive 404/410) — every component
+    // under it is broken-source regardless of its own location's health (I4).
+    if (p.o == 'hpm' && pe.broken == true) status = 'broken-source'
+    return status
+}
+
 // GET /api/inventory — aggregator: registry + sweep cache (Task 6) + HPM mode (Task 5). No sources, no secrets.
 Map buildInventoryPayload() {
     Map pkgs = (state.pkgs ?: [:]) as Map
@@ -692,19 +733,7 @@ Map buildInventoryPayload() {
         Map pe = (sweep["pkg:" + key] ?: [:]) as Map                       // package-row sweep entry (Task 6)
         List pc = (p.c as List).collect { Map c ->
             Map s = (sweep[ckey(c.k as String, c.id)] ?: [:]) as Map
-            boolean localMod = c.ah && c.ih && c.ih != c.ah
-            String status
-            if (c.id == null) status = 'missing'
-            else if (c.pv) status = 'private'
-            else if (p.o == 'local') status = 'unknown'
-            else if (p.o == 'hpm' && s.isEmpty()) {
-                // HPM component with no own sweep entry (manifest unchanged, body never fetched): derive
-                // from the package manifest's declared version instead of a per-component hash compare.
-                Integer cmp = compareVersions(p.v as String, pe.rver as String)
-                status = (cmp != null && cmp < 0) ? 'update-available' : ((pe.checkedAt && (!pe.rver || (cmp != null && cmp >= 0))) ? 'current' : 'unknown')
-            }
-            else status = freshnessStatus(c.ih as String, s.rhash as String, c.iv as String, s.rver as String, localMod)
-            if (s.broken == true) status = 'broken-source'
+            String status = componentStatus(p, c, s, pe)
             // origin-url app/driver components don't store loc — reconstruct it from the key (see runInventoryPass)
             String location = c.loc ?: (p.o == 'url' ? key.substring(4) : null)
             Map row = [key: key, kind: c.k, hubId: c.id, namespace: c.ns, name: c.nm, origin: p.o, location: location, managedBy: p.o == 'hpm' ? (state.hpm?.mode == 'manage' ? 'cm' : 'hpm') : 'cm',
@@ -714,9 +743,19 @@ Map buildInventoryPayload() {
             comps << row
             return row
         }
+        List pcStatuses = pc.collect { it.status }
+        String pkgStatus
+        if (pe.broken == true) pkgStatus = 'broken-source'
+        else if (pcStatuses.contains('update-available')) pkgStatus = 'update-available'
+        else if (pcStatuses.contains('changed-upstream')) pkgStatus = 'changed-upstream'
+        else if (pcStatuses.contains('broken-source')) pkgStatus = 'broken-source'
+        // never checked, or every component is unknown/private/missing (I8) — the package itself
+        // hasn't been resolved yet, which is a different meaning than "matches upstream".
+        else if (pcStatuses.isEmpty() || pcStatuses.every { it in ['unknown', 'private', 'missing'] }) pkgStatus = 'unknown'
+        else pkgStatus = 'current'
         [key: key, origin: p.o, name: p.n, version: p.v, gen: p.g, doc: pkgFileName(key), isPrivate: p.pv == true, url: p.url, componentCount: pc.size(),
-         checkedAtMs: pe.checkedAt, rver: pe.rver,
-         status: pc.collect { it.status }.contains('update-available') ? 'update-available' : pc.collect { it.status }.contains('changed-upstream') ? 'changed-upstream' : pc.collect { it.status }.contains('broken-source') ? 'broken-source' : 'current']
+         checkedAtMs: pe.checkedAt, rver: pe.rver, broken: pe.broken == true, error: pe.error, httpStatus: pe.httpStatus,
+         status: pkgStatus]
     }
     Map hub = cachedFetch("hubData", 300_000L) { Map w = hubMapRequest(HUB_DATA_PATH, "hub data", 10); w.ok ? [name: w.data.name, firmware: w.data.version, model: w.data.model] : null } as Map ?: [:]
     Map summary = [packages: packages.size(), components: comps.size(),
@@ -772,7 +811,8 @@ Map startSweep(boolean force = false) {
     if (prev.status == 'running' && JOBS[prev.jobId as String]?.status == 'running') return [jobId: prev.jobId, total: prev.total, alreadyRunning: true]
     readSweepCache()
     runInventoryPass()
-    if (findHpm()) importHpm()
+    Map hpmProbe = findHpm()
+    if (hpmProbe != null && hpmProbe.absent != true) importHpm(hpmProbe)
     Map pkgs = (state.pkgs ?: [:]) as Map
     List<String> queue = []
     long cutoff = force ? Long.MAX_VALUE : now() - SWEEP_TTL_MS
@@ -924,13 +964,13 @@ private void finalizeSweep(String jobId) {
     Map pkgs = (state.pkgs ?: [:]) as Map
     int updates = 0, broken = 0
     pkgs.each { String key, Map p ->
+        Map pe = (SWEEP["pkg:" + key] ?: [:]) as Map
         boolean pkgHasUpdate = false
         (p.c as List).each { Map c ->
             if (!c.id || c.k in ['bundle', 'file']) return
             String ck = ckey(c.k as String, c.id)
             Map e = SWEEP[ck]; if (e == null) return
-            String st = freshnessStatus(c.ih as String, e.rhash as String, c.iv as String, e.rver as String, false)
-            if (p.o == 'hpm') { Map pe = SWEEP["pkg:" + key]; if (pe?.rver && compareVersions(p.v as String, pe.rver as String) != null && compareVersions(p.v as String, pe.rver as String) < 0) st = 'update-available' }
+            String st = componentStatus(p, c, e, pe)
             if (st == 'update-available') pkgHasUpdate = true
             if (e.broken == true) broken++
         }
@@ -948,7 +988,10 @@ private void finalizeSweep(String jobId) {
     state.updatesAvailable = updates > 0
     refreshUpdateLabel()
     if (updates > 0 && !had && settings.notifyDevices && state.updatesNotified != true) {
-        settings.notifyDevices.each { it.deviceNotification("Code Manager: ${updates} package update${updates == 1 ? '' : 's'} available${broken ? ", ${broken} broken source${broken == 1 ? '' : 's'}" : ''}") }
+        settings.notifyDevices.each { d ->
+            try { d.deviceNotification("Code Manager: ${updates} package update${updates == 1 ? '' : 's'} available${broken ? ", ${broken} broken source${broken == 1 ? '' : 's'}" : ''}") }
+            catch (Exception e) { logWarn "notify ${d}: ${e.message}" }
+        }
         state.updatesNotified = true
     }
     if (updates == 0) state.updatesNotified = false
@@ -1053,7 +1096,7 @@ Map apiUpdateSettings() {
 }
 
 // ===== Lifecycle =====
-void installed() { logCfg "installed"; state.installed = true; if (!state.accessToken) checkOAuth(); runIn(1, 'syncUIForced'); initialize() }
+void installed() { logCfg "installed"; state.installed = true; if (!state.accessToken) checkOAuth(); runIn(1, 'syncUIForced'); runIn(60, 'scheduledSweep'); initialize() }
 void updated() {
     logCfg "updated"
     state.installed = true
@@ -1062,6 +1105,9 @@ void updated() {
     uiVersionCache = null
     if (settings.debugEnable) runIn(1800, 'logsOff')
     runIn(1, 'syncUIForced')
+    // warms the registry before the first SPA open on a cold hub; the sweep runs the inventory pass
+    // first (I5). The GET /api/inventory lazy pass stays as the fallback.
+    runIn(60, 'scheduledSweep')
     initialize()
 }
 void uninstalled() { unschedule(); unsubscribe(); logCfg "uninstalled" }
@@ -1148,6 +1194,11 @@ static String freshnessStatus(String ihash, String rhash, String iver, String rv
     Integer cmp = compareVersions(iver, rver)
     return (cmp != null && cmp < 0) ? 'update-available' : 'changed-upstream'
 }
+
+// True when the installed hash has moved since adoption AND still doesn't match the upstream hash
+// (a user import that lands back on the upstream file is Current again, not modified-locally forever, C1).
+@CompileStatic
+static boolean isLocallyModified(String ih, String ah, String rhash) { return ih && ah && ih != ah && ih != rhash }
 
 // ===== Source normalization and hashing (DESIGN.md §4.1) =====
 @CompileStatic

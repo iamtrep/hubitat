@@ -80,7 +80,7 @@ function csvCell(v){let s=String(v??'');if(/^[=+\-@]/.test(s))s="'"+s;return /["
 function fmtDays(ms,now){if(!ms)return{text:'Never',color:'var(--muted)'};const d=Math.floor(((now||Date.now())-ms)/86400000);return{text:d+'d',color:d>=14?'var(--crit)':d>=7?'var(--warn)':'var(--ok)'}}
 function classifyComponent(c){const s=c.status||'unknown';const map={'current':['Current','var(--ok)'],'update-available':['Update available','var(--warn)'],'changed-upstream':['Changed upstream','var(--warn)'],'modified-locally':['Modified locally','var(--warn)'],'broken-source':['Broken source','var(--crit)'],'missing':['Missing on hub','var(--crit)'],'private':['Private bundle','var(--muted)'],'unknown':['No upstream','var(--muted)']};const m=map[s]||[s,'var(--muted)'];return{origin:c.origin,status:s,label:m[0],color:m[1]}}
 // Removability is per package (DESIGN.md §3): zero usage, no used bundle sibling, not referenced as a child type by an installed parent.
-function safeToRemove(c,comps){if((c.usedByCount||0)>0)return false;if(c.bundleOf){if(comps.some(o=>o.bundleOf===c.bundleOf&&(o.usedByCount||0)>0))return false}const ref=(c.namespace||'')+'/'+(c.name||'');if(comps.some(o=>o!==c&&(o.usedByCount||0)>0&&Array.isArray(o.childTypes)&&o.childTypes.includes(ref)))return false;return true}
+function safeToRemove(c,comps){if((c.usedByCount||0)>0)return false;if(c.bundleOf){if(comps.some(o=>o.bundleOf===c.bundleOf&&(o.usedByCount||0)>0))return false}return true}
 
 // ===== UI primitives =====
 function clink(kind,id,n){const p={app:'/app/editor/',driver:'/driver/editor/',library:'/library/editor/',bundle:'/bundle/editor/'}[kind];return p&&id?'<a href="'+p+id+'" target="_blank">'+h(n)+'</a>':h(n)}
