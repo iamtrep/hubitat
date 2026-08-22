@@ -295,6 +295,8 @@ Author mode adds no schema: a document that passes is a valid HPM manifest as-is
 
 ## 14. Release plan
 
+Where the app currently stands against this plan: [STATUS.md](STATUS.md).
+
 - **0.1 — inventory release, runs alongside HPM.** Inventory, classification, usage index, safe-to-remove list, HPM import in `observe` mode, sweep with hash/version freshness for every origin, broken-source flags, label badge and notifications. No writes except catalog persistence. Ships with the Mode 2 API test, Mode 3 extraction tests for every derivation, the lockstep test, and WORKBENCH mock data (10). This is the first thing a user installs, and it gives them something HPM and the hub do not: freshness for the ~40 % of their code that is not HPM-managed (on the test hub 65 of 159 items were `importUrl`-only and 42 had no provenance).
 - **0.2 — apply for `url` and `local` origins.** Preview, diff, snapshot, write, verify, rollback; install-from-URL; per-package unattended opt-in (6.5) for these origins. HPM packages still read-only.
 - **0.3 — HPM parity, the switch release.** Catalog build/browse/search, install/modify/repair/uninstall/adopt for HPM packages, `manage` mode, beta channel, files and bundles, export; the manifest editor, author mode (12), and promotion of a local package to an HPM package by re-keying. After 0.3 a user can uninstall HPM and lose nothing listed as *match* or *improve* in HPM-PARITY.md; the one *drop* item (firmware below 2.3.8.128) and the narrowed unattended mode (per-package opt-in, no global `Always`) are stated in the README.
