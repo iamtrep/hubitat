@@ -252,6 +252,27 @@ if run_slow:
     (ok if "cm_sweep.json" in files else fail)("cm_sweep.json persisted")
 else:
     warn("RUN_SLOW_TESTS not set; sweep execution skipped")
+# ── Task 7: item source + export ──────────────────────────────────────
+section("Item source and export")
+comps = (api_get("inventory", timeout=180)).get("components", [])
+a = next((c for c in comps if c["kind"] == "app" and c.get("hubId")), None)
+if a:
+    srcr = api_get(f"item/app/{a['hubId']}/source", timeout=60)
+    (ok if srcr.get("source") and srcr.get("lock") is not None else fail)(f"item source for app {a['hubId']}: keys {sorted(srcr.keys())[:6]}")
+    (ok if srcr.get("ihash") == a.get("ihash") else fail)("item source ihash equals inventory ihash")
+    (ok if srcr.get("modifiedLocally") is False else warn)(f"modifiedLocally={srcr.get('modifiedLocally')} (expected False on an untouched hub)")
+bad = api_get("item/app/999999999/source")
+(ok if "error" in bad else fail)("unknown item -> error payload")
+lib = next((c for c in comps if c["kind"] == "library"), None)
+if lib:
+    ls = api_get(f"item/library/{lib['hubId']}/source", timeout=60)
+    (ok if ls.get("source", "").lstrip().startswith("library") else fail)("library source served from /library/ajax/code")
+ex = api_get("export", timeout=120)
+for k in ("exportedAt", "registry", "documents", "sweep", "hpm"):
+    (ok if k in ex else fail)(f"export has {k}")
+(ok if len(ex.get("documents", [])) == len(ex.get("registry", {})) else fail)("one document per registry package in the export")
+files = [f["name"] for f in (fetch("/hub/fileManager/json") or {}).get("files", [])]
+(ok if "cm_registry_export.json" in files else fail)("cm_registry_export.json written")
 # TASK-SECTIONS-BELOW
 
 print(f"\n{passed} passed, {failed} failed, {warnings} warnings")

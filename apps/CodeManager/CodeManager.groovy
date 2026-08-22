@@ -955,6 +955,32 @@ private void finalizeSweep(String jobId) {
     logInfo "sweep done: ${result}"
 }
 
+// ===== Item source and export (DESIGN.md §9) =====
+Map apiItemSource() {
+    String kind = params.kind as String, id = params.id as String
+    if (!(kind in ['app', 'driver', 'library']) || !id?.isInteger()) return jsonResponse([error: "kind must be app|driver|library and id numeric"])
+    String path = "/${kind}/ajax/code"
+    Object resp = hubRequest(path, "${kind} ${id} source", "json", 30, [id: id])
+    if (!(resp instanceof Map) || ((Map) resp).error || ((Map) resp).source == null) return jsonResponse([error: "no source for ${kind} ${id}"])
+    Map d = (Map) resp
+    String source = d.source as String
+    Map t = resolveTarget("${kind}:${id}")
+    Map c = t?.comp as Map
+    String cur = hashPrefix(sourceHash(source))
+    Map pv = parseVersionLiteral(source)
+    return jsonResponse([kind: kind, hubId: id, lock: d.version, ihash: c?.ih, ahash: c?.ah, currentHash: cur, modifiedLocally: (c?.ah ? cur != c.ah : false),
+                         version: pv.ver, versionSrc: pv.src, location: c?.loc, packageKey: t?.key, source: source])
+}
+
+Map apiExport() {
+    Map pkgs = (state.pkgs ?: [:]) as Map
+    List docs = pkgs.keySet().collect { String key -> [name: pkgFileName(key), key: key, doc: readPkgDoc(key)] }
+    Map out = [exportedAt: now(), appVersion: CODE_VERSION, registry: pkgs, documents: docs, sweep: readSweepCache(), hpm: state.hpm ?: [mode: 'absent'],
+               repos: state.repos ?: [:], betaOn: state.betaOn ?: []]
+    writeCmFile("cm_registry_export.json", JsonOutput.toJson(out))
+    return jsonResponse(out)
+}
+
 // ===== Session TTL cache (Tier 2) — fetch closures return null on failure so misses are never cached =====
 private Object cachedFetch(String key, long ttlMs, Closure fetch) {
     Map slot = TTL_CACHE[key]
