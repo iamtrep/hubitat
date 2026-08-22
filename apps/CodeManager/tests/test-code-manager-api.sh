@@ -50,7 +50,7 @@ if not instance_id:
     def find(entries):
         for e in entries:
             d = e.get("data") or {}
-            if d.get("appTypeName") == "Code Manager" or d.get("name") == "Code Manager": return d.get("id")
+            if d.get("type") == "Code Manager": return d.get("id")
             r = find(e.get("children") or []);
             if r: return r
     instance_id = find(apps.get("apps", []))
