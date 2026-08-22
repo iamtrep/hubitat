@@ -737,6 +737,7 @@ Map apiInventory() {
 @Field static final long SWEEP_TTL_MS = 86_400_000L
 @Field static final int  SWEEP_WATCHDOG_SEC = 180
 @Field static final int  BROKEN_AFTER = 3
+@Field static final java.util.regex.Pattern SWEEP_STRIKE_ERROR_RE = ~/(?s).*(UnknownHostException|SSLHandshakeException|SSLException|Name or service not known).*/
 @Field static final ConcurrentHashMap<String, Map> SWEEP = new ConcurrentHashMap<>()   // live mirror of cm_sweep.json
 @Field static volatile boolean sweepLoaded = false
 
@@ -752,8 +753,10 @@ private void persistSweepCache() { writeCmFile(SWEEP_FILE, JsonOutput.toJson(SWE
 
 void scheduledSweep() { startSweep() }
 
+// force=1 ignores the TTL and queues every eligible item (manual "check now" / verification use;
+// documented in the README by Task 9).
 Map apiSweepStart() {
-    Map r = startSweep()
+    Map r = startSweep(params.force == "1")
     return jsonResponse(r)
 }
 
@@ -764,15 +767,15 @@ Map apiSweepStart() {
 private String componentLoc(String key, Map p, Map c) { return (c.loc as String) ?: (p.o == 'url' ? key.substring(4) : null) }
 
 // Builds the queue and fans out. Idempotent under concurrent triggers.
-Map startSweep() {
+Map startSweep(boolean force = false) {
     Map prev = (state.sweep ?: [:]) as Map
-    if (prev.status == 'running' && JOBS[prev.jobId as String]) return [jobId: prev.jobId, total: prev.total, alreadyRunning: true]
+    if (prev.status == 'running' && JOBS[prev.jobId as String]?.status == 'running') return [jobId: prev.jobId, total: prev.total, alreadyRunning: true]
     readSweepCache()
     runInventoryPass()
     if (findHpm()) importHpm()
     Map pkgs = (state.pkgs ?: [:]) as Map
     List<String> queue = []
-    long cutoff = now() - SWEEP_TTL_MS
+    long cutoff = force ? Long.MAX_VALUE : now() - SWEEP_TTL_MS
     pkgs.each { String key, Map p ->
         if (p.o == 'hpm') { Map e = SWEEP["pkg:" + key]; if (!e || ((e.checkedAt ?: 0) as long) < cutoff) queue << ("pkg:" + key) }
         (p.c as List).each { Map c ->
@@ -809,7 +812,7 @@ private Map resolveTarget(String qk) {
 
 // CAS-bounded dispatch (HubDiagnostics audit pattern). Conditional GET via If-None-Match when an ETag is known.
 private boolean dispatchSweep(String jobId) {
-    ConcurrentHashMap j = JOBS[jobId]; if (j == null) return false
+    ConcurrentHashMap j = JOBS[jobId]; if (j == null || j.status != 'running') return false
     AtomicInteger inFlight = j.inFlight as AtomicInteger
     while (true) { int n = inFlight.get(); if (n >= SWEEP_MAX_INFLIGHT) return false; if (inFlight.compareAndSet(n, n + 1)) break }
     String qk = (j.pending as ConcurrentLinkedQueue<String>).poll()
@@ -835,21 +838,39 @@ void sweepCallback(resp, data) {
         if (status == 304) { entry.checkedAt = now(); entry.httpStatus = 304; entry.failCount = 0; entry.unreachable = false; entry.error = null; outcome = 'notModified' }
         else if (status == 200) {
             String body = (resp.data ?: '') as String
-            String etag = resp.headers?.find { it.key?.toString()?.equalsIgnoreCase('ETag') }?.value?.toString()
-            entry.etag = etag; entry.httpStatus = 200; entry.checkedAt = now(); entry.failCount = 0; entry.unreachable = false; entry.broken = false; entry.error = null
-            if (qk.startsWith("pkg:")) outcome = applyManifestResult(qk, entry, body)
-            else {
-                // rhash stored as the same 16-hex prefix as ih/ah (DESIGN.md §2.4 state-size budget) so freshnessStatus compares like with like
-                String rh = hashPrefix(sourceHash(body))
-                if (entry.rhash != rh) { entry.changedAt = now(); outcome = 'changed' }
-                entry.rhash = rh
-                Map pv = parseVersionLiteral(body); entry.rver = pv.ver; entry.rverSrc = pv.src
+            if (!body) {                                                  // an empty 200 body is not a valid source snapshot — never hash ''
+                entry.httpStatus = 200; entry.checkedAt = now(); entry.unreachable = true; entry.error = 'empty response body'; outcome = 'unreachable'
+            } else {
+                // resp.headers may be a Map or a List of key/value entries depending on firmware; either
+                // iterates as Map.Entry-shaped items under Groovy's find{}, and the name is matched
+                // case-insensitively since some servers/CDNs send it lowercased.
+                String etag = resp.headers?.find { it.key?.toString()?.equalsIgnoreCase('ETag') }?.value?.toString()
+                entry.etag = etag; entry.httpStatus = 200; entry.checkedAt = now(); entry.failCount = 0; entry.unreachable = false; entry.broken = false; entry.error = null
+                if (qk.startsWith("pkg:")) outcome = applyManifestResult(jobId, qk, entry, body)
+                else {
+                    // rhash stored as the same 16-hex prefix as ih/ah (DESIGN.md §2.4 state-size budget) so freshnessStatus compares like with like
+                    String rh = hashPrefix(sourceHash(body))
+                    if (entry.rhash != rh) { entry.changedAt = now(); outcome = 'changed' }
+                    entry.rhash = rh
+                    Map pv = parseVersionLiteral(body); entry.rver = pv.ver; entry.rverSrc = pv.src
+                }
             }
-        } else if (status in [404, 410] || (status == 0 && resp?.hasError())) {
-            entry.httpStatus = status ?: null; entry.checkedAt = now(); entry.error = resp?.errorMessage ?: "HTTP ${status}"
+        } else if (status in [404, 410]) {                                 // definite "gone": strikes toward broken-source
+            entry.httpStatus = status; entry.checkedAt = now(); entry.error = resp?.errorMessage ?: "HTTP ${status}"
             entry.failCount = ((entry.failCount ?: 0) as int) + 1
             if ((entry.failCount as int) >= BROKEN_AFTER) { entry.broken = true; outcome = 'broken' }
-        } else {                                                            // 5xx, 429, timeouts: transient, no strike
+        } else if (status == 0 && resp?.hasError()) {
+            // DNS/TLS failures mean the host itself is gone or misconfigured: strike. Everything else at
+            // this branch (timeouts, connect resets) is transient network noise: no strike (DESIGN.md §7).
+            String errMsg = (resp?.errorMessage ?: resp?.errorData?.toString() ?: '') as String
+            entry.httpStatus = null; entry.checkedAt = now(); entry.error = errMsg ?: 'transport error'
+            if (SWEEP_STRIKE_ERROR_RE.matcher(errMsg).matches()) {
+                entry.failCount = ((entry.failCount ?: 0) as int) + 1
+                if ((entry.failCount as int) >= BROKEN_AFTER) { entry.broken = true; outcome = 'broken' }
+            } else {
+                entry.unreachable = true; outcome = 'unreachable'
+            }
+        } else {                                                            // 5xx, 429: transient, no strike
             entry.httpStatus = status ?: null; entry.checkedAt = now(); entry.unreachable = true; entry.error = "HTTP ${status}"; outcome = 'unreachable'
         }
     } catch (Exception e) { entry.error = "${getObjectClassName(e)}: ${e.message}"; entry.checkedAt = now(); outcome = 'unreachable' }
@@ -858,7 +879,7 @@ void sweepCallback(resp, data) {
 }
 
 // HPM package manifest result: compare declared versions; refresh component hashes only when the manifest changed.
-private String applyManifestResult(String qk, Map entry, String body) {
+private String applyManifestResult(String jobId, String qk, Map entry, String body) {
     String key = qk.substring(4)
     Map m = null
     try { m = (Map) new JsonSlurper().parseText(body) } catch (Exception e) { entry.error = "manifest parse: ${e.message}"; entry.broken = false; return 'unreachable' }
@@ -870,8 +891,8 @@ private String applyManifestResult(String qk, Map entry, String body) {
     if (changed) {
         entry.changedAt = now()
         // queue this package's components for a body fetch (their own entries decide update/changed by hash)
-        ConcurrentHashMap j = JOBS[(state.sweep ?: [:]).jobId as String]
-        if (j != null && p) (p.c as List).each { Map c -> if (c.id && c.loc && !c.pv && c.k in ['app', 'driver', 'library']) { (j.pending as ConcurrentLinkedQueue).add(ckey(c.k as String, c.id)); j.total = (j.total as int) + 1 } }
+        ConcurrentHashMap j = JOBS[jobId]
+        if (j != null && p) (p.c as List).each { Map c -> if (c.id && c.loc && !c.pv && c.k in ['app', 'driver', 'library']) { (j.pending as ConcurrentLinkedQueue).add(ckey(c.k as String, c.id)); (j.total as AtomicInteger).addAndGet(1) } }
     }
     return changed ? 'changed' : 'checked'
 }
@@ -883,41 +904,51 @@ private void sweepStep(String jobId, String outcome) {
     int processed = (j.processed as AtomicInteger).incrementAndGet()
     int inFlight = (j.inFlight as AtomicInteger).decrementAndGet()
     if (!(j.pending as ConcurrentLinkedQueue).isEmpty()) dispatchSweep(jobId)
-    else if (inFlight == 0 && (j.processed as AtomicInteger).get() >= (j.total as int)) finalizeSweep(jobId)
+    else if (inFlight == 0 && (j.processed as AtomicInteger).get() >= (j.total as AtomicInteger).get()) finalizeSweep(jobId)
 }
 
 void sweepWatchdog(Map data) {
     String jobId = data.jobId as String
     ConcurrentHashMap j = JOBS[jobId]
-    if (j != null && j.status == 'running') { logWarn "sweep ${jobId} watchdog: ${(j.processed as AtomicInteger).get()}/${j.total} after ${SWEEP_WATCHDOG_SEC}s; finalizing with what completed"; finalizeSweep(jobId) }
+    if (j != null && j.status == 'running') {
+        logWarn "sweep ${jobId} watchdog: ${(j.processed as AtomicInteger).get()}/${(j.total as AtomicInteger).get()} after ${SWEEP_WATCHDOG_SEC}s; finalizing with what completed"
+        (j.pending as ConcurrentLinkedQueue).clear()          // stop the fan-out before finalizing so no late dispatch races the finalize
+        finalizeSweep(jobId)
+    }
 }
 
 // Detect local modifications (installed hash moved since adoption), compute package statuses, persist, badge, notify.
 private void finalizeSweep(String jobId) {
     ConcurrentHashMap j = JOBS[jobId]; if (j == null || j.status != 'running') return
+    unschedule('sweepWatchdog')
     Map pkgs = (state.pkgs ?: [:]) as Map
     int updates = 0, broken = 0
     pkgs.each { String key, Map p ->
+        boolean pkgHasUpdate = false
         (p.c as List).each { Map c ->
             if (!c.id || c.k in ['bundle', 'file']) return
             String ck = ckey(c.k as String, c.id)
             Map e = SWEEP[ck]; if (e == null) return
             String st = freshnessStatus(c.ih as String, e.rhash as String, c.iv as String, e.rver as String, false)
             if (p.o == 'hpm') { Map pe = SWEEP["pkg:" + key]; if (pe?.rver && compareVersions(p.v as String, pe.rver as String) != null && compareVersions(p.v as String, pe.rver as String) < 0) st = 'update-available' }
-            if (st == 'update-available') updates++
+            if (st == 'update-available') pkgHasUpdate = true
             if (e.broken == true) broken++
         }
+        if (pkgHasUpdate) updates++                            // updates counts packages with >=1 update-available component, not components
     }
     persistSweepCache()
     Map counts = (j.counts as Map).collectEntries { k, v -> [(k): (v as AtomicInteger).get()] }
-    Map result = [queued: j.total, updates: updates, broken: broken] + counts
+    int total = (j.total as AtomicInteger).get()
+    // counts also has an outcome key literally named 'broken' (how many callbacks flipped an item to
+    // broken-source this run) — merge it first so the registry-wide updates/broken totals below win
+    Map result = counts + [queued: total, updates: updates, broken: broken]
     jobDone(jobId, result)
-    state.sweep = [jobId: jobId, status: 'done', total: j.total, processed: (j.processed as AtomicInteger).get(), startedAt: j.startedAt, finishedAt: now(), updates: updates, broken: broken]
+    state.sweep = [jobId: jobId, status: 'done', total: total, processed: (j.processed as AtomicInteger).get(), startedAt: j.startedAt, finishedAt: now(), updates: updates, broken: broken]
     boolean had = state.updatesAvailable == true
     state.updatesAvailable = updates > 0
     refreshUpdateLabel()
     if (updates > 0 && !had && settings.notifyDevices && state.updatesNotified != true) {
-        settings.notifyDevices.each { it.deviceNotification("Code Manager: ${updates} update${updates == 1 ? '' : 's'} available${broken ? ", ${broken} broken source${broken == 1 ? '' : 's'}" : ''}") }
+        settings.notifyDevices.each { it.deviceNotification("Code Manager: ${updates} package update${updates == 1 ? '' : 's'} available${broken ? ", ${broken} broken source${broken == 1 ? '' : 's'}" : ''}") }
         state.updatesNotified = true
     }
     if (updates == 0) state.updatesNotified = false
@@ -948,7 +979,7 @@ Map apiStats() { return jsonResponse([version: CODE_VERSION, timingsMs: new Hash
 String newJob(String kind, int total) {
     String id = "${kind}-${now()}-${(int) (Math.random() * 9999)}"
     ConcurrentHashMap j = new ConcurrentHashMap()
-    j.kind = kind; j.total = total; j.startedAt = now(); j.status = 'running'
+    j.kind = kind; j.total = new AtomicInteger(total); j.startedAt = now(); j.status = 'running'
     j.processed = new AtomicInteger(0); j.inFlight = new AtomicInteger(0)
     j.pending = new ConcurrentLinkedQueue<String>()
     JOBS[id] = j
@@ -958,12 +989,12 @@ String newJob(String kind, int total) {
 void jobDone(String jobId, Map result) {
     ConcurrentHashMap j = JOBS[jobId]; if (j == null) return
     j.status = 'done'; j.result = result ?: [:]; j.finishedAt = now()
-    state.lastJob = [id: jobId, kind: j.kind, status: 'done', total: j.total, startedAt: j.startedAt, finishedAt: j.finishedAt]
+    state.lastJob = [id: jobId, kind: j.kind, status: 'done', total: (j.total as AtomicInteger).get(), startedAt: j.startedAt, finishedAt: j.finishedAt]
 }
 void jobFail(String jobId, String error) {
     ConcurrentHashMap j = JOBS[jobId]; if (j == null) return
     j.status = 'error'; j.error = error; j.finishedAt = now()
-    state.lastJob = [id: jobId, kind: j.kind, status: 'error', error: error, total: j.total, startedAt: j.startedAt, finishedAt: j.finishedAt]
+    state.lastJob = [id: jobId, kind: j.kind, status: 'error', error: error, total: (j.total as AtomicInteger).get(), startedAt: j.startedAt, finishedAt: j.finishedAt]
 }
 Map jobStatus(String jobId) {
     ConcurrentHashMap j = JOBS[jobId]
@@ -972,7 +1003,7 @@ Map jobStatus(String jobId) {
         if (snap.id == jobId) return (snap.status == 'running') ? snap + [status: 'error', error: 'Job lost to hub restart or code push'] : snap
         return [id: jobId, status: 'unknown']
     }
-    return [id: jobId, kind: j.kind, status: j.status, processed: (j.processed as AtomicInteger).get(), total: j.total,
+    return [id: jobId, kind: j.kind, status: j.status, processed: (j.processed as AtomicInteger).get(), total: (j.total as AtomicInteger).get(),
             startedAt: j.startedAt, finishedAt: j.finishedAt, error: j.error, result: j.status == 'done' ? j.result : null]
 }
 Map apiJob() { return jsonResponse(jobStatus(params.id as String)) }
@@ -1016,7 +1047,7 @@ void initialize() {
     Map lj = (state.lastJob ?: [:]) as Map
     if (lj.status == 'running' && !JOBS[lj.id as String]) state.lastJob = lj + [status: 'error', error: 'Job lost to hub restart or code push']
     Map sw = (state.sweep ?: [:]) as Map
-    if (sw.status == 'running' && !JOBS[sw.jobId as String]) state.sweep = sw + [status: 'stale']
+    if (sw.status == 'running' && JOBS[sw.jobId as String]?.status != 'running') state.sweep = sw + [status: 'stale']
     Random rng = new Random()
     schedule("${rng.nextInt(60)} ${rng.nextInt(60)} 3 * * ?", "scheduledSweep")       // Task 6 defines scheduledSweep
     schedule("0 17 3 * * ?", "scheduledUISync")
