@@ -697,14 +697,16 @@ Map usedByIndex() {
 }
 
 // Single source of truth for a component's status; shared by buildInventoryPayload and finalizeSweep (I6).
-// p = package map, c = component map, s = the component's own sweep entry ([:] if none), pe = the
-// package row's sweep entry ([:] if none — HPM manifest fetch result, or empty for non-hpm origins).
+// p = package map, c = component map, s = the component's own sweep entry (null or [:] if none — both
+// tolerated), pe = the package row's sweep entry ([:] if none — HPM manifest fetch result, or empty
+// for non-hpm origins).
 private String componentStatus(Map p, Map c, Map s, Map pe) {
     if (c.id == null) return 'missing'
     if (c.pv) return 'private'
+    Map ss = s ?: [:]
     String status
     if (p.o == 'local') status = 'unknown'
-    else if (p.o == 'hpm' && s.isEmpty()) {
+    else if (p.o == 'hpm' && ss.isEmpty()) {
         // HPM component with no own sweep entry (manifest unchanged, body never fetched): derive
         // from the package manifest's declared version instead of a per-component hash compare.
         // A manifest that answered 404/410 or has struck out never reads as current (I4).
@@ -713,10 +715,10 @@ private String componentStatus(Map p, Map c, Map s, Map pe) {
         status = deadManifest ? 'unknown' : ((cmp != null && cmp < 0) ? 'update-available' : ((pe.checkedAt && (!pe.rver || (cmp != null && cmp >= 0))) ? 'current' : 'unknown'))
     }
     else {
-        boolean localMod = isLocallyModified(c.ih as String, c.ah as String, s.rhash as String)
-        status = freshnessStatus(c.ih as String, s.rhash as String, c.iv as String, s.rver as String, localMod)
+        boolean localMod = isLocallyModified(c.ih as String, c.ah as String, ss.rhash as String)
+        status = freshnessStatus(c.ih as String, ss.rhash as String, c.iv as String, ss.rver as String, localMod)
     }
-    if (s.broken == true) status = 'broken-source'
+    if (ss.broken == true) status = 'broken-source'
     // the package's own manifest location has struck out (3 consecutive 404/410) — every component
     // under it is broken-source regardless of its own location's health (I4).
     if (p.o == 'hpm' && pe.broken == true) status = 'broken-source'
@@ -791,6 +793,10 @@ Map readSweepCache() {
 private void persistSweepCache() { writeCmFile(SWEEP_FILE, JsonOutput.toJson(SWEEP)) }
 
 void scheduledSweep() { startSweep() }
+// Distinct handler name from the daily cron target (I5): runIn() and schedule() overwrite by handler
+// name, so a runIn(…, 'scheduledSweep') warm-up cancels the cron job it shares a name with, and a
+// systemStart warm-up cancels the cron after every reboot. warmSweep is that separate one-off target.
+void warmSweep() { startSweep() }
 
 // force=1 ignores the TTL and queues every eligible item (manual "check now" / verification use;
 // documented in the README by Task 9).
@@ -969,10 +975,10 @@ private void finalizeSweep(String jobId) {
         (p.c as List).each { Map c ->
             if (!c.id || c.k in ['bundle', 'file']) return
             String ck = ckey(c.k as String, c.id)
-            Map e = SWEEP[ck]; if (e == null) return
+            Map e = SWEEP[ck]                                   // may be null — an HPM component with no own entry; componentStatus tolerates it (I6)
             String st = componentStatus(p, c, e, pe)
             if (st == 'update-available') pkgHasUpdate = true
-            if (e.broken == true) broken++
+            if (e?.broken == true) broken++
         }
         if (pkgHasUpdate) updates++                            // updates counts packages with >=1 update-available component, not components
     }
@@ -1011,7 +1017,11 @@ Map apiItemSource() {
     Map c = t?.comp as Map
     String cur = hashPrefix(sourceHash(source))
     Map pv = parseVersionLiteral(source)
-    return jsonResponse([kind: kind, hubId: id, lock: d.version, ihash: c?.ih, ahash: c?.ah, currentHash: cur, modifiedLocally: (c?.ah ? cur != c.ah : false),
+    // same rule as the inventory status (C1): a re-import that lands back on the upstream hash is
+    // Current again, not modified-locally forever.
+    Map sw = readSweepCache()
+    boolean modifiedLocally = isLocallyModified(cur, c?.ah as String, (sw[ckey(kind, id)] as Map)?.rhash as String)
+    return jsonResponse([kind: kind, hubId: id, lock: d.version, ihash: c?.ih, ahash: c?.ah, currentHash: cur, modifiedLocally: modifiedLocally,
                          version: pv.ver, versionSrc: pv.src, location: c?.loc, packageKey: t?.key, source: source])
 }
 
@@ -1096,7 +1106,7 @@ Map apiUpdateSettings() {
 }
 
 // ===== Lifecycle =====
-void installed() { logCfg "installed"; state.installed = true; if (!state.accessToken) checkOAuth(); runIn(1, 'syncUIForced'); runIn(60, 'scheduledSweep'); initialize() }
+void installed() { logCfg "installed"; state.installed = true; if (!state.accessToken) checkOAuth(); runIn(1, 'syncUIForced'); runIn(60, 'warmSweep'); initialize() }
 void updated() {
     logCfg "updated"
     state.installed = true
@@ -1106,8 +1116,10 @@ void updated() {
     if (settings.debugEnable) runIn(1800, 'logsOff')
     runIn(1, 'syncUIForced')
     // warms the registry before the first SPA open on a cold hub; the sweep runs the inventory pass
-    // first (I5). The GET /api/inventory lazy pass stays as the fallback.
-    runIn(60, 'scheduledSweep')
+    // first (I5). runIn a handler distinct from the daily cron's target so this one-off doesn't
+    // overwrite (and get overwritten by) the schedule() call below. The GET /api/inventory lazy
+    // pass stays as the fallback.
+    runIn(60, 'warmSweep')
     initialize()
 }
 void uninstalled() { unschedule(); unsubscribe(); logCfg "uninstalled" }
@@ -1129,7 +1141,7 @@ void initialize() {
     if (!state.hpm) runIn(30, 'initialHpmImport')
     logSched "daily sweep, UI sync and version check scheduled"
 }
-void systemStartHandler(evt) { runIn(300, 'scheduledSweep') }
+void systemStartHandler(evt) { runIn(300, 'warmSweep') }       // distinct handler name — see warmSweep (I5)
 
 // ===== Version heuristics (DESIGN.md §4) — self-contained, extracted by tests/test-version-compare.groovy =====
 
