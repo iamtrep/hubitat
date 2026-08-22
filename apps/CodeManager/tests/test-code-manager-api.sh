@@ -108,6 +108,8 @@ except Exception as e: fail(f"GET /ui.html: {e}")
 if html:
     (ok if "${access_token}" not in html and access_token in html else fail)("ui.html substitutes access_token")
     (ok if f'const CODE_VERSION = "{s.get("uiVersion")}"' in html else fail)("ui.html CODE_VERSION matches settings.uiVersion")
+    (ok if "function tbl(" in html else fail)("ui.html serves the real SPA (has function tbl()")
+    (ok if "function makeLimiter(" in html else fail)("ui.html serves the real SPA (has function makeLimiter()")
 try:
     urllib.request.urlopen(f"{api_base}/api/settings?access_token=bad", timeout=15); fail("bad token accepted")
 except urllib.error.HTTPError as e: (ok if e.code in (401, 403, 500) else fail)(f"bad token rejected ({e.code})")

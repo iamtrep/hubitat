@@ -4,14 +4,276 @@ SPDX-License-Identifier: MIT
 -->
 <!DOCTYPE html>
 <html lang="en">
-<head><meta charset="UTF-8"><title>Code Manager</title></head>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Code Manager</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/ui2/images/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/ui2/images/favicon-16x16.png">
+<style>
+:root { --primary:#1A77C9; --ok:#388e3c; --warn:#ff9800; --crit:#d32f2f; --bg:#f5f5f5; --card:#fff; --border:#ddd; --text:#333; --muted:#777; --alt:#f9f9f9; --hover:#e3f2fd; }
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:14px}
+a{color:var(--primary);text-decoration:none} a:hover{text-decoration:underline}
+.hdr{background:var(--primary);color:#fff;padding:10px 20px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:100;box-shadow:0 2px 4px rgba(0,0,0,.15)}
+.hdr h1{font-size:17px;font-weight:600} .hdr .info{margin-left:auto;font-size:12px;opacity:.85} .hdr a{color:#fff}
+.tabs{display:flex;background:#fff;border-bottom:2px solid var(--border);overflow-x:auto;position:sticky;top:42px;z-index:99}
+.tab{padding:9px 16px;cursor:pointer;font-size:13px;font-weight:500;border-bottom:3px solid transparent;white-space:nowrap;color:var(--muted)}
+.tab:hover{color:var(--text);background:var(--alt)} .tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+.content{max-width:1400px;margin:0 auto;padding:16px} .panel{display:none} .panel.active{display:block}
+.card{background:var(--card);border:1px solid var(--border);border-radius:6px;margin-bottom:14px} .card-h{padding:9px 14px;font-weight:600;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px} .card-b{padding:12px 14px}
+.metrics{display:flex;flex-wrap:wrap;gap:10px} .m{background:var(--alt);border:1px solid var(--border);border-radius:6px;padding:8px 12px;min-width:120px} .m .l{font-size:11px;color:var(--muted)} .m .v{font-size:18px;font-weight:600}
+.tbl-wrap{overflow-x:auto} table{border-collapse:collapse;width:100%;font-size:13px} th{position:sticky;top:0;background:var(--alt);text-align:left;padding:6px 8px;cursor:pointer;border-bottom:2px solid var(--border);white-space:nowrap} td{padding:5px 8px;border-bottom:1px solid var(--border);vertical-align:top} tr:hover td{background:var(--hover)}
+.filter input{width:100%;max-width:360px;padding:6px 8px;border:1px solid var(--border);border-radius:4px;margin-bottom:8px}
+.badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600} .b-ok{background:#e8f5e9;color:var(--ok)} .b-warn{background:#fff3e0;color:#e65100} .b-crit{background:#ffebee;color:var(--crit)} .b-muted{background:#eee;color:var(--muted)}
+.btn{padding:6px 12px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;font-size:13px} .btn-p{background:var(--primary);color:#fff;border-color:var(--primary)} .btn:disabled{opacity:.5;cursor:default} .actions{display:flex;gap:8px;align-items:center;margin:8px 0}
+.msg{font-size:12px;color:var(--muted)} .alert{padding:8px 12px;border-radius:4px;margin-bottom:10px} .a-warn{background:#fff3e0;border:1px solid #ffb74d} .a-info{background:#e3f2fd;border:1px solid #90caf9}
+.loading{padding:30px;text-align:center;color:var(--muted)} .err{padding:16px;background:#ffebee;border:1px solid #ef9a9a;border-radius:6px}
+pre.src{background:#1e1e1e;color:#ddd;padding:10px;border-radius:6px;overflow:auto;max-height:60vh;font-size:12px;white-space:pre}
+</style>
+</head>
 <body>
-<h1>Code Manager</h1>
-<p id="v"></p>
+<div class="hdr"><h1>Code Manager</h1><span class="info" id="hubInfo"></span>
+  <a href="https://github.com/iamtrep/hubitat/tree/main/apps/CodeManager#readme" target="_blank">Docs ↗</a>
+  <a id="cfgLink" href="#" target="_blank">⚙ Settings</a>
+  <button class="btn" onclick="refreshPage()">↻ Refresh</button></div>
+<div class="tabs" id="tabs">
+  <div class="tab" data-tab="inventory">Inventory</div><div class="tab" data-tab="packages">Packages</div>
+  <div class="tab" data-tab="hpm">HPM</div><div class="tab" data-tab="settings">Settings</div></div>
+<div class="content">
+  <div class="panel" id="p-inventory"></div><div class="panel" id="p-packages"></div>
+  <div class="panel" id="p-hpm"></div><div class="panel" id="p-settings"></div></div>
 <script>
 const CODE_VERSION = "0.1.0";
-const T='${access_token}', B='${api_base}', APP_VERSION='${app_version}';
-document.getElementById('v').textContent = 'UI v' + CODE_VERSION + ' / App v' + APP_VERSION;
+const WORKBENCH = false;   // true: render from MOCK_DATA without a hub
+const MOCK_DATA = { 'inventory': {"generatedAt":1787300000000,"appVersion":"0.1.0","hub":{"name":"Workbench","firmware":"2.5.1.147","model":"C-8 Pro"},
+  "packages":[{"key":"url:https://raw.githubusercontent.com/x/y/A.groovy","origin":"url","name":"Driver A","version":null,"gen":1,"doc":"cm_pkg_0000000000000001.json","componentCount":1,"status":"update-available"}],
+  "components":[{"key":"url:https://raw.githubusercontent.com/x/y/A.groovy","kind":"driver","hubId":"1","namespace":"x","name":"Driver A","origin":"url","location":"https://raw.githubusercontent.com/x/y/A.groovy","managedBy":"cm","status":"update-available","ihash":"aa","iver":"1.0.0","iverSrc":"field","rhash":"bb","rver":"1.1.0","checkedAtMs":1787290000000,"changedAtMs":1787290000000,"httpStatus":200,"failCount":0,"lastModifiedMs":1787000000000,"usedByCount":2,"usedBy":[{"id":10,"name":"Lamp"}],"bundleOf":null,"isPrivate":false}],
+  "summary":{"packages":1,"components":1,"byOrigin":{"url":1},"byStatus":{"update-available":1},"byKind":{"driver":1},"unused":0},"hpm":{"mode":"absent"},"sweep":{"status":"done","updates":1},"lastInventory":{"at":1787290000000,"items":1}},
+  'hpm/status': {"mode":"absent"}, 'settings': {"txtEnable":true,"debugEnable":false,"traceEnable":false,"labelBadge":true,"notifyDeviceCount":0,"sweepTtlHours":24,"sweepMaxInflight":6,"brokenAfter":3,"appVersion":"0.1.0","uiVersion":"0.1.0"},
+  'version/check': {"currentVersion":"0.1.0","latestVersion":"0.1.0","updateAvailable":false} };
+const T='${access_token}', B='${api_base}', APP_VERSION='${app_version}', cache={};
+const HUB_ORIGIN=(B.match(/^(https?:\/\/[^\/]+)\/apps\/api\//)||[])[1]||'';
+(function(){ const m=B.match(/^(https?:\/\/[^\/]+)\/apps\/api\/(\d+)/); const el=document.getElementById('cfgLink'); if(m&&el)el.href=m[1]+'/installedapp/configure/'+m[2]; else if(el)el.style.display='none'; })();
+let curTab = localStorage.getItem('cm_tab') || 'inventory';
+const README = 'https://github.com/iamtrep/hubitat/tree/main/apps/CodeManager#';
+
+// ===== API: 2-minute cache, mutation-driven drop, in-flight dedup, 3-wide semaphore =====
+const CACHE_TTL_MS=120000, inFlight={};
+function makeLimiter(n){let active=0;const q=[];function next(){if(active>=n||!q.length)return;active++;const {fn,res,rej}=q.shift();Promise.resolve().then(fn).then(v=>{active--;res(v);next()},e=>{active--;rej(e);next()})}return{run(fn){return new Promise((res,rej)=>{q.push({fn,res,rej});next()})}}}
+const hubLimiter = makeLimiter(3);
+async function api(ep){
+  if(WORKBENCH&&MOCK_DATA[ep])return MOCK_DATA[ep];
+  const hit=cache[ep];if(hit&&(Date.now()-hit.ts<CACHE_TTL_MS))return hit.d;
+  if(inFlight[ep])return inFlight[ep];
+  const sep=ep.includes('?')?'&':'?';
+  inFlight[ep]=hubLimiter.run(async()=>{const r=await fetch(B+'/api/'+ep+sep+'access_token='+T);if(!r.ok)throw new Error('API '+r.status);return r.json()})
+    .then(d=>{cache[ep]={d,ts:Date.now()};return d}).finally(()=>{delete inFlight[ep]});
+  return inFlight[ep];
+}
+async function post(ep,p){if(WORKBENCH)return{success:true};const q=new URLSearchParams(p||{});q.set('access_token',T);return hubLimiter.run(async()=>{const r=await fetch(B+'/api/'+ep+'?'+q.toString(),{method:'POST'});if(!r.ok)throw new Error('API '+r.status);return r.json()})}
+function drop(ep){if(ep)delete cache[ep];else Object.keys(cache).forEach(k=>delete cache[k])}
+
+// ===== Pure helpers (extracted by tests/*.js — keep dependency-free) =====
+function escText(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
+function h(s){return escText(s)}
+function safeHref(u){if(typeof u!=='string')return '';if(!/^https:\/\/[A-Za-z0-9.\-]+(?::\d+)?\/[^\s"'<>\\]*$/.test(u))return '';return u}
+function csvCell(v){let s=String(v??'');if(/^[=+\-@]/.test(s))s="'"+s;return /[",\n\r]/.test(s)||s.startsWith("'")?'"'+s.replace(/"/g,'""')+'"':s}
+function fmtDays(ms,now){if(!ms)return{text:'Never',color:'var(--muted)'};const d=Math.floor(((now||Date.now())-ms)/86400000);return{text:d+'d',color:d>=14?'var(--crit)':d>=7?'var(--warn)':'var(--ok)'}}
+function classifyComponent(c){const s=c.status||'unknown';const map={'current':['Current','var(--ok)'],'update-available':['Update available','var(--warn)'],'changed-upstream':['Changed upstream','var(--warn)'],'modified-locally':['Modified locally','var(--warn)'],'broken-source':['Broken source','var(--crit)'],'missing':['Missing on hub','var(--crit)'],'private':['Private bundle','var(--muted)'],'unknown':['No upstream','var(--muted)']};const m=map[s]||[s,'var(--muted)'];return{origin:c.origin,status:s,label:m[0],color:m[1]}}
+// Removability is per package (DESIGN.md §3): zero usage, no used bundle sibling, not referenced as a child type by an installed parent.
+function safeToRemove(c,comps){if((c.usedByCount||0)>0)return false;if(c.bundleOf){if(comps.some(o=>o.bundleOf===c.bundleOf&&(o.usedByCount||0)>0))return false}const ref=(c.namespace||'')+'/'+(c.name||'');if(comps.some(o=>o!==c&&(o.usedByCount||0)>0&&Array.isArray(o.childTypes)&&o.childTypes.includes(ref)))return false;return true}
+
+// ===== UI primitives =====
+function clink(kind,id,n){const p={app:'/app/editor/',driver:'/driver/editor/',library:'/library/editor/',bundle:'/bundle/editor/'}[kind];return p&&id?'<a href="'+p+id+'" target="_blank">'+h(n)+'</a>':h(n)}
+function dlistlink(count,ids){if(!ids||!ids.length)return String(count??0);return'<a href="/device/list?ids='+ids.map(Number).join(',')+'" target="_blank">'+count+'</a>'}
+function alistlink(count){return'<a href="/installedapp/list" target="_blank">'+(count??0)+'</a>'}
+function badge(label,color){const cls=color==='var(--ok)'?'b-ok':color==='var(--warn)'?'b-warn':color==='var(--crit)'?'b-crit':'b-muted';return'<span class="badge '+cls+'">'+h(label)+'</span>'}
+function mc(l,v,c){return'<div class="m"><div class="l">'+h(l)+'</div><div class="v"'+(c?' style="color:'+c+'"':'')+'>'+v+'</div></div>'}
+function loading(id){document.getElementById(id).innerHTML='<div class="loading">Loading...</div>'}
+function err(id,e,fn){document.getElementById(id).innerHTML='<div class="err"><div>'+h(e.message||String(e))+'</div><button class="btn" onclick="('+fn.name+')()">Retry</button></div>'}
+function flash(id,msg){const el=document.getElementById(id);if(el){el.textContent=msg;setTimeout(()=>{if(el.textContent===msg)el.textContent=''},4000)}}
+function dlink2(u){const s=safeHref(u);return s?'<a href="'+h(s)+'" target="_blank">'+h(s.replace(/^https:\/\/raw\.githubusercontent\.com\//,''))+'</a>':(u?h(u):'')}
+
+// ===== SORTABLE TABLE ENGINE (copied verbatim from apps/HubDiagnostics/hub_diagnostics_ui.html) =====
+function tbl(cid,cols,rows,opts={}){
+  const el=document.getElementById(cid);if(!el)return;
+  if(!rows||!rows.length){el.innerHTML='<p style="color:var(--muted);padding:16px">No data</p>';return}
+  let filt=[...rows],sc=opts.sc??0,sd=opts.sd??'asc';
+  const ct=opts.collapse??0,cl=opts.collapseLabel;
+  // Filter/sort compare against each cell's *visible* text so they match what the user sees —
+  // the alias when name obfuscation is on (renderers already apply Obf.nm), the real name when
+  // off. Memoized once per build (toggling obfuscation clears panels and rebuilds the table), so
+  // the debounced filter and the sort comparator never re-parse HTML per keystroke.
+  const _ctCache=new Map();
+  function cellText(c,ci,r){
+    let arr=_ctCache.get(r);if(!arr){arr=[];_ctCache.set(r,arr)}
+    if(arr[ci]!==undefined)return arr[ci];
+    let t;
+    if(c.ff)t=String(c.ff(r)??'');                                                                    // explicit override wins
+    else if(c.r){const tmp=document.createElement('div');tmp.innerHTML=c.r(r);t=tmp.textContent||''}  // rendered text: tags stripped, entities decoded
+    else t=String(r[c.f]??'');                                                                        // plain field
+    return arr[ci]=t;
+  }
+  function sf(r,ci,d){const c=cols[ci],num=c.t==='n';
+    return r.map(row=>({row,k:num?(parseFloat(row[c.sf]??row[c.f])||0):cellText(c,ci,row).toLowerCase()}))
+      .sort((a,b)=>{if(a.k<b.k)return d==='asc'?-1:1;if(a.k>b.k)return d==='asc'?1:-1;return 0})
+      .map(o=>o.row)}
+  function bld(rs){
+    let o='';
+    if(opts.filter)o+='<div class="filter"><input type="text" placeholder="Filter..." id="flt_'+cid+'"></div>';
+    if(ct>0&&cl){const open=rows.length<=ct?' open':'';o+='<details'+open+'><summary style="cursor:pointer;font-weight:600;margin:4px 0">'+cl+' ('+rows.length+')</summary>'}
+    o+='<div class="tbl-wrap"><table id="t_'+cid+'"><thead><tr>';
+    cols.forEach((c,i)=>{const ar=i===sc?(sd==='asc'?' ▲':' ▼'):' ⇅';o+='<th data-c="'+i+'">'+h(c.l)+'<span class="arr">'+ar+'</span></th>'});
+    o+='</tr></thead><tbody>'+bldRows(rs)+'</tbody></table></div>';
+    if(ct>0&&cl)o+='</details>';return o
+  }
+  function bldRows(rs){
+    let o='';
+    rs.forEach(r=>{
+      o+='<tr>';
+      cols.forEach((c,ci)=>{
+        const v=c.r?c.r(r):h(r[c.f]??'');
+        const sv=cellText(c,ci,r);   // data-v mirrors visible text → no real-name leak into copied/exported HTML
+        const color = r['_' + c.f + 'Color'] || '';
+        const style = color ? ' style="color:' + color + ';font-weight:600"' : '';
+        o+='<td data-v="'+h(String(sv))+'"'+style+'>'+v+'</td>'
+      });
+      o+='</tr>'
+    });
+    return o;
+  }
+  filt=sf(filt,sc,sd);el.innerHTML=bld(filt);
+  function bind(){
+    const t=document.getElementById('t_'+cid);if(!t)return;
+    // v5.18.0 (R-5 A10): on header click, only re-render <tbody> rows + update sort arrows in
+    // the existing <th> cells. Pre-fix the entire table was rebuilt via el.innerHTML and bind()
+    // was re-run, throwing away the click handlers, the filter input (and its focus), and any
+    // <details> open state. New path is faster on large tables (350-row per-device audit table)
+    // and preserves filter focus / details state automatically.
+    t.querySelectorAll('th').forEach(th=>{th.onclick=()=>{
+      const ci=+th.dataset.c;
+      if(ci===sc)sd=sd==='asc'?'desc':'asc';else{sc=ci;sd='desc'};
+      filt=sf(filt,sc,sd);
+      const tb=t.querySelector('tbody');
+      if(tb){
+        tb.innerHTML=bldRows(filt);
+        // Refresh sort-arrow indicators across all th cells
+        t.querySelectorAll('th').forEach((thh,i)=>{
+          const arr=thh.querySelector('.arr');
+          if(arr)arr.textContent=i===sc?(sd==='asc'?' ▲':' ▼'):' ⇅';
+        });
+      } else {
+        // Fallback: full rebuild if tbody is somehow missing
+        const det=el.querySelector('details');const wasOpen=det?det.open:false;
+        el.innerHTML=bld(filt);
+        const det2=el.querySelector('details');if(det2)det2.open=wasOpen;
+        bind();
+      }
+    }});
+    const fi=document.getElementById('flt_'+cid);
+    if(fi){
+      // v5.19.0 (R-6 B4): 150ms debounce — pre-fix every keystroke triggered full filter+sort+innerHTML
+      // rewrite, painful on 200+ row tables. Debounce coalesces typing bursts into one render.
+      let _fltTimer=null;
+      fi.addEventListener('input',()=>{
+        clearTimeout(_fltTimer);
+        _fltTimer=setTimeout(()=>{
+          const q=fi.value.toLowerCase();
+          // Full-text match across each column's visible text (see cellText): the displayed
+          // alias when name obfuscation is on, the real name when off.
+          filt=rows.filter(r=>cols.some((c,ci)=>cellText(c,ci,r).toLowerCase().includes(q)));
+          filt=sf(filt,sc,sd);
+          const tb=t.querySelector('tbody');
+          if(tb) tb.innerHTML=bldRows(filt);
+          else { el.innerHTML=bld(filt);bind() }
+        },150);
+      });
+    }
+  }bind()
+}
+
+// ===== Jobs: pollTimers registry, 2 s tick, 5 min cap, terminal 'done' =====
+const pollTimers={};
+function pollJob(jobId,onTick,onEnd){if(pollTimers[jobId])return;const t0=Date.now();pollTimers[jobId]=setInterval(async()=>{try{const j=await fetch(B+'/api/jobs/'+jobId+'?access_token='+T).then(r=>r.json());onTick(j);if(j.status!=='running'){clearInterval(pollTimers[jobId]);delete pollTimers[jobId];onEnd(j)}}catch(e){}if(Date.now()-t0>300000){clearInterval(pollTimers[jobId]);delete pollTimers[jobId];onEnd({status:'timeout'})}},2000)}
+
+// ===== Tabs =====
+async function rInventory(){
+  const P='p-inventory';loading(P);
+  try{
+    const d=await api('inventory');const comps=d.components||[];const now=Date.now();
+    document.getElementById('hubInfo').textContent=(d.hub&&d.hub.name?d.hub.name+' · '+d.hub.firmware+' · ':'')+'App v'+d.appVersion+' / UI v'+CODE_VERSION;
+    const s=d.summary||{};const st=s.byStatus||{};
+    let html='<div class="card"><div class="card-h">Summary <span class="msg"><a href="'+README+'freshness" target="_blank">how freshness is decided</a></span></div><div class="card-b"><div class="metrics">'
+      +mc('Components',s.components||0)+mc('Packages',s.packages||0)+mc('Updates available',st['update-available']||0,st['update-available']?'var(--warn)':'')
+      +mc('Changed upstream',st['changed-upstream']||0)+mc('Broken sources',st['broken-source']||0,st['broken-source']?'var(--crit)':'')+mc('Unused',s.unused||0)+'</div>'
+      +'<div class="actions"><button class="btn btn-p" id="sweepBtn" onclick="startSweep()">Check for updates now</button><span class="msg" id="sweepMsg">'+(d.sweep&&d.sweep.finishedAt?'Last sweep '+new Date(d.sweep.finishedAt).toLocaleString():'No sweep yet')+'</span></div></div></div>';
+    html+='<div class="card"><div class="card-h">Components <span class="msg"><label><input type="checkbox" id="onlyRemovable" onchange="rInventoryTable()"> safe to remove only (<a href="'+README+'safe-to-remove" target="_blank">rule</a>)</label></span></div><div class="card-b" id="invTbl"></div></div>';
+    document.getElementById(P).innerHTML=html;window._inv=comps;rInventoryTable();
+  }catch(e){err(P,e,rInventory)}
+}
+function rInventoryTable(){
+  const comps=window._inv||[];const only=document.getElementById('onlyRemovable')?.checked;const now=Date.now();
+  const rows=(only?comps.filter(c=>safeToRemove(c,comps)):comps).map(c=>Object.assign({},c,{_cls:classifyComponent(c),_rem:safeToRemove(c,comps)}));
+  tbl('invTbl',[
+    {l:'Name',f:'name',r:r=>clink(r.kind,r.hubId,r.name)+(r.isPrivate?' '+badge('private','var(--muted)'):'')},
+    {l:'Kind',f:'kind'},{l:'Namespace',f:'namespace'},{l:'Origin',f:'origin'},
+    {l:'Status',f:'status',r:r=>badge(r._cls.label,r._cls.color),ff:r=>r._cls.label},
+    {l:'Installed',f:'iver',r:r=>h(r.iver||'')+(r.iverSrc&&r.iverSrc!=='field'&&r.iverSrc!=='manifest'?' <span class="msg">('+h(r.iverSrc)+')</span>':'')},
+    {l:'Upstream',f:'rver'},
+    {l:'Used by',f:'usedByCount',t:'n',r:r=>r.kind==='driver'?dlistlink(r.usedByCount,(r.usedBy||[]).map(u=>u.id)):r.kind==='app'?alistlink(r.usedByCount):String(r.usedByCount)},
+    {l:'Checked',f:'checkedAtMs',t:'n',r:r=>{const f=fmtDays(r.checkedAtMs,now);return'<span style="color:'+f.color+'">'+f.text+'</span>'}},
+    {l:'Source',f:'location',r:r=>dlink2(r.location)},
+    {l:'Removable',f:'_rem',r:r=>r._rem?badge('yes','var(--ok)'):''},
+  ],rows,{sc:4,sd:'desc',filter:true});
+}
+async function rPackages(){
+  const P='p-packages';loading(P);
+  try{const d=await api('inventory');const pk=d.packages||[];
+    document.getElementById(P).innerHTML='<div class="card"><div class="card-h">Packages</div><div class="card-b" id="pkgTbl"></div></div>';
+    tbl('pkgTbl',[{l:'Package',f:'name'},{l:'Origin',f:'origin'},{l:'Version',f:'version'},{l:'Components',f:'componentCount',t:'n'},
+      {l:'Status',f:'status',r:r=>{const c=classifyComponent(r);return badge(c.label,c.color)}},{l:'Document',f:'doc',r:r=>'<a href="/hub/fileManager" target="_blank">'+h(r.doc)+'</a>'},
+      {l:'Source',f:'url',r:r=>dlink2(r.url||(r.origin==='hpm'?r.key:''))}],pk,{sc:0,filter:true});
+  }catch(e){err(P,e,rPackages)}
+}
+async function rHpm(){
+  const P='p-hpm';loading(P);
+  try{const s=await api('hpm/status');let html='<div class="card"><div class="card-h">Hubitat Package Manager transition <span class="msg"><a href="'+README+'hpm-observe" target="_blank">how the phases work</a></span></div><div class="card-b">';
+    if(s.mode==='absent')html+='<div class="alert a-info">HPM is not installed. Code Manager is the only package manager on this hub.</div>';
+    else{html+='<div class="alert a-warn"><b>Mode: '+h(s.mode)+'</b> — HPM instance '+h(String(s.instanceId))+' is '+(s.disabled?'disabled':'enabled')+'; autoUpdateMode='+h(String(s.autoUpdateMode))+'. In observe mode HPM remains the writer for its packages; Code Manager only reports.</div>'
+      +'<div class="metrics">'+mc('Imported packages',s.packages||0)+mc('Dangling heIDs',s.dangling||0,s.dangling?'var(--warn)':'')+mc('Last import',s.importedAt?new Date(s.importedAt).toLocaleString():'never')+'</div>'
+      +'<div class="actions"><button class="btn" id="hpmBtn" onclick="hpmImport()">Re-import HPM registry</button><span class="msg" id="hpmMsg"></span></div>'}
+    document.getElementById(P).innerHTML=html+'</div></div>';
+  }catch(e){err(P,e,rHpm)}
+}
+async function hpmImport(){const b=document.getElementById('hpmBtn');b.disabled=true;b.textContent='Importing…';try{const r=await post('hpm/import');flash('hpmMsg',r.success?'Imported '+r.packages+' packages ('+r.dangling+' dangling)':'Failed: '+(r.error||''));drop('inventory');drop('hpm/status')}catch(e){flash('hpmMsg','Failed: '+e.message)}finally{b.disabled=false;b.textContent='Re-import HPM registry';rHpm()}}
+async function startSweep(){const b=document.getElementById('sweepBtn');b.disabled=true;b.textContent='Sweeping…';
+  try{const r=await post('sweep/start',{force:'1'});pollJob(r.jobId,j=>{document.getElementById('sweepMsg').textContent=(j.processed||0)+' / '+(j.total||0)},j=>{drop('inventory');b.disabled=false;b.textContent='Check for updates now';flash('sweepMsg',j.status==='done'?'Done: '+(j.result?.updates||0)+' updates, '+(j.result?.broken||0)+' broken':'Sweep '+j.status+(j.error?': '+j.error:''));rInventory()})}
+  catch(e){b.disabled=false;b.textContent='Check for updates now';flash('sweepMsg','Failed: '+e.message)}}
+async function rSettings(){
+  const P='p-settings';loading(P);
+  try{const [s,v]=await Promise.all([api('settings'),api('version/check').catch(()=>({}))]);
+    const mismatch=APP_VERSION[0]!=='$'&&APP_VERSION!==CODE_VERSION;
+    let html='<div class="card"><div class="card-h">Versions</div><div class="card-b">'+(mismatch?'<div class="alert a-warn">App v'+h(APP_VERSION)+' and UI v'+CODE_VERSION+' differ — <button class="btn" onclick="syncUI()">Sync UI from GitHub</button></div>':'')
+      +'<div class="metrics">'+mc('App',h(s.appVersion||APP_VERSION))+mc('UI',CODE_VERSION)+mc('Latest on GitHub',h(v.latestVersion||'?'),v.updateAvailable?'var(--warn)':'')+'</div>'
+      +(v.updateAvailable?'<p class="msg">A newer Code Manager is published'+(v.editorPath?': <a href="'+h(v.editorPath)+'" target="_blank">open Apps Code</a> and use Import.':'.')+'</p>':'')+'</div></div>';
+    html+='<div class="card"><div class="card-h">Behaviour (fixed values, <a href="'+README+'fixed-values" target="_blank">documented</a>)</div><div class="card-b"><div class="metrics">'+mc('Freshness TTL',s.sweepTtlHours+' h')+mc('Upstream fetches in flight',s.sweepMaxInflight)+mc('Broken after',s.brokenAfter+' failures')+'</div></div></div>';
+    html+='<div class="card"><div class="card-h">Settings</div><div class="card-b">'+['txtEnable','debugEnable','traceEnable','labelBadge'].map(k=>'<label style="display:block;margin:4px 0"><input type="checkbox" id="set_'+k+'"'+(s[k]?' checked':'')+'> '+k+'</label>').join('')
+      +'<div class="actions"><button class="btn btn-p" onclick="saveSettings()">Save</button><span class="msg" id="setMsg"></span></div><p class="msg">Notification devices ('+(s.notifyDeviceCount||0)+') are chosen on the app\'s Hubitat settings page.</p></div></div>';
+    html+='<div class="card"><div class="card-h">Export</div><div class="card-b"><div class="actions"><button class="btn" onclick="exportRegistry()">Write cm_registry_export.json</button><span class="msg" id="expMsg"></span></div></div></div>';
+    document.getElementById(P).innerHTML=html;
+  }catch(e){err(P,e,rSettings)}
+}
+async function saveSettings(){const body={};['txtEnable','debugEnable','traceEnable','labelBadge'].forEach(k=>body[k]=document.getElementById('set_'+k).checked);try{const r=await post('settings',{data:JSON.stringify(body)});flash('setMsg',r.success?'Saved':'Failed');drop('settings')}catch(e){flash('setMsg','Failed: '+e.message)}}
+async function syncUI(){try{const r=await post('ui/sync');if(r.success)location.reload();else flash('setMsg','Sync refused (version mismatch on GitHub?)')}catch(e){flash('setMsg','Failed: '+e.message)}}
+async function exportRegistry(){try{await api('export?'+Date.now());flash('expMsg','Written to File Manager')}catch(e){flash('expMsg','Failed: '+e.message)}}
+
+// ===== Router =====
+const R={inventory:rInventory,packages:rPackages,hpm:rHpm,settings:rSettings};
+function go(t){curTab=t;localStorage.setItem('cm_tab',t);document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active',e.dataset.tab===t));document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active',p.id==='p-'+t));const p=document.getElementById('p-'+t);if(!p.children.length||p.querySelector('.loading')||p.querySelector('.err'))R[t]()}
+document.getElementById('tabs').addEventListener('click',e=>{if(e.target.dataset.tab)go(e.target.dataset.tab)});
+function refreshPage(){const keys={inventory:['inventory'],packages:['inventory'],hpm:['hpm/status','inventory'],settings:['settings','version/check']};(keys[curTab]||[]).forEach(k=>drop(k));document.getElementById('p-'+curTab).innerHTML='';R[curTab]()}
+go(curTab);
 </script>
 </body>
 </html>
