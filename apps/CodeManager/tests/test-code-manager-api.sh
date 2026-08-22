@@ -218,6 +218,40 @@ else:
         (ok if all(c.get("hubId") for c in hpm_files) else fail)("HPM file components keep hubId after a forced inventory pass")
     files = [f["name"] for f in (fetch("/hub/fileManager/json") or {}).get("files", [])]
     (ok if "cm_hpm_import.json" in files else fail)("cm_hpm_import.json written")
+# ── Task 6: sweep ─────────────────────────────────────────────────────
+section("Sweep")
+sw = inv.get("sweep", {}) if isinstance(inv, dict) else {}
+(ok if isinstance(sw, dict) else fail)("inventory.sweep is a map")
+if run_slow:
+    r = api_post("sweep/start", timeout=60)
+    (ok if r.get("jobId") else fail)(f"POST /api/sweep/start -> {r}")
+    j = poll_job(r.get("jobId", ""), timeout_s=600)
+    (ok if j.get("status") == "done" else fail)(f"sweep job terminal status: {j.get('status')} {j.get('error') or ''}")
+    res = j.get("result") or {}
+    for k in ("queued", "checked", "notModified", "changed", "broken", "unreachable", "updates"):
+        (ok if k in res else fail)(f"sweep result has {k}")
+    inv = api_get("inventory", timeout=180)
+    comps = inv.get("components", [])
+    allowed = {"current", "update-available", "changed-upstream", "modified-locally", "broken-source", "unknown", "private", "missing"}
+    badst = [c for c in comps if c["status"] not in allowed]
+    (ok if not badst else fail)(f"every status in the allowed set ({len(badst)} bad)")
+    url_comps = [c for c in comps if c["origin"] == "url" and c.get("hubId") is not None and c.get("location") and not c.get("isPrivate")]
+    unchecked = [c for c in url_comps if not c.get("checkedAtMs") and not c.get("error")]
+    (ok if not unchecked else fail)(f"every url component was checked ({len(unchecked)} unchecked of {len(url_comps)})")
+    hpm_pkgs = [p for p in inv.get("packages", []) if p.get("origin") == "hpm"]
+    unchecked_pkgs = [p for p in hpm_pkgs if p.get("checkedAtMs") is None]
+    (ok if not unchecked_pkgs else fail)(f"every hpm package was checked at the package row ({len(unchecked_pkgs)} unchecked of {len(hpm_pkgs)})")
+    local = [c for c in comps if c["origin"] == "local"]
+    (ok if all(c["status"] in ("unknown", "missing") for c in local) else fail)("local-origin components stay unknown")
+    r2 = api_post("sweep/start", timeout=60)
+    j2 = poll_job(r2.get("jobId", ""), timeout_s=300)
+    (ok if (j2.get("result") or {}).get("queued", 1) == 0 else fail)("second sweep inside the TTL queues nothing")
+    st = api_get("inventory", timeout=60).get("sweep", {})
+    (ok if st.get("status") == "done" else fail)("state.sweep status done after the job")
+    files = [f["name"] for f in (fetch("/hub/fileManager/json") or {}).get("files", [])]
+    (ok if "cm_sweep.json" in files else fail)("cm_sweep.json persisted")
+else:
+    warn("RUN_SLOW_TESTS not set; sweep execution skipped")
 # TASK-SECTIONS-BELOW
 
 print(f"\n{passed} passed, {failed} failed, {warnings} warnings")

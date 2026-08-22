@@ -689,10 +689,21 @@ Map buildInventoryPayload() {
     Map usedBy = usedByIndex()
     List comps = []
     List packages = pkgs.collect { String key, Map p ->
+        Map pe = (sweep["pkg:" + key] ?: [:]) as Map                       // package-row sweep entry (Task 6)
         List pc = (p.c as List).collect { Map c ->
             Map s = (sweep[ckey(c.k as String, c.id)] ?: [:]) as Map
             boolean localMod = c.ah && c.ih && c.ih != c.ah
-            String status = c.id == null ? 'missing' : (c.pv ? 'private' : (p.o == 'local' ? 'unknown' : freshnessStatus(c.ih as String, s.rhash as String, c.iv as String, s.rver as String, localMod)))
+            String status
+            if (c.id == null) status = 'missing'
+            else if (c.pv) status = 'private'
+            else if (p.o == 'local') status = 'unknown'
+            else if (p.o == 'hpm' && s.isEmpty()) {
+                // HPM component with no own sweep entry (manifest unchanged, body never fetched): derive
+                // from the package manifest's declared version instead of a per-component hash compare.
+                Integer cmp = compareVersions(p.v as String, pe.rver as String)
+                status = (cmp != null && cmp < 0) ? 'update-available' : ((pe.checkedAt && (!pe.rver || (cmp != null && cmp >= 0))) ? 'current' : 'unknown')
+            }
+            else status = freshnessStatus(c.ih as String, s.rhash as String, c.iv as String, s.rver as String, localMod)
             if (s.broken == true) status = 'broken-source'
             // origin-url app/driver components don't store loc — reconstruct it from the key (see runInventoryPass)
             String location = c.loc ?: (p.o == 'url' ? key.substring(4) : null)
@@ -704,6 +715,7 @@ Map buildInventoryPayload() {
             return row
         }
         [key: key, origin: p.o, name: p.n, version: p.v, gen: p.g, doc: pkgFileName(key), isPrivate: p.pv == true, url: p.url, componentCount: pc.size(),
+         checkedAtMs: pe.checkedAt, rver: pe.rver,
          status: pc.collect { it.status }.contains('update-available') ? 'update-available' : pc.collect { it.status }.contains('changed-upstream') ? 'changed-upstream' : pc.collect { it.status }.contains('broken-source') ? 'broken-source' : 'current']
     }
     Map hub = cachedFetch("hubData", 300_000L) { Map w = hubMapRequest(HUB_DATA_PATH, "hub data", 10); w.ok ? [name: w.data.name, firmware: w.data.version, model: w.data.model] : null } as Map ?: [:]
@@ -720,7 +732,197 @@ Map apiInventory() {
         buildInventoryPayload()
     }
 }
-Map readSweepCache() { return [:] }   // replaced in Task 6
+// ===== Sweep (DESIGN.md §5.2, §7): bounded async freshness check over every upstream location =====
+@Field static final int  SWEEP_MAX_INFLIGHT = 6          // two of the eight async slots stay free for endpoint handlers
+@Field static final long SWEEP_TTL_MS = 86_400_000L
+@Field static final int  SWEEP_WATCHDOG_SEC = 180
+@Field static final int  BROKEN_AFTER = 3
+@Field static final ConcurrentHashMap<String, Map> SWEEP = new ConcurrentHashMap<>()   // live mirror of cm_sweep.json
+@Field static volatile boolean sweepLoaded = false
+
+Map readSweepCache() {
+    if (!sweepLoaded) {
+        String t = readCmFile(SWEEP_FILE)
+        if (t) { try { ((Map) new JsonSlurper().parseText(t)).each { k, v -> SWEEP[(String) k] = (Map) v } } catch (Exception ignored) {} }
+        sweepLoaded = true
+    }
+    return new HashMap(SWEEP)
+}
+private void persistSweepCache() { writeCmFile(SWEEP_FILE, JsonOutput.toJson(SWEEP)) }
+
+void scheduledSweep() { startSweep() }
+
+Map apiSweepStart() {
+    Map r = startSweep()
+    return jsonResponse(r)
+}
+
+// Effective source location for a component: url-origin app/driver components don't store loc
+// redundantly in state.pkgs (runInventoryPass strips it to derive from the package key on read);
+// reconstruct it the same way buildInventoryPayload does. Library/HPM/bundle components always
+// carry loc directly on the stored component.
+private String componentLoc(String key, Map p, Map c) { return (c.loc as String) ?: (p.o == 'url' ? key.substring(4) : null) }
+
+// Builds the queue and fans out. Idempotent under concurrent triggers.
+Map startSweep() {
+    Map prev = (state.sweep ?: [:]) as Map
+    if (prev.status == 'running' && JOBS[prev.jobId as String]) return [jobId: prev.jobId, total: prev.total, alreadyRunning: true]
+    readSweepCache()
+    runInventoryPass()
+    if (findHpm()) importHpm()
+    Map pkgs = (state.pkgs ?: [:]) as Map
+    List<String> queue = []
+    long cutoff = now() - SWEEP_TTL_MS
+    pkgs.each { String key, Map p ->
+        if (p.o == 'hpm') { Map e = SWEEP["pkg:" + key]; if (!e || ((e.checkedAt ?: 0) as long) < cutoff) queue << ("pkg:" + key) }
+        (p.c as List).each { Map c ->
+            if (!c.id || c.pv || c.k == 'bundle' || c.k == 'file' || p.o == 'local') return
+            if (p.o == 'hpm') return                         // component hashes refresh only when the manifest changed (see applyManifestResult)
+            String loc = componentLoc(key, p, c); if (!loc) return
+            Map e = SWEEP[ckey(c.k as String, c.id)]
+            if (!e || ((e.checkedAt ?: 0) as long) < cutoff) queue << ckey(c.k as String, c.id)
+        }
+    }
+    String jobId = newJob('sweep', queue.size())
+    ConcurrentHashMap j = JOBS[jobId]
+    (j.pending as ConcurrentLinkedQueue).addAll(queue)
+    j.counts = new ConcurrentHashMap([checked: new AtomicInteger(0), notModified: new AtomicInteger(0), changed: new AtomicInteger(0), broken: new AtomicInteger(0), unreachable: new AtomicInteger(0)])
+    state.sweep = [jobId: jobId, status: 'running', total: queue.size(), processed: 0, startedAt: j.startedAt]
+    runIn(SWEEP_WATCHDOG_SEC, 'sweepWatchdog', [data: [jobId: jobId]])
+    if (queue.isEmpty()) { finalizeSweep(jobId); return [jobId: jobId, total: 0, alreadyRunning: false] }
+    SWEEP_MAX_INFLIGHT.times { dispatchSweep(jobId) }
+    logSched "sweep ${jobId}: ${queue.size()} queued"
+    return [jobId: jobId, total: queue.size(), alreadyRunning: false]
+}
+
+// Locate a component or package by queue key.
+private Map resolveTarget(String qk) {
+    Map pkgs = (state.pkgs ?: [:]) as Map
+    if (qk.startsWith("pkg:")) { String key = qk.substring(4); Map p = pkgs[key] as Map; return p ? [kind: 'pkg', key: key, loc: key, pkg: p] : null }
+    for (Map.Entry e in pkgs.entrySet()) {
+        String key = e.key as String; Map p = e.value as Map
+        Map c = (p.c as List).find { Map c2 -> ckey(c2.k as String, c2.id) == qk } as Map
+        if (c) return [kind: c.k, key: key, loc: componentLoc(key, p, c), comp: c, pkg: p]
+    }
+    return null
+}
+
+// CAS-bounded dispatch (HubDiagnostics audit pattern). Conditional GET via If-None-Match when an ETag is known.
+private boolean dispatchSweep(String jobId) {
+    ConcurrentHashMap j = JOBS[jobId]; if (j == null) return false
+    AtomicInteger inFlight = j.inFlight as AtomicInteger
+    while (true) { int n = inFlight.get(); if (n >= SWEEP_MAX_INFLIGHT) return false; if (inFlight.compareAndSet(n, n + 1)) break }
+    String qk = (j.pending as ConcurrentLinkedQueue<String>).poll()
+    if (qk == null) { inFlight.decrementAndGet(); return false }
+    Map t = resolveTarget(qk)
+    if (t == null || !(t.loc as String)?.startsWith("https://")) {       // http:// locations are not fetched (DESIGN.md §6.3)
+        SWEEP[qk] = (SWEEP[qk] ?: [:]) + [checkedAt: now(), error: t == null ? 'not in registry' : 'non-https location', httpStatus: null]
+        sweepStep(jobId, null); return true
+    }
+    Map entry = SWEEP[qk] ?: [:]
+    Map headers = entry.etag ? ['If-None-Match': entry.etag] : [:]
+    asynchttpGet('sweepCallback', [uri: t.loc, contentType: 'text/plain', headers: headers, timeout: 20], [jobId: jobId, qk: qk])
+    return true
+}
+
+void sweepCallback(resp, data) {
+    String jobId = data.jobId as String, qk = data.qk as String
+    ConcurrentHashMap j = JOBS[jobId]; if (j == null) return
+    Map entry = new HashMap(SWEEP[qk] ?: [:])
+    int status = resp?.status ?: 0
+    String outcome = 'checked'
+    try {
+        if (status == 304) { entry.checkedAt = now(); entry.httpStatus = 304; entry.failCount = 0; entry.unreachable = false; entry.error = null; outcome = 'notModified' }
+        else if (status == 200) {
+            String body = (resp.data ?: '') as String
+            String etag = resp.headers?.find { it.key?.toString()?.equalsIgnoreCase('ETag') }?.value?.toString()
+            entry.etag = etag; entry.httpStatus = 200; entry.checkedAt = now(); entry.failCount = 0; entry.unreachable = false; entry.broken = false; entry.error = null
+            if (qk.startsWith("pkg:")) outcome = applyManifestResult(qk, entry, body)
+            else {
+                // rhash stored as the same 16-hex prefix as ih/ah (DESIGN.md §2.4 state-size budget) so freshnessStatus compares like with like
+                String rh = hashPrefix(sourceHash(body))
+                if (entry.rhash != rh) { entry.changedAt = now(); outcome = 'changed' }
+                entry.rhash = rh
+                Map pv = parseVersionLiteral(body); entry.rver = pv.ver; entry.rverSrc = pv.src
+            }
+        } else if (status in [404, 410] || (status == 0 && resp?.hasError())) {
+            entry.httpStatus = status ?: null; entry.checkedAt = now(); entry.error = resp?.errorMessage ?: "HTTP ${status}"
+            entry.failCount = ((entry.failCount ?: 0) as int) + 1
+            if ((entry.failCount as int) >= BROKEN_AFTER) { entry.broken = true; outcome = 'broken' }
+        } else {                                                            // 5xx, 429, timeouts: transient, no strike
+            entry.httpStatus = status ?: null; entry.checkedAt = now(); entry.unreachable = true; entry.error = "HTTP ${status}"; outcome = 'unreachable'
+        }
+    } catch (Exception e) { entry.error = "${getObjectClassName(e)}: ${e.message}"; entry.checkedAt = now(); outcome = 'unreachable' }
+    SWEEP[qk] = entry
+    sweepStep(jobId, outcome)
+}
+
+// HPM package manifest result: compare declared versions; refresh component hashes only when the manifest changed.
+private String applyManifestResult(String qk, Map entry, String body) {
+    String key = qk.substring(4)
+    Map m = null
+    try { m = (Map) new JsonSlurper().parseText(body) } catch (Exception e) { entry.error = "manifest parse: ${e.message}"; entry.broken = false; return 'unreachable' }
+    Map p = ((state.pkgs ?: [:]) as Map)[key] as Map
+    // manifest rhash stored as the same 16-hex prefix as component rhash (ruling: hash prefixes)
+    String rh = hashPrefix(sha256Hex(body))
+    boolean changed = entry.rhash != rh
+    entry.rhash = rh; entry.rver = m.version?.toString(); entry.rverSrc = 'manifest'; entry.rbeta = m.betaVersion?.toString()
+    if (changed) {
+        entry.changedAt = now()
+        // queue this package's components for a body fetch (their own entries decide update/changed by hash)
+        ConcurrentHashMap j = JOBS[(state.sweep ?: [:]).jobId as String]
+        if (j != null && p) (p.c as List).each { Map c -> if (c.id && c.loc && !c.pv && c.k in ['app', 'driver', 'library']) { (j.pending as ConcurrentLinkedQueue).add(ckey(c.k as String, c.id)); j.total = (j.total as int) + 1 } }
+    }
+    return changed ? 'changed' : 'checked'
+}
+
+// Per-callback bookkeeping; dispatches the next item or finalizes. processed is incremented before inFlight is released.
+private void sweepStep(String jobId, String outcome) {
+    ConcurrentHashMap j = JOBS[jobId]; if (j == null) return
+    if (outcome) ((j.counts as Map)[outcome] as AtomicInteger)?.incrementAndGet()
+    int processed = (j.processed as AtomicInteger).incrementAndGet()
+    int inFlight = (j.inFlight as AtomicInteger).decrementAndGet()
+    if (!(j.pending as ConcurrentLinkedQueue).isEmpty()) dispatchSweep(jobId)
+    else if (inFlight == 0 && (j.processed as AtomicInteger).get() >= (j.total as int)) finalizeSweep(jobId)
+}
+
+void sweepWatchdog(Map data) {
+    String jobId = data.jobId as String
+    ConcurrentHashMap j = JOBS[jobId]
+    if (j != null && j.status == 'running') { logWarn "sweep ${jobId} watchdog: ${(j.processed as AtomicInteger).get()}/${j.total} after ${SWEEP_WATCHDOG_SEC}s; finalizing with what completed"; finalizeSweep(jobId) }
+}
+
+// Detect local modifications (installed hash moved since adoption), compute package statuses, persist, badge, notify.
+private void finalizeSweep(String jobId) {
+    ConcurrentHashMap j = JOBS[jobId]; if (j == null || j.status != 'running') return
+    Map pkgs = (state.pkgs ?: [:]) as Map
+    int updates = 0, broken = 0
+    pkgs.each { String key, Map p ->
+        (p.c as List).each { Map c ->
+            if (!c.id || c.k in ['bundle', 'file']) return
+            String ck = ckey(c.k as String, c.id)
+            Map e = SWEEP[ck]; if (e == null) return
+            String st = freshnessStatus(c.ih as String, e.rhash as String, c.iv as String, e.rver as String, false)
+            if (p.o == 'hpm') { Map pe = SWEEP["pkg:" + key]; if (pe?.rver && compareVersions(p.v as String, pe.rver as String) != null && compareVersions(p.v as String, pe.rver as String) < 0) st = 'update-available' }
+            if (st == 'update-available') updates++
+            if (e.broken == true) broken++
+        }
+    }
+    persistSweepCache()
+    Map counts = (j.counts as Map).collectEntries { k, v -> [(k): (v as AtomicInteger).get()] }
+    Map result = [queued: j.total, updates: updates, broken: broken] + counts
+    jobDone(jobId, result)
+    state.sweep = [jobId: jobId, status: 'done', total: j.total, processed: (j.processed as AtomicInteger).get(), startedAt: j.startedAt, finishedAt: now(), updates: updates, broken: broken]
+    boolean had = state.updatesAvailable == true
+    state.updatesAvailable = updates > 0
+    refreshUpdateLabel()
+    if (updates > 0 && !had && settings.notifyDevices && state.updatesNotified != true) {
+        settings.notifyDevices.each { it.deviceNotification("Code Manager: ${updates} update${updates == 1 ? '' : 's'} available${broken ? ", ${broken} broken source${broken == 1 ? '' : 's'}" : ''}") }
+        state.updatesNotified = true
+    }
+    if (updates == 0) state.updatesNotified = false
+    logInfo "sweep done: ${result}"
+}
 
 // ===== Session TTL cache (Tier 2) — fetch closures return null on failure so misses are never cached =====
 private Object cachedFetch(String key, long ttlMs, Closure fetch) {
@@ -813,6 +1015,8 @@ void initialize() {
     // A job that was running when the class was replaced can never finish: mark it.
     Map lj = (state.lastJob ?: [:]) as Map
     if (lj.status == 'running' && !JOBS[lj.id as String]) state.lastJob = lj + [status: 'error', error: 'Job lost to hub restart or code push']
+    Map sw = (state.sweep ?: [:]) as Map
+    if (sw.status == 'running' && !JOBS[sw.jobId as String]) state.sweep = sw + [status: 'stale']
     Random rng = new Random()
     schedule("${rng.nextInt(60)} ${rng.nextInt(60)} 3 * * ?", "scheduledSweep")       // Task 6 defines scheduledSweep
     schedule("0 17 3 * * ?", "scheduledUISync")
@@ -823,7 +1027,6 @@ void initialize() {
     logSched "daily sweep, UI sync and version check scheduled"
 }
 void systemStartHandler(evt) { runIn(300, 'scheduledSweep') }
-void scheduledSweep() { logSched "scheduled sweep (engine arrives in Task 6)" }
 
 // ===== Version heuristics (DESIGN.md §4) — self-contained, extracted by tests/test-version-compare.groovy =====
 
