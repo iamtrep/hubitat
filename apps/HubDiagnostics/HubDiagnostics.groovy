@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "5.83.4"
+@Field static final String CODE_VERSION = "5.83.5"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -81,13 +81,18 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final int    AUDIT_WATCHDOG_SEC  = 120     // safety net if a callback is genuinely lost
 @Field static final long   AUDIT_STALE_MS      = 600_000 // 10 min — anything older is force-cleared on app entry
 @Field static final double AUDIT_FAIL_RATIO    = 0.10    // > 10% per-device failures → mark scan errored
+@Field static final int    AUDIT_ATTEMPT_CAP   = 2       // one retry per device, then record it failed
+@Field static final int    AUDIT_REAP_INTERVAL_SEC = 10  // how often the claim reaper runs while a scan is live
+@Field static final long   AUDIT_REAP_DEADLINE_MS  = 25_000 // > the 15s request timeout, so a slow-but-live fetch is never reaped
 
 // Per-scan in-memory state. Each entry is itself a ConcurrentHashMap with keys:
 //   total (Integer), startedAt (Long),
 //   inFlight (AtomicInteger), processed (AtomicInteger),
-//   pending (ConcurrentLinkedQueue<Long>),
+//   pending (ConcurrentLinkedQueue — Long id, or [id:, attemptCount:] for a requeued retry),
 //   devices (ConcurrentHashMap<Long, Map>),
-//   failed (ConcurrentHashMap<Long, String>)
+//   failed (ConcurrentHashMap<Long, String>),
+//   claims (ConcurrentHashMap<Long, Map> — one per dispatched-but-unresolved attempt),
+//   tokenSeq (AtomicInteger), finalizeGuard (AtomicInteger)
 @Field static final ConcurrentHashMap<String, ConcurrentHashMap> AUDIT_SCANS = new ConcurrentHashMap<>()
 @Field static volatile Map lastAuditResult = null
 
@@ -419,8 +424,10 @@ Map dashboardPage() {
 
         section("Dashboard") {
             String dashboardUrl = "${fullLocalApiServerUrl}/ui.html?access_token=${state.accessToken}"
-            href url: dashboardUrl, title: "Open Dashboard", style: "external",
-                 description: "Interactive diagnostic dashboard (opens in new tab)"
+            // Rendered as a raw anchor, not href(): on 2.5.1.147 `style: "external"` compiles to
+            // onClick="openWindow(this)" with a hardcoded width=800 feature string — a cramped,
+            // popup-blockable window, never a tab. Same technique as the App Code Editor link above.
+            paragraph "<a href='${dashboardUrl}' target='_blank'>Open Dashboard</a> — interactive diagnostic dashboard (opens in a new tab)"
         }
 
         section("Documentation") {
@@ -4017,9 +4024,21 @@ private String controllerTypeLabel(String ct) {
 }
 
 /**
+ * Refill the pipeline until the in-flight cap is reached or the queue drains.
+ * Iterative, not recursive: dispatchOne() returns true whenever it made progress —
+ * a successful dispatch, or a rollback after a synchronous throw — so a run of
+ * consecutive synchronous failures is bounded by the queue, not by the call stack.
+ */
+private void refillAuditPipeline(String scanId) {
+    while (dispatchOne(scanId)) { /* keep the pipeline full */ }
+}
+
+/**
  * CAS-bounded dispatch: reserves a slot in the in-flight pool (≤ AUDIT_MAX_INFLIGHT),
- * pops the next pending device id atomically, and issues an async fullJson fetch.
- * Returns false if the cap is reached, the queue is empty, or the scan no longer exists.
+ * pops the next pending device id atomically, records a claim before the request goes
+ * out, and issues an async fullJson fetch.
+ * Returns false only when no progress was made (cap reached, queue empty, or the scan
+ * no longer exists); a handled synchronous throw counts as progress and returns true.
  */
 private boolean dispatchOne(String scanId) {
     ConcurrentHashMap scan = AUDIT_SCANS[scanId]
@@ -4032,19 +4051,89 @@ private boolean dispatchOne(String scanId) {
         if (inFlight.compareAndSet(n, n + 1)) break
     }
 
-    Long deviceId = (scan.pending as ConcurrentLinkedQueue).poll()
-    if (deviceId == null) {                                         // queue drained between cap check and pop
+    Object raw = (scan.pending as ConcurrentLinkedQueue).poll()
+    if (raw == null) {                                              // queue drained between cap check and pop
         inFlight.decrementAndGet()
         return false
     }
+    // A requeued retry carries its prior attempt count; a first attempt is a bare id.
+    Long deviceId    = (raw instanceof Map) ? ((raw as Map).id as Long) : (raw as Long)
+    int attemptCount = (((raw instanceof Map) ? ((raw as Map).attemptCount ?: 0) : 0) as Integer) + 1
+
+    // Claim recorded BEFORE the request is issued, so a request that is accepted and then
+    // never calls back is still visible to the reaper. The token makes the claim specific
+    // to this attempt, so a late callback from a reaped attempt can identify itself as stale.
+    String attemptToken = "tok-${(scan.tokenSeq as AtomicInteger).incrementAndGet()}"
+    Map myClaim = [attemptToken: attemptToken, dispatchedAt: now(), attemptCount: attemptCount]
+    (scan.claims as ConcurrentHashMap)[deviceId] = myClaim
 
     Map params = [
         uri: "${HUB_BASE}${FULL_JSON_PATH_PREFIX}${deviceId}",
         contentType: "application/json",
         timeout: 15
     ]
-    asynchttpGet('fullJsonCb', params, [scanId: scanId, deviceId: deviceId])
+    try {
+        asynchttpGet('fullJsonCb', params, [scanId: scanId, deviceId: deviceId, attemptToken: attemptToken])
+        return true
+    } catch (Exception e) {
+        // The request was never accepted, so no callback is coming and the reserved slot
+        // would leak permanently — eight such throws would hang the scan at inFlight == 8
+        // with nothing logged. Roll the reservation back here instead.
+        logWarn "[audit ${scanId}] device ${deviceId} dispatch threw: ${e.message}"
+        retireAuditClaim(scan, deviceId, myClaim, "dispatch threw: ${getObjectClassName(e)}: ${e.message}")
+        maybeFinalizeAudit(scanId)                                  // the last device may have just failed terminally
+        return true                                                 // progress made — the refill loop tries the next id
+    }
+}
+
+/**
+ * Retire one dispatched-but-unresolved attempt: release its claim and its in-flight slot,
+ * then either requeue the device for one more try or record it as failed.
+ *
+ * Shared by dispatchOne's synchronous-throw path and the reaper so both retire identically.
+ * Ownership is proven by conditional removal — remove(id, thatExactClaim) — so a callback
+ * and the reaper racing over the same attempt can never both release the slot for it.
+ * Returns true if this execution owned the claim and retired it.
+ *
+ * Write ordering mirrors fullJsonCb's: the completion signal (requeue / processed++) is
+ * published BEFORE inFlight drops, so the finalize predicate can never observe an empty
+ * queue and a zero in-flight count while this device is still owed.
+ */
+private boolean retireAuditClaim(ConcurrentHashMap scan, Long deviceId, Map claim, String reason) {
+    if (!(scan.claims as ConcurrentHashMap).remove(deviceId, claim)) return false
+    int attemptCount = claim.attemptCount as Integer
+    if (attemptCount < AUDIT_ATTEMPT_CAP) {
+        (scan.pending as ConcurrentLinkedQueue) << [id: deviceId, attemptCount: attemptCount]
+    } else {
+        (scan.failed as ConcurrentHashMap)[deviceId] = reason
+        (scan.processed as AtomicInteger).incrementAndGet()
+    }
+    (scan.inFlight as AtomicInteger).decrementAndGet()
     return true
+}
+
+/**
+ * Finalize if — and only if — the scan is genuinely complete: nothing queued, nothing in
+ * flight, no outstanding claims, and every device accounted for. Every count is read fresh
+ * here rather than passed in from a caller's local, because processed and inFlight are
+ * independent atomics: the execution that zeroes inFlight is not necessarily the one whose
+ * increment hit total. finalizeAudit() is itself exactly-once via its CAS guard, so calling
+ * this from several paths (callback, reaper, throw rollback) is safe.
+ */
+private void maybeFinalizeAudit(String scanId) {
+    ConcurrentHashMap scan = AUDIT_SCANS[scanId]
+    if (scan == null) return
+    if (!(scan.pending as ConcurrentLinkedQueue).isEmpty()) return
+    if ((scan.inFlight as AtomicInteger).get() != 0) return
+    if (!(scan.claims as ConcurrentHashMap).isEmpty()) return
+    int processed = (scan.processed as AtomicInteger).get()
+    int total     = scan.total as Integer
+    if (processed > total) {
+        logWarn "[audit ${scanId}] invariant violation — processed=${processed} exceeds total=${total}"
+        return
+    }
+    if (processed < total) return
+    finalizeAudit(scanId)
 }
 
 /**
@@ -4057,6 +4146,15 @@ void fullJsonCb(resp, data) {
     if (scan == null) return                                        // callback from prior abandoned scan
 
     Long deviceId = data.deviceId as Long
+    String attemptToken = data.attemptToken as String
+
+    // Claim ownership. A callback whose claim is gone or has been replaced belongs to an
+    // attempt the reaper already retired — it must not touch processed/inFlight, which that
+    // retirement already accounted for.
+    Map claim = (scan.claims as ConcurrentHashMap)[deviceId] as Map
+    if (claim == null || claim.attemptToken != attemptToken) return
+    if (!(scan.claims as ConcurrentHashMap).remove(deviceId, claim)) return   // lost the race with the reaper
+
     try {
         if (resp?.status == 200) {
             Map fj = (Map) resp.json
@@ -4069,9 +4167,10 @@ void fullJsonCb(resp, data) {
         (scan.failed as ConcurrentHashMap)[deviceId] = "${getObjectClassName(e)}: ${e.message}"
     }
 
+    // Ordering is load-bearing: the completion signal rises before the in-progress signal
+    // drops, so the finalize predicate never sees this device as neither in flight nor done.
     int processed = (scan.processed as AtomicInteger).incrementAndGet()
-    int inFlight  = (scan.inFlight  as AtomicInteger).decrementAndGet()
-    Integer total = scan.total as Integer
+    (scan.inFlight as AtomicInteger).decrementAndGet()
 
     // Update small state snapshot for UI polling — cheap (just scalars)
     Map snap = (state.audit ?: [:]) as Map
@@ -4080,18 +4179,60 @@ void fullJsonCb(resp, data) {
         state.audit = snap
     }
 
-    if (!(scan.pending as ConcurrentLinkedQueue).isEmpty()) {
-        dispatchOne(scanId)                                         // keep pipeline full
-    } else if (inFlight == 0 && (scan.processed as AtomicInteger).get() >= total) {
-        // Finalize trigger must read `processed` FRESH, not this callback's local increment
-        // value. `processed` and `inFlight` are independent atomics: the callback that zeroes
-        // inFlight is not necessarily the one whose increment hit `total`, so the local
-        // `processed` can be stale (< total) on the very callback that sees inFlight == 0 —
-        // leaving the scan unfinalized until the watchdog fails it. Because every callback
-        // increments processed *before* decrementing inFlight, once inFlight hits 0 all
-        // increments have landed, so a fresh read is guaranteed == total. inFlight.decrement
-        // returns 0 for exactly one callback, so finalize still fires exactly once.
-        finalizeAudit(scanId)
+    refillAuditPipeline(scanId)                                     // keep the pipeline full
+    // maybeFinalizeAudit reads every count fresh — see its comment for why this callback's
+    // local `processed`/`inFlight` values are not a safe basis for the finalize decision.
+    maybeFinalizeAudit(scanId)
+}
+
+/**
+ * Reaper: retires claims for attempts that were accepted but never called back at all —
+ * platform-level silence, not a per-device HTTP failure (those already resolve in one
+ * callback). Without it, inFlight never returns to 0, the finalize predicate never holds,
+ * and the scan hangs with the progress bar stopped and nothing logged.
+ *
+ * Self-reschedules every AUDIT_REAP_INTERVAL_SEC, but only while the scan is still live and
+ * unfinalized. Both terminal conditions are checked at the end: a scan that can never
+ * complete is failed by the watchdog, which CASes finalizeGuard and unschedules this — so
+ * the reaper stops rather than cycling forever on a scan that will never finalize.
+ */
+void auditClaimReaper(data) {
+    String scanId = data?.scanId as String
+    ConcurrentHashMap scan = scanId ? AUDIT_SCANS[scanId] : null
+    if (scan == null) return                                        // finalized or cleared — terminal, stop rescheduling
+    if ((scan.finalizeGuard as AtomicInteger).get() == 1) return     // finalize owned elsewhere — terminal
+
+    long nowMs = now()
+    List<Map> stale = []
+    (scan.claims as ConcurrentHashMap).each { k, v ->
+        Map c = v as Map
+        if (nowMs - (c.dispatchedAt as Long) >= AUDIT_REAP_DEADLINE_MS) {
+            stale << [deviceId: k as Long, claim: c]
+        }
+    }
+
+    int reaped = 0
+    stale.each { Map cand ->
+        Long deviceId = cand.deviceId as Long
+        Map claim = cand.claim as Map
+        // Re-check the age against the claim we snapshotted: the slot may have been retired
+        // and re-dispatched since the sweep above, and the conditional remove inside
+        // retireAuditClaim is what keeps this attempt-specific.
+        if (now() - (claim.dispatchedAt as Long) < AUDIT_REAP_DEADLINE_MS) return
+        if (retireAuditClaim(scan, deviceId, claim, "no callback within ${AUDIT_REAP_DEADLINE_MS}ms")) {
+            reaped++
+            logWarn "[audit ${scanId}] device ${deviceId} reaped — no callback (attempt ${claim.attemptCount})"
+        }
+    }
+
+    if (reaped > 0) {
+        refillAuditPipeline(scanId)
+        maybeFinalizeAudit(scanId)
+    }
+
+    ConcurrentHashMap live = AUDIT_SCANS[scanId]
+    if (live != null && (live.finalizeGuard as AtomicInteger).get() != 1) {
+        runIn(AUDIT_REAP_INTERVAL_SEC, 'auditClaimReaper', [data: [scanId: scanId]])
     }
 }
 
@@ -4102,6 +4243,11 @@ void fullJsonCb(resp, data) {
 private void finalizeAudit(String scanId) {
     ConcurrentHashMap scan = AUDIT_SCANS[scanId]
     if (scan == null) return
+    // Exactly-once publish guard. Finalize is now reachable from a callback, the reaper and
+    // dispatchOne's rollback path; this CAS is what keeps them from publishing twice. It is
+    // also the reaper's terminal signal, so take it before doing any work.
+    if (!(scan.finalizeGuard as AtomicInteger).compareAndSet(0, 1)) return
+    unschedule('auditClaimReaper')
     long startedAt = scan.startedAt as Long
     int total      = scan.total as Integer
     Map devices    = (scan.devices as ConcurrentHashMap) as Map
@@ -4239,9 +4385,16 @@ void auditWatchdog(data) {
     if (!scanId) return
     ConcurrentHashMap scan = AUDIT_SCANS[scanId]
     if (scan == null) return                                        // already finalized — nothing to do
+    // CAS the same guard finalizeAudit takes, before writing anything: a legitimate finalize
+    // landing at the same moment must win rather than have its result overwritten by this
+    // failure path. Setting it also stops the reaper rescheduling — a scan that can never
+    // complete ends here instead of cycling the reaper forever.
+    if (!(scan.finalizeGuard as AtomicInteger).compareAndSet(0, 1)) return
+    unschedule('auditClaimReaper')
     int processed = (scan.processed as AtomicInteger).get()
     int total     = scan.total as Integer
-    logWarn "[audit ${scanId}] watchdog fired — ${processed}/${total} done, marking errored"
+    int outstanding = (scan.claims as ConcurrentHashMap).size()
+    logWarn "[audit ${scanId}] watchdog fired — ${processed}/${total} done, ${outstanding} claim(s) outstanding, marking errored"
     state.audit = [
         scanId: scanId, status: 'error', processed: processed, total: total,
         startedAt: scan.startedAt, error: "Watchdog: scan exceeded ${AUDIT_WATCHDOG_SEC}s"
@@ -4288,6 +4441,9 @@ Map apiAuditStart() {
     scan.pending    = new ConcurrentLinkedQueue<Long>(ids)
     scan.devices    = new ConcurrentHashMap<Long, Map>()
     scan.failed     = new ConcurrentHashMap<Long, String>()
+    scan.claims     = new ConcurrentHashMap<Long, Map>()
+    scan.tokenSeq   = new AtomicInteger(0)
+    scan.finalizeGuard = new AtomicInteger(0)
     AUDIT_SCANS[scanId] = scan
 
     state.audit = [
@@ -4295,11 +4451,14 @@ Map apiAuditStart() {
         startedAt: scan.startedAt
     ]
 
-    // Schedule the watchdog
+    // Schedule the watchdog and the missing-callback reaper. runIn() replaces rather than
+    // stacks a prior job of the same handler name, so a previous scan's jobs cannot linger.
     runIn(AUDIT_WATCHDOG_SEC, 'auditWatchdog', [data: [scanId: scanId]])
+    runIn(AUDIT_REAP_INTERVAL_SEC, 'auditClaimReaper', [data: [scanId: scanId]])
 
-    // Initial fan-out — each call self-bounds at 8
-    AUDIT_MAX_INFLIGHT.times { dispatchOne(scanId) }
+    // Initial fan-out — self-bounds at AUDIT_MAX_INFLIGHT, and re-tries the next id if a
+    // dispatch throws, so a throwing device cannot consume one of the initial slots.
+    refillAuditPipeline(scanId)
 
     logInfo "[audit ${scanId}] started — ${ids.size()} devices to scan"
     return jsonResponse([scanId: scanId, total: ids.size(), alreadyRunning: false])

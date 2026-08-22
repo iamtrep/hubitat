@@ -180,9 +180,20 @@ node tests/test-forum-render.js         # full forum-export render (buildForumMa
 node tests/test-temp-scale.js           # temperature-scale helpers
 node tests/test-zwave-render.js         # routeChangesCell (Route Changes null -> em-dash)
 
-# Extraction-based Groovy test (TESTING.md Mode 4 variant — bound to shipped Groovy)
+# Extraction-based Groovy tests (TESTING.md Mode 4 variant — bound to shipped Groovy)
 groovy tests/test-zwave-mesh-quality.groovy  # route-change normalization: no-data -> null, excluded from total
+groovy tests/test-audit-dispatch.groovy      # audit fan-out: throw rollback, missing-callback reaper, claim ownership
 ```
+
+> **Audit fan-out coverage (v5.83.5):** `test-audit-dispatch.groovy` brace-extracts the six
+> pipeline methods (`refillAuditPipeline`, `dispatchOne`, `retireAuditClaim`, `maybeFinalizeAudit`,
+> `fullJsonCb`, `auditClaimReaper`) and stubs the platform, so it can drive the two failure modes
+> that have no natural trigger on a hub: a synchronous `asynchttpGet` throw, and an accepted
+> request that never calls back. **Known limit:** the harness is single-threaded, so it cannot open
+> a real callback-vs-reaper race — where ownership matters, `retireAuditClaim`'s contract is driven
+> directly instead, and `finalizeGuard`'s exactly-once CAS is not empirically covered (sequentially,
+> removing the scan from `AUDIT_SCANS` already blocks a second finalize). Neither hardened path has
+> ever been exercised on real hardware.
 
 > **Phase D progress:** the SPA derivations relocated from Groovy during the v5.57.0 refactor each
 > landed with extraction-based pure-JS coverage (`test-radio-derivations.js`, `test-network-derivations.js`,
