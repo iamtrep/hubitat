@@ -159,6 +159,9 @@ const MOCK_DATA = {
 };
 
 const T='${access_token}', B='${api_base}', REPORT=window.REPORT_DATA||null, cache={};
+// Token in the Authorization header, not the URL — keeps it out of hub and proxy
+// access logs. The platform matches the scheme case-sensitively: exactly "Bearer".
+const AUTH=(x)=>Object.assign({'Authorization':'Bearer '+T},x||{});
 // Hub admin-UI origin (e.g. http://192.0.2.10), derived from the API base — used to build
 // direct links into the hub's own settings pages instead of printing navigation breadcrumbs.
 const HUB_ORIGIN=(B.match(/^(https?:\/\/[^\/]+)\/apps\/api\//)||[])[1]||'';
@@ -178,14 +181,13 @@ async function api(ep){
   // stale data after a mutation (the list cache is dropped, these were not).
   const noCache=ep.startsWith('snapshot/view');
   const hit=noCache?null:cache[ep];if(hit&&(Date.now()-hit.ts<CACHE_TTL_MS))return hit.d;
-  const sep=ep.includes('?')?'&':'?';
-  const r=await fetch(B+'/api/'+ep+sep+'access_token='+T);
+  const r=await fetch(B+'/api/'+ep,{headers:AUTH()});
   if(!r.ok)throw new Error('API '+r.status);
   const d=await r.json();
   if(!noCache)cache[ep]={d,ts:Date.now()};
   return d
 }
-async function post(ep,p){if(REPORT)return{};const q=new URLSearchParams(p||{});q.set('access_token',T);const r=await fetch(B+'/api/'+ep+'?'+q.toString(),{method:'POST'});if(!r.ok)throw new Error('API '+r.status);return r.json()}
+async function post(ep,p){if(REPORT)return{};const q=new URLSearchParams(p||{});const qs=q.toString();const r=await fetch(B+'/api/'+ep+(qs?'?'+qs:''),{method:'POST',headers:AUTH()});if(!r.ok)throw new Error('API '+r.status);return r.json()}
 function drop(ep){if(ep)delete cache[ep];else Object.keys(cache).forEach(k=>delete cache[k])}
 
 // ===== HELPERS =====
@@ -2026,7 +2028,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
             network=results.network, health=results.health, healthHistory=results['health/history'],
             performance=results.performance, snapshots=results.snapshots;
       // Fetch raw template via OAuth (works regardless of /local/ access policy).
-      const tmplResp=await fetch(B+'/api/report/template?access_token='+T);
+      const tmplResp=await fetch(B+'/api/report/template',{headers:AUTH()});
       if(!tmplResp.ok)throw new Error('template fetch '+tmplResp.status);
       let html=await tmplResp.text();
       // Build the envelope shape the SPA's REPORT mode expects (window.REPORT_DATA[ep]).
@@ -2045,7 +2047,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
       // Filename matches old format: hub_diagnostics_report_YYYYMMDD_HHmmss.html
       const stamp=ts.getFullYear()+pad(ts.getMonth()+1)+pad(ts.getDate())+'_'+pad(ts.getHours())+pad(ts.getMinutes())+pad(ts.getSeconds());
       const filename='hub_diagnostics_report_'+stamp+'.html';
-      const saveResp=await fetch(B+'/api/report/save?access_token='+T,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename,html})});
+      const saveResp=await fetch(B+'/api/report/save',{method:'POST',headers:AUTH({'Content-Type':'application/json'}),body:JSON.stringify({filename,html})});
       if(!saveResp.ok)throw new Error('save '+saveResp.status);
       const saveJson=await saveResp.json();
       if(!saveJson.success)throw new Error(saveJson.error||'save failed');
@@ -2089,7 +2091,7 @@ async function auditStart() {
     const row = document.getElementById('audit-row');
     btn.disabled = true; btn.textContent = 'Starting…';
     try {
-        const r = await fetch(B + '/api/audit/start?access_token=' + T, {method:'POST'});
+        const r = await fetch(B + '/api/audit/start', {method:'POST', headers:AUTH()});
         const d = await r.json();
         if (d.error) { row.innerHTML = '<span class="warn">'+h(d.error)+'</span>'; btn.disabled=false; btn.textContent='Generate Device Audit'; return; }
         auditPoll(d.scanId, d.total);
@@ -2116,7 +2118,7 @@ function auditPoll(scanId, total) {
     }
     async function tick() {
         try {
-            const r = await fetch(B + '/api/audit/status?scanId=' + encodeURIComponent(scanId) + '&access_token=' + T);
+            const r = await fetch(B + '/api/audit/status?scanId=' + encodeURIComponent(scanId), {headers:AUTH()});
             const d = await r.json();
             if (d.status === 'scanning') {
                 if (row) row.innerHTML = 'Audit in progress · scanning device <b>'+d.processed+'</b> / '+d.total+' …';
@@ -5432,8 +5434,7 @@ document.getElementById('tabs').addEventListener('click',e=>{if(e.target.dataset
 async function refreshLive(){
   if(document.hidden)return;
   try{
-    const sep='?';
-    const resp=await fetch(B+'/api/live'+sep+'access_token='+T);
+    const resp=await fetch(B+'/api/live',{headers:AUTH()});
     if(!resp.ok)return;
     const d=await resp.json();
     const r={freeOSMemory:d.freeOSMemory,cpuAvg5min:d.cpuAvg5min,

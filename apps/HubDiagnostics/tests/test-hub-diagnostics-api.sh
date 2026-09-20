@@ -111,9 +111,9 @@ def fetch(path, timeout=30):
     except Exception as e:
         return None
 
-def fetch_raw(url, timeout=30):
+def fetch_raw(url, timeout=30, headers=None):
     try:
-        req = urllib.request.Request(url)
+        req = urllib.request.Request(url, headers=headers or {})
         resp = urllib.request.urlopen(req, timeout=timeout)
         return resp.status, json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
@@ -187,12 +187,13 @@ api_base = f"http://{hub_ip}/apps/api/{instance_id}"
 info(f"API base: {api_base}")
 info(f"Token: {access_token[:8]}...")
 
+AUTH = lambda: {"Authorization": f"Bearer {access_token}"}   # header, not ?access_token= — keeps the token out of access logs (scheme is case-sensitive)
+
 def api_get(endpoint, timeout=60):
     """Fetch a JSON API endpoint with auth."""
-    sep = "&" if "?" in endpoint else "?"
-    url = f"{api_base}/api/{endpoint}{sep}access_token={access_token}"
+    url = f"{api_base}/api/{endpoint}"
     try:
-        resp = urllib.request.urlopen(url, timeout=timeout)
+        resp = urllib.request.urlopen(urllib.request.Request(url, headers=AUTH()), timeout=timeout)
         return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         return {"_error": e.code}
@@ -201,12 +202,11 @@ def api_get(endpoint, timeout=60):
 
 def api_post(endpoint, params="", timeout=60):
     """POST to a JSON API endpoint with auth."""
-    sep = "&" if "?" in endpoint else "?"
-    url = f"{api_base}/api/{endpoint}{sep}access_token={access_token}"
+    url = f"{api_base}/api/{endpoint}"
     if params:
-        url += "&" + params
+        url += ("&" if "?" in url else "?") + params
     try:
-        req = urllib.request.Request(url, data=b"", method="POST")
+        req = urllib.request.Request(url, data=b"", method="POST", headers=AUTH())
         resp = urllib.request.urlopen(req, timeout=timeout)
         return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
@@ -278,9 +278,16 @@ else:
 
 status, _ = fetch_raw(f"{api_base}/api/dashboard?access_token=bad-token-12345")
 if status == 401:
-    ok("Invalid token returns 401")
+    ok("Invalid token in query param returns 401")
 else:
-    fail(f"Invalid token returned {status} (expected 401)")
+    fail(f"Invalid token in query param returned {status} (expected 401)")
+
+status, _ = fetch_raw(f"{api_base}/api/dashboard",
+                      headers={"Authorization": "Bearer bad-token-12345"})
+if status == 401:
+    ok("Invalid token in Authorization header returns 401")
+else:
+    fail(f"Invalid token in Authorization header returned {status} (expected 401)")
 
 # ── Test 2: GET /api/dashboard ────────────────────────────────────────
 section("GET /api/dashboard")

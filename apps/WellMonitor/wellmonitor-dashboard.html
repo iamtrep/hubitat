@@ -278,11 +278,22 @@ SPDX-License-Identifier: MIT
     // ==================== Helpers ====================
 
     function apiUrl(path) {
+        return BASE_URL + path;
+    }
+
+    // The token rides in the Authorization header so it stays out of hub and proxy
+    // access logs. The platform matches the scheme case-sensitively: exactly "Bearer".
+    function authHeaders(extra) {
+        return Object.assign({ 'Authorization': 'Bearer ' + ACCESS_TOKEN }, extra || {});
+    }
+
+    // A <script src> cannot carry a header, so that one case keeps the query param.
+    function apiUrlTokened(path) {
         return BASE_URL + path + '?access_token=' + ACCESS_TOKEN;
     }
 
     async function fetchJson(path) {
-        const resp = await fetch(apiUrl(path));
+        const resp = await fetch(apiUrl(path), { headers: authHeaders() });
         if (!resp.ok) throw new Error(`API error: ${resp.status}`);
         return resp.json();
     }
@@ -1027,7 +1038,7 @@ SPDX-License-Identifier: MIT
         if (!confirm('Pull the matching dashboard UI from GitHub? If a matching version is found, the page will reload.')) return;
         if (badge) { badge.textContent = 'Syncing…'; badge.onclick = null; }
         try {
-            const resp = await fetch(apiUrl('/api/ui/sync'), { method: 'POST' });
+            const resp = await fetch(apiUrl('/api/ui/sync'), { method: 'POST', headers: authHeaders() });
             const res = await resp.json();
             if (res && res.success) {
                 location.reload();
@@ -1119,7 +1130,7 @@ SPDX-License-Identifier: MIT
         btn.disabled = true;
         btn.textContent = 'Loading...';
         try {
-            const resp = await fetch(apiUrl('/csv/cycles'));
+            const resp = await fetch(apiUrl('/csv/cycles'), { headers: authHeaders() });
             const text = await resp.text();
             const lines = text.trim().split('\n');
             if (lines.length < 2) { btn.textContent = 'No CSV data'; return; }
@@ -1164,7 +1175,7 @@ SPDX-License-Identifier: MIT
         btn.disabled = true;
         btn.textContent = 'Loading...';
         try {
-            const resp = await fetch(apiUrl('/csv/flow'));
+            const resp = await fetch(apiUrl('/csv/flow'), { headers: authHeaders() });
             const text = await resp.text();
             const lines = text.trim().split('\n');
             if (lines.length < 2) { btn.textContent = 'No CSV data'; return; }
@@ -1239,7 +1250,7 @@ SPDX-License-Identifier: MIT
     async function init() {
         try {
             // Load Chart.js from the app's own mapping endpoint
-            await loadScript(apiUrl('/chart.js'));
+            await loadScript(apiUrlTokened('/chart.js'));
 
             const [status, cycles, flow, stats] = await Promise.all([
                 fetchJson('/api/status'),

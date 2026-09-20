@@ -146,6 +146,9 @@ function fwTargetsLabel(r){
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // true for hub-free local development
 const T = '${access_token}', B = '${api_base}';
+// Token in the Authorization header, not the URL — keeps it out of hub and proxy
+// access logs. The platform matches the scheme case-sensitively: exactly "Bearer".
+const AUTH = () => ({ 'Authorization': 'Bearer ' + T });
 const MOCK_PEERS = [{index:0,label:'Hub A',reachable:true,webBase:'http://192.168.0.10'},{index:1,label:'Hub B',reachable:true,webBase:'http://192.168.0.11'}];
 const MOCK_AUDIT = {
   // Hub 0: real-drift group (same source=softwareBuild, different values) + inconsistent-fields group (different sources)
@@ -440,7 +443,7 @@ function isFlagged(r){
 let FLEET = { rows: [], hubs: [], all: [] };
 
 function peerUrl(hubIdx, op, extra){
-  let u = `${B}/api/peer?hub=${hubIdx}&op=${op}&access_token=${T}`;
+  let u = `${B}/api/peer?hub=${hubIdx}&op=${op}`;
   if (extra) u += extra;
   return u;
 }
@@ -451,7 +454,7 @@ async function proxy(hubIdx, op, extra){
     return { status: 'done', processed: 0, total: 0 };
   }
   try {
-    const r = await fetch(peerUrl(hubIdx, op, extra));
+    const r = await fetch(peerUrl(hubIdx, op, extra), { headers: AUTH() });
     if (!r.ok) return { _error: r.status };
     return r.json();
   } catch(e) { return { _error: 'network' }; }
@@ -459,7 +462,7 @@ async function proxy(hubIdx, op, extra){
 async function loadPeers(){
   if (WORKBENCH) return MOCK_PEERS;
   try {
-    const r = await fetch(`${B}/api/peers?access_token=${T}`);
+    const r = await fetch(`${B}/api/peers`, { headers: AUTH() });
     const j = await r.json();
     return j.peers || [];
   } catch(e) { return []; }
@@ -854,7 +857,7 @@ async function renderConfig(){
 
   if(!WORKBENCH){
     try {
-      const r = await fetch(`${B}/api/version/check?access_token=${T}`);
+      const r = await fetch(`${B}/api/version/check`, { headers: AUTH() });
       if(r.ok){
         const v = await r.json();
         const gh = document.getElementById('cfgGh');
@@ -874,7 +877,7 @@ async function renderConfig(){
     const msg = document.getElementById('cfgMsg');
     btn.disabled = true; btn.textContent = 'Checking…';
     try {
-      const r = await fetch(`${B}/api/ui/sync?access_token=${T}`, { method: 'POST' });
+      const r = await fetch(`${B}/api/ui/sync`, { method: 'POST', headers: AUTH() });
       const j = await r.json();
       if(j.success){ btn.textContent = 'Updating…'; location.reload(); }
       else { if(msg) msg.innerHTML = '<span class="warn">No matching update found or sync failed. App and UI versions must match.</span>'; btn.disabled = false; btn.textContent = 'Check for updates'; }

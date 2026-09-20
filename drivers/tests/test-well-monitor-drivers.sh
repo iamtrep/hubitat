@@ -161,11 +161,16 @@ if not access_token:
 api_base = f"http://{hub_ip}/apps/api/{maker_id}"
 ok(f"Maker API: '{MAKER_API_LABEL}' id={maker_id}")
 
+def maker_req(url):
+    """Build a request that carries the token in the Authorization header rather
+    than in the URL, keeping it out of hub and proxy access logs. The platform
+    matches the scheme case-sensitively: it must be exactly "Bearer"."""
+    return urllib.request.Request(url, headers={"Authorization": f"Bearer {access_token}"})
+
 def maker_get(path, timeout=15):
-    sep = "&" if "?" in path else "?"
-    url = f"{api_base}{path}{sep}access_token={access_token}"
+    url = f"{api_base}{path}"
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as r:
+        with urllib.request.urlopen(maker_req(url), timeout=timeout) as r:
             return json.loads(r.read().decode())
     except Exception:
         return None
@@ -175,9 +180,9 @@ def maker_send(device_id, command, args=None, timeout=15):
     if args:
         for a in args:
             path += f"/{urllib.parse.quote(str(a), safe='')}"
-    url = f"{api_base}{path}?access_token={access_token}"
+    url = f"{api_base}{path}"
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as r:
+        with urllib.request.urlopen(maker_req(url), timeout=timeout) as r:
             return r.status == 200
     except Exception:
         return False

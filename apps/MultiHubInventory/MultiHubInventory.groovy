@@ -345,12 +345,19 @@ private boolean isNewer(String a, String b) {
 
 // ===== REACHABILITY =====
 // Probe each peer's audit/status (runIn'd off initialize) so the config page shows ok / auth /
+// Peer auth goes in the Authorization header rather than ?access_token=, so the
+// token stays out of the peer hub's access log. The platform's scheme match is
+// case-sensitive: it must be exactly "Bearer".
+private Map bearer(String token) {
+    return ['Authorization': "Bearer ${token}".toString()]
+}
+
 // unreachable per hub before a scan is ever run.
 void probePeers() {
     List peers = (state.peerList ?: []) as List
     peers.each { Map peer ->
         try {
-            httpGet([uri: "${peer.baseUrl}/audit/status", query: [access_token: peer.token], contentType: 'application/json', timeout: 8]) { resp ->
+            httpGet([uri: "${peer.baseUrl}/audit/status", headers: bearer(peer.token), contentType: 'application/json', timeout: 8]) { resp ->
                 peer.reachable = (resp.status == 200) ? 'ok' : "http ${resp.status}"
             }
         } catch (Exception e) {
@@ -416,18 +423,21 @@ Map apiPeer() {
     // Query via the query: map, not inline in the uri: 2.5.1.x drops an inline uri query
     // string (token/scanId are URL-safe, so the map carries them cleanly).
     String url; String method = 'GET'
-    Map q = [access_token: token]
+    Map q = [:]
     if (op == 'start')       { url = "${base}/audit/start"; method = 'POST' }
     else if (op == 'status') { url = "${base}/audit/status"; String rawSid = params.scanId as String; if (rawSid && rawSid ==~ /[A-Za-z0-9_\-]+/) q.scanId = rawSid }
     else                     { url = "${base}/audit/data" }
     try {
         Object body = null
         Closure handler = { resp -> body = resp.data }
-        if (method == 'POST') httpPost([uri: url, query: q, requestContentType: 'application/json', contentType: 'application/json', timeout: 30], handler)
-        else                  httpGet([uri: url, query: q, contentType: 'application/json', timeout: 90], handler)
+        Map common = [uri: url, headers: bearer(token), contentType: 'application/json']
+        if (q) common.query = q
+        if (method == 'POST') httpPost(common + [requestContentType: 'application/json', timeout: 30], handler)
+        else                  httpGet(common + [timeout: 90], handler)
         return jsonResponse(body ?: [:])
     } catch (Exception e) {
         String safeMsg = (e.message ?: '')?.replaceAll(/access_token=[^&\s]+/, 'access_token=REDACTED')
+                                           ?.replaceAll(/Bearer\s+\S+/, 'Bearer REDACTED')
         logWarn "peer ${idx} ${op} failed: ${e.class?.simpleName}: ${safeMsg}"
         return jsonResponse([error: "peer call failed"])
     }
