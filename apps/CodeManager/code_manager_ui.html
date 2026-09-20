@@ -52,6 +52,9 @@ const MOCK_DATA = { 'inventory': {"generatedAt":1787300000000,"appVersion":"0.1.
   'settings': {"txtEnable":true,"debugEnable":false,"traceEnable":false,"labelBadge":true,"notifyDeviceCount":0,"sweepTtlHours":24,"sweepMaxInflight":6,"brokenAfter":3,"appVersion":"0.1.1","uiVersion":"0.1.1"},
   'version/check': {"currentVersion":"0.1.1","latestVersion":"0.1.1","updateAvailable":false} };
 const T='${access_token}', B='${api_base}', APP_VERSION='${app_version}', cache={};
+// Token in the Authorization header, not the URL — keeps it out of hub and proxy
+// access logs. The platform matches the scheme case-sensitively: exactly "Bearer".
+const AUTH=(x)=>Object.assign({'Authorization':'Bearer '+T},x||{});
 const HUB_ORIGIN=(B.match(/^(https?:\/\/[^\/]+)\/apps\/api\//)||[])[1]||'';
 (function(){ const m=B.match(/^(https?:\/\/[^\/]+)\/apps\/api\/(\d+)/); const el=document.getElementById('cfgLink'); if(m&&el)el.href=m[1]+'/installedapp/configure/'+m[2]; else if(el)el.style.display='none'; })();
 let curTab = localStorage.getItem('cm_tab') || 'inventory';
@@ -65,12 +68,11 @@ async function api(ep){
   if(WORKBENCH&&MOCK_DATA[ep])return MOCK_DATA[ep];
   const hit=cache[ep];if(hit&&(Date.now()-hit.ts<CACHE_TTL_MS))return hit.d;
   if(inFlight[ep])return inFlight[ep];
-  const sep=ep.includes('?')?'&':'?';
-  inFlight[ep]=hubLimiter.run(async()=>{const r=await fetch(B+'/api/'+ep+sep+'access_token='+T);if(!r.ok)throw new Error('API '+r.status);return r.json()})
+  inFlight[ep]=hubLimiter.run(async()=>{const r=await fetch(B+'/api/'+ep,{headers:AUTH()});if(!r.ok)throw new Error('API '+r.status);return r.json()})
     .then(d=>{cache[ep]={d,ts:Date.now()};return d}).finally(()=>{delete inFlight[ep]});
   return inFlight[ep];
 }
-async function post(ep,p){if(WORKBENCH)return{success:true};const q=new URLSearchParams(p||{});q.set('access_token',T);return hubLimiter.run(async()=>{const r=await fetch(B+'/api/'+ep+'?'+q.toString(),{method:'POST'});if(!r.ok)throw new Error('API '+r.status);return r.json()})}
+async function post(ep,p){if(WORKBENCH)return{success:true};const q=new URLSearchParams(p||{});const qs=q.toString();return hubLimiter.run(async()=>{const r=await fetch(B+'/api/'+ep+(qs?'?'+qs:''),{method:'POST',headers:AUTH()});if(!r.ok)throw new Error('API '+r.status);return r.json()})}
 function drop(ep){if(ep)delete cache[ep];else Object.keys(cache).forEach(k=>delete cache[k])}
 
 // ===== Pure helpers (extracted by tests/*.js — keep dependency-free) =====
@@ -197,7 +199,7 @@ function tbl(cid,cols,rows,opts={}){
 
 // ===== Jobs: pollTimers registry, 2 s tick, 5 min cap, terminal 'done' =====
 const pollTimers={};
-function pollJob(jobId,onTick,onEnd){if(pollTimers[jobId])return;const t0=Date.now();pollTimers[jobId]=setInterval(async()=>{try{const j=await fetch(B+'/api/jobs/'+jobId+'?access_token='+T).then(r=>r.json());onTick(j);if(j.status!=='running'){clearInterval(pollTimers[jobId]);delete pollTimers[jobId];onEnd(j)}}catch(e){}if(Date.now()-t0>300000){clearInterval(pollTimers[jobId]);delete pollTimers[jobId];onEnd({status:'timeout'})}},2000)}
+function pollJob(jobId,onTick,onEnd){if(pollTimers[jobId])return;const t0=Date.now();pollTimers[jobId]=setInterval(async()=>{try{const j=await fetch(B+'/api/jobs/'+jobId,{headers:AUTH()}).then(r=>r.json());onTick(j);if(j.status!=='running'){clearInterval(pollTimers[jobId]);delete pollTimers[jobId];onEnd(j)}}catch(e){}if(Date.now()-t0>300000){clearInterval(pollTimers[jobId]);delete pollTimers[jobId];onEnd({status:'timeout'})}},2000)}
 
 // ===== Tabs =====
 async function rInventory(){

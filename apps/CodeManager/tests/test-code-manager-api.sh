@@ -66,15 +66,17 @@ if not access_token: print("Could not find access_token; open the app and click 
 api_base = f"http://{hub_ip}/apps/api/{instance_id}"
 info(f"API base: {api_base}")
 
+AUTH = lambda: {"Authorization": f"Bearer {access_token}"}   # header, not ?access_token= — keeps the token out of access logs (scheme is case-sensitive)
+
 def api_get(ep, timeout=60):
-    sep = "&" if "?" in ep else "?"
-    try: return json.loads(urllib.request.urlopen(f"{api_base}/api/{ep}{sep}access_token={access_token}", timeout=timeout).read().decode())
+    try: return json.loads(urllib.request.urlopen(urllib.request.Request(f"{api_base}/api/{ep}", headers=AUTH()), timeout=timeout).read().decode())
     except urllib.error.HTTPError as e: return {"_error": e.code}
     except Exception as e: return {"_error": str(e)}
 def api_post(ep, params=None, timeout=60):
-    q = dict(params or {}); q["access_token"] = access_token
+    q = dict(params or {})
+    sep = "?" if q else ""
     try:
-        req = urllib.request.Request(f"{api_base}/api/{ep}?{urllib.parse.urlencode(q)}", data=b"", method="POST")
+        req = urllib.request.Request(f"{api_base}/api/{ep}{sep}{urllib.parse.urlencode(q)}", data=b"", method="POST", headers=AUTH())
         return json.loads(urllib.request.urlopen(req, timeout=timeout).read().decode())
     except urllib.error.HTTPError as e: return {"_error": e.code}
     except Exception as e: return {"_error": str(e)}
@@ -111,9 +113,13 @@ if html:
     (ok if "function tbl(" in html else fail)("ui.html serves the real SPA (has function tbl()")
     (ok if "function makeLimiter(" in html else fail)("ui.html serves the real SPA (has function makeLimiter()")
 try:
-    urllib.request.urlopen(f"{api_base}/api/settings?access_token=bad", timeout=15); fail("bad token accepted")
-except urllib.error.HTTPError as e: (ok if e.code in (401, 403, 500) else fail)(f"bad token rejected ({e.code})")
-except Exception as e: warn(f"bad token check: {e}")
+    urllib.request.urlopen(f"{api_base}/api/settings?access_token=bad", timeout=15); fail("bad query-param token accepted")
+except urllib.error.HTTPError as e: (ok if e.code in (401, 403, 500) else fail)(f"bad query-param token rejected ({e.code})")
+except Exception as e: warn(f"bad query-param token check: {e}")
+try:
+    urllib.request.urlopen(urllib.request.Request(f"{api_base}/api/settings", headers={"Authorization": "Bearer bad"}), timeout=15); fail("bad Bearer token accepted")
+except urllib.error.HTTPError as e: (ok if e.code in (401, 403, 500) else fail)(f"bad Bearer token rejected ({e.code})")
+except Exception as e: warn(f"bad Bearer token check: {e}")
 # ── Task 4: inventory ─────────────────────────────────────────────────
 section("Inventory")
 gt_libs = fetch("/hub2/userLibraries") or []
