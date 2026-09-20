@@ -11,7 +11,7 @@ Reference for the internal admin HTTP APIs of a Hubitat Elevation hub. Hubitat o
 
 ## Read-only inventory endpoints
 
-- `GET /hub2/hubData` — hub metadata: `name`, `model`, `version` (firmware), `ipAddress` — no auth required
+- `GET /hub2/hubData` — hub metadata: `name`, `model`, `version` (firmware), `ipAddress` — no auth required. Carries no hub-security setting: `baseModel.userLoggedIn` is **session state** ("this request is authenticated"), not "security is enabled" — it reads `false` on a hub with security off. To read the setting, use the `/logout` probe under [App configuration](#app-configuration-addremove-devices-change-settings).
 - `GET /hub2/userDeviceTypes` — list user drivers (includes `usedBy` with device IDs/names)
 - `GET /hub2/userAppTypes` — list user app types
 - `GET /hub2/devicesList` — list all devices
@@ -81,6 +81,7 @@ Reference for the internal admin HTTP APIs of a Hubitat Elevation hub. Hubitat o
 - `POST /installedapp/update/json` — save app configuration. Content-Type must be **`application/x-www-form-urlencoded`** despite the `json` suffix; the `json` refers to the response format. Sending `application/json` returns HTTP 500 with no useful diagnostic.
 - **Session cookie required**: hub issues a `HUBSESSION` cookie on any GET; must be captured and sent with POST (`curl -c cookiejar -b cookiejar`)
 - **Loopback bypasses hub security:** `http://127.0.0.1:8080` (same-hub app→app calls and `/installedapp/`, `/hub2/`, `/device/`, `/hub/*` from on-hub code) is NOT gated by hub security — only off-hub LAN-IP access is. An on-hub integration hitting loopback needs no credential handling.
+- **Detecting whether hub security is enabled — no credentials needed:** on-hub, `GET http://127.0.0.1:8080/logout` with redirects disabled. `Location: http://127.0.0.1:8080/login` means security is ON; any other target means OFF. The OFF case is verified (302 to `/`, 2026-09-20, firmware 2.5.2.113); the ON case is taken from thebearmay's Hub Information Driver v3, which ships this probe as its `securityInUse` attribute (`hubInfoV3.groovy`, `checkSecurity()`/`getSecurity()`, added v3.1.7) — not independently re-verified here. Only discriminates from on-hub — off-hub against a secured hub every path redirects to `/login`. An app config page therefore never needs to ask the user whether hub security is on, and — given the loopback bullet above — an app whose HTTP calls all target loopback needs neither the flag nor the credentials.
 - `settings[{deviceInput}]` = comma-separated device IDs is the definitive device list
 - A bare `{name}=value` (no brackets) returns `{"status":"success"}` but **persists nothing** — only the `settings[{name}]` bracket form sticks (keep the `.type` metadata bare alongside it).
 - **Dynamically-added input rows must be seeded first** by POSTing the add-button via `/installedapp/btn` (fires `appButtonHandler`, whose `state` write persists). A dynamicPage only *declares* its grown inputs once `state` holds their ids, and `state` writes inside a page-render closure do NOT persist — so until the row exists, a settings POST for it is silently dropped. (`/installedapp/update/json` addresses `mainPage` only; genuine sub-pages remain un-POSTable — see below.)
@@ -143,13 +144,43 @@ Reference for the internal admin HTTP APIs of a Hubitat Elevation hub. Hubitat o
 - A device's invokable commands are listed in `GET /device/fullJson/{id}` under `device…commands[]` (each has `name`, `parameters`).
 - This is the **web-UI invocation channel**; its script-instance/binding lifecycle could differ from app- or Maker-API-driven calls. For production-representative behavior — and any test that cares about cross-invocation state — prefer the Maker API route `GET /apps/api/{appId}/devices/{deviceId}/{command}?access_token={token}`. (The two channels matched for command dispatch and binding persistence on firmware 2.5.0.143 — see [`hubitat-platform-notes.md`](hubitat-platform-notes.md).)
 
+## App OAuth endpoint authentication (`Bearer` header)
+
+Every app OAuth endpoint (`/apps/api/{appId}/{path}` — Maker API and any custom Groovy app with a `mappings` block) accepts the token as an **`Authorization: Bearer {TOKEN}` header** instead of the `?access_token={TOKEN}` query parameter. Prefer the header: a query-string token lands in hub and proxy access logs, DNS/filtering logs, browser history, and outbound `Referer` headers, and on the cloud relay it crosses the public internet in the URL.
+
+This is enforced by the platform's OAuth filter, not by app code — a rejected request never reaches the mapped handler and returns `401` with an XML body, `<oauth><error_description>null</error_description><error>invalid_token</error></oauth>`, rather than the JSON `AppException` shape an app-level error produces.
+
+Verified 2026-09-20 on firmware 2.5.2.113 (C-8 Pro, hub security off) and 2.5.1.183 (C-7, hub security on), against both a Maker API instance and a custom app's own endpoint:
+
+| Request | Result |
+|---|---|
+| `?access_token={TOKEN}` | 200 |
+| `Authorization: Bearer {TOKEN}`, no query param | 200 |
+| `Authorization: Bearer {WRONG}` | 401 |
+| no auth | 401 |
+
+Scope of the behavior:
+
+- Applies to **POST as well as GET** — a POST carrying only the header to a GET-only path returns `405 Method Not Allowed` (auth passed, routing failed), while the same POST with no auth returns `401`.
+- Applies to the **cloud relay** (`https://cloud.hubitat.com/api/{hubUID}/apps/{appId}/{path}`) identically. This is where the header matters most.
+- Independent of hub security — app OAuth endpoints never consult the hub login session.
+
+Three traps:
+
+- **The scheme is case-sensitive.** Only exactly `Bearer` authenticates; `bearer` and `BEARER` both return 401. This is off-spec (RFC 6750 §2.1 defines the scheme as case-insensitive), so an HTTP client or gateway that normalizes the scheme's case will break the request.
+- **No other form works.** A bare `Authorization: {TOKEN}` with no scheme, and `X-Auth-Token: {TOKEN}`, both return 401.
+- **The query parameter wins when present.** Wrong query param + correct header → 401; correct query param + wrong header → 200. The header is consulted only when `access_token` is absent from the URL, so a header cannot override a stale token left in a URL.
+
+Undocumented by Hubitat — nothing promises this across firmware versions. Code that relies on it should keep the query-param form as a fallback.
+
 ## Maker API specifics
 
 ### Token discovery
 
-- The access token is **not** in `settings` — it's embedded in HTML links inside `configPage.sections[].body[]` paragraphs
-- Look for `description` fields containing `access_token=` in paragraph body elements
-- Example: `<a href='http://{hub_ip}/apps/api/{id}/devices?access_token={TOKEN}'>`
+- **Preferred: `GET /installedapp/statusJson/{id}` → `appState[]`, the entry named `accessToken`.** A structured field, no HTML parsing. This is not Maker-API-specific — it works for any app instance, because `createAccessToken()` stores the token in `state.accessToken`. Verified 2026-09-20 on firmware 2.5.2.113 against a Maker API instance and a custom app; the token read this way authenticates the app's endpoints.
+- The entry is **absent** for an app that never called `createAccessToken()` (no OAuth endpoints), so treat a missing `accessToken` as "this app has no endpoints", not as a read failure.
+- Fallback: the token is also embedded in HTML links inside `configPage.sections[].body[]` paragraphs — look for `description` fields containing `access_token=`. Example: `<a href='http://{hub_ip}/apps/api/{id}/devices?access_token={TOKEN}'>`. Use this only if `appState` is unavailable; it breaks whenever the app's config page markup changes.
+- The token is **not** in `settings`.
 
 ### Device events via Maker API
 
