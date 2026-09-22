@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tool access</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --ink: #263238;
+    --muted: #78909c;
+    --line: #cfd8dc;
+    --hair: #eceff1;
+    --on-bg: #e8f5e9;
+    --on-ink: #2e7d32;
+    --off-bg: #eceff1;
+    --off-ink: #546e7a;
+    --sel: #cfe8d0;
+    --link: #1565c0;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+    flex: 0 0 auto;
+  }
+  header h1 { margin: 0; font-size: 16px; font-weight: 500; }
+  .tabs { display: flex; gap: 4px; margin-left: 8px; }
+  .tab {
+    padding: 6px 14px; min-height: 34px;
+    border: 1px solid var(--line); border-radius: 3px;
+    background: #fff; color: var(--off-ink);
+    font: inherit; font-size: 13px; cursor: pointer;
+  }
+  .tab[aria-selected="true"] { background: var(--on-bg); color: var(--on-ink); border-color: #a5d6a7; font-weight: 500; }
+  .spacer { flex: 1 1 auto; }
+  .icon-btn {
+    width: 34px; height: 34px; line-height: 1;
+    border: 1px solid var(--line); border-radius: 3px;
+    background: #fff; color: var(--off-ink); font-size: 18px; cursor: pointer;
+  }
+
+  main { flex: 1 1 auto; min-height: 0; padding: 14px 16px; }
+  .shuttle { height: 100%; display: flex; gap: 12px; align-items: stretch; }
+
+  .pane {
+    flex: 1 1 0; min-width: 0;
+    display: flex; flex-direction: column;
+    border: 1px solid var(--line); border-radius: 3px; overflow: hidden;
+  }
+  .pane-head {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 7px 10px; font-size: 12.5px; font-weight: 500;
+    border-bottom: 1px solid var(--line);
+  }
+  .pane.on  .pane-head { background: var(--on-bg);  color: var(--on-ink); }
+  .pane.off .pane-head { background: var(--off-bg); color: var(--off-ink); }
+
+  .pane-tools { display: flex; gap: 6px; padding: 7px 8px; border-bottom: 1px solid var(--hair); }
+  .filter {
+    flex: 1 1 auto; min-width: 0;
+    padding: 7px 9px; font: inherit; font-size: 13px;
+    border: 1px solid var(--line); border-radius: 3px; background: #fff; color: var(--ink);
+  }
+  .filter:focus { outline: 2px solid var(--link); outline-offset: -1px; }
+  .mini {
+    padding: 0 9px; min-height: 34px;
+    border: 1px solid var(--line); border-radius: 3px;
+    background: #fff; color: var(--off-ink); font: inherit; font-size: 12px; cursor: pointer;
+    white-space: nowrap;
+  }
+  .mini:hover, .icon-btn:hover, .tab:hover { background: #f5f7f8; }
+
+  .list { flex: 1 1 auto; overflow-y: auto; padding: 3px 0; margin: 0; list-style: none; }
+  .row {
+    display: block; width: 100%; text-align: left;
+    padding: 4px 10px; border: 0; background: none;
+    font-family: ui-monospace, "Roboto Mono", Menlo, monospace; font-size: 12px;
+    color: var(--ink); cursor: pointer;
+  }
+  .row:hover { background: #f5f7f8; }
+  .row[aria-pressed="true"] { background: var(--sel); }
+  .row:focus-visible { outline: 2px solid var(--link); outline-offset: -2px; }
+  .empty { padding: 12px 10px; font-size: 12.5px; color: var(--muted); font-style: italic; }
+
+  .arrows {
+    flex: 0 0 auto; align-self: center;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .arrow {
+    width: 44px; height: 44px;
+    border: 1px solid var(--line); border-radius: 3px;
+    background: #fff; color: var(--off-ink); font-size: 16px; cursor: pointer;
+  }
+  .arrow:hover:not(:disabled) { background: #f5f7f8; }
+  .arrow:disabled { opacity: .4; cursor: default; }
+
+  footer {
+    flex: 0 0 auto;
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 16px; border-top: 1px solid var(--line);
+  }
+  .status { font-size: 13px; color: var(--muted); }
+  .status.dirty { color: #e65100; }
+  .status.error { color: #c62828; }
+  .btn {
+    padding: 10px 20px; min-height: 44px;
+    border: 1px solid var(--line); border-radius: 3px;
+    background: #fff; color: var(--ink); font: inherit; font-size: 13px; cursor: pointer;
+  }
+  .btn.primary { background: var(--on-ink); border-color: var(--on-ink); color: #fff; }
+  .btn:disabled { opacity: .5; cursor: default; }
+
+  @media (max-width: 720px) {
+    .shuttle { flex-direction: column; }
+    .arrows { flex-direction: row; align-self: stretch; justify-content: center; }
+    .pane { min-height: 180px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Tool access</h1>
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" id="tab-gw" aria-selected="true" aria-controls="shuttle">Gateways</button>
+    <button class="tab" role="tab" id="tab-tl" aria-selected="false" aria-controls="shuttle">Tools</button>
+  </div>
+  <span class="spacer"></span>
+  <button class="icon-btn" id="close-x" aria-label="Close" title="Close">&times;</button>
+</header>
+
+<main>
+  <div class="shuttle" id="shuttle">
+    <section class="pane on" aria-label="Switched on">
+      <div class="pane-head"><span>On</span><span id="on-count">0</span></div>
+      <div class="pane-tools">
+        <input class="filter" id="on-filter" type="search" placeholder="Filter&hellip;" aria-label="Filter the on list">
+        <button class="mini" id="on-all">All</button>
+        <button class="mini" id="on-none">None</button>
+      </div>
+      <ul class="list" id="on-list"></ul>
+    </section>
+
+    <div class="arrows">
+      <button class="arrow" id="to-off" title="Switch off selected" aria-label="Switch off selected">&rarr;</button>
+      <button class="arrow" id="to-on" title="Switch on selected" aria-label="Switch on selected">&larr;</button>
+    </div>
+
+    <section class="pane off" aria-label="Switched off">
+      <div class="pane-head"><span>Off</span><span id="off-count">0</span></div>
+      <div class="pane-tools">
+        <input class="filter" id="off-filter" type="search" placeholder="Filter&hellip;" aria-label="Filter the off list">
+        <button class="mini" id="off-all">All</button>
+        <button class="mini" id="off-none">None</button>
+      </div>
+      <ul class="list" id="off-list"></ul>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <span class="status" id="status">Loading&hellip;</span>
+  <span class="spacer"></span>
+  <button class="btn" id="cancel">Close</button>
+  <button class="btn primary" id="save" disabled>Save</button>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  var API = "${api_base}";
+  var TOKEN = "${access_token}";
+
+  // Two independent shuttles; the tabs swap which one the panes are showing.
+  var sets = {
+    gw: { all: [], off: [], sel: { on: {}, off: {} } },
+    tl: { all: [], off: [], sel: { on: {}, off: {} } }
+  };
+  var tab = "gw";
+  var saved = null;   // JSON of the last persisted off-sets, for the dirty check
+  var busy = false;
+
+  var el = {};
+  ["on-count","off-count","on-list","off-list","on-filter","off-filter",
+   "on-all","on-none","off-all","off-none","to-off","to-on",
+   "status","save","cancel","close-x","tab-gw","tab-tl"].forEach(function (id) {
+    el[id] = document.getElementById(id);
+  });
+
+  function cur() { return sets[tab]; }
+  function onNames() { var s = cur(); return s.all.filter(function (n) { return s.off.indexOf(n) === -1; }); }
+  function offNames() { var s = cur(); return s.all.filter(function (n) { return s.off.indexOf(n) !== -1; }); }
+
+  function visible(names, side) {
+    var q = el[side + "-filter"].value.trim().toLowerCase();
+    if (!q) return names;
+    return names.filter(function (n) { return n.toLowerCase().indexOf(q) !== -1; });
+  }
+
+  function selectedIn(side) {
+    var picked = cur().sel[side];
+    return visible(side === "on" ? onNames() : offNames(), side)
+      .filter(function (n) { return picked[n]; });
+  }
+
+  function renderList(side, names) {
+    var list = el[side + "-list"];
+    var shown = visible(names, side);
+    list.textContent = "";
+    if (!shown.length) {
+      var li = document.createElement("li");
+      li.className = "empty";
+      li.textContent = names.length ? "nothing matches this filter" : "nothing here";
+      list.appendChild(li);
+      return;
+    }
+    var picked = cur().sel[side];
+    shown.forEach(function (name) {
+      var li = document.createElement("li");
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "row";
+      b.textContent = name;
+      b.setAttribute("aria-pressed", picked[name] ? "true" : "false");
+      b.addEventListener("click", function () {
+        if (picked[name]) { delete picked[name]; } else { picked[name] = true; }
+        render();
+      });
+      b.addEventListener("dblclick", function () {
+        picked[name] = true;
+        move(side === "on" ? "off" : "on");
+      });
+      li.appendChild(b);
+      list.appendChild(li);
+    });
+  }
+
+  function render() {
+    var on = onNames(), off = offNames();
+    el["on-count"].textContent = on.length;
+    el["off-count"].textContent = off.length;
+    renderList("on", on);
+    renderList("off", off);
+    el["to-off"].disabled = busy || selectedIn("on").length === 0;
+    el["to-on"].disabled = busy || selectedIn("off").length === 0;
+    el["tab-gw"].setAttribute("aria-selected", tab === "gw" ? "true" : "false");
+    el["tab-tl"].setAttribute("aria-selected", tab === "tl" ? "true" : "false");
+
+    var dirty = saved !== null && saved !== snapshot();
+    el.save.disabled = busy || !dirty;
+    if (!busy) {
+      el.status.className = "status" + (dirty ? " dirty" : "");
+      el.status.textContent = dirty
+        ? "unsaved changes"
+        : sets.gw.off.length + " gateway(s) and " + sets.tl.off.length + " tool(s) switched off";
+    }
+  }
+
+  function snapshot() {
+    return JSON.stringify({ gwOff: sets.gw.off.slice().sort(), tlOff: sets.tl.off.slice().sort() });
+  }
+
+  // direction "off" = move the on-side selection into the off-set, and back.
+  function move(direction) {
+    var s = cur();
+    var from = direction === "off" ? "on" : "off";
+    var names = selectedIn(from);
+    if (!names.length) return;
+    if (direction === "off") {
+      names.forEach(function (n) { if (s.off.indexOf(n) === -1) s.off.push(n); });
+    } else {
+      s.off = s.off.filter(function (n) { return names.indexOf(n) === -1; });
+    }
+    s.sel[from] = {};
+    render();
+  }
+
+  // "All" ticks everything the filter is currently showing — the select-all the
+  // stock picker never had. The arrows still do the moving.
+  function selectVisible(side) {
+    var s = cur();
+    visible(side === "on" ? onNames() : offNames(), side)
+      .forEach(function (n) { s.sel[side][n] = true; });
+    render();
+  }
+
+  function url(path) { return API + path + "?access_token=" + encodeURIComponent(TOKEN); }
+
+  function load() {
+    fetch(url("/api/catalog"), { headers: { "Accept": "application/json" } })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(function (d) {
+        sets.gw.all = d.gateways || [];
+        sets.tl.all = d.tools || [];
+        sets.gw.off = d.gwOff || [];
+        sets.tl.off = d.tlOff || [];
+        saved = snapshot();
+        render();
+      })
+      .catch(function (e) {
+        el.status.className = "status error";
+        el.status.textContent = "could not load: " + e.message;
+      });
+  }
+
+  function save() {
+    busy = true;
+    el.status.className = "status";
+    el.status.textContent = "saving…";
+    render();
+    fetch(url("/api/access"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ gwOff: sets.gw.off, tlOff: sets.tl.off })
+    })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(function () {
+        busy = false;
+        saved = snapshot();
+        render();
+        notify("saved");
+      })
+      .catch(function (e) {
+        busy = false;
+        render();
+        el.status.className = "status error";
+        el.status.textContent = "save failed: " + e.message;
+      });
+  }
+
+  function notify(kind) {
+    if (window.parent !== window) {
+      window.parent.postMessage({ source: "toolAccess", kind: kind }, "*");
+    }
+  }
+
+  function close() {
+    if (saved !== null && saved !== snapshot() &&
+        !window.confirm("Discard unsaved changes?")) return;
+    notify("close");
+  }
+
+  el["to-off"].addEventListener("click", function () { move("off"); });
+  el["to-on"].addEventListener("click", function () { move("on"); });
+  el["on-all"].addEventListener("click", function () { selectVisible("on"); });
+  el["off-all"].addEventListener("click", function () { selectVisible("off"); });
+  el["on-none"].addEventListener("click", function () { cur().sel.on = {}; render(); });
+  el["off-none"].addEventListener("click", function () { cur().sel.off = {}; render(); });
+  el["on-filter"].addEventListener("input", render);
+  el["off-filter"].addEventListener("input", render);
+  el["tab-gw"].addEventListener("click", function () { tab = "gw"; render(); });
+  el["tab-tl"].addEventListener("click", function () { tab = "tl"; render(); });
+  el.save.addEventListener("click", save);
+  el.cancel.addEventListener("click", close);
+  el["close-x"].addEventListener("click", close);
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") close(); });
+
+  load();
+})();
+</script>
+</body>
+</html>
