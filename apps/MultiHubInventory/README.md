@@ -108,9 +108,9 @@ The following are known constraints in v1:
 - **Z-Wave models still appear as raw hex IDs.** Manufacturers are looked up against a
   bundled Z-Wave maker-id table and shown by name; the model column has no equivalent
   mapping yet, so firmware-drift labels remain less readable than Zigbee entries.
-- **Hub Mesh mirrors are filtered, not deduped in a separate view.** Devices with
-  `protocol == 'Linked'` are excluded from all counts and the register; they do not appear in
-  a dedicated mesh-link view.
+- **Hub Mesh mismatch check covers on/off only.** Mirrors (`protocol == 'Linked'`) are excluded
+  from counts and the register and shown in the Hub Mesh tab against their source device; only
+  the on/off state is compared between the two.
 
 The following are planned but not in v1:
 

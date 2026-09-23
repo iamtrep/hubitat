@@ -1,6 +1,6 @@
 # Multi-Hub Inventory — TODO
 
-Backlog for the app. v0.1.0 is functional (deployed + verified on maison-pro); this is the
+Backlog for the app. v0.1.0 is functional (deployed + verified on the test hub); this is the
 remaining work.
 
 ## Done
@@ -36,7 +36,7 @@ MHI renders the `integration` column + a `connectionType` (CONN_DISPLAY) column,
 - **Cloud-relay peers: large `audit/data` 504s.** Cloud URLs now parse and the courier reaches
   them server-side — `op=start`/`op=status` (small responses) cross the relay fine. But fetching
   the full `audit/data` for a sizeable hub **times out: the Hubitat cloud relay returns HTTP 504
-  after ~10s** (verified 2026-05-24: chalet, 190 devices, scan completes `done` but `audit/data`
+  after ~10s** (verified 2026-05-24: a 190-device hub, scan completes `done` but `audit/data`
   → 504, ~10s, even on a direct curl). This is a Hubitat cloud-relay gateway-timeout/payload limit,
   not our code. Fix options: (a) add a **slim/projection mode** to HubDiagnostics `/api/audit/data`
   returning only the ~11 fields MHI uses (id, label, deviceTypeName, manufacturer, model, firmware,
@@ -63,6 +63,11 @@ MHI renders the `integration` column + a `connectionType` (CONN_DISPLAY) column,
   should share a driver. Computable from current audit fields (adjacent to firmware-drift).
 
 ## Low priority
+
+### Hub Mesh: compare more than on/off
+The Hub Mesh tab flags a mirror whose on/off state differs from its source. Extending that to a
+device's primary attribute (dimmer `level`, a sensor value) is fragile per driver and lower value
+than the on/off case, so it was left out of the first version.
 
 - **Row-click detail drawer** in the register (full audit record: apps-using, scheduled jobs,
   parent/children, namespace/driver).
