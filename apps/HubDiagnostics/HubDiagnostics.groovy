@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "5.83.5"
+@Field static final String CODE_VERSION = "5.83.6"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -2655,14 +2655,23 @@ private Object reqData(String path, String name, int timeout = 10) {
     return r.ok ? r.data : null
 }
 
-Map analyzeNetwork() {
+// Radio details go through the shared radio TTL cache, like getPerformanceData. fresh=true (config
+// snapshot) reads past it for a point-in-time record, and refreshes it.
+Map analyzeNetwork(boolean fresh = false) {
     return [
         network: reqData(NETWORK_CONFIG_PATH, "network configuration", 15),
-        zwave:   reqData(ZWAVE_DETAILS_PATH, "Z-Wave details", 20),
-        zigbee:  reqData(ZIGBEE_DETAILS_PATH, "Zigbee details", 20),
+        zwave:   radioDetails('zwaveDetails', ZWAVE_DETAILS_PATH, "Z-Wave details", fresh),
+        zigbee:  radioDetails('zigbeeDetails', ZIGBEE_DETAILS_PATH, "Zigbee details", fresh),
         matter:  reqData(MATTER_DETAILS_PATH, "Matter details", 15),
         hubMesh: reqData(HUB_MESH_PATH, "Hub Mesh", 15)
     ]
+}
+
+private Map radioDetails(String key, String path, String name, boolean fresh) {
+    if (!fresh) return (Map) cachedFetch(key, RADIO_CACHE_TTL_MS) { (Map) reqData(path, name, 20) ?: null }
+    Map data = (Map) reqData(path, name, 20) ?: null
+    cachePut(key, data)
+    return data
 }
 
 Map analyzeSystemHealth(Map shared = [:]) {
@@ -3373,7 +3382,7 @@ void createSnapshot() {
         timestampMs: now(),
         devices: analyzeDevices(),
         apps: analyzeApps(),
-        network: analyzeNetwork(),
+        network: analyzeNetwork(true),
         systemHealth: analyzeSystemHealth(),
         hubInfo: getHubInfo(),
         storage: fetchFileManagerStats(),
