@@ -15,6 +15,7 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 | **Attribute Logger (parent/child)** | Manages multiple Attribute Logger app instances |
 | **Bathroom Lighting Shadow** | Runs multiple lighting-control policies in parallel against shared sensors, drives an auto-created virtual switch per policy, and scores each policy without touching real lights. |
 | **Battery Change Logger** | Monitors battery levels and logs replacements to app history and an on-hub JSON file |
+| **Contact State Setter** | Sets selected contact sensors open or closed by injecting a contact event via sendEvent. |
 | **Humidity-Based Fan Controller** | Controls a bathroom extractor fan based on humidity levels compared to a reference sensor |
 | **Hydro-Québec Peak Period Manager** | Manages devices during Hydro-Québec peak periods |
 | **Mirror Switch** | Keeps a group of on/off devices in sync; any member changing drives the rest to match. |
@@ -30,7 +31,6 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 |---|---|
 | [HubDiagnostics/](./HubDiagnostics/) | Comprehensive hub diagnostics: inventory, performance tracking, network analysis, and snapshot comparison |
 | [LocationEventMapper/](./LocationEventMapper/) | TBD |
-| [LockCodeScheduler/](./LockCodeScheduler/) |  |
 | [LogMonitor/](./LogMonitor/) |  |
 | [MultiHubInventory/](./MultiHubInventory/) | Read-only cross-hub device inventory, aggregated from each hub's Hub Diagnostics audit API |
 | [sensors/](./sensors/) |  |
