@@ -212,10 +212,10 @@ Severity legend: 🔴 critical bug · 🟠 high (architecture / leverage) · �
 | C13 | Excessive complexity in `buildForumMarkdown` and `buildCrossReference` | 🟡 | Open | [ ] |
 | C14 | Version drift risk: `APP_VERSION` and `UI_VERSION` maintained separately | ⚪ | Open | [ ] |
 | C15 | Static `lastAuditResult` bypasses state management and consumes heap | 🟡 | Open | [ ] |
-| N1 | Volatile caches not cleared in `updated()`: the 4 radio/list caches + (R-8) `cachedCheckpointIndex`, `cachedSystemResources/At`, `cachedTemperature/At`, `cachedDatabaseSize/At`, `cachedCpuInfo/At`, `cachedLoadThreshold/At` | 🟠 | Open (scope grew, R-8) | [ ] |
-| N2 | Caching strategy fragmented: same hub endpoints fetched at 11+ call sites; only `getPerformanceData` uses the new TTL caches | 🟠 | Open | [ ] |
-| N3 | TTL cache pattern duplicated 4× in `getPerformanceData` (DRY) | 🟡 | Open | [ ] |
-| N4 | Checkpoint cache shares list reference with callers (no defensive copy); `cachedCheckpoints` → `loadCheckpointIndex`/`saveCheckpointIndex` (v5.33.0), concern persists (R-8) | 🟡 | Open | [ ] |
+| N1 | Volatile caches not cleared in `updated()`: the 4 radio/list caches + (R-8) `cachedCheckpointIndex`, `cachedSystemResources/At`, `cachedTemperature/At`, `cachedDatabaseSize/At`, `cachedCpuInfo/At`, `cachedLoadThreshold/At` | 🟠 | **Fixed** (`fb6e35c`): the TTL caches now share one `TTL_CACHE` map that `updated()` clears in one call, so a new cache can't be missed | [x] |
+| N2 | Caching strategy fragmented: same hub endpoints fetched at 11+ call sites; only `getPerformanceData` uses the new TTL caches | 🟠 | **Mostly fixed** (`fb6e35c`): `cachedFetch()` is used by the perf path and the async radio chain. Remaining direct fetches are deliberate (config snapshot and audit read fresh; `analyzeDevices`/`buildMeshFieldsMap` take prefetched data; the apps-list fetch is cheap), except `analyzeNetwork`, which still bypasses the radio TTL cache | [ ] |
+| N3 | TTL cache pattern duplicated 4× in `getPerformanceData` (DRY) | 🟡 | **Fixed** (`fb6e35c`): the four inline copies became `cachedFetch()` calls | [x] |
+| N4 | Checkpoint cache shares list reference with callers (no defensive copy); `cachedCheckpoints` → `loadCheckpointIndex`/`saveCheckpointIndex` (v5.33.0), concern persists (R-8) | 🟡 | **Fixed** (`235b4ec`): `loadCheckpointIndex()` returns a copy and `saveCheckpointIndex()` stores one | [x] |
 | N5 | Missing aggregator-rationale comments on `apiCode` and `apiPerformance` (other routes have them post-reorg) | ⚪ | Open | [ ] |
 | N6 | `getUIVersion` cache is `@Field static volatile`, not `state.cachedUIVersion` as #4 fix description claims | ⚪ | **Reconciled (R-8)** — accept session cache; `serveUI` no longer calls `getUIVersion`, so #4's hot-path concern is moot | [x] |
 | N7 | `_perfInFlight` in-flight guard is tab-local; could be lifted into `api()` to dedupe across all tabs | ⚪ | Open | [ ] |
@@ -897,7 +897,7 @@ Goal: ship the two real defects immediately. Both were one-line changes.
 - [x] **Test guard:** value-correctness assertions added to `test-hub-diagnostics-api.sh` for both — verifies `childIds` size == `childDevices` count, `childIds ∩ parentIds == ∅`, and `/api/apps userApps[*]disabled` count matches `/hub2/appsList` ground truth
 - [x] Bumped to v5.13.1; shipped via push + commit + mirror
 
-**Verified:** 175/175 PASS on maison-pro after fixes. Note on #7's user-visible impact recorded in the detailed section above (the bug was in a code path the SPA doesn't currently consume; fix is preventive).
+**Verified:** 175/175 PASS on the test hub after fixes. Note on #7's user-visible impact recorded in the detailed section above (the bug was in a code path the SPA doesn't currently consume; fix is preventive).
 
 ---
 
@@ -908,7 +908,7 @@ Goal: fix #1 + A1 by completing the half-built request-scoped cache.
 - [x] Added `private Map buildSharedCache(boolean includeNetwork = false)` — pre-fetches hubData, resources, temperature, databaseSize, hubAlerts; optional network/runtimeStats for heavier endpoints
 - [x] Wired through `apiDashboard`, `apiHealth`, `apiNetwork` (minimal — just hubData since only `fetchSecurityInfo` consumes it there). `apiPerformance` not touched (no hubData consumer in its path).
 - [x] Refactored `getHubInfo`, `fetchHubAlerts`, `fetchSecurityInfo` to accept optional `Map prefetchedHubData = null`. `fetchFirmwareUpdate` was excluded after re-verification — it hits `/hub/cloud/checkForUpdate`, not hubData.
-- [x] No behavioral regression: 175/175 PASS on maison-pro after refactor.
+- [x] No behavioral regression: 175/175 PASS on the test hub after refactor.
 
 **Trade-off note:** one timeout error observed post-deploy. Pre-R-2, two consumers each made independent fetch attempts; post-R-2 both share one. Downstream consumers still degrade gracefully — empty alerts, local fallback for hub.hardware, null cloudController. The deterministic single-attempt is the price of the call-count savings; resilience improvement (retry/backoff) is part of R-4 item #12 + A8.
 
@@ -929,7 +929,7 @@ Picked Option A (Option A-Pragmatic, really): pull the audit's 38-line inline CS
 
 - [ ] Bump to v5.15.0 (minor)
 
-**Verification:** generate audit on maison-pro, compare rendered HTML byte-for-byte against pre-refactor version (modulo the extracted block).
+**Verification:** generate an audit on the test hub, compare rendered HTML byte-for-byte against pre-refactor version (modulo the extracted block).
 
 ---
 

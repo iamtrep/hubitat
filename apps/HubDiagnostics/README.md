@@ -492,7 +492,7 @@ The scan crawls every device via `/device/fullJson/{id}` — one call per device
 
 ## App Settings Tab
 
-Most settings are accessible from the Hubitat admin UI under **Apps → Hub Diagnostics → Preferences**. Three settings are available only through the dashboard's App Settings tab and are not shown in the Hubitat admin UI: **Auto-refresh interval** (Live Data section), **Obfuscate labels in forum export** (Export section), and **Clear Enrichment Cache** (Maintenance section).
+Most settings are accessible from the Hubitat admin UI under **Apps → Hub Diagnostics → Preferences**. Three settings are available only through the dashboard's App Settings tab and are not shown in the Hubitat admin UI: **Auto-refresh interval** (Live Data section), **Obfuscate device/app names** (Export section), and **Clear Enrichment Cache** (Maintenance section).
 
 ### Config Snapshot Scheduling
 - Enable automatic snapshots: on/off
@@ -535,7 +535,7 @@ Changes take effect immediately in the dashboard without a page reload.
 - **Debug logging** — Enables verbose logging in the Hubitat Logs page. Useful for troubleshooting; leave off during normal use.
 
 ### Export
-- **Obfuscate labels in forum export** — Replaces device and app names with their driver/app type in forum exports. Useful for privacy when posting diagnostics in public forums.
+- **Obfuscate device/app names** — Replaces every device, app and file name, throughout the dashboard and in the forum export, with a stable adjective-noun alias (for example `amber-otter`). The same name always gets the same alias, so a screenshot and a forum post still line up. The CSV export keeps real names, since it is for local use.
 
 ### Maintenance
 - **Clear Enrichment Cache** — Clears the cached per-device classification data (controller type, parent app). The next analysis re-fetches this from the hub. Use this if device classifications appear stale after adding or re-pairing devices.
@@ -558,7 +558,7 @@ The forum export generates a concise Markdown-formatted summary suitable for pas
 - Zigbee: health, channel, LQI stats, weak/stale neighbors, top talkers
 - Hub Mesh and Matter status
 
-**Obfuscation:** Enable "Obfuscate labels in forum export" in App Settings to replace device names with driver types, so you can share diagnostics publicly without revealing device names or room labels.
+**Obfuscation:** Enable "Obfuscate device/app names" in App Settings to replace names with stable aliases in the forum export and across the dashboard, so you can share diagnostics or screenshots publicly without revealing device names or room labels.
 
 ---
 
