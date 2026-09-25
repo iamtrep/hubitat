@@ -167,7 +167,7 @@ Scope of the behavior:
 
 Three traps:
 
-- **The scheme is case-sensitive.** Only exactly `Bearer` authenticates; `bearer` and `BEARER` both return 401. This is off-spec (RFC 6750 §2.1 defines the scheme as case-insensitive), so an HTTP client or gateway that normalizes the scheme's case will break the request.
+- **The scheme is case-sensitive before 2.5.2.120.** On earlier firmware only exactly `Bearer` authenticates; `bearer` and `BEARER` both return 401. This is off-spec (RFC 6750 §2.1 defines the scheme as case-insensitive), so an HTTP client or gateway that normalizes the scheme's case will break the request. From 2.5.2.120 the match is case-insensitive, locally and through the cloud relay. Send exactly `Bearer` while any target hub runs older firmware.
 - **No other form works.** A bare `Authorization: {TOKEN}` with no scheme, and `X-Auth-Token: {TOKEN}`, both return 401.
 - **The query parameter wins when present.** Wrong query param + correct header → 401; correct query param + wrong header → 200. The header is consulted only when `access_token` is absent from the URL, so a header cannot override a stale token left in a URL.
 
