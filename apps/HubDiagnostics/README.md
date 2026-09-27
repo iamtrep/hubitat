@@ -359,9 +359,9 @@ Lists devices visible to the hub via mDNS / Bonjour / Avahi (`/hub/mdnsDevices/j
 
 **Alerts** — All active platform and calculated alerts plus messages from `/hub/messages` (info-severity, blue). Shows a green checkmark when there are none.
 
-**System Resources** — Free OS memory, CPU load (5-min avg), **Processors** (count, from `/hub/cpuInfo`), **Load Avg (1m)** (from `/hub/cpuInfo`), **Hub Load Threshold** (% from `/hub/advanced/getExcessiveLoadThreshold` — the level Hubitat itself considers "excessive"), Java heap usage (total/free/direct), temperature (°C and °F), and database size. Values are color-coded against configured thresholds. This card **auto-refreshes** in the background on a configurable interval (default 30 s); the last refresh time is shown in the card header.
+**System Resources** — Free OS memory, CPU load (5-min avg), **Processors** (count, from `/hub/cpuInfo`), **Load Avg (1m)** (from `/hub/cpuInfo`), **Hub Load Threshold** (% from `/hub/advanced/getExcessiveLoadThreshold` — the level Hubitat itself considers "excessive"), Java heap usage (total/free/direct), temperature (°C and °F), and database size. Free memory, CPU load and temperature each get a bar showing the current reading against the range since the last restart and the warning and critical thresholds; temperature also lists its 30-day range. The other readings share one line, with the database size's 30-day range. Values are color-coded against configured thresholds. This card **auto-refreshes** in the background on a configurable interval (default 30 s); the last refresh time is shown in the card header.
 
-**Resource History** — Time-series chart of free OS memory and CPU load over recent checkpoints. Horizontal reference lines mark the warning and critical memory thresholds. Re-renders on browser resize.
+**Resource History** — Time-series chart of free OS memory and CPU load since the last hub restart. Horizontal reference lines mark the warning and critical memory thresholds. Below it, a hub temperature chart covers the same period. The app samples temperature every 5 minutes and keeps hourly min/average/max summaries, along with the database size, for 30 days in File Manager (`hub_diagnostics_hourly.json`), so the chart fills in with hourly averages after a code update. Re-renders on browser resize.
 
 **Database & Storage** — Database size, state compression status, max events per device, max event age (days), max state age (days). A separate **File Manager** sub-section shows the total number of files stored in the hub's File Manager, total bytes used, and free storage space.
 
@@ -395,7 +395,7 @@ When no comparison is active, these cards show current values:
 
 ### Performance Checkpoints
 
-A checkpoint captures a point-in-time snapshot of runtime statistics, resources, radio message counts, hub temperature, and database size. Use checkpoints to compare performance before and after changes (new app, added devices, firmware update, etc.).
+A checkpoint captures a point-in-time snapshot of runtime statistics, resources, radio message counts, hub temperature, and database size. It also records the min, average and max of free memory, CPU load and temperature since the previous checkpoint. Use checkpoints to compare performance before and after changes (new app, added devices, firmware update, etc.).
 
 - **Take Perf Checkpoint** — manually capture the current state
 - **Auto-checkpoints** — optionally schedule automatic captures (5m–24h intervals, up to 50 retained)
@@ -515,16 +515,16 @@ Most settings are accessible from the Hubitat admin UI under **Apps → Hub Diag
 
 ### Alert Thresholds
 
-These thresholds control when resource metrics turn orange (warning) or red (critical) across the Dashboard, Health, and Performance tabs. Adjust them to match your hub model and environment — a C-7 hub will have different normal ranges than a C-8 Pro.
+These thresholds control when resource metrics turn orange (warning) or red (critical) across the Dashboard, Health, and Performance tabs. The defaults are generic starting points. Free memory and temperature vary from hub to hub: a C-7 often runs with 100–200 MB free while a C-8 Pro has several times that, and a hub's temperature depends mostly on where it sits. **Show observed ranges** on the dashboard's App Settings tab lists min, median and max for each reading since the last restart, over the last 30 days (temperature), across stored checkpoints, and across stored snapshots, next to the current thresholds. Set the warnings just outside the hub's normal range. CPU load is a load average, so 4.0 means all four cores are busy. The temperature defaults sit below the throttle points in Amlogic's reference Linux kernel for the A113X (70 °C to start throttling, 80 °C held); Hubitat does not publish its own limits.
 
 | Setting | Default | Range |
 |---|---|---|
-| Free memory warning (MB) | 100 | 10–2000 |
+| Free memory warning (MB) | 100 (200 on a C-8 Pro) | 10–2000 |
 | Free memory critical (MB) | 75 | 10–2000 |
 | CPU load average warning | 4.0 | 0.1–32 |
 | CPU load average critical | 8.0 | 0.1–32 |
-| Hub temperature warning (°C) | 50 | 20–100 |
-| Hub temperature critical (°C) | 77 | 20–100 |
+| Hub temperature warning (°C) | 65 | 20–100 |
+| Hub temperature critical (°C) | 80 | 20–100 |
 
 Changes take effect immediately in the dashboard without a page reload.
 

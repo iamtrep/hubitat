@@ -803,6 +803,34 @@ else:
     else:
         warn("No history data points (may be expected on fresh install)")
 
+# ── Test 7b: GET /api/health/ranges ───────────────────────────────────
+section("GET /api/health/ranges")
+
+rng = api_get("health/ranges")
+if "_error" in rng:
+    fail(f"Request failed: {rng['_error']}")
+else:
+    ok("Endpoint responds")
+    for key in ["temperature", "hourly"]:
+        if isinstance(rng.get(key), list):
+            ok(f"'{key}': {len(rng[key])} entries")
+        else:
+            fail(f"'{key}' missing or not a list")
+    for src, fields in [("history", ["time", "timeMs", "freeOS", "cpu"]),
+                        ("checkpoints", ["ts", "freeOS", "cpu", "temperature", "interval"]),
+                        ("snapshots", ["ts", "freeOS", "cpu", "temperature"])]:
+        rows = rng.get(src)
+        if not isinstance(rows, list):
+            fail(f"'{src}' missing or not a list")
+        elif not rows:
+            warn(f"'{src}' is empty (expected when none are stored)")
+        else:
+            missing = [f for f in fields if f not in rows[0]]
+            if missing:
+                fail(f"'{src}' entries missing {missing}")
+            else:
+                ok(f"'{src}': {len(rows)} entries with {fields}")
+
 # ── Test 8: GET /api/performance ──────────────────────────────────────
 section("GET /api/performance")
 

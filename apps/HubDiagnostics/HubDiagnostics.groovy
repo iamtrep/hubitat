@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "5.83.6"
+@Field static final String CODE_VERSION = "5.84.0"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -137,13 +137,15 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final long ONE_DAY_MS = 86400000
 @Field static final int API_TIMING_WINDOW = 20
 
-// System alert threshold defaults — these become the defaults for user-configurable settings
+// System alert threshold defaults — these become the defaults for user-configurable settings.
+// Temperature: Amlogic's A113X reference kernel starts CPU throttling at 70 °C and holds 80 °C.
 @Field static final int    DEFAULT_WARN_MEM_MB   = 100
+@Field static final int    DEFAULT_WARN_MEM_MB_C8PRO = 200   // 2 GB RAM, normally about 1 GB free
 @Field static final int    DEFAULT_CRIT_MEM_MB   = 75
 @Field static final double DEFAULT_WARN_CPU_LOAD = 4.0
 @Field static final double DEFAULT_CRIT_CPU_LOAD = 8.0
-@Field static final int    DEFAULT_WARN_TEMP_C   = 50
-@Field static final int    DEFAULT_CRIT_TEMP_C   = 77
+@Field static final int    DEFAULT_WARN_TEMP_C   = 65
+@Field static final int    DEFAULT_CRIT_TEMP_C   = 80
 
 // In-memory API response time tracking (reset on hub reboot)
 @Field static Map apiTimings = [:]
@@ -151,6 +153,7 @@ import java.util.concurrent.atomic.AtomicInteger
 // In-memory caches (survive within a JVM session; cleared on hub reboot/app reload)
 @Field static volatile String  uiVersionCache
 @Field static volatile String  zwaveStackCache
+@Field static volatile String  hubModelCache
 // v5.33.0: split-file storage replaces the single-blob cachedCheckpoints. Only the
 // slim index is cached in memory; per-checkpoint detail is read on demand.
 @Field static volatile List    cachedCheckpointIndex
@@ -262,6 +265,15 @@ private void cachePut(String key, Object data) {
 //   index file: small list of slim records (one per checkpoint) + detailFile pointer
 //   detail files: one per checkpoint, named with timestampMs, holds full content
 @Field static final String CHECKPOINT_INDEX_FILE = "hub_diagnostics_checkpoints_index.json"
+// Hourly rollups: [hourStartMs, tempMinC, tempAvgC, tempMaxC, tempSamples, databaseMB], newest last,
+// 30 days kept. Temperature fields are null for an hour with no samples; databaseMB is read once
+// per rollup and set on the last completed hour only.
+@Field static final String HOURLY_FILE = "hub_diagnostics_hourly.json"
+@Field static final int    HOURLY_KEEP = 720
+@Field static final int    TEMP_SAMPLE_CAP  = 8640   // 30 days of 5-minute samples
+// In-memory 5-minute temperature samples [ms, tempC] per app instance. Resets on hub reboot or
+// code push, like the hub's own memory history. Copy-on-write: the sampler replaces the list.
+@Field static final ConcurrentHashMap<Long, List> TEMP_SAMPLES = new ConcurrentHashMap<>()
 @Field static final String CHECKPOINT_DETAIL_PREFIX = "hub_diagnostics_checkpoint_"
 @Field static final String PERFORMANCE_COMPARISON_FILE = "hub_diagnostics_performance_comparison.json"
 
@@ -329,6 +341,7 @@ mappings {
     path('/api/code')             { action: [GET: 'apiCode'] }
     path('/api/performance')      { action: [GET: 'apiPerformance'] }
     path('/api/snapshots')        { action: [GET: 'apiSnapshots'] }
+    path('/api/health/ranges')    { action: [GET: 'apiHealthRanges'] }
     path('/api/snapshot/view')    { action: [GET: 'apiSnapshotView'] }
     path('/api/stats')            { action: [GET: 'apiStats'] }
     path('/api/version/check')    { action: [GET: 'apiVersionCheck'] }
@@ -483,8 +496,8 @@ Map settingsPage() {
         }
 
         section("Alert Thresholds") {
-            paragraph "Adjust these to match your hub model and environment. Defaults suit most C-8/C-8 Pro setups."
-            input "warnMemMb",   "number",  title: "Free memory warning (MB)",    defaultValue: DEFAULT_WARN_MEM_MB,   range: "10..2000", required: true
+            paragraph "Free memory and temperature vary from hub to hub. Show observed ranges on the dashboard's App Settings tab lists this hub's normal readings; set the warnings just outside them. CPU load is a load average: 4.0 means all four cores are busy."
+            input "warnMemMb",   "number",  title: "Free memory warning (MB)",    defaultValue: defaultWarnMemMb(),    range: "10..2000", required: true
             input "critMemMb",   "number",  title: "Free memory critical (MB)",   defaultValue: DEFAULT_CRIT_MEM_MB,   range: "10..2000", required: true
             input "warnCpuLoad", "decimal", title: "CPU load average warning",    defaultValue: DEFAULT_WARN_CPU_LOAD, range: "0.1..32",  required: true
             input "critCpuLoad", "decimal", title: "CPU load average critical",   defaultValue: DEFAULT_CRIT_CPU_LOAD, range: "0.1..32",  required: true
@@ -734,7 +747,25 @@ Map apiHealth() { return timed("health") { getHealthData(buildSharedCache(false)
 // Aggregator: parses a hub text endpoint into a stable structured payload.
 Map apiHealthHistory() {
     List memHistory = fetchMemoryHistory()
-    return jsonResponse([dataPoints: memHistory ?: []])
+    return jsonResponse([dataPoints: memHistory ?: [], temperature: tempSamples(), hourly: loadHourly()])
+}
+
+// Memory/CPU/temperature samples for the Settings "observed ranges" panel: the hub's since-boot
+// history plus the resource fields of stored checkpoints and snapshots. The SPA computes the ranges.
+Map apiHealthRanges() {
+    return timed("healthRanges") {
+        [
+            history:     (fetchMemoryHistory() ?: []).collect { Map p -> [time: p.time, timeMs: p.timeMs, freeOS: p.freeOS, cpu: p.cpuLoad] },
+            temperature:       tempSamples(),
+            hourly:            loadHourly(),
+            checkpoints: loadCheckpointIndex().collect { Map c ->
+                [ts: c.timestampMs, freeOS: c.resources?.freeOSMemory, cpu: c.resources?.cpuAvg5min, temperature: c.temperature,
+                 interval: c.interval] },
+            snapshots:   loadSnapshots().collect { Map sn ->
+                [ts: sn.timestampMs, freeOS: sn.systemHealth?.memory?.freeOSMemory, cpu: sn.systemHealth?.memory?.cpuAvg5min,
+                 temperature: sn.systemHealth?.temperature] }
+        ]
+    }
 }
 
 // Aggregator on the hot path (polled by the SPA every few seconds):
@@ -1006,7 +1037,7 @@ Map apiGetSettings() {
         inactivityDays:        (settings.inactivityDays ?: 7) as int,
         lowBatteryThreshold:   (settings.lowBatteryThreshold ?: 20) as int,
         chattyDeviceThreshold: (settings.chattyDeviceThreshold ?: 10) as int,
-        warnMemMb:             (settings.warnMemMb   ?: DEFAULT_WARN_MEM_MB)   as int,
+        warnMemMb:             (settings.warnMemMb   ?: defaultWarnMemMb())    as int,
         critMemMb:             (settings.critMemMb   ?: DEFAULT_CRIT_MEM_MB)   as int,
         warnCpuLoad:           (settings.warnCpuLoad ?: DEFAULT_WARN_CPU_LOAD) as double,
         critCpuLoad:           (settings.critCpuLoad ?: DEFAULT_CRIT_CPU_LOAD) as double,
@@ -1048,12 +1079,15 @@ Map apiUpdateSettings() {
         } else if (decimalKeys.contains(key)) {
             String numStr = value.toString()
             if (!numStr.isBigDecimal()) return
-            app.updateSetting(key, [type: "decimal", value: numStr.toBigDecimal()])
+            updateDecimalSetting(key, numStr.toBigDecimal())
         } else if (enumKeys.contains(key)) {
             app.updateSetting(key, [type: "enum", value: value as String])
             if (key == "checkpointInterval") reschedule = true
         }
     }
+    // Keep the native settings page's scale inputs in step, or updated() would copy them back.
+    if (body.containsKey("warnTempC")) app.updateSetting("warnTempInput", [type: "number", value: warnTempDisplayValue()])
+    if (body.containsKey("critTempC")) app.updateSetting("critTempInput", [type: "number", value: critTempDisplayValue()])
     if (reschedule) { unsubscribe(); unschedule(); initialize() }
     return jsonResponse([success: true])
 }
@@ -1635,6 +1669,7 @@ List fetchMemoryHistory() {
         Map parsed = parseHubCsv(text)
         if (!parsed || !parsed.rows) return []
         boolean headerWarned = false
+        Map hourCache = [:]
         ((List) parsed.rows).each { Object r ->
             Map row = (Map) r
             Map p = parseResourceRow(row)
@@ -1647,6 +1682,7 @@ List fetchMemoryHistory() {
             }
             dataPoints << [
                 time:       p.timestamp,
+                timeMs:     hubStampToMs(p.timestamp as String, hourCache),
                 freeOS:     p.freeOS,
                 cpuLoad:    p.cpu,
                 freeJava:   p.freeJava,
@@ -1688,6 +1724,131 @@ Float fetchTemperature() {
     }
 }
 
+// ===== TEMPERATURE HISTORY =====
+// Sampled every 5 minutes (always on). Samples stay in memory; each completed hour is rolled
+// up to min/avg/max in HOURLY_FILE, with the database size, so a longer view survives reboots
+// and code pushes.
+
+// Every 5 minutes at a per-install second offset. Also armed from the daily scheduledUISync so
+// installs updated by a code push alone (no updated() call) start sampling within a day.
+void armTemperatureSampling() {
+    int sec = (state.tempSampleOffsetSec != null) ? (state.tempSampleOffsetSec as int) : new Random().nextInt(60)
+    state.tempSampleOffsetSec = sec
+    schedule("${sec} 0/5 * * * ?", "sampleTemperature")
+}
+
+List tempSamples() {
+    return (List) (TEMP_SAMPLES.get(app.id as Long) ?: [])
+}
+
+List loadHourly() {
+    Object data = readFile(HOURLY_FILE)
+    return (data instanceof List) ? (List) data : []
+}
+
+void sampleTemperature() {
+    String text = (String) hubRequest(INTERNAL_TEMP_PATH, "internal temperature", "text", 5)
+    Float t = null
+    try { t = text?.trim()?.toFloat() } catch (Exception e) { }
+    if (t == null) return
+    long ms = now()
+    List next = new ArrayList(tempSamples())
+    next << [ms, t]
+    if (next.size() > TEMP_SAMPLE_CAP) next = new ArrayList(next.subList(next.size() - TEMP_SAMPLE_CAP, next.size()))
+    TEMP_SAMPLES.put(app.id as Long, next)
+    rollupHours(next, ms)
+}
+
+// Append rows for completed hours not yet written. Hours whose samples were lost to a reboot
+// or push get no temperature; a partly sampled hour carries its real sample count.
+private void rollupHours(List samples, long nowMs) {
+    long hourStart = nowMs.intdiv(3_600_000L) * 3_600_000L
+    long lastHour = hourStart - 3_600_000L
+    Long done = state.hourlyDoneMs as Long           // start of the last hour written
+    long fromMs = done != null ? done + 3_600_000L : 0L
+    if (fromMs >= hourStart) return
+    Map<Long, List> byHour = [:]
+    samples.each { List smp ->
+        long ts = smp[0] as long
+        if (ts >= fromMs && ts < hourStart) {
+            long h = ts.intdiv(3_600_000L) * 3_600_000L
+            if (!byHour[h]) byHour[h] = []
+            byHour[h] << (smp[1] as BigDecimal)
+        }
+    }
+    state.hourlyDoneMs = lastHour
+    Integer db = fetchDatabaseSize()
+    if (!byHour.containsKey(lastHour)) byHour[lastHour] = []
+    List rows = new ArrayList(loadHourly())
+    byHour.keySet().sort().each { Long h ->
+        List v = byHour[h]
+        List row = v ? [h, v.min(), (v.sum() / v.size()).setScale(1, BigDecimal.ROUND_HALF_UP), v.max(), v.size()]
+                     : [h, null, null, null, 0]
+        row << (h == lastHour ? db : null)
+        rows << row
+    }
+    if (rows.size() > HOURLY_KEEP) rows = rows.subList(rows.size() - HOURLY_KEEP, rows.size())
+    writeFile(HOURLY_FILE, groovy.json.JsonOutput.toJson(rows))
+}
+
+// Hub resource CSV stamps are "MM-dd HH:mm:ss" in hub local time with no year. Parses the
+// hour once per distinct hour (cached in hourCache) and assumes the current year, or the
+// previous one when that lands in the future (history spanning New Year).
+Long hubStampToMs(String stamp, Map hourCache) {
+    if (!stamp || stamp.length() < 14) return null
+    try {
+        String hourKey = stamp.substring(0, 8)
+        Long hourMs = hourCache[hourKey] as Long
+        if (hourMs == null) {
+            int year = new Date().format("yyyy", location.timeZone).toInteger()
+            hourMs = Date.parse("yyyy-MM-dd HH", "${year}-${hourKey}", location.timeZone).time
+            if (hourMs > now() + 86_400_000L) hourMs = Date.parse("yyyy-MM-dd HH", "${year - 1}-${hourKey}", location.timeZone).time
+            hourCache[hourKey] = hourMs
+        }
+        return hourMs + stamp.substring(9, 11).toInteger() * 60_000L + stamp.substring(12, 14).toInteger() * 1000L
+    } catch (Exception e) {
+        return null
+    }
+}
+
+// Free memory, CPU load and temperature over the interval since the previous checkpoint
+// (or since the earliest sample available): [fromMs, toMs, freeOS:{min,avg,max,n}, cpu:…, temperature:…].
+private Map buildIntervalSummary(long toMs) {
+    List idx = loadCheckpointIndex()
+    Long fromMs = idx ? (idx[0].timestampMs as Long) : null
+    List mem = [], cpu = [], temp = []
+    Long firstMs = null
+    (fetchMemoryHistory() ?: []).each { Map p ->
+        Long ms = p.timeMs as Long
+        if (ms == null || ms > toMs || (fromMs != null && ms <= fromMs)) return
+        if (firstMs == null || ms < firstMs) firstMs = ms
+        mem << (p.freeOS as BigDecimal); cpu << (p.cpuLoad as BigDecimal)
+    }
+    tempSamples().each { List smp ->
+        long ms = smp[0] as long
+        if (ms > toMs || (fromMs != null && ms <= fromMs)) return
+        if (firstMs == null || ms < firstMs) firstMs = ms
+        temp << (smp[1] as BigDecimal)
+    }
+    return [fromMs: fromMs ?: firstMs, toMs: toMs,
+            freeOS: summarizeValues(mem, 0), cpu: summarizeValues(cpu, 2), temperature: summarizeValues(temp, 1)]
+}
+
+private Map summarizeValues(List vals, int scale) {
+    if (!vals) return null
+    BigDecimal avg = ((BigDecimal) vals.sum() / vals.size()).setScale(scale, BigDecimal.ROUND_HALF_UP)
+    return [min: vals.min(), avg: avg, max: vals.max(), n: vals.size()]
+}
+
+// Model-dependent default for the free-memory warning; the hub model is looked up once per code load.
+private int defaultWarnMemMb() {
+    if (hubModelCache == null) {
+        Map r = hubMapRequest(HUB_DATA_PATH, "hub data", 10)
+        if (r.ok) hubModelCache = (r.data?.model ?: "") as String
+    }
+    return hubModelCache == "C-8 Pro" ? DEFAULT_WARN_MEM_MB_C8PRO : DEFAULT_WARN_MEM_MB
+}
+
 // ===== TEMPERATURE THRESHOLDS =====
 // The internal reading and the warn/crit thresholds are ALWAYS Celsius internally
 // (warnTempC/critTempC), so comparisons stay valid no matter what scale the hub is set to —
@@ -1702,6 +1863,13 @@ private BigDecimal scaleToC(Number v) {
     BigDecimal c = (getTemperatureScale() == "F") ? (((v - 32) * 5 / 9) as BigDecimal) : (v as BigDecimal)
     return (Math.round(c.doubleValue() * 10) / 10.0) as BigDecimal
 }
+// updateSetting leaves a setting unchanged when it was first stored under another type; older
+// installs hold warnTempC/critTempC as "number". Removing it first lets the decimal write land.
+private void updateDecimalSetting(String key, BigDecimal value) {
+    app.removeSetting(key)
+    app.updateSetting(key, [type: "decimal", value: value.setScale(1, BigDecimal.ROUND_HALF_UP)])
+}
+
 private BigDecimal warnTempCValue() { (settings.warnTempC != null ? settings.warnTempC : DEFAULT_WARN_TEMP_C) as BigDecimal }
 private BigDecimal critTempCValue() { (settings.critTempC != null ? settings.critTempC : DEFAULT_CRIT_TEMP_C) as BigDecimal }
 private int warnTempDisplayValue() { Math.round(cToScale(warnTempCValue()).doubleValue()) as int }
@@ -3683,6 +3851,7 @@ private Map buildCheckpointIndexEntry(Map cp, String detailFile) {
         resources: cp?.resources,
         temperature: cp?.temperature,
         databaseSize: cp?.databaseSize,
+        interval: cp?.interval,
         detailFile: detailFile
     ]
 }
@@ -3753,6 +3922,11 @@ void deleteCheckpointDetail(String filename) {
 // and async (scheduledCheckpoint) paths. Persists detail file first, then updates the
 // index. Trims oldest entries beyond settings.maxCheckpoints, deleting their detail files.
 void persistCheckpoint(Map cp) {
+    try {
+        cp.interval = buildIntervalSummary((cp.timestampMs ?: now()) as long)
+    } catch (Exception e) {
+        logWarn "persistCheckpoint: interval summary skipped: ${e.message}"
+    }
     String filename = saveCheckpointDetail(cp)
     if (!filename) {
         logError "persistCheckpoint: detail file write failed; index unchanged"
@@ -4546,8 +4720,8 @@ void updated() {
     state.installed = true
     // Convert the scale-display threshold inputs to canonical Celsius storage. Thresholds are
     // always compared in Celsius, so a later hub scale change can never reinterpret them.
-    if (settings.warnTempInput != null) app.updateSetting("warnTempC", [type: "decimal", value: scaleToC(settings.warnTempInput as BigDecimal)])
-    if (settings.critTempInput != null) app.updateSetting("critTempC", [type: "decimal", value: scaleToC(settings.critTempInput as BigDecimal)])
+    if (settings.warnTempInput != null) updateDecimalSetting("warnTempC", scaleToC(settings.warnTempInput as BigDecimal))
+    if (settings.critTempInput != null) updateDecimalSetting("critTempC", scaleToC(settings.critTempInput as BigDecimal))
     unsubscribe()
     unschedule()
     // clear session-scoped caches so config/hardware changes take effect immediately
@@ -4694,6 +4868,8 @@ void initialize() {
         logInfo "Automatic perf checkpoints scheduled every ${interval} minute(s) at :${mm}:${ss} past the hour"
     }
 
+    armTemperatureSampling()
+
     // v5.15.0: daily UI sync moved out of serveUI hot path. 03:17 local time, off-peak.
     schedule("0 17 3 * * ?", "scheduledUISync")
     logInfo "Daily UI sync scheduled at 03:17"
@@ -4737,6 +4913,7 @@ void checkpointSwitchHandler(evt) {
 
 void scheduledUISync() {
     logDebug "Running scheduled UI sync"
+    if (state.tempSampleOffsetSec == null) armTemperatureSampling()
     syncUI(false)
 }
 

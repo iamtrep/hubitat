@@ -142,7 +142,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.83.6";
+const CODE_VERSION = "5.84.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -1082,7 +1082,7 @@ function downloadRecording(buf, meta, filenameProtocol){
 function mc(l,v,c){const s=c?' style="color:'+c+'"':'';return'<div class="m"><div class="m-l">'+h(l)+'</div><div class="m-v"'+s+'>'+(v??'N/A')+'</div></div>'}
 function ni(l,v,c){const s=c?' style="color:'+c+';font-weight:600"':'';return'<div class="ni"><div class="nl">'+h(l)+'</div><div class="nv"'+s+'>'+h(String(v??'N/A'))+'</div></div>'}
 // Module-level thresholds with hardcoded defaults — updated when settings load
-let TH={warnMemMb:100,critMemMb:75,warnCpuLoad:4,critCpuLoad:8,warnTempC:50,critTempC:77,chattyDeviceThreshold:10};
+let TH={warnMemMb:100,critMemMb:75,warnCpuLoad:4,critCpuLoad:8,warnTempC:65,critTempC:80,chattyDeviceThreshold:10};
 
 // ===== TEMPERATURE SCALE =====
 // The reading AND the warn/crit thresholds (TH.warnTempC/critTempC) are always Celsius —
@@ -1878,20 +1878,53 @@ function renderDashRes(r,d){
   if(d.temperature!=null)o+=mc('Temperature',ftemp(d.temperature),sev(d.temperature,TH.warnTempC,TH.critTempC,false));
   if(d.databaseSize!=null)o+=mc('Database',d.databaseSize+' MB');
   return o}
+// Since-restart ranges for the Health resource tiles; set when health/history loads.
+let resRanges=null;
+function computeResRanges(hh){
+  const pts=hh.dataPoints||[];if(!pts.length)return null;
+  const rng=a=>{a=a.filter(v=>typeof v==='number'&&!isNaN(v)).sort((x,y)=>x-y);if(!a.length)return null;const k=a.length>>1;return{lo:a[0],hi:a[a.length-1],med:a.length%2?a[k]:(a[k-1]+a[k])/2}};
+  const ts=tempSeries(hh,pts[0].timeMs||0),all=hh.hourly||[],hr=all.filter(r=>r[2]!=null),db=all.map(r=>r[5]).filter(v=>v!=null);
+  return{mem:rng(pts.map(p=>p.freeOS)),cpu:rng(pts.map(p=>p.cpuLoad)),
+    temp:ts.length>1?{lo:Math.min(...ts.map(p=>p.lo??p.c)),hi:Math.max(...ts.map(p=>p.hi??p.c))}:null,
+    temp30:hr.length?{lo:Math.min(...hr.map(r=>r[1])),hi:Math.max(...hr.map(r=>r[3]))}:null,
+    db30:db.length?{lo:Math.min(...db),hi:Math.max(...db)}:null}
+}
+// Range bar: since-restart band, current-value dot (severity color), warning/critical ticks.
+function resBar(cur,band,w,c,min,max,low){
+  const pc=v=>Math.max(0,Math.min(100,(v-min)/((max-min)||1)*100));
+  let b='<div style="position:relative;height:8px;background:#e6e6e6;border-radius:4px;margin:10px 0 4px">';
+  if(band)b+=`<div style="position:absolute;left:${pc(band.lo)}%;width:${Math.max(1,pc(band.hi)-pc(band.lo))}%;top:0;bottom:0;background:var(--primary);opacity:.35;border-radius:4px"></div>`;
+  b+=`<div title="Warning" style="position:absolute;left:${pc(w)}%;top:-3px;bottom:-3px;width:2px;background:var(--warn)"></div>`;
+  b+=`<div title="Critical" style="position:absolute;left:${pc(c)}%;top:-3px;bottom:-3px;width:2px;background:var(--crit)"></div>`;
+  if(cur!=null)b+=`<div style="position:absolute;left:calc(${pc(cur)}% - 6px);top:-3px;width:12px;height:12px;border-radius:50%;background:${sev(cur,w,c,low)};border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.25);box-sizing:border-box"></div>`;
+  return b+'</div>'}
+function resTile(label,val,col,bar,lines){
+  return `<div class="m" style="padding:12px 14px"><div class="m-l">${label}</div><div class="m-v" style="color:${col}">${val??'N/A'}</div>${bar}`+
+    lines.map(t=>`<div style="font-size:11px;color:var(--muted);margin-top:3px">${t}</div>`).join('')+'</div>'}
 function renderHealthRes(r,d){
-  let o='';
-  o+=resMemCard(r);
-  o+=mc('CPU Load (5m)',r.cpuAvg5min?.toFixed(2),sev(r.cpuAvg5min,TH.warnCpuLoad,TH.critCpuLoad,false));
-  if(d.cpuInfo){const ci=d.cpuInfo;
-    if(ci.processors!=null)o+=mc('Processors',ci.processors);
-    if(ci.loadAverage!=null)o+=mc('Load Avg (1m)',ci.loadAverage.toFixed(2));
+  const R=resRanges||{},wM=TH.warnMemMb*1024,cM=TH.critMemMb*1024;
+  let o='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px">';
+  const m=R.mem,mMax=Math.max(m?m.hi:0,r.freeOSMemory||0,wM)*1.1;
+  o+=resTile('Free OS Memory',fmem(r.freeOSMemory),sev(r.freeOSMemory,wM,cM,true),resBar(r.freeOSMemory,m,wM,cM,0,mMax,true),
+    (m?[`Since restart ${fmem(m.lo)} – ${fmem(m.hi)}, median ${fmem(m.med)}`]:[]).concat(`Warning ${TH.warnMemMb} MB · critical ${TH.critMemMb} MB`));
+  const c=R.cpu,cMax=Math.max(TH.critCpuLoad,c?c.hi:0,r.cpuAvg5min||0)*1.1;
+  o+=resTile('CPU Load (5m)',r.cpuAvg5min?.toFixed(2),sev(r.cpuAvg5min,TH.warnCpuLoad,TH.critCpuLoad,false),resBar(r.cpuAvg5min,c,TH.warnCpuLoad,TH.critCpuLoad,0,cMax,false),
+    (c?[`Since restart ${c.lo.toFixed(2)} – ${c.hi.toFixed(2)}, median ${c.med.toFixed(2)}`]:[]).concat(`Warning ${TH.warnCpuLoad} · critical ${TH.critCpuLoad}`));
+  if(d.temperature!=null){
+    const t=R.temp,tl=[];
+    if(t)tl.push(`Since restart ${ftemp(t.lo)} – ${ftemp(t.hi)}`);
+    if(R.temp30)tl.push(`30 days ${ftemp(R.temp30.lo)} – ${ftemp(R.temp30.hi)}`);
+    tl.push(`Warning ${ftemp(TH.warnTempC)} · critical ${ftemp(TH.critTempC)}`);
+    o+=resTile('Temperature',ftempBoth(d.temperature),sev(d.temperature,TH.warnTempC,TH.critTempC,false),
+      resBar(d.temperature,t,TH.warnTempC,TH.critTempC,20,Math.max(TH.critTempC,t?t.hi:0,d.temperature)+10,false),tl);
   }
-  if(d.loadThreshold!=null)o+=mc('Hub Load Threshold',d.loadThreshold+'%');
-  o+=mc('Total Java Memory',fmem(r.totalJavaMemory));o+=mc('Free Java Memory',fmem(r.freeJavaMemory));
-  o+=mc('Direct Java Memory',fmem(r.directJavaMemory));
-  if(d.temperature!=null)o+=mc('Temperature',ftempBoth(d.temperature),sev(d.temperature,TH.warnTempC,TH.critTempC,false));
-  if(d.databaseSize!=null)o+=mc('Database',d.databaseSize+' MB');
-  return o}
+  o+='</div><div style="display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12px;color:var(--muted);margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">';
+  const sm=(k,v)=>v==null?'':`<span>${k} <b style="color:var(--text)">${v}</b></span>`;
+  const ci=d.cpuInfo||{};
+  o+=sm('Processors',ci.processors)+sm('Load avg (1m)',ci.loadAverage?.toFixed(2))+sm('Load threshold',d.loadThreshold!=null?d.loadThreshold+'%':null)+
+     sm('Java total / free / direct',`${fmem(r.totalJavaMemory)} / ${fmem(r.freeJavaMemory)} / ${fmem(r.directJavaMemory)}`)+
+     sm('Database',d.databaseSize!=null?d.databaseSize+' MB'+(R.db30?` <span style="font-weight:normal;color:var(--muted)">(30 days ${R.db30.lo}–${R.db30.hi} MB)</span>`:''):null);
+  return o+'</div>'}
 function renderPerfRes(r){
   let o='';
   o+=resMemCard(r);
@@ -2758,9 +2791,9 @@ async function rHealth(){const P='p-health';loading(P);try{
   else o+='<div class="alert a-ok">\u2705 No active alerts</div>';
   // Resources
   if(d.resources){const r=d.resources;
-    o+='<div class="card"><div class="card-h">System Resources<span id="res-health-ts" style="float:right;font-size:11px;font-weight:normal;opacity:.6"></span></div><div class="card-b"><div id="res-health" class="metrics">'+renderHealthRes(r,d)+'</div></div></div>'}
+    o+='<div class="card"><div class="card-h">System Resources<span id="res-health-ts" style="float:right;font-size:11px;font-weight:normal;opacity:.6"></span></div><div class="card-b"><div id="res-health">'+renderHealthRes(r,d)+'</div></div></div>'}
   // Memory chart placeholder
-  o+='<div class="card"><div class="card-h">Resource History</div><div class="card-b"><div id="memChart"><div class="loading"><div class="spinner"></div><div>Loading history...</div></div></div></div></div>';
+  o+='<div class="card"><div class="card-h">Resource History</div><div class="card-b"><div id="memChart"><div class="loading"><div class="spinner"></div><div>Loading history...</div></div></div><div id="tempChart"></div></div></div>';
   // Database
   o+='<div class="card"><div class="card-h">Database & Storage</div><div class="card-b"><div class="metrics">';
   if(d.databaseSize!=null)o+=mc('Database Size',d.databaseSize+' MB');
@@ -2813,7 +2846,9 @@ async function rHealth(){const P='p-health';loading(P);try{
     {l:'Description',f:'description'}
   ],(d.events||[]).slice(0,25),{sc:0,sd:'desc',collapse:5,collapseLabel:'Hub Events'});
   // Fetch and render chart async
-  api('health/history').then(h=>{renderChart(h.dataPoints,'memChart')}).catch(()=>{document.getElementById('memChart').innerHTML='<i style="color:var(--muted)">Unable to load history</i>'});
+  api('health/history').then(h=>{renderChart(h.dataPoints,'memChart');
+    resRanges=computeResRanges(h);const rh=document.getElementById('res-health');if(rh&&d.resources)rh.innerHTML=renderHealthRes(d.resources,d);const dp=h.dataPoints||[],t0=dp.length?dp[0].timeMs:0,t1=dp.length?dp[dp.length-1].timeMs:0;
+    renderTempChart(tempSeries(h,t0||0),'tempChart',t0,t1,parseInt(document.querySelector('#memChart svg')?.getAttribute('width'))||0)}).catch(()=>{document.getElementById('memChart').innerHTML='<i style="color:var(--muted)">Unable to load history</i>'});
 }catch(e){err(P,e,rHealth)}}
 
 // ===== TAB: PERFORMANCE =====
@@ -3421,6 +3456,92 @@ function renderDiff(d,elId){
 }
 
 // ===== TAB: CONFIG =====
+// ===== HUB TEMPERATURE HISTORY =====
+// Series since sinceMs: hourly averages from the rollup file for hours with no in-memory
+// samples (before the last reboot or code push), then the 5-minute samples.
+function tempSeries(d,sinceMs){
+  const smp=(d.temperature||[]).map(([ms,c])=>({ms,c}));
+  const first=smp.length?smp[0].ms:Infinity;
+  const hr=(d.hourly||[]).filter(r=>r[2]!=null&&r[0]+3600000<=first).map(r=>({ms:r[0]+1800000,c:r[2],lo:r[1],hi:r[3],n:r[4]}));
+  return hr.concat(smp).filter(p=>p.ms>=sinceMs);
+}
+// Drawn on the resource-history chart's time window and width so the two line up.
+function renderTempChart(series,cid,winStart,winEnd,width){
+  const el=document.getElementById(cid);if(!el)return;
+  if(series.length<2){el.innerHTML='';return}
+  const ml=55,mr=50,mt=10,mb=22,ch=110,W=width||Math.max(400,el.offsetWidth||800),iw=W-ml-mr;
+  const t0=Math.min(winStart||series[0].ms,series[0].ms),t1=Math.max(winEnd||0,series[series.length-1].ms);
+  let lo=Math.min(...series.map(p=>p.lo??p.c)),hi=Math.max(...series.map(p=>p.hi??p.c));
+  lo=Math.floor(lo-3);hi=Math.max(Math.ceil(hi+3),TH.warnTempC+2);
+  const x=ms=>ml+(ms-t0)/((t1-t0)||1)*iw,y=c=>mt+ch-(c-lo)/(hi-lo)*ch;
+  let path='',prev=null;
+  series.forEach(p=>{path+=(prev==null||p.ms-prev>5400000?'M':'L')+x(p.ms).toFixed(1)+','+y(p.c).toFixed(1)+' ';prev=p.ms});
+  let grid='';
+  for(let i=0;i<=4;i++){const c=lo+(hi-lo)*i/4,yy=y(c);grid+=`<line x1="${ml}" y1="${yy}" x2="${W-mr}" y2="${yy}" stroke="#eee"/><text x="${ml-4}" y="${yy+4}" font-size="9" fill="#999" text-anchor="end">${Math.round(c2u(c))}</text>`}
+  const thr=(c,col)=>c<=hi?`<line x1="${ml}" y1="${y(c)}" x2="${W-mr}" y2="${y(c)}" stroke="${col}" stroke-dasharray="6" opacity=".5"/>`:'';
+  const fd=ms=>new Date(ms).toLocaleString([],{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+  el.innerHTML=`<div style="font-size:12px;color:var(--muted);margin:12px 0 2px">Hub temperature (${tSym()}), ${series.length} points, ${fd(t0)} to ${fd(t1)}</div>`+
+    `<div class="chart-wrap"><svg width="${W}" height="${mt+ch+mb}" viewBox="0 0 ${W} ${mt+ch+mb}">${grid}${thr(TH.warnTempC,'var(--warn)')}${thr(TH.critTempC,'var(--crit)')}`+
+    `<path d="${path}" fill="none" stroke="#C0392B" stroke-width="1.5"/>`+
+    `<text x="${ml}" y="${mt+ch+15}" font-size="9" fill="#999">${fd(t0)}</text><text x="${W-mr}" y="${mt+ch+15}" font-size="9" fill="#999" text-anchor="end">${fd(t1)}</text></svg></div>`;
+}
+
+// ===== OBSERVED RANGES (Settings → Alert Thresholds) =====
+// Min/median/max of each thresholded reading per source, next to the current thresholds.
+// Items are {v, lo?, hi?, n?}: aggregated items (hourly rollups, checkpoint intervals) carry
+// their own min/max and sample count; v is the average and feeds the median.
+function rangeStats(items){
+  const it=items.filter(x=>x&&typeof x.v==='number'&&!isNaN(x.v));if(!it.length)return null;
+  const v=it.map(x=>x.v).sort((a,b)=>a-b),k=v.length>>1;
+  return{min:Math.min(...it.map(x=>x.lo??x.v)),med:v.length%2?v[k]:(v[k-1]+v[k])/2,
+    max:Math.max(...it.map(x=>x.hi??x.v)),n:it.reduce((a,x)=>a+(x.n??1),0),all:v}
+}
+function renderObservedRanges(d){
+  const day=ms=>new Date(ms).toLocaleDateString();
+  const span=ts=>{ts=ts.filter(Boolean);return ts.length?day(Math.min(...ts))+' – '+day(Math.max(...ts)):''};
+  const pt=v=>v==null?null:{v};
+  const iv=s=>s?{v:s.avg,lo:s.min,hi:s.max,n:s.n}:null;
+  const hist=d.history||[],boot=hist.length&&hist[0].timeMs?hist[0].timeMs:0;
+  const temps=tempSeries(d,boot).map(p=>({v:p.c,lo:p.lo,hi:p.hi,n:p.n}));
+  const hrows=(d.hourly||[]).filter(r=>r[2]!=null),hourly=hrows.map(r=>({v:r[2],lo:r[1],hi:r[3],n:r[4]}));
+  const cps=d.checkpoints||[],snaps=d.snapshots||[];
+  const srcs=[
+    {name:'Since restart',span:hist.length?hist[0].time+' – '+hist[hist.length-1].time:'',
+      freeOS:hist.map(r=>pt(r.freeOS)),cpu:hist.map(r=>pt(r.cpu)),temperature:temps},
+    {name:'Last 30 days',span:span(hrows.map(r=>r[0])),freeOS:[],cpu:[],temperature:hourly},
+    {name:'Checkpoints',span:span(cps.map(c=>c.ts)),
+      freeOS:cps.map(c=>c.interval?iv(c.interval.freeOS):pt(c.freeOS)),
+      cpu:cps.map(c=>c.interval?iv(c.interval.cpu):pt(c.cpu)),
+      temperature:cps.map(c=>c.interval&&c.interval.temperature?iv(c.interval.temperature):pt(c.temperature))},
+    {name:'Snapshots',span:span(snaps.map(c=>c.ts)),
+      freeOS:snaps.map(c=>pt(c.freeOS)),cpu:snaps.map(c=>pt(c.cpu)),temperature:snaps.map(c=>pt(c.temperature))}];
+  const mets=[
+    {label:'Free memory',key:'freeOS',low:true,w:TH.warnMemMb*1024,fmt:fmem,thr:`${TH.warnMemMb} MB / ${TH.critMemMb} MB`},
+    {label:'CPU load',key:'cpu',w:TH.warnCpuLoad,fmt:v=>v.toFixed(2),thr:`${TH.warnCpuLoad} / ${TH.critCpuLoad}`},
+    {label:'Temperature',key:'temperature',w:TH.warnTempC,fmt:ftemp,thr:`${ftemp(TH.warnTempC)} / ${ftemp(TH.critTempC)}`}];
+  let o='<div class="tbl-wrap" style="margin-top:10px"><table><thead><tr><th></th>';
+  srcs.forEach(s=>o+=`<th>${h(s.name)}<div style="font-weight:normal;font-size:11px;opacity:.85">${h(s.span)}</div></th>`);
+  o+='<th>Warning / critical</th><th></th></tr></thead><tbody>';
+  mets.forEach(m=>{
+    const all=[];
+    o+=`<tr><td><b>${h(m.label)}</b></td>`;
+    srcs.forEach(s=>{
+      const st=rangeStats(s[m.key]);
+      if(!st){o+=`<td style="color:var(--muted)">not recorded</td>`;return}
+      all.push(...st.all);
+      o+=`<td>${m.fmt(st.min)} / ${m.fmt(st.med)} / ${m.fmt(st.max)}<div style="font-size:11px;color:var(--muted)">${st.n} samples</div></td>`;
+    });
+    const past=all.filter(v=>m.low?v<m.w:v>m.w).length;
+    const note=!all.length?'':past*2>=all.length?'<span style="color:var(--crit)">Warning is inside this hub\'s normal range</span>'
+      :past?`<span style="color:var(--warn)">${past} of ${all.length} readings past warning</span>`:'';
+    o+=`<td>${m.thr}</td><td>${note}</td></tr>`;
+  });
+  o+='</tbody></table></div>';
+  o+=`<p style="font-size:12px;color:var(--muted);margin:8px 0 0">Each cell shows min / median / max. `+
+     `For reference, Amlogic's Linux kernel for the A113X chip (C-5, C-7, C-8) starts throttling the CPU at ${Math.round(c2u(70))}${tSym()} and holds it at ${Math.round(c2u(80))}${tSym()}. Hubitat does not publish its own limits.</p>`;
+  return o;
+}
+
 async function rConfig(){const P='p-config';loading(P);try{
   drop('settings');
   const s=await api('settings');
@@ -3474,7 +3595,7 @@ async function rConfig(){const P='p-config';loading(P);try{
 
   // Alert Thresholds
   o+='<div class="card"><div class="card-h">Alert Thresholds</div><div class="card-b">';
-  o+=`<p style="font-size:13px;color:var(--muted);margin:0 0 10px">Adjust to match your hub model and environment. Defaults suit most C-8/C-8 Pro setups.</p>`;
+  o+=`<p style="font-size:13px;color:var(--muted);margin:0 0 10px">Free memory and temperature vary from hub to hub. Use <b>Show observed ranges</b> to see this hub's normal readings and set the warnings just outside them. CPU load is a load average: 4.0 means all four cores are busy.</p>`;
   o+=`<div class="cfg-row">`;
   o+=`<label>Free memory warning: <input type="number" id="cfg_warnMemMb" value="${s.warnMemMb}" min="10" max="2000" class="cfg-n"> MB</label>`;
   o+=`<label>Free memory critical: <input type="number" id="cfg_critMemMb" value="${s.critMemMb}" min="10" max="2000" class="cfg-n"> MB</label>`;
@@ -3485,7 +3606,8 @@ async function rConfig(){const P='p-config';loading(P);try{
   o+=`<label>Temperature warning: <input type="number" id="cfg_warnTempC" value="${Math.round(c2u(s.warnTempC))}" min="${tScale()==='F'?68:20}" max="${tScale()==='F'?212:100}" class="cfg-n"> ${tSym()}</label>`;
   o+=`<label>Temperature critical: <input type="number" id="cfg_critTempC" value="${Math.round(c2u(s.critTempC))}" min="${tScale()==='F'?68:20}" max="${tScale()==='F'?212:100}" class="cfg-n"> ${tSym()}</label>`;
   o+=`</div>`;
-  o+=`<div class="cfg-row"><button class="btn btn-p btn-s" id="cfg_saveThresholds">Save</button><span id="cfg_threshStatus" style="font-size:12px;color:var(--ok)"></span></div>`;
+  o+=`<div class="cfg-row"><button class="btn btn-p btn-s" id="cfg_saveThresholds">Save</button><span id="cfg_threshStatus" style="font-size:12px;color:var(--ok)"></span>`;
+  o+=`<button class="btn btn-p btn-s" id="cfg_showRanges">Show observed ranges</button></div><div id="cfg_ranges"></div>`;
   o+='</div></div>';
 
   // Maintenance
@@ -3526,16 +3648,24 @@ async function rConfig(){const P='p-config';loading(P);try{
     const _cT=parseInt(document.getElementById('cfg_critTempC').value);
     const toC=v=>Math.round(cClamp(u2c(v))*10)/10;
     const upd={
-      warnMemMb:   parseInt(document.getElementById('cfg_warnMemMb').value)||100,
+      warnMemMb:   parseInt(document.getElementById('cfg_warnMemMb').value)||TH.warnMemMb,
       critMemMb:   parseInt(document.getElementById('cfg_critMemMb').value)||75,
       warnCpuLoad: parseFloat(document.getElementById('cfg_warnCpuLoad').value)||4.0,
       critCpuLoad: parseFloat(document.getElementById('cfg_critCpuLoad').value)||8.0,
-      warnTempC:   isNaN(_wT)?50:toC(_wT),
-      critTempC:   isNaN(_cT)?77:toC(_cT)
+      warnTempC:   isNaN(_wT)?65:toC(_wT),
+      critTempC:   isNaN(_cT)?80:toC(_cT)
     };
     await saveSetting(upd);
     Object.assign(TH,upd);
     flash('cfg_threshStatus','Saved ✓');
+  };
+
+  document.getElementById('cfg_showRanges').onclick=async function(){
+    const el=document.getElementById('cfg_ranges');this.disabled=true;
+    el.innerHTML='<i style="color:var(--muted)">Loading…</i>';
+    try{drop('health/ranges');el.innerHTML=renderObservedRanges(await api('health/ranges'))}
+    catch(e){el.innerHTML='<i style="color:var(--muted)">Unable to load observed ranges</i>'}
+    finally{this.disabled=false}
   };
 
   document.getElementById('cfg_debugLogging').onchange=async function(){await saveSetting({debugLogging:this.checked})};
