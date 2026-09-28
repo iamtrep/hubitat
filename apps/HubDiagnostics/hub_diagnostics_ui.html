@@ -142,7 +142,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.85.0";
+const CODE_VERSION = "5.85.1";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -1158,7 +1158,7 @@ function composeAlerts(d){
   if(sig.zwaveRadioUpdate) out.push({severity:'warning',name:'Z-Wave radio firmware update available'});
   // Hub firmware update (present on both dashboard and health payloads). The Dashboard's
   // dedicated "Hub Firmware" card carries the release-notes link; this is the rollup entry.
-  if(fwUpdate) out.push({severity:'warning',name:`Hub firmware update available: v${fwVer||'?'}`});
+  if(fwUpdate) out.push(fu.beta?{severity:'info',name:`Hub firmware beta available: v${fwVer||'?'}`}:{severity:'warning',name:`Hub firmware update available: v${fwVer||'?'}`});
   // App code behind the bundled UI — the Groovy app needs re-importing.
   if(d.appVersion&&typeof isNewer==='function'&&isNewer(CODE_VERSION,d.appVersion))
     out.push({severity:'critical',name:`App update required — UI is v${CODE_VERSION} but app code is v${d.appVersion}`});
@@ -1989,7 +1989,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
     let b='';
     if(fu.updateAvailable){
       const rn=fu.releaseNotesUrl?' <a href="'+h(fu.releaseNotesUrl)+'" target="_blank" style="color:var(--link)">Release notes</a>':'';
-      b+='<div class="alert a-warn">\u2B06 Update available: <b>'+h(fu.availableVersion)+'</b> (you have '+h(fu.currentVersion)+').'+rn+'</div>';
+      b+='<div class="alert '+(fu.beta?'a-info':'a-warn')+'">\u2B06 Update available: <b>'+h(fu.availableVersion)+'</b>'+(fu.beta?' (beta)':'')+' (you have '+h(fu.currentVersion)+').'+rn+'</div>';
     }
     if(rv.length||fu.stableVersion){
       b+='<div style="font-size:13px;line-height:1.7">';
