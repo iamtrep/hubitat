@@ -76,6 +76,7 @@ These methods are firmware 2.5.0.143+. Code shipped to older hubs will throw `Mi
 ## Capabilities
 
 - Capabilities cannot change at runtime, so a multi-function driver must declare the **union** of every capability it might expose — which forces unused capabilities onto every instance and is hostile to consumers (dashboards, rules, app device-selection filters all key off capabilities). When one upstream system surfaces multiple device types, prefer fanning out into one child driver per type (parent app routes by type) over a single multi-capability driver.
+- `capability "RTSPStream"` does not exist on firmware 2.5.2.121 and earlier. A driver that must still compile there can wrap the declaration in `try { capability "RTSPStream" } catch (Exception e) {}` inside `metadata`. The hub serves the stream as MJPEG at `/hub2/videoStream/{deviceId}.mjpg` and checks the source with `POST /hub2/videoStream/{deviceId}/validate` (JSON reply with `success`, `message`, `width`, `height`). Drivers skip streaming when `getNumericHubVersion() < 9`.
 - There is no `capability "FirmwareUpdate"` — declaring it fails to compile (`Capability 'FirmwareUpdate' not found`). The convention is a plain `command "updateFirmware"` whose body returns `zigbee.updateFirmware()`.
 
 ## Thermostat driver modes
@@ -118,6 +119,21 @@ These methods are firmware 2.5.0.143+. Code shipped to older hubs will throw `Mi
 
 - The hub admin UI and **app configuration pages** (`/installedapp/configure/{id}`) load **Font Awesome 6 Pro** and **PrimeIcons** site-wide, so an app `dynamicPage` can use the hub's own `fa-*` / `pi-*` glyph classes and they match the admin UI in shape and size. Standalone HTML served from an app endpoint (`render` / OAuth report pages) or File Manager loads **neither** font — there, inline an SVG rather than relying on icon-font classes (cloud-served variants also can't reach `/ui2/...` asset paths). FA/PrimeIcons version specifics may age across firmware; verify by inspecting the loaded CSS.
 
+## App page rendering (`dynamicPage`)
+
+Verified against the hub's app-page templates (`/ui2/js/appUI.js`) on firmware 2.5.2.124. The firmware version that introduced each option is unknown.
+
+- `paragraph` emits its text **unescaped** whether or not `rawHtml` is set, so `<style>`, `onclick`, and `<a target='_blank'>` work either way. Escape any user, device, or network text before putting it in a paragraph.
+- `paragraph rawHtml: true, html` only drops the wrapper `<div style="white-space:pre-wrap; text-align:left">`. Use it for multi-line `"""` HTML, whose newlines and indentation otherwise render as visible whitespace (and stack with any `<br>`), and for flex or centered layouts. Keep plain paragraphs that rely on `\n` line breaks without it.
+- `section(sectionClass: "x")` sets the class on the section's wrapper div, which gives page CSS a scoping hook (per-section styling, multi-column layouts with a `@media` fallback).
+- On `input`, `styleClass:` lands on the cell div and `inputClass:` on the control itself. For buttons, `inputClass: "p-button"`, `"p-button p-button-outlined"`, or `"p-button bg-hubitat-primary-green text-white"` gives the native PrimeVue look. Buttons also accept `disabled:`.
+- App pages load PrimeFlex and PrimeVue CSS alongside the icon fonts (see below), so utility classes work in paragraph HTML: layout (`flex align-items-center gap-3`, `border-1 border-round p-3`), color (`bg-green-50`, `text-red-700`, `text-color-secondary`), and native message boxes (`p-message p-message-warn`).
+- `window.alertHubitat(html)` is a firmware UI global that opens the native modal dialog. Call it from an `onclick` in paragraph HTML; JSON-encode the HTML, then entity-escape `& ' < >` for a single-quoted attribute. It is alert-only (no confirm result).
+- The Done button can be hidden on a confirmation page so the only exits are explicit Cancel and Confirm: `#formApp:has(.my-confirm-section) #fieldsetAppButtons button[value='Done'] { display:none !important; }`. Pair it with a single-use token in the confirm `href` `params` so a refresh or stale link can't repeat the action.
+- `dynamicPage(refreshInterval: n)` re-renders the page every `n` seconds; set it only while async work is running (`busy ? 2 : 0`). An app still in initial setup can't run scheduled jobs, so have the page render itself collect the result, and tag each run with a nonce in `state` so callbacks from an abandoned run are ignored.
+- `/logs?tab=past&appId=${app.id}` deep-links to the app's past logs.
+- Selectors such as `#formApp`, `#fieldsetAppButtons`, `button.hrefElem[name^='_action_href_<name>']`, `.state-incomplete-text`, `.mdl-grid`, and `div.panel-body` style native elements but are internal markup, not API. Prefer PrimeFlex color tokens (`text-color`, `text-color-secondary`) over hard-coded hex so pages follow the theme.
+
 ## App label round-trip
 
 - HTML embedded in an app label via `updateLabel()` (e.g. a badge `<span>`) renders in the Apps list but does not always round-trip verbatim: saving the app's config page (the name/label input on Done) can return the label with its **HTML tags stripped**, leaving bare text. A "strip-then-reapply badge" routine anchored to the exact `<span>…</span>` element then fails to match the bare-text remnant and appends a fresh badge on each refresh — it self-stacks (stabilizing at a doubled badge). Strip a label badge by its **text content with optional/repeating markup**, never by exact HTML element.
@@ -125,4 +141,5 @@ These methods are firmware 2.5.0.143+. Code shipped to older hubs will throw `Mi
 ## Firmware changelog notes
 
 - The hub-as-HomeKit-**controller** app ("HomeKit Controller", C-8 Pro) was renamed to **"HomeKit Bridge"** in firmware 2.4.2.128 — code matching the literal app-type string should accept both. This is the accessory-controller direction (hub controls HomeKit accessories), distinct from the long-standing HomeKit Integration app that exposes hub devices to HomeKit.
+- Firmware 2.5.2.122 added `hubitat.helper.NetworkUtils.startReolinkDiscovery()` (returns a scan id) and `getReolinkDiscoveryStatus(scanId)` (`status` of `running`/`complete`/error, `candidates` of `[host, uid]`, `errorCode` such as `reply_port_in_use` when UDP 3000 is taken). Gate on the firmware version and also catch `MissingMethodException`.
 - Shelly and UniFi Network became **built-in** integrations in firmware 2.4.3.122; MQTT (export device data + run commands over MQTT, later an in-hub broker option and Home Assistant discovery) in 2.4.4.151+. A community app of the same name can still coexist, so match integrations by app-type id / built-in flag, not by literal name.
