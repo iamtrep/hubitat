@@ -9,8 +9,8 @@
 // shape the hub used to ship from /api/forum/data (apiForumData, now deleted). Same source of
 // truth: the tab endpoints and the old aggregator both derive from analyzeDevices/analyzeApps/
 // analyzeNetwork on the hub. This test pins the remap field-by-field so a tab-endpoint shape change
-// can't silently corrupt the export. assembleForumData is dependency-free, so it's extracted by
-// name (brace-matched) and run directly — bound to the shipped code, not a copy.
+// can't silently corrupt the export. assembleForumData and its one helper, zbMeshDetails, are
+// extracted by name (brace-matched) and run directly — bound to the shipped code, not a copy.
 //
 // Run: node apps/HubDiagnostics/tests/test-forum-export.js
 'use strict';
@@ -29,7 +29,7 @@ function extractFn(name) {
   return src.slice(start, i);
 }
 const tmp = path.join(os.tmpdir(), 'hd_forum_' + process.pid + '.js');
-fs.writeFileSync(tmp, extractFn('assembleForumData') + '\nmodule.exports = { assembleForumData };');
+fs.writeFileSync(tmp, extractFn('zbMeshDetails') + '\n' + extractFn('assembleForumData') + '\nmodule.exports = { assembleForumData };');
 const { assembleForumData } = require(tmp);
 process.on('exit', () => { try { fs.unlinkSync(tmp); } catch (e) {} });
 
@@ -61,14 +61,14 @@ const r = {
   },
   network: {
     uptimeSeconds: 90000,
-    network: { hasEthernet: true, hasWiFi: false, lanAddr: '192.168.1.5' },
+    network: { hasEthernet: true, hasWiFi: false, lanAddr: '192.0.2.5' },
     zwave: { enabled: true, healthy: true, region: 'US', zwaveJS: false, nodeCount: 20, version: '7.18',
              mesh: { avgPer: 0.5, totalRouteChanges: 4, nodes: [{ nodeId: 2, name: 'N2', state: 'OK', per: 0 }] },
              ghostNodes: [{ id: 9, name: 'Ghost', kind: 'ghost' }] },
     zigbee: { enabled: true, healthy: true, networkState: 'ONLINE', channel: 20, powerLevel: 8, deviceCount: 25,
               mesh: { neighbors: 10, avgLqi: 200, minLqi: 150, maxLqi: 255,
                       neighborDetails: [{ shortId: 'A1', lqi: 200, age: 1 }, { shortId: 'B2', lqi: 100, age: 9 }] } },
-    hubMesh: { enabled: true, peers: [{ name: 'Maison', ip: '192.168.1.213', offline: false, deviceCount: 20, varCount: 2 }] },
+    hubMesh: { enabled: true, peers: [{ name: 'Hub A', ip: '192.0.2.20', offline: false, deviceCount: 20, varCount: 2 }] },
     matter: { enabled: true, installed: true, devices: [{}, {}], networkState: 'Online', fabricId: 'A98634F7' }
   },
   health: {
@@ -112,7 +112,7 @@ t('appStats: userAppsList grouped-by app type; builtInInstances passed through',
   assert.strictEqual(d.appStats.builtInInstances['Notifier'], 2);
 });
 t('networkData carries raw config + zwave/zigbee with counts for the builder tweaks', () => {
-  assert.strictEqual(d.networkData.network.lanAddr, '192.168.1.5');
+  assert.strictEqual(d.networkData.network.lanAddr, '192.0.2.5');
   assert.strictEqual(d.networkData.zwave.nodeCount, 20);      // buildForumMarkdown reads nodeCount
   assert.strictEqual(d.networkData.zigbee.deviceCount, 25);   // buildForumMarkdown reads deviceCount
   assert.strictEqual(d.networkData.zwave.region, 'US');
@@ -141,7 +141,7 @@ t('Matter / Hub Mesh / Performance sections carried through for the builder', ()
   // Hub Mesh: builder reads networkData.hubMesh.peers (reshaped), not the raw hubList.
   assert(Array.isArray(d.networkData.hubMesh.peers), 'hubMesh.peers must be present');
   assert.strictEqual(d.networkData.hubMesh.peers[0].deviceCount, 20);
-  assert.strictEqual(d.networkData.hubMesh.peers[0].ip, '192.168.1.213');
+  assert.strictEqual(d.networkData.hubMesh.peers[0].ip, '192.0.2.20');
   // Performance: stats passthrough keeps the runtime + CPU-by-type fields the builder renders.
   assert.strictEqual(d.stats.totalDevicesRuntime, '1h 28m 5s');
   assert.strictEqual(d.stats.deviceStats[0].name, 'local');
