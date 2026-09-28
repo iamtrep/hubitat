@@ -39,6 +39,17 @@ Reference for the internal admin HTTP APIs of a Hubitat Elevation hub. Hubitat o
 
 - `GET /hub/advanced/disableHubProcessMonitor` / `GET /hub/advanced/enableHubProcessMonitor` — toggle the hub's process watchdog. **Widened in firmware 2.4.3.137**: these now ALSO control the critical-CPU auto-reboot added in 2.4.3.133 (the platform auto-reboots if CPU stays at a critical level for ≥15 min; suppressed during the first hour of uptime).
 
+## Platform versions and the Diagnostic Tool (port 8081)
+
+The Diagnostic Tool is a separate Jetty process at `http://{hub_ip}:8081` (plain HTTP only, not relayed by `cloud.hubitat.com`). It keeps running when the main platform is down. Its UI asks for the hub's MAC address and stores the returned token in the browser's `localStorage` under `hubitat-diagnostic-tool-token`; the MAC is in `GET /hub/details/json` → `macAddress`, which needs an admin session when hub security is on. The two reads below answer **without** that login, on hubs with and without hub security (verified 2026-09-27 on firmware 2.5.1.183 and 2.5.2.124). Both return `application/json`. CORS allows only `https://findmyhub.hubitat.com`, so a browser page served from the hub can't read them; call them server-side (an app's `httpPost` to `http://127.0.0.1:8081` works, sync and async).
+
+- `POST :8081/api/versions`: platform versions stored on the hub and restorable from the tool, `{"success":true, "hubList":["hub-2.5.2.120", …], "currentVersionExecuting":"hub-2.5.2.124"}`. Strip the `hub-` prefix. `GET` returns 404.
+- `POST :8081/api/hubInfo`: `{hubId, uv, hasServices, hubAvailable, pv, ip, hubTime, hv, stableVersion}`. `pv` is the running platform (`hub-` prefixed), `hv` the hardware model, `uv` the tool's own version, `stableVersion` the fallback release the tool's "switch to stable" installs. `hubId` carries a trailing `\n`.
+
+Downloading a release so it becomes restorable is a main-platform endpoint:
+
+- `GET /hub/advanced/downloadPlatform/{line}`: downloads the latest stable release of a version line and adds it to the `/api/versions` list. `{line}` is the line's digits without dots: `250` for 2.5.0.x, `234` for 2.3.4.x. The request blocks until the download completes (about 97 s on a C-8 Pro), then answers plain text `success`. An unknown line answers `incorrect version` immediately. Both are HTTP 200 with `text/html`, so check the body. On a C-8 Pro, downloading 2.5.0.159 dropped free OS memory from about 900 MB to 370 MB during the download (settling near 725 MB) and removed no stored version. It is a GET that changes hub storage: call it from a button, never from a link that prefetching could follow.
+
 ## Code push details
 
 - POST body: `id={ID}&version={VERSION}&source={URL_ENCODED_SOURCE}`
