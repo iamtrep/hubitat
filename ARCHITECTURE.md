@@ -20,7 +20,7 @@ The guide is organized in three parts: **Common** principles that apply to anyth
 Several standard Groovy and Java patterns are blocked or behave differently in the Hubitat sandbox.
 
 - **`value.getClass()` is sandbox-blocked.** Use the global `getObjectClassName(value)` instead to get a runtime class name string.
-- **In-place mutation of `state` may not persist.** Writing `state.myList << item` is not reliably detected as a change by the platform. Always use explicit reassignment: `state.myList = modifiedList`.
+- **Reassign `state` collections after mutating them.** Use `state.myList = modifiedList` rather than `state.myList << item`. On firmware 2.5.2.124 a probe found in-place deep writes, key puts, and list appends on plain `state` persisting in both an app and a driver, so this is a convention that doesn't depend on the platform's change detection, not a known failure.
 - **Pushing source code does not trigger `updated()`.** Updated Groovy takes effect immediately, but `updated()` and `initialize()` are not called. Subscriptions and `state` from the previous version persist until the user re-saves the app's preferences in the hub UI. See *Version constants and code-push detection* below for the workaround.
 - **`sendEvent()` deduplicates silently.** If the value hasn't changed and `isStateChange` is not set to `true`, the event is filtered out and not fired. Set `isStateChange: true` explicitly when an event must fire even with an unchanged value (button presses, repeated identical commands, forced state ticks).
 - **Concurrent async HTTP calls are capped at 8 per app.** Code that fans out one request per device will silently lose calls at scale. Prefer batched or aggregated endpoints, or serialize work behind a small worker pool.
@@ -41,7 +41,9 @@ Choosing the wrong tier is a real bug source: transient per-scan data in `state`
 
 Two narrower scopes the relaxation does NOT cover, even inside a singleThreaded file:
 
-- **In-place mutation of `state` collections** (`state.myMap[k] = v`, `state.myList << item`) is a Hubitat change-detection quirk, not a concurrency one — the read-mutate-reassign pattern still applies regardless of threading mode.
+- **In-place mutation of `state` collections** (`state.myMap[k] = v`, `state.myList << item`) is a change-detection concern, not a concurrency one, so the read-mutate-reassign convention above still applies regardless of threading mode.
+
+A direct method call from a child device into a singleThreaded parent (`parent.componentX()`) **is** serialized with the parent's other handlers: on firmware 2.5.2.124 a child's call waited for the parent's running scheduled handler to finish before entering. The child's own thread blocks for that wait, so a slow singleThreaded parent stalls every child that calls into it.
 - **`@Field static volatile`** — `singleThreaded` serializes Groovy handler dispatch, but `@Field static` lives in the JVM and can still be touched by concurrent threads outside that dispatch (e.g. async HTTP callback threads). `volatile` is still required where concurrent reads are possible.
 
 ### Hubitat libraries are not real modularity
@@ -230,6 +232,15 @@ subscribe(location, "systemStart", "systemStartHandler")
 
 The handler typically refreshes devices and re-evaluates the app's monitored conditions.
 
+**What a reboot does to scheduled work.** `runIn` and `schedule` jobs are stored in the hub database and survive a reboot. The only change is that some are now overdue. The scheduler appears to be Quartz (`schedule()` takes Quartz cron syntax), whose default treats a late job as a misfire: a slightly late job runs, a one-shot `runIn` runs once right away, and a repeating job runs once to catch up then resumes. Hubitat's exact misfire setting is unverified, so expect overdue jobs to fire late or in a burst at startup. What a reboot does break is everything outside the job table:
+
+- A handler interrupted mid-run loses its `state` writes (state commits at method exit). A chain that re-arms with `runIn` at the end of its handler dies there.
+- In-memory data is gone: `@Field static` values, open sockets, pending async HTTP callbacks.
+- Persisted flags now describe the world before the reboot (a stored "connected" mode, an "in progress" marker) and can stop an app from reconnecting or polling.
+- Overdue jobs fire while radios and integrations may still be starting.
+
+So handlers must tolerate running late or early in startup, and the `systemStart` handler is the place to clear flags about in-memory or connection state and re-arm chains. Community reports that "runIn schedules don't survive a restart" are better explained by the stale-flag and interrupted-handler cases than by lost jobs.
+
 **Self-healing transient states.** A time-delayed state transition must never
 depend solely on a single scheduled callback. Persist the transition's start
 timestamp; on *every* evaluation of a transient state — and on `initialize()` —
@@ -295,7 +306,7 @@ The mechanics of nested apps (`app(...)` declaration, `parent: "ns:Name"`) and c
 
 The platform defines what `configure()`, `initialize()`, `refresh()`, and `deviceTypeUpdated()` mean. Two project-specific rules:
 
-- **`initialize()` is for work that must re-execute after hub startup.** The platform calls it on hub start, install, and as part of the `updated()` convergence. Use it for LAN/cloud reconnection, re-arming any housekeeping the hub doesn't already persist (most `schedule`/`runIn` calls already survive reboot), and idempotent state/counter seeding. For a pure local-radio (Zigbee/Z-Wave) driver with no such startup work, omitting `initialize()` is fine — and is the common case for plugs, switches, sensors, and locks. **Don't add an empty stub or one that only calls `configure()`.** When `initialize()` is omitted, `configure()` becomes the convergence point: `installed()` routes to it (typically via `runInMillis` so it doesn't run inline with the install transaction), `updated()` does its `unschedule(); <preference writes>; configure()` sequence, and `deviceTypeUpdated()` calls `configure()`. When `initialize()` *is* present, call **`refresh()`, not `configure()`** from it — reconfiguring on each hub restart wastes radio bandwidth and can race with other devices joining the mesh.
+- **`initialize()` is for work that must re-execute after hub startup.** The platform calls it on hub start, install, and as part of the `updated()` convergence. Use it for LAN/cloud reconnection, re-arming any housekeeping the hub doesn't already persist (`schedule`/`runIn` jobs survive reboot; see *What a reboot does to scheduled work*), and idempotent state/counter seeding. For a pure local-radio (Zigbee/Z-Wave) driver with no such startup work, omitting `initialize()` is fine — and is the common case for plugs, switches, sensors, and locks. **Don't add an empty stub or one that only calls `configure()`.** When `initialize()` is omitted, `configure()` becomes the convergence point: `installed()` routes to it (typically via `runInMillis` so it doesn't run inline with the install transaction), `updated()` does its `unschedule(); <preference writes>; configure()` sequence, and `deviceTypeUpdated()` calls `configure()`. When `initialize()` *is* present, call **`refresh()`, not `configure()`** from it — reconfiguring on each hub restart wastes radio bandwidth and can race with other devices joining the mesh.
 - **`deviceTypeUpdated()` should always be implemented.** The platform calls it when a device's driver type is switched. The convention is to log the change at debug level (`logDebug "driver change detected"`) and *only* call `configure()` when the driver author judges a reconfigure is necessary on a driver change — typically local-radio drivers that must re-apply device-side reporting and defaults. Drivers with nothing to re-apply (virtual, cloud, log/probe helpers) implement the method as a debug-log-only stub.
 
 ### Zigbee parse skeleton
