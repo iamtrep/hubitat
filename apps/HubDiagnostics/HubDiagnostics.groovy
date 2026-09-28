@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "5.84.0"
+@Field static final String CODE_VERSION = "5.85.0"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -54,6 +54,11 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final String NTP_SERVER_PATH = "/hub/advanced/ntpServer"
 @Field static final String LOAD_THRESHOLD_PATH = "/hub/advanced/getExcessiveLoadThreshold"
 @Field static final String FIRMWARE_UPDATE_PATH = "/hub/cloud/checkForUpdate"
+// Diagnostic Tool (port 8081): separate process that serves platform versions kept on the hub.
+// These two reads answer without the tool's MAC login.
+@Field static final String DIAG_TOOL_BASE = "http://127.0.0.1:8081"
+@Field static final String DIAG_TOOL_VERSIONS_PATH = "/api/versions"
+@Field static final String DIAG_TOOL_HUB_INFO_PATH = "/api/hubInfo"
 @Field static final String MDNS_PATH = "/hub/mdnsDevices/json"
 @Field static final String USER_BUNDLES_PATH = "/hub2/userBundles"
 @Field static final String USER_LIBRARIES_PATH = "/hub2/userLibraries"
@@ -352,6 +357,7 @@ mappings {
     path('/api/snapshot/create')     { action: [POST: 'apiCreateSnapshot'] }
     path('/api/snapshot/delete')     { action: [POST: 'apiDeleteSnapshot'] }
     path('/api/snapshots/clear')     { action: [POST: 'apiClearSnapshots'] }
+    path('/api/firmware/refresh')    { action: [POST: 'apiFirmwareRefresh'] }
     path('/api/checkpoint/create')   { action: [POST: 'apiCreateCheckpoint'] }
     path('/api/checkpoint/delete')   { action: [POST: 'apiDeleteCheckpoint'] }
     path('/api/checkpoints/clear')   { action: [POST: 'apiClearCheckpoints'] }
@@ -985,6 +991,13 @@ Map apiClearCheckpoints() {
 
 Map apiClearSnapshots() {
     clearAllSnapshots()
+    return jsonResponse([success: true])
+}
+
+// Drops the cached Diagnostic Tool versions so the next read shows a platform download
+// the SPA just made.
+Map apiFirmwareRefresh() {
+    TTL_CACHE.remove('diagToolVersions')
     return jsonResponse([success: true])
 }
 
@@ -2003,7 +2016,7 @@ String fetchNtpServer() {
 }
 
 Map fetchFirmwareUpdate() {
-    return (Map) cachedFetch('fwUpdate', FW_UPDATE_CACHE_TTL_MS) {
+    Map fu = (Map) cachedFetch('fwUpdate', FW_UPDATE_CACHE_TTL_MS) {
         Map wrap = hubMapRequest(FIRMWARE_UPDATE_PATH, "firmware update check", 15)
         if (!wrap.ok) return null
         Map resp = wrap.data
@@ -2011,6 +2024,40 @@ Map fetchFirmwareUpdate() {
                 updateAvailable: resp.upgrade == true, status: resp.status,
                 beta: resp.beta == true, releaseNotesUrl: resp.releaseNotesUrl]
     }
+    Map dt = fetchDiagToolVersions()
+    if (!fu && !dt) return null
+    return (fu ?: [currentVersion: getHubFirmwareVersion()]) + dt
+}
+
+/**
+ * Platform versions the Diagnostic Tool can restore, plus its stable (fallback) version.
+ * Returns [:] when the tool doesn't answer; the empty map is cached so a down tool
+ * doesn't cost a timeout on every page load.
+ */
+Map fetchDiagToolVersions() {
+    return (Map) cachedFetch('diagToolVersions', FW_UPDATE_CACHE_TTL_MS) {
+        Map versions = diagToolPost(DIAG_TOOL_VERSIONS_PATH)
+        if (versions?.success != true) return [:]
+        Map info = diagToolPost(DIAG_TOOL_HUB_INFO_PATH)
+        List restorable = ((versions.hubList as List) ?: []).collect { stripHubPrefix(it as String) }
+        return [restorableVersions: restorable, stableVersion: stripHubPrefix(info?.stableVersion as String)]
+    }
+}
+
+private Map diagToolPost(String path) {
+    Map result = null
+    try {
+        httpPost([uri: DIAG_TOOL_BASE, path: path, contentType: "application/json", timeout: 5]) { resp ->
+            if (resp.success && resp.data instanceof Map) result = (Map) resp.data
+        }
+    } catch (Exception e) {
+        logDebug "Diagnostic Tool ${path} unavailable: ${e.message}"
+    }
+    return result
+}
+
+private static String stripHubPrefix(String v) {
+    return v?.startsWith("hub-") ? v.substring(4) : v
 }
 
 /**

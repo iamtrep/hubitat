@@ -98,7 +98,7 @@ The app keeps the UI in sync with the app version automatically: a nightly job d
 
 A summary of hub health at a glance.
 
-The header bar contains a **Docs ↗** link (this document) and a **↻ Refresh** button that forces a full re-fetch and re-render of whichever tab is currently open.
+The header bar contains a **Docs ↗** link (this document), a **Diagnostic Tool ↗** link to the hub's recovery tool on port 8081 (hidden when the dashboard is opened through the Hubitat cloud URL, since the tool is LAN-only), and a **↻ Refresh** button that forces a full re-fetch and re-render of whichever tab is currently open.
 
 **Hub Information** — Hardware model, firmware version, hub ID, IP address, Zigbee ID, location, current mode, time zone.
 
@@ -110,7 +110,7 @@ The header bar contains a **Docs ↗** link (this document) and a **↻ Refresh*
 
 **Platform Alerts** — A roll-up of hub health: alerts reported by the Hubitat hub itself (load warnings, radio crashes, backup failures, etc.), threshold-based alerts derived in the browser from the configured thresholds (memory, CPU, temperature), Z-Wave radio health (ghost / failed / problem nodes and radio-firmware-update), hub-firmware and app-update status, and messages from `/hub/messages` (info-severity). This same roll-up drives the **alert-aware favicon** (a colored dot on the browser tab showing the highest active severity) and the Health tab's *Alerts* list. Device-inventory conditions — low battery, stale devices, and chatty devices — are shown on their own tabs (Devices / Performance), **not** in this roll-up or the favicon. See [Alerts & Warnings Reference](#alerts--warnings-reference) for the full list.
 
-**Hub Firmware** — When `/hub/cloud/checkForUpdate` reports an upgrade is available, an orange badge appears with the current version, the available version, and a link to the release notes. The check is cached for 1 hour to avoid hammering the cloud API on every dashboard refresh.
+**Hub Firmware** — When `/hub/cloud/checkForUpdate` reports an upgrade is available, an orange badge appears with the current version, the available version, and a link to the release notes. The card also lists the platform versions stored on the hub that the Diagnostic Tool can restore, and the stable fallback version, read from the Diagnostic Tool on port 8081. On the LAN, a **Download stable** button fetches the latest stable release of a version line (for example 2.5.1) so it becomes restorable; the download takes 1–2 minutes and temporarily uses several hundred MB of the hub's free memory. A link opens the Diagnostic Tool, which asks for the hub's MAC address (shown under Settings → Hub Details). The update check and the version list are cached for 1 hour; a download refreshes the list.
 
 **Reports** — Buttons to generate a full HTML report or copy a forum-ready Markdown export to the clipboard.
 

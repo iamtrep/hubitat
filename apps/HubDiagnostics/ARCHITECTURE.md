@@ -93,7 +93,7 @@ TTLs are proportional to how fast the underlying metric actually moves, sized so
 | `CPU_INFO_CACHE_TTL_MS` | 5 min | core count / static CPU facts | Effectively constant per install. |
 | `LOAD_THRESHOLD_CACHE_TTL_MS` | 5 min | platform load threshold | Rarely changes. |
 | `INTEGRATION_OVERRIDES_CACHE_TTL_MS` | 5 min | File Manager overrides config | Picks up a re-uploaded config without a full Done; `updated()`/`apiClearCache()` reset it immediately. |
-| `FW_UPDATE_CACHE_TTL_MS` | 1 hr | firmware-update check | Slow-moving; no value polling more often. |
+| `FW_UPDATE_CACHE_TTL_MS` | 1 hr | firmware-update check, Diagnostic Tool version list | Slow-moving; no value polling more often. A failed tool read is cached as empty so a down tool costs no timeout per load; `apiFirmwareRefresh()` drops the list after a platform download. |
 | *(none)* | process life | `uiVersionCache`, `zwaveStackCache` | Install-constant; re-derived after a code push anyway. |
 
 ### Tier 3 — Persistent cache (`state` / File Manager)

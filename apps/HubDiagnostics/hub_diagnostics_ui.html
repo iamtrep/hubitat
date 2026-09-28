@@ -115,7 +115,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </head>
 <body>
 <script>if(window.REPORT_DATA){document.write('<div class="report-banner">Offline Report &mdash; Generated '+(window.REPORT_DATA._generated||'')+'</div>')}</script>
-<div class="hdr"><h1>Hub Diagnostics</h1><span class="info" id="hubInfo">Loading...</span><a href="https://github.com/hubitrep/hubitat/blob/main/HubDiagnostics/README.md" target="_blank" style="font-size:12px;opacity:.75;color:#fff;margin-left:12px;white-space:nowrap">Docs ↗</a><a id="cfgLink" href="#" target="_blank" style="font-size:12px;opacity:.75;color:#fff;margin-left:12px;white-space:nowrap">⚙ Settings</a><button onclick="refreshPage()" class="live-only" style="font-size:12px;opacity:.75;color:#fff;margin-left:12px;background:none;border:none;cursor:pointer;padding:0">↻ Refresh</button></div>
+<div class="hdr"><h1>Hub Diagnostics</h1><span class="info" id="hubInfo">Loading...</span><a href="https://github.com/hubitrep/hubitat/blob/main/HubDiagnostics/README.md" target="_blank" style="font-size:12px;opacity:.75;color:#fff;margin-left:12px;white-space:nowrap">Docs ↗</a><a id="diagToolLink" href="#" target="_blank" rel="noopener" title="Hub Diagnostic Tool (port 8081). Log in with the hub's MAC address from Settings → Hub Details." style="font-size:12px;opacity:.75;color:#fff;margin-left:12px;white-space:nowrap">Diagnostic Tool ↗</a><a id="cfgLink" href="#" target="_blank" style="font-size:12px;opacity:.75;color:#fff;margin-left:12px;white-space:nowrap">⚙ Settings</a><button onclick="refreshPage()" class="live-only" style="font-size:12px;opacity:.75;color:#fff;margin-left:12px;background:none;border:none;cursor:pointer;padding:0">↻ Refresh</button></div>
 <div class="tabs" id="tabs">
   <div class="tab active" data-tab="dashboard">Dashboard</div>
   <div class="tab" data-tab="devices">Devices</div>
@@ -142,7 +142,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.84.0";
+const CODE_VERSION = "5.85.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -165,6 +165,10 @@ const AUTH=(x)=>Object.assign({'Authorization':'Bearer '+T},x||{});
 // Hub admin-UI origin (e.g. http://192.0.2.10), derived from the API base — used to build
 // direct links into the hub's own settings pages instead of printing navigation breadcrumbs.
 const HUB_ORIGIN=(B.match(/^(https?:\/\/[^\/]+)\/apps\/api\//)||[])[1]||'';
+// Diagnostic Tool: a LAN-only, plain-HTTP process on port 8081. Empty when the SPA runs through
+// the cloud relay (no HUB_ORIGIN), where the tool is unreachable.
+const DIAG_TOOL_URL=HUB_ORIGIN?'http://'+new URL(HUB_ORIGIN).hostname+':8081/':'';
+(function(){const el=document.getElementById('diagToolLink'); if(!el)return; if(DIAG_TOOL_URL) el.href=DIAG_TOOL_URL; else el.style.display='none';})();
 (function(){ const m = B.match(/^(https?:\/\/[^\/]+)\/apps\/api\/(\d+)/); const el=document.getElementById('cfgLink');
   if (m && el) el.href = m[1]+'/installedapp/configure/'+m[2]; else if (el) el.style.display='none'; })();
 let curTab = localStorage.getItem('hub_diag_tab') || 'dashboard';
@@ -1980,12 +1984,26 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   const dashAlerts=composeAlerts(d);
   if(dashAlerts.length){o+='<div class="card"><div class="card-h">Platform Alerts</div><div class="card-b" role="status" aria-live="polite" aria-label="Platform alerts">';
     dashAlerts.forEach(a=>{const sev=(a.severity==='critical')?'crit':((a.severity==='info')?'info':'warn');const icon=(a.severity==='critical')?'\u26D4':((a.severity==='info')?'\u2139':'\u26A0');o+='<div class="alert a-'+sev+'">'+icon+' '+h(Obf.scrub(a.name))+'</div>'});o+='</div></div>'}
-  // Firmware update (v5.9.0)
-  if(d.firmwareUpdate){const fu=d.firmwareUpdate;
+  // Hub firmware: pending update, plus versions the Diagnostic Tool can restore
+  if(d.firmwareUpdate){const fu=d.firmwareUpdate, rv=fu.restorableVersions||[];
+    let b='';
     if(fu.updateAvailable){
       const rn=fu.releaseNotesUrl?' <a href="'+h(fu.releaseNotesUrl)+'" target="_blank" style="color:var(--link)">Release notes</a>':'';
-      o+='<div class="card"><div class="card-h">Hub Firmware</div><div class="card-b"><div class="alert a-warn">\u2B06 Update available: <b>'+h(fu.availableVersion)+'</b> (you have '+h(fu.currentVersion)+').'+rn+'</div></div></div>';
+      b+='<div class="alert a-warn">\u2B06 Update available: <b>'+h(fu.availableVersion)+'</b> (you have '+h(fu.currentVersion)+').'+rn+'</div>';
     }
+    if(rv.length||fu.stableVersion){
+      b+='<div style="font-size:13px;line-height:1.7">';
+      if(fu.currentVersion)b+='<div><span style="color:var(--muted)">Running:</span> '+h(fu.currentVersion)+'</div>';
+      b+='<div><span style="color:var(--muted)">Restorable:</span> '+(rv.length?rv.map(v=>h(v)).join(', '):'none')+'</div>';
+      if(fu.stableVersion)b+='<div><span style="color:var(--muted)">Stable (fallback):</span> '+h(fu.stableVersion)+'</div>';
+      b+='</div>';
+    }
+    if(b&&DIAG_TOOL_URL&&!REPORT){
+      const pv=(fu.currentVersion||'').split('.').map(Number), prevLine=pv.length>=3&&pv[2]>0?pv[0]+'.'+pv[1]+'.'+(pv[2]-1):'';
+      b+='<div style="margin-top:8px;font-size:12px">Download a stable release so it can be restored: <input id="fwDlLine" value="'+prevLine+'" placeholder="2.5.1" size="6" style="font-size:12px;padding:2px 4px"> <button class="btn btn-s btn-p" id="fwDlBtn">Download stable</button> <span id="fwDlMsg" style="color:var(--muted)"></span></div>';
+      b+='<div style="margin-top:8px;font-size:12px"><a href="'+DIAG_TOOL_URL+'" target="_blank" rel="noopener" style="color:var(--link)">Restore or switch versions in the Diagnostic Tool ↗</a> <span style="color:var(--muted)">Log in with the hub\'s MAC address, shown under <a href="'+HUB_ORIGIN+'/hub/edit" target="_blank" rel="noopener" style="color:var(--link)">Settings</a> → Hub Details.</span></div>';
+    }
+    if(b)o+='<div class="card"><div class="card-h">Hub Firmware</div><div class="card-b">'+b+'</div></div>';
   }
   // Reports
   const rpts=await api('reports');
@@ -2040,6 +2058,21 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
       el.innerHTML='<div style="margin-bottom:8px"><a href="'+v.editorPath+'" target="_blank" style="color:var(--link)">Open Apps Code</a></div>';
     }
   }).catch(()=>{});
+
+  // Stable-release download: a same-origin call, so hub security applies; not exposed via the app API.
+  const fwDlBtn=document.getElementById('fwDlBtn');
+  if(fwDlBtn)fwDlBtn.onclick=async()=>{
+    const line=document.getElementById('fwDlLine').value.trim(), msg=document.getElementById('fwDlMsg');
+    if(!/^\d+\.\d+\.\d+$/.test(line)){msg.textContent='Enter a version line such as 2.5.1.';return}
+    if(!confirm('Download the stable '+line+'.x release to the hub? It takes 1–2 minutes and temporarily uses several hundred MB of the hub\'s free memory.'))return;
+    fwDlBtn.disabled=true;msg.textContent='Downloading (1–2 minutes)…';
+    try{
+      const t=(await (await fetch('/hub/advanced/downloadPlatform/'+line.replace(/\./g,''))).text()).trim();
+      if(t==='success'){await post('firmware/refresh');drop('dashboard');drop('health');rDashboard();return}
+      msg.textContent=t==='incorrect version'?'No stable release found for '+line+'.':'Download failed. With hub security on, log in to the hub first.';
+    }catch(e){msg.textContent='Download failed: '+e.message}
+    fwDlBtn.disabled=false;
+  };
 
   const btnReport=document.getElementById('btnReport');
   if(btnReport)btnReport.onclick=async()=>{
