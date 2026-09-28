@@ -30,7 +30,7 @@ function fnLine(name) {
   return src.slice(i, nl < 0 ? undefined : nl);
 }
 
-const HELPERS = ['tScale', 'tSym', 'c2u', 'u2c', 'c2uD', 'cClamp', 'ftemp', 'ftempD', 'ftempBoth', 'sev'];
+const HELPERS = ['tScale', 'tSym', 'c2u', 'u2c', 'c2uD', 'cClamp', 'ftemp', 'ftempD', 'ftempBoth', 'sev', 'joinTemp'];
 const harness =
   'let TH = {};\n' +
   HELPERS.map(fnLine).join('\n') + '\n' +
@@ -142,6 +142,24 @@ t('regression: a normal 36°C reading never alerts after a C->F switch', () => {
   // The pre-fix bug treated a stored 50 as 50°F (=10°C) after a scale switch, firing false warns.
   H.setTH({ temperatureScale: 'F', warnTempC: 50, critTempC: 77 });  // thresholds remain °C
   assert.strictEqual(H.sev(36, 50, 77, false), 'var(--ok)');
+});
+
+// ---- joinTemp: temperature attached to resource-history points ----
+t('joinTemp picks the nearest sample within 5 min, else null', () => {
+  const m = 60000;
+  const pts = [{ timeMs: 0 }, { timeMs: 5 * m }, { timeMs: 10 * m }, { timeMs: 30 * m }];
+  const series = [{ ms: 1 * m, c: 40 }, { ms: 4 * m, c: 41 }, { ms: 11 * m, c: 42 }];
+  assert.deepStrictEqual(H.joinTemp(pts, series).map(p => p.tempC), [null, 41, 42, null]);
+});
+t('joinTemp spreads an hourly average across its hour', () => {
+  const m = 60000;
+  const pts = [0, 10, 25, 55, 70].map(x => ({ timeMs: (x + 60) * m }));
+  const series = [{ ms: 90 * m, c: 40, lo: 39, hi: 41, n: 12 }];
+  assert.deepStrictEqual(H.joinTemp(pts, series).map(p => p.tempC), [40, 40, 40, 40, null]);
+});
+t('joinTemp keeps point fields and handles an empty series', () => {
+  const out = H.joinTemp([{ timeMs: 1000, freeOS: 5 }], []);
+  assert.deepStrictEqual(out, [{ timeMs: 1000, freeOS: 5, tempC: null }]);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -142,7 +142,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.85.1";
+const CODE_VERSION = "5.86.3";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -1787,19 +1787,24 @@ function renderChart(pts,cid,range){
   chartData[cid]=pts;
   const viewPts=range?pts.slice(range.start,range.end+1):pts;
   const isZoomed=range&&(range.start>0||range.end<pts.length-1);
-  const ml=55,mr=50,mt=30,mb=30,ch=200;
+  const tv=viewPts.map(p=>p.tempC).filter(v=>v!=null),hasT=tv.length>1;
+  const ml=55,mr=hasT?80:50,mt=30,mb=30,ch=200;
   const containerW=el.offsetWidth||800;
-  const ppx=Math.max(isZoomed?4:1,Math.floor((containerW-ml-mr)/(viewPts.length||1)));
-  const w=ml+viewPts.length*ppx+mr,svgH=mt+ch+mb;
+  const ppx=Math.max(isZoomed?4:1,(containerW-ml-mr)/(Math.max(viewPts.length-1,1)));
+  const w=Math.floor(ml+(viewPts.length-1)*ppx+mr),svgH=mt+ch+mb;
   let maxOS=0,maxCpu=0;
   viewPts.forEach(p=>{if(p.freeOS>maxOS)maxOS=p.freeOS;if(p.cpuLoad>maxCpu)maxCpu=p.cpuLoad});
   maxOS=Math.ceil(maxOS/51200)*51200;if(maxOS<204800)maxOS=204800;
   maxCpu=Math.ceil(maxCpu);if(maxCpu<2)maxCpu=2;
   function yOS(v){return mt+ch-(v/maxOS)*ch}
   function yCPU(v){return mt+ch-(v/maxCpu)*ch}
-  function xp(i){return ml+i*ppx}
-  let osLine='',javaLine='',cpuLine='';
-  viewPts.forEach((p,i)=>{const px=xp(i);osLine+=(i?' ':'')+px+','+yOS(p.freeOS);javaLine+=(i?' ':'')+px+','+yOS(p.freeJava);cpuLine+=(i?' ':'')+px+','+yCPU(p.cpuLoad)});
+  // Temperature axis in display units, a whole number of degrees per gridline.
+  const tLo=hasT?Math.floor(c2u(Math.min(...tv))-2):0,tHi=hasT?tLo+5*Math.ceil((c2u(Math.max(...tv))+2-tLo)/5):1;
+  function yT(c){return mt+ch-(c2u(c)-tLo)/(tHi-tLo)*ch}
+  function xp(i){return +(ml+i*ppx).toFixed(1)}
+  let osLine='',javaLine='',cpuLine='',tPath='',tPrev=false;
+  viewPts.forEach((p,i)=>{const px=xp(i);osLine+=(i?' ':'')+px+','+yOS(p.freeOS);javaLine+=(i?' ':'')+px+','+yOS(p.freeJava);cpuLine+=(i?' ':'')+px+','+yCPU(p.cpuLoad);
+    if(p.tempC!=null){tPath+=(tPrev?'L':'M')+px+','+yT(p.tempC).toFixed(1)+' ';tPrev=true}else tPrev=false});
   const warnY=yOS(TH.warnMemMb*1024),critY=yOS(TH.critMemMb*1024);
   let timeLabels='',lastDate='';
   viewPts.forEach((p,i)=>{
@@ -1813,7 +1818,8 @@ function renderChart(pts,cid,range){
     const v=maxOS*i/steps;const y=yOS(v);
     yLabels+=`<line x1="${ml}" y1="${y}" x2="${w-mr}" y2="${y}" stroke="#eee"/><text x="${ml-4}" y="${y+4}" font-size="9" fill="#999" text-anchor="end">${(v/1024).toFixed(0)}</text>`;
     const cv=maxCpu*i/steps;const cy=yCPU(cv);
-    yLabels+=`<text x="${w-mr+4}" y="${cy+4}" font-size="9" fill="#999">${cv.toFixed(1)}</text>`;
+    yLabels+=`<text x="${w-mr+4}" y="${cy+4}" font-size="9" fill="var(--warn)">${cv.toFixed(1)}</text>`;
+    if(hasT){const tu=tLo+(tHi-tLo)*i/steps;yLabels+=`<text x="${w-mr+34}" y="${mt+ch-ch*i/steps+4}" font-size="9" fill="#C0392B">${tu}</text>`}
   }
   const infoBar=isZoomed
     ?`<button class="btn btn-s btn-p" id="${cid}_reset" style="margin-right:8px">Reset Zoom</button><span style="font-size:11px;color:var(--muted)">${viewPts.length} of ${pts.length} samples &mdash; ${viewPts[0].time} to ${viewPts[viewPts.length-1].time}</span>`
@@ -1825,15 +1831,18 @@ function renderChart(pts,cid,range){
     <polyline points="${osLine}" fill="none" stroke="#1A77C9" stroke-width="2"/>
     <polyline points="${javaLine}" fill="none" stroke="var(--ok)" stroke-width="1.5" opacity=".7"/>
     <polyline points="${cpuLine}" fill="none" stroke="var(--warn)" stroke-width="1.5" opacity=".7"/>
+    ${hasT?`<path d="${tPath}" fill="none" stroke="#C0392B" stroke-width="1.5" opacity=".8"/>`:''}
     <text x="${ml-4}" y="${mt-4}" font-size="9" fill="#999" text-anchor="end">MB</text>
-    <text x="${w-mr+4}" y="${mt-4}" font-size="9" fill="#999">CPU</text>
-    <rect id="${cid}_sel" x="0" y="${mt}" width="0" height="${ch}" fill="rgba(33,150,243,0.15)" stroke="rgba(33,150,243,0.5)" stroke-width="1" visibility="hidden"/>
+    <text x="${w-mr+4}" y="${mt-4}" font-size="9" fill="var(--warn)">CPU</text>
+    ${hasT?`<text x="${w-mr+34}" y="${mt-4}" font-size="9" fill="#C0392B">${tSym()}</text>`:''}
+    <rect id="${cid}_sel" x="0" y="${mt}" width="0" height="${ch}" fill="rgba(33,150,243,0.15)" stroke="rgba(33,150,243,0.5)" stroke-width="1" visibility="hidden" pointer-events="none"/>
     <rect x="${ml}" y="${mt}" width="${w-ml-mr}" height="${ch}" fill="transparent" id="${cid}_hover" style="cursor:crosshair"/>
   </svg></div>
   <div style="display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:8px;font-size:12px;color:var(--muted)">
     <span><span style="display:inline-block;width:16px;height:3px;background:#1A77C9;vertical-align:middle;margin-right:5px;border-radius:1px"></span>Free OS (MB)</span>
     <span><span style="display:inline-block;width:16px;height:3px;background:var(--ok);vertical-align:middle;margin-right:5px;border-radius:1px"></span>Free Java (MB)</span>
     <span><span style="display:inline-block;width:16px;height:3px;background:var(--warn);vertical-align:middle;margin-right:5px;border-radius:1px"></span>CPU Load</span>
+    ${hasT?`<span><span style="display:inline-block;width:16px;height:3px;background:#C0392B;vertical-align:middle;margin-right:5px;border-radius:1px"></span>Hub temp (${tSym()})</span>`:''}
   </div>
   <div style="margin-top:6px;display:flex;align-items:center;flex-wrap:wrap;gap:4px">${infoBar}</div>`;
   el.innerHTML=svg;
@@ -1841,8 +1850,8 @@ function renderChart(pts,cid,range){
   if(isZoomed){const rb=document.getElementById(cid+'_reset');if(rb)rb.onclick=()=>renderChart(pts,cid)}
   const svgEl=el.querySelector('svg');const hover=document.getElementById(cid+'_hover');const selRect=document.getElementById(cid+'_sel');
   if(hover&&svgEl){
-    const tip=document.createElementNS('http://www.w3.org/2000/svg','text');tip.setAttribute('visibility','hidden');tip.setAttribute('font-size','10');tip.setAttribute('fill','#333');svgEl.appendChild(tip);
-    const vline=document.createElementNS('http://www.w3.org/2000/svg','line');vline.setAttribute('y1',mt);vline.setAttribute('y2',mt+ch);vline.setAttribute('stroke','#666');vline.setAttribute('visibility','hidden');svgEl.appendChild(vline);
+    const tip=document.createElementNS('http://www.w3.org/2000/svg','text');tip.setAttribute('visibility','hidden');tip.setAttribute('font-size','10');tip.setAttribute('fill','#333');tip.setAttribute('pointer-events','none');svgEl.appendChild(tip);
+    const vline=document.createElementNS('http://www.w3.org/2000/svg','line');vline.setAttribute('y1',mt);vline.setAttribute('y2',mt+ch);vline.setAttribute('stroke','#666');vline.setAttribute('visibility','hidden');vline.setAttribute('pointer-events','none');svgEl.appendChild(vline);
     let dragging=false,dragStartSvgX=0;
     function svgXfromEvent(e){const r=svgEl.getBoundingClientRect();return(e.clientX-r.left)*(w/r.width)}
     function pxToIdx(svgX){return Math.max(0,Math.min(viewPts.length-1,Math.round((svgX-ml)/ppx)))}
@@ -1856,7 +1865,7 @@ function renderChart(pts,cid,range){
       } else {
         const ci=pxToIdx(sx);const px=xp(ci);
         vline.setAttribute('x1',px);vline.setAttribute('x2',px);vline.setAttribute('visibility','visible');
-        const p=viewPts[ci];tip.textContent=`${p.time} | OS: ${(p.freeOS/1024).toFixed(0)} MB | CPU: ${p.cpuLoad.toFixed(2)} | Java: ${(p.freeJava/1024).toFixed(0)} MB`;
+        const p=viewPts[ci];tip.textContent=`${p.time} | OS: ${(p.freeOS/1024).toFixed(0)} MB | CPU: ${p.cpuLoad.toFixed(2)} | Java: ${(p.freeJava/1024).toFixed(0)} MB${p.tempC!=null?' | Temp: '+ftemp(p.tempC):''}`;
         const tw=tip.textContent.length*5.5+10;let tx=px+8;if(tx+tw>w-10)tx=px-tw-8;
         tip.setAttribute('x',tx);tip.setAttribute('y',mt+14);tip.setAttribute('visibility','visible');
       }
@@ -2826,7 +2835,7 @@ async function rHealth(){const P='p-health';loading(P);try{
   if(d.resources){const r=d.resources;
     o+='<div class="card"><div class="card-h">System Resources<span id="res-health-ts" style="float:right;font-size:11px;font-weight:normal;opacity:.6"></span></div><div class="card-b"><div id="res-health">'+renderHealthRes(r,d)+'</div></div></div>'}
   // Memory chart placeholder
-  o+='<div class="card"><div class="card-h">Resource History</div><div class="card-b"><div id="memChart"><div class="loading"><div class="spinner"></div><div>Loading history...</div></div></div><div id="tempChart"></div></div></div>';
+  o+='<div class="card"><div class="card-h">Resource History</div><div class="card-b"><div id="memChart"><div class="loading"><div class="spinner"></div><div>Loading history...</div></div></div></div></div>';
   // Database
   o+='<div class="card"><div class="card-h">Database & Storage</div><div class="card-b"><div class="metrics">';
   if(d.databaseSize!=null)o+=mc('Database Size',d.databaseSize+' MB');
@@ -2879,9 +2888,8 @@ async function rHealth(){const P='p-health';loading(P);try{
     {l:'Description',f:'description'}
   ],(d.events||[]).slice(0,25),{sc:0,sd:'desc',collapse:5,collapseLabel:'Hub Events'});
   // Fetch and render chart async
-  api('health/history').then(h=>{renderChart(h.dataPoints,'memChart');
-    resRanges=computeResRanges(h);const rh=document.getElementById('res-health');if(rh&&d.resources)rh.innerHTML=renderHealthRes(d.resources,d);const dp=h.dataPoints||[],t0=dp.length?dp[0].timeMs:0,t1=dp.length?dp[dp.length-1].timeMs:0;
-    renderTempChart(tempSeries(h,t0||0),'tempChart',t0,t1,parseInt(document.querySelector('#memChart svg')?.getAttribute('width'))||0)}).catch(()=>{document.getElementById('memChart').innerHTML='<i style="color:var(--muted)">Unable to load history</i>'});
+  api('health/history').then(h=>{const dp=h.dataPoints||[];renderChart(joinTemp(dp,tempSeries(h,dp.length?(dp[0].timeMs||0)-300000:0)),'memChart');
+    resRanges=computeResRanges(h);const rh=document.getElementById('res-health');if(rh&&d.resources)rh.innerHTML=renderHealthRes(d.resources,d)}).catch(()=>{document.getElementById('memChart').innerHTML='<i style="color:var(--muted)">Unable to load history</i>'});
 }catch(e){err(P,e,rHealth)}}
 
 // ===== TAB: PERFORMANCE =====
@@ -3498,26 +3506,9 @@ function tempSeries(d,sinceMs){
   const hr=(d.hourly||[]).filter(r=>r[2]!=null&&r[0]+3600000<=first).map(r=>({ms:r[0]+1800000,c:r[2],lo:r[1],hi:r[3],n:r[4]}));
   return hr.concat(smp).filter(p=>p.ms>=sinceMs);
 }
-// Drawn on the resource-history chart's time window and width so the two line up.
-function renderTempChart(series,cid,winStart,winEnd,width){
-  const el=document.getElementById(cid);if(!el)return;
-  if(series.length<2){el.innerHTML='';return}
-  const ml=55,mr=50,mt=10,mb=22,ch=110,W=width||Math.max(400,el.offsetWidth||800),iw=W-ml-mr;
-  const t0=Math.min(winStart||series[0].ms,series[0].ms),t1=Math.max(winEnd||0,series[series.length-1].ms);
-  let lo=Math.min(...series.map(p=>p.lo??p.c)),hi=Math.max(...series.map(p=>p.hi??p.c));
-  lo=Math.floor(lo-3);hi=Math.max(Math.ceil(hi+3),TH.warnTempC+2);
-  const x=ms=>ml+(ms-t0)/((t1-t0)||1)*iw,y=c=>mt+ch-(c-lo)/(hi-lo)*ch;
-  let path='',prev=null;
-  series.forEach(p=>{path+=(prev==null||p.ms-prev>5400000?'M':'L')+x(p.ms).toFixed(1)+','+y(p.c).toFixed(1)+' ';prev=p.ms});
-  let grid='';
-  for(let i=0;i<=4;i++){const c=lo+(hi-lo)*i/4,yy=y(c);grid+=`<line x1="${ml}" y1="${yy}" x2="${W-mr}" y2="${yy}" stroke="#eee"/><text x="${ml-4}" y="${yy+4}" font-size="9" fill="#999" text-anchor="end">${Math.round(c2u(c))}</text>`}
-  const thr=(c,col)=>c<=hi?`<line x1="${ml}" y1="${y(c)}" x2="${W-mr}" y2="${y(c)}" stroke="${col}" stroke-dasharray="6" opacity=".5"/>`:'';
-  const fd=ms=>new Date(ms).toLocaleString([],{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
-  el.innerHTML=`<div style="font-size:12px;color:var(--muted);margin:12px 0 2px">Hub temperature (${tSym()}), ${series.length} points, ${fd(t0)} to ${fd(t1)}</div>`+
-    `<div class="chart-wrap"><svg width="${W}" height="${mt+ch+mb}" viewBox="0 0 ${W} ${mt+ch+mb}">${grid}${thr(TH.warnTempC,'var(--warn)')}${thr(TH.critTempC,'var(--crit)')}`+
-    `<path d="${path}" fill="none" stroke="#C0392B" stroke-width="1.5"/>`+
-    `<text x="${ml}" y="${mt+ch+15}" font-size="9" fill="#999">${fd(t0)}</text><text x="${W-mr}" y="${mt+ch+15}" font-size="9" fill="#999" text-anchor="end">${fd(t1)}</text></svg></div>`;
-}
+// Attach the nearest temperature reading to each resource-history point as tempC: a 5-minute
+// sample within 5 min, or an hourly average (n set) for any point inside its hour.
+function joinTemp(pts,series){let j=0;const d=(s,p)=>Math.abs(s.ms-p.timeMs);return pts.map(p=>{while(j+1<series.length&&d(series[j+1],p)<=d(series[j],p))j++;const s=series[j];return Object.assign({},p,{tempC:s&&p.timeMs&&d(s,p)<=(s.n!=null?1800000:300000)?s.c:null})})}
 
 // ===== OBSERVED RANGES (Settings → Alert Thresholds) =====
 // Min/median/max of each thresholded reading per source, next to the current thresholds.

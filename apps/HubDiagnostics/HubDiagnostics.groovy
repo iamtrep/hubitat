@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "5.85.1"
+@Field static final String CODE_VERSION = "5.86.3"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -276,8 +276,9 @@ private void cachePut(String key, Object data) {
 @Field static final String HOURLY_FILE = "hub_diagnostics_hourly.json"
 @Field static final int    HOURLY_KEEP = 720
 @Field static final int    TEMP_SAMPLE_CAP  = 8640   // 30 days of 5-minute samples
-// In-memory 5-minute temperature samples [ms, tempC] per app instance. Resets on hub reboot or
-// code push, like the hub's own memory history. Copy-on-write: the sampler replaces the list.
+// In-memory 5-minute temperature samples [ms, tempC] per app instance. Lost on hub reboot or
+// code push; the SPA falls back to HOURLY_FILE averages for hours before the first sample.
+// Copy-on-write: the sampler replaces the list.
 @Field static final ConcurrentHashMap<Long, List> TEMP_SAMPLES = new ConcurrentHashMap<>()
 @Field static final String CHECKPOINT_DETAIL_PREFIX = "hub_diagnostics_checkpoint_"
 @Field static final String PERFORMANCE_COMPARISON_FILE = "hub_diagnostics_performance_comparison.json"
@@ -286,7 +287,7 @@ private void cachePut(String key, Object data) {
 @Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/HubDiagnostics/hub_diagnostics_ui.html"
 
 
-// Maps controllerType values (from device/fullJson top-level field) to connection type constants.
+// Maps controllerType values (from the device/fullJson `device.controllerType` field) to connection type constants.
 // Actual observed values: ZGB=Zigbee, MAT=Matter, LNK=HubMesh, HKC=HomeKit, BLE=Bluetooth.
 // Used only as a last-resort fallback when parentApp is absent from fullJson.
 @Field static final Map CONTROLLER_TYPE_CONN = [
@@ -3223,7 +3224,7 @@ Map classifyDevice(Map device, Map appLookup, Set communityDrivers) {
 // Primary signal: parentApp from fullJson (appType.name) — runs the same algorithm-primary logic as
 //   classifyDevice: integration = cleanIntegrationName(appType.name), connectionType derived from
 //   the controllerType signal (NET/LAN ⇒ lan_direct, else cloud); INTEGRATION_OVERRIDES supplies a conn exception.
-// Fallback signal: controllerType from fullJson top level (actual values: ZGB, MAT, LNK, etc.).
+// Fallback signal: controllerType from fullJson.device (actual values: ZGB, MAT, LNK, etc.).
 // Results cached in state.controllerTypeCache — keyed by device ID string, value is compact
 // JSON of [parentAppTypeName, controllerType] since parentApp is also stable for a device's lifetime.
 // Returns Map<String deviceId, Map [connectionType, integration]> for devices that improve.
@@ -3246,6 +3247,8 @@ Map enrichDevices(Map uncertainDevices, Set communityAppTypeNames = [] as Set) {
             try { cachedEntry = (Map) new groovy.json.JsonSlurper().parseText((String) cachedVal) }
             catch (Exception ignored) { /* stale/invalid format — re-fetch */ }
         }
+        // Entries written before controllerType was read from fullJson.device hold a blank value; re-fetch.
+        if (cachedEntry != null && cachedEntry.ctSrc != "device") cachedEntry = null
 
         String parentAppTypeName = cachedEntry?.parentAppTypeName
         String ct = cachedEntry?.controllerType
@@ -3262,7 +3265,7 @@ Map enrichDevices(Map uncertainDevices, Set communityAppTypeNames = [] as Set) {
                     parentAppTypeName = safeToString(appTypeObj.name ?: parentApp.name, "")
                     isBuiltin = !(appTypeObj.user == true)
                 }
-                ct = safeToString(full?.controllerType, "").toUpperCase()
+                ct = fullJsonControllerType(full)
                 // Check for community driver classification hint: updateDataValue("hubdiag:conn", "cloud|lan_direct|lan_bridge|homekit")
                 try {
                     String dataJson = safeToString(full?.device?.dataJson, "")
@@ -3275,6 +3278,7 @@ Map enrichDevices(Map uncertainDevices, Set communityAppTypeNames = [] as Set) {
                 cacheUpdates[idStr] = [
                     parentAppTypeName: parentAppTypeName ?: "",
                     controllerType: ct ?: "",
+                    ctSrc: "device",
                     connHint: connHint ?: "",
                     builtin: isBuiltin == null ? "" : (isBuiltin ? "true" : "false")
                 ]
@@ -4107,7 +4111,7 @@ private Map extractAuditFields(Map fj, Long did) {
             // pair, so distinct products sharing one numeric manufacturer id (e.g. ZOOZ = 634) don't collapse
             // into a single group and get flagged as false firmware drift.
             model        = firstDataValue(dv, ['model', 'deviceModel'])
-            if (!model && safeToString(fj?.controllerType, "").trim().equalsIgnoreCase("ZWV")) {
+            if (!model && fullJsonControllerType(fj) == "ZWV") {
                 String dt = firstDataValue(dv, ['deviceType']), di = firstDataValue(dv, ['deviceId'])
                 if (dt && di) model = "${dt}:${di}"
             }
@@ -4131,7 +4135,7 @@ private Map extractAuditFields(Map fj, Long did) {
             }
         }
     } catch (Exception ignored) { /* malformed dataJson — leave inventory fields blank */ }
-    String protocol = controllerTypeLabel(safeToString(fj?.controllerType, ""))
+    String protocol = controllerTypeLabel(fullJsonControllerType(fj))
 
     // Section A — cross-reference core
     List appsUsing = ((fj?.appsUsing ?: []) as List).collect { Map a ->
@@ -4231,6 +4235,15 @@ private String firstDataValue(Map dv, List<String> keys) {
         }
     }
     return null
+}
+
+/**
+ * controllerType from a /device/fullJson response. It lives under `device` (ZGB, ZWV, MAT, LNK…;
+ * null for LAN, cloud, and virtual devices); the top-level key is kept as a fallback.
+ */
+private String fullJsonControllerType(Map fj) {
+    Map dev = fj?.device instanceof Map ? (Map) fj.device : null
+    return safeToString(dev?.controllerType ?: fj?.controllerType, "").trim().toUpperCase()
 }
 
 /**
