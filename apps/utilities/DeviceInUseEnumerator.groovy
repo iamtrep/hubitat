@@ -2,13 +2,15 @@
 // SPDX-License-Identifier: MIT
 
 /*
- An app that tracks down which apps use given devices, with special attention to child devices.
+ For each device, lists the apps that use it, grouped by app type, with the parent device or app
+ of child devices.
  */
 import groovy.transform.Field
-import groovy.transform.CompileStatic
-import com.hubitat.app.DeviceWrapper
 
-@Field static final String CODE_VERSION = "0.0.1"
+@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String HUB = "http://127.0.0.1:8080"
+// Parent of the mobile dashboards the hub generates per room and for "All Devices".
+@Field static final String DASHBOARD_PARENT_TYPE = "Easy Mobile Dashboard Parent"
 
 definition(
     name: "Device \"in use by\" Enumerator",
@@ -17,7 +19,7 @@ definition(
     description: "For each device, enumerates the apps referencing them",
     menu: "Apps", // new in platform 2.5.0
     category: "Utility",
-    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/DeviceInUseEnumerator.groovy",
+    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/utilities/DeviceInUseEnumerator.groovy",
     iconUrl: "",
     iconX2Url: ""
 )
@@ -26,11 +28,6 @@ preferences {
     page(name: "mainPage")
 }
 
-@Field static final constDevicesListURL = "http://127.0.0.1:8080/hub2/devicesList"
-@Field static final constDeviceFullJsonURL = "http://127.0.0.1:8080/device/fullJson/"
-@Field static final constAppStatusURL = "http://127.0.0.1:8080/installedapp/statusJson/"
-
-
 Map mainPage() {
     dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
         section("Settings", hideable: true, hidden: true) {
@@ -38,6 +35,7 @@ Map mainPage() {
             if (logLevel != null) logInfo("${logLevel} logging enabled")
             input "appName", "text", title: "Rename this app", defaultValue: app.getLabel(), multiple: false, required: false, submitOnChange: true
             if (appName != app.getLabel()) app.updateLabel(appName)
+            input "forceLoopback", "bool", title: "Use the slower loopback method instead of the platform API (for testing)", defaultValue: false, submitOnChange: true
         }
         section("Options") {
             input "devices", "capability.*", title: "Only report on these specific devices", multiple: true, required: false, submitOnChange: true
@@ -68,7 +66,7 @@ void updated() {
 
 void initialize() {
     logTrace "initialize()"
-    state.reportOutput = null
+    state.remove("reportOutput")
 }
 
 void uninstalled() {
@@ -83,135 +81,249 @@ void appButtonHandler(evt) {
 
 String generateReport() {
     logInfo "Generating report"
-    Map deviceAppMap = [:]
-    Map appMap = [:]
-
-    List devicesList = getDevicesList()
-
-    devicesList.each { deviceId ->
-        Map deviceInfo = getDeviceInfo(deviceId as Integer, appMap)
-        if (!onlyChildDevices || deviceInfo.isChild) {
-            deviceAppMap[deviceId] = [name: deviceInfo.name, info: deviceInfo]
+    long started = now()
+    Map src = referenceSource()
+    List<Map> devs = loadDevices(src)
+    Map<Long, Map> byId = devs.collectEntries { [(it.id): it] }
+    Map<Long, List<Map>> refs = devs.collectEntries { Map d ->
+        [(d.id): appsUsing(d.id as Long, src).findAll { it.id != (app.id as Long) }]
+    }
+    Map<String, String> parents = [:]
+    devs.each { Map d ->
+        if (d.parentDeviceId && !parents.containsKey("d${d.parentDeviceId}".toString())) {
+            parents["d${d.parentDeviceId}".toString()] = byId[d.parentDeviceId as Long]?.label ?: deviceLabel(d.parentDeviceId as Long, src)
+        }
+        if (d.parentAppId && !parents.containsKey("a${d.parentAppId}".toString())) {
+            parents["a${d.parentAppId}".toString()] = appLabel(d.parentAppId as Long, src)
         }
     }
-
-    Map sortedDevices = deviceAppMap.sort { -((Map) it.value).info.apps.size() }
-    String reportHtml = "<table><tr><th>Device</th><th>Total Apps</th><th>Apps</th><th>Parent</th></tr>"
-
-    sortedDevices.each { deviceId, deviceData ->
-        String deviceUrl = getDeviceDetailsUrl(deviceId as Integer)
-        List appLinks = deviceData.info.apps.collect { appEntry -> "<a href='${getAppConfigUrl(appEntry.id as Integer)}' target='_blank'>${appEntry.label}</a>" }
-        String parentLink = deviceData.info.parent ? "<a href='${deviceData.info.parent.url}' target='_blank'>${deviceData.info.parent.label}</a>" : "N/A"
-        reportHtml += "<tr><td><a href='${deviceUrl}' target='_blank'>${deviceData.name}</a></td><td>${deviceData.info.apps.size()}</td><td>${appLinks.join(', ')}</td><td>${parentLink}</td></tr>"
-    }
-
-    reportHtml += "</table>"
-    logInfo "Report generated"
-    return reportHtml
+    String html = buildReport(devs, refs, parents,
+        [loopback: src.loopback, reason: src.reason, onlyChildren: onlyChildDevices == true, base: hubBaseUrl()])
+    logInfo "Report generated for ${devs.size()} devices in ${now() - started} ms (${src.loopback ? 'loopback' : 'platform API'})"
+    return html
 }
 
-private List getDevicesList() {
-    if (devices?.size() > 0) {
-        logInfo("Generating report for specified devices only")
-        return devices.collect { device -> device.id.toInteger() }
-    }
+// ---- Device reference source ----
+// Every read about devices and the apps using them goes through the functions below, which
+// return plain maps; nothing else touches the platform objects. getDevicesByIds,
+// getAppsUsingDevice and getAppByAppId are fast but reach devices and apps this app was never
+// granted, so the platform may restrict them. When one fails, these functions fall back to the
+// loopback endpoints (/hub2/devicesList, /device/fullJson, /installedapp/statusJson): slower, and
+// without app-type namespaces or the mobile dashboards. A missing method or a sandbox
+// block is remembered until the firmware changes; any other error falls back for this run only.
+//
+// getAppsUsingDevice also returns the mobile dashboards (children of the hub's Easy Mobile
+// Dashboard Parent), which /device/fullJson leaves out. A removed device just drops off them,
+// so they are flagged `dashboard`, listed apart and kept out of the counts. The flag comes from
+// the parent's app type; if that ever misses, a dashboard is counted as a user, the safe side.
 
-    logInfo("Generating report for all devices")
-    try {
-        httpGet(constDevicesListURL) { response ->
-            if (response.status == 200) {
-                return response.data.devices?.collect { device -> device.data?.id }?.findAll { it != null } ?: []
-            } else {
-                logError "Failed to retrieve data for device ${device.displayName}. HTTP status: ${response.status}"
+private Map referenceSource() {
+    String fw = location.hub.firmwareVersionString
+    if (state.refSourceFw != fw) {
+        state.remove("refSource")
+        state.remove("refSourceFw")
+    }
+    if (forceLoopback) return [loopback: true, reason: "forced in settings", fj: [:]]
+    if (state.refSource == "loopback") return [loopback: true, reason: "platform API unavailable on ${fw}", fj: [:]]
+    return [loopback: false, fj: [:]]
+}
+
+private void platformFailed(Map src, Exception e) {
+    src.loopback = true
+    src.reason = e.toString()
+    if (e instanceof MissingMethodException || e instanceof SecurityException) {
+        state.refSource = "loopback"
+        state.refSourceFw = location.hub.firmwareVersionString
+    }
+    logWarn "platform device-reference API failed (${e}); using the loopback endpoints"
+}
+
+private List<Map> loadDevices(Map src) {
+    // Devices the user picked are granted to this app: use them directly.
+    if (devices) return devices.collect { deviceMap(it) }
+    List<Long> ids = allDeviceIds()
+    if (!src.loopback) {
+        try {
+            return getDevicesByIds(ids).collect { deviceMap(it) }
+        } catch (Exception e) {
+            platformFailed(src, e)
+        }
+    }
+    return ids.collect { fullJsonDevice(it, src) }.findAll { it != null }
+}
+
+private Map deviceMap(d) {
+    [id: d.getIdAsLong(), label: d.getDisplayName(), parentDeviceId: d.getParentDeviceId(),
+     parentAppId: d.getParentAppId(), room: d.getRoomName(), disabled: d.isDisabled()]
+}
+
+private List<Map> appsUsing(Long deviceId, Map src) {
+    if (!src.loopback) {
+        try {
+            return (getAppsUsingDevice(deviceId) ?: []).collect { a ->
+                [id: a.id as Long, label: (a.label ?: a.name) as String, type: (a.appType?.name ?: a.name) as String,
+                 namespace: a.appType?.namespace as String, disabled: a.disabled == true,
+                 dashboard: isDashboardParent(a.parentAppId as Long, src)]
             }
+        } catch (Exception e) {
+            platformFailed(src, e)
+        }
+    }
+    List used = (fullJson(deviceId, src)?.appsUsing ?: []) as List
+    return used.collect { Map a ->
+        [id: a.id as Long, label: (a.label ?: a.name) as String, type: a.name as String, namespace: null,
+         disabled: a.disabled == true, dashboard: false]
+    }
+}
+
+private boolean isDashboardParent(Long parentAppId, Map src) {
+    if (parentAppId == null) return false
+    Map cache = (src.parentTypes ?: (src.parentTypes = [:])) as Map
+    if (!cache.containsKey(parentAppId)) {
+        def p = getAppByAppId(parentAppId)
+        cache[parentAppId] = p?.appType?.namespace == "hubitat" && p?.appType?.name == DASHBOARD_PARENT_TYPE
+    }
+    return cache[parentAppId] as boolean
+}
+
+private String deviceLabel(Long deviceId, Map src) {
+    if (!src.loopback) {
+        try {
+            List found = getDevicesByIds([deviceId])
+            if (found) return found[0].getDisplayName()
+        } catch (Exception e) {
+            platformFailed(src, e)
+        }
+    }
+    return fullJsonDevice(deviceId, src)?.label ?: "Device ${deviceId}"
+}
+
+private String appLabel(Long appId, Map src) {
+    if (!src.loopback) {
+        try {
+            def a = getAppByAppId(appId)
+            if (a) return (a.label ?: a.name) as String
+        } catch (Exception e) {
+            platformFailed(src, e)
+        }
+    }
+    String label = null
+    try {
+        httpGet([uri: HUB, path: "/installedapp/statusJson/${appId}", timeout: 15]) { resp ->
+            Map ia = resp.data?.installedApp as Map
+            label = (ia?.label ?: ia?.name) as String
         }
     } catch (Exception e) {
-        logError "Error making HTTP request for devices list: ${e.message}"
+        logWarn "statusJson ${appId}: ${e.message}"
     }
+    return label ?: "App ${appId}"
 }
 
-private Map getDeviceInfo(Integer device_id, Map appMap) {
-    String displayName = ""
-    List apps = []
-    boolean isChildDevice = false
-    Map parent = null
-
+private List<Long> allDeviceIds() {
+    List<Long> ids = []
     try {
-        httpGet(constDeviceFullJsonURL + device_id) { response ->
-            if (response.status == 200) {
-                Map json = response.data as Map
-                displayName = json.device.displayName
-                apps = json.appsUsing.findAll { it.id != app.id }.collect { [id: it.id, label: it.label] }
-                isChildDevice = json.device.parentAppId != null || json.device.parentDeviceId != null
-                if (json.device.parentDeviceId) {
-                    parent = getParentDeviceInfo(json.device.parentDeviceId)
-                } else if (json.device.parentAppId) {
-                    parent = appMap[json.device.parentAppId] ?: getParentAppInfo(json.device.parentAppId, appMap)
-                }
-            } else {
-                logError "Failed to retrieve data for device id ${device_id}. HTTP status: ${response.status}"
-            }
+        httpGet([uri: HUB, path: "/hub2/devicesList", timeout: 30]) { resp ->
+            collectIds(resp.data?.devices as List, ids)
         }
     } catch (Exception e) {
-        logError "Error making HTTP request for device id ${device_id}: ${e.message}"
+        logError "could not list devices: ${e.message}"
     }
-    return [name: displayName, apps: apps, isChild: isChildDevice, parent: parent]
+    return ids
 }
 
-private Map getParentDeviceInfo(Integer parentDeviceId) {
-    Map parent = null
-    String url = constDeviceFullJsonURL + parentDeviceId
+// devicesList is a tree: child devices are nested under their parent.
+private void collectIds(List nodes, Collection<Long> ids) {
+    nodes?.each { Map n ->
+        Object id = (n.data as Map)?.id
+        if (id != null) ids << (id as Long)
+        collectIds(n.children as List, ids)
+    }
+}
+
+private Map fullJson(Long deviceId, Map src) {
+    Map cache = src.fj as Map
+    if (cache.containsKey(deviceId)) return cache[deviceId] as Map
+    Map out = null
     try {
-        httpGet(url) { response ->
-            if (response.status == 200) {
-                Map json = response.data as Map
-                String label = json.device.label ?: json.device.name
-                parent = [label: label, url: getDeviceDetailsUrl(parentDeviceId)]
-            } else {
-                logError "Failed to retrieve data for parent device id ${parentDeviceId}. HTTP status: ${response.status}"
-            }
+        httpGet([uri: HUB, path: "/device/fullJson/${deviceId}", timeout: 15]) { resp ->
+            if (resp.status == 200) out = resp.data as Map
         }
     } catch (Exception e) {
-        logError "Error making HTTP request for parent device id ${parentDeviceid}: ${e.message}"
+        logWarn "fullJson ${deviceId}: ${e.message}"
     }
-    return parent
+    cache[deviceId] = out
+    return out
 }
 
-private Map getParentAppInfo(Integer parentAppId, Map appMap) {
-    Map parent = null
-    String url = constAppStatusURL + parentAppId
-    try {
-        httpGet(url) { response ->
-            if (response.status == 200) {
-                Map json = response.data as Map
-                String label = json.installedApp.label ?: json.installedApp.name
-                parent = [label: label, url: getAppConfigUrl(parentAppId)]
-                appMap[parentAppId] = parent
-            } else {
-                logError "Failed to retrieve data for parent app id ${parentAppId}. HTTP status: ${response.status}"
-            }
+private Map fullJsonDevice(Long deviceId, Map src) {
+    Map d = fullJson(deviceId, src)?.device as Map
+    if (!d) return null
+    return [id: deviceId, label: (d.displayName ?: d.label ?: d.name) as String,
+            parentDeviceId: d.parentDeviceId as Long, parentAppId: d.parentAppId as Long,
+            room: d.roomName as String, disabled: d.disabled == true]
+}
+
+// ---- Report (pure: plain maps in, HTML out) ----
+
+String buildReport(List<Map> devs, Map refs, Map parents, Map opts) {
+    String base = opts.base ?: ""
+    List<Map> rows = devs.findAll { !opts.onlyChildren || it.parentDeviceId || it.parentAppId }
+    // Mobile dashboards drop a removed device by themselves: listed apart, not counted.
+    Closure appsOf = { Map d -> ((refs[d.id] ?: []) as List<Map>).findAll { !it.dashboard } }
+    Closure dashboardsOf = { Map d -> ((refs[d.id] ?: []) as List<Map>).findAll { it.dashboard } }
+
+    int unused = rows.count { appsOf(it).isEmpty() }
+    int onlyDisabled = rows.count { List a = appsOf(it); a && a.every { it.disabled } }
+    int childrenUsed = rows.count { (it.parentDeviceId || it.parentAppId) && appsOf(it) }
+
+    StringBuilder sb = new StringBuilder()
+    if (opts.loopback) {
+        sb << "<div style='padding:6px;margin-bottom:8px;border:1px solid #c80;border-radius:4px'>"
+        sb << "Using the slower loopback method (${esc(opts.reason as String)}). "
+        sb << "App-type namespaces and mobile dashboards are not shown.</div>"
+    }
+    sb << "<p>${rows.size()} devices &middot; ${unused} used by no app &middot; ${onlyDisabled} used only by disabled apps"
+    sb << " &middot; ${childrenUsed} child devices used directly by apps</p>"
+    sb << "<table><tr><th>Device</th><th>Room</th><th>Parent</th><th>Apps</th><th>Used by</th></tr>"
+
+    rows.sort { Map a, Map b -> appsOf(b).size() <=> appsOf(a).size() ?: (a.label ?: "") <=> (b.label ?: "") }.each { Map d ->
+        List<Map> apps = appsOf(d)
+        String parent = "&ndash;"
+        if (d.parentDeviceId) parent = "<a href='${base}/device/edit/${d.parentDeviceId}' target='_blank'>${esc(parents["d${d.parentDeviceId}".toString()] as String)}</a>"
+        else if (d.parentAppId) parent = "<a href='${base}/installedapp/configure/${d.parentAppId}' target='_blank'>${esc(parents["a${d.parentAppId}".toString()] as String)}</a>"
+        String usedBy = groupedLinks(apps, base)
+        List<Map> dashboards = dashboardsOf(d)
+        if (dashboards) {
+            String line = "<span style='opacity:.6'>Mobile dashboards: " + dashboards.sort { it.label }.collect { Map a ->
+                "<a href='${base}/installedapp/configure/${a.id}' target='_blank'>${esc(a.label as String)}</a>"
+            }.join(", ") + "</span>"
+            usedBy = usedBy ? usedBy + "<br>" + line : line
         }
-    } catch (Exception e) {
-        logError "Error making HTTP request for parent app id ${parentAppid}: ${e.message}"
+        String name = "<a href='${base}/device/edit/${d.id}' target='_blank'>${esc(d.label as String)}</a>"
+        if (d.disabled) name += " (disabled)"
+        sb << "<tr><td>${name}</td><td>${esc((d.room ?: "") as String)}</td><td>${parent}</td>"
+        sb << "<td>${apps.size()}</td><td>${usedBy ?: '&ndash;'}</td></tr>"
     }
-    return parent
+    sb << "</table>"
+    return sb.toString()
 }
 
-private DeviceWrapper getDeviceById(Integer deviceId) {
-    app.updateSetting("tempDeviceWrapper", [value:deviceId, type:"capability.*"])
-    return tempDeviceWrapper
+String groupedLinks(List<Map> apps, String base) {
+    return apps.groupBy { it.type ?: "Other" }.sort { it.key }.collect { type, group ->
+        "<b>${esc(type as String)}</b>: " + (group as List<Map>).sort { it.label }.collect { Map a ->
+            String link = "<a href='${base}/installedapp/configure/${a.id}' target='_blank'>${esc(a.label as String)}</a>"
+            a.disabled ? "<span style='opacity:.6'>${link} (disabled)</span>" : link
+        }.join(", ")
+    }.join("<br>")
 }
 
-private String getHubBaseLocalUrl() {
+String esc(String s) {
+    if (s == null) return ""
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("'", "&#39;").replace('"', "&quot;")
+}
+
+private String hubBaseUrl() {
     return "http://${location.hubs[0].getDataValue("localIP")}"
-}
-
-private String getDeviceDetailsUrl(Integer deviceId) {
-    return "${getHubBaseLocalUrl()}/device/edit/$deviceId"
-}
-
-private String getAppConfigUrl(Integer appId) {
-    return "${getHubBaseLocalUrl()}/installedapp/configure/$appId"
 }
 
 // logging helpers

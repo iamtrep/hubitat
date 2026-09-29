@@ -20,11 +20,11 @@ Hubitat Elevation apps for hub administration and maintenance. These are not aut
 
 Generates an HTML report showing which installed apps reference each device.
 
-- Queries the hub's internal APIs (`/hub2/devicesList`, `/device/fullJson/{id}`, `/installedapp/statusJson/{id}`) to build a cross-reference map.
-- Reports can cover all devices or a user-selected subset.
-- Optional filter to show only **child devices** (those with a parent app or parent device).
-- Output table is sorted by number of referencing apps (most-referenced first) and includes clickable links to both the device and each app's configuration page.
-- Also resolves and displays the parent app or parent device for child devices.
+- Groups each device's apps by app type and marks disabled apps and devices. A summary line counts devices used by no app, devices used only by disabled apps, and child devices used directly by apps.
+- Shows each device's room and, for child devices, the parent device or parent app.
+- Mobile dashboards (the hub's per-room and "All Devices" Easy Mobile Dashboards) are listed apart and not counted: a removed device just drops off them.
+- Reports can cover all devices, child devices included, or a user-selected subset. Optional filter to show only **child devices**.
+- Reads through the platform API (`getDevicesByIds`, `getAppsUsingDevice`, `getAppByAppId`), which takes a couple of seconds for a few hundred devices. If the platform restricts those calls, the report falls back to the hub's internal endpoints (`/hub2/devicesList`, `/device/fullJson/{id}`, `/installedapp/statusJson/{id}`), several times slower and without mobile dashboards, and says so at the top. A setting forces the fallback for testing.
 
 ### Device Replacement Helper (`DeviceReplacement.groovy`)
 
@@ -33,10 +33,14 @@ Helps replace one device with another across every installed app — auto-swappi
 **Three-page workflow:**
 
 1. **Device Selection** — pick the source (old) device and target (new) device. Displays a capability comparison highlighting any mismatches.
-2. **Scan & Preview** — for every app that references the source device, walks the app's full preference page graph (`mainPage` plus every sub-page reachable via `href`), then locates each affected input on its home page. Findings split into two tables:
+2. **Scan & Preview** — for every app that references the source device, walks the app's full preference page graph (`mainPage` plus every sub-page reachable via `href`), then locates each affected input on its home page. Findings split into four sections:
    - **Auto-Swap Eligible (mainPage)** — inputs on the main page, with per-row checkboxes to include/exclude from the swap. Per-app warnings flag capability mismatch, target already present, single-device inputs, and `state.*` references to the device ID.
    - **Manual Edit Required** — inputs on sub-pages or in places the auto-swap can't safely write. Each row carries an **Edit →** deeplink straight to the right page (`/installedapp/configure/{id}/{pageName}`), the current device list with the source highlighted, and the same warning columns.
+   - **Other Apps Using the Source** — apps that use the source but hold it in no device input the scan can see (Hub Mesh sharing, apps that keep devices in their own data). Each gets an **Open →** link to replace the device by hand.
+   - **Mobile Dashboards** — the hub's per-room and "All Devices" dashboards showing the source. Nothing in them is swapped; they list devices by room, so the page says whether to put the target in the source's room.
 3. **Execute & Report** — performs the auto-swap via `POST /installedapp/update/json` for selected eligible entries, verifies each by re-reading `statusJson`, and displays a pass/fail table.
+
+Apps using the source are found through the platform API (`getAppsUsingDevice`). If the platform restricts it, the scan falls back to `/device/fullJson/{id}`, without the mobile dashboards, and says so at the top. An option forces the fallback for testing.
 
 Additional features:
 - **Undo** — stores the last auto-swap and offers a one-click undo from the main page.

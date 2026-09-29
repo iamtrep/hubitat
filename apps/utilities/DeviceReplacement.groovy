@@ -4,8 +4,10 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.2.0"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
+// Parent of the mobile dashboards the hub generates per room and for "All Devices".
+@Field static final String DASHBOARD_PARENT_TYPE = "Easy Mobile Dashboard Parent"
 
 definition(
     name: "Device Replacement Helper",
@@ -91,6 +93,9 @@ Map mainPage() {
             input "skipSelf", "bool",
                 title: "Skip this app's own config",
                 defaultValue: true, required: false
+            input "forceLoopback", "bool",
+                title: "Find apps with the slower loopback method instead of the platform API (for testing)",
+                defaultValue: false, required: false
         }
 
         Map lastSwap = state.lastSwap as Map
@@ -149,24 +154,24 @@ Map previewPage() {
         }
 
         // Step 1: Find apps using the source device
-        List appsUsing = []
-        try {
-            httpGet("${BASE_URL}/device/fullJson/${sourceId}") { response ->
-                if (response.status == 200) {
-                    appsUsing = (response.data.appsUsing ?: []) as List
-                }
-            }
-        } catch (Exception e) {
-            section { paragraph "<span style='color:red'>Error fetching device info: ${e.message}</span>" }
+        Map src = referenceSource()
+        List<Map> appsUsing = appsUsing(sourceId as Long, src)
+        if (appsUsing == null) {
+            section { paragraph "<span style='color:red'>Could not read which apps use ${sourceDevice.displayName}; see the logs.</span>" }
             return
+        }
+        if (src.loopback) {
+            section { paragraph "<span style='color:orange'>Using the slower loopback method (${src.reason}). Mobile dashboards are not shown.</span>" }
         }
 
         // Filter out self if skipSelf is enabled
         if (skipSelf != false) {
             appsUsing = appsUsing.findAll { (it.id as int) != (app.id as int) }
         }
+        List<Map> dashboards = appsUsing.findAll { it.dashboard }
+        appsUsing = appsUsing.findAll { !it.dashboard }
 
-        if (!appsUsing) {
+        if (!appsUsing && !dashboards) {
             section("Results") {
                 paragraph "No apps reference this device. Nothing to swap."
             }
@@ -177,11 +182,12 @@ Map previewPage() {
         // Step 2 & 3: For each app, check statusJson and configure/json
         List<Map> swappable = []
         List<Map> manual = []
+        List<Map> unmatched = []   // apps that use the source but hold it in no device input we can see
 
-        appsUsing.each { appRef ->
+        appsUsing.each { Map appRef ->
             int appId = appRef.id as int
             String appLabel = (appRef.label ?: "App ${appId}") as String
-            String appType = (appRef.name ?: "") as String
+            String appType = (appRef.type ?: "") as String
 
             // Get statusJson for device input details
             Map statusData = null
@@ -193,9 +199,11 @@ Map previewPage() {
                 }
             } catch (Exception e) {
                 logWarn "Error fetching statusJson for app ${appId}: ${e.message}"
+            }
+            if (!statusData) {
+                unmatched << [appId: appId, appLabel: appLabel, appType: appType, reason: "Could not read the app's settings"]
                 return
             }
-            if (!statusData) return
 
             // Scan appSettings for device inputs containing source ID
             List appSettings = (statusData.appSettings ?: []) as List
@@ -216,7 +224,11 @@ Map previewPage() {
                 }
             }
 
-            if (!matchingInputs) return
+            if (!matchingInputs) {
+                unmatched << [appId: appId, appLabel: appLabel, appType: appType,
+                              reason: "No device input holds it; the app may keep the device in its own data"]
+                return
+            }
 
             // Check app state for source device ID references
             List appState = (statusData.appState ?: []) as List
@@ -399,7 +411,32 @@ Map previewPage() {
             }
         }
 
-        if (!swappable && !manual) {
+        if (unmatched) {
+            section("Other Apps Using the Source (${unmatched.size()})") {
+                paragraph "These apps use <b>${sourceDevice.displayName}</b> but the scan found no device input to change. Open each app and replace the device by hand."
+                String table = "<table style='border-collapse:collapse;width:100%'>" +
+                    "<thead><tr style='background:#ddd'><th ${td}>App</th><th ${td}>Type</th><th ${td}>Why</th><th ${tdC}>Open</th></tr></thead><tbody>"
+                unmatched.each { Map entry ->
+                    table += "<tr><td ${td}>${entry.appLabel}</td><td ${td}>${entry.appType}</td><td ${td}>${entry.reason}</td>" +
+                        "<td ${tdC}><a href='/installedapp/configure/${entry.appId}' target='_blank'>Open &rarr;</a></td></tr>"
+                }
+                table += "</tbody></table>"
+                paragraph table
+            }
+        }
+
+        if (dashboards) {
+            section("Mobile Dashboards (${dashboards.size()})") {
+                String links = dashboards.sort { it.label }.collect { Map d ->
+                    "<a href='/installedapp/configure/${d.id}' target='_blank'>${d.label}</a>"
+                }.join(", ")
+                paragraph "Showing ${sourceDevice.displayName}: ${links}"
+                paragraph dashboardAdvice(sourceDevice.getRoomName(), targetDevice.getRoomName(),
+                                          targetDevice.displayName as String, targetId as Long)
+            }
+        }
+
+        if (!swappable && !manual && !unmatched && !dashboards) {
             section("Results") {
                 paragraph "No device inputs found containing the source device."
             }
@@ -727,7 +764,8 @@ private String buildAndSendSwap(Map configData, int appId, String inputName, int
         path: "/installedapp/update/json",
         requestContentType: "application/x-www-form-urlencoded",
         body: body,
-        textParser: true
+        textParser: true,
+        timeout: 30
     ]) { response ->
         if (response.status == 200) {
             String respText = response.data?.text ?: ""
@@ -855,6 +893,87 @@ private void performUndo() {
 
     state.remove("lastSwap")
     logInfo "Undo complete"
+}
+
+// The hub's mobile dashboards list devices by room (plus "All Devices" and "Devices without
+// room"), so they follow the target once it is in the source's room; nothing in them is swapped.
+String dashboardAdvice(String sourceRoom, String targetRoom, String targetName, Long targetId) {
+    if (sourceRoom && sourceRoom != targetRoom) {
+        return "These dashboards list devices by room. Put <a href='/device/edit/${targetId}' target='_blank'>${targetName}</a> " +
+            "in room <b>${sourceRoom}</b>" + (targetRoom ? " (it is in <b>${targetRoom}</b> now)" : "") +
+            " so they show it. The source drops off them once it is removed."
+    }
+    return "Nothing to do: these dashboards list devices by room, and they will show ${targetName} on their own."
+}
+
+// ---- Apps using a device ----
+// getAppsUsingDevice is fast but reaches apps this app was never granted, so the platform may
+// restrict it. When it fails, appsUsing() falls back to /device/fullJson: slower, and without the
+// mobile dashboards. A missing method or a sandbox block is remembered until the firmware changes;
+// any other error falls back for this run only. Results are plain maps; nothing else here touches
+// the platform's InstalledApp objects.
+//
+// Mobile dashboards (children of the hub's Easy Mobile Dashboard Parent) are flagged `dashboard`:
+// they list devices by room and hold no input to swap. The flag comes from the parent's app type;
+// if that ever misses, a dashboard shows up as an app to check by hand, the safe side.
+
+private Map referenceSource() {
+    String fw = location.hub.firmwareVersionString
+    if (state.refSourceFw != fw) {
+        state.remove("refSource")
+        state.remove("refSourceFw")
+    }
+    if (forceLoopback) return [loopback: true, reason: "forced in settings"]
+    if (state.refSource == "loopback") return [loopback: true, reason: "platform API unavailable on ${fw}"]
+    return [loopback: false]
+}
+
+private void platformFailed(Map src, Exception e) {
+    src.loopback = true
+    src.reason = e.toString()
+    if (e instanceof MissingMethodException || e instanceof SecurityException) {
+        state.refSource = "loopback"
+        state.refSourceFw = location.hub.firmwareVersionString
+    }
+    logWarn "platform API failed (${e}); using the loopback endpoints"
+}
+
+// Apps using the device as [id, label, type, disabled, dashboard] maps, or null when it can't be read.
+private List<Map> appsUsing(Long deviceId, Map src) {
+    if (!src.loopback) {
+        try {
+            return (getAppsUsingDevice(deviceId) ?: []).collect { a ->
+                [id: a.id as Long, label: (a.label ?: a.name) as String, type: (a.appType?.name ?: a.name) as String,
+                 disabled: a.disabled == true, dashboard: isDashboardParent(a.parentAppId as Long, src)]
+            }
+        } catch (Exception e) {
+            platformFailed(src, e)
+        }
+    }
+    List<Map> out = null
+    try {
+        httpGet([uri: BASE_URL, path: "/device/fullJson/${deviceId}", timeout: 15]) { response ->
+            if (response.status == 200) {
+                out = ((response.data.appsUsing ?: []) as List).collect { Map a ->
+                    [id: a.id as Long, label: (a.label ?: a.name) as String, type: a.name as String,
+                     disabled: a.disabled == true, dashboard: false]
+                }
+            }
+        }
+    } catch (Exception e) {
+        logError "fullJson ${deviceId}: ${e.message}"
+    }
+    return out
+}
+
+private boolean isDashboardParent(Long parentAppId, Map src) {
+    if (parentAppId == null) return false
+    Map cache = (src.parentTypes ?: (src.parentTypes = [:])) as Map
+    if (!cache.containsKey(parentAppId)) {
+        def p = getAppByAppId(parentAppId)
+        cache[parentAppId] = p?.appType?.namespace == "hubitat" && p?.appType?.name == DASHBOARD_PARENT_TYPE
+    }
+    return cache[parentAppId] as boolean
 }
 
 // ---- Lifecycle ----
