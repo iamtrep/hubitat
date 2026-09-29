@@ -4,6 +4,8 @@
 /*
  *  Zigbee Responder — hub-wide responder for Zigbee cluster reads Hubitat does not
  *  forward to driver parse() (currently Time cluster 0x000A; OTA 0x0019 stub).
+ *  The hub answers Time cluster reads itself since firmware 2.5.0.157, so the 0x000A
+ *  path is historical; the driver stays as a template for other frames.
  *
  *  One virtual-device instance opens a single WebSocket to the hub's /zigbeeLogsocket,
  *  filters inbound frames by cluster + opt-in deviceId, and emits a ZCL response on

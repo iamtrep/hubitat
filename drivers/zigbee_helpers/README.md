@@ -10,7 +10,7 @@ Diagnostic and test drivers for Zigbee mesh tooling — not device drivers for e
 ## Drivers
 
 - `ZigbeeMeshProbe.groovy` — **Zigbee Mesh Probe**: issues ZDO neighbor-table and routing-table queries for external mesh-mapping tools
-- `ZigbeeResponder.groovy` — **Zigbee Responder**: development driver exercising the hub's Zigbee log WebSocket
+- `ZigbeeResponder.groovy` — **Zigbee Responder**: development driver exercising the hub's Zigbee log WebSocket. It was written to answer Time cluster (0x000A) reads, which the hub handles itself since firmware 2.5.0.157; kept as a template for responding to other frames
 
 ## License
 
