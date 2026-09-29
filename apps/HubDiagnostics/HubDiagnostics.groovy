@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "5.86.5"
+@Field static final String CODE_VERSION = "5.86.6"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -172,6 +172,7 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final int        RUNTIME_STATS_RETRY_S      = 60
 @Field static final long       RADIO_CACHE_TTL_MS = 60_000L
 @Field static final long       HUB_LIST_CACHE_TTL_MS = 120_000L
+@Field static final long       HUB_DATA_CACHE_TTL_MS = 30_000L
 @Field static final long       SYSTEM_RESOURCES_CACHE_TTL_MS = 10_000L
 // apiLive polls every 30s by default and fans out to 5 hub HTTP calls. The slow-changing ones
 // (temperature, databaseSize, cpuInfo, loadThreshold) carry longer TTLs to spare the hub.
@@ -670,10 +671,18 @@ private String stripUpdateBadge(String label) {
  * @param includeNetwork  set true when the caller will use network/runtimeStats (Network/Performance tabs);
  *                        defaults false because analyzeNetwork is heavier than the savings on Dashboard/Health.
  */
+// /hub2/hubData (hub alerts, model, cloud-controller flag) takes about a second to build and
+// several endpoints read it, so one page load would fetch it repeatedly without this.
+Map fetchHubData() {
+    return (Map) cachedFetch('hubData', HUB_DATA_CACHE_TTL_MS) {
+        Map r = hubMapRequest(HUB_DATA_PATH, "hub data", 10)
+        return r.ok ? r.data : null
+    }
+}
+
 private Map buildSharedCache(boolean includeNetwork = false) {
     Map shared = [:]
-    Map hubDataWrap = hubMapRequest(HUB_DATA_PATH, "hub data (shared)", 10)
-    shared.hubData     = hubDataWrap.ok ? hubDataWrap.data : null
+    shared.hubData     = fetchHubData()
     shared.resources   = fetchSystemResources()
     shared.temperature = fetchTemperature()
     shared.databaseSize = fetchDatabaseSize()
@@ -741,8 +750,7 @@ Map apiNetwork() {
     return timed("network") {
         // Network tab needs hubData (for fetchSecurityInfo's cloudController flag); rest is fetched by analyzeNetwork
         Map shared = [:]
-        Map hubDataWrap = hubMapRequest(HUB_DATA_PATH, "hub data (shared)", 10)
-        shared.hubData = hubDataWrap.ok ? hubDataWrap.data : null
+        shared.hubData = fetchHubData()
         getNetworkData(shared)
     }
 }
@@ -1856,8 +1864,8 @@ private Map summarizeValues(List vals, int scale) {
 // Model-dependent default for the free-memory warning; the hub model is looked up once per code load.
 private int defaultWarnMemMb() {
     if (hubModelCache == null) {
-        Map r = hubMapRequest(HUB_DATA_PATH, "hub data", 10)
-        if (r.ok) hubModelCache = (r.data?.model ?: "") as String
+        Map hd = fetchHubData()
+        if (hd != null) hubModelCache = (hd.model ?: "") as String
     }
     return hubModelCache == "C-8 Pro" ? DEFAULT_WARN_MEM_MB_C8PRO : DEFAULT_WARN_MEM_MB
 }
@@ -1891,7 +1899,7 @@ private String tempThresholdRange() { (getTemperatureScale() == "F") ? "68..212"
 
 Map fetchHubAlerts(Map prefetchedHubData = null) {
     Map hubData = prefetchedHubData
-    if (!hubData) { Map r = hubMapRequest(HUB_DATA_PATH, "hub data", 10); hubData = r.ok ? r.data : null }
+    if (!hubData) hubData = fetchHubData()
     if (!hubData) return [:]
     return [
         alerts: hubData.alerts ?: [:],
@@ -2234,7 +2242,7 @@ Map fetchSecurityInfo(Map prefetchedHubData = null) {
     String subnets = (String) hubRequest(ALLOW_SUBNETS_PATH, "allowed subnets", "text", 5)
     String dnsFb = (String) hubRequest(DNS_FALLBACK_PATH, "DNS fallback", "text", 5)
     Map hubData = prefetchedHubData
-    if (!hubData) { Map r = hubMapRequest(HUB_DATA_PATH, "hub data (cloud controller flag)", 10); hubData = r.ok ? r.data : null }
+    if (!hubData) hubData = fetchHubData()
     // null laRaw/subnets means the fetch itself failed — distinguish from a successfully-fetched "no restriction"
     // so the UI can render "Unknown" instead of a falsely reassuring "Off".
     Map limitedAccess = null
@@ -3702,7 +3710,7 @@ Map getHubInfo(Map prefetchedHubData = null) {
     }
     // Fetch model from hubData for accurate hardware name (e.g. "C-7", "C-8 Pro")
     Map hubData = prefetchedHubData
-    if (!hubData) { Map r = hubMapRequest(HUB_DATA_PATH, "hub data", 10); hubData = r.ok ? r.data : null }
+    if (!hubData) hubData = fetchHubData()
     if (hubData && hubData.model) {
         info.hardware = hubData.model
     }

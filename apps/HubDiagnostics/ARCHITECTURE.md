@@ -90,6 +90,7 @@ TTLs are proportional to how fast the underlying metric actually moves, sized so
 | `TEMPERATURE_CACHE_TTL_MS` | 60 s | hub temperature | Slow-changing. |
 | `DATABASE_SIZE_CACHE_TTL_MS` | 60 s | database size | Grows over hours, not seconds. |
 | `HUB_LIST_CACHE_TTL_MS` | 2 min | apps list, devices list | Large payloads; topology only changes on install/remove. |
+| `HUB_DATA_CACHE_TTL_MS` | 30 s | `/hub2/hubData`: hub alerts, model, cloud-controller flag | About 1 s to build and read by several endpoints; 30 s folds one page load's reads into one fetch while alerts stay current. |
 | `CPU_INFO_CACHE_TTL_MS` | 5 min | core count / static CPU facts | Effectively constant per install. |
 | `LOAD_THRESHOLD_CACHE_TTL_MS` | 5 min | platform load threshold | Rarely changes. |
 | `INTEGRATION_OVERRIDES_CACHE_TTL_MS` | 5 min | File Manager overrides config | Picks up a re-uploaded config without a full Done; `updated()`/`apiClearCache()` reset it immediately. |
