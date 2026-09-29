@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "5.86.6"
+@Field static final String CODE_VERSION = "5.86.7"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -282,6 +282,10 @@ private void cachePut(String key, Object data) {
 @Field static final ConcurrentHashMap<Long, List> TEMP_SAMPLES = new ConcurrentHashMap<>()
 @Field static final String CHECKPOINT_DETAIL_PREFIX = "hub_diagnostics_checkpoint_"
 @Field static final String PERFORMANCE_COMPARISON_FILE = "hub_diagnostics_performance_comparison.json"
+// Scheduled snapshots and checkpoints: cron fires JITTER_BASE_MIN past the slot, then a
+// random 1..JITTER_MAX_S delay, so each run lands between :03 and :07.
+@Field static final int    JITTER_BASE_MIN = 3
+@Field static final int    JITTER_MAX_S    = 240
 
 @Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/HubDiagnostics/HubDiagnostics.groovy"
 @Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/HubDiagnostics/hub_diagnostics_ui.html"
@@ -3354,7 +3358,11 @@ boolean createCheckpoint() {
     }
 }
 
-// v5.33.0: scheduled-only async entry point. The Hubitat cron handler calls this and
+void checkpointTick() {
+    runIn(jitterDelaySec(), "scheduledCheckpoint")
+}
+
+// v5.33.0: scheduled-only async entry point. checkpointTick() schedules this and it
 // returns immediately after firing the first asynchttpGet; the chain callbacks finalize
 // off the app thread. Keeps user-triggered apiCreateCheckpoint sync so the HTTP caller
 // gets a real success/fail response.
@@ -3578,6 +3586,22 @@ void clearAllCheckpoints() {
 }
 
 // ===== SNAPSHOT SYSTEM =====
+
+// Daily cron entry point; skips until snapshotInterval days have passed. One hour of
+// slack so a run that fires slightly early is not pushed back a whole day.
+void scheduledSnapshot() {
+    int days = (settings.snapshotInterval ?: 1).toInteger()
+    Long last = state.lastScheduledSnapshotMs as Long
+    if (last != null && now() - last < days * 86400000L - 3600000L) return
+    state.lastScheduledSnapshotMs = now()
+    runIn(jitterDelaySec(), "createSnapshot")
+}
+
+// Scheduled jobs fire on a fixed cron slot, then wait a fresh random delay each run
+// so they stay off the :00 jobs and do not land on the same second every time.
+private int jitterDelaySec() {
+    return 1 + new Random().nextInt(JITTER_MAX_S)
+}
 
 void createSnapshot() {
     logInfo "Creating config snapshot..."
@@ -4894,33 +4918,25 @@ void initialize() {
 
     if (settings.autoSnapshot) {
         int days = (settings.snapshotInterval ?: 1).toInteger()
-        String cron = days == 1 ? "0 0 0 * * ?" : "0 0 0 */${days} * ?"
-        schedule(cron, "createSnapshot")
-        logInfo "Automatic config snapshots scheduled every ${days} day(s)"
+        // A day-of-month step (*/N) restarts on the 1st, so it only means "every N days"
+        // when N divides the month. Run daily and let scheduledSnapshot() count the days.
+        schedule("0 ${JITTER_BASE_MIN} 0 * * ?", "scheduledSnapshot")
+        logInfo "Automatic config snapshots scheduled every ${days} day(s), 00:0${JITTER_BASE_MIN}–00:0${JITTER_BASE_MIN + 4}"
     }
+    state.remove('snapshotOffsetSeconds')
+    state.remove('checkpointOffsetSeconds')
 
     if (settings.autoCheckpoint) {
         int interval = (settings.checkpointInterval ?: "60").toInteger()
-        int offsetSec = (state.checkpointOffsetSeconds ?: -1) as int
-        if (offsetSec < 180 || offsetSec > 420) {
-            offsetSec = 180 + new Random().nextInt(241)
-            state.checkpointOffsetSeconds = offsetSec
-        }
-        int sec = offsetSec % 60
-        int min = offsetSec.intdiv(60)
         String cron
         if (interval < 60) {
-            cron = "${sec} ${min}/${interval} * * * ?"
+            cron = "0 ${JITTER_BASE_MIN}/${interval} * * * ?"
         } else {
             int hours = (interval / 60).toInteger()
-            cron = hours >= 24 ? "${sec} ${min} 0 * * ?" : "${sec} ${min} */${hours} * * ?"
+            cron = hours >= 24 ? "0 ${JITTER_BASE_MIN} 0 * * ?" : "0 ${JITTER_BASE_MIN} */${hours} * * ?"
         }
-        // v5.33.0: scheduledCheckpoint fires the async chain and returns immediately,
-        // so the platform scheduler is never blocked on radio/file work.
-        schedule(cron, "scheduledCheckpoint")
-        String mm = min.toString().padLeft(2, '0')
-        String ss = sec.toString().padLeft(2, '0')
-        logInfo "Automatic perf checkpoints scheduled every ${interval} minute(s) at :${mm}:${ss} past the hour"
+        schedule(cron, "checkpointTick")
+        logInfo "Automatic perf checkpoints scheduled every ${interval} minute(s), :0${JITTER_BASE_MIN}–:0${JITTER_BASE_MIN + 4} past the slot"
     }
 
     armTemperatureSampling()
