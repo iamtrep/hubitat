@@ -4,7 +4,7 @@
  */
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.8.0"
+@Field static final String CODE_VERSION = "0.8.1"
 @Field static final String UI_FILE = "multi_hub_inventory_ui.html"
 @Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/MultiHubInventory.groovy"
 @Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/multi_hub_inventory_ui.html"
@@ -165,19 +165,8 @@ private boolean checkOAuth() {
     }
 }
 
-// Look up this app's type ID by its definition name, via the hub loopback API.
 private String getAppTypeId() {
-    String typeId = null
-    try {
-        httpGet([uri: "http://127.0.0.1:8080", path: "/hub2/userAppTypes", timeout: 15]) { resp ->
-            List apps = resp.data instanceof List ? (List) resp.data : []
-            Map match = apps.find { it.name == "Multi-Hub Inventory" }
-            if (match) typeId = match.id?.toString()
-        }
-    } catch (e) {
-        logDebug "Failed to fetch user app types: ${e.message}"
-    }
-    return typeId
+    return app.getAppTypeId()?.toString()
 }
 
 private String getAppEditorPath() {

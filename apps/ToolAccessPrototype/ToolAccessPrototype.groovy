@@ -21,7 +21,7 @@ import groovy.transform.Field
 import groovy.json.JsonOutput
 
 @Field static final String APP_NAME = "Tool Access Prototype"
-@Field static final String CODE_VERSION = "0.3.0"
+@Field static final String CODE_VERSION = "0.3.1"
 @Field static final String UI_FILE = "tool_access_ui.html"
 @Field static final Integer DEBUG_AUTO_OFF_MINUTES = 30
 
@@ -306,17 +306,7 @@ private boolean checkOAuth() {
 }
 
 private String getAppTypeId() {
-    String typeId = null
-    try {
-        httpGet([uri: "http://127.0.0.1:8080", path: "/hub2/userAppTypes", timeout: 15]) { resp ->
-            List apps = resp.data instanceof List ? (List) resp.data : []
-            Map match = apps.find { it.name == APP_NAME }
-            if (match) typeId = match.id?.toString()
-        }
-    } catch (e) {
-        logDebug "could not fetch user app types: ${e.message}"
-    }
-    return typeId
+    return app.getAppTypeId()?.toString()
 }
 
 private boolean autoEnableOAuth() {
