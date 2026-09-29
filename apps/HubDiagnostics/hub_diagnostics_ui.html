@@ -142,7 +142,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.86.3";
+const CODE_VERSION = "5.86.5";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -5684,13 +5684,29 @@ function buildAuditXref(allDevices) {
   return { unreferenced, meshOrphans, criticalTop20, criticalCount, appsToDevices, dashboardsToDevices, tunedDevices, tunedDefaults: { spammyThreshold: modeSt, maxStates: modeMs, maxEvents: modeMe } };
 }
 
+// The hub ships getRooms() as is: no "Unassigned" room, and ids of deleted devices can linger.
+// Keep only ids the scan saw (audited or failed) and gather the rest under "Unassigned".
+function buildAuditRooms(rooms, allDevices, failed) {
+  const known = new Set(Object.keys(allDevices || {}));
+  (failed || []).forEach(f => known.add(String(f.id)));
+  const assigned = new Set();
+  const out = (rooms || []).map(r => {
+    const ids = (r.deviceIds || []).filter(d => known.has(String(d)));
+    ids.forEach(d => assigned.add(String(d)));
+    return { id: r.id, name: r.name, deviceIds: ids };
+  });
+  const unassigned = [...known].filter(d => !assigned.has(d)).map(Number);
+  if (unassigned.length) out.push({ id: null, name: 'Unassigned', deviceIds: unassigned });
+  return out;
+}
+
 function buildAuditHtml(data) {
   const hubName = data.hubName || '';
   // Hub ships generatedMs (epoch); format for display here, consistent with the rest of the UI.
   const generatedAt = data.generatedMs ? new Date(data.generatedMs).toLocaleString() : '';
-  const rooms = data.rooms || [];
   const allDevices = data.allDevices || {};
   const failed = data.failed || [];
+  const rooms = buildAuditRooms(data.rooms, allDevices, failed);
   // Cross-reference derivation moved off the hub (LB1, v5.42.0) — derive from allDevices in the browser.
   const x = buildAuditXref(allDevices);
   const unreferenced = x.unreferenced;

@@ -468,7 +468,7 @@ Generates a one-time, per-device cross-reference report covering:
 - **Stuck scheduled jobs** — `nextRunTime` in the past, with a "Last run" (`prevRunTime`) column to disambiguate "never ran" vs "ran once and lingered".
 - **Manually-tuned devices** — devices with non-default `spammyThreshold`, `maxStates`, or `maxEvents` values. The audit detects the fleet's mode value for each setting and highlights divergent devices in bold.
 - **Critical devices** — top 20 by combined apps + dashboards reference count.
-- **Devices by Room** — devices grouped by their assigned room (sourced from `/hub2/roomsList`). Surfaces empty rooms (cleanup targets) and high-density rooms (split candidates). Hubitat provides a synthetic "Unassigned" room for devices not assigned anywhere.
+- **Devices by Room** — devices grouped by their assigned room, child devices included. Surfaces empty rooms (cleanup targets) and high-density rooms (split candidates). Devices not assigned anywhere are listed under "Unassigned".
 - **Z-Wave JS Mesh Health** (Z-Wave JS hubs only) — per-Z-Wave-device row from `/hub/zwave2/getNodeState?node=N`: state, status, interview stage, RTT, RSSI, PER %, TX/RX command counts, last-seen timestamp.
 - **Hub Mesh Linked Devices** — for each device this hub consumes from another hub via Hub Mesh, source hub + source device ID + status from `/hubMesh/localLinkedDevice/<id>`.
 - **Apps → devices** and **Dashboards → devices reverse indices** — disabled app subscribers are rendered with strikethrough so "ghost references" stand out.

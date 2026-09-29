@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "5.86.3"
+@Field static final String CODE_VERSION = "5.86.5"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -63,7 +63,6 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final String USER_BUNDLES_PATH = "/hub2/userBundles"
 @Field static final String USER_LIBRARIES_PATH = "/hub2/userLibraries"
 @Field static final String USER_APP_TYPES_PATH = "/hub2/userAppTypes"
-@Field static final String ROOMS_LIST_PATH = "/hub2/roomsList"
 @Field static final String ZWAVE_JS_NODE_STATE_PREFIX = "/hub/zwave2/getNodeState?node="
 @Field static final String HUB_MESH_LINKED_DEVICE_PREFIX = "/hubMesh/localLinkedDevice/"
 @Field static final String CPU_INFO_PATH = "/hub/cpuInfo"
@@ -2062,24 +2061,22 @@ private static String stripHubPrefix(String v) {
 }
 
 /**
- * Walks /hub2/roomsList tree and returns flat list:
- *   [{id, name, deviceCount, deviceIds[]}]
- * Devices not assigned to any room are gathered under a synthetic "(Unassigned)" room with id=null.
+ * Rooms from getRooms(): [{id, name, deviceCount, deviceIds[]}], child devices included.
+ * Unlike /hub2/roomsList it has no "Unassigned" room and can list ids of deleted devices;
+ * the SPA reconciles both against allDevices (buildAuditRooms() in hub_diagnostics_ui.html).
  */
 List fetchRoomsForAudit() {
-    Map wrap = hubMapRequest(ROOMS_LIST_PATH, "rooms list", 10)
-    if (!wrap.ok) return []
-    List nodes = (wrap.data.roomNodes as List) ?: []
-    List rooms = []
-    nodes.each { Map rn ->
-        Map data = (rn.data as Map) ?: [:]
-        if (!data.id) return
-        List children = (rn.children as List) ?: []
-        List devIds = children.collect { Map c -> (c.data as Map)?.id as Long }.findAll { it }
-        rooms << [id: data.id, name: data.name, deviceCount: devIds.size(), deviceIds: devIds]
+    List rooms
+    try {
+        rooms = (getRooms() ?: []) as List
+    } catch (Exception e) {
+        logWarn "rooms: getRooms() failed: ${e.message}"
+        return []
     }
-    rooms.sort { (it.name as String)?.toLowerCase() }
-    return rooms
+    return rooms.collect { Map r ->
+        List<Long> ids = ((r.deviceIds as List) ?: []).collect { it as Long }
+        [id: r.id, name: r.name, deviceCount: ids.size(), deviceIds: ids]
+    }.sort { (it.name as String)?.toLowerCase() }
 }
 
 /** Per-node Z-Wave JS state. Returns null when stack is not JS or fetch fails. */
@@ -3814,17 +3811,7 @@ boolean isNewer(String v1, String v2) {
 }
 
 private String getAppTypeId() {
-    String typeId = null
-    try {
-        httpGet([uri: HUB_BASE, path: "/hub2/userAppTypes", timeout: 15]) { resp ->
-            List apps = resp.data instanceof List ? (List) resp.data : []
-            Map match = apps.find { it.name == "Hub Diagnostics" }
-            if (match) typeId = match.id?.toString()
-        }
-    } catch (e) {
-        logDebug "Failed to fetch user app types: ${e.message}"
-    }
-    return typeId
+    return app.getAppTypeId()?.toString()
 }
 
 private String getAppEditorPath() {
@@ -3838,7 +3825,7 @@ private boolean autoEnableOAuth() {
     // 1. Find our app type ID
     String typeId = getAppTypeId()
     if (!typeId) {
-        logError "Could not find Hub Diagnostics in user app types."
+        logError "Could not determine this app's type id."
         return false
     }
 
