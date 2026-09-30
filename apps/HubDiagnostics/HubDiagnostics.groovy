@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "5.86.7"
+@Field static final String CODE_VERSION = "5.86.8"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -1364,7 +1364,7 @@ Map getPerformanceData(Map shared = [:]) {
             if (app?.id == null) return
             appSourceById[app.id] = (app.user ? "community" : "builtin")
             Map root = parents ? (Map) parents[0] : app
-            appParentTypeById[app.id] = (root.label ?: root.name ?: 'Unknown') as String
+            appParentTypeById[app.id] = stripHtml((root.label ?: root.name ?: 'Unknown') as String)
         }
     }
 
@@ -2793,6 +2793,7 @@ Map analyzeApps(boolean deep = true) {
                     id:         numericId,
                     name:       displayName,
                     type:       appType,
+                    typeId:     isUserApp ? app.appTypeId : null,
                     user:       isUserApp,
                     source:     isUserApp ? "community" : "builtin",
                     disabled:   app.disabled ?: false,

@@ -28,7 +28,7 @@ A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-t
 11. [Snapshots Tab](#snapshots-tab)
 12. [Radio Capture Tab](#radio-capture-tab)
 13. [Device Usage Audit](#device-usage-audit)
-14. [App Settings Tab](#app-settings-tab)
+14. [Settings Tab](#settings-tab)
 15. [Forum Export](#forum-export)
 16. [Alerts & Warnings Reference](#alerts--warnings-reference)
 17. [REST API](#rest-api)
@@ -102,9 +102,9 @@ The header bar contains a **Docs ↗** link (this document), a **Diagnostic Tool
 
 **Hub Information** — Hardware model, firmware version, hub ID, IP address, Zigbee ID, location, current mode, time zone.
 
-**Overview** — Device counts: total, active, inactive, disabled. Installed apps: total, built-in, user. All counts are linked to the relevant filtered list.
+**Overview** — Device counts: total, active, inactive, disabled. Installed apps: total, built-in, community. All counts are linked to the relevant filtered list.
 
-**Resources** — Free OS memory, CPU load (5-minute average), hub temperature, and database size. Values are color-coded against configurable thresholds (see [App Settings](#app-settings-tab)). This card **auto-refreshes** in the background on a configurable interval (default 30 s); the last refresh time is shown in the card header.
+**Resources** — Free OS memory, CPU load (5-minute average), hub temperature, and database size. Values are color-coded against configurable thresholds (see [Settings](#settings-tab)). This card **auto-refreshes** in the background on a configurable interval (default 30 s); the last refresh time is shown in the card header.
 
 **Connection Types / Integrations** — Two independent breakdowns. **Connection** is how the hub reaches each device — the specific radio for commissioned devices (Zigbee, Z-Wave, Matter, Bluetooth), HomeKit for HAP-commissioned accessories, plus LAN (Direct), LAN (Bridge), Cloud, Virtual, and Hub Mesh. **Integrations** counts only devices managed by a parent integration (an app or a parent device) — e.g. Lutron, Blink, Kasa; standalone devices aren't listed here, so this breakdown won't sum to the device total. Counts are linked to the device list filtered to that group.
 
@@ -171,7 +171,7 @@ To apply:
 
 1. Start from the sample file at `apps/HubDiagnostics/tests/hub_diagnostics_integration_overrides.json` (or build your own). Keys beginning with `_` are treated as comments/disabled — strip the leading underscore to enable an entry.
 2. Upload the file to the hub's **File Manager**, keeping the name `hub_diagnostics_integration_overrides.json`.
-3. Open Hub Diagnostics and **Save** the App Settings page to reload it.
+3. Open Hub Diagnostics and **Save** the Settings page to reload it.
 
 Your entries overlay the built-in table; on a key collision, yours wins.
 
@@ -185,7 +185,7 @@ updateDataValue("hubdiag:conn", "virtual")     // virtual device
 updateDataValue("hubdiag:conn", "homekit")     // HomeKit-commissioned accessory
 ```
 
-This value is read during device enrichment and cached. Use **Clear Enrichment Cache** (App Settings → Maintenance) after changing a data value for it to take effect.
+This value is read during device enrichment and cached. Use **Clear Enrichment Cache** (Settings → Maintenance) after changing a data value for it to take effect.
 
 **Low Battery Alerts** — Devices below the configured battery threshold are listed separately above the main table.
 
@@ -202,7 +202,7 @@ A flat, sortable table of all installed app instances, including built-in system
 | Column | Description |
 |---|---|
 | App | Instance name, linked to its configure page (or status page for platform apps) |
-| Type | Internal app type name |
+| Type | App type name, linked to its code for community apps |
 | Source | **Platform** (hub system app) / **Community** (HPM/user) / **Built-in** (Hubitat) |
 | Menu | Menu category if firmware ≥ 2.5.0.x: Automations / Integrations / Apps |
 | Role | **Parent (N)** if the app has N child instances; **Child of [parent name]** if it is a child |
@@ -222,7 +222,7 @@ The canonical place for all user-installed source code on this hub. The Apps and
 
 | Column | Description |
 |---|---|
-| App Type | Name, linked to `/app/edit/<id>` |
+| App Type | Name, linked to `/app/editor/<id>` |
 | Namespace | Author/maintainer namespace |
 | OAuth | Green badge when OAuth is enabled on this app type |
 | Instances | Count of installed instances of this app type — installed-instance names appear in a hover tooltip |
@@ -383,7 +383,7 @@ When no comparison is active, these cards show current values:
 
 **Runtime** — Hub uptime, device runtime %, app runtime %.
 
-**Resources** — Free OS memory and CPU load (5-minute average). This card **auto-refreshes** in the background on a configurable interval (default 30 s) when no comparison is active; the last refresh time is shown in the card header.
+**Resources (Delta)** — Shown only while a comparison is active: the change in free OS memory, CPU load, temperature and database size over the compared interval. Live readings are on the Dashboard and Health tabs.
 
 **Top Talkers** — The 3 most message-active Z-Wave and Zigbee devices by total message count since last restart.
 
@@ -408,7 +408,7 @@ A configuration snapshot captures the state of devices, apps, network configurat
 
 **Taking a snapshot** — Click **Take Config Snapshot**, or enable auto-snapshots on a schedule (interval 1–30 days, up to 50 retained).
 
-**Snapshot table** — Lists all saved snapshots with timestamp, firmware version, device count, app count, and free memory. Individual snapshots can be viewed or deleted.
+**Snapshot table** — Lists all saved snapshots with timestamp, firmware version, device count, app count, and free memory. Click a timestamp to view that snapshot; the trash button deletes it.
 
 **Viewing a snapshot** — Shows a full breakdown at the time of capture: device counts by status, connection types, integrations, full device list, app counts, app type list, user app instances (with disabled status), parent/child hierarchy, network configuration summary (Zigbee channel, Z-Wave region, Hub Mesh peers, Matter status), file manager stats, backup counts, security settings (limited access, allowed subnets, DNS fallback, cloud controller), NTP server, hub load threshold, and code inventory (bundles, libraries, hub variable names + types).
 
@@ -490,9 +490,9 @@ The scan crawls every device via `/device/fullJson/{id}` — one call per device
 
 ---
 
-## App Settings Tab
+## Settings Tab
 
-Most settings are accessible from the Hubitat admin UI under **Apps → Hub Diagnostics → Preferences**. Three settings are available only through the dashboard's App Settings tab and are not shown in the Hubitat admin UI: **Auto-refresh interval** (Live Data section), **Obfuscate device/app names** (Export section), and **Clear Enrichment Cache** (Maintenance section).
+Most settings are accessible from the Hubitat admin UI under **Apps → Hub Diagnostics → Preferences**. Three settings are available only through the dashboard's Settings tab and are not shown in the Hubitat admin UI: **Auto-refresh interval** (Live Data section), **Obfuscate device/app names** (Export section), and **Clear Enrichment Cache** (Maintenance section).
 
 ### Config Snapshot Scheduling
 - Enable automatic snapshots: on/off
@@ -515,7 +515,7 @@ Most settings are accessible from the Hubitat admin UI under **Apps → Hub Diag
 
 ### Alert Thresholds
 
-These thresholds control when resource metrics turn orange (warning) or red (critical) across the Dashboard, Health, and Performance tabs. The defaults are generic starting points. Free memory and temperature vary from hub to hub: a C-7 often runs with 100–200 MB free while a C-8 Pro has several times that, and a hub's temperature depends mostly on where it sits. **Show observed ranges** on the dashboard's App Settings tab lists min, median and max for each reading since the last restart, over the last 30 days (temperature), across stored checkpoints, and across stored snapshots, next to the current thresholds. Set the warnings just outside the hub's normal range. CPU load is a load average, so 4.0 means all four cores are busy. The temperature defaults sit below the throttle points in Amlogic's reference Linux kernel for the A113X (70 °C to start throttling, 80 °C held); Hubitat does not publish its own limits.
+These thresholds control when resource metrics turn orange (warning) or red (critical) across the Dashboard, Health, and Performance tabs. The defaults are generic starting points. Free memory and temperature vary from hub to hub: a C-7 often runs with 100–200 MB free while a C-8 Pro has several times that, and a hub's temperature depends mostly on where it sits. **Show observed ranges** on the dashboard's Settings tab lists min, median and max for each reading since the last restart, over the last 30 days (temperature), across stored checkpoints, and across stored snapshots, next to the current thresholds. Set the warnings just outside the hub's normal range. CPU load is a load average, so 4.0 means all four cores are busy. The temperature defaults sit below the throttle points in Amlogic's reference Linux kernel for the A113X (70 °C to start throttling, 80 °C held); Hubitat does not publish its own limits.
 
 | Setting | Default | Range |
 |---|---|---|
@@ -534,7 +534,7 @@ Changes take effect immediately in the dashboard without a page reload.
 ### Logging
 - **Debug logging** — Enables verbose logging in the Hubitat Logs page. Useful for troubleshooting; leave off during normal use.
 
-### Export
+### Privacy
 - **Obfuscate device/app names** — Replaces every device, app and file name, throughout the dashboard and in the forum export, with a stable adjective-noun alias (for example `amber-otter`). The same name always gets the same alias, so a screenshot and a forum post still line up. The CSV export keeps real names, since it is for local use.
 
 ### Maintenance
@@ -558,7 +558,7 @@ The forum export generates a concise Markdown-formatted summary suitable for pas
 - Zigbee: health, channel, LQI stats, weak/stale neighbors, top talkers
 - Hub Mesh and Matter status
 
-**Obfuscation:** Enable "Obfuscate device/app names" in App Settings to replace names with stable aliases in the forum export and across the dashboard, so you can share diagnostics or screenshots publicly without revealing device names or room labels.
+**Obfuscation:** Enable "Obfuscate device/app names" in Settings to replace names with stable aliases in the forum export and across the dashboard, so you can share diagnostics or screenshots publicly without revealing device names or room labels.
 
 ---
 
@@ -574,7 +574,7 @@ The **alert-aware favicon** and the Dashboard *Platform Alerts* / Health *Alerts
 | Hub messages from `/hub/messages` | Hubitat platform admin notifications | Info |
 
 ### System Resource Alerts
-*Thresholds are configurable in App Settings → Alert Thresholds.*
+*Thresholds are configurable in Settings → Alert Thresholds.*
 
 | Alert | Condition | Default Threshold | Severity |
 |---|---|---|---|
@@ -644,8 +644,8 @@ The **alert-aware favicon** and the Dashboard *Platform Alerts* / Health *Alerts
 
 | Alert | Condition | Default Threshold | Configurable | Severity |
 |---|---|---|---|---|
-| Low Battery | Battery ≤ lowBatteryThreshold | 20% | ✅ App Settings | Warning |
-| Inactive Devices | No activity > inactivityDays | 7 days | ✅ App Settings | Warning |
+| Low Battery | Battery ≤ lowBatteryThreshold | 20% | ✅ Settings | Warning |
+| Inactive Devices | No activity > inactivityDays | 7 days | ✅ Settings | Warning |
 | Stale Devices | No activity > 2 × inactivityDays | 14 days | ✅ base; 2× multiplier hardcoded | Warning |
 | Disabled Devices | Device disabled flag | — | ❌ | Critical |
 
@@ -653,7 +653,7 @@ The **alert-aware favicon** and the Dashboard *Platform Alerts* / Health *Alerts
 
 | Alert | Condition | Default Threshold | Configurable | Severity |
 |---|---|---|---|---|
-| High Message Rate | Device msgs/min ≥ chattyDeviceThreshold | 10/min | ✅ App Settings | Critical |
+| High Message Rate | Device msgs/min ≥ chattyDeviceThreshold | 10/min | ✅ Settings | Critical |
 | Elevated Message Rate | Device msgs/min ≥ chattyDeviceThreshold × 0.6 | 6/min | ✅ base; 0.6× multiplier hardcoded | Warning |
 
 ---
