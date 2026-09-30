@@ -30,15 +30,24 @@ described under **Adding a hub** below.
 
 ## What it does
 
-Multi-Hub Inventory has three tabs across all hubs in your fleet:
+Multi-Hub Inventory has five tabs covering all hubs in your fleet:
 
 - **Summary** — total device count, per-hub counts, connection/integration/manufacturer
-  breakdowns, and an **Attention** card rolling up stale, orphaned, disabled, and
-  unreferenced devices across hubs.
+  breakdowns, and an **Attention** card rolling up stale, disabled, and unreferenced devices
+  across hubs. Every count opens the Device Register filtered to those devices.
 - **Device Register** — every device across all hubs in one sortable, filterable table
   with CSV export. Hub Mesh mirror devices are excluded and counted once on their home hub.
+  Each device's flags (stale, unreferenced, disabled, orphan, single-thread) use the same
+  rules as the Summary's Attention card.
 - **Device Drift** — groups of identical devices flagged when they run mixed firmware
   (or, in a separate section, mixed driver types) across hubs, sorted most-drifted first.
+- **Hub Mesh** — every Hub Mesh link across the fleet, matched to its source device, with
+  counts by status that filter the table.
+- **About** — version, update check and a link to the app's code.
+
+Hub Diagnostics keeps each hub's last scan in memory, so a hub restart or a Hub Diagnostics
+update clears it. That hub then shows "No scan since this hub's last restart or update" until
+you click **Rescan fleet**.
 
 ## How it works
 
@@ -87,9 +96,9 @@ http://192.168.0.10/apps/api/247/api/?access_token=<token>
 This is the `/api/` path — **not** the `ui.html` dashboard link. You can find it on the Hub
 Diagnostics settings page under "Open Hub Diagnostics Dashboard."
 
-Add an entry for **this hub itself** too, pointing at its own Hub Diagnostics instance — but
-for the host hub use the **loopback** address, because a hub cannot make an HTTP call to its
-own external IP (the call fails with "peer call failed"):
+Add an entry for **this hub itself** too, pointing at its own Hub Diagnostics instance. A hub
+cannot make an HTTP call to its own LAN IP, so the app sends its own requests through the
+loopback address either way; you can enter the LAN IP or the loopback address:
 
 ```
 http://127.0.0.1:8080/apps/api/247/api/?access_token=<token>
@@ -116,5 +125,4 @@ The following are planned but not in v1:
 
 - Row-click device detail drawer (full audit record with apps-using, scheduled jobs,
   parent/children).
-- "Flagged only" register toggle to show just attention-flagged devices.
 - Parallel rescan with per-hub progress bars (v1 scans hubs sequentially).

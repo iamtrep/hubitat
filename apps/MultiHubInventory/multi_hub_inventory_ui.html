@@ -36,7 +36,9 @@ a{color:var(--primary);text-decoration:none} a:hover{text-decoration:underline}
 
 .pills{display:flex;flex-wrap:wrap;gap:6px}
 .pill{padding:5px 12px;border-radius:14px;font-size:12px;font-weight:500;background:var(--hover)}
-.pill b{color:var(--primary);margin-left:4px}
+.pill b{color:var(--primary);margin-right:4px}
+a.pill{color:var(--text);cursor:pointer} a.pill:hover{text-decoration:none;filter:brightness(.96)}
+.pill.warn{background:#fff3e0} .pill.crit{background:#ffebee} .pill.on{box-shadow:0 0 0 2px var(--primary)}
 
 .tbl-wrap{overflow-x:auto}
 table{width:100%;border-collapse:collapse;font-size:13px}
@@ -86,7 +88,7 @@ select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-si
 .pill-menu{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:500}
 .pill-auto{background:#dbeafe;color:#1e40af} .pill-integ{background:#d1fae5;color:#065f46} .pill-apps{background:#ede9fe;color:#5b21b6}
 
-@media(max-width:600px){.metrics{grid-template-columns:repeat(2,1fr)}.tab{padding:7px 10px;font-size:12px}.filter input{width:100%}}
+@media(max-width:600px){.hdr .info{display:none}.hdr h1{font-size:15px;white-space:nowrap}#hdrLinks{margin-left:auto!important}.metrics{grid-template-columns:repeat(2,1fr)}.tab{padding:7px 10px;font-size:12px}.filter input{width:100%}}
 .report-mode .actions,.report-mode .live-only,.report-mode .tab[data-tab="config"]{display:none}
 .report-banner{background:#fff3cd;color:#856404;padding:8px 20px;font-size:13px;text-align:center;border-bottom:1px solid #ffc107;position:sticky;top:0;z-index:101}
 .report-mode .hdr{top:33px}
@@ -103,6 +105,7 @@ table[data-sortable] th{cursor:pointer}
 table[data-sortable] th:hover{background:#1565a7}
 table[data-sortable] th[data-dir] .arr{opacity:1}
 .muted{color:var(--muted)}.warn{color:var(--warn)}.crit{color:var(--crit)}
+.drift-g+.drift-g{margin-top:18px} .drift-h{font-size:13px;font-weight:600;margin-bottom:6px}
 </style>
 </head>
 <body>
@@ -114,7 +117,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
   <div class="tab" data-tab="register">Device Register</div>
   <div class="tab" data-tab="drift">Device Drift</div>
   <div class="tab" data-tab="mesh">Hub Mesh</div>
-  <div class="tab" data-tab="config">App Settings</div>
+  <div class="tab" data-tab="config">About</div>
 </div>
 <div class="content">
   <div class="panel active" id="p-summary"></div>
@@ -125,7 +128,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "0.8.1";
+const CODE_VERSION = "0.8.2";
 const APP_VERSION = '${app_version}';   // injected by serveUI; stays literal in workbench/dev
 
 // ===== Z-WAVE MANUFACTURER TABLE (decimal maker-id -> name, from zwave-js) =====
@@ -137,6 +140,8 @@ function displayMfr(m){
   if (/^\d+$/.test(s)) return ZWAVE_MFR[s] || s;   // numeric => Z-Wave maker id => name (fallback to id)
   return s;                                         // Zigbee etc. already a name
 }
+// Which field a firmware value came from, in words.
+function fwSourceLabel(s){ return ({softwareBuild:'Software build', application:'App version', OTA:'OTA', firmware:'Firmware'})[s] || s; }
 function fwTargetsLabel(r){
   if (!r.firmwareTargets) return '';
   const parts = Object.keys(r.firmwareTargets).sort().map(k => 't'+k+':'+r.firmwareTargets[k]);
@@ -210,6 +215,12 @@ const MOCK_AUDIT = {
 // HubDiagnostics two-axis model (Groovy analyzeDevices omits null integrations from byIntegration).
 const integLabel = r => r.integration || '';
 function filterLinked(rows){ return rows.filter(r => r.protocol !== 'Linked'); }
+// Some Zigbee devices report fixed-length strings padded with NUL or junk bytes; keep the part
+// before the first control character.
+function cleanStr(v){ return typeof v === 'string' ? v.split(/[\u0000-\u001f]/)[0].trim() : v; }
+// Same timestamp format as Hub Diagnostics: yyyy-MM-dd HH:mm:ss, local time.
+function fmtTs(ms){ const d = new Date(ms), p = n => String(n).padStart(2,'0');
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds()); }
 function mergeFleet(hubResults){
   const rows = [], hubs = [], all = [];
   for (const h of hubResults){
@@ -217,10 +228,10 @@ function mergeFleet(hubResults){
     if (h.ok && h.data && h.data.allDevices){
       info.hubName = h.data.hubName || null;
       info.generatedMs = (typeof h.data.generatedMs === 'number') ? h.data.generatedMs : null;
-      info.generatedAt = h.data.generatedMs ? new Date(h.data.generatedMs).toLocaleString() : (h.data.generatedAt || null);
+      info.generatedAt = h.data.generatedMs ? fmtTs(h.data.generatedMs) : (h.data.generatedAt || null);
       info.hubModel = (h.data && h.data.hubModel) || null;
       info.hubFirmware = (h.data && h.data.hubFirmware) || null;
-      const tagged = Object.values(h.data.allDevices).map(r => Object.assign({}, r, { hub:h.label }));
+      const tagged = Object.values(h.data.allDevices).map(r => Object.assign({}, r, { hub:h.label, manufacturer:cleanStr(r.manufacturer), model:cleanStr(r.model) }));
       for (const r of tagged) all.push(r);
       const kept = filterLinked(tagged);
       info.deviceCount = kept.length;
@@ -360,21 +371,25 @@ function driverDrift(rows){
   out.sort((a,b) => (b.drivers.length - a.drivers.length) || (b.count - a.count));
   return out;
 }
+// The attention reasons a device has. Summary counts and Register flags both come from here.
+// Unreferenced = no app uses the device. Dashboards are ignored: Hubitat's per-device dashboards
+// list is non-discriminating (every device reports the catch-all "Dashboard").
+function deviceFlags(r, now, staleDays){
+  const cutoff = (now || Date.now()) - (staleDays || 7) * 86400000;
+  const f = [];
+  if (r.disabled === true) f.push('disabled');
+  if (r.orphan === true) f.push('orphan');
+  if (typeof r.lastActivityTimeMs === 'number' && r.lastActivityTimeMs > 0 && r.lastActivityTimeMs < cutoff) f.push('stale');
+  if ((r.appsUsingCount || 0) === 0) f.push('unreferenced');
+  if (r.singleThreaded === true) f.push('single-thread');
+  return f;
+}
 function attentionItems(rows, opts){
-  const MS_PER_DAY = 86400000;
   opts = opts || {};
   const staleDays = opts.staleDays || 7;
-  const cutoff = (opts.now || Date.now()) - staleDays * MS_PER_DAY;
   const res = { stale:[], orphaned:[], disabled:[], unreferenced:[] };
-  for (const r of rows){
-    if (r.disabled === true) res.disabled.push(r);
-    if (r.orphan === true) res.orphaned.push(r);
-    if (typeof r.lastActivityTimeMs === 'number' && r.lastActivityTimeMs > 0 && r.lastActivityTimeMs < cutoff) res.stale.push(r);
-    // Unreferenced = no app uses the device. Dashboards intentionally excluded: Hubitat's
-    // per-device dashboards list is non-discriminating (every device reports the catch-all
-    // "Dashboard"), so it can't separate referenced from unreferenced.
-    if ((r.appsUsingCount || 0) === 0) res.unreferenced.push(r);
-  }
+  const key = { disabled:'disabled', orphan:'orphaned', stale:'stale', unreferenced:'unreferenced' };
+  for (const r of rows) for (const f of deviceFlags(r, opts.now, staleDays)) if (key[f]) res[key[f]].push(r);
   return res;
 }
 function fleetSummary(merged, webBaseByLabel){
@@ -383,7 +398,7 @@ function fleetSummary(merged, webBaseByLabel){
     byHub[r.hub] = (byHub[r.hub] || 0) + 1;
     const i = integLabel(r); if (i) byIntegration[i] = (byIntegration[i] || 0) + 1;  // null integration omitted (counted in byConnection)
     const c = r.connectionType ? (CD[r.connectionType] || r.connectionType) : 'Unknown'; byConnection[c] = (byConnection[c] || 0) + 1;
-    const m = (r.manufacturer||'').trim() || 'Unknown'; byMfr[m] = (byMfr[m] || 0) + 1;
+    const m = displayMfr((r.manufacturer||'').trim()) || 'Unknown'; byMfr[m] = (byMfr[m] || 0) + 1;
   }
   const att = attentionItems(rows, {});
   const mg = meshGraph(merged.all || [], merged.hubs || [], webBaseByLabel || {});
@@ -412,31 +427,54 @@ function dlink(id, name, hubLabel){
   const base = (wb && !/127\.0\.0\.1|localhost/.test(wb)) ? wb : '';
   return `<a href="${base}/device/edit/${id}" target="_blank" rel="noopener">${esc(name)}</a>`;
 }
+// Browser base for a hub's admin pages; '' for the serving hub (relative links) and null when
+// the hub has no reachable admin UI (cloud relay).
+function hubBase(hubLabel){
+  const wb = HUB_WEBBASE[hubLabel] || '';
+  if (/cloud\.hubitat\.com/.test(wb)) return null;
+  return (wb && !/127\.0\.0\.1|localhost/.test(wb)) ? wb : '';
+}
+function hubLink(hubLabel){
+  const b = hubBase(hubLabel);
+  return b == null ? esc(hubLabel) : `<a href="${b}/" target="_blank" rel="noopener">${esc(hubLabel)}</a>`;
+}
+// User drivers open in that hub's driver editor; built-in drivers have no editor page.
+function driverLink(r, text){
+  const b = hubBase(r.hub);
+  if (r.driverType !== 'usr' || !r.deviceTypeId || b == null) return esc(text || '—');
+  return `<a href="${b}/driver/editor/${r.deviceTypeId}" target="_blank" rel="noopener">${esc(text)}</a>`;
+}
+// Open the Register filtered to one Summary pill's devices.
+function showReg(f){
+  renderRegister();
+  const set = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = v; };
+  set('regFlag', f.flag); set('regConn', f.conn); set('regInteg', f.integ); set('regMfr', f.mfr);
+  refreshRegTbl();
+  document.querySelector('.tab[data-tab="register"]').click();
+  window.scrollTo(0, 0);
+}
 // Return {text, color} for days since lastActivityTimeMs.
 // text is the bare day count as a string (no 'd' suffix) for numeric sort compatibility;
 // callers that want the suffix (e.g. renderDrift) must append it themselves.
 function inactivity(ms){
   if (typeof ms !== 'number' || ms <= 0) return { text:'Never', color:'var(--crit)' };
   const days = Math.floor((Date.now() - ms) / 86400000);
-  let color = 'var(--ok)';
+  let color = '';
   if (days >= 2*STALE_DAYS) color = 'var(--crit)';
   else if (days >= STALE_DAYS) color = 'var(--warn)';
   return { text: String(days), color };
 }
 // Return flag badge HTML for a register row.
+const FLAG_BADGE = {
+  'disabled':      ['b-crit', 'Disabled', 'Device is disabled'],
+  'orphan':        ['b-warn', 'Orphan', 'Mesh device with no route to the hub'],
+  'stale':         ['b-warn', 'Stale', 'No activity in '+STALE_DAYS+' days'],
+  'unreferenced':  ['b-warn', 'Unreferenced', 'No app uses this device'],
+  'single-thread': ['b-builtin', 'Single-thread', 'Driver runs one event at a time (singleThreaded: true)'],
+};
 function flagPills(r){
-  const pills = [];
-  if (r.disabled === true) pills.push('<span class="badge b-crit">disabled</span>');
-  if (r.orphan === true) pills.push('<span class="badge b-warn">orphan</span>');
-  if ((r.appsUsingCount||0) === 0 && (!r.dashboards || r.dashboards.length === 0))
-    pills.push('<span class="badge b-warn">unreferenced</span>');
-  if (r.singleThreaded === true) pills.push('<span class="badge b-builtin">single-thread</span>');
-  return pills.join(' ');
-}
-// Return true if a register row has any flag worth attention.
-function isFlagged(r){
-  return r.orphan === true || r.disabled === true || r.singleThreaded === true ||
-    ((r.appsUsingCount||0) === 0 && (!r.dashboards || r.dashboards.length === 0));
+  return deviceFlags(r, null, STALE_DAYS).map(f => { const [cls, txt, tip] = FLAG_BADGE[f];
+    return `<span class="badge ${cls}" style="white-space:nowrap" title="${esc(tip)}">${txt}</span>`; }).join(' ');
 }
 
 // ===== ORCHESTRATION =====
@@ -473,9 +511,16 @@ async function collectExisting(peers){
   for (const p of peers){
     const d = await proxy(p.index, 'data');
     if (d && !d._error && !d.error) results.push({ label:p.label, ok:true, data:d });
-    else results.push({ label:p.label, ok:false, error: d && d.error ? d.error : 'no scan yet', data:null });
+    else results.push({ label:p.label, ok:false, error: peerError(d), data:null });
   }
   return results;
+}
+// Hub Diagnostics keeps its last scan in memory, so a hub restart or app update clears it.
+function peerError(d){
+  const e = d && (d.error || d._error);
+  if (!e || e === 'no scan' || e === 404) return "No scan since this hub's last restart or update. Rescan to collect.";
+  if (e === 'network') return 'Could not reach this hub.';
+  return 'Could not read this hub (' + e + ').';
 }
 // Trigger a fresh scan on each hub, poll to completion, then pull data.
 function setScanStatus(msg){ const el = document.getElementById('hubInfo'); if (el) el.textContent = msg; }
@@ -487,13 +532,17 @@ async function rescanFleet(){
   try {
     const peers = await loadPeers();
     HUB_WEBBASE = {}; for (const p of peers) if (p.webBase) HUB_WEBBASE[p.label] = p.webBase;
+    // Clear the previous results so an old error or old counts aren't shown during the scan.
+    FLEET = mergeFleet(peers.map(p => ({ label:p.label, ok:false, error:'Waiting to scan…', data:null })));
+    FLEET.hubs.forEach(h => h.pending = true);
+    renderSummary();
     const results = [];
     for (let i = 0; i < peers.length; i++){
       const p = peers[i];
       const pos = `(${i+1}/${peers.length})`;
       setScanStatus(`Scanning ${p.label} ${pos}…`);
       const started = await proxy(p.index, 'start');
-      if (!started || started._error){ results.push({label:p.label,ok:false,error:'start failed',data:null}); continue; }
+      if (!started || started._error || started.error){ results.push({label:p.label,ok:false,error:'Could not start a scan on this hub.',data:null}); continue; }
       const sid = started.scanId;
       let done = false; const deadline = Date.now() + 300000; // 5 min cap
       while (!done && Date.now() < deadline){
@@ -509,7 +558,7 @@ async function rescanFleet(){
       setScanStatus(`Fetching ${p.label} ${pos}…`);
       const d = await proxy(p.index, 'data');
       if (d && !d._error && !d.error) results.push({ label:p.label, ok:true, data:d });
-      else results.push({ label:p.label, ok:false, error: done ? 'scan produced no data' : 'scan timed out', data:null });
+      else results.push({ label:p.label, ok:false, error: done ? 'The scan finished without data.' : 'The scan timed out.', data:null });
     }
     FLEET = mergeFleet(results);
     renderAll();   // resets hubInfo to the summary line
@@ -531,7 +580,7 @@ async function boot(){
   if (cfgM) {
     const cfgUrl = cfgM[1] + '/installedapp/configure/' + cfgM[2];
     linksEl.insertAdjacentHTML('beforeend',
-      `<a href="${cfgUrl}" target="_blank" rel="noopener" style="${linkStyle}">&#9881; Settings</a>`);
+      `<a href="${cfgUrl}" target="_blank" rel="noopener" style="${linkStyle}" title="This app's page in the hub">App Page &#8599;</a>`);
   }
   linksEl.insertAdjacentHTML('beforeend',
     `<a href="https://github.com/iamtrep/hubitat/blob/main/apps/MultiHubInventory/README.md" target="_blank" rel="noopener" style="${linkStyle}">Docs &#8599;</a>`);
@@ -638,38 +687,43 @@ function tbl(cid,cols,rows,opts={}){
 
 function renderSummary(){
   const s = fleetSummary(FLEET, HUB_WEBBASE);
-  const hubLines = FLEET.hubs.map(h => `<div class="ni"><div class="nl">${esc(h.label)}${h.ok?'':' ⚠'}</div>`
-    + `<div class="nv">${h.ok?h.deviceCount+' devices':'<span class="crit">'+esc(h.error)+'</span>'}</div>`
-    + `<div class="nl">${h.ok?('as of '+esc(h.generatedAt||'?')):''}</div>`
+  const hubLines = FLEET.hubs.map(h => `<div class="ni"><div class="nl">${hubLink(h.label)}${h.ok||h.pending?'':' ⚠'}</div>`
+    + `<div class="nv">${h.ok?h.deviceCount+' devices':'<span class="'+(h.pending?'muted':'crit')+'">'+esc(h.error)+'</span>'}</div>`
+    + `<div class="nl">${h.ok?('Scanned '+esc(h.generatedAt||'?')):''}</div>`
     + `${(h.hubModel||h.hubFirmware)?('<div class="nl">'+esc(h.hubModel||'')+( h.hubFirmware?(' · fw '+esc(h.hubFirmware)):'' )+'</div>'):''}</div>`).join('');
-  const kv = o => Object.entries(o).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<span class="pill">${esc(k)}<b>${v}</b></span>`).join('');
+  // Each pill opens the Register filtered to its devices.
+  const go = (n, label, f, cls) => n
+    ? `<a class="pill ${cls||''}" href="#" data-f="${esc(JSON.stringify(f))}" onclick="showReg(JSON.parse(this.dataset.f));return false"><b>${n}</b>${esc(label)}</a>`
+    : `<span class="pill"><b>0</b>${esc(label)}</span>`;
+  const kv = (o, key) => Object.entries(o).sort((a,b)=>b[1]-a[1]).map(([k,v])=>go(v, k, {[key]: key==='mfr'&&k==='Unknown' ? '(none)' : k})).join('');
+  const meshPill = (n, label, cls) => n
+    ? `<a class="pill ${cls}" href="#" onclick="document.querySelector('.tab[data-tab=mesh]').click();return false"><b>${n}</b>${esc(label)}</a>`
+    : `<span class="pill"><b>0</b>${esc(label)}</span>`;
   const a = s.attentionCounts;
   document.getElementById('p-summary').innerHTML =
-    `<div class="card"><div class="card-h">Fleet — ${s.total} devices (mesh mirrors excluded)</div><div class="card-b">
+    `<div class="card"><div class="card-h">Fleet (${s.total} devices, Hub Mesh mirrors excluded)</div><div class="card-b">
        <div class="ng">${hubLines}</div></div></div>
      <div class="card"><div class="card-h">Attention</div><div class="card-b"><div class="pills">
-       <span class="pill">Stale<b>${a.stale}</b></span>
-       <span class="pill">Disabled<b>${a.disabled}</b></span><span class="pill">Unreferenced<b>${a.unreferenced}</b></span>
-       <span class="pill ${s.meshAttention.mismatch?'crit':''}">Mesh mismatch<b>${s.meshAttention.mismatch}</b></span>
-       <span class="pill ${s.meshAttention.orphaned?'crit':''}">Mesh orphaned<b>${s.meshAttention.orphaned}</b></span>
-       <span class="pill ${s.meshAttention.disabledWithRemotes?'warn':''}">Mesh src disabled<b>${s.meshAttention.disabledWithRemotes}</b></span></div></div></div>
-     <div class="card"><div class="card-h">By connection</div><div class="card-b"><div class="pills">${kv(s.byConnection)}</div></div></div>
-     <div class="card"><div class="card-h">By integration</div><div class="card-b"><div class="pills">${kv(s.byIntegration)}</div></div></div>
-     <div class="card"><div class="card-h">By manufacturer</div><div class="card-b"><div class="pills">${kv(s.byManufacturer)}</div></div></div>`;
+       ${go(a.stale,'Stale',{flag:'stale'},'warn')}${go(a.disabled,'Disabled',{flag:'disabled'},'crit')}${go(a.unreferenced,'Unreferenced',{flag:'unreferenced'},'warn')}
+       ${meshPill(s.meshAttention.mismatch,'Mesh Mismatch','crit')}${meshPill(s.meshAttention.orphaned,'Mesh Orphaned','crit')}${meshPill(s.meshAttention.disabledWithRemotes,'Mesh Source Disabled','warn')}</div></div></div>
+     <div class="card"><div class="card-h">By Connection</div><div class="card-b"><div class="pills">${kv(s.byConnection,'conn')}</div></div></div>
+     <div class="card"><div class="card-h">By Integration</div><div class="card-b"><div class="pills">${kv(s.byIntegration,'integ')}</div></div></div>
+     <div class="card"><div class="card-h">By Manufacturer</div><div class="card-b"><div class="pills">${kv(s.byManufacturer,'mfr')}</div></div></div>`;
 }
 
 function hasFw(r){ return !!((r.firmware||'').trim() || (r.firmwareOta||'').trim()); }
-function flagText(r){ return [r.orphan&&'orphan', r.disabled&&'disabled', (((r.appsUsingCount||0)===0)&&(!r.dashboards||r.dashboards.length===0))&&'unreferenced', r.singleThreaded&&'single-thread'].filter(Boolean).join(' '); }
+function flagText(r){ return deviceFlags(r, null, STALE_DAYS).join(' '); }
 function regViewRows(){
-  const flaggedOnly = document.getElementById('regFlagged') && document.getElementById('regFlagged').checked;
-  const hasFwOnly  = document.getElementById('regHasFw')  && document.getElementById('regHasFw').checked;
-  const connSel  = (document.getElementById('regConn')  || {}).value || '';
-  const integSel = (document.getElementById('regInteg') || {}).value || '';
+  const val = id => (document.getElementById(id) || {}).value || '';
+  const flagSel = val('regFlag'), connSel = val('regConn'), integSel = val('regInteg'), mfrSel = val('regMfr');
+  const hasFwOnly = document.getElementById('regHasFw') && document.getElementById('regHasFw').checked;
   const connOf  = r => CD[r.connectionType] || r.connectionType || '';
-  const integOf = integLabel;
-  return FLEET.rows.filter(r => (!flaggedOnly||isFlagged(r)) && (!hasFwOnly||hasFw(r))
+  const mfrOf   = r => displayMfr(r.manufacturer) || '(none)';
+  const flagOk  = r => { if (!flagSel) return true; const f = deviceFlags(r, null, STALE_DAYS); return flagSel === 'any' ? f.length > 0 : f.includes(flagSel); };
+  return FLEET.rows.filter(r => flagOk(r) && (!hasFwOnly||hasFw(r))
       && (!connSel  || connOf(r)  === connSel)
-      && (!integSel || integOf(r) === integSel)).map(r=>{
+      && (!integSel || integLabel(r) === integSel)
+      && (!mfrSel   || mfrOf(r)   === mfrSel)).map(r=>{
     const ia = inactivity(r.lastActivityTimeMs);
     const days = (ia.text==='Never') ? 1e9 : Number(ia.text);
     return Object.assign({}, r, { _days:days, _daysText:ia.text, _daysColor:ia.color, _flags:flagText(r), _mfrName:displayMfr(r.manufacturer) });
@@ -677,20 +731,22 @@ function regViewRows(){
 }
 function refreshRegTbl(){
   const cols = [
-    { l:'Hub',          f:'hub' },
+    { l:'Hub',          f:'hub', r:r=>hubLink(r.hub) },
     { l:'Label',        f:'label', ff:r=>(r.label||r.displayName||''), r:r=>dlink(r.id, r.label||r.displayName, r.hub) },
-    { l:'Type',         f:'deviceTypeName' },
-    { l:'Manufacturer', f:'_mfrName', ff:r=>((r._mfrName||'')+' '+(r.manufacturer||'')), r:r=>esc(r._mfrName) },
-    { l:'Model',        f:'model' },
-    { l:'Firmware',     f:'firmware', r:r=>esc(r.firmware||'')+fwTargetsLabel(r) },
+    { l:'Type',         f:'deviceTypeName', r:r=>driverLink(r, r.deviceTypeName) },
+    { l:'Manufacturer', f:'_mfrName', ff:r=>((r._mfrName||'')+' '+(r.manufacturer||'')), r:r=>esc(r._mfrName||'—') },
+    { l:'Model',        f:'model', r:r=>esc(r.model||'—') },
+    { l:'Firmware',     f:'firmware', r:r=>esc(r.firmware||'—')+fwTargetsLabel(r) },
     { l:'OTA',          f:'firmwareOta', r:r=>esc(r.firmwareOta||'—') },
     { l:'Connection',   f:'connectionType', r:r=>esc(CD[r.connectionType]||r.connectionType||'—') },
     { l:'Integration',  f:'integration', r:r=>esc(integLabel(r)||'—') },
-    { l:'Days inactive',f:'_days', t:'n', r:r=>`<span style="color:${r._daysColor}">${esc(r._daysText)}</span>` },
-    { l:'#Apps',        f:'appsUsingCount', t:'n' },
-    { l:'Flags',        f:'_flags', ff:r=>r._flags||'', r:r=>flagPills(r) },
+    { l:'Days Inactive',f:'_days', t:'n', r:r=>`<span style="color:${r._daysColor}">${esc(r._daysText)}</span>` },
+    { l:'Apps',         f:'appsUsingCount', t:'n', r:r=>r.appsUsingCount ? dlink(r.id, String(r.appsUsingCount), r.hub) : '0' },
+    { l:'Flags',        f:'_flags', ff:r=>r._flags||'', r:r=>flagPills(r)||'—' },
   ];
-  tbl('regTbl', cols, regViewRows(), {filter:true});
+  const rows = regViewRows();
+  const hdr = document.getElementById('regHdr'); if (hdr) hdr.textContent = `Devices (${rows.length} of ${FLEET.rows.length})`;
+  tbl('regTbl', cols, rows, {filter:true});
 }
 function renderRegister(){
   const distinct = (getter) => [...new Set(FLEET.rows.map(getter).filter(Boolean))].sort();
@@ -698,14 +754,19 @@ function renderRegister(){
     + `<option value="">All ${label}</option>` + vals.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('') + `</select>`;
   const conns  = distinct(r => CD[r.connectionType] || r.connectionType);
   const integs = distinct(integLabel);
+  const mfrs   = [...new Set(FLEET.rows.map(r => displayMfr(r.manufacturer) || '(none)'))].sort();
+  const flagSel = `<select id="regFlag" onchange="refreshRegTbl()" style="font-size:13px;padding:2px 4px"><option value="">All devices</option><option value="any">Needs attention</option>`
+    + Object.entries(FLAG_BADGE).map(([k,v])=>`<option value="${k}">${v[1]}</option>`).join('') + `</select>`;
   document.getElementById('p-register').innerHTML =
-    `<div class="actions">
-       <label style="font-size:13px;display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="regFlagged" onchange="refreshRegTbl()"> Flagged only</label>
-       <label style="font-size:13px;display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="regHasFw" onchange="refreshRegTbl()"> Has firmware</label>
+    `<div class="card"><div class="card-h" id="regHdr">Devices</div><div class="card-b">
+       <div class="actions">
+       ${flagSel}
        ${sel('regConn','connections',conns)}
        ${sel('regInteg','integrations',integs)}
-       <button class="btn btn-p btn-s" onclick="exportCsv()">Export CSV</button></div>
-     <div class="card"><div class="card-b"><div id="regTbl"></div></div></div>`;
+       ${sel('regMfr','manufacturers',mfrs)}
+       <label style="font-size:13px;display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="regHasFw" onchange="refreshRegTbl()"> Has firmware</label>
+       <button class="btn btn-p btn-s" onclick="exportCsv()" style="margin-left:auto">Export CSV</button></div>
+       <div id="regTbl"></div></div></div>`;
   refreshRegTbl();
 }
 function exportCsv(){
@@ -724,48 +785,46 @@ function renderDeviceDrift(){
     { l:'Device',       f:'label', ff:r=>(r.label||r.displayName||''), r:r=>dlink(r.id, r.label||r.displayName, r.hub) },
     { l:'Hub',          f:'hub' },
     { l:'Firmware',     f:'firmware', r:r=>(r.firmware?esc(r.firmware):'<span class="muted">—</span>')+fwTargetsLabel(r) },
-    { l:'Source',       f:'firmwareSource', r:r=>r.firmwareSource?esc(r.firmwareSource):'<span class="muted">—</span>' },
+    { l:'Source',       f:'firmwareSource', r:r=>r.firmwareSource?esc(fwSourceLabel(r.firmwareSource)):'<span class="muted">—</span>' },
     { l:'OTA',          f:'firmwareOta', r:r=>esc(r.firmwareOta||'—') },
-    { l:'Days inactive',f:'_days', t:'n', r:r=>`<span style="color:${r._daysColor}">${esc(r._daysText)}</span>` },
+    { l:'Days Inactive',f:'_days', t:'n', r:r=>`<span style="color:${r._daysColor}">${esc(r._daysText)}</span>` },
   ];
   const driverCols = [
     { l:'Device',    f:'label', ff:r=>(r.label||r.displayName||''), r:r=>dlink(r.id, r.label||r.displayName, r.hub) },
     { l:'Hub',       f:'hub' },
-    { l:'Driver',    f:'deviceTypeName' },
+    { l:'Driver',    f:'deviceTypeName', r:r=>driverLink(r, r.deviceTypeName) },
     { l:'Namespace', f:'deviceTypeNamespace' },
   ];
 
   // Build firmware-drift card HTML
   let fwHtml;
   if (!fwGroups.length){
-    fwHtml = '<div class="card"><div class="card-b muted">No firmware drift — all identical-model devices report consistent firmware.</div></div>';
+    fwHtml = '<div class="muted">No firmware drift: devices of the same model all report the same firmware.</div>';
   } else {
     fwHtml = fwGroups.map((g, i) => {
       const mfr = esc(displayMfr(g.manufacturer)), model = esc(g.model), count = g.count;
       let label;
-      if (g.mixed && g.inconsistent) label = '<span class="crit">⚠ mixed firmware + inconsistent fields</span>';
-      else if (g.mixed)              label = '<span class="crit">⚠ mixed firmware</span>';
-      else                           label = `<span class="warn">⚠ inconsistent firmware fields (${esc(g.bases.join(' vs '))})</span>`;
-      return `<div class="card"><div class="card-h">${label} ${mfr} ${model} (${count})</div>`
-        + `<div class="card-b"><div id="drift_${i}"></div></div></div>`;
+      const badges = [];
+      if (g.mixed) badges.push('<span class="badge b-crit">Mixed firmware</span>');
+      if (!g.mixed || g.inconsistent) badges.push(`<span class="badge b-warn" title="Devices report firmware in different fields">Different fields: ${esc(g.bases.map(fwSourceLabel).join(' vs '))}</span>`);
+      return `<div class="drift-g"><div class="drift-h">${badges.join(' ')} ${mfr} ${model} (${count})</div><div id="drift_${i}"></div></div>`;
     }).join('');
   }
 
   // Build driver-drift card HTML
   let ddHtml;
   if (!ddGroups.length){
-    ddHtml = '<div class="card"><div class="card-b muted">No driver drift — identical-model devices all use the same driver.</div></div>';
+    ddHtml = '<div class="muted">No driver drift: devices of the same model all use the same driver.</div>';
   } else {
     ddHtml = ddGroups.map((g, i) => {
-      const hdr = `⚠ ${esc(displayMfr(g.manufacturer))} ${esc(g.model)} (${g.count}) — drivers: ${esc(g.drivers.join(' · '))}`;
-      return `<div class="card"><div class="card-h">${hdr}</div>`
-        + `<div class="card-b"><div id="driverdrift_${i}"></div></div></div>`;
+      const hdr = `<span class="badge b-warn">${g.drivers.length} drivers</span> ${esc(displayMfr(g.manufacturer))} ${esc(g.model)} (${g.count})`;
+      return `<div class="drift-g"><div class="drift-h">${hdr}</div><div id="driverdrift_${i}"></div></div>`;
     }).join('');
   }
 
   document.getElementById('p-drift').innerHTML =
-    '<h3 style="margin:6px 0">Firmware drift</h3>' + fwHtml +
-    '<h3 style="margin:14px 0 6px">Driver drift</h3>' + ddHtml;
+    `<div class="card"><div class="card-h">Firmware Drift (${fwGroups.length} models)</div><div class="card-b">${fwHtml}</div></div>`
+    + `<div class="card"><div class="card-h">Driver Drift (${ddGroups.length} models)</div><div class="card-b">${ddHtml}</div></div>`;
 
   // Bind firmware-drift tables
   fwGroups.forEach((g, i) => {
@@ -787,7 +846,7 @@ function meshStatusBadge(st){
   const map = {
     'healthy':            ['', 'healthy'],
     'mismatch':           ['crit', '⚠ state mismatch'],
-    'mismatch-recent':    ['warn', 'mismatch (recent?)'],
+    'mismatch-recent':    ['warn', 'mismatch, still settling'],
     'disabled-at-remote': ['warn', 'disabled at remote'],
     'orphaned':           ['crit', '⚠ orphaned'],
     'source-not-in-fleet':['muted', 'source not in fleet'],
@@ -795,7 +854,25 @@ function meshStatusBadge(st){
   const [cls, txt] = map[st] || ['', st];
   return `<span class="${cls}">${esc(txt)}</span>`;
 }
+function meshStatusLabel(st){ return ({'healthy':'healthy','mismatch':'state mismatch','mismatch-recent':'mismatch, still settling','disabled-at-remote':'disabled at remote','orphaned':'orphaned','source-not-in-fleet':'source not in fleet'})[st] || st; }
 
+let MESH_EDGES = [];
+function meshFilter(st){
+  if (st === 'src'){ const c = document.getElementById('meshSrcCard'); if (c) c.scrollIntoView({behavior:'smooth'}); return; }
+  document.querySelectorAll('#p-mesh a.pill').forEach(a => a.classList.toggle('on', !!st && a.dataset.st === st));
+  const rows = st ? MESH_EDGES.filter(e => e.status === st) : MESH_EDGES;
+  const hdr = document.getElementById('meshTblHdr');
+  if (hdr) hdr.innerHTML = st ? `Links: ${esc(meshStatusLabel(st))} (${rows.length}) <a href="#" style="float:right;font-weight:500;font-size:12px" onclick="meshFilter('');return false">Show all</a>` : 'Links';
+  tbl('meshTbl', [
+    { l:'Remote Hub',    f:'remoteHub', r:r=>hubLink(r.remoteHub) },
+    { l:'Remote Device', f:'remoteLabel', ff:r=>r.remoteLabel||'', r:r=>dlink(r.remoteId, r.remoteLabel, r.remoteHub) },
+    { l:'Remote State',  f:'remoteOnOff', r:r=>esc(r.remoteOnOff||'—') },
+    { l:'Source Hub',    f:'sourceHub',   r:r=>r.sourceHub?hubLink(r.sourceHub):'—' },
+    { l:'Source Device', f:'sourceLabel', ff:r=>r.sourceLabel||'', r:r=> r.sourceId!=null ? dlink(r.sourceId, r.sourceLabel||('#'+r.sourceId), r.sourceHub) : '—' },
+    { l:'Source State',  f:'sourceOnOff', r:r=>esc(r.sourceOnOff||'—') },
+    { l:'Status',        f:'status',      r:r=>meshStatusBadge(r.status) },
+  ], rows, {filter:true});
+}
 function renderMesh(){
   const g = meshGraph(FLEET.all, FLEET.hubs, HUB_WEBBASE), c = g.counts;
   // A reachable peer whose devices lack the mesh fields is on pre-5.69.0 HubDiag — flag it so an
@@ -806,37 +883,32 @@ function renderMesh(){
   const staleNote = staleHubs.length
     ? `<div class="card"><div class="card-b warn">Mesh data unavailable for: ${esc(staleHubs.map(h=>h.label).join(', '))} — update Hub Diagnostics on ${staleHubs.length>1?'those hubs':'that hub'} to ≥ 5.69.0.</div></div>`
     : '';
-  const pill = (label, n, cls) => `<span class="pill ${n && cls ? cls : ''}">${label}<b>${n}</b></span>`;
+  // Link pills filter the Links table by status; source pills jump to the Source Issues card.
+  const pill = (label, n, cls, st) => n
+    ? `<a class="pill ${cls}" href="#" data-st="${st}" onclick="meshFilter('${st}');return false"><b>${n}</b>${label}</a>`
+    : `<span class="pill"><b>0</b>${label}</span>`;
   const pills = '<div class="pills">'
-    + pill('Links', c.total, '') + pill('Healthy', c.healthy, '')
-    + pill('State mismatch', c.mismatch, 'crit') + pill('Mismatch (recent?)', c.mismatchRecent, 'warn')
-    + pill('Disabled at remote', c.disabledAtRemote, 'warn') + pill('Orphaned', c.orphaned, 'crit')
-    + pill('Zero-consumer src', c.zeroConsumer, '') + pill('Disabled src w/ remotes', c.sourceDisabledWithRemotes, 'warn')
-    + pill('Source not in fleet', c.sourceNotInFleet, '') + '</div>';
+    + pill('Links', c.total, '', '') + pill('Healthy', c.healthy, '', 'healthy')
+    + pill('State Mismatch', c.mismatch, 'crit', 'mismatch') + pill('Mismatch, Still Settling', c.mismatchRecent, 'warn', 'mismatch-recent')
+    + pill('Disabled at Remote', c.disabledAtRemote, 'warn', 'disabled-at-remote') + pill('Orphaned', c.orphaned, 'crit', 'orphaned')
+    + pill('Source Not in Fleet', c.sourceNotInFleet, 'warn', 'source-not-in-fleet')
+    + pill('Shared, Not Used', c.zeroConsumer, 'warn', 'src') + pill('Source Disabled, Still Linked', c.sourceDisabledWithRemotes, 'warn', 'src') + '</div>';
 
-  let html = `<div class="card"><div class="card-h">Hub Mesh — ${c.total} links</div><div class="card-b">${pills}</div></div>`
-    + `<div class="card"><div class="card-h">Links</div><div class="card-b"><div id="meshTbl"></div></div></div>`;
+  let html = `<div class="card"><div class="card-h">Hub Mesh (${c.total} links)</div><div class="card-b">${pills}</div></div>`
+    + `<div class="card"><div class="card-h" id="meshTblHdr">Links</div><div class="card-b"><div id="meshTbl"></div></div></div>`;
   if (g.sourceIssues.length)
-    html += `<div class="card"><div class="card-h">Source issues</div><div class="card-b"><div id="meshSrcTbl"></div></div></div>`;
+    html += `<div class="card" id="meshSrcCard"><div class="card-h">Source Issues</div><div class="card-b"><div id="meshSrcTbl"></div></div></div>`;
   document.getElementById('p-mesh').innerHTML = staleNote + html;
-
-  tbl('meshTbl', [
-    { l:'Remote hub',    f:'remoteHub' },
-    { l:'Remote device', f:'remoteLabel', ff:r=>r.remoteLabel||'', r:r=>dlink(r.remoteId, r.remoteLabel, r.remoteHub) },
-    { l:'Remote',        f:'remoteOnOff', r:r=>esc(r.remoteOnOff||'') },
-    { l:'Source hub',    f:'sourceHub',   r:r=>esc(r.sourceHub||'—') },
-    { l:'Source device', f:'sourceLabel', ff:r=>r.sourceLabel||'', r:r=> r.sourceId!=null ? dlink(r.sourceId, r.sourceLabel||('#'+r.sourceId), r.sourceHub) : '—' },
-    { l:'Source',        f:'sourceOnOff', r:r=>esc(r.sourceOnOff||'') },
-    { l:'Status',        f:'status',      r:r=>meshStatusBadge(r.status) },
-  ], g.edges, {filter:true});
+  MESH_EDGES = g.edges;
+  meshFilter('');
 
   if (g.sourceIssues.length) tbl('meshSrcTbl', [
     { l:'Hub',    f:'hub' },
     { l:'Device', f:'label', r:r=>dlink(r.id, r.label, r.hub) },
     { l:'Consumers', f:'consumers', t:'n' },
     { l:'Issue',  f:'status', r:r=> r.status==='zero-consumer'
-        ? '<span class="muted">no consumers — candidate to disable mesh</span>'
-        : '<span class="warn">⚠ source disabled but still has remotes</span>' },
+        ? '<span class="muted">Shared but no hub uses it; sharing can be turned off</span>'
+        : '<span class="warn">Source disabled, still linked from other hubs</span>' },
   ], g.sourceIssues, {});
 }
 
@@ -845,8 +917,9 @@ async function renderConfig(){
   if(!el) return;
   const appVer = (APP_VERSION && APP_VERSION[0] !== '$') ? APP_VERSION : null;
   let o = '<div class="card"><div class="card-h">Version</div><div class="card-b">';
-  o += `<div><b>App Version:</b> ${esc(appVer || 'Unknown')}</div>`;
-  o += `<div><b>UI Version:</b> ${esc(CODE_VERSION)}</div>`;
+  // One version line; App and UI are listed apart only when they differ.
+  if(!appVer || appVer === CODE_VERSION) o += `<div><b>Version:</b> ${esc(CODE_VERSION)} <a id="cfgCode" href="#" target="_blank" rel="noopener" style="display:none;margin-left:10px;font-size:12px">View app code ↗</a></div>`;
+  else o += `<div><b>App:</b> ${esc(appVer)} · <b>UI:</b> ${esc(CODE_VERSION)} <a id="cfgCode" href="#" target="_blank" rel="noopener" style="display:none;margin-left:10px;font-size:12px">View app code ↗</a></div>`;
   if(appVer && isNewer(CODE_VERSION, appVer))
     o += `<div class="warn" style="margin-top:6px">⛔ <b>App Update Required:</b> the UI (v${esc(CODE_VERSION)}) is newer than the app code (v${esc(appVer)}). Update the Groovy app via Import.</div>`;
   o += '<div id="cfgGh" style="margin-top:6px"></div>';
@@ -863,10 +936,12 @@ async function renderConfig(){
         const gh = document.getElementById('cfgGh');
         if(gh){
           if(v.updateAvailable)
-            gh.innerHTML = `⬆ <b>v${esc(v.latestVersion)}</b> available on GitHub (you have v${esc(v.currentVersion)}).`;
+            gh.innerHTML = `⬆ <b>v${esc(v.latestVersion)}</b> available on GitHub.`;
           else if(v.latestVersion)
-            gh.textContent = `Up to date (v${v.currentVersion}).`;
+            gh.textContent = 'Up to date.';
         }
+        const code = document.getElementById('cfgCode');
+        if(code && v.editorPath){ code.href = v.editorPath; code.style.display = ''; }
       }
     } catch(e){ /* leave the GitHub line blank on failure */ }
   }

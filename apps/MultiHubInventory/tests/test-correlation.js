@@ -32,8 +32,9 @@ function extractConstLine(prefix) {
   return src.slice(i, j < 0 ? src.length : j);
 }
 
-const FNS = ['filterLinked', 'mergeFleet', 'fwBasis', 'firmwareDrift', 'driverDrift', 'attentionItems', 'fleetSummary', 'parseRemoteUrl', 'meshGraph'];
+const FNS = ['cleanStr', 'fmtTs', 'displayMfr', 'deviceFlags', 'filterLinked', 'mergeFleet', 'fwBasis', 'firmwareDrift', 'driverDrift', 'attentionItems', 'fleetSummary', 'parseRemoteUrl', 'meshGraph'];
 const harness = extractConstLine('const CD =') + '\n' + extractConstLine('const integLabel') + '\n'
+  + extractConstLine('const ZWAVE_MFR =') + '\n'
   + FNS.map(extractFn).join('\n') + '\nmodule.exports = { ' + FNS.join(', ') + ' };';
 const tmp = path.join(os.tmpdir(), 'mhi_corr_' + process.pid + '.js');
 fs.writeFileSync(tmp, harness);
@@ -332,6 +333,39 @@ t('fleetSummary surfaces mesh attention counts', () => {
   const s = C.fleetSummary(merged, WB);
   assert.strictEqual(s.meshAttention.orphaned, 1);
   assert.strictEqual(s.meshAttention.mismatch, 0);
+});
+
+t('mergeFleet strips padded manufacturer/model strings', () => {
+  const res = [{ label:'H', ok:true, data:{ generatedMs:1000, allDevices:{
+    1:{id:1,protocol:'Zigbee',model:'ST218r\u0001\ufffd',manufacturer:'Sinope Technologies\u0000\u0000'},
+    2:{id:2,protocol:'Zigbee',model:'ST218\u0000\u0000\u0007\u0000\u00b6c'} } } }];
+  const m = C.mergeFleet(res);
+  assert.deepStrictEqual(m.rows.map(r=>r.model), ['ST218r','ST218']);
+  assert.strictEqual(m.rows[0].manufacturer, 'Sinope Technologies');
+  assert.ok(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(m.hubs[0].generatedAt));
+});
+
+t('fleetSummary names Z-Wave makers like the Register does', () => {
+  const merged = { rows:[{hub:'H',id:1,manufacturer:'634'},{hub:'H',id:2,manufacturer:''}], hubs:[], all:[] };
+  const s = C.fleetSummary(merged);
+  assert.strictEqual(s.byManufacturer.Zooz, 1);
+  assert.strictEqual(s.byManufacturer.Unknown, 1);
+  assert.strictEqual(s.byManufacturer['634'], undefined);
+});
+
+t('deviceFlags and attentionItems agree (unreferenced ignores dashboards)', () => {
+  const NOW = 100 * 86400000;
+  const rows = [
+    {id:1, appsUsingCount:0, dashboards:['Dashboard'], lastActivityTimeMs: NOW - 86400000},
+    {id:2, appsUsingCount:3, lastActivityTimeMs: NOW - 30*86400000},
+    {id:3, appsUsingCount:1, disabled:true, singleThreaded:true, lastActivityTimeMs: NOW} ];
+  assert.deepStrictEqual(C.deviceFlags(rows[0], NOW, 7), ['unreferenced']);
+  assert.deepStrictEqual(C.deviceFlags(rows[1], NOW, 7), ['stale']);
+  assert.deepStrictEqual(C.deviceFlags(rows[2], NOW, 7), ['disabled','single-thread']);
+  const a = C.attentionItems(rows, { now: NOW, staleDays: 7 });
+  assert.deepStrictEqual(a.unreferenced.map(r=>r.id), [1]);
+  assert.deepStrictEqual(a.stale.map(r=>r.id), [2]);
+  assert.deepStrictEqual(a.disabled.map(r=>r.id), [3]);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

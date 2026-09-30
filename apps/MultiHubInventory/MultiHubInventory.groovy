@@ -4,7 +4,7 @@
  */
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.8.1"
+@Field static final String CODE_VERSION = "0.8.2"
 @Field static final String UI_FILE = "multi_hub_inventory_ui.html"
 @Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/MultiHubInventory.groovy"
 @Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/multi_hub_inventory_ui.html"
@@ -127,6 +127,9 @@ void initialize() {
         String webBase = (parsed.baseUrl =~ /^(https?:\/\/[^\/]+)/)[0][1] ?: ''
         // Self-peer: a hub can't HTTP its own external IP, so route this app's server-side calls
         // through the loopback while keeping webBase = real IP (browser device links resolve to it).
+        // A loopback URL is this hub too; give the browser its LAN address so device links and
+        // Hub Mesh source matching (remote URLs carry the LAN IP) resolve.
+        if (hubIp && webBase ==~ /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/) webBase = "http://${hubIp}"
         boolean isSelf = (hubIp && webBase.contains(hubIp))
         String callBase = isSelf ? parsed.baseUrl.replaceFirst(/^https?:\/\/[^\/]+/, 'http://127.0.0.1:8080') : parsed.baseUrl
         if (isSelf) logInfo "peer ${p} is this hub — routing API calls via loopback"
@@ -424,6 +427,12 @@ Map apiPeer() {
         if (method == 'POST') httpPost(common + [requestContentType: 'application/json', timeout: 30], handler)
         else                  httpGet(common + [timeout: 90], handler)
         return jsonResponse(body ?: [:])
+    } catch (groovyx.net.http.HttpResponseException e) {
+        // Hub Diagnostics answers 404 when it has no scan in memory (cleared by a restart or update).
+        Integer st = (e.response?.status ?: e.statusCode) as Integer
+        if (st == 404) return jsonResponse([error: "no scan"])
+        logWarn "peer ${idx} ${op} failed: HTTP ${st}"
+        return jsonResponse([error: "HTTP ${st}".toString()])
     } catch (Exception e) {
         String safeMsg = (e.message ?: '')?.replaceAll(/access_token=[^&\s]+/, 'access_token=REDACTED')
                                            ?.replaceAll(/Bearer\s+\S+/, 'Bearer REDACTED')
