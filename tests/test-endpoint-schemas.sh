@@ -3,21 +3,23 @@
 # SPDX-License-Identifier: MIT
 
 #
-# Rule Logging Manager — Endpoint Monitor
+# Endpoint schemas — undocumented hub endpoint monitor
 #
-# Tests the undocumented Hubitat HTTP endpoints used by RuleLoggingManager.groovy
-# and detects breaking API changes via structural assertions and schema snapshot diffs.
+# Checks undocumented Hubitat HTTP endpoints that apps here rely on (the app tree,
+# an installed app's status and configuration) and detects breaking changes via
+# structural assertions and schema snapshot diffs (TESTING.md §1.2). Uses the first
+# Rule Machine or Button Controller rule it finds as the subject; read-only.
 #
 # Usage:
-#   bash test-rule-logging-manager.sh                           # default hub
-#   bash test-rule-logging-manager.sh @maison-pro               # specific hub
-#   bash test-rule-logging-manager.sh @maison-pro --save-snapshots
+#   bash tests/test-endpoint-schemas.sh                         # default hub
+#   bash tests/test-endpoint-schemas.sh @myhub                  # specific hub
+#   bash tests/test-endpoint-schemas.sh @myhub --save-snapshots # rewrite the snapshots
 #
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONFIG_FILE="$PROJECT_ROOT/.hubitat.json"
 # Unique per run/hub/test so concurrent runs (e.g. parallel agents, pytest -n)
 # don't clobber each other's session state. Cleaned up on exit.
@@ -87,7 +89,7 @@ hub_ip   = hub["hub_ip"]
 username = hub.get("username")
 password = hub.get("password")
 
-print(f"{BOLD}Rule Logging Manager — Endpoint Monitor{RESET}")
+print(f"{BOLD}Endpoint schemas — undocumented hub endpoint monitor{RESET}")
 print(f"Hub: {hub_name} ({hub_ip})")
 if save_snapshots:
     print(f"{YELLOW}Mode: --save-snapshots (baseline will be updated){RESET}")
@@ -183,7 +185,7 @@ test_rule = None
 if apps_list is None:
     fail("No response — cannot continue appsList checks")
 elif not isinstance(apps_list, dict) or "apps" not in apps_list:
-    fail("BREAKING: response missing top-level 'apps' key — getRuleMachineRuleApps() will return empty list")
+    fail("BREAKING: response missing top-level 'apps' key — code that walks the app tree will see no apps")
 else:
     ok("Response has top-level 'apps' key")
     apps = apps_list["apps"]
@@ -203,14 +205,14 @@ else:
                 if field in data:
                     ok(f"apps[].data.{field} present")
                 else:
-                    fail(f"BREAKING: apps[].data.{field} missing — getRuleMachineRuleApps() will malfunction")
+                    fail(f"BREAKING: apps[].data.{field} missing — code that reads app entries will malfunction")
             if "label" not in data:
-                warn("apps[].data.label absent (optional — Groovy defaults to empty string)")
+                warn("apps[].data.label absent (optional; callers should default it to an empty string)")
 
             if "children" in first_with_data:
                 ok("apps[].children key present")
             else:
-                fail("BREAKING: apps[].children missing — rule discovery will find no rules")
+                fail("BREAKING: apps[].children missing — child apps such as rules can't be found")
 
             # Search all entries for a child that has a data dict (first parent may have no RM/BC children)
             first_child = None
@@ -233,7 +235,7 @@ else:
                     if field in child_data:
                         ok(f"apps[].children[].data.{field} present")
                     else:
-                        fail(f"BREAKING: apps[].children[].data.{field} missing — rules will be skipped")
+                        fail(f"BREAKING: apps[].children[].data.{field} missing — child apps will be skipped")
             else:
                 warn("No child entries with 'data' found to validate child field structure")
 
@@ -283,7 +285,7 @@ if test_rule:
         if containers:
             ok(f"Scanning containers present: {containers}")
         else:
-            warn("None of appSettings/settings/state present — detectRuleLogging() will find no candidates")
+            warn("None of appSettings/settings/state present — nothing to read an app's settings or state from")
 
         if "appState" in status:
             app_state = status["appState"]
@@ -296,18 +298,18 @@ if test_rule:
                     if "name" in item and "value" in item:
                         ok("appState items have 'name' and 'value' keys")
                     else:
-                        fail("BREAKING: appState items missing 'name' or 'value' — extractLastRun() will fail")
+                        fail("BREAKING: appState items missing 'name' or 'value' — app state values can't be read")
 
                     names_found = {i["name"] for i in app_state if isinstance(i.get("name"), str)}
                     for field in ["lastEvtDate", "lastEvtTime", "timeFormat", "dateFormat"]:
                         if field in names_found:
                             ok(f"appState contains '{field}' entry")
                         else:
-                            info(f"appState has no '{field}' entry (optional; Last Run may be blank for this rule)")
+                            info(f"appState has no '{field}' entry (optional for this app)")
         else:
-            info("appState not present — Last Run column will be blank for this rule")
+            info("appState not present for this app")
 
-        check_snapshot(f"statusJson_{rule_id}", status)
+        check_snapshot("statusJson", status)
 
 # ── Endpoint 3: GET /installedapp/configure/json/{ruleId} ────────────────────
 if test_rule:
@@ -324,7 +326,7 @@ if test_rule:
 
         # app key
         if "app" not in config_data:
-            fail("BREAKING: 'app' key missing — buildPostBody() will use empty version/label")
+            fail("BREAKING: 'app' key missing — a settings save can't send the app's version and label")
         else:
             ok("'app' key present")
             app_info = config_data["app"]
@@ -383,9 +385,9 @@ if test_rule:
         if "settings" in config_data:
             ok("'settings' key present")
         else:
-            fail("BREAKING: 'settings' key missing — buildPostBody() will send empty values for all inputs")
+            fail("BREAKING: 'settings' key missing — a settings save can't echo the current input values")
 
-        check_snapshot(f"configureJson_{rule_id}", config_data)
+        check_snapshot("configureJson", config_data)
 
 # ── Endpoint 4: POST /installedapp/update/json ───────────────────────────────
 section("POST /installedapp/update/json (precondition check — no POST issued)")

@@ -33,6 +33,7 @@
         "user": "__truncated__",
         "hidden": "__truncated__",
         "setting": "__truncated__",
+        "deprecated": "__truncated__",
         "level": "__truncated__"
       },
       "children": "list[]",
@@ -41,6 +42,7 @@
       "id": "int"
     }
   },
+  "appCollections": "list[]",
   "builtInAppsDismissed": "bool",
   "appsSplitDismissed": "bool"
 }

@@ -57,7 +57,7 @@ The contract applies to Modes 1–4 (see §2.1). Mode 5 (in-hub stress apps) is 
 
 For undocumented hub endpoints whose schema may shift between firmware versions, commit a JSON snapshot under `<project>/tests/snapshots/<endpoint-name>.json`. The test asserts the live response matches the snapshot structurally (key set, value types). Schema additions are tolerated by default; schema removals fail.
 
-A refresh procedure must be documented next to the snapshot — typically a `--save-snapshots` flag on the test script. Canonical example: `bash apps/utilities/tests/test-rule-logging-manager.sh --save-snapshots` rewrites the committed snapshots from the current live response.
+A refresh procedure must be documented next to the snapshot — typically a `--save-snapshots` flag on the test script. Canonical example: [`tests/test-endpoint-schemas.sh`](tests/test-endpoint-schemas.sh) checks the app tree, app status and app configuration endpoints against `tests/snapshots/`; `bash tests/test-endpoint-schemas.sh --save-snapshots` rewrites the snapshots from the current live response.
 
 ### 1.3 Test rig hygiene
 
