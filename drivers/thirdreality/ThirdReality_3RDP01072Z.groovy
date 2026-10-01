@@ -8,8 +8,9 @@
  *  This driver is the coordinator: it owns all Zigbee I/O and exposes each outlet as a
  *  "Third Reality Outlet (Component)" child carrying switch/power/current/energy/powerFactor.
  *  Shared line measurements (voltage, frequency) live on the parent, not per outlet.
- *  Switching to this type from the stock "Third Reality dual plug" type replaces the stock
- *  component children with the component type automatically (configure() -> ensureChildren()).
+ *  After switching from the stock "Third Reality dual plug" type, the stock component children
+ *  stay in place until the user runs Replace Outlet Children with "REPLACE": replacing a child
+ *  creates a new device, which drops its dashboard tiles and automation references.
  *
  *  configure() sets a per-endpoint reporting profile (min 10 s, wide deltas, frequency
  *  reporting off, voltage on EP01 only) so idle reports stay off the mesh.
@@ -29,7 +30,7 @@ import com.hubitat.app.DeviceWrapper
 import hubitat.zigbee.zcl.DataType
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.1"
+@Field static final String CODE_VERSION = "0.0.2"
 
 // Both outlets. Kept as strings to match descMap.endpoint / child DNI suffixes.
 @Field static final List<String> ENDPOINTS = ["01", "02"]
@@ -126,7 +127,10 @@ metadata {
 
         attribute "frequency",    "number"
         attribute "healthStatus", "enum", ["unknown", "offline", "online"]
+        attribute "childStatus",  "enum", ["ok", "replacementNeeded"]
 
+        command "replaceOutletChildren", [[name: "confirm", type: "STRING",
+            description: "Type REPLACE to recreate outlet children that use another driver. The new devices keep their names but lose dashboard tiles and automation references."]]
         command "resetEnergy"
         command "updateFirmware"
 
@@ -244,24 +248,49 @@ void logsOff() {
 
 // Child device management
 
+// Creates missing outlet children. A child on another driver (e.g. the stock "Generic Component
+// Metering Switch", which can't hold voltage/current/powerFactor) is only reported: replacing it
+// is a user action, because the new device loses dashboard tiles and automation references.
 private void ensureChildren() {
+    List<String> mismatched = []
     ENDPOINTS.each { String ep ->
-        String dni = childDni(ep)
-        DeviceWrapper existing = getChildDevice(dni)
-        // Replace a stock/mismatched child (e.g. the system driver's "Generic Component
-        // Metering Switch", which can't hold voltage/current/powerFactor) with the component type.
-        if (existing != null && existing.typeName != CHILD_TYPE) {
-            logInfo "replacing child for endpoint ${ep} (was ${existing.typeName})"
-            deleteChildDevice(dni)
-            existing = null
-        }
+        DeviceWrapper existing = childForEndpoint(ep)
         if (existing == null) {
-            logInfo "creating child for endpoint ${ep}"
-            DeviceWrapper cd = addChildDevice("iamtrep", CHILD_TYPE, dni,
-                [name: "${device.displayName} EP${ep}", label: "${device.displayName} EP${ep}", isComponent: false])
-            cd?.sendEvent(name: "switch", value: "off")
+            createChild(ep, "${device.displayName} EP${ep}")
+        } else if (existing.typeName != CHILD_TYPE) {
+            mismatched << "EP${ep} (${existing.typeName})".toString()
         }
     }
+    if (mismatched) {
+        logWarn "outlet children on another driver: ${mismatched.join(', ')}. Run Replace Outlet Children with REPLACE to recreate them as ${CHILD_TYPE}."
+        sendEvent(name: "childStatus", value: "replacementNeeded")
+    } else {
+        sendEvent(name: "childStatus", value: "ok")
+    }
+}
+
+void replaceOutletChildren(String confirm) {
+    if (confirm?.trim() != "REPLACE") {
+        logWarn "Replace Outlet Children not confirmed (type REPLACE); nothing changed"
+        return
+    }
+    ENDPOINTS.each { String ep ->
+        DeviceWrapper existing = childForEndpoint(ep)
+        if (existing == null || existing.typeName == CHILD_TYPE) return
+        String label = existing.label ?: existing.name
+        logInfo "replacing child for endpoint ${ep} (was ${existing.typeName})"
+        deleteChildDevice(childDni(ep))
+        createChild(ep, label)
+    }
+    ensureChildren()
+    sendZigbeeCommands(refresh())    // seed the new children with current readings
+}
+
+private void createChild(String ep, String label) {
+    logInfo "creating child for endpoint ${ep}"
+    DeviceWrapper cd = addChildDevice("iamtrep", CHILD_TYPE, childDni(ep),
+        [name: "${device.displayName} EP${ep}", label: label, isComponent: false])
+    cd?.sendEvent(name: "switch", value: "off")
 }
 
 private String childDni(String ep) { "${device.id}-${ep}" }
