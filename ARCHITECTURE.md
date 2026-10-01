@@ -243,7 +243,7 @@ subscribe(location, "systemStart", "systemStartHandler")
 
 The handler typically refreshes devices and re-evaluates the app's monitored conditions.
 
-**What a reboot does to scheduled work.** *(measured once on 2.5.2.128; [platform notes](docs/hubitat-platform-notes.md#platform-behavior))* `runIn` and `schedule` jobs are stored in the hub database. A job that falls due after the hub is back runs on time, and a repeating `schedule` resumes once the hub is up, with one catch-up run for the ticks it missed. A one-shot `runIn` that fell due **while the hub was down** was dropped: it never ran and left the job list. The `systemStart` event arrived about two minutes into uptime, after the first scheduled ticks had already run. What a reboot also breaks is everything outside the job table:
+**What a reboot does to scheduled work.** *([verified 2.5.2.128](docs/hubitat-platform-notes.md#platform-behavior), two reboots)* `runIn` and `schedule` jobs are stored in the hub database. A job that falls due after the hub is back runs on time, and a repeating `schedule` resumes once the hub is up, with one catch-up run for the ticks it missed. A one-shot `runIn` that fell due **while the hub was down** was dropped: it never ran and left the job list. The `systemStart` event arrived about two minutes into uptime, after the first scheduled ticks had already run. What a reboot also breaks is everything outside the job table:
 
 - A handler interrupted mid-run loses its `state` writes (state commits at method exit). A chain that re-arms with `runIn` at the end of its handler dies there.
 - In-memory data is gone: `@Field static` values, open sockets, pending async HTTP callbacks.
