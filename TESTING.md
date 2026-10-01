@@ -112,13 +112,13 @@ The spec maps directly onto the procedure below — for [`apps/sensors/SensorAgg
 
 #### Mode 2 — API integration tests
 
-**Purpose:** validate apps that serve an OAuth-gated `/api/*` surface (HubDiagnostics, RuleLoggingManager) end-to-end against the real hub.
+**Purpose:** validate apps that serve an OAuth-gated `/api/*` surface (HubDiagnostics, Multi-Hub Inventory) end-to-end against the real hub.
 
 **Pattern:** bash + embedded Python heredoc. The bash wrapper reads `.hubitat.json`, parses `@hubname` and instance-id args, and pipes the hub/instance metadata into a Python script that performs the actual assertions. Outputs `[PASS]`/`[FAIL]`/`[WARN]`/`[INFO]` to stdout and an exit code per the contract.
 
 **Canonical examples:**
-- [`apps/HubDiagnostics/tests/test-hub-diagnostics-api.sh`](apps/HubDiagnostics/tests/test-hub-diagnostics-api.sh) — 170+ assertions across every API surface, ground-truth comparison against raw hub endpoints, snapshot-diff for schemas.
-- [`apps/utilities/tests/test-rule-logging-manager.sh`](apps/utilities/tests/test-rule-logging-manager.sh) — undocumented-endpoint monitor with structural assertions and snapshot diffs.
+- [`apps/HubDiagnostics/tests/test-hub-diagnostics-api.sh`](apps/HubDiagnostics/tests/test-hub-diagnostics-api.sh) — 170+ assertions across every API surface, ground-truth comparison against raw hub endpoints.
+- [`apps/MultiHubInventory/tests/test-multi-hub-inventory-api.sh`](apps/MultiHubInventory/tests/test-multi-hub-inventory-api.sh) — the peer-list and peer-proxy endpoints of an app that serves data from several hubs.
 
 **Closed-loop notes:** these are the most mature tests in the repo and define the bash-wrapper-around-Python idiom that newer tests should mimic. Discovery via `/hub2/appsList` by `appTypeName` is the convention; pass an explicit instance ID as the second positional arg if discovery fails.
 
