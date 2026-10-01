@@ -28,7 +28,7 @@ A test is "agent-runnable" — usable in a write/push/test/parse/fix loop withou
 
   All other arguments are optional and have defaults.
 
-- **Hub selection via `.hubitat.json`.** Never hardcode IPs. Default to `default_hub`; accept an `@hubname` prefix to override. Credentials come from the config; no flags or env vars for connection details.
+- **Hub selection via `.hubitat.json`.** Never hardcode IPs. Default to `default_hub`; accept an `@hubname` prefix to override. Credentials come from the config; no flags or env vars for connection details. To set it up, copy `.hubitat.example.json` to `.hubitat.json` at the repo root (it is gitignored) and fill in your hubs. Tests need Python 3; tests that capture logs or events also need the `websockets` package, used by `scripts/lib/logsocket.py` and `scripts/lib/eventsocket.py`.
 
 - **Self-discovery of installed app instance.** Auto-locate the app under test via `GET /hub2/appsList` by `appTypeName`; accept an explicit instance ID as the second positional argument as a fallback.
 
@@ -75,7 +75,7 @@ A refresh procedure must be documented next to the snapshot — typically a `--s
 - `apps/tests/*.groovy` — in-hub stress and diagnostic apps. This directory is the exception, not the convention.
 - `drivers/tests/*Test.groovy` — paired test drivers (companion drivers that drive the behavior of another driver under test).
 
-The repo-root `tests/` directory is reserved for cross-project tooling. The top-level runner lives at `scripts/run-tests.sh` — see §2.4.
+The repo-root `tests/` directory is reserved for cross-project tooling.
 
 ## 2. Apps
 
@@ -89,7 +89,7 @@ Each mode below has a purpose, a canonical example to mimic, and notes on how it
 
 **Pattern:** virtual test devices created via `POST /device/save`; a dedicated Maker API instance fronting them; a dedicated installed instance of the app under test, configured with the test devices and test-friendly timing; a test script (bash + Python or bash + curl) driving the cycle `reset() → action() → wait() → verify()`.
 
-**Canonical example:** [`apps/sensors/tests/test-sadc.sh`](apps/sensors/tests/test-sadc.sh), generated from [`apps/sensors/tests/spec-sadc.yaml`](apps/sensors/tests/spec-sadc.yaml) by the `/hubitat-behavior-test` skill (§2.4).
+**Canonical example:** [`apps/sensors/tests/test-sadc.sh`](apps/sensors/tests/test-sadc.sh), generated from [`apps/sensors/tests/spec-sadc.yaml`](apps/sensors/tests/spec-sadc.yaml). The spec documents the test; the generated script runs on its own.
 
 The spec maps directly onto the procedure below — for [`apps/sensors/SensorAggregatorDiscreteChild.groovy`](apps/sensors/SensorAggregatorDiscreteChild.groovy) (SADC), which aggregates discrete sensor values across N inputs into a single virtual output device:
 
@@ -140,7 +140,6 @@ The spec maps directly onto the procedure below — for [`apps/sensors/SensorAgg
 
 **Canonical examples:**
 - [`apps/HubDiagnostics/test_classification.py`](apps/HubDiagnostics/test_classification.py) — mirrors the `INTEGRATION_TABLE` classification logic.
-- `scripts/perf/tests/` — pytest suite for the JSONL log analyser.
 
 **Closed-loop notes:** when the Groovy is the source of truth and the Python mirror drifts, the mirror is wrong by definition. Keep the source-line-range comment in the mirror up-to-date; periodic review is a code-review concern, not an automated one.
 
@@ -157,7 +156,7 @@ The spec maps directly onto the procedure below — for [`apps/sensors/SensorAgg
 - [`apps/tests/udpStressTest.groovy`](apps/tests/udpStressTest.groovy) — UDP round-trip latency under load.
 - [`apps/tests/fileManagerTests.groovy`](apps/tests/fileManagerTests.groovy) — file manager API benchmark.
 
-**Closed-loop notes:** Mode 5 historically did not satisfy the contract — button press was manual and output was hub-log only. With the button-press helper (`/hubitat-app-button`) and `LogCapture` both shipped (see §2.4), a wrapper script can now drive the in-hub app and assert structurally on its log output. No existing Mode 5 app has been refactored to a wrapper-driven test yet; doing so is what brings each stress app into the loop.
+**Closed-loop notes:** Mode 5 historically did not satisfy the contract — button press was manual and output was hub-log only. With a button press being a single `POST /installedapp/btn` call and `LogCapture` available (see §2.4), a wrapper script can now drive the in-hub app and assert structurally on its log output. No existing Mode 5 app has been refactored to a wrapper-driven test yet; doing so is what brings each stress app into the loop.
 
 ### 2.2 The tiered bar — applies to new or significantly-changed code only
 
@@ -182,7 +181,7 @@ Canonical example: [`apps/HubDiagnostics/tests/TEST_PLAN.md`](apps/HubDiagnostic
 
 ### 2.4 Named gaps
 
-All originally-identified tooling gaps (behavior-test generation, a top-level test runner, log/event-assertion helpers, a button-press helper) are addressed in the IDE tooling.
+The log and event capture helpers live in `scripts/lib/` (`LogCapture`, `EventCapture`). A button press is a single `POST /installedapp/btn` call with the button name; see `docs/hubitat-internal-apis.md`.
 
 ## 3. Drivers
 

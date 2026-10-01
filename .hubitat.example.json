@@ -1,0 +1,11 @@
+{
+  "default_hub": "myhub",
+  "hubs": {
+    "myhub": {
+      "hub_ip": "192.0.2.10",
+      "username": "",
+      "password": "",
+      "maker_api": { "app_id": null, "token": null }
+    }
+  }
+}
