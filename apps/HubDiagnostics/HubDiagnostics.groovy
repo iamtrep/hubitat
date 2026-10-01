@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "5.86.9"
+@Field static final String CODE_VERSION = "5.86.10"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -99,6 +99,9 @@ import java.util.concurrent.atomic.AtomicInteger
 //   tokenSeq (AtomicInteger), finalizeGuard (AtomicInteger)
 @Field static final ConcurrentHashMap<String, ConcurrentHashMap> AUDIT_SCANS = new ConcurrentHashMap<>()
 @Field static volatile Map lastAuditResult = null
+// [scanId, status, processed] of the last finalized scan. finalizeAudit drops the scan from
+// AUDIT_SCANS before its state.audit write commits; this bridges that gap for status reads.
+@Field static volatile Map lastFinalizedAudit = null
 
 // Hub alert flag display names
 @Field static final Map ALERT_DISPLAY_NAMES = [
@@ -176,9 +179,10 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final long       SYSTEM_RESOURCES_CACHE_TTL_MS = 10_000L
 // apiLive polls every 30s by default and fans out to 5 hub HTTP calls. The slow-changing ones
 // (temperature, databaseSize, cpuInfo, loadThreshold) carry longer TTLs to spare the hub.
+// cpuInfo also carries the 1-minute load average, so it stays on the 60 s tier.
 @Field static final long       TEMPERATURE_CACHE_TTL_MS   = 60_000L
 @Field static final long       DATABASE_SIZE_CACHE_TTL_MS = 60_000L
-@Field static final long       CPU_INFO_CACHE_TTL_MS      = 300_000L
+@Field static final long       CPU_INFO_CACHE_TTL_MS      = 60_000L
 @Field static final long       LOAD_THRESHOLD_CACHE_TTL_MS = 300_000L
 // Optional integration-overrides file: re-read at most this often so an uploaded/edited file is
 // picked up without a full Done. updated()/apiClearCache() reset it for an immediate reload.
@@ -344,11 +348,11 @@ mappings {
     path('/api/health')           { action: [GET: 'apiHealth'] }
     path('/api/health/history')   { action: [GET: 'apiHealthHistory'] }
     path('/api/live')             { action: [GET: 'apiLive'] }
+    path('/api/code')             { action: [GET: 'apiCode'] }
 
     // ===== App-owned GETs =====
     // Routes that read app-owned state (snapshots, checkpoints, performance
     // history, telemetry, settings) or compose data only the app can produce.
-    path('/api/code')             { action: [GET: 'apiCode'] }
     path('/api/performance')      { action: [GET: 'apiPerformance'] }
     path('/api/snapshots')        { action: [GET: 'apiSnapshots'] }
     path('/api/health/ranges')    { action: [GET: 'apiHealthRanges'] }
@@ -665,16 +669,6 @@ private String stripUpdateBadge(String label) {
     return label ? UPDATE_BADGE_RE.matcher(label).replaceAll('') : label
 }
 
-/**
- * Build a request-scoped shared cache so downstream getXxxData methods reuse common datasets
- * instead of re-fetching them. Pre-fix (v5.13.x), a single /api/dashboard call hit /hub2/hubData
- * twice (getHubInfo + fetchHubAlerts via getAlertSignals) and fetched system resources twice
- * (once directly, once via getAlertSignals fallback). With the shared cache populated, both
- * are fetched once and reused.
- *
- * @param includeNetwork  set true when the caller will use network/runtimeStats (Network/Performance tabs);
- *                        defaults false because analyzeNetwork is heavier than the savings on Dashboard/Health.
- */
 // /hub2/hubData (hub alerts, model, cloud-controller flag) takes about a second to build and
 // several endpoints read it, so one page load would fetch it repeatedly without this.
 Map fetchHubData() {
@@ -684,18 +678,21 @@ Map fetchHubData() {
     }
 }
 
-private Map buildSharedCache(boolean includeNetwork = false) {
+/**
+ * Build a request-scoped shared cache so downstream getXxxData methods reuse common datasets
+ * instead of re-fetching them. Pre-fix (v5.13.x), a single /api/dashboard call hit /hub2/hubData
+ * twice (getHubInfo + fetchHubAlerts via getAlertSignals) and fetched system resources twice
+ * (once directly, once via getAlertSignals fallback). With the shared cache populated, both
+ * are fetched once and reused. Radio and runtime data stay out: their readers go through the
+ * cross-request TTL cache instead.
+ */
+private Map buildSharedCache() {
     Map shared = [:]
     shared.hubData     = fetchHubData()
     shared.resources   = fetchSystemResources()
     shared.temperature = fetchTemperature()
     shared.databaseSize = fetchDatabaseSize()
     shared.hubAlerts   = fetchHubAlerts(shared.hubData as Map)
-    if (includeNetwork) {
-        shared.network      = analyzeNetwork()
-        Map statsWrap = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats (shared)")
-        shared.runtimeStats = statsWrap.ok ? statsWrap.data : null
-    }
     return shared
 }
 
@@ -710,7 +707,7 @@ private Map timed(String name, Closure<Map> body) {
 }
 
 // Aggregator: shared cache over multiple hub resources with fail-soft fallbacks.
-Map apiDashboard() { return timed("dashboard") { getDashboardData(buildSharedCache(false)) } }
+Map apiDashboard() { return timed("dashboard") { getDashboardData(buildSharedCache()) } }
 
 String getUIVersion() {
     if (uiVersionCache) return uiVersionCache
@@ -737,6 +734,8 @@ Map apiDevices() { return timed("devices") { getDevicesData() } }
 // Aggregator: joins apps list with runtime stats; surfaces parent/child structure.
 Map apiApps() { return timed("apps") { getAppsData() } }
 
+// Aggregator: one response for the Code tab from four hub listings (app, driver, bundle and
+// library types) plus the hub variables, each fail-soft on its own.
 Map apiCode() {
     return timed("code") {
         [
@@ -760,7 +759,7 @@ Map apiNetwork() {
 }
 
 // Aggregator: cross-resource health summary with alert shaping.
-Map apiHealth() { return timed("health") { getHealthData(buildSharedCache(false)) } }
+Map apiHealth() { return timed("health") { getHealthData(buildSharedCache()) } }
 
 // Aggregator: parses a hub text endpoint into a stable structured payload.
 Map apiHealthHistory() {
@@ -1197,16 +1196,15 @@ Map getAppsData() {
          total: app.total, count: app.count, average: app.average,
          hubActionCount: app.hubActionCount, cloudCallCount: app.cloudCallCount]
     }
+    // Display order is left to the SPA: its tables sort these columns.
     List userAppRows = (appStats.userAppsList ?: [])
-        .sort { (it.label ?: it.name ?: "").toString().toLowerCase() }
         .collect { [id: it.id, label: it.label ?: it.name, type: it.name,
                     parentId: it.parentAppId, disabled: it.disabled ?: false] }
     List platformEntries = (appStats.platformApps ?: []).collect { Map p ->
         [id: p.id, name: p.name, type: p.name, user: false, source: "platform",
          disabled: false, hidden: false, setting: false, menu: "", level: 0, childCount: 0, parentId: null]
     }
-    List allApps = ((appStats.allApps ?: []) + platformEntries)
-        .sort { Map a -> "${a.type ?: ''} ${a.name ?: ''}".toLowerCase() }
+    List allApps = (appStats.allApps ?: []) + platformEntries
     boolean hasMenuData = allApps.any { it.menu as boolean }
     return [
         summary: [totalApps: appStats.totalApps, builtInApps: appStats.builtInApps, userApps: appStats.userApps,
@@ -1220,9 +1218,9 @@ Map getAppsData() {
 }
 
 Map getNetworkData(Map shared = [:]) {
-    Map networkData = (shared.network as Map) ?: analyzeNetwork()
-    Map statsRaw = (Map) shared.runtimeStats
-    if (!statsRaw) { Map r = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats"); statsRaw = r.ok ? r.data : null }
+    Map networkData = analyzeNetwork()
+    Map statsWrap = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats")
+    Map statsRaw = statsWrap.ok ? statsWrap.data : null
     Map stats = statsRaw
     Integer uptimeSeconds = stats ? parseUptime(stats.uptime as String) : null
     Map zigbeeMesh = fetchZigbeeMeshInfo()
@@ -1333,17 +1331,16 @@ Map getHealthData(Map shared = [:]) {
 }
 
 Map getPerformanceData(Map shared = [:]) {
-    Map stats
-    if (shared.runtimeStats) { stats = (Map) shared.runtimeStats }
-    else { Map r = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats"); stats = r.ok ? r.data : null }
+    Map statsWrap = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats")
+    Map stats = statsWrap.ok ? statsWrap.data : null
 
     Map resources = (shared.resources as Map) ?: fetchSystemResources()
 
-    Map zwaveData = (shared.network?.zwave as Map) ?: (Map) cachedFetch('zwaveDetails', RADIO_CACHE_TTL_MS) {
+    Map zwaveData = (Map) cachedFetch('zwaveDetails', RADIO_CACHE_TTL_MS) {
         Map r = hubMapRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", 20)
         return (r.ok && r.data) ? r.data : null
     }
-    Map zigbeeData = (shared.network?.zigbee as Map) ?: (Map) cachedFetch('zigbeeDetails', RADIO_CACHE_TTL_MS) {
+    Map zigbeeData = (Map) cachedFetch('zigbeeDetails', RADIO_CACHE_TTL_MS) {
         Map r = hubMapRequest(ZIGBEE_DETAILS_PATH, "Zigbee details", 20)
         return (r.ok && r.data) ? r.data : null
     }
@@ -1441,11 +1438,8 @@ Map getAlertSignals(Map shared = [:]) {
         (msg.text ?: msg.message ?: msg.toString()) as String
     }.findAll { it } as List
 
-    Map networkConfig = (Map) shared.network?.network
-    if (!networkConfig) {
-        Map r = hubMapRequest(NETWORK_CONFIG_PATH, "network configuration", 15)
-        networkConfig = r.ok ? r.data : null
-    }
+    Map netWrap = hubMapRequest(NETWORK_CONFIG_PATH, "network configuration", 15)
+    Map networkConfig = netWrap.ok ? netWrap.data : null
     boolean ethernetAndWifi = (networkConfig && networkConfig.hasEthernet && networkConfig.hasWiFi) as boolean
     // Periodic Bonjour restarts (Network Setup → Bonjour options) cause LAN multicast spikes;
     // the platform recommends leaving it off. containsKey guard: legacy hubs omit the field —
@@ -1455,15 +1449,12 @@ Map getAlertSignals(Map shared = [:]) {
     // Z-Wave ghost/failed/problem signals \u2014 served from the shared 60s radio cache so
     // Dashboard/Health loads never pay a cold 8s fetch more than once per window.
     // state.cachedZwaveSignals persists the last computed signals across reboots.
-    Map zwRaw = (shared.network?.zwave as Map)
-    if (!zwRaw) {
-        zwRaw = (Map) cachedFetch('zwaveDetails', RADIO_CACHE_TTL_MS) {
-            Map zwWrap = hubMapRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", 8)
-            return (zwWrap.ok && zwWrap.data) ? zwWrap.data : null
-        }
-        if (zwRaw) state.cachedZwaveSignals = computeZwaveSignals(zwRaw)
+    Map zwRaw = (Map) cachedFetch('zwaveDetails', RADIO_CACHE_TTL_MS) {
+        Map zwWrap = hubMapRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", 8)
+        return (zwWrap.ok && zwWrap.data) ? zwWrap.data : null
     }
     Map zwSignals = zwRaw ? computeZwaveSignals(zwRaw) : ((state.cachedZwaveSignals as Map) ?: [:])
+    if (zwRaw) state.cachedZwaveSignals = zwSignals
 
     return [
         platformAlerts:       platformAlerts,
@@ -2088,7 +2079,7 @@ List fetchRoomsForAudit() {
     return rooms.collect { Map r ->
         List<Long> ids = ((r.deviceIds as List) ?: []).collect { it as Long }
         [id: r.id, name: r.name, deviceCount: ids.size(), deviceIds: ids]
-    }.sort { (it.name as String)?.toLowerCase() }
+    }   // the SPA orders rooms (buildAuditRooms)
 }
 
 /** Per-node Z-Wave JS state. Returns null when stack is not JS or fetch fails. */
@@ -2869,8 +2860,7 @@ Map analyzeApps(boolean deep = true) {
         logDebug "Could not fetch runtime stats for app count: ${e.message}"
     }
 
-    // userAppsList / platformApps display order is left to the SPA (tbl() re-sorts; platformApps is unconsumed).
-    stats.parentChildHierarchy = stats.parentChildHierarchy.sort { it.type }
+    // Display order of userAppsList, platformApps and parentChildHierarchy is left to the SPA.
 
     return stats
 }
@@ -3036,8 +3026,9 @@ Map buildAppLookupMap() {
 // Fetches community-installed device types and returns a Set of their names.
 // Any device whose type field is NOT in this set uses a built-in Hubitat driver.
 Set buildCommunityDriverSet() {
-    List types = (List) hubRequest(DEVICE_TYPES_PATH, "device types", "json", 15)
-    if (!types) return [] as Set
+    Object resp = hubRequest(DEVICE_TYPES_PATH, "device types", "json", 15)
+    if (!(resp instanceof List)) return [] as Set
+    List types = (List) resp
     return types.collect { it?.name?.toString() ?: "" }.findAll { it } as Set
 }
 
@@ -3696,7 +3687,7 @@ List<Map> listHubFiles(String nameContains = null) {
                 date: rec.date ?: rec.lastModified ?: rec.modified ?: ""
             ]
         }
-        return fileList.sort { a, b -> (b.name ?: "") <=> (a.name ?: "") }
+        return fileList   // callers that display it order it themselves
     } catch (Exception e) {
         logDebug "Unable to list hub files: ${e.message}"
         return []
@@ -4435,13 +4426,8 @@ void fullJsonCb(resp, data) {
     int processed = (scan.processed as AtomicInteger).incrementAndGet()
     (scan.inFlight as AtomicInteger).decrementAndGet()
 
-    // Update small state snapshot for UI polling — cheap (just scalars)
-    Map snap = (state.audit ?: [:]) as Map
-    if (snap.scanId == scanId) {
-        snap.processed = processed
-        state.audit = snap
-    }
-
+    // No state.audit write here: concurrent callbacks rewriting one state map lose entries,
+    // and apiAuditStatus reads live progress from scan.processed instead.
     refillAuditPipeline(scanId)                                     // keep the pipeline full
     // maybeFinalizeAudit reads every count fresh — see its comment for why this callback's
     // local `processed`/`inFlight` values are not a safe basis for the finalize decision.
@@ -4627,10 +4613,13 @@ private void finalizeAudit(String scanId) {
     lastAuditResult = xref
 
     // Snapshot for UI
+    int finalProcessed = (scan.processed as AtomicInteger).get()
+    String finalStatus = errored ? 'error' : 'done'
+    lastFinalizedAudit = [scanId: scanId, status: finalStatus, processed: finalProcessed]
     state.audit = [
         scanId:    scanId,
-        status:    errored ? 'error' : 'done',
-        processed: (scan.processed as AtomicInteger).get(),
+        status:    finalStatus,
+        processed: finalProcessed,
         total:     total,
         startedAt: startedAt
     ]
@@ -4666,12 +4655,29 @@ void auditWatchdog(data) {
 }
 
 /**
+ * state.audit as it should read now. A 'scanning' snapshot whose scan is no longer in
+ * AUDIT_SCANS was either just finalized (state write not yet committed) or lost to a reboot,
+ * code push or reload. Re-deriving on every read means an orphan never waits on one exit.
+ */
+private Map currentAuditSnapshot() {
+    Map snap = (state.audit ?: [:]) as Map
+    String scanId = snap.scanId as String
+    if (snap.status != 'scanning' || !scanId || AUDIT_SCANS[scanId]) return snap
+    Map fin = lastFinalizedAudit
+    if (fin?.scanId == scanId) return snap + [status: fin.status, processed: fin.processed]
+    Map healed = snap + [status: 'error', error: 'Scan interrupted by hub reboot, code push or app reload']
+    state.audit = healed
+    logWarn "[audit] cleared orphaned scan ${scanId} (in-memory state lost)"
+    return healed
+}
+
+/**
  * POST /api/audit/start — begin a new device usage audit.
  * Idempotent under concurrent triggers: if a scan is already in-flight, returns its scanId.
  */
 Map apiAuditStart() {
     // Force-clear stale scan (>10 min in 'scanning' state) on entry
-    Map prev = (state.audit ?: [:]) as Map
+    Map prev = currentAuditSnapshot()
     if (prev.status == 'scanning' && prev.startedAt && (now() - (prev.startedAt as Long) > AUDIT_STALE_MS)) {
         logWarn "[audit] clearing stale scan ${prev.scanId} (started ${(now() - (prev.startedAt as Long))/1000}s ago)"
         AUDIT_SCANS.remove(prev.scanId as String)
@@ -4733,16 +4739,13 @@ Map apiAuditStart() {
  */
 Map apiAuditStatus() {
     String requested = params.scanId as String
-    Map snap = (state.audit ?: [:]) as Map
+    Map snap = currentAuditSnapshot()
     if (requested && snap.scanId != requested) {
         // Caller asked about a specific scan we don't know about
         return jsonResponse([scanId: requested, status: 'unknown'])
     }
-    // R-6 G1 (v5.19.0): when a scan is still in-flight, read processed/total directly from
-    // AUDIT_SCANS' AtomicInteger. The fullJsonCb handler updates state.audit.processed from
-    // up to 8 concurrent callbacks — Hubitat's "last write wins" persistence semantics mean
-    // the snapshot can lag by several count units (never wrong direction, just slightly
-    // behind). Reading the AtomicInteger eliminates the lag for live progress polling.
+    // While a scan is in flight, progress lives only in AUDIT_SCANS' AtomicInteger;
+    // state.audit.processed is written at start and at finalize.
     String scanId = (snap.scanId ?: requested) as String
     ConcurrentHashMap scan = scanId ? (AUDIT_SCANS[scanId] as ConcurrentHashMap) : null
     Integer processed = scan ? (scan.processed as AtomicInteger).get() : (snap.processed as Integer)
@@ -4909,13 +4912,7 @@ private boolean processSyncUIResponse(String htmlText) {
 void initialize() {
     logInfo "Hub Diagnostics initialized"
 
-    // Reconcile audit state: if a scan was in-flight when the app reloaded, AUDIT_SCANS is now
-    // empty and the scan can never complete — mark it failed so the UI doesn't get stuck.
-    Map audit = (state.audit ?: [:]) as Map
-    if (audit.status == 'scanning' && audit.scanId && !AUDIT_SCANS[audit.scanId as String]) {
-        state.audit = audit + [status: 'error', error: 'Scan interrupted by hub reboot/app reload']
-        logWarn "[audit] cleared orphaned scan ${audit.scanId} (in-memory state lost on reload)"
-    }
+    currentAuditSnapshot()      // mark a scan orphaned by a reload as failed
 
     if (settings.autoSnapshot) {
         int days = (settings.snapshotInterval ?: 1).toInteger()

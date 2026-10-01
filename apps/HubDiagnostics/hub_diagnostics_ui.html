@@ -148,7 +148,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.86.9";
+const CODE_VERSION = "5.86.10";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -2032,7 +2032,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   if(rpts.lastReport)o+='<p><a href="/local/'+h(rpts.lastReport)+'" target="_blank" style="color:var(--link)">Open latest report: '+h(rpts.lastReport)+'</a></p>';
   if(rpts.reports&&rpts.reports.length>0){
     o+='<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--muted)">All reports ('+rpts.reports.length+')</summary><div style="margin-top:6px">';
-    rpts.reports.forEach(r=>{
+    rpts.reports.slice().sort((a,b)=>String(b.name||'').localeCompare(String(a.name||''))).forEach(r=>{
       const sz=r.size?(Number(r.size)>=1048576?(Number(r.size)/1048576).toFixed(1)+' MB':(Number(r.size)/1024).toFixed(0)+' KB'):'';
       const dt=r.date?fdt(r.date):'';
       o+='<div style="display:flex;gap:12px;padding:3px 0"><a href="/local/'+h(r.name)+'" target="_blank" style="color:var(--link)">'+h(Obf.nm(r.name))+'</a><span style="color:var(--muted)">'+sz+'</span><span style="color:var(--muted)">'+dt+'</span></div>'});
@@ -2781,7 +2781,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
       btn.disabled=true;btn.textContent='Scanning…';
       if(info)info.textContent='Scanning all 16 channels…';
       try{
-        const r=await post('network/zigbee/scan');
+        const r=await post('network/zigbee/scan');drop('network');
         if(r.success&&r.scan){
           renderZigbeeWifiChart(d.zigbee.channel,'zbWifiChart',r.scan);
           info.textContent='Scan complete: '+(r.scan.results||[]).filter(x=>x.panId).length+' neighbor PANs detected ('+(r.elapsedMs/1000).toFixed(1)+'s)';
@@ -3095,7 +3095,7 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
         document.getElementById('compResult').innerHTML='<div class="alert a-warn">Baseline must be older than the comparison point. Swap the selections.</div>';
         btnComp.disabled=false;btnComp.textContent='Compare';return;}}
     try {
-      const r=await post('performance/compare','baseline='+b+'&checkpoint='+c);
+      const r=await post('performance/compare','baseline='+b+'&checkpoint='+c);drop('performance');
       if(r.success){
         // Startup baseline arrives as null + baselineMode:"startup"; synthesize the zeroed mirror client-side.
         const baseStats = r.baselineStats || (r.baselineMode==='startup' ? zeroBaseline(r.checkpointStats) : null);
@@ -3245,7 +3245,7 @@ function renderSnapshotView(s,elId){
     o+='<details><summary>User App Instances ('+ap.userAppsList.length+')</summary><div id="snapUserAppTbl" style="margin-top:6px"></div></details>'}
   if(ap.parentChildHierarchy&&ap.parentChildHierarchy.length){
     o+='<details><summary>Parent/Child Hierarchy ('+ap.parentChildHierarchy.length+' parents)</summary><div style="margin-top:6px">';
-    ap.parentChildHierarchy.forEach(p=>{
+    ap.parentChildHierarchy.slice().sort((a,b)=>String(a.type||'').localeCompare(String(b.type||''))).forEach(p=>{
       o+='<div style="margin-bottom:8px"><b>'+alink(p.id,p.label||p.type)+'</b> <span style="color:var(--muted)">('+p.childCount+' children)</span>';
       if(p.children&&p.children.length){o+='<ul style="margin:4px 0 0 16px;list-style:none;padding:0">';
         p.children.forEach(c=>{o+='<li style="padding:2px 0">'+alink(c.id,c.name||c.type)+(c.disabled?' <span style="color:var(--crit)">[disabled]</span>':'')+'</li>'});
@@ -3719,7 +3719,7 @@ async function rConfig(){const P='p-config';loading(P);try{
 
   document.getElementById('cfg_clearCache').onclick=async function(){
     if(!confirm('Clear the enrichment cache? The next analysis will re-fetch device details from the hub.'))return;
-    const res=await post('cache/clear',{});drop('settings');
+    const res=await post('cache/clear',{});drop('settings');drop('devices');
     this.textContent='Clear Enrichment Cache (0 entries)';
     flash('cfg_cacheStatus','Cleared '+res.cleared+' entr'+(res.cleared===1?'y':'ies'));
   };
@@ -5703,6 +5703,7 @@ function buildAuditRooms(rooms, allDevices, failed) {
     ids.forEach(d => assigned.add(String(d)));
     return { id: r.id, name: r.name, deviceIds: ids };
   });
+  out.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' }));
   const unassigned = [...known].filter(d => !assigned.has(d)).map(Number);
   if (unassigned.length) out.push({ id: null, name: 'Unassigned', deviceIds: unassigned });
   return out;
