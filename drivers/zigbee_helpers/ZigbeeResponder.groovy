@@ -17,7 +17,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = '0.3.2'
+@Field static final String CODE_VERSION = '0.3.3'
 
 // Sub-second WS re-delivery dedup, keyed by hub device id, value = [sig, ts].
 // In-JVM only — lost on hub reboot, which is fine for sub-second dedup. Bounded
@@ -27,7 +27,7 @@ import groovy.transform.Field
 
 metadata {
     definition(name: 'Zigbee Responder', namespace: 'iamtrep', author: 'pj',
-               importUrl: 'https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/ZigbeeResponder/ZigbeeResponder.groovy',
+               importUrl: 'https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/zigbee_helpers/ZigbeeResponder.groovy',
                singleThreaded: true) {
         capability 'Initialize'
         capability 'Configuration'
