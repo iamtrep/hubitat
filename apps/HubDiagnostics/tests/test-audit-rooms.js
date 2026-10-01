@@ -62,6 +62,11 @@ t('gathers unassigned devices, failed scans included, as a last row', () => {
   assert.strictEqual(last.id, null);
   assert.deepStrictEqual(last.deviceIds.sort((a, b) => a - b), [3, 20, 30]);
 });
+t('rooms ordered by name, case-insensitive, Unassigned last', () => {
+  const out = R.buildAuditRooms([{ id: 1, name: 'salon', deviceIds: [1] }, { id: 2, name: 'Bureau', deviceIds: [2] }],
+                                { '1': {}, '2': {}, '3': {} }, []);
+  assert.deepStrictEqual(out.map(r => r.name), ['Bureau', 'salon', 'Unassigned']);
+});
 t('no Unassigned row when every device has a room', () => {
   const out = R.buildAuditRooms([{ id: 1, name: 'All', deviceIds: [1, 2] }], { '1': {}, '2': {} }, []);
   assert.deepStrictEqual(out.map(r => r.name), ['All']);

@@ -84,7 +84,7 @@ TTLs are proportional to how fast the underlying metric actually moves, sized so
 | `DATABASE_SIZE_CACHE_TTL_MS` | 60 s | database size | Grows over hours, not seconds. |
 | `HUB_LIST_CACHE_TTL_MS` | 2 min | apps list, devices list, on the Performance path only | Large payloads; topology only changes on install/remove. The device, app and audit paths fetch both lists uncached. |
 | `HUB_DATA_CACHE_TTL_MS` | 30 s | `/hub2/hubData`: hub alerts, model, cloud-controller flag | Slow to build and read by several endpoints; 30 s folds one page load's reads into one fetch while alerts stay current. |
-| `CPU_INFO_CACHE_TTL_MS` | 5 min | `/hub/cpuInfo`: core count, and the 1-minute load average parsed from the same response | Core count is constant per install. The load average shares the 5-minute TTL, so the "Load avg (1m)" figure can be up to 5 minutes old. |
+| `CPU_INFO_CACHE_TTL_MS` | 60 s | `/hub/cpuInfo`: core count, and the 1-minute load average parsed from the same response | Core count is constant per install; the 1-minute load average sets the TTL. |
 | `LOAD_THRESHOLD_CACHE_TTL_MS` | 5 min | platform load threshold | Rarely changes. |
 | `INTEGRATION_OVERRIDES_CACHE_TTL_MS` | 5 min | File Manager overrides config | Picks up a re-uploaded config without a full Done; `updated()`/`apiClearCache()` reset it immediately. |
 | `FW_UPDATE_CACHE_TTL_MS` | 1 hr | firmware-update check, Diagnostic Tool version list | Slow-moving; no value polling more often. A failed tool read is cached as empty so a down tool costs no timeout per load; `apiFirmwareRefresh()` drops the list after a platform download. |
