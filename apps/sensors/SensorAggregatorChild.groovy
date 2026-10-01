@@ -31,7 +31,7 @@ import com.hubitat.app.ChildDeviceWrapper
 //import com.hubitat.hub.domain.Capability // only available from 2.4.3.148 onward
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.3.2"
+@Field static final String CODE_VERSION = "0.3.3"
 
 @Field static final Map<String, String> CAPABILITY_ATTRIBUTES = [
     "capability.carbonDioxideMeasurement"   : [ attribute: "carbonDioxide", driver: "Virtual Omni Sensor" ],
@@ -93,11 +93,18 @@ Map mainPage() {
 
 void installed() {
     logDebug "installed()"
+    initialize()
 }
 
 void updated() {
     logDebug "updated()"
     unsubscribe()
+    unschedule()
+    initialize()
+}
+
+void initialize() {
+    logDebug "initialize()"
 
     if (state.includedSensors == null) { state.includedSensors = [] }
     if (state.excludedSensors == null) { state.excludedSensors = [] }
@@ -122,10 +129,6 @@ void updated() {
     }
 
     sensorEventHandler()
-}
-
-void initialize() {
-    logDebug "initialize()"
 }
 
 void uninstalled() {
