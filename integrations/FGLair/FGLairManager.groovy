@@ -33,7 +33,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "0.2.3"
+@Field static final String CODE_VERSION = "0.2.4"
 
 // Region-specific Ayla endpoints + app credentials, lifted from
 // ayla-iot-unofficial/src/ayla_iot_unofficial/const.py and fujitsu_consts.py.
@@ -88,6 +88,9 @@ definition(
 @Field static final int MAX_WAKES_PER_TICK = 2
 // Longest response body echoed to debug logs.
 @Field static final int LOG_BODY_MAX = 200
+// A write queued behind a token refresh is dropped if the refresh takes longer;
+// sending it later would replay a command the user has moved on from.
+@Field static final long PENDING_WRITE_MAX_MS = 120_000L
 // Poll pipeline (gen, queue, inFlight, lastActivity). In memory: its async
 // callbacks don't survive a reboot or code update, so neither should it.
 // One map is enough because the app is singleInstance.
@@ -437,7 +440,7 @@ private boolean wakeUnit(String dni) {
     Map<String, Long> wakes = (atomicState.lastWakeAt ?: [:]) as Map<String, Long>
     wakes[dni] = now()
     atomicState.lastWakeAt = wakes
-    sendCommand(dni, "refresh", 1)
+    sendWrite(dni, "refresh", 1, false)
     return true
 }
 
@@ -498,22 +501,21 @@ void signInCallback(resp, data) {
     requestDone()
     atomicState.remove("authStartedAt")
     boolean manual = data?.manual as Boolean
-    if (resp.hasError()) {
-        // Network failure: keep the tokens; the next poll tries again.
-        if (manual) logError "signIn HTTP error: ${resp.getErrorMessage()}"
-        else noteTransientFailure "re-sign-in HTTP error: ${resp.getErrorMessage()}"
-        state.authError = "Sign-in failed: ${resp.getErrorMessage()}"
-        return
-    }
     int status = resp.getStatus()
-    if (status >= 500 && !manual) {
-        noteTransientFailure "re-sign-in HTTP ${status}"
+    if (isTransientStatus(status)) {
+        // Network failure or cloud outage: keep the tokens; the next poll tries again.
+        if (manual) {
+            logError "signIn ${httpError(resp)}"
+            state.authError = "Sign-in failed: ${httpError(resp)}"
+        } else {
+            noteTransientFailure "re-sign-in ${httpError(resp)}"
+        }
         return
     }
     if (status != 200) {
         String msg = "Sign-in failed (HTTP ${status}). Check email/password and region."
         if (manual) {
-            logError "signIn HTTP ${status}"
+            logError "signIn ${httpError(resp)}"
             state.authError = msg
         } else {
             haltAuth(msg)
@@ -570,19 +572,14 @@ void refreshToken() {
 
 void refreshTokenCallback(resp, data) {
     requestDone()
-    if (resp.hasError()) {
-        atomicState.remove("authStartedAt")
-        noteTransientFailure "refreshToken HTTP error: ${resp.getErrorMessage()}"
-        return
-    }
     int status = resp.getStatus()
-    if (status >= 500) {
+    if (isTransientStatus(status)) {
         atomicState.remove("authStartedAt")
-        noteTransientFailure "refreshToken HTTP ${status}"
+        noteTransientFailure "refreshToken ${httpError(resp)}"
         return
     }
     if (status != 200) {
-        logWarn "refreshToken HTTP ${status} — falling back to re-sign-in"
+        logWarn "refreshToken ${httpError(resp)} — falling back to re-sign-in"
         atomicState.authStartedAt = now()
         postSignIn(false)
         return
@@ -640,8 +637,6 @@ private void clearAuthRejects() {
 private void haltAuth(String reason) {
     logError "${reason} Polling stopped; log in again from the manager page."
     state.authError = reason
-    List pending = (atomicState.pendingWrites ?: []) as List
-    if (pending) logWarn "discarding ${pending.size()} queued write(s)"
     clearSession()
     markUnitsOffline()
 }
@@ -652,7 +647,7 @@ private void clearSession() {
     state.remove("tokenExpiry")
     atomicState.remove("authStartedAt")
     atomicState.remove("authRejects")
-    atomicState.remove("pendingWrites")
+    discardPendingWrites()
     state.remove("unitFailures")
     POLL.clear()
     unschedule()
@@ -726,22 +721,14 @@ void fetchDevicesCallback(resp, data) {
 }
 
 private void handleDevicesResponse(resp) {
-    if (resp.hasError()) {
-        noteTransientFailure "fetchDevices HTTP error: ${resp.getErrorMessage()}"
-        return
-    }
     int status = resp.getStatus()
     if (status == 401) {
         noteAuthReject("fetchDevices")
         return
     }
-    if (status >= 500) {
-        noteTransientFailure "fetchDevices HTTP ${status}"
-        return
-    }
     if (status != 200) {
-        noteTransientFailure "fetchDevices HTTP ${status}"
-        logDebug "fetchDevices response: ${bodyExcerpt(resp)}"
+        noteTransientFailure "fetchDevices ${httpError(resp)}"
+        if (!isTransientStatus(status)) logDebug "fetchDevices response: ${bodyExcerpt(resp)}"
         return
     }
     List parsed
@@ -844,29 +831,26 @@ void fetchPropertiesCallback(resp, data) {
     releaseRequest()  // the next read starts in finally, after a 401 has cleared the queue
     boolean queued = data?.gen != null
     if (queued) {
-        if (!isCurrentPoll(data)) { logDebug "fetchProperties(${data?.dsn}): response from a superseded poll ignored"; return }
+        if (!isCurrentPoll(data)) { logDebug "fetchProperties(${data?.dsn}): response from a superseded poll ignored"; fetchNextQueued(); return }
         POLL.inFlight = Math.max(0, ((POLL.inFlight ?: 0) as int) - 1)
     }
     try {
         handlePropertiesResponse(resp, (String) data?.dsn)
     } finally {
-        if (queued) {
-            fetchNextQueued()
-            if (pollDrained()) endPoll()
-        }
+        // A single-unit read frees a slot too, which a waiting poll read may need.
+        fetchNextQueued()
+        if (queued && pollDrained()) endPoll()
     }
 }
 
 private void handlePropertiesResponse(resp, String dsn) {
-    if (resp.hasError()) { noteUnitFailure(dsn, "fetchProperties(${dsn}) HTTP error: ${resp.getErrorMessage()}"); return }
     int status = resp.getStatus()
     if (status == 401) {
         POLL.remove("queue")  // the rest would fail on the same token
         noteAuthReject("fetchProperties(${dsn})")
         return
     }
-    if (status >= 500) { noteUnitFailure(dsn, "fetchProperties(${dsn}) HTTP ${status}"); return }
-    if (status != 200) { noteUnitFailure(dsn, "fetchProperties(${dsn}) HTTP ${status}"); return }
+    if (status != 200) { noteUnitFailure(dsn, "fetchProperties(${dsn}) ${httpError(resp)}"); return }
     List parsed
     try { parsed = (List) new JsonSlurper().parseText(resp.getData()) }
     catch (Exception e) { noteUnitFailure(dsn, "fetchProperties(${dsn}) parse: ${e.message}"); return }
@@ -927,31 +911,38 @@ void fetchPropertiesDeferred(Map data) { fetchProperties((String) data.dsn) }
 // --- Write commands ---
 
 void sendCommand(String dni, String propertyName, Object value) {
+    sendWrite(dni, propertyName, value, true)
+}
+
+// report=false for the manager's own writes (sensor wakes): the child didn't ask
+// for them, so their outcome stays out of its commandStatus.
+private void sendWrite(String dni, String propertyName, Object value, boolean report) {
     String dsn = dni?.replaceFirst("^${java.util.regex.Pattern.quote(DNI_PREFIX_UNIT)}", "")
     if (!dsn) { logError "sendCommand: invalid dni ${dni}"; return }
+    Map w = [dsn: dsn, name: propertyName, value: value, retried: false, report: report]
     if (!isAuthenticated()) {
         logWarn "sendCommand(${propertyName}): not signed in — dropped"
-        reportCommand(dsn, propertyName, false)
+        reportWrite(w, false)
         return
     }
     // While a refresh runs the current token may be the one just rejected.
     if (tokenNearExpiry() || authInFlight()) {
-        queuePendingWrite(dsn, propertyName, value, false)
+        queuePendingWrite(w)
         refreshToken()
         return
     }
-    writeDatapoint(dsn, propertyName, value, false)
+    writeDatapoint(w)
 }
 
 // Writes waiting on a token refresh, flushed in order by afterAuth(). A newer
 // write to the same property replaces the queued one.
-private void queuePendingWrite(String dsn, String name, Object value, boolean retried) {
+private void queuePendingWrite(Map w) {
     List<Map> pending = ((atomicState.pendingWrites ?: []) as List<Map>).findAll {
-        !(it.dsn == dsn && it.name == name)
+        !(it.dsn == w.dsn && it.name == w.name)
     }
-    pending << [dsn: dsn, name: name, value: value, retried: retried]
+    pending << (w + [at: now()])
     atomicState.pendingWrites = pending
-    logDebug "queued ${name}=${value} until token refresh (${pending.size()} pending)"
+    logDebug "queued ${w.name}=${w.value} until token refresh (${pending.size()} pending)"
 }
 
 private void flushPendingWrites() {
@@ -960,67 +951,76 @@ private void flushPendingWrites() {
     atomicState.pendingWrites = []
     logDebug "flushing ${pending.size()} queued write(s)"
     pending.each { Map w ->
-        writeDatapoint((String) w.dsn, (String) w.name, w.value, w.retried as Boolean)
+        if (w.at == null || now() - (w.at as long) > PENDING_WRITE_MAX_MS) {
+            logWarn "writeDatapoint(${w.name}): queued too long behind the token refresh — dropped"
+            reportWrite(w, false)
+        } else {
+            writeDatapoint(w)
+        }
     }
 }
 
-private void writeDatapoint(String dsn, String propertyName, Object value, boolean retried) {
+// Writes still queued when the session ends are reported failed, never sent.
+private void discardPendingWrites() {
+    List<Map> pending = (atomicState.pendingWrites ?: []) as List<Map>
+    atomicState.remove("pendingWrites")
+    if (!pending) return
+    logWarn "discarding ${pending.size()} queued write(s)"
+    pending.each { Map w -> reportWrite(w, false) }
+}
+
+private void writeDatapoint(Map w) {
+    String propertyName = w.name
     if (!hasRequestRoom(1)) {
         logWarn "writeDatapoint(${propertyName}): ${requestsInFlight()} requests in flight — dropped"
-        reportCommand(dsn, propertyName, false)
+        reportWrite(w, false)
         return
     }
     Map<String, String> rc = regionConfig()
-    Map body = [datapoint: [value: value]]
+    Map body = [datapoint: [value: w.value]]
     Map params = [
-        uri: "${rc.ads}/apiv1/dsns/${dsn}/properties/${propertyName}/datapoints.json",
+        uri: "${rc.ads}/apiv1/dsns/${w.dsn}/properties/${propertyName}/datapoints.json",
         headers: authHeader(),
         contentType: "application/json",
         requestContentType: "application/json",
         body: JsonOutput.toJson(body),
         timeout: HTTP_TIMEOUT
     ]
-    logDebug "writeDatapoint dsn=${dsn} ${propertyName}=${value}"
+    logDebug "writeDatapoint dsn=${w.dsn} ${propertyName}=${w.value}"
     asyncRequest("POST", "writeDatapointCallback", params,
-                 [dsn: dsn, name: propertyName, value: value, retried: retried])
+                 [dsn: w.dsn, name: propertyName, value: w.value, retried: w.retried, report: w.report])
 }
 
 // Failed writes are not retried: a write the unit can't honor jams the per-DSN
 // queue. The child reports the failure and the next poll restores true state.
 void writeDatapointCallback(resp, data) {
     requestDone()
-    String dsn = data?.dsn
-    String name = data?.name
-    if (resp.hasError()) {
-        logWarn "writeDatapoint(${name}) HTTP error: ${resp.getErrorMessage()}"
-        reportCommand(dsn, name, false)
-        return
-    }
+    Map w = (data ?: [:]) as Map
+    String name = w.name
     int status = resp.getStatus()
     if (status == 401) {
-        if (data?.retried) {
+        if (w.retried) {
             logError "writeDatapoint(${name}) HTTP 401 after token refresh — dropped"
-            reportCommand(dsn, name, false)
+            reportWrite(w, false)
             return
         }
-        queuePendingWrite((String) data.dsn, (String) data.name, data.value, true)
-        noteAuthReject("writeDatapoint(${data?.name})")
-        return
-    }
-    if (status >= 500) {
-        logWarn "writeDatapoint(${name}) HTTP ${status}"
-        reportCommand(dsn, name, false)
+        queuePendingWrite(w + [retried: true])
+        noteAuthReject("writeDatapoint(${name})")
         return
     }
     if (status != 200 && status != 201) {
-        logError "writeDatapoint(${name}) HTTP ${status}"
-        logDebug "writeDatapoint(${name}) response: ${bodyExcerpt(resp)}"
-        reportCommand(dsn, name, false)
+        if (isTransientStatus(status)) {
+            logWarn "writeDatapoint(${name}) ${httpError(resp)}"
+        } else {
+            logError "writeDatapoint(${name}) ${httpError(resp)}"
+            logDebug "writeDatapoint(${name}) response: ${bodyExcerpt(resp)}"
+        }
+        reportWrite(w, false)
         return
     }
     clearAuthRejects()
     logDebug "writeDatapoint(${name}) ok"
-    reportCommand(dsn, name, true)
+    reportWrite(w, true)
 }
 
 // Every async call goes through here so all paths share one count against ASYNC_CAP.
@@ -1059,8 +1059,10 @@ private void requestDone() {
     fetchNextQueued()
 }
 
-private void reportCommand(String dsn, String name, boolean ok) {
-    getChildDevice("${DNI_PREFIX_UNIT}${dsn}")?.commandResult(name, ok)
+// Writes from before report existed carry no flag and are reported.
+private void reportWrite(Map w, boolean ok) {
+    if (w.report == false) return
+    getChildDevice("${DNI_PREFIX_UNIT}${w.dsn}")?.commandResult((String) w.name, ok)
 }
 
 private void computeOrphans(Set<String> liveDnis) {
@@ -1089,8 +1091,21 @@ private void logInfo(String msg)  { if (settings.txtEnable)   log.info  "${app.l
 private void logWarn(String msg)  { log.warn  "${app.label} ${msg}" }
 private void logError(String msg) { log.error "${app.label} ${msg}" }
 
+// hasError() is true for every non-2xx status, so callbacks branch on getStatus().
+// Timeouts and connection failures carry no real HTTP status (408, or below 100).
+private boolean isTransientStatus(int status) {
+    return status < 100 || status == 408 || status == 429 || status >= 500
+}
+
+// getErrorMessage() and getErrorData() throw on a success, getData() on an error.
+private String httpError(resp) {
+    return resp.hasError() ? "HTTP ${resp.getStatus()}: ${resp.getErrorMessage()}" : "HTTP ${resp.getStatus()}"
+}
+
 private String bodyExcerpt(resp) {
-    String body = resp.getData()?.toString() ?: ""
+    String body
+    try { body = (resp.hasError() ? resp.getErrorData() : resp.getData())?.toString() ?: "" }
+    catch (Exception e) { return "" }
     return body.length() > LOG_BODY_MAX ? body.take(LOG_BODY_MAX) + "…" : body
 }
 

@@ -24,6 +24,8 @@ Manager / driver v0.2.1 (2026-09-30) added the following, not yet run live:
 - **`commandStatus`.** Set on every write outcome. Check that a failed write shows `failed` and the next poll restores the optimistic attributes.
 - **`singleThreaded`.** Child commands now wait for any running manager handler. All manager handlers are short (HTTP is async), so command latency should not change noticeably.
 
+Manager v0.2.4 (2026-10-01) routes 4xx responses to the auth handling; before it, `hasError()` (true for any non-2xx status) sent every 401 down the transient-failure path. The 401 → refresh → re-sign-in → halt chain is now reachable but still not run live.
+
 ## Tier 3 — swing, mode toggles
 
 **Deferred 2026-05-18, re-deferred 2026-09-30** (no current need). All findings below are current as of 2026-09-30.

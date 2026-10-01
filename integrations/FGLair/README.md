@@ -23,7 +23,7 @@ Parent/child integration for Fujitsu mini-split heat pumps that authenticate aga
 
 ## Authentication
 
-Email + password against Ayla's `/users/sign_in.json`. The access token (~24 h) is refreshed automatically 5 minutes before expiry. If the refresh token is rejected, the manager re-signs in using stored credentials. Network errors and 5xx responses are retried on the next poll. If the stored credentials are rejected, or FGLair keeps returning 401 on fresh tokens, the manager stops polling and shows the error on its page until you log in again. Commands issued while a token refresh is in progress are queued and sent once it completes.
+Email + password against Ayla's `/users/sign_in.json`. The access token (~24 h) is refreshed automatically 5 minutes before expiry. If the refresh token is rejected, the manager re-signs in using stored credentials. Network errors and 5xx responses are retried on the next poll. If the stored credentials are rejected, or FGLair keeps returning 401 on fresh tokens, the manager stops polling and shows the error on its page until you log in again. Commands issued while a token refresh is in progress are queued and sent once it completes; a command still queued after 2 minutes is dropped and reported as failed.
 
 Region (US / EU) is configurable on the manager page; the region setting drives the base URL and the `app_id` / `app_secret` pair used for sign-in.
 
