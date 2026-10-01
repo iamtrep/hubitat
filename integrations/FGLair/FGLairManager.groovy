@@ -30,7 +30,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "0.1.7"
+@Field static final String CODE_VERSION = "0.1.8"
 
 // Region-specific Ayla endpoints + app credentials, lifted from
 // ayla-iot-unofficial/src/ayla_iot_unofficial/const.py and fujitsu_consts.py.
@@ -60,6 +60,10 @@ definition(
 // the next poll. Log at warn until this many in a row, then escalate to error so a
 // real outage surfaces.
 @Field static final int FAILURE_ERROR_THRESHOLD = 5
+// A refresh or sign-in older than this is treated as lost, so a new one may start.
+@Field static final long AUTH_INFLIGHT_MS = 30_000L
+// Consecutive 401s, each followed by a successful refresh, before auth is halted.
+@Field static final int AUTH_REJECT_LIMIT = 3
 // display_temperature / outdoor_temperature are "sensed" properties: the Ayla cloud
 // only returns a fresh reading after the unit is told to wake its sensors (refresh=1).
 // Without that, a plain GET serves the last cached value — which the cloud refreshes
@@ -112,6 +116,7 @@ Map mainPage() {
             section("Actions") { input "btnDisconnect", "button", title: "Disconnect" }
         } else {
             section {
+                if (state.authError) paragraph "<span style='color:red;'><b>Error:</b> ${state.authError}</span>"
                 paragraph "Connect your FGLair account to get started."
                 href "loginPage", title: "Login to FGLair", description: "Enter your FGLair credentials"
             }
@@ -293,11 +298,20 @@ private Map<String, String> regionConfig() {
     return REGION[r] ?: REGION.us
 }
 
+// Manual login (button). Automatic re-sign-in after a failed refresh goes
+// through postSignIn(false) inside the refresh's in-flight window.
 void signIn() {
+    atomicState.authStartedAt = now()
+    postSignIn(true)
+}
+
+private void postSignIn(boolean manual) {
     String email = settings.fglairEmail
     String password = settings.fglairPassword
     if (!email || !password) {
-        state.authError = "Email and password required."
+        atomicState.remove("authStartedAt")
+        if (manual) state.authError = "Email and password required."
+        else haltAuth("Stored FGLair credentials are missing.")
         return
     }
     Map<String, String> rc = regionConfig()
@@ -315,20 +329,33 @@ void signIn() {
         body: JsonOutput.toJson(body),
         timeout: HTTP_TIMEOUT
     ]
-    logDebug "signIn POST ${params.uri}"
-    asynchttpPost("signInCallback", params, [:])
+    logDebug "signIn POST ${params.uri} (manual=${manual})"
+    asynchttpPost("signInCallback", params, [manual: manual])
 }
 
 void signInCallback(resp, data) {
+    atomicState.remove("authStartedAt")
+    boolean manual = data?.manual as Boolean
     if (resp.hasError()) {
-        logError "signIn HTTP error: ${resp.getErrorMessage()}"
+        // Network failure: keep the tokens; the next poll tries again.
+        if (manual) logError "signIn HTTP error: ${resp.getErrorMessage()}"
+        else noteTransientFailure "re-sign-in HTTP error: ${resp.getErrorMessage()}"
         state.authError = "Sign-in failed: ${resp.getErrorMessage()}"
         return
     }
     int status = resp.getStatus()
+    if (status >= 500 && !manual) {
+        noteTransientFailure "re-sign-in HTTP ${status}"
+        return
+    }
     if (status != 200) {
-        logError "signIn HTTP ${status}: ${resp.getData()}"
-        state.authError = "Sign-in failed (HTTP ${status}). Check email/password and region."
+        String msg = "Sign-in failed (HTTP ${status}). Check email/password and region."
+        if (manual) {
+            logError "signIn HTTP ${status}: ${resp.getData()}"
+            state.authError = msg
+        } else {
+            haltAuth(msg)
+        }
         return
     }
     Map parsed
@@ -341,8 +368,8 @@ void signInCallback(resp, data) {
     }
     storeTokens(parsed)
     logInfo "FGLair sign-in successful"
-    runIn(2, "fetchDevices")
-    schedulePolling()
+    if (manual) schedulePolling()
+    afterAuth()
 }
 
 private void storeTokens(Map parsed) {
@@ -354,14 +381,19 @@ private void storeTokens(Map parsed) {
     scheduleTokenRefresh()
 }
 
+// Single-flight: callers that need a fresh token call this and return; afterAuth()
+// re-runs the poll and flushes queued writes. Nothing retries on a timer, so a
+// failed refresh waits for the next poll tick.
 void refreshToken() {
-    logDebug "refreshToken"
+    if (authInFlight()) { logDebug "refreshToken: already in flight"; return }
+    atomicState.authStartedAt = now()
     String rt = state.refreshToken
     if (!rt) {
         logWarn "no refresh token — attempting full re-sign-in"
-        signIn()
+        postSignIn(false)
         return
     }
+    logDebug "refreshToken"
     Map<String, String> rc = regionConfig()
     Map body = [user: [refresh_token: rt]]
     Map params = [
@@ -376,14 +408,20 @@ void refreshToken() {
 
 void refreshTokenCallback(resp, data) {
     if (resp.hasError()) {
-        logWarn "refreshToken HTTP error: ${resp.getErrorMessage()} — falling back to re-sign-in"
-        signIn()
+        atomicState.remove("authStartedAt")
+        noteTransientFailure "refreshToken HTTP error: ${resp.getErrorMessage()}"
         return
     }
     int status = resp.getStatus()
+    if (status >= 500) {
+        atomicState.remove("authStartedAt")
+        noteTransientFailure "refreshToken HTTP ${status}"
+        return
+    }
     if (status != 200) {
         logWarn "refreshToken HTTP ${status} — falling back to re-sign-in"
-        signIn()
+        atomicState.authStartedAt = now()
+        postSignIn(false)
         return
     }
     Map parsed
@@ -391,16 +429,65 @@ void refreshTokenCallback(resp, data) {
         parsed = new JsonSlurper().parseText(resp.getData())
     } catch (Exception e) {
         logError "refreshToken JSON parse error: ${e.message}"
-        signIn()
+        atomicState.authStartedAt = now()
+        postSignIn(false)
         return
     }
+    atomicState.remove("authStartedAt")
     storeTokens(parsed)
     logInfo "FGLair token refreshed"
+    afterAuth()
+}
+
+private boolean authInFlight() {
+    Long started = atomicState.authStartedAt as Long
+    return started != null && now() - started < AUTH_INFLIGHT_MS
+}
+
+private void afterAuth() {
+    flushPendingWrites()
+    runIn(2, "fetchDevices")
 }
 
 private boolean tokenNearExpiry() {
     if (!state.tokenExpiry) return true
     return now() > ((long) state.tokenExpiry) - 60_000L
+}
+
+// A 401 on a token we just obtained means refreshing won't help. Count them so
+// a rejected token can't drive a fetch -> 401 -> refresh -> fetch loop.
+private void noteAuthReject(String what) {
+    int n = ((atomicState.authRejects ?: 0) as int) + 1
+    atomicState.authRejects = n
+    if (n >= AUTH_REJECT_LIMIT) {
+        haltAuth("FGLair rejected the session ${n} times in a row (last: ${what}).")
+        return
+    }
+    logWarn "${what} HTTP 401 — refreshing token"
+    refreshToken()
+}
+
+private void clearAuthRejects() {
+    if (atomicState.authRejects) atomicState.authRejects = 0
+}
+
+// Stops polling and drops the session so the manager page shows the login link.
+private void haltAuth(String reason) {
+    logError "${reason} Polling stopped; log in again from the manager page."
+    state.authError = reason
+    List pending = (atomicState.pendingWrites ?: []) as List
+    if (pending) logWarn "discarding ${pending.size()} queued write(s)"
+    clearSession()
+}
+
+private void clearSession() {
+    state.remove("accessToken")
+    state.remove("refreshToken")
+    state.remove("tokenExpiry")
+    atomicState.remove("authStartedAt")
+    atomicState.remove("authRejects")
+    atomicState.remove("pendingWrites")
+    unschedule()
 }
 
 // --- Device discovery ---
@@ -409,10 +496,10 @@ private Map authHeader() { return ["Authorization": "auth_token ${state.accessTo
 
 void fetchDevices() {
     logDebug "fetchDevices"
+    if (!isAuthenticated()) { logDebug "fetchDevices: not signed in"; return }
     if (tokenNearExpiry()) {
-        logDebug "token near expiry — refreshing inline before fetchDevices"
+        logDebug "token near expiry — fetchDevices runs after the refresh"
         refreshToken()
-        runIn(3, "fetchDevices")
         return
     }
     Map<String, String> rc = regionConfig()
@@ -432,9 +519,7 @@ void fetchDevicesCallback(resp, data) {
     }
     int status = resp.getStatus()
     if (status == 401) {
-        logWarn "fetchDevices HTTP 401 — refreshing token and retrying"
-        refreshToken()
-        runIn(3, "fetchDevices")
+        noteAuthReject("fetchDevices")
         return
     }
     if (status >= 500) {
@@ -453,6 +538,7 @@ void fetchDevicesCallback(resp, data) {
         return
     }
     clearTransientFailureStreak()
+    clearAuthRejects()
     handleDeviceList(parsed)
 }
 
@@ -499,7 +585,8 @@ private void handleDeviceList(List rawDevices) {
 // If display_temperature staleness is later observed in normal operation,
 // add a separate refreshSensedTemp() that mirrors the lib's narrow pattern.
 void fetchProperties(String dsn) {
-    if (tokenNearExpiry()) { refreshToken(); runIn(3, "fetchProperties", [data: [dsn: dsn]]); return }
+    // A deferred fetch is covered by afterAuth(), which re-polls every unit.
+    if (tokenNearExpiry()) { refreshToken(); return }
     Map<String, String> rc = regionConfig()
     Map params = [
         uri: "${rc.ads}/apiv1/dsns/${dsn}/properties.json",
@@ -514,13 +601,14 @@ void fetchPropertiesCallback(resp, data) {
     String dsn = data?.dsn
     if (resp.hasError()) { noteTransientFailure "fetchProperties(${dsn}) HTTP error: ${resp.getErrorMessage()}"; return }
     int status = resp.getStatus()
-    if (status == 401) { logWarn "fetchProperties(${dsn}) 401 — refresh"; refreshToken(); runIn(3, "fetchProperties", [data: [dsn: dsn]]); return }
+    if (status == 401) { noteAuthReject("fetchProperties(${dsn})"); return }
     if (status >= 500) { noteTransientFailure "fetchProperties(${dsn}) HTTP ${status}"; return }
     if (status != 200) { logError "fetchProperties(${dsn}) HTTP ${status}"; return }
     List parsed
     try { parsed = (List) new JsonSlurper().parseText(resp.getData()) }
     catch (Exception e) { logError "fetchProperties parse: ${e.message}"; return }
     clearTransientFailureStreak()
+    clearAuthRejects()
 
     Map<String, Object> props = [:]
     parsed.each { item ->
@@ -558,19 +646,37 @@ void refreshUnit(String dni) {
 void sendCommand(String dni, String propertyName, Object value) {
     String dsn = dni?.replaceFirst("^${java.util.regex.Pattern.quote(DNI_PREFIX_UNIT)}", "")
     if (!dsn) { logError "sendCommand: invalid dni ${dni}"; return }
+    if (!isAuthenticated()) { logWarn "sendCommand(${propertyName}): not signed in — dropped"; return }
     if (tokenNearExpiry()) {
+        queuePendingWrite(dsn, propertyName, value, false)
         refreshToken()
-        runIn(3, "sendCommandDeferred", [data: [dsn: dsn, name: propertyName, value: value]])
         return
     }
-    writeDatapoint(dsn, propertyName, value)
+    writeDatapoint(dsn, propertyName, value, false)
 }
 
-void sendCommandDeferred(Map data) {
-    writeDatapoint((String) data.dsn, (String) data.name, data.value)
+// Writes waiting on a token refresh, flushed in order by afterAuth(). A newer
+// write to the same property replaces the queued one.
+private void queuePendingWrite(String dsn, String name, Object value, boolean retried) {
+    List<Map> pending = ((atomicState.pendingWrites ?: []) as List<Map>).findAll {
+        !(it.dsn == dsn && it.name == name)
+    }
+    pending << [dsn: dsn, name: name, value: value, retried: retried]
+    atomicState.pendingWrites = pending
+    logDebug "queued ${name}=${value} until token refresh (${pending.size()} pending)"
 }
 
-private void writeDatapoint(String dsn, String propertyName, Object value) {
+private void flushPendingWrites() {
+    List<Map> pending = (atomicState.pendingWrites ?: []) as List<Map>
+    if (!pending) return
+    atomicState.pendingWrites = []
+    logDebug "flushing ${pending.size()} queued write(s)"
+    pending.each { Map w ->
+        writeDatapoint((String) w.dsn, (String) w.name, w.value, w.retried as Boolean)
+    }
+}
+
+private void writeDatapoint(String dsn, String propertyName, Object value, boolean retried) {
     Map<String, String> rc = regionConfig()
     Map body = [datapoint: [value: value]]
     Map params = [
@@ -582,7 +688,8 @@ private void writeDatapoint(String dsn, String propertyName, Object value) {
         timeout: HTTP_TIMEOUT
     ]
     logDebug "writeDatapoint dsn=${dsn} ${propertyName}=${value}"
-    asynchttpPost("writeDatapointCallback", params, [dsn: dsn, name: propertyName])
+    asynchttpPost("writeDatapointCallback", params,
+                  [dsn: dsn, name: propertyName, value: value, retried: retried])
 }
 
 void writeDatapointCallback(resp, data) {
@@ -592,8 +699,12 @@ void writeDatapointCallback(resp, data) {
     }
     int status = resp.getStatus()
     if (status == 401) {
-        logWarn "writeDatapoint(${data?.name}) 401 — refresh and retry once"
-        refreshToken()
+        if (data?.retried) {
+            logError "writeDatapoint(${data?.name}) HTTP 401 after token refresh — dropped"
+            return
+        }
+        queuePendingWrite((String) data.dsn, (String) data.name, data.value, true)
+        noteAuthReject("writeDatapoint(${data?.name})")
         return
     }
     if (status >= 500) {
@@ -604,6 +715,7 @@ void writeDatapointCallback(resp, data) {
         logError "writeDatapoint(${data?.name}) HTTP ${status}: ${resp.getData()}"
         return
     }
+    clearAuthRejects()
     logDebug "writeDatapoint(${data?.name}) ok"
 }
 
@@ -621,10 +733,7 @@ private void computeOrphans(Set<String> liveDnis) {
 
 void disconnect() {
     logInfo "disconnecting"
-    state.remove("accessToken")
-    state.remove("refreshToken")
-    state.remove("tokenExpiry")
-    unschedule()
+    clearSession()
 }
 
 // --- Logging ---
