@@ -9,6 +9,8 @@ This document captures architectural principles and platform constraints that ap
 
 Treat this guide as the default. Project-level guides may extend specific sections, but the platform constraints below are not negotiable: violating them produces silent failures or lost work.
 
+Conventions apply to new code and to files when they are edited. Existing files adopt them when touched, with no sweep, so an architecture review flags a deviation only in code the change touches.
+
 The guide is organized in three parts: **Common** principles that apply to anything built for Hubitat, then **Apps**-specific guidance, then **Drivers**-specific guidance. A companion file [`ARCHITECTURE_CANDIDATES.md`](ARCHITECTURE_CANDIDATES.md) holds lower-priority observations from the codebase review, kept aside for later reconsideration.
 
 **Hubitat platform reference.** Platform mechanics — lifecycle methods, capabilities, app and driver metadata, OAuth, Zigbee helpers, etc. — are covered authoritatively at <https://docs2.hubitat.com/en/developer>. This guide does not duplicate that material. It focuses on project-specific conventions, workarounds for platform quirks, and failure modes that are easy to miss.
@@ -17,34 +19,43 @@ The guide is organized in three parts: **Common** principles that apply to anyth
 
 ### Platform constraints
 
-Several standard Groovy and Java patterns are blocked or behave differently in the Hubitat sandbox.
+Several standard Groovy and Java patterns are blocked or behave differently in the Hubitat sandbox. A *verified* mark names the firmware a platform fact was last measured on; the evidence is in `docs/hubitat-platform-notes.md`, and `apps/tests/test-architecture-claims.sh` re-checks it. Re-run that test after each major firmware update. Statements without a mark are project conventions.
 
-- **`value.getClass()` is sandbox-blocked.** Use the global `getObjectClassName(value)` instead to get a runtime class name string.
+- **`value.getClass()` is sandbox-blocked.** The hub rejects the code when it is saved, so a `try`/`catch` can't guard it. Use the global `getObjectClassName(value)` to get a runtime class name string. *([verified 2.5.2.128](docs/hubitat-platform-notes.md#platform-behavior))*
 - **Reassign `state` collections after mutating them.** Use `state.myList = modifiedList` rather than `state.myList << item`. On firmware 2.5.2.124 a probe found in-place deep writes, key puts, and list appends on plain `state` persisting in both an app and a driver, so this is a convention that doesn't depend on the platform's change detection, not a known failure.
-- **Pushing source code does not trigger `updated()`.** Updated Groovy takes effect immediately, but `updated()` and `initialize()` are not called. Subscriptions and `state` from the previous version persist until the user re-saves the app's preferences in the hub UI. See *Version constants and code-push detection* below for the workaround.
-- **`sendEvent()` deduplicates silently.** If the value hasn't changed and `isStateChange` is not set to `true`, the event is filtered out and not fired. Set `isStateChange: true` explicitly when an event must fire even with an unchanged value (button presses, repeated identical commands, forced state ticks).
-- **Concurrent async HTTP calls are capped at 8 per app.** Code that fans out one request per device will silently lose calls at scale. Prefer batched or aggregated endpoints, or serialize work behind a small worker pool.
+- **Pushing source code does not trigger `updated()`.** Updated Groovy takes effect immediately, but `updated()` and `initialize()` are not called. Subscriptions and `state` from the previous version persist until the user re-saves the app's preferences in the hub UI, and `@Field static` values are reset. *([verified 2.5.2.128](docs/hubitat-platform-notes.md#platform-behavior))* See *Version constants and code-push detection* below for the workaround.
+- **`sendEvent()` deduplicates unless someone asks for repeats.** An unchanged value without `isStateChange: true` is not stored and not delivered to default subscribers. A subscriber that passes `[filterEvents: false]` receives every repeat, and the repeats are then stored too. *([verified 2.5.2.128](docs/hubitat-platform-notes.md#platform-behavior))* A consumer that needs every sample subscribes with `filterEvents: false`. Drivers call `sendEvent` on every report and set `isStateChange: true` only for events that are new by nature, such as button presses.
+- **Concurrent async HTTP calls are capped at 8 per app, and at 5 per destination host.** Calls beyond either limit queue and complete later; none are lost. *([verified 2.5.2.128](docs/hubitat-platform-notes.md#platform-behavior))* Code that fans out one request per device serializes behind the pool at scale. Prefer batched or aggregated endpoints.
 
 ### State tiers: `state`, `atomicState`, `@Field static`
 
 Three storage options are available, with very different durability and cost:
 
 - **`state`** — persisted to the hub database; committed when the method exits. Survives hub restarts. The default.
-- **`atomicState`** — persisted to the hub database; committed on every write. Survives hub restarts. Use when fields are written from async callbacks, WebSocket handlers, or anywhere the surrounding method has likely already exited (intentional-disconnect flags, scan counters, log counters). Plain `state` writes from those paths can silently vanish.
-- **`@Field static`** — in-memory only, no database I/O. Survives across script executions within the same hub uptime, lost on hub restart or app/driver reinstall. Use for transient scan/orchestration state, request-scoped caches with a bounded TTL, and fast-path counters where DB writes would dominate the work. RuleLoggingManager and HubDiagnostics use this deliberately; both files have explanatory comments at the declaration site.
+- **`atomicState`** — persisted to the hub database; committed on every write. Survives hub restarts, and a write survives the handler failing afterwards. *([verified 2.5.2.128](docs/hubitat-platform-notes.md#platform-behavior))* Use for flags another thread must see right away (intentional-disconnect flags, scan progress). It does **not** make a read-modify-write atomic: concurrent callbacks that each read a map, add a key and write it back lose entries in `atomicState` as well as `state`. *([verified 2.5.2.128](docs/hubitat-platform-notes.md#platform-behavior))*
+- **`@Field static`** — in-memory only, no database I/O. Survives across script executions within the same hub uptime, lost on hub restart, code push, and app/driver reinstall. It is shared by every instance of the app or driver type, so key per-instance entries by `app.id` or a scan ID. *([verified 2.5.2.128](docs/hubitat-platform-notes.md#platform-behavior))* Use for transient scan/orchestration state, request-scoped caches with a bounded TTL, and fast-path counters where DB writes would dominate the work. HubDiagnostics uses this deliberately, with explanatory comments at the declaration site.
 
   Mark a `@Field static` field with `volatile` when it may be read or written by concurrent OAuth endpoint handlers. Without `volatile`, readers may see stale values across threads.
 
-Choosing the wrong tier is a real bug source: transient per-scan data in `state` causes unnecessary DB writes; async-written plain `state` silently loses writes; long-lived configuration in `@Field static` is lost on every reboot.
+**Gathering results from concurrent async callbacks.** Collect them in a `@Field static` `ConcurrentHashMap` keyed by instance, using `put`/`putIfAbsent` (never `get` then `put`), count completions with an `AtomicInteger`, and write the result to `state` once when the last callback arrives. That kept 20 of 20 results where a shared map in `state` or `atomicState` lost entries. *([verified 2.5.2.128](docs/hubitat-platform-notes.md#platform-behavior))* A value that must survive on its own goes in its own top-level `state` key. The in-memory results are lost on a push or reboot, so the handler must tolerate an unfinished batch. HubDiagnostics' device audit scan is the reference implementation.
 
-**`singleThreaded: true` makes `atomicState` unnecessary — within that file.** When `definition()` declares `singleThreaded: true`, the platform serializes every handler invocation in that app/driver: commands, `parse()`, scheduled callbacks, event handlers, OAuth endpoint dispatches all run one-at-a-time. The race `atomicState` protects against — a callback firing while an earlier method is still in flight and the two clobbering each other's `state` writes — cannot occur in a singleThreaded file, so plain `state` is sufficient and `atomicState` only adds per-write DB cost. **This relaxation applies *only* inside a singleThreaded definition.** In any file that does not declare it (the default), the bullet above still holds — async-callback writes must use `atomicState` or they may silently vanish.
+Choosing the wrong tier is a real bug source: transient per-scan data in `state` causes unnecessary DB writes; concurrent callbacks sharing one map in `state` or `atomicState` lose entries; long-lived configuration in `@Field static` is lost on every reboot or push.
 
-Two narrower scopes the relaxation does NOT cover, even inside a singleThreaded file:
+**What `singleThreaded: true` serializes.** It runs one handler at a time per app or driver **instance**; two instances of the same type still run in parallel. Scheduled handlers and async HTTP callbacks wait for each other: 20 callbacks never overlapped, and a shared-map read-modify-write in plain `state` kept all 20 entries. OAuth endpoints (`mappings`) are dispatched through a different path and only partly take part: an endpoint waits for a running scheduled handler or callback, and a scheduled job waits for a running endpoint, but concurrent endpoint calls usually run alongside each other. A callback that arrives while an endpoint runs sometimes waits and sometimes runs alongside it. *([verified 2.5.2.128](docs/hubitat-platform-notes.md#platform-behavior))* A direct call from a child device into a singleThreaded parent (`parent.componentX()`) waited for the parent's running scheduled handler on firmware 2.5.2.124, so a slow parent stalls every child that calls into it. Commands, `parse()`, scheduled handlers and event handlers are expected to follow the callback behavior but have no direct measurement yet.
 
-- **In-place mutation of `state` collections** (`state.myMap[k] = v`, `state.myList << item`) is a change-detection concern, not a concurrency one, so the read-mutate-reassign convention above still applies regardless of threading mode.
+Inside a singleThreaded file, plain `state` is enough for anything written from callbacks, schedules and events, and `atomicState` only adds per-write DB cost. Three things still need care there:
 
-A direct method call from a child device into a singleThreaded parent (`parent.componentX()`) **is** serialized with the parent's other handlers: on firmware 2.5.2.124 a child's call waited for the parent's running scheduled handler to finish before entering. The child's own thread blocks for that wait, so a slow singleThreaded parent stalls every child that calls into it.
-- **`@Field static volatile`** — `singleThreaded` serializes Groovy handler dispatch, but `@Field static` lives in the JVM and can still be touched by concurrent threads outside that dispatch (e.g. async HTTP callback threads). `volatile` is still required where concurrent reads are possible.
+- **Endpoint handlers** can run alongside other endpoints and sometimes alongside callbacks, so an endpoint that writes `state` needs the same treatment as a callback in a file without `singleThreaded`. A slow scheduled handler or callback also delays every endpoint call behind it, which a polled UI feels directly.
+- **In-place mutation of `state` collections** (`state.myMap[k] = v`, `state.myList << item`) is a change-detection concern, not a concurrency one, so the read-mutate-reassign convention above still applies.
+- **`@Field static` is shared by every instance of the type**, and those instances run in parallel, so a static read across instances still needs `volatile` or a concurrent structure.
+
+**Choosing between `singleThreaded` and concurrent `@Field` structures.**
+
+- **Use `singleThreaded: true`** when durable state in `state` is updated from several handlers (events, schedules, callbacks, commands) and each handler is short. Plain `state` is then safe without extra structure. This suits automation apps and stateful drivers (HumidityFanController, SwitchMonitor, MirrorSwitch, DevicePing).
+- **Its cost** is that every handler waits for the one before it. A handler that blocks (sync HTTP, `pauseExecution`, a long loop) delays every event, schedule and callback queued behind it, and child devices that call into the parent wait too.
+- **Leave `singleThreaded` off and use `@Field static` concurrent structures** when the app must keep handling work while slow calls are in flight: an app serving a polled UI or API, or one fanning out async calls whose callbacks should not queue behind each other. Keep the shared data in `ConcurrentHashMap`/`AtomicInteger`, change it only through their atomic methods, and write durable results to `state` at one point (see *Gathering results from concurrent async callbacks* above). HubDiagnostics works this way.
+- **Concurrent structures hold only in-memory data.** It is lost on a push or reboot and shared across instances. Durable state that several handlers update still needs `singleThreaded`, or one top-level `state` key per writer.
+- **Default:** start an automation app or a stateful driver with `singleThreaded: true`. Drop it only when serialization measurably delays something (an endpoint or callback waiting behind slow work), and move the contended data into concurrent structures.
 
 ### Hubitat libraries are not real modularity
 
@@ -62,7 +73,7 @@ Map jsonData = parseJson(raw)
 
 Two exceptions: Hubitat callback parameters (`evt`, `resp`, `data`) stay untyped per platform convention; genuinely polymorphic values (e.g. `aValue` passed straight to `sendEvent`) stay untyped. Don't use `Object` as a substitute for `def` — it adds no value.
 
-**Constants and pure computation.** Declare constants with `@Field static final` — top-level Groovy fields aren't usable as constants in the sandbox. Use `@CompileStatic` on pure computation methods that don't access Hubitat dynamic properties (`settings`, `state`, `device`, etc.).
+**Constants and pure computation.** Declare constants with `@Field static final` — a top-level variable without `@Field` reads as `null` inside methods, with no error. *([verified 2.5.2.128](docs/hubitat-platform-notes.md#platform-behavior))* Use `@CompileStatic` on pure computation methods that don't access Hubitat dynamic properties (`settings`, `state`, `device`, etc.).
 
 **Capabilities.** Use current capabilities, not deprecated ones. For example, prefer `capability "Refresh"` over the deprecated `capability "Polling"` for pollable devices.
 
@@ -73,7 +84,7 @@ The standard lifecycle methods (`installed`, `updated`, `uninstalled`, `initiali
 - **The lifecycle has a single convergence point.** Both the install path and the preferences-saved path route through it so subscriptions, schedules, and version checks live there exactly once. The convergence method depends on the file shape:
   - **Apps** and **drivers with persistent runtime state** (LAN/cloud sockets, OAuth tokens, reconnect logic): `initialize()`.
   - **Local-radio drivers** (Zigbee, Z-Wave) with no startup work: `configure()`. `initialize()` is omitted — don't add an empty stub or one that only calls `configure()`. `Drivers → Driver lifecycle` expands on this.
-- **`updated()` resets before reinitializing** — `unsubscribe(); unschedule(); <convergence>` (drivers omit `unsubscribe()`). Same-handler-name `runIn`/`runInMillis`/`runOnce`/`schedule` calls are self-cancelling because the platform's `options.overwrite` defaults to `true` — so a static handler name re-scheduled in the new config does not need `unschedule()` to avoid accumulation. The defensive `unschedule()` matters in narrower cases: handler names that change across configs (e.g., `"check_${index}"` when the index shifts), handlers scheduled from event handlers that the new config no longer fires, and any call site that passes `[overwrite: false]`. Calling `unschedule()` unconditionally remains the convention because it's cheap and protects against all three.
+- **`updated()` resets before reinitializing** — `unsubscribe(); unschedule(); <convergence>` (drivers omit `unsubscribe()`). Same-handler-name `runIn`/`runInMillis`/`runOnce`/`schedule` calls are self-cancelling because the platform's `options.overwrite` defaults to `true` *([verified 2.5.2.128](docs/hubitat-platform-notes.md#platform-behavior))* — so a static handler name re-scheduled in the new config does not need `unschedule()` to avoid accumulation. The defensive `unschedule()` matters in narrower cases: handler names that change across configs (e.g., `"check_${index}"` when the index shifts), handlers scheduled from event handlers that the new config no longer fires, and any call site that passes `[overwrite: false]`. Calling `unschedule()` unconditionally remains the convention because it's cheap and protects against all three.
 
 ### Version constants and code-push detection
 
@@ -124,7 +135,7 @@ The `logsOff` handler clears the flags via `device.updateSetting` / `app.updateS
 
 ### Date handling
 
-Hubitat hub endpoints return ISO 8601 strings with numeric timezone offsets, e.g. `"2026-05-05T23:07:43.088-0400"`. This format is **not consistently parsed by `new Date()` in browsers** — Safari/WebKit in particular fails silently or returns `Invalid Date`.
+Hubitat hub endpoints return ISO 8601 strings with numeric timezone offsets, e.g. `"2026-05-05T23:07:43.088-0400"`. Browsers have not always agreed on parsing an offset without a colon (`-0400`), and an unparseable date fails silently as `Invalid Date`. Current WebKit and V8 both parse it, but older engines are untested. *(unverified for older browsers)*
 
 Always convert timestamps to epoch milliseconds in Groovy before including them in any UI or external API response:
 
@@ -150,7 +161,7 @@ If you cannot explain invalidation in one or two sentences, the cache design is 
 
 ### Never store `DeviceWrapper` (or other live platform proxies) in `state`
 
-`state` and `atomicState` are JSON-serialized. Live platform proxies — `DeviceWrapper`, `InstalledAppWrapper`, `LocationWrapper`, `HubWrapper`, event/subscription objects — do not survive a serialization round-trip cleanly. They appear to "work" within a single method call (because the in-memory list is read back before commit), but on the next invocation the values come back as garbled blobs and any method call on them (`it.currentValue(...)`, `it.getLabel()`) breaks.
+`state` and `atomicState` are JSON-serialized. Live platform proxies — `DeviceWrapper`, `InstalledAppWrapper`, `LocationWrapper`, `HubWrapper`, event/subscription objects — do not survive a serialization round-trip cleanly. They appear to "work" within a single method call (because the in-memory list is read back before commit), but on the next invocation each one comes back as a plain `HashMap` of device properties, and any method call on it (`it.currentValue(...)`, `it.getLabel()`) throws. *([verified 2.5.2.128](docs/hubitat-platform-notes.md#platform-behavior))*
 
 Store **device IDs** (Hubitat-issued, e.g. `it.id` — string) and rehydrate at read time from the input selection:
 
@@ -196,17 +207,17 @@ Pass per-request context (URL, retry count, identifying ID) through the `extraDa
 
 ### When sync HTTP is the right call
 
-The async-HTTP contract above is the project default. It is the right tool for **background work** — scheduled polls, event-handler reactions, fan-out queries across many devices — where the caller has nothing to wait on, the workload may run concurrent with other async work, and the platform's 8-concurrent-call ceiling needs headroom.
+The async-HTTP contract above is the project default. It is the right tool for **background work** — scheduled polls, event-handler reactions, fan-out queries across many devices — where the caller has nothing to wait on, the workload may run concurrent with other async work, and the platform's 8-call async pool per app needs headroom.
 
 Two cases legitimately call for sync HTTP. Both are present in this repo.
 
-**1. Inside `dynamicPage` rendering.** Hubitat `dynamicPage` builds and returns the page Map in a single synchronous method call; there is no platform mechanism to suspend rendering and await an async callback mid-render. Any data the page needs from hub APIs has to be in hand by return time. The async escape hatch — "kick off the call, render placeholders, force a page reload when the result lands" — replaces a short blocking call with a multi-reload state machine that the user can interrupt by clicking away. It is worse, not better. Compounding the constraint: pages that iterate (one call per app/device) can issue dozens of HTTP calls per render, far past the per-app cap of 8 concurrent async; the excess would silently drop and corrupt the preview.
+**1. Inside `dynamicPage` rendering.** Hubitat `dynamicPage` builds and returns the page Map in a single synchronous method call; there is no platform mechanism to suspend rendering and await an async callback mid-render. Any data the page needs from hub APIs has to be in hand by return time. The async escape hatch — "kick off the call, render placeholders, force a page reload when the result lands" — replaces a short blocking call with a multi-reload state machine that the user can interrupt by clicking away. It is worse, not better. Compounding the constraint: pages that iterate (one call per app/device) can issue dozens of HTTP calls per render, far past the per-app pool of 8 concurrent async calls; the excess would queue behind it and land after the page has already rendered.
 
-Canonical example — `apps/utilities/DeviceReplacement.groovy:167,202,256,288`. Four sync `httpGet` sites in `previewPage()`. The two loop sites (`:202`, `:256`) iterate over the per-app list returned by `:167`, producing 60+ calls on a 30-app preview. Sync is the only shape that fits a `dynamicPage`'s render-and-return semantics.
+Canonical example — `apps/utilities/DeviceReplacement.groovy`, `previewPage()`. It gets the apps using a device from `appsUsing()` (sync `fullJson` fallback), then loops over them with sync `httpGet` calls to `statusJson` and `listJson`, and `discoverPageGraph()` reads up to 30 configuration pages per app. A 30-app preview issues well over 60 calls. Sync is the only shape that fits a `dynamicPage`'s render-and-return semantics.
 
 **2. Driver commands that return a value to their caller.** Hubitat invokes driver commands synchronously: `setHeatingSetpoint`, `setMode`, `refresh`. If the command's body calls an external API and acts on the result — fire a device event reflecting the new state, retry on auth failure, decide whether the operation actually succeeded — the simplest correct implementation is a sync HTTP call inside the command. Restructuring around async means continuation chains: token-check callback → token-refresh callback → API-call callback → event-emit, with intermediate state stashed in `state.*` between hops. The sync form has 5 lines and obvious semantics; the async form is a 30-line state machine with new failure modes (callback never fires, state from a previous command bleeds into the next, retries race the timeout). Latency on a user-initiated thermostat command is invisible.
 
-Canonical example — `drivers/EcobeeCompanion.groovy:273,368,372`. `callApi(method, path, ...)` returns `Map result` synchronously to every command path; `refreshAccessToken()` returns `Boolean success` that callers check before issuing API calls. OAuth bootstrap sites at `:191,:233` could migrate to async without any of these concerns, but they're one-shot user-triggered calls run twice in the device's lifetime — migrating only the cheapest sites would leave the file inconsistent without making it better.
+Canonical example — `drivers/EcobeeCompanion.groovy`. `callEcobeeApi(method, path, ...)` returns a `Map` synchronously to every command path and retries once on HTTP 401; `refreshToken()` and `checkAndRefreshToken()` return a `Boolean` that callers check before issuing API calls. The OAuth bootstrap calls in `connect()` and `authorize()` could migrate to async without any of these concerns, but they're one-shot user-triggered calls run twice in the device's lifetime — migrating only the cheapest sites would leave the file inconsistent without making it better.
 
 **The contract, confirmed.** Async is right when the work is background, fan-out, or event-handler-shaped — the caller doesn't need a return value, latency is invisible to a user, and many calls may be in flight at once. Sync is right when the work is on the synchronous critical path of a user-facing operation and the caller structurally depends on the return value — page render, command dispatch, a dependent chain that completes inside one logical user action. The two files above are not violations of the async-HTTP contract; they are the shapes the contract carves out.
 
@@ -232,7 +243,7 @@ subscribe(location, "systemStart", "systemStartHandler")
 
 The handler typically refreshes devices and re-evaluates the app's monitored conditions.
 
-**What a reboot does to scheduled work.** `runIn` and `schedule` jobs are stored in the hub database and survive a reboot. The only change is that some are now overdue. The scheduler appears to be Quartz (`schedule()` takes Quartz cron syntax), whose default treats a late job as a misfire: a slightly late job runs, a one-shot `runIn` runs once right away, and a repeating job runs once to catch up then resumes. Hubitat's exact misfire setting is unverified, so expect overdue jobs to fire late or in a burst at startup. What a reboot does break is everything outside the job table:
+**What a reboot does to scheduled work.** *(unverified: run `test-architecture-claims.sh --reboot`)* `runIn` and `schedule` jobs are stored in the hub database and survive a reboot. The only change is that some are now overdue. The scheduler appears to be Quartz (`schedule()` takes Quartz cron syntax), whose default treats a late job as a misfire: a slightly late job runs, a one-shot `runIn` runs once right away, and a repeating job runs once to catch up then resumes. Hubitat's exact misfire setting is unverified, so expect overdue jobs to fire late or in a burst at startup. What a reboot does break is everything outside the job table:
 
 - A handler interrupted mid-run loses its `state` writes (state commits at method exit). A chain that re-arms with `runIn` at the end of its handler dies there.
 - In-memory data is gone: `@Field static` values, open sockets, pending async HTTP callbacks.
@@ -255,11 +266,11 @@ where the transition is cheap to recompute from scratch.
 
 App-served UIs and programmatic APIs use Hubitat's per-app OAuth path (`oauth: true` + `mappings { }` + `createAccessToken()`). The architectural property that matters: endpoints reachable via `${getFullLocalApiServerUrl()}/...?access_token=${state.accessToken}` work without an active hub admin session — that is what makes app-served UIs viable for users.
 
-The `/hubitat-oauth` skill in this repo enables OAuth on a Groovy app without manual hub UI steps.
+An app can enable OAuth for itself on install, so nobody has to toggle it in the code editor: catch the `createAccessToken()` failure, enable OAuth through the hub's loopback API, and retry. HubDiagnostics' `autoEnableOAuth()` / `checkOAuth()` is the reference implementation.
 
 ### Cross-origin (CORS) and multi-hub browser clients
 
-The local OAuth API sends no CORS headers (see `docs/hubitat-platform-notes.md` for the measured behavior), so a browser page served by one hub cannot read another hub's API response directly. Browser-based multi-hub tools therefore cannot fan out to peer hubs from the client: the cross-hub calls must run server-side on the hub that serves the page, which forwards them and returns the result same-origin.
+The local OAuth API sends no CORS headers *([verified 2.5.2.128](docs/hubitat-platform-notes.md#platform-behavior))*, so a browser page served by one hub cannot read another hub's API response directly. Browser-based multi-hub tools therefore cannot fan out to peer hubs from the client: the cross-hub calls must run server-side on the hub that serves the page, which forwards them and returns the result same-origin.
 
 Such a forwarding route is **not** the "pure passthrough" forbidden under API endpoint design below — that rule assumes the consumer can fetch the target directly under an admin session, which the CORS boundary makes impossible. Keep the forwarder hardened: whitelist the forwarded operations and address peers by index, never by a caller-supplied URL or token.
 
@@ -307,7 +318,7 @@ The mechanics of nested apps (`app(...)` declaration, `parent: "ns:Name"`) and c
 The platform defines what `configure()`, `initialize()`, `refresh()`, and `deviceTypeUpdated()` mean. Two project-specific rules:
 
 - **`initialize()` is for work that must re-execute after hub startup.** The platform calls it on hub start, install, and as part of the `updated()` convergence. Use it for LAN/cloud reconnection, re-arming any housekeeping the hub doesn't already persist (`schedule`/`runIn` jobs survive reboot; see *What a reboot does to scheduled work*), and idempotent state/counter seeding. For a pure local-radio (Zigbee/Z-Wave) driver with no such startup work, omitting `initialize()` is fine — and is the common case for plugs, switches, sensors, and locks. **Don't add an empty stub or one that only calls `configure()`.** When `initialize()` is omitted, `configure()` becomes the convergence point: `installed()` routes to it (typically via `runInMillis` so it doesn't run inline with the install transaction), `updated()` does its `unschedule(); <preference writes>; configure()` sequence, and `deviceTypeUpdated()` calls `configure()`. When `initialize()` *is* present, call **`refresh()`, not `configure()`** from it — reconfiguring on each hub restart wastes radio bandwidth and can race with other devices joining the mesh.
-- **`deviceTypeUpdated()` should always be implemented.** The platform calls it when a device's driver type is switched. The convention is to log the change at debug level (`logDebug "driver change detected"`) and *only* call `configure()` when the driver author judges a reconfigure is necessary on a driver change — typically local-radio drivers that must re-apply device-side reporting and defaults. Drivers with nothing to re-apply (virtual, cloud, log/probe helpers) implement the method as a debug-log-only stub.
+- **`deviceTypeUpdated()` should always be implemented.** The platform calls it when a device's driver type is switched. *([verified 2.5.2.128](docs/hubitat-platform-notes.md#platform-behavior))* The convention is to log the change at debug level (`logDebug "driver change detected"`) and *only* call `configure()` when the driver author judges a reconfigure is necessary on a driver change — typically local-radio drivers that must re-apply device-side reporting and defaults. Drivers with nothing to re-apply (virtual, cloud, log/probe helpers) implement the method as a debug-log-only stub.
 
 ### Zigbee parse skeleton
 
@@ -337,9 +348,9 @@ When a device reports a state change for a value that is also exposed as a prefe
 
 ### `device.updateDataValue` for device metadata
 
-Use `device.updateDataValue("key", "value")` for non-state metadata that should survive driver swaps and be visible in the device edit page: firmware version, MAC, UUID, runtime-discovered capability flags. Read with `device.getDataValue("key")`.
+Use `device.updateDataValue("key", "value")` for non-state metadata that should survive driver swaps: a driver switch keeps data values and clears `state`. *([verified 2.5.2.128](docs/hubitat-platform-notes.md#platform-behavior))* Use it for firmware version, MAC, UUID, runtime-discovered capability flags. Read with `device.getDataValue("key")`.
 
-This is distinct from `state` (driver-instance scoped, not visible in the device edit page) and from attributes (event-bearing, dashboard-visible).
+This is distinct from `state` (scoped to the current driver, cleared when the driver changes, shown in the device page's State Variables card) and from attributes (event-bearing, dashboard-visible).
 
 ## Patterns To Avoid
 
@@ -352,10 +363,10 @@ Avoid these unless there is a deliberate, documented exception:
 - caches in `state` with no invalidation story
 - pure-passthrough `/api/*` routes that exist only to forward a hub call
 - treating Hubitat libraries as architectural module boundaries
-- per-device async fan-out that exceeds the 8-call concurrency ceiling
+- per-device async fan-out that assumes more than 8 calls (or 5 to one host) run in parallel
 - skipping `unschedule()` in `updated()` (produces orphan timers)
 - a transient state whose only exit is an unrescheduled `runIn` callback
-- writing async-callback state with `state` instead of `atomicState`
+- concurrent callbacks doing a read-modify-write of one map in `state` or `atomicState` (use a `@Field static` concurrent map)
 - storing transient per-scan or per-request data in `state` instead of `@Field static`
 - omitting `volatile` on `@Field static` fields read by concurrent endpoint handlers
 - treating `state` as the place for device metadata that belongs in `updateDataValue`

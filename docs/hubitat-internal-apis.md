@@ -146,6 +146,7 @@ Downloading a release so it becomes restorable is a main-platform endpoint:
 - Returns HTTP 302 on success (redirect to the new device's edit page)
 - Field names discovered from `vue-hub2.min.js`: the `deviceModel` object
 - Delete a virtual device: `GET /device/forceDelete/{id}/json` → `{"status":"success"}`
+- Change a device's driver (or name, label, room): `POST /device/update`, form-encoded, the device page's Save. It replaces the whole record, so send every field: `id`, `version` (from `/device/fullJson/{id}` `device.version`), `name`, `label`, `deviceNetworkId`, `deviceTypeId`, `zigbeeId`, `maxEvents`, `maxStates`, `spammyThreshold`, `roomId`, `groupId`, `locationId`, `hubId`, `meshEnabled`, `retryEnabled`, `homeKitEnabled`, `dashboardIds`, `tags`, `defaultIcon`, `notes`, `controllerType`. Captured from the device page on firmware 2.5.2.128; `apps/tests/test-architecture-claims.sh` uses it to switch drivers.
 - Delete a user driver type: `GET /driver/deleteDeviceType/{id}` (delete any devices using it first)
 
 ## Run a device command (no Maker API)
