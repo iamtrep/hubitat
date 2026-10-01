@@ -33,7 +33,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import groovy.json.JsonOutput
 
-@Field static final String CODE_VERSION = "0.0.7"
+@Field static final String CODE_VERSION = "0.0.8"
 
 metadata {
     definition (name: "Stelpro Allia Zigbee Thermostat",
@@ -142,6 +142,7 @@ void configure(){
 
     unschedule()
     runIn(1800,debugLogsOff)
+    rearmRefreshSchedule()
 
     // Configure Default values if null
     if (tempChange == null)
@@ -615,6 +616,18 @@ private String getDescriptionText(String msg) {
  * Schedule a refresh
  * @param intervalMin interval in minutes
  */
+/**
+ * configure() cancels every job, and the 0x0008 handler only schedules the poll when the
+ * operating state changes, so re-arm it from the state the device last reported. With no
+ * reported state yet, the refresh() at the end of configure() arms it on the first report.
+ */
+private void rearmRefreshSchedule() {
+    String opState = device.currentValue("thermostatOperatingState") as String
+    if (opState == null) return
+    Integer interval = (opState == "heating" ? settings.refreshScheduleHeating : settings.refreshScheduleIdle) as Integer
+    if (interval) scheduleRefresh(interval)
+}
+
 private void scheduleRefresh(final int intervalMin) {
     final Random rnd = new Random()
     unschedule('refresh')
