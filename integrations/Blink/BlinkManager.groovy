@@ -35,7 +35,7 @@ definition(
 
 // --- Constants ---
 
-@Field static final String CODE_VERSION = "1.0.2"
+@Field static final String CODE_VERSION = "1.0.3"
 
 @Field static final String OAUTH_BASE_URL = "https://api.oauth.blink.com"
 @Field static final String CLIENT_ID = "ios"
@@ -1517,9 +1517,12 @@ private String describeHttpBody(resp) {
 
 // --- Auth State ---
 
+// Keeps tier/accountId/hardwareId for one-click re-auth; clearAuthState() wipes those too.
 void logout() {
     logInfo "disconnecting from Blink"
-    clearAuthState()
+    unschedule()
+    clearTokensOnly()
+    cleanupEphemeralState()
     atomicState.remove("homescreenSummary")
     atomicState.remove("orphanedDevices")
 }
@@ -1529,12 +1532,10 @@ private boolean isAuthenticated() {
 }
 
 private void clearAuthState() {
-    unschedule()
-    clearTokensOnly()
+    logout()
     state.remove("tier")
     state.remove("accountId")
     state.remove("hardwareId")
-    cleanupEphemeralState()
 }
 
 private void clearTokensOnly() {
