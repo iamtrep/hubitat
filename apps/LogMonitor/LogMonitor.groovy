@@ -13,7 +13,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "1.1.1"
+@Field static final String CODE_VERSION = "1.1.2"
 @Field static final int MAX_BRIDGES = 5
 @Field static final int MAX_FILTERS = 10
 
@@ -25,6 +25,7 @@ definition(
     menu: "Apps", // new in platform 2.5.0
     category: "Utility",
     singleInstance: true,
+    singleThreaded: true,   // bridges call processLogEntry concurrently; each call rewrites state.filters
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/apps/LogMonitor/LogMonitor.groovy",
     iconUrl: "",
     iconX2Url: ""

@@ -10,13 +10,14 @@
  */
 
 import groovy.json.JsonSlurper
-import groovy.transform.CompileStatic
 import groovy.transform.Field
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "1.0.1"
+@Field static final String CODE_VERSION = "1.0.2"
 @Field static final int STARTUP_DELAY_SECS = 60
-@Field static final AtomicInteger LOGS_RECEIVED = new AtomicInteger()
+// Keyed by device id: @Field static is shared by every bridge device of this type.
+@Field static final ConcurrentHashMap<String, AtomicInteger> LOGS_RECEIVED = new ConcurrentHashMap<>()
 
 metadata {
     definition(
@@ -79,7 +80,7 @@ void initialize() {
 
     atomicState.intentionalDisconnect = false
     state.reconnectAttempts = 0
-    LOGS_RECEIVED.set(0)
+    logsReceived().set(0)
 
     atomicState.remove("logsReceived")
     state.remove("logsReceived")
@@ -182,7 +183,7 @@ void webSocketStatus(String message) {
 }
 
 void parse(String message) {
-    LOGS_RECEIVED.incrementAndGet()
+    logsReceived().incrementAndGet()
 
     try {
         Map logEntry = new JsonSlurper().parseText(message)
@@ -221,9 +222,14 @@ void parse(String message) {
  * Returns the total count of logs received by this bridge.
  * Can be called by the parent app to display status without attribute overhead.
  */
-@CompileStatic
 int getLogsReceivedCount() {
-    return LOGS_RECEIVED.get()
+    return logsReceived().get()
+}
+
+private AtomicInteger logsReceived() {
+    String key = device.id as String
+    LOGS_RECEIVED.putIfAbsent(key, new AtomicInteger())
+    return LOGS_RECEIVED.get(key)
 }
 
 // ============================================================================
