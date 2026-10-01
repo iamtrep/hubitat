@@ -300,6 +300,8 @@ Map apiRebootArm() {
     runIn(dueSecs, "rebootOneShot")
     runIn(3600, "rebootFar")
     schedule("0 * * ? * *", "rebootEveryMinute")
+    atomicState.rebootLastBeat = now()
+    schedule("0/5 * * ? * *", "rebootHeartbeat")
     subscribe(location, "systemStart", "rebootSystemStart")
     return renderJson([armed: true, dueSecs: dueSecs])
 }
@@ -312,9 +314,15 @@ void rebootOneShot() { recordReboot("oneShot") }
 void rebootFar() { recordReboot("far") }
 void rebootEveryMinute() { recordReboot("everyMinute") }
 void rebootSystemStart(evt) { recordReboot("systemStart") }
+// Last moment the hub was running before the reboot (and every 5 s after it).
+void rebootHeartbeat() {
+    // Uptime restarts at boot, so only beats from before the reboot are recorded.
+    if ((location.hub.uptime as Long) >= ((atomicState.rebootArmUptime ?: 0) as Long)) atomicState.rebootLastBeat = now()
+}
 
 Map apiRebootRead() {
     return renderJson([armedAt: atomicState.rebootArmedAt, armUptime: atomicState.rebootArmUptime,
+                       lastBeatBeforeReboot: atomicState.rebootLastBeat,
                        fired: atomicState.rebootFired ?: [], uptime: location.hub.uptime, now: now()])
 }
 

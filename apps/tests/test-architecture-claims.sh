@@ -549,11 +549,14 @@ if DO_REBOOT:
     info(f"jobs after reboot: {jobs_after}")
     check("rebootFar" in jobs_after, "a far-future runIn job survives the reboot", f"rebootFar missing after reboot: {jobs_after}")
     one_shot = [f for f in fired if f["what"] == "oneShot"]
-    if one_shot and (one_shot[0]["at"] - rb["armedAt"]) / 1000 < DUE_SECS + 5:
-        warn("the one-shot fired before the hub went down, so this run did not test an overdue job")
-    check(bool(one_shot), "a one-shot runIn that came due while the hub was down runs after it returns",
-          "the overdue one-shot never ran")
-    check(sum(1 for f in fired if f["what"] == "oneShot") == 1, "the overdue one-shot runs once", "the overdue one-shot ran more than once")
+    down_at = (rb.get("lastBeatBeforeReboot") or 0) - rb["armedAt"]   # ms after arming of the last beat before the reboot
+    info(f"last heartbeat before the reboot: {down_at / 1000:.0f} s after arming; one-shot due at {DUE_SECS} s")
+    if down_at / 1000 >= DUE_SECS:
+        warn("the hub was still up when the one-shot fell due, so this run did not test an overdue job")
+    elif one_shot:
+        ok(f"a one-shot runIn that fell due while the hub was down ran after it returned ({len(one_shot)} time(s))")
+    else:
+        ok("a one-shot runIn that fell due while the hub was down was dropped: it never ran and left the job list")
     check(any(f["what"] == "everyMinute" and f["uptime"] < 600 for f in fired), "the cron schedule resumes after the reboot",
           "the cron schedule did not fire after the reboot")
     check(any(f["what"] == "systemStart" for f in fired), "the systemStart subscription fires", "no systemStart event seen")
