@@ -23,7 +23,7 @@ definition(
 import groovy.transform.Field
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.1.1"
+@Field static final String CODE_VERSION = "0.1.2"
 
 @Field static final Map<String, String> FUSION_MODES = [
     "pirOnly"              : "PIR Only",
@@ -124,7 +124,6 @@ void initialize() {
 
     // Initialize state
     if (state.currentOutput == null) state.currentOutput = "inactive"
-    if (state.pendingInactive == null) state.pendingInactive = false
 
     // Read current sensor values
     state.lastPirValue = sourceDevice.currentValue("pirDetection") ?: "inactive"
@@ -135,6 +134,9 @@ void initialize() {
     // Subscribe to sensor events
     subscribe(sourceDevice, "pirDetection", pirEventHandler)
     subscribe(sourceDevice, "roomState", mmwaveEventHandler)
+
+    // Re-arm (or complete) a pending window whose timer the unschedule() in updated() killed
+    servicePending()
 
     logInfo "Initialized: mode=${FUSION_MODES[fusionMode]}, PIR=${state.lastPirValue}, mmWave=${state.lastMmwaveValue}, output=${state.currentOutput}"
 }
@@ -172,6 +174,7 @@ private Boolean isMmwaveOccupied() {
 // ==================== Fusion Dispatcher ====================
 
 private void evaluateFusion(String trigger) {
+    servicePending()
     switch (fusionMode) {
         case "pirOnly":
             evaluatePirOnly()
@@ -211,15 +214,14 @@ private void evaluatePirOnly() {
 private void evaluateMmwaveOnly(String trigger) {
     if (isMmwaveOccupied()) {
         unschedule("delayedInactive")
-        state.pendingInactive = false
+        clearPending()
         setOutputState("active")
     } else {
         Integer delay = (inactiveDelay ?: 0) as Integer
         if (delay > 0) {
             if (!state.pendingInactive) {
                 logDebug "mmWave unoccupied — scheduling inactive in ${delay}s"
-                state.pendingInactive = true
-                runIn(delay, "delayedInactive")
+                armPending("delayedInactive", delay)
             }
         } else {
             setOutputState("inactive")
@@ -228,7 +230,7 @@ private void evaluateMmwaveOnly(String trigger) {
 }
 
 void delayedInactive() {
-    state.pendingInactive = false
+    clearPending()
     if (isMmwaveOccupied()) {
         logDebug "delayedInactive: mmWave re-occupied, staying active"
         return
@@ -254,8 +256,7 @@ private void evaluateBoth(String trigger) {
         if (state.currentOutput != "active" && !state.pendingInactive) {
             Integer window = (confirmationWindow ?: 5) as Integer
             logDebug "One sensor active — waiting ${window}s for confirmation"
-            state.pendingInactive = true
-            runIn(window, "confirmationTimeout")
+            armPending("confirmationTimeout", window)
         }
         // If currently active and one drops out, go inactive immediately
         if (state.currentOutput == "active") {
@@ -264,13 +265,13 @@ private void evaluateBoth(String trigger) {
     } else {
         // Both inactive
         unschedule("confirmationTimeout")
-        state.pendingInactive = false
+        clearPending()
         setOutputState("inactive")
     }
 }
 
 void confirmationTimeout() {
-    state.pendingInactive = false
+    clearPending()
     if (isPirActive() && isMmwaveOccupied()) {
         setOutputState("active")
     } else {
@@ -285,7 +286,7 @@ private void evaluatePirGated(String trigger) {
     if (!isMmwaveOccupied()) {
         // mmWave unoccupied — immediate inactive, regardless of PIR
         unschedule("mmwaveConfirmationTimeout")
-        state.pendingInactive = false
+        clearPending()
         setOutputState("inactive")
         return
     }
@@ -294,20 +295,19 @@ private void evaluatePirGated(String trigger) {
     if (isPirActive() && isMmwaveOccupied()) {
         // Both active — confirmed
         unschedule("mmwaveConfirmationTimeout")
-        state.pendingInactive = false
+        clearPending()
         setOutputState("active")
     } else if (trigger == "pir" && isPirActive() && state.currentOutput != "active") {
         // PIR just fired, mmWave not yet occupied — start confirmation window
         Integer window = (confirmationWindow ?: 5) as Integer
         logDebug "PIR active — waiting ${window}s for mmWave confirmation"
-        state.pendingInactive = true
-        runIn(window, "mmwaveConfirmationTimeout")
+        armPending("mmwaveConfirmationTimeout", window)
     }
     // If already active and PIR drops but mmWave still occupied, stay active
 }
 
 void mmwaveConfirmationTimeout() {
-    state.pendingInactive = false
+    clearPending()
     if (isPirActive() && isMmwaveOccupied()) {
         setOutputState("active")
     } else {
@@ -324,7 +324,7 @@ private void evaluatePirConfirmedMmwave(String trigger) {
     if (!isMmwaveOccupied()) {
         // mmWave unoccupied — immediate inactive
         unschedule("pirConfirmationTimeout")
-        state.pendingInactive = false
+        clearPending()
         setOutputState("inactive")
         return
     }
@@ -333,20 +333,19 @@ private void evaluatePirConfirmedMmwave(String trigger) {
     if (isPirActive()) {
         // PIR confirms — active
         unschedule("pirConfirmationTimeout")
-        state.pendingInactive = false
+        clearPending()
         setOutputState("active")
     } else if (trigger == "mmwave" && state.currentOutput != "active") {
         // mmWave just went occupied, PIR not yet active — start confirmation window
         Integer window = (confirmationWindow ?: 5) as Integer
         logDebug "mmWave occupied — waiting ${window}s for PIR confirmation"
-        state.pendingInactive = true
-        runIn(window, "pirConfirmationTimeout")
+        armPending("pirConfirmationTimeout", window)
     }
     // If already active and PIR goes inactive but mmWave still occupied, stay active
 }
 
 void pirConfirmationTimeout() {
-    state.pendingInactive = false
+    clearPending()
     if (isPirActive() && isMmwaveOccupied()) {
         setOutputState("active")
     } else {
@@ -364,7 +363,7 @@ private void evaluatePirQuickMmwaveHold(String trigger) {
     if (isPirActive()) {
         // PIR active — immediate active
         unschedule("cooldownExpired")
-        state.pendingInactive = false
+        clearPending()
         setOutputState("active")
         return
     }
@@ -372,7 +371,7 @@ private void evaluatePirQuickMmwaveHold(String trigger) {
     if (isMmwaveOccupied()) {
         // mmWave occupied — cancel cooldown, stay active
         unschedule("cooldownExpired")
-        state.pendingInactive = false
+        clearPending()
         if (state.currentOutput == "active") {
             // Already active, mmWave sustains it
             logDebug "mmWave sustaining active state"
@@ -385,18 +384,59 @@ private void evaluatePirQuickMmwaveHold(String trigger) {
     if (state.currentOutput == "active" && !state.pendingInactive) {
         Integer cooldown = (cooldownTime ?: 30) as Integer
         logDebug "Both sensors inactive — starting ${cooldown}s cooldown"
-        state.pendingInactive = true
-        runIn(cooldown, "cooldownExpired")
+        armPending("cooldownExpired", cooldown)
     }
 }
 
 void cooldownExpired() {
-    state.pendingInactive = false
+    clearPending()
     if (isPirActive() || isMmwaveOccupied()) {
         logDebug "cooldownExpired: sensor re-activated, staying active"
         return
     }
     setOutputState("inactive")
+}
+
+// ==================== Pending Windows ====================
+
+// Each pending window persists its handler and deadline, so a lost runIn completes or
+// re-arms on the next sensor event or initialize() instead of leaving pendingInactive
+// stuck true, which would block every later window.
+private void armPending(String handler, Integer seconds) {
+    state.pendingInactive = true
+    state.pendingHandler = handler
+    state.pendingDueAt = now() + seconds * 1000L
+    runIn(seconds, handler)
+}
+
+private void clearPending() {
+    state.pendingInactive = false
+    state.remove("pendingHandler")
+    state.remove("pendingDueAt")
+}
+
+private void servicePending() {
+    if (!state.pendingInactive) return
+    String handler = state.pendingHandler as String
+    Long dueAt = state.pendingDueAt as Long
+    if (handler == null || dueAt == null) {     // no deadline recorded: drop the stale flag
+        clearPending()
+        return
+    }
+    long remainingMs = dueAt - now()
+    if (remainingMs > 0) {
+        runIn((remainingMs / 1000).toInteger() + 1, handler)
+        return
+    }
+    unschedule(handler)
+    switch (handler) {
+        case "delayedInactive":            delayedInactive(); break
+        case "confirmationTimeout":        confirmationTimeout(); break
+        case "mmwaveConfirmationTimeout":  mmwaveConfirmationTimeout(); break
+        case "pirConfirmationTimeout":     pirConfirmationTimeout(); break
+        case "cooldownExpired":            cooldownExpired(); break
+        default:                           clearPending()
+    }
 }
 
 // ==================== Output ====================
