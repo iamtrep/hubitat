@@ -16,14 +16,17 @@
 
 import groovy.transform.CompileStatic
 import groovy.transform.Field
+import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = '0.3.3'
+@Field static final String CODE_VERSION = '0.3.4'
 
 // Sub-second WS re-delivery dedup, keyed by hub device id, value = [sig, ts].
 // In-JVM only — lost on hub reboot, which is fine for sub-second dedup. Bounded
 // by the operator-configured allowlist size, so unbounded growth isn't a risk.
-@Field static Map timeRequestDedup = [:]
-@Field static Map otaRequestDedup  = [:]
+// Shared by every responder device, which run in parallel, so a frame two responders
+// both hear is answered once; put() records and returns the prior entry atomically.
+@Field static final ConcurrentHashMap<String, Map> timeRequestDedup = new ConcurrentHashMap<>()
+@Field static final ConcurrentHashMap<String, Map> otaRequestDedup  = new ConcurrentHashMap<>()
 
 metadata {
     definition(name: 'Zigbee Responder', namespace: 'iamtrep', author: 'pj',
@@ -301,12 +304,11 @@ private void processTimeReadRequest(Map entry) {
     // by deviceId+seq+payload covers it without rejecting genuine new reads.
     String sig = "${entryDeviceId}|${zclSeq}|${rawPayload.join(',')}"
     long nowMs = now()
-    Map prev = timeRequestDedup[entryDeviceId] as Map
+    Map prev = timeRequestDedup.put(entryDeviceId, [sig: sig, ts: nowMs])
     if (prev?.sig == sig && (nowMs - ((prev?.ts ?: 0L) as long)) < 2000L) {
         logDebug "Time: duplicate (dev=${entryDeviceId}, seq=0x${zclSeq}) suppressed"
         return
     }
-    timeRequestDedup[entryDeviceId] = [sig: sig, ts: nowMs]
 
     // Parse requested attribute IDs (LE 16-bit pairs starting at byte 3)
     List<String> attrBytes = rawPayload.drop(3)
@@ -458,12 +460,11 @@ private void processOtaQueryNextImageRequest(Map entry) {
 
     String sig = "0019|${entryDeviceId}|${zclSeq}|${rawPayload.join(',')}"
     long nowMs = now()
-    Map prev = otaRequestDedup[entryDeviceId] as Map
+    Map prev = otaRequestDedup.put(entryDeviceId, [sig: sig, ts: nowMs])
     if (prev?.sig == sig && (nowMs - ((prev?.ts ?: 0L) as long)) < 2000L) {
         logDebug "OTA: duplicate (dev=${entryDeviceId}, seq=0x${zclSeq}) suppressed"
         return
     }
-    otaRequestDedup[entryDeviceId] = [sig: sig, ts: nowMs]
 
     Integer srcEp = Integer.parseInt(entry.sourceEndpoint?.toString() ?: '01', 16)
     Integer dstEp = Integer.parseInt(entry.destinationEndpoint?.toString() ?: '01', 16)
