@@ -65,10 +65,13 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.1.3"
+@Field static final String CODE_VERSION = "0.1.4"
 
 @Field static final List<String> SUPPORTED_STD_MODES = ["\"off\"", "\"heat\"", "\"cool\"", "\"auto\""]
 @Field static final List<String> SUPPORTED_STD_FAN_MODES = ["\"auto\"", "\"on\""]
+// Setpoint range in °C, per role.
+@Field static final Map<String, BigDecimal> SETPOINT_MIN_C = ["heat": 16, "cool": 18]
+@Field static final BigDecimal SETPOINT_MAX_C = 30
 @Field static final List<String> FUJITSU_MODES = ["off","heat","cool","auto","dry","fan_only"]
 @Field static final List<String> FUJITSU_FAN_SPEEDS = ["auto","quiet","low","medium","high"]
 
@@ -92,10 +95,10 @@ void refresh() {
 
 private void emitBounds() {
     String scale = getTemperatureScale()
-    sendEvent(name: 'minHeatingSetpoint', value: convertFromC(16), unit: scale)
-    sendEvent(name: 'maxHeatingSetpoint', value: convertFromC(30), unit: scale)
-    sendEvent(name: 'minCoolingSetpoint', value: convertFromC(18), unit: scale)
-    sendEvent(name: 'maxCoolingSetpoint', value: convertFromC(30), unit: scale)
+    sendEvent(name: 'minHeatingSetpoint', value: convertFromC(SETPOINT_MIN_C.heat), unit: scale)
+    sendEvent(name: 'maxHeatingSetpoint', value: convertFromC(SETPOINT_MAX_C), unit: scale)
+    sendEvent(name: 'minCoolingSetpoint', value: convertFromC(SETPOINT_MIN_C.cool), unit: scale)
+    sendEvent(name: 'maxCoolingSetpoint', value: convertFromC(SETPOINT_MAX_C), unit: scale)
 }
 
 private BigDecimal convertFromC(BigDecimal celsius) {
@@ -212,7 +215,7 @@ void setCoolingSetpoint(BigDecimal t) { handleSetSetpoint("cool", t) }
 
 private void handleSetSetpoint(String role, BigDecimal t) {
     if (t == null) { logWarn "set${role.capitalize()}Setpoint(null) — ignored"; return }
-    BigDecimal clamped = clampSetpoint(t)
+    BigDecimal clamped = clampSetpoint(role, t)
     String attrName = "${role}ingSetpoint"
     sendEvent(name: attrName, value: clamped, unit: getTemperatureScale(),
               descriptionText: "${device} ${attrName} is ${clamped}${getTemperatureScale()}")
@@ -226,9 +229,9 @@ private void handleSetSetpoint(String role, BigDecimal t) {
     pushSetpointToUnit(clamped)
 }
 
-private BigDecimal clampSetpoint(BigDecimal t) {
-    BigDecimal lo = getTemperatureScale() == 'F' ? 61 : 16
-    BigDecimal hi = getTemperatureScale() == 'F' ? 86 : 30
+private BigDecimal clampSetpoint(String role, BigDecimal t) {
+    BigDecimal lo = convertFromC(SETPOINT_MIN_C[role])
+    BigDecimal hi = convertFromC(SETPOINT_MAX_C)
     BigDecimal clamped = t
     if (clamped < lo) { logWarn "setpoint ${t} below min ${lo} — clamped"; clamped = lo }
     if (clamped > hi) { logWarn "setpoint ${t} above max ${hi} — clamped"; clamped = hi }
