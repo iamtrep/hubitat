@@ -55,7 +55,7 @@ Downloading a release so it becomes restorable is a main-platform endpoint:
 - POST body: `id={ID}&version={VERSION}&source={URL_ENCODED_SOURCE}`
 - Use `--data-urlencode "source@{FILEPATH}"` to auto-encode file contents
 - Response: `{"id":..., "version":..., "status":"success"}` on success
-- `POST /app/ajax/update` bumps the source body and `appType.version` but does **NOT re-parse the `definition()` block** — app-level flags (`singleThreaded`, `menu`, `parent`, `category`, …) stay whatever they were at the last create/re-parse. Force a re-parse by POSTing the existing `id` + current `version` + source to `/app/saveOrUpdateJson` (what the editor's Save button does). Scope is app `definition()` flags only: a driver push recompiles, so new driver commands/capabilities/preference inputs surface on a device-page reload with no save.
+- `POST /app/ajax/update` recompiles and re-reads `definition()`: on firmware 2.5.2.128 a push changed `category`, `description`, `menu`, `singleInstance` and `importUrl` with no Save in the editor. Read them back from `GET /app/list/single/data/{id}`. `oauth: true` in `definition()` does not enable OAuth on push or install; that takes the editor's OAuth button (`oauthClientId` stays null, `/hub2/userAppTypes` `oauth` stays empty). `singleThreaded` is not exposed by any endpoint, so whether a push applies it is unconfirmed. A driver push likewise picks up new commands, capabilities and preference inputs on a device-page reload.
 
 ## Live logs and events
 
