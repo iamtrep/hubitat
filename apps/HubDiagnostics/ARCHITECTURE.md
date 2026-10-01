@@ -27,7 +27,7 @@ The architecture is optimized for:
 
 ## Guiding Principle: The Hub Is The Constrained Side
 
-The hub is a 4-core ARM Cortex-A53 sharing memory with every other Hubitat app on the device. The browser is, in practice, an order of magnitude faster with effectively unbounded RAM relative to this workload. Optimize accordingly.
+The hub is a small 4-core ARM board sharing memory with every other Hubitat app on the device. The browser is, in practice, an order of magnitude faster with effectively unbounded RAM relative to this workload. Optimize accordingly.
 
 - Ship slightly larger normalized payloads to the browser rather than do CPU-intensive transformation on the hub.
 - *Aggregation* means coalescing duplicate fetches and providing fail-soft semantics — not computing derived data the browser can compute trivially.
@@ -38,18 +38,9 @@ When in doubt, ship raw and let the SPA derive.
 
 ## System Shape
 
-### Backend layers
+### Backend layout
 
-The Groovy app is intentionally layered:
-
-1. Constants, caches, and lifecycle state
-2. Low-level request wrappers
-3. Feature-specific fetch helpers
-4. Aggregation and analysis methods
-5. API endpoints
-6. Lifecycle, scheduling, UI sync, and migrations
-
-Those layers should stay in that order. New code should fit one of them instead of mixing responsibilities.
+`HubDiagnostics.groovy` is divided into banner-marked sections (`// ===== NAME =====`). In file order: constants and caches; API mappings; page methods; API endpoint methods; data gatherers (aggregation); data collection (the request wrappers) followed by the feature-specific fetch helpers; analysis modules and protocol detection; the checkpoint, snapshot, file and audit systems; lifecycle. New code goes in the section that matches its job. Keep fetching, aggregation, analysis and endpoint code in their own sections.
 
 ### Frontend model
 
@@ -73,29 +64,31 @@ Caching is how the app honours the guiding principle: every avoided hub fetch is
 - Two endpoints deliberately bypass it:
   - `snapshot/view` — keyed by a positional index that shifts on every snapshot create/delete, so a cached entry would serve the wrong snapshot after a mutation.
   - `/api/live` — fetched via a raw `fetch()` in `refreshLive()`, never through `api()`, so the live tile's freshness is governed by the **server-side** TTLs below, not this cache.
-- Invalidation is mutation-driven, never time-pressured: every mutating `post()` calls `drop(ep)` for the affected key, and `refreshPage()` drops the current tab's keys before re-rendering.
+- Invalidation is mutation-driven, never time-pressured: the code that calls a mutating `post()` must `drop(ep)` every key the mutation affects (`post()` itself drops nothing), and `refreshPage()` drops the current tab's keys before re-rendering.
 
 Consequence to keep in mind: for every tab except Live, the 2-minute SPA cache is the outer gate. The server TTLs only take effect on an SPA cache miss — first load, after a `drop`, after 2 minutes, or an explicit Refresh.
 
-### Tier 2 — Server in-memory cache (`@Field static volatile`)
+The SPA also calls `api('dashboard')` every 60 s on every tab, for the header and favicon severity. With the 2-minute cache, the hub rebuilds the dashboard payload about every 2 minutes for as long as a browser has the UI open.
 
-These fields live for the JVM session and are **wiped on hub reboot, app reload, and code push** (`@Field static` does not survive a push — see the repo-wide guide). Use this tier only for data that is safe to lose on a push. Each entry pairs a value field with an `…At` timestamp and is checked as `now() - …At < TTL`.
+### Tier 2 — Server in-memory cache (`TTL_CACHE`)
 
-TTLs are proportional to how fast the underlying metric actually moves, sized so `apiLive()`'s ~30 s poll (which fans out to several hub calls) does not hammer slow-changing endpoints:
+Cached values live in one `@Field static final ConcurrentHashMap TTL_CACHE`, as `{data, at}` slots read through `cachedFetch(key, ttl) { … }` (fetch on a miss) and `cachePeek(key, ttl)` (read only), with the check `now() - at < ttl`. Like every `@Field static`, the map is **wiped on hub reboot, app reload and code push**, and `updated()` also clears it. Use this tier only for data that is safe to lose on a push.
+
+TTLs are proportional to how fast the underlying metric actually moves, sized so the Live tile's poll of `apiLive()` (a user setting from 10 to 300 s, default 30 s; each call fans out to five hub calls) does not hammer slow-changing endpoints:
 
 | Constant | TTL | Cached data | Why this TTL |
 |---|---|---|---|
 | `SYSTEM_RESOURCES_CACHE_TTL_MS` | 10 s | free mem, CPU load, JVM memory | Fastest-moving; short TTL still coalesces a request's duplicate reads. |
-| `RADIO_CACHE_TTL_MS` | 60 s | Z-Wave + Zigbee mesh | Topology fetch is ~8 s and bounded no-retry; 60 s avoids paying it per tab load. |
+| `RADIO_CACHE_TTL_MS` | 60 s | Z-Wave + Zigbee details (`/hub/zwaveDetails`, `/hub/zigbeeDetails`) | Slow, bounded no-retry fetches (8 s timeout on checkpoint and alert paths); 60 s avoids paying them per tab load. `/hub/zwaveTopology` is not cached. |
 | `TEMPERATURE_CACHE_TTL_MS` | 60 s | hub temperature | Slow-changing. |
 | `DATABASE_SIZE_CACHE_TTL_MS` | 60 s | database size | Grows over hours, not seconds. |
-| `HUB_LIST_CACHE_TTL_MS` | 2 min | apps list, devices list | Large payloads; topology only changes on install/remove. |
-| `HUB_DATA_CACHE_TTL_MS` | 30 s | `/hub2/hubData`: hub alerts, model, cloud-controller flag | About 1 s to build and read by several endpoints; 30 s folds one page load's reads into one fetch while alerts stay current. |
-| `CPU_INFO_CACHE_TTL_MS` | 5 min | core count / static CPU facts | Effectively constant per install. |
+| `HUB_LIST_CACHE_TTL_MS` | 2 min | apps list, devices list, on the Performance path only | Large payloads; topology only changes on install/remove. The device, app and audit paths fetch both lists uncached. |
+| `HUB_DATA_CACHE_TTL_MS` | 30 s | `/hub2/hubData`: hub alerts, model, cloud-controller flag | Slow to build and read by several endpoints; 30 s folds one page load's reads into one fetch while alerts stay current. |
+| `CPU_INFO_CACHE_TTL_MS` | 5 min | `/hub/cpuInfo`: core count, and the 1-minute load average parsed from the same response | Core count is constant per install. The load average shares the 5-minute TTL, so the "Load avg (1m)" figure can be up to 5 minutes old. |
 | `LOAD_THRESHOLD_CACHE_TTL_MS` | 5 min | platform load threshold | Rarely changes. |
 | `INTEGRATION_OVERRIDES_CACHE_TTL_MS` | 5 min | File Manager overrides config | Picks up a re-uploaded config without a full Done; `updated()`/`apiClearCache()` reset it immediately. |
 | `FW_UPDATE_CACHE_TTL_MS` | 1 hr | firmware-update check, Diagnostic Tool version list | Slow-moving; no value polling more often. A failed tool read is cached as empty so a down tool costs no timeout per load; `apiFirmwareRefresh()` drops the list after a platform download. |
-| *(none)* | process life | `uiVersionCache`, `zwaveStackCache` | Install-constant; re-derived after a code push anyway. |
+| *(none)* | process life | `@Field static volatile` fields `uiVersionCache`, `zwaveStackCache`, `hubModelCache` | Install-constant. `uiVersionCache` is refreshed on UI sync, `zwaveStackCache` is reset by `updated()`, and all three are re-derived after a code push. |
 
 ### Tier 3 — Persistent cache (`state` / File Manager)
 
@@ -105,7 +98,7 @@ Data that must **survive a code push or reboot** is stored in `state` or File Ma
 - `state.controllerTypeCache` — device enrichment (parent app type, controller type) keyed by device ID, with **no TTL** and no per-entry expiry (`enrichDevices()` only ever adds entries). A device's parent and controller type are stable for its lifetime, and each entry costs a per-device `fullJson` fetch (against the 8-call cap), so the cache persists across reboots and is evicted *wholesale*, not by age, at exactly two points: `updated()` (any Done / settings save, via `state.remove('controllerTypeCache')`) and the manual "Clear Enrichment Cache" config button (`apiClearCache()`). An entry without `ctSrc: "device"` predates reading `controllerType` from `fullJson.device` and is re-fetched on sight, since a code push doesn't run `updated()`. This is the one cache where staleness is a *correctness* risk: if a device is re-parented, its entry stays wrong until the next Done or a manual clear.
 - `cachedCheckpointIndex` — an in-memory mirror of the File-Manager-persisted checkpoint index. The file is the source of truth; the `@Field` copy is a read-through, refreshed on write and handed out as a defensive `ArrayList` copy so callers cannot mutate the shared cache.
 - `state.zigbeeScanCache` — refreshed only on an explicit user scan (the scan perturbs Zigbee joins, so it is never auto-triggered); `fetchCachedZigbeeScan()` reads it without ever scanning.
-- `state.cachedZwaveSignals` — fallback so ghost-node signals still render when the shared cache was built `includeNetwork=false`.
+- `state.cachedZwaveSignals` — fallback so ghost-node signals still render when the Z-Wave details fetch fails; rewritten on each Dashboard or Health load that fetches them.
 
 ### Request-scoped shared cache
 
@@ -114,7 +107,7 @@ Data that must **survive a code push or reboot** is stored in `state` or File Ma
 ### Rules for adding or changing a cache
 
 - **Pick the tier by lifetime requirement.** Loss-on-push acceptable → Tier 2 `@Field static`. Must survive a code push → Tier 3 `state`/File Manager. Needed only within one request → the request-scoped shared map, not a new field.
-- **Every cross-request cache needs an explicit TTL or an explicit invalidation path.** A cache that grows without expiration or invalidation is a regression. The only no-TTL exceptions are justified above: `controllerTypeCache` is evicted on `updated()`/manually, and the install-constant `@Field` fields (`uiVersionCache`, `zwaveStackCache`) are wiped by a code push.
+- **Every cross-request cache needs an explicit TTL or an explicit invalidation path.** A cache that grows without expiration or invalidation is a regression. The only no-TTL exceptions are justified above: `controllerTypeCache` is evicted on `updated()`/manually, and the install-constant `@Field` fields (`uiVersionCache`, `zwaveStackCache`, `hubModelCache`) are wiped by a code push.
 - **Set the TTL by volatility, not convenience** — reuse an existing tier (10 s / 60 s / 2 min / 5 min / 1 hr) rather than inventing a new value, and declare the constant beside the others near the top of the file.
 - **Wire invalidation end to end.** A server-side mutation that changes cached data must drop both the server cache (or rely on its TTL) and the matching SPA key via `drop()`.
 
@@ -129,7 +122,7 @@ The Groovy app acts as an application server for the SPA, providing four things 
 3. **Aggregation** — collapsing multiple hub requests into a single response with shared-cache and fail-soft semantics centralized. Aggregation is about *coalescing fetches*, not about computing derived values; if the only thing the SPA cannot do directly is sort, slice, or threshold-check the result, that does not belong on the hub.
 4. **Normalization** — stable field names, payload shape, date-to-epoch conversion, firmware/version compatibility.
 
-Most Hub Diagnostics routes are app-owned. The notable aggregators are `/api/dashboard`, `/api/health`, and `/api/live`; they are justified by shared-cache, fail-soft behavior, and normalization the SPA should not duplicate.
+Most Hub Diagnostics routes are app-owned. The aggregators are `/api/dashboard`, `/api/devices`, `/api/apps`, `/api/network`, `/api/health`, `/api/health/history` and `/api/live`; they are justified by shared-cache, fail-soft behavior, and normalization the SPA should not duplicate.
 
 The `mappings { }` block in `HubDiagnostics.groovy` is grouped by category. Place new routes in the matching section.
 
@@ -158,6 +151,7 @@ Use:
 - `hubMapRequest()` for JSON responses that should behave like maps
 - `hubRequest()` for text responses or non-map JSON payloads
 - `hubRequestInternal()` only as shared infrastructure, not as a normal call site for new feature code
+- `reqData()` as a short form of `hubMapRequest()` that returns the data or `null`
 
 **Array vs map responses:** `hubMapRequest()` always casts its result to `Map`. If an endpoint returns a JSON array, this silently produces an empty map or throws at the call site. Use `hubRequest()` for any endpoint that returns an array, then check `instanceof List` before casting:
 
@@ -194,12 +188,12 @@ Some methods have large blast radius and must not gain new fetches casually. The
 **Hardest change zones** — these run on common refresh paths or have broad fan-out across the app:
 
 - `buildSharedCache()` — runs on every dashboard and health request
-- `getStructuredAlerts()` — feeds alert content across multiple tabs and endpoints
-- `apiLive()` — called automatically by the frontend every few seconds
+- `getAlertSignals()` — feeds alert content across multiple tabs and endpoints
+- `apiLive()` — called automatically by the frontend on the Live poll interval (default 30 s)
 
 **High blast radius** — these run on common tab loads and already contain multiple HTTP calls; new additions need justification but are not forbidden:
 
-- `getDashboardData()` and `getHealthData()` — tab-specific, not recurring, but called on every open of those tabs
+- `getDashboardData()` and `getHealthData()` — called on every open of those tabs; the dashboard also rebuilds about every 2 minutes in the background while the UI is open (see *Tier 1*)
 - `apiNetwork()` / `getNetworkData()` — narrower than Dashboard/Health, but still substantial and easy to bloat
 
 Any new fetch added to any of these must satisfy all of the following:
@@ -235,10 +229,10 @@ In addition to the repo-wide patterns-to-avoid list, these are Hub Diagnostics s
 - raw `httpGet` calls in feature logic when a wrapper covers the case
 - new endpoint-specific error contracts when the wrappers already define the norm
 - duplicate fetches of the same endpoint within a request path
-- adding experimental or expensive fetches to `getStructuredAlerts()` or `apiLive()`
+- adding experimental or expensive fetches to `getAlertSignals()` or `apiLive()`
 - pushing backend parsing and compatibility logic into the SPA
 - computing derivable data hub-side that the SPA can compute trivially — sorts, top-N, set differences, snapshot diffs, threshold-based severity, HTML cleanup, percentage rollups
-- blocking hot paths (`apiLive()`, `getStructuredAlerts()`, `buildSharedCache()`) on data that does not change between ticks
+- blocking hot paths (`apiLive()`, `getAlertSignals()`, `buildSharedCache()`) on data that does not change between ticks
 - hub-side string templating or HTML assembly when the SPA owns rendering
 - one-off tables when `tbl()` is sufficient
 - "cleanup" refactors that ignore Hubitat platform constraints already accepted by the project
