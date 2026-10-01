@@ -43,6 +43,7 @@ metadata {
         attribute "fanSpeed",                    "string"
         attribute "errorCode",                   "number"
         attribute "opStatus",                    "number"
+        attribute "healthStatus",                "enum", ["online", "offline"]
 
         command "setFujitsuMode", [[name: "mode*", type: "ENUM",
                                     description: "Fujitsu operation mode",
@@ -65,7 +66,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.1.4"
+@Field static final String CODE_VERSION = "0.2.0"
 
 @Field static final List<String> SUPPORTED_STD_MODES = ["\"off\"", "\"heat\"", "\"cool\"", "\"auto\""]
 @Field static final List<String> SUPPORTED_STD_FAN_MODES = ["\"auto\"", "\"on\""]
@@ -347,6 +348,18 @@ void updateState(Map data) {
 // The cloud doesn't report whether the compressor is running (op_status stays 0),
 // so this is a thermostat-style estimate: start heating once the room is a band
 // below the setpoint, keep heating until it reaches the setpoint; cooling mirrors it.
+// Called by the parent with the unit's cloud link state, or "offline" when the
+// cloud itself is unreachable.
+void updateHealth(String status) {
+    String prev = device.currentValue("healthStatus")
+    sendEvent(name: "healthStatus", value: status,
+              descriptionText: "${device} healthStatus is ${status}")
+    if (prev != null && prev != status) {
+        if (status == "offline") logWarn "unit is offline"
+        else logInfo "unit is back online"
+    }
+}
+
 private String deriveOperatingState(String mode, BigDecimal temp, BigDecimal sp, String prev) {
     if (mode == "fan_only") return "fan only"
     if (!(mode in ["heat", "cool", "auto"]) || temp == null || sp == null) return "idle"

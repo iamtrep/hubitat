@@ -44,6 +44,7 @@ Region (US / EU) is configurable on the manager page; the region setting drives 
 - `outdoorTemperature` — temperature reported by the outdoor unit (number)
 - `errorCode` — raw Fujitsu error code (number; `0` = no fault). Transitions `0 → non-0` log a warning; `non-0 → 0` logs an info-level clear.
 - `opStatus` — raw operational status (number). Logged at info level on change.
+- `healthStatus` — `online` / `offline`, from the unit's cloud connection status. Also set to `offline` after 5 consecutive failed cloud requests or when the manager stops polling on an auth failure.
 - `setFujitsuMode(String)` command — accepts the full mode enum
 - `setFanSpeed(String)` command — accepts the full fan-speed enum
 
@@ -89,7 +90,11 @@ The `optimisticUpdates` driver preference (default **on**) controls how non-setp
 
 ## Polling
 
-Default poll interval is 60 s. Configurable to 30 / 60 / 120 / 300 s. Each cycle fetches the device list, then issues one plain `properties.json` GET per indoor unit — mirroring `ayla-iot-unofficial`'s `device.async_update()`. End-to-end freshness depends on the unit's own cadence for publishing state changes to the cloud (Ayla pushes propagate within seconds for state changes; passive sensor readings can lag longer).
+Default poll interval is 60 s. Configurable to 30 / 60 / 120 / 300 s. Each cycle fetches the device list, then issues one plain `properties.json` GET per indoor unit — mirroring `ayla-iot-unofficial`'s `device.async_update()`. Mode, setpoint and fan changes propagate to the cloud within seconds.
+
+Room and outdoor temperatures are "sensed" properties: the cloud serves a cached value it refreshes on its own only about once a day. The manager wakes each unit's sensors by writing `refresh=1` once per **Wake sensed temps every** interval (10 / 15 / 30 / 60 min, default 15), independent of the poll interval; a later poll reads the fresh values. Writing it more often risks jamming the unit's cloud write queue, which blocks setpoint changes from every source.
+
+The device's **Refresh** command wakes the sensors and reads 15 s later. Wakes are limited to one per minute per unit; a refresh inside that window only reads.
 
 ## Orphans
 

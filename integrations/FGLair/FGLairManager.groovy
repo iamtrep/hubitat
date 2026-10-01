@@ -30,7 +30,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "0.1.8"
+@Field static final String CODE_VERSION = "0.2.0"
 
 // Region-specific Ayla endpoints + app credentials, lifted from
 // ayla-iot-unofficial/src/ayla_iot_unofficial/const.py and fujitsu_consts.py.
@@ -67,9 +67,14 @@ definition(
 // display_temperature / outdoor_temperature are "sensed" properties: the Ayla cloud
 // only returns a fresh reading after the unit is told to wake its sensors (refresh=1).
 // Without that, a plain GET serves the last cached value — which the cloud refreshes
-// on its own roughly once a day, so the temps look frozen. We wake them once every
-// settings.sensedPolls polls — NOT every poll, which jammed the per-DSN write queue
-// in v0.1.1/v0.1.2 — and the next poll's GET picks up the woken values.
+// on its own roughly once a day, so the temps look frozen. Each unit is woken at most
+// once per settings.sensedMinutes, never per poll: per-poll trigger writes jammed the
+// per-DSN write queue in v0.1.1/v0.1.2. The next GET picks up the woken values.
+@Field static final List<String> SENSED_MINUTES = ["10", "15", "30", "60"]
+// Floor between wakes of one unit when refresh() is called repeatedly.
+@Field static final long MANUAL_WAKE_MIN_MS = 60_000L
+// Delay between a manual wake and the GET that reads the woken values.
+@Field static final int MANUAL_WAKE_READ_DELAY = 15
 
 preferences {
     page(name: "mainPage")
@@ -90,8 +95,8 @@ Map mainPage() {
             section("Polling") {
                 input "pollRate", "enum", title: "Poll interval (seconds)",
                       options: ["30", "60", "120", "300"], defaultValue: "60", submitOnChange: true
-                input "sensedPolls", "enum", title: "Wake sensed temps every N polls",
-                      options: ["5", "10", "15", "30"], defaultValue: "15"
+                input "sensedMinutes", "enum", title: "Wake sensed temps every (minutes)",
+                      options: SENSED_MINUTES, defaultValue: "15"
                 input "btnRefreshNow", "button", title: "Refresh now"
             }
             section("Devices") {
@@ -162,11 +167,31 @@ void initialize()  {
         logWarn "new version: ${CODE_VERSION} (was: ${state.version})"
         state.version = CODE_VERSION
     }
+    migrateSensedSetting()
     if (isAuthenticated()) {
         scheduleTokenRefresh()
         schedulePolling()
     }
     subscribe(location, "systemStart", "systemStartHandler")
+}
+
+// v0.2.0 replaced "wake every N polls" with a wake interval in minutes.
+// sensedRefreshRate is an unused setting left by an earlier build.
+private void migrateSensedSetting() {
+    if (settings.sensedRefreshRate != null) app.removeSetting("sensedRefreshRate")
+    if (settings.sensedPolls == null) return
+    if (settings.sensedMinutes == null) app.updateSetting("sensedMinutes", [type: "enum", value: sensedMinutes()])
+    app.removeSetting("sensedPolls")
+    state.remove("pollCount")
+}
+
+// Converts a leftover sensedPolls setting to the nearest interval, never below 10 min.
+private String sensedMinutes() {
+    if (settings.sensedMinutes) return settings.sensedMinutes
+    if (settings.sensedPolls == null) return "15"
+    int rate = (settings.pollRate ?: "60") as int
+    int mins = ((settings.sensedPolls as int) * rate).intdiv(60)
+    return SENSED_MINUTES.min { Math.abs((it as int) - mins) }
 }
 
 void systemStartHandler(evt) {
@@ -201,9 +226,7 @@ void appButtonHandler(String btn) {
 }
 
 private void renderChildList() {
-    List<ChildDeviceWrapper> kids = getChildDevices().findAll {
-        it.deviceNetworkId?.startsWith(DNI_PREFIX_UNIT)
-    }
+    List<ChildDeviceWrapper> kids = unitChildren()
     if (kids.size() == 0) { paragraph "No child devices yet."; return }
     paragraph "<b>Units (${kids.size()}):</b>"
     kids.each { ChildDeviceWrapper c ->
@@ -269,12 +292,9 @@ private void schedulePolling() {
 void pollTick() {
     logTrace "pollTick"
     int rate = (settings.pollRate ?: "60") as int
-    int every = (settings.sensedPolls ?: "15") as int
-    int n = ((state.pollCount ?: 0) as int) + 1
-    state.pollCount = n
-    // Every Nth poll, wake the sensed temps; this poll's GET still reads the
-    // current values and the next poll picks up the woken ones.
-    if (n % every == 0) wakeSensors()
+    // Units due a wake are woken here; this poll's GET still reads the current
+    // values and a later poll picks up the woken ones.
+    wakeDueUnits()
     fetchDevices()
     if (rate < 60) {
         int jitter = -7 + new Random().nextInt(15)
@@ -282,11 +302,27 @@ void pollTick() {
     }
 }
 
-private void wakeSensors() {
-    getChildDevices().each { ChildDeviceWrapper c ->
-        String dni = c.deviceNetworkId
-        if (dni?.startsWith(DNI_PREFIX_UNIT)) sendCommand(dni, "refresh", 1)
+private void wakeDueUnits() {
+    long interval = ((sensedMinutes() as int) * 60_000L) - 5_000L  // slack for poll jitter
+    unitChildren().each { ChildDeviceWrapper c ->
+        if (sinceLastWake(c.deviceNetworkId) >= interval) wakeUnit(c.deviceNetworkId)
     }
+}
+
+private void wakeUnit(String dni) {
+    Map<String, Long> wakes = (atomicState.lastWakeAt ?: [:]) as Map<String, Long>
+    wakes[dni] = now()
+    atomicState.lastWakeAt = wakes
+    sendCommand(dni, "refresh", 1)
+}
+
+private long sinceLastWake(String dni) {
+    Long last = ((atomicState.lastWakeAt ?: [:]) as Map)[dni] as Long
+    return last == null ? Long.MAX_VALUE : now() - last
+}
+
+private List<ChildDeviceWrapper> unitChildren() {
+    return getChildDevices().findAll { it.deviceNetworkId?.startsWith(DNI_PREFIX_UNIT) }
 }
 
 // --- Authentication ---
@@ -478,6 +514,7 @@ private void haltAuth(String reason) {
     List pending = (atomicState.pendingWrites ?: []) as List
     if (pending) logWarn "discarding ${pending.size()} queued write(s)"
     clearSession()
+    markUnitsOffline()
 }
 
 private void clearSession() {
@@ -545,7 +582,12 @@ void fetchDevicesCallback(resp, data) {
 private void handleDeviceList(List rawDevices) {
     // Ayla wraps each device under {"device": {...}}.
     List<Map> devices = rawDevices.collect { (Map) ((Map) it).device }.findAll { it != null }
-    logInfo "fetchDevices returned ${devices.size()} device(s)"
+    if (devices.size() != state.lastDeviceCount) {
+        logInfo "fetchDevices returned ${devices.size()} device(s)"
+        state.lastDeviceCount = devices.size()
+    } else {
+        logDebug "fetchDevices returned ${devices.size()} device(s)"
+    }
     logTrace "raw device list: ${JsonOutput.toJson(devices)}"
 
     Set<String> liveDnis = [] as Set
@@ -560,9 +602,12 @@ private void handleDeviceList(List rawDevices) {
         if (!child) {
             String label = d.product_name?.toString() ?: "Fujitsu Mini-Split ${dsn}"
             logInfo "creating child device ${dni} (${label})"
-            addChildDevice("iamtrep", DRIVER_UNIT, dni,
+            child = addChildDevice("iamtrep", DRIVER_UNIT, dni,
                 [name: DRIVER_UNIT, label: label, isComponent: false])
         }
+        // Ayla reports "Online" / "Offline" for the unit's link to the cloud.
+        String conn = d.connection_status?.toString()
+        if (conn) child.updateHealth(conn.equalsIgnoreCase("Online") ? "online" : "offline")
     }
     computeOrphans(liveDnis)
 
@@ -573,17 +618,10 @@ private void handleDeviceList(List rawDevices) {
     }
 }
 
-// Plain GET — mirrors ayla-iot-unofficial's device.async_update(), which does
-// no trigger write before reading. Earlier versions wrote refresh=1 (v0.1.1)
-// then get_prop=1 (v0.1.2) before each GET, on the theory that the cloud
-// would otherwise return stale values; both turned out to feed the Fujitsu
-// WLAN module's per-DSN write queue once per minute and could jam setpoint
-// writes from any source (driver or the FGLair app on cloud). The lib
-// applies refresh=1 only narrowly, inside refresh_sensed_temp(), to wake a
-// single sensor reading — not before a full poll. We follow that.
-//
-// If display_temperature staleness is later observed in normal operation,
-// add a separate refreshSensedTemp() that mirrors the lib's narrow pattern.
+// Plain GET — mirrors ayla-iot-unofficial's device.async_update(). No trigger
+// write precedes it: v0.1.1 (refresh=1) and v0.1.2 (get_prop=1) wrote one before
+// every GET and jammed the unit's per-DSN write queue. Sensed temps are woken
+// separately and sparingly by wakeDueUnits() and refreshUnit().
 void fetchProperties(String dsn) {
     // A deferred fetch is covered by afterAuth(), which re-polls every unit.
     if (tokenNearExpiry()) { refreshToken(); return }
@@ -628,18 +666,29 @@ void fetchPropertiesCallback(resp, data) {
         modelName       : props["model_name"],
         firmwareVersion : props["mcu_fw_version"],
         deviceName      : props["device_name"],
-        commVersion     : props["comm_version"],
-        online          : true
+        commVersion     : props["comm_version"]
     ]
     logTrace "fetchProperties(${dsn}) -> ${stateMap}"
     ChildDeviceWrapper child = getChildDevice("${DNI_PREFIX_UNIT}${dsn}")
     child?.updateState(stateMap)
 }
 
+// Child refresh(): mirrors the lib's refresh_sensed_temp() — wake the sensors,
+// then read once they have reported. Wakes are rate-limited per unit; within
+// the limit this is a plain read.
 void refreshUnit(String dni) {
     String dsn = dni?.replaceFirst("^${java.util.regex.Pattern.quote(DNI_PREFIX_UNIT)}", "")
-    if (dsn) fetchProperties(dsn)
+    if (!dsn) return
+    if (sinceLastWake(dni) < MANUAL_WAKE_MIN_MS) {
+        logDebug "refreshUnit(${dsn}): woken recently, reading only"
+        fetchProperties(dsn)
+        return
+    }
+    wakeUnit(dni)
+    runIn(MANUAL_WAKE_READ_DELAY, "fetchPropertiesDeferred", [data: [dsn: dsn], overwrite: false])
 }
+
+void fetchPropertiesDeferred(Map data) { fetchProperties((String) data.dsn) }
 
 // --- Write commands ---
 
@@ -747,11 +796,18 @@ private void logError(String msg) { log.error "${app.label} ${msg}" }
 private void noteTransientFailure(String msg) {
     int n = ((state.consecutiveFetchFailures ?: 0) as int) + 1
     state.consecutiveFetchFailures = n
+    if (n == FAILURE_ERROR_THRESHOLD) markUnitsOffline()
     if (n >= FAILURE_ERROR_THRESHOLD) {
         logError "${msg} (failure streak: ${n})"
     } else {
         logWarn msg
     }
+}
+
+// The cloud can't be reached, so unit state is unknown. The next successful
+// device list restores health from connection_status.
+private void markUnitsOffline() {
+    unitChildren().each { it.updateHealth("offline") }
 }
 
 private void clearTransientFailureStreak() {
