@@ -11,13 +11,14 @@
  */
 import groovy.transform.CompileStatic
 import groovy.transform.Field
+import java.util.concurrent.ConcurrentHashMap
 import groovy.json.JsonOutput
 import com.hubitat.app.DeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.nio.file.AccessDeniedException
 
 @Field static final String APP_NAME = "Well Monitor"
-@Field static final String CODE_VERSION = "0.11.2"
+@Field static final String CODE_VERSION = "0.11.3"
 @Field static final String DASHBOARD_FILE = "wellmonitor-dashboard.html"
 @Field static final String CHARTJS_FILE = "wellpump-chart.min.js"
 
@@ -26,7 +27,11 @@ import java.nio.file.AccessDeniedException
 
 // In-flight flag for the GitHub version probe; `volatile` because OAuth endpoint handlers
 // can race on it across threads.
-@Field static volatile boolean githubVersionRefreshPending = false
+// App id -> start time of an in-flight GitHub version check. Keyed by instance because
+// @Field static is shared by every WellMonitor instance; an entry older than
+// GITHUB_CHECK_TIMEOUT_MS counts as a lost callback.
+@Field static final ConcurrentHashMap<String, Long> githubVersionRefreshPending = new ConcurrentHashMap<>()
+@Field static final long GITHUB_CHECK_TIMEOUT_MS = 60000L
 
 definition(
     name: APP_NAME,
@@ -464,7 +469,9 @@ void powerHandler(Event evt) {
         return
     }
 
-    long currentTime = now()
+    // Event time, not now(): a handler queued behind another (singleThreaded) would
+    // otherwise shift pump start/stop times by the wait.
+    long currentTime = eventTimeMs(evt)
     BigDecimal prevPower = (state.previousPower ?: 0) as BigDecimal
     int offThreshold = (powerOffThreshold ?: 10) as int
     int onThreshold = (powerOnThreshold ?: 100) as int
@@ -637,6 +644,10 @@ private void performEmergencyShutoff(BigDecimal durationSeconds) {
 
 // ==================== Volume Tracking ====================
 
+private long eventTimeMs(Event evt) {
+    return (evt?.date?.time ?: now()) as long
+}
+
 void volumeHandler(Event evt) {
     logDebug("Volume event: ${evt.value}L")
 }
@@ -657,7 +668,7 @@ void rateHandler(Event evt) {
     if (rate > 0 && !state.flowActive) {
         // Flow just started
         state.flowActive = true
-        state.flowBeginTime = now()
+        state.flowBeginTime = eventTimeMs(evt)
         state.flowVolumeBegin = readVolume()
         if (flowIndicatorSwitch) flowIndicatorSwitch.on()
         logInfo("Water flow started")
@@ -667,7 +678,7 @@ void rateHandler(Event evt) {
         state.flowActive = false
         if (flowIndicatorSwitch) flowIndicatorSwitch.off()
 
-        long flowEnd = now()
+        long flowEnd = eventTimeMs(evt)
         BigDecimal volumeEnd = readVolume()
         BigDecimal volumeBegin = (state.flowVolumeBegin ?: 0.0) as BigDecimal
         BigDecimal volumeDelivered = volumeEnd - volumeBegin
@@ -1345,15 +1356,17 @@ private void appendToCsvLog(long timestamp, BigDecimal durationSeconds, BigDecim
 // Fires an async refresh if the cache is older than 1 hour.
 String checkGithubVersion() {
     long lastCheck = (state.lastGithubVersionCheck ?: 0L) as long
-    if (now() - lastCheck >= 3600000L && !githubVersionRefreshPending) {
-        githubVersionRefreshPending = true
+    String key = app.id as String
+    Long pendingAt = githubVersionRefreshPending[key]
+    if (now() - lastCheck >= 3600000L && (pendingAt == null || now() - pendingAt > GITHUB_CHECK_TIMEOUT_MS)) {
+        githubVersionRefreshPending[key] = now()
         asynchttpGet('githubVersionCallback', [uri: IMPORT_URL_APP, contentType: "text/plain", timeout: 10])
     }
     return state.lastGithubVersion as String
 }
 
 void githubVersionCallback(resp, data) {
-    githubVersionRefreshPending = false
+    githubVersionRefreshPending.remove(app.id as String)
     if (resp.hasError() || resp.status != 200) {
         logDebug("GitHub version check failed: HTTP ${resp.status}")
         return
