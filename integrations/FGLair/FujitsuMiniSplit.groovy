@@ -71,7 +71,9 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.2.2"
+@Field static final String CODE_VERSION = "0.2.3"
+// A held low setpoint is dropped if the unit hasn't reported heat by then.
+@Field static final long HELD_SETPOINT_MS = 600_000L
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 
 @Field static final List<String> SUPPORTED_STD_MODES = ["\"off\"", "\"heat\"", "\"cool\"", "\"auto\""]
@@ -150,6 +152,7 @@ void setFujitsuMode(String mode) {
 private void writeMode(String mode) {
     Integer code = OP_MODE_INV[mode]
     if (code == null) { logWarn "writeMode(${mode}): no int code"; return }
+    if (mode != "heat") state.remove("heldSetpoint")
     String prevMode = device.currentValue("fujitsuMode")
     logInfo "setting operation_mode -> ${mode} (${code})"
     parent?.sendCommand(device.deviceNetworkId, "operation_mode", code)
@@ -162,7 +165,7 @@ private void writeMode(String mode) {
         preset = device.currentValue("coolingSetpoint") as BigDecimal
     }
     if (preset != null) {
-        logInfo "mode change ${prevMode} -> ${mode}: pushing stored ${mode}ingSetpoint ${preset}${getTemperatureScale()} to unit"
+        logInfo "mode change ${prevMode} -> ${mode}: stored ${mode}ingSetpoint is ${preset}${getTemperatureScale()}"
         pushSetpointToUnit(preset)
     }
 
@@ -251,6 +254,15 @@ private BigDecimal clampSetpoint(String role, BigDecimal t) {
 }
 
 private void pushSetpointToUnit(BigDecimal clamped) {
+    // Below the cool minimum a setpoint is valid only in heat. Written while the
+    // unit is in any other mode, it is a value the unit can't honor, the kind that
+    // jams the cloud write queue. Hold it until a poll confirms heat.
+    if (clamped < convertFromC(SETPOINT_MIN_C.cool) && state.unitMode != "heat") {
+        state.heldSetpoint = [value: clamped, at: now()]
+        logInfo "holding setpoint ${clamped}${getTemperatureScale()} until the unit reports heat mode"
+        return
+    }
+    state.remove("heldSetpoint")
     BigDecimal aylaValue = scaleToAylaSetpoint(clamped)
     logInfo "setting adjust_temperature -> ${clamped}${getTemperatureScale()} (raw ${aylaValue})"
     parent?.sendCommand(device.deviceNetworkId, "adjust_temperature", aylaValue.toInteger())
@@ -302,7 +314,9 @@ void updateState(Map data) {
                   descriptionText: "${device} thermostatSetpoint is ${sp}${getTemperatureScale()}")
         // Mirror to mode-specific slot. Bootstrap empty heat/cool attributes on first observation.
         String modeNow = fujMode ?: device.currentValue("fujitsuMode")
-        if (modeNow == "heat" || device.currentValue("heatingSetpoint") == null) {
+        // A held setpoint is the user's newer intent; don't overwrite it with the unit's old value.
+        boolean holding = state.heldSetpoint != null
+        if ((modeNow == "heat" && !holding) || device.currentValue("heatingSetpoint") == null) {
             sendEvent(name: "heatingSetpoint", value: sp, unit: getTemperatureScale(),
                       descriptionText: "${device} heatingSetpoint is ${sp}${getTemperatureScale()}")
         }
@@ -312,9 +326,11 @@ void updateState(Map data) {
         }
     }
     if (fujMode != null) {
+        state.unitMode = fujMode  // poll-confirmed, unlike the optimistic fujitsuMode attribute
         emitMode(fujMode, temp != null ? temp : device.currentValue("temperature") as BigDecimal,
                  sp != null ? sp : device.currentValue("thermostatSetpoint") as BigDecimal)
     }
+    sendHeldSetpoint()
     if (data.fanSpeed != null) {
         String speed = FAN_MODE[(int) data.fanSpeed]
         if (speed != null) emitFanSpeed(speed)
@@ -352,6 +368,17 @@ void updateState(Map data) {
             device.updateDataValue(dataKey, v.toString())
         }
     }
+}
+
+private void sendHeldSetpoint() {
+    Map held = state.heldSetpoint as Map
+    if (!held) return
+    if (now() - (held.at as long) > HELD_SETPOINT_MS) {
+        state.remove("heldSetpoint")
+        logInfo "held setpoint ${held.value} not sent: the unit didn't report heat mode"
+        return
+    }
+    if (state.unitMode == "heat") pushSetpointToUnit(held.value as BigDecimal)
 }
 
 // Called by the parent with the unit's cloud link state, or "offline" when the

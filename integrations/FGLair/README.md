@@ -66,6 +66,7 @@ Fujitsu units have one physical setpoint (`adjust_temperature`), but the driver 
 - `setHeatingSetpoint(t)` always updates `heatingSetpoint` locally. Writes to the unit when mode is `heat`, `auto`, `dry`, or `off`.
 - `setCoolingSetpoint(t)` always updates `coolingSetpoint` locally. Writes to the unit when mode is `cool`, `auto`, `dry`, or `off`.
 - When mode transitions to `heat`, the stored `heatingSetpoint` is auto-pushed to the unit. Same for `cool`.
+- A heating setpoint below 18°C is only valid in heat mode. If the unit isn't confirmed in heat yet (for example right after a switch from cool), the driver holds it and sends it once a poll shows the unit in heat. Switching to another mode cancels it; it is dropped after 10 minutes.
 - `thermostatSetpoint` is the device-confirmed value — updated only on the next poll, mirroring the built-in Ecobee integration. `heatingSetpoint` / `coolingSetpoint` are user-intent presets and update immediately on the command.
 
 ### Standard command policy
@@ -99,7 +100,7 @@ The device's **Refresh** command wakes the sensors and reads 15 s later. Wakes a
 
 ## Orphans
 
-If a unit is removed from your FGLair account, the Hubitat child is flagged as orphaned on the manager page but **not auto-deleted**. Click **Remove orphaned devices** on the manager to remove them explicitly.
+If a unit is removed from your FGLair account, the Hubitat child is flagged as orphaned on the manager page but **not auto-deleted**. Click **Remove orphaned devices** on the manager and confirm to remove them.
 
 ## Discovered Properties (debug)
 

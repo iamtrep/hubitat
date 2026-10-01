@@ -100,10 +100,6 @@ Research findings (so this isn't re-done): no open-source FGLair/Fujitsu project
 
 The FGLair app sends control commands to the unit over Ayla Local LAN Mode, never through the cloud write path this integration uses. Moving writes to LAN would remove the cloud queue-jam risk at its source. Investigation notes and captures: `LAN_MODE.md`.
 
-## Housekeeping
-
-- **Confirm pages** for the destructive "Disconnect" and "Remove orphaned devices" buttons — tracked in the repo-level `TODO.md`.
-
 ## Discovery debug section refinements
 
 The `atomicState.knownProperties` accumulator is currently single-unit-blind (one map for all units combined). Future improvements if the discovery surface ever gets reused in a multi-unit account:

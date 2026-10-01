@@ -33,7 +33,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "0.2.2"
+@Field static final String CODE_VERSION = "0.2.3"
 
 // Region-specific Ayla endpoints + app credentials, lifted from
 // ayla-iot-unofficial/src/ayla_iot_unofficial/const.py and fujitsu_consts.py.
@@ -102,6 +102,10 @@ preferences {
     page(name: "mainPage")
     page(name: "loginPage")
     page(name: "discoveredPropertiesPage")
+    page(name: "confirmRemoveOrphansPage")
+    page(name: "removeOrphansPage")
+    page(name: "confirmDisconnectPage")
+    page(name: "disconnectPage")
 }
 
 Map mainPage() {
@@ -129,7 +133,8 @@ Map mainPage() {
                     orphans.each { Map o ->
                         paragraph "<a href='/device/edit/${o.id}' target='_blank'>${o.label}</a> (${o.dni})"
                     }
-                    input "btnRemoveOrphans", "button", title: "Remove orphaned devices"
+                    href "confirmRemoveOrphansPage", title: "Remove orphaned devices",
+                         description: "Review and confirm before anything is deleted"
                 }
             }
             section {
@@ -140,7 +145,9 @@ Map mainPage() {
                         ? "No properties observed yet — wait for one poll cycle."
                         : "${known.size()} property name(s) observed — tap to view"
             }
-            section("Actions") { input "btnDisconnect", "button", title: "Disconnect" }
+            section("Actions") {
+                href "confirmDisconnectPage", title: "Disconnect", description: "Review and confirm"
+            }
         } else {
             section {
                 if (state.authError) paragraph "<span style='color:red;'><b>Error:</b> ${state.authError}</span>"
@@ -246,9 +253,7 @@ void appButtonHandler(String btn) {
     logDebug "appButtonHandler(${btn})"
     switch (btn) {
         case "btnLogin":            signIn(); break
-        case "btnDisconnect":       disconnect(); break
         case "btnRefreshNow":       fetchDevices(); break
-        case "btnRemoveOrphans":    removeOrphans(); break
         case "btnResetDiscovered":  resetDiscoveredProperties(); break
         default: logWarn "unhandled button: ${btn}"
     }
@@ -263,11 +268,89 @@ private void renderChildList() {
     }
 }
 
+// --- Confirmation pages ---
+// Each destructive action is an href to a confirm page, whose Confirm link carries
+// a single-use token to the page that acts. A refresh or a stale link finds the
+// token gone and does nothing.
+
+Map confirmRemoveOrphansPage() {
+    List<Map> orphans = (atomicState.orphanedDevices ?: []) as List<Map>
+    dynamicPage(name: "confirmRemoveOrphansPage", title: "Remove orphaned devices?") {
+        section(sectionClass: "fglair-confirm") {
+            hideDoneButton()
+            if (!orphans) {
+                paragraph "No orphaned devices."
+            } else {
+                paragraph "These devices will be deleted. Rules and dashboards that use them stop working. This can't be undone."
+                orphans.each { Map o -> paragraph "${o.label} (${o.dni})" }
+                href "removeOrphansPage", title: "Delete ${orphans.size()} device(s)",
+                     params: [token: issueConfirmToken("removeOrphans")]
+            }
+            href "mainPage", title: "Cancel"
+        }
+    }
+}
+
+Map removeOrphansPage(Map params) {
+    String result = consumeConfirmToken("removeOrphans", params)
+    if (result == "act") removeOrphans()
+    dynamicPage(name: "removeOrphansPage", title: "Remove orphaned devices", nextPage: "mainPage") {
+        section {
+            paragraph result == "stale" ? "Nothing removed: this link was already used." : "Orphaned devices removed."
+        }
+    }
+}
+
+Map confirmDisconnectPage() {
+    dynamicPage(name: "confirmDisconnectPage", title: "Disconnect from FGLair?") {
+        section(sectionClass: "fglair-confirm") {
+            hideDoneButton()
+            paragraph "Polling stops and every unit shows offline until you log in again. The units' devices and your stored login are kept."
+            href "disconnectPage", title: "Disconnect", params: [token: issueConfirmToken("disconnect")]
+            href "mainPage", title: "Cancel"
+        }
+    }
+}
+
+Map disconnectPage(Map params) {
+    String result = consumeConfirmToken("disconnect", params)
+    if (result == "act") disconnect()
+    dynamicPage(name: "disconnectPage", title: "Disconnect", nextPage: "mainPage") {
+        section {
+            paragraph result == "stale" ? "Nothing done: this link was already used." : "Disconnected."
+        }
+    }
+}
+
+private void hideDoneButton() {
+    paragraph rawHtml: true, "<style>#formApp:has(.fglair-confirm) #fieldsetAppButtons button[value='Done'] { display:none !important; }</style>"
+}
+
+private String issueConfirmToken(String action) {
+    String token = UUID.randomUUID().toString()
+    state.confirmToken = [action: action, token: token]
+    return token
+}
+
+// "act" the first time a token is presented, "done" if the same page renders
+// again for that click, "stale" otherwise.
+private String consumeConfirmToken(String action, Map params) {
+    String token = params?.token
+    if (!token) return "stale"
+    Map pending = state.confirmToken as Map
+    if (pending?.action == action && pending.token == token) {
+        state.remove("confirmToken")
+        state.confirmUsed = token
+        return "act"
+    }
+    return state.confirmUsed == token ? "done" : "stale"
+}
+
 void removeOrphans() {
     List<Map> orphans = (atomicState.orphanedDevices ?: []) as List<Map>
     orphans.each { Map o ->
         try {
-            deleteChildDevice((String) o.dni)
+            deleteChildDevice((String) o.dni)  // safety-lint:ok delete-in-loop — behind confirmRemoveOrphansPage
             logInfo "removed orphan ${o.dni}"
         } catch (Exception e) {
             logError "remove orphan ${o.dni} failed: ${e.message}"

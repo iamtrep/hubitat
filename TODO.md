@@ -16,10 +16,9 @@ Adopt the `dynamicPage` rendering options documented in [App page rendering](doc
 These buttons act on a single click straight from `appButtonHandler`:
 
 - `integrations/Blink/BlinkManager.groovy`: "Reset auth state (full wipe)", "Disconnect", "Remove orphaned devices"
-- `integrations/FGLair/FGLairManager.groovy`: "Disconnect", "Remove orphaned devices"
 - `integrations/visiblair/VisiblAirManager.groovy`: "Remove orphaned devices"
 
-Replace each with an `href` to a confirmation page that lists what will be removed, hides Done, and carries a single-use token in the confirm `href` `params`. `window.alertHubitat` does not fit here; it has no confirm result.
+Replace each with an `href` to a confirmation page that lists what will be removed, hides Done, and carries a single-use token in the confirm `href` `params`. `window.alertHubitat` does not fit here; it has no confirm result. `integrations/FGLair/FGLairManager.groovy` (confirmation pages section) implements this.
 
 ### 2. BlinkManager diagnostics spacing
 
