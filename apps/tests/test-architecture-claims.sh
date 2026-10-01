@@ -183,6 +183,9 @@ def ensure_instance(type_id, label, device_ids=()):
 def status_json(iid):
     return request("GET", f"/installedapp/statusJson/{iid}")
 
+def job_names(iid):
+    return sorted((j.get("handler") or j.get("methodName") or "") for j in (status_json(iid).get("scheduledJobs") or []))
+
 def app_state(iid):
     return {s["name"]: s.get("value") for s in status_json(iid).get("appState", [])}
 
@@ -442,7 +445,7 @@ check(code == 500 and st_after.get("throwAtomic") == token and st_after.get("thr
 section("Scheduling")
 
 api(iid_mt, "runIn")
-jobs = [j.get("methodName") or j.get("handler") for j in status_json(iid_mt).get("scheduledJobs", [])]
+jobs = job_names(iid_mt)
 check(jobs.count("noopDefault") == 1 and jobs.count("noopNoOverwrite") == 2,
       "runIn overwrites a same-name job by default; [overwrite:false] keeps both",
       f"scheduled jobs: {jobs}")
@@ -519,10 +522,11 @@ except urllib.error.HTTPError as e:
 # ── Reboot (opt-in) ───────────────────────────────────────────────────
 if DO_REBOOT:
     section("Scheduled jobs across a reboot (rebooting the hub)")
-    api(iid_mt, "rebootArm", dueSecs=120)
+    DUE_SECS = 25   # due while the hub is down, so it is overdue when the hub returns
+    api(iid_mt, "rebootArm", dueSecs=DUE_SECS)
     armed = app_state(iid_mt)
-    jobs_before = sorted(j.get("methodName") or "" for j in status_json(iid_mt).get("scheduledJobs", []))
-    info(f"armed: one-shot due in 120 s, far job in 1 h, every-minute cron; jobs {jobs_before}")
+    jobs_before = job_names(iid_mt)
+    info(f"armed: one-shot due in {DUE_SECS} s, far job in 1 h, every-minute cron; jobs {jobs_before}")
     request("POST", "/hub/reboot", expect="text")
     reboot_at = time.time()
     time.sleep(30)
@@ -539,12 +543,15 @@ if DO_REBOOT:
     time.sleep(150)
     _, rb = api(iid_mt, "rebootRead")
     fired = rb["fired"]
-    jobs_after = sorted(j.get("methodName") or "" for j in status_json(iid_mt).get("scheduledJobs", []))
+    jobs_after = job_names(iid_mt)
     rel = [(f["what"], round((f["at"] - rb["armedAt"]) / 1000), f["uptime"]) for f in fired]
     info(f"fired (handler, s after arming, hub uptime s): {rel}")
     info(f"jobs after reboot: {jobs_after}")
     check("rebootFar" in jobs_after, "a far-future runIn job survives the reboot", f"rebootFar missing after reboot: {jobs_after}")
-    check(any(f["what"] == "oneShot" for f in fired), "a one-shot runIn that came due during the reboot still runs",
+    one_shot = [f for f in fired if f["what"] == "oneShot"]
+    if one_shot and (one_shot[0]["at"] - rb["armedAt"]) / 1000 < DUE_SECS + 5:
+        warn("the one-shot fired before the hub went down, so this run did not test an overdue job")
+    check(bool(one_shot), "a one-shot runIn that came due while the hub was down runs after it returns",
           "the overdue one-shot never ran")
     check(sum(1 for f in fired if f["what"] == "oneShot") == 1, "the overdue one-shot runs once", "the overdue one-shot ran more than once")
     check(any(f["what"] == "everyMinute" and f["uptime"] < 600 for f in fired), "the cron schedule resumes after the reboot",
