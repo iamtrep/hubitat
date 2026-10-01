@@ -16,6 +16,14 @@ Manager v0.2.0 / driver v0.2.0 shipped behavior that was only partly exercised l
 - **Operating-state estimate.** `thermostatOperatingState` is derived from room temperature vs setpoint with a 0.5°C band (start heating at setpoint − 0.5, stop on reaching setpoint; cooling mirrors). Check it against what the unit is physically doing over a few heating days.
 - **Auth failure paths** (single-flight refresh, halt after 3 consecutive 401s or a rejected re-sign-in, queued writes replayed after refresh). Only the happy path ran live.
 
+Manager / driver v0.2.1 (2026-09-30) added the following, not yet run live:
+
+- **Poll pipeline.** Property GETs run at most 4 at a time from an in-memory per-poll queue, at most 2 sensor wakes go out per tick, a tick is skipped while the previous poll still has a request out (no activity for 20 s means none), and responses from a superseded poll are ignored. With one unit only the single-fetch path runs; the queue and wake cap only matter with more units.
+- **Request budget.** Every async call counts against one app-wide limit of 8. Token calls always go, writes keep 1 slot free (else dropped and reported `failed`), wakes and single-unit reads keep 2 (else skipped). "Refresh now" and post-auth polls wait for a running poll, retrying every 5 s. The count resets after 20 s with no request activity. A 3× `refresh()` burst ran correctly live (one wake, two reads, the delayed read 15 s later); the limits themselves were never reached.
+- **Per-unit health.** 5 failed property reads in a row mark that unit offline; the next device list after a success brings it back.
+- **`commandStatus`.** Set on every write outcome. Check that a failed write shows `failed` and the next poll restores the optimistic attributes.
+- **`singleThreaded`.** Child commands now wait for any running manager handler. All manager handlers are short (HTTP is async), so command latency should not change noticeably.
+
 ## Tier 3 — swing, mode toggles
 
 **Deferred 2026-05-18, re-deferred 2026-09-30** (no current need). All findings below are current as of 2026-09-30.
@@ -94,7 +102,6 @@ The FGLair app sends control commands to the unit over Ayla Local LAN Mode, neve
 
 ## Housekeeping
 
-- **Leftover app state:** `lastSensedWakeMs` (from the June build) is no longer read. Remove it in `migrateSensedSetting()`.
 - **Confirm pages** for the destructive "Disconnect" and "Remove orphaned devices" buttons — tracked in the repo-level `TODO.md`.
 
 ## Discovery debug section refinements

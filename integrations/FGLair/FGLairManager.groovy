@@ -16,6 +16,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
+import java.util.concurrent.ConcurrentHashMap
 
 definition(
     name: "FGLair Manager",
@@ -25,12 +26,14 @@ definition(
     menu: "Integrations",
     category: "Climate Control",
     singleInstance: true,
+    // Async callbacks read-modify-write shared state (tokens, queues, counters).
+    singleThreaded: true,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/integrations/FGLair/FGLairManager.groovy",
     iconUrl: "",
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "0.2.0"
+@Field static final String CODE_VERSION = "0.2.2"
 
 // Region-specific Ayla endpoints + app credentials, lifted from
 // ayla-iot-unofficial/src/ayla_iot_unofficial/const.py and fujitsu_consts.py.
@@ -75,6 +78,25 @@ definition(
 @Field static final long MANUAL_WAKE_MIN_MS = 60_000L
 // Delay between a manual wake and the GET that reads the woken values.
 @Field static final int MANUAL_WAKE_READ_DELAY = 15
+// Property GETs in flight at once during a poll; the platform caps an app at 8
+// concurrent async calls, and wakes, writes and auth calls need headroom.
+@Field static final int MAX_PROPERTY_FETCHES = 4
+// A poll with no request sent or answered for this long has nothing left in
+// flight (every request times out after HTTP_TIMEOUT, 15 s), so a new one may start.
+@Field static final long POLL_IDLE_MS = 20_000L
+// Sensor wakes sent per poll tick. Units still due wait for the next tick.
+@Field static final int MAX_WAKES_PER_TICK = 2
+// Longest response body echoed to debug logs.
+@Field static final int LOG_BODY_MAX = 200
+// Poll pipeline (gen, queue, inFlight, lastActivity). In memory: its async
+// callbacks don't survive a reboot or code update, so neither should it.
+// One map is enough because the app is singleInstance.
+@Field static final Map<String, Object> POLL = new ConcurrentHashMap<String, Object>()
+// Platform cap on concurrent async calls per app. Every request is counted in
+// REQ.inFlight; each path leaves slots free for the ones that matter more:
+// token calls always go, writes keep 1 free, wakes and single-unit reads keep 2.
+@Field static final int ASYNC_CAP = 8
+@Field static final Map<String, Object> REQ = new ConcurrentHashMap<String, Object>()
 
 preferences {
     page(name: "mainPage")
@@ -159,7 +181,13 @@ Map loginPage() {
 // --- Lifecycle ---
 
 void installed()   { logDebug "installed"; state.version = CODE_VERSION; initialize() }
-void updated()     { logDebug "updated"; unsubscribe(); unschedule(); initialize() }
+void updated() {
+    logDebug "updated"
+    unsubscribe()
+    unschedule()
+    initialize()
+    if (settings.debugEnable) runIn(DEBUG_LOG_TIMEOUT, "logsOff")
+}
 void uninstalled() { logDebug "uninstalled" }
 void initialize()  {
     logDebug "initialize"
@@ -178,6 +206,7 @@ void initialize()  {
 // v0.2.0 replaced "wake every N polls" with a wake interval in minutes.
 // sensedRefreshRate is an unused setting left by an earlier build.
 private void migrateSensedSetting() {
+    state.remove("lastSensedWakeMs")  // unused since the June build
     if (settings.sensedRefreshRate != null) app.removeSetting("sensedRefreshRate")
     if (settings.sensedPolls == null) return
     if (settings.sensedMinutes == null) app.updateSetting("sensedMinutes", [type: "enum", value: sensedMinutes()])
@@ -292,28 +321,41 @@ private void schedulePolling() {
 void pollTick() {
     logTrace "pollTick"
     int rate = (settings.pollRate ?: "60") as int
-    // Units due a wake are woken here; this poll's GET still reads the current
-    // values and a later poll picks up the woken ones.
-    wakeDueUnits()
-    fetchDevices()
+    // Re-arm first so an error below can't end the loop.
     if (rate < 60) {
         int jitter = -7 + new Random().nextInt(15)
         runIn(Math.max(15, rate + jitter), "pollTick")
+    }
+    // A code push doesn't run updated(); converge here on the first poll after one.
+    if (state.version != CODE_VERSION) {
+        updated()
+        return
+    }
+    if (pollInFlight()) {
+        logDebug "pollTick: previous poll still running — skipped"
+    } else {
+        // Units due a wake are woken here; this poll's GET still reads the current
+        // values and a later poll picks up the woken ones.
+        wakeDueUnits()
+        fetchDevices()
     }
 }
 
 private void wakeDueUnits() {
     long interval = ((sensedMinutes() as int) * 60_000L) - 5_000L  // slack for poll jitter
-    unitChildren().each { ChildDeviceWrapper c ->
-        if (sinceLastWake(c.deviceNetworkId) >= interval) wakeUnit(c.deviceNetworkId)
-    }
+    unitChildren().findAll { sinceLastWake(it.deviceNetworkId) >= interval }
+                  .sort { sinceLastWake(it.deviceNetworkId) }.reverse()
+                  .take(MAX_WAKES_PER_TICK)
+                  .each { ChildDeviceWrapper c -> wakeUnit(c.deviceNetworkId) }
 }
 
-private void wakeUnit(String dni) {
+private boolean wakeUnit(String dni) {
+    if (!hasRequestRoom(2)) { logDebug "wake ${dni}: ${requestsInFlight()} requests in flight — skipped"; return false }
     Map<String, Long> wakes = (atomicState.lastWakeAt ?: [:]) as Map<String, Long>
     wakes[dni] = now()
     atomicState.lastWakeAt = wakes
     sendCommand(dni, "refresh", 1)
+    return true
 }
 
 private long sinceLastWake(String dni) {
@@ -366,10 +408,11 @@ private void postSignIn(boolean manual) {
         timeout: HTTP_TIMEOUT
     ]
     logDebug "signIn POST ${params.uri} (manual=${manual})"
-    asynchttpPost("signInCallback", params, [manual: manual])
+    asyncRequest("POST", "signInCallback", params, [manual: manual])
 }
 
 void signInCallback(resp, data) {
+    requestDone()
     atomicState.remove("authStartedAt")
     boolean manual = data?.manual as Boolean
     if (resp.hasError()) {
@@ -387,7 +430,7 @@ void signInCallback(resp, data) {
     if (status != 200) {
         String msg = "Sign-in failed (HTTP ${status}). Check email/password and region."
         if (manual) {
-            logError "signIn HTTP ${status}: ${resp.getData()}"
+            logError "signIn HTTP ${status}"
             state.authError = msg
         } else {
             haltAuth(msg)
@@ -439,10 +482,11 @@ void refreshToken() {
         body: JsonOutput.toJson(body),
         timeout: HTTP_TIMEOUT
     ]
-    asynchttpPost("refreshTokenCallback", params, [:])
+    asyncRequest("POST", "refreshTokenCallback", params, [:])
 }
 
 void refreshTokenCallback(resp, data) {
+    requestDone()
     if (resp.hasError()) {
         atomicState.remove("authStartedAt")
         noteTransientFailure "refreshToken HTTP error: ${resp.getErrorMessage()}"
@@ -493,6 +537,8 @@ private boolean tokenNearExpiry() {
 // A 401 on a token we just obtained means refreshing won't help. Count them so
 // a rejected token can't drive a fetch -> 401 -> refresh -> fetch loop.
 private void noteAuthReject(String what) {
+    // Requests sent before the refresh started all fail with the same token.
+    if (authInFlight()) { logDebug "${what} HTTP 401 — refresh already in flight"; return }
     int n = ((atomicState.authRejects ?: 0) as int) + 1
     atomicState.authRejects = n
     if (n >= AUTH_REJECT_LIMIT) {
@@ -524,6 +570,8 @@ private void clearSession() {
     atomicState.remove("authStartedAt")
     atomicState.remove("authRejects")
     atomicState.remove("pendingWrites")
+    state.remove("unitFailures")
+    POLL.clear()
     unschedule()
 }
 
@@ -534,11 +582,25 @@ private Map authHeader() { return ["Authorization": "auth_token ${state.accessTo
 void fetchDevices() {
     logDebug "fetchDevices"
     if (!isAuthenticated()) { logDebug "fetchDevices: not signed in"; return }
+    // Wait for the running poll instead of stacking a second one on top of it.
+    if (pollInFlight() || !hasRequestRoom(1)) {
+        logDebug "fetchDevices: poll or requests still in flight — retrying in 5 s"
+        runIn(5, "fetchDevices")
+        return
+    }
     if (tokenNearExpiry()) {
         logDebug "token near expiry — fetchDevices runs after the refresh"
         refreshToken()
         return
     }
+    // Responses from an earlier poll that went idle are ignored. A timestamp
+    // stays unique across code updates, which reset POLL.
+    long gen = now()
+    POLL.clear()
+    POLL.gen = gen
+    POLL.queue = []
+    POLL.inFlight = 0
+    POLL.lastActivity = gen
     Map<String, String> rc = regionConfig()
     Map params = [
         uri: "${rc.ads}/apiv1/devices.json",
@@ -546,10 +608,41 @@ void fetchDevices() {
         contentType: "application/json",
         timeout: HTTP_TIMEOUT
     ]
-    asynchttpGet("fetchDevicesCallback", params, [:])
+    asyncRequest("GET", "fetchDevicesCallback", params, [gen: gen])
+}
+
+private boolean pollInFlight() {
+    Long last = POLL.lastActivity as Long
+    return last != null && now() - last < POLL_IDLE_MS
+}
+
+private boolean isCurrentPoll(Map data) {
+    boolean current = data?.gen != null && POLL.gen != null && (data.gen as long) == (POLL.gen as long)
+    if (current) POLL.lastActivity = now()
+    return current
+}
+
+private boolean pollDrained() {
+    return !POLL.queue && !POLL.inFlight
+}
+
+private void endPoll() {
+    POLL.remove("lastActivity")
+    POLL.remove("queue")
+    POLL.remove("inFlight")
 }
 
 void fetchDevicesCallback(resp, data) {
+    requestDone()
+    if (!isCurrentPoll(data)) { logDebug "fetchDevices: response from a superseded poll ignored"; return }
+    try {
+        handleDevicesResponse(resp)
+    } finally {
+        if (pollDrained()) endPoll()
+    }
+}
+
+private void handleDevicesResponse(resp) {
     if (resp.hasError()) {
         noteTransientFailure "fetchDevices HTTP error: ${resp.getErrorMessage()}"
         return
@@ -564,14 +657,15 @@ void fetchDevicesCallback(resp, data) {
         return
     }
     if (status != 200) {
-        logError "fetchDevices HTTP ${status}: ${resp.getData()}"
+        noteTransientFailure "fetchDevices HTTP ${status}"
+        logDebug "fetchDevices response: ${bodyExcerpt(resp)}"
         return
     }
     List parsed
     try {
         parsed = (List) new JsonSlurper().parseText(resp.getData())
     } catch (Exception e) {
-        logError "fetchDevices JSON parse error: ${e.message}"
+        noteTransientFailure "fetchDevices JSON parse error: ${e.message}"
         return
     }
     clearTransientFailureStreak()
@@ -581,7 +675,8 @@ void fetchDevicesCallback(resp, data) {
 
 private void handleDeviceList(List rawDevices) {
     // Ayla wraps each device under {"device": {...}}.
-    List<Map> devices = rawDevices.collect { (Map) ((Map) it).device }.findAll { it != null }
+    List<Map> devices = rawDevices.collect { it instanceof Map ? ((Map) it).device : null }
+                                  .findAll { it instanceof Map } as List<Map>
     if (devices.size() != state.lastDeviceCount) {
         logInfo "fetchDevices returned ${devices.size()} device(s)"
         state.lastDeviceCount = devices.size()
@@ -607,14 +702,33 @@ private void handleDeviceList(List rawDevices) {
         }
         // Ayla reports "Online" / "Offline" for the unit's link to the cloud.
         String conn = d.connection_status?.toString()
-        if (conn) child.updateHealth(conn.equalsIgnoreCase("Online") ? "online" : "offline")
+        // A unit whose own property reads keep failing stays offline until one succeeds.
+        boolean reachable = unitFailures(dsn) < FAILURE_ERROR_THRESHOLD
+        if (conn) child.updateHealth(conn.equalsIgnoreCase("Online") && reachable ? "online" : "offline")
     }
-    computeOrphans(liveDnis)
+    // An empty list is more likely a cloud glitch than every unit removed from the
+    // account; flagging all units as orphans would let one click delete them all.
+    if (devices) computeOrphans(liveDnis)
+    else if (unitChildren()) logWarn "FGLair returned no devices — orphan check skipped"
 
-    // After ensuring children exist, fetch each DSN's properties and dispatch.
-    devices.each { Map d ->
-        String dsn = d.dsn?.toString()
-        if (dsn) fetchProperties(dsn)
+    // After ensuring children exist, fetch each DSN's properties and dispatch,
+    // a few at a time so large accounts stay under the async-call cap.
+    POLL.queue = devices.collect { it.dsn?.toString() }.findAll { it }
+    MAX_PROPERTY_FETCHES.times { fetchNextQueued() }
+}
+
+private void fetchNextQueued() {
+    List<String> queue = (POLL.queue ?: []) as List<String>
+    if (!queue) return
+    if (((POLL.inFlight ?: 0) as int) >= MAX_PROPERTY_FETCHES || !hasRequestRoom(1)) return
+    String dsn = queue.remove(0)
+    POLL.queue = queue
+    if (sendPropertiesGet(dsn, POLL.gen as Long)) {
+        POLL.inFlight = ((POLL.inFlight ?: 0) as int) + 1
+        POLL.lastActivity = now()
+    } else {
+        // Token refresh started; afterAuth() re-polls every unit.
+        POLL.remove("queue")
     }
 }
 
@@ -623,8 +737,15 @@ private void handleDeviceList(List rawDevices) {
 // every GET and jammed the unit's per-DSN write queue. Sensed temps are woken
 // separately and sparingly by wakeDueUnits() and refreshUnit().
 void fetchProperties(String dsn) {
+    if (!hasRequestRoom(2)) { logDebug "fetchProperties(${dsn}): ${requestsInFlight()} requests in flight — next poll reads it"; return }
+    sendPropertiesGet(dsn, null)
+}
+
+// gen ties a fetch to the poll that queued it; null for a single-unit refresh.
+// Returns false when the GET was deferred behind a token refresh.
+private boolean sendPropertiesGet(String dsn, Long gen) {
     // A deferred fetch is covered by afterAuth(), which re-polls every unit.
-    if (tokenNearExpiry()) { refreshToken(); return }
+    if (tokenNearExpiry()) { refreshToken(); return false }
     Map<String, String> rc = regionConfig()
     Map params = [
         uri: "${rc.ads}/apiv1/dsns/${dsn}/properties.json",
@@ -632,29 +753,56 @@ void fetchProperties(String dsn) {
         contentType: "application/json",
         timeout: HTTP_TIMEOUT
     ]
-    asynchttpGet("fetchPropertiesCallback", params, [dsn: dsn])
+    asyncRequest("GET", "fetchPropertiesCallback", params, [dsn: dsn, gen: gen])
+    return true
 }
 
 void fetchPropertiesCallback(resp, data) {
-    String dsn = data?.dsn
-    if (resp.hasError()) { noteTransientFailure "fetchProperties(${dsn}) HTTP error: ${resp.getErrorMessage()}"; return }
+    releaseRequest()  // the next read starts in finally, after a 401 has cleared the queue
+    boolean queued = data?.gen != null
+    if (queued) {
+        if (!isCurrentPoll(data)) { logDebug "fetchProperties(${data?.dsn}): response from a superseded poll ignored"; return }
+        POLL.inFlight = Math.max(0, ((POLL.inFlight ?: 0) as int) - 1)
+    }
+    try {
+        handlePropertiesResponse(resp, (String) data?.dsn)
+    } finally {
+        if (queued) {
+            fetchNextQueued()
+            if (pollDrained()) endPoll()
+        }
+    }
+}
+
+private void handlePropertiesResponse(resp, String dsn) {
+    if (resp.hasError()) { noteUnitFailure(dsn, "fetchProperties(${dsn}) HTTP error: ${resp.getErrorMessage()}"); return }
     int status = resp.getStatus()
-    if (status == 401) { noteAuthReject("fetchProperties(${dsn})"); return }
-    if (status >= 500) { noteTransientFailure "fetchProperties(${dsn}) HTTP ${status}"; return }
-    if (status != 200) { logError "fetchProperties(${dsn}) HTTP ${status}"; return }
+    if (status == 401) {
+        POLL.remove("queue")  // the rest would fail on the same token
+        noteAuthReject("fetchProperties(${dsn})")
+        return
+    }
+    if (status >= 500) { noteUnitFailure(dsn, "fetchProperties(${dsn}) HTTP ${status}"); return }
+    if (status != 200) { noteUnitFailure(dsn, "fetchProperties(${dsn}) HTTP ${status}"); return }
     List parsed
     try { parsed = (List) new JsonSlurper().parseText(resp.getData()) }
-    catch (Exception e) { logError "fetchProperties parse: ${e.message}"; return }
+    catch (Exception e) { noteUnitFailure(dsn, "fetchProperties(${dsn}) parse: ${e.message}"); return }
     clearTransientFailureStreak()
+    clearUnitFailures(dsn)
     clearAuthRejects()
 
     Map<String, Object> props = [:]
     parsed.each { item ->
-        Map p = (Map) ((Map) item).property
-        if (p?.name) props[((String) p.name).toLowerCase()] = p.value
+        Object p = item instanceof Map ? ((Map) item).property : null
+        if (p instanceof Map && p.name) props[p.name.toString().toLowerCase()] = p.value
+    }
+    if (parsed && !props) {
+        noteUnitFailure(dsn, "fetchProperties(${dsn}): unrecognized response shape — keeping last state")
+        return
     }
     Map<String, Object> known = (atomicState.knownProperties ?: [:]) as Map<String, Object>
-    atomicState.knownProperties = (known + props)
+    Map<String, Object> merged = known + props
+    if (merged != known) atomicState.knownProperties = merged
     Map stateMap = [
         opMode          : props["operation_mode"],
         fanSpeed        : props["fan_speed"],
@@ -670,7 +818,11 @@ void fetchPropertiesCallback(resp, data) {
     ]
     logTrace "fetchProperties(${dsn}) -> ${stateMap}"
     ChildDeviceWrapper child = getChildDevice("${DNI_PREFIX_UNIT}${dsn}")
-    child?.updateState(stateMap)
+    try {
+        child?.updateState(stateMap)
+    } catch (Exception e) {
+        logError "fetchProperties(${dsn}): unexpected property values: ${e.message}"
+    }
 }
 
 // Child refresh(): mirrors the lib's refresh_sensed_temp() — wake the sensors,
@@ -679,13 +831,12 @@ void fetchPropertiesCallback(resp, data) {
 void refreshUnit(String dni) {
     String dsn = dni?.replaceFirst("^${java.util.regex.Pattern.quote(DNI_PREFIX_UNIT)}", "")
     if (!dsn) return
-    if (sinceLastWake(dni) < MANUAL_WAKE_MIN_MS) {
-        logDebug "refreshUnit(${dsn}): woken recently, reading only"
-        fetchProperties(dsn)
+    if (sinceLastWake(dni) >= MANUAL_WAKE_MIN_MS && wakeUnit(dni)) {
+        runIn(MANUAL_WAKE_READ_DELAY, "fetchPropertiesDeferred", [data: [dsn: dsn], overwrite: false])
         return
     }
-    wakeUnit(dni)
-    runIn(MANUAL_WAKE_READ_DELAY, "fetchPropertiesDeferred", [data: [dsn: dsn], overwrite: false])
+    logDebug "refreshUnit(${dsn}): reading only"
+    fetchProperties(dsn)
 }
 
 void fetchPropertiesDeferred(Map data) { fetchProperties((String) data.dsn) }
@@ -695,8 +846,13 @@ void fetchPropertiesDeferred(Map data) { fetchProperties((String) data.dsn) }
 void sendCommand(String dni, String propertyName, Object value) {
     String dsn = dni?.replaceFirst("^${java.util.regex.Pattern.quote(DNI_PREFIX_UNIT)}", "")
     if (!dsn) { logError "sendCommand: invalid dni ${dni}"; return }
-    if (!isAuthenticated()) { logWarn "sendCommand(${propertyName}): not signed in — dropped"; return }
-    if (tokenNearExpiry()) {
+    if (!isAuthenticated()) {
+        logWarn "sendCommand(${propertyName}): not signed in — dropped"
+        reportCommand(dsn, propertyName, false)
+        return
+    }
+    // While a refresh runs the current token may be the one just rejected.
+    if (tokenNearExpiry() || authInFlight()) {
         queuePendingWrite(dsn, propertyName, value, false)
         refreshToken()
         return
@@ -726,6 +882,11 @@ private void flushPendingWrites() {
 }
 
 private void writeDatapoint(String dsn, String propertyName, Object value, boolean retried) {
+    if (!hasRequestRoom(1)) {
+        logWarn "writeDatapoint(${propertyName}): ${requestsInFlight()} requests in flight — dropped"
+        reportCommand(dsn, propertyName, false)
+        return
+    }
     Map<String, String> rc = regionConfig()
     Map body = [datapoint: [value: value]]
     Map params = [
@@ -737,19 +898,26 @@ private void writeDatapoint(String dsn, String propertyName, Object value, boole
         timeout: HTTP_TIMEOUT
     ]
     logDebug "writeDatapoint dsn=${dsn} ${propertyName}=${value}"
-    asynchttpPost("writeDatapointCallback", params,
-                  [dsn: dsn, name: propertyName, value: value, retried: retried])
+    asyncRequest("POST", "writeDatapointCallback", params,
+                 [dsn: dsn, name: propertyName, value: value, retried: retried])
 }
 
+// Failed writes are not retried: a write the unit can't honor jams the per-DSN
+// queue. The child reports the failure and the next poll restores true state.
 void writeDatapointCallback(resp, data) {
+    requestDone()
+    String dsn = data?.dsn
+    String name = data?.name
     if (resp.hasError()) {
-        logWarn "writeDatapoint(${data?.name}) HTTP error: ${resp.getErrorMessage()}"
+        logWarn "writeDatapoint(${name}) HTTP error: ${resp.getErrorMessage()}"
+        reportCommand(dsn, name, false)
         return
     }
     int status = resp.getStatus()
     if (status == 401) {
         if (data?.retried) {
-            logError "writeDatapoint(${data?.name}) HTTP 401 after token refresh — dropped"
+            logError "writeDatapoint(${name}) HTTP 401 after token refresh — dropped"
+            reportCommand(dsn, name, false)
             return
         }
         queuePendingWrite((String) data.dsn, (String) data.name, data.value, true)
@@ -757,15 +925,59 @@ void writeDatapointCallback(resp, data) {
         return
     }
     if (status >= 500) {
-        logWarn "writeDatapoint(${data?.name}) HTTP ${status}"
+        logWarn "writeDatapoint(${name}) HTTP ${status}"
+        reportCommand(dsn, name, false)
         return
     }
     if (status != 200 && status != 201) {
-        logError "writeDatapoint(${data?.name}) HTTP ${status}: ${resp.getData()}"
+        logError "writeDatapoint(${name}) HTTP ${status}"
+        logDebug "writeDatapoint(${name}) response: ${bodyExcerpt(resp)}"
+        reportCommand(dsn, name, false)
         return
     }
     clearAuthRejects()
-    logDebug "writeDatapoint(${data?.name}) ok"
+    logDebug "writeDatapoint(${name}) ok"
+    reportCommand(dsn, name, true)
+}
+
+// Every async call goes through here so all paths share one count against ASYNC_CAP.
+// Each callback calls requestDone() first; callbacks always fire, at the latest on timeout.
+private void asyncRequest(String method, String callback, Map params, Map data) {
+    REQ.inFlight = requestsInFlight() + 1
+    REQ.lastActivity = now()
+    try {
+        if (method == "GET") asynchttpGet(callback, params, data)
+        else asynchttpPost(callback, params, data)
+    } catch (Exception e) {
+        releaseRequest()
+        throw e
+    }
+}
+
+// Every request times out after HTTP_TIMEOUT, so after POLL_IDLE_MS with no
+// request sent or answered nothing can still be in flight; the count resets
+// in case a callback was lost.
+private int requestsInFlight() {
+    Long last = REQ.lastActivity as Long
+    if (last == null || now() - last >= POLL_IDLE_MS) REQ.inFlight = 0
+    return (REQ.inFlight ?: 0) as int
+}
+
+private boolean hasRequestRoom(int reserve) { return requestsInFlight() < ASYNC_CAP - reserve }
+
+private void releaseRequest() {
+    REQ.inFlight = Math.max(0, requestsInFlight() - 1)
+    REQ.lastActivity = now()
+}
+
+// A freed slot may unblock poll reads that were waiting on other requests.
+private void requestDone() {
+    releaseRequest()
+    fetchNextQueued()
+}
+
+private void reportCommand(String dsn, String name, boolean ok) {
+    getChildDevice("${DNI_PREFIX_UNIT}${dsn}")?.commandResult(name, ok)
 }
 
 private void computeOrphans(Set<String> liveDnis) {
@@ -783,6 +995,7 @@ private void computeOrphans(Set<String> liveDnis) {
 void disconnect() {
     logInfo "disconnecting"
     clearSession()
+    markUnitsOffline()
 }
 
 // --- Logging ---
@@ -793,6 +1006,18 @@ private void logInfo(String msg)  { if (settings.txtEnable)   log.info  "${app.l
 private void logWarn(String msg)  { log.warn  "${app.label} ${msg}" }
 private void logError(String msg) { log.error "${app.label} ${msg}" }
 
+private String bodyExcerpt(resp) {
+    String body = resp.getData()?.toString() ?: ""
+    return body.length() > LOG_BODY_MAX ? body.take(LOG_BODY_MAX) + "…" : body
+}
+
+void logsOff() {
+    logWarn "debug and trace logging disabled"
+    app.updateSetting("debugEnable", [value: "false", type: "bool"])
+    app.updateSetting("traceEnable", [value: "false", type: "bool"])
+}
+
+// Cloud-level failures (auth, device list). Per-unit property reads use noteUnitFailure().
 private void noteTransientFailure(String msg) {
     int n = ((state.consecutiveFetchFailures ?: 0) as int) + 1
     state.consecutiveFetchFailures = n
@@ -812,4 +1037,31 @@ private void markUnitsOffline() {
 
 private void clearTransientFailureStreak() {
     if (state.consecutiveFetchFailures) state.consecutiveFetchFailures = 0
+}
+
+// A unit whose property reads keep failing is marked offline on its own,
+// without counting against the cloud streak.
+private void noteUnitFailure(String dsn, String msg) {
+    Map<String, Integer> fails = (state.unitFailures ?: [:]) as Map<String, Integer>
+    int n = ((fails[dsn] ?: 0) as int) + 1
+    fails[dsn] = n
+    state.unitFailures = fails
+    if (n == FAILURE_ERROR_THRESHOLD) getChildDevice("${DNI_PREFIX_UNIT}${dsn}")?.updateHealth("offline")
+    if (n >= FAILURE_ERROR_THRESHOLD) {
+        logError "${msg} (failure streak: ${n})"
+    } else {
+        logWarn msg
+    }
+}
+
+private int unitFailures(String dsn) {
+    return (((state.unitFailures ?: [:]) as Map)[dsn] ?: 0) as int
+}
+
+private void clearUnitFailures(String dsn) {
+    Map<String, Integer> fails = (state.unitFailures ?: [:]) as Map<String, Integer>
+    if (!fails.containsKey(dsn)) return
+    fails.remove(dsn)
+    state.unitFailures = fails
+    // Health comes back with the next device list, which carries the unit's own link state.
 }

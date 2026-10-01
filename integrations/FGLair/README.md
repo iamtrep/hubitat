@@ -44,7 +44,8 @@ Region (US / EU) is configurable on the manager page; the region setting drives 
 - `outdoorTemperature` — temperature reported by the outdoor unit (number)
 - `errorCode` — raw Fujitsu error code (number; `0` = no fault). Transitions `0 → non-0` log a warning; `non-0 → 0` logs an info-level clear.
 - `opStatus` — raw operational status (number). Logged at info level on change.
-- `healthStatus` — `online` / `offline`, from the unit's cloud connection status. Also set to `offline` after 5 consecutive failed cloud requests or when the manager stops polling on an auth failure.
+- `healthStatus` — `online` / `offline`, from the unit's cloud connection status. Also set to `offline` after 5 consecutive failed cloud requests, after 5 consecutive failed property reads for that unit, or when the manager stops polling on an auth failure.
+- `commandStatus` — `ok` / `failed`, the outcome of the last write to the unit. Failed writes are not retried, since a retried write can jam the unit's cloud write queue; the next poll restores the real state.
 - `setFujitsuMode(String)` command — accepts the full mode enum
 - `setFanSpeed(String)` command — accepts the full fan-speed enum
 
@@ -90,7 +91,7 @@ The `optimisticUpdates` driver preference (default **on**) controls how non-setp
 
 ## Polling
 
-Default poll interval is 60 s. Configurable to 30 / 60 / 120 / 300 s. Each cycle fetches the device list, then issues one plain `properties.json` GET per indoor unit — mirroring `ayla-iot-unofficial`'s `device.async_update()`. Mode, setpoint and fan changes propagate to the cloud within seconds.
+Default poll interval is 60 s. Configurable to 30 / 60 / 120 / 300 s. Each cycle fetches the device list, then issues one plain `properties.json` GET per indoor unit, at most 4 at a time — mirroring `ayla-iot-unofficial`'s `device.async_update()`. Mode, setpoint and fan changes propagate to the cloud within seconds.
 
 Room and outdoor temperatures are "sensed" properties: the cloud serves a cached value it refreshes on its own only about once a day. The manager wakes each unit's sensors by writing `refresh=1` once per **Wake sensed temps every** interval (10 / 15 / 30 / 60 min, default 15), independent of the poll interval; a later poll reads the fresh values. Writing it more often risks jamming the unit's cloud write queue, which blocks setpoint changes from every source.
 

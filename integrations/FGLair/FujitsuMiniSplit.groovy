@@ -44,6 +44,11 @@ metadata {
         attribute "errorCode",                   "number"
         attribute "opStatus",                    "number"
         attribute "healthStatus",                "enum", ["online", "offline"]
+        attribute "commandStatus",               "enum", ["ok", "failed"]
+        attribute "minHeatingSetpoint",          "number"
+        attribute "maxHeatingSetpoint",          "number"
+        attribute "minCoolingSetpoint",          "number"
+        attribute "maxCoolingSetpoint",          "number"
 
         command "setFujitsuMode", [[name: "mode*", type: "ENUM",
                                     description: "Fujitsu operation mode",
@@ -66,18 +71,24 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.2.0"
+@Field static final String CODE_VERSION = "0.2.2"
+@Field static final int DEBUG_LOG_TIMEOUT = 1800
 
 @Field static final List<String> SUPPORTED_STD_MODES = ["\"off\"", "\"heat\"", "\"cool\"", "\"auto\""]
 @Field static final List<String> SUPPORTED_STD_FAN_MODES = ["\"auto\"", "\"on\""]
 // Setpoint range in °C, per role.
 @Field static final Map<String, BigDecimal> SETPOINT_MIN_C = ["heat": 16, "cool": 18]
 @Field static final BigDecimal SETPOINT_MAX_C = 30
-@Field static final List<String> FUJITSU_MODES = ["off","heat","cool","auto","dry","fan_only"]
-@Field static final List<String> FUJITSU_FAN_SPEEDS = ["auto","quiet","low","medium","high"]
 
 void installed() { logDebug "installed"; state.version = CODE_VERSION; initialize() }
-void updated()   { logDebug "updated"; unschedule(); initialize() }
+void updated() {
+    logDebug "updated"
+    unschedule()
+    initialize()
+    if (settings.debugEnable) runIn(DEBUG_LOG_TIMEOUT, "logsOff")
+}
+// Re-seeds the supported-mode lists and setpoint bounds, which a driver swap leaves unset.
+void deviceTypeUpdated() { logDebug "driver change detected"; initialize() }
 void initialize() {
     logDebug "initialize"
     if (state.version != CODE_VERSION) {
@@ -275,28 +286,18 @@ void fanCirculate()   { logWarn "fanCirculate() not a standard Fujitsu fan setti
 
 void updateState(Map data) {
     logTrace "updateState(${data})"
-    String fujMode = null
-    if (data.opMode != null) {
-        fujMode = OP_MODE[(int) data.opMode]
-        if (fujMode != null) {
-            BigDecimal temp = data.displayTemp != null ? aylaSensorToScale(data.displayTemp)
-                                                       : device.currentValue("temperature") as BigDecimal
-            BigDecimal sp = data.adjustTemp != null ? aylaSetpointToScale(data.adjustTemp)
-                                                    : device.currentValue("thermostatSetpoint") as BigDecimal
-            emitMode(fujMode, temp, sp)
-        }
+    // A code push doesn't run updated(); the parent calls this every poll.
+    if (state.version != CODE_VERSION) initialize()
+    String fujMode = data.opMode != null ? OP_MODE[(int) data.opMode] : null
+    BigDecimal temp = data.displayTemp != null ? aylaSensorToScale(data.displayTemp) : null
+    BigDecimal sp = data.adjustTemp != null ? aylaSetpointToScale(data.adjustTemp) : null
+    // Temperature and setpoint go out before the mode and operating state, so a
+    // subscriber to thermostatOperatingState reads the values it was derived from.
+    if (temp != null) {
+        sendEvent(name: "temperature", value: temp, unit: getTemperatureScale(),
+                  descriptionText: "${device} temperature is ${temp}${getTemperatureScale()}")
     }
-    if (data.fanSpeed != null) {
-        String speed = FAN_MODE[(int) data.fanSpeed]
-        if (speed != null) emitFanSpeed(speed)
-    }
-    if (data.displayTemp != null) {
-        BigDecimal t = aylaSensorToScale(data.displayTemp)
-        sendEvent(name: "temperature", value: t, unit: getTemperatureScale(),
-                  descriptionText: "${device} temperature is ${t}${getTemperatureScale()}")
-    }
-    if (data.adjustTemp != null) {
-        BigDecimal sp = aylaSetpointToScale(data.adjustTemp)
+    if (sp != null) {
         sendEvent(name: "thermostatSetpoint", value: sp, unit: getTemperatureScale(),
                   descriptionText: "${device} thermostatSetpoint is ${sp}${getTemperatureScale()}")
         // Mirror to mode-specific slot. Bootstrap empty heat/cool attributes on first observation.
@@ -309,6 +310,14 @@ void updateState(Map data) {
             sendEvent(name: "coolingSetpoint", value: sp, unit: getTemperatureScale(),
                       descriptionText: "${device} coolingSetpoint is ${sp}${getTemperatureScale()}")
         }
+    }
+    if (fujMode != null) {
+        emitMode(fujMode, temp != null ? temp : device.currentValue("temperature") as BigDecimal,
+                 sp != null ? sp : device.currentValue("thermostatSetpoint") as BigDecimal)
+    }
+    if (data.fanSpeed != null) {
+        String speed = FAN_MODE[(int) data.fanSpeed]
+        if (speed != null) emitFanSpeed(speed)
     }
     if (data.outdoorTemp != null) {
         BigDecimal ot = aylaSensorToScale(data.outdoorTemp)
@@ -339,15 +348,12 @@ void updateState(Map data) {
     [modelName: "modelName", firmwareVersion: "firmwareVersion",
      deviceName: "deviceName", commVersion: "commVersion"].each { String key, String dataKey ->
         Object v = data[key]
-        if (v != null && v.toString() != "") {
+        if (v != null && v.toString() != "" && device.getDataValue(dataKey) != v.toString()) {
             device.updateDataValue(dataKey, v.toString())
         }
     }
 }
 
-// The cloud doesn't report whether the compressor is running (op_status stays 0),
-// so this is a thermostat-style estimate: start heating once the room is a band
-// below the setpoint, keep heating until it reaches the setpoint; cooling mirrors it.
 // Called by the parent with the unit's cloud link state, or "offline" when the
 // cloud itself is unreachable.
 void updateHealth(String status) {
@@ -360,6 +366,18 @@ void updateHealth(String status) {
     }
 }
 
+// Called by the parent with the outcome of each property write. A failed write
+// is not retried; the next poll restores the attributes to the unit's real state.
+void commandResult(String property, boolean ok) {
+    String status = ok ? "ok" : "failed"
+    sendEvent(name: "commandStatus", value: status,
+              descriptionText: "${device} ${property} write ${status}")
+    if (!ok) logWarn "${property} write failed"
+}
+
+// The cloud doesn't report whether the compressor is running (op_status stays 0),
+// so this is a thermostat-style estimate: start heating once the room is a band
+// below the setpoint, keep heating until it reaches the setpoint; cooling mirrors it.
 private String deriveOperatingState(String mode, BigDecimal temp, BigDecimal sp, String prev) {
     if (mode == "fan_only") return "fan only"
     if (!(mode in ["heat", "cool", "auto"]) || temp == null || sp == null) return "idle"
@@ -426,3 +444,9 @@ private void logDebug(String msg) { if (settings.debugEnable) log.debug "${devic
 private void logInfo(String msg)  { if (settings.txtEnable)   log.info  "${device} ${msg}" }
 private void logWarn(String msg)  { log.warn  "${device} ${msg}" }
 private void logError(String msg) { log.error "${device} ${msg}" }
+
+void logsOff() {
+    logWarn "debug and trace logging disabled"
+    device.updateSetting("debugEnable", [value: "false", type: "bool"])
+    device.updateSetting("traceEnable", [value: "false", type: "bool"])
+}
