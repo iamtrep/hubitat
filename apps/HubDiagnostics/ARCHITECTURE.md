@@ -143,7 +143,7 @@ Read this section — and the platform constraints in the repo-wide guide — be
 
 ### UI file deployment
 
-The SPA (`hub_diagnostics_ui.html`) is deployed to the hub's File Manager. Editing the local file has no effect on the running app until it is uploaded. Use the `/hubitat-filemanager upload` skill to push changes. The Groovy app's `/ui.html` endpoint reads the uploaded file from File Manager, injects runtime values like the access token and API base, and serves the resulting HTML directly.
+The SPA (`hub_diagnostics_ui.html`) is deployed to the hub's File Manager. Editing the local file has no effect on the running app until it is uploaded. Upload changes through the hub's File Manager (Settings › File Manager) or its upload endpoint. The Groovy app's `/ui.html` endpoint reads the uploaded file from File Manager, injects runtime values like the access token and API base, and serves the resulting HTML directly.
 
 ## Required Patterns
 

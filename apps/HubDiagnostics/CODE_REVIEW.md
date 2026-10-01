@@ -133,7 +133,7 @@ Full audit of this document against the current code, triggered by drift: the he
 
 ## Round 9 summary (Claude, 2026-05-21, v5.38.0 — dead-code / duplication / bloat + arch)
 
-Three review passes: a code-quality pass over each file (dead code, duplication, bloat) plus an arch-compliance audit using the `hubitat-arch-review` rubric against `/ARCHITECTURE.md` + `apps/HubDiagnostics/ARCHITECTURE.md`. Dead-symbol claims were grep-verified (definition-only). **0 arch errors** — the code is largely arch-compliant; findings are warnings/notes plus the first dedicated dead-code sweep. The only critical open item remains the already-tracked **C1**. Line numbers are current as of v5.38.0 but treated as approximate per the Round 8 convention.
+Three review passes: a code-quality pass over each file (dead code, duplication, bloat) plus an arch-compliance audit against `/ARCHITECTURE.md` + `apps/HubDiagnostics/ARCHITECTURE.md`. Dead-symbol claims were grep-verified (definition-only). **0 arch errors** — the code is largely arch-compliant; findings are warnings/notes plus the first dedicated dead-code sweep. The only critical open item remains the already-tracked **C1**. Line numbers are current as of v5.38.0 but treated as approximate per the Round 8 convention.
 
 **Dead code (net-new, grep-confirmed, ~80 lines removable):**
 - **R9-1** — five never-called Groovy methods (~49 lines): `buildRadioProtocolMap` (`:2879`), `listHubFilesByNames` (`:3499`), `formatDuration` (`:3657`), `formatDurationSec` (`:4272`), `fileExists` (`:3986`). Note `formatDuration` is listed under **C7** (add `@CompileStatic`) — it's dead, so delete instead.

@@ -17,7 +17,7 @@
 #   pushes 80 → 85 (sub-threshold), case 3 pushes 85 → 50 (decrease).
 #   The terminal value is 50, matching the next run's case-1 setup.
 #
-# Generate with: /hubitat-behavior-test apps/tests/spec-battery-change-logger.yaml
+# The test script is generated from this spec (apps/tests/spec-battery-change-logger.yaml).
 
 app:
   source: apps/BatteryChangeLogger.groovy

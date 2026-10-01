@@ -20,7 +20,7 @@
 # 75 (offset activation), 95 (above absoluteHigh=90), 60 (deactivation
 # via snapshot+normalOffset=65), 45 (deactivation floor at 58).
 #
-# Generate with: /hubitat-behavior-test apps/tests/spec-humidity-fan-controller.yaml
+# The test script is generated from this spec (apps/tests/spec-humidity-fan-controller.yaml).
 
 app:
   source: apps/HumidityFanController.groovy

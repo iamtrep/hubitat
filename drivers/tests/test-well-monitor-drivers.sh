@@ -15,8 +15,8 @@
 # the driver fixture?"
 #
 # Reuses the WellMonitor test rig (test-well-monitor-maker, test-wm-pump,
-# test-wm-meter). Run /hubitat-behavior-test apps/WellMonitor/tests/spec-
-# well-monitor.yaml @<hub> first to provision the rig.
+# test-wm-meter). Provision the rig described in
+# apps/WellMonitor/tests/spec-well-monitor.yaml first.
 #
 # Usage:
 #   bash drivers/tests/test-well-monitor-drivers.sh                   # default hub
@@ -140,7 +140,7 @@ all_apps = walk_apps(apps_list["apps"], [])
 maker_apps = [a for a in all_apps if a.get("name") == MAKER_API_LABEL]
 if not maker_apps:
     die(f"Maker API '{MAKER_API_LABEL}' not found on {hub_name}. "
-        f"Run: /hubitat-behavior-test apps/WellMonitor/tests/spec-well-monitor.yaml @{hub_name}")
+        f"Provision the rig described in apps/WellMonitor/tests/spec-well-monitor.yaml on @{hub_name}")
 maker_id = maker_apps[0]["id"]
 
 cfg = fetch(f"/installedapp/configure/json/{maker_id}")
@@ -201,7 +201,7 @@ required = {PUMP_LABEL, METER_LABEL}
 missing = required - set(label_to_id.keys())
 if missing:
     die(f"Maker API '{MAKER_API_LABEL}' is missing devices: {sorted(missing)}. "
-        f"Re-run /hubitat-behavior-test to wire the test rig.")
+        f"Wire the test rig as the spec describes, then re-run.")
 
 pump_id  = label_to_id[PUMP_LABEL]
 meter_id = label_to_id[METER_LABEL]

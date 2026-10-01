@@ -1371,7 +1371,7 @@ void githubVersionCallback(resp, data) {
 }
 
 // Reads CODE_VERSION from the dashboard HTML in File Manager. Not cached — direct uploads
-// (filemanager skill, manual UI upload) bypass any invalidation hook we could install,
+// (File Manager uploads from any tool or the UI) bypass any invalidation hook we could install,
 // so a cache would go stale silently. /api/status polling is infrequent enough that the
 // re-read cost is invisible.
 String getUIVersion() {

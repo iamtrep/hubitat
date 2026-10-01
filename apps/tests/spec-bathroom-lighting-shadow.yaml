@@ -10,7 +10,7 @@
 # Test-friendly timing: wOn=10s, tQuiet=5s, tForgot=20s, per-policy
 # holdSec shortened to 8s (fast policies) and 25s (composite).
 #
-# Generate with: /hubitat-behavior-test apps/tests/spec-bathroom-lighting-shadow.yaml
+# The test script is generated from this spec (apps/tests/spec-bathroom-lighting-shadow.yaml).
 
 app:
   source: apps/BathroomLightingShadow.groovy

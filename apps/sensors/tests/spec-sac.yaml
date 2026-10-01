@@ -9,7 +9,7 @@
 # illuminance, CO2). Asserts use `tolerance` because aggregates over
 # floats can round/format differently than the literal computed value.
 #
-# Generate the test with: /hubitat-behavior-test apps/sensors/tests/spec-sac.yaml
+# The test script is generated from this spec (apps/sensors/tests/spec-sac.yaml).
 
 app:
   source: apps/sensors/SensorAggregatorChild.groovy

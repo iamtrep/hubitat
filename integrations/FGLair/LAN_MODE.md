@@ -32,10 +32,10 @@ LAN.
 
 | File | Window | Contents |
 |---|---|---|
-| `forks/iamtrep/tmp/fglair1.chlz` | ~4 min, LAN-only | 31 POST/PUT to unit's `/local_reg.json` |
-| `forks/iamtrep/tmp/fglair2.chlz` | ~1 min, mixed | 11 LAN POST/PUT + 27 HTTPS CONNECT tunnels, all tunnelled (Ayla not on Charles SSL Locations) |
-| `forks/iamtrep/tmp/fglair3.chlz` | ~2 min, mixed, **SSL-intercepted Ayla** | Plain GETs to `/devices.json`, `/properties.json`, `/lan.json`; subscription POST; LAN heartbeats. No user-driven changes. |
-| `forks/iamtrep/tmp/fglair4.chlz` | ~1.5 min, mixed, **SSL-intercepted Ayla, with deliberate setpoint changes** | Two `adjust_temperature` changes by the user (240→245→250). Zero corresponding cloud datapoint POSTs. |
+| `tmp/fglair1.chlz` | ~4 min, LAN-only | 31 POST/PUT to unit's `/local_reg.json` |
+| `tmp/fglair2.chlz` | ~1 min, mixed | 11 LAN POST/PUT + 27 HTTPS CONNECT tunnels, all tunnelled (Ayla not on Charles SSL Locations) |
+| `tmp/fglair3.chlz` | ~2 min, mixed, **SSL-intercepted Ayla** | Plain GETs to `/devices.json`, `/properties.json`, `/lan.json`; subscription POST; LAN heartbeats. No user-driven changes. |
+| `tmp/fglair4.chlz` | ~1.5 min, mixed, **SSL-intercepted Ayla, with deliberate setpoint changes** | Two `adjust_temperature` changes by the user (240→245→250). Zero corresponding cloud datapoint POSTs. |
 
 ## What's confirmed about LAN mode
 
@@ -256,4 +256,4 @@ first.
 - `README.md` — current cloud-mode integration overview.
 - `TODO.md` — other deferred work (Tier 3 swing/mode-toggles, errorCode/opStatus
   decoding, testing harness).
-- Captures: `forks/iamtrep/tmp/fglair1.chlz`, `forks/iamtrep/tmp/fglair2.chlz`.
+- Captures: `tmp/fglair1.chlz`, `tmp/fglair2.chlz`.

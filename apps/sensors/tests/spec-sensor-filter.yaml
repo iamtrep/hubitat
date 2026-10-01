@@ -12,7 +12,7 @@
 # end of each case — so cases are deterministic regardless of prior
 # state.
 #
-# Generate with: /hubitat-behavior-test apps/sensors/tests/spec-sensor-filter.yaml
+# The test script is generated from this spec (apps/sensors/tests/spec-sensor-filter.yaml).
 
 app:
   source: apps/sensors/SensorFilterChild.groovy

@@ -24,7 +24,7 @@
 # Click **Done**. The generated test runs idempotently from then on.
 # ──────────────────────────────────────────────────────────────────────
 #
-# Generate with: /hubitat-behavior-test apps/tests/spec-attribute-logger-child.yaml
+# The test script is generated from this spec (apps/tests/spec-attribute-logger-child.yaml).
 
 app:
   source: apps/AttributeLoggerChild.groovy

@@ -30,7 +30,7 @@
 # Click **Done** on the group page, then **Done** on the main page.
 # ──────────────────────────────────────────────────────────────────────
 #
-# Generate with: /hubitat-behavior-test apps/tests/spec-switch-monitor.yaml
+# The test script is generated from this spec (apps/tests/spec-switch-monitor.yaml).
 
 app:
   source: apps/SwitchMonitor.groovy

@@ -22,7 +22,7 @@
 # emit, with setPirDetection / setRoomState commands for Maker API
 # injection.
 #
-# Generate with: /hubitat-behavior-test apps/sensors/tests/spec-motion-fusion-child.yaml
+# The test script is generated from this spec (apps/sensors/tests/spec-motion-fusion-child.yaml).
 
 app:
   source: apps/sensors/MotionFusionChild.groovy
@@ -33,7 +33,7 @@ app:
     type_name: "Sensor Aggregator"
     # singleInstance parent — the test child hangs off whichever
     # Sensor Aggregator instance exists. instance_label is ignored
-    # for singleInstance parents per the skill.
+    # for singleInstance parents per the generator.
   config:
     appName: test-mfc-app
     fusionMode: pirQuickMmwaveHold

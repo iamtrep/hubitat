@@ -4,7 +4,7 @@
 # SensorAggregatorDiscreteChild (SADC) — Mode 1 behavior test spec
 #
 # Mirrors the §2.1 worked example in TESTING.md.
-# Generate the test with: /hubitat-behavior-test apps/sensors/tests/spec-sadc.yaml
+# The test script is generated from this spec (apps/sensors/tests/spec-sadc.yaml).
 
 app:
   source: apps/sensors/SensorAggregatorDiscreteChild.groovy
@@ -17,7 +17,7 @@ app:
     # whichever Sensor Aggregator instance exists (typically the production
     # parent). The parent is an organizational container; it doesn't aggregate
     # config from its children, so this is isolation-safe. No instance_label
-    # field — the skill ignores it for singleInstance parents.
+    # field — the generator ignores it for singleInstance parents.
   config:
     appName: test-sadc-app
     selectedSensorCapability: capability.contactSensor
