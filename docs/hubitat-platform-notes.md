@@ -54,6 +54,25 @@ Three sandbox-safe ways to look at an object's surface, picked by what you need.
 
 - Any app can call `sendLocationEvent(name:, value:, descriptionText:)` with **reserved platform event names** (`systemStart`, `manualReboot`, `manualShutdown`, `sunrise`, `sunset`, `cloudBackup`, …). The dispatcher does not gate by provenance, and a subscriber handler cannot distinguish an app-originated event from a platform one (`evt.source` carries no such tag). Apps that key trust or lifecycle logic off these names can be misled by any other local app emitting the same name. For a tamper-resistant lifecycle signal, derive it from something only the platform controls — e.g. `location.hubs[0].uptime` crossing a threshold — not from a subscribed event name.
 
+## Controlling one app from another
+
+The sandbox gives no direct route between unrelated apps: no call returns a handle to another app or reads its `state`. Every route goes through an event (location, device, or hub variable) or an HTTP call over loopback. The exception is a parent/child family: a child can call `parent.someMethod()`, and a parent can call methods on `getChildApps()` / `getChildAppById()`, synchronously and with return values. As a result, an unrelated custom app can't get a synchronous answer from another app unless that app serves one over HTTP. Platform helper classes are not bound by this: `RMUtils.getRuleList()` reads Rule Machine's rules synchronously, while `RMUtils.sendAction()` goes through a location event.
+
+Four patterns let one piece of automation command an app. They differ in who can call them, whether access is controlled, and whether the caller can read state back.
+
+| Pattern | Custom apps | Rule Machine | Off-hub | Access control | Read-back |
+|---|---|---|---|---|---|
+| Groovy helper class (`hubitat.helper.RMUtils`) | yes | no | no | none | only what the class exposes |
+| Location event (`sendLocationEvent`) | yes | no | no | none | only if the target publishes status events |
+| Maker API | yes, over loopback | yes, HTTP actions | yes | per instance: token, selected devices | yes |
+| App `mappings` (OAuth endpoints) | yes, over loopback | yes, HTTP actions | yes | per instance: token, plus whatever the app checks | yes, if the app provides it |
+
+- **Helper class.** `RMUtils.getRuleList(version)` and `RMUtils.sendAction(rules, action, appLabel, version)` are documented on-hub; `version` defaults to `'4.1'`, so pass `'5.0'` for current rules. Per the on-hub docs, `sendAction` posts a Rule Machine action event to the location: the helper class wraps a location event with a documented payload. Any app can run any rule; nothing scopes it. Calls are fire-and-forget. Rule ids differ per hub, so resolve them by label through `getRuleList()`. A helper class is the most reusable form: a wrapper app can expose it through its own `mappings`, with its own access checks.
+- **Location event.** A broadcast with no target reference and no acknowledgement. Any app can send any name, including reserved ones (see "Location events" above), so a receiver can't trust the sender. Rule Machine only triggers on a fixed list of location events and has no action to send an arbitrary one, so this pattern reaches custom apps only. HSM is the documented example: `hsmSetArm` in, `hsmStatus` out; Rule Machine reaches HSM through dedicated actions.
+- **Maker API.** Exposes the devices selected in each instance, plus modes and HSM. It does not run rules or reach app internals; a virtual device that a rule triggers on is the usual bridge. On-hub callers use `http://127.0.0.1:8080`.
+- **App `mappings`.** Each OAuth app instance gets its own token, the same as a Maker API instance. The cloud relay serves every app endpoint, so an app meant for local use has to check `request.requestSource` itself.
+- **Built-in apps.** Most built-in apps expose no command interface of their own; Rule Machine's actions are the only way in. From a custom app, put the actions in a rule and run it with `RMUtils.sendAction`. Thermostat Scheduler, for example, has no OAuth endpoints, and the `thermSched` location event it subscribes to is undocumented and not visible to user apps while Rule Machine drives it. When several schedulers share a thermostat, the RM action works when it targets the scheduler by app name and silently does nothing when it targets by thermostat (firmware 2.5.2.128). Its restriction switch (*Disable when switch is off*) is a separate, device-based control that needs no rule.
+
 ## Locale-aware date/time formatting (firmware 2.5.0.143+)
 
 Hubitat exposes platform-injected helpers that format dates per the user's Settings → Hub Details date/time format. Prefer these over hand-rolled `SimpleDateFormat` patterns for any display-side timestamp in apps or driver attributes:
