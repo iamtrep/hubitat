@@ -20,7 +20,6 @@
  * parent.sendCommand(dni, name, intValue).
  */
 
-import groovy.json.JsonOutput
 import groovy.transform.Field
 
 metadata {
@@ -71,9 +70,12 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.2.3"
+@Field static final String CODE_VERSION = "0.2.5"
 // A held low setpoint is dropped if the unit hasn't reported heat by then.
 @Field static final long HELD_SETPOINT_MS = 600_000L
+// A poll can land before a write reaches the cloud and still report the old value.
+// For this long after a write, a polled value that disagrees with it is ignored.
+@Field static final long WRITE_SETTLE_MS = 30_000L
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 
 @Field static final List<String> SUPPORTED_STD_MODES = ["\"off\"", "\"heat\"", "\"cool\"", "\"auto\""]
@@ -155,7 +157,7 @@ private void writeMode(String mode) {
     if (mode != "heat") state.remove("heldSetpoint")
     String prevMode = device.currentValue("fujitsuMode")
     logInfo "setting operation_mode -> ${mode} (${code})"
-    parent?.sendCommand(device.deviceNetworkId, "operation_mode", code)
+    writeToUnit("operation_mode", code)
 
     // Auto-push the stored mode-specific setpoint when transitioning into heat or cool.
     BigDecimal preset = null
@@ -211,7 +213,7 @@ private void writeFanSpeed(String speed) {
     Integer code = FAN_MODE_INV[speed]
     if (code == null) { logWarn "writeFanSpeed(${speed}): no int code"; return }
     logInfo "setting fan_speed -> ${speed} (${code})"
-    parent?.sendCommand(device.deviceNetworkId, "fan_speed", code)
+    writeToUnit("fan_speed", code)
     if (!isOptimistic()) return
     emitFanSpeed(speed)
 }
@@ -225,11 +227,13 @@ private void emitFanSpeed(String speed) {
               descriptionText: "${device} thermostatFanMode is ${fanMode}")
 }
 
-void setHeatingSetpoint(BigDecimal t) { handleSetSetpoint("heat", t) }
-void setCoolingSetpoint(BigDecimal t) { handleSetSetpoint("cool", t) }
+// Callers pass numbers or strings, depending on the app.
+void setHeatingSetpoint(temp) { handleSetSetpoint("heat", temp) }
+void setCoolingSetpoint(temp) { handleSetSetpoint("cool", temp) }
 
-private void handleSetSetpoint(String role, BigDecimal t) {
-    if (t == null) { logWarn "set${role.capitalize()}Setpoint(null) — ignored"; return }
+private void handleSetSetpoint(String role, Object raw) {
+    BigDecimal t = toDecimal(raw)
+    if (t == null) { logWarn "set${role.capitalize()}Setpoint(${raw}): not a number — ignored"; return }
     BigDecimal clamped = clampSetpoint(role, t)
     String attrName = "${role}ingSetpoint"
     sendEvent(name: attrName, value: clamped, unit: getTemperatureScale(),
@@ -242,6 +246,11 @@ private void handleSetSetpoint(String role, BigDecimal t) {
         return
     }
     pushSetpointToUnit(clamped)
+}
+
+private BigDecimal toDecimal(Object raw) {
+    if (raw == null) return null
+    try { return new BigDecimal(raw.toString().trim()) } catch (NumberFormatException e) { return null }
 }
 
 private BigDecimal clampSetpoint(String role, BigDecimal t) {
@@ -265,11 +274,32 @@ private void pushSetpointToUnit(BigDecimal clamped) {
     state.remove("heldSetpoint")
     BigDecimal aylaValue = scaleToAylaSetpoint(clamped)
     logInfo "setting adjust_temperature -> ${clamped}${getTemperatureScale()} (raw ${aylaValue})"
-    parent?.sendCommand(device.deviceNetworkId, "adjust_temperature", aylaValue.toInteger())
+    writeToUnit("adjust_temperature", aylaValue.toInteger())
     // thermostatSetpoint is the device-confirmed value — updated only by the next
     // poll, mirroring the built-in Ecobee integration model. heatingSetpoint /
     // coolingSetpoint are user-intent presets and update immediately at the call
     // site, regardless of the optimisticUpdates preference.
+}
+
+private void writeToUnit(String property, Integer value) {
+    Map recent = (state.recentWrites ?: [:]) as Map
+    recent[property] = [value: value, at: now()]
+    state.recentWrites = recent
+    parent?.sendCommand(device.deviceNetworkId, property, value)
+}
+
+// The polled value, or null while it still disagrees with a recent write.
+private Object settled(String property, Object polled) {
+    Map recent = (state.recentWrites ?: [:]) as Map
+    Map w = recent[property] as Map
+    if (w == null || polled == null) return polled
+    if (now() - (w.at as long) < WRITE_SETTLE_MS && (polled as BigDecimal) != (w.value as BigDecimal)) {
+        logDebug "${property}: poll still reports ${polled}, ${w.value} was just written — ignored"
+        return null
+    }
+    recent.remove(property)
+    state.recentWrites = recent
+    return polled
 }
 
 void auto()           { setThermostatMode("auto") }
@@ -300,9 +330,12 @@ void updateState(Map data) {
     logTrace "updateState(${data})"
     // A code push doesn't run updated(); the parent calls this every poll.
     if (state.version != CODE_VERSION) initialize()
-    String fujMode = data.opMode != null ? OP_MODE[(int) data.opMode] : null
+    Object opMode = settled("operation_mode", data.opMode)
+    Object adjustTemp = settled("adjust_temperature", data.adjustTemp)
+    Object fanSpeed = settled("fan_speed", data.fanSpeed)
+    String fujMode = opMode != null ? OP_MODE[(int) opMode] : null
     BigDecimal temp = data.displayTemp != null ? aylaSensorToScale(data.displayTemp) : null
-    BigDecimal sp = data.adjustTemp != null ? aylaSetpointToScale(data.adjustTemp) : null
+    BigDecimal sp = adjustTemp != null ? aylaSetpointToScale(adjustTemp) : null
     // Temperature and setpoint go out before the mode and operating state, so a
     // subscriber to thermostatOperatingState reads the values it was derived from.
     if (temp != null) {
@@ -331,8 +364,8 @@ void updateState(Map data) {
                  sp != null ? sp : device.currentValue("thermostatSetpoint") as BigDecimal)
     }
     sendHeldSetpoint()
-    if (data.fanSpeed != null) {
-        String speed = FAN_MODE[(int) data.fanSpeed]
+    if (fanSpeed != null) {
+        String speed = FAN_MODE[(int) fanSpeed]
         if (speed != null) emitFanSpeed(speed)
     }
     if (data.outdoorTemp != null) {
@@ -378,7 +411,14 @@ private void sendHeldSetpoint() {
         logInfo "held setpoint ${held.value} not sent: the unit didn't report heat mode"
         return
     }
-    if (state.unitMode == "heat") pushSetpointToUnit(held.value as BigDecimal)
+    // From its own handler: this runs inside the manager's poll callback, and
+    // calling back into the manager from there may wait on its singleThreaded lock.
+    if (state.unitMode == "heat") runIn(1, "pushHeldSetpoint")
+}
+
+void pushHeldSetpoint() {
+    Map held = state.heldSetpoint as Map
+    if (held && state.unitMode == "heat") pushSetpointToUnit(held.value as BigDecimal)
 }
 
 // Called by the parent with the unit's cloud link state, or "offline" when the
@@ -396,6 +436,11 @@ void updateHealth(String status) {
 // Called by the parent with the outcome of each property write. A failed write
 // is not retried; the next poll restores the attributes to the unit's real state.
 void commandResult(String property, boolean ok) {
+    if (!ok) {
+        // The next poll reports the unit's real value.
+        Map recent = (state.recentWrites ?: [:]) as Map
+        if (recent.remove(property) != null) state.recentWrites = recent
+    }
     String status = ok ? "ok" : "failed"
     sendEvent(name: "commandStatus", value: status,
               descriptionText: "${device} ${property} write ${status}")

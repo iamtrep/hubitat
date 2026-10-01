@@ -33,7 +33,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "0.2.4"
+@Field static final String CODE_VERSION = "0.2.5"
 
 // Region-specific Ayla endpoints + app credentials, lifted from
 // ayla-iot-unofficial/src/ayla_iot_unofficial/const.py and fujitsu_consts.py.
@@ -129,6 +129,7 @@ Map mainPage() {
                 input "btnRefreshNow", "button", title: "Refresh now"
             }
             section("Devices") {
+                if (state.childError) paragraph "<span style='color:red;'><b>Error:</b> ${state.childError}</span>"
                 renderChildList()
                 List<Map> orphans = (atomicState.orphanedDevices ?: []) as List<Map>
                 if (orphans.size() > 0) {
@@ -195,6 +196,12 @@ void updated() {
     logDebug "updated"
     unsubscribe()
     unschedule()
+    // Tokens are issued per region; the other region's endpoints reject them.
+    if (isAuthenticated() && state.sessionRegion && state.sessionRegion != currentRegion()) {
+        logWarn "region changed to ${currentRegion()} — signed out"
+        disconnect()
+        state.authError = "Region changed. Log in again."
+    }
     initialize()
     if (settings.debugEnable) runIn(DEBUG_LOG_TIMEOUT, "logsOff")
 }
@@ -206,6 +213,8 @@ void initialize()  {
         state.version = CODE_VERSION
     }
     migrateSensedSetting()
+    // Sessions from before 0.2.5 didn't record their region.
+    if (isAuthenticated() && !state.sessionRegion) state.sessionRegion = currentRegion()
     if (isAuthenticated()) {
         scheduleTokenRefresh()
         schedulePolling()
@@ -449,6 +458,10 @@ private long sinceLastWake(String dni) {
     return last == null ? Long.MAX_VALUE : now() - last
 }
 
+private String dsnFromDni(String dni) {
+    return dni?.startsWith(DNI_PREFIX_UNIT) ? dni.substring(DNI_PREFIX_UNIT.length()) : null
+}
+
 private List<ChildDeviceWrapper> unitChildren() {
     return getChildDevices().findAll { it.deviceNetworkId?.startsWith(DNI_PREFIX_UNIT) }
 }
@@ -457,9 +470,10 @@ private List<ChildDeviceWrapper> unitChildren() {
 
 private boolean isAuthenticated() { return state.accessToken != null }
 
+private String currentRegion() { return (settings.region ?: "us") as String }
+
 private Map<String, String> regionConfig() {
-    String r = settings.region ?: "us"
-    return REGION[r] ?: REGION.us
+    return REGION[currentRegion()] ?: REGION.us
 }
 
 // Manual login (button). Automatic re-sign-in after a failed refresh goes
@@ -522,12 +536,10 @@ void signInCallback(resp, data) {
         }
         return
     }
-    Map parsed
-    try {
-        parsed = new JsonSlurper().parseText(resp.getData())
-    } catch (Exception e) {
-        logError "signIn JSON parse error: ${e.message}"
-        state.authError = "Sign-in response could not be parsed."
+    Map parsed = parseTokens(resp, "signIn")
+    if (parsed == null) {
+        state.authError = "Sign-in response carried no session token."
+        if (!manual) noteTransientFailure "re-sign-in: no session token in the response"
         return
     }
     storeTokens(parsed)
@@ -536,11 +548,24 @@ void signInCallback(resp, data) {
     afterAuth()
 }
 
+// Null when the body isn't JSON or has no access token.
+private Map parseTokens(resp, String what) {
+    try {
+        Object parsed = new JsonSlurper().parseText(resp.getData())
+        if (parsed instanceof Map && ((Map) parsed).access_token) return (Map) parsed
+        logError "${what}: response has no access token"
+    } catch (Exception e) {
+        logError "${what} JSON parse error: ${e.message}"
+    }
+    return null
+}
+
 private void storeTokens(Map parsed) {
     state.accessToken  = parsed.access_token
     state.refreshToken = parsed.refresh_token
     long expiresInMs = ((parsed.expires_in ?: 3600L) as long) * 1000L
     state.tokenExpiry = now() + expiresInMs
+    state.sessionRegion = currentRegion()
     state.remove("authError")
     scheduleTokenRefresh()
 }
@@ -584,11 +609,8 @@ void refreshTokenCallback(resp, data) {
         postSignIn(false)
         return
     }
-    Map parsed
-    try {
-        parsed = new JsonSlurper().parseText(resp.getData())
-    } catch (Exception e) {
-        logError "refreshToken JSON parse error: ${e.message}"
+    Map parsed = parseTokens(resp, "refreshToken")
+    if (parsed == null) {
         atomicState.authStartedAt = now()
         postSignIn(false)
         return
@@ -649,8 +671,10 @@ private void clearSession() {
     atomicState.remove("authRejects")
     discardPendingWrites()
     state.remove("unitFailures")
+    state.remove("sessionRegion")
     POLL.clear()
-    unschedule()
+    // Only the session's own handlers; a pending logsOff must still run.
+    ["pollTick", "refreshToken", "fetchDevices", "fetchPropertiesDeferred"].each { unschedule(it) }
 }
 
 // --- Device discovery ---
@@ -756,6 +780,7 @@ private void handleDeviceList(List rawDevices) {
     logTrace "raw device list: ${JsonOutput.toJson(devices)}"
 
     Set<String> liveDnis = [] as Set
+    String childError = null
     devices.each { Map d ->
         String dsn = d.dsn?.toString()
         if (!dsn) return
@@ -767,8 +792,14 @@ private void handleDeviceList(List rawDevices) {
         if (!child) {
             String label = d.product_name?.toString() ?: "Fujitsu Mini-Split ${dsn}"
             logInfo "creating child device ${dni} (${label})"
-            child = addChildDevice("iamtrep", DRIVER_UNIT, dni,
-                [name: DRIVER_UNIT, label: label, isComponent: false])
+            try {
+                child = addChildDevice("iamtrep", DRIVER_UNIT, dni,
+                    [name: DRIVER_UNIT, label: label, isComponent: false])
+            } catch (Exception e) {
+                childError = "Could not create a device for ${label}: ${e.message}. Is the ${DRIVER_UNIT} driver installed?"
+                logError childError
+                return
+            }
         }
         // Ayla reports "Online" / "Offline" for the unit's link to the cloud.
         String conn = d.connection_status?.toString()
@@ -776,6 +807,8 @@ private void handleDeviceList(List rawDevices) {
         boolean reachable = unitFailures(dsn) < FAILURE_ERROR_THRESHOLD
         if (conn) child.updateHealth(conn.equalsIgnoreCase("Online") && reachable ? "online" : "offline")
     }
+    if (childError) state.childError = childError
+    else state.remove("childError")
     // An empty list is more likely a cloud glitch than every unit removed from the
     // account; flagging all units as orphans would let one click delete them all.
     if (devices) computeOrphans(liveDnis)
@@ -896,7 +929,7 @@ private void handlePropertiesResponse(resp, String dsn) {
 // then read once they have reported. Wakes are rate-limited per unit; within
 // the limit this is a plain read.
 void refreshUnit(String dni) {
-    String dsn = dni?.replaceFirst("^${java.util.regex.Pattern.quote(DNI_PREFIX_UNIT)}", "")
+    String dsn = dsnFromDni(dni)
     if (!dsn) return
     if (sinceLastWake(dni) >= MANUAL_WAKE_MIN_MS && wakeUnit(dni)) {
         runIn(MANUAL_WAKE_READ_DELAY, "fetchPropertiesDeferred", [data: [dsn: dsn], overwrite: false])
@@ -917,7 +950,7 @@ void sendCommand(String dni, String propertyName, Object value) {
 // report=false for the manager's own writes (sensor wakes): the child didn't ask
 // for them, so their outcome stays out of its commandStatus.
 private void sendWrite(String dni, String propertyName, Object value, boolean report) {
-    String dsn = dni?.replaceFirst("^${java.util.regex.Pattern.quote(DNI_PREFIX_UNIT)}", "")
+    String dsn = dsnFromDni(dni)
     if (!dsn) { logError "sendCommand: invalid dni ${dni}"; return }
     Map w = [dsn: dsn, name: propertyName, value: value, retried: false, report: report]
     if (!isAuthenticated()) {

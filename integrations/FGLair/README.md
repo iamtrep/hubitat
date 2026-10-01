@@ -25,7 +25,7 @@ Parent/child integration for Fujitsu mini-split heat pumps that authenticate aga
 
 Email + password against Ayla's `/users/sign_in.json`. The access token (~24 h) is refreshed automatically 5 minutes before expiry. If the refresh token is rejected, the manager re-signs in using stored credentials. Network errors and 5xx responses are retried on the next poll. If the stored credentials are rejected, or FGLair keeps returning 401 on fresh tokens, the manager stops polling and shows the error on its page until you log in again. Commands issued while a token refresh is in progress are queued and sent once it completes; a command still queued after 2 minutes is dropped and reported as failed.
 
-Region (US / EU) is configurable on the manager page; the region setting drives the base URL and the `app_id` / `app_secret` pair used for sign-in.
+Region (US / EU) is configurable on the manager page; the region setting drives the base URL and the `app_id` / `app_secret` pair used for sign-in. Changing the region signs you out, since tokens from one region are rejected by the other; log in again afterwards.
 
 ## Devices
 
@@ -89,6 +89,8 @@ The `optimisticUpdates` driver preference (default **on**) controls how non-setp
 - **Off** — these attributes wait for the next poll cycle (truthful device state).
 
 `heatingSetpoint` / `coolingSetpoint` always update immediately on command (user intent, not device state). `thermostatSetpoint` always waits for poll confirmation.
+
+For 30 s after a mode, fan speed or setpoint write, a poll that still reports the old value is ignored, so a poll that lands before the write reaches the cloud doesn't flip the attributes back. A poll that reports the written value, or a failed write, ends the window early.
 
 ## Polling
 
