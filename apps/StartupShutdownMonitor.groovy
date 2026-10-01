@@ -14,7 +14,7 @@
 import groovy.transform.Field
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.0.2"
+@Field static final String CODE_VERSION = "0.0.3"
 
 definition(
     name: "Startup and Shutdown Monitor",
@@ -90,18 +90,23 @@ void installed() {
 void updated() {
     logDebug "updated()"
     unsubscribe()
-    subscribe(location, "eventHandler")
-    logDebug "${contactSensor?.getDisplayName()} ${contactSensor?.currentValue('contact')}"
+    unschedule()
+    initialize()
 }
 
 void initialize() {
     logDebug "initialize()"
+    subscribe(location, "eventHandler")
+    servicePendingClose()
+    logDebug "${contactSensor?.getDisplayName()} ${contactSensor?.currentValue('contact')}"
 }
 
 void eventHandler(Event evt) {
     logDebug "System event detected: ${evt.name}"
+    servicePendingClose()
 
     if (evt.name in triggerEventsOpen) {
+        cancelPendingClose()
         openContact(evt.descriptionText)
     }
 
@@ -112,6 +117,8 @@ void eventHandler(Event evt) {
         Integer delay = (evt.name == "systemStart") ? ((settings.startupDelay ?: 0) as Integer) : 0
         if (delay > 0) {
             logInfo "${evt.descriptionText} - Deferring close by ${delay}s"
+            state.closeDueAt = now() + delay * 1000L
+            state.closeMessage = evt.descriptionText
             runIn(delay, "closeContactDelayed", [data: [message: evt.descriptionText]])
         } else {
             closeContact(evt.descriptionText)
@@ -122,7 +129,30 @@ void eventHandler(Event evt) {
 }
 
 void closeContactDelayed(Map data) {
+    state.remove("closeDueAt")
+    state.remove("closeMessage")
     closeContact((data?.message as String) ?: "delayed close")
+}
+
+// A deferred close keeps its due time in state, so a lost runIn (crash mid-handler, or the
+// unschedule() in updated()) completes or re-arms on the next location event or initialize().
+private void servicePendingClose() {
+    Long dueAt = state.closeDueAt as Long
+    if (dueAt == null) return
+    String message = state.closeMessage as String
+    long remainingMs = dueAt - now()
+    if (remainingMs <= 0) {
+        closeContactDelayed([message: message])
+    } else {
+        runIn((long) Math.ceil(remainingMs / 1000d), "closeContactDelayed", [data: [message: message]])
+    }
+}
+
+private void cancelPendingClose() {
+    if (state.closeDueAt == null) return
+    unschedule("closeContactDelayed")
+    state.remove("closeDueAt")
+    state.remove("closeMessage")
 }
 
 void openContact(String message) {
