@@ -65,10 +65,10 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.1.2"
+@Field static final String CODE_VERSION = "0.1.3"
 
 @Field static final List<String> SUPPORTED_STD_MODES = ["\"off\"", "\"heat\"", "\"cool\"", "\"auto\""]
-@Field static final List<String> SUPPORTED_STD_FAN_MODES = ["\"auto\""]
+@Field static final List<String> SUPPORTED_STD_FAN_MODES = ["\"auto\"", "\"on\""]
 @Field static final List<String> FUJITSU_MODES = ["off","heat","cool","auto","dry","fan_only"]
 @Field static final List<String> FUJITSU_FAN_SPEEDS = ["auto","quiet","low","medium","high"]
 
@@ -152,40 +152,33 @@ private void writeMode(String mode) {
     }
 
     if (!isOptimistic()) return
-    sendEvent(name: "fujitsuMode", value: mode,
-              descriptionText: "${device} fujitsuMode is ${mode}")
-    if (mode in CANONICAL_MODES) {
-        sendEvent(name: "thermostatMode", value: mode,
-                  descriptionText: "${device} mode is ${mode}")
-    }
-    String optState = optimisticOperatingState(mode)
-    if (optState != null) {
-        sendEvent(name: "thermostatOperatingState", value: optState,
-                  descriptionText: "${device} operating state is ${optState}")
-    }
+    BigDecimal sp = preset ?: (device.currentValue("thermostatSetpoint") as BigDecimal)
+    emitMode(mode, device.currentValue("temperature") as BigDecimal, sp)
+}
+
+private void emitMode(String fujMode, BigDecimal temp, BigDecimal sp) {
+    sendEvent(name: "fujitsuMode", value: fujMode,
+              descriptionText: "${device} fujitsuMode is ${fujMode}")
+    String tMode = THERMOSTAT_MODE_FOR[fujMode]
+    sendEvent(name: "thermostatMode", value: tMode,
+              descriptionText: "${device} mode is ${tMode}")
+    String opState = deriveOperatingState(fujMode, temp, sp,
+                                          device.currentValue("thermostatOperatingState") as String)
+    sendEvent(name: "thermostatOperatingState", value: opState,
+              descriptionText: "${device} operating state is ${opState}")
 }
 
 private boolean isOptimistic() {
     return settings.optimisticUpdates == null ? true : (settings.optimisticUpdates as Boolean)
 }
 
-private String optimisticOperatingState(String mode) {
-    switch (mode) {
-        case "off":      return "idle"
-        case "heat":     return "heating"
-        case "cool":     return "cooling"
-        case "fan_only": return "fan only"
-        case "dry":      return "idle"
-        default:         return null  // auto — let next poll derive from sensor vs setpoint
-    }
-}
-
 void setThermostatFanMode(String fanMode) {
-    if (fanMode != "auto") {
-        logWarn "setThermostatFanMode(${fanMode}): only 'auto' is canonical — use setFanSpeed for quiet/low/medium/high"
-        return
+    switch (fanMode) {
+        case "auto":      writeFanSpeed("auto"); break
+        case "on":        fanOn(); break
+        case "circulate": fanCirculate(); break
+        default: logWarn "setThermostatFanMode(${fanMode}): not supported — use setFanSpeed for quiet/low/medium/high"
     }
-    writeFanSpeed("auto")
 }
 
 void setFanSpeed(String speed) {
@@ -202,12 +195,16 @@ private void writeFanSpeed(String speed) {
     logInfo "setting fan_speed -> ${speed} (${code})"
     parent?.sendCommand(device.deviceNetworkId, "fan_speed", code)
     if (!isOptimistic()) return
+    emitFanSpeed(speed)
+}
+
+// Any fixed speed is a continuously running fan, which the canonical enum calls "on".
+private void emitFanSpeed(String speed) {
     sendEvent(name: "fanSpeed", value: speed,
               descriptionText: "${device} fanSpeed is ${speed}")
-    if (speed == "auto") {
-        sendEvent(name: "thermostatFanMode", value: "auto",
-                  descriptionText: "${device} thermostatFanMode is auto")
-    }
+    String fanMode = speed == "auto" ? "auto" : "on"
+    sendEvent(name: "thermostatFanMode", value: fanMode,
+              descriptionText: "${device} thermostatFanMode is ${fanMode}")
 }
 
 void setHeatingSetpoint(BigDecimal t) { handleSetSetpoint("heat", t) }
@@ -254,7 +251,7 @@ void heat()           { setThermostatMode("heat") }
 void off()            { setThermostatMode("off") }
 void emergencyHeat()  { logWarn "emergencyHeat() not supported on Fujitsu mini-splits — routing to heat"; setThermostatMode("heat") }
 void fanAuto()        { setThermostatFanMode("auto") }
-void fanOn()          { logWarn "fanOn() not a standard Fujitsu fan setting — routing to setFanSpeed(\"high\")"; setFanSpeed("high") }
+void fanOn()          { logInfo "fanOn() routes to setFanSpeed(\"high\")"; setFanSpeed("high") }
 void fanCirculate()   { logWarn "fanCirculate() not a standard Fujitsu fan setting — routing to setFanSpeed(\"low\")"; setFanSpeed("low") }
 
 // --- Inbound state from parent ---
@@ -266,6 +263,11 @@ void fanCirculate()   { logWarn "fanCirculate() not a standard Fujitsu fan setti
     0: "quiet", 1: "low", 2: "medium", 3: "high", 4: "auto"
 ]
 @Field static final List<String> CANONICAL_MODES = ["off", "heat", "cool", "auto"]
+// thermostatMode only holds canonical values. Dry runs the compressor on its
+// cooling cycle; fan_only runs no compressor at all.
+@Field static final Map<String, String> THERMOSTAT_MODE_FOR = [
+    "off": "off", "heat": "heat", "cool": "cool", "auto": "auto", "dry": "cool", "fan_only": "off"
+]
 
 void updateState(Map data) {
     logTrace "updateState(${data})"
@@ -273,26 +275,16 @@ void updateState(Map data) {
     if (data.opMode != null) {
         fujMode = OP_MODE[(int) data.opMode]
         if (fujMode != null) {
-            sendEvent(name: "fujitsuMode", value: fujMode,
-                      descriptionText: "${device} fujitsuMode is ${fujMode}")
-            if (fujMode in CANONICAL_MODES) {
-                sendEvent(name: "thermostatMode", value: fujMode,
-                          descriptionText: "${device} mode is ${fujMode}")
-            }
-            sendEvent(name: "thermostatOperatingState",
-                      value: deriveOperatingState(fujMode, data.displayTemp, data.adjustTemp))
+            BigDecimal temp = data.displayTemp != null ? aylaSensorToScale(data.displayTemp)
+                                                       : device.currentValue("temperature") as BigDecimal
+            BigDecimal sp = data.adjustTemp != null ? aylaSetpointToScale(data.adjustTemp)
+                                                    : device.currentValue("thermostatSetpoint") as BigDecimal
+            emitMode(fujMode, temp, sp)
         }
     }
     if (data.fanSpeed != null) {
         String speed = FAN_MODE[(int) data.fanSpeed]
-        if (speed != null) {
-            sendEvent(name: "fanSpeed", value: speed,
-                      descriptionText: "${device} fanSpeed is ${speed}")
-            if (speed == "auto") {
-                sendEvent(name: "thermostatFanMode", value: "auto",
-                          descriptionText: "${device} thermostatFanMode is auto")
-            }
-        }
+        if (speed != null) emitFanSpeed(speed)
     }
     if (data.displayTemp != null) {
         BigDecimal t = aylaSensorToScale(data.displayTemp)
@@ -349,22 +341,22 @@ void updateState(Map data) {
     }
 }
 
-private String deriveOperatingState(String mode, Object displayTemp, Object adjustTemp) {
-    switch (mode) {
-        case "off":      return "idle"
-        case "heat":     return "heating"
-        case "cool":     return "cooling"
-        case "fan_only": return "fan only"
-        case "dry":      return "idle"
-        case "auto":
-            if (displayTemp == null || adjustTemp == null) return "idle"
-            BigDecimal sp = aylaSetpointToScale(adjustTemp)
-            BigDecimal dt = aylaSensorToScale(displayTemp)
-            if (sp > dt) return "heating"
-            if (sp < dt) return "cooling"
-            return "idle"
-        default: return "idle"
+// The cloud doesn't report whether the compressor is running (op_status stays 0),
+// so this is a thermostat-style estimate: start heating once the room is a band
+// below the setpoint, keep heating until it reaches the setpoint; cooling mirrors it.
+private String deriveOperatingState(String mode, BigDecimal temp, BigDecimal sp, String prev) {
+    if (mode == "fan_only") return "fan only"
+    if (!(mode in ["heat", "cool", "auto"]) || temp == null || sp == null) return "idle"
+    BigDecimal band = getTemperatureScale() == 'F' ? 0.9 : 0.5
+    if (mode != "cool") {
+        if (temp <= sp - band) return "heating"
+        if (prev == "heating" && temp < sp) return "heating"
     }
+    if (mode != "heat") {
+        if (temp >= sp + band) return "cooling"
+        if (prev == "cooling" && temp > sp) return "cooling"
+    }
+    return "idle"
 }
 
 // Sensor readings (display_temperature, outdoor_temperature) are in hundredths

@@ -32,11 +32,11 @@ Region (US / EU) is configurable on the manager page; the region setting drives 
 ### Fujitsu Mini-Split
 
 **Standard capability surface (canonical values only):**
-- `thermostatMode` — `off`, `heat`, `cool`, `auto`
-- `thermostatFanMode` — `auto`
+- `thermostatMode` — `off`, `heat`, `cool`, `auto`. The unit's `dry` mode reports as `cool` (the compressor runs its cooling cycle) and `fan_only` as `off` (no compressor).
+- `thermostatFanMode` — `auto`, or `on` when the unit runs a fixed fan speed
 - `temperature` — room temperature from `display_temperature`
 - `heatingSetpoint` / `coolingSetpoint` / `thermostatSetpoint`
-- `thermostatOperatingState` — `idle` / `heating` / `cooling` / `fan only`
+- `thermostatOperatingState` — `idle` / `heating` / `cooling` / `fan only`. The cloud doesn't report whether the compressor is running, so this is estimated from room temperature and setpoint: heating starts once the room is 0.5°C below the setpoint and continues until it reaches it; cooling mirrors that above the setpoint. `dry` reports `idle`.
 
 **Custom Fujitsu surface (full unit enum):**
 - `fujitsuMode` — `off`, `heat`, `cool`, `auto`, `dry`, `fan_only`
@@ -74,9 +74,9 @@ The standard Hubitat `Thermostat` and `Thermostat Fan Mode` capabilities define 
 |---|---|
 | `auto()` / `cool()` / `heat()` / `off()` | route to `setThermostatMode(...)` |
 | `emergencyHeat()` | warn, route to `setThermostatMode("heat")` (no aux strip on mini-splits) |
-| `fanAuto()` | route to `setThermostatFanMode("auto")` |
-| `fanOn()` | warn, route to `setFanSpeed("high")` (closest to "continuous full fan") |
-| `fanCirculate()` | warn, route to `setFanSpeed("low")` (closest to "gentle circulation") |
+| `fanAuto()` / `setThermostatFanMode("auto")` | `setFanSpeed("auto")` |
+| `fanOn()` / `setThermostatFanMode("on")` | `setFanSpeed("high")` (closest to "continuous full fan") |
+| `fanCirculate()` / `setThermostatFanMode("circulate")` | warn, route to `setFanSpeed("low")` (closest to "gentle circulation") |
 
 ### Optimistic updates
 
