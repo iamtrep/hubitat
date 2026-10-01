@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "5.86.8"
+@Field static final String CODE_VERSION = "5.86.9"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -507,7 +507,7 @@ Map settingsPage() {
         }
 
         section("Alert Thresholds") {
-            paragraph "Free memory and temperature vary from hub to hub. Show observed ranges on the dashboard's App Settings tab lists this hub's normal readings; set the warnings just outside them. CPU load is a load average: 4.0 means all four cores are busy."
+            paragraph "Free memory and temperature vary from hub to hub. <b>Show observed ranges</b> on the dashboard's Settings tab lists this hub's normal readings; set the warnings just outside them. CPU load is a load average: 4.0 means all four cores are busy."
             input "warnMemMb",   "number",  title: "Free memory warning (MB)",    defaultValue: defaultWarnMemMb(),    range: "10..2000", required: true
             input "critMemMb",   "number",  title: "Free memory critical (MB)",   defaultValue: DEFAULT_CRIT_MEM_MB,   range: "10..2000", required: true
             input "warnCpuLoad", "decimal", title: "CPU load average warning",    defaultValue: DEFAULT_WARN_CPU_LOAD, range: "0.1..32",  required: true
