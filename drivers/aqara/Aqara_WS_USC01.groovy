@@ -68,7 +68,10 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "1.5.0"
+@Field static final String CODE_VERSION = "1.5.1"
+
+// A pending version reconfigure older than this is treated as lost and re-armed.
+@Field static final long RECONFIGURE_RETRY_MS = 60000L
 
 @Field static final String MFG_CODE = "0x115F"
 
@@ -425,15 +428,19 @@ private void parseLumiHeartbeat(String value) {
 
 private void runVersionCheck() {
     // publishCode pushes don't fire updated(); reconfigure on the first frame
-    // after a code change. Guarded so a burst of frames only schedules once.
-    if (state.version == CODE_VERSION || state.reconfigurePending) return
-    state.reconfigurePending = true
+    // after a code change. The pending timestamp keeps a burst of frames from
+    // scheduling twice, and expires so a lost callback re-arms on a later frame.
+    if (state.version == CODE_VERSION) return
+    Long pendingAt = state.reconfigurePendingAt as Long
+    if (pendingAt != null && now() - pendingAt < RECONFIGURE_RETRY_MS) return
+    state.reconfigurePendingAt = now()
     runInMillis(100, "runVersionReconfigure")
 }
 
 void runVersionReconfigure() {
     logWarn "Driver upgraded to ${CODE_VERSION} (was ${state.version}), reconfiguring"
     state.remove("reconfigurePending")
+    state.remove("reconfigurePendingAt")
     configure()
 }
 

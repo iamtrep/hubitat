@@ -88,7 +88,10 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "2.15.1"
+@Field static final String CODE_VERSION = "2.15.2"
+
+// A pending version reconfigure older than this is treated as lost and re-armed.
+@Field static final long RECONFIGURE_RETRY_MS = 60000L
 
 @Field static final int REPORT_INTERVAL_MINUTES = 60
 @Field static final int CHECK_EVERY_MINUTES = 10
@@ -150,6 +153,7 @@ void initialize() {
     sendEvent(name: "numberOfButtons", value: 1, isStateChange: false)
 
     state.remove("reconfigurePending")
+    state.remove("reconfigurePendingAt")
 
     // Drop legacy state keys — FF01 tags 0x05/0x06 were misnamed RSSI/LQI in
     // an earlier driver version (see parseCheckin header for the corrected
@@ -393,12 +397,13 @@ void parse(String description) {
 
 private void runVersionCheck() {
     // Auto-reconfigure after a publishCode push (which doesn't fire updated()
-    // on the receiving hub). Guarded so a burst of frames only schedules once.
-    if (state.reconfigurePending) return
-    if (getDeviceDataByName('driver') != CODE_VERSION) {
-        state.reconfigurePending = true
-        runInMillis(100, "runVersionReconfigure")
-    }
+    // on the receiving hub). The pending timestamp keeps a burst of frames from
+    // scheduling twice, and expires so a lost callback re-arms on a later frame.
+    if (getDeviceDataByName('driver') == CODE_VERSION) return
+    Long pendingAt = state.reconfigurePendingAt as Long
+    if (pendingAt != null && now() - pendingAt < RECONFIGURE_RETRY_MS) return
+    state.reconfigurePendingAt = now()
+    runInMillis(100, "runVersionReconfigure")
 }
 
 /*
