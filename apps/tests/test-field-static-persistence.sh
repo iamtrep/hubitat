@@ -3,12 +3,12 @@
 # SPDX-License-Identifier: MIT
 
 #
-# test-field-static-persistence — verifies @Field static survives code pushes
+# test-field-static-persistence — verifies @Field static is reset by a code push
 #
-# Asserts the memory claim recorded in
-#   memory/hubitat_field_static_persistence.md
-# that, as of Hubitat 2.5.0.x, `@Field static` values in apps and drivers
-# persist across `/app/ajax/update` (and the equivalent for drivers).
+# Backs the platform note (docs/hubitat-platform-notes.md, "Platform behavior")
+# that `@Field static` values are reset when the code is pushed
+# (`/app/ajax/update`), so anything that must survive a push belongs in
+# `state` or `atomicState`.
 #
 # Probe: apps/tests/FieldStaticPersistenceTest.groovy — single app with
 #   @Field static AtomicInteger fspCounter
@@ -24,15 +24,14 @@
 #   Phase 2 — the assertion
 #     d. Push a marker variant of the source (extra comment) so the hub
 #        is forced to recompile, not no-op.
-#     e. btnReport → assert log shows counter still = 3.
-#        (If @Field static reset on push, this would be 0 → FAIL.)
-#     f. btnIncrement → assert counter = 4 (continuity).
+#     e. btnReport → assert log shows counter = 0 (reset by the push).
+#     f. btnIncrement → assert counter = 1.
 #   Cleanup
 #     g. Restore the canonical source on the hub by pushing the disk copy.
 #
 # Usage:
 #   bash apps/tests/test-field-static-persistence.sh             # default hub
-#   bash apps/tests/test-field-static-persistence.sh @maison-pro # specific hub
+#   bash apps/tests/test-field-static-persistence.sh @myhub      # specific hub
 #
 # Runtime budget: ~20s.
 #
@@ -378,7 +377,7 @@ else:
         die("No FSP_COUNTER log lines captured — abandoning phase 2", code=1)
 
 # ── Phase 2: push again + assert counter survives ────────────────────
-section("Phase 2 — push code, counter must persist")
+section("Phase 2 — push code, counter must reset")
 
 code_info = get_app_code(app_type_id) or {}
 current_version = code_info.get("version", 1)
@@ -401,11 +400,11 @@ else:
         time.sleep(0.5)
 
     seq2 = captured_counters(cap2)
-    expected2 = [(3, "report"), (4, "increment")]
+    expected2 = [(0, "report"), (1, "increment")]
     if seq2 == expected2:
-        ok(f"counter survived code push: {seq2}")
-    elif seq2 and seq2[0][0] == 0:
-        fail(f"counter RESET on code push (saw {seq2}) — claim is FALSE on firmware {fw}")
+        ok(f"counter reset by code push: {seq2}")
+    elif seq2 and seq2[0][0] == 3:
+        fail(f"counter SURVIVED the code push (saw {seq2}): @Field static behavior changed on firmware {fw}")
     else:
         fail(f"unexpected sequence after push: expected {expected2}, got {seq2}")
 

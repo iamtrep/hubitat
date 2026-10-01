@@ -8,7 +8,7 @@ definition(
     name: "Field Static Persistence Test",
     namespace: "tests",
     author: "PJ",
-    description: "Probe app for verifying @Field static survives Hubitat code pushes (2.5.0.x+).",
+    description: "Probe app showing that a code push resets @Field static values.",
     menu: "Apps", // new in platform 2.5.0
     category: "Convenience",
     iconUrl: "",
