@@ -12,9 +12,10 @@ Hubitat Elevation apps for stress-testing various hub subsystems. These are diag
 <!-- AUTO:tests-index -->
 | File | App | Description |
 |---|---|---|
+| `ArchitectureClaimsProbe.groovy` | **Architecture Claims Probe** | Probe app for the platform claims in ARCHITECTURE.md. Test use only. |
 | `asyncHttpStressTest.groovy` | **Async HTTP Stress Test App** | Async HTTP Stress Test App |
 | `udpStressTest.groovy` | **Async UDP Stress Test App** | Async UDP Stress Test App |
-| `FieldStaticPersistenceTest.groovy` | **Field Static Persistence Test** | Probe app for verifying @Field static survives Hubitat code pushes (2.5.0.x+). |
+| `FieldStaticPersistenceTest.groovy` | **Field Static Persistence Test** | Probe app showing that a code push resets @Field static values. |
 | `fileManagerTests.groovy` | **File Manager API test** | tbd |
 | `hubStressTests.groovy` | **Hub Stress Test App** | Some HE stress test functions |
 | `PushoverNotificationTester.groovy` | **Pushover Notification Tester** | Systematic test app for the Pushover Notifications driver |
