@@ -40,7 +40,7 @@ metadata {
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.1"
+@Field static final String CODE_VERSION = "0.1.2"
 @Field static final String constCO2ClickURL = 'https://environment-monitor-01.co2.click:11000/api/v1'
 @Field static final String constVisiblairURL = 'https://api.visiblair.com:11000/api/v1'
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
@@ -144,7 +144,7 @@ void refreshSensorData(Map retData) {
     retData.each {
         switch (it.key) {
             case "firmwareVersion":
-                state.firmwareVersion = it.value
+                setMetadata("firmwareVersion", it.value)
                 break
             case "lastSampleTemperature":
                 String temp = convertTemperatureIfNeeded(it.value, "c", 1)
@@ -172,13 +172,13 @@ void refreshSensorData(Map retData) {
                 updateDeviceAttribute("calibration", it.value, "")
                 break
             case "model":
-                state.model = it.value
+                setMetadata("model", it.value)
                 break
             case "modelVersion":
-                state.modelVersion = it.value
+                setMetadata("modelVersion", it.value)
                 break
             case "modelVariant":
-                state.modelVariant = it.value
+                setMetadata("modelVariant", it.value)
                 break
             case "sampleRate":
                 state.sampleRate = it.value // in s
@@ -392,3 +392,10 @@ private void logError(String message) {
     "lowCO2LimitEnabled":false
  *  }
  */
+
+// Firmware and model are device metadata: data values survive a driver switch, which clears
+// state. Also drops the state key earlier versions wrote.
+private void setMetadata(String key, Object value) {
+    state.remove(key)
+    if (value != null) device.updateDataValue(key, value.toString())
+}

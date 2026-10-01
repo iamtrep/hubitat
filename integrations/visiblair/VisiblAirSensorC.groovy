@@ -154,20 +154,20 @@ void updateSensorData(Map data) {
 
             // --- Device info ---
             case "firmwareVersion":
-                state.firmwareVersion = value
+                setMetadata("firmwareVersion", value)
                 break
             case "latestFirmwareVersion":
-                state.latestFirmwareVersion = value
-                String current = state.firmwareVersion ?: ""
+                setMetadata("latestFirmwareVersion", value)
+                String current = device.getDataValue("firmwareVersion") ?: ""
                 String latest = (value ?: "") as String
                 boolean updateAvail = latest != "" && latest != current
                 sendEvent(name: "firmwareUpdateAvailable", value: updateAvail ? "true" : "false")
                 break
             case "model":
-                state.model = value
+                setMetadata("model", value)
                 break
             case "modelVersion":
-                state.modelVersion = value
+                setMetadata("modelVersion", value)
                 break
 
             // --- Config sync to preferences ---
@@ -255,4 +255,11 @@ private void logWarn(String message) {
 
 private void logError(String message) {
     log.error "${device} : ${message}"
+}
+
+// Firmware and model are device metadata: data values survive a driver switch, which clears
+// state. Also drops the state key earlier versions wrote.
+private void setMetadata(String key, Object value) {
+    state.remove(key)
+    if (value != null) device.updateDataValue(key, value.toString())
 }
