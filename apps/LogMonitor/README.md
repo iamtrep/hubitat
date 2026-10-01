@@ -14,10 +14,10 @@ The parent app (`Log Monitor`) orchestrates everything. Each WebSocket connectio
 ### Bridges (WebSocket sources)
 - Up to **5 bridges**, each connecting to one hub's `/logsocket`
 - Local hub uses `127.0.0.1:8080`, remote hubs connect to `ws://{ip}/logsocket` on port 80
-- Auto-reconnect with exponential backoff (5 → 60s cap), configurable ping interval, intentional-disconnect handling
+- Auto-reconnect with exponential backoff (5, 10, 20, then 40s between attempts), configurable ping interval, intentional-disconnect handling
 - 60-second cold-start delay when hub uptime is below 60s, so the connection isn't initiated before the platform's WebSocket stack is ready
 - HTML entities arriving from remote hubs (often double-encoded over port 80) are unescaped at the bridge
-- Self-monitoring guard: the bridge skips its own device logs, the parent skips its own app logs — no feedback loops
+- Self-monitoring guard: the bridge skips its own device logs, the parent skips its own app logs, and logs from a notification device never trigger a notification
 
 ### Filters (matching + output)
 - Up to **10 filters**, each independently configured
@@ -35,10 +35,10 @@ Each filter can fan out to any combination of:
 - **Hub log file** — appended to a file in File Manager as CSV (`timestamp,bridge,type,level,"name","msg"`)
 - **HTTP POST** — JSON body `{filter, bridge, type, level, name, msg, id, time}` posted to a configurable URL with a 5-second timeout
 
-The matched-line format sent to notifications and the hub log is:
+Notifications and the app's own log lines use this format:
 
 ```
-[<bridge>/<type>/<level>] <name>: <msg>
+<filter>: [<bridge>/<type>/<level>] <name>: <msg>
 ```
 
 ### Statistics
@@ -124,10 +124,10 @@ On the main page, **Add Bridge** prompts for a label and an IP address. Each rem
 
 ## Output formats
 
-### Notifications and hub log file
+### Notifications
 
 ```
-[<bridge>/<type>/<level>] <name>: <msg>
+<filter>: [<bridge>/<type>/<level>] <name>: <msg>
 ```
 
 CSV (one line per matched event, appended to the chosen File Manager file):

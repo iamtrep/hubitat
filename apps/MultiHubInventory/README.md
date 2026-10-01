@@ -93,8 +93,8 @@ base URL with its access token**, for example:
 http://192.168.0.10/apps/api/247/api/?access_token=<token>
 ```
 
-This is the `/api/` path — **not** the `ui.html` dashboard link. You can find it on the Hub
-Diagnostics settings page under "Open Hub Diagnostics Dashboard."
+This is the `/api/` path, not the `ui.html` dashboard link. To build it, take the **Open
+Dashboard** link from the Hub Diagnostics settings page and replace `ui.html` with `api/`.
 
 Add an entry for **this hub itself** too, pointing at its own Hub Diagnostics instance. A hub
 cannot make an HTTP call to its own LAN IP, so the app sends its own requests through the

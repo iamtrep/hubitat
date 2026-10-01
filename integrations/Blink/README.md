@@ -37,7 +37,7 @@ The integration uses the same OAuth 2.0 Authorization-Code + PKCE flow as the iO
 5. `GET /oauth/v2/authorize` again to obtain the auth code
 6. `POST /oauth/token` to exchange the code for access + refresh tokens
 
-The access token is refreshed automatically 5 minutes before expiry. Refresh tokens are persisted in the app's `state` and survive both hub restarts and code pushes — only an explicit **Disconnect** or **Reset auth state** clears them.
+The access token is refreshed automatically 5 minutes before expiry. Refresh tokens are persisted in the app's `state` and survive both hub restarts and code pushes. They are cleared by **Disconnect**, **Reset auth state**, or Blink rejecting the refresh token (HTTP 400/401).
 
 ## Devices
 
@@ -87,7 +87,7 @@ Connection state, region tier, account ID, token expiry, and a summary of the la
 
 ### 📷 Devices (read-only)
 
-The list of `Blink Network` and `Blink Camera` children, with links to each device's edit page. Camera entries that aren't default-type cameras show a small tag (`mini`, `doorbell`, `superior`, `storm`) since variant-specific commands aren't yet implemented for those. Orphans (cameras or networks deleted in the Blink mobile app but still present in Hubitat) appear with a **Remove orphaned devices** button.
+The list of `Blink Network` and `Blink Camera` children, with links to each device's edit page. Camera entries that aren't default-type cameras show a small tag (`owl`, `doorbell`, `superior`, `storm`) since variant-specific commands aren't yet implemented for those. Orphans (cameras or networks deleted in the Blink mobile app but still present in Hubitat) appear with a **Remove orphaned devices** button.
 
 ### ⏱️ Polling
 

@@ -106,7 +106,7 @@ If a unit is removed from your FGLair account, the Hubitat child is flagged as o
 
 ## Discovered Properties (debug)
 
-The manager's main page lists every Ayla property name observed across polls, with each property's last-seen value. This is a development aid for adding coverage of properties the integration doesn't expose yet — different Fujitsu models report different property sets, and the discovery section makes the unit's actual property surface visible without dumping logs. A **Reset discovered properties** button clears the accumulator if you want a fresh snapshot.
+A **Discovered properties (debug)** link on the manager's main page opens a page listing every Ayla property name observed across polls, with each property's last-seen value. This is a development aid for adding coverage of properties the integration doesn't expose yet — different Fujitsu models report different property sets, and the discovery section makes the unit's actual property surface visible without dumping logs. A **Reset discovered properties** button clears the accumulator if you want a fresh snapshot.
 
 ## Acknowledgments
 

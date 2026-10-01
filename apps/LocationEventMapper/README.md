@@ -77,7 +77,7 @@ The defaults wire up a restart-state sensor: it opens when the hub is asked to s
 
 | Setting | Default | Description |
 |---|---|---|
-| Name | _(required)_ | Display label for this mapping |
+| Name | _(none)_ | Display label for this mapping |
 | Virtual Contact Sensor | _(required)_ | Sensor the mapping drives |
 | Events to OPEN the device | `manualReboot`, `manualShutdown`, `update` | Multi-select from the supported location events |
 | Events to CLOSE the device | `systemStart` | Multi-select from the supported location events |

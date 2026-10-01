@@ -86,7 +86,7 @@ Applies a sliding-window filter to a single sensor's numeric attribute and write
 ## Installation
 
 1. Install the **parent** app code on your Hubitat hub (Sensor Aggregator and/or Sensor Filters).
-2. Install the corresponding **child** app code (Continuous Child, Discrete Child, and/or Sensor Filter Child).
+2. Install the corresponding **child** app code (Continuous Child, Discrete Child, Motion Fusion Child, and/or Sensor Filter Child).
 3. Add the parent app from **Apps > Add User App**.
 4. Create child instances from within the parent app's UI.
 

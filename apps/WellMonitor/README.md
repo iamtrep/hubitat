@@ -142,7 +142,7 @@ The OFF threshold must be lower than the ON threshold. The gap between them prov
 | Setting | Default | Description |
 |---|---|---|
 | Enable CSV logging | true | Write pump cycles and flow events to files |
-| Pump CSV file name | pumpCycles.csv | File name for pump cycle log |
+| CSV file name | pumpCycles.csv | File name for pump cycle log |
 | Flow CSV file name | waterFlow.csv | File name for flow event log |
 
 ### Logging
@@ -157,7 +157,7 @@ Three boolean preferences in the project standard pattern:
 
 ## API Endpoints
 
-The app exposes the following endpoints via OAuth-secured mappings. The access token is required as a query parameter (`?access_token=...`).
+The app exposes the following endpoints via OAuth-secured mappings. Pass the access token in an `Authorization: Bearer <token>` header, or as an `?access_token=...` query parameter where a header can't be sent (browser links, `<script src>`).
 
 | Endpoint | Content-Type | Description |
 |---|---|---|

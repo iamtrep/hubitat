@@ -9,7 +9,7 @@ Standalone single-device Hubitat driver for a [VisiblAir](https://visiblair.com/
 
 ## Driver
 
-- `visiblair.groovy` — **VisiblAir Sensor**: configure with the sensor's IP address; the driver polls the local HTTP API directly
+- `visiblair.groovy` — **VisiblAir Sensor**: configure with your VisiblAir user ID, access token and sensor UUID; the driver polls the VisiblAir cloud API
 
 ## When to use this vs. the full integration
 

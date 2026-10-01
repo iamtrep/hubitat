@@ -54,7 +54,7 @@ You don't need to enable OAuth by hand — the app enables OAuth for itself the 
 
 1. Go to **Apps → + Add User App → Hub Diagnostics**
 2. On first run the app initializes, **enables its own OAuth**, and automatically downloads its web dashboard to the hub's File Manager — you don't need to install that file or touch OAuth yourself. (The dashboard talks to the app over OAuth-protected API calls, so OAuth must be on; the app turns it on for you.)
-3. A link to open the dashboard appears on the main page.
+3. Click **Done**, then re-open Hub Diagnostics from the Apps list. The main page shows an **Open Dashboard** link.
 
 > **Note:** In the rare case the app can't enable OAuth itself, it shows instructions to enable it manually from the **Apps Code → Hub Diagnostics → OAuth** page.
 
@@ -76,7 +76,7 @@ Bookmark this URL for direct access. The access token is tied to the app instanc
 ## Updating
 
 ### Check for updates
-The Dashboard tab shows the current App Version and UI Version. Click **Check for updates** to query GitHub for a newer release.
+The Dashboard tab shows the current App Version and UI Version, plus a banner when a newer release is on GitHub. **Check for updates** downloads the UI that matches the installed app version.
 
 When a newer release is published on GitHub, the app appends a green **update available** badge to its label on the Apps list, so you can spot an available update without opening the app. The badge is reconciled daily (and whenever the app re-initializes) and clears itself once the installed code catches up.
 
@@ -90,7 +90,7 @@ Use **Apps Code → Hub Diagnostics → Import** (same import URL as above). Aft
 > breakdowns and are best deleted and re-captured.
 
 ### Updating the UI
-The app keeps the UI in sync with the app version automatically: a nightly job downloads the latest UI from GitHub and installs it once its version matches the installed app. In practice: after updating the Groovy app code, open the app preferences once and re-save (or wait for the nightly job) and the matching UI will install automatically. You can also trigger an immediate sync via **Sync UI from GitHub** on the Dashboard tab.
+The app keeps the UI in sync with the app version automatically: a nightly job downloads the latest UI from GitHub and installs it once its version matches the installed app. In practice: after updating the Groovy app code, open the app preferences once and re-save (or wait for the nightly job) and the matching UI will install automatically. You can also trigger an immediate sync via **Check for updates** on the Dashboard tab.
 
 ---
 
@@ -128,6 +128,7 @@ A full inventory of every device on the hub.
 
 | Column | Description |
 |---|---|
+| ID | Hubitat device ID |
 | Label (Name) | The device's display name — its label, or the device name when unlabeled; linked to the device edit page |
 | Type | Driver type; community drivers are linked to the driver editor |
 | Connection | How the hub reaches the device: Zigbee, Z-Wave, Matter, Bluetooth, HomeKit, LAN (Direct), LAN (Bridge), Cloud, Virtual, Hub Mesh |
@@ -314,11 +315,11 @@ The user's own channel is annotated with "(your channel)" when it appears in the
 ### Z-Wave
 
 - Radio status (enabled, healthy, firmware version, region, node count)
-- **Zip Gateway** version (`/hub/advanced/zipgatewayVersion`) — the Z-Wave SDK version
+- **Z/IP Gateway Version** (`/hub/advanced/zipgatewayVersion`) on the Z/IP stack, or **Z-Wave JS Version** on the Z-Wave JS stack
 - Firmware update alert if a radio firmware upgrade is available
 - Compatible with both the legacy Z/IP stack and the Z-Wave JS stack
 
-**Ghost Nodes** — Z-Wave radio nodes flagged by any of: no associated Hubitat device ID (primary signal — the device was deleted without Z-Wave exclusion), node in FAILED state, or (no route AND unknown name). Each ghost shows the signals that triggered it: `no device`, `FAILED`, `no route`, `unknown name`. These should be removed from the Z-Wave mesh.
+**Ghost Nodes** — Z-Wave radio nodes with no associated Hubitat device ID (the device was deleted without Z-Wave exclusion). These are safe to force-remove from the radio. **Failed Nodes** — nodes that have a Hubitat device but are in FAILED state, or have no route and an unknown name. Try a battery swap or moving the device closer to the hub before excluding. Each node shows the signals that flagged it: `no device`, `FAILED`, `no route`, `unknown name`.
 
 **Problem Nodes** — Nodes with state ≠ OK or packet error rate > 1%.
 
@@ -444,7 +445,7 @@ A **Matter** sub-tab captures the hub's Matter (CHIP) SDK log. Unlike the Zigbee
 - **Clear buffer** empties the recording buffer without disconnecting.
 - **Recording cap** selects the recording buffer's byte cap (10 / 50 / 200 MB). When the buffer is full, oldest frames are dropped and the "Dropped: N" counter advances so you know the capture is no longer complete from `t0`.
 
-**Live tail** shows every captured frame (newest first) inside a scrollable, fixed-height panel — the visible area is bounded but the buffer is not, so older frames are reachable by scrolling. Columns are **Time · Name · DNI · LQI · RSSI · Cluster · Command · Decoded**. The **DNI** column renders the 16-bit short address as `0xHHHH`; the **Name** column links to that device's edit page on the hub when the frame carries a Hubitat device id. The **Command** column decodes the ZCL command to a friendly name (e.g. `Report Attributes (0x0A)`, `On (0x01)`) and folds in a direction arrow — `←hub` for device→hub frames, `→dev` for hub→device; a `(mfr)` marker flags manufacturer-specific frames (whose command id is read at the correct offset). The **Decoded** column shows the human-readable payload: reported/read attributes as `Name=value` (e.g. `OnOff=true`, `MeasuredValue=2348`) and Default Responses as `Command→STATUS`; hover the cell for the full form with attribute ids and ZCL data types. Values are shown raw (no unit scaling). Click any row to expand a decoded breakdown — frame-control flags (global/cluster-specific, direction, manufacturer-specific, default-response-disabled), the command, and the attribute/response detail — above the pretty-printed raw JSON (which carries the raw payload bytes); click again to collapse.
+**Live tail** shows every captured frame (newest first) inside a scrollable, fixed-height panel — the visible area is bounded but the buffer is not, so older frames are reachable by scrolling. Columns are **Time · Name · DNI · EP · LQI · RSSI · Cluster · Command · Decoded**. The **EP** column shows the source endpoint. The **DNI** column renders the 16-bit short address as `0xHHHH`; the **Name** column links to that device's edit page on the hub when the frame carries a Hubitat device id. The **Command** column decodes the ZCL command to a friendly name (e.g. `Report Attributes (0x0A)`, `On (0x01)`) and folds in a direction arrow — `←hub` for device→hub frames, `→dev` for hub→device; a `(mfr)` marker flags manufacturer-specific frames (whose command id is read at the correct offset). The **Decoded** column shows the human-readable payload: reported/read attributes as `Name=value` (e.g. `OnOff=true`, `MeasuredValue=2348`) and Default Responses as `Command→STATUS`; hover the cell for the full form with attribute ids and ZCL data types. Values are shown raw (no unit scaling). Click any row to expand a decoded breakdown — frame-control flags (global/cluster-specific, direction, manufacturer-specific, default-response-disabled), the command, and the attribute/response detail — above the pretty-printed raw JSON (which carries the raw payload bytes); click again to collapse.
 
 **Filter** — a single box (like the table filter used elsewhere in the SPA) substring-matches, case-insensitively, against everything the row shows: name, DNI, cluster, command (decoded name + direction), decoded value, LQI, and RSSI. Space-separated terms must all match, so `kitchen onoff` or `0402 report` narrow progressively. It applies only to the live tail view — the recording buffer is always full-fidelity.
 
@@ -492,7 +493,7 @@ The scan crawls every device via `/device/fullJson/{id}` — one call per device
 
 ## Settings Tab
 
-Most settings are accessible from the Hubitat admin UI under **Apps → Hub Diagnostics → Preferences**. Three settings are available only through the dashboard's Settings tab and are not shown in the Hubitat admin UI: **Auto-refresh interval** (Live Data section), **Obfuscate device/app names** (Export section), and **Clear Enrichment Cache** (Maintenance section).
+Most settings are accessible from the Hubitat admin UI under **Apps → Hub Diagnostics → Settings**. Three settings are available only through the dashboard's Settings tab and are not shown in the Hubitat admin UI: **Auto-refresh interval** (Live Data section), **Obfuscate device/app names** (Privacy section), and **Clear Enrichment Cache** (Maintenance section).
 
 ### Config Snapshot Scheduling
 - Enable automatic snapshots: on/off
@@ -529,7 +530,7 @@ These thresholds control when resource metrics turn orange (warning) or red (cri
 Changes take effect immediately in the dashboard without a page reload.
 
 ### Live Data
-- **Auto-refresh interval** — How frequently the Resources cards on Dashboard, Health, and Performance tabs update in the background (10–300 seconds, default 30). Changes take effect immediately on save without a page reload.
+- **Auto-refresh interval** — How frequently the Resources cards on the Dashboard and Health tabs update in the background (10–300 seconds, default 30). Changes take effect immediately on save without a page reload.
 
 ### Logging
 - **Debug logging** — Enables verbose logging in the Hubitat Logs page. Useful for troubleshooting; leave off during normal use.
@@ -566,7 +567,7 @@ The forum export generates a concise Markdown-formatted summary suitable for pas
 
 Severity levels: **Critical** (red), **Warning** (orange), **Info** (blue), **OK** (green).
 
-The **alert-aware favicon** and the Dashboard *Platform Alerts* / Health *Alerts* lists share one roll-up: System Resource Alerts, Platform Alerts, Hub Messages, Ethernet + WiFi, the Z-Wave ghost / failed / problem-node counts, Z-Wave radio-firmware-update, hub-firmware-update, and app-update status. The remaining entries below — Matter reboot, the per-mesh quality metrics (Avg PER / RSSI, S0 overhead, Zigbee LQI), and the device-inventory alerts (low battery, stale devices, chatty devices) — are surfaced on their own tabs and do **not** affect the favicon or the *Alerts* count. The Performance tab's chatty-device banner is a separate, browser-computed metric (per-device messages/min vs the chatty-device threshold) and is distinct from the hub's *Spammy Devices Detected* flag; only the hub flag feeds the roll-up.
+The **alert-aware favicon** and the Dashboard *Platform Alerts* / Health *Alerts* lists share one roll-up: System Resource Alerts, Platform Alerts, Hub Messages, Ethernet + WiFi, mDNS/Bonjour periodic restart, the Z-Wave ghost / failed / problem-node counts, Z-Wave radio-firmware-update, hub-firmware-update, and app-update status. The remaining entries below — Matter reboot, the per-mesh quality metrics (Avg PER / RSSI, S0 overhead, Zigbee LQI), and the device-inventory alerts (low battery, stale devices, chatty devices) — are surfaced on their own tabs and do **not** affect the favicon or the *Alerts* count. The Performance tab's chatty-device banner is a separate, browser-computed metric (per-device messages/min vs the chatty-device threshold) and is distinct from the hub's *Spammy Devices Detected* flag; only the hub flag feeds the roll-up.
 
 ### Hub Messages
 | Alert | Source | Severity |
@@ -579,11 +580,11 @@ The **alert-aware favicon** and the Dashboard *Platform Alerts* / Health *Alerts
 | Alert | Condition | Default Threshold | Severity |
 |---|---|---|---|
 | OS Memory Critical | Free memory < critMemMb | 75 MB | Critical |
-| OS Memory Warning | Free memory < warnMemMb | 100 MB | Warning |
+| OS Memory Warning | Free memory < warnMemMb | 100 MB (200 on a C-8 Pro) | Warning |
 | CPU Load Critical | 5-min avg > critCpuLoad | 8.0 | Critical |
 | CPU Load Warning | 5-min avg > warnCpuLoad | 4.0 | Warning |
-| Temperature Critical | Hub temp > critTempC | 77 °C | Critical |
-| Temperature Warning | Hub temp > warnTempC | 50 °C | Warning |
+| Temperature Critical | Hub temp > critTempC | 80 °C | Critical |
+| Temperature Warning | Hub temp > warnTempC | 65 °C | Warning |
 
 ### Platform Alerts (binary flags from the hub — no configurable threshold)
 
@@ -614,13 +615,14 @@ The **alert-aware favicon** and the Dashboard *Platform Alerts* / Health *Alerts
 | Ethernet + WiFi both active | Both interfaces enabled | Warning |
 | Z-Wave radio firmware update available | Hub flag | Warning |
 | Matter reboot required | Hub flag | Warning |
+| mDNS/Bonjour periodic restart enabled | Hub setting | Warning |
 
 ### Z-Wave Mesh Alerts (hardcoded)
 
 | Alert | Condition | Threshold | Severity |
 |---|---|---|---|
-| Ghost Nodes | No associated device ID (orphaned in the radio), or no route + unknown name | — | Critical |
-| Failed Nodes | Has a Hubitat device but the radio reports it FAILED / down | — | Warning |
+| Ghost Nodes | No associated Hubitat device ID (orphaned in the radio) | — | Critical |
+| Failed Nodes | Has a Hubitat device but the radio reports it FAILED, or it has no route and an unknown name | — | Warning |
 | Problem Nodes | State ≠ OK, or PER > 1% | 1% PER | Warning |
 | Avg PER Critical | Mesh average PER > 1% | 1% | Critical |
 | Avg PER Warning | Mesh average PER > 0% | 0% | Warning |
@@ -632,8 +634,6 @@ The **alert-aware favicon** and the Dashboard *Platform Alerts* / Health *Alerts
 
 | Alert | Condition | Threshold | Severity |
 |---|---|---|---|
-| Non-Responsive Critical | Responsive < 80% of total | 80% ratio | Critical |
-| Non-Responsive Warning | Responsive < 100% but ≥ 80% | 80% ratio | Warning |
 | Avg LQI Critical | Average LQI < 150 | 150 | Critical |
 | Avg LQI Warning | Average LQI < 200 | 200 | Warning |
 | Weak Neighbors | Any neighbor LQI < 150 | 150 | Critical |
@@ -660,7 +660,7 @@ The **alert-aware favicon** and the Dashboard *Platform Alerts* / Health *Alerts
 
 ## REST API
 
-The app exposes a REST API consumed by the dashboard SPA. It is not a stable public contract — routes are added and renamed as the SPA evolves. All endpoints require the OAuth `access_token` query parameter.
+The app exposes a REST API consumed by the dashboard SPA. It is not a stable public contract — routes are added and renamed as the SPA evolves. All endpoints require the OAuth access token, sent as an `Authorization: Bearer` header. Browser navigations such as the dashboard link use the `access_token` query parameter.
 
 Base URL: `http://{hub-ip}/apps/api/{app-id}/`
 
