@@ -88,7 +88,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Humidity-Based Fan Controller"
-@Field static final String CODE_VERSION = "0.9.4"
+@Field static final String CODE_VERSION = "0.9.5"
 
 // Humidity state machine states
 @Field static final String HUMIDITY_NORMAL = "NORMAL"
@@ -273,9 +273,8 @@ void initialize() {
     // Clear stale pending command (verification timers were killed by unschedule())
     state.pendingCommand = null
 
-    // Clear stale physical-run-floor state (the runIn timer was killed by unschedule())
-    state.physicalRunStartedAt = null
-    state.deferredOffReason = null
+    // Re-derive the physical-run floor from its start time (its timer was killed by unschedule())
+    servicePhysicalRunFloor()
 
     // Sync high humidity switch with current state
     syncHighHumiditySwitch()
@@ -466,6 +465,7 @@ void restrictionSwitchHandler(evt) {
 // ==================== Humidity State Machine ====================
 
 private void evaluateHumidityStateMachine(reportingDevice = null) {
+    servicePhysicalRunFloor()
     // bathroomHumidity / referenceHumidity are the comparison metric for the
     // current mode — %RH in default mode, °C dew point when useDewPoint is on.
     BigDecimal bathroomHumidity = computeBathroomMetric(reportingDevice)
@@ -1103,15 +1103,44 @@ private void cancelPhysicalRunFloor(String reason) {
 // floor is active, this is just a passthrough to turnOffFan().
 private void requestFanOff(String reason) {
     if (isPhysicalRunFloorActive()) {
-        Long startedAt = state.physicalRunStartedAt as Long
-        Integer mins = (settings.physicalRunTimerMinutes ?: DEFAULT_PHYSICAL_RUN_TIMER_MINUTES) as Integer
-        Long remainingMs = (startedAt + mins * 60000L) - now()
-        Long remainingSec = Math.max(0L, remainingMs.intdiv(1000L))
-        logInfo("Off request from '${reason}' deferred — physical-run floor has ~${remainingSec}s remaining")
-        state.deferredOffReason = reason
-        return
+        Long remainingMs = physicalRunFloorRemainingMs()
+        if (remainingMs > 0) {
+            logInfo("Off request from '${reason}' deferred — physical-run floor has ~${remainingMs.intdiv(1000L)}s remaining")
+            state.deferredOffReason = reason
+            return
+        }
+        // The floor elapsed but its callback never ran; clear it and honor this off.
+        unschedule("physicalRunFloorReached")
+        state.physicalRunStartedAt = null
+        state.deferredOffReason = null
+        logInfo("Physical-run floor already elapsed; executing off request from '${reason}'")
     }
     turnOffFan()
+}
+
+private Long physicalRunFloorRemainingMs() {
+    Long startedAt = state.physicalRunStartedAt as Long
+    Integer mins = (settings.physicalRunTimerMinutes ?: DEFAULT_PHYSICAL_RUN_TIMER_MINUTES) as Integer
+    return (startedAt + mins * 60000L) - now()
+}
+
+// Re-derives the physical-run floor from physicalRunStartedAt, so a lost
+// physicalRunFloorReached() callback (crash, missed schedule, unschedule() on save)
+// completes or re-arms on the next evaluation instead of deferring automation offs
+// indefinitely. Same pattern as servicePendingTransition().
+private void servicePhysicalRunFloor() {
+    if (!isPhysicalRunFloorActive()) return
+    if (!isPhysicalRunFloorEnabled()) {
+        cancelPhysicalRunFloor("feature disabled")
+        return
+    }
+    if (fanSwitch?.currentValue("switch") != "on") {
+        cancelPhysicalRunFloor("fan is off")
+        return
+    }
+    Long remainingMs = physicalRunFloorRemainingMs()
+    Integer remainingSeconds = remainingMs > 0 ? (remainingMs / 1000).toInteger() + 1 : 1
+    runIn(remainingSeconds, "physicalRunFloorReached")
 }
 
 void physicalRunFloorReached() {
