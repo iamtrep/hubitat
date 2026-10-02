@@ -6,7 +6,8 @@
 # Subscribes to a chosen device's selected attributes and appends a CSV
 # row to a hub file on every event. Primary observable is a trace-level
 # `new data <line>` log emitted by the event handler — no output device,
-# so the test asserts on logs (like BCL).
+# so the test asserts on logs (like BCL). Trace logging turns itself off
+# after 30 minutes, so each case turns debug, then trace, back on first.
 #
 # ── ONE-TIME MANUAL SETUP REQUIRED ────────────────────────────────────
 # `selectedAttributes` is a dynamicPage enum gated on `selectedDevice`;
@@ -17,7 +18,6 @@
 #   http://<hub_ip>/installedapp/configure/<instance_id>
 # and set:
 #   Log File Name:     test-attrlog.csv
-#   Log level:         trace
 #   Select Device:     test-attrlog-1
 #   Select Attributes: contact
 #   Confirm Changes:   ✓
@@ -37,9 +37,6 @@ app:
   manual_setup_required: true
   config:
     logFileName: "test-attrlog.csv"
-    # `trace` is the only level at which handleEvent's "new data" line
-    # fires. info/debug log other (less reliable) lines.
-    logLevel: trace
     # The "Confirm Changes" gate in mainPage sets state.pendingChanges
     # on first config save (device/attributes changed from null). Pre-
     # confirming here lets updated() commit the change in one POST.
@@ -65,6 +62,7 @@ maker_api:
 cases:
   - name: attribute-event-logged
     setup:
+      - { settings: { debugEnable: true, traceEnable: true } }
       - { device: test-attrlog-1, command: "close" }
     setup_wait_seconds: 2
     actions:
@@ -76,6 +74,8 @@ cases:
       - "Could not read existing data"
 
   - name: idempotent-reset
+    setup:
+      - { settings: { debugEnable: true, traceEnable: true } }
     actions:
       - { device: test-attrlog-1, command: "close" }
     wait_seconds: 3

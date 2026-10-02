@@ -56,7 +56,7 @@ APP_INSTANCE_LABEL    = "test-attrlog-app"
 MAKER_API_LABEL       = "test-attrlog-maker"
 INPUT_DEVICE_LABELS   = ["test-attrlog-1"]
 OUTPUT_DEVICE_LABELS  = []
-CASES                 = [{'name': 'attribute-event-logged', 'setup': [{'device': 'test-attrlog-1', 'command': 'close'}], 'setup_wait_seconds': 2, 'actions': [{'device': 'test-attrlog-1', 'command': 'open'}], 'wait_seconds': 3, 'assert_logs': [{'pattern': 'new data.*open', 'level': 'trace'}], 'allow_log_patterns': ['Could not read existing data']}, {'name': 'idempotent-reset', 'actions': [{'device': 'test-attrlog-1', 'command': 'close'}], 'wait_seconds': 3, 'assert_logs': [{'pattern': 'new data.*close', 'level': 'trace'}], 'allow_log_patterns': ['Could not read existing data']}]
+CASES                 = [{'name': 'attribute-event-logged', 'setup': [{'settings': {'debugEnable': True, 'traceEnable': True}}, {'device': 'test-attrlog-1', 'command': 'close'}], 'setup_wait_seconds': 2, 'actions': [{'device': 'test-attrlog-1', 'command': 'open'}], 'wait_seconds': 3, 'assert_logs': [{'pattern': 'new data.*open', 'level': 'trace'}], 'allow_log_patterns': ['Could not read existing data']}, {'name': 'idempotent-reset', 'setup': [{'settings': {'debugEnable': True, 'traceEnable': True}}], 'actions': [{'device': 'test-attrlog-1', 'command': 'close'}], 'wait_seconds': 3, 'assert_logs': [{'pattern': 'new data.*close', 'level': 'trace'}], 'allow_log_patterns': ['Could not read existing data']}]
 RUNTIME_BUDGET_SECONDS = 30
 
 # ── Stdin args ────────────────────────────────────────────────────────
@@ -254,6 +254,79 @@ def app_button(button_name, app_id=None, timeout=15):
     except Exception:
         return False
 
+def _unset(v):
+    return v is None or v == "[]" or v == ""
+
+def app_settings(changes, app_id=None, timeout=15):
+    """Save settings on an installed app's main page (runs updated()). Applies
+    `changes` one at a time, in order, so an input that only renders once an
+    earlier one is set (e.g. trace under debug) can follow it. Every other
+    setting is echoed unchanged. Returns an error string, or None on success."""
+    target = app_id if app_id is not None else instance_id
+    for name, want in changes.items():
+        cfg = fetch(f"/installedapp/configure/json/{target}")
+        if not cfg or "configPage" not in cfg:
+            return f"could not read app {target} config"
+        page, current = cfg["configPage"], cfg.get("settings") or {}
+        inputs = [i for sec in page.get("sections", []) for i in sec.get("input", [])]
+        if name not in {i["name"] for i in inputs}:
+            return f"app {target} has no input '{name}' on {page.get('name')}"
+        fields = [("_action_update", "Done"), ("formAction", "update"), ("id", str(target)),
+                  ("version", str(cfg["app"].get("version", 1))), ("appTypeId", ""),
+                  ("appTypeName", ""), ("currentPage", page.get("name", "mainPage")),
+                  ("pageBreadcrumbs", "[]")]
+        for sec in page.get("sections", []):
+            for b in sec.get("body", []):
+                if b.get("element") == "label":
+                    fields += [(f"{b['name']}.type", "text"), (b["name"], cfg["app"].get("label") or "")]
+        for i in inputs:
+            n, typ = i["name"], i.get("type", "")
+            if typ in ("button", "paragraph", "href"):
+                continue
+            fields += [(f"{n}.type", typ), (f"{n}.multiple", "true" if i.get("multiple") else "false")]
+            value = want if n == name else current.get(n)
+            if isinstance(value, dict):
+                value = list(value.keys())
+            if typ.startswith(("capability.", "device.")):
+                ids = [str(v) for v in (value or [])] if not _unset(value) else []
+                if ids:
+                    fields.append((f"settings[{n}]", ",".join(ids)))
+                fields += [("deviceList", n), ("", "")]
+                continue
+            if _unset(value):
+                continue
+            if isinstance(value, list):                 # enum multiple: JSON array string
+                fields.append((f"settings[{n}]", json.dumps([str(v) for v in value])))
+                continue
+            if typ == "bool":
+                fields.append((f"checkbox[{n}]", "on"))
+                value = "true" if str(value).lower() == "true" else "false"
+            fields.append((f"settings[{n}]", str(value)))
+        fields += [("referrer", f"http://{hub_ip}/installedapp/list"),
+                   ("url", f"http://{hub_ip}/installedapp/configure/{target}/{page.get('name')}"),
+                   ("_cancellable", "false")]
+        req = urllib.request.Request(f"http://{hub_ip}/installedapp/update/json",
+                                     data=urllib.parse.urlencode(fields).encode())
+        req.add_header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+        try:
+            with opener.open(req, timeout=timeout) as r:
+                resp = json.loads(r.read().decode())
+        except Exception as e:
+            return f"save of '{name}' failed: {e}"
+        if not isinstance(resp, dict) or resp.get("status") != "success":
+            return f"save of '{name}' rejected: {resp}"
+        after = (fetch(f"/installedapp/configure/json/{target}") or {}).get("settings") or {}
+        got = after.get(name)
+        if isinstance(want, list):
+            if isinstance(got, str):
+                try: got = json.loads(got)
+                except ValueError: pass
+            if sorted(map(str, got or [])) != sorted(map(str, want)):
+                return f"'{name}' did not land: wanted {want}, hub has {got}"
+        elif str(got).lower() != str(want).lower():
+            return f"'{name}' did not land: wanted {want}, hub has {after.get(name)}"
+    return None
+
 devices_resp = maker_get("/devices")
 if not isinstance(devices_resp, list):
     die(f"Maker API /devices returned unexpected payload: {devices_resp}")
@@ -309,10 +382,18 @@ for case in CASES:
     spacing = float(case.get("command_spacing_seconds", 0))
 
     def run_step(step, kind):
-        # Two step shapes:
+        # Three step shapes:
         #   - device command: { device: <label>, command: <name>, args: [...] }
         #   - app button:     { button: <name> [, target_app: <label or id>] }
+        #   - app settings:   { settings: { <input>: <value>, ... } }  (saved in order)
         # target_app defaults to the app under test.
+        if "settings" in step:
+            err = app_settings(step["settings"])
+            if err:
+                warn(f"{kind}: <app> settings {step['settings']} ({err})")
+            else:
+                info(f"{kind}: <app> settings {step['settings']}")
+            return
         if "button" in step:
             btn = step["button"]
             target = step.get("target_app")  # default → app under test
