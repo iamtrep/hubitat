@@ -30,8 +30,8 @@ function extractFn(name) {
 const consts = (src.match(/const ZWAVE_PER_CRIT=[^;]+;/) || [])[0];
 assert(consts, 'threshold consts not found in HTML');
 const harness = consts + '\n' +
-  ['zwProblemNodes', 'zbWeakNeighbors', 'zbStaleNeighbors', 'lqiBandColor'].map(extractFn).join('\n') +
-  '\nmodule.exports = { zwProblemNodes, zbWeakNeighbors, zbStaleNeighbors, lqiBandColor };';
+  ['zwProblemNodes', 'zbWeakNeighbors', 'zbStaleNeighbors', 'lqiBandColor', 'zwMeshStats', 'zbMeshDetails'].map(extractFn).join('\n') +
+  '\nmodule.exports = { zwProblemNodes, zbWeakNeighbors, zbStaleNeighbors, lqiBandColor, zwMeshStats, zbMeshDetails };';
 const tmp = path.join(os.tmpdir(), 'hd_net_' + process.pid + '.js');
 fs.writeFileSync(tmp, harness);
 const N = require(tmp);
@@ -98,6 +98,46 @@ t('lqiBandColor: band boundaries (strict <)', () => {
   assert.strictEqual(N.lqiBandColor(199), 'var(--lqi-good)');
   assert.strictEqual(N.lqiBandColor(200), 'var(--lqi-excellent)');
   assert.strictEqual(N.lqiBandColor(255), 'var(--lqi-excellent)');
+});
+
+// ---- zwMeshStats (Z-Wave rollups + S0 flag from the raw node list) ----
+t('zwMeshStats: rollups; null routeChanges/rssi excluded; S0 flag skips locks', () => {
+  const zw = { mesh: { nodes: [
+    { per: 0, routeChanges: 3,    rssi: -60, security: 'S0',   zwaveType: 'BINARY_SWITCH' },
+    { per: 2, routeChanges: null, rssi: -71, security: 'S0',   zwaveType: 'DOOR_LOCK' },
+    { per: 0, routeChanges: 0,    rssi: null, security: 'None', zwaveType: '' }
+  ] } };
+  N.zwMeshStats(zw);
+  const m = zw.mesh;
+  assert.strictEqual(m.nodeCount, 3);
+  assert.strictEqual(m.totalRouteChanges, 3);
+  assert.strictEqual(m.nodesWithErrors, 1);
+  assert.ok(Math.abs(m.avgPer - 2 / 3) < 1e-9);
+  assert.strictEqual(m.avgRssi, -65);
+  assert.deepStrictEqual(m.nodes.map(n => n.s0Flag), [true, false, false]);
+});
+t('zwMeshStats: payload that already carries rollups is left as is', () => {
+  const zw = { mesh: { avgPer: 0.5, totalRouteChanges: 9, nodes: [{ per: 0, s0Flag: true }] } };
+  N.zwMeshStats(zw);
+  assert.strictEqual(zw.mesh.avgPer, 0.5);
+  assert.strictEqual(zw.mesh.totalRouteChanges, 9);
+  assert.strictEqual(zw.mesh.nodes[0].s0Flag, true);
+  N.zwMeshStats(null); N.zwMeshStats({ mesh: {} });
+});
+
+// ---- zbMeshDetails (LQI rollup + stale flag from the raw neighbor list) ----
+t('zbMeshDetails: avg/min/max LQI and stale at age >= 7', () => {
+  const zb = { mesh: { neighborList: neighbors.slice() } };
+  N.zbMeshDetails(zb);
+  assert.strictEqual(zb.mesh.avgLqi, 185);
+  assert.strictEqual(zb.mesh.minLqi, 100);
+  assert.strictEqual(zb.mesh.maxLqi, 255);
+  assert.deepStrictEqual(zb.mesh.neighborDetails.filter(n => n.stale).map(n => n.shortId), ['C3']);
+});
+t('zbMeshDetails: keeps LQI rollup an older payload already carries', () => {
+  const zb = { mesh: { avgLqi: 1, minLqi: 1, maxLqi: 1, neighborList: neighbors.slice() } };
+  N.zbMeshDetails(zb);
+  assert.strictEqual(zb.mesh.avgLqi, 1);
 });
 
 console.log(`\n${pass}/${pass + fail} passed${fail ? `, ${fail} failed` : ''}`);

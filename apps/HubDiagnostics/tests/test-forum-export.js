@@ -9,7 +9,7 @@
 // shape the hub used to ship from /api/forum/data (apiForumData, now deleted). Same source of
 // truth: the tab endpoints and the old aggregator both derive from analyzeDevices/analyzeApps/
 // analyzeNetwork on the hub. This test pins the remap field-by-field so a tab-endpoint shape change
-// can't silently corrupt the export. assembleForumData and its one helper, zbMeshDetails, are
+// can't silently corrupt the export. assembleForumData and its helpers, zbMeshDetails and zwMeshStats, are
 // extracted by name (brace-matched) and run directly — bound to the shipped code, not a copy.
 //
 // Run: node apps/HubDiagnostics/tests/test-forum-export.js
@@ -29,7 +29,7 @@ function extractFn(name) {
   return src.slice(start, i);
 }
 const tmp = path.join(os.tmpdir(), 'hd_forum_' + process.pid + '.js');
-fs.writeFileSync(tmp, extractFn('zbMeshDetails') + '\n' + extractFn('assembleForumData') + '\nmodule.exports = { assembleForumData };');
+fs.writeFileSync(tmp, ['zbMeshDetails', 'zwMeshStats', 'assembleForumData'].map(extractFn).join('\n') + '\nmodule.exports = { assembleForumData };');
 const { assembleForumData } = require(tmp);
 process.on('exit', () => { try { fs.unlinkSync(tmp); } catch (e) {} });
 

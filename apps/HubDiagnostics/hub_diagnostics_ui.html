@@ -148,7 +148,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "5.86.11";
+const CODE_VERSION = "5.86.12";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -401,16 +401,19 @@ function alink(id,n){return'<a href="/installedapp/configure/'+String(id).replac
 function dlistlink(count,ids){if(ids===true)return'<a href="/device/list" target="_blank">'+(count??0)+'</a>';if(!ids||!ids.length)return String(count??0);return'<a href="/device/list?ids='+ids.join(',')+'" target="_blank">'+count+'</a>'}
 // Header link to the matching hub admin page.
 function hp(path,label){return'<a class="hub-lnk" href="'+path+'" target="_blank" rel="noopener">'+(label||'Open in hub')+' ↗</a>'}
+// App labels can carry HTML (e.g. an update badge); show the text only.
+function noTags(s){return String(s??'').replace(/<[^>]+>/g,'').trim()}
 // Platform apps have no settings worth opening; their status page is the useful view.
 function appLink(r){return r.source==='platform'?'<a href="/installedapp/status/'+r.id+'" target="_blank">'+h(Obf.nm(r.name))+'</a>':alink(r.id,r.name)}
 function alistlink(count){return'<a href="/installedapp/list" target="_blank">'+(count??0)+'</a>'}
 const CD={zigbee:'Zigbee',zwave:'Z-Wave',matter:'Matter',bluetooth:'Bluetooth',homekit:'HomeKit',lan_direct:'LAN (Direct)',lan_bridge:'LAN (Bridge)',cloud:'Cloud',virtual:'Virtual',hubmesh:'Hub Mesh',other:'Other'};
 // Join the raw mesh neighbor/route lists against the zigbee device list (all shipped in the
-// same /api/network payload). Produces the same neighborDetails/routeDetails shapes the hub
-// used to assemble. Idempotent: no-op if details are already attached.
+// same /api/network payload), and derive the LQI rollup. Idempotent: no-op if details are already attached.
 function zbMeshDetails(zb){
   if(!zb||!zb.mesh||zb.mesh.neighborDetails)return;
   const m=zb.mesh;
+  const lq=(m.neighborList||[]).map(n=>n.lqi).filter(v=>v!=null);
+  if(m.avgLqi==null&&lq.length)Object.assign(m,{avgLqi:Math.trunc(lq.reduce((a,b)=>a+b,0)/lq.length),minLqi:Math.min(...lq),maxLqi:Math.max(...lq)});
   const devByShort={};(zb.devicesSlim||[]).forEach(d=>{if(d.shortZigbeeId)devByShort[String(d.shortZigbeeId).toUpperCase()]=d});
   const routeByDest={};(m.routeList||[]).forEach(r=>{if(r.destinationShortId&&r.status==='Active')routeByDest[r.destinationShortId]=r});
   m.neighborDetails=(m.neighborList||[]).map(n=>{
@@ -419,12 +422,21 @@ function zbMeshDetails(zb){
     const isDirect=route?(route.direct||false):true;
     const viaShortId=(route&&!isDirect)?route.viaShortId:null;
     const viaDev=viaShortId?devByShort[viaShortId]:null;
-    return{shortId:n.shortId,name:n.name,deviceId:zdev?zdev.id:null,lqi:n.lqi,age:n.age,inCost:n.inCost,outCost:n.outCost,stale:n.stale||false,direct:isDirect,noLearnedRoute:route==null,viaName:(route&&!isDirect)?route.viaName:null,viaShortId:viaShortId,viaDeviceId:viaDev?viaDev.id:null};
+    return{shortId:n.shortId,name:n.name,deviceId:zdev?zdev.id:null,lqi:n.lqi,age:n.age,inCost:n.inCost,outCost:n.outCost,stale:n.age!=null&&n.age>6,direct:isDirect,noLearnedRoute:route==null,viaName:(route&&!isDirect)?route.viaName:null,viaShortId:viaShortId,viaDeviceId:viaDev?viaDev.id:null};
   });
   m.routeDetails=(m.routeList||[]).map(r=>{
     const dstDev=devByShort[r.destinationShortId],viaDev=r.viaShortId?devByShort[r.viaShortId]:null;
     return Object.assign({},r,{destinationDeviceId:dstDev?dstDev.id:null,viaDeviceId:viaDev?viaDev.id:null});
   });
+}
+// Z-Wave mesh rollups and the per-node S0 flag (S0 on anything but a lock or garage/barrier is
+// avoidable overhead), from the raw node list. Skipped when the payload already carries them.
+function zwMeshStats(zw){
+  const m=zw&&zw.mesh;if(!m||!m.nodes||m.avgPer!=null)return;
+  const ns=m.nodes,rs=ns.map(n=>n.rssi).filter(v=>v!=null),sum=(a,f)=>a.reduce((s,x)=>s+(f(x)||0),0);
+  Object.assign(m,{nodeCount:ns.length,avgPer:ns.length?sum(ns,n=>n.per)/ns.length:0,nodesWithErrors:ns.filter(n=>(n.per||0)>0).length,
+    totalRouteChanges:sum(ns,n=>n.routeChanges),avgRssi:rs.length?Math.trunc(sum(rs,v=>v)/rs.length):null});
+  ns.forEach(n=>{if(n.s0Flag==null)n.s0Flag=/s0/i.test(n.security||'')&&!/DOOR_LOCK|GARAGE|BARRIER/i.test(n.zwaveType||'')});
 }
 const BADGE={builtin:'<span class="badge b-builtin">Built-in</span>',community:'<span class="badge b-community">Community</span>',platform:'<span class="badge b-platform">Platform</span>'};
 // Source classification → badge markup. emptyAsBuiltin=true renders Built-in for a missing source (apps); false renders nothing (perf rows).
@@ -1160,7 +1172,7 @@ function composeAlerts(d){
   });
   if(sig.spammyDevicesMessage) out.push({key:'spammyDevices',name:'Spammy Devices',severity:'warning',message:sig.spammyDevicesMessage});
   (sig.hubMessages||[]).forEach(text=>{
-    const stripped=String(text||'').replace(/<[^>]+>/g,'').trim();
+    const stripped=noTags(text);
     if(!stripped)return;
     // Same firmware update as the entry below — skip the platform's redundant notification.
     if(fwUpdate&&((fwVer&&stripped.includes(fwVer))||/platform update/i.test(stripped)))return;
@@ -1195,7 +1207,7 @@ function assembleForumData(r){
         hlth=r.health||{}, perf=r.performance||{}, set=r.settings||{};
   const ds=dev.summary||{}, as=app.summary||{};
   const zw=net.zwave||null, zb=net.zigbee||null;
-  zbMeshDetails(zb);
+  zbMeshDetails(zb);zwMeshStats(zw);
   return {
     hubInfo: hlth.hub||dash.hub||{},
     appVersion: dash.appVersion,
@@ -1656,7 +1668,7 @@ function renderZigbeeWifiChart(zbCh,containerId,scan){
 // Aggregate values by type using parent-type map, return sorted top-10 + Other
 function aggregateByType(items,typeMap,idKey,valKey){
   const byType={};
-  items.forEach(item=>{const t=typeMap[item[idKey]]||item.name||'Unknown';byType[t]=(byType[t]||0)+(item[valKey]||0)});
+  items.forEach(item=>{const t=noTags(typeMap[item[idKey]])||item.name||'Unknown';byType[t]=(byType[t]||0)+(item[valKey]||0)});
   const sorted=Object.entries(byType).map(([k,v])=>({label:k,value:v})).sort((a,b)=>b.value-a.value);
   const top=sorted.slice(0,10);
   const otherVal=sorted.slice(10).reduce((s,e)=>s+e.value,0);
@@ -2296,6 +2308,7 @@ async function rDevices(){const P='p-devices';loading(P);try{
 // ===== TAB: APPS =====
 async function rApps(){const P='p-apps';loading(P);try{
   const d=await api('apps'),s=d.summary;
+  (d.allApps||[]).forEach(a=>{a.name=noTags(a.name);a.parentName=noTags(a.parentName)});
   let o='';
   o+='<div class="card"><div class="card-h">Application Summary</div><div class="card-b"><div class="metrics">';
   // Counted from the table rows so every tile adds up to what the table lists.
@@ -2440,7 +2453,7 @@ async function rCode(){const P='p-code';loading(P);try{
 // ===== TAB: NETWORK =====
 async function rNetwork(){const P='p-network';loading(P);try{
   const d=await api('network');let o='';
-  zbMeshDetails(d.zigbee);
+  zbMeshDetails(d.zigbee);zwMeshStats(d.zwave);
   // Radio + transport health badges (v5.9.0; Matter v5.66.2; Hub Mesh v5.66.3;
   // three-state model v5.66.4 — DISABLED/ONLINE/OFFLINE, always shown so the operator can
   // see what's actually enabled at a glance. Per-subsystem signals:
@@ -5667,7 +5680,7 @@ function buildAuditXref(allDevices) {
       e.devices.push({ id: d.id, name: nm });
     });
   });
-  unreferenced.sort((a, b) => (a.lastActivityTimeMs || 0) - (b.lastActivityTimeMs || 0));
+  unreferenced.sort((a, b) => auditMs(a) - auditMs(b));
   meshOrphans.sort(byName);
   const criticalTop20 = allRefs.slice().sort((a, b) => (b.total - a.total) || byName(a, b)).slice(0, 20);
   const criticalCount = allRefs.filter(r => r.total >= AUDIT_CRIT_REFS).length;
@@ -5761,11 +5774,11 @@ function buildAuditHtml(data) {
     o += '<div class="muted">None — every device is used by at least one app, dashboard, or parent integration.</div>';
   } else {
     o += '<div class="muted" style="margin-bottom:6px">No apps, no dashboards, no parent app — default sort: oldest last activity first.</div>';
-    o += '<div class="tbl-wrap"><table data-sortable id="t_unref"><thead><tr><th>Device</th><th>Type</th><th data-sd="asc">Last activity</th><th>Source</th></tr></thead><tbody>';
+    o += '<div class="tbl-wrap"><table data-sortable id="t_unref"><thead><tr><th>Device</th><th>Type</th><th data-t="n" data-sd="asc">Last activity</th><th>Source</th></tr></thead><tbody>';
     unreferenced.forEach(u => {
       o += `<tr><td>${dlink(u.id, u.name)}</td>`;
       o += `<td>${h(u.type || '')}</td>`;
-      o += `<td>${h(u.lastActivityTime || '')}</td>`;
+      o += `<td data-sv="${auditMs(u)}">${h(auditAct(u))}</td>`;
       o += `<td>${driverBadge(u.driverType)}</td></tr>`;
     });
     o += '</tbody></table></div>';
@@ -5956,7 +5969,7 @@ function buildAuditHtml(data) {
   o += openCard('all', `📋 Per-device detail table (${data.deviceCount})`);
   o += '<div style="margin-bottom:10px"><button type="button" class="btn btn-p btn-s" onclick="downloadDeviceDetailCsv()">⬇ Download CSV</button> <button type="button" class="btn btn-p btn-s" onclick="copyDeviceDetailCsv(this)">⧉ Copy CSV</button></div>';
   o += '<div class="filter"><input type="text" data-filter="t_all" placeholder="Filter devices…"></div>';
-  o += '<div class="tbl-wrap"><table data-sortable id="t_all"><thead><tr><th data-t="n">ID</th><th>Name</th><th data-sd="asc">Label</th><th>Type</th><th>Source</th><th data-t="n">Apps</th><th data-t="n">Dashboards</th><th>Parent app</th><th>Last activity</th></tr></thead><tbody>';
+  o += '<div class="tbl-wrap"><table data-sortable id="t_all"><thead><tr><th data-t="n">ID</th><th>Name</th><th data-sd="asc">Label</th><th>Type</th><th>Source</th><th data-t="n">Apps</th><th data-t="n">Dashboards</th><th>Parent app</th><th data-t="n">Last activity</th></tr></thead><tbody>';
   // Default sort matches the visible Label column: labeled devices alphabetically, unlabeled (—) last, then by name.
   const sortedDevices = Object.values(allDevices).slice().sort((a, b) => {
     const la = a.label || '', lb = b.label || '';
@@ -5996,7 +6009,7 @@ function buildAuditHtml(data) {
     o += `<td data-sv="${apps.length}">${appsCell}</td>`;
     o += `<td data-sv="${dashs.length}">${dashsCell}</td>`;
     o += `<td>${paCell}</td>`;
-    o += `<td>${h(d.lastActivityTime || '')}</td></tr>`;
+    o += `<td data-sv="${auditMs(d)}">${h(auditAct(d))}</td></tr>`;
     detailCsvRows.push({
       id: d.id,
       name: d.name || '',
@@ -6006,7 +6019,7 @@ function buildAuditHtml(data) {
       apps: apps.map(a => a.id).join('; '),
       dashboards: dashs.map(dash => dash.id).join('; '),
       parentApp: pa ? (pa.label || pa.name || '') : '',
-      lastActivity: d.lastActivityTime || ''
+      lastActivity: auditAct(d)
     });
   });
   window._auditDeviceDetail = detailCsvRows;
@@ -6023,6 +6036,10 @@ function buildAuditHtml(data) {
   return o;
 }
 
+// Older stored audits may carry only the hub's raw lastActivityTime string.
+// Audits before schema 4 carry lastActivityTime as an ISO string with a +HHMM offset instead of epoch ms.
+function auditMs(d) { if (d.lastActivityTimeMs) return d.lastActivityTimeMs; const ms = d.lastActivityTime ? Date.parse(String(d.lastActivityTime).replace(/([+-]\d\d)(\d\d)$/, '$1:$2')) : NaN; return isNaN(ms) ? 0 : ms; }
+function auditAct(d) { const ms = auditMs(d); return ms ? fdt(ms) : ''; }
 function initAuditSort() {
   function cmp(a, b, n) {
     if (n) { a = parseFloat(a) || 0; b = parseFloat(b) || 0; return a < b ? -1 : a > b ? 1 : 0; }

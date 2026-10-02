@@ -34,7 +34,7 @@ The hub is a small 4-core ARM board sharing memory with every other Hubitat app 
 - *Normalization* means stable field names, payload shape, and date-to-epoch conversion — not sorting, ranking, diffing, threshold-evaluating, or HTML-cleaning.
 - Sorts, top-N selection, set differences, snapshot diffs, threshold-based severity, HTML stripping, and percentage rollups all belong in the SPA.
 
-When in doubt, ship raw and let the SPA derive.
+When in doubt, ship raw and let the SPA derive. Examples in place: the Network tab's Zigbee LQI rollup and stale-neighbor flag (`zbMeshDetails()`), the Z-Wave mesh rollups and S0 flag (`zwMeshStats()`), app-label HTML cleanup (`noTags()`), and audit dates, which ship as epoch ms (`lastActivityTimeMs`, `createTimeMs`, `updateTimeMs`). The mesh rollups keep the values an older payload already carries.
 
 ## System Shape
 
@@ -82,7 +82,7 @@ TTLs are proportional to how fast the underlying metric actually moves, sized so
 | `RADIO_CACHE_TTL_MS` | 60 s | Z-Wave + Zigbee details (`/hub/zwaveDetails`, `/hub/zigbeeDetails`) | Slow, bounded no-retry fetches (8 s timeout on checkpoint and alert paths); 60 s avoids paying them per tab load. `/hub/zwaveTopology` is not cached. |
 | `TEMPERATURE_CACHE_TTL_MS` | 60 s | hub temperature | Slow-changing. |
 | `DATABASE_SIZE_CACHE_TTL_MS` | 60 s | database size | Grows over hours, not seconds. |
-| `HUB_LIST_CACHE_TTL_MS` | 2 min | apps list, devices list, on the Performance path only | Large payloads; topology only changes on install/remove. The device, app and audit paths fetch both lists uncached. |
+| `HUB_LIST_CACHE_TTL_MS` | 2 min | apps list (every path, via `fetchAppsList()`); devices list (Performance path only) | Large payloads; topology only changes on install/remove. One dashboard load or snapshot reads the apps list once. The device and audit paths fetch the devices list uncached. |
 | `HUB_DATA_CACHE_TTL_MS` | 30 s | `/hub2/hubData`: hub alerts, model, cloud-controller flag | Slow to build and read by several endpoints; 30 s folds one page load's reads into one fetch while alerts stay current. |
 | `CPU_INFO_CACHE_TTL_MS` | 60 s | `/hub/cpuInfo`: core count, and the 1-minute load average parsed from the same response | Core count is constant per install; the 1-minute load average sets the TTL. |
 | `LOAD_THRESHOLD_CACHE_TTL_MS` | 5 min | platform load threshold | Rarely changes. |
@@ -122,7 +122,7 @@ The Groovy app acts as an application server for the SPA, providing four things 
 3. **Aggregation** — collapsing multiple hub requests into a single response with shared-cache and fail-soft semantics centralized. Aggregation is about *coalescing fetches*, not about computing derived values; if the only thing the SPA cannot do directly is sort, slice, or threshold-check the result, that does not belong on the hub.
 4. **Normalization** — stable field names, payload shape, date-to-epoch conversion, firmware/version compatibility.
 
-Most Hub Diagnostics routes are app-owned. The aggregators are `/api/dashboard`, `/api/devices`, `/api/apps`, `/api/network`, `/api/health`, `/api/health/history` and `/api/live`; they are justified by shared-cache, fail-soft behavior, and normalization the SPA should not duplicate.
+Most Hub Diagnostics routes are app-owned. The aggregators are `/api/dashboard`, `/api/devices`, `/api/apps`, `/api/network`, `/api/health`, `/api/health/history`, `/api/live` and `/api/code`; they are justified by shared-cache, fail-soft behavior, and normalization the SPA should not duplicate.
 
 The `mappings { }` block in `HubDiagnostics.groovy` is grouped by category. Place new routes in the matching section.
 

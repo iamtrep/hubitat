@@ -140,7 +140,7 @@ class AuditPipeline {
     }
     void deliverOne(int status = 200) {
         Map req = inflightRequests.remove(0)
-        fullJsonCb([status: status, json: [device: [:]]], req.data)
+        fullJsonCb([status: status, json: [device: [:]], hasError: { false }], req.data)
     }
     void deliverAll(int status = 200) { while (inflightRequests) deliverOne(status) }
     void fireReaper(String scanId) {
@@ -246,7 +246,7 @@ check('not finalized — attempt 2 outstanding',    h.finalizeCalls == 0)
 check('attempt 2 is in flight',                   h.inflightRequests.size() == 1)
 check('attempt 2 holds the only claim',           h.AUDIT_SCANS[sid].claims.size() == 1)
 
-h.fullJsonCb([status: 200, json: [device: [:]]], held.data)   // the "lost" callback lands
+h.fullJsonCb([status: 200, json: [device: [:]], hasError: { false }], held.data)   // the "lost" callback lands
 check('stale callback must not finalize',         h.finalizeCalls == 0)
 check('scan still live after stale callback',     h.AUDIT_SCANS[sid] != null)
 check('did not release attempt 2 slot',           h.AUDIT_SCANS[sid].inFlight.get() == 1)

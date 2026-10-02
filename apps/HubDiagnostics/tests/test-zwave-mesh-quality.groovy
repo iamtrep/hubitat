@@ -4,9 +4,10 @@
 // Mode 4 (extraction variant) unit test for the Z-Wave route-change normalization.
 //
 // extractZwaveMeshQuality / extractZwaveMessageCounts must map a non-numeric hub
-// routeChanges to null — not a "-1" sentinel — and exclude those null nodes from the
-// mesh-wide route-change total. The non-numeric case is what a Z-Wave Long Range node
-// (no mesh routing) and a node with no accumulated traffic both surface as.
+// routeChanges to null — not a "-1" sentinel. The SPA's zwMeshStats sums the mesh-wide total
+// and skips those nulls (covered by test-network-derivations.js). The non-numeric case is what
+// a Z-Wave Long Range node (no mesh routing) and a node with no accumulated traffic both
+// surface as.
 //
 // Unlike a Python mirror (Mode 4), this BRACE-EXTRACTS the two methods from the shipped
 // HubDiagnostics.groovy and runs the real Groovy semantics — so it stays bound to the
@@ -63,7 +64,6 @@ check('LR node with absent field -> null',        byId[3].routeChanges == null)
 check('hub-reported null -> null',                byId[4].routeChanges == null)
 check('non-numeric -> null',                      byId[5].routeChanges == null)
 check('legit zero preserved (0, not null)',       byId[6].routeChanges == 0)
-check('total excludes no-data nodes (== 3)',      q.totalRouteChanges == 3)
 
 List m = harness.msgs(fixture)
 Map mById = m.collectEntries { [(it.name): it] }

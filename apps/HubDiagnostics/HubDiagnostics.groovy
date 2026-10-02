@@ -12,13 +12,12 @@
 
 import com.hubitat.hub.domain.Hub
 import groovy.transform.Field
-import groovy.transform.CompileStatic
 import groovy.json.JsonOutput
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "5.86.11"
+@Field static final String CODE_VERSION = "5.86.12"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -160,7 +159,7 @@ import java.util.concurrent.atomic.AtomicInteger
 // In-memory caches (survive within a JVM session; cleared on hub reboot/app reload)
 @Field static volatile String  uiVersionCache
 @Field static volatile String  zwaveStackCache
-@Field static volatile String  hubModelCache
+@Field static volatile String  hubModelCache   // no TTL: the hub model can't change while the app runs
 // v5.33.0: split-file storage replaces the single-blob cachedCheckpoints. Only the
 // slim index is cached in memory; per-checkpoint detail is read on demand.
 @Field static volatile List    cachedCheckpointIndex
@@ -211,7 +210,6 @@ private void cachePut(String key, Object data) {
 }
 
 @Field static volatile boolean githubVersionRefreshPending = false
-@Field static final java.util.regex.Pattern HTML_TAG_RE = ~/<[^>]+>/
 // Green badge appended to the app label (visible in the Apps list) when a newer release is
 // published on GitHub. UPDATE_BADGE_RE strips any prior badge so re-applying is idempotent. The
 // span tags are optional and the match repeats so it also clears remnants when the "Assign a name"
@@ -765,7 +763,7 @@ Map apiCode() {
     }
 }
 
-// Aggregator: normalizes multiple hub resources; adds mesh and health derivations.
+// Aggregator: normalizes the radio, mesh, Matter and Hub Mesh payloads into one response.
 Map apiNetwork() {
     checkVersion()
     return timed("network") {
@@ -1322,10 +1320,9 @@ Map getNetworkData(Map shared = [:]) {
             },
             mesh: zigbeeMesh ? [
                 neighbors: zigbeeMesh.neighbors?.size() ?: 0, routes: zigbeeMesh.routes?.size() ?: 0,
-                avgLqi: zigbeeMesh.avgLqi, minLqi: zigbeeMesh.minLqi, maxLqi: zigbeeMesh.maxLqi,
                 neighborList: (zigbeeMesh.neighbors ?: []).collect { Map n ->
                     [shortId: n.shortId, name: n.name, lqi: n.lqi, age: n.age,
-                     inCost: n.inCost, outCost: n.outCost, stale: n.stale ?: false]
+                     inCost: n.inCost, outCost: n.outCost]
                 },
                 routeList: (zigbeeMesh.routes ?: []).findAll { Map r -> r.destinationShortId }.collect { Map r ->
                     [status: r.status, age: r.age, concentratorType: r.concentratorType,
@@ -1395,10 +1392,7 @@ Map getPerformanceData(Map shared = [:]) {
     // Ship the raw per-device message counts; the SPA ranks the top talkers (sort + top-N).
     Map radioStats = [zwave: extractZwaveMessageCounts(zwaveData), zigbee: extractZigbeeMessageCounts(zigbeeData)]
 
-    Map appsListResp = ((Map) cachedFetch('appsList', HUB_LIST_CACHE_TTL_MS) {
-        Map w = hubMapRequest(APPS_LIST_PATH, "apps list")
-        return (w.ok && w.data) ? w.data : null
-    }) ?: [:]
+    Map appsListResp = fetchAppsList() ?: [:]
 
     // R-7 B2: id → source / root-parent-label maps so the SPA doesn't cross-fetch /api/devices
     // and /api/apps just to label the Performance tab's CPU charts. One walk builds both.
@@ -1409,7 +1403,7 @@ Map getPerformanceData(Map shared = [:]) {
             if (app?.id == null) return
             appSourceById[app.id] = (app.user ? "community" : "builtin")
             Map root = parents ? (Map) parents[0] : app
-            appParentTypeById[app.id] = stripHtml((root.label ?: root.name ?: 'Unknown') as String)
+            appParentTypeById[app.id] = (root.label ?: root.name ?: 'Unknown') as String
         }
     }
 
@@ -1797,9 +1791,13 @@ Float fetchTemperature() {
 // Every 5 minutes at a per-install second offset. Also armed from the daily scheduledUISync
 // when the offset is missing.
 void armTemperatureSampling() {
-    int sec = (state.tempSampleOffsetSec != null) ? (state.tempSampleOffsetSec as int) : new Random().nextInt(60)
-    state.tempSampleOffsetSec = sec
-    schedule("${sec} 0/5 * * * ?", "sampleTemperature")
+    schedule("${installOffset('tempSampleOffsetSec', 60)} 0/5 * * * ?", "sampleTemperature")
+}
+
+// Random per-install schedule offset in [0, bound), kept in state so it is stable across saves.
+private int installOffset(String key, int bound) {
+    if (state[key] == null) state[key] = new Random().nextInt(bound)
+    return state[key] as int
 }
 
 List tempSamples() {
@@ -1813,9 +1811,19 @@ List loadHourly() {
 
 void sampleTemperature() {
     checkVersion()
-    String text = (String) hubRequest(INTERNAL_TEMP_PATH, "internal temperature", "text", 5)
+    asynchttpGet('onTempSample', [uri: HUB_BASE, path: INTERNAL_TEMP_PATH, contentType: "text/plain", timeout: 5])
+}
+
+// Text body of an async hub response per the callback contract (hasError, then status); null on failure.
+private String asyncText(resp, String name) {
+    if (resp.hasError()) { logNet "${name}: ${resp.getErrorMessage()}"; return null }
+    if (resp.status != 200) { logNet "${name}: HTTP ${resp.status}"; return null }
+    return resp.data?.toString()?.trim()
+}
+
+void onTempSample(resp, data) {
     Float t = null
-    try { t = text?.trim()?.toFloat() } catch (Exception e) { }
+    try { t = asyncText(resp, "temperature sample")?.toFloat() } catch (Exception e) { }
     if (t == null) return
     long ms = now()
     List next = new ArrayList(tempSamples())
@@ -1843,18 +1851,22 @@ private void rollupHours(List samples, long nowMs) {
         }
     }
     state.hourlyDoneMs = lastHour
-    Integer db = fetchDatabaseSize()
     if (!byHour.containsKey(lastHour)) byHour[lastHour] = []
-    List rows = new ArrayList(loadHourly())
-    byHour.keySet().sort().each { Long h ->
+    List rows = byHour.keySet().sort().collect { Long h ->
         List v = byHour[h]
-        List row = v ? [h, v.min(), (v.sum() / v.size()).setScale(1, BigDecimal.ROUND_HALF_UP), v.max(), v.size()]
-                     : [h, null, null, null, 0]
-        row << (h == lastHour ? db : null)
-        rows << row
+        v ? [h, v.min(), (v.sum() / v.size()).setScale(1, BigDecimal.ROUND_HALF_UP), v.max(), v.size(), null]
+          : [h, null, null, null, 0, null]
     }
-    if (rows.size() > HOURLY_KEEP) rows = rows.subList(rows.size() - HOURLY_KEEP, rows.size())
-    writeFile(HOURLY_FILE, groovy.json.JsonOutput.toJson(rows))
+    asynchttpGet('onHourlyDbSize', [uri: HUB_BASE, path: DATABASE_SIZE_PATH, contentType: "text/plain", timeout: 10], [rows: rows])
+}
+
+// The database size goes on the last (just completed) hour's row.
+void onHourlyDbSize(resp, data) {
+    List rows = (List) data.rows
+    try { rows[-1][5] = asyncText(resp, "database size")?.toInteger() } catch (Exception e) { }
+    List all = new ArrayList(loadHourly()) + rows
+    if (all.size() > HOURLY_KEEP) all = all.subList(all.size() - HOURLY_KEEP, all.size())
+    writeFile(HOURLY_FILE, groovy.json.JsonOutput.toJson(all))
 }
 
 // Hub resource CSV stamps are "MM-dd HH:mm:ss" in hub local time with no year. Parses the
@@ -2400,7 +2412,6 @@ Map fetchZigbeeMeshInfo() {
             if (ageMatch.find()) neighbor.age = ageMatch.group(1).toInteger()
             if (inCostMatch.find()) neighbor.inCost = inCostMatch.group(1).toInteger()
             if (outCostMatch.find()) neighbor.outCost = outCostMatch.group(1).toInteger()
-            neighbor.stale = (neighbor.age != null && neighbor.age >= 7)
             result.neighbors << neighbor
         } else if (currentSection == "child") {
             result.childDevices = (result.childDevices as int) + 1
@@ -2441,16 +2452,6 @@ Map fetchZigbeeMeshInfo() {
         }
     }
 
-    // Compute mesh stats
-    if (result.neighbors) {
-        List lqiValues = result.neighbors.findAll { it.lqi != null }.collect { it.lqi }
-        if (lqiValues) {
-            result.avgLqi = (lqiValues.sum() / lqiValues.size()).toInteger()
-            result.minLqi = lqiValues.min()
-            result.maxLqi = lqiValues.max()
-        }
-    }
-
     return result
 }
 
@@ -2478,12 +2479,6 @@ Map extractZwaveMeshQuality(Map zwaveData) {
     if (!zwaveData || !zwaveData.nodes) return [:]
 
     List nodes = []
-    int totalPer = 0
-    int nodesWithErrors = 0
-    int totalRouteChanges = 0
-    int rssiCount = 0
-    int rssiSum = 0
-
     zwaveData.nodes.each { Map node ->
         int per = (node.per ?: 0) as int
         int neighborCount = (node.neighbors ?: 0) as int
@@ -2495,29 +2490,12 @@ Map extractZwaveMeshQuality(Map zwaveData) {
         Integer rssiVal = null
         if (rssiStr) {
             java.util.regex.Matcher m = (rssiStr =~ /(-?\d+)/)
-            if (m.find()) {
-                rssiVal = m.group(1).toInteger()
-                rssiSum += rssiVal
-                rssiCount++
-            }
+            if (m.find()) rssiVal = m.group(1).toInteger()
         }
-
-        totalPer += per
-        if (per > 0) nodesWithErrors++
-        if (routeChanges != null) totalRouteChanges += routeChanges
 
         // averageRtt: integer ms or empty string when unavailable
         String rttRaw = (node.averageRtt != null) ? node.averageRtt.toString() : ""
         Integer rtt = (rttRaw && rttRaw.isInteger()) ? rttRaw.toInteger() : null
-
-        // S0 flag: S0 on a device that isn't a lock or garage door is noteworthy overhead
-        String security = node.security ?: ""
-        boolean s0Flag = false
-        if (security.toLowerCase().contains("s0")) {
-            String zwType = (node.zwaveType ?: "").toUpperCase()
-            boolean isSecurityDevice = zwType.contains("DOOR_LOCK") || zwType.contains("GARAGE") || zwType.contains("BARRIER")
-            s0Flag = !isSecurityDevice
-        }
 
         // driverType from zwDevices (keyed by node ID string)
         String driverType = ""
@@ -2541,21 +2519,14 @@ Map extractZwaveMeshQuality(Map zwaveData) {
             state: node.nodeState ?: "Unknown",
             lastTime: node.lastTime ?: "",
             listening: node.listening ?: false,
-            security: security,
-            s0Flag: s0Flag,
+            security: node.security ?: "",
             driverType: driverType,
             zwaveType: node.zwaveType ?: ""
         ]
     }
 
-    return [
-        nodes: nodes,
-        nodeCount: nodes.size(),
-        avgPer: nodes.size() > 0 ? (totalPer / nodes.size()).toFloat() : 0,
-        nodesWithErrors: nodesWithErrors,
-        totalRouteChanges: totalRouteChanges,
-        avgRssi: rssiCount > 0 ? (rssiSum / rssiCount).toInteger() : null
-    ]
+    // Mesh rollups (node count, PER, RSSI, route changes) and the S0 flag are derived in the SPA.
+    return [nodes: nodes]
 }
 
 List extractZwaveMessageCounts(Map zwaveData) {
@@ -2760,17 +2731,22 @@ Map analyzeDevices(boolean deep = true, Map prefetchedDevices = null) {
     return stats
 }
 
-Map analyzeApps(boolean deep = true) {
-    Map wrap = hubMapRequest(APPS_LIST_PATH, "apps list")
+// /hub2/appsList through the shared 2-minute list cache; null on failure.
+private Map fetchAppsList() {
+    return (Map) cachedFetch('appsList', HUB_LIST_CACHE_TTL_MS) { (Map) reqData(APPS_LIST_PATH, "apps list", 20) ?: null }
+}
 
-    if (!wrap.ok || !wrap.data.apps) {
+Map analyzeApps(boolean deep = true) {
+    List appsList = (fetchAppsList()?.apps ?: []) as List
+
+    if (!appsList) {
         return deep ? getEmptyAppStats() : [totalApps: 0, userApps: 0, builtInApps: 0]
     }
 
     // Quick mode: just count apps
     if (!deep) {
         int totalApps = 0, userApps = 0, builtInApps = 0
-        visitAppEntries(wrap.data.apps as List) { Map appEntry, Map app, boolean isChildLevel, List parentHierarchyList ->
+        visitAppEntries(appsList) { Map appEntry, Map app, boolean isChildLevel, List parentHierarchyList ->
             if (!app) return
             totalApps++
             if (app.user) userApps++
@@ -2779,7 +2755,6 @@ Map analyzeApps(boolean deep = true) {
         return [totalApps: totalApps, userApps: userApps, builtInApps: builtInApps]
     }
 
-    List appsList = wrap.data.apps
     Map stats = [
         totalApps: 0,
         userApps: 0,
@@ -2828,11 +2803,10 @@ Map analyzeApps(boolean deep = true) {
 
                 stats.byNamespace[appType] = (stats.byNamespace[appType] ?: 0) + 1
 
-                String displayName = stripHtml(app.name ?: appType)
                 // Flat entry for the installed apps table
                 stats.allApps << [
                     id:         numericId,
-                    name:       displayName,
+                    name:       appLabel,
                     type:       appType,
                     typeId:     isUserApp ? app.appTypeId : null,
                     user:       isUserApp,
@@ -2856,7 +2830,7 @@ Map analyzeApps(boolean deep = true) {
                         children: []
                     ]
 
-                    processAppList(children, true, parentInfo.children, numericId, displayName)
+                    processAppList(children, true, parentInfo.children, numericId, appLabel)
                     parentInfo.childCount = parentInfo.children.size()
                     parentHierarchyList << parentInfo
                 } else if (isChildLevel) {
@@ -3054,13 +3028,9 @@ List buildZwaveGhostNodes(Map zwaveDetails) {
 }
 
 Map buildAppLookupMap() {
-    Map wrap = hubMapRequest(APPS_LIST_PATH, "apps list", 20)
-    if (!wrap.ok || !wrap.data.apps) {
-        return [:]
-    }
-
+    List apps = (fetchAppsList()?.apps ?: []) as List
     Map appLookup = [:]
-    visitAppEntries(wrap.data.apps as List) { Map appEntry, Map app, boolean isChildLevel, List parentHierarchyList ->
+    visitAppEntries(apps) { Map appEntry, Map app, boolean isChildLevel, List parentHierarchyList ->
         String appId = normalizeAppLookupId(appEntry?.key ?: app?.id)
         if (appId) {
             appLookup[appId] = [
@@ -3805,11 +3775,6 @@ String safeToString(value, String defaultValue = "") {
     return value.toString()
 }
 
-@CompileStatic
-String stripHtml(String s) {
-    return s ? HTML_TAG_RE.matcher(s).replaceAll('').trim() : s
-}
-
 Long parseDate(dateStr) {
     if (dateStr == null || dateStr instanceof List) return null
     String dateString = safeToString(dateStr, "")
@@ -4207,7 +4172,7 @@ private Map extractAuditFields(Map fj, Long did) {
         // need to know about. AUDIT_SCANS is in-memory only, so old records
         // never persist across an app reload — but cross-restart cases or future on-disk persistence
         // benefit from being able to detect the format.
-        _schemaVersion:      3,
+        _schemaVersion:      4,
         id:                  did,
         name:                dev.name,
         label:               dev.label,
@@ -4218,10 +4183,9 @@ private Map extractAuditFields(Map fj, Long did) {
         readableType:        dev.deviceTypeReadableType,
         driverType:          dev.driverType,                 // 'usr' or system
         singleThreaded:      dev.deviceTypeSingleThreaded == true,
-        createTime:          dev.createTime,
-        updateTime:          dev.updateTime,
-        lastActivityTime:    dev.lastActivityTime,
-        lastActivityTimeMs:  parseDate(dev.lastActivityTime),  // epoch for SPA-side unreferenced sort
+        createTimeMs:        parseDate(dev.createTime),
+        updateTimeMs:        parseDate(dev.updateTime),
+        lastActivityTimeMs:  parseDate(dev.lastActivityTime),
         parentDeviceId:      (dev.parentDeviceId as Long),
         childDeviceIds:      ((fj?.childDevices ?: [:]) as Map).keySet()?.collect { it as Long } ?: [],
         notes:               dev.notes,
@@ -4445,12 +4409,12 @@ void fullJsonCb(resp, data) {
     if (!(scan.claims as ConcurrentHashMap).remove(deviceId, claim)) return   // lost the race with the reaper
 
     try {
-        if (resp?.status == 200) {
-            Map fj = (Map) resp.json
-            Map record = extractAuditFields(fj, deviceId)
-            (scan.devices as ConcurrentHashMap)[deviceId] = record
-        } else {
+        if (resp?.hasError()) {
+            (scan.failed as ConcurrentHashMap)[deviceId] = (resp.getErrorMessage() ?: "request error") as String
+        } else if (resp?.status != 200) {
             (scan.failed as ConcurrentHashMap)[deviceId] = "HTTP ${resp?.status ?: 'n/a'}"
+        } else {
+            (scan.devices as ConcurrentHashMap)[deviceId] = extractAuditFields((Map) resp.json, deviceId)
         }
     } catch (Exception e) {
         (scan.failed as ConcurrentHashMap)[deviceId] = "${getObjectClassName(e)}: ${e.message}"
@@ -4850,12 +4814,6 @@ void updated() {
     // clear session-scoped caches so config/hardware changes take effect immediately
     zwaveStackCache  = null   // re-detect Z-Wave stack on next use (handles user switching legacy ↔ JS)
     state.remove('controllerTypeCache') // evict per-device classification cache; rebuilds on next analysis pass
-    // Retired state keys (v5.77.0): the checkpoint index lives in File Manager + a session cache
-    // only — keeping a copy in state taxed every app invocation. lastZwaveGhostCheckMs was
-    // replaced by the shared TTL cache; storageSchemaVersion by the ≥5.33 upgrade floor.
-    state.remove('checkpointIndex')
-    state.remove('storageSchemaVersion')
-    state.remove('lastZwaveGhostCheckMs')
     apiTimings.clear()                  // drop stats for renamed/removed endpoints; fresh measurements from now
     // N1: clear the TTL'd radio/list/resource/fwUpdate/integrationOverrides caches too, so a
     // settings change isn't masked by stale data for up to the cache TTL.
@@ -4960,6 +4918,8 @@ private void checkVersion(boolean reinit = true) {
 void initialize() {
     checkVersion(false)
     logCfg "Hub Diagnostics initialized"
+    ['snapshotOffsetSeconds', 'checkpointOffsetSeconds', 'checkpointIndex', 'storageSchemaVersion',
+     'lastZwaveGhostCheckMs'].each { state.remove(it) }    // retired keys
 
     currentAuditSnapshot()      // mark a scan orphaned by a reload as failed
 
@@ -4970,8 +4930,6 @@ void initialize() {
         schedule("0 ${JITTER_BASE_MIN} 0 * * ?", "scheduledSnapshot")
         logInfo "Automatic config snapshots scheduled every ${days} day(s), 00:0${JITTER_BASE_MIN}–00:0${JITTER_BASE_MIN + 4}"
     }
-    state.remove('snapshotOffsetSeconds')
-    state.remove('checkpointOffsetSeconds')
 
     if (settings.autoCheckpoint) {
         int interval = (settings.checkpointInterval ?: "60").toInteger()
@@ -4988,14 +4946,15 @@ void initialize() {
 
     armTemperatureSampling()
 
-    // v5.15.0: daily UI sync moved out of serveUI hot path. 03:17 local time, off-peak.
-    schedule("0 17 3 * * ?", "scheduledUISync")
-    logInfo "Daily UI sync scheduled at 03:17"
-
-    // v5.63.0: keep the Apps-list "update available" badge current even when the config page is
-    // never opened — poll GitHub daily for a newer release, and reconcile the label now so the
-    // badge clears immediately after the user updates the installed code.
-    schedule("0 41 3 * * ?", "scheduledVersionCheck")
+    // Daily GitHub polls (UI sync 03:xx, release check 04:xx) at a per-install minute and second,
+    // so hubs don't hit GitHub in step. The release check keeps the Apps-list "update available"
+    // badge current when the config page is never opened; reconciling the label now clears it
+    // right after the user updates the code.
+    int gh = installOffset('githubPollOffsetSec', 3600)
+    String ghMin = "${gh % 60} ${gh.intdiv(60)}"
+    schedule("${ghMin} 3 * * ?", "scheduledUISync")
+    schedule("${ghMin} 4 * * ?", "scheduledVersionCheck")
+    logInfo "Daily UI sync and release check scheduled at minute ${gh.intdiv(60)} past 03:00 and 04:00"
     refreshUpdateLabel()
 
     if (settings.snapshotTriggerSwitch) {

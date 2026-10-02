@@ -22,7 +22,7 @@ function extractFn(name) {
   return src.slice(s, i);
 }
 const HELPERS = ['makeObf', 'assembleForumData', 'buildForumMarkdown', 'composeAlerts', 'flattenRadioDevices',
-  'fmem', 'ftemp', 'tScale', 'tSym', 'c2u', 'splitGhostNodes', 'zbWeakNeighbors', 'zbStaleNeighbors', 'zbMeshDetails', 'isNewer'];
+  'fmem', 'ftemp', 'tScale', 'tSym', 'c2u', 'splitGhostNodes', 'zbWeakNeighbors', 'zbStaleNeighbors', 'zbMeshDetails', 'zwMeshStats', 'noTags', 'isNewer'];
 const CD = (src.match(/const CD=\{[^;]*\};/) || [])[0];
 assert(CD, 'CD const not found');
 const THRESHOLDS = (src.match(/const ZWAVE_PER_CRIT=[^;]+;/) || [])[0];
