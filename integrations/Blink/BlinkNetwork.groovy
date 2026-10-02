@@ -10,6 +10,8 @@
 
 import groovy.transform.Field
 
+@Field static final String CODE_VERSION = "0.1.0"
+
 metadata {
     definition(
         name: "Blink Network",
@@ -44,6 +46,10 @@ void installed() {
     logDebug "installed"
 }
 
+void deviceTypeUpdated() {
+    logDebug "driver change detected"
+}
+
 void updated() {
     if (debugEnable || traceEnable) runIn(DEBUG_LOG_TIMEOUT, "turnOffDebugLogging")
 }
@@ -71,8 +77,16 @@ void refresh() {
     if (networkId) parent.refreshNetwork(networkId)
 }
 
+// Parent-fed child: nothing to reconfigure, so a push is only recorded.
+private void checkVersion() {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+}
+
 // Called by the parent on each poll with the latest network + sync module state.
 void handleNetworkUpdate(Map data) {
+    checkVersion()
     if (!data) return
     logTrace "handleNetworkUpdate: ${data}"
 

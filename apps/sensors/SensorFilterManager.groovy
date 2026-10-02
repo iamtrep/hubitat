@@ -47,10 +47,22 @@ Map mainPage() {
 }
 
 void installed() {
+    initialize()
 }
 
 void updated() {
+    initialize()
+}
+
+void initialize() {
+    checkVersion()
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
+}
+
+private void checkVersion() {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
 }
 
 void uninstalled() {

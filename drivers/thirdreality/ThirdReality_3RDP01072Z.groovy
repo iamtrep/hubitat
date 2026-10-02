@@ -752,11 +752,11 @@ private static int parseSignedHex8(String hex) {
     return (raw >= 0x80) ? raw - 0x100 : raw
 }
 
-private static int intSetting(Object value, int defaultValue) {
+private static int intSetting(def value, int defaultValue) {
     value != null ? (value as Integer) : defaultValue
 }
 
-private static BigDecimal decSetting(Object value, BigDecimal defaultValue) {
+private static BigDecimal decSetting(def value, BigDecimal defaultValue) {
     value != null ? (value as BigDecimal) : defaultValue
 }
 

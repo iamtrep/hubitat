@@ -37,7 +37,7 @@ preferences {
     page(name: "mainPage")
 }
 
-def mainPage() {
+Map mainPage() {
     dynamicPage(name: "mainPage", title: "${APP_NAME} v${CODE_VERSION}", install: true, uninstall: true) {
         section("Contact sensors") {
             input name: "contacts", type: "capability.contactSensor", title: "Sensors to control",
@@ -67,20 +67,29 @@ private String currentStates() {
     }.join("<br>")
 }
 
-def installed() {
+void installed() {
     initialize()
 }
 
-def updated() {
+void updated() {
     initialize()
     if (settings.debugLogging || settings.traceEnable) runIn(1800, "logsOff")
 }
 
-def initialize() {
+void initialize() {
+    checkVersion(false)
     // Stateless: all work happens on button press. Nothing to subscribe or schedule.
 }
 
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
+}
+
 void appButtonHandler(String btn) {
+    checkVersion()
     switch (btn) {
         case "setOpen":   setContact("open");   break
         case "setClosed": setContact("closed"); break

@@ -85,11 +85,12 @@ Map mainPage() {
 
 void installed() {
     logDebug "installed"
-    state.version = CODE_VERSION
     updated()
 }
 
+// No initialize(): updated() is the convergence point, so it records the version.
 void updated() {
+    checkVersion(false)
     logDebug "updated"
     unschedule()
     if (debugEnable || traceEnable) runIn(1800, turnOffDebugLogging)
@@ -106,11 +107,19 @@ void updated() {
     logSched "scheduled polling every ${rate} minutes"
 }
 
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
+}
+
 void uninstalled() {
     unschedule()
 }
 
 void appButtonHandler(String buttonName) {
+    checkVersion()
     switch (buttonName) {
         case "btnRediscover":
             logInfo "re-discovery requested"
@@ -162,6 +171,7 @@ private String login() {
 // --- Discovery & Polling ---
 
 void pollSensors() {
+    checkVersion()
     if (!apiEmail || !apiPassword) return
 
     String token = login()

@@ -6,6 +6,7 @@
  of child devices.
  */
 import groovy.transform.Field
+import com.hubitat.app.DeviceWrapper
 
 @Field static final String CODE_VERSION = "0.1.1"
 @Field static final String HUB = "http://127.0.0.1:8080"
@@ -75,17 +76,26 @@ void logsOff() {
 }
 
 void initialize() {
+    checkVersion(false)
     app.removeSetting("logLevel")
     logTrace "initialize()"
     state.remove("reportOutput")
+}
+
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
 }
 
 void uninstalled() {
     logTrace("uninstalled()")
 }
 
-void appButtonHandler(evt) {
-    if (evt == "generateReport") {
+void appButtonHandler(String btn) {
+    checkVersion()
+    if (btn == "generateReport") {
         state.generateReport = true
     }
 }
@@ -163,7 +173,7 @@ private List<Map> loadDevices(Map src) {
     return ids.collect { fullJsonDevice(it, src) }.findAll { it != null }
 }
 
-private Map deviceMap(d) {
+private Map deviceMap(DeviceWrapper d) {
     [id: d.getIdAsLong(), label: d.getDisplayName(), parentDeviceId: d.getParentDeviceId(),
      parentAppId: d.getParentAppId(), room: d.getRoomName(), disabled: d.isDisabled()]
 }
@@ -245,8 +255,8 @@ private List<Long> allDeviceIds() {
 // devicesList is a tree: child devices are nested under their parent.
 private void collectIds(List nodes, Collection<Long> ids) {
     nodes?.each { Map n ->
-        Object id = (n.data as Map)?.id
-        if (id != null) ids << (id as Long)
+        Long id = (n.data as Map)?.id as Long
+        if (id != null) ids << id
         collectIds(n.children as List, ids)
     }
 }

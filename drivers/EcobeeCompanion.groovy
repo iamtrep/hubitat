@@ -441,7 +441,7 @@ private Map callEcobeeApi(String method, String path, Map queryParams = null, Ma
                 logWarn "Ecobee API non-success [${method} ${path}] status=${status} body=${response.data}"
                 return
             }
-            def data = response.data
+            Map data = response.data
             Integer ecobeeCode = data?.status?.code as Integer
             if (ecobeeCode != null && ecobeeCode != 0) {
                 logWarn "Ecobee app-level error [${method} ${path}] code=${ecobeeCode} msg=${data?.status?.message}"

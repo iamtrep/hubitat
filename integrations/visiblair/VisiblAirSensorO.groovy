@@ -11,6 +11,8 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
+@Field static final String CODE_VERSION = "0.1.0"
+
 metadata {
     definition(
         name: "VisiblAir Sensor O",
@@ -88,6 +90,10 @@ void installed() {
     state.pm25readings = []
 }
 
+void deviceTypeUpdated() {
+    logDebug "driver change detected"
+}
+
 void updated() {
     if (debugEnable || traceEnable) runIn(DEBUG_LOG_TIMEOUT, turnOffDebugLogging)
     pushConfigChanges()
@@ -134,7 +140,15 @@ void updateFirmware() {
     if (uuid) parent.sendFirmwareCommand(uuid, "flagFirmwareUpdate")
 }
 
+// Parent-fed child: nothing to reconfigure, so a push is only recorded.
+private void checkVersion() {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+}
+
 void updateSensorData(Map data) {
+    checkVersion()
     if (!data) return
     logTrace "updateSensorData: ${data}"
 
@@ -294,7 +308,7 @@ private void updateAqi(Number pm25Value) {
     if (readings.isEmpty()) return
 
     double totalPM25 = 0.0d
-    for (Object reading : readings) {
+    for (def reading : readings) {
         totalPM25 += (reading as double)
     }
     double avgPM25 = totalPM25 / readings.size()

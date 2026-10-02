@@ -56,7 +56,15 @@ void updated() {
 }
 
 void initialize() {
+    checkVersion(false)
     logDebug "there are ${getChildApps().size()} location event mappers : ${getChildApps().collect { it.label } }"
+}
+
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
 }
 
 void logsOff() {

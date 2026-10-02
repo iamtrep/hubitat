@@ -126,6 +126,7 @@ void logsOff() {
 }
 
 void initialize() {
+    checkVersion(false)
     app.removeSetting("logLevel")
     logDebug "initialize()"
 
@@ -153,6 +154,13 @@ void initialize() {
     logCfg "Initialized: mode=${FUSION_MODES[fusionMode]}, PIR=${state.lastPirValue}, mmWave=${state.lastMmwaveValue}, output=${state.currentOutput}"
 }
 
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
+}
+
 void uninstalled() {
     logDebug "uninstalled()"
 }
@@ -160,6 +168,7 @@ void uninstalled() {
 // ==================== Event Handlers ====================
 
 void pirEventHandler(Event evt) {
+    checkVersion()
     logEvt "PIR event: ${evt.value}"
     state.lastPirValue = evt.value
     state.lastPirTime = now()
@@ -167,6 +176,7 @@ void pirEventHandler(Event evt) {
 }
 
 void mmwaveEventHandler(Event evt) {
+    checkVersion()
     logEvt "mmWave event: ${evt.value}"
     state.lastMmwaveValue = evt.value
     state.lastMmwaveTime = now()
@@ -242,6 +252,7 @@ private void evaluateMmwaveOnly(String trigger) {
 }
 
 void delayedInactive() {
+    checkVersion()
     clearPending()
     if (isMmwaveOccupied()) {
         logSched "delayedInactive: mmWave re-occupied, staying active"
@@ -283,6 +294,7 @@ private void evaluateBoth(String trigger) {
 }
 
 void confirmationTimeout() {
+    checkVersion()
     clearPending()
     if (isPirActive() && isMmwaveOccupied()) {
         setOutputState("active")
@@ -319,6 +331,7 @@ private void evaluatePirGated(String trigger) {
 }
 
 void mmwaveConfirmationTimeout() {
+    checkVersion()
     clearPending()
     if (isPirActive() && isMmwaveOccupied()) {
         setOutputState("active")
@@ -357,6 +370,7 @@ private void evaluatePirConfirmedMmwave(String trigger) {
 }
 
 void pirConfirmationTimeout() {
+    checkVersion()
     clearPending()
     if (isPirActive() && isMmwaveOccupied()) {
         setOutputState("active")
@@ -401,6 +415,7 @@ private void evaluatePirQuickMmwaveHold(String trigger) {
 }
 
 void cooldownExpired() {
+    checkVersion()
     clearPending()
     if (isPirActive() || isMmwaveOccupied()) {
         logSched "cooldownExpired: sensor re-activated, staying active"

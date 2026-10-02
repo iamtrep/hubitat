@@ -216,7 +216,7 @@ private static double satVaporPressure(double tempC) {
     return 6.1094d * Math.exp((17.625d * tempC) / (tempC + 243.04d))
 }
 
-private void processEvent(String name, Object value, String unit = null, String description = null) {
+private void processEvent(String name, def value, String unit = null, String description = null) {
     Map evt = [
         name : name,
         value: value

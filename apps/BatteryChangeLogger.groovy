@@ -186,6 +186,7 @@ void uninstalled() {
 }
 
 void initialize() {
+    checkVersion(false)
     app.removeSetting("logLevel")
     logDebug "initialize()"
     if (state.batteryLevels == null) {
@@ -207,6 +208,13 @@ void initialize() {
     saveHistoryToFile(state.replacementHistory as Map)
     subscribe(batteryDevices, "battery", "batteryHandler")
     seedInitialLevels()
+}
+
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
 }
 
 // Seed current battery level for any device not yet tracked.
@@ -232,6 +240,7 @@ void seedInitialLevels() {
 }
 
 void batteryHandler(evt) {
+    checkVersion()
     String deviceId = evt.deviceId.toString()
     String deviceLabel = evt.displayName
     int newLevel = evt.value.toInteger()

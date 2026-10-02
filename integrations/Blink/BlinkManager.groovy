@@ -1739,7 +1739,7 @@ private String cookieHeader() {
 private static String extractCsrfFromHtml(String html) {
     if (!html) return null
 
-    def matcher = html =~ /"csrf-token"\s*:\s*"([^"]+)"/
+    java.util.regex.Matcher matcher = html =~ /"csrf-token"\s*:\s*"([^"]+)"/
     if (matcher.find() && matcher.group(1).length() >= 20) return matcher.group(1)
 
     matcher = html =~ /"csrfToken"\s*:\s*"([^"]+)"/
@@ -1766,7 +1766,7 @@ private static String extractCsrfFromHtml(String html) {
 @CompileStatic
 private static String extractCodeFromUrl(String url) {
     if (!url) return null
-    def matcher = url =~ /[?&]code=([^&\s"]+)/
+    java.util.regex.Matcher matcher = url =~ /[?&]code=([^&\s"]+)/
     return matcher.find() ? matcher.group(1) : null
 }
 

@@ -41,7 +41,7 @@ mappings {
 }
 
 // ===== CONFIG PAGE =====
-def mainPage() {
+Map mainPage() {
     if (state.peerIds == null) state.peerIds = [1]
     dynamicPage(name: "mainPage", title: "Multi-Hub Inventory v${CODE_VERSION}", install: true, uninstall: true) {
         section("Hubs") {
@@ -106,6 +106,7 @@ private Map parsePeerUrl(String raw) {
 }
 
 void appButtonHandler(String btn) {
+    checkVersion()
     List ids = (state.peerIds ?: []) as List
     if (btn == 'btnAddHub') {
         Integer next = ids ? ((ids.max() as Integer) + 1) : 1
@@ -121,6 +122,7 @@ void appButtonHandler(String btn) {
 void installed() { state.peerIds = [1]; checkOAuth(); runIn(1, 'syncUIForced'); initialize() }
 void updated()   { uiVersionCache = null; runIn(1, 'syncUIForced'); initialize() }
 void initialize() {
+    checkVersion(false)
     if (!state.accessToken) checkOAuth()
     String hubIp = location?.hubs ? location.hubs[0]?.localIP : null
     List peerList = []
@@ -151,6 +153,13 @@ void initialize() {
     refreshUpdateLabel()
     if (peerList) runIn(2, 'probePeers')
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
+}
+
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
 }
 
 void logsOff() {
@@ -219,13 +228,13 @@ private boolean autoEnableOAuth() {
     }
     return success
 }
-private Map jsonResponse(Object data) { return render(contentType: 'application/json', data: groovy.json.JsonOutput.toJson(data)) }
+private Map jsonResponse(def data) { return render(contentType: 'application/json', data: groovy.json.JsonOutput.toJson(data)) }
 
 // ===== UPDATE MANAGEMENT =====
 // Self-healing SPA: on install/update (and on File Manager loss), download the matching
 // multi_hub_inventory_ui.html from GitHub and store it in File Manager — so the dashboard HTML
 // never has to be uploaded by hand and can't silently drift behind the app version.
-void syncUIForced() { syncUI(true) }
+void syncUIForced() { checkVersion(); syncUI(true) }
 
 void syncUI(boolean force = false) {
     if (!force && state.lastInstalledUIVersion == CODE_VERSION && (now() - (state.lastUISyncCheck ?: 0) < 86400000)) return
@@ -326,6 +335,7 @@ private String stripUpdateBadge(String label) {
 }
 
 void scheduledVersionCheck() {
+    checkVersion()
     logSched "Running scheduled GitHub version check"
     checkGithubVersion()   // stale-while-revalidate; the async callback refreshes the label
     refreshUpdateLabel()   // also reconcile the label against the already-cached version
@@ -356,6 +366,7 @@ private Map bearer(String token) {
 
 // unreachable per hub before a scan is ever run.
 void probePeers() {
+    checkVersion()
     List peers = (state.peerList ?: []) as List
     peers.each { Map peer ->
         try {
@@ -375,6 +386,7 @@ void probePeers() {
 // peers, arms the version-check cron, refreshes the update-label badge). A code push alone does NOT
 // fire updated()/initialize(), so the deploy chain calls this after pushing new code.
 Map apiReinit() {
+    checkVersion()
     if (!checkOAuth()) return render(status: 403, contentType: 'text/plain', data: 'OAuth not enabled')
     logCfg "Reinitialize requested via API (running updated())"
     updated()
@@ -383,6 +395,7 @@ Map apiReinit() {
 
 // GET /api/version/check — current vs. latest GitHub version, for the SPA update badge.
 Map apiVersionCheck() {
+    checkVersion()
     if (!checkOAuth()) return render(status: 403, contentType: 'text/plain', data: 'OAuth not enabled')
     String latest = checkGithubVersion()
     if (!latest) return jsonResponse([error: "Unable to check for updates"])
@@ -396,6 +409,7 @@ Map apiVersionCheck() {
 
 // POST /api/ui/sync — manual re-download of the UI HTML from GitHub, for the SPA's Check-for-updates button.
 Map apiSyncUI() {
+    checkVersion()
     if (!checkOAuth()) return render(status: 403, contentType: 'text/plain', data: 'OAuth not enabled')
     logInfo "Manual UI sync requested via API..."
     boolean success = syncUIBlocking()
@@ -404,6 +418,7 @@ Map apiSyncUI() {
 
 // GET /api/peers — labels + index + reachability. NEVER returns tokens.
 Map apiPeers() {
+    checkVersion()
     if (!checkOAuth()) return render(status: 403, contentType: 'text/plain', data: 'OAuth not enabled')
     List out = []
     (state.peerList ?: []).eachWithIndex { Map p, int i -> out << [index: i, label: p.label, reachable: p.reachable, webBase: p.webBase ?: ''] }
@@ -413,6 +428,7 @@ Map apiPeers() {
 // GET /api/peer?hub=<idx>&op=start|status|data[&scanId=...] — same-origin forwarder.
 // op is whitelisted; the caller passes a hub INDEX, never a URL or token.
 Map apiPeer() {
+    checkVersion()
     if (!checkOAuth()) return render(status: 403, contentType: 'text/plain', data: 'OAuth not enabled')
     String op = (params.op ?: '') as String
     if (!(op in ['start', 'status', 'data'])) return jsonResponse([error: "invalid op"])
@@ -430,7 +446,7 @@ Map apiPeer() {
     else if (op == 'status') { url = "${base}/audit/status"; String rawSid = params.scanId as String; if (rawSid && rawSid ==~ /[A-Za-z0-9_\-]+/) q.scanId = rawSid }
     else                     { url = "${base}/audit/data" }
     try {
-        Object body = null
+        def body = null
         Closure handler = { resp -> body = resp.data }
         Map common = [uri: url, headers: bearer(token), contentType: 'application/json']
         if (q) common.query = q
@@ -453,6 +469,7 @@ Map apiPeer() {
 
 // ===== UI SERVING =====
 Map serveUI() {
+    checkVersion()
     if (!checkOAuth()) return render(status: 403, contentType: 'text/plain', data: 'OAuth is not enabled for this app.')
     try {
         byte[] bytes = downloadHubFile(UI_FILE)

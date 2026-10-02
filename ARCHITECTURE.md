@@ -105,6 +105,8 @@ void initialize() {
 
 For Zigbee drivers, place the check in `parse()` instead, so the device auto-reconfigures on the first event after a code push (the user doesn't have to re-save preferences). Trigger the reconfigure via `runInMillis` so it doesn't run inline with parsing.
 
+An app's `initialize()` only runs on install or save, so a check there alone sees a push only at the next save. Apps wrap the comparison in a `checkVersion(boolean reinit = true)` helper: `initialize()` calls `checkVersion(false)` to record the version, and every event handler, scheduled handler, endpoint and `appButtonHandler` calls `checkVersion()`, which logs the change with `logVer`, records it and schedules `runIn(1, "updated")`. A push then behaves like pressing Done on the first event after it. Drivers call the same check from the entry point that runs on its own after a push (`parse()`, a poll, the parent-fed update or socket handler) and re-run their convergence point: `configure()` for radio drivers, `updated()` for socket and cloud drivers (it closes the old connection before `initialize()` opens a new one), nothing for virtual and parent-fed children.
+
 ### Logging discipline
 
 Every app and driver should expose three boolean preferences and a small set of gated helpers.

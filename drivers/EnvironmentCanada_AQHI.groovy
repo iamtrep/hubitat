@@ -163,7 +163,7 @@ void updated() {
 }
 
 void deviceTypeUpdated() {
-    logCfg "driver change detected"
+    logDebug "driver change detected"
 }
 
 void initialize() {
@@ -367,8 +367,8 @@ void parseForecastResponse(resp) {
     List<Map> futureForecasts = []
     String locationName = ""
 
-    for (Object f : features) {
-        Map props = (f as Map)?.properties as Map
+    for (Map f : features) {
+        Map props = f?.properties as Map
         if (!props) continue
 
         String forecastDt = props.forecast_datetime as String
@@ -556,8 +556,7 @@ void parseAlertResponse(resp) {
     if (count > 0) {
         // Concatenate alert descriptions
         List<String> messages = []
-        for (Object a : alerts) {
-            Map alert = a as Map
+        for (Map alert : alerts) {
             String desc = alert?.description as String ?: alert?.title as String ?: "AQHI Alert"
             messages << desc
         }
@@ -617,8 +616,7 @@ void parseStationsResponse(resp, BigDecimal hubLat, BigDecimal hubLon) {
     String nearestName = ""
     double nearestDist = Double.MAX_VALUE
 
-    for (Object f : features) {
-        Map feature = f as Map
+    for (Map feature : features) {
         Map props = feature?.properties as Map
         Map geometry = feature?.geometry as Map
         if (!props || !geometry) continue

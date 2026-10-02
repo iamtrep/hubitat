@@ -3,6 +3,7 @@
 
 import groovy.transform.Field
 
+@Field static final String CODE_VERSION = "0.1.0"
 @Field static final long RSSI_MIN_INTERVAL_MS = 10000
 
 metadata {
@@ -29,6 +30,7 @@ metadata {
 }
 
 void parse(Map data) {
+    checkVersion()
     parseBatteryAndRSSI(data)
     if (hasBinaryValue(data, "motion")) {
         processBinaryValue(data, "motion", "motion", "active", "inactive")
@@ -55,7 +57,14 @@ void uninstalled() {
 }
 
 void initialize() {
-    // nothing for now
+    checkVersion()
+}
+
+// BLE advertisements need no device-side configuration, so a push is only recorded.
+private void checkVersion() {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
 }
 
 void logsOff() {

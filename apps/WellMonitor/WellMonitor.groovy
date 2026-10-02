@@ -15,6 +15,7 @@ import java.util.concurrent.ConcurrentHashMap
 import groovy.json.JsonOutput
 import com.hubitat.app.DeviceWrapper
 import com.hubitat.hub.domain.Event
+import com.hubitat.hub.domain.Hub
 import java.nio.file.AccessDeniedException
 
 @Field static final String APP_NAME = "Well Monitor"
@@ -1222,7 +1223,7 @@ Map getChartJs() {
 }
 
 Map getStatusJson() {
-    def hub = location.hubs ? location.hubs[0] : null
+    Hub hub = location.hubs ? location.hubs[0] : null
     Map status = [
         pumpRunning: state.pumpRunning ?: false,
         flowActive: state.flowActive ?: false,

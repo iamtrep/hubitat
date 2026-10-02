@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import groovy.transform.Field
+import com.hubitat.app.ChildDeviceWrapper
 
 @Field static final String CODE_VERSION = "0.2.3"
 @Field static final Integer SCORING_SCHEMA_VERSION = 1
@@ -225,7 +226,7 @@ private void scoreOn(Long wallOnTs) {
 
 private void syncDecision(String key) {
     Map ps = state.policyState[key]
-    def child = getChildDevice(childDni(key))
+    ChildDeviceWrapper child = getChildDevice(childDni(key))
     String swState = child?.currentValue("switch")
     if (swState != null && swState != ps.decision) {
         ps.decision = swState
@@ -300,7 +301,7 @@ private void evaluatePolicies() {
 }
 
 private void drivePolicy(String key, String edge) {
-    def child = getChildDevice(childDni(key))
+    ChildDeviceWrapper child = getChildDevice(childDni(key))
     if (child == null) return
     if (edge == "on") child.on() else child.off()
     Map ps = state.policyState[key]

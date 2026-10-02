@@ -567,6 +567,7 @@ Map jsonResponse(Map data) {
 }
 
 Map serveUI() {
+    checkVersion()
     if (!checkOAuth()) {
         return render(status: 403, contentType: 'text/plain', data: 'OAuth is not enabled for this app. Please enable it in the Hubitat App Settings.')
     }
@@ -623,6 +624,7 @@ void githubVersionCallback(resp, data) {
 }
 
 Map apiSyncUI() {
+    checkVersion()
     logInfo "Manual UI sync requested via API..."
     boolean success = syncUIBlocking()
     return jsonResponse([success: success])
@@ -638,6 +640,7 @@ Map apiReinit() {
 }
 
 Map apiVersionCheck() {
+    checkVersion()
     String latestVersion = checkGithubVersion()
     if (!latestVersion) return jsonResponse([error: "Unable to check for updates"])
 
@@ -711,7 +714,10 @@ private Map timed(String name, Closure<Map> body) {
 }
 
 // Aggregator: shared cache over multiple hub resources with fail-soft fallbacks.
-Map apiDashboard() { return timed("dashboard") { getDashboardData(buildSharedCache()) } }
+Map apiDashboard() {
+    checkVersion()
+    return timed("dashboard") { getDashboardData(buildSharedCache()) }
+}
 
 String getUIVersion() {
     if (uiVersionCache) return uiVersionCache
@@ -733,14 +739,21 @@ String getUIVersion() {
 }
 
 // Aggregator: device classification and fullJson enrichment join.
-Map apiDevices() { return timed("devices") { getDevicesData() } }
+Map apiDevices() {
+    checkVersion()
+    return timed("devices") { getDevicesData() }
+}
 
 // Aggregator: joins apps list with runtime stats; surfaces parent/child structure.
-Map apiApps() { return timed("apps") { getAppsData() } }
+Map apiApps() {
+    checkVersion()
+    return timed("apps") { getAppsData() }
+}
 
 // Aggregator: one response for the Code tab from four hub listings (app, driver, bundle and
 // library types) plus the hub variables, each fail-soft on its own.
 Map apiCode() {
+    checkVersion()
     return timed("code") {
         [
             appTypes: fetchUserAppTypes(),
@@ -754,6 +767,7 @@ Map apiCode() {
 
 // Aggregator: normalizes multiple hub resources; adds mesh and health derivations.
 Map apiNetwork() {
+    checkVersion()
     return timed("network") {
         // Network tab needs hubData (for fetchSecurityInfo's cloudController flag); rest is fetched by analyzeNetwork
         Map shared = [:]
@@ -763,10 +777,14 @@ Map apiNetwork() {
 }
 
 // Aggregator: cross-resource health summary with alert shaping.
-Map apiHealth() { return timed("health") { getHealthData(buildSharedCache()) } }
+Map apiHealth() {
+    checkVersion()
+    return timed("health") { getHealthData(buildSharedCache()) }
+}
 
 // Aggregator: parses a hub text endpoint into a stable structured payload.
 Map apiHealthHistory() {
+    checkVersion()
     List memHistory = fetchMemoryHistory()
     return jsonResponse([dataPoints: memHistory ?: [], temperature: tempSamples(), hourly: loadHourly()])
 }
@@ -774,6 +792,7 @@ Map apiHealthHistory() {
 // Memory/CPU/temperature samples for the Settings "observed ranges" panel: the hub's since-boot
 // history plus the resource fields of stored checkpoints and snapshots. The SPA computes the ranges.
 Map apiHealthRanges() {
+    checkVersion()
     return timed("healthRanges") {
         [
             history:     (fetchMemoryHistory() ?: []).collect { Map p -> [time: p.time, timeMs: p.timeMs, freeOS: p.freeOS, cpu: p.cpuLoad] },
@@ -792,6 +811,7 @@ Map apiHealthRanges() {
 // Aggregator on the hot path (polled by the SPA every few seconds):
 // consolidates polling and centralizes fail-soft semantics.
 Map apiLive() {
+    checkVersion()
     Map res = fetchSystemResources() ?: [:]
     return jsonResponse([
         freeOSMemory    : res.freeOSMemory,
@@ -806,9 +826,13 @@ Map apiLive() {
     ])
 }
 
-Map apiPerformance() { return timed("performance") { getPerformanceData() } }
+Map apiPerformance() {
+    checkVersion()
+    return timed("performance") { getPerformanceData() }
+}
 
 Map apiZigbeeScan() {
+    checkVersion()
     long start = now()
     Map result = runZigbeeChannelScan()
     long elapsed = now() - start
@@ -819,6 +843,7 @@ Map apiZigbeeScan() {
 }
 
 Map apiPerformanceCompare() {
+    checkVersion()
     String baseline = params.baseline
     String checkpoint = params.checkpoint
     if (!baseline || !checkpoint) {
@@ -904,10 +929,12 @@ Map apiPerformanceCompare() {
 }
 
 Map apiSnapshots() {
+    checkVersion()
     return jsonResponse(getSnapshotsData())
 }
 
 Map apiSnapshotView() {
+    checkVersion()
     String idxStr = params.index ?: "-1"
     if (!idxStr.isInteger()) return jsonResponse([error: "Invalid snapshot index"])
     int idx = idxStr.toInteger()
@@ -961,14 +988,15 @@ Map apiSnapshotView() {
 }
 
 Map apiCreateSnapshot() {
+    checkVersion()
     // C1: createSnapshot() is void and swallows save failures (writeFile catches internally), so a
     // failed live snapshot would otherwise return success and the SPA would diff against a stale
     // snapshot with no error. Detect real success by checking the newest snapshot's timestampMs
     // actually changed — robust even at the retention cap, where the total count stays flat.
-    def prevNewestMs = loadSnapshots()?.getAt(0)?.timestampMs
+    Long prevNewestMs = loadSnapshots()?.getAt(0)?.timestampMs as Long
     createSnapshot()
     List snapshots = loadSnapshots()
-    def newestMs = snapshots?.getAt(0)?.timestampMs
+    Long newestMs = snapshots?.getAt(0)?.timestampMs as Long
     if (newestMs == null || newestMs == prevNewestMs) {
         logWarn "apiCreateSnapshot: live snapshot did not persist (newest timestampMs unchanged) — creation failed"
         return jsonResponse([success: false, error: "Failed to create live snapshot — check hub logs", snapshotCount: snapshots?.size() ?: 0])
@@ -977,6 +1005,7 @@ Map apiCreateSnapshot() {
 }
 
 Map apiDeleteSnapshot() {
+    checkVersion()
     String idxStr = params.index ?: "-1"
     if (!idxStr.isInteger()) return jsonResponse([success: false, error: "Invalid index"])
     int idx = idxStr.toInteger()
@@ -986,11 +1015,13 @@ Map apiDeleteSnapshot() {
 }
 
 Map apiCreateCheckpoint() {
+    checkVersion()
     if (!createCheckpoint()) return jsonResponse([success: false, error: "Checkpoint creation failed or already in progress"])
     return jsonResponse([success: true, checkpointCount: loadCheckpointIndex().size()])
 }
 
 Map apiDeleteCheckpoint() {
+    checkVersion()
     String idxStr = params.index ?: "-1"
     if (!idxStr.isInteger()) return jsonResponse([success: false, error: "Invalid index"])
     int idx = idxStr.toInteger()
@@ -1000,11 +1031,13 @@ Map apiDeleteCheckpoint() {
 }
 
 Map apiClearCheckpoints() {
+    checkVersion()
     clearAllCheckpoints()
     return jsonResponse([success: true])
 }
 
 Map apiClearSnapshots() {
+    checkVersion()
     clearAllSnapshots()
     return jsonResponse([success: true])
 }
@@ -1012,11 +1045,13 @@ Map apiClearSnapshots() {
 // Drops the cached Diagnostic Tool versions so the next read shows a platform download
 // the SPA just made.
 Map apiFirmwareRefresh() {
+    checkVersion()
     TTL_CACHE.remove('diagToolVersions')
     return jsonResponse([success: true])
 }
 
 Map apiReports() {
+    checkVersion()
     List reportFiles = listHubFiles("hub_diagnostics_report_")
     String lastReport = safeToString(state.lastReportFile, "")
     return jsonResponse([
@@ -1031,6 +1066,7 @@ Map apiReports() {
 // strips placeholders, injects window.REPORT_DATA, and POSTs the resulting HTML
 // to /api/report/save. Replaces the heavier server-side apiGenerateReport pipeline.
 Map apiReportTemplate() {
+    checkVersion()
     String html = loadUITemplate()
     if (!html) return render(status: 404, contentType: 'application/json', data: '{"error":"SPA template not found in File Manager"}')
     return render(contentType: 'text/html', data: html)
@@ -1040,6 +1076,7 @@ Map apiReportTemplate() {
 // report client-side (parallel data fetches, template injection, placeholder strip)
 // and just hands the finished bytes here for FileManager persistence.
 Map apiSaveReport() {
+    checkVersion()
     Map body = (request?.JSON instanceof Map) ? (Map) request.JSON : null
     if (!body) return jsonResponse([success: false, error: "Empty or invalid JSON body"])
     String filename = (body.filename ?: "") as String
@@ -1055,6 +1092,7 @@ Map apiSaveReport() {
 }
 
 Map apiGetSettings() {
+    checkVersion()
     return jsonResponse([
         autoSnapshot:          settings.autoSnapshot ?: false,
         snapshotInterval:      settings.snapshotInterval ?: 1,
@@ -1080,6 +1118,7 @@ Map apiGetSettings() {
 }
 
 Map apiUpdateSettings() {
+    checkVersion()
     Map body = [:]
     String dataStr = params?.data as String
     if (dataStr) {
@@ -1125,6 +1164,7 @@ Map apiUpdateSettings() {
 }
 
 Map apiClearCache() {
+    checkVersion()
     int cleared = (state.controllerTypeCache ?: [:]).size()
     state.controllerTypeCache = [:]
     // Also drop the integration-overrides cache so this re-reads the File Manager config on next
@@ -1512,6 +1552,7 @@ void recordApiTiming(String endpoint, long elapsedMs) {
 }
 
 Map apiStats() {
+    checkVersion()
     Map stats = [:]
     synchronized (apiTimings) {
         apiTimings.each { String endpoint, Map entry ->
@@ -1753,8 +1794,8 @@ Float fetchTemperature() {
 // up to min/avg/max in HOURLY_FILE, with the database size, so a longer view survives reboots
 // and code pushes.
 
-// Every 5 minutes at a per-install second offset. Also armed from the daily scheduledUISync so
-// installs updated by a code push alone (no updated() call) start sampling within a day.
+// Every 5 minutes at a per-install second offset. Also armed from the daily scheduledUISync
+// when the offset is missing.
 void armTemperatureSampling() {
     int sec = (state.tempSampleOffsetSec != null) ? (state.tempSampleOffsetSec as int) : new Random().nextInt(60)
     state.tempSampleOffsetSec = sec
@@ -1771,6 +1812,7 @@ List loadHourly() {
 }
 
 void sampleTemperature() {
+    checkVersion()
     String text = (String) hubRequest(INTERNAL_TEMP_PATH, "internal temperature", "text", 5)
     Float t = null
     try { t = text?.trim()?.toFloat() } catch (Exception e) { }
@@ -2754,7 +2796,7 @@ Map analyzeApps(boolean deep = true) {
 
     // Dedicated recursion remains here because hierarchy generation mutates nested child lists
     Closure processAppList
-    processAppList = { List entries, boolean isChildLevel, List parentHierarchyList, def currentParentId, String currentParentName ->
+    processAppList = { List entries, boolean isChildLevel, List parentHierarchyList, Long currentParentId, String currentParentName ->
         entries.each { appEntry ->
             try {
                 Map app = appEntry.data
@@ -2766,7 +2808,7 @@ Map analyzeApps(boolean deep = true) {
                 String appType = app.type ?: "Unknown App"
                 String appLabel = app.name ?: appType
                 def appId = appEntry.key ?: app.id  // keep "APP-NNN" for snapshot diff lookups
-                def numericId = app.id              // numeric ID for UI links
+                Long numericId = app.id as Long     // numeric ID for UI links
                 List children = appEntry.children ?: []
 
                 if (isChildLevel) {
@@ -2984,7 +3026,7 @@ List buildZwaveGhostNodes(Map zwaveDetails) {
         String zwType = zwTypeByNodeId[nodeId.toString()] ?: ""
         // Never flag the hub's own controller node
         if (zwType.toUpperCase().contains("CONTROLLER")) return
-        def deviceId = deviceIdByNodeId[nodeId.toString()]
+        Long deviceId = deviceIdByNodeId[nodeId.toString()] as Long
         boolean noDeviceId = !deviceId                         // principal signal: no paired Hubitat device
         boolean isFailed   = nodeData.status == "FAILED" || nodeData.failed == true
         boolean noRoute    = nodeData.route == null || nodeData.route == "" || nodeData.route == "No route"
@@ -3359,6 +3401,7 @@ boolean createCheckpoint() {
 }
 
 void checkpointTick() {
+    checkVersion()
     runIn(jitterDelaySec(), "scheduledCheckpoint")
 }
 
@@ -3367,6 +3410,7 @@ void checkpointTick() {
 // off the app thread. Keeps user-triggered apiCreateCheckpoint sync so the HTTP caller
 // gets a real success/fail response.
 void scheduledCheckpoint() {
+    checkVersion()
     Long inFlight = atomicState.checkpointInFlight as Long
     if (inFlight && (now() - inFlight) < 300_000L) {
         logInfo "scheduledCheckpoint skipped — already in flight since ${new Date(inFlight)}"
@@ -3397,6 +3441,7 @@ private void dispatchRuntimeStatsFetch() {
 
 // runIn target for the single bounded retry of the runtime-stats leg.
 void retryRuntimeStatsFetch() {
+    checkVersion()
     if (asyncCheckpointStaging == null) {
         // Chain was aborted or staging was reset (e.g. code push) during the retry wait.
         logSched "scheduledCheckpoint: runtime stats retry skipped — chain no longer active"
@@ -3590,6 +3635,7 @@ void clearAllCheckpoints() {
 // Daily cron entry point; skips until snapshotInterval days have passed. One hour of
 // slack so a run that fires slightly early is not pushed back a whole day.
 void scheduledSnapshot() {
+    checkVersion()
     int days = (settings.snapshotInterval ?: 1).toInteger()
     Long last = state.lastScheduledSnapshotMs as Long
     if (last != null && now() - last < days * 86400000L - 3600000L) return
@@ -3604,6 +3650,7 @@ private int jitterDelaySec() {
 }
 
 void createSnapshot() {
+    checkVersion()
     logInfo "Creating config snapshot..."
 
     // v5.13.0: capture additional facts surfaced by Phases 0–6.
@@ -4434,6 +4481,7 @@ void fullJsonCb(resp, data) {
  * the reaper stops rather than cycling forever on a scan that will never finalize.
  */
 void auditClaimReaper(data) {
+    checkVersion()
     String scanId = data?.scanId as String
     ConcurrentHashMap scan = scanId ? AUDIT_SCANS[scanId] : null
     if (scan == null) return                                        // finalized or cleared — terminal, stop rescheduling
@@ -4621,6 +4669,7 @@ private void finalizeAudit(String scanId) {
  * If the scan is still in-flight when this fires, mark errored and clean up.
  */
 void auditWatchdog(data) {
+    checkVersion()
     String scanId = data?.scanId as String ?: ((state.audit as Map)?.scanId as String)
     if (!scanId) return
     ConcurrentHashMap scan = AUDIT_SCANS[scanId]
@@ -4664,6 +4713,7 @@ private Map currentAuditSnapshot() {
  * Idempotent under concurrent triggers: if a scan is already in-flight, returns its scanId.
  */
 Map apiAuditStart() {
+    checkVersion()
     // Force-clear stale scan (>10 min in 'scanning' state) on entry
     Map prev = currentAuditSnapshot()
     if (prev.status == 'scanning' && prev.startedAt && (now() - (prev.startedAt as Long) > AUDIT_STALE_MS)) {
@@ -4726,6 +4776,7 @@ Map apiAuditStart() {
  * If scanId is omitted, returns the latest known status.
  */
 Map apiAuditStatus() {
+    checkVersion()
     String requested = params.scanId as String
     Map snap = currentAuditSnapshot()
     if (requested && snap.scanId != requested) {
@@ -4754,6 +4805,7 @@ Map apiAuditStatus() {
  * Returns 404 if no audit has been run since the last hub restart.
  */
 Map apiAuditData() {
+    checkVersion()
     if (lastAuditResult == null) {
         return render(status: 404, contentType: 'application/json', data: '{"error":"no audit result available"}')
     }
@@ -4898,7 +4950,15 @@ private boolean processSyncUIResponse(String htmlText) {
     return true
 }
 
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
+}
+
 void initialize() {
+    checkVersion(false)
     logCfg "Hub Diagnostics initialized"
 
     currentAuditSnapshot()      // mark a scan orphaned by a reload as failed
@@ -4951,6 +5011,7 @@ void initialize() {
 // ===== SWITCH TRIGGER HANDLERS =====
 
 void snapshotSwitchHandler(evt) {
+    checkVersion()
     if (evt?.value != "on") return        // subscribed to switch.on; defensive
     // lightweight debounce: createSnapshot does heavy API work; ignore a bounce
     Long last = state.lastSnapshotTriggerMs as Long
@@ -4964,24 +5025,28 @@ void snapshotSwitchHandler(evt) {
 }
 
 void checkpointSwitchHandler(evt) {
+    checkVersion()
     if (evt?.value != "on") return
     logInfo "Perf checkpoint triggered by switch ${evt.displayName}"
     scheduledCheckpoint()                 // already has a 300s in-flight guard
 }
 
 void scheduledUISync() {
+    checkVersion()
     logSched "Running scheduled UI sync"
     if (state.tempSampleOffsetSec == null) armTemperatureSampling()
     syncUI(false)
 }
 
 void scheduledVersionCheck() {
+    checkVersion()
     logSched "Running scheduled GitHub version check"
     checkGithubVersion()   // stale-while-revalidate; the async callback refreshes the label
     refreshUpdateLabel()   // also reconcile the label against the already-cached version
 }
 
 void syncUIForced() {
+    checkVersion()
     syncUI(true)
 }
 

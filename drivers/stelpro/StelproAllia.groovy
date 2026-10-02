@@ -238,7 +238,7 @@ void setCoolingSetpoint(degrees) {
     logWarn("setCoolingSetpoint(${degrees}): is not available for this device")
 }
 
-void setThermostatFanMode(fanmode) {
+void setThermostatFanMode(String fanmode) {
     logWarn "setThermostatFanMode is not available for this device"
 }
 
@@ -681,7 +681,7 @@ private static int hexToSignedInt16(String hex) {
     return v > 0x7FFF ? v - 0x10000 : v
 }
 
-private void sendZigbeeCommands(cmds) {
+private void sendZigbeeCommands(List<String> cmds) {
     sendHubCommand(new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE))
 }
 

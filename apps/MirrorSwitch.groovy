@@ -37,7 +37,7 @@ preferences {
     page(name: "mainPage")
 }
 
-def mainPage() {
+Map mainPage() {
     dynamicPage(name: "mainPage", title: "${APP_NAME} v${CODE_VERSION}", install: true, uninstall: true) {
         section("Mirror group") {
             input name: "switches", type: "capability.switch", title: "Devices to keep in sync",
@@ -61,17 +61,18 @@ def mainPage() {
     }
 }
 
-def installed() {
+void installed() {
     initialize()
 }
 
-def updated() {
+void updated() {
     unsubscribe()
     unschedule()
     initialize()
 }
 
-def initialize() {
+void initialize() {
+    checkVersion(false)
     if (settings.debugLogging || settings.traceEnable) {
         runIn(DEBUG_AUTO_OFF_MINUTES * 60, "logsOff")
     }
@@ -85,6 +86,13 @@ def initialize() {
     reconcile()
 }
 
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
+}
+
 void logsOff() {
     app.updateSetting("debugLogging", [value: "false", type: "bool"])
     app.updateSetting("traceEnable", [value: "false", type: "bool"])
@@ -92,6 +100,7 @@ void logsOff() {
 }
 
 void switchHandler(evt) {
+    checkVersion()
     String target = evt.value
     if (target != "on" && target != "off") return
     logEvt "${evt.displayName} -> ${target}; propagating."
@@ -108,9 +117,9 @@ private void propagate(String target, String sourceId) {
 }
 
 private void reconcile() {
-    def members = settings.switches
+    List<DeviceWrapper> members = settings.switches
     if (!members || members.size() < 2) return
-    def mostRecent = null
+    DeviceWrapper mostRecent = null
     Long bestTime = -1L
     members.each { dev ->
         def st = dev.currentState("switch")

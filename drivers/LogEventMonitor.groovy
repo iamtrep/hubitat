@@ -117,9 +117,8 @@ void uninstalled() {
 }
 
 void initialize() {
+    checkVersion(false)
     logDebug "initialize()"
-
-    state.codeVersion = CODE_VERSION
 
     // Initialize state
     atomicState.intentionalDisconnect = false
@@ -141,6 +140,15 @@ void initialize() {
 
     // Reset rate limit counter every minute
     runEvery1Minute("resetRateLimitCounter")
+}
+
+// A push leaves the old socket and schedules running, so re-initialize once.
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    state.remove('codeVersion')
+    if (reinit) runIn(1, "updated")
 }
 
 // ============================================================================
@@ -238,6 +246,7 @@ void resetRateLimitCounter() {
 // ============================================================================
 
 void webSocketStatus(String message) {
+    checkVersion()
     logTrace "WebSocket status: ${message}"
 
     if (message.contains("failure") || message.contains("error")) {
@@ -265,6 +274,7 @@ void webSocketStatus(String message) {
 }
 
 void parse(String message) {
+    checkVersion()
     String devId = device.id.toString()
     totalLogsReceived[devId] = (totalLogsReceived[devId] ?: 0L) + 1
 

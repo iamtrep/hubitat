@@ -351,6 +351,7 @@ void logsOff() {
 }
 
 private void initialize() {
+    checkVersion(false)
     state.bridges = state.bridges ?: []
     state.filters = state.filters ?: []
 
@@ -366,6 +367,13 @@ private void initialize() {
     runEvery1Minute("resetRateLimitCounters")
 
     refreshNotifyDeviceIds()
+}
+
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
 }
 
 // IDs of every device used as a notification target, for the loop guard in
@@ -547,6 +555,7 @@ private void clearFilterSettings() {
 // ============================================================================
 
 void processLogEntry(String bridgeDni, Map logEntry) {
+    checkVersion()
     // Self-monitoring guard: skip own app logs
     if (logEntry.type == "app" && logEntry.id?.toString() == app.id.toString()) return
 
@@ -748,6 +757,7 @@ private void appendToFile(String fileName, String data) {
 // ============================================================================
 
 void resetRateLimitCounters() {
+    checkVersion()
     List<Map> filters = state.filters
     if (!filters) return
 

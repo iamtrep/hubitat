@@ -707,7 +707,7 @@ private String buildAndSendSwap(Map configData, int appId, String inputName, int
                 // can be a Map (device id -> label), a scalar Long/Integer for
                 // a single device, or a comma-separated String.
                 List<Integer> currentIds = []
-                Object curVal = settings[name]
+                def curVal = settings[name]
                 if (curVal instanceof Map) {
                     currentIds = (curVal as Map).keySet().collect { it.toString().toInteger() }
                 } else if (curVal instanceof List) {

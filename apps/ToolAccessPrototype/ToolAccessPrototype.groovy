@@ -98,7 +98,7 @@ mappings {
 
 // ── Page ──────────────────────────────────────────────────────────────
 
-def mainPage() {
+Map mainPage() {
     if (!checkOAuth()) {
         return dynamicPage(name: "mainPage", title: APP_NAME, install: true, uninstall: true) {
             section("OAuth required") {
@@ -341,19 +341,19 @@ private boolean autoEnableOAuth() {
 
 // ── Lifecycle ─────────────────────────────────────────────────────────
 
-def installed() {
+void installed() {
     checkOAuth()
     initialize()
 }
 
-def updated() {
+void updated() {
     unsubscribe()
     unschedule()
     checkOAuth()
     initialize()
 }
 
-def initialize() {
+void initialize() {
     if (state.version != CODE_VERSION) {
         logVer "now running v${CODE_VERSION}"
         state.version = CODE_VERSION

@@ -94,6 +94,7 @@ class AuditPipeline {
     void logWarn(String m) { warnings << m }
     void logInfo(String m) {}
     void logDebug(String m) {}
+    void checkVersion(boolean reinit = true) {}
     String getObjectClassName(Object o) { return o.getClass().simpleName }
     Map extractAuditFields(Map fj, Long did) { return [id: did, name: "dev" + did] }
 

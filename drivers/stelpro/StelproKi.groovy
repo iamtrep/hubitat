@@ -77,8 +77,8 @@ metadata {
 
 // Constants
 
-@Field static final constSupportedFanModes = ["\"auto\""]
-@Field static final constSupportedThermostatModes = ["\"emergency heat\"", "\"heat\"", "\"off\""]
+@Field static final List<String> constSupportedFanModes = ["\"auto\""]
+@Field static final List<String> constSupportedThermostatModes = ["\"emergency heat\"", "\"heat\"", "\"off\""]
 
 @Field static final Map constModeMap = [ "00": "off", "04": "heat", "05": "eco" ]
 @Field static final Map constKeypadLockoutModes = [ "Yes": 0x01, "No": 0x00 ]
@@ -245,7 +245,7 @@ void fanOn(){
     logWarn "fanOn mode is not available for this device"
 }
 
-void setThermostatFanMode(fanmode){
+void setThermostatFanMode(String fanmode){
     logWarn "setThermostatFanMode is not available for this device"
 }
 

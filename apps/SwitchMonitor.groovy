@@ -256,6 +256,7 @@ Map removeGroupPage(params) {
 }
 
 void appButtonHandler(String btn) {
+    checkVersion()
     if (btn == "btnNewGroup") {
         List<Integer> groups = (List<Integer>)(state.groups ?: [])
         Integer newNum = groups ? (groups.max() + 1) : 1
@@ -311,6 +312,7 @@ void uninstalled() {
 }
 
 void initialize() {
+    checkVersion(false)
     migrateFromV2IfNeeded()
 
     List<Integer> groups = (List<Integer>)(state.groups ?: [])
@@ -387,9 +389,17 @@ void initialize() {
     evaluateGroups("Preferences saved")
 }
 
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
+}
+
 // ── Event Handlers ───────────────────────────────────────────────────────────
 
 void systemStartHandler(evt) {
+    checkVersion()
     logInfo "Hub startup detected — refreshing monitored switches"
     List allSwitches = getAllMonitoredSwitches()
     List refreshable = allSwitches.findAll { it.hasCommand("refresh") }
@@ -401,10 +411,12 @@ void systemStartHandler(evt) {
 }
 
 void startupCheck() {
+    checkVersion()
     evaluateGroups("Startup check")
 }
 
 void switchDeviatedHandler(evt) {
+    checkVersion()
     logTrace "switchDeviatedHandler fired: ${evt.displayName} (${evt.device.id}) -> ${evt.value}"
     String devId = evt.device.id.toString()
     // Determine which target state this event deviates FROM
@@ -429,6 +441,7 @@ void switchDeviatedHandler(evt) {
 }
 
 void switchRestoredHandler(evt) {
+    checkVersion()
     String devId = evt.device.id.toString()
     // Determine which target state this event restores TO
     String restoredTarget = evt.value
@@ -456,6 +469,7 @@ void switchRestoredHandler(evt) {
 // ── Power Outage Handlers ────────────────────────────────────────────────────
 
 void outageIndicatorSwitchHandler(evt) {
+    checkVersion()
     if (evt.value == "on") {
         powerOutageStarted()
     } else {
@@ -464,6 +478,7 @@ void outageIndicatorSwitchHandler(evt) {
 }
 
 void outageIndicatorPowerHandler(evt) {
+    checkVersion()
     if (evt.value != "mains") {
         powerOutageStarted()
     } else {
@@ -509,12 +524,14 @@ private void powerOutageEnded() {
 }
 
 void postOutageCheck() {
+    checkVersion()
     evaluateGroups("Power restored")
 }
 
 // ── Recovery Logic (Unified) ─────────────────────────────────────────────────
 
 void startRecovery(Map data) {
+    checkVersion()
     int groupNum = data.groupNum as int
     String targetState = getGroupTargetState(groupNum)
     String groupLabel = getGroupLabel(groupNum)
@@ -549,6 +566,7 @@ void startRecovery(Map data) {
 }
 
 void attemptRecovery(Map data) {
+    checkVersion()
     int groupNum = data.groupNum as int
     String targetState = getGroupTargetState(groupNum)
     String groupLabel = getGroupLabel(groupNum)
@@ -603,6 +621,7 @@ void attemptRecovery(Map data) {
 }
 
 void verifyRecovery(Map data) {
+    checkVersion()
     int groupNum = data.groupNum as int
     String targetState = getGroupTargetState(groupNum)
     String groupLabel = getGroupLabel(groupNum)
@@ -632,6 +651,7 @@ void verifyRecovery(Map data) {
 // ── Load Monitoring ──────────────────────────────────────────────────────────
 
 void powerHandler(evt) {
+    checkVersion()
     if (state.powerOutage) return
 
     String devId = evt.device.id.toString()
@@ -703,6 +723,7 @@ private void evaluateGroupLoad(int groupNum) {
 }
 
 void checkLowLoad(Map data) {
+    checkVersion()
     int groupNum = data.groupNum as int
     String groupLabel = getGroupLabel(groupNum)
 
@@ -1022,17 +1043,17 @@ private String getGroupLabel(int groupNum) {
 }
 
 private int getIntGroupSetting(int groupNum, String name, int defaultValue) {
-    Object val = settings["group${groupNum}.${name}"]
+    def val = settings["group${groupNum}.${name}"]
     return val != null ? val as int : defaultValue
 }
 
 private BigDecimal getDecimalGroupSetting(int groupNum, String name, BigDecimal defaultValue) {
-    Object val = settings["group${groupNum}.${name}"]
+    def val = settings["group${groupNum}.${name}"]
     return val != null ? val as BigDecimal : defaultValue
 }
 
 private boolean getBoolGroupSetting(int groupNum, String name, boolean defaultValue = false) {
-    Object val = settings["group${groupNum}.${name}"]
+    def val = settings["group${groupNum}.${name}"]
     return val != null ? val as boolean : defaultValue
 }
 

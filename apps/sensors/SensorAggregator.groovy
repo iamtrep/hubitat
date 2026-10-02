@@ -74,10 +74,18 @@ void installed() {
 
 void updated() {
     logDebug "there are ${getChildApps().size()} sensor aggregators : ${getChildApps().collect { it.label } }"
-    if (debugEnable || traceEnable) runIn(1800, "logsOff")
+    initialize()
 }
 
 void initialize() {
+    checkVersion()
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
+}
+
+private void checkVersion() {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
 }
 
 void logsOff() {

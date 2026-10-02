@@ -231,7 +231,7 @@ private void emitFanSpeed(String speed) {
 void setHeatingSetpoint(temp) { handleSetSetpoint("heat", temp) }
 void setCoolingSetpoint(temp) { handleSetSetpoint("cool", temp) }
 
-private void handleSetSetpoint(String role, Object raw) {
+private void handleSetSetpoint(String role, def raw) {
     BigDecimal t = toDecimal(raw)
     if (t == null) { logWarn "set${role.capitalize()}Setpoint(${raw}): not a number — ignored"; return }
     BigDecimal clamped = clampSetpoint(role, t)
@@ -248,7 +248,7 @@ private void handleSetSetpoint(String role, Object raw) {
     pushSetpointToUnit(clamped)
 }
 
-private BigDecimal toDecimal(Object raw) {
+private BigDecimal toDecimal(def raw) {
     if (raw == null) return null
     try { return new BigDecimal(raw.toString().trim()) } catch (NumberFormatException e) { return null }
 }
@@ -289,7 +289,7 @@ private void writeToUnit(String property, Integer value) {
 }
 
 // The polled value, or null while it still disagrees with a recent write.
-private Object settled(String property, Object polled) {
+private def settled(String property, Object polled) {
     Map recent = (state.recentWrites ?: [:]) as Map
     Map w = recent[property] as Map
     if (w == null || polled == null) return polled
@@ -330,9 +330,9 @@ void updateState(Map data) {
     logTrace "updateState(${data})"
     // A code push doesn't run updated(); the parent calls this every poll.
     if (state.version != CODE_VERSION) initialize()
-    Object opMode = settled("operation_mode", data.opMode)
-    Object adjustTemp = settled("adjust_temperature", data.adjustTemp)
-    Object fanSpeed = settled("fan_speed", data.fanSpeed)
+    def opMode = settled("operation_mode", data.opMode)
+    def adjustTemp = settled("adjust_temperature", data.adjustTemp)
+    def fanSpeed = settled("fan_speed", data.fanSpeed)
     String fujMode = opMode != null ? OP_MODE[(int) opMode] : null
     BigDecimal temp = data.displayTemp != null ? aylaSensorToScale(data.displayTemp) : null
     BigDecimal sp = adjustTemp != null ? aylaSetpointToScale(adjustTemp) : null
@@ -396,7 +396,7 @@ void updateState(Map data) {
     // Device metadata — visible on the device edit page's Data section.
     [modelName: "modelName", firmwareVersion: "firmwareVersion",
      deviceName: "deviceName", commVersion: "commVersion"].each { String key, String dataKey ->
-        Object v = data[key]
+        def v = data[key]
         if (v != null && v.toString() != "" && device.getDataValue(dataKey) != v.toString()) {
             device.updateDataValue(dataKey, v.toString())
         }
@@ -478,7 +478,7 @@ private String deriveOperatingState(String mode, BigDecimal temp, BigDecimal sp,
 // reports values outside the [3200, 11200] hundredths-of-°F range (-18°C to
 // +49°C, well past mini-split sensor limits), the lib formula may need to
 // be re-considered with a per-unit override.
-private BigDecimal aylaSensorToScale(Object raw) {
+private BigDecimal aylaSensorToScale(def raw) {
     BigDecimal fahrenheit = (raw as BigDecimal) / 100
     if (getTemperatureScale() == 'C') {
         BigDecimal celsius = (fahrenheit - 32) * 5 / 9
@@ -489,7 +489,7 @@ private BigDecimal aylaSensorToScale(Object raw) {
 
 // Setpoint (adjust_temperature): tenths of °C, regardless of the unit's
 // display scale. Empirically verified 2026-05-18: raw 180 = 18.0°C.
-private BigDecimal aylaSetpointToScale(Object raw) {
+private BigDecimal aylaSetpointToScale(def raw) {
     BigDecimal celsius = (raw as BigDecimal) / 10
     if (getTemperatureScale() == 'F') {
         return (celsius * 9 / 5 + 32).setScale(1, java.math.RoundingMode.HALF_UP)

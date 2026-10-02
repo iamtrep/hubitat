@@ -32,7 +32,7 @@ metadata {
         namespace: "iamtrep",
         author: "pj",
         description: "Issues ZDO neighbor-table and routing-table queries for external mesh-mapping tools",
-        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/ZigbeeMeshProbe/ZigbeeMeshProbe.groovy"
+        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/zigbee_helpers/ZigbeeMeshProbe.groovy"
     ) {
         capability "Actuator"
 
@@ -81,7 +81,16 @@ private String buildZdoFrame(String addr, String clusterHex, int startIndex) {
     return "he raw 0x${addr} 0 0 0x${clusterHex} {00 ${HexUtils.integerToHexString(startIndex, 1)}} {0x0000}"
 }
 
+// No parse() traffic and no device configuration: commands are the only entry
+// point, and a push is only recorded.
+private void checkVersion() {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+}
+
 private void sendZdoRequest(String addr, String clusterHex, int startIndex) {
+    checkVersion()
     String frame = buildZdoFrame(addr, clusterHex, startIndex)
     sendHubCommand new hubitat.device.HubMultiAction([frame], hubitat.device.Protocol.ZIGBEE)
     logCmd "ZDO cluster 0x${clusterHex} → ${addr} (startIndex=${startIndex})"

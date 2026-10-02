@@ -14,6 +14,11 @@
    setPowerSource("mains")   → switch=off, powerSource=mains
    setPowerSource(other)     → switch=on,  powerSource={value}
  */
+
+import groovy.transform.Field
+
+@Field static final String CODE_VERSION = "0.1.0"
+
 metadata {
     definition(name: 'Virtual Switch + PowerSource', namespace: 'iamtrep', author: 'pj',
                description: 'Virtual device with synced Switch and PowerSource capabilities for testing power outage detection') {
@@ -49,6 +54,7 @@ void parse(String description) {
 }
 
 void on() {
+    checkVersion()
     String descriptionText = "${device.displayName} was turned on"
     sendEvent(name: 'switch', value: 'on', descriptionText: descriptionText)
     sendEvent(name: 'powerSource', value: 'battery', descriptionText: "${device.displayName} power source set to battery")
@@ -56,6 +62,7 @@ void on() {
 }
 
 void off() {
+    checkVersion()
     String descriptionText = "${device.displayName} was turned off"
     sendEvent(name: 'switch', value: 'off', descriptionText: descriptionText)
     sendEvent(name: 'powerSource', value: 'mains', descriptionText: "${device.displayName} power source set to mains")
@@ -63,11 +70,19 @@ void off() {
 }
 
 void setPowerSource(String source) {
+    checkVersion()
     String descriptionText = "${device.displayName} power source set to ${source}"
     sendEvent(name: 'powerSource', value: source, descriptionText: descriptionText)
     String switchValue = (source == 'mains') ? 'off' : 'on'
     sendEvent(name: 'switch', value: switchValue, descriptionText: "${device.displayName} was turned ${switchValue}")
     if (txtEnable) { logInfo "power source set to ${source}" }
+}
+
+// Virtual device: nothing to reconfigure, so a push is only recorded.
+private void checkVersion() {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
 }
 
 void logsOff() {

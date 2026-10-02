@@ -551,7 +551,7 @@ void signInCallback(resp, data) {
 // Null when the body isn't JSON or has no access token.
 private Map parseTokens(resp, String what) {
     try {
-        Object parsed = new JsonSlurper().parseText(resp.getData())
+        def parsed = new JsonSlurper().parseText(resp.getData())
         if (parsed instanceof Map && ((Map) parsed).access_token) return (Map) parsed
         logError "${what}: response has no access token"
     } catch (Exception e) {
@@ -893,7 +893,7 @@ private void handlePropertiesResponse(resp, String dsn) {
 
     Map<String, Object> props = [:]
     parsed.each { item ->
-        Object p = item instanceof Map ? ((Map) item).property : null
+        def p = item instanceof Map ? ((Map) item).property : null
         if (p instanceof Map && p.name) props[p.name.toString().toLowerCase()] = p.value
     }
     if (parsed && !props) {
@@ -943,13 +943,13 @@ void fetchPropertiesDeferred(Map data) { fetchProperties((String) data.dsn) }
 
 // --- Write commands ---
 
-void sendCommand(String dni, String propertyName, Object value) {
+void sendCommand(String dni, String propertyName, def value) {
     sendWrite(dni, propertyName, value, true)
 }
 
 // report=false for the manager's own writes (sensor wakes): the child didn't ask
 // for them, so their outcome stays out of its commandStatus.
-private void sendWrite(String dni, String propertyName, Object value, boolean report) {
+private void sendWrite(String dni, String propertyName, def value, boolean report) {
     String dsn = dsnFromDni(dni)
     if (!dsn) { logError "sendCommand: invalid dni ${dni}"; return }
     Map w = [dsn: dsn, name: propertyName, value: value, retried: false, report: report]

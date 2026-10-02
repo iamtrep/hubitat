@@ -94,6 +94,7 @@ void updated() {
 }
 
 void initialize() {
+    checkVersion(false)
     app.removeSetting("logLevel")
     logDebug "initialize()"
     unsubscribe()
@@ -101,7 +102,15 @@ void initialize() {
     logTrace "${contactSensor?.getDisplayName()} ${contactSensor?.currentValue('contact')}"
 }
 
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
+}
+
 void eventHandler(Event evt) {
+    checkVersion()
     logInfo "Location event: ${evt.name}"
 
     if (evt.name in triggerEventsOpen) {

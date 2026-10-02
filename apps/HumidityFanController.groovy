@@ -86,6 +86,7 @@
  */
 import groovy.transform.CompileStatic
 import groovy.transform.Field
+import com.hubitat.app.DeviceWrapper
 
 @Field static final String APP_NAME = "Humidity-Based Fan Controller"
 @Field static final String CODE_VERSION = "0.9.6"
@@ -250,6 +251,7 @@ void updated() {
 }
 
 void initialize() {
+    checkVersion(false)
     logDebug("Initializing...")
 
     // Migrate legacy `enableDebug` pref to the standard `debugEnable` name
@@ -341,9 +343,17 @@ void initialize() {
     logCfg("${APP_NAME} initialized. Humidity: ${state.humidityState}, Fan controlled by app: ${state.fanTurnedOnByApp}")
 }
 
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
+}
+
 // ==================== Event Handlers ====================
 
 void bathroomHumidityHandler(evt) {
+    checkVersion()
     logEvt("Bathroom humidity event from ${evt.device}: ${evt.value}%")
     state.lastHumidityEventTime = now()
     recordBathroomSample(evt.value as BigDecimal)
@@ -389,12 +399,14 @@ private static List appendSample(List samples, long nowMs, BigDecimal value, lon
 }
 
 void referenceHumidityHandler(evt) {
+    checkVersion()
     logEvt("Reference humidity event from ${evt.device}: ${evt.value}%")
     // Reference sensor events don't reset the max fan timer, but we still evaluate
     evaluateHumidityStateMachine(evt.device)
 }
 
 void fanSwitchHandler(evt) {
+    checkVersion()
     logEvt("Fan switch changed to ${evt.value}")
 
     // Any switch event resolves a pending verification — the verifyFan*
@@ -442,11 +454,13 @@ void fanSwitchHandler(evt) {
 }
 
 void occupancyHandler(evt) {
+    checkVersion()
     logEvt("Occupancy motion event from ${evt.device}: ${evt.value}")
     state.lastMotionActiveTime = now()
 }
 
 void restrictionSwitchHandler(evt) {
+    checkVersion()
     logEvt("Restriction switch ${evt.device} changed to ${evt.value}")
 
     Boolean nowRestricted = isRestricted()
@@ -464,7 +478,7 @@ void restrictionSwitchHandler(evt) {
 
 // ==================== Humidity State Machine ====================
 
-private void evaluateHumidityStateMachine(reportingDevice = null) {
+private void evaluateHumidityStateMachine(DeviceWrapper reportingDevice = null) {
     servicePhysicalRunFloor()
     // bathroomHumidity / referenceHumidity are the comparison metric for the
     // current mode — %RH in default mode, °C dew point when useDewPoint is on.
@@ -596,6 +610,7 @@ private void evaluatePendingHighState(BigDecimal bathroomHumidity, BigDecimal re
 }
 
 void delayedTransitionToHigh() {
+    checkVersion()
     if (state.humidityState != HUMIDITY_PENDING_HIGH) {
         logDebug("delayedTransitionToHigh called but state is ${state.humidityState}, ignoring")
         return
@@ -644,6 +659,7 @@ private void evaluatePendingNormalState(BigDecimal bathroomHumidity, BigDecimal 
 }
 
 void delayedTransitionToNormal() {
+    checkVersion()
     if (state.humidityState != HUMIDITY_PENDING_NORMAL) {
         logDebug("delayedTransitionToNormal called but state is ${state.humidityState}, ignoring")
         return
@@ -934,6 +950,7 @@ private void turnOnFan() {
 }
 
 void verifyFanOn() {
+    checkVersion()
     // Fires only when no switch event arrived within the verification
     // window (fanSwitchHandler unschedules this on any event). If the
     // device's current value is "on" anyway, the event was missed or
@@ -965,6 +982,7 @@ private void turnOffFan() {
 }
 
 void verifyFanOff() {
+    checkVersion()
     // Same pattern as verifyFanOn — only fires when no switch event arrived
     // within the verification window.
     String switchState = fanSwitch.currentValue("switch")
@@ -1025,6 +1043,7 @@ private void rescheduleMaxFanRunTimer() {
 }
 
 void maxFanRunTimeExpired() {
+    checkVersion()
     if (!state.fanTurnedOnByApp) {
         logDebug("Max fan run time expired but fan not controlled by app - ignoring")
         return
@@ -1144,6 +1163,7 @@ private void servicePhysicalRunFloor() {
 }
 
 void physicalRunFloorReached() {
+    checkVersion()
     String deferred = state.deferredOffReason
     state.physicalRunStartedAt = null
     state.deferredOffReason = null
@@ -1326,7 +1346,7 @@ private String getStatusText() {
 
 // ==================== Sensor Aggregation ====================
 
-private List getActiveSensors(List sensors, reportingDevice = null) {
+private List getActiveSensors(List sensors, DeviceWrapper reportingDevice = null) {
     if (!sensors) {
         return []
     }
@@ -1363,7 +1383,7 @@ private List getActiveSensors(List sensors, reportingDevice = null) {
     return activeSensors
 }
 
-private BigDecimal computeMedianHumidity(List sensors, reportingDevice = null) {
+private BigDecimal computeMedianHumidity(List sensors, DeviceWrapper reportingDevice = null) {
     List activeSensors = getActiveSensors(sensors, reportingDevice)
 
     if (activeSensors.size() == 0) {
@@ -1397,16 +1417,16 @@ private static BigDecimal computeDewPoint(BigDecimal humidityPct, BigDecimal tem
 
 // Median dew point across a sensor list, pairing each sensor's own (humidity, temperature).
 // Sensors lacking either attribute are skipped. Null if no usable pair.
-private BigDecimal computeMedianDewPoint(List sensors, reportingDevice = null) {
+private BigDecimal computeMedianDewPoint(List sensors, DeviceWrapper reportingDevice = null) {
     List activeSensors = getActiveSensors(sensors, reportingDevice)
     if (activeSensors.size() == 0) return null
 
     List<BigDecimal> dewPoints = []
     activeSensors.each { sensor ->
-        def h = sensor.currentValue("humidity")
-        def t = sensor.currentValue("temperature")
+        BigDecimal h = sensor.currentValue("humidity") as BigDecimal
+        BigDecimal t = sensor.currentValue("temperature") as BigDecimal
         if (h != null && t != null) {
-            BigDecimal dp = computeDewPoint(h as BigDecimal, t as BigDecimal)
+            BigDecimal dp = computeDewPoint(h, t)
             if (dp != null) dewPoints.add(dp)
         }
     }
@@ -1421,13 +1441,13 @@ private BigDecimal computeMedianDewPoint(List sensors, reportingDevice = null) {
 
 private Boolean useDewPointMode() { return settings.useDewPoint as Boolean }
 
-private BigDecimal computeBathroomMetric(reportingDevice = null) {
+private BigDecimal computeBathroomMetric(DeviceWrapper reportingDevice = null) {
     return useDewPointMode()
         ? computeMedianDewPoint(bathroomHumiditySensors, reportingDevice)
         : computeMedianHumidity(bathroomHumiditySensors, reportingDevice)
 }
 
-private BigDecimal computeReferenceMetric(reportingDevice = null) {
+private BigDecimal computeReferenceMetric(DeviceWrapper reportingDevice = null) {
     return useDewPointMode()
         ? computeMedianDewPoint(referenceHumiditySensors, reportingDevice)
         : computeMedianHumidity(referenceHumiditySensors, reportingDevice)

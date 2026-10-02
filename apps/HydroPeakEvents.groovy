@@ -121,6 +121,7 @@ void updated() {
 }
 
 void initialize() {
+    checkVersion(false)
     logDebug("Initializing...")
     unschedule()
 
@@ -152,6 +153,13 @@ void initialize() {
     if (settings.enableDebug || settings.enableTrace) runIn(1800, "logsOff")
 }
 
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
+}
+
 void logsOff() {
     logWarn("Debug and trace logging disabled")
     app.updateSetting("enableDebug", [value: "false", type: "bool"])
@@ -159,6 +167,7 @@ void logsOff() {
 }
 
 void fetchPeakPeriods() {
+    checkVersion()
     logNet("Fetching peak period data...")
 
     try {
@@ -441,6 +450,7 @@ private void enterEventActiveState(Date eventEnd) {
 
 // State transition handlers (called by scheduler)
 void transitionToPreEvent() {
+    checkVersion()
     logInfo("Transition handler: Moving to PRE_EVENT")
 
     Date eventStart = state.eventStart ? new Date(state.eventStart as Long) : null
@@ -456,6 +466,7 @@ void transitionToPreEvent() {
 }
 
 void transitionToEventActive() {
+    checkVersion()
     logInfo("Transition handler: Moving to EVENT_ACTIVE")
 
     Date eventEnd = state.eventEnd ? new Date(state.eventEnd as Long) : null
@@ -470,6 +481,7 @@ void transitionToEventActive() {
 }
 
 void transitionToNoEvents() {
+    checkVersion()
     logInfo("Transition handler: Moving to NO_EVENTS")
     transitionToState(STATE_NO_EVENTS, null, null)
     updateAppLabel()

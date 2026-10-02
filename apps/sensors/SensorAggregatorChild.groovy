@@ -114,6 +114,7 @@ void logsOff() {
 }
 
 void initialize() {
+    checkVersion(false)
     app.removeSetting("logLevel")
     logDebug "initialize()"
 
@@ -142,11 +143,19 @@ void initialize() {
     sensorEventHandler()
 }
 
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
+}
+
 void uninstalled() {
     logDebug "uninstalled()"
 }
 
 void appButtonHandler(String buttonName) {
+    checkVersion()
     switch (buttonName) {
         case "forceUpdate":
         default:
@@ -157,6 +166,7 @@ void appButtonHandler(String buttonName) {
 }
 
 void sensorEventHandler(Event evt=null) {
+    checkVersion()
     if (evt != null) logTrace "sensorEventHandler() called: ${evt?.name} ${evt?.getDevice().getLabel()} ${evt?.value} ${evt?.descriptionText}"
 
 	if (computeAggregateSensorValue()) {

@@ -84,6 +84,7 @@ void uninstalled() {
 }
 
 void initialize() {
+    checkVersion(false)
     app.removeSetting("logLevel")
     unsubscribe()
     selectedAttributes.each { attribute ->
@@ -91,7 +92,15 @@ void initialize() {
     }
 }
 
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
+}
+
 void handleEvent(Event evt) {
+    checkVersion()
     Integer timestamp = new Date().getTime() / 1000
     List attributeValues = selectedAttributes.collect { attribute ->
         selectedDevice.currentValue(attribute)

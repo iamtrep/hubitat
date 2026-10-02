@@ -61,7 +61,6 @@ metadata {
 
 void installed() {
     logDebug "installed()"
-    state.codeVersion = CODE_VERSION
     initialize()
 }
 
@@ -84,7 +83,12 @@ void uninstalled() {
     disconnect()
 }
 
+void deviceTypeUpdated() {
+    logDebug "driver change detected"
+}
+
 void initialize() {
+    checkVersion(false)
     logDebug "initialize()"
 
     atomicState.intentionalDisconnect = false
@@ -97,6 +101,14 @@ void initialize() {
     sendEvent(name: "connectionStatus", value: "initializing")
 
     runIn(location.hub.uptime < STARTUP_DELAY_SECS ? STARTUP_DELAY_SECS : 2, "connect")
+}
+
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    state.remove('codeVersion')
+    if (reinit) runIn(1, "updated")
 }
 
 // ============================================================================
@@ -165,6 +177,7 @@ private void scheduleReconnect() {
 // ============================================================================
 
 void webSocketStatus(String message) {
+    checkVersion()
     logTrace "WebSocket status: ${message}"
 
     if (message.contains("failure") || message.contains("error")) {
@@ -192,6 +205,7 @@ void webSocketStatus(String message) {
 }
 
 void parse(String message) {
+    checkVersion()
     logsReceived().incrementAndGet()
 
     try {

@@ -178,6 +178,7 @@ void uninstalled() {
 }
 
 void initialize() {
+    checkVersion(false)
     app.removeSetting("logLevel")
     if (state.includedSensors == null) { state.includedSensors = [] }
     if (state.excludedSensors == null) { state.excludedSensors = [] }
@@ -217,6 +218,13 @@ void initialize() {
     }
 }
 
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
+}
+
 ChildDeviceWrapper fetchChildDevice() {
     String driverName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.driver
     if (!driverName) {
@@ -242,6 +250,7 @@ ChildDeviceWrapper fetchChildDevice() {
 }
 
 void sensorEventHandler(Event evt=null) {
+    checkVersion()
     if (evt == null) {
         // Manual recompute (forceUpdate, initial calculation) — skip sticky filter
         publishAggregate()
@@ -274,6 +283,7 @@ void sensorEventHandler(Event evt=null) {
 }
 
 void commitStuckState(Map data) {
+    checkVersion()
     if (state.pendingSeq == null) state.pendingSeq = [:]
     if (state.stuckState == null) state.stuckState = [:]
     String sid = data.sensorId as String
@@ -317,7 +327,7 @@ private void publishAggregate() {
     }
 }
 
-private int effectiveStaysSeconds(sensor) {
+private int effectiveStaysSeconds(DeviceWrapper sensor) {
     if (sensor == null) return 0
     Integer override = settings["staysOverride_${sensor.id}"] as Integer
     if (override != null) return override as int
@@ -393,7 +403,7 @@ private boolean computeAggregateSensorValue() {
 
     String attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute
     List<String> possibleValues = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.values
-    List<Object> sensorValues = includedSensors.collect { stuckValueFor(it, attributeName) }
+    List<String> sensorValues = includedSensors.collect { stuckValueFor(it, attributeName) }
     String targetValue = attributeValue
     String oppositeValue = possibleValues.find { it != targetValue }
 
@@ -424,6 +434,7 @@ private boolean computeAggregateSensorValue() {
 
 
 void appButtonHandler(String buttonName) {
+    checkVersion()
     switch (buttonName) {
         case "forceUpdate":
             logInfo("Force update triggered")

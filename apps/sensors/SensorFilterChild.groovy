@@ -6,6 +6,7 @@
  */
 import groovy.transform.Field
 import groovy.transform.CompileStatic
+import com.hubitat.app.DeviceWrapper
 
 @Field static final String CODE_VERSION = "0.0.3"
 
@@ -103,7 +104,7 @@ Map mainPage() {
     }
 }
 
-private List<String> getDeviceAttributes(dev) {
+private List<String> getDeviceAttributes(DeviceWrapper dev) {
     List<String> attributes = []
     try {
         attributes = dev.supportedAttributes.collect { it.name }.sort()
@@ -112,7 +113,7 @@ private List<String> getDeviceAttributes(dev) {
                 attributes.add(st.name)
             }
         }
-    } catch (e) {
+    } catch (Exception e) {
         logWarn "Error getting attributes for device ${dev}: ${e}"
         attributes = ["temperature", "humidity", "illuminance", "motion", "contact", "switch", "level", "battery"]
     }

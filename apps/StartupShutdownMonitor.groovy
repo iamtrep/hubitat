@@ -99,6 +99,7 @@ void updated() {
 }
 
 void initialize() {
+    checkVersion(false)
     app.removeSetting("logLevel")
     logDebug "initialize()"
     subscribe(location, "eventHandler")
@@ -106,7 +107,15 @@ void initialize() {
     logDebug "${contactSensor?.getDisplayName()} ${contactSensor?.currentValue('contact')}"
 }
 
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
+}
+
 void eventHandler(Event evt) {
+    checkVersion()
     logEvt "System event detected: ${evt.name}"
     servicePendingClose()
 
@@ -134,6 +143,7 @@ void eventHandler(Event evt) {
 }
 
 void closeContactDelayed(Map data) {
+    checkVersion()
     state.remove("closeDueAt")
     state.remove("closeMessage")
     closeContact((data?.message as String) ?: "delayed close")
