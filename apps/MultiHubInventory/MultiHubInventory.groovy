@@ -4,7 +4,7 @@
  */
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.8.4"
+@Field static final String CODE_VERSION = "0.8.5"
 @Field static final String UI_FILE = "multi_hub_inventory_ui.html"
 @Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/MultiHubInventory.groovy"
 @Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/multi_hub_inventory_ui.html"
@@ -228,7 +228,7 @@ private boolean autoEnableOAuth() {
     }
     return success
 }
-private Map jsonResponse(def data) { return render(contentType: 'application/json', data: groovy.json.JsonOutput.toJson(data)) }
+private Map jsonResponse(def data, int status = 200) { return render(status: status, contentType: 'application/json', data: groovy.json.JsonOutput.toJson(data)) }
 
 // ===== UPDATE MANAGEMENT =====
 // Self-healing SPA: on install/update (and on File Manager loss), download the matching
@@ -454,11 +454,11 @@ Map apiPeer() {
     checkVersion()
     if (!checkOAuth()) return render(status: 403, contentType: 'text/plain', data: 'OAuth not enabled')
     String op = (params.op ?: '') as String
-    if (!(op in ['start', 'status', 'data'])) return jsonResponse([error: "invalid op"])
+    if (!(op in ['start', 'status', 'data'])) return jsonResponse([error: "invalid op"], 400)
     List peers = (state.peerList ?: []) as List
     String hubParam = (params.hub ?: '') as String
     Integer idx = hubParam.isInteger() ? hubParam.toInteger() : null
-    if (idx == null || idx < 0 || idx >= peers.size()) return jsonResponse([error: "unknown hub"])
+    if (idx == null || idx < 0 || idx >= peers.size()) return jsonResponse([error: "unknown hub"], 400)
     Map peer = peers[idx] as Map
     String base = peer.baseUrl, token = peer.token
     // Query via the query: map, not inline in the uri: 2.5.1.x drops an inline uri query
@@ -479,14 +479,15 @@ Map apiPeer() {
     } catch (groovyx.net.http.HttpResponseException e) {
         // Hub Diagnostics answers 404 when it has no scan in memory (cleared by a restart or update).
         Integer st = (e.response?.status ?: e.statusCode) as Integer
-        if (st == 404) return jsonResponse([error: "no scan"])
+        // Non-2xx statuses so the SPA stops polling instead of retrying through the cloud relay.
+        if (st == 404) return jsonResponse([error: "no scan"], 404)
         logWarn "peer ${idx} ${op} failed: HTTP ${st}"
-        return jsonResponse([error: "HTTP ${st}".toString()])
+        return jsonResponse([error: "HTTP ${st}".toString()], 502)
     } catch (Exception e) {
         String safeMsg = (e.message ?: '')?.replaceAll(/access_token=[^&\s]+/, 'access_token=REDACTED')
                                            ?.replaceAll(/Bearer\s+\S+/, 'Bearer REDACTED')
         logWarn "peer ${idx} ${op} failed: ${e.class?.simpleName}: ${safeMsg}"
-        return jsonResponse([error: "peer call failed"])
+        return jsonResponse([error: "peer call failed"], 502)
     }
 }
 
