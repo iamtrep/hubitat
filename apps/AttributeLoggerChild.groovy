@@ -10,9 +10,9 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import com.hubitat.app.DeviceWrapper
 import com.hubitat.hub.domain.Event
-import java.nio.file.AccessDeniedException
+import java.nio.file.NoSuchFileException
 
-@Field static final String CODE_VERSION = "0.0.4"
+@Field static final String CODE_VERSION = "0.0.5"
 
 definition(
     name: "Attribute Logger Child",
@@ -102,14 +102,16 @@ void handleEvent(Event evt) {
 }
 
 void writeFile(String data) {
-    String existingData = null
+    String existingData
     try {
         byte[] byteArray = safeDownloadHubFile(logFileName)
+        // A failed read must not fall through to a fresh file: the upload would overwrite the history.
+        if (byteArray == null) {
+            logError "Skipping write to ${logFileName}, could not read it. Row lost: ${data.trim()}"
+            return
+        }
         existingData = new String(byteArray)
-    } catch (Exception e) {
-        logWarn "Could not read existing data: ${e.message}"
-    }
-    if (existingData == null) {
+    } catch (NoSuchFileException ignored) {
         existingData = "timestamp," + selectedAttributes.join(',') + "\n"
     }
     String newData = existingData + data
@@ -121,7 +123,9 @@ byte[] safeDownloadHubFile(String fileName) {
     for (int i = 1; i <= 3; i++) {
         try {
             return downloadHubFile(fileName)
-        } catch (AccessDeniedException ex) {
+        } catch (NoSuchFileException ex) {
+            throw ex
+        } catch (Exception ex) {
             logWarn "Failed to download ${fileName}: ${ex.message}. Retrying (${i} / 3) ..."
             pauseExecution(500)
         }
@@ -137,7 +141,7 @@ void safeUploadHubFile(String fileName, byte[] bytes) {
         try {
             uploadHubFile(fileName, bytes)
             return
-        } catch (AccessDeniedException ex) {
+        } catch (Exception ex) {
             logWarn "Failed to upload ${fileName}: ${ex.message}. Retrying (${i} / 3) ..."
             pauseExecution(500)
         }
@@ -151,7 +155,7 @@ void safeDeleteHubFile(String fileName) {
         try {
             deleteHubFile(fileName)
             return
-        } catch (AccessDeniedException ex) {
+        } catch (Exception ex) {
             logWarn "Failed to delete ${fileName}: ${ex.message}. Retrying (${i} / 3) ..."
             pauseExecution(500)
         }
