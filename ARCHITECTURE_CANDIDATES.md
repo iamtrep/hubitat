@@ -13,8 +13,8 @@ Items that are pure platform mechanics — capability/attribute/command syntax, 
 
 - **`importUrl` convention.** App and driver `definition()` blocks point at the canonical raw GitHub URL so the code editor's Import button can fetch it. Nearly universal; BatteryChangeLogger, DeviceReplacement, BTHomeV2-Motion and VirtualSwitchPowerSource lack it.
 - **License headers.** Two licenses coexist: every app is MIT, and most drivers are too; a minority of drivers keep Apache-2.0 inherited from upstream (e.g. IKEA-Blinds, XfinityContactSensor, Aqara_MCCGQ11LM). Consider whether to standardize.
-- **Rolling-window state idiom.** DevicePing (`RESPONSE_HISTORY_SIZE = 21`, median) and AwairElement (`MAX_PM25_READINGS = 5`, average) converge: list in `state`, drop oldest when over cap, compute the statistic, save back. Worth canonicalizing if a third instance appears.
-- **Firmware-conditional behavior.** DevicePing checks `location.hub.firmwareVersionString`, which returns the platform's version, before picking between `NetworkUtils.ping` signatures; IKEA-Blinds picks its battery-percentage divisor from the `softwareBuild` data value, the device's firmware version. A short pattern for "behave differently on older firmware without crashing" might be worth documenting.
+- **Rolling-window state idiom.** IPReachabilitySensor (`RESPONSE_HISTORY_SIZE = 21`, median) and AwairElement (`MAX_PM25_READINGS = 5`, average) converge: list in `state`, drop oldest when over cap, compute the statistic, save back. Worth canonicalizing if a third instance appears.
+- **Firmware-conditional behavior.** IPReachabilitySensor checks `location.hub.firmwareVersionString`, which returns the platform's version, before picking between `NetworkUtils.ping` signatures; IKEA-Blinds picks its battery-percentage divisor from the `softwareBuild` data value, the device's firmware version. A short pattern for "behave differently on older firmware without crashing" might be worth documenting.
 
 ## Apps
 

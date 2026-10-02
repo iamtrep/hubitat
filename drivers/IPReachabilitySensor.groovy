@@ -2,16 +2,16 @@
 // SPDX-License-Identifier: MIT
 
 /*
- Hubitat Elevation driver to ping devices
+ Hubitat Elevation driver that checks a host by ICMP ping and/or HTTP GET
  */
 
 metadata {
     definition (
-        name: "Device Ping",
+        name: "IP Reachability Sensor",
         namespace: "iamtrep",
         author: "pj",
-        description: "Pings a device and reports connectivity as a contact sensor",
-        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/DevicePing.groovy",
+        description: "Checks whether a host is reachable by ICMP ping and/or HTTP GET and reports it as a contact sensor",
+        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/IPReachabilitySensor.groovy",
         singleThreaded: true
     )
     {
@@ -55,7 +55,7 @@ import hubitat.helper.NetworkUtils
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.0.9"
+@Field static final String CODE_VERSION = "0.1.0"
 @Field static final int RESPONSE_HISTORY_SIZE = 21
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int INITIAL_PING_DELAY = 2

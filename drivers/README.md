@@ -14,10 +14,10 @@ Hubitat Elevation device drivers for Zigbee devices, BLE sensors, and cloud APIs
 |---|---|
 | **Awair Element** | Local API driver for Awair Element air quality monitors |
 | **Bluetooth Home v2 Motion/Occupancy Sensor** | BLE motion/occupancy sensor via BTHome v2 |
-| **Device Ping** | Pings a device and reports connectivity as a contact sensor |
 | **Ecobee Companion** | Advanced Ecobee thermostat control via OAuth API |
 | **Environment Canada AQHI** | Air Quality Health Index driver using the Environment Canada GeoMet OGC API — current observations, hourly forecasts, and alerts |
 | **IKEA Window Blinds** | Zigbee driver for IKEA window blinds |
+| **IP Reachability Sensor** | Checks whether a host is reachable by ICMP ping and/or HTTP GET and reports it as a contact sensor |
 | **Log Event Monitor** | Monitors the hub log stream and fires events on pattern matches |
 | **Universal Electronics / Visonic / Xfinity Contact Sensor** | Zigbee contact sensor with battery, tamper, and temperature |
 | **Virtual Switch + PowerSource** | Virtual device with synced Switch and PowerSource capabilities for testing power outage detection |
