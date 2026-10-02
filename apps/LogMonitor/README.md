@@ -33,7 +33,7 @@ The parent app (`Log Monitor`) orchestrates everything. Each WebSocket connectio
 Each filter can fan out to any combination of:
 - **Notification devices** — `capability.notification` devices receive a formatted string
 - **Hub log file** — appended to a file in File Manager as CSV (`timestamp,bridge,type,level,"name","msg"`)
-- **HTTP POST** — JSON body `{filter, bridge, type, level, name, msg, id, time}` posted to a configurable URL with a 5-second timeout
+- **HTTP POST** — JSON body `{filter, bridge, type, level, name, msg, id, time}` posted to a configurable URL with a 5-second timeout. Failed POSTs pause that URL with backoff up to 60 minutes (longer if the server sends `Retry-After`); a 401, 403, 404 or 410 stops POSTs to it until a filter using it is saved again
 
 Notifications and the app's own log lines use this format:
 

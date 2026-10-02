@@ -13,9 +13,11 @@ import com.hubitat.app.ChildDeviceWrapper
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "1.1.4"
+@Field static final String CODE_VERSION = "1.1.5"
 @Field static final int MAX_BRIDGES = 5
 @Field static final int MAX_FILTERS = 10
+@Field static final int HTTP_MAX_BACKOFF_MIN = 60
+@Field static final List<Integer> HTTP_STOP_STATUSES = [401, 403, 404, 410]
 
 definition(
     name: "Log Monitor",
@@ -514,6 +516,9 @@ private void savePendingFilter() {
     }
 
     state.filters = filters
+    // Saving a filter retries its URL now; drop backoff for URLs no filter uses any more.
+    Set<String> urls = filters.findAll { it.outputHttp && it.httpUrl }.collect { it.httpUrl as String } as Set
+    state.httpBackoff = ((state.httpBackoff ?: [:]) as Map).findAll { k, v -> k in urls && k != filter.httpUrl }
     state.remove("editingFilterIndex")
     clearFilterSettings()
 }
@@ -709,7 +714,9 @@ private Map executeOutputs(Map logEntry, Map filter, String bridgeDni) {
     }
 
     // HTTP POST
-    if (filter.outputHttp && filter.httpUrl) {
+    if (filter.outputHttp && filter.httpUrl && httpPaused(filter.httpUrl as String)) {
+        logNet "HTTP POST for ${filter.label} skipped: URL paused after failures"
+    } else if (filter.outputHttp && filter.httpUrl) {
         try {
             Map postParams = [
                 uri: filter.httpUrl,
@@ -726,7 +733,7 @@ private Map executeOutputs(Map logEntry, Map filter, String bridgeDni) {
                 ],
                 timeout: 5
             ]
-            asynchttpPost("httpPostCallback", postParams)
+            asynchttpPost("httpPostCallback", postParams, [url: filter.httpUrl])
         } catch (Exception e) {
             logNet "HTTP POST error for ${filter.label}: ${e.message}"
         }
@@ -735,13 +742,60 @@ private Map executeOutputs(Map logEntry, Map filter, String bridgeDni) {
     return filter
 }
 
+// Failed POSTs back off per URL so a dead or overloaded endpoint (e.g. a cloud
+// relay URL) isn't hit at the full per-filter rate. 401/403/404/410 won't fix
+// themselves: POSTs stop until a filter using the URL is saved again.
 void httpPostCallback(resp, data) {
-    if (resp.hasError()) {
-        logNet "HTTP POST failed: ${resp.getErrorMessage()}"
+    String url = data?.url as String
+    int status = resp.getStatus()
+    if (!resp.hasError() && status >= 200 && status < 300) {
+        if (url && state.httpBackoff?.containsKey(url)) {
+            Map all = state.httpBackoff as Map
+            all.remove(url)
+            state.httpBackoff = all
+        }
         return
     }
-    int status = resp.getStatus()
-    if (status < 200 || status >= 300) logNet "HTTP POST failed: HTTP ${status}"
+    String reason = resp.hasError() ? "HTTP ${status}: ${resp.getErrorMessage()}" : "HTTP ${status}"
+    if (!url) {
+        logWarn "HTTP POST failed: ${reason}"
+        return
+    }
+    Map all = (state.httpBackoff ?: [:]) as Map
+    Map b = (all[url] ?: [failures: 0]) as Map
+    b.failures = (b.failures as int) + 1
+    if (status in HTTP_STOP_STATUSES) {
+        b.stopped = true
+        logWarn "HTTP POST to ${redactUrl(url)} failed (${reason}); POSTs to this URL stopped until a filter using it is saved again"
+    } else {
+        long delayMs = Math.min(1L << Math.min((b.failures as int) - 1, 6), (long) HTTP_MAX_BACKOFF_MIN) * 60000L
+        Long retryAfter = retryAfterSeconds(resp)
+        if (retryAfter) delayMs = Math.max(delayMs, retryAfter * 1000L)
+        b.until = now() + delayMs
+        logWarn "HTTP POST to ${redactUrl(url)} failed (${reason}); pausing POSTs to this URL for ${(delayMs / 1000L) as long} s (failure ${b.failures})"
+    }
+    all[url] = b
+    state.httpBackoff = all
+}
+
+private boolean httpPaused(String url) {
+    Map b = (state.httpBackoff ?: [:])[url] as Map
+    if (!b) return false
+    return b.stopped || now() < ((b.until ?: 0) as long)
+}
+
+private Long retryAfterSeconds(resp) {
+    try {
+        String v = resp.getHeaders()?.find { k, val -> (k as String)?.equalsIgnoreCase("Retry-After") }?.value as String
+        return v?.trim()?.isLong() ? v.trim().toLong() : null
+    } catch (Exception e) {
+        return null
+    }
+}
+
+@CompileStatic
+private static String redactUrl(String url) {
+    return url.replaceAll(/access_token=[^&]+/, 'access_token=REDACTED')
 }
 
 private void appendToFile(String fileName, String data) {
