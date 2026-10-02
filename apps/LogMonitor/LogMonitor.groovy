@@ -13,7 +13,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "1.1.3"
+@Field static final String CODE_VERSION = "1.1.4"
 @Field static final int MAX_BRIDGES = 5
 @Field static final int MAX_FILTERS = 10
 
@@ -738,7 +738,10 @@ private Map executeOutputs(Map logEntry, Map filter, String bridgeDni) {
 void httpPostCallback(resp, data) {
     if (resp.hasError()) {
         logNet "HTTP POST failed: ${resp.getErrorMessage()}"
+        return
     }
+    int status = resp.getStatus()
+    if (status < 200 || status >= 300) logNet "HTTP POST failed: HTTP ${status}"
 }
 
 private void appendToFile(String fileName, String data) {

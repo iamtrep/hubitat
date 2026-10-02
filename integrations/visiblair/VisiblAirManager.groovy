@@ -26,7 +26,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "2.0.1"
+@Field static final String CODE_VERSION = "2.0.2"
 @Field static final String VISIBLAIR_API = "https://api.visiblair.com/api/v1"
 @Field static final int HTTP_TIMEOUT = 15
 @Field static final String DNI_PREFIX = "visiblair-"
@@ -144,8 +144,8 @@ void appButtonHandler(String buttonName) {
 
 // --- Authentication ---
 
-private String login() {
-    String token = null
+// Logs in, then runs the request named by data.next with the fresh token.
+private void loginThen(String next, String failMsg, Map ctx = [:]) {
     Map loginParams = [
         uri: "${VISIBLAIR_API}/auth/login",
         requestContentType: "application/json",
@@ -153,19 +153,33 @@ private String login() {
         body: JsonOutput.toJson([email: apiEmail, password: apiPassword]),
         timeout: HTTP_TIMEOUT
     ]
-    try {
-        httpPost(loginParams) { resp ->
-            if (resp.status == 200 && resp.data) {
-                token = resp.data.accessToken as String
-                logNet "login successful"
-            } else {
-                logError "login failed: HTTP ${resp.status}"
-            }
+    asynchttpPost("handleLoginResponse", loginParams, ctx + [next: next, failMsg: failMsg])
+}
+
+void handleLoginResponse(resp, data) {
+    String token = null
+    if (resp.hasError()) {
+        logError "login: ${resp.getErrorMessage()}"
+    } else if (resp.getStatus() != 200) {
+        logError "login failed: HTTP ${resp.getStatus()}"
+    } else {
+        try {
+            token = resp.json?.accessToken as String
+        } catch (Exception e) {
+            logError "login: ${e.message}"
         }
-    } catch (Exception e) {
-        logError "login: ${e.message}"
     }
-    return token
+    if (!token) {
+        logError "${data.failMsg}: login failed"
+        return
+    }
+    logNet "login successful"
+    switch (data.next) {
+        case "poll":        requestSensors(token); break
+        case "firmware":    requestFirmwareCommand(token, data.uuid as String, data.cmd as String); break
+        case "fetchConfig": requestSensorsForConfig(token, data.uuid as String, data.overrides as Map); break
+        case "assign":      requestConfigUpdate(token, data.uuid as String, data.config as Map, data.overrides as Map); break
+    }
 }
 
 // --- Discovery & Polling ---
@@ -174,24 +188,30 @@ void pollSensors() {
     checkVersion()
     if (!apiEmail || !apiPassword) return
 
-    String token = login()
-    if (!token) {
-        logError "cannot poll sensors: login failed"
-        return
-    }
+    loginThen("poll", "cannot poll sensors")
+}
 
-    Map requestParams = [
+private Map sensorsRequest(String token) {
+    return [
         uri: "${VISIBLAIR_API}/sensors/getForUser",
         headers: [Authorization: "Bearer ${token}"],
         requestContentType: "application/json",
         contentType: "application/json",
         timeout: HTTP_TIMEOUT
     ]
+}
 
+private void requestSensors(String token) {
+    asynchttpGet("handlePollResponse", sensorsRequest(token))
+}
+
+void handlePollResponse(resp, data) {
+    if (resp.hasError()) {
+        logError "pollSensors: ${resp.getErrorMessage()}"
+        return
+    }
     try {
-        httpGet(requestParams) { resp ->
-            handlePollData(resp.status, resp.data)
-        }
+        handlePollData(resp.getStatus(), resp.json)
     } catch (Exception e) {
         logError "pollSensors: ${e.message}"
     }
@@ -327,12 +347,10 @@ static String resolveDriverName(String model, String modelVariant) {
 void sendFirmwareCommand(String uuid, String command) {
     logDebug "firmware command '${command}' for ${uuid}"
 
-    String token = login()
-    if (!token) {
-        logError "cannot send firmware command: login failed"
-        return
-    }
+    loginThen("firmware", "cannot send firmware command", [cmd: command, uuid: uuid])
+}
 
+private void requestFirmwareCommand(String token, String uuid, String command) {
     Map requestParams = [
         uri: "${VISIBLAIR_API}/firmware/${command}",
         query: [uuid: uuid],
@@ -427,49 +445,46 @@ void updateSensorConfig(String uuid, Map overrides) {
 }
 
 private void fetchAndUpdateConfig(String uuid, Map overrides) {
-    String token = login()
-    if (!token) {
-        logError "cannot fetch config: login failed"
+    loginThen("fetchConfig", "cannot fetch config", [uuid: uuid, overrides: overrides])
+}
+
+private void requestSensorsForConfig(String token, String uuid, Map overrides) {
+    asynchttpGet("handleConfigFetchResponse", sensorsRequest(token), [token: token, uuid: uuid, overrides: overrides])
+}
+
+void handleConfigFetchResponse(resp, data) {
+    String uuid = data.uuid as String
+    if (resp.hasError()) {
+        logError "fetchAndUpdateConfig: ${resp.getErrorMessage()}"
         return
     }
-
-    Map requestParams = [
-        uri: "${VISIBLAIR_API}/sensors/getForUser",
-        headers: [Authorization: "Bearer ${token}"],
-        requestContentType: "application/json",
-        contentType: "application/json",
-        timeout: HTTP_TIMEOUT
-    ]
+    if (resp.getStatus() != 200) {
+        logError "failed to fetch config for ${uuid}: HTTP ${resp.getStatus()}"
+        return
+    }
     try {
-        httpGet(requestParams) { resp ->
-            if (resp.status == 200) {
-                List jsonList = resp.data as List
-                List realSensors = jsonList.findAll { Map sensor -> isRealSensor(sensor) }
-                storeSensorConfigs(realSensors)
-                Map<String, Map> configs = (state.sensorConfigs ?: [:]) as Map
-                Map config = (configs[uuid] ?: [:]) as Map
-                overrides.each { String key, value ->
-                    config[key] = value
-                }
-                configs[uuid] = config
-                state.sensorConfigs = configs
-                sendConfigUpdate(uuid, config, overrides)
-            } else {
-                logError "failed to fetch config for ${uuid}: HTTP ${resp.status}"
-            }
+        List jsonList = resp.json as List
+        List realSensors = jsonList.findAll { Map sensor -> isRealSensor(sensor) }
+        storeSensorConfigs(realSensors)
+        Map<String, Map> configs = (state.sensorConfigs ?: [:]) as Map
+        Map config = (configs[uuid] ?: [:]) as Map
+        Map overrides = data.overrides as Map
+        overrides.each { String key, value ->
+            config[key] = value
         }
+        configs[uuid] = config
+        state.sensorConfigs = configs
+        requestConfigUpdate(data.token as String, uuid, config, overrides)
     } catch (Exception e) {
         logError "fetchAndUpdateConfig: ${e.message}"
     }
 }
 
 private void sendConfigUpdate(String uuid, Map config, Map overrides) {
-    String token = login()
-    if (!token) {
-        logError "cannot update config: login failed"
-        return
-    }
+    loginThen("assign", "cannot update config", [uuid: uuid, config: config, overrides: overrides])
+}
 
+private void requestConfigUpdate(String token, String uuid, Map config, Map overrides) {
     Map<String, String> query = [uuid: uuid]
     config.each { String key, value ->
         query[key] = (value instanceof Map || value instanceof List) ? JsonOutput.toJson(value) : (value?.toString() ?: "")

@@ -68,7 +68,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "1.5.2"
+@Field static final String CODE_VERSION = "1.5.3"
 
 // A pending version reconfigure older than this is treated as lost and re-armed.
 @Field static final long RECONFIGURE_RETRY_MS = 60000L
@@ -389,9 +389,17 @@ private void parseLumiAttribute(Integer attrInt, String value) {
             return
         case LUMI_ATTR_POWER_OUTAGE:
             logRx "Power-outage memory: ${value}"
+            boolean restore = value && Integer.parseInt(value, 16) != 0
+            if ((powerOutageMemory != false) != restore) {
+                device.updateSetting("powerOutageMemory", [value: restore.toString(), type: "bool"])
+            }
             return
         case LUMI_ATTR_FLIP_INDICATOR:
             logRx "LED indicator inverted: ${value}"
+            boolean inverted = value && Integer.parseInt(value, 16) != 0
+            if ((ledIndicatorInverted == true) != inverted) {
+                device.updateSetting("ledIndicatorInverted", [value: inverted.toString(), type: "bool"])
+            }
             return
         case LUMI_ATTR_HEARTBEAT:
             parseLumiHeartbeat(value)

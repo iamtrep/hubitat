@@ -35,7 +35,7 @@ definition(
 
 // --- Constants ---
 
-@Field static final String CODE_VERSION = "1.0.4"
+@Field static final String CODE_VERSION = "1.0.5"
 
 @Field static final String OAUTH_BASE_URL = "https://api.oauth.blink.com"
 @Field static final String CLIENT_ID = "ios"
@@ -588,10 +588,8 @@ void exchangeCodeForTokens(String code) {
             logInfo "token exchange OK, expires in ${expiresIn}s, accessToken: ${state.accessToken ? 'set' : 'NULL'}"
             scheduleTokenRefresh()
             cleanupEphemeralState()
-            fetchTierInfo()
+            fetchTierInfo(true, true)
             schedulePolling()
-            runIn(2, "pollHomescreen")
-            runIn(4, "fetchNotificationFlags")
         }
     } catch (Exception e) {
         logError "token exchange failed: ${e.message}"
@@ -606,6 +604,12 @@ void refreshAccessToken() {
         logError "no refresh token available"
         return
     }
+    // Refresh tokens rotate: a second request with the same token would be rejected and clear auth.
+    Long sentAt = atomicState.tokenRefreshSentAt as Long
+    if (sentAt && now() - sentAt < (HTTP_TIMEOUT + 5) * 1000L) {
+        logNet "token refresh already in flight"
+        return
+    }
 
     String postBody = toQueryString([
         client_id    : CLIENT_ID,
@@ -615,33 +619,45 @@ void refreshAccessToken() {
         scope        : SCOPE
     ])
 
-    try {
-        httpPost([
-            uri               : "${OAUTH_BASE_URL}/oauth/token",
-            headers           : [
-                "User-Agent": UA_TOKEN,
-                "Accept"    : "application/json"
-            ],
-            body              : postBody,
-            requestContentType: "application/x-www-form-urlencoded",
-            contentType       : "application/json",
-            timeout           : HTTP_TIMEOUT
-        ]) { resp ->
-            Map json = (resp.data instanceof String) ? (new groovy.json.JsonSlurper().parseText(resp.data as String) as Map) : (resp.data as Map)
-            state.accessToken = json.access_token
-            if (json.refresh_token) state.refreshToken = json.refresh_token
-            long expiresIn = (json.expires_in ?: 3600L) as long
-            state.tokenExpiry = now() + (expiresIn * 1000L)
-            logInfo "token refreshed, expires in ${expiresIn}s"
-            scheduleTokenRefresh()
-        }
-    } catch (Exception e) {
-        logError "token refresh failed: ${e.message}"
-        String msg = e.message ?: ""
-        if (msg.contains("401") || msg.contains("400")) {
+    atomicState.tokenRefreshSentAt = now()
+    asynchttpPost("refreshTokenResponse", [
+        uri               : "${OAUTH_BASE_URL}/oauth/token",
+        headers           : [
+            "User-Agent": UA_TOKEN,
+            "Accept"    : "application/json"
+        ],
+        body              : postBody,
+        requestContentType: "application/x-www-form-urlencoded",
+        contentType       : "application/json",
+        timeout           : HTTP_TIMEOUT
+    ])
+}
+
+void refreshTokenResponse(resp, data) {
+    atomicState.remove("tokenRefreshSentAt")
+    if (resp.hasError()) {
+        int status = resp.getStatus()
+        logError "token refresh failed: HTTP ${status} ${resp.getErrorMessage()}${describeHttpBody(resp)}"
+        if (status == 401 || status == 400) {
             logWarn "refresh token rejected; tokens cleared (tier/accountId/hardwareId preserved for one-click re-auth)"
             clearTokensOnly()
         }
+        return
+    }
+    if (resp.getStatus() != 200) {
+        logError "token refresh failed: HTTP ${resp.getStatus()}"
+        return
+    }
+    try {
+        Map json = resp.json as Map
+        state.accessToken = json.access_token
+        if (json.refresh_token) state.refreshToken = json.refresh_token
+        long expiresIn = (json.expires_in ?: 3600L) as long
+        state.tokenExpiry = now() + (expiresIn * 1000L)
+        logInfo "token refreshed, expires in ${expiresIn}s"
+        scheduleTokenRefresh()
+    } catch (Exception e) {
+        logError "token refresh failed: ${e.message}"
     }
 }
 
@@ -664,7 +680,7 @@ private void ensureValidToken() {
 
 // --- Tier & Account ---
 
-void fetchTierInfo() {
+void fetchTierInfo(boolean thenPoll = false, boolean thenFlags = false) {
     logNet "fetching tier info"
     String url = "https://rest-prod.immedia-semi.com/api/v1/users/tier_info"
     // blinkpy's tier_info call shape: android UA + form-urlencoded Content-Type.
@@ -674,19 +690,27 @@ void fetchTierInfo() {
         "Accept"       : "application/json",
         "Content-Type" : "application/x-www-form-urlencoded"
     ]
-    try {
-        httpGet([uri: url, headers: headers, timeout: HTTP_TIMEOUT]) { resp ->
-            Map json = resp.data as Map
+    asynchttpGet("tierInfoResponse", [uri: url, headers: headers, timeout: HTTP_TIMEOUT], [thenPoll: thenPoll, thenFlags: thenFlags])
+}
+
+void tierInfoResponse(resp, data) {
+    if (resp.hasError()) {
+        logWarn "tier_info failed: HTTP ${resp.getStatus()} ${resp.getErrorMessage()}"
+    } else if (resp.getStatus() != 200) {
+        logWarn "tier_info failed: HTTP ${resp.getStatus()}"
+    } else {
+        try {
+            Map json = resp.json as Map
             if (json.tier) state.tier = json.tier
             if (json.account_id) state.accountId = json.account_id
+        } catch (Exception e) {
+            logWarn "tier_info failed: ${e.message}"
         }
-    } catch (groovyx.net.http.HttpResponseException e) {
-        logWarn "tier_info failed: HTTP ${e.statusCode}"
-    } catch (Exception e) {
-        logWarn "tier_info failed: ${e.message}"
     }
     if (!state.tier) state.tier = "prod"
     logInfo "tier: ${state.tier}, accountId: ${state.accountId}"
+    if (data?.thenPoll && state.accountId) pollHomescreen()
+    if (data?.thenFlags) runIn(2, "fetchNotificationFlags")
 }
 
 // --- Polling & Discovery ---
@@ -698,8 +722,8 @@ void pollHomescreen() {
     }
     if (!state.accountId) {
         logNet "pollHomescreen: no accountId, fetching tier info first"
-        fetchTierInfo()
-        if (!state.accountId) return
+        fetchTierInfo(true)
+        return
     }
     ensureValidToken()
 

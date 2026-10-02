@@ -14,7 +14,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.23"
+@Field static final String CODE_VERSION = "0.0.24"
 
 metadata {
     definition(
@@ -229,6 +229,8 @@ void refresh() {
     cmds += zigbee.readAttribute(0xFF01, 0x0051, [mfgCode: "0x119C"])
     cmds += zigbee.readAttribute(0xFF01, 0x0052, [mfgCode: "0x119C"])
     cmds += zigbee.readAttribute(0xFF01, 0x0053, [mfgCode: "0x119C"])
+    cmds += zigbee.readAttribute(0xFF01, 0x0002, [mfgCode: "0x119C"]) // keypad lock
+    cmds += zigbee.readAttribute(0xFF01, 0x00A0, [mfgCode: "0x119C"]) // auto-off timer
 
     cmds += zigbee.readAttribute(0xFF01, 0x0090, [mfgCode: "0x119C"]) // energy delivered
 
@@ -477,6 +479,9 @@ private void parseAttributeReport(Map descMap) {
                     map.name = "keypadLock"
                     map.value = locked
                     map.descriptionText = "Keypad ${descMap.commandInt == 0x0A ? 'is' : 'was'} ${locked ? 'locked' : 'unlocked'}"
+                    if ((prefKeypadLock == true) != locked) {
+                        device.updateSetting('prefKeypadLock', [value: locked.toString(), type: 'bool'])
+                    }
                     break
 
                 case "0050": // on LED color
@@ -523,11 +528,19 @@ private void parseAttributeReport(Map descMap) {
                     map.descriptionText = "Cumulative energy delivered is ${map.value} ${map.unit}"
                     break
 
+                case "00A0": // auto-off timer setting
+                    Integer seconds = Integer.parseInt(descMap.value, 16)
+                    Object timerKey = constTimerValueMap.find { it.value == seconds }?.key
+                    logRx("Auto-off timer is ${seconds}s (pref key ${timerKey})")
+                    if (timerKey != null && (prefAutoOffTimer ?: 0).toString() != timerKey.toString()) {
+                        device.updateSetting('prefAutoOffTimer', [value: timerKey.toString(), type: 'enum'])
+                    }
+                    return
+
                     // TODO
                 case "0010": // on intensity
                 case "0055": // minimum intensity (0 - 3000)
                 case "0058": // double-up = full (0=off, 1=on)
-                case "00A0": // auto-off timer setting
                 case "00A1": // current remaining timer seconds
                 case "0119": // connected load (in watts, always zero)
                 case "0200": // status (always zero)

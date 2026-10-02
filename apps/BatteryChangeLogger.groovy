@@ -5,7 +5,7 @@ import groovy.transform.Field
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 
-@Field static final String CODE_VERSION = "0.0.3"
+@Field static final String CODE_VERSION = "0.0.4"
 
 // File name used by uploadHubFile / downloadHubFile for durable history storage.
 // The file survives app reinstall and can be inspected/downloaded from File Manager.
@@ -488,19 +488,24 @@ void handleFullJsonResponse(resp, data) {
 // POST /device/update returns 302 (redirect to device edit page) on success;
 // the async HTTP client may follow it and deliver 200, so accept both.
 void handleUpdateResponse(resp, data) {
-    int status = resp.status
-    boolean success = (status == 200 || status == 302)
-    updateNotesStatus(data.deviceId, data.entryId as long, success)
-    if (success) {
-        logInfo "Battery replacement logged to device notes for ${data.deviceLabel}"
-        logDebug "Notes: ${data.notes}"
-    } else {
-        logWarn "(notes) Failed to update device notes for ${data.deviceLabel}: HTTP ${status} — replacement is recorded in app history"
-        if (resp.hasError()) logWarn "(notes) ${resp.getErrorMessage()}"
+    int status = resp.getStatus()
+    if (resp.hasError() && status != 302) {
+        updateNotesStatus(data.deviceId, data.entryId as long, false)
+        logWarn "(notes) Failed to update device notes for ${data.deviceLabel}: HTTP ${status}: ${resp.getErrorMessage()} — replacement is recorded in app history"
         // Log response body at debug level to aid diagnosis of future API changes
-        String responseBody = resp.data?.toString()
+        String responseBody = null
+        try { responseBody = resp.getErrorData()?.toString() } catch (Exception ignored) { }
         if (responseBody) logNet "(notes) Response body: ${responseBody}"
+        return
     }
+    if (status != 200 && status != 302) {
+        updateNotesStatus(data.deviceId, data.entryId as long, false)
+        logWarn "(notes) Failed to update device notes for ${data.deviceLabel}: HTTP ${status} — replacement is recorded in app history"
+        return
+    }
+    updateNotesStatus(data.deviceId, data.entryId as long, true)
+    logInfo "Battery replacement logged to device notes for ${data.deviceLabel}"
+    logDebug "Notes: ${data.notes}"
 }
 
 void logsOff() {

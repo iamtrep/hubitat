@@ -16,7 +16,7 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.2.11"
+@Field static final String CODE_VERSION = "0.2.12"
 
 // Custom cluster for radar config and TVOC
 @Field static final int CLUSTER_RADAR = 0x042E
@@ -487,8 +487,14 @@ private Map parseColorAttribute(Map descMap) {
             }
             break
 
-        case "4010":  // StartUpColorTemperatureMireds — silent readback
+        case "4010":  // StartUpColorTemperatureMireds readback (FFFF = previous)
             logRx "Start-up color temperature mireds readback: ${rawValue}"
+            if (rawValue <= 0 || rawValue == 0xFFFF) break
+            Integer prefK = toIntOrNull(settings.startUpColorTempK)
+            if (prefK == null || kelvinToMireds(prefK) != rawValue) {
+                int startUpK = Math.max(CT_MIN_KELVIN, Math.min(CT_MAX_KELVIN, miredsToKelvin(rawValue)))
+                device.updateSetting("startUpColorTempK", [value: startUpK, type: "number"])
+            }
             break
     }
 

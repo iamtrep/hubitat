@@ -34,7 +34,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.4"
+@Field static final String CODE_VERSION = "0.1.5"
 
 metadata {
     definition (
@@ -500,6 +500,10 @@ private void parseAttributeReport(Map descMap) {
                     map.name = "keypadLockout"
                     map.value = descMap.value == "00" ? "unlocked" : "locked"
                     map.descriptionText = "Thermostat keypad lockout set to ${map.value}"
+                    String lockPref = descMap.value == "00" ? "No" : "Yes"
+                    if ((prefKeypadLockout ?: "No") != lockPref) {
+                        device.updateSetting("prefKeypadLockout", [value: lockPref, type: "enum"])
+                    }
                     break
 
                 default:

@@ -4,7 +4,7 @@
  */
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.8.3"
+@Field static final String CODE_VERSION = "0.8.4"
 @Field static final String UI_FILE = "multi_hub_inventory_ui.html"
 @Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/MultiHubInventory.groovy"
 @Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/multi_hub_inventory_ui.html"
@@ -356,7 +356,6 @@ private boolean isNewer(String a, String b) {
 }
 
 // ===== REACHABILITY =====
-// Probe each peer's audit/status (runIn'd off initialize) so the config page shows ok / auth /
 // Peer auth goes in the Authorization header rather than ?access_token=, so the
 // token stays out of the peer hub's access log. The platform's scheme match is
 // case-sensitive: it must be exactly "Bearer".
@@ -364,20 +363,44 @@ private Map bearer(String token) {
     return ['Authorization': "Bearer ${token}".toString()]
 }
 
-// unreachable per hub before a scan is ever run.
+// Probe each peer's audit/status (runIn'd off initialize) so the config page shows ok / auth /
+// unreachable per hub before a scan is ever run. One probe at a time: each callback starts the next.
 void probePeers() {
     checkVersion()
+    probePeer(0)
+}
+
+private void probePeer(int i) {
     List peers = (state.peerList ?: []) as List
-    peers.each { Map peer ->
-        try {
-            httpGet([uri: "${peer.baseUrl}/audit/status", headers: bearer(peer.token), contentType: 'application/json', timeout: 8]) { resp ->
-                peer.reachable = (resp.status == 200) ? 'ok' : "http ${resp.status}"
-            }
-        } catch (Exception e) {
-            String msg = (e.message ?: '')
-            peer.reachable = (msg.contains('401') || msg.contains('403')) ? 'auth' : 'unreachable'
-        }
+    if (i >= peers.size()) return
+    Map peer = peers[i] as Map
+    try {
+        asynchttpGet('probePeerCallback', [uri: "${peer.baseUrl}/audit/status", headers: bearer(peer.token as String), contentType: 'application/json', timeout: 8], [i: i, baseUrl: peer.baseUrl])
+    } catch (Exception e) {
+        logNet "Peer probe ${peer.label} failed: ${e.message}"
+        setPeerReachable(i, peer.baseUrl as String, 'unreachable')
+        probePeer(i + 1)
     }
+}
+
+void probePeerCallback(resp, data) {
+    int i = data.i as int
+    int status = resp.getStatus()
+    String reachable
+    if (resp.hasError()) {
+        logNet "Peer probe ${data.baseUrl} failed: HTTP ${status}: ${resp.getErrorMessage()}"
+        reachable = (status == 401 || status == 403) ? 'auth' : 'unreachable'
+    } else {
+        reachable = (status == 200) ? 'ok' : "http ${status}"
+    }
+    setPeerReachable(i, data.baseUrl as String, reachable)
+    probePeer(i + 1)
+}
+
+private void setPeerReachable(int i, String baseUrl, String reachable) {
+    List peers = (state.peerList ?: []) as List
+    if (i >= peers.size() || (peers[i] as Map).baseUrl != baseUrl) return
+    (peers[i] as Map).reachable = reachable
     state.peerList = peers
 }
 

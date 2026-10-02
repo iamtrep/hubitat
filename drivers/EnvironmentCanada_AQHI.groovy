@@ -11,7 +11,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.3.2"
+@Field static final String CODE_VERSION = "0.3.3"
 @Field static final String API_BASE = "https://api.weather.gc.ca/collections"
 @Field static final String ALERT_API_BASE = "https://weather.gc.ca/api/app/v3"
 @Field static final int HTTP_TIMEOUT = 15
@@ -223,8 +223,11 @@ void refresh() {
         return
     }
     logDebug "Refreshing AQHI data for station ${sid}"
+    // Chained, not parallel: the forecast's trend and fallback read the observation's result.
     fetchObservation(sid)
-    fetchForecast(sid)
+}
+
+private void fetchAlertsIfZoned() {
     String zone = resolveAlertZone()
     if (zone) {
         fetchAlerts(zone)
@@ -245,13 +248,20 @@ void fetchObservation(String sid) {
         timeout: HTTP_TIMEOUT
     ]
 
+    asynchttpGet("observationResponse", params, [sid: sid])
+}
+
+void observationResponse(resp, Map data) {
     try {
-        httpGet(params) { resp ->
+        if (resp.hasError()) {
+            logWarn "Error fetching observation: ${resp.getErrorMessage()}"
+        } else {
             parseObservationResponse(resp)
         }
     } catch (Exception e) {
         logWarn "Error fetching observation: ${e.message}"
     }
+    fetchForecast(data.sid as String)
 }
 
 void parseObservationResponse(resp) {
@@ -260,7 +270,7 @@ void parseObservationResponse(resp) {
         return
     }
 
-    Map data = resp.data as Map
+    Map data = resp.json as Map
     List features = data?.features as List
     if (!features || features.isEmpty()) {
         checkObservationStaleness()
@@ -340,13 +350,20 @@ void fetchForecast(String sid) {
         timeout: HTTP_TIMEOUT
     ]
 
+    asynchttpGet("forecastResponse", params)
+}
+
+void forecastResponse(resp, Map data) {
     try {
-        httpGet(params) { resp ->
+        if (resp.hasError()) {
+            logWarn "Error fetching forecast: ${resp.getErrorMessage()}"
+        } else {
             parseForecastResponse(resp)
         }
     } catch (Exception e) {
         logWarn "Error fetching forecast: ${e.message}"
     }
+    fetchAlertsIfZoned()
 }
 
 void parseForecastResponse(resp) {
@@ -355,7 +372,7 @@ void parseForecastResponse(resp) {
         return
     }
 
-    Map data = resp.data as Map
+    Map data = resp.json as Map
     List features = data?.features as List
     if (!features || features.isEmpty()) {
         logDebug "No forecast data available"
@@ -532,8 +549,14 @@ void fetchAlerts(String zoneCode) {
         timeout: HTTP_TIMEOUT
     ]
 
+    asynchttpGet("alertResponse", params)
+}
+
+void alertResponse(resp, Map data) {
     try {
-        httpGet(params) { resp ->
+        if (resp.hasError()) {
+            logWarn "Error fetching alerts: ${resp.getErrorMessage()}"
+        } else {
             parseAlertResponse(resp)
         }
     } catch (Exception e) {
@@ -547,7 +570,7 @@ void parseAlertResponse(resp) {
         return
     }
 
-    Map data = resp.data as Map
+    Map data = resp.json as Map
     List alerts = data?.alerts as List ?: []
     int count = alerts.size()
 
