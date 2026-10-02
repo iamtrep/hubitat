@@ -55,21 +55,23 @@ import hubitat.helper.NetworkUtils
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.0.8"
+@Field static final String CODE_VERSION = "0.0.9"
 @Field static final int RESPONSE_HISTORY_SIZE = 21
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int INITIAL_PING_DELAY = 2
 @Field static final int DEFAULT_HTTP_TIMEOUT = 15
 @Field static final int DEFAULT_RETRY_THRESHOLD = 3
+// Statuses a retry can't fix: the HTTP check stops until preferences are saved or Initialize runs.
+@Field static final List<Integer> HTTP_STOP_STATUSES = [401, 403, 404, 410]
 
 void installed() {
-    logDebug "Installed with settings: ${settings}"
+    logDebug "Installed with settings: ${redactSettings()}"
     state.clear()
     initialize()
 }
 
 void updated() {
-    logDebug "Updated with settings: ${settings}"
+    logDebug "Updated with settings: ${redactSettings()}"
     initialize()
 }
 
@@ -82,6 +84,8 @@ void initialize() {
 
     initState()
     state.remove('isPinging')
+    state.remove('httpStopped')
+    state.remove('httpRetryAfter')
 
     // Checks if firmware version supports 3-parameter ping (adjust version as needed)
     state.supportsPingTimeout = supportsPingTimeout(location.hub.firmwareVersionString)
@@ -147,8 +151,12 @@ void ping() {
         long httpRT = -1
 
         if (httpURL) {
-            httpRT = sendHttpRequest()
-            sendEvent(name: "httpStatus", value: httpRT >= 0 ? "success" : "failed", descriptionText: "HTTP GET ${httpURL} ${httpRT >= 0}")
+            if (state.httpStopped) {
+                logDebug "HTTP check stopped after HTTP ${state.httpStopped}; save preferences or run Initialize to resume"
+            } else {
+                httpRT = sendHttpRequest()
+            }
+            sendEvent(name: "httpStatus", value: httpRT >= 0 ? "success" : "failed", descriptionText: "HTTP GET ${redactUrl(httpURL)} ${httpRT >= 0}")
         }
 
         updateDeviceStatus((deviceIP ? pingRT >= 0 : true) && (httpURL ? httpRT >= 0 : true))
@@ -188,18 +196,48 @@ long sendHttpRequest() {
         httpGet(params) { response ->
             if (response.status >= 200 && response.status < 300) {
                 long elapsed = now() - timeBefore
-                logNet "HTTP GET $httpURL successful in ${elapsed} ms"
+                logNet "HTTP GET ${redactUrl(httpURL)} successful in ${elapsed} ms"
                 recordResponseTime("http", elapsed)
                 result = elapsed
             } else {
-                logWarn "HTTP GET $httpURL failed with status ${response.status}"
+                logWarn "HTTP GET ${redactUrl(httpURL)} failed with status ${response.status}"
             }
         }
         return result
+    } catch (groovyx.net.http.HttpResponseException e) {
+        // httpGet throws on any non-2xx status, so status handling lives here.
+        int status = e.statusCode
+        if (status in HTTP_STOP_STATUSES) {
+            state.httpStopped = status
+            logError "HTTP GET ${redactUrl(httpURL)} returned HTTP ${status}; HTTP checks stopped until preferences are saved or Initialize runs"
+        } else {
+            Long retryAfter = retryAfterSeconds(e)
+            if (retryAfter) state.httpRetryAfter = retryAfter
+            logWarn "HTTP GET ${redactUrl(httpURL)} failed with HTTP ${status}${retryAfter ? " (Retry-After ${retryAfter} s)" : ''}"
+        }
+        return -1
     } catch (Exception e) {
         logWarn "Error sending HTTP request: ${e}"
         return -1
     }
+}
+
+private Long retryAfterSeconds(groovyx.net.http.HttpResponseException e) {
+    try {
+        String v = e.response?.headers?.'Retry-After'?.value as String
+        return v?.trim()?.isLong() ? v.trim().toLong() : null
+    } catch (Exception ignored) {
+        return null
+    }
+}
+
+private Map redactSettings() {
+    return settings.collectEntries { k, v -> [(k): k == 'httpURL' ? redactUrl(v as String) : v] }
+}
+
+@CompileStatic
+private static String redactUrl(String url) {
+    return url?.replaceAll(/access_token=[^&]+/, 'access_token=REDACTED')
 }
 
 // Firmware 2.5.1.x (Apache HttpClient 5.x) drops a query string embedded in the
@@ -228,17 +266,19 @@ void updateDeviceStatus(boolean online) {
     if (currentStatus != newStatus) {
         if (txtEnable) logInfo "tracking state change to ${newStatus}"
 
-        if (online || state.currentRetryCount >= state.retryThreshold) {
+        // A stopped HTTP check never recovers on its own, so report offline without waiting for retries.
+        if (online || state.currentRetryCount >= state.retryThreshold || state.httpStopped) {
             String newStatusDescription = "${device.getLabel()} status is ${newStatus}"
             sendEvent(name: "status", value: newStatus, descriptionText: newStatusDescription)
             sendEvent(name: "contact", value: contactValue, descriptionText: newStatusDescription)
             if (txtEnable) logInfo "status changed from ${currentStatus} to ${newStatus}"
-
-            // Reset retry count so scheduleNextPing() uses normal interval
-            if (online) {
-                resetRetryCount()
-            }
         }
+    }
+
+    // Any success ends retry mode, including a failure that never reached the threshold;
+    // otherwise scheduleNextPing() keeps polling at the retry interval.
+    if (online && state.currentRetryCount > 0) {
+        resetRetryCount()
     }
 
     // Handle retry logic for offline devices
@@ -248,6 +288,10 @@ void updateDeviceStatus(boolean online) {
 }
 
 private void scheduleNextPing() {
+    if (state.httpStopped && !deviceIP) {
+        logSched "HTTP check stopped and no device IP set; not scheduling further pings"
+        return
+    }
     int delay
     if (state.currentRetryCount > 0 && state.currentRetryCount <= maxRetries) {
         // Retry mode: exponential backoff
@@ -259,6 +303,11 @@ private void scheduleNextPing() {
         int intervalSecs = (pingInterval ?: 5) * 60
         delay = intervalSecs - 7 + new Random().nextInt(15)
         logSched "Scheduling next ping in ${delay} seconds"
+    }
+    Integer retryAfter = state.remove('httpRetryAfter') as Integer
+    if (retryAfter && retryAfter > delay) {
+        delay = retryAfter
+        logSched "Server asked to retry after ${delay} seconds"
     }
     runIn(delay, "ping")
 }
