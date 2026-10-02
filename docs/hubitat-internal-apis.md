@@ -74,6 +74,19 @@ Downloading a release so it becomes restorable is a main-platform endpoint:
 
 - `GET /hub/matterLogs/json` → `{"text": "<ANSI-colored CHIP/Matter SDK dump>"}` — **polling only, no socket** (the native page polls ~every 2 s). Each response is the **full rolling buffer** (no `offset`/`since`/`Range` params, same byte size each poll), so a live tail must dedup against the previous poll — anchor on a block of trailing lines (lines repeat verbatim), not single lines. CHIP line format (ANSI-stripped): `[<epoch>.<ms>] [<pid>:<tid>] [<COMPONENT>] <message>`, with indented multi-line continuations. Components seen: `DMG`, `EM` (busier hubs add `SC`, `IM`, `BLE`, `DL`, `IN`, …).
 
+### Logs page endpoints
+
+The Logs page (`/logs`, tabs `?tab=past` etc.) is a Vue chunk (`/ui2/js/vue-hub2-logs.min.js`) that reads these:
+
+- `GET /logs/json`: runtime stats since boot. Top-level `uptime`, `appStats[]`, `deviceStats[]`, `jobs[]`, `runningJobs[]`, `hubCommands`, `totalAppsRuntime`, `totalDevicesRuntime`, `appsUptime`, `devicesUptime`, `appPct`, `devicePct`, `maxEvents`, `maxStates`, `showAppStatDetails`, `showDeviceStatDetails`, plus `check*` column-visibility flags (strings `"true"`/`"false"`). Each stats entry: `id`, `name`, `total`, `count`, `average`, `pct`, `pctTotal`, `grandTotal`, `stateSize`, `largeState`, `hubActionCount`, `cloudCallCount`, `pendingEventsCount`, `customAttributes`, and `formatted*` display strings. Each `jobs[]` entry: `id` (`app{id}Once.{method}`, `dev{id}Recur.{method}`), `name`, `link`, `recurring`, `methodName`, `nextRun`, `nextRunDt`. Slow on a loaded hub (15 s or more). 2.5.2.129 removed the `check*` flags for the average, total and percent-of-total columns and the uptime/total headers, and added `checkDriversStatesCountColumn`; the stats fields did not change.
+- `GET /logs/past/json`: the hub's past-log buffer as a JSON array of strings, one per line: `"{yyyy-MM-dd HH:mm:ss.SSS}\t{LEVEL} \t{type}|{id}|{name}|{message}"`, where `type` is `app`, `dev` or `sys`. Covers several hours; read it instead of a live capture to answer "what logged in the last N minutes".
+- `GET /logs/eventsJson` and `GET /hub/eventsJson`: event lists for the page's events views.
+- `GET /logs/cloudCalls/json` (new in 2.5.2.129, 404 before): inbound cloud-relay requests per app, in hourly buckets. Backs the "Cloud calls" tab.
+
+  `{apps: [{id, name, installed, total, currentHour}], hours: [{appId, hourStart, count}], startedAt, generatedAt, timeZone}`
+
+  Times are epoch ms; `hourStart` is the bucket start. Counts start at `startedAt`, which looked like hub boot in one sample. Requests to an app ID that no longer exists still count: that app is listed with `installed: false` and `name: "Deleted app ({id})"`. The hub also logs each one as a `sys` WARN, `Received cloud request for App {id} that does not exist, path: {path} from {ip}`, where `{ip}` is the caller's public address. The caller can be the hub itself, for example a driver whose cloud-check URL still names the deleted app. A LAN DNS log for `cloud.hubitat.com` lookups on the same cadence identifies the device.
+
 ## Install an app instance
 
 - `GET /installedapp/create/{appTypeId}` — creates an installed instance of an app type, returns the installed app ID
