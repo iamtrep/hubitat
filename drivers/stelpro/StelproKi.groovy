@@ -34,7 +34,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.3"
+@Field static final String CODE_VERSION = "0.1.4"
 
 metadata {
     definition (
@@ -66,8 +66,8 @@ metadata {
     preferences {
         input name: "prefKeypadLockout", type: "enum", title: "Do you want to lock your thermostat's physical keypad?",
             options: ["No", "Yes"], defaultValue: "No", required: true
-        input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
-        input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: false, required: true
+        input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
+        input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: false, required: true, submitOnChange: true
         if (logEnable) {
             input name: "traceEnable", type: "bool", title: "Enable trace logging info (for development purposes)", defaultValue: false
         }
@@ -115,7 +115,7 @@ void updated() {
         logWarn "invalid lock mode ${prefKeypadLockout}"
     }
 
-    //runIn(1800, logsOff, [overwrite: true, misfire: "ignore"])
+    if (logEnable || traceEnable) runIn(1800, "logsOff")
 }
 
 void deviceTypeUpdated() {
@@ -134,8 +134,7 @@ void configure() {
     state.lastOperatingStateRequest = 0
     state.codeVersion = CODE_VERSION
 
-    // automatically turn off debug logs after 30 minutes
-    //runIn(1800,logsOff, [overwrite: true, misfire: "ignore"])
+    if (logEnable || traceEnable) runIn(1800, "logsOff")
 
     // Set supported modes
     sendEvent(name: "supportedThermostatFanModes", value: constSupportedFanModes)
@@ -353,9 +352,9 @@ void parse(String description) {
             logTrace("Unhandled ZHA global command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
         }
     } else if (description?.startsWith('enroll request')) {
-        logDebug "Received enroll request"
+        logRx "Received enroll request"
     } else if (description?.startsWith('zone status')  || description?.startsWith('zone report')) {
-        logDebug "Zone status: $description"
+        logRx "Zone status: $description"
     } else {
         logWarn("Unhandled unknown command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     }
@@ -463,7 +462,7 @@ private void parseAttributeReport(Map descMap) {
                         // System mode "04" (heat) could be heat or eco — need setpoint mode to decide.
                         // Store and request the manufacturer-specific setpoint mode attribute.
                         state.storedSystemMode = constModeMap[descMap.value]
-                        logDebug "System mode is ${descMap.value} (${state.storedSystemMode}), requesting setpoint mode"
+                        logRx "System mode is ${descMap.value} (${state.storedSystemMode}), requesting setpoint mode"
                         sendZigbeeCommands(zigbee.readAttribute(0x201, 0x401C, [mfgCode: "0x1185"]))
                         return
                     }
@@ -475,10 +474,10 @@ private void parseAttributeReport(Map descMap) {
                         map.name = "thermostatMode"
                         map.value = constModeMap[descMap.value]
                         map.descriptionText = "Thermostat mode is set to ${map.value}"
-                        logDebug "Setpoint mode ${descMap.value} resolved final mode to ${map.value}"
+                        logRx "Setpoint mode ${descMap.value} resolved final mode to ${map.value}"
                     } else {
                         // System was off — ignore the setpoint mode
-                        logDebug "Ignoring setpoint mode ${descMap.value} because system mode is ${state.storedSystemMode}"
+                        logRx "Ignoring setpoint mode ${descMap.value} because system mode is ${state.storedSystemMode}"
                         return
                     }
                     break
@@ -516,8 +515,8 @@ private void parseAttributeReport(Map descMap) {
 
     if (map) {
         sendEvent(map)
-        if (map.descriptionText && txtEnable) logInfo("${map.descriptionText}")
-        logDebug("event sent: ${map}")
+        if (map.descriptionText) logInfo("${map.descriptionText}")
+        logRx("event sent: ${map}")
     } else {
         logTrace("Unhandled attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
     }
@@ -526,11 +525,11 @@ private void parseAttributeReport(Map descMap) {
 void parseResponse(Map descMap) {
     switch (descMap.clusterInt) {
         case 0x0201:
-        	logDebug("Received response for Thermostat cluster (${descMap.data}) ${descMap}")
+        	logRx("Received response for Thermostat cluster (${descMap.data}) ${descMap}")
             break
 
         case 0x0204:
-        	logDebug("Received response for Thermostat UI cluster (${descMap.data}) ${descMap}")
+        	logRx("Received response for Thermostat UI cluster (${descMap.data}) ${descMap}")
             break
 
         default:
@@ -542,7 +541,7 @@ void parseResponse(Map descMap) {
 // Callback helpers
 
 void logsOff() {
-    logInfo "debug logging disabled..."
+    logWarn "debug and trace logging disabled"
     device.updateSetting("logEnable",[value:"false",type:"bool"])
     device.updateSetting("traceEnable",[value:"false",type:"bool"])
 }
@@ -570,7 +569,7 @@ private void updateTemperatureAlarm(BigDecimal temperature, String unit) {
 }
 
 private void autoConfigure() {
-    logWarn "Detected driver version change"
+    logVer "Detected driver version change"
     configure()
 }
 
@@ -594,7 +593,7 @@ private BigDecimal getTemperature(String value) {
         BigDecimal fahrenheit = celsiusToFahrenheit(celsius)
         return fahrenheit.setScale(1, BigDecimal.ROUND_HALF_UP)
     } catch (Exception e) {
-        log.error "getTemperature: Cannot parse '${value}' as hex", e
+        logError "getTemperature: Cannot parse '${value}' as hex: ${e}"
         return null
     }
 }
@@ -674,27 +673,23 @@ private Map validateOperatingStateBugFix(Map map) {
     return map
 }
 
-// Logging helpers
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
 
-private void logTrace(String message) {
-    if (traceEnable) log.trace("${device} : ${message}")
-}
+void logRx   (String m) { if (logEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (logEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (logEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
-private void logDebug(String message) {
-    if (logEnable) log.debug("${device} : ${message}")
-}
-
-private void logInfo(String message) {
-    if (txtEnable) log.info("${device} : ${message}")
-}
-
-private void logWarn(String message) {
-    log.warn("${device} : ${message}")
-}
-
-private void logError(String message) {
-    log.error("${device} : ${message}")
-}
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (logEnable) log.debug "${device.displayName}: ${m}" }
 
 
 /*

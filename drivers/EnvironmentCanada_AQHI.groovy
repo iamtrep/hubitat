@@ -11,7 +11,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.3.1"
+@Field static final String CODE_VERSION = "0.3.2"
 @Field static final String API_BASE = "https://api.weather.gc.ca/collections"
 @Field static final String ALERT_API_BASE = "https://weather.gc.ca/api/app/v3"
 @Field static final int HTTP_TIMEOUT = 15
@@ -138,9 +138,11 @@ preferences {
         input("staleThreshold", "number", title: "Observation staleness threshold (hours)\nWarn and fall back to forecast after this many hours without observations:", defaultValue: 6, range: "1..168")
     }
     section("Logging") {
-        input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
+        input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
         input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
-        input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
+        if (debugEnable) {
+            input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
+        }
     }
 }
 
@@ -170,7 +172,7 @@ void initialize() {
         state.version = CODE_VERSION
     }
 
-    if (debugEnable) {
+    if (debugEnable || traceEnable) {
         runIn(1800, "turnOffDebugLogging")
     }
 
@@ -703,20 +705,21 @@ long parseISO8601(String dt) {
 private String logp(String e) { "${e} ${device.displayName}: " }
 
 void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
-void logCmd  (String m) { log.info  logp('⬆️') + m }
-void logCfg  (String m) { log.info  logp('🔧') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
 void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
 void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
-void logOta  (String m) { log.info  logp('📦') + m }
-void logVer  (String m) { log.info  logp('🏷️') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
 void logWarn (String m) { log.warn  logp('⚠️') + m }
 void logError(String m) { log.error logp('🛑') + m }
 void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
-void logInfo (String m) { log.info  "${device.displayName}: ${m}" }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
 void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }
 
 void turnOffDebugLogging() {
     logWarn "Debug logging disabled"
     device.updateSetting("debugEnable", [value: "false", type: "bool"])
+    device.updateSetting("traceEnable", [value: "false", type: "bool"])
 }

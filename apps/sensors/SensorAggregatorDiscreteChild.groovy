@@ -28,7 +28,7 @@ import com.hubitat.app.ChildDeviceWrapper
 //import com.hubitat.hub.domain.Capability // only available from 2.4.3.148 onward
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.3.4"
+@Field static final String CODE_VERSION = "0.3.5"
 
 @Field static final Map<String, String> CAPABILITY_ATTRIBUTES = [
     "capability.accelerationSensor"  : [ attribute: "acceleration", values: ["inactive", "active"], driver: "Virtual Acceleration Sensor" ],
@@ -96,8 +96,11 @@ Map mainPage() {
                     paragraph "<span style='color:orange'><b>Excluded sensors:</b> ${excludedLinks.join(', ')}</span>"
                 }
             }
-            input name: "logLevel", type: "enum", options: ["warn","info","debug","trace"], title: "Enable logging?", defaultValue: "info", required: true, submitOnChange: true
-            log.info("${logLevel} logging enabled")
+            input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
+            input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
+            if (debugEnable) {
+                input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
+            }
         }
         section("Notifications") {
             input name: "notificationDevice", type: "capability.notification", title: "Send notifications to:", multiple: false, required: false
@@ -133,6 +136,7 @@ void installed() {
 
 void updated() {
     logDebug "updated()"
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
 
     // Validate settings (skip validation during testing)
     if (!state.testingInProgress) {
@@ -154,6 +158,12 @@ void updated() {
     initialize()
 }
 
+void logsOff() {
+    app.updateSetting("debugEnable", [value: "false", type: "bool"])
+    app.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "debug and trace logging disabled"
+}
+
 void uninstalled() {
     logDebug "uninstalled()"
     // Clean up child devices
@@ -168,6 +178,7 @@ void uninstalled() {
 }
 
 void initialize() {
+    app.removeSetting("logLevel")
     if (state.includedSensors == null) { state.includedSensors = [] }
     if (state.excludedSensors == null) { state.excludedSensors = [] }
     if (state.aggregateValue == null) { state.aggregateValue = "" }
@@ -259,7 +270,7 @@ void sensorEventHandler(Event evt=null) {
     state.pendingSeq = pending + [(sid): seq]
     runIn(seconds, "commitStuckState",
           [data: [sensorId: sid, seq: seq, value: newValue], overwrite: false])
-    logDebug "Sticky scheduled: ${evt.getDevice().getLabel()} -> ${newValue} in ${seconds}s (seq ${seq})"
+    logSched "Sticky scheduled: ${evt.getDevice().getLabel()} -> ${newValue} in ${seconds}s (seq ${seq})"
 }
 
 void commitStuckState(Map data) {
@@ -464,37 +475,17 @@ private List<String> getAttributePossibleValues(DeviceWrapper deviceWrapper, Str
 
 private void logObjectProperties(obj) {
     if (obj == null) return
-    log.debug "${getObjectClassName(obj)} BEGIN"
+    logTrace "${getObjectClassName(obj)} BEGIN"
     obj.properties.each { property, value ->
-        log.debug "${property}=${value}"
+        logTrace "${property}=${value}"
     }
-    log.debug "${getObjectClassName(obj)} END"
+    logTrace "${getObjectClassName(obj)} END"
 }
 
 @CompileStatic
 private double roundToDecimalPlaces(double decimalNumber, int decimalPlaces = 2) {
     double scale = Math.pow(10, decimalPlaces)
     return (Math.round(decimalNumber * scale) as double) / scale
-}
-
-private void logError(Object... args) {
-    log.error(args)
-}
-
-private void logWarn(Object... args) {
-    log.warn(args)
-}
-
-private void logInfo(Object... args) {
-    if (logLevel in ["info","debug","trace"]) log.info(args)
-}
-
-private void logDebug(Object... args) {
-    if (logLevel in ["debug","trace"]) log.debug(args)
-}
-
-private void logTrace(Object... args) {
-    if (logLevel in ["trace"]) log.trace(args)
 }
 
 // ============================================================================
@@ -1457,3 +1448,20 @@ void test_AllSensorsExcluded() {
     app.updateSetting("excludeAfter", [type: "number", value: 60])
     pauseExecution(300)
 }
+
+// ── Logging (app) ─────────────────────────────────────────────────────
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${app.getLabel()}: " }
+
+void logEvt  (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${app.getLabel()}: ${m}" }

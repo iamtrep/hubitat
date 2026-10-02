@@ -5,7 +5,7 @@ import groovy.transform.Field
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 
-@Field static final String CODE_VERSION = "0.0.2"
+@Field static final String CODE_VERSION = "0.0.3"
 
 // File name used by uploadHubFile / downloadHubFile for durable history storage.
 // The file survives app reinstall and can be inspected/downloaded from File Manager.
@@ -111,10 +111,11 @@ Map mainPage() {
         }
 
         section("Logging", hideable: true, hidden: true) {
-            input "logLevel", "enum",
-                title: "Log level",
-                options: ["warn", "info", "debug"],
-                defaultValue: "info", required: true
+            input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
+            input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
+            if (settings.debugEnable) {
+                input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
+            }
         }
         
         section("") {
@@ -177,6 +178,7 @@ void updated() {
     logDebug "updated()"
     unsubscribe()
     initialize()
+    if (settings.debugEnable || settings.traceEnable) runIn(1800, "logsOff")
 }
 
 void uninstalled() {
@@ -184,6 +186,7 @@ void uninstalled() {
 }
 
 void initialize() {
+    app.removeSetting("logLevel")
     logDebug "initialize()"
     if (state.batteryLevels == null) {
         state.batteryLevels = [:]
@@ -194,7 +197,7 @@ void initialize() {
         Map fileHistory = loadHistoryFromFile()
         if (fileHistory != null) {
             state.replacementHistory = fileHistory
-            logInfo "Restored replacement history from ${HISTORY_FILE} (${fileHistory.size()} device(s))"
+            logCfg "Restored replacement history from ${HISTORY_FILE} (${fileHistory.size()} device(s))"
         } else {
             state.replacementHistory = [:]
         }
@@ -238,7 +241,7 @@ void batteryHandler(evt) {
 
     if (lastLevel != null) {
         int delta = newLevel - lastLevel
-        logDebug "${deviceLabel}: ${lastLevel}% -> ${newLevel}% (delta: ${delta}%)"
+        logEvt "${deviceLabel}: ${lastLevel}% -> ${newLevel}% (delta: ${delta}%)"
         if (delta >= (settings.threshold as Integer)) {
             logInfo "Battery replacement detected on ${deviceLabel}: ${lastLevel}% -> ${newLevel}%"
             // Use now() as a unique entry ID so the async callback can find and update
@@ -257,7 +260,7 @@ void batteryHandler(evt) {
             }
         }
     } else {
-        logDebug "${deviceLabel}: first reading, seeding at ${newLevel}%"
+        logEvt "${deviceLabel}: first reading, seeding at ${newLevel}%"
     }
 
     // Always update stored level so the next event has an accurate baseline
@@ -289,7 +292,7 @@ private void checkIntervalAndNotify(String deviceId, String deviceLabel, int old
             : "Short battery life: ${deviceLabel} replaced after only ${elapsedDays} day${elapsedDays == 1 ? '' : 's'} " +
               "(threshold: ${thresholdDays}d). ${oldLevel}% -> ${newLevel}%"
         notifyDevice.deviceNotification(msg)
-        logInfo "Interval notification sent for ${deviceLabel}: ${elapsedDays}d since last replacement"
+        logCmd "Interval notification sent for ${deviceLabel}: ${elapsedDays}d since last replacement"
     }
 }
 
@@ -487,24 +490,29 @@ void handleUpdateResponse(resp, data) {
         if (resp.hasError()) logWarn "(notes) ${resp.getErrorMessage()}"
         // Log response body at debug level to aid diagnosis of future API changes
         String responseBody = resp.data?.toString()
-        if (responseBody) logDebug "(notes) Response body: ${responseBody}"
+        if (responseBody) logNet "(notes) Response body: ${responseBody}"
     }
 }
 
-// ---- Logging helpers ----
-
-private void logDebug(String msg) {
-    if (logLevel == "debug") log.debug "${app.getLabel()}: ${msg}"
+void logsOff() {
+    app.updateSetting("debugEnable", [value: "false", type: "bool"])
+    app.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "debug and trace logging disabled"
 }
 
-private void logInfo(String msg) {
-    if (logLevel in ["info", "debug"]) log.info "${app.getLabel()}: ${msg}"
-}
+// ── Logging (app) ─────────────────────────────────────────────────────
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${app.getLabel()}: " }
 
-private void logWarn(String msg) {
-    log.warn "${app.getLabel()}: ${msg}"
-}
+void logEvt  (String m) { if (settings.debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (settings.debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (settings.debugEnable) log.debug logp('⏰') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
-private void logError(String msg) {
-    log.error "${app.getLabel()}: ${msg}"
-}
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (settings.traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (settings.debugEnable) log.debug "${app.getLabel()}: ${m}" }

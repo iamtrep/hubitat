@@ -23,7 +23,7 @@ import hubitat.zigbee.zcl.DataType
 import hubitat.zigbee.clusters.iaszone.ZoneStatus
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.1.5"
+@Field static final String CODE_VERSION = "0.1.6"
 
 metadata {
 	definition (
@@ -62,7 +62,7 @@ metadata {
               description: "Set temperature reporting interval by this many <b>minutes</b>. </br>Default: 720 (12 hours)", required: false)
         input name: "tempOffset", title: "<b>Temperature Calibration</b>", type: "number", range: "-128..127", defaultValue: 0, required: true,
             description: "Adjust temperature by this many degrees.</br>Range: -128 thru 127</br>Default: 0"
-        input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: false
+        input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
         input name: "debugEnable", type: "bool", title: "Enable debug logging info", defaultValue: false, required: true, submitOnChange: true
         if (debugEnable) {
             input name: "traceEnable", type: "bool", title: "Enable trace logging info (for development purposes)", defaultValue: false
@@ -126,6 +126,7 @@ void installed(){
 void updated(){
 	logDebug "updated()"
     configure()
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
 }
 
 void uninstalled() {
@@ -206,7 +207,7 @@ void parse(String description) {
     }
 
     Map descMap = zigbee.parseDescriptionAsMap(description)
-    logTrace "Receiving Zigbee message️ ⬅️ device: ${descMap}"
+    logTrace "Receiving Zigbee message: ${descMap}"
 
     if (descMap.attrId != null) {
         // device attribute report
@@ -222,7 +223,7 @@ void parse(String description) {
         // ZigBee Home Automation (ZHA) global command
         logTrace("Unhandled ZHA global command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     } else if (description?.startsWith('enroll request')) {
-        logDebug "Received enroll request"
+        logRx "Received enroll request"
         List<String> cmds = []
         cmds += zigbee.enrollResponse(1200)
         sendZigbeeCommands(cmds)
@@ -279,7 +280,7 @@ private void parseIasMessage(String description) {
 private void emitZoneStatusEvent(String attribute, Boolean isTrue, Closure onClear = null) {
     Map config = ATTRIBUTE_CONFIG[attribute]
     String descriptionText = "${device.displayName} ${isTrue ? config.trueDesc : config.falseDesc}"
-    logInfo descriptionText
+    if (txtEnable) logInfo "${isTrue ? config.trueDesc : config.falseDesc}"
     sendEvent(
         name: attribute,
         value: isTrue ? config.trueValue : config.falseValue,
@@ -326,7 +327,7 @@ private void parseAttributeReport(Map descMap) {
                     setBatteryReplacementDate(now)
                     device.updateDataValue('batteryReplacementDetected',
                         "auto: V_prev=${String.format('%.2f', prevSmoothed)} → V_new=${String.format('%.2f', voltage)} @ ${now.format('yyyy-MM-dd HH:mm:ss zzz')}")
-                    logInfo "battery replacement detected: ${String.format('%.2f', prevSmoothed)}V → ${String.format('%.2f', voltage)}V"
+                    if (txtEnable) logInfo "battery replacement detected: ${String.format('%.2f', prevSmoothed)}V → ${String.format('%.2f', voltage)}V"
                 } else if (voltage < prevSmoothed) {
                     smoothed = constBatteryEmaAlpha * voltage + (1.0d - constBatteryEmaAlpha) * prevSmoothed
                     emaAction = 'down'
@@ -406,53 +407,48 @@ private void parseAttributeReport(Map descMap) {
     }
 
     if (map.name) {
-        logInfo "${map.descriptionText}"
+        if (txtEnable) logInfo((map.descriptionText as String) - "${device.displayName} ")
         sendEvent(map)
     }
 }
 
 private void autoConfigure() {
-    logWarn "Detected driver version change"
+    logVer "Detected driver version change"
     configure()
 }
 
 private void sendZigbeeCommands(List<String> cmds) {
     if (cmds.empty) return
     List<String> send = delayBetween(cmds.findAll { !it.startsWith('delay') }, constDefaultDelay)
-    logTrace "Sending Zigbee messages ➡️ device: ${send}"
+    logTrace "Sending Zigbee messages: ${send}"
     sendHubCommand(new hubitat.device.HubMultiAction(send, hubitat.device.Protocol.ZIGBEE))
     state.lastTx = now()
 }
 
 
-// Logging helpers
-
-void logsOff(){
-	logWarn "debug logging disabled..."
-	device.updateSetting("debugEnable",[value:"false",type:"bool"])
-	device.updateSetting("traceEnable",[value:"false",type:"bool"])
+void logsOff() {
+    logWarn "debug logging disabled..."
+    device.updateSetting("debugEnable", [value: "false", type: "bool"])
+    device.updateSetting("traceEnable", [value: "false", type: "bool"])
 }
 
-private void logTrace(String message) {
-    if (traceEnable) log.trace("${device.displayName} : ${message}")
-}
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
 
-private void logDebug(String message) {
-    if (debugEnable) log.debug("${device.displayName} : ${message}")
-}
+void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
-private void logInfo(String message) {
-    if (txtEnable) log.info("${device.displayName} : ${message}")
-}
-
-private void logWarn(String message) {
-    log.warn("${device.displayName} : ${message}")
-}
-
-private void logError(String message) {
-    log.error("${device.displayName} : ${message}")
-}
-
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }
 
 
 /*

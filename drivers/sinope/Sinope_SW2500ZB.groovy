@@ -14,7 +14,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.22"
+@Field static final String CODE_VERSION = "0.0.23"
 
 metadata {
     definition(
@@ -61,7 +61,7 @@ metadata {
             input(name: "prefOffLedColor", title: "LED color when OFF", type: "enum", defaultValue: 1, options: constLedColorPrefMap)
             input(name: "prefOffLedIntensity", title: "LED intensity when OFF", type: "number", defaultValue: 48, range: "0..100")
 
-            input(name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true)
+            input(name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true)
             input(name: "debugEnable", type: "bool", title: "Enable debug logging info", defaultValue: false, required: true, submitOnChange: true)
             if (debugEnable) {
                 input(name: "traceEnable", type: "bool", title: "Enable trace logging info", defaultValue: false,
@@ -155,8 +155,9 @@ void updated() {
             setOffLedIntensity(settings.prefOffLedIntensity as int)
         }
     } catch (Throwable t) {
-        log.error("updated() failed: ${t.message}", t)
+        logError("updated() failed: ${t.message}")
     }
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
 }
 
 void uninstalled() {
@@ -184,6 +185,7 @@ void configure() {
     {
         logError("unschedule() threw an exception ${e}")
     }
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
 
     List<String> cmds = []
 
@@ -390,9 +392,9 @@ void parse(String description) {
             logTrace("Unhandled ZHA global command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
         }
     } else if (description?.startsWith('enroll request')) {
-        logDebug "Received enroll request"
+        logRx "Received enroll request"
     } else if (description?.startsWith('zone status')  || description?.startsWith('zone report')) {
-        logDebug "Zone status: $description"
+        logRx "Zone status: $description"
     } else {
         logWarn("Unhandled unknown command ($description): cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     }
@@ -480,25 +482,25 @@ private void parseAttributeReport(Map descMap) {
                 case "0050": // on LED color
                     String color = constLedColorMap[descMap.value]
                     device.updateSetting('prefOnLedColor', [value: "${constLedColorPrefMap[color]}", type: 'enum'])
-                    logDebug("On LED color was set to $color => ${constLedColorPrefMap[color]} (${descMap.value})")
+                    logRx("On LED color was set to $color => ${constLedColorPrefMap[color]} (${descMap.value})")
                     return
 
                 case "0051": // off LED color
                     String color = constLedColorMap[descMap.value]
                     device.updateSetting('prefOffLedColor', [value: "${constLedColorPrefMap[color]}", type: 'enum'])
-                    logDebug("Off LED color was set to $color => ${constLedColorPrefMap[color]} (${descMap.value})")
+                    logRx("Off LED color was set to $color => ${constLedColorPrefMap[color]} (${descMap.value})")
                     return
 
                 case "0052": // on LED intensity
                     Integer ledIntensity = scaleHexValue(descMap.value)
                     device.updateSetting('prefOnLedIntensity', [value: ledIntensity, type: 'number'])
-                    logDebug("On LED intensity was set to $ledIntensity% (0x${descMap.value})")
+                    logRx("On LED intensity was set to $ledIntensity% (0x${descMap.value})")
                     return
 
                 case "0053": // off LED intensity
                     Integer ledIntensity = scaleHexValue(descMap.value)
                     device.updateSetting('prefOffLedIntensity', [value: ledIntensity, type: 'number'])
-                    logDebug("Off LED intensity was set to $ledIntensity% (0x${descMap.value})")
+                    logRx("Off LED intensity was set to $ledIntensity% (0x${descMap.value})")
                     return
 
                 case "0054": // action report (pushed/released/double tapped)
@@ -510,7 +512,7 @@ private void parseAttributeReport(Map descMap) {
                         map.type = "physical"
                         map.isStateChange = true
                     } else {
-                        logDebug("Unknown button action report ${descMap}")
+                        logRx("Unknown button action report ${descMap}")
                     }
                     break
 
@@ -529,11 +531,11 @@ private void parseAttributeReport(Map descMap) {
                 case "00A1": // current remaining timer seconds
                 case "0119": // connected load (in watts, always zero)
                 case "0200": // status (always zero)
-                    logDebug("Unhandled manufacturer-specific attribute report: ${descMap}")
+                    logRx("Unhandled manufacturer-specific attribute report: ${descMap}")
                     return
 
                 default:
-                    logDebug("Unknown manufacturer-specific attribute report: ${descMap}")
+                    logRx("Unknown manufacturer-specific attribute report: ${descMap}")
                     break
             }
             break
@@ -546,14 +548,14 @@ private void parseAttributeReport(Map descMap) {
         if (map.descriptionText) logInfo("${map.descriptionText}")
         sendEvent(map)
     } else {
-        logDebug("Unhandled attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
+        logRx("Unhandled attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
     }
 }
 
 // Private methods
 
 private void autoConfigure() {
-    logWarn "Detected driver version change"
+    logVer "Detected driver version change"
     configure()
 }
 
@@ -562,7 +564,6 @@ private void sendZigbeeCommands(List cmds) {
     sendHubCommand(hubAction)
 }
 
-@CompileStatic
 private double getEnergy(String value) {
     if (value != null) {
         Integer energy = Integer.parseInt(value, 16)
@@ -608,24 +609,26 @@ private Integer scaleHexValue(String hexValue, double scale = 100.0, double max 
     return Math.round(Integer.parseInt(hexValue, 16).toDouble() * scale / max) as Integer
 }
 
-// Logging helpers
-
-private void logTrace(String message) {
-    if (traceEnable) log.trace("${device} : ${message}")
+void logsOff() {
+    logWarn "debug and trace logging disabled"
+    device.updateSetting("debugEnable", [value: "false", type: "bool"])
+    device.updateSetting("traceEnable", [value: "false", type: "bool"])
 }
 
-private void logDebug(String message) {
-    if (debugEnable) log.debug("${device} : ${message}")
-}
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
 
-private void logInfo(String message) {
-    if (txtEnable) log.info("${device} : ${message}")
-}
+void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
-private void logWarn(String message) {
-    log.warn("${device} : ${message}")
-}
-
-private void logError(String message) {
-    log.error("${device} : ${message}")
-}
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }

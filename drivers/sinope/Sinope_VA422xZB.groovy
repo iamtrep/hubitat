@@ -33,7 +33,7 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.0.8"
+@Field static final String CODE_VERSION = "0.0.9"
 
 
 metadata {
@@ -72,7 +72,7 @@ metadata {
                 input(name: "prefAbnormalFlowAction", type: "enum", title: "Abnormal Flow Action", options: ["off": "No action", "alert": "Send alert", "close": "Close valve and send alert"], defaultValue: "off", required: false)
                 input(name: "prefAbnormalFlowDuration", type: "number", title: "Abnormal Flow Duration (s)", range: "900..86400", defaultValue: 3600)
             }
-            input(name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true)
+            input(name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true)
             input(name: "debugEnable", type: "bool", title: "Enable debug logging info", defaultValue: false, required: true, submitOnChange: true)
             if (debugEnable) {
                 input(name: "traceEnable", type: "bool", title: "Enable trace logging info (for development purposes)", defaultValue: false)
@@ -145,6 +145,7 @@ void configure() {
     catch (e) {
         logError("unschedule() threw an exception ${e}")
     }
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
 
     List<String> cmds = []
 
@@ -238,9 +239,9 @@ void parse(String description) {
         // ZigBee Home Automation (ZHA) global command
         //logTrace("Unhandled ZHA global command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     } else if (description?.startsWith('enroll request')) {
-        logDebug "Received enroll request"
+        logRx "Received enroll request"
     } else if (description?.startsWith('zone status')  || description?.startsWith('zone report')) {
-        logDebug "Zone status: $description"
+        logRx "Zone status: $description"
         parseIASMessage(description)
     } else {
         logWarn("Unhandled unknown command ($description): cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
@@ -250,7 +251,7 @@ void parse(String description) {
 
 private void parseIASMessage(String description) {
     Map zs = zigbee.parseZoneStatusChange(description)
-    logDebug("parseIASMessage zs = $zs")
+    logRx("parseIASMessage zs = $zs")
     // Firmware variants signal a leak on either alarm bit (some report 0x31 / bit 0, others 0x32 / bit 1), so react to both.
     if (zs.alarm1Set || zs.alarm2Set) {
         sendEvent(name: "water", value: 'wet', descriptionText: "Flow sensor leak detection: detected")
@@ -297,7 +298,7 @@ private void parseAttributeReport(Map descMap) {
                     map.name = "batteryAlarm"
                     map.value = constBatteryAlarmValues[descMap.value]
                     if (map.value == null) {
-                        logDebug("Unknown battery alarm value ${descMap.value}")
+                        logRx("Unknown battery alarm value ${descMap.value}")
                         map.value = Integer.parseInt(descMap.value, 16) > 0 ? "detected" : "clear"
                     }
                     map.descriptionText = "Battery alarm state is ${map.value}"
@@ -362,7 +363,7 @@ private void parseAttributeReport(Map descMap) {
                 case "0000":
                     // IAS enroll response
                     boolean enrolled = descMap.value == "01"
-                    logDebug("IAS Zone cluster enrolled = $enrolled")
+                    logRx("IAS Zone cluster enrolled = $enrolled")
                     return
 
                 case "0002":
@@ -416,15 +417,15 @@ private void parseAttributeReport(Map descMap) {
                 case "0251": // emergency power source
                 case "0252": // abnormal flow duration
                 case "0253": // abnormal flow action
-                    logDebug("Manufacturer specific attribute report: ${descMap}")
+                    logRx("Manufacturer specific attribute report: ${descMap}")
                     break
 
                 case "0240":
-                    logDebug("Pipe diameter attribute - ${descMap}")
+                    logRx("Pipe diameter attribute - ${descMap}")
                     break
 
                 default:
-                    logDebug("Unknown manufacturer specific attribute report: ${descMap}")
+                    logRx("Unknown manufacturer specific attribute report: ${descMap}")
                     break
             }
             return
@@ -437,7 +438,7 @@ private void parseAttributeReport(Map descMap) {
         if (map.descriptionText) logInfo("${map.descriptionText}")
         sendEvent(map)
     } else {
-        logDebug("Unhandled attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
+        logRx("Unhandled attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
     }
 }
 
@@ -470,7 +471,7 @@ void computeFlowRate(String volumeAttr) {
             // volumeDiff (mL) over sampleTimeDiff (ms) -> LPM, 2 decimal places
             computedFlowRate = Math.round(100 * (volumeDiff.floatValue() * 60f) / sampleTimeDiff) / 100f
         } else {
-            logDebug("positive but instantaneous volume change ?!?")
+            logRx("positive but instantaneous volume change ?!?")
             return
         }
     }
@@ -486,7 +487,7 @@ void computeFlowRate(String volumeAttr) {
 // Scheduled callbacks
 
 private void autoConfigure() {
-    logWarn "Detected driver version change"
+    logVer "Detected driver version change"
     configure()
 }
 
@@ -644,24 +645,26 @@ private List<String> configureFlowSensor(String flowSensorDiameter) {
     return cmds
 }
 
-// Logging helpers
-
-private void logTrace(String message) {
-    if (traceEnable) log.trace("${device} : ${message}")
+void logsOff() {
+    logWarn "debug and trace logging disabled"
+    device.updateSetting("debugEnable", [value: "false", type: "bool"])
+    device.updateSetting("traceEnable", [value: "false", type: "bool"])
 }
 
-private void logDebug(String message) {
-    if (debugEnable) log.debug("${device} : ${message}")
-}
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
 
-private void logInfo(String message) {
-    if (txtEnable) log.info("${device} : ${message}")
-}
+void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
-private void logWarn(String message) {
-    log.warn("${device} : ${message}")
-}
-
-private void logError(String message) {
-    log.error("${device} : ${message}")
-}
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }

@@ -16,7 +16,7 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.2.10"
+@Field static final String CODE_VERSION = "0.2.11"
 
 // Custom cluster for radar config and TVOC
 @Field static final int CLUSTER_RADAR = 0x042E
@@ -136,7 +136,7 @@ metadata {
             range: "${CT_MIN_KELVIN}..${CT_MAX_KELVIN}", required: false,
             description: "${CT_MIN_KELVIN}-${CT_MAX_KELVIN} K, blank = previous color"
 
-        input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
+        input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
         input name: "debugEnable", type: "bool", title: "Enable debug logging info", defaultValue: false, required: true, submitOnChange: true
         if (debugEnable) {
             input name: "traceEnable", type: "bool", title: "Enable trace logging info (for development purposes)", defaultValue: false
@@ -156,7 +156,7 @@ void updated() {
     logDebug "updated()"
     unschedule()
 
-    if (debugEnable) runIn(1800, "logsOff")
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
 
     List<String> cmds = buildPreferenceWrites()
     if (cmds) sendZigbeeCommands(cmds)
@@ -328,7 +328,7 @@ void parse(String description) {
     } else if (description?.startsWith("zone status") || description?.startsWith("zone report")) {
         logTrace "zone status/report: ${description}"
     } else {
-        logDebug "Unhandled message: ${descMap}"
+        logRx "Unhandled message: ${descMap}"
     }
 }
 
@@ -341,7 +341,7 @@ private void parseAttributeReport(Map descMap) {
         if (descMap.cluster == "042E" && descMap.status == "86") {
             logInfo "Radar config attribute 0x${descMap.attrId} not supported on this firmware — distance/sensitivity/threshold tuning needs a newer firmware"
         } else {
-            logDebug "No value: cluster=${descMap.cluster} attrId=${descMap.attrId} status=${descMap.status}"
+            logRx "No value: cluster=${descMap.cluster} attrId=${descMap.attrId} status=${descMap.status}"
         }
         return
     }
@@ -374,27 +374,27 @@ private void parseAttributeReport(Map descMap) {
                 case "0010":  // OnOffTransitionTime readback (tenths)
                     int tenths = Integer.parseInt(descMap.value, 16)
                     int seconds = Math.round(tenths / 10.0d) as int
-                    logDebug "OnOff transition readback: ${tenths / 10.0d}s → setting ${seconds}s"
+                    logRx "OnOff transition readback: ${tenths / 10.0d}s → setting ${seconds}s"
                     device.updateSetting("onTransitionTime", [value: seconds, type: "number"])
                     break
                 case "0011":  // OnLevel readback (1..254 or FF)
                     int raw = Integer.parseInt(descMap.value, 16)
                     if (raw != 0xFF) {
                         int pct = Math.max(1, Math.min(100, Math.round(raw / 2.54) as int))
-                        logDebug "OnLevel readback: ${pct}% (raw=${raw})"
+                        logRx "OnLevel readback: ${pct}% (raw=${raw})"
                         device.updateSetting("onLevel", [value: pct, type: "number"])
                     } else {
-                        logDebug "OnLevel readback: previous-level mode (FF)"
+                        logRx "OnLevel readback: previous-level mode (FF)"
                     }
                     break
                 case "4000":  // StartUpCurrentLevel readback
                     int raw = Integer.parseInt(descMap.value, 16)
                     if (raw != 0xFF) {
                         int pct = raw == 0 ? 0 : Math.max(1, Math.min(100, Math.round(raw / 2.54) as int))
-                        logDebug "Start-up level readback: ${pct}% (raw=${raw})"
+                        logRx "Start-up level readback: ${pct}% (raw=${raw})"
                         device.updateSetting("startUpLevel", [value: pct, type: "number"])
                     } else {
-                        logDebug "Start-up level readback: previous-level mode (FF)"
+                        logRx "Start-up level readback: previous-level mode (FF)"
                     }
                     break
             }
@@ -430,12 +430,12 @@ private void parseAttributeReport(Map descMap) {
             break
 
         default:
-            logDebug "Unhandled cluster ${descMap.cluster} attrId ${descMap.attrId} value ${descMap.value}"
+            logRx "Unhandled cluster ${descMap.cluster} attrId ${descMap.attrId} value ${descMap.value}"
             break
     }
 
     if (map?.name) {
-        logInfo "${map.descriptionText}"
+        if (txtEnable) logInfo "${map.descriptionText}"
         sendEvent(map)
     }
 }
@@ -467,7 +467,7 @@ private Map parseColorAttribute(Map descMap) {
 
         case "0007":  // ColorTemperatureMireds — 0x0000 and 0xFFFF are ZCL "undefined" sentinels
             if (rawValue <= 0 || rawValue == 0xFFFF) {
-                logDebug "ColorTemperatureMireds reads as sentinel ${rawValue} — device has no CT set"
+                logRx "ColorTemperatureMireds reads as sentinel ${rawValue} — device has no CT set"
                 break
             }
             int kelvin = miredsToKelvin(rawValue)
@@ -488,7 +488,7 @@ private Map parseColorAttribute(Map descMap) {
             break
 
         case "4010":  // StartUpColorTemperatureMireds — silent readback
-            logDebug "Start-up color temperature mireds readback: ${rawValue}"
+            logRx "Start-up color temperature mireds readback: ${rawValue}"
             break
     }
 
@@ -528,42 +528,42 @@ private Map parseRadarCluster(Map descMap) {
 
         case "F002":  // Detection distance readback (1-6)
             int distance = Integer.parseInt(descMap.value, 16)
-            logDebug "Detection distance readback: ${distance}"
+            logRx "Detection distance readback: ${distance}"
             device.updateSetting("detectDistance", [value: "${distance}", type: "enum"])
             break
 
         case "F003":  // Air quality threshold readback
             int threshold = Integer.parseInt(descMap.value, 16)
-            logDebug "Air quality threshold readback: ${threshold}"
+            logRx "Air quality threshold readback: ${threshold}"
             device.updateSetting("airQualityThreshold", [value: threshold, type: "number"])
             break
 
         case "F004":  // Motion sensitivity readback (0-20)
             int sens = Integer.parseInt(descMap.value, 16)
-            logDebug "Motion sensitivity readback: ${sens}"
+            logRx "Motion sensitivity readback: ${sens}"
             device.updateSetting("motionSensitivity", [value: sens, type: "number"])
             break
 
         case "F005":  // Presence sensitivity readback (0-20)
             int sens = Integer.parseInt(descMap.value, 16)
-            logDebug "Presence sensitivity readback: ${sens}"
+            logRx "Presence sensitivity readback: ${sens}"
             device.updateSetting("presenceSensitivity", [value: sens, type: "number"])
             break
 
         case "F006":  // Presence hold time readback (1-4)
             int hold = Integer.parseInt(descMap.value, 16)
-            logDebug "Presence hold time readback: ${hold}"
+            logRx "Presence hold time readback: ${hold}"
             device.updateSetting("presenceHoldTime", [value: "${hold}", type: "enum"])
             break
 
         case "F007":  // TVOC alert enable readback
             int enabled = Integer.parseInt(descMap.value, 16)
-            logDebug "TVOC alert enable readback: ${enabled}"
+            logRx "TVOC alert enable readback: ${enabled}"
             device.updateSetting("tvocAlertEnable", [value: enabled != 0, type: "bool"])
             break
 
         default:
-            logDebug "Unknown radar cluster attribute ${descMap.attrId} value ${descMap.value}"
+            logRx "Unknown radar cluster attribute ${descMap.attrId} value ${descMap.value}"
             break
     }
 
@@ -716,21 +716,21 @@ void setColorTemperature(Number temperature, Number level = null, Number duratio
 // Custom Commands
 
 void resetTVOCCalibration() {
-    logInfo "Resetting TVOC calibration baseline"
+    logCmd "Resetting TVOC calibration baseline"
     List<String> cmds = zigbee.writeAttribute(CLUSTER_RADAR, ATTR_TVOC_CALIBRATE, DataType.UINT8, 1, [mfgCode: MFG_CODE])
     sendZigbeeCommands(cmds)
 }
 
 // Zigbee OTA firmware check (cluster 0x0019).
 void updateFirmware() {
-    logInfo "Requesting Zigbee OTA firmware update"
+    logOta "Requesting Zigbee OTA firmware update"
     sendZigbeeCommands(zigbee.updateFirmware())
 }
 
 // Helpers
 
 private void autoConfigure() {
-    logWarn "Detected driver version change"
+    logVer "Detected driver version change"
     configure()
 }
 
@@ -790,24 +790,20 @@ private void sendColorTempName(int kelvin) {
               descriptionText: "${device.displayName} color is ${name}")
 }
 
-// Logging helpers
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
 
-private void logTrace(String message) {
-    if (traceEnable) log.trace("${device.displayName} : ${message}")
-}
+void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
-private void logDebug(String message) {
-    if (debugEnable) log.debug("${device.displayName} : ${message}")
-}
-
-private void logInfo(String message) {
-    if (txtEnable) log.info("${device.displayName} : ${message}")
-}
-
-private void logWarn(String message) {
-    log.warn("${device.displayName} : ${message}")
-}
-
-private void logError(String message) {
-    log.error("${device.displayName} : ${message}")
-}
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }

@@ -43,7 +43,7 @@ metadata {
         input "httpTimeout", "number", title: "HTTP Timeout (seconds)", description: "How long to wait for an HTTP response", defaultValue: DEFAULT_HTTP_TIMEOUT, range: "1..60", required: true
         input "slowThreshold", "number", title: "Slow Response Threshold (ms)", description: "Log a warning when response time exceeds this value (0 = disabled)", defaultValue: 0, range: "0..*", required: false
 
-        input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: false
+        input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
         input name: "debugEnable", type: "bool", title: "Enable debug logging info", defaultValue: false, required: true, submitOnChange: true
         if (debugEnable) {
             input name: "traceEnable", type: "bool", title: "Enable trace logging info (for development purposes)", defaultValue: false
@@ -55,7 +55,7 @@ import hubitat.helper.NetworkUtils
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.0.7"
+@Field static final String CODE_VERSION = "0.0.8"
 @Field static final int RESPONSE_HISTORY_SIZE = 21
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int INITIAL_PING_DELAY = 2
@@ -88,12 +88,12 @@ void initialize() {
 
     reschedulePing()
 
-    if (debugEnable) runIn(DEBUG_LOG_TIMEOUT, "logsOff")
+    if (debugEnable || traceEnable) runIn(DEBUG_LOG_TIMEOUT, "logsOff")
 }
 
 private void initState() {
     if (state.version != CODE_VERSION) {
-        log.warn("New driver version detected: ${CODE_VERSION} (previous: ${state.version})")
+        logVer "New driver version detected: ${CODE_VERSION} (previous: ${state.version})"
         unschedule("ping")
         state.version = CODE_VERSION
     }
@@ -114,25 +114,25 @@ void reschedulePing() {
     if (deviceIP || httpURL) {
         runIn(INITIAL_PING_DELAY, "ping")
     } else {
-        log.warn "No device IP or HTTP URL specified. Pings will not be scheduled."
+        logWarn "No device IP or HTTP URL specified. Pings will not be scheduled."
     }
 }
 
 void logsOff() {
-    logDebug("Debug logging turned off")
-    device.updateSetting("debugEnable", false)
-    device.updateSetting("traceEnable", false)
+    logWarn "Debug logging turned off"
+    device.updateSetting("debugEnable", [value: "false", type: "bool"])
+    device.updateSetting("traceEnable", [value: "false", type: "bool"])
 }
 
 void parse(String description) {
-    logDebug "parse: ${description}"
+    logRx "parse: ${description}"
 }
 
 void ping() {
     initState()
     // Ensure at least one of deviceIP or httpURL is set before attempting a ping
     if (!deviceIP && !httpURL) {
-        log.warn "No device IP or HTTP URL specified. Ping aborted."
+        logWarn "No device IP or HTTP URL specified. Ping aborted."
         return
     }
 
@@ -154,7 +154,7 @@ void ping() {
         updateDeviceStatus((deviceIP ? pingRT >= 0 : true) && (httpURL ? httpRT >= 0 : true))
         updateLastResponseTime(pingRT, httpRT)
     } catch (Exception e) {
-        logInfo "Error during ping: ${e}"
+        logError "Error during ping: ${e}"
     } finally {
         scheduleNextPing()
     }
@@ -164,7 +164,7 @@ long sendPingRequest() {
     try {
         NetworkUtils.PingData pingData = state.supportsPingTimeout ? NetworkUtils.ping(deviceIP,1,1) : NetworkUtils.ping(deviceIP, 1)
         boolean success = pingData.packetLoss != 100
-        logDebug "Ping $deviceIP result: ${success ? 'Success' : 'Failed'} rttAvg: ${pingData.rttAvg} ms"
+        logNet "Ping $deviceIP result: ${success ? 'Success' : 'Failed'} rttAvg: ${pingData.rttAvg} ms"
         if (success) {
             long elapsed = Math.round(pingData.rttAvg) as long
             recordResponseTime("ping", elapsed)
@@ -172,7 +172,7 @@ long sendPingRequest() {
         }
         return -1
     } catch (Exception e) {
-        logInfo "Error during ping: ${e}"
+        logError "Error during ping: ${e}"
         return -1
     }
 }
@@ -188,16 +188,16 @@ long sendHttpRequest() {
         httpGet(params) { response ->
             if (response.status >= 200 && response.status < 300) {
                 long elapsed = now() - timeBefore
-                logDebug "HTTP GET $httpURL successful in ${elapsed} ms"
+                logNet "HTTP GET $httpURL successful in ${elapsed} ms"
                 recordResponseTime("http", elapsed)
                 result = elapsed
             } else {
-                logInfo "HTTP GET $httpURL failed with status ${response.status}"
+                logWarn "HTTP GET $httpURL failed with status ${response.status}"
             }
         }
         return result
     } catch (Exception e) {
-        logInfo "Error sending HTTP request: ${e}"
+        logWarn "Error sending HTTP request: ${e}"
         return -1
     }
 }
@@ -226,13 +226,13 @@ void updateDeviceStatus(boolean online) {
     state.lastCheckin = new Date().format("yyyy-MM-dd HH:mm:ss")
 
     if (currentStatus != newStatus) {
-        logInfo "Device ${device.getLabel()} - tracking state change to ${newStatus}"
+        if (txtEnable) logInfo "tracking state change to ${newStatus}"
 
         if (online || state.currentRetryCount >= state.retryThreshold) {
             String newStatusDescription = "${device.getLabel()} status is ${newStatus}"
             sendEvent(name: "status", value: newStatus, descriptionText: newStatusDescription)
             sendEvent(name: "contact", value: contactValue, descriptionText: newStatusDescription)
-            logInfo "Device ${device.getLabel()} status changed from ${currentStatus} to ${newStatus}"
+            if (txtEnable) logInfo "status changed from ${currentStatus} to ${newStatus}"
 
             // Reset retry count so scheduleNextPing() uses normal interval
             if (online) {
@@ -253,12 +253,12 @@ private void scheduleNextPing() {
         // Retry mode: exponential backoff
         Integer backoffFactor = Math.min(Math.pow(2, state.currentRetryCount - 1), maxBackoffFactor).toInteger()
         delay = retryInterval * backoffFactor
-        logDebug "Scheduling retry ${state.currentRetryCount}/${maxRetries} in ${delay} seconds (backoff factor: ${backoffFactor})"
+        logSched "Scheduling retry ${state.currentRetryCount}/${maxRetries} in ${delay} seconds (backoff factor: ${backoffFactor})"
     } else {
         // Normal mode: pingInterval with ±7s jitter to desynchronize devices
         int intervalSecs = (pingInterval ?: 5) * 60
         delay = intervalSecs - 7 + new Random().nextInt(15)
-        logDebug "Scheduling next ping in ${delay} seconds"
+        logSched "Scheduling next ping in ${delay} seconds"
     }
     runIn(delay, "ping")
 }
@@ -318,7 +318,7 @@ private void recordResponseTime(String name, long elapsed) {
     state["${name}MedianResponseTime"] = median
 
     if (slowThreshold && (slowThreshold as int) > 0 && elapsed > (slowThreshold as int)) {
-        log.warn "${device} : Slow ${name} response: ${elapsed} ms (threshold: ${slowThreshold} ms, median: ${median} ms)"
+        logWarn "Slow ${name} response: ${elapsed} ms (threshold: ${slowThreshold} ms, median: ${median} ms)"
     }
 }
 
@@ -334,24 +334,20 @@ private long computeMedian(List<Long> values) {
 }
 
 
-// Logging helpers
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
 
-private logTrace(message) {
-    if (traceEnable) log.trace("${device} : ${message}")
-}
+void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
-private logDebug(message) {
-    if (debugEnable) log.debug("${device} : ${message}")
-}
-
-private logInfo(message) {
-    if (txtEnable) log.info("${device} : ${message}")
-}
-
-private logWarn(message) {
-    log.warn("${device} : ${message}")
-}
-
-private logError(message) {
-    log.error("${device} : ${message}")
-}
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }

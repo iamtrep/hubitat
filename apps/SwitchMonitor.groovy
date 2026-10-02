@@ -54,7 +54,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Switch Monitor"
-@Field static final String CODE_VERSION = "3.0.1"
+@Field static final String CODE_VERSION = "3.0.2"
 
 @Field static final Integer DEFAULT_GRACE_MINUTES = 5
 @Field static final Integer DEFAULT_GRACE_SECONDS = 0
@@ -151,8 +151,11 @@ Map mainPage() {
         }
 
         section("Logging", hideable: true, hidden: true) {
-            input "enableDebug", "bool", title: "Enable debug logging", defaultValue: false
-            input "enableTrace", "bool", title: "Enable trace logging (verbose)", defaultValue: false
+            input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
+            input "enableDebug", "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
+            if (settings.enableDebug) {
+                input "enableTrace", "bool", title: "Enable trace logging (verbose)", defaultValue: false
+            }
         }
     }
 }
@@ -267,7 +270,7 @@ void appButtonHandler(String btn) {
         String targetState = parts[1]
         DeviceWrapper dev = (DeviceWrapper) getAllMonitoredSwitches().find { it.id.toString() == deviceId }
         if (dev) {
-            log.info "Manual command: turning ${targetState} ${dev.displayName}"
+            logCmd "Manual command: turning ${targetState} ${dev.displayName}"
             targetState == "on" ? dev.on() : dev.off()
         }
     }
@@ -300,6 +303,7 @@ void updated() {
     unsubscribe()
     unschedule()
     initialize()
+    if (settings.enableDebug || settings.enableTrace) runIn(1800, "logsOff")
 }
 
 void uninstalled() {
@@ -386,7 +390,7 @@ void initialize() {
 // ── Event Handlers ───────────────────────────────────────────────────────────
 
 void systemStartHandler(evt) {
-    log.info "Hub startup detected — refreshing monitored switches"
+    logInfo "Hub startup detected — refreshing monitored switches"
     List allSwitches = getAllMonitoredSwitches()
     List refreshable = allSwitches.findAll { it.hasCommand("refresh") }
     if (refreshable) {
@@ -411,7 +415,7 @@ void switchDeviatedHandler(evt) {
     groups.each { Integer groupNum ->
         String groupLabel = getGroupLabel(groupNum)
         String targetState = getGroupTargetState(groupNum)
-        log.info "[${groupLabel}] ${evt.displayName} turned ${evt.value} (must stay ${targetState})"
+        logInfo "[${groupLabel}] ${evt.displayName} turned ${evt.value} (must stay ${targetState})"
 
         if (state.powerOutage && targetState == "on") {
             logDebug "[${groupLabel}] Power outage active — skipping recovery scheduling"
@@ -419,7 +423,7 @@ void switchDeviatedHandler(evt) {
         }
 
         int delaySecs = getGroupGracePeriodSeconds(groupNum)
-        logDebug "[${groupLabel}] Scheduling recovery check in ${getGroupGracePeriodLabel(groupNum)}"
+        logSched "[${groupLabel}] Scheduling recovery check in ${getGroupGracePeriodLabel(groupNum)}"
         runIn(delaySecs, "startRecovery", [data: [groupNum: groupNum], overwrite: false])
     }
 }
@@ -432,7 +436,7 @@ void switchRestoredHandler(evt) {
 
     groups.each { Integer groupNum ->
         String groupLabel = getGroupLabel(groupNum)
-        log.warn "[${groupLabel}] ${evt.displayName} turned back ${evt.value}"
+        logWarn "[${groupLabel}] ${evt.displayName} turned back ${evt.value}"
 
         List devices = getGroupDevices(groupNum)
         String targetState = getGroupTargetState(groupNum)
@@ -441,7 +445,7 @@ void switchRestoredHandler(evt) {
 
         Map gs = getGroupState(groupNum)
         if (gs.recoveryActive) {
-            log.info "[${groupLabel}] All switches are back ${targetState} — recovery complete"
+            logInfo "[${groupLabel}] All switches are back ${targetState} — recovery complete"
         }
         gs.recoveryActive = false
         gs.retryCount = 0
@@ -472,7 +476,7 @@ void outageIndicatorPowerHandler(evt) {
 private void powerOutageStarted() {
     if (state.powerOutage) return
     state.powerOutage = true
-    log.warn "Power outage detected — pausing stay-on recovery and load monitoring"
+    logWarn "Power outage detected — pausing stay-on recovery and load monitoring"
 
     // Mark all must-stay-on groups as not recovering and clear load state
     List<Integer> groups = (List<Integer>)(state.groups ?: [])
@@ -493,7 +497,7 @@ private void powerOutageStarted() {
 private void powerOutageEnded() {
     if (!state.powerOutage) return
     state.powerOutage = false
-    log.warn "Power restored — refreshing and re-evaluating monitored switches"
+    logWarn "Power restored — refreshing and re-evaluating monitored switches"
 
     List allSwitches = getAllMonitoredSwitches()
     List refreshable = allSwitches.findAll { it.hasCommand("refresh") }
@@ -532,7 +536,7 @@ void startRecovery(Map data) {
     }
 
     String names = actionable.collect { it.displayName }.join(", ")
-    log.info "[${groupLabel}] ${names} stayed ${targetState == 'on' ? 'off' : 'on'} for ${getGroupGracePeriodLabel(groupNum)} — starting recovery"
+    logInfo "[${groupLabel}] ${names} stayed ${targetState == 'on' ? 'off' : 'on'} for ${getGroupGracePeriodLabel(groupNum)} — starting recovery"
     if (getBoolGroupSetting(groupNum, "notifyOnRecovery", true)) {
         sendGroupNotification(groupNum, "${names} turned ${targetState == 'on' ? 'off' : 'on'} — turning back ${targetState}")
     }
@@ -561,7 +565,7 @@ void attemptRecovery(Map data) {
     List devices = getGroupDevices(groupNum)
     List actionable = getActionableSwitches(devices, targetState)
     if (actionable.isEmpty()) {
-        log.info "[${groupLabel}] All switches are ${targetState} — recovery complete"
+        logInfo "[${groupLabel}] All switches are ${targetState} — recovery complete"
         Map gs = getGroupState(groupNum)
         gs.recoveryActive = false
         gs.retryCount = 0
@@ -579,7 +583,7 @@ void attemptRecovery(Map data) {
     if (max > 0 && count > max) {
         String names = actionable.collect { it.displayName }.join(", ")
         String msg = "Giving up on turning ${targetState} ${names} after ${max} attempt(s)"
-        log.warn "[${groupLabel}] ${msg}"
+        logError "[${groupLabel}] ${msg}"
         if (getBoolGroupSetting(groupNum, "notifyOnFailure", true)) {
             sendGroupNotification(groupNum, msg)
         }
@@ -606,7 +610,7 @@ void verifyRecovery(Map data) {
     List devices = getGroupDevices(groupNum)
     List actionable = getActionableSwitches(devices, targetState)
     if (actionable.isEmpty()) {
-        log.info "[${groupLabel}] All switches verified ${targetState} — recovery complete"
+        logInfo "[${groupLabel}] All switches verified ${targetState} — recovery complete"
         Map gs = getGroupState(groupNum)
         gs.recoveryActive = false
         gs.retryCount = 0
@@ -616,7 +620,7 @@ void verifyRecovery(Map data) {
 
     Map gs = getGroupState(groupNum)
     String names = actionable.collect { it.displayName }.join(", ")
-    log.warn "[${groupLabel}] ${names} did not turn back ${targetState} (attempt ${gs.retryCount})"
+    logWarn "[${groupLabel}] ${names} did not turn back ${targetState} (attempt ${gs.retryCount})"
     if (getBoolGroupSetting(groupNum, "notifyOnFailure", true)) {
         sendGroupNotification(groupNum, "${names} did not turn back ${targetState}!")
     }
@@ -746,7 +750,7 @@ void checkLowLoad(Map data) {
 
     if (lowNames) {
         String msg = "Low load detected: ${lowNames.join(', ')}"
-        log.warn "[${groupLabel}] ${msg}"
+        logWarn "[${groupLabel}] ${msg}"
         if (getBoolGroupSetting(groupNum, "notifyOnLowLoad", true)) {
             sendGroupNotification(groupNum, msg)
         }
@@ -780,7 +784,7 @@ private void evaluateGroups(String context) {
     }
 
     if (!anyActionable) {
-        log.info "${context}: all monitored switches are in their target state"
+        logInfo "${context}: all monitored switches are in their target state"
     }
 }
 
@@ -818,7 +822,7 @@ private boolean evaluateGroupSwitches(int groupNum, List devices, String targetS
     if (immediate) {
         String names = immediate.collect { it.displayName }.join(", ")
         String action = (targetState == "on") ? "turning back on" : "turning back off"
-        log.warn "[${groupLabel}] ${context}: ${names} ${wrongState} past grace period — starting recovery"
+        logWarn "[${groupLabel}] ${context}: ${names} ${wrongState} past grace period — starting recovery"
         if (getBoolGroupSetting(groupNum, "notifyOnRecovery", true)) {
             sendGroupNotification(groupNum, "${names} found ${wrongState} — ${action}")
         }
@@ -847,7 +851,7 @@ private void migrateFromV2IfNeeded() {
         return
     }
 
-    log.info "Migrating from v2 to v3 multi-group format"
+    logCfg "Migrating from v2 to v3 multi-group format"
     List<Integer> groups = []
     int nextGroup = 1
 
@@ -894,7 +898,7 @@ private void migrateFromV2IfNeeded() {
     state.remove("retryCountOff")
     state.remove("lowLoadDevices")
 
-    log.info "Migration complete: created ${groups.size()} group(s)"
+    logCfg "Migration complete: created ${groups.size()} group(s)"
 }
 
 private void migrateTimingSettings(int g) {
@@ -1178,10 +1182,25 @@ private static String formatDuration(long ms) {
     return "${days}d ${hours % 24}h"
 }
 
-private void logDebug(String msg) {
-    if (enableDebug) log.debug msg
+void logsOff() {
+    app.updateSetting("enableDebug", [value: "false", type: "bool"])
+    app.updateSetting("enableTrace", [value: "false", type: "bool"])
+    logWarn "debug and trace logging disabled"
 }
 
-private void logTrace(String msg) {
-    if (enableTrace) log.trace msg
-}
+// ── Logging (app) ─────────────────────────────────────────────────────
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${app.getLabel()}: " }
+
+void logEvt  (String m) { if (settings.enableDebug) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (settings.enableDebug) log.debug logp('🌐') + m }
+void logSched(String m) { if (settings.enableDebug) log.debug logp('⏰') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (settings.enableTrace) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (settings.enableDebug) log.debug "${app.getLabel()}: ${m}" }

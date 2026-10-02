@@ -35,7 +35,7 @@ definition(
 
 // --- Constants ---
 
-@Field static final String CODE_VERSION = "1.0.3"
+@Field static final String CODE_VERSION = "1.0.4"
 
 @Field static final String OAUTH_BASE_URL = "https://api.oauth.blink.com"
 @Field static final String CLIENT_ID = "ios"
@@ -122,7 +122,7 @@ Map mainPage() {
         }
         section(hideable: true, hidden: true, "⚙️ Settings") {
             label title: "Assign a name", required: false
-            input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
+            input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
             input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
             if (debugEnable) {
                 input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
@@ -244,13 +244,13 @@ void updated() {
     logDebug "updated"
     unsubscribe()
     unschedule()
-    if (debugEnable) runIn(DEBUG_LOG_TIMEOUT, "turnOffDebugLogging")
+    if (debugEnable || traceEnable) runIn(DEBUG_LOG_TIMEOUT, "turnOffDebugLogging")
     initialize()
     pushNotificationFlagChanges()
 }
 
 void uninstalled() {
-    logInfo "uninstalled"
+    logCfg "uninstalled"
     unschedule()
     getChildDevices()?.each { ChildDeviceWrapper c ->
         try { deleteChildDevice(c.deviceNetworkId) } catch (Exception ignored) {}
@@ -260,12 +260,12 @@ void uninstalled() {
 void initialize() {
     logDebug "initialize"
     if (state.version != CODE_VERSION) {
-        logWarn "version change: ${state.version} -> ${CODE_VERSION}"
+        logVer "version change: ${state.version} -> ${CODE_VERSION}"
         state.version = CODE_VERSION
     }
     subscribe(location, "systemStart", "systemStartHandler")
     if (!isAuthenticated()) {
-        logDebug "not authenticated yet, skipping schedules"
+        logSched "not authenticated yet, skipping schedules"
         return
     }
     if (state.tokenExpiry && now() >= ((long) state.tokenExpiry)) {
@@ -304,7 +304,7 @@ private void schedulePolling() {
         int minutes = rate / 60 as int
         cron = "${offset} */${minutes} * ? * *"
     }
-    logDebug "scheduling poll: ${cron}"
+    logSched "scheduling poll: ${cron}"
     schedule(cron, "pollHomescreen")
 }
 
@@ -338,7 +338,7 @@ private void removeOrphans() {
         try { deleteChildDevice(dni) } catch (Exception e) { logError "delete ${dni}: ${e.message}" }
     }
     atomicState.orphanedDevices = []
-    logInfo "removed ${orphans.size()} orphaned devices"
+    logCfg "removed ${orphans.size()} orphaned devices"
 }
 
 // --- OAuth: Steps 1-3 (CSRF + Credentials) ---
@@ -357,20 +357,20 @@ void startOAuthFlow() {
     state.cookieJar = [:]
 
     String authorizeUrl = buildAuthorizeUrl((String) pkce.challenge)
-    logDebug "step 1: GET authorize"
+    logNet "step 1: GET authorize"
     httpGetNoRedirect(authorizeUrl, headersHtmlGet())
-    logDebug "step 1 cookies: ${state.cookieJar?.keySet()}"
+    logNet "step 1 cookies: ${state.cookieJar?.keySet()}"
 
-    logDebug "step 2: GET signin"
+    logNet "step 2: GET signin"
     String csrfToken = null
     String step2Html = httpGetNoRedirect("${OAUTH_BASE_URL}/oauth/v2/signin", headersHtmlGetWithCookie())
     if (step2Html) {
         csrfToken = extractCsrfFromHtml(step2Html)
-        logDebug "step 2 CSRF from HTML: ${csrfToken ? 'found' : 'not found'}"
+        logNet "step 2 CSRF from HTML: ${csrfToken ? 'found' : 'not found'}"
     }
     if (!csrfToken && state.cookieJar?.containsKey("csrf-protection")) {
         csrfToken = ((Map) state.cookieJar)["csrf-protection"] as String
-        logDebug "using csrf-protection cookie as CSRF token"
+        logNet "using csrf-protection cookie as CSRF token"
     }
     if (!csrfToken) {
         state.authError = "Failed to extract CSRF token"
@@ -379,7 +379,7 @@ void startOAuthFlow() {
     }
     state.csrfToken = csrfToken
 
-    logDebug "step 3: POST credentials"
+    logNet "step 3: POST credentials"
     String postBody = toQueryString([
         username    : blinkEmail,
         password    : blinkPassword,
@@ -395,7 +395,7 @@ void startOAuthFlow() {
             timeout    : HTTP_TIMEOUT
         ]) { resp ->
             captureCookies(resp)
-            logDebug "step 3 status: ${resp.status}"
+            logNet "step 3 status: ${resp.status}"
             if (resp.status == 412) {
                 logInfo "2FA required (HTTP 412)"
                 state.needs2fa = true
@@ -418,7 +418,7 @@ void startOAuthFlow() {
             }
         }
     } catch (groovyx.net.http.HttpResponseException e) {
-        logDebug "step 3 exception: HTTP ${e.statusCode}"
+        logNet "step 3 exception: HTTP ${e.statusCode}"
         if (e.statusCode == 412) {
             logInfo "2FA required (HTTP 412)"
             state.needs2fa = true
@@ -466,7 +466,7 @@ void verifyPin() {
             timeout    : HTTP_TIMEOUT
         ]) { resp ->
             captureCookies(resp)
-            logDebug "step 4 status: ${resp.status}"
+            logNet "step 4 status: ${resp.status}"
             String body = readResponseBody(resp)
             logTrace "step 4 response: ${body?.take(500)}"
             if (resp.status == 200 || resp.status == 201 || body?.contains("auth-completed")) {
@@ -501,7 +501,7 @@ void verifyPin() {
 }
 
 void runStep5() {
-    logDebug "step 5: GET authorize (with session cookies)"
+    logNet "step 5: GET authorize (with session cookies)"
     String authorizeUrl = "${OAUTH_BASE_URL}/oauth/v2/authorize"
     String authCode = null
 
@@ -515,18 +515,18 @@ void runStep5() {
         ]) { resp ->
             captureCookies(resp)
             String location = getRedirectLocation(resp)
-            logDebug "step 5 Location: ${location?.take(200)}"
+            logNet "step 5 Location: ${location?.take(200)}"
             if (location) authCode = extractCodeFromUrl(location)
         }
     } catch (groovyx.net.http.HttpResponseException e) {
-        logDebug "step 5 exception status: ${e.statusCode}"
+        logNet "step 5 exception status: ${e.statusCode}"
         try {
             String locValue = getRedirectLocation(e.response)
             if (locValue) authCode = extractCodeFromUrl(locValue)
             captureCookies(e.response)
         } catch (Exception ignored) {}
     } catch (Exception e) {
-        logDebug "step 5 non-HTTP exception: ${e.message}, retrying with redirects"
+        logNet "step 5 non-HTTP exception: ${e.message}, retrying with redirects"
         try {
             httpGet([
                 uri        : authorizeUrl,
@@ -554,7 +554,7 @@ void runStep5() {
 }
 
 void exchangeCodeForTokens(String code) {
-    logDebug "step 6: POST token exchange"
+    logNet "step 6: POST token exchange"
 
     String postBody = toQueryString([
         app_brand    : APP_BRAND,
@@ -601,7 +601,7 @@ void exchangeCodeForTokens(String code) {
 }
 
 void refreshAccessToken() {
-    logDebug "refreshing access token"
+    logNet "refreshing access token"
     if (!state.refreshToken) {
         logError "no refresh token available"
         return
@@ -650,14 +650,14 @@ void scheduleTokenRefresh() {
     if (!state.tokenExpiry) return
     long refreshAt = ((long) state.tokenExpiry) - TOKEN_REFRESH_BUFFER_MS
     long delaySecs = Math.max(60L, (long) ((refreshAt - now()) / 1000L))
-    logDebug "scheduling token refresh in ${delaySecs}s"
+    logSched "scheduling token refresh in ${delaySecs}s"
     runIn(delaySecs, "refreshAccessToken")
 }
 
 private void ensureValidToken() {
     if (!state.accessToken) return
     if (state.tokenExpiry && now() >= (((long) state.tokenExpiry) - TOKEN_REFRESH_BUFFER_MS)) {
-        logDebug "token near expiry, refreshing inline"
+        logNet "token near expiry, refreshing inline"
         refreshAccessToken()
     }
 }
@@ -665,7 +665,7 @@ private void ensureValidToken() {
 // --- Tier & Account ---
 
 void fetchTierInfo() {
-    logDebug "fetching tier info"
+    logNet "fetching tier info"
     String url = "https://rest-prod.immedia-semi.com/api/v1/users/tier_info"
     // blinkpy's tier_info call shape: android UA + form-urlencoded Content-Type.
     Map headers = [
@@ -693,11 +693,11 @@ void fetchTierInfo() {
 
 void pollHomescreen() {
     if (!isAuthenticated()) {
-        logDebug "pollHomescreen: not authenticated"
+        logSched "pollHomescreen: not authenticated"
         return
     }
     if (!state.accountId) {
-        logDebug "pollHomescreen: no accountId, fetching tier info first"
+        logNet "pollHomescreen: no accountId, fetching tier info first"
         fetchTierInfo()
         if (!state.accountId) return
     }
@@ -812,7 +812,7 @@ private void syncChildren(List<Map> networks, List<Map> cameras, List<Map> syncM
         ChildDeviceWrapper child = getChildDevice(dni)
         if (!child) {
             String label = (n.name ?: "Blink Network ${netId}") as String
-            logInfo "creating child: ${DRIVER_NETWORK} '${label}' (${dni})"
+            logCfg "creating child: ${DRIVER_NETWORK} '${label}' (${dni})"
             try {
                 child = addChildDevice("iamtrep", DRIVER_NETWORK, dni, [name: DRIVER_NETWORK, label: label])
             } catch (Exception e) {
@@ -833,7 +833,7 @@ private void syncChildren(List<Map> networks, List<Map> cameras, List<Map> syncM
         ChildDeviceWrapper child = getChildDevice(dni)
         if (!child) {
             String label = (c.name ?: "Blink Camera ${camId}") as String
-            logInfo "creating child: ${DRIVER_CAMERA} '${label}' (${dni})"
+            logCfg "creating child: ${DRIVER_CAMERA} '${label}' (${dni})"
             try {
                 child = addChildDevice("iamtrep", DRIVER_CAMERA, dni, [name: DRIVER_CAMERA, label: label])
             } catch (Exception e) {
@@ -1036,13 +1036,13 @@ private void updateHomescreenSummary(List<Map> networks, List<Map> cameras, List
 @Field static final int CMD_RETRY_CAMERA  = 30  // 30 × 2s = 60s
 
 void arm(String networkId) {
-    logInfo "arming network ${networkId}"
+    logCmd "arming network ${networkId}"
     String path = "/api/v1/accounts/${state.accountId}/networks/${networkId}/state/arm"
     blinkPostAsync(path, "commandPostResponse", [label: "arm ${networkId}", maxAttempts: CMD_RETRY_NETWORK])
 }
 
 void disarm(String networkId) {
-    logInfo "disarming network ${networkId}"
+    logCmd "disarming network ${networkId}"
     String path = "/api/v1/accounts/${state.accountId}/networks/${networkId}/state/disarm"
     blinkPostAsync(path, "commandPostResponse", [label: "disarm ${networkId}", maxAttempts: CMD_RETRY_NETWORK])
 }
@@ -1109,7 +1109,7 @@ void commandPostResponse(resp, data) {
         Object cmdIdObj = json?.id
         String netId = (json?.network_id ?: json?.networkId)?.toString()
         if (cmdIdObj == null || !netId) {
-            logInfo "${label} accepted (no command id); refreshing in 3s"
+            logCmd "${label} accepted (no command id); refreshing in 3s"
             runIn(3, "pollHomescreen")
             return
         }
@@ -1158,7 +1158,7 @@ void commandStatusResponse(resp, data) {
     }
 
     if (complete && statusCode == 908) {
-        logInfo "${label} confirmed (${attempt} ${attempt == 1 ? 'check' : 'checks'})"
+        logCmd "${label} confirmed (${attempt} ${attempt == 1 ? 'check' : 'checks'})"
         pollHomescreen()
         return
     }
@@ -1225,7 +1225,7 @@ void cameraSignalsResponse(resp, data) {
         // here. Use this to override the uncalibrated homescreen temperature.
         if (json.temp instanceof Number) {
             child.handleCameraUpdate([temperature: json.temp])
-            logDebug "signals ${data.cameraId}: calibrated temp=${json.temp}"
+            logNet "signals ${data.cameraId}: calibrated temp=${json.temp}"
         }
     } catch (Exception e) {
         logError "cameraSignalsResponse: ${e.message}"
@@ -1357,7 +1357,7 @@ void recentClipsResponse(resp, data) {
 void fetchNotificationFlags() {
     if (!isAuthenticated() || !state.accountId || !state.tier) return
     String url = "https://rest-${state.tier}.immedia-semi.com/api/v1/accounts/${state.accountId}/notifications/configuration"
-    logDebug "fetching notification flags"
+    logNet "fetching notification flags"
     asynchttpGet("notificationFlagsResponse", [
         uri        : url,
         headers    : bearerHeaders(),
@@ -1424,7 +1424,7 @@ private void pushNotificationFlagChanges() {
 private void setNotificationFlags(Map changes) {
     String url = "https://rest-${state.tier}.immedia-semi.com/api/v1/accounts/${state.accountId}/notifications/configuration"
     String body = groovy.json.JsonOutput.toJson([notifications: changes])
-    logInfo "updating notification flags: ${changes.keySet().join(', ')}"
+    logCmd "updating notification flags: ${changes.keySet().join(', ')}"
     asynchttpPost("notificationUpdateResponse", [
         uri               : url,
         headers           : bearerHeaders(),
@@ -1450,7 +1450,7 @@ void notificationUpdateResponse(resp, data) {
         Map flags = (atomicState.notificationFlags ?: [:]) as Map
         flags.putAll(changes)
         atomicState.notificationFlags = flags
-        logInfo "notification flags updated: ${changes.keySet().join(', ')}"
+        logCmd "notification flags updated: ${changes.keySet().join(', ')}"
     } catch (Exception e) {
         logError "notificationUpdateResponse: ${e.message}"
     }
@@ -1648,7 +1648,7 @@ private String httpGetNoRedirect(String url, Map headers) {
         try { captureCookies(e.response) } catch (Exception ignored) {}
         body = readResponseBody(e.response) ?: ""
     } catch (Exception e) {
-        logDebug "httpGetNoRedirect: non-HTTP exception: ${e.message}, falling back"
+        logNet "httpGetNoRedirect: non-HTTP exception: ${e.message}, falling back"
         try {
             httpGet([
                 uri        : url,
@@ -1779,24 +1779,19 @@ private String getRedirectLocation(response) {
     }
 }
 
-// --- Logging ---
+// ── Logging (app) ─────────────────────────────────────────────────────
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${app.getLabel()}: " }
 
-private void logTrace(String message) {
-    if (traceEnable) log.trace "${app.label ?: 'Blink Manager'} : ${message}"
-}
+void logEvt  (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
-private void logDebug(String message) {
-    if (debugEnable) log.debug "${app.label ?: 'Blink Manager'} : ${message}"
-}
-
-private void logInfo(String message) {
-    if (txtEnable) log.info "${app.label ?: 'Blink Manager'} : ${message}"
-}
-
-private void logWarn(String message) {
-    log.warn "${app.label ?: 'Blink Manager'} : ${message}"
-}
-
-private void logError(String message) {
-    log.error "${app.label ?: 'Blink Manager'} : ${message}"
-}
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${app.getLabel()}: ${m}" }

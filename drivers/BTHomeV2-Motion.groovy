@@ -20,7 +20,11 @@ metadata {
         attribute "rssi", "number"
     }
     preferences {
-        input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: true
+        input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
+        input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: true, submitOnChange: true
+        if (logEnable) {
+            input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
+        }
     }
 }
 
@@ -35,15 +39,15 @@ void parse(Map data) {
 }
 
 void installed() {
-    // runIn(1800, logsOff)
+    if (logEnable || traceEnable) runIn(1800, "logsOff")
 }
 
 void updated() {
-    // runIn(1800, logsOff)
+    if (logEnable || traceEnable) runIn(1800, "logsOff")
 }
 
 void deviceTypeUpdated() {
-    if (logEnable) log.debug "driver change detected"
+    logDebug "driver change detected"
 }
 
 void uninstalled() {
@@ -54,9 +58,10 @@ void initialize() {
     // nothing for now
 }
 
-void logsOff(){
-    log.warn "debug logging disabled..."
-    device.updateSetting("logEnable",[value:"false",type:"bool"])
+void logsOff() {
+    logWarn "debug and trace logging disabled"
+    device.updateSetting("logEnable", [value: "false", type: "bool"])
+    device.updateSetting("traceEnable", [value: "false", type: "bool"])
 }
 
 Map getSensorData(Map data, String sensorType) {
@@ -106,6 +111,7 @@ boolean hasBinaryValue(Map data, String valueName) {
 void processBinaryValue(Map data, String valueName, String attributeName, String trueState, String falseState) {
     boolean value = getBinaryValue(data, valueName)
     String hubitatState = value ? trueState : falseState
+    if (txtEnable && device.currentValue(attributeName) != hubitatState) logInfo "${attributeName} is now ${hubitatState}"
     sendEvent(name: attributeName, value: hubitatState, descriptionText: "${device.displayName} is now ${hubitatState}")
 }
 
@@ -162,8 +168,7 @@ boolean isDouble(obj) {
 }
 
 void parseBatteryAndRSSI(Map data) {
-    if (logEnable)
-        log.debug "parse: ${data}"
+    logRx "parse: ${data}"
 
     processIntegerValue(data, "battery", "battery", "%")
 
@@ -174,3 +179,21 @@ void parseBatteryAndRSSI(Map data) {
         state.lastRssiReport = now
     }
 }
+
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
+
+void logRx   (String m) { if (logEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (logEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (logEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (logEnable) log.debug "${device.displayName}: ${m}" }

@@ -25,7 +25,7 @@ instead of a category glyph.
 | `logNet`   | 🌐    | cloud/IO: http, websocket, connect, token, authorize  | debug |
 | `logSched` | ⏰    | scheduling, polling, timers                           | debug |
 | `logOta`   | 📦    | ota, firmware (drivers only)                          | info  |
-| `logVer`   | 🏷️    | driver/app version change or new-version notice       | info  |
+| `logVer`   | 🏷️    | driver/app version change or new-version notice       | warn  |
 | `logWarn`  | ⚠️    | unexpected / unhandled / invalid / filtered / degraded| warn  |
 | `logError` | 🛑    | failure — HTTP failed, could-not, exception           | error |
 | `logTrace` | 🔬    | raw firehose (gated)                                  | trace |
@@ -49,17 +49,17 @@ gates:
 private String logp(String e) { "${e} ${device.displayName}: " }
 
 void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
-void logCmd  (String m) { log.info  logp('⬆️') + m }
-void logCfg  (String m) { log.info  logp('🔧') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
 void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
 void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
-void logOta  (String m) { log.info  logp('📦') + m }
-void logVer  (String m) { log.info  logp('🏷️') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
 void logWarn (String m) { log.warn  logp('⚠️') + m }
 void logError(String m) { log.error logp('🛑') + m }
 void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
-void logInfo (String m) { log.info  "${device.displayName}: ${m}" }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
 void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }
 ```
 
@@ -74,21 +74,27 @@ events), no `logOta`.
 private String logp(String e) { "${e} ${app.getLabel()}: " }
 
 void logEvt  (String m) { if (debugEnable) log.debug logp('⬇️') + m }
-void logCmd  (String m) { log.info  logp('⬆️') + m }
-void logCfg  (String m) { log.info  logp('🔧') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
 void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
 void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
-void logVer  (String m) { log.info  logp('🏷️') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
 void logWarn (String m) { log.warn  logp('⚠️') + m }
 void logError(String m) { log.error logp('🛑') + m }
 void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
-void logInfo (String m) { log.info  "${app.getLabel()}: ${m}" }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
 void logDebug(String m) { if (debugEnable) log.debug "${app.getLabel()}: ${m}" }
 ```
 
-Substitute the file's existing gate variables (`debugEnable`/`traceEnable`,
-`enableDebug`, `logLevel`, …) — do not rename an existing gate. Keep every
-helper even if the file emits none of that category. Leave `txtEnable`-gated
-descriptionText event logging as `logInfo` (emoji-less): it is user-facing event
-text, not operational scanning.
+Substitute the file's existing gate variables (`txtEnable`/`debugEnable`/`traceEnable`,
+`enableDebug`, …) — do not rename an existing gate. Keep every
+helper even if the file emits none of that category.
+
+`txtEnable` ("Enable info logging") gates every info-level helper: `logInfo`,
+`logCmd`, `logCfg`, `logOta`. An unset value counts as on, matching
+the pref's default. `logVer`, `logWarn` and `logError` always log; a version
+notice fires once per release and should be seen whatever the info setting.
+The debug auto-off message in `logsOff` and one-time migration notices also
+use `logWarn` for the same reason. Event descriptionText
+goes through `logInfo` (emoji-less) with no extra check at the call site.

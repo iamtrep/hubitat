@@ -88,7 +88,7 @@ metadata {
                   required: true
         }
         input name: "pollInterval", type: "number", title: "Polling interval (minutes)", description: "How often to refresh thermostat state (1-30 minutes)", range: "1..30", defaultValue: 5, required: true
-        input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
+        input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
         input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
         if (debugEnable) {
             input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
@@ -96,7 +96,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.0.6"
+@Field static final String CODE_VERSION = "0.0.7"
 
 // OAuth and API endpoints
 @Field static final String ECOBEE_API_BASE= "https://api.ecobee.com"
@@ -117,7 +117,7 @@ metadata {
 
 // Token and timeout configuration
 @Field static final long TOKEN_REFRESH_BUFFER_MS = 325782L  // Refresh 5.5 minutes before expiry
-@Field static final int DEBUG_LOG_TIMEOUT_SECONDS = 3600    // Auto-disable debug logging after 1 hour
+@Field static final int DEBUG_LOG_TIMEOUT_SECONDS = 1800    // Auto-disable debug logging after 30 minutes
 
 
 @Field static final Map VALID_FAN_MODES = [
@@ -149,7 +149,7 @@ void installed() {
 void updated() {
     checkVersion()
     unschedule()
-    if (debugEnable) runIn(DEBUG_LOG_TIMEOUT_SECONDS, logsOff)
+    if (debugEnable || traceEnable) runIn(DEBUG_LOG_TIMEOUT_SECONDS, "logsOff")
     schedulePolling()
 }
 
@@ -170,7 +170,7 @@ void refresh() {
 
 private void checkVersion() {
     if (state.version != CODE_VERSION) {
-        logWarn "New version: ${CODE_VERSION} (was: ${state.version})"
+        logVer "New version: ${CODE_VERSION} (was: ${state.version})"
         state.version = CODE_VERSION
     }
 }
@@ -214,7 +214,7 @@ void connect() {
             state.ecobeeAuthToken = data.code
             state.pinExpires = now() + (data.expires_in * 1000)
 
-            logInfo "PIN: ${data.ecobeePin} (expires in ${data.expires_in / 60} min)"
+            if (txtEnable) logInfo "PIN: ${data.ecobeePin} (expires in ${data.expires_in / 60} min)"
             logInfo "Authorize at ecobee.com, then run authorize() to complete setup"
 
             sendEvent(name: "connectionStatus", value: "pending", descriptionText: "${device.displayName} Waiting for PIN authorization: ${data.ecobeePin}")
@@ -330,7 +330,7 @@ Boolean refreshToken() {
             state.refreshToken = data.refresh_token
             state.tokenExpiry = now() + (data.expires_in * 1000)
 
-            logDebug "Token refreshed"
+            logNet "Token refreshed"
             sendEvent(name: "connectionStatus", value: "connected", descriptionText: "${device.displayName} is connected")
             success = true
         }
@@ -376,20 +376,20 @@ List<Map> listThermostats() {
     }
 
     List<Map> thermostats = data.thermostatList
-    logInfo "Found ${thermostats.size()} thermostat(s)"
+    if (txtEnable) logInfo "Found ${thermostats.size()} thermostat(s)"
 
     Map<String, Map> discovered = [:]
     thermostats.each { Map t ->
         String id = t.identifier?.toString()
         discovered[id] = [name: t.name?.toString(), model: t.modelNumber?.toString()]
-        logInfo "  ${t.name} (${t.modelNumber}) — ID: ${id}"
+        if (txtEnable) logInfo "  ${t.name} (${t.modelNumber}) — ID: ${id}"
     }
     state.thermostats = discovered
 
     if (thermostats.size() == 1) {
         String onlyId = thermostats[0].identifier?.toString()
         device.updateSetting("thermostatId", [type: "enum", value: onlyId])
-        logInfo "Auto-selected the only thermostat: ${discovered[onlyId].name}"
+        if (txtEnable) logInfo "Auto-selected the only thermostat: ${discovered[onlyId].name}"
     }
 
     return thermostats
@@ -400,11 +400,11 @@ List<Map> listComfortSettings() {
     if (!thermostat) return []
 
     List<Map> climates = thermostat.program.climates
-    logInfo "Found ${climates.size()} comfort setting(s)"
+    if (txtEnable) logInfo "Found ${climates.size()} comfort setting(s)"
     climates.each { Map c ->
         BigDecimal heatC = ecobeeToCelsius(c.heatTemp)
         BigDecimal coolC = ecobeeToCelsius(c.coolTemp)
-        logInfo "  ${c.name}: Heat ${heatC}°C, Cool ${coolC}°C (${c.climateRef})"
+        if (txtEnable) logInfo "  ${c.name}: Heat ${heatC}°C, Cool ${coolC}°C (${c.climateRef})"
     }
 
     return climates
@@ -524,7 +524,7 @@ void setComfortTemperature(String comfortName, heatTemp, coolTemp = null) {
     }
 
     if (updateThermostat([program: thermostat.program])) {
-        logInfo "Updated ${comfortName}: Heat ${heatTemp}°C" + (coolTemp ? ", Cool ${coolTemp}°C" : "")
+        logCmd "Updated ${comfortName}: Heat ${heatTemp}°C" + (coolTemp ? ", Cool ${coolTemp}°C" : "")
         state.lastUpdate = new Date().format("yyyy-MM-dd HH:mm:ss")
     } else {
         logError "Failed to update ${comfortName}"
@@ -546,11 +546,11 @@ List<Map> listVacations() {
         return []
     }
 
-    logInfo "Found ${vacations.size()} vacation(s)"
+    if (txtEnable) logInfo "Found ${vacations.size()} vacation(s)"
     vacations.each { Map v ->
         BigDecimal heatC = ecobeeToCelsius(v.heatHoldTemp)
         BigDecimal coolC = ecobeeToCelsius(v.coolHoldTemp)
-        logInfo "  ${v.name}: ${v.startDate} ${v.startTime} to ${v.endDate} ${v.endTime}, Heat ${heatC}°C, Cool ${coolC}°C, Fan ${v.fan}"
+        if (txtEnable) logInfo "  ${v.name}: ${v.startDate} ${v.startTime} to ${v.endDate} ${v.endTime}, Heat ${heatC}°C, Cool ${coolC}°C, Fan ${v.fan}"
     }
 
     return vacations
@@ -614,7 +614,7 @@ void createVacation(String name, String startDateTime, String endDateTime, heatT
     ]
 
     if (sendFunction([type: "createVacation", params: vacation])) {
-        logInfo "Created vacation '${name}'"
+        logCmd "Created vacation '${name}'"
         state.lastUpdate = new Date().format("yyyy-MM-dd HH:mm:ss")
     } else {
         logError "Failed to create vacation '${name}'"
@@ -631,7 +631,7 @@ void deleteVacation(String name) {
     }
 
     if (sendFunction([type: "deleteVacation", params: [name: name]])) {
-        logInfo "Deleted vacation '${name}'"
+        logCmd "Deleted vacation '${name}'"
         state.lastUpdate = new Date().format("yyyy-MM-dd HH:mm:ss")
     } else {
         logError "Failed to delete vacation '${name}'"
@@ -657,7 +657,7 @@ List<Map> listThermostatSchedule(String day) {
 
     Map<String, String> climates = thermostat.program.climates.collectEntries { [(it.climateRef): it.name] }
 
-    logInfo "Schedule for ${day}"
+    if (txtEnable) logInfo "Schedule for ${day}"
     List<Map> transitions = []
     String lastClimate = null
     for (int i = 0; i < scheduleBlocks.size(); i++) {
@@ -667,7 +667,7 @@ List<Map> listThermostatSchedule(String day) {
             Integer minutes = (i % 2) * 30
             String timeStr = String.format("%02d:%02d", hours, minutes)
             String climateName = climates[climate] ?: climate
-            logInfo "  ${timeStr}: ${climateName}"
+            if (txtEnable) logInfo "  ${timeStr}: ${climateName}"
 
             transitions << [
                 time: timeStr,
@@ -704,7 +704,7 @@ void setThermostatScheduleTime(String day, String comfortName, String currentTim
     }
 
     if (currentBlock == newBlock) {
-        logInfo "Time is already ${currentTime}, no change needed"
+        if (txtEnable) logInfo "Time is already ${currentTime}, no change needed"
         return
     }
 
@@ -728,7 +728,7 @@ void setThermostatScheduleTime(String day, String comfortName, String currentTim
 
     Map updateData = [program: program]
     if (updateThermostat(updateData)) {
-        logInfo "Moved ${comfortName} on ${day} from ${currentTime} to ${newTime}"
+        logCmd "Moved ${comfortName} on ${day} from ${currentTime} to ${newTime}"
         state.lastUpdate = new Date().format("yyyy-MM-dd HH:mm:ss")
     } else {
         logError "Failed to update schedule"
@@ -818,7 +818,7 @@ void getCurrentState() {
     }
 
     // Concise log summary
-    logInfo "State: ${tempC}°C, ${runtime.actualHumidity}%, Heat ${heatC}°C, Cool ${coolC}°C, ${operatingState}, ${activeHold ? 'Hold active' : 'No hold'}"
+    if (txtEnable) logInfo "State: ${tempC}°C, ${runtime.actualHumidity}%, Heat ${heatC}°C, Cool ${coolC}°C, ${operatingState}, ${activeHold ? 'Hold active' : 'No hold'}"
 
     state.lastUpdate = new Date().format("yyyy-MM-dd HH:mm:ss")
 }
@@ -828,17 +828,17 @@ void getCurrentState() {
 // ========================================
 
 void setCoolingSetpoint(BigDecimal temperature) {
-    logInfo "Setting cooling setpoint to ${temperature}°C"
+    logCmd "Setting cooling setpoint to ${temperature}°C"
     setHoldTemperature(null, temperature)
 }
 
 void setHeatingSetpoint(BigDecimal temperature) {
-    logInfo "Setting heating setpoint to ${temperature}°C"
+    logCmd "Setting heating setpoint to ${temperature}°C"
     setHoldTemperature(temperature, null)
 }
 
 void setThermostatMode(String mode) {
-    logInfo "Setting thermostat mode to ${mode}"
+    logCmd "Setting thermostat mode to ${mode}"
 
     if (!HE_TO_ECOBEE_MODE.containsKey(mode)) {
         logError "Invalid thermostat mode: ${mode}. Valid modes: ${HE_TO_ECOBEE_MODE.keySet()}"
@@ -864,7 +864,7 @@ void setThermostatMode(String mode) {
     if (data) {
         sendEvent(name: "thermostatMode", value: mode)
         sendEvent(name: "hvacMode", value: ecobeeMode)
-        logInfo "Successfully set thermostat mode to ${mode}"
+        logCmd "Successfully set thermostat mode to ${mode}"
     } else {
         logError "Failed to set thermostat mode"
     }
@@ -891,7 +891,7 @@ void off() {
 }
 
 void setThermostatFanMode(String fanMode) {
-    logInfo "Setting fan mode to ${fanMode}"
+    logCmd "Setting fan mode to ${fanMode}"
 
     if (!VALID_FAN_MODES.containsKey(fanMode)) {
         logError "Invalid fan mode: ${fanMode}. Valid modes: ${VALID_FAN_MODES.keySet()}"
@@ -908,7 +908,7 @@ void setThermostatFanMode(String fanMode) {
 
     if (sendFunction(function)) {
         sendEvent(name: "thermostatFanMode", value: fanMode)
-        logInfo "Successfully set fan mode to ${fanMode}"
+        logCmd "Successfully set fan mode to ${fanMode}"
     } else {
         logError "Failed to set fan mode"
     }
@@ -949,7 +949,7 @@ private void setHoldTemperature(BigDecimal heatTemp, BigDecimal coolTemp, String
         if (coolTemp != null) {
             sendEvent(name: "coolingSetpoint", value: coolTemp, unit: "°C")
         }
-        logInfo "Successfully set temperature hold"
+        logCmd "Successfully set temperature hold"
     } else {
         logError "Failed to set temperature hold"
     }
@@ -966,13 +966,13 @@ void getWeatherForecast() {
         return
     }
 
-    logInfo "Weather: ${weather.weatherStation}"
+    if (txtEnable) logInfo "Weather: ${weather.weatherStation}"
     weather.forecasts.take(5).eachWithIndex { forecast, index ->
         String day = index == 0 ? "Today" : "Day ${index}"
         BigDecimal high = ecobeeToCelsius(forecast.tempHigh)
         BigDecimal low = ecobeeToCelsius(forecast.tempLow)
         String precip = forecast.pop > 0 ? ", ${forecast.pop}% precip" : ""
-        logInfo "  ${day}: ${forecast.condition}, ${high}°C/${low}°C, ${forecast.relativeHumidity}%${precip}"
+        if (txtEnable) logInfo "  ${day}: ${forecast.condition}, ${high}°C/${low}°C, ${forecast.relativeHumidity}%${precip}"
     }
 }
 
@@ -987,7 +987,7 @@ List<Map> listSensors() {
         return []
     }
 
-    logInfo "Found ${sensors.size()} sensor(s)"
+    if (txtEnable) logInfo "Found ${sensors.size()} sensor(s)"
     sensors.each { Map sensor ->
         List<String> readings = []
         sensor.capability.each { Map cap ->
@@ -1004,7 +1004,7 @@ List<Map> listSensors() {
                 readings << "${cap.value}% RH"
             }
         }
-        logInfo "  ${sensor.name} (${sensor.type}): ${readings.join(', ')}"
+        if (txtEnable) logInfo "  ${sensor.name} (${sensor.type}): ${readings.join(', ')}"
     }
 
     return sensors
@@ -1186,31 +1186,29 @@ private void schedulePolling() {
 
     String cronExpression = "0 0/${effective} * ? * *"
     schedule(cronExpression, "refresh")
-    logDebug "Polling: every ${effective} min"
-}
-
-private void logTrace(String message) {
-    if (traceEnable) log.trace("${device.displayName} : ${message}")
-}
-
-private void logDebug(String message) {
-    if (debugEnable) log.debug("${device.displayName} : ${message}")
-}
-
-private void logInfo(String message) {
-    if (txtEnable) log.info("${device.displayName} : ${message}")
-}
-
-private void logWarn(String message) {
-    log.warn("${device.displayName} : ${message}")
-}
-
-private void logError(String message) {
-    log.error("${device.displayName} : ${message}")
+    logSched "Polling: every ${effective} min"
 }
 
 void logsOff() {
     logWarn "Debug/trace logging disabled"
-    device.updateSetting("debugEnable", [value: false, type: "bool"])
-    device.updateSetting("traceEnable", [value: false, type: "bool"])
+    device.updateSetting("debugEnable", [value: "false", type: "bool"])
+    device.updateSetting("traceEnable", [value: "false", type: "bool"])
 }
+
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
+
+void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }

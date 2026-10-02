@@ -40,7 +40,7 @@ metadata {
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.2"
+@Field static final String CODE_VERSION = "0.1.3"
 @Field static final String constCO2ClickURL = 'https://environment-monitor-01.co2.click:11000/api/v1'
 @Field static final String constVisiblairURL = 'https://api.visiblair.com:11000/api/v1'
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
@@ -55,7 +55,7 @@ preferences {
         input("pollRate", "number", title: "Sensor Polling Rate (minutes)\nZero for no polling:", defaultValue:0, range: "0..*")
     }
     section("Logging") {
-        input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: false
+        input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
         input name: "debugEnable", type: "bool", title: "Enable debug logging info", defaultValue: false, required: true, submitOnChange: true
         if (debugEnable) {
             input name: "traceEnable", type: "bool", title: "Enable trace logging info (for development purposes)", defaultValue: false
@@ -73,7 +73,7 @@ void turnOffDebugLogging() {
 
 private void updateDeviceAttribute(String aKey, aValue, String aUnit = "", String aDescription = "") {
     sendEvent(name: aKey, value: aValue, unit: aUnit, descriptionText: aDescription)
-    if (aDescription != "") logInfo(aDescription)
+    if (txtEnable && aDescription != "") logInfo(aDescription)
 }
 
 // driver methods
@@ -90,7 +90,7 @@ void uninstalled() {
 
 void initialize() {
     if (state.version != CODE_VERSION) {
-        logWarn "New driver version detected: ${CODE_VERSION} (previous: ${state.version})"
+        logVer "New driver version detected: ${CODE_VERSION} (previous: ${state.version})"
         state.version = CODE_VERSION
     }
     updateDeviceAttribute("battery", 100, "%")
@@ -98,7 +98,7 @@ void initialize() {
 }
 
 void updated() {
-    if (debugEnable) runIn(DEBUG_LOG_TIMEOUT, turnOffDebugLogging)
+    if (debugEnable || traceEnable) runIn(DEBUG_LOG_TIMEOUT, "turnOffDebugLogging")
 
     if (pollRate == null)
         device.updateSetting("pollRate", [value: 0, type: "number"])
@@ -229,7 +229,7 @@ void getDeviceValuesFromAPI_async(resp, data) {
             return
         }
 
-        logDebug "${resp.properties} - ${data.cmd} - ${resp.getStatus()}"
+        logNet "${resp.properties} - ${data.cmd} - ${resp.getStatus()}"
 
         if (resp.getStatus() == 200 || resp.getStatus() == 207) {
             if (resp.data) {
@@ -243,10 +243,10 @@ void getDeviceValuesFromAPI_async(resp, data) {
                     refreshSensorData(jsonData)
                 } else if (cmd == "sensors/getForUser") {
                     int nSensors = resp.json.size
-                    logDebug "found ${nSensors} sensors for this user"
+                    logNet "found ${nSensors} sensors for this user"
                     for (sensorJson in resp.json) {
                         Map sensorData = (HashMap) sensorJson
-                        logTrace sensorData
+                        logTrace "${sensorData}"
                         refreshSensorData(sensorData)
                     }
                 } else {
@@ -279,7 +279,7 @@ void processPutRequest_async(response, data) {
         logTrace "${response.properties} - ${data} - ${response.getStatus()}"
 
         if (response.getStatus() == 200) {
-            logDebug "Command successful: '${data}'"
+            logNet "Command successful: '${data}'"
         } else {
             logWarn "PUT command '${data.cmd}' returned HTTP ${response.getStatus()}"
         }
@@ -325,28 +325,23 @@ void resetWifiSettings() {
 }
 
 
-// Logging helpers
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
 
-private void logTrace(String message) {
-    if (traceEnable) log.trace("${device} : ${message}")
-}
+void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
-private void logDebug(String message) {
-    if (debugEnable) log.debug("${device} : ${message}")
-}
-
-private void logInfo(String message) {
-    if (txtEnable) log.info("${device} : ${message}")
-}
-
-private void logWarn(String message) {
-    log.warn("${device} : ${message}")
-}
-
-private void logError(String message) {
-    log.error("${device} : ${message}")
-}
-
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }
 
 
 /*

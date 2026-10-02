@@ -88,7 +88,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Humidity-Based Fan Controller"
-@Field static final String CODE_VERSION = "0.9.5"
+@Field static final String CODE_VERSION = "0.9.6"
 
 // Humidity state machine states
 @Field static final String HUMIDITY_NORMAL = "NORMAL"
@@ -224,7 +224,7 @@ Map mainPage() {
         }
 
         section("Logging", hideable: true, hidden: true) {
-            input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
+            input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
             input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
             if (debugEnable) {
                 input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
@@ -338,13 +338,13 @@ void initialize() {
     // Initial evaluation to sync state
     evaluateHumidityStateMachine()
 
-    logInfo("${APP_NAME} initialized. Humidity: ${state.humidityState}, Fan controlled by app: ${state.fanTurnedOnByApp}")
+    logCfg("${APP_NAME} initialized. Humidity: ${state.humidityState}, Fan controlled by app: ${state.fanTurnedOnByApp}")
 }
 
 // ==================== Event Handlers ====================
 
 void bathroomHumidityHandler(evt) {
-    logDebug("Bathroom humidity event from ${evt.device}: ${evt.value}%")
+    logEvt("Bathroom humidity event from ${evt.device}: ${evt.value}%")
     state.lastHumidityEventTime = now()
     recordBathroomSample(evt.value as BigDecimal)
 
@@ -389,13 +389,13 @@ private static List appendSample(List samples, long nowMs, BigDecimal value, lon
 }
 
 void referenceHumidityHandler(evt) {
-    logDebug("Reference humidity event from ${evt.device}: ${evt.value}%")
+    logEvt("Reference humidity event from ${evt.device}: ${evt.value}%")
     // Reference sensor events don't reset the max fan timer, but we still evaluate
     evaluateHumidityStateMachine(evt.device)
 }
 
 void fanSwitchHandler(evt) {
-    logDebug("Fan switch changed to ${evt.value}")
+    logEvt("Fan switch changed to ${evt.value}")
 
     // Any switch event resolves a pending verification — the verifyFan*
     // timer is only a fallback for missed events. Unschedule both timers
@@ -442,12 +442,12 @@ void fanSwitchHandler(evt) {
 }
 
 void occupancyHandler(evt) {
-    logDebug("Occupancy motion event from ${evt.device}: ${evt.value}")
+    logEvt("Occupancy motion event from ${evt.device}: ${evt.value}")
     state.lastMotionActiveTime = now()
 }
 
 void restrictionSwitchHandler(evt) {
-    logDebug("Restriction switch ${evt.device} changed to ${evt.value}")
+    logEvt("Restriction switch ${evt.device} changed to ${evt.value}")
 
     Boolean nowRestricted = isRestricted()
 
@@ -692,10 +692,10 @@ private void servicePendingTransition() {
             Long remainingMs = activationDelayMs - elapsedMs
             if (remainingMs > 0) {
                 Integer remainingSeconds = (remainingMs / 1000).toInteger() + 1  // Round up
-                logDebug("Servicing activation timer: ${remainingSeconds}s remaining")
+                logSched("Servicing activation timer: ${remainingSeconds}s remaining")
                 runIn(remainingSeconds, "delayedTransitionToHigh")
             } else {
-                logDebug("Activation delay elapsed - triggering transition now")
+                logSched("Activation delay elapsed - triggering transition now")
                 runIn(1, "delayedTransitionToHigh")
             }
             break
@@ -705,10 +705,10 @@ private void servicePendingTransition() {
             Long remainingMsDeact = deactivationDelayMs - elapsedMs
             if (remainingMsDeact > 0) {
                 Integer remainingSeconds = (remainingMsDeact / 1000).toInteger() + 1  // Round up
-                logDebug("Servicing deactivation timer: ${remainingSeconds}s remaining")
+                logSched("Servicing deactivation timer: ${remainingSeconds}s remaining")
                 runIn(remainingSeconds, "delayedTransitionToNormal")
             } else {
-                logDebug("Deactivation delay elapsed - triggering transition now")
+                logSched("Deactivation delay elapsed - triggering transition now")
                 runIn(1, "delayedTransitionToNormal")
             }
             break
@@ -919,7 +919,7 @@ private void onHumidityBecameNormal() {
 }
 
 private void turnOnFan() {
-    logInfo("Turning on fan")
+    logCmd("Turning on fan")
 
     state.fanTurnedOnByApp = true
     state.pendingCommand = "on"
@@ -952,7 +952,7 @@ void verifyFanOn() {
 }
 
 private void turnOffFan() {
-    logInfo("Turning off fan")
+    logCmd("Turning off fan")
 
     state.pendingCommand = "off"
     fanSwitch.off()
@@ -991,7 +991,7 @@ private void scheduleMaxFanRunTimer() {
 
     Integer delaySeconds = (maxFanRunTime as Integer) * 60
     runIn(delaySeconds, "maxFanRunTimeExpired")
-    logDebug("Max fan run timer scheduled for ${maxFanRunTime} minutes")
+    logSched("Max fan run timer scheduled for ${maxFanRunTime} minutes")
 }
 
 private void resetMaxFanRunTimer() {
@@ -999,7 +999,7 @@ private void resetMaxFanRunTimer() {
 
     unschedule("maxFanRunTimeExpired")
     scheduleMaxFanRunTimer()
-    logDebug("Max fan run timer reset")
+    logSched("Max fan run timer reset")
 }
 
 private void rescheduleMaxFanRunTimer() {
@@ -1017,7 +1017,7 @@ private void rescheduleMaxFanRunTimer() {
     if (remainingMs > 0) {
         Integer remainingSeconds = (remainingMs / 1000).toInteger() + 1
         runIn(remainingSeconds, "maxFanRunTimeExpired")
-        logDebug("Max fan run timer rescheduled: ${remainingSeconds}s remaining")
+        logSched("Max fan run timer rescheduled: ${remainingSeconds}s remaining")
     } else {
         // Should have already expired - trigger now
         runIn(1, "maxFanRunTimeExpired")
@@ -1493,14 +1493,25 @@ private void sendNotification(String message) {
     }
 }
 
-private void logTrace(String message) { if (traceEnable) log.trace(message) }
-private void logDebug(String message) { if (debugEnable) log.debug(message) }
-private void logInfo(String message)  { if (txtEnable)   log.info(message) }
-private void logWarn(String message)  { log.warn(message) }
-private void logError(String message) { log.error(message) }
-
 void logsOff() {
-    log.warn "Debug/trace logging auto-disabled"
     app.updateSetting("debugEnable", [value: "false", type: "bool"])
     app.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn("Debug/trace logging auto-disabled")
 }
+
+// ── Logging (app) ─────────────────────────────────────────────────────
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${app.getLabel()}: " }
+
+void logEvt  (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${app.getLabel()}: ${m}" }

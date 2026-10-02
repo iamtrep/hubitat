@@ -9,7 +9,7 @@
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "1.9.0"
+@Field static final String CODE_VERSION = "1.9.1"
 @Field static final int STARTUP_DELAY_SECS = 60
 @Field static final JsonSlurper JSON_SLURPER = new JsonSlurper()
 @Field static final Map<String, Long> totalLogsReceived = [:].asSynchronized()
@@ -83,10 +83,14 @@ metadata {
         input name: "maxEventHistory", type: "number",
             title: "Max events to remember (for deduplication)",
             defaultValue: 100, range: "10..1000"
+        input name: "txtEnable", type: "bool",
+            title: "Enable info logging", defaultValue: true
         input name: "enableDebug", type: "bool",
-            title: "Enable Debug Logging", defaultValue: false
-        input name: "enableTrace", type: "bool",
-            title: "Enable Trace Logging (very verbose)", defaultValue: false
+            title: "Enable Debug Logging", defaultValue: false, submitOnChange: true
+        if (enableDebug) {
+            input name: "enableTrace", type: "bool",
+                title: "Enable Trace Logging (very verbose)", defaultValue: false
+        }
     }
 }
 
@@ -100,6 +104,7 @@ void updated() {
     disconnect()
     unschedule()
     initialize()
+    if (enableDebug || enableTrace) runIn(1800, "logsOff")
 }
 
 void deviceTypeUpdated() {
@@ -143,7 +148,7 @@ void initialize() {
 // ============================================================================
 
 void connect() {
-    logDebug "Connecting to log event WebSocket..."
+    logNet "Connecting to log event WebSocket..."
 
     // Cancel any pending scheduled reconnect to avoid duplicate connections
     unschedule("connect")
@@ -160,7 +165,7 @@ void connect() {
         )
 
         // Connection is async — webSocketStatus() will set connected state
-        logDebug "WebSocket connect initiated"
+        logNet "WebSocket connect initiated"
     } catch (Exception e) {
         state.wsConnected = false
         sendEvent(name: "connectionStatus", value: "error")
@@ -173,7 +178,7 @@ void connect() {
 }
 
 void disconnect() {
-    logDebug "Disconnecting WebSocket..."
+    logNet "Disconnecting WebSocket..."
 
     atomicState.intentionalDisconnect = true
     unschedule("connect")
@@ -456,7 +461,7 @@ void triggerLogEvent(Map logEntry) {
 
     state.eventsMatched = (state.eventsMatched ?: 0) + 1
 
-    logInfo "Log event matched [${state.eventsMatched}]: [${logEntry.type}/${logEntry.level}] ${logEntry.name}: ${logEntry.msg}"
+    if (txtEnable) logInfo "Log event matched [${state.eventsMatched}]: [${logEntry.type}/${logEntry.level}] ${logEntry.name}: ${logEntry.msg}"
 
     // Send the main event
     sendEvent(
@@ -478,33 +483,29 @@ void clearStats() {
     state.eventsThisMinute = 0
     state.rateLimitWarningShown = false
     totalLogsReceived[device.id.toString()] = 0L
-    logInfo "Statistics cleared"
+    logCmd "Statistics cleared"
 }
 
-// ============================================================================
-// Logging
-// ============================================================================
-
-void logDebug(String msg) {
-    if (enableDebug) {
-        log.debug "${device.displayName}: ${msg}"
-    }
+void logsOff() {
+    logWarn "debug and trace logging disabled"
+    device.updateSetting("enableDebug", [value: "false", type: "bool"])
+    device.updateSetting("enableTrace", [value: "false", type: "bool"])
 }
 
-void logTrace(String msg) {
-    if (enableTrace) {
-        log.trace "${device.displayName}: ${msg}"
-    }
-}
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
 
-void logInfo(String msg) {
-    log.info "${device.displayName}: ${msg}"
-}
+void logRx   (String m) { if (enableDebug) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (enableDebug) log.debug logp('🌐') + m }
+void logSched(String m) { if (enableDebug) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
-void logWarn(String msg) {
-    log.warn "${device.displayName}: ${msg}"
-}
-
-void logError(String msg) {
-    log.error "${device.displayName}: ${msg}"
-}
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (enableTrace) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (enableDebug) log.debug "${device.displayName}: ${m}" }

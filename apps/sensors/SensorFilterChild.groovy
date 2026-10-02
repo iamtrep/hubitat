@@ -7,7 +7,7 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.0.2"
+@Field static final String CODE_VERSION = "0.0.3"
 
 definition(
     name: "Sensor Filter Child",
@@ -86,7 +86,7 @@ Map mainPage() {
 
         section("Logging") {
             input "txtEnable", "bool",
-                  title: "Enable descriptionText logging",
+                  title: "Enable info logging",
                   defaultValue: true
 
             input "debugEnable", "bool",
@@ -99,12 +99,6 @@ Map mainPage() {
                       title: "Enable trace logging",
                       defaultValue: false
             }
-
-            input "logRetention", "number",
-                  title: "Days to retain debug/trace logging when enabled",
-                  required: true,
-                  defaultValue: 7,
-                  range: "1..30"
         }
     }
 }
@@ -127,22 +121,18 @@ private List<String> getDeviceAttributes(dev) {
 
 void installed() {
     initialize()
-    if (debugEnable || traceEnable) {
-        runIn(logRetention * 86400, "logsOff")
-    }
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
 }
 
 void updated() {
     unsubscribe()
     initialize()
-    if (debugEnable || traceEnable) {
-        runIn(logRetention * 86400, "logsOff")
-    }
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
 }
 
 void initialize() {
     if (state.version != CODE_VERSION) {
-        logWarn "New version: ${CODE_VERSION} (was: ${state.version})"
+        logVer "New version: ${CODE_VERSION} (was: ${state.version})"
         state.version = CODE_VERSION
     }
 
@@ -180,7 +170,7 @@ void handleNewValue(evt) {
     logTrace "Window: ${state.valueWindow}"
 
     Number filteredValue = updateFilteredValue()
-    logDebug "Raw value: ${value}, Filtered value: ${filteredValue}"
+    logEvt "Raw value: ${value}, Filtered value: ${filteredValue}"
 
     runIn(settings.decay * 60, "decayWindow")
 }
@@ -200,7 +190,7 @@ Number updateFilteredValue() {
         targetDevice.sendEvent(name: attributeToFilter, value: filteredValue, unit: sourceDevice.currentState(attributeToFilter)?.unit)
         logTrace "Updated target device ${targetDevice.displayName} with value ${filteredValue}"
     } catch (Exception e) {
-        logWarn "Error updating target device: ${e}"
+        logError "Error updating target device: ${e}"
     }
 
     return filteredValue
@@ -268,9 +258,9 @@ Number calculateAverage(List values) {
 }
 
 void logsOff() {
-    log.warn "${app.label}: disabling debug/trace logging"
     app.updateSetting("debugEnable", [value: "false", type: "bool"])
     app.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "debug and trace logging disabled"
 }
 
 boolean isNumeric(String value) {
@@ -285,10 +275,19 @@ boolean isDecimal(String value) {
     return value ==~ /^-?\d*\.\d+$/
 }
 
-// logging helpers
+// ── Logging (app) ─────────────────────────────────────────────────────
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${app.getLabel()}: " }
 
-private void logError(String msg) { log.error "${app.label}: ${msg}" }
-private void logWarn (String msg) { log.warn  "${app.label}: ${msg}" }
-private void logInfo (String msg) { if (txtEnable)   log.info  "${app.label}: ${msg}" }
-private void logDebug(String msg) { if (debugEnable) log.debug "${app.label}: ${msg}" }
-private void logTrace(String msg) { if (traceEnable) log.trace "${app.label}: ${msg}" }
+void logEvt  (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${app.getLabel()}: ${m}" }

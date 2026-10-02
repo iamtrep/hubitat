@@ -69,7 +69,7 @@ metadata {
     }
 
     preferences {
-        input name: "txtEnable",   type: "bool", title: "Enable descriptionText logging", defaultValue: true
+        input name: "txtEnable",   type: "bool", title: "Enable info logging", defaultValue: true
         input name: "debugEnable", type: "bool", title: "Enable debug logging",           defaultValue: false, submitOnChange: true
         if (debugEnable) {
             input name: "traceEnable", type: "bool", title: "Enable trace logging",       defaultValue: false
@@ -88,7 +88,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "2.15.2"
+@Field static final String CODE_VERSION = "2.15.3"
 
 // A pending version reconfigure older than this is treated as lost and re-armed.
 @Field static final long RECONFIGURE_RETRY_MS = 60000L
@@ -123,7 +123,7 @@ import java.math.RoundingMode
 void installed() {
     // Runs once at pairing/install. Route through initialize() so install
     // and updated paths converge.
-    logInfo "Installed"
+    logCfg "Installed"
     state.clear()
     initialize()
 }
@@ -133,6 +133,7 @@ void initialize() {
     // version-change. Does NOT issue device-side Zigbee reporting (that's configure()).
 
     unschedule()
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
     state.recoveryActive = false
 
     // Seed to install/upgrade time so the normal "overdue" grace window
@@ -161,18 +162,17 @@ void initialize() {
     state.remove("RSSI")
     state.remove("LQI")
 
-    logInfo "Initialized."
+    logCfg "Initialized."
 }
 
 void updated() {
-    // Runs when preferences are saved. Re-converge, then arm log-off.
-    logInfo "Preferences Updated"
-    logInfo "Info Logging:  ${txtEnable}"
-    logInfo "Debug Logging: ${debugEnable}"
-    logInfo "Trace Logging: ${traceEnable}"
+    // Runs when preferences are saved. initialize() re-converges and arms log-off.
+    logCfg "Preferences Updated"
+    logCfg "Info Logging:  ${txtEnable}"
+    logCfg "Debug Logging: ${debugEnable}"
+    logCfg "Trace Logging: ${traceEnable}"
 
     initialize()
-    if (debugEnable || traceEnable) runIn(1800, "logsOff")
 }
 
 void deviceTypeUpdated() {
@@ -183,14 +183,14 @@ void deviceTypeUpdated() {
 void configure() {
     // Required by the Configuration capability. WSDCGQ11LM sets up its own
     // reporting at pairing time — no zigbee.configureReporting needed here.
-    logInfo "Configuring."
+    logCfg "Configuring."
     initialize()
 }
 
 void runVersionReconfigure() {
     // runInMillis target — lets parse() return immediately so the reconfigure
     // runs on a fresh dispatch instead of inside the inbound frame's handler.
-    logWarn "Driver upgraded from ${getDeviceDataByName('driver')} to ${CODE_VERSION}, reconfiguring."
+    logVer "Driver upgraded from ${getDeviceDataByName('driver')} to ${CODE_VERSION}, reconfiguring."
     initialize()
 }
 
@@ -203,14 +203,14 @@ void push(Integer buttonId) {
 void resetMeshCounters() {
     sendEvent(name: "notPresentCounter", value: 0)
     sendEvent(name: "restoredCounter", value: 0)
-    logInfo("Mesh counters reset")
+    logCmd("Mesh counters reset")
 }
 
 void setBatteryReplacementDate(Date date = null) {
     if (date == null) date = new Date()
     String dateStr = date.format('yyyy-MM-dd')
     device.updateDataValue("batteryReplacementDate", dateStr)
-    logInfo("Battery replacement date set to ${dateStr}")
+    logCmd("Battery replacement date set to ${dateStr}")
 }
 
 // ─── Health monitoring ─────────────────────────────────────────────────────
@@ -224,13 +224,13 @@ void checkHealth() {
     if (millisElapsed <= timeoutMillis) {
         // Device is reporting on schedule. updateHealthStatus() in parse() has
         // already flipped healthStatus to "online", so nothing to do here.
-        logDebug("Health : Last message ${secondsElapsed} seconds ago.")
+        logSched("Health : Last message ${secondsElapsed} seconds ago.")
         logTrace("checkHealth() : elapsed=${millisElapsed}ms, timeout=${timeoutMillis}ms")
         return
     }
 
     if (hubUptime <= HUB_REBOOT_ALLOWANCE_MINUTES * 60) {
-        logDebug("Health : Ignoring overdue reports for ${HUB_REBOOT_ALLOWANCE_MINUTES} minutes after hub reboot (uptime ${hubUptime}s).")
+        logSched("Health : Ignoring overdue reports for ${HUB_REBOOT_ALLOWANCE_MINUTES} minutes after hub reboot (uptime ${hubUptime}s).")
         return
     }
 
@@ -299,7 +299,7 @@ void recoveryProbe() {
     // No early-exit check here — updateHealthStatus() unschedules this when a
     // frame arrives. Using healthStatus as a stop signal is unreliable for
     // devices that were silent at install (it stays at the seeded "online").
-    logInfo("Recovery : Sending probe (readAttribute 0x0000/0x0004)")
+    logCmd("Recovery : Sending probe (readAttribute 0x0000/0x0004)")
     sendZigbeeCommands(zigbee.readAttribute(0x0000, 0x0004))
     runIn(recoveryIntervalForMode(), "recoveryProbe")
 }
@@ -313,7 +313,7 @@ private int recoveryIntervalForMode() {
 }
 
 private void rebindClusters() {
-    logInfo("Recovery : Re-binding reporting clusters")
+    logCfg("Recovery : Re-binding reporting clusters")
     List<String> cmds = []
     cmds += "zdo bind 0x${device.deviceNetworkId} 0x01 0x01 0x0000 {${device.zigbeeId}} {}"
     cmds += "zdo bind 0x${device.deviceNetworkId} 0x01 0x01 0x0402 {${device.zigbeeId}} {}"
@@ -335,7 +335,7 @@ void parse(String description) {
             String[] pair = entry.split(': ')
             [(pair.first()): pair.last()]
         }
-        logDebug "Parse (Xiaomi check-in): ${xiaomiMap}"
+        logRx "Parse (Xiaomi check-in): ${xiaomiMap}"
         parseCheckin(xiaomiMap)
 
         Date now = new Date()
@@ -362,7 +362,7 @@ void parse(String description) {
         return
     }
 
-    logDebug "Parse: ${descMap}"
+    logRx "Parse: ${descMap}"
 
     // ZDO command (profile 0x0000) — bind responses, mgmt responses, etc.
     if (descMap.profileId == "0000") {
@@ -378,7 +378,7 @@ void parse(String description) {
 
     // IAS Zone — WSDCGQ11LM does not use IAS, log if any frame appears.
     if (descMap.clusterId == "0500") {
-        logDebug "IAS Zone message (unexpected for this device): ${descMap}"
+        logRx "IAS Zone message (unexpected for this device): ${descMap}"
         return
     }
 
@@ -446,10 +446,10 @@ private void parseCheckin(Map map) {
     int strLength = hexString.size()
 
     logInfo("Check-in message.")
-    logDebug("parseCheckin : ${strLength}-char payload")
+    logRx("parseCheckin : ${strLength}-char payload")
 
     if (strLength <= 20) {
-        logDebug("parseCheckin : payload too short to carry sensor data")
+        logRx("parseCheckin : payload too short to carry sensor data")
         return
     }
 
@@ -462,13 +462,13 @@ private void parseCheckin(Map map) {
 
         Integer dataLength = DataType.getLength(dataType)
         if (dataLength == null || dataLength == -1 || dataLength == 0) {
-            logDebug("Unsupported dataType 0x${Integer.toHexString(dataType)} for tag 0x${Integer.toHexString(dataTag)} (length=${dataLength})")
+            logRx("Unsupported dataType 0x${Integer.toHexString(dataType)} for tag 0x${Integer.toHexString(dataTag)} (length=${dataLength})")
             return
         }
 
         int payloadEnd = strPosition + dataLength * 2
         if (payloadEnd > strLength) {
-            logDebug("Ran out of bytes mid-record at tag 0x${Integer.toHexString(dataTag)}")
+            logRx("Ran out of bytes mid-record at tag 0x${Integer.toHexString(dataTag)}")
             return
         }
 
@@ -484,7 +484,7 @@ private void parseCheckin(Map map) {
                 break
             case 0x03:
                 long chipTemp = parseCheckinInt(dataPayload, dataType)
-                logDebug("$tagDebug (chip temperature ${chipTemp}°C)")
+                logRx("$tagDebug (chip temperature ${chipTemp}°C)")
                 state.chipTemperature = chipTemp
                 break
             case 0x05:
@@ -517,7 +517,7 @@ private void parseCheckin(Map map) {
                 logTrace("$tagDebug (known unhandled)")
                 break
             default:
-                logDebug("$tagDebug (unexpected tag)")
+                logRx("$tagDebug (unexpected tag)")
         }
     }
 }
@@ -530,7 +530,7 @@ private void parseAttributeReport(Map map) {
     // metadata attrs 0x0010 (ScaledValue, INT16) and 0x0014 (Scale, INT8 = "FE"),
     // and the INT8 width would crash the 4-hex byte-flip with IndexOutOfBounds.
     if ((map.cluster == "0402" || map.cluster == "0403" || map.cluster == "0405") && map.attrId != "0000") {
-        logDebug("parseAttributeReport() : ignoring cluster ${map.cluster} metadata attrId=${map.attrId} value=${map.value}")
+        logRx("parseAttributeReport() : ignoring cluster ${map.cluster} metadata attrId=${map.attrId} value=${map.value}")
         return
     }
 
@@ -566,23 +566,23 @@ private void parseBasic(Map map) {
         case "0001":  // ApplicationVersion (UINT8)
             int appVersion = Integer.parseInt(value, 16)
             updateDataValue("applicationVersion", appVersion.toString())
-            logDebug("ApplicationVersion : ${appVersion}")
+            logRx("ApplicationVersion : ${appVersion}")
             break
         case "0004":  // ManufacturerName (Character String)
             String mfg = hexToText(value)
             if (mfg) {
                 updateDataValue("manufacturer", mfg)
-                logDebug("ManufacturerName : ${mfg}")
+                logRx("ManufacturerName : ${mfg}")
             }
             break
         case "0005":  // ModelIdentifier + Xiaomi button-press quirk — see comment above.
-            logInfo("Trigger : Button Pressed (basic 0x0005, encoding=${encoding}, value=${value})")
+            if (txtEnable) logInfo("Trigger : Button Pressed (basic 0x0005, encoding=${encoding}, value=${value})")
             sendEvent(name: "pushed", value: 1, isStateChange: true)
             if (encoding == "42") {
                 String model = hexToText(value)
                 if (model) {
                     updateDataValue("model", model)
-                    logDebug("ModelIdentifier : ${model}")
+                    logRx("ModelIdentifier : ${model}")
                 }
             }
             break
@@ -590,11 +590,11 @@ private void parseBasic(Map map) {
             String sw = hexToText(value)
             if (sw) {
                 updateDataValue("softwareBuildId", sw)
-                logDebug("SWBuildID : ${sw}")
+                logRx("SWBuildID : ${sw}")
             }
             break
         default:
-            logDebug("Basic cluster : unhandled attrId=${map.attrId} encoding=${encoding} value=${value}")
+            logRx("Basic cluster : unhandled attrId=${map.attrId} encoding=${encoding} value=${value}")
     }
 }
 
@@ -604,25 +604,25 @@ private void logUnhandledMessage(Map map) {
     // genuinely-unknown frame and gets a warn that asks the user to report it.
 
     if (map.cluster == null && map.clusterId == null) {
-        logDebug("Skipped : Empty Message")
+        logRx("Skipped : Empty Message")
         return
     }
 
     switch (map.clusterId) {
         case "0001":
-            logDebug("Skipped : Power Configuration Response"); return
+            logRx("Skipped : Power Configuration Response"); return
         case "0006":
-            logDebug("Skipped : Match Descriptor Request"); return
+            logRx("Skipped : Match Descriptor Request"); return
         case "0013":
-            logDebug("Skipped : Device Announce Broadcast"); return
+            logRx("Skipped : Device Announce Broadcast"); return
         case "0400":
-            logDebug("Skipped : Illuminance Response"); return
+            logRx("Skipped : Illuminance Response"); return
         case "8004":
-            logDebug("Skipped : Simple Descriptor Response"); return
+            logRx("Skipped : Simple Descriptor Response"); return
         case "8005":
-            logDebug("Skipped : Active End Point Response"); return
+            logRx("Skipped : Active End Point Response"); return
         case "8021":
-            logDebug("Skipped : Bind Response"); return
+            logRx("Skipped : Bind Response"); return
     }
 
     String dataCount = (map.data != null) ? "${map.data.size()} bytes of " : ""
@@ -651,7 +651,7 @@ private void parseTemperature(String temperatureFlippedHex) {
         logWarn("Temperature : Value of ${temperature}°${temperatureScale} is unusual. Watch out for batteries failing on this device.")
     } else {
         BigDecimal rounded = temperature.setScale(1, RoundingMode.HALF_UP)
-        logInfo("Temperature : ${rounded} °${temperatureScale}")
+        if (txtEnable) logInfo("Temperature : ${rounded} °${temperatureScale}")
         sendEvent(name: "temperature", value: rounded, unit: "${temperatureScale}")
     }
 }
@@ -669,14 +669,14 @@ private void parseHumidity(String humidityFlippedHex) {
     }
 
     BigDecimal humidityRounded = humidity.setScale(1, RoundingMode.HALF_UP)
-    logInfo("Humidity (Relative) : ${humidityRounded} %")
+    if (txtEnable) logInfo("Humidity (Relative) : ${humidityRounded} %")
     sendEvent(name: "humidity", value: humidityRounded, unit: "%")
 
     BigDecimal lastTemperature = device.currentState("temperature")?.value?.toBigDecimal()
     if (lastTemperature == null) {
         // First check-in or first humidity report before any temperature has
         // landed — skip absoluteHumidity rather than emit a 0°C-based value.
-        logDebug("Skipping absoluteHumidity (no temperature reading yet)")
+        logRx("Skipping absoluteHumidity (no temperature reading yet)")
         return
     }
 
@@ -692,7 +692,7 @@ private void parseHumidity(String humidityFlippedHex) {
     BigDecimal absoluteHumidity = (numerator / denominator).setScale(1, RoundingMode.HALF_UP)
 
     String cubedChar = String.valueOf((char)(179))
-    logInfo("Humidity (Absolute) : ${absoluteHumidity} g/m${cubedChar}")
+    if (txtEnable) logInfo("Humidity (Absolute) : ${absoluteHumidity} g/m${cubedChar}")
     sendEvent(name: "absoluteHumidity", value: absoluteHumidity, unit: "g/m${cubedChar}")
 }
 
@@ -733,7 +733,7 @@ private void parsePressure(String pressureFlippedHex, boolean checkin = false) {
         : ["falling", "steady", "rising"][(pressure <=> lastPressure) + 1]
 
     logTrace("pressure : ${pressure} from hex value ${pressureFlippedHex}")
-    logInfo("Pressure : ${pressure} ${unit} (${pressureDirection})")
+    if (txtEnable) logInfo("Pressure : ${pressure} ${unit} (${pressureDirection})")
     sendEvent(name: "pressure", value: pressure, unit: unit)
     sendEvent(name: "pressureDirection", value: pressureDirection)
 }
@@ -760,12 +760,12 @@ private void parseBattery(String batteryVoltageHex, int batteryVoltageDivisor) {
     logTrace("batteryVoltageHex : ${batteryVoltageHex}")
 
     int rawMv = zigbee.convertHexToInt(batteryVoltageHex)
-    logDebug("batteryVoltage raw value : ${rawMv}")
+    logRx("batteryVoltage raw value : ${rawMv}")
 
     double voltage = ((double) rawMv) / batteryVoltageDivisor
     BigDecimal voltageRounded = BigDecimal.valueOf(voltage).setScale(2, RoundingMode.HALF_UP)
     sendEvent(name: "batteryVoltage", value: voltageRounded, unit: "V")
-    logDebug("batteryVoltage : ${voltageRounded}")
+    logRx("batteryVoltage : ${voltageRounded}")
 
     Double prevSmoothed = (state.smoothedBatteryVoltage instanceof Number) ?
         ((Number) state.smoothedBatteryVoltage).doubleValue() : null
@@ -795,7 +795,7 @@ private void parseBattery(String batteryVoltageHex, int batteryVoltageDivisor) {
 
     String desc = "$batteryPct% (${voltageRounded}V, smoothed ${String.format('%.3f', smoothed)}V, EMA ${emaAction})"
     if (batteryPct > 20) {
-        logInfo("Battery : ${desc}")
+        if (txtEnable) logInfo("Battery : ${desc}")
     } else {
         logWarn("Battery : ${desc}")
     }
@@ -861,30 +861,26 @@ private long parseCheckinInt(String dataPayload, int dataType) {
     return raw
 }
 
-// ─── Logging ───────────────────────────────────────────────────────────────
-
-private void logTrace(String message) {
-    if (debugEnable && traceEnable) log.trace "${device.displayName}: ${message}"
-}
-
-private void logDebug(String message) {
-    if (debugEnable) log.debug "${device.displayName}: ${message}"
-}
-
-private void logInfo(String message) {
-    if (txtEnable) log.info "${device.displayName}: ${message}"
-}
-
-private void logWarn(String message) {
-    log.warn "${device.displayName}: ${message}"
-}
-
-private void logError(String message) {
-    log.error "${device.displayName}: ${message}"
-}
-
 void logsOff() {
     logWarn("Auto-disabling debug + trace logging")
     device.updateSetting("debugEnable", [value: "false", type: "bool"])
     device.updateSetting("traceEnable", [value: "false", type: "bool"])
 }
+
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
+
+void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }

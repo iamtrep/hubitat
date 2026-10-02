@@ -4,7 +4,7 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.2.0"
+@Field static final String CODE_VERSION = "0.2.1"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
 // Parent of the mobile dashboards the hub generates per room and for "All Devices".
 @Field static final String DASHBOARD_PARENT_TYPE = "Easy Mobile Dashboard Parent"
@@ -111,7 +111,7 @@ Map mainPage() {
 
         section("Logging", hideable: true, hidden: true) {
             input "txtEnable", "bool",
-                title: "Enable descriptionText logging",
+                title: "Enable info logging",
                 defaultValue: true
             input "debugEnable", "bool",
                 title: "Enable debug logging",
@@ -526,7 +526,7 @@ Map resultsPage() {
                 }
             } catch (Exception e) {
                 result.message = "Error: ${e.message}"
-                logWarn "Swap failed for ${appLabel}/${inputName}: ${e.message}"
+                logError "Swap failed for ${appLabel}/${inputName}: ${e.message}"
             }
 
             results << result
@@ -756,7 +756,7 @@ private String buildAndSendSwap(Map configData, int appId, String inputName, int
         URLEncoder.encode(pair[0], "UTF-8") + "=" + URLEncoder.encode(pair[1], "UTF-8")
     }.join("&")
 
-    logDebug "POST body for app ${appId}: ${body}"
+    logNet "POST body for app ${appId}: ${body}"
 
     String postResult = "unknown"
     httpPost([
@@ -863,7 +863,7 @@ private void performUndo() {
     int originalTarget = lastSwap.targetId as int
     List<Map> swapResults = (lastSwap.results ?: []) as List<Map>
 
-    logInfo "Undoing swap: ${originalTarget} → ${originalSource} across ${swapResults.size()} app(s)"
+    logCmd "Undoing swap: ${originalTarget} → ${originalSource} across ${swapResults.size()} app(s)"
 
     swapResults.each { Map entry ->
         int appId = entry.appId as int
@@ -883,11 +883,11 @@ private void performUndo() {
                 if (result == "success") {
                     logInfo "Undo successful for ${entry.appLabel}/${inputName}"
                 } else {
-                    logWarn "Undo failed for ${entry.appLabel}/${inputName}: ${result}"
+                    logError "Undo failed for ${entry.appLabel}/${inputName}: ${result}"
                 }
             }
         } catch (Exception e) {
-            logWarn "Undo error for app ${appId}: ${e.message}"
+            logError "Undo error for app ${appId}: ${e.message}"
         }
     }
 
@@ -987,7 +987,7 @@ void updated() {
     logDebug "updated()"
     unsubscribe()
     initialize()
-    if (debugEnable) runIn(1800, "logsOff")
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
 }
 
 void uninstalled() {
@@ -997,35 +997,30 @@ void uninstalled() {
 void initialize() {
     logDebug "initialize()"
     if (state.version != CODE_VERSION) {
-        logWarn "New version: ${CODE_VERSION} (was: ${state.version})"
+        logVer "New version: ${CODE_VERSION} (was: ${state.version})"
         state.version = CODE_VERSION
     }
 }
 
 void logsOff() {
-    log.warn "${app.getLabel()}: disabling debug/trace logging"
     app.updateSetting("debugEnable", [value: "false", type: "bool"])
     app.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "debug and trace logging disabled"
 }
 
-// ---- Logging helpers ----
+// ── Logging (app) ─────────────────────────────────────────────────────
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${app.getLabel()}: " }
 
-private void logTrace(String msg) {
-    if (traceEnable) log.trace "${app.getLabel()}: ${msg}"
-}
+void logEvt  (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
-private void logDebug(String msg) {
-    if (debugEnable) log.debug "${app.getLabel()}: ${msg}"
-}
-
-private void logInfo(String msg) {
-    if (txtEnable) log.info "${app.getLabel()}: ${msg}"
-}
-
-private void logWarn(String msg) {
-    log.warn "${app.getLabel()}: ${msg}"
-}
-
-private void logError(String msg) {
-    log.error "${app.getLabel()}: ${msg}"
-}
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${app.getLabel()}: ${m}" }

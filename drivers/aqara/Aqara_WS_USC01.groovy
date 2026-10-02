@@ -51,7 +51,7 @@ metadata {
     }
 
     preferences {
-        input name: "txtEnable",   type: "bool", title: "Enable descriptionText logging", defaultValue: true
+        input name: "txtEnable",   type: "bool", title: "Enable info logging", defaultValue: true
         input name: "debugEnable", type: "bool", title: "Enable debug logging",           defaultValue: false, submitOnChange: true
         if (debugEnable) {
             input name: "traceEnable", type: "bool", title: "Enable trace logging",       defaultValue: false
@@ -68,7 +68,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "1.5.1"
+@Field static final String CODE_VERSION = "1.5.2"
 
 // A pending version reconfigure older than this is treated as lost and re-armed.
 @Field static final long RECONFIGURE_RETRY_MS = 60000L
@@ -98,12 +98,12 @@ metadata {
 // route through it; parse() reconfigures after a code push via runVersionCheck().
 
 void installed() {
-    logInfo "Installed"
+    logCfg "Installed"
     runInMillis(1500, "configure")
 }
 
 void updated() {
-    logInfo "Preferences updated"
+    logCfg "Preferences updated"
     unschedule()
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
     configure()
@@ -120,7 +120,7 @@ void configure() {
     // forced back to control_relay on upgrade. Default to control_relay on a fresh
     // install where neither is set.
     String desiredMode = operationModePref ?: device.currentValue("operationMode") ?: "control_relay"
-    logInfo "Configuring (operationMode=${desiredMode}, version ${CODE_VERSION})"
+    logCfg "Configuring (operationMode=${desiredMode}, version ${CODE_VERSION})"
     sendEvent(name: "numberOfButtons", value: 1, isStateChange: false)
     state.version = CODE_VERSION
 
@@ -147,7 +147,7 @@ void configure() {
 }
 
 void refresh() {
-    logInfo "Refreshing"
+    logCmd "Refreshing"
     List<String> cmds = []
     cmds += zigbee.readAttribute(CLUSTER_ON_OFF, ATTR_ON_OFF)
     cmds += zigbee.readAttribute(CLUSTER_DEVICE_TEMP, ATTR_MEASURED_VALUE)
@@ -229,7 +229,7 @@ void parse(String description) {
         logWarn "Parse: could not interpret description: ${description}"
         return
     }
-    logDebug "Parse: ${descMap}"
+    logRx "Parse: ${descMap}"
 
     // ZDO command (profile 0x0000) — bind/mgmt responses.
     if (descMap.profileId == "0000") {
@@ -333,9 +333,9 @@ private void reportSwitch(String value) {
     // sendEvent dedups the duplicate; log at info only on a real change so the
     // confirmation read doesn't double the log line.
     if (device.currentValue("switch") != sw) {
-        logInfo "Switch: ${sw} [${src}]"
+        if (txtEnable) logInfo "Switch: ${sw} [${src}]"
     } else {
-        logDebug "Switch: ${sw} (confirmation)"
+        logRx "Switch: ${sw} (confirmation)"
     }
     sendEvent(name: "switch", value: sw, type: src, descriptionText: "${device.displayName} was turned ${sw} [${src}]")
 }
@@ -345,7 +345,7 @@ private void reportDeviceTemperature(String value) {
     // ZCL DeviceTemperature MeasuredValue is INT16 in °C. parseDescriptionAsMap
     // already presents the value big-endian, so a straight signed parse is correct.
     int celsius = signedInt16(value)
-    logDebug "Device temperature: ${celsius} °C"
+    logRx "Device temperature: ${celsius} °C"
     sendEvent(name: "deviceTemperature", value: celsius, unit: "°C")
 }
 
@@ -377,9 +377,9 @@ private void parseLumiAttribute(Integer attrInt, String value) {
             // its own, so a single configure yields several frames. sendEvent dedups
             // the event; log at info only on a real change to avoid repeats.
             if (device.currentValue("operationMode") != mode) {
-                logInfo "Operation mode: ${mode}"
+                if (txtEnable) logInfo "Operation mode: ${mode}"
             } else {
-                logDebug "Operation mode: ${mode} (confirmation)"
+                logRx "Operation mode: ${mode} (confirmation)"
             }
             sendEvent(name: "operationMode", value: mode)
             // Keep the preferences UI in sync with the device (bidirectional sync).
@@ -388,10 +388,10 @@ private void parseLumiAttribute(Integer attrInt, String value) {
             }
             return
         case LUMI_ATTR_POWER_OUTAGE:
-            logDebug "Power-outage memory: ${value}"
+            logRx "Power-outage memory: ${value}"
             return
         case LUMI_ATTR_FLIP_INDICATOR:
-            logDebug "LED indicator inverted: ${value}"
+            logRx "LED indicator inverted: ${value}"
             return
         case LUMI_ATTR_HEARTBEAT:
             parseLumiHeartbeat(value)
@@ -438,7 +438,7 @@ private void runVersionCheck() {
 }
 
 void runVersionReconfigure() {
-    logWarn "Driver upgraded to ${CODE_VERSION} (was ${state.version}), reconfiguring"
+    logVer "Driver upgraded to ${CODE_VERSION} (was ${state.version}), reconfiguring"
     state.remove("reconfigurePending")
     state.remove("reconfigurePendingAt")
     configure()
@@ -509,30 +509,26 @@ private static String hexToText(String hex) {
     return out.toString()
 }
 
-// ─── Logging ────────────────────────────────────────────────────────────────
-
-private void logTrace(String message) {
-    if (debugEnable && traceEnable) log.trace "${device.displayName}: ${message}"
-}
-
-private void logDebug(String message) {
-    if (debugEnable) log.debug "${device.displayName}: ${message}"
-}
-
-private void logInfo(String message) {
-    if (txtEnable) log.info "${device.displayName}: ${message}"
-}
-
-private void logWarn(String message) {
-    log.warn "${device.displayName}: ${message}"
-}
-
-private void logError(String message) {
-    log.error "${device.displayName}: ${message}"
-}
-
 void logsOff() {
     logWarn "Auto-disabling debug + trace logging"
     device.updateSetting("debugEnable", [value: "false", type: "bool"])
     device.updateSetting("traceEnable", [value: "false", type: "bool"])
 }
+
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
+
+void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }

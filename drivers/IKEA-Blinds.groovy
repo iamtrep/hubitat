@@ -26,7 +26,7 @@ import groovy.transform.Field
 import hubitat.zigbee.zcl.DataType
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.0.4"
+@Field static final String CODE_VERSION = "0.0.5"
 
 metadata {
     definition(
@@ -66,7 +66,7 @@ metadata {
         input name: "closedThreshold", type: "number", defaultValue: 3, range: "0..5", title: "Shade Closed Threshold",
             description: "Threshold beyond which shade is considered closed (%)"
 
-        input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
+        input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
         input name: "debugEnable", type: "bool", title: "Enable debug logging info", defaultValue: false, required: true, submitOnChange: true
         if (debugEnable) {
             input name: "traceEnable", type: "bool", title: "Enable trace logging info (for development purposes)", defaultValue: false
@@ -192,7 +192,7 @@ void setTiltLevel(BigDecimal tilt) {
 }
 
 List<String> updateFirmware() {
-    logInfo 'Looking for firmware updates ...'
+    logOta 'Looking for firmware updates ...'
     logWarn '[IMPORTANT] Click the "Update Firmware" button immediately after pushing any button on the device in order to first wake it up!'
     return zigbee.updateFirmware()
 }
@@ -210,7 +210,7 @@ void parse(String description) {
 
     state.lastRx = now()
     Map descMap = zigbee.parseDescriptionAsMap(description)
-    logTrace "Receiving Zigbee message️ ⬅️ device: ${descMap}"
+    logTrace "Receiving Zigbee message: ${descMap}"
 
     if (descMap.attrId != null) {
         // device attribute report
@@ -226,9 +226,9 @@ void parse(String description) {
         // ZigBee Home Automation (ZHA) global command
         logTrace("Unhandled ZHA global command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     } else if (description?.startsWith('enroll request')) {
-        logDebug "Received enroll request"
+        logRx "Received enroll request"
     } else if (description?.startsWith('zone status')  || description?.startsWith('zone report')) {
-        logDebug "Zone status: $description"
+        logRx "Zone status: $description"
     } else {
         logWarn("Unhandled unknown command ($description): cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     }
@@ -293,7 +293,7 @@ private void handleLiftPositionEvent(Map descMap) {
     Integer lastLevel = device.currentValue("level") as Integer
     boolean moved = (lastLevel != null && lastLevel != currentLevel)
 
-    logDebug "handleLiftPositionEvent - currentLevel: ${currentLevel} lastLevel: ${lastLevel} moved: ${moved}"
+    logRx "handleLiftPositionEvent - currentLevel: ${currentLevel} lastLevel: ${lastLevel} moved: ${moved}"
 
     updateDeviceAttribute(name: "level", value: currentLevel)
     updateDeviceAttribute(name: "position", value: currentLevel)
@@ -345,7 +345,7 @@ private void updateFinalState() {
 // private methods
 
 private void autoConfigure() {
-    logWarn "Detected driver version change"
+    logVer "Detected driver version change"
     configure()
 }
 
@@ -362,7 +362,7 @@ private void updateDeviceAttribute(Map evt) {
 private void handleConfigStatus(Map descMap) {
     if (descMap.value) {
         Integer configStatus = Integer.parseInt(descMap.value, 16)
-        logDebug "ConfigStatus: 0x${descMap.value} (${configStatus})"
+        logRx "ConfigStatus: 0x${descMap.value} (${configStatus})"
 
         // Parse common ConfigStatus bits (vendor-specific implementation may vary)
         // Bit 0: Operational (0=Not Operational, 1=Operational)
@@ -386,7 +386,7 @@ private void handleConfigStatus(Map descMap) {
         // Bit 6: Tilt encoder controlled (0=Timer, 1=Encoder)
         Boolean tiltEncoderControlled = (configStatus & 0x40) != 0
 
-        logDebug "ConfigStatus decoded - Operational: ${operational}, Online: ${online}, CommandsReversed: ${commandsReversed}, LiftClosedLoop: ${liftClosedLoop}"
+        logRx "ConfigStatus decoded - Operational: ${operational}, Online: ${online}, CommandsReversed: ${commandsReversed}, LiftClosedLoop: ${liftClosedLoop}"
 
         // Update shade state based on operational status
         if (!operational) {
@@ -408,38 +408,34 @@ private double roundToDecimalPlaces(double decimalNumber, int decimalPlaces = 2)
 
 private void sendZigbeeCommands(List<String> cmds) {
     if (cmds.empty) return
-    logTrace "Sending Zigbee messages ➡️ device: ${cmds}"
+    logTrace "Sending Zigbee messages: ${cmds}"
     state.lastTx = now()
     sendHubCommand(new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE))
 }
 
-// Logging helpers
-
-void logsOff(){
-	logWarn "debug logging disabled..."
-	device.updateSetting("debugEnable",[value:"false",type:"bool"])
-	device.updateSetting("traceEnable",[value:"false",type:"bool"])
+void logsOff() {
+    logWarn "debug logging disabled..."
+    device.updateSetting("debugEnable", [value: "false", type: "bool"])
+    device.updateSetting("traceEnable", [value: "false", type: "bool"])
 }
 
-private void logTrace(String message) {
-    if (traceEnable) log.trace("${device} : ${message}")
-}
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
 
-private void logDebug(String message) {
-    if (debugEnable) log.debug("${device} : ${message}")
-}
+void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
-private void logInfo(String message) {
-    if (txtEnable) log.info("${device} : ${message}")
-}
-
-private void logWarn(String message) {
-    log.warn("${device} : ${message}")
-}
-
-private void logError(String message) {
-    log.error("${device} : ${message}")
-}
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }
 
 
 /*

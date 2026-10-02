@@ -3,7 +3,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.2.2"
+@Field static final String CODE_VERSION = "0.2.3"
 @Field static final Integer SCORING_SCHEMA_VERSION = 1
 @Field static final Integer RESOLVER_MAX_PER_TICK = 10
 
@@ -59,7 +59,11 @@ Map mainPage() {
             href "recentEventsPage", title: "Recent events", description: "Last 100 entries in the ring buffer"
         }
         section("Diagnostics") {
-            input "debugEnable", "bool", title: "Enable debug logging", defaultValue: false
+            input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
+            input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
+            if (settings.debugEnable) {
+                input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
+            }
         }
     }
 }
@@ -73,7 +77,13 @@ Map recentEventsPage() {
 }
 
 void installed()   { logDebug "installed()"; initialize() }
-void updated()     { logDebug "updated()"; unsubscribe(); unschedule(); initialize() }
+void updated() {
+    logDebug "updated()"
+    unsubscribe()
+    unschedule()
+    initialize()
+    if (settings.debugEnable || settings.traceEnable) runIn(1800, "logsOff")
+}
 void uninstalled() {
     logDebug "uninstalled()"
     getChildDevices().each { deleteChildDevice(it.deviceNetworkId) }
@@ -126,25 +136,22 @@ private void ensurePolicyChildren() {
         if (getChildDevice(dni) == null) {
             addChildDevice("hubitat", "Virtual Switch", dni,
                 [name: childLabel(p.key), label: childLabel(p.key), isComponent: true])
-            logInfo "created child ${childLabel(p.key)} (${dni})"
+            logCfg "created child ${childLabel(p.key)} (${dni})"
         }
     }
 }
 
 private void checkVersion() {
     if (state.version != CODE_VERSION) {
-        logInfo "version ${state.version} -> ${CODE_VERSION}"
+        logVer "version ${state.version} -> ${CODE_VERSION}"
         state.version = CODE_VERSION
     }
     if (state.scoringSchemaVersion != SCORING_SCHEMA_VERSION) {
-        logInfo "scoring schema ${state.scoringSchemaVersion} -> ${SCORING_SCHEMA_VERSION} — resetting scores"
+        logCfg "scoring schema ${state.scoringSchemaVersion} -> ${SCORING_SCHEMA_VERSION} — resetting scores"
         state.scores = [:]
         state.scoringSchemaVersion = SCORING_SCHEMA_VERSION
     }
 }
-
-private void logDebug(String msg) { if (debugEnable) log.debug msg }
-private void logInfo(String msg)  { log.info msg }
 
 void sensorHandler(evt) {
     state.sensorState[evt.device.id as String] = [name: evt.name, value: evt.value, ts: now()]
@@ -301,7 +308,7 @@ private void drivePolicy(String key, String edge) {
     ps.decision = edge
     ps.lastTransitionTs = now()
     ps.transitions = ((ps.transitions ?: []) + [[ts: now(), edge: edge]]).takeRight(50)
-    logInfo "policy ${key} -> ${edge}"
+    logCmd "policy ${key} -> ${edge}"
     if (edge == "off" && prev == "on") {
         classifyOff(key, now() as Long)
     } else if (edge == "on") {
@@ -355,7 +362,7 @@ private void reevaluateOff(String key) {
     if (!wantOn && ps.decision == "on") {
         drivePolicy(key, "off")
     } else if (wantOn && ps.decision == "on") {
-        logDebug "policy ${key}: off-check fired but policy still wants ON"
+        logSched "policy ${key}: off-check fired but policy still wants ON"
     }
 }
 
@@ -478,3 +485,26 @@ void appButtonHandler(String btn) {
         state.observingSince = now()
     }
 }
+
+void logsOff() {
+    app.updateSetting("debugEnable", [value: "false", type: "bool"])
+    app.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "debug and trace logging disabled"
+}
+
+// ── Logging (app) ─────────────────────────────────────────────────────
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${app.getLabel()}: " }
+
+void logEvt  (String m) { if (settings.debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (settings.debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (settings.debugEnable) log.debug logp('⏰') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (settings.traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (settings.debugEnable) log.debug "${app.getLabel()}: ${m}" }

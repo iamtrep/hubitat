@@ -12,7 +12,7 @@ import groovy.json.JsonOutput
 import java.text.SimpleDateFormat
 
 @Field static final String APP_NAME = "Hydro-Québec Peak Period Manager"
-@Field static final String CODE_VERSION = "0.2.0"
+@Field static final String CODE_VERSION = "0.2.1"
 
 definition(
     name: APP_NAME,
@@ -97,8 +97,11 @@ Map mainPage() {
             input "testMode", "bool", title: "Enable test mode (uses local test file)", defaultValue: false
             paragraph "<small>When enabled, creates a test event 5 minutes from now</small>"
 
-            input "enableDebug", "bool", title: "Enable debug logging", defaultValue: true
-            input name: "enableTrace", type: "bool", title: "Enable trace logging", defaultValue: false
+            input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
+            input name: "enableDebug", type: "bool", title: "Enable debug logging", defaultValue: true, submitOnChange: true
+            if (settings.enableDebug) {
+                input name: "enableTrace", type: "bool", title: "Enable trace logging", defaultValue: false
+            }
         }
         section("") {
             paragraph "<small>${APP_NAME} v${CODE_VERSION}</small>"
@@ -145,6 +148,14 @@ void initialize() {
     schedule(cronExpression, fetchPeakPeriods)
 
     logSched("Scheduled to check every ${settings.updateInterval} hour(s)")
+
+    if (settings.enableDebug || settings.enableTrace) runIn(1800, "logsOff")
+}
+
+void logsOff() {
+    logWarn("Debug and trace logging disabled")
+    app.updateSetting("enableDebug", [value: "false", type: "bool"])
+    app.updateSetting("enableTrace", [value: "false", type: "bool"])
 }
 
 void fetchPeakPeriods() {
@@ -658,14 +669,14 @@ private Date parseIsoDate(String isoTimestamp) {
 private String logp(String e) { "${e} ${app.getLabel()}: " }
 
 void logEvt  (String m) { if (settings.enableDebug) log.debug logp('⬇️') + m }
-void logCmd  (String m) { log.info  logp('⬆️') + m }
-void logCfg  (String m) { log.info  logp('🔧') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
 void logNet  (String m) { if (settings.enableDebug) log.debug logp('🌐') + m }
 void logSched(String m) { if (settings.enableDebug) log.debug logp('⏰') + m }
-void logVer  (String m) { log.info  logp('🏷️') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
 void logWarn (String m) { log.warn  logp('⚠️') + m }
 void logError(String m) { log.error logp('🛑') + m }
 void logTrace(String m) { if (settings.enableTrace) log.trace logp('🔬') + m }
-void logInfo (String m) { log.info  "${app.getLabel()}: ${m}" }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
 void logDebug(String m) { if (settings.enableDebug) log.debug "${app.getLabel()}: ${m}" }

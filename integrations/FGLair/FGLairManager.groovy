@@ -33,7 +33,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "0.2.5"
+@Field static final String CODE_VERSION = "0.2.6"
 
 // Region-specific Ayla endpoints + app credentials, lifted from
 // ayla-iot-unofficial/src/ayla_iot_unofficial/const.py and fujitsu_consts.py.
@@ -162,7 +162,7 @@ Map mainPage() {
         section("Settings") {
             label title: "Assign a name", required: false
             input name: "region",      type: "enum", title: "Region", options: ["us", "eu"], defaultValue: "us"
-            input name: "txtEnable",   type: "bool", title: "Enable descriptionText logging", defaultValue: true
+            input name: "txtEnable",   type: "bool", title: "Enable info logging", defaultValue: true
             input name: "debugEnable", type: "bool", title: "Enable debug logging",           defaultValue: false, submitOnChange: true
             if (debugEnable) {
                 input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
@@ -203,13 +203,13 @@ void updated() {
         state.authError = "Region changed. Log in again."
     }
     initialize()
-    if (settings.debugEnable) runIn(DEBUG_LOG_TIMEOUT, "logsOff")
+    if (settings.debugEnable || settings.traceEnable) runIn(DEBUG_LOG_TIMEOUT, "logsOff")
 }
 void uninstalled() { logDebug "uninstalled" }
 void initialize()  {
     logDebug "initialize"
     if (state.version != CODE_VERSION) {
-        logWarn "new version: ${CODE_VERSION} (was: ${state.version})"
+        logVer "new version: ${CODE_VERSION} (was: ${state.version})"
         state.version = CODE_VERSION
     }
     migrateSensedSetting()
@@ -255,7 +255,7 @@ private void scheduleTokenRefresh() {
     if (!state.tokenExpiry) return
     long ms = ((long) state.tokenExpiry) - now() - TOKEN_REFRESH_BUFFER_MS
     int secs = Math.max(60, (int) (ms / 1000L))
-    logDebug "scheduleTokenRefresh in ${secs}s"
+    logSched "scheduleTokenRefresh in ${secs}s"
     runIn(secs, "refreshToken")
 }
 
@@ -363,7 +363,7 @@ void removeOrphans() {
     orphans.each { Map o ->
         try {
             deleteChildDevice((String) o.dni)  // safety-lint:ok delete-in-loop — behind confirmRemoveOrphansPage
-            logInfo "removed orphan ${o.dni}"
+            logCfg "removed orphan ${o.dni}"
         } catch (Exception e) {
             logError "remove orphan ${o.dni} failed: ${e.message}"
         }
@@ -393,7 +393,7 @@ Map discoveredPropertiesPage() {
 }
 
 void resetDiscoveredProperties() {
-    logInfo "resetting discovered properties"
+    logCfg "resetting discovered properties"
     atomicState.knownProperties = [:]
 }
 
@@ -403,11 +403,11 @@ private void schedulePolling() {
     int offset = rng.nextInt(60)
     String cron = "${offset} */${Math.max(1, rate.intdiv(60))} * ? * *"
     if (rate < 60) {
-        logDebug "schedulePolling: ${rate}s loop"
+        logSched "schedulePolling: ${rate}s loop"
         unschedule("pollTick")
         runIn(rate, "pollTick")
     } else {
-        logDebug "schedulePolling: cron '${cron}'"
+        logSched "schedulePolling: cron '${cron}'"
         unschedule("pollTick")
         schedule(cron, "pollTick")
     }
@@ -427,7 +427,7 @@ void pollTick() {
         return
     }
     if (pollInFlight()) {
-        logDebug "pollTick: previous poll still running — skipped"
+        logSched "pollTick: previous poll still running — skipped"
     } else {
         // Units due a wake are woken here; this poll's GET still reads the current
         // values and a later poll picks up the woken ones.
@@ -445,7 +445,7 @@ private void wakeDueUnits() {
 }
 
 private boolean wakeUnit(String dni) {
-    if (!hasRequestRoom(2)) { logDebug "wake ${dni}: ${requestsInFlight()} requests in flight — skipped"; return false }
+    if (!hasRequestRoom(2)) { logNet "wake ${dni}: ${requestsInFlight()} requests in flight — skipped"; return false }
     Map<String, Long> wakes = (atomicState.lastWakeAt ?: [:]) as Map<String, Long>
     wakes[dni] = now()
     atomicState.lastWakeAt = wakes
@@ -507,7 +507,7 @@ private void postSignIn(boolean manual) {
         body: JsonOutput.toJson(body),
         timeout: HTTP_TIMEOUT
     ]
-    logDebug "signIn POST ${params.uri} (manual=${manual})"
+    logNet "signIn POST ${params.uri} (manual=${manual})"
     asyncRequest("POST", "signInCallback", params, [manual: manual])
 }
 
@@ -574,7 +574,7 @@ private void storeTokens(Map parsed) {
 // re-runs the poll and flushes queued writes. Nothing retries on a timer, so a
 // failed refresh waits for the next poll tick.
 void refreshToken() {
-    if (authInFlight()) { logDebug "refreshToken: already in flight"; return }
+    if (authInFlight()) { logNet "refreshToken: already in flight"; return }
     atomicState.authStartedAt = now()
     String rt = state.refreshToken
     if (!rt) {
@@ -582,7 +582,7 @@ void refreshToken() {
         postSignIn(false)
         return
     }
-    logDebug "refreshToken"
+    logNet "refreshToken"
     Map<String, String> rc = regionConfig()
     Map body = [user: [refresh_token: rt]]
     Map params = [
@@ -640,7 +640,7 @@ private boolean tokenNearExpiry() {
 // a rejected token can't drive a fetch -> 401 -> refresh -> fetch loop.
 private void noteAuthReject(String what) {
     // Requests sent before the refresh started all fail with the same token.
-    if (authInFlight()) { logDebug "${what} HTTP 401 — refresh already in flight"; return }
+    if (authInFlight()) { logNet "${what} HTTP 401 — refresh already in flight"; return }
     int n = ((atomicState.authRejects ?: 0) as int) + 1
     atomicState.authRejects = n
     if (n >= AUTH_REJECT_LIMIT) {
@@ -682,16 +682,16 @@ private void clearSession() {
 private Map authHeader() { return ["Authorization": "auth_token ${state.accessToken}"] }
 
 void fetchDevices() {
-    logDebug "fetchDevices"
-    if (!isAuthenticated()) { logDebug "fetchDevices: not signed in"; return }
+    logNet "fetchDevices"
+    if (!isAuthenticated()) { logNet "fetchDevices: not signed in"; return }
     // Wait for the running poll instead of stacking a second one on top of it.
     if (pollInFlight() || !hasRequestRoom(1)) {
-        logDebug "fetchDevices: poll or requests still in flight — retrying in 5 s"
+        logSched "fetchDevices: poll or requests still in flight — retrying in 5 s"
         runIn(5, "fetchDevices")
         return
     }
     if (tokenNearExpiry()) {
-        logDebug "token near expiry — fetchDevices runs after the refresh"
+        logNet "token near expiry — fetchDevices runs after the refresh"
         refreshToken()
         return
     }
@@ -736,7 +736,7 @@ private void endPoll() {
 
 void fetchDevicesCallback(resp, data) {
     requestDone()
-    if (!isCurrentPoll(data)) { logDebug "fetchDevices: response from a superseded poll ignored"; return }
+    if (!isCurrentPoll(data)) { logNet "fetchDevices: response from a superseded poll ignored"; return }
     try {
         handleDevicesResponse(resp)
     } finally {
@@ -752,7 +752,7 @@ private void handleDevicesResponse(resp) {
     }
     if (status != 200) {
         noteTransientFailure "fetchDevices ${httpError(resp)}"
-        if (!isTransientStatus(status)) logDebug "fetchDevices response: ${bodyExcerpt(resp)}"
+        if (!isTransientStatus(status)) logNet "fetchDevices response: ${bodyExcerpt(resp)}"
         return
     }
     List parsed
@@ -775,7 +775,7 @@ private void handleDeviceList(List rawDevices) {
         logInfo "fetchDevices returned ${devices.size()} device(s)"
         state.lastDeviceCount = devices.size()
     } else {
-        logDebug "fetchDevices returned ${devices.size()} device(s)"
+        logNet "fetchDevices returned ${devices.size()} device(s)"
     }
     logTrace "raw device list: ${JsonOutput.toJson(devices)}"
 
@@ -791,7 +791,7 @@ private void handleDeviceList(List rawDevices) {
         ChildDeviceWrapper child = getChildDevice(dni)
         if (!child) {
             String label = d.product_name?.toString() ?: "Fujitsu Mini-Split ${dsn}"
-            logInfo "creating child device ${dni} (${label})"
+            logCfg "creating child device ${dni} (${label})"
             try {
                 child = addChildDevice("iamtrep", DRIVER_UNIT, dni,
                     [name: DRIVER_UNIT, label: label, isComponent: false])
@@ -840,7 +840,7 @@ private void fetchNextQueued() {
 // every GET and jammed the unit's per-DSN write queue. Sensed temps are woken
 // separately and sparingly by wakeDueUnits() and refreshUnit().
 void fetchProperties(String dsn) {
-    if (!hasRequestRoom(2)) { logDebug "fetchProperties(${dsn}): ${requestsInFlight()} requests in flight — next poll reads it"; return }
+    if (!hasRequestRoom(2)) { logNet "fetchProperties(${dsn}): ${requestsInFlight()} requests in flight — next poll reads it"; return }
     sendPropertiesGet(dsn, null)
 }
 
@@ -864,7 +864,7 @@ void fetchPropertiesCallback(resp, data) {
     releaseRequest()  // the next read starts in finally, after a 401 has cleared the queue
     boolean queued = data?.gen != null
     if (queued) {
-        if (!isCurrentPoll(data)) { logDebug "fetchProperties(${data?.dsn}): response from a superseded poll ignored"; fetchNextQueued(); return }
+        if (!isCurrentPoll(data)) { logNet "fetchProperties(${data?.dsn}): response from a superseded poll ignored"; fetchNextQueued(); return }
         POLL.inFlight = Math.max(0, ((POLL.inFlight ?: 0) as int) - 1)
     }
     try {
@@ -1046,13 +1046,13 @@ void writeDatapointCallback(resp, data) {
             logWarn "writeDatapoint(${name}) ${httpError(resp)}"
         } else {
             logError "writeDatapoint(${name}) ${httpError(resp)}"
-            logDebug "writeDatapoint(${name}) response: ${bodyExcerpt(resp)}"
+            logNet "writeDatapoint(${name}) response: ${bodyExcerpt(resp)}"
         }
         reportWrite(w, false)
         return
     }
     clearAuthRejects()
-    logDebug "writeDatapoint(${name}) ok"
+    logNet "writeDatapoint(${name}) ok"
     reportWrite(w, true)
 }
 
@@ -1115,14 +1115,6 @@ void disconnect() {
     clearSession()
     markUnitsOffline()
 }
-
-// --- Logging ---
-
-private void logTrace(String msg) { if (settings.traceEnable) log.trace "${app.label} ${msg}" }
-private void logDebug(String msg) { if (settings.debugEnable) log.debug "${app.label} ${msg}" }
-private void logInfo(String msg)  { if (settings.txtEnable)   log.info  "${app.label} ${msg}" }
-private void logWarn(String msg)  { log.warn  "${app.label} ${msg}" }
-private void logError(String msg) { log.error "${app.label} ${msg}" }
 
 // hasError() is true for every non-2xx status, so callbacks branch on getStatus().
 // Timeouts and connection failures carry no real HTTP status (408, or below 100).
@@ -1196,3 +1188,20 @@ private void clearUnitFailures(String dsn) {
     state.unitFailures = fails
     // Health comes back with the next device list, which carries the unit's own link state.
 }
+
+// ── Logging (app) ─────────────────────────────────────────────────────
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${app.getLabel()}: " }
+
+void logEvt  (String m) { if (settings.debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (settings.debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (settings.debugEnable) log.debug logp('⏰') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (settings.traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (settings.debugEnable) log.debug "${app.getLabel()}: ${m}" }

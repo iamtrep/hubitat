@@ -25,7 +25,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.19"
+@Field static final String CODE_VERSION = "0.0.20"
 
 @Field static final List<String> SUPPORTED_THERMOSTAT_MODES     = ['"off"', '"heat"']
 @Field static final List<String> SUPPORTED_THERMOSTAT_FAN_MODES = ['"auto"']
@@ -104,9 +104,11 @@ metadata
         input name: 'prefMinTempChange', type: 'number', title: 'Temperature change', description: 'Minumum change of temperature reading to trigger report in Celsius/100, 5..50', range: '5..50', defaultValue: 50
         input name: 'prefMinPIChange', type: 'number', title: 'Heating change', description: 'Minimum change in the PI heating in % to trigger power and PI heating reporting, 1..25', range: '1..25', defaultValue: 5
         input name: 'prefMinEnergyChange', type: 'number', title: 'Energy increment', description: 'Minimum increment of the energy meter in Wh to trigger energy reporting, 10..', range: '10..', defaultValue: 10
-        input name: 'txtEnable',   type: 'bool', title: 'Enable descriptionText logging', defaultValue: true
-        input name: 'debugEnable', type: 'bool', title: 'Enable debug level logging', defaultValue: false
-        input name: 'traceEnable', type: 'bool', title: 'Enable trace level logging', description: 'For driver development', defaultValue: false
+        input name: 'txtEnable',   type: 'bool', title: 'Enable info logging', defaultValue: true
+        input name: 'debugEnable', type: 'bool', title: 'Enable debug level logging', defaultValue: false, submitOnChange: true
+        if (debugEnable) {
+            input name: 'traceEnable', type: 'bool', title: 'Enable trace level logging', description: 'For driver development', defaultValue: false
+        }
     }
 }
 
@@ -128,7 +130,7 @@ metadata
 //-- Capabilities -----------------------------------------------------------------------------------------
 
 void configure() {
-    logInfo('configure()')
+    logCfg('configure()')
     state.version = CODE_VERSION  // installed()/updated() route here; keep parse() from re-firing configure()
 
     // Set unused default values
@@ -175,10 +177,10 @@ void configure() {
 
     //Configure Clock Format
     if (prefTimeFormatParam == '12h AM/PM') { //12h AM/PM "24h"
-        logInfo('Set to 12h AM/PM')
+        logCfg('Set to 12h AM/PM')
         cmds += zigbee.writeAttribute(0xFF01, 0x0114, 0x30, 0x0001, [mfgCode: '0x119C'])
     } else { //24h
-        logInfo('Set to 24h')
+        logCfg('Set to 24h')
         cmds += zigbee.writeAttribute(0xFF01, 0x0114, 0x30, 0x0000, [mfgCode: '0x119C'])
     }
 
@@ -192,19 +194,19 @@ void configure() {
 
     //Set the control heating mode
     if (prefAirFloorModeParam == 'Ambient') { //Air mode
-        logInfo('Set to Ambient mode')
+        logCfg('Set to Ambient mode')
         cmds += zigbee.writeAttribute(0xFF01, 0x0105, 0x30, 0x0001, [mfgCode: '0x119C'])
     } else { //Floor mode
-        logInfo('Set to Floor mode')
+        logCfg('Set to Floor mode')
         cmds += zigbee.writeAttribute(0xFF01, 0x0105, 0x30, 0x0002, [mfgCode: '0x119C'])
     }
 
     //set the type of sensor
     if (prefFloorSensorTypeParam == '12k') { //sensor type = 12k
-        logInfo('Sensor type is 12k')
+        logCfg('Sensor type is 12k')
         cmds += zigbee.writeAttribute(0xFF01, 0x010B, 0x30, 0x0001, [mfgCode: '0x119C'])
     } else { //sensor type = 10k
-        logInfo('Sensor type is 10k')
+        logCfg('Sensor type is 10k')
         cmds += zigbee.writeAttribute(0xFF01, 0x010B, 0x30, 0x0000, [mfgCode: '0x119C'])
     }
 
@@ -295,7 +297,7 @@ void configure() {
 }
 
 void refresh() {
-    logInfo('refresh()')
+    logCmd('refresh()')
 
     List<String> cmds = []
     cmds += zigbee.readAttribute(0x0201, 0x0000)    // Read Local Temperature
@@ -316,19 +318,19 @@ void refresh() {
 }
 
 void installed() {
-    logInfo('installed()')
+    logCfg('installed()')
     configure()
     refresh()
 }
 
 void initialize() {
     // refresh() not configure() — Zigbee reconfigure on every hub startup wastes radio bandwidth
-    logInfo('initialize()')
+    logCfg('initialize()')
     refresh()
 }
 
 void updated() {
-    logInfo('updated()')
+    logCfg('updated()')
 
     if (!state.updatedLastRanAt || now() >= state.updatedLastRanAt + 5000) {
         state.updatedLastRanAt = now()
@@ -338,7 +340,7 @@ void updated() {
 }
 
 void uninstalled() {
-    logInfo('uninstalled()')
+    logCfg('uninstalled()')
 }
 
 void deviceTypeUpdated() {
@@ -348,7 +350,7 @@ void deviceTypeUpdated() {
 
 
 void heat() {
-    logInfo('heat(): mode set')
+    logCmd('heat(): mode set')
 
     List<String> cmds = []
     cmds += zigbee.writeAttribute(0x0201, 0x001C, 0x30, 04, [:], 1000)
@@ -358,7 +360,7 @@ void heat() {
 }
 
 void off() {
-    logInfo('off(): mode set')
+    logCmd('off(): mode set')
 
     List<String> cmds = []
     cmds += zigbee.writeAttribute(0x0201, 0x001C, 0x30, 0)
@@ -412,7 +414,7 @@ private void applyHeatingSetpoint() {
         String temperatureScale = getTemperatureScale()
         BigDecimal degrees = state.setPoint as BigDecimal
 
-        logInfo("setHeatingSetpoint(${degrees}:${temperatureScale})")
+        logCmd("setHeatingSetpoint(${degrees}:${temperatureScale})")
         state.lastDigitalSetpointAt = now()
 
         Float celsius = (temperatureScale == 'C') ? degrees.floatValue() : (fahrenheitToCelsius(degrees) as Float).round(2)
@@ -432,7 +434,7 @@ void setThermostatFanMode(String fanmode) {
 }
 
 void setThermostatMode(String value) {
-    logInfo("setThermostatMode(${value})")
+    logCmd("setThermostatMode(${value})")
 
     switch (value) {
         case 'heat':
@@ -453,7 +455,7 @@ void setThermostatMode(String value) {
 
 void parse(String description) {
     if (state.version != CODE_VERSION) {
-        logWarn("new version: ${CODE_VERSION} (was: ${state.version})")
+        logVer("new version: ${CODE_VERSION} (was: ${state.version})")
         state.version = CODE_VERSION
         runInMillis(1, 'configure')
     }
@@ -476,9 +478,9 @@ void parse(String description) {
         // ZigBee Home Automation (ZHA) global command
         logTrace("Unhandled ZHA global command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     } else if (description?.startsWith('enroll request')) {
-        logDebug "Received enroll request"
+        logRx "Received enroll request"
     } else if (description?.startsWith('zone status')  || description?.startsWith('zone report')) {
-        logDebug "Zone status: $description"
+        logRx "Zone status: $description"
     } else {
         logWarn("Unhandled unknown command ($description): cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     }
@@ -644,7 +646,7 @@ private void parseAttributeReport(Map descMap) {
                     break
 
                 default:
-                    logDebug("unhandled electrical measurement attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
+                    logRx("unhandled electrical measurement attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
                     break
             }
             break
@@ -737,13 +739,13 @@ private void parseAttributeReport(Map descMap) {
                     break
 
                 default:
-                    logDebug("unhandled custom attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
+                    logRx("unhandled custom attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
                     break
             }
             break
 
         default:
-            logDebug("Unhandled attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
+            logRx("Unhandled attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
             break
     }
 
@@ -815,7 +817,7 @@ void setOutdoorTemperature(BigDecimal outdoorTemperature) {
 
     double outdoorTemp = outdoorTemperature.toDouble()
     String tempScale = getTemperatureScale()
-    logInfo("Received outdoor weather report : ${outdoorTemp} ${tempScale}")
+    logCmd("Received outdoor weather report : ${outdoorTemp} ${tempScale}")
 
     sendEvent(name: 'outdoorTemperature', value: outdoorTemp, unit: tempScale, descriptionText: "${device.displayName} outdoor temperature set to ${outdoorTemp}${tempScale}")
 
@@ -997,30 +999,26 @@ private Double roundToTwoDecimalPlaces(Double val) {
     return Math.round(val * 100) / 100.0d
 }
 
-// Logging helpers
-
 void logsOff() {
-    log.warn "${device} : disabling debug/trace logging"
-    if (debugEnable) device.updateSetting('debugEnable', [value: false, type: 'bool'])
-    if (traceEnable) device.updateSetting('traceEnable', [value: false, type: 'bool'])
+    logWarn "debug and trace logging disabled"
+    device.updateSetting("debugEnable", [value: "false", type: "bool"])
+    device.updateSetting("traceEnable", [value: "false", type: "bool"])
 }
 
-private void logTrace(String message) {
-    if (traceEnable) log.trace("${device} : ${message}")
-}
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
 
-private void logDebug(String message) {
-    if (debugEnable) log.debug("${device} : ${message}")
-}
+void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
-private void logInfo(String message) {
-    if (txtEnable) log.info("${device} : ${message}")
-}
-
-private void logWarn(String message) {
-    log.warn("${device} : ${message}")
-}
-
-private void logError(String message) {
-    log.error("${device} : ${message}")
-}
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }

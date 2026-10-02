@@ -52,7 +52,7 @@ metadata {
         input name: "correctHumidityForTemp", type: "bool", title: "Correct humidity for the temperature offset", defaultValue: false
         input name: "humidityOffset", type: "decimal", title: "Humidity offset (% RH, signed)", defaultValue: 0
 
-        input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: false
+        input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
         input name: "debugEnable", type: "bool", title: "Enable debug logging info", defaultValue: false, required: true, submitOnChange: true
         if (debugEnable) {
             input name: "traceEnable", type: "bool", title: "Enable trace logging info (for development purposes)", defaultValue: false
@@ -60,7 +60,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.2.0"
+@Field static final String CODE_VERSION = "0.2.1"
 @Field static final String constLocalPathToAirData = "/air-data/latest"
 @Field static final String constLocalPathToConfig = "/settings/config/data"
 
@@ -80,6 +80,7 @@ void updated() {
     }
     configure()
     runIn(2, "poll")
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
 }
 
 void deviceTypeUpdated() {
@@ -104,7 +105,7 @@ void uninstalled() {
 
 private void initState() {
     if (state.version != CODE_VERSION) {
-        logWarn "New driver version detected: ${CODE_VERSION} (previous: ${state.version})"
+        logVer "New driver version detected: ${CODE_VERSION} (previous: ${state.version})"
         unschedule("poll")
         state.version = CODE_VERSION
     }
@@ -387,24 +388,26 @@ private double calculateRawAqi(Map<String, Object> aqiTier, double avgPM25) {
 }
 
 
-// Logging helpers
-
-private void logTrace(String message) {
-    if (traceEnable) log.trace("${device} : ${message}")
+void logsOff() {
+    logWarn "debug and trace logging disabled"
+    device.updateSetting("debugEnable", [value: "false", type: "bool"])
+    device.updateSetting("traceEnable", [value: "false", type: "bool"])
 }
 
-private void logDebug(String message) {
-    if (debugEnable) log.debug("${device} : ${message}")
-}
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
 
-private void logInfo(String message) {
-    if (txtEnable) log.info("${device} : ${message}")
-}
+void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
-private void logWarn(String message) {
-    log.warn("${device} : ${message}")
-}
-
-private void logError(String message) {
-    log.error("${device} : ${message}")
-}
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }

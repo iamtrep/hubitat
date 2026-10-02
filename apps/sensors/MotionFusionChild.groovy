@@ -23,7 +23,7 @@ definition(
 import groovy.transform.Field
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.1.2"
+@Field static final String CODE_VERSION = "0.1.3"
 
 @Field static final Map<String, String> FUSION_MODES = [
     "pirOnly"              : "PIR Only",
@@ -94,7 +94,11 @@ Map mainPage() {
                        "Your effective inactive delay is the device setting plus any app-side delay configured above.</small>"
         }
         section("Logging") {
-            input name: "logLevel", type: "enum", options: ["warn", "info", "debug"], title: "Log level", defaultValue: "info", required: true
+            input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
+            input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
+            if (debugEnable) {
+                input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
+            }
             paragraph "<small>Motion Fusion v${CODE_VERSION}</small>"
         }
     }
@@ -112,9 +116,17 @@ void updated() {
     unsubscribe()
     unschedule()
     initialize()
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
+}
+
+void logsOff() {
+    app.updateSetting("debugEnable", [value: "false", type: "bool"])
+    app.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "debug and trace logging disabled"
 }
 
 void initialize() {
+    app.removeSetting("logLevel")
     logDebug "initialize()"
 
     if (!sourceDevice || !outputDevice) {
@@ -138,7 +150,7 @@ void initialize() {
     // Re-arm (or complete) a pending window whose timer the unschedule() in updated() killed
     servicePending()
 
-    logInfo "Initialized: mode=${FUSION_MODES[fusionMode]}, PIR=${state.lastPirValue}, mmWave=${state.lastMmwaveValue}, output=${state.currentOutput}"
+    logCfg "Initialized: mode=${FUSION_MODES[fusionMode]}, PIR=${state.lastPirValue}, mmWave=${state.lastMmwaveValue}, output=${state.currentOutput}"
 }
 
 void uninstalled() {
@@ -148,14 +160,14 @@ void uninstalled() {
 // ==================== Event Handlers ====================
 
 void pirEventHandler(Event evt) {
-    logDebug "PIR event: ${evt.value}"
+    logEvt "PIR event: ${evt.value}"
     state.lastPirValue = evt.value
     state.lastPirTime = now()
     evaluateFusion("pir")
 }
 
 void mmwaveEventHandler(Event evt) {
-    logDebug "mmWave event: ${evt.value}"
+    logEvt "mmWave event: ${evt.value}"
     state.lastMmwaveValue = evt.value
     state.lastMmwaveTime = now()
     evaluateFusion("mmwave")
@@ -220,7 +232,7 @@ private void evaluateMmwaveOnly(String trigger) {
         Integer delay = (inactiveDelay ?: 0) as Integer
         if (delay > 0) {
             if (!state.pendingInactive) {
-                logDebug "mmWave unoccupied — scheduling inactive in ${delay}s"
+                logSched "mmWave unoccupied — scheduling inactive in ${delay}s"
                 armPending("delayedInactive", delay)
             }
         } else {
@@ -232,7 +244,7 @@ private void evaluateMmwaveOnly(String trigger) {
 void delayedInactive() {
     clearPending()
     if (isMmwaveOccupied()) {
-        logDebug "delayedInactive: mmWave re-occupied, staying active"
+        logSched "delayedInactive: mmWave re-occupied, staying active"
         return
     }
     setOutputState("inactive")
@@ -255,7 +267,7 @@ private void evaluateBoth(String trigger) {
         // One sensor active — start confirmation window if not already waiting
         if (state.currentOutput != "active" && !state.pendingInactive) {
             Integer window = (confirmationWindow ?: 5) as Integer
-            logDebug "One sensor active — waiting ${window}s for confirmation"
+            logSched "One sensor active — waiting ${window}s for confirmation"
             armPending("confirmationTimeout", window)
         }
         // If currently active and one drops out, go inactive immediately
@@ -275,7 +287,7 @@ void confirmationTimeout() {
     if (isPirActive() && isMmwaveOccupied()) {
         setOutputState("active")
     } else {
-        logDebug "confirmationTimeout: sensors did not agree within window"
+        logSched "confirmationTimeout: sensors did not agree within window"
         setOutputState("inactive")
     }
 }
@@ -300,7 +312,7 @@ private void evaluatePirGated(String trigger) {
     } else if (trigger == "pir" && isPirActive() && state.currentOutput != "active") {
         // PIR just fired, mmWave not yet occupied — start confirmation window
         Integer window = (confirmationWindow ?: 5) as Integer
-        logDebug "PIR active — waiting ${window}s for mmWave confirmation"
+        logSched "PIR active — waiting ${window}s for mmWave confirmation"
         armPending("mmwaveConfirmationTimeout", window)
     }
     // If already active and PIR drops but mmWave still occupied, stay active
@@ -311,7 +323,7 @@ void mmwaveConfirmationTimeout() {
     if (isPirActive() && isMmwaveOccupied()) {
         setOutputState("active")
     } else {
-        logDebug "mmwaveConfirmationTimeout: mmWave did not confirm within window"
+        logSched "mmwaveConfirmationTimeout: mmWave did not confirm within window"
         if (state.currentOutput != "active") {
             setOutputState("inactive")
         }
@@ -338,7 +350,7 @@ private void evaluatePirConfirmedMmwave(String trigger) {
     } else if (trigger == "mmwave" && state.currentOutput != "active") {
         // mmWave just went occupied, PIR not yet active — start confirmation window
         Integer window = (confirmationWindow ?: 5) as Integer
-        logDebug "mmWave occupied — waiting ${window}s for PIR confirmation"
+        logSched "mmWave occupied — waiting ${window}s for PIR confirmation"
         armPending("pirConfirmationTimeout", window)
     }
     // If already active and PIR goes inactive but mmWave still occupied, stay active
@@ -349,7 +361,7 @@ void pirConfirmationTimeout() {
     if (isPirActive() && isMmwaveOccupied()) {
         setOutputState("active")
     } else {
-        logDebug "pirConfirmationTimeout: PIR did not confirm within window"
+        logSched "pirConfirmationTimeout: PIR did not confirm within window"
         // Stay in current state — don't go inactive if already active (mmWave still holding)
         if (state.currentOutput != "active") {
             setOutputState("inactive")
@@ -383,7 +395,7 @@ private void evaluatePirQuickMmwaveHold(String trigger) {
     // Both inactive — start cooldown if currently active
     if (state.currentOutput == "active" && !state.pendingInactive) {
         Integer cooldown = (cooldownTime ?: 30) as Integer
-        logDebug "Both sensors inactive — starting ${cooldown}s cooldown"
+        logSched "Both sensors inactive — starting ${cooldown}s cooldown"
         armPending("cooldownExpired", cooldown)
     }
 }
@@ -391,7 +403,7 @@ private void evaluatePirQuickMmwaveHold(String trigger) {
 void cooldownExpired() {
     clearPending()
     if (isPirActive() || isMmwaveOccupied()) {
-        logDebug "cooldownExpired: sensor re-activated, staying active"
+        logSched "cooldownExpired: sensor re-activated, staying active"
         return
     }
     setOutputState("inactive")
@@ -447,7 +459,7 @@ private void setOutputState(String motionState) {
     }
 
     state.currentOutput = motionState
-    logInfo "Output → ${motionState} (mode: ${FUSION_MODES[fusionMode]}, PIR: ${state.lastPirValue}, mmWave: ${state.lastMmwaveValue})"
+    logCmd "Output → ${motionState} (mode: ${FUSION_MODES[fusionMode]}, PIR: ${state.lastPirValue}, mmWave: ${state.lastMmwaveValue})"
 
     outputDevice.sendEvent(
         name: "motion",
@@ -497,20 +509,19 @@ private String getFusionModeDescription() {
     }
 }
 
-// ==================== Logging ====================
+// ── Logging (app) ─────────────────────────────────────────────────────
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${app.getLabel()}: " }
 
-private void logError(String msg) {
-    log.error(app.getLabel() + ': ' + msg)
-}
+void logEvt  (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
-private void logWarn(String msg) {
-    log.warn(app.getLabel() + ': ' + msg)
-}
-
-private void logInfo(String msg) {
-    if (logLevel == null || logLevel in ["info", "debug"]) log.info(app.getLabel() + ': ' + msg)
-}
-
-private void logDebug(String msg) {
-    if (logLevel == null || logLevel in ["debug"]) log.debug(app.getLabel() + ': ' + msg)
-}
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${app.getLabel()}: ${m}" }

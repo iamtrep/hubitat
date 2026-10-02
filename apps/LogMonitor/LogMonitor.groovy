@@ -13,7 +13,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "1.1.2"
+@Field static final String CODE_VERSION = "1.1.3"
 @Field static final int MAX_BRIDGES = 5
 @Field static final int MAX_FILTERS = 10
 
@@ -99,8 +99,14 @@ Map mainPage() {
             }
         }
         section("Logging") {
+            input name: "txtEnable", type: "bool",
+                title: "Enable info logging", defaultValue: true
             input name: "enableDebug", type: "bool",
-                title: "Enable debug logging", defaultValue: false
+                title: "Enable debug logging", defaultValue: false, submitOnChange: true
+            if (enableDebug) {
+                input name: "traceEnable", type: "bool",
+                    title: "Enable trace logging", defaultValue: false
+            }
         }
         section {
             paragraph "Version ${CODE_VERSION}"
@@ -335,6 +341,13 @@ void updated() {
     savePendingBridge()
     savePendingFilter()
     initialize()
+    if (enableDebug || traceEnable) runIn(1800, "logsOff")
+}
+
+void logsOff() {
+    app.updateSetting("enableDebug", [value: "false", type: "bool"])
+    app.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "Debug/trace logging auto-disabled"
 }
 
 private void initialize() {
@@ -706,7 +719,7 @@ private Map executeOutputs(Map logEntry, Map filter, String bridgeDni) {
             ]
             asynchttpPost("httpPostCallback", postParams)
         } catch (Exception e) {
-            logDebug "HTTP POST error for ${filter.label}: ${e.message}"
+            logNet "HTTP POST error for ${filter.label}: ${e.message}"
         }
     }
 
@@ -715,7 +728,7 @@ private Map executeOutputs(Map logEntry, Map filter, String bridgeDni) {
 
 void httpPostCallback(resp, data) {
     if (resp.hasError()) {
-        logDebug "HTTP POST failed: ${resp.getErrorMessage()}"
+        logNet "HTTP POST failed: ${resp.getErrorMessage()}"
     }
 }
 
@@ -778,22 +791,19 @@ private static String buildOutputsSummary(Map filter) {
     return outputs.size() > 0 ? "-> " + outputs.join(", ") : "-> (no outputs)"
 }
 
-// ============================================================================
-// Logging
-// ============================================================================
+// ── Logging (app) ─────────────────────────────────────────────────────
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${app.getLabel()}: " }
 
-private void logDebug(String msg) {
-    if (enableDebug) log.debug "LogMonitor: ${msg}"
-}
+void logEvt  (String m) { if (enableDebug) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (enableDebug) log.debug logp('🌐') + m }
+void logSched(String m) { if (enableDebug) log.debug logp('⏰') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
-private void logInfo(String msg) {
-    log.info "LogMonitor: ${msg}"
-}
-
-private void logWarn(String msg) {
-    log.warn "LogMonitor: ${msg}"
-}
-
-private void logError(String msg) {
-    log.error "LogMonitor: ${msg}"
-}
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (enableDebug) log.debug "${app.getLabel()}: ${m}" }

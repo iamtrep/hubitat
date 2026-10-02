@@ -24,7 +24,11 @@ metadata {
     }
 
     preferences {
-        input name: 'txtEnable', type: 'bool', title: 'Enable descriptionText logging', defaultValue: true
+        input name: 'txtEnable', type: 'bool', title: 'Enable info logging', defaultValue: true
+        input name: 'debugEnable', type: 'bool', title: 'Enable debug logging', defaultValue: false, submitOnChange: true
+        if (debugEnable) {
+            input name: 'traceEnable', type: 'bool', title: 'Enable trace logging', defaultValue: false
+        }
     }
 }
 
@@ -34,10 +38,11 @@ void installed() {
 }
 
 void updated() {
+    if (debugEnable || traceEnable) runIn(1800, 'logsOff')
 }
 
 void deviceTypeUpdated() {
-    log.debug "driver change detected"
+    logDebug "driver change detected"
 }
 
 void parse(String description) {
@@ -47,14 +52,14 @@ void on() {
     String descriptionText = "${device.displayName} was turned on"
     sendEvent(name: 'switch', value: 'on', descriptionText: descriptionText)
     sendEvent(name: 'powerSource', value: 'battery', descriptionText: "${device.displayName} power source set to battery")
-    if (txtEnable) { log.info descriptionText }
+    if (txtEnable) { logInfo 'was turned on' }
 }
 
 void off() {
     String descriptionText = "${device.displayName} was turned off"
     sendEvent(name: 'switch', value: 'off', descriptionText: descriptionText)
     sendEvent(name: 'powerSource', value: 'mains', descriptionText: "${device.displayName} power source set to mains")
-    if (txtEnable) { log.info descriptionText }
+    if (txtEnable) { logInfo 'was turned off' }
 }
 
 void setPowerSource(String source) {
@@ -62,5 +67,29 @@ void setPowerSource(String source) {
     sendEvent(name: 'powerSource', value: source, descriptionText: descriptionText)
     String switchValue = (source == 'mains') ? 'off' : 'on'
     sendEvent(name: 'switch', value: switchValue, descriptionText: "${device.displayName} was turned ${switchValue}")
-    if (txtEnable) { log.info descriptionText }
+    if (txtEnable) { logInfo "power source set to ${source}" }
 }
+
+void logsOff() {
+    logWarn 'debug and trace logging disabled'
+    device.updateSetting('debugEnable', [value: 'false', type: 'bool'])
+    device.updateSetting('traceEnable', [value: 'false', type: 'bool'])
+}
+
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
+
+void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }

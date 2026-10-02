@@ -31,7 +31,7 @@ import com.hubitat.app.ChildDeviceWrapper
 //import com.hubitat.hub.domain.Capability // only available from 2.4.3.148 onward
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.3.3"
+@Field static final String CODE_VERSION = "0.3.4"
 
 @Field static final Map<String, String> CAPABILITY_ATTRIBUTES = [
     "capability.carbonDioxideMeasurement"   : [ attribute: "carbonDioxide", driver: "Virtual Omni Sensor" ],
@@ -80,8 +80,11 @@ Map mainPage() {
                     paragraph "<span style='color:orange'><b>Excluded sensors:</b> ${excludedLinks.join(', ')}</span>"
                 }
             }
-            input name: "logLevel", type: "enum", options: ["warn","info","debug","trace"], title: "Enable logging?", defaultValue: "info", required: true, submitOnChange: true
-            log.info("${logLevel} logging enabled")
+            input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
+            input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
+            if (debugEnable) {
+                input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
+            }
         }
         section("Notifications") {
             input name: "notificationDevice", type: "capability.notification", title: "Send notifications to:", multiple: false, required: false
@@ -101,9 +104,17 @@ void updated() {
     unsubscribe()
     unschedule()
     initialize()
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
+}
+
+void logsOff() {
+    app.updateSetting("debugEnable", [value: "false", type: "bool"])
+    app.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "debug and trace logging disabled"
 }
 
 void initialize() {
+    app.removeSetting("logLevel")
     logDebug "initialize()"
 
     if (state.includedSensors == null) { state.includedSensors = [] }
@@ -330,31 +341,19 @@ private double roundToDecimalPlaces(double decimalNumber, int decimalPlaces = 2)
     return (Math.round(decimalNumber * scale) as double) / scale
 }
 
-// logging helpers
+// ── Logging (app) ─────────────────────────────────────────────────────
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${app.getLabel()}: " }
 
-private void logError(String msg)
-{
-    //if (logLevel in ["info","debug","trace"])
-    log.error(app.getLabel() + ': ' + msg)
-}
+void logEvt  (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
-private void logWarn(String msg)
-{
-    //if (logLevel in ["warn", "info","debug","trace"])
-    log.warn(app.getLabel() + ': ' + msg)
-}
-
-private void logInfo(String msg)
-{
-    if (logLevel == null || logLevel in ["info","debug","trace"]) log.info(app.getLabel() + ': ' + msg)
-}
-
-private void logDebug(String msg)
-{
-    if (logLevel == null || logLevel in ["debug","trace"]) log.debug(app.getLabel() + ': ' + msg)
-}
-
-private void logTrace(String msg)
-{
-    if (logLevel == null || logLevel in ["trace"]) log.trace(app.getLabel() + ': ' + msg)
-}
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${app.getLabel()}: ${m}" }

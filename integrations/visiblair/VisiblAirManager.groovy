@@ -26,7 +26,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "2.0.0"
+@Field static final String CODE_VERSION = "2.0.1"
 @Field static final String VISIBLAIR_API = "https://api.visiblair.com/api/v1"
 @Field static final int HTTP_TIMEOUT = 15
 @Field static final String DNI_PREFIX = "visiblair-"
@@ -74,7 +74,7 @@ Map mainPage() {
             }
         }
         section("Logging") {
-            input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: false
+            input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
             input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
             if (debugEnable) {
                 input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
@@ -92,19 +92,18 @@ void installed() {
 void updated() {
     logDebug "updated"
     unschedule()
+    if (debugEnable || traceEnable) runIn(1800, turnOffDebugLogging)
 
     if (!apiEmail || !apiPassword) {
         logWarn "Email/password not configured"
         return
     }
 
-    if (debugEnable) runIn(1800, turnOffDebugLogging)
-
     pollSensors()
 
     int rate = (pollRate ?: 5) as int
     schedule("0 */${rate} * ? * *", pollSensors)
-    logDebug "scheduled polling every ${rate} minutes"
+    logSched "scheduled polling every ${rate} minutes"
 }
 
 void uninstalled() {
@@ -129,7 +128,7 @@ void appButtonHandler(String buttonName) {
                 }
             }
             state.orphanedDevices = []
-            logInfo "removed ${orphans.size()} orphaned devices"
+            logCfg "removed ${orphans.size()} orphaned devices"
             break
     }
 }
@@ -149,7 +148,7 @@ private String login() {
         httpPost(loginParams) { resp ->
             if (resp.status == 200 && resp.data) {
                 token = resp.data.accessToken as String
-                logDebug "login successful"
+                logNet "login successful"
             } else {
                 logError "login failed: HTTP ${resp.status}"
             }
@@ -201,7 +200,7 @@ private void handlePollData(int status, data) {
         }
 
         List jsonList = data as List
-        logDebug "received ${jsonList.size()} entries from API"
+        logNet "received ${jsonList.size()} entries from API"
 
         List realSensors = jsonList.findAll { Map sensor -> isRealSensor(sensor) }
         logDebug "filtered to ${realSensors.size()} real sensors"
@@ -246,7 +245,7 @@ private void syncChildDevices(List<Map> sensors) {
 
         ChildDeviceWrapper child = getChildDevice(dni)
         if (!child) {
-            logInfo "creating child device: ${description} (${driverName})"
+            logCfg "creating child device: ${description} (${driverName})"
             try {
                 child = addChildDevice("iamtrep", driverName, dni, [
                     name: "${driverName} - ${description}",
@@ -344,7 +343,7 @@ void handleFirmwareResponse(resp, data) {
             return
         }
         if (resp.getStatus() == 200) {
-            logInfo "firmware command '${data.cmd}' successful for ${data.uuid}"
+            logCmd "firmware command '${data.cmd}' successful for ${data.uuid}"
         } else {
             logWarn "firmware command '${data.cmd}' returned HTTP ${resp.getStatus()}"
         }
@@ -409,7 +408,7 @@ void updateSensorConfig(String uuid, Map overrides) {
     state.sensorConfigs = configs
 
     if (!config.containsKey("mqttenpoint")) {
-        logDebug "stored config incomplete for ${uuid}, fetching full config first"
+        logNet "stored config incomplete for ${uuid}, fetching full config first"
         fetchAndUpdateConfig(uuid, overrides)
         return
     }
@@ -487,7 +486,7 @@ void handleConfigResponse(resp, data) {
             return
         }
         if (resp.getStatus() == 200) {
-            logInfo "config updated for ${data.uuid}: ${data.overrides}"
+            logCmd "config updated for ${data.uuid}: ${data.overrides}"
         } else {
             logWarn "config update for ${data.uuid} returned HTTP ${resp.getStatus()}"
         }
@@ -504,22 +503,19 @@ void turnOffDebugLogging() {
     app.updateSetting("traceEnable", [value: "false", type: "bool"])
 }
 
-private void logTrace(String message) {
-    if (traceEnable) log.trace "${app.label} : ${message}"
-}
+// ── Logging (app) ─────────────────────────────────────────────────────
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${app.getLabel()}: " }
 
-private void logDebug(String message) {
-    if (debugEnable) log.debug "${app.label} : ${message}"
-}
+void logEvt  (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
-private void logInfo(String message) {
-    if (txtEnable) log.info "${app.label} : ${message}"
-}
-
-private void logWarn(String message) {
-    log.warn "${app.label} : ${message}"
-}
-
-private void logError(String message) {
-    log.error "${app.label} : ${message}"
-}
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${app.getLabel()}: ${m}" }

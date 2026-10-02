@@ -33,7 +33,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import groovy.json.JsonOutput
 
-@Field static final String CODE_VERSION = "0.0.8"
+@Field static final String CODE_VERSION = "0.0.9"
 
 metadata {
     definition (name: "Stelpro Allia Zigbee Thermostat",
@@ -78,9 +78,11 @@ metadata {
         input name: 'refreshScheduleIdle', type: 'enum', title: '<b>Refresh Interval while idle</b>', options: constRefreshIntervalOpts.options, defaultValue: constRefreshIntervalOpts.defaultValueIdle, description:\
             '<i>Changes how often the hub calls a refresh while the thermostat is in idle mode.</i>'
 
-        input name: 'infoEnable', type: 'bool', title: 'Enable info level logging', defaultValue: true
-        input name: 'debugEnable', type: 'bool', title: 'Enable debug level logging', defaultValue: true //false
-        input name: 'traceEnable', type: 'bool', title: 'Enable trace level logging', description: "For driver development", defaultValue: false
+        input name: 'infoEnable', type: 'bool', title: 'Enable info logging', defaultValue: true
+        input name: 'debugEnable', type: 'bool', title: 'Enable debug level logging', defaultValue: false, submitOnChange: true
+        if (debugEnable) {
+            input name: 'traceEnable', type: 'bool', title: 'Enable trace level logging', description: "For driver development", defaultValue: false
+        }
     }
 }
 
@@ -110,25 +112,25 @@ metadata {
 // Install/Configure/Refresh
 
 void installed() {
-    logInfo('installed()')
+    logCfg('installed()')
     configure()
 }
 
 void initialize() {
-    logInfo('initialize()')
+    logCfg('initialize()')
     if (state.driverVersion != CODE_VERSION) {
-        logWarn "New/different driver installed since last configure()"
+        logVer "New/different driver installed since last configure()"
     }
     refresh()
 }
 
 void updated() {
-    logInfo('updated()')
+    logCfg('updated()')
     configure()
 }
 
 void uninstalled() {
-    logInfo('uninstalled()')
+    logCfg('uninstalled()')
 }
 
 void deviceTypeUpdated() {
@@ -137,11 +139,11 @@ void deviceTypeUpdated() {
 }
 
 void configure(){
-    logWarn "configure..."
+    logCfg "configure..."
     state.driverVersion = CODE_VERSION
 
     unschedule()
-    runIn(1800,debugLogsOff)
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
     rearmRefreshSchedule()
 
     // Configure Default values if null
@@ -186,7 +188,7 @@ void configure(){
 }
 
 void refresh() {
-    logInfo("refresh")
+    logCmd("refresh")
     List<String> cmds = []
 
     cmds += zigbee.readAttribute(0x201, 0x0000) // Local Temperature
@@ -409,9 +411,9 @@ void parse(String description) {
         // ZigBee Home Automation (ZHA) global command
         logTrace("Unhandled ZHA global command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     } else if (description?.startsWith('enroll request')) {
-        logDebug "Received enroll request"
+        logRx "Received enroll request"
     } else if (description?.startsWith('zone status')  || description?.startsWith('zone report')) {
-        logDebug "Zone status: $description"
+        logRx "Zone status: $description"
     } else {
         logWarn("Unhandled unknown command ($description): cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     }
@@ -470,7 +472,7 @@ private void parseAttributeReport(Map descMap) {
                         map.value = "idle"
                         final int interval = (settings.refreshScheduleIdle as Integer) ?: 0
                         if (interval > 0 && map.value != device.currentValue("thermostatOperatingState")) {
-                            logInfo "${device} scheduling refresh every ${interval} minutes"
+                            logInfo "scheduling refresh every ${interval} minutes"
                             scheduleRefresh(interval)
                             runIn(5, 'refresh')
                         }
@@ -478,7 +480,7 @@ private void parseAttributeReport(Map descMap) {
                         map.value = "heating"
                         final int interval = (settings.refreshScheduleHeating as Integer) ?: 0
                         if (interval > 0 && map.value != device.currentValue("thermostatOperatingState")) {
-                            logInfo "${device} scheduling refresh every ${interval} minutes"
+                            logInfo "scheduling refresh every ${interval} minutes"
                             scheduleRefresh(interval)
                             runIn(5, 'refresh')
                         }
@@ -520,7 +522,7 @@ private void parseAttributeReport(Map descMap) {
                 case "4002":
                 case "4004":
                 case "4006":
-                    logDebug "Unknown vendor-specific attribute report 0x4004: ${descMap}"
+                    logRx "Unknown vendor-specific attribute report 0x4004: ${descMap}"
                     break
 
                 case "4008":
@@ -575,7 +577,7 @@ private void parseAttributeReport(Map descMap) {
         if (map.descriptionText) logInfo(map.descriptionText)
         sendEvent(map)
     } else {
-        logDebug("Unhandled attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
+        logRx("Unhandled attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
         logTrace("descMap: ${descMap}")
     }
 }
@@ -603,7 +605,7 @@ private void updateTemperatureAlarm(BigDecimal temperature, String unit) {
 }
 
 private void autoConfigure() {
-    logWarn "Detected driver version change"
+    logVer "Detected driver version change"
     configure()
 }
 
@@ -631,7 +633,7 @@ private void rearmRefreshSchedule() {
 private void scheduleRefresh(final int intervalMin) {
     final Random rnd = new Random()
     unschedule('refresh')
-    logInfo "${rnd.nextInt(59)} ${rnd.nextInt(intervalMin)}-59/${intervalMin} * ? * * *"
+    logSched "${rnd.nextInt(59)} ${rnd.nextInt(intervalMin)}-59/${intervalMin} * ? * * *"
     schedule("${rnd.nextInt(59)} ${rnd.nextInt(intervalMin)}-59/${intervalMin} * ? * * *", 'refresh')
 }
 
@@ -683,38 +685,29 @@ private void sendZigbeeCommands(cmds) {
     sendHubCommand(new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE))
 }
 
-// logging helpers
-
-private void logTrace(String message) {
-    if (traceEnable) log.trace("${device} : ${message}")
+void logsOff() {
+    logWarn "debug and trace logging disabled"
+    device.updateSetting("debugEnable", [value: "false", type: "bool"])
+    device.updateSetting("traceEnable", [value: "false", type: "bool"])
 }
 
-private void logDebug(String message) {
-    if (debugEnable) log.debug("${device.displayName} : ${message}")
-}
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
 
-private void logInfo(String message) {
-    if (infoEnable) log.info("${device.displayName} : ${message}")
-}
+void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (infoEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (infoEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (infoEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
-private void logWarn(String message) {
-    log.warn("${device.displayName} : ${message}")
-}
-
-private void logError(String message) {
-    log.error("${device.displayName} : ${message}")
-}
-
-void debugLogsOff() {
-    if (debugEnable) {
-        log.debug "debug logging disabled..."
-        device.updateSetting("debugEnable",[value:"false",type:"bool"])
-    }
-    if (traceEnable) {
-        log.debug "trace logging disabled..."
-        device.updateSetting("traceEnable",[value:"false",type:"bool"])
-    }
-}
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (infoEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }
 
 
 /*

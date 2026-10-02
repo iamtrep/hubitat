@@ -16,7 +16,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Contact State Setter"
-@Field static final String CODE_VERSION = "1.0.0"
+@Field static final String CODE_VERSION = "1.0.1"
 
 definition(
     name: APP_NAME,
@@ -52,7 +52,11 @@ def mainPage() {
         }
         section("Options") {
             label title: "App name", required: false
-            input name: "debugLogging", type: "bool", title: "Enable debug logging", defaultValue: false
+            input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
+            input name: "debugLogging", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
+            if (settings.debugLogging) {
+                input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
+            }
         }
     }
 }
@@ -69,6 +73,7 @@ def installed() {
 
 def updated() {
     initialize()
+    if (settings.debugLogging || settings.traceEnable) runIn(1800, "logsOff")
 }
 
 def initialize() {
@@ -79,7 +84,7 @@ void appButtonHandler(String btn) {
     switch (btn) {
         case "setOpen":   setContact("open");   break
         case "setClosed": setContact("closed"); break
-        default: log.warn "${APP_NAME}: unknown button '${btn}'"
+        default: logWarn "unknown button '${btn}'"
     }
 }
 
@@ -87,6 +92,29 @@ private void setContact(String value) {
     settings.contacts?.each { dev ->
         dev.sendEvent(name: "contact", value: value,
                       descriptionText: "${dev.displayName} contact set to ${value} by ${APP_NAME}")
-        if (settings.debugLogging) log.debug "${APP_NAME}: ${dev.displayName} contact -> ${value}"
+        logDebug "${dev.displayName} contact -> ${value}"
     }
 }
+
+void logsOff() {
+    app.updateSetting("debugLogging", [value: "false", type: "bool"])
+    app.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "debug and trace logging disabled"
+}
+
+// ── Logging (app) ─────────────────────────────────────────────────────
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${app.getLabel()}: " }
+
+void logEvt  (String m) { if (settings.debugLogging) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (settings.debugLogging) log.debug logp('🌐') + m }
+void logSched(String m) { if (settings.debugLogging) log.debug logp('⏰') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (settings.traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (settings.debugLogging) log.debug "${app.getLabel()}: ${m}" }

@@ -21,7 +21,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import hubitat.helper.HexUtils
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 
 @Field static final String CLUSTER_MGMT_LQI_REQ = "0031"
 @Field static final String CLUSTER_MGMT_RTG_REQ = "0032"
@@ -47,16 +47,22 @@ metadata {
     }
 
     preferences {
-        input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
+        input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
+        input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
+        if (debugEnable) {
+            input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
+        }
     }
 }
 
 void installed() { }
-void updated()   { }
+void updated() {
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
+}
 void parse(String description) { }
 
 void deviceTypeUpdated() {
-    if (txtEnable) log.debug "driver change detected"
+    logDebug "driver change detected"
 }
 
 void requestNeighborTable(String addr, BigDecimal startIndex = 0) {
@@ -78,5 +84,29 @@ private String buildZdoFrame(String addr, String clusterHex, int startIndex) {
 private void sendZdoRequest(String addr, String clusterHex, int startIndex) {
     String frame = buildZdoFrame(addr, clusterHex, startIndex)
     sendHubCommand new hubitat.device.HubMultiAction([frame], hubitat.device.Protocol.ZIGBEE)
-    if (txtEnable) log.info "ZDO cluster 0x${clusterHex} → ${addr} (startIndex=${startIndex})"
+    logCmd "ZDO cluster 0x${clusterHex} → ${addr} (startIndex=${startIndex})"
 }
+
+void logsOff() {
+    logWarn "debug and trace logging disabled"
+    device.updateSetting("debugEnable", [value: "false", type: "bool"])
+    device.updateSetting("traceEnable", [value: "false", type: "bool"])
+}
+
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
+
+void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }

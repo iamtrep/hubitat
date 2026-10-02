@@ -21,7 +21,7 @@ import groovy.transform.Field
 import groovy.json.JsonOutput
 
 @Field static final String APP_NAME = "Tool Access Prototype"
-@Field static final String CODE_VERSION = "0.3.1"
+@Field static final String CODE_VERSION = "0.3.2"
 @Field static final String UI_FILE = "tool_access_ui.html"
 @Field static final Integer DEBUG_AUTO_OFF_MINUTES = 30
 
@@ -131,7 +131,7 @@ def mainPage() {
 
         section("Options") {
             label title: "App name", required: false
-            input name: "txtEnable", type: "bool", title: "Enable descriptionText logging",
+            input name: "txtEnable", type: "bool", title: "Enable info logging",
                   defaultValue: true
             input name: "debugEnable", type: "bool", title: "Enable debug logging",
                   defaultValue: false, submitOnChange: true
@@ -369,7 +369,7 @@ def initialize() {
 void logsOff() {
     app.updateSetting("debugEnable", [type: "bool", value: false])
     app.updateSetting("traceEnable", [type: "bool", value: false])
-    logCfg "debug and trace logging disabled automatically"
+    logWarn "debug and trace logging disabled automatically"
 }
 
 // ── Logging (app) ─────────────────────────────────────────────────────
@@ -377,14 +377,14 @@ void logsOff() {
 private String logp(String e) { "${e} ${app.getLabel()}: " }
 
 void logEvt  (String m) { if (settings.debugEnable) log.debug logp('⬇️') + m }
-void logCmd  (String m) { log.info  logp('⬆️') + m }
-void logCfg  (String m) { log.info  logp('🔧') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
 void logNet  (String m) { if (settings.debugEnable) log.debug logp('🌐') + m }
 void logSched(String m) { if (settings.debugEnable) log.debug logp('⏰') + m }
-void logVer  (String m) { log.info  logp('🏷️') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
 void logWarn (String m) { log.warn  logp('⚠️') + m }
 void logError(String m) { log.error logp('🛑') + m }
 void logTrace(String m) { if (settings.traceEnable) log.trace logp('🔬') + m }
-void logInfo (String m) { log.info  "${app.getLabel()}: ${m}" }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
 void logDebug(String m) { if (settings.debugEnable) log.debug "${app.getLabel()}: ${m}" }

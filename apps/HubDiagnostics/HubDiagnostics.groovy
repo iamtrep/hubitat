@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "5.86.10"
+@Field static final String CODE_VERSION = "5.86.11"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -546,7 +546,11 @@ Map settingsPage() {
         }
 
         section("Logging") {
-            input "debugLogging", "bool", title: "Enable debug logging", defaultValue: false
+            input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
+            input name: "debugLogging", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
+            if (debugLogging) {
+                input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
+            }
         }
 
         section("Installation") {
@@ -602,7 +606,7 @@ String checkGithubVersion() {
 void githubVersionCallback(resp, data) {
     githubVersionRefreshPending = false
     if (resp.hasError() || resp.status != 200) {
-        logDebug "GitHub version check failed: HTTP ${resp.status}"
+        logNet "GitHub version check failed: HTTP ${resp.status}"
         return
     }
     try {
@@ -614,7 +618,7 @@ void githubVersionCallback(resp, data) {
             refreshUpdateLabel()
         }
     } catch (Exception e) {
-        logDebug "GitHub version callback error: ${e.message}"
+        logNet "GitHub version callback error: ${e.message}"
     }
 }
 
@@ -628,7 +632,7 @@ Map apiSyncUI() {
 // settings migrations, and refreshes the update-label badge. A code push alone does NOT fire
 // updated()/initialize(), so the deploy chain calls this per hub after pushing new code.
 Map apiReinit() {
-    logInfo "Reinitialize requested via API (running updated())"
+    logCfg "Reinitialize requested via API (running updated())"
     updated()
     return jsonResponse([success: true, version: CODE_VERSION])
 }
@@ -1113,6 +1117,10 @@ Map apiUpdateSettings() {
     if (body.containsKey("warnTempC")) app.updateSetting("warnTempInput", [type: "number", value: warnTempDisplayValue()])
     if (body.containsKey("critTempC")) app.updateSetting("critTempInput", [type: "number", value: critTempDisplayValue()])
     if (reschedule) { unsubscribe(); unschedule(); initialize() }
+    if (body.containsKey("debugLogging") || reschedule) {
+        boolean dbg = body.containsKey("debugLogging") ? (body.debugLogging as boolean) : (settings.debugLogging as boolean)
+        if (dbg || settings.traceEnable) runIn(1800, 'logsOff')
+    }
     return jsonResponse([success: true])
 }
 
@@ -1558,13 +1566,13 @@ private Object hubRequestInternal(String path, String name, String type, int tim
                 }
             }
         }
-        logDebug "Fetched ${name} in ${now() - start}ms"
+        logNet "Fetched ${name} in ${now() - start}ms"
         return type == "json" ? (result ?: [:]) : result
     } catch (Exception e) {
         String exClass = getObjectClassName(e)
         boolean isTransient = (exClass == 'java.net.SocketTimeoutException' || exClass == 'java.net.ConnectException')
         if (allowRetry && isTransient) {
-            logDebug "Transient error fetching ${name} (${exClass}); retrying once"
+            logNet "Transient error fetching ${name} (${exClass}); retrying once"
             return hubRequestInternal(path, name, type, timeout, false)
         }
         if (type == "json") {
@@ -1572,13 +1580,13 @@ private Object hubRequestInternal(String path, String name, String type, int tim
             // state is available) is valid JSON but fails Hubitat's object/array parse with
             // JsonException. That's a no-data outcome, not a fault — log quietly; callers see ok:false.
             if (exClass == 'groovy.json.JsonException') {
-                logDebug "No JSON body for ${name} (${now() - start}ms): ${e.message}"
+                logNet "No JSON body for ${name} (${now() - start}ms): ${e.message}"
             } else {
                 logError "Error fetching ${name} (${now() - start}ms): ${exClass}: ${e.message}"
             }
             return [error: true, message: e.message]
         } else {
-            logDebug "Error fetching ${name}: ${e.message}"
+            logNet "Error fetching ${name}: ${e.message}"
             return null
         }
     }
@@ -1914,7 +1922,7 @@ List fetchHubEvents() {
             [id: ev.id, name: ev.name, description: ev.descriptionText, ts: ts, value: ev.value]
         }
     } catch (Exception e) {
-        logDebug "fetchHubEvents failed: ${e.message}"
+        logNet "fetchHubEvents failed: ${e.message}"
         return []
     }
 }
@@ -2054,7 +2062,7 @@ private Map diagToolPost(String path) {
             if (resp.success && resp.data instanceof Map) result = (Map) resp.data
         }
     } catch (Exception e) {
-        logDebug "Diagnostic Tool ${path} unavailable: ${e.message}"
+        logNet "Diagnostic Tool ${path} unavailable: ${e.message}"
     }
     return result
 }
@@ -2857,7 +2865,7 @@ Map analyzeApps(boolean deep = true) {
             }
         }
     } catch (Exception e) {
-        logDebug "Could not fetch runtime stats for app count: ${e.message}"
+        logNet "Could not fetch runtime stats for app count: ${e.message}"
     }
 
     // Display order of userAppsList, platformApps and parentChildHierarchy is left to the SPA.
@@ -3284,7 +3292,7 @@ Map enrichDevices(Map uncertainDevices, Set communityAppTypeNames = [] as Set) {
                     builtin: isBuiltin == null ? "" : (isBuiltin ? "true" : "false")
                 ]
             } catch (Exception e) {
-                logDebug "enrichDevices: could not fetch device ${idStr}: ${e.message}"
+                logNet "enrichDevices: could not fetch device ${idStr}: ${e.message}"
                 return
             }
         } else {
@@ -3391,7 +3399,7 @@ private void dispatchRuntimeStatsFetch() {
 void retryRuntimeStatsFetch() {
     if (asyncCheckpointStaging == null) {
         // Chain was aborted or staging was reset (e.g. code push) during the retry wait.
-        logDebug "scheduledCheckpoint: runtime stats retry skipped — chain no longer active"
+        logSched "scheduledCheckpoint: runtime stats retry skipped — chain no longer active"
         abortAsyncChain(); return
     }
     dispatchRuntimeStatsFetch()
@@ -3461,11 +3469,11 @@ private Map extractAsyncBody(resp, data, String name) {
     if (data?.cached) return (Map) data.body
     if (resp == null) return [:]
     if (resp.hasError()) {
-        logDebug "scheduledCheckpoint: ${name} error: ${resp.getErrorMessage()}"
+        logNet "scheduledCheckpoint: ${name} error: ${resp.getErrorMessage()}"
         return [:]
     }
     if (resp.status != 200) {
-        logDebug "scheduledCheckpoint: ${name} HTTP ${resp.status}"
+        logNet "scheduledCheckpoint: ${name} HTTP ${resp.status}"
         return [:]
     }
     try { return resp.json instanceof Map ? (Map) resp.json : [:] }
@@ -3696,26 +3704,6 @@ List<Map> listHubFiles(String nameContains = null) {
 
 // ===== UTILITY METHODS =====
 
-private String logPrefix() {
-    return stripUpdateBadge((app?.label ?: app?.name ?: "Hub Diagnostics") as String)
-}
-
-private void logDebug(String message) {
-    if (debugLogging) log.debug "${logPrefix()} : ${message}"
-}
-
-private void logInfo(String message) {
-    log.info "${logPrefix()} : ${message}"
-}
-
-private void logWarn(String message) {
-    log.warn "${logPrefix()} : ${message}"
-}
-
-private void logError(String message) {
-    log.error "${logPrefix()} : ${message}"
-}
-
 Map getHubInfo(Map prefetchedHubData = null) {
     Map info = [name: location.name ?: "Unknown", firmware: "Unknown", hardware: "Unknown", ip: "Unknown"]
     if (location.hubs && location.hubs.size() > 0) {
@@ -3844,7 +3832,7 @@ private String getAppEditorPath() {
 }
 
 private boolean autoEnableOAuth() {
-    logInfo "Attempting to auto-enable OAuth for Hub Diagnostics..."
+    logCfg "Attempting to auto-enable OAuth for Hub Diagnostics..."
 
     // 1. Find our app type ID
     String typeId = getAppTypeId()
@@ -3884,7 +3872,7 @@ private boolean autoEnableOAuth() {
             timeout: 20
         ]) { resp ->
             success = true
-            logInfo "Successfully auto-enabled OAuth."
+            logCfg "Successfully auto-enabled OAuth."
         }
     } catch (e) {
         logError "Failed to enable OAuth: ${e.message}"
@@ -4791,7 +4779,7 @@ void deleteFile(String fileName) {
 // ===== LIFECYCLE METHODS =====
 
 void installed() {
-    logInfo "Hub Diagnostics installed"
+    logCfg "Hub Diagnostics installed"
     state.installed = true
     if (!state.accessToken) checkOAuth()
     runIn(1, 'syncUIForced')
@@ -4799,7 +4787,7 @@ void installed() {
 }
 
 void updated() {
-    logInfo "Hub Diagnostics updated"
+    logCfg "Hub Diagnostics updated"
     state.installed = true
     // Convert the scale-display threshold inputs to canonical Celsius storage. Thresholds are
     // always compared in Celsius, so a later hub scale change can never reinterpret them.
@@ -4822,20 +4810,21 @@ void updated() {
     TTL_CACHE.clear()   // N1: one wholesale clear — a new cache can never be missed here again
     cachedCheckpointIndex = null   // re-read the checkpoint index from FileManager on next access
     // C2: auto-disable debug logging after 30 min so it can't be left on indefinitely
-    if (settings.debugLogging) runIn(1800, 'logsOff')
+    if (settings.debugLogging || settings.traceEnable) runIn(1800, 'logsOff')
     runIn(1, 'syncUIForced')
     initialize()
 }
 
 void logsOff() {
     app.updateSetting("debugLogging", [type: "bool", value: false])
-    logInfo "Debug logging auto-disabled after 30 minutes"
+    app.updateSetting("traceEnable", [type: "bool", value: false])
+    logWarn "Debug/trace logging auto-disabled after 30 minutes"
 }
 
 void uninstalled() {
     unschedule()
     unsubscribe()
-    logInfo "Hub Diagnostics uninstalled"
+    logCfg "Hub Diagnostics uninstalled"
 }
 
 private boolean checkOAuth() {
@@ -4844,7 +4833,7 @@ private boolean checkOAuth() {
         createAccessToken()
         return (state.accessToken != null)
     } catch (e) {
-        logDebug "OAuth not enabled yet, attempting auto-enable..."
+        logNet "OAuth not enabled yet, attempting auto-enable..."
         if (autoEnableOAuth()) {
             try {
                 createAccessToken()
@@ -4864,7 +4853,7 @@ void syncUI(boolean force = false) {
         long lastCheck = state.lastUIUpdateCheck ?: 0
         if (now() - lastCheck < 86400000) return
     }
-    logInfo "Hub Diagnostics: Syncing UI from GitHub (async)..."
+    logInfo "Syncing UI from GitHub (async)..."
     asynchttpGet('syncUICallback', [uri: IMPORT_URL_WEB, contentType: "text/plain", timeout: 30])
 }
 
@@ -4879,7 +4868,7 @@ void syncUICallback(resp, data) {
 // Blocking UI sync — only for emergency recovery (file missing) and explicit API endpoint.
 private boolean syncUIBlocking() {
     try {
-        logInfo "Hub Diagnostics: Syncing UI from GitHub (blocking)..."
+        logInfo "Syncing UI from GitHub (blocking)..."
         String htmlText = null
         httpGet([uri: IMPORT_URL_WEB, contentType: "text/plain", timeout: 30]) { resp ->
             if (resp.success && resp.data) htmlText = resp.data.text ?: resp.data.toString()
@@ -4905,12 +4894,12 @@ private boolean processSyncUIResponse(String htmlText) {
     state.lastInstalledVersion = CODE_VERSION
     state.lastUIUpdateCheck = now()
     uiVersionCache = CODE_VERSION
-    logInfo "UI updated from GitHub to match App v${CODE_VERSION} (${htmlBytes.length} bytes)"
+    logVer "UI updated from GitHub to match App v${CODE_VERSION} (${htmlBytes.length} bytes)"
     return true
 }
 
 void initialize() {
-    logInfo "Hub Diagnostics initialized"
+    logCfg "Hub Diagnostics initialized"
 
     currentAuditSnapshot()      // mark a scan orphaned by a reload as failed
 
@@ -4951,11 +4940,11 @@ void initialize() {
 
     if (settings.snapshotTriggerSwitch) {
         subscribe(settings.snapshotTriggerSwitch, "switch.on", "snapshotSwitchHandler")
-        logInfo "Config snapshot trigger armed on ${settings.snapshotTriggerSwitch}"
+        logCfg "Config snapshot trigger armed on ${settings.snapshotTriggerSwitch}"
     }
     if (settings.checkpointTriggerSwitch) {
         subscribe(settings.checkpointTriggerSwitch, "switch.on", "checkpointSwitchHandler")
-        logInfo "Perf checkpoint trigger armed on ${settings.checkpointTriggerSwitch}"
+        logCfg "Perf checkpoint trigger armed on ${settings.checkpointTriggerSwitch}"
     }
 }
 
@@ -4981,13 +4970,13 @@ void checkpointSwitchHandler(evt) {
 }
 
 void scheduledUISync() {
-    logDebug "Running scheduled UI sync"
+    logSched "Running scheduled UI sync"
     if (state.tempSampleOffsetSec == null) armTemperatureSampling()
     syncUI(false)
 }
 
 void scheduledVersionCheck() {
-    logDebug "Running scheduled GitHub version check"
+    logSched "Running scheduled GitHub version check"
     checkGithubVersion()   // stale-while-revalidate; the async callback refreshes the label
     refreshUpdateLabel()   // also reconcile the label against the already-cached version
 }
@@ -4996,3 +4985,23 @@ void syncUIForced() {
     syncUI(true)
 }
 
+private String logPrefix() {
+    return stripUpdateBadge((app?.label ?: app?.name ?: "Hub Diagnostics") as String)
+}
+
+// ── Logging (app) ─────────────────────────────────────────────────────
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${logPrefix()}: " }
+
+void logEvt  (String m) { if (debugLogging) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugLogging) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugLogging) log.debug logp('⏰') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${logPrefix()}: ${m}" }
+void logDebug(String m) { if (debugLogging) log.debug "${logPrefix()}: ${m}" }

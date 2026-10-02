@@ -52,7 +52,7 @@ preferences {
         input name: "temperatureUnit", type: "enum", title: "Temperature unit on sensor display", options: ["C", "F"]
     }
     section("Logging") {
-        input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: false
+        input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
         input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
         if (debugEnable) {
             input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
@@ -65,7 +65,7 @@ void installed() {
 }
 
 void updated() {
-    if (debugEnable) runIn(DEBUG_LOG_TIMEOUT, turnOffDebugLogging)
+    if (debugEnable || traceEnable) runIn(DEBUG_LOG_TIMEOUT, turnOffDebugLogging)
     pushConfigChanges()
 }
 
@@ -121,7 +121,7 @@ void updateSensorData(Map data) {
                 Number co2 = unwrapNumeric(value)
                 if (co2 != null) {
                     sendEvent(name: "carbonDioxide", value: co2, unit: "ppm", descriptionText: "CO2 is ${co2} ppm")
-                    logInfo "CO2 is ${co2} ppm"
+                    if (txtEnable) logInfo "CO2 is ${co2} ppm"
                 }
                 break
             case "lastSampleTemperature":
@@ -130,14 +130,14 @@ void updateSensorData(Map data) {
                     String temp = convertTemperatureIfNeeded(rawTemp, "c", 1)
                     String unit = "\u00B0${location.temperatureScale}"
                     sendEvent(name: "temperature", value: temp, unit: unit, descriptionText: "Temperature is ${temp}${unit}")
-                    logInfo "Temperature is ${temp}${unit}"
+                    if (txtEnable) logInfo "Temperature is ${temp}${unit}"
                 }
                 break
             case "lastSampleHumidity":
                 Number humidity = unwrapNumeric(value)
                 if (humidity != null) {
                     sendEvent(name: "humidity", value: humidity, unit: "%", descriptionText: "Humidity is ${humidity}%")
-                    logInfo "Humidity is ${humidity}%"
+                    if (txtEnable) logInfo "Humidity is ${humidity}%"
                 }
                 break
 
@@ -235,31 +235,27 @@ void turnOffDebugLogging() {
     device.updateSetting("traceEnable", [value: "false", type: "bool"])
 }
 
-// --- Logging ---
-
-private void logTrace(String message) {
-    if (traceEnable) log.trace "${device} : ${message}"
-}
-
-private void logDebug(String message) {
-    if (debugEnable) log.debug "${device} : ${message}"
-}
-
-private void logInfo(String message) {
-    if (txtEnable) log.info "${device} : ${message}"
-}
-
-private void logWarn(String message) {
-    log.warn "${device} : ${message}"
-}
-
-private void logError(String message) {
-    log.error "${device} : ${message}"
-}
-
 // Firmware and model are device metadata: data values survive a driver switch, which clears
 // state. Also drops the state key earlier versions wrote.
 private void setMetadata(String key, Object value) {
     state.remove(key)
     if (value != null) device.updateDataValue(key, value.toString())
 }
+
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
+
+void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }

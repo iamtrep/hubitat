@@ -62,7 +62,7 @@ metadata {
               title: "Optimistic attribute updates on write",
               description: "When on, attributes reflect the requested value immediately on command. When off, attributes only update on the next poll cycle (truthful cloud state).",
               defaultValue: true
-        input name: "txtEnable",   type: "bool", title: "Enable descriptionText logging", defaultValue: true
+        input name: "txtEnable",   type: "bool", title: "Enable info logging", defaultValue: true
         input name: "debugEnable", type: "bool", title: "Enable debug logging",           defaultValue: false, submitOnChange: true
         if (debugEnable) {
             input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
@@ -70,7 +70,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.2.5"
+@Field static final String CODE_VERSION = "0.2.6"
 // A held low setpoint is dropped if the unit hasn't reported heat by then.
 @Field static final long HELD_SETPOINT_MS = 600_000L
 // A poll can land before a write reaches the cloud and still report the old value.
@@ -89,14 +89,14 @@ void updated() {
     logDebug "updated"
     unschedule()
     initialize()
-    if (settings.debugEnable) runIn(DEBUG_LOG_TIMEOUT, "logsOff")
+    if (settings.debugEnable || settings.traceEnable) runIn(DEBUG_LOG_TIMEOUT, "logsOff")
 }
 // Re-seeds the supported-mode lists and setpoint bounds, which a driver swap leaves unset.
 void deviceTypeUpdated() { logDebug "driver change detected"; initialize() }
 void initialize() {
     logDebug "initialize"
     if (state.version != CODE_VERSION) {
-        logWarn "new version: ${CODE_VERSION} (was: ${state.version})"
+        logVer "new version: ${CODE_VERSION} (was: ${state.version})"
         state.version = CODE_VERSION
     }
     sendEvent(name: "supportedThermostatModes",    value: SUPPORTED_STD_MODES)
@@ -156,7 +156,7 @@ private void writeMode(String mode) {
     if (code == null) { logWarn "writeMode(${mode}): no int code"; return }
     if (mode != "heat") state.remove("heldSetpoint")
     String prevMode = device.currentValue("fujitsuMode")
-    logInfo "setting operation_mode -> ${mode} (${code})"
+    logCmd "setting operation_mode -> ${mode} (${code})"
     writeToUnit("operation_mode", code)
 
     // Auto-push the stored mode-specific setpoint when transitioning into heat or cool.
@@ -212,7 +212,7 @@ void setFanSpeed(String speed) {
 private void writeFanSpeed(String speed) {
     Integer code = FAN_MODE_INV[speed]
     if (code == null) { logWarn "writeFanSpeed(${speed}): no int code"; return }
-    logInfo "setting fan_speed -> ${speed} (${code})"
+    logCmd "setting fan_speed -> ${speed} (${code})"
     writeToUnit("fan_speed", code)
     if (!isOptimistic()) return
     emitFanSpeed(speed)
@@ -273,7 +273,7 @@ private void pushSetpointToUnit(BigDecimal clamped) {
     }
     state.remove("heldSetpoint")
     BigDecimal aylaValue = scaleToAylaSetpoint(clamped)
-    logInfo "setting adjust_temperature -> ${clamped}${getTemperatureScale()} (raw ${aylaValue})"
+    logCmd "setting adjust_temperature -> ${clamped}${getTemperatureScale()} (raw ${aylaValue})"
     writeToUnit("adjust_temperature", aylaValue.toInteger())
     // thermostatSetpoint is the device-confirmed value — updated only by the next
     // poll, mirroring the built-in Ecobee integration model. heatingSetpoint /
@@ -294,7 +294,7 @@ private Object settled(String property, Object polled) {
     Map w = recent[property] as Map
     if (w == null || polled == null) return polled
     if (now() - (w.at as long) < WRITE_SETTLE_MS && (polled as BigDecimal) != (w.value as BigDecimal)) {
-        logDebug "${property}: poll still reports ${polled}, ${w.value} was just written — ignored"
+        logRx "${property}: poll still reports ${polled}, ${w.value} was just written — ignored"
         return null
     }
     recent.remove(property)
@@ -308,7 +308,7 @@ void heat()           { setThermostatMode("heat") }
 void off()            { setThermostatMode("off") }
 void emergencyHeat()  { logWarn "emergencyHeat() not supported on Fujitsu mini-splits — routing to heat"; setThermostatMode("heat") }
 void fanAuto()        { setThermostatFanMode("auto") }
-void fanOn()          { logInfo "fanOn() routes to setFanSpeed(\"high\")"; setFanSpeed("high") }
+void fanOn()          { logCmd "fanOn() routes to setFanSpeed(\"high\")"; setFanSpeed("high") }
 void fanCirculate()   { logWarn "fanCirculate() not a standard Fujitsu fan setting — routing to setFanSpeed(\"low\")"; setFanSpeed("low") }
 
 // --- Inbound state from parent ---
@@ -511,14 +511,26 @@ private BigDecimal scaleToAylaSetpoint(BigDecimal scaleValue) {
     return (celsius * 2).setScale(0, java.math.RoundingMode.HALF_UP) * 5
 }
 
-private void logTrace(String msg) { if (settings.traceEnable) log.trace "${device} ${msg}" }
-private void logDebug(String msg) { if (settings.debugEnable) log.debug "${device} ${msg}" }
-private void logInfo(String msg)  { if (settings.txtEnable)   log.info  "${device} ${msg}" }
-private void logWarn(String msg)  { log.warn  "${device} ${msg}" }
-private void logError(String msg) { log.error "${device} ${msg}" }
-
 void logsOff() {
     logWarn "debug and trace logging disabled"
     device.updateSetting("debugEnable", [value: "false", type: "bool"])
     device.updateSetting("traceEnable", [value: "false", type: "bool"])
 }
+
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
+
+void logRx   (String m) { if (settings.debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (settings.debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (settings.debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (settings.traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (settings.debugEnable) log.debug "${device.displayName}: ${m}" }

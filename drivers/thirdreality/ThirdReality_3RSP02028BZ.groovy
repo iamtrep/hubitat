@@ -26,7 +26,7 @@ import com.hubitat.hub.domain.Event
 import hubitat.zigbee.zcl.DataType
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.8"
+@Field static final String CODE_VERSION = "0.0.9"
 
 // Third Reality proprietary cluster (no Hubitat constant). The mfg code differs by
 // generation; resolve per-device via mfgCode() rather than a single constant.
@@ -217,7 +217,7 @@ metadata {
                   options: constHealthCheckIntervalOpts, defaultValue: 0,
                   description: "How often to check whether the device is still talking. Disabled by default — mains-powered routers rarely go silent.")
 
-            input(name: "txtEnable", type: "bool", title: "<b>Enable descriptionText logging</b>",
+            input(name: "txtEnable", type: "bool", title: "<b>Enable info logging</b>",
                   defaultValue: true)
             input(name: "debugEnable", type: "bool", title: "<b>Enable debug logging</b>",
                   defaultValue: false, submitOnChange: true)
@@ -233,7 +233,7 @@ metadata {
 // Driver installation
 
 void installed() {
-    logInfo "installed"
+    logCfg "installed"
     // state.attributes: diagnostic cache of device-reported divisors, overwritten on each refresh.
     state.attributes = [:]
     state.codeVersion = CODE_VERSION
@@ -253,13 +253,11 @@ void installed() {
 }
 
 void updated() {
-    logInfo "updated"
+    logCfg "updated"
     unschedule()
 
-    if (debugEnable) {
-        logDebug "settings: ${settings}"
-        runIn(1800, "logsOff")
-    }
+    logDebug "settings: ${settings}"
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
 
     int healthInterval = intSetting(settings.prefHealthCheckInterval, 0)
     if (healthInterval > 0) {
@@ -285,7 +283,7 @@ void updated() {
 }
 
 void uninstalled() {
-    logInfo "uninstalled"
+    logCfg "uninstalled"
     unschedule()
 }
 
@@ -353,7 +351,7 @@ void configure() {
 }
 
 void configureApply() {
-    logInfo "configured (version ${CODE_VERSION})"
+    logCfg "configured (version ${CODE_VERSION})"
 }
 
 List<String> refresh() {
@@ -372,10 +370,10 @@ List<String> refresh() {
 // a directed query the device must answer regardless of state transition.
 List<String> on() {
     if (settings.prefDisableOnOff) {
-        logInfo "on() ignored (Disable Power Commands is on)"
+        logCmd "on() ignored (Disable Power Commands is on)"
         return []
     }
-    logInfo "on"
+    logCmd "on"
     markPendingDigital()
     List<String> cmds = []
     cmds += zigbee.on()
@@ -385,10 +383,10 @@ List<String> on() {
 
 List<String> off() {
     if (settings.prefDisableOnOff) {
-        logInfo "off() ignored (Disable Power Commands is on)"
+        logCmd "off() ignored (Disable Power Commands is on)"
         return []
     }
-    logInfo "off"
+    logCmd "off"
     markPendingDigital()
     List<String> cmds = []
     cmds += zigbee.off()
@@ -398,10 +396,10 @@ List<String> off() {
 
 List<String> toggle() {
     if (settings.prefDisableOnOff) {
-        logInfo "toggle() ignored (Disable Power Commands is on)"
+        logCmd "toggle() ignored (Disable Power Commands is on)"
         return []
     }
-    logInfo "toggle"
+    logCmd "toggle"
     markPendingDigital()
     List<String> cmds = []
     cmds += zigbee.command(zigbee.ON_OFF_CLUSTER, 0x02)
@@ -421,14 +419,14 @@ void clearIsDigital() {
 }
 
 List<String> updateFirmware() {
-    logInfo "checking for firmware updates"
+    logOta "checking for firmware updates"
     return zigbee.updateFirmware()
 }
 
 // Custom commands
 
 void resetEnergy() {
-    logInfo "resetEnergy"
+    logCmd "resetEnergy"
     List<String> cmds = []
     // Device-side reset (older Gen1 firmware silently ignores)
     cmds += zigbee.writeAttribute(CLUSTER_MFG, ATTR_MFG_RESET_ENERGY, DataType.UINT8, 1, [mfgCode: mfgCode()])
@@ -439,7 +437,7 @@ void resetEnergy() {
 }
 
 void startBind() {
-    logInfo "startBind: writing 0xFF03/0x0020 = 1"
+    logCmd "startBind: writing 0xFF03/0x0020 = 1"
     sendZigbeeCommands(zigbee.writeAttribute(CLUSTER_MFG, ATTR_MFG_ALLOW_BIND, DataType.UINT8, 1, [mfgCode: mfgCode()]))
 }
 
@@ -453,7 +451,7 @@ void parse(String description) {
 
     Map descMap = zigbee.parseDescriptionAsMap(description)
     if (descMap == null) {
-        logDebug "parse() got null descMap from description: ${description}"
+        logRx "parse() got null descMap from description: ${description}"
         return
     }
     logTrace "parse() - descMap = ${descMap}"
@@ -501,12 +499,12 @@ private void parseZhaGlobalCommand(Map descMap) {
 private void parseConfigureReportingResponse(Map descMap) {
     List data = descMap.data as List
     if (!data) {
-        logDebug "Configure Reporting Response cluster=${descMap.clusterId}: empty data"
+        logRx "Configure Reporting Response cluster=${descMap.clusterId}: empty data"
         return
     }
     String statusHex = data[0]
     if (statusHex == "00") {
-        logDebug "Configure Reporting Response cluster=${descMap.clusterId}: Success"
+        logRx "Configure Reporting Response cluster=${descMap.clusterId}: Success"
         return
     }
     String statusName = constZclStatusNames[statusHex] ?: "Unknown"
@@ -525,7 +523,7 @@ private void parseConfigureReportingResponse(Map descMap) {
 private void parseReadReportingConfigResponse(Map descMap) {
     List data = descMap.data as List
     if (!data || data.size() < 4) {
-        logDebug "Read Reporting Config Response cluster=${descMap.clusterId}: short data ${data}"
+        logRx "Read Reporting Config Response cluster=${descMap.clusterId}: short data ${data}"
         return
     }
     String statusHex = data[0]
@@ -536,13 +534,13 @@ private void parseReadReportingConfigResponse(Map descMap) {
         return
     }
     if (data.size() < 9) {
-        logInfo "Reporting config cluster=${descMap.clusterId} attr=0x${attrId}: status=Success (no min/max/change in record)"
+        logCfg "Reporting config cluster=${descMap.clusterId} attr=0x${attrId}: status=Success (no min/max/change in record)"
         return
     }
     int minInterval = Integer.parseInt("${data[6]}${data[5]}", 16)
     int maxInterval = Integer.parseInt("${data[8]}${data[7]}", 16)
     String change = (data.size() > 9) ? data[9..-1].reverse().join() : "(discrete)"
-    logInfo "Reporting config cluster=${descMap.clusterId} attr=0x${attrId} min=${minInterval}s max=${maxInterval}s change=0x${change}"
+    logCfg "Reporting config cluster=${descMap.clusterId} attr=0x${attrId} min=${minInterval}s max=${maxInterval}s change=0x${change}"
 }
 
 private void parseWriteAttributeResponse(Map descMap) {
@@ -578,12 +576,12 @@ private void parseAttributeReport(Map descMap) {
         case "0000": // Basic
             if (attrId == "4000") {
                 String version = descMap.value ?: "unknown"
-                logInfo "firmware version: ${version}"
+                logOta "firmware version: ${version}"
                 updateDataValue("softwareBuild", version)
             } else if (attrId == "FF01" && descMap.value != null) { // Gen3 LED brightness
                 int raw = Integer.parseInt(descMap.value, 16)
                 device.updateSetting("prefLedBrightness", [value: raw, type: "number"])
-                logDebug "led brightness is ${raw}%"
+                logRx "led brightness is ${raw}%"
             }
             return
 
@@ -604,7 +602,7 @@ private void parseAttributeReport(Map descMap) {
             return
 
         default:
-            logDebug "Unhandled cluster ${cluster} attr ${attrId} value ${descMap.value}"
+            logRx "Unhandled cluster ${cluster} attr ${attrId} value ${descMap.value}"
             return
     }
 }
@@ -619,7 +617,7 @@ private void handleOnOffCluster(Map descMap) {
             String desc = (curVal != newVal)
                 ? "Switch was turned ${newVal} [${type}]"
                 : "Switch is ${newVal}"
-            if (curVal != newVal) logInfo desc
+            if (txtEnable && curVal != newVal) logInfo desc
             sendEvent(name: "switch", value: newVal, type: type, descriptionText: desc)
             return
 
@@ -631,7 +629,7 @@ private void handleOnOffCluster(Map descMap) {
             return
 
         default:
-            logDebug "Unhandled on/off attr ${descMap.attrId} value ${descMap.value}"
+            logRx "Unhandled on/off attr ${descMap.attrId} value ${descMap.value}"
             return
     }
 }
@@ -682,7 +680,7 @@ private void handleElectricalCluster(Map descMap) {
             return
 
         default:
-            logDebug "Unhandled electrical attr ${descMap.attrId} value ${descMap.value}"
+            logRx "Unhandled electrical attr ${descMap.attrId} value ${descMap.value}"
             return
     }
 }
@@ -709,7 +707,7 @@ private void handleMeteringCluster(Map descMap) {
             return
 
         default:
-            logDebug "Unhandled metering attr ${descMap.attrId} value ${descMap.value}"
+            logRx "Unhandled metering attr ${descMap.attrId} value ${descMap.value}"
             return
     }
 }
@@ -719,23 +717,23 @@ private void handleMfgCluster(Map descMap) {
         case "0001": // on-to-off delay
             int raw = Integer.parseInt(descMap.value, 16)
             device.updateSetting("prefOnToOffDelay", [value: raw, type: "number"])
-            logDebug "on-to-off delay is ${raw}s"
+            logRx "on-to-off delay is ${raw}s"
             return
 
         case "0002": // off-to-on delay
             int raw = Integer.parseInt(descMap.value, 16)
             device.updateSetting("prefOffToOnDelay", [value: raw, type: "number"])
-            logDebug "off-to-on delay is ${raw}s"
+            logRx "off-to-on delay is ${raw}s"
             return
 
         case "0010": // led brightness
             int raw = Integer.parseInt(descMap.value, 16)
             device.updateSetting("prefLedBrightness", [value: raw, type: "number"])
-            logDebug "led brightness is ${raw}%"
+            logRx "led brightness is ${raw}%"
             return
 
         default:
-            logDebug "Unhandled mfg attr ${descMap.attrId} value ${descMap.value}"
+            logRx "Unhandled mfg attr ${descMap.attrId} value ${descMap.value}"
             return
     }
 }
@@ -744,7 +742,7 @@ private void applyScaledReport(String name, BigDecimal raw, int divisor, int dec
     BigDecimal value = (divisor == 1) ? raw : raw.divide(new BigDecimal(divisor), decimals, RoundingMode.HALF_UP)
     value = value.setScale(decimals, RoundingMode.HALF_UP)
     String desc = "${name} is ${value}${unit ? ' ' + unit : ''}"
-    if (txtEnable) logInfo desc
+    logInfo desc
     sendEvent(name: name, value: value, unit: unit, type: "physical", descriptionText: desc)
 }
 
@@ -755,7 +753,7 @@ private void recordReportedDivisor(String attrId, String hexValue) {
     attrs[attrId] = value
     state.attributes = attrs
     if (prev == null || prev != value) {
-        logDebug "device-reported scaling attribute ${attrId} = ${value} (driver uses hardcoded values)"
+        logRx "device-reported scaling attribute ${attrId} = ${value} (driver uses hardcoded values)"
     }
 }
 
@@ -795,7 +793,7 @@ private void scheduleDeviceHealthCheck(int intervalMin) {
 // Private methods
 
 private void autoConfigure() {
-    logWarn "driver version change detected"
+    logVer "driver version change detected"
     configure()
 }
 
@@ -846,24 +844,20 @@ private static BigDecimal decSetting(Object value, BigDecimal defaultValue) {
     value != null ? (value as BigDecimal) : defaultValue
 }
 
-// Logging helpers
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
 
-private void logTrace(String message) {
-    if (traceEnable) log.trace "${device} : ${message}"
-}
+void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
-private void logDebug(String message) {
-    if (debugEnable) log.debug "${device} : ${message}"
-}
-
-private void logInfo(String message) {
-    if (txtEnable) log.info "${device} : ${message}"
-}
-
-private void logWarn(String message) {
-    log.warn "${device} : ${message}"
-}
-
-private void logError(String message) {
-    log.error "${device} : ${message}"
-}
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }

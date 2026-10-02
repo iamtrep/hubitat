@@ -11,7 +11,7 @@ import groovy.transform.Field
 
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.0.3"
+@Field static final String CODE_VERSION = "0.0.4"
 
 definition(
     name: "Location Event Mapper Child",
@@ -70,8 +70,11 @@ Map mainPage() {
                 options: constLocationEvents, required: false, multiple: true, defaultValue: ["systemStart"]
         }
         section("Logging") {
-            input name: "logLevel", type: "enum", options: ["warn","info","debug","trace"], title: "Enable logging?", defaultValue: "info", required: true, submitOnChange: true
-            if (logLevel != null) logInfo("${logLevel} logging enabled")
+            input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
+            input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
+            if (settings.debugEnable) {
+                input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
+            }
         }
     }
 }
@@ -87,9 +90,11 @@ void updated() {
     unsubscribe()
     initialize()
     logDebug "updated()"
+    if (settings.debugEnable || settings.traceEnable) runIn(1800, "logsOff")
 }
 
 void initialize() {
+    app.removeSetting("logLevel")
     logDebug "initialize()"
     unsubscribe()
     subscribe(location, "eventHandler")
@@ -113,7 +118,7 @@ void openContact(String message) {
         logWarn("${message} - ${contactSensor?.getDisplayName()} already open - missed systemStart event?")
     }
 
-    logInfo "${message} - Opening contact"
+    logCmd "${message} - Opening contact"
     contactSensor?.open()
 }
 
@@ -122,35 +127,29 @@ void closeContact(String message) {
         logWarn("${message} - ${contactSensor?.getDisplayName()} already closed - missed shutdown/reboot event?")
     }
 
-    logInfo "${message} - Closing contact"
+    logCmd "${message} - Closing contact"
     contactSensor?.close()
 }
 
-// Logging helpers
-
-private void logError(String msg)
-{
-    //if (logLevel in ["info","debug","trace"])
-    log.error(app.getLabel() + ': ' + msg)
+void logsOff() {
+    app.updateSetting("debugEnable", [value: "false", type: "bool"])
+    app.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "debug and trace logging disabled"
 }
 
-private void logWarn(String msg)
-{
-    //if (logLevel in ["warn", "info","debug","trace"])
-    log.warn(app.getLabel() + ': ' + msg)
-}
+// ── Logging (app) ─────────────────────────────────────────────────────
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${app.getLabel()}: " }
 
-private void logInfo(String msg)
-{
-    if (logLevel == null || logLevel in ["info","debug","trace"]) log.info(app.getLabel() + ': ' + msg)
-}
+void logEvt  (String m) { if (settings.debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (settings.debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (settings.debugEnable) log.debug logp('⏰') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
-private void logDebug(String msg)
-{
-    if (logLevel == null || logLevel in ["debug","trace"]) log.debug(app.getLabel() + ': ' + msg)
-}
-
-private void logTrace(String msg)
-{
-    if (logLevel == null || logLevel in ["trace"]) log.trace(app.getLabel() + ': ' + msg)
-}
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (settings.traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (settings.debugEnable) log.debug "${app.getLabel()}: ${m}" }

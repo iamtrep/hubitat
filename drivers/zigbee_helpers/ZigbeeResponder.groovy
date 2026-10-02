@@ -18,7 +18,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = '0.3.4'
+@Field static final String CODE_VERSION = '0.3.5'
 
 // Sub-second WS re-delivery dedup, keyed by hub device id, value = [sig, ts].
 // In-JVM only — lost on hub reboot, which is fine for sub-second dedup. Bounded
@@ -42,7 +42,7 @@ metadata {
     }
 
     preferences {
-        input name: 'txtEnable',   type: 'bool', title: '<b>Enable descriptionText logging</b>',
+        input name: 'txtEnable',   type: 'bool', title: '<b>Enable info logging</b>',
               defaultValue: true
         input name: 'debugEnable', type: 'bool', title: '<b>Enable debug logging</b>',
               description: 'Auto-disables after 30 minutes.', defaultValue: false, submitOnChange: true
@@ -83,46 +83,40 @@ metadata {
 // ══════════════════════════════════════════════════════════════════════════
 
 void installed() {
-    log.info "${device.displayName} installed v${CODE_VERSION}"
+    logCfg "installed v${CODE_VERSION}"
     state.clear()
     initialize()
 }
 
 void updated() {
-    log.info "${device.displayName} updated"
+    logCfg "updated"
     unschedule()
     initialize()
 }
 
 void initialize() {
-    log.info "${device.displayName} initialize v${CODE_VERSION}"
-
-    // One-time rename of the prior `logEnable` pref to the standard `debugEnable`.
-    if (settings?.logEnable != null) {
-        device.updateSetting('debugEnable', [type: 'bool', value: settings.logEnable as Boolean])
-        device.removeSetting('logEnable')
-    }
+    logCfg "initialize v${CODE_VERSION}"
 
     if (state.version != CODE_VERSION) {
-        logWarn "New version: ${CODE_VERSION} (was: ${state.version})"
+        logVer "New version: ${CODE_VERSION} (was: ${state.version})"
         state.version = CODE_VERSION
     }
 
-    if (settings?.debugEnable) runIn(1800, 'logsOff', [overwrite: true])
+    if (settings?.debugEnable || settings?.traceEnable) runIn(1800, 'logsOff', [overwrite: true])
 
     state.timeAllowedIds   = parseAllowedIds(settings?.timeResponderDeviceIds as String)
     state.timeUnixEpochIds = parseAllowedIds(settings?.timeResponderUnixEpochDeviceIds as String)
     state.otaAllowedIds    = parseAllowedIds(settings?.otaResponderDeviceIds as String)
-    logInfo "Time responder: ${settings?.enableTimeResponder ? 'ENABLED' : 'disabled'}, " +
+    logCfg "Time responder: ${settings?.enableTimeResponder ? 'ENABLED' : 'disabled'}, " +
             "allowedIds=${state.timeAllowedIds}, unixEpochIds=${state.timeUnixEpochIds}"
-    logInfo "OTA responder:  ${settings?.enableOtaResponder ? 'ENABLED' : 'disabled'}, " +
+    logCfg "OTA responder:  ${settings?.enableOtaResponder ? 'ENABLED' : 'disabled'}, " +
             "allowedIds=${state.otaAllowedIds}"
 
     runIn(2, 'connectZigbeeLogSocket', [overwrite: true])
 }
 
 void uninstalled() {
-    log.info "${device.displayName} uninstalled"
+    logCfg "uninstalled"
     disconnectZigbeeLogSocket()
 }
 
@@ -132,18 +126,18 @@ void deviceTypeUpdated() {
 }
 
 void configure() {
-    log.info "${device.displayName} configure"
+    logCfg "configure"
     initialize()
 }
 
 void refresh() {
-    logInfo "ws=${state.wsConnected}, " +
+    if (txtEnable) logInfo "ws=${state.wsConnected}, " +
             "time=${settings?.enableTimeResponder ? 'on' : 'off'} allowed=${state.timeAllowedIds} unixEpoch=${state.timeUnixEpochIds}, " +
             "ota=${settings?.enableOtaResponder ? 'on' : 'off'} allowed=${state.otaAllowedIds}"
 }
 
 void reconnect() {
-    logInfo 'reconnect requested'
+    logCmd 'reconnect requested'
     disconnectZigbeeLogSocket()
     runIn(2, 'connectZigbeeLogSocket', [overwrite: true])
 }
@@ -157,7 +151,7 @@ void connectZigbeeLogSocket() {
     state.wsIntentionalClose = false
     state.wsConnected = false
     sendEvent(name: 'wsStatus', value: 'connecting')
-    logDebug 'connecting to ws://127.0.0.1:8080/zigbeeLogsocket'
+    logNet 'connecting to ws://127.0.0.1:8080/zigbeeLogsocket'
     try {
         interfaces.webSocket.connect('ws://127.0.0.1:8080/zigbeeLogsocket')
         logInfo 'zigbeeLogsocket connect initiated'
@@ -177,9 +171,9 @@ void disconnectZigbeeLogSocket() {
     sendEvent(name: 'wsStatus', value: 'disconnected')
     try {
         interfaces.webSocket.close()
-        logDebug 'close requested'
+        logNet 'close requested'
     } catch (Exception e) {
-        logDebug "close exception: ${e.message}"
+        logNet "close exception: ${e.message}"
     }
 }
 
@@ -193,7 +187,7 @@ private void scheduleZigbeeLogSocketReconnect() {
 
 void webSocketStatus(String status) {
     String normalized = status?.trim()?.toLowerCase()
-    logDebug "webSocketStatus: ${status}"
+    logNet "webSocketStatus: ${status}"
     if (normalized in ['open', 'status: open']) {
         state.wsConnected = true
         state.wsReconnectPending = false
@@ -211,7 +205,7 @@ void webSocketStatus(String status) {
         state.wsConnected = false
         sendEvent(name: 'wsStatus', value: 'disconnected')
         if (state.wsIntentionalClose == true) {
-            logDebug 'closed intentionally'
+            logNet 'closed intentionally'
             return
         }
         if (isFailure) logWarn "ws failure: ${status}"
@@ -337,7 +331,7 @@ private void processTimeReadRequest(Map entry) {
     String devLabel = entry?.name?.toString() ?: "id=${entryDeviceId}"
     boolean useUnixEpoch = ((state.timeUnixEpochIds ?: []) as List<String>).contains(entryDeviceId)
     String epochTag = useUnixEpoch ? ' [unix-epoch]' : ''
-    logInfo "<b>Time read</b>${epochTag} from ${devLabel} (dni=0x${srcDniHex}, seq=0x${zclSeq}, attrs=${attrHexList})"
+    if (txtEnable) logInfo "<b>Time read</b>${epochTag} from ${devLabel} (dni=0x${srcDniHex}, seq=0x${zclSeq}, attrs=${attrHexList})"
 
     sendTimeClusterResponse(srcDniHex, zclSeq, requestedAttrs, srcEp, dstEp, useUnixEpoch)
 }
@@ -408,7 +402,7 @@ private void sendTimeClusterResponse(String srcDniHex, String zclSeq, List<Integ
     String payload = sb.toString()
     List<String> cmds = ["he raw 0x${srcDniHex} ${responseSrcEp} ${responseDstEp} 0x000A {${payload}} {0x0104}"]
     String epochLabel = useUnixEpoch ? '1970' : '2000'
-    logInfo "Time response → 0x${srcDniHex}: seq=0x${zclSeq}, epoch=${epochLabel}, time=${timeBase}, TZ=${tzOffsetSec}s, DST=${dstSec}s"
+    logCmd "Time response → 0x${srcDniHex}: seq=0x${zclSeq}, epoch=${epochLabel}, time=${timeBase}, TZ=${tzOffsetSec}s, DST=${dstSec}s"
     logDebug "Time response payload: ${payload}"
     sendHubCommand(new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE))
 }
@@ -487,7 +481,7 @@ private void processOtaQueryNextImageRequest(Map entry) {
     String verLE  = "${rawPayload[8]} ${rawPayload[9]} ${rawPayload[10]} ${rawPayload[11]}"
 
     String devLabel = entry?.name?.toString() ?: "id=${entryDeviceId}"
-    logInfo "<b>OTA Query Next Image</b> from ${devLabel} (dni=0x${srcDniHex}, seq=0x${zclSeq}, mfr=${mfrCode}, imgType=${imgType}, fileVer=${fileVer})"
+    logOta "<b>OTA Query Next Image</b> from ${devLabel} (dni=0x${srcDniHex}, seq=0x${zclSeq}, mfr=${mfrCode}, imgType=${imgType}, fileVer=${fileVer})"
 
     sendOtaNoImageResponse(srcDniHex, zclSeq, srcEp, dstEp, mfrLE, typeLE, verLE)
 }
@@ -501,7 +495,7 @@ private void sendOtaNoImageResponse(String srcDniHex, String zclSeq, Integer src
     int responseDstEp = srcEp
     String payload = "09 ${zclSeq} 02 98 ${mfrLE} ${typeLE} ${verLE} FF FF FF FF"
     List<String> cmds = ["he raw 0x${srcDniHex} ${responseSrcEp} ${responseDstEp} 0x0019 {${payload}} {0x0104}"]
-    logInfo "OTA response → 0x${srcDniHex}: seq=0x${zclSeq}, status=0x98 NO_IMAGE_AVAILABLE"
+    logCmd "OTA response → 0x${srcDniHex}: seq=0x${zclSeq}, status=0x98 NO_IMAGE_AVAILABLE"
     logDebug "OTA response payload: ${payload}"
     sendHubCommand(new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE))
 }
@@ -525,12 +519,24 @@ private static String toLEHex32(long value) {
 
 void logsOff() {
     logWarn 'debug/trace logging disabled'
-    device.updateSetting('debugEnable', [value: false, type: 'bool'])
-    device.updateSetting('traceEnable', [value: false, type: 'bool'])
+    device.updateSetting('debugEnable', [value: 'false', type: 'bool'])
+    device.updateSetting('traceEnable', [value: 'false', type: 'bool'])
 }
 
-private void logTrace(String message) { if (settings?.traceEnable) log.trace "${device} : ${message}" }
-private void logDebug(String message) { if (settings?.debugEnable) log.debug "${device} : ${message}" }
-private void logInfo(String message)  { if (settings?.txtEnable)   log.info  "${device} : ${message}" }
-private void logWarn(String message)  { log.warn  "${device} : ${message}" }
-private void logError(String message) { log.error "${device} : ${message}" }
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
+
+void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }

@@ -110,7 +110,7 @@ For Zigbee drivers, place the check in `parse()` instead, so the device auto-rec
 Every app and driver should expose three boolean preferences and a small set of gated helpers.
 
 ```groovy
-input name: "txtEnable",   type: "bool", title: "Enable descriptionText logging", defaultValue: true
+input name: "txtEnable",   type: "bool", title: "Enable info logging",            defaultValue: true
 input name: "debugEnable", type: "bool", title: "Enable debug logging",           defaultValue: false, submitOnChange: true
 if (debugEnable) {
     input name: "traceEnable", type: "bool", title: "Enable trace logging",       defaultValue: false
@@ -123,15 +123,17 @@ line encoding the line's *category* (the UI already colors by level), with
 `logWarn`/`logError` carrying severity flags and `logTrace` the raw firehose.
 Each helper checks the file's existing debug/trace gate and prefixes
 `${device.displayName}` (drivers) or `${app.getLabel()}` (apps). Plain
-`logInfo`/`logDebug` remain emoji-less for uncategorized lines.
+`logInfo`/`logDebug` remain emoji-less for uncategorized lines. `txtEnable` gates
+all info-level output (`logInfo` and the info-level category helpers), with an
+unset value counting as on; version notices (`logVer`, warn level), warnings and errors always log.
 
 Auto-disable debug and trace after about 30 minutes:
 
 ```groovy
-if (debugEnable) runIn(1800, "logsOff")
+if (debugEnable || traceEnable) runIn(1800, "logsOff")
 ```
 
-The `logsOff` handler clears the flags via `device.updateSetting` / `app.updateSetting`.
+The `logsOff` handler clears both flags via `device.updateSetting` / `app.updateSetting` and logs that it did with `logWarn`, so the reason debug output stopped shows whatever the info setting. One-time notices such as settings migrations also use `logWarn`.
 
 ### Date handling
 

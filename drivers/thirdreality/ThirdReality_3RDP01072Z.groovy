@@ -30,7 +30,7 @@ import com.hubitat.app.DeviceWrapper
 import hubitat.zigbee.zcl.DataType
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.2"
+@Field static final String CODE_VERSION = "0.0.3"
 
 // Both outlets. Kept as strings to match descMap.endpoint / child DNI suffixes.
 @Field static final List<String> ENDPOINTS = ["01", "02"]
@@ -177,7 +177,7 @@ metadata {
                   options: constHealthCheckIntervalOpts, defaultValue: 0,
                   description: "How often to check whether the device is still talking. Disabled by default — mains-powered routers rarely go silent.")
 
-            input(name: "txtEnable", type: "bool", title: "<b>Enable descriptionText logging</b>",
+            input(name: "txtEnable", type: "bool", title: "<b>Enable info logging</b>",
                   defaultValue: true)
             input(name: "debugEnable", type: "bool", title: "<b>Enable debug logging</b>",
                   defaultValue: false, submitOnChange: true)
@@ -193,7 +193,7 @@ metadata {
 // Driver installation
 
 void installed() {
-    logInfo "installed"
+    logCfg "installed"
     state.attributes = [:]   // diagnostic cache of device-reported divisors
     state.codeVersion = CODE_VERSION
     state.lastRx = 0
@@ -204,14 +204,12 @@ void installed() {
 }
 
 void updated() {
-    logInfo "updated"
+    logCfg "updated"
     unschedule()
     ensureChildren()
 
-    if (debugEnable) {
-        logDebug "settings: ${settings}"
-        runIn(1800, "logsOff")
-    }
+    logDebug "settings: ${settings}"
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
 
     int healthInterval = intSetting(settings.prefHealthCheckInterval, 0)
     if (healthInterval > 0) scheduleDeviceHealthCheck(healthInterval)
@@ -231,7 +229,7 @@ void updated() {
 }
 
 void uninstalled() {
-    logInfo "uninstalled"
+    logCfg "uninstalled"
     unschedule()
 }
 
@@ -278,7 +276,7 @@ void replaceOutletChildren(String confirm) {
         DeviceWrapper existing = childForEndpoint(ep)
         if (existing == null || existing.typeName == CHILD_TYPE) return
         String label = existing.label ?: existing.name
-        logInfo "replacing child for endpoint ${ep} (was ${existing.typeName})"
+        logCfg "replacing child for endpoint ${ep} (was ${existing.typeName})"
         deleteChildDevice(childDni(ep))
         createChild(ep, label)
     }
@@ -287,7 +285,7 @@ void replaceOutletChildren(String confirm) {
 }
 
 private void createChild(String ep, String label) {
-    logInfo "creating child for endpoint ${ep}"
+    logCfg "creating child for endpoint ${ep}"
     DeviceWrapper cd = addChildDevice("iamtrep", CHILD_TYPE, childDni(ep),
         [name: "${device.displayName} EP${ep}", label: label, isComponent: false])
     cd?.sendEvent(name: "switch", value: "off")
@@ -361,7 +359,7 @@ void configure() {
 }
 
 void configureApply() {
-    logInfo "configured (version ${CODE_VERSION})"
+    logCfg "configured (version ${CODE_VERSION})"
 }
 
 List<String> refresh() {
@@ -395,10 +393,10 @@ void componentRefresh(DeviceWrapper cd) {
 // a Default Response, no attribute report, and the command-retry watchdog gives up.
 private void switchEndpoint(String ep, String target) {
     if (settings.prefDisableOnOff) {
-        logInfo "${target}() on EP${ep} ignored (Disable Power Commands is on)"
+        logCmd "${target}() on EP${ep} ignored (Disable Power Commands is on)"
         return
     }
-    logInfo "EP${ep} ${target}"
+    logCmd "EP${ep} ${target}"
     markPendingDigital(ep)
     int e = epInt(ep)
     int cmd = (target == "on") ? 0x01 : 0x00
@@ -427,7 +425,7 @@ private boolean consumePendingDigital(String ep) {
 // Custom commands
 
 void resetEnergy() {
-    logInfo "resetEnergy (both outlets)"
+    logCmd "resetEnergy (both outlets)"
     List<String> cmds = []
     Map offsets = (state.energyOffset ?: [:]) as Map
     ENDPOINTS.each { String ep ->
@@ -440,7 +438,7 @@ void resetEnergy() {
 }
 
 List<String> updateFirmware() {
-    logInfo "checking for firmware updates"
+    logOta "checking for firmware updates"
     return zigbee.updateFirmware()
 }
 
@@ -454,7 +452,7 @@ void parse(String description) {
 
     Map descMap = zigbee.parseDescriptionAsMap(description)
     if (descMap == null) {
-        logDebug "parse() got null descMap from description: ${description}"
+        logRx "parse() got null descMap from description: ${description}"
         return
     }
     logTrace "parse() - descMap = ${descMap}"
@@ -496,7 +494,7 @@ private void parseConfigureReportingResponse(Map descMap) {
     if (!data) return
     String statusHex = data[0]
     if (statusHex == "00") {
-        logDebug "Configure Reporting Response cluster=${descMap.clusterId} ep=${descMap.endpoint}: Success"
+        logRx "Configure Reporting Response cluster=${descMap.clusterId} ep=${descMap.endpoint}: Success"
         return
     }
     String statusName = constZclStatusNames[statusHex] ?: "Unknown"
@@ -519,13 +517,13 @@ private void parseReadReportingConfigResponse(Map descMap) {
         return
     }
     if (data.size() < 9) {
-        logInfo "Reporting config cluster=${descMap.clusterId} attr=0x${attrId}: Success (no min/max/change in record)"
+        logCfg "Reporting config cluster=${descMap.clusterId} attr=0x${attrId}: Success (no min/max/change in record)"
         return
     }
     int minInterval = Integer.parseInt("${data[6]}${data[5]}", 16)
     int maxInterval = Integer.parseInt("${data[8]}${data[7]}", 16)
     String change = (data.size() > 9) ? data[9..-1].reverse().join() : "(discrete)"
-    logInfo "Reporting config cluster=${descMap.clusterId} ep=${descMap.endpoint} attr=0x${attrId} min=${minInterval}s max=${maxInterval}s change=0x${change}"
+    logCfg "Reporting config cluster=${descMap.clusterId} ep=${descMap.endpoint} attr=0x${attrId} min=${minInterval}s max=${maxInterval}s change=0x${change}"
 }
 
 private void parseWriteAttributeResponse(Map descMap) {
@@ -555,19 +553,19 @@ private void parseAttributeReport(Map descMap) {
         case "0000": // Basic
             if (descMap.attrId == "4000") {
                 String version = descMap.value ?: "unknown"
-                logInfo "firmware version: ${version}"
+                logOta "firmware version: ${version}"
                 updateDataValue("softwareBuild", version)
             } else if (descMap.attrId == "FF01" && descMap.value != null) {
                 int raw = Integer.parseInt(descMap.value, 16)
                 device.updateSetting("prefLedBrightness", [value: raw, type: "number"])
-                logDebug "led brightness is ${raw}%"
+                logRx "led brightness is ${raw}%"
             }
             return
         case "0006": handleOnOffCluster(ep, descMap);      return
         case "0B04": handleElectricalCluster(ep, descMap); return
         case "0702": handleMeteringCluster(ep, descMap);   return
         default:
-            logDebug "Unhandled cluster ${cluster} ep ${ep} attr ${descMap.attrId} value ${descMap.value}"
+            logRx "Unhandled cluster ${cluster} ep ${ep} attr ${descMap.attrId} value ${descMap.value}"
             return
     }
 }
@@ -590,7 +588,7 @@ private void handleOnOffCluster(String ep, Map descMap) {
             device.updateSetting("prefPowerRestore", [value: "${raw}", type: "enum"])
             return
         default:
-            logDebug "Unhandled on/off ep ${ep} attr ${descMap.attrId} value ${descMap.value}"
+            logRx "Unhandled on/off ep ${ep} attr ${descMap.attrId} value ${descMap.value}"
             return
     }
 }
@@ -633,7 +631,7 @@ private void handleElectricalCluster(String ep, Map descMap) {
             recordReportedDivisor("0B04-${ep}-${descMap.attrId}", descMap.value)
             return
         default:
-            logDebug "Unhandled electrical ep ${ep} attr ${descMap.attrId} value ${descMap.value}"
+            logRx "Unhandled electrical ep ${ep} attr ${descMap.attrId} value ${descMap.value}"
             return
     }
 }
@@ -662,7 +660,7 @@ private void handleMeteringCluster(String ep, Map descMap) {
             recordReportedDivisor("0702-${ep}-${descMap.attrId}", descMap.value)
             return
         default:
-            logDebug "Unhandled metering ep ${ep} attr ${descMap.attrId} value ${descMap.value}"
+            logRx "Unhandled metering ep ${ep} attr ${descMap.attrId} value ${descMap.value}"
             return
     }
 }
@@ -728,7 +726,7 @@ private void scheduleDeviceHealthCheck(int intervalMin) {
 // Private helpers
 
 private void autoConfigure() {
-    logWarn "driver version change detected"
+    logVer "driver version change detected"
     configure()
 }
 
@@ -762,10 +760,20 @@ private static BigDecimal decSetting(Object value, BigDecimal defaultValue) {
     value != null ? (value as BigDecimal) : defaultValue
 }
 
-// Logging helpers
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
 
-private void logTrace(String message) { if (traceEnable) log.trace "${device} : ${message}" }
-private void logDebug(String message) { if (debugEnable) log.debug "${device} : ${message}" }
-private void logInfo(String message)  { if (txtEnable)  log.info  "${device} : ${message}" }
-private void logWarn(String message)  { log.warn  "${device} : ${message}" }
-private void logError(String message) { log.error "${device} : ${message}" }
+void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }

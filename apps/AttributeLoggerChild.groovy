@@ -12,7 +12,7 @@ import com.hubitat.app.DeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.nio.file.AccessDeniedException
 
-@Field static final String CODE_VERSION = "0.0.3"
+@Field static final String CODE_VERSION = "0.0.4"
 
 definition(
     name: "Attribute Logger Child",
@@ -37,8 +37,11 @@ Map mainPage() {
         section("App Settings", hideable: true, hidden: false) {
             label title: "Set App Label", required: false
             input "logFileName", "text", title: "Log File Name", description: "Enter the name of the log file (e.g., log.csv)", defaultValue: "log.csv", required: true
-            input name: "logLevel", type: "enum", options: ["warn","info","debug","trace"], title: "Enable logging?", defaultValue: "info", required: true, submitOnChange: true
-            if (logLevel != null) logInfo("${logLevel} logging enabled")
+            input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
+            input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
+            if (settings.debugEnable) {
+                input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
+            }
         }
         section("Select Device and Attributes") {
             input "selectedDevice", "capability.*", title: "Select Device", multiple: false, required: true, submitOnChange: true
@@ -74,12 +77,14 @@ void updated() {
 	    //uploadHubFile(logFileName, header.bytes)
     }
     initialize()
+    if (settings.debugEnable || settings.traceEnable) runIn(1800, "logsOff")
 }
 
 void uninstalled() {
 }
 
 void initialize() {
+    app.removeSetting("logLevel")
     unsubscribe()
     selectedAttributes.each { attribute ->
         subscribe(selectedDevice, attribute, handleEvent)
@@ -117,12 +122,12 @@ byte[] safeDownloadHubFile(String fileName) {
         try {
             return downloadHubFile(fileName)
         } catch (AccessDeniedException ex) {
-            log.warn "Failed to download ${fileName}: ${ex.message}. Retrying (${i} / 3) ..."
+            logWarn "Failed to download ${fileName}: ${ex.message}. Retrying (${i} / 3) ..."
             pauseExecution(500)
         }
     }
 
-    log.error "Failed to download ${fileName} after 3 attempts"
+    logError "Failed to download ${fileName} after 3 attempts"
     return null
 }
 
@@ -133,12 +138,12 @@ void safeUploadHubFile(String fileName, byte[] bytes) {
             uploadHubFile(fileName, bytes)
             return
         } catch (AccessDeniedException ex) {
-            log.warn "Failed to upload ${fileName}: ${ex.message}. Retrying (${i} / 3) ..."
+            logWarn "Failed to upload ${fileName}: ${ex.message}. Retrying (${i} / 3) ..."
             pauseExecution(500)
         }
     }
 
-    log.error "Failed to upload ${fileName} after 3 attempts - possible data loss"
+    logError "Failed to upload ${fileName} after 3 attempts - possible data loss"
 }
 
 void safeDeleteHubFile(String fileName) {
@@ -147,12 +152,12 @@ void safeDeleteHubFile(String fileName) {
             deleteHubFile(fileName)
             return
         } catch (AccessDeniedException ex) {
-            log.warn "Failed to delete ${fileName}: ${ex.message}. Retrying (${i} / 3) ..."
+            logWarn "Failed to delete ${fileName}: ${ex.message}. Retrying (${i} / 3) ..."
             pauseExecution(500)
         }
     }
 
-    log.error "Failed to delete ${fileName} after 3 attempts"
+    logError "Failed to delete ${fileName} after 3 attempts"
 }
 
 List getDeviceAttributes(DeviceWrapper device) {
@@ -172,29 +177,25 @@ List getDeviceAttributes(DeviceWrapper device) {
     return uniqueAttributes ?: ["No supported attributes found"]
 }
 
-// logging helpers
-
-private void logError(String msg)
-{
-    log.error(app.getLabel() + ': ' + msg)
+void logsOff() {
+    app.updateSetting("debugEnable", [value: "false", type: "bool"])
+    app.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "debug and trace logging disabled"
 }
 
-private void logWarn(String msg)
-{
-    log.warn(app.getLabel() + ': ' + msg)
-}
+// ── Logging (app) ─────────────────────────────────────────────────────
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${app.getLabel()}: " }
 
-private void logInfo(String msg)
-{
-    if (logLevel == null || logLevel in ["info","debug","trace"]) log.info(app.getLabel() + ': ' + msg)
-}
+void logEvt  (String m) { if (settings.debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (settings.debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (settings.debugEnable) log.debug logp('⏰') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
-private void logDebug(String msg)
-{
-    if (logLevel == null || logLevel in ["debug","trace"]) log.debug(app.getLabel() + ': ' + msg)
-}
-
-private void logTrace(String msg)
-{
-    if (logLevel == null || logLevel in ["trace"]) log.trace(app.getLabel() + ': ' + msg)
-}
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (settings.traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (settings.debugEnable) log.debug "${app.getLabel()}: ${m}" }

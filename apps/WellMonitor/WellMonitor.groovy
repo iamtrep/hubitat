@@ -18,7 +18,7 @@ import com.hubitat.hub.domain.Event
 import java.nio.file.AccessDeniedException
 
 @Field static final String APP_NAME = "Well Monitor"
-@Field static final String CODE_VERSION = "0.11.3"
+@Field static final String CODE_VERSION = "0.11.4"
 @Field static final String DASHBOARD_FILE = "wellmonitor-dashboard.html"
 @Field static final String CHARTJS_FILE = "wellpump-chart.min.js"
 
@@ -164,7 +164,7 @@ Map mainPage() {
 
         section("Logging", hideable: true, hidden: true) {
             input name: "txtEnable", type: "bool",
-                title: "Enable descriptionText (info) logging",
+                title: "Enable info logging",
                 defaultValue: true
             input name: "debugEnable", type: "bool",
                 title: "Enable debug logging",
@@ -340,7 +340,7 @@ void initialize() {
     logDebug("Initializing...")
 
     if (state.version != CODE_VERSION) {
-        log.warn "${APP_NAME}: version ${CODE_VERSION} (was: ${state.version})"
+        logVer("version ${CODE_VERSION} (was: ${state.version})")
         state.version = CODE_VERSION
         // Version-aware reconfigure hook: add per-version migrations here when needed.
     }
@@ -384,7 +384,7 @@ void initialize() {
     if (!state.accessToken) {
         try {
             createAccessToken()
-            logInfo("Access token created for dashboard API")
+            logCfg("Access token created for dashboard API")
         } catch (Exception e) {
             logError("Failed to create access token: ${e.message}. Enable OAuth in the app code editor.")
         }
@@ -408,7 +408,7 @@ void initialize() {
     subscribe(location, "systemStart", systemStartHandler)
 
     // Auto-disable debug/trace after 30 minutes so verbose logging doesn't get left on indefinitely.
-    if (debugEnable) runIn(1800, "logsOff")
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
 
     // Daily off-peak UI sync so a manually-uploaded HTML drifts back into alignment with the
     // groovy version if the user upgrades the app code via GitHub import.
@@ -416,7 +416,7 @@ void initialize() {
 
     recoverPumpState()
 
-    log.info("${APP_NAME} initialized. Pump running: ${state.pumpRunning}")
+    logCfg("${APP_NAME} initialized. Pump running: ${state.pumpRunning}")
 }
 
 void systemStartHandler(evt) {
@@ -476,7 +476,7 @@ void powerHandler(Event evt) {
     int offThreshold = (powerOffThreshold ?: 10) as int
     int onThreshold = (powerOnThreshold ?: 100) as int
 
-    logDebug("Power event: ${currentPower}W (previous: ${prevPower}W)")
+    logEvt("Power event: ${currentPower}W (previous: ${prevPower}W)")
 
     if (currentPower < offThreshold && prevPower > onThreshold) {
         handlePumpStopped(currentTime)
@@ -519,7 +519,7 @@ private void handlePumpStarted(long currentTime) {
     if (enableEmergencyShutoff != false) {
         int timeout = (emergencyTimeoutSeconds ?: 300) as int
         runIn(timeout, "emergencyShutoff")
-        logDebug("Emergency shutoff scheduled in ${timeout}s")
+        logSched("Emergency shutoff scheduled in ${timeout}s")
     }
 }
 
@@ -649,7 +649,7 @@ private long eventTimeMs(Event evt) {
 }
 
 void volumeHandler(Event evt) {
-    logDebug("Volume event: ${evt.value}L")
+    logEvt("Volume event: ${evt.value}L")
 }
 
 // ==================== Water Flow Tracking ====================
@@ -663,7 +663,7 @@ void rateHandler(Event evt) {
         return
     }
 
-    logDebug("Rate event: ${rate} LPM (flowActive: ${state.flowActive})")
+    logEvt("Rate event: ${rate} LPM (flowActive: ${state.flowActive})")
 
     if (rate > 0 && !state.flowActive) {
         // Flow just started
@@ -1023,7 +1023,7 @@ private void migrateRunningCounters() {
         }
 
         state.statsVersion = 1
-        logInfo("Running counters migrated from history (${(state.cycleHistory ?: []).size()} cycles, ${(state.flowHistory ?: []).size()} flow events)")
+        logCfg("Running counters migrated from history (${(state.cycleHistory ?: []).size()} cycles, ${(state.flowHistory ?: []).size()} flow events)")
     }
 
     // v2 timestamp backfill — idempotent, runs on every initialize() until no work remains.
@@ -1090,7 +1090,7 @@ private void backfillHistoryTimestamps() {
     }
     state.flowHistory = migratedFlow
 
-    log.warn "${APP_NAME}: ts backfill — cycles ${cycleDone}/${cycleNeed} (failed ${cycleFail}), flow ${flowDone}/${flowNeed} (failed ${flowFail})"
+    logWarn("ts backfill — cycles ${cycleDone}/${cycleNeed} (failed ${cycleFail}), flow ${flowDone}/${flowNeed} (failed ${flowFail})")
 }
 
 private long parseHistoryDate(String s) {
@@ -1098,7 +1098,7 @@ private long parseHistoryDate(String s) {
     try {
         return Date.parse("yyyy-MM-dd HH:mm:ss", s).getTime()
     } catch (Exception e) {
-        log.warn "${APP_NAME}: failed to parse history date '${s}': ${e.message}"
+        logWarn("failed to parse history date '${s}': ${e.message}")
         return 0L
     }
 }
@@ -1166,7 +1166,7 @@ private void renameCoincidentFlowFields() {
     }
 
     if (changed) {
-        log.warn "${APP_NAME}: v3 rename — coincident-flow fields migrated (${renamed} cycle entries)"
+        logWarn("v3 rename — coincident-flow fields migrated (${renamed} cycle entries)")
     }
 }
 
@@ -1182,7 +1182,7 @@ private void migrateLogSettings() {
     app.updateSetting('txtEnable', [type: 'bool', value: txt])
     app.updateSetting('debugEnable', [type: 'bool', value: dbg])
     app.removeSetting('logLevel')
-    log.warn "${APP_NAME}: v4 log settings migrated (logLevel='${level}' → txtEnable=${txt}, debugEnable=${dbg})"
+    logWarn("v4 log settings migrated (logLevel='${level}' → txtEnable=${txt}, debugEnable=${dbg})")
 }
 
 // ==================== API Endpoints ====================
@@ -1368,7 +1368,7 @@ String checkGithubVersion() {
 void githubVersionCallback(resp, data) {
     githubVersionRefreshPending.remove(app.id as String)
     if (resp.hasError() || resp.status != 200) {
-        logDebug("GitHub version check failed: HTTP ${resp.status}")
+        logNet("GitHub version check failed: HTTP ${resp.status}")
         return
     }
     try {
@@ -1379,7 +1379,7 @@ void githubVersionCallback(resp, data) {
             state.lastGithubVersionCheck = now()
         }
     } catch (Exception e) {
-        logDebug("GitHub version callback error: ${e.message}")
+        logNet("GitHub version callback error: ${e.message}")
     }
 }
 
@@ -1502,7 +1502,7 @@ private boolean processSyncUIResponse(String htmlText) {
     }
     state.lastInstalledVersion = CODE_VERSION
     state.lastUIUpdateCheck = now()
-    logInfo("Dashboard UI updated from GitHub to match App v${CODE_VERSION} (${htmlText.length()} bytes)")
+    logVer("Dashboard UI updated from GitHub to match App v${CODE_VERSION} (${htmlText.length()} bytes)")
     return true
 }
 
@@ -1511,11 +1511,11 @@ private byte[] safeDownloadHubFile(String fileName) {
         try {
             return downloadHubFile(fileName)
         } catch (AccessDeniedException ex) {
-            log.warn "Failed to download ${fileName}: ${ex.message}. Retrying (${i} / 3) ..."
+            logWarn("Failed to download ${fileName}: ${ex.message}. Retrying (${i} / 3) ...")
             pauseExecution(500)
         }
     }
-    log.error "Failed to download ${fileName} after 3 attempts"
+    logError("Failed to download ${fileName} after 3 attempts")
     return null
 }
 
@@ -1525,11 +1525,11 @@ private void safeUploadHubFile(String fileName, byte[] bytes) {
             uploadHubFile(fileName, bytes)
             return
         } catch (AccessDeniedException ex) {
-            log.warn "Failed to upload ${fileName}: ${ex.message}. Retrying (${i} / 3) ..."
+            logWarn("Failed to upload ${fileName}: ${ex.message}. Retrying (${i} / 3) ...")
             pauseExecution(500)
         }
     }
-    log.error "Failed to upload ${fileName} after 3 attempts - possible data loss"
+    logError("Failed to upload ${fileName} after 3 attempts - possible data loss")
 }
 
 // ==================== Status Display ====================
@@ -1654,30 +1654,25 @@ private String fmtDec(Number value) {
     return ((value ?: 0) as BigDecimal).setScale(1, BigDecimal.ROUND_HALF_UP).toString()
 }
 
-// ==================== Logging ====================
-
-private void logTrace(String msg) {
-    if (traceEnable) log.trace "${app.getLabel() ?: APP_NAME}: ${msg}"
-}
-
-private void logDebug(String msg) {
-    if (debugEnable) log.debug "${app.getLabel() ?: APP_NAME}: ${msg}"
-}
-
-private void logInfo(String msg) {
-    if (txtEnable != false) log.info "${app.getLabel() ?: APP_NAME}: ${msg}"
-}
-
-private void logWarn(String msg) {
-    log.warn "${app.getLabel() ?: APP_NAME}: ${msg}"
-}
-
-private void logError(String msg) {
-    log.error "${app.getLabel() ?: APP_NAME}: ${msg}"
-}
-
 void logsOff() {
-    log.warn "${APP_NAME}: debug/trace logging auto-disabled"
     app.updateSetting("debugEnable", [type: "bool", value: false])
     app.updateSetting("traceEnable", [type: "bool", value: false])
+    logWarn("debug/trace logging auto-disabled")
 }
+
+// ── Logging (app) ─────────────────────────────────────────────────────
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${app.getLabel()}: " }
+
+void logEvt  (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${app.getLabel()}: ${m}" }

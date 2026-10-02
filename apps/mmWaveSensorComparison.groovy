@@ -4,7 +4,7 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.2.2"
+@Field static final String CODE_VERSION = "0.2.3"
 
 // Attributes (beyond the universal "motion") that some presence sensors expose.
 // Subscribed opportunistically per device and surfaced as extra context.
@@ -70,12 +70,12 @@ void initialize() {
         }
     }
 
-    if (debugEnable) runIn(1800, "logsOff")
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
 }
 
 private void checkVersion() {
     if (state.version != CODE_VERSION) {
-        logInfo "version ${state.version} -> ${CODE_VERSION}"
+        logVer "version ${state.version} -> ${CODE_VERSION}"
         state.version = CODE_VERSION
     }
 }
@@ -403,7 +403,7 @@ Map mainPage() {
         }
 
         section("Logging", hideable: true, hidden: true) {
-            input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
+            input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
             input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
             if (debugEnable) {
                 input name: "traceEnable", type: "bool", title: "Enable trace logging (per-event timestamps)", defaultValue: false
@@ -617,16 +617,25 @@ private static String formatMs(long ms) {
     return "${m}m ${sec}s"
 }
 
-// ─── Logging ────────────────────────────────────────────────────────────────
-
-private void logTrace(String m) { if (traceEnable) log.trace "${app.label}: ${m}" }
-private void logDebug(String m) { if (debugEnable) log.debug "${app.label}: ${m}" }
-private void logInfo(String m)  { if (txtEnable)   log.info  "${app.label}: ${m}" }
-private void logWarn(String m)  { log.warn  "${app.label}: ${m}" }
-private void logError(String m) { log.error "${app.label}: ${m}" }
-
 void logsOff() {
-    app.updateSetting("debugEnable", [value: false, type: "bool"])
-    app.updateSetting("traceEnable", [value: false, type: "bool"])
-    logInfo "debug/trace logging auto-disabled"
+    app.updateSetting("debugEnable", [value: "false", type: "bool"])
+    app.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "debug/trace logging auto-disabled"
 }
+
+// ── Logging (app) ─────────────────────────────────────────────────────
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${app.getLabel()}: " }
+
+void logEvt  (String m) { if (settings.debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (settings.debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (settings.debugEnable) log.debug logp('⏰') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (settings.traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (settings.debugEnable) log.debug "${app.getLabel()}: ${m}" }

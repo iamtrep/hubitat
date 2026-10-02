@@ -51,7 +51,7 @@ metadata {
 
 preferences {
     section("Logging") {
-        input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
+        input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
         input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
         if (debugEnable) {
             input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
@@ -64,7 +64,7 @@ void installed() {
 }
 
 void updated() {
-    if (debugEnable) runIn(DEBUG_LOG_TIMEOUT, "turnOffDebugLogging")
+    if (debugEnable || traceEnable) runIn(DEBUG_LOG_TIMEOUT, "turnOffDebugLogging")
 }
 
 void on() {
@@ -161,22 +161,20 @@ void turnOffDebugLogging() {
     device.updateSetting("traceEnable", [value: "false", type: "bool"])
 }
 
-private void logTrace(String message) {
-    if (traceEnable) log.trace "${device} : ${message}"
-}
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
 
-private void logDebug(String message) {
-    if (debugEnable) log.debug "${device} : ${message}"
-}
+void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
 
-private void logInfo(String message) {
-    if (txtEnable) log.info "${device} : ${message}"
-}
-
-private void logWarn(String message) {
-    log.warn "${device} : ${message}"
-}
-
-private void logError(String message) {
-    log.error "${device} : ${message}"
-}
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }
