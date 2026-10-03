@@ -31,6 +31,35 @@ check('fall-back 01:30 exists once', core.hhmmOf(core.atLocal('2026-11-01', '01:
 check('numOrNull string', core.numOrNull('18'), 18)
 check('numOrNull blank', core.numOrNull(''), null)
 
+// ── transitions ──
+long T(String iso, String hhmm) { core.atLocal(iso, hhmm, TZ) }
+normal = [name: 'Normal', type: 'time', groups: [
+  [name: 'Weekdays', days: [1, 2, 3, 4, 5], periods: [
+    [name: 'Wake', start: [kind: 'time', at: '06:30'], profile: 'Home'],
+    [name: 'Leave', start: [kind: 'time', at: '08:15'], profile: 'Out'],
+    [name: 'Night', start: [kind: 'time', at: '22:00'], profile: 'Sleep']]],
+  [name: 'Weekend', days: [6, 7], periods: [
+    [name: 'Wake', start: [kind: 'sunrise', offset: -30], profile: 'Home'],
+    [name: 'Night', start: [kind: 'var', name: 'nightTime'], profile: 'Sleep']]]]]
+Map sunFor(String iso) { [(iso): [rise: T(iso, '07:02'), set: T(iso, '18:30')]] }
+Map ctxAt(String iso, String hhmm, Map extra = [:]) {
+  Map sun = [:]; [-1, 0, 1].each { sun += sunFor(core.addDays(iso, it, TZ)) }
+  [now: T(iso, hhmm), tz: TZ, modeId: 1L, sun: sun, vars: [nightTime: T('2026-01-01', '23:00')]] + extra
+}
+check('weekday current', core.currentTransition(normal, ctxAt('2026-10-05', '09:00')).period, 'Leave')
+check('weekday next', core.nextTransitionOf(normal, ctxAt('2026-10-05', '09:00')).period, 'Night')
+check('exact start is current', core.currentTransition(normal, ctxAt('2026-10-05', '06:30')).period, 'Wake')
+check('before first period uses previous day', core.currentTransition(normal, ctxAt('2026-10-06', '05:00')).key, '2026-10-05|Weekdays|Night')
+check('sunrise offset', core.transitionsForDay(normal, '2026-10-03', ctxAt('2026-10-03', '12:00'))[0].at, T('2026-10-03', '06:32'))
+check('var time of day used', core.transitionsForDay(normal, '2026-10-03', ctxAt('2026-10-03', '12:00'))[1].at, T('2026-10-03', '23:00'))
+check('missing var skips period', core.transitionsForDay(normal, '2026-10-03', ctxAt('2026-10-03', '12:00', [vars: [:]])).size(), 1)
+check('Friday night to Saturday wake', core.nextTransitionOf(normal, ctxAt('2026-10-09', '23:00')).key, '2026-10-10|Weekend|Wake')
+dst = [name: 'D', type: 'time', groups: [[name: 'All', days: [1,2,3,4,5,6,7], periods: [
+  [name: 'Early', start: [kind: 'time', at: '02:30'], profile: 'Home']]]]]
+check('DST gap period still fires once', core.transitionsForDay(dst, '2026-03-08', ctxAt('2026-03-08', '12:00')).size(), 1)
+check('DST repeat period fires once', core.transitionsForDay(dst, '2026-11-01', ctxAt('2026-11-01', '12:00')).size(), 1)
+check('no group for day gives none', core.transitionsForDay([name: 'X', type: 'time', groups: []], '2026-10-05', ctxAt('2026-10-05', '12:00')), [])
+
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)

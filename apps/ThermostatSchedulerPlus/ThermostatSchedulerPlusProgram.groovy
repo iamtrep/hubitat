@@ -40,7 +40,7 @@ void initialize() { }
 
 // ── Core (pure) ───────────────────────────────────────────────────────
 // Self-contained: arguments in, values out. No settings, state, devices or logs.
-// tests/test-core.groovy parses and runs this block off-hub.
+// tests/test_core.groovy parses and runs this block off-hub.
 
 Calendar calFor(String iso, TimeZone tz) {
     Calendar c = Calendar.getInstance(tz)
@@ -84,6 +84,63 @@ long atLocal(String iso, String hhmm, TimeZone tz) {
 BigDecimal numOrNull(Object o) {
     if (o instanceof Number) return new BigDecimal(o.toString())
     if (o instanceof String && ((String) o).trim().isBigDecimal()) return new BigDecimal(((String) o).trim())
+    return null
+}
+
+Long startOf(Map start, String iso, Map ctx) {
+    TimeZone tz = ctx.tz as TimeZone
+    String kind = start?.kind as String
+    if (kind == 'time') return start.at ? atLocal(iso, start.at as String, tz) : null
+    if (kind == 'sunrise' || kind == 'sunset') {
+        Map day = (ctx.sun as Map)?.get(iso) as Map
+        Long base = day ? (day.get(kind == 'sunrise' ? 'rise' : 'set') as Long) : null
+        return base == null ? null : base + ((start.offset ?: 0) as long) * 60000L
+    }
+    if (kind == 'var') {
+        Object v = (ctx.vars as Map)?.get(start.name)
+        if (!(v instanceof Number)) return null
+        return atLocal(iso, hhmmOf(((Number) v).longValue(), tz), tz)
+    }
+    return null
+}
+
+Map groupFor(Map sched, int dow) {
+    return (sched.groups as List<Map>)?.find { Map g -> (g.days as List)?.collect { it as int }?.contains(dow) }
+}
+
+List<Map> transitionsForDay(Map sched, String iso, Map ctx) {
+    Map g = groupFor(sched, isoDow(iso, ctx.tz as TimeZone))
+    if (!g) return []
+    List<Map> out = []
+    for (Map p in (g.periods as List<Map>)) {
+        Long at = startOf(p.start as Map, iso, ctx)
+        if (at != null) {
+            out << [at: at, key: "${iso}|${g.name}|${p.name}".toString(), group: g.name, period: p.name,
+                    profile: p.profile, custom: p.custom]
+        }
+    }
+    return out.sort { Map t -> t.at as Long }
+}
+
+Map currentTransition(Map sched, Map ctx) {
+    long now = ctx.now as long
+    TimeZone tz = ctx.tz as TimeZone
+    String today = isoDate(now, tz)
+    for (int back = 0; back <= 7; back++) {
+        List<Map> past = transitionsForDay(sched, addDays(today, -back, tz), ctx).findAll { Map t -> (t.at as long) <= now }
+        if (past) return past.last()
+    }
+    return null
+}
+
+Map nextTransitionOf(Map sched, Map ctx) {
+    long now = ctx.now as long
+    TimeZone tz = ctx.tz as TimeZone
+    String today = isoDate(now, tz)
+    for (int fwd = 0; fwd <= 7; fwd++) {
+        List<Map> ahead = transitionsForDay(sched, addDays(today, fwd, tz), ctx).findAll { Map t -> (t.at as long) > now }
+        if (ahead) return ahead.first()
+    }
     return null
 }
 
