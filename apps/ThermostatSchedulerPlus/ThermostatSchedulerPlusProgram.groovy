@@ -234,4 +234,45 @@ List<Map> planWrites(Map target, List<Map> therms, Map opts) {
     return out
 }
 
+boolean restrictedNow(Map r, Map ctx) {
+    if (!r) return false
+    TimeZone tz = ctx.tz as TimeZone
+    long now = ctx.now as long
+    String today = isoDate(now, tz)
+    List days = r.days as List
+    if (days && !days.collect { it as int }.contains(isoDow(today, tz))) return true
+    List modes = r.modeIds as List
+    if (modes && !modes.collect { it as Long }.contains(ctx.modeId as Long)) return true
+    if (r.from && r.to) {
+        Long a = startOf(r.from as Map, today, ctx), b = startOf(r.to as Map, today, ctx)
+        if (a != null && b != null) {
+            boolean inside = a <= b ? (now >= a && now < b) : (now >= a || now < b)
+            if (!inside) return true
+        }
+    }
+    return false
+}
+
+long nextWake(Map cfg, Map rt, Map ctx) {
+    long now = ctx.now as long
+    TimeZone tz = ctx.tz as TimeZone
+    List<Long> c = [atLocal(addDays(isoDate(now, tz), 1, tz), '00:00', tz)]
+    Map sched = (cfg.schedules as List<Map>)?.find { Map s -> s.name == cfg.active }
+    if (sched?.type == 'time') {
+        Long n = nextTransitionOf(sched, ctx)?.at as Long
+        if (n != null) c << n
+    }
+    Map hold = rt.hold as Map
+    if (hold?.end == 'at') c << (hold.until as Long)
+    Map r = cfg.restrictions as Map
+    if (r?.from && r?.to) {
+        String today = isoDate(now, tz)
+        [r.from, r.to].each { Object s ->
+            Long t = startOf(s as Map, today, ctx)
+            if (t != null && t > now) c << t
+        }
+    }
+    return Math.max(c.min() as long, now + 1000L)
+}
+
 // ── End core ──────────────────────────────────────────────────────────

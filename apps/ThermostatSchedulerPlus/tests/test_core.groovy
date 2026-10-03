@@ -117,6 +117,18 @@ check('fan written when different', cmds([layer: 'schedule', fan: 'on'], th('hea
 check('paused writes nothing', cmds([layer: 'paused'], th('heat')), [])
 check('blank values leave thermostat alone', cmds([layer: 'schedule'], th('heat')), [])
 
+// ── restrictions and wake ──
+check('no restrictions', core.restrictedNow(null, at9), false)
+check('day restriction', core.restrictedNow([days: [6, 7]], at9), true)
+check('mode restriction', core.restrictedNow([modeIds: [2]], at9), true)
+check('inside time window', core.restrictedNow([from: [kind: 'time', at: '08:00'], to: [kind: 'time', at: '17:00']], at9), false)
+check('outside time window', core.restrictedNow([from: [kind: 'time', at: '10:00'], to: [kind: 'time', at: '17:00']], at9), true)
+check('overnight window', core.restrictedNow([from: [kind: 'time', at: '22:00'], to: [kind: 'time', at: '06:00']], ctxAt('2026-10-05', '23:00')), false)
+check('wake at next transition', core.nextWake(cfgBase, rt0, at9), T('2026-10-05', '22:00'))
+check('wake at hold end when sooner', core.nextWake(cfgBase, rt0 + [hold: [end: 'at', until: T('2026-10-05', '10:00')]], at9), T('2026-10-05', '10:00'))
+check('wake at midnight at the latest', core.nextWake(cfgBase + [active: 'Cottage'], rt0, at9), T('2026-10-06', '00:00'))
+check('nextWake never in the past', core.nextWake(cfgBase, rt0 + [hold: [end: 'at', until: (at9.now as long) - 60000]], at9) > (at9.now as long), true)
+
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)
