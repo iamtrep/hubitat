@@ -99,6 +99,8 @@ The new program starts paused and does not touch the thermostats. Open it, check
 
 Driver **Thermostat Scheduler+ Program Device**, capabilities Switch, Actuator and Refresh. It does not declare Thermostat, so it stays out of thermostat pickers. Attributes with nothing to report read `none`.
 
+The device is how rules, Maker API, dashboards and other apps reach one program; the program app does the scheduling. A driver alone could not: it can't select the thermostats, subscribe to their events, read hub variables, serve the HTTP API or show the editor pages.
+
 | Attribute | Values |
 |---|---|
 | `switch` | `on` running, `off` paused |

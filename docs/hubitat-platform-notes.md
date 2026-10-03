@@ -101,7 +101,19 @@ These methods are firmware 2.5.0.143+. Code shipped to older hubs will throw `Mi
 ## Driver preferences
 
 - A driver `preferences {}` block supports only `input` elements (and conditional Groovy around them). `paragraph` / `href` / `section` are app-page (`dynamicPage`) primitives and cause a compile error in a driver (`No signature of method: ...paragraph()`). For in-prefs guidance in a driver, use an `input` instead: `input name: "info", type: "paragraph", element: "paragraph", title: "<b>Heading</b>", description: "<i>text</i>"` renders the HTML title and description, and `input name: "info", type: "hidden", title: "<div>text</div>"` renders the HTML title alone. Both occupy one preferences grid cell, not a full row (firmware 2.5.2.124).
+- A `capability.*` input compiles in a driver but never yields a device. The hub offers no devices to pick (`options` is empty in `/device/fullJson`), and a value written with `device.updateSetting(name, [type: "capability.thermostat", value: [id]])` reads back as the String `"[18]"`, not a `DeviceWrapper`. A driver can't hold a handle to another device (firmware 2.5.2.129).
 - `multiple: true` on an `enum` input is app-only. In a driver it is silently ignored: the picker renders single-select and `settings.<name>` binds a **String** (one value), never a `List` — even though the per-setting metadata may still echo `multiple: true`. Code that assumes a driver enum setting is a List is wrong.
+
+## What only an app can do
+
+Measured with a throwaway driver on firmware 2.5.2.129; the on-hub API reference (`/developer-docs/index.json`) lists each of these methods under app scopes only.
+
+- `subscribe()` does not exist in a driver: `subscribe(location, "mode", …)` throws `MissingMethodException`. A driver can't listen to other devices, location modes, hub variables or `systemStart`.
+- `getGlobalVar()` does not exist in a driver (`MissingMethodException`), so a driver can't read hub variables.
+- `mappings { }` fails to compile in a driver (`No signature of method: Script1.mappings()`), so a driver has no OAuth HTTP endpoints.
+- Device selection: see the `capability.*` input note under *Driver preferences*.
+
+With the preferences limits (no `dynamicPage`, `paragraph` or `href`), a driver can act only on its own device and on what its parent passes it. Logic that watches or commands other devices belongs in an app.
 
 ## Capabilities
 

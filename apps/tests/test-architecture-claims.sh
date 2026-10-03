@@ -17,7 +17,7 @@
 #
 # Phases: provision, sandbox, push, threading and async callbacks, the
 # singleThreaded lock matrix, state commit, scheduling, sendEvent dedup,
-# device state and driver switch, CORS.
+# device state and driver switch, driver limits, CORS.
 # With --reboot it also arms scheduled jobs, REBOOTS THE HUB, and checks
 # which jobs survived and when they fired (adds ~5 minutes).
 #
@@ -26,7 +26,7 @@
 #     --reboot  include the reboot phase (reboots the hub)
 #     --keep    leave the probe apps, drivers and device on the hub
 #
-# Runtime budget: ~280s without --reboot.
+# Runtime budget: ~310s without --reboot.
 #
 # Per TESTING.md §1.1: single invocation, exit 0/1/2, [PASS]/[FAIL]/[WARN]
 # labels, idempotent (re-provisions what it finds), no production mutation
@@ -65,7 +65,7 @@ LABEL_ST, LABEL_ST2 = "test-arch-claims-st", "test-arch-claims-st2"
 DEVICE_DNI, DEVICE_NAME = "TEST_ARCH_CLAIMS_PROBE", "test-arch-claims-device"
 DATE_SAMPLE_EPOCH = 1778036863088   # 2026-05-05T23:07:43.088-0400
 DOCUMENTED_ASYNC_POOL = 8            # concurrent async HTTP calls per app, docs/hubitat-platform-notes.md
-RUNTIME_BUDGET = 280
+RUNTIME_BUDGET = 310
 
 GREEN, RED, YELLOW, CYAN, DIM, RESET = "\033[32m", "\033[31m", "\033[33m", "\033[36m", "\033[2m", "\033[0m"
 passed = failed = warnings = 0
@@ -501,6 +501,33 @@ time.sleep(2)
 back = device_full()
 check(not back.get("deviceState"), "state stays cleared after switching back to the original driver",
       f"state after switching back: {back.get('deviceState')}")
+
+# ── Driver limits ─────────────────────────────────────────────────────
+section("What only an app can do")
+
+pref = next((x for x in device_full().get("settings") or [] if x.get("name") == "probeDevices"), {})
+check(pref.get("type") == "capability.actuator" and not pref.get("options"),
+      "a driver capability input compiles but offers no devices to pick", f"driver device input: {pref}")
+run_cmd("setProbeDevice", device_id)
+tag = f"l{int(time.time())}"
+run_cmd("probeLimits", tag)
+lim = json.loads((device_full()["device"].get("data") or {}).get("probeLimits") or "{}")
+if lim.get("tag") != tag:
+    fail(f"probeLimits did not report: {lim}")
+else:
+    check(lim.get("deviceSettingClass") == "java.lang.String", "a device id saved in a driver capability input reads back as a String",
+          f"driver device setting class: {lim.get('deviceSettingClass')}")
+    check(lim.get("subscribe") == "MissingMethodException", "subscribe() does not exist in a driver", f"driver subscribe(): {lim.get('subscribe')}")
+    check(lim.get("getGlobalVar") == "MissingMethodException", "getGlobalVar() does not exist in a driver", f"driver getGlobalVar(): {lim.get('getGlobalVar')}")
+
+map_src = 'metadata { definition(name: "Arch Claims mappings Probe", namespace: "tests", author: "PJ") { } }\nmappings { path("/x") { action: [GET: "x"] } }\n'
+resp = request("POST", "/driver/saveOrUpdateJson", json_body={"source": map_src, "version": 1}, timeout=90)
+if resp.get("success") or resp.get("id"):
+    fail("mappings compiled in a driver")
+    try: request("GET", f"/driver/editor/deleteJson/{resp['id']}")
+    except Exception: pass
+else:
+    check("mappings" in str(resp), "mappings fails to compile in a driver", f"unexpected save response: {resp}")
 
 # ── CORS ──────────────────────────────────────────────────────────────
 section("CORS on the local OAuth API")

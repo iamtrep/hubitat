@@ -313,6 +313,7 @@ The mechanics of nested apps (`app(...)` declaration, `parent: "ns:Name"`) and c
 
 - **DNI prefix scheme.** Every parent uses a stable DNI prefix (e.g. `visiblair-${uuid}`) so children are identifiable at a glance and won't collide with hand-created devices.
 - **Push from parent, callback from child.** Parents push data via custom child methods (`child.updateSensorData(map)`); children call back via custom parent methods (`parent.refreshSensor(dni)`, `parent.sendFirmwareCommand(uuid, cmd)`). Avoid raw `state` sharing across the boundary.
+- **The app does the work, a child device is the handle.** Automation that selects, watches or commands other devices is an app: drivers can't select devices, `subscribe()`, read hub variables or serve `mappings` *([verified 2.5.2.129](docs/hubitat-platform-notes.md#what-only-an-app-can-do))*. When rules, Maker API, dashboards, MCP or voice assistants need to drive or watch one instance, give it a child device whose commands call the parent and whose attributes report its status. The device addresses that one instance and holds no logic. Reference: Thermostat Scheduler+, one device per program, which fixes the built-in scheduler's ambiguous by-thermostat targeting.
 - **Orphan tracking, explicit user action.** When the parent's source-of-truth changes (a sensor unenrolls upstream, etc.), diff the active DNI `Set` against `getChildDevices()` and surface orphans for the user to remove explicitly. Don't auto-delete child devices — they may carry user-edited labels, dashboard pins, or rule references.
 
 ## Drivers
