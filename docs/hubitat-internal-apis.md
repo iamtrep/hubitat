@@ -109,7 +109,7 @@ The Logs page (`/logs`, tabs `?tab=past` etc.) is a Vue chunk (`/ui2/js/vue-hub2
 - `settings[{deviceInput}]` = comma-separated device IDs is the definitive device list
 - A bare `{name}=value` (no brackets) returns `{"status":"success"}` but **persists nothing** — only the `settings[{name}]` bracket form sticks (keep the `.type` metadata bare alongside it).
 - **Press an app's button input:** `POST /installedapp/btn`, form-encoded: `id` (installed app id), `name` (the button input's name), `settings[<name>]=clicked`, `<name>.type=button`. It calls the app's `appButtonHandler(name)`, so tests can drive in-hub apps without the UI.
-- **Dynamically-added input rows must be seeded first** by POSTing the add-button via `/installedapp/btn` (fires `appButtonHandler`, whose `state` write persists). A dynamicPage only *declares* its grown inputs once `state` holds their ids, and `state` writes inside a page-render closure do NOT persist — so until the row exists, a settings POST for it is silently dropped. (`/installedapp/update/json` addresses `mainPage` only; genuine sub-pages remain un-POSTable — see below.)
+- **Dynamically-added input rows must be seeded first** by POSTing the add-button via `/installedapp/btn` (fires `appButtonHandler`, whose `state` write persists). A dynamicPage only *declares* its grown inputs once `state` holds their ids, and `state` writes inside a page-render closure do NOT persist — so until the row exists, a settings POST for it is silently dropped. (Sub-page inputs: see the sub-page bullet below.)
 - A **device multi-select** input (`capability.X`, `multiple: true`) needs `{name}.multiple=true` sent on the POST — without it the input stores `multiple:false`, so only the FIRST device id's subscription arms even though all ids look bound (`settings` show every device, but `eventSubscriptions` covers one). Multiple ids go comma-joined in one `settings[{name}]=id1,id2,id3` field, not repeated keys.
 - All inputs must be echoed back with `.type`, `.multiple`, and `settings[{name}]` metadata
 - Bool inputs additionally need `checkbox[{name}]=on`
@@ -120,7 +120,7 @@ The Logs page (`/logs`, tabs `?tab=past` etc.) is a Vue chunk (`/ui2/js/vue-hub2
 - Label inputs use `app.label` value (NOT from `settings` object)
 - Null settings values should be sent as `[]` (not empty string) **for fields without a `type`**. For typed fields, omit instead — see the `[]` warning in [`hubitat-platform-notes.md`](hubitat-platform-notes.md).
 - Success response: `{"status":"success","location":"/installedapp/list"}`
-- Sub-page settings are not yet POSTable via this endpoint — `/installedapp/update/json` only addresses `mainPage`. Sub-pages (`SwitchMonitor` groupPage, etc.) need a HAR-captured POST format that hasn't been derived.
+- Sub-page settings are POSTable through the same endpoint. Read the page with `GET /installedapp/configure/json/{id}/{page}`, then POST that page's inputs with `currentPage={page}`, `pageBreadcrumbs=["mainPage"]` and the page name at the end of `url` (`/installedapp/configure/{id}/{page}`). Save one page per POST; each save runs `updated()`, so re-read the next page before saving it *(verified 2.5.2.129)*.
 - On `/hub2/appsList`, the installed-app's user-set label is stored as `data.name`; `data.label` is always null. Match installed-app labels via `data.name`.
 
 ## Device discovery
@@ -207,6 +207,10 @@ Undocumented by Hubitat — nothing promises this across firmware versions. Code
 - The entry is **absent** for an app that never called `createAccessToken()` (no OAuth endpoints), so treat a missing `accessToken` as "this app has no endpoints", not as a read failure.
 - Fallback: the token is also embedded in HTML links inside `configPage.sections[].body[]` paragraphs — look for `description` fields containing `access_token=`. Example: `<a href='http://{hub_ip}/apps/api/{id}/devices?access_token={TOKEN}'>`. Use this only if `appState` is unavailable; it breaks whenever the app's config page markup changes.
 - The token is **not** in `settings`.
+
+### Device commands with arguments
+
+- `GET /apps/api/{appId}/devices/{deviceId}/{command}/{args}?access_token={TOKEN}`. Several arguments go comma-joined in one path segment (`/holdProfile/Sleep,next`); separate segments (`/holdProfile/Sleep/next`) answer 404 *(observed 2.5.2.129)*.
 
 ### Device events via Maker API
 
