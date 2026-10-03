@@ -20,6 +20,7 @@ definition(
     namespace: "iamtrep",
     author: "pj",
     description: "One Thermostat Scheduler+ program",
+    menu: "Automations", // new in platform 2.5.0
     category: "Convenience",
     parent: "iamtrep:Thermostat Scheduler+",
     singleThreaded: true,
@@ -1930,7 +1931,9 @@ Map builtinWindowEnd(Map s, String end) {
 
 Map convertBuiltin(Map s, Map st, List<Map> modes) {
     List<String> warn = [], errs = []
-    Map away = builtinCell(st, 'Away')
+    // Only time-period schedulers use the stored Away values; a Hub Modes scheduler treats Away as an ordinary mode.
+    boolean byModes = s.schedTypeL == 'Hub Modes'
+    Map away = byModes ? [:] : builtinCell(st, 'Away')
     // Identical values share one profile, named after every period or mode that uses it.
     // Periods and rows hold an index into `sets` until the names are known.
     List<Map> sets = []
@@ -1941,7 +1944,7 @@ Map convertBuiltin(Map s, Map st, List<Map> modes) {
         return i
     }
     Map sched
-    if (s.schedTypeL == 'Hub Modes') {
+    if (byModes) {
         List<Map> rows = []
         ((st.modeTable ?: [:]) as Map).each { Object k, Object v ->
             Map m = v as Map
@@ -2005,7 +2008,7 @@ Map convertBuiltin(Map s, Map st, List<Map> modes) {
         if (awayMode) overrides << [modeId: awayMode.id as Long, profile: 'Away']
         else warn << 'The hub has no Away mode; the Away profile was imported without an override'
     }
-    if (st.useEcoModeAway == true) warn << 'Away used the EcoMode offset; the program uses the Away profile instead'
+    if (!byModes && st.useEcoModeAway == true) warn << 'Away used the EcoMode offset; the program uses the Away profile instead'
     if (st.manHold == true) warn << 'The scheduler was on hold; the program starts without a hold'
     Map restrictions = [:]
     List<String> dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']

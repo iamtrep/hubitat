@@ -20,6 +20,7 @@ definition(
     namespace: "iamtrep",
     author: "pj",
     description: "Thermostat schedules with profiles, holds and an API",
+    menu: "Automations", // new in platform 2.5.0
     category: "Convenience",
     singleInstance: true,
     installOnOpen: true,

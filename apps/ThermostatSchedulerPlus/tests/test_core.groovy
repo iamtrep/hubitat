@@ -383,6 +383,11 @@ check('import: window with one end only is warned and left out', core.convertBui
 check('import: unset window (the built-in default) is silent', core.convertBuiltin(bSettings + [startingX: 'A specific time', starting: '', endingX: 'A specific time', ending: ''], bState, bModes).with { [it.options.restrictions, it.warnings] }, [null, []])
 check('import: restriction mode deleted is warned', core.convertBuiltin(kSet + [modesR: ['1', '9']], bState, bModes).with { [it.options.restrictions.modeIds, it.warnings.any { w -> w.contains('9') }] }, [[1L], true])
 
+// Hub Modes schedulers ignore the stored Away values (checked on the hub: Away with no row leaves the thermostat alone)
+check('import: Hub Modes scheduler gets no Away override', [mc.doc.overrides, mc.doc.profiles*.name.contains('Away')], [[], false])
+check('import: Hub Modes Away row is an ordinary row', core.convertBuiltin([schedTypeL: 'Hub Modes', therm: ['11': 'Th A']], [modeTable: ['4': [heat: 15.0, used: true]], heatAway: 16.0], bModes).doc.with { [it.schedules[0].rows, it.overrides, it.profiles] }, [[[modes: [4L], profile: 'Away']], [], [[name: 'Away', heat: 15.0]]])
+check('import: Hub Modes EcoMode-for-Away not warned', core.convertBuiltin([schedTypeL: 'Hub Modes', therm: ['11': 'Th A']], mState + [useEcoModeAway: true], bModes).warnings.any { it.contains('EcoMode') }, false)
+
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)
