@@ -345,7 +345,6 @@ wc = core.convertBuiltin(bSettings, bState + [useEcoModeAway: true, manHold: tru
 check('import: EcoMode-for-Away warned', wc.warnings.any { it.contains('EcoMode') }, true)
 check('import: hold warned', wc.warnings.any { it.contains('hold') }, true)
 check('import: no Away mode warned', wc.warnings.any { it.contains('Away mode') }, true)
-check('import: restrictions warned', core.convertBuiltin(bSettings + [modesR: ['1'], starting: '08:00'], bState, bModes).warnings.size(), 2)
 check('import: no thermostat is an error', core.convertBuiltin(bSettings + [therm: [:]], bState, bModes).errors, ['The scheduler has no thermostat'])
 check('import: eco offset out of range warned and left out', core.convertBuiltin(bSettings, bState + [ecoSet: 12], bModes).options.eco, [onOverrides: false])
 
@@ -362,6 +361,27 @@ check('import: empty-list start counts as none', ec.doc.schedules[0].groups[0].p
 nothing = core.convertBuiltin([therm: ['11': 'Th A']], [timeSort: ['Wake'], dayGroups: ['1': [true] * 7]], bModes)
 check('import: nothing scheduled warned', nothing.warnings.any { it.contains('nothing') }, true)
 check('import: empty mode schedule warned', core.convertBuiltin([schedTypeL: 'Hub Modes', therm: ['11': 'Th A']], [modeTable: [:]], bModes).warnings.any { it.contains('nothing') }, true)
+
+// keys read back from a built-in scheduler configured through its own page
+kSet = bSettings + ['timeWake.1': 'Variable time', 'timeXWake.1': 'comfortTime', reqOffset: '1.5',
+                    days: ['Monday', 'Saturday'], modesR: ['1', '3'],
+                    startingX: 'Sunrise', startSunriseOffsetnull: '-30', endingX: 'A specific time', ending: '2026-10-03T22:30:00.000-0400']
+kc = core.convertBuiltin(kSet, bState, bModes)
+kEnv = bEnv + [vars: ['comfort', 'comfortTime']]
+check('import: variable time start', kc.doc.schedules[0].groups[0].periods[0].start, [kind: 'var', name: 'comfortTime'])
+check('import: variable time result validates', core.validateConfig(kc.doc, kEnv), [])
+check('import: required separation', kc.options.options.separation, 1.5)
+check('import: restriction days', kc.options.restrictions.days, [1, 6])
+check('import: restriction modes', kc.options.restrictions.modeIds, [1L, 3L])
+check('import: restriction window from sunrise offset', kc.options.restrictions.from, [kind: 'sunrise', offset: -30])
+check('import: restriction window to a time', kc.options.restrictions.to, [kind: 'time', at: '22:30'])
+check('import: restrictions validate', core.validateOptions(kc.options, kEnv), [])
+check('import: restrictions imported without warnings', kc.warnings, [])
+check('import: no restrictions, none written', bc.options.restrictions, null)
+check('import: window end at sunset, no offset', core.convertBuiltin(kSet + [endingX: 'Sunset'], bState, bModes).options.restrictions.to, [kind: 'sunset', offset: 0])
+check('import: window with one end only is warned and left out', core.convertBuiltin(kSet + [startingX: 'A specific time', starting: ''], bState, bModes).with { [it.options.restrictions.from, it.options.restrictions.to, it.warnings.any { w -> w.contains('time restriction') }] }, [null, null, true])
+check('import: unset window (the built-in default) is silent', core.convertBuiltin(bSettings + [startingX: 'A specific time', starting: '', endingX: 'A specific time', ending: ''], bState, bModes).with { [it.options.restrictions, it.warnings] }, [null, []])
+check('import: restriction mode deleted is warned', core.convertBuiltin(kSet + [modesR: ['1', '9']], bState, bModes).with { [it.options.restrictions.modeIds, it.warnings.any { w -> w.contains('9') }] }, [[1L], true])
 
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"

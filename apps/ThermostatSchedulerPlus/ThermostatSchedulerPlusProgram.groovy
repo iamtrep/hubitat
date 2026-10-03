@@ -1908,6 +1908,23 @@ Map builtinStart(Map s, String p, String g) {
         String off = builtinText(s.get("at${kind}Offset${sfx}".toString()))
         return [kind: kind.toLowerCase(), offset: off && off ==~ /-?\d+/ ? (off as int) : 0]
     }
+    if (kind == 'Variable time') {
+        String name = builtinText(s.get("timeX${sfx}".toString()))
+        return name ? [kind: 'var', name: name] : null
+    }
+    return [bad: kind]
+}
+
+// One end of the restriction window (`end` is "start" or "end"). null: unset; [bad: ...]: unreadable.
+// The built-in names the offset inputs "<end><Sunrise|Sunset>Offsetnull".
+Map builtinWindowEnd(Map s, String end) {
+    String kind = builtinText(s.get("${end}ingX".toString()))
+    if (kind == 'Sunrise' || kind == 'Sunset') {
+        String off = builtinText(s.get("${end}${kind}Offsetnull".toString())) ?: builtinText(s.get("${end}${kind}Offset".toString()))
+        return [kind: kind.toLowerCase(), offset: off && off ==~ /-?\d+/ ? (off as int) : 0]
+    }
+    String at = builtinHhmm(s.get("${end}ing".toString()))
+    if (kind == null || kind == 'A specific time') return at ? [kind: 'time', at: at] : null
     return [bad: kind]
 }
 
@@ -1990,9 +2007,22 @@ Map convertBuiltin(Map s, Map st, List<Map> modes) {
     }
     if (st.useEcoModeAway == true) warn << 'Away used the EcoMode offset; the program uses the Away profile instead'
     if (st.manHold == true) warn << 'The scheduler was on hold; the program starts without a hold'
-    if (builtinText(s.modesR)) warn << 'The mode restriction was not imported'
-    if (builtinText(s.starting) || builtinText(s.ending)) warn << 'The time restriction was not imported'
-    if (builtinText(s.days)) warn << 'The day restriction was not imported'
+    Map restrictions = [:]
+    List<String> dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    if (s.days instanceof List && s.days) restrictions.days = (s.days as List).collect { dayNames.indexOf(it as String) + 1 }.findAll { it > 0 }
+    if (s.modesR instanceof List && s.modesR) {
+        List<Long> ids = []
+        (s.modesR as List).each { Object m ->
+            Long id = m.toString().isLong() ? (m.toString() as Long) : null
+            if (modes.any { (it.id as Long) == id }) ids << id
+            else warn << "Hub mode ${m} no longer exists; it was left out of the mode restriction".toString()
+        }
+        if (ids) restrictions.modeIds = ids
+    }
+    Map from = builtinWindowEnd(s, 'start'), to = builtinWindowEnd(s, 'end')
+    if (from?.bad || to?.bad) warn << 'The time restriction could not be read and was not imported'
+    else if (from && to) { restrictions.from = from; restrictions.to = to }
+    else if (from || to) warn << 'The time restriction has only one end set and was not imported'
 
     Map eco = [onOverrides: false]   // the built-in never applies EcoMode to Away
     BigDecimal off = numOrNull(st.ecoSet)
@@ -2000,6 +2030,10 @@ Map convertBuiltin(Map s, Map st, List<Map> modes) {
     else if (off != null) warn << "EcoMode offset ${off} is outside -10 to 10 and was not imported".toString()
     Map opts = [eco: eco, options: [applyOnStart: !(s.setOnStart in ['false', false]),
                                     whilePaused: s.turnThermOff in ['true', true] ? 'off' : 'leave', onResume: 'restore']]
+    BigDecimal sep = numOrNull(s.reqOffset)
+    if (sep != null && sep >= 0 && sep <= 10) (opts.options as Map).separation = sep
+    else if (sep != null) warn << "Required separation ${sep} is outside 0 to 10 and was not imported".toString()
+    if (restrictions) opts.restrictions = restrictions
     List<String> therms = ((s.therm instanceof Map ? s.therm : [:]) as Map).keySet().collect { it.toString() }
     if (!therms) errs << 'The scheduler has no thermostat'
     List<String> sw = ((s.disabled instanceof Map ? s.disabled : [:]) as Map).keySet().collect { it.toString() }
