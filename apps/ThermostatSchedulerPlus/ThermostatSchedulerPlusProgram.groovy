@@ -144,4 +144,63 @@ Map nextTransitionOf(Map sched, Map ctx) {
     return null
 }
 
+Map valuesOf(Map v, Map ctx) {
+    Map vars = (ctx.vars ?: [:]) as Map
+    BigDecimal heat = v.heatVar ? numOrNull(vars.get(v.heatVar)) : numOrNull(v.heat)
+    BigDecimal cool = v.coolVar ? numOrNull(vars.get(v.coolVar)) : numOrNull(v.cool)
+    return [heat: heat, cool: cool, fan: v.fan ?: null, mode: v.mode ?: null]
+}
+
+Map profileValues(Map cfg, String name, Map ctx) {
+    Map p = (cfg.profiles as List<Map>)?.find { Map x -> x.name == name }
+    return p ? valuesOf(p, ctx) + [profile: name] : null
+}
+
+Map resolveTarget(Map cfg, Map rt, Map ctx) {
+    if (rt.paused == true || ctx.restricted == true) return [layer: 'paused']
+    Long modeId = ctx.modeId as Long
+    Map sched = (cfg.schedules as List<Map>)?.find { Map s -> s.name == cfg.active }
+    Map cur = sched?.type == 'time' ? currentTransition(sched, ctx) : null
+    String key = sched?.type == 'mode' ? "mode|${modeId}".toString() : (cur?.key as String)
+    Map ov = (cfg.overrides as List<Map>)?.find { Map o -> (o.modeId as Long) == modeId }
+    Map hold = rt.hold as Map
+    Map base = null
+    String layer = 'none'
+    if (hold) {
+        base = hold.kind == 'profile' ? profileValues(cfg, hold.profile as String, ctx)
+             : [heat: numOrNull(hold.heat), cool: numOrNull(hold.cool), fan: null, mode: null, profile: 'custom']
+        layer = 'hold'
+    } else if (ov) {
+        base = profileValues(cfg, ov.profile as String, ctx)
+        layer = 'mode'
+    } else if (sched?.type == 'mode') {
+        Map row = (sched.rows as List<Map>)?.find { Map rw -> (rw.modes as List)?.collect { it as Long }?.contains(modeId) }
+        if (row) {
+            base = row.custom ? valuesOf(row.custom as Map, ctx) + [profile: 'custom'] : profileValues(cfg, row.profile as String, ctx)
+            layer = 'schedule'
+        }
+    } else if (cur) {
+        base = cur.custom ? valuesOf(cur.custom as Map, ctx) + [profile: 'custom'] : profileValues(cfg, cur.profile as String, ctx)
+        layer = 'schedule'
+    }
+    if (base == null) return [layer: 'none', transitionKey: key, overrideModeId: ov?.modeId as Long]
+    Map eco = (cfg.eco ?: [:]) as Map
+    boolean ecoOn = rt.eco == true && (layer != 'mode' || eco.onOverrides != false)
+    BigDecimal off = numOrNull(eco.offset) ?: 0.0G
+    BigDecimal heat = base.heat as BigDecimal
+    BigDecimal cool = base.cool as BigDecimal
+    if (ecoOn) {
+        if (heat != null) heat = heat - off
+        if (cool != null) cool = cool + off
+    }
+    return [layer: layer, profile: base.profile, heat: heat, cool: cool, fan: base.fan, mode: base.mode,
+            eco: ecoOn, transitionKey: key, overrideModeId: ov?.modeId as Long]
+}
+
+boolean holdExpired(Map hold, Map target, long now) {
+    if (!hold || hold.end == 'indefinite') return false
+    if (hold.end == 'at') return now >= (hold.until as long)
+    return target.transitionKey != hold.transitionKey || (target.overrideModeId as Long) != (hold.overrideModeId as Long)
+}
+
 // ── End core ──────────────────────────────────────────────────────────

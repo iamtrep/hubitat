@@ -60,6 +60,46 @@ check('DST gap period still fires once', core.transitionsForDay(dst, '2026-03-08
 check('DST repeat period fires once', core.transitionsForDay(dst, '2026-11-01', ctxAt('2026-11-01', '12:00')).size(), 1)
 check('no group for day gives none', core.transitionsForDay([name: 'X', type: 'time', groups: []], '2026-10-05', ctxAt('2026-10-05', '12:00')), [])
 
+// ── resolver ──
+cfgBase = [profiles: [
+    [name: 'Home', heat: 21.0, cool: 24.0, fan: 'auto'], [name: 'Out', heat: 19.0, cool: 27.0],
+    [name: 'Sleep', heat: 18.0, cool: 26.0], [name: 'Away', heat: 16.0, cool: 29.0],
+    [name: 'Var', heatVar: 'comfort']],
+  schedules: [normal, [name: 'Cottage', type: 'mode', rows: [[modes: [1, 2], profile: 'Home'], [modes: [3], profile: 'Sleep']]]],
+  active: 'Normal', overrides: [[modeId: 4, profile: 'Away']],
+  eco: [offset: 2.0, onOverrides: true], options: [separation: 2.0]]
+rt0 = [paused: false, eco: false, hold: null]
+at9 = ctxAt('2026-10-05', '09:00')
+Map r(Map cfg = cfgBase, Map rt = rt0, Map ctx = at9) { core.resolveTarget(cfg, rt, ctx) }
+
+check('schedule layer', r().layer, 'schedule')
+check('schedule profile', r().profile, 'Out')
+check('paused wins', r(cfgBase, rt0 + [paused: true]).layer, 'paused')
+check('restricted pauses', r(cfgBase, rt0, at9 + [restricted: true]).layer, 'paused')
+check('hold beats override', r(cfgBase, rt0 + [hold: [kind: 'profile', profile: 'Sleep', end: 'indefinite']], at9 + [modeId: 4L]).profile, 'Sleep')
+check('override beats schedule', r(cfgBase, rt0, at9 + [modeId: 4L]).profile, 'Away')
+check('override matched by id', r(cfgBase, rt0, at9 + [modeId: 4L]).overrideModeId, 4L)
+check('eco lowers heat', r(cfgBase, rt0 + [eco: true]).heat, 17.0)
+check('eco raises cool', r(cfgBase, rt0 + [eco: true]).cool, 29.0)
+check('eco on override by default', r(cfgBase, rt0 + [eco: true], at9 + [modeId: 4L]).heat, 14.0)
+check('eco off override when disabled', r(cfgBase + [eco: [offset: 2.0, onOverrides: false]], rt0 + [eco: true], at9 + [modeId: 4L]).heat, 16.0)
+check('eco offset change does not stack', r(cfgBase + [eco: [offset: 3.0, onOverrides: true]], rt0 + [eco: true]).heat, 16.0)
+check('eco off during override returns override value', r(cfgBase, rt0, at9 + [modeId: 4L]).heat, 16.0)
+check('mode schedule row', r(cfgBase + [active: 'Cottage'], rt0, at9 + [modeId: 3L]).profile, 'Sleep')
+check('mode schedule unlisted mode', r(cfgBase + [active: 'Cottage'], rt0, at9 + [modeId: 5L]).layer, 'none')
+check('mode schedule key is the mode', r(cfgBase + [active: 'Cottage'], rt0, at9 + [modeId: 3L]).transitionKey, 'mode|3')
+check('variable setpoint', core.profileValues(cfgBase, 'Var', at9 + [vars: [comfort: 22.5]]).heat, 22.5)
+check('missing profile resolves to none', r(cfgBase + [overrides: [[modeId: 4, profile: 'Gone']]], rt0, at9 + [modeId: 4L]).layer, 'none')
+check('setpoint hold', r(cfgBase, rt0 + [hold: [kind: 'setpoints', heat: 23.0, end: 'next']]).heat, 23.0)
+// hold expiry
+tgt = r()
+check('next hold lives within period', core.holdExpired([end: 'next', transitionKey: tgt.transitionKey, overrideModeId: null], tgt, at9.now as long), false)
+check('next hold ends at transition', core.holdExpired([end: 'next', transitionKey: 'old', overrideModeId: null], tgt, at9.now as long), true)
+check('next hold ends when override starts', core.holdExpired([end: 'next', transitionKey: tgt.transitionKey, overrideModeId: null], r(cfgBase, rt0, at9 + [modeId: 4L]), at9.now as long), true)
+check('timed hold before end', core.holdExpired([end: 'at', until: (at9.now as long) + 1000], tgt, at9.now as long), false)
+check('timed hold after end', core.holdExpired([end: 'at', until: (at9.now as long) - 1], tgt, at9.now as long), true)
+check('indefinite hold', core.holdExpired([end: 'indefinite'], tgt, at9.now as long), false)
+
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)
