@@ -13,7 +13,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.app.DeviceWrapper
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.3"
+@Field static final String CODE_VERSION = "0.2.0"
 
 definition(
     name: "Thermostat Scheduler+ Program",
@@ -187,6 +187,13 @@ Map mainPage() {
         section {
             paragraph TSP_CSS
             input "thermostats", "capability.thermostat", title: "Select Thermostats", multiple: true, required: true, submitOnChange: true
+        }
+        Map rep = state.importReport as Map
+        if (rep) section("Imported") {
+            StringBuilder h = new StringBuilder("<p>Imported from <b>${esc(rep.from)}</b>, which is left as it is. This program is paused: check it, press Done, disable the built-in scheduler, then turn this program on.</p>")
+            if (rep.warnings) h << "<ul>" << (rep.warnings as List).collect { "<li>${esc(it)}</li>" }.join('') << "</ul>"
+            paragraph h.toString()
+            input "btnImportDismiss", "button", title: "Dismiss", width: 2, inputClass: SEC
         }
         if (installed && thermostats) {
             Map cfg = coreConfig()
@@ -889,11 +896,15 @@ void installed() { initialize() }
 void updated() { unsubscribe(); unschedule(); initialize() }
 void uninstalled() { if (getChildDevice("tsp-${app.id}")) deleteChildDevice("tsp-${app.id}") }
 
+Map newRt() {
+    return [paused: false, eco: false, hold: null, pausedApplied: false, recordedModes: [:],
+            sent: [:], manual: [], lastTarget: null, lastApply: 'ok', verify: null]
+}
+
 void initialize() {
     checkVersion(false)
     if (!state.config) state.config = newConfig()
-    if (state.rt == null) state.rt = [paused: false, eco: false, hold: null, pausedApplied: false, recordedModes: [:],
-                                      sent: [:], manual: [], lastTarget: null, lastApply: 'ok', verify: null]
+    if (state.rt == null) state.rt = newRt()
     if (!settings.testClock) app.removeSetting("testClock")
     statusDevice()
     if ((state.rt as Map).verify) runIn(30, "verifyWrites")
@@ -1203,6 +1214,7 @@ void appButtonHandler(String btn) {
     else if (btn == "btnApply") evaluate("apply now", true)
     else if (btn == "btnStart") startHandler()
     else if (btn == "btnLoadConfig") loadConfigJson()
+    else if (btn == "btnImportDismiss") state.remove('importReport')
     else if (btn in ["btnAdvance", "btnEco", "btnPause", "btnResume", "btnHold"]) controlButton(btn)
     else uiButton(btn)
 }
@@ -1212,11 +1224,47 @@ void loadConfigJson() {
     try { doc = parseJson(settings.testConfigJson as String) as Map } catch (Exception e) { logWarn "configuration is not JSON"; return }
     List<String> errs = validateConfig(doc, validationEnv())
     if (errs) { logWarn "configuration rejected: ${errs}"; return }
+    replaceConfig(doc, [:], true)
+}
+
+// One save path for the configuration JSON input, PUT and the importer. The caller has validated.
+void replaceConfig(Map doc, Map optionGroups, boolean force) {
+    optionSettings(optionGroups ?: [:]).each { Map w ->
+        if (w.value == null) app.removeSetting(w.name as String)
+        else app.updateSetting(w.name as String, [type: w.type, value: w.value])
+    }
+    Map rt = state.rt as Map
+    Map hold = rt?.hold as Map
+    if (hold?.kind == 'profile' && !(doc.profiles as List<Map>).any { it.name == hold.profile }) {
+        rt.hold = null
+        state.rt = rt
+        logCfg "hold on ${hold.profile} ended: the profile was removed"
+    }
     state.config = doc
     state.ui = [:]
-    resubscribe()
-    logCfg "configuration loaded"
-    evaluate("config loaded", true)
+    clearEdits()
+    logCfg "configuration replaced"
+    if (app.getInstallationState() == "COMPLETE") {
+        resubscribe()
+        evaluate("config replaced", force)
+    }
+}
+
+// Reply body plus httpStatus; the document carries its own `status` field.
+Map apiPut(Map body) {
+    checkVersion()
+    if (!(body?.config instanceof Map)) return [httpStatus: 400, error: "config is required"]
+    if (body.revision == null) return [httpStatus: 400, error: "revision is required"]
+    int current = revisionOf(coreConfig())
+    if (body.revision.toString() != current.toString()) return [httpStatus: 409, error: "configuration changed since it was read", revision: current]
+    Map c = body.config as Map
+    Map env = validationEnv()
+    List<String> errs = putShapeErrors(c)
+    Map doc = errs ? null : putDocument(c)
+    if (!errs) errs = validateConfig(doc, env) + validateOptions(c, env)
+    if (errs) { logWarn "PUT rejected: ${errs.join('; ')}"; return [httpStatus: 400, error: "invalid configuration", errors: errs] }
+    replaceConfig(doc, c.subMap(['eco', 'options', 'restrictions']), false)
+    return [httpStatus: 200] + apiDocument()
 }
 
 Map validationEnv() {
@@ -1282,6 +1330,30 @@ Map apiCommand(Map req) {
     return [ok: true] + apiStatus()
 }
 
+// Builds this program from a built-in scheduler read by the parent. The program starts paused with the
+// pause already applied, so saving it with Done writes nothing while the built-in still runs.
+Map importBuiltin(Map raw) {
+    checkVersion(false)
+    Map conv = convertBuiltin((raw.settings ?: [:]) as Map, (raw.appState ?: [:]) as Map,
+                              location.modes.collect { [id: it.id as Long, name: it.name as String] })
+    Map env = validationEnv()
+    List<String> errs = (conv.errors as List<String>) + validateConfig(conv.doc as Map, env) + validateOptions(conv.options as Map, env)
+    if (errs) { logWarn "import of ${raw.fromLabel} rejected: ${errs.join('; ')}"; return [ok: false, errors: errs] }
+    app.updateSetting("thermostats", [type: "capability.thermostat", value: conv.thermostats])
+    if (conv.pauseSwitch) {
+        app.updateSetting("pauseSwitch", [type: "capability.switch", value: conv.pauseSwitch])
+        app.updateSetting("pauseWhenSwitch", [type: "enum", value: conv.pauseWhen])
+    }
+    state.rt = newRt() + [paused: true, pausedApplied: true, eco: conv.eco]
+    replaceConfig(conv.doc as Map, conv.options as Map, false)
+    state.importedFrom = raw.fromId
+    state.importReport = [from: raw.fromLabel, warnings: conv.warnings]
+    logCfg "imported from ${raw.fromLabel}"
+    return [ok: true, warnings: conv.warnings]
+}
+
+Long importedFrom() { return state.importedFrom as Long }
+
 Map apiStatus() {
     Map rt = (state.rt ?: [:]) as Map
     Map cfg = coreConfig()
@@ -1290,7 +1362,7 @@ Map apiStatus() {
 
 Map apiDocument() {
     Map cfg = coreConfig()
-    return [id: app.id, name: app.label, revision: ((state.config ?: newConfig()) as Map).hashCode(),
+    return [id: app.id, name: app.label, revision: revisionOf(coreConfig()),
             thermostats: (thermostats ?: []).collect { [id: it.id, name: it.displayName] },
             config: cfg, status: apiStatus()]
 }
@@ -1717,6 +1789,224 @@ String applyOutcome(List<Map> batch, List<String> confirmedIds) {
     List<String> ids = batch.collect { it.id as String }.unique()
     int ok = ids.count { confirmedIds.contains(it) } as int
     return ok == ids.size() ? 'ok' : (ok == 0 ? 'failed' : 'partial')
+}
+
+// ── Configuration PUT ──
+
+Map parseJsonLike(Map m) { return new groovy.json.JsonSlurper().parseText(groovy.json.JsonOutput.toJson(m)) as Map }
+
+// Any change to the document or to an option setting changes the revision. Hashed after a JSON
+// round trip, so a map read back from state and the map it was saved from agree.
+int revisionOf(Map cfg) { return groovy.json.JsonOutput.toJson(parseJsonLike(cfg)).hashCode() }
+
+List<String> putShapeErrors(Map c) {
+    List<String> e = []
+    if (!(c.profiles instanceof List)) e << 'config.profiles must be a list'
+    if (!(c.schedules instanceof List)) e << 'config.schedules must be a list'
+    if (!(c.active instanceof String)) e << 'config.active must be text'
+    if (c.overrides != null && !(c.overrides instanceof List)) e << 'config.overrides must be a list'
+    return e
+}
+
+Map putDocument(Map c) {
+    return [v: c.v ?: 1, profiles: c.profiles, schedules: c.schedules, active: c.active, overrides: c.overrides ?: []]
+}
+
+boolean validStart(Object s) {
+    if (s == null) return true
+    if (!(s instanceof Map)) return false
+    Map m = (Map) s
+    if (m.kind == 'time') return (m.at as String) ==~ /([01]\d|2[0-3]):[0-5]\d/
+    if (m.kind in ['sunrise', 'sunset']) return m.offset == null || (m.offset.toString() ==~ /-?\d+/)
+    return false
+}
+
+List<String> validateOptions(Map c, Map env) {
+    List<String> e = []
+    Map eco = c.eco as Map, o = c.options as Map, r = c.restrictions as Map
+    if (eco?.containsKey('offset')) {
+        BigDecimal n = numOrNull(eco.offset)
+        if (n == null || n < -10 || n > 10) e << 'eco.offset must be a number from -10 to 10'
+    }
+    if (o?.containsKey('separation')) {
+        BigDecimal n = numOrNull(o.separation)
+        if (n == null || n < 0 || n > 10) e << 'options.separation must be a number from 0 to 10'
+    }
+    if (o?.containsKey('whilePaused') && !(o.whilePaused in ['leave', 'off'])) e << 'options.whilePaused must be leave or off'
+    if (o?.containsKey('onResume') && !(o.onResume in ['restore', 'leaveOff'])) e << 'options.onResume must be restore or leaveOff'
+    if (r?.days != null && !(r.days instanceof List && (r.days as List).every { it.toString() ==~ /[1-7]/ })) e << 'restrictions.days must hold days 1 to 7'
+    (r?.modeIds as List)?.each { Object m ->
+        if (!(env.modeIds as List).collect { it as Long }.contains(m as Long)) e << "restrictions.modeIds: unknown mode ${m}".toString()
+    }
+    ['from', 'to'].each { String k -> if (r?.containsKey(k) && !validStart(r.get(k))) e << "restrictions.${k} is not a valid start".toString() }
+    return e
+}
+
+// Settings writes for the option groups present; a null value removes the setting.
+List<Map> optionSettings(Map c) {
+    List<Map> w = []
+    Map eco = c.eco as Map, o = c.options as Map, r = c.restrictions as Map
+    if (eco?.containsKey('offset')) w << [name: 'ecoOffset', type: 'decimal', value: eco.offset]
+    if (eco?.containsKey('onOverrides')) w << [name: 'ecoOnOverrides', type: 'bool', value: eco.onOverrides == true]
+    Map optMap = [separation: ['separation', 'decimal'], verify: ['verifyWrites', 'bool'], applyOnStart: ['applyOnStart', 'bool'],
+                  whilePaused: ['whilePaused', 'enum'], onResume: ['onResume', 'enum']]
+    optMap.each { String k, List nt -> if (o?.containsKey(k)) w << [name: nt[0], type: nt[1], value: nt[1] == 'bool' ? o.get(k) == true : o.get(k)] }
+    if (r?.containsKey('days')) w << [name: 'restrictDays', type: 'enum', value: (r.days as List)?.collect { it.toString() } ?: null]
+    if (r?.containsKey('modeIds')) w << [name: 'restrictModes', type: 'mode', value: (r.modeIds as List)?.collect { it.toString() } ?: null]
+    [from: 'restrictFrom', to: 'restrictTo'].each { String k, String n ->
+        if (!r?.containsKey(k)) return
+        Map s = r.get(k) as Map
+        w << [name: n, type: 'enum', value: s ? s.kind : 'any']
+        w << [name: "${n}At".toString(), type: 'time', value: s?.kind == 'time' ? s.at : null]
+        w << [name: "${n}Offset".toString(), type: 'number', value: s?.kind in ['sunrise', 'sunset'] ? ((s.offset ?: 0) as int) : null]
+    }
+    return w
+}
+
+// ── Built-in Thermostat Scheduler 2.0 import ──
+// Only appState.timeSort (periods) and appState.dayGroups (groups) are live; the scheduler keeps
+// settings and state of deleted periods and groups, which are ignored here.
+
+String builtinText(Object v) {
+    if (v == null || (v instanceof Collection && ((Collection) v).isEmpty()) || (v instanceof Map && ((Map) v).isEmpty())) return null
+    return v.toString().trim() ?: null
+}
+
+Map builtinCell(Map src, String suffix) {
+    Map v = [:]
+    String hv = builtinText(src.get("heat${suffix}V".toString())), cv = builtinText(src.get("cool${suffix}V".toString()))
+    BigDecimal heat = numOrNull(src.get("heat${suffix}".toString())), cool = numOrNull(src.get("cool${suffix}".toString()))
+    if (hv) v.heatVar = hv
+    else if (heat != null) v.heat = heat
+    if (cv) v.coolVar = cv
+    else if (cool != null) v.cool = cool
+    String fan = builtinText(src.get("fan${suffix}".toString())), mode = builtinText(src.get("mod${suffix}".toString()))
+    if (fan) v.fan = fan.toLowerCase()
+    if (mode) v.mode = mode.toLowerCase()
+    return v
+}
+
+String builtinHhmm(Object v) {
+    String s = builtinText(v)
+    if (!s) return null
+    def m = s =~ /^(\d{1,2}):(\d{2})$/
+    if (m.find()) return "${m.group(1).padLeft(2, '0')}:${m.group(2)}".toString()
+    m = s =~ /T(\d{2}):(\d{2})/
+    return m.find() ? "${m.group(1)}:${m.group(2)}".toString() : null
+}
+
+// null: no start; [bad: kind]: a start this importer does not know.
+Map builtinStart(Map s, String p, String g) {
+    String sfx = "${p}.${g}".toString()
+    String kind = builtinText(s.get("time${sfx}".toString()))
+    if (!kind) return null
+    if (kind == 'A specific time') {
+        String at = builtinHhmm(s.get("atTime${sfx}".toString()))
+        return at ? [kind: 'time', at: at] : null
+    }
+    if (kind == 'Sunrise' || kind == 'Sunset') {
+        String off = builtinText(s.get("at${kind}Offset${sfx}".toString()))
+        return [kind: kind.toLowerCase(), offset: off && off ==~ /-?\d+/ ? (off as int) : 0]
+    }
+    return [bad: kind]
+}
+
+Map convertBuiltin(Map s, Map st, List<Map> modes) {
+    List<String> warn = [], errs = []
+    Map away = builtinCell(st, 'Away')
+    // Identical values share one profile, named after every period or mode that uses it.
+    // Periods and rows hold an index into `sets` until the names are known.
+    List<Map> sets = []
+    Closure profileFor = { Map values, String user ->
+        int i = sets.findIndexOf { Map x -> x.values == values }
+        if (i < 0) { sets << [values: values, users: []]; i = sets.size() - 1 }
+        if (!(sets[i].users as List).contains(user)) (sets[i].users as List) << user
+        return i
+    }
+    Map sched
+    if (s.schedTypeL == 'Hub Modes') {
+        List<Map> rows = []
+        ((st.modeTable ?: [:]) as Map).each { Object k, Object v ->
+            Map m = v as Map
+            if (m.used == false) return
+            Long id = k.toString().isLong() ? (k.toString() as Long) : null
+            String modeName = modes.find { (it.id as Long) == id }?.name
+            if (modeName == null) { warn << "Hub mode ${k} no longer exists; its row was not imported".toString(); return }
+            int prof = profileFor(builtinCell(m, ''), modeName) as int
+            Map row = rows.find { it.profile == prof }
+            if (row) (row.modes as List) << id
+            else rows << [modes: [id], profile: prof]
+        }
+        sched = [name: 'Hub modes', type: 'mode', rows: rows]
+    } else {
+        List<String> periods = ((st.timeSort ?: []) as List).collect { it as String }
+        Map dg = (st.dayGroups ?: [:]) as Map
+        List<Map> groups = []
+        dg.keySet().collect { it.toString() }.sort { it as int }.each { String g ->
+            List<Integer> days = []
+            (dg.get(g) as List).eachWithIndex { Object f, int i -> if (f == true) days << (i + 1) }
+            String gName = builtinText(((st.dayGroupsList ?: [:]) as Map).get(g)) ?: "Group ${g}".toString()
+            List<Map> cells = []
+            periods.each { String p ->
+                Map vals = builtinCell(st, "${p}.${g}".toString())
+                Map start = builtinStart(s, p, g)
+                if (start == null && !vals) return
+                cells << [p: p, vals: vals, start: start]
+            }
+            List<Map> ps = []
+            cells.each { Map c ->
+                Map start = c.start as Map
+                if (start?.bad) { warn << "${gName}, ${c.p}: start \"${start.bad}\" was not imported".toString(); return }
+                if (start == null) {
+                    if (cells.size() > 1) { warn << "${gName}, ${c.p}: no start time; period not imported".toString(); return }
+                    start = [kind: 'time', at: '00:00']
+                    warn << "${gName}, ${c.p}: no start time; imported as starting at 00:00 every day".toString()
+                }
+                ps << [name: c.p, start: start, profile: profileFor(c.vals as Map, c.p as String), custom: null]
+            }
+            groups << [name: gName, days: days, periods: ps]
+        }
+        sched = [name: 'Imported', type: 'time', groups: groups]
+    }
+    List<String> names = away ? ['Away'] : []
+    sets.each { Map x ->
+        String base = (x.users as List).join(' / ')
+        String n = base
+        int i = 2
+        while (names.contains(n)) n = "${base} ${i++}".toString()
+        names << n
+    }
+    int first = away ? 1 : 0
+    List<Map> profiles = (away ? [[name: 'Away'] + away] : []) + sets.withIndex().collect { Map x, int i -> [name: names[first + i]] + (x.values as Map) }
+    if (sched.type == 'mode') (sched.rows as List<Map>).each { Map r -> r.profile = names[first + (r.profile as int)] }
+    else (sched.groups as List<Map>).each { Map g -> (g.periods as List<Map>).each { Map p -> p.profile = names[first + (p.profile as int)] } }
+    if (sets.isEmpty()) warn << 'The scheduler has nothing scheduled; the program has an empty schedule'
+
+    List<Map> overrides = []
+    if (away) {
+        Map awayMode = modes.find { (it.name as String)?.trim()?.equalsIgnoreCase('Away') }
+        if (awayMode) overrides << [modeId: awayMode.id as Long, profile: 'Away']
+        else warn << 'The hub has no Away mode; the Away profile was imported without an override'
+    }
+    if (st.useEcoModeAway == true) warn << 'Away used the EcoMode offset; the program uses the Away profile instead'
+    if (st.manHold == true) warn << 'The scheduler was on hold; the program starts without a hold'
+    if (builtinText(s.modesR)) warn << 'The mode restriction was not imported'
+    if (builtinText(s.starting) || builtinText(s.ending)) warn << 'The time restriction was not imported'
+    if (builtinText(s.days)) warn << 'The day restriction was not imported'
+
+    Map eco = [onOverrides: false]   // the built-in never applies EcoMode to Away
+    BigDecimal off = numOrNull(st.ecoSet)
+    if (off != null && off.abs() <= 10) eco.offset = off
+    else if (off != null) warn << "EcoMode offset ${off} is outside -10 to 10 and was not imported".toString()
+    Map opts = [eco: eco, options: [applyOnStart: !(s.setOnStart in ['false', false]),
+                                    whilePaused: s.turnThermOff in ['true', true] ? 'off' : 'leave', onResume: 'restore']]
+    List<String> therms = ((s.therm instanceof Map ? s.therm : [:]) as Map).keySet().collect { it.toString() }
+    if (!therms) errs << 'The scheduler has no thermostat'
+    List<String> sw = ((s.disabled instanceof Map ? s.disabled : [:]) as Map).keySet().collect { it.toString() }
+    return [doc: [v: 1, profiles: profiles, schedules: [sched], active: sched.name, overrides: overrides],
+            options: opts, thermostats: therms, pauseSwitch: sw ? sw[0] : null,
+            pauseWhen: s.disabledOff in ['true', true] ? 'off' : 'on', eco: st.inEcoMode == true,
+            warnings: warn, errors: errs]
 }
 
 // ── End core ──────────────────────────────────────────────────────────

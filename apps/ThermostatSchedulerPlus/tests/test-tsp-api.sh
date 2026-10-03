@@ -240,6 +240,65 @@ try:
     s, b = call("POST", f"/programs/{prog_id}/command", raw_body=b"{not json")
     info(f"malformed JSON body: HTTP {s} (platform answers before the app runs; not asserted)")
 
+    # ── Configuration PUT ─────────────────────────────────────────────
+    section("Configuration PUT")
+    s, doc = call("GET", f"/programs/{prog_id}")
+    original = doc["config"]
+    rev = doc["revision"]
+    if any(p.get("name") == "Temp" for p in original["profiles"]):   # left by an interrupted run
+        original["profiles"] = [p for p in original["profiles"] if p.get("name") != "Temp"]
+        s, b = call("PUT", f"/programs/{prog_id}", {"revision": rev, "config": original})
+        if s != 200: die(f"could not remove the leftover Temp profile: {s} {b}")
+        rev = b["revision"]
+        info("removed a leftover Temp profile")
+    s, b = call("PUT", f"/programs/{prog_id}", {"config": original}, auth=False); check("put without token is 401", s, 401)
+    s, b = call("PUT", "/programs/999999", {"revision": rev, "config": original}); check("put unknown program is 404", s, 404)
+    s, b = call("PUT", f"/programs/{prog_id}", {"config": original}); check("put without revision is 400", s, 400)
+    s, b = call("PUT", f"/programs/{prog_id}", {"revision": rev}); check("put without config is 400", s, 400)
+    s, b = call("PUT", f"/programs/{prog_id}", {"revision": rev, "config": original})
+    check("round trip put is 200", s, 200)
+    check("round trip keeps the revision", b.get("revision"), rev)
+    bad = json.loads(json.dumps(original)); bad["active"] = "No such schedule"
+    s, b = call("PUT", f"/programs/{prog_id}", {"revision": rev, "config": bad})
+    check("invalid document is 400", s, 400)
+    check("invalid document lists errors", any("No such schedule" in e for e in b.get("errors", [])), True)
+    edited = json.loads(json.dumps(original))
+    edited["profiles"].append({"name": "Temp", "heat": 17.5})
+    edited["eco"] = {"offset": 3, "onOverrides": True}
+    s, b = call("PUT", f"/programs/{prog_id}", {"revision": rev, "config": edited})
+    check("edited put is 200", s, 200)
+    check("edited put adds the profile", any(p.get("name") == "Temp" for p in b.get("config", {}).get("profiles", [])), True)
+    check("edited put sets the eco offset", float(b.get("config", {}).get("eco", {}).get("offset", 0)), 3.0)
+    check("edited put changes the revision", b.get("revision") != rev, True)
+    s, b2 = call("PUT", f"/programs/{prog_id}", {"revision": rev, "config": original})
+    check("stale revision is 409", s, 409)
+    check("409 carries the current revision", b2.get("revision"), b.get("revision"))
+    rev = b.get("revision")
+    s, h = cmd({"command": "holdProfile", "profile": "Temp", "end": "indefinite"}); check("hold Temp", h.get("profile"), "Temp")
+    s, b = call("PUT", f"/programs/{prog_id}", {"revision": rev, "config": original})
+    check("put restoring the original is 200", s, 200)
+    check("put removing the held profile ends the hold", b.get("status", {}).get("holdEnd"), "none")
+    check("original eco offset is back", float(b.get("config", {}).get("eco", {}).get("offset", 0)), float(original["eco"]["offset"]))
+
+    # Two PUTs sent at once with the same revision: one must win, the other must get 409.
+    import threading
+    races = []
+    for rnd in range(10):
+        s, doc = call("GET", f"/programs/{prog_id}")
+        bodies = []
+        for k in (1, 2):
+            c = json.loads(json.dumps(doc["config"])); c["profiles"].append({"name": f"Race{k}", "heat": 17.0})
+            bodies.append({"revision": doc["revision"], "config": c})
+        codes = [None, None]
+        def put(i): codes[i] = call("PUT", f"/programs/{prog_id}", bodies[i])[0]
+        ts = [threading.Thread(target=put, args=(i,)) for i in (0, 1)]
+        for th in ts: th.start()
+        for th in ts: th.join()
+        races.append(sorted(codes))
+        s, doc = call("GET", f"/programs/{prog_id}")
+        call("PUT", f"/programs/{prog_id}", {"revision": doc["revision"], "config": original})
+    check("concurrent PUTs with one revision: one 200, one 409", races, [[200, 409]] * 10)
+
     # ── Create route (debug only) ─────────────────────────────────────
     section("Create route")
     if str((fetch(f"/installedapp/configure/json/{parent_id}").get("settings") or {}).get("debugEnable")).lower() == "true":
