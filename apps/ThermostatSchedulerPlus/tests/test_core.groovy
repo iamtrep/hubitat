@@ -279,6 +279,90 @@ check('settings: window at a time', core.optionSettings([restrictions: [to: [kin
 check('settings: days and modes as text', core.optionSettings([restrictions: [days: [1, 7], modeIds: [4]]]).findAll { it.name in ['restrictDays', 'restrictModes'] },
       [[name: 'restrictDays', type: 'enum', value: ['1', '7']], [name: 'restrictModes', type: 'mode', value: ['4']]])
 
+// ── built-in import ──
+bModes = [[id: 1L, name: 'Day'], [id: 2L, name: 'Evening'], [id: 3L, name: 'Night'], [id: 4L, name: 'Away']]
+bEnv = [scale: 'C', vars: ['comfort'], modeIds: [1L, 2L, 3L, 4L]]
+bSettings = [origLabel: 'Thermostat Scheduler: Living', schedTypeL: 'Time Periods', therm: ['11': 'Th A', '12': 'Th B'],
+    disabled: ['21': 'Peak'], disabledOff: 'true', turnThermOff: 'true', setOnStart: 'false',
+    'timeWake.1': 'A specific time', 'atTimeWake.1': '06:30', 'timeNight.1': 'Sunset', 'atSunsetOffsetNight.1': '-30',
+    'timeWake.2': 'Sunrise', 'atSunriseOffsetWake.2': '', 'timeNight.2': 'A specific time', 'atTimeNight.2': '2026-01-01T23:00:00.000-0500',
+    'timeLeave.1': 'A specific time', 'atTimeLeave.1': '09:00',           // Leave is not in timeSort: leftover
+    'timeWake.3': 'A specific time', 'atTimeWake.3': '05:00']            // group 3 is not in dayGroups: leftover
+bState = [timeSort: ['Wake', 'Night'], dayGroups: ['1': [true, true, true, true, true, false, false], '2': [false, false, false, false, false, true, true]],
+    dayGroupsList: ['1': 'Mon-Tue-Wed-Thu-Fri', '2': 'Sat-Sun'],
+    'heatWake.1': 21.0, 'modWake.1': 'Heat', 'fanWake.1': 'Auto', 'heatNight.1': 18.0,
+    'heatWake.2': 22.0, 'heatNight.2': 18.0,
+    'heatLeave.1': 15.0, 'heatWake.3': 30.0,
+    heatAway: 16.0, ecoSet: 4.0, inEcoMode: true]
+bc = core.convertBuiltin(bSettings, bState, bModes)
+bs = bc.doc.schedules[0]
+check('import: no errors', bc.errors, [])
+check('import: result validates', core.validateConfig(bc.doc, bEnv), [])
+check('import: options validate', core.validateOptions(bc.options, bEnv), [])
+check('import: time schedule', [bs.type, bc.doc.active], ['time', bs.name])
+check('import: day groups', bs.groups.collect { [it.name, it.days] }, [['Mon-Tue-Wed-Thu-Fri', [1, 2, 3, 4, 5]], ['Sat-Sun', [6, 7]]])
+check('leftover period and group keys ignored', bs.groups.collect { it.periods*.name }, [['Wake', 'Night'], ['Wake', 'Night']])
+check('import: fixed start', bs.groups[0].periods[0].start, [kind: 'time', at: '06:30'])
+check('import: sunset offset from text', bs.groups[0].periods[1].start, [kind: 'sunset', offset: -30])
+check('import: blank sunrise offset is 0', bs.groups[1].periods[0].start, [kind: 'sunrise', offset: 0])
+check('import: ISO time input', bs.groups[1].periods[1].start, [kind: 'time', at: '23:00'])
+check('import: mode and fan lower-cased', bc.doc.profiles.find { it.name == 'Wake' }.subMap(['heat', 'fan', 'mode']), [heat: 21.0, fan: 'auto', mode: 'heat'])
+check('import: identical cells share a profile', bs.groups.collect { it.periods*.profile }, [['Wake', 'Night'], ['Wake 2', 'Night']])
+check('import: Away profile and override', [bc.doc.profiles.find { it.name == 'Away' }?.heat, bc.doc.overrides], [16.0, [[modeId: 4L, profile: 'Away']]])
+check('import: eco', [bc.options.eco, bc.eco], [[onOverrides: false, offset: 4.0], true])
+check('import: options', bc.options.options, [applyOnStart: false, whilePaused: 'off', onResume: 'restore'])
+check('import: devices', [bc.thermostats, bc.pauseSwitch, bc.pauseWhen], [['11', '12'], '21', 'off'])
+check('import: restricted while the switch is on', core.convertBuiltin(bSettings + [disabledOff: 'false'], bState, bModes).pauseWhen, 'on')
+check('import: no warnings for a clean scheduler', bc.warnings, [])
+
+// variable setpoints, single period without a start
+vState = [timeSort: ['Always'], dayGroups: ['1': [true] * 7], dayGroupsList: ['1': 'Mon-Tue-Wed-Thu-Fri-Sat-Sun'],
+          'heatAlways.1': 27.5, 'heatAlways.1V': 'comfort']
+vc = core.convertBuiltin([schedTypeL: 'Time Periods', therm: ['11': 'Th A']], vState, bModes)
+check('import: variable setpoint', vc.doc.profiles.find { it.name == 'Always' }.subMap(['heat', 'heatVar']), [heatVar: 'comfort'])
+check('import: lone period without a start runs from midnight', vc.doc.schedules[0].groups[0].periods[0].start, [kind: 'time', at: '00:00'])
+check('import: lone period warning', vc.warnings.any { it.contains('Always') && it.contains('00:00') }, true)
+check('import: no Away values, no override', vc.doc.overrides, [])
+check('import: variable result validates', core.validateConfig(vc.doc, bEnv), [])
+
+// a period with values but no start, among others
+nState = bState + ['heatLeave.1': 15.0, timeSort: ['Wake', 'Leave', 'Night']]
+nc = core.convertBuiltin(bSettings.findAll { k, v -> !(k in ['timeLeave.1', 'atTimeLeave.1']) }, nState, bModes)
+check('import: period without a start skipped', nc.doc.schedules[0].groups[0].periods*.name, ['Wake', 'Night'])
+check('import: skipped period warned', nc.warnings.any { it.contains('Leave') }, true)
+
+// hub-mode schedule
+mState = [modeTable: ['1': [heat: 21.0, used: true], '2': [heat: 21.0, used: true], '3': [heat: 18.0, used: true],
+                      '9': [heat: 17.0, used: true], '4': [heat: 15.0, used: false]], heatAway: 16.0]
+mc = core.convertBuiltin([schedTypeL: 'Hub Modes', therm: ['11': 'Th A']], mState, bModes)
+check('import: mode schedule', [mc.doc.schedules[0].type, mc.doc.active], ['mode', mc.doc.schedules[0].name])
+check('import: identical mode rows merged', mc.doc.schedules[0].rows, [[modes: [1L, 2L], profile: 'Day / Evening'], [modes: [3L], profile: 'Night']])
+check('deleted mode row skipped with warning', mc.warnings.any { it.contains('9') }, true)
+check('import: mode result validates', core.validateConfig(mc.doc, bEnv), [])
+
+// warnings and errors
+wc = core.convertBuiltin(bSettings, bState + [useEcoModeAway: true, manHold: true], bModes - [bModes[3]])
+check('import: EcoMode-for-Away warned', wc.warnings.any { it.contains('EcoMode') }, true)
+check('import: hold warned', wc.warnings.any { it.contains('hold') }, true)
+check('import: no Away mode warned', wc.warnings.any { it.contains('Away mode') }, true)
+check('import: restrictions warned', core.convertBuiltin(bSettings + [modesR: ['1'], starting: '08:00'], bState, bModes).warnings.size(), 2)
+check('import: no thermostat is an error', core.convertBuiltin(bSettings + [therm: [:]], bState, bModes).errors, ['The scheduler has no thermostat'])
+check('import: eco offset out of range warned and left out', core.convertBuiltin(bSettings, bState + [ecoSet: 12], bModes).options.eco, [onOverrides: false])
+
+// shared profiles, empty-list settings, empty schedules (seen on real schedulers)
+sState = [timeSort: ['Wake', 'Leave', 'Return', 'Night'], dayGroups: ['1': [true] * 7], dayGroupsList: ['1': 'All'],
+          'heatWake.1': 21.0, 'heatLeave.1': 17.0, 'heatReturn.1': 21.0, 'heatNight.1': 17.0]
+sSet = [therm: ['11': 'Th A'], 'timeWake.1': 'A specific time', 'atTimeWake.1': '06:00', 'timeLeave.1': 'A specific time', 'atTimeLeave.1': '09:00',
+        'timeReturn.1': 'A specific time', 'atTimeReturn.1': '16:00', 'timeNight.1': 'A specific time', 'atTimeNight.1': '22:00']
+sc = core.convertBuiltin(sSet, sState, bModes)
+check('import: shared profile named after its periods', sc.doc.schedules[0].groups[0].periods*.profile, ['Wake / Return', 'Leave / Night', 'Wake / Return', 'Leave / Night'])
+check('import: shared profile result validates', core.validateConfig(sc.doc, bEnv), [])
+ec = core.convertBuiltin([therm: ['11': 'Th A'], 'timeAlways.1': []], vState - ['heatAlways.1V': 'comfort'], bModes)
+check('import: empty-list start counts as none', ec.doc.schedules[0].groups[0].periods*.start, [[kind: 'time', at: '00:00']])
+nothing = core.convertBuiltin([therm: ['11': 'Th A']], [timeSort: ['Wake'], dayGroups: ['1': [true] * 7]], bModes)
+check('import: nothing scheduled warned', nothing.warnings.any { it.contains('nothing') }, true)
+check('import: empty mode schedule warned', core.convertBuiltin([schedTypeL: 'Hub Modes', therm: ['11': 'Th A']], [modeTable: [:]], bModes).warnings.any { it.contains('nothing') }, true)
+
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)

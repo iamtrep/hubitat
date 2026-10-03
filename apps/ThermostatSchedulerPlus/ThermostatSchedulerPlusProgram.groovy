@@ -1831,6 +1831,152 @@ List<Map> optionSettings(Map c) {
     return w
 }
 
+// ── Built-in Thermostat Scheduler 2.0 import ──
+// Only appState.timeSort (periods) and appState.dayGroups (groups) are live; the scheduler keeps
+// settings and state of deleted periods and groups, which are ignored here.
+
+String builtinText(Object v) {
+    if (v == null || (v instanceof Collection && ((Collection) v).isEmpty()) || (v instanceof Map && ((Map) v).isEmpty())) return null
+    return v.toString().trim() ?: null
+}
+
+Map builtinCell(Map src, String suffix) {
+    Map v = [:]
+    String hv = builtinText(src.get("heat${suffix}V".toString())), cv = builtinText(src.get("cool${suffix}V".toString()))
+    BigDecimal heat = numOrNull(src.get("heat${suffix}".toString())), cool = numOrNull(src.get("cool${suffix}".toString()))
+    if (hv) v.heatVar = hv
+    else if (heat != null) v.heat = heat
+    if (cv) v.coolVar = cv
+    else if (cool != null) v.cool = cool
+    String fan = builtinText(src.get("fan${suffix}".toString())), mode = builtinText(src.get("mod${suffix}".toString()))
+    if (fan) v.fan = fan.toLowerCase()
+    if (mode) v.mode = mode.toLowerCase()
+    return v
+}
+
+String builtinHhmm(Object v) {
+    String s = builtinText(v)
+    if (!s) return null
+    def m = s =~ /^(\d{1,2}):(\d{2})$/
+    if (m.find()) return "${m.group(1).padLeft(2, '0')}:${m.group(2)}".toString()
+    m = s =~ /T(\d{2}):(\d{2})/
+    return m.find() ? "${m.group(1)}:${m.group(2)}".toString() : null
+}
+
+// null: no start; [bad: kind]: a start this importer does not know.
+Map builtinStart(Map s, String p, String g) {
+    String sfx = "${p}.${g}".toString()
+    String kind = builtinText(s.get("time${sfx}".toString()))
+    if (!kind) return null
+    if (kind == 'A specific time') {
+        String at = builtinHhmm(s.get("atTime${sfx}".toString()))
+        return at ? [kind: 'time', at: at] : null
+    }
+    if (kind == 'Sunrise' || kind == 'Sunset') {
+        String off = builtinText(s.get("at${kind}Offset${sfx}".toString()))
+        return [kind: kind.toLowerCase(), offset: off && off ==~ /-?\d+/ ? (off as int) : 0]
+    }
+    return [bad: kind]
+}
+
+Map convertBuiltin(Map s, Map st, List<Map> modes) {
+    List<String> warn = [], errs = []
+    Map away = builtinCell(st, 'Away')
+    // Identical values share one profile, named after every period or mode that uses it.
+    // Periods and rows hold an index into `sets` until the names are known.
+    List<Map> sets = []
+    Closure profileFor = { Map values, String user ->
+        int i = sets.findIndexOf { Map x -> x.values == values }
+        if (i < 0) { sets << [values: values, users: []]; i = sets.size() - 1 }
+        if (!(sets[i].users as List).contains(user)) (sets[i].users as List) << user
+        return i
+    }
+    Map sched
+    if (s.schedTypeL == 'Hub Modes') {
+        List<Map> rows = []
+        ((st.modeTable ?: [:]) as Map).each { Object k, Object v ->
+            Map m = v as Map
+            if (m.used == false) return
+            Long id = k.toString().isLong() ? (k.toString() as Long) : null
+            String modeName = modes.find { (it.id as Long) == id }?.name
+            if (modeName == null) { warn << "Hub mode ${k} no longer exists; its row was not imported".toString(); return }
+            int prof = profileFor(builtinCell(m, ''), modeName) as int
+            Map row = rows.find { it.profile == prof }
+            if (row) (row.modes as List) << id
+            else rows << [modes: [id], profile: prof]
+        }
+        sched = [name: 'Hub modes', type: 'mode', rows: rows]
+    } else {
+        List<String> periods = ((st.timeSort ?: []) as List).collect { it as String }
+        Map dg = (st.dayGroups ?: [:]) as Map
+        List<Map> groups = []
+        dg.keySet().collect { it.toString() }.sort { it as int }.each { String g ->
+            List<Integer> days = []
+            (dg.get(g) as List).eachWithIndex { Object f, int i -> if (f == true) days << (i + 1) }
+            String gName = builtinText(((st.dayGroupsList ?: [:]) as Map).get(g)) ?: "Group ${g}".toString()
+            List<Map> cells = []
+            periods.each { String p ->
+                Map vals = builtinCell(st, "${p}.${g}".toString())
+                Map start = builtinStart(s, p, g)
+                if (start == null && !vals) return
+                cells << [p: p, vals: vals, start: start]
+            }
+            List<Map> ps = []
+            cells.each { Map c ->
+                Map start = c.start as Map
+                if (start?.bad) { warn << "${gName}, ${c.p}: start \"${start.bad}\" was not imported".toString(); return }
+                if (start == null) {
+                    if (cells.size() > 1) { warn << "${gName}, ${c.p}: no start time; period not imported".toString(); return }
+                    start = [kind: 'time', at: '00:00']
+                    warn << "${gName}, ${c.p}: no start time; imported as starting at 00:00 every day".toString()
+                }
+                ps << [name: c.p, start: start, profile: profileFor(c.vals as Map, c.p as String), custom: null]
+            }
+            groups << [name: gName, days: days, periods: ps]
+        }
+        sched = [name: 'Imported', type: 'time', groups: groups]
+    }
+    List<String> names = away ? ['Away'] : []
+    sets.each { Map x ->
+        String base = (x.users as List).join(' / ')
+        String n = base
+        int i = 2
+        while (names.contains(n)) n = "${base} ${i++}".toString()
+        names << n
+    }
+    int first = away ? 1 : 0
+    List<Map> profiles = (away ? [[name: 'Away'] + away] : []) + sets.withIndex().collect { Map x, int i -> [name: names[first + i]] + (x.values as Map) }
+    if (sched.type == 'mode') (sched.rows as List<Map>).each { Map r -> r.profile = names[first + (r.profile as int)] }
+    else (sched.groups as List<Map>).each { Map g -> (g.periods as List<Map>).each { Map p -> p.profile = names[first + (p.profile as int)] } }
+    if (sets.isEmpty()) warn << 'The scheduler has nothing scheduled; the program has an empty schedule'
+
+    List<Map> overrides = []
+    if (away) {
+        Map awayMode = modes.find { (it.name as String)?.trim()?.equalsIgnoreCase('Away') }
+        if (awayMode) overrides << [modeId: awayMode.id as Long, profile: 'Away']
+        else warn << 'The hub has no Away mode; the Away profile was imported without an override'
+    }
+    if (st.useEcoModeAway == true) warn << 'Away used the EcoMode offset; the program uses the Away profile instead'
+    if (st.manHold == true) warn << 'The scheduler was on hold; the program starts without a hold'
+    if (builtinText(s.modesR)) warn << 'The mode restriction was not imported'
+    if (builtinText(s.starting) || builtinText(s.ending)) warn << 'The time restriction was not imported'
+    if (builtinText(s.days)) warn << 'The day restriction was not imported'
+
+    Map eco = [onOverrides: false]   // the built-in never applies EcoMode to Away
+    BigDecimal off = numOrNull(st.ecoSet)
+    if (off != null && off.abs() <= 10) eco.offset = off
+    else if (off != null) warn << "EcoMode offset ${off} is outside -10 to 10 and was not imported".toString()
+    Map opts = [eco: eco, options: [applyOnStart: !(s.setOnStart in ['false', false]),
+                                    whilePaused: s.turnThermOff in ['true', true] ? 'off' : 'leave', onResume: 'restore']]
+    List<String> therms = ((s.therm instanceof Map ? s.therm : [:]) as Map).keySet().collect { it.toString() }
+    if (!therms) errs << 'The scheduler has no thermostat'
+    List<String> sw = ((s.disabled instanceof Map ? s.disabled : [:]) as Map).keySet().collect { it.toString() }
+    return [doc: [v: 1, profiles: profiles, schedules: [sched], active: sched.name, overrides: overrides],
+            options: opts, thermostats: therms, pauseSwitch: sw ? sw[0] : null,
+            pauseWhen: s.disabledOff in ['true', true] ? 'off' : 'on', eco: st.inEcoMode == true,
+            warnings: warn, errors: errs]
+}
+
 // ── End core ──────────────────────────────────────────────────────────
 
 // ── Logging (app) ─────────────────────────────────────────────────────
