@@ -31,11 +31,11 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 |---|---|
 | [HubDiagnostics/](./HubDiagnostics/) | Comprehensive hub diagnostics: inventory, performance tracking, network analysis, and snapshot comparison |
 | [LocationEventMapper/](./LocationEventMapper/) | TBD |
-| [LogMonitor/](./LogMonitor/) |  |
+| [LogMonitor/](./LogMonitor/) | Monitor hub logs with multiple filters and output actions |
 | [MultiHubInventory/](./MultiHubInventory/) | Read-only cross-hub device inventory, aggregated from each hub's Hub Diagnostics audit API |
 | [sensors/](./sensors/) |  |
 | [tests/](./tests/) |  |
-| [ThermostatSchedulerPlus/](./ThermostatSchedulerPlus/) |  |
+| [ThermostatSchedulerPlus/](./ThermostatSchedulerPlus/) | Thermostat schedules with profiles, holds and an API |
 | [utilities/](./utilities/) |  |
 | [WellMonitor/](./WellMonitor/) | Monitors well pump cycles, downstream consumption, tank usage, and emergency shutoff |
 <!-- /AUTO -->

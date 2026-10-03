@@ -13,7 +13,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.app.DeviceWrapper
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.1"
+@Field static final String CODE_VERSION = "0.1.2"
 
 definition(
     name: "Thermostat Scheduler+ Program",
@@ -81,7 +81,9 @@ String fmtT(Object v) {
 String heatSpan(Object v) { v == null ? '' : "<span class='tsp-heat'>${fmtT(v)}</span>" }
 String coolSpan(Object v) { v == null ? '' : "<span class='tsp-cool'>${fmtT(v)}</span>" }
 
-Map uiCfg() { return (state.config ?: defaultConfig()) as Map }
+Map uiCfg() { return (state.config ?: newConfig()) as Map }
+
+Map newConfig() { return seedOverrides(defaultConfig(), location.modes.collect { [id: it.id as Long, name: it.name as String] }) }
 
 Map cfgCopy() { return parseJson(groovy.json.JsonOutput.toJson(uiCfg())) as Map }
 
@@ -888,7 +890,7 @@ void uninstalled() { if (getChildDevice("tsp-${app.id}")) deleteChildDevice("tsp
 
 void initialize() {
     checkVersion(false)
-    if (!state.config) state.config = defaultConfig()
+    if (!state.config) state.config = newConfig()
     if (state.rt == null) state.rt = [paused: false, eco: false, hold: null, pausedApplied: false, recordedModes: [:],
                                       sent: [:], manual: [], lastTarget: null, lastApply: 'ok', verify: null]
     if (!settings.testClock) app.removeSetting("testClock")
@@ -933,7 +935,7 @@ ChildDeviceWrapper statusDevice() {
 }
 
 Map coreConfig() {
-    Map c = (state.config as Map) + [
+    Map c = ((state.config ?: newConfig()) as Map) + [
         eco: [offset: settings.ecoOffset != null ? settings.ecoOffset : 2.0, onOverrides: settings.ecoOnOverrides != false],
         options: [separation: settings.separation != null ? settings.separation : 2.0, verify: settings.verifyWrites != false, applyOnStart: settings.applyOnStart != false,
                   whilePaused: settings.whilePaused ?: 'leave', onResume: settings.onResume ?: 'restore'],
@@ -992,7 +994,7 @@ void evaluate(String why, boolean force, String onlyId = null) {
     Map cfg = coreConfig()
     Map rt = state.rt as Map
     // A write check whose job was lost (crash, push) runs at the next evaluation.
-    if (rt.verify && now() - (((rt.verify as Map).at ?: 0L) as long) > 60000L) runIn(1, "verifyWrites")
+    if (verifyOverdue(rt.verify as Map, now())) runIn(1, "verifyWrites")
     Map ctx = buildCtx(cfg)
     Map target = resolveTarget(cfg, rt, ctx)
     if (holdExpired(rt.hold as Map, target, ctx.now as long)) {
@@ -1141,7 +1143,7 @@ void thermostatEvent(evt) {
 
 void appButtonHandler(String btn) {
     checkVersion()
-    if (!state.config) state.config = defaultConfig()
+    if (!state.config) state.config = newConfig()
     state.remove('uiError')
     state.uiPage = pageForButton(btn)
     if (btn == "btnEvaluate") evaluate("button", false)
@@ -1230,7 +1232,7 @@ Map apiStatus() {
 
 Map apiDocument() {
     Map cfg = coreConfig()
-    return [id: app.id, name: app.label, revision: (state.config as Map).hashCode(),
+    return [id: app.id, name: app.label, revision: ((state.config ?: newConfig()) as Map).hashCode(),
             thermostats: (thermostats ?: []).collect { [id: it.id, name: it.displayName] },
             config: cfg, status: apiStatus()]
 }
@@ -1488,6 +1490,19 @@ Map defaultConfig() {
             [name: 'Wake', start: [kind: 'time', at: '06:30'], profile: 'Home', custom: null],
             [name: 'Night', start: [kind: 'time', at: '22:00'], profile: 'Sleep', custom: null]]]]]],
         active: 'Normal', overrides: []]
+}
+
+// A new program maps the hub mode named Away to the Away profile, as the built-in Away row does.
+Map seedOverrides(Map cfg, List<Map> modes) {
+    Map away = modes?.find { Map m -> (m.name as String)?.trim()?.equalsIgnoreCase('Away') }
+    boolean hasProfile = (cfg.profiles as List<Map>)?.any { Map p -> p.name == 'Away' }
+    if (away == null || !hasProfile || cfg.overrides) return cfg
+    return cfg + [overrides: [[modeId: away.id as Long, profile: 'Away']]]
+}
+
+// A write check is due 30 s after the write; past 60 s its job was lost.
+boolean verifyOverdue(Map verify, long now) {
+    return verify != null && now - ((verify.at ?: 0L) as long) > 60000L
 }
 
 List<String> validateConfig(Map doc, Map env) {

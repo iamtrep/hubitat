@@ -20,7 +20,7 @@ B, C and E take minutes each and belong to `RUN_SLOW_TESTS=1` runs. E checks the
 
 ## Phase A: core unit tests
 
-`test_core.groovy` parses the block between the "Core (pure)" and "End core" markers of `ThermostatSchedulerPlusProgram.groovy` and runs it under the pinned Groovy 2.4.21 jar, so the tests bind to shipped code. Covered: date helpers (week days, month ends, both DST changes), transitions (fixed times, sunrise and sunset offsets, DateTime variables set and missing, the first period of a day, day groups, a period inside the skipped and the repeated DST hour), the resolver (every layer, eco on schedules and overrides, eco offset changes, mode schedules, variable setpoints, missing profiles), hold expiry for each end, write planning (heat, cool, auto with separation in both directions, off thermostats, blank fan and mode, `noModeIds`), restrictions, the next wake time, configuration validation, command parsing for every command and end format, and `applyOutcome` (`ok`, `partial`, `failed`).
+`test_core.groovy` parses the block between the "Core (pure)" and "End core" markers of `ThermostatSchedulerPlusProgram.groovy` and runs it under the pinned Groovy 2.4.21 jar, so the tests bind to shipped code. Covered: date helpers (week days, month ends, both DST changes), transitions (fixed times, sunrise and sunset offsets, DateTime variables set and missing, the first period of a day, day groups, a period inside the skipped and the repeated DST hour), the resolver (every layer, eco on schedules and overrides, eco offset changes, mode schedules, variable setpoints, missing profiles), hold expiry for each end, write planning (heat, cool, auto with separation in both directions, off thermostats, blank fan and mode, `noModeIds`), restrictions, the next wake time, configuration validation, command parsing for every command and end format, `applyOutcome` (`ok`, `partial`, `failed`), the Away override a new program gets (`seedOverrides`), and when a write check is overdue (`verifyOverdue`).
 
 ## Phase B: behavior
 
@@ -32,7 +32,7 @@ B, C and E take minutes each and belong to `RUN_SLOW_TESTS=1` runs. E checks the
 
 ## Phase D: HTTP API
 
-`test-tsp-api.sh` exercises every parent route: requests without a token (401), list and get (with `revision` and configuration), unknown and non-numeric program ids (404), a hold and a resume whose replies carry the new status and match the status device, unknown commands and missing arguments (400), and the debug-only `POST /programs` without a label (400). It needs the `test-tsp` program from phase B. The cloud case (a relayed request refused with 403 while the app's cloud access is off) is skipped with `[INFO]` when the hub's cloud address cannot be found, which is the case while the hub's own cloud access is off.
+`test-tsp-api.sh` exercises every parent route: requests without a token (401), list and get (with `revision` and configuration), unknown and non-numeric program ids (404), a hold and a resume whose replies carry the new status and match the status device, unknown commands and missing arguments (400), and the debug-only `POST /programs`: without a label (400), and creating the program `test-tsp-new`, whose configuration must map the Away mode to the Away profile. The test turns the parent's debug logging on first and leaves `test-tsp-new` in place. It needs the `test-tsp` program from phase B. The cloud case (a relayed request refused with 403 while the app's cloud access is off) is skipped with `[INFO]` when the hub's cloud address cannot be found, which is the case while the hub's own cloud access is off.
 
 ## Phase E: parity
 
@@ -44,7 +44,8 @@ Planned with the phase-2 features: `PUT /programs/{id}` with revision checks and
 
 ## Known gaps
 
-- The API test does not cover local access turned off or a successful `POST /programs`; the parity test creates its program through that route.
+- The API test does not cover local access turned off.
+- No on-hub case loses a write-check job to prove the re-arm at the next evaluation: losing a scheduled job on purpose needs a hub restart or editing the program's state. The core tests cover the overdue decision (`verifyOverdue`).
 - `lastApply` `failed` is covered by the core tests only.
 - Minute and ISO-time holds and `holdSetpoints` are covered by the core tests only (parsing, expiry, resolution); no on-hub case runs one.
 - No case runs two programs on one thermostat (the spec's regression case for the built-in's by-thermostat targeting). Each program has its own status device, so the commands cannot reach another program.

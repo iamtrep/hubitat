@@ -29,7 +29,7 @@ A program controls one or more thermostats that share a schedule, usually one zo
 
 The program's main page shows what is in effect and why, the next transition, a table of the thermostats, and the controls: **Apply now**, **Advance**, eco on or off, **Pause** or **Resume**, **End hold**, and a hold picker. Three pages hold the setup: **Profiles**, **Schedules**, and **Overrides and options**.
 
-A new program starts with the profiles Home, Sleep and Away, and one schedule, Normal, with Wake at 06:30 (Home) and Night at 22:00 (Sleep) every day.
+A new program starts with the profiles Home, Sleep and Away, one schedule, Normal, with Wake at 06:30 (Home) and Night at 22:00 (Sleep) every day, and an override from the Away mode to the Away profile.
 
 ### Profiles
 
@@ -46,7 +46,7 @@ A program can have several schedules, for example Normal and Vacation. One is ac
 
 ### Mode overrides
 
-An override maps a hub mode to a profile and applies on top of any schedule while the hub is in that mode. A new program has none; adding one for Away with the Away profile reproduces the built-in Away row.
+An override maps a hub mode to a profile and applies on top of any schedule while the hub is in that mode. A new program maps the hub mode named Away, when there is one, to the Away profile, which reproduces the built-in Away row. Modes are matched by id, so renaming the mode keeps the override.
 
 ### Eco offset
 

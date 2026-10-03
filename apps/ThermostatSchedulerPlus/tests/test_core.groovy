@@ -185,6 +185,22 @@ check('no thermostat confirmed is failed', core.applyOutcome(wbatch, []), 'faile
 check('confirmed ids outside the batch do not count', core.applyOutcome(wbatch, ['3']), 'failed')
 check('empty batch is ok', core.applyOutcome([], []), 'ok')
 
+// ── new program seeding ──
+seedModes = [[id: 1L, name: 'Day'], [id: 4L, name: 'Away']]
+check('new program maps Away mode to Away profile', core.seedOverrides(core.defaultConfig(), seedModes).overrides, [[modeId: 4L, profile: 'Away']])
+check('Away matched by name, any case', core.seedOverrides(core.defaultConfig(), [[id: 7L, name: 'away']]).overrides, [[modeId: 7L, profile: 'Away']])
+check('no Away mode leaves overrides empty', core.seedOverrides(core.defaultConfig(), [[id: 1L, name: 'Day']]).overrides, [])
+check('no Away profile leaves overrides empty', core.seedOverrides(core.defaultConfig() + [profiles: [[name: 'Home', heat: 21.0]]], seedModes).overrides, [])
+check('existing overrides are kept', core.seedOverrides(core.defaultConfig() + [overrides: [[modeId: 1L, profile: 'Home']]], seedModes).overrides, [[modeId: 1L, profile: 'Home']])
+check('seeded default config validates', core.validateConfig(core.seedOverrides(core.defaultConfig(), seedModes), [scale: 'C', vars: [], modeIds: [1L, 4L]]), [])
+
+// ── overdue write check ──
+check('no pending check is not overdue', core.verifyOverdue(null, 100000L), false)
+check('check 30 s old is not overdue', core.verifyOverdue([writes: [], at: 70000L], 100000L), false)
+check('check 60 s old is not overdue', core.verifyOverdue([writes: [], at: 40000L], 100000L), false)
+check('check 61 s old is overdue', core.verifyOverdue([writes: [], at: 39000L], 100000L), true)
+check('check without a time is overdue', core.verifyOverdue([writes: []], 100000L), true)
+
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)

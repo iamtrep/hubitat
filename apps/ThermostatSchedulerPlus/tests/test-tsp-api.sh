@@ -6,7 +6,9 @@
 #
 # Thermostat Scheduler+ API test (Mode 2): parent app HTTP routes.
 # Needs the parent app installed with a "test-tsp" program (see test-tsp.sh).
-# Leaves the program resumed (no hold).
+# Leaves the program resumed (no hold). Turns the parent's debug logging on (it
+# turns itself off after 30 minutes) and creates the program "test-tsp-new" once,
+# through the debug-only POST /programs, to check a new program's defaults.
 #
 # Usage:
 #   bash tests/test-tsp-api.sh            # default hub
@@ -32,6 +34,7 @@ hub_name_arg, config_file = sys.argv[1], sys.argv[2]
 PARENT_TYPE = "Thermostat Scheduler+"
 PROGRAM_NAME = "test-tsp"
 STATUS_LABEL = "test-tsp scheduler"
+NEW_PROGRAM = "test-tsp-new"
 
 GREEN, RED, DIM, CYAN, BOLD, RESET = "\033[32m", "\033[31m", "\033[2m", "\033[36m", "\033[1m", "\033[0m"
 passed = failed = 0
@@ -79,6 +82,38 @@ def fetch_text(path, timeout=30):
 
 def fetch(path, timeout=30):
     return json.loads(fetch_text(path, timeout))
+
+def post_form(path, fields, timeout=30):
+    req = urllib.request.Request(f"http://{hub_ip}{path}", data=urllib.parse.urlencode(fields).encode())
+    req.add_header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+    with opener.open(req, timeout=timeout) as r:
+        return r.read().decode()
+
+def set_main_bool(app_id, name, want):
+    """Save one bool on an app's main page (runs updated()), echoing the page's other bools and text inputs."""
+    cfg = fetch(f"/installedapp/configure/json/{app_id}")
+    page, current = cfg["configPage"], cfg.get("settings") or {}
+    fields = [("_action_update", "Done"), ("formAction", "update"), ("id", str(app_id)),
+              ("version", str(cfg["app"].get("version", 1))), ("appTypeId", ""), ("appTypeName", ""),
+              ("currentPage", "mainPage"), ("pageBreadcrumbs", "[]")]
+    for sec in page.get("sections", []):
+        for i in sec.get("input", []):
+            n, typ = i["name"], i.get("type", "")
+            if typ not in ("bool", "text", "number", "decimal", "enum"):
+                continue
+            value = want if n == name else current.get(n)
+            fields += [(f"{n}.type", typ), (f"{n}.multiple", "false")]
+            if value is None or value == "" or isinstance(value, (list, dict)):
+                continue
+            if typ == "bool":
+                fields.append((f"checkbox[{n}]", "on"))
+                value = "true" if str(value).lower() == "true" else "false"
+            fields.append((f"settings[{n}]", str(value)))
+    fields += [("referrer", f"http://{hub_ip}/installedapp/list"),
+               ("url", f"http://{hub_ip}/installedapp/configure/{app_id}/mainPage"), ("_cancellable", "false")]
+    resp = json.loads(post_form("/installedapp/update/json", fields))
+    if resp.get("status") != "success":
+        die(f"app {app_id}: save of {name} rejected: {resp}")
 
 def walk(entries):
     for e in entries:
@@ -200,11 +235,20 @@ try:
 
     # ── Create route (debug only) ─────────────────────────────────────
     section("Create route")
+    if str((fetch(f"/installedapp/configure/json/{parent_id}").get("settings") or {}).get("debugEnable")).lower() != "true":
+        set_main_bool(parent_id, "debugEnable", True)
+        info("turned the parent's debug logging on")
     s, b = call("POST", "/programs", {})
-    if s == 404:
-        ok("create is hidden when debug is off (404)")
-    else:
-        check("create without label is 400", s, 400)
+    check("create without label is 400", s, 400)
+    s, b = call("POST", "/programs", {"label": NEW_PROGRAM})
+    check("create returns 201 or the existing program (200)", s in (200, 201), True)
+    new_id = b.get("id")
+    s, b = call("GET", f"/programs/{new_id}")
+    check("new program reads", s, 200)
+    modes = fetch("/modes/json").get("modes", [])
+    away = next((m["id"] for m in modes if str(m.get("name", "")).strip().lower() == "away"), None)
+    want = [{"modeId": away, "profile": "Away"}] if away is not None else []
+    check("new program maps the Away mode to the Away profile", (b.get("config") or {}).get("overrides"), want)
 
     # ── Cloud ─────────────────────────────────────────────────────────
     section("Cloud access")
