@@ -25,8 +25,7 @@
 # Cases (5 s settle each): apply vs Set Scheduled Temperatures, Away mode in and
 # out, restriction on and off, and the intended difference (Away, manual change,
 # apply: the built-in keeps the manual value, Thermostat Scheduler+ reapplies).
-# Leaves the hub in Day mode, and every switch and the reference thermostat as
-# found.
+# Leaves the hub mode, every switch and the reference thermostat as found.
 #
 # Runtime ~90 s: gated behind RUN_SLOW_TESTS=1 (TESTING.md §1.1).
 #
@@ -227,243 +226,251 @@ def setting_differs(current, want):
         return sorted(map(str, got.keys() if isinstance(got, dict) else (got or []))) != sorted(map(str, want[1]))
     return str(got).lower() != str(want[1]).lower()
 
-# ── Reference: the built-in scheduler ────────────────────────────────
-section("Reference")
-all_apps = apps()
-refs = [a for a in all_apps if a.get("type") == BUILTIN_TYPE and a.get("name") == BUILTIN_LABEL]
-if len(refs) != 1:
-    die(f"Need exactly one '{BUILTIN_TYPE}' instance labelled '{BUILTIN_LABEL}' (found {len(refs)}). "
-        f"Set it up by hand: one virtual thermostat, Time Periods, all days in one group, "
-        f"an Away setting, restriction 'disabled by a switch'.")
-ref_id = refs[0]["id"]
-ref_cfg = fetch(f"/installedapp/configure/json/{ref_id}")
-ref_settings = ref_cfg.get("settings") or {}
-ref_status = fetch(f"/installedapp/statusJson/{ref_id}")
-ref_state = {s["name"]: s["value"] for s in ref_status.get("appState", [])}
+# Setup reads the reference and provisions the rig; any unexpected error here is
+# a setup failure (exit 2). Nothing outside the rig changes until the guard passes.
+try:
+    # ── Reference: the built-in scheduler ────────────────────────────────
+    section("Reference")
+    all_apps = apps()
+    refs = [a for a in all_apps if a.get("type") == BUILTIN_TYPE and a.get("name") == BUILTIN_LABEL]
+    if len(refs) != 1:
+        die(f"Need exactly one '{BUILTIN_TYPE}' instance labelled '{BUILTIN_LABEL}' (found {len(refs)}). "
+            f"Set it up by hand: one virtual thermostat, Time Periods, all days in one group, "
+            f"an Away setting, restriction 'disabled by a switch'.")
+    ref_id = refs[0]["id"]
+    ref_cfg = fetch(f"/installedapp/configure/json/{ref_id}")
+    ref_settings = ref_cfg.get("settings") or {}
+    ref_status = fetch(f"/installedapp/statusJson/{ref_id}")
+    ref_state = {s["name"]: s["value"] for s in ref_status.get("appState", [])}
 
-therm = ref_settings.get("therm") or {}
-restrict = ref_settings.get("disabled") or {}
-if len(therm) != 1 or len(restrict) != 1:
-    die(f"'{BUILTIN_LABEL}' needs one thermostat and one restriction switch (has {therm}, {restrict})")
-ref_therm = next(iter(therm))
-restrict_id = next(iter(restrict))
-# disabledOff=false: restricted while the switch is on.
-restrict_on = "off" if str(ref_settings.get("disabledOff")).lower() == "true" else "on"
-turn_off = str(ref_settings.get("turnThermOff")).lower() == "true"
-if ref_settings.get("schedTypeL") != "Time Periods":
-    die(f"'{BUILTIN_LABEL}' must schedule by Time Periods")
-groups = ref_state.get("dayGroups") or {}
-if list(groups.values()) != [[True] * 7]:
-    die(f"'{BUILTIN_LABEL}' must have one day group covering every day (has {groups})")
-gid = next(iter(groups))
-if ref_state.get("heatAway") is None:
-    die(f"'{BUILTIN_LABEL}' has no Away heating setpoint")
-heat_away = float(ref_state["heatAway"])
+    therm = ref_settings.get("therm") or {}
+    restrict = ref_settings.get("disabled") or {}
+    if len(therm) != 1 or len(restrict) != 1:
+        die(f"'{BUILTIN_LABEL}' needs one thermostat and one restriction switch (has {therm}, {restrict})")
+    ref_therm = next(iter(therm))
+    restrict_id = next(iter(restrict))
+    # disabledOff=false: restricted while the switch is on.
+    restrict_on = "off" if str(ref_settings.get("disabledOff")).lower() == "true" else "on"
+    turn_off = str(ref_settings.get("turnThermOff")).lower() == "true"
+    if ref_settings.get("schedTypeL") != "Time Periods":
+        die(f"'{BUILTIN_LABEL}' must schedule by Time Periods")
+    groups = ref_state.get("dayGroups") or {}
+    if list(groups.values()) != [[True] * 7]:
+        die(f"'{BUILTIN_LABEL}' must have one day group covering every day (has {groups})")
+    gid = next(iter(groups))
+    if ref_state.get("heatAway") is None:
+        die(f"'{BUILTIN_LABEL}' has no Away heating setpoint")
+    heat_away = float(ref_state["heatAway"])
 
-periods = []
-for p in ref_state.get("timeSort") or []:
-    heat = ref_state.get(f"heat{p}.{gid}")
-    kind = ref_settings.get(f"time{p}.{gid}")
-    if heat is None or not kind:
-        die(f"'{BUILTIN_LABEL}' period {p} has no heating setpoint or start")
-    if kind == "Sunrise":
-        start = {"kind": "sunrise", "offset": int(ref_settings.get(f"atSunriseOffset{p}.{gid}") or 0)}
-    elif kind == "Sunset":
-        start = {"kind": "sunset", "offset": int(ref_settings.get(f"atSunsetOffset{p}.{gid}") or 0)}
+    periods = []
+    for p in ref_state.get("timeSort") or []:
+        heat = ref_state.get(f"heat{p}.{gid}")
+        kind = ref_settings.get(f"time{p}.{gid}")
+        if heat is None or not kind:
+            die(f"'{BUILTIN_LABEL}' period {p} has no heating setpoint or start")
+        if kind == "Sunrise":
+            start = {"kind": "sunrise", "offset": int(ref_settings.get(f"atSunriseOffset{p}.{gid}") or 0)}
+        elif kind == "Sunset":
+            start = {"kind": "sunset", "offset": int(ref_settings.get(f"atSunsetOffset{p}.{gid}") or 0)}
+        else:
+            start = {"kind": "time", "at": ref_settings.get(f"atTime{p}.{gid}")}
+        periods.append({"name": p, "start": start, "heat": float(heat)})
+    info(f"'{BUILTIN_LABEL}': {len(periods)} periods, Away {heat_away}, restricted while switch is "
+         f"{restrict_on}, turn off when restricted: {turn_off}")
+
+    # Other built-in schedulers on the same thermostat are held restricted for the run.
+    others = []
+    for a in all_apps:
+        if a.get("type") != BUILTIN_TYPE or a["id"] == ref_id:
+            continue
+        s = fetch(f"/installedapp/configure/json/{a['id']}").get("settings") or {}
+        if ref_therm not in (s.get("therm") or {}):
+            continue
+        sw = s.get("disabled") or {}
+        if len(sw) != 1:
+            die(f"Built-in scheduler '{a.get('name')}' also drives the reference thermostat and has no "
+                f"restriction switch to hold it off; disable it for the run")
+        others.append({"label": a.get("name"), "switch": next(iter(sw)),
+                       "on": "off" if str(s.get("disabledOff")).lower() == "true" else "on"})
+    for o in others:
+        info(f"'{o['label']}' also drives the reference thermostat: held restricted for the run")
+
+    # ── Provisioning ─────────────────────────────────────────────────────
+    section("Provisioning")
+    devs = devices()
+    by_id = {str(d["id"]): d for d in devs}
+    ref_dev = fetch(f"/device/fullJson/{ref_therm}")["device"]
+    ref_label = ref_dev.get("label") or ref_dev.get("name")
+    plus = [d for d in devs if (d.get("label") or d.get("name")) == PLUS_THERM]
+    if plus:
+        plus_id = str(plus[0]["id"])
+        ok(f"thermostat '{PLUS_THERM}' exists")
     else:
-        start = {"kind": "time", "at": ref_settings.get(f"atTime{p}.{gid}")}
-    periods.append({"name": p, "start": start, "heat": float(heat)})
-info(f"'{BUILTIN_LABEL}': {len(periods)} periods, Away {heat_away}, restricted while switch is "
-     f"{restrict_on}, turn off when restricted: {turn_off}")
+        _, final = post_form("/device/save", {"name": PLUS_THERM, "label": PLUS_THERM,
+                                              "deviceNetworkId": "TEST-PARITY-PLUS",
+                                              "deviceTypeId": str(ref_dev["deviceTypeId"])})
+        m = re.search(r"/device/edit/(\d+)", final)
+        plus_id = m.group(1) if m else next((str(d["id"]) for d in devices()
+                                             if (d.get("label") or d.get("name")) == PLUS_THERM), None)
+        if not plus_id:
+            die(f"could not create '{PLUS_THERM}'")
+        ok(f"created thermostat '{PLUS_THERM}'")
 
-# Other built-in schedulers on the same thermostat are held restricted for the run.
-others = []
-for a in all_apps:
-    if a.get("type") != BUILTIN_TYPE or a["id"] == ref_id:
-        continue
-    s = fetch(f"/installedapp/configure/json/{a['id']}").get("settings") or {}
-    if ref_therm not in (s.get("therm") or {}):
-        continue
-    sw = s.get("disabled") or {}
-    if len(sw) != 1:
-        die(f"Built-in scheduler '{a.get('name')}' also drives the reference thermostat and has no "
-            f"restriction switch to hold it off; disable it for the run")
-    others.append({"label": a.get("name"), "switch": next(iter(sw)),
-                   "on": "off" if str(s.get("disabledOff")).lower() == "true" else "on"})
-for o in others:
-    info(f"'{o['label']}' also drives the reference thermostat: held restricted for the run")
+    parents = [a for a in all_apps if a.get("type") == PARENT_TYPE]
+    if not parents:
+        die(f"No '{PARENT_TYPE}' instance on {hub_name}; install the parent app first")
+    parent_id = parents[0]["id"]
+    if str((fetch(f"/installedapp/configure/json/{parent_id}").get("settings") or {}).get("debugEnable")).lower() != "true":
+        app_settings(parent_id, {"debugEnable": True})
+    api_page = fetch_text(f"/installedapp/configure/json/{parent_id}/apiPage")
+    m = re.search(r"access_token=([a-f0-9-]+)", api_page)
+    if not m:
+        die("No access_token on the parent's apiPage (is OAuth enabled?)")
+    req = urllib.request.Request(f"http://{hub_ip}/apps/api/{parent_id}/programs", method="POST",
+                                 data=json.dumps({"label": PROGRAM}).encode(),
+                                 headers={"Content-Type": "application/json", "Authorization": f"Bearer {m.group(1)}"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        created = json.loads(r.read())
+    prog_id = created["id"]
+    ok(f"program '{PROGRAM}' {'created' if created.get('created') else 'exists'}")
 
-# ── Provisioning ─────────────────────────────────────────────────────
-section("Provisioning")
-devs = devices()
-by_id = {str(d["id"]): d for d in devs}
-ref_dev = fetch(f"/device/fullJson/{ref_therm}")["device"]
-ref_label = ref_dev.get("label") or ref_dev.get("name")
-plus = [d for d in devs if (d.get("label") or d.get("name")) == PLUS_THERM]
-if plus:
-    plus_id = str(plus[0]["id"])
-    ok(f"thermostat '{PLUS_THERM}' exists")
-else:
-    _, final = post_form("/device/save", {"name": PLUS_THERM, "label": PLUS_THERM,
-                                          "deviceNetworkId": "TEST-PARITY-PLUS",
-                                          "deviceTypeId": str(ref_dev["deviceTypeId"])})
-    m = re.search(r"/device/edit/(\d+)", final)
-    plus_id = m.group(1) if m else next((str(d["id"]) for d in devices()
-                                         if (d.get("label") or d.get("name")) == PLUS_THERM), None)
-    if not plus_id:
-        die(f"could not create '{PLUS_THERM}'")
-    ok(f"created thermostat '{PLUS_THERM}'")
+    # Configuration equivalent to the reference: one profile per distinct setpoint.
+    def pname(v): return f"H{v:.1f}"
+    values = sorted({p["heat"] for p in periods} | {heat_away})
+    modes = fetch("/modes/json")
+    away_id = next((m["id"] for m in modes["modes"] if m["name"] == "Away"), None)
+    day_id = next((m["id"] for m in modes["modes"] if m["name"] == "Day"), None)
+    if away_id is None or day_id is None:
+        die("The hub needs modes named Day and Away")
+    plus_config = {"v": 1,
+        "profiles": [{"name": pname(v), "heat": v} for v in values],
+        "schedules": [{"name": "Builtin", "type": "time", "groups": [{"name": "All", "days": [1, 2, 3, 4, 5, 6, 7],
+            "periods": [{"name": p["name"], "start": p["start"], "profile": pname(p["heat"])} for p in periods]}]}],
+        "active": "Builtin", "overrides": [{"modeId": away_id, "profile": pname(heat_away)}]}
+    config_json = json.dumps(plus_config, separators=(",", ":"))
 
-parents = [a for a in all_apps if a.get("type") == PARENT_TYPE]
-if not parents:
-    die(f"No '{PARENT_TYPE}' instance on {hub_name}; install the parent app first")
-parent_id = parents[0]["id"]
-if str((fetch(f"/installedapp/configure/json/{parent_id}").get("settings") or {}).get("debugEnable")).lower() != "true":
-    app_settings(parent_id, {"debugEnable": True})
-api_page = fetch_text(f"/installedapp/configure/json/{parent_id}/apiPage")
-m = re.search(r"access_token=([a-f0-9-]+)", api_page)
-if not m:
-    die("No access_token on the parent's apiPage (is OAuth enabled?)")
-req = urllib.request.Request(f"http://{hub_ip}/apps/api/{parent_id}/programs", method="POST",
-                             data=json.dumps({"label": PROGRAM}).encode(),
-                             headers={"Content-Type": "application/json", "Authorization": f"Bearer {m.group(1)}"})
-with urllib.request.urlopen(req, timeout=20) as r:
-    created = json.loads(r.read())
-prog_id = created["id"]
-ok(f"program '{PROGRAM}' {'created' if created.get('created') else 'exists'}")
+    want = [("debugEnable", True), ("thermostats", [plus_id]), ("pauseSwitch", [restrict_id]),
+            ("pauseWhenSwitch", restrict_on), ("whilePaused", "off" if turn_off else "leave"),
+            ("onResume", "restore"), ("testConfigJson", config_json)]
+    prog_settings = fetch(f"/installedapp/configure/json/{prog_id}").get("settings") or {}
+    todo = {k: v for k, v in want if setting_differs(prog_settings, (k, v))}
+    if todo:
+        app_settings(prog_id, todo)
+        info(f"program settings saved: {sorted(todo)}")
+    app_button(prog_id, "btnLoadConfig")
+    time.sleep(2)
+    status_dev = next((str(d["id"]) for d in devices() if (d.get("label") or d.get("name")) == STATUS), None)
+    if not status_dev:
+        die(f"status device '{STATUS}' not found after provisioning")
+    ok(f"program configured ({len(values)} profiles, {len(periods)} periods, Away override)")
 
-# Configuration equivalent to the reference: one profile per distinct setpoint.
-def pname(v): return f"H{v:.1f}"
-values = sorted({p["heat"] for p in periods} | {heat_away})
-modes = fetch("/modes/json")
-away_id = next((m["id"] for m in modes["modes"] if m["name"] == "Away"), None)
-day_id = next((m["id"] for m in modes["modes"] if m["name"] == "Day"), None)
-if away_id is None or day_id is None:
-    die("The hub needs modes named Day and Away")
-plus_config = {"v": 1,
-    "profiles": [{"name": pname(v), "heat": v} for v in values],
-    "schedules": [{"name": "Builtin", "type": "time", "groups": [{"name": "All", "days": [1, 2, 3, 4, 5, 6, 7],
-        "periods": [{"name": p["name"], "start": p["start"], "profile": pname(p["heat"])} for p in periods]}]}],
-    "active": "Builtin", "overrides": [{"modeId": away_id, "profile": pname(heat_away)}]}
-config_json = json.dumps(plus_config, separators=(",", ":"))
+    makers = [a for a in apps() if a.get("type") == "Maker API" and a.get("name") == MAKER_LABEL]
+    need = sorted({ref_therm, plus_id, restrict_id, status_dev} | {o["switch"] for o in others})
+    if makers:
+        maker_id = makers[0]["id"]
+    else:
+        type_id = next((fetch(f"/installedapp/configure/json/{a['id']}")["app"]["appTypeId"]
+                        for a in all_apps if a.get("type") == "Maker API"), None)
+        if type_id is None:
+            die("No Maker API instance to copy the app type from; create 'test-parity-maker' by hand")
+        final = opener.open(f"http://{hub_ip}/installedapp/create/{type_id}", timeout=30).geturl()
+        mm = re.search(r"/installedapp/configure/(\d+)", final)
+        if not mm:
+            die(f"could not create the Maker API instance ({final})")
+        maker_id = mm.group(1)
+        app_settings(maker_id, {}, label=MAKER_LABEL)
+        info(f"created Maker API '{MAKER_LABEL}'")
+    maker_settings = fetch(f"/installedapp/configure/json/{maker_id}").get("settings") or {}
+    todo = {k: v for k, v in [("localAccess", True), ("allowModes", True), ("pickedDevices", need)]
+            if setting_differs(maker_settings, (k, v))}
+    if todo:
+        app_settings(maker_id, todo)
+    m = re.search(r"access_token=([a-f0-9-]+)", json.dumps(fetch(f"/installedapp/configure/json/{maker_id}")))
+    if not m:
+        die(f"No access_token on Maker API '{MAKER_LABEL}' (is OAuth enabled?)")
+    maker_token, maker_base = m.group(1), f"http://{hub_ip}/apps/api/{maker_id}"
+    ok(f"Maker API '{MAKER_LABEL}' ready")
 
-want = [("debugEnable", True), ("thermostats", [plus_id]), ("pauseSwitch", [restrict_id]),
-        ("pauseWhenSwitch", restrict_on), ("whilePaused", "off" if turn_off else "leave"),
-        ("onResume", "restore"), ("testConfigJson", config_json)]
-prog_settings = fetch(f"/installedapp/configure/json/{prog_id}").get("settings") or {}
-todo = {k: v for k, v in want if setting_differs(prog_settings, (k, v))}
-if todo:
-    app_settings(prog_id, todo)
-    info(f"program settings saved: {sorted(todo)}")
-app_button(prog_id, "btnLoadConfig")
-time.sleep(2)
-status_dev = next((str(d["id"]) for d in devices() if (d.get("label") or d.get("name")) == STATUS), None)
-if not status_dev:
-    die(f"status device '{STATUS}' not found after provisioning")
-ok(f"program configured ({len(values)} profiles, {len(periods)} periods, Away override)")
+    def maker(path):
+        req = urllib.request.Request(maker_base + path, headers={"Authorization": f"Bearer {maker_token}"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            raw = r.read()
+        try:
+            return json.loads(raw or b"null")
+        except ValueError:
+            return None
 
-makers = [a for a in apps() if a.get("type") == "Maker API" and a.get("name") == MAKER_LABEL]
-need = sorted({ref_therm, plus_id, restrict_id, status_dev} | {o["switch"] for o in others})
-if makers:
-    maker_id = makers[0]["id"]
-else:
-    type_id = next((fetch(f"/installedapp/configure/json/{a['id']}")["app"]["appTypeId"]
-                    for a in all_apps if a.get("type") == "Maker API"), None)
-    if type_id is None:
-        die("No Maker API instance to copy the app type from; create 'test-parity-maker' by hand")
-    final = opener.open(f"http://{hub_ip}/installedapp/create/{type_id}", timeout=30).geturl()
-    mm = re.search(r"/installedapp/configure/(\d+)", final)
-    if not mm:
-        die(f"could not create the Maker API instance ({final})")
-    maker_id = mm.group(1)
-    app_settings(maker_id, {}, label=MAKER_LABEL)
-    info(f"created Maker API '{MAKER_LABEL}'")
-maker_settings = fetch(f"/installedapp/configure/json/{maker_id}").get("settings") or {}
-todo = {k: v for k, v in [("localAccess", True), ("allowModes", True), ("pickedDevices", need)]
-        if setting_differs(maker_settings, (k, v))}
-if todo:
-    app_settings(maker_id, todo)
-m = re.search(r"access_token=([a-f0-9-]+)", json.dumps(fetch(f"/installedapp/configure/json/{maker_id}")))
-if not m:
-    die(f"No access_token on Maker API '{MAKER_LABEL}' (is OAuth enabled?)")
-maker_token, maker_base = m.group(1), f"http://{hub_ip}/apps/api/{maker_id}"
-ok(f"Maker API '{MAKER_LABEL}' ready")
+    def cmd(dev, command, *args):
+        path = f"/devices/{dev}/{command}"
+        if args:
+            path += "/" + ",".join(urllib.parse.quote(str(a), safe="") for a in args)
+        maker(path)
 
-def maker(path):
-    req = urllib.request.Request(maker_base + path, headers={"Authorization": f"Bearer {maker_token}"})
-    with urllib.request.urlopen(req, timeout=15) as r:
-        raw = r.read()
-    try:
-        return json.loads(raw or b"null")
-    except ValueError:
+    def attr(dev, name):
+        d = maker(f"/devices/{dev}")
+        for a in d.get("attributes", []):
+            if a.get("name") == name:
+                return a.get("currentValue")
         return None
 
-def cmd(dev, command, *args):
-    path = f"/devices/{dev}/{command}"
-    if args:
-        path += "/" + ",".join(urllib.parse.quote(str(a), safe="") for a in args)
-    maker(path)
+    def set_mode(mid):
+        maker(f"/modes/{mid}")
 
-def attr(dev, name):
-    d = maker(f"/devices/{dev}")
-    for a in d.get("attributes", []):
-        if a.get("name") == name:
-            return a.get("currentValue")
-    return None
+    def num(v):
+        try: return float(v)
+        except (TypeError, ValueError): return None
 
-def set_mode(mid):
-    maker(f"/modes/{mid}")
+    def both(name="heatingSetpoint"):
+        return attr(ref_therm, name), attr(plus_id, name)
 
-def num(v):
-    try: return float(v)
-    except (TypeError, ValueError): return None
+    def check_equal(what, want=None):
+        r, p = both()
+        if num(r) is not None and num(r) == num(p):
+            ok(f"{what}: both {num(r)}")
+        else:
+            fail(f"{what}: built-in {r}, Thermostat Scheduler+ {p}")
+        if want is not None:
+            if num(p) == want: ok(f"{what}: value is {want}")
+            else: fail(f"{what}: value {p}, want {want}")
 
-def both(name="heatingSetpoint"):
-    return attr(ref_therm, name), attr(plus_id, name)
+    def settle(): time.sleep(SETTLE)
 
-def check_equal(what, want=None):
-    r, p = both()
-    if num(r) is not None and num(r) == num(p):
-        ok(f"{what}: both {num(r)}")
-    else:
-        fail(f"{what}: built-in {r}, Thermostat Scheduler+ {p}")
-    if want is not None:
-        if num(p) == want: ok(f"{what}: value is {want}")
-        else: fail(f"{what}: value {p}, want {want}")
+    # ── Starting state ───────────────────────────────────────────────────
+    section("Starting state")
+    found = {"mode": modes.get("currentModeId"), "ref_mode": attr(ref_therm, "thermostatMode"),
+             "ref_heat": attr(ref_therm, "heatingSetpoint"), "restrict": attr(restrict_id, "switch"),
+             "others": {o["switch"]: attr(o["switch"], "switch") for o in others}}
+    info(f"found: hub mode id {found['mode']}, '{ref_label}' {found['ref_mode']} {found['ref_heat']}, "
+         f"restriction switch {found['restrict']}, other restriction switches {found['others']}")
 
-def settle(): time.sleep(SETTLE)
+    def boundary_guard():
+        nt = attr(status_dev, "nextTransition")
+        if not nt or nt == "none":
+            return
+        at = datetime.strptime(nt, "%Y-%m-%dT%H:%M:%S%z")
+        left = (at - datetime.now(timezone.utc)).total_seconds()
+        if left < RUN_WINDOW:
+            die(f"A period starts at {at.strftime('%H:%M')} ({int(left)} s away), inside the test window. "
+                f"Re-run after {at.strftime('%H:%M')}.")
+        info(f"next period boundary {at.strftime('%H:%M')}, {int(left)} s away")
 
-# ── Starting state ───────────────────────────────────────────────────
-section("Starting state")
-found = {"mode": modes.get("currentModeId"), "ref_mode": attr(ref_therm, "thermostatMode"),
-         "ref_heat": attr(ref_therm, "heatingSetpoint"), "restrict": attr(restrict_id, "switch"),
-         "others": {o["switch"]: attr(o["switch"], "switch") for o in others}}
-info(f"found: hub mode id {found['mode']}, '{ref_label}' {found['ref_mode']} {found['ref_heat']}, "
-     f"restriction switch {found['restrict']}, other restriction switches {found['others']}")
-
-def boundary_guard():
-    nt = attr(status_dev, "nextTransition")
-    if not nt or nt == "none":
-        return
-    at = datetime.strptime(nt, "%Y-%m-%dT%H:%M:%S%z")
-    left = (at - datetime.now(timezone.utc)).total_seconds()
-    if left < RUN_WINDOW:
-        die(f"A period starts at {at.strftime('%H:%M')} ({int(left)} s away), inside the test window. "
-            f"Re-run after {at.strftime('%H:%M')}.")
-    info(f"next period boundary {at.strftime('%H:%M')}, {int(left)} s away")
+    boundary_guard()
+except SystemExit:
+    raise
+except Exception as e:
+    die(f"Setup failed: {type(e).__name__}: {e}")
 
 def unrestricted_state(): return "on" if restrict_on == "off" else "off"
 
-set_mode(day_id)
-for o in others:
-    cmd(o["switch"], o["on"])
-cmd(restrict_id, unrestricted_state())
-cmd(ref_therm, "heat"); cmd(plus_id, "heat")
-cmd(status_dev, "on"); cmd(status_dev, "resume")
-settle()
-boundary_guard()
-
 try:
+    set_mode(day_id)
+    for o in others:
+        cmd(o["switch"], o["on"])
+    cmd(restrict_id, unrestricted_state())
+    cmd(ref_therm, "heat"); cmd(plus_id, "heat")
+    cmd(status_dev, "on"); cmd(status_dev, "resume")
+    settle()
+
     # ── Case 1 ───────────────────────────────────────────────────────
     section("Case 1: apply now vs Set Scheduled Temperatures")
     cmd(ref_therm, "setHeatingSetpoint", PARK); cmd(plus_id, "setHeatingSetpoint", PARK)
@@ -521,14 +528,18 @@ try:
     app_button(ref_id, "setTemps"); app_button(prog_id, "btnApply")
     settle()
     r, p = both()
-    info(f"expected difference: built-in has {r} after Set Scheduled Temperatures in Away "
-         f"(it skips the Away value, keeping the manual {MANUAL}); Thermostat Scheduler+ reapplies the override")
+    info(f"expected difference: after apply in Away the built-in has {r} (manual value was {MANUAL}), "
+         f"Thermostat Scheduler+ has {p} (Away value {heat_away})")
+    if num(r) == MANUAL: ok(f"built-in keeps the manual {MANUAL}: it skips the Away value on apply (known built-in bug)")
+    else: fail(f"built-in has {r} after apply in Away; the known behavior is to keep the manual {MANUAL}")
     if num(p) == heat_away: ok(f"Thermostat Scheduler+ applies the Away value {heat_away}")
     else: fail(f"Thermostat Scheduler+ gives {p}, want {heat_away}")
+except Exception as e:
+    fail(f"unexpected error during the cases: {type(e).__name__}: {e}")
 finally:
     section("Cleanup")
     try:
-        set_mode(day_id)
+        set_mode(found["mode"] or day_id)
         time.sleep(2)
         cmd(restrict_id, found["restrict"] or unrestricted_state())
         for o in others:
