@@ -33,7 +33,7 @@ A new program starts with the profiles Home, Sleep and Away, one schedule, Norma
 
 ### Profiles
 
-A profile is a named set of values: heating setpoint, cooling setpoint, fan mode and thermostat mode. Each value is optional; a blank value leaves the thermostat as it is. Setpoints can come from number hub variables. Schedules, mode overrides and holds use profiles by name, so editing a profile changes every place that uses it. Renaming a profile updates those references. A profile in use cannot be deleted; the page lists where it is used.
+A profile is a named set of values: heating setpoint, cooling setpoint, fan mode and thermostat mode. Each value is optional; a blank value leaves the thermostat as it is. Setpoints can come from number hub variables. The program marks the hub variables it uses as in use, applies a change to one at once, and follows a rename. Schedules, mode overrides and holds use profiles by name, so editing a profile changes every place that uses it. Renaming a profile updates those references. A profile in use cannot be deleted; the page lists where it is used.
 
 Setpoints use the hub's temperature scale. Valid values are 0 to 40 °C or 32 to 104 °F.
 
@@ -95,7 +95,7 @@ Driver **Thermostat Scheduler+ Status**, capabilities Switch, Actuator and Refre
 | `status` | `schedule`, `mode`, `hold`, `manual`, `paused`, `restricted` |
 | `schedule` | Active schedule name |
 | `profile` | Profile in effect, `custom` for explicit setpoints, or `none` |
-| `heatingTarget`, `coolingTarget` | Resolved setpoints in °C or °F (hub's scale), eco offset included |
+| `heatingTarget`, `coolingTarget` | Resolved setpoints in °C or °F (hub's scale), eco offset included. When no target applies to one of them, it keeps its last value; `status` and `profile` show when no target applies |
 | `holdEnd` | `next`, `indefinite`, an ISO time, or `none` |
 | `nextTransition` | ISO time of the next period, or `none` |
 | `nextProfile` | Profile of the next period, or `none` |

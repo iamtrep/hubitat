@@ -10,7 +10,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.2"
+@Field static final String CODE_VERSION = "0.1.3"
 @Field static final String CHILD_NAME = "Thermostat Scheduler+ Program"
 
 definition(

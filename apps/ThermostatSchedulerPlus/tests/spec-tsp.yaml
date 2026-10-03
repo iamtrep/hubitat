@@ -245,6 +245,18 @@ cases:
       - { device: test-tsp-th2, attribute: coolingSetpoint, value: 27.0, tolerance: 0.05 }
       - { device: test-tsp scheduler, attribute: status, value: manual }
 
+  # A hold whose heating setpoint equals th1's manual value writes th2 (cool) and
+  # nothing to th1 (heat), so the manual status stays. Maker API drops an empty
+  # argument, so the hold cannot leave heating blank.
+  - name: cooling-only-change-keeps-manual
+    actions:
+      - { device: test-tsp scheduler, command: holdSetpoints, args: [23, 28, "next"] }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp-th2, attribute: coolingSetpoint, value: 28.0, tolerance: 0.05 }
+      - { device: test-tsp-th1, attribute: heatingSetpoint, value: 23.0, tolerance: 0.05 }
+      - { device: test-tsp scheduler, attribute: status, value: manual }
+
   - name: next-write-clears-manual
     actions:
       - settings: { testClock: "2026-10-05 22:00" }

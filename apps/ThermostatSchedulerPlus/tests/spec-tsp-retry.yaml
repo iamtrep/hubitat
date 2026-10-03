@@ -62,4 +62,22 @@ cases:
       - { device: test-tsp-stubborn, attribute: ignored, value: 1, tolerance: 0.1 }
       - { device: test-tsp-normal, attribute: heatingSetpoint, value: 18.0, tolerance: 0.05 }
       - { device: test-tsp-retry scheduler, attribute: lastApply, value: partial }
-runtime_budget_seconds: 120
+
+  # A second batch sent before the first one's check joins it: the stubborn
+  # thermostat's ignored write from the first batch is still reported.
+  - name: second-batch-keeps-first-batch-check
+    allow_warnings: true
+    setup:
+      - { device: test-tsp-normal, command: setCoolingSetpoint, args: [30] }
+      - { device: test-tsp-stubborn, command: setIgnore, args: [1] }
+    actions:
+      # Home (21) goes to both; the stubborn thermostat ignores it.
+      - settings: { testClock: "2026-10-06 06:30" }
+      # A mode change on the normal thermostat makes a second batch for it alone (cool 24).
+      - { device: test-tsp-normal, command: cool }
+    wait_seconds: 33
+    assert:
+      - { device: test-tsp-stubborn, attribute: heatingSetpoint, value: 19.0, tolerance: 0.05 }
+      - { device: test-tsp-normal, attribute: coolingSetpoint, value: 24.0, tolerance: 0.05 }
+      - { device: test-tsp-retry scheduler, attribute: lastApply, value: partial }
+runtime_budget_seconds: 160

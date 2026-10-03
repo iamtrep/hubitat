@@ -201,6 +201,55 @@ check('check 60 s old is not overdue', core.verifyOverdue([writes: [], at: 40000
 check('check 61 s old is overdue', core.verifyOverdue([writes: [], at: 39000L], 100000L), true)
 check('check without a time is overdue', core.verifyOverdue([writes: []], 100000L), true)
 
+check('check 61 s after the first write but 20 s after the latest is not overdue', core.verifyOverdue([writes: [], at: 39000L, last: 80000L], 100000L), false)
+check('check 61 s after the latest write is overdue', core.verifyOverdue([writes: [], at: 10000L, last: 39000L], 100000L), true)
+
+// ── merged write checks ──
+pend = [[id: '1', command: 'setHeatingSetpoint', value: 21.0], [id: '2', command: 'setHeatingSetpoint', value: 21.0]]
+mrg = core.mergeWrites(pend, [[id: '2', command: 'setHeatingSetpoint', value: 18.0], [id: '2', command: 'setCoolingSetpoint', value: 26.0]])
+check('merge keeps writes the new batch does not touch', mrg.findAll { it.id == '1' }.size(), 1)
+check('merge replaces the same thermostat and command', mrg.findAll { it.id == '2' && it.command == 'setHeatingSetpoint' }*.value, [18.0])
+check('merge adds new commands', mrg.size(), 3)
+check('merge into nothing is the batch', core.mergeWrites(null, pend), pend)
+check('merged batch with an unconfirmed earlier write is partial', core.applyOutcome(mrg, ['2']), 'partial')
+
+// ── hub variable rename ──
+vcfg = [profiles: [[name: 'V', heatVar: 'comfort', coolVar: 'comfort'], [name: 'H', heat: 20.0]],
+        schedules: [[name: 'N', type: 'time', groups: [[name: 'A', days: [1,2,3,4,5,6,7], periods: [
+            [name: 'Night', start: [kind: 'var', name: 'comfort'], profile: 'H'],
+            [name: 'Day', start: [kind: 'time', at: '06:00'], profile: 'H']]]]]]]
+check('rename reports a change', core.renameVarRefs(vcfg, 'comfort', 'cosy'), true)
+check('rename rewrites profile variables', [vcfg.profiles[0].heatVar, vcfg.profiles[0].coolVar], ['cosy', 'cosy'])
+check('rename rewrites period starts', vcfg.schedules[0].groups[0].periods[0].start.name, 'cosy')
+check('rename leaves other periods alone', vcfg.schedules[0].groups[0].periods[1].start, [kind: 'time', at: '06:00'])
+check('rename of an unused variable changes nothing', core.renameVarRefs(vcfg, 'other', 'x'), false)
+check('rename on an empty config changes nothing', core.renameVarRefs([:], 'a', 'b'), false)
+
+// ── hold setpoint range ──
+check('hold setpoints in range (C)', core.setpointRangeError(21.0, 24.0, 'C'), null)
+check('hold heating over 40 C', core.setpointRangeError(41.0, null, 'C') != null, true)
+check('hold cooling under 0 C', core.setpointRangeError(null, -1.0, 'C') != null, true)
+check('hold 70 F in range', core.setpointRangeError(70.0, 75.0, 'F'), null)
+check('hold 31 F out of range', core.setpointRangeError(31.0, null, 'F') != null, true)
+check('hold 104 F in range', core.setpointRangeError(null, 104.0, 'F'), null)
+check('hold 70 is out of range in C', core.setpointRangeError(70.0, null, 'C') != null, true)
+
+// ── fan writes and off thermostats ──
+check('no fan write to an off thermostat', cmds([layer: 'schedule', fan: 'on'], th('off')), [])
+check('no fan write when the target turns the thermostat off', cmds([layer: 'schedule', fan: 'on', mode: 'off'], th('heat')), ['setThermostatMode=off'])
+check('fan write when the target turns an off thermostat on', cmds([layer: 'schedule', fan: 'on', mode: 'heat'], th('off')), ['setThermostatMode=heat', 'setThermostatFanMode=on'])
+check('no fan write to an off thermostat kept off by noModeIds', core.planWrites([layer: 'schedule', fan: 'on', mode: 'heat'], [th('off')], [separation: 2.0, noModeIds: ['1']]), [])
+
+// ── strict end parsing ──
+check('ISO with trailing junk is an error', core.parseEnd('2026-10-05T22:00:00-04:00junk').error != null, true)
+check('ISO minutes form with trailing junk is an error', core.parseEnd('2026-10-05T22:00-04:00x').error != null, true)
+check('ISO minutes form parses', core.parseEnd('2026-10-05T22:00-04:00').end, 'at')
+isoNow = core.parseEnd('2026-10-05T22:00:00-04:00').until as long
+check('ISO time in the past is an error', core.parseEnd('2026-10-05T22:00:00-04:00', isoNow + 1000L).error != null, true)
+check('ISO time now is an error', core.parseEnd('2026-10-05T22:00:00-04:00', isoNow).error != null, true)
+check('ISO time in the future is accepted', core.parseEnd('2026-10-05T22:00:00-04:00', isoNow - 1000L).end, 'at')
+check('past ISO end makes the command fail', core.parseCommand([command: 'holdProfile', profile: 'Sleep', end: '2026-10-05T22:00:00-04:00'], isoNow + 1000L).ok, false)
+
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)

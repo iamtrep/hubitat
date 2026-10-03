@@ -13,7 +13,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.app.DeviceWrapper
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.2"
+@Field static final String CODE_VERSION = "0.1.3"
 
 definition(
     name: "Thermostat Scheduler+ Program",
@@ -168,6 +168,7 @@ boolean saveConfig(Map doc, Map renamed = null) {
     state.config = doc
     if (renamed) renameHeldProfile(renamed.from as String, renamed.to as String)
     clearEdits()
+    resubscribe()
     logCfg "configuration saved"
     evaluate("config edited", false)
     return true
@@ -896,21 +897,45 @@ void initialize() {
     if (!settings.testClock) app.removeSetting("testClock")
     statusDevice()
     if ((state.rt as Map).verify) runIn(30, "verifyWrites")
+    subscribeAll()
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
+    evaluate("initialize", false)
+}
+
+// Also run after every configuration save, so the hub variables in use stay registered and watched.
+void subscribeAll() {
     subscribe(thermostats, "heatingSetpoint", "thermostatEvent")
     subscribe(thermostats, "coolingSetpoint", "thermostatEvent")
     subscribe(thermostats, "thermostatMode", "thermostatEvent")
     subscribe(location, "mode", "modeHandler")
     subscribe(location, "systemStart", "startHandler")
     if (pauseSwitch) subscribe(pauseSwitch, "switch", "pauseSwitchHandler")
-    if (debugEnable || traceEnable) runIn(1800, "logsOff")
-    evaluate("initialize", false)
+    List<String> vars = varNames((state.config ?: [:]) as Map)
+    removeAllInUseGlobalVar()
+    if (vars) addInUseGlobalVar(vars)
+    vars.each { String n -> subscribe(location, "variable:${n}".toString(), "variableHandler") }
 }
+
+void resubscribe() { unsubscribe(); subscribeAll() }
+
+// Called by the hub when a hub variable this program uses is renamed.
+void renameVariable(String oldName, String newName) {
+    checkVersion()
+    Map c = cfgCopy()
+    if (!renameVarRefs(c, oldName, newName)) return
+    state.config = c
+    logCfg "hub variable ${oldName} renamed to ${newName}"
+    resubscribe()
+}
+
+void variableHandler(evt) { checkVersion(); logEvt "${evt.name} ${evt.value}"; evaluate("variable ${evt.name}", false) }
 
 void logsOff() {
     checkVersion()
     app.updateSetting("debugEnable", false); app.updateSetting("traceEnable", false)
     app.removeSetting("testClock")
     logWarn "debug logging and the test clock turned off"
+    evaluate("test clock cleared", false)
 }
 
 // ── Runtime ───────────────────────────────────────────────────────────
@@ -965,7 +990,9 @@ Map buildCtx(Map cfg) {
     varNames(cfg).each { String n ->
         Object v = getGlobalVar(n)?.value
         if (v instanceof Date) v = ((Date) v).getTime()
-        else if (v instanceof String && ((String) v).contains("T")) v = toDateTime(v as String).getTime()
+        else if (v instanceof String && ((String) v).contains("T")) {
+            try { v = toDateTime(v as String).getTime() } catch (Exception e) { v = null }
+        }
         vars[n] = v
     }
     Map ctx = [now: t, tz: tz, modeId: location.currentMode?.id as Long, sun: sun, vars: vars]
@@ -1002,6 +1029,25 @@ void evaluate(String why, boolean force, String onlyId = null) {
         rt.hold = null
         target = resolveTarget(cfg, rt, ctx)
     }
+    // Armed before any device command, so a failing write cannot leave the program without a wake.
+    armWake(cfg, rt, ctx)
+    try {
+        applyTarget(cfg, rt, target, force, onlyId)
+    } catch (Exception e) {
+        logError "evaluate (${why}): ${e}"
+    }
+    rt.lastTarget = target
+    state.rt = rt
+    publish(cfg, rt, target, ctx)
+    logSched "evaluate (${why}): ${target.layer} ${target.profile ?: ''}"
+    armWake(cfg, rt, ctx)
+}
+
+void armWake(Map cfg, Map rt, Map ctx) {
+    if (!(debugEnable && settings.testClock)) runOnce(new Date(nextWake(cfg, rt, ctx)), "wakeHandler")
+}
+
+void applyTarget(Map cfg, Map rt, Map target, boolean force, String onlyId) {
     Map modeOverride = [:]
     List<String> noModeIds = []
     if (target.layer == 'paused' && !rt.pausedApplied) {
@@ -1010,7 +1056,7 @@ void evaluate(String why, boolean force, String onlyId = null) {
             rt.recordedModes = [:]
             thermostats.each { d ->
                 String m = d.currentValue("thermostatMode") as String
-                if (m != 'off') { rt.recordedModes[d.id as String] = m; d.setThermostatMode("off"); remember(rt, d.id as String, 'thermostatMode', 'off') }
+                if (m != 'off' && send(d, 'setThermostatMode', 'off')) { rt.recordedModes[d.id as String] = m; remember(rt, d.id as String, 'thermostatMode', 'off') }
             }
             logCmd "paused: thermostats off"
         } else logCfg "paused"
@@ -1019,7 +1065,7 @@ void evaluate(String why, boolean force, String onlyId = null) {
         if ((cfg.options as Map).onResume == 'restore') {
             (rt.recordedModes as Map).each { String id, String m ->
                 DeviceWrapper d = thermostats.find { (it.id as String) == id }
-                if (d) { d.setThermostatMode(m); remember(rt, id, 'thermostatMode', m); modeOverride[id] = m }
+                if (d && send(d, 'setThermostatMode', m)) { remember(rt, id, 'thermostatMode', m); modeOverride[id] = m }
             }
             logCmd "resumed: modes restored"
         } else {
@@ -1030,19 +1076,24 @@ void evaluate(String why, boolean force, String onlyId = null) {
         force = true
     }
     boolean changed = !sameTarget(target, rt.lastTarget as Map)
-    if (changed) rt.manual = []
     if (target.layer != 'paused' && (changed || force || onlyId)) {
         List<Map> states = thermostatStates(modeOverride).findAll { changed || force || onlyId == null || it.id == onlyId }
         if (onlyId && !changed && !force) noModeIds << onlyId
         List<Map> writes = planWrites(target, states, [separation: (cfg.options as Map).separation, force: force, noModeIds: noModeIds])
-        rt.manual = (rt.manual as List) - writes*.id.unique()
+        // Only thermostats that get a write lose their manual status.
+        rt.manual = ((rt.manual ?: []) as List) - writes*.id.unique()
         sendWrites(writes, rt, cfg)
     }
-    rt.lastTarget = target
-    state.rt = rt
-    publish(cfg, rt, target, ctx)
-    logSched "evaluate (${why}): ${target.layer} ${target.profile ?: ''}"
-    if (!(debugEnable && settings.testClock)) runOnce(new Date(nextWake(cfg, rt, ctx)), "wakeHandler")
+}
+
+boolean send(DeviceWrapper d, String command, Object value) {
+    try {
+        d."${command}"(value)
+        return true
+    } catch (Exception e) {
+        logWarn "${d.displayName}: ${command} ${value} failed: ${e}"
+        return false
+    }
 }
 
 void remember(Map rt, String id, String attr, Object value) {
@@ -1059,12 +1110,14 @@ void sendWrites(List<Map> writes, Map rt, Map cfg) {
     writes.each { Map w ->
         DeviceWrapper d = thermostats.find { (it.id as String) == w.id }
         if (!d) return
-        d."${w.command}"(w.value)
+        if (!send(d, w.command as String, w.value)) return
         remember(rt, w.id as String, ATTR_FOR[w.command] as String, w.value)
         logCmd "${d.displayName}: ${w.command} ${w.value}"
     }
     if ((cfg.options as Map).verify) {
-        rt.verify = [writes: writes, at: now()]
+        // A batch sent while another waits for its check joins it; the check runs 30 s after the latest write.
+        Map pending = rt.verify as Map
+        rt.verify = [writes: mergeWrites((pending?.writes ?: []) as List<Map>, writes), at: pending?.at ?: now(), last: now()]
         runIn(30, "verifyWrites")
     } else rt.lastApply = 'ok'
 }
@@ -1161,6 +1214,7 @@ void loadConfigJson() {
     if (errs) { logWarn "configuration rejected: ${errs}"; return }
     state.config = doc
     state.ui = [:]
+    resubscribe()
     logCfg "configuration loaded"
     evaluate("config loaded", true)
 }
@@ -1176,8 +1230,12 @@ Map deviceCommand(Map req) { return apiCommand(req) }
 
 Map apiCommand(Map req) {
     checkVersion()
-    Map p = parseCommand(req)
+    Map p = parseCommand(req, nowMillis())
     if (!p.ok) { logWarn "${req?.command}: ${p.error}"; return p }
+    if (p.name == 'holdSetpoints') {
+        String rangeErr = setpointRangeError((p.args as Map).heat, (p.args as Map).cool, location.temperatureScale as String)
+        if (rangeErr) { logWarn "holdSetpoints: ${rangeErr}"; return [ok: false, error: rangeErr] }
+    }
     Map cfg = coreConfig()
     Map rt = state.rt as Map
     Map a = p.args as Map
@@ -1225,7 +1283,7 @@ Map apiCommand(Map req) {
 }
 
 Map apiStatus() {
-    Map rt = state.rt as Map
+    Map rt = (state.rt ?: [:]) as Map
     Map cfg = coreConfig()
     return [id: app.id, name: app.label] + statusMap(cfg, rt, (rt.lastTarget ?: [layer: 'none']) as Map, buildCtx(cfg))
 }
@@ -1424,7 +1482,7 @@ List<Map> planWrites(Map target, List<Map> therms, Map opts) {
         String want = noMode.contains(t.id?.toString()) ? null : target.mode as String
         String mode = (want ?: t.mode) as String
         if (want && (force || want != t.mode)) out << [id: t.id, command: 'setThermostatMode', value: want]
-        if (target.fan && (force || target.fan != t.fan)) out << [id: t.id, command: 'setThermostatFanMode', value: target.fan]
+        if (target.fan && mode != 'off' && (force || target.fan != t.fan)) out << [id: t.id, command: 'setThermostatFanMode', value: target.fan]
         if (mode == null || mode == 'off') continue
         BigDecimal heat = target.heat as BigDecimal
         BigDecimal cool = target.cool as BigDecimal
@@ -1500,9 +1558,45 @@ Map seedOverrides(Map cfg, List<Map> modes) {
     return cfg + [overrides: [[modeId: away.id as Long, profile: 'Away']]]
 }
 
-// A write check is due 30 s after the write; past 60 s its job was lost.
+// A write check is due 30 s after the latest write; past 60 s its job was lost.
 boolean verifyOverdue(Map verify, long now) {
-    return verify != null && now - ((verify.at ?: 0L) as long) > 60000L
+    return verify != null && now - ((verify.last ?: verify.at ?: 0L) as long) > 60000L
+}
+
+// Adds a batch to the one waiting for its check: a write replaces an earlier one with the
+// same thermostat and command, the others are kept.
+List<Map> mergeWrites(List<Map> pending, List<Map> writes) {
+    List<Map> out = (pending ?: []).findAll { Map p -> !(writes ?: []).any { Map w -> w.id?.toString() == p.id?.toString() && w.command == p.command } }
+    out.addAll(writes ?: [])
+    return out
+}
+
+// Rewrites references to hub variable `from` as `to`. Returns true when anything changed.
+boolean renameVarRefs(Map cfg, String from, String to) {
+    boolean changed = false
+    (cfg?.profiles as List<Map>)?.each { Map p ->
+        if (p.heatVar == from) { p.heatVar = to; changed = true }
+        if (p.coolVar == from) { p.coolVar = to; changed = true }
+    }
+    (cfg?.schedules as List<Map>)?.each { Map s ->
+        (s.groups as List<Map>)?.each { Map g ->
+            (g.periods as List<Map>)?.each { Map p ->
+                Map st = p.start as Map
+                if (st?.kind == 'var' && st.name == from) { st.name = to; changed = true }
+            }
+        }
+    }
+    return changed
+}
+
+// Setpoints given to a hold must be in the hub scale's range: C 0 to 40, F 32 to 104.
+String setpointRangeError(Object heat, Object cool, String scale) {
+    BigDecimal lo = scale == 'F' ? 32.0G : 0.0G, hi = scale == 'F' ? 104.0G : 40.0G
+    for (String f in ['heating', 'cooling']) {
+        BigDecimal n = numOrNull(f == 'heating' ? heat : cool)
+        if (n != null && (n < lo || n > hi)) return "${f} ${n} is out of range (${lo} to ${hi} °${scale})".toString()
+    }
+    return null
 }
 
 List<String> validateConfig(Map doc, Map env) {
@@ -1564,35 +1658,44 @@ List<String> validateConfig(Map doc, Map env) {
     return e
 }
 
-Map parseEnd(Object raw) {
+// `now`, when given, rejects an ISO time that is not in the future.
+Map parseEnd(Object raw, Long now = null) {
     String s = raw == null ? '' : raw.toString().trim()
     if (s == '' || s == 'next') return [end: 'next']
     if (s == 'indefinite') return [end: 'indefinite']
     if (s ==~ /\d{1,6}/) return (s as int) > 0 ? [end: 'minutes', minutes: s as int] : [error: 'minutes must be positive']
     if (s ==~ /\d+/) return [error: 'minutes must be at most 999999']
-    for (String fmt in ["yyyy-MM-dd'T'HH:mm:ssXXX", "yyyy-MM-dd'T'HH:mmXXX"]) {
+    // The whole string must be an ISO time (SimpleDateFormat.parse stops at trailing text; the hub sandbox blocks ParsePosition).
+    String fmt = s ==~ /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:\d{2})/ ? "yyyy-MM-dd'T'HH:mm:ssXXX"
+               : (s ==~ /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(Z|[+-]\d{2}:\d{2})/ ? "yyyy-MM-dd'T'HH:mmXXX" : null)
+    if (fmt) {
+        Date d = null
         try {
             java.text.SimpleDateFormat f = new java.text.SimpleDateFormat(fmt)
             f.setLenient(false)
-            return [end: 'at', until: f.parse(s).getTime()]
+            d = f.parse(s)
         } catch (Exception ignored) { }
+        if (d != null) {
+            if (now != null && d.getTime() <= now) return [error: "end time ${s} is in the past".toString()]
+            return [end: 'at', until: d.getTime()]
+        }
     }
     return [error: "end must be next, indefinite, minutes or an ISO time: ${s}".toString()]
 }
 
-Map parseCommand(Map req) {
+Map parseCommand(Map req, Long now = null) {
     String name = req?.command as String
     Closure err = { String m -> [ok: false, error: m] }
     if (name in ['on', 'off', 'resume', 'applyNow', 'advance', 'refresh']) return [ok: true, name: name, args: [:]]
     if (name == 'holdProfile') {
         if (!req.profile?.toString()?.trim()) return err('profile is required')
-        Map end = parseEnd(req.end)
+        Map end = parseEnd(req.end, now)
         return end.error ? err(end.error as String) : [ok: true, name: name, args: [profile: req.profile.toString().trim()] + end]
     }
     if (name == 'holdSetpoints') {
         BigDecimal h = numOrNull(req.heating), c = numOrNull(req.cooling)
         if (h == null && c == null) return err('heating or cooling is required')
-        Map end = parseEnd(req.end)
+        Map end = parseEnd(req.end, now)
         return end.error ? err(end.error as String) : [ok: true, name: name, args: [heat: h, cool: c] + end]
     }
     if (name == 'setSchedule') {

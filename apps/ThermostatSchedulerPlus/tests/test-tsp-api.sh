@@ -227,6 +227,13 @@ try:
     s, b = cmd({"command": "holdProfile"})
     check("missing arg 400", s, 400)
     check("missing arg has error", bool(b.get("error")), True)
+    s, b = cmd({"command": "holdSetpoints", "heating": 120, "end": "next"})
+    check("out-of-range hold setpoint is 400", s, 400)
+    check("out-of-range hold setpoint error", "out of range" in b.get("error", ""), True)
+    s, b = cmd({"command": "holdProfile", "profile": "Sleep", "end": "2020-01-01T00:00:00Z"})
+    check("hold ending in the past is 400", s, 400)
+    s, b = cmd({"command": "holdProfile", "profile": "Sleep", "end": "2099-01-01T00:00:00Zjunk"})
+    check("hold end with trailing text is 400", s, 400)
     s, b = call("POST", "/programs/999999/command", {"command": "resume"})
     check("command on unknown program is 404", s, 404)
 
@@ -235,9 +242,13 @@ try:
 
     # ── Create route (debug only) ─────────────────────────────────────
     section("Create route")
-    if str((fetch(f"/installedapp/configure/json/{parent_id}").get("settings") or {}).get("debugEnable")).lower() != "true":
-        set_main_bool(parent_id, "debugEnable", True)
-        info("turned the parent's debug logging on")
+    if str((fetch(f"/installedapp/configure/json/{parent_id}").get("settings") or {}).get("debugEnable")).lower() == "true":
+        set_main_bool(parent_id, "debugEnable", False)
+        info("turned the parent's debug logging off")
+    s, b = call("POST", "/programs", {"label": NEW_PROGRAM})
+    check("create is 404 while debug logging is off", s, 404)
+    set_main_bool(parent_id, "debugEnable", True)
+    info("turned the parent's debug logging on")
     s, b = call("POST", "/programs", {})
     check("create without label is 400", s, 400)
     s, b = call("POST", "/programs", {"label": NEW_PROGRAM})
