@@ -61,7 +61,7 @@ outputs:
   - { name: test-wm-pump-active, driver: Virtual Switch,         role: pumpActiveSwitch }
   # Using Virtual Omni Sensor (carries WaterSensor + wet/dry) rather
   # than Virtual Moisture Sensor — the Omni Sensor is confirmed-present
-  # on @maison-pro (driverTypeId 510), and Hubitat doesn't expose a JSON
+  # on the dev hub (driverTypeId 510), and Hubitat doesn't expose a JSON
   # endpoint to look up built-in driver IDs by name.
   - { name: test-wm-leak,        driver: Virtual Omni Sensor,    role: emergencyLeakSensor }
   - { name: test-wm-flow-ind,    driver: Virtual Switch,         role: flowIndicatorSwitch }

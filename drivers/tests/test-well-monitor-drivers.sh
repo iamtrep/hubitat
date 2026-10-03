@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Copyright (c) 2025-2026 PJ
 # SPDX-License-Identifier: MIT
+# TEST-LIVE: needs a reachable hub
 
 #
 # test-well-monitor-drivers — driver-contract smoke test
