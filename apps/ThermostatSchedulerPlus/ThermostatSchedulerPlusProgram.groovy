@@ -20,6 +20,7 @@ definition(
     description: "One Thermostat Scheduler+ program",
     category: "Convenience",
     parent: "iamtrep:Thermostat Scheduler+",
+    singleThreaded: true,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/apps/ThermostatSchedulerPlus/ThermostatSchedulerPlusProgram.groovy",
     iconUrl: "", iconX2Url: ""
 )
@@ -30,13 +31,386 @@ preferences {
 
 Map mainPage() {
     dynamicPage(name: "mainPage", install: true, uninstall: true) {
-        section { label title: "Program name", required: true }
+        section {
+            label title: "Program name", required: true
+            input "thermostats", "capability.thermostat", title: "Select Thermostats", multiple: true, required: true, submitOnChange: true
+        }
+        section("Options") {
+            input "ecoOffset", "decimal", title: "Eco offset (°${location.temperatureScale})", defaultValue: 2.0
+            input "ecoOnOverrides", "bool", title: "Also apply eco on top of mode overrides", defaultValue: true
+            input "separation", "decimal", title: "Required heat/cool separation (°${location.temperatureScale})", defaultValue: 2.0
+            input "verifyWrites", "bool", title: "Check each write and retry twice if the thermostat does not report the new value", defaultValue: true
+            input "applyOnStart", "bool", title: "Apply the schedule after a hub restart", defaultValue: true
+            input "pauseSwitch", "capability.switch", title: "Pause when this switch is…", required: false, submitOnChange: true
+            if (pauseSwitch) input "pauseWhenSwitch", "enum", title: "…in this state", options: ["off", "on"], defaultValue: "off"
+            input "restrictDays", "enum", title: "Only on days", multiple: true, required: false,
+                  options: ["1": "Monday", "2": "Tuesday", "3": "Wednesday", "4": "Thursday", "5": "Friday", "6": "Saturday", "7": "Sunday"]
+            input "restrictModes", "mode", title: "Only in modes", multiple: true, required: false
+            input "whilePaused", "enum", title: "While paused", options: ["leave": "Leave thermostats as they are", "off": "Turn thermostats off"], defaultValue: "leave"
+            input "onResume", "enum", title: "When the pause ends", options: ["restore": "Restore the thermostat mode and apply the schedule", "leaveOff": "Leave thermostats off"], defaultValue: "restore"
+        }
+        section("Logging") {
+            input "txtEnable", "bool", title: "Enable info logging", defaultValue: true
+            input "debugEnable", "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
+            if (debugEnable) {
+                input "traceEnable", "bool", title: "Enable trace logging", defaultValue: false
+                input "testClock", "text", title: "Test clock (yyyy-MM-dd HH:mm, blank = real time)", required: false
+                input "btnEvaluate", "button", title: "Evaluate now"
+                input "btnStart", "button", title: "Run the hub-start handler"
+                input "testConfigJson", "textarea", title: "Configuration JSON", required: false
+                input "btnLoadConfig", "button", title: "Load configuration"
+            }
+        }
     }
 }
 
 void installed() { initialize() }
 void updated() { unsubscribe(); unschedule(); initialize() }
-void initialize() { }
+void uninstalled() { getChildDevices().each { deleteChildDevice(it.deviceNetworkId) } }
+
+void initialize() {
+    checkVersion(false)
+    if (!state.config) state.config = defaultConfig()
+    if (state.rt == null) state.rt = [paused: false, eco: false, hold: null, pausedApplied: false, recordedModes: [:],
+                                      sent: [:], manual: [], lastTarget: null, lastApply: 'ok', verify: null]
+    if (!settings.testClock) app.removeSetting("testClock")
+    statusDevice()
+    if ((state.rt as Map).verify) runIn(15, "verifyWrites")
+    subscribe(thermostats, "heatingSetpoint", "thermostatEvent")
+    subscribe(thermostats, "coolingSetpoint", "thermostatEvent")
+    subscribe(thermostats, "thermostatMode", "thermostatEvent")
+    subscribe(location, "mode", "modeHandler")
+    subscribe(location, "systemStart", "startHandler")
+    if (pauseSwitch) subscribe(pauseSwitch, "switch", "pauseSwitchHandler")
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
+    evaluate("initialize", false)
+}
+
+void logsOff() {
+    app.updateSetting("debugEnable", false); app.updateSetting("traceEnable", false)
+    app.removeSetting("testClock")
+    logWarn "debug logging and the test clock turned off"
+}
+
+// ── Runtime ───────────────────────────────────────────────────────────
+
+long nowMillis() {
+    if (debugEnable && settings.testClock) {
+        java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm")
+        f.setTimeZone(location.timeZone)
+        return f.parse(settings.testClock as String).getTime()
+    }
+    return now()
+}
+
+def statusDevice() {
+    String dni = "tsp-${app.id}"
+    def d = getChildDevice(dni)
+    if (!d) {
+        d = addChildDevice("iamtrep", "Thermostat Scheduler+ Status", dni, [name: "${app.label} scheduler", label: "${app.label} scheduler", isComponent: true])
+        logCfg "created ${d.displayName}"
+    } else if (d.label != "${app.label} scheduler") d.setLabel("${app.label} scheduler")
+    return d
+}
+
+Map coreConfig() {
+    Map c = (state.config as Map) + [
+        eco: [offset: settings.ecoOffset ?: 2.0, onOverrides: settings.ecoOnOverrides != false],
+        options: [separation: settings.separation ?: 2.0, verify: settings.verifyWrites != false, applyOnStart: settings.applyOnStart != false,
+                  whilePaused: settings.whilePaused ?: 'leave', onResume: settings.onResume ?: 'restore'],
+        restrictions: [days: (settings.restrictDays ?: []).collect { it as int }, modeIds: (settings.restrictModes ?: []).collect { it as Long }]]
+    return c
+}
+
+List<String> varNames(Map cfg) {
+    Set<String> n = [] as Set
+    (cfg.profiles as List<Map>)?.each { Map p -> if (p.heatVar) n << (p.heatVar as String); if (p.coolVar) n << (p.coolVar as String) }
+    (cfg.schedules as List<Map>)?.each { Map s -> (s.groups as List<Map>)?.each { Map g -> (g.periods as List<Map>)?.each { Map p -> if (p.start?.kind == 'var') n << (p.start.name as String) } } }
+    return n as List
+}
+
+Map buildCtx(Map cfg) {
+    long t = nowMillis()
+    TimeZone tz = location.timeZone
+    String today = isoDate(t, tz)
+    Map sun = [:]
+    [-1, 0, 1].each { int d ->
+        String iso = addDays(today, d, tz)
+        Map s = getSunriseAndSunset(date: new Date(atLocal(iso, "12:00", tz)))
+        sun[iso] = [rise: (s.sunrise as Date)?.getTime(), set: (s.sunset as Date)?.getTime()]
+    }
+    Map vars = [:]
+    varNames(cfg).each { String n ->
+        Object v = getGlobalVar(n)?.value
+        if (v instanceof Date) v = ((Date) v).getTime()
+        else if (v instanceof String && ((String) v).contains("T")) v = toDateTime(v as String).getTime()
+        vars[n] = v
+    }
+    Map ctx = [now: t, tz: tz, modeId: location.currentMode?.id as Long, sun: sun, vars: vars]
+    ctx.restricted = restrictedNow(cfg.restrictions as Map, ctx) || switchRestricted()
+    return ctx
+}
+
+boolean switchRestricted() {
+    return pauseSwitch && pauseSwitch.currentValue("switch") == (settings.pauseWhenSwitch ?: "off")
+}
+
+List<Map> thermostatStates(Map modeOverride = [:]) {
+    return (thermostats ?: []).collect { d ->
+        String id = d.id as String
+        [id: id, mode: modeOverride[id] ?: d.currentValue("thermostatMode"), heat: d.currentValue("heatingSetpoint"),
+         cool: d.currentValue("coolingSetpoint"), fan: d.currentValue("thermostatFanMode")]
+    }
+}
+
+boolean sameTarget(Map a, Map b) {
+    if (a == null || b == null) return false
+    return ['layer', 'profile', 'heat', 'cool', 'fan', 'mode', 'eco', 'transitionKey', 'overrideModeId'].every { String k -> a[k]?.toString() == b[k]?.toString() }
+}
+
+void evaluate(String why, boolean force, String onlyId = null) {
+    Map cfg = coreConfig()
+    Map rt = state.rt as Map
+    Map ctx = buildCtx(cfg)
+    Map target = resolveTarget(cfg, rt, ctx)
+    if (holdExpired(rt.hold as Map, target, ctx.now as long)) {
+        logCfg "hold ended"
+        rt.hold = null
+        target = resolveTarget(cfg, rt, ctx)
+    }
+    Map modeOverride = [:]
+    if (target.layer == 'paused' && !rt.pausedApplied) {
+        rt.pausedApplied = true
+        if ((cfg.options as Map).whilePaused == 'off') {
+            rt.recordedModes = [:]
+            thermostats.each { d ->
+                String m = d.currentValue("thermostatMode") as String
+                if (m != 'off') { rt.recordedModes[d.id as String] = m; d.setThermostatMode("off"); remember(rt, d.id as String, 'thermostatMode', 'off') }
+            }
+            logCmd "paused: thermostats off"
+        } else logCfg "paused"
+    } else if (target.layer != 'paused' && rt.pausedApplied) {
+        rt.pausedApplied = false
+        if ((cfg.options as Map).onResume == 'restore') {
+            (rt.recordedModes as Map).each { String id, String m ->
+                def d = thermostats.find { (it.id as String) == id }
+                if (d) { d.setThermostatMode(m); remember(rt, id, 'thermostatMode', m); modeOverride[id] = m }
+            }
+            logCmd "resumed: modes restored"
+        } else logCfg "resumed: thermostats left off"
+        rt.recordedModes = [:]
+        force = true
+    }
+    boolean changed = !sameTarget(target, rt.lastTarget as Map)
+    if (changed) rt.manual = []
+    if (target.layer != 'paused' && (changed || force || onlyId)) {
+        List<Map> states = thermostatStates(modeOverride).findAll { onlyId == null || it.id == onlyId }
+        sendWrites(planWrites(target, states, [separation: (cfg.options as Map).separation, force: force]), rt, cfg)
+    }
+    rt.lastTarget = target
+    state.rt = rt
+    publish(cfg, rt, target, ctx)
+    logSched "evaluate (${why}): ${target.layer} ${target.profile ?: ''}"
+    if (!(debugEnable && settings.testClock)) runOnce(new Date(nextWake(cfg, rt, ctx)), "wakeHandler")
+}
+
+void remember(Map rt, String id, String attr, Object value) {
+    Map byDev = ((rt.sent as Map)[id] ?: [:]) as Map
+    byDev[attr] = [value: value?.toString(), at: now()]
+    (rt.sent as Map)[id] = byDev
+}
+
+@Field static final Map ATTR_FOR = [setHeatingSetpoint: 'heatingSetpoint', setCoolingSetpoint: 'coolingSetpoint',
+                                     setThermostatMode: 'thermostatMode', setThermostatFanMode: 'thermostatFanMode']
+
+void sendWrites(List<Map> writes, Map rt, Map cfg) {
+    if (!writes) return
+    writes.each { Map w ->
+        def d = thermostats.find { (it.id as String) == w.id }
+        if (!d) return
+        d."${w.command}"(w.value)
+        remember(rt, w.id as String, ATTR_FOR[w.command] as String, w.value)
+        logCmd "${d.displayName}: ${w.command} ${w.value}"
+    }
+    if ((cfg.options as Map).verify) {
+        rt.verify = [writes: writes, attempt: 0]
+        runIn(15, "verifyWrites")
+    } else rt.lastApply = 'ok'
+}
+
+void verifyWrites() {
+    checkVersion()
+    Map rt = state.rt as Map
+    Map v = rt.verify as Map
+    if (!v) return
+    List<Map> missing = (v.writes as List<Map>).findAll { Map w ->
+        def d = thermostats.find { (it.id as String) == w.id }
+        Object cur = d?.currentValue(ATTR_FOR[w.command] as String)
+        w.value instanceof Number || numOrNull(w.value) != null ? differs(numOrNull(w.value), cur) : cur?.toString() != w.value?.toString()
+    }
+    if (!missing) { rt.lastApply = 'ok'; rt.verify = null }
+    else if ((v.attempt as int) < 2) {
+        missing.each { Map w -> thermostats.find { (it.id as String) == w.id }?."${w.command}"(w.value) }
+        rt.verify = [writes: missing, attempt: (v.attempt as int) + 1]
+        logWarn "${missing.size()} write(s) not confirmed, retry ${(v.attempt as int) + 1}"
+        runIn(15, "verifyWrites")
+    } else {
+        rt.lastApply = missing.size() < (v.writes as List).size() || missing*.id.unique().size() < (thermostats?.size() ?: 0) ? 'partial' : 'failed'
+        rt.verify = null
+        logWarn "writes not confirmed after 2 retries: ${missing.collect { "${it.id} ${it.command} ${it.value}" }}"
+    }
+    state.rt = rt
+    statusDevice().updateStatus([lastApply: rt.lastApply])
+}
+
+void publish(Map cfg, Map rt, Map target, Map ctx) {
+    TimeZone tz = ctx.tz as TimeZone
+    Map sched = (cfg.schedules as List<Map>)?.find { it.name == cfg.active }
+    Map next = sched?.type == 'time' ? nextTransitionOf(sched, ctx) : null
+    java.text.SimpleDateFormat iso = new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX")
+    iso.setTimeZone(tz)
+    String status = target.layer == 'paused' ? (rt.paused ? 'paused' : 'restricted')
+                  : (rt.manual ? 'manual' : (target.layer == 'none' ? 'schedule' : target.layer))
+    Map hold = rt.hold as Map
+    String holdEnd = !hold ? '' : (hold.end == 'at' ? iso.format(new Date(hold.until as long)) : hold.end as String)
+    Map attrs = [
+        switch: rt.paused ? 'off' : 'on', status: status, schedule: cfg.active, profile: target.profile ?: '',
+        heatingTarget: target.heat, coolingTarget: target.cool, holdEnd: holdEnd,
+        nextTransition: next ? iso.format(new Date(next.at as long)) : '', nextProfile: next?.profile ?: '',
+        eco: rt.eco ? 'on' : 'off', ecoOffset: (cfg.eco as Map).offset, lastApply: rt.lastApply]
+    def d = statusDevice()
+    attrs.findAll { k, v -> v == '' }.each { k, v -> if (d.currentValue(k as String) != null) d.deleteCurrentState(k as String) }
+    d.updateStatus(attrs.findAll { k, v -> v != '' })
+}
+
+// ── Handlers ──────────────────────────────────────────────────────────
+
+void wakeHandler() { checkVersion(); evaluate("wake", false) }
+void modeHandler(evt) { checkVersion(); logEvt "mode ${evt.value}"; evaluate("mode", false) }
+void pauseSwitchHandler(evt) { checkVersion(); logEvt "pause switch ${evt.value}"; evaluate("pause switch", false) }
+void startHandler(evt = null) {
+    checkVersion()
+    Map rt = state.rt as Map
+    rt.verify = null
+    state.rt = rt
+    evaluate("hub start", coreConfig().options.applyOnStart as boolean)
+}
+
+void thermostatEvent(evt) {
+    checkVersion()
+    Map rt = state.rt as Map
+    String id = evt.deviceId as String
+    Map sent = (((rt.sent as Map)[id] ?: [:]) as Map)[evt.name] as Map
+    boolean own = sent && (now() - (sent.at as long) < 120000L) &&
+                  (numOrNull(evt.value) != null ? !differs(numOrNull(sent.value), evt.value) : sent.value == evt.value)
+    if (own) return
+    logEvt "${evt.displayName} ${evt.name} ${evt.value} (not sent by this program)"
+    if (evt.name == 'thermostatMode') { evaluate("mode change on ${evt.displayName}", false, id); return }
+    if (!(rt.manual as List).contains(id)) (rt.manual as List) << id
+    state.rt = rt
+    publish(coreConfig(), rt, (rt.lastTarget ?: [layer: 'none']) as Map, buildCtx(coreConfig()))
+}
+
+void appButtonHandler(String btn) {
+    checkVersion()
+    switch (btn) {
+        case "btnEvaluate": evaluate("button", false); break
+        case "btnApply": evaluate("apply now", true); break
+        case "btnStart": startHandler(); break
+        case "btnLoadConfig":
+            Map doc
+            try { doc = parseJson(settings.testConfigJson as String) as Map } catch (Exception e) { logWarn "configuration is not JSON"; return }
+            List<String> errs = validateConfig(doc, validationEnv())
+            if (errs) { logWarn "configuration rejected: ${errs}"; return }
+            state.config = doc
+            logCfg "configuration loaded"
+            evaluate("config loaded", true)
+            break
+    }
+}
+
+Map validationEnv() {
+    return [scale: location.temperatureScale, vars: getAllGlobalVars()?.keySet()?.collect { it as String } ?: [],
+            modeIds: location.modes.collect { it.id as Long }]
+}
+
+// ── Commands (device, API) ────────────────────────────────────────────
+
+Map deviceCommand(Map req) { return apiCommand(req) }
+
+Map apiCommand(Map req) {
+    checkVersion()
+    Map p = parseCommand(req)
+    if (!p.ok) { logWarn "${req?.command}: ${p.error}"; return p }
+    Map cfg = coreConfig()
+    Map rt = state.rt as Map
+    Map a = p.args as Map
+    long t = nowMillis()
+    boolean force = false
+    switch (p.name) {
+        case 'on': rt.paused = false; break
+        case 'off': rt.paused = true; break
+        case 'resume': rt.hold = null; force = true; break
+        case 'applyNow': force = true; break
+        case 'refresh': break
+        case 'setEco': rt.eco = a.state == 'on'; break
+        case 'setEcoOffset': app.updateSetting("ecoOffset", [type: "decimal", value: a.offset]); cfg = coreConfig(); break
+        case 'setSchedule':
+            if (!(cfg.schedules as List<Map>).find { it.name == a.schedule }) { logWarn "unknown schedule ${a.schedule}"; return [ok: false, error: "unknown schedule ${a.schedule}".toString()] }
+            Map c = state.config as Map; c.active = a.schedule; state.config = c; cfg = coreConfig(); break
+        case 'holdProfile':
+        case 'holdSetpoints':
+        case 'advance':
+            Map ctx = buildCtx(cfg)
+            Map cur = resolveTarget(cfg, rt + [hold: null], ctx)
+            Map hold
+            if (p.name == 'advance') {
+                Map sched = (cfg.schedules as List<Map>).find { it.name == cfg.active }
+                Map nx = sched?.type == 'time' ? nextTransitionOf(sched, ctx) : null
+                if (!nx) return [ok: false, error: 'no next transition']
+                hold = nx.custom ? [kind: 'setpoints', heat: (nx.custom as Map).heat, cool: (nx.custom as Map).cool] : [kind: 'profile', profile: nx.profile]
+                a = [end: 'next']
+            } else if (p.name == 'holdProfile') {
+                if (!(cfg.profiles as List<Map>).find { it.name == a.profile }) { logWarn "unknown profile ${a.profile}"; return [ok: false, error: "unknown profile ${a.profile}".toString()] }
+                hold = [kind: 'profile', profile: a.profile]
+            } else hold = [kind: 'setpoints', heat: a.heat, cool: a.cool]
+            hold.end = a.end == 'minutes' ? 'at' : a.end
+            if (a.end == 'minutes') hold.until = t + (a.minutes as long) * 60000L
+            if (a.end == 'at') hold.until = a.until
+            hold.transitionKey = cur.transitionKey
+            hold.overrideModeId = cur.overrideModeId
+            rt.hold = hold
+            break
+    }
+    state.rt = rt
+    logCmd "${p.name} ${a ?: ''}"
+    evaluate(p.name as String, force)
+    return [ok: true] + apiStatus()
+}
+
+Map apiStatus() {
+    Map rt = state.rt as Map
+    Map tg = (rt.lastTarget ?: [:]) as Map
+    def d = statusDevice()
+    return [id: app.id, name: app.label, status: d.currentValue("status"), schedule: (state.config as Map).active,
+            profile: tg.profile, heatingTarget: tg.heat, coolingTarget: tg.cool, holdEnd: d.currentValue("holdEnd"),
+            nextTransition: d.currentValue("nextTransition"), nextProfile: d.currentValue("nextProfile"),
+            eco: rt.eco ? 'on' : 'off', ecoOffset: coreConfig().eco.offset, lastApply: rt.lastApply]
+}
+
+Map apiDocument() {
+    Map cfg = coreConfig()
+    return [id: app.id, name: app.label, revision: (state.config as Map).hashCode(),
+            thermostats: (thermostats ?: []).collect { [id: it.id, name: it.displayName] },
+            config: cfg, status: apiStatus()]
+}
+
+void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "version ${CODE_VERSION} (was ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
+}
 
 // ── Core (pure) ───────────────────────────────────────────────────────
 // Self-contained: arguments in, values out. No settings, state, devices or logs.
@@ -390,3 +764,20 @@ Map parseCommand(Map req) {
 }
 
 // ── End core ──────────────────────────────────────────────────────────
+
+// ── Logging (app) ─────────────────────────────────────────────────────
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${app.getLabel()}: " }
+
+void logEvt  (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${app.getLabel()}: ${m}" }
