@@ -33,7 +33,7 @@ preferences {
 
 mappings {
     path("/programs")             { action: [GET: "apiList", POST: "apiCreate"] }
-    path("/programs/:id")         { action: [GET: "apiGet"] }
+    path("/programs/:id")         { action: [GET: "apiGet", PUT: "apiPut"] }
     path("/programs/:id/command") { action: [POST: "apiCommand"] }
 }
 
@@ -69,6 +69,7 @@ Map apiPage() {
         section("Routes") {
             paragraph "<table><tr><td><code>GET /programs</code></td><td>All programs with status</td></tr>" +
                       "<tr><td><code>GET /programs/{id}</code></td><td>Configuration and status, with a revision</td></tr>" +
+                      "<tr><td><code>PUT /programs/{id}</code></td><td>Replace the configuration; send the revision from GET</td></tr>" +
                       "<tr><td><code>POST /programs/{id}/command</code></td><td>Any status device command</td></tr></table>"
         }
     }
@@ -124,6 +125,18 @@ def apiGet() {
     def child = findProgram()
     if (!child) { return reply(404, [error: "no program ${params.id}"]) }
     return reply(200, child.apiDocument() as Map)
+}
+
+def apiPut() {
+    checkVersion()
+    Map d = denied(); if (d) { return reply(d.status as int, [error: d.error]) }
+    def child = findProgram()
+    if (!child) { return reply(404, [error: "no program ${params.id}"]) }
+    Map req
+    req = parseBody()
+    if (req == null) return reply(400, [error: "body is not JSON"])
+    Map res = child.apiPut(req) as Map
+    return reply(res.httpStatus as int, res.findAll { k, v -> k != 'httpStatus' })
 }
 
 def apiCommand() {

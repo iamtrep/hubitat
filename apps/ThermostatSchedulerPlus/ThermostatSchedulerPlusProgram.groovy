@@ -889,11 +889,15 @@ void installed() { initialize() }
 void updated() { unsubscribe(); unschedule(); initialize() }
 void uninstalled() { if (getChildDevice("tsp-${app.id}")) deleteChildDevice("tsp-${app.id}") }
 
+Map newRt() {
+    return [paused: false, eco: false, hold: null, pausedApplied: false, recordedModes: [:],
+            sent: [:], manual: [], lastTarget: null, lastApply: 'ok', verify: null]
+}
+
 void initialize() {
     checkVersion(false)
     if (!state.config) state.config = newConfig()
-    if (state.rt == null) state.rt = [paused: false, eco: false, hold: null, pausedApplied: false, recordedModes: [:],
-                                      sent: [:], manual: [], lastTarget: null, lastApply: 'ok', verify: null]
+    if (state.rt == null) state.rt = newRt()
     if (!settings.testClock) app.removeSetting("testClock")
     statusDevice()
     if ((state.rt as Map).verify) runIn(30, "verifyWrites")
@@ -1212,11 +1216,47 @@ void loadConfigJson() {
     try { doc = parseJson(settings.testConfigJson as String) as Map } catch (Exception e) { logWarn "configuration is not JSON"; return }
     List<String> errs = validateConfig(doc, validationEnv())
     if (errs) { logWarn "configuration rejected: ${errs}"; return }
+    replaceConfig(doc, [:], true)
+}
+
+// One save path for the configuration JSON input, PUT and the importer. The caller has validated.
+void replaceConfig(Map doc, Map optionGroups, boolean force) {
+    optionSettings(optionGroups ?: [:]).each { Map w ->
+        if (w.value == null) app.removeSetting(w.name as String)
+        else app.updateSetting(w.name as String, [type: w.type, value: w.value])
+    }
+    Map rt = state.rt as Map
+    Map hold = rt?.hold as Map
+    if (hold?.kind == 'profile' && !(doc.profiles as List<Map>).any { it.name == hold.profile }) {
+        rt.hold = null
+        state.rt = rt
+        logCfg "hold on ${hold.profile} ended: the profile was removed"
+    }
     state.config = doc
     state.ui = [:]
-    resubscribe()
-    logCfg "configuration loaded"
-    evaluate("config loaded", true)
+    clearEdits()
+    logCfg "configuration replaced"
+    if (app.getInstallationState() == "COMPLETE") {
+        resubscribe()
+        evaluate("config replaced", force)
+    }
+}
+
+// Reply body plus httpStatus; the document carries its own `status` field.
+Map apiPut(Map body) {
+    checkVersion()
+    if (!(body?.config instanceof Map)) return [httpStatus: 400, error: "config is required"]
+    if (body.revision == null) return [httpStatus: 400, error: "revision is required"]
+    int current = revisionOf(coreConfig())
+    if (body.revision.toString() != current.toString()) return [httpStatus: 409, error: "configuration changed since it was read", revision: current]
+    Map c = body.config as Map
+    Map env = validationEnv()
+    List<String> errs = putShapeErrors(c)
+    Map doc = errs ? null : putDocument(c)
+    if (!errs) errs = validateConfig(doc, env) + validateOptions(c, env)
+    if (errs) { logWarn "PUT rejected: ${errs.join('; ')}"; return [httpStatus: 400, error: "invalid configuration", errors: errs] }
+    replaceConfig(doc, c.subMap(['eco', 'options', 'restrictions']), false)
+    return [httpStatus: 200] + apiDocument()
 }
 
 Map validationEnv() {
@@ -1290,7 +1330,7 @@ Map apiStatus() {
 
 Map apiDocument() {
     Map cfg = coreConfig()
-    return [id: app.id, name: app.label, revision: ((state.config ?: newConfig()) as Map).hashCode(),
+    return [id: app.id, name: app.label, revision: revisionOf(coreConfig()),
             thermostats: (thermostats ?: []).collect { [id: it.id, name: it.displayName] },
             config: cfg, status: apiStatus()]
 }
