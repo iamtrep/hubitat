@@ -52,7 +52,7 @@ cases:
   - name: writes-verified
     actions:
       - { device: test-tsp scheduler, command: applyNow }
-    wait_seconds: 18
+    wait_seconds: 33
     assert:
       - { device: test-tsp scheduler, attribute: lastApply, value: ok }
 

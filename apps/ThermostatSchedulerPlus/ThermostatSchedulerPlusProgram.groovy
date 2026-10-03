@@ -39,7 +39,8 @@ Map mainPage() {
             input "ecoOffset", "decimal", title: "Eco offset (°${location.temperatureScale})", defaultValue: 2.0
             input "ecoOnOverrides", "bool", title: "Also apply eco on top of mode overrides", defaultValue: true
             input "separation", "decimal", title: "Required heat/cool separation (°${location.temperatureScale})", defaultValue: 2.0
-            input "verifyWrites", "bool", title: "Check each write and retry twice if the thermostat does not report the new value", defaultValue: true
+            input "verifyWrites", "bool", title: "Check each write and report thermostats that do not take the new value", defaultValue: true,
+                  description: "Checks once, 30 s after writing. Resending is left to Hubitat's Command Retry."
             input "applyOnStart", "bool", title: "Apply the schedule after a hub restart", defaultValue: true
             input "pauseSwitch", "capability.switch", title: "Pause when this switch is…", required: false, submitOnChange: true
             if (pauseSwitch) input "pauseWhenSwitch", "enum", title: "…in this state", options: ["off", "on"], defaultValue: "off"
@@ -75,7 +76,7 @@ void initialize() {
                                       sent: [:], manual: [], lastTarget: null, lastApply: 'ok', verify: null]
     if (!settings.testClock) app.removeSetting("testClock")
     statusDevice()
-    if ((state.rt as Map).verify) runIn(15, "verifyWrites")
+    if ((state.rt as Map).verify) runIn(30, "verifyWrites")
     subscribe(thermostats, "heatingSetpoint", "thermostatEvent")
     subscribe(thermostats, "coolingSetpoint", "thermostatEvent")
     subscribe(thermostats, "thermostatMode", "thermostatEvent")
@@ -240,8 +241,8 @@ void sendWrites(List<Map> writes, Map rt, Map cfg) {
         logCmd "${d.displayName}: ${w.command} ${w.value}"
     }
     if ((cfg.options as Map).verify) {
-        rt.verify = [writes: writes, attempt: 0]
-        runIn(15, "verifyWrites")
+        rt.verify = [writes: writes]
+        runIn(30, "verifyWrites")
     } else rt.lastApply = 'ok'
 }
 
@@ -250,26 +251,19 @@ void verifyWrites() {
     Map rt = state.rt as Map
     Map v = rt.verify as Map
     if (!v) return
-    List<Map> missing = (v.writes as List<Map>).findAll { Map w ->
+    List<Map> batch = v.writes as List<Map>
+    List<Map> missing = batch.findAll { Map w ->
         if ((rt.manual as List)?.contains(w.id)) return false
         def d = thermostats.find { (it.id as String) == w.id }
         Object cur = d?.currentValue(ATTR_FOR[w.command] as String)
         w.value instanceof Number || numOrNull(w.value) != null ? differs(numOrNull(w.value), cur) : cur?.toString() != w.value?.toString()
     }
-    if (!missing) { rt.lastApply = 'ok'; rt.verify = null }
-    else if ((v.attempt as int) < 2) {
-        missing.each { Map w ->
-            thermostats.find { (it.id as String) == w.id }?."${w.command}"(w.value)
-            remember(rt, w.id as String, ATTR_FOR[w.command] as String, w.value)
-        }
-        rt.verify = [writes: missing, attempt: (v.attempt as int) + 1]
-        logWarn "${missing.size()} write(s) not confirmed, retry ${(v.attempt as int) + 1}"
-        runIn(15, "verifyWrites")
-    } else {
-        rt.lastApply = missing.size() < (v.writes as List).size() || missing*.id.unique().size() < (thermostats?.size() ?: 0) ? 'partial' : 'failed'
-        rt.verify = null
-        logWarn "writes not confirmed after 2 retries: ${missing.collect { "${it.id} ${it.command} ${it.value}" }}"
-    }
+    List<String> missingIds = missing.collect { it.id as String }
+    List<String> confirmed = batch.collect { it.id as String }.unique().findAll { !missingIds.contains(it) }
+    rt.lastApply = applyOutcome(batch, confirmed)
+    rt.verify = null
+    if (missing) logWarn "${missing.size()} write(s) not confirmed after 30 s: " + missing.collect { Map w ->
+        "${thermostats.find { (it.id as String) == w.id }?.displayName ?: w.id} ${w.command} ${w.value}" }.join(', ')
     state.rt = rt
     statusDevice().updateStatus([lastApply: rt.lastApply])
 }
@@ -771,6 +765,12 @@ Map parseCommand(Map req) {
         return (o != null && o.abs() <= 10.0G) ? [ok: true, name: name, args: [offset: o]] : err('offset must be a number from -10 to 10')
     }
     return err("unknown command: ${name}".toString())
+}
+
+String applyOutcome(List<Map> batch, List<String> confirmedIds) {
+    List<String> ids = batch.collect { it.id as String }.unique()
+    int ok = ids.count { confirmedIds.contains(it) } as int
+    return ok == ids.size() ? 'ok' : (ok == 0 ? 'failed' : 'partial')
 }
 
 // ── End core ──────────────────────────────────────────────────────────

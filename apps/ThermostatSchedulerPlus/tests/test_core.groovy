@@ -176,6 +176,15 @@ check('setSchedule needs name', core.parseCommand([command: 'setSchedule', sched
 check('unknown command', core.parseCommand([command: 'explode']).ok, false)
 ['on', 'off', 'resume', 'applyNow', 'advance', 'refresh'].each { check("bare ${it}", core.parseCommand([command: it]).ok, true) }
 
+// ── write check outcome ──
+wbatch = [[id: '1', command: 'setHeatingSetpoint', value: 18.0], [id: '1', command: 'setCoolingSetpoint', value: 26.0],
+          [id: '2', command: 'setHeatingSetpoint', value: 18.0]]
+check('every thermostat confirmed is ok', core.applyOutcome(wbatch, ['1', '2']), 'ok')
+check('some thermostats confirmed is partial', core.applyOutcome(wbatch, ['2']), 'partial')
+check('no thermostat confirmed is failed', core.applyOutcome(wbatch, []), 'failed')
+check('confirmed ids outside the batch do not count', core.applyOutcome(wbatch, ['3']), 'failed')
+check('empty batch is ok', core.applyOutcome([], []), 'ok')
+
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)
