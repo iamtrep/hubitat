@@ -361,7 +361,7 @@ try:
     time.sleep(2)
     status_dev = next((str(d["id"]) for d in devices() if (d.get("label") or d.get("name")) == STATUS), None)
     if not status_dev:
-        die(f"status device '{STATUS}' not found after provisioning")
+        die(f"program device '{STATUS}' not found after provisioning")
     ok(f"program configured ({len(values)} profiles, {len(periods)} periods, Away override)")
 
     makers = [a for a in apps() if a.get("type") == "Maker API" and a.get("name") == MAKER_LABEL]

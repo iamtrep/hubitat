@@ -161,13 +161,13 @@ def call(method, path, body=None, auth=True, raw_body=None, url=None):
 def cmd(body):
     return call("POST", f"/programs/{prog_id}/command", body)
 
-# Status device (read through the hub).
+# Program device (read through the hub).
 dev_id = None
 for d in walk(fetch("/hub2/devicesList").get("devices", [])):
     if d.get("name") == STATUS_LABEL or d.get("label") == STATUS_LABEL:
         dev_id = d.get("id"); break
 if dev_id is None:
-    info(f"status device '{STATUS_LABEL}' not found; cross-check will fail")
+    info(f"program device '{STATUS_LABEL}' not found; cross-check will fail")
 
 def device_attr(name):
     j = fetch(f"/device/fullJson/{dev_id}")
@@ -211,7 +211,7 @@ try:
 
     if dev_id is not None:
         got = device_attr("status")
-        check("command status equals status device attribute", b.get("status"), got)
+        check("command status equals program device attribute", b.get("status"), got)
 
     s, b = cmd({"command": "resume"})
     check("resume ok", s, 200)
@@ -219,7 +219,7 @@ try:
     check("resume reply holdEnd is none", b.get("holdEnd"), "none")
     time.sleep(2)
     if dev_id is not None:
-        check("resume status equals status device attribute", b.get("status"), device_attr("status"))
+        check("resume status equals program device attribute", b.get("status"), device_attr("status"))
 
     s, b = cmd({"command": "explode"})
     check("bad command 400", s, 400)

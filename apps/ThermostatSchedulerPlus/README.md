@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT
 
 # Thermostat Scheduler+
 
-A thermostat scheduler for Hubitat Elevation with named profiles, several schedules per zone, holds, mode overrides, an eco offset and pause handling. Each program publishes what it is doing on its own status device, so rules, dashboards, Maker API and other apps can read and control it. The parent app also serves a small HTTP API.
+A thermostat scheduler for Hubitat Elevation with named profiles, several schedules per zone, holds, mode overrides, an eco offset and pause handling. Each program publishes what it is doing on its own program device, so rules, dashboards, Maker API and other apps can read and control it. The parent app also serves a small HTTP API.
 
 It covers what the built-in Thermostat Scheduler does and fixes four of its known problems: the eco offset stacking when changed while on, eco off resuming the time schedule during Away, Away not being restorable after a manual change, and Rule Machine reaching only one scheduler per thermostat.
 
@@ -15,7 +15,7 @@ It covers what the built-in Thermostat Scheduler does and fixes four of its know
 |---|---|---|
 | `ThermostatSchedulerPlus.groovy` | App (parent) | Thermostat Scheduler+ |
 | `ThermostatSchedulerPlusProgram.groovy` | App (child) | Thermostat Scheduler+ Program |
-| `ThermostatSchedulerPlusStatus.groovy` | Driver | Thermostat Scheduler+ Status |
+| `ThermostatSchedulerPlusProgramDevice.groovy` | Driver | Thermostat Scheduler+ Program Device |
 
 ## Install
 
@@ -23,7 +23,7 @@ It covers what the built-in Thermostat Scheduler does and fixes four of its know
 2. In **Apps**, choose **Add user app** and pick **Thermostat Scheduler+**. The parent enables OAuth for itself on install.
 3. Open the parent and choose **Create New Program**. Pick the thermostats, name the program and press **Done**.
 
-A program controls one or more thermostats that share a schedule, usually one zone. Saving it creates the status device **"<program> scheduler"** (for example "Living room scheduler"). The device belongs to the program and is deleted with it.
+A program controls one or more thermostats that share a schedule, usually one zone. Saving it creates the program device **"<program> scheduler"** (for example "Living room scheduler"). The device belongs to the program and is deleted with it.
 
 ## Programs
 
@@ -80,7 +80,7 @@ The program resolves one target from these layers, highest first, and applies th
 
 ### Pause and restrictions
 
-The status device's switch is the program's own on/off: off pauses it. Optional restrictions pause it too: a switch in a chosen state, a time window (fixed times or sunrise/sunset with offsets in minutes), days of the week, and hub modes. Settings choose what happens:
+The program device's switch is the program's own on/off: off pauses it. Optional restrictions pause it too: a switch in a chosen state, a time window (fixed times or sunrise/sunset with offsets in minutes), days of the week, and hub modes. Settings choose what happens:
 
 - **While paused:** leave the thermostats as they are, or turn them off.
 - **When the pause ends:** restore the recorded thermostat mode and apply the schedule (default), or leave the thermostats off.
@@ -93,11 +93,11 @@ What is imported: the thermostats, the periods with their start times (fixed, su
 
 What is not imported, each reported as a warning on the new program's page: EcoMode used for Away, a hold in effect, a time window with only one end set, a restriction mode that no longer exists, and a period with no start time (a lone one is imported as starting at 00:00).
 
-The new program starts paused and does not touch the thermostats. Open it, check it, press **Done**, disable the built-in scheduler, then turn the program on (its status device switch, or **Resume**).
+The new program starts paused and does not touch the thermostats. Open it, check it, press **Done**, disable the built-in scheduler, then turn the program on (its program device switch, or **Resume**).
 
-## Status device
+## Program device
 
-Driver **Thermostat Scheduler+ Status**, capabilities Switch, Actuator and Refresh. It does not declare Thermostat, so it stays out of thermostat pickers. Attributes with nothing to report read `none`.
+Driver **Thermostat Scheduler+ Program Device**, capabilities Switch, Actuator and Refresh. It does not declare Thermostat, so it stays out of thermostat pickers. Attributes with nothing to report read `none`.
 
 | Attribute | Values |
 |---|---|
@@ -137,7 +137,7 @@ The parent app serves the API with one OAuth token for all programs. The **API a
 | `GET /programs` | Every program with its status |
 | `GET /programs/{id}` | Configuration, thermostats and status, with a `revision` |
 | `PUT /programs/{id}` | Replace the configuration |
-| `POST /programs/{id}/command` | Any status device command, as JSON |
+| `POST /programs/{id}/command` | Any program device command, as JSON |
 | `POST /import` | Create a paused program from a built-in scheduler: `{"from": <app id>, "label": "<optional name>"}`; replies 201 with `id`, `name` and `warnings` |
 
 Example, holding Sleep until the next transition:

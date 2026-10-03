@@ -237,7 +237,7 @@ Map mainPage() {
             href "schedulesPage", title: "Schedules", description: esc((cfg.schedules as List<Map>).collect { it.name == cfg.active ? "${it.name} (active)" : it.name }.join(', '))
             href "optionsPage", title: "Overrides and options", description: esc(optionsSummary(cfg))
             ChildDeviceWrapper d = installed ? getChildDevice("tsp-${app.id}") : null
-            if (d) href "statusDevice", title: "Status device", description: esc(d.displayName), url: "/device/edit/${d.id}", style: "external"
+            if (d) href "programDevice", title: "Program device", description: esc(d.displayName), url: "/device/edit/${d.id}", style: "external"
         }
         section {
             label title: "Program name", required: true
@@ -273,7 +273,7 @@ String nowHtml(Map cfg, Map rt, Map target, Map ctx, Map sm) {
     } else h << "<div class='tsp-big'>${status == 'paused' ? 'Paused' : (status == 'restricted' ? 'Restricted' : 'Nothing scheduled')}</div>"
     Map sched = (cfg.schedules as List<Map>).find { it.name == cfg.active }
     String why
-    if (status == 'paused') why = "The status device switch is off. While paused: ${(cfg.options as Map).whilePaused == 'off' ? 'thermostats off' : 'thermostats left as they are'}."
+    if (status == 'paused') why = "The program device switch is off. While paused: ${(cfg.options as Map).whilePaused == 'off' ? 'thermostats off' : 'thermostats left as they are'}."
     else if (status == 'restricted') why = "A restriction is active. While paused: ${(cfg.options as Map).whilePaused == 'off' ? 'thermostats off' : 'thermostats left as they are'}."
     else if (target.layer == 'hold') {
         Map hold = rt.hold as Map
@@ -907,7 +907,7 @@ void initialize() {
     if (!state.config) state.config = newConfig()
     if (state.rt == null) state.rt = newRt()
     if (!settings.testClock) app.removeSetting("testClock")
-    statusDevice()
+    programDevice()
     if ((state.rt as Map).verify) runIn(30, "verifyWrites")
     subscribeAll()
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
@@ -961,11 +961,11 @@ long nowMillis() {
     return now()
 }
 
-ChildDeviceWrapper statusDevice() {
+ChildDeviceWrapper programDevice() {
     String dni = "tsp-${app.id}"
     ChildDeviceWrapper d = getChildDevice(dni)
     if (!d) {
-        d = addChildDevice("iamtrep", "Thermostat Scheduler+ Status", dni, [name: "${app.label} scheduler", label: "${app.label} scheduler", isComponent: true])
+        d = addChildDevice("iamtrep", "Thermostat Scheduler+ Program Device", dni, [name: "${app.label} scheduler", label: "${app.label} scheduler", isComponent: true])
         logCfg "created ${d.displayName}"
     } else if (d.label != "${app.label} scheduler") d.setLabel("${app.label} scheduler")
     return d
@@ -1154,7 +1154,7 @@ void verifyWrites() {
     if (missing) logWarn "${missing.size()} write(s) not confirmed after 30 s: " + missing.collect { Map w ->
         "${thermostats.find { (it.id as String) == w.id }?.displayName ?: w.id} ${w.command} ${w.value}" }.join(', ')
     state.rt = rt
-    statusDevice().updateStatus([lastApply: rt.lastApply])
+    programDevice().updateStatus([lastApply: rt.lastApply])
 }
 
 Map statusMap(Map cfg, Map rt, Map target, Map ctx) {
@@ -1175,7 +1175,7 @@ Map statusMap(Map cfg, Map rt, Map target, Map ctx) {
 }
 
 void publish(Map cfg, Map rt, Map target, Map ctx) {
-    statusDevice().updateStatus(statusMap(cfg, rt, target, ctx))
+    programDevice().updateStatus(statusMap(cfg, rt, target, ctx))
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────

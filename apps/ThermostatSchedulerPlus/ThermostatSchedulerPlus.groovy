@@ -78,7 +78,7 @@ Map apiPage() {
             paragraph "<table><tr><td><code>GET /programs</code></td><td>All programs with status</td></tr>" +
                       "<tr><td><code>GET /programs/{id}</code></td><td>Configuration and status, with a revision</td></tr>" +
                       "<tr><td><code>PUT /programs/{id}</code></td><td>Replace the configuration; send the revision from GET</td></tr>" +
-                      "<tr><td><code>POST /programs/{id}/command</code></td><td>Any status device command</td></tr>" +
+                      "<tr><td><code>POST /programs/{id}/command</code></td><td>Any program device command</td></tr>" +
                       "<tr><td><code>POST /import</code></td><td>Create a paused program from a built-in scheduler: <code>{\"from\": id}</code></td></tr></table>"
         }
     }
