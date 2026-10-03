@@ -1,0 +1,52 @@
+<!--
+Copyright (c) 2026 PJ
+SPDX-License-Identifier: MIT
+-->
+
+# Thermostat Scheduler+ test plan
+
+Modes are those of TESTING.md. Every on-hub test follows its closed-loop contract: `[PASS]`/`[FAIL]` lines, exit 0 when all pass, 1 on a failure, 2 on a setup error.
+
+| Phase | Title | Mode | Test | Status |
+|---|---|---|---|---|
+| A | Core unit tests | 4, extraction variant | `test_core.groovy` | Done |
+| B | Behavior | 1 | `test-tsp.sh` (from `spec-tsp.yaml`) | Done |
+| C | Write check | 1, with a test driver | `test-tsp-retry.sh` (from `spec-tsp-retry.yaml`) | Done |
+| D | HTTP API | 2 | `test-tsp-api.sh` | Done |
+| E | Parity with the built-in scheduler | 1, differential | `test-tsp-parity.sh` | Done |
+| F | Configuration `PUT` and importer | 2 | not written | Planned |
+
+B, C and E take minutes each and belong to `RUN_SLOW_TESTS=1` runs. E checks the flag and, without it, prints `[INFO] ... skipped` and exits 0; the generated B and C run whether the flag is set or not. B and C use the program's test inputs (configuration JSON, test clock), which render only while its debug logging is on, so their first case turns debug logging on; it turns itself off after 30 minutes.
+
+## Phase A: core unit tests
+
+`test_core.groovy` parses the block between the "Core (pure)" and "End core" markers of `ThermostatSchedulerPlusProgram.groovy` and runs it under the pinned Groovy 2.4.21 jar, so the tests bind to shipped code. Covered: date helpers (week days, month ends, both DST changes), transitions (fixed times, sunrise and sunset offsets, DateTime variables set and missing, the first period of a day, day groups, a period inside the skipped and the repeated DST hour), the resolver (every layer, eco on schedules and overrides, eco offset changes, mode schedules, variable setpoints, missing profiles), hold expiry for each end, write planning (heat, cool, auto with separation in both directions, off thermostats, blank fan and mode, `noModeIds`), restrictions, the next wake time, configuration validation, command parsing for every command and end format, and `applyOutcome` (`ok`, `partial`, `failed`).
+
+## Phase B: behavior
+
+`test-tsp.sh` runs the program `test-tsp` on two virtual thermostats and a pause switch, driven through a dedicated Maker API and the program's test clock. Cases: configuration load and apply, a transition on the test clock, profile holds ending `next` and `indefinite`, resume, advance, schedule switch, bad commands, eco offset 0, mode overrides in and out with and without a `next` hold, eco on and off on an override, the eco stacking regression, manual changes (set, kept through other events, cleared by the next write), a thermostat mode changed by someone else (off writes nothing, heat gets its setpoint), pause through the restriction switch and the status switch with both *while paused* and both *when the pause ends* settings, the hub-start handler, and UI edits through the page buttons (profiles, rename and delete refusal, periods, splitting a day group, overrides, mode schedules, the active schedule, holds from the main page). Every case also fails on any unexpected warn or error log line.
+
+## Phase C: write check
+
+`test-tsp-retry.sh` runs the program `test-tsp-retry` on a Stubborn Thermostat (a test driver that ignores the next N setpoint commands) and a virtual thermostat. Cases: all writes confirmed (`lastApply` `ok`), and an ignored write reported as `partial` and not resent.
+
+## Phase D: HTTP API
+
+`test-tsp-api.sh` exercises every parent route: requests without a token (401), list and get (with `revision` and configuration), unknown and non-numeric program ids (404), a hold and a resume whose replies carry the new status and match the status device, unknown commands and missing arguments (400), and the debug-only `POST /programs` without a label (400). It needs the `test-tsp` program from phase B. The cloud case (a relayed request refused with 403 while the app's cloud access is off) is skipped with `[INFO]` when the hub's cloud address cannot be found, which is the case while the hub's own cloud access is off.
+
+## Phase E: parity
+
+`test-tsp-parity.sh` runs a built-in Thermostat Scheduler and a Thermostat Scheduler+ program built from its configuration on twin virtual thermostats, and compares them: apply now, Away mode in and out, a restriction on and off, and the intended difference after a manual change in Away. It exits 2 with the time to re-run when a period boundary is less than 150 seconds away.
+
+## Phase F: configuration `PUT` and importer
+
+Planned with the phase-2 features: `PUT /programs/{id}` with revision checks and validation errors, and an importer test that builds a program from a built-in scheduler's configuration.
+
+## Known gaps
+
+- The API test does not cover local access turned off or a successful `POST /programs`; the parity test creates its program through that route.
+- `lastApply` `failed` is covered by the core tests only.
+- Minute and ISO-time holds and `holdSetpoints` are covered by the core tests only (parsing, expiry, resolution); no on-hub case runs one.
+- No case runs two programs on one thermostat (the spec's regression case for the built-in's by-thermostat targeting). Each program has its own status device, so the commands cannot reach another program.
+- The warning logged for an unconfirmed write is checked by hand.
+- Parity covers only the built-in's leave-thermostats-on restriction branch; its turn-off branch is untested.

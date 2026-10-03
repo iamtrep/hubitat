@@ -35,6 +35,7 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 | [MultiHubInventory/](./MultiHubInventory/) | Read-only cross-hub device inventory, aggregated from each hub's Hub Diagnostics audit API |
 | [sensors/](./sensors/) |  |
 | [tests/](./tests/) |  |
+| [ThermostatSchedulerPlus/](./ThermostatSchedulerPlus/) |  |
 | [utilities/](./utilities/) |  |
 | [WellMonitor/](./WellMonitor/) | Monitors well pump cycles, downstream consumption, tank usage, and emergency shutoff |
 <!-- /AUTO -->
