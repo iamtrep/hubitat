@@ -329,4 +329,132 @@ cases:
     wait_seconds: 3
     assert:
       - { device: test-tsp-th1, attribute: heatingSetpoint, value: 18.0, tolerance: 0.05 }
-runtime_budget_seconds: 240
+  # ── Editing through the app pages: buttons (/installedapp/btn) and settings saves ──
+  - name: edit-profile-through-ui
+    setup:
+      - { device: test-tsp scheduler, command: setSchedule, args: [Normal] }
+      - { button: "epf~2" }
+    actions:
+      - settings: { edHeat: 17.5 }
+      - { button: btnProfileSave }
+    wait_seconds: 3
+    assert_events:
+      - { attribute: heatingSetpoint, value: "17.5", source: test-tsp-th1 }
+
+  - name: delete-in-use-refused
+    allow_warnings: true
+    actions:
+      - { button: "epf~2" }
+      - { button: btnProfileDelete }
+    wait_seconds: 2
+    assert_logs:
+      - { pattern: "Sleep is used by", level: warn }
+
+  - name: rename-profile-updates-references
+    setup:
+      - { button: "epf~2" }
+    actions:
+      - settings: { edName: Bedtime }
+      - { button: btnProfileSave }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp scheduler, attribute: profile, value: Bedtime }
+      - { device: test-tsp-th1, attribute: heatingSetpoint, value: 17.5, tolerance: 0.05 }
+
+  - name: edit-period-through-ui
+    setup:
+      - { button: "esc~0" }
+      - { button: "epd~0~2" }
+    actions:
+      - settings: { edProfile: Out }
+      - { button: btnPeriodSave }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp scheduler, attribute: profile, value: Out }
+      - { device: test-tsp-th1, attribute: heatingSetpoint, value: 19.0, tolerance: 0.05 }
+
+  - name: split-day-into-own-group
+    setup:
+      # Monday (the test clock's day) leaves "All" with a copy of its periods.
+      - { button: "edg~new~1" }
+      - { button: "epd~1~2" }
+    actions:
+      - settings: { edProfile: Home }
+      - { button: btnPeriodSave }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp-th1, attribute: heatingSetpoint, value: 21.0, tolerance: 0.05 }
+
+  - name: other-days-keep-their-group
+    actions:
+      - settings: { testClock: "2026-10-06 22:00" }
+      - { button: btnEvaluate }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp-th1, attribute: heatingSetpoint, value: 19.0, tolerance: 0.05 }
+
+  - name: edit-override-through-ui
+    setup:
+      - { button: "eov~0" }
+    actions:
+      - settings: { edProfile: Home }
+      - { button: btnOverrideSave }
+      - { mode: Away }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp scheduler, attribute: status, value: mode }
+      - { device: test-tsp-th1, attribute: heatingSetpoint, value: 21.0, tolerance: 0.05 }
+
+  - name: mode-schedule-through-ui
+    setup:
+      - { mode: Day }
+      - { button: btnScheduleNew }
+    actions:
+      - settings: { edSchedName: Modes, edSchedType: mode }
+      - { button: btnScheduleSave }
+      - { button: btnRowAdd }
+      - settings: { edModes: ["1"], edProfile: Away }
+      - { button: btnRowSave }
+      - { button: btnScheduleActivate }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp scheduler, attribute: schedule, value: Modes }
+      - { device: test-tsp scheduler, attribute: profile, value: Away }
+      - { device: test-tsp-th1, attribute: heatingSetpoint, value: 16.0, tolerance: 0.05 }
+
+  - name: delete-active-schedule-refused
+    allow_warnings: true
+    actions:
+      - { button: btnScheduleDelete }
+    wait_seconds: 2
+    assert:
+      - { device: test-tsp scheduler, attribute: schedule, value: Modes }
+    assert_logs:
+      - { pattern: "Modes is the active schedule", level: warn }
+  - name: hold-through-main-page
+    actions:
+      - settings: { holdSel: Home, holdUntil: indefinite }
+      - { button: btnHold }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp scheduler, attribute: status, value: hold }
+      - { device: test-tsp scheduler, attribute: holdEnd, value: indefinite }
+      - { device: test-tsp-th1, attribute: heatingSetpoint, value: 21.0, tolerance: 0.05 }
+
+  - name: end-hold-through-main-page
+    actions:
+      - { button: btnResume }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp scheduler, attribute: status, value: schedule }
+      - { device: test-tsp-th1, attribute: heatingSetpoint, value: 16.0, tolerance: 0.05 }
+  # Leaves the loaded configuration as the first case set it (test-tsp-api.sh holds Sleep).
+  - name: reload-test-config
+    actions:
+      - { button: btnLoadConfig }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp scheduler, attribute: schedule, value: Normal }
+      - { device: test-tsp scheduler, attribute: profile, value: Sleep }
+      - { device: test-tsp-th1, attribute: heatingSetpoint, value: 18.0, tolerance: 0.05 }
+runtime_budget_seconds: 340
