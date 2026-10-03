@@ -14,7 +14,7 @@ Modes are those of TESTING.md. Every on-hub test follows its closed-loop contrac
 | C | Write check | 1, with a test driver | `test-tsp-retry.sh` (from `spec-tsp-retry.yaml`) | Done |
 | D | HTTP API | 2 | `test-tsp-api.sh` | Done |
 | E | Parity with the built-in scheduler | 1, differential | `test-tsp-parity.sh` | Done |
-| F | Configuration `PUT` and importer | 2 | not written | Planned |
+| F | Configuration `PUT` and importer | 2 and 4 | `test-tsp-api.sh` (PUT section), `test-tsp-import.sh`, `test_core.groovy` (PUT and import cases) | Done |
 
 B, C and E take minutes each and belong to `RUN_SLOW_TESTS=1` runs. E checks the flag and, without it, prints `[INFO] ... skipped` and exits 0; the generated B and C run whether the flag is set or not. B and C use the program's test inputs (configuration JSON, test clock), which render only while its debug logging is on, so their first case turns debug logging on; it turns itself off after 30 minutes.
 
@@ -40,7 +40,11 @@ B, C and E take minutes each and belong to `RUN_SLOW_TESTS=1` runs. E checks the
 
 ## Phase F: configuration `PUT` and importer
 
-Planned with the phase-2 features: `PUT /programs/{id}` with revision checks and validation errors, and an importer test that builds a program from a built-in scheduler's configuration.
+Core cases in `test_core.groovy`: the revision (stable across a JSON round trip, changed by any value), the document shape, option group validation and the settings each group writes; the converter on synthetic built-in data: day groups, fixed, sunrise, sunset and ISO starts, blank and text offsets, leftover period and group keys ignored, shared profiles named after every period or mode that uses them, hub variables, lower-cased fan and mode, the Away profile and override, the EcoMode offset and its range, options, the restriction switch and its polarity, a lone period without a start, a period without a start among others, empty-list settings, Hub Modes schedules (merged rows, unused rows, a deleted mode), empty schedules, and the warnings for restrictions, EcoMode for Away, a hold and a hub without an Away mode.
+
+`test-tsp-api.sh` (PUT section) on the `test-tsp` program: no token (401), unknown program (404), missing revision or configuration (400), a round trip that keeps the revision, an invalid document (400 with errors), an edit that adds a profile and changes the eco offset, a stale revision (409 with the current one), and a PUT that drops the profile a hold uses, which ends the hold. It removes a `Temp` profile left by an interrupted run.
+
+`test-tsp-import.sh` imports the parity test's reference scheduler: missing or unknown `from`, an app that is not a built-in scheduler, no token; then the program's pause state, thermostat, pause switch and polarity, every live period with its heating setpoint, the Away profile and override, and the eco offset. It sets *while paused* to *turn thermostats off*, saves the program with Done, and checks that the thermostat did not change and that the program never applied its pause (no `paused` log line). A second import without a label takes the built-in's name. It deletes the programs it creates.
 
 ## Known gaps
 
@@ -51,5 +55,8 @@ Planned with the phase-2 features: `PUT /programs/{id}` with revision checks and
 - No case runs two programs on one thermostat (the spec's regression case for the built-in's by-thermostat targeting). Each program has its own status device, so the commands cannot reach another program.
 - The warning logged for an unconfirmed write is checked by hand.
 - Parity covers only the built-in's leave-thermostats-on restriction branch; its turn-off branch is untested.
-- Whether calls from the parent (API) and from the status device into a program are serialized with the program's own handlers is unmeasured. To measure before release.
+- Whether calls from the parent (API, PUT, import) and from the status device into a program are serialized with the program's own handlers is unmeasured. To measure before release.
+- The built-in's cooling, fan and thermostat-mode keys for periods, Away and Hub Modes rows are inferred from its heating keys; no built-in instance with those values has been read yet.
+- The reference scheduler leaves thermostats alone while restricted, so no on-hub case imports a scheduler set to turn them off; the import test covers it by switching the imported program to that setting before Done.
+- The parent's import page is checked by hand.
 - Hub variable registration, rename and change events are covered by the core tests (`renameVarRefs`) only; no on-hub case renames or changes a hub variable.

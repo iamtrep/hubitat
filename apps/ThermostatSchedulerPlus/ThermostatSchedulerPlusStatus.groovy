@@ -10,7 +10,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.3"
+@Field static final String CODE_VERSION = "0.2.0"
 
 metadata {
     definition(name: "Thermostat Scheduler+ Status", namespace: "iamtrep", author: "pj", component: true,
