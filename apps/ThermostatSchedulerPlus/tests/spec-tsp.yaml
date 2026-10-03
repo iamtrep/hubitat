@@ -145,4 +145,158 @@ cases:
     assert:
       - { device: test-tsp scheduler, attribute: status, value: manual }
       - { device: test-tsp-th1, attribute: heatingSetpoint, value: 22.5, tolerance: 0.05 }
-runtime_budget_seconds: 150
+
+  - name: override-in-and-out
+    setup:
+      # eco-offset-zero leaves eco on with offset 0; later eco cases need offset 2.
+      - { device: test-tsp scheduler, command: setEco, args: ["off"] }
+      - { device: test-tsp scheduler, command: setEcoOffset, args: [2] }
+      - { device: test-tsp scheduler, command: setSchedule, args: [Normal] }
+      - { device: test-tsp scheduler, command: resume }
+      - settings: { testClock: "2026-10-05 09:00" }
+      - { button: btnEvaluate }
+    actions:
+      - { mode: Away }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp-th1, attribute: heatingSetpoint, value: 16.0, tolerance: 0.05 }
+      - { device: test-tsp scheduler, attribute: status, value: mode }
+
+  - name: override-ends-next-hold
+    setup:
+      - { mode: Day }
+      - { device: test-tsp scheduler, command: holdProfile, args: [Home, next] }
+    actions:
+      - { mode: Away }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp scheduler, attribute: status, value: mode }
+      - { device: test-tsp-th1, attribute: heatingSetpoint, value: 16.0, tolerance: 0.05 }
+
+  - name: eco-on-override-and-off-again
+    actions:
+      - { device: test-tsp scheduler, command: setEco, args: ["on"] }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp-th1, attribute: heatingSetpoint, value: 14.0, tolerance: 0.05 }
+
+  - name: eco-off-while-override-keeps-override
+    actions:
+      - { device: test-tsp scheduler, command: setEco, args: ["off"] }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp-th1, attribute: heatingSetpoint, value: 16.0, tolerance: 0.05 }
+      - { device: test-tsp scheduler, attribute: status, value: mode }
+
+  - name: eco-offset-change-does-not-stack
+    setup:
+      - { mode: Day }
+      - { device: test-tsp scheduler, command: setEco, args: ["on"] }
+    actions:
+      - { device: test-tsp scheduler, command: setEcoOffset, args: [3] }
+      - { device: test-tsp scheduler, command: setEcoOffset, args: [2] }
+    command_spacing_seconds: 2
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp-th1, attribute: heatingSetpoint, value: 17.0, tolerance: 0.05 }
+
+  - name: manual-change-sets-manual
+    setup:
+      - { device: test-tsp scheduler, command: setEco, args: ["off"] }
+    actions:
+      - { device: test-tsp-th1, command: setHeatingSetpoint, args: [23] }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp scheduler, attribute: status, value: manual }
+      - { device: test-tsp-th1, attribute: heatingSetpoint, value: 23.0, tolerance: 0.05 }
+
+  - name: manual-survives-other-events
+    actions:
+      - { device: test-tsp-th2, command: cool }
+      - { button: btnEvaluate }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp-th1, attribute: heatingSetpoint, value: 23.0, tolerance: 0.05 }
+      - { device: test-tsp-th2, attribute: coolingSetpoint, value: 27.0, tolerance: 0.05 }
+      - { device: test-tsp scheduler, attribute: status, value: manual }
+
+  - name: next-write-clears-manual
+    actions:
+      - settings: { testClock: "2026-10-05 22:00" }
+      - { button: btnEvaluate }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp-th1, attribute: heatingSetpoint, value: 18.0, tolerance: 0.05 }
+      - { device: test-tsp scheduler, attribute: status, value: schedule }
+
+  - name: mode-off-writes-nothing-then-heat-gets-setpoint
+    setup:
+      - { device: test-tsp-th2, command: "off" }
+      - { device: test-tsp-th2, command: setHeatingSetpoint, args: [10] }
+      - { device: test-tsp scheduler, command: applyNow }
+    actions:
+      - { device: test-tsp-th2, command: heat }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp-th2, attribute: heatingSetpoint, value: 18.0, tolerance: 0.05 }
+
+  - name: pause-switch-turns-off-and-restores
+    actions:
+      - { device: test-tsp-pause, command: "off" }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp-th1, attribute: thermostatMode, value: "off" }
+      - { device: test-tsp scheduler, attribute: status, value: restricted }
+
+  - name: resume-restores-mode-and-applies
+    actions:
+      - { device: test-tsp-th1, command: setHeatingSetpoint, args: [12] }
+      - { device: test-tsp-pause, command: "on" }
+    command_spacing_seconds: 2
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp-th1, attribute: thermostatMode, value: heat }
+      - { device: test-tsp-th1, attribute: heatingSetpoint, value: 18.0, tolerance: 0.05 }
+
+  - name: resume-leave-off-writes-nothing
+    setup:
+      - settings: { onResume: leaveOff }
+      - { device: test-tsp-pause, command: "off" }
+      - { device: test-tsp-th1, command: setHeatingSetpoint, args: [12] }
+    actions:
+      - { device: test-tsp-pause, command: "on" }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp-th1, attribute: thermostatMode, value: "off" }
+      - { device: test-tsp-th1, attribute: heatingSetpoint, value: 12.0, tolerance: 0.05 }
+
+  - name: status-switch-pauses
+    setup:
+      - settings: { onResume: restore }
+      - { device: test-tsp-th1, command: heat }
+      - { device: test-tsp-th2, command: heat }
+      - { button: btnEvaluate }
+    actions:
+      - { device: test-tsp scheduler, command: "off" }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp scheduler, attribute: switch, value: "off" }
+      - { device: test-tsp scheduler, attribute: status, value: paused }
+
+  - name: status-switch-resumes
+    actions:
+      - { device: test-tsp scheduler, command: "on" }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp scheduler, attribute: status, value: schedule }
+      - { device: test-tsp-th1, attribute: thermostatMode, value: heat }
+
+  - name: hub-start-applies
+    setup:
+      - { device: test-tsp-th1, command: setHeatingSetpoint, args: [12] }
+    actions:
+      - { button: btnStart }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp-th1, attribute: heatingSetpoint, value: 18.0, tolerance: 0.05 }
+runtime_budget_seconds: 240
