@@ -25,6 +25,9 @@ maker_api:
 cases:
   - name: all-confirmed
     setup:
+      # Debug logging turns itself off after 30 minutes, and the test inputs
+      # (testConfigJson, testClock) only render while it is on.
+      - settings: { debugEnable: true }
       - { device: test-tsp-retry scheduler, command: resume }
       - { device: test-tsp-retry scheduler, command: setEco, args: ["off"] }
       - { device: test-tsp-stubborn, command: setIgnore, args: [0] }

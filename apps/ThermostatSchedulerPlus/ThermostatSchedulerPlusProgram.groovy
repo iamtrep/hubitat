@@ -9,9 +9,11 @@
  Spec: docs/thermostat-scheduler-replacement-spec.md.
 */
 
+import com.hubitat.app.ChildDeviceWrapper
+import com.hubitat.app.DeviceWrapper
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 
 definition(
     name: "Thermostat Scheduler+ Program",
@@ -223,7 +225,7 @@ Map mainPage() {
             href "profilesPage", title: "Profiles", description: esc((cfg.profiles as List<Map>)*.name.join(', '))
             href "schedulesPage", title: "Schedules", description: esc((cfg.schedules as List<Map>).collect { it.name == cfg.active ? "${it.name} (active)" : it.name }.join(', '))
             href "optionsPage", title: "Overrides and options", description: esc(optionsSummary(cfg))
-            def d = installed ? getChildDevice("tsp-${app.id}") : null
+            ChildDeviceWrapper d = installed ? getChildDevice("tsp-${app.id}") : null
             if (d) href "statusDevice", title: "Status device", description: esc(d.displayName), url: "/device/edit/${d.id}", style: "external"
         }
         section {
@@ -882,7 +884,7 @@ String holdAtIso() {
 
 void installed() { initialize() }
 void updated() { unsubscribe(); unschedule(); initialize() }
-void uninstalled() { getChildDevices().each { deleteChildDevice(it.deviceNetworkId) } }
+void uninstalled() { if (getChildDevice("tsp-${app.id}")) deleteChildDevice("tsp-${app.id}") }
 
 void initialize() {
     checkVersion(false)
@@ -903,6 +905,7 @@ void initialize() {
 }
 
 void logsOff() {
+    checkVersion()
     app.updateSetting("debugEnable", false); app.updateSetting("traceEnable", false)
     app.removeSetting("testClock")
     logWarn "debug logging and the test clock turned off"
@@ -919,9 +922,9 @@ long nowMillis() {
     return now()
 }
 
-def statusDevice() {
+ChildDeviceWrapper statusDevice() {
     String dni = "tsp-${app.id}"
-    def d = getChildDevice(dni)
+    ChildDeviceWrapper d = getChildDevice(dni)
     if (!d) {
         d = addChildDevice("iamtrep", "Thermostat Scheduler+ Status", dni, [name: "${app.label} scheduler", label: "${app.label} scheduler", isComponent: true])
         logCfg "created ${d.displayName}"
@@ -988,6 +991,8 @@ boolean sameTarget(Map a, Map b) {
 void evaluate(String why, boolean force, String onlyId = null) {
     Map cfg = coreConfig()
     Map rt = state.rt as Map
+    // A write check whose job was lost (crash, push) runs at the next evaluation.
+    if (rt.verify && now() - (((rt.verify as Map).at ?: 0L) as long) > 60000L) runIn(1, "verifyWrites")
     Map ctx = buildCtx(cfg)
     Map target = resolveTarget(cfg, rt, ctx)
     if (holdExpired(rt.hold as Map, target, ctx.now as long)) {
@@ -1011,7 +1016,7 @@ void evaluate(String why, boolean force, String onlyId = null) {
         rt.pausedApplied = false
         if ((cfg.options as Map).onResume == 'restore') {
             (rt.recordedModes as Map).each { String id, String m ->
-                def d = thermostats.find { (it.id as String) == id }
+                DeviceWrapper d = thermostats.find { (it.id as String) == id }
                 if (d) { d.setThermostatMode(m); remember(rt, id, 'thermostatMode', m); modeOverride[id] = m }
             }
             logCmd "resumed: modes restored"
@@ -1050,14 +1055,14 @@ void remember(Map rt, String id, String attr, Object value) {
 void sendWrites(List<Map> writes, Map rt, Map cfg) {
     if (!writes) return
     writes.each { Map w ->
-        def d = thermostats.find { (it.id as String) == w.id }
+        DeviceWrapper d = thermostats.find { (it.id as String) == w.id }
         if (!d) return
         d."${w.command}"(w.value)
         remember(rt, w.id as String, ATTR_FOR[w.command] as String, w.value)
         logCmd "${d.displayName}: ${w.command} ${w.value}"
     }
     if ((cfg.options as Map).verify) {
-        rt.verify = [writes: writes]
+        rt.verify = [writes: writes, at: now()]
         runIn(30, "verifyWrites")
     } else rt.lastApply = 'ok'
 }
@@ -1070,7 +1075,7 @@ void verifyWrites() {
     List<Map> batch = v.writes as List<Map>
     List<Map> missing = batch.findAll { Map w ->
         if ((rt.manual as List)?.contains(w.id)) return false
-        def d = thermostats.find { (it.id as String) == w.id }
+        DeviceWrapper d = thermostats.find { (it.id as String) == w.id }
         Object cur = d?.currentValue(ATTR_FOR[w.command] as String)
         w.value instanceof Number || numOrNull(w.value) != null ? differs(numOrNull(w.value), cur) : cur?.toString() != w.value?.toString()
     }

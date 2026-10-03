@@ -10,7 +10,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 @Field static final String CHILD_NAME = "Thermostat Scheduler+ Program"
 
 definition(
@@ -86,7 +86,7 @@ void appButtonHandler(String btn) {
     if (btn == "btnResetToken") { revokeAccessToken(); state.remove("accessToken"); checkOAuth(); logCfg "token reset" }
 }
 
-void logsOff() { app.updateSetting("debugEnable", false); app.updateSetting("traceEnable", false); logWarn "debug logging disabled" }
+void logsOff() { checkVersion(); app.updateSetting("debugEnable", false); app.updateSetting("traceEnable", false); logWarn "debug logging disabled" }
 
 // ── API ───────────────────────────────────────────────────────────────
 
@@ -160,7 +160,7 @@ def apiCreate() {
 
 private boolean autoEnableOAuth() {
     String typeId = app.getAppTypeId()?.toString()
-    if (!typeId) { log.error "Could not find app type ID."; return false }
+    if (!typeId) { logError "Could not find app type ID."; return false }
 
     String internalVer = null
     try {
@@ -168,10 +168,10 @@ private boolean autoEnableOAuth() {
             internalVer = resp.data?.version?.toString()
         }
     } catch (e) {
-        log.error "Failed to fetch app code version: ${e.message}"
+        logError "Failed to fetch app code version: ${e.message}"
         return false
     }
-    if (!internalVer) { log.error "Could not determine app code version."; return false }
+    if (!internalVer) { logError "Could not determine app code version."; return false }
 
     boolean success = false
     try {
@@ -190,7 +190,7 @@ private boolean autoEnableOAuth() {
             success = true
         }
     } catch (e) {
-        log.error "Failed to enable OAuth: ${e.message}"
+        logError "Failed to enable OAuth: ${e.message}"
     }
     return success
 }
@@ -201,13 +201,13 @@ private boolean checkOAuth() {
         createAccessToken()
         return (state.accessToken != null)
     } catch (e) {
-        log.debug "OAuth not enabled yet, attempting auto-enable..."
+        logDebug "OAuth not enabled yet, attempting auto-enable..."
         if (autoEnableOAuth()) {
             try {
                 createAccessToken()
                 return (state.accessToken != null)
             } catch (e2) {
-                log.error "OAuth enabled but token creation failed: ${e2.message}"
+                logError "OAuth enabled but token creation failed: ${e2.message}"
                 return false
             }
         }

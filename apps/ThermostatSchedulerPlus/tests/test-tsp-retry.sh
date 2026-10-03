@@ -56,7 +56,7 @@ APP_INSTANCE_LABEL    = "test-tsp-retry"
 MAKER_API_LABEL       = "test-tsp-maker"
 INPUT_DEVICE_LABELS   = ["test-tsp-stubborn", "test-tsp-normal"]
 OUTPUT_DEVICE_LABELS  = ["test-tsp-retry scheduler"]
-CASES                 = [{'name': 'all-confirmed', 'setup': [{'device': 'test-tsp-retry scheduler', 'command': 'resume'}, {'device': 'test-tsp-retry scheduler', 'command': 'setEco', 'args': ['off']}, {'device': 'test-tsp-stubborn', 'command': 'setIgnore', 'args': [0]}, {'device': 'test-tsp-stubborn', 'command': 'heat'}, {'device': 'test-tsp-normal', 'command': 'heat'}, {'mode': 'Day'}, {'settings': {'testConfigJson': '{"v":1,"profiles":[{"name":"Home","heat":21.0,"cool":24.0},{"name":"Out","heat":19.0,"cool":27.0},{"name":"Sleep","heat":18.0,"cool":26.0},{"name":"Away","heat":16.0,"cool":29.0}],"schedules":[{"name":"Normal","type":"time","groups":[{"name":"All","days":[1,2,3,4,5,6,7],"periods":[{"name":"Wake","start":{"kind":"time","at":"06:30"},"profile":"Home"},{"name":"Leave","start":{"kind":"time","at":"08:15"},"profile":"Out"},{"name":"Night","start":{"kind":"time","at":"22:00"},"profile":"Sleep"}]}]},{"name":"Vacation","type":"time","groups":[{"name":"All","days":[1,2,3,4,5,6,7],"periods":[{"name":"Day","start":{"kind":"time","at":"00:00"},"profile":"Away"}]}]}],"active":"Normal","overrides":[{"modeId":4,"profile":"Away"}]}'}}, {'button': 'btnLoadConfig'}, {'settings': {'testClock': '2026-10-05 09:00'}}], 'actions': [{'button': 'btnEvaluate'}], 'wait_seconds': 33, 'assert': [{'device': 'test-tsp-stubborn', 'attribute': 'heatingSetpoint', 'value': 19.0, 'tolerance': 0.05}, {'device': 'test-tsp-normal', 'attribute': 'heatingSetpoint', 'value': 19.0, 'tolerance': 0.05}, {'device': 'test-tsp-retry scheduler', 'attribute': 'lastApply', 'value': 'ok'}]}, {'name': 'ignored-write-is-reported-not-resent', 'allow_warnings': True, 'setup': [{'device': 'test-tsp-stubborn', 'command': 'setIgnore', 'args': [1]}], 'actions': [{'settings': {'testClock': '2026-10-05 22:00'}}, {'button': 'btnEvaluate'}], 'wait_seconds': 33, 'assert': [{'device': 'test-tsp-stubborn', 'attribute': 'heatingSetpoint', 'value': 19.0, 'tolerance': 0.05}, {'device': 'test-tsp-stubborn', 'attribute': 'ignored', 'value': 1, 'tolerance': 0.1}, {'device': 'test-tsp-normal', 'attribute': 'heatingSetpoint', 'value': 18.0, 'tolerance': 0.05}, {'device': 'test-tsp-retry scheduler', 'attribute': 'lastApply', 'value': 'partial'}]}]
+CASES                 = [{'name': 'all-confirmed', 'setup': [{'settings': {'debugEnable': True}}, {'device': 'test-tsp-retry scheduler', 'command': 'resume'}, {'device': 'test-tsp-retry scheduler', 'command': 'setEco', 'args': ['off']}, {'device': 'test-tsp-stubborn', 'command': 'setIgnore', 'args': [0]}, {'device': 'test-tsp-stubborn', 'command': 'heat'}, {'device': 'test-tsp-normal', 'command': 'heat'}, {'mode': 'Day'}, {'settings': {'testConfigJson': '{"v":1,"profiles":[{"name":"Home","heat":21.0,"cool":24.0},{"name":"Out","heat":19.0,"cool":27.0},{"name":"Sleep","heat":18.0,"cool":26.0},{"name":"Away","heat":16.0,"cool":29.0}],"schedules":[{"name":"Normal","type":"time","groups":[{"name":"All","days":[1,2,3,4,5,6,7],"periods":[{"name":"Wake","start":{"kind":"time","at":"06:30"},"profile":"Home"},{"name":"Leave","start":{"kind":"time","at":"08:15"},"profile":"Out"},{"name":"Night","start":{"kind":"time","at":"22:00"},"profile":"Sleep"}]}]},{"name":"Vacation","type":"time","groups":[{"name":"All","days":[1,2,3,4,5,6,7],"periods":[{"name":"Day","start":{"kind":"time","at":"00:00"},"profile":"Away"}]}]}],"active":"Normal","overrides":[{"modeId":4,"profile":"Away"}]}'}}, {'button': 'btnLoadConfig'}, {'settings': {'testClock': '2026-10-05 09:00'}}], 'actions': [{'button': 'btnEvaluate'}], 'wait_seconds': 33, 'assert': [{'device': 'test-tsp-stubborn', 'attribute': 'heatingSetpoint', 'value': 19.0, 'tolerance': 0.05}, {'device': 'test-tsp-normal', 'attribute': 'heatingSetpoint', 'value': 19.0, 'tolerance': 0.05}, {'device': 'test-tsp-retry scheduler', 'attribute': 'lastApply', 'value': 'ok'}]}, {'name': 'ignored-write-is-reported-not-resent', 'allow_warnings': True, 'setup': [{'device': 'test-tsp-stubborn', 'command': 'setIgnore', 'args': [1]}], 'actions': [{'settings': {'testClock': '2026-10-05 22:00'}}, {'button': 'btnEvaluate'}], 'wait_seconds': 33, 'assert': [{'device': 'test-tsp-stubborn', 'attribute': 'heatingSetpoint', 'value': 19.0, 'tolerance': 0.05}, {'device': 'test-tsp-stubborn', 'attribute': 'ignored', 'value': 1, 'tolerance': 0.1}, {'device': 'test-tsp-normal', 'attribute': 'heatingSetpoint', 'value': 18.0, 'tolerance': 0.05}, {'device': 'test-tsp-retry scheduler', 'attribute': 'lastApply', 'value': 'partial'}]}]
 RUNTIME_BUDGET_SECONDS = 120
 
 # ── Stdin args ────────────────────────────────────────────────────────
@@ -256,24 +256,43 @@ def app_button(button_name, app_id=None, timeout=15):
 def _unset(v):
     return v is None or v == "[]" or v == ""
 
+def _page_with_input(target, name):
+    """Config JSON of the page that declares input `name`: the main page, or a
+    page an href on the main page links to. Returns (cfg, error)."""
+    main = fetch(f"/installedapp/configure/json/{target}")
+    if not main or "configPage" not in main:
+        return None, f"could not read app {target} config"
+    def declares(cfg):
+        return name in {i["name"] for sec in cfg["configPage"].get("sections", []) for i in sec.get("input", [])}
+    if declares(main):
+        return main, None
+    for sec in main["configPage"].get("sections", []):
+        for b in sec.get("body", []):
+            if b.get("element") == "href" and b.get("page") and not b.get("url"):
+                sub = fetch(f"/installedapp/configure/json/{target}/{b['page']}")
+                if sub and "configPage" in sub and declares(sub):
+                    return sub, None
+    return None, f"app {target} has no input '{name}' on its main page or the pages it links to"
+
 def app_settings(changes, app_id=None, timeout=15):
-    """Save settings on an installed app's main page (runs updated()). Applies
+    """Save settings on an installed app's page (runs updated()). The input may
+    live on the main page or on a page the main page links to. Applies
     `changes` one at a time, in order, so an input that only renders once an
     earlier one is set (e.g. trace under debug) can follow it. Every other
-    setting is echoed unchanged. Returns an error string, or None on success."""
+    setting on that page is echoed unchanged. Returns an error string, or None
+    on success."""
     target = app_id if app_id is not None else instance_id
     for name, want in changes.items():
-        cfg = fetch(f"/installedapp/configure/json/{target}")
-        if not cfg or "configPage" not in cfg:
-            return f"could not read app {target} config"
+        cfg, err = _page_with_input(target, name)
+        if err:
+            return err
         page, current = cfg["configPage"], cfg.get("settings") or {}
         inputs = [i for sec in page.get("sections", []) for i in sec.get("input", [])]
-        if name not in {i["name"] for i in inputs}:
-            return f"app {target} has no input '{name}' on {page.get('name')}"
+        sub_page = page.get("name", "mainPage") != "mainPage"
         fields = [("_action_update", "Done"), ("formAction", "update"), ("id", str(target)),
                   ("version", str(cfg["app"].get("version", 1))), ("appTypeId", ""),
                   ("appTypeName", ""), ("currentPage", page.get("name", "mainPage")),
-                  ("pageBreadcrumbs", "[]")]
+                  ("pageBreadcrumbs", '["mainPage"]' if sub_page else "[]")]
         for sec in page.get("sections", []):
             for b in sec.get("body", []):
                 if b.get("element") == "label":
