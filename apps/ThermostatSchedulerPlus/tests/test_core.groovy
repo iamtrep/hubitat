@@ -57,7 +57,13 @@ check('Friday night to Saturday wake', core.nextTransitionOf(normal, ctxAt('2026
 dst = [name: 'D', type: 'time', groups: [[name: 'All', days: [1,2,3,4,5,6,7], periods: [
   [name: 'Early', start: [kind: 'time', at: '02:30'], profile: 'Home']]]]]
 check('DST gap period still fires once', core.transitionsForDay(dst, '2026-03-08', ctxAt('2026-03-08', '12:00')).size(), 1)
-check('DST repeat period fires once', core.transitionsForDay(dst, '2026-11-01', ctxAt('2026-11-01', '12:00')).size(), 1)
+check('DST gap period lands at 03:30', core.transitionsForDay(dst, '2026-03-08', ctxAt('2026-03-08', '12:00'))[0].at, T('2026-03-08', '03:30'))
+check('DST gap: before it, previous day is current', core.currentTransition(dst, ctxAt('2026-03-08', '03:10')).key, '2026-03-07|All|Early')
+dst2 = [name: 'D2', type: 'time', groups: [[name: 'All', days: [1,2,3,4,5,6,7], periods: [
+  [name: 'Rep', start: [kind: 'time', at: '01:30'], profile: 'Home']]]]]
+check('DST repeat period fires once', core.transitionsForDay(dst2, '2026-11-01', ctxAt('2026-11-01', '12:00')).size(), 1)
+repAt = core.transitionsForDay(dst2, '2026-11-01', ctxAt('2026-11-01', '12:00'))[0].at as long
+check('DST repeat does not fire twice', core.nextTransitionOf(dst2, ctxAt('2026-11-01', '12:00') + [now: repAt + 3600000L]).key, '2026-11-02|All|Rep')
 check('no group for day gives none', core.transitionsForDay([name: 'X', type: 'time', groups: []], '2026-10-05', ctxAt('2026-10-05', '12:00')), [])
 
 // ── resolver ──
@@ -99,6 +105,10 @@ check('next hold ends when override starts', core.holdExpired([end: 'next', tran
 check('timed hold before end', core.holdExpired([end: 'at', until: (at9.now as long) + 1000], tgt, at9.now as long), false)
 check('timed hold after end', core.holdExpired([end: 'at', until: (at9.now as long) - 1], tgt, at9.now as long), true)
 check('indefinite hold', core.holdExpired([end: 'indefinite'], tgt, at9.now as long), false)
+pausedTgt = r(cfgBase, rt0 + [paused: true])
+check('next hold survives pause', core.holdExpired([end: 'next', transitionKey: tgt.transitionKey, overrideModeId: null], pausedTgt, at9.now as long), false)
+restrictedTgt = r(cfgBase, rt0, at9 + [restricted: true])
+check('next hold survives restriction', core.holdExpired([end: 'next', transitionKey: tgt.transitionKey, overrideModeId: null], restrictedTgt, at9.now as long), false)
 
 // ── planWrites ──
 Map th(String mode, Object heat = 20.0, Object cool = 25.0, String fan = 'auto') { [id: '1', mode: mode, heat: heat, cool: cool, fan: fan] }
@@ -139,12 +149,18 @@ check('day in two groups', core.validateConfig(cfgBase + [schedules: [[name: 'N'
 check('day in no group', core.validateConfig(cfgBase + [schedules: [[name: 'N', type: 'time', groups: [[name: 'A', days: [1], periods: []]]]], active: 'N'], env).isEmpty(), false)
 check('same time twice in a group', core.validateConfig(cfgBase + [schedules: [[name: 'N', type: 'time', groups: [[name: 'A', days: [1,2,3,4,5,6,7], periods: [
     [name: 'X', start: [kind: 'time', at: '06:00'], profile: 'Home'], [name: 'Y', start: [kind: 'time', at: '06:00'], profile: 'Home']]]]]], active: 'N'], env).isEmpty(), false)
-check('out of range setpoint', core.validateConfig(cfgBase + [profiles: [[name: 'Hot', heat: 60.0]]], env).isEmpty(), false)
-check('unknown variable', core.validateConfig(cfgBase + [profiles: [[name: 'V', heatVar: 'nope']]], env).isEmpty(), false)
+check('out of range setpoint', core.validateConfig(cfgBase + [profiles: cfgBase.profiles + [[name: 'Hot', heat: 60.0]]], env).size(), 1)
+fenv = env + [scale: 'F']
+fProfiles = [[name: 'Home', heat: 70.0, cool: 75.0], [name: 'Sleep', heat: 65.0, cool: 78.0]]
+check('F heat 31 rejected', core.validateConfig(core.defaultConfig() + [profiles: fProfiles + [[name: 'F1', heat: 31.0]]], fenv).size(), 1)
+check('F heat 32 accepted', core.validateConfig(core.defaultConfig() + [profiles: fProfiles + [[name: 'F2', heat: 32.0]]], fenv), [])
+check('F heat 104 accepted', core.validateConfig(core.defaultConfig() + [profiles: fProfiles + [[name: 'F3', heat: 104.0]]], fenv), [])
+check('unknown variable', core.validateConfig(cfgBase + [profiles: cfgBase.profiles + [[name: 'V', heatVar: 'nope']]], env).size(), 1)
 check('unknown active schedule', core.validateConfig(cfgBase + [active: 'Nope'], env).isEmpty(), false)
 check('end default next', core.parseEnd(null).end, 'next')
 check('end minutes from string', core.parseEnd('30').minutes, 30)
 check('end iso', core.parseEnd('2026-10-05T22:00:00-04:00').end, 'at')
+check('huge minutes is an error not a throw', core.parseCommand([command: 'holdProfile', profile: 'Sleep', end: '99999999999']).ok, false)
 check('end garbage', core.parseEnd('soon').error != null, true)
 check('hold profile', core.parseCommand([command: 'holdProfile', profile: 'Sleep', end: '']).args.end, 'next')
 check('hold profile needs profile', core.parseCommand([command: 'holdProfile']).ok, false)

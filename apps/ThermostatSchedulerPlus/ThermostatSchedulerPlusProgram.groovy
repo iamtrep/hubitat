@@ -157,12 +157,12 @@ Map profileValues(Map cfg, String name, Map ctx) {
 }
 
 Map resolveTarget(Map cfg, Map rt, Map ctx) {
-    if (rt.paused == true || ctx.restricted == true) return [layer: 'paused']
     Long modeId = ctx.modeId as Long
     Map sched = (cfg.schedules as List<Map>)?.find { Map s -> s.name == cfg.active }
     Map cur = sched?.type == 'time' ? currentTransition(sched, ctx) : null
     String key = sched?.type == 'mode' ? "mode|${modeId}".toString() : (cur?.key as String)
     Map ov = (cfg.overrides as List<Map>)?.find { Map o -> (o.modeId as Long) == modeId }
+    if (rt.paused == true || ctx.restricted == true) return [layer: 'paused', transitionKey: key, overrideModeId: ov?.modeId as Long]
     Map hold = rt.hold as Map
     Map base = null
     String layer = 'none'
@@ -347,7 +347,8 @@ Map parseEnd(Object raw) {
     String s = raw == null ? '' : raw.toString().trim()
     if (s == '' || s == 'next') return [end: 'next']
     if (s == 'indefinite') return [end: 'indefinite']
-    if (s ==~ /\d+/) return (s as int) > 0 ? [end: 'minutes', minutes: s as int] : [error: 'minutes must be positive']
+    if (s ==~ /\d{1,6}/) return (s as int) > 0 ? [end: 'minutes', minutes: s as int] : [error: 'minutes must be positive']
+    if (s ==~ /\d+/) return [error: 'minutes must be at most 999999']
     for (String fmt in ["yyyy-MM-dd'T'HH:mm:ssXXX", "yyyy-MM-dd'T'HH:mmXXX"]) {
         try {
             java.text.SimpleDateFormat f = new java.text.SimpleDateFormat(fmt)
