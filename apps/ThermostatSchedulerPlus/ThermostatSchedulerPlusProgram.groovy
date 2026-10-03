@@ -274,7 +274,7 @@ void verifyWrites() {
     statusDevice().updateStatus([lastApply: rt.lastApply])
 }
 
-void publish(Map cfg, Map rt, Map target, Map ctx) {
+Map statusMap(Map cfg, Map rt, Map target, Map ctx) {
     TimeZone tz = ctx.tz as TimeZone
     Map sched = (cfg.schedules as List<Map>)?.find { it.name == cfg.active }
     Map next = sched?.type == 'time' ? nextTransitionOf(sched, ctx) : null
@@ -284,11 +284,15 @@ void publish(Map cfg, Map rt, Map target, Map ctx) {
                   : (rt.manual ? 'manual' : (target.layer == 'none' ? 'schedule' : target.layer))
     Map hold = rt.hold as Map
     String holdEnd = !hold ? 'none' : (hold.end == 'at' ? iso.format(new Date(hold.until as long)) : hold.end as String)
-    statusDevice().updateStatus([
+    return [
         switch: rt.paused ? 'off' : 'on', status: status, schedule: cfg.active, profile: target.profile ?: 'none',
         heatingTarget: target.heat, coolingTarget: target.cool, holdEnd: holdEnd,
         nextTransition: next ? iso.format(new Date(next.at as long)) : 'none', nextProfile: next?.profile ?: 'none',
-        eco: rt.eco ? 'on' : 'off', ecoOffset: (cfg.eco as Map).offset, lastApply: rt.lastApply])
+        eco: rt.eco ? 'on' : 'off', ecoOffset: (cfg.eco as Map).offset, lastApply: rt.lastApply]
+}
+
+void publish(Map cfg, Map rt, Map target, Map ctx) {
+    statusDevice().updateStatus(statusMap(cfg, rt, target, ctx))
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────
@@ -398,12 +402,8 @@ Map apiCommand(Map req) {
 
 Map apiStatus() {
     Map rt = state.rt as Map
-    Map tg = (rt.lastTarget ?: [:]) as Map
-    def d = statusDevice()
-    return [id: app.id, name: app.label, status: d.currentValue("status"), schedule: (state.config as Map).active,
-            profile: tg.profile, heatingTarget: tg.heat, coolingTarget: tg.cool, holdEnd: d.currentValue("holdEnd"),
-            nextTransition: d.currentValue("nextTransition"), nextProfile: d.currentValue("nextProfile"),
-            eco: rt.eco ? 'on' : 'off', ecoOffset: coreConfig().eco.offset, lastApply: rt.lastApply]
+    Map cfg = coreConfig()
+    return [id: app.id, name: app.label] + statusMap(cfg, rt, (rt.lastTarget ?: [layer: 'none']) as Map, buildCtx(cfg))
 }
 
 Map apiDocument() {

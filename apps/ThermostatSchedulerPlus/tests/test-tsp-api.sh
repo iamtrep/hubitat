@@ -171,11 +171,8 @@ try:
     fields = ("schedule", "heatingTarget", "coolingTarget", "holdEnd", "nextTransition",
               "nextProfile", "eco", "ecoOffset", "lastApply")
     check("hold result carries the status fields", [k for k in fields if k not in b], [])
-    if b.get("holdEnd") in (None, "", "none"):
-        info("hold result holdEnd is read from the status device before its event lands (stale in the command reply)")
+    check("hold reply holdEnd is set", b.get("holdEnd") not in (None, "", "none"), True)
     time.sleep(2)
-    s, g = call("GET", f"/programs/{prog_id}")
-    check("hold holdEnd is set on a later read", g.get("status", {}).get("holdEnd") not in (None, "", "none"), True)
 
     if dev_id is not None:
         got = device_attr("status")
@@ -184,9 +181,8 @@ try:
     s, b = cmd({"command": "resume"})
     check("resume ok", s, 200)
     check("resume status is not hold", b.get("status") != "hold", True)
+    check("resume reply holdEnd is none", b.get("holdEnd"), "none")
     time.sleep(2)
-    s, g = call("GET", f"/programs/{prog_id}")
-    check("resume holdEnd is none on a later read", g.get("status", {}).get("holdEnd"), "none")
     if dev_id is not None:
         check("resume status equals status device attribute", b.get("status"), device_attr("status"))
 
