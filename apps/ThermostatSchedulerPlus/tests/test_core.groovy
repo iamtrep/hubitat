@@ -100,6 +100,23 @@ check('timed hold before end', core.holdExpired([end: 'at', until: (at9.now as l
 check('timed hold after end', core.holdExpired([end: 'at', until: (at9.now as long) - 1], tgt, at9.now as long), true)
 check('indefinite hold', core.holdExpired([end: 'indefinite'], tgt, at9.now as long), false)
 
+// ── planWrites ──
+Map th(String mode, Object heat = 20.0, Object cool = 25.0, String fan = 'auto') { [id: '1', mode: mode, heat: heat, cool: cool, fan: fan] }
+List cmds(Map t, Map th, Map o = [separation: 2.0]) { core.planWrites(t, [th], o).collect { "${it.command}=${it.value}".toString() } }
+tg = [layer: 'schedule', heat: 21.0, cool: 24.0]
+check('heat mode writes heat only', cmds(tg, th('heat')), ['setHeatingSetpoint=21.0'])
+check('cool mode writes cool only', cmds(tg, th('cool')), ['setCoolingSetpoint=24.0'])
+check('off writes nothing', cmds(tg, th('off')), [])
+check('equal value not written', cmds([layer: 'schedule', heat: 20.0], th('heat')), [])
+check('force rewrites equal value', cmds([layer: 'schedule', heat: 20.0], th('heat'), [separation: 2.0, force: true]), ['setHeatingSetpoint=20.0'])
+check('auto both, separation raises cool', cmds([layer: 'schedule', heat: 23.0, cool: 24.0], th('auto', 20.0, 24.0)), ['setHeatingSetpoint=23.0', 'setCoolingSetpoint=25.0'])
+check('auto heat only, lowered under current cool', cmds([layer: 'schedule', heat: 24.0], th('auto', 20.0, 25.0)), ['setHeatingSetpoint=23.0'])
+check('auto cool only, raised over current heat', cmds([layer: 'schedule', cool: 21.0], th('auto', 20.0, 25.0)), ['setCoolingSetpoint=22.0'])
+check('mode change then setpoint for new mode', cmds([layer: 'schedule', heat: 21.0, cool: 24.0, mode: 'cool'], th('heat')), ['setThermostatMode=cool', 'setCoolingSetpoint=24.0'])
+check('fan written when different', cmds([layer: 'schedule', fan: 'on'], th('heat')), ['setThermostatFanMode=on'])
+check('paused writes nothing', cmds([layer: 'paused'], th('heat')), [])
+check('blank values leave thermostat alone', cmds([layer: 'schedule'], th('heat')), [])
+
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)

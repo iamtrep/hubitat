@@ -203,4 +203,35 @@ boolean holdExpired(Map hold, Map target, long now) {
     return target.transitionKey != hold.transitionKey || (target.overrideModeId as Long) != (hold.overrideModeId as Long)
 }
 
+boolean differs(BigDecimal want, Object cur) {
+    BigDecimal c = numOrNull(cur)
+    return c == null || (want - c).abs() >= 0.05G
+}
+
+List<Map> planWrites(Map target, List<Map> therms, Map opts) {
+    List<Map> out = []
+    if (target == null || target.layer == 'paused' || target.layer == 'none') return out
+    boolean force = opts?.force == true
+    BigDecimal sep = numOrNull(opts?.separation) ?: 0.0G
+    for (Map t in therms) {
+        String mode = (target.mode ?: t.mode) as String
+        if (target.mode && (force || target.mode != t.mode)) out << [id: t.id, command: 'setThermostatMode', value: target.mode]
+        if (target.fan && (force || target.fan != t.fan)) out << [id: t.id, command: 'setThermostatFanMode', value: target.fan]
+        if (mode == null || mode == 'off') continue
+        BigDecimal heat = target.heat as BigDecimal
+        BigDecimal cool = target.cool as BigDecimal
+        if (mode == 'auto') {
+            BigDecimal curHeat = numOrNull(t.heat), curCool = numOrNull(t.cool)
+            if (heat != null && cool != null) { if (cool - heat < sep) cool = heat + sep }
+            else if (heat != null && curCool != null && curCool - heat < sep) heat = curCool - sep
+            else if (cool != null && curHeat != null && cool - curHeat < sep) cool = curHeat + sep
+        }
+        boolean wantHeat = mode in ['heat', 'emergency heat', 'auto']
+        boolean wantCool = mode in ['cool', 'auto']
+        if (wantHeat && heat != null && (force || differs(heat, t.heat))) out << [id: t.id, command: 'setHeatingSetpoint', value: heat]
+        if (wantCool && cool != null && (force || differs(cool, t.cool))) out << [id: t.id, command: 'setCoolingSetpoint', value: cool]
+    }
+    return out
+}
+
 // ── End core ──────────────────────────────────────────────────────────
