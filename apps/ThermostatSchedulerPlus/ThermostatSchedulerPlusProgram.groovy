@@ -40,6 +40,7 @@ preferences {
 @Field static final List<String> DAY_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 @Field static final List<String> DAY_NAME = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
+@Field static final String DAY_CELL = 'min-width:44px;justify-content:center;font-size:20px;line-height:1'
 @Field static final String TSP_CSS = """<style>
 .tsp-t{border-collapse:collapse;width:100%;font-size:15px}
 .tsp-t th{text-align:left;font-weight:500;opacity:.7;border-bottom:1px solid rgba(128,128,128,.4);padding:10px 12px;white-space:nowrap;font-size:14px}
@@ -61,10 +62,10 @@ String esc(Object s) { s == null ? '' : s.toString().replace('&', '&amp;').repla
 // Same markup the firmware's Thermostat Scheduler 2.0.3 emits for grid buttons (2.5.2.129),
 // without submitOnChange: the click reloads the page instead of re-posting the form, which
 // would overwrite the values the handler just wrote. Edit inputs submit on change instead.
-String cellButton(String name, String label, boolean raw = false) {
+String cellButton(String name, String label, boolean raw = false, String style = '') {
     return "<div class='form-group'><input type='hidden' name='${name}.type' value='button'></div>" +
            "<div><div class='app-button-link' onclick='buttonClick(this); return false;' " +
-           "style='cursor:pointer;color:#1a5fa3;min-height:44px;display:flex;align-items:center'>${raw ? label : esc(label)}</div></div>" +
+           "style='cursor:pointer;color:#1a5fa3;min-height:44px;display:flex;align-items:center;${style}'>${raw ? label : esc(label)}</div></div>" +
            "<input type='hidden' name='settings[${name}]' value=''>"
 }
 
@@ -95,8 +96,25 @@ List<String> varNamesOfType(List<String> types) {
 
 void clearEdits() { settings.keySet().findAll { it.startsWith('ed') }.each { app.removeSetting(it) } }
 
-String errorPara() {
-    return state.uiError ? "<div class='p-message p-message-error p-3 border-round'>${esc(state.uiError)}</div>" : ''
+// Edit errors belong to the page whose button raised them; they show there once and are
+// gone on the next button press or render.
+String errorPara(String page) {
+    Object raw = state.uiError
+    if (raw != null && !(raw instanceof Map)) { state.remove('uiError'); return '' }
+    Map e = raw as Map
+    if (!e || e.page != page) return ''
+    if (e.shown) { state.remove('uiError'); return '' }
+    e.shown = true
+    state.uiError = e
+    return "<div class='p-message p-message-error p-3 border-round'>${esc(e.text)}</div>"
+}
+
+void uiErr(String text) { state.uiError = [page: state.uiPage ?: 'mainPage', text: text, shown: false] }
+
+String pageForButton(String btn) {
+    if (btn ==~ /epf~\d+/ || btn.startsWith('btnProfile')) return 'profilesPage'
+    if (btn ==~ /eov~\d+/ || btn.startsWith('btnOverride')) return 'optionsPage'
+    return 'schedulesPage'
 }
 
 // "Name · 21.0" for a profile reference, or the custom values.
@@ -141,7 +159,7 @@ void renameHeldProfile(String from, String to) {
 
 boolean saveConfig(Map doc, Map renamed = null) {
     List<String> errs = validateConfig(doc, validationEnv())
-    if (errs) { state.uiError = errs.join('; '); logWarn "not saved: ${state.uiError}"; return false }
+    if (errs) { uiErr(errs.join('; ')); logWarn "not saved: ${errs.join('; ')}"; return false }
     state.remove('uiError')
     state.config = doc
     if (renamed) renameHeldProfile(renamed.from as String, renamed.to as String)
@@ -290,6 +308,8 @@ Map profilesPage() {
         List<Map> profiles = cfg.profiles as List<Map>
         section {
             paragraph TSP_CSS + "<p class='tsp-note'>Schedules, mode overrides and holds use these by name. A blank value leaves the thermostat as it is.</p>"
+            String err = errorPara('profilesPage')
+            if (err) paragraph err
             StringBuilder t = new StringBuilder("<div class='tsp-tw'><table class='tsp-t'><thead><tr><th>Profile</th><th>Heat</th><th>Cool</th><th>Fan</th><th>Mode</th><th>Used in</th></tr></thead><tbody>")
             profiles.eachWithIndex { Map p, int i ->
                 String u = usage(p.name as String, cfg)
@@ -307,7 +327,6 @@ Map profilesPage() {
         if (ui.profile != null && (ui.profile as int) < profiles.size()) {
             Map p = profiles[ui.profile as int]
             section("Edit profile: ${esc(p.name)}", sectionClass: "tsp-edit") {
-                if (state.uiError) paragraph errorPara()
                 input "edName", "text", title: "Name", width: 3, submitOnChange: true, required: false
                 if (edUseVars) {
                     List<String> nv = varNamesOfType(['bigdecimal', 'integer'])
@@ -348,7 +367,8 @@ Map schedulesPage() {
         Map s = scheds[si]
         section {
             paragraph TSP_CSS
-            if (state.uiError && ui.group == null && ui.row == null) paragraph errorPara()
+            String err = errorPara('schedulesPage')
+            if (err) paragraph err
             scheds.eachWithIndex { Map x, int i ->
                 input "esc~${i}", "button", title: esc(x.name == cfg.active ? "${x.name} · active" : x.name), width: 2, inputClass: i == si ? PRI : SEC
             }
@@ -380,15 +400,14 @@ void timeScheduleSections(Map cfg, Map s, int si, Map ui) {
             t << "<tr><td class='tsp-l'>${cellButton("egn~${gi}", g.name as String)}</td>"
             (1..7).each { int d ->
                 boolean on = (g.days as List).collect { it as int }.contains(d)
-                t << "<td>${cellButton("edg~${gi}~${d}", on ? '&#9745;' : '&#9744;', true)}</td>"
+                t << "<td>${cellButton("edg~${gi}~${d}", on ? '&#9745;' : '&#9744;', true, DAY_CELL)}</td>"
             }
             t << "</tr>"
         }
         t << "<tr><td class='tsp-l tsp-dim'>New group</td>"
-        (1..7).each { int d -> t << "<td>${cellButton("edg~new~${d}", '+')}</td>" }
+        (1..7).each { int d -> t << "<td>${cellButton("edg~new~${d}", '+', false, DAY_CELL)}</td>" }
         paragraph t.append("</tbody></table></div><p class='tsp-note'>Each day is in one group. Taking a day out of its group starts a new group with a copy of its periods.</p>").toString()
         if (ui.groupName != null && ui.schedule == si) {
-            if (state.uiError) paragraph errorPara()
             input "edGroupName", "text", title: "Group name", width: 3, submitOnChange: true, required: false
             input "btnGroupSave", "button", title: "Save", width: 2, inputClass: PRI
             input "btnGroupCancel", "button", title: "Cancel", width: 2, inputClass: SEC
@@ -415,7 +434,6 @@ void timeScheduleSections(Map cfg, Map s, int si, Map ui) {
         boolean isNew = (ui.period as int) < 0
         String pname = isNew ? 'new period' : (g.periods as List<Map>)[ui.period as int]?.name
         section("Edit period: ${esc(g.name)} · ${esc(pname)}", sectionClass: "tsp-edit") {
-            if (state.uiError) paragraph errorPara()
             input "edName", "text", title: "Period name", width: 3, submitOnChange: true, required: false
             input "edKind", "enum", title: "Starts at", options: KIND_OPTS, defaultValue: "time", width: 3, submitOnChange: true
             String kind = settings.edKind ?: 'time'
@@ -471,7 +489,6 @@ void modeScheduleSections(Map cfg, Map s, int si, Map ui) {
         boolean isNew = (ui.row as int) < 0
         String title = isNew ? 'new row' : (rows[ui.row as int]?.modes as List)?.collect { modeName(it) }?.join(', ')
         section("Edit row: ${esc(title)}", sectionClass: "tsp-edit") {
-            if (state.uiError) paragraph errorPara()
             input "edModes", "mode", title: "Modes", multiple: true, width: 4, submitOnChange: true, required: false
             Map popts = (cfg.profiles as List<Map>).collectEntries { [(it.name): it.name] } + [custom: "Custom values for this row"]
             input "edProfile", "enum", title: "Profile", options: popts, width: 4, submitOnChange: true, required: false
@@ -498,10 +515,11 @@ Map optionsPage() {
             }
             if (!ovs) t << "<tr><td colspan='2' class='tsp-dim'>No overrides</td></tr>"
             paragraph t.append("</tbody></table></div>").toString()
+            String err = errorPara('optionsPage')
+            if (err) paragraph err
             input "btnOverrideAdd", "button", title: "Add override", width: 3, inputClass: SEC
             paragraph "<p class='tsp-note'>Overrides apply on top of any schedule. A hold set to end at the next transition also ends when an override starts or ends.</p>"
             if (ui.override != null) {
-                if (state.uiError) paragraph errorPara()
                 input "edOvMode", "mode", title: "While the hub mode is", width: 4, submitOnChange: true, required: false
                 input "edProfile", "enum", title: "Use profile", options: (cfg.profiles as List<Map>)*.name, width: 4, submitOnChange: true, required: false
                 input "btnOverrideSave", "button", title: "Save", width: 2, inputClass: PRI
@@ -622,7 +640,7 @@ boolean uiButton(String btn) {
         if (ui.profile == null) return true
         String n = (uiCfg().profiles as List<Map>)[ui.profile as int].name
         String u = usage(n)
-        if (u) { state.uiError = "${n} is used by ${u}".toString(); logWarn state.uiError; return true }
+        if (u) { uiErr("${n} is used by ${u}".toString()); logWarn "${n} is used by ${u}"; return true }
         Map c = cfgCopy(); (c.profiles as List).remove(ui.profile as int)
         if (saveConfig(c)) state.ui = [:]
         return true
@@ -692,8 +710,8 @@ boolean scheduleButton(String btn, Map ui) {
         if (ui.groupName == null) return true
         Map c = cfgCopy(); Map g = ((c.schedules as List<Map>)[si].groups as List<Map>)[ui.groupName as int]
         String nn = (settings.edGroupName ?: '').toString().trim()
-        if (!nn) { state.uiError = "A group needs a name"; return true }
-        if (((c.schedules as List<Map>)[si].groups as List<Map>).any { it != g && it.name == nn }) { state.uiError = "Group name used twice: ${nn}".toString(); return true }
+        if (!nn) { uiErr("A group needs a name"); return true }
+        if (((c.schedules as List<Map>)[si].groups as List<Map>).any { it != g && it.name == nn }) { uiErr("Group name used twice: ${nn}"); return true }
         g.name = nn
         if (saveConfig(c)) state.ui = [schedule: si]
         return true
@@ -708,7 +726,7 @@ boolean scheduleButton(String btn, Map ui) {
         Map np = [name: (settings.edName ?: 'Period') as String, start: start, profile: custom ? null : settings.edProfile, custom: custom]
         List<Map> periods = g.periods as List<Map>
         if ((ui.period as int) < 0) periods << np else periods[ui.period as int] = np
-        if (periods.count { it.name == np.name } > 1) { state.uiError = "Period name used twice: ${np.name}".toString(); return true }
+        if (periods.count { it.name == np.name } > 1) { uiErr("Period name used twice: ${np.name}"); return true }
         if (saveConfig(c)) state.ui = [schedule: si]
         return true
     }
@@ -723,7 +741,7 @@ boolean scheduleButton(String btn, Map ui) {
         Map c = cfgCopy(); Map s = (c.schedules as List<Map>)[si]
         Map custom = customFromEdits()
         Map nr = [modes: (settings.edModes ?: []).collect { it as Long }, profile: custom ? null : settings.edProfile, custom: custom]
-        if (!nr.modes) { state.uiError = "Choose at least one mode"; return true }
+        if (!nr.modes) { uiErr("Choose at least one mode"); return true }
         List<Map> rows = (s.rows ?: []) as List<Map>
         if ((ui.row as int) < 0) rows << nr else rows[ui.row as int] = nr
         s.rows = rows
@@ -766,7 +784,7 @@ boolean scheduleButton(String btn, Map ui) {
     }
     if (btn == "btnScheduleDelete") {
         String n = (cfg.schedules as List<Map>)[si].name
-        if (n == cfg.active) { state.uiError = "${n} is the active schedule".toString(); logWarn state.uiError; return true }
+        if (n == cfg.active) { uiErr("${n} is the active schedule".toString()); logWarn "${n} is the active schedule"; return true }
         Map c = cfgCopy(); (c.schedules as List).remove(si)
         if (saveConfig(c)) state.ui = [:]
         return true
@@ -817,12 +835,12 @@ boolean overrideButton(String btn, Map ui) {
     }
     if (btn == "btnOverrideSave") {
         if (ui.override == null) return true
-        if (!settings.edOvMode || !settings.edProfile) { state.uiError = "Choose a mode and a profile"; return true }
+        if (!settings.edOvMode || !settings.edProfile) { uiErr("Choose a mode and a profile"); return true }
         Map c = cfgCopy(); List<Map> ovs = c.overrides as List<Map>
         Map no = [modeId: settings.edOvMode as Long, profile: settings.edProfile]
         int i = ui.override as int
         if (ovs.findIndexOf { (it.modeId as Long) == (no.modeId as Long) } >= 0 && ovs.findIndexOf { (it.modeId as Long) == (no.modeId as Long) } != i) {
-            state.uiError = "${modeName(no.modeId)} already has an override".toString(); return true
+            uiErr("${modeName(no.modeId)} already has an override"); return true
         }
         if (i < 0) ovs << no else ovs[i] = no
         if (saveConfig(c)) state.ui = [:]
@@ -1119,6 +1137,8 @@ void thermostatEvent(evt) {
 void appButtonHandler(String btn) {
     checkVersion()
     if (!state.config) state.config = defaultConfig()
+    state.remove('uiError')
+    state.uiPage = pageForButton(btn)
     if (btn == "btnEvaluate") evaluate("button", false)
     else if (btn == "btnApply") evaluate("apply now", true)
     else if (btn == "btnStart") startHandler()
