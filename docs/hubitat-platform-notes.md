@@ -136,7 +136,11 @@ These methods are firmware 2.5.0.143+. Code shipped to older hubs will throw `Mi
 
 - A `mappings` handler must return the result of `render(...)`: `def handler() { return render(status: 200, contentType: "application/json", data: json) }`. A `void` handler, or one that does not return the `render` result, answers an empty 200.
 - `request.JSON` is blocked in the sandbox; parse POST bodies with `parseJson(request.body)`. A malformed JSON body sent with `Content-Type: application/json` is answered by the platform with an empty 200 before app code runs, with no app log line, so the app cannot return its own 400 for it *(observed 2.5.2.129)*.
-- A parent app can create its own child app instances with `addChildApp(namespace, name, label)`, which returns the new child. Test tooling can reach this through a mapping that answers only while the parent's debug logging is on. The new child is unconfigured until its settings are saved with Done, and until then its scheduled jobs do not run (see Platform behavior) *(observed 2.5.2.129)*.
+- A parent app can create its own child app instances with `addChildApp(namespace, name, label)`, which returns the new child. Test tooling can reach this through a mapping that answers only while the parent's debug logging is on.
+- `addChildApp` runs the child's `installed()` before it returns: right after the call the child reports `installed: true` and `getInstallationState() == "COMPLETE"`, its `initialize()` has created its component devices, subscriptions and scheduled jobs, and it is listed in `/hub2/appsList`. Anything the parent then writes into the child (settings, state) is live at once, so it must already be safe to act on; it is not held until someone presses Done. Whether a job scheduled at that point runs before the child's page is first saved has not been checked *(observed 2.5.2.129)*.
+- An exception thrown in a child method that the parent calls (`child.someMethod(...)`) does not propagate: the parent gets `null`. Check the returned value, not only an error flag inside it.
+- `deleteChildApp(id)` also deletes the child's component devices.
+- Calls from a parent into a `singleThreaded` child are serialized with each other: two simultaneous HTTP requests to the parent (which is not `singleThreaded`), each calling the same child method, never overlapped in ten rounds. Whether they are serialized with the child's own scheduled and event handlers has not been measured *(observed 2.5.2.129)*.
 
 ## HTTP subsystem
 
