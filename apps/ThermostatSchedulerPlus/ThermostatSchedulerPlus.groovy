@@ -232,7 +232,8 @@ Map importScheduler(Long from, String label) {
     String name = importLabel(label?.trim() ?: ((raw.settings as Map).origLabel as String ?: b.name as String), from)
     def child = addChildApp("iamtrep", CHILD_NAME, name)
     Map r = child.importBuiltin(raw) as Map
-    if (!r?.ok) { deleteChildApp(child.id); return [httpStatus: 400, error: "import failed", errors: r?.errors] }
+    // A program that throws hands back null; the half-made program is removed either way.
+    if (!r?.ok) { deleteChildApp(child.id); return [httpStatus: 400, error: "import failed", errors: r?.errors ?: ["the program raised an error; see the logs"]] }
     logCfg "imported ${b.name} as ${name}"
     return [httpStatus: 201, id: child.id, name: name, warnings: r.warnings]
 }

@@ -280,6 +280,25 @@ try:
     check("put removing the held profile ends the hold", b.get("status", {}).get("holdEnd"), "none")
     check("original eco offset is back", float(b.get("config", {}).get("eco", {}).get("offset", 0)), float(original["eco"]["offset"]))
 
+    # Two PUTs sent at once with the same revision: one must win, the other must get 409.
+    import threading
+    races = []
+    for rnd in range(10):
+        s, doc = call("GET", f"/programs/{prog_id}")
+        bodies = []
+        for k in (1, 2):
+            c = json.loads(json.dumps(doc["config"])); c["profiles"].append({"name": f"Race{k}", "heat": 17.0})
+            bodies.append({"revision": doc["revision"], "config": c})
+        codes = [None, None]
+        def put(i): codes[i] = call("PUT", f"/programs/{prog_id}", bodies[i])[0]
+        ts = [threading.Thread(target=put, args=(i,)) for i in (0, 1)]
+        for th in ts: th.start()
+        for th in ts: th.join()
+        races.append(sorted(codes))
+        s, doc = call("GET", f"/programs/{prog_id}")
+        call("PUT", f"/programs/{prog_id}", {"revision": doc["revision"], "config": original})
+    check("concurrent PUTs with one revision: one 200, one 409", races, [[200, 409]] * 10)
+
     # ── Create route (debug only) ─────────────────────────────────────
     section("Create route")
     if str((fetch(f"/installedapp/configure/json/{parent_id}").get("settings") or {}).get("debugEnable")).lower() == "true":
