@@ -1,0 +1,62 @@
+# Copyright (c) 2026 PJ
+# SPDX-License-Identifier: MIT
+# Thermostat Scheduler+ program — write-check behavior spec.
+# The program checks each write once, 30 s later, and reports what did not take;
+# it never resends (Hubitat's Command Retry owns that). The "failed" outcome
+# is covered by applyOutcome in tests/test_core.groovy.
+app:
+  source: apps/ThermostatSchedulerPlus/ThermostatSchedulerPlusProgram.groovy
+  type_name: "Thermostat Scheduler+ Program"
+  instance_label: test-tsp-retry
+  parent:
+    source: apps/ThermostatSchedulerPlus/ThermostatSchedulerPlus.groovy
+    type_name: "Thermostat Scheduler+"
+    create_mapping: true
+  config:
+    debugEnable: true
+    verifyWrites: true
+inputs:
+  - { name: test-tsp-stubborn, driver: Stubborn Thermostat, role: thermostats }
+  - { name: test-tsp-normal, driver: Virtual Thermostat, role: thermostats }
+outputs:
+  - { name: test-tsp-retry scheduler, child: true }
+maker_api:
+  label: test-tsp-maker
+cases:
+  - name: all-confirmed
+    setup:
+      - { device: test-tsp-retry scheduler, command: resume }
+      - { device: test-tsp-retry scheduler, command: setEco, args: ["off"] }
+      - { device: test-tsp-stubborn, command: setIgnore, args: [0] }
+      - { device: test-tsp-stubborn, command: heat }
+      - { device: test-tsp-normal, command: heat }
+      - { mode: Day }
+      - settings:
+          testConfigJson: '{"v":1,"profiles":[{"name":"Home","heat":21.0,"cool":24.0},{"name":"Out","heat":19.0,"cool":27.0},{"name":"Sleep","heat":18.0,"cool":26.0},{"name":"Away","heat":16.0,"cool":29.0}],"schedules":[{"name":"Normal","type":"time","groups":[{"name":"All","days":[1,2,3,4,5,6,7],"periods":[{"name":"Wake","start":{"kind":"time","at":"06:30"},"profile":"Home"},{"name":"Leave","start":{"kind":"time","at":"08:15"},"profile":"Out"},{"name":"Night","start":{"kind":"time","at":"22:00"},"profile":"Sleep"}]}]},{"name":"Vacation","type":"time","groups":[{"name":"All","days":[1,2,3,4,5,6,7],"periods":[{"name":"Day","start":{"kind":"time","at":"00:00"},"profile":"Away"}]}]}],"active":"Normal","overrides":[{"modeId":4,"profile":"Away"}]}'
+      - { button: btnLoadConfig }
+      # Saving testClock runs updated() -> evaluate(), which writes the 09:00 target.
+      - settings: { testClock: "2026-10-05 09:00" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 33
+    assert:
+      - { device: test-tsp-stubborn, attribute: heatingSetpoint, value: 19.0, tolerance: 0.05 }
+      - { device: test-tsp-normal, attribute: heatingSetpoint, value: 19.0, tolerance: 0.05 }
+      - { device: test-tsp-retry scheduler, attribute: lastApply, value: ok }
+
+  # The check also logs "1 write(s) not confirmed after 30 s: ..."; it fires ~30 s
+  # after the action, past what the log capture reliably holds, so it is not asserted.
+  - name: ignored-write-is-reported-not-resent
+    allow_warnings: true
+    setup:
+      - { device: test-tsp-stubborn, command: setIgnore, args: [1] }
+    actions:
+      - settings: { testClock: "2026-10-05 22:00" }
+      - { button: btnEvaluate }
+    wait_seconds: 33
+    assert:
+      - { device: test-tsp-stubborn, attribute: heatingSetpoint, value: 19.0, tolerance: 0.05 }
+      - { device: test-tsp-stubborn, attribute: ignored, value: 1, tolerance: 0.1 }
+      - { device: test-tsp-normal, attribute: heatingSetpoint, value: 18.0, tolerance: 0.05 }
+      - { device: test-tsp-retry scheduler, attribute: lastApply, value: partial }
+runtime_budget_seconds: 120
