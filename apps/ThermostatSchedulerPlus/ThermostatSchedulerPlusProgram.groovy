@@ -115,8 +115,8 @@ def statusDevice() {
 
 Map coreConfig() {
     Map c = (state.config as Map) + [
-        eco: [offset: settings.ecoOffset ?: 2.0, onOverrides: settings.ecoOnOverrides != false],
-        options: [separation: settings.separation ?: 2.0, verify: settings.verifyWrites != false, applyOnStart: settings.applyOnStart != false,
+        eco: [offset: settings.ecoOffset != null ? settings.ecoOffset : 2.0, onOverrides: settings.ecoOnOverrides != false],
+        options: [separation: settings.separation != null ? settings.separation : 2.0, verify: settings.verifyWrites != false, applyOnStart: settings.applyOnStart != false,
                   whilePaused: settings.whilePaused ?: 'leave', onResume: settings.onResume ?: 'restore'],
         restrictions: [days: (settings.restrictDays ?: []).collect { it as int }, modeIds: (settings.restrictModes ?: []).collect { it as Long }]]
     return c
@@ -179,6 +179,7 @@ void evaluate(String why, boolean force, String onlyId = null) {
         target = resolveTarget(cfg, rt, ctx)
     }
     Map modeOverride = [:]
+    List<String> noModeIds = []
     if (target.layer == 'paused' && !rt.pausedApplied) {
         rt.pausedApplied = true
         if ((cfg.options as Map).whilePaused == 'off') {
@@ -197,15 +198,21 @@ void evaluate(String why, boolean force, String onlyId = null) {
                 if (d) { d.setThermostatMode(m); remember(rt, id, 'thermostatMode', m); modeOverride[id] = m }
             }
             logCmd "resumed: modes restored"
-        } else logCfg "resumed: thermostats left off"
+        } else {
+            noModeIds = thermostats.findAll { it.currentValue("thermostatMode") == 'off' }.collect { it.id as String }
+            logCfg "resumed: thermostats left off"
+        }
         rt.recordedModes = [:]
         force = true
     }
     boolean changed = !sameTarget(target, rt.lastTarget as Map)
     if (changed) rt.manual = []
     if (target.layer != 'paused' && (changed || force || onlyId)) {
-        List<Map> states = thermostatStates(modeOverride).findAll { onlyId == null || it.id == onlyId }
-        sendWrites(planWrites(target, states, [separation: (cfg.options as Map).separation, force: force]), rt, cfg)
+        List<Map> states = thermostatStates(modeOverride).findAll { changed || force || onlyId == null || it.id == onlyId }
+        if (onlyId && !changed && !force) noModeIds << onlyId
+        List<Map> writes = planWrites(target, states, [separation: (cfg.options as Map).separation, force: force, noModeIds: noModeIds])
+        rt.manual = (rt.manual as List) - writes*.id.unique()
+        sendWrites(writes, rt, cfg)
     }
     rt.lastTarget = target
     state.rt = rt
@@ -244,13 +251,17 @@ void verifyWrites() {
     Map v = rt.verify as Map
     if (!v) return
     List<Map> missing = (v.writes as List<Map>).findAll { Map w ->
+        if ((rt.manual as List)?.contains(w.id)) return false
         def d = thermostats.find { (it.id as String) == w.id }
         Object cur = d?.currentValue(ATTR_FOR[w.command] as String)
         w.value instanceof Number || numOrNull(w.value) != null ? differs(numOrNull(w.value), cur) : cur?.toString() != w.value?.toString()
     }
     if (!missing) { rt.lastApply = 'ok'; rt.verify = null }
     else if ((v.attempt as int) < 2) {
-        missing.each { Map w -> thermostats.find { (it.id as String) == w.id }?."${w.command}"(w.value) }
+        missing.each { Map w ->
+            thermostats.find { (it.id as String) == w.id }?."${w.command}"(w.value)
+            remember(rt, w.id as String, ATTR_FOR[w.command] as String, w.value)
+        }
         rt.verify = [writes: missing, attempt: (v.attempt as int) + 1]
         logWarn "${missing.size()} write(s) not confirmed, retry ${(v.attempt as int) + 1}"
         runIn(15, "verifyWrites")
@@ -584,9 +595,11 @@ List<Map> planWrites(Map target, List<Map> therms, Map opts) {
     if (target == null || target.layer == 'paused' || target.layer == 'none') return out
     boolean force = opts?.force == true
     BigDecimal sep = numOrNull(opts?.separation) ?: 0.0G
+    List noMode = ((opts?.noModeIds ?: []) as List).collect { it.toString() }
     for (Map t in therms) {
-        String mode = (target.mode ?: t.mode) as String
-        if (target.mode && (force || target.mode != t.mode)) out << [id: t.id, command: 'setThermostatMode', value: target.mode]
+        String want = noMode.contains(t.id?.toString()) ? null : target.mode as String
+        String mode = (want ?: t.mode) as String
+        if (want && (force || want != t.mode)) out << [id: t.id, command: 'setThermostatMode', value: want]
         if (target.fan && (force || target.fan != t.fan)) out << [id: t.id, command: 'setThermostatFanMode', value: target.fan]
         if (mode == null || mode == 'off') continue
         BigDecimal heat = target.heat as BigDecimal

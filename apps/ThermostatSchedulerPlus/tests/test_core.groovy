@@ -126,6 +126,10 @@ check('mode change then setpoint for new mode', cmds([layer: 'schedule', heat: 2
 check('fan written when different', cmds([layer: 'schedule', fan: 'on'], th('heat')), ['setThermostatFanMode=on'])
 check('paused writes nothing', cmds([layer: 'paused'], th('heat')), [])
 check('blank values leave thermostat alone', cmds([layer: 'schedule'], th('heat')), [])
+pair = [th('off') + [id: '1'], th('off') + [id: '2']]
+nm = core.planWrites([layer: 'schedule', heat: 21.0, mode: 'heat'], pair, [separation: 2.0, noModeIds: ['1']])
+check('noModeIds: listed off thermostat gets no writes', nm.findAll { it.id == '1' }, [])
+check('noModeIds: unlisted thermostat gets mode then setpoint', nm.findAll { it.id == '2' }.collect { "${it.command}=${it.value}".toString() }, ['setThermostatMode=heat', 'setHeatingSetpoint=21.0'])
 
 // ── restrictions and wake ──
 check('no restrictions', core.restrictedNow(null, at9), false)
