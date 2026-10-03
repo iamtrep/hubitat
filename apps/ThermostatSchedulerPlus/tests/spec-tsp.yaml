@@ -171,6 +171,7 @@ cases:
     wait_seconds: 3
     assert:
       - { device: test-tsp scheduler, attribute: status, value: mode }
+      - { device: test-tsp scheduler, attribute: holdEnd, value: none }
       - { device: test-tsp-th1, attribute: heatingSetpoint, value: 16.0, tolerance: 0.05 }
 
   - name: eco-on-override-and-off-again
@@ -187,6 +188,24 @@ cases:
     assert:
       - { device: test-tsp-th1, attribute: heatingSetpoint, value: 16.0, tolerance: 0.05 }
       - { device: test-tsp scheduler, attribute: status, value: mode }
+
+  - name: hold-during-override
+    actions:
+      - { device: test-tsp scheduler, command: holdProfile, args: [Home, next] }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp scheduler, attribute: status, value: hold }
+      - { device: test-tsp scheduler, attribute: holdEnd, value: next }
+      - { device: test-tsp-th1, attribute: heatingSetpoint, value: 21.0, tolerance: 0.05 }
+
+  - name: override-end-ends-next-hold
+    actions:
+      - { mode: Day }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp scheduler, attribute: status, value: schedule }
+      - { device: test-tsp scheduler, attribute: holdEnd, value: none }
+      - { device: test-tsp-th1, attribute: heatingSetpoint, value: 19.0, tolerance: 0.05 }
 
   - name: eco-offset-change-does-not-stack
     setup:
@@ -211,6 +230,9 @@ cases:
       - { device: test-tsp-th1, attribute: heatingSetpoint, value: 23.0, tolerance: 0.05 }
 
   - name: manual-survives-other-events
+    setup:
+      # Start th2's cooling setpoint away from 27 so the assertion proves the mode-change write.
+      - { device: test-tsp-th2, command: setCoolingSetpoint, args: [30] }
     actions:
       - { device: test-tsp-th2, command: cool }
       - { button: btnEvaluate }
@@ -229,11 +251,18 @@ cases:
       - { device: test-tsp-th1, attribute: heatingSetpoint, value: 18.0, tolerance: 0.05 }
       - { device: test-tsp scheduler, attribute: status, value: schedule }
 
-  - name: mode-off-writes-nothing-then-heat-gets-setpoint
+  - name: mode-off-writes-nothing
     setup:
       - { device: test-tsp-th2, command: "off" }
       - { device: test-tsp-th2, command: setHeatingSetpoint, args: [10] }
+    actions:
       - { device: test-tsp scheduler, command: applyNow }
+    wait_seconds: 3
+    assert:
+      - { device: test-tsp-th2, attribute: thermostatMode, value: "off" }
+      - { device: test-tsp-th2, attribute: heatingSetpoint, value: 10.0, tolerance: 0.05 }
+
+  - name: off-thermostat-heat-gets-setpoint
     actions:
       - { device: test-tsp-th2, command: heat }
     wait_seconds: 3
@@ -282,6 +311,7 @@ cases:
     assert:
       - { device: test-tsp scheduler, attribute: switch, value: "off" }
       - { device: test-tsp scheduler, attribute: status, value: paused }
+      - { device: test-tsp-th1, attribute: thermostatMode, value: "off" }
 
   - name: status-switch-resumes
     actions:
