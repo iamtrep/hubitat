@@ -188,6 +188,13 @@ Map mainPage() {
             paragraph TSP_CSS
             input "thermostats", "capability.thermostat", title: "Select Thermostats", multiple: true, required: true, submitOnChange: true
         }
+        Map rep = state.importReport as Map
+        if (rep) section("Imported") {
+            StringBuilder h = new StringBuilder("<p>Imported from <b>${esc(rep.from)}</b>, which is left as it is. This program is paused: check it, press Done, disable the built-in scheduler, then turn this program on.</p>")
+            if (rep.warnings) h << "<ul>" << (rep.warnings as List).collect { "<li>${esc(it)}</li>" }.join('') << "</ul>"
+            paragraph h.toString()
+            input "btnImportDismiss", "button", title: "Dismiss", width: 2, inputClass: SEC
+        }
         if (installed && thermostats) {
             Map cfg = coreConfig()
             Map rt = state.rt as Map
@@ -1207,6 +1214,7 @@ void appButtonHandler(String btn) {
     else if (btn == "btnApply") evaluate("apply now", true)
     else if (btn == "btnStart") startHandler()
     else if (btn == "btnLoadConfig") loadConfigJson()
+    else if (btn == "btnImportDismiss") state.remove('importReport')
     else if (btn in ["btnAdvance", "btnEco", "btnPause", "btnResume", "btnHold"]) controlButton(btn)
     else uiButton(btn)
 }
@@ -1321,6 +1329,30 @@ Map apiCommand(Map req) {
     evaluate(p.name as String, force)
     return [ok: true] + apiStatus()
 }
+
+// Builds this program from a built-in scheduler read by the parent. The program starts paused with the
+// pause already applied, so saving it with Done writes nothing while the built-in still runs.
+Map importBuiltin(Map raw) {
+    checkVersion(false)
+    Map conv = convertBuiltin((raw.settings ?: [:]) as Map, (raw.appState ?: [:]) as Map,
+                              location.modes.collect { [id: it.id as Long, name: it.name as String] })
+    Map env = validationEnv()
+    List<String> errs = (conv.errors as List<String>) + validateConfig(conv.doc as Map, env) + validateOptions(conv.options as Map, env)
+    if (errs) { logWarn "import of ${raw.fromLabel} rejected: ${errs.join('; ')}"; return [ok: false, errors: errs] }
+    app.updateSetting("thermostats", [type: "capability.thermostat", value: conv.thermostats])
+    if (conv.pauseSwitch) {
+        app.updateSetting("pauseSwitch", [type: "capability.switch", value: conv.pauseSwitch])
+        app.updateSetting("pauseWhenSwitch", [type: "enum", value: conv.pauseWhen])
+    }
+    state.rt = newRt() + [paused: true, pausedApplied: true, eco: conv.eco]
+    replaceConfig(conv.doc as Map, conv.options as Map, false)
+    state.importedFrom = raw.fromId
+    state.importReport = [from: raw.fromLabel, warnings: conv.warnings]
+    logCfg "imported from ${raw.fromLabel}"
+    return [ok: true, warnings: conv.warnings]
+}
+
+Long importedFrom() { return state.importedFrom as Long }
 
 Map apiStatus() {
     Map rt = (state.rt ?: [:]) as Map
