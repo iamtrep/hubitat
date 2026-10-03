@@ -1719,6 +1719,78 @@ String applyOutcome(List<Map> batch, List<String> confirmedIds) {
     return ok == ids.size() ? 'ok' : (ok == 0 ? 'failed' : 'partial')
 }
 
+// ── Configuration PUT ──
+
+Map parseJsonLike(Map m) { return new groovy.json.JsonSlurper().parseText(groovy.json.JsonOutput.toJson(m)) as Map }
+
+// Any change to the document or to an option setting changes the revision. Hashed after a JSON
+// round trip, so a map read back from state and the map it was saved from agree.
+int revisionOf(Map cfg) { return groovy.json.JsonOutput.toJson(parseJsonLike(cfg)).hashCode() }
+
+List<String> putShapeErrors(Map c) {
+    List<String> e = []
+    if (!(c.profiles instanceof List)) e << 'config.profiles must be a list'
+    if (!(c.schedules instanceof List)) e << 'config.schedules must be a list'
+    if (!(c.active instanceof String)) e << 'config.active must be text'
+    if (c.overrides != null && !(c.overrides instanceof List)) e << 'config.overrides must be a list'
+    return e
+}
+
+Map putDocument(Map c) {
+    return [v: c.v ?: 1, profiles: c.profiles, schedules: c.schedules, active: c.active, overrides: c.overrides ?: []]
+}
+
+boolean validStart(Object s) {
+    if (s == null) return true
+    if (!(s instanceof Map)) return false
+    Map m = (Map) s
+    if (m.kind == 'time') return (m.at as String) ==~ /([01]\d|2[0-3]):[0-5]\d/
+    if (m.kind in ['sunrise', 'sunset']) return m.offset == null || (m.offset.toString() ==~ /-?\d+/)
+    return false
+}
+
+List<String> validateOptions(Map c, Map env) {
+    List<String> e = []
+    Map eco = c.eco as Map, o = c.options as Map, r = c.restrictions as Map
+    if (eco?.containsKey('offset')) {
+        BigDecimal n = numOrNull(eco.offset)
+        if (n == null || n < -10 || n > 10) e << 'eco.offset must be a number from -10 to 10'
+    }
+    if (o?.containsKey('separation')) {
+        BigDecimal n = numOrNull(o.separation)
+        if (n == null || n < 0 || n > 10) e << 'options.separation must be a number from 0 to 10'
+    }
+    if (o?.containsKey('whilePaused') && !(o.whilePaused in ['leave', 'off'])) e << 'options.whilePaused must be leave or off'
+    if (o?.containsKey('onResume') && !(o.onResume in ['restore', 'leaveOff'])) e << 'options.onResume must be restore or leaveOff'
+    if (r?.days != null && !(r.days instanceof List && (r.days as List).every { it.toString() ==~ /[1-7]/ })) e << 'restrictions.days must hold days 1 to 7'
+    (r?.modeIds as List)?.each { Object m ->
+        if (!(env.modeIds as List).collect { it as Long }.contains(m as Long)) e << "restrictions.modeIds: unknown mode ${m}".toString()
+    }
+    ['from', 'to'].each { String k -> if (r?.containsKey(k) && !validStart(r.get(k))) e << "restrictions.${k} is not a valid start".toString() }
+    return e
+}
+
+// Settings writes for the option groups present; a null value removes the setting.
+List<Map> optionSettings(Map c) {
+    List<Map> w = []
+    Map eco = c.eco as Map, o = c.options as Map, r = c.restrictions as Map
+    if (eco?.containsKey('offset')) w << [name: 'ecoOffset', type: 'decimal', value: eco.offset]
+    if (eco?.containsKey('onOverrides')) w << [name: 'ecoOnOverrides', type: 'bool', value: eco.onOverrides == true]
+    Map optMap = [separation: ['separation', 'decimal'], verify: ['verifyWrites', 'bool'], applyOnStart: ['applyOnStart', 'bool'],
+                  whilePaused: ['whilePaused', 'enum'], onResume: ['onResume', 'enum']]
+    optMap.each { String k, List nt -> if (o?.containsKey(k)) w << [name: nt[0], type: nt[1], value: nt[1] == 'bool' ? o.get(k) == true : o.get(k)] }
+    if (r?.containsKey('days')) w << [name: 'restrictDays', type: 'enum', value: (r.days as List)?.collect { it.toString() } ?: null]
+    if (r?.containsKey('modeIds')) w << [name: 'restrictModes', type: 'mode', value: (r.modeIds as List)?.collect { it.toString() } ?: null]
+    [from: 'restrictFrom', to: 'restrictTo'].each { String k, String n ->
+        if (!r?.containsKey(k)) return
+        Map s = r.get(k) as Map
+        w << [name: n, type: 'enum', value: s ? s.kind : 'any']
+        w << [name: "${n}At".toString(), type: 'time', value: s?.kind == 'time' ? s.at : null]
+        w << [name: "${n}Offset".toString(), type: 'number', value: s?.kind in ['sunrise', 'sunset'] ? ((s.offset ?: 0) as int) : null]
+    }
+    return w
+}
+
 // ── End core ──────────────────────────────────────────────────────────
 
 // ── Logging (app) ─────────────────────────────────────────────────────

@@ -250,6 +250,35 @@ check('ISO time now is an error', core.parseEnd('2026-10-05T22:00:00-04:00', iso
 check('ISO time in the future is accepted', core.parseEnd('2026-10-05T22:00:00-04:00', isoNow - 1000L).end, 'at')
 check('past ISO end makes the command fail', core.parseCommand([command: 'holdProfile', profile: 'Sleep', end: '2026-10-05T22:00:00-04:00'], isoNow + 1000L).ok, false)
 
+// ── PUT ──
+envC = [scale: 'C', vars: ['comfort'], modeIds: [1L, 2L, 3L, 4L]]
+check('revision is stable', core.revisionOf(cfgBase), core.revisionOf(core.parseJsonLike(cfgBase)))
+check('revision changes with a value', core.revisionOf(cfgBase) != core.revisionOf(cfgBase + [active: 'Cottage']), true)
+check('shape: complete document passes', core.putShapeErrors([profiles: [], schedules: [], active: 'N', overrides: []]), [])
+check('shape: missing profiles', core.putShapeErrors([schedules: [], active: 'N', overrides: []]), ['config.profiles must be a list'])
+check('shape: active must be text', core.putShapeErrors([profiles: [], schedules: [], active: 3, overrides: []]), ['config.active must be text'])
+check('shape: overrides may be absent', core.putShapeErrors([profiles: [], schedules: [], active: 'N']), [])
+check('document keeps only document fields', core.putDocument(cfgBase).keySet() as List, ['v', 'profiles', 'schedules', 'active', 'overrides'])
+check('document defaults overrides', core.putDocument([profiles: [], schedules: [], active: 'N']).overrides, [])
+check('options: none present is valid', core.validateOptions([:], envC), [])
+check('options: eco offset range', core.validateOptions([eco: [offset: 11]], envC), ['eco.offset must be a number from -10 to 10'])
+check('options: whilePaused value', core.validateOptions([options: [whilePaused: 'bogus']], envC), ['options.whilePaused must be leave or off'])
+check('options: onResume value', core.validateOptions([options: [onResume: 'x']], envC), ['options.onResume must be restore or leaveOff'])
+check('options: separation range', core.validateOptions([options: [separation: -1]], envC), ['options.separation must be a number from 0 to 10'])
+check('options: day out of range', core.validateOptions([restrictions: [days: [0]]], envC), ['restrictions.days must hold days 1 to 7'])
+check('options: unknown mode', core.validateOptions([restrictions: [modeIds: [99]]], envC), ['restrictions.modeIds: unknown mode 99'])
+check('options: bad window start', core.validateOptions([restrictions: [from: [kind: 'time', at: '25:00']]], envC), ['restrictions.from is not a valid start'])
+check('options: sunset window start', core.validateOptions([restrictions: [from: [kind: 'sunset', offset: -15]]], envC), [])
+check('settings: eco group', core.optionSettings([eco: [offset: 3, onOverrides: false]]),
+      [[name: 'ecoOffset', type: 'decimal', value: 3], [name: 'ecoOnOverrides', type: 'bool', value: false]])
+check('settings: absent groups write nothing', core.optionSettings([:]), [])
+check('settings: window cleared', core.optionSettings([restrictions: [from: null]]).findAll { it.name.startsWith('restrictFrom') },
+      [[name: 'restrictFrom', type: 'enum', value: 'any'], [name: 'restrictFromAt', type: 'time', value: null], [name: 'restrictFromOffset', type: 'number', value: null]])
+check('settings: window at a time', core.optionSettings([restrictions: [to: [kind: 'time', at: '07:15']]]).findAll { it.name.startsWith('restrictTo') },
+      [[name: 'restrictTo', type: 'enum', value: 'time'], [name: 'restrictToAt', type: 'time', value: '07:15'], [name: 'restrictToOffset', type: 'number', value: null]])
+check('settings: days and modes as text', core.optionSettings([restrictions: [days: [1, 7], modeIds: [4]]]).findAll { it.name in ['restrictDays', 'restrictModes'] },
+      [[name: 'restrictDays', type: 'enum', value: ['1', '7']], [name: 'restrictModes', type: 'mode', value: ['4']]])
+
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)
