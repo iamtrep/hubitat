@@ -118,6 +118,8 @@ String usage(String profile, Map cfg = null) {
         } else if ((s.rows as List<Map>)?.any { Map r -> !r.custom && r.profile == profile }) out << (s.name as String)
     }
     (c.overrides as List<Map>).findAll { it.profile == profile }.each { out << "Mode override: ${modeName(it.modeId)}".toString() }
+    Map hold = (state.rt as Map)?.hold as Map
+    if (hold?.kind == 'profile' && hold.profile == profile) out << "the hold now in effect"
     return out.join(', ')
 }
 
@@ -129,11 +131,20 @@ void renameProfileRefs(Map c, String from, String to) {
     (c.overrides as List<Map>).each { Map o -> if (o.profile == from) o.profile = to }
 }
 
-boolean saveConfig(Map doc) {
+// The running hold and the main page's hold choice name profiles too; called once the renamed config is stored.
+void renameHeldProfile(String from, String to) {
+    Map rt = state.rt as Map
+    Map hold = rt?.hold as Map
+    if (hold?.kind == 'profile' && hold.profile == from) { hold.profile = to; state.rt = rt }
+    if (settings.holdSel == from) app.updateSetting("holdSel", [type: "enum", value: to])
+}
+
+boolean saveConfig(Map doc, Map renamed = null) {
     List<String> errs = validateConfig(doc, validationEnv())
     if (errs) { state.uiError = errs.join('; '); logWarn "not saved: ${state.uiError}"; return false }
     state.remove('uiError')
     state.config = doc
+    if (renamed) renameHeldProfile(renamed.from as String, renamed.to as String)
     clearEdits()
     logCfg "configuration saved"
     evaluate("config edited", false)
@@ -602,8 +613,9 @@ boolean uiButton(String btn) {
                   fan: settings.edFan in [null, 'unchanged'] ? null : settings.edFan, mode: settings.edMode in [null, 'unchanged'] ? null : settings.edMode,
                   heatVar: vars ? settings.edHeatVar : null, coolVar: vars ? settings.edCoolVar : null].findAll { k, v -> v != null }
         (c.profiles as List<Map>)[i] = np
-        if (np.name != oldName) renameProfileRefs(c, oldName, np.name as String)
-        if (saveConfig(c)) state.ui = [:]
+        Map renamed = np.name != oldName ? [from: oldName, to: np.name] : null
+        if (renamed) renameProfileRefs(c, oldName, np.name as String)
+        if (saveConfig(c, renamed)) state.ui = [:]
         return true
     }
     if (btn == "btnProfileDelete") {
