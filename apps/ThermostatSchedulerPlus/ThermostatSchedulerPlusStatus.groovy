@@ -65,6 +65,10 @@ private void forward(Map req) {
 }
 
 void updateStatus(Map attrs) {
+    if (state.version != CODE_VERSION) {
+        logVer "version ${CODE_VERSION} (was ${state.version})"
+        state.version = CODE_VERSION
+    }
     attrs.each { String k, v -> if (v != null) sendEvent(name: k, value: v) }
 }
 

@@ -97,6 +97,19 @@ private Map denied() {
     return null
 }
 
+private Object findProgram() {
+    Long id = null
+    try { id = params.id?.toString()?.toLong() } catch (Throwable t) { id = null }
+    return id == null ? null : getChildAppById(id)
+}
+
+private Map parseBody() {
+    try {
+        Object o = parseJson(request.body ?: "{}")
+        return (o instanceof Map) ? (Map) o : null
+    } catch (Throwable t) { return null }
+}
+
 private Object reply(int status, Map body) { return render(status: status, contentType: "application/json", data: groovy.json.JsonOutput.toJson(body)) }
 
 def apiList() {
@@ -108,7 +121,7 @@ def apiList() {
 def apiGet() {
     checkVersion()
     Map d = denied(); if (d) { return reply(d.status as int, [error: d.error]) }
-    def child = getChildAppById(params.id as Long)
+    def child = findProgram()
     if (!child) { return reply(404, [error: "no program ${params.id}"]) }
     return reply(200, child.apiDocument() as Map)
 }
@@ -116,12 +129,14 @@ def apiGet() {
 def apiCommand() {
     checkVersion()
     Map d = denied(); if (d) { return reply(d.status as int, [error: d.error]) }
-    def child = getChildAppById(params.id as Long)
+    def child = findProgram()
     if (!child) { return reply(404, [error: "no program ${params.id}"]) }
     Map req
-    try { req = parseJson(request.body ?: "{}") as Map } catch (Exception e) { return reply(400, [error: "body is not JSON"]) }
+    req = parseBody()
+    if (req == null) return reply(400, [error: "body is not JSON"])
     Map res = child.apiCommand(req) as Map
-    return reply(res.ok == false ? 400 : 200, res)
+    if (res == null) return reply(500, [error: "program returned no result"])
+    return reply(res?.ok == false ? 400 : 200, res)
 }
 
 // Debug only: lets test tooling create a program the way the UI does.
@@ -130,7 +145,8 @@ def apiCreate() {
     if (!debugEnable) { return reply(404, [error: "not found"]) }
     Map d = denied(); if (d) { return reply(d.status as int, [error: d.error]) }
     Map req
-    try { req = parseJson(request.body ?: "{}") as Map } catch (Exception e) { return reply(400, [error: "body is not JSON"]) }
+    req = parseBody()
+    if (req == null) return reply(400, [error: "body is not JSON"])
     String label = req.label?.toString()?.trim()
     if (!label) { return reply(400, [error: "label is required"]) }
     def existing = getChildApps().find { it.label == label }
