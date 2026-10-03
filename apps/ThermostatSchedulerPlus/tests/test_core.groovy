@@ -129,6 +129,33 @@ check('wake at hold end when sooner', core.nextWake(cfgBase, rt0 + [hold: [end: 
 check('wake at midnight at the latest', core.nextWake(cfgBase + [active: 'Cottage'], rt0, at9), T('2026-10-06', '00:00'))
 check('nextWake never in the past', core.nextWake(cfgBase, rt0 + [hold: [end: 'at', until: (at9.now as long) - 60000]], at9) > (at9.now as long), true)
 
+// ── validation and commands ──
+env = [scale: 'C', vars: ['comfort', 'nightTime'], modeIds: [1L, 2L, 3L, 4L]]
+check('default config is valid', core.validateConfig(core.defaultConfig(), env), [])
+check('cfgBase is valid', core.validateConfig(cfgBase + [v: 1], env), [])
+check('unknown profile', core.validateConfig(cfgBase + [overrides: [[modeId: 4, profile: 'Gone']]], env).size(), 1)
+check('duplicate profile names', core.validateConfig(cfgBase + [profiles: cfgBase.profiles + [[name: 'Home', heat: 20.0]]], env).size(), 1)
+check('day in two groups', core.validateConfig(cfgBase + [schedules: [[name: 'N', type: 'time', groups: [[name: 'A', days: [1,2,3,4,5,6,7], periods: []], [name: 'B', days: [1], periods: []]]]], active: 'N'], env).isEmpty(), false)
+check('day in no group', core.validateConfig(cfgBase + [schedules: [[name: 'N', type: 'time', groups: [[name: 'A', days: [1], periods: []]]]], active: 'N'], env).isEmpty(), false)
+check('same time twice in a group', core.validateConfig(cfgBase + [schedules: [[name: 'N', type: 'time', groups: [[name: 'A', days: [1,2,3,4,5,6,7], periods: [
+    [name: 'X', start: [kind: 'time', at: '06:00'], profile: 'Home'], [name: 'Y', start: [kind: 'time', at: '06:00'], profile: 'Home']]]]]], active: 'N'], env).isEmpty(), false)
+check('out of range setpoint', core.validateConfig(cfgBase + [profiles: [[name: 'Hot', heat: 60.0]]], env).isEmpty(), false)
+check('unknown variable', core.validateConfig(cfgBase + [profiles: [[name: 'V', heatVar: 'nope']]], env).isEmpty(), false)
+check('unknown active schedule', core.validateConfig(cfgBase + [active: 'Nope'], env).isEmpty(), false)
+check('end default next', core.parseEnd(null).end, 'next')
+check('end minutes from string', core.parseEnd('30').minutes, 30)
+check('end iso', core.parseEnd('2026-10-05T22:00:00-04:00').end, 'at')
+check('end garbage', core.parseEnd('soon').error != null, true)
+check('hold profile', core.parseCommand([command: 'holdProfile', profile: 'Sleep', end: '']).args.end, 'next')
+check('hold profile needs profile', core.parseCommand([command: 'holdProfile']).ok, false)
+check('hold setpoints from strings', core.parseCommand([command: 'holdSetpoints', heating: '18', end: 'indefinite']).args.heat, 18)
+check('hold setpoints needs a value', core.parseCommand([command: 'holdSetpoints', heating: '', cooling: '']).ok, false)
+check('setEco needs on or off', core.parseCommand([command: 'setEco', state: 'maybe']).ok, false)
+check('setEcoOffset from string', core.parseCommand([command: 'setEcoOffset', offset: '2.5']).args.offset, 2.5)
+check('setSchedule needs name', core.parseCommand([command: 'setSchedule', schedule: '']).ok, false)
+check('unknown command', core.parseCommand([command: 'explode']).ok, false)
+['on', 'off', 'resume', 'applyNow', 'advance', 'refresh'].each { check("bare ${it}", core.parseCommand([command: it]).ok, true) }
+
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)

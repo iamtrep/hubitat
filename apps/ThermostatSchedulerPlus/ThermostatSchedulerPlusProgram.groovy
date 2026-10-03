@@ -275,4 +275,117 @@ long nextWake(Map cfg, Map rt, Map ctx) {
     return Math.max(c.min() as long, now + 1000L)
 }
 
+Map defaultConfig() {
+    return [v: 1,
+        profiles: [[name: 'Home', heat: 21.0, cool: 24.0], [name: 'Sleep', heat: 18.0, cool: 26.0], [name: 'Away', heat: 16.0, cool: 29.0]],
+        schedules: [[name: 'Normal', type: 'time', groups: [[name: 'Every day', days: [1, 2, 3, 4, 5, 6, 7], periods: [
+            [name: 'Wake', start: [kind: 'time', at: '06:30'], profile: 'Home', custom: null],
+            [name: 'Night', start: [kind: 'time', at: '22:00'], profile: 'Sleep', custom: null]]]]]],
+        active: 'Normal', overrides: []]
+}
+
+List<String> validateConfig(Map doc, Map env) {
+    List<String> e = []
+    BigDecimal lo = env.scale == 'F' ? 32.0G : 0.0G, hi = env.scale == 'F' ? 104.0G : 40.0G
+    List<String> names = (doc.profiles as List<Map>)?.collect { it.name as String } ?: []
+    names.findAll { String n -> !n?.trim() }.each { e << 'A profile has no name' }
+    names.countBy { it }.findAll { k, v -> v > 1 }.each { k, v -> e << "Profile name used twice: ${k}".toString() }
+    Closure checkValues = { Map v, String where ->
+        ['heat', 'cool'].each { String f ->
+            BigDecimal n = numOrNull(v?.get(f))
+            if (n != null && (n < lo || n > hi)) e << "${where}: ${f} ${n} is out of range".toString()
+            String var = v?.get(f + 'Var') as String
+            if (var && !(env.vars as List).contains(var)) e << "${where}: unknown variable ${var}".toString()
+        }
+    }
+    (doc.profiles as List<Map>)?.each { Map p -> checkValues(p, "Profile ${p.name}".toString()) }
+    Closure profileRef = { String name, Map custom, String where ->
+        if (custom) checkValues(custom, where)
+        else if (!names.contains(name)) e << "${where}: unknown profile ${name}".toString()
+    }
+    List<String> scheds = (doc.schedules as List<Map>)?.collect { it.name as String } ?: []
+    scheds.countBy { it }.findAll { k, v -> v > 1 }.each { k, v -> e << "Schedule name used twice: ${k}".toString() }
+    if (!scheds.contains(doc.active)) e << "Active schedule ${doc.active} does not exist".toString()
+    (doc.schedules as List<Map>)?.each { Map s ->
+        if (s.type == 'time') {
+            (1..7).each { int d ->
+                int n = (s.groups as List<Map>).count { Map g -> (g.days as List)?.collect { it as int }?.contains(d) } as int
+                if (n != 1) e << "Schedule ${s.name}: day ${d} is in ${n} groups".toString()
+            }
+            (s.groups as List<Map>).each { Map g ->
+                List<String> fixed = (g.periods as List<Map>).findAll { it.start?.kind == 'time' }.collect { it.start.at as String }
+                fixed.countBy { it }.findAll { k, v -> v > 1 }.each { k, v -> e << "Schedule ${s.name}, ${g.name}: two periods at ${k}".toString() }
+                (g.periods as List<Map>).each { Map p ->
+                    String where = "Schedule ${s.name}, ${g.name}, ${p.name}".toString()
+                    String kind = p.start?.kind as String
+                    if (!(kind in ['time', 'sunrise', 'sunset', 'var'])) e << "${where}: bad start".toString()
+                    if (kind == 'time' && !((p.start.at as String) ==~ /([01]\d|2[0-3]):[0-5]\d/)) e << "${where}: bad time ${p.start.at}".toString()
+                    if (kind == 'var' && !(env.vars as List).contains(p.start.name)) e << "${where}: unknown variable ${p.start.name}".toString()
+                    profileRef(p.profile as String, p.custom as Map, where)
+                }
+            }
+        } else if (s.type == 'mode') {
+            List<Long> seen = []
+            (s.rows as List<Map>).each { Map row ->
+                (row.modes as List).collect { it as Long }.each { Long m ->
+                    if (!(env.modeIds as List).collect { it as Long }.contains(m)) e << "Schedule ${s.name}: unknown mode ${m}".toString()
+                    if (seen.contains(m)) e << "Schedule ${s.name}: mode ${m} in two rows".toString()
+                    seen << m
+                }
+                profileRef(row.profile as String, row.custom as Map, "Schedule ${s.name}".toString())
+            }
+        } else e << "Schedule ${s.name}: unknown type ${s.type}".toString()
+    }
+    (doc.overrides as List<Map>)?.each { Map o ->
+        if (!(env.modeIds as List).collect { it as Long }.contains(o.modeId as Long)) e << "Override: unknown mode ${o.modeId}".toString()
+        profileRef(o.profile as String, null, 'Override')
+    }
+    return e
+}
+
+Map parseEnd(Object raw) {
+    String s = raw == null ? '' : raw.toString().trim()
+    if (s == '' || s == 'next') return [end: 'next']
+    if (s == 'indefinite') return [end: 'indefinite']
+    if (s ==~ /\d+/) return (s as int) > 0 ? [end: 'minutes', minutes: s as int] : [error: 'minutes must be positive']
+    for (String fmt in ["yyyy-MM-dd'T'HH:mm:ssXXX", "yyyy-MM-dd'T'HH:mmXXX"]) {
+        try {
+            java.text.SimpleDateFormat f = new java.text.SimpleDateFormat(fmt)
+            f.setLenient(false)
+            return [end: 'at', until: f.parse(s).getTime()]
+        } catch (Exception ignored) { }
+    }
+    return [error: "end must be next, indefinite, minutes or an ISO time: ${s}".toString()]
+}
+
+Map parseCommand(Map req) {
+    String name = req?.command as String
+    Closure err = { String m -> [ok: false, error: m] }
+    if (name in ['on', 'off', 'resume', 'applyNow', 'advance', 'refresh']) return [ok: true, name: name, args: [:]]
+    if (name == 'holdProfile') {
+        if (!req.profile?.toString()?.trim()) return err('profile is required')
+        Map end = parseEnd(req.end)
+        return end.error ? err(end.error as String) : [ok: true, name: name, args: [profile: req.profile.toString().trim()] + end]
+    }
+    if (name == 'holdSetpoints') {
+        BigDecimal h = numOrNull(req.heating), c = numOrNull(req.cooling)
+        if (h == null && c == null) return err('heating or cooling is required')
+        Map end = parseEnd(req.end)
+        return end.error ? err(end.error as String) : [ok: true, name: name, args: [heat: h, cool: c] + end]
+    }
+    if (name == 'setSchedule') {
+        String s = req.schedule?.toString()?.trim()
+        return s ? [ok: true, name: name, args: [schedule: s]] : err('schedule is required')
+    }
+    if (name == 'setEco') {
+        String s = req.state?.toString()?.trim()
+        return s in ['on', 'off'] ? [ok: true, name: name, args: [state: s]] : err('state must be on or off')
+    }
+    if (name == 'setEcoOffset') {
+        BigDecimal o = numOrNull(req.offset)
+        return (o != null && o.abs() <= 10.0G) ? [ok: true, name: name, args: [offset: o]] : err('offset must be a number from -10 to 10')
+    }
+    return err("unknown command: ${name}".toString())
+}
+
 // ── End core ──────────────────────────────────────────────────────────
