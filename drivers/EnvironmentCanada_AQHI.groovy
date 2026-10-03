@@ -6,12 +6,15 @@
  *
  * Retrieves current AQHI observations, hourly forecasts, and alerts from the
  * Environment Canada GeoMet OGC API (api.weather.gc.ca).
+ *
+ * Stations without an observation feed (all of Québec since mid-2026) run forecast-only.
+ * For observed air quality in Québec, use the Québec Air Quality Index (IQA) driver.
  */
 
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.3.3"
+@Field static final String CODE_VERSION = "0.4.0"
 @Field static final String API_BASE = "https://api.weather.gc.ca/collections"
 @Field static final String ALERT_API_BASE = "https://weather.gc.ca/api/app/v3"
 @Field static final int HTTP_TIMEOUT = 15
@@ -184,7 +187,7 @@ void initialize() {
     }
 
     schedulePoll()
-    runIn(1, "refresh")
+    fetchStationInfo(sid)
 }
 
 private String resolveStationId() {
@@ -217,14 +220,67 @@ void schedulePoll() {
 // Main refresh
 
 void refresh() {
+    if (state.version != CODE_VERSION) {
+        updated()
+        return
+    }
     String sid = resolveStationId()
     if (!sid) {
         logWarn "No station configured — use Find Nearest Station or set Station ID in preferences"
         return
     }
     logDebug "Refreshing AQHI data for station ${sid}"
+    if (state.noObservationFeed) {
+        state.observationStale = true
+        sendEvent(name: "observationAge", value: "unavailable")
+        fetchForecast(sid)
+        return
+    }
     // Chained, not parallel: the forecast's trend and fallback read the observation's result.
     fetchObservation(sid)
+}
+
+// ---------- Station info ----------
+
+// Records whether the station publishes observations, then refreshes
+void fetchStationInfo(String sid) {
+    logNet "Fetching station info for ${sid}"
+    Map params = [
+        uri: "${API_BASE}/aqhi-stations/items",
+        query: [f: "json", location_id: sid],
+        contentType: "application/json",
+        timeout: HTTP_TIMEOUT
+    ]
+    asynchttpGet("stationInfoResponse", params, [sid: sid])
+}
+
+void stationInfoResponse(resp, Map data) {
+    try {
+        if (resp.hasError()) {
+            logWarn "Error fetching station info: ${resp.getErrorMessage()}"
+        } else if (resp.getStatus() != 200) {
+            logWarn "Station API returned status ${resp.getStatus()}"
+        } else {
+            List features = (resp.json as Map)?.features as List
+            Map props = features ? ((features[0] as Map)?.properties as Map) : null
+            if (props) {
+                recordObservationFeed(props)
+            } else {
+                logWarn "Station ${data.sid} not found in the AQHI station list"
+            }
+        }
+    } catch (Exception e) {
+        logWarn "Error parsing station info: ${e.message}"
+    }
+    refresh()
+}
+
+private void recordObservationFeed(Map props) {
+    boolean none = !props['url_msc-datamart_observation']
+    if (none && !state.noObservationFeed) {
+        logCfg "Station ${props.location_id} publishes no observations — using forecasts only"
+    }
+    state.noObservationFeed = none
 }
 
 private void fetchAlertsIfZoned() {
@@ -490,7 +546,7 @@ void parseForecastResponse(resp) {
         }
         sendEvent(name: "lastUpdated", value: new Date().format("yyyy-MM-dd HH:mm:ss"))
         if (txtEnable) {
-            logInfo "AQHI ${aqhi} (${riskCategory(rounded)}) from forecast fallback — observations unavailable"
+            logInfo "AQHI ${aqhi} (${riskCategory(rounded)}) from forecast${state.noObservationFeed ? '' : ' fallback — observations unavailable'}"
         }
     }
 }
@@ -637,6 +693,7 @@ void parseStationsResponse(resp, BigDecimal hubLat, BigDecimal hubLon) {
 
     String nearestId = ""
     String nearestName = ""
+    Map nearestProps = null
     double nearestDist = Double.MAX_VALUE
 
     for (Map feature : features) {
@@ -655,6 +712,7 @@ void parseStationsResponse(resp, BigDecimal hubLat, BigDecimal hubLon) {
             nearestDist = dist
             nearestId = props.location_id as String
             nearestName = props.location_name_en as String
+            nearestProps = props
         }
     }
 
@@ -662,6 +720,7 @@ void parseStationsResponse(resp, BigDecimal hubLat, BigDecimal hubLon) {
         state.autoStationId = nearestId
         state.autoStationName = nearestName
         state.autoStationDistance = Math.round(nearestDist) as int
+        recordObservationFeed(nearestProps)
         logInfo "Nearest station: ${nearestName} (${nearestId}), ${Math.round(nearestDist)} km away"
         sendEvent(name: "stationName", value: nearestName)
 
