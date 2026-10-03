@@ -272,15 +272,12 @@ void publish(Map cfg, Map rt, Map target, Map ctx) {
     String status = target.layer == 'paused' ? (rt.paused ? 'paused' : 'restricted')
                   : (rt.manual ? 'manual' : (target.layer == 'none' ? 'schedule' : target.layer))
     Map hold = rt.hold as Map
-    String holdEnd = !hold ? '' : (hold.end == 'at' ? iso.format(new Date(hold.until as long)) : hold.end as String)
-    Map attrs = [
-        switch: rt.paused ? 'off' : 'on', status: status, schedule: cfg.active, profile: target.profile ?: '',
+    String holdEnd = !hold ? 'none' : (hold.end == 'at' ? iso.format(new Date(hold.until as long)) : hold.end as String)
+    statusDevice().updateStatus([
+        switch: rt.paused ? 'off' : 'on', status: status, schedule: cfg.active, profile: target.profile ?: 'none',
         heatingTarget: target.heat, coolingTarget: target.cool, holdEnd: holdEnd,
-        nextTransition: next ? iso.format(new Date(next.at as long)) : '', nextProfile: next?.profile ?: '',
-        eco: rt.eco ? 'on' : 'off', ecoOffset: (cfg.eco as Map).offset, lastApply: rt.lastApply]
-    def d = statusDevice()
-    attrs.findAll { k, v -> v == '' }.each { k, v -> if (d.currentValue(k as String) != null) d.deleteCurrentState(k as String) }
-    d.updateStatus(attrs.findAll { k, v -> v != '' })
+        nextTransition: next ? iso.format(new Date(next.at as long)) : 'none', nextProfile: next?.profile ?: 'none',
+        eco: rt.eco ? 'on' : 'off', ecoOffset: (cfg.eco as Map).offset, lastApply: rt.lastApply])
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────

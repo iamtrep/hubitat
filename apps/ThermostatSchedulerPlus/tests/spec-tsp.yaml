@@ -61,7 +61,7 @@ cases:
     wait_seconds: 3
     assert:
       - { device: test-tsp scheduler, attribute: status, value: schedule }
-      - { device: test-tsp scheduler, attribute: holdEnd, value: "" }
+      - { device: test-tsp scheduler, attribute: holdEnd, value: none }
 
   - name: hold-indefinite-and-resume
     actions:
