@@ -309,9 +309,10 @@ put_code("app", APP_MT, APP_SRC)
 section("singleThreaded and async callbacks")
 
 def endpoint_burst(iid, n=3, ms=1000):
-    """Fire n concurrent endpoint calls; True when they ran strictly one after another."""
+    """Fire n concurrent endpoint calls; True when they ran strictly one after another.
+    Each URL is unique: concurrent identical GETs share one execution and response."""
     out = [None] * n
-    def worker(i): out[i] = api(iid, "sleep", ms=ms)[1]
+    def worker(i): out[i] = api(iid, "sleep", ms=ms, tag=f"{time.time()}-{i}")[1]
     ts = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
     for t in ts: t.start()
     for t in ts: t.join()
@@ -328,10 +329,8 @@ mt_serial = sum(endpoint_burst(iid_mt) for _ in range(BURSTS))
 st_serial = sum(endpoint_burst(iid_st) for _ in range(BURSTS))
 check(mt_serial == 0, f"without singleThreaded, concurrent endpoint calls overlap ({mt_serial}/{BURSTS} bursts serialized)",
       f"without singleThreaded, {mt_serial}/{BURSTS} bursts ran serialized")
-if st_serial == BURSTS:
-    warn(f"singleThreaded serialized every endpoint burst ({BURSTS}/{BURSTS}); the platform notes say it does not reliably")
-else:
-    ok(f"singleThreaded does not reliably serialize OAuth endpoint calls ({st_serial}/{BURSTS} bursts serialized)")
+check(st_serial == BURSTS, f"singleThreaded serializes concurrent endpoint calls ({st_serial}/{BURSTS} bursts)",
+      f"singleThreaded serialized only {st_serial}/{BURSTS} endpoint bursts")
 
 sleep_path = f"/apps/api/{iid_mt2}/sleep?access_token={tokens[iid_mt2]}&ms=3000"
 ONE_HOST, FOUR_HOSTS = "127.0.0.1", "127.0.0.1,127.0.0.2,127.0.0.3,127.0.0.4"
@@ -388,11 +387,10 @@ else:
 # ── Lock matrix: which handler types wait for each other ──────────────
 section("singleThreaded lock: running handler vs arriving handler")
 
-LOCK_EXPECT = {   # (running, arriving) -> what singleThreaded did on 2.5.2.128; the control always runs during
+LOCK_EXPECT = {   # (running, arriving) -> what singleThreaded does (full matrix: test-singlethreaded.sh); the control always runs during
     ("scheduled", "scheduled"): "waited", ("scheduled", "callback"): "waited", ("scheduled", "endpoint"): "waited",
     ("callback", "scheduled"): "waited", ("callback", "callback"): "waited", ("callback", "endpoint"): "waited",
-    ("endpoint", "scheduled"): "waited",
-    ("endpoint", "callback"): None,   # inconsistent: ran during in some setups, waited in others
+    ("endpoint", "scheduled"): "waited", ("endpoint", "callback"): "waited",
 }
 slow_url = f"http://127.0.0.1:8080/apps/api/{iid_mt2}/sleep?access_token={tokens[iid_mt2]}&ms=2000"
 
@@ -419,9 +417,7 @@ def lock_case(iid, running, arriving):
 for (running, arriving), expected in LOCK_EXPECT.items():
     st_got, ctl_got = lock_case(iid_st, running, arriving), lock_case(iid_mt, running, arriving)
     label = f"{arriving} arriving while {'an' if running == 'endpoint' else 'a'} {running} handler runs"
-    if expected is None:
-        info(f"singleThreaded: {label} -> {st_got} (recorded, not judged: this case is inconsistent)")
-    elif ctl_got != "during":
+    if ctl_got != "during":
         warn(f"{label}: the control (no singleThreaded) {ctl_got}; this cell can't be judged")
     else:
         check(st_got == expected, f"singleThreaded: {label} -> {st_got}",

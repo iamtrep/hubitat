@@ -20,6 +20,9 @@ Hubitat Elevation apps for stress-testing various hub subsystems. These are diag
 | `hubStressTests.groovy` | **Hub Stress Test App** | Some HE stress test functions |
 | `PushoverNotificationTester.groovy` | **Pushover Notification Tester** | Systematic test app for the Pushover Notifications driver |
 | `SampleApp.groovy` | **Sample Application** | A skeleton sample app for HE |
+| `SingleThreadedProbe.groovy` | **Single Threaded Probe** | Target app for the singleThreaded entry-point test. Test use only. |
+| `SingleThreadedProbeChildApp.groovy` | **Single Threaded Probe Child App (child)** | Child app for the singleThreaded entry-point test. Test use only. |
+| `SingleThreadedProbeTrigger.groovy` | **Single Threaded Probe Trigger** | Trigger app for the singleThreaded entry-point test. Test use only. |
 <!-- /AUTO -->
 
 ### Async HTTP Stress Test (`asyncHttpStressTest.groovy`)
