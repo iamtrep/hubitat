@@ -1865,6 +1865,7 @@ List<Map> optionSettings(Map c) {
 }
 
 // ── Built-in Thermostat Scheduler 2.0 import ──
+// Key by key layout of the built-in's settings and state: BUILTIN-STORAGE.md.
 // Only appState.timeSort (periods) and appState.dayGroups (groups) are live; the scheduler keeps
 // settings and state of deleted periods and groups, which are ignored here.
 
