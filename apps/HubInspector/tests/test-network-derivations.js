@@ -8,12 +8,12 @@
 // thresholds and assembles the Z-Wave problem-node issue strings + the Zigbee weak/stale subsets
 // (logic that used to live in getNetworkData / fetchZigbeeMeshInfo). This EXTRACTS
 // zwProblemNodes/zbWeakNeighbors/zbStaleNeighbors (plus the threshold consts) from
-// hub_diagnostics_ui.html by name, so the test stays bound to the shipped code.
+// hub_inspector_ui.html by name, so the test stays bound to the shipped code.
 //
-// Run: node apps/HubDiagnostics/tests/test-network-derivations.js
+// Run: node apps/HubInspector/tests/test-network-derivations.js
 'use strict';
 const fs = require('fs'), os = require('os'), path = require('path'), assert = require('assert');
-const src = fs.readFileSync(path.join(__dirname, '..', 'hub_diagnostics_ui.html'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'hub_inspector_ui.html'), 'utf8');
 
 // Brace-matched extraction of a (possibly multi-line) `function NAME(...){ ... }`.
 function extractFn(name) {

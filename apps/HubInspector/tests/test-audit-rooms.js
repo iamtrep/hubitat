@@ -6,13 +6,13 @@
 //
 // The hub ships getRooms() as is: child devices included, no "Unassigned" room, and ids of
 // deleted devices can linger. buildAuditRooms() drops ids the scan never saw and gathers the
-// unassigned devices. This EXTRACTS buildAuditRooms from hub_diagnostics_ui.html by name, so
+// unassigned devices. This EXTRACTS buildAuditRooms from hub_inspector_ui.html by name, so
 // the test stays bound to the shipped code.
 //
-// Run: node apps/HubDiagnostics/tests/test-audit-rooms.js
+// Run: node apps/HubInspector/tests/test-audit-rooms.js
 'use strict';
 const fs = require('fs'), os = require('os'), path = require('path'), assert = require('assert');
-const src = fs.readFileSync(path.join(__dirname, '..', 'hub_diagnostics_ui.html'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'hub_inspector_ui.html'), 'utf8');
 
 // Brace-matched extraction of a (possibly multi-line) `function NAME(...){ ... }`.
 function extractFn(name) {

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-Mode-4 pure unit test for HubDiagnostics device classification.
+Mode-4 pure unit test for HubInspector device classification.
 
 Mirrors the Groovy logic in:
   - cleanIntegrationName()    (strips trailing app-name noise → display name)

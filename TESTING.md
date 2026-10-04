@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT
 
 # Hubitat Testing Guide
 
-This document captures how apps and drivers are tested in this repository, and codifies the conventions that make tests agent-runnable as part of a closed-loop write/push/test/fix workflow. Per-project test plans (for example, [`apps/HubDiagnostics/tests/TEST_PLAN.md`](apps/HubDiagnostics/tests/TEST_PLAN.md)) build on this one and add the specifics of their own coverage targets.
+This document captures how apps and drivers are tested in this repository, and codifies the conventions that make tests agent-runnable as part of a closed-loop write/push/test/fix workflow. Per-project test plans (for example, [`apps/HubInspector/tests/TEST_PLAN.md`](apps/HubInspector/tests/TEST_PLAN.md)) build on this one and add the specifics of their own coverage targets.
 
 Treat this guide as the default. The closed-loop contract in §1.1 is not negotiable: tests that don't satisfy it can run but are not part of the loop.
 
@@ -112,23 +112,23 @@ The spec maps directly onto the procedure below — for [`apps/sensors/SensorAgg
 
 #### Mode 2 — API integration tests
 
-**Purpose:** validate apps that serve an OAuth-gated `/api/*` surface (HubDiagnostics, Multi-Hub Inventory) end-to-end against the real hub.
+**Purpose:** validate apps that serve an OAuth-gated `/api/*` surface (HubInspector, Multi-Hub Inventory) end-to-end against the real hub.
 
 **Pattern:** bash + embedded Python heredoc. The bash wrapper reads `.hubitat.json`, parses `@hubname` and instance-id args, and pipes the hub/instance metadata into a Python script that performs the actual assertions. Outputs `[PASS]`/`[FAIL]`/`[WARN]`/`[INFO]` to stdout and an exit code per the contract.
 
 **Canonical examples:**
-- [`apps/HubDiagnostics/tests/test-hub-diagnostics-api.sh`](apps/HubDiagnostics/tests/test-hub-diagnostics-api.sh) — 170+ assertions across every API surface, ground-truth comparison against raw hub endpoints.
+- [`apps/HubInspector/tests/test-hub-inspector-api.sh`](apps/HubInspector/tests/test-hub-inspector-api.sh) — 170+ assertions across every API surface, ground-truth comparison against raw hub endpoints.
 - [`apps/MultiHubInventory/tests/test-multi-hub-inventory-api.sh`](apps/MultiHubInventory/tests/test-multi-hub-inventory-api.sh) — the peer-list and peer-proxy endpoints of an app that serves data from several hubs.
 
 **Closed-loop notes:** these are the most mature tests in the repo and define the bash-wrapper-around-Python idiom that newer tests should mimic. Discovery via `/hub2/appsList` by `appTypeName` is the convention; pass an explicit instance ID as the second positional arg if discovery fails.
 
 #### Mode 3 — Pure-JS unit tests
 
-**Purpose:** cover the pure rendering/parsing/formatting helpers in SPA `.html` files (HubDiagnostics' `hub_diagnostics_ui.html`), which have no test coverage by default.
+**Purpose:** cover the pure rendering/parsing/formatting helpers in SPA `.html` files (HubInspector's `hub_inspector_ui.html`), which have no test coverage by default.
 
-**Pattern:** copy the helpers out of the HTML into a standalone `.js` file with a header comment pointing at the source line range, write a tiny `ok`/`fail`/`section` harness, run with `node`. A browser-runnable variant (open `tests/spa/index.html` in any browser) is sketched in HubDiagnostics' `TEST_PLAN.md` Phase D.
+**Pattern:** copy the helpers out of the HTML into a standalone `.js` file with a header comment pointing at the source line range, write a tiny `ok`/`fail`/`section` harness, run with `node`. A browser-runnable variant (open `tests/spa/index.html` in any browser) is sketched in HubInspector's `TEST_PLAN.md` Phase D.
 
-**Canonical example:** [`apps/HubDiagnostics/tests/test-diffStats.js`](apps/HubDiagnostics/tests/test-diffStats.js).
+**Canonical example:** [`apps/HubInspector/tests/test-diffStats.js`](apps/HubInspector/tests/test-diffStats.js).
 
 **Closed-loop notes:** exit code is `0` if all pass, `1` if any fail. Labels are `[PASS]`/`[FAIL]` per the contract. The copy from HTML to `.js` is a deliberate trade — keeping the helpers Node-runnable is worth the manual sync.
 
@@ -139,11 +139,11 @@ The spec maps directly onto the procedure below — for [`apps/sensors/SensorAgg
 **Pattern:** Python file with a comment header pointing at the Groovy source line range it shadows; `pytest` or a `__main__` harness; assertions on the mirror, periodic manual cross-check against the Groovy.
 
 **Canonical examples:**
-- [`apps/HubDiagnostics/test_classification.py`](apps/HubDiagnostics/test_classification.py) — mirrors the `INTEGRATION_TABLE` classification logic.
+- [`apps/HubInspector/test_classification.py`](apps/HubInspector/test_classification.py) — mirrors the `INTEGRATION_TABLE` classification logic.
 
 **Closed-loop notes:** when the Groovy is the source of truth and the Python mirror drifts, the mirror is wrong by definition. Keep the source-line-range comment in the mirror up-to-date; periodic review is a code-review concern, not an automated one.
 
-**Extraction variant (no mirror, no drift):** when the Groovy method is *self-contained* — it computes from its arguments and standard library only, calling no app-context helpers (`hubRequest`, `log*`, settings, `state`, etc.) — brace-extract it from the shipped `.groovy` and run the real method under `groovy`, the same way Mode 3 extracts named JS functions from the SPA HTML. This binds to shipped code instead of shadowing it, so there is no mirror to drift. Prefer it over a Python mirror whenever the method qualifies; fall back to the mirror when the logic is entangled with app context. Canonical example: [`apps/HubDiagnostics/tests/test-zwave-mesh-quality.groovy`](apps/HubDiagnostics/tests/test-zwave-mesh-quality.groovy) — extracts `extractZwaveMeshQuality` / `extractZwaveMessageCounts` and asserts the route-change normalization against a synthetic fixture (no hub, no Long Range hardware). Run: `groovy apps/HubDiagnostics/tests/test-zwave-mesh-quality.groovy`.
+**Extraction variant (no mirror, no drift):** when the Groovy method is *self-contained* — it computes from its arguments and standard library only, calling no app-context helpers (`hubRequest`, `log*`, settings, `state`, etc.) — brace-extract it from the shipped `.groovy` and run the real method under `groovy`, the same way Mode 3 extracts named JS functions from the SPA HTML. This binds to shipped code instead of shadowing it, so there is no mirror to drift. Prefer it over a Python mirror whenever the method qualifies; fall back to the mirror when the logic is entangled with app context. Canonical example: [`apps/HubInspector/tests/test-zwave-mesh-quality.groovy`](apps/HubInspector/tests/test-zwave-mesh-quality.groovy) — extracts `extractZwaveMeshQuality` / `extractZwaveMessageCounts` and asserts the route-change normalization against a synthetic fixture (no hub, no Long Range hardware). Run: `groovy apps/HubInspector/tests/test-zwave-mesh-quality.groovy`.
 
 #### Mode 5 — In-hub stress / diagnostic apps
 
@@ -171,13 +171,13 @@ Pre-existing artifacts are not required to retroactively meet this bar.
 | Driver | None required; Mode 1 with a paired test driver when behavior is non-trivial |
 | Stress / diagnostic app | Exempt — the app itself is the test |
 
-A single app may need multiple modes. HubDiagnostics has Mode 2 and would benefit from Mode 3 and Mode 4; that's tracked in its own `TEST_PLAN.md`.
+A single app may need multiple modes. HubInspector has Mode 2 and would benefit from Mode 3 and Mode 4; that's tracked in its own `TEST_PLAN.md`.
 
 ### 2.3 Per-project `TEST_PLAN.md` convention
 
 When a project has phased coverage targets — multiple test modes in flight, gaps to close on a schedule — it gets a `TEST_PLAN.md` next to its tests. The plan tracks phases with a status column (`Done` / `In-progress` / `Planned`) and references the modes by their numbers from this guide.
 
-Canonical example: [`apps/HubDiagnostics/tests/TEST_PLAN.md`](apps/HubDiagnostics/tests/TEST_PLAN.md) — Phase A (Mode 2, shipped), Phase B (Mode 2 audit-HTML, planned), Phase C (Mode 2 snapshot-diff, planned), Phase D (Mode 3 SPA unit tests, planned).
+Canonical example: [`apps/HubInspector/tests/TEST_PLAN.md`](apps/HubInspector/tests/TEST_PLAN.md) — Phase A (Mode 2, shipped), Phase B (Mode 2 audit-HTML, planned), Phase C (Mode 2 snapshot-diff, planned), Phase D (Mode 3 SPA unit tests, planned).
 
 ### 2.4 Named gaps
 
@@ -215,7 +215,7 @@ The tiered bar in §2.2 leaves drivers explicitly unrequired. The bar can tighte
 
 Per-project test plans inherit from this guide. Existing plans:
 
-- [`apps/HubDiagnostics/tests/TEST_PLAN.md`](apps/HubDiagnostics/tests/TEST_PLAN.md) — phased coverage for HubDiagnostics: Mode 2 (done), Mode 2 audit-HTML (planned), Mode 2 snapshot-diff (planned), Mode 3 SPA helpers (planned).
+- [`apps/HubInspector/tests/TEST_PLAN.md`](apps/HubInspector/tests/TEST_PLAN.md) — phased coverage for HubInspector: Mode 2 (done), Mode 2 audit-HTML (planned), Mode 2 snapshot-diff (planned), Mode 3 SPA helpers (planned).
 
 This section grows as more projects gain plans. The convention is one `TEST_PLAN.md` per project with phased coverage targets — see §2.3.
 

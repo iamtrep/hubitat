@@ -11,9 +11,9 @@ Personal collection of apps, drivers, and integrations for the [Hubitat Elevatio
 
 Automation apps for humidity control, peak energy management, device monitoring, sensor aggregation, and hub administration. See [`apps/`](apps/README.md) for the full list.
 
-### Hub Diagnostics
+### Hub Inspector
 
-Comprehensive diagnostic dashboard served from the hub itself — devices, apps, network, performance history, snapshots, and a forum-friendly export. See [`apps/HubDiagnostics/`](apps/HubDiagnostics/README.md).
+Comprehensive diagnostic dashboard served from the hub itself — devices, apps, network, performance history, snapshots, and a forum-friendly export. See [`apps/HubInspector/`](apps/HubInspector/README.md).
 
 ## Drivers
 

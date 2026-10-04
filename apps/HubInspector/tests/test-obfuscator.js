@@ -2,14 +2,14 @@
 // Copyright (c) 2025-2026 PJ
 // SPDX-License-Identifier: MIT
 //
-// Unit test for makeObf() (hub_diagnostics_ui.html) — the UI-wide name aliaser.
+// Unit test for makeObf() (hub_inspector_ui.html) — the UI-wide name aliaser.
 // makeObf is dependency-free (word lists live inside it), so it's extracted by
 // name (brace-matched) and run directly — bound to the shipped code, not a copy.
 //
-// Run: node apps/HubDiagnostics/tests/test-obfuscator.js
+// Run: node apps/HubInspector/tests/test-obfuscator.js
 'use strict';
 const fs = require('fs'), os = require('os'), path = require('path'), assert = require('assert');
-const src = fs.readFileSync(path.join(__dirname, '..', 'hub_diagnostics_ui.html'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'hub_inspector_ui.html'), 'utf8');
 
 function extractFn(name) {
   const start = src.indexOf('function ' + name + '(');

@@ -4,7 +4,7 @@
  */
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.8.5"
+@Field static final String CODE_VERSION = "0.8.6"
 @Field static final String UI_FILE = "multi_hub_inventory_ui.html"
 @Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/MultiHubInventory.groovy"
 @Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/multi_hub_inventory_ui.html"
@@ -20,7 +20,7 @@ definition(
     name: "Multi-Hub Inventory",
     namespace: "iamtrep",
     author: "pj",
-    description: "Read-only cross-hub device inventory, aggregated from each hub's Hub Diagnostics audit API",
+    description: "Read-only cross-hub device inventory, aggregated from each hub's Hub Inspector audit API",
     menu: "Apps",
     category: "Utility",
     singleInstance: true,
@@ -45,7 +45,7 @@ Map mainPage() {
     if (state.peerIds == null) state.peerIds = [1]
     dynamicPage(name: "mainPage", title: "Multi-Hub Inventory v${CODE_VERSION}", install: true, uninstall: true) {
         section("Hubs") {
-            paragraph "For each hub running Hub Diagnostics, paste its API base URL with the access token, e.g.<br><code>http://192.168.0.10/apps/api/247/api/?access_token=abcd…</code><br>(the <code>/api/</code> path, not the <code>ui.html</code> link). Include this hub as a peer too, pointing at its own Hub Diagnostics."
+            paragraph "For each hub running Hub Inspector, paste its API base URL with the access token, e.g.<br><code>http://192.168.0.10/apps/api/247/api/?access_token=abcd…</code><br>(the <code>/api/</code> path, not the <code>ui.html</code> link). Include this hub as a peer too, pointing at its own Hub Inspector."
             (state.peerIds as List).each { Integer p ->
                 input "peer_${p}_label", "text", title: "Hub ${p} label",   required: false, width: 4
                 input "peer_${p}_url",   "text", title: "Hub ${p} API URL", required: false, width: 6, submitOnChange: true
@@ -93,7 +93,7 @@ Map mainPage() {
     }
 }
 
-// Parse a Hub Diagnostics API base URL + access token, accepting BOTH shapes:
+// Parse a Hub Inspector API base URL + access token, accepting BOTH shapes:
 //   local: http://<ip>/apps/api/<id>/api/?access_token=<tok>
 //   cloud: https://cloud.hubitat.com/api/<cloudHubId>/apps/<id>/api/?access_token=<tok>
 // Capture everything up to the LAST "/api" segment before the query as the base (the proxy
@@ -477,7 +477,7 @@ Map apiPeer() {
         else                  httpGet(common + [timeout: 90], handler)
         return jsonResponse(body ?: [:])
     } catch (groovyx.net.http.HttpResponseException e) {
-        // Hub Diagnostics answers 404 when it has no scan in memory (cleared by a restart or update).
+        // Hub Inspector answers 404 when it has no scan in memory (cleared by a restart or update).
         Integer st = (e.response?.status ?: e.statusCode) as Integer
         // Non-2xx statuses so the SPA stops polling instead of retrying through the cloud relay.
         if (st == 404) return jsonResponse([error: "no scan"], 404)

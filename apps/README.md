@@ -29,12 +29,12 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 <!-- AUTO:apps-subfolders -->
 | Folder | Description |
 |---|---|
-| [HubDiagnostics/](./HubDiagnostics/) | Comprehensive hub diagnostics: inventory, performance tracking, network analysis, and snapshot comparison |
+| [HubInspector/](./HubInspector/) | Comprehensive hub diagnostics: inventory, performance tracking, network analysis, and snapshot comparison |
 | [HvacInterlock/](./HvacInterlock/) | Gates heating and cooling equipment by season and open windows |
 | [HvacSeasonManager/](./HvacSeasonManager/) | Publishes the heating and cooling season on a device, from dates and the outdoor temperature |
 | [LocationEventMapper/](./LocationEventMapper/) | TBD |
 | [LogMonitor/](./LogMonitor/) | Monitor hub logs with multiple filters and output actions |
-| [MultiHubInventory/](./MultiHubInventory/) | Read-only cross-hub device inventory, aggregated from each hub's Hub Diagnostics audit API |
+| [MultiHubInventory/](./MultiHubInventory/) | Read-only cross-hub device inventory, aggregated from each hub's Hub Inspector audit API |
 | [sensors/](./sensors/) |  |
 | [tests/](./tests/) |  |
 | [ThermostatSchedulerPlus/](./ThermostatSchedulerPlus/) | Thermostat schedules with profiles, holds and an API |

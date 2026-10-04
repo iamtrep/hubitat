@@ -5,12 +5,12 @@ remaining work.
 
 ## Done
 
-### Device classification parity with Hub Diagnostics ✅ (MHI v0.3.0 / HubDiag v5.59.0)
+### Device classification parity with Hub Inspector ✅ (MHI v0.3.0 / HubInspector v5.59.0)
 The register/summary previously displayed the audit record's raw `protocol`
 (`controllerTypeLabel(controllerType)`), which left ~130/165 devices as "Unknown" (blank
 `controllerType` on virtual/cloud/LAN/integration devices) and leaked unmapped codes (`HKC`).
 
-Single-sourced in Hub Diagnostics. Rather than the originally-sketched fullJson-only
+Single-sourced in Hub Inspector. Rather than the originally-sketched fullJson-only
 classification in `extractAuditFields` (which would have reproduced the "Unknown" problem, since
 fullJson lacks the authoritative `isZigbee`/`isZwave`/`isNetwork` bulk-list flags), `finalizeAudit`
 now reuses `analyzeDevices()` — the full `classifyDevice` + `enrichDevices` passes that already feed
@@ -21,11 +21,11 @@ MHI renders the `integration` column + a `connectionType` (CONN_DISPLAY) column,
 
 ### Onboarding & update management ✅ (v0.4.0)
 - **SPA self-sync** — `installed()`/`updated()` trigger a version-change download of
-  `multi_hub_inventory_ui.html` from GitHub into File Manager (mirrors Hub Diagnostics' `syncUI`), so
+  `multi_hub_inventory_ui.html` from GitHub into File Manager (mirrors Hub Inspector' `syncUI`), so
   the dashboard HTML no longer has to be uploaded by hand; `serveUI` emergency-syncs if it's missing.
 - **Version lockstep guard** — `processSyncUIResponse` refuses a GitHub UI whose `CODE_VERSION`
   doesn't match the app's, and the config page shows App vs UI version + warns on mismatch. (MHI
-  previously lacked the guard Hub Diagnostics has — which is how the versions drifted.)
+  previously lacked the guard Hub Inspector has — which is how the versions drifted.)
 - **Self-peer loopback** — `initialize()` detects a peer pointing at this hub's own `localIP` and
   routes its server-side calls via `127.0.0.1:8080` (browser device links keep the real IP).
 - **Reachability probe** — `probePeers()` (runIn off `initialize`) hits each peer's `audit/status`
@@ -38,12 +38,12 @@ MHI renders the `integration` column + a `connectionType` (CONN_DISPLAY) column,
   the full `audit/data` for a sizeable hub **times out: the Hubitat cloud relay returns HTTP 504
   after ~10s** (verified 2026-05-24: a 190-device hub, scan completes `done` but `audit/data`
   → 504, ~10s, even on a direct curl). This is a Hubitat cloud-relay gateway-timeout/payload limit,
-  not our code. Fix options: (a) add a **slim/projection mode** to HubDiagnostics `/api/audit/data`
+  not our code. Fix options: (a) add a **slim/projection mode** to HubInspector `/api/audit/data`
   returning only the ~11 fields MHI uses (id, label, deviceTypeName, manufacturer, model, firmware,
   firmwareOta, protocol, lastActivityTimeMs, appsUsingCount, flag bits) — a much smaller payload
   that should deliver under the relay timeout (also speeds up all peers); (b) reach remote hubs over
   LAN/VPN instead of cloud (no relay timeout).
-- **Multi-target Z-Wave firmware — drift comparison.** Extraction + display shipped: HubDiagnostics
+- **Multi-target Z-Wave firmware — drift comparison.** Extraction + display shipped: HubInspector
   v5.51.0 emits `firmwareTargets` (e.g. a lock's `{0:'1.05', 1:'2.01'}`), and the SPA shows them where
   firmware is displayed. **Remaining:** factor secondary targets into the drift *comparison* —
   `firmwareDrift` still compares only the primary firmware basis, so identical devices that match on

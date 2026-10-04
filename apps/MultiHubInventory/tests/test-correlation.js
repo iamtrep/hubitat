@@ -195,7 +195,7 @@ t('attentionItems classifies by reason with injectable now + staleDays', () => {
 
 t('fleetSummary counts by hub/integration/manufacturer + attention totals', () => {
   // lastActivityTimeMs:Date.now() keeps every row non-stale so attentionCounts isolates disabled/unreferenced.
-  // Two-axis model (mirrors HubDiagnostics): byIntegration counts only devices with a real parent
+  // Two-axis model (mirrors HubInspector): byIntegration counts only devices with a real parent
   // integration (row 1). Standalone devices (rows 2-3: integration null) are omitted from
   // byIntegration and reported under byConnection instead — no connection-label fallback.
   const merged = { rows: [

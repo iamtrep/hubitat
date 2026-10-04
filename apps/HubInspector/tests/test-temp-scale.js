@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 /*
- * Unit test for Hub Diagnostics temperature-scale handling (SPA side).
+ * Unit test for Hub Inspector temperature-scale handling (SPA side).
  *
  * Design: the reading AND the warn/crit thresholds are ALWAYS Celsius internally
  * (TH.warnTempC/critTempC). Comparisons are done in Celsius so changing the hub's temperature
  * scale never reinterprets a stored threshold. getTemperatureScale() is used only to (a) format
  * values for display and (b) convert the config inputs the user enters in their scale to Celsius.
  *
- * This test EXTRACTS the real helper functions from hub_diagnostics_ui.html by name and runs
+ * This test EXTRACTS the real helper functions from hub_inspector_ui.html by name and runs
  * them in a controlled `TH` context, so it stays bound to the shipped code, not a copy.
  *
- * Run:  node apps/HubDiagnostics/tests/test-temp-scale.js
+ * Run:  node apps/HubInspector/tests/test-temp-scale.js
  * Exits non-zero on any failure.
  */
 'use strict';
@@ -19,7 +19,7 @@ const os = require('os');
 const path = require('path');
 const assert = require('assert');
 
-const HTML = path.join(__dirname, '..', 'hub_diagnostics_ui.html');
+const HTML = path.join(__dirname, '..', 'hub_inspector_ui.html');
 const src = fs.readFileSync(HTML, 'utf8');
 
 // Grab a single-line `function NAME(...) {...}` from the source by name.

@@ -12,7 +12,7 @@
 //      or inFlight never returns to 0 and the scan hangs with the progress bar stopped.
 //
 // Like test-zwave-mesh-quality.groovy, this BRACE-EXTRACTS the pipeline methods from the
-// shipped HubDiagnostics.groovy and runs the real Groovy semantics, so it stays bound to
+// shipped HubInspector.groovy and runs the real Groovy semantics, so it stays bound to
 // the shipped code rather than to a transcription of it. Everything the pipeline calls out
 // to (asynchttpGet, runIn, unschedule, now, finalizeAudit, logging) is stubbed, which is
 // what lets the test drive platform failures directly.
@@ -23,10 +23,10 @@
 // exactly-once CAS is therefore not empirically covered either — sequentially, removing the
 // scan from AUDIT_SCANS already blocks a second finalize.
 //
-// Run: groovy apps/HubDiagnostics/tests/test-audit-dispatch.groovy
+// Run: groovy apps/HubInspector/tests/test-audit-dispatch.groovy
 
 File scriptFile = new File(getClass().protectionDomain.codeSource.location.toURI())
-File groovySrc = new File(scriptFile.parentFile.parentFile, 'HubDiagnostics.groovy')
+File groovySrc = new File(scriptFile.parentFile.parentFile, 'HubInspector.groovy')
 assert groovySrc.exists() : "source not found: ${groovySrc}"
 String src = groovySrc.text
 
@@ -60,7 +60,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
 class AuditPipeline {
-    // Mirrored from the @Field constants in HubDiagnostics.groovy.
+    // Mirrored from the @Field constants in HubInspector.groovy.
     static final int  AUDIT_MAX_INFLIGHT      = 8
     static final int  AUDIT_ATTEMPT_CAP       = 2
     static final int  AUDIT_REAP_INTERVAL_SEC = 10

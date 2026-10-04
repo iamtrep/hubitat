@@ -6,17 +6,17 @@
 //
 // The hub ships raw per-device message counts (radioStats); the SPA ranks the top talkers
 // (sort + top-N) — a pure derivation that used to live in Groovy (buildRadioDeviceList +
-// sort.take(3)). This EXTRACTS topRadioTalkers from hub_diagnostics_ui.html by name
+// sort.take(3)). This EXTRACTS topRadioTalkers from hub_inspector_ui.html by name
 // (brace-matched), so the test stays bound to the shipped function rather than a copy.
 //
-// Run: node apps/HubDiagnostics/tests/test-radio-derivations.js
+// Run: node apps/HubInspector/tests/test-radio-derivations.js
 'use strict';
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const assert = require('assert');
 
-const HTML = path.join(__dirname, '..', 'hub_diagnostics_ui.html');
+const HTML = path.join(__dirname, '..', 'hub_inspector_ui.html');
 const src = fs.readFileSync(HTML, 'utf8');
 
 // Extract a (possibly multi-line) `function NAME(...){ ... }` from the HTML by brace matching.

@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT
 
 # Hubitat Development Architecture Guide
 
-This document captures architectural principles and platform constraints that apply across all Hubitat Groovy development in this repository — apps, drivers, and integrations alike. Per-project guides (for example, `apps/HubDiagnostics/ARCHITECTURE.md`) build on top of this one and add the specifics of their own design.
+This document captures architectural principles and platform constraints that apply across all Hubitat Groovy development in this repository — apps, drivers, and integrations alike. Per-project guides (for example, `apps/HubInspector/ARCHITECTURE.md`) build on top of this one and add the specifics of their own design.
 
 Treat this guide as the default. Project-level guides may extend specific sections, but the platform constraints below are not negotiable: violating them produces silent failures or lost work.
 
@@ -33,11 +33,11 @@ Three storage options are available, with very different durability and cost:
 
 - **`state`** — persisted to the hub database; committed when the method exits. Survives hub restarts. The default.
 - **`atomicState`** — persisted to the hub database; committed on every write. Survives hub restarts, and a write survives the handler failing afterwards. *([verified 2.5.2.128](docs/hubitat-platform-notes.md#platform-behavior))* Use for flags another thread must see right away (intentional-disconnect flags, scan progress). It does **not** make a read-modify-write atomic: concurrent callbacks that each read a map, add a key and write it back lose entries in `atomicState` as well as `state`. *([verified 2.5.2.128](docs/hubitat-platform-notes.md#platform-behavior))*
-- **`@Field static`** — in-memory only, no database I/O. Survives across script executions within the same hub uptime, lost on hub restart, code push, and app/driver reinstall. It is shared by every instance of the app or driver type, so key per-instance entries by `app.id` or a scan ID. *([verified 2.5.2.128](docs/hubitat-platform-notes.md#platform-behavior))* Use for transient scan/orchestration state, request-scoped caches with a bounded TTL, and fast-path counters where DB writes would dominate the work. HubDiagnostics uses this deliberately, with explanatory comments at the declaration site.
+- **`@Field static`** — in-memory only, no database I/O. Survives across script executions within the same hub uptime, lost on hub restart, code push, and app/driver reinstall. It is shared by every instance of the app or driver type, so key per-instance entries by `app.id` or a scan ID. *([verified 2.5.2.128](docs/hubitat-platform-notes.md#platform-behavior))* Use for transient scan/orchestration state, request-scoped caches with a bounded TTL, and fast-path counters where DB writes would dominate the work. HubInspector uses this deliberately, with explanatory comments at the declaration site.
 
   Mark a `@Field static` field with `volatile` when it may be read or written by concurrent OAuth endpoint handlers. Without `volatile`, readers may see stale values across threads.
 
-**Gathering results from concurrent async callbacks.** Collect them in a `@Field static` `ConcurrentHashMap` keyed by instance, using `put`/`putIfAbsent` (never `get` then `put`), count completions with an `AtomicInteger`, and write the result to `state` once when the last callback arrives. That kept 20 of 20 results where a shared map in `state` or `atomicState` lost entries. *([verified 2.5.2.128](docs/hubitat-platform-notes.md#platform-behavior))* A value that must survive on its own goes in its own top-level `state` key. The in-memory results are lost on a push or reboot, so the handler must tolerate an unfinished batch. HubDiagnostics' device audit scan is the reference implementation.
+**Gathering results from concurrent async callbacks.** Collect them in a `@Field static` `ConcurrentHashMap` keyed by instance, using `put`/`putIfAbsent` (never `get` then `put`), count completions with an `AtomicInteger`, and write the result to `state` once when the last callback arrives. That kept 20 of 20 results where a shared map in `state` or `atomicState` lost entries. *([verified 2.5.2.128](docs/hubitat-platform-notes.md#platform-behavior))* A value that must survive on its own goes in its own top-level `state` key. The in-memory results are lost on a push or reboot, so the handler must tolerate an unfinished batch. HubInspector's device audit scan is the reference implementation.
 
 Choosing the wrong tier is a real bug source: transient per-scan data in `state` causes unnecessary DB writes; concurrent callbacks sharing one map in `state` or `atomicState` lose entries; long-lived configuration in `@Field static` is lost on every reboot or push.
 
@@ -53,7 +53,7 @@ Inside a singleThreaded file, plain `state` is enough for anything written from 
 
 - **Use `singleThreaded: true`** when durable state in `state` is updated from several handlers (events, schedules, callbacks, commands) and each handler is short. Plain `state` is then safe without extra structure. This suits automation apps and stateful drivers (HumidityFanController, SwitchMonitor, MirrorSwitch, IPReachabilitySensor).
 - **Its cost** is that every handler waits for the one before it. A handler that blocks (sync HTTP, `pauseExecution`, a long loop) delays every event, schedule and callback queued behind it, and child devices that call into the parent wait too.
-- **Leave `singleThreaded` off and use `@Field static` concurrent structures** when the app must keep handling work while slow calls are in flight: an app serving a polled UI or API, or one fanning out async calls whose callbacks should not queue behind each other. Keep the shared data in `ConcurrentHashMap`/`AtomicInteger`, change it only through their atomic methods, and write durable results to `state` at one point (see *Gathering results from concurrent async callbacks* above). HubDiagnostics works this way.
+- **Leave `singleThreaded` off and use `@Field static` concurrent structures** when the app must keep handling work while slow calls are in flight: an app serving a polled UI or API, or one fanning out async calls whose callbacks should not queue behind each other. Keep the shared data in `ConcurrentHashMap`/`AtomicInteger`, change it only through their atomic methods, and write durable results to `state` at one point (see *Gathering results from concurrent async callbacks* above). HubInspector works this way.
 - **Concurrent structures hold only in-memory data.** It is lost on a push or reboot and shared across instances. Durable state that several handlers update still needs `singleThreaded`, or one top-level `state` key per writer.
 - **Default:** start an automation app or a stateful driver with `singleThreaded: true`. Drop it only when serialization measurably delays something (an endpoint or callback waiting behind slow work), and move the contended data into concurrent structures.
 
@@ -270,7 +270,7 @@ where the transition is cheap to recompute from scratch.
 
 App-served UIs and programmatic APIs use Hubitat's per-app OAuth path (`oauth: true` + `mappings { }` + `createAccessToken()`). The architectural property that matters: endpoints reachable via `${getFullLocalApiServerUrl()}/...?access_token=${state.accessToken}` work without an active hub admin session — that is what makes app-served UIs viable for users.
 
-An app can enable OAuth for itself on install, so nobody has to toggle it in the code editor: catch the `createAccessToken()` failure, enable OAuth through the hub's loopback API, and retry. HubDiagnostics' `autoEnableOAuth()` / `checkOAuth()` is the reference implementation.
+An app can enable OAuth for itself on install, so nobody has to toggle it in the code editor: catch the `createAccessToken()` failure, enable OAuth through the hub's loopback API, and retry. HubInspector's `autoEnableOAuth()` / `checkOAuth()` is the reference implementation.
 
 ### Cross-origin (CORS) and multi-hub browser clients
 
@@ -384,4 +384,4 @@ Project-level architecture guides inherit everything in this document and add th
 
 When writing or reviewing a project's architecture guide, prefer extending or referencing this document over duplicating its contents. Existing examples:
 
-- [`apps/HubDiagnostics/ARCHITECTURE.md`](apps/HubDiagnostics/ARCHITECTURE.md) — Hub Diagnostics app and SPA
+- [`apps/HubInspector/ARCHITECTURE.md`](apps/HubInspector/ARCHITECTURE.md) — Hub Inspector app and SPA

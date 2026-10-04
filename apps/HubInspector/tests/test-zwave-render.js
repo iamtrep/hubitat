@@ -8,17 +8,17 @@
 // count — Z-Wave Long Range nodes have no mesh routing, and nodes with no accumulated
 // traffic report none yet. routeChangesCell() must render that null as an em-dash, not
 // as a number (the old code leaked a "-1" sentinel here). This EXTRACTS routeChangesCell
-// from hub_diagnostics_ui.html by name (brace-matched) so the test stays bound to the
+// from hub_inspector_ui.html by name (brace-matched) so the test stays bound to the
 // shipped function rather than a copy.
 //
-// Run: node apps/HubDiagnostics/tests/test-zwave-render.js
+// Run: node apps/HubInspector/tests/test-zwave-render.js
 'use strict';
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const assert = require('assert');
 
-const HTML = path.join(__dirname, '..', 'hub_diagnostics_ui.html');
+const HTML = path.join(__dirname, '..', 'hub_inspector_ui.html');
 const src = fs.readFileSync(HTML, 'utf8');
 
 // Extract a `function NAME(...){ ... }` from the HTML by brace matching.

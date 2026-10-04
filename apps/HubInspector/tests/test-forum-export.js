@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 PJ
 // SPDX-License-Identifier: MIT
 //
-// Unit test for assembleForumData (hub_diagnostics_ui.html).
+// Unit test for assembleForumData (hub_inspector_ui.html).
 //
 // The forum export is now built entirely client-side: btnForum batch-fetches the tab endpoints
 // and assembleForumData reshapes them into the `d` object buildForumMarkdown consumes — the same
@@ -12,10 +12,10 @@
 // can't silently corrupt the export. assembleForumData and its helpers, zbMeshDetails and zwMeshStats, are
 // extracted by name (brace-matched) and run directly — bound to the shipped code, not a copy.
 //
-// Run: node apps/HubDiagnostics/tests/test-forum-export.js
+// Run: node apps/HubInspector/tests/test-forum-export.js
 'use strict';
 const fs = require('fs'), os = require('os'), path = require('path'), assert = require('assert');
-const src = fs.readFileSync(path.join(__dirname, '..', 'hub_diagnostics_ui.html'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'hub_inspector_ui.html'), 'utf8');
 
 function extractFn(name) {
   const start = src.indexOf('function ' + name + '(');
@@ -38,7 +38,7 @@ function t(n, fn) { try { fn(); pass++; console.log('  ok   ' + n); }
   catch (e) { fail++; console.log('  FAIL ' + n + '\n         ' + e.message); } }
 
 // Representative tab-endpoint payloads (shapes mirror getDashboardData/getDevicesData/getAppsData/
-// getNetworkData/getHealthData/getPerformanceData/apiGetSettings in HubDiagnostics.groovy).
+// getNetworkData/getHealthData/getPerformanceData/apiGetSettings in HubInspector.groovy).
 const r = {
   dashboard: { appVersion: '5.57.0', hub: { name: 'Hub', hardware: 'C-8 Pro', firmware: '2.5.0' } },
   devices: {
@@ -81,7 +81,7 @@ const r = {
   performance: { stats: { uptime: '25h 0m 0s', totalDevicesRuntime: '1h 28m 5s', devicePct: '1.2%',
                           totalAppsRuntime: '3h 26m 2s', appPct: '2.9%',
                           deviceStats: [{ name: 'local', pctTotal: 0.365, count: 137104, average: 11.3 }],
-                          appStats: [{ name: 'Hub Diagnostics', type: 'app', pctTotal: 0.728, count: 13808, average: 223.7 }] },
+                          appStats: [{ name: 'Hub Inspector', type: 'app', pctTotal: 0.728, count: 13808, average: 223.7 }] },
                  radioStats: { zwave: [{ name: 'N2', deviceId: 2, msgCount: 100 }], zigbee: [{ name: 'Z6', id: 6, msgCount: 50 }] } },
   settings: { obfuscateForumExport: true }
 };

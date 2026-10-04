@@ -3,7 +3,7 @@ Copyright (c) 2025-2026 PJ
 SPDX-License-Identifier: MIT
 -->
 
-# HubDiagnostics — Test Coverage Plan
+# HubInspector — Test Coverage Plan
 
 Status as of 2026-05-08:
 
@@ -22,7 +22,7 @@ Status as of 2026-05-08:
 
 **Effort:** S-M (~1-2 hours)
 
-**Deliverable:** `tests/test-audit-html.sh` — bash + embedded Python following the same pattern as `test-hub-diagnostics-api.sh`. Triggers an audit via `/api/audit/start`, polls until done, fetches the rendered HTML from FileManager, then parses and asserts on it.
+**Deliverable:** `tests/test-audit-html.sh` — bash + embedded Python following the same pattern as `test-hub-inspector-api.sh`. Triggers an audit via `/api/audit/start`, polls until done, fetches the rendered HTML from FileManager, then parses and asserts on it.
 
 **Coverage targets:**
 
@@ -94,14 +94,14 @@ Status as of 2026-05-08:
 
 ## Phase D — SPA pure-JS unit tests
 
-**Goal:** Cover the pure rendering / parsing / formatting helpers in `hub_diagnostics_ui.html` that have zero coverage today. Catch regressions in the SVG and table renderers without spinning up a browser-automation framework.
+**Goal:** Cover the pure rendering / parsing / formatting helpers in `hub_inspector_ui.html` that have zero coverage today. Catch regressions in the SVG and table renderers without spinning up a browser-automation framework.
 
 **Effort:** M (~2-3 hours)
 
 **Deliverable:** `tests/spa/index.html` + `tests/spa/tests.js`. Open `index.html` in any browser; results display inline. No installation step.
 
 **Approach:** the SPA is a single `.html` file. Strategy:
-- Extract the script block from `hub_diagnostics_ui.html` into a sourceable form (or just `<script src="../../hub_diagnostics_ui.html">` — won't work because of the surrounding HTML; better to copy the script block into a separate file at build time, OR use a small build step that creates `tests/spa/spa.js` from the SPA HTML).
+- Extract the script block from `hub_inspector_ui.html` into a sourceable form (or just `<script src="../../hub_inspector_ui.html">` — won't work because of the surrounding HTML; better to copy the script block into a separate file at build time, OR use a small build step that creates `tests/spa/spa.js` from the SPA HTML).
 - Pragmatic alternative: each test file directly fetches the SPA HTML, extracts the `<script>` content via regex, and `eval`s it into the test page's scope.
 - A tiny assert framework: `function assert(cond, msg)` + `function assertEq(a, b, msg)` writing PASS/FAIL `<li>`s into a results `<ul>`.
 
@@ -157,10 +157,10 @@ Stop / re-evaluate after each phase. If a phase's value isn't holding up, pivot.
 
 ```bash
 # All API tests, fast (no Zigbee scan)
-bash tests/test-hub-diagnostics-api.sh @hubname
+bash tests/test-hub-inspector-api.sh @hubname
 
 # Same, with the slow Zigbee channel scan included (~30s extra)
-RUN_SLOW_TESTS=1 bash tests/test-hub-diagnostics-api.sh @hubname
+RUN_SLOW_TESTS=1 bash tests/test-hub-inspector-api.sh @hubname
 
 # Audit-HTML validator (Phase B, when shipped)
 bash tests/test-audit-html.sh @hubname
@@ -200,4 +200,4 @@ groovy tests/test-audit-dispatch.groovy      # audit fan-out: throw rollback, mi
 > and the `zeroBaseline` case in `test-diffStats.js`). The broader renderer coverage in Phase D's
 > coverage-targets list (charts, tab routing, snapshot-diff renderer) is still outstanding.
 
-All test scripts auto-discover the Hub Diagnostics installed-app instance via `/hub2/appsList`; pass an explicit instance ID as the second arg if discovery fails.
+All test scripts auto-discover the Hub Inspector installed-app instance via `/hub2/appsList`; pass an explicit instance ID as the second arg if discovery fails.

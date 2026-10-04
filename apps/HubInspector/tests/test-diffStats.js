@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 PJ
 // SPDX-License-Identifier: MIT
 
-// Unit tests for diffStats (hub_diagnostics_ui.html)
+// Unit tests for diffStats (hub_inspector_ui.html)
 // Run: node tests/test-diffStats.js
 //
 // These tests exercise the comparison/diff logic in isolation.
@@ -13,7 +13,7 @@ function ok(msg)   { passed++; console.log(`  [PASS] ${msg}`); }
 function fail(msg) { failed++; console.error(`  [FAIL] ${msg}`); }
 function section(msg) { console.log(`\n--- ${msg} ---`); }
 
-// ── Copy from hub_diagnostics_ui.html (keep in sync) ──────────────────
+// ── Copy from hub_inspector_ui.html (keep in sync) ──────────────────
 
 function parseRuntimeMs(v){
   if(v==null)return 0;if(typeof v==='number')return v;
@@ -95,7 +95,7 @@ function diffStats(base, comp) {
   return res;
 }
 
-// ── zeroBaseline: copied from hub_diagnostics_ui.html — keep in sync ──
+// ── zeroBaseline: copied from hub_inspector_ui.html — keep in sync ──
 // Field-for-field port of the old Groovy buildZeroBaseline(); the SPA now synthesizes the
 // startup baseline client-side instead of the hub shipping it.
 function zeroBaseline(comp){

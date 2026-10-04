@@ -5,27 +5,27 @@ SPDX-License-Identifier: MIT
 
 # Multi-Hub Inventory
 
-A standalone Hubitat app that aggregates each hub's existing Hub Diagnostics `/api/audit/*` data
-into one read-only, cross-hub view. It does **not** modify Hub Diagnostics in any way.
+A standalone Hubitat app that aggregates each hub's existing Hub Inspector `/api/audit/*` data
+into one read-only, cross-hub view. It does **not** modify Hub Inspector in any way.
 
 ## Requirements
 
 Multi-Hub Inventory has **no data of its own** — it only reads and merges the audit data that
-**Hub Diagnostics already produces** on each hub. Before a hub can appear in any view, it must
-already be running Hub Diagnostics:
+**Hub Inspector already produces** on each hub. Before a hub can appear in any view, it must
+already be running Hub Inspector:
 
-- **Hub Diagnostics must be installed *and* instantiated on every hub you want to include** —
-  including the host hub that serves this app. Importing the Hub Diagnostics app *code* is not
-  enough; each hub needs a configured Hub Diagnostics *instance* (Apps → Add User App → Hub
+- **Hub Inspector must be installed *and* instantiated on every hub you want to include** —
+  including the host hub that serves this app. Importing the Hub Inspector app *code* is not
+  enough; each hub needs a configured Hub Inspector *instance* (Apps → Add User App → Hub
   Diagnostics) that has finished its setup.
 - **That instance must have OAuth enabled with an access token**, so it exposes a local
-  `/apps/api/<id>/api/` endpoint. (Hub Diagnostics enables its own OAuth on install, so this is
+  `/apps/api/<id>/api/` endpoint. (Hub Inspector enables its own OAuth on install, so this is
   normally automatic.)
 - **The endpoint must be reachable on the LAN** from the hub that serves Multi-Hub Inventory.
 
-A hub without a configured Hub Diagnostics instance cannot be added: there is no audit API for the
+A hub without a configured Hub Inspector instance cannot be added: there is no audit API for the
 proxy to call, so its peer probe reports it unreachable and it contributes nothing to the merged
-views. Install and configure Hub Diagnostics on each target hub *first*, then add it here as
+views. Install and configure Hub Inspector on each target hub *first*, then add it here as
 described under **Adding a hub** below.
 
 ## What it does
@@ -45,7 +45,7 @@ Multi-Hub Inventory has five tabs covering all hubs in your fleet:
   counts by status that filter the table.
 - **About** — version, update check and a link to the app's code.
 
-Hub Diagnostics keeps each hub's last scan in memory, so a hub restart or a Hub Diagnostics
+Hub Inspector keeps each hub's last scan in memory, so a hub restart or a Hub Inspector
 update clears it. That hub then shows "No scan since this hub's last restart or update" until
 you click **Rescan fleet**.
 
@@ -57,7 +57,7 @@ server-side proxying is required because browsers cannot fetch another hub's API
 Hubitat's local OAuth API sends no CORS headers, so cross-origin calls are blocked. The SPA
 loads the peer list from `/api/peers`, orchestrates audit collection through the proxy one hub
 at a time, then merges and correlates all the data client-side. The serving hub registers one
-of its own peer entries pointing at its co-located Hub Diagnostics instance, so all hubs
+of its own peer entries pointing at its co-located Hub Inspector instance, so all hubs
 (including the host) are treated identically.
 
 ## Install / deploy
@@ -85,8 +85,8 @@ catches up.
 
 ## Adding a hub
 
-A hub can only be added once it has a configured Hub Diagnostics instance (see **Requirements**
-above). In the app's settings page, click **"Add hub"**. Paste that hub's Hub Diagnostics **API
+A hub can only be added once it has a configured Hub Inspector instance (see **Requirements**
+above). In the app's settings page, click **"Add hub"**. Paste that hub's Hub Inspector **API
 base URL with its access token**, for example:
 
 ```
@@ -94,9 +94,9 @@ http://192.168.0.10/apps/api/247/api/?access_token=<token>
 ```
 
 This is the `/api/` path, not the `ui.html` dashboard link. To build it, take the **Open
-Dashboard** link from the Hub Diagnostics settings page and replace `ui.html` with `api/`.
+Dashboard** link from the Hub Inspector settings page and replace `ui.html` with `api/`.
 
-Add an entry for **this hub itself** too, pointing at its own Hub Diagnostics instance. A hub
+Add an entry for **this hub itself** too, pointing at its own Hub Inspector instance. A hub
 cannot make an HTTP call to its own LAN IP, so the app sends its own requests through the
 loopback address either way; you can enter the LAN IP or the loopback address:
 

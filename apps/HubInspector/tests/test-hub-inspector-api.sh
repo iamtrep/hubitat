@@ -4,7 +4,7 @@
 # TEST-LIVE: needs a reachable hub
 
 #
-# Hub Diagnostics API Validation Test
+# Hub Inspector API Validation Test
 #
 # Tests all JSON API endpoints, validates response structure, data integrity,
 # cross-endpoint coherence, and OAuth enforcement. Compares API data against
@@ -20,10 +20,10 @@
 # /api/network/zigbee/scan caching.
 #
 # Usage:
-#   bash tests/test-hub-diagnostics-api.sh                    # default hub
-#   bash tests/test-hub-diagnostics-api.sh @hubname          # specific hub
-#   bash tests/test-hub-diagnostics-api.sh @hubname 247      # specific hub + instance
-#   RUN_SLOW_TESTS=1 bash tests/test-hub-diagnostics-api.sh   # also run the Zigbee scan (~30s)
+#   bash tests/test-hub-inspector-api.sh                    # default hub
+#   bash tests/test-hub-inspector-api.sh @hubname          # specific hub
+#   bash tests/test-hub-inspector-api.sh @hubname 247      # specific hub + instance
+#   RUN_SLOW_TESTS=1 bash tests/test-hub-inspector-api.sh   # also run the Zigbee scan (~30s)
 #
 
 set -euo pipefail
@@ -148,7 +148,7 @@ if not instance_id:
             for entry in entries:
                 d = entry.get("data", {})
                 if d and isinstance(d, dict):
-                    if d.get("type", "") == "Hub Diagnostics":
+                    if d.get("type", "") == "Hub Inspector":
                         return d.get("id")
                 children = entry.get("children", [])
                 if children:
@@ -159,7 +159,7 @@ if not instance_id:
         instance_id = find_instance(apps_list["apps"])
 
 if not instance_id:
-    print(f"{RED}Could not find Hub Diagnostics instance on {hub_name}. Is it installed?{RESET}")
+    print(f"{RED}Could not find Hub Inspector instance on {hub_name}. Is it installed?{RESET}")
     sys.exit(2)
 
 # Get access_token from the app's config page (embedded in href links)
@@ -266,7 +266,7 @@ info(f"Hub: {gt_hub_name} | {gt_model} | fw {gt_firmware}")
 info(f"Devices: {gt_devices} (disabled: {gt_disabled})")
 info(f"Apps: {gt_apps} (user: {gt_apps_user}, system: {gt_apps_system})")
 
-print(f"\n{BOLD}=== Hub Diagnostics API Validation: {gt_hub_name} ({gt_model}) ==={RESET}")
+print(f"\n{BOLD}=== Hub Inspector API Validation: {gt_hub_name} ({gt_model}) ==={RESET}")
 
 # ── Test 1: OAuth ─────────────────────────────────────────────────────
 section("OAuth Security")

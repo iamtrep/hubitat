@@ -12,7 +12,7 @@ const os = require('os');
 const path = require('path');
 const assert = require('assert');
 
-const HTML = path.join(__dirname, '..', 'hub_diagnostics_ui.html');
+const HTML = path.join(__dirname, '..', 'hub_inspector_ui.html');
 const src = fs.readFileSync(HTML, 'utf8');
 
 function extractFn(name) {

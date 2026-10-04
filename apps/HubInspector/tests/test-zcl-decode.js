@@ -10,17 +10,17 @@
 // ID, distinguish ZDO requests (no status byte) from responses (status byte), and never surface
 // the colliding ZCL cluster name / attribute decode for a ZDO frame.
 //
-// EXTRACTS the shipped ZCL-decode block from hub_diagnostics_ui.html (ZB_CLUSTERS .. ZCL DECODE
+// EXTRACTS the shipped ZCL-decode block from hub_inspector_ui.html (ZB_CLUSTERS .. ZCL DECODE
 // (END)) so the test stays bound to the shipped code rather than a copy.
 //
-// Run: node apps/HubDiagnostics/tests/test-zcl-decode.js
+// Run: node apps/HubInspector/tests/test-zcl-decode.js
 'use strict';
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const assert = require('assert');
 
-const HTML = path.join(__dirname, '..', 'hub_diagnostics_ui.html');
+const HTML = path.join(__dirname, '..', 'hub_inspector_ui.html');
 const src = fs.readFileSync(HTML, 'utf8');
 
 // Slice the self-contained decode block plus the cluster-label helpers just above it. Starts at the

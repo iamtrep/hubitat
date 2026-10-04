@@ -128,7 +128,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "0.8.5";
+const CODE_VERSION = "0.8.6";
 const APP_VERSION = '${app_version}';   // injected by serveUI; stays literal in workbench/dev
 
 // ===== Z-WAVE MANUFACTURER TABLE (decimal maker-id -> name, from zwave-js) =====
@@ -212,13 +212,13 @@ const MOCK_AUDIT = {
 // ===== CORRELATION ===== (pure functions; unit-tested in tests/test-correlation.js)
 // Real parent-managed integration name only (e.g. Lutron, Blink, AirPlay); '' for standalone devices.
 // Standalone devices are reported under "By connection", not "By integration" — mirrors the
-// HubDiagnostics two-axis model (Groovy analyzeDevices omits null integrations from byIntegration).
+// HubInspector two-axis model (Groovy analyzeDevices omits null integrations from byIntegration).
 const integLabel = r => r.integration || '';
 function filterLinked(rows){ return rows.filter(r => r.protocol !== 'Linked'); }
 // Some Zigbee devices report fixed-length strings padded with NUL or junk bytes; keep the part
 // before the first control character.
 function cleanStr(v){ return typeof v === 'string' ? v.split(/[\u0000-\u001f]/)[0].trim() : v; }
-// Same timestamp format as Hub Diagnostics: yyyy-MM-dd HH:mm:ss, local time.
+// Same timestamp format as Hub Inspector: yyyy-MM-dd HH:mm:ss, local time.
 function fmtTs(ms){ const d = new Date(ms), p = n => String(n).padStart(2,'0');
   return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds()); }
 function mergeFleet(hubResults){
@@ -411,7 +411,7 @@ function fleetSummary(merged, webBaseByLabel){
 
 // ===== HELPERS =====
 const STALE_DAYS = 7;
-// Connection-type display names — mirrors HubDiagnostics CONN_DISPLAY.
+// Connection-type display names — mirrors HubInspector CONN_DISPLAY.
 const CD = {zigbee:'Zigbee', zwave:'Z-Wave', matter:'Matter', bluetooth:'Bluetooth', homekit:'HomeKit', paired:'Paired', lan_direct:'LAN (Direct)', lan_bridge:'LAN (Bridge)', cloud:'Cloud', virtual:'Virtual', hubmesh:'Hub Mesh', other:'Other'};
 // Map of hub label -> webBase (scheme+host), populated from /api/peers.
 let HUB_WEBBASE = {};
@@ -515,7 +515,7 @@ async function collectExisting(peers){
   }
   return results;
 }
-// Hub Diagnostics keeps its last scan in memory, so a hub restart or app update clears it.
+// Hub Inspector keeps its last scan in memory, so a hub restart or app update clears it.
 function peerError(d){
   const e = d && (d.error || d._error);
   if (!e || e === 'no scan' || e === 404) return "No scan since this hub's last restart or update. Rescan to collect.";
@@ -551,7 +551,7 @@ async function rescanFleet(){
         if (!st || st._error || st.error){ failed = st || { _error: 'network' }; break; }
         if (typeof st.processed === 'number' && typeof st.total === 'number')
           setScanStatus(`Scanning ${p.label} ${pos}… ${st.processed}/${st.total} devices`);
-        // HubDiagnostics' terminal audit status is 'done' (verified live), not 'complete';
+        // HubInspector's terminal audit status is 'done' (verified live), not 'complete';
         // treat anything no longer actively 'scanning' as finished (done/error/unknown).
         if (st.status && st.status !== 'scanning') done = true;
       }
@@ -613,7 +613,7 @@ function isNewer(a, b){
 }
 const fmtDate = ms => (typeof ms==='number'&&ms>0) ? new Date(ms).toISOString().slice(0,10) : '—';
 
-// ===== TABLE ENGINE ===== (ported verbatim from HubDiagnostics tbl())
+// ===== TABLE ENGINE ===== (ported verbatim from HubInspector tbl())
 function tbl(cid,cols,rows,opts={}){
   const el=document.getElementById(cid);if(!el)return;
   if(!rows||!rows.length){el.innerHTML='<p style="color:var(--muted);padding:16px">No data</p>';return}
@@ -876,13 +876,13 @@ function meshFilter(st){
 }
 function renderMesh(){
   const g = meshGraph(FLEET.all, FLEET.hubs, HUB_WEBBASE), c = g.counts;
-  // A reachable peer whose devices lack the mesh fields is on pre-5.69.0 HubDiag — flag it so an
+  // A reachable peer whose devices lack the mesh fields is on pre-5.69.0 HubInspector — flag it so an
   // empty/partial tab isn't misread as "no mesh". Detect by absence of the isLinked key on its rows.
   const staleHubs = FLEET.hubs.filter(h => h.ok &&
     FLEET.all.some(d => d.hub === h.label) &&
     !FLEET.all.some(d => d.hub === h.label && Object.prototype.hasOwnProperty.call(d, 'isLinked')));
   const staleNote = staleHubs.length
-    ? `<div class="card"><div class="card-b warn">Mesh data unavailable for: ${esc(staleHubs.map(h=>h.label).join(', '))} — update Hub Diagnostics on ${staleHubs.length>1?'those hubs':'that hub'} to ≥ 5.69.0.</div></div>`
+    ? `<div class="card"><div class="card-b warn">Mesh data unavailable for: ${esc(staleHubs.map(h=>h.label).join(', '))} — update Hub Inspector on ${staleHubs.length>1?'those hubs':'that hub'} to ≥ 5.69.0.</div></div>`
     : '';
   // Link pills filter the Links table by status; source pills jump to the Source Issues card.
   const pill = (label, n, cls, st) => n

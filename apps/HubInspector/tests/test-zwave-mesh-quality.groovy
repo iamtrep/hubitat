@@ -10,14 +10,14 @@
 // surface as.
 //
 // Unlike a Python mirror (Mode 4), this BRACE-EXTRACTS the two methods from the shipped
-// HubDiagnostics.groovy and runs the real Groovy semantics — so it stays bound to the
+// HubInspector.groovy and runs the real Groovy semantics — so it stays bound to the
 // shipped code, no live hub or Long Range hardware required.
 //
-// Run: groovy apps/HubDiagnostics/tests/test-zwave-mesh-quality.groovy
+// Run: groovy apps/HubInspector/tests/test-zwave-mesh-quality.groovy
 
-// Locate HubDiagnostics.groovy relative to this script (CWD-independent).
+// Locate HubInspector.groovy relative to this script (CWD-independent).
 File scriptFile = new File(getClass().protectionDomain.codeSource.location.toURI())
-File groovySrc = new File(scriptFile.parentFile.parentFile, 'HubDiagnostics.groovy')
+File groovySrc = new File(scriptFile.parentFile.parentFile, 'HubInspector.groovy')
 assert groovySrc.exists() : "source not found: ${groovySrc}"
 String src = groovySrc.text
 

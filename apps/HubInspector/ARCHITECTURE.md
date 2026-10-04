@@ -3,20 +3,20 @@ Copyright (c) 2025-2026 PJ
 SPDX-License-Identifier: MIT
 -->
 
-# Hub Diagnostics Architecture Guide
+# Hub Inspector Architecture Guide
 
-This document is the contributor-facing architecture guide for Hub Diagnostics.
+This document is the contributor-facing architecture guide for Hub Inspector.
 
 Use it to make feature additions that reinforce the current design instead of eroding it. It is intentionally prescriptive. `README.md` explains what the app does. `CODE_REVIEW.md` records review findings and accepted tradeoffs. This file defines how future changes should be built.
 
-> **Read first:** [`/ARCHITECTURE.md`](../../ARCHITECTURE.md) — repo-wide Hubitat development principles and platform constraints (sandbox restrictions, `state` semantics, async-call ceiling, static typing, date handling, generic API endpoint design, app/UI version sync, fail-soft defaults). This guide assumes that document and adds Hub Diagnostics specifics on top.
+> **Read first:** [`/ARCHITECTURE.md`](../../ARCHITECTURE.md) — repo-wide Hubitat development principles and platform constraints (sandbox restrictions, `state` semantics, async-call ceiling, static typing, date handling, generic API endpoint design, app/UI version sync, fail-soft defaults). This guide assumes that document and adds Hub Inspector specifics on top.
 
 ## Purpose
 
-Hub Diagnostics is a Hubitat app plus a single-file SPA:
+Hub Inspector is a Hubitat app plus a single-file SPA:
 
-- `HubDiagnostics.groovy` owns hub data collection, API shaping, scheduling, caching, enrichment, and lifecycle behavior.
-- `hub_diagnostics_ui.html` owns rendering and interaction, but should stay thin and consume server-shaped data rather than inventing its own data model.
+- `HubInspector.groovy` owns hub data collection, API shaping, scheduling, caching, enrichment, and lifecycle behavior.
+- `hub_inspector_ui.html` owns rendering and interaction, but should stay thin and consume server-shaped data rather than inventing its own data model.
 
 The architecture is optimized for:
 
@@ -40,7 +40,7 @@ When in doubt, ship raw and let the SPA derive. Examples in place: the Network t
 
 ### Backend layout
 
-`HubDiagnostics.groovy` is divided into banner-marked sections (`// ===== NAME =====`). In file order: constants and caches; API mappings; page methods; API endpoint methods; data gatherers (aggregation); data collection (the request wrappers) followed by the feature-specific fetch helpers; analysis modules and protocol detection; the checkpoint, snapshot, file and audit systems; lifecycle. New code goes in the section that matches its job. Keep fetching, aggregation, analysis and endpoint code in their own sections.
+`HubInspector.groovy` is divided into banner-marked sections (`// ===== NAME =====`). In file order: constants and caches; API mappings; page methods; API endpoint methods; data gatherers (aggregation); data collection (the request wrappers) followed by the feature-specific fetch helpers; analysis modules and protocol detection; the checkpoint, snapshot, file and audit systems; lifecycle. New code goes in the section that matches its job. Keep fetching, aggregation, analysis and endpoint code in their own sections.
 
 ### Frontend model
 
@@ -58,7 +58,7 @@ Caching is how the app honours the guiding principle: every avoided hub fetch is
 
 ### Tier 1 — Browser (SPA) cache
 
-`hub_diagnostics_ui.html` wraps every aggregator fetch in `api(ep)`, backed by an in-memory `cache={}` object with a single flat TTL:
+`hub_inspector_ui.html` wraps every aggregator fetch in `api(ep)`, backed by an in-memory `cache={}` object with a single flat TTL:
 
 - `CACHE_TTL_MS = 120000` (2 min) applies uniformly to all cached endpoints.
 - Two endpoints deliberately bypass it:
@@ -113,7 +113,7 @@ Data that must **survive a code push or reboot** is stored in `state` or File Ma
 
 ## API Endpoint Boundaries
 
-The repo-wide guide defines the three endpoint categories — *app-owned*, *aggregator*, and *pure passthrough* — and the rule that pure-passthrough routes should not exist. The notes below are Hub Diagnostics specifics on top of that rule.
+The repo-wide guide defines the three endpoint categories — *app-owned*, *aggregator*, and *pure passthrough* — and the rule that pure-passthrough routes should not exist. The notes below are Hub Inspector specifics on top of that rule.
 
 The Groovy app acts as an application server for the SPA, providing four things the browser cannot get from raw hub endpoints:
 
@@ -122,9 +122,9 @@ The Groovy app acts as an application server for the SPA, providing four things 
 3. **Aggregation** — collapsing multiple hub requests into a single response with shared-cache and fail-soft semantics centralized. Aggregation is about *coalescing fetches*, not about computing derived values; if the only thing the SPA cannot do directly is sort, slice, or threshold-check the result, that does not belong on the hub.
 4. **Normalization** — stable field names, payload shape, date-to-epoch conversion, firmware/version compatibility.
 
-Most Hub Diagnostics routes are app-owned. The aggregators are `/api/dashboard`, `/api/devices`, `/api/apps`, `/api/network`, `/api/health`, `/api/health/history`, `/api/live` and `/api/code`; they are justified by shared-cache, fail-soft behavior, and normalization the SPA should not duplicate.
+Most Hub Inspector routes are app-owned. The aggregators are `/api/dashboard`, `/api/devices`, `/api/apps`, `/api/network`, `/api/health`, `/api/health/history`, `/api/live` and `/api/code`; they are justified by shared-cache, fail-soft behavior, and normalization the SPA should not duplicate.
 
-The `mappings { }` block in `HubDiagnostics.groovy` is grouped by category. Place new routes in the matching section.
+The `mappings { }` block in `HubInspector.groovy` is grouped by category. Place new routes in the matching section.
 
 ## Contributor Prerequisites
 
@@ -132,15 +132,15 @@ Read this section — and the platform constraints in the repo-wide guide — be
 
 ### Test script structure
 
-`tests/test-hub-diagnostics-api.sh` is a bash script that embeds a Python 3 program as a heredoc. The test logic is entirely Python; bash handles argument parsing and invocation. When adding new test coverage, write Python that matches the existing pattern — `ok()`, `fail()`, `warn()`, `section()`, `api_get()`, etc. Do not add pure bash test assertions.
+`tests/test-hub-inspector-api.sh` is a bash script that embeds a Python 3 program as a heredoc. The test logic is entirely Python; bash handles argument parsing and invocation. When adding new test coverage, write Python that matches the existing pattern — `ok()`, `fail()`, `warn()`, `section()`, `api_get()`, etc. Do not add pure bash test assertions.
 
 ### UI file deployment
 
-The SPA (`hub_diagnostics_ui.html`) is deployed to the hub's File Manager. Editing the local file has no effect on the running app until it is uploaded. Upload changes through the hub's File Manager (Settings › File Manager) or its upload endpoint. The Groovy app's `/ui.html` endpoint reads the uploaded file from File Manager, injects runtime values like the access token and API base, and serves the resulting HTML directly.
+The SPA (`hub_inspector_ui.html`) is deployed to the hub's File Manager. Editing the local file has no effect on the running app until it is uploaded. Upload changes through the hub's File Manager (Settings › File Manager) or its upload endpoint. The Groovy app's `/ui.html` endpoint reads the uploaded file from File Manager, injects runtime values like the access token and API base, and serves the resulting HTML directly.
 
 ## Required Patterns
 
-The repo-wide guide already covers backend-owns-normalization, date handling, state/cache invalidation, and app/UI version sync. The patterns below are Hub Diagnostics specifics.
+The repo-wide guide already covers backend-owns-normalization, date handling, state/cache invalidation, and app/UI version sync. The patterns below are Hub Inspector specifics.
 
 ### 1. All hub HTTP calls go through the request wrappers
 
@@ -224,7 +224,7 @@ Small visual duplication is acceptable. Structural duplication of logic is not.
 
 ## Patterns To Avoid
 
-In addition to the repo-wide patterns-to-avoid list, these are Hub Diagnostics specifics:
+In addition to the repo-wide patterns-to-avoid list, these are Hub Inspector specifics:
 
 - raw `httpGet` calls in feature logic when a wrapper covers the case
 - new endpoint-specific error contracts when the wrappers already define the norm
@@ -342,7 +342,7 @@ Before pushing a feature, answer these:
 - If `tbl()` is used on potentially unbounded data, has the row-cap question been discussed?
 - Does any new cache have explicit expiration and invalidation behavior?
 - If API/UI contract changed, were both `CODE_VERSION` constants (Groovy and HTML) bumped in lockstep?
-- Did `tests/test-hub-diagnostics-api.sh` gain or update coverage where needed?
+- Did `tests/test-hub-inspector-api.sh` gain or update coverage where needed?
 - Would this change still behave acceptably if the new endpoint timed out, returned an empty payload, or changed shape slightly?
 
 If any answer is "no" or "not sure," the design should be revisited before merge.
@@ -352,6 +352,6 @@ If any answer is "no" or "not sure," the design should be revisited before merge
 - [`/ARCHITECTURE.md`](../../ARCHITECTURE.md): repo-wide Hubitat development principles and platform constraints
 - `README.md`: user-facing behavior, installation, features, and REST API overview
 - `CODE_REVIEW.md`: review findings, debt ledger, and rationale for accepted tradeoffs
-- `ARCHITECTURE.md` (this file): contributor rules for safely extending Hub Diagnostics
+- `ARCHITECTURE.md` (this file): contributor rules for safely extending Hub Inspector
 
 Keep all four aligned, but do not collapse them into one document.

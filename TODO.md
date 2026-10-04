@@ -46,9 +46,9 @@ If they run async, give these `disabled: busy` plus `refreshInterval: busy ? 2 :
 
 ### 6. Status colors (opportunistic)
 
-Inline `color:red/orange/green` appears in HubDiagnostics, WellMonitor, SensorAggregatorDiscreteChild and the integration managers. Switch to PrimeFlex color classes only when already editing those pages.
+Inline `color:red/orange/green` appears in HubInspector, WellMonitor, SensorAggregatorDiscreteChild and the integration managers. Switch to PrimeFlex color classes only when already editing those pages.
 
 ### Out of scope
 
-- HubDiagnostics and MultiHubInventory keep their real UI in the SPA; their native pages are thin.
-- HubDiagnostics paragraphs that rely on `\n` line breaks (the OAuth instructions and version block) must not get `rawHtml`.
+- HubInspector and MultiHubInventory keep their real UI in the SPA; their native pages are thin.
+- HubInspector paragraphs that rely on `\n` line breaks (the OAuth instructions and version block) must not get `rawHtml`.

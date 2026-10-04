@@ -3,7 +3,7 @@ Copyright (c) 2025-2026 PJ
 SPDX-License-Identifier: MIT
 -->
 
-# HubDiagnostics — Code Review Findings & Fix Plan
+# HubInspector — Code Review Findings & Fix Plan
 
 Status as of 2026-05-21 (v5.38.0; rounds 1-9 complete).
 
@@ -110,10 +110,10 @@ Full audit of this document against the current code, triggered by drift: the he
 
 **Newly fixed:**
 - **N8** — `APP_VERSION` and `UI_VERSION` are both `5.38.0`. (C14 — the structural risk of two hand-maintained constants — remains; no automated cross-file check exists.)
-- **R8-1 (🔴, fixed v5.37.0)** — audit finalize-trigger race. The finalize gate read this callback's local `incrementAndGet()` value, so the callback that zeroed `inFlight` could carry a stale `processed` < total and never call `finalizeAudit`, stranding the scan until the 120s watchdog failed it. Fixed by reading `processed` fresh from the atomic in the gate (`HubDiagnostics.groovy:4335`).
+- **R8-1 (🔴, fixed v5.37.0)** — audit finalize-trigger race. The finalize gate read this callback's local `incrementAndGet()` value, so the callback that zeroed `inFlight` could carry a stale `processed` < total and never call `finalizeAudit`, stranding the scan until the 120s watchdog failed it. Fixed by reading `processed` fresh from the atomic in the gate (`HubInspector.groovy:4335`).
 
 **Relocated — still open:**
-- **C1 (🔴)** — the silent-wrong-diff hazard survived. `apiCreateSnapshot()` (`:894`) unconditionally returns `[success:true]` while `createSnapshot()` (`:3390`) is `void` with no error path; the SPA create-then-diff flow (`hub_diagnostics_ui.html:2141`) trusts it and diffs index 0. A failed live snapshot still yields a wrong diff with no error surfaced — now split across the Groovy create path and the SPA. The fix should re-point at `apiCreateSnapshot` returning real success/failure.
+- **C1 (🔴)** — the silent-wrong-diff hazard survived. `apiCreateSnapshot()` (`:894`) unconditionally returns `[success:true]` while `createSnapshot()` (`:3390`) is `void` with no error path; the SPA create-then-diff flow (`hub_inspector_ui.html:2141`) trusts it and diffs index 0. A failed live snapshot still yields a wrong diff with no error surfaced — now split across the Groovy create path and the SPA. The fix should re-point at `apiCreateSnapshot` returning real success/failure.
 
 **Reconciled (doc vs code):**
 - **N6 / #4** — `getUIVersion` uses `@Field static volatile uiVersionCache` (`:145`), not `state.cachedUIVersion`. More to the point, `serveUI` no longer calls `getUIVersion()` at all, so #4's hot-path concern is moot — accept as session-scoped cache (one FileManager read per JVM start).
@@ -133,7 +133,7 @@ Full audit of this document against the current code, triggered by drift: the he
 
 ## Round 9 summary (Claude, 2026-05-21, v5.38.0 — dead-code / duplication / bloat + arch)
 
-Three review passes: a code-quality pass over each file (dead code, duplication, bloat) plus an arch-compliance audit against `/ARCHITECTURE.md` + `apps/HubDiagnostics/ARCHITECTURE.md`. Dead-symbol claims were grep-verified (definition-only). **0 arch errors** — the code is largely arch-compliant; findings are warnings/notes plus the first dedicated dead-code sweep. The only critical open item remains the already-tracked **C1**. Line numbers are current as of v5.38.0 but treated as approximate per the Round 8 convention.
+Three review passes: a code-quality pass over each file (dead code, duplication, bloat) plus an arch-compliance audit against `/ARCHITECTURE.md` + `apps/HubInspector/ARCHITECTURE.md`. Dead-symbol claims were grep-verified (definition-only). **0 arch errors** — the code is largely arch-compliant; findings are warnings/notes plus the first dedicated dead-code sweep. The only critical open item remains the already-tracked **C1**. Line numbers are current as of v5.38.0 but treated as approximate per the Round 8 convention.
 
 **Dead code (net-new, grep-confirmed, ~80 lines removable):**
 - **R9-1** — five never-called Groovy methods (~49 lines): `buildRadioProtocolMap` (`:2879`), `listHubFilesByNames` (`:3499`), `formatDuration` (`:3657`), `formatDurationSec` (`:4272`), `fileExists` (`:3986`). Note `formatDuration` is listed under **C7** (add `@CompileStatic`) — it's dead, so delete instead.
@@ -247,21 +247,21 @@ Severity legend: 🔴 critical bug · 🟠 high (architecture / leverage) · �
 
 ### ✅ #6 — `childIds` includes parent IDs (fixed v5.13.1)
 
-**Where:** `HubDiagnostics.groovy:1527` (now corrected)
+**Where:** `HubInspector.groovy:1527` (now corrected)
 
 **Original:** `childIds: deviceStats.parentIds + deviceStats.childIds` — concatenated the two lists.
 
 **Fixed:** `childIds: deviceStats.childIds`.
 
-**Symptom (resolved):** `hub_diagnostics_ui.html:797` — `mc('Child', dlistlink(s.childDevices, s.childIds))`. The "Child" metric link on the Devices tab now navigates to the actual child devices only.
+**Symptom (resolved):** `hub_inspector_ui.html:797` — `mc('Child', dlistlink(s.childDevices, s.childIds))`. The "Child" metric link on the Devices tab now navigates to the actual child devices only.
 
-**Regression guard:** test-hub-diagnostics-api.sh now asserts `len(childIds) == childDevices` AND `childIds ∩ parentIds == ∅`.
+**Regression guard:** test-hub-inspector-api.sh now asserts `len(childIds) == childDevices` AND `childIds ∩ parentIds == ∅`.
 
 ---
 
 ### ✅ #7 — `disabled` flag on `apps.userApps` always false (fixed v5.13.1)
 
-**Where:** `HubDiagnostics.groovy:1548` (now corrected)
+**Where:** `HubInspector.groovy:1548` (now corrected)
 
 **Original:** `disabled: it.state == "disabled"` against a Map with no `state` key → always `false`.
 
@@ -269,7 +269,7 @@ Severity legend: 🔴 critical bug · 🟠 high (architecture / leverage) · �
 
 **User-visible impact (turned out to be smaller than first thought):** the SPA's Apps-tab Disabled badge actually reads from `apps.allApps[*].disabled`, which was sourced separately from `analyzeApps` line 2799 and was always correct. The `apps.userApps` rows array is exposed in the API response but isn't currently consumed by the SPA. So the bug existed in a dead code path; the fix is preventive (keeps the API contract correct for future SPA features and external API consumers, and matches the snapshot-view path which sources `userAppsList` directly from `analyzeApps`).
 
-**Regression guard:** test-hub-diagnostics-api.sh now asserts `apps.userApps[*].disabled` count matches the `data.user==True AND data.disabled==True` count from `/hub2/appsList` ground truth.
+**Regression guard:** test-hub-inspector-api.sh now asserts `apps.userApps[*].disabled` count matches the `data.user==True AND data.disabled==True` count from `/hub2/appsList` ground truth.
 
 ---
 
@@ -294,12 +294,12 @@ Plus `fetchSystemResources` / `fetchTemperature` / `fetchDatabaseSize` de-duplic
 
 > **[R-8, v5.38.0]: Resolved by removal.** `renderAuditHtml` and `AUDIT_REPORT_CSS` no longer exist — audit rendering moved entirely to the SPA's `buildAuditHtml` (v5.25.0). The text below is historical.
 
-**Where:** `HubDiagnostics.groovy:4030–4393` — `renderAuditHtml` ships its own:
+**Where:** `HubInspector.groovy:4030–4393` — `renderAuditHtml` ships its own:
 - CSS rules (cards, tables, summary chips, badges)
 - Inline `<script>` for table sort + filter
 - Open/close `<details>` collapsible card pattern
 
-The SPA's `tbl()` (hub_diagnostics_ui.html:390), `mc()`, `ni()`, `.tbl-wrap`, `.card` classes do the same job. Future styling changes have to land in two places to stay consistent.
+The SPA's `tbl()` (hub_inspector_ui.html:390), `mc()`, `ni()`, `.tbl-wrap`, `.card` classes do the same job. Future styling changes have to land in two places to stay consistent.
 
 **Fix sketch:** extract a shared CSS/JS bundle and have the audit-report HTML reference it via inline `<style>`/`<script>` blocks pulled from constants. Or simpler short-term: move the audit's CSS into a `@Field static final String` and have both the SPA `<style>` block and the audit report consume it.
 
@@ -327,7 +327,7 @@ The rest are coherent end-to-end pipelines — splitting them would add indirect
 
 ### 🟡 #4 — `serveUI` sync on hot path
 
-**Where:** `HubDiagnostics.groovy:444–449`
+**Where:** `HubInspector.groovy:444–449`
 ```groovy
 long lastCheck = state.lastUIUpdateCheck ?: 0
 String uiVer = getUIVersion()                    // calls downloadHubFile() — file read on every request
@@ -344,7 +344,7 @@ The 24-hour gate makes the GitHub-fetch path uncommon, but `getUIVersion()` runs
 
 ### 🟡 #5 — Audit per-device enrichment serial after async fan-out
 
-**Where:** `HubDiagnostics.groovy:4544` and `4557` — loops over Z-Wave nodes and Hub Mesh linked devices doing one synchronous `hubRequest` per device.
+**Where:** `HubInspector.groovy:4544` and `4557` — loops over Z-Wave nodes and Hub Mesh linked devices doing one synchronous `hubRequest` per device.
 
 **Documented trade-off** (in v5.11.0 commit message): "for an audit that runs once a week, the few-second cost is preferable to refactoring the dispatch state machine."
 
@@ -354,7 +354,7 @@ The 24-hour gate makes the GitHub-fetch path uncommon, but `getUIVersion()` runs
 
 ### 🟡 #9 — `auditPoll` lifecycle
 
-**Where:** `hub_diagnostics_ui.html:711–741` — `pollTimer` is closure-local; nothing clears it on tab navigation away. Multiple polls can stack up if the user clicks Generate Audit again, switches tabs, comes back.
+**Where:** `hub_inspector_ui.html:711–741` — `pollTimer` is closure-local; nothing clears it on tab navigation away. Multiple polls can stack up if the user clicks Generate Audit again, switches tabs, comes back.
 
 **Fix:** track active timers in a `pollTimers` registry keyed by scanId; clear all on tab switch (already a hook point in the route map at line ~1917).
 
@@ -362,7 +362,7 @@ The 24-hour gate makes the GitHub-fetch path uncommon, but `getUIVersion()` runs
 
 ### 🟡 #10 — Table filter searches raw fields only
 
-**Where:** `hub_diagnostics_ui.html:428`
+**Where:** `hub_inspector_ui.html:428`
 ```javascript
 filt = rows.filter(r => cols.some(c => String(r[c.f] ?? '').toLowerCase().includes(q)));
 ```
@@ -375,7 +375,7 @@ For columns that use a `r:` render function (e.g. Parent column shows app name O
 
 ### 🟡 #12 — `hubRequest` weak return contract
 
-**Where:** `HubDiagnostics.groovy:1837`
+**Where:** `HubInspector.groovy:1837`
 
 Three distinct shapes:
 - text success → `String` or `null` if empty
@@ -390,7 +390,7 @@ Every caller does its own `if (!resp || resp.error) return null` dance.
 
 ### ⚪ #8 — Inline event handlers, `document.write`, full-container `innerHTML`
 
-**Where:** `hub_diagnostics_ui.html:91, 92, 421, 641, 831`, plus `onclick='+r._idx+'` patterns in 3+ table renderers.
+**Where:** `hub_inspector_ui.html:91, 92, 421, 641, 831`, plus `onclick='+r._idx+'` patterns in 3+ table renderers.
 
 **Verdict:** works correctly today, brittle to refactor. Real cost is hidden until a substantive UI rewrite is needed. Not worth fixing in isolation — would naturally fall out of any larger SPA cleanup.
 
@@ -398,7 +398,7 @@ Every caller does its own `if (!resp || resp.error) return null` dance.
 
 ### ⚪ A2 — `apiSnapshotDiff` writes payload to FileManager every call
 
-**Where:** `HubDiagnostics.groovy:904` — `saveSnapshotDiffPayload(...)`.
+**Where:** `HubInspector.groovy:904` — `saveSnapshotDiffPayload(...)`.
 
 A 50–200 KB FileManager write per snapshots-tab refresh. The payload appears unused after writing (no read path I could find). Likely leftover from a debugging or persistence experiment.
 
@@ -426,7 +426,7 @@ Codex's round-2 item 5 re-flags the audit-report CSS as a "manually mirrored cop
 
 ### 🟠 B1 — `analyzeDevices` deep-mode N+1
 
-**Where:** `analyzeDevices()` in HubDiagnostics.groovy. After the fast `/devicesList` pass, deep mode iterates uncertain devices and fires one synchronous `/device/fullJson/{id}` per device.
+**Where:** `analyzeDevices()` in HubInspector.groovy. After the fast `/devicesList` pass, deep mode iterates uncertain devices and fires one synchronous `/device/fullJson/{id}` per device.
 
 **Symptom:** latency grows linearly with the number of ambiguous devices. On hubs with many cloud-integration devices that need classification disambiguation, this can add many seconds to the Devices tab load.
 
@@ -436,7 +436,7 @@ Codex's round-2 item 5 re-flags the audit-report CSS as a "manually mirrored cop
 
 ### 🟡 B2 — Performance-tab cross-endpoint refetch
 
-**Where:** `hub_diagnostics_ui.html:1491` and `hub_diagnostics_ui.html:1508` — the Performance tab calls `api('devices')` and `api('apps')` to build chart labels (device-name lookup for top talkers, app-name lookup for runtime detail).
+**Where:** `hub_inspector_ui.html:1491` and `hub_inspector_ui.html:1508` — the Performance tab calls `api('devices')` and `api('apps')` to build chart labels (device-name lookup for top talkers, app-name lookup for runtime detail).
 
 **Symptom:** opening Performance triggers two extra full endpoint hits even though the user already loaded those tabs (likely cached client-side at the tab-render level but not at the cross-tab level).
 
@@ -444,7 +444,7 @@ Codex's round-2 item 5 re-flags the audit-report CSS as a "manually mirrored cop
 
 ### ⚪ B3 — `rDevices` double computation
 
-**Where:** `hub_diagnostics_ui.html:850-862` (build phase) + `:866-875` (init phase).
+**Where:** `hub_inspector_ui.html:850-862` (build phase) + `:866-875` (init phase).
 
 `dt` (sorted device-type entries) is built once for the card markup at line 852 then rebuilt at 867 to feed `tbl('dtTbl', ..., dt)`. Same for `stale` at 858/871.
 
@@ -452,7 +452,7 @@ Codex's round-2 item 5 re-flags the audit-report CSS as a "manually mirrored cop
 
 ### 🟡 B4 — Filter input no debounce
 
-**Where:** `hub_diagnostics_ui.html:426` — `fi.addEventListener('input', () => { ... })`.
+**Where:** `hub_inspector_ui.html:426` — `fi.addEventListener('input', () => { ... })`.
 
 Every keystroke triggers `rows.filter(...)` → `sf(filt, sc, sd)` (sort) → `tb.innerHTML = bldRows(filt)`. For a 350-row per-device audit table or runtime-detail table, this is noticeable.
 
@@ -460,7 +460,7 @@ Every keystroke triggers `rows.filter(...)` → `sf(filt, sc, sd)` (sort) → `t
 
 ### ⚪ B5 — `state.controllerTypeCache` unbounded growth
 
-**Where:** `state.controllerTypeCache` populated by enrichment paths (HubDiagnostics.groovy:1515, 1553, 3266 per Codex). Cleared only via the user-triggered "Clear Enrichment Cache" button.
+**Where:** `state.controllerTypeCache` populated by enrichment paths (HubInspector.groovy:1515, 1553, 3266 per Codex). Cleared only via the user-triggered "Clear Enrichment Cache" button.
 
 **Symptom:** cache size grows monotonically over the lifetime of an install. Each entry is small (one device → one classification string) so practical impact is bounded by the device count, but there's no automatic eviction for devices that have been removed.
 
@@ -476,7 +476,7 @@ Gemini recommended splitting the 5k-line file into Hubitat Libraries (the platfo
 
 ### 🟡 G1 — `apiAuditStatus` reads from snapshot, not AtomicInteger
 
-**Where:** `apiAuditStatus()` returns `snap.processed` from `state.audit` (HubDiagnostics.groovy:4769). `state.audit.processed` is updated by `fullJsonCb` after each device fetches: `int processed = scan.processed.incrementAndGet(); ... state.audit = snap` (lines 4546, 4554).
+**Where:** `apiAuditStatus()` returns `snap.processed` from `state.audit` (HubInspector.groovy:4769). `state.audit.processed` is updated by `fullJsonCb` after each device fetches: `int processed = scan.processed.incrementAndGet(); ... state.audit = snap` (lines 4546, 4554).
 
 **Verified race:** with up to 8 concurrent fullJsonCb instances, all reading the AtomicInteger correctly via `incrementAndGet()` then writing the snapshot value to `state.audit`, the final committed `state.audit.processed` value reflects whichever callback's method-end happened last (Hubitat's "last write wins" persistence semantics).
 
@@ -492,7 +492,7 @@ Gemini recommended splitting the 5k-line file into Hubitat Libraries (the platfo
 
 ### G3 (deferred) — User-configurable integration mappings
 
-**Symptom:** `INTEGRATION_TABLE` (parent-app-name → integration-name mapping for the Devices tab Integration column) is hardcoded in `HubDiagnostics.groovy`. New community integrations not in the table fall through to "Other".
+**Symptom:** `INTEGRATION_TABLE` (parent-app-name → integration-name mapping for the Devices tab Integration column) is hardcoded in `HubInspector.groovy`. New community integrations not in the table fall through to "Other".
 
 **Existing extension point:** drivers can call `updateDataValue("hubdiag:conn", "<type>")` to override classification per-device (documented in README). Covers driver-author additions but not end-users without driver access.
 
@@ -506,9 +506,9 @@ Gemini recommended splitting the 5k-line file into Hubitat Libraries (the platfo
 
 ### 🔴 C1 — `createSnapshot()` failure is silent in `apiSnapshotDiff(newer=now)`
 
-> **[R-8, v5.38.0]: Relocated — still open.** `apiSnapshotDiff` was deleted (v5.31.0; diffing moved to SPA `computeSnapshotDiff`), but the hazard survived. The SPA now does create-then-diff: `post('snapshot/create')` → `apiCreateSnapshot()` (`:894`) returns `[success:true]` unconditionally while `createSnapshot()` (`:3390`) is `void` with no error path; the SPA (`hub_diagnostics_ui.html:2141`) then diffs `snapshot/view?index=0`. A failed live snapshot still yields a wrong diff with no error. The fix should make `apiCreateSnapshot` report real success/failure (snapshot count grew) and have the SPA check it. The Groovy fix sketch below no longer applies verbatim.
+> **[R-8, v5.38.0]: Relocated — still open.** `apiSnapshotDiff` was deleted (v5.31.0; diffing moved to SPA `computeSnapshotDiff`), but the hazard survived. The SPA now does create-then-diff: `post('snapshot/create')` → `apiCreateSnapshot()` (`:894`) returns `[success:true]` unconditionally while `createSnapshot()` (`:3390`) is `void` with no error path; the SPA (`hub_inspector_ui.html:2141`) then diffs `snapshot/view?index=0`. A failed live snapshot still yields a wrong diff with no error. The fix should make `apiCreateSnapshot` report real success/failure (snapshot count grew) and have the SPA check it. The Groovy fix sketch below no longer applies verbatim.
 
-**Where:** `HubDiagnostics.groovy:907–915`
+**Where:** `HubInspector.groovy:907–915`
 
 When the user diffs against "now", the handler calls `createSnapshot()` (a `void` method with no return value), then reloads the snapshot list and takes `snapshots[0]`. If `createSnapshot()` fails mid-execution (any fetch error, execution timeout, file write failure), the list doesn't grow, `snapshots[0]` is still the prior newest snapshot, and the diff is computed between two stale snapshots with no error surfaced to the user.
 
@@ -536,7 +536,7 @@ newer = snapshots[0]
 
 ### 🟡 C2 — No `logsOff` auto-disable guard for debug logging
 
-**Where:** `HubDiagnostics.groovy:482` (setting), `3714–3716` (logDebug check)
+**Where:** `HubInspector.groovy:482` (setting), `3714–3716` (logDebug check)
 
 The `debugLogging` setting is a manual toggle with no auto-expiry. A user who enables debug to investigate an issue and forgets to turn it off generates verbose output indefinitely. Standard Hubitat practice is to schedule `logsOff` in `updated()`:
 
@@ -554,7 +554,7 @@ void logsOff() {
 
 ### 🟡 C3 — `generateQuickSummary()` makes 5+ blocking HTTP calls during preferences page render
 
-**Where:** `HubDiagnostics.groovy:3680–3706`, called from `dashboardPage()` at line 417.
+**Where:** `HubInspector.groovy:3680–3706`, called from `dashboardPage()` at line 417.
 
 `analyzeDevices(false)` calls `buildAppLookupMap()` (→ `/hub2/appsList`), `buildCommunityDriverSet()` (→ `/hub2/userDeviceTypes`), and the main `/hub2/devicesList` fetch. `analyzeApps(false)` hits `/hub2/appsList` again. `getHubInfo()` hits `/hub2/hubData`. `fetchSystemResources()` hits the memory endpoint. That is 5–6 sequential blocking calls adding 1–3 seconds to every preferences page open.
 
@@ -568,7 +568,7 @@ void logsOff() {
 
 > **[R-8, v5.38.0]: Obsolete.** `apiGenerateReport` was deleted (v5.32.0), replaced by `apiReportTemplate()` (returns the raw template) + thin `apiSaveReport()` (file write). The SPA assembles the report client-side, so no server-side multi-fetch remains.
 
-**Where:** `HubDiagnostics.groovy:1186–1226`
+**Where:** `HubInspector.groovy:1186–1226`
 
 `apiGenerateReport` builds a `shared` map for network/resources/temperature/alerts but not for the apps list. As a result:
 - `getDashboardData(shared)` → `analyzeDevices(false)` → `buildAppLookupMap()` → `/hub2/appsList` (#1)
@@ -584,7 +584,7 @@ void logsOff() {
 
 > **[R-8, v5.38.0]: Obsolete.** Alert composition moved to the SPA's `composeAlerts()`; `getStructuredAlerts` was renamed `getAlertSignals` (v5.30.0) and finalized v5.38.0 to ship only raw signals, and `analyzeSystemHealth` explicitly no longer composes alerts. Threshold logic now lives in exactly one place (the SPA).
 
-**Where:** `HubDiagnostics.groovy:1884–1907` and `3106–3127`
+**Where:** `HubInspector.groovy:1884–1907` and `3106–3127`
 
 Both methods independently compute the same memory / CPU / temperature threshold comparisons from the same `settings.*` fields and emit structurally identical `[severity, name]` Maps. If a threshold label or severity mapping ever changes, it requires two edits.
 
@@ -605,7 +605,7 @@ Call from both `getStructuredAlerts` and `analyzeSystemHealth`.
 
 ### ⚪ C6 — `readFile()` return untyped `def`; stray `def` locals
 
-**Where:** `HubDiagnostics.groovy:3997` (`readFile` signature), `989–996` (`apiSnapshotDiff`), `2957` (closure param), `3208` (`buildZwaveGhostNodes`), `3939/3958/3976` (file-read locals).
+**Where:** `HubInspector.groovy:3997` (`readFile` signature), `989–996` (`apiSnapshotDiff`), `2957` (closure param), `3208` (`buildZwaveGhostNodes`), `3939/3958/3976` (file-read locals).
 
 `readFile` returns either a parsed JSON `List`/`Map` or `null` — `Object` is the honest type. The `def` locals in `apiSnapshotDiff` (`olderZbCh`, `newerZbCh`, etc.) should be `Object`. Mechanical cleanup only; no behavioral impact.
 
@@ -621,7 +621,7 @@ Only `stripHtml` has `@CompileStatic`. These methods are all pure computation wi
 
 ### ⚪ C8 — `fetchHubMessages()` called unconditionally in hot path with 5s timeout
 
-**Where:** `HubDiagnostics.groovy:1925`, inside `getStructuredAlerts()`.
+**Where:** `HubInspector.groovy:1925`, inside `getStructuredAlerts()`.
 
 `fetchHubMessages()` hits `/hub/messages` with a 5-second timeout on every dashboard and health render. On a hub where this endpoint is slow (or unavailable after a firmware change), it adds up to 5s to every response. The endpoint is localhost so worst-case is rare, but a 60-second `state` cache (matching the Z-Wave ghost-node pattern already in use at line 1940) would cap the exposure.
 
@@ -629,7 +629,7 @@ Only `stripHtml` has `@CompileStatic`. These methods are all pure computation wi
 
 ### ⚪ C9 — `*/N` day cron syntax has Hubitat firmware quirk
 
-**Where:** `HubDiagnostics.groovy:5064` — `String cron = days == 1 ? "0 0 0 * * ?" : "0 0 0 */${days} * ?"`
+**Where:** `HubInspector.groovy:5064` — `String cron = days == 1 ? "0 0 0 * * ?" : "0 0 0 */${days} * ?"`
 
 The `*/N` day-of-month expression means "every Nth calendar day starting from the 1st of the month", not "every N days from now". For `days=2`, this fires on the 1st, 3rd, 5th … not every 48 hours. The Quartz scheduler embedded in Hubitat handles this inconsistently across firmware versions. For `days=1` the existing `"0 0 0 * * ?"` (daily) is correct. For multi-day intervals, `runIn(days * 86400, 'createSnapshotAndReschedule')` with a self-rescheduling helper is more reliable.
 
@@ -639,7 +639,7 @@ The `*/N` day-of-month expression means "every Nth calendar day starting from th
 
 ### ⚪ C10 — `autoEnableOAuth()` bypasses the retry-on-transient behavior
 
-**Where:** `HubDiagnostics.groovy:3870` (`getAppTypeId` uses raw `httpGet`), `3913–3931` (`autoEnableOAuth` uses raw `httpPost`).
+**Where:** `HubInspector.groovy:3870` (`getAppTypeId` uses raw `httpGet`), `3913–3931` (`autoEnableOAuth` uses raw `httpPost`).
 
 These two calls use blocking `httpGet`/`httpPost` directly rather than `hubRequest`/`hubMapRequest`, so they don't get the single retry-on-transient error added in A8. On a freshly booted hub where the local HTTP server is briefly slow, the OAuth auto-enable can fail silently. Impact is first-install only; the workaround is manual OAuth enable. Lowest priority.
 
@@ -649,7 +649,7 @@ These two calls use blocking `httpGet`/`httpPost` directly rather than `hubReque
 
 ### 🟠 N1 — New volatile caches not cleared in `updated()`
 
-**Where:** `HubDiagnostics.groovy:148–156` (declarations) and `:4348–4361` (`updated()` body).
+**Where:** `HubInspector.groovy:148–156` (declarations) and `:4348–4361` (`updated()` body).
 
 The uncommitted v5.28/5.29 work added five new volatile fields:
 
@@ -698,7 +698,7 @@ cachedCheckpoints = null
 
 ### 🟡 N3 — TTL cache pattern duplicated 4× in `getPerformanceData`
 
-**Where:** `HubDiagnostics.groovy:1497–1525` (zwave + zigbee), `:1539–1545` (apps), `:1572–1578` (devices).
+**Where:** `HubInspector.groovy:1497–1525` (zwave + zigbee), `:1539–1545` (apps), `:1572–1578` (devices).
 
 Same shape repeated four times:
 
@@ -730,7 +730,7 @@ private Object cachedFetch(String name, long ttlMs, Closure fetch) {
 
 ### 🟡 N4 — `cachedCheckpoints` shares its list reference with callers
 
-**Where:** `HubDiagnostics.groovy:3713–3731`.
+**Where:** `HubInspector.groovy:3713–3731`.
 
 ```groovy
 List loadCheckpoints() {
@@ -758,7 +758,7 @@ cachedCheckpoints = new ArrayList<>(checkpoints)
 
 ### ⚪ N5 — Missing aggregator-rationale comments on two routes
 
-**Where:** `HubDiagnostics.groovy:615` (`apiCode`) and `:677` (`apiPerformance`).
+**Where:** `HubInspector.groovy:615` (`apiCode`) and `:677` (`apiPerformance`).
 
 The mappings reorganization at `:275–325` added one-line rationale comments above `apiDashboard`, `apiDevices`, `apiApps`, `apiNetwork`, `apiHealth`, `apiHealthHistory`, `apiLive` — per ARCHITECTURE.md guidance. `apiCode` and `apiPerformance` were missed; both are aggregators (apiCode joins 5 hub endpoints; apiPerformance composes runtime stats with checkpoint-derived data).
 
@@ -768,7 +768,7 @@ The mappings reorganization at `:275–325` added one-line rationale comments ab
 
 ### ⚪ N6 — `getUIVersion` cache placement disagrees with #4 fix description
 
-**Where:** `HubDiagnostics.groovy:576–593` (impl), `:4435` (cache write), and the Phase R-4 Pack 1 description in this doc which says "cache `uiVer` in `state` after a successful sync".
+**Where:** `HubInspector.groovy:576–593` (impl), `:4435` (cache write), and the Phase R-4 Pack 1 description in this doc which says "cache `uiVer` in `state` after a successful sync".
 
 Actual implementation uses `@Field static volatile String uiVersionCache`. Volatile fields are wiped on JVM reload; `state` survives. After a hub reboot, the first `serveUI` call still does a FileManager read to re-populate the cache.
 
@@ -778,7 +778,7 @@ Actual implementation uses `@Field static volatile String uiVersionCache`. Volat
 
 ### ⚪ N7 — `_perfInFlight` guard is tab-local
 
-**Where:** `hub_diagnostics_ui.html:1648-1649`.
+**Where:** `hub_inspector_ui.html:1648-1649`.
 
 ```javascript
 let _perfInFlight=false;
@@ -815,7 +815,7 @@ One change covers all tabs and `_perfInFlight` becomes redundant.
 
 ### ⚪ N8 — Version drift in WIP
 
-**Where:** `HubDiagnostics.groovy:17` (`APP_VERSION = "5.29.0"`) vs `hub_diagnostics_ui.html:135` (`UI_VERSION = "5.28.0"`).
+**Where:** `HubInspector.groovy:17` (`APP_VERSION = "5.29.0"`) vs `hub_inspector_ui.html:135` (`UI_VERSION = "5.28.0"`).
 
 Per the user's own memory rule "Version bump both files together." Bump UI to 5.29.0 before commit. Trivial.
 
@@ -825,7 +825,7 @@ Per the user's own memory rule "Version bump both files together." Bump UI to 5.
 
 ### 🟡 LB1 — `buildCrossReference()` does heavy post-processing hub-side
 
-**Where:** `HubDiagnostics.groovy` `buildCrossReference()` (~120 lines, called from `finalizeAudit()`).
+**Where:** `HubInspector.groovy` `buildCrossReference()` (~120 lines, called from `finalizeAudit()`).
 
 Iterates all audited devices to compute `appsUsingCount`, `dashboards`, `unreferenced`, `meshOrphans`, `stuckJobs`, `criticalTop20`. Multiple O(n log n) sorts: `unreferenced` by timestamp, `meshOrphans`, `stuckJobs`, `criticalTop20` by total references, per-app device list, per-dashboard device list. Plus three mode computations across all devices for `spammyThreshold` / `maxStates` / `maxEvents`, then a tuned-device detection pass.
 
@@ -839,9 +839,9 @@ Overlaps with C13 (Excessive complexity in `buildCrossReference`). Resolves part
 
 ### ⚪ LB2 — Top-N rankings & per-tab sorts done hub-side
 
-**Where:** `analyzeNetwork` neighbor weak/stale lists (`HubDiagnostics.groovy:1448–1454`), `analyzeApps` type/name sorts, network distribution maps sorted by count, plus the audit-side top-N items (also covered by LB1).
+**Where:** `analyzeNetwork` neighbor weak/stale lists (`HubInspector.groovy:1448–1454`), `analyzeApps` type/name sorts, network distribution maps sorted by count, plus the audit-side top-N items (also covered by LB1).
 
-The SPA `tbl()` helper at `hub_diagnostics_ui.html:703–785` already sorts on every column-header click. Pre-sorting on the hub is wasted work: the SPA re-sorts as soon as the user clicks anything. Per ARCHITECTURE.md regression rule "new sorting or top-N selection done in Groovy when the SPA already sorts/filters the same column via `tbl()`."
+The SPA `tbl()` helper at `hub_inspector_ui.html:703–785` already sorts on every column-header click. Pre-sorting on the hub is wasted work: the SPA re-sorts as soon as the user clicks anything. Per ARCHITECTURE.md regression rule "new sorting or top-N selection done in Groovy when the SPA already sorts/filters the same column via `tbl()`."
 
 **Fix sketch:** ship arrays in arbitrary or natural-key order; remove the hub-side `.sort { }` chains. SPA's existing `tbl()` config (`sc:`, `sd:`) handles initial sort.
 
@@ -849,7 +849,7 @@ The SPA `tbl()` helper at `hub_diagnostics_ui.html:703–785` already sorts on e
 
 ### ⚪ LB3 — `apiForumData()` runs 15 sequential fetches in one endpoint
 
-**Where:** `HubDiagnostics.groovy` `apiForumData()` (currently around `:1205`).
+**Where:** `HubInspector.groovy` `apiForumData()` (currently around `:1205`).
 
 Calls `getHubInfo`, `fetchSystemResources`, `fetchTemperature`, `fetchDatabaseSize`, `fetchStateCompression`, `fetchEventStateLimits`, `getAlertSignals`, `analyzeDevices(true)`, `analyzeApps(true)`, `analyzeNetwork`, plus mesh quality / ghost / Zigbee mesh / Z-Wave version / runtime stats. The deep `analyzeDevices(true)` / `analyzeApps(true)` are the heaviest individual costs; the rest are individually fine but stack up serially.
 
@@ -894,7 +894,7 @@ Goal: ship the two real defects immediately. Both were one-line changes.
 
 - [x] **#6 fix** — `getDevicesData()` line 1527: `childIds: deviceStats.childIds` (dropped `+ parentIds`)
 - [x] **#7 fix** — `getAppsData()` line 1548: `disabled: it.disabled ?: false` (was `state == "disabled"`)
-- [x] **Test guard:** value-correctness assertions added to `test-hub-diagnostics-api.sh` for both — verifies `childIds` size == `childDevices` count, `childIds ∩ parentIds == ∅`, and `/api/apps userApps[*]disabled` count matches `/hub2/appsList` ground truth
+- [x] **Test guard:** value-correctness assertions added to `test-hub-inspector-api.sh` for both — verifies `childIds` size == `childDevices` count, `childIds ∩ parentIds == ∅`, and `/api/apps userApps[*]disabled` count matches `/hub2/appsList` ground truth
 - [x] Bumped to v5.13.1; shipped via push + commit + mirror
 
 **Verified:** 175/175 PASS on the test hub after fixes. Note on #7's user-visible impact recorded in the detailed section above (the bug was in a code path the SPA doesn't currently consume; fix is preventive).
@@ -1066,7 +1066,7 @@ When picking up a fix:
 
 1. Find the relevant entry above
 2. Implement
-3. Run `test-hub-diagnostics-api.sh` — if it passes, ship
+3. Run `test-hub-inspector-api.sh` — if it passes, ship
 4. Tick the checkbox in the table at the top **and** in the detailed section
 5. Add the version number that shipped the fix in a note next to the checkbox
 

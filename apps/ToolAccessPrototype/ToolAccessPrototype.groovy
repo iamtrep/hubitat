@@ -9,7 +9,7 @@
 
  The picker is a page the app serves from its own OAuth endpoint and the config
  page opens in a modal over itself — the shape the hub's own room device picker
- uses, and the shape HubDiagnostics already uses for its dashboard. Two earlier
+ uses, and the shape HubInspector already uses for its dashboard. Two earlier
  passes built this out of preference inputs; both cost a page round-trip per
  move and neither could offer a filter.
 
