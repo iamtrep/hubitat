@@ -40,6 +40,40 @@ check('runs', core.effective('on', false, 'block'), [state: 'on', blockReason: '
 check('numOrNull string', core.numOrNull('10'), 10)
 check('numOrNull junk', core.numOrNull('none'), null)
 
+// ── alert timing ──
+base = [raised: false, wanted: 'heat', openSince: null, allClosedSince: null, now: 1000000L, openDelayMs: 600000L, closeDelayMs: 300000L]
+Map step(Map over) { core.alertStep(base + over) }
+check('nothing open', step([:]), [raised: false, nextCheck: null])
+check('open, not long enough', step([openSince: 900000L]), [raised: false, nextCheck: 1500000L])
+check('open long enough raises', step([openSince: 400000L]), [raised: true, nextCheck: null])
+check('zero delay raises at once', step([openSince: 1000000L, openDelayMs: 0L]), [raised: true, nextCheck: null])
+check('open in an off season stays quiet', step([wanted: 'off', openSince: 0L]), [raised: false, nextCheck: null])
+check('raised, still open, stays', step([raised: true, openSince: 0L]), [raised: true, nextCheck: null])
+check('raised, closed recently, waits', step([raised: true, allClosedSince: 900000L]), [raised: true, nextCheck: 1200000L])
+check('raised, closed long enough, clears', step([raised: true, allClosedSince: 600000L]), [raised: false, nextCheck: null])
+check('raised, season turns off, clears', step([raised: true, wanted: 'off', openSince: 0L]), [raised: false, nextCheck: null])
+
+// ── contacts, messages, mode writes ──
+contacts = [[id: '1', label: 'Window B', open: true, since: 500L], [id: '2', label: 'Door', open: false, since: null], [id: '3', label: 'Window A', open: true, since: 300L]]
+check('openList sorted', core.openList(contacts), 'Window A, Window B')
+check('openList none open', core.openList([[id: '2', label: 'Door', open: false, since: null]]), '')
+check('earliestOpen', core.earliestOpen(contacts), 300L)
+check('earliestOpen none', core.earliestOpen([[id: '2', label: 'Door', open: false, since: null]]), null)
+check('alertText', core.alertText('Véranda', 'Window A'), 'Véranda: Window A open')
+check('clearText', core.clearText('Véranda'), 'Véranda: alert cleared')
+check('modeWrites only differing', core.modeWrites([[id: '1', mode: 'heat'], [id: '2', mode: 'off']], 'heat'), ['2'])
+check('modeWrites none', core.modeWrites([[id: '1', mode: 'cool']], 'cool'), [])
+check('supportsMode listed', core.supportsMode('["heat","cool","off"]', 'cool'), true)
+check('supportsMode not listed', core.supportsMode('[heat, off]', 'auto'), false)
+check('supportsMode unknown list', core.supportsMode(null, 'auto'), true)
+check('supportsMode empty list', core.supportsMode('[]', 'heat'), true)
+check('openDelayMs default', core.openDelayMs(null), 600000L)
+check('openDelayMs zero', core.openDelayMs(0), 0L)
+check('openDelayMs string', core.openDelayMs('3'), 180000L)
+check('closeDelay default', core.closeDelayMs(false, 3), 300000L)
+check('closeDelay test', core.closeDelayMs(true, '3'), 3000L)
+check('closeDelay test not set', core.closeDelayMs(true, 'none'), 300000L)
+
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)

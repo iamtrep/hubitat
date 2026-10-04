@@ -82,4 +82,55 @@ Map effective(String wanted, boolean raised, String response) {
     return [state: wanted, blockReason: 'none']
 }
 
+// Raise when an opening has been open for the open delay while the group wants to run;
+// clear when everything has been closed for the close delay, or when the group no longer
+// wants to run. nextCheck is when the answer can next change without a new event.
+Map alertStep(Map a) {
+    boolean raised = a.raised == true
+    long now = a.now as long
+    Long openSince = a.openSince as Long
+    Long closedSince = a.allClosedSince as Long
+    if (a.wanted == 'off') return [raised: false, nextCheck: null]
+    if (!raised) {
+        if (openSince == null) return [raised: false, nextCheck: null]
+        long due = openSince + (a.openDelayMs as long)
+        return now >= due ? [raised: true, nextCheck: null] : [raised: false, nextCheck: due]
+    }
+    if (closedSince == null) return [raised: true, nextCheck: null]
+    long due = closedSince + (a.closeDelayMs as long)
+    return now >= due ? [raised: false, nextCheck: null] : [raised: true, nextCheck: due]
+}
+
+Long earliestOpen(List<Map> contacts) {
+    List<Long> t = contacts.findAll { it.open }.collect { it.since as Long }.findAll { it != null }
+    return t ? t.min() : null
+}
+
+String openList(List<Map> contacts) { return contacts.findAll { it.open }.collect { it.label as String }.sort().join(', ') }
+
+String alertText(String group, String open) { return "${group}: ${open} open".toString() }
+
+String clearText(String group) { return "${group}: alert cleared".toString() }
+
+List<String> modeWrites(List<Map> thermostats, String target) {
+    return thermostats.findAll { it.mode != target }.collect { it.id as String }
+}
+
+// supportedThermostatModes is a JSON-like list string; missing or empty means unknown.
+boolean supportsMode(Object supported, String mode) {
+    if (supported == null) return true
+    List<String> modes = supported.toString().replaceAll(/[\[\]"\s]/, '').split(',').findAll { it }.collect { it as String }
+    return modes.isEmpty() || modes.contains(mode)
+}
+
+long openDelayMs(Object minutes) {
+    BigDecimal n = numOrNull(minutes)
+    return n == null ? 600000L : (n * 60000).longValue()
+}
+
+long closeDelayMs(boolean debug, Object testSeconds) {
+    BigDecimal n = debug ? numOrNull(testSeconds) : null
+    return n == null ? 300000L : (n * 1000).longValue()
+}
+
 // ── End core ──────────────────────────────────────────────────────────
