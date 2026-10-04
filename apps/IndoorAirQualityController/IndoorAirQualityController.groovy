@@ -210,4 +210,86 @@ boolean allRunning(List<Map> st) {
     return true
 }
 
+// What a stage switch event means. pending: the command this app sent and has not seen come back.
+// 'own' our command arriving; 'hold' a physical off on a running stage; 'reassert' another source
+// turned a running stage's switch off; 'throttled' the same, too soon after the last re-assertion;
+// 'ignore' anything else.
+String switchEventAction(String value, boolean physical, String pending, String stageState, boolean stopped,
+                         Long lastReassert, long now, long gapMs) {
+    if (pending != null && pending == value) return 'own'
+    if (value != 'off' || stageState != 'engaged' || stopped) return 'ignore'
+    if (physical) return 'hold'
+    if (lastReassert != null && now - lastReassert < gapMs) return 'throttled'
+    return 'reassert'
+}
+
+// w: [active, since, lastSent]. mode: 'run', 'pause' (no stage may run, CO2 alone decides) or 'stop'.
+// Raised once CO2 has stayed above the threshold with every stage running (or paused) for the
+// duration; repeated every repeatHours; cleared below the top stage's off threshold.
+Map stepWindow(Map w, BigDecimal co2, boolean allRunning, String mode, BigDecimal topOff, long now, Map cfg) {
+    Map adv = cfg.adv as Map
+    long unit = cfg.unitMs as long
+    long dur = (numOrNull(adv.minutes) * unit).longValue()
+    long rep = (numOrNull(adv.repeatHours) * 60 * unit).longValue()
+    Map x = [active: w?.active == true, since: w?.since as Long, lastSent: w?.lastSent as Long]
+    if (mode == 'stop') return [w: [active: false, since: null, lastSent: null], notify: null, wakeAt: null]
+    if (co2 == null) return [w: x, notify: null, wakeAt: null]
+    String note = null
+    if (!x.active) {
+        if (co2 > numOrNull(adv.ppm) && (mode == 'pause' || allRunning)) {
+            if (x.since == null) x.since = now
+            if (now - (x.since as long) >= dur) {
+                x = [active: true, since: null, lastSent: now]
+                note = 'raise'
+            }
+        } else x.since = null
+    } else if (co2 < topOff) {
+        x = [active: false, since: null, lastSent: null]
+        note = adv.allClear == true ? 'clear' : null
+    } else if (now - (x.lastSent as long) >= rep) {
+        x.lastSent = now
+        note = 'repeat'
+    }
+    Long wake = x.active ? (x.lastSent as long) + rep : (x.since != null ? (x.since as long) + dur : null)
+    return [w: x, notify: note, wakeAt: wake]
+}
+
+// h: [active, since, recSince]. Raised once the reading has stayed below the threshold for the
+// duration; cleared once it has stayed 3 points above for 1 hour, or when the season does not allow it.
+Map stepHumidity(Map h, BigDecimal rh, boolean seasonOk, long now, Map cfg) {
+    Map r = cfg.rh as Map
+    long unit = cfg.unitMs as long
+    BigDecimal pct = numOrNull(r.pct)
+    long dur = (numOrNull(r.hours) * 60 * unit).longValue()
+    long rec = 60 * unit
+    Map x = [active: h?.active == true, since: h?.since as Long, recSince: h?.recSince as Long]
+    if (!seasonOk) return [h: [active: false, since: null, recSince: null], notify: null, wakeAt: null]
+    if (rh == null) return [h: x, notify: null, wakeAt: null]
+    String note = null
+    if (!x.active) {
+        if (rh < pct) {
+            if (x.since == null) x.since = now
+            if (now - (x.since as long) >= dur) {
+                x = [active: true, since: null, recSince: null]
+                note = 'raise'
+            }
+        } else x.since = null
+    } else if (rh >= pct + 3) {
+        if (x.recSince == null) x.recSince = now
+        if (now - (x.recSince as long) >= rec) x = [active: false, since: null, recSince: null]
+    } else x.recSince = null
+    Long wake = x.since != null ? (x.since as long) + dur : (x.recSince != null ? (x.recSince as long) + rec : null)
+    return [h: x, notify: note, wakeAt: wake]
+}
+
+String windowMessage(String label, String kind, BigDecimal co2) {
+    if (kind == 'raise' || kind == 'repeat') return "${label}: CO2 at ${fmtInt(co2)} ppm despite ventilation. Consider opening a window.".toString()
+    if (kind == 'clear') return "${label}: CO2 back to ${fmtInt(co2)} ppm.".toString()
+    return null
+}
+
+String humidityMessage(String label, BigDecimal rh, Object hours) {
+    return "${label}: indoor humidity at ${fmtInt(rh)}% for ${fmtInt(hours)} h.".toString()
+}
+
 // ── End core ──────────────────────────────────────────────────────────

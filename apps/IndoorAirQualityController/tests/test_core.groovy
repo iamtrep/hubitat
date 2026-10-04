@@ -131,6 +131,66 @@ check('stageLevel none', core.stageLevel([[s: 'off']]), 0)
 check('allRunning', core.allRunning([[s: 'engaged'], [s: 'held']]), true)
 check('allRunning not', core.allRunning([[s: 'engaged'], [s: 'off']]), false)
 
+// ── switch events ──
+long GAP = 5 * M
+check('own command', core.switchEventAction('on', false, 'on', 'engaged', false, null, 0L, GAP), 'own')
+check('countermanded is not own', core.switchEventAction('off', false, 'on', 'engaged', false, null, 0L, GAP), 'reassert')
+check('physical off holds', core.switchEventAction('off', true, null, 'engaged', false, null, 0L, GAP), 'hold')
+check('digital off reasserts', core.switchEventAction('off', false, null, 'engaged', false, null, 0L, GAP), 'reassert')
+check('reassert throttled', core.switchEventAction('off', false, null, 'engaged', false, 0L, M, GAP), 'throttled')
+check('reassert after gap', core.switchEventAction('off', false, null, 'engaged', false, 0L, 6 * M, GAP), 'reassert')
+check('off while stage off', core.switchEventAction('off', false, null, 'off', false, null, 0L, GAP), 'ignore')
+check('off while held', core.switchEventAction('off', true, null, 'held', false, null, 0L, GAP), 'ignore')
+check('off while stopped', core.switchEventAction('off', false, null, 'engaged', true, null, 0L, GAP), 'ignore')
+check('on by someone else', core.switchEventAction('on', true, null, 'off', false, null, 0L, GAP), 'ignore')
+
+// ── window advisory ──
+TOP = 1150G   // binding variable: win() can't see a typed local
+Map win(Map w, Object co2, boolean all, String mode, long now, Map c = cfg()) {
+    core.stepWindow(w, new BigDecimal(co2.toString()), all, mode, TOP, now, c)
+}
+Map w0 = win(null, 1500, true, 'run', 0L)
+check('window starts timing', w0.w.since, 0)
+check('window not yet', w0.notify, null)
+check('window wake', w0.wakeAt, 20 * M)
+Map w1 = win([since: 0L], 1500, true, 'run', 20 * M)
+check('window raises after duration', w1.notify, 'raise')
+check('window active', w1.w.active, true)
+check('window repeat wake', w1.wakeAt, 20 * M + 180 * M)
+check('window needs every stage', win([since: 0L], 1500, false, 'run', 20 * M).w.since, null)
+check('window paused uses CO2 alone', win([since: 0L], 1500, false, 'pause', 20 * M).notify, 'raise')
+check('window repeats', win([active: true, lastSent: 0L], 1500, true, 'run', 180 * M).notify, 'repeat')
+check('window no early repeat', win([active: true, lastSent: 0L], 1500, true, 'run', M).notify, null)
+check('window stays between thresholds', win([active: true, lastSent: 0L], 1200, true, 'run', M).w.active, true)
+Map wc = win([active: true, lastSent: 0L], 1100, true, 'run', M)
+check('window clears below top off', wc.w.active, false)
+check('window clear is silent by default', wc.notify, null)
+check('window all-clear', win([active: true, lastSent: 0L], 1100, true, 'run', M,
+        cfg(adv: [ppm: 1400, minutes: 20, repeatHours: 3, allClear: true])).notify, 'clear')
+Map ws = win([active: true, lastSent: 0L], 1500, true, 'stop', M)
+check('window stop clears', ws.w.active, false)
+check('window stop silent', ws.notify, null)
+check('window no reading keeps state', core.stepWindow([active: true, lastSent: 0L], null, true, 'run', TOP, M, cfg()).w.active, true)
+
+// ── low-humidity advisory ──
+Map hum(Map h, Object rh, boolean ok, long now) { core.stepHumidity(h, new BigDecimal(rh.toString()), ok, now, cfg()) }
+check('humidity starts timing', hum(null, 25, true, 0L).h.since, 0)
+check('humidity raises after duration', hum([since: 0L], 25, true, 720 * M).notify, 'raise')
+check('humidity back above resets', hum([since: 0L], 31, true, 600 * M).h.since, null)
+check('humidity stays active below margin', hum([active: true], 32, true, 0L).h.recSince, null)
+check('humidity recovery starts', hum([active: true], 33, true, 0L).h.recSince, 0)
+check('humidity clears after an hour', hum([active: true, recSince: 0L], 33, true, 60 * M).h.active, false)
+check('humidity clear is silent', hum([active: true, recSince: 0L], 33, true, 60 * M).notify, null)
+check('humidity season off clears', hum([active: true], 20, false, 0L).h.active, false)
+check('humidity season off no timer', hum(null, 20, false, 0L).h.since, null)
+
+// ── messages ──
+check('raise message', core.windowMessage('Maison', 'raise', 1523.4G), 'Maison: CO2 at 1523 ppm despite ventilation. Consider opening a window.')
+check('repeat message', core.windowMessage('Maison', 'repeat', 1500G), 'Maison: CO2 at 1500 ppm despite ventilation. Consider opening a window.')
+check('clear message', core.windowMessage('Maison', 'clear', 1100G), 'Maison: CO2 back to 1100 ppm.')
+check('no message', core.windowMessage('Maison', null, 1100G), null)
+check('humidity message', core.humidityMessage('Maison', 27.6G, 12), 'Maison: indoor humidity at 28% for 12 h.')
+
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)
