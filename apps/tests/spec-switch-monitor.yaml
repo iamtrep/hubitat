@@ -67,5 +67,8 @@ cases:
     wait_seconds: 5
     assert:
       - { device: test-switchmon-1, attribute: switch, value: "on" }
+    # The app reports each correction at warn level ("<switch> turned back on").
+    allow_log_patterns:
+      - "turned back on"
 
 runtime_budget_seconds: 30

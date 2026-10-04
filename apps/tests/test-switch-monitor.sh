@@ -57,7 +57,7 @@ APP_INSTANCE_LABEL    = "test-switchmon-app"
 MAKER_API_LABEL       = "test-switchmon-maker"
 INPUT_DEVICE_LABELS   = ["test-switchmon-1"]
 OUTPUT_DEVICE_LABELS  = []
-CASES                 = [{'name': 'correct-deviated-switch', 'setup': [{'device': 'test-switchmon-1', 'command': 'on'}], 'setup_wait_seconds': 2, 'actions': [{'device': 'test-switchmon-1', 'command': 'off'}], 'wait_seconds': 5, 'assert': [{'device': 'test-switchmon-1', 'attribute': 'switch', 'value': 'on'}]}]
+CASES                 = [{'name': 'correct-deviated-switch', 'setup': [{'device': 'test-switchmon-1', 'command': 'on'}], 'setup_wait_seconds': 2, 'actions': [{'device': 'test-switchmon-1', 'command': 'off'}], 'wait_seconds': 5, 'assert': [{'device': 'test-switchmon-1', 'attribute': 'switch', 'value': 'on'}], 'allow_log_patterns': ['turned back on']}]
 RUNTIME_BUDGET_SECONDS = 30
 
 # ── Stdin args ────────────────────────────────────────────────────────
