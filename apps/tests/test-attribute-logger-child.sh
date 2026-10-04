@@ -370,6 +370,8 @@ def current_attribute(device_label, attr_name):
 # the "interesting" hub activity is checked.
 hub_creds = (hub.get("username"), hub.get("password"))
 LOG_GUARD_LEVELS = ["warn", "error"]
+# logVer announces a new code version at warn level, once after each push; not a fault.
+VERSION_NOTICE = r"New version: \S+ \(was: "
 
 for case in CASES:
     name = case.get("name", "<unnamed>")
@@ -532,7 +534,7 @@ for case in CASES:
     if case.get("allow_warnings"):
         info("log guard skipped (allow_warnings: true)")
     else:
-        allow_patterns = [re.compile(p) for p in (case.get("allow_log_patterns") or [])]
+        allow_patterns = [re.compile(p) for p in [VERSION_NOTICE] + (case.get("allow_log_patterns") or [])]
         suspect = cap.find_all(pattern=None, level=LOG_GUARD_LEVELS, source=APP_INSTANCE_LABEL)
         unexpected = [m for m in suspect
                       if not any(r.search(m.get("msg") or "") for r in allow_patterns)]
