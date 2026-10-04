@@ -534,33 +534,14 @@ String nextPossible(String season, Map cfg, String unit) {
     return ''
 }
 
-// samples: ISO day -> [s: sum of readings, n: number of readings]. Keeps the last 4 days.
+// samples: ISO day -> [s: sum of readings, n: number of readings]. Keeps the last 10 days.
 Map addSample(Map samples, String iso, BigDecimal v) {
     Map out = [:]
-    String oldest = addDays(iso, -4)
+    String oldest = addDays(iso, -10)
     (samples ?: [:]).each { k, x -> if ((k as String) >= oldest) out[k as String] = x }
     Map day = (out[iso] ?: [s: 0, n: 0]) as Map
     out[iso] = [s: (day.s as BigDecimal) + v, n: (day.n as int) + 1]
     return out
-}
-
-List<Map> recentMeans(Map samples, String today) {
-    List<Map> out = []
-    for (int i = 1; i <= 3; i++) {
-        String day = addDays(today, -i)
-        Map x = (samples ?: [:])[day] as Map
-        int n = x ? (x.n as int) : 0
-        BigDecimal mean = n ? ((x.s as BigDecimal) / n).setScale(2, BigDecimal.ROUND_HALF_UP) : null
-        out << [day: day, n: n, mean: mean]
-    }
-    return out
-}
-
-BigDecimal mean3(Map samples, String today, int minSamples = 12) {
-    List<Map> days = recentMeans(samples, today)
-    if (days.any { (it.n as int) < minSamples }) return null
-    BigDecimal total = days.sum { it.mean as BigDecimal } as BigDecimal
-    return (total / 3).setScale(2, BigDecimal.ROUND_HALF_UP)
 }
 
 // Test day and test mean apply to button-driven evaluations only, never to scheduled runs.
@@ -596,6 +577,63 @@ Map parseDaily(Object json) {
         BigDecimal m = numOrNull(v[i])
         if (m != null && validIso(t[i])) out[t[i] as String] = m.setScale(2, BigDecimal.ROUND_HALF_UP)
     }
+    return out
+}
+
+BigDecimal sensorMean(Map samples, String day, int minSamples) {
+    Map x = (samples ?: [:])[day] as Map
+    int n = x ? (x.n as int) : 0
+    return n >= minSamples ? ((x.s as BigDecimal) / n).setScale(2, BigDecimal.ROUND_HALF_UP) : null
+}
+
+// Mean of sensor minus Open-Meteo over the last 7 days before today that have both; null when none.
+BigDecimal sensorOffset(Map samples, Map om, String today, int minSamples = 12) {
+    List<BigDecimal> diffs = []
+    List<String> days = (om ?: [:]).keySet().collect { it as String }.findAll { it < today }.sort().reverse()
+    for (String d : days) {
+        BigDecimal s = sensorMean(samples, d, minSamples)
+        BigDecimal o = numOrNull(om[d])
+        if (s != null && o != null) diffs << (s - o)
+        if (diffs.size() == 7) break
+    }
+    if (!diffs) return null
+    return ((diffs.sum() as BigDecimal) / diffs.size()).setScale(2, BigDecimal.ROUND_HALF_UP)
+}
+
+// One mean per day before today: Open-Meteo first, else the sensor corrected by its offset.
+Map mergeDays(Map samples, Map om, String today, int minSamples = 12) {
+    BigDecimal off = sensorOffset(samples, om, today, minSamples)
+    Set<String> days = new TreeSet<String>()
+    (samples ?: [:]).keySet().each { days << (it as String) }
+    (om ?: [:]).keySet().each { days << (it as String) }
+    Map out = [:]
+    days.findAll { it < today }.each { String d ->
+        BigDecimal o = numOrNull((om ?: [:])[d])
+        BigDecimal s = sensorMean(samples, d, minSamples)
+        if (o != null) out[d] = [mean: o, src: 'openmeteo']
+        else if (s != null) out[d] = [mean: (off == null ? s : s - off).setScale(2, BigDecimal.ROUND_HALF_UP), src: 'sensor']
+    }
+    return out
+}
+
+Map meanValues(Map merged) {
+    Map out = [:]
+    (merged ?: [:]).each { k, v -> out[k as String] = (v as Map).mean }
+    return out
+}
+
+// 3-day mean of the three days before day; null unless all three have a mean.
+BigDecimal mean3At(Map means, String day) {
+    List<BigDecimal> xs = (1..3).collect { int i -> numOrNull((means ?: [:])[addDays(day, -i)]) }
+    if (xs.any { it == null }) return null
+    return ((xs.sum() as BigDecimal) / 3).setScale(2, BigDecimal.ROUND_HALF_UP)
+}
+
+// The keep days before today.
+Map pruneDays(Map days, String today, int keep) {
+    String oldest = addDays(today, -keep)
+    Map out = [:]
+    (days ?: [:]).each { k, v -> if ((k as String) >= oldest && (k as String) < today) out[k as String] = v }
     return out
 }
 

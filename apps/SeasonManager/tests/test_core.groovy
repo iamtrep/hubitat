@@ -107,15 +107,6 @@ check('nextPossible winter', core.nextPossible('winter', cfg, '°C'), 'spring be
 // ── daily means ──
 Map fillDay(Map s, String day, Object v, int n) { Map x = s; n.times { x = core.addSample(x, day, new BigDecimal(v.toString())) }; return x }
 full = fillDay(fillDay(fillDay([:], '2026-10-01', 10, 24), '2026-10-02', 12, 24), '2026-10-03', 14, 24)
-check('mean3 of three full days', core.mean3(full, '2026-10-04'), 12.0)
-check('mean3 ignores today', core.mean3(fillDay(full, '2026-10-04', 30, 5), '2026-10-04'), 12.0)
-check('day with too few readings gives none', core.mean3(fillDay(fillDay(fillDay([:], '2026-10-01', 10, 24), '2026-10-02', 12, 11), '2026-10-03', 14, 24), '2026-10-04'), null)
-check('missing day gives none', core.mean3(fillDay(fillDay([:], '2026-10-01', 10, 24), '2026-10-03', 14, 24), '2026-10-04'), null)
-check('mean of mixed readings', core.mean3(fillDay(fillDay(fillDay(fillDay([:], '2026-10-01', 9, 12), '2026-10-01', 11, 12), '2026-10-02', 12, 24), '2026-10-03', 13, 24), '2026-10-04'), 11.67)
-check('old days pruned', core.addSample(full, '2026-10-08', 5.0).keySet().sort(), ['2026-10-08'])
-check('recentMeans newest first', core.recentMeans(full, '2026-10-04')*.day, ['2026-10-03', '2026-10-02', '2026-10-01'])
-check('recentMeans counts', core.recentMeans(full, '2026-10-04')*.n, [24, 24, 24])
-check('recentMeans empty day', core.recentMeans([:], '2026-10-04')[0], [day: '2026-10-03', n: 0, mean: null])
 
 // ── review fixes ──
 check('summer before possible-from goes to spring', nxt('summer', '2026-05-03', 25).season, 'spring')
@@ -155,6 +146,35 @@ check('fixture first day', core.parseDaily(fixture)['2026-03-01'], fixture.daily
 check('null mean skipped', core.parseDaily(new groovy.json.JsonSlurper().parseText('{"daily":{"time":["2026-10-01","2026-10-02"],"temperature_2m_mean":[5.2,null]}}')).keySet() as List, ['2026-10-01'])
 check('error response gives nothing', core.parseDaily([error: true, reason: 'bad']), [:])
 check('null response gives nothing', core.parseDaily(null), [:])
+// ── merged daily means ──
+Map bd(Map m) { Map x = [:]; m.each { k, v -> x[k] = new BigDecimal(v.toString()) }; return x }
+Map daysOf(String from, String to, Object v) { Map x = [:]; String d = from; while (d <= to) { x[d] = new BigDecimal(v.toString()); d = core.addDays(d, 1) }; return x }
+om3 = bd(['2026-10-01': 10, '2026-10-02': 12, '2026-10-03': 14])
+check('old days pruned', core.addSample(full, '2026-10-14', 5.0).keySet().sort(), ['2026-10-14'])
+check('ten days kept', core.addSample(full, '2026-10-11', 5.0).keySet().sort(), ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-11'])
+check('sensorMean', core.sensorMean(full, '2026-10-02', 12), 12.0)
+check('sensorMean sparse day', core.sensorMean(fillDay([:], '2026-10-02', 12, 11), '2026-10-02', 12), null)
+sens = fillDay(fillDay(fillDay([:], '2026-10-01', 12, 24), '2026-10-02', 14, 24), '2026-10-03', 16, 24)
+check('offset from days with both', core.sensorOffset(sens, om3, '2026-10-04'), 2.0)
+check('no offset without overlap', core.sensorOffset(sens, [:], '2026-10-04'), null)
+Map nine = [:]; Map nineOm = [:]
+(1..9).each { int i -> String d = core.addDays('2026-09-30', i); nine = fillDay(nine, d, i <= 2 ? 20 : 11, 24); nineOm[d] = 10.0 }
+check('offset uses the last 7 days', core.sensorOffset(nine, nineOm, '2026-10-10'), 1.0)
+check('offset ignores today', core.sensorOffset(fillDay(sens, '2026-10-04', 40, 24), bd(om3 + ['2026-10-04': 10]), '2026-10-04'), 2.0)
+check('Open-Meteo first', core.mergeDays(sens, om3, '2026-10-04')['2026-10-02'].src, 'openmeteo')
+check('Open-Meteo value', core.mergeDays(sens, om3, '2026-10-04')['2026-10-02'].mean, 12.0)
+sens4 = fillDay(sens, '2026-10-04', 20, 24)
+check('sensor fills missing Open-Meteo day', core.mergeDays(sens4, om3, '2026-10-05')['2026-10-04'].src, 'sensor')
+check('sensor day corrected by the offset', core.mergeDays(sens4, om3, '2026-10-05')['2026-10-04'].mean, 18.0)
+check('sensor uncorrected without overlap', core.mergeDays(sens4, [:], '2026-10-05')['2026-10-04'].mean, 20.0)
+check('today left out', core.mergeDays(sens4, om3, '2026-10-04').containsKey('2026-10-04'), false)
+check('day with too few readings gives none', core.mergeDays(fillDay([:], '2026-10-02', 12, 11), [:], '2026-10-04').containsKey('2026-10-02'), false)
+check('meanValues', core.meanValues(core.mergeDays(sens, om3, '2026-10-04')), bd(['2026-10-01': 10, '2026-10-02': 12, '2026-10-03': 14]))
+check('mean3At', core.mean3At(om3, '2026-10-04'), 12.0)
+check('mean3At ignores the day itself', core.mean3At(bd(om3 + ['2026-10-04': 30]), '2026-10-04'), 12.0)
+check('missing day gives none', core.mean3At(bd(['2026-10-01': 10, '2026-10-03': 14]), '2026-10-04'), null)
+check('mean of a zero day', core.mean3At(bd(['2026-10-01': 0, '2026-10-02': 0, '2026-10-03': 0]), '2026-10-04'), 0)
+check('pruneDays', core.pruneDays(daysOf('2026-09-25', '2026-10-12', 1), '2026-10-12', 10).keySet().sort(), daysOf('2026-10-02', '2026-10-11', 1).keySet().sort())
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)
