@@ -356,6 +356,7 @@ void dropClaim(String id) {
 }
 
 void releaseAll() {
+    state.reasserted = [:]
     Map c = (state.claims ?: [:]) as Map
     if (!c) return
     stageDevices().each { DeviceWrapper d -> if (c[d.id.toString()]) switchCmd(d, "off") }
@@ -413,6 +414,7 @@ ChildDeviceWrapper airDevice() {
 }
 
 Map airCommand(Map req) {
+    checkVersion()
     String c = req?.command as String
     if (c != "on" && c != "off") return [ok: false, error: "unknown command ${c}"]
     state.enabled = c == "on"
