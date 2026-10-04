@@ -54,7 +54,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Switch Monitor"
-@Field static final String CODE_VERSION = "3.0.3"
+@Field static final String CODE_VERSION = "3.0.4"
 
 @Field static final Integer DEFAULT_GRACE_MINUTES = 5
 @Field static final Integer DEFAULT_GRACE_SECONDS = 0
@@ -97,7 +97,7 @@ Map mainPage() {
         state.remove("removeSettingsForGroupNumber")
         removeSettingsForGroup(groupNum)
         List<Integer> groups = (List<Integer>)(state.groups ?: [])
-        groups.remove((Integer) groupNum)
+        groups.removeAll { it == groupNum }   // remove(Integer) would remove by index
         state.groups = groups
         Map allGroupState = (Map)(state.groupState ?: [:])
         allGroupState.remove(groupNum.toString())
