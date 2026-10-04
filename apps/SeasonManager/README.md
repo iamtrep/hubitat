@@ -82,7 +82,7 @@ The same controls are on the app page, with the current season, the last three d
 
 ## Outlook
 
-Each morning the app also fetches Open-Meteo's 7-day forecast of daily means and runs the same rules forward from the current season. The app page lists the forecast means and every change the rules would make, such as "Likely: winter on Oct 27 (3-day mean 1.7 °C)". A change whose 3-day mean is within 1 °C of its threshold reads "Possible" instead. Changes forced by a date are listed with their reason. The outlook never changes the season.
+Each morning the app also fetches Open-Meteo's 7-day forecast of daily means and runs the same rules forward from the current season. The app page lists the forecast means and every change the rules would make, such as "Forecast: winter on Oct 27 (3-day mean 1.7 °C)", or says the forecast predicts no change. Changes forced by a date are listed with their reason. The outlook never changes the season. Saving the settings fetches the daily means and the forecast at once.
 
 ## Hub variable mirror
 

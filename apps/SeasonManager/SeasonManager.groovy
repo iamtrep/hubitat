@@ -184,6 +184,7 @@ void initialize() {
     schedule("0 0 5 * * ?", "evaluateHandler")
     schedule("0 1 0 * * ?", "creditHandler")
     if (debugEnable) runIn(1800, "logsOff")
+    startEvaluation("refresh")
     updateCredit(realToday(), currentCfg())
     publish()
 }
@@ -333,6 +334,7 @@ void sampleHandler() {
 void evaluateHandler() { checkVersion(); startEvaluation("daily") }
 
 // Fetches Open-Meteo means when enabled and evaluates in the callback; evaluates at once otherwise.
+// why "refresh" (on save) only fetches the means and the forecast.
 void startEvaluation(String why) {
     String today = realToday()
     String start = addDays(today, -10)
@@ -343,7 +345,7 @@ void startEvaluation(String why) {
     if (url) {
         asynchttpGet("archiveHandler", [uri: url, contentType: 'application/json', timeout: 30], [why: why])
     } else {
-        evaluateSeason(why, null)
+        if (why != "refresh") evaluateSeason(why, null)
         updateOutlook([:])
     }
 }
@@ -363,7 +365,7 @@ void archiveHandler(resp, Map data) {
         kept.putAll(om)
         state.om = pruneDays(kept, realToday(), 10)
     }
-    evaluateSeason(data.why as String, om)
+    if (data.why != "refresh") evaluateSeason(data.why as String, om)
     String url = omUrl('forecast', location.latitude, location.longitude, location.temperatureScale as String, null, null)
     if (url) asynchttpGet("forecastHandler", [uri: url, contentType: 'application/json', timeout: 30])
 }
@@ -383,7 +385,7 @@ void updateOutlook(Map forecast) {
     if (validateCfg(cfg)) return
     String today = realToday()
     Map observed = meanValues(mergeDays((state.samples ?: [:]) as Map, (state.om ?: [:]) as Map, today))
-    state.outlook = [made: today] + outlook(state.season as String, today, observed, forecast, cfg, holdLastDay(), location.temperatureScale as String)
+    state.outlook = [made: today] + outlook(state.season as String, today, observed, forecast, cfg, holdLastDay())
 }
 
 // The last day whose 05:00 evaluation the hold suspends, or null.
@@ -820,31 +822,14 @@ String dayLabel(String iso) {
     return "${m[(iso.substring(5, 7) as int) - 1]} ${iso.substring(8) as int}".toString()
 }
 
-// The threshold a weather-driven change crossed; null for date-driven changes.
-BigDecimal thresholdFor(String from, String to, Map cfg) {
-    if (from == 'winter') return numOrNull((cfg.w2s as Map).above)
-    if (to == 'winter') return numOrNull((cfg.f2w as Map).below)
-    if (to == 'summer') return numOrNull((cfg.summer as Map).enter)
-    if (from == 'summer') return numOrNull((cfg.summer as Map).leave)
-    return null
-}
-
 // The rules run forward over the next 7 evaluations. observed: means before today; forecast: means from today on.
-Map outlook(String season, String today, Map observed, Map forecast, Map cfg, String holdLast, String scale) {
+Map outlook(String season, String today, Map observed, Map forecast, Map cfg, String holdLast) {
     Map means = [:]
     (observed ?: [:]).each { k, v -> if ((k as String) < today) means[k as String] = v }
     (forecast ?: [:]).each { k, v -> if ((k as String) >= today) means[k as String] = v }
     String last = addDays(today, 7)
     Map r = runDays(season, addDays(today, 1), last, means, cfg, holdLast)
-    BigDecimal margin = scale == 'F' ? 1.8 : 1.0
-    String prev = season
-    List<Map> changes = []
-    (r.changes as List<Map>).each { Map c ->
-        BigDecimal thr = (c.reason as String).startsWith('3-day mean') ? thresholdFor(prev, c.season as String, cfg) : null
-        String kind = thr == null ? 'date' : (((c.mean as BigDecimal) - thr).abs() > margin ? 'likely' : 'possible')
-        changes << (c + [kind: kind])
-        prev = c.season as String
-    }
+    List<Map> changes = (r.changes as List<Map>).collect { Map c -> c + [kind: (c.reason as String).startsWith('3-day mean') ? 'forecast' : 'date'] }
     List<Map> days = (forecast ?: [:]).keySet().collect { it as String }.findAll { it >= today }.sort().collect { String d -> [day: d, mean: forecast[d]] }
     return [through: last, days: days, changes: changes, forecast: !(forecast ?: [:]).isEmpty()]
 }
@@ -853,11 +838,11 @@ List<String> outlookText(Map o, String unit) {
     List<String> out = []
     if (!o.forecast) out << 'No forecast available; only the date limits are shown.'
     List<Map> ch = (o.changes ?: []) as List<Map>
-    if (!ch) out << "No change expected through ${dayLabel(o.through as String)}".toString()
+    if (!ch) out << "The forecast predicts no season change through ${dayLabel(o.through as String)}".toString()
     ch.each { Map c ->
         String day = dayLabel(c.day as String)
         if (c.kind == 'date') out << "${(c.season as String).capitalize()} on ${day} (${c.reason})".toString()
-        else out << "${c.kind == 'likely' ? 'Likely' : 'Possible'}: ${c.season} on ${day} (3-day mean ${fmtNum(c.mean)} ${unit})".toString()
+        else out << "Forecast: ${c.season} on ${day} (3-day mean ${fmtNum(c.mean)} ${unit})".toString()
     }
     return out
 }
