@@ -210,4 +210,33 @@ String nextPossible(String season, Map cfg, String unit) {
     return ''
 }
 
+// samples: ISO day -> [s: sum of readings, n: number of readings]. Keeps the last 4 days.
+Map addSample(Map samples, String iso, BigDecimal v) {
+    Map out = [:]
+    String oldest = addDays(iso, -4)
+    (samples ?: [:]).each { k, x -> if ((k as String) >= oldest) out[k as String] = x }
+    Map day = (out[iso] ?: [s: 0, n: 0]) as Map
+    out[iso] = [s: (day.s as BigDecimal) + v, n: (day.n as int) + 1]
+    return out
+}
+
+List<Map> recentMeans(Map samples, String today) {
+    List<Map> out = []
+    for (int i = 1; i <= 3; i++) {
+        String day = addDays(today, -i)
+        Map x = (samples ?: [:])[day] as Map
+        int n = x ? (x.n as int) : 0
+        BigDecimal mean = n ? ((x.s as BigDecimal) / n).setScale(2, BigDecimal.ROUND_HALF_UP) : null
+        out << [day: day, n: n, mean: mean]
+    }
+    return out
+}
+
+BigDecimal mean3(Map samples, String today, int minSamples = 12) {
+    List<Map> days = recentMeans(samples, today)
+    if (days.any { (it.n as int) < minSamples }) return null
+    BigDecimal total = days.sum { it.mean as BigDecimal } as BigDecimal
+    return (total / 3).setScale(2, BigDecimal.ROUND_HALF_UP)
+}
+
 // ── End core ──────────────────────────────────────────────────────────

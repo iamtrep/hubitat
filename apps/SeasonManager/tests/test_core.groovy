@@ -104,6 +104,19 @@ check('parse fractional days', core.parseSeasonArgs('fall', '1.5').ok, false)
 check('parse negative days', core.parseSeasonArgs('fall', -1).ok, false)
 check('nextPossible winter', core.nextPossible('winter', cfg, '°C'), 'spring between 03-11 and 04-08, as soon as the 3-day mean is above 3.0 °C')
 
+// ── daily means ──
+Map fillDay(Map s, String day, Object v, int n) { Map x = s; n.times { x = core.addSample(x, day, new BigDecimal(v.toString())) }; return x }
+full = fillDay(fillDay(fillDay([:], '2026-10-01', 10, 24), '2026-10-02', 12, 24), '2026-10-03', 14, 24)
+check('mean3 of three full days', core.mean3(full, '2026-10-04'), 12.0)
+check('mean3 ignores today', core.mean3(fillDay(full, '2026-10-04', 30, 5), '2026-10-04'), 12.0)
+check('day with too few readings gives none', core.mean3(fillDay(fillDay(fillDay([:], '2026-10-01', 10, 24), '2026-10-02', 12, 11), '2026-10-03', 14, 24), '2026-10-04'), null)
+check('missing day gives none', core.mean3(fillDay(fillDay([:], '2026-10-01', 10, 24), '2026-10-03', 14, 24), '2026-10-04'), null)
+check('mean of mixed readings', core.mean3(fillDay(fillDay(fillDay(fillDay([:], '2026-10-01', 9, 12), '2026-10-01', 11, 12), '2026-10-02', 12, 24), '2026-10-03', 13, 24), '2026-10-04'), 11.67)
+check('old days pruned', core.addSample(full, '2026-10-08', 5.0).keySet().sort(), ['2026-10-08'])
+check('recentMeans newest first', core.recentMeans(full, '2026-10-04')*.day, ['2026-10-03', '2026-10-02', '2026-10-01'])
+check('recentMeans counts', core.recentMeans(full, '2026-10-04')*.n, [24, 24, 24])
+check('recentMeans empty day', core.recentMeans([:], '2026-10-04')[0], [day: '2026-10-03', n: 0, mean: null])
+
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)
