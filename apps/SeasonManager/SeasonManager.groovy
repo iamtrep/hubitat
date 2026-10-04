@@ -568,6 +568,37 @@ Map evalInputs(boolean useTest, Object testDate, Object testMean, String today) 
     return [day: (useTest && validIso(testDate)) ? (testDate as String) : today, mean: useTest ? numOrNull(testMean) : null]
 }
 
+String omCoord(Object v) {
+    BigDecimal b = numOrNull(v)
+    return b == null ? null : b.setScale(1, BigDecimal.ROUND_HALF_UP).toPlainString()
+}
+
+// kind 'archive': start to end; 'forecast': today and the next 6 days. Null without coordinates.
+String omUrl(String kind, Object lat, Object lon, String scale, String start, String end) {
+    String la = omCoord(lat)
+    String lo = omCoord(lon)
+    if (la == null || lo == null) return null
+    String base = kind == 'archive' ? 'https://archive-api.open-meteo.com/v1/archive' : 'https://api.open-meteo.com/v1/forecast'
+    String q = "latitude=${la}&longitude=${lo}&daily=temperature_2m_mean&timezone=auto"
+    if (scale == 'F') q += '&temperature_unit=fahrenheit'
+    q += kind == 'archive' ? "&start_date=${start}&end_date=${end}" : '&forecast_days=7'
+    return "${base}?${q}".toString()
+}
+
+// Open-Meteo daily response -> [ISO day: BigDecimal]; days without a mean left out.
+Map parseDaily(Object json) {
+    Map out = [:]
+    Map daily = json instanceof Map ? ((Map) json).daily as Map : null
+    List t = daily?.time as List
+    List v = daily?.temperature_2m_mean as List
+    if (!t || !v) return out
+    for (int i = 0; i < Math.min(t.size(), v.size()); i++) {
+        BigDecimal m = numOrNull(v[i])
+        if (m != null && validIso(t[i])) out[t[i] as String] = m.setScale(2, BigDecimal.ROUND_HALF_UP)
+    }
+    return out
+}
+
 // ── End core ──────────────────────────────────────────────────────────
 
 // ── Logging (app) ─────────────────────────────────────────────────────

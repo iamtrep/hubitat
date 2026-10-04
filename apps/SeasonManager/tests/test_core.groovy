@@ -138,6 +138,23 @@ check('seasonsOn winter on the window last day', core.seasonsOn('2026-11-11', cf
 check('seasonsOn agrees with forced moves', (1..365).every { int i ->
     String d = core.addDays('2026-01-01', i - 1); List<String> p = core.seasonsOn(d, cfg)
     p.size() > 1 || p.every { nxt(it, d, null).season == it } }, true)
+// ── Open-Meteo ──
+check('omCoord rounds', core.omCoord(45.4567), '45.5')
+check('omCoord negative', core.omCoord(-73.5871), '-73.6')
+check('omCoord null', core.omCoord(null), null)
+check('archive url', core.omUrl('archive', 45.5123, -73.5871, 'C', '2026-03-01', '2026-04-15'),
+      'https://archive-api.open-meteo.com/v1/archive?latitude=45.5&longitude=-73.6&daily=temperature_2m_mean&timezone=auto&start_date=2026-03-01&end_date=2026-04-15')
+check('F url', core.omUrl('archive', 45.5, -73.6, 'F', '2026-03-01', '2026-03-02'),
+      'https://archive-api.open-meteo.com/v1/archive?latitude=45.5&longitude=-73.6&daily=temperature_2m_mean&timezone=auto&temperature_unit=fahrenheit&start_date=2026-03-01&end_date=2026-03-02')
+check('forecast url', core.omUrl('forecast', 45.5, -73.6, 'C', null, null),
+      'https://api.open-meteo.com/v1/forecast?latitude=45.5&longitude=-73.6&daily=temperature_2m_mean&timezone=auto&forecast_days=7')
+check('no coordinates gives no url', core.omUrl('archive', null, -73.6, 'C', '2026-03-01', '2026-03-02'), null)
+fixture = new groovy.json.JsonSlurper().parse(new File(here, 'fixtures/openmeteo-archive.json'))
+check('fixture days', core.parseDaily(fixture).size(), 46)
+check('fixture first day', core.parseDaily(fixture)['2026-03-01'], fixture.daily.temperature_2m_mean[0])
+check('null mean skipped', core.parseDaily(new groovy.json.JsonSlurper().parseText('{"daily":{"time":["2026-10-01","2026-10-02"],"temperature_2m_mean":[5.2,null]}}')).keySet() as List, ['2026-10-01'])
+check('error response gives nothing', core.parseDaily([error: true, reason: 'bad']), [:])
+check('null response gives nothing', core.parseDaily(null), [:])
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)
