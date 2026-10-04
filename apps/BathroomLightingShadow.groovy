@@ -4,7 +4,7 @@
 import groovy.transform.Field
 import com.hubitat.app.ChildDeviceWrapper
 
-@Field static final String CODE_VERSION = "0.2.3"
+@Field static final String CODE_VERSION = "0.2.4"
 @Field static final Integer SCORING_SCHEMA_VERSION = 1
 @Field static final Integer RESOLVER_MAX_PER_TICK = 10
 
@@ -314,6 +314,9 @@ private void drivePolicy(String key, String edge) {
         classifyOff(key, now() as Long)
     } else if (edge == "on") {
         ps.lastOnClass = null  // pending — resolver or scoreOn will set it
+        // Resolve this ON when its window closes, even if the resolver's self-rescheduling
+        // chain was lost (nothing restarts it short of updated()).
+        runIn(((settings.wOn ?: 60) as Integer) + 1, "resolveUnresolvedOns")
     }
 }
 
