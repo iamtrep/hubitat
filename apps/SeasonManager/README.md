@@ -20,7 +20,7 @@ Season Manager decides which of four seasons it is (`winter`, `spring`, `summer`
 
 1. Add the app in **Apps Code** and the driver in **Drivers Code**.
 2. In **Apps**, choose **Add user app** and pick **Season Manager**.
-3. Pick the outdoor temperature sensor and the current season, then press **Done**.
+3. Pick the outdoor temperature sensor, then press **Done**. The app sets the starting season from the date. Inside a window where the weather decides between two seasons, it asks which one it is.
 
 Saving creates the device **"Season"**. If you rename the app, the device is named "<app name> Season" instead, so a second instance does not create a second "Season". The device belongs to the app and is deleted with it.
 

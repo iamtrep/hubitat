@@ -12,7 +12,7 @@
 import com.hubitat.app.ChildDeviceWrapper
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 
 definition(
     name: "Season Manager",
@@ -53,8 +53,11 @@ Map mainPage() {
             if (state.season != null) paragraph statusHtml(cfg)
         }
         if (state.season == null) {
+            List<String> poss = startOptions(cfg, errs)
             section("Current season") {
-                input "initialSeason", "enum", title: "Season right now", options: SEASON_OPTS, required: true
+                if (poss.size() == 1) paragraph "Season right now: <b>${esc(SEASON_OPTS[poss[0]])}</b>, from today's date."
+                else input "initialSeason", "enum", title: "Season right now: today's date allows ${poss.collect { SEASON_OPTS[it] }.join(' or ')}, depending on recent weather",
+                           options: SEASON_OPTS.subMap(poss), required: true
             }
         } else {
             section("Change the season") {
@@ -139,10 +142,15 @@ void uninstalled() {
 }
 
 void initialize() {
-    if (state.season == null && settings.initialSeason) {
-        state.season = settings.initialSeason as String
-        state.since = realToday()
-        logCfg "season set to ${state.season} on install"
+    if (state.season == null) {
+        Map cfg = currentCfg()
+        List<String> poss = startOptions(cfg, validateCfg(cfg))
+        String s = poss.size() == 1 ? poss[0] : (poss.contains(settings.initialSeason) ? settings.initialSeason as String : null)
+        if (s) {
+            state.season = s
+            state.since = realToday()
+            logCfg "season set to ${s} on install${poss.size() == 1 ? ' from the date' : ''}"
+        }
     }
     state.remove('mirroredSeason')
     state.remove('mirroredCredit')
@@ -183,6 +191,8 @@ Map currentCfg() {
 }
 
 String realToday() { return new Date().format('yyyy-MM-dd', location.timeZone) }
+
+List<String> startOptions(Map cfg, List<String> errs) { errs ? seasonList() : seasonsOn(realToday(), cfg) }
 
 
 // ── Device ────────────────────────────────────────────────────────────
@@ -486,6 +496,19 @@ Map nextSeason(String season, String iso, BigDecimal mean, Map cfg) {
         if (mean != null && mean < leave) return [season: fallHalf ? 'fall' : 'spring', reason: "3-day mean ${m} below ${fmtNum(leave)}".toString()]
     }
     return [season: season, reason: null]
+}
+
+// The seasons possible on iso from the date alone. Two inside a window where the weather decides.
+List<String> seasonsOn(String iso, Map cfg) {
+    Map w = cfg.w2s as Map
+    Map f = cfg.f2w as Map
+    Map s = cfg.summer as Map
+    List<List> spans = [[f.until, w.from, ['winter']], [w.from, w.until, ['winter', 'spring']],
+                        [w.until, s.from, ['spring']], [s.from, s.fallFrom, ['spring', 'summer']],
+                        [s.fallFrom, s.until, ['summer', 'fall']], [s.until, f.from, ['fall']],
+                        [f.from, f.until, ['fall', 'winter']]]
+    List hit = spans.find { inSpan(iso, it[0] as String, it[1] as String) }
+    return hit ? (hit[2] as List<String>) : seasonList()
 }
 
 boolean creditOn(String iso, Map credit) { return inMd(iso, credit.from as String, credit.until as String) }

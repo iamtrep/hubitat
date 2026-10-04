@@ -126,6 +126,18 @@ check('winter catch-up before fall-from still moves', nxt('winter', '2026-07-01'
 check('scheduled run ignores test inputs', core.evalInputs(false, '2026-03-20', '4', '2026-10-04'), [day: '2026-10-04', mean: null])
 check('button run uses test inputs', core.evalInputs(true, '2026-03-20', '4', '2026-10-04'), [day: '2026-03-20', mean: 4])
 check('button run with bad test day uses today', core.evalInputs(true, '2026-3-20', 'none', '2026-10-04'), [day: '2026-10-04', mean: null])
+check('seasonsOn winter', core.seasonsOn('2026-01-15', cfg), ['winter'])
+check('seasonsOn winter to spring window', core.seasonsOn('2026-03-11', cfg), ['winter', 'spring'])
+check('seasonsOn spring on the window last day', core.seasonsOn('2026-04-08', cfg), ['spring'])
+check('seasonsOn spring or summer', core.seasonsOn('2026-06-20', cfg), ['spring', 'summer'])
+check('seasonsOn summer or fall from fall-from', core.seasonsOn('2026-08-15', cfg), ['summer', 'fall'])
+check('seasonsOn fall on summer last day', core.seasonsOn('2026-09-14', cfg), ['fall'])
+check('seasonsOn fall', core.seasonsOn('2026-10-03', cfg), ['fall'])
+check('seasonsOn fall or winter', core.seasonsOn('2026-11-10', cfg), ['fall', 'winter'])
+check('seasonsOn winter on the window last day', core.seasonsOn('2026-11-11', cfg), ['winter'])
+check('seasonsOn agrees with forced moves', (1..365).every { int i ->
+    String d = core.addDays('2026-01-01', i - 1); List<String> p = core.seasonsOn(d, cfg)
+    p.size() > 1 || p.every { nxt(it, d, null).season == it } }, true)
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)
