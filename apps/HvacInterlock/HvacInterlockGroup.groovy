@@ -220,8 +220,19 @@ void evaluateGroup(String why) {
     logDebug "${why}: season ${season}, wanted ${wanted}, effective ${eff.state}, alert ${raised}"
 }
 
-// Task 4 fills this in.
-void applyModes(String target) { }
+void applyModes(String target) {
+    List<Map> ts = (thermostats ?: []).collect { [id: it.id as String, mode: it.currentValue("thermostatMode") as String] }
+    List<String> ids = modeWrites(ts, target)
+    (thermostats ?: []).findAll { ids.contains(it.id as String) }.each { dev ->
+        if (!supportsMode(dev.currentValue("supportedThermostatModes"), target)) {
+            logWarn "${dev.displayName} does not support mode ${target}; left as it is"
+            return
+        }
+        dev.setThermostatMode(target)
+        logCmd "${dev.displayName}: mode ${target}"
+    }
+}
+
 
 void appButtonHandler(String btn) {
     checkVersion()

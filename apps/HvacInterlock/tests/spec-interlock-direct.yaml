@@ -1,0 +1,119 @@
+# Copyright (c) 2026 PJ
+# SPDX-License-Identifier: MIT
+# HVAC Interlock, direct group: Mode 1 behavior spec. Policy: off in winter, heat in
+# spring and fall, cool in summer (the mini-split layout). The season comes from
+# Season Manager's test device; see spec-interlock-permit.yaml.
+app:
+  source: apps/HvacInterlock/HvacInterlockGroup.groovy
+  type_name: "HVAC Interlock Group"
+  instance_label: test-ilk-direct
+  parent:
+    source: apps/HvacInterlock/HvacInterlock.groovy
+    type_name: "HVAC Interlock"
+    instance_label: test-interlock
+  config:
+    debugEnable: true
+    style: "direct"
+    modeWinter: "off"
+    modeSpring: "heat"
+    modeSummer: "cool"
+    modeFall: "heat"
+    response: "block"
+    openDelay: 0
+inputs:
+  - { name: test-ilk-th, driver: Virtual Thermostat, role: thermostats }
+  - { name: test-ilk-window2, driver: Virtual Contact Sensor, role: openings }
+outputs:
+  - { name: test-ilk-direct status, child: true }
+  - { name: test-season Season, child: true }
+maker_api:
+  label: test-ilk-maker
+cases:
+  - name: spring-heats
+    setup:
+      - settings: { debugEnable: true }
+      - settings: { testCloseDelay: 3, response: "block" }
+      - { device: test-ilk-window2, command: close }
+      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
+    actions:
+      - { device: test-season Season, command: setSeason, args: ["spring", 0] }
+    wait_seconds: 3
+    assert:
+      - { device: test-ilk-th, attribute: thermostatMode, value: heat }
+      - { device: test-ilk-direct status, attribute: switch, value: "on" }
+
+  - name: summer-cools
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-ilk-window2, command: close }
+      - { device: test-season Season, command: setSeason, args: ["spring", 0] }
+    actions:
+      - { device: test-season Season, command: setSeason, args: ["summer", 0] }
+    wait_seconds: 3
+    assert:
+      - { device: test-ilk-th, attribute: thermostatMode, value: cool }
+
+  - name: winter-turns-off
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-ilk-window2, command: close }
+      - { device: test-season Season, command: setSeason, args: ["summer", 0] }
+    actions:
+      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
+    wait_seconds: 3
+    assert:
+      - { device: test-ilk-th, attribute: thermostatMode, value: "off" }
+      - { device: test-ilk-direct status, attribute: blockReason, value: season }
+
+  - name: open-window-turns-off
+    setup:
+      - settings: { debugEnable: true }
+      - settings: { testCloseDelay: 3 }
+      - { device: test-ilk-window2, command: close }
+      - { device: test-season Season, command: setSeason, args: ["summer", 0] }
+    actions:
+      - { device: test-ilk-window2, command: open }
+    wait_seconds: 3
+    assert:
+      - { device: test-ilk-th, attribute: thermostatMode, value: "off" }
+      - { device: test-ilk-direct status, attribute: blockReason, value: openings }
+
+  - name: closing-restores-mode
+    setup:
+      - settings: { debugEnable: true }
+      - settings: { testCloseDelay: 3 }
+      - { device: test-season Season, command: setSeason, args: ["summer", 0] }
+      - { device: test-ilk-window2, command: open }
+    actions:
+      - { device: test-ilk-window2, command: close }
+    wait_seconds: 8
+    assert:
+      - { device: test-ilk-th, attribute: thermostatMode, value: cool }
+
+  - name: no-reassert-when-unchanged
+    setup:
+      - settings: { debugEnable: true }
+      - settings: { testCloseDelay: 3, response: "warn" }
+      - { device: test-ilk-window2, command: close }
+      - { device: test-season Season, command: setSeason, args: ["summer", 0] }
+      - { device: test-ilk-th, command: heat }
+    actions:
+      - { device: test-ilk-window2, command: open }
+    wait_seconds: 3
+    assert:
+      - { device: test-ilk-th, attribute: thermostatMode, value: heat }
+      - { device: test-ilk-direct status, attribute: contact, value: open }
+
+  - name: restart-corrects-mode
+    setup:
+      - settings: { debugEnable: true }
+      - settings: { testCloseDelay: 3, response: "block" }
+      - { device: test-ilk-window2, command: close }
+      - { device: test-season Season, command: setSeason, args: ["summer", 0] }
+      - { device: test-ilk-th, command: heat }
+    actions:
+      - { button: btnRestart }
+    wait_seconds: 8
+    assert:
+      - { device: test-ilk-th, attribute: thermostatMode, value: cool }
+runtime_budget_seconds: 150
