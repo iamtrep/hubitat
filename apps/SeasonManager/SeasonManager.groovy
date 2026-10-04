@@ -152,7 +152,7 @@ void initialize() {
     schedule("0 0 5 * * ?", "evaluateHandler")
     schedule("0 1 0 * * ?", "creditHandler")
     if (debugEnable) runIn(1800, "logsOff")
-    updateCredit(evalDay(), currentCfg())
+    updateCredit(realToday(), currentCfg())
     publish()
 }
 
@@ -184,9 +184,6 @@ Map currentCfg() {
 
 String realToday() { return new Date().format('yyyy-MM-dd', location.timeZone) }
 
-String evalDay() { return (debugEnable && validIso(settings.testDate)) ? (settings.testDate as String) : realToday() }
-
-BigDecimal testMean() { return debugEnable ? numOrNull(settings.testMean) : null }
 
 // ── Device ────────────────────────────────────────────────────────────
 
@@ -274,7 +271,7 @@ void sampleHandler() {
 
 void evaluateHandler() { checkVersion(); evaluateSeason("daily") }
 
-void creditHandler() { checkVersion(); updateCredit(evalDay(), currentCfg()); publish() }
+void creditHandler() { checkVersion(); updateCredit(realToday(), currentCfg()); publish() }
 
 void updateCredit(String day, Map cfg) {
     Map c = cfg.credit as Map
@@ -285,8 +282,9 @@ void evaluateSeason(String why) {
     Map cfg = currentCfg()
     List<String> errs = validateCfg(cfg)
     if (errs) { logWarn "season not evaluated, settings invalid: ${errs.join('; ')}"; return }
-    String day = evalDay()
-    BigDecimal mean = testMean()
+    Map inputs = evalInputs(debugEnable && why == "button", settings.testDate, settings.testMean, realToday())
+    String day = inputs.day as String
+    BigDecimal mean = inputs.mean as BigDecimal
     if (mean == null) mean = mean3((state.samples ?: [:]) as Map, day)
     state.lastEval = [day: day, mean: mean?.toPlainString(), why: why]
     updateCredit(day, cfg)
@@ -320,7 +318,7 @@ Map setSeasonManual(Object season, Object holdDays) {
     String was = state.season
     int days = p.days as int
     state.season = p.season
-    state.since = evalDay()
+    state.since = realToday()
     if (days > 0) state.holdUntil = now() + days * DAY_MS
     else state.remove('holdUntil')
     logCmd "season set to ${p.season} by hand (was ${was})${days > 0 ? ', automatic changes suspended for ' + days + ' days' : ''}"
@@ -468,7 +466,8 @@ Map nextSeason(String season, String iso, BigDecimal mean, Map cfg) {
         if (inMd(iso, w.from as String, w.until as String)) {
             if (mean != null && mean > above) return [season: 'spring', reason: "3-day mean ${m} above ${fmtNum(above)}".toString()]
             if (sameDay(iso, w.until as String)) return [season: 'spring', reason: 'last day of the winter to spring window']
-        } else if (inSpan(iso, w.until as String, f.from as String)) {
+        } else if (inSpan(iso, w.until as String, s.fallFrom as String)) {
+            // A winter from fall-from on is the coming winter, set early by hand: keep it.
             return [season: 'spring', reason: 'past the winter to spring window']
         }
     } else if (season == 'spring' || season == 'fall') {
@@ -483,7 +482,7 @@ Map nextSeason(String season, String iso, BigDecimal mean, Map cfg) {
             }
         }
     } else if (season == 'summer') {
-        if (!summerOpen) return [season: 'fall', reason: "summer ends on ${s.until}".toString()]
+        if (!summerOpen) return [season: fallHalf ? 'fall' : 'spring', reason: "outside the summer dates (${s.from} to ${s.until})".toString()]
         if (mean != null && mean < leave) return [season: fallHalf ? 'fall' : 'spring', reason: "3-day mean ${m} below ${fmtNum(leave)}".toString()]
     }
     return [season: season, reason: null]
@@ -539,6 +538,11 @@ BigDecimal mean3(Map samples, String today, int minSamples = 12) {
     if (days.any { (it.n as int) < minSamples }) return null
     BigDecimal total = days.sum { it.mean as BigDecimal } as BigDecimal
     return (total / 3).setScale(2, BigDecimal.ROUND_HALF_UP)
+}
+
+// Test day and test mean apply to button-driven evaluations only, never to scheduled runs.
+Map evalInputs(boolean useTest, Object testDate, Object testMean, String today) {
+    return [day: (useTest && validIso(testDate)) ? (testDate as String) : today, mean: useTest ? numOrNull(testMean) : null]
 }
 
 // ── End core ──────────────────────────────────────────────────────────

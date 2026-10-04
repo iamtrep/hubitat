@@ -117,6 +117,15 @@ check('recentMeans newest first', core.recentMeans(full, '2026-10-04')*.day, ['2
 check('recentMeans counts', core.recentMeans(full, '2026-10-04')*.n, [24, 24, 24])
 check('recentMeans empty day', core.recentMeans([:], '2026-10-04')[0], [day: '2026-10-03', n: 0, mean: null])
 
+// ── review fixes ──
+check('summer before possible-from goes to spring', nxt('summer', '2026-05-03', 25).season, 'spring')
+check('summer outside its dates gives the reason', nxt('summer', '2026-05-03', 25).reason, 'outside the summer dates (05-10 to 09-14)')
+check('early winter in October stays', nxt('winter', '2026-10-20', 5).season, 'winter')
+check('early winter after fall-from stays', nxt('winter', '2026-08-20', 15).season, 'winter')
+check('winter catch-up before fall-from still moves', nxt('winter', '2026-07-01', 20).season, 'spring')
+check('scheduled run ignores test inputs', core.evalInputs(false, '2026-03-20', '4', '2026-10-04'), [day: '2026-10-04', mean: null])
+check('button run uses test inputs', core.evalInputs(true, '2026-03-20', '4', '2026-10-04'), [day: '2026-03-20', mean: 4])
+check('button run with bad test day uses today', core.evalInputs(true, '2026-3-20', 'none', '2026-10-04'), [day: '2026-10-04', mean: null])
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)
