@@ -30,6 +30,7 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 | Folder | Description |
 |---|---|
 | [HubDiagnostics/](./HubDiagnostics/) | Comprehensive hub diagnostics: inventory, performance tracking, network analysis, and snapshot comparison |
+| [HvacInterlock/](./HvacInterlock/) | Gates heating and cooling equipment by season and open windows |
 | [LocationEventMapper/](./LocationEventMapper/) | TBD |
 | [LogMonitor/](./LogMonitor/) | Monitor hub logs with multiple filters and output actions |
 | [MultiHubInventory/](./MultiHubInventory/) | Read-only cross-hub device inventory, aggregated from each hub's Hub Diagnostics audit API |
