@@ -156,19 +156,13 @@ class LogCapture:
             ) as ws:
                 self._ws = ws
                 self._ready.set()
-                # The synchronous client doesn't expose a non-blocking recv,
-                # so we use a socket timeout to allow the stop signal to
-                # break the loop. Aggressive timeouts (<1s) corrupt the
-                # WebSocket protocol state in python-websockets' sync API
-                # — only the first message arrives before the connection
-                # is torn down. 5s is a safe value: messages are still
-                # delivered promptly (each arriving message returns recv
-                # immediately), and stop() only waits up to one timeout
-                # window after `_stop` is set.
-                ws.socket.settimeout(5.0)
+                # recv(timeout=1) lets the stop signal break the loop. Never set a
+                # timeout on ws.socket: websockets' sync client reads the socket in
+                # a background thread, and a socket timeout there closes the
+                # connection, so every message after the first quiet 5 s was lost.
                 while not self._stop.is_set():
                     try:
-                        raw = ws.recv()
+                        raw = ws.recv(timeout=1.0)
                     except TimeoutError:
                         continue
                     except websockets.exceptions.ConnectionClosed:

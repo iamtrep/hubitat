@@ -182,11 +182,10 @@ class EventCapture:
             ) as ws:
                 self._ws = ws
                 self._ready.set()
-                # See logsocket.py for the rationale on this timeout value.
-                ws.socket.settimeout(5.0)
+                # See logsocket.py: recv(timeout=), never a socket timeout.
                 while not self._stop.is_set():
                     try:
-                        raw = ws.recv()
+                        raw = ws.recv(timeout=1.0)
                     except TimeoutError:
                         continue
                     except websockets.exceptions.ConnectionClosed:
