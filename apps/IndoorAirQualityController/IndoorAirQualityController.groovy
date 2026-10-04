@@ -132,4 +132,82 @@ List<String> validateCfg(Map cfg) {
     return errs
 }
 
+long dwellMs(Map stageDef, long unitMs) { return ((numOrNull(stageDef.dwell) ?: 1G) * unitMs).longValue() }
+
+// Stage states: [s: 'off' | 'engaged' | 'held', since: epoch ms the value crossed toward a change
+// (null when it has not), heldUntil: epoch ms]. One call evaluates the ladder once.
+// Returns [stages: List<Map>, actions: [[stage: index, cmd: 'on' | 'off']], wakeAt: Long or null].
+Map stepStages(List<Map> cur, BigDecimal co2, long now, Map cfg, boolean offsetOn) {
+    List<Map> defs = cfg.stages as List<Map>
+    int n = defs.size()
+    BigDecimal o = offsetOn ? (numOrNull(cfg.offset) ?: 0G) : 0G
+    long unit = cfg.unitMs as long
+    List<Map> st = resized(cur, n)
+    List<Map> actions = []
+    // A hold that ended: back on while CO2 is above the on threshold, or while a stage above
+    // still runs (stages release from the top down).
+    for (int i = n - 1; i >= 0; i--) {
+        Map x = st[i]
+        if (x.s != 'held' || now < (x.heldUntil as long)) continue
+        boolean above = i < n - 1 && st[i + 1].s != 'off'
+        boolean below = i == 0 || st[i - 1].s != 'off'
+        boolean back = above || (co2 != null && below && co2 > numOrNull(defs[i].on) + o)
+        x.s = back ? 'engaged' : 'off'
+        x.since = null
+        x.heldUntil = null
+        actions << [stage: i, cmd: back ? 'on' : 'off']
+    }
+    if (co2 != null) {
+        // Release from the top down: a stage goes off only once the stage above is off.
+        for (int i = n - 1; i >= 0; i--) {
+            Map x = st[i]
+            if (x.s != 'engaged') continue
+            if (co2 < numOrNull(defs[i].off) + o) {
+                if (x.since == null) x.since = now
+                boolean upperOff = i == n - 1 || st[i + 1].s == 'off'
+                if (upperOff && now - (x.since as long) >= dwellMs(defs[i], unit)) {
+                    x.s = 'off'
+                    x.since = null
+                    actions << [stage: i, cmd: 'off']
+                }
+            } else x.since = null
+        }
+        // Engage from the bottom up: a stage goes on only once the stage below runs.
+        for (int i = 0; i < n; i++) {
+            Map x = st[i]
+            if (x.s != 'off') continue
+            if (co2 > numOrNull(defs[i].on) + o) {
+                if (x.since == null) x.since = now
+                boolean lowerOn = i == 0 || st[i - 1].s != 'off'
+                if (lowerOn && now - (x.since as long) >= dwellMs(defs[i], unit)) {
+                    x.s = 'engaged'
+                    x.since = null
+                    actions << [stage: i, cmd: 'on']
+                }
+            } else x.since = null
+        }
+    }
+    // Earliest future change. A dwell already elapsed is waiting on another stage, whose own
+    // timer wakes the app.
+    Long wake = null
+    for (int i = 0; i < n; i++) {
+        Map x = st[i]
+        Long t = x.s == 'held' ? x.heldUntil as Long : (x.since != null ? (x.since as long) + dwellMs(defs[i], unit) : null)
+        if (t != null && t > now) wake = earliest(wake, t)
+    }
+    return [stages: st, actions: actions, wakeAt: wake]
+}
+
+int stageLevel(List<Map> st) {
+    int level = 0
+    for (int i = 0; i < (st ?: []).size(); i++) if (st[i]?.s != null && st[i].s != 'off') level = i + 1
+    return level
+}
+
+boolean allRunning(List<Map> st) {
+    if (!st) return false
+    for (Map x : st) if (x?.s == null || x.s == 'off') return false
+    return true
+}
+
 // ── End core ──────────────────────────────────────────────────────────

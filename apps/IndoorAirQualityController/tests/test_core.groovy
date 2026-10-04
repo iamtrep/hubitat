@@ -83,6 +83,54 @@ check('switch in two stages', core.validateCfg(cfgStages { it[1].switches = ['1'
 check('five stages', core.validateCfg(cfgStages { it << [:] << [:] }), ['Choose 1 to 4 stages'])
 check('offset blank', core.validateCfg(cfg(offset: '')), ['Threshold offset: enter a number'])
 
+// ── stage ladder ──
+Map step(List cur, Object co2, long now, boolean offsetOn = false, Map c = cfg()) {
+    core.stepStages(cur, co2 == null ? null : new BigDecimal(co2.toString()), now, c, offsetOn)
+}
+List states(Map r) { r.stages.collect { it.s } }
+
+Map r1 = step([], 700, 0L)
+check('first reading starts the dwell', r1.stages[0].since, 0)
+check('first reading no action', r1.actions, [])
+check('wake at end of dwell', r1.wakeAt, 5 * M)
+check('engages after dwell', step([[s: 'off', since: 0L]], 700, 5 * M).actions, [[stage: 0, cmd: 'on']])
+check('not before dwell', states(step([[s: 'off', since: 0L]], 700, 4 * M)), ['off', 'off', 'off'])
+check('dwell restarts when value crosses back', step([[s: 'off', since: 0L]], 600, M).stages[0].since, null)
+check('on threshold is strict', states(step([[s: 'off', since: 0L]], 625, 10 * M)), ['off', 'off', 'off'])
+check('stage 1 then stage 2', states(step([[s: 'off', since: 0L], [s: 'off', since: 0L]], 1200, 6 * M)), ['engaged', 'engaged', 'off'])
+Map blocked = step([[s: 'off', since: 2 * M], [s: 'off', since: 0L]], 1200, 390000L)   // 6.5 min
+check('stage 2 waits for stage 1', states(blocked), ['off', 'off', 'off'])
+check('blocked stage does not wake in the past', blocked.wakeAt, 7 * M)
+check('held stage counts for the stage above', states(step([[s: 'held', heldUntil: 999 * M], [s: 'off', since: 0L]], 1200, 6 * M)), ['held', 'engaged', 'off'])
+Map down = step([[s: 'engaged', since: 0L], [s: 'engaged', since: 0L]], 400, 6 * M)
+check('release top down', down.actions, [[stage: 1, cmd: 'off'], [stage: 0, cmd: 'off']])
+check('lower stage waits for upper', states(step([[s: 'engaged', since: 0L], [s: 'engaged', since: M]], 400, 5 * M)), ['engaged', 'engaged', 'off'])
+Map band = step([[s: 'engaged']], 600, 10 * M)
+check('hysteresis band keeps stage', states(band), ['engaged', 'off', 'off'])
+check('hysteresis band no timer', band.stages[0].since, null)
+check('offset raises thresholds', states(step([[s: 'off', since: 0L]], 700, 5 * M, true)), ['off', 'off', 'off'])
+check('offset removed engages', states(step([[s: 'off', since: 0L]], 700, 5 * M, false)), ['engaged', 'off', 'off'])
+check('offset still engages above', states(step([[s: 'off', since: 0L]], 900, 5 * M, true)), ['engaged', 'off', 'off'])
+Map oa = step([[s: 'engaged']], 700, 0L, true)
+check('offset applied while engaged starts release', oa.stages[0].since, 0)
+check('offset applied while engaged releases after dwell', states(step(oa.stages, 700, 5 * M, true)), ['off', 'off', 'off'])
+Map none = step([[s: 'engaged', since: 0L]], null, 999 * M)
+check('no reading holds stages', states(none), ['engaged', 'off', 'off'])
+check('no reading no action', none.actions, [])
+check('hold ends, CO2 high', step([[s: 'held', heldUntil: 1000L]], 700, 1000L).actions, [[stage: 0, cmd: 'on']])
+check('hold ends, CO2 low', step([[s: 'held', heldUntil: 1000L]], 500, 1000L).actions, [[stage: 0, cmd: 'off']])
+check('hold ends with stage above running', states(step([[s: 'held', heldUntil: 1000L], [s: 'engaged']], 600, 1000L)), ['engaged', 'engaged', 'off'])
+check('hold not over', states(step([[s: 'held', heldUntil: 5000L]], 400, 1000L)), ['held', 'off', 'off'])
+check('hold wakes at its end', step([[s: 'held', heldUntil: 5000L]], 400, 1000L).wakeAt, 5000)
+Map rs = step([[s: 'engaged', since: null]], 500, 0L)
+check('restart keeps engaged stage', states(rs), ['engaged', 'off', 'off'])
+check('restart starts the release timer', rs.stages[0].since, 0)
+check('test unit', core.dwellMs([dwell: 5], 1000L), 5000)
+check('stageLevel', core.stageLevel([[s: 'engaged'], [s: 'held'], [s: 'off']]), 2)
+check('stageLevel none', core.stageLevel([[s: 'off']]), 0)
+check('allRunning', core.allRunning([[s: 'engaged'], [s: 'held']]), true)
+check('allRunning not', core.allRunning([[s: 'engaged'], [s: 'off']]), false)
+
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)
