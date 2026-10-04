@@ -74,6 +74,10 @@ check('closeDelay default', core.closeDelayMs(false, 3), 300000L)
 check('closeDelay test', core.closeDelayMs(true, '3'), 3000L)
 check('closeDelay test not set', core.closeDelayMs(true, 'none'), 300000L)
 
+// ── status device label ──
+check('statusLabel', core.statusLabel('Véranda'), 'Véranda status')
+check('statusLabel null before the first save', core.statusLabel(null), null)
+check('statusLabel blank', core.statusLabel('  '), null)
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)

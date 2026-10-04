@@ -13,6 +13,7 @@ Virtual drivers, sandbox introspection tools, and companion test apps that exerc
 - `VirtualWellPumpSwitch.groovy` — virtual switch + `powerMeter` device for the same suite
 - `VirtualMmwavePirSensor.groovy` — virtual device that exposes both PIR and mmWave motion attributes for Motion Fusion testing
 - `StubbornThermostat.groovy` — virtual thermostat that ignores the next N setpoint commands, used by Thermostat Scheduler+'s write-check tests
+- `NotificationCapture.groovy` — records the last notification or spoken text as `lastMessage`, used by HVAC Interlock's alert tests
 
 ## Diagnostic / introspection drivers
 

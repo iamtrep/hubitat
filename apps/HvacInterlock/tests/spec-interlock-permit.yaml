@@ -1,0 +1,154 @@
+# Copyright (c) 2026 PJ
+# SPDX-License-Identifier: MIT
+# HVAC Interlock, permit group: Mode 1 behavior spec. The season comes from Season
+# Manager's test device ("test-season Season", from apps/SeasonManager/tests), driven
+# with setSeason(<season>, 0). Two outputs are marked child: true only so the
+# generator looks them up instead of creating them: the Season device (Season Manager's
+# rig) and the notification capture device (created by hand, set on the test parent).
+app:
+  source: apps/HvacInterlock/HvacInterlockGroup.groovy
+  type_name: "HVAC Interlock Group"
+  instance_label: test-ilk-permit
+  parent:
+    source: apps/HvacInterlock/HvacInterlock.groovy
+    type_name: "HVAC Interlock"
+    instance_label: test-interlock
+  config:
+    debugEnable: true
+    style: "permit"
+    response: "block"
+    openDelay: 0
+inputs:
+  - { name: test-ilk-window, driver: Virtual Contact Sensor, role: openings }
+outputs:
+  - { name: test-ilk-permit status, child: true }
+  - { name: test-season Season, child: true }
+  - { name: test-ilk-notify, child: true }
+maker_api:
+  label: test-ilk-maker
+cases:
+  - name: allowed-in-spring
+    setup:
+      - settings: { debugEnable: true }
+      - settings: { testCloseDelay: 3, response: "block" }
+      - { device: test-ilk-window, command: close }
+      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
+    actions:
+      - { device: test-season Season, command: setSeason, args: ["spring", 0] }
+    wait_seconds: 3
+    assert:
+      - { device: test-ilk-permit status, attribute: switch, value: "on" }
+      - { device: test-ilk-permit status, attribute: blockReason, value: none }
+      - { device: test-ilk-permit status, attribute: contact, value: closed }
+
+  - name: blocked-in-summer
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-ilk-window, command: close }
+      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
+    actions:
+      - { device: test-season Season, command: setSeason, args: ["summer", 0] }
+    wait_seconds: 3
+    assert:
+      - { device: test-ilk-permit status, attribute: switch, value: "off" }
+      - { device: test-ilk-permit status, attribute: blockReason, value: season }
+
+  - name: open-window-blocks
+    setup:
+      - settings: { debugEnable: true }
+      - settings: { testCloseDelay: 3 }
+      - { device: test-ilk-window, command: close }
+      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
+    actions:
+      - { device: test-ilk-window, command: open }
+    wait_seconds: 3
+    assert:
+      - { device: test-ilk-permit status, attribute: switch, value: "off" }
+      - { device: test-ilk-permit status, attribute: contact, value: open }
+      - { device: test-ilk-permit status, attribute: blockReason, value: openings }
+      - { device: test-ilk-permit status, attribute: openContacts, value: test-ilk-window }
+      - { device: test-ilk-notify, attribute: lastMessage, value: "test-ilk-permit: test-ilk-window open" }
+
+  - name: reopen-during-close-delay
+    setup:
+      - settings: { debugEnable: true }
+      - settings: { testCloseDelay: 10 }
+      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
+      - { device: test-ilk-window, command: open }
+    actions:
+      - { device: test-ilk-window, command: close }
+      - { device: test-ilk-window, command: open }
+    wait_seconds: 12
+    assert:
+      - { device: test-ilk-permit status, attribute: contact, value: open }
+      - { device: test-ilk-permit status, attribute: switch, value: "off" }
+      - { device: test-ilk-notify, attribute: lastMessage, value: "test-ilk-permit: test-ilk-window open" }
+
+  - name: closing-clears-after-delay
+    setup:
+      - settings: { debugEnable: true }
+      - settings: { testCloseDelay: 3 }
+      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
+      - { device: test-ilk-window, command: open }
+    actions:
+      - { device: test-ilk-window, command: close }
+    wait_seconds: 8
+    assert:
+      - { device: test-ilk-permit status, attribute: switch, value: "on" }
+      - { device: test-ilk-permit status, attribute: contact, value: closed }
+      - { device: test-ilk-permit status, attribute: blockReason, value: none }
+      - { device: test-ilk-notify, attribute: lastMessage, value: "test-ilk-permit: alert cleared" }
+
+  - name: open-window-in-summer-stays-quiet
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-ilk-window, command: close }
+      - { device: test-season Season, command: setSeason, args: ["summer", 0] }
+    actions:
+      - { device: test-ilk-window, command: open }
+    wait_seconds: 3
+    assert:
+      - { device: test-ilk-permit status, attribute: contact, value: closed }
+      - { device: test-ilk-permit status, attribute: blockReason, value: season }
+
+  - name: open-before-save-raises
+    setup:
+      - settings: { debugEnable: true }
+      - settings: { testCloseDelay: 3, openDelay: 60 }
+      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
+      - { device: test-ilk-window, command: close }
+      - { device: test-ilk-window, command: open }
+    actions:
+      - settings: { openDelay: 0 }
+    wait_seconds: 3
+    assert:
+      - { device: test-ilk-permit status, attribute: contact, value: open }
+      - { device: test-ilk-permit status, attribute: switch, value: "off" }
+
+  - name: warn-raises-without-blocking
+    setup:
+      - settings: { debugEnable: true }
+      - settings: { testCloseDelay: 3, response: "warn" }
+      - { device: test-ilk-window, command: close }
+      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
+    actions:
+      - { device: test-ilk-window, command: open }
+    wait_seconds: 3
+    assert:
+      - { device: test-ilk-permit status, attribute: switch, value: "on" }
+      - { device: test-ilk-permit status, attribute: contact, value: open }
+      - { device: test-ilk-permit status, attribute: blockReason, value: none }
+
+  - name: block-restored
+    setup:
+      - settings: { debugEnable: true }
+      - settings: { testCloseDelay: 3, response: "block" }
+      - { device: test-ilk-window, command: close }
+      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
+    actions:
+      - { device: test-season Season, command: setSeason, args: ["spring", 0] }
+    wait_seconds: 8
+    assert:
+      - { device: test-ilk-permit status, attribute: switch, value: "on" }
+      - { device: test-ilk-permit status, attribute: contact, value: closed }
+runtime_budget_seconds: 180
