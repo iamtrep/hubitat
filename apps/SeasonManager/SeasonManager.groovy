@@ -637,6 +637,50 @@ Map pruneDays(Map days, String today, int keep) {
     return out
 }
 
+// The daily evaluation applied to each day from first to last, in order, one change a day at most.
+// Days up to holdLast (ISO, or null) are skipped.
+Map runDays(String season, String first, String last, Map means, Map cfg, String holdLast = null) {
+    String s = season
+    List<Map> changes = []
+    List<String> missing = []
+    String d = first
+    int guard = 0
+    while (d <= last && guard++ < 400) {
+        if (holdLast == null || d > holdLast) {
+            BigDecimal m = mean3At(means, d)
+            if (m == null) missing << d
+            Map r = nextSeason(s, d, m, cfg)
+            if (r.reason) {
+                changes << [day: d, season: r.season, reason: r.reason, mean: m]
+                s = r.season as String
+            }
+        }
+        d = addDays(d, 1)
+    }
+    return [season: s, changes: changes, missing: missing]
+}
+
+// The most recent day at or before today whose season the date alone settles.
+Map replayAnchor(String today, Map cfg) {
+    for (int i = 0; i <= 366; i++) {
+        String d = addDays(today, -i)
+        List<String> p = seasonsOn(d, cfg)
+        if (p.size() == 1) return [day: d, season: p[0]]
+    }
+    return null
+}
+
+// Today's season, replayed from the anchor on daily means. Null when a replayed day lacks its 3-day mean.
+Map seasonFromHistory(String today, Map means, Map cfg) {
+    Map a = replayAnchor(today, cfg)
+    if (a == null) return null
+    if (a.day == today) return [season: a.season, since: null]
+    Map r = runDays(a.season as String, addDays(a.day as String, 1), today, means, cfg)
+    if (r.missing) return null
+    List<Map> ch = r.changes as List<Map>
+    return [season: r.season, since: ch ? ch[-1].day : null]
+}
+
 // ── End core ──────────────────────────────────────────────────────────
 
 // ── Logging (app) ─────────────────────────────────────────────────────

@@ -175,6 +175,29 @@ check('mean3At ignores the day itself', core.mean3At(bd(om3 + ['2026-10-04': 30]
 check('missing day gives none', core.mean3At(bd(['2026-10-01': 10, '2026-10-03': 14]), '2026-10-04'), null)
 check('mean of a zero day', core.mean3At(bd(['2026-10-01': 0, '2026-10-02': 0, '2026-10-03': 0]), '2026-10-04'), 0)
 check('pruneDays', core.pruneDays(daysOf('2026-09-25', '2026-10-12', 1), '2026-10-12', 10).keySet().sort(), daysOf('2026-10-02', '2026-10-11', 1).keySet().sort())
+// ── running days ──
+warm = daysOf('2026-03-01', '2026-03-31', 5)
+check('one change a day at most', core.runDays('winter', '2026-03-20', '2026-03-22', warm, cfg).changes.size(), 1)
+check('runDays season', core.runDays('winter', '2026-03-20', '2026-03-22', warm, cfg).season, 'spring')
+check('runDays change day', core.runDays('winter', '2026-03-20', '2026-03-22', warm, cfg).changes[0].day, '2026-03-20')
+check('runDays records the mean', core.runDays('winter', '2026-03-20', '2026-03-22', warm, cfg).changes[0].mean, 5.0)
+flip = daysOf('2026-05-29', '2026-06-01', 20) + daysOf('2026-06-02', '2026-06-06', 5)
+check('catch-up runs each day in order', core.runDays('spring', '2026-06-01', '2026-06-06', flip, cfg).changes*.season, ['summer', 'spring'])
+check('catch-up change days', core.runDays('spring', '2026-06-01', '2026-06-06', flip, cfg).changes*.day, ['2026-06-01', '2026-06-04'])
+check('hold days skipped', core.runDays('winter', '2026-03-20', '2026-03-22', warm, cfg, '2026-03-21').changes[0].day, '2026-03-22')
+check('forced move without means', core.runDays('winter', '2026-04-07', '2026-04-08', [:], cfg).season, 'spring')
+check('missing days listed', core.runDays('winter', '2026-04-07', '2026-04-08', [:], cfg).missing, ['2026-04-07', '2026-04-08'])
+check('runDays empty range', core.runDays('fall', '2026-10-05', '2026-10-04', [:], cfg), [season: 'fall', changes: [], missing: []])
+
+// ── install replay ──
+check('anchor before the spring window', core.replayAnchor('2026-03-20', cfg), [day: '2026-03-10', season: 'winter'])
+check('anchor is today when settled', core.replayAnchor('2026-10-03', cfg), [day: '2026-10-03', season: 'fall'])
+check('anchor before summer', core.replayAnchor('2026-07-01', cfg), [day: '2026-05-09', season: 'spring'])
+check('replay finds spring', core.seasonFromHistory('2026-03-20', daysOf('2026-03-08', '2026-03-19', 5), cfg), [season: 'spring', since: '2026-03-11'])
+check('replay stays winter', core.seasonFromHistory('2026-03-20', daysOf('2026-03-08', '2026-03-19', -5), cfg), [season: 'winter', since: null])
+check('replay finds summer', core.seasonFromHistory('2026-07-01', daysOf('2026-05-07', '2026-06-30', 20), cfg), [season: 'summer', since: '2026-05-10'])
+check('replay with a missing day gives none', core.seasonFromHistory('2026-03-20', daysOf('2026-03-08', '2026-03-15', 5), cfg), null)
+check('replay on a settled day needs no means', core.seasonFromHistory('2026-10-03', [:], cfg), [season: 'fall', since: null])
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)
