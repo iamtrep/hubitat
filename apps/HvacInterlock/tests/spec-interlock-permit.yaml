@@ -24,6 +24,7 @@ outputs:
   - { name: test-ilk-permit status, child: true }
   - { name: test-season Season, child: true }
   - { name: test-ilk-notify, child: true }
+  - { name: test-ilk-th, child: true }
 maker_api:
   label: test-ilk-maker
 cases:
@@ -151,4 +152,33 @@ cases:
     assert:
       - { device: test-ilk-permit status, attribute: switch, value: "on" }
       - { device: test-ilk-permit status, attribute: contact, value: closed }
-runtime_budget_seconds: 180
+
+  - name: failing-notifier-still-blocks-and-forwards
+    setup:
+      - settings: { debugEnable: true }
+      - settings: { testCloseDelay: 3, response: "block" }
+      - { device: test-ilk-notify, command: setFailing, args: ["false"] }
+      - { device: test-season Season, command: setSeason, args: ["summer", 0] }
+      - { device: test-ilk-window, command: open }
+      - { device: test-ilk-notify, command: setFailing, args: ["true"] }
+    actions:
+      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
+    wait_seconds: 4
+    assert:
+      - { device: test-ilk-permit status, attribute: blockReason, value: openings }
+      - { device: test-ilk-permit status, attribute: contact, value: open }
+      - { device: test-ilk-th, attribute: thermostatMode, value: "off" }
+    allow_warnings: true
+
+  - name: notifier-restored
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-ilk-notify, command: setFailing, args: ["false"] }
+      - { device: test-ilk-window, command: close }
+      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
+    actions:
+      - { device: test-season Season, command: setSeason, args: ["spring", 0] }
+    wait_seconds: 8
+    assert:
+      - { device: test-ilk-permit status, attribute: switch, value: "on" }
+runtime_budget_seconds: 210
