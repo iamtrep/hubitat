@@ -117,4 +117,37 @@ String fmtNum(Object n) {
     return b == null ? '' : b.setScale(1, BigDecimal.ROUND_HALF_UP).toPlainString()
 }
 
+BigDecimal inScale(BigDecimal celsius, String scale) {
+    return scale == 'F' ? (celsius * 9 / 5 + 32).setScale(1, BigDecimal.ROUND_HALF_UP) : celsius
+}
+
+// Defaults calibrated on 2005-2025 climate (spec, "Calibration from local climate").
+Map defaultCfg(String scale) {
+    return [w2s:    [from: '03-11', until: '04-08', above: inScale(3.0, scale)],
+            f2w:    [from: '10-26', until: '11-11', below: inScale(3.0, scale)],
+            summer: [from: '05-10', until: '09-14', enter: inScale(17.0, scale), leave: inScale(12.0, scale), fallFrom: '08-15'],
+            credit: [from: '12-01', until: '03-31']]
+}
+
+List<String> validateCfg(Map cfg) {
+    List<String> errs = []
+    Map w = cfg.w2s as Map
+    Map f = cfg.f2w as Map
+    Map s = cfg.summer as Map
+    Map c = cfg.credit as Map
+    Map dates = ['Winter to spring window from': w.from, 'Winter to spring window until': w.until,
+                 'Fall to winter window from': f.from, 'Fall to winter window until': f.until,
+                 'Summer possible from': s.from, 'Summer possible until': s.until, 'Fall from': s.fallFrom,
+                 'Winter credit from': c.from, 'Winter credit until': c.until]
+    dates.each { String k, v -> if (!validMd(v)) errs << "${k}: enter a month and day as MM-DD".toString() }
+    Map nums = ['Winter to spring threshold': w.above, 'Fall to winter threshold': f.below,
+                'Enter summer threshold': s.enter, 'Leave summer threshold': s.leave]
+    nums.each { String k, v -> if (numOrNull(v) == null) errs << "${k}: enter a number".toString() }
+    if (errs) return errs
+    if (numOrNull(s.leave) >= numOrNull(s.enter)) errs << 'Leave summer threshold must be below the enter summer threshold'
+    if (!cyclicOrdered([w.from, w.until, s.from, s.fallFrom, s.until, f.from, f.until] as List<String>))
+        errs << 'Dates must follow each other through the year in this order: winter to spring window, summer possible from, fall from, summer possible until, fall to winter window'
+    return errs
+}
+
 // ── End core ──────────────────────────────────────────────────────────

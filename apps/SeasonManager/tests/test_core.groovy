@@ -51,6 +51,20 @@ check('numOrNull blank', core.numOrNull(''), null)
 check('numOrNull junk', core.numOrNull('abc'), null)
 check('fmtNum', core.fmtNum(17), '17.0')
 
+// ── configuration ──
+Map badCfg(Closure edit) { Map x = core.defaultCfg('C'); edit(x); return x }
+check('defaults valid', core.validateCfg(core.defaultCfg('C')), [])
+check('F defaults valid', core.validateCfg(core.defaultCfg('F')), [])
+check('F enter converted', core.defaultCfg('F').summer.enter, 62.6)
+check('F w2s converted', core.defaultCfg('F').w2s.above, 37.4)
+check('C kept', core.defaultCfg('C').summer.leave, 12.0)
+check('bad date reported', core.validateCfg(badCfg { it.summer.fallFrom = '8-15' }), ['Fall from: enter a month and day as MM-DD'])
+check('missing threshold', core.validateCfg(badCfg { it.summer.enter = '' }), ['Enter summer threshold: enter a number'])
+check('leave not below enter', core.validateCfg(badCfg { it.summer.leave = 17.0 }), ['Leave summer threshold must be below the enter summer threshold'])
+check('dates out of order', core.validateCfg(badCfg { it.summer.until = '08-01' }).size(), 1)
+check('credit dates free', core.validateCfg(badCfg { it.credit.from = '11-15' }), [])
+check('bad credit date', core.validateCfg(badCfg { it.credit.until = '04-31' }), ['Winter credit until: enter a month and day as MM-DD'])
+
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)
