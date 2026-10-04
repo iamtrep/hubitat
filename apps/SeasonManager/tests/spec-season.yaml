@@ -9,6 +9,7 @@ app:
   config:
     debugEnable: true
     initialSeason: "winter"
+    omEnable: false
 inputs:
   - { name: test-season-outdoor, driver: Virtual Temperature Sensor, role: tempSensor }
 outputs:

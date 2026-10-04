@@ -12,7 +12,7 @@
 import com.hubitat.app.ChildDeviceWrapper
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.1"
+@Field static final String CODE_VERSION = "0.2.0"
 
 definition(
     name: "Season Manager",
@@ -54,8 +54,10 @@ Map mainPage() {
         }
         if (state.season == null) {
             List<String> poss = startOptions(cfg, errs)
+            Map rep = poss.size() > 1 && !errs ? installReplay(cfg) : null
             section("Current season") {
                 if (poss.size() == 1) paragraph "Season right now: <b>${esc(SEASON_OPTS[poss[0]])}</b>, from today's date."
+                else if (rep) paragraph "Season right now: <b>${esc(SEASON_OPTS[rep.season])}</b>, from the daily means since ${esc(dayLabel(rep.from as String))}."
                 else input "initialSeason", "enum", title: "Season right now: today's date allows ${poss.collect { SEASON_OPTS[it] }.join(' or ')}, depending on recent weather",
                            options: SEASON_OPTS.subMap(poss), required: true
             }
@@ -68,8 +70,11 @@ Map mainPage() {
             }
         }
         section("Outdoor temperature") {
-            input "tempSensor", "capability.temperatureMeasurement", title: "Outdoor temperature sensor", required: true
-            paragraph "Read every hour. The season follows the mean of the three previous daily means, checked every day at 05:00."
+            input "omEnable", "bool", title: "Use Open-Meteo daily means (needs internet)", defaultValue: true, submitOnChange: true
+            input "tempSensor", "capability.temperatureMeasurement", title: "Outdoor temperature sensor, used on days Open-Meteo has no mean", required: false, submitOnChange: true
+            if (omEnable != false && omCoord(location.latitude) == null) paragraph "The hub has no location set, so Open-Meteo is not used."
+            if (omEnable == false && !tempSensor) paragraph "No temperature source: the season changes on the date limits only."
+            paragraph "The season follows the mean of the three previous daily means, checked every day at 05:00."
         }
         section("Winter boundary: changes once a year each way") {
             input "w2sFrom", "text", title: "Winter to spring, from (MM-DD)", defaultValue: d.w2s.from, width: 4, submitOnChange: true
@@ -108,8 +113,9 @@ Map mainPage() {
         if (debugEnable) {
             section("Testing") {
                 input "testDate", "text", title: "Test day (yyyy-MM-dd, blank = today)", required: false, width: 4
-                input "testMean", "text", title: "Test 3-day mean (${u}; blank or none = from the sensor)", required: false, width: 4
+                input "testMean", "text", title: "Test 3-day mean (${u}; blank or none = from the daily means)", required: false, width: 4
                 input "btnEvaluate", "button", title: "Evaluate now"
+                input "btnRunDaily", "button", title: "Run the daily evaluation now"
             }
         }
         section { label title: "App name", required: false }
@@ -122,10 +128,24 @@ String statusHtml(Map cfg) {
     if (state.holdUntil) rows << "Automatic changes suspended until ${esc(fmtTime(state.holdUntil as Long))}".toString()
     Map ev = state.lastEval as Map
     if (ev) rows << "Last evaluation ${esc(ev.day)}: 3-day mean ${ev.mean != null ? esc(ev.mean) + ' ' + unit() : 'not available'}".toString()
-    recentMeans((state.samples ?: [:]) as Map, realToday()).each { Map m ->
-        rows << "${esc(m.day)}: ${m.mean != null ? esc(m.mean) + ' ' + unit() : 'no mean'} (${m.n} readings)".toString()
+    String today = realToday()
+    Map merged = mergeDays((state.samples ?: [:]) as Map, (state.om ?: [:]) as Map, today)
+    (1..3).each { int i ->
+        String d = addDays(today, -i)
+        Map x = merged[d] as Map
+        rows << "${esc(d)}: ${x ? esc(fmtNum(x.mean)) + ' ' + unit() + ' (' + (x.src == 'openmeteo' ? 'Open-Meteo' : 'sensor') + ')' : 'no mean'}".toString()
+    }
+    if (tempSensor) {
+        BigDecimal off = sensorOffset((state.samples ?: [:]) as Map, (state.om ?: [:]) as Map, today)
+        rows << "Sensor offset from Open-Meteo: ${off == null ? 'not known yet' : esc(fmtNum(off)) + ' ' + unit()}".toString()
     }
     if (!validateCfg(cfg)) rows << "Next possible change: ${esc(nextPossible(state.season as String, cfg, unit()))}".toString()
+    Map o = state.outlook as Map
+    if (o) {
+        rows << "<b>Outlook</b> (${esc(o.made)})".toString()
+        outlookText(o, unit()).each { rows << esc(it) }
+        if (o.days) rows << ("Forecast daily means: " + (o.days as List<Map>).collect { Map x -> "${dayLabel(x.day as String)} ${fmtNum(x.mean)}" }.join(' · ') + " ${unit()}").toString()
+    }
     rows << "Winter credit period: ${state.credit ?: 'off'}".toString()
     return rows.join('<br>')
 }
@@ -144,19 +164,23 @@ void uninstalled() {
 void initialize() {
     if (state.season == null) {
         Map cfg = currentCfg()
-        List<String> poss = startOptions(cfg, validateCfg(cfg))
-        String s = poss.size() == 1 ? poss[0] : (poss.contains(settings.initialSeason) ? settings.initialSeason as String : null)
+        List<String> errs = validateCfg(cfg)
+        List<String> poss = startOptions(cfg, errs)
+        Map rep = poss.size() > 1 && !errs ? installReplay(cfg) : null
+        String s = poss.size() == 1 ? poss[0] : (rep ? rep.season as String : (poss.contains(settings.initialSeason) ? settings.initialSeason as String : null))
         if (s) {
             state.season = s
-            state.since = realToday()
-            logCfg "season set to ${s} on install${poss.size() == 1 ? ' from the date' : ''}"
+            state.since = (rep?.since ?: realToday()) as String
+            logCfg "season set to ${s} on install${poss.size() == 1 ? ' from the date' : (rep ? ' from the daily means' : '')}"
         }
     }
+    state.remove('installReplay')
+    if (!state.lastDaily) state.lastDaily = addDays(realToday(), -1)
     state.remove('mirroredSeason')
     state.remove('mirroredCredit')
     registerVars()
     seasonDevice()
-    schedule("0 7 * * * ?", "sampleHandler")
+    if (tempSensor) schedule("0 7 * * * ?", "sampleHandler")
     schedule("0 0 5 * * ?", "evaluateHandler")
     schedule("0 1 0 * * ?", "creditHandler")
     if (debugEnable) runIn(1800, "logsOff")
@@ -193,6 +217,33 @@ Map currentCfg() {
 String realToday() { return new Date().format('yyyy-MM-dd', location.timeZone) }
 
 List<String> startOptions(Map cfg, List<String> errs) { errs ? seasonList() : seasonsOn(realToday(), cfg) }
+
+// Replays the rules on archive means for the install page. Cached per day and settings: the page re-renders on every change.
+Map installReplay(Map cfg) {
+    if (settings.omEnable == false) return null
+    String today = realToday()
+    String key = "${today} ${cfg}".toString()
+    Map c = state.installReplay as Map
+    if (c?.key == key) return c.result as Map
+    Map a = replayAnchor(today, cfg)
+    String url = a ? omUrl('archive', location.latitude, location.longitude, location.temperatureScale as String, addDays(a.day as String, -2), addDays(today, -1)) : null
+    Map om = url ? omGet(url) : null
+    Map h = om ? seasonFromHistory(today, om, cfg) : null
+    if (h == null) return null
+    Map res = [season: h.season, since: h.since, from: a.day]
+    state.installReplay = [key: key, result: res]
+    return res
+}
+
+Map omGet(String url) {
+    Map out = null
+    try {
+        httpGet([uri: url, contentType: 'application/json', timeout: 15]) { resp -> if (resp.status == 200) out = parseDaily(resp.data) }
+    } catch (Exception e) {
+        logWarn "Open-Meteo request failed: ${e.message}"
+    }
+    return out
+}
 
 
 // ── Device ────────────────────────────────────────────────────────────
@@ -279,7 +330,115 @@ void sampleHandler() {
     logSched "reading ${v}"
 }
 
-void evaluateHandler() { checkVersion(); evaluateSeason("daily") }
+void evaluateHandler() { checkVersion(); startEvaluation("daily") }
+
+// Fetches Open-Meteo means when enabled and evaluates in the callback; evaluates at once otherwise.
+void startEvaluation(String why) {
+    String today = realToday()
+    String start = addDays(today, -10)
+    String last = state.lastDaily as String
+    if (last && addDays(last, -2) < start) start = addDays(last, -2)
+    if (start < addDays(today, -120)) start = addDays(today, -120)
+    String url = settings.omEnable != false ? omUrl('archive', location.latitude, location.longitude, location.temperatureScale as String, start, addDays(today, -1)) : null
+    if (url) {
+        asynchttpGet("archiveHandler", [uri: url, contentType: 'application/json', timeout: 30], [why: why])
+    } else {
+        evaluateSeason(why, null)
+        updateOutlook([:])
+    }
+}
+
+void archiveHandler(resp, Map data) {
+    checkVersion()
+    Map om = null
+    if (!resp.hasError() && resp.status == 200) {
+        try { om = parseDaily(resp.json) } catch (Exception e) { logDebug "Open-Meteo archive response unreadable: ${e.message}" }
+    }
+    if (!om) {
+        if (!state.omWarned) { logWarn "Open-Meteo unavailable (HTTP ${resp.status}); using the sensor"; state.omWarned = true }
+    } else {
+        if (state.omWarned) { logInfo "Open-Meteo available again"; state.remove('omWarned') }
+        Map kept = [:]
+        kept.putAll((state.om ?: [:]) as Map)
+        kept.putAll(om)
+        state.om = pruneDays(kept, realToday(), 10)
+    }
+    evaluateSeason(data.why as String, om)
+    String url = omUrl('forecast', location.latitude, location.longitude, location.temperatureScale as String, null, null)
+    if (url) asynchttpGet("forecastHandler", [uri: url, contentType: 'application/json', timeout: 30])
+}
+
+void forecastHandler(resp, Map data) {
+    checkVersion()
+    Map fc = [:]
+    if (!resp.hasError() && resp.status == 200) {
+        try { fc = parseDaily(resp.json) } catch (Exception e) { logDebug "Open-Meteo forecast response unreadable: ${e.message}" }
+    }
+    updateOutlook(fc)
+}
+
+void updateOutlook(Map forecast) {
+    if (state.season == null) return
+    Map cfg = currentCfg()
+    if (validateCfg(cfg)) return
+    String today = realToday()
+    Map observed = meanValues(mergeDays((state.samples ?: [:]) as Map, (state.om ?: [:]) as Map, today))
+    state.outlook = [made: today] + outlook(state.season as String, today, observed, forecast, cfg, holdLastDay(), location.temperatureScale as String)
+}
+
+// The last day whose 05:00 evaluation the hold suspends, or null.
+String holdLastDay() {
+    if (!state.holdUntil) return null
+    return new Date((state.holdUntil as Long) - 5 * 3600000L - 1).format('yyyy-MM-dd', location.timeZone)
+}
+
+void evaluateSeason(String why, Map fetched = null) {
+    Map cfg = currentCfg()
+    List<String> errs = validateCfg(cfg)
+    if (errs) { logWarn "season not evaluated, settings invalid: ${errs.join('; ')}"; return }
+    String today = realToday()
+    Map om = [:]
+    om.putAll((state.om ?: [:]) as Map)
+    om.putAll(fetched ?: [:])
+    Map means = meanValues(mergeDays((state.samples ?: [:]) as Map, om, today))
+    Map inputs = evalInputs(debugEnable && why == "button", settings.testDate, settings.testMean, today)
+    String day = inputs.day as String
+    BigDecimal mean = inputs.mean != null ? inputs.mean as BigDecimal : mean3At(means, day)
+    state.lastEval = [day: day, mean: mean?.toPlainString(), why: why]
+    updateCredit(day, cfg)
+    if (state.season == null) { logWarn "no current season; open the app and pick one"; publish(); return }
+    if (state.holdUntil && now() >= (state.holdUntil as Long)) { state.remove('holdUntil'); logInfo "automatic season changes resumed" }
+    if (mean == null) logWarn "no 3-day mean (no Open-Meteo or sensor mean for one of the three previous days); only the date limits apply"
+    if (why == "daily") {
+        String first = state.lastDaily ? addDays(state.lastDaily as String, 1) : today
+        if (first < addDays(today, -120)) first = addDays(today, -120)
+        if (first > today) first = today
+        String was = state.season as String
+        Map r = runDays(was, first, today, means, cfg, holdLastDay())
+        (r.changes as List<Map>).each { Map c ->
+            logInfo "season ${was} → ${c.season}${c.day == today ? '' : ' on ' + c.day}: ${c.reason}"
+            was = c.season as String
+        }
+        if (r.changes) {
+            state.season = r.season
+            state.since = ((r.changes as List<Map>)[-1]).day
+        } else {
+            logDebug "daily: season stays ${state.season}, 3-day mean ${mean}"
+        }
+        state.lastDaily = today
+    } else {
+        if (state.holdUntil) { logSched "automatic changes suspended until ${fmtTime(state.holdUntil as Long)}"; publish(); return }
+        Map r = nextSeason(state.season as String, day, mean, cfg)
+        if (r.reason) {
+            logInfo "season ${state.season} → ${r.season}: ${r.reason}"
+            state.season = r.season
+            state.since = day
+        } else {
+            logDebug "${why}: season stays ${state.season}, 3-day mean ${mean}"
+        }
+    }
+    publish()
+}
 
 void creditHandler() { checkVersion(); updateCredit(realToday(), currentCfg()); publish() }
 
@@ -288,30 +447,6 @@ void updateCredit(String day, Map cfg) {
     if (validMd(c.from) && validMd(c.until)) state.credit = creditOn(day, c) ? 'on' : 'off'
 }
 
-void evaluateSeason(String why) {
-    Map cfg = currentCfg()
-    List<String> errs = validateCfg(cfg)
-    if (errs) { logWarn "season not evaluated, settings invalid: ${errs.join('; ')}"; return }
-    Map inputs = evalInputs(debugEnable && why == "button", settings.testDate, settings.testMean, realToday())
-    String day = inputs.day as String
-    BigDecimal mean = inputs.mean as BigDecimal
-    if (mean == null) mean = mean3((state.samples ?: [:]) as Map, day)
-    state.lastEval = [day: day, mean: mean?.toPlainString(), why: why]
-    updateCredit(day, cfg)
-    if (state.season == null) { logWarn "no current season; open the app and pick one"; publish(); return }
-    if (state.holdUntil && now() >= (state.holdUntil as Long)) { state.remove('holdUntil'); logInfo "automatic season changes resumed" }
-    if (state.holdUntil) { logSched "automatic changes suspended until ${fmtTime(state.holdUntil as Long)}"; publish(); return }
-    if (mean == null) logWarn "no 3-day mean (outdoor sensor silent or too few readings); only the date limits apply"
-    Map r = nextSeason(state.season as String, day, mean, cfg)
-    if (r.reason) {
-        logInfo "season ${state.season} → ${r.season}: ${r.reason}"
-        state.season = r.season
-        state.since = day
-    } else {
-        logDebug "${why}: season stays ${state.season}, 3-day mean ${mean}"
-    }
-    publish()
-}
 
 // ── Commands ──────────────────────────────────────────────────────────
 
@@ -347,6 +482,7 @@ void appButtonHandler(String btn) {
     if (btn == "btnEvaluate") evaluateSeason("button")
     else if (btn == "btnSetSeason") setSeasonManual(settings.manualSeason, settings.manualHoldDays)
     else if (btn == "btnResumeAuto") resumeAuto()
+    else if (btn == "btnRunDaily") startEvaluation("daily")
 }
 
 
