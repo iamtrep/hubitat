@@ -33,6 +33,7 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 | [LocationEventMapper/](./LocationEventMapper/) | TBD |
 | [LogMonitor/](./LogMonitor/) | Monitor hub logs with multiple filters and output actions |
 | [MultiHubInventory/](./MultiHubInventory/) | Read-only cross-hub device inventory, aggregated from each hub's Hub Diagnostics audit API |
+| [SeasonManager/](./SeasonManager/) | Publishes the heating and cooling season on a device, from dates and the outdoor temperature |
 | [sensors/](./sensors/) |  |
 | [tests/](./tests/) |  |
 | [ThermostatSchedulerPlus/](./ThermostatSchedulerPlus/) | Thermostat schedules with profiles, holds and an API |
