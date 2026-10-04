@@ -20,7 +20,7 @@ Season Manager decides which of four seasons it is (`winter`, `spring`, `summer`
 
 1. Add the app in **Apps Code** and the driver in **Drivers Code**.
 2. In **Apps**, choose **Add user app** and pick **Season Manager**.
-3. Pick the outdoor temperature sensor, then press **Done**. The app sets the starting season from the date. Inside a window where the weather decides between two seasons, it asks which one it is.
+3. Pick the outdoor temperature sensor if you have one, then press **Done**. The app sets the starting season from the date, or from Open-Meteo's daily means inside a window where the weather decides. It asks only when neither works.
 
 Saving creates the device **"Season"**. If you rename the app, the device is named "<app name> Season" instead, so a second instance does not create a second "Season". The device belongs to the app and is deleted with it.
 
@@ -38,7 +38,8 @@ A cold spell after summer starts is the costly mistake, since summer usually mea
 
 | Setting | Default | Notes |
 |---|---|---|
-| Outdoor temperature sensor | | Required |
+| Use Open-Meteo daily means | on | Needs internet and the hub's location |
+| Outdoor temperature sensor | | Optional; used on days Open-Meteo has no mean |
 | Winter to spring, from / until | 03-11 / 04-08 | `MM-DD`; *until* is the last possible day |
 | Winter to spring threshold | 3 °C | 3-day mean above it |
 | Fall to winter, from / until | 10-26 / 11-11 | `MM-DD`; *until* is the last possible day |
@@ -56,11 +57,12 @@ Temperatures use the hub's scale; on a °F hub the defaults are converted. The d
 
 These are not settings:
 
-- The sensor is read every hour. A day's mean needs at least 12 readings.
+- Daily means come from the Open-Meteo archive at the hub's location, rounded to 0.1°. This is the data the default thresholds were calibrated on. The app logs a warning once while Open-Meteo is unavailable.
+- On a day Open-Meteo has no mean, the sensor's mean is used, corrected by its mean difference from Open-Meteo over the last 7 days that have both. The sensor is read every hour, and a day's mean needs at least 12 readings. Readings are kept for 10 days.
 - The season is checked once a day at 05:00, against the mean of the three previous daily means.
-- A reading older than 24 hours is not counted, and the app logs a warning once until the sensor reports again. Without a 3-day mean, only the date limits apply: a winter boundary change happens on its window's last day, and summer ends on its *until* date.
+- A sensor reading older than 24 hours is not counted, and the app logs a warning once until the sensor reports again. Without a 3-day mean, only the date limits apply: a winter boundary change happens on its window's last day, and summer ends on its *until* date.
 - The season changes at most once per day.
-- If the hub was off on a window's last day, the change happens at the next daily check.
+- If the hub was off for some days, the next daily check evaluates each missed day in order, up to 120 days back.
 - The winter credit flag is updated just after midnight.
 - On a hub restart nothing is recomputed: the season stays what it was.
 
@@ -76,7 +78,11 @@ These are not settings:
 | `setSeason(season, holdDays)` | Sets the season at once and suspends automatic changes for `holdDays` days (default 3, 0 for none). When the hold ends, automatic changes continue from the season you set. |
 | `resumeAuto()` | Ends the hold. The next daily check applies the rules. |
 
-The same controls are on the app page, with the current season, the last three daily means, and the next possible change.
+The same controls are on the app page, with the current season, the last three daily means and where each came from, the sensor's offset, and the next possible change.
+
+## Outlook
+
+Each morning the app also fetches Open-Meteo's 7-day forecast of daily means and runs the same rules forward from the current season. The app page lists the forecast means and every change the rules would make, such as "Likely: winter on Oct 27 (3-day mean 1.7 °C)". A change whose 3-day mean is within 1 °C of its threshold reads "Possible" instead. Changes forced by a date are listed with their reason. The outlook never changes the season.
 
 ## Hub variable mirror
 
@@ -88,5 +94,5 @@ The defaults suit a Montréal-area climate and come from the 2005 to 2025 daily 
 
 ## Tests
 
-- `tests/test_core.groovy`: unit tests of the date arithmetic, validation, transition rules and daily means, run off the hub under Groovy 2.4.21: `java -cp groovy-all-2.4.21.jar groovy.ui.GroovyMain tests/test_core.groovy`.
+- `tests/test_core.groovy`: unit tests of the date arithmetic, validation, transition rules, daily means, Open-Meteo parsing (against a saved response in `tests/fixtures/`), the replay and the outlook, run off the hub under Groovy 2.4.21: `java -cp groovy-all-2.4.21.jar groovy.ui.GroovyMain tests/test_core.groovy`.
 - `tests/test-season.sh`: behavior test on a hub, generated from `tests/spec-season.yaml`. It drives a test instance through a test day and a test mean (shown on the app page while debug logging is on) and checks the device: `bash tests/test-season.sh [@hub]`.
