@@ -26,19 +26,415 @@ definition(
     iconUrl: "", iconX2Url: ""
 )
 
+@Field static final List<Map> STAGE_DEFAULTS = [[on: 625, off: 575, dwell: 5], [on: 1150, off: 1050, dwell: 6],
+                                                [on: 1250, off: 1150, dwell: 6], [on: 1350, off: 1250, dwell: 6]]
+@Field static final long STALE_MS = 7200000L        // a sensor silent for 2 hours drops out
+@Field static final long PENDING_MS = 60000L        // our command's event arrives within a minute
+@Field static final long REASSERT_GAP_MS = 300000L  // at most one re-assertion per switch per 5 minutes
+@Field static final Map STOP_TEXT = [safety: "Stopped: smoke or CO detected, switches left as they are",
+                                     disabled: "Stopped: turned off on the Air device",
+                                     mode: "Stopped: the mode is not selected",
+                                     pause: "Paused by a switch"]
+
 preferences {
     page(name: "mainPage")
 }
 
+// ── UI ────────────────────────────────────────────────────────────────
+
+String esc(Object s) { s == null ? '' : s.toString().replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace("'", '&#39;') }
+
+String fmtTime(Long t) { t == null ? '' : new Date(t).format('HH:mm', location.timeZone) }
+
 Map mainPage() {
-    dynamicPage(name: "mainPage", title: "Indoor Air Quality Controller", install: true, uninstall: true) {
-        section { label title: "App name", required: false }
+    dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
+        List<String> errs = validateCfg(currentCfg())
+        section {
+            label title: "App name", required: false
+            if (errs) paragraph "<div class='p-message p-message-error p-3 border-round'>${errs.collect { esc(it) }.join('<br>')}</div>"
+            if (state.stages != null) paragraph rawHtml: true, statusHtml()
+        }
+        section("CO2") {
+            input "co2Sensors", "capability.carbonDioxideMeasurement", title: "CO2 sensors", multiple: true, required: true
+            input "co2Mode", "enum", title: "Combine the readings", options: [highest: "Highest reading", average: "Average"],
+                  defaultValue: "highest", required: true
+        }
+        section("Stages") {
+            input "stageCount", "enum", title: "Number of stages", options: ["1", "2", "3", "4"], defaultValue: "3",
+                  required: true, submitOnChange: true
+            for (int n = 1; n <= stageCount(); n++) {
+                Map d = STAGE_DEFAULTS[n - 1]
+                paragraph "<b>Stage ${n}</b>"
+                input "stage${n}Switches", "capability.switch", title: "Switches", multiple: true, required: true
+                input "stage${n}On", "number", title: "On above (ppm)", defaultValue: d.on, required: true, width: 4
+                input "stage${n}Off", "number", title: "Off below (ppm)", defaultValue: d.off, required: true, width: 4
+                input "stage${n}Dwell", "number", title: "For (minutes)", defaultValue: d.dwell, range: "1..120", required: true, width: 4
+            }
+            input "holdMinutes", "number", title: "After a switch is turned off by hand, leave its stage off for (minutes)",
+                  defaultValue: 60, range: "1..1440", required: true
+        }
+        section("When to manage air") {
+            input "activeModes", "mode", title: "Modes (none selected: every mode except Away)", multiple: true, required: false
+            input "pauseWhenOn", "capability.switch", title: "Pause while any of these is on", multiple: true, required: false
+            input "pauseWhenOff", "capability.switch", title: "Pause while any of these is off", multiple: true, required: false
+            input "smokeDetectors", "capability.smokeDetector", title: "Smoke detectors: while smoke is detected, stop and leave the switches as they are",
+                  multiple: true, required: false
+            input "coDetectors", "capability.carbonMonoxideDetector", title: "CO detectors: the same, while CO is detected", multiple: true, required: false
+        }
+        section("Threshold offset") {
+            input "offsetPpm", "number", title: "Add to every stage threshold (ppm)", defaultValue: 0, required: true
+            input "offsetWhenOn", "capability.switch", title: "While any of these is on", multiple: true, required: false
+            input "offsetWhenOff", "capability.switch", title: "While any of these is off", multiple: true, required: false
+        }
+        section("Open-window advisory") {
+            input "advPpm", "number", title: "CO2 above (ppm)", defaultValue: 1400, required: true, width: 4
+            input "advMinutes", "number", title: "For (minutes)", defaultValue: 20, range: "1..240", required: true, width: 4
+            input "advRepeatHours", "number", title: "Repeat every (hours)", defaultValue: 3, range: "1..24", required: true, width: 4
+            input "advAllClear", "bool", title: "Notify when CO2 is back down", defaultValue: false
+        }
+        section("Low-humidity advisory") {
+            input "rhSensors", "capability.relativeHumidityMeasurement", title: "Humidity sensors (the lowest reading is used)",
+                  multiple: true, required: false
+            input "rhPct", "number", title: "Humidity below (%RH)", defaultValue: 30, range: "5..80", required: true, width: 6
+            input "rhHours", "number", title: "For (hours)", defaultValue: 12, range: "1..72", required: true, width: 6
+            input "seasonDevice", "device.HVACSeason", title: "Only in winter, from this HVAC Season Manager device (optional)", required: false
+        }
+        section("Notifications") {
+            input "notifyDevices", "capability.notification", title: "Send both advisories to", multiple: true, required: false
+        }
+        section("Logging and testing", hideable: true, hidden: true) {
+            input "txtEnable", "bool", title: "Enable info logging", defaultValue: true
+            input "debugEnable", "bool", title: "Enable debug logging (turns off after 30 minutes)", defaultValue: false
+            input "testFast", "bool", title: "Testing: a minute lasts a second and an hour a minute", defaultValue: false
+        }
     }
 }
 
-void installed() { initialize() }
-void updated() { unsubscribe(); unschedule(); initialize() }
-void initialize() { }
+String statusHtml() {
+    Map cfg = currentCfg()
+    boolean offOn = offsetApplies()
+    BigDecimal o = offOn ? numOrNull(cfg.offset) : 0G
+    List<Map> st = resized((state.stages ?: []) as List<Map>, (cfg.stages as List).size())
+    StringBuilder h = new StringBuilder()
+    h << "<p><b>${esc(state.lastStop ? STOP_TEXT[state.lastStop] : 'Managing air')}</b> · CO2 "
+    h << (state.co2 != null ? "${fmtInt(state.co2)} ppm" : "no reading")
+    if (offOn) h << " · offset +${fmtInt(o)} ppm applies"
+    h << "</p><table class='table'><tr><th>Stage</th><th>On above</th><th>Off below</th><th>State</th></tr>"
+    (cfg.stages as List<Map>).eachWithIndex { Map d, int i ->
+        Map x = st[i]
+        String s = x.s == "held" ? "held until ${fmtTime(x.heldUntil as Long)}" : x.s as String
+        h << "<tr><td>${i + 1}</td><td>${fmtInt(numOrNull(d.on) + o)}</td><td>${fmtInt(numOrNull(d.off) + o)}</td><td>${esc(s)}</td></tr>"
+    }
+    h << "</table><p>Open-window advisory: ${(state.window as Map)?.active ? 'active' : 'inactive'}"
+    h << " · Low-humidity advisory: ${(state.rh as Map)?.active ? 'active' : 'inactive'}</p>"
+    return h.toString()
+}
+
+// ── Lifecycle ─────────────────────────────────────────────────────────
+
+void installed() { checkVersion(false); state.enabled = false; initialize() }
+
+void updated() { checkVersion(false); unsubscribe(); unschedule(); initialize() }
+
+void uninstalled() { if (getChildDevice(dni())) deleteChildDevice(dni()) }
+
+void initialize() {
+    airDevice()
+    Map cfg = currentCfg()
+    restartTimers((cfg.stages as List).size())
+    pruneClaims()
+    if (debugEnable) runIn(1800, "logsOff")
+    List<String> errs = validateCfg(cfg)
+    if (errs) {
+        logWarn "settings incomplete, nothing is managed: ${errs.join('; ')}"
+        publish(null, null, state.stages as List<Map>)
+        return
+    }
+    subscribe(co2Sensors, "carbonDioxide", "inputHandler")
+    if (rhSensors) subscribe(rhSensors, "humidity", "inputHandler")
+    stageDevices().each { DeviceWrapper d -> subscribe(d, "switch", "stageSwitchHandler") }
+    [pauseWhenOn, pauseWhenOff, offsetWhenOn, offsetWhenOff].each { if (it) subscribe(it, "switch", "inputHandler") }
+    if (smokeDetectors) subscribe(smokeDetectors, "smoke", "inputHandler")
+    if (coDetectors) subscribe(coDetectors, "carbonMonoxide", "inputHandler")
+    if (seasonDevice) subscribe(seasonDevice, "season", "inputHandler")
+    subscribe(location, "mode", "inputHandler")
+    subscribe(location, "systemStart", "systemStartHandler")
+    evaluate("settings saved")
+}
+
+// Dwell timers start over from the current value; engaged and held stages keep their state.
+void restartTimers(int n) {
+    state.stages = resized((state.stages ?: []) as List<Map>, n).collect { Map m -> [s: m.s, since: null, heldUntil: m.heldUntil] }
+}
+
+// A switch no longer in any stage loses its claim and is left as it is.
+void pruneClaims() {
+    Set<String> ids = stageDevices().collect { it.id.toString() } as Set
+    Map c = (state.claims ?: [:]) as Map
+    Map kept = c.findAll { k, v -> ids.contains(k as String) }
+    if (kept.size() != c.size()) logInfo "${c.size() - kept.size()} switch(es) no longer in a stage, left as they are"
+    state.claims = kept
+}
+
+void systemStartHandler(evt) {
+    checkVersion()
+    restartTimers((currentCfg().stages as List).size())
+    evaluate("hub restart")
+}
+
+void logsOff() { checkVersion(); app.updateSetting("debugEnable", false); logWarn "debug logging disabled" }
+
+void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "version ${CODE_VERSION} (was ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
+}
+
+// ── Configuration ─────────────────────────────────────────────────────
+
+int stageCount() { (settings.stageCount ?: "3") as int }
+
+Object stageSetting(int n, String key) { settings["stage${n}${key}".toString()] }
+
+BigDecimal numOr(Object v, Object dflt) {
+    BigDecimal n = numOrNull(v)
+    return n == null ? (dflt as BigDecimal) : n
+}
+
+Map currentCfg() {
+    List<Map> stages = []
+    for (int n = 1; n <= stageCount(); n++) {
+        Map d = STAGE_DEFAULTS[n - 1]
+        stages << [on: numOr(stageSetting(n, "On"), d.on), off: numOr(stageSetting(n, "Off"), d.off),
+                   dwell: numOr(stageSetting(n, "Dwell"), d.dwell),
+                   switches: stageDevices(n).collect { it.id.toString() }]
+    }
+    return [stages: stages, offset: settings.offsetPpm == null ? 0G : numOrNull(settings.offsetPpm),
+            holdMin: numOr(holdMinutes, 60),
+            adv: [ppm: numOr(advPpm, 1400), minutes: numOr(advMinutes, 20), repeatHours: numOr(advRepeatHours, 3), allClear: advAllClear == true],
+            rh: [pct: numOr(rhPct, 30), hours: numOr(rhHours, 12)],
+            unitMs: testFast ? 1000L : 60000L]
+}
+
+List<DeviceWrapper> stageDevices(int n) { (stageSetting(n, "Switches") ?: []) as List<DeviceWrapper> }
+
+List<DeviceWrapper> stageDevices() {
+    List<DeviceWrapper> all = []
+    for (int n = 1; n <= stageCount(); n++) all.addAll(stageDevices(n))
+    return all
+}
+
+// 0-based stage index of a switch, -1 when it is in none.
+int stageOf(String id) {
+    for (int n = 1; n <= stageCount(); n++) if (stageDevices(n).any { it.id.toString() == id }) return n - 1
+    return -1
+}
+
+// ── Inputs ────────────────────────────────────────────────────────────
+
+// A reading's time is the device's last activity, so a sensor repeating the same value is not silent.
+List<Map> readings(List devs, String attr) {
+    List<Map> out = []
+    (devs ?: []).each { DeviceWrapper d ->
+        def s = d.currentState(attr)
+        Date seen = d.getLastActivity() ?: s?.date
+        if (s?.value != null && seen != null) out << [v: s.value, t: seen.time]
+    }
+    return out
+}
+
+List<String> switchValues(List devs) { (devs ?: []).collect { it.currentValue("switch") as String } }
+
+boolean offsetApplies() { anySwitchCondition(switchValues(offsetWhenOn), switchValues(offsetWhenOff)) }
+
+boolean safetyAlarm() {
+    return (smokeDetectors ?: []).any { it.currentValue("smoke") == "detected" } ||
+           (coDetectors ?: []).any { it.currentValue("carbonMonoxide") == "detected" }
+}
+
+void inputHandler(evt) {
+    checkVersion()
+    logEvt "${evt.displayName} ${evt.name} ${evt.value}"
+    evaluate(evt.name as String)
+}
+
+void wakeHandler() {
+    checkVersion()
+    evaluate("timer")
+}
+
+// ── Evaluation ────────────────────────────────────────────────────────
+
+void evaluate(String why) {
+    Map cfg = currentCfg()
+    if (validateCfg(cfg)) return
+    long t = now()
+    logDebug "evaluate (${why})"
+    BigDecimal co2 = combineReadings(readings(co2Sensors, "carbonDioxide"), (co2Mode ?: "highest") as String, t, STALE_MS)
+    BigDecimal rh = rhSensors ? combineReadings(readings(rhSensors, "humidity"), "lowest", t, STALE_MS) : null
+    String reason = stopReason(safetyAlarm(), state.enabled == true,
+                               modeActive(location.mode as String, (activeModes ?: []) as List<String>),
+                               anySwitchCondition(switchValues(pauseWhenOn), switchValues(pauseWhenOff)))
+    boolean offOn = offsetApplies()
+    int n = (cfg.stages as List).size()
+    List<Map> st = resized((state.stages ?: []) as List<Map>, n)
+    Long wake = null
+    if (reason != state.lastStop) logInfo(reason ? STOP_TEXT[reason] as String : "managing air")
+    if (reason == "safety") {
+        st = resized([], n)
+    } else {
+        if (state.lastStop == "safety") {
+            state.claims = [:]
+            logInfo "detectors clear: claims dropped"
+        }
+        if (reason) {
+            releaseAll()
+            st = resized([], n)
+        } else {
+            if (co2 == null && state.co2Missing != true) logWarn "no CO2 reading in the last 2 hours: stages held"
+            state.co2Missing = co2 == null
+            Map r = stepStages(st, co2, t, cfg, offOn)
+            st = r.stages as List<Map>
+            wake = r.wakeAt as Long
+            state.stages = st
+            (r.actions as List<Map>).each { Map a -> applyAction(a) }
+        }
+    }
+    state.lastStop = reason
+    state.stages = st
+    state.co2 = co2
+    BigDecimal topOff = numOrNull((cfg.stages as List<Map>).last().off) + (offOn ? numOrNull(cfg.offset) : 0G)
+    String wmode = reason == null ? "run" : (reason == "pause" ? "pause" : "stop")
+    Map w = stepWindow(state.window as Map, co2, allRunning(st), wmode, topOff, t, cfg)
+    state.window = w.w
+    sendNote(windowMessage(app.getLabel(), w.notify as String, co2))
+    wake = earliest(wake, w.wakeAt as Long)
+    if (rhSensors) {
+        boolean seasonOk = !seasonDevice || seasonDevice.currentValue("season") == "winter"
+        Map h = stepHumidity(state.rh as Map, rh, seasonOk, t, cfg)
+        state.rh = h.h
+        if (h.notify == "raise") sendNote(humidityMessage(app.getLabel(), rh, (cfg.rh as Map).hours))
+        wake = earliest(wake, h.wakeAt as Long)
+    }
+    publish(co2, rh, st)
+    if (wake == null) unschedule("wakeHandler")
+    else runInMillis(Math.max(wake - t, 500L), "wakeHandler")
+}
+
+// ── Switches and claims ───────────────────────────────────────────────
+
+void applyAction(Map a) {
+    int n = (a.stage as int) + 1
+    Map claims = (state.claims ?: [:]) as Map
+    logCmd "stage ${n} ${a.cmd}"
+    stageDevices(n).each { DeviceWrapper d ->
+        if (a.cmd == "on") {
+            if (d.currentValue("switch") == "on") logDebug "${d.displayName} already on, not claimed"
+            else switchCmd(d, "on")
+        } else if (claims[d.id.toString()]) switchCmd(d, "off")
+        else logDebug "${d.displayName} not turned on by this app, left as is"
+    }
+}
+
+void switchCmd(DeviceWrapper d, String cmd) {
+    String id = d.id.toString()
+    Map p = (state.pending ?: [:]) as Map
+    p[id] = [cmd: cmd, at: now()]
+    state.pending = p
+    Map c = (state.claims ?: [:]) as Map
+    if (cmd == "on") c[id] = true
+    else c.remove(id)
+    state.claims = c
+    if (cmd == "on") d.on()
+    else d.off()
+}
+
+void dropClaim(String id) {
+    Map c = (state.claims ?: [:]) as Map
+    if (c.remove(id) != null) state.claims = c
+}
+
+void releaseAll() {
+    Map c = (state.claims ?: [:]) as Map
+    if (!c) return
+    stageDevices().each { DeviceWrapper d -> if (c[d.id.toString()]) switchCmd(d, "off") }
+    state.claims = [:]
+}
+
+void stageSwitchHandler(evt) {
+    checkVersion()
+    String id = evt.deviceId.toString()
+    boolean physical = evt.type == "physical"
+    logEvt "${evt.displayName} ${evt.value}${physical ? ' (physical)' : ''}"
+    Map p = (state.pending ?: [:]) as Map
+    Map mine = p[id] as Map
+    String pending = mine && now() - (mine.at as long) < PENDING_MS ? mine.cmd as String : null
+    if (mine) {
+        p.remove(id)
+        state.pending = p
+    }
+    int i = stageOf(id)
+    if (i < 0) return
+    List<Map> st = resized((state.stages ?: []) as List<Map>, stageCount())
+    Map re = (state.reasserted ?: [:]) as Map
+    String act = switchEventAction(evt.value as String, physical, pending, st[i].s as String, state.lastStop != null,
+                                   re[id] as Long, now(), REASSERT_GAP_MS)
+    if (act != "own" && evt.value == "off") dropClaim(id)
+    if (act == "hold") {
+        long mins = numOr(holdMinutes, 60).longValue()
+        st[i] = [s: "held", since: null, heldUntil: now() + mins * (testFast ? 1000L : 60000L)]
+        state.stages = st
+        logInfo "${evt.displayName} turned off by hand: stage ${i + 1} stays off for ${mins} minutes"
+        evaluate("manual off")
+    } else if (act == "reassert") {
+        re[id] = now()
+        state.reasserted = re
+        logInfo "${evt.displayName} turned off by another source while stage ${i + 1} runs: turning it back on"
+        switchCmd(evt.device as DeviceWrapper, "on")
+    } else if (act == "throttled") {
+        logWarn "${evt.displayName} turned off again within 5 minutes of being turned back on: left off"
+    }
+}
+
+// ── Air device ────────────────────────────────────────────────────────
+
+String dni() { "iaq-${app.id}" }
+
+String deviceLabel() { app.getLabel() == "Indoor Air Quality Controller" ? "Indoor Air" : "${app.getLabel()} Air" }
+
+ChildDeviceWrapper airDevice() {
+    ChildDeviceWrapper d = getChildDevice(dni())
+    if (!d) {
+        d = addChildDevice("iamtrep", "Indoor Air", dni(), [name: "Indoor Air", label: deviceLabel(), isComponent: true])
+        logCfg "created ${d.displayName}, switched off"
+    }
+    return d
+}
+
+Map airCommand(Map req) {
+    String c = req?.command as String
+    if (c != "on" && c != "off") return [ok: false, error: "unknown command ${c}"]
+    state.enabled = c == "on"
+    airDevice().updateStatus(["switch": c])
+    evaluate("Air device ${c}")
+    return [ok: true]
+}
+
+void publish(BigDecimal co2, BigDecimal rh, List<Map> st) {
+    Map a = ["switch": state.enabled == true ? "on" : "off", ventilationStage: stageLevel(st),
+             windowAdvisory: (state.window as Map)?.active ? "active" : "inactive",
+             lowHumidityAdvisory: (state.rh as Map)?.active ? "active" : "inactive"]
+    if (co2 != null) a.carbonDioxide = co2.setScale(0, BigDecimal.ROUND_HALF_UP)
+    if (rh != null) a.humidity = rh
+    airDevice().updateStatus(a)
+}
+
+void sendNote(String msg) {
+    if (!msg) return
+    logInfo msg
+    (notifyDevices ?: []).each { it.deviceNotification(msg) }
+}
 
 // ── Core (pure) ───────────────────────────────────────────────────────
 // Self-contained: arguments in, values out. No settings, state, devices or logs.
@@ -293,3 +689,20 @@ String humidityMessage(String label, BigDecimal rh, Object hours) {
 }
 
 // ── End core ──────────────────────────────────────────────────────────
+
+// ── Logging (app) ─────────────────────────────────────────────────────
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${app.getLabel()}: " }
+
+void logEvt  (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${app.getLabel()}: ${m}" }

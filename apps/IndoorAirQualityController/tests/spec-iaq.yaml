@@ -1,0 +1,228 @@
+# Copyright (c) 2026 PJ
+# SPDX-License-Identifier: MIT
+# Indoor Air Quality Controller: Mode 1 behavior spec. testFast makes a minute last a
+# second and an hour a minute. Each case resets the rig: the Air device off (which
+# releases every claim), detectors clear, pause and offset off, stage switches off,
+# CO2 400 ppm, humidity 45%, then the Air device on.
+app:
+  source: apps/IndoorAirQualityController/IndoorAirQualityController.groovy
+  type_name: "Indoor Air Quality Controller"
+  instance_label: test-iaq
+  config:
+    debugEnable: true
+    testFast: true
+    co2Mode: "highest"
+    stageCount: "2"
+    stage1On: 625
+    stage1Off: 575
+    stage1Dwell: 1
+    stage2On: 1150
+    stage2Off: 1050
+    stage2Dwell: 1
+    holdMinutes: 3
+    offsetPpm: 200
+    advPpm: 1400
+    advMinutes: 2
+    advRepeatHours: 1
+    rhPct: 30
+    rhHours: 1
+inputs:
+  - { name: test-iaq-co2, driver: Virtual Carbon Dioxide Sensor, role: co2Sensors }
+  - { name: test-iaq-rh, driver: Virtual Humidity Sensor, role: rhSensors }
+  - { name: test-iaq-s1, driver: Virtual Switch with Physical Events, role: stage1Switches }
+  - { name: test-iaq-s2, driver: Virtual Switch, role: stage2Switches }
+  - { name: test-iaq-pause, driver: Virtual Switch, role: pauseWhenOn }
+  - { name: test-iaq-offset, driver: Virtual Switch, role: offsetWhenOn }
+  - { name: test-iaq-smoke, driver: Virtual Smoke Detector, role: smokeDetectors }
+outputs:
+  - { name: test-iaq Air, child: true }
+maker_api:
+  label: test-iaq-maker
+runtime_budget_seconds: 900
+cases:
+  - name: stage1-on-above-threshold
+    setup: &reset
+      - settings: { debugEnable: true }
+      - { device: test-iaq Air, command: "off" }
+      - { device: test-iaq-smoke, command: clear }
+      - { device: test-iaq-pause, command: "off" }
+      - { device: test-iaq-offset, command: "off" }
+      - { device: test-iaq-s1, command: "off" }
+      - { device: test-iaq-s2, command: "off" }
+      - { device: test-iaq-co2, command: setCarbonDioxide, args: [400] }
+      - { device: test-iaq-rh, command: setRelativeHumidity, args: [45] }
+      - { device: test-iaq Air, command: "on" }
+    command_spacing_seconds: 2
+    actions:
+      - { device: test-iaq-co2, command: setCarbonDioxide, args: [700] }
+    wait_seconds: 4
+    assert:
+      - { device: test-iaq-s1, attribute: switch, value: "on" }
+      - { device: test-iaq-s2, attribute: switch, value: "off" }
+      - { device: test-iaq Air, attribute: ventilationStage, value: "1" }
+
+  - name: both-stages-on
+    setup: *reset
+    command_spacing_seconds: 2
+    actions:
+      - { device: test-iaq-co2, command: setCarbonDioxide, args: [1200] }
+    wait_seconds: 4
+    assert:
+      - { device: test-iaq-s1, attribute: switch, value: "on" }
+      - { device: test-iaq-s2, attribute: switch, value: "on" }
+      - { device: test-iaq Air, attribute: ventilationStage, value: "2" }
+
+  - name: release-turns-off-claimed
+    setup: *reset
+    command_spacing_seconds: 3
+    actions:
+      - { device: test-iaq-co2, command: setCarbonDioxide, args: [1200] }
+      - { device: test-iaq-co2, command: setCarbonDioxide, args: [400] }
+    wait_seconds: 5
+    assert:
+      - { device: test-iaq-s1, attribute: switch, value: "off" }
+      - { device: test-iaq-s2, attribute: switch, value: "off" }
+      - { device: test-iaq Air, attribute: ventilationStage, value: "0" }
+
+  - name: pre-existing-on-left-on
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-iaq Air, command: "off" }
+      - { device: test-iaq-smoke, command: clear }
+      - { device: test-iaq-pause, command: "off" }
+      - { device: test-iaq-offset, command: "off" }
+      - { device: test-iaq-s2, command: "off" }
+      - { device: test-iaq-s1, command: "on" }
+      - { device: test-iaq-co2, command: setCarbonDioxide, args: [400] }
+      - { device: test-iaq-rh, command: setRelativeHumidity, args: [45] }
+      - { device: test-iaq Air, command: "on" }
+    command_spacing_seconds: 3
+    actions:
+      - { device: test-iaq-co2, command: setCarbonDioxide, args: [700] }
+      - { device: test-iaq-co2, command: setCarbonDioxide, args: [400] }
+    wait_seconds: 5
+    assert:
+      - { device: test-iaq-s1, attribute: switch, value: "on" }
+      - { device: test-iaq Air, attribute: ventilationStage, value: "0" }
+
+  - name: digital-off-reasserted
+    setup: *reset
+    command_spacing_seconds: 3
+    actions:
+      - { device: test-iaq-co2, command: setCarbonDioxide, args: [700] }
+      - { device: test-iaq-s1, command: "off" }
+    wait_seconds: 3
+    assert:
+      - { device: test-iaq-s1, attribute: switch, value: "on" }
+
+  - name: manual-off-holds-stage
+    setup: *reset
+    command_spacing_seconds: 2
+    actions:
+      - { device: test-iaq-co2, command: setCarbonDioxide, args: [700] }
+      - { device: test-iaq-s1, command: physicalOff }
+    wait_seconds: 1
+    assert:
+      - { device: test-iaq-s1, attribute: switch, value: "off" }
+      - { device: test-iaq Air, attribute: ventilationStage, value: "1" }
+    assert_logs:
+      - { pattern: "turned off by hand: stage 1 stays off for 3 minutes", level: info }
+
+  - name: hold-ends-back-on
+    setup: *reset
+    command_spacing_seconds: 2
+    actions:
+      - { device: test-iaq-co2, command: setCarbonDioxide, args: [700] }
+      - { device: test-iaq-s1, command: physicalOff }
+    wait_seconds: 5
+    assert:
+      - { device: test-iaq-s1, attribute: switch, value: "on" }
+
+  - name: offset-raises-threshold
+    setup: *reset
+    command_spacing_seconds: 2
+    actions:
+      - { device: test-iaq-offset, command: "on" }
+      - { device: test-iaq-co2, command: setCarbonDioxide, args: [700] }
+    wait_seconds: 4
+    assert:
+      - { device: test-iaq-s1, attribute: switch, value: "off" }
+      - { device: test-iaq Air, attribute: ventilationStage, value: "0" }
+
+  - name: offset-still-engages-above
+    setup: *reset
+    command_spacing_seconds: 2
+    actions:
+      - { device: test-iaq-offset, command: "on" }
+      - { device: test-iaq-co2, command: setCarbonDioxide, args: [900] }
+    wait_seconds: 4
+    assert:
+      - { device: test-iaq-s1, attribute: switch, value: "on" }
+
+  - name: pause-releases
+    setup: *reset
+    command_spacing_seconds: 3
+    actions:
+      - { device: test-iaq-co2, command: setCarbonDioxide, args: [700] }
+      - { device: test-iaq-pause, command: "on" }
+    wait_seconds: 3
+    assert:
+      - { device: test-iaq-s1, attribute: switch, value: "off" }
+      - { device: test-iaq Air, attribute: ventilationStage, value: "0" }
+
+  - name: window-advisory-raised
+    setup: *reset
+    command_spacing_seconds: 2
+    actions:
+      - { device: test-iaq-co2, command: setCarbonDioxide, args: [1500] }
+    wait_seconds: 6
+    assert:
+      - { device: test-iaq Air, attribute: windowAdvisory, value: active }
+    assert_logs:
+      - { pattern: "Consider opening a window", level: info }
+
+  - name: window-advisory-while-paused
+    setup: *reset
+    command_spacing_seconds: 2
+    actions:
+      - { device: test-iaq-pause, command: "on" }
+      - { device: test-iaq-co2, command: setCarbonDioxide, args: [1500] }
+    wait_seconds: 5
+    assert:
+      - { device: test-iaq Air, attribute: windowAdvisory, value: active }
+      - { device: test-iaq-s1, attribute: switch, value: "off" }
+
+  - name: smoke-freezes-switches
+    setup: *reset
+    command_spacing_seconds: 3
+    actions:
+      - { device: test-iaq-co2, command: setCarbonDioxide, args: [700] }
+      - { device: test-iaq-smoke, command: detected }
+      - { device: test-iaq-s1, command: "off" }
+    wait_seconds: 3
+    assert:
+      - { device: test-iaq-s1, attribute: switch, value: "off" }
+      - { device: test-iaq Air, attribute: ventilationStage, value: "0" }
+
+  - name: enable-off-releases
+    setup: *reset
+    command_spacing_seconds: 3
+    actions:
+      - { device: test-iaq-co2, command: setCarbonDioxide, args: [700] }
+      - { device: test-iaq Air, command: "off" }
+    wait_seconds: 3
+    assert:
+      - { device: test-iaq-s1, attribute: switch, value: "off" }
+      - { device: test-iaq Air, attribute: switch, value: "off" }
+
+  # Last: the advisory needs a 1-hour (60 s) recovery to clear, longer than a reset.
+  - name: low-humidity-advisory
+    setup: *reset
+    command_spacing_seconds: 2
+    actions:
+      - { device: test-iaq-rh, command: setRelativeHumidity, args: [25] }
+    wait_seconds: 65
+    assert:
+      - { device: test-iaq Air, attribute: lowHumidityAdvisory, value: active }
+    assert_logs:
+      - { pattern: "indoor humidity at 25% for 1 h", level: info }
