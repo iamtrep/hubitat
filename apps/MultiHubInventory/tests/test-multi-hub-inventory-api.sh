@@ -186,6 +186,20 @@ def api_get(endpoint, timeout=30):
     except Exception as e:
         return {"_error": str(e)}
 
+def api_get_status(endpoint, timeout=30):
+    """(HTTP status, JSON body) for a call that may answer with an error status."""
+    url = f"{api_base}/api/{endpoint}"
+    try:
+        resp = urllib.request.urlopen(urllib.request.Request(url, headers=AUTH()), timeout=timeout)
+        return resp.status, json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode())
+        except Exception:
+            return e.code, {}
+    except Exception as e:
+        return None, {"_error": str(e)}
+
 def api_post(endpoint, timeout=30):
     """POST a JSON API endpoint with auth."""
     url = f"{api_base}/api/{endpoint}"
@@ -246,24 +260,20 @@ if peers:
 # ── Test 2: op whitelist — reject unknown op ─────────────────────────
 section("/api/peer — op whitelist")
 
-bad_op = api_get("peer?hub=0&op=evil")
-if "_error" in bad_op:
-    fail(f"Request failed: {bad_op['_error']}")
-elif bad_op.get("error") == "invalid op":
-    ok("/api/peer rejects non-whitelisted op (op=evil → {\"error\":\"invalid op\"})")
+status, bad_op = api_get_status("peer?hub=0&op=evil")
+if status == 400 and bad_op.get("error") == "invalid op":
+    ok("/api/peer rejects non-whitelisted op (op=evil → 400 {\"error\":\"invalid op\"})")
 else:
-    fail(f"/api/peer op whitelist not enforced — got: {bad_op}")
+    fail(f"/api/peer op whitelist not enforced — got HTTP {status}: {bad_op}")
 
 # ── Test 3: unknown hub index ────────────────────────────────────────
 section("/api/peer — unknown hub index")
 
-bad_hub = api_get("peer?hub=99&op=data")
-if "_error" in bad_hub:
-    fail(f"Request failed: {bad_hub['_error']}")
-elif bad_hub.get("error") == "unknown hub":
-    ok("/api/peer rejects unknown hub index (hub=99 → {\"error\":\"unknown hub\"})")
+status, bad_hub = api_get_status("peer?hub=99&op=data")
+if status == 400 and bad_hub.get("error") == "unknown hub":
+    ok("/api/peer rejects unknown hub index (hub=99 → 400 {\"error\":\"unknown hub\"})")
 else:
-    fail(f"/api/peer did not reject unknown hub index — got: {bad_hub}")
+    fail(f"/api/peer did not reject unknown hub index — got HTTP {status}: {bad_hub}")
 
 # ── Test 4: data passthrough — audit shape or clean error ────────────
 section("/api/peer?hub=0&op=data")
