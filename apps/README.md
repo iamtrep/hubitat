@@ -32,6 +32,7 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 | [HubInspector/](./HubInspector/) | Comprehensive hub diagnostics: inventory, performance tracking, network analysis, and snapshot comparison |
 | [HvacInterlock/](./HvacInterlock/) | Gates heating and cooling equipment by season and open windows |
 | [HvacSeasonManager/](./HvacSeasonManager/) | Publishes the heating and cooling season on a device, from dates and the outdoor temperature |
+| [IndoorAirQualityController/](./IndoorAirQualityController/) | Runs ventilation in stages from indoor CO2 and warns when a window should be opened or the air is too dry |
 | [LocationEventMapper/](./LocationEventMapper/) | TBD |
 | [LogMonitor/](./LogMonitor/) | Monitor hub logs with multiple filters and output actions |
 | [MultiHubInventory/](./MultiHubInventory/) | Read-only cross-hub device inventory, aggregated from each hub's Hub Inspector audit API |
