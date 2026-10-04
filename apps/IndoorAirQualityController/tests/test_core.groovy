@@ -185,11 +185,11 @@ check('humidity season off clears', hum([active: true], 20, false, 0L).h.active,
 check('humidity season off no timer', hum(null, 20, false, 0L).h.since, null)
 
 // ── messages ──
-check('raise message', core.windowMessage('Maison', 'raise', 1523.4G), 'Maison: CO2 at 1523 ppm despite ventilation. Consider opening a window.')
-check('repeat message', core.windowMessage('Maison', 'repeat', 1500G), 'Maison: CO2 at 1500 ppm despite ventilation. Consider opening a window.')
-check('clear message', core.windowMessage('Maison', 'clear', 1100G), 'Maison: CO2 back to 1100 ppm.')
-check('no message', core.windowMessage('Maison', null, 1100G), null)
-check('humidity message', core.humidityMessage('Maison', 27.6G, 12), 'Maison: indoor humidity at 28% for 12 h.')
+check('raise message', core.windowMessage('Home', 'raise', 1523.4G), 'Home: CO2 at 1523 ppm despite ventilation. Consider opening a window.')
+check('repeat message', core.windowMessage('Home', 'repeat', 1500G), 'Home: CO2 at 1500 ppm despite ventilation. Consider opening a window.')
+check('clear message', core.windowMessage('Home', 'clear', 1100G), 'Home: CO2 back to 1100 ppm.')
+check('no message', core.windowMessage('Home', null, 1100G), null)
+check('humidity message', core.humidityMessage('Home', 27.6G, 12), 'Home: indoor humidity at 28% for 12 h.')
 
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"

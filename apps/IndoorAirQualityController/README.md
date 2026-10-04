@@ -62,6 +62,8 @@ The app turns off only the switches it turned on. A switch that is already on wh
 
 When another app or rule turns off a switch of a running stage, the app turns it back on and takes it as its own, at most once per switch every 5 minutes. A physical off holds the stage: the app sends no command to it for the hold time, the stages above it keep working, and when the hold ends the stage turns on again if CO2 is still above its on threshold or a stage above it is still running. A physical off needs a device that reports `physical`.
 
+An off from a dashboard or the device page is digital, so the app turns the switch back on while its stage runs. Use a physical switch press or the pause inputs to stop it.
+
 The pause inputs match the restriction switches of Humidity Fan Controller. Its *Must Be OFF* list corresponds to *Pause while any of these is on*, and its *Must Be ON* list to *Pause while any of these is off*. One switch can pause both apps.
 
 ## Stopping
@@ -101,3 +103,5 @@ The device is named **Indoor Air** and labelled "Indoor Air", or "<app name> Air
 
 - `tests/test_core.groovy`: unit tests of the stage, advisory and offset logic, run off the hub under Groovy 2.4.21: `java -cp groovy-all-2.4.21.jar groovy.ui.GroovyMain tests/test_core.groovy`.
 - `tests/test-iaq.sh`: behavior test on a hub, generated from `tests/spec-iaq.yaml`. It drives a test instance with virtual sensors and switches, with the testing setting on: `bash tests/test-iaq.sh [@hub]`.
+
+The Mode 1 test needs the two test drivers `VirtualCO2Sensor.groovy` and `VirtualSwitchPhysical.groovy` from `drivers/tests/` installed on the hub.

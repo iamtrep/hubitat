@@ -47,8 +47,8 @@ String esc(Object s) { s == null ? '' : s.toString().replace('&', '&amp;').repla
 String fmtTime(Long t) { t == null ? '' : new Date(t).format('HH:mm', location.timeZone) }
 
 Map mainPage() {
-    dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
-        List<String> errs = validateCfg(currentCfg())
+    List<String> errs = validateCfg(currentCfg())
+    dynamicPage(name: "mainPage", title: "", install: errs.isEmpty(), uninstall: true) {
         section {
             label title: "App name", required: false
             if (errs) paragraph "<div class='p-message p-message-error p-3 border-round'>${errs.collect { esc(it) }.join('<br>')}</div>"
@@ -116,7 +116,8 @@ String statusHtml() {
     BigDecimal o = offOn ? numOrNull(cfg.offset) : 0G
     List<Map> st = resized((state.stages ?: []) as List<Map>, (cfg.stages as List).size())
     StringBuilder h = new StringBuilder()
-    h << "<p><b>${esc(state.lastStop ? STOP_TEXT[state.lastStop] : 'Managing air')}</b> · CO2 "
+    String head = validateCfg(cfg) ? 'Not managing: settings incomplete' : (state.lastStop ? STOP_TEXT[state.lastStop] : 'Managing air')
+    h << "<p><b>${esc(head)}</b> · CO2 "
     h << (state.co2 != null ? "${fmtInt(state.co2)} ppm" : "no reading")
     if (offOn) h << " · offset +${fmtInt(o)} ppm applies"
     h << "</p><table class='table'><tr><th>Stage</th><th>On above</th><th>Off below</th><th>State</th></tr>"
@@ -136,17 +137,29 @@ void installed() { checkVersion(false); state.enabled = false; initialize() }
 
 void updated() { checkVersion(false); unsubscribe(); unschedule(); initialize() }
 
-void uninstalled() { if (getChildDevice(dni())) deleteChildDevice(dni()) }
+void uninstalled() {
+    if (state.lastStop != 'safety') releaseAll()
+    if (getChildDevice(dni())) deleteChildDevice(dni())
+}
 
 void initialize() {
     airDevice()
     Map cfg = currentCfg()
     restartTimers((cfg.stages as List).size())
+    for (int n = stageCount() + 1; n <= 4; n++) {
+        Map claims = (state.claims ?: [:]) as Map
+        ((settings["stage${n}Switches".toString()] ?: []) as List).each { Object o ->
+            DeviceWrapper d = o as DeviceWrapper
+            if (claims[d.id.toString()]) switchCmd(d, "off")
+        }
+    }
     pruneClaims()
     if (debugEnable) runIn(1800, "logsOff")
     List<String> errs = validateCfg(cfg)
     if (errs) {
         logWarn "settings incomplete, nothing is managed: ${errs.join('; ')}"
+        releaseAll()
+        state.stages = resized([], (cfg.stages as List).size())
         publish(null, null, state.stages as List<Map>)
         return
     }
@@ -266,16 +279,24 @@ void wakeHandler() {
 
 // ── Evaluation ────────────────────────────────────────────────────────
 
+String currentStopReason() {
+    return stopReason(safetyAlarm(), state.enabled == true,
+                      modeActive(location.mode as String, (activeModes ?: []) as List<String>),
+                      anySwitchCondition(switchValues(pauseWhenOn), switchValues(pauseWhenOff)))
+}
+
 void evaluateAir(String why) {
     Map cfg = currentCfg()
-    if (validateCfg(cfg)) return
+    if (validateCfg(cfg)) {
+        releaseAll()
+        state.stages = resized([], (cfg.stages as List).size())
+        return
+    }
     long t = now()
     logDebug "evaluateAir (${why})"
     BigDecimal co2 = combineReadings(readings(co2Sensors, "carbonDioxide"), (co2Mode ?: "highest") as String, t, STALE_MS)
     BigDecimal rh = rhSensors ? combineReadings(readings(rhSensors, "humidity"), "lowest", t, STALE_MS) : null
-    String reason = stopReason(safetyAlarm(), state.enabled == true,
-                               modeActive(location.mode as String, (activeModes ?: []) as List<String>),
-                               anySwitchCondition(switchValues(pauseWhenOn), switchValues(pauseWhenOff)))
+    String reason = currentStopReason()
     boolean offOn = offsetApplies()
     int n = (cfg.stages as List).size()
     List<Map> st = resized((state.stages ?: []) as List<Map>, n)
@@ -310,6 +331,7 @@ void evaluateAir(String why) {
     state.window = w.w
     sendNote(windowMessage(app.getLabel(), w.notify as String, co2))
     wake = earliest(wake, w.wakeAt as Long)
+    if (!rhSensors) state.rh = null
     if (rhSensors) {
         boolean seasonOk = !seasonDevice || seasonDevice.currentValue("season") == "winter"
         Map h = stepHumidity(state.rh as Map, rh, seasonOk, t, cfg)
@@ -379,7 +401,8 @@ void stageSwitchHandler(evt) {
     if (i < 0) return
     List<Map> st = resized((state.stages ?: []) as List<Map>, stageCount())
     Map re = (state.reasserted ?: [:]) as Map
-    String act = switchEventAction(evt.value as String, physical, pending, st[i].s as String, state.lastStop != null,
+    String live = currentStopReason()
+    String act = switchEventAction(evt.value as String, physical, pending, st[i].s as String, (state.lastStop != null || live != null),
                                    re[id] as Long, now(), REASSERT_GAP_MS)
     if (act != "own" && evt.value == "off") dropClaim(id)
     if (act == "hold") {
@@ -396,6 +419,7 @@ void stageSwitchHandler(evt) {
     } else if (act == "throttled") {
         logWarn "${evt.displayName} turned off again within 5 minutes of being turned back on: left off"
     }
+    if (live != null && live != state.lastStop) evaluateAir("stop")
 }
 
 // ── Air device ────────────────────────────────────────────────────────
