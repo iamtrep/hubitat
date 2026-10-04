@@ -214,4 +214,28 @@ cases:
     wait_seconds: 2
     assert:
       - { device: test-season Season, attribute: season, value: spring }
-runtime_budget_seconds: 240
+
+  - name: mirror-writes-labels
+    setup:
+      - settings: { debugEnable: true, mirrorEnable: true, mirrorSeasonVar: "zz_season_test", mirrorCreditVar: "zz_credit_test", labelSummer: "été", labelWinter: "hiver" }
+      - { device: test-season Season, command: setSeason, args: ["spring", 0] }
+      - settings: { testDate: "2026-05-20", testMean: "18" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: summer }
+    assert_logs:
+      - { pattern: "mirrored season to zz_season_test = été", level: info }
+
+  - name: mirror-off-again
+    setup:
+      - settings: { debugEnable: true, mirrorEnable: false }
+      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
+      - settings: { testDate: "2026-03-01", testMean: "10" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: winter }
+runtime_budget_seconds: 270

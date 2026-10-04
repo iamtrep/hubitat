@@ -87,6 +87,17 @@ Map mainPage() {
             input "creditFrom", "text", title: "On from (MM-DD)", defaultValue: d.credit.from, width: 4, submitOnChange: true
             input "creditUntil", "text", title: "On until (MM-DD), included", defaultValue: d.credit.until, width: 4, submitOnChange: true
         }
+        section("Hub variable mirror") {
+            input "mirrorEnable", "bool", title: "Mirror the season to hub variables, for rules not yet moved to the Season device", defaultValue: false, submitOnChange: true
+            if (mirrorEnable) {
+                input "mirrorSeasonVar", "enum", title: "String variable for the season", options: varNames("string"), required: false, submitOnChange: true
+                input "labelWinter", "text", title: "Label for winter", defaultValue: "winter", width: 3
+                input "labelSpring", "text", title: "Label for spring", defaultValue: "spring", width: 3
+                input "labelSummer", "text", title: "Label for summer", defaultValue: "summer", width: 3
+                input "labelFall", "text", title: "Label for fall", defaultValue: "fall", width: 3
+                input "mirrorCreditVar", "enum", title: "Boolean variable for the winter credit period", options: varNames("boolean"), required: false, submitOnChange: true
+            }
+        }
         section("Logging") {
             input "txtEnable", "bool", title: "Enable info logging", defaultValue: true
             input "debugEnable", "bool", title: "Enable debug logging (turns off after 30 minutes)", defaultValue: false, submitOnChange: true
@@ -123,6 +134,7 @@ void installed() { checkVersion(false); initialize() }
 void updated() { checkVersion(false); unsubscribe(); unschedule(); initialize() }
 
 void uninstalled() {
+    removeAllInUseGlobalVar()
     if (getChildDevice(dni())) deleteChildDevice(dni())
 }
 
@@ -132,6 +144,9 @@ void initialize() {
         state.since = realToday()
         logCfg "season set to ${state.season} on install"
     }
+    state.remove('mirroredSeason')
+    state.remove('mirroredCredit')
+    registerVars()
     seasonDevice()
     schedule("0 7 * * * ?", "sampleHandler")
     schedule("0 0 5 * * ?", "evaluateHandler")
@@ -190,6 +205,53 @@ ChildDeviceWrapper seasonDevice() {
 
 void publish() {
     seasonDevice().updateStatus([season: state.season, winterCredit: state.credit])
+    mirror()
+}
+
+List<String> varNames(String type) { return ((getGlobalVarsByType(type) ?: [:]) as Map).keySet().collect { it as String }.sort() }
+
+String mirrorLabel(String season) {
+    Map labels = [winter: settings.labelWinter ?: 'winter', spring: settings.labelSpring ?: 'spring',
+                  summer: settings.labelSummer ?: 'summer', fall: settings.labelFall ?: 'fall']
+    return labels[season] as String
+}
+
+void mirror() {
+    if (!settings.mirrorEnable) return
+    if (settings.mirrorSeasonVar && state.season) {
+        String label = mirrorLabel(state.season as String)
+        if (state.mirroredSeason != label) {
+            if (setGlobalVar(settings.mirrorSeasonVar as String, label)) {
+                state.mirroredSeason = label
+                logCfg "mirrored season to ${settings.mirrorSeasonVar} = ${label}"
+            } else logWarn "could not set hub variable ${settings.mirrorSeasonVar}"
+        }
+    }
+    if (settings.mirrorCreditVar && state.credit) {
+        boolean on = state.credit == 'on'
+        if (state.mirroredCredit != on) {
+            if (setGlobalVar(settings.mirrorCreditVar as String, on)) {
+                state.mirroredCredit = on
+                logCfg "mirrored winter credit to ${settings.mirrorCreditVar} = ${on}"
+            } else logWarn "could not set hub variable ${settings.mirrorCreditVar}"
+        }
+    }
+}
+
+void registerVars() {
+    removeAllInUseGlobalVar()
+    List<String> vars = settings.mirrorEnable ? ([settings.mirrorSeasonVar, settings.mirrorCreditVar].findAll { it } as List<String>) : []
+    if (vars) addInUseGlobalVar(vars)
+}
+
+void renameVariable(String oldName, String newName) {
+    checkVersion()
+    ['mirrorSeasonVar', 'mirrorCreditVar'].each { String k ->
+        if (settings[k] == oldName) {
+            app.updateSetting(k, [type: "enum", value: newName])
+            logCfg "hub variable ${oldName} renamed to ${newName}"
+        }
+    }
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────
