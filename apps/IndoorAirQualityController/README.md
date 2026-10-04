@@ -54,19 +54,19 @@ Saving creates the Air device and leaves its switch off. Turn the switch on to s
 | Enable debug logging | off | Turns off after 30 minutes |
 | Testing: a minute lasts a second and an hour a minute | off | For the behavior test |
 
-The page refuses to save while the on thresholds do not rise from stage to stage, or while an off threshold is not below its on threshold. A status block at the top shows each stage, the effective thresholds and why the app is stopped, if it is.
+The page shows an error while the on thresholds do not rise from stage to stage, or while an off threshold is not below its on threshold, and the app manages nothing until it is fixed. A status block at the top shows each stage, the effective thresholds and why the app is stopped, if it is.
 
 ## Sharing a switch with another app
 
 The app turns off only the switches it turned on. A switch that is already on when a stage starts stays on when the stage stops.
 
-When another app or rule turns off a switch of a running stage, the app turns it back on and takes it as its own, at most once per switch every 5 minutes. A physical off holds the stage: the app sends no command to it for the hold time, the stages above it keep working, and when the hold ends the stage turns on again if CO2 is still above its on threshold. A physical off needs a device that reports `physical`.
+When another app or rule turns off a switch of a running stage, the app turns it back on and takes it as its own, at most once per switch every 5 minutes. A physical off holds the stage: the app sends no command to it for the hold time, the stages above it keep working, and when the hold ends the stage turns on again if CO2 is still above its on threshold or a stage above it is still running. A physical off needs a device that reports `physical`.
 
 The pause inputs match the restriction switches of Humidity Fan Controller. Its *Must Be OFF* list corresponds to *Pause while any of these is on*, and its *Must Be ON* list to *Pause while any of these is off*. One switch can pause both apps.
 
 ## Stopping
 
-The app turns off the switches it turned on, sets every stage to off and sends no commands while any of these holds:
+On entering a stopped state the app turns off the switches it turned on and sets every stage to off, then sends no commands while any of these holds:
 
 - A *Pause while any of these is on* switch is on, or a *Pause while any of these is off* switch is off.
 - The hub mode is not one of the selected modes.
@@ -74,7 +74,7 @@ The app turns off the switches it turned on, sets every stage to off and sends n
 
 When the last of them clears, the app evaluates from the current CO2 value and starts stages through their dwell times.
 
-While a smoke or CO detector reports `detected`, the app stops and leaves every switch as it is, so it does not interfere with a fire rule. When every detector is clear the app forgets which switches it turned on and evaluates from the current CO2 value.
+While a smoke or CO detector reports `detected`, the app stops and leaves every switch as it is, so a fire rule keeps control. When every detector is clear the app forgets which switches it turned on and evaluates from the current CO2 value.
 
 ## Threshold offset
 
@@ -84,7 +84,7 @@ Example: an offset of 200 ppm and an offset switch that is on while the A/C runs
 
 ## The Air device
 
-The device is named **Indoor Air**, or "<app name> Air" when the app is renamed. It belongs to the app and is deleted with it.
+The device is named **Indoor Air** and labelled "Indoor Air", or "<app name> Air" when the app is renamed. It belongs to the app and is deleted with it.
 
 | Attribute | Values |
 |---|---|
