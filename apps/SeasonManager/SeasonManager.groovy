@@ -387,10 +387,7 @@ void updateOutlook(Map forecast) {
 }
 
 // The last day whose 05:00 evaluation the hold suspends, or null.
-String holdLastDay() {
-    if (!state.holdUntil) return null
-    return new Date((state.holdUntil as Long) - 5 * 3600000L - 1).format('yyyy-MM-dd', location.timeZone)
-}
+String holdLastDay() { holdLastDayOf(state.holdUntil as Long, location.timeZone) }
 
 void evaluateSeason(String why, Map fetched = null) {
     Map cfg = currentCfg()
@@ -407,6 +404,7 @@ void evaluateSeason(String why, Map fetched = null) {
     state.lastEval = [day: day, mean: mean?.toPlainString(), why: why]
     updateCredit(day, cfg)
     if (state.season == null) { logWarn "no current season; open the app and pick one"; publish(); return }
+    String holdLast = holdLastDay()
     if (state.holdUntil && now() >= (state.holdUntil as Long)) { state.remove('holdUntil'); logInfo "automatic season changes resumed" }
     if (mean == null) logWarn "no 3-day mean (no Open-Meteo or sensor mean for one of the three previous days); only the date limits apply"
     if (why == "daily") {
@@ -414,7 +412,7 @@ void evaluateSeason(String why, Map fetched = null) {
         if (first < addDays(today, -120)) first = addDays(today, -120)
         if (first > today) first = today
         String was = state.season as String
-        Map r = runDays(was, first, today, means, cfg, holdLastDay())
+        Map r = runDays(was, first, today, means, cfg, holdLast)
         (r.changes as List<Map>).each { Map c ->
             logInfo "season ${was} → ${c.season}${c.day == today ? '' : ' on ' + c.day}: ${c.reason}"
             was = c.season as String
@@ -862,6 +860,19 @@ List<String> outlookText(Map o, String unit) {
         else out << "${c.kind == 'likely' ? 'Likely' : 'Possible'}: ${c.season} on ${day} (3-day mean ${fmtNum(c.mean)} ${unit})".toString()
     }
     return out
+}
+
+// The last day whose 05:00 local evaluation a hold ending at holdUntil suspends, or null.
+String holdLastDayOf(Long holdUntil, TimeZone tz) {
+    if (holdUntil == null) return null
+    Calendar c = Calendar.getInstance(tz)
+    c.setTimeInMillis(holdUntil)
+    long msOfDay = ((c.get(Calendar.HOUR_OF_DAY) * 60L + c.get(Calendar.MINUTE)) * 60L + c.get(Calendar.SECOND)) * 1000L + c.get(Calendar.MILLISECOND)
+    boolean after5 = msOfDay > 5 * 3600000L
+    java.text.SimpleDateFormat f = new java.text.SimpleDateFormat('yyyy-MM-dd')
+    f.setTimeZone(tz)
+    String day = f.format(c.getTime())
+    return after5 ? day : addDays(day, -1)
 }
 
 // ── End core ──────────────────────────────────────────────────────────

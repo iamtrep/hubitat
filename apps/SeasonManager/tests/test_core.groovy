@@ -226,6 +226,14 @@ check('outlook hold', core.outlook('fall', '2026-10-25', obs, cold, cfg, '2026-1
 o4 = core.outlook('fall', '2026-10-03', daysOf('2026-09-30', '2026-10-02', 15), daysOf('2026-10-03', '2026-10-09', 15), cfg, null, 'C')
 check('outlook text no change', core.outlookText(o4, '°C'), ['No change expected through Oct 10'])
 check('observed from today ignored', core.outlook('fall', '2026-10-25', obs + bd(['2026-10-25': 100]), cold, cfg, null, 'C').changes[0].day, '2026-10-27')
+// ── hold end across DST ──
+TimeZone tor = TimeZone.getTimeZone('America/Toronto')
+long at(String local) { java.text.SimpleDateFormat f = new java.text.SimpleDateFormat('yyyy-MM-dd HH:mm'); f.setTimeZone(TimeZone.getTimeZone('America/Toronto')); return f.parse(local).getTime() }
+check('hold ending after 05:00 covers that day', core.holdLastDayOf(at('2026-10-10 14:00'), tor), '2026-10-10')
+check('hold ending at 05:00 stops the day before', core.holdLastDayOf(at('2026-10-10 05:00'), tor), '2026-10-09')
+check('hold ending 05:30 on spring-forward day covers it', core.holdLastDayOf(at('2027-03-14 05:30'), tor), '2027-03-14')
+check('hold ending 04:30 on fall-back day stops the day before', core.holdLastDayOf(at('2026-11-01 04:30'), tor), '2026-10-31')
+check('no hold', core.holdLastDayOf(null, tor), null)
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)
