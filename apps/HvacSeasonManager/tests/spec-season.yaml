@@ -1,10 +1,10 @@
 # Copyright (c) 2026 PJ
 # SPDX-License-Identifier: MIT
-# Season Manager: Mode 1 behavior spec. Each case resets the season with
+# HVAC Season Manager: Mode 1 behavior spec. Each case resets the season with
 # setSeason(<season>, 0), sets the test day and test mean, and presses Evaluate.
 app:
-  source: apps/SeasonManager/SeasonManager.groovy
-  type_name: "Season Manager"
+  source: apps/HvacSeasonManager/HvacSeasonManager.groovy
+  type_name: "HVAC Season Manager"
   instance_label: test-season
   config:
     debugEnable: true
@@ -139,28 +139,6 @@ cases:
     assert:
       - { device: test-season Season, attribute: season, value: fall }
 
-  - name: credit-on-from-december
-    setup:
-      - settings: { debugEnable: true }
-      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
-      - settings: { testDate: "2026-12-01", testMean: "-5" }
-    actions:
-      - { button: btnEvaluate }
-    wait_seconds: 2
-    assert:
-      - { device: test-season Season, attribute: winterCredit, value: "on" }
-
-  - name: credit-off-from-april
-    setup:
-      - settings: { debugEnable: true }
-      - { device: test-season Season, command: setSeason, args: ["spring", 0] }
-      - settings: { testDate: "2026-04-01", testMean: "5" }
-    actions:
-      - { button: btnEvaluate }
-    wait_seconds: 2
-    assert:
-      - { device: test-season Season, attribute: winterCredit, value: "off" }
-
   - name: no-mean-uses-date-limits
     setup:
       - settings: { debugEnable: true }
@@ -218,7 +196,7 @@ cases:
 
   - name: mirror-writes-labels
     setup:
-      - settings: { debugEnable: true, mirrorEnable: true, mirrorSeasonVar: "zz_season_test", mirrorCreditVar: "zz_credit_test", labelSummer: "été", labelWinter: "hiver" }
+      - settings: { debugEnable: true, mirrorEnable: true, mirrorSeasonVar: "zz_season_test", labelSummer: "été", labelWinter: "hiver" }
       - { device: test-season Season, command: setSeason, args: ["spring", 0] }
       - settings: { testDate: "2026-05-20", testMean: "18" }
     actions:

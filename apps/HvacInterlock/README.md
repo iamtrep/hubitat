@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 Gates heating and cooling equipment by season and open windows.
 
-HVAC Interlock decides, for each group of equipment, whether it may run: the season must allow it, and in a group with openings, nothing may have been left open. It reads the season from the device [Season Manager](../SeasonManager/README.md) creates. A group is a set of equipment that shares the same season policy and the same openings, usually one scheduler or one directly driven unit.
+HVAC Interlock decides, for each group of equipment, whether it may run: the season must allow it, and in a group with openings, nothing may have been left open. It reads the season from the device [HVAC Season Manager](../HvacSeasonManager/README.md) creates. A group is a set of equipment that shares the same season policy and the same openings, usually one scheduler or one directly driven unit.
 
 A group works in one of two ways:
 
@@ -91,4 +91,4 @@ With notification or speech devices set on the parent, a group raising its alert
 ## Tests
 
 - `tests/test_core.groovy`: unit tests of the season policy, alert timing and mode decisions, run off the hub under Groovy 2.4.21: `java -cp groovy-all-2.4.21.jar groovy.ui.GroovyMain tests/test_core.groovy`.
-- `tests/test-ilk-permit.sh` and `tests/test-ilk-direct.sh`: behavior tests on a hub, generated from the two `tests/spec-interlock-*.yaml` files: `bash tests/test-ilk-permit.sh [@hub]`. They take the season from Season Manager's test device, so Season Manager's test rig must exist, and a debug-only close delay in seconds keeps them short.
+- `tests/test-ilk-permit.sh` and `tests/test-ilk-direct.sh`: behavior tests on a hub, generated from the two `tests/spec-interlock-*.yaml` files: `bash tests/test-ilk-permit.sh [@hub]`. They take the season from HVAC Season Manager's test device, so HVAC Season Manager's test rig must exist, and a debug-only close delay in seconds keeps them short.

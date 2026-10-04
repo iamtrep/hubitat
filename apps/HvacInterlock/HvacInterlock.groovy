@@ -11,7 +11,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 
 definition(
     name: "HVAC Interlock",
@@ -33,9 +33,9 @@ String esc(Object s) { s == null ? '' : s.toString().replace('&', '&amp;').repla
 Map mainPage() {
     dynamicPage(name: "mainPage", title: "HVAC Interlock", install: true, uninstall: true) {
         section {
-            input "seasonDevice", "capability.actuator", title: "Season device (the one Season Manager created)", required: true, submitOnChange: true
+            input "seasonDevice", "capability.actuator", title: "Season device (the one HVAC Season Manager created)", required: true, submitOnChange: true
             if (seasonDevice && !seasonDevice.hasAttribute("season"))
-                paragraph "<div class='p-message p-message-error p-3 border-round'>${esc(seasonDevice.displayName)} has no season attribute. Pick the device Season Manager created.</div>"
+                paragraph "<div class='p-message p-message-error p-3 border-round'>${esc(seasonDevice.displayName)} has no season attribute. Pick the device HVAC Season Manager created.</div>"
             else if (seasonDevice) paragraph "Season now: ${esc(seasonDevice.currentValue('season') ?: 'not set')}"
         }
         section("Groups") {

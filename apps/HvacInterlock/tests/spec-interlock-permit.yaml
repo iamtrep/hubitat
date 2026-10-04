@@ -1,9 +1,9 @@
 # Copyright (c) 2026 PJ
 # SPDX-License-Identifier: MIT
-# HVAC Interlock, permit group: Mode 1 behavior spec. The season comes from Season
-# Manager's test device ("test-season Season", from apps/SeasonManager/tests), driven
+# HVAC Interlock, permit group: Mode 1 behavior spec. The season comes from HVAC Season
+# Manager's test device ("test-season Season", from apps/HvacSeasonManager/tests), driven
 # with setSeason(<season>, 0). Two outputs are marked child: true only so the
-# generator looks them up instead of creating them: the Season device (Season Manager's
+# generator looks them up instead of creating them: the Season device (HVAC Season Manager's
 # rig) and the notification capture device (created by hand, set on the test parent).
 app:
   source: apps/HvacInterlock/HvacInterlockGroup.groovy

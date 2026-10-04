@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 # HVAC Interlock, direct group: Mode 1 behavior spec. Policy: off in winter, heat in
 # spring and fall, cool in summer (the mini-split layout). The season comes from
-# Season Manager's test device; see spec-interlock-permit.yaml.
+# HVAC Season Manager's test device; see spec-interlock-permit.yaml.
 app:
   source: apps/HvacInterlock/HvacInterlockGroup.groovy
   type_name: "HVAC Interlock Group"

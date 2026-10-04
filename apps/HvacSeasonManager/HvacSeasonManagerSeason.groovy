@@ -2,22 +2,21 @@
 // SPDX-License-Identifier: MIT
 
 /*
- Season Manager Season
+ HVAC Season
 
- Component device of Season Manager. Publishes the season and the winter credit flag,
- and forwards setSeason and resumeAuto to the app.
+ Component device of HVAC Season Manager. Publishes the season and forwards
+ setSeason and resumeAuto to the app.
 */
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.2.0"
+@Field static final String CODE_VERSION = "0.3.0"
 
 metadata {
-    definition(name: "Season Manager Season", namespace: "iamtrep", author: "pj", component: true,
-               importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/apps/SeasonManager/SeasonManagerSeason.groovy") {
+    definition(name: "HVAC Season", namespace: "iamtrep", author: "pj", component: true,
+               importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/apps/HvacSeasonManager/HvacSeasonManagerSeason.groovy") {
         capability "Actuator"
         attribute "season", "enum", ["winter", "spring", "summer", "fall"]
-        attribute "winterCredit", "enum", ["on", "off"]
         command "setSeason", [[name: "season*", type: "ENUM", constraints: ["winter", "spring", "summer", "fall"]],
                               [name: "holdDays", type: "NUMBER", description: "Days without automatic changes (default 3, 0 = none)"]]
         command "resumeAuto"

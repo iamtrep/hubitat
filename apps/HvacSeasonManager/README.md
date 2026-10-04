@@ -3,26 +3,26 @@ Copyright (c) 2026 PJ
 SPDX-License-Identifier: MIT
 -->
 
-# Season Manager
+# HVAC Season Manager
 
 Publishes the heating and cooling season on a device, from dates and the outdoor temperature.
 
-Season Manager decides which of four seasons it is (`winter`, `spring`, `summer`, `fall`) and publishes it on its own device, with a second flag for a winter credit period. Rules, dashboards and other apps read the device; nothing else needs to know how the season was decided. It knows nothing about heating equipment: what each piece of equipment may do in each season belongs to whatever reads the device.
+HVAC Season Manager decides which of four heating and cooling seasons it is (`winter`, `spring`, `summer`, `fall`) and publishes it on its own device. Rules, dashboards and other apps read the device; nothing else needs to know how the season was decided. It knows nothing about heating equipment: what each piece of equipment may do in each season belongs to whatever reads the device.
 
 ## Files
 
 | File | Type | Name on the hub |
 |---|---|---|
-| `SeasonManager.groovy` | App | Season Manager |
-| `SeasonManagerSeason.groovy` | Driver | Season Manager Season |
+| `HvacSeasonManager.groovy` | App | HVAC Season Manager |
+| `HvacSeasonManagerSeason.groovy` | Driver | HVAC Season |
 
 ## Install
 
 1. Add the app in **Apps Code** and the driver in **Drivers Code**.
-2. In **Apps**, choose **Add user app** and pick **Season Manager**.
+2. In **Apps**, choose **Add user app** and pick **HVAC Season Manager**.
 3. Pick the outdoor temperature sensor if you have one, then press **Done**. The app sets the starting season from the date, or from Open-Meteo's daily means inside a window where the weather decides. It asks only when neither works.
 
-Saving creates the device **"Season"**. If you rename the app, the device is named "<app name> Season" instead, so a second instance does not create a second "Season". The device belongs to the app and is deleted with it.
+Saving creates the device **"HVAC Season"**. If you rename the app, the device is named "<app name> Season" instead, so a second instance does not create a second "HVAC Season". The device belongs to the app and is deleted with it.
 
 ## How the season changes
 
@@ -48,10 +48,12 @@ A cold spell after summer starts is the costly mistake, since summer usually mea
 | Fall from | 08-15 | Outside summer, spring becomes fall on this day |
 | Enter summer threshold | 17 °C | 3-day mean above it |
 | Leave summer threshold | 12 °C | 3-day mean below it; must be below the entry threshold |
-| Winter credit on from / until | 12-01 / 03-31 | Both days included |
+| Summer end threshold | 17 °C | Used only to compute *summer possible until* and *fall from* from local climate |
 | Hub variable mirror | off | See below |
 
-Temperatures use the hub's scale; on a °F hub the defaults are converted. The dates must follow each other through the year in this order: the winter to spring window, *summer possible from*, *fall from*, *summer possible until*, the fall to winter window. The page shows an error and the season stops changing until they do.
+The default dates suit a cold-winter climate. On install, with Open-Meteo on, the app replaces them with dates computed from the last 21 full years of daily means at the hub's location, and the *Compute dates from local climate* button in *Season rules* does the same later, showing the computed dates beside the current ones before any change. For each year it finds the first day the 3-day mean crosses each threshold: a winter window runs from the 10th to the 90th percentile of those days, *summer possible from* is the 10th percentile of the summer entry crossing, and *summer possible until* and *fall from* are the 90th and 10th percentiles of the summer end crossing. A rule whose threshold is crossed in fewer than two thirds of the years keeps its dates. South of the equator the searches start half a year later. The thresholds are never changed.
+
+Temperatures use the hub's scale; on a °F hub the defaults are converted. The dates must follow each other through the year in this order: the winter to spring window, *summer possible from*, *fall from*, *summer possible until*, the fall to winter window. The page shows an error and the season stops changing until they do. Each date field opens a month-and-day calendar, and the *Season rules* section draws the windows on a 12-month strip with today marked.
 
 ## Fixed behavior
 
@@ -63,15 +65,13 @@ These are not settings:
 - A sensor reading older than 24 hours is not counted, and the app logs a warning once until the sensor reports again. Without a 3-day mean, only the date limits apply: a winter boundary change happens on its window's last day, and summer ends on its *until* date.
 - The season changes at most once per day.
 - If the hub was off for some days, the next daily check evaluates each missed day in order, up to 120 days back.
-- The winter credit flag is updated just after midnight.
 - On a hub restart nothing is recomputed: the season stays what it was.
 
-## The Season device
+## The HVAC Season device
 
 | Attribute | Values |
 |---|---|
 | `season` | `winter`, `spring`, `summer`, `fall` |
-| `winterCredit` | `on`, `off` |
 
 | Command | What it does |
 |---|---|
@@ -86,7 +86,7 @@ Each morning the app also fetches Open-Meteo's 7-day forecast of daily means and
 
 ## Hub variable mirror
 
-For rules that still read a hub variable, the app can copy the season to a String variable, with your own label for each season, and the winter credit flag to a Boolean variable. It marks those variables as in use and follows a rename. Turn the mirror off once nothing reads them.
+For rules that still read a hub variable, the app can copy the season to a String variable, with your own label for each season. It marks that variable as in use and follows a rename. Turn the mirror off once nothing reads it.
 
 ## Choosing thresholds
 

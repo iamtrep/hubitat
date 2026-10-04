@@ -1,13 +1,13 @@
 // Copyright (c) 2026 PJ
 // SPDX-License-Identifier: MIT
 //
-// Core unit tests for Season Manager. Parses the block between the "Core (pure)"
+// Core unit tests for HVAC Season Manager. Parses the block between the "Core (pure)"
 // and "End core" markers of the shipped app file and runs it, so the tests bind
 // to shipped code. Run under the pinned Groovy 2.4.21 jar:
 //   java -cp groovy-all-2.4.21.jar groovy.ui.GroovyMain <this file>
 
 File here = new File(getClass().protectionDomain.codeSource.location.toURI()).parentFile
-String src = new File(here.parentFile, 'SeasonManager.groovy').text
+String src = new File(here.parentFile, 'HvacSeasonManager.groovy').text
 int a = src.indexOf('// ── Core (pure)'), b = src.indexOf('// ── End core')
 if (a < 0 || b < a) { println '[FAIL] core markers not found'; System.exit(2) }
 core = new GroovyShell().parse(src.substring(a, b))
@@ -62,8 +62,6 @@ check('bad date reported', core.validateCfg(badCfg { it.summer.fallFrom = '8-15'
 check('missing threshold', core.validateCfg(badCfg { it.summer.enter = '' }), ['Enter summer threshold: enter a number'])
 check('leave not below enter', core.validateCfg(badCfg { it.summer.leave = 17.0 }), ['Leave summer threshold must be below the enter summer threshold'])
 check('dates out of order', core.validateCfg(badCfg { it.summer.until = '08-01' }).size(), 1)
-check('credit dates free', core.validateCfg(badCfg { it.credit.from = '11-15' }), [])
-check('bad credit date', core.validateCfg(badCfg { it.credit.until = '04-31' }), ['Winter credit until: enter a month and day as MM-DD'])
 
 // ── transitions ──
 cfg = core.defaultCfg('C')
@@ -91,10 +89,6 @@ check('fall after summer closed stays', nxt('fall', '2026-09-20', 25).season, 'f
 check('fall to winter when cold', nxt('fall', '2026-10-30', 2).season, 'winter')
 check('fall to winter forced on last day', nxt('fall', '2026-11-11', 10).season, 'winter')
 check('fall past window moves', nxt('fall', '2026-11-20', 10).season, 'winter')
-check('credit on Dec 1', core.creditOn('2026-12-01', cfg.credit), true)
-check('credit on Mar 31', core.creditOn('2027-03-31', cfg.credit), true)
-check('credit off Apr 1', core.creditOn('2027-04-01', cfg.credit), false)
-check('credit leap day', core.creditOn('2028-02-29', cfg.credit), true)
 check('parse case-insensitive', core.parseSeasonArgs('Summer', '2'), [ok: true, season: 'summer', days: 2])
 check('parse blank days = 3', core.parseSeasonArgs('fall', ''), [ok: true, season: 'fall', days: 3])
 check('parse null days = 3', core.parseSeasonArgs('fall', null), [ok: true, season: 'fall', days: 3])
@@ -102,7 +96,7 @@ check('parse zero days', core.parseSeasonArgs('winter', 0), [ok: true, season: '
 check('parse unknown season', core.parseSeasonArgs('monsoon', 3).ok, false)
 check('parse fractional days', core.parseSeasonArgs('fall', '1.5').ok, false)
 check('parse negative days', core.parseSeasonArgs('fall', -1).ok, false)
-check('nextPossible winter', core.nextPossible('winter', cfg, '°C'), 'spring between 03-11 and 04-08, as soon as the 3-day mean is above 3.0 °C')
+check('nextPossible winter', core.nextPossible('winter', cfg, '°C'), 'spring between Mar 11 and Apr 8, as soon as the 3-day mean is above 3.0 °C')
 
 // ── daily means ──
 Map fillDay(Map s, String day, Object v, int n) { Map x = s; n.times { x = core.addSample(x, day, new BigDecimal(v.toString())) }; return x }
@@ -200,6 +194,7 @@ check('replay with a missing day gives none', core.seasonFromHistory('2026-03-20
 check('replay on a settled day needs no means', core.seasonFromHistory('2026-10-03', [:], cfg), [season: 'fall', since: null])
 // ── outlook ──
 check('dayLabel', core.dayLabel('2026-11-01'), 'Nov 1')
+check('mdLabel', core.mdLabel('03-11'), 'Mar 11')
 obs = daysOf('2026-10-22', '2026-10-24', 5)
 cold = daysOf('2026-10-25', '2026-10-31', 0)
 o1 = core.outlook('fall', '2026-10-25', obs, cold, cfg, null)
@@ -225,6 +220,33 @@ check('hold ending at 05:00 stops the day before', core.holdLastDayOf(at('2026-1
 check('hold ending 05:30 on spring-forward day covers it', core.holdLastDayOf(at('2027-03-14 05:30'), tor), '2027-03-14')
 check('hold ending 04:30 on fall-back day stops the day before', core.holdLastDayOf(at('2026-11-01 04:30'), tor), '2026-10-31')
 check('no hold', core.holdLastDayOf(null, tor), null)
+// Calibration from local climate
+check('leapDoy Mar 1', core.leapDoy('03-01'), 61)
+check('leapMd 61', core.leapMd(61), '03-01')
+check('leapMd 366', core.leapMd(366), '12-31')
+check('anchors north', core.calibAnchors(false).spring, '02-15')
+check('anchors south', core.calibAnchors(true).spring, '08-16')
+check('percentile median', core.percentileMd(['03-10', '03-12', '03-20'], '02-15', 50), '03-12')
+check('percentile 10th interpolates', core.percentileMd(['03-10', '03-12', '03-20'], '02-15', 10), '03-10')
+check('percentile past Dec 31', core.percentileMd(['12-30', '01-03'], '09-15', 90), '01-03')
+// Same climate every year: 30 at day 200, falling 0.25 a day each side. The 3-day mean lags 2 days.
+Map climate = [:]
+for (String d = '2021-01-01'; d <= '2023-12-31'; d = core.addDays(d, 1)) climate[d] = 30 - Math.abs(core.doyOf(d.substring(5)) - 200) * 0.25
+Map thr = [w2s: 3, f2w: 3, enter: 17, end: 12]
+Map cal = core.calibrate(climate, '2021-01-01', '2023-12-31', thr, false)
+check('calibrate winter to spring', cal.w2s, [from: '04-05', until: '04-05'])
+check('calibrate fall to winter', cal.f2w, [from: '11-07', until: '11-07'])
+check('calibrate summer', cal.summer, [from: '05-31', until: '10-02', fallFrom: '10-02'])
+check('calibrate no notes', cal.notes, [])
+Map mild = [:]
+for (String d = '2021-01-01'; d <= '2023-12-31'; d = core.addDays(d, 1)) mild[d] = 20
+Map calMild = core.calibrate(mild, '2021-01-01', '2023-12-31', thr, false)
+check('calibrate no winter: rule left out', calMild.f2w, null)
+check('calibrate no winter: fall note text', calMild.notes.find { it.startsWith('Fall → winter') }, 'Fall → winter: the 3-day mean went below 3.0 in 0 of 3 years, too few to set dates')
+Map base = core.defaultCfg('C')
+check('withDates replaces dates', core.withDates(base, cal).w2s, [from: '04-05', until: '04-05', above: 3.0])
+check('withDates keeps the rest', core.withDates(base, [:]).summer.fallFrom, '08-15')
+check('withDates leaves cfg alone', base.w2s.from, '03-11')
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)
