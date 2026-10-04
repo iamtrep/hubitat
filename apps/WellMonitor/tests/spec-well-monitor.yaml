@@ -176,9 +176,11 @@ cases:
       - { attribute: "switch", value: "off", source: "test-wm-pump-active" }
     # Emergency notification is sent via sendNotification(), which logs a
     # warn when no notification device is configured. The spec deliberately
-    # omits notificationDevices (it's optional), so this warn is expected.
+    # omits notificationDevices (it's optional), so this warn is expected,
+    # as is the shutoff itself, which the app logs at error level.
     allow_log_patterns:
       - "No notification device configured"
+      - "EMERGENCY SHUTOFF"
 
 # Budget: cases 1-4 ~3s each + case 5 ~14s + per-case provisioning slack
 # = ~35s. Bump if Hubitat scheduling jitter pushes us past this.
