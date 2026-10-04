@@ -150,4 +150,64 @@ List<String> validateCfg(Map cfg) {
     return errs
 }
 
+// One change at most per evaluation. mean is the 3-day mean, or null when there is none.
+Map nextSeason(String season, String iso, BigDecimal mean, Map cfg) {
+    Map w = cfg.w2s as Map
+    Map f = cfg.f2w as Map
+    Map s = cfg.summer as Map
+    BigDecimal above = numOrNull(w.above)
+    BigDecimal below = numOrNull(f.below)
+    BigDecimal enter = numOrNull(s.enter)
+    BigDecimal leave = numOrNull(s.leave)
+    String m = fmtNum(mean)
+    boolean summerOpen = inSpan(iso, s.from as String, s.until as String)
+    boolean fallHalf = inSpan(iso, s.fallFrom as String, w.from as String)
+    if (season == 'winter') {
+        if (inMd(iso, w.from as String, w.until as String)) {
+            if (mean != null && mean > above) return [season: 'spring', reason: "3-day mean ${m} above ${fmtNum(above)}".toString()]
+            if (sameDay(iso, w.until as String)) return [season: 'spring', reason: 'last day of the winter to spring window']
+        } else if (inSpan(iso, w.until as String, f.from as String)) {
+            return [season: 'spring', reason: 'past the winter to spring window']
+        }
+    } else if (season == 'spring' || season == 'fall') {
+        if (summerOpen && mean != null && mean > enter) return [season: 'summer', reason: "3-day mean ${m} above ${fmtNum(enter)}".toString()]
+        if (season == 'spring' && fallHalf) return [season: 'fall', reason: "fall from ${s.fallFrom}".toString()]
+        if (season == 'fall') {
+            if (inMd(iso, f.from as String, f.until as String)) {
+                if (mean != null && mean < below) return [season: 'winter', reason: "3-day mean ${m} below ${fmtNum(below)}".toString()]
+                if (sameDay(iso, f.until as String)) return [season: 'winter', reason: 'last day of the fall to winter window']
+            } else if (inSpan(iso, f.until as String, w.from as String)) {
+                return [season: 'winter', reason: 'past the fall to winter window']
+            }
+        }
+    } else if (season == 'summer') {
+        if (!summerOpen) return [season: 'fall', reason: "summer ends on ${s.until}".toString()]
+        if (mean != null && mean < leave) return [season: fallHalf ? 'fall' : 'spring', reason: "3-day mean ${m} below ${fmtNum(leave)}".toString()]
+    }
+    return [season: season, reason: null]
+}
+
+boolean creditOn(String iso, Map credit) { return inMd(iso, credit.from as String, credit.until as String) }
+
+Map parseSeasonArgs(Object season, Object holdDays) {
+    String s = season == null ? '' : season.toString().trim().toLowerCase()
+    if (!seasonList().contains(s)) return [ok: false, error: "unknown season '${season}'; use winter, spring, summer or fall".toString()]
+    boolean blank = holdDays == null || holdDays.toString().trim() == ''
+    BigDecimal d = blank ? new BigDecimal(3) : numOrNull(holdDays)
+    if (d == null || d < 0 || d > 365 || d.stripTrailingZeros().scale() > 0)
+        return [ok: false, error: "hold days must be a whole number from 0 to 365, got '${holdDays}'".toString()]
+    return [ok: true, season: s, days: d.intValue()]
+}
+
+String nextPossible(String season, Map cfg, String unit) {
+    Map w = cfg.w2s as Map
+    Map f = cfg.f2w as Map
+    Map s = cfg.summer as Map
+    if (season == 'winter') return "spring between ${w.from} and ${w.until}, as soon as the 3-day mean is above ${fmtNum(w.above)} ${unit}".toString()
+    if (season == 'spring') return "summer between ${s.from} and ${s.until} when the 3-day mean is above ${fmtNum(s.enter)} ${unit}; fall from ${s.fallFrom}".toString()
+    if (season == 'summer') return "spring or fall when the 3-day mean is below ${fmtNum(s.leave)} ${unit}; fall on ${s.until} at the latest".toString()
+    if (season == 'fall') return "winter between ${f.from} and ${f.until}, as soon as the 3-day mean is below ${fmtNum(f.below)} ${unit}; summer until ${s.until} when it is above ${fmtNum(s.enter)} ${unit}".toString()
+    return ''
+}
+
 // ── End core ──────────────────────────────────────────────────────────
