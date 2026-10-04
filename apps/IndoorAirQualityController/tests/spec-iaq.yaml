@@ -27,7 +27,7 @@ app:
     rhPct: 30
     rhHours: 1
 inputs:
-  - { name: test-iaq-co2, driver: Virtual Carbon Dioxide Sensor, role: co2Sensors }
+  - { name: test-iaq-co2, driver: Virtual CO2 Sensor (Test), role: co2Sensors }
   - { name: test-iaq-rh, driver: Virtual Humidity Sensor, role: rhSensors }
   - { name: test-iaq-s1, driver: Virtual Switch with Physical Events, role: stage1Switches }
   - { name: test-iaq-s2, driver: Virtual Switch, role: stage2Switches }
@@ -50,7 +50,7 @@ cases:
       - { device: test-iaq-s1, command: "off" }
       - { device: test-iaq-s2, command: "off" }
       - { device: test-iaq-co2, command: setCarbonDioxide, args: [400] }
-      - { device: test-iaq-rh, command: setRelativeHumidity, args: [45] }
+      - { device: test-iaq-rh, command: setHumidity, args: [45] }
       - { device: test-iaq Air, command: "on" }
     command_spacing_seconds: 2
     actions:
@@ -94,7 +94,7 @@ cases:
       - { device: test-iaq-s2, command: "off" }
       - { device: test-iaq-s1, command: "on" }
       - { device: test-iaq-co2, command: setCarbonDioxide, args: [400] }
-      - { device: test-iaq-rh, command: setRelativeHumidity, args: [45] }
+      - { device: test-iaq-rh, command: setHumidity, args: [45] }
       - { device: test-iaq Air, command: "on" }
     command_spacing_seconds: 3
     actions:
@@ -220,7 +220,7 @@ cases:
     setup: *reset
     command_spacing_seconds: 2
     actions:
-      - { device: test-iaq-rh, command: setRelativeHumidity, args: [25] }
+      - { device: test-iaq-rh, command: setHumidity, args: [25] }
     wait_seconds: 65
     assert:
       - { device: test-iaq Air, attribute: lowHumidityAdvisory, value: active }
