@@ -26,19 +26,259 @@ definition(
     iconUrl: "", iconX2Url: ""
 )
 
+@Field static final Map SEASON_OPTS = [winter: "Winter", spring: "Spring", summer: "Summer", fall: "Fall"]
+@Field static final long DAY_MS = 86400000L
+@Field static final long STALE_MS = 86400000L
+
 preferences {
     page(name: "mainPage")
 }
 
+// ── UI ────────────────────────────────────────────────────────────────
+
+String esc(Object s) { s == null ? '' : s.toString().replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace("'", '&#39;') }
+
+String unit() { "°${location.temperatureScale}" }
+
+String fmtTime(Long t) { t == null ? '' : new Date(t).format('yyyy-MM-dd HH:mm', location.timeZone) }
+
 Map mainPage() {
     dynamicPage(name: "mainPage", title: "Season Manager", install: true, uninstall: true) {
+        Map cfg = currentCfg()
+        List<String> errs = validateCfg(cfg)
+        String u = unit()
+        Map d = defaultCfg(location.temperatureScale as String)
+        section {
+            if (errs) paragraph "<div class='p-message p-message-error p-3 border-round'>${errs.collect { esc(it) }.join('<br>')}</div>"
+            if (state.season != null) paragraph statusHtml(cfg)
+        }
+        if (state.season == null) {
+            section("Current season") {
+                input "initialSeason", "enum", title: "Season right now", options: SEASON_OPTS, required: true
+            }
+        } else {
+            section("Change the season") {
+                input "manualSeason", "enum", title: "Season", options: SEASON_OPTS, required: false, width: 4
+                input "manualHoldDays", "number", title: "Suspend automatic changes for (days)", defaultValue: 3, range: "0..365", required: false, width: 4
+                input "btnSetSeason", "button", title: "Set the season"
+                if (state.holdUntil) input "btnResumeAuto", "button", title: "Resume automatic changes"
+            }
+        }
+        section("Outdoor temperature") {
+            input "tempSensor", "capability.temperatureMeasurement", title: "Outdoor temperature sensor", required: true
+            paragraph "Read every hour. The season follows the mean of the three previous daily means, checked every day at 05:00."
+        }
+        section("Winter boundary: changes once a year each way") {
+            input "w2sFrom", "text", title: "Winter to spring, from (MM-DD)", defaultValue: d.w2s.from, width: 4, submitOnChange: true
+            input "w2sUntil", "text", title: "…until (MM-DD), the last possible day", defaultValue: d.w2s.until, width: 4, submitOnChange: true
+            input "w2sAbove", "decimal", title: "…when the 3-day mean is above (${u})", defaultValue: d.w2s.above, width: 4, submitOnChange: true
+            input "f2wFrom", "text", title: "Fall to winter, from (MM-DD)", defaultValue: d.f2w.from, width: 4, submitOnChange: true
+            input "f2wUntil", "text", title: "…until (MM-DD), the last possible day", defaultValue: d.f2w.until, width: 4, submitOnChange: true
+            input "f2wBelow", "decimal", title: "…when the 3-day mean is below (${u})", defaultValue: d.f2w.below, width: 4, submitOnChange: true
+        }
+        section("Summer boundary: follows the weather both ways") {
+            input "summerFrom", "text", title: "Summer possible from (MM-DD)", defaultValue: d.summer.from, width: 4, submitOnChange: true
+            input "summerUntil", "text", title: "Summer possible until (MM-DD); summer ends on this day", defaultValue: d.summer.until, width: 4, submitOnChange: true
+            input "fallFrom", "text", title: "Fall from (MM-DD); outside summer, spring becomes fall on this day", defaultValue: d.summer.fallFrom, width: 4, submitOnChange: true
+            input "summerEnter", "decimal", title: "Enter summer when the 3-day mean is above (${u})", defaultValue: d.summer.enter, width: 4, submitOnChange: true
+            input "summerLeave", "decimal", title: "Leave summer when the 3-day mean is below (${u})", defaultValue: d.summer.leave, width: 4, submitOnChange: true
+        }
+        section("Winter credit period") {
+            input "creditFrom", "text", title: "On from (MM-DD)", defaultValue: d.credit.from, width: 4, submitOnChange: true
+            input "creditUntil", "text", title: "On until (MM-DD), included", defaultValue: d.credit.until, width: 4, submitOnChange: true
+        }
+        section("Logging") {
+            input "txtEnable", "bool", title: "Enable info logging", defaultValue: true
+            input "debugEnable", "bool", title: "Enable debug logging (turns off after 30 minutes)", defaultValue: false, submitOnChange: true
+        }
+        if (debugEnable) {
+            section("Testing") {
+                input "testDate", "text", title: "Test day (yyyy-MM-dd, blank = today)", required: false, width: 4
+                input "testMean", "text", title: "Test 3-day mean (${u}; blank or none = from the sensor)", required: false, width: 4
+                input "btnEvaluate", "button", title: "Evaluate now"
+            }
+        }
         section { label title: "App name", required: false }
     }
 }
 
-void installed() { initialize() }
-void updated() { unsubscribe(); unschedule(); initialize() }
-void initialize() { }
+String statusHtml(Map cfg) {
+    List<String> rows = []
+    rows << "<b>${esc(SEASON_OPTS[state.season])}</b> since ${esc(state.since)}".toString()
+    if (state.holdUntil) rows << "Automatic changes suspended until ${esc(fmtTime(state.holdUntil as Long))}".toString()
+    Map ev = state.lastEval as Map
+    if (ev) rows << "Last evaluation ${esc(ev.day)}: 3-day mean ${ev.mean != null ? esc(ev.mean) + ' ' + unit() : 'not available'}".toString()
+    recentMeans((state.samples ?: [:]) as Map, realToday()).each { Map m ->
+        rows << "${esc(m.day)}: ${m.mean != null ? esc(m.mean) + ' ' + unit() : 'no mean'} (${m.n} readings)".toString()
+    }
+    if (!validateCfg(cfg)) rows << "Next possible change: ${esc(nextPossible(state.season as String, cfg, unit()))}".toString()
+    rows << "Winter credit period: ${state.credit ?: 'off'}".toString()
+    return rows.join('<br>')
+}
+
+// ── Lifecycle ─────────────────────────────────────────────────────────
+
+void installed() { checkVersion(false); initialize() }
+
+void updated() { checkVersion(false); unsubscribe(); unschedule(); initialize() }
+
+void uninstalled() {
+    if (getChildDevice(dni())) deleteChildDevice(dni())
+}
+
+void initialize() {
+    if (state.season == null && settings.initialSeason) {
+        state.season = settings.initialSeason as String
+        state.since = realToday()
+        logCfg "season set to ${state.season} on install"
+    }
+    seasonDevice()
+    schedule("0 7 * * * ?", "sampleHandler")
+    schedule("0 0 5 * * ?", "evaluateHandler")
+    schedule("0 1 0 * * ?", "creditHandler")
+    if (debugEnable) runIn(1800, "logsOff")
+    updateCredit(evalDay(), currentCfg())
+    publish()
+}
+
+void logsOff() { checkVersion(); app.updateSetting("debugEnable", false); logWarn "debug logging disabled" }
+
+void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "version ${CODE_VERSION} (was ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
+}
+
+// ── Configuration ─────────────────────────────────────────────────────
+
+BigDecimal numOr(Object v, Object dflt) {
+    BigDecimal n = numOrNull(v)
+    return n == null ? (dflt as BigDecimal) : n
+}
+
+Map currentCfg() {
+    Map d = defaultCfg(location.temperatureScale as String)
+    return [w2s:    [from: settings.w2sFrom ?: d.w2s.from, until: settings.w2sUntil ?: d.w2s.until, above: numOr(settings.w2sAbove, d.w2s.above)],
+            f2w:    [from: settings.f2wFrom ?: d.f2w.from, until: settings.f2wUntil ?: d.f2w.until, below: numOr(settings.f2wBelow, d.f2w.below)],
+            summer: [from: settings.summerFrom ?: d.summer.from, until: settings.summerUntil ?: d.summer.until,
+                     enter: numOr(settings.summerEnter, d.summer.enter), leave: numOr(settings.summerLeave, d.summer.leave),
+                     fallFrom: settings.fallFrom ?: d.summer.fallFrom],
+            credit: [from: settings.creditFrom ?: d.credit.from, until: settings.creditUntil ?: d.credit.until]]
+}
+
+String realToday() { return new Date().format('yyyy-MM-dd', location.timeZone) }
+
+String evalDay() { return (debugEnable && validIso(settings.testDate)) ? (settings.testDate as String) : realToday() }
+
+BigDecimal testMean() { return debugEnable ? numOrNull(settings.testMean) : null }
+
+// ── Device ────────────────────────────────────────────────────────────
+
+String dni() { "season-${app.id}" }
+
+String deviceLabel() { app.getLabel() == "Season Manager" ? "Season" : "${app.getLabel()} Season" }
+
+ChildDeviceWrapper seasonDevice() {
+    ChildDeviceWrapper d = getChildDevice(dni())
+    if (!d) {
+        d = addChildDevice("iamtrep", "Season Manager Season", dni(), [name: "Season", label: deviceLabel(), isComponent: true])
+        logCfg "created ${d.displayName}"
+    }
+    return d
+}
+
+void publish() {
+    seasonDevice().updateStatus([season: state.season, winterCredit: state.credit])
+}
+
+// ── Handlers ──────────────────────────────────────────────────────────
+
+void sampleHandler() {
+    checkVersion()
+    Object st = tempSensor?.currentState("temperature")
+    BigDecimal v = numOrNull(st?.value)
+    if (v == null || st?.date == null || now() - (st.date as Date).getTime() > STALE_MS) {
+        if (!state.staleWarned) {
+            logWarn "outdoor sensor has not reported for 24 hours; season changes wait for the date limits"
+            state.staleWarned = true
+        }
+        return
+    }
+    if (state.staleWarned) { logInfo "outdoor sensor reporting again"; state.remove('staleWarned') }
+    state.samples = addSample((state.samples ?: [:]) as Map, realToday(), v)
+    logSched "reading ${v}"
+}
+
+void evaluateHandler() { checkVersion(); evaluateSeason("daily") }
+
+void creditHandler() { checkVersion(); updateCredit(evalDay(), currentCfg()); publish() }
+
+void updateCredit(String day, Map cfg) {
+    Map c = cfg.credit as Map
+    if (validMd(c.from) && validMd(c.until)) state.credit = creditOn(day, c) ? 'on' : 'off'
+}
+
+void evaluateSeason(String why) {
+    Map cfg = currentCfg()
+    List<String> errs = validateCfg(cfg)
+    if (errs) { logWarn "season not evaluated, settings invalid: ${errs.join('; ')}"; return }
+    String day = evalDay()
+    BigDecimal mean = testMean()
+    if (mean == null) mean = mean3((state.samples ?: [:]) as Map, day)
+    state.lastEval = [day: day, mean: mean?.toPlainString(), why: why]
+    updateCredit(day, cfg)
+    if (state.season == null) { logWarn "no current season; open the app and pick one"; publish(); return }
+    if (state.holdUntil && now() >= (state.holdUntil as Long)) { state.remove('holdUntil'); logInfo "automatic season changes resumed" }
+    if (state.holdUntil) { logSched "automatic changes suspended until ${fmtTime(state.holdUntil as Long)}"; publish(); return }
+    if (mean == null) logWarn "no 3-day mean (outdoor sensor silent or too few readings); only the date limits apply"
+    Map r = nextSeason(state.season as String, day, mean, cfg)
+    if (r.reason) {
+        logInfo "season ${state.season} → ${r.season}: ${r.reason}"
+        state.season = r.season
+        state.since = day
+    } else {
+        logDebug "${why}: season stays ${state.season}, 3-day mean ${mean}"
+    }
+    publish()
+}
+
+// ── Commands ──────────────────────────────────────────────────────────
+
+Map seasonCommand(Map req) {
+    checkVersion()
+    if (req.command == 'setSeason') return setSeasonManual(req.season, req.holdDays)
+    if (req.command == 'resumeAuto') { resumeAuto(); return [ok: true] }
+    return [ok: false, error: "unknown command ${req.command}".toString()]
+}
+
+Map setSeasonManual(Object season, Object holdDays) {
+    Map p = parseSeasonArgs(season, holdDays)
+    if (!p.ok) { logWarn "setSeason: ${p.error}"; return p }
+    String was = state.season
+    int days = p.days as int
+    state.season = p.season
+    state.since = evalDay()
+    if (days > 0) state.holdUntil = now() + days * DAY_MS
+    else state.remove('holdUntil')
+    logCmd "season set to ${p.season} by hand (was ${was})${days > 0 ? ', automatic changes suspended for ' + days + ' days' : ''}"
+    publish()
+    return [ok: true]
+}
+
+void resumeAuto() {
+    state.remove('holdUntil')
+    logCmd "automatic season changes resumed"
+    publish()
+}
+
+void appButtonHandler(String btn) {
+    checkVersion()
+    if (btn == "btnEvaluate") evaluateSeason("button")
+    else if (btn == "btnSetSeason") setSeasonManual(settings.manualSeason, settings.manualHoldDays)
+    else if (btn == "btnResumeAuto") resumeAuto()
+}
+
 
 // ── Core (pure) ───────────────────────────────────────────────────────
 // Self-contained: arguments in, values out. No settings, state, devices or logs.
@@ -240,3 +480,20 @@ BigDecimal mean3(Map samples, String today, int minSamples = 12) {
 }
 
 // ── End core ──────────────────────────────────────────────────────────
+
+// ── Logging (app) ─────────────────────────────────────────────────────
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${app.getLabel()}: " }
+
+void logEvt  (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${app.getLabel()}: ${m}" }

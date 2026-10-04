@@ -1,0 +1,217 @@
+# Copyright (c) 2026 PJ
+# SPDX-License-Identifier: MIT
+# Season Manager: Mode 1 behavior spec. Each case resets the season with
+# setSeason(<season>, 0), sets the test day and test mean, and presses Evaluate.
+app:
+  source: apps/SeasonManager/SeasonManager.groovy
+  type_name: "Season Manager"
+  instance_label: test-season
+  config:
+    debugEnable: true
+    initialSeason: "winter"
+inputs:
+  - { name: test-season-outdoor, driver: Virtual Temperature Sensor, role: tempSensor }
+outputs:
+  - { name: test-season Season, child: true }
+maker_api:
+  label: test-season-maker
+cases:
+  - name: winter-stays-before-window
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
+      - settings: { testDate: "2026-03-01", testMean: "10" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: winter }
+
+  - name: winter-to-spring-when-warm
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
+      - settings: { testDate: "2026-03-20", testMean: "4" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: spring }
+
+  - name: winter-to-spring-forced-on-last-day
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
+      - settings: { testDate: "2026-04-08", testMean: "-5" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: spring }
+
+  - name: spring-to-summer
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-season Season, command: setSeason, args: ["spring", 0] }
+      - settings: { testDate: "2026-05-20", testMean: "18" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: summer }
+
+  - name: summer-relapse-to-spring
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-season Season, command: setSeason, args: ["summer", 0] }
+      - settings: { testDate: "2026-06-01", testMean: "10" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: spring }
+
+  - name: summer-leaves-to-fall-after-fall-from
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-season Season, command: setSeason, args: ["summer", 0] }
+      - settings: { testDate: "2026-08-20", testMean: "10" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: fall }
+
+  - name: summer-ends-on-until
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-season Season, command: setSeason, args: ["summer", 0] }
+      - settings: { testDate: "2026-09-14", testMean: "25" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: fall }
+
+  - name: spring-relabelled-fall
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-season Season, command: setSeason, args: ["spring", 0] }
+      - settings: { testDate: "2026-08-15", testMean: "15" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: fall }
+
+  - name: fall-to-winter-forced-on-last-day
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-season Season, command: setSeason, args: ["fall", 0] }
+      - settings: { testDate: "2026-11-11", testMean: "10" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: winter }
+
+  - name: hold-blocks-changes
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-season Season, command: setSeason, args: ["summer", 3] }
+      - settings: { testDate: "2026-01-15", testMean: "-10" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: summer }
+
+  - name: resume-then-one-step
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-season Season, command: setSeason, args: ["summer", 3] }
+      - { device: test-season Season, command: resumeAuto }
+      - settings: { testDate: "2026-01-15", testMean: "-10" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: fall }
+
+  - name: credit-on-from-december
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
+      - settings: { testDate: "2026-12-01", testMean: "-5" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: winterCredit, value: "on" }
+
+  - name: credit-off-from-april
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-season Season, command: setSeason, args: ["spring", 0] }
+      - settings: { testDate: "2026-04-01", testMean: "5" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: winterCredit, value: "off" }
+
+  - name: no-mean-uses-date-limits
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
+      - settings: { testDate: "2026-04-08", testMean: "none" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: spring }
+    assert_logs:
+      - { pattern: "no 3-day mean", level: warn }
+    allow_log_patterns:
+      - "no 3-day mean"
+
+  - name: unknown-season-refused
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
+    actions:
+      - { device: test-season Season, command: setSeason, args: ["monsoon", 0] }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: winter }
+    assert_logs:
+      - { pattern: "unknown season .{0,6}monsoon", level: warn }
+    allow_log_patterns:
+      - "unknown season"
+
+  - name: invalid-settings-skip-evaluation
+    setup:
+      - settings: { debugEnable: true, summerUntil: "08-01" }
+      - { device: test-season Season, command: setSeason, args: ["summer", 0] }
+      - settings: { testDate: "2026-06-01", testMean: "5" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: summer }
+    assert_logs:
+      - { pattern: "season not evaluated, settings invalid", level: warn }
+    allow_log_patterns:
+      - "settings invalid"
+
+  - name: restore-valid-settings
+    setup:
+      - settings: { debugEnable: true, summerUntil: "09-14" }
+      - { device: test-season Season, command: setSeason, args: ["summer", 0] }
+      - settings: { testDate: "2026-06-01", testMean: "5" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: spring }
+runtime_budget_seconds: 240
