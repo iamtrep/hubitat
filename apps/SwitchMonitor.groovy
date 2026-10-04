@@ -54,7 +54,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Switch Monitor"
-@Field static final String CODE_VERSION = "3.0.2"
+@Field static final String CODE_VERSION = "3.0.3"
 
 @Field static final Integer DEFAULT_GRACE_MINUTES = 5
 @Field static final Integer DEFAULT_GRACE_SECONDS = 0
@@ -1022,7 +1022,7 @@ private boolean isOutageActive() {
 
 private void removeSettingsForGroup(int groupNum) {
     String prefix = "group${groupNum}."
-    List<String> toRemove = settings.keySet().findAll { ((String) it).startsWith(prefix) }
+    List<String> toRemove = settings.keySet().findAll { ((String) it).startsWith(prefix) }.toList()
     logDebug "Removing ${toRemove.size()} settings for group ${groupNum}"
     toRemove.each { app.removeSetting(it) }
 }
