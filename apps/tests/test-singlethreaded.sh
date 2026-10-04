@@ -2,6 +2,7 @@
 # Copyright (c) 2025-2026 PJ
 # SPDX-License-Identifier: MIT
 # TEST-LIVE: needs a reachable hub
+# TEST-EXCLUDE: a measurement run (about 10 min, 2 h for the full matrix); run it directly
 
 #
 # test-singlethreaded — which entry points singleThreaded: true serializes
