@@ -159,7 +159,7 @@ void initialize() {
     if (seasonDevice) subscribe(seasonDevice, "season", "inputHandler")
     subscribe(location, "mode", "inputHandler")
     subscribe(location, "systemStart", "systemStartHandler")
-    evaluate("settings saved")
+    evaluateAir("settings saved")
 }
 
 // Dwell timers start over from the current value; engaged and held stages keep their state.
@@ -179,7 +179,7 @@ void pruneClaims() {
 void systemStartHandler(evt) {
     checkVersion()
     restartTimers((currentCfg().stages as List).size())
-    evaluate("hub restart")
+    evaluateAir("hub restart")
 }
 
 void logsOff() { checkVersion(); app.updateSetting("debugEnable", false); logWarn "debug logging disabled" }
@@ -256,21 +256,21 @@ boolean safetyAlarm() {
 void inputHandler(evt) {
     checkVersion()
     logEvt "${evt.displayName} ${evt.name} ${evt.value}"
-    evaluate(evt.name as String)
+    evaluateAir(evt.name as String)
 }
 
 void wakeHandler() {
     checkVersion()
-    evaluate("timer")
+    evaluateAir("timer")
 }
 
 // ── Evaluation ────────────────────────────────────────────────────────
 
-void evaluate(String why) {
+void evaluateAir(String why) {
     Map cfg = currentCfg()
     if (validateCfg(cfg)) return
     long t = now()
-    logDebug "evaluate (${why})"
+    logDebug "evaluateAir (${why})"
     BigDecimal co2 = combineReadings(readings(co2Sensors, "carbonDioxide"), (co2Mode ?: "highest") as String, t, STALE_MS)
     BigDecimal rh = rhSensors ? combineReadings(readings(rhSensors, "humidity"), "lowest", t, STALE_MS) : null
     String reason = stopReason(safetyAlarm(), state.enabled == true,
@@ -387,7 +387,7 @@ void stageSwitchHandler(evt) {
         st[i] = [s: "held", since: null, heldUntil: now() + mins * (testFast ? 1000L : 60000L)]
         state.stages = st
         logInfo "${evt.displayName} turned off by hand: stage ${i + 1} stays off for ${mins} minutes"
-        evaluate("manual off")
+        evaluateAir("manual off")
     } else if (act == "reassert") {
         re[id] = now()
         state.reasserted = re
@@ -419,7 +419,7 @@ Map airCommand(Map req) {
     if (c != "on" && c != "off") return [ok: false, error: "unknown command ${c}"]
     state.enabled = c == "on"
     airDevice().updateStatus(["switch": c])
-    evaluate("Air device ${c}")
+    evaluateAir("Air device ${c}")
     return [ok: true]
 }
 
