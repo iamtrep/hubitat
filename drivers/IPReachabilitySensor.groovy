@@ -55,7 +55,7 @@ import hubitat.helper.NetworkUtils
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 @Field static final int RESPONSE_HISTORY_SIZE = 21
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int INITIAL_PING_DELAY = 2
@@ -161,8 +161,9 @@ void ping() {
 
         updateDeviceStatus((deviceIP ? pingRT >= 0 : true) && (httpURL ? httpRT >= 0 : true))
         updateLastResponseTime(pingRT, httpRT)
+        clearCheckError("check")
     } catch (Exception e) {
-        logError "Error during ping: ${e}"
+        noteCheckError("check", "Error during check: ${e}")
     } finally {
         scheduleNextPing()
     }
@@ -171,6 +172,7 @@ void ping() {
 long sendPingRequest() {
     try {
         NetworkUtils.PingData pingData = state.supportsPingTimeout ? NetworkUtils.ping(deviceIP,1,1) : NetworkUtils.ping(deviceIP, 1)
+        clearCheckError("ping")
         boolean success = pingData.packetLoss != 100
         logNet "Ping $deviceIP result: ${success ? 'Success' : 'Failed'} rttAvg: ${pingData.rttAvg} ms"
         if (success) {
@@ -180,9 +182,27 @@ long sendPingRequest() {
         }
         return -1
     } catch (Exception e) {
-        logError "Error during ping: ${e}"
+        noteCheckError("ping", "Error during ping: ${e}")
         return -1
     }
+}
+
+// An exception that recurs on every check logs at error once per distinct message,
+// then at debug; clearCheckError() logs when it stops.
+private void noteCheckError(String key, String msg) {
+    Map errs = (state.checkErrors ?: [:]) as Map
+    if (errs[key] != msg) logError msg
+    else logDebug msg
+    errs[key] = msg
+    state.checkErrors = errs
+}
+
+private void clearCheckError(String key) {
+    Map errs = (state.checkErrors ?: [:]) as Map
+    if (!errs.containsKey(key)) return
+    logInfo "${key} no longer failing (was: ${errs[key]})"
+    errs.remove(key)
+    state.checkErrors = errs
 }
 
 long sendHttpRequest() {
