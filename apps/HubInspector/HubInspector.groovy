@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "6.0.0"
+@Field static final String CODE_VERSION = "6.1.0"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -32,6 +32,8 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final String STATE_COMPRESSION_PATH = "/hub/advanced/stateCompressionStatus"
 @Field static final String FREE_MEMORY_PATH = "/hub/advanced/freeOSMemoryLast"
 @Field static final String RUNTIME_STATS_PATH = "/logs/json"
+@Field static final String CLOUD_CALLS_PATH = "/logs/cloudCalls/json"   // 2.5.2.129+, 404 before
+@Field static final String CLOUD_CALLS_MIN_FW = "2.5.2.129"
 @Field static final String DATABASE_SIZE_PATH = "/hub/advanced/databaseSize"
 @Field static final String INTERNAL_TEMP_PATH = "/hub/advanced/internalTempCelsius"
 @Field static final String ZIGBEE_CHILD_ROUTE_PATH = "/hub/zigbee/getChildAndRouteInfo"
@@ -182,6 +184,7 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final long       TEMPERATURE_CACHE_TTL_MS   = 60_000L
 @Field static final long       DATABASE_SIZE_CACHE_TTL_MS = 60_000L
 @Field static final long       CPU_INFO_CACHE_TTL_MS      = 60_000L
+@Field static final long       CLOUD_CALLS_CACHE_TTL_MS   = 60_000L
 @Field static final long       LOAD_THRESHOLD_CACHE_TTL_MS = 300_000L
 // Optional integration-overrides file: re-read at most this often so an uploaded/edited file is
 // picked up without a full Done. updated()/apiClearCache() reset it for an immediate reload.
@@ -272,9 +275,10 @@ private void cachePut(String key, Object data) {
 //   index file: small list of slim records (one per checkpoint) + detailFile pointer
 //   detail files: one per checkpoint, named with timestampMs, holds full content
 @Field static final String CHECKPOINT_INDEX_FILE = "hub_diagnostics_checkpoints_index.json"
-// Hourly rollups: [hourStartMs, tempMinC, tempAvgC, tempMaxC, tempSamples, databaseMB], newest last,
-// 30 days kept. Temperature fields are null for an hour with no samples; databaseMB is read once
-// per rollup and set on the last completed hour only.
+// Hourly rollups: [hourStartMs, tempMinC, tempAvgC, tempMaxC, tempSamples, databaseMB, cloudCalls],
+// newest last, 30 days kept. Temperature fields are null for an hour with no samples; databaseMB is
+// read once per rollup and set on the last completed hour only. cloudCalls is {appId: count} from
+// the hub's since-boot buckets, null for an hour that ended before boot, absent on older rows.
 @Field static final String HOURLY_FILE = "hub_diagnostics_hourly.json"
 @Field static final int    HOURLY_KEEP = 720
 @Field static final int    TEMP_SAMPLE_CAP  = 8640   // 30 days of 5-minute samples
@@ -1453,7 +1457,9 @@ Map getPerformanceData(Map shared = [:]) {
         checkpointCount: indexEntries.size(),
         maxCheckpoints: (settings.maxCheckpoints ?: 10) as int,
         checkpoints: indexEntries,
-        savedComparison: loadPerformanceComparisonPayload()
+        savedComparison: loadPerformanceComparisonPayload(),
+        cloudCalls: fetchCloudCalls(),
+        cloudHourly: loadHourly().findAll { List r -> r.size() > 6 }.collect { List r -> [r[0], r[6]] }
     ]
 }
 
@@ -1511,6 +1517,12 @@ Map getAlertSignals(Map shared = [:]) {
     Map zwSignals = zwRaw ? computeZwaveSignals(zwRaw) : ((state.cachedZwaveSignals as Map) ?: [:])
     if (zwRaw) state.cachedZwaveSignals = zwSignals
 
+    // Cloud calls to apps that no longer exist, with their hourly buckets; the SPA decides recency.
+    Map cc = fetchCloudCalls()
+    List deletedCloud = (cc?.apps ?: []).findAll { Map a -> a.installed == false }.collect { Map a ->
+        a + [hours: (cc.hours ?: []).findAll { Map b -> b.appId == a.id }]
+    }
+
     return [
         platformAlerts:       platformAlerts,
         spammyDevicesMessage: hubAlerts?.spammyDevicesMessage,
@@ -1520,7 +1532,8 @@ Map getAlertSignals(Map shared = [:]) {
         zwaveGhostCount:      (zwSignals.ghostCount   ?: 0) as int,
         zwaveFailedCount:     (zwSignals.failedCount  ?: 0) as int,
         zwaveProblemCount:    (zwSignals.problemCount ?: 0) as int,
-        zwaveRadioUpdate:     (zwSignals.radioUpdate == true)
+        zwaveRadioUpdate:     (zwSignals.radioUpdate == true),
+        deletedAppCloudCalls: deletedCloud
     ]
 }
 
@@ -1877,9 +1890,37 @@ private void rollupHours(List samples, long nowMs) {
 void onHourlyDbSize(resp, data) {
     List rows = (List) data.rows
     try { rows[-1][5] = asyncText(resp, "database size")?.toInteger() } catch (Exception e) { }
+    addCloudCalls(rows)
     List all = new ArrayList(loadHourly()) + rows
     if (all.size() > HOURLY_KEEP) all = all.subList(all.size() - HOURLY_KEEP, all.size())
     writeFile(HOURLY_FILE, groovy.json.JsonOutput.toJson(all))
+}
+
+// The hub's cloud-call buckets reset at boot, so each completed hour's counts are copied into
+// its rollup row. Uncached: a cached read can predate the hour's last calls.
+private void addCloudCalls(List rows) {
+    Map cc = fetchCloudCalls(0L)
+    if (cc == null) return
+    long boot = (cc.startedAt ?: 0L) as long
+    rows.each { List r ->
+        long h = r[0] as long
+        if (h + 3_600_000L <= boot) { r << null; return }
+        Map counts = [:]
+        (cc.hours ?: []).each { Map b ->
+            long bs = b.hourStart as long
+            if (bs >= h && bs < h + 3_600_000L) counts[b.appId as String] = ((counts[b.appId as String] ?: 0) as int) + (b.count as int)
+        }
+        r << counts
+    }
+}
+
+// /logs/cloudCalls/json: inbound cloud-relay requests per app, hourly since boot. null before 2.5.2.129.
+Map fetchCloudCalls(long ttlMs = CLOUD_CALLS_CACHE_TTL_MS) {
+    if (!isVersionAtLeast(getHubFirmwareVersion(), CLOUD_CALLS_MIN_FW)) return null
+    return (Map) cachedFetch('cloudCalls', ttlMs) {
+        Map w = hubMapRequest(CLOUD_CALLS_PATH, "cloud calls", 10)
+        return (w.ok && w.data) ? w.data : null
+    }
 }
 
 // Hub resource CSV stamps are "MM-dd HH:mm:ss" in hub local time with no year. Parses the

@@ -74,6 +74,10 @@ tr:nth-child(even){background:var(--alt)} tr:hover{background:var(--hover)}
 .btn-p{background:var(--primary);color:#fff} .btn-p:hover{background:#1565a7} .btn-p:disabled{background:#90caf9;cursor:not-allowed}
 .btn-d{background:#ffebee;color:var(--crit)} .btn-d:hover{background:#ffcdd2}
 .btn-s{padding:4px 10px;font-size:12px}
+.share{margin:4px 0 16px} .share-h{display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px} .share-h span{color:var(--muted)}
+.share-bar{display:flex;gap:2px;height:14px;border-radius:7px;overflow:hidden;background:var(--alt)} .share-bar div{min-width:3px}
+.share-lg{display:flex;flex-wrap:wrap;gap:3px 14px;margin-top:6px;font-size:12px} .share-lg i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px} .share-lg em{font-style:normal;color:var(--muted)}
+.share-tip{position:fixed;display:none;pointer-events:none;background:#fff;border:1px solid var(--border);border-radius:4px;box-shadow:0 2px 6px rgba(0,0,0,.15);padding:4px 8px;font-size:12px;z-index:50}
 .actions{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
 .cfg-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:4px 0}
 .cfg-row label{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
@@ -148,7 +152,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "6.0.0";
+const CODE_VERSION = "6.1.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -1186,6 +1190,12 @@ function composeAlerts(d){
   if(failed>0) out.push({severity:'warning',name:`${failed} Z-Wave failed node${failed>1?'s':''} — try a battery swap or move closer to the hub`});
   if(problem>0) out.push({severity:'warning',name:`${problem} Z-Wave problem node${problem>1?'s':''} — degraded route or packet errors`});
   if(sig.zwaveRadioUpdate) out.push({severity:'warning',name:'Z-Wave radio firmware update available'});
+  // Cloud calls to an app that no longer exists: some client still uses its cloud URL.
+  const prevHr=Math.floor(Date.now()/3600000)*3600000-3600000;
+  (sig.deletedAppCloudCalls||[]).forEach(a=>{
+    const n=(a.hours||[]).filter(b=>b.hourStart>=prevHr).reduce((t,b)=>t+b.count,0);
+    if(n>0)out.push({key:'deletedAppCloudCalls',severity:'warning',name:`Deleted app ${a.id} received ${n} cloud call${n>1?'s':''} this hour and last — something still uses its cloud URL`});
+  });
   // Hub firmware update (present on both dashboard and health payloads). The Dashboard's
   // dedicated "Hub Firmware" card carries the release-notes link; this is the rollup entry.
   if(fwUpdate) out.push(Object.assign({key:'hubFirmware',href:'/hub/platformUpdate'},fu.beta?{severity:'info',name:`Hub firmware beta available: v${fwVer||'?'}`}:{severity:'warning',name:`Hub firmware update available: v${fwVer||'?'}`}));
@@ -1695,6 +1705,114 @@ function renderBarChart(data,containerId,opts={}){
   html+='</div>';
   document.getElementById(containerId).innerHTML=html;
 }
+
+// ===== CLOUD CALLS =====
+// Hourly {ms, apps:{appId:count}|null} from the hub's since-boot buckets (/logs/cloudCalls/json),
+// extended back past the last reboot with the hourly rollup file. null = hour not recorded.
+function cloudCallsByHour(d){
+  const HR=3600000,m=new Map(),cc=d.cloudCalls;
+  (d.cloudHourly||[]).forEach(r=>m.set(r[0],r[1]));
+  if(cc){
+    const live=new Map();
+    (cc.hours||[]).forEach(b=>{const k=Math.floor(b.hourStart/HR)*HR,a=live.get(k)||{};a[b.appId]=(a[b.appId]||0)+b.count;live.set(k,a)});
+    for(let k=Math.floor(cc.startedAt/HR)*HR;k<=cc.generatedAt;k+=HR)m.set(k,live.get(k)||{});
+  }
+  const keys=[...m.keys()].sort((a,b)=>a-b);if(!keys.length)return[];
+  const out=[];for(let k=keys[0];k<=keys[keys.length-1];k+=HR)out.push({ms:k,apps:m.has(k)?m.get(k):null});
+  return out.slice(-720);
+}
+// Stacked hourly chart, one color per app. Colors follow the app (ranked by calls over all
+// recorded hours), so switching the range never repaints a series; past 8 apps fold into Other.
+const CC_COLORS=['#2a78d6','#eb6834','#1baf7a','#eda100','#e87ba4','#008300','#4a3aa7','#e34948'],CC_OTHER='#9e9e9e';
+const CC_RANGES=[[24,'24 Hours'],[168,'7 Days'],[720,'30 Days']];
+let CC=null;
+function cloudCallsCard(d,pts){
+  const cc=d.cloudCalls,tot={},names={},gone={};
+  (d.stats?.appStats||[]).forEach(a=>{names[a.id]=a.name});
+  (cc?.apps||[]).forEach(a=>{names[a.id]=a.name;if(a.installed===false)gone[a.id]=true});
+  pts.forEach(p=>Object.entries(p.apps||{}).forEach(([id,n])=>{tot[id]=(tot[id]||0)+n}));
+  const apps=Object.keys(tot).sort((x,y)=>tot[y]-tot[x]).map((id,i)=>({id:+id,name:names[id]||'App '+id,gone:!!gone[id],color:i<8?CC_COLORS[i]:CC_OTHER,other:i>=8}));
+  CC={pts,apps,live:!!cc,range:CC?.range||24};
+  const ranges=CC_RANGES.filter(([n],i)=>i===0||pts.length>CC_RANGES[i-1][0]);
+  let o='<div class="card"><div class="card-h">Cloud Calls'+hp('/logs?tab=cloudCalls')+'</div><div class="card-b">';
+  o+='<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px"><div class="metrics" id="ccMetrics" style="flex:1"></div>';
+  o+='<div style="display:flex;gap:4px">'+ranges.map(([n,l])=>'<button class="btn btn-s cc-rng" data-n="'+n+'">'+l+'</button>').join('')+'</div></div>';
+  o+='<div id="ccChart" style="position:relative;margin-top:8px"></div><div id="ccLegend" style="display:flex;flex-wrap:wrap;gap:4px 14px;margin:6px 0 10px;font-size:12px;color:var(--muted)"></div>';
+  if(cc)o+='<div style="font-size:11px;color:var(--muted);margin-bottom:8px">The hub has counted since '+h(new Date(cc.startedAt).toLocaleString())+'; earlier hours come from the app\'s hourly record.</div>';
+  return o+'<div id="cloudCallsTbl"></div></div></div>';
+}
+function cloudCallsTable(){
+  document.querySelectorAll('.cc-rng').forEach(b=>b.onclick=()=>{CC.range=+b.dataset.n;cloudCallsTable()});
+  document.querySelectorAll('.cc-rng').forEach(b=>{b.className='btn btn-s cc-rng '+(+b.dataset.n===CC.range?'btn-p':'')});
+  const {pts,apps,live}=CC,view=pts.slice(-CC.range),last=pts.length-1,sum=a=>a?Object.values(a).reduce((t,v)=>t+v,0):0;
+  const rl=CC_RANGES.find(r=>r[0]===CC.range)[1],row={};
+  apps.forEach(a=>{row[a.id]={...a,hour:0,range:0,all:0}});
+  pts.forEach((p,i)=>Object.entries(p.apps||{}).forEach(([id,n])=>{const r=row[id];if(i===last&&live)r.hour+=n;if(i>last-CC.range)r.range+=n;r.all+=n}));
+  const rows=Object.values(row),inRange=rows.filter(r=>r.range>0);
+  document.getElementById('ccMetrics').innerHTML=(live?mc('This Hour',sum(pts[last].apps)):'')+mc('Last '+rl,view.reduce((t,p)=>t+sum(p.apps),0))+mc('Apps With Calls',inRange.length);
+  cloudChart(view,live);
+  document.getElementById('ccLegend').innerHTML=apps.filter(a=>!a.other&&row[a.id].range>0).map(a=>'<span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:'+a.color+';vertical-align:-1px;margin-right:5px"></span>'+h(Obf.nm(a.name))+'</span>').join('')
+    +(apps.some(a=>a.other&&row[a.id].range>0)?'<span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:'+CC_OTHER+';vertical-align:-1px;margin-right:5px"></span>Other</span>':'');
+  tbl('cloudCallsTbl',[
+    {l:'App',f:'name',r:r=>'<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:'+r.color+';margin-right:6px"></span>'+(r.gone?h(r.name)+' <span class="badge b-warn">Deleted</span>':alink(r.id,r.name))},
+    {l:'This Hour',f:'hour',t:'n'},{l:'Last '+rl,f:'range',t:'n'},{l:'Recorded',f:'all',t:'n'}
+  ],rows,{sc:2,sd:'desc',collapse:1,collapseLabel:'Calls by App'});
+}
+function cloudChart(view,live){
+  const el=document.getElementById('ccChart');if(!el)return;
+  const n=view.length,W=el.clientWidth||800,H=230,ml=40,mr=6,mt=18,mb=24,ch=H-mt-mb,bw=(W-ml-mr)/n,gap=n<=48?3:n<=200?1:0;
+  const segs=p=>{if(!p.apps)return null;const out=[];let oth=0;
+    CC.apps.forEach(a=>{const v=p.apps[a.id]||0;if(!v)return;if(a.other)oth+=v;else out.push({a,v})});
+    if(oth)out.push({a:{name:'Other',color:CC_OTHER},v:oth});return out};
+  const S=view.map(segs),tots=S.map(s=>s?s.reduce((t,x)=>t+x.v,0):0);
+  const raw=Math.max(4,...tots),mag=Math.pow(10,Math.floor(Math.log10(raw/4))),step=[1,2,5,10].map(m=>m*mag).find(st=>raw/st<=5),max=Math.ceil(raw/step)*step;
+  const y=v=>mt+ch-v/max*ch,fmt=ms=>new Date(ms).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),day=ms=>new Date(ms).toLocaleDateString([],{month:'short',day:'numeric'});
+  let g='<defs><pattern id="ccHatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="5" fill="#ccc"/></pattern></defs>';
+  for(let v=0;v<=max;v+=step)g+='<line x1="'+ml+'" x2="'+(W-mr)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="'+(v?'#eee':'#bbb')+'"/><text x="'+(ml-6)+'" y="'+(y(v)+3)+'" font-size="10" fill="#777" text-anchor="end">'+v+'</text>';
+  g+='<text x="'+(ml-6)+'" y="10" font-size="10" fill="#777" text-anchor="end">calls</text>';
+  view.forEach((p,i)=>{
+    const x=ml+i*bw+gap/2,w=Math.max(bw-gap,.5),hr=new Date(p.ms).getHours();
+    if(live&&i===n-1)g+='<rect x="'+(ml+i*bw)+'" y="'+mt+'" width="'+bw+'" height="'+ch+'" fill="#e3f2fd"/>';
+    if(!S[i]){g+='<rect x="'+x+'" y="'+mt+'" width="'+w+'" height="'+ch+'" fill="url(#ccHatch)"/>';}
+    else{let base=0;S[i].forEach((sg,k)=>{const top=y(base+sg.v),hh=y(base)-top-(k<S[i].length-1&&gap?1:0);
+      g+='<rect x="'+x+'" y="'+top+'" width="'+w+'" height="'+Math.max(hh,.5)+'" fill="'+sg.a.color+'"'+(k===S[i].length-1&&gap?' rx="1.5"':'')+'/>';base+=sg.v});
+      if(n<=48&&tots[i])g+='<text x="'+(x+w/2)+'" y="'+(y(tots[i])-3)+'" font-size="9" fill="#555" text-anchor="middle">'+tots[i]+'</text>'}
+    const lab=hr===0?day(p.ms):(n<=24&&hr%3===0)||(n<=48&&hr%6===0)?fmt(p.ms):null;
+    if(lab&&(n<=48||hr===0)&&(n<=200||new Date(p.ms).getDate()%3===1))g+='<line x1="'+(ml+i*bw)+'" x2="'+(ml+i*bw)+'" y1="'+(mt+ch)+'" y2="'+(mt+ch+4)+'" stroke="#bbb"/><text x="'+(ml+i*bw)+'" y="'+(H-6)+'" font-size="10" fill="#777" text-anchor="middle"'+(hr===0?' font-weight="600"':'')+'>'+lab+'</text>';
+  });
+  g+='<rect id="ccBand" y="'+mt+'" width="'+bw+'" height="'+ch+'" fill="rgba(0,0,0,.07)" visibility="hidden" pointer-events="none"/><rect id="ccHit" x="'+ml+'" y="'+mt+'" width="'+(W-ml-mr)+'" height="'+ch+'" fill="transparent"/>';
+  el.innerHTML='<svg width="'+W+'" height="'+H+'" style="display:block;font-family:inherit">'+g+'</svg><div id="ccTip" style="position:absolute;display:none;pointer-events:none;background:#fff;border:1px solid var(--border);border-radius:4px;box-shadow:0 2px 6px rgba(0,0,0,.15);padding:6px 8px;font-size:12px;white-space:nowrap;z-index:5"></div>';
+  const hit=document.getElementById('ccHit'),band=document.getElementById('ccBand'),tip=document.getElementById('ccTip');
+  hit.onmousemove=e=>{
+    const r=el.getBoundingClientRect(),i=Math.min(n-1,Math.max(0,Math.floor((e.clientX-r.left-ml)/bw))),p=view[i];
+    band.setAttribute('x',ml+i*bw);band.setAttribute('visibility','visible');
+    let t='<b>'+h(day(p.ms)+', '+fmt(p.ms)+'–'+fmt(p.ms+3600000))+'</b>'+(live&&i===n-1?' <span style="color:var(--muted)">(in progress)</span>':'');
+    if(!S[i])t+='<div style="color:var(--muted)">Not recorded</div>';
+    else{t+=S[i].slice().reverse().map(sg=>'<div><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:'+sg.a.color+';margin-right:6px"></span>'+h(Obf.nm(sg.a.name))+': <b>'+sg.v+'</b></div>').join('')+'<div style="border-top:1px solid var(--border);margin-top:3px;padding-top:3px">Total: <b>'+tots[i]+'</b></div>'}
+    tip.innerHTML=t;tip.style.display='block';
+    const x=e.clientX-r.left,tw=tip.offsetWidth;tip.style.left=(x+14+tw>W?x-14-tw:x+14)+'px';tip.style.top=(mt+4)+'px'};
+  hit.onmouseleave=()=>{band.setAttribute('visibility','hidden');tip.style.display='none'};
+}
+window.addEventListener('resize',()=>{if(CC&&document.getElementById('ccChart'))cloudChart(CC.pts.slice(-CC.range),CC.live)});
+
+// ===== SHARE BARS =====
+// One stacked bar per measure, top 5 + Other: what share of the total each contributor takes.
+function shareBar(title,items,fmt){
+  items=items.filter(i=>i.value>0).sort((a,b)=>b.value-a.value);
+  const total=items.reduce((t,i)=>t+i.value,0);if(!total)return'';
+  const top=items.filter(i=>!/^Other \(/.test(i.label)).slice(0,5),rest=total-top.reduce((t,i)=>t+i.value,0);
+  const seg=top.map((it,k)=>({...it,c:CC_COLORS[k]}));if(rest>0)seg.push({label:'Other',value:rest,c:CC_OTHER});
+  const tip=it=>h(it.label+': '+fmt(it.value)+' ('+(it.value/total*100).toFixed(1)+'%)');
+  return'<div class="share"><div class="share-h"><b>'+h(title)+'</b><span>'+h(fmt(total))+'</span></div><div class="share-bar">'
+    +seg.map(it=>'<div data-tip="'+tip(it)+'" style="flex:'+it.value+' 1 0;background:'+it.c+'"></div>').join('')+'</div><div class="share-lg">'
+    +seg.map(it=>'<span data-tip="'+tip(it)+'"><i style="background:'+it.c+'"></i>'+h(it.label)+' <em>'+(it.value/total<.01?'&lt;1':Math.round(it.value/total*100))+'%</em></span>').join('')+'</div></div>';
+}
+document.addEventListener('mousemove',e=>{
+  const t=e.target.closest&&e.target.closest('[data-tip]');let tip=document.getElementById('shareTip');
+  if(!t){if(tip)tip.style.display='none';return}
+  if(!tip){tip=document.createElement('div');tip.id='shareTip';tip.className='share-tip';document.body.appendChild(tip)}
+  tip.textContent=t.dataset.tip;tip.style.display='block';
+  tip.style.left=Math.min(e.clientX+12,innerWidth-tip.offsetWidth-8)+'px';tip.style.top=(e.clientY+16)+'px'});
 
 // ===== SORTABLE TABLE ENGINE =====
 function tbl(cid,cols,rows,opts={}){
@@ -2969,6 +3087,19 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
     if(s.appPct)o+=mc('Apps % Busy',s.appPct);
     o+='</div></div></div>'}
   
+  // Load breakdown: share of app CPU, device CPU, radio messages and cloud calls.
+  {
+    const num=u=>v=>Math.round(v).toLocaleString()+' '+u,rsb=s?.radioStats||{};
+    let b='';
+    if(s?.appStats)b+=shareBar('App CPU, by app type',aggregateByType(s.appStats,d.appParentTypeById||{},'id','total'),v=>fmsDuration(v));
+    if(s?.deviceStats)b+=shareBar('Device CPU, by device type',aggregateByType(s.deviceStats,d.deviceTypeById||{},'id','total'),v=>fmsDuration(v));
+    b+=shareBar('Radio messages, by device',[...(rsb.zigbee||[]),...(rsb.zwave||[])].map(r=>({label:Obf.nm(r.name),value:r.msgCount||0})),num('messages'));
+    // The 2.5.2.129 endpoint adds calls to deleted apps; older firmware has only the runtime-stats counts.
+    const cloudItems=d.cloudCalls?(d.cloudCalls.apps||[]).map(a=>({label:Obf.nm(a.name),value:a.total||0})):(s?.appStats||[]).map(a=>({label:Obf.nm(a.name),value:a.cloudCallCount||0}));
+    b+=shareBar('Cloud calls, by app'+(activePerfComp&&d.cloudCalls?' (since startup)':''),cloudItems,num('calls'));
+    if(b)o+='<div class="card"><div class="card-h">Load Breakdown'+(activePerfComp?' (Interval)':'')+'</div><div class="card-b">'+b+'</div></div>';
+  }
+
   // Live resources are on Dashboard and Health; this card only shows a comparison's deltas.
   if(res&&activePerfComp){
     o+='<div class="card"><div class="card-h">Resources (Delta)</div><div class="card-b"><div class="metrics">';
@@ -3027,7 +3158,10 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
     if(hasZw)o+='<div id="perfZwMsgTbl"></div>';
     if(hasZb)o+='<div id="perfZbMsgTbl" style="margin-top:8px"></div>';
     o+='</div></div>'}
+  const cloud=cloudCallsByHour(d);
+  if(cloud.length)o+=cloudCallsCard(d,cloud);
   document.getElementById(P).innerHTML=o;
+  if(cloud.length)cloudCallsTable();
   
   // Render checkpoint table
   if(d.checkpoints&&d.checkpoints.length){

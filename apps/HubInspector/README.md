@@ -386,6 +386,8 @@ When no comparison is active, these cards show current values:
 
 **Resources (Delta)** — Shown only while a comparison is active: the change in free OS memory, CPU load, temperature and database size over the compared interval. Live readings are on the Dashboard and Health tabs.
 
+**Load Breakdown** — One stacked bar each for app CPU by app type, device CPU by device type, radio messages by device (Zigbee and Z-Wave together) and cloud calls by app. Each shows the top 5 contributors and Other, with each one's share of the total; hover a segment for its value. Before firmware 2.5.2.129 the cloud-call bar uses the runtime stats' per-app counts, which leave out calls to deleted apps. In a comparison the bars cover the interval, except cloud calls on 2.5.2.129+, which count since startup.
+
 **Top Talkers** — The 3 most message-active Z-Wave and Zigbee devices by total message count since last restart.
 
 **App Runtime Detail** — Sortable table of every app with: total execution time (ms), % busy, execution count, average time per call, state size, source badge (Platform/Community/Built-in).
@@ -393,6 +395,8 @@ When no comparison is active, these cards show current values:
 **Device Runtime Detail** — Same structure for device drivers.
 
 **Radio Message Counts** — Per-device message counts and msgs/min for Z-Wave and Zigbee. Devices exceeding the chatty device threshold are highlighted with a critical alert banner; devices in the warn band (60% of threshold) show a warning banner.
+
+**Cloud Calls** (firmware 2.5.2.129+, `/logs/cloudCalls/json`) — Inbound cloud-relay requests per hour, with this hour's count, the last 24 hours, and a per-app table. Calls to an app ID that no longer exists are listed as **Deleted** and raise a warning alert while they continue: a device, app or service still uses that app's cloud URL. The hub's counts reset at reboot, so each completed hour's per-app counts are also kept for 30 days in `hub_diagnostics_hourly.json`; hours the app could not record (hub down, or the hour ended before a reboot was rolled up) show hatched.
 
 ### Performance Checkpoints
 
@@ -567,7 +571,7 @@ The forum export generates a concise Markdown-formatted summary suitable for pas
 
 Severity levels: **Critical** (red), **Warning** (orange), **Info** (blue), **OK** (green).
 
-The **alert-aware favicon** and the Dashboard *Platform Alerts* / Health *Alerts* lists share one roll-up: System Resource Alerts, Platform Alerts, Hub Messages, Ethernet + WiFi, mDNS/Bonjour periodic restart, the Z-Wave ghost / failed / problem-node counts, Z-Wave radio-firmware-update, hub-firmware-update, and app-update status. The remaining entries below — Matter reboot, the per-mesh quality metrics (Avg PER / RSSI, S0 overhead, Zigbee LQI), and the device-inventory alerts (low battery, stale devices, chatty devices) — are surfaced on their own tabs and do **not** affect the favicon or the *Alerts* count. The Performance tab's chatty-device banner is a separate, browser-computed metric (per-device messages/min vs the chatty-device threshold) and is distinct from the hub's *Spammy Devices Detected* flag; only the hub flag feeds the roll-up.
+The **alert-aware favicon** and the Dashboard *Platform Alerts* / Health *Alerts* lists share one roll-up: System Resource Alerts, Platform Alerts, Hub Messages, Ethernet + WiFi, mDNS/Bonjour periodic restart, cloud calls to a deleted app, the Z-Wave ghost / failed / problem-node counts, Z-Wave radio-firmware-update, hub-firmware-update, and app-update status. The remaining entries below — Matter reboot, the per-mesh quality metrics (Avg PER / RSSI, S0 overhead, Zigbee LQI), and the device-inventory alerts (low battery, stale devices, chatty devices) — are surfaced on their own tabs and do **not** affect the favicon or the *Alerts* count. The Performance tab's chatty-device banner is a separate, browser-computed metric (per-device messages/min vs the chatty-device threshold) and is distinct from the hub's *Spammy Devices Detected* flag; only the hub flag feeds the roll-up.
 
 ### Hub Messages
 | Alert | Source | Severity |
@@ -616,6 +620,7 @@ The **alert-aware favicon** and the Dashboard *Platform Alerts* / Health *Alerts
 | Z-Wave radio firmware update available | Hub flag | Warning |
 | Matter reboot required | Hub flag | Warning |
 | mDNS/Bonjour periodic restart enabled | Hub setting | Warning |
+| Cloud calls to a deleted app | Calls this hour or last to an app ID that no longer exists (firmware 2.5.2.129+) | Warning |
 
 ### Z-Wave Mesh Alerts (hardcoded)
 
