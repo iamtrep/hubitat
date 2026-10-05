@@ -26,7 +26,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "2.1.0"
+@Field static final String CODE_VERSION = "2.1.1"
 @Field static final String VISIBLAIR_API = "https://api.visiblair.com/api/v1"
 @Field static final int HTTP_TIMEOUT = 15
 @Field static final String DNI_PREFIX = "visiblair-"
@@ -276,8 +276,8 @@ private void handlePollData(int status, data) {
 
 // --- API Health ---
 
-// Logs an outage once it reaches POLL_FAILURES_BEFORE_ALARM failed polls, then
-// reminds hourly at warn level; earlier and in-between failures log at debug only.
+// Warns on each failed poll until POLL_FAILURES_BEFORE_ALARM, logs the outage once
+// at error, then reminds hourly at warn; failures between reminders log at debug.
 private void pollFailed(String reason) {
     long t = now()
     int failures = ((state.pollFailures ?: 0) as int) + 1
@@ -285,7 +285,7 @@ private void pollFailed(String reason) {
     if (failures == 1) state.pollFailingSince = t
 
     if (failures < POLL_FAILURES_BEFORE_ALARM) {
-        logDebug "poll failed (${failures}/${POLL_FAILURES_BEFORE_ALARM}): ${reason}"
+        logWarn "poll failed (${failures}/${POLL_FAILURES_BEFORE_ALARM}): ${reason}"
     } else if (failures == POLL_FAILURES_BEFORE_ALARM) {
         logError "VisiblAir API unreachable since ${formatClock(state.pollFailingSince as long)}: ${reason}"
         state.lastOutageReminder = t
