@@ -3,7 +3,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.3.0"
+@Field static final String CODE_VERSION = "0.4.0"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
 // File Manager file with one line per input each swap or undo changed.
 @Field static final String AUDIT_FILE = "device_replacement_audit.txt"
@@ -27,15 +27,22 @@ preferences {
     page(name: "previewPage")
     page(name: "confirmSwapPage")
     page(name: "resultsPage")
+    page(name: "nativeSwapPage")
+    page(name: "nativeUndoPage")
+    page(name: "nativeCheckPage")
 }
 
 // ---- Page 1: Device Selection ----
 
-Map mainPage() {
+Map mainPage(Map params = null) {
     // Clear scan/results state when returning to main page
     state.remove("pendingScan")
     state.remove("swapResults")
     state.remove("swapSelections")
+    // A Swap Apps Device page left open without a check is settled now; an unused one is deleted.
+    nativeFinalize()
+    nativeDiscard()
+    state.remove("native")
 
     dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
         section("App Name", hideable: true, hidden: true) {
@@ -44,10 +51,10 @@ Map mainPage() {
         section("Device Selection") {
             input "sourceDevice", "capability.*",
                 title: "Device to replace (source)",
-                required: true, multiple: false, submitOnChange: true
+                required: false, multiple: false, submitOnChange: true
             input "targetDevice", "capability.*",
                 title: "Replacement device (target)",
-                required: true, multiple: false, submitOnChange: true
+                required: false, multiple: false, submitOnChange: true
         }
 
         // Show device capabilities once selected
@@ -102,7 +109,12 @@ Map mainPage() {
         }
 
         Map lastSwap = state.lastSwap as Map
-        if (lastSwap) {
+        if (lastSwap?.method == "native") {
+            section("Last Swap") {
+                paragraph "Swap Apps Device swapped ${lastSwap.sourceLabel} (${lastSwap.sourceId}) and ${lastSwap.targetLabel} (${lastSwap.targetId}) in all apps."
+                href "nativeUndoPage", title: "Undo: swap them back", description: "Opens the hub's swap page with the same two devices"
+            }
+        } else if (lastSwap) {
             section("Last Swap") {
                 String summary = "Swapped device ${lastSwap.sourceId} → ${lastSwap.targetId}"
                 int successCount = (lastSwap.results as List)?.count { (it as Map).success } ?: 0
@@ -144,7 +156,7 @@ Map mainPage() {
 
 // ---- Page 2: Scan & Preview ----
 
-Map previewPage() {
+Map previewPage(Map params = null) {
     dynamicPage(name: "previewPage", title: "Preview") {
         section {
             href "mainPage", title: "Back to Device Selection", description: ""
@@ -197,6 +209,7 @@ Map previewPage() {
         List<Map> swappable = []
         List<Map> manual = []
         List<Map> unmatched = []   // apps that use the source but hold it in no device input we can see
+        Set<String> allSubscribedAttrs = [] as Set<String>
 
         appsUsing.each { Map appRef ->
             int appId = appRef.id as int
@@ -218,6 +231,16 @@ Map previewPage() {
                 unmatched << [appId: appId, appLabel: appLabel, appType: appType, reason: "Could not read the app's settings"]
                 return
             }
+
+            // Extract subscribed attributes for the source device
+            List eventSubs = (statusData.eventSubscriptions ?: []) as List
+            List<String> subscribedAttrs = eventSubs.findAll { sub ->
+                Map s = sub as Map
+                (s.typeId as int) == sourceId && s.type == "DEVICE"
+            }.collect { sub ->
+                (sub as Map).name as String
+            }.unique().sort()
+            allSubscribedAttrs.addAll(subscribedAttrs)
 
             // Scan appSettings for device inputs containing source ID
             List appSettings = (statusData.appSettings ?: []) as List
@@ -253,15 +276,6 @@ Map previewPage() {
                 String val = (e.value ?: "") as String
                 key.contains(sourceIdStr) || val.contains(sourceIdStr)
             }
-
-            // Extract subscribed attributes for the source device
-            List eventSubs = (statusData.eventSubscriptions ?: []) as List
-            List<String> subscribedAttrs = eventSubs.findAll { sub ->
-                Map s = sub as Map
-                (s.typeId as int) == sourceId && s.type == "DEVICE"
-            }.collect { sub ->
-                (sub as Map).name as String
-            }.unique().sort()
 
             // Walk the app's full page graph so we can locate each input's home page.
             Map<String,Map> pageGraph = discoverPageGraph(appId)
@@ -336,6 +350,8 @@ Map previewPage() {
                 }
             }
         }
+
+        nativeSwapSection(sourceId, targetId, allSubscribedAttrs)
 
         // Display results
         String td = "style='border:1px solid #999;padding:4px 8px'"
@@ -482,7 +498,7 @@ Map previewPage() {
 // The confirm page's Swap link carries a single-use token to resultsPage, which swaps only the
 // first time it sees that token. A refresh or a stale link shows the stored results instead.
 
-Map confirmSwapPage() {
+Map confirmSwapPage(Map params = null) {
     List<Map> pending = selectedPending()
     dynamicPage(name: "confirmSwapPage", title: "Swap devices?") {
         section(sectionClass: "swap-confirm") {
@@ -890,6 +906,327 @@ private void performUndo() {
     state.remove("lastSwap")
 }
 
+// ---- Swap Apps Device ----
+// The hub's Swap Apps Device exchanges the two device records (name, network id, driver, room,
+// current states), so every app keeps its device id and reaches the new hardware. This app opens a
+// pending instance, selects both devices on it and frames the hub's page; the user clicks the
+// hub's own swap button. The hub swaps when its page renders after that click, and every later
+// render swaps back. So an instance is framed once, and after that it is only deleted, never fetched.
+
+// Shown in the preview when the hub accepts both devices.
+private void nativeSwapSection(int sourceId, int targetId, Set<String> subscribedAttrs) {
+    Map n = nativePrepare("swap", sourceId, targetId)
+    if (!n.aid) {
+        section("Swap Apps Device") {
+            paragraph "<span style='color:gray'>The hub's Swap Apps Device can't do this swap: ${n.reason}. Use the inputs below.</span>"
+        }
+        return
+    }
+    List<Map> onTarget = (appsUsing(targetId as Long, referenceSource()) ?: []).findAll { Map a ->
+        !a.dashboard && (a.id as int) != (app.id as int)
+    }
+    List<String> targetAttrs = targetDevice.getSupportedAttributes().collect { it.name as String }
+    List<String> missing = ((subscribedAttrs ?: []) - targetAttrs).sort()
+    n.onTarget = onTarget.collect { Map a -> [id: a.id, label: a.label] }
+    n.missingAttrs = missing
+    state.native = n
+
+    section("Swap everywhere with Swap Apps Device") {
+        List<String> notes = [
+            "Every app that uses ${sourceDevice.displayName} keeps using device ${sourceId}, which takes over the new hardware. This includes the inputs listed below for manual editing. No app setting changes.",
+            "The name, label, room and driver move with the hardware: device ${sourceId} takes ${targetDevice.displayName}'s, and the old hardware becomes device ${targetId}.",
+            "Event history stays with the device id."
+        ]
+        if (onTarget) {
+            notes << "<span style='color:orange'>Apps that use ${targetDevice.displayName} now will move to the old hardware: " +
+                onTarget.collect { Map a -> "<a href='/installedapp/configure/${a.id}' target='_blank'>${a.label}</a>" }.join(", ") + "</span>"
+        }
+        if (missing) {
+            notes << "<span style='color:orange'>Apps subscribe to ${missing.join(', ')}, which ${targetDevice.displayName} doesn't report.</span>"
+        }
+        paragraph "<ul>" + notes.collect { "<li>${it}</li>" }.join("") + "</ul>"
+        href "nativeSwapPage", title: "Swap with Swap Apps Device…", description: "Opens the hub's swap page with both devices selected"
+    }
+}
+
+// Returns the stored swap for this pair, or opens a new pending instance with both devices
+// selected. Without an `aid`, `reason` says why the hub won't do it.
+private Map nativePrepare(String mode, int oldId, int newId) {
+    Map n = state.native as Map
+    if (n?.framed && !n.result) {
+        nativeFinalize()   // a swap shown but never checked is settled and logged first
+        n = state.native as Map
+    }
+    if (n?.aid && !n.framed && n.mode == mode && (n.oldId as int) == oldId && (n.newId as int) == newId) return n
+    nativeDiscard()
+    n = [mode: mode, oldId: oldId, newId: newId]
+    try {
+        Integer aid = openSwapInstance()
+        if (aid == null) {
+            n.reason = "the hub did not open its swap page"
+        } else {
+            n.aid = aid
+            state.native = n   // stored first, so nativeDiscard() can delete it if a step below fails
+            String why = swapSelect(aid, "oldDev", oldId, "the hub does not offer this device for swapping (it skips most child devices)") ?:
+                swapSelect(aid, "newDev", newId, "the hub does not accept the replacement (its capabilities don't match)")
+            if (!why && !swapButtonShown(aid)) why = "the hub did not show its swap button"
+            if (why) {
+                nativeDiscard()
+                n = [mode: mode, oldId: oldId, newId: newId, reason: why]
+            }
+        }
+    } catch (Exception e) {
+        logWarn "Swap Apps Device: ${e}"
+        nativeDiscard()
+        n = [mode: mode, oldId: oldId, newId: newId, reason: e.message ?: e.toString()]
+    }
+    state.native = n
+    return n
+}
+
+// The Settings link /installedapp/direct/swapDevice redirects to create, then to the new instance.
+private Integer openSwapInstance() {
+    String path = "/installedapp/direct/swapDevice"
+    for (int hop = 1; hop <= 2; hop++) {
+        String loc = null
+        httpGet([uri: BASE_URL, path: path, followRedirects: false, textParser: true, timeout: 15]) { resp ->
+            loc = resp.headers?."Location"?.toString() ?: resp.getFirstHeader("Location")?.value
+        }
+        def m = (loc =~ /\/installedapp\/configure\/(\d+)/)
+        if (m.find()) return m.group(1) as Integer
+        def c = (loc =~ /\/installedapp\/create\/(\d+)/)
+        if (hop == 1 && c.find()) {
+            path = "/installedapp/create/${c.group(1)}"
+        } else {
+            logWarn "Swap Apps Device: unexpected redirect ${loc}"
+            return null
+        }
+    }
+    return null
+}
+
+// Selects a device on the pending instance after checking the hub offers it. Reading the page is
+// safe here: the instance has not been framed, so its swap button has not been clicked.
+private String swapSelect(int aid, String inputName, int deviceId, String notOffered) {
+    Map cfg = fetchConfig(aid)
+    Map input = cfg ? findMainInput(cfg, inputName) : null
+    if (!input) return "the hub's swap page has no ${inputName} selector"
+    List ids = []
+    def opts = input.options
+    if (opts instanceof Map) ids = (opts as Map).keySet().collect { it.toString() }
+    else ((opts ?: []) as List).each { o -> if (o instanceof Map) ids.addAll((o as Map).keySet().collect { it.toString() }) }
+    if (!ids.contains(deviceId.toString())) return notOffered
+    String body = [
+        ["formAction", "update"], ["id", aid.toString()],
+        ["version", (((cfg.app ?: [:]) as Map).version ?: "1").toString()],
+        ["currentPage", "mainPage"], ["pageBreadcrumbs", "[]"],
+        ["${inputName}.type".toString(), "enum"], ["${inputName}.multiple".toString(), "false"],
+        ["settings[${inputName}]".toString(), deviceId.toString()],
+        ["referrer", "${BASE_URL}/installedapp/list".toString()],
+        ["url", "${BASE_URL}/installedapp/configure/${aid}/mainPage".toString()], ["_cancellable", "false"]
+    ].collect { p -> URLEncoder.encode(p[0], "UTF-8") + "=" + URLEncoder.encode(p[1], "UTF-8") }.join("&")
+    String err = "no response"
+    httpPost([uri: BASE_URL, path: "/installedapp/update/json", requestContentType: "application/x-www-form-urlencoded",
+              body: body, textParser: true, timeout: 30]) { resp ->
+        err = resp.status == 200 ? null : "HTTP ${resp.status}"
+    }
+    return err ? "the hub did not take the ${inputName} selection (${err})" : null
+}
+
+private boolean swapButtonShown(int aid) {
+    Map cp = ((fetchConfig(aid) ?: [:]).configPage ?: [:]) as Map
+    return ((cp.sections ?: []) as List).any { sec ->
+        ((sec as Map).input ?: []).any { inp -> (inp as Map).type == "button" && (inp as Map).name != "closeApp" }
+    }
+}
+
+// Deletes the stored pending instance without rendering it.
+private void nativeDiscard() {
+    Map n = state.native as Map
+    if (!n?.aid) return
+    try {
+        httpGet([uri: BASE_URL, path: "/installedapp/delete/${n.aid}", followRedirects: false, textParser: true, timeout: 15]) { }
+    } catch (Exception e) {
+        logDebug "Swap Apps Device: delete of instance ${n.aid}: ${e.message}"
+    }
+    n.remove("aid")
+    state.native = n
+}
+
+// The hub passes the last link's params to every page that follows, so the page name, never a
+// param, says whether this is a swap or an undo.
+Map nativeSwapPage(Map params = null) {
+    return nativeFramePage("nativeSwapPage")
+}
+
+Map nativeUndoPage(Map params = null) {
+    Map n = state.native as Map
+    Map lastSwap = state.lastSwap as Map
+    if (!(n?.mode == "undo" && n.framed) && lastSwap?.method == "native") {
+        nativePrepare("undo", lastSwap.sourceId as int, lastSwap.targetId as int)
+    }
+    return nativeFramePage("nativeUndoPage")
+}
+
+private Map nativeFramePage(String pageName) {
+    Map n = state.native as Map
+    boolean undo = n?.mode == "undo"
+    dynamicPage(name: pageName, title: undo ? "Undo with Swap Apps Device" : "Swap with Swap Apps Device", install: false, uninstall: false) {
+        if (n?.framed) {
+            section {
+                paragraph "The hub's swap page was already shown. Showing it again could reverse the swap."
+                href "nativeCheckPage", title: "Check the result", description: ""
+            }
+            return
+        }
+        if (!n?.aid) {
+            section {
+                paragraph n?.reason ? "The hub's Swap Apps Device can't do this: ${n.reason}." : "Nothing to swap."
+                href "mainPage", title: "Back to Device Selection", description: ""
+            }
+            return
+        }
+        n.before = deviceRecords([n.oldId as int, n.newId as int])
+        n.framed = true
+        state.native = n
+        section(sectionClass: "swap-confirm") {
+            hideDoneButton()
+            paragraph undo
+                ? "Both devices are selected so the hub swaps them back. Click the hub's swap button below to undo the swap."
+                : "Both devices are selected. Click the hub's swap button below to swap them in every app."
+            paragraph rawHtml: true, nativeFrameHtml(n.aid as int)
+            href "nativeCheckPage", title: "Check the result", description: "Also opens on its own after the swap, Done or Cancel"
+        }
+    }
+}
+
+// Frames the hub's page without its menu and header. Once the hub shows its result, the script
+// deletes the instance (a reload would swap back) and opens the check page. It waits for the
+// page's Cancel/Done button before deciding, because the hub draws the page after the frame loads.
+private String nativeFrameHtml(int aid) {
+    String checkUrl = "/installedapp/configure/${app.id}/nativeCheckPage"
+    return """
+<iframe id="swapFrame" src="/installedapp/configure/${aid}/mainPage" style="width:100%;height:360px;border:1px solid #ccc"></iframe>
+<script>
+(function () {
+    let finished = false
+    const leave = () => { if (!finished) { finished = true; window.location.href = '${checkUrl}' } }
+    const timer = setInterval(() => {
+        let d
+        try { d = document.getElementById('swapFrame').contentDocument } catch (e) { return }
+        if (!d || !d.location || d.location.href === 'about:blank') return
+        if (d.location.pathname.indexOf('/installedapp/configure/${aid}') !== 0) { clearInterval(timer); leave(); return }
+        d.querySelectorAll('#divSideMenu, #divMainUIMenu, #divMainUIHeader, #divMainUIFooter').forEach(e => e.remove())
+        if (!d.getElementById('settings[closeApp]') || d.getElementById('settings[oldDev]')) return
+        clearInterval(timer)
+        fetch('/installedapp/delete/${aid}', {cache: 'no-store'}).finally(() => setTimeout(leave, 2500))
+    }, 500)
+})()
+</script>"""
+}
+
+// The hub can pass along the params of the link that opened the swap page; they are not used here.
+Map nativeCheckPage(Map params = null) {
+    Map result = nativeFinalize()
+    dynamicPage(name: "nativeCheckPage", title: "Swap Apps Device Result", install: false, uninstall: false, nextPage: "mainPage") {
+        section {
+            href "mainPage", title: "Back to Device Selection", description: ""
+        }
+        if (!result) {
+            section { paragraph "No Swap Apps Device swap to check." }
+            return
+        }
+        section {
+            String color = result.outcome == "swapped" ? "green" : (result.outcome == "unchanged" ? "gray" : "red")
+            paragraph "<span style='color:${color}'>${result.message}</span>"
+            ((result.cleanup ?: []) as List).each { String line -> paragraph line }
+            paragraph state.auditError
+                ? "<span style='color:orange'>Not written to the <a href='/local/${AUDIT_FILE}' target='_blank'>audit log</a>: ${state.auditError}</span>"
+                : "Written to the <a href='/local/${AUDIT_FILE}' target='_blank'>audit log</a>."
+        }
+    }
+}
+
+// Settles a framed swap once: deletes the instance unrendered, compares the two device records
+// with the ones read before framing, logs the outcome and records the swap for undo.
+private Map nativeFinalize() {
+    Map n = state.native as Map
+    if (!n?.framed) return null
+    if (n.result) return n.result as Map
+    nativeDiscard()
+    n = state.native as Map
+    String oldKey = n.oldId.toString()
+    String newKey = n.newId.toString()
+    Map before = (n.before ?: [:]) as Map
+    Map after = deviceRecords([n.oldId as int, n.newId as int])
+    Map bOld = (before[oldKey] ?: [:]) as Map, bNew = (before[newKey] ?: [:]) as Map
+    Map aOld = (after[oldKey] ?: [:]) as Map, aNew = (after[newKey] ?: [:]) as Map
+    boolean undo = n.mode == "undo"
+    String outcome = (aOld.dni == bNew.dni && aNew.dni == bOld.dni) ? "swapped" :
+        ((aOld.dni == bOld.dni && aNew.dni == bNew.dni) ? "unchanged" : "unclear")
+
+    Map result = [outcome: outcome, cleanup: []]
+    String pair = "${bOld.label} (${oldKey}) <-> ${bNew.label} (${newKey})"
+    if (outcome == "swapped") {
+        result.message = undo ? "Swapped back: the apps use the original hardware again." :
+            "Swapped: every app that used device ${oldKey} now reaches the hardware that was ${bNew.label}."
+        if (undo) {
+            state.remove("lastSwap")
+            state.lastUndo = [[appLabel: "Swap Apps Device", inputName: "all apps", success: true, message: "swapped back"]]
+        } else {
+            state.lastSwap = [method: "native", sourceId: n.oldId, targetId: n.newId,
+                              sourceLabel: bOld.label, targetLabel: bNew.label]
+            state.remove("lastUndo")
+            app.removeSetting("sourceDevice")
+            app.removeSetting("targetDevice")
+            result.cleanup = nativeCleanup(n, bOld, aOld, aNew)
+        }
+    } else if (outcome == "unchanged") {
+        result.message = "Nothing changed: the swap was not done."
+    } else {
+        result.message = "The devices changed in an unexpected way; check devices ${oldKey} and ${newKey}."
+    }
+    String line = "${new Date().format('yyyy-MM-dd HH:mm:ss z', location.timeZone)} | Swap Apps Device ${undo ? 'undo' : 'swap'} | ${pair} | all apps | " +
+        (outcome == "swapped" ? "ok: network ids exchanged" : "not done: ${outcome}")
+    state.auditError = appendAudit([line])
+    logCmd "Swap Apps Device ${undo ? 'undo' : 'swap'} ${pair}: ${outcome}"
+
+    n.result = result
+    state.native = n
+    return result
+}
+
+private List<String> nativeCleanup(Map n, Map bOld, Map aOld, Map aNew) {
+    List<String> lines = []
+    lines << "Device ${n.oldId}, the one your apps use, is now named <b>${aOld.label}</b>. " +
+        "<a href='/device/edit/${n.oldId}' target='_blank'>Open it</a> to rename it" +
+        (bOld.room && bOld.room != aOld.room ? " or put it back in room <b>${bOld.room}</b>" : "") + "."
+    lines << "The old hardware is now device ${n.newId}, <b>${aNew.label}</b>. " +
+        "<a href='/device/edit/${n.newId}' target='_blank'>Open it</a> to remove it or reuse it."
+    List onTarget = (n.onTarget ?: []) as List
+    if (onTarget) {
+        lines << "<span style='color:orange'>These apps used the replacement before the swap and now use the old hardware: " +
+            onTarget.collect { a -> "<a href='/installedapp/configure/${(a as Map).id}' target='_blank'>${(a as Map).label}</a>" }.join(", ") + "</span>"
+    }
+    List missing = (n.missingAttrs ?: []) as List
+    if (missing) {
+        lines << "<span style='color:orange'>Apps subscribe to ${missing.join(', ')}, which the new hardware doesn't report.</span>"
+    }
+    return lines
+}
+
+// [id: [dni, label, room]] for the given device ids, read from /device/fullJson.
+private Map deviceRecords(List<Integer> ids) {
+    Map out = [:]
+    ids.each { Integer id ->
+        httpGet([uri: BASE_URL, path: "/device/fullJson/${id}", timeout: 15]) { resp ->
+            Map d = ((resp.data as Map)?.device ?: [:]) as Map
+            out[id.toString()] = [dni: d.deviceNetworkId, label: (d.label ?: d.name) as String, room: d.roomName]
+        }
+    }
+    return out
+}
+
 // ---- Audit Log ----
 // One line per input a swap or undo touched, appended to AUDIT_FILE. File Manager has no append,
 // so the file is read and written back whole.
@@ -1021,6 +1358,7 @@ void updated() {
 
 void uninstalled() {
     logDebug "uninstalled()"
+    nativeDiscard()
 }
 
 void initialize() {
