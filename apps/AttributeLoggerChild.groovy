@@ -12,7 +12,9 @@ import com.hubitat.app.DeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.nio.file.NoSuchFileException
 
-@Field static final String CODE_VERSION = "0.0.5"
+@Field static final String CODE_VERSION = "0.1.0"
+@Field static final long WEEK_SECONDS = 604800L
+@Field static final long ROTATION_RETRY_MS = 3600000L
 
 definition(
     name: "Attribute Logger Child",
@@ -50,10 +52,27 @@ Map mainPage() {
             }
             if (state.previousDeviceId != selectedDevice?.id || state.previousAttributes != selectedAttributes) {
                 state.pendingChanges = true
-                paragraph "Warning: Changing the device or attributes will result in the loss of existing data."
+                paragraph settings.rotationEnabled ?
+                    "Changing the device or attributes archives the current log file and starts a new one." :
+                    "Warning: Changing the device or attributes will result in the loss of existing data."
                 input "confirmChanges", "bool", title: "Confirm Changes", required: true, submitOnChange: true
             } else {
                 state.pendingChanges = false
+            }
+        }
+        section("Rotation") {
+            input "rotationEnabled", "bool", title: "Rotate the log file", defaultValue: false, submitOnChange: true
+            if (settings.rotationEnabled) {
+                input "keepWeeks", "number", title: "Weeks kept in the log file after a rotation", defaultValue: 4, range: "1..520", required: true, submitOnChange: true
+                input "rotateAtWeeks", "number", title: "Rotate when the oldest row is this many weeks old", defaultValue: 8, range: "2..520", required: true, submitOnChange: true
+                if (!watermarksValid()) {
+                    paragraph "<b>Rotation is paused:</b> the rotation age must be greater than the weeks kept."
+                } else if (state.oldestRowSec) {
+                    long oldest = state.oldestRowSec as long
+                    String oldestDay = new Date(oldest * 1000L).format("yyyy-MM-dd", location.timeZone)
+                    String nextDay = new Date((oldest + highWatermarkWeeks() * WEEK_SECONDS) * 1000L).format("yyyy-MM-dd", location.timeZone)
+                    paragraph "Log file: ${logFileName}. Oldest row: ${oldestDay}. Next rotation on the first event after ${nextDay}."
+                }
             }
         }
         section("") {
@@ -69,12 +88,14 @@ void installed() {
 }
 
 void updated() {
+    state.remove("rotationRetryAfter")
     if (state.pendingChanges && confirmChanges) {
+        if (settings.rotationEnabled && state.previousAttributes) {
+            archiveWholeFile("timestamp," + state.previousAttributes.join(',') + "\n")
+        }
         state.pendingChanges = false
         state.previousDeviceId = selectedDevice?.id
         state.previousAttributes = selectedAttributes
-    	String header = "timestamp," + selectedAttributes.join(',') + "\n"
-	    //uploadHubFile(logFileName, header.bytes)
     }
     initialize()
     if (settings.debugEnable || settings.traceEnable) runIn(1800, "logsOff")
@@ -119,12 +140,116 @@ void writeFile(String data) {
             logError "Skipping write to ${logFileName}, could not read it. Row lost: ${data.trim()}"
             return
         }
-        existingData = new String(byteArray)
+        checkTruncation(byteArray.length)
+        existingData = rotateIfDue(new String(byteArray))
     } catch (NoSuchFileException ignored) {
-        existingData = "timestamp," + selectedAttributes.join(',') + "\n"
+        existingData = buildHeader()
     }
-    String newData = existingData + data
-    safeUploadHubFile(logFileName, newData.bytes)
+    String content = existingData + data
+    byte[] newData = content.bytes
+    if (safeUploadHubFile(logFileName, newData)) {
+        state.lastFileSize = newData.length
+        if (settings.rotationEnabled) state.oldestRowSec = rowSeconds(content, firstRowIndex(content))
+    }
+}
+
+String buildHeader() {
+    return "timestamp," + selectedAttributes.join(',') + "\n"
+}
+
+int lowWatermarkWeeks() {
+    return (settings.keepWeeks ?: 4) as int
+}
+
+int highWatermarkWeeks() {
+    return (settings.rotateAtWeeks ?: 8) as int
+}
+
+boolean watermarksValid() {
+    return highWatermarkWeeks() > lowWatermarkWeeks()
+}
+
+// Archives the rows older than the low watermark once the oldest row passes the high
+// watermark. Returns the content to keep (header + recent rows), or the input unchanged.
+String rotateIfDue(String content) {
+    if (!settings.rotationEnabled || !watermarksValid()) return content
+    if (state.rotationRetryAfter && now() < (state.rotationRetryAfter as long)) return content
+    try {
+        int firstRow = firstRowIndex(content)
+        Long oldest = rowSeconds(content, firstRow)
+        long nowSec = now().intdiv(1000)
+        if (oldest == null || oldest > nowSec - highWatermarkWeeks() * WEEK_SECONDS) return content
+        int cut = findCut(content, firstRow, nowSec - lowWatermarkWeeks() * WEEK_SECONDS)
+        if (cut <= firstRow) return content
+        String header = firstRow > 0 ? content.substring(0, firstRow) : buildHeader()
+        if (firstRow == 0) logWarn "${logFileName} has no header row, writing one: ${header.trim()}"
+        String archive = writeArchive(content, firstRow, cut, header)
+        if (archive == null) {
+            state.rotationRetryAfter = now() + ROTATION_RETRY_MS
+            logError "Could not archive ${logFileName}, rotation retries after one hour"
+            return content
+        }
+        int rows = content.substring(firstRow, cut).count("\n")
+        logInfo "Archived ${rows} rows of ${logFileName} to ${archive}"
+        return header + content.substring(cut)
+    } catch (Exception ex) {
+        state.rotationRetryAfter = now() + ROTATION_RETRY_MS
+        logError "Could not archive ${logFileName}: ${ex.message}. Rotation retries after one hour"
+        return content
+    }
+}
+
+// Writes header + rows [firstRow, end) to a dated archive and confirms it landed.
+// Returns the archive name, or null when nothing was archived.
+String writeArchive(String content, int firstRow, int end, String header) {
+    Long first = rowSeconds(content, firstRow)
+    if (first == null) return null
+    Long last = rowSeconds(content, content.lastIndexOf("\n", end - 2) + 1)
+    TimeZone tz = location.timeZone
+    String name = archiveName(logFileName, dayStamp(first, tz), dayStamp(last ?: first, tz), getHubFiles()*.name)
+    byte[] bytes = (header + content.substring(firstRow, end)).bytes
+    if (!uploadArchive(name, bytes)) return null
+    def entry = getHubFiles().find { it.name == name }
+    if (entry == null || (entry.size as long) != bytes.length) return null
+    return name
+}
+
+// The only call that uploads an archive. The shadow test build patches it to fail on demand.
+boolean uploadArchive(String fileName, byte[] bytes) {
+    return safeUploadHubFile(fileName, bytes)
+}
+
+// Archives the whole file and restarts it with the new header (device or attribute change).
+void archiveWholeFile(String previousHeader) {
+    String content
+    try {
+        byte[] bytes = safeDownloadHubFile(logFileName)
+        if (bytes == null) {
+            logError "Could not read ${logFileName}, not archived before the device or attribute change"
+            return
+        }
+        content = new String(bytes)
+    } catch (NoSuchFileException ignored) {
+        return
+    }
+    int firstRow = firstRowIndex(content)
+    if (firstRow >= content.length()) return
+    String header = firstRow > 0 ? content.substring(0, firstRow) : previousHeader
+    String archive = writeArchive(content, firstRow, content.length(), header)
+    if (archive == null) {
+        logError "Could not archive ${logFileName} before the device or attribute change"
+        return
+    }
+    byte[] fresh = buildHeader().bytes
+    if (safeUploadHubFile(logFileName, fresh)) state.lastFileSize = fresh.length
+    logInfo "Archived ${logFileName} to ${archive} after the device or attribute change"
+}
+
+void checkTruncation(int size) {
+    Long previous = state.lastFileSize as Long
+    if (previous && size < previous.intdiv(2)) {
+        logError "${logFileName} shrank from ${previous} to ${size} bytes since the last write"
+    }
 }
 
 // Epoch seconds at the start of the row beginning at index start, or null.
@@ -207,11 +332,11 @@ byte[] safeDownloadHubFile(String fileName) {
 }
 
 
-void safeUploadHubFile(String fileName, byte[] bytes) {
+boolean safeUploadHubFile(String fileName, byte[] bytes) {
     for (int i = 1; i <= 3; i++) {
         try {
             uploadHubFile(fileName, bytes)
-            return
+            return true
         } catch (Exception ex) {
             logWarn "Failed to upload ${fileName}: ${ex.message}. Retrying (${i} / 3) ..."
             pauseExecution(500)
@@ -219,6 +344,7 @@ void safeUploadHubFile(String fileName, byte[] bytes) {
     }
 
     logError "Failed to upload ${fileName} after 3 attempts - possible data loss"
+    return false
 }
 
 void safeDeleteHubFile(String fileName) {
