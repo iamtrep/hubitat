@@ -32,6 +32,7 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full set, including platform se
 apps/             Automation and dashboard apps          (see apps/README.md)
 drivers/          Zigbee / BLE / cloud device drivers    (see drivers/README.md)
 integrations/     Parent-app + child-driver vendor integrations (see integrations/README.md)
+scripts/          Off-hub scripts: browser userscripts, Google Apps Script, test helpers
 ARCHITECTURE.md   Coding conventions & platform semantics (authoritative)
 README.md         As per usual convention
 TESTING.md        Testing methodology & the closed-loop contract
