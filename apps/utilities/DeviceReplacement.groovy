@@ -3,7 +3,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.4.3"
+@Field static final String CODE_VERSION = "0.4.4"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
 // File Manager file with one line per input each swap or undo changed.
 @Field static final String AUDIT_FILE = "device_replacement_audit.txt"
@@ -19,6 +19,7 @@ definition(
     description: "Replace a device across all installed apps in one shot",
     menu: "Apps", // new in platform 2.5.0
     category: "Utility",
+    singleInstance: true,
     iconUrl: "",
     iconX2Url: "",
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/utilities/DeviceReplacement.groovy"
@@ -41,15 +42,13 @@ Map mainPage(Map params = null) {
     state.remove("pendingScan")
     state.remove("swapResults")
     state.remove("swapSelections")
+    state.remove("showPerInput")
     // A Swap Apps Device page left open without a check is settled now; an unused one is deleted.
     nativeFinalize()
     nativeDiscard()
     state.remove("native")
 
     dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
-        section("App Name", hideable: true, hidden: true) {
-            label title: "Set App Label", required: false
-        }
         section("Device Selection") {
             input "sourceDevice", "capability.*",
                 title: "Device to replace (source)",
@@ -265,7 +264,7 @@ Map previewPage(Map params = null) {
 
             if (!matchingInputs) {
                 unmatched << [appId: appId, appLabel: appLabel, appType: appType,
-                              reason: "No device input holds it; the app may keep the device in its own data"]
+                              reason: "The hub lists this app as using the device, but not through a device input the scan can read (a rule document, an enum picker, a driver-specific picker or its own selection screen)"]
                 return
             }
 
@@ -366,7 +365,19 @@ Map previewPage(Map params = null) {
             }
         }
 
-        nativeSwapSection(sourceId, targetId, allSubscribedAttrs)
+        // When the hub's swap can do it, the per-input swap is folded behind a button: it can leave
+        // per-device settings behind (Mode Switches), and the hub's swap cannot.
+        boolean nativeOk = nativeSwapSection(sourceId, targetId, allSubscribedAttrs)
+        if (nativeOk && !state.showPerInput && (swappable || manual || unmatched || dashboards)) {
+            usageSection(swappable, manual, unmatched, dashboards)
+            section("Or swap only some apps") {
+                paragraph "The per-input swap changes the device in selected app inputs only. It is for swapping in some apps and not others. " +
+                    "It can't reach inputs on sub-pages, and an app that keeps per-device settings in its own data may lose them."
+                input "showPerInput", "button", title: "Show the per-input swap"
+            }
+            state.pendingScan = []
+            return
+        }
 
         // Display results
         String td = "style='border:1px solid #999;padding:4px 8px'"
@@ -459,7 +470,7 @@ Map previewPage(Map params = null) {
 
         if (unmatched) {
             section("Other Apps Using the Source (${unmatched.size()})") {
-                paragraph "These apps use <b>${sourceDevice.displayName}</b> but the scan found no device input to change. Open each app and replace the device by hand."
+                paragraph "The hub lists these apps as using <b>${sourceDevice.displayName}</b>, but the scan can't read how they reference it, so it can't change it. Open each app and replace the device by hand, or use Swap Apps Device."
                 String table = "<table style='border-collapse:collapse;width:100%'>" +
                     "<thead><tr style='background:#ddd'><th ${td}>App</th><th ${td}>Type</th><th ${td}>Why</th><th ${tdC}>Open</th></tr></thead><tbody>"
                 unmatched.each { Map entry ->
@@ -508,6 +519,37 @@ Map previewPage(Map params = null) {
             state.pendingScan = []
         }
     }
+}
+
+// Read-only list of every app using the source and where it holds it, shown when the per-input
+// swap is folded away: the usage information stays visible whichever swap the user picks.
+private void usageSection(List<Map> swappable, List<Map> manual, List<Map> unmatched, List<Map> dashboards) {
+    String td = "style='border:1px solid #999;padding:4px 8px'"
+    List<List<String>> rows = []
+    swappable.each { Map e ->
+        List<String> w = [e.capWarning, e.targetWarning, e.stateWarning, e.tileWarning].findAll { it } as List<String>
+        rows << [appLink(e), e.appType, "input ${e.inputName} (main page)", ((e.subscribedAttrs ?: []) as List).join(", "), w.join("<br>")] as List<String>
+    }
+    manual.each { Map e ->
+        rows << [appLink(e), e.appType, "input ${e.inputName} (${e.homePage ?: 'page unknown'})", ((e.subscribedAttrs ?: []) as List).join(", "), e.reason] as List<String>
+    }
+    unmatched.each { Map e ->
+        rows << ["<a href='/installedapp/configure/${e.appId}' target='_blank'>${e.appLabel}</a>", e.appType, "used (per the hub); how isn't visible to the scan", "", e.reason] as List<String>
+    }
+    dashboards.each { Map d ->
+        rows << ["<a href='/installedapp/configure/${d.id}' target='_blank'>${d.label}</a>", "Mobile dashboard", "lists devices by room", "", ""] as List<String>
+    }
+    section("Apps using ${sourceDevice.displayName} (${rows.size()})") {
+        String table = "<table style='border-collapse:collapse;width:100%'><thead><tr style='background:#ddd'>" +
+            "<th ${td}>App</th><th ${td}>Type</th><th ${td}>Where</th><th ${td}>Subscribes to</th><th ${td}>Notes</th></tr></thead><tbody>" +
+            rows.collect { List<String> r -> "<tr>" + r.collect { "<td ${td}>${it ?: ''}</td>" }.join("") + "</tr>" }.join("") +
+            "</tbody></table>"
+        paragraph table
+    }
+}
+
+private String appLink(Map e) {
+    return "<a href='/installedapp/configure/${e.appId}' target='_blank'>${e.appLabel}</a>"
 }
 
 // ---- Page 3: Confirm, Execute & Report ----
@@ -895,6 +937,8 @@ private void checkApps(List<Map> pending, List<Map> results, int targetId, Strin
 void appButtonHandler(String evt) {
     if (evt == "undoLastSwap") {
         performUndo()
+    } else if (evt == "showPerInput") {
+        state.showPerInput = true
     } else if (evt == "refreshScan") {
         state.remove("swapSelections")
     } else if (evt.startsWith("btnSwapSel:")) {
@@ -976,13 +1020,14 @@ private void performUndo() {
 // render swaps back. So an instance is framed once, and after that it is only deleted, never fetched.
 
 // Shown in the preview when the hub accepts both devices.
-private void nativeSwapSection(int sourceId, int targetId, Set<String> subscribedAttrs) {
+// Returns true when the hub's swap is offered.
+private boolean nativeSwapSection(int sourceId, int targetId, Set<String> subscribedAttrs) {
     Map n = nativePrepare("swap", sourceId, targetId)
     if (!n.aid) {
         section("Swap Apps Device") {
             paragraph "<span style='color:gray'>The hub's Swap Apps Device can't do this swap: ${n.reason}. Use the inputs below.</span>"
         }
-        return
+        return false
     }
     List<Map> onTarget = (appsUsing(targetId as Long, referenceSource()) ?: []).findAll { Map a ->
         !a.dashboard && (a.id as int) != (app.id as int)
@@ -996,7 +1041,7 @@ private void nativeSwapSection(int sourceId, int targetId, Set<String> subscribe
 
     section("Swap everywhere with Swap Apps Device") {
         List<String> notes = [
-            "Every app that uses ${sourceDevice.displayName} keeps using device ${sourceId}, which takes over the new hardware. This includes the inputs listed below for manual editing. No app setting changes.",
+            "Every app the hub lists as using ${sourceDevice.displayName} keeps using device ${sourceId}, which takes over the new hardware, however the app references it. No app setting changes.",
             "The name, label, room and driver move with the hardware: device ${sourceId} takes ${targetDevice.displayName}'s, and the old hardware becomes device ${targetId}.",
             "Event history stays with the device id."
         ]
@@ -1010,6 +1055,7 @@ private void nativeSwapSection(int sourceId, int targetId, Set<String> subscribe
         paragraph "<ul>" + notes.collect { "<li>${it}</li>" }.join("") + "</ul>"
         href "nativeSwapPage", title: "Swap with Swap Apps Device…", description: "Opens the hub's swap page with both devices selected"
     }
+    return true
 }
 
 // Returns the stored swap for this pair, or opens a new pending instance with both devices
