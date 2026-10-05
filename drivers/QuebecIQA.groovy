@@ -13,7 +13,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.2.0"
 @Field static final String RSQAQ_URL = "https://services3.arcgis.com/0lL78GhXbg1Po7WO/arcgis/rest/services/IQA_resultat_REST/FeatureServer/0/query"
 // CKAN datastore; GET ignores filters, so queries are POSTed
 @Field static final String MTL_DATASTORE_URL = "https://donnees.montreal.ca/api/3/action/datastore_search"
@@ -21,6 +21,10 @@ import groovy.transform.Field
 @Field static final String MTL_DETAILS_RESOURCE = "f4eca3bf-5ded-4d3c-a8dc-ed42486498f3"
 @Field static final String MTL_PREFIX = "MTL-"
 @Field static final int HTTP_TIMEOUT = 15
+// Failed polls log at warn until this many in a row, then once at error, then at
+// warn every OUTAGE_REMINDER_MS until a poll succeeds.
+@Field static final int FAILURE_ERROR_THRESHOLD = 3
+@Field static final long OUTAGE_REMINDER_MS = 3_600_000L
 
 // Sub-index fields: RSQAQ column / Montréal pollutant label -> attribute
 @Field static final Map<String, String> RSQAQ_POLLUTANTS = [PM25: "pm25", O3: "o3", NO2: "no2", SO2: "so2", CO: "co"]
@@ -55,6 +59,7 @@ metadata {
         attribute "stationName", "string"
         attribute "observationTime", "string"
         attribute "lastUpdated", "string"
+        attribute "healthStatus", "enum", ["online", "offline"]
 
         command "findNearestStation"
     }
@@ -180,25 +185,26 @@ void fetchProvincial(String sid) {
 
 void provincialResponse(resp, Map data) {
     if (resp.hasError()) {
-        logWarn "Error fetching RSQAQ observation: ${resp.getErrorMessage()}"
+        pollFailed("RSQAQ: ${resp.getErrorMessage()}")
         return
     }
     if (resp.getStatus() != 200) {
-        logWarn "RSQAQ returned status ${resp.getStatus()}"
+        pollFailed("RSQAQ: HTTP ${resp.getStatus()}")
         return
     }
     try {
         Map json = parseJson(resp.getData() as String) as Map
         if (json?.error) {
-            logWarn "RSQAQ query error: ${(json.error as Map)?.message}"
+            pollFailed("RSQAQ query error: ${(json.error as Map)?.message}")
             return
         }
         List features = json?.features as List
         Map a = features ? ((features[0] as Map)?.attributes as Map) : null
         if (!a) {
-            logWarn "RSQAQ has no station ${data.sid}"
+            pollFailed("RSQAQ has no station ${data.sid}")
             return
         }
+        pollSucceeded()
         // -99 marks a pollutant the station does not measure
         Map<String, Integer> subs = [:]
         RSQAQ_POLLUTANTS.each { String col, String attr ->
@@ -209,7 +215,7 @@ void provincialResponse(resp, Map data) {
         Long obsMillis = a.DATE_HEURE as Long
         publishObservation(iqa, subs, a.NOM_STATION as String, obsMillis)
     } catch (Exception e) {
-        logWarn "Error parsing RSQAQ observation: ${e.message}"
+        pollFailed("RSQAQ parse: ${e.message}")
     }
 }
 
@@ -230,19 +236,20 @@ void fetchMontreal(String id) {
 
 void montrealResponse(resp, Map data) {
     if (resp.hasError()) {
-        logWarn "Error fetching Montréal observation: ${resp.getErrorMessage()}"
+        pollFailed("Montréal open data: ${resp.getErrorMessage()}")
         return
     }
     if (resp.getStatus() != 200) {
-        logWarn "Montréal open data returned status ${resp.getStatus()}"
+        pollFailed("Montréal open data: HTTP ${resp.getStatus()}")
         return
     }
     try {
         Map json = parseJson(resp.getData() as String) as Map
         if (!json?.success) {
-            logWarn "Montréal datastore error: ${json?.error}"
+            pollFailed("Montréal datastore error: ${json?.error}")
             return
         }
+        pollSucceeded()
         Map obs = latestMontrealHour((json.result as Map)?.records as List<Map>, data.id as String)
         if (!obs) {
             checkStaleness()
@@ -253,7 +260,7 @@ void montrealResponse(resp, Map data) {
         String name = state.autoStationName && state.autoStationId == (MTL_PREFIX + data.id) ? state.autoStationName as String : "Montréal station ${data.id}"
         publishObservation(iqa, subs, name, obs.millis as Long)
     } catch (Exception e) {
-        logWarn "Error parsing Montréal observation: ${e.message}"
+        pollFailed("Montréal parse: ${e.message}")
     }
 }
 
@@ -317,9 +324,13 @@ private void publishObservation(int iqa, Map<String, Integer> subs, String name,
     checkStaleness()
 }
 
+// Runs after every answered poll and sets healthStatus from the station's last report.
 private void checkStaleness() {
     Long last = state.lastObservationMillis as Long
-    if (!last) return
+    if (!last) {
+        setHealth("online", "reporting")
+        return
+    }
     int thresholdHours = (staleThreshold != null) ? staleThreshold as int : 6
     long ageHours = (long)((now() - last) / 3600000)
     boolean stale = ageHours >= thresholdHours
@@ -329,6 +340,63 @@ private void checkStaleness() {
         logInfo "Station reporting again"
     }
     state.stale = stale
+    if (stale) setHealth("offline", "station has not reported for ${ageHours} h")
+    else setHealth("online", "reporting")
+}
+
+// --- Outage handling ---
+
+// Warn below FAILURE_ERROR_THRESHOLD, one error at it, then a warn every OUTAGE_REMINDER_MS.
+private void pollFailed(String msg) {
+    long t = now()
+    int n = ((state.pollFailures ?: 0) as int) + 1
+    state.pollFailures = n
+    if (n == 1) state.pollFailingSince = t
+    long since = state.pollFailingSince as long
+    if (n < FAILURE_ERROR_THRESHOLD) {
+        logWarn "poll failed (${n}/${FAILURE_ERROR_THRESHOLD}): ${msg}"
+    } else if (n == FAILURE_ERROR_THRESHOLD) {
+        logError "IQA service unreachable since ${formatClock(since)}: ${msg}"
+        state.lastOutageReminder = t
+        setHealth("offline", "IQA service unreachable")
+    } else if (t - ((state.lastOutageReminder ?: 0L) as long) >= OUTAGE_REMINDER_MS) {
+        logWarn "IQA service still unreachable after ${formatDuration(t - since)} (${n} polls failed): ${msg}"
+        state.lastOutageReminder = t
+    } else {
+        logDebug "poll failed (${n}): ${msg}"
+    }
+}
+
+// The caller then runs checkStaleness(), which sets healthStatus.
+private void pollSucceeded() {
+    int n = (state.pollFailures ?: 0) as int
+    if (n >= FAILURE_ERROR_THRESHOLD) {
+        logInfo "IQA service back after ${formatDuration(now() - (state.pollFailingSince as long))} (${n} polls failed)"
+    } else if (n > 0) {
+        logDebug "poll recovered after ${n} failed"
+    }
+    state.remove("pollFailures")
+    state.remove("pollFailingSince")
+    state.remove("lastOutageReminder")
+}
+
+private void setHealth(String status, String reason) {
+    String prev = device.currentValue("healthStatus")
+    sendEvent(name: "healthStatus", value: status, descriptionText: "${device.displayName} is ${status}: ${reason}")
+    if (prev != null && prev != status) {
+        if (status == "offline") logWarn "offline: ${reason}"
+        else logInfo "back online"
+    }
+}
+
+private String formatClock(long t) {
+    return new Date(t).format("yyyy-MM-dd HH:mm", location.timeZone)
+}
+
+private static String formatDuration(long ms) {
+    long minutes = ms.intdiv(60000L)
+    if (minutes < 60) return "${minutes} min"
+    return "${minutes.intdiv(60L)} h ${minutes % 60} min"
 }
 
 // ---------- Find nearest station ----------
