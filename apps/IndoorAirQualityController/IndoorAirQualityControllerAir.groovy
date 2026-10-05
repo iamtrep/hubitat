@@ -10,7 +10,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 @Field static final Map UNITS = [carbonDioxide: "ppm", humidity: "%"]
 
 metadata {

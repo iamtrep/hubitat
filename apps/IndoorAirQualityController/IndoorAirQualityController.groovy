@@ -12,7 +12,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.app.DeviceWrapper
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 
 definition(
     name: "Indoor Air Quality Controller",
@@ -281,7 +281,7 @@ void wakeHandler() {
 
 String currentStopReason() {
     return stopReason(safetyAlarm(), state.enabled == true,
-                      modeActive(location.mode as String, (activeModes ?: []) as List<String>),
+                      modeActive(location.mode as String, location.currentMode?.id?.toString(), (activeModes ?: []) as List),
                       anySwitchCondition(switchValues(pauseWhenOn), switchValues(pauseWhenOff)))
 }
 
@@ -498,8 +498,9 @@ boolean anySwitchCondition(List<String> whenOn, List<String> whenOff) {
     return (whenOn ?: []).contains('on') || (whenOff ?: []).contains('off')
 }
 
-boolean modeActive(String mode, List<String> chosen) {
-    return chosen ? chosen.contains(mode) : mode != 'Away'
+// chosen holds mode ids, as a mode input stores them
+boolean modeActive(String mode, String modeId, List chosen) {
+    return chosen ? chosen*.toString().contains(modeId) : mode != 'Away'
 }
 
 // Why the app is not managing air, most important first; null when it is.
