@@ -7,6 +7,7 @@
  Description: This app monitors system events to detect when the hub is shutting down/starting up.
  - Opens the selected virtual contact sensor on: manualReboot, manualShutdown, update
  - Closes the selected virtual contact sensor on: systemStart
+ - Optionally notifies when the hub starts without a prior shutdown event (unplanned restart)
 
  The virtual contact sensor can be used in automations (e.g. Rule Machine - can be
  used as a Required Expression or condtion for triggers).
@@ -14,7 +15,10 @@
 import groovy.transform.Field
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.0.4"
+@Field static final String CODE_VERSION = "0.1.0"
+
+@Field static final List<String> DEFAULT_OPEN_EVENTS = ["manualReboot", "manualShutdown", "update"]
+@Field static final List<String> DEFAULT_CLOSE_EVENTS = ["systemStart"]
 
 definition(
     name: "Startup and Shutdown Monitor",
@@ -65,12 +69,15 @@ Map mainPage() {
         section("Settings") {
             input name: "startupDelay", title: "Wait this many seconds after systemStartup event to close the contact sensor", type: "number", defaultValue: 0, range: "0..3600", required: true
         }
+        section("Unplanned Restart Notification") {
+            input name: "notifyDevices", type: "capability.notification", title: "Notify these devices when the hub starts without a prior shutdown event", multiple: true, required: false
+        }
         section(true, true, "Advanced") {
              input "triggerEventsOpen", "enum", title: "Events to OPEN the device",
-                options: constLocationEvents, required: false, multiple: true, defaultValue: ["manualReboot","manualShutdown","update"]
+                options: constLocationEvents, required: false, multiple: true, defaultValue: DEFAULT_OPEN_EVENTS
 
              input "triggerEventsClose", "enum", title: "Events to CLOSE the device",
-                options: constLocationEvents, required: false, multiple: true, defaultValue: ["systemStart"]
+                options: constLocationEvents, required: false, multiple: true, defaultValue: DEFAULT_CLOSE_EVENTS
 
         }
         section("Logging") {
@@ -119,12 +126,19 @@ void eventHandler(Event evt) {
     logEvt "System event detected: ${evt.name}"
     servicePendingClose()
 
-    if (evt.name in triggerEventsOpen) {
+    // Unset lists fall back to the defaults: an instance whose settings were never saved
+    // (or were lost) would otherwise ignore every event.
+    if (evt.name in (settings.triggerEventsOpen ?: DEFAULT_OPEN_EVENTS)) {
         cancelPendingClose()
         openContact(evt.descriptionText)
     }
 
-    if (evt.name in triggerEventsClose) {
+    // Still closed at startup = no shutdown event since the last start.
+    if (evt.name == "systemStart" && contactSensor?.currentValue('contact') == 'closed') {
+        notifyUnplannedRestart(evt)
+    }
+
+    if (evt.name in (settings.triggerEventsClose ?: DEFAULT_CLOSE_EVENTS)) {
         // The startup delay only applies to systemStart -- the rationale (hub
         // is busy coming back up) doesn't generalize to other close events the
         // user might pick (zigbeeOn, sunrise, ...).
@@ -168,6 +182,12 @@ private void cancelPendingClose() {
     unschedule("closeContactDelayed")
     state.remove("closeDueAt")
     state.remove("closeMessage")
+}
+
+private void notifyUnplannedRestart(Event evt) {
+    String message = "${location.name}: unplanned restart (no shutdown event before ${evt.descriptionText})"
+    logWarn message
+    notifyDevices?.each { it.deviceNotification(message) }
 }
 
 void openContact(String message) {
