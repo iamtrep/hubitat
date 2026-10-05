@@ -3,12 +3,20 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.4.4"
+@Field static final String CODE_VERSION = "0.4.5"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
 // File Manager file with one line per input each swap or undo changed.
 @Field static final String AUDIT_FILE = "device_replacement_audit.txt"
 // Parent of the mobile dashboards the hub generates per room and for "All Devices".
 @Field static final String DASHBOARD_PARENT_TYPE = "Easy Mobile Dashboard Parent"
+// How app types that hold devices outside their settings and state reference them.
+@Field static final Map<String,String> REFERENCE_BY_APP_TYPE = [
+    "Visual Rule Builder 1.0": "A Visual Rules Builder rule document",
+    "webCoRE Piston": "A webCoRE piston",
+    "HomeKit Bridge": "HomeKit Bridge's own device selection",
+    "MQTT Export Integration (beta)": "MQTT Export's own device selection",
+    "AI (MCP) Connector Integration": "The AI connector's own device selection",
+]
 // Dashboards whose tiles hold device ids of their own.
 @Field static final List<String> TILE_DASHBOARD_TYPES = ["Dashboard", "Easy Dashboard"]
 
@@ -20,6 +28,7 @@ definition(
     menu: "Apps", // new in platform 2.5.0
     category: "Utility",
     singleInstance: true,
+    singleThreaded: true, // one run at a time, so two audit-log appends never overlap
     iconUrl: "",
     iconX2Url: "",
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/utilities/DeviceReplacement.groovy"
@@ -75,13 +84,13 @@ Map mainPage(Map params = null) {
                     List<String> missing = (srcCaps - tgtCaps).sort()
                     List<String> extra = (tgtCaps - srcCaps).sort()
                     if (missing) {
-                        paragraph "<span style='color:orange'>Target is missing: ${missing.join(', ')}</span>"
+                        paragraph "<span class='text-orange-700'>Target is missing: ${missing.join(', ')}</span>"
                     }
                     if (extra) {
-                        paragraph "<span style='color:gray'>Target has extra: ${extra.join(', ')}</span>"
+                        paragraph "<span class='text-color-secondary'>Target has extra: ${extra.join(', ')}</span>"
                     }
                     if (!missing && !extra) {
-                        paragraph "<span style='color:green'>Capabilities match</span>"
+                        paragraph "<span class='text-green-700'>Capabilities match</span>"
                     }
                 }
             }
@@ -91,7 +100,7 @@ Map mainPage(Map params = null) {
         if (sourceDevice && targetDevice) {
             if (sourceDevice.id == targetDevice.id) {
                 section {
-                    paragraph "<span style='color:red'>Source and target are the same device. Please select different devices.</span>"
+                    paragraph "<span class='text-red-700'>Source and target are the same device. Please select different devices.</span>"
                 }
             } else {
                 section {
@@ -129,7 +138,7 @@ Map mainPage(Map params = null) {
         if (lastUndo) {
             section("Last Undo") {
                 lastUndo.each { Map r ->
-                    String icon = (r.success as boolean) ? "<span style='color:green'>&#10003;</span>" : "<span style='color:red'>&#10007;</span>"
+                    String icon = (r.success as boolean) ? "<span class='text-green-700'>&#10003;</span>" : "<span class='text-red-700'>&#10007;</span>"
                     paragraph "${icon} ${r.appLabel}: ${r.inputName}: ${r.message}"
                 }
             }
@@ -168,7 +177,7 @@ Map previewPage(Map params = null) {
             return
         }
         if (sourceDevice.id == targetDevice.id) {
-            section { paragraph "<span style='color:red'>Source and target are the same device. Please go back and select different devices.</span>" }
+            section { paragraph "<span class='text-red-700'>Source and target are the same device. Please go back and select different devices.</span>" }
             return
         }
 
@@ -184,11 +193,11 @@ Map previewPage(Map params = null) {
         Map src = referenceSource()
         List<Map> appsUsing = appsUsing(sourceId as Long, src)
         if (appsUsing == null) {
-            section { paragraph "<span style='color:red'>Could not read which apps use ${sourceDevice.displayName}; see the logs.</span>" }
+            section { paragraph "<span class='text-red-700'>Could not read which apps use ${sourceDevice.displayName}; see the logs.</span>" }
             return
         }
         if (src.loopback) {
-            section { paragraph "<span style='color:orange'>Using the slower loopback method (${src.reason}). Mobile dashboards are not shown.</span>" }
+            section { paragraph "<span class='text-orange-700'>Using the slower loopback method (${src.reason}). Mobile dashboards are not shown.</span>" }
         }
 
         // Filter out self if skipSelf is enabled
@@ -264,18 +273,14 @@ Map previewPage(Map params = null) {
 
             if (!matchingInputs) {
                 unmatched << [appId: appId, appLabel: appLabel, appType: appType,
-                              reason: "The hub lists this app as using the device, but not through a device input the scan can read (a rule document, an enum picker, a driver-specific picker or its own selection screen)"]
+                              reason: describeReference(statusData, sourceId, appType)]
                 return
             }
 
             // Check app state for source device ID references
-            List appState = (statusData.appState ?: []) as List
-            String sourceIdStr = sourceId.toString()
-            boolean stateHasDeviceRef = appState.any { entry ->
+            boolean stateHasDeviceRef = ((statusData.appState ?: []) as List).any { entry ->
                 Map e = entry as Map
-                String key = (e.name ?: "") as String
-                String val = (e.value ?: "") as String
-                key.contains(sourceIdStr) || val.contains(sourceIdStr)
+                mentionsId(e.name, sourceId) || mentionsId(e.value, sourceId)
             }
 
             // Walk the app's full page graph so we can locate each input's home page.
@@ -388,13 +393,15 @@ Map previewPage(Map params = null) {
             if (state.swapSelections == null) {
                 state.swapSelections = [:]
             }
-            swappable.eachWithIndex { Map entry, int idx ->
-                String key = idx.toString()
-                if (!state.swapSelections.containsKey(key)) {
+            Map initSel = (state.swapSelections ?: [:]) as Map
+            swappable.each { Map entry ->
+                String key = selKey(entry)
+                if (!initSel.containsKey(key)) {
                     boolean hasWarnings = entry.capWarning || entry.targetWarning || entry.singleSelectWarning || entry.stateWarning || entry.tileWarning
-                    state.swapSelections[key] = hasWarnings ? "off" : "on"
+                    initSel[key] = hasWarnings ? "off" : "on"
                 }
             }
+            state.swapSelections = initSel
 
             String X = "<i class='he-checkbox-checked'></i>"
             String O = "<i class='he-checkbox-unchecked'></i>"
@@ -413,12 +420,12 @@ Map previewPage(Map params = null) {
                     if (entry.singleSelectWarning) entryWarnings << (entry.singleSelectWarning as String)
                     if (entry.stateWarning) entryWarnings << (entry.stateWarning as String)
                     if (entry.tileWarning) entryWarnings << (entry.tileWarning as String)
-                    String warningCell = entryWarnings ? "<span style='color:orange'>${entryWarnings.join('<br>')}</span>" : "<span style='color:green'>&#10003;</span>"
+                    String warningCell = entryWarnings ? "<span class='text-orange-700'>${entryWarnings.join('<br>')}</span>" : "<span class='text-green-700'>&#10003;</span>"
                     List<String> attrs = (entry.subscribedAttrs ?: []) as List<String>
-                    String subsCell = attrs ? attrs.join(", ") : "<span style='color:gray'>-</span>"
-                    boolean selected = state.swapSelections[idx.toString()] != "off"
+                    String subsCell = attrs ? attrs.join(", ") : "<span class='text-color-secondary'>-</span>"
+                    boolean selected = state.swapSelections[selKey(entry)] != "off"
                     table += "<tr>" +
-                        "<td style='text-align:center;border-right:2px solid black'>${buttonLink("btnSwapSel:${idx}", selected ? X : O, "#1A77C9")}</td>" +
+                        "<td style='text-align:center;border-right:2px solid black'>${buttonLink("btnSwapSel:${selKey(entry)}", selected ? X : O, "#1A77C9")}</td>" +
                         "<td><a href='/installedapp/configure/${entry.appId}' target='_blank'>${entry.appLabel}</a></td>" +
                         "<td>${entry.appType}</td>" +
                         "<td><a href='${entry.pageDeepLink}' target='_blank'>${entry.homePage ?: 'mainPage'}</a></td>" +
@@ -442,15 +449,15 @@ Map previewPage(Map params = null) {
                     "</tr></thead><tbody>"
                 manual.each { Map entry ->
                     List<String> attrs = (entry.subscribedAttrs ?: []) as List<String>
-                    String subsCell = attrs ? attrs.join(", ") : "<span style='color:gray'>-</span>"
+                    String subsCell = attrs ? attrs.join(", ") : "<span class='text-color-secondary'>-</span>"
                     List currentIds = (entry.currentDeviceIds ?: []) as List
                     String currentCell = currentIds ? currentIds.collect { id ->
                         ((id as int) == sourceId)
-                            ? "<b style='color:red'>${id}</b>"
+                            ? "<b class='text-red-700'>${id}</b>"
                             : id.toString()
-                    }.join(", ") : "<span style='color:gray'>-</span>"
+                    }.join(", ") : "<span class='text-color-secondary'>-</span>"
                     String pageLabel = (entry.homePage ?: '(unknown)') as String
-                    String editBtn = "<a href='${entry.pageDeepLink}' target='_blank' style='display:inline-block;padding:4px 10px;background:#1A77C9;color:white;border-radius:3px;text-decoration:none'>Edit &rarr;</a>"
+                    String editBtn = "<a href='${entry.pageDeepLink}' target='_blank' class='p-button p-button-sm p-button-outlined no-underline'>Edit &rarr;</a>"
                     table += "<tr>" +
                         "<td ${td}><a href='/installedapp/configure/${entry.appId}' target='_blank'>${entry.appLabel}</a></td>" +
                         "<td ${td}>${entry.appType}</td>" +
@@ -501,14 +508,12 @@ Map previewPage(Map params = null) {
 
         if (swappable) {
             // Store indexed entries so resultsPage can filter by selection
-            swappable.eachWithIndex { Map entry, int idx ->
-                entry.index = idx
-            }
+            swappable.each { Map entry -> entry.key = selKey(entry) }
             state.pendingScan = swappable
 
             Map selections = state.swapSelections ?: [:]
             int selectedCount = swappable.count { Map entry ->
-                selections[entry.index.toString()] != "off"
+                selections[entry.key] != "off"
             }
             if (selectedCount > 0) {
                 section {
@@ -519,6 +524,34 @@ Map previewPage(Map params = null) {
             state.pendingScan = []
         }
     }
+}
+
+// True when `value` holds `id` as a whole number ("618" in ["618","620"] or {618=...}, not in "6180").
+private boolean mentionsId(Object value, int id) {
+    return value != null && (value.toString() =~ /(?<![0-9])${id}(?![0-9])/).find()
+}
+
+// For an app the hub lists as using the device but with no capability input holding it: where the
+// scan does see the device's id, or what kind of reference the app type uses.
+private String describeReference(Map statusData, int sourceId, String appType) {
+    List<String> found = []
+    ((statusData.appSettings ?: []) as List).each { setting ->
+        Map s = setting as Map
+        String type = (s.type ?: "") as String
+        boolean holds = ((s.deviceIdsForDeviceList ?: []) as List).any { (it as int) == sourceId } || mentionsId(s.value, sourceId)
+        if (!holds) return
+        found << (type.startsWith("device.")
+            ? "driver-specific picker ${s.name} (${type}), which the per-input swap doesn't write"
+            : "setting ${s.name} (${type ?: 'untyped'}), which the per-input swap doesn't write")
+    }
+    List<String> stateKeys = ((statusData.appState ?: []) as List).findAll { entry ->
+        Map e = entry as Map
+        mentionsId(e.name, sourceId) || mentionsId(e.value, sourceId)
+    }.collect { (it as Map).name as String }
+    if (stateKeys) found << "the app's own data (${stateKeys.join(', ')})"
+    if (found) return "Holds it in ${found.join('; ')}"
+    String byType = REFERENCE_BY_APP_TYPE[appType]
+    return byType ?: "The scan doesn't see where this app holds it"
 }
 
 // Read-only list of every app using the source and where it holds it, shown when the per-input
@@ -564,7 +597,7 @@ Map confirmSwapPage(Map params = null) {
             if (!pending) {
                 paragraph "Nothing to swap. Go back and select at least one app."
             } else {
-                paragraph "<span style='color:red'><b>&#9888; Recommended:</b> <a href='/hub/backup' target='_blank'>Create a local hub backup</a> before executing the swap.</span>"
+                paragraph "<div class='p-message p-component p-message-warn'><div class='p-message-wrapper'><span class='p-message-text'><b>Recommended:</b> <a href='/hub/backup' target='_blank'>Create a local hub backup</a> before executing the swap.</span></div></div>"
                 paragraph "${sourceDevice.displayName} (ID ${sourceDevice.id}) will be replaced by ${targetDevice.displayName} (ID ${targetDevice.id}) in:"
                 pending.each { Map e -> paragraph "${e.appLabel}: ${e.inputName}" }
                 paragraph "Each app's settings are saved, so each one runs its updated()."
@@ -595,7 +628,7 @@ Map resultsPage(Map params) {
                 "<th ${td}>App</th><th ${td}>Input</th><th ${td}>Status</th><th ${td}>Details</th>" +
                 "</tr></thead><tbody>"
             results.each { Map r ->
-                String statusIcon = (r.success as boolean) ? "<span style='color:green'>&#10003;</span>" : "<span style='color:red'>&#10007;</span>"
+                String statusIcon = (r.success as boolean) ? "<span class='text-green-700'>&#10003;</span>" : "<span class='text-red-700'>&#10007;</span>"
                 table += "<tr>" +
                     "<td ${td}><a href='/installedapp/configure/${r.appId}' target='_blank'>${r.appLabel}</a></td>" +
                     "<td ${td}>${r.inputName}</td>" +
@@ -606,7 +639,7 @@ Map resultsPage(Map params) {
             table += "</tbody></table>"
             paragraph table
             paragraph state.auditError
-                ? "<span style='color:orange'>Not written to the <a href='/local/${AUDIT_FILE}' target='_blank'>audit log</a>: ${state.auditError}</span>"
+                ? "<span class='text-orange-700'>Not written to the <a href='/local/${AUDIT_FILE}' target='_blank'>audit log</a>: ${state.auditError}</span>"
                 : "Written to the <a href='/local/${AUDIT_FILE}' target='_blank'>audit log</a>."
         }
     }
@@ -615,7 +648,7 @@ Map resultsPage(Map params) {
 private List<Map> selectedPending() {
     Map selections = state.swapSelections ?: [:]
     return ((state.pendingScan ?: []) as List<Map>).findAll { Map entry ->
-        selections[entry.index.toString()] != "off"
+        selections[selKey(entry)] != "off"
     }
 }
 
@@ -942,11 +975,16 @@ void appButtonHandler(String evt) {
     } else if (evt == "refreshScan") {
         state.remove("swapSelections")
     } else if (evt.startsWith("btnSwapSel:")) {
-        String idx = evt.split(":")[1]
+        String idx = evt.substring("btnSwapSel:".length())
         Map selections = state.swapSelections ?: [:]
         selections[idx] = (selections[idx] == "off") ? "on" : "off"
         state.swapSelections = selections
     }
+}
+
+// A selection is keyed by app and input, so a rescan that reorders the rows keeps each choice.
+private String selKey(Map entry) {
+    return "${entry.appId}:${entry.inputName}"
 }
 
 private String buttonLink(String btnName, String linkText, String color = "#1A77C9", String font = "15px") {
@@ -1025,7 +1063,7 @@ private boolean nativeSwapSection(int sourceId, int targetId, Set<String> subscr
     Map n = nativePrepare("swap", sourceId, targetId)
     if (!n.aid) {
         section("Swap Apps Device") {
-            paragraph "<span style='color:gray'>The hub's Swap Apps Device can't do this swap: ${n.reason}. Use the inputs below.</span>"
+            paragraph "<span class='text-color-secondary'>The hub's Swap Apps Device can't do this swap: ${n.reason}. Use the inputs below.</span>"
         }
         return false
     }
@@ -1046,11 +1084,11 @@ private boolean nativeSwapSection(int sourceId, int targetId, Set<String> subscr
             "Event history stays with the device id."
         ]
         if (onTarget) {
-            notes << "<span style='color:orange'>Apps that use ${targetDevice.displayName} now will move to the old hardware: " +
+            notes << "<span class='text-orange-700'>Apps that use ${targetDevice.displayName} now will move to the old hardware: " +
                 onTarget.collect { Map a -> "<a href='/installedapp/configure/${a.id}' target='_blank'>${a.label}</a>" }.join(", ") + "</span>"
         }
         if (missing) {
-            notes << "<span style='color:orange'>Apps subscribe to ${missing.join(', ')}, which ${targetDevice.displayName} doesn't report.</span>"
+            notes << "<span class='text-orange-700'>Apps subscribe to ${missing.join(', ')}, which ${targetDevice.displayName} doesn't report.</span>"
         }
         paragraph "<ul>" + notes.collect { "<li>${it}</li>" }.join("") + "</ul>"
         href "nativeSwapPage", title: "Swap with Swap Apps Device…", description: "Opens the hub's swap page with both devices selected"
@@ -1246,11 +1284,11 @@ Map nativeCheckPage(Map params = null) {
             return
         }
         section {
-            String color = result.outcome == "swapped" ? "green" : (result.outcome == "unchanged" ? "gray" : "red")
-            paragraph "<span style='color:${color}'>${result.message}</span>"
+            String cls = result.outcome == "swapped" ? "text-green-700" : (result.outcome == "unchanged" ? "text-color-secondary" : "text-red-700")
+            paragraph "<span class='${cls}'>${result.message}</span>"
             ((result.cleanup ?: []) as List).each { String line -> paragraph line }
             paragraph state.auditError
-                ? "<span style='color:orange'>Not written to the <a href='/local/${AUDIT_FILE}' target='_blank'>audit log</a>: ${state.auditError}</span>"
+                ? "<span class='text-orange-700'>Not written to the <a href='/local/${AUDIT_FILE}' target='_blank'>audit log</a>: ${state.auditError}</span>"
                 : "Written to the <a href='/local/${AUDIT_FILE}' target='_blank'>audit log</a>."
         }
     }
@@ -1314,12 +1352,12 @@ private List<String> nativeCleanup(Map n, Map bOld, Map aOld, Map aNew) {
         "<a href='/device/edit/${n.newId}' target='_blank'>Open it</a> to remove it or reuse it."
     List onTarget = (n.onTarget ?: []) as List
     if (onTarget) {
-        lines << "<span style='color:orange'>These apps used the replacement before the swap and now use the old hardware: " +
+        lines << "<span class='text-orange-700'>These apps used the replacement before the swap and now use the old hardware: " +
             onTarget.collect { a -> "<a href='/installedapp/configure/${(a as Map).id}' target='_blank'>${(a as Map).label}</a>" }.join(", ") + "</span>"
     }
     List missing = (n.missingAttrs ?: []) as List
     if (missing) {
-        lines << "<span style='color:orange'>Apps subscribe to ${missing.join(', ')}, which the new hardware doesn't report.</span>"
+        lines << "<span class='text-orange-700'>Apps subscribe to ${missing.join(', ')}, which the new hardware doesn't report.</span>"
     }
     return lines
 }

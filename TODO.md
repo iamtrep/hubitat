@@ -24,14 +24,6 @@ Replace each with an `href` to a confirmation page that lists what will be remov
 
 `diagnosticsPage` renders a multi-line `"""` paragraph that also uses `<br>`, so pre-wrap doubles every line break. Add `rawHtml: true`.
 
-### 3. DeviceReplacement styling
-
-`apps/utilities/DeviceReplacement.groovy` is the most hand-styled page:
-
-- Inline `color:orange/red/green` spans become `p-message p-message-warn` / `p-message-error` boxes or `text-*-700` classes.
-- The inline-styled `#1A77C9` "Edit" links become `p-button` classes.
-- The "create a hub backup first" warning becomes a `p-message-warn` box.
-
 ### 4. SwitchMonitor group delete
 
 `removeGroupPage` has a confirm button and a Cancel link, but its `nextPage` button is a third exit that does nothing. Hide it, or drop `nextPage`.
