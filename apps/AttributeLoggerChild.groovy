@@ -127,6 +127,68 @@ void writeFile(String data) {
     safeUploadHubFile(logFileName, newData.bytes)
 }
 
+// Epoch seconds at the start of the row beginning at index start, or null.
+Long rowSeconds(String content, int start) {
+    if (start < 0 || start >= content.length()) return null
+    int comma = content.indexOf(",", start)
+    int newline = content.indexOf("\n", start)
+    int end = comma < 0 ? newline : (newline < 0 ? comma : Math.min(comma, newline))
+    if (end < 0) end = content.length()
+    try {
+        return new BigDecimal(content.substring(start, end).trim()).longValue()
+    } catch (NumberFormatException ignored) {
+        return null
+    }
+}
+
+// Index of the first data row: after the header line, or 0 when the file has no header.
+int firstRowIndex(String content) {
+    if (!content.startsWith("timestamp")) return 0
+    int newline = content.indexOf("\n")
+    return newline < 0 ? content.length() : newline + 1
+}
+
+// Line start of the first row with a timestamp >= cutoff, or content.length() when none.
+// Rows are in time order, so this binary-searches byte offsets and snaps to line starts.
+// An unparsable row counts as old. Whatever it returns is a line start, so the rows
+// before and after it always add up to the whole file.
+int findCut(String content, int firstRow, long cutoff) {
+    int lo = firstRow
+    int hi = content.length()
+    while (lo < hi) {
+        int mid = (lo + hi).intdiv(2)
+        int start = Math.max(firstRow, content.lastIndexOf("\n", mid - 1) + 1)
+        int newline = content.indexOf("\n", mid)
+        int next = newline < 0 ? content.length() : newline + 1
+        Long seconds = rowSeconds(content, start)
+        if (seconds != null && seconds >= cutoff) {
+            hi = start
+        } else {
+            lo = next
+        }
+    }
+    return lo
+}
+
+// <base>_<firstDay>_<lastDay><ext>, adding -2, -3... when the name is taken.
+String archiveName(String logFileName, String firstDay, String lastDay, Collection<String> existing) {
+    int dot = logFileName.lastIndexOf('.')
+    String base = dot > 0 ? logFileName.substring(0, dot) : logFileName
+    String ext = dot > 0 ? logFileName.substring(dot) : ""
+    String stem = "${base}_${firstDay}_${lastDay}"
+    String name = stem + ext
+    int n = 2
+    while (existing.contains(name)) {
+        name = "${stem}-${n}${ext}"
+        n++
+    }
+    return name
+}
+
+String dayStamp(long seconds, TimeZone tz) {
+    return new Date(seconds * 1000L).format("yyyyMMdd", tz)
+}
+
 
 byte[] safeDownloadHubFile(String fileName) {
     for (int i = 1; i <= 3; i++) {
