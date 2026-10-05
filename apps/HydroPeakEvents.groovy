@@ -12,7 +12,7 @@ import groovy.json.JsonOutput
 import java.text.SimpleDateFormat
 
 @Field static final String APP_NAME = "Hydro-Québec Peak Period Manager"
-@Field static final String CODE_VERSION = "0.2.1"
+@Field static final String CODE_VERSION = "0.3.0"
 
 definition(
     name: APP_NAME,
@@ -47,6 +47,10 @@ definition(
 ]
 
 @Field static final Integer REFETCH_DELAY_SECONDS = 5
+// Failed fetches log at warn until this many in a row, then once at error, then at
+// warn every OUTAGE_REMINDER_MS until a fetch succeeds. The last fetched events stay in effect.
+@Field static final int FAILURE_ERROR_THRESHOLD = 3
+@Field static final long OUTAGE_REMINDER_MS = 3_600_000L
 @Field static final String DATE_FORMAT_ISO8601 = "yyyy-MM-dd'T'HH:mm:ssXXX"
 @Field static final String DATE_FORMAT_HUBITAT = "yyyy-MM-dd'T'HH:mm:ss.sssXX"
 @Field static final String DATE_FORMAT_DISPLAY = 'yyyy-MM-dd HH:mm:ss'
@@ -173,14 +177,14 @@ void fetchPeakPeriods() {
     try {
         asynchttpGet(handlePeakPeriodsResponse, settings.testMode ? API_TEST_PARAMS : API_PARAMS)
     } catch (Exception e) {
-        logError("Error initiating fetch of peak periods: ${e.message}")
+        fetchFailed("cannot start fetch: ${e.message}")
     }
 }
 
 void handlePeakPeriodsResponse(hubitat.scheduling.AsyncResponse response, Map data) {
     try {
         if (response.hasError()) {
-            logError("HTTP error fetching peak periods: ${response.getErrorMessage()}")
+            fetchFailed("HTTP error: ${response.getErrorMessage()}")
             return
         }
 
@@ -188,13 +192,58 @@ void handlePeakPeriodsResponse(hubitat.scheduling.AsyncResponse response, Map da
             logNet("Successfully fetched data")
             String jsonText = response.data
             Map responseData = parseJson(jsonText)
+            fetchSucceeded()
             processPeakPeriods(responseData)
         } else {
-            logError("Failed to fetch data: HTTP ${response.status}")
+            fetchFailed("HTTP ${response.status}")
         }
     } catch (Exception e) {
         logError("Error handling peak periods response: ${e.message}")
     }
+}
+
+// --- Outage handling ---
+
+// Warn below FAILURE_ERROR_THRESHOLD, one error at it, then a warn every OUTAGE_REMINDER_MS.
+private void fetchFailed(String msg) {
+    long t = now()
+    int n = ((state.fetchFailures ?: 0) as int) + 1
+    state.fetchFailures = n
+    if (n == 1) state.fetchFailingSince = t
+    long since = state.fetchFailingSince as long
+    if (n < FAILURE_ERROR_THRESHOLD) {
+        logWarn("fetching peak periods failed (${n}/${FAILURE_ERROR_THRESHOLD}): ${msg}")
+    } else if (n == FAILURE_ERROR_THRESHOLD) {
+        logError("Hydro-Québec data unreachable since ${formatClock(since)}, keeping the last fetched events: ${msg}")
+        state.lastOutageReminder = t
+    } else if (t - ((state.lastOutageReminder ?: 0L) as long) >= OUTAGE_REMINDER_MS) {
+        logWarn("Hydro-Québec data still unreachable after ${formatDuration(t - since)} (${n} fetches failed): ${msg}")
+        state.lastOutageReminder = t
+    } else {
+        logDebug("fetching peak periods failed (${n}): ${msg}")
+    }
+}
+
+private void fetchSucceeded() {
+    int n = (state.fetchFailures ?: 0) as int
+    if (n >= FAILURE_ERROR_THRESHOLD) {
+        logInfo("Hydro-Québec data back after ${formatDuration(now() - (state.fetchFailingSince as long))} (${n} fetches failed)")
+    } else if (n > 0) {
+        logDebug("fetch recovered after ${n} failed")
+    }
+    state.remove("fetchFailures")
+    state.remove("fetchFailingSince")
+    state.remove("lastOutageReminder")
+}
+
+private String formatClock(long t) {
+    return new Date(t).format("yyyy-MM-dd HH:mm", location.timeZone)
+}
+
+private static String formatDuration(long ms) {
+    long minutes = ms.intdiv(60000L)
+    if (minutes < 60) return "${minutes} min"
+    return "${minutes.intdiv(60L)} h ${minutes % 60} min"
 }
 
 private void processPeakPeriods(Map data) {
