@@ -15,7 +15,7 @@
 import groovy.transform.Field
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 
 @Field static final List<String> DEFAULT_OPEN_EVENTS = ["manualReboot", "manualShutdown", "update"]
 @Field static final List<String> DEFAULT_CLOSE_EVENTS = ["systemStart"]
@@ -63,7 +63,7 @@ preferences {
 Map mainPage() {
     dynamicPage(name: "mainPage", title: "${app.getLabel()} Setup", install: true, uninstall: true) {
         section("Select Virtual Contact Sensor") {
-            input name: "contactSensor", "capability.contactSensor", title: "Virtual Contact Sensor", multiple:false, required:true, showFilter:true
+            input name: "contactSensor", type: "capability.contactSensor", title: "Virtual Contact Sensor", multiple:false, required:true, showFilter:true
             paragraph "<a href='/device/addDevice' target='_blank'>Click here</a> to create a new Virtual Contact Sensor for use with this app"
         }
         section("Settings") {
@@ -72,7 +72,7 @@ Map mainPage() {
         section("Unplanned Restart Notification") {
             input name: "notifyDevices", type: "capability.notification", title: "Notify these devices when the hub starts without a prior shutdown event", multiple: true, required: false
         }
-        section(true, true, "Advanced") {
+        section("Advanced", hideable: true, hidden: true) {
              input "triggerEventsOpen", "enum", title: "Events to OPEN the device",
                 options: constLocationEvents, required: false, multiple: true, defaultValue: DEFAULT_OPEN_EVENTS
 
