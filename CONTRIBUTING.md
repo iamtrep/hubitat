@@ -45,6 +45,10 @@ still authoritative; only mentions from parent READMEs (e.g. the root `README.md
 `integrations/README.md`) are suppressed until the marker is removed. Find all WIP
 directories with `git ls-files | grep '\.wip$'`.
 
+## Device spec files
+
+A `*_specs.groovy` file next to a driver (e.g. `drivers/sinope/Sinope_switch_specs.groovy`) is reference material, not code: comments only, recording the device's Zigbee node descriptor and its cluster and attribute tables. Don't install it on a hub.
+
 ## Building a dashboard SPA — conventions
 
 Some apps in this repo aren't automations — they're **dashboards**: a Groovy app that serves a single-page HTML app and backs it with `/api/*` JSON endpoints (e.g. [`apps/HubInspector/`](apps/HubInspector/), [`apps/MultiHubInventory/`](apps/MultiHubInventory/)). [`apps/HubInspector/hub_inspector_ui.html`](apps/HubInspector/hub_inspector_ui.html) is the reference implementation — match its conventions rather than inventing simpler ones (a leaner dashboard built without them tends to look done but be unusable).

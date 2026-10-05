@@ -235,6 +235,21 @@ For monitoring, diagnostics, and dashboard-style apps, partial data is usually b
 
 This default does not apply to writes or destructive actions, which should fail loudly.
 
+### Cloud API outages
+
+An integration that logs an error on every failed poll pages the user once per poll for the whole outage, because Log Monitor forwards errors to a notifier. Cloud pollers follow these rules:
+
+- Count consecutive failed polls as one streak, whichever step failed (login, fetch, parse). Commands the user runs still log an error on each failure.
+- Below a small threshold of polls, log each failure at warn, since these services should not fail. At the threshold, log one error, then a warn every hour while the outage lasts, and one info line on recovery with the outage length. Log Monitor pages on errors only, so an outage pages once.
+- Keep polling at the normal rate. Honor `Retry-After` when the server sends one, with a ceiling so a bad header can't stop polling for good.
+- Report health on each child's `healthStatus` attribute (`online`/`offline`). No capability defines it, so drivers declare it as a custom attribute. A child also goes offline when its own data stops while the API is up, and the event's `descriptionText` gives the reason.
+
+Reference implementations: VisiblAirManager (`pollFailed()`/`pollSucceeded()`, threshold 3) and FGLairManager (threshold 5, `noteRetryAfter()`). Home Assistant's [`log-when-unavailable`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/log-when-unavailable/) rule takes the same approach.
+
+### Firmware-dependent platform APIs
+
+A platform method whose signature changed between firmware releases throws on a hub that runs the older one. Compare `location.hub.firmwareVersionString` against the first release that has the signature, store the result, and branch on it. Compare the version components as integers, since string comparison puts `2.4.10` before `2.4.9`. Reference: IPReachabilitySensor's `supportsPingTimeout()`, which picks `NetworkUtils.ping(ip, count, timeout)` when the firmware supports it and `NetworkUtils.ping(ip, count)` otherwise.
+
 ## Apps
 
 ### App lifecycle and subscriptions
@@ -316,6 +331,16 @@ The mechanics of nested apps (`app(...)` declaration, `parent: "ns:Name"`) and c
 - **The app does the work, a child device is the handle.** Automation that selects, watches or commands other devices is an app: drivers can't select devices, `subscribe()`, read hub variables or serve `mappings` *([verified 2.5.2.129](docs/hubitat-platform-notes.md#what-only-an-app-can-do))*. When rules, Maker API, dashboards, MCP or voice assistants need to drive or watch one instance, give it a child device whose commands call the parent and whose attributes report its status. The device addresses that one instance and holds no logic. Reference: Thermostat Scheduler+, one device per program, which fixes the built-in scheduler's ambiguous by-thermostat targeting.
 - **Orphan tracking, explicit user action.** When the parent's source-of-truth changes (a sensor unenrolls upstream, etc.), diff the active DNI `Set` against `getChildDevices()` and surface orphans for the user to remove explicitly. Don't auto-delete child devices — they may carry user-edited labels, dashboard pins, or rule references.
 
+### Choosing `singleInstance`
+
+Set `singleInstance: true` when a second instance would duplicate work or split what belongs together:
+
+- **Integration roots** bound to one account or a fixed DNI prefix. A second instance polls the account twice and creates child devices whose DNIs collide, so `addChildDevice` throws. Examples: VisiblAirManager, FGLairManager, BlinkManager.
+- **Apps that watch or serve the whole hub.** A second instance subscribes twice and sends duplicate notifications or runs duplicate scans. Examples: HubInspector, StartupShutdownMonitor, LocationEventMapper.
+- **Parents that exist to create child apps**, where the parent's page is how the user adds a new child. The admin interface lists child apps nested under their parent, so one parent keeps every child in one group behind one "add" button, and a second parent splits them into two groups. Examples: AttributeLogger, SensorAggregator, ThermostatSchedulerPlus.
+
+Leave it off when each instance is one independent use (HumidityFanController, SwitchMonitor, MirrorSwitch), including apps that only own a child device as their output handle (HvacSeasonManager, IndoorAirQualityController).
+
 ## Drivers
 
 ### Driver lifecycle
@@ -368,6 +393,8 @@ Avoid these unless there is a deliberate, documented exception:
 - caches in `state` with no invalidation story
 - pure-passthrough `/api/*` routes that exist only to forward a hub call
 - treating Hubitat libraries as architectural module boundaries
+- logging an error on every failed background poll of a cloud API
+- calling a platform method signature that older firmware lacks without checking `location.hub.firmwareVersionString`
 - per-device async fan-out that assumes more than 8 calls (or 5 to one host) run in parallel
 - skipping `unschedule()` in `updated()` (produces orphan timers)
 - a transient state whose only exit is an unrescheduled `runIn` callback
