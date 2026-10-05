@@ -44,7 +44,7 @@ Region (US / EU) is configurable on the manager page; the region setting drives 
 - `outdoorTemperature` — temperature reported by the outdoor unit (number)
 - `errorCode` — raw Fujitsu error code (number; `0` = no fault). Transitions `0 → non-0` log a warning; `non-0 → 0` logs an info-level clear.
 - `opStatus` — raw operational status (number). Logged at info level on change.
-- `healthStatus` — `online` / `offline`, from the unit's cloud connection status. Also set to `offline` after 5 consecutive failed cloud requests, after 5 consecutive failed property reads for that unit, or when the manager stops polling on an auth failure.
+- `healthStatus` — `online` / `offline`, from the unit's cloud connection status. Also set to `offline` after 5 consecutive failed cloud requests, after 5 consecutive failed property reads for that unit, or when the manager stops polling on an auth failure. The event description gives the reason.
 - `commandStatus` — `ok` / `failed`, the outcome of the last write to the unit. Failed writes are not retried, since a retried write can jam the unit's cloud write queue; the next poll restores the real state.
 - `setFujitsuMode(String)` command — accepts the full mode enum
 - `setFanSpeed(String)` command — accepts the full fan-speed enum

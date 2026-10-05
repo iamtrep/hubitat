@@ -33,7 +33,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "0.2.6"
+@Field static final String CODE_VERSION = "0.3.0"
 
 // Region-specific Ayla endpoints + app credentials, lifted from
 // ayla-iot-unofficial/src/ayla_iot_unofficial/const.py and fujitsu_consts.py.
@@ -59,10 +59,12 @@ definition(
 @Field static final long TOKEN_REFRESH_BUFFER_MS = 300_000L
 @Field static final int HTTP_TIMEOUT = 15
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
-// Transient cloud failures (timeouts, 5xx) are common with Ayla and self-clear on
-// the next poll. Log at warn until this many in a row, then escalate to error so a
-// real outage surfaces.
+// Transient cloud failures (timeouts, 5xx) log at warn until this many in a row,
+// then once at error, then at warn every OUTAGE_REMINDER_MS until they clear.
 @Field static final int FAILURE_ERROR_THRESHOLD = 5
+@Field static final long OUTAGE_REMINDER_MS = 3_600_000L
+// Longest Retry-After honored, so a bad header can't stop polling for good.
+@Field static final long RETRY_AFTER_MAX_MS = 3_600_000L
 // A refresh or sign-in older than this is treated as lost, so a new one may start.
 @Field static final long AUTH_INFLIGHT_MS = 30_000L
 // Consecutive 401s, each followed by a successful refresh, before auth is halted.
@@ -213,6 +215,9 @@ void initialize()  {
         state.version = CODE_VERSION
     }
     migrateSensedSetting()
+    // 0.3.0 keeps failure streaks with their start and reminder times.
+    state.remove("consecutiveFetchFailures")
+    state.remove("unitFailures")
     // Sessions from before 0.2.5 didn't record their region.
     if (isAuthenticated() && !state.sessionRegion) state.sessionRegion = currentRegion()
     if (isAuthenticated()) {
@@ -426,7 +431,9 @@ void pollTick() {
         updated()
         return
     }
-    if (pollInFlight()) {
+    if (now() < ((state.cloudPausedUntil ?: 0L) as long)) {
+        logSched "pollTick: FGLair asked to retry later — skipped"
+    } else if (pollInFlight()) {
         logSched "pollTick: previous poll still running — skipped"
     } else {
         // Units due a wake are woken here; this poll's GET still reads the current
@@ -518,6 +525,7 @@ void signInCallback(resp, data) {
     int status = resp.getStatus()
     if (isTransientStatus(status)) {
         // Network failure or cloud outage: keep the tokens; the next poll tries again.
+        noteRetryAfter(resp)
         if (manual) {
             logError "signIn ${httpError(resp)}"
             state.authError = "Sign-in failed: ${httpError(resp)}"
@@ -600,6 +608,7 @@ void refreshTokenCallback(resp, data) {
     int status = resp.getStatus()
     if (isTransientStatus(status)) {
         atomicState.remove("authStartedAt")
+        noteRetryAfter(resp)
         noteTransientFailure "refreshToken ${httpError(resp)}"
         return
     }
@@ -660,7 +669,7 @@ private void haltAuth(String reason) {
     logError "${reason} Polling stopped; log in again from the manager page."
     state.authError = reason
     clearSession()
-    markUnitsOffline()
+    markUnitsOffline("signed out of FGLair")
 }
 
 private void clearSession() {
@@ -670,7 +679,9 @@ private void clearSession() {
     atomicState.remove("authStartedAt")
     atomicState.remove("authRejects")
     discardPendingWrites()
-    state.remove("unitFailures")
+    state.remove("cloudStreak")
+    state.remove("unitStreaks")
+    state.remove("cloudPausedUntil")
     state.remove("sessionRegion")
     POLL.clear()
     // Only the session's own handlers; a pending logsOff must still run.
@@ -751,6 +762,7 @@ private void handleDevicesResponse(resp) {
         return
     }
     if (status != 200) {
+        noteRetryAfter(resp)
         noteTransientFailure "fetchDevices ${httpError(resp)}"
         if (!isTransientStatus(status)) logNet "fetchDevices response: ${bodyExcerpt(resp)}"
         return
@@ -805,14 +817,23 @@ private void handleDeviceList(List rawDevices) {
         String conn = d.connection_status?.toString()
         // A unit whose own property reads keep failing stays offline until one succeeds.
         boolean reachable = unitFailures(dsn) < FAILURE_ERROR_THRESHOLD
-        if (conn) child.updateHealth(conn.equalsIgnoreCase("Online") && reachable ? "online" : "offline")
+        if (conn) {
+            if (!conn.equalsIgnoreCase("Online")) child.updateHealth("offline", "unit reports no cloud link (${conn})")
+            else if (!reachable) child.updateHealth("offline", "property reads failing")
+            else child.updateHealth("online", "reporting")
+        }
     }
     if (childError) state.childError = childError
     else state.remove("childError")
     // An empty list is more likely a cloud glitch than every unit removed from the
     // account; flagging all units as orphans would let one click delete them all.
-    if (devices) computeOrphans(liveDnis)
-    else if (unitChildren()) logWarn "FGLair returned no devices — orphan check skipped"
+    if (devices) {
+        computeOrphans(liveDnis)
+        state.remove("emptyDeviceList")
+    } else if (unitChildren() && !state.emptyDeviceList) {
+        logWarn "FGLair returned no devices — orphan check skipped until it does"
+        state.emptyDeviceList = true
+    }
 
     // After ensuring children exist, fetch each DSN's properties and dispatch,
     // a few at a time so large accounts stay under the async-call cap.
@@ -883,7 +904,11 @@ private void handlePropertiesResponse(resp, String dsn) {
         noteAuthReject("fetchProperties(${dsn})")
         return
     }
-    if (status != 200) { noteUnitFailure(dsn, "fetchProperties(${dsn}) ${httpError(resp)}"); return }
+    if (status != 200) {
+        noteRetryAfter(resp)
+        noteUnitFailure(dsn, "fetchProperties(${dsn}) ${httpError(resp)}")
+        return
+    }
     List parsed
     try { parsed = (List) new JsonSlurper().parseText(resp.getData()) }
     catch (Exception e) { noteUnitFailure(dsn, "fetchProperties(${dsn}) parse: ${e.message}"); return }
@@ -1113,7 +1138,7 @@ private void computeOrphans(Set<String> liveDnis) {
 void disconnect() {
     logInfo "disconnecting"
     clearSession()
-    markUnitsOffline()
+    markUnitsOffline("disconnected from FGLair")
 }
 
 // hasError() is true for every non-2xx status, so callbacks branch on getStatus().
@@ -1142,51 +1167,105 @@ void logsOff() {
 
 // Cloud-level failures (auth, device list). Per-unit property reads use noteUnitFailure().
 private void noteTransientFailure(String msg) {
-    int n = ((state.consecutiveFetchFailures ?: 0) as int) + 1
-    state.consecutiveFetchFailures = n
-    if (n == FAILURE_ERROR_THRESHOLD) markUnitsOffline()
-    if (n >= FAILURE_ERROR_THRESHOLD) {
-        logError "${msg} (failure streak: ${n})"
-    } else {
-        logWarn msg
-    }
+    Map streak = streakFailed((state.cloudStreak ?: [:]) as Map, "FGLair cloud", msg)
+    state.cloudStreak = streak
+    if ((streak.count as int) == FAILURE_ERROR_THRESHOLD) markUnitsOffline("FGLair cloud unreachable")
 }
 
 // The cloud can't be reached, so unit state is unknown. The next successful
 // device list restores health from connection_status.
-private void markUnitsOffline() {
-    unitChildren().each { it.updateHealth("offline") }
+private void markUnitsOffline(String reason) {
+    unitChildren().each { it.updateHealth("offline", reason) }
 }
 
 private void clearTransientFailureStreak() {
-    if (state.consecutiveFetchFailures) state.consecutiveFetchFailures = 0
+    if (!state.cloudStreak) return
+    streakRecovered(state.cloudStreak as Map, "FGLair cloud")
+    state.remove("cloudStreak")
 }
 
 // A unit whose property reads keep failing is marked offline on its own,
 // without counting against the cloud streak.
 private void noteUnitFailure(String dsn, String msg) {
-    Map<String, Integer> fails = (state.unitFailures ?: [:]) as Map<String, Integer>
-    int n = ((fails[dsn] ?: 0) as int) + 1
-    fails[dsn] = n
-    state.unitFailures = fails
-    if (n == FAILURE_ERROR_THRESHOLD) getChildDevice("${DNI_PREFIX_UNIT}${dsn}")?.updateHealth("offline")
-    if (n >= FAILURE_ERROR_THRESHOLD) {
-        logError "${msg} (failure streak: ${n})"
-    } else {
-        logWarn msg
+    Map<String, Map> streaks = (state.unitStreaks ?: [:]) as Map<String, Map>
+    Map streak = streakFailed((streaks[dsn] ?: [:]) as Map, unitName(dsn), msg)
+    streaks[dsn] = streak
+    state.unitStreaks = streaks
+    if ((streak.count as int) == FAILURE_ERROR_THRESHOLD) {
+        getChildDevice("${DNI_PREFIX_UNIT}${dsn}")?.updateHealth("offline", "property reads failing")
     }
 }
 
 private int unitFailures(String dsn) {
-    return (((state.unitFailures ?: [:]) as Map)[dsn] ?: 0) as int
+    return ((((state.unitStreaks ?: [:]) as Map)[dsn] as Map)?.count ?: 0) as int
 }
 
 private void clearUnitFailures(String dsn) {
-    Map<String, Integer> fails = (state.unitFailures ?: [:]) as Map<String, Integer>
-    if (!fails.containsKey(dsn)) return
-    fails.remove(dsn)
-    state.unitFailures = fails
+    Map<String, Map> streaks = (state.unitStreaks ?: [:]) as Map<String, Map>
+    if (!streaks.containsKey(dsn)) return
+    streakRecovered(streaks[dsn], unitName(dsn))
+    streaks.remove(dsn)
+    state.unitStreaks = streaks
     // Health comes back with the next device list, which carries the unit's own link state.
+}
+
+private String unitName(String dsn) {
+    return getChildDevice("${DNI_PREFIX_UNIT}${dsn}")?.displayName ?: "unit ${dsn}"
+}
+
+// Logs one failure of a streak and returns the updated streak [count, since, reminded]:
+// warn below FAILURE_ERROR_THRESHOLD, one error at it, then a warn every OUTAGE_REMINDER_MS.
+private Map streakFailed(Map streak, String what, String msg) {
+    long t = now()
+    int n = ((streak.count ?: 0) as int) + 1
+    long since = (streak.since ?: t) as long
+    Map updated = [count: n, since: since, reminded: streak.reminded]
+    if (n < FAILURE_ERROR_THRESHOLD) {
+        logWarn "${msg} (failure ${n}/${FAILURE_ERROR_THRESHOLD})"
+    } else if (n == FAILURE_ERROR_THRESHOLD) {
+        logError "${what} unreachable since ${formatClock(since)}: ${msg}"
+        updated.reminded = t
+    } else if (t - ((streak.reminded ?: 0L) as long) >= OUTAGE_REMINDER_MS) {
+        logWarn "${what} still unreachable after ${formatDuration(t - since)} (${n} failures): ${msg}"
+        updated.reminded = t
+    } else {
+        logDebug "${msg} (failure ${n})"
+    }
+    return updated
+}
+
+private void streakRecovered(Map streak, String what) {
+    int n = (streak.count ?: 0) as int
+    if (n >= FAILURE_ERROR_THRESHOLD) {
+        logInfo "${what} back after ${formatDuration(now() - (streak.since as long))} (${n} failures)"
+    } else if (n > 0) {
+        logDebug "${what} recovered after ${n} failure(s)"
+    }
+}
+
+// Honors a Retry-After in seconds by skipping polls until then.
+private void noteRetryAfter(resp) {
+    Long secs = null
+    try {
+        String v = resp.getHeaders()?.find { k, val -> (k as String)?.equalsIgnoreCase("Retry-After") }?.value as String
+        if (v?.trim()?.isLong()) secs = v.trim().toLong()
+    } catch (Exception e) {
+        return
+    }
+    if (secs == null || secs <= 0) return
+    long ms = Math.min(secs * 1000L, RETRY_AFTER_MAX_MS)
+    state.cloudPausedUntil = now() + ms
+    logWarn "FGLair asked to retry after ${secs} s; polling paused until ${formatClock(now() + ms)}"
+}
+
+private String formatClock(long t) {
+    return new Date(t).format("yyyy-MM-dd HH:mm", location.timeZone)
+}
+
+private static String formatDuration(long ms) {
+    long minutes = ms.intdiv(60000L)
+    if (minutes < 60) return "${minutes} min"
+    return "${minutes.intdiv(60L)} h ${minutes % 60} min"
 }
 
 // ── Logging (app) ─────────────────────────────────────────────────────

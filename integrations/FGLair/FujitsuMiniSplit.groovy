@@ -70,7 +70,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.2.6"
+@Field static final String CODE_VERSION = "0.3.0"
 // A held low setpoint is dropped if the unit hasn't reported heat by then.
 @Field static final long HELD_SETPOINT_MS = 600_000L
 // A poll can land before a write reaches the cloud and still report the old value.
@@ -422,13 +422,14 @@ void pushHeldSetpoint() {
 }
 
 // Called by the parent with the unit's cloud link state, or "offline" when the
-// cloud itself is unreachable.
-void updateHealth(String status) {
+// cloud itself is unreachable. The reason goes in the event description.
+void updateHealth(String status, String reason = null) {
     String prev = device.currentValue("healthStatus")
+    String why = reason ? ": ${reason}" : ""
     sendEvent(name: "healthStatus", value: status,
-              descriptionText: "${device} healthStatus is ${status}")
+              descriptionText: "${device} is ${status}${why}")
     if (prev != null && prev != status) {
-        if (status == "offline") logWarn "unit is offline"
+        if (status == "offline") logWarn "unit is offline${why}"
         else logInfo "unit is back online"
     }
 }
