@@ -61,7 +61,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.3.1"
+@Field static final String CODE_VERSION = "0.3.2"
 // Failed polls log at warn until this many in a row, then once at error, then at
 // warn every OUTAGE_REMINDER_MS until a poll succeeds.
 @Field static final int FAILURE_ERROR_THRESHOLD = 3
@@ -158,7 +158,9 @@ void configure() {
     runIn((pollingInterval ?: 300) as int, "poll")
 }
 
+// Runs on its own after a code push, so the version check lives here too; the runIn below re-arms the poll.
 void poll() {
+    initState()
     try {
         Map<String, String> httpParams = [
                 uri        : "http://${ip}",
