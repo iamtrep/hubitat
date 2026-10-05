@@ -71,6 +71,7 @@ metadata {
 
         // Custom attributes (not provided by standard capabilities)
         attribute "connectionStatus", "string"
+        attribute "healthStatus", "enum", ["online", "offline"]
         attribute "currentProgram", "string"
         attribute "holdStatus", "string"
         attribute "holdClimate", "string"
@@ -96,7 +97,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.0.7"
+@Field static final String CODE_VERSION = "0.1.0"
 
 // OAuth and API endpoints
 @Field static final String ECOBEE_API_BASE= "https://api.ecobee.com"
@@ -118,6 +119,13 @@ metadata {
 // Token and timeout configuration
 @Field static final long TOKEN_REFRESH_BUFFER_MS = 325782L  // Refresh 5.5 minutes before expiry
 @Field static final int DEBUG_LOG_TIMEOUT_SECONDS = 1800    // Auto-disable debug logging after 30 minutes
+
+// Failed polls log at warn until this many in a row, then once at error, then at
+// warn every OUTAGE_REMINDER_MS until a poll succeeds.
+@Field static final int FAILURE_ERROR_THRESHOLD = 3
+@Field static final long OUTAGE_REMINDER_MS = 3_600_000L
+// Longest Retry-After honored, so a bad header can't stop polling for good.
+@Field static final long RETRY_AFTER_MAX_MS = 3_600_000L
 
 
 @Field static final Map VALID_FAN_MODES = [
@@ -165,7 +173,7 @@ void configure() {
 
 void refresh() {
     checkVersion()
-    getCurrentState()
+    pollState()
 }
 
 private void checkVersion() {
@@ -271,6 +279,7 @@ void authorize() {
             state.remove('pinExpires')
 
             logInfo "Authorization successful"
+            state.remove("authFailed")
             sendEvent(name: "connectionStatus", value: "connected")
             listThermostats()
         }
@@ -300,9 +309,11 @@ void authorize() {
     }
 }
 
-Boolean refreshToken() {
+// quiet: the scheduled poll counts a transient failure itself, so it is not logged here.
+Boolean refreshToken(boolean quiet = false) {
     if (!state.refreshToken) {
-        logWarn "Not authorized — run connect() to start OAuth"
+        state.lastTokenError = "not authorized"
+        if (!quiet) logWarn "Not authorized — run connect() to start OAuth"
         return false
     }
 
@@ -322,13 +333,15 @@ Boolean refreshToken() {
         httpPost(params) { response ->
             int status = response.status
             if (status < 200 || status >= 300) {
-                logWarn "Token refresh non-success status=${status} body=${response.data}"
+                state.lastTokenError = "status=${status}"
+                if (!quiet) logWarn "Token refresh non-success status=${status} body=${response.data}"
                 return
             }
             Map data = response.data
             state.accessToken = data.access_token
             state.refreshToken = data.refresh_token
             state.tokenExpiry = now() + (data.expires_in * 1000)
+            state.remove("authFailed")
 
             logNet "Token refreshed"
             sendEvent(name: "connectionStatus", value: "connected", descriptionText: "${device.displayName} is connected")
@@ -338,18 +351,23 @@ Boolean refreshToken() {
         Integer status = e.response?.status as Integer
         String oauthError = e.response?.data?.error?.toString()
         if (status != null && status >= 400 && status < 500 && oauthError in ["invalid_grant", "invalid_client"]) {
-            logError "Token refresh auth failure status=${status} oauth=${oauthError} — re-authorization required"
+            // Polling pauses until connect()/authorize() succeeds, so this logs once.
+            logError "Token refresh auth failure status=${status} oauth=${oauthError} — re-authorization required; polling paused"
+            state.authFailed = true
+            state.lastTokenError = "re-authorization required (${oauthError})"
             sendEvent(name: "connectionStatus", value: "error", descriptionText: "${device.displayName} re-authorization required (${oauthError})")
+            setHealth("offline", "re-authorization required")
         } else {
-            logWarn "Token refresh transient failure status=${status} oauth=${oauthError} msg=${e.message}"
+            state.lastTokenError = "status=${status} oauth=${oauthError} msg=${e.message}"
+            if (!quiet) logWarn "Token refresh transient failure status=${status} oauth=${oauthError} msg=${e.message}"
         }
     }
     return success
 }
 
-Boolean checkAndRefreshToken() {
+Boolean checkAndRefreshToken(boolean quiet = false) {
     if (!state.tokenExpiry || now() >= ((state.tokenExpiry as Long) - TOKEN_REFRESH_BUFFER_MS)) {
-        return refreshToken()
+        return refreshToken(quiet)
     }
     return true
 }
@@ -414,9 +432,13 @@ List<Map> listComfortSettings() {
 // Ecobee API Methods
 // ========================================
 
-private Map callEcobeeApi(String method, String path, Map queryParams = null, Map bodyData = null, int attempt = 0) {
-    if (!checkAndRefreshToken()) {
-        logError "Cannot call API: token refresh failed"
+// err: when given (the scheduled poll), failures are recorded in err.msg for the
+// caller's failure count. Otherwise (user commands) they are logged here.
+private Map callEcobeeApi(String method, String path, Map queryParams = null, Map bodyData = null, int attempt = 0, Map err = null) {
+    boolean quiet = err != null
+    if (!checkAndRefreshToken(quiet)) {
+        if (quiet) err.msg = "token refresh failed: ${state.lastTokenError}"
+        else logError "Cannot call API: token refresh failed"
         return null
     }
 
@@ -438,13 +460,17 @@ private Map callEcobeeApi(String method, String path, Map queryParams = null, Ma
         Closure handler = { response ->
             int status = response.status
             if (status < 200 || status >= 300) {
-                logWarn "Ecobee API non-success [${method} ${path}] status=${status} body=${response.data}"
+                String m = "Ecobee API non-success [${method} ${path}] status=${status} body=${response.data}"
+                if (quiet) err.msg = m
+                else logWarn m
                 return
             }
             Map data = response.data
             Integer ecobeeCode = data?.status?.code as Integer
             if (ecobeeCode != null && ecobeeCode != 0) {
-                logWarn "Ecobee app-level error [${method} ${path}] code=${ecobeeCode} msg=${data?.status?.message}"
+                String m = "Ecobee app-level error [${method} ${path}] code=${ecobeeCode} msg=${data?.status?.message}"
+                if (quiet) err.msg = m
+                else logWarn m
                 return
             }
             result = data
@@ -459,11 +485,14 @@ private Map callEcobeeApi(String method, String path, Map queryParams = null, Ma
         Integer status = e.response?.status as Integer
         if (status == 401 && attempt == 0) {
             logWarn "Token invalid, refreshing..."
-            if (refreshToken()) {
-                return callEcobeeApi(method, path, queryParams, bodyData, attempt + 1)
+            if (refreshToken(quiet)) {
+                return callEcobeeApi(method, path, queryParams, bodyData, attempt + 1, err)
             }
         }
-        logError "Ecobee API failed [${method} ${path}] status=${status} msg=${e.message}"
+        noteRetryAfter(e.response)
+        String m = "Ecobee API failed [${method} ${path}] status=${status} msg=${e.message}"
+        if (quiet) err.msg = m
+        else logError m
         return null
     }
 }
@@ -740,6 +769,20 @@ void setThermostatScheduleTime(String day, String comfortName, String currentTim
 // ========================================
 
 void getCurrentState() {
+    pollState()
+}
+
+// The scheduled poll. Failures count toward one outage; see pollFailed().
+private void pollState() {
+    if (state.authFailed) {
+        logDebug "poll skipped: re-authorization required"
+        return
+    }
+    if (now() < ((state.pollPausedUntil ?: 0L) as long)) {
+        logDebug "poll skipped: Ecobee asked to retry later"
+        return
+    }
+    if (!requireThermostatId()) return
     Map selection = [
         selectionType: "thermostats",
         selectionMatch: thermostatId,
@@ -751,11 +794,21 @@ void getCurrentState() {
         includeEvents: true
     ]
 
-    Map thermostat = fetchThermostatData("/1/thermostat", selection)
-    if (!thermostat) return
+    Map err = [:]
+    Map thermostat = fetchThermostatData("/1/thermostat", selection, err)
+    if (!thermostat) {
+        pollFailed((err.msg ?: "no thermostat data") as String)
+        return
+    }
+    pollSucceeded()
 
     Map runtime = thermostat.runtime
     state.thermostatRuntime = runtime
+    if (runtime?.connected == false) {
+        setHealth("offline", "thermostat not connected to Ecobee since ${runtime.disconnectDateTime} UTC")
+    } else {
+        setHealth("online", "reporting")
+    }
     Map weather = thermostat.weather
     state.thermostatWeather = weather
 
@@ -1018,6 +1071,75 @@ private static BigDecimal roundTemp(BigDecimal temp) {
     return temp.setScale(1, RoundingMode.HALF_UP)
 }
 
+// --- Outage handling ---
+
+// Warn below FAILURE_ERROR_THRESHOLD, one error at it, then a warn every OUTAGE_REMINDER_MS.
+private void pollFailed(String msg) {
+    long t = now()
+    int n = ((state.pollFailures ?: 0) as int) + 1
+    state.pollFailures = n
+    if (n == 1) state.pollFailingSince = t
+    long since = state.pollFailingSince as long
+    if (n < FAILURE_ERROR_THRESHOLD) {
+        logWarn "poll failed (${n}/${FAILURE_ERROR_THRESHOLD}): ${msg}"
+    } else if (n == FAILURE_ERROR_THRESHOLD) {
+        logError "Ecobee API unreachable since ${formatClock(since)}: ${msg}"
+        state.lastOutageReminder = t
+        setHealth("offline", "Ecobee API unreachable")
+    } else if (t - ((state.lastOutageReminder ?: 0L) as long) >= OUTAGE_REMINDER_MS) {
+        logWarn "Ecobee API still unreachable after ${formatDuration(t - since)} (${n} polls failed): ${msg}"
+        state.lastOutageReminder = t
+    } else {
+        logDebug "poll failed (${n}): ${msg}"
+    }
+}
+
+private void pollSucceeded() {
+    int n = (state.pollFailures ?: 0) as int
+    if (n >= FAILURE_ERROR_THRESHOLD) {
+        logInfo "Ecobee API back after ${formatDuration(now() - (state.pollFailingSince as long))} (${n} polls failed)"
+    } else if (n > 0) {
+        logDebug "poll recovered after ${n} failed"
+    }
+    state.remove("pollFailures")
+    state.remove("pollFailingSince")
+    state.remove("lastOutageReminder")
+}
+
+private void setHealth(String status, String reason) {
+    String prev = device.currentValue("healthStatus")
+    sendEvent(name: "healthStatus", value: status, descriptionText: "${device.displayName} is ${status}: ${reason}")
+    if (prev != null && prev != status) {
+        if (status == "offline") logWarn "offline: ${reason}"
+        else logInfo "back online"
+    }
+}
+
+// Honors a Retry-After in seconds by skipping polls until then.
+private void noteRetryAfter(response) {
+    Long secs = null
+    try {
+        String v = response?.getFirstHeader("Retry-After")?.getValue()
+        if (v?.trim()?.isLong()) secs = v.trim().toLong()
+    } catch (Exception e) {
+        return
+    }
+    if (secs == null || secs <= 0) return
+    long ms = Math.min(secs * 1000L, RETRY_AFTER_MAX_MS)
+    state.pollPausedUntil = now() + ms
+    logWarn "Ecobee asked to retry after ${secs} s; polling paused until ${formatClock(now() + ms)}"
+}
+
+private String formatClock(long t) {
+    return new Date(t).format("yyyy-MM-dd HH:mm", location.timeZone)
+}
+
+private static String formatDuration(long ms) {
+    long minutes = ms.intdiv(60000L)
+    if (minutes < 60) return "${minutes} min"
+    return "${minutes.intdiv(60L)} h ${minutes % 60} min"
+}
+
 private boolean requireThermostatId() {
     if (!thermostatId) {
         logError "No thermostat selected — run listThermostats() to discover, then save preferences"
@@ -1034,7 +1156,7 @@ private boolean validateDayParameter(String day) {
     return true
 }
 
-private Map fetchThermostatData(String apiPath = "/1/thermostat", Map customSelection = null) {
+private Map fetchThermostatData(String apiPath = "/1/thermostat", Map customSelection = null, Map err = null) {
     if (!requireThermostatId()) return null
 
     Map selection = customSelection != null ? customSelection : [
@@ -1045,7 +1167,8 @@ private Map fetchThermostatData(String apiPath = "/1/thermostat", Map customSele
     ]
 
     Map queryData = [json: JsonOutput.toJson([selection: selection])]
-    Map data = callEcobeeApi("GET", apiPath, queryData)
+    Map data = callEcobeeApi("GET", apiPath, queryData, null, 0, err)
+    if (data != null && !data.thermostatList && err != null) err.msg = "no thermostat in the response"
     return data?.thermostatList ? data.thermostatList[0] : null
 }
 
