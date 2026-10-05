@@ -26,7 +26,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "2.1.1"
+@Field static final String CODE_VERSION = "2.1.2"
 @Field static final String VISIBLAIR_API = "https://api.visiblair.com/api/v1"
 @Field static final int HTTP_TIMEOUT = 15
 @Field static final String DNI_PREFIX = "visiblair-"
@@ -266,9 +266,9 @@ private void handlePollData(int status, data) {
         pollFailed("handlePollData: ${e.message}")
         return
     }
-    pollSucceeded()
+    String recovery = pollSucceeded()
     try {
-        updateSensorHealth(data as List)
+        updateSensorHealth(data as List, recovery)
     } catch (Exception e) {
         logError "updateSensorHealth: ${e.message}"
     }
@@ -298,20 +298,25 @@ private void pollFailed(String reason) {
     }
 }
 
-private void pollSucceeded() {
+// Returns the recovery line when this poll ends a declared outage, else null.
+private String pollSucceeded() {
     int failures = (state.pollFailures ?: 0) as int
+    String recovery = null
     if (failures >= POLL_FAILURES_BEFORE_ALARM) {
-        logInfo "VisiblAir API back after ${formatDuration(now() - (state.pollFailingSince as long))} (${failures} polls failed)"
+        recovery = "VisiblAir API back after ${formatDuration(now() - (state.pollFailingSince as long))} (${failures} polls failed)"
+        logInfo recovery
     } else if (failures > 0) {
         logDebug "poll recovered after ${failures} failed"
     }
     state.remove("pollFailures")
     state.remove("pollFailingSince")
     state.remove("lastOutageReminder")
+    return recovery
 }
 
 // Marks each sensor offline when its last sample is older than STALE_SAMPLE_PERIODS sample periods.
-private void updateSensorHealth(List sensorList) {
+// recovery: the outage recovery line, used as the online reason on the poll that ends an outage.
+private void updateSensorHealth(List sensorList, String recovery = null) {
     long t = now()
     sensorList.findAll { Map sensor -> isRealSensor(sensor) }.each { Map sensor ->
         ChildDeviceWrapper child = getChildDevice("${DNI_PREFIX}${sensor.uuid}")
@@ -324,7 +329,7 @@ private void updateSensorHealth(List sensorList) {
         } else if (t - sampledAt > STALE_SAMPLE_PERIODS * period * 1000L) {
             child.setHealthStatus("offline", "no sample for ${formatDuration(t - sampledAt)}")
         } else {
-            child.setHealthStatus("online", "reporting")
+            child.setHealthStatus("online", recovery ?: "reporting")
         }
     }
 }

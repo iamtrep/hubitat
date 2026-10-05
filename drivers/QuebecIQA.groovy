@@ -13,7 +13,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.2.0"
+@Field static final String CODE_VERSION = "0.2.1"
 @Field static final String RSQAQ_URL = "https://services3.arcgis.com/0lL78GhXbg1Po7WO/arcgis/rest/services/IQA_resultat_REST/FeatureServer/0/query"
 // CKAN datastore; GET ignores filters, so queries are POSTed
 @Field static final String MTL_DATASTORE_URL = "https://donnees.montreal.ca/api/3/action/datastore_search"
@@ -326,9 +326,10 @@ private void publishObservation(int iqa, Map<String, Integer> subs, String name,
 
 // Runs after every answered poll and sets healthStatus from the station's last report.
 private void checkStaleness() {
+    String online = (state.remove("recoveryNote") ?: "reporting") as String
     Long last = state.lastObservationMillis as Long
     if (!last) {
-        setHealth("online", "reporting")
+        setHealth("online", online)
         return
     }
     int thresholdHours = (staleThreshold != null) ? staleThreshold as int : 6
@@ -341,7 +342,7 @@ private void checkStaleness() {
     }
     state.stale = stale
     if (stale) setHealth("offline", "station has not reported for ${ageHours} h")
-    else setHealth("online", "reporting")
+    else setHealth("online", online)
 }
 
 // --- Outage handling ---
@@ -367,11 +368,13 @@ private void pollFailed(String msg) {
     }
 }
 
-// The caller then runs checkStaleness(), which sets healthStatus.
+// The caller then runs checkStaleness(), which sets healthStatus and uses state.recoveryNote.
 private void pollSucceeded() {
     int n = (state.pollFailures ?: 0) as int
     if (n >= FAILURE_ERROR_THRESHOLD) {
-        logInfo "IQA service back after ${formatDuration(now() - (state.pollFailingSince as long))} (${n} polls failed)"
+        String recovery = "IQA service back after ${formatDuration(now() - (state.pollFailingSince as long))} (${n} polls failed)"
+        logInfo recovery
+        state.recoveryNote = recovery
     } else if (n > 0) {
         logDebug "poll recovered after ${n} failed"
     }

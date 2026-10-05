@@ -33,7 +33,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "0.3.0"
+@Field static final String CODE_VERSION = "0.3.1"
 
 // Region-specific Ayla endpoints + app credentials, lifted from
 // ayla-iot-unofficial/src/ayla_iot_unofficial/const.py and fujitsu_consts.py.
@@ -681,6 +681,8 @@ private void clearSession() {
     discardPendingWrites()
     state.remove("cloudStreak")
     state.remove("unitStreaks")
+    state.remove("cloudRecoveryNote")
+    state.remove("unitRecoveryNotes")
     state.remove("cloudPausedUntil")
     state.remove("sessionRegion")
     POLL.clear()
@@ -792,6 +794,7 @@ private void handleDeviceList(List rawDevices) {
     logTrace "raw device list: ${JsonOutput.toJson(devices)}"
 
     Set<String> liveDnis = [] as Set
+    Map<String, String> unitNotes = (state.unitRecoveryNotes ?: [:]) as Map<String, String>
     String childError = null
     devices.each { Map d ->
         String dsn = d.dsn?.toString()
@@ -820,9 +823,12 @@ private void handleDeviceList(List rawDevices) {
         if (conn) {
             if (!conn.equalsIgnoreCase("Online")) child.updateHealth("offline", "unit reports no cloud link (${conn})")
             else if (!reachable) child.updateHealth("offline", "property reads failing")
-            else child.updateHealth("online", "reporting")
+            else child.updateHealth("online", (unitNotes.remove(dsn) ?: state.cloudRecoveryNote ?: "reporting") as String)
         }
     }
+    state.remove("cloudRecoveryNote")
+    if (unitNotes) state.unitRecoveryNotes = unitNotes
+    else state.remove("unitRecoveryNotes")
     if (childError) state.childError = childError
     else state.remove("childError")
     // An empty list is more likely a cloud glitch than every unit removed from the
@@ -1178,9 +1184,11 @@ private void markUnitsOffline(String reason) {
     unitChildren().each { it.updateHealth("offline", reason) }
 }
 
+// A recovery line waits in state until the next device list sets health from it.
 private void clearTransientFailureStreak() {
     if (!state.cloudStreak) return
-    streakRecovered(state.cloudStreak as Map, "FGLair cloud")
+    String recovery = streakRecovered(state.cloudStreak as Map, "FGLair cloud")
+    if (recovery) state.cloudRecoveryNote = recovery
     state.remove("cloudStreak")
 }
 
@@ -1203,9 +1211,14 @@ private int unitFailures(String dsn) {
 private void clearUnitFailures(String dsn) {
     Map<String, Map> streaks = (state.unitStreaks ?: [:]) as Map<String, Map>
     if (!streaks.containsKey(dsn)) return
-    streakRecovered(streaks[dsn], unitName(dsn))
+    String recovery = streakRecovered(streaks[dsn], unitName(dsn))
     streaks.remove(dsn)
     state.unitStreaks = streaks
+    if (recovery) {
+        Map<String, String> notes = (state.unitRecoveryNotes ?: [:]) as Map<String, String>
+        notes[dsn] = recovery
+        state.unitRecoveryNotes = notes
+    }
     // Health comes back with the next device list, which carries the unit's own link state.
 }
 
@@ -1234,13 +1247,16 @@ private Map streakFailed(Map streak, String what, String msg) {
     return updated
 }
 
-private void streakRecovered(Map streak, String what) {
+// Returns the recovery line when the streak had reached the threshold, else null.
+private String streakRecovered(Map streak, String what) {
     int n = (streak.count ?: 0) as int
     if (n >= FAILURE_ERROR_THRESHOLD) {
-        logInfo "${what} back after ${formatDuration(now() - (streak.since as long))} (${n} failures)"
-    } else if (n > 0) {
-        logDebug "${what} recovered after ${n} failure(s)"
+        String recovery = "${what} back after ${formatDuration(now() - (streak.since as long))} (${n} failures)"
+        logInfo recovery
+        return recovery
     }
+    if (n > 0) logDebug "${what} recovered after ${n} failure(s)"
+    return null
 }
 
 // Honors a Retry-After in seconds by skipping polls until then.

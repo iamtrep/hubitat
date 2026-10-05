@@ -35,7 +35,7 @@ definition(
 
 // --- Constants ---
 
-@Field static final String CODE_VERSION = "1.1.0"
+@Field static final String CODE_VERSION = "1.1.1"
 
 @Field static final String OAUTH_BASE_URL = "https://api.oauth.blink.com"
 @Field static final String CLIENT_ID = "ios"
@@ -773,18 +773,19 @@ void handleHomescreenResponse(resp, data) {
             noteCloudFailure("homescreen: empty response")
             return
         }
-        clearCloudFailures()
+        String recovery = clearCloudFailures()
         int nNet = (json.networks ?: []).size()
         Map acc = (json.accessories ?: [:]) as Map
         int nCam = (json.cameras ?: []).size() + (json.owls ?: []).size() + (json.doorbells ?: []).size() + (json.superiors ?: []).size() + (acc.storm ?: []).size()
         logInfo "homescreen OK: ${nNet} networks, ${nCam} cameras"
-        processHomescreen(json)
+        processHomescreen(json, recovery)
     } catch (Exception e) {
         noteCloudFailure("handleHomescreenResponse: ${e.message}")
     }
 }
 
-private void processHomescreen(Map json) {
+// recovery: the outage recovery line, used as the online reason on the poll that ends an outage.
+private void processHomescreen(Map json, String recovery = null) {
     List<Map> networks = (json.networks ?: []) as List<Map>
     List<Map> cameras = []
 
@@ -799,7 +800,7 @@ private void processHomescreen(Map json) {
     List<Map> syncModules = (json.sync_modules ?: []) as List<Map>
 
     syncChildren(networks, cameras, syncModules)
-    dispatchToChildren(networks, cameras, syncModules)
+    dispatchToChildren(networks, cameras, syncModules, recovery)
     updateHomescreenSummary(networks, cameras, syncModules)
     rotateSignalsFetch(cameras)
     fetchRecentClips()
@@ -902,7 +903,7 @@ private void syncChildren(List<Map> networks, List<Map> cameras, List<Map> syncM
     atomicState.orphanedDevices = orphans
 }
 
-private void dispatchToChildren(List<Map> networks, List<Map> cameras, List<Map> syncModules) {
+private void dispatchToChildren(List<Map> networks, List<Map> cameras, List<Map> syncModules, String recovery = null) {
     Map<String, Map> smByNetwork = [:]
     syncModules.each { Map sm ->
         String netId = (sm.network_id ?: sm.networkId)?.toString()
@@ -930,7 +931,7 @@ private void dispatchToChildren(List<Map> networks, List<Map> cameras, List<Map>
             child.handleNetworkUpdate(update)
             String sync = update.online as String
             if (sync.equalsIgnoreCase("offline")) child.updateHealth("offline", "sync module reports offline")
-            else child.updateHealth("online", "reporting")
+            else child.updateHealth("online", recovery ?: "reporting")
             netsDispatched++
         } catch (Exception e) {
             logError "handleNetworkUpdate failed on ${child.deviceNetworkId}: ${e.message}"
@@ -947,7 +948,7 @@ private void dispatchToChildren(List<Map> networks, List<Map> cameras, List<Map>
         try {
             child.handleCameraUpdate(cameraSnapshot(c, tier, acct))
             if (((c.status ?: "") as String).equalsIgnoreCase("offline")) child.updateHealth("offline", "Blink reports the camera offline")
-            else child.updateHealth("online", "reporting")
+            else child.updateHealth("online", recovery ?: "reporting")
             camsDispatched++
         } catch (Exception e) {
             logError "handleCameraUpdate failed on ${child.deviceNetworkId}: ${e.message}"
@@ -1588,16 +1589,20 @@ private void noteCloudFailure(String msg) {
     state.cloudStreak = updated
 }
 
-private void clearCloudFailures() {
+// Returns the recovery line when this poll ends a declared outage, else null.
+private String clearCloudFailures() {
     Map streak = state.cloudStreak as Map
-    if (!streak) return
+    if (!streak) return null
     int n = (streak.count ?: 0) as int
+    String recovery = null
     if (n >= FAILURE_ERROR_THRESHOLD) {
-        logInfo "Blink cloud back after ${formatDuration(now() - (streak.since as long))} (${n} failures)"
+        recovery = "Blink cloud back after ${formatDuration(now() - (streak.since as long))} (${n} failures)"
+        logInfo recovery
     } else {
         logDebug "Blink cloud recovered after ${n} failure(s)"
     }
     state.remove("cloudStreak")
+    return recovery
 }
 
 // The next successful homescreen poll restores each child's health.

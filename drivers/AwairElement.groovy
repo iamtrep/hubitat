@@ -61,7 +61,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.3.0"
+@Field static final String CODE_VERSION = "0.3.1"
 // Failed polls log at warn until this many in a row, then once at error, then at
 // warn every OUTAGE_REMINDER_MS until a poll succeeds.
 @Field static final int FAILURE_ERROR_THRESHOLD = 3
@@ -337,15 +337,17 @@ private void pollFailed(String msg) {
 
 private void pollSucceeded() {
     int n = (state.pollFailures ?: 0) as int
+    String recovery = null
     if (n >= FAILURE_ERROR_THRESHOLD) {
-        logInfo "Awair back after ${formatDuration(now() - (state.pollFailingSince as long))} (${n} polls failed)"
+        recovery = "Awair back after ${formatDuration(now() - (state.pollFailingSince as long))} (${n} polls failed)"
+        logInfo recovery
     } else if (n > 0) {
         logDebug "poll recovered after ${n} failed"
     }
     state.remove("pollFailures")
     state.remove("pollFailingSince")
     state.remove("lastOutageReminder")
-    setHealth("online", "reporting")
+    setHealth("online", recovery ?: "reporting")
 }
 
 private void setHealth(String status, String reason) {

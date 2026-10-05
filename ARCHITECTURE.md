@@ -242,7 +242,7 @@ An integration that logs an error on every failed poll pages the user once per p
 - Count consecutive failed polls as one streak, whichever step failed (login, fetch, parse). Commands the user runs still log an error on each failure.
 - Below a small threshold of polls, log each failure at warn, since these services should not fail. At the threshold, log one error, then a warn every hour while the outage lasts, and one info line on recovery with the outage length. Log Monitor pages on errors only, so an outage pages once.
 - Keep polling at the normal rate. Honor `Retry-After` when the server sends one, with a ceiling so a bad header can't stop polling for good.
-- Report health on each child's `healthStatus` attribute (`online`/`offline`). No capability defines it, so drivers declare it as a custom attribute. A child also goes offline when its own data stops while the API is up, and the event's `descriptionText` gives the reason.
+- Report health on each child's `healthStatus` attribute (`online`/`offline`). No capability defines it, so drivers declare it as a custom attribute. A child also goes offline when its own data stops while the API is up, and the event's `descriptionText` gives the reason. The `online` event that ends an outage carries the recovery line ("back after 6 h 5 min, 73 polls failed").
 
 Reference implementations: VisiblAirManager (`pollFailed()`/`pollSucceeded()`, threshold 3) and FGLairManager (threshold 5, `noteRetryAfter()`). Home Assistant's [`log-when-unavailable`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/log-when-unavailable/) rule takes the same approach.
 

@@ -97,7 +97,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 
 // OAuth and API endpoints
 @Field static final String ECOBEE_API_BASE= "https://api.ecobee.com"
@@ -800,14 +800,14 @@ private void pollState() {
         pollFailed((err.msg ?: "no thermostat data") as String)
         return
     }
-    pollSucceeded()
+    String recovery = pollSucceeded()
 
     Map runtime = thermostat.runtime
     state.thermostatRuntime = runtime
     if (runtime?.connected == false) {
         setHealth("offline", "thermostat not connected to Ecobee since ${runtime.disconnectDateTime} UTC")
     } else {
-        setHealth("online", "reporting")
+        setHealth("online", recovery ?: "reporting")
     }
     Map weather = thermostat.weather
     state.thermostatWeather = weather
@@ -1094,16 +1094,20 @@ private void pollFailed(String msg) {
     }
 }
 
-private void pollSucceeded() {
+// Returns the recovery line when this poll ends a declared outage, else null.
+private String pollSucceeded() {
     int n = (state.pollFailures ?: 0) as int
+    String recovery = null
     if (n >= FAILURE_ERROR_THRESHOLD) {
-        logInfo "Ecobee API back after ${formatDuration(now() - (state.pollFailingSince as long))} (${n} polls failed)"
+        recovery = "Ecobee API back after ${formatDuration(now() - (state.pollFailingSince as long))} (${n} polls failed)"
+        logInfo recovery
     } else if (n > 0) {
         logDebug "poll recovered after ${n} failed"
     }
     state.remove("pollFailures")
     state.remove("pollFailingSince")
     state.remove("lastOutageReminder")
+    return recovery
 }
 
 private void setHealth(String status, String reason) {
