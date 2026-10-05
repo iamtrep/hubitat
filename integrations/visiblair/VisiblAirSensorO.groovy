@@ -11,7 +11,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.2.0"
 
 metadata {
     definition(
@@ -41,6 +41,7 @@ metadata {
         attribute "pm100", "number"
         attribute "smokeVapeDetected", "enum", ["clear", "detected"]
         attribute "lastSeen", "date"
+        attribute "healthStatus", "enum", ["online", "offline"]
         attribute "firmwareUpdateAvailable", "enum", ["true", "false"]
 
         command "reboot"
@@ -145,6 +146,15 @@ private void checkVersion() {
     if (state.version == CODE_VERSION) return
     logVer "New version: ${CODE_VERSION} (was: ${state.version})"
     state.version = CODE_VERSION
+}
+
+// Called by the parent after each poll: offline while the API is unreachable or samples are stale.
+void setHealthStatus(String status, String reason) {
+    String previous = device.currentValue("healthStatus") as String
+    sendEvent(name: "healthStatus", value: status, descriptionText: "${device.displayName} is ${status}: ${reason}")
+    if (status == previous) return
+    if (status == "offline") logWarn "offline: ${reason}"
+    else logInfo "online"
 }
 
 void updateSensorData(Map data) {

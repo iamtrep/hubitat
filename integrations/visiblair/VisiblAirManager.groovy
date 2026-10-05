@@ -26,10 +26,15 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "2.0.2"
+@Field static final String CODE_VERSION = "2.1.0"
 @Field static final String VISIBLAIR_API = "https://api.visiblair.com/api/v1"
 @Field static final int HTTP_TIMEOUT = 15
 @Field static final String DNI_PREFIX = "visiblair-"
+// Consecutive failed polls before the outage is logged as an error and children go offline.
+@Field static final int POLL_FAILURES_BEFORE_ALARM = 3
+@Field static final long OUTAGE_REMINDER_MS = 3600000L
+// A sensor is offline when its last sample is older than this many sample periods.
+@Field static final int STALE_SAMPLE_PERIODS = 3
 
 preferences {
     page(name: "mainPage")
@@ -158,19 +163,25 @@ private void loginThen(String next, String failMsg, Map ctx = [:]) {
 
 void handleLoginResponse(resp, data) {
     String token = null
+    String err = null
     if (resp.hasError()) {
-        logError "login: ${resp.getErrorMessage()}"
+        err = resp.getErrorMessage()
     } else if (resp.getStatus() != 200) {
-        logError "login failed: HTTP ${resp.getStatus()}"
+        err = "HTTP ${resp.getStatus()}"
     } else {
         try {
             token = resp.json?.accessToken as String
+            if (!token) err = "no access token in response"
         } catch (Exception e) {
-            logError "login: ${e.message}"
+            err = e.message
         }
     }
     if (!token) {
-        logError "${data.failMsg}: login failed"
+        if (data.next == "poll") {
+            pollFailed("login: ${err}")
+        } else {
+            logError "${data.failMsg}: login: ${err}"
+        }
         return
     }
     logNet "login successful"
@@ -207,25 +218,25 @@ private void requestSensors(String token) {
 
 void handlePollResponse(resp, data) {
     if (resp.hasError()) {
-        logError "pollSensors: ${resp.getErrorMessage()}"
+        pollFailed("sensors: ${resp.getErrorMessage()}")
         return
     }
     try {
         handlePollData(resp.getStatus(), resp.json)
     } catch (Exception e) {
-        logError "pollSensors: ${e.message}"
+        pollFailed("sensors: ${e.message}")
     }
 }
 
 private void handlePollData(int status, data) {
     try {
         if (status != 200 && status != 207) {
-            logWarn "API returned HTTP ${status}"
+            pollFailed("sensors: HTTP ${status}")
             return
         }
 
         if (!data) {
-            logWarn "empty response from API"
+            pollFailed("sensors: empty response")
             return
         }
 
@@ -251,10 +262,98 @@ private void handlePollData(int status, data) {
         syncChildDevices(discovered)
         storeSensorConfigs(realSensors)
         dispatchSensorData(realSensors)
-
     } catch (Exception e) {
-        logError "handlePollData: ${e.message}"
+        pollFailed("handlePollData: ${e.message}")
+        return
     }
+    pollSucceeded()
+    try {
+        updateSensorHealth(data as List)
+    } catch (Exception e) {
+        logError "updateSensorHealth: ${e.message}"
+    }
+}
+
+// --- API Health ---
+
+// Logs an outage once it reaches POLL_FAILURES_BEFORE_ALARM failed polls, then
+// reminds hourly at warn level; earlier and in-between failures log at debug only.
+private void pollFailed(String reason) {
+    long t = now()
+    int failures = ((state.pollFailures ?: 0) as int) + 1
+    state.pollFailures = failures
+    if (failures == 1) state.pollFailingSince = t
+
+    if (failures < POLL_FAILURES_BEFORE_ALARM) {
+        logDebug "poll failed (${failures}/${POLL_FAILURES_BEFORE_ALARM}): ${reason}"
+    } else if (failures == POLL_FAILURES_BEFORE_ALARM) {
+        logError "VisiblAir API unreachable since ${formatClock(state.pollFailingSince as long)}: ${reason}"
+        state.lastOutageReminder = t
+        setAllChildrenHealth("offline", "VisiblAir API unreachable")
+    } else if (t - ((state.lastOutageReminder ?: 0L) as long) >= OUTAGE_REMINDER_MS) {
+        logWarn "VisiblAir API still unreachable after ${formatDuration(t - (state.pollFailingSince as long))} (${failures} polls failed): ${reason}"
+        state.lastOutageReminder = t
+    } else {
+        logDebug "poll failed (${failures}): ${reason}"
+    }
+}
+
+private void pollSucceeded() {
+    int failures = (state.pollFailures ?: 0) as int
+    if (failures >= POLL_FAILURES_BEFORE_ALARM) {
+        logInfo "VisiblAir API back after ${formatDuration(now() - (state.pollFailingSince as long))} (${failures} polls failed)"
+    } else if (failures > 0) {
+        logDebug "poll recovered after ${failures} failed"
+    }
+    state.remove("pollFailures")
+    state.remove("pollFailingSince")
+    state.remove("lastOutageReminder")
+}
+
+// Marks each sensor offline when its last sample is older than STALE_SAMPLE_PERIODS sample periods.
+private void updateSensorHealth(List sensorList) {
+    long t = now()
+    sensorList.findAll { Map sensor -> isRealSensor(sensor) }.each { Map sensor ->
+        ChildDeviceWrapper child = getChildDevice("${DNI_PREFIX}${sensor.uuid}")
+        if (!child) return
+        Long sampledAt = parseSampleTime(sensor.lastSampleTimeStamp as String, sensor.tz as String)
+        String rate = sensor.sampleRate as String
+        int period = rate?.isInteger() ? rate.toInteger() : 900
+        if (sampledAt == null) {
+            child.setHealthStatus("offline", "last sample time unreadable")
+        } else if (t - sampledAt > STALE_SAMPLE_PERIODS * period * 1000L) {
+            child.setHealthStatus("offline", "no sample for ${formatDuration(t - sampledAt)}")
+        } else {
+            child.setHealthStatus("online", "reporting")
+        }
+    }
+}
+
+private void setAllChildrenHealth(String status, String reason) {
+    getChildDevices().each { child -> child.setHealthStatus(status, reason) }
+}
+
+// The API reports sample times as local wall-clock time in the sensor's configured zone.
+private Long parseSampleTime(String ts, String tz) {
+    if (!ts) return null
+    try {
+        TimeZone zone = tz ? TimeZone.getTimeZone(tz) : location.timeZone
+        return Date.parse("yyyy-MM-dd HH:mm:ss", ts, zone).time
+    } catch (Exception e) {
+        logDebug "cannot parse sample time '${ts}': ${e.message}"
+        return null
+    }
+}
+
+private String formatClock(long t) {
+    return new Date(t).format("yyyy-MM-dd HH:mm", location.timeZone)
+}
+
+@CompileStatic
+static String formatDuration(long ms) {
+    long minutes = ms.intdiv(60000L)
+    if (minutes < 60) return "${minutes} min"
+    return "${minutes.intdiv(60L)} h ${minutes % 60} min"
 }
 
 // --- Child Device Lifecycle ---
