@@ -35,7 +35,7 @@ definition(
 
 // --- Constants ---
 
-@Field static final String CODE_VERSION = "1.0.5"
+@Field static final String CODE_VERSION = "1.1.0"
 
 @Field static final String OAUTH_BASE_URL = "https://api.oauth.blink.com"
 @Field static final String CLIENT_ID = "ios"
@@ -57,6 +57,12 @@ definition(
 @Field static final String DRIVER_CAMERA = "Blink Camera"
 
 @Field static final int HTTP_TIMEOUT = 15
+// Blink cloud failures (homescreen poll, token refresh) log at warn until this many
+// in a row, then once at error, then at warn every OUTAGE_REMINDER_MS until they clear.
+@Field static final int FAILURE_ERROR_THRESHOLD = 5
+@Field static final long OUTAGE_REMINDER_MS = 3_600_000L
+// Longest Retry-After honored, so a bad header can't stop polling for good.
+@Field static final long RETRY_AFTER_MAX_MS = 3_600_000L
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 
 // /media/changed initial-window lookback on first fetch — picks up clips that
@@ -637,10 +643,16 @@ void refreshTokenResponse(resp, data) {
     atomicState.remove("tokenRefreshSentAt")
     if (resp.hasError()) {
         int status = resp.getStatus()
+        if (isTransientStatus(status)) {
+            noteRetryAfter(resp)
+            noteCloudFailure("token refresh failed: HTTP ${status} ${resp.getErrorMessage()}")
+            return
+        }
         logError "token refresh failed: HTTP ${status} ${resp.getErrorMessage()}${describeHttpBody(resp)}"
         if (status == 401 || status == 400) {
             logWarn "refresh token rejected; tokens cleared (tier/accountId/hardwareId preserved for one-click re-auth)"
             clearTokensOnly()
+            markChildrenOffline("signed out of Blink")
         }
         return
     }
@@ -725,6 +737,10 @@ void pollHomescreen() {
         fetchTierInfo(true)
         return
     }
+    if (now() < ((state.cloudPausedUntil ?: 0L) as long)) {
+        logSched "pollHomescreen: Blink asked to retry later, skipped"
+        return
+    }
     ensureValidToken()
 
     String url = "https://rest-${state.tier}.immedia-semi.com/api/v3/accounts/${state.accountId}/homescreen"
@@ -736,12 +752,9 @@ void pollHomescreen() {
     ])
 }
 
+// hasError() is true for every non-2xx status, so the 401 check comes first.
 void handleHomescreenResponse(resp, data) {
     try {
-        if (resp.hasError()) {
-            logError "homescreen error: ${resp.getErrorMessage()}"
-            return
-        }
         int status = resp.getStatus()
         if (status == 401) {
             logWarn "homescreen 401, refreshing token and retrying"
@@ -749,22 +762,25 @@ void handleHomescreenResponse(resp, data) {
             runIn(3, "pollHomescreen")
             return
         }
-        if (status != 200) {
-            logWarn "homescreen: HTTP ${status}${describeHttpBody(resp)}"
+        if (resp.hasError() || status != 200) {
+            noteRetryAfter(resp)
+            String err = resp.hasError() ? resp.getErrorMessage() : ""
+            noteCloudFailure("homescreen: HTTP ${status} ${err}${describeHttpBody(resp)}")
             return
         }
         Map json = resp.json as Map
         if (!json) {
-            logWarn "homescreen: empty response"
+            noteCloudFailure("homescreen: empty response")
             return
         }
+        clearCloudFailures()
         int nNet = (json.networks ?: []).size()
         Map acc = (json.accessories ?: [:]) as Map
         int nCam = (json.cameras ?: []).size() + (json.owls ?: []).size() + (json.doorbells ?: []).size() + (json.superiors ?: []).size() + (acc.storm ?: []).size()
         logInfo "homescreen OK: ${nNet} networks, ${nCam} cameras"
         processHomescreen(json)
     } catch (Exception e) {
-        logError "handleHomescreenResponse: ${e.message}"
+        noteCloudFailure("handleHomescreenResponse: ${e.message}")
     }
 }
 
@@ -912,6 +928,9 @@ private void dispatchToChildren(List<Map> networks, List<Map> cameras, List<Map>
         ]
         try {
             child.handleNetworkUpdate(update)
+            String sync = update.online as String
+            if (sync.equalsIgnoreCase("offline")) child.updateHealth("offline", "sync module reports offline")
+            else child.updateHealth("online", "reporting")
             netsDispatched++
         } catch (Exception e) {
             logError "handleNetworkUpdate failed on ${child.deviceNetworkId}: ${e.message}"
@@ -927,6 +946,8 @@ private void dispatchToChildren(List<Map> networks, List<Map> cameras, List<Map>
         if (!child) { missingChildren++; return }
         try {
             child.handleCameraUpdate(cameraSnapshot(c, tier, acct))
+            if (((c.status ?: "") as String).equalsIgnoreCase("offline")) child.updateHealth("offline", "Blink reports the camera offline")
+            else child.updateHealth("online", "reporting")
             camsDispatched++
         } catch (Exception e) {
             logError "handleCameraUpdate failed on ${child.deviceNetworkId}: ${e.message}"
@@ -1539,6 +1560,82 @@ private String describeHttpBody(resp) {
     return (body && body.length() > 0) ? " body=${body.take(400)}" : ""
 }
 
+// --- Cloud outage handling ---
+
+private boolean isTransientStatus(int status) {
+    return status < 100 || status == 408 || status == 429 || status >= 500
+}
+
+// Warn below FAILURE_ERROR_THRESHOLD, one error at it, then a warn every OUTAGE_REMINDER_MS.
+private void noteCloudFailure(String msg) {
+    long t = now()
+    Map streak = (state.cloudStreak ?: [:]) as Map
+    int n = ((streak.count ?: 0) as int) + 1
+    long since = (streak.since ?: t) as long
+    Map updated = [count: n, since: since, reminded: streak.reminded]
+    if (n < FAILURE_ERROR_THRESHOLD) {
+        logWarn "${msg} (failure ${n}/${FAILURE_ERROR_THRESHOLD})"
+    } else if (n == FAILURE_ERROR_THRESHOLD) {
+        logError "Blink cloud unreachable since ${formatClock(since)}: ${msg}"
+        updated.reminded = t
+        markChildrenOffline("Blink cloud unreachable")
+    } else if (t - ((streak.reminded ?: 0L) as long) >= OUTAGE_REMINDER_MS) {
+        logWarn "Blink cloud still unreachable after ${formatDuration(t - since)} (${n} failures): ${msg}"
+        updated.reminded = t
+    } else {
+        logDebug "${msg} (failure ${n})"
+    }
+    state.cloudStreak = updated
+}
+
+private void clearCloudFailures() {
+    Map streak = state.cloudStreak as Map
+    if (!streak) return
+    int n = (streak.count ?: 0) as int
+    if (n >= FAILURE_ERROR_THRESHOLD) {
+        logInfo "Blink cloud back after ${formatDuration(now() - (streak.since as long))} (${n} failures)"
+    } else {
+        logDebug "Blink cloud recovered after ${n} failure(s)"
+    }
+    state.remove("cloudStreak")
+}
+
+// The next successful homescreen poll restores each child's health.
+private void markChildrenOffline(String reason) {
+    getChildDevices().each { ChildDeviceWrapper child ->
+        try {
+            child.updateHealth("offline", reason)
+        } catch (Exception e) {
+            logError "updateHealth failed on ${child.deviceNetworkId}: ${e.message}"
+        }
+    }
+}
+
+// Honors a Retry-After in seconds by skipping polls until then.
+private void noteRetryAfter(resp) {
+    Long secs = null
+    try {
+        String v = resp.getHeaders()?.find { k, val -> (k as String)?.equalsIgnoreCase("Retry-After") }?.value as String
+        if (v?.trim()?.isLong()) secs = v.trim().toLong()
+    } catch (Exception e) {
+        return
+    }
+    if (secs == null || secs <= 0) return
+    long ms = Math.min(secs * 1000L, RETRY_AFTER_MAX_MS)
+    state.cloudPausedUntil = now() + ms
+    logWarn "Blink asked to retry after ${secs} s; polling paused until ${formatClock(now() + ms)}"
+}
+
+private String formatClock(long t) {
+    return new Date(t).format("yyyy-MM-dd HH:mm", location.timeZone)
+}
+
+private static String formatDuration(long ms) {
+    long minutes = ms.intdiv(60000L)
+    if (minutes < 60) return "${minutes} min"
+    return "${minutes.intdiv(60L)} h ${minutes % 60} min"
+}
+
 // --- Auth State ---
 
 // Keeps tier/accountId/hardwareId for one-click re-auth; clearAuthState() wipes those too.
@@ -1549,6 +1646,9 @@ void logout() {
     cleanupEphemeralState()
     atomicState.remove("homescreenSummary")
     atomicState.remove("orphanedDevices")
+    state.remove("cloudStreak")
+    state.remove("cloudPausedUntil")
+    markChildrenOffline("disconnected from Blink")
 }
 
 private boolean isAuthenticated() {

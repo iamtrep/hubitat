@@ -10,7 +10,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.2.0"
 
 metadata {
     definition(
@@ -24,6 +24,7 @@ metadata {
         capability "Refresh"
 
         attribute "online", "string"
+        attribute "healthStatus", "enum", ["online", "offline"]
         attribute "firmwareVersion", "string"
         attribute "syncModuleSerial", "string"
         attribute "cameraCount", "number"
@@ -82,6 +83,18 @@ private void checkVersion() {
     if (state.version == CODE_VERSION) return
     logVer "New version: ${CODE_VERSION} (was: ${state.version})"
     state.version = CODE_VERSION
+}
+
+// Called by the parent after each poll: offline while the Blink cloud is
+// unreachable or Blink reports the device offline. The reason goes in the event description.
+void updateHealth(String status, String reason = null) {
+    String prev = device.currentValue("healthStatus")
+    String why = reason ? ": ${reason}" : ""
+    sendEvent(name: "healthStatus", value: status, descriptionText: "${device.displayName} is ${status}${why}")
+    if (prev != null && prev != status) {
+        if (status == "offline") logWarn "offline${why}"
+        else logInfo "back online"
+    }
 }
 
 // Called by the parent on each poll with the latest network + sync module state.
