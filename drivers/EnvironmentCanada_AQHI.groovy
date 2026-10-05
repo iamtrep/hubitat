@@ -14,10 +14,14 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.4.0"
+@Field static final String CODE_VERSION = "0.5.0"
 @Field static final String API_BASE = "https://api.weather.gc.ca/collections"
 @Field static final String ALERT_API_BASE = "https://weather.gc.ca/api/app/v3"
 @Field static final int HTTP_TIMEOUT = 15
+// Polls that get no AQHI value (observation and forecast both failed) log at warn
+// until this many in a row, then once at error, then at warn every OUTAGE_REMINDER_MS.
+@Field static final int FAILURE_ERROR_THRESHOLD = 3
+@Field static final long OUTAGE_REMINDER_MS = 3_600_000L
 
 // Station ID → Alert Zone Code mapping (Environment Canada, March 2026)
 @Field static final Map<String, String> STATION_TO_ZONE = [
@@ -128,6 +132,7 @@ metadata {
         attribute "lastUpdated", "string"
         attribute "dataSource", "enum", ["observation", "forecast"]
         attribute "observationAge", "string"
+        attribute "healthStatus", "enum", ["online", "offline"]
 
         command "findNearestStation"
     }
@@ -230,6 +235,8 @@ void refresh() {
         return
     }
     logDebug "Refreshing AQHI data for station ${sid}"
+    state.pollErrors = []
+    state.pollObservationOk = false
     if (state.noObservationFeed) {
         state.observationStale = true
         sendEvent(name: "observationAge", value: "unavailable")
@@ -310,31 +317,32 @@ void fetchObservation(String sid) {
 void observationResponse(resp, Map data) {
     try {
         if (resp.hasError()) {
-            logWarn "Error fetching observation: ${resp.getErrorMessage()}"
+            notePollError("observation: ${resp.getErrorMessage()}")
         } else {
-            parseObservationResponse(resp)
+            state.pollObservationOk = parseObservationResponse(resp)
         }
     } catch (Exception e) {
-        logWarn "Error fetching observation: ${e.message}"
+        notePollError("observation: ${e.message}")
     }
     fetchForecast(data.sid as String)
 }
 
-void parseObservationResponse(resp) {
+// True when the API answered, with or without a new observation.
+boolean parseObservationResponse(resp) {
     if (resp.status != 200) {
-        logWarn "Observation API returned status ${resp.status}"
-        return
+        notePollError("observation: HTTP ${resp.status}")
+        return false
     }
 
     Map data = resp.json as Map
     List features = data?.features as List
     if (!features || features.isEmpty()) {
         checkObservationStaleness()
-        return
+        return true
     }
 
     Map props = (features[0] as Map)?.properties as Map
-    if (!props) return
+    if (!props) return true
 
     BigDecimal aqhi = props.aqhi as BigDecimal
     String locationName = props.location_name_en as String
@@ -345,7 +353,9 @@ void parseObservationResponse(resp) {
     String risk = riskCategory(rounded)
 
     state.lastObservationMillis = obsDt ? parseISO8601(obsDt) : now()
+    if (state.observationStale && state.staleWarned) logInfo "Observations are back (${obsTime})"
     state.observationStale = false
+    state.remove("staleWarned")
 
     sendEvent(name: "aqhi", value: aqhi, unit: "AQHI")
     sendEvent(name: "airQualityIndex", value: aqhiToAQI(rounded))
@@ -361,6 +371,7 @@ void parseObservationResponse(resp) {
     if (txtEnable) {
         logInfo "AQHI ${aqhi} (${risk}) observed at ${obsTime}"
     }
+    return true
 }
 
 private void checkObservationStaleness() {
@@ -387,7 +398,11 @@ private void checkObservationStaleness() {
 
     if (ageHours >= thresholdHours) {
         state.observationStale = true
-        logWarn "No observation data for ${ageText} (threshold: ${thresholdHours}h) — will use forecast as fallback"
+        // Once per stale stretch; parseObservationResponse() logs the return.
+        if (!state.staleWarned) {
+            logWarn "No observation data for ${ageText} (threshold: ${thresholdHours}h) — using forecast as fallback"
+            state.staleWarned = true
+        }
     } else {
         state.observationStale = false
         logDebug "No new observation; last observation ${ageText} ago (within threshold)"
@@ -410,29 +425,32 @@ void fetchForecast(String sid) {
 }
 
 void forecastResponse(resp, Map data) {
+    boolean forecastOk = false
     try {
         if (resp.hasError()) {
-            logWarn "Error fetching forecast: ${resp.getErrorMessage()}"
+            notePollError("forecast: ${resp.getErrorMessage()}")
         } else {
-            parseForecastResponse(resp)
+            forecastOk = parseForecastResponse(resp)
         }
     } catch (Exception e) {
-        logWarn "Error fetching forecast: ${e.message}"
+        notePollError("forecast: ${e.message}")
     }
+    finishPoll(forecastOk || (state.pollObservationOk as boolean))
     fetchAlertsIfZoned()
 }
 
-void parseForecastResponse(resp) {
+// True when the API answered, with or without forecasts.
+boolean parseForecastResponse(resp) {
     if (resp.status != 200) {
-        logWarn "Forecast API returned status ${resp.status}"
-        return
+        notePollError("forecast: HTTP ${resp.status}")
+        return false
     }
 
     Map data = resp.json as Map
     List features = data?.features as List
     if (!features || features.isEmpty()) {
         logDebug "No forecast data available"
-        return
+        return true
     }
 
     // Build a sorted list of future forecasts
@@ -549,6 +567,80 @@ void parseForecastResponse(resp) {
             logInfo "AQHI ${aqhi} (${riskCategory(rounded)}) from forecast${state.noObservationFeed ? '' : ' fallback — observations unavailable'}"
         }
     }
+    return true
+}
+
+// --- Outage handling ---
+
+private void notePollError(String msg) {
+    List errs = (state.pollErrors ?: []) as List
+    errs << msg
+    state.pollErrors = errs
+}
+
+// A poll fails when neither the observation nor the forecast came back. One that
+// got either is a success; the other's failure is logged at warn.
+private void finishPoll(boolean gotData) {
+    String errs = ((state.pollErrors ?: []) as List).join("; ")
+    if (gotData) {
+        pollSucceeded()
+        if (errs) logWarn "partial refresh: ${errs}"
+    } else {
+        pollFailed(errs ?: "no AQHI data")
+    }
+}
+
+// Warn below FAILURE_ERROR_THRESHOLD, one error at it, then a warn every OUTAGE_REMINDER_MS.
+private void pollFailed(String msg) {
+    long t = now()
+    int n = ((state.pollFailures ?: 0) as int) + 1
+    state.pollFailures = n
+    if (n == 1) state.pollFailingSince = t
+    long since = state.pollFailingSince as long
+    if (n < FAILURE_ERROR_THRESHOLD) {
+        logWarn "poll failed (${n}/${FAILURE_ERROR_THRESHOLD}): ${msg}"
+    } else if (n == FAILURE_ERROR_THRESHOLD) {
+        logError "AQHI service unreachable since ${formatClock(since)}: ${msg}"
+        state.lastOutageReminder = t
+        setHealth("offline", "AQHI service unreachable")
+    } else if (t - ((state.lastOutageReminder ?: 0L) as long) >= OUTAGE_REMINDER_MS) {
+        logWarn "AQHI service still unreachable after ${formatDuration(t - since)} (${n} polls failed): ${msg}"
+        state.lastOutageReminder = t
+    } else {
+        logDebug "poll failed (${n}): ${msg}"
+    }
+}
+
+private void pollSucceeded() {
+    int n = (state.pollFailures ?: 0) as int
+    if (n >= FAILURE_ERROR_THRESHOLD) {
+        logInfo "AQHI service back after ${formatDuration(now() - (state.pollFailingSince as long))} (${n} polls failed)"
+    } else if (n > 0) {
+        logDebug "poll recovered after ${n} failed"
+    }
+    state.remove("pollFailures")
+    state.remove("pollFailingSince")
+    state.remove("lastOutageReminder")
+    setHealth("online", "reporting")
+}
+
+private void setHealth(String status, String reason) {
+    String prev = device.currentValue("healthStatus")
+    sendEvent(name: "healthStatus", value: status, descriptionText: "${device.displayName} is ${status}: ${reason}")
+    if (prev != null && prev != status) {
+        if (status == "offline") logWarn "offline: ${reason}"
+        else logInfo "back online"
+    }
+}
+
+private String formatClock(long t) {
+    return new Date(t).format("yyyy-MM-dd HH:mm", location.timeZone)
+}
+
+private static String formatDuration(long ms) {
+    long minutes = ms.intdiv(60000L)
+    if (minutes < 60) return "${minutes} min"
+    return "${minutes.intdiv(60L)} h ${minutes % 60} min"
 }
 
 void buildForecastHtml(List<Map> forecasts) {
