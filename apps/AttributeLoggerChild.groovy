@@ -89,6 +89,7 @@ void installed() {
 
 void updated() {
     state.remove("rotationRetryAfter")
+    state.remove("rotationBlockedWarned")
     if (state.pendingChanges && confirmChanges) {
         if (settings.rotationEnabled && state.previousAttributes) {
             archiveWholeFile("timestamp," + state.previousAttributes.join(',') + "\n")
@@ -97,6 +98,8 @@ void updated() {
         state.previousDeviceId = selectedDevice?.id
         state.previousAttributes = selectedAttributes
     }
+    // A change needs a fresh confirmation each time: archiving resets the live file.
+    app.removeSetting("confirmChanges")
     initialize()
     if (settings.debugEnable || settings.traceEnable) runIn(1800, "logsOff")
 }
@@ -145,7 +148,7 @@ void writeFile(String data) {
     } catch (NoSuchFileException ignored) {
         existingData = buildHeader()
     }
-    String content = existingData + data
+    String content = appendRow(existingData, data)
     byte[] newData = content.bytes
     if (safeUploadHubFile(logFileName, newData)) {
         state.lastFileSize = newData.length
@@ -178,7 +181,15 @@ String rotateIfDue(String content) {
         int firstRow = firstRowIndex(content)
         Long oldest = rowSeconds(content, firstRow)
         long nowSec = now().intdiv(1000)
-        if (oldest == null || oldest > nowSec - highWatermarkWeeks() * WEEK_SECONDS) return content
+        if (oldest == null) {
+            if (firstRow < content.length() && !state.rotationBlockedWarned) {
+                logWarn "${logFileName}: the first row has no readable timestamp, rotation skipped until it is fixed"
+                state.rotationBlockedWarned = true
+            }
+            return content
+        }
+        state.remove("rotationBlockedWarned")
+        if (oldest > nowSec - highWatermarkWeeks() * WEEK_SECONDS) return content
         int cut = findCut(content, firstRow, nowSec - lowWatermarkWeeks() * WEEK_SECONDS)
         if (cut <= firstRow) return content
         String header = firstRow > 0 ? content.substring(0, firstRow) : buildHeader()
@@ -233,16 +244,24 @@ void archiveWholeFile(String previousHeader) {
         return
     }
     int firstRow = firstRowIndex(content)
-    if (firstRow >= content.length()) return
+    if (firstRow >= content.length()) {
+        restartFile()
+        return
+    }
     String header = firstRow > 0 ? content.substring(0, firstRow) : previousHeader
     String archive = writeArchive(content, firstRow, content.length(), header)
     if (archive == null) {
         logError "Could not archive ${logFileName} before the device or attribute change"
         return
     }
+    restartFile()
+    logInfo "Archived ${logFileName} to ${archive} after the device or attribute change"
+}
+
+// Replaces the live file with just the header for the current attributes.
+void restartFile() {
     byte[] fresh = buildHeader().bytes
     if (safeUploadHubFile(logFileName, fresh)) state.lastFileSize = fresh.length
-    logInfo "Archived ${logFileName} to ${archive} after the device or attribute change"
 }
 
 void checkTruncation(int size) {
@@ -266,9 +285,11 @@ Long rowSeconds(String content, int start) {
     }
 }
 
-// Index of the first data row: after the header line, or 0 when the file has no header.
+// Index of the first data row: after the header line, or where the rows start when the
+// file has no header. Skips the byte-order mark Excel's "CSV UTF-8" save adds.
 int firstRowIndex(String content) {
-    if (!content.startsWith("timestamp")) return 0
+    int start = content.startsWith("\uFEFF") ? 1 : 0
+    if (!content.startsWith("timestamp", start)) return start
     int newline = content.indexOf("\n")
     return newline < 0 ? content.length() : newline + 1
 }
@@ -312,6 +333,11 @@ String archiveName(String logFileName, String firstDay, String lastDay, Collecti
 
 String dayStamp(long seconds, TimeZone tz) {
     return new Date(seconds * 1000L).format("yyyyMMdd", tz)
+}
+
+// Appends row, first ending a last line that lacks its newline so the two never merge.
+String appendRow(String content, String row) {
+    return (content && !content.endsWith("\n") ? content + "\n" : content) + row
 }
 
 

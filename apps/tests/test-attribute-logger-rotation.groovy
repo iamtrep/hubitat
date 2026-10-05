@@ -30,9 +30,10 @@ List<String> sigs = [
     'int findCut(String content, int firstRow, long cutoff) {',
     'String archiveName(String logFileName, String firstDay, String lastDay, Collection<String> existing) {',
     'String dayStamp(long seconds, TimeZone tz) {',
+    'String appendRow(String content, String row) {',
 ]
 def h = new GroovyShell().evaluate(sigs.collect { extract(src, it) }.join("\n") +
-    "\n[row: this.&rowSeconds, first: this.&firstRowIndex, cut: this.&findCut, name: this.&archiveName, day: this.&dayStamp]")
+    "\n[row: this.&rowSeconds, first: this.&firstRowIndex, cut: this.&findCut, name: this.&archiveName, day: this.&dayStamp, app: this.&appendRow]")
 
 int pass = 0, fail = 0
 def check = { String name, boolean cond ->
@@ -72,6 +73,8 @@ check('with header',                h.first(HEADER + "1,2\n") == HEADER.length()
 check('headerless',                 h.first("1791164812,7\n") == 0)
 check('header-only, no newline',    h.first("timestamp,illuminance") == "timestamp,illuminance".length())
 check('empty',                      h.first("") == 0)
+check('BOM before the header',      h.first("\uFEFFtimestamp,illuminance\n1,2\n") == "\uFEFFtimestamp,illuminance\n".length())
+check('BOM before a headerless row', h.first("\uFEFF1791164812,7\n") == 1)
 
 println 'findCut'
 List<Long> hourly = (0..<100).collect { 1790000000L + it * 3600L }
@@ -130,6 +133,11 @@ check('without extension',          h.name('log', '20260708', '20260902', []) ==
 check('several dots',               h.name('a.b.csv', '20260708', '20260902', []) == 'a.b_20260708_20260902.csv')
 check('collision adds -2',          h.name('log.csv', '1', '2', ['log_1_2.csv']) == 'log_1_2-2.csv')
 check('second collision adds -3',   h.name('log.csv', '1', '2', ['log_1_2.csv', 'log_1_2-2.csv']) == 'log_1_2-3.csv')
+
+println 'appendRow'
+check('after a full line',          h.app("a\n", "b\n") == "a\nb\n")
+check('after a partial last line',  h.app("a", "b\n") == "a\nb\n")
+check('to an empty file',           h.app("", "b\n") == "b\n")
 
 println 'dayStamp'
 check('Toronto evening',            h.day(1791164812L, TimeZone.getTimeZone('America/Toronto')) == '20261004')
