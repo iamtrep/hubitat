@@ -192,6 +192,47 @@ Verified against the hub's app-page templates (`/ui2/js/appUI.js`) on firmware 2
 
 - HTML embedded in an app label via `updateLabel()` (e.g. a badge `<span>`) renders in the Apps list but does not always round-trip verbatim: saving the app's config page (the name/label input on Done) can return the label with its **HTML tags stripped**, leaving bare text. A "strip-then-reapply badge" routine anchored to the exact `<span>…</span>` element then fails to match the bare-text remnant and appends a fresh badge on each refresh — it self-stacks (stabilizing at a doubled badge). Strip a label badge by its **text content with optional/repeating markup**, never by exact HTML element.
 
+## Hub hardware
+
+Per bravenel (Hubitat staff, [forum, 2024-01-27](https://community.hubitat.com/t/what-is-c8-pro-soc/132597/6)):
+
+| Model | SoC | CPU | RAM | Z-Wave | Zigbee |
+|---|---|---|---|---|---|
+| C-5 | Amlogic A113X | Cortex-A53, 1.416 GHz | 1 GB | 500 series, single US frequency (other regions need a dongle) | 1.2 |
+| C-7 | Amlogic A113X | Cortex-A53, 1.416 GHz | 1 GB | 700 series, all regions via settings | 1.2 |
+| C-8 | Amlogic A113X | Cortex-A53, 1.416 GHz | 1 GB | 800 series, all regions, external antenna | 3.0 |
+| C-8 Pro | Amlogic A113X2 | Cortex-A55, 2.016 GHz | 2 GB | 800 series, all regions, external antenna | 3.0 |
+
+Earlier forum speculation that these hubs used the S905X is wrong. Staff gave no storage type and no performance figures beyond "C-8 Pro boots almost twice as fast as C-8", and said they do not know whether that comes from the CPU, memory or storage. A user in the same thread reports the C-8 Pro Ethernet still links at 100 Mb/s.
+
+## File Manager API
+
+On firmware 2.5.2.129 the on-hub developer docs (`/developer-docs/index.json`) list four file methods: `uploadHubFile(String, byte[])`, `downloadHubFile(String)`, `deleteHubFile(String)` and `getHubFiles(String folder = "")`. There is no append and no rename, so adding a line means downloading the whole file and uploading it again. File names accept only ASCII letters, digits, dot, underscore and hyphen. The docs say `downloadHubFile` returns null for an unavailable file, but on a C-7 (2026-10-04) it threw `NoSuchFileException` for a missing file.
+
+Append cost grows with file size (2.5.2.129, a throwaway probe app, median of 5, ms per one-row append):
+
+| File size | C-7 app (String) | C-7 app (bytes) | C-8 Pro app (String) | C-8 Pro app (bytes) | C-8 Pro Rule Machine "Append to local file" |
+|---|---|---|---|---|---|
+| 1 KB | 12 | 12 | 11 | 17 | 32 |
+| 1 MB | 76 | 30 | 25 | 19 | 55 |
+| 4 MB | 233 | 124 | 123 | 66 | 155 |
+| 8 MB | 392 | 252 | 210 | 196 | 685 |
+
+"String" is the usual logger pattern (`new String(bytes) + row`, `getBytes()`); "bytes" copies the byte arrays only. On the C-7 at 8 MB the String round trip took 234 ms of the 392, download 73 and upload 85. Rule Machine's "Append to local file" (`actSubType` `getAppendLocalFile`) also slows with file size, so it rewrites the whole file as apps must. It appends the text with no newline.
+
+Two writers appending to the same file at once lose rows with no exception: both download the same content and the last upload wins (C-8 Pro, 1 KB to 4 MB, every burst lost all rows but one). `singleThreaded: true` prevents this inside one app only; nothing in the sandbox locks a file across apps.
+
+Appends from several apps to their own files slow each other down (one probe app, not `singleThreaded`, one file per concurrent append, median of 5 bursts, ms per append, no exceptions):
+
+| File size | Files at once | C-8 Pro | C-7 |
+|---|---|---|---|
+| 1 KB | 1 / 2 / 4 / 8 | 11 / 16 / 28 / 57 | 12 / 14 / 18 / 20 |
+| 1 MB | 1 / 2 / 4 / 8 | 44 / 62 / 98 / 206 | 72 / 81 / 162 / 252 |
+| 2 MB | 1 / 2 / 4 / 8 | 60 / 102 / 171 / 2004 | 120 / 196 / 320 / 3032 |
+| 4 MB | 1 / 2 / 4 / 8 | 124 / 196 / 2014 / 4364 | 224 / 430 / 3105 / 6208 |
+
+On the C-8 Pro the upload step grows with the number of concurrent uploads even at 1 KB (10 to 57 ms), so File Manager writes appear to be serialized hub-wide. Past a few MB in flight the time per append jumps to about 2 s (C-8 Pro) or 3 s (C-7), with single appends up to 8.6 s on the C-8 Pro and 7.1 s on the C-7 at 4 MB x 8. In the slow appends the extra time lands in the String conversion in some runs (up to 97%) and in `uploadHubFile()` in others (up to 92%). The cause (garbage collection, a write lock) is not verified.
+
 ## Firmware changelog notes
 
 - The hub-as-HomeKit-**controller** app ("HomeKit Controller", C-8 Pro) was renamed to **"HomeKit Bridge"** in firmware 2.4.2.128 — code matching the literal app-type string should accept both. This is the accessory-controller direction (hub controls HomeKit accessories), distinct from the long-standing HomeKit Integration app that exposes hub devices to HomeKit.
