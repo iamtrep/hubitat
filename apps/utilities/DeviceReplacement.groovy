@@ -3,8 +3,10 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.2.2"
+@Field static final String CODE_VERSION = "0.3.0"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
+// File Manager file with one line per input each swap or undo changed.
+@Field static final String AUDIT_FILE = "device_replacement_audit.txt"
 // Parent of the mobile dashboards the hub generates per room and for "All Devices".
 @Field static final String DASHBOARD_PARENT_TYPE = "Easy Mobile Dashboard Parent"
 
@@ -134,6 +136,7 @@ Map mainPage() {
             }
         }
         section("") {
+            paragraph "<a href='/local/${AUDIT_FILE}' target='_blank'>Audit log</a> of every swap and undo (File Manager: ${AUDIT_FILE})"
             paragraph "Version ${CODE_VERSION}"
         }
     }
@@ -528,6 +531,9 @@ Map resultsPage(Map params) {
             }
             table += "</tbody></table>"
             paragraph table
+            paragraph state.auditError
+                ? "<span style='color:orange'>Not written to the <a href='/local/${AUDIT_FILE}' target='_blank'>audit log</a>: ${state.auditError}</span>"
+                : "Written to the <a href='/local/${AUDIT_FILE}' target='_blank'>audit log</a>."
         }
     }
 }
@@ -545,6 +551,8 @@ private void executeSwap() {
     int targetId = targetDevice.id as int
     logCmd "Swapping ${sourceId} → ${targetId} in ${pending.size()} input(s)"
     List<Map> results = pending.collect { Map entry -> swapInput(entry, sourceId, targetId) }
+    String devices = "${sourceDevice.displayName} (${sourceId}) -> ${targetDevice.displayName} (${targetId})"
+    state.auditError = appendAudit(results.collect { Map r -> auditLine("swap", devices, r) })
 
     List<Map> done = results.findAll { it.success }
     if (done) {
@@ -839,7 +847,7 @@ private void performUndo() {
     List<Map> undone = swapResults.collect { Map entry ->
         int appId = entry.appId as int
         String inputName = entry.inputName as String
-        Map row = [appLabel: entry.appLabel, inputName: inputName, success: false]
+        Map row = [appId: appId, appLabel: entry.appLabel, inputName: inputName, success: false]
         try {
             if (entry.before == null) {
                 row.message = "Swapped by an older version of this app; change it by hand"
@@ -863,6 +871,8 @@ private void performUndo() {
                 row.message = err
                 return row
             }
+            row.before = now
+            row.after = before
             row.success = true
             row.message = verifyWrite(appId, inputName, before, cfg.settings as Map, null, 0)
         } catch (Exception e) {
@@ -873,8 +883,45 @@ private void performUndo() {
         return row
     }
 
+    String devices = "${lastSwap.targetLabel} (${lastSwap.targetId}) -> ${lastSwap.sourceLabel} (${lastSwap.sourceId})"
+    String auditError = appendAudit(undone.collect { Map r -> auditLine("undo", devices, r) })
+    if (auditError) undone << [appLabel: "Audit log", inputName: AUDIT_FILE, success: false, message: "Not written: ${auditError}"]
     state.lastUndo = undone
     state.remove("lastSwap")
+}
+
+// ---- Audit Log ----
+// One line per input a swap or undo touched, appended to AUDIT_FILE. File Manager has no append,
+// so the file is read and written back whole.
+
+private String auditLine(String action, String devices, Map r) {
+    String ts = new Date().format("yyyy-MM-dd HH:mm:ss z", location.timeZone)
+    String ids = r.before != null ? " | [${(r.before as List).join(',')}] -> [${(r.after as List).join(',')}]" : ""
+    String outcome = (r.success as boolean) ? "ok" : "not done"
+    return "${ts} | ${action} | ${devices} | app ${r.appLabel} (${r.appId}) input ${r.inputName}${ids} | ${outcome}: ${r.message}"
+}
+
+// Returns null on success, else the reason. A missing file is started fresh; any other read
+// failure skips the write, so a log that can't be read is never replaced by a partial one.
+private String appendAudit(List<String> lines) {
+    if (!lines) return null
+    String existing = ""
+    try {
+        byte[] bytes = downloadHubFile(AUDIT_FILE)
+        if (bytes) existing = new String(bytes, "UTF-8")
+    } catch (Exception e) {
+        if (e.class.simpleName != "NoSuchFileException") {
+            logWarn "Audit log not written: could not read ${AUDIT_FILE}: ${e}"
+            return "could not read ${AUDIT_FILE} (${e.message})"
+        }
+    }
+    try {
+        uploadHubFile(AUDIT_FILE, (existing + lines.join("\n") + "\n").getBytes("UTF-8"))
+    } catch (Exception e) {
+        logWarn "Audit log not written: ${e}"
+        return e.message ?: e.toString()
+    }
+    return null
 }
 
 // The hub's mobile dashboards list devices by room (plus "All Devices" and "Devices without

@@ -44,6 +44,7 @@ Apps using the source are found through the platform API (`getAppsUsingDevice`).
 
 Additional features:
 - **Undo**: stores each swapped input's device list from before the swap, and a one-click undo on the main page puts back exactly that list. An input changed since the swap is left alone and reported.
+- **Audit log**: every swap and undo appends one line per input to `device_replacement_audit.txt` in File Manager: time, devices, app, input, device ids before and after, and the outcome. The main page links to it.
 
 **Why some apps still need a manual edit.** The hub's form-save endpoint (`/installedapp/update/json`) addresses one page at a time, and the wire format for sub-page saves (`pageBreadcrumbs`, `_action_previous`, conditionally-rendered dynamic input names) is per-app-family — generalizing the write path across every built-in (Basic Rule, Notifier, Rule Machine, …) would mean re-validating undocumented form shapes on every firmware release. The deeplinked punch list trades clicks for stability: zero firmware-coupling, and the user stays in the loop for ambiguous cases.
 

@@ -128,6 +128,10 @@ The Logs page (`/logs`, tabs `?tab=past` etc.) is a Vue chunk (`/ui2/js/vue-hub2
 - Sub-page settings are POSTable through the same endpoint. Read the page with `GET /installedapp/configure/json/{id}/{page}`, then POST that page's inputs with `currentPage={page}`, `pageBreadcrumbs=["mainPage"]` and the page name at the end of `url` (`/installedapp/configure/{id}/{page}`). Save one page per POST; each save runs `updated()`, so re-read the next page before saving it *(verified 2.5.2.129)*.
 - On `/hub2/appsList`, the installed-app's user-set label is stored as `data.name`; `data.label` is always null. Match installed-app labels via `data.name`.
 
+## File Manager files over HTTP
+
+- `GET /local/{fileName}` serves a File Manager file. The content type follows the extension: `.txt` is `text/plain` and opens in the browser, `.log` is `application/octet-stream` and downloads *(verified 2.5.2.129)*.
+
 ## Device discovery
 
 - `GET /device/listJson?capability={capability}` — list devices with a specific capability
