@@ -38,13 +38,12 @@ Helps replace one device with another across every installed app — auto-swappi
    - **Manual Edit Required** — inputs on sub-pages or in places the auto-swap can't safely write. Each row carries an **Edit →** deeplink straight to the right page (`/installedapp/configure/{id}/{pageName}`), the current device list with the source highlighted, and the same warning columns.
    - **Other Apps Using the Source** — apps that use the source but hold it in no device input the scan can see (Hub Mesh sharing, apps that keep devices in their own data). Each gets an **Open →** link to replace the device by hand.
    - **Mobile Dashboards** — the hub's per-room and "All Devices" dashboards showing the source. Nothing in them is swapped; they list devices by room, so the page says whether to put the target in the source's room.
-3. **Execute & Report** — performs the auto-swap via `POST /installedapp/update/json` for selected eligible entries, verifies each by re-reading `statusJson`, and displays a pass/fail table.
+3. **Confirm, Execute & Report**: a confirmation page lists the selected inputs and recommends a hub backup. Its Swap link works once, so a refresh or a stale link doesn't swap again. Each swap saves only the changed input via `POST /installedapp/update/json`, leaving the app's other settings as they were. It then re-reads the app to check the input, the app's other settings and its subscriptions on the target, and shows a pass/fail table.
 
 Apps using the source are found through the platform API (`getAppsUsingDevice`). If the platform restricts it, the scan falls back to `/device/fullJson/{id}`, without the mobile dashboards, and says so at the top. An option forces the fallback for testing.
 
 Additional features:
-- **Undo** — stores the last auto-swap and offers a one-click undo from the main page.
-- Recommends creating a hub backup before executing.
+- **Undo**: stores each swapped input's device list from before the swap, and a one-click undo on the main page puts back exactly that list. An input changed since the swap is left alone and reported.
 
 **Why some apps still need a manual edit.** The hub's form-save endpoint (`/installedapp/update/json`) addresses one page at a time, and the wire format for sub-page saves (`pageBreadcrumbs`, `_action_previous`, conditionally-rendered dynamic input names) is per-app-family — generalizing the write path across every built-in (Basic Rule, Notifier, Rule Machine, …) would mean re-validating undocumented form shapes on every firmware release. The deeplinked punch list trades clicks for stability: zero firmware-coupling, and the user stays in the loop for ambiguous cases.
 

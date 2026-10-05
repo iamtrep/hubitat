@@ -31,7 +31,6 @@ Replace each with an `href` to a confirmation page that lists what will be remov
 - Inline `color:orange/red/green` spans become `p-message p-message-warn` / `p-message-error` boxes or `text-*-700` classes.
 - The inline-styled `#1A77C9` "Edit" links become `p-button` classes.
 - The "create a hub backup first" warning becomes a `p-message-warn` box.
-- The swap confirmation page hides Done.
 
 ### 4. SwitchMonitor group delete
 

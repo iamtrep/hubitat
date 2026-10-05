@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 import groovy.transform.Field
-import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.2.1"
+@Field static final String CODE_VERSION = "0.2.2"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
 // Parent of the mobile dashboards the hub generates per room and for "All Devices".
 @Field static final String DASHBOARD_PARENT_TYPE = "Easy Mobile Dashboard Parent"
@@ -24,6 +23,7 @@ definition(
 preferences {
     page(name: "mainPage")
     page(name: "previewPage")
+    page(name: "confirmSwapPage")
     page(name: "resultsPage")
 }
 
@@ -107,6 +107,16 @@ Map mainPage() {
                 summary += " (${successCount} app${successCount == 1 ? '' : 's'} updated)"
                 paragraph summary
                 input "undoLastSwap", "button", title: "Undo Last Swap"
+            }
+        }
+
+        List<Map> lastUndo = state.lastUndo as List<Map>
+        if (lastUndo) {
+            section("Last Undo") {
+                lastUndo.each { Map r ->
+                    String icon = (r.success as boolean) ? "<span style='color:green'>&#10003;</span>" : "<span style='color:red'>&#10007;</span>"
+                    paragraph "${icon} ${r.appLabel}: ${r.inputName}: ${r.message}"
+                }
             }
         }
 
@@ -456,8 +466,7 @@ Map previewPage() {
             }
             if (selectedCount > 0) {
                 section {
-                    paragraph "<span style='color:red'><b>&#9888; Recommended:</b> <a href='/hub/backup' target='_blank'>Create a local hub backup</a> before executing the swap.</span>"
-                    href "resultsPage", title: "Execute Swap", description: "Swap ${sourceDevice.displayName} → ${targetDevice.displayName} in ${selectedCount} of ${swappable.size()} app(s)"
+                    href "confirmSwapPage", title: "Swap…", description: "Review the swap of ${sourceDevice.displayName} → ${targetDevice.displayName} in ${selectedCount} of ${swappable.size()} app(s)"
                 }
             }
         } else {
@@ -466,77 +475,43 @@ Map previewPage() {
     }
 }
 
-// ---- Page 3: Execute & Report ----
+// ---- Page 3: Confirm, Execute & Report ----
+// The confirm page's Swap link carries a single-use token to resultsPage, which swaps only the
+// first time it sees that token. A refresh or a stale link shows the stored results instead.
 
-Map resultsPage() {
-    dynamicPage(name: "resultsPage", title: "Swap Results", install: true) {
+Map confirmSwapPage() {
+    List<Map> pending = selectedPending()
+    dynamicPage(name: "confirmSwapPage", title: "Swap devices?") {
+        section(sectionClass: "swap-confirm") {
+            hideDoneButton()
+            if (!pending) {
+                paragraph "Nothing to swap. Go back and select at least one app."
+            } else {
+                paragraph "<span style='color:red'><b>&#9888; Recommended:</b> <a href='/hub/backup' target='_blank'>Create a local hub backup</a> before executing the swap.</span>"
+                paragraph "${sourceDevice.displayName} (ID ${sourceDevice.id}) will be replaced by ${targetDevice.displayName} (ID ${targetDevice.id}) in:"
+                pending.each { Map e -> paragraph "${e.appLabel}: ${e.inputName}" }
+                paragraph "Each app's settings are saved, so each one runs its updated()."
+                href "resultsPage", title: "Swap in ${pending.size()} input(s)", params: [token: issueConfirmToken("swap")]
+            }
+            href "previewPage", title: "Cancel"
+        }
+    }
+}
+
+Map resultsPage(Map params) {
+    String result = consumeConfirmToken("swap", params)
+    if (result == "act") executeSwap()
+    dynamicPage(name: "resultsPage", title: "Swap Results", nextPage: "mainPage") {
         section {
             href "mainPage", title: "Back to Device Selection", description: ""
         }
-        List<Map> allPending = (state.pendingScan ?: []) as List<Map>
-
-        // Filter to only user-selected entries
-        Map selections = state.swapSelections ?: [:]
-        List<Map> pending = allPending.findAll { Map entry ->
-            selections[entry.index.toString()] != "off"
-        }
-
-        if (!pending) {
-            section { paragraph "Nothing to swap. Go back and select at least one app." }
+        List<Map> results = (state.swapResults ?: []) as List<Map>
+        if (result == "stale" || !results) {
+            section { paragraph result == "stale" ? "Nothing swapped: this link was already used." : "Nothing to swap." }
             return
         }
-
-        int sourceId = sourceDevice.id as int
-        int targetId = targetDevice.id as int
-        List<Map> results = []
-
-        pending.each { Map entry ->
-            int appId = entry.appId as int
-            String appLabel = entry.appLabel as String
-            String inputName = entry.inputName as String
-            boolean targetAlreadyPresent = entry.targetAlreadyPresent as boolean
-
-            Map result = [appId: appId, appLabel: appLabel, inputName: inputName, success: false, message: ""]
-
-            try {
-                // Fetch full config for POST body construction
-                Map configData = null
-                httpGet("${BASE_URL}/installedapp/configure/json/${appId}") { response ->
-                    if (response.status == 200) {
-                        configData = response.data as Map
-                    }
-                }
-                if (!configData) {
-                    result.message = "Could not fetch app config"
-                    results << result
-                    return
-                }
-
-                // Store original device IDs for undo
-                result.originalDeviceIds = entry.currentDeviceIds
-
-                // Build and send POST
-                String postResult = buildAndSendSwap(configData, appId, inputName, sourceId, targetId, targetAlreadyPresent)
-                if (postResult == "success") {
-                    // Verify
-                    String verifyResult = verifySwap(appId, inputName, sourceId, targetId)
-                    result.success = true
-                    result.message = verifyResult
-                } else {
-                    result.message = postResult
-                }
-            } catch (Exception e) {
-                result.message = "Error: ${e.message}"
-                logError "Swap failed for ${appLabel}/${inputName}: ${e.message}"
-            }
-
-            results << result
-        }
-
-        // Display results
         String td = "style='border:1px solid #999;padding:4px 8px'"
         String tdC = "style='border:1px solid #999;padding:4px 8px;text-align:center'"
-
         section("Results") {
             String table = "<table style='border-collapse:collapse;width:100%'>" +
                 "<thead><tr style='background:#ddd'>" +
@@ -554,22 +529,60 @@ Map resultsPage() {
             table += "</tbody></table>"
             paragraph table
         }
-
-        // Store for undo
-        List successfulSwaps = results.findAll { it.success }
-        if (successfulSwaps) {
-            state.lastSwap = [
-                sourceId: sourceId,
-                targetId: targetId,
-                sourceLabel: sourceDevice.displayName,
-                targetLabel: targetDevice.displayName,
-                results: successfulSwaps
-            ]
-        }
-
-        state.remove("pendingScan")
-        state.swapResults = results
     }
+}
+
+private List<Map> selectedPending() {
+    Map selections = state.swapSelections ?: [:]
+    return ((state.pendingScan ?: []) as List<Map>).findAll { Map entry ->
+        selections[entry.index.toString()] != "off"
+    }
+}
+
+private void executeSwap() {
+    List<Map> pending = selectedPending()
+    int sourceId = sourceDevice.id as int
+    int targetId = targetDevice.id as int
+    logCmd "Swapping ${sourceId} → ${targetId} in ${pending.size()} input(s)"
+    List<Map> results = pending.collect { Map entry -> swapInput(entry, sourceId, targetId) }
+
+    List<Map> done = results.findAll { it.success }
+    if (done) {
+        state.lastSwap = [
+            sourceId: sourceId,
+            targetId: targetId,
+            sourceLabel: sourceDevice.displayName,
+            targetLabel: targetDevice.displayName,
+            results: done
+        ]
+        state.remove("lastUndo")
+    }
+    state.remove("pendingScan")
+    state.swapResults = results
+}
+
+private void hideDoneButton() {
+    paragraph rawHtml: true, "<style>#formApp:has(.swap-confirm) #fieldsetAppButtons button[value='Done'] { display:none !important; }</style>"
+}
+
+private String issueConfirmToken(String action) {
+    String token = UUID.randomUUID().toString()
+    state.confirmToken = [action: action, token: token]
+    return token
+}
+
+// "act" the first time a token is presented, "done" if the same page renders
+// again for that click, "stale" otherwise.
+private String consumeConfirmToken(String action, Map params) {
+    String token = params?.token
+    if (!token) return "stale"
+    Map pending = state.confirmToken as Map
+    if (pending?.action == action && pending.token == token) {
+        state.remove("confirmToken")
+        state.confirmUsed = token
+        return "act"
+    }
+    return state.confirmUsed == token ? "done" : "stale"
 }
 
 // ---- Page Graph Discovery ----
@@ -649,117 +662,104 @@ private Map locateInputPage(Map<String,Map> graph, String inputName) {
     return [page: home, breadcrumbs: breadcrumbs]
 }
 
-// ---- POST Body Construction & Execution ----
+// ---- Device Input Write ----
+// A save to /installedapp/update/json keeps every setting it leaves out, so a swap posts the one
+// device input it changes. Echoing the rest of the page corrupts some of them: configure/json
+// returns an enum-multiple as a List whose toString() is not the form the save expects, and an
+// unset input echoed as "[]" is stored as that string.
 
-private String buildAndSendSwap(Map configData, int appId, String inputName, int sourceId, int targetId, boolean targetAlreadyPresent) {
-    Map appInfo = (configData.app ?: [:]) as Map
-    Map configPage = (configData.configPage ?: [:]) as Map
-    Map settings = (configData.settings ?: [:]) as Map
-    String pageName = (configPage.name ?: "mainPage") as String
-    String appVersion = (appInfo.version ?: "1") as String
-    String appLabel = (appInfo.label ?: "") as String
+// Replaces sourceId with targetId in one main-page device input, then re-reads the app to check
+// the input and that no other setting moved. Returns the result row; `before` and `after` hold
+// the input's device ids, for undo.
+private Map swapInput(Map entry, int sourceId, int targetId) {
+    int appId = entry.appId as int
+    String inputName = entry.inputName as String
+    Map result = [appId: appId, appLabel: entry.appLabel, inputName: inputName, success: false, message: ""]
+    try {
+        Map cfg = fetchConfig(appId)
+        Map input = cfg ? findMainInput(cfg, inputName) : null
+        if (!input) {
+            result.message = cfg ? "The input is no longer on the app's main page" : "Could not read the app's settings"
+            return result
+        }
+        List<Integer> before = deviceIds((cfg.settings as Map)?.get(inputName))
+        if (!before.contains(sourceId)) {
+            result.message = "The source is no longer in this input"
+            return result
+        }
+        List<Integer> after = before.collect { it == sourceId ? targetId : it }.unique()
+        String err = writeDeviceInput(appId, cfg, input, after)
+        if (err) {
+            result.message = err
+            return result
+        }
+        result.before = before
+        result.after = after
+        result.success = true
+        result.message = verifyWrite(appId, inputName, after, cfg.settings as Map, entry.subscribedAttrs as List, targetId)
+    } catch (Exception e) {
+        result.message = "Error: ${e.message}"
+        logError "Swap failed for ${entry.appLabel}/${inputName}: ${e.message}"
+    }
+    return result
+}
 
-    // Build form fields as ordered list of tuples
-    List<List<String>> fields = []
+private Map fetchConfig(int appId) {
+    Map cfg = null
+    httpGet([uri: BASE_URL, path: "/installedapp/configure/json/${appId}", timeout: 15]) { response ->
+        if (response.status == 200) cfg = response.data as Map
+    }
+    return cfg
+}
 
-    // Header fields
-    fields << ["_action_update", "Done"]
-    fields << ["formAction", "update"]
-    fields << ["id", appId.toString()]
-    fields << ["version", appVersion]
-    fields << ["appTypeId", ""]
-    fields << ["appTypeName", ""]
-    fields << ["currentPage", pageName]
-    fields << ["pageBreadcrumbs", "%5B%5D"]
-
-    // Label inputs from body elements
-    List sections = (configPage.sections ?: []) as List
-    sections.each { sec ->
-        List bodyElements = ((sec as Map).body ?: []) as List
-        bodyElements.each { elem ->
-            Map e = elem as Map
-            if (e.element == "label") {
-                String labelName = (e.name ?: "label") as String
-                fields << ["${labelName}.type", "text"]
-                fields << [labelName, appLabel]
-            }
+private Map findMainInput(Map cfg, String inputName) {
+    Map cp = (cfg.configPage ?: [:]) as Map
+    if ((cp.name ?: "mainPage") != "mainPage") return null
+    for (sec in (cp.sections ?: [])) {
+        for (inp in ((sec as Map).input ?: [])) {
+            if ((inp as Map).name == inputName) return inp as Map
         }
     }
+    return null
+}
 
-    // Regular inputs in order
-    sections.each { sec ->
-        List inputs = ((sec as Map).input ?: []) as List
-        inputs.each { inp ->
-            Map input = inp as Map
-            String name = input.name as String
-            String type = (input.type ?: "") as String
-            boolean multiple = input.multiple as boolean
+// A device setting as configure/json returns it: a Map of id -> label, a List, or a scalar id.
+private List<Integer> deviceIds(Object value) {
+    if (value instanceof Map) return (value as Map).keySet().collect { it.toString().toInteger() }
+    if (value instanceof List) return (value as List).collect { it.toString().toInteger() }
+    if (value == null || value.toString() in ["", "null"]) return []
+    return value.toString().split(",").findAll { it.trim() }.collect { it.trim().toInteger() }
+}
 
-            fields << ["${name}.type", type]
-            fields << ["${name}.multiple", multiple.toString()]
-
-            if (type == "bool") {
-                // Bool inputs
-                fields << ["checkbox[${name}]", "on"]
-                String val = settingToString(settings[name])
-                fields << ["settings[${name}]", val]
-            } else if (type.startsWith("capability.")) {
-                // Device input — compute new device ID list. The settings value
-                // can be a Map (device id -> label), a scalar Long/Integer for
-                // a single device, or a comma-separated String.
-                List<Integer> currentIds = []
-                def curVal = settings[name]
-                if (curVal instanceof Map) {
-                    currentIds = (curVal as Map).keySet().collect { it.toString().toInteger() }
-                } else if (curVal instanceof List) {
-                    currentIds = (curVal as List).collect { it.toString().toInteger() }
-                } else if (curVal != null && curVal.toString() != "" && curVal.toString() != "null") {
-                    currentIds = curVal.toString().split(",").findAll { it.trim() }.collect { it.trim().toInteger() }
-                }
-
-                List<Integer> newIds
-                if (name == inputName) {
-                    // This is the input we're swapping
-                    newIds = currentIds.collect() as List<Integer>
-                    newIds.removeAll { it == sourceId }
-                    if (!targetAlreadyPresent) {
-                        // Insert target at the position where source was
-                        int sourceIdx = currentIds.indexOf(sourceId)
-                        if (sourceIdx >= 0 && sourceIdx <= newIds.size()) {
-                            newIds.add(sourceIdx, targetId)
-                        } else {
-                            newIds << targetId
-                        }
-                    }
-                } else {
-                    newIds = currentIds
-                }
-
-                String idStr = newIds.collect { it.toString() }.join(",")
-                fields << ["settings[${name}]", idStr]
-                fields << ["deviceList", name]
-                fields << ["", ""]
-            } else {
-                // Other inputs
-                String val = settingToString(settings[name])
-                fields << ["settings[${name}]", val]
-            }
-        }
-    }
-
-    // Footer fields
-    fields << ["referrer", "${BASE_URL}/installedapp/list"]
-    fields << ["url", "${BASE_URL}/installedapp/configure/${appId}/${pageName}"]
-    fields << ["_cancellable", "false"]
-
-    // URL-encode and POST
+// Saves one device input with Done, so the app's updated() re-arms its subscriptions. Returns
+// null on success, else the reason. An empty list is refused: the save can't clear a multi-select.
+private String writeDeviceInput(int appId, Map cfg, Map input, List<Integer> ids) {
+    if (!ids) return "Refusing to save an empty device list"
+    String name = input.name as String
+    List<List<String>> fields = [
+        ["_action_update", "Done"],
+        ["formAction", "update"],
+        ["id", appId.toString()],
+        ["version", (((cfg.app ?: [:]) as Map).version ?: "1").toString()],
+        ["appTypeId", ""],
+        ["appTypeName", ""],
+        ["currentPage", "mainPage"],
+        ["pageBreadcrumbs", "[]"],
+        ["${name}.type".toString(), (input.type ?: "") as String],
+        ["${name}.multiple".toString(), (input.multiple as boolean).toString()],
+        ["settings[${name}]".toString(), ids.join(",")],
+        ["deviceList", name],
+        ["", ""],
+        ["referrer", "${BASE_URL}/installedapp/list".toString()],
+        ["url", "${BASE_URL}/installedapp/configure/${appId}/mainPage".toString()],
+        ["_cancellable", "false"]
+    ]
     String body = fields.collect { pair ->
         URLEncoder.encode(pair[0], "UTF-8") + "=" + URLEncoder.encode(pair[1], "UTF-8")
     }.join("&")
-
     logNet "POST body for app ${appId}: ${body}"
 
-    String postResult = "unknown"
+    String err = "No response"
     httpPost([
         uri: BASE_URL,
         path: "/installedapp/update/json",
@@ -768,68 +768,40 @@ private String buildAndSendSwap(Map configData, int appId, String inputName, int
         textParser: true,
         timeout: 30
     ]) { response ->
-        if (response.status == 200) {
-            String respText = response.data?.text ?: ""
-            if (respText.contains('"success"')) {
-                postResult = "success"
-            } else {
-                postResult = "Unexpected response: ${respText}"
-            }
-        } else {
-            postResult = "HTTP ${response.status}"
-        }
+        String respText = response.data?.text ?: ""
+        err = (response.status == 200 && respText.contains('"success"')) ? null : "Save rejected: HTTP ${response.status} ${respText.take(200)}"
     }
-
-    return postResult
+    return err
 }
 
-@CompileStatic
-private String settingToString(Object value) {
-    if (value == null) return "[]"
-    if (value instanceof Map) return (value as Map).keySet().collect { it.toString() }.join(",")
-    return value.toString()
-}
+// ---- Post-Write Verification ----
 
-// ---- Post-Swap Verification ----
-
-private String verifySwap(int appId, String inputName, int sourceId, int targetId) {
+private String verifyWrite(int appId, String inputName, List<Integer> expected, Map settingsBefore,
+                           List subscribedAttrs, int targetId) {
     List<String> notes = []
+    Map cfg = fetchConfig(appId)
+    if (!cfg) return "Saved; could not re-read the app to verify"
+    Map settingsAfter = (cfg.settings ?: [:]) as Map
+    List<Integer> now = deviceIds(settingsAfter[inputName])
+    notes << ((now as Set) == (expected as Set) ? "Verified: input now ${now.join(', ')}" : "Warning: input is ${now.join(', ')}, expected ${expected.join(', ')}")
 
-    try {
-        httpGet("${BASE_URL}/installedapp/statusJson/${appId}") { response ->
-            if (response.status == 200) {
-                Map data = response.data as Map
-                List appSettings = (data.appSettings ?: []) as List
-                Map targetSetting = appSettings.find { (it as Map).name == inputName } as Map
+    Set<String> keys = ((settingsBefore ?: [:]).keySet() + settingsAfter.keySet()).collect { it.toString() } as Set<String>
+    List<String> moved = keys.findAll { it != inputName && settingsBefore?.get(it) != settingsAfter[it] }.sort()
+    if (moved) notes << "Warning: other settings changed: ${moved.join(', ')}"
 
-                if (targetSetting) {
-                    List deviceIds = (targetSetting.deviceIdsForDeviceList ?: []) as List
-                    boolean hasTarget = deviceIds.any { (it as int) == targetId }
-                    boolean hasSource = deviceIds.any { (it as int) == sourceId }
-
-                    if (hasTarget && !hasSource) {
-                        notes << "Verified: target present, source removed"
-                    } else {
-                        if (hasSource) notes << "Warning: source still present"
-                        if (!hasTarget) notes << "Warning: target not found"
-                    }
-                } else {
-                    notes << "Could not find input in statusJson"
-                }
-
-                // Check event subscriptions
-                List subs = (data.eventSubscriptions ?: []) as List
-                boolean subFound = subs.any { (it as Map).typeId == targetId }
-                if (subFound) {
-                    notes << "Subscriptions confirmed"
-                }
-            }
+    if (subscribedAttrs) {
+        Map status = null
+        httpGet([uri: BASE_URL, path: "/installedapp/statusJson/${appId}", timeout: 15]) { response ->
+            if (response.status == 200) status = response.data as Map
         }
-    } catch (Exception e) {
-        notes << "Verification error: ${e.message}"
+        Set<String> onTarget = ((status?.eventSubscriptions ?: []) as List).findAll { sub ->
+            Map s = sub as Map
+            s.type == "DEVICE" && (s.typeId as int) == targetId
+        }.collect { (it as Map).name as String } as Set<String>
+        List<String> missing = (subscribedAttrs.collect { it as String } - onTarget).sort()
+        notes << (missing ? "Warning: not subscribed to ${missing.join(', ')} on the target" : "Subscriptions confirmed")
     }
-
-    return notes.join("; ") ?: "Done"
+    return notes.join("; ")
 }
 
 // ---- Undo ----
@@ -853,47 +825,56 @@ private String buttonLink(String btnName, String linkText, String color = "#1A77
         "<input type='hidden' name='settings[${btnName}]' value=''>"
 }
 
+// Puts each swapped input back to the exact device list it held before the swap. An input that
+// changed since the swap is left alone and reported.
 private void performUndo() {
     Map lastSwap = state.lastSwap as Map
     if (!lastSwap) {
         logWarn "No swap to undo"
         return
     }
-
-    int originalSource = lastSwap.sourceId as int
-    int originalTarget = lastSwap.targetId as int
     List<Map> swapResults = (lastSwap.results ?: []) as List<Map>
+    logCmd "Undoing swap: ${lastSwap.targetId} → ${lastSwap.sourceId} across ${swapResults.size()} input(s)"
 
-    logCmd "Undoing swap: ${originalTarget} → ${originalSource} across ${swapResults.size()} app(s)"
-
-    swapResults.each { Map entry ->
+    List<Map> undone = swapResults.collect { Map entry ->
         int appId = entry.appId as int
         String inputName = entry.inputName as String
-
+        Map row = [appLabel: entry.appLabel, inputName: inputName, success: false]
         try {
-            Map configData = null
-            httpGet("${BASE_URL}/installedapp/configure/json/${appId}") { response ->
-                if (response.status == 200) {
-                    configData = response.data as Map
-                }
+            if (entry.before == null) {
+                row.message = "Swapped by an older version of this app; change it by hand"
+                return row
             }
-            if (configData) {
-                // Reverse: swap target back to source
-                // Target is already present (it's what we swapped in), source is not
-                String result = buildAndSendSwap(configData, appId, inputName, originalTarget, originalSource, false)
-                if (result == "success") {
-                    logInfo "Undo successful for ${entry.appLabel}/${inputName}"
-                } else {
-                    logError "Undo failed for ${entry.appLabel}/${inputName}: ${result}"
-                }
+            List<Integer> before = (entry.before as List).collect { it as int }
+            List<Integer> after = (entry.after as List).collect { it as int }
+            Map cfg = fetchConfig(appId)
+            Map input = cfg ? findMainInput(cfg, inputName) : null
+            if (!input) {
+                row.message = cfg ? "The input is no longer on the app's main page" : "Could not read the app's settings"
+                return row
             }
+            List<Integer> now = deviceIds((cfg.settings as Map)?.get(inputName))
+            if ((now as Set) != (after as Set)) {
+                row.message = "Changed since the swap (now ${now.join(', ')}); left alone"
+                return row
+            }
+            String err = writeDeviceInput(appId, cfg, input, before)
+            if (err) {
+                row.message = err
+                return row
+            }
+            row.success = true
+            row.message = verifyWrite(appId, inputName, before, cfg.settings as Map, null, 0)
         } catch (Exception e) {
-            logError "Undo error for app ${appId}: ${e.message}"
+            row.message = "Error: ${e.message}"
         }
+        if (row.success) logInfo "Undo ${row.appLabel}/${inputName}: ${row.message}"
+        else logError "Undo ${row.appLabel}/${inputName}: ${row.message}"
+        return row
     }
 
+    state.lastUndo = undone
     state.remove("lastSwap")
-    logInfo "Undo complete"
 }
 
 // The hub's mobile dashboards list devices by room (plus "All Devices" and "Devices without
