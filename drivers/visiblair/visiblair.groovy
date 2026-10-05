@@ -4,6 +4,9 @@
 /*
  * Basic driver for VisiblAir sensor (formerly CO2.click) - https://visiblair.com/
  *
+ * DEPRECATED: superseded by the VisiblAir integration (integrations/visiblair/, VisiblAir Manager),
+ * which discovers every sensor on the account and reports healthStatus. No longer maintained.
+ *
  * NOTE: this driver requires instantiating one device per sensor, by inputting user id, device id
  * and access token in the settings page.
  */
@@ -12,7 +15,7 @@ metadata {
         name: "VisiblAir Sensor",
         namespace: "iamtrep",
         author: "pj",
-        description: "Standalone single-device driver for a VisiblAir indoor air quality sensor",
+        description: "Deprecated: use the VisiblAir Manager integration",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/visiblair/visiblair.groovy"
     ) {
         capability "Battery"
@@ -40,7 +43,7 @@ metadata {
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.3"
+@Field static final String CODE_VERSION = "0.1.4"
 @Field static final String constCO2ClickURL = 'https://environment-monitor-01.co2.click:11000/api/v1'
 @Field static final String constVisiblairURL = 'https://api.visiblair.com:11000/api/v1'
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
@@ -98,6 +101,7 @@ void initialize() {
 }
 
 void updated() {
+    logWarn "this driver is deprecated and no longer maintained; use the VisiblAir Manager integration"
     if (debugEnable || traceEnable) runIn(DEBUG_LOG_TIMEOUT, "turnOffDebugLogging")
 
     if (pollRate == null)

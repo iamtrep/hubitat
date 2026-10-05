@@ -20,10 +20,6 @@ Parent/child integration for [VisiblAir](https://visiblair.com/) indoor air qual
 | **VisiblAir Sensor XW** | Driver | Wind speed, direction, compass heading |
 <!-- /AUTO -->
 
-## Standalone Alternative
-
-A standalone single-device driver also exists at `drivers/visiblair/visiblair.groovy` if you only need to monitor one sensor without the full parent/child setup.
-
 ## License
 
 MIT — see individual source files for the full license text.

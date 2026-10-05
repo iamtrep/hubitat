@@ -36,7 +36,7 @@ Vendor and utility driver groups. Each subfolder's own README lists its drivers.
 | [stelpro/](./stelpro/) |  |
 | [tests/](./tests/) |  |
 | [thirdreality/](./thirdreality/) |  |
-| [visiblair/](./visiblair/) | Standalone single-device driver for a VisiblAir indoor air quality sensor |
+| [visiblair/](./visiblair/) | Deprecated: use the VisiblAir Manager integration |
 | [zigbee_helpers/](./zigbee_helpers/) |  |
 <!-- /AUTO -->
 
