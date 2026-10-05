@@ -98,6 +98,7 @@ cases:
       - { device: test-ilk-permit status, attribute: switch, value: "on" }
       - { device: test-ilk-permit status, attribute: contact, value: closed }
       - { device: test-ilk-permit status, attribute: blockReason, value: none }
+      - { device: test-ilk-permit status, attribute: openContacts, value: none }
       - { device: test-ilk-notify, attribute: lastMessage, value: "test-ilk-permit: alert cleared" }
 
   - name: open-window-in-summer-stays-quiet

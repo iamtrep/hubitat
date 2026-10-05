@@ -80,7 +80,7 @@ A direct group writes the thermostat mode when its effective state changes, and 
 | `switch` | `on` while the equipment may run |
 | `contact` | `open` while the openings alert is raised, `closed` otherwise |
 | `blockReason` | `none`, `season`, `openings` |
-| `openContacts` | The openings behind the alert, comma-separated, or empty |
+| `openContacts` | The openings behind the alert, comma-separated, or `none` |
 
 The `on` and `off` commands do nothing: the group is the switch's only writer.
 

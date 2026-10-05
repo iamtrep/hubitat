@@ -12,7 +12,7 @@
 import com.hubitat.app.ChildDeviceWrapper
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 
 definition(
     name: "HVAC Interlock Group",
@@ -214,7 +214,7 @@ void evaluateGroup(String why) {
     else unschedule("timerHandler")
     Map eff = effective(wanted, raised, (settings.response ?: 'block') as String)
     statusDevice()?.updateStatus([switch: eff.state == 'off' ? 'off' : 'on', contact: raised ? 'open' : 'closed',
-                                 blockReason: eff.blockReason, openContacts: open])
+                                 blockReason: eff.blockReason, openContacts: open ?: 'none'])
     if (style == 'direct' && (eff.state != state.effective || why == 'restart')) applyModes(eff.state as String)
     state.effective = eff.state
     logDebug "${why}: season ${season}, wanted ${wanted}, effective ${eff.state}, alert ${raised}"
