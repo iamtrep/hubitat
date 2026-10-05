@@ -3,10 +3,10 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.4.5"
+@Field static final String CODE_VERSION = "0.5.0"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
 // File Manager file with one line per input each swap or undo changed.
-@Field static final String AUDIT_FILE = "device_replacement_audit.txt"
+@Field static final String AUDIT_FILE = "device_swap_audit.txt"
 // Parent of the mobile dashboards the hub generates per room and for "All Devices".
 @Field static final String DASHBOARD_PARENT_TYPE = "Easy Mobile Dashboard Parent"
 // How app types that hold devices outside their settings and state reference them.
@@ -21,17 +21,17 @@ import groovy.transform.Field
 @Field static final List<String> TILE_DASHBOARD_TYPES = ["Dashboard", "Easy Dashboard"]
 
 definition(
-    name: "Device Replacement Helper",
+    name: "Device Swap Helper",
     namespace: "iamtrep",
     author: "pj",
-    description: "Replace a device across all installed apps in one shot",
+    description: "Swap a device in every app that uses it",
     menu: "Apps", // new in platform 2.5.0
     category: "Utility",
     singleInstance: true,
     singleThreaded: true, // one run at a time, so two audit-log appends never overlap
     iconUrl: "",
     iconX2Url: "",
-    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/utilities/DeviceReplacement.groovy"
+    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/utilities/DeviceSwapHelper.groovy"
 )
 
 preferences {
@@ -1520,6 +1520,8 @@ void initialize() {
         logVer "New version: ${CODE_VERSION} (was: ${state.version})"
         state.version = CODE_VERSION
     }
+    // The app offers no rename, so its label follows the app's name.
+    if (app.getLabel() != app.getName()) app.updateLabel(app.getName())
 }
 
 void logsOff() {

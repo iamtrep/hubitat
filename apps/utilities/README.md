@@ -13,7 +13,7 @@ Hubitat Elevation apps for hub administration and maintenance. These are not aut
 | File | App | Description |
 |---|---|---|
 | `DeviceInUseEnumerator.groovy` | **Device "in use by" Enumerator** | For each device, enumerates the apps referencing them |
-| `DeviceReplacement.groovy` | **Device Replacement Helper** | Replace a device across all installed apps in one shot |
+| `DeviceSwapHelper.groovy` | **Device Swap Helper** | Swap a device in every app that uses it |
 <!-- /AUTO -->
 
 ### Device "in use by" Enumerator (`DeviceInUseEnumerator.groovy`)
@@ -26,7 +26,7 @@ Generates an HTML report showing which installed apps reference each device.
 - Reports can cover all devices, child devices included, or a user-selected subset. Optional filter to show only **child devices**.
 - Reads through the platform API (`getDevicesByIds`, `getAppsUsingDevice`, `getAppByAppId`), which takes a couple of seconds for a few hundred devices. If the platform restricts those calls, the report falls back to the hub's internal endpoints (`/hub2/devicesList`, `/device/fullJson/{id}`, `/installedapp/statusJson/{id}`), several times slower and without mobile dashboards, and says so at the top. A setting forces the fallback for testing.
 
-### Device Replacement Helper (`DeviceReplacement.groovy`)
+### Device Swap Helper (`DeviceSwapHelper.groovy`)
 
 Helps replace one device with another across every installed app — auto-swapping where it can, and producing a deeplinked punch list for everything else.
 
@@ -50,7 +50,7 @@ Apps using the source are found through the platform API (`getAppsUsingDevice`).
 
 Additional features:
 - **Undo**: stores each swapped input's device list from before the swap, and a one-click undo on the main page puts back exactly that list. An input changed since the swap is left alone and reported.
-- **Audit log**: every swap and undo appends one line per input to `device_replacement_audit.txt` in File Manager: time, devices, app, input, device ids before and after, and the outcome. The main page links to it.
+- **Audit log**: every swap and undo appends one line per input to `device_swap_audit.txt` in File Manager: time, devices, app, input, device ids before and after, and the outcome. The main page links to it.
 
 **Why some apps still need a manual edit.** The hub's form-save endpoint (`/installedapp/update/json`) addresses one page at a time, and the wire format for sub-page saves (`pageBreadcrumbs`, `_action_previous`, conditionally-rendered dynamic input names) is per-app-family — generalizing the write path across every built-in (Basic Rule, Notifier, Rule Machine, …) would mean re-validating undocumented form shapes on every firmware release. The deeplinked punch list trades clicks for stability: zero firmware-coupling, and the user stays in the loop for ambiguous cases.
 

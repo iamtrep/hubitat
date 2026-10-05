@@ -96,7 +96,7 @@ VerbNav's Maintain is pretty but shallow. Hub Inspector covers ~10 things VerbNa
 ### Extend — inventory only, no actions
 VerbNav lists user drivers/apps and Hub Mesh peers. The repo has actionable "extend" workflows that aren't surfaced.
 
-- **Device Replacement Helper** — three-step swap (select / preview / execute) with capability matching, per-app checkboxes, undo. `apps/utilities/`.
+- **Device Swap Helper** — three-step swap (select / preview / execute) with capability matching, per-app checkboxes, undo. `apps/utilities/`.
 - **App-instance config drill-down** — VerbNav links out to the hub's config page; could embed instance settings via `/installedapp/configure/json/{id}` (already used elsewhere in the repo).
 - **GitHub-sync awareness** — Hub Inspector auto-syncs its UI file from GitHub and version-checks on load. VerbNav has no equivalent and would silently drift.
 
@@ -122,7 +122,7 @@ VerbNav lists user drivers/apps and Hub Mesh peers. The repo has actionable "ext
 2. **Maintain is where the gap is biggest.** Hub Inspector has overtaken it on depth (alerts, snapshots, mesh quality, exports). The cleanest evolution is to back VerbNav by Hub Inspector' OAuth API rather than calling `/hub2/*` directly — most of the gap closes for free.
 3. **Connect's mesh-quality gap is the second-biggest.** Same fix: pull from Hub Inspector' `/api/network` instead of the raw radio details endpoints.
 4. **Monitor's `/logsocket` capability is unique to VerbNav** and worth preserving. Nothing else in the repo streams hub logs live.
-5. **Extend needs actionable workflows** to be more than a directory listing. Device Replacement Helper is the first candidate to surface.
+5. **Extend needs actionable workflows** to be more than a directory listing. Device Swap Helper is the first candidate to surface.
 6. **Hosting/auth is the single largest architectural gap.** A serious version of this needs to live behind an OAuth-protected app instance, with the HTML file-managed and version-checked, the way Hub Inspector does it.
 
 ---

@@ -33,7 +33,7 @@ Replace each with an `href` to a confirmation page that lists what will be remov
 If they run async, give these `disabled: busy` plus `refreshInterval: busy ? 2 : 0`, with a nonce in `state` to ignore stale callbacks:
 
 - `apps/sensors/SensorAggregatorDiscreteChild.groovy`: "Run Full Test Suite"
-- `apps/utilities/DeviceReplacement.groovy`: "Refresh Scan"
+- `apps/utilities/DeviceSwapHelper.groovy`: "Refresh Scan"
 
 ### 6. Status colors (opportunistic)
 

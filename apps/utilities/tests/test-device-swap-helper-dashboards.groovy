@@ -1,14 +1,14 @@
 // Copyright (c) 2026 PJ
 // SPDX-License-Identifier: MIT
 //
-// Unit test for Device Replacement Helper's mobile-dashboard advice. The hub's mobile dashboards
+// Unit test for Device Swap Helper's mobile-dashboard advice. The hub's mobile dashboards
 // list devices by room, so the advice depends only on the source and target rooms. This
-// BRACE-EXTRACTS dashboardAdvice from the shipped DeviceReplacement.groovy.
+// BRACE-EXTRACTS dashboardAdvice from the shipped DeviceSwapHelper.groovy.
 //
-// Run: groovy apps/utilities/tests/test-device-replacement-dashboards.groovy
+// Run: groovy apps/utilities/tests/test-device-swap-helper-dashboards.groovy
 
 File scriptFile = new File(getClass().protectionDomain.codeSource.location.toURI())
-File groovySrc = new File(scriptFile.parentFile.parentFile, 'DeviceReplacement.groovy')
+File groovySrc = new File(scriptFile.parentFile.parentFile, 'DeviceSwapHelper.groovy')
 assert groovySrc.exists() : "source not found: ${groovySrc}"
 String src = groovySrc.text
 
@@ -33,7 +33,7 @@ def check = { String name, boolean cond ->
     if (cond) { pass++; println "  [PASS] ${name}" } else { fail++; println "  [FAIL] ${name}" }
 }
 
-println 'Device Replacement: mobile dashboard advice'
+println 'Device Swap Helper: mobile dashboard advice'
 
 String moveFromNone = advice('Kitchen', null, 'New plug', 42L)
 check 'target without a room: put it in the source room, linked',
