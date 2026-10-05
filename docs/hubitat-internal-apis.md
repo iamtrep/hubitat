@@ -214,6 +214,8 @@ Undocumented by Hubitat — nothing promises this across firmware versions. Code
 
 ## Maker API specifics
 
+- Device notes are read-only: `GET /devices/{id}` carries a `notes` key (added in 2.5.0), and nothing writes them. The documented device writers are `setLabel`, `setDriver` and `deleteDevice`. `/devices/{id}/setNotes?notes=…` is treated as a device command and returns 404 *(verified 2.5.2.129)*.
+
 ### Token discovery
 
 - **Preferred: `GET /installedapp/statusJson/{id}` → `appState[]`, the entry named `accessToken`.** A structured field, no HTML parsing. This is not Maker-API-specific — it works for any app instance, because `createAccessToken()` stores the token in `state.accessToken`. Verified 2026-09-20 on firmware 2.5.2.113 against a Maker API instance and a custom app; the token read this way authenticates the app's endpoints.
