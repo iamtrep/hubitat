@@ -42,6 +42,7 @@ metadata {
         attribute "pm25_desc", "ENUM", ["unknown", "hazardous", "bad", "poor", "fair", "good"]
         attribute "co2_desc", "ENUM", ["unknown", "hazardous", "bad", "poor", "fair", "good"]
         attribute "voc_desc", "ENUM", ["unknown", "hazardous", "bad", "poor", "fair", "good"]
+        attribute "healthStatus", "enum", ["online", "offline"]
     }
 
     preferences {
@@ -60,7 +61,11 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.2.1"
+@Field static final String CODE_VERSION = "0.3.0"
+// Failed polls log at warn until this many in a row, then once at error, then at
+// warn every OUTAGE_REMINDER_MS until a poll succeeds.
+@Field static final int FAILURE_ERROR_THRESHOLD = 3
+@Field static final long OUTAGE_REMINDER_MS = 3_600_000L
 @Field static final String constLocalPathToAirData = "/air-data/latest"
 @Field static final String constLocalPathToConfig = "/settings/config/data"
 
@@ -163,9 +168,9 @@ void poll() {
 
         asynchttpGet('processAwairData', httpParams)
     } catch (URISyntaxException e) {
-        logError "Invalid URI in poll() (check IP address setting): http://${ip} - ${e.message}"
+        pollFailed("invalid URI (check IP address setting): http://${ip} - ${e.message}")
     } catch (Exception e) {
-        logError "error occurred in poll(): ${e}"
+        pollFailed("poll(): ${e}")
     }
 
     runIn((pollingInterval ?: 300) as int, "poll")
@@ -244,7 +249,7 @@ private void processEvent(String name, def value, String unit = null, String des
 
 private void processAwairData(response, data) {
     if (response.hasError()) {
-        logError "HTTP error in processAwairData(): ${response.getErrorMessage()}"
+        pollFailed("HTTP error: ${response.getErrorMessage()}")
         return
     }
     if (response.getStatus() == 200 || response.getStatus() == 207) {
@@ -296,14 +301,70 @@ private void processAwairData(response, data) {
                 int humidity = Math.round(rh) as int
                 processEvent("humidity", humidity, "%", "humidity is ${humidity}%")
             }
+            pollSucceeded()
         } catch (groovy.json.JsonException e) {
-            logError "Malformed JSON from air-data endpoint: ${e.message} - raw: ${response.data}"
+            pollFailed("malformed JSON from air-data endpoint: ${e.message} - raw: ${response.data}")
         } catch (Exception e) {
-            logError "Failed to process air data response: ${e}"
+            pollFailed("failed to process air data response: ${e}")
         }
     } else {
-        logError "HTTP response error in processAwairData() - STATUS ${response.getStatus()}"
+        pollFailed("HTTP status ${response.getStatus()}")
     }
+}
+
+// --- Outage handling ---
+
+// Warn below FAILURE_ERROR_THRESHOLD, one error at it, then a warn every OUTAGE_REMINDER_MS.
+private void pollFailed(String msg) {
+    long t = now()
+    int n = ((state.pollFailures ?: 0) as int) + 1
+    state.pollFailures = n
+    if (n == 1) state.pollFailingSince = t
+    long since = state.pollFailingSince as long
+    if (n < FAILURE_ERROR_THRESHOLD) {
+        logWarn "poll failed (${n}/${FAILURE_ERROR_THRESHOLD}): ${msg}"
+    } else if (n == FAILURE_ERROR_THRESHOLD) {
+        logError "Awair unreachable at ${ip} since ${formatClock(since)}: ${msg}"
+        state.lastOutageReminder = t
+        setHealth("offline", "Awair unreachable at ${ip}")
+    } else if (t - ((state.lastOutageReminder ?: 0L) as long) >= OUTAGE_REMINDER_MS) {
+        logWarn "Awair still unreachable after ${formatDuration(t - since)} (${n} polls failed): ${msg}"
+        state.lastOutageReminder = t
+    } else {
+        logDebug "poll failed (${n}): ${msg}"
+    }
+}
+
+private void pollSucceeded() {
+    int n = (state.pollFailures ?: 0) as int
+    if (n >= FAILURE_ERROR_THRESHOLD) {
+        logInfo "Awair back after ${formatDuration(now() - (state.pollFailingSince as long))} (${n} polls failed)"
+    } else if (n > 0) {
+        logDebug "poll recovered after ${n} failed"
+    }
+    state.remove("pollFailures")
+    state.remove("pollFailingSince")
+    state.remove("lastOutageReminder")
+    setHealth("online", "reporting")
+}
+
+private void setHealth(String status, String reason) {
+    String prev = device.currentValue("healthStatus")
+    sendEvent(name: "healthStatus", value: status, descriptionText: "${device.displayName} is ${status}: ${reason}")
+    if (prev != null && prev != status) {
+        if (status == "offline") logWarn "offline: ${reason}"
+        else logInfo "back online"
+    }
+}
+
+private String formatClock(long t) {
+    return new Date(t).format("yyyy-MM-dd HH:mm", location.timeZone)
+}
+
+private static String formatDuration(long ms) {
+    long minutes = ms.intdiv(60000L)
+    if (minutes < 60) return "${minutes} min"
+    return "${minutes.intdiv(60L)} h ${minutes % 60} min"
 }
 
 private void processAirQualityMetric(String metricName, Number level, String unit,
