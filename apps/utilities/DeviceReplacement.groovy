@@ -3,12 +3,14 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.4.0"
+@Field static final String CODE_VERSION = "0.4.2"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
 // File Manager file with one line per input each swap or undo changed.
 @Field static final String AUDIT_FILE = "device_replacement_audit.txt"
 // Parent of the mobile dashboards the hub generates per room and for "All Devices".
 @Field static final String DASHBOARD_PARENT_TYPE = "Easy Mobile Dashboard Parent"
+// Dashboards whose tiles hold device ids of their own.
+@Field static final List<String> TILE_DASHBOARD_TYPES = ["Dashboard", "Easy Dashboard"]
 
 definition(
     name: "Device Replacement Helper",
@@ -317,6 +319,11 @@ Map previewPage(Map params = null) {
                 // App state warning
                 String stateWarning = stateHasDeviceRef ? "App state references device ID; may need manual attention" : null
 
+                // Dashboard tiles keep the old device id when only the dashboard's device list changes.
+                String tileWarning = appType in TILE_DASHBOARD_TYPES
+                    ? "Tiles on this dashboard keep pointing at ${sourceDevice.displayName}; use Swap Apps Device, or re-pick the tiles after swapping"
+                    : null
+
                 // Deeplink straight to the page that holds this input (mainPage if unknown)
                 String pageForLink = homePage ?: "mainPage"
                 String pageDeepLink = "/installedapp/configure/${appId}/${pageForLink}"
@@ -335,6 +342,7 @@ Map previewPage(Map params = null) {
                     targetWarning: targetWarning,
                     singleSelectWarning: singleSelectWarning,
                     stateWarning: stateWarning,
+                    tileWarning: tileWarning,
                     homePage: homePage,
                     homeBreadcrumbs: homeBreadcrumbs,
                     pageDeepLink: pageDeepLink
@@ -345,7 +353,9 @@ Map previewPage(Map params = null) {
                 } else {
                     entry.reason = homePage
                         ? "Input lives on sub-page '${homePage}' — auto-swap not supported; use deeplink"
-                        : "Input not on any discoverable page (dynamic render path) — open the app to edit"
+                        : (appRef.disabled
+                            ? "The app is disabled, so its page shows no inputs; enable it to swap automatically, or edit it by hand"
+                            : "Input not on any discoverable page (dynamic render path) — open the app to edit")
                     manual << entry
                 }
             }
@@ -365,7 +375,7 @@ Map previewPage(Map params = null) {
             swappable.eachWithIndex { Map entry, int idx ->
                 String key = idx.toString()
                 if (!state.swapSelections.containsKey(key)) {
-                    boolean hasWarnings = entry.capWarning || entry.targetWarning || entry.singleSelectWarning || entry.stateWarning
+                    boolean hasWarnings = entry.capWarning || entry.targetWarning || entry.singleSelectWarning || entry.stateWarning || entry.tileWarning
                     state.swapSelections[key] = hasWarnings ? "off" : "on"
                 }
             }
@@ -386,6 +396,7 @@ Map previewPage(Map params = null) {
                     if (entry.targetWarning) entryWarnings << (entry.targetWarning as String)
                     if (entry.singleSelectWarning) entryWarnings << (entry.singleSelectWarning as String)
                     if (entry.stateWarning) entryWarnings << (entry.stateWarning as String)
+                    if (entry.tileWarning) entryWarnings << (entry.tileWarning as String)
                     String warningCell = entryWarnings ? "<span style='color:orange'>${entryWarnings.join('<br>')}</span>" : "<span style='color:green'>&#10003;</span>"
                     List<String> attrs = (entry.subscribedAttrs ?: []) as List<String>
                     String subsCell = attrs ? attrs.join(", ") : "<span style='color:gray'>-</span>"
@@ -567,6 +578,13 @@ private void executeSwap() {
     int targetId = targetDevice.id as int
     logCmd "Swapping ${sourceId} → ${targetId} in ${pending.size()} input(s)"
     List<Map> results = pending.collect { Map entry -> swapInput(entry, sourceId, targetId) }
+    // The writes are done. An exception from here on would drop this render's state, so the undo
+    // record and audit lines go first and the checks below cannot throw.
+    try {
+        checkApps(pending, results, targetId, sourceDevice.displayName as String)
+    } catch (Exception e) {
+        logWarn "Post-swap checks failed: ${e}"
+    }
     String devices = "${sourceDevice.displayName} (${sourceId}) -> ${targetDevice.displayName} (${targetId})"
     state.auditError = appendAudit(results.collect { Map r -> auditLine("swap", devices, r) })
 
@@ -720,7 +738,7 @@ private Map swapInput(Map entry, int sourceId, int targetId) {
         result.before = before
         result.after = after
         result.success = true
-        result.message = verifyWrite(appId, inputName, after, cfg.settings as Map, entry.subscribedAttrs as List, targetId)
+        result.message = verifyWrite(appId, inputName, after, cfg.settings as Map)
     } catch (Exception e) {
         result.message = "Error: ${e.message}"
         logError "Swap failed for ${entry.appLabel}/${inputName}: ${e.message}"
@@ -800,8 +818,7 @@ private String writeDeviceInput(int appId, Map cfg, Map input, List<Integer> ids
 
 // ---- Post-Write Verification ----
 
-private String verifyWrite(int appId, String inputName, List<Integer> expected, Map settingsBefore,
-                           List subscribedAttrs, int targetId) {
+private String verifyWrite(int appId, String inputName, List<Integer> expected, Map settingsBefore) {
     List<String> notes = []
     Map cfg = fetchConfig(appId)
     if (!cfg) return "Saved; could not re-read the app to verify"
@@ -812,8 +829,21 @@ private String verifyWrite(int appId, String inputName, List<Integer> expected, 
     Set<String> keys = ((settingsBefore ?: [:]).keySet() + settingsAfter.keySet()).collect { it.toString() } as Set<String>
     List<String> moved = keys.findAll { it != inputName && settingsBefore?.get(it) != settingsAfter[it] }.sort()
     if (moved) notes << "Warning: other settings changed: ${moved.join(', ')}"
+    return notes.join("; ")
+}
 
-    if (subscribedAttrs) {
+// Once per app, after all its inputs are swapped. The subscriptions the app had on the source
+// (names as the hub lists them, e.g. "switch.on") should now be on the target. Some apps name
+// themselves after their devices at setup and keep that name, so a name still holding the old
+// device's name is pointed out.
+private void checkApps(List<Map> pending, List<Map> results, int targetId, String oldName) {
+    results.findAll { it.success }.groupBy { it.appId }.each { appId, List<Map> rows ->
+        Map last = rows[-1]
+        String label = ((((fetchConfig(appId as int) ?: [:]).app ?: [:]) as Map).label ?: "") as String
+        if (oldName && label.contains(oldName)) last.message = "${last.message}; The app's name still mentions ${oldName}; rename it if you like"
+        List<String> expected = pending.findAll { (it.appId as int) == (appId as int) }
+            .collectMany { (it.subscribedAttrs ?: []) as List }.collect { it as String }.unique()
+        if (!expected) return
         Map status = null
         httpGet([uri: BASE_URL, path: "/installedapp/statusJson/${appId}", timeout: 15]) { response ->
             if (response.status == 200) status = response.data as Map
@@ -822,10 +852,9 @@ private String verifyWrite(int appId, String inputName, List<Integer> expected, 
             Map s = sub as Map
             s.type == "DEVICE" && (s.typeId as int) == targetId
         }.collect { (it as Map).name as String } as Set<String>
-        List<String> missing = (subscribedAttrs.collect { it as String } - onTarget).sort()
-        notes << (missing ? "Warning: not subscribed to ${missing.join(', ')} on the target" : "Subscriptions confirmed")
+        List<String> missing = (expected - onTarget).sort()
+        last.message = "${last.message}; " + (missing ? "Warning: not subscribed to ${missing.join(', ')} on the target" : "Subscriptions confirmed")
     }
-    return notes.join("; ")
 }
 
 // ---- Undo ----
@@ -890,7 +919,7 @@ private void performUndo() {
             row.before = now
             row.after = before
             row.success = true
-            row.message = verifyWrite(appId, inputName, before, cfg.settings as Map, null, 0)
+            row.message = verifyWrite(appId, inputName, before, cfg.settings as Map)
         } catch (Exception e) {
             row.message = "Error: ${e.message}"
         }
@@ -926,7 +955,8 @@ private void nativeSwapSection(int sourceId, int targetId, Set<String> subscribe
         !a.dashboard && (a.id as int) != (app.id as int)
     }
     List<String> targetAttrs = targetDevice.getSupportedAttributes().collect { it.name as String }
-    List<String> missing = ((subscribedAttrs ?: []) - targetAttrs).sort()
+    // A subscription can carry a value filter ("switch.on"); the attribute is the part before it.
+    List<String> missing = ((subscribedAttrs ?: []).collect { (it as String).tokenize(".")[0] }.unique() - targetAttrs).sort()
     n.onTarget = onTarget.collect { Map a -> [id: a.id, label: a.label] }
     n.missingAttrs = missing
     state.native = n
@@ -968,7 +998,7 @@ private Map nativePrepare(String mode, int oldId, int newId) {
             n.aid = aid
             state.native = n   // stored first, so nativeDiscard() can delete it if a step below fails
             String why = swapSelect(aid, "oldDev", oldId, "the hub does not offer this device for swapping (it skips most child devices)") ?:
-                swapSelect(aid, "newDev", newId, "the hub does not accept the replacement (its capabilities don't match)")
+                swapSelect(aid, "newDev", newId, "the hub does not offer this replacement (it skips most child devices and devices whose capabilities don't match)")
             if (!why && !swapButtonShown(aid)) why = "the hub did not show its swap button"
             if (why) {
                 nativeDiscard()
@@ -1304,12 +1334,18 @@ private void platformFailed(Map src, Exception e) {
     logWarn "platform API failed (${e}); using the loopback endpoints"
 }
 
+// Some built-in apps (Notifier) can hold the label "null"; fall back to the app type and id.
+private String appLabelOf(Object label, Object name, Object id) {
+    String l = label as String
+    return (l && l != "null") ? l : "${name} ${id}"
+}
+
 // Apps using the device as [id, label, type, disabled, dashboard] maps, or null when it can't be read.
 private List<Map> appsUsing(Long deviceId, Map src) {
     if (!src.loopback) {
         try {
             return (getAppsUsingDevice(deviceId) ?: []).collect { a ->
-                [id: a.id as Long, label: (a.label ?: a.name) as String, type: (a.appType?.name ?: a.name) as String,
+                [id: a.id as Long, label: appLabelOf(a.label, a.name, a.id), type: (a.appType?.name ?: a.name) as String,
                  disabled: a.disabled == true, dashboard: isDashboardParent(a.parentAppId as Long, src)]
             }
         } catch (Exception e) {
@@ -1321,7 +1357,7 @@ private List<Map> appsUsing(Long deviceId, Map src) {
         httpGet([uri: BASE_URL, path: "/device/fullJson/${deviceId}", timeout: 15]) { response ->
             if (response.status == 200) {
                 out = ((response.data.appsUsing ?: []) as List).collect { Map a ->
-                    [id: a.id as Long, label: (a.label ?: a.name) as String, type: a.name as String,
+                    [id: a.id as Long, label: appLabelOf(a.label, a.name, a.id), type: a.name as String,
                      disabled: a.disabled == true, dashboard: false]
                 }
             }
