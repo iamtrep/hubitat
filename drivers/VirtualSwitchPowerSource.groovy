@@ -21,7 +21,8 @@ import groovy.transform.Field
 
 metadata {
     definition(name: 'Virtual Switch + PowerSource', namespace: 'iamtrep', author: 'pj',
-               description: 'Virtual device with synced Switch and PowerSource capabilities for testing power outage detection') {
+               description: 'Virtual device with synced Switch and PowerSource capabilities for testing power outage detection',
+               importUrl: 'https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/VirtualSwitchPowerSource.groovy') {
         capability 'Switch'
         capability 'PowerSource'
 

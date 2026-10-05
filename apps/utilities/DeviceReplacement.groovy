@@ -17,7 +17,8 @@ definition(
     menu: "Apps", // new in platform 2.5.0
     category: "Utility",
     iconUrl: "",
-    iconX2Url: ""
+    iconX2Url: "",
+    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/utilities/DeviceReplacement.groovy"
 )
 
 preferences {

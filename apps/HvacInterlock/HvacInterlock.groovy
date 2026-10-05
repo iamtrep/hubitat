@@ -11,7 +11,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.1"
+@Field static final String CODE_VERSION = "0.1.2"
 
 definition(
     name: "HVAC Interlock",
@@ -20,6 +20,7 @@ definition(
     description: "Gates heating and cooling equipment by season and open windows",
     menu: "Automations", // new in platform 2.5.0
     category: "Convenience",
+    singleInstance: true,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/apps/HvacInterlock/HvacInterlock.groovy",
     iconUrl: "", iconX2Url: ""
 )

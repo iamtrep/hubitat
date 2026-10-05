@@ -28,6 +28,7 @@ definition(
     category: "Utility",
     singleThreaded: true,
     iconUrl: "",
+    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/BatteryChangeLogger.groovy",
     iconX2Url: ""
 )
 

@@ -12,6 +12,7 @@ metadata {
         namespace: "hubitat",
         author: "Victor U.",
         description: "BLE motion/occupancy sensor via BTHome v2",
+        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/BTHomeV2-Motion.groovy",
         singleThreaded: true
     ) {
         capability "Battery"

@@ -19,6 +19,7 @@ definition(
     // execution so the state read-modify-write in the accumulators is safe.
     singleThreaded: true,
     description: "Subscribes to several co-located presence/motion sensors and derives comparative metrics: activation latency, agreement, and sustained-occupancy hold.",
+    menu: "Apps", // new in platform 2.5.0
     category: "Utility",
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/mmWaveSensorComparison.groovy",
     iconUrl: "",

@@ -75,7 +75,7 @@ definition(
     namespace: "iamtrep",
     author: "pj",
     description: "UI experiment: a two-pane tool access picker served as a modal over the app config page.",
-    menu: "Utilities",
+    menu: "Apps",
     category: "Convenience",
     singleInstance: false,
     singleThreaded: true,

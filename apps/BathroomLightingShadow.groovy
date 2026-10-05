@@ -22,6 +22,7 @@ definition(
     author: "pj",
     singleThreaded: true,
     description: "Runs multiple lighting-control policies in parallel against shared sensors, drives an auto-created virtual switch per policy, and scores each policy without touching real lights.",
+    menu: "Apps", // new in platform 2.5.0
     category: "Utility",
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/BathroomLightingShadow.groovy",
     iconUrl: "",
