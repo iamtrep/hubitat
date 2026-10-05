@@ -390,9 +390,9 @@ When no comparison is active, these cards show current values:
 
 **Top Talkers** — The 3 most message-active Z-Wave and Zigbee devices by total message count since last restart.
 
-**App Runtime Detail** — Sortable table of every app with: total execution time (ms), % busy, execution count, average time per call, state size, source badge (Platform/Community/Built-in).
+**App Runtime Detail** — Sortable table of every app with: type (the top-level parent app, as grouped in CPU by App Type), source badge (Platform/Community/Built-in), total execution time (ms), % busy, execution count, average time per call, state size, hub actions and cloud calls. Type the parent app's name in the filter to list only its apps.
 
-**Device Runtime Detail** — Same structure for device drivers.
+**Device Runtime Detail** — The same for devices, with the driver as the type and no cloud calls column, since devices don't receive cloud calls.
 
 **Radio Message Counts** — Per-device message counts and msgs/min for Z-Wave and Zigbee. Devices exceeding the chatty device threshold are highlighted with a critical alert banner; devices in the warn band (60% of threshold) show a warning banner.
 

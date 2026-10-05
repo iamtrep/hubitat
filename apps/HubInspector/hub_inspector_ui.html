@@ -3181,14 +3181,15 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
     renderBarChart(aggregateByType(s.deviceStats,typeById,'id','total'),'perfDevCpuChart',{format:v=>v.toFixed(0)+' ms'});
   }
   // Device Runtime table
+  // Type = the grouping the CPU-by-type charts use, so the tables can be filtered to one bar.
   if(s&&s.deviceStats)
     tbl('devStatsTbl',[
-      {l:'Name',f:'name',r:r=>r.id?dlink(r.id,r.name):h(Obf.nm(r.name))},{l:'Total (ms)',f:'total',t:'n'},
+      {l:'Name',f:'name',r:r=>r.id?dlink(r.id,r.name):h(Obf.nm(r.name))},{l:'Type',f:'type'},{l:'Total (ms)',f:'total',t:'n'},
       {l:'% Busy',f:'pct',t:'n',r:r=>r.pct!=null?r.pct.toFixed(1)+'%':''},
       {l:'% Total',f:'pctTotal',t:'n',r:r=>r.pctTotal!=null?r.pctTotal.toFixed(3)+'%':''},
       {l:'Count',f:'count',t:'n'},{l:'Avg (ms)',f:'average',t:'n',r:r=>Number(r.average||0).toFixed(1)},
-      {l:'State Size',f:'stateSize',t:'n'},{l:'Hub Actions',f:'hubActionCount',t:'n'},{l:'Cloud Calls',f:'cloudCallCount',t:'n'}
-    ],s.deviceStats,{sc:1,sd:'desc',filter:true,collapse:10,collapseLabel:'Show all'});
+      {l:'State Size',f:'stateSize',t:'n'},{l:'Hub Actions',f:'hubActionCount',t:'n'}
+    ],s.deviceStats.map(r=>({...r,type:(d.deviceTypeById||{})[r.id]||''})),{sc:2,sd:'desc',filter:true,collapse:10,collapseLabel:'Show all'});
   // CPU by app type chart — v5.20.0 (R-7 B2): id→parent-label map now ships in /api/performance
   if(s&&s.appStats&&s.appStats.length){
     const ptm=d.appParentTypeById||{};
@@ -3198,6 +3199,7 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
   if(s&&s.appStats){
     tbl('appStatsTbl',[
       {l:'Name',  f:'name',  r:r=>r.id?appLink(r):h(Obf.nm(r.name))},
+      {l:'Type',f:'type'},
       {l:'Source',f:'source',r:r=>srcBadge(r.source,false)},
       {l:'Total (ms)',f:'total',t:'n'},
       {l:'% Busy',f:'pct',t:'n',r:r=>r.pct!=null?r.pct.toFixed(1)+'%':''},
@@ -3205,7 +3207,7 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
       {l:'Count',f:'count',t:'n'},
       {l:'Avg (ms)',f:'average',t:'n',r:r=>Number(r.average||0).toFixed(1)},
       {l:'State Size',f:'stateSize',t:'n'},{l:'Hub Actions',f:'hubActionCount',t:'n'},{l:'Cloud Calls',f:'cloudCallCount',t:'n'}
-    ],s.appStats,{sc:2,sd:'desc',filter:true,collapse:10,collapseLabel:'Show all'});}
+    ],s.appStats.map(r=>({...r,type:noTags((d.appParentTypeById||{})[r.id])||''})),{sc:3,sd:'desc',filter:true,collapse:10,collapseLabel:'Show all'});}
   // Radio message count tables
   if(hasZw){
     tbl('perfZwMsgTbl',[
