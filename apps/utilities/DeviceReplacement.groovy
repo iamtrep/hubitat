@@ -3,7 +3,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.4.2"
+@Field static final String CODE_VERSION = "0.4.3"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
 // File Manager file with one line per input each swap or undo changed.
 @Field static final String AUDIT_FILE = "device_replacement_audit.txt"
@@ -317,7 +317,12 @@ Map previewPage(Map params = null) {
                 String singleSelectWarning = !(inputMatch.multiple as boolean) ? "Single-device input" : null
 
                 // App state warning
-                String stateWarning = stateHasDeviceRef ? "App state references device ID; may need manual attention" : null
+                // Some apps keep per-device settings in their own data, keyed by device id (Mode Switches'
+                // per-mode table). Those stay with the old id and the new device starts blank; others
+                // (Room Lighting) rebuild them on save. Which one an app does can't be read from outside.
+                String stateWarning = stateHasDeviceRef
+                    ? "The app's own data mentions this device's id. If it holds per-device settings, the new device starts without them: check the app after swapping, or use Swap Apps Device"
+                    : null
 
                 // Dashboard tiles keep the old device id when only the dashboard's device list changes.
                 String tileWarning = appType in TILE_DASHBOARD_TYPES
@@ -735,15 +740,33 @@ private Map swapInput(Map entry, int sourceId, int targetId) {
             result.message = err
             return result
         }
+        Map check = checkWrite(appId, inputName, after, cfg.settings as Map)
+        if (check.problems) {
+            // Put the input back. Settings the app changed on its own are reported, not rewritten:
+            // re-sending them is what corrupts settings.
+            String undoErr = writeDeviceInput(appId, cfg, input, before)
+            Map back = undoErr ? null : checkWrite(appId, inputName, before, cfg.settings as Map)
+            String outcome = undoErr ? "rolling back failed (${undoErr}); open the app and check it" :
+                (deviceIdsOf(appId, inputName) as Set) == (before as Set) ? "rolled back to ${before.join(', ')}" :
+                "rolling back did not land; open the app and check it"
+            result.message = "Not swapped: ${(check.problems as List).join('; ')}; ${outcome}" +
+                ((back?.problems as List) ? " (after rollback: ${(back.problems as List).join('; ')})" : "")
+            logWarn "Swap rolled back for ${entry.appLabel}/${inputName}: ${result.message}"
+            return result
+        }
         result.before = before
         result.after = after
         result.success = true
-        result.message = verifyWrite(appId, inputName, after, cfg.settings as Map)
+        result.message = (check.notes as List).join("; ")
     } catch (Exception e) {
         result.message = "Error: ${e.message}"
         logError "Swap failed for ${entry.appLabel}/${inputName}: ${e.message}"
     }
     return result
+}
+
+private List<Integer> deviceIdsOf(int appId, String inputName) {
+    return deviceIds((((fetchConfig(appId) ?: [:]).settings ?: [:]) as Map)[inputName])
 }
 
 private Map fetchConfig(int appId) {
@@ -819,17 +842,27 @@ private String writeDeviceInput(int appId, Map cfg, Map input, List<Integer> ids
 // ---- Post-Write Verification ----
 
 private String verifyWrite(int appId, String inputName, List<Integer> expected, Map settingsBefore) {
-    List<String> notes = []
+    Map check = checkWrite(appId, inputName, expected, settingsBefore)
+    return ((check.notes as List) + (check.problems as List).collect { "Warning: ${it}" }).join("; ")
+}
+
+// Re-reads the app after a save. `problems` lists what makes the save unsafe to keep: the input
+// did not land, another setting moved, or the app's page now fails to render.
+private Map checkWrite(int appId, String inputName, List<Integer> expected, Map settingsBefore) {
+    List<String> notes = [], problems = []
     Map cfg = fetchConfig(appId)
-    if (!cfg) return "Saved; could not re-read the app to verify"
+    if (!cfg) return [notes: ["Saved; could not re-read the app to verify"], problems: []]
     Map settingsAfter = (cfg.settings ?: [:]) as Map
     List<Integer> now = deviceIds(settingsAfter[inputName])
-    notes << ((now as Set) == (expected as Set) ? "Verified: input now ${now.join(', ')}" : "Warning: input is ${now.join(', ')}, expected ${expected.join(', ')}")
+    if ((now as Set) == (expected as Set)) notes << "Verified: input now ${now.join(', ')}"
+    else problems << "input is ${now.join(', ')}, expected ${expected.join(', ')}"
 
     Set<String> keys = ((settingsBefore ?: [:]).keySet() + settingsAfter.keySet()).collect { it.toString() } as Set<String>
     List<String> moved = keys.findAll { it != inputName && settingsBefore?.get(it) != settingsAfter[it] }.sort()
-    if (moved) notes << "Warning: other settings changed: ${moved.join(', ')}"
-    return notes.join("; ")
+    if (moved) problems << "other settings changed: ${moved.join(', ')}"
+    String pageError = ((cfg.configPage ?: [:]) as Map).error as String
+    if (pageError) problems << "the app's page now shows an error: ${pageError.take(150)}"
+    return [notes: notes, problems: problems]
 }
 
 // Once per app, after all its inputs are swapped. The subscriptions the app had on the source
