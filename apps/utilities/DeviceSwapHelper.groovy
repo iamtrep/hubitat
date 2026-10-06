@@ -3,12 +3,14 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.5.0"
+@Field static final String CODE_VERSION = "0.5.1"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
 // File Manager file with one line per input each swap or undo changed.
 @Field static final String AUDIT_FILE = "device_swap_audit.txt"
 // Parent of the mobile dashboards the hub generates per room and for "All Devices".
 @Field static final String DASHBOARD_PARENT_TYPE = "Easy Mobile Dashboard Parent"
+// App types whose device inputs live on wizard pages reachable only with parameters.
+@Field static final List<String> NO_PAGE_WALK_TYPES = ["Rule-", "Button Rule-", "webCoRE"]
 // How app types that hold devices outside their settings and state reference them.
 @Field static final Map<String,String> REFERENCE_BY_APP_TYPE = [
     "Visual Rule Builder 1.0": "A Visual Rules Builder rule document",
@@ -185,8 +187,10 @@ Map previewPage(Map params = null) {
         int targetId = targetDevice.id as int
 
         section {
-            paragraph "<b>Source:</b> ${sourceDevice.displayName} (ID: ${sourceId})"
-            paragraph "<b>Target:</b> ${targetDevice.displayName} (ID: ${targetId})"
+            paragraph deviceSummary("Source", sourceDevice)
+            paragraph deviceSummary("Target", targetDevice)
+            List<String> missingCaps = (capabilityNames(sourceDevice) - capabilityNames(targetDevice)).sort()
+            if (missingCaps) paragraph "<span class='text-orange-700'>${targetDevice.displayName} lacks ${missingCaps.join(', ')}</span>"
         }
 
         // Step 1: Find apps using the source device
@@ -284,7 +288,10 @@ Map previewPage(Map params = null) {
             }
 
             // Walk the app's full page graph so we can locate each input's home page.
-            Map<String,Map> pageGraph = discoverPageGraph(appId)
+            // Wizard-style apps keep their devices on pages that open only with parameters, so a
+            // walk renders several pages and never finds them; skip it for those types.
+            boolean wizard = NO_PAGE_WALK_TYPES.any { String prefix -> appType.startsWith(prefix) }
+            Map<String,Map> pageGraph = wizard ? [:] : discoverPageGraph(appId, matchingInputs.collect { it.name as String } as Set<String>)
 
             matchingInputs.each { Map inputMatch ->
                 String inputName = inputMatch.name
@@ -364,7 +371,9 @@ Map previewPage(Map params = null) {
                         ? "Input lives on sub-page '${homePage}' — auto-swap not supported; use deeplink"
                         : (appRef.disabled
                             ? "The app is disabled, so its page shows no inputs; enable it to swap automatically, or edit it by hand"
-                            : "Input not on any discoverable page (dynamic render path) — open the app to edit")
+                            : (wizard
+                                ? "This app keeps its devices on wizard pages the scan can't open; edit the device in the app"
+                                : "Input not on any discoverable page (dynamic render path) — open the app to edit"))
                     manual << entry
                 }
             }
@@ -554,6 +563,15 @@ private String describeReference(Map statusData, int sourceId, String appType) {
     return byType ?: "The scan doesn't see where this app holds it"
 }
 
+private List<String> capabilityNames(def device) {
+    return device.getCapabilities().collect { it.name as String }.unique().sort()
+}
+
+private String deviceSummary(String role, def device) {
+    return "<b>${role}:</b> <a href='/device/edit/${device.id}' target='_blank'>${device.displayName}</a> (ID ${device.id}), " +
+        "driver ${device.getTypeName()}<br/><span class='text-color-secondary'>${capabilityNames(device).join(', ')}</span>"
+}
+
 // Read-only list of every app using the source and where it holds it, shown when the per-input
 // swap is folded away: the usage information stays visible whichever swap the user picks.
 private void usageSection(List<Map> swappable, List<Map> manual, List<Map> unmatched, List<Map> dashboards) {
@@ -709,19 +727,19 @@ private String consumeConfirmToken(String action, Map params) {
 
 // ---- Page Graph Discovery ----
 
-// Recursively walks an app's preference pages starting at mainPage, following
-// every body element with element=='href' and a 'page' attribute. Returns a map
-// keyed by page name with rendered input names and the parent-page breadcrumb
-// chain that leads to it (mainPage's chain is empty). Cycles are protected by
-// a visited set; total pages capped at 30 for safety.
-private Map<String,Map> discoverPageGraph(int appId) {
+// Walks an app's preference pages from mainPage, following every href with a 'page', until each
+// of `wanted` has been seen. Returns a map keyed by page name with rendered input names and the
+// parent-page breadcrumb chain (mainPage's is empty). Each page costs a full render, so the walk
+// stops early and is capped at 8 pages.
+private Map<String,Map> discoverPageGraph(int appId, Set<String> wanted) {
     Map<String,Map> graph = [:]
     List<List> queue = []
     queue << ["mainPage", [] as List<String>]
     Set<String> seen = [] as Set<String>
-    int hardCap = 30
+    Set<String> found = [] as Set<String>
+    int hardCap = 8
 
-    while (!queue.isEmpty() && graph.size() < hardCap) {
+    while (!queue.isEmpty() && graph.size() < hardCap && !found.containsAll(wanted)) {
         List head = queue.remove(0)
         String pageName = head[0] as String
         List<String> parents = head[1] as List<String>
@@ -755,6 +773,7 @@ private Map<String,Map> discoverPageGraph(int appId) {
             }
         }
         graph[actualName] = [breadcrumbs: parents, inputs: inputs, hrefs: hrefPages]
+        found.addAll(inputs.findAll { it in wanted })
 
         List<String> childParents = (parents + [actualName]) as List<String>
         hrefPages.each { String childPage ->
@@ -1063,7 +1082,7 @@ private boolean nativeSwapSection(int sourceId, int targetId, Set<String> subscr
     Map n = nativePrepare("swap", sourceId, targetId)
     if (!n.aid) {
         section("Swap Apps Device") {
-            paragraph "<span class='text-color-secondary'>The hub's Swap Apps Device can't do this swap: ${n.reason}. Use the inputs below.</span>"
+            paragraph "<span class='text-color-secondary'>The hub's Swap Apps Device can't do this swap: ${n.reason}. The per-input swap below can still change the apps' inputs.</span>"
         }
         return false
     }
@@ -1091,6 +1110,9 @@ private boolean nativeSwapSection(int sourceId, int targetId, Set<String> subscr
             notes << "<span class='text-orange-700'>Apps subscribe to ${missing.join(', ')}, which ${targetDevice.displayName} doesn't report.</span>"
         }
         paragraph "<ul>" + notes.collect { "<li>${it}</li>" }.join("") + "</ul>"
+        // The preferred action: the hub's green, on the href button the hub renders for this page.
+        paragraph rawHtml: true, "<style>button.hrefElem[name*='|nativeSwapPage|']{background-color:var(--hubitat-primary-green,#81bc00) !important}" +
+            "button.hrefElem[name*='|nativeSwapPage|'],button.hrefElem[name*='|nativeSwapPage|'] *{color:#fff !important}</style>"
         href "nativeSwapPage", title: "Swap with Swap Apps Device…", description: "Opens the hub's swap page with both devices selected"
     }
     return true
@@ -1114,8 +1136,12 @@ private Map nativePrepare(String mode, int oldId, int newId) {
         } else {
             n.aid = aid
             state.native = n   // stored first, so nativeDiscard() can delete it if a step below fails
-            String why = swapSelect(aid, "oldDev", oldId, "the hub does not offer this device for swapping (it skips most child devices)") ?:
-                swapSelect(aid, "newDev", newId, "the hub does not offer this replacement (it skips most child devices and devices whose capabilities don't match)")
+            String why = swapSelect(aid, "oldDev", oldId)
+            if (why == NOT_OFFERED) why = refusalReason(oldId, null)
+            if (!why) {
+                why = swapSelect(aid, "newDev", newId)
+                if (why == NOT_OFFERED) why = refusalReason(newId, oldId)
+            }
             if (!why && !swapButtonShown(aid)) why = "the hub did not show its swap button"
             if (why) {
                 nativeDiscard()
@@ -1154,7 +1180,7 @@ private Integer openSwapInstance() {
 
 // Selects a device on the pending instance after checking the hub offers it. Reading the page is
 // safe here: the instance has not been framed, so its swap button has not been clicked.
-private String swapSelect(int aid, String inputName, int deviceId, String notOffered) {
+private String swapSelect(int aid, String inputName, int deviceId) {
     Map cfg = fetchConfig(aid)
     Map input = cfg ? findMainInput(cfg, inputName) : null
     if (!input) return "the hub's swap page has no ${inputName} selector"
@@ -1162,7 +1188,7 @@ private String swapSelect(int aid, String inputName, int deviceId, String notOff
     def opts = input.options
     if (opts instanceof Map) ids = (opts as Map).keySet().collect { it.toString() }
     else ((opts ?: []) as List).each { o -> if (o instanceof Map) ids.addAll((o as Map).keySet().collect { it.toString() }) }
-    if (!ids.contains(deviceId.toString())) return notOffered
+    if (!ids.contains(deviceId.toString())) return NOT_OFFERED
     String body = [
         ["formAction", "update"], ["id", aid.toString()],
         ["version", (((cfg.app ?: [:]) as Map).version ?: "1").toString()],
@@ -1185,6 +1211,40 @@ private boolean swapButtonShown(int aid) {
     return ((cp.sections ?: []) as List).any { sec ->
         ((sec as Map).input ?: []).any { inp -> (inp as Map).type == "button" && (inp as Map).name != "closeApp" }
     }
+}
+
+@Field static final String NOT_OFFERED = "not offered"
+
+// Why the hub left a device out of its swap page's choices, from the device's own record. `oldId`
+// is set when the device is the replacement, so missing capabilities can be named.
+private String refusalReason(int deviceId, Integer oldId) {
+    Map fj = fetchDeviceJson(deviceId)
+    Map d = ((fj?.device ?: [:]) as Map)
+    String name = (d.label ?: d.name ?: "Device ${deviceId}") as String
+    if (d.parentAppId) {
+        String parent = ((fj.parentApp ?: [:]) as Map).label ?: "app ${d.parentAppId}"
+        return "${name} is a child device of ${parent}, and the hub only swaps child devices of a few built-in integrations"
+    }
+    if (d.parentDeviceId) {
+        Map p = ((fetchDeviceJson(d.parentDeviceId as int)?.device ?: [:]) as Map)
+        return "${name} is a component of ${p.label ?: p.name ?: "device ${d.parentDeviceId}"}, and the hub doesn't swap component devices"
+    }
+    if (oldId != null) {
+        List<String> missing = (((((fetchDeviceJson(oldId)?.device ?: [:]) as Map).capabilities ?: []) as List) -
+            ((d.capabilities ?: []) as List)).collect { it as String }.sort()
+        if (missing) return "${name} lacks ${missing.join(', ')}, so the hub doesn't offer it as the replacement"
+    }
+    return "the hub doesn't offer ${name} ${oldId != null ? 'as the replacement' : 'for swapping'}"
+}
+
+private Map fetchDeviceJson(int deviceId) {
+    Map out = null
+    try {
+        httpGet([uri: BASE_URL, path: "/device/fullJson/${deviceId}", timeout: 15]) { resp -> out = resp.data as Map }
+    } catch (Exception e) {
+        logDebug "fullJson ${deviceId}: ${e.message}"
+    }
+    return out
 }
 
 // Deletes the stored pending instance without rendering it.
