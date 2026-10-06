@@ -205,6 +205,14 @@ The App Status page's Export/Import/Clone button opens a hidden built-in app, "E
 - **Clone:** press `cloneRuleButton`, then open `importRule` and continue as for an import. One press in the `settings[cloneRuleButton]=clicked` form did nothing; a repeat with `cloneRuleButton=clicked` worked. The cause was not isolated.
 - Not tested: import onto another hub, an import whose app type is missing, and single-instance apps.
 
+## Hub variables admin API
+
+From 2.5.2.133 the Hub Variables page is a native page at `/hub/variables`, and `/installedapp/direct/hubVariables` redirects there. Earlier firmware serves it as a built-in app at `/installedapp/direct/hubVariables` → `/installedapp/configure/{id}`. The new page uses a JSON API:
+
+- `GET /hub2/variables` → `{timeZone, variables[]}`; each variable has `name`, `type` (`integer`, `bigdecimal`, `boolean`, `string`, `datetime`), `value` (always a string), `linked`, `meshEnabled`, `sourceName`, `connectorId`, `connectorType`, `connectorOptions[]`, `usedBy[]`, `connectorUsedBy[]`.
+- `POST` JSON to `/hub2/variables/{create,update,rename,remove,createConnector,removeConnector}`; success is `204`, failure is `400`/`409` with `{"message": …}`. `create` takes `{name, type, value}`, plus `mode` (`datetime`, `date`, `time`, `unset`), `date` (`yyyy-MM-dd`) and `time` (`HH:mm:ss`) for a DateTime. `update` takes the same fields plus `expectedValue`, the value last read: a mismatch returns `409`. `rename` takes `{name, newName}`; `remove` and `removeConnector` take `{name}`; `createConnector` takes `{name, connectorType}` from `connectorOptions`. All of them check the value against the type.
+- `remove` and `removeConnector` refuse a variable or connector in use (`usedBy`/`connectorUsedBy`). The built-in Easy Mobile Dashboards pick up new connector devices on their own, so a new connector is in use at once; delete the connector device (`/device/forceDelete/{id}/json`) before removing the variable. *(2.5.2.133)*
+
 ## Run a device command (no Maker API)
 
 - `POST /device/runmethod` — invoke any command on a device via the admin-UI channel, without a Maker API token. JSON body: `{"id": <deviceId>, "method": "<commandName>", "args": [{"type": "<paramType>", "value": <v>}, ...]}` (use `"args": []` for no-arg commands). Response: `{"success":true,"message":null}`
@@ -244,6 +252,17 @@ Undocumented by Hubitat — nothing promises this across firmware versions. Code
 ## Maker API specifics
 
 - Device notes are read-only: `GET /devices/{id}` carries a `notes` key (added in 2.5.0), and nothing writes them. The documented device writers are `setLabel`, `setDriver` and `deleteDevice`. `/devices/{id}/setNotes?notes=…` is treated as a device command and returns 404 *(verified 2.5.2.129)*.
+
+### Status codes
+
+Status codes follow REST for authentication and lookup, while a write the hub declines comes back as 200 *(2.5.2.133)*:
+
+- 401 with an XML `invalid_token` body: missing or wrong `access_token`.
+- 404 with plain text: an unknown path (JSON `{"error":true,"message":"Not Found"}`); a device that doesn't exist or isn't picked ("Device not found or not authorized"); a command the device doesn't have ("…not authorized to send that command"); a hub variable that doesn't exist or isn't picked ("Hub variable not found or not authorized"). The API doesn't say whether the object is missing or only not picked.
+- 500 with JSON `{"error":true,"type":…,"message":"An unexpected error occurred."}`: the command threw, for example `on` called with an argument.
+- 200 with nothing applied: a hub variable value of the wrong type (`{"result":"not authorized"}`), a mode id that doesn't exist (returns the mode list unchanged), an HSM command while HSM access is off (`{"hsm":null}`).
+
+A client must therefore compare the body of a 200 with what it asked for: for a variable write, check that `value` came back.
 
 ### Token discovery
 
