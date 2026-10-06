@@ -3,7 +3,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.5.1"
+@Field static final String CODE_VERSION = "0.5.2"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
 // File Manager file with one line per input each swap or undo changed.
 @Field static final String AUDIT_FILE = "device_swap_audit.txt"
@@ -30,6 +30,7 @@ definition(
     menu: "Apps", // new in platform 2.5.0
     category: "Utility",
     singleInstance: true,
+    installOnOpen: true, // installed when first opened, so leaving without Done keeps it
     singleThreaded: true, // one run at a time, so two audit-log appends never overlap
     iconUrl: "",
     iconX2Url: "",

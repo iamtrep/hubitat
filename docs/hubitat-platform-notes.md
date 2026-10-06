@@ -96,6 +96,7 @@ These methods are firmware 2.5.0.143+. Code shipped to older hubs will throw `Mi
 ## App `definition()` flags
 
 - `doNotFocus: true` (firmware 2.5.0.123+) — stops the main page auto-focusing the first input on open. Useful when the first element is a paragraph, status banner, or read-only field (the auto-focus otherwise scrolls past it). Unknown definition keys are ignored on older firmware, so this is safe to set unconditionally.
+- `installOnOpen: true` — installs a new instance the first time its page renders: `installed()` runs and the app appears in the Apps list without a Done. Without it, an instance left before its first Done stays not installed and drops out of the list *(verified 2.5.2.129 with two probe apps)*.
 - `showAppTitle: false` (firmware 2.4.1.x+, default true) — hides the app title from the rendered configuration page. Sibling to `doNotFocus`. Safe to set unconditionally on older firmware (unknown keys ignored).
 - `importUrl` only adds a manual **Import** button in the Apps/Drivers code editor that fetches the code from the URL and overwrites the editor (the user then Saves). That is the whole feature — it does not poll the remote, compare versions, or show any "update available" indicator. Stock Hubitat has no native update notification for user apps/drivers; an app that wants to signal a newer version must implement its own remote version poll.
 
