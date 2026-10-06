@@ -1,11 +1,42 @@
 /*
  *  Pushover Notification Tester
- * Bla blah
+ *
+ *  Copyright 2026 Dan Ogorchock
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+ *  in compliance with the License. You may obtain a copy of the License at:
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software distributed under the License is distributed
+ *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
+ *  for the specific language governing permissions and limitations under the License.
+ *
+ *  Change History:
+ *
+ *    Version   Date        Who             What
+ *    -------   ----        ---             ----
+ *     v1.0.0   2026-02-07  @hubitrep       Original Creation - Systematic test app for Pushover driver features
+ *     v1.1.0   2026-10-05  @hubitrep       Automated run verifies each test from device events; emergency
+ *                                          cases cover ack polling, callback URL and cancel; edge cases;
+ *                                          driver-preference cases; acknowledgement run with a callback to the
+ *                                          tester's own endpoint (OAuth enabled by the app itself)
  *
  *  Description:
  *      A button-driven test app that exercises every feature of the Pushover Notifications driver.
  *      Each test page targets a specific feature area (priorities, formatting, embedded options, etc.)
  *      and sends crafted messages to verify correct behavior.
+ *
+ *      The automated run passes a test only when the device records the expected event:
+ *      notificationText (Pushover accepted the message), emergencyAck (pending, cancelled, expired)
+ *      or limitLastUpdated (getMsgLimits). Each emergency case cancels its message once it is
+ *      pending, except the poll cases, which wait for the short expiry. Preference cases set the
+ *      driver's settings for one test and restore them afterwards.
+ *
+ *      The acknowledgement run sends one emergency message whose callback URL is this app's own
+ *      cloud endpoint, then expects emergencyAck=acknowledged from the driver's polling and the
+ *      callback from Pushover. Someone acknowledges the message in the Pushover app, or a script
+ *      does it through Pushover's Open Client API; the app holds no Pushover login.
  */
 
 import groovy.transform.Field
@@ -25,6 +56,11 @@ import groovy.transform.Field
 @Field static final int TEST_EMERGENCY_EXPIRE = 60
 @Field static final int TEST_EMERGENCY_RETRY_UNDER_MIN = 10
 @Field static final int TEST_EMERGENCY_EXPIRE_OVER_MAX = 99999
+@Field static final int TEST_EMERGENCY_POLL = 30
+@Field static final int TEST_ACK_TIMEOUT_SECONDS = 240
+@Field static final int ACK_CHECK_SECONDS = 10
+@Field static final int TEST_MANUAL_ACK_TIMEOUT_SECONDS = 600
+@Field static final int TEST_LONG_MESSAGE_LENGTH = 1100
 @Field static final int TEST_DELAY_SECONDS = 3
 // An in-progress run that records no step for this long is treated as dead (stale),
 // so the UI doesn't stay locked after a run is interrupted (hub reboot, code save, etc.)
@@ -35,8 +71,13 @@ definition(
     namespace: "ogiewon",
     author: "Dan Ogorchock",
     description: "Systematic test app for the Pushover Notifications driver",
+    oauth: true,
     iconUrl: "",
     iconX2Url: "")
+
+mappings {
+    path("/pushoverCallback") { action: [POST: "handlePushoverCallback"] }
+}
 
 preferences {
     page(name: "mainPage")
@@ -78,6 +119,7 @@ Map mainPage() {
                     }
                     input "btnRunAll", "button", title: "Run All Tests (Skip Emergency)"
                     input "btnRunAllWithEmergency", "button", title: "Run All Tests (Include Emergency)"
+                    input "btnRunAckTest", "button", title: "Run Acknowledgement Test (acknowledge the message within ${TEST_MANUAL_ACK_TIMEOUT_SECONDS / 60} min)"
                 }
                 if (state.testResults) {
                     int passed = state.testResults.count { it.status == "pass" }
@@ -92,7 +134,7 @@ Map mainPage() {
                 href "formattingTests", title: "Formatting Tests", description: "Test [HTML], [OPEN]/[CLOSE], newlines, bold/italic/underline/color"
                 href "bracketOptionTests", title: "Embedded Options (Bracket Syntax)", description: "Test [TITLE=], [SOUND=], [DEVICE=], [URL=], [URLTITLE=], [IMAGE=], [SELFDESTRUCT=]"
                 href "legacyOptionTests", title: "Embedded Options (Legacy Syntax)", description: "Test ^title^, #sound#, *device*, \u00a7url\u00a7, \u00a4urlTitle\u00a4, \u00a8imageUrl\u00a8"
-                href "emergencyTests", title: "Emergency Tests", description: "Test [E] with [EM.RETRY=], [EM.EXPIRE=], and legacy \u00a9retry\u00a9, \u2122expire\u2122"
+                href "emergencyTests", title: "Emergency Tests", description: "Test [E] with [EM.RETRY=], [EM.EXPIRE=], [EM.POLL=], [EM.CALLBACK=], legacy \u00a9retry\u00a9, \u2122expire\u2122, and cancel"
                 href "combinationTests", title: "Combination Tests", description: "Test multiple options combined in one message"
                 href "commandTests", title: "Command Tests", description: "Test speak(), getMsgLimits(), view attributes"
             }
@@ -108,6 +150,7 @@ Map mainPage() {
             section("Device Attributes") {
                 def attrs = getDeviceAttributes()
                 paragraph "<b>notificationText:</b> ${attrs.notificationText ?: 'n/a'}"
+                paragraph "<b>emergencyAck:</b> ${attrs.emergencyAck ?: 'n/a'}"
                 paragraph "<b>messageLimit:</b> ${attrs.messageLimit ?: 'n/a'}"
                 paragraph "<b>messagesRemaining:</b> ${attrs.messagesRemaining ?: 'n/a'}"
                 paragraph "<b>limitResetDate:</b> ${attrs.limitResetDate ?: 'n/a'}"
@@ -241,6 +284,12 @@ Map emergencyTests() {
         }
         section("Legacy Syntax") {
             input "btnEmergLegacyRetryExpire", "button", title: "[E] + \u00a9${TEST_EMERGENCY_RETRY}\u00a9 + \u2122${TEST_EMERGENCY_EXPIRE}\u2122 (legacy retry/expire)"
+        }
+        section("Acknowledgement") {
+            input "btnEmergPoll", "button", title: "[E] + [EM.POLL=${TEST_EMERGENCY_POLL}] + [EM.EXPIRE=${TEST_EMERGENCY_EXPIRE}] (emergencyAck goes pending, then acknowledged or expired)"
+            input "btnEmergCallback", "button", title: "[E] + [EM.CALLBACK=${TEST_URL}] + [EM.POLL=${TEST_EMERGENCY_POLL}]"
+            input "btnEmergCancel", "button", title: "Cancel the tracked emergency message"
+            paragraph "<b>emergencyAck:</b> ${getDeviceAttributes().emergencyAck ?: 'n/a'}"
         }
         section("Last Test Result") {
             if (state.lastTestName) {
@@ -464,6 +513,15 @@ void appButtonHandler(String buttonName) {
         case "btnEmergLegacyRetryExpire":
             sendTest("Emergency Legacy Retry+Expire", "[E]\u00a9${TEST_EMERGENCY_RETRY}\u00a9\u2122${TEST_EMERGENCY_EXPIRE}\u2122Test: legacy retry ${TEST_EMERGENCY_RETRY}s, expire ${TEST_EMERGENCY_EXPIRE}s - ACK to stop")
             break
+        case "btnEmergPoll":
+            sendTest("Emergency Poll", emergencyPollMessage())
+            break
+        case "btnEmergCallback":
+            sendTest("Emergency Callback URL", emergencyCallbackMessage())
+            break
+        case "btnEmergCancel":
+            runCancelEmergency()
+            break
 
         // Combination tests
         case "btnComboHighHtmlTitle":
@@ -498,10 +556,13 @@ void appButtonHandler(String buttonName) {
 
         // Automated test run
         case "btnRunAll":
-            runAllTests(false)
+            runTests("standard")
             break
         case "btnRunAllWithEmergency":
-            runAllTests(true)
+            runTests("emergency")
+            break
+        case "btnRunAckTest":
+            runTests("ack")
             break
         case "btnStopTests":
             stopTests()
@@ -566,11 +627,42 @@ private void runGetLimits() {
     }
 }
 
+private void runCancelEmergency() {
+    state.lastTestName = "cancelEmergencyMessage()"
+    state.lastTestMessage = "Called cancelEmergencyMessage() - check emergencyAck"
+    state.lastTestTime = new Date().format("yyyy-MM-dd HH:mm:ss")
+
+    try {
+        pushoverDevice.cancelEmergencyMessage()
+    } catch (e) {
+        log.error "runCancelEmergency(): error = ${e}"
+        state.lastTestName = "cancelEmergencyMessage() - ERROR"
+    }
+}
+
+private String emergencyPollMessage() {
+    return "[E][EM.RETRY=${TEST_EMERGENCY_RETRY}][EM.EXPIRE=${TEST_EMERGENCY_EXPIRE}][EM.POLL=${TEST_EMERGENCY_POLL}]Test: ack polling, expires in ${TEST_EMERGENCY_EXPIRE}s"
+}
+
+private String longMessage() {
+    String head = "Test: long message "
+    return head + ("x" * (TEST_LONG_MESSAGE_LENGTH - head.length()))
+}
+
+private String callbackUrl() {
+    return "${getFullApiServerUrl()}/pushoverCallback?access_token=${state.accessToken}"
+}
+
+private String emergencyCallbackMessage() {
+    return "[E][EM.CALLBACK=${TEST_URL}][EM.POLL=${TEST_EMERGENCY_POLL}]Test: callback URL - cancelled by the tester"
+}
+
 private Map getDeviceAttributes() {
     Map attrs = [:]
     if (pushoverDevice) {
         try {
             attrs.notificationText = pushoverDevice.currentValue("notificationText")
+            attrs.emergencyAck = pushoverDevice.currentValue("emergencyAck")
             attrs.messageLimit = pushoverDevice.currentValue("messageLimit")
             attrs.messagesRemaining = pushoverDevice.currentValue("messagesRemaining")
             attrs.limitReset = pushoverDevice.currentValue("limitReset")
@@ -594,7 +686,7 @@ private List getTestCases() {
         [name: "Low Priority [L]", message: "[L]Test: low priority (-1)"],
         [name: "Normal Priority [N]", message: "[N]Test: normal priority (0)"],
         [name: "High Priority [H]", message: "[H]Test: high priority (1)"],
-        [name: "Emergency Priority [E]", message: "[E]Test: emergency priority (2) - ACK to stop", emergency: true],
+        [name: "Emergency Priority [E]", message: "[E]Test: emergency priority (2) - ACK to stop", emergency: true, after: "cancel"],
 
         // Formatting tests
         [name: "Basic HTML", message: "[HTML]Test: <b>HTML mode</b> is active"],
@@ -625,11 +717,25 @@ private List getTestCases() {
         [name: "Legacy \u00a8image\u00a8", message: "\u00a8${TEST_IMAGE_URL}\u00a8Test: legacy image syntax"],
 
         // Emergency tests
-        [name: "Emergency Default", message: "[E]Test: emergency with driver defaults - ACK to stop", emergency: true],
-        [name: "Emergency Retry+Expire", message: "[E][EM.RETRY=${TEST_EMERGENCY_RETRY}][EM.EXPIRE=${TEST_EMERGENCY_EXPIRE}]Test: retry ${TEST_EMERGENCY_RETRY}s, expire ${TEST_EMERGENCY_EXPIRE}s - ACK to stop", emergency: true],
-        [name: "Emergency Min Retry", message: "[E][EM.RETRY=${TEST_EMERGENCY_RETRY_UNDER_MIN}]Test: retry=${TEST_EMERGENCY_RETRY_UNDER_MIN} should clamp to 30 - ACK to stop", emergency: true],
-        [name: "Emergency Max Expire", message: "[E][EM.EXPIRE=${TEST_EMERGENCY_EXPIRE_OVER_MAX}]Test: expire=${TEST_EMERGENCY_EXPIRE_OVER_MAX} should clamp to 10800 - ACK to stop", emergency: true],
-        [name: "Emergency Legacy Retry+Expire", message: "[E]\u00a9${TEST_EMERGENCY_RETRY}\u00a9\u2122${TEST_EMERGENCY_EXPIRE}\u2122Test: legacy retry ${TEST_EMERGENCY_RETRY}s, expire ${TEST_EMERGENCY_EXPIRE}s - ACK to stop", emergency: true],
+        [name: "Emergency Default", message: "[E]Test: emergency with driver defaults - ACK to stop", emergency: true, after: "cancel"],
+        [name: "Emergency Retry+Expire", message: "[E][EM.RETRY=${TEST_EMERGENCY_RETRY}][EM.EXPIRE=${TEST_EMERGENCY_EXPIRE}]Test: retry ${TEST_EMERGENCY_RETRY}s, expire ${TEST_EMERGENCY_EXPIRE}s - ACK to stop", emergency: true, after: "cancel"],
+        [name: "Emergency Min Retry", message: "[E][EM.RETRY=${TEST_EMERGENCY_RETRY_UNDER_MIN}]Test: retry=${TEST_EMERGENCY_RETRY_UNDER_MIN} should clamp to 30 - ACK to stop", emergency: true, after: "cancel"],
+        [name: "Emergency Max Expire", message: "[E][EM.EXPIRE=${TEST_EMERGENCY_EXPIRE_OVER_MAX}]Test: expire=${TEST_EMERGENCY_EXPIRE_OVER_MAX} should clamp to 10800 - ACK to stop", emergency: true, after: "cancel"],
+        [name: "Emergency Legacy Retry+Expire", message: "[E]\u00a9${TEST_EMERGENCY_RETRY}\u00a9\u2122${TEST_EMERGENCY_EXPIRE}\u2122Test: legacy retry ${TEST_EMERGENCY_RETRY}s, expire ${TEST_EMERGENCY_EXPIRE}s - ACK to stop", emergency: true, after: "cancel"],
+        [name: "Emergency Callback URL", message: emergencyCallbackMessage(), emergency: true, after: "cancel"],
+        [name: "Emergency Poll -> Expired", message: emergencyPollMessage(), emergency: true, expectAck: "expired"],
+        [name: "Pref: emergency poll, retry, expire -> Expired", message: "[E]Test: polling from preferences, expires in ${TEST_EMERGENCY_EXPIRE}s", emergency: true, expectAck: "expired",
+         prefs: [emPollInterval: [TEST_EMERGENCY_POLL, "number"], retry: [TEST_EMERGENCY_RETRY, "number"], expire: [TEST_EMERGENCY_EXPIRE, "number"]]],
+        [name: "Pref: emergency callback URL", message: "[E]Test: callback URL from preferences - cancelled by the tester", emergency: true, after: "cancel",
+         prefs: [emCallbackUrl: [TEST_URL, "text"]]],
+        [name: "Second emergency replaces the first", emergency: true, after: "cancel", pendingCount: 2,
+         messages: ["[E][EM.RETRY=${TEST_EMERGENCY_RETRY}][EM.EXPIRE=${TEST_EMERGENCY_EXPIRE}]Test: first of two, expires in ${TEST_EMERGENCY_EXPIRE}s",
+                    "[E][EM.POLL=${TEST_EMERGENCY_POLL}]Test: second of two - cancelled by the tester"]],
+        [name: "Cancel with nothing pending", type: "cancel", emergency: true],
+
+        // Manual: only in the acknowledgement run
+        [name: "Emergency acknowledged + callback", message: "[E][EM.POLL=${TEST_EMERGENCY_POLL}][EM.EXPIRE=${TEST_MANUAL_ACK_TIMEOUT_SECONDS}]Test: ACKNOWLEDGE this message",
+         emergency: true, manual: true, callback: true, expectAck: "acknowledged", timeoutSec: TEST_MANUAL_ACK_TIMEOUT_SECONDS],
 
         // Combination tests
         [name: "Combo: High+HTML+Title", message: "[H][HTML][TITLE=Alert]Test: <b>high priority HTML</b> with custom title"],
@@ -638,6 +744,20 @@ private List getTestCases() {
         [name: "Combo: Kitchen Sink", message: "[H][HTML][TITLE=Kitchen Sink][SOUND=${TEST_SOUND}][URL=${TEST_URL}][URLTITLE=${TEST_URL_TITLE}][IMAGE=${TEST_IMAGE_URL}]Test: <b>all options</b> at once"],
         [name: "Combo: Newline+HTML+Bold+Color", message: '[HTML]Test: line one\\n[OPEN]b[CLOSE]bold on line two[OPEN]/b[CLOSE]\\n\u2264font color="#FF0000"\u2265red on line three\u2264/font\u2265'],
         [name: "Combo: Mixed Syntax", message: "[H]^Mixed Syntax^#${TEST_SOUND}#Test: high priority with legacy title and sound"],
+
+        // Edge cases: Pushover accepts these, so each expects notificationText
+        [name: "Edge: title only (empty text is sent as a placeholder)", message: "[TITLE=Test: title only, no text]"],
+        [name: "Edge: ${TEST_LONG_MESSAGE_LENGTH}-character message", message: longMessage()],
+        [name: "Edge: unknown device name", message: "[DEVICE=nosuchdevice123]Test: unknown device name"],
+        [name: "Edge: unknown sound name", message: "[SOUND=nosuchsound]Test: unknown sound name"],
+        [name: "Edge: image URL that does not resolve", message: "[IMAGE=https://invalid.invalid/x.png]Test: image URL that does not resolve"],
+
+        // Driver preferences: set on the device for the one test, then restored
+        [name: "Pref: priority, sound, URL, self-destruct", message: "Test: defaults from preferences (high, ${TEST_SOUND_ALT}, URL, auto-deletes in ${TEST_SELFDESTRUCT_LONG}s)",
+         prefs: [priority: ["1", "enum"], sound: [TEST_SOUND_ALT, "enum"], url: [TEST_URL, "text"], urlTitle: [TEST_URL_TITLE, "text"], ttl: [TEST_SELFDESTRUCT_LONG, "number"]]],
+        [name: "Pref: device ALL", message: "Test: device preference ALL", prefs: [deviceName: ["ALL", "enum"]]],
+        [name: "Pref: custom HTML characters", message: "[HTML]Test: {{b}}bold via custom characters{{/b}}", prefs: [htmlOpen: ["{{", "text"], htmlClose: ["}}", "text"]]],
+        [name: "Pref: testing mode (HTML sent as text)", message: "[HTML]Test: <b>these tags show as text</b>", prefs: [testingEnable: [true, "bool"]]],
 
         // Command tests
         [name: "speak() Command", message: "Test: sent via speak() command", type: "speak"],
@@ -657,68 +777,119 @@ private static boolean computeRunStale(boolean inProgress, Long lastStepEpoch, l
     return (nowMs - lastStepEpoch) > thresholdMs
 }
 
-private void runAllTests(boolean includeEmergency) {
+// mode: "standard" (no emergency), "emergency" (all automated cases), "ack" (the manual case)
+private void runTests(String mode) {
     // Defensive: clear any stale schedule left by a prior run that didn't finish cleanly
     unschedule("executeNextTest")
+    unschedule("verifyTest")
+    restorePrefs()
 
-    List testCases = getTestCases()
-    if (!includeEmergency) {
-        testCases = testCases.findAll { !it.emergency }
-    }
+    state.runMode = mode
+    List testCases = getActiveTestCases()
 
     state.testResults = []
     state.currentTestIndex = 0
     state.testTotal = testCases.size()
     state.testRunInProgress = true
-    state.includeEmergency = includeEmergency
     state.testRunStartTime = new Date().format("yyyy-MM-dd HH:mm:ss")
     state.testRunEndTime = null
     state.currentTestName = null
     state.lastStepEpoch = now()
 
-    if (logEnable) log.debug "runAllTests(): starting ${testCases.size()} tests (includeEmergency=${includeEmergency})"
+    if (logEnable) log.debug "runTests(): starting ${testCases.size()} tests (mode=${mode})"
 
     executeNextTest()
 }
 
 private void stopTests() {
     if (logEnable) log.debug "stopTests(): aborting test run"
+    unschedule("executeNextTest")
+    unschedule("verifyTest")
+    if (state.stepPhase in ["cancelling", "awaitAck"] || (state.stepPhase == "sent" && currentTestCase()?.emergency)) {
+        cancelQuietly()
+    }
+    restorePrefs()
+    finishRun()
+}
+
+private List getActiveTestCases() {
+    List testCases = getTestCases()
+    switch (state.runMode) {
+        case "ack":
+            return testCases.findAll { it.manual }
+        case "emergency":
+            return testCases.findAll { !it.manual }
+        default:
+            return testCases.findAll { !it.emergency }
+    }
+}
+
+private Map currentTestCase() {
+    List testCases = getActiveTestCases()
+    int idx = (state.currentTestIndex ?: 0) as int
+    return idx < testCases.size() ? testCases[idx] : null
+}
+
+private void finishRun() {
     state.testRunInProgress = false
     state.testRunEndTime = new Date().format("yyyy-MM-dd HH:mm:ss")
     state.currentTestName = null
-    unschedule("executeNextTest")
+    state.stepPhase = null
 }
 
+// Sets a test's driver preferences, remembering the old values for restorePrefs().
+private void applyPrefs(Map prefs) {
+    Map saved = [:]
+    prefs.each { String name, List valueType ->
+        saved[name] = [value: pushoverDevice.getSetting(name), type: valueType[1]]
+        pushoverDevice.updateSetting(name, [value: valueType[0], type: valueType[1]])
+    }
+    state.savedPrefs = saved
+}
+
+private void restorePrefs() {
+    Map saved = state.savedPrefs
+    if (!saved) return
+    saved.each { String name, Map old ->
+        if (old.value == null) {
+            pushoverDevice.removeSetting(name)
+        } else {
+            pushoverDevice.updateSetting(name, [value: old.value, type: old.type])
+        }
+    }
+    state.savedPrefs = null
+}
+
+// Sends the current test, then hands off to verifyTest(), which checks the device's events.
 void executeNextTest() {
     if (!state.testRunInProgress) return
 
-    List testCases = getTestCases()
-    if (!state.includeEmergency) {
-        testCases = testCases.findAll { !it.emergency }
-    }
-
-    int idx = state.currentTestIndex
-    if (idx >= testCases.size()) {
-        state.testRunInProgress = false
-        state.testRunEndTime = new Date().format("yyyy-MM-dd HH:mm:ss")
-        state.currentTestName = null
+    Map testCase = currentTestCase()
+    if (testCase == null) {
+        finishRun()
         if (logEnable) log.debug "executeNextTest(): all tests complete"
         return
     }
 
-    Map testCase = testCases[idx]
     state.currentTestName = testCase.name
     state.lastStepEpoch = now()
+    state.stepStartEpoch = now()
+    state.stepPhase = "sent"
     String type = testCase.type ?: "notification"
 
-    if (logEnable) log.debug "executeNextTest(): [${idx + 1}/${testCases.size()}] ${testCase.name}"
+    if (logEnable) log.debug "executeNextTest(): [${state.currentTestIndex + 1}/${state.testTotal}] ${testCase.name}"
 
-    List results = state.testResults ?: []
+    if (testCase.callback && !checkOAuth()) {
+        recordResult(testCase, "fail", "OAuth could not be enabled, so there is no callback endpoint")
+        return
+    }
 
     try {
+        Map prefs = (testCase.prefs ?: [:]) + (testCase.callback ? [emCallbackUrl: [callbackUrl(), "text"]] : [:])
+        if (prefs) applyPrefs(prefs)
         switch (type) {
             case "notification":
-                pushoverDevice.deviceNotification(testCase.message)
+                (testCase.messages ?: [testCase.message]).each { pushoverDevice.deviceNotification(it) }
                 break
             case "speak":
                 pushoverDevice.speak(testCase.message)
@@ -726,23 +897,226 @@ void executeNextTest() {
             case "command":
                 pushoverDevice.getMsgLimits()
                 break
+            case "cancel":
+                pushoverDevice.cancelEmergencyMessage()
+                break
         }
-        results << [name: testCase.name, status: "pass"]
-        if (logEnable) log.debug "executeNextTest(): ${testCase.name} - PASS"
     } catch (e) {
-        results << [name: testCase.name, status: "fail", error: e.message]
-        log.error "executeNextTest(): ${testCase.name} - FAIL: ${e.message}"
+        recordResult(testCase, "fail", "exception: ${e.message}")
+        return
+    }
+    runIn(TEST_DELAY_SECONDS, "verifyTest")
+}
+
+void verifyTest() {
+    if (!state.testRunInProgress) return
+
+    Map testCase = currentTestCase()
+    if (testCase == null) {
+        finishRun()
+        return
+    }
+    state.lastStepEpoch = now()
+    long since = state.stepStartEpoch as long
+    String type = testCase.type ?: "notification"
+
+    switch (state.stepPhase) {
+        case "sent":
+            if (type == "command") {
+                boolean ok = sawEvent("limitLastUpdated", null, since)
+                recordResult(testCase, ok ? "pass" : "fail", ok ? null : "no limitLastUpdated event")
+                return
+            }
+            if (type == "cancel") {
+                boolean quiet = !sawEvent("emergencyAck", null, since)
+                recordResult(testCase, quiet ? "pass" : "fail", quiet ? null : "emergencyAck event with nothing pending")
+                return
+            }
+            String lastMessage = (testCase.messages ? testCase.messages[-1] : testCase.message).toString()
+            if (!sawEvent("notificationText", lastMessage, since)) {
+                if (testCase.emergency) cancelQuietly()
+                recordResult(testCase, "fail", "no notificationText event (Pushover did not accept the message)")
+                return
+            }
+            if (!testCase.emergency) {
+                recordResult(testCase, "pass", null)
+                return
+            }
+            int pendingWanted = (testCase.pendingCount ?: 1) as int
+            int pendingSeen = countEvents("emergencyAck", "pending", since)
+            if (pendingSeen < pendingWanted) {
+                cancelQuietly()
+                recordResult(testCase, "fail", "${pendingSeen} emergencyAck=pending event(s), expected ${pendingWanted}")
+                return
+            }
+            if (testCase.after == "cancel") {
+                state.stepPhase = "cancelling"
+                state.stepStartEpoch = now()
+                try {
+                    pushoverDevice.cancelEmergencyMessage()
+                } catch (e) {
+                    recordResult(testCase, "fail", "cancel exception: ${e.message}")
+                    return
+                }
+                runIn(TEST_DELAY_SECONDS, "verifyTest")
+                return
+            }
+            if (testCase.expectAck) {
+                state.stepPhase = "awaitAck"
+                int timeoutSec = (testCase.timeoutSec ?: TEST_ACK_TIMEOUT_SECONDS) as int
+                state.ackDeadlineEpoch = since + timeoutSec * 1000L
+                runIn(ACK_CHECK_SECONDS, "verifyTest")
+                return
+            }
+            recordResult(testCase, "pass", null)
+            break
+
+        case "cancelling":
+            boolean cancelled = sawEvent("emergencyAck", "cancelled", since)
+            recordResult(testCase, cancelled ? "pass" : "fail", cancelled ? null : "no emergencyAck=cancelled event after cancelEmergencyMessage()")
+            break
+
+        case "awaitAck":
+            boolean acked = sawEvent("emergencyAck", testCase.expectAck, since)
+            String otherEnd = ["acknowledged", "expired", "cancelled"].find { it != testCase.expectAck && sawEvent("emergencyAck", it, since) }
+            if (!acked && otherEnd) {
+                recordResult(testCase, "fail", "emergencyAck=${otherEnd}, expected ${testCase.expectAck}")
+                return
+            }
+            boolean callbackDone = !testCase.callback || sawCallback(since)
+            boolean timedOut = now() > (state.ackDeadlineEpoch as long)
+            if (acked && callbackDone) {
+                recordResult(testCase, "pass", null)
+            } else if (sawEvent("emergencyAck", "error", since)) {
+                recordResult(testCase, "fail", "emergencyAck=error (ack polling gave up)")
+            } else if (timedOut) {
+                if (!acked) cancelQuietly()
+                String why = acked ? "acknowledged, but Pushover did not call the callback URL" : "no emergencyAck=${testCase.expectAck} in time"
+                recordResult(testCase, "fail", why)
+            } else {
+                runIn(ACK_CHECK_SECONDS, "verifyTest")
+            }
+            break
+    }
+}
+
+private int countEvents(String name, value, long sinceEpoch) {
+    List events = pushoverDevice.eventsSince(new Date(sinceEpoch), [max: 50]) ?: []
+    return events.count { it.name == name && (value == null || it.value == value.toString()) }
+}
+
+private boolean sawCallback(long sinceEpoch) {
+    return (state.callbackHits ?: []).any { (it.at as long) >= sinceEpoch }
+}
+
+// ========================================
+// CALLBACK ENDPOINT
+// ========================================
+// Pushover POSTs here when the emergency message is acknowledged.
+def handlePushoverCallback() {
+    if (!checkOAuth()) {
+        return render(status: 403, contentType: "text/plain", data: "OAuth not enabled.")
+    }
+    List hits = state.callbackHits ?: []
+    hits << [at: now(), receipt: params?.receipt, by: params?.acknowledged_by_device]
+    state.callbackHits = hits.size() > 10 ? hits[-10..-1] : hits
+    if (logEnable) log.debug "handlePushoverCallback(): receipt=${params?.receipt}"
+    render(status: 200, contentType: "text/plain", data: "ok")
+}
+
+// ========================================
+// OAUTH (self-enabling)
+// ========================================
+private boolean autoEnableOAuth() {
+    String typeId = app.getAppTypeId()?.toString()
+    if (!typeId) { log.error "Could not find app type ID."; return false }
+
+    String internalVer = null
+    try {
+        httpGet([uri: "http://127.0.0.1:8080", path: "/app/ajax/code", query: [id: typeId], timeout: 15]) { resp ->
+            internalVer = resp.data?.version?.toString()
+        }
+    } catch (e) {
+        log.error "Failed to fetch app code version: ${e.message}"
+        return false
+    }
+    if (!internalVer) { log.error "Could not determine app code version."; return false }
+
+    boolean success = false
+    try {
+        httpPost([
+            uri: "http://127.0.0.1:8080",
+            path: "/app/edit/update",
+            requestContentType: "application/x-www-form-urlencoded",
+            body: [
+                id: typeId,
+                version: internalVer,
+                oauthEnabled: "true",
+                _action_update: "Update"
+            ],
+            timeout: 20
+        ]) { resp ->
+            success = true
+        }
+    } catch (e) {
+        log.error "Failed to enable OAuth: ${e.message}"
+    }
+    return success
+}
+
+private boolean checkOAuth() {
+    if (state.accessToken) return true
+    try {
+        createAccessToken()
+        return (state.accessToken != null)
+    } catch (e) {
+        log.debug "OAuth not enabled yet, attempting auto-enable..."
+        if (autoEnableOAuth()) {
+            try {
+                createAccessToken()
+                return (state.accessToken != null)
+            } catch (e2) {
+                log.error "OAuth enabled but token creation failed: ${e2.message}"
+                return false
+            }
+        }
+        return false
+    }
+}
+
+private boolean sawEvent(String name, value, long sinceEpoch) {
+    List events = pushoverDevice.eventsSince(new Date(sinceEpoch), [max: 50]) ?: []
+    return events.any { it.name == name && (value == null || it.value == value.toString()) }
+}
+
+// Best effort: an emergency message left running repeats until its expiry.
+private void cancelQuietly() {
+    try {
+        pushoverDevice.cancelEmergencyMessage()
+    } catch (e) {
+        log.warn "cancelQuietly(): ${e.message}"
+    }
+}
+
+private void recordResult(Map testCase, String status, String error) {
+    List results = state.testResults ?: []
+    Map result = [name: testCase.name, status: status]
+    if (error) result.error = error
+    results << result
+    state.testResults = results
+    if (status == "fail") {
+        log.error "executeNextTest(): ${testCase.name} - FAIL: ${error}"
+    } else if (logEnable) {
+        log.debug "executeNextTest(): ${testCase.name} - PASS"
     }
 
-    state.testResults = results
-    state.currentTestIndex = idx + 1
-
-    if (idx + 1 < testCases.size()) {
-        runIn(TEST_DELAY_SECONDS, "executeNextTest")
+    restorePrefs()
+    state.currentTestIndex = (state.currentTestIndex ?: 0) + 1
+    state.stepPhase = null
+    if (state.currentTestIndex < (state.testTotal ?: 0)) {
+        runIn(1, "executeNextTest")
     } else {
-        state.testRunInProgress = false
-        state.testRunEndTime = new Date().format("yyyy-MM-dd HH:mm:ss")
-        state.currentTestName = null
+        finishRun()
         if (logEnable) log.debug "executeNextTest(): all tests complete"
     }
 }
@@ -752,6 +1126,7 @@ void executeNextTest() {
 // ========================================
 void installed() {
     log.debug "'installed()' called"
+    checkOAuth()
     initialize()
 }
 
@@ -759,6 +1134,7 @@ void updated() {
     log.debug "'updated()' called"
     unsubscribe()
     unschedule()
+    checkOAuth()
     initialize()
 }
 
