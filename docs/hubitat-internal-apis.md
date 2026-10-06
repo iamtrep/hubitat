@@ -193,7 +193,7 @@ The Logs page (`/logs`, tabs `?tab=past` etc.) is a Vue chunk (`/ui2/js/vue-hub2
 
 ## Export, Import and Clone of app instances
 
-The App Status page's Export/Import/Clone button opens a hidden built-in app, "Export/Import/Clone" (`classLocation: appCloner`). Like Swap Apps Device, it is an ordinary app page, driven with `update/json` and `/installedapp/btn` as in [App configuration](#app-configuration-addremove-devices-change-settings), so the whole flow works over HTTP. It copies one app instance; for the whole hub see the section Hub database backups *(all verified 2.5.2.129)*.
+The App Status page's Export/Import/Clone button opens a hidden built-in app, "Export/Import/Clone" (`classLocation: appCloner`). Like Swap Apps Device, it is an ordinary app page, driven with `update/json` and `/installedapp/btn` as in [App configuration](#app-configuration-addremove-devices-change-settings), so the whole flow works over HTTP. It copies one app instance; for the whole hub see [Hub database backups](#hub-database-backups) *(all verified 2.5.2.129)*.
 
 - **Open:** `GET /installedapp/sysAppApi/appCloner/app/{appId}` → 302 to `/apps/api/{clonerId}/app/{appId}?access_token=…`, whose GET selects `{appId}` and redirects to `/installedapp/configure/{clonerId}/main`. Each open creates a new cloner instance and deletes the previous one. The page is `main`, so `configure/json/{clonerId}` without a page name is a 404.
 - **Export:** press `exportRuleButton`, then read `configure/json/{clonerId}/main`: the `download-text` input `ruledownload` carries the export in `filecontent`. There is no download URL.
