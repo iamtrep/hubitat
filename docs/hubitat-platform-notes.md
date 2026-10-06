@@ -60,6 +60,10 @@ Three sandbox-safe ways to look at an object's surface, picked by what you need.
 - **"No value" for a DateTime** is `9999-99-99T99:99:99.999-9999`, the form the Hub Variables page writes for an unset value; `setGlobalVar()` accepts it. Date-only is `yyyy-MM-ddT99:99:99.999-9999` and time-only is `9999-99-99THH:mm:ss.SSSZ`. Writing `""` to clear a DateTime fails silently on 2.5.2.133. A reader must check for these forms before calling `toDateTime()`: it throws `ParseException` on the unset and date-only forms and rolls the time-only form over to year 10007.
 - **Connectors and Maker API validate too** *(2.5.2.133)*. Connector `setVariable`/`setDateTime` ignore a bad value (before: Number/Decimal stored `null`, Boolean the raw string). Maker API `GET /hubvariables/{name}/{value}` answers a bad value with HTTP 200 `{"result":"not authorized"}` and leaves the value unchanged; a variable that is missing or not in `pickedHubVariables` gets 404 instead. See [Maker API specifics](hubitat-internal-apis.md#maker-api-specifics) for its status codes.
 - The native MCP server has no hub variable tool *(gateway 0.1.4, 2.5.2.133)*.
+- **A rejected connector command still sends the device event** *(2.5.2.133)*. `setLevel(55.7)` on a Dimmer connector leaves the Number variable alone but reports `level` 55.7; `setTemperature("abc")` reports `temperature` `abc` on a NUMBER attribute. An app subscribed to the connector device sees a value the variable never held. Connectors check type, not range: a Dimmer connector stores 150 and -5.
+- **Rule Machine converts before it writes** *(2.5.2.133)*. Set Variable from a device attribute truncates 55.7 to 55 for a Number variable and skips a non-numeric value, logging the action as done either way.
+- **Hub Mesh: the receiving hub rejects bad values** *(2.5.2.133 receiving from 2.5.2.129)*. A Number variable set to `null` or a DateTime set to `abc` on the source hub keeps its last good value on the receiving hub, so the two hubs then disagree with no sign of it on either.
+- None of these rejections writes a log entry.
 
 ## Location events
 
