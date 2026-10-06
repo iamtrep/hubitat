@@ -3,7 +3,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.5.3"
+@Field static final String CODE_VERSION = "0.5.4"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
 // File Manager file with one line per input each swap or undo changed.
 @Field static final String AUDIT_FILE = "device_swap_audit.txt"
@@ -251,7 +251,9 @@ Map previewPage(Map params = null) {
             Map initSel = (state.swapSelections ?: [:]) as Map
             swappable.each { Map entry ->
                 String key = selKey(entry)
-                if (!initSel.containsKey(key)) {
+                if (entry.capBlock) {
+                    initSel[key] = "off"
+                } else if (!initSel.containsKey(key)) {
                     boolean hasWarnings = entry.capWarning || entry.targetWarning || entry.singleSelectWarning || entry.stateWarning || entry.tileWarning
                     initSel[key] = hasWarnings ? "off" : "on"
                 }
@@ -270,6 +272,7 @@ Map previewPage(Map params = null) {
                     "</tr></thead><tbody>"
                 swappable.eachWithIndex { Map entry, int idx ->
                     List<String> entryWarnings = []
+                    if (entry.capBlock) entryWarnings << "<span class='text-red-700'>Can't swap: ${entry.capBlock}</span>".toString()
                     if (entry.capWarning) entryWarnings << (entry.capWarning as String)
                     if (entry.targetWarning) entryWarnings << (entry.targetWarning as String)
                     if (entry.singleSelectWarning) entryWarnings << (entry.singleSelectWarning as String)
@@ -279,8 +282,9 @@ Map previewPage(Map params = null) {
                     List<String> attrs = (entry.subscribedAttrs ?: []) as List<String>
                     String subsCell = attrs ? attrs.join(", ") : "<span class='text-color-secondary'>-</span>"
                     boolean selected = state.swapSelections[selKey(entry)] != "off"
+                    String swapCell = entry.capBlock ? "<span class='text-color-secondary'>-</span>" : buttonLink("btnSwapSel:${selKey(entry)}", selected ? X : O, "#1A77C9")
                     table += "<tr>" +
-                        "<td style='text-align:center;border-right:2px solid black'>${buttonLink("btnSwapSel:${selKey(entry)}", selected ? X : O, "#1A77C9")}</td>" +
+                        "<td style='text-align:center;border-right:2px solid black'>${swapCell}</td>" +
                         "<td><a href='/installedapp/configure/${entry.appId}' target='_blank'>${entry.appLabel}</a></td>" +
                         "<td>${entry.appType}</td>" +
                         "<td><a href='${entry.pageDeepLink}' target='_blank'>${entry.homePage ?: 'mainPage'}</a></td>" +
@@ -413,6 +417,26 @@ private List<String> capabilityNames(def device) {
     return device.getCapabilities().collect { it.name as String }.unique().sort()
 }
 
+// Whether the hub lists the device under an input's capability type: true, false, or null when it
+// can't tell. A comma-separated type returns the devices that have any one of them.
+private Boolean hasInputCapability(int deviceId, String capType) {
+    if (!capType?.startsWith("capability.") || capType == "capability.*") return true
+    try {
+        List devices = null
+        httpGet("${BASE_URL}/device/listJson?capability=${capType}") { response ->
+            if (response.status == 200) devices = response.data as List
+        }
+        return devices == null ? null : devices.any { (it.id as int) == deviceId }
+    } catch (Exception e) {
+        logDebug "Could not check ${capType}: ${e.message}"
+        return null
+    }
+}
+
+private String capabilityRefusal(String capType) {
+    return "${targetDevice.displayName} doesn't have ${capType.split(',').join(' or ')}, which this input needs"
+}
+
 private String deviceSummary(String role, def device) {
     return "<b>${role}:</b> <a href='/device/edit/${device.id}' target='_blank'>${device.displayName}</a> (ID ${device.id}), " +
         "driver ${device.getTypeName()}<br/><span class='text-color-secondary'>${capabilityNames(device).join(', ')}</span>"
@@ -424,7 +448,7 @@ private void usageSection(List<Map> swappable, List<Map> manual, List<Map> unmat
     String td = "style='border:1px solid #999;padding:4px 8px'"
     List<List<String>> rows = []
     swappable.each { Map e ->
-        List<String> w = [e.capWarning, e.targetWarning, e.stateWarning, e.tileWarning].findAll { it } as List<String>
+        List<String> w = [e.capBlock ? "Can't swap: ${e.capBlock}" : null, e.capWarning, e.targetWarning, e.stateWarning, e.tileWarning].findAll { it } as List<String>
         rows << [appLink(e), e.appType, "input ${e.inputName} (main page)", ((e.subscribedAttrs ?: []) as List).join(", "), w.join("<br>")] as List<String>
     }
     manual.each { Map e ->
@@ -466,7 +490,7 @@ private Map scanApps(int sourceId, int targetId) {
     List<Map> manual = []
     List<Map> unmatched = []   // apps the hub lists as using the source with no device input the scan reads
     Set<String> allSubscribedAttrs = [] as Set<String>
-    Map<String,Boolean> capOk = [:]   // per capability type: does the target have it
+    Map<String,Boolean> capOk = [:]   // per input type: does the target have it (null: unknown)
 
     appsUsing.each { Map appRef ->
         int appId = appRef.id as int
@@ -543,23 +567,15 @@ private Map scanApps(int sourceId, int targetId) {
             List<String> homeBreadcrumbs = (loc.breadcrumbs ?: []) as List<String>
             boolean isOnMainPage = (homePage == "mainPage")
 
-            // Capability compatibility, checked for the rows the per-input swap can write
+            // Capability compatibility, checked for the rows the per-input swap can write. The hub
+            // saves any device into any input, so a target without the capability is refused here.
             String capWarning = null
+            String capBlock = null
             String capType = inputMatch.type as String
-            if (isOnMainPage && capType != "capability.*") {
-                if (!capOk.containsKey(capType)) {
-                    try {
-                        List compatDevices = []
-                        httpGet("${BASE_URL}/device/listJson?capability=${capType}") { response ->
-                            if (response.status == 200) compatDevices = response.data as List
-                        }
-                        capOk[capType] = compatDevices.any { (it.id as int) == targetId }
-                    } catch (Exception e) {
-                        logDebug "Could not check capability compatibility: ${e.message}"
-                        capOk[capType] = true
-                    }
-                }
-                if (!capOk[capType]) capWarning = "Target device may not have ${capType}"
+            if (isOnMainPage) {
+                if (!capOk.containsKey(capType)) capOk[capType] = hasInputCapability(targetId, capType)
+                if (capOk[capType] == null) capWarning = "Could not check that the target has ${capType}"
+                else if (!capOk[capType]) capBlock = capabilityRefusal(capType)
             }
 
             // Check if target already present
@@ -597,6 +613,7 @@ private Map scanApps(int sourceId, int targetId) {
                 targetAlreadyPresent: targetAlreadyPresent,
                 subscribedAttrs: subscribedAttrs,
                 capWarning: capWarning,
+                capBlock: capBlock,
                 targetWarning: targetWarning,
                 singleSelectWarning: singleSelectWarning,
                 stateWarning: stateWarning,
@@ -733,7 +750,7 @@ Map resultsPage(Map params) {
 private List<Map> selectedPending() {
     Map selections = state.swapSelections ?: [:]
     return ((state.pendingScan ?: []) as List<Map>).findAll { Map entry ->
-        selections[selKey(entry)] != "off"
+        !entry.capBlock && selections[selKey(entry)] != "off"
     }
 }
 
@@ -894,6 +911,10 @@ private Map swapInput(Map entry, int sourceId, int targetId) {
         List<Integer> before = deviceIds((cfg.settings as Map)?.get(inputName))
         if (!before.contains(sourceId)) {
             result.message = "The source is no longer in this input"
+            return result
+        }
+        if (hasInputCapability(targetId, (input.type ?: entry.inputType) as String) == false) {
+            result.message = "Not swapped: ${capabilityRefusal((input.type ?: entry.inputType) as String)}"
             return result
         }
         List<Integer> after = before.collect { it == sourceId ? targetId : it }.unique()
@@ -1152,7 +1173,7 @@ private boolean nativeSwapSection(int sourceId, int targetId, Set<String> subscr
     Map n = nativePrepare("swap", sourceId, targetId)
     if (!n.aid) {
         section("Swap Apps Device") {
-            paragraph "<span class='text-color-secondary'>The hub's Swap Apps Device can't do this swap: ${n.reason}. The per-input swap below can still change the apps' inputs.</span>"
+            paragraph "<span class='text-color-secondary'>The hub's Swap Apps Device can't do this swap: ${n.reason}. The per-input swap below can still change the inputs that accept ${targetDevice.displayName}.</span>"
         }
         return false
     }

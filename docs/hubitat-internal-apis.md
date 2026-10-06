@@ -113,6 +113,7 @@ The Logs page (`/logs`, tabs `?tab=past` etc.) is a Vue chunk (`/ui2/js/vue-hub2
 - **Buttons inside paragraph HTML** (grids of `app-button-link` divs, as built-in apps draw them) may carry a `data-stateAttribute`; the page then adds `stateAttribute=<that value>` to the `/installedapp/btn` POST, and the app uses it to tell apart buttons that share a name (Thermostat Scheduler's heating and cooling cells are both named `Wake.1`, with `tsH` and `tsC`). A button without the attribute sends no `stateAttribute`; adding one anyway made toggle buttons do nothing. After the click, a button with class `submitOnChange` is followed by a form save without Done (next bullet) *(observed 2.5.2.129, from `/ui2/js/appUI.js`)*.
 - **Save-on-change** (an input with `submitOnChange`, or the save that follows such a button): the page POSTs the whole form to `/installedapp/update/json` exactly as for Done but **without `_action_update=Done`**, so `updated()` does not run. Use this form to drive an app's in-page editors. A Done save while a built-in app had an editor open left that app's page throwing on every render. Some inputs appear only after an earlier value is saved (a sunrise offset after choosing *Sunrise*), so set them in a second POST *(observed 2.5.2.129)*.
 - A setting left out of an `update/json` POST is **kept**, not removed.
+- The save does **not** check a device against the input's capability: a Virtual Contact Sensor POSTed into a `capability.switch` input was stored, the app subscribed to `switch` on it, and its page rendered without error. Validate before writing *(verified 2.5.2.129)*.
 - A **disabled** app renders no inputs, but a save to it still applies: the setting changes. Its `updated()` does not run, so its subscriptions stay on the old devices, and enabling the app again does not run `updated()` either; only a Done save does *(verified 2.5.2.129 with a Notifier)*.
 - Not every built-in picks devices with a `capability.*` input. Groups and Scenes (Group-2.1) uses `enum` inputs (`bulbs`, `dimmers`, `switches`) whose options are `[{"<deviceId>": "<label>"}]` *(2.5.2.129)*.
 - **`href` params stick.** After a link with `params` (e.g. `[undo: true]`), the hub passes the same params to every page the app renders next, including plain URL loads of other pages, until another link sets new ones. A page method declared without a parameter then fails with `No signature of method: java.lang.String.call() ... (java.util.HashMap)`. Declare every page as `Map pageName(Map params = null)`, and don't let a param pick an action; use a separate page instead *(verified 2.5.2.129)*.
@@ -138,7 +139,7 @@ The Logs page (`/logs`, tabs `?tab=past` etc.) is a Vue chunk (`/ui2/js/vue-hub2
 
 ## Device discovery
 
-- `GET /device/listJson?capability={capability}` — list devices with a specific capability
+- `GET /device/listJson?capability={capability}` — list devices with a specific capability. Takes the full `capability.switch` form (a bare `switch` returns nothing). A comma-separated list, the form multi-capability inputs use, returns the devices that have any of them *(verified 2.5.2.129)*.
   - e.g. `capability=capability.battery`, `capability=capability.notification`
   - Returns `[{"id":N,"name":"...","label":"...","displayName":"..."},...]`
   - Useful for populating device picker inputs programmatically
