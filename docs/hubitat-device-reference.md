@@ -198,3 +198,16 @@ suggest "tune the reporting interval" or "configure Reportable Change" — there
 writable in the herdsman schema, but it is unconfirmed whether this is the vendor's throttle
 knob (units unknown, adversarial verification declined to confirm). Treat any `coolDownTime`-style
 lever as untested speculation, not a fact.
+
+## Hubitat hubs
+
+Per bravenel (Hubitat staff, [forum, 2024-01-27](https://community.hubitat.com/t/what-is-c8-pro-soc/132597/6)):
+
+| Model | SoC | CPU | RAM | Z-Wave | Zigbee |
+|---|---|---|---|---|---|
+| C-5 | Amlogic A113X | Cortex-A53, 1.416 GHz | 1 GB | 500 series, single US frequency (other regions need a dongle) | 1.2 |
+| C-7 | Amlogic A113X | Cortex-A53, 1.416 GHz | 1 GB | 700 series, all regions via settings | 1.2 |
+| C-8 | Amlogic A113X | Cortex-A53, 1.416 GHz | 1 GB | 800 series, all regions, external antenna | 3.0 |
+| C-8 Pro | Amlogic A113X2 | Cortex-A55, 2.016 GHz | 2 GB | 800 series, all regions, external antenna | 3.0 |
+
+Earlier forum speculation that these hubs used the S905X is wrong. Staff gave no storage type and no performance figures beyond "C-8 Pro boots almost twice as fast as C-8", and said they do not know whether that comes from the CPU, memory or storage. A user in the same thread reports the C-8 Pro Ethernet still links at 100 Mb/s.
