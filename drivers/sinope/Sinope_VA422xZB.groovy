@@ -27,13 +27,14 @@
  * v0.0.6 Signed int16/int8 temperature decoding; configure() no longer runs on every hub restart
  * v0.0.7 Leak detection reacts to both IAS alarm bits; fix Level Control fall-through and abnormal-flow-duration default; dormant Flow Measurement (0x0404) decoding; cleanup
  * v0.0.8 Auto-reconfigure on code push (version check in parse())
+ * v0.0.10 rateFromVolume drops to 0 when the device reports zero flow
  *
  */
 
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.0.9"
+@Field static final String CODE_VERSION = "0.0.10"
 
 
 metadata {
@@ -394,6 +395,9 @@ private void parseAttributeReport(Map descMap) {
                     map.value = getFlowRate(descMap.value)
                     if (map.value > 0) {
                         map.isStateChange = true  // force a state change on flow so subscribed rules re-trigger
+                    } else {
+                        // otherwise rateFromVolume holds its last average until the next volume report (up to 30 min)
+                        sendEvent(name: "rateFromVolume", value: 0, unit: "LPM", descriptionText: "Water flow rate avg reset on zero flow report")
                     }
                     map.unit = "LPM"
                     map.descriptionText = "Water flow rate is ${map.value} ${map.unit}"
