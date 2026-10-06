@@ -3,7 +3,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.5.2"
+@Field static final String CODE_VERSION = "0.5.3"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
 // File Manager file with one line per input each swap or undo changed.
 @Field static final String AUDIT_FILE = "device_swap_audit.txt"
@@ -55,6 +55,7 @@ Map mainPage(Map params = null) {
     state.remove("swapResults")
     state.remove("swapSelections")
     state.remove("showPerInput")
+    state.remove("scanCache")
     // A Swap Apps Device page left open without a check is settled now; an unused one is deleted.
     nativeFinalize()
     nativeDiscard()
@@ -113,9 +114,6 @@ Map mainPage(Map params = null) {
         }
 
         section("Options", hideable: true, hidden: true) {
-            input "skipSelf", "bool",
-                title: "Skip this app's own config",
-                defaultValue: true, required: false
             input "forceLoopback", "bool",
                 title: "Find apps with the slower loopback method instead of the platform API (for testing)",
                 defaultValue: false, required: false
@@ -170,7 +168,12 @@ Map mainPage(Map params = null) {
 // ---- Page 2: Scan & Preview ----
 
 Map previewPage(Map params = null) {
-    dynamicPage(name: "previewPage", title: "Preview") {
+    // The scan runs as a background job so the page can say so instead of rendering blank for
+    // seconds; the page refreshes itself until the job has stored its result.
+    boolean scanning = sourceDevice && targetDevice && sourceDevice.id != targetDevice.id &&
+        !scanReady(sourceDevice.id as int, targetDevice.id as int)
+    if (scanning) startScan(sourceDevice.id as int, targetDevice.id as int)
+    dynamicPage(name: "previewPage", title: "Preview", refreshInterval: scanning ? 2 : -1) {
         section {
             href "mainPage", title: "Back to Device Selection", description: ""
             input "refreshScan", "button", title: "Refresh Scan"
@@ -194,190 +197,32 @@ Map previewPage(Map params = null) {
             if (missingCaps) paragraph "<span class='text-orange-700'>${targetDevice.displayName} lacks ${missingCaps.join(', ')}</span>"
         }
 
-        // Step 1: Find apps using the source device
-        Map src = referenceSource()
-        List<Map> appsUsing = appsUsing(sourceId as Long, src)
-        if (appsUsing == null) {
-            section { paragraph "<span class='text-red-700'>Could not read which apps use ${sourceDevice.displayName}; see the logs.</span>" }
+        if (scanning) {
+            section { paragraph "<b>Scan in progress, please wait…</b> Reading the apps that use ${sourceDevice.displayName}; this page updates by itself." }
             return
         }
-        if (src.loopback) {
-            section { paragraph "<span class='text-orange-700'>Using the slower loopback method (${src.reason}). Mobile dashboards are not shown.</span>" }
+        Map scan = ((state.scanCache as Map)?.result ?: [:]) as Map
+        if (scan.error) {
+            section { paragraph "<span class='text-red-700'>${scan.error}</span>" }
+            return
         }
-
-        // Filter out self if skipSelf is enabled
-        if (skipSelf != false) {
-            appsUsing = appsUsing.findAll { (it.id as int) != (app.id as int) }
+        if (scan.loopbackReason) {
+            section { paragraph "<span class='text-orange-700'>Using the slower loopback method (${scan.loopbackReason}). Mobile dashboards are not shown.</span>" }
         }
-        List<Map> dashboards = appsUsing.findAll { it.dashboard }
-        appsUsing = appsUsing.findAll { !it.dashboard }
-
-        if (!appsUsing && !dashboards) {
+        List<Map> swappable = (scan.swappable ?: []) as List<Map>
+        List<Map> manual = (scan.manual ?: []) as List<Map>
+        List<Map> unmatched = (scan.unmatched ?: []) as List<Map>
+        List<Map> dashboards = (scan.dashboards ?: []) as List<Map>
+        Set<String> allSubscribedAttrs = ((scan.allSubscribedAttrs ?: []) as List<String>) as Set<String>
+        section {
+            paragraph "<span class='text-color-secondary'>Scanned ${scan.appCount} app(s) in ${String.format('%.1f', ((scan.ms ?: 0) as long) / 1000.0)} s. Refresh Scan to re-read them.</span>"
+        }
+        if (!swappable && !manual && !unmatched && !dashboards) {
             section("Results") {
                 paragraph "No apps reference this device. Nothing to swap."
             }
             state.pendingScan = []
             return
-        }
-
-        // Step 2 & 3: For each app, check statusJson and configure/json
-        List<Map> swappable = []
-        List<Map> manual = []
-        List<Map> unmatched = []   // apps that use the source but hold it in no device input we can see
-        Set<String> allSubscribedAttrs = [] as Set<String>
-
-        appsUsing.each { Map appRef ->
-            int appId = appRef.id as int
-            String appLabel = (appRef.label ?: "App ${appId}") as String
-            String appType = (appRef.type ?: "") as String
-
-            // Get statusJson for device input details
-            Map statusData = null
-            try {
-                httpGet("${BASE_URL}/installedapp/statusJson/${appId}") { response ->
-                    if (response.status == 200) {
-                        statusData = response.data as Map
-                    }
-                }
-            } catch (Exception e) {
-                logWarn "Error fetching statusJson for app ${appId}: ${e.message}"
-            }
-            if (!statusData) {
-                unmatched << [appId: appId, appLabel: appLabel, appType: appType, reason: "Could not read the app's settings"]
-                return
-            }
-
-            // Extract subscribed attributes for the source device
-            List eventSubs = (statusData.eventSubscriptions ?: []) as List
-            List<String> subscribedAttrs = eventSubs.findAll { sub ->
-                Map s = sub as Map
-                (s.typeId as int) == sourceId && s.type == "DEVICE"
-            }.collect { sub ->
-                (sub as Map).name as String
-            }.unique().sort()
-            allSubscribedAttrs.addAll(subscribedAttrs)
-
-            // Scan appSettings for device inputs containing source ID
-            List appSettings = (statusData.appSettings ?: []) as List
-            List<Map> matchingInputs = []
-            appSettings.each { setting ->
-                Map s = setting as Map
-                String type = (s.type ?: "") as String
-                if (!type.startsWith("capability.")) return
-                List deviceIds = (s.deviceIdsForDeviceList ?: []) as List
-                boolean hasSource = deviceIds.any { (it as int) == sourceId }
-                if (hasSource) {
-                    matchingInputs << [
-                        name: s.name as String,
-                        type: type,
-                        multiple: s.multiple as boolean,
-                        deviceIds: deviceIds.collect { it as int }
-                    ]
-                }
-            }
-
-            if (!matchingInputs) {
-                unmatched << [appId: appId, appLabel: appLabel, appType: appType,
-                              reason: describeReference(statusData, sourceId, appType)]
-                return
-            }
-
-            // Check app state for source device ID references
-            boolean stateHasDeviceRef = ((statusData.appState ?: []) as List).any { entry ->
-                Map e = entry as Map
-                mentionsId(e.name, sourceId) || mentionsId(e.value, sourceId)
-            }
-
-            // Walk the app's full page graph so we can locate each input's home page.
-            // Wizard-style apps keep their devices on pages that open only with parameters, so a
-            // walk renders several pages and never finds them; skip it for those types.
-            boolean wizard = NO_PAGE_WALK_TYPES.any { String prefix -> appType.startsWith(prefix) }
-            Map<String,Map> pageGraph = wizard ? [:] : discoverPageGraph(appId, matchingInputs.collect { it.name as String } as Set<String>)
-
-            matchingInputs.each { Map inputMatch ->
-                String inputName = inputMatch.name
-                Map loc = locateInputPage(pageGraph, inputName)
-                String homePage = loc.page as String
-                List<String> homeBreadcrumbs = (loc.breadcrumbs ?: []) as List<String>
-                boolean isOnMainPage = (homePage == "mainPage")
-
-                // Capability compatibility check
-                String capWarning = null
-                String capType = inputMatch.type as String
-                if (capType != "capability.*") {
-                    try {
-                        List compatDevices = []
-                        httpGet("${BASE_URL}/device/listJson?capability=${capType}") { response ->
-                            if (response.status == 200) {
-                                compatDevices = response.data as List
-                            }
-                        }
-                        boolean targetCompatible = compatDevices.any { (it.id as int) == targetId }
-                        if (!targetCompatible) {
-                            capWarning = "Target device may not have ${capType}"
-                        }
-                    } catch (Exception e) {
-                        logDebug "Could not check capability compatibility: ${e.message}"
-                    }
-                }
-
-                // Check if target already present
-                boolean targetAlreadyPresent = (inputMatch.deviceIds as List).any { (it as int) == targetId }
-                String targetWarning = targetAlreadyPresent ? "Target already in this input; swap will just remove source" : null
-
-                // Single-select warning
-                String singleSelectWarning = !(inputMatch.multiple as boolean) ? "Single-device input" : null
-
-                // App state warning
-                // Some apps keep per-device settings in their own data, keyed by device id (Mode Switches'
-                // per-mode table). Those stay with the old id and the new device starts blank; others
-                // (Room Lighting) rebuild them on save. Which one an app does can't be read from outside.
-                String stateWarning = stateHasDeviceRef
-                    ? "The app's own data mentions this device's id. If it holds per-device settings, the new device starts without them: check the app after swapping, or use Swap Apps Device"
-                    : null
-
-                // Dashboard tiles keep the old device id when only the dashboard's device list changes.
-                String tileWarning = appType in TILE_DASHBOARD_TYPES
-                    ? "Tiles on this dashboard keep pointing at ${sourceDevice.displayName}; use Swap Apps Device, or re-pick the tiles after swapping"
-                    : null
-
-                // Deeplink straight to the page that holds this input (mainPage if unknown)
-                String pageForLink = homePage ?: "mainPage"
-                String pageDeepLink = "/installedapp/configure/${appId}/${pageForLink}"
-
-                Map entry = [
-                    appId: appId,
-                    appLabel: appLabel,
-                    appType: appType,
-                    inputName: inputName,
-                    inputType: capType,
-                    multiple: inputMatch.multiple,
-                    currentDeviceIds: inputMatch.deviceIds,
-                    targetAlreadyPresent: targetAlreadyPresent,
-                    subscribedAttrs: subscribedAttrs,
-                    capWarning: capWarning,
-                    targetWarning: targetWarning,
-                    singleSelectWarning: singleSelectWarning,
-                    stateWarning: stateWarning,
-                    tileWarning: tileWarning,
-                    homePage: homePage,
-                    homeBreadcrumbs: homeBreadcrumbs,
-                    pageDeepLink: pageDeepLink
-                ]
-
-                if (isOnMainPage) {
-                    swappable << entry
-                } else {
-                    entry.reason = homePage
-                        ? "Input lives on sub-page '${homePage}' — auto-swap not supported; use deeplink"
-                        : (appRef.disabled
-                            ? "The app is disabled, so its page shows no inputs; enable it to swap automatically, or edit it by hand"
-                            : (wizard
-                                ? "This app keeps its devices on wizard pages the scan can't open; edit the device in the app"
-                                : "Input not on any discoverable page (dynamic render path) — open the app to edit"))
-                    manual << entry
-                }
-            }
         }
 
         // When the hub's swap can do it, the per-input swap is folded behind a button: it can leave
@@ -604,6 +449,227 @@ private String appLink(Map e) {
     return "<a href='/installedapp/configure/${e.appId}' target='_blank'>${e.appLabel}</a>"
 }
 
+// Scans the apps the hub lists as using the source. The result is cached per device pair, since
+// every checkbox click re-renders the preview; Refresh Scan, a swap or the main page clears it.
+private Map scanApps(int sourceId, int targetId) {
+    long t0 = now()
+    Map src = referenceSource()
+    List<Map> appsUsing = appsUsing(sourceId as Long, src)
+    if (appsUsing == null) return [error: "Could not read which apps use ${sourceDevice.displayName}; see the logs."]
+
+    // This app's own instances hold both devices in their pickers; leftovers of the type do too.
+    appsUsing = appsUsing.findAll { (it.id as Long) != (app.id as Long) && it.type != app.getName() }
+    List<Map> dashboards = appsUsing.findAll { it.dashboard }
+    appsUsing = appsUsing.findAll { !it.dashboard }
+
+    List<Map> swappable = []
+    List<Map> manual = []
+    List<Map> unmatched = []   // apps the hub lists as using the source with no device input the scan reads
+    Set<String> allSubscribedAttrs = [] as Set<String>
+    Map<String,Boolean> capOk = [:]   // per capability type: does the target have it
+
+    appsUsing.each { Map appRef ->
+        int appId = appRef.id as int
+        String appLabel = (appRef.label ?: "App ${appId}") as String
+        String appType = (appRef.type ?: "") as String
+
+        // Get statusJson for device input details
+        Map statusData = null
+        try {
+            httpGet("${BASE_URL}/installedapp/statusJson/${appId}") { response ->
+                if (response.status == 200) {
+                    statusData = response.data as Map
+                }
+            }
+        } catch (Exception e) {
+            logWarn "Error fetching statusJson for app ${appId}: ${e.message}"
+        }
+        if (!statusData) {
+            unmatched << [appId: appId, appLabel: appLabel, appType: appType, reason: "Could not read the app's settings"]
+            return
+        }
+
+        // Extract subscribed attributes for the source device
+        List eventSubs = (statusData.eventSubscriptions ?: []) as List
+        List<String> subscribedAttrs = eventSubs.findAll { sub ->
+            Map s = sub as Map
+            (s.typeId as int) == sourceId && s.type == "DEVICE"
+        }.collect { sub ->
+            (sub as Map).name as String
+        }.unique().sort()
+        allSubscribedAttrs.addAll(subscribedAttrs)
+
+        // Scan appSettings for device inputs containing source ID
+        List appSettings = (statusData.appSettings ?: []) as List
+        List<Map> matchingInputs = []
+        appSettings.each { setting ->
+            Map s = setting as Map
+            String type = (s.type ?: "") as String
+            if (!type.startsWith("capability.")) return
+            List deviceIds = (s.deviceIdsForDeviceList ?: []) as List
+            boolean hasSource = deviceIds.any { (it as int) == sourceId }
+            if (hasSource) {
+                matchingInputs << [
+                    name: s.name as String,
+                    type: type,
+                    multiple: s.multiple as boolean,
+                    deviceIds: deviceIds.collect { it as int }
+                ]
+            }
+        }
+
+        if (!matchingInputs) {
+            unmatched << [appId: appId, appLabel: appLabel, appType: appType,
+                          reason: describeReference(statusData, sourceId, appType)]
+            return
+        }
+
+        // Check app state for source device ID references
+        boolean stateHasDeviceRef = ((statusData.appState ?: []) as List).any { entry ->
+            Map e = entry as Map
+            mentionsId(e.name, sourceId) || mentionsId(e.value, sourceId)
+        }
+
+        // Walk the app's full page graph so we can locate each input's home page.
+        // Wizard-style apps keep their devices on pages that open only with parameters, so a
+        // walk renders several pages and never finds them; skip it for those types.
+        boolean wizard = NO_PAGE_WALK_TYPES.any { String prefix -> appType.startsWith(prefix) }
+        Map<String,Map> pageGraph = wizard ? [:] : discoverPageGraph(appId, matchingInputs.collect { it.name as String } as Set<String>)
+
+        matchingInputs.each { Map inputMatch ->
+            String inputName = inputMatch.name
+            Map loc = locateInputPage(pageGraph, inputName)
+            String homePage = loc.page as String
+            List<String> homeBreadcrumbs = (loc.breadcrumbs ?: []) as List<String>
+            boolean isOnMainPage = (homePage == "mainPage")
+
+            // Capability compatibility, checked for the rows the per-input swap can write
+            String capWarning = null
+            String capType = inputMatch.type as String
+            if (isOnMainPage && capType != "capability.*") {
+                if (!capOk.containsKey(capType)) {
+                    try {
+                        List compatDevices = []
+                        httpGet("${BASE_URL}/device/listJson?capability=${capType}") { response ->
+                            if (response.status == 200) compatDevices = response.data as List
+                        }
+                        capOk[capType] = compatDevices.any { (it.id as int) == targetId }
+                    } catch (Exception e) {
+                        logDebug "Could not check capability compatibility: ${e.message}"
+                        capOk[capType] = true
+                    }
+                }
+                if (!capOk[capType]) capWarning = "Target device may not have ${capType}"
+            }
+
+            // Check if target already present
+            boolean targetAlreadyPresent = (inputMatch.deviceIds as List).any { (it as int) == targetId }
+            String targetWarning = targetAlreadyPresent ? "Target already in this input; swap will just remove source" : null
+
+            // Single-select warning
+            String singleSelectWarning = !(inputMatch.multiple as boolean) ? "Single-device input" : null
+
+            // App state warning
+            // Some apps keep per-device settings in their own data, keyed by device id (Mode Switches'
+            // per-mode table). Those stay with the old id and the new device starts blank; others
+            // (Room Lighting) rebuild them on save. Which one an app does can't be read from outside.
+            String stateWarning = stateHasDeviceRef
+                ? "The app's own data mentions this device's id. If it holds per-device settings, the new device starts without them: check the app after swapping, or use Swap Apps Device"
+                : null
+
+            // Dashboard tiles keep the old device id when only the dashboard's device list changes.
+            String tileWarning = appType in TILE_DASHBOARD_TYPES
+                ? "Tiles on this dashboard keep pointing at ${sourceDevice.displayName}; use Swap Apps Device, or re-pick the tiles after swapping"
+                : null
+
+            // Deeplink straight to the page that holds this input (mainPage if unknown)
+            String pageForLink = homePage ?: "mainPage"
+            String pageDeepLink = "/installedapp/configure/${appId}/${pageForLink}"
+
+            Map entry = [
+                appId: appId,
+                appLabel: appLabel,
+                appType: appType,
+                inputName: inputName,
+                inputType: capType,
+                multiple: inputMatch.multiple,
+                currentDeviceIds: inputMatch.deviceIds,
+                targetAlreadyPresent: targetAlreadyPresent,
+                subscribedAttrs: subscribedAttrs,
+                capWarning: capWarning,
+                targetWarning: targetWarning,
+                singleSelectWarning: singleSelectWarning,
+                stateWarning: stateWarning,
+                tileWarning: tileWarning,
+                homePage: homePage,
+                homeBreadcrumbs: homeBreadcrumbs,
+                pageDeepLink: pageDeepLink
+            ]
+
+            if (isOnMainPage) {
+                swappable << entry
+            } else {
+                entry.reason = homePage
+                    ? "Input lives on sub-page '${homePage}' — auto-swap not supported; use deeplink"
+                    : (appRef.disabled
+                        ? "The app is disabled, so its page shows no inputs; enable it to swap automatically, or edit it by hand"
+                        : (wizard
+                            ? "This app keeps its devices on wizard pages the scan can't open; edit the device in the app"
+                            : "Input not on any discoverable page (dynamic render path) — open the app to edit"))
+                manual << entry
+            }
+        }
+    }
+
+    logDebug "Scan of ${appsUsing.size() + dashboards.size()} apps took ${now() - t0} ms"
+    return [loopbackReason: src.loopback ? src.reason : null, swappable: swappable, manual: manual, unmatched: unmatched,
+            dashboards: dashboards, allSubscribedAttrs: allSubscribedAttrs as List, appCount: appsUsing.size() + dashboards.size(),
+            ms: now() - t0]
+}
+
+private boolean scanReady(int sourceId, int targetId) {
+    return ((state.scanCache as Map)?.key) == "${sourceId}:${targetId}".toString()
+}
+
+// Starts the background scan for this pair unless one is already running (or ran into a timeout:
+// a job that hasn't finished in two minutes is assumed dead and restarted).
+private void startScan(int sourceId, int targetId) {
+    String key = "${sourceId}:${targetId}"
+    Map running = state.scanRunning as Map
+    if (running?.key == key && now() - ((running.at ?: 0) as long) < 120000) return
+    state.scanRunning = [key: key, at: now()]
+    runInMillis(50, "backgroundScan")
+}
+
+void backgroundScan() {
+    Map running = state.scanRunning as Map
+    if (!running || !sourceDevice || !targetDevice) {
+        state.remove("scanRunning")
+        return
+    }
+    int sourceId = sourceDevice.id as int
+    int targetId = targetDevice.id as int
+    String key = "${sourceId}:${targetId}"
+    if (running.key != key) {
+        state.remove("scanRunning")
+        return
+    }
+    Map result
+    try {
+        result = scanApps(sourceId, targetId)
+    } catch (Exception e) {
+        logError "Scan failed: ${e}"
+        result = [error: "The scan failed (${e.message}); see the logs, then Refresh Scan."]
+    }
+    try {
+        if (!result.error) nativePrepare("swap", sourceId, targetId)
+    } catch (Exception e) {
+        logWarn "Swap Apps Device preparation failed: ${e}"
+    }
+    state.scanCache = [key: key, result: result]
+    state.remove("scanRunning")
+}
+
 // ---- Page 3: Confirm, Execute & Report ----
 // The confirm page's Swap link carries a single-use token to resultsPage, which swaps only the
 // first time it sees that token. A refresh or a stale link shows the stored results instead.
@@ -677,6 +743,7 @@ private void executeSwap() {
     int targetId = targetDevice.id as int
     logCmd "Swapping ${sourceId} → ${targetId} in ${pending.size()} input(s)"
     List<Map> results = pending.collect { Map entry -> swapInput(entry, sourceId, targetId) }
+    state.remove("scanCache")
     // The writes are done. An exception from here on would drop this render's state, so the undo
     // record and audit lines go first and the checks below cannot throw.
     try {
@@ -994,6 +1061,7 @@ void appButtonHandler(String evt) {
         state.showPerInput = true
     } else if (evt == "refreshScan") {
         state.remove("swapSelections")
+        state.remove("scanCache")
     } else if (evt.startsWith("btnSwapSel:")) {
         String idx = evt.substring("btnSwapSel:".length())
         Map selections = state.swapSelections ?: [:]
@@ -1068,6 +1136,7 @@ private void performUndo() {
     if (auditError) undone << [appLabel: "Audit log", inputName: AUDIT_FILE, success: false, message: "Not written: ${auditError}"]
     state.lastUndo = undone
     state.remove("lastSwap")
+    state.remove("scanCache")
 }
 
 // ---- Swap Apps Device ----
@@ -1376,6 +1445,7 @@ private Map nativeFinalize() {
     Map result = [outcome: outcome, cleanup: []]
     String pair = "${bOld.label} (${oldKey}) <-> ${bNew.label} (${newKey})"
     if (outcome == "swapped") {
+        state.remove("scanCache")
         result.message = undo ? "Swapped back: the apps use the original hardware again." :
             "Swapped: every app that used device ${oldKey} now reaches the hardware that was ${bNew.label}."
         if (undo) {
