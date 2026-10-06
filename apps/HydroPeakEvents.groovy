@@ -12,7 +12,7 @@ import groovy.json.JsonOutput
 import java.text.SimpleDateFormat
 
 @Field static final String APP_NAME = "Hydro-Québec Peak Period Manager"
-@Field static final String CODE_VERSION = "0.3.0"
+@Field static final String CODE_VERSION = "0.3.1"
 
 definition(
     name: APP_NAME,
@@ -52,7 +52,9 @@ definition(
 @Field static final int FAILURE_ERROR_THRESHOLD = 3
 @Field static final long OUTAGE_REMINDER_MS = 3_600_000L
 @Field static final String DATE_FORMAT_ISO8601 = "yyyy-MM-dd'T'HH:mm:ssXXX"
-@Field static final String DATE_FORMAT_HUBITAT = "yyyy-MM-dd'T'HH:mm:ss.sssXX"
+@Field static final String DATE_FORMAT_HUBITAT = "yyyy-MM-dd'T'HH:mm:ss.SSSXX"
+// What the Hub Variables page writes for a DateTime with no value; firmware 2.5.2.133+ rejects ""
+@Field static final String DATETIME_UNSET = "9999-99-99T99:99:99.999-9999"
 @Field static final String DATE_FORMAT_DISPLAY = 'yyyy-MM-dd HH:mm:ss'
 
 @Field static final Integer DEFAULT_UPDATE_INTERVAL_HOURS = 1
@@ -319,29 +321,20 @@ private void processPeakPeriods(Map data) {
 
 private void updateHubVariables(Date eventStart, Date eventEnd) {
     try {
-        if (settings.eventStartVariableName) {
-            if (eventStart) {
-                String formattedDate = formatDateForHubitat(eventStart)
-                setGlobalVar(settings.eventStartVariableName, formattedDate)
-                logDebug("Set hub variable '${settings.eventStartVariableName}' to: ${formattedDate}")
-            } else {
-                setGlobalVar(settings.eventStartVariableName, "")
-                logDebug("Cleared hub variable '${settings.eventStartVariableName}'")
-            }
-        }
-
-        if (settings.eventEndVariableName) {
-            if (eventEnd) {
-                String formattedDate = formatDateForHubitat(eventEnd)
-                setGlobalVar(settings.eventEndVariableName, formattedDate)
-                logDebug("Set hub variable '${settings.eventEndVariableName}' to: ${formattedDate}")
-            } else {
-                setGlobalVar(settings.eventEndVariableName, "")
-                logDebug("Cleared hub variable '${settings.eventEndVariableName}'")
-            }
-        }
+        setDateTimeVar(settings.eventStartVariableName as String, eventStart)
+        setDateTimeVar(settings.eventEndVariableName as String, eventEnd)
     } catch (Exception e) {
         logError("Error updating hub variables: ${e.message}")
+    }
+}
+
+private void setDateTimeVar(String name, Date date) {
+    if (!name) return
+    String value = date ? formatDateForHubitat(date) : DATETIME_UNSET
+    if (setGlobalVar(name, value)) {
+        logDebug("Set hub variable '${name}' to: ${value}")
+    } else {
+        logWarn("Hub variable '${name}' rejected value: ${value}")
     }
 }
 
