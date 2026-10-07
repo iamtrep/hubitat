@@ -15,6 +15,7 @@ Modes are those of TESTING.md. Every on-hub test follows its closed-loop contrac
 | D | HTTP API | 2 | `test-tsp-api.sh` | Done |
 | E | Parity with the built-in scheduler | 1, differential | `test-tsp-parity.sh` | Done |
 | F | Configuration `PUT` and importer | 2 and 4 | `test-tsp-api.sh` (PUT section), `test-tsp-import.sh`, `test_core.groovy` (PUT and import cases) | Done |
+| G | HVAC Interlock and hub variables | 1 | `test-tsp-interlock.sh` | Done |
 
 B, C and E take minutes each and belong to `RUN_SLOW_TESTS=1` runs. E checks the flag and, without it, prints `[INFO] ... skipped` and exits 0; the generated B and C run whether the flag is set or not. B and C use the program's test inputs (configuration JSON, test clock), which render only while its debug logging is on, so their first case turns debug logging on; it turns itself off after 30 minutes.
 
@@ -46,6 +47,12 @@ Core cases in `test_core.groovy`: the revision (stable across a JSON round trip,
 
 `test-tsp-import.sh` imports the parity test's reference scheduler: missing or unknown `from`, an app that is not a built-in scheduler, no token; then the program's pause state, thermostat, pause switch and polarity, every live period with its heating setpoint, the Away profile and override, and the eco offset. It sets *while paused* to *turn thermostats off*, saves the program with Done, and checks that the thermostat did not change and that the program never applied its pause (no `paused` log line). A second import without a label takes the built-in's name. It deletes the programs it creates.
 
+## Phase G: HVAC Interlock and hub variables
+
+`test-tsp-interlock.sh` runs a program it creates (`test-tsp-ilk`) on the virtual thermostat `test-tsp-ilk-th`, with a profile whose heating setpoint is the hub variable `zz_tsp_ilk_heat` (created and removed by the test through the hub variables admin API, firmware 2.5.2.133 and later), and pausing on the status device of the HVAC Interlock permit group `test-ilk-tsp`. Device commands go through `/device/runmethod`, the same device command a Rule Machine custom action sends. Cases: the applied setpoint comes from the variable and follows a change of it; `setEco on`/`off` on the program device lowers and restores the setpoint; an open window turns the group's status off, the thermostat off and the program `restricted`, a variable change while restricted writes nothing, and closing the window restores the mode and applies the current setpoint over one changed by hand; the program paused by the group and by its own switch at once, lifted in both orders, stays off until the second lift.
+
+Right after a lift that follows a setpoint changed by hand, `status` read `manual` once in eight runs and `schedule` a moment later; the case reads it after 10 seconds.
+
 ## Known gaps
 
 - The API test does not cover local access turned off.
@@ -59,4 +66,4 @@ Core cases in `test_core.groovy`: the revision (stable across a JSON round trip,
 - An import whose program throws after it was created is checked by hand with an injected fault: the parent gets null, deletes the program and its program device, and answers 400.
 - The reference scheduler leaves thermostats alone while restricted, so no on-hub case imports a scheduler set to turn them off; the import test covers it by switching the imported program to that setting before Done.
 - The parent's import page is checked by hand.
-- Hub variable registration, rename and change events are covered by the core tests (`renameVarRefs`) only; no on-hub case renames or changes a hub variable.
+- Hub variable rename is covered by the core tests (`renameVarRefs`) only; phase G covers a change of a setpoint variable on the hub.

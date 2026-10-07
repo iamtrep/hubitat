@@ -175,6 +175,7 @@ Run from the repository root. On-hub tests target the default hub in `.hubitat.j
 | `RUN_SLOW_TESTS=1 bash apps/ThermostatSchedulerPlus/tests/test-tsp-retry.sh` | Write check, with the Stubborn Thermostat test driver |
 | `bash apps/ThermostatSchedulerPlus/tests/test-tsp-api.sh` | HTTP API, on the program `test-tsp.sh` provisions |
 | `bash apps/ThermostatSchedulerPlus/tests/test-tsp-import.sh` | Importing the built-in scheduler the parity test uses |
+| `bash apps/ThermostatSchedulerPlus/tests/test-tsp-interlock.sh` | Hub variable setpoints, eco by device command, pausing on an HVAC Interlock group |
 | `RUN_SLOW_TESTS=1 bash apps/ThermostatSchedulerPlus/tests/test-tsp-parity.sh` | Side by side with a built-in Thermostat Scheduler |
 
 ## More
