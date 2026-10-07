@@ -5,7 +5,8 @@
 // instance has (endpoint, scheduled handler, async callback, device and
 // location event handlers, child device and child app calls into the parent,
 // button handler, page render) runs work() and records its span on the hub
-// clock. The test pushes a second copy with singleThreaded: true; keep the
+// clock. Child calls also record callerAt, the child's own clock reading as it
+// made the call, so a wait inside parent.childWork() shows directly. The test pushes a second copy with singleThreaded: true; keep the
 // name, CHILD_APP and singleThreaded keys on their own lines so its text
 // substitution keeps working.
 
@@ -81,17 +82,20 @@ void initialize() {
         subscribe(child, "probe", "devEventHandler", [filterEvents: false])
     }
     subscribe(location, "stpProbe${app.id}".toString(), "locEventHandler")
-    if (!getChildApps()) addChildApp("tests", CHILD_APP, "stp-${app.id}-childapp".toString())
+    // Two child apps, so the two calls of a pair never share one child app instance.
+    ["childapp", "childapp2"].each { String s -> if (!childAppFor(s)) addChildApp("tests", CHILD_APP, "stp-${app.id}-${s}".toString()) }
 }
+
+private childAppFor(String s) { getChildApps()?.find { it.label == "stp-${app.id}-${s}".toString() } }
 
 // ── the measured work ────────────────────────────────────────────────
 
 // How work() holds the instance: pauseExecution, a busy loop, or a blocking HTTP call.
-private void work(String tag, String via, int ms) {
+private void work(String tag, String via, int ms, Long callerAt = null) {
     long start = now()
     Map mode = MODE.get(app.id.toString()) ?: [m: "pause"]
     hold(mode, start + ms)
-    SPANS.put("${app.id}:${tag}".toString(), [tag: tag, via: via, start: start, end: now(), mode: mode.m])
+    SPANS.put("${app.id}:${tag}".toString(), [tag: tag, via: via, start: start, end: now(), mode: mode.m, callerAt: callerAt])
 }
 
 private void hold(Map mode, long until) {
@@ -133,7 +137,7 @@ void locEventHandler(evt) { List<String> p = splitValue(evt.value as String); wo
 void appButtonHandler(String btn) { popWork("button") }
 
 // Called by the child device driver and the child app.
-void childWork(String tag, Integer ms, String via) { work(tag, via, ms ?: 0) }
+void childWork(String tag, Integer ms, String via, Long callerAt = null) { work(tag, via, ms ?: 0, callerAt) }
 
 // ── endpoints ────────────────────────────────────────────────────────
 
@@ -186,9 +190,11 @@ Map apiMode() {
 }
 
 Map apiInfo() {
-    def childApp = getChildApps()?.find()
+    def childApp = childAppFor("childapp")
+    def childApp2 = childAppFor("childapp2")
     renderJson([childDevice: getChildDevice("STP-${app.id}-dev".toString())?.id, childDevice2: getChildDevice("STP-${app.id}-dev2".toString())?.id,
-                childApp: childApp?.id, childAppToken: childApp?.ensureToken(), label: app.label])
+                childApp: childApp?.id, childAppToken: childApp?.ensureToken(), childApp2: childApp2?.id, childAppToken2: childApp2?.ensureToken(),
+                label: app.label])
 }
 
 // ── self-enabling OAuth ──────────────────────────────────────────────

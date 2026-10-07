@@ -66,7 +66,7 @@ Map apiSetup() {
 // arriving one gap ms later.
 Map apiRun() {
     Map t = [domain: params.domain, tid: params.tid, tok: params.tok, childDev: params.childDev, childDev2: params.childDev2,
-             childApp: params.childApp, childAppTok: params.childAppTok, dni: params.dni, parseHost: params.parseHost, label: params.label]
+             childApp: params.childApp, childAppTok: params.childAppTok, childApp2: params.childApp2, childAppTok2: params.childAppTok2, dni: params.dni, parseHost: params.parseHost, label: params.label]
     String rep = params.rep as String
     if (ISSUED.keySet().any { String k -> k.startsWith("${rep}:".toString()) }) return renderJson([error: "rep ${rep} already ran".toString()])
     long t0 = now() + ((params.lead ?: "800") as long)
@@ -90,8 +90,8 @@ private void prepare(Map t, String kind, String tag, int ms, long at, String rep
         return
     }
     Map d = t + [kind: kind, tag: tag, ms: ms, rep: rep]
-    // The second call of a pair uses the second source device.
-    if (tag.startsWith("a")) d.childDev = t.childDev2
+    // The second call of a pair uses the second source device and the second child app.
+    if (tag.startsWith("a")) { d.childDev = t.childDev2; d.childApp = t.childApp2; d.childAppTok = t.childAppTok2 }
     if (t.domain == "app" && kind == "updated") d.form = settingsForm(t)
     runInMillis(Math.max(1L, at - now()), "fire", [data: d, overwrite: false])
 }

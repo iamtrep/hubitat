@@ -305,10 +305,11 @@ def trig(path, **p): return call(iids["TRIG"], tokens["TRIG"], path, **p)
 app_targets = {}
 for k in ("MT", "ST"):
     i = target(k, "info")
-    if not all(i.get(x) for x in ("childDevice", "childDevice2", "childApp", "childAppToken")):
-        die(f"{k} target is missing a child device or its child app: {i}")
+    if not all(i.get(x) for x in ("childDevice", "childDevice2", "childApp", "childAppToken", "childApp2", "childAppToken2")):
+        die(f"{k} target is missing a child device or a child app: {i}")
     app_targets[k] = {"domain": "app", "tid": iids[k], "tok": tokens[k], "childDev": i["childDevice"], "childDev2": i["childDevice2"],
-                      "childApp": i["childApp"], "childAppTok": i["childAppToken"], "label": i["label"]}
+                      "childApp": i["childApp"], "childAppTok": i["childAppToken"], "childApp2": i["childApp2"],
+                      "childAppTok2": i["childAppToken2"], "label": i["label"]}
 setup = trig("setup", driverMT=D, driverST=D_ST)   # idempotent: creates the driver devices only if missing
 # parse() is routed by the sender's IP, so the two copies are reached through
 # different ingress: the control on the hub's LAN IP, singleThreaded on loopback.
@@ -384,10 +385,14 @@ def one_rep(t, running, arriving, gap=GAP, ms_r=MS_RUN, ms_a=MS_ARRIVE, idle=0, 
     elif gap > 0 and by_issue[0]["tag"] != first["tag"]: reason = "calls started in the opposite order from their issue"
     elif gap > 0 and second["issued"] < first["start"]: reason = "second call issued before the first started"
     elif second["issued"] > first["end"] - VALID_MARGIN: reason = f"second call issued with {first['end'] - second['issued']} ms left"
+    elif second.get("callerAt") and second["callerAt"] > first["end"] - VALID_MARGIN:
+        reason = f"child made the call with {first['end'] - second['callerAt']} ms left"
     elif any("unarmed" in s["tag"] for s in all_spans): reason = "an entry ran unarmed"
     if reason: outcome, detail = "invalid", reason
     elif release < -10: outcome, detail = "during", f"started {second['start'] - first['start']} ms into the first"
-    elif release <= RELEASE_MAX: outcome, detail = "waited", f"started {release} ms after release"
+    elif release <= RELEASE_MAX:
+        outcome, detail = "waited", f"started {release} ms after release"
+        if second.get("callerAt"): detail += f", child blocked {second['start'] - second['callerAt']} ms in the call"
     else: outcome, detail = "late", f"started {release} ms after release"
     raw({"domain": t["domain"], "st": t["tid"] in ST_TIDS, "running": running, "arriving": arriving, "gap": gap,
          "msR": ms_r, "msA": ms_a, "idle": idle, "rep": rep, "outcome": outcome, "detail": detail,

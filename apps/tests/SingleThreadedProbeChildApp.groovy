@@ -36,7 +36,7 @@ String ensureToken() {
 }
 
 Map apiCallParent() {
-    parent.childWork(params.tag as String, (params.ms ?: "0") as Integer, "childApp")
+    parent.childWork(params.tag as String, (params.ms ?: "0") as Integer, "childApp", now())
     render(contentType: "application/json", data: groovy.json.JsonOutput.toJson([done: now()]))
 }
 

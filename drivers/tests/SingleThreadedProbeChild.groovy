@@ -16,5 +16,5 @@ metadata {
 void installed() { }
 void updated() { }
 
-void callParent(String tag, BigDecimal ms) { parent.childWork(tag, (ms ?: 0) as Integer, "childDev") }
+void callParent(String tag, BigDecimal ms) { parent.childWork(tag, (ms ?: 0) as Integer, "childDev", now()) }
 void emit(String value) { sendEvent(name: "probe", value: value, isStateChange: true) }

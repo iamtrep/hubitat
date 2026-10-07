@@ -35,11 +35,13 @@ void installed() { }
 void updated() { }
 
 // How work() holds the device: pauseExecution, a busy loop, or a blocking HTTP call.
-void work(String tag, BigDecimal ms, String via) {
+void work(String tag, BigDecimal ms, String via) { doWork(tag, ms, via, null) }
+
+private void doWork(String tag, BigDecimal ms, String via, Long callerAt) {
     long start = now()
     Map mode = MODE.get(device.id.toString()) ?: [m: "pause"]
     hold(mode, start + ((ms ?: 0) as long))
-    SPANS.put("${device.id}:${tag}".toString(), [tag: tag, via: via ?: "command", start: start, end: now(), mode: mode.m])
+    SPANS.put("${device.id}:${tag}".toString(), [tag: tag, via: via ?: "command", start: start, end: now(), mode: mode.m, callerAt: callerAt])
 }
 
 private void hold(Map mode, long until) {
@@ -70,7 +72,7 @@ void parse(String description) {
 }
 
 // Called by the child device.
-void childWork(String tag, Integer ms, String via) { work(tag, ms as BigDecimal, via) }
+void childWork(String tag, Integer ms, String via, Long callerAt = null) { doWork(tag, ms as BigDecimal, via, callerAt) }
 
 void resetSpans() {
     String prefix = "${device.id}:".toString()
