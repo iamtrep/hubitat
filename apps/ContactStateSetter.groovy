@@ -6,7 +6,8 @@
 
  Forces selected contact sensors to "open" or "closed" by injecting a contact
  event onto the device via DeviceWrapper.sendEvent — no radio traffic, no
- physical actuation. Useful for driving automations under test.
+ physical actuation. Useful for driving automations under test. The selection is
+ cleared on Done, so each visit starts with no sensor selected.
 
  sendEvent here writes directly to the device's event stream, so any app or
  rule subscribed to the sensor's "contact" attribute fires exactly as it would
@@ -16,7 +17,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Contact State Setter"
-@Field static final String CODE_VERSION = "1.0.1"
+@Field static final String CODE_VERSION = "1.0.2"
 
 definition(
     name: APP_NAME,
@@ -41,7 +42,7 @@ Map mainPage() {
     dynamicPage(name: "mainPage", title: "${APP_NAME} v${CODE_VERSION}", install: true, uninstall: true) {
         section("Contact sensors") {
             input name: "contacts", type: "capability.contactSensor", title: "Sensors to control",
-                  multiple: true, required: true, submitOnChange: true
+                  multiple: true, required: false, submitOnChange: true
         }
         section("Set state") {
             input name: "setOpen", type: "button", title: "Set Open"
@@ -72,6 +73,7 @@ void installed() {
 }
 
 void updated() {
+    app.removeSetting("contacts")
     initialize()
     if (settings.debugLogging || settings.traceEnable) runIn(1800, "logsOff")
 }
