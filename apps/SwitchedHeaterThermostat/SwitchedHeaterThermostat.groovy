@@ -243,7 +243,11 @@ void appButtonHandler(String btn) {
 
 Map faults() { (state.faults ?: [sensor: false, load: false, limit: false, rise: false]) as Map }
 
-Long minuteMs() { (numOrNull(testSecondsPerMinute) ?: 60L) * 1000L }
+// The test hook applies only while debug logging is on, so a forgotten value can't shorten real timers.
+Long minuteMs() {
+    Long t = debugEnable ? numOrNull(testSecondsPerMinute) : null
+    return (t ?: 60L) * 1000L
+}
 
 Long minutesMs(Object setting) {
     Long n = numOrNull(setting)
