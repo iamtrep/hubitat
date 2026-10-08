@@ -284,9 +284,16 @@ private void setFault(String kind, boolean raised, String detail, String extra =
     f[kind] = raised
     state.faults = f
     String msg = faultMessage(app.getLabel(), kind, raised, detail, extra)
-    if (raised) logWarn(msg) else logInfo(msg)
-    sendAlert(msg)
+    if (raised) logWarn(unlabeled(msg)) else logInfo(unlabeled(msg))
+    // Switches first: a slow notifier (speech) must not delay what automations act on.
     applyFaultSwitches()
+    sendAlert(msg)
+}
+
+// The log helpers add the app label, which notification texts already start with.
+private String unlabeled(String msg) {
+    String p = "${app.getLabel()}: ".toString()
+    return msg.startsWith(p) ? msg.substring(p.length()) : msg
 }
 
 private void sendAlert(String msg) {
@@ -385,7 +392,7 @@ private boolean noteFrost(BigDecimal temp) {
     state.frost = on
     if (on == was) return false
     String msg = faultMessage(app.getLabel(), "frost", on, tempText(temp, location.temperatureScale as String), "")
-    if (on) logWarn(msg) else logInfo(msg)
+    if (on) logWarn(unlabeled(msg)) else logInfo(unlabeled(msg))
     sendAlert(msg)
     return true
 }
@@ -756,7 +763,8 @@ String verifyOutcome(String wanted, String current, Integer attempts, Integer ma
 Map cyclePhase(Long now, Long start, Long periodMs, Integer dutyPct) {
     Long s = (start != null) ? start : now
     Long onMs = (periodMs * dutyPct).intdiv(100) as Long
-    Long pos = (now - s) % periodMs
+    // Kept non-negative if the clock steps back before the cycle start.
+    Long pos = ((now - s) % periodMs + periodMs) % periodMs
     boolean on = pos < onMs
     return [on: on, next: now + (on ? onMs - pos : periodMs - pos)]
 }

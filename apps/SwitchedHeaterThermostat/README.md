@@ -95,7 +95,7 @@ Frost protection needs a live reading, so for rooms where frost matters pick on 
 
 ## Quiet sensors
 
-A sensor is quiet when its last activity (any event, including battery and check-ins) is older than its quiet limit. Until the app has seen 5 gaps between a sensor's activity, the limit is **Count a sensor as quiet after** (10 to 1440 minutes, default 120). After that, the limit is twice the second-longest of the last 48 gaps, never under 30 minutes. Using the second-longest keeps a single outage from teaching the app that outages are normal.
+A sensor is quiet when its last activity (any event, including battery and check-ins) is older than its quiet limit. Until the app has seen 5 gaps between a sensor's activity, the limit is **Count a sensor as quiet after** (10 to 1440 minutes, default 120). After that, the limit is twice the second-longest of the last 48 gaps, never under 30 minutes, so a setting under 30 minutes applies only while the app learns. Using the second-longest keeps a single outage from teaching the app that outages are normal.
 
 A sensor that comes back with an unchanged value sends no event, so the app sees it at the next 5-minute check. One quiet sensor among several is left out of the temperature and notifies once (turn off **Also notify when some sensors go quiet** to skip it). It is not a fault.
 
