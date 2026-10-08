@@ -204,6 +204,7 @@ void initialize() {
     List<String> noRetry = heatersWithoutRetry()
     if (noRetry) logWarn retryAdviceText(noRetry)
     subscribe(location, "systemStart", "startHandler")
+    subscribe(sensors, "temperature", "sensorHandler")
     schedule("${new Random().nextInt(60)} */5 * ? * *", "checkAll")
     checkAll()
 }
@@ -224,6 +225,8 @@ void startHandler(evt) {
 void checkAll() {
     checkVersion()
     logSched "check"
+    sampleActivity()
+    updateTemperature()
     applyFaultSwitches()
 }
 
@@ -287,6 +290,84 @@ private void applyFaultSwitches() {
             if (want == "on") d.on() else d.off()
         }
     }
+}
+
+// ── Temperature ───────────────────────────────────────────────────────
+
+void sensorHandler(evt) {
+    checkVersion()
+    logEvt "${evt.device.displayName} temperature ${evt.value}"
+    noteActivity(evt.device.id.toString(), now())
+    updateTemperature()
+}
+
+private void noteActivity(String id, Long at) {
+    Map all = (state.sensors ?: [:]) as Map
+    all[id] = recordActivity(all[id] as Map, at, KEEP_GAPS)
+    state.sensors = all
+}
+
+private void sampleActivity() {
+    (sensors ?: []).each { DeviceWrapper d ->
+        Date la = d.getLastActivity()
+        if (la != null) noteActivity(d.id.toString(), la.time)
+    }
+}
+
+private Long limitFor(String id) {
+    Map s = ((state.sensors ?: [:]) as Map)[id] as Map
+    return quietLimitMs((s?.gaps ?: []) as List, ((quietAfter ?: 120) as Long) * minuteMs(), QUIET_FLOOR_MIN * minuteMs(), MIN_GAPS)
+}
+
+void updateTemperature() {
+    Long t = now()
+    Map all = (state.sensors ?: [:]) as Map
+    List<DeviceWrapper> live = []
+    List<String> quietNames = []
+    (sensors ?: []).each { DeviceWrapper d ->
+        String id = d.id.toString()
+        if (isQuiet(all[id] as Map, t, limitFor(id))) quietNames << (d.displayName as String)
+        else live << d
+    }
+    BigDecimal temp = aggregateTemp(live.collect { it.currentValue("temperature") }, (aggregate ?: "average") as String)
+    state.temp = temp
+    noteQuiet(quietNames, temp == null)
+    boolean frostChanged = noteFrost(temp)
+    if (temp == null) return
+    logDebug "temperature ${temp} from ${live.size()} sensors"
+    thermostatDevice()?.setTemperature(temp)
+}
+
+private void noteQuiet(List<String> quietNames, boolean noTemp) {
+    Map d = listDiff((state.quiet ?: []) as List, quietNames)
+    state.quiet = quietNames.sort()
+    List<String> names = (sensors ?: []).collect { it.displayName as String }
+    if (noTemp) {
+        if (!faults().sensor) state.cycleStart = now()
+        setFault("sensor", true, namesText(names), policyText((onSensorFault ?: "off") as String, cycleDutyPercent ?: 30, cyclePeriodMinutes ?: 30))
+        return
+    }
+    if (faults().sensor) {
+        state.cycleStart = null
+        unschedule("cycleTick")
+        setFault("sensor", false, namesText(names - quietNames))
+        return
+    }
+    if (notifyPartial == false) return
+    if (d.added) sendAlert(faultMessage(app.getLabel(), "quiet", true, namesText(d.added as List), ""))
+    if (d.removed) sendAlert(faultMessage(app.getLabel(), "quiet", false, namesText(d.removed as List), ""))
+}
+
+// Frost protection needs a live reading: with no temperature it is off and the sensor-fault choice applies.
+private boolean noteFrost(BigDecimal temp) {
+    boolean was = state.frost == true
+    boolean on = frostStep(was, temp, decOrNull(frostTemp))
+    state.frost = on
+    if (on == was) return false
+    String msg = faultMessage(app.getLabel(), "frost", on, tempText(temp, location.temperatureScale as String), "")
+    if (on) logWarn(msg) else logInfo(msg)
+    sendAlert(msg)
+    return true
 }
 
 // ── Core (pure) ───────────────────────────────────────────────────────
