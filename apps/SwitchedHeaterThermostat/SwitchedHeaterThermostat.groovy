@@ -205,7 +205,11 @@ void initialize() {
     if (noRetry) logWarn retryAdviceText(noRetry)
     subscribe(location, "systemStart", "startHandler")
     subscribe(sensors, "temperature", "sensorHandler")
+    subscribe(t, "thermostatOperatingState", "opStateHandler")
+    subscribe(t, "thermostatMode", "opStateHandler")
+    subscribe(heaters, "switch", "heaterHandler")
     schedule("${new Random().nextInt(60)} */5 * ? * *", "checkAll")
+    scheduleKeepAlive()
     checkAll()
 }
 
@@ -227,6 +231,7 @@ void checkAll() {
     logSched "check"
     sampleActivity()
     updateTemperature()
+    applyLoads()
     applyFaultSwitches()
 }
 
@@ -333,9 +338,10 @@ void updateTemperature() {
     state.temp = temp
     noteQuiet(quietNames, temp == null)
     boolean frostChanged = noteFrost(temp)
-    if (temp == null) return
+    if (temp == null) { applyLoads(); return }
     logDebug "temperature ${temp} from ${live.size()} sensors"
     thermostatDevice()?.setTemperature(temp)
+    if (frostChanged) applyLoads()
 }
 
 private void noteQuiet(List<String> quietNames, boolean noTemp) {
@@ -369,6 +375,162 @@ private boolean noteFrost(BigDecimal temp) {
     sendAlert(msg)
     return true
 }
+
+// ── Heaters ───────────────────────────────────────────────────────────
+
+void opStateHandler(evt) {
+    checkVersion()
+    logEvt "thermostat ${evt.name} ${evt.value}"
+    applyLoads()
+}
+
+private Integer verifySeconds() { ((verifyTimeout ?: 30) as Integer) }
+
+private void sendHeater(DeviceWrapper d, String want, Integer attempt) {
+    logCmd "${d.displayName} ${want} (command ${attempt})"
+    if (want == "on") d.on() else d.off()
+    runIn(verifySeconds(), "verifyHeaters")
+}
+
+// Re-applies the wanted state to every heater; also the 5-minute retry while a load fault is raised.
+void applyLoads() {
+    DeviceWrapper th = thermostatDevice()
+    if (th == null) return
+    Long t = now()
+    boolean sf = faults().sensor == true
+    String policy = (onSensorFault ?: "off") as String
+    Long restUntil = state.restUntil as Long
+    boolean resting = restUntil != null && t < restUntil
+    if (resting) runIn(secondsUntil(restUntil), "restEnd")
+    else state.restUntil = null
+    Map cyc = null
+    if (sf && policy == "cycle") {
+        cyc = cyclePhase(t, state.cycleStart as Long, ((cyclePeriodMinutes ?: 30) as Long) * minuteMs(), (cycleDutyPercent ?: 30) as Integer)
+        runIn(secondsUntil(cyc.next as Long), "cycleTick")
+    }
+    Map d = decideLoad([frost: state.frost == true && !sf, mode: th.currentValue("thermostatMode"), opState: th.currentValue("thermostatOperatingState"),
+                        sensorFault: sf, policy: policy, cycleOn: cyc?.on, resting: resting])
+    String before = state.wanted as String
+    Map h = holdForMinTimes(d.want as String, before, d.why as String, state.lastChange as Long, t, minutesMs(minOnMinutes), minutesMs(minOffMinutes))
+    if (h.until != null) runIn(secondsUntil(h.until as Long), "holdEnd")
+    String want = h.want as String
+    if (want != before) state.lastChange = t
+    state.wanted = want
+    trackOnTime(want, before, resting, t)
+    if (sf) {
+        String op = want == "on" ? "heating" : "idle"
+        if (th.currentValue("thermostatOperatingState") != op) th.setThermostatOperatingState(op)
+    }
+    Map att = (state.attempts ?: [:]) as Map
+    Map un = (state.unresponsive ?: [:]) as Map
+    (heaters ?: []).each { DeviceWrapper dev ->
+        String id = dev.id.toString()
+        if (dev.currentValue("switch") == want) { att.remove(id); un.remove(id) }
+        else if (!att.containsKey(id)) { att[id] = 1; sendHeater(dev, want, 1) }
+    }
+    state.attempts = att
+    state.unresponsive = un
+    updateLoadFault()
+}
+
+private void trackOnTime(String want, String before, boolean resting, Long t) {
+    if (want == "on") {
+        if (before != "on" || state.onSince == null) {
+            state.onSince = t
+        }
+        Long maxMs = minutesMs(maxHeatMinutes)
+        if (maxMs != null) runIn(secondsUntil((state.onSince as Long) + maxMs), "limitTick")
+        return
+    }
+    state.onSince = null
+    unschedule("limitTick")
+    if (!resting && faults().limit) setFault("limit", false, "")
+}
+
+void limitTick() {
+    checkVersion()
+    Long t = now()
+    if (state.frost || state.wanted != "on" || !overLimit(state.onSince as Long, t, minutesMs(maxHeatMinutes))) return
+    Long restMin = (restMinutes ?: 15) as Long
+    state.restUntil = t + restMin * minuteMs()
+    setFault("limit", true, numOrNull(maxHeatMinutes).toString(), restMin.toString())
+    applyLoads()
+}
+
+void restEnd() { checkVersion(); applyLoads() }
+
+void cycleTick() { checkVersion(); applyLoads() }
+
+void holdEnd() { checkVersion(); applyLoads() }
+
+private void scheduleKeepAlive() {
+    Long ms = minutesMs(keepAliveMinutes)
+    if (ms != null) runIn(secondsUntil(now() + ms), "keepAliveTick")
+}
+
+// Re-sends the wanted state to heaters that already report it, for switches that lose state silently.
+void keepAliveTick() {
+    checkVersion()
+    String want = state.wanted as String
+    Map att = (state.attempts ?: [:]) as Map
+    if (want != null) {
+        (heaters ?: []).each { DeviceWrapper dev ->
+            if (att.containsKey(dev.id.toString())) return
+            logDebug "keep-alive ${dev.displayName} ${want}"
+            if (want == "on") dev.on() else dev.off()
+        }
+    }
+    scheduleKeepAlive()
+}
+
+void heaterHandler(evt) {
+    checkVersion()
+    String want = state.wanted as String
+    logEvt "${evt.device.displayName} ${evt.value}"
+    if (want == null) return
+    String id = evt.device.id.toString()
+    Map att = (state.attempts ?: [:]) as Map
+    Map un = (state.unresponsive ?: [:]) as Map
+    if (evt.value == want) {
+        att.remove(id)
+        un.remove(id)
+    } else if (!att.containsKey(id)) {
+        logWarn "${evt.device.displayName} turned ${evt.value} without the app; setting it back to ${want}"
+        att[id] = 1
+        sendHeater(evt.device, want, 1)
+    }
+    state.attempts = att
+    state.unresponsive = un
+    updateLoadFault()
+}
+
+void verifyHeaters() {
+    checkVersion()
+    String want = state.wanted as String
+    Map att = (state.attempts ?: [:]) as Map
+    Map un = (state.unresponsive ?: [:]) as Map
+    (heaters ?: []).each { DeviceWrapper dev ->
+        String id = dev.id.toString()
+        if (!att.containsKey(id)) return
+        String cur = dev.currentValue("switch") as String
+        Integer n = att[id] as Integer
+        String out = verifyOutcome(want, cur, n, MAX_ATTEMPTS)
+        if (out == "ok") { att.remove(id); un.remove(id) }
+        else if (out == "retry") { att[id] = n + 1; sendHeater(dev, want, n + 1) }
+        else { att.remove(id); un[id] = "${dev.displayName} (commanded ${want}, reads ${cur})".toString() }
+    }
+    state.attempts = att
+    state.unresponsive = un
+    updateLoadFault()
+}
+
+private void updateLoadFault() {
+    List<String> details = []
+    for (Object v : ((state.unresponsive ?: [:]) as Map).values()) details << (v as String)
+    for (Object v : ((state.powerFault ?: [:]) as Map).values()) details << (v as String)
+    setFault("load", !details.isEmpty(), namesText(details))
+}
+
 
 // ── Core (pure) ───────────────────────────────────────────────────────
 // No settings, state, devices, logging or @Field here: tests/test_core.groovy runs this block off-hub.
