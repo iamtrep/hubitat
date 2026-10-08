@@ -100,6 +100,10 @@ check('tempText', core.tempText(4.85, 'C'), '4.9 °C')
 check('tempText no reading', core.tempText(null, 'C'), 'no temperature')
 
 // ── verification ──
+check('pending same want', core.pendingFor([want: 'on', n: 1, at: 1000L], 'on', 5000L, 60000L), true)
+check('pending other want', core.pendingFor([want: 'on', n: 1, at: 1000L], 'off', 5000L, 60000L), false)
+check('pending expired', core.pendingFor([want: 'on', n: 1, at: 1000L], 'on', 61000L, 60000L), false)
+check('nothing pending', core.pendingFor(null, 'on', 5000L, 60000L), false)
 check('verify ok', core.verifyOutcome('on', 'on', 1, 2), 'ok')
 check('verify retry', core.verifyOutcome('on', 'off', 1, 2), 'retry')
 check('verify fault', core.verifyOutcome('on', 'off', 2, 2), 'fault')

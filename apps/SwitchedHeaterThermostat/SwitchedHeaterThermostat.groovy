@@ -191,10 +191,10 @@ void initialize() {
     checkVersion(false)
     if (debugEnable) runIn(1800, "logsOff")
     String err = configError()
-    if (err) { logError err; return }
+    if (err) { logError err; heatersOff(); return }
     ensureThermostat()
     DeviceWrapper t = thermostatDevice()
-    if (t == null) { logError "no thermostat"; return }
+    if (t == null) { logError "no thermostat"; heatersOff(); return }
     t.setSupportedThermostatModes(JsonOutput.toJson(["off", "heat"]))
     if (state.faults == null) state.faults = [sensor: false, load: false, limit: false, rise: false]
     if (state.quiet == null) state.quiet = []
@@ -336,12 +336,13 @@ void updateTemperature() {
     }
     BigDecimal temp = aggregateTemp(live.collect { it.currentValue("temperature") }, (aggregate ?: "average") as String)
     state.temp = temp
+    boolean sensorWas = faults().sensor == true
     noteQuiet(quietNames, temp == null)
     boolean frostChanged = noteFrost(temp)
     if (temp == null) { applyLoads(); return }
     logDebug "temperature ${temp} from ${live.size()} sensors"
     thermostatDevice()?.setTemperature(temp)
-    if (frostChanged) applyLoads()
+    if (frostChanged || sensorWas) applyLoads()
 }
 
 private void noteQuiet(List<String> quietNames, boolean noTemp) {
@@ -386,6 +387,14 @@ void opStateHandler(evt) {
 
 private Integer verifySeconds() { ((verifyTimeout ?: 30) as Integer) }
 
+// A pending command expires after two verification windows, so a lost check can't leave a heater unmanaged.
+private Long pendingWindowMs() { 2000L * verifySeconds() }
+
+// Used when the configuration is unusable: the app can't control the heaters, so it leaves them off.
+private void heatersOff() {
+    (heaters ?: []).each { DeviceWrapper dev -> if (dev.currentValue("switch") != "off") dev.off() }
+}
+
 private void sendHeater(DeviceWrapper d, String want, Integer attempt) {
     logCmd "${d.displayName} ${want} (command ${attempt})"
     if (want == "on") d.on() else d.off()
@@ -403,6 +412,7 @@ void applyLoads() {
     boolean resting = restUntil != null && t < restUntil
     if (resting) runIn(secondsUntil(restUntil), "restEnd")
     else state.restUntil = null
+    if (sf && state.cycleStart == null) state.cycleStart = t
     Map cyc = null
     if (sf && policy == "cycle") {
         cyc = cyclePhase(t, state.cycleStart as Long, ((cyclePeriodMinutes ?: 30) as Long) * minuteMs(), (cycleDutyPercent ?: 30) as Integer)
@@ -416,7 +426,7 @@ void applyLoads() {
     String want = h.want as String
     if (want != before) state.lastChange = t
     state.wanted = want
-    trackOnTime(want, before, resting, t)
+    trackOnTime(want, before, d.why as String, t)
     if (sf) {
         String op = want == "on" ? "heating" : "idle"
         if (th.currentValue("thermostatOperatingState") != op) th.setThermostatOperatingState(op)
@@ -426,31 +436,40 @@ void applyLoads() {
     (heaters ?: []).each { DeviceWrapper dev ->
         String id = dev.id.toString()
         if (dev.currentValue("switch") == want) { att.remove(id); un.remove(id) }
-        else if (!att.containsKey(id)) { att[id] = 1; sendHeater(dev, want, 1) }
+        else if (!pendingFor(att[id] as Map, want, t, pendingWindowMs())) { att[id] = [want: want, n: 1, at: t]; sendHeater(dev, want, 1) }
     }
     state.attempts = att
     state.unresponsive = un
     updateLoadFault()
 }
 
-private void trackOnTime(String want, String before, boolean resting, Long t) {
+// onSince starts every on run (for the warming check); limitSince counts only runs that are not frost
+// protection, so frost never counts toward the heating time limit.
+private void trackOnTime(String want, String before, String why, Long t) {
     if (want == "on") {
         if (before != "on" || state.onSince == null) {
             state.onSince = t
         }
-        Long maxMs = minutesMs(maxHeatMinutes)
-        if (maxMs != null) runIn(secondsUntil((state.onSince as Long) + maxMs), "limitTick")
+        if (why == "frost") {
+            state.limitSince = null
+            unschedule("limitTick")
+        } else {
+            if (state.limitSince == null) state.limitSince = t
+            Long maxMs = minutesMs(maxHeatMinutes)
+            if (maxMs != null) runIn(secondsUntil((state.limitSince as Long) + maxMs), "limitTick")
+        }
         return
     }
     state.onSince = null
+    state.limitSince = null
     unschedule("limitTick")
-    if (!resting && faults().limit) setFault("limit", false, "")
+    if (!(state.restUntil != null && t < (state.restUntil as Long)) && faults().limit) setFault("limit", false, "")
 }
 
 void limitTick() {
     checkVersion()
     Long t = now()
-    if (state.frost || state.wanted != "on" || !overLimit(state.onSince as Long, t, minutesMs(maxHeatMinutes))) return
+    if (state.frost || state.wanted != "on" || !overLimit(state.limitSince as Long, t, minutesMs(maxHeatMinutes))) return
     Long restMin = (restMinutes ?: 15) as Long
     state.restUntil = t + restMin * minuteMs()
     setFault("limit", true, numOrNull(maxHeatMinutes).toString(), restMin.toString())
@@ -471,6 +490,7 @@ private void scheduleKeepAlive() {
 // Re-sends the wanted state to heaters that already report it, for switches that lose state silently.
 void keepAliveTick() {
     checkVersion()
+    scheduleKeepAlive()
     String want = state.wanted as String
     Map att = (state.attempts ?: [:]) as Map
     if (want != null) {
@@ -480,7 +500,6 @@ void keepAliveTick() {
             if (want == "on") dev.on() else dev.off()
         }
     }
-    scheduleKeepAlive()
 }
 
 void heaterHandler(evt) {
@@ -494,9 +513,9 @@ void heaterHandler(evt) {
     if (evt.value == want) {
         att.remove(id)
         un.remove(id)
-    } else if (!att.containsKey(id)) {
+    } else if (!pendingFor(att[id] as Map, want, now(), pendingWindowMs())) {
         logWarn "${evt.device.displayName} turned ${evt.value} without the app; setting it back to ${want}"
-        att[id] = 1
+        att[id] = [want: want, n: 1, at: now()]
         sendHeater(evt.device, want, 1)
     }
     state.attempts = att
@@ -504,19 +523,21 @@ void heaterHandler(evt) {
     updateLoadFault()
 }
 
+// Checks each pending command against the state it asked for; a newer wanted state replaces the entry in applyLoads.
 void verifyHeaters() {
     checkVersion()
-    String want = state.wanted as String
     Map att = (state.attempts ?: [:]) as Map
     Map un = (state.unresponsive ?: [:]) as Map
     (heaters ?: []).each { DeviceWrapper dev ->
         String id = dev.id.toString()
-        if (!att.containsKey(id)) return
+        Map a = att[id] as Map
+        if (a == null) return
+        String want = a.want as String
         String cur = dev.currentValue("switch") as String
-        Integer n = att[id] as Integer
+        Integer n = a.n as Integer
         String out = verifyOutcome(want, cur, n, MAX_ATTEMPTS)
         if (out == "ok") { att.remove(id); un.remove(id) }
-        else if (out == "retry") { att[id] = n + 1; sendHeater(dev, want, n + 1) }
+        else if (out == "retry") { att[id] = [want: want, n: n + 1, at: now()]; sendHeater(dev, want, n + 1) }
         else { att.remove(id); un[id] = "${dev.displayName} (commanded ${want}, reads ${cur})".toString() }
     }
     state.attempts = att
@@ -530,7 +551,6 @@ private void updateLoadFault() {
     for (Object v : ((state.powerFault ?: [:]) as Map).values()) details << (v as String)
     setFault("load", !details.isEmpty(), namesText(details))
 }
-
 
 // ── Core (pure) ───────────────────────────────────────────────────────
 // No settings, state, devices, logging or @Field here: tests/test_core.groovy runs this block off-hub.
@@ -618,6 +638,12 @@ boolean frostStep(boolean active, Object temp, Object frostTemp) {
     if (temp == null || frostTemp == null) return false
     BigDecimal t = new BigDecimal(temp.toString()), f = new BigDecimal(frostTemp.toString())
     return active ? t < f + 1 : t < f
+}
+
+// A command for `want` is still pending (sent, unconfirmed, not expired); entry: [want, n, at].
+boolean pendingFor(Map entry, String want, Long now, Long windowMs) {
+    if (entry == null || entry.want != want || entry.at == null) return false
+    return now - (entry.at as Long) < windowMs
 }
 
 String verifyOutcome(String wanted, String current, Integer attempts, Integer maxAttempts) {
