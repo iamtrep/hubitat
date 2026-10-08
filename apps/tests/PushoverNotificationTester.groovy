@@ -21,6 +21,8 @@
  *                                          cases cover ack polling, callback URL and cancel; edge cases;
  *                                          driver-preference cases; acknowledgement run with a callback to the
  *                                          tester's own endpoint (OAuth enabled by the app itself)
+ *     v1.2.0   2026-10-07  @hubitrep       Optional Pushover login: the acknowledgement run acknowledges its
+ *                                          own message through the Open Client API
  *
  *  Description:
  *      A button-driven test app that exercises every feature of the Pushover Notifications driver.
@@ -35,8 +37,10 @@
  *
  *      The acknowledgement run sends one emergency message whose callback URL is this app's own
  *      cloud endpoint, then expects emergencyAck=acknowledged from the driver's polling and the
- *      callback from Pushover. Someone acknowledges the message in the Pushover app, or a script
- *      does it through Pushover's Open Client API; the app holds no Pushover login.
+ *      callback from Pushover. Someone acknowledges the message in the Pushover app, or, after a
+ *      Pushover login on the main page, the app acknowledges it through Pushover's Open Client API.
+ *      The login keeps only the Open Client session secret, encrypted with the hub's key; the
+ *      password setting is cleared.
  */
 
 import groovy.transform.Field
@@ -45,6 +49,7 @@ import groovy.transform.Field
 // CONSTANTS
 // ========================================
 @Field static final String TEST_URL = "https://hubitat.com"
+@Field static final String PUSHOVER_API = "https://api.pushover.net"
 @Field static final String TEST_URL_TITLE = "Hubitat Website"
 @Field static final String TEST_IMAGE_URL = "https://placehold.co/100x100.png"
 @Field static final String TEST_SOUND = "cosmic"
@@ -119,7 +124,8 @@ Map mainPage() {
                     }
                     input "btnRunAll", "button", title: "Run All Tests (Skip Emergency)"
                     input "btnRunAllWithEmergency", "button", title: "Run All Tests (Include Emergency)"
-                    input "btnRunAckTest", "button", title: "Run Acknowledgement Test (acknowledge the message within ${TEST_MANUAL_ACK_TIMEOUT_SECONDS / 60} min)"
+                    String ackHow = openClientSecret() ? "acknowledged by this app" : "acknowledge the message within ${TEST_MANUAL_ACK_TIMEOUT_SECONDS / 60} min"
+                    input "btnRunAckTest", "button", title: "Run Acknowledgement Test (${ackHow})"
                 }
                 if (state.testResults) {
                     int passed = state.testResults.count { it.status == "pass" }
@@ -128,6 +134,19 @@ Map mainPage() {
                     paragraph "<b>Last Run:</b> ${passed} passed, ${failed} failed, ${skipped} skipped"
                     href "testResults", title: "View Detailed Results", description: "See pass/fail for each test"
                 }
+            }
+            section("Pushover Login (automatic acknowledgement)", hideable: true, hidden: openClientSecret() != null) {
+                if (openClientSecret()) {
+                    paragraph "Logged in as <b>${state.openClientEmail}</b>. The acknowledgement run acknowledges its own message."
+                    input "btnPushoverLogout", "button", title: "Log Out"
+                } else {
+                    paragraph "Log in to let the acknowledgement run acknowledge its message through Pushover's Open Client API. Only the session secret is kept; the password is cleared after the login."
+                    input "poEmail", "text", title: "Pushover email", required: false, submitOnChange: true
+                    input "poPassword", "password", title: "Pushover password", required: false, submitOnChange: true
+                    input "poTwofa", "text", title: "Two-factor code (if enabled on the account)", required: false, submitOnChange: true
+                    input "btnPushoverLogin", "button", title: "Log In"
+                }
+                if (state.loginError) paragraph "<b>Login failed:</b> ${state.loginError}"
             }
             section("Test Pages") {
                 href "priorityTests", title: "Priority Tests", description: "Test [S], [L], [N], [H], [E], and default priority"
@@ -567,6 +586,14 @@ void appButtonHandler(String buttonName) {
         case "btnStopTests":
             stopTests()
             break
+        case "btnPushoverLogin":
+            pushoverLogin()
+            break
+        case "btnPushoverLogout":
+            state.remove("openClientSecretEnc")
+            state.remove("openClientEmail")
+            state.remove("loginError")
+            break
         case "btnRefreshStatus":
             // No-op: pressing any button re-renders the page, refreshing the progress display
             break
@@ -875,6 +902,7 @@ void executeNextTest() {
     state.lastStepEpoch = now()
     state.stepStartEpoch = now()
     state.stepPhase = "sent"
+    state.autoAckSent = false
     String type = testCase.type ?: "notification"
 
     if (logEnable) log.debug "executeNextTest(): [${state.currentTestIndex + 1}/${state.testTotal}] ${testCase.name}"
@@ -977,6 +1005,15 @@ void verifyTest() {
             break
 
         case "awaitAck":
+            if (testCase.manual && openClientSecret() && !state.autoAckSent) {
+                state.autoAckSent = true
+                String err = acknowledgeReceipt()
+                if (err) {
+                    cancelQuietly()
+                    recordResult(testCase, "fail", "automatic acknowledgement failed: ${err}")
+                    return
+                }
+            }
             boolean acked = sawEvent("emergencyAck", testCase.expectAck, since)
             String otherEnd = ["acknowledged", "expired", "cancelled"].find { it != testCase.expectAck && sawEvent("emergencyAck", it, since) }
             if (!acked && otherEnd) {
@@ -1022,6 +1059,79 @@ def handlePushoverCallback() {
     state.callbackHits = hits.size() > 10 ? hits[-10..-1] : hits
     if (logEnable) log.debug "handlePushoverCallback(): receipt=${params?.receipt}"
     render(status: 200, contentType: "text/plain", data: "ok")
+}
+
+// ========================================
+// PUSHOVER OPEN CLIENT
+// ========================================
+// The session secret, decrypted; null when not logged in or unreadable (e.g. after a hub migration,
+// since the encryption key stays with the hub). A plain-text secret from v1.2.0 is encrypted here.
+private String openClientSecret() {
+    if (state.openClientSecret) {
+        state.openClientSecretEnc = encrypt(state.openClientSecret.toString())
+        state.remove("openClientSecret")
+    }
+    if (!state.openClientSecretEnc) return null
+    try {
+        return decrypt(state.openClientSecretEnc.toString()) ?: null
+    } catch (e) {
+        log.warn "openClientSecret(): could not decrypt the stored secret, log in again (${e.message})"
+        state.remove("openClientSecretEnc")
+        return null
+    }
+}
+
+// Logs in with the email/password settings and keeps only the session secret.
+private void pushoverLogin() {
+    state.remove("loginError")
+    if (!settings.poEmail || !settings.poPassword) {
+        state.loginError = "enter the email and password"
+        return
+    }
+    Map body = [email: settings.poEmail, password: settings.poPassword]
+    if (settings.poTwofa) body.twofa = settings.poTwofa.toString().trim()
+    try {
+        httpPost([uri: PUSHOVER_API, path: "/1/users/login.json", requestContentType: "application/x-www-form-urlencoded",
+                  contentType: "application/json", body: body, timeout: 20]) { resp ->
+            if (resp.data?.secret) {
+                state.openClientSecretEnc = encrypt(resp.data.secret.toString())
+                state.openClientEmail = settings.poEmail
+            } else {
+                state.loginError = "no secret in Pushover's reply"
+            }
+        }
+    } catch (groovyx.net.http.HttpResponseException e) {
+        state.loginError = e.statusCode == 412 ? "the account uses two-factor authentication: enter the current code and log in again" :
+                "HTTP ${e.statusCode}: ${e.response?.data?.errors ?: e.message}"
+    } catch (e) {
+        state.loginError = e.message
+    }
+    app.removeSetting("poPassword")
+    app.removeSetting("poTwofa")
+}
+
+// Acknowledges the device's tracked emergency receipt; returns null on success, else the error.
+private String acknowledgeReceipt() {
+    String receipt = null
+    try {
+        httpGet([uri: "http://127.0.0.1:8080", path: "/device/fullJson/${pushoverDevice.id}", timeout: 15]) { resp ->
+            receipt = resp.data?.deviceState?.emergencyReceipt
+        }
+    } catch (e) {
+        return "could not read the device's receipt: ${e.message}"
+    }
+    if (!receipt) return "the device tracks no emergency receipt"
+    try {
+        httpPost([uri: PUSHOVER_API, path: "/1/receipts/${receipt}/acknowledge.json", requestContentType: "application/x-www-form-urlencoded",
+                  contentType: "application/json", body: [secret: openClientSecret()], timeout: 20]) { resp -> }
+    } catch (groovyx.net.http.HttpResponseException e) {
+        if (e.statusCode == 403) state.remove("openClientSecretEnc")
+        return "HTTP ${e.statusCode}: ${e.response?.data?.errors ?: e.message}"
+    } catch (e) {
+        return e.message
+    }
+    if (logEnable) log.debug "acknowledgeReceipt(): acknowledged ${receipt}"
+    return null
 }
 
 // ========================================
