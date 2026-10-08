@@ -11,7 +11,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.2.0"
+@Field static final String CODE_VERSION = "0.3.0"
 @Field static final String CHILD_NAME = "Thermostat Scheduler+ Program"
 @Field static final String BUILTIN_TYPE = "Thermostat Scheduler 2.0"
 
@@ -148,7 +148,8 @@ private Object reply(int status, Map body) { return render(status: status, conte
 def apiList() {
     checkVersion()
     Map d = denied(); if (d) { return reply(d.status as int, [error: d.error]) }
-    return reply(200, [programs: getChildApps().collect { it.apiStatus() }])
+    // A disabled program returns nothing to its parent.
+    return reply(200, [programs: getChildApps().collect { it.apiStatus() ?: [id: it.id, name: it.label, status: 'disabled'] }])
 }
 
 def apiGet() {
@@ -156,7 +157,9 @@ def apiGet() {
     Map d = denied(); if (d) { return reply(d.status as int, [error: d.error]) }
     def child = findProgram()
     if (!child) { return reply(404, [error: "no program ${params.id}"]) }
-    return reply(200, child.apiDocument() as Map)
+    Map doc = child.apiDocument() as Map
+    if (doc == null) return reply(409, [error: "program ${params.id} is disabled"])
+    return reply(200, doc)
 }
 
 def apiPut() {
@@ -168,6 +171,7 @@ def apiPut() {
     req = parseBody()
     if (req == null) return reply(400, [error: "body is not JSON"])
     Map res = child.apiPut(req) as Map
+    if (res == null) return reply(409, [error: "program ${params.id} is disabled"])
     return reply(res.httpStatus as int, res.findAll { k, v -> k != 'httpStatus' })
 }
 
@@ -180,7 +184,7 @@ def apiCommand() {
     req = parseBody()
     if (req == null) return reply(400, [error: "body is not JSON"])
     Map res = child.apiCommand(req) as Map
-    if (res == null) return reply(500, [error: "program returned no result"])
+    if (res == null) return reply(409, [error: "program ${params.id} is disabled"])
     return reply(res?.ok == false ? 400 : 200, res)
 }
 

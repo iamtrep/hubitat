@@ -13,7 +13,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.app.DeviceWrapper
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.2.0"
+@Field static final String CODE_VERSION = "0.3.0"
 
 definition(
     name: "Thermostat Scheduler+ Program",
@@ -548,8 +548,8 @@ Map optionsPage() {
         }
         section("Pause and restrictions") {
             paragraph "<p class='tsp-note'>The ${esc(app.label)} scheduler device switch pauses the program when off. These optional restrictions pause it too.</p>"
-            input "pauseSwitch", "capability.switch", title: "Pause when this switch is…", required: false, submitOnChange: true
-            if (pauseSwitch) input "pauseWhenSwitch", "enum", title: "…in this state", options: ["off", "on"], defaultValue: "off", width: 3
+            input "pauseWhenOn", "capability.switch", title: "Pause while any of these is on", multiple: true, required: false
+            input "pauseWhenOff", "capability.switch", title: "Pause while any of these is off", multiple: true, required: false
             restrictTimeInputs("restrictFrom", "Only between")
             if (settings.restrictFrom && settings.restrictFrom != 'any') restrictTimeInputs("restrictTo", "and")
             input "restrictDays", "enum", title: "Only on days", multiple: true, required: false, width: 4,
@@ -921,7 +921,7 @@ void subscribeAll() {
     subscribe(thermostats, "thermostatMode", "thermostatEvent")
     subscribe(location, "mode", "modeHandler")
     subscribe(location, "systemStart", "startHandler")
-    if (pauseSwitch) subscribe(pauseSwitch, "switch", "pauseSwitchHandler")
+    [pauseWhenOn, pauseWhenOff].each { if (it) subscribe(it, "switch", "pauseSwitchHandler") }
     List<String> vars = varNames((state.config ?: [:]) as Map)
     removeAllInUseGlobalVar()
     if (vars) addInUseGlobalVar(vars)
@@ -1013,7 +1013,8 @@ Map buildCtx(Map cfg) {
 }
 
 boolean switchRestricted() {
-    return pauseSwitch && pauseSwitch.currentValue("switch") == (settings.pauseWhenSwitch ?: "off")
+    return (pauseWhenOn ?: []).any { it.currentValue("switch") == "on" } ||
+           (pauseWhenOff ?: []).any { it.currentValue("switch") == "off" }
 }
 
 List<Map> thermostatStates(Map modeOverride = [:]) {
@@ -1182,7 +1183,7 @@ void publish(Map cfg, Map rt, Map target, Map ctx) {
 
 void wakeHandler() { checkVersion(); evaluate("wake", false) }
 void modeHandler(evt) { checkVersion(); logEvt "mode ${evt.value}"; evaluate("mode", false) }
-void pauseSwitchHandler(evt) { checkVersion(); logEvt "pause switch ${evt.value}"; evaluate("pause switch", false) }
+void pauseSwitchHandler(evt) { checkVersion(); logEvt "pause switch ${evt.displayName} ${evt.value}"; evaluate("pause switch", false) }
 void startHandler(evt = null) {
     checkVersion()
     Map rt = state.rt as Map
@@ -1342,8 +1343,7 @@ Map importBuiltin(Map raw) {
     if (errs) { logWarn "import of ${raw.fromLabel} rejected: ${errs.join('; ')}"; return [ok: false, errors: errs] }
     app.updateSetting("thermostats", [type: "capability.thermostat", value: conv.thermostats])
     if (conv.pauseSwitch) {
-        app.updateSetting("pauseSwitch", [type: "capability.switch", value: conv.pauseSwitch])
-        app.updateSetting("pauseWhenSwitch", [type: "enum", value: conv.pauseWhen])
+        app.updateSetting(conv.pauseWhen == 'on' ? "pauseWhenOn" : "pauseWhenOff", [type: "capability.switch", value: [conv.pauseSwitch]])
     }
     state.rt = newRt() + [paused: true, pausedApplied: true, eco: conv.eco]
     replaceConfig(conv.doc as Map, conv.options as Map, false)
@@ -1372,7 +1372,21 @@ void checkVersion(boolean reinit = true) {
     if (state.version == CODE_VERSION) return
     logVer "version ${CODE_VERSION} (was ${state.version})"
     state.version = CODE_VERSION
+    migratePauseSwitch()
     if (reinit) runIn(1, "updated")
+}
+
+// Before 0.3.0 a program had one pause switch and a state; it joins the matching list.
+void migratePauseSwitch() {
+    def sw = settings.pauseSwitch
+    if (sw) {
+        String key = settings.pauseWhenSwitch == 'on' ? "pauseWhenOn" : "pauseWhenOff"
+        List<String> ids = (((settings[key] ?: []) as List)*.id + [sw.id]).collect { it.toString() }.unique()
+        app.updateSetting(key, [type: "capability.switch", value: ids])
+        logCfg "pause switch ${sw.displayName} moved to ${key == 'pauseWhenOn' ? 'pause while on' : 'pause while off'}"
+    }
+    app.removeSetting("pauseSwitch")
+    app.removeSetting("pauseWhenSwitch")
 }
 
 // ── Core (pure) ───────────────────────────────────────────────────────

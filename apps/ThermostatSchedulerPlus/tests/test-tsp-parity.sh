@@ -349,8 +349,8 @@ try:
         "active": "Builtin", "overrides": [{"modeId": away_id, "profile": pname(heat_away)}]}
     config_json = json.dumps(plus_config, separators=(",", ":"))
 
-    want = [("debugEnable", True), ("thermostats", [plus_id]), ("pauseSwitch", [restrict_id]),
-            ("pauseWhenSwitch", restrict_on), ("whilePaused", "off" if turn_off else "leave"),
+    want = [("debugEnable", True), ("thermostats", [plus_id]), ("pauseWhenOn" if restrict_on == "on" else "pauseWhenOff", [restrict_id]),
+            ("whilePaused", "off" if turn_off else "leave"),
             ("onResume", "restore"), ("testConfigJson", config_json)]
     prog_settings = fetch(f"/installedapp/configure/json/{prog_id}").get("settings") or {}
     todo = {k: v for k, v in want if setting_differs(prog_settings, (k, v))}

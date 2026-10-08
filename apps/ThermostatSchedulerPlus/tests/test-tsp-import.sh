@@ -214,10 +214,12 @@ try:
     check("imported program is paused", doc.get("status", {}).get("status"), "paused")
     check("imported thermostat", [str(t["id"]) for t in doc.get("thermostats", [])], [str(ref_therm)])
     prog_set = fetch(f"/installedapp/configure/json/{new_id}").get("settings") or {}
-    sw = prog_set.get("pauseSwitch")
-    check("imported pause switch", sorted(map(str, sw.keys())) if isinstance(sw, dict) else sw, [str(ref_switch)])
     want_when = "off" if str(ref_set.get("disabledOff")).lower() == "true" else "on"
-    check("imported pause polarity", prog_set.get("pauseWhenSwitch"), want_when)
+    ids = lambda v: sorted(map(str, v.keys())) if isinstance(v, dict) else []
+    check("imported pause switch in the list for its state",
+          {k: ids(prog_set.get(k)) for k in ("pauseWhenOn", "pauseWhenOff")},
+          {"pauseWhenOn": [str(ref_switch)] if want_when == "on" else [],
+           "pauseWhenOff": [str(ref_switch)] if want_when == "off" else []})
     gid = next(iter(ref_st["dayGroups"]))
     periods = cfg["schedules"][0]["groups"][0]["periods"]
     profiles = {p["name"]: p for p in cfg["profiles"]}

@@ -320,6 +320,25 @@ try:
     want = [{"modeId": away, "profile": "Away"}] if away is not None else []
     check("new program maps the Away mode to the Away profile", (b.get("config") or {}).get("overrides"), want)
 
+    # ── Disabled program ──────────────────────────────────────────────
+    section("Disabled program")
+    def set_disabled(app_id, value):
+        req = urllib.request.Request(f"http://{hub_ip}/installedapp/disable", method="POST",
+                                     data=json.dumps({"id": app_id, "disable": value}).encode(),
+                                     headers={"Content-Type": "application/json"})
+        opener.open(req, timeout=30).read()
+    set_disabled(new_id, True)
+    try:
+        s, b = call("GET", "/programs")
+        entry = next((p for p in b.get("programs", []) if p and p.get("id") == new_id), None)
+        check("list shows a disabled program as disabled", [s, (entry or {}).get("status"), None in b.get("programs", [])], [200, "disabled", False])
+        s, b = call("GET", f"/programs/{new_id}")
+        check("get of a disabled program is 409", s, 409)
+        s, b = call("POST", f"/programs/{new_id}/command", {"command": "applyNow"})
+        check("command to a disabled program is 409", s, 409)
+    finally:
+        set_disabled(new_id, False)
+
     # ── Cloud ─────────────────────────────────────────────────────────
     section("Cloud access")
     uid = None

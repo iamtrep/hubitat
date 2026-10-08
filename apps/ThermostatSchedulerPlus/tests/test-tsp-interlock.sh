@@ -9,13 +9,14 @@
 # and off through program device commands; an HVAC Interlock permit group
 # pausing the program through its status switch (thermostat off, then mode
 # restored and current setpoints applied); the program paused by the group
-# and by its own switch at once, lifted in both orders.
+# and by its own switch at once, lifted in both orders; the program paused by
+# the group (pause while off) and by a second switch (pause while on).
 #
-# Rig (set up once): virtual thermostat "test-tsp-ilk-th", virtual contact
-# "test-tsp-ilk-window", HVAC Interlock group "test-ilk-tsp" (permit, that
+# Rig (set up once): virtual thermostat "test-tsp-ilk-th", virtual switch
+# "test-tsp-ilk-sw", virtual contact "test-tsp-ilk-window", HVAC Interlock group "test-ilk-tsp" (permit, that
 # contact as its only opening, response block, open delay 0) under a parent
 # whose Season device allows the group in the current season; the
-# thermostat, the contact and the group's status device in the Maker API
+# thermostat, the switch, the contact and the group's status device in the Maker API
 # "test-tsp-maker". Needs hub firmware 2.5.2.133 or later (hub variables
 # admin API).
 # Each run creates the program "test-tsp-ilk" and the hub variable
@@ -48,6 +49,7 @@ GROUP_LABEL = "test-ilk-tsp"
 MAKER_LABEL = "test-tsp-maker"
 PROG_LABEL = "test-tsp-ilk"
 THERM = "test-tsp-ilk-th"
+PEAK = "test-tsp-ilk-sw"
 WINDOW = "test-tsp-ilk-window"
 STATUS = f"{GROUP_LABEL} status"
 VAR = "zz_tsp_ilk_heat"
@@ -175,10 +177,10 @@ def maker(device_id, command, *args):
 
 code, devs = http_json("GET", f"http://{hub_ip}/apps/api/{maker_id}/devices", maker_token)
 by_label = {d.get("label") or d.get("name"): d["id"] for d in (devs if isinstance(devs, list) else [])}
-missing = [n for n in (THERM, WINDOW, STATUS) if n not in by_label]
+missing = [n for n in (THERM, PEAK, WINDOW, STATUS) if n not in by_label]
 if missing:
     die(f"Maker API '{MAKER_LABEL}' is missing {missing}")
-therm_id, window_id, status_id = (str(by_label[n]) for n in (THERM, WINDOW, STATUS))
+therm_id, peak_id, window_id, status_id = (str(by_label[n]) for n in (THERM, PEAK, WINDOW, STATUS))
 
 def attr(dev_id, name):
     j = fetch(f"/device/fullJson/{dev_id}")
@@ -287,6 +289,7 @@ remove_var()
 
 # Known starting state: window closed, thermostat in heat at 15.
 maker(window_id, "close")
+maker(peak_id, "off")
 maker(therm_id, "setThermostatMode", "heat")
 maker(therm_id, "setHeatingSetpoint", 15)
 save_settings(group_id, "", {"debugEnable": True})
@@ -320,15 +323,14 @@ try:
     s, b = call("PUT", f"/programs/{prog_id}", {"revision": doc["revision"], "config": cfg})
     if s != 200:
         die(f"PUT configuration answered {s} {b}")
-    opt_page = page_of(prog_id, "pauseSwitch")
-    save_settings(prog_id, opt_page, {"pauseSwitch": [status_id]})
-    save_settings(prog_id, opt_page, {"pauseWhenSwitch": "off"})
+    opt_page = page_of(prog_id, "pauseWhenOff")
+    save_settings(prog_id, opt_page, {"pauseWhenOff": [status_id], "pauseWhenOn": [peak_id]})
     devs = [d["data"] for d in fetch("/hub2/devicesList")["devices"]]
     pdev = [str(d["id"]) for d in devs if str(d.get("name", "")).startswith(PROG_LABEL) and d.get("type") == "Thermostat Scheduler+ Program Device"]
     if len(pdev) != 1:
         die(f"Expected one program device for {PROG_LABEL}, found {pdev}")
     prog_dev = pdev[0]
-    ok(f"program {prog_id} (device {prog_dev}) on {THERM}, pausing on '{STATUS}'")
+    ok(f"program {prog_id} (device {prog_dev}) on {THERM}, pausing while '{STATUS}' is off or '{PEAK}' is on")
 
     def prog_status():
         return call("GET", f"/programs/{prog_id}")[1].get("status", {}).get("status")
@@ -406,8 +408,27 @@ try:
     check("status switch back on", wait_for(status_id, "switch", "on", CLOSE_DELAY_S + 20), "on")
     check("group lift restores the mode", wait_for(therm_id, "thermostatMode", "heat"), "heat")
     check("and applies the setpoint", wait_for(therm_id, "heatingSetpoint", 22.0), 22.0)
+    # ── Pause lists: any on, any off ──────────────────────────────────
+    section("Pause lists: any on, any off")
+    maker(peak_id, "on")
+    check("a switch in the on list pauses", wait_for(therm_id, "thermostatMode", "off"), "off")
+    check("program reports restricted", prog_status(), "restricted")
+    maker(window_id, "open")
+    check("status switch off as well", wait_for(status_id, "switch", "off"), "off")
+    maker(peak_id, "off")
+    time.sleep(5)
+    check("still off while the off list holds", attr(therm_id, "thermostatMode"), "off")
+    maker(peak_id, "on")
+    maker(window_id, "close")
+    check("status switch back on", wait_for(status_id, "switch", "on", CLOSE_DELAY_S + 20), "on")
+    time.sleep(5)
+    check("still off while the on list holds", attr(therm_id, "thermostatMode"), "off")
+    maker(peak_id, "off")
+    check("both lists clear: mode restored", wait_for(therm_id, "thermostatMode", "heat"), "heat")
+    check("and setpoint applied", wait_for(therm_id, "heatingSetpoint", 22.0), 22.0)
 finally:
     maker(window_id, "close")
+    maker(peak_id, "off")
     if prog_id: delete_program(prog_id)
     remove_var()
 

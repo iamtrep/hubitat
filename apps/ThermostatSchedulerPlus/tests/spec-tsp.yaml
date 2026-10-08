@@ -17,7 +17,7 @@ app:
 inputs:
   - { name: test-tsp-th1, driver: Virtual Thermostat, role: thermostats }
   - { name: test-tsp-th2, driver: Virtual Thermostat, role: thermostats }
-  - { name: test-tsp-pause, driver: Virtual Switch, role: pauseSwitch }
+  - { name: test-tsp-pause, driver: Virtual Switch, role: pauseWhenOff }
 outputs:
   - { name: test-tsp scheduler, child: true }
 maker_api:

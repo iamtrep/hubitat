@@ -80,7 +80,7 @@ The program resolves one target from these layers, highest first, and applies th
 
 ### Pause and restrictions
 
-The program device's switch is the program's own on/off: off pauses it. Optional restrictions pause it too: a switch in a chosen state, a time window (fixed times or sunrise/sunset with offsets in minutes), days of the week, and hub modes. Settings choose what happens:
+The program device's switch is the program's own on/off: off pauses it. Optional restrictions pause it too: any of a list of switches being on, any of another list being off (a peak-event switch and an HVAC Interlock status device can pause the same program), a time window (fixed times or sunrise/sunset with offsets in minutes), days of the week, and hub modes. Settings choose what happens:
 
 - **While paused:** leave the thermostats as they are, or turn them off.
 - **When the pause ends:** restore the recorded thermostat mode and apply the schedule (default), or leave the thermostats off.
@@ -136,7 +136,7 @@ The parent app serves the API with one OAuth token for all programs. The **API a
 
 | Route | Purpose |
 |---|---|
-| `GET /programs` | Every program with its status |
+| `GET /programs` | Every program with its status; a disabled program is listed with `status` `disabled` only |
 | `GET /programs/{id}` | Configuration, thermostats and status, with a `revision` |
 | `PUT /programs/{id}` | Replace the configuration |
 | `POST /programs/{id}/command` | Any program device command, as JSON |
@@ -160,7 +160,7 @@ The reply carries the new status:
 
 `PUT` takes `{"revision": <from GET>, "config": {...}}`, where `config` has the shape `GET` returns. Profiles, schedules, the active schedule and overrides are required and replace the program's; `eco`, `options` and `restrictions` are optional and, when present, replace those settings. A configuration changed since the `GET` answers 409 with the current `revision`; a configuration that does not validate answers 400 with an `errors` list. A hold on a profile the new configuration drops ends.
 
-Errors carry an `error` field: 400 for a body that is not a JSON object or a bad command or argument, 403 when local or cloud access is off, 404 for an unknown program. A malformed JSON body sent as `application/json` gets an empty 200 from the platform before the app runs.
+Errors carry an `error` field: 400 for a body that is not a JSON object or a bad command or argument, 403 when local or cloud access is off, 404 for an unknown program, 409 for a disabled one. A malformed JSON body sent as `application/json` gets an empty 200 from the platform before the app runs.
 
 While the parent's debug logging is on, `POST /programs` with `{"label": "<name>"}` creates a program (201) or returns the existing one with that label (200). Test tooling uses it; with debug logging off the route answers 404.
 

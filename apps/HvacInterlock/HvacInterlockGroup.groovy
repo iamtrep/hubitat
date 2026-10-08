@@ -12,7 +12,7 @@
 import com.hubitat.app.ChildDeviceWrapper
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.1"
+@Field static final String CODE_VERSION = "0.1.2"
 
 definition(
     name: "HVAC Interlock Group",
@@ -80,7 +80,7 @@ Map mainPage() {
 String permitInstructions() {
     String dev = esc(statusDevice()?.displayName ?: "${app.getLabel()} status")
     return "Set this once on each scheduler in the group.<br>" +
-           "<b>Thermostat Scheduler+ program:</b> <i>Pause when this switch is…</i> ${dev}, <i>…in this state</i> off, " +
+           "<b>Thermostat Scheduler+ program:</b> add ${dev} to <i>Pause while any of these is off</i>, " +
            "<i>While paused</i> = Turn thermostats off, <i>When the pause ends</i> = Restore the thermostat mode and apply the schedule.<br>" +
            "<b>Built-in Thermostat Scheduler:</b> <i>Disable when ${dev} is off</i> and <i>Turn thermostats off when restricted</i>. " +
            "The built-in restores the mode when the restriction lifts but keeps the old setpoints until its next period."

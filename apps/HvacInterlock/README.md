@@ -57,7 +57,7 @@ Before the group has received a season, it changes nothing and logs a warning. A
 
 The status device's switch is on while the equipment may run. Set this once on each scheduler in the group; the group's page shows the exact device name:
 
-- **Thermostat Scheduler+ program:** *Pause when this switch is…* the status device, *…in this state* off, *While paused* = Turn thermostats off (its default is to leave them), *When the pause ends* = Restore the thermostat mode and apply the schedule.
+- **Thermostat Scheduler+ program:** add the status device to *Pause while any of these is off*, *While paused* = Turn thermostats off (its default is to leave them), *When the pause ends* = Restore the thermostat mode and apply the schedule.
 - **Built-in Thermostat Scheduler:** *Disable when <status device> is off* and *Turn thermostats off when restricted*.
 
 Thermostat Scheduler+ is recommended. The built-in works, with limits:
