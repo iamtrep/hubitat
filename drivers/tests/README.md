@@ -16,6 +16,7 @@ Virtual drivers, sandbox introspection tools, and companion test apps that exerc
 - `NotificationCapture.groovy` — records the last notification or spoken text as `lastMessage`, used by HVAC Interlock's alert tests
 - `VirtualCO2Sensor.groovy` — virtual CarbonDioxideMeasurement device reporting ppm, for the Indoor Air Quality Controller behavior test
 - `VirtualSwitchPhysical.groovy` — virtual switch with physicalOn/physicalOff commands that send physical events
+- `VirtualHeaterPlug.groovy` — virtual switch with a simulated power meter that can be stuck or unplugged, for the Switched Heater Thermostat behavior test
 
 ## Diagnostic / introspection drivers
 
