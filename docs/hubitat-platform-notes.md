@@ -12,6 +12,7 @@ What Hubitat's official documentation leaves out, contradicts or gets wrong, mea
 - `@TypeChecked` is not in the [allowed imports](https://docs2.hubitat.com/en/developer/allowed-imports); saving code that imports it fails with `Importing [groovy.transform.TypeChecked] is not allowed` (firmware 2.5.0.148). `@CompileStatic` is allowed.
 - The sandbox treats a fully-qualified class name as an implicit import, so an FQN reference to a class missing from the allowed imports is rejected the same way as an `import`.
 - `encrypt(String)` / `decrypt(String)` are callable from an app and round-trip; a 60-character `state` string encrypted to 88 characters (firmware 2.5.2.134). The on-hub API reference calls it a static-IV helper, so equal inputs encrypt alike. The key stays with the hub: Hubitat's [Lock Code Manager docs](https://docs2.hubitat.com/en/apps/lock-code-manager) say encrypted lock codes cannot be read after a migration. Whether lock codes use this exact helper, and how `decrypt()` fails on foreign input, is untested.
+- A `password`-type app input is masked only in the page's rendered input: its value comes back in plain text from `/installedapp/statusJson/{id}` (`appSettings[].value`) and from the configure JSON's `settings` map (firmware 2.5.2.134). Keep a password in a setting only as long as the code needs it, then `app.removeSetting()` it.
 
 ## Object introspection
 
@@ -134,6 +135,8 @@ With the preferences limits (no `dynamicPage`, `paragraph` or `href`), a driver 
 
 - The canonical `thermostatMode` / `thermostatFanMode` values ([capability list](https://docs2.hubitat.com/en/developer/driver/capability-list)) can be **narrowed** but not extended: non-canonical values break dashboard widget rendering and capability adherence. Expose a non-canonical mode (e.g. `dry`, `fan_only`) through a parallel custom attribute + command pair instead of stuffing it into `thermostatMode`.
 - Set the supported-modes list by `sendEvent` of the `supportedThermostatModes` / `supportedThermostatFanModes` attribute with a list of **pre-quoted** strings (`["\"off\"", "\"heat\"", ...]`) so the platform's stringification yields a valid JSON array. Calling `setSupportedThermostatModes(...)` was observed to fail to bind on a custom (user-namespaced) driver (`MissingMethodException`); version-observed, not guaranteed across firmware.
+- The built-in **Virtual Thermostat** (type id 580, `virtualThermostat`) sets `thermostatOperatingState` from `setTemperature`: in heat mode with setpoint 20 and the default 0.5 hysteresis it starts heating at 19.4, keeps heating through 20.4, goes idle at 20.6 and stays idle down to 19.6. It drives no outputs. The copy in `hubitat/HubitatPublic` (`examples/drivers/virtualThermostat.groovy`) is older than the firmware's: its `manageCycle()` would set idle on every report taken while heating, which the firmware build does not do *(verified 2.5.2.134, throwaway device)*.
+- The built-in **Thermostat Controller 2.0** (child of *Thermostat Controllers*, type id 69; app version 2.0.3) inputs: thermostats to control, temperature sensors (optionally per mode), restrictions, logging. Selecting a thermostat creates a child virtual thermostat named `thermController-<thermostat>`. It has no switch or outlet inputs, so it cannot drive heaters directly *(verified 2.5.2.134, throwaway instance)*.
 
 ## Command Retry
 

@@ -26,7 +26,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "2.1.2"
+@Field static final String CODE_VERSION = "2.1.3"
 @Field static final String VISIBLAIR_API = "https://api.visiblair.com/api/v1"
 @Field static final int HTTP_TIMEOUT = 15
 @Field static final String DNI_PREFIX = "visiblair-"
@@ -44,7 +44,8 @@ Map mainPage() {
     dynamicPage(name: "mainPage", title: "VisiblAir Manager", install: true, uninstall: true) {
         section("API Configuration") {
             input "apiEmail", "text", title: "VisiblAir Email", required: true
-            input "apiPassword", "password", title: "VisiblAir Password", required: true
+            input "apiPassword", "password", title: state.passwordEnc ? "VisiblAir Password (stored, enter only to change it)" : "VisiblAir Password",
+                  required: !state.passwordEnc
             input "pollRate", "number", title: "Poll rate (minutes)", defaultValue: 5, range: "1..60"
         }
         section("Discovered Sensors") {
@@ -99,8 +100,9 @@ void updated() {
     logDebug "updated"
     unschedule()
     if (debugEnable || traceEnable) runIn(1800, turnOffDebugLogging)
+    encryptPassword()
 
-    if (!apiEmail || !apiPassword) {
+    if (!apiEmail || !apiPasswordValue()) {
         logWarn "Email/password not configured"
         return
     }
@@ -148,6 +150,26 @@ void appButtonHandler(String buttonName) {
 }
 
 // --- Authentication ---
+// The password is kept encrypted with the hub's key, so the app's state and settings pages
+// don't show it. A hub migration loses the key: enter the password again after one.
+
+private void encryptPassword() {
+    if (!settings.apiPassword) return
+    state.passwordEnc = encrypt(settings.apiPassword as String)
+    app.removeSetting("apiPassword")
+}
+
+private String apiPasswordValue() {
+    if (settings.apiPassword) return settings.apiPassword
+    if (!state.passwordEnc) return null
+    try {
+        return decrypt(state.passwordEnc as String)
+    } catch (Exception e) {
+        logWarn "could not decrypt the stored password (${e.message}); enter it again"
+        state.remove("passwordEnc")
+        return null
+    }
+}
 
 // Logs in, then runs the request named by data.next with the fresh token.
 private void loginThen(String next, String failMsg, Map ctx = [:]) {
@@ -155,7 +177,7 @@ private void loginThen(String next, String failMsg, Map ctx = [:]) {
         uri: "${VISIBLAIR_API}/auth/login",
         requestContentType: "application/json",
         contentType: "application/json",
-        body: JsonOutput.toJson([email: apiEmail, password: apiPassword]),
+        body: JsonOutput.toJson([email: apiEmail, password: apiPasswordValue()]),
         timeout: HTTP_TIMEOUT
     ]
     asynchttpPost("handleLoginResponse", loginParams, ctx + [next: next, failMsg: failMsg])
@@ -197,7 +219,7 @@ void handleLoginResponse(resp, data) {
 
 void pollSensors() {
     checkVersion()
-    if (!apiEmail || !apiPassword) return
+    if (!apiEmail || !apiPasswordValue()) return
 
     loginThen("poll", "cannot poll sensors")
 }

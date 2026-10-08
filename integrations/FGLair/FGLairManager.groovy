@@ -33,7 +33,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "0.3.1"
+@Field static final String CODE_VERSION = "0.3.2"
 
 // Region-specific Ayla endpoints + app credentials, lifted from
 // ayla-iot-unofficial/src/ayla_iot_unofficial/const.py and fujitsu_consts.py.
@@ -185,7 +185,8 @@ Map loginPage() {
         }
         section("Credentials") {
             input "fglairEmail",    "text",     title: "Email",    required: true, submitOnChange: true
-            input "fglairPassword", "password", title: "Password", required: true, submitOnChange: true
+            input "fglairPassword", "password", title: state.passwordEnc ? "Password (stored, enter only to change it)" : "Password",
+                  required: !state.passwordEnc, submitOnChange: true
             input "btnLogin",       "button",   title: "Login"
         }
     }
@@ -215,6 +216,7 @@ void initialize()  {
         state.version = CODE_VERSION
     }
     migrateSensedSetting()
+    encryptStoredSecrets()
     // 0.3.0 keeps failure streaks with their start and reminder times.
     state.remove("consecutiveFetchFailures")
     state.remove("unitFailures")
@@ -474,8 +476,34 @@ private List<ChildDeviceWrapper> unitChildren() {
 }
 
 // --- Authentication ---
+// The password and tokens are kept encrypted with the hub's key, so the app's state and
+// settings pages don't show them. A hub migration loses the key: log in again after one.
 
-private boolean isAuthenticated() { return state.accessToken != null }
+private boolean isAuthenticated() { return state.accessTokenEnc != null || state.accessToken != null }
+
+private String accessToken()   { return state.accessToken  ?: decryptState("accessTokenEnc") }
+private String refreshTokenValue() { return state.refreshToken ?: decryptState("refreshTokenEnc") }
+
+private String decryptState(String key) {
+    if (!state[key]) return null
+    try {
+        return decrypt(state[key] as String)
+    } catch (Exception e) {
+        logWarn "could not decrypt ${key} (${e.message}); log in again"
+        state.remove(key)
+        return null
+    }
+}
+
+// Converts what 0.3.1 and earlier stored in plain text.
+private void encryptStoredSecrets() {
+    if (state.accessToken)  { state.accessTokenEnc  = encrypt(state.accessToken as String);  state.remove("accessToken") }
+    if (state.refreshToken) { state.refreshTokenEnc = encrypt(state.refreshToken as String); state.remove("refreshToken") }
+    if (settings.fglairPassword) {
+        state.passwordEnc = encrypt(settings.fglairPassword as String)
+        app.removeSetting("fglairPassword")
+    }
+}
 
 private String currentRegion() { return (settings.region ?: "us") as String }
 
@@ -487,12 +515,16 @@ private Map<String, String> regionConfig() {
 // through postSignIn(false) inside the refresh's in-flight window.
 void signIn() {
     atomicState.authStartedAt = now()
+    if (settings.fglairPassword) {
+        state.passwordEnc = encrypt(settings.fglairPassword as String)
+        app.removeSetting("fglairPassword")
+    }
     postSignIn(true)
 }
 
 private void postSignIn(boolean manual) {
     String email = settings.fglairEmail
-    String password = settings.fglairPassword
+    String password = decryptState("passwordEnc")
     if (!email || !password) {
         atomicState.remove("authStartedAt")
         if (manual) state.authError = "Email and password required."
@@ -536,6 +568,7 @@ void signInCallback(resp, data) {
     }
     if (status != 200) {
         String msg = "Sign-in failed (HTTP ${status}). Check email/password and region."
+        if (status in [400, 401, 403]) state.remove("passwordEnc")
         if (manual) {
             logError "signIn ${httpError(resp)}"
             state.authError = msg
@@ -569,8 +602,10 @@ private Map parseTokens(resp, String what) {
 }
 
 private void storeTokens(Map parsed) {
-    state.accessToken  = parsed.access_token
-    state.refreshToken = parsed.refresh_token
+    state.accessTokenEnc  = encrypt(parsed.access_token as String)
+    state.refreshTokenEnc = parsed.refresh_token ? encrypt(parsed.refresh_token as String) : null
+    state.remove("accessToken")
+    state.remove("refreshToken")
     long expiresInMs = ((parsed.expires_in ?: 3600L) as long) * 1000L
     state.tokenExpiry = now() + expiresInMs
     state.sessionRegion = currentRegion()
@@ -584,7 +619,7 @@ private void storeTokens(Map parsed) {
 void refreshToken() {
     if (authInFlight()) { logNet "refreshToken: already in flight"; return }
     atomicState.authStartedAt = now()
-    String rt = state.refreshToken
+    String rt = refreshTokenValue()
     if (!rt) {
         logWarn "no refresh token — attempting full re-sign-in"
         postSignIn(false)
@@ -673,8 +708,7 @@ private void haltAuth(String reason) {
 }
 
 private void clearSession() {
-    state.remove("accessToken")
-    state.remove("refreshToken")
+    ["accessToken", "refreshToken", "accessTokenEnc", "refreshTokenEnc"].each { state.remove(it) }
     state.remove("tokenExpiry")
     atomicState.remove("authStartedAt")
     atomicState.remove("authRejects")
@@ -692,7 +726,7 @@ private void clearSession() {
 
 // --- Device discovery ---
 
-private Map authHeader() { return ["Authorization": "auth_token ${state.accessToken}"] }
+private Map authHeader() { return ["Authorization": "auth_token ${accessToken()}"] }
 
 void fetchDevices() {
     logNet "fetchDevices"
@@ -1144,6 +1178,7 @@ private void computeOrphans(Set<String> liveDnis) {
 void disconnect() {
     logInfo "disconnecting"
     clearSession()
+    state.remove("passwordEnc")
     markUnitsOffline("disconnected from FGLair")
 }
 
