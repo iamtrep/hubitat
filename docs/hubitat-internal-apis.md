@@ -252,6 +252,10 @@ Three traps:
 
 Undocumented by Hubitat — nothing promises this across firmware versions. Code that relies on it should keep the query-param form as a fallback.
 
+### Cloud relay response size limit
+
+The relay carries responses over AWS IoT Core MQTT, whose publish payload limit is 128 KB and not adjustable ([AWS IoT Core quotas](https://docs.aws.amazon.com/general/latest/gr/iot-core.html), "MQTT payload size"; staff confirmed the MQTT cause in community.hubitat.com/t/119869/15, 2023). Measured on 2.5.2.134 (2026-10-08) with a throwaway app returning an N-byte `text/plain` body: N ≤ 127,831 returned 200, N ≥ 127,845 returned `504` with body `No response from hub` after about 10 s. About 3.2 KB of the 131,072-byte payload goes to the relay's own envelope. A body of repeated `x` failed at the same size as random text, so the relay doesn't compress, and an `Accept-Encoding: gzip` request header made no difference. Cloud clients that read large lists (Maker API `/devices/*`) must page or slim the response.
+
 ## Maker API specifics
 
 - Device notes are read-only: `GET /devices/{id}` carries a `notes` key (added in 2.5.0), and nothing writes them. The documented device writers are `setLabel`, `setDriver` and `deleteDevice`. `/devices/{id}/setNotes?notes=…` is treated as a device command and returns 404 *(verified 2.5.2.129)*.
