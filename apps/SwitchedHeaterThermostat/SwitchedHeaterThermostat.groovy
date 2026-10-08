@@ -345,6 +345,7 @@ void updateTemperature() {
     logDebug "temperature ${temp} from ${live.size()} sensors"
     thermostatDevice()?.setTemperature(temp)
     if (frostChanged || sensorWas) applyLoads()
+    evaluateRise()
 }
 
 private void noteQuiet(List<String> quietNames, boolean noTemp) {
@@ -452,6 +453,7 @@ private void trackOnTime(String want, String before, String why, Long t) {
     if (want == "on") {
         if (before != "on" || state.onSince == null) {
             state.onSince = t
+            state.startTemp = state.temp
         }
         if (why == "frost") {
             state.limitSince = null
@@ -461,12 +463,17 @@ private void trackOnTime(String want, String before, String why, Long t) {
             Long maxMs = minutesMs(maxHeatMinutes)
             if (maxMs != null) runIn(secondsUntil((state.limitSince as Long) + maxMs), "limitTick")
         }
+        Long riseMs = minutesMs(noRiseMinutes)
+        if (riseMs != null) runIn(secondsUntil((state.onSince as Long) + riseMs), "riseTick")
         return
     }
     state.onSince = null
     state.limitSince = null
+    state.startTemp = null
     unschedule("limitTick")
+    unschedule("riseTick")
     if (!(state.restUntil != null && t < (state.restUntil as Long)) && faults().limit) setFault("limit", false, "")
+    setFault("rise", false, "")
 }
 
 void limitTick() {
@@ -598,6 +605,25 @@ private void evaluatePower() {
     }
     state.powerBad = bad
     state.powerFault = fault
+}
+
+// ── Warming ───────────────────────────────────────────────────────────
+
+void riseTick() {
+    checkVersion()
+    evaluateRise()
+}
+
+// Raised while the heaters run without warming the room; cleared once it warms or the heaters turn off.
+private void evaluateRise() {
+    Long windowMs = minutesMs(noRiseMinutes)
+    if (windowMs == null || state.wanted != "on" || state.temp == null) return
+    BigDecimal minRise = decOrNull(minRiseDegrees) ?: 0.3
+    if (noRise(state.onSince as Long, now(), state.startTemp, state.temp, windowMs, minRise)) {
+        setFault("rise", true, numOrNull(noRiseMinutes).toString(), riseDetail(state.startTemp, state.temp, minRise, location.temperatureScale as String))
+    } else if (riseOk(state.startTemp, state.temp, minRise)) {
+        setFault("rise", false, "")
+    }
 }
 
 // ── Core (pure) ───────────────────────────────────────────────────────
