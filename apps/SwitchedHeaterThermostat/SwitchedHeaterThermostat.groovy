@@ -404,7 +404,15 @@ private Integer verifySeconds() { ((verifyTimeout ?: 30) as Integer) }
 private Long pendingWindowMs() { 2000L * verifySeconds() }
 
 // Used when the configuration is unusable: the app can't control the heaters, so it leaves them off.
+// Recording "off" as wanted keeps heaterHandler from reading the off events as manual changes to undo.
 private void heatersOff() {
+    state.wanted = "off"
+    state.attempts = [:]
+    state.onSince = null
+    state.limitSince = null
+    state.startTemp = null
+    unschedule("limitTick")
+    unschedule("riseTick")
     (heaters ?: []).each { DeviceWrapper dev -> if (dev.currentValue("switch") != "off") dev.off() }
 }
 

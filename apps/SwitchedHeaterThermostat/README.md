@@ -18,7 +18,7 @@ The app reads one or more temperature sensors and feeds the combined reading to 
 ## Install
 
 1. Add the app in **Apps Code**, then choose **Add user app** and pick **Switched Heater Thermostat**.
-2. Under **Thermostat**, pick an existing Virtual Thermostat (built-in driver) or turn on **Create a Virtual Thermostat for this app**. Another driver is refused. A created thermostat is deleted with the app. Uninstalling the app turns the current heaters and fault switches off. A heater you removed from the list earlier is left as it was. If you later pick a different one, a button removes the unused created one.
+2. Under **Thermostat**, pick an existing Virtual Thermostat (built-in driver) or turn on **Create a Virtual Thermostat for this app**. Another driver is refused. A created thermostat is deleted with the app. If you later pick a different thermostat, a button removes the unused created one. Uninstalling the app turns the current heaters and fault switches off. A heater you removed from the list earlier is left as it was.
 3. Pick the heater switches and the temperature sensors.
 4. Choose what the heaters do when no sensor reports, and the alert devices.
 5. Press **Done**.
