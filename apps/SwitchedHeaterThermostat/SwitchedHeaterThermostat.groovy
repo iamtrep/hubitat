@@ -185,7 +185,11 @@ void installed() { initialize() }
 
 void updated() { unsubscribe(); unschedule(); initialize() }
 
-void uninstalled() { if (getChildDevice(childDni())) deleteChildDevice(childDni()) }
+void uninstalled() {
+    heatersOff()
+    for (DeviceWrapper d : [sensorFaultSwitch, loadFaultSwitch, limitFaultSwitch, riseFaultSwitch]) { if (d) d.off() }
+    if (getChildDevice(childDni())) deleteChildDevice(childDni())
+}
 
 void initialize() {
     checkVersion(false)
@@ -201,6 +205,12 @@ void initialize() {
     if (state.sensors == null) state.sensors = [:]
     if (state.unresponsive == null) state.unresponsive = [:]
     state.attempts = [:]
+    // Drop per-heater state for heaters no longer in the list.
+    List<String> heaterIds = (heaters ?: []).collect { it.id.toString() }
+    for (String key : ["unresponsive", "powerBad", "powerFault"]) {
+        Map m = (state[key] ?: [:]) as Map
+        state[key] = m.findAll { Object k, Object v -> heaterIds.contains(k.toString()) }
+    }
     List<String> noRetry = heatersWithoutRetry()
     if (noRetry) logWarn retryAdviceText(noRetry)
     subscribe(location, "systemStart", "startHandler")
@@ -349,9 +359,9 @@ void updateTemperature() {
 }
 
 private void noteQuiet(List<String> quietNames, boolean noTemp) {
-    Map d = listDiff((state.quiet ?: []) as List, quietNames)
-    state.quiet = quietNames.sort()
     List<String> names = (sensors ?: []).collect { it.displayName as String }
+    Map d = listDiff(((state.quiet ?: []) as List).findAll { names.contains(it) }, quietNames)
+    state.quiet = quietNames.sort()
     if (noTemp) {
         if (!faults().sensor) state.cycleStart = now()
         setFault("sensor", true, namesText(names), policyText((onSensorFault ?: "off") as String, cycleDutyPercent ?: 30, cyclePeriodMinutes ?: 30))
@@ -407,7 +417,7 @@ private void sendHeater(DeviceWrapper d, String want, Integer attempt) {
 // Re-applies the wanted state to every heater; also the 5-minute retry while a load fault is raised.
 void applyLoads() {
     DeviceWrapper th = thermostatDevice()
-    if (th == null) return
+    if (th == null) { logError "no thermostat"; heatersOff(); return }
     Long t = now()
     boolean sf = faults().sensor == true
     String policy = (onSensorFault ?: "off") as String
@@ -501,6 +511,7 @@ private void scheduleKeepAlive() {
 void keepAliveTick() {
     checkVersion()
     scheduleKeepAlive()
+    if (thermostatDevice() == null) return
     String want = state.wanted as String
     Map att = (state.attempts ?: [:]) as Map
     if (want != null) {

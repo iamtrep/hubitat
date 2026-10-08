@@ -18,10 +18,11 @@ The app reads one or more temperature sensors and feeds the combined reading to 
 ## Install
 
 1. Add the app in **Apps Code**, then choose **Add user app** and pick **Switched Heater Thermostat**.
-2. Under **Thermostat**, pick an existing Virtual Thermostat (built-in driver) or turn on **Create a Virtual Thermostat for this app**. Another driver is refused. A created thermostat is deleted with the app. If you later pick a different one, a button removes the unused created one.
+2. Under **Thermostat**, pick an existing Virtual Thermostat (built-in driver) or turn on **Create a Virtual Thermostat for this app**. Another driver is refused. A created thermostat is deleted with the app. Uninstalling the app turns the current heaters and fault switches off. A heater you removed from the list earlier is left as it was. If you later pick a different one, a button removes the unused created one.
 3. Pick the heater switches and the temperature sensors.
 4. Choose what the heaters do when no sensor reports, and the alert devices.
 5. Press **Done**.
+6. Set the thermostat's mode to Heat. A created thermostat starts in mode Off.
 
 On every Done the app sets the thermostat's supported modes to `off` and `heat`. Setpoints and mode stay on the thermostat, so dashboards, voice assistants and schedulers control it like any thermostat.
 
@@ -70,7 +71,7 @@ A mismatch must last 2 minutes before it counts, which covers meters that report
 
 ### Command Retry
 
-Hubitat's Command Retry (Settings, Command Retry) makes the hub resend a command that a radio device did not acknowledge, up to 5 times. For heaters that can use it but have it off, the page and the log (a warning on every Done) say: *Command Retry is off for the heaters. Turning it on lets the hub resend a missed on or off before this app reports a load fault.* This is advice only: no notification, no fault, and the app never changes the setting. Virtual, LAN and most cloud devices cannot use Command Retry and get no advice.
+Hubitat's Command Retry (Settings, Command Retry) makes the hub resend a command that a radio device did not acknowledge, up to 5 times. For heaters that can use it but have it off, the page and the log (a warning on every Done) say: *Command Retry is off for <heaters>. Turning it on (Settings, Command Retry) lets the hub resend a missed on or off before this app reports a load fault.* This is advice only: no notification, no fault, and the app never changes the setting. Virtual, LAN and most cloud devices cannot use Command Retry and get no advice.
 
 ## Warming check
 
@@ -90,7 +91,7 @@ The choice under **When no sensor reports** decides what the heaters do while ev
 | On | on, still subject to the heating time limit |
 | Cycle | on for a share of each cycle (default 30 % of every 30 minutes), starting with the on phase when the fault is raised |
 
-Thermostat mode `off` always wins. During this fault the app sets the thermostat's operating state to match the heaters (`heating` or `idle`), since the thermostat has no temperature to decide from.
+Frost protection needs a live reading, so for rooms where frost matters pick on or cycle. Thermostat mode `off` always wins. During this fault the app sets the thermostat's operating state to match the heaters (`heating` or `idle`), since the thermostat has no temperature to decide from.
 
 ## Quiet sensors
 

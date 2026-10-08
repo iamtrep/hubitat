@@ -31,7 +31,7 @@ Run: `java -cp groovy-all-2.4.21.jar groovy.ui.GroovyMain apps/SwitchedHeaterThe
 
 ## Phase B: behavior
 
-`test-sht.sh` runs the app instance `test-sht` on one adopted Virtual Thermostat (heat mode, setpoint 20, default hysteresis), two virtual temperature sensors, two Virtual Heater Plug (Test) devices (a switch with a simulated 1000 W meter that can be stuck, unplugged or set to any draw, and counts its commands), the four fault switches and a Notification Capture (Test) device, driven through a dedicated Maker API. The debug-only `testSecondsPerMinute` is 1, so every minute-based setting runs in seconds: the power grace is 2 s and `quietAfter` 10 is 10 s. The 24 cases run in order, and some start from the previous case's end state (named below). Each case also fails on an unexpected warn or error log line, except where it expects an alert.
+`test-sht.sh` runs the app instance `test-sht` on one adopted Virtual Thermostat (heat mode, setpoint 20, default hysteresis), two virtual temperature sensors, two Virtual Heater Plug (Test) devices (a switch with a simulated 1000 W meter that can be stuck, unplugged or set to any draw, and counts its commands), the four fault switches and a Notification Capture (Test) device, driven through a dedicated Maker API. The debug-only `testSecondsPerMinute` is 1, so every minute-based setting runs in seconds: the power grace is 2 s and `quietAfter` 10 is 10 s. The 24 cases run in order, and some start from the previous case's end state (named below). Each case also fails on an unexpected warn or error log line, except that 20 of the 24 cases allow warnings (set `allow_warnings`), whether or not they raise an alert.
 
 | Case | What it checks |
 |---|---|
@@ -60,7 +60,7 @@ Run: `java -cp groovy-all-2.4.21.jar groovy.ui.GroovyMain apps/SwitchedHeaterThe
 | `cycle-off-phase` | The off phase of the cycle turns the heaters off (starts from the previous case) |
 | `one-sensor-quiet-partial` | One quiet sensor among two: no fault, a "left out" notification |
 
-Run: `bash apps/SwitchedHeaterThermostat/tests/test-sht.sh [@hub]`, about 10 minutes. The spec is the source; regenerate the script from it.
+Run: `bash apps/SwitchedHeaterThermostat/tests/test-sht.sh [@hub]`, about 450 s (7.5 minutes). The spec is the source; regenerate the script from it.
 
 ## Known gaps
 
