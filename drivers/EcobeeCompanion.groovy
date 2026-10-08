@@ -97,7 +97,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.1.1"
+@Field static final String CODE_VERSION = "0.1.2"
 
 // OAuth and API endpoints
 @Field static final String ECOBEE_API_BASE= "https://api.ecobee.com"
@@ -181,6 +181,30 @@ private void checkVersion() {
         logVer "New version: ${CODE_VERSION} (was: ${state.version})"
         state.version = CODE_VERSION
     }
+    // 0.1.1 and earlier stored the tokens in plain text.
+    if (state.accessToken || state.refreshToken) storeTokens(state.accessToken as String, state.refreshToken as String)
+}
+
+// The tokens are kept encrypted with the hub's key, so the device's state doesn't show them.
+// A hub migration loses the key: run connect() again after one.
+private void storeTokens(String access, String refresh) {
+    state.accessTokenEnc = access ? encrypt(access) : null
+    state.refreshTokenEnc = refresh ? encrypt(refresh) : null
+    state.remove("accessToken")
+    state.remove("refreshToken")
+}
+
+private String token(String name) {
+    if (state[name]) return state[name] as String
+    String enc = state["${name}Enc"] as String
+    if (!enc) return null
+    try {
+        return decrypt(enc)
+    } catch (Exception e) {
+        logWarn "could not decrypt ${name} (${e.message}); run connect() again"
+        state.remove("${name}Enc")
+        return null
+    }
 }
 
 // ========================================
@@ -195,9 +219,7 @@ void connect() {
     }
 
     // Wipe any prior OAuth state so a fresh PIN flow doesn't collide with stale tokens/selection.
-    state.remove('accessToken')
-    state.remove('refreshToken')
-    state.remove('tokenExpiry')
+    ['accessToken', 'refreshToken', 'accessTokenEnc', 'refreshTokenEnc', 'tokenExpiry'].each { state.remove(it) }
     state.remove('thermostats')
 
     Map params = [
@@ -270,8 +292,7 @@ void authorize() {
                 return
             }
             Map data = response.data
-            state.accessToken = data.access_token
-            state.refreshToken = data.refresh_token
+            storeTokens(data.access_token as String, data.refresh_token as String)
             state.tokenExpiry = now() + (data.expires_in * 1000)
 
             state.remove('ecobeeAuthToken')
@@ -311,7 +332,8 @@ void authorize() {
 
 // quiet: the scheduled poll counts a transient failure itself, so it is not logged here.
 Boolean refreshToken(boolean quiet = false) {
-    if (!state.refreshToken) {
+    String refresh = token("refreshToken")
+    if (!refresh) {
         state.lastTokenError = "not authorized"
         if (!quiet) logWarn "Not authorized — run connect() to start OAuth"
         return false
@@ -321,7 +343,7 @@ Boolean refreshToken(boolean quiet = false) {
         uri: "${ECOBEE_API_BASE}/token",
         query: [
             grant_type: "refresh_token",
-            refresh_token: state.refreshToken,
+            refresh_token: refresh,
             client_id: apiKey
         ],
         contentType: "application/json",
@@ -338,8 +360,7 @@ Boolean refreshToken(boolean quiet = false) {
                 return
             }
             Map data = response.data
-            state.accessToken = data.access_token
-            state.refreshToken = data.refresh_token
+            storeTokens(data.access_token as String, data.refresh_token as String)
             state.tokenExpiry = now() + (data.expires_in * 1000)
             state.remove("authFailed")
 
@@ -442,7 +463,7 @@ private Map callEcobeeApi(String method, String path, Map queryParams = null, Ma
         return null
     }
 
-    Map headers = [Authorization: "Bearer ${state.accessToken}"]
+    Map headers = [Authorization: "Bearer ${token("accessToken")}"]
     if (bodyData) headers["Content-Type"] = "application/json"
 
     Map params = [

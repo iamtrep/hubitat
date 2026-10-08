@@ -35,7 +35,7 @@ definition(
 
 // --- Constants ---
 
-@Field static final String CODE_VERSION = "1.1.1"
+@Field static final String CODE_VERSION = "1.1.2"
 
 @Field static final String OAUTH_BASE_URL = "https://api.oauth.blink.com"
 @Field static final String CLIENT_ID = "ios"
@@ -145,8 +145,8 @@ Map mainPage() {
 Map diagnosticsPage() {
     dynamicPage(name: "diagnosticsPage", title: "Blink Manager — Diagnostics", nextPage: "mainPage") {
         section("🩺 State snapshot") {
-            String at = state.accessToken ? "set (${state.accessToken.toString().length()} chars)" : "<i>null</i>"
-            String rt = state.refreshToken ? "set (${state.refreshToken.toString().length()} chars)" : "<i>null</i>"
+            String at = hasToken("accessToken") ? "set (encrypted)" : "<i>null</i>"
+            String rt = hasToken("refreshToken") ? "set (encrypted)" : "<i>null</i>"
             String exp = state.tokenExpiry ? new Date((long) state.tokenExpiry).format('HH:mm:ss', location.timeZone) : "<i>null</i>"
             paragraph """
                 <b>isAuthenticated:</b> ${isAuthenticated()}<br>
@@ -269,6 +269,9 @@ void initialize() {
         logVer "version change: ${state.version} -> ${CODE_VERSION}"
         state.version = CODE_VERSION
     }
+    // 1.1.1 and earlier stored the tokens in plain text.
+    if (state.accessToken) storeToken("accessToken", state.accessToken as String)
+    if (state.refreshToken) storeToken("refreshToken", state.refreshToken as String)
     subscribe(location, "systemStart", "systemStartHandler")
     if (!isAuthenticated()) {
         logSched "not authenticated yet, skipping schedules"
@@ -587,11 +590,11 @@ void exchangeCodeForTokens(String code) {
         ]) { resp ->
             Map json = (resp.data instanceof String) ? (new groovy.json.JsonSlurper().parseText(resp.data as String) as Map) : (resp.data as Map)
             logTrace "token exchange response keys: ${json?.keySet()}"
-            state.accessToken = json.access_token
-            state.refreshToken = json.refresh_token
+            storeToken("accessToken", json.access_token as String)
+            storeToken("refreshToken", json.refresh_token as String)
             long expiresIn = (json.expires_in ?: 3600L) as long
             state.tokenExpiry = now() + (expiresIn * 1000L)
-            logInfo "token exchange OK, expires in ${expiresIn}s, accessToken: ${state.accessToken ? 'set' : 'NULL'}"
+            logInfo "token exchange OK, expires in ${expiresIn}s, accessToken: ${hasToken("accessToken") ? 'set' : 'NULL'}"
             scheduleTokenRefresh()
             cleanupEphemeralState()
             fetchTierInfo(true, true)
@@ -606,7 +609,7 @@ void exchangeCodeForTokens(String code) {
 
 void refreshAccessToken() {
     logNet "refreshing access token"
-    if (!state.refreshToken) {
+    if (!hasToken("refreshToken")) {
         logError "no refresh token available"
         return
     }
@@ -621,7 +624,7 @@ void refreshAccessToken() {
         client_id    : CLIENT_ID,
         grant_type   : "refresh_token",
         hardware_id  : state.hardwareId ?: UUID.randomUUID().toString().toUpperCase(),
-        refresh_token: state.refreshToken,
+        refresh_token: token("refreshToken"),
         scope        : SCOPE
     ])
 
@@ -662,8 +665,8 @@ void refreshTokenResponse(resp, data) {
     }
     try {
         Map json = resp.json as Map
-        state.accessToken = json.access_token
-        if (json.refresh_token) state.refreshToken = json.refresh_token
+        storeToken("accessToken", json.access_token as String)
+        if (json.refresh_token) storeToken("refreshToken", json.refresh_token as String)
         long expiresIn = (json.expires_in ?: 3600L) as long
         state.tokenExpiry = now() + (expiresIn * 1000L)
         logInfo "token refreshed, expires in ${expiresIn}s"
@@ -683,7 +686,7 @@ void scheduleTokenRefresh() {
 }
 
 private void ensureValidToken() {
-    if (!state.accessToken) return
+    if (!hasToken("accessToken")) return
     if (state.tokenExpiry && now() >= (((long) state.tokenExpiry) - TOKEN_REFRESH_BUFFER_MS)) {
         logNet "token near expiry, refreshing inline"
         refreshAccessToken()
@@ -698,7 +701,7 @@ void fetchTierInfo(boolean thenPoll = false, boolean thenFlags = false) {
     // blinkpy's tier_info call shape: android UA + form-urlencoded Content-Type.
     Map headers = [
         "User-Agent"   : "27.0ANDROID_28373244",
-        "Authorization": "Bearer ${state.accessToken}",
+        "Authorization": "Bearer ${token("accessToken")}",
         "Accept"       : "application/json",
         "Content-Type" : "application/x-www-form-urlencoded"
     ]
@@ -1534,7 +1537,7 @@ private void blinkPostAsync(String path, String handler, Map context) {
 private Map bearerHeaders() {
     return [
         "User-Agent"   : UA_TOKEN,
-        "Authorization": "Bearer ${state.accessToken}",
+        "Authorization": "Bearer ${token("accessToken")}",
         "Accept"       : "application/json"
     ]
 }
@@ -1657,7 +1660,30 @@ void logout() {
 }
 
 private boolean isAuthenticated() {
-    return state.accessToken != null && state.refreshToken != null
+    return hasToken("accessToken") && hasToken("refreshToken")
+}
+
+// The tokens are kept encrypted with the hub's key, so the app's state page doesn't show them.
+// A hub migration loses the key: log in again after one.
+private boolean hasToken(String name) { return state[name] != null || state["${name}Enc"] != null }
+
+private void storeToken(String name, String value) {
+    if (value) state["${name}Enc"] = encrypt(value)
+    else state.remove("${name}Enc")
+    state.remove(name)
+}
+
+private String token(String name) {
+    if (state[name]) return state[name] as String
+    String enc = state["${name}Enc"] as String
+    if (!enc) return null
+    try {
+        return decrypt(enc)
+    } catch (Exception e) {
+        logWarn "could not decrypt ${name} (${e.message}); log in again"
+        state.remove("${name}Enc")
+        return null
+    }
 }
 
 private void clearAuthState() {
@@ -1668,9 +1694,7 @@ private void clearAuthState() {
 }
 
 private void clearTokensOnly() {
-    state.remove("accessToken")
-    state.remove("refreshToken")
-    state.remove("tokenExpiry")
+    ["accessToken", "refreshToken", "accessTokenEnc", "refreshTokenEnc", "tokenExpiry"].each { state.remove(it) }
 }
 
 private void cleanupEphemeralState() {

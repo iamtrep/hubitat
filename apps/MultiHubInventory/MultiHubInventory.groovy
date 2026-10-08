@@ -4,7 +4,7 @@
  */
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.8.6"
+@Field static final String CODE_VERSION = "0.8.7"
 @Field static final String UI_FILE = "multi_hub_inventory_ui.html"
 @Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/MultiHubInventory.groovy"
 @Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/multi_hub_inventory_ui.html"
@@ -45,7 +45,7 @@ Map mainPage() {
     if (state.peerIds == null) state.peerIds = [1]
     dynamicPage(name: "mainPage", title: "Multi-Hub Inventory v${CODE_VERSION}", install: true, uninstall: true) {
         section("Hubs") {
-            paragraph "For each hub running Hub Inspector, paste its API base URL with the access token, e.g.<br><code>http://192.168.0.10/apps/api/247/api/?access_token=abcd…</code><br>(the <code>/api/</code> path, not the <code>ui.html</code> link). Include this hub as a peer too, pointing at its own Hub Inspector."
+            paragraph "For each hub running Hub Inspector, paste its API base URL with the access token, e.g.<br><code>http://192.168.0.10/apps/api/247/api/?access_token=abcd…</code><br>(the <code>/api/</code> path, not the <code>ui.html</code> link). Include this hub as a peer too, pointing at its own Hub Inspector. On save, the token moves into encrypted storage and leaves the field; paste a full URL again to change it."
             (state.peerIds as List).each { Integer p ->
                 input "peer_${p}_label", "text", title: "Hub ${p} label",   required: false, width: 4
                 input "peer_${p}_url",   "text", title: "Hub ${p} API URL", required: false, width: 6, submitOnChange: true
@@ -99,10 +99,24 @@ Map mainPage() {
 // Capture everything up to the LAST "/api" segment before the query as the base (the proxy
 // appends /audit/... to it), then the token. Greedy [^?\s]+/api lands on the app's /api base
 // in either shape (the cloud URL also has an earlier /api/<cloudHubId> which is correctly skipped).
+// The token is null for a URL whose token was already moved into state.peerTokens.
 private Map parsePeerUrl(String raw) {
-    java.util.regex.Matcher m = (raw =~ /(https?:\/\/[^?\s]+\/api)\/?\?.*?access_token=([a-fA-F0-9\-]+)/)
+    java.util.regex.Matcher m = (raw =~ /(https?:\/\/[^?\s]+\/api)\/?(?:\?.*?access_token=([a-fA-F0-9\-]+))?/)
     if (m.find()) return [baseUrl: m.group(1).replaceAll(/\/+$/, ''), token: m.group(2)]
     return null
+}
+
+// Peer tokens are kept encrypted with the hub's key, so the app's settings and state pages
+// don't show them. A hub migration loses the key: paste each peer's full URL again after one.
+private String peerToken(Map peer) {
+    String enc = ((state.peerTokens ?: [:]) as Map)["${peer.pid}".toString()] as String
+    if (!enc) return null
+    try {
+        return decrypt(enc)
+    } catch (Exception e) {
+        logWarn "peer ${peer.pid}: could not decrypt its token (${e.message}); paste its full URL again"
+        return null
+    }
 }
 
 void appButtonHandler(String btn) {
@@ -115,6 +129,8 @@ void appButtonHandler(String btn) {
         Integer p = btn.replace('btnRemoveHub_', '') as Integer
         ids.remove((Object) p); state.peerIds = ids
         app.removeSetting("peer_${p}_label"); app.removeSetting("peer_${p}_url")
+        Map tokens = (state.peerTokens ?: [:]) as Map
+        tokens.remove("${p}".toString()); state.peerTokens = tokens
     }
 }
 
@@ -126,11 +142,19 @@ void initialize() {
     if (!state.accessToken) checkOAuth()
     String hubIp = location?.hubs ? location.hubs[0]?.localIP : null
     List peerList = []
+    Map tokens = (state.peerTokens ?: [:]) as Map
     (state.peerIds ?: []).each { Integer p ->
         String raw = settings["peer_${p}_url"] as String
         if (!raw) return
         Map parsed = parsePeerUrl(raw)
         if (!parsed) { logWarn "peer ${p}: could not parse URL"; return }
+        if (parsed.token) {
+            tokens["${p}".toString()] = encrypt(parsed.token as String)
+            app.updateSetting("peer_${p}_url", [type: "text", value: "${parsed.baseUrl}/".toString()])
+        } else if (!tokens["${p}".toString()]) {
+            logWarn "peer ${p}: no access token; paste its full URL"
+            return
+        }
         String label = (settings["peer_${p}_label"] as String) ?: parsed.baseUrl
         // webBase: scheme+host of the peer (everything before /apps/) — used for browser device links.
         String webBase = (parsed.baseUrl =~ /^(https?:\/\/[^\/]+)/)[0][1] ?: ''
@@ -142,8 +166,9 @@ void initialize() {
         boolean isSelf = (hubIp && webBase.contains(hubIp))
         String callBase = isSelf ? parsed.baseUrl.replaceFirst(/^https?:\/\/[^\/]+/, 'http://127.0.0.1:8080') : parsed.baseUrl
         if (isSelf) logCfg "peer ${p} is this hub — routing API calls via loopback"
-        peerList << [pid: p, label: label, baseUrl: callBase, token: parsed.token, reachable: null, webBase: webBase, self: isSelf]
+        peerList << [pid: p, label: label, baseUrl: callBase, reachable: null, webBase: webBase, self: isSelf]
     }
+    state.peerTokens = tokens.findAll { k, v -> (state.peerIds ?: []).any { "${it}" == k } }
     state.peerList = peerList
     logCfg "Multi-Hub Inventory initialized with ${peerList.size()} peer(s)"
     // Keep the Apps-list "update available" badge current even when the config page is never opened:
@@ -375,7 +400,7 @@ private void probePeer(int i) {
     if (i >= peers.size()) return
     Map peer = peers[i] as Map
     try {
-        asynchttpGet('probePeerCallback', [uri: "${peer.baseUrl}/audit/status", headers: bearer(peer.token as String), contentType: 'application/json', timeout: 8], [i: i, baseUrl: peer.baseUrl])
+        asynchttpGet('probePeerCallback', [uri: "${peer.baseUrl}/audit/status", headers: bearer(peerToken(peer)), contentType: 'application/json', timeout: 8], [i: i, baseUrl: peer.baseUrl])
     } catch (Exception e) {
         logNet "Peer probe ${peer.label} failed: ${e.message}"
         setPeerReachable(i, peer.baseUrl as String, 'unreachable')
@@ -460,7 +485,7 @@ Map apiPeer() {
     Integer idx = hubParam.isInteger() ? hubParam.toInteger() : null
     if (idx == null || idx < 0 || idx >= peers.size()) return jsonResponse([error: "unknown hub"], 400)
     Map peer = peers[idx] as Map
-    String base = peer.baseUrl, token = peer.token
+    String base = peer.baseUrl, token = peerToken(peer)
     // Query via the query: map, not inline in the uri: 2.5.1.x drops an inline uri query
     // string (token/scanId are URL-safe, so the map carries them cleanly).
     String url; String method = 'GET'
