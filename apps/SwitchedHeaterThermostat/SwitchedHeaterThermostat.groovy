@@ -41,6 +41,250 @@ preferences {
     page(name: "mainPage")
 }
 
+// ── UI ────────────────────────────────────────────────────────────────
+
+String esc(Object s) { s == null ? '' : s.toString().replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace("'", '&#39;') }
+
+boolean anyMeter() { (heaters ?: []).any { DeviceWrapper d -> d.hasAttribute("power") } }
+
+// Command Retry is a per-device setting with no DeviceWrapper accessor; the device record has it.
+// Returns null when the record can't be read, so a failed check stays silent.
+private Map retryInfo(DeviceWrapper d) {
+    try {
+        Map rec = null
+        httpGet([uri: "http://127.0.0.1:8080", path: "/device/fullJson/${d.id}", contentType: "application/json", timeout: 5]) { resp -> rec = resp.data as Map }
+        Map dev = rec?.device as Map
+        if (dev == null || !dev.containsKey("retryAvailable")) return null
+        return [label: d.displayName as String, available: dev.retryAvailable == true, enabled: dev.retryEnabled == true]
+    } catch (Exception e) {
+        logDebug "command retry check for ${d.displayName}: ${e.message}"
+        return null
+    }
+}
+
+List<String> heatersWithoutRetry() { retryAdvice((heaters ?: []).collect { DeviceWrapper d -> retryInfo(d) }.findAll { it != null }) }
+
+String retryAdviceText(List<String> names) {
+    return "Command Retry is off for ${namesText(names)}. Turning it on (Settings, Command Retry) lets the hub resend a missed on or off before this app reports a load fault.".toString()
+}
+
+Map mainPage() {
+    dynamicPage(name: "mainPage", install: true, uninstall: true) {
+        section {
+            label title: "Name", required: true
+            if (app.getInstallationState() == "COMPLETE") paragraph statusHtml()
+        }
+        section("Thermostat") {
+            input "thermostat", "capability.thermostat", title: "Virtual Thermostat (built-in driver)", required: false, submitOnChange: true
+            if (!thermostat) input "createThermostat", "bool", title: "Create a Virtual Thermostat for this app", defaultValue: false, submitOnChange: true
+            if (thermostat && getChildDevice(childDni())) {
+                paragraph "The thermostat this app created is no longer used."
+                input "btnRemoveChild", "button", title: "Remove the created thermostat"
+            }
+            input "frostTemp", "decimal", title: "Frost protection: heat below this temperature (°${location.temperatureScale}) whatever the thermostat mode; blank = off", required: false
+        }
+        section("Heat") {
+            input "heaters", "capability.switch", title: "Heater switches", multiple: true, required: true, submitOnChange: true
+            List<String> noRetry = heatersWithoutRetry()
+            if (noRetry) paragraph "<i>${esc(retryAdviceText(noRetry))}</i>"
+            input "verifyTimeout", "number", title: "Time a heater has to confirm a command (seconds)", defaultValue: 30, range: "5..300"
+            if (anyMeter()) {
+                input "usePower", "bool", title: "Check the power draw of heaters that report it", defaultValue: true, submitOnChange: true
+                if (usePower != false) input "minPowerW", "number", title: "A heater that is on draws at least (W)", defaultValue: 20, range: "1..5000"
+            }
+            input "minOnMinutes", "number", title: "Keep the heaters on for at least (minutes; blank = no minimum)", required: false, range: "1..60"
+            input "minOffMinutes", "number", title: "Keep the heaters off for at least (minutes; blank = no minimum)", required: false, range: "1..60"
+            input "maxHeatMinutes", "number", title: "Longest time the heaters may stay on (minutes; blank = no limit)", required: false, range: "10..1440", submitOnChange: true
+            if (numOrNull(maxHeatMinutes) != null) input "restMinutes", "number", title: "Then keep them off for (minutes)", defaultValue: 15, range: "1..240"
+            input "noRiseMinutes", "number", title: "Alert when the heaters have been on this long without warming the room (minutes; blank = off)", required: false, range: "10..240", submitOnChange: true
+            if (numOrNull(noRiseMinutes) != null) input "minRiseDegrees", "decimal", title: "Warming means a rise of at least (°${location.temperatureScale})", defaultValue: 0.3
+            input "keepAliveMinutes", "number", title: "Re-send the heaters' state every (minutes; blank = only when it is wrong)", required: false, range: "1..120"
+        }
+        section("Temperature") {
+            input "sensors", "capability.temperatureMeasurement", title: "Temperature sensors", multiple: true, required: true
+            input "aggregate", "enum", title: "Combine the readings by", options: AGG_OPTS, defaultValue: "average", required: true
+            input "quietAfter", "number", title: "Count a sensor as quiet after (minutes), until the app has learned its usual gaps", defaultValue: 120, range: "10..1440"
+        }
+        section("When no sensor reports") {
+            input "onSensorFault", "enum", title: "Heaters", options: SENSOR_FAULT_OPTS, defaultValue: "off", required: true, submitOnChange: true
+            if (onSensorFault == "cycle") {
+                input "cycleDutyPercent", "number", title: "On for (% of each cycle)", defaultValue: 30, range: "5..95"
+                input "cyclePeriodMinutes", "number", title: "Cycle length (minutes)", defaultValue: 30, range: "10..120"
+            }
+        }
+        section("Alerts") {
+            input "notifyDevices", "capability.notification", title: "Notification devices", multiple: true, required: false
+            input "sensorFaultSwitch", "capability.switch", title: "Switch to turn on while no sensor reports", required: false, submitOnChange: true
+            input "loadFaultSwitch", "capability.switch", title: "Switch to turn on while a heater does not respond or draws the wrong power", required: false, submitOnChange: true
+            input "limitFaultSwitch", "capability.switch", title: "Switch to turn on when the heaters reach the time limit", required: false, submitOnChange: true
+            input "riseFaultSwitch", "capability.switch", title: "Switch to turn on while the heaters run without warming the room", required: false, submitOnChange: true
+            input "notifyPartial", "bool", title: "Also notify when some sensors go quiet", defaultValue: true
+        }
+        String err = configError()
+        if (err) section { paragraph "<b>${esc(err)}</b>" }
+        section("Logging") {
+            input "txtEnable", "bool", title: "Enable info logging", defaultValue: true
+            input "debugEnable", "bool", title: "Enable debug logging (turns off after 30 minutes)", defaultValue: false, submitOnChange: true
+        }
+        if (debugEnable) {
+            section("Testing") {
+                input "testSecondsPerMinute", "number", title: "Seconds per minute, for tests (blank or none = 60)", required: false
+                input "btnCheck", "button", title: "Run the 5-minute check now"
+                input "btnForgetGaps", "button", title: "Forget the sensors' learned gaps"
+            }
+        }
+    }
+}
+
+String statusHtml() {
+    DeviceWrapper t = thermostatDevice()
+    List<String> rows = []
+    if (t) rows << "<a href='/device/edit/${t.id}' target='_blank'>${esc(t.displayName)}</a>: ${esc(t.currentValue('temperature'))}°${esc(location.temperatureScale)}, ${esc(t.currentValue('thermostatMode'))}, ${esc(t.currentValue('thermostatOperatingState'))}".toString()
+    (heaters ?: []).each { DeviceWrapper d ->
+        String p = d.hasAttribute("power") ? ", ${d.currentValue('power')} W" : ""
+        rows << "${esc(d.displayName)}: ${esc(d.currentValue('switch'))}${esc(p)}".toString()
+    }
+    List q = (state.quiet ?: []) as List
+    if (q) rows << "Quiet: ${esc(namesText(q))}".toString()
+    if (state.frost) rows << "<b>Frost protection running</b>"
+    Map f = faults()
+    if (f.sensor) rows << "<b>Sensor fault</b>"
+    if (f.load) rows << "<b>Load fault</b>"
+    if (f.limit) rows << "<b>Limit fault</b>"
+    if (f.rise) rows << "<b>Not warming</b>"
+    if (state.restUntil) rows << "Resting until ${esc(new Date(state.restUntil as Long).format('HH:mm', location.timeZone))}".toString()
+    return rows.join("<br>")
+}
+
+String configError() {
+    if (thermostat && thermostat.getTypeName() != VT_DRIVER)
+        return "${thermostat.displayName} uses the ${thermostat.getTypeName()} driver. Pick a device on the built-in Virtual Thermostat driver.".toString()
+    if (!thermostat && !createThermostat) return "Pick a Virtual Thermostat, or turn on Create a Virtual Thermostat."
+    List<String> heaterIds = (heaters ?: []).collect { it.id.toString() }
+    for (DeviceWrapper d : [sensorFaultSwitch, loadFaultSwitch, limitFaultSwitch, riseFaultSwitch]) {
+        if (d && heaterIds.contains(d.id.toString())) return "${d.displayName} is a heater. Pick another fault switch.".toString()
+    }
+    return null
+}
+
+// ── Thermostat device ─────────────────────────────────────────────────
+
+String childDni() { "heaterthermo-${app.id}" }
+
+DeviceWrapper thermostatDevice() { thermostat ?: getChildDevice(childDni()) }
+
+private void ensureThermostat() {
+    if (thermostat || !createThermostat || getChildDevice(childDni())) return
+    addChildDevice("hubitat", VT_DRIVER, childDni(), [name: VT_DRIVER, label: app.getLabel(), isComponent: true])
+    logCfg "created thermostat ${app.getLabel()}"
+}
+
+// ── Lifecycle ─────────────────────────────────────────────────────────
+
+void installed() { initialize() }
+
+void updated() { unsubscribe(); unschedule(); initialize() }
+
+void uninstalled() { if (getChildDevice(childDni())) deleteChildDevice(childDni()) }
+
+void initialize() {
+    checkVersion(false)
+    if (debugEnable) runIn(1800, "logsOff")
+    String err = configError()
+    if (err) { logError err; return }
+    ensureThermostat()
+    DeviceWrapper t = thermostatDevice()
+    if (t == null) { logError "no thermostat"; return }
+    t.setSupportedThermostatModes(JsonOutput.toJson(["off", "heat"]))
+    if (state.faults == null) state.faults = [sensor: false, load: false, limit: false, rise: false]
+    if (state.quiet == null) state.quiet = []
+    if (state.sensors == null) state.sensors = [:]
+    if (state.unresponsive == null) state.unresponsive = [:]
+    state.attempts = [:]
+    List<String> noRetry = heatersWithoutRetry()
+    if (noRetry) logWarn retryAdviceText(noRetry)
+    subscribe(location, "systemStart", "startHandler")
+    schedule("${new Random().nextInt(60)} */5 * ? * *", "checkAll")
+    checkAll()
+}
+
+void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "version ${CODE_VERSION} (was ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
+}
+
+void startHandler(evt) {
+    checkVersion()
+    logInfo "hub started"
+    checkAll()
+}
+
+void checkAll() {
+    checkVersion()
+    logSched "check"
+    applyFaultSwitches()
+}
+
+void appButtonHandler(String btn) {
+    checkVersion()
+    if (btn == "btnCheck") checkAll()
+    else if (btn == "btnForgetGaps") {
+        Map all = [:]
+        ((state.sensors ?: [:]) as Map).each { k, v -> all[k] = [last: (v as Map)?.last, gaps: []] }
+        state.sensors = all
+    }
+    else if (btn == "btnRemoveChild" && thermostat && getChildDevice(childDni())) {
+        deleteChildDevice(childDni())
+        logCfg "removed the created thermostat"
+    }
+}
+
+Map faults() { (state.faults ?: [sensor: false, load: false, limit: false, rise: false]) as Map }
+
+Long minuteMs() { (numOrNull(testSecondsPerMinute) ?: 60L) * 1000L }
+
+Long minutesMs(Object setting) {
+    Long n = numOrNull(setting)
+    return n == null ? null : n * minuteMs()
+}
+
+Integer secondsUntil(Long at) { Math.max(1L, (at - now() + 999L).intdiv(1000L) as Long) as Integer }
+
+// ── Alerts ────────────────────────────────────────────────────────────
+
+private void setFault(String kind, boolean raised, String detail, String extra = "") {
+    Map f = faults()
+    if ((f[kind] == true) == raised) return
+    f[kind] = raised
+    state.faults = f
+    String msg = faultMessage(app.getLabel(), kind, raised, detail, extra)
+    if (raised) logWarn(msg) else logInfo(msg)
+    sendAlert(msg)
+    applyFaultSwitches()
+}
+
+private void sendAlert(String msg) {
+    (notifyDevices ?: []).each { it.deviceNotification(msg) }
+}
+
+// The app owns the fault switches: they follow the faults and are re-asserted at each check.
+private void applyFaultSwitches() {
+    Map ids = [sensor: sensorFaultSwitch?.id?.toString(), load: loadFaultSwitch?.id?.toString(),
+               limit: limitFaultSwitch?.id?.toString(), rise: riseFaultSwitch?.id?.toString()]
+    Map targets = alertSwitchTargets(ids, faults())
+    Map<String, DeviceWrapper> devs = [:]
+    for (DeviceWrapper d : [sensorFaultSwitch, loadFaultSwitch, limitFaultSwitch, riseFaultSwitch]) { if (d) devs[d.id.toString()] = d }
+    devs.each { String id, DeviceWrapper d ->
+        String want = targets[id] as String
+        if (d.currentValue("switch") != want) {
+            logCmd "${d.displayName} ${want}"
+            if (want == "on") d.on() else d.off()
+        }
+    }
+}
+
 // ── Core (pure) ───────────────────────────────────────────────────────
 // No settings, state, devices, logging or @Field here: tests/test_core.groovy runs this block off-hub.
 
@@ -240,3 +484,22 @@ String faultMessage(String app, String kind, boolean raised, String detail, Stri
 }
 
 // ── End core ──────────────────────────────────────────────────────────
+
+// ── Logging (app) ─────────────────────────────────────────────────────
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${app.getLabel()}: " }
+
+void logEvt  (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${app.getLabel()}: ${m}" }
+
+void logsOff() { checkVersion(); app.updateSetting("debugEnable", false); logWarn "debug logging disabled" }
