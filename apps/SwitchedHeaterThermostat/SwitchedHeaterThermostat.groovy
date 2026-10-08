@@ -208,6 +208,8 @@ void initialize() {
     subscribe(t, "thermostatOperatingState", "opStateHandler")
     subscribe(t, "thermostatMode", "opStateHandler")
     subscribe(heaters, "switch", "heaterHandler")
+    List metered = (heaters ?: []).findAll { DeviceWrapper d -> d.hasAttribute("power") }
+    if (usePower != false && metered) subscribe(metered, "power", "powerHandler")
     schedule("${new Random().nextInt(60)} */5 * ? * *", "checkAll")
     scheduleKeepAlive()
     checkAll()
@@ -440,6 +442,7 @@ void applyLoads() {
     }
     state.attempts = att
     state.unresponsive = un
+    evaluatePower()
     updateLoadFault()
 }
 
@@ -520,6 +523,7 @@ void heaterHandler(evt) {
     }
     state.attempts = att
     state.unresponsive = un
+    evaluatePower()
     updateLoadFault()
 }
 
@@ -550,6 +554,50 @@ private void updateLoadFault() {
     for (Object v : ((state.unresponsive ?: [:]) as Map).values()) details << (v as String)
     for (Object v : ((state.powerFault ?: [:]) as Map).values()) details << (v as String)
     setFault("load", !details.isEmpty(), namesText(details))
+}
+
+// ── Power ─────────────────────────────────────────────────────────────
+
+void powerHandler(evt) {
+    checkVersion()
+    logEvt "${evt.device.displayName} ${evt.value} W"
+    evaluatePower()
+    updateLoadFault()
+}
+
+void powerTick() {
+    checkVersion()
+    evaluatePower()
+    updateLoadFault()
+}
+
+private void evaluatePower() {
+    Map bad = [:]
+    Map fault = [:]
+    if (usePower != false) {
+        Long t = now()
+        Long grace = POWER_GRACE_MIN * minuteMs()
+        Map prev = (state.powerBad ?: [:]) as Map
+        BigDecimal minW = (minPowerW ?: 20) as BigDecimal
+        Long next = null
+        (heaters ?: []).each { DeviceWrapper d ->
+            if (!d.hasAttribute("power")) return
+            String id = d.id.toString()
+            String sw = d.currentValue("switch") as String
+            Object p = d.currentValue("power")
+            Map st = powerStep(prev[id] as Long, powerVerdict(sw, p, minW), t, grace)
+            if (st.badSince == null) return
+            bad[id] = st.badSince
+            if (st.fault) fault[id] = powerDetail(d.displayName as String, sw, p)
+            else {
+                Long due = (st.badSince as Long) + grace
+                if (next == null || due < next) next = due
+            }
+        }
+        if (next != null) runIn(secondsUntil(next), "powerTick")
+    }
+    state.powerBad = bad
+    state.powerFault = fault
 }
 
 // ── Core (pure) ───────────────────────────────────────────────────────
