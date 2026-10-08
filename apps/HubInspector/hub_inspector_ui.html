@@ -152,7 +152,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "6.1.0";
+const CODE_VERSION = "6.1.1";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -445,8 +445,9 @@ function zwMeshStats(zw){
 const BADGE={builtin:'<span class="badge b-builtin">Built-in</span>',community:'<span class="badge b-community">Community</span>',platform:'<span class="badge b-platform">Platform</span>'};
 // Source classification → badge markup. emptyAsBuiltin=true renders Built-in for a missing source (apps); false renders nothing (perf rows).
 function srcBadge(source,emptyAsBuiltin){if(source==='platform')return BADGE.platform;if(source==='community')return BADGE.community;if(!source&&!emptyAsBuiltin)return'';return BADGE.builtin;}
-// Split Z-Wave nodes into ghosts/failed. Legacy backend (no `kind` field): treat no-deviceId as ghost, anything else as failed.
-function splitGhostNodes(nodes){return{ghosts:nodes.filter(g=>(g.kind?g.kind==='ghost':!g.deviceId)),failed:nodes.filter(g=>(g.kind?g.kind==='failed':!!g.deviceId))};}
+// Split Z-Wave nodes by kind. Legacy backend (no `kind` field): treat no-deviceId as ghost, anything else as failed.
+// longRange/unlisted are devices with no radio entry; the hub gives no signal details for them.
+function splitGhostNodes(nodes){const k=g=>g.kind||(g.deviceId?'failed':'ghost');return{ghosts:nodes.filter(g=>k(g)==='ghost'),failed:nodes.filter(g=>k(g)==='failed'),longRange:nodes.filter(g=>k(g)==='longRange'),unlisted:nodes.filter(g=>k(g)==='unlisted')};}
 
 // ===== RADIO CAPTURE CONSTANTS =====
 // Full standard Zigbee Cluster Library cluster set. Keys are 4-char hex (uppercase).
@@ -1389,7 +1390,7 @@ function buildForumMarkdown(d){
     }
     // Ghost / Failed nodes — split by kind so readers can see how many are truly orphaned
     // vs how many are recoverable (battery/range issues).
-    const {ghosts,failed}=splitGhostNodes(ghostNodes);
+    const {ghosts,failed,longRange,unlisted}=splitGhostNodes(ghostNodes);
     const renderNode=g=>{
       const gName=Obf.nm(g.name);
       const gSig=g.signals?` [${g.signals.join(', ')}]`:'';
@@ -1402,6 +1403,14 @@ function buildForumMarkdown(d){
     if(failed.length){
       L('');L(`**Failed Nodes (${failed.length}, recoverable — try battery/range):**`);
       failed.forEach(renderNode);
+    }
+    if(unlisted.length){
+      L('');L(`**Not in Radio List (${unlisted.length}, Hubitat device the radio doesn't report):**`);
+      unlisted.forEach(renderNode);
+    }
+    if(longRange.length){
+      L('');L(`**Long Range Devices (${longRange.length}, no signal details from the hub):**`);
+      longRange.forEach(renderNode);
     }
     // Problem nodes
     const zwNodes=zwaveMesh&&zwaveMesh.nodes?zwaveMesh.nodes:[];
@@ -2676,9 +2685,10 @@ async function rNetwork(){const P='p-network';loading(P);try{
     // Ghost / Failed nodes \u2014 split by kind so users don't force-remove recoverable nodes.
     // kind=ghost  -> no Hubitat device, safe to force-remove from radio
     // kind=failed -> has device, radio reports failure; try battery/range before excluding
+    // kind=longRange/unlisted -> device with no radio entry; informational, never "remove"
     if(z.ghostNodes&&z.ghostNodes.length){
-      const renderRow=g=>{const sig=g.signals&&g.signals.length?'<span style="color:var(--muted);font-size:12px"> ['+g.signals.map(s=>h(s)).join(', ')+']</span>':'';return '<div style="margin:4px 0;color:var(--crit)">'+(g.deviceId?dlink(g.deviceId,'Node '+g.id):h('Node '+g.id))+' &mdash; '+h(Obf.nm(g.name||'Unknown'))+sig+'</div>'};
-      const {ghosts,failed}=splitGhostNodes(z.ghostNodes);
+      const renderRow=(g,color)=>{const sig=g.signals&&g.signals.length?'<span style="color:var(--muted);font-size:12px"> ['+g.signals.map(s=>h(s)).join(', ')+']</span>':'';return '<div style="margin:4px 0;color:'+(color||'var(--crit)')+'">'+(g.deviceId?dlink(g.deviceId,'Node '+g.id):h('Node '+g.id))+' &mdash; '+h(Obf.nm(g.name||'Unknown'))+sig+'</div>'};
+      const {ghosts,failed,longRange,unlisted}=splitGhostNodes(z.ghostNodes);
       if(ghosts.length){
         o+='<div style="margin-top:10px"><div class="alert a-crit">\u26D4 Ghost Nodes: '+ghosts.length+' \u2014 no Hubitat device, safe to force-remove from radio</div>';
         ghosts.forEach(g=>{o+=renderRow(g)});
@@ -2687,6 +2697,16 @@ async function rNetwork(){const P='p-network';loading(P);try{
       if(failed.length){
         o+='<div style="margin-top:10px"><div class="alert a-warn">\u26A0 Failed Nodes: '+failed.length+' \u2014 radio reports failure; try a battery swap or moving the device closer to the hub before excluding</div>';
         failed.forEach(g=>{o+=renderRow(g)});
+        o+='</div>';
+      }
+      if(unlisted.length){
+        o+='<div style="margin-top:10px"><div class="alert a-warn">\u26A0 Not in Radio List: '+unlisted.length+' \u2014 Hubitat devices the Z-Wave radio doesn\u2019t report; check that they still respond</div>';
+        unlisted.forEach(g=>{o+=renderRow(g,'var(--warn)')});
+        o+='</div>';
+      }
+      if(longRange.length){
+        o+='<div style="margin-top:10px"><div class="muted" style="font-size:12px">Long Range devices: '+longRange.length+' \u2014 the hub reports no signal details for these</div>';
+        longRange.forEach(g=>{o+=renderRow(g,'inherit')});
         o+='</div>';
       }
     }

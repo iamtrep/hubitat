@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "6.1.0"
+@Field static final String CODE_VERSION = "6.1.1"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -3038,45 +3038,55 @@ void visitAppEntries(List entries, Closure visitor, boolean isChildLevel = false
     }
 }
 
+// zwaveDetails carries two lists: nodes[] (the radio's nodes, with route/state/RSSI) and
+// zwDevices (Hubitat device records keyed by node id; each value's id is the device id).
+//   kind=ghost     -> radio node with no Hubitat device, safe to force-remove from radio
+//   kind=failed    -> radio reports the node FAILED but it has a device; try battery/range first
+//   kind=longRange -> device with no radio entry, node id >= 256: the Z/IP stack leaves
+//                     Long Range nodes out of nodes[], so the hub gives no signal details
+//   kind=unlisted  -> device with no radio entry below 256
 List buildZwaveGhostNodes(Map zwaveDetails) {
     List ghostNodes = []
-    Map zwTypeByNodeId = [:]
-    Map deviceIdByNodeId = [:]   // built from nodes[] — reliable across firmware versions
+    Map zwDevices = (zwaveDetails?.zwDevices ?: [:]) as Map
+    Set radioNodeIds = [] as Set
     (zwaveDetails?.nodes ?: []).each { Map n ->
-        if (n.nodeId) {
-            if (n.zwaveType) zwTypeByNodeId[n.nodeId.toString()] = n.zwaveType
-            // zwDevices.deviceId is absent on some firmware; nodes[].deviceId is always present
-            if (n.deviceId) deviceIdByNodeId[n.nodeId.toString()] = n.deviceId
-        }
-    }
-    (zwaveDetails?.zwDevices ?: [:]).each { nodeId, nodeData ->
-        if (!(nodeData instanceof Map)) return
-        String zwType = zwTypeByNodeId[nodeId.toString()] ?: ""
-        // Never flag the hub's own controller node
-        if (zwType.toUpperCase().contains("CONTROLLER")) return
-        Long deviceId = deviceIdByNodeId[nodeId.toString()] as Long
-        boolean noDeviceId = !deviceId                         // principal signal: no paired Hubitat device
-        boolean isFailed   = nodeData.status == "FAILED" || nodeData.failed == true
-        boolean noRoute    = nodeData.route == null || nodeData.route == "" || nodeData.route == "No route"
-        boolean noName     = !nodeData.name || nodeData.name == "Unknown" || nodeData.name == ""
-        if (noDeviceId || isFailed || (noRoute && noName)) {
+        if (n.nodeId == null) return
+        String nodeId = n.nodeId.toString()
+        radioNodeIds << nodeId
+        String zwType = (n.zwaveType ?: "") as String
+        Long deviceId = (n.deviceId ?: (zwDevices[nodeId] instanceof Map ? zwDevices[nodeId].id : null)) as Long
+        boolean isFailed = n.nodeState == "FAILED"
+        boolean noRoute  = !n.route || n.route == "No route"
+        // Never flag a deviceless controller node (the hub's own, or a secondary controller)
+        if (!deviceId && zwType.toUpperCase().contains("CONTROLLER")) return
+        if (!deviceId || isFailed) {
             List signals = []
-            if (noDeviceId) signals << "no device"
-            if (isFailed)   signals << "FAILED"
-            if (noRoute)    signals << "no route"
-            if (noName)     signals << "unknown name"
-            // kind=ghost  -> truly orphaned (no Hubitat device), safe to force-remove from radio
-            // kind=failed -> has a Hubitat device but radio reports it down; try battery/range first
+            if (!deviceId) signals << "no device"
+            if (isFailed)  signals << "FAILED"
+            if (noRoute)   signals << "no route"
             ghostNodes << [
-                id: nodeId,
+                id: n.nodeId,
                 deviceId: deviceId,
-                kind: noDeviceId ? "ghost" : "failed",
-                name: nodeData.name ?: "Unknown",
-                status: nodeData.status ?: "No route",
+                kind: deviceId ? "failed" : "ghost",
+                name: n.deviceName ?: "Unknown",
+                status: n.nodeState ?: "",
                 type: zwType,
                 signals: signals
             ]
         }
+    }
+    zwDevices.each { nodeId, dev ->
+        if (!(dev instanceof Map) || radioNodeIds.contains(nodeId.toString())) return
+        boolean longRange = nodeId.toString().isInteger() && nodeId.toString().toInteger() >= 256
+        ghostNodes << [
+            id: nodeId,
+            deviceId: dev.id as Long,
+            kind: longRange ? "longRange" : "unlisted",
+            name: dev.label ?: dev.name ?: "Unknown",
+            status: "",
+            type: "",
+            signals: [longRange ? "Long Range" : "not in radio list"]
+        ]
     }
     return ghostNodes
 }

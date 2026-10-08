@@ -178,10 +178,11 @@ node tests/test-network-derivations.js  # zwProblemNodes / zbWeakNeighbors / zbS
 node tests/test-forum-export.js         # assembleForumData (client-side forum-export data assembly)
 node tests/test-forum-render.js         # full forum-export render (buildForumMarkdown end-to-end)
 node tests/test-temp-scale.js           # temperature-scale helpers
-node tests/test-zwave-render.js         # routeChangesCell (Route Changes null -> em-dash)
+node tests/test-zwave-render.js         # routeChangesCell (Route Changes null -> em-dash), splitGhostNodes
 
 # Extraction-based Groovy tests (TESTING.md Mode 4 variant — bound to shipped Groovy)
 groovy tests/test-zwave-mesh-quality.groovy  # route-change normalization: no-data -> null, excluded from total
+groovy tests/test-zwave-ghost-nodes.groovy   # ghost vs failed vs Long Range (LR devices absent from nodes[])
 groovy tests/test-audit-dispatch.groovy      # audit fan-out: throw rollback, missing-callback reaper, claim ownership
 ```
 
