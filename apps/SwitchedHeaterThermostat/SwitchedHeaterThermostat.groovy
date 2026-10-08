@@ -617,7 +617,15 @@ void riseTick() {
 // Raised while the heaters run without warming the room; cleared once it warms or the heaters turn off.
 private void evaluateRise() {
     Long windowMs = minutesMs(noRiseMinutes)
-    if (windowMs == null || state.wanted != "on" || state.temp == null) return
+    if (windowMs == null) { setFault("rise", false, ""); return }
+    if (state.wanted != "on" || state.temp == null) return
+    if (state.startTemp == null) {
+        // The run began with no reading (a sensor fault, or code pushed mid-run): the window starts now.
+        state.startTemp = state.temp
+        state.onSince = now()
+        runIn(secondsUntil(now() + windowMs), "riseTick")
+        return
+    }
     BigDecimal minRise = decOrNull(minRiseDegrees) ?: 0.3
     if (noRise(state.onSince as Long, now(), state.startTemp, state.temp, windowMs, minRise)) {
         setFault("rise", true, numOrNull(noRiseMinutes).toString(), riseDetail(state.startTemp, state.temp, minRise, location.temperatureScale as String))
