@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "6.1.2"
+@Field static final String CODE_VERSION = "6.1.3"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -576,6 +576,7 @@ Map jsonResponse(Map data) {
 }
 
 Map serveUI() {
+    boolean newAppVersion = state.version != CODE_VERSION
     checkVersion()
     if (!checkOAuth()) {
         return render(status: 403, contentType: 'text/plain', data: 'OAuth is not enabled for this app. Please enable it in the Hubitat App Settings.')
@@ -588,6 +589,10 @@ Map serveUI() {
         String html = loadUITemplate()
         if (!html) {
             logError "${UI_FILE} missing from hub. Attempting emergency sync..."
+            if (syncUIBlocking()) html = loadUITemplate()
+        } else if (newAppVersion && !html.contains("const CODE_VERSION = \"${CODE_VERSION}\"")) {
+            // First page load after a code update: fetch the matching UI now so this load
+            // doesn't serve the previous version. On failure the old UI is served as before.
             if (syncUIBlocking()) html = loadUITemplate()
         }
         if (!html) return render(status: 404, contentType: 'text/plain', data: 'UI file not found. Check hub logs.')
