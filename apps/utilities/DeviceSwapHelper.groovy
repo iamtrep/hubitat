@@ -4,7 +4,7 @@
 import com.hubitat.app.DeviceWrapper
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.5.5"
+@Field static final String CODE_VERSION = "0.5.6"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
 // File Manager file with one line per input each swap or undo changed.
 @Field static final String AUDIT_FILE = "device_swap_audit.txt"
@@ -660,6 +660,7 @@ private void startScan(int sourceId, int targetId) {
 }
 
 void backgroundScan() {
+    checkVersion()
     Map running = state.scanRunning as Map
     if (!running || !sourceDevice || !targetDevice) {
         state.remove("scanRunning")
@@ -1077,6 +1078,7 @@ private void checkApps(List<Map> pending, List<Map> results, int targetId, Strin
 // ---- Undo ----
 
 void appButtonHandler(String evt) {
+    checkVersion()
     if (evt == "undoLastSwap") {
         performUndo()
     } else if (evt == "showPerInput") {
@@ -1669,15 +1671,20 @@ void uninstalled() {
 
 void initialize() {
     logDebug "initialize()"
-    if (state.version != CODE_VERSION) {
-        logVer "New version: ${CODE_VERSION} (was: ${state.version})"
-        state.version = CODE_VERSION
-    }
+    checkVersion(false)
     // The app offers no rename, so its label follows the app's name.
     if (app.getLabel() != app.getName()) app.updateLabel(app.getName())
 }
 
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
+}
+
 void logsOff() {
+    checkVersion()
     app.updateSetting("debugEnable", [value: "false", type: "bool"])
     app.updateSetting("traceEnable", [value: "false", type: "bool"])
     logWarn "debug and trace logging disabled"

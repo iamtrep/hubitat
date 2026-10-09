@@ -19,7 +19,7 @@ import com.hubitat.hub.domain.Hub
 import java.nio.file.AccessDeniedException
 
 @Field static final String APP_NAME = "Well Monitor"
-@Field static final String CODE_VERSION = "0.11.4"
+@Field static final String CODE_VERSION = "0.11.5"
 @Field static final String DASHBOARD_FILE = "wellmonitor-dashboard.html"
 @Field static final String CHARTJS_FILE = "wellpump-chart.min.js"
 
@@ -33,6 +33,11 @@ import java.nio.file.AccessDeniedException
 // GITHUB_CHECK_TIMEOUT_MS counts as a lost callback.
 @Field static final ConcurrentHashMap<String, Long> githubVersionRefreshPending = new ConcurrentHashMap<>()
 @Field static final long GITHUB_CHECK_TIMEOUT_MS = 60000L
+// App id -> start time of an in-flight UI download, same scheme as above.
+@Field static final ConcurrentHashMap<String, Long> uiSyncPending = new ConcurrentHashMap<>()
+@Field static final long UI_SYNC_TIMEOUT_MS = 45000L
+// Least time between the downloads the /dashboard endpoint starts on its own.
+@Field static final long UI_AUTO_SYNC_INTERVAL_MS = 300000L
 
 definition(
     name: APP_NAME,
@@ -339,12 +344,7 @@ void updated() {
 
 void initialize() {
     logDebug("Initializing...")
-
-    if (state.version != CODE_VERSION) {
-        logVer("version ${CODE_VERSION} (was: ${state.version})")
-        state.version = CODE_VERSION
-        // Version-aware reconfigure hook: add per-version migrations here when needed.
-    }
+    checkVersion(false)
 
     // Initialize state variables if not set
     if (state.previousPower == null) state.previousPower = 0
@@ -420,7 +420,15 @@ void initialize() {
     logCfg("${APP_NAME} initialized. Pump running: ${state.pumpRunning}")
 }
 
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer("version ${CODE_VERSION} (was: ${state.version})")
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
+}
+
 void systemStartHandler(evt) {
+    checkVersion()
     logInfo("Hub started — re-evaluating pump state")
     recoverPumpState()
 }
@@ -462,6 +470,7 @@ private void recoverPumpState() {
 // ==================== Event Handler ====================
 
 void powerHandler(Event evt) {
+    checkVersion()
     BigDecimal currentPower = 0
     try {
         currentPower = evt.value as BigDecimal
@@ -613,6 +622,7 @@ private void handlePumpRunning(long currentTime) {
 }
 
 void emergencyShutoff() {
+    checkVersion()
     if (!state.pumpRunning) {
         logDebug("emergencyShutoff() called but pump is not running, ignoring")
         return
@@ -650,12 +660,14 @@ private long eventTimeMs(Event evt) {
 }
 
 void volumeHandler(Event evt) {
+    checkVersion()
     logEvt("Volume event: ${evt.value}L")
 }
 
 // ==================== Water Flow Tracking ====================
 
 void rateHandler(Event evt) {
+    checkVersion()
     BigDecimal rate = 0
     try {
         rate = evt.value as BigDecimal
@@ -1189,30 +1201,28 @@ private void migrateLogSettings() {
 // ==================== API Endpoints ====================
 
 Map getDashboardHtml() {
+    checkVersion()
     String html = null
     try {
         byte[] bytes = safeDownloadHubFile(DASHBOARD_FILE)
         if (bytes) html = new String(bytes, 'UTF-8')
     } catch (Exception ignored) {}
 
-    // Emergency recovery: file missing → try a blocking pull from GitHub before failing.
+    // Never wait on GitHub here: the app is singleThreaded, so a blocking download would hold up
+    // every pump and meter event behind it. Serve what is on the hub and fetch in the background.
     if (html == null) {
-        if (syncUIBlocking()) {
-            try {
-                byte[] bytes = safeDownloadHubFile(DASHBOARD_FILE)
-                if (bytes) html = new String(bytes, 'UTF-8')
-            } catch (Exception ignored) {}
-        }
+        autoSyncUI()
+        return render(status: 200, contentType: 'text/html', data: "<html><head><meta http-equiv='refresh' content='10'></head><body>" +
+            "Downloading the dashboard from GitHub; this page reloads every 10 s. If it never appears, upload " +
+            "<code>${DASHBOARD_FILE}</code> to the hub File Manager and check the hub logs.</body></html>")
     }
-
-    if (html == null) {
-        html = "<html><body>Dashboard file not found and GitHub sync failed. Upload <code>${DASHBOARD_FILE}</code> to the hub File Manager manually.</body></html>"
-    }
+    if (!html.contains("const CODE_VERSION = '${CODE_VERSION}'")) autoSyncUI()
     html = html.replaceAll('\\$\\{access_token\\}', state.accessToken ?: '')
     return render(status: 200, contentType: 'text/html', data: html)
 }
 
 Map getChartJs() {
+    checkVersion()
     try {
         byte[] bytes = safeDownloadHubFile(CHARTJS_FILE)
         if (bytes) {
@@ -1223,6 +1233,7 @@ Map getChartJs() {
 }
 
 Map getStatusJson() {
+    checkVersion()
     Hub hub = location.hubs ? location.hubs[0] : null
     Map status = [
         pumpRunning: state.pumpRunning ?: false,
@@ -1246,12 +1257,14 @@ Map getStatusJson() {
         hubFirmware: hub?.firmwareVersionString,
         appVersion: CODE_VERSION,
         uiVersion: getUIVersion(),
+        uiSyncError: state.uiSyncError,
         timestamp: now()
     ]
     return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson(status))
 }
 
 Map getCyclesJson() {
+    checkVersion()
     List<Map> history = (state.cycleHistory ?: []) as List<Map>
     List<Map> enriched = []
     for (int i = 0; i < history.size(); i++) {
@@ -1268,11 +1281,13 @@ Map getCyclesJson() {
 }
 
 Map getFlowJson() {
+    checkVersion()
     return render(status: 200, contentType: 'application/json',
         data: JsonOutput.toJson(state.flowHistory ?: []))
 }
 
 Map getStatsJson() {
+    checkVersion()
     Map allTime = computeAllTimeStats()
     Map recentCycle = computeCycleStats()
     List<Map> dailyCycles = computeDailySummaries((state.cycleHistory ?: []) as List<Map>, 'coincidentFlowL')
@@ -1305,6 +1320,7 @@ Map getStatsJson() {
 }
 
 Map getCyclesCsv() {
+    checkVersion()
     String fileName = csvFileName ?: "pumpCycles.csv"
     try {
         byte[] bytes = safeDownloadHubFile(fileName)
@@ -1316,6 +1332,7 @@ Map getCyclesCsv() {
 }
 
 Map getFlowCsv() {
+    checkVersion()
     String fileName = flowCsvFileName ?: "waterFlow.csv"
     try {
         byte[] bytes = safeDownloadHubFile(fileName)
@@ -1367,6 +1384,7 @@ String checkGithubVersion() {
 }
 
 void githubVersionCallback(resp, data) {
+    checkVersion()
     githubVersionRefreshPending.remove(app.id as String)
     if (resp.hasError() || resp.status != 200) {
         logNet("GitHub version check failed: HTTP ${resp.status}")
@@ -1418,6 +1436,7 @@ boolean isNewerVersion(String v1, String v2) {
 }
 
 Map getVersionJson() {
+    checkVersion()
     String latest = checkGithubVersion()
     Map payload = [
         currentVersion: CODE_VERSION,
@@ -1428,59 +1447,80 @@ Map getVersionJson() {
     return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson(payload))
 }
 
-// Manual UI sync trigger — SPA "Check for updates" button POSTs here. Wraps the existing
-// blocking pull (validates HTML CODE_VERSION matches the app's, before writing).
+// Manual UI sync trigger — the SPA's sync button POSTs here. Starts the download and returns;
+// the SPA polls /api/status until uiVersion matches or uiSyncError is set.
 Map apiSyncUI() {
+    checkVersion()
     logInfo("Manual UI sync requested via /api/ui/sync")
-    boolean success = syncUIBlocking()
-    Map payload = [success: success, version: CODE_VERSION]
+    syncUI(true)
+    Map payload = [success: true, pending: true, version: CODE_VERSION]
     return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson(payload))
 }
 
 // ==================== Dashboard auto-sync from GitHub ====================
 
-// Async UI sync — used by lifecycle paths (installed/updated → runIn(1, 'syncUIForced')) and the
-// daily off-peak schedule. Fire-and-forget; the callback validates content before writing.
+// Async UI sync — used by lifecycle paths (installed/updated → runIn(1, 'syncUIForced')), the
+// daily off-peak schedule, the /dashboard endpoint and /api/ui/sync. The callback validates
+// content before writing.
 void syncUI(boolean force = false) {
     if (!force && state.lastInstalledVersion == CODE_VERSION) {
         long lastCheck = (state.lastUIUpdateCheck ?: 0L) as long
         if (now() - lastCheck < 86400000L) return
     }
+    String key = app.id as String
+    Long pendingAt = uiSyncPending[key]
+    if (pendingAt != null && now() - pendingAt < UI_SYNC_TIMEOUT_MS) {
+        logDebug("UI sync already in progress")
+        return
+    }
+    uiSyncPending[key] = now()
+    state.remove('uiSyncError')
     logInfo("Syncing dashboard UI from GitHub (async)...")
     asynchttpGet('syncUICallback', [uri: IMPORT_URL_WEB, contentType: "text/plain", timeout: 30])
 }
 
+// Started by /dashboard when the file is missing or doesn't match the app; rate-limited so
+// reloads during an outage, or before the matching UI is on GitHub, don't refetch each time.
+private void autoSyncUI() {
+    if (now() - ((state.lastUIAutoSync ?: 0L) as long) < UI_AUTO_SYNC_INTERVAL_MS) return
+    state.lastUIAutoSync = now()
+    syncUI(true)
+}
+
 void syncUICallback(resp, data) {
-    if (resp.hasError() || resp.status != 200) {
-        logWarn("Async UI sync failed: HTTP ${resp.status}")
+    checkVersion()
+    uiSyncPending.remove(app.id as String)
+    if (resp.hasError()) {
+        uiSyncFailed("HTTP error: ${resp.getErrorMessage()}")
         return
     }
-    processSyncUIResponse(resp.data ?: "")
+    if (resp.status != 200) {
+        uiSyncFailed("HTTP ${resp.status}")
+        return
+    }
+    String text
+    try {
+        text = resp.data ?: ""
+    } catch (Exception e) {
+        uiSyncFailed("unreadable response: ${e.message}")
+        return
+    }
+    if (!processSyncUIResponse(text)) state.uiSyncError = "download rejected; the matching version may not be on GitHub yet"
+}
+
+private void uiSyncFailed(String msg) {
+    logWarn("Async UI sync failed: ${msg}")
+    state.uiSyncError = msg
 }
 
 void scheduledUISync() {
+    checkVersion()
     syncUI(false)
 }
 
 void syncUIForced() {
+    checkVersion()
     syncUI(true)
-}
-
-// Blocking UI sync — for emergency recovery on the /dashboard endpoint when the file is missing.
-// dynamicPage-style request paths can't await an async callback, so sync HTTP is the correct
-// shape here. See ARCHITECTURE.md → "When sync HTTP is the right call".
-private boolean syncUIBlocking() {
-    try {
-        logInfo("Syncing dashboard UI from GitHub (blocking, recovery path)...")
-        String htmlText = null
-        httpGet([uri: IMPORT_URL_WEB, contentType: "text/plain", timeout: 30]) { resp ->
-            if (resp.success && resp.data) htmlText = resp.data.text ?: resp.data.toString()
-        }
-        return processSyncUIResponse(htmlText ?: "")
-    } catch (Exception e) {
-        logWarn("Failed to sync UI from GitHub: ${e.message}")
-        return false
-    }
 }
 
 // Validates downloaded HTML — must look like our dashboard AND carry a CODE_VERSION matching
@@ -1656,6 +1696,7 @@ private String fmtDec(Number value) {
 }
 
 void logsOff() {
+    checkVersion()
     app.updateSetting("debugEnable", [type: "bool", value: false])
     app.updateSetting("traceEnable", [type: "bool", value: false])
     logWarn("debug/trace logging auto-disabled")

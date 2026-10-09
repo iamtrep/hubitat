@@ -4,7 +4,7 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.2.3"
+@Field static final String CODE_VERSION = "0.2.4"
 
 // Attributes (beyond the universal "motion") that some presence sensors expose.
 // Subscribed opportunistically per device and surfaced as extra context.
@@ -50,7 +50,7 @@ void uninstalled() {
 
 void initialize() {
     logDebug "initialize()"
-    checkVersion()
+    checkVersion(false)
 
     if (state.observingSince == null) state.observingSince = now()
     if (state.stats == null)         state.stats = [:]
@@ -74,11 +74,11 @@ void initialize() {
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
 }
 
-private void checkVersion() {
-    if (state.version != CODE_VERSION) {
-        logVer "version ${state.version} -> ${CODE_VERSION}"
-        state.version = CODE_VERSION
-    }
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
 }
 
 // Refresh per-device stats entries + reset the agreement baseline to the
@@ -122,6 +122,7 @@ private void ensureStats(String id, String label) {
 // ─── Event handlers ─────────────────────────────────────────────────────────
 
 void motionHandler(evt) {
+    checkVersion()
     String devId = evt.deviceId.toString()
     String label = evt.displayName
     String val = evt.value
@@ -171,6 +172,7 @@ void motionHandler(evt) {
 }
 
 void auxHandler(evt) {
+    checkVersion()
     long t = eventTime(evt)
     String devId = evt.deviceId.toString()
     recordRecent(t, evt.displayName, evt.name, evt.value)
@@ -351,6 +353,7 @@ private void recordRecent(long t, String dev, String name, String val) {
 // ─── Buttons ────────────────────────────────────────────────────────────────
 
 void appButtonHandler(String btn) {
+    checkVersion()
     if (btn == "resetStats") resetStats()
 }
 
@@ -619,6 +622,7 @@ private static String formatMs(long ms) {
 }
 
 void logsOff() {
+    checkVersion()
     app.updateSetting("debugEnable", [value: "false", type: "bool"])
     app.updateSetting("traceEnable", [value: "false", type: "bool"])
     logWarn "debug/trace logging auto-disabled"

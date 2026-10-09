@@ -4,7 +4,7 @@
 import groovy.transform.Field
 import com.hubitat.app.ChildDeviceWrapper
 
-@Field static final String CODE_VERSION = "0.2.5"
+@Field static final String CODE_VERSION = "0.2.6"
 @Field static final Integer SCORING_SCHEMA_VERSION = 1
 @Field static final Integer RESOLVER_MAX_PER_TICK = 10
 
@@ -93,7 +93,8 @@ void uninstalled() {
 
 void initialize() {
     logDebug "initialize()"
-    checkVersion()
+    checkVersion(false)
+    checkScoringSchema()
     ensurePolicyChildren()
 
     if (state.observingSince == null) state.observingSince = now()
@@ -178,11 +179,14 @@ private void putScores(String key, Map s) {
     state.scores = all
 }
 
-private void checkVersion() {
-    if (state.version != CODE_VERSION) {
-        logVer "version ${state.version} -> ${CODE_VERSION}"
-        state.version = CODE_VERSION
-    }
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
+}
+
+private void checkScoringSchema() {
     if (state.scoringSchemaVersion != SCORING_SCHEMA_VERSION) {
         logCfg "scoring schema ${state.scoringSchemaVersion} -> ${SCORING_SCHEMA_VERSION} — resetting scores"
         state.scores = [:]
@@ -191,6 +195,7 @@ private void checkVersion() {
 }
 
 void sensorHandler(evt) {
+    checkVersion()
     Map sensorState = new LinkedHashMap((state.sensorState ?: [:]) as Map)
     sensorState[evt.device.id as String] = [name: evt.name, value: evt.value, ts: now()]
     state.sensorState = sensorState
@@ -200,6 +205,7 @@ void sensorHandler(evt) {
 }
 
 void wallSwitchHandler(evt) {
+    checkVersion()
     recordEvent("wallSwitch", evt.device.displayName, evt.value)
 
     Long lastAct = state.tLastActivity as Long
@@ -277,10 +283,12 @@ private Map syncDecision(String key) {
 }
 
 void doorHandler(evt) {
+    checkVersion()
     recordEvent("door", evt.device.displayName, evt.value)
 }
 
 void hfcHandler(evt) {
+    checkVersion()
     Map sensorState = new LinkedHashMap((state.sensorState ?: [:]) as Map)
     sensorState["hfc"] = [value: evt.value, ts: now()]
     state.sensorState = sensorState
@@ -399,11 +407,11 @@ private void classifyOff(String key, Long tOff) {
     logInfo "classifyOff ${key} class=${offClass}"
 }
 
-void offCheckHueOnly()     { reevaluateOff("hueOnly") }
-void offCheckFp300Hybrid() { reevaluateOff("fp300Hybrid") }
-void offCheckFp300Mm()     { reevaluateOff("fp300Mm") }
-void offCheckAnyMotion()   { reevaluateOff("anyMotion") }
-void offCheckComposite()   { reevaluateOff("composite") }
+void offCheckHueOnly()     { checkVersion(); reevaluateOff("hueOnly") }
+void offCheckFp300Hybrid() { checkVersion(); reevaluateOff("fp300Hybrid") }
+void offCheckFp300Mm()     { checkVersion(); reevaluateOff("fp300Mm") }
+void offCheckAnyMotion()   { checkVersion(); reevaluateOff("anyMotion") }
+void offCheckComposite()   { checkVersion(); reevaluateOff("composite") }
 
 private void reevaluateOff(String key) {
     Map p = POLICIES.find { it.key == key }
@@ -434,6 +442,7 @@ private void refreshDerivedTimestamps() {
 }
 
 void resolveUnresolvedOns() {
+    checkVersion()
     Long windowMs = (settings.wOn ?: 60) * 1000L
     Long cutoff = now() - windowMs
     int processed = 0
@@ -524,6 +533,7 @@ private String buildRecentTable() {
 }
 
 void appButtonHandler(String btn) {
+    checkVersion()
     if (btn == "btnReset") {
         logInfo "reset counters"
         Map scores = new LinkedHashMap((state.scores ?: [:]) as Map)
@@ -535,6 +545,7 @@ void appButtonHandler(String btn) {
 }
 
 void logsOff() {
+    checkVersion()
     app.updateSetting("debugEnable", [value: "false", type: "bool"])
     app.updateSetting("traceEnable", [value: "false", type: "bool"])
     logWarn "debug and trace logging disabled"

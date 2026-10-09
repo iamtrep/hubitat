@@ -78,6 +78,7 @@
     - fanTurnedOnByApp: Boolean - did we turn the fan on? (set after verification, not on command)
     - pendingCommand: "on" / "off" / null - unverified command in flight
     - lastHumidityEventTime: Long - timestamp of last bathroom humidity event (resets max run timer)
+    - maxFanRunSince: Long - start of the current max fan run window (null when not armed)
 
  3. HIGH HUMIDITY SWITCH (optional virtual switch synced to humidity state)
 
@@ -89,7 +90,7 @@ import groovy.transform.Field
 import com.hubitat.app.DeviceWrapper
 
 @Field static final String APP_NAME = "Humidity-Based Fan Controller"
-@Field static final String CODE_VERSION = "0.9.6"
+@Field static final String CODE_VERSION = "0.9.7"
 
 // Humidity state machine states
 @Field static final String HUMIDITY_NORMAL = "NORMAL"
@@ -301,6 +302,8 @@ void initialize() {
         subscribe(occupancySensors, "motion.active", occupancyHandler)
     }
 
+    subscribe(location, "systemStart", "systemStartHandler")
+
     // Service any pending-state transition (timers were cleared by unschedule())
     servicePendingTransition()
 
@@ -332,10 +335,8 @@ void initialize() {
         }
     }
 
-    // Reschedule max fan run timer if fan is on and controlled by app
-    if (state.fanTurnedOnByApp && state.lastHumidityEventTime) {
-        rescheduleMaxFanRunTimer()
-    }
+    // Re-derive the max fan run timer (its timer was killed by unschedule())
+    serviceMaxFanRunTimer()
 
     // Initial evaluation to sync state
     evaluateHumidityStateMachine()
@@ -351,6 +352,19 @@ private void checkVersion(boolean reinit = true) {
 }
 
 // ==================== Event Handlers ====================
+
+// A one-shot runIn that fell due while the hub was down is dropped, so re-derive
+// every timer from its persisted start time. With a dead bathroom sensor no event
+// would ever do it, and the max-run safety off would never fire.
+void systemStartHandler(evt) {
+    checkVersion()
+    logInfo("Hub startup detected - re-deriving timers")
+    servicePendingTransition()
+    servicePhysicalRunFloor()
+    serviceMaxFanRunTimer()
+    if (state.pendingCommand == "on") runIn(switchVerificationTimeout as Integer, "verifyFanOn")
+    else if (state.pendingCommand == "off") runIn(switchVerificationTimeout as Integer, "verifyFanOff")
+}
 
 void bathroomHumidityHandler(evt) {
     checkVersion()
@@ -480,6 +494,7 @@ void restrictionSwitchHandler(evt) {
 
 private void evaluateHumidityStateMachine(DeviceWrapper reportingDevice = null) {
     servicePhysicalRunFloor()
+    serviceMaxFanRunTimer()
     // bathroomHumidity / referenceHumidity are the comparison metric for the
     // current mode — %RH in default mode, °C dew point when useDewPoint is on.
     BigDecimal bathroomHumidity = computeBathroomMetric(reportingDevice)
@@ -975,7 +990,7 @@ private void turnOffFan() {
     fanSwitch.off()
 
     // Cancel max fan run timer and any pending verification for the opposite state
-    unschedule("maxFanRunTimeExpired")
+    cancelMaxFanRunTimer()
     unschedule("verifyFanOn")
 
     runIn(switchVerificationTimeout as Integer, "verifyFanOff")
@@ -1007,37 +1022,41 @@ private Boolean isMaxFanRunTimeEnabled() {
 private void scheduleMaxFanRunTimer() {
     if (!isMaxFanRunTimeEnabled()) return
 
-    Integer delaySeconds = (maxFanRunTime as Integer) * 60
-    runIn(delaySeconds, "maxFanRunTimeExpired")
+    state.maxFanRunSince = now()
+    runIn((maxFanRunTime as Integer) * 60, "maxFanRunTimeExpired")
     logSched("Max fan run timer scheduled for ${maxFanRunTime} minutes")
 }
 
 private void resetMaxFanRunTimer() {
     if (!isMaxFanRunTimeEnabled()) return
 
-    unschedule("maxFanRunTimeExpired")
     scheduleMaxFanRunTimer()
     logSched("Max fan run timer reset")
 }
 
-private void rescheduleMaxFanRunTimer() {
-    if (!isMaxFanRunTimeEnabled()) return
+private void cancelMaxFanRunTimer() {
+    unschedule("maxFanRunTimeExpired")
+    state.maxFanRunSince = null
+}
 
-    if (!state.lastHumidityEventTime) {
-        scheduleMaxFanRunTimer()
+// Re-derives the max fan run timer from maxFanRunSince, so a lost
+// maxFanRunTimeExpired() callback (reboot, crash, unschedule() on save) completes
+// or re-arms on the next evaluation. Same pattern as servicePendingTransition().
+private void serviceMaxFanRunTimer() {
+    if (!isMaxFanRunTimeEnabled() || !state.fanTurnedOnByApp) {
+        if (state.maxFanRunSince != null) cancelMaxFanRunTimer()
         return
     }
+    // Pre-0.9.7 installs have no maxFanRunSince; the last humidity event was the start.
+    if (state.maxFanRunSince == null) state.maxFanRunSince = (state.lastHumidityEventTime ?: now()) as Long
 
-    Long elapsedMs = now() - (state.lastHumidityEventTime as Long)
-    Long maxRunMs = (maxFanRunTime as Integer) * 60 * 1000
-    Long remainingMs = maxRunMs - elapsedMs
-
+    Long remainingMs = (state.maxFanRunSince as Long) + (maxFanRunTime as Integer) * 60000L - now()
     if (remainingMs > 0) {
         Integer remainingSeconds = (remainingMs / 1000).toInteger() + 1
         runIn(remainingSeconds, "maxFanRunTimeExpired")
-        logSched("Max fan run timer rescheduled: ${remainingSeconds}s remaining")
+        logSched("Max fan run timer serviced: ${remainingSeconds}s remaining")
     } else {
-        // Should have already expired - trigger now
+        logSched("Max fan run time elapsed - triggering expiry now")
         runIn(1, "maxFanRunTimeExpired")
     }
 }
@@ -1046,6 +1065,12 @@ void maxFanRunTimeExpired() {
     checkVersion()
     if (!state.fanTurnedOnByApp) {
         logDebug("Max fan run time expired but fan not controlled by app - ignoring")
+        state.maxFanRunSince = null
+        return
+    }
+    // A stale callback from before the window was reset re-arms instead of firing early.
+    if (isMaxFanRunTimeEnabled() && state.maxFanRunSince != null && (state.maxFanRunSince as Long) + (maxFanRunTime as Integer) * 60000L - now() > 2000L) {
+        serviceMaxFanRunTimer()
         return
     }
 
@@ -1318,8 +1343,8 @@ private String getStatusText() {
     if (state.fanTurnedOnByApp) {
         status.append(" (controlled by app)")
         // Show max run timer status
-        if (isMaxFanRunTimeEnabled() && state.lastHumidityEventTime) {
-            Long elapsedMin = (now() - (state.lastHumidityEventTime as Long)) / 60000
+        if (isMaxFanRunTimeEnabled() && state.maxFanRunSince) {
+            Long elapsedMin = (now() - (state.maxFanRunSince as Long)) / 60000
             Long remainingMin = (maxFanRunTime as Integer) - elapsedMin
             if (remainingMin > 0) {
                 status.append(" <small>[auto-off in ${remainingMin}min]</small>")

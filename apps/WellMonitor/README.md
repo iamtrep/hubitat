@@ -67,7 +67,7 @@ The flow meter sits *downstream* of the pressure tank, so it measures household 
 - Validates the downloaded file (must contain the app name AND a `CODE_VERSION` matching the app's) before overwriting the local copy
 - Daily scheduled re-check at 03:17 local for slow drift catch-up
 - An in-SPA **Sync UI from GitHub** button forces an immediate refresh from the dashboard itself
-- Emergency recovery: if `/dashboard` is requested and the local file is missing, a blocking GitHub fetch is attempted before failing
+- Recovery: if `/dashboard` is requested and the local file is missing, it serves a page that reloads every 10 seconds while the app downloads the file in the background
 
 ### CSV Logging
 - Pump cycles: `datetime, duration_s, coincident_flow_L, coincident_lpm, vol_at_start, vol_at_end`

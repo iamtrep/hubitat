@@ -263,7 +263,7 @@ SPDX-License-Identifier: MIT
 
     const ACCESS_TOKEN = '${access_token}';
     const BASE_URL = window.location.pathname.replace(/\/dashboard\/?$/, '');
-    const CODE_VERSION = '0.11.4';
+    const CODE_VERSION = '0.11.5';
 
     // Latest /api/version probe (latestVersion + updateAvailable). Cached so the version
     // badge can be re-rendered from /api/status updates without re-hitting /api/version.
@@ -1040,9 +1040,20 @@ SPDX-License-Identifier: MIT
         try {
             const resp = await fetch(apiUrl('/api/ui/sync'), { method: 'POST', headers: authHeaders() });
             const res = await resp.json();
-            if (res && res.success) {
+            if (res && res.success && !res.pending) {
                 location.reload();
                 return;
+            }
+            // The app downloads in the background; wait for the hub's copy to match the app.
+            if (res && res.success) {
+                const deadline = Date.now() + 45000;
+                while (Date.now() < deadline) {
+                    await new Promise(function(r) { setTimeout(r, 2000); });
+                    let s = null;
+                    try { s = await fetchJson('/api/status'); } catch (e) { continue; }
+                    if (s.uiVersion && s.uiVersion === s.appVersion) { location.reload(); return; }
+                    if (s.uiSyncError) { alert('UI sync failed: ' + s.uiSyncError + '. See the Hubitat logs for details.'); return; }
+                }
             }
             alert('UI sync failed. The matching version may not be on GitHub yet, or the download was invalid. See the Hubitat logs for details.');
         } catch (e) {

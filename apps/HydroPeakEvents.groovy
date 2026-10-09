@@ -12,7 +12,7 @@ import groovy.json.JsonOutput
 import java.text.SimpleDateFormat
 
 @Field static final String APP_NAME = "Hydro-Québec Peak Period Manager"
-@Field static final String CODE_VERSION = "0.3.2"
+@Field static final String CODE_VERSION = "0.3.3"
 
 definition(
     name: APP_NAME,
@@ -122,6 +122,7 @@ void installed() {
 
 void updated() {
     logDebug("Updated with settings: ${settings}")
+    unsubscribe()
     unschedule()
     initialize()
 }
@@ -146,6 +147,8 @@ void initialize() {
 
     // Update switch states based on current state (in case switches were changed in config)
     updateSwitchStates()
+
+    subscribe(location, "systemStart", "systemStartHandler")
 
     // Fetch data immediately
     fetchPeakPeriods()
@@ -172,8 +175,16 @@ void logsOff() {
     app.updateSetting("enableTrace", [value: "false", type: "bool"])
 }
 
+void systemStartHandler(evt) {
+    checkVersion()
+    fetchPeakPeriods()
+}
+
 void fetchPeakPeriods() {
     checkVersion()
+    // Every tick re-derives the state first, so a dropped transition completes
+    // even while the fetch below keeps failing.
+    reconcileState()
     logNet("Fetching peak period data...")
 
     try {
@@ -466,15 +477,9 @@ private void enterEventScheduledState(Date eventStart, Date eventEnd) {
     // Schedule transition to pre-event or event active
     if (preEventSwitch && settings.preEventMinutes > 0) {
         Integer preEventMins = settings.testMode ? 2 : settings.preEventMinutes as Integer
-        Date preEventTime = new Date(eventStart.time - (preEventMins * 60 * 1000))
-        state.preEventStart = preEventTime.time
-
-        runOnce(preEventTime, transitionToPreEvent)
-        logSched("Scheduled transition to PRE_EVENT at ${preEventTime}")
-    } else {
-        runOnce(eventStart, transitionToEventActive)
-        logSched("Scheduled transition to EVENT_ACTIVE at ${eventStart}")
+        state.preEventStart = eventStart.time - (preEventMins * 60 * 1000)
     }
+    armNextTransition(STATE_EVENT_SCHEDULED)
 }
 
 private void enterPreEventState(Date eventStart, Date eventEnd) {
@@ -489,9 +494,7 @@ private void enterPreEventState(Date eventStart, Date eventEnd) {
     upcomingEventSwitch?.each { if (it.currentValue("switch") == "on") it.off() }
     preEventSwitch?.each { if (it.currentValue("switch") == "off") it.on() }
 
-    // Schedule transition to event active
-    runOnce(eventStart, transitionToEventActive)
-    logSched("Scheduled transition to EVENT_ACTIVE at ${eventStart}")
+    armNextTransition(STATE_PRE_EVENT)
 }
 
 private void enterEventActiveState(Date eventEnd) {
@@ -506,8 +509,56 @@ private void enterEventActiveState(Date eventEnd) {
     eventSwitch?.each { if (it.currentValue("switch") == "off") it.on() }
 
     // Schedule transition back to no events (or refetch will find next event)
-    runOnce(eventEnd, transitionToNoEvents)
-    logSched("Scheduled transition to NO_EVENTS at ${eventEnd}")
+    armNextTransition(STATE_EVENT_ACTIVE)
+}
+
+// Schedules the one-shot that leaves `st`, from the stored event times.
+private void armNextTransition(String st) {
+    switch (st) {
+        case STATE_EVENT_SCHEDULED:
+            if (state.preEventStart && (state.preEventStart as Long) > now()) {
+                Date preEventTime = new Date(state.preEventStart as Long)
+                runOnce(preEventTime, transitionToPreEvent)
+                logSched("Scheduled transition to PRE_EVENT at ${preEventTime}")
+            } else {
+                Date eventStart = new Date(state.eventStart as Long)
+                runOnce(eventStart, transitionToEventActive)
+                logSched("Scheduled transition to EVENT_ACTIVE at ${eventStart}")
+            }
+            break
+        case STATE_PRE_EVENT:
+            Date eventStart = new Date(state.eventStart as Long)
+            runOnce(eventStart, transitionToEventActive)
+            logSched("Scheduled transition to EVENT_ACTIVE at ${eventStart}")
+            break
+        case STATE_EVENT_ACTIVE:
+            Date eventEnd = new Date(state.eventEnd as Long)
+            runOnce(eventEnd, transitionToNoEvents)
+            logSched("Scheduled transition to NO_EVENTS at ${eventEnd}")
+            break
+    }
+}
+
+// Re-derives the state from the stored event times. A runOnce that fell due while
+// the hub was down is dropped, and a save's unschedule() kills the pending one, so
+// this completes an overdue transition or re-arms the pending one. Without it the
+// only other exit is a successful fetch, which a cloud outage can delay for hours.
+// Callers fetch right after, which finds the next event once NO_EVENTS is reached.
+private void reconcileState() {
+    String current = state.currentState ?: STATE_NO_EVENTS
+    if (current == STATE_NO_EVENTS) return
+    Date start = state.eventStart ? new Date(state.eventStart as Long) : null
+    Date end = state.eventEnd ? new Date(state.eventEnd as Long) : null
+    // EVENT_ACTIVE keeps only the end time; any past start yields the same target.
+    if (current == STATE_EVENT_ACTIVE && start == null) start = new Date(0L)
+    String target = (start && end) ? determineTargetState(new Date(), start, end) : STATE_NO_EVENTS
+    if (target == current) {
+        armNextTransition(current)
+        return
+    }
+    logWarn("Missed transition: ${current} is out of date, moving to ${target}")
+    transitionToState(target, start, end)
+    updateAppLabel()
 }
 
 // State transition handlers (called by scheduler)

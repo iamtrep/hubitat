@@ -12,7 +12,7 @@
 import com.hubitat.app.ChildDeviceWrapper
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.3.0"
+@Field static final String CODE_VERSION = "0.3.1"
 
 definition(
     name: "HVAC Season Manager",
@@ -334,18 +334,9 @@ void uninstalled() {
 }
 
 void initialize() {
-    if (state.season == null) {
-        Map cfg = currentCfg()
-        List<String> errs = validateCfg(cfg)
-        List<String> poss = startOptions(cfg, errs)
-        Map rep = poss.size() > 1 && !errs ? installReplay(cfg) : null
-        String s = poss.size() == 1 ? poss[0] : (rep ? rep.season as String : (poss.contains(settings.initialSeason) ? settings.initialSeason as String : null))
-        if (s) {
-            state.season = s
-            state.since = (rep?.since ?: realToday()) as String
-            logCfg "season set to ${s} on install${poss.size() == 1 ? ' from the date' : (rep ? ' from the daily means' : '')}"
-        }
-    }
+    // initialize() takes the replay only from the page's cache: a fresh Open-Meteo fetch here
+    // would hold up Done for up to 15 s, so a cache miss goes to installSeasonJob() instead.
+    if (state.season == null && !setInstallSeason(true)) runIn(1, "installSeasonJob")
     state.remove('installReplay')
     if (!state.lastDaily) state.lastDaily = addDays(realToday(), -1)
     state.remove('mirroredSeason')
@@ -357,6 +348,32 @@ void initialize() {
     if (tempSensor) schedule("0 7 * * * ?", "sampleHandler")
     schedule("0 0 5 * * ?", "evaluateHandler")
     if (debugEnable) runIn(1800, "logsOff")
+    startEvaluation("refresh")
+    publish()
+}
+
+// Sets the season on install from the date, the archive replay or the user's pick. Returns false
+// only when the replay is needed but not cached (cachedOnly) or Open-Meteo did not answer.
+boolean setInstallSeason(boolean cachedOnly) {
+    Map cfg = currentCfg()
+    List<String> errs = validateCfg(cfg)
+    List<String> poss = startOptions(cfg, errs)
+    boolean wantReplay = poss.size() > 1 && !errs && settings.omEnable != false
+    Map rep = wantReplay ? installReplay(cfg, cachedOnly) : null
+    String s = poss.size() == 1 ? poss[0] : (rep ? rep.season as String : (poss.contains(settings.initialSeason) ? settings.initialSeason as String : null))
+    if (!s) return !(wantReplay && cachedOnly)
+    state.season = s
+    state.since = (rep?.since ?: realToday()) as String
+    logCfg "season set to ${s} on install${poss.size() == 1 ? ' from the date' : (rep ? ' from the daily means' : '')}"
+    return true
+}
+
+void installSeasonJob() {
+    checkVersion()
+    if (state.season != null) return
+    setInstallSeason(false)
+    state.remove('installReplay')
+    if (state.season == null) { logWarn "season not set: Open-Meteo did not answer; choose it on the app page"; return }
     startEvaluation("refresh")
     publish()
 }
@@ -394,12 +411,13 @@ String realToday() { return new Date().format('yyyy-MM-dd', location.timeZone) }
 List<String> startOptions(Map cfg, List<String> errs) { errs ? seasonList() : seasonsOn(realToday(), cfg) }
 
 // Replays the rules on archive means for the install page. Cached per day and settings: the page re-renders on every change.
-Map installReplay(Map cfg) {
+Map installReplay(Map cfg, boolean cachedOnly = false) {
     if (settings.omEnable == false) return null
     String today = realToday()
     String key = "${today} ${cfg}".toString()
     Map c = state.installReplay as Map
     if (c?.key == key) return c.result as Map
+    if (cachedOnly) return null
     Map a = replayAnchor(today, cfg)
     String url = a ? omUrl('archive', location.latitude, location.longitude, location.temperatureScale as String, addDays(a.day as String, -2), addDays(today, -1)) : null
     Map om = url ? omGet(url) : null
