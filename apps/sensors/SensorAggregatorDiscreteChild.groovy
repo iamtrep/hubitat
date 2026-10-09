@@ -28,7 +28,7 @@ import com.hubitat.app.ChildDeviceWrapper
 //import com.hubitat.hub.domain.Capability // only available from 2.4.3.148 onward
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.3.5"
+@Field static final String CODE_VERSION = "0.3.6"
 
 @Field static final Map<String, String> CAPABILITY_ATTRIBUTES = [
     "capability.accelerationSensor"  : [ attribute: "acceleration", values: ["inactive", "active"], driver: "Virtual Acceleration Sensor" ],
@@ -136,6 +136,8 @@ void installed() {
 
 void updated() {
     logDebug "updated()"
+    unsubscribe()
+    unschedule()
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
 
     // Validate settings (skip validation during testing)
@@ -154,7 +156,6 @@ void updated() {
         }
     }
 
-    unsubscribe()
     initialize()
 }
 
@@ -196,8 +197,8 @@ void initialize() {
         String attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute
         if (attributeName) {
             // Always re-seed stuck state from current live values on init/updated.
-            // Any pending sticky timers from the previous configuration will fire and
-            // find a stale seq (we reset pendingSeq) — they'll no-op.
+            // Sticky timers from before this call must no-op, so every seq advances
+            // past them. Restarting at 1 would let a new event reuse an old timer's seq.
             Map<String, String> seededStuck = [:]
             inputSensors.each { sensor ->
                 String sid = sensor.id as String
@@ -205,7 +206,8 @@ void initialize() {
                 if (liveValue != null) seededStuck[sid] = liveValue
             }
             state.stuckState = seededStuck
-            state.pendingSeq = [:]
+            Map pending = (state.pendingSeq as Map) ?: [:]
+            state.pendingSeq = pending.collectEntries { k, v -> [(k): ((v ?: 0) as int) + 1] }
 
             subscribe(inputSensors, attributeName, sensorEventHandler)
             logTrace "Subscribed to ${attributeName} events for ${inputSensors.collect { it.displayName}}."
@@ -1100,6 +1102,7 @@ void runStaysTests() {
     test_Stays_ThresholdWithSticky()
     test_Stays_OverrideOnlyDefaultZero()
     test_Stays_PendingTimerSurvivesReinit()
+    test_Stays_ReinitSeqNoCollision()
     // test_Stays_SameDirectionRepeatDedup intentionally removed:
     // Hubitat's sendEvent dedupes same-value emissions (no isStateChange:true), so the
     // "fire same value twice in a row" scenario can't occur in production. Seq supersession
@@ -1409,10 +1412,32 @@ void test_Stays_PendingTimerSurvivesReinit() {
     // T≈1: device is back to "closed". Force re-init.
     initialize()
     pauseExecution(500)
-    // initialize() reseeds stuckState[241]="closed" and resets pendingSeq=[:].
-    // Both pending runIns (T≈3 and T≈3.5) will find expectedSeq=null → stale → no-op.
+    // initialize() reseeds stuckState to "closed" and advances pendingSeq to 3.
+    // Both pending runIns (T≈3 and T≈3.5) carry an older seq → stale → no-op.
     pauseExecution(3500)
     assertAggregateValue("closed", testName)
+}
+
+void test_Stays_ReinitSeqNoCollision() {
+    String testName = "Test 4.16: Stays - Pre-reinit timer can't match a post-reinit seq"
+    logInfo ""
+    logInfo "Running: ${testName}"
+    prepareStickyTest(4)
+    // Pending commits seq=1 'open' (due T≈4) and seq=2 'closed' (due T≈4.5)
+    fireSensor(1, "open")
+    pauseExecution(500)
+    fireSensor(1, "closed")
+    pauseExecution(500)
+    initialize()
+    pauseExecution(500)
+    // T≈1.5: a new 'open' after reinit, due T≈5.5. If initialize() restarted the
+    // sequence, this event reuses seq=1 and the old 'open' timer commits it at T≈4.
+    fireSensor(1, "open")
+    pauseExecution(2500)
+    // T≈4.5 (assert adds 500 ms): the new 'open' hasn't stayed 4 s yet
+    assertAggregateValue("closed", "${testName} - old timer ignored")
+    pauseExecution(1500)
+    assertAggregateValue("open", "${testName} - new timer commits")
 }
 
 // ============================================================================
