@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 Turns plain switches (smart plugs or relays feeding resistive heaters) into a thermostat, and tells you when it cannot do the job.
 
-The app reads one or more temperature sensors and feeds the combined reading to a Virtual Thermostat. It turns the heater switches on and off as that thermostat's operating state changes. It protects against frost whatever the thermostat mode, and it raises an alert when a heater does not respond or draws the wrong power, when the heaters run without warming the room or past a time limit, or when no sensor reports. [Thermostat Scheduler+](../ThermostatSchedulerPlus/README.md) and [HVAC Interlock](../HvacInterlock/README.md) work on the thermostat like on any other.
+The app reads one or more temperature sensors and feeds the combined reading to a Virtual Thermostat. It turns the heater switches on and off as that thermostat's operating state changes. It protects against frost whatever the thermostat mode, and it raises an alert when a heater does not respond or draws the wrong power, when the heaters run without warming the room or past a time limit, or when no sensor reports.
 
 ## Files
 
@@ -46,7 +46,7 @@ When the configuration is unusable (no thermostat, a thermostat on another drive
 
 ## Frost protection
 
-Set **Frost protection** (°C or °F) to turn the heaters on when the combined temperature falls below it, whatever the thermostat mode, HVAC Interlock and the heating time limit rest. The heaters stay on until the temperature is 1 degree above the setting. It needs a live reading: with every sensor quiet, frost protection is off and the choice for no sensor applies. A notification goes out when it starts and when it stops, and the status at the top of the page shows it while it runs. It is not a fault, turns on no switch, and does not count toward the heating time limit. Blank turns it off.
+Set **Frost protection** (°C or °F) to turn the heaters on when the combined temperature falls below it, whatever the thermostat mode and the heating time limit rest. The heaters stay on until the temperature is 1 degree above the setting. It needs a live reading: with every sensor quiet, frost protection is off and the choice for no sensor applies. A notification goes out when it starts and when it stops, and the status at the top of the page shows it while it runs. It is not a fault, turns on no switch, and does not count toward the heating time limit. Blank turns it off.
 
 ## Minimum on and off times
 
@@ -128,13 +128,9 @@ Messages (`<name>` is the app label; temperatures show the hub's scale, such as 
 
 On hub start, on every Done and on the first event after a code update, the app samples sensor activity, rewrites the temperature, re-applies the heaters (restarting the limit, rest, cycle, minimum-time, warming and keep-alive timers from its saved state), re-evaluates power and re-asserts the fault switches.
 
-## With Thermostat Scheduler+ and HVAC Interlock
-
-Both act on the thermostat (setpoints and `setThermostatMode`), and the app follows the result. Nothing to configure. Thermostat mode `off` from either turns the heaters off, except while frost protection runs.
-
 ## Not in this version
 
-Time-proportional control with an outdoor temperature, cooling, and per-heater power thresholds. Window and door handling, presets, presence and schedules belong to HVAC Interlock and Thermostat Scheduler+.
+Time-proportional control with an outdoor temperature, cooling, and per-heater power thresholds.
 
 ## Tests
 
