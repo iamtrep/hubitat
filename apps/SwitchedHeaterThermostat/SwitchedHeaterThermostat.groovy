@@ -15,7 +15,7 @@ import com.hubitat.app.DeviceWrapper
 import groovy.json.JsonOutput
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.1"
+@Field static final String CODE_VERSION = "0.1.2"
 
 definition(
     name: "Switched Heater Thermostat",
@@ -125,6 +125,7 @@ Map mainPage() {
         section("Logging") {
             input "txtEnable", "bool", title: "Enable info logging", defaultValue: true
             input "debugEnable", "bool", title: "Enable debug logging (turns off after 30 minutes)", defaultValue: false, submitOnChange: true
+            if (debugEnable) input "traceEnable", "bool", title: "Enable trace logging (turns off with debug)", defaultValue: false
         }
         if (debugEnable) {
             section("Testing") {
@@ -193,7 +194,7 @@ void uninstalled() {
 
 void initialize() {
     checkVersion(false)
-    if (debugEnable) runIn(1800, "logsOff")
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
     String err = configError()
     if (err) { logError err; heatersOff(); return }
     ensureThermostat()
@@ -920,4 +921,4 @@ void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
 void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
 void logDebug(String m) { if (debugEnable) log.debug "${app.getLabel()}: ${m}" }
 
-void logsOff() { checkVersion(); app.updateSetting("debugEnable", false); logWarn "debug logging disabled" }
+void logsOff() { checkVersion(); app.updateSetting("debugEnable", false); app.updateSetting("traceEnable", false); logWarn "debug and trace logging disabled" }
