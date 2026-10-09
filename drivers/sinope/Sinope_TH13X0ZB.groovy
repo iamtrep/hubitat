@@ -25,7 +25,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.21"
+@Field static final String CODE_VERSION = "0.0.22"
 
 @Field static final List<String> SUPPORTED_THERMOSTAT_MODES     = ['"off"', '"heat"']
 @Field static final List<String> SUPPORTED_THERMOSTAT_FAN_MODES = ['"auto"']
@@ -763,7 +763,7 @@ private void parseAttributeReport(Map descMap) {
 
 void setClockTime() {
     Date thermostatDate = new Date()
-    long thermostatTimeSec = thermostatDate.getTime() / 1000
+    long thermostatTimeSec = thermostatDate.getTime().intdiv(1000)
     int thermostatTimezoneOffsetSec = thermostatDate.getTimezoneOffset() * 60
     int currentTimeToDisplay = Math.round(thermostatTimeSec - thermostatTimezoneOffsetSec - 946684800) //time from 2000-01-01 00:00
 
@@ -952,7 +952,7 @@ private Integer getActivePower(String value) {
     if (state.powerDivider == null) {
         state.powerDivider = 1 as Integer
     }
-    return Integer.parseInt(value, 16) / (state.powerDivider as Integer)
+    return Integer.parseInt(value, 16).intdiv(state.powerDivider as Integer)
 }
 
 private Double getRMSVoltage(String attributeReportValue) {

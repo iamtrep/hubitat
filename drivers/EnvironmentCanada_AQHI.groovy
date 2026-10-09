@@ -14,7 +14,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.5.3"
+@Field static final String CODE_VERSION = "0.5.4"
 @Field static final String API_BASE = "https://api.weather.gc.ca/collections"
 @Field static final String ALERT_API_BASE = "https://weather.gc.ca/api/app/v3"
 @Field static final int HTTP_TIMEOUT = 15
@@ -217,7 +217,7 @@ void schedulePoll() {
         if (rate < 60) {
             cron = "${rng.nextInt(60)} */${rate} * ? * *"
         } else {
-            int hours = Math.max(1, (int)(rate / 60))
+            int hours = Math.max(1, rate.intdiv(60))
             cron = "${rng.nextInt(60)} ${rng.nextInt(60)} */${hours} ? * *"
         }
         schedule(cron, "refresh")
@@ -390,13 +390,13 @@ private void checkObservationStaleness() {
 
     int thresholdHours = (staleThreshold != null) ? staleThreshold as int : 6
     long ageMillis = now() - lastObs
-    long ageHours = (long)(ageMillis / 3600000)
+    long ageHours = ageMillis.intdiv(3600000)
 
     String ageText
     if (ageHours < 24) {
         ageText = "${ageHours}h"
     } else {
-        long days = (long)(ageHours / 24)
+        long days = ageHours.intdiv(24)
         ageText = "${days}d ${ageHours % 24}h"
     }
 
@@ -476,7 +476,7 @@ boolean parseForecastResponse(resp, List errors) {
         long forecastMillis = parseISO8601(forecastDt)
         if (forecastMillis <= nowMillis) continue
 
-        int hoursAhead = (int)((forecastMillis - nowMillis) / 3600000)
+        int hoursAhead = (int) (forecastMillis - nowMillis).intdiv(3600000)
         BigDecimal aqhi = props.aqhi as BigDecimal
 
         futureForecasts << [

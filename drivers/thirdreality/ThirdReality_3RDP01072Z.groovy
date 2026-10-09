@@ -30,7 +30,7 @@ import com.hubitat.app.DeviceWrapper
 import hubitat.zigbee.zcl.DataType
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.3"
+@Field static final String CODE_VERSION = "0.0.4"
 
 // Both outlets. Kept as strings to match descMap.endpoint / child DNI suffixes.
 @Field static final List<String> ENDPOINTS = ["01", "02"]
@@ -710,7 +710,7 @@ void checkPresence() {
     long silenceMs = now() - lastRx
     if (silenceMs > thresholdMs && device.currentValue("healthStatus") != "offline") {
         sendEvent(name: "healthStatus", value: "offline", descriptionText: "${device.displayName} is offline")
-        logWarn "marked offline after ${(silenceMs / 60000) as int} min of silence"
+        logWarn "marked offline after ${silenceMs.intdiv(60000)} min of silence"
     }
 }
 
@@ -718,7 +718,7 @@ private void scheduleDeviceHealthCheck(int intervalMin) {
     int second = (new Random()).nextInt(60)
     String cron = intervalMin < 60
         ? "${second} */${intervalMin} * ? * * *"
-        : "${second} 0 */${(intervalMin / 60) as int} ? * * *"
+        : "${second} 0 */${intervalMin.intdiv(60)} ? * * *"
     schedule(cron, "checkPresence")
     logInfo "health check scheduled every ${intervalMin} minute(s)"
 }

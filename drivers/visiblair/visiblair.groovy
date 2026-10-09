@@ -44,7 +44,7 @@ metadata {
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.6"
+@Field static final String CODE_VERSION = "0.1.7"
 @Field static final String constCO2ClickURL = 'https://environment-monitor-01.co2.click:11000/api/v1'
 @Field static final String constVisiblairURL = 'https://api.visiblair.com:11000/api/v1'
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
@@ -109,9 +109,7 @@ void updated() {
     if (pollRate == null)
         device.updateSetting("pollRate", [value: 0, type: "number"])
 
-    unschedule("refresh")
-    if (pollRate > 0)
-        runIn(pollRate * 60, "refresh")
+    scheduleNextRefresh()
 
     refresh()
 }
@@ -140,9 +138,15 @@ void refresh() {
 
     getDeviceValuesFromAPI("sensor?uuid=${uuid}&viewToken=${token}")
 
+    scheduleNextRefresh()
+}
+
+private void scheduleNextRefresh() {
     unschedule("refresh")
-    if (pollRate > 0)
-        runIn(pollRate * 60, "refresh")
+    if (pollRate > 0) {
+        int delay = (pollRate as int) * 60 - 7 + new Random().nextInt(15)
+        runIn(delay, "refresh")
+    }
 }
 
 // for debug purposes only

@@ -88,7 +88,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "2.15.5"
+@Field static final String CODE_VERSION = "2.15.6"
 
 // A pending version reconfigure older than this is treated as lost and re-armed.
 @Field static final long RECONFIGURE_RETRY_MS = 60000L
@@ -225,7 +225,7 @@ void setBatteryReplacementDate(Date date = null) {
 void checkHealth() {
     long millisElapsed = new Date().time - state.lastMessageMillis
     long timeoutMillis = (REPORT_INTERVAL_MINUTES * 2 + HEALTH_TIMEOUT_SLACK_MINUTES) * 60000L
-    long secondsElapsed = millisElapsed / 1000
+    long secondsElapsed = millisElapsed.intdiv(1000)
     long hubUptime = location.hub.uptime
 
     if (millisElapsed <= timeoutMillis) {
@@ -351,7 +351,7 @@ void parse(String description) {
         if (state.lastCheckinMillis) {
             long millisSinceLastCheckin = now.time - state.lastCheckinMillis
             if (millisSinceLastCheckin > 90 * 60 * 1000) {
-                logInfo "Recovery : Check-in was ${(millisSinceLastCheckin / 60000).intValue()} min overdue, re-binding clusters"
+                logInfo "Recovery : Check-in was ${millisSinceLastCheckin.intdiv(60000)} min overdue, re-binding clusters"
                 rebindClusters()
             }
         }

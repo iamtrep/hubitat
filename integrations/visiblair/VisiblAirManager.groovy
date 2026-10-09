@@ -28,7 +28,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "2.1.5"
+@Field static final String CODE_VERSION = "2.1.6"
 @Field static final String VISIBLAIR_API = "https://api.visiblair.com/api/v1"
 @Field static final int HTTP_TIMEOUT = 15
 @Field static final String DNI_PREFIX = "visiblair-"
@@ -112,7 +112,8 @@ void updated() {
     pollSensors()
 
     int rate = (pollRate ?: 5) as int
-    schedule("0 */${rate} * ? * *", pollSensors)
+    Random rng = new Random()
+    schedule("${rng.nextInt(60)} */${rate} * ? * *", pollSensors)
     logSched "scheduled polling every ${rate} minutes"
 }
 

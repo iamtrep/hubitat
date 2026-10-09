@@ -34,7 +34,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.7"
+@Field static final String CODE_VERSION = "0.1.8"
 
 metadata {
     definition (
@@ -131,8 +131,6 @@ void configure() {
     logTrace("configure()")
 
     state.clear()
-    state.lastTx = 0
-    state.lastRx = 0
     state.lastOperatingStateRequest = 0
     state.codeVersion = CODE_VERSION
 
@@ -328,10 +326,11 @@ void setThermostatMode(String value) {
 void parse(String description) {
     if (state.codeVersion != CODE_VERSION) {
         state.codeVersion = CODE_VERSION
+        // 0.1.7 and earlier wrote these on every frame; nothing read them.
+        state.remove("lastRx")
+        state.remove("lastTx")
         runInMillis 1500, 'autoConfigure'
     }
-
-    state.lastRx = now()
 
     Map descMap = zigbee.parseDescriptionAsMap(description)
     logTrace("parse() - description = ${descMap}")
@@ -588,7 +587,6 @@ private void autoConfigure() {
 
 private void sendZigbeeCommands(List<String> cmds) {
     logTrace "Sending Zigbee messages ➡️ device: ${cmds}"
-    state.lastTx = now()
     sendHubCommand(new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE))
 }
 

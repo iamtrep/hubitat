@@ -33,7 +33,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "0.3.3"
+@Field static final String CODE_VERSION = "0.3.4"
 
 // Region-specific Ayla endpoints + app credentials, lifted from
 // ayla-iot-unofficial/src/ayla_iot_unofficial/const.py and fujitsu_consts.py.
@@ -268,7 +268,7 @@ void systemStartHandler(evt) {
 private void scheduleTokenRefresh() {
     if (!state.tokenExpiry) return
     long ms = ((long) state.tokenExpiry) - now() - TOKEN_REFRESH_BUFFER_MS
-    int secs = Math.max(60, (int) (ms / 1000L))
+    int secs = Math.max(60, (int) ms.intdiv(1000L))
     logSched "scheduleTokenRefresh in ${secs}s"
     runIn(secs, "refreshToken")
 }

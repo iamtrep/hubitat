@@ -29,6 +29,7 @@
  * v0.0.8 Auto-reconfigure on code push (version check in parse())
  * v0.0.10 rateFromVolume drops to 0 when the device reports zero flow
  * v0.0.11 Re-arm poll chains on hub start; digital-command marker expires on its own
+ * v0.0.12 Trace-log unhandled ZDO and ZHA global frames
  *
  */
 
@@ -36,7 +37,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.0.11"
+@Field static final String CODE_VERSION = "0.0.12"
 
 // device.id -> deadline (ms) until which a valve report counts as digital. Static rather than state:
 // a driver's state is written back at method exit, so parse() on another thread would not see it,
@@ -250,10 +251,10 @@ void parse(String description) {
         }
     } else if (descMap.profileId == "0000") {
         // ZigBee Device Object (ZDO) command
-        //logTrace("Unhandled ZDO command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
+        logTrace("Unhandled ZDO command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     } else if (descMap.profileId == "0104" && descMap.clusterId != null) {
         // ZigBee Home Automation (ZHA) global command
-        //logTrace("Unhandled ZHA global command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
+        logTrace("Unhandled ZHA global command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     } else if (description?.startsWith('enroll request')) {
         logRx "Received enroll request"
     } else if (description?.startsWith('zone status')  || description?.startsWith('zone report')) {

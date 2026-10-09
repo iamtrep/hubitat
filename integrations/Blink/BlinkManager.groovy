@@ -38,7 +38,7 @@ definition(
 
 // --- Constants ---
 
-@Field static final String CODE_VERSION = "1.1.4"
+@Field static final String CODE_VERSION = "1.1.5"
 
 @Field static final String OAUTH_BASE_URL = "https://api.oauth.blink.com"
 @Field static final String CLIENT_ID = "ios"
@@ -320,7 +320,7 @@ private void schedulePolling() {
     if (rate == 60) {
         cron = "${offset} * * ? * *"
     } else {
-        int minutes = rate / 60 as int
+        int minutes = rate.intdiv(60)
         cron = "${offset} */${minutes} * ? * *"
     }
     logSched "scheduling poll: ${cron}"
@@ -693,7 +693,7 @@ void scheduleTokenRefresh() {
     unschedule("refreshAccessToken")
     if (!state.tokenExpiry) return
     long refreshAt = ((long) state.tokenExpiry) - TOKEN_REFRESH_BUFFER_MS
-    long delaySecs = Math.max(60L, (long) ((refreshAt - now()) / 1000L))
+    long delaySecs = Math.max(60L, (refreshAt - now()).intdiv(1000L))
     logSched "scheduling token refresh in ${delaySecs}s"
     runIn(delaySecs, "refreshAccessToken")
 }
@@ -1316,7 +1316,7 @@ void cameraSignalsResponse(resp, data) {
 // the actual recorded video, distinct from the still-image lastThumbnailUrl.
 private void fetchRecentClips() {
     if (!isAuthenticated() || !state.accountId || !state.tier) return
-    long sinceUnix = ((atomicState.lastClipFetchTime ?: ((now() / 1000L) - CLIP_INITIAL_WINDOW_SEC)) as Number).longValue()
+    long sinceUnix = ((atomicState.lastClipFetchTime ?: (now().intdiv(1000L) - CLIP_INITIAL_WINDOW_SEC)) as Number).longValue()
     // since = ISO 8601 with a UTC offset ("YYYY-MM-DDTHH:MM:SS+0000"); a raw Unix
     // epoch is rejected. Pass the query via the `query:` map, NOT inline in the URI:
     // the 2.5.1.x asynchttpGet path drops an inline query string, so Blink sees no
@@ -1335,7 +1335,7 @@ private void fetchRecentClips() {
 
 void recentClipsResponse(resp, data) {
     checkVersion()
-    long fetchedAt = (now() / 1000L) as long
+    long fetchedAt = now().intdiv(1000L)
     List<Map> media = []
     Map<String, Map> latestByName = [:]
     String errorMsg = null

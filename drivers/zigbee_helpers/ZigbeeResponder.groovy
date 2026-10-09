@@ -18,7 +18,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = '0.3.6'
+@Field static final String CODE_VERSION = '0.3.7'
 
 // Sub-second WS re-delivery dedup, keyed by hub device id, value = [sig, ts].
 // In-JVM only — lost on hub reboot, which is fine for sub-second dedup. Bounded
@@ -345,7 +345,7 @@ private void processTimeReadRequest(Map entry) {
 private void sendTimeClusterResponse(String srcDniHex, String zclSeq, List<Integer> requestedAttrs,
                                      Integer srcEp, Integer dstEp, boolean useUnixEpoch = false) {
     final long ZIGBEE_EPOCH_OFFSET = 946684800L
-    long unixSec  = (now() / 1000L).toLong()
+    long unixSec  = now().intdiv(1000L)
     long zbUtcSec = unixSec - ZIGBEE_EPOCH_OFFSET
     int  tzOffsetSec = location.timeZone.rawOffset.intdiv(1000)
     int  dstSec      = location.timeZone.inDaylightTime(new Date())

@@ -100,7 +100,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.1.3"
+@Field static final String CODE_VERSION = "0.1.4"
 
 // OAuth and API endpoints
 @Field static final String ECOBEE_API_BASE= "https://api.ecobee.com"
@@ -184,6 +184,9 @@ private void checkVersion(boolean reinit = true) {
     if (state.version != CODE_VERSION) {
         logVer "New version: ${CODE_VERSION} (was: ${state.version})"
         state.version = CODE_VERSION
+        // 0.1.3 and earlier copied the full API payloads into state on every poll.
+        state.remove("thermostatRuntime")
+        state.remove("thermostatWeather")
         if (reinit) runIn(1, "updated")
     }
     // 0.1.1 and earlier stored the tokens in plain text.
@@ -720,7 +723,7 @@ List<Map> listThermostatSchedule(String day) {
     for (int i = 0; i < scheduleBlocks.size(); i++) {
         String climate = scheduleBlocks[i]
         if (climate != lastClimate) {
-            Integer hours = Math.floor(i / 2) as Integer
+            Integer hours = i.intdiv(2)
             Integer minutes = (i % 2) * 30
             String timeStr = String.format("%02d:%02d", hours, minutes)
             String climateName = climates[climate] ?: climate
@@ -831,14 +834,12 @@ private void pollState() {
     String recovery = pollSucceeded()
 
     Map runtime = thermostat.runtime
-    state.thermostatRuntime = runtime
     if (runtime?.connected == false) {
         setHealth("offline", "thermostat not connected to Ecobee since ${runtime.disconnectDateTime} UTC")
     } else {
         setHealth("online", recovery ?: "reporting")
     }
     Map weather = thermostat.weather
-    state.thermostatWeather = weather
 
     // Update temperature and humidity
     BigDecimal tempC = ecobeeToCelsius(runtime.actualTemperature)
@@ -1302,7 +1303,7 @@ Integer timeToBlockIndex(String timeStr) {
 
 @CompileStatic
 String minutesToTime(Integer minutes) {
-    int hours = (minutes / 60) as Integer
+    int hours = minutes.intdiv(60).intValue()
     int mins = (minutes % 60) as Integer
     return String.format("%02d:%02d", hours, mins)
 }
@@ -1339,7 +1340,8 @@ private void schedulePolling() {
         effective = 5
     }
 
-    String cronExpression = "0 0/${effective} * ? * *"
+    Random rng = new Random()
+    String cronExpression = "${rng.nextInt(60)} */${effective} * ? * *"
     schedule(cronExpression, "refresh")
     logSched "Polling: every ${effective} min"
 }

@@ -61,7 +61,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.3.2"
+@Field static final String CODE_VERSION = "0.3.3"
 // Failed polls log at warn until this many in a row, then once at error, then at
 // warn every OUTAGE_REMINDER_MS until a poll succeeds.
 @Field static final int FAILURE_ERROR_THRESHOLD = 3
@@ -113,6 +113,8 @@ private void initState() {
         logVer "New driver version detected: ${CODE_VERSION} (previous: ${state.version})"
         unschedule("poll")
         state.version = CODE_VERSION
+        // 0.3.2 and earlier kept per-poll AQI intermediates in state; nothing read them.
+        ['avgPM25', 'aqiBreakpoint', 'rawAqi'].each { state.remove(it) }
     }
     if (state.pm25readings == null) state.pm25readings = []
 }
@@ -419,15 +421,12 @@ private int calculateAqi() {
         totalPM25 += reading
     }
     double avgPM25 = totalPM25 / readings.size()
-    state.avgPM25 = avgPM25
 
     // Find appropriate AQI breakpoint tier
     Map<String, Object> aqiTier = findAqiTier(avgPM25)
-    state.aqiBreakpoint = aqiTier
 
     // Apply AQI formula: ((AQI_high - AQI_low) / (BP_high - BP_low)) * (PM2.5 - BP_low) + AQI_low
     double rawAqi = calculateRawAqi(aqiTier, avgPM25)
-    state.rawAqi = rawAqi
 
     return Math.round(rawAqi) as int
 }

@@ -26,7 +26,7 @@ import com.hubitat.hub.domain.Event
 import hubitat.zigbee.zcl.DataType
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.9"
+@Field static final String CODE_VERSION = "0.0.10"
 
 // Third Reality proprietary cluster (no Hubitat constant). The mfg code differs by
 // generation; resolve per-device via mfgCode() rather than a single constant.
@@ -776,7 +776,7 @@ void checkPresence() {
     long silenceMs = now() - lastRx
     if (silenceMs > thresholdMs && device.currentValue("healthStatus") != "offline") {
         sendEvent(name: "healthStatus", value: "offline", descriptionText: "${device.displayName} is offline")
-        logWarn "marked offline after ${(silenceMs / 60000) as int} min of silence"
+        logWarn "marked offline after ${silenceMs.intdiv(60000)} min of silence"
     }
 }
 
@@ -785,7 +785,7 @@ private void scheduleDeviceHealthCheck(int intervalMin) {
     // Quartz rejects step values >= 60 in the minutes field, so >=60 routes through the hours field.
     String cron = intervalMin < 60
         ? "${second} */${intervalMin} * ? * * *"
-        : "${second} 0 */${(intervalMin / 60) as int} ? * * *"
+        : "${second} 0 */${intervalMin.intdiv(60)} ? * * *"
     schedule(cron, "checkPresence")
     logInfo "health check scheduled every ${intervalMin} minute(s)"
 }

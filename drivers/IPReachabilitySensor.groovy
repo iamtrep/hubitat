@@ -55,7 +55,7 @@ import hubitat.helper.NetworkUtils
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.1.3"
+@Field static final String CODE_VERSION = "0.1.4"
 @Field static final int RESPONSE_HISTORY_SIZE = 21
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int INITIAL_PING_DELAY = 2
@@ -376,7 +376,7 @@ void setRetryThreshold(Number threshold) {
     logDebug "Set retry threshold to ${threshold}"
 }
 
-@Field static List<Integer> constNewPingVersion = [2, 4, 3, 149]
+@Field static final List<Integer> constNewPingVersion = [2, 4, 3, 149]
 
 @CompileStatic
 private boolean supportsPingTimeout(String versionString) {
@@ -426,7 +426,7 @@ private long computeMedian(List<Long> values) {
     List<Long> sorted = values.collect().sort()
     int mid = sorted.size().intdiv(2)
     if (sorted.size() % 2 == 0) {
-        return ((sorted[mid - 1] + sorted[mid]) / 2) as long
+        return (sorted[mid - 1] + sorted[mid]).intdiv(2) as long
     }
     return sorted[mid] as long
 }

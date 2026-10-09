@@ -13,7 +13,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.2.2"
+@Field static final String CODE_VERSION = "0.2.3"
 @Field static final String RSQAQ_URL = "https://services3.arcgis.com/0lL78GhXbg1Po7WO/arcgis/rest/services/IQA_resultat_REST/FeatureServer/0/query"
 // CKAN datastore; GET ignores filters, so queries are POSTed
 @Field static final String MTL_DATASTORE_URL = "https://donnees.montreal.ca/api/3/action/datastore_search"
@@ -133,7 +133,7 @@ void schedulePoll() {
         cron = "${rng.nextInt(60)} */${rate} * ? * *"
     } else {
         // Both feeds publish the previous hour 10+ minutes past the hour
-        int hours = Math.max(1, (int)(rate / 60))
+        int hours = Math.max(1, rate.intdiv(60))
         cron = "${rng.nextInt(60)} ${15 + rng.nextInt(30)} */${hours} ? * *"
     }
     schedule(cron, "refresh")
@@ -333,7 +333,7 @@ private void checkStaleness() {
         return
     }
     int thresholdHours = (staleThreshold != null) ? staleThreshold as int : 6
-    long ageHours = (long)((now() - last) / 3600000)
+    long ageHours = (now() - last).intdiv(3600000)
     boolean stale = ageHours >= thresholdHours
     if (stale && !state.stale) {
         logWarn "Station has not reported for ${ageHours}h (threshold: ${thresholdHours}h)"
