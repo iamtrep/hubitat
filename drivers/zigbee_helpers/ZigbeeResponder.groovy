@@ -18,7 +18,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = '0.3.5'
+@Field static final String CODE_VERSION = '0.3.6'
 
 // Sub-second WS re-delivery dedup, keyed by hub device id, value = [sig, ts].
 // In-JVM only — lost on hub reboot, which is fine for sub-second dedup. Bounded
@@ -91,6 +91,7 @@ void installed() {
 void updated() {
     logCfg "updated"
     unschedule()
+    disconnectZigbeeLogSocket()
     initialize()
 }
 
@@ -221,7 +222,7 @@ void webSocketStatus(String status) {
 // ══════════════════════════════════════════════════════════════════════════
 
 void parse(String description) {
-    if (state.version != CODE_VERSION) runInMillis(100, 'initialize')
+    if (state.version != CODE_VERSION) runInMillis(100, 'updated')  // updated() closes the open socket before reconnecting
 
     // The only thing reaching parse() on this virtual device is the WebSocket
     // text frame (JSON). Anything else is a hub anomaly and gets dropped.

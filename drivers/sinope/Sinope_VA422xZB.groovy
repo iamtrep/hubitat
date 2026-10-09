@@ -28,13 +28,21 @@
  * v0.0.7 Leak detection reacts to both IAS alarm bits; fix Level Control fall-through and abnormal-flow-duration default; dormant Flow Measurement (0x0404) decoding; cleanup
  * v0.0.8 Auto-reconfigure on code push (version check in parse())
  * v0.0.10 rateFromVolume drops to 0 when the device reports zero flow
+ * v0.0.11 Re-arm poll chains on hub start; digital-command marker expires on its own
  *
  */
 
 import groovy.transform.Field
 import groovy.transform.CompileStatic
+import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.0.10"
+@Field static final String CODE_VERSION = "0.0.11"
+
+// device.id -> deadline (ms) until which a valve report counts as digital. Static rather than state:
+// a driver's state is written back at method exit, so parse() on another thread would not see it,
+// and a deadline expires on its own when no report follows the command.
+@Field static final ConcurrentHashMap<String, Long> digitalUntil = new ConcurrentHashMap<>()
+@Field static final long DIGITAL_WINDOW_MS = 5000L
 
 
 metadata {
@@ -164,9 +172,13 @@ void configure() {
 
     sendZigbeeCommands(cmds)
 
-    // Poll power source and battery alarm; the device's self-reporting for these is unreliable.
-    runIn(prefPowerSourceSchedule*60, requestPowerSourceReport, [overwrite: true, misfire: "ignore"])
-    runIn(prefBatteryAlarmSchedule*3600, requestBatteryAlarmReport, [overwrite: true, misfire: "ignore"])
+    schedulePolls()
+}
+
+// Poll power source and battery alarm; the device's self-reporting for these is unreliable.
+private void schedulePolls() {
+    runIn((prefPowerSourceSchedule ?: 5) * 60, "requestPowerSourceReport", [overwrite: true, misfire: "ignore"])
+    runIn((prefBatteryAlarmSchedule ?: 1) * 3600, "requestBatteryAlarmReport", [overwrite: true, misfire: "ignore"])
 }
 
 void initialize() {
@@ -174,11 +186,13 @@ void initialize() {
     // hub startup wastes radio bandwidth.
     logTrace("initialize()")
 
-    state.switchTypeDigital = false
+    digitalUntil.remove(device.id as String)
     state.remove("lastVolumeRecorded")
     state.remove("lastVolumeRecordedTime")
     state.remove("volumeSinceLastEvent")
 
+    // One-shot runIn chains: a run that fell due while the hub was down is dropped, ending the chain
+    schedulePolls()
     refresh()
 }
 
@@ -205,14 +219,14 @@ void open() {
     List<String> cmds = []
     cmds += zigbee.command(0x0006, 0x01)
     sendZigbeeCommands(cmds)
-    state.switchTypeDigital = true
+    markDigital()
 }
 
 void close() {
     List<String> cmds = []
     cmds += zigbee.command(0x0006, 0x00)
     sendZigbeeCommands(cmds)
-    state.switchTypeDigital = true
+    markDigital()
 }
 
 // Device Event Parsing
@@ -220,6 +234,7 @@ void close() {
 void parse(String description) {
     if (state.codeVersion != CODE_VERSION) {
         state.codeVersion = CODE_VERSION
+        state.remove("switchTypeDigital")  // replaced by digitalUntil in 0.0.11
         runInMillis 1500, 'autoConfigure'
     }
 
@@ -320,8 +335,7 @@ private void parseAttributeReport(Map descMap) {
             if (descMap.attrId == "0000") {
                 map.name = "valve"
                 map.value = constValveValues[descMap.value]
-                map.type = state.switchTypeDigital ? "digital" : "physical"
-                state.switchTypeDigital = false
+                map.type = consumeDigital() ? "digital" : "physical"
                 map.descriptionText = "Valve is ${map.value} [${map.type}]"
             }
             break
@@ -510,6 +524,15 @@ void requestBatteryAlarmReport() {
 }
 
 // Private methods
+
+private void markDigital() {
+    digitalUntil.put(device.id as String, now() + DIGITAL_WINDOW_MS)
+}
+
+private boolean consumeDigital() {
+    Long until = digitalUntil.remove(device.id as String)
+    return until != null && now() < until
+}
 
 private void sendZigbeeCommands(List cmds) {
     hubitat.device.HubMultiAction hubAction = new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE)

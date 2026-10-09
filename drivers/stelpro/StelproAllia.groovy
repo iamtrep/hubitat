@@ -33,7 +33,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import groovy.json.JsonOutput
 
-@Field static final String CODE_VERSION = "0.0.10"
+@Field static final String CODE_VERSION = "0.0.11"
 
 metadata {
     definition (name: "Stelpro Allia Zigbee Thermostat",
@@ -645,11 +645,12 @@ private Integer getPower(String value)
     }
 }
 
-private Integer getEnergy(String value)
+// Device reports Wh as UINT32 (can exceed Integer.MAX_VALUE); emitted in kWh at Wh resolution
+private BigDecimal getEnergy(String value)
 {
     if (value != null) {
         logTrace("getEnergy: value $value")
-        return Integer.parseInt(value, 16)/1000
+        return (Long.parseLong(value, 16) as BigDecimal).movePointLeft(3).setScale(3)
     }
 }
 

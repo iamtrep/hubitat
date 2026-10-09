@@ -68,7 +68,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "1.5.3"
+@Field static final String CODE_VERSION = "1.5.4"
 
 // A pending version reconfigure older than this is treated as lost and re-armed.
 @Field static final long RECONFIGURE_RETRY_MS = 60000L
@@ -333,7 +333,7 @@ private void reportSwitch(String value) {
     // sendEvent dedups the duplicate; log at info only on a real change so the
     // confirmation read doesn't double the log line.
     if (device.currentValue("switch") != sw) {
-        if (txtEnable) logInfo "Switch: ${sw} [${src}]"
+        logInfo "Switch: ${sw} [${src}]"
     } else {
         logRx "Switch: ${sw} (confirmation)"
     }
@@ -377,7 +377,7 @@ private void parseLumiAttribute(Integer attrInt, String value) {
             // its own, so a single configure yields several frames. sendEvent dedups
             // the event; log at info only on a real change to avoid repeats.
             if (device.currentValue("operationMode") != mode) {
-                if (txtEnable) logInfo "Operation mode: ${mode}"
+                logInfo "Operation mode: ${mode}"
             } else {
                 logRx "Operation mode: ${mode} (confirmation)"
             }

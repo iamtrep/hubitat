@@ -66,7 +66,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "1.1.2"
+@Field static final String CODE_VERSION = "1.1.3"
 
 // A pending version reconfigure older than this is treated as lost and re-armed.
 @Field static final long RECONFIGURE_RETRY_MS = 60000L
@@ -428,7 +428,7 @@ private void parseCheckin(Map map) {
                 break
             case 0x64:
                 String contact = (parseCheckinInt(dataPayload, dataType) == 1) ? "open" : "closed"
-                if (txtEnable) logInfo("Contact (check-in) : ${contact}")
+                logInfo("Contact (check-in) : ${contact}")
                 sendEvent(name: "contact", value: contact)
                 break
             case 0x04: case 0x07: case 0x08: case 0x09: case 0x0B: case 0x0C:
@@ -563,7 +563,7 @@ private void parseContact(Map map) {
     // is not present on this app:03 firmware.
     if (map.attrId != "0000") { logRx("Contact: ignoring 0006 attr ${map.attrId}"); return }
     String contact = (map.value == "01") ? "open" : "closed"
-    if (txtEnable) logInfo("Contact : ${contact}")
+    logInfo("Contact : ${contact}")
     sendEvent(name: "contact", value: contact)
 }
 
@@ -624,7 +624,7 @@ private void parseBattery(String batteryVoltageHex, int batteryVoltageDivisor) {
 
     String desc = "$batteryPct% (${voltageRounded}V, smoothed ${String.format('%.3f', smoothed)}V, EMA ${emaAction})"
     if (batteryPct > 20) {
-        if (txtEnable) logInfo("Battery : ${desc}")
+        logInfo("Battery : ${desc}")
     } else {
         logWarn("Battery : ${desc}")
     }

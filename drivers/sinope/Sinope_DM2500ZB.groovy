@@ -14,7 +14,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.24"
+@Field static final String CODE_VERSION = "0.0.25"
 
 metadata {
     definition(
@@ -221,6 +221,8 @@ void initialize() {
     state.switchTypeDigital = false
     state.levelTypeDigital = false
     sendEvent(name:"numberOfButtons", value: 2, isStateChange: true)
+    // One-shot runIn chain: a run that fell due while the hub was down is dropped, ending the chain
+    runIn(1800, "refreshEnergyReport")
 }
 
 void refresh() {

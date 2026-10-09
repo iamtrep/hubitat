@@ -34,7 +34,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.6"
+@Field static final String CODE_VERSION = "0.1.7"
 
 metadata {
     definition (
@@ -50,6 +50,7 @@ metadata {
         capability "Thermostat"
 
         attribute "temperatureAlarm", "enum", ["cleared", "freeze", "heat", "sensor"]
+        attribute "temperatureDisplayMode", "enum", ["celsius", "fahrenheit"]
 
         command "eco"
         command "increaseHeatSetpoint"
@@ -82,6 +83,7 @@ metadata {
 
 @Field static final Map constModeMap = [ "00": "off", "04": "heat", "05": "eco" ]
 @Field static final Map constKeypadLockoutModes = [ "Yes": 0x01, "No": 0x00 ]
+@Field static final Map constTemperatureDisplayModes = [ "00": "celsius", "01": "fahrenheit" ]  // ZCL 0x0204/0x0000
 
 @Field static final Map constSetpointRange = [ "C": [min: 5, max: 30, step: 0.5], "F": [min: 41, max: 86, step: 1.0] ]
 
@@ -96,7 +98,7 @@ metadata {
 // Device installation
 
 void installed() {
-    // called when device is first created with this driver
+    runInMillis(500, 'configure')
 }
 
 void uninstalled() {
@@ -493,8 +495,13 @@ private void parseAttributeReport(Map descMap) {
         case "0204": // Thermostat UI config cluster
             switch (descMap.attrId) {
                 case "0000":  // TemperatureDisplayMode
+                    String displayMode = constTemperatureDisplayModes[descMap.value]
+                    if (displayMode == null) {
+                        logTrace "Unknown temperature display mode ${descMap.value}"
+                        return
+                    }
                     map.name = "temperatureDisplayMode"
-                    map.value = descMap.attrId  // don't know the mapping, sorry
+                    map.value = displayMode
                     map.descriptionText = "Temperature display mode is set to ${map.value}"
                     break
 

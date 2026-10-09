@@ -25,7 +25,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.20"
+@Field static final String CODE_VERSION = "0.0.21"
 
 @Field static final List<String> SUPPORTED_THERMOSTAT_MODES     = ['"off"', '"heat"']
 @Field static final List<String> SUPPORTED_THERMOSTAT_FAN_MODES = ['"auto"']
@@ -327,6 +327,9 @@ void initialize() {
     // refresh() not configure() — Zigbee reconfigure on every hub startup wastes radio bandwidth
     logCfg('initialize()')
     refresh()
+    // One-shot runIn chains: a run that fell due while the hub was down is dropped, ending the chain
+    runIn(10, 'refreshClockTime')
+    runIn(12, 'refreshMaxPower')
 }
 
 void updated() {
@@ -751,7 +754,7 @@ private void parseAttributeReport(Map descMap) {
 
     if (map) {
         // descriptionText already includes the device label — bypass logInfo() to avoid doubling
-        if (map.descriptionText && txtEnable) log.info(map.descriptionText)
+        if (map.descriptionText && txtEnable != false) log.info(map.descriptionText)
         sendEvent(map)
     }
 }

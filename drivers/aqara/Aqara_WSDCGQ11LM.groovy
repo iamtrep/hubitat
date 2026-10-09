@@ -88,7 +88,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "2.15.4"
+@Field static final String CODE_VERSION = "2.15.5"
 
 // A pending version reconfigure older than this is treated as lost and re-armed.
 @Field static final long RECONFIGURE_RETRY_MS = 60000L
@@ -686,7 +686,7 @@ private void parseTemperature(String temperatureFlippedHex) {
     }
 
     BigDecimal rounded = temperature.setScale(1, RoundingMode.HALF_UP)
-    if (txtEnable) logInfo("Temperature : ${rounded} °${temperatureScale}")
+    logInfo("Temperature : ${rounded} °${temperatureScale}")
     sendEvent(name: "temperature", value: rounded, unit: "${temperatureScale}")
 }
 
@@ -709,7 +709,7 @@ private void parseHumidity(String humidityFlippedHex) {
     }
 
     BigDecimal humidityRounded = humidity.setScale(1, RoundingMode.HALF_UP)
-    if (txtEnable) logInfo("Humidity (Relative) : ${humidityRounded} %")
+    logInfo("Humidity (Relative) : ${humidityRounded} %")
     sendEvent(name: "humidity", value: humidityRounded, unit: "%")
 
     BigDecimal lastTemperature = device.currentState("temperature")?.value?.toBigDecimal()
@@ -732,7 +732,7 @@ private void parseHumidity(String humidityFlippedHex) {
     BigDecimal absoluteHumidity = (numerator / denominator).setScale(1, RoundingMode.HALF_UP)
 
     String cubedChar = String.valueOf((char)(179))
-    if (txtEnable) logInfo("Humidity (Absolute) : ${absoluteHumidity} g/m${cubedChar}")
+    logInfo("Humidity (Absolute) : ${absoluteHumidity} g/m${cubedChar}")
     sendEvent(name: "absoluteHumidity", value: absoluteHumidity, unit: "g/m${cubedChar}")
 }
 
@@ -781,7 +781,7 @@ private void parsePressure(String pressureFlippedHex, boolean checkin = false) {
         : ["falling", "steady", "rising"][(pressure <=> lastPressure) + 1]
 
     logTrace("pressure : ${pressure} from hex value ${pressureFlippedHex}")
-    if (txtEnable) logInfo("Pressure : ${pressure} ${unit} (${pressureDirection})")
+    logInfo("Pressure : ${pressure} ${unit} (${pressureDirection})")
     sendEvent(name: "pressure", value: pressure, unit: unit)
     sendEvent(name: "pressureDirection", value: pressureDirection)
 }
@@ -843,7 +843,7 @@ private void parseBattery(String batteryVoltageHex, int batteryVoltageDivisor) {
 
     String desc = "$batteryPct% (${voltageRounded}V, smoothed ${String.format('%.3f', smoothed)}V, EMA ${emaAction})"
     if (batteryPct > 20) {
-        if (txtEnable) logInfo("Battery : ${desc}")
+        logInfo("Battery : ${desc}")
     } else {
         logWarn("Battery : ${desc}")
     }
