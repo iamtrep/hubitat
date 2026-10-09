@@ -26,7 +26,7 @@ definition(
 import groovy.transform.Field
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.1.4"
+@Field static final String CODE_VERSION = "0.1.5"
 
 @Field static final Map<String, String> FUSION_MODES = [
     "pirOnly"              : "PIR Only",
@@ -455,7 +455,7 @@ private void servicePending() {
     }
     long remainingMs = dueAt - now()
     if (remainingMs > 0) {
-        runIn((remainingMs / 1000).toInteger() + 1, handler)
+        runIn((remainingMs.intdiv(1000) as int) + 1, handler)
         return
     }
     unschedule(handler)

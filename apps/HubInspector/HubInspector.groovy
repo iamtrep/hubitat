@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "6.1.9"
+@Field static final String CODE_VERSION = "6.1.10"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -1132,7 +1132,7 @@ Map apiSaveReport() {
 
     writeFile(filename, html)
     state.lastReportFile = filename
-    logInfo "Report saved: ${filename} (${(html.length() / 1024).intValue()} KB)"
+    logInfo "Report saved: ${filename} (${html.length().intdiv(1024)} KB)"
     return jsonResponse([success: true, filename: filename])
 }
 
@@ -3931,7 +3931,7 @@ int parseUptime(String uptime) {
 
     // Handle milliseconds format like "0ms" or "123ms"
     if (uptime.endsWith('ms')) {
-        return (uptime[0..-3].toInteger() / 1000).toInteger()
+        return uptime[0..-3].toInteger().intdiv(1000)
     }
 
     int seconds = 0
@@ -3994,7 +3994,7 @@ private boolean autoEnableOAuth() {
         httpGet([uri: HUB_BASE, path: "/app/ajax/code", query: [id: typeId], timeout: 15]) { resp ->
             internalVer = resp.data?.version?.toString()
         }
-    } catch (e) {
+    } catch (Exception e) {
         logError "Failed to fetch app code version: ${e.message}"
         return false
     }
@@ -4021,7 +4021,7 @@ private boolean autoEnableOAuth() {
             success = true
             logCfg "Successfully auto-enabled OAuth."
         }
-    } catch (e) {
+    } catch (Exception e) {
         logError "Failed to enable OAuth: ${e.message}"
     }
     return success
@@ -4816,7 +4816,7 @@ Map apiAuditStart() {
     // Force-clear stale scan (>10 min in 'scanning' state) on entry
     Map prev = currentAuditSnapshot()
     if (prev.status == 'scanning' && prev.startedAt && (now() - (prev.startedAt as Long) > AUDIT_STALE_MS)) {
-        logWarn "[audit] clearing stale scan ${prev.scanId} (started ${(now() - (prev.startedAt as Long))/1000}s ago)"
+        logWarn "[audit] clearing stale scan ${prev.scanId} (started ${(now() - (prev.startedAt as Long)).intdiv(1000L)}s ago)"
         AUDIT_SCANS.remove(prev.scanId as String)
         state.audit = [:]
     }
@@ -4978,13 +4978,13 @@ private boolean checkOAuth() {
     try {
         createAccessToken()
         return (state.accessToken != null)
-    } catch (e) {
+    } catch (Exception e) {
         logNet "OAuth not enabled yet, attempting auto-enable..."
         if (autoEnableOAuth()) {
             try {
                 createAccessToken()
                 return (state.accessToken != null)
-            } catch (e2) {
+            } catch (Exception e2) {
                 logError "OAuth enabled but token creation failed: ${e2.message}"
                 return false
             }
@@ -5074,7 +5074,7 @@ void initialize() {
         if (interval < 60) {
             cron = "0 ${JITTER_BASE_MIN}/${interval} * * * ?"
         } else {
-            int hours = (interval / 60).toInteger()
+            int hours = interval.intdiv(60)
             cron = hours >= 24 ? "0 ${JITTER_BASE_MIN} 0 * * ?" : "0 ${JITTER_BASE_MIN} */${hours} * * ?"
         }
         schedule(cron, "checkpointTick")

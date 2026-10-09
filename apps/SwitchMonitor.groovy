@@ -54,7 +54,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Switch Monitor"
-@Field static final String CODE_VERSION = "3.0.4"
+@Field static final String CODE_VERSION = "3.0.5"
 
 @Field static final Integer DEFAULT_GRACE_MINUTES = 5
 @Field static final Integer DEFAULT_GRACE_SECONDS = 0
@@ -830,7 +830,7 @@ private boolean evaluateGroupSwitches(int groupNum, List devices, String targetS
                 immediate << dev
             } else {
                 int remainingSecs = (int) Math.ceil(remainingMs / 1000.0)
-                logTrace "[${groupLabel}] ${context}: ${dev.displayName} turned ${wrongState} ${(int)(durationMs / 1000)}s ago — scheduling check in ${remainingSecs}s"
+                logTrace "[${groupLabel}] ${context}: ${dev.displayName} turned ${wrongState} ${durationMs.intdiv(1000)}s ago — scheduling check in ${remainingSecs}s"
                 if (remainingSecs < soonestDelaySecs) {
                     soonestDelaySecs = remainingSecs
                 }
@@ -1193,13 +1193,13 @@ private String getStatusText() {
 
 @CompileStatic
 private static String formatDuration(long ms) {
-    long totalSecs = (long)(ms / 1000)
+    long totalSecs = ms.intdiv(1000L) as long
     if (totalSecs < 60) return "${totalSecs}s"
-    long totalMins = (long)(totalSecs / 60)
+    long totalMins = totalSecs.intdiv(60L) as long
     if (totalMins < 60) return "${totalMins}m ${totalSecs % 60}s"
-    long hours = (long)(totalMins / 60)
+    long hours = totalMins.intdiv(60L) as long
     if (hours < 24) return "${hours}h ${totalMins % 60}m"
-    long days = (long)(hours / 24)
+    long days = hours.intdiv(24L) as long
     return "${days}d ${hours % 24}h"
 }
 

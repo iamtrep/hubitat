@@ -12,7 +12,7 @@ import com.hubitat.app.DeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.nio.file.NoSuchFileException
 
-@Field static final String CODE_VERSION = "0.1.1"
+@Field static final String CODE_VERSION = "0.1.2"
 @Field static final long WEEK_SECONDS = 604800L
 @Field static final long ROTATION_RETRY_MS = 3600000L
 
@@ -125,7 +125,7 @@ private void checkVersion(boolean reinit = true) {
 
 void handleEvent(Event evt) {
     checkVersion()
-    Integer timestamp = new Date().getTime() / 1000
+    Integer timestamp = new Date().getTime().intdiv(1000) as Integer
     List attributeValues = selectedAttributes.collect { attribute ->
         selectedDevice.currentValue(attribute)
     }

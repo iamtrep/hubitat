@@ -15,7 +15,7 @@ import groovy.transform.Field
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "1.1.6"
+@Field static final String CODE_VERSION = "1.1.7"
 @Field static final int MAX_BRIDGES = 5
 @Field static final int MAX_FILTERS = 10
 @Field static final int MAX_DEDUPE_HISTORY = 100
@@ -821,7 +821,7 @@ void httpPostCallback(resp, data) {
         Long retryAfter = retryAfterSeconds(resp)
         if (retryAfter) delayMs = Math.max(delayMs, retryAfter * 1000L)
         b.until = now() + delayMs
-        logWarn "HTTP POST to ${redactUrl(url)} failed (${reason}); pausing POSTs to this URL for ${(delayMs / 1000L) as long} s (failure ${b.failures})"
+        logWarn "HTTP POST to ${redactUrl(url)} failed (${reason}); pausing POSTs to this URL for ${delayMs.intdiv(1000L)} s (failure ${b.failures})"
     }
     all[url] = b
     state.httpBackoff = all

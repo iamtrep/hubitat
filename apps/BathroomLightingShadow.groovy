@@ -4,7 +4,7 @@
 import groovy.transform.Field
 import com.hubitat.app.ChildDeviceWrapper
 
-@Field static final String CODE_VERSION = "0.2.6"
+@Field static final String CODE_VERSION = "0.2.7"
 @Field static final Integer SCORING_SCHEMA_VERSION = 1
 @Field static final Integer RESOLVER_MAX_PER_TICK = 10
 
@@ -222,7 +222,7 @@ void wallSwitchHandler(evt) {
         Long tForgotMs = ((settings.tForgot ?: 600) as Long) * 1000L
         if (tQuietSince != null && (now() - tQuietSince) >= tForgotMs) {
             Map forgot = new LinkedHashMap((state.userForgotOff ?: [count: 0, lapseSecSum: 0L]) as Map)
-            Long lapseSec = ((now() - tQuietSince) / 1000L) as Long
+            Long lapseSec = (now() - tQuietSince).intdiv(1000L) as Long
             forgot.count = (forgot.count ?: 0) + 1
             forgot.lapseSecSum = (forgot.lapseSecSum ?: 0L) + lapseSec
             state.userForgotOff = forgot

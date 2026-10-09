@@ -10,7 +10,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.3.0"
+@Field static final String CODE_VERSION = "0.3.1"
 
 metadata {
     definition(name: "Thermostat Scheduler+ Program Device", namespace: "iamtrep", author: "pj", component: true,
@@ -45,6 +45,7 @@ metadata {
 
 void installed() { logCfg "installed ${CODE_VERSION}" }
 void updated() { logCfg "updated" }
+void deviceTypeUpdated() { logDebug "driver change detected" }
 
 void on()                      { forward([command: 'on']) }
 void off()                     { forward([command: 'off']) }

@@ -10,7 +10,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.1"
+@Field static final String CODE_VERSION = "0.1.2"
 @Field static final Map UNITS = [carbonDioxide: "ppm", humidity: "%"]
 
 metadata {
@@ -32,6 +32,7 @@ metadata {
 
 void installed() { logCfg "installed ${CODE_VERSION}" }
 void updated() { logCfg "updated" }
+void deviceTypeUpdated() { logDebug "driver change detected" }
 
 void on() { forward("on") }
 void off() { forward("off") }

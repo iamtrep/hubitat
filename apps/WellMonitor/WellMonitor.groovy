@@ -19,7 +19,7 @@ import com.hubitat.hub.domain.Hub
 import java.nio.file.AccessDeniedException
 
 @Field static final String APP_NAME = "Well Monitor"
-@Field static final String CODE_VERSION = "0.11.5"
+@Field static final String CODE_VERSION = "0.11.6"
 @Field static final String DASHBOARD_FILE = "wellmonitor-dashboard.html"
 @Field static final String CHARTJS_FILE = "wellpump-chart.min.js"
 
@@ -798,9 +798,9 @@ private Map computeCycleStats() {
     Collections.sort(sortedDurations)
     BigDecimal medianDuration
     if (n % 2 == 0) {
-        medianDuration = (sortedDurations[(n / 2 - 1) as int] + sortedDurations[(n / 2) as int]) / 2.0
+        medianDuration = (sortedDurations[n.intdiv(2) - 1] + sortedDurations[n.intdiv(2)]) / 2.0
     } else {
-        medianDuration = sortedDurations[(n / 2) as int]
+        medianDuration = sortedDurations[n.intdiv(2)]
     }
 
     // Median coincident flow
@@ -808,9 +808,9 @@ private Map computeCycleStats() {
     Collections.sort(sortedCoincident)
     BigDecimal medianCoincident
     if (n % 2 == 0) {
-        medianCoincident = (sortedCoincident[(n / 2 - 1) as int] + sortedCoincident[(n / 2) as int]) / 2.0
+        medianCoincident = (sortedCoincident[n.intdiv(2) - 1] + sortedCoincident[n.intdiv(2)]) / 2.0
     } else {
-        medianCoincident = sortedCoincident[(n / 2) as int]
+        medianCoincident = sortedCoincident[n.intdiv(2)]
     }
 
     // Mean and stddev for duration
@@ -885,7 +885,7 @@ private Map computeAllTimeStats() {
 
     BigDecimal cyclesPerDay = 0.0
     if (state.firstCycleTimestamp && (state.firstCycleTimestamp as long) > 0) {
-        long elapsed = (now() - (state.firstCycleTimestamp as long)) / 86400000 as long
+        long elapsed = (now() - (state.firstCycleTimestamp as long)).intdiv(86400000L) as long
         long daysSinceFirst = elapsed > 1 ? elapsed : 1
         cyclesPerDay = (totalCycles as BigDecimal) / (daysSinceFirst as BigDecimal)
     }

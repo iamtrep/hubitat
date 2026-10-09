@@ -34,7 +34,7 @@ import com.hubitat.app.ChildDeviceWrapper
 //import com.hubitat.hub.domain.Capability // only available from 2.4.3.148 onward
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.3.5"
+@Field static final String CODE_VERSION = "0.3.6"
 
 @Field static final Map<String, String> CAPABILITY_ATTRIBUTES = [
     "capability.carbonDioxideMeasurement"   : [ attribute: "carbonDioxide", driver: "Virtual Omni Sensor" ],
@@ -306,10 +306,10 @@ private boolean computeAggregateSensorValue() {
     logDebug "sorted values: $sensorValues"
     if (n % 2 == 0) {
         // Even number of elements, average the two middle values
-        state.medianSensorValue = (sensorValues[(n / 2 - 1) as int] + sensorValues[(n / 2) as int]) / 2.0
+        state.medianSensorValue = (sensorValues[n.intdiv(2) - 1] + sensorValues[n.intdiv(2)]) / 2.0
     } else {
         // Odd number of elements, take the middle value
-        state.medianSensorValue = sensorValues[(n / 2) as int]
+        state.medianSensorValue = sensorValues[n.intdiv(2)]
     }
 
     //aggregationMethod", type: "enum", options: ["average", "median", "min", "max"

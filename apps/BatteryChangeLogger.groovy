@@ -5,7 +5,7 @@ import groovy.transform.Field
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 
-@Field static final String CODE_VERSION = "0.0.4"
+@Field static final String CODE_VERSION = "0.0.5"
 
 // File name used by uploadHubFile / downloadHubFile for durable history storage.
 // The file survives app reinstall and can be inspected/downloaded from File Manager.
@@ -293,7 +293,7 @@ private void checkIntervalAndNotify(String deviceId, String deviceLabel, int old
     if (hasHistory) {
         Map lastEntry = entries.last() as Map
         long elapsedMs = now() - (lastEntry.id as long)
-        elapsedDays = (elapsedMs / (1000L * 60 * 60 * 24)) as int
+        elapsedDays = elapsedMs.intdiv(1000L * 60 * 60 * 24) as int
     }
     logDebug "${deviceLabel}: ${hasHistory ? "${elapsedDays}d since last replacement" : "no prior history"} (notify threshold: ${thresholdDays}d)"
     if (thresholdDays == 0 || elapsedDays < thresholdDays) {

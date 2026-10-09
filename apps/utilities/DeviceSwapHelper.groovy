@@ -4,7 +4,7 @@
 import com.hubitat.app.DeviceWrapper
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.5.6"
+@Field static final String CODE_VERSION = "0.5.7"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
 // File Manager file with one line per input each swap or undo changed.
 @Field static final String AUDIT_FILE = "device_swap_audit.txt"
@@ -1549,7 +1549,7 @@ private String appendAudit(List<String> lines) {
         byte[] bytes = downloadHubFile(AUDIT_FILE)
         if (bytes) existing = new String(bytes, "UTF-8")
     } catch (Exception e) {
-        if (e.class.simpleName != "NoSuchFileException") {
+        if (!getObjectClassName(e).endsWith(".NoSuchFileException")) {   // getObjectClassName returns the FQN
             logWarn "Audit log not written: could not read ${AUDIT_FILE}: ${e}"
             return "could not read ${AUDIT_FILE} (${e.message})"
         }

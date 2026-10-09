@@ -11,9 +11,10 @@
 import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.app.DeviceWrapper
 import com.hubitat.hub.domain.State
+import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.2"
+@Field static final String CODE_VERSION = "0.1.3"
 
 definition(
     name: "Indoor Air Quality Controller",
@@ -467,12 +468,14 @@ void sendNote(String msg) {
 // Self-contained: arguments in, values out. No settings, state, devices or logs.
 // tests/test_core.groovy parses and runs this block off-hub.
 
+@CompileStatic
 BigDecimal numOrNull(Object o) {
     if (o instanceof Number) return new BigDecimal(o.toString())
     if (o instanceof String && ((String) o).trim().isBigDecimal()) return new BigDecimal(((String) o).trim())
     return null
 }
 
+@CompileStatic
 String fmtInt(Object n) {
     BigDecimal b = numOrNull(n)
     return b == null ? '' : b.setScale(0, BigDecimal.ROUND_HALF_UP).toPlainString()
@@ -480,6 +483,7 @@ String fmtInt(Object n) {
 
 // readings: [[v: value, t: epoch ms]]. A reading older than staleMs is left out.
 // how: 'highest', 'average' (rounded to a whole number) or 'lowest'. null when nothing is left.
+@CompileStatic
 BigDecimal combineReadings(List<Map> readings, String how, long now, long staleMs) {
     List<BigDecimal> vals = []
     for (Map r : readings) {
@@ -495,16 +499,19 @@ BigDecimal combineReadings(List<Map> readings, String how, long now, long staleM
     return how == 'lowest' ? vals.min() : vals.max()
 }
 
+@CompileStatic
 boolean anySwitchCondition(List<String> whenOn, List<String> whenOff) {
     return (whenOn ?: []).contains('on') || (whenOff ?: []).contains('off')
 }
 
 // chosen holds mode ids, as a mode input stores them
+@CompileStatic
 boolean modeActive(String mode, String modeId, List chosen) {
     return chosen ? chosen*.toString().contains(modeId) : mode != 'Away'
 }
 
 // Why the app is not managing air, most important first; null when it is.
+@CompileStatic
 String stopReason(boolean safety, boolean enabled, boolean modeOk, boolean paused) {
     if (safety) return 'safety'
     if (!enabled) return 'disabled'
@@ -513,12 +520,14 @@ String stopReason(boolean safety, boolean enabled, boolean modeOk, boolean pause
     return null
 }
 
+@CompileStatic
 Long earliest(Long a, Long b) {
     if (a == null) return b
     if (b == null) return a
     return Math.min(a, b)
 }
 
+@CompileStatic
 List<Map> resized(List<Map> cur, int n) {
     List<Map> out = []
     for (int i = 0; i < n; i++) {
@@ -528,6 +537,7 @@ List<Map> resized(List<Map> cur, int n) {
     return out
 }
 
+@CompileStatic
 List<String> validateCfg(Map cfg) {
     List<String> errs = []
     List<Map> st = cfg.stages as List<Map>
@@ -561,6 +571,7 @@ long dwellMs(Map stageDef, long unitMs) { return ((numOrNull(stageDef.dwell) ?: 
 // Stage states: [s: 'off' | 'engaged' | 'held', since: epoch ms the value crossed toward a change
 // (null when it has not), heldUntil: epoch ms]. One call evaluates the ladder once.
 // Returns [stages: List<Map>, actions: [[stage: index, cmd: 'on' | 'off']], wakeAt: Long or null].
+@CompileStatic
 Map stepStages(List<Map> cur, BigDecimal co2, long now, Map cfg, boolean offsetOn) {
     List<Map> defs = cfg.stages as List<Map>
     int n = defs.size()
@@ -622,12 +633,14 @@ Map stepStages(List<Map> cur, BigDecimal co2, long now, Map cfg, boolean offsetO
     return [stages: st, actions: actions, wakeAt: wake]
 }
 
+@CompileStatic
 int stageLevel(List<Map> st) {
     int level = 0
     for (int i = 0; i < (st ?: []).size(); i++) if (st[i]?.s != null && st[i].s != 'off') level = i + 1
     return level
 }
 
+@CompileStatic
 boolean allRunning(List<Map> st) {
     if (!st) return false
     for (Map x : st) if (x?.s == null || x.s == 'off') return false
@@ -638,6 +651,7 @@ boolean allRunning(List<Map> st) {
 // 'own' our command arriving; 'hold' a physical off on a running stage; 'reassert' another source
 // turned a running stage's switch off; 'throttled' the same, too soon after the last re-assertion;
 // 'ignore' anything else.
+@CompileStatic
 String switchEventAction(String value, boolean physical, String pending, String stageState, boolean stopped,
                          Long lastReassert, long now, long gapMs) {
     if (pending != null && pending == value) return 'own'
@@ -706,12 +720,14 @@ Map stepHumidity(Map h, BigDecimal rh, boolean seasonOk, long now, Map cfg) {
     return [h: x, notify: note, wakeAt: wake]
 }
 
+@CompileStatic
 String windowMessage(String label, String kind, BigDecimal co2) {
     if (kind == 'raise' || kind == 'repeat') return "${label}: CO2 at ${fmtInt(co2)} ppm despite ventilation. Consider opening a window.".toString()
     if (kind == 'clear') return "${label}: CO2 back to ${fmtInt(co2)} ppm.".toString()
     return null
 }
 
+@CompileStatic
 String humidityMessage(String label, BigDecimal rh, Object hours) {
     return "${label}: indoor humidity at ${fmtInt(rh)}% for ${fmtInt(hours)} h.".toString()
 }

@@ -10,7 +10,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.3.0"
+@Field static final String CODE_VERSION = "0.3.1"
 
 metadata {
     definition(name: "HVAC Season", namespace: "iamtrep", author: "pj", component: true,
@@ -28,6 +28,7 @@ metadata {
 
 void installed() { logCfg "installed ${CODE_VERSION}" }
 void updated() { logCfg "updated" }
+void deviceTypeUpdated() { logDebug "driver change detected" }
 
 void setSeason(String season, holdDays = null) { forward([command: 'setSeason', season: season, holdDays: holdDays]) }
 void resumeAuto() { forward([command: 'resumeAuto']) }

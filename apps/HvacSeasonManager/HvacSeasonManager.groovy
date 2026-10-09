@@ -10,9 +10,11 @@
 */
 
 import com.hubitat.app.ChildDeviceWrapper
+import com.hubitat.hub.domain.State
+import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.3.1"
+@Field static final String CODE_VERSION = "0.3.2"
 
 definition(
     name: "HVAC Season Manager",
@@ -346,7 +348,9 @@ void initialize() {
     registerVars()
     seasonDevice()
     if (tempSensor) schedule("0 7 * * * ?", "sampleHandler")
-    schedule("0 0 5 * * ?", "evaluateHandler")
+    // Daily Open-Meteo fetch: random time in 05:00–05:29 so installs don't hit the service together
+    Random rng = new Random()
+    schedule("${rng.nextInt(60)} ${rng.nextInt(30)} 5 * * ?", "evaluateHandler")
     if (debugEnable) runIn(1800, "logsOff")
     startEvaluation("refresh")
     publish()
@@ -518,7 +522,7 @@ void renameVariable(String oldName, String newName) {
 
 void sampleHandler() {
     checkVersion()
-    Object st = tempSensor?.currentState("temperature")
+    State st = tempSensor?.currentState("temperature")
     BigDecimal v = numOrNull(st?.value)
     if (v == null || st?.date == null || now() - (st.date as Date).getTime() > STALE_MS) {
         if (!state.staleWarned) {
@@ -697,8 +701,10 @@ void applyCalibration() {
 // Self-contained: arguments in, values out. No settings, state, devices or logs.
 // tests/test_core.groovy parses and runs this block off-hub.
 
+@CompileStatic
 List<String> seasonList() { return ['winter', 'spring', 'summer', 'fall'] }
 
+@CompileStatic
 boolean validMd(Object s) {
     if (!(s instanceof String) || !(((String) s) ==~ /\d\d-\d\d/)) return false
     int m = ((String) s).substring(0, 2) as int
@@ -707,11 +713,13 @@ boolean validMd(Object s) {
     return m >= 1 && m <= 12 && d >= 1 && d <= max[m - 1]
 }
 
+@CompileStatic
 boolean validIso(Object s) {
     return s instanceof String && ((String) s) ==~ /\d{4}-\d\d-\d\d/ && validMd(((String) s).substring(5))
 }
 
 // Day of the year on a non-leap calendar; Feb 29 counts as Feb 28.
+@CompileStatic
 int doyOf(String md) {
     List<Integer> start = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
     int m = md.substring(0, 2) as int
@@ -719,11 +727,14 @@ int doyOf(String md) {
     return start[m - 1] + (m == 2 ? Math.min(d, 28) : d)
 }
 
+@CompileStatic
 String mdOf(String iso) { return iso.substring(5) }
 
+@CompileStatic
 boolean sameDay(String iso, String md) { return doyOf(mdOf(iso)) == doyOf(md) }
 
 // iso's month-day in [from, until], both ends included, wrapping over the new year.
+@CompileStatic
 boolean inMd(String iso, String from, String until) {
     int x = doyOf(mdOf(iso))
     int a = doyOf(from)
@@ -732,11 +743,13 @@ boolean inMd(String iso, String from, String until) {
 }
 
 // iso's month-day in [from, until): the last day excluded.
+@CompileStatic
 boolean inSpan(String iso, String from, String until) {
     return inMd(iso, from, until) && !sameDay(iso, until)
 }
 
 // The month-days follow each other through the year in this order, going round once.
+@CompileStatic
 boolean cyclicOrdered(List<String> mds) {
     int total = 0
     for (int i = 0; i < mds.size(); i++) {
@@ -747,6 +760,7 @@ boolean cyclicOrdered(List<String> mds) {
     return total == 365
 }
 
+@CompileStatic
 String addDays(String iso, int n) {
     TimeZone gmt = TimeZone.getTimeZone('GMT')
     Calendar c = Calendar.getInstance(gmt)
@@ -759,28 +773,33 @@ String addDays(String iso, int n) {
     return f.format(c.getTime())
 }
 
+@CompileStatic
 BigDecimal numOrNull(Object o) {
     if (o instanceof Number) return new BigDecimal(o.toString())
     if (o instanceof String && ((String) o).trim().isBigDecimal()) return new BigDecimal(((String) o).trim())
     return null
 }
 
+@CompileStatic
 String fmtNum(Object n) {
     BigDecimal b = numOrNull(n)
     return b == null ? '' : b.setScale(1, BigDecimal.ROUND_HALF_UP).toPlainString()
 }
 
+@CompileStatic
 BigDecimal inScale(BigDecimal celsius, String scale) {
     return scale == 'F' ? (celsius * 9 / 5 + 32).setScale(1, BigDecimal.ROUND_HALF_UP) : celsius
 }
 
 // Defaults calibrated on 2005-2025 climate (spec, "Calibration from local climate").
+@CompileStatic
 Map defaultCfg(String scale) {
     return [w2s:    [from: '03-11', until: '04-08', above: inScale(3.0, scale)],
             f2w:    [from: '10-26', until: '11-11', below: inScale(3.0, scale)],
             summer: [from: '05-10', until: '09-14', enter: inScale(17.0, scale), leave: inScale(12.0, scale), fallFrom: '08-15', end: inScale(17.0, scale)]]
 }
 
+@CompileStatic
 List<String> validateCfg(Map cfg) {
     List<String> errs = []
     Map w = cfg.w2s as Map
@@ -801,6 +820,7 @@ List<String> validateCfg(Map cfg) {
 }
 
 // One change at most per evaluation. mean is the 3-day mean, or null when there is none.
+@CompileStatic
 Map nextSeason(String season, String iso, BigDecimal mean, Map cfg) {
     Map w = cfg.w2s as Map
     Map f = cfg.f2w as Map
@@ -839,6 +859,7 @@ Map nextSeason(String season, String iso, BigDecimal mean, Map cfg) {
 }
 
 // The seasons possible on iso from the date alone. Two inside a window where the weather decides.
+@CompileStatic
 List<String> seasonsOn(String iso, Map cfg) {
     Map w = cfg.w2s as Map
     Map f = cfg.f2w as Map
@@ -852,6 +873,7 @@ List<String> seasonsOn(String iso, Map cfg) {
 }
 
 
+@CompileStatic
 Map parseSeasonArgs(Object season, Object holdDays) {
     String s = season == null ? '' : season.toString().trim().toLowerCase()
     if (!seasonList().contains(s)) return [ok: false, error: "unknown season '${season}'; use winter, spring, summer or fall".toString()]
@@ -862,6 +884,7 @@ Map parseSeasonArgs(Object season, Object holdDays) {
     return [ok: true, season: s, days: d.intValue()]
 }
 
+@CompileStatic
 String nextPossible(String season, Map cfg, String unit) {
     Map w = cfg.w2s as Map
     Map f = cfg.f2w as Map
@@ -884,16 +907,19 @@ Map addSample(Map samples, String iso, BigDecimal v) {
 }
 
 // Test day and test mean apply to button-driven evaluations only, never to scheduled runs.
+@CompileStatic
 Map evalInputs(boolean useTest, Object testDate, Object testMean, String today) {
     return [day: (useTest && validIso(testDate)) ? (testDate as String) : today, mean: useTest ? numOrNull(testMean) : null]
 }
 
+@CompileStatic
 String omCoord(Object v) {
     BigDecimal b = numOrNull(v)
     return b == null ? null : b.setScale(1, BigDecimal.ROUND_HALF_UP).toPlainString()
 }
 
 // kind 'archive': start to end; 'forecast': today and the next 6 days. Null without coordinates.
+@CompileStatic
 String omUrl(String kind, Object lat, Object lon, String scale, String start, String end) {
     String la = omCoord(lat)
     String lo = omCoord(lon)
@@ -906,6 +932,7 @@ String omUrl(String kind, Object lat, Object lon, String scale, String start, St
 }
 
 // Open-Meteo daily response -> [ISO day: BigDecimal]; days without a mean left out.
+@CompileStatic
 Map parseDaily(Object json) {
     Map out = [:]
     Map daily = json instanceof Map ? ((Map) json).daily as Map : null
@@ -919,6 +946,7 @@ Map parseDaily(Object json) {
     return out
 }
 
+@CompileStatic
 BigDecimal sensorMean(Map samples, String day, int minSamples) {
     Map x = (samples ?: [:])[day] as Map
     int n = x ? (x.n as int) : 0
@@ -926,6 +954,7 @@ BigDecimal sensorMean(Map samples, String day, int minSamples) {
 }
 
 // Mean of sensor minus Open-Meteo over the last 7 days before today that have both; null when none.
+@CompileStatic
 BigDecimal sensorOffset(Map samples, Map om, String today, int minSamples = 12) {
     List<BigDecimal> diffs = []
     List<String> days = (om ?: [:]).keySet().collect { it as String }.findAll { it < today }.sort().reverse()
@@ -955,6 +984,7 @@ Map mergeDays(Map samples, Map om, String today, int minSamples = 12) {
     return out
 }
 
+@CompileStatic
 Map meanValues(Map merged) {
     Map out = [:]
     (merged ?: [:]).each { k, v -> out[k as String] = (v as Map).mean }
@@ -962,6 +992,7 @@ Map meanValues(Map merged) {
 }
 
 // 3-day mean of the three days before day; null unless all three have a mean.
+@CompileStatic
 BigDecimal mean3At(Map means, String day) {
     List<BigDecimal> xs = (1..3).collect { int i -> numOrNull((means ?: [:])[addDays(day, -i)]) }
     if (xs.any { it == null }) return null
@@ -969,6 +1000,7 @@ BigDecimal mean3At(Map means, String day) {
 }
 
 // The keep days before today.
+@CompileStatic
 Map pruneDays(Map days, String today, int keep) {
     String oldest = addDays(today, -keep)
     Map out = [:]
@@ -978,6 +1010,7 @@ Map pruneDays(Map days, String today, int keep) {
 
 // The daily evaluation applied to each day from first to last, in order, one change a day at most.
 // Days up to holdLast (ISO, or null) are skipped.
+@CompileStatic
 Map runDays(String season, String first, String last, Map means, Map cfg, String holdLast = null) {
     String s = season
     List<Map> changes = []
@@ -1000,6 +1033,7 @@ Map runDays(String season, String first, String last, Map means, Map cfg, String
 }
 
 // The most recent day at or before today whose season the date alone settles.
+@CompileStatic
 Map replayAnchor(String today, Map cfg) {
     for (int i = 0; i <= 366; i++) {
         String d = addDays(today, -i)
@@ -1010,6 +1044,7 @@ Map replayAnchor(String today, Map cfg) {
 }
 
 // Today's season, replayed from the anchor on daily means. Null when a replayed day lacks its 3-day mean.
+@CompileStatic
 Map seasonFromHistory(String today, Map means, Map cfg) {
     Map a = replayAnchor(today, cfg)
     if (a == null) return null
@@ -1021,8 +1056,10 @@ Map seasonFromHistory(String today, Map means, Map cfg) {
 }
 
 // A month-day as "Mar 11".
+@CompileStatic
 String mdLabel(String md) { return dayLabel("2001-${md}".toString()) }
 
+@CompileStatic
 String dayLabel(String iso) {
     List<String> m = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
     return "${m[(iso.substring(5, 7) as int) - 1]} ${iso.substring(8) as int}".toString()
@@ -1040,6 +1077,7 @@ Map outlook(String season, String today, Map observed, Map forecast, Map cfg, St
     return [through: last, days: days, changes: changes, forecast: !(forecast ?: [:]).isEmpty()]
 }
 
+@CompileStatic
 List<String> outlookText(Map o, String unit) {
     List<String> out = []
     if (!o.forecast) out << 'No forecast available; only the date limits are shown.'
@@ -1054,6 +1092,7 @@ List<String> outlookText(Map o, String unit) {
 }
 
 // The last day whose 05:00 local evaluation a hold ending at holdUntil suspends, or null.
+@CompileStatic
 String holdLastDayOf(Long holdUntil, TimeZone tz) {
     if (holdUntil == null) return null
     Calendar c = Calendar.getInstance(tz)
@@ -1067,11 +1106,13 @@ String holdLastDayOf(Long holdUntil, TimeZone tz) {
 }
 
 // Day of the year on a leap calendar, so Feb 29 and every later date line up across years.
+@CompileStatic
 int leapDoy(String md) {
     List<Integer> start = [0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335]
     return start[(md.substring(0, 2) as int) - 1] + (md.substring(3) as int)
 }
 
+@CompileStatic
 String leapMd(int doy) {
     List<Integer> len = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     int d = doy
@@ -1081,12 +1122,14 @@ String leapMd(int doy) {
 }
 
 // Where each first-crossing search starts, early enough to precede every window. Half a year later south of the equator.
+@CompileStatic
 Map calibAnchors(boolean south) {
     Map n = [spring: '02-15', summer: '04-01', fall: '08-01', winter: '09-15']
     return south ? n.collectEntries { k, v -> [k, leapMd((leapDoy(v as String) - 1 + 183) % 366 + 1)] } : n
 }
 
 // The p-th percentile of month-days, counted from the anchor so a span past Dec 31 still sorts. Rounds half to even.
+@CompileStatic
 String percentileMd(List<String> mds, String anchor, int p) {
     int a = leapDoy(anchor)
     List<Integer> xs = mds.collect { (leapDoy(it) - a + 366) % 366 }.sort()
@@ -1145,6 +1188,7 @@ Map calibrate(Map means, String first, String last, Map thr, boolean south) {
 }
 
 // cfg with the dates of a calibration result in place of its own, where the result has them.
+@CompileStatic
 Map withDates(Map cfg, Map cal) {
     Map out = [w2s: [:] + (cfg.w2s as Map), f2w: [:] + (cfg.f2w as Map), summer: [:] + (cfg.summer as Map)]
     if (cal?.w2s) out.w2s.putAll(cal.w2s as Map)

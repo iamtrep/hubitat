@@ -8,7 +8,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import com.hubitat.app.DeviceWrapper
 
-@Field static final String CODE_VERSION = "0.0.4"
+@Field static final String CODE_VERSION = "0.0.5"
 
 definition(
     name: "Sensor Filter Child",
@@ -224,7 +224,7 @@ Number calculateMedian(List values) {
     int size = sortedValues.size()
     if (size == 0) return null
 
-    int midpoint = (int)(size / 2)
+    int midpoint = size.intdiv(2)
     BigDecimal medianValue
 
     if (size % 2 == 0) {

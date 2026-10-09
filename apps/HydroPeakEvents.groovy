@@ -12,7 +12,7 @@ import groovy.json.JsonOutput
 import java.text.SimpleDateFormat
 
 @Field static final String APP_NAME = "Hydro-Québec Peak Period Manager"
-@Field static final String CODE_VERSION = "0.3.3"
+@Field static final String CODE_VERSION = "0.3.4"
 
 definition(
     name: APP_NAME,
@@ -154,7 +154,9 @@ void initialize() {
     fetchPeakPeriods()
 
     // Schedule periodic updates
-    String cronExpression = "7 13 */${settings.updateInterval} * * ?"
+    // Random second and minute so installs don't all poll Hydro-Québec at the same instant
+    Random rng = new Random()
+    String cronExpression = "${rng.nextInt(60)} ${rng.nextInt(60)} */${settings.updateInterval} * * ?"
     schedule(cronExpression, fetchPeakPeriods)
 
     logSched("Scheduled to check every ${settings.updateInterval} hour(s)")

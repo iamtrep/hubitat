@@ -10,9 +10,11 @@
 */
 
 import com.hubitat.app.ChildDeviceWrapper
+import com.hubitat.hub.domain.State
+import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.2"
+@Field static final String CODE_VERSION = "0.1.3"
 
 definition(
     name: "HVAC Interlock Group",
@@ -150,7 +152,7 @@ ChildDeviceWrapper statusDevice() {
 void rebuildOpenings() {
     Map since = [:]
     (openings ?: []).each { dev ->
-        Object st = dev.currentState("contact")
+        State st = dev.currentState("contact")
         if (st?.value == "open") since[dev.id as String] = (st.date as Date)?.getTime() ?: now()
     }
     state.openSince = since
@@ -243,8 +245,10 @@ void appButtonHandler(String btn) {
 // Self-contained: arguments in, values out. No settings, state, devices or logs.
 // tests/test_core.groovy parses and runs this block off-hub.
 
+@CompileStatic
 List<String> seasonList() { return ['winter', 'spring', 'summer', 'fall'] }
 
+@CompileStatic
 BigDecimal numOrNull(Object o) {
     if (o instanceof Number) return new BigDecimal(o.toString())
     if (o instanceof String && ((String) o).trim().isBigDecimal()) return new BigDecimal(((String) o).trim())
@@ -252,6 +256,7 @@ BigDecimal numOrNull(Object o) {
 }
 
 // Per-season policy from the settings map: booleans for permit, modes for direct.
+@CompileStatic
 Map policyFrom(String style, Map s) {
     Map out = [:]
     Map dflt = [winter: true, spring: true, summer: false, fall: true]
@@ -268,6 +273,7 @@ Map policyFrom(String style, Map s) {
 
 // What the group wants this season: 'on'/'off' for permit, a mode or 'off' for direct.
 // Null when the season is unknown: the caller then changes nothing.
+@CompileStatic
 String wantedFor(String style, Map policy, String season) {
     if (!seasonList().contains(season)) return null
     Object p = policy?.get(season)
@@ -275,6 +281,7 @@ String wantedFor(String style, Map policy, String season) {
     return ['heat', 'cool', 'auto'].contains(p) ? (p as String) : 'off'
 }
 
+@CompileStatic
 Map effective(String wanted, boolean raised, String response) {
     if (wanted == 'off') return [state: 'off', blockReason: 'season']
     if (raised && response != 'warn') return [state: 'off', blockReason: 'openings']
@@ -284,6 +291,7 @@ Map effective(String wanted, boolean raised, String response) {
 // Raise when an opening has been open for the open delay while the group wants to run;
 // clear when everything has been closed for the close delay, or when the group no longer
 // wants to run. nextCheck is when the answer can next change without a new event.
+@CompileStatic
 Map alertStep(Map a) {
     boolean raised = a.raised == true
     long now = a.now as long
@@ -300,39 +308,48 @@ Map alertStep(Map a) {
     return now >= due ? [raised: false, nextCheck: null] : [raised: true, nextCheck: due]
 }
 
+@CompileStatic
 Long earliestOpen(List<Map> contacts) {
     List<Long> t = contacts.findAll { it.open }.collect { it.since as Long }.findAll { it != null }
     return t ? t.min() : null
 }
 
+@CompileStatic
 String openList(List<Map> contacts) { return contacts.findAll { it.open }.collect { it.label as String }.sort().join(', ') }
 
+@CompileStatic
 String alertText(String group, String open) { return "${group}: ${open} open".toString() }
 
+@CompileStatic
 String clearText(String group) { return "${group}: alert cleared".toString() }
 
+@CompileStatic
 List<String> modeWrites(List<Map> thermostats, String target) {
     return thermostats.findAll { it.mode != target }.collect { it.id as String }
 }
 
 // supportedThermostatModes is a JSON-like list string; missing or empty means unknown.
+@CompileStatic
 boolean supportsMode(Object supported, String mode) {
     if (supported == null) return true
     List<String> modes = supported.toString().replaceAll(/[\[\]"\s]/, '').split(',').findAll { it }.collect { it as String }
     return modes.isEmpty() || modes.contains(mode)
 }
 
+@CompileStatic
 long openDelayMs(Object minutes) {
     BigDecimal n = numOrNull(minutes)
     return n == null ? 600000L : (n * 60000).longValue()
 }
 
+@CompileStatic
 long closeDelayMs(boolean debug, Object testSeconds) {
     BigDecimal n = debug ? numOrNull(testSeconds) : null
     return n == null ? 300000L : (n * 1000).longValue()
 }
 
 // The status device's label; null until the group has a name (its first save).
+@CompileStatic
 String statusLabel(Object group) {
     String g = group == null ? '' : group.toString().trim()
     return g ? "${g} status".toString() : null

@@ -11,9 +11,10 @@
 
 import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.app.DeviceWrapper
+import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.3.1"
+@Field static final String CODE_VERSION = "0.3.2"
 
 definition(
     name: "Thermostat Scheduler+ Program",
@@ -1393,6 +1394,7 @@ void migratePauseSwitch() {
 // Self-contained: arguments in, values out. No settings, state, devices or logs.
 // tests/test_core.groovy parses and runs this block off-hub.
 
+@CompileStatic
 Calendar calFor(String iso, TimeZone tz) {
     Calendar c = Calendar.getInstance(tz)
     c.clear()
@@ -1401,29 +1403,34 @@ Calendar calFor(String iso, TimeZone tz) {
     return c
 }
 
+@CompileStatic
 String isoDate(long t, TimeZone tz) {
     java.text.SimpleDateFormat f = new java.text.SimpleDateFormat('yyyy-MM-dd')
     f.setTimeZone(tz)
     return f.format(new Date(t))
 }
 
+@CompileStatic
 String hhmmOf(long t, TimeZone tz) {
     java.text.SimpleDateFormat f = new java.text.SimpleDateFormat('HH:mm')
     f.setTimeZone(tz)
     return f.format(new Date(t))
 }
 
+@CompileStatic
 String addDays(String iso, int n, TimeZone tz) {
     Calendar c = calFor(iso, tz)
     c.add(Calendar.DAY_OF_MONTH, n)
     return isoDate(c.getTimeInMillis(), tz)
 }
 
+@CompileStatic
 int isoDow(String iso, TimeZone tz) {
     int d = calFor(iso, tz).get(Calendar.DAY_OF_WEEK)
     return d == Calendar.SUNDAY ? 7 : d - 1
 }
 
+@CompileStatic
 long atLocal(String iso, String hhmm, TimeZone tz) {
     Calendar c = calFor(iso, tz)
     String[] p = hhmm.split(':')
@@ -1432,12 +1439,14 @@ long atLocal(String iso, String hhmm, TimeZone tz) {
     return c.getTimeInMillis()
 }
 
+@CompileStatic
 BigDecimal numOrNull(Object o) {
     if (o instanceof Number) return new BigDecimal(o.toString())
     if (o instanceof String && ((String) o).trim().isBigDecimal()) return new BigDecimal(((String) o).trim())
     return null
 }
 
+@CompileStatic
 Long startOf(Map start, String iso, Map ctx) {
     TimeZone tz = ctx.tz as TimeZone
     String kind = start?.kind as String
@@ -1455,10 +1464,12 @@ Long startOf(Map start, String iso, Map ctx) {
     return null
 }
 
+@CompileStatic
 Map groupFor(Map sched, int dow) {
     return (sched.groups as List<Map>)?.find { Map g -> (g.days as List)?.collect { it as int }?.contains(dow) }
 }
 
+@CompileStatic
 List<Map> transitionsForDay(Map sched, String iso, Map ctx) {
     Map g = groupFor(sched, isoDow(iso, ctx.tz as TimeZone))
     if (!g) return []
@@ -1473,6 +1484,7 @@ List<Map> transitionsForDay(Map sched, String iso, Map ctx) {
     return out.sort { Map t -> t.at as Long }
 }
 
+@CompileStatic
 Map currentTransition(Map sched, Map ctx) {
     long now = ctx.now as long
     TimeZone tz = ctx.tz as TimeZone
@@ -1484,6 +1496,7 @@ Map currentTransition(Map sched, Map ctx) {
     return null
 }
 
+@CompileStatic
 Map nextTransitionOf(Map sched, Map ctx) {
     long now = ctx.now as long
     TimeZone tz = ctx.tz as TimeZone
@@ -1495,6 +1508,7 @@ Map nextTransitionOf(Map sched, Map ctx) {
     return null
 }
 
+@CompileStatic
 Map valuesOf(Map v, Map ctx) {
     Map vars = (ctx.vars ?: [:]) as Map
     BigDecimal heat = v.heatVar ? numOrNull(vars.get(v.heatVar)) : numOrNull(v.heat)
@@ -1502,11 +1516,13 @@ Map valuesOf(Map v, Map ctx) {
     return [heat: heat, cool: cool, fan: v.fan ?: null, mode: v.mode ?: null]
 }
 
+@CompileStatic
 Map profileValues(Map cfg, String name, Map ctx) {
     Map p = (cfg.profiles as List<Map>)?.find { Map x -> x.name == name }
     return p ? valuesOf(p, ctx) + [profile: name] : null
 }
 
+@CompileStatic
 Map resolveTarget(Map cfg, Map rt, Map ctx) {
     Long modeId = ctx.modeId as Long
     Map sched = (cfg.schedules as List<Map>)?.find { Map s -> s.name == cfg.active }
@@ -1548,17 +1564,20 @@ Map resolveTarget(Map cfg, Map rt, Map ctx) {
             eco: ecoOn, transitionKey: key, overrideModeId: ov?.modeId as Long]
 }
 
+@CompileStatic
 boolean holdExpired(Map hold, Map target, long now) {
     if (!hold || hold.end == 'indefinite') return false
     if (hold.end == 'at') return now >= (hold.until as long)
     return target.transitionKey != hold.transitionKey || (target.overrideModeId as Long) != (hold.overrideModeId as Long)
 }
 
+@CompileStatic
 boolean differs(BigDecimal want, Object cur) {
     BigDecimal c = numOrNull(cur)
     return c == null || (want - c).abs() >= 0.05G
 }
 
+@CompileStatic
 List<Map> planWrites(Map target, List<Map> therms, Map opts) {
     List<Map> out = []
     if (target == null || target.layer == 'paused' || target.layer == 'none') return out
@@ -1587,6 +1606,7 @@ List<Map> planWrites(Map target, List<Map> therms, Map opts) {
     return out
 }
 
+@CompileStatic
 boolean restrictedNow(Map r, Map ctx) {
     if (!r) return false
     TimeZone tz = ctx.tz as TimeZone
@@ -1606,6 +1626,7 @@ boolean restrictedNow(Map r, Map ctx) {
     return false
 }
 
+@CompileStatic
 long nextWake(Map cfg, Map rt, Map ctx) {
     long now = ctx.now as long
     TimeZone tz = ctx.tz as TimeZone
@@ -1628,6 +1649,7 @@ long nextWake(Map cfg, Map rt, Map ctx) {
     return Math.max(c.min() as long, now + 1000L)
 }
 
+@CompileStatic
 Map defaultConfig() {
     return [v: 1,
         profiles: [[name: 'Home', heat: 21.0, cool: 24.0], [name: 'Sleep', heat: 18.0, cool: 26.0], [name: 'Away', heat: 16.0, cool: 29.0]],
@@ -1638,6 +1660,7 @@ Map defaultConfig() {
 }
 
 // A new program maps the hub mode named Away to the Away profile, as the built-in Away row does.
+@CompileStatic
 Map seedOverrides(Map cfg, List<Map> modes) {
     Map away = modes?.find { Map m -> (m.name as String)?.trim()?.equalsIgnoreCase('Away') }
     boolean hasProfile = (cfg.profiles as List<Map>)?.any { Map p -> p.name == 'Away' }
@@ -1646,6 +1669,7 @@ Map seedOverrides(Map cfg, List<Map> modes) {
 }
 
 // A write check is due 30 s after the latest write; past 60 s its job was lost.
+@CompileStatic
 boolean verifyOverdue(Map verify, long now) {
     return verify != null && now - ((verify.last ?: verify.at ?: 0L) as long) > 60000L
 }
@@ -1659,6 +1683,7 @@ List<Map> mergeWrites(List<Map> pending, List<Map> writes) {
 }
 
 // Rewrites references to hub variable `from` as `to`. Returns true when anything changed.
+@CompileStatic
 boolean renameVarRefs(Map cfg, String from, String to) {
     boolean changed = false
     (cfg?.profiles as List<Map>)?.each { Map p ->
@@ -1677,6 +1702,7 @@ boolean renameVarRefs(Map cfg, String from, String to) {
 }
 
 // Setpoints given to a hold must be in the hub scale's range: C 0 to 40, F 32 to 104.
+@CompileStatic
 String setpointRangeError(Object heat, Object cool, String scale) {
     BigDecimal lo = scale == 'F' ? 32.0G : 0.0G, hi = scale == 'F' ? 104.0G : 40.0G
     for (String f in ['heating', 'cooling']) {
@@ -1746,6 +1772,7 @@ List<String> validateConfig(Map doc, Map env) {
 }
 
 // `now`, when given, rejects an ISO time that is not in the future.
+@CompileStatic
 Map parseEnd(Object raw, Long now = null) {
     String s = raw == null ? '' : raw.toString().trim()
     if (s == '' || s == 'next') return [end: 'next']
@@ -1770,6 +1797,7 @@ Map parseEnd(Object raw, Long now = null) {
     return [error: "end must be next, indefinite, minutes or an ISO time: ${s}".toString()]
 }
 
+@CompileStatic
 Map parseCommand(Map req, Long now = null) {
     String name = req?.command as String
     Closure err = { String m -> [ok: false, error: m] }
@@ -1800,6 +1828,7 @@ Map parseCommand(Map req, Long now = null) {
     return err("unknown command: ${name}".toString())
 }
 
+@CompileStatic
 String applyOutcome(List<Map> batch, List<String> confirmedIds) {
     List<String> ids = batch.collect { it.id as String }.unique()
     int ok = ids.count { confirmedIds.contains(it) } as int
@@ -1808,12 +1837,15 @@ String applyOutcome(List<Map> batch, List<String> confirmedIds) {
 
 // ── Configuration PUT ──
 
+@CompileStatic
 Map parseJsonLike(Map m) { return new groovy.json.JsonSlurper().parseText(groovy.json.JsonOutput.toJson(m)) as Map }
 
 // Any change to the document or to an option setting changes the revision. Hashed after a JSON
 // round trip, so a map read back from state and the map it was saved from agree.
+@CompileStatic
 int revisionOf(Map cfg) { return groovy.json.JsonOutput.toJson(parseJsonLike(cfg)).hashCode() }
 
+@CompileStatic
 List<String> putShapeErrors(Map c) {
     List<String> e = []
     if (!(c.profiles instanceof List)) e << 'config.profiles must be a list'
@@ -1823,10 +1855,12 @@ List<String> putShapeErrors(Map c) {
     return e
 }
 
+@CompileStatic
 Map putDocument(Map c) {
     return [v: c.v ?: 1, profiles: c.profiles, schedules: c.schedules, active: c.active, overrides: c.overrides ?: []]
 }
 
+@CompileStatic
 boolean validStart(Object s) {
     if (s == null) return true
     if (!(s instanceof Map)) return false
@@ -1836,6 +1870,7 @@ boolean validStart(Object s) {
     return false
 }
 
+@CompileStatic
 List<String> validateOptions(Map c, Map env) {
     List<String> e = []
     Map eco = c.eco as Map, o = c.options as Map, r = c.restrictions as Map
@@ -1858,6 +1893,7 @@ List<String> validateOptions(Map c, Map env) {
 }
 
 // Settings writes for the option groups present; a null value removes the setting.
+@CompileStatic
 List<Map> optionSettings(Map c) {
     List<Map> w = []
     Map eco = c.eco as Map, o = c.options as Map, r = c.restrictions as Map
@@ -1883,11 +1919,13 @@ List<Map> optionSettings(Map c) {
 // Only appState.timeSort (periods) and appState.dayGroups (groups) are live; the scheduler keeps
 // settings and state of deleted periods and groups, which are ignored here.
 
+@CompileStatic
 String builtinText(Object v) {
     if (v == null || (v instanceof Collection && ((Collection) v).isEmpty()) || (v instanceof Map && ((Map) v).isEmpty())) return null
     return v.toString().trim() ?: null
 }
 
+@CompileStatic
 Map builtinCell(Map src, String suffix) {
     Map v = [:]
     String hv = builtinText(src.get("heat${suffix}V".toString())), cv = builtinText(src.get("cool${suffix}V".toString()))
@@ -1902,6 +1940,7 @@ Map builtinCell(Map src, String suffix) {
     return v
 }
 
+@CompileStatic
 String builtinHhmm(Object v) {
     String s = builtinText(v)
     if (!s) return null
@@ -1912,6 +1951,7 @@ String builtinHhmm(Object v) {
 }
 
 // null: no start; [bad: kind]: a start this importer does not know.
+@CompileStatic
 Map builtinStart(Map s, String p, String g) {
     String sfx = "${p}.${g}".toString()
     String kind = builtinText(s.get("time${sfx}".toString()))
@@ -1933,6 +1973,7 @@ Map builtinStart(Map s, String p, String g) {
 
 // One end of the restriction window (`end` is "start" or "end"). null: unset; [bad: ...]: unreadable.
 // The built-in names the offset inputs "<end><Sunrise|Sunset>Offsetnull".
+@CompileStatic
 Map builtinWindowEnd(Map s, String end) {
     String kind = builtinText(s.get("${end}ingX".toString()))
     if (kind == 'Sunrise' || kind == 'Sunset') {

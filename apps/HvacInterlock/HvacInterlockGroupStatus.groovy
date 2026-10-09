@@ -10,7 +10,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 
 metadata {
     definition(name: "HVAC Interlock Group Status", namespace: "iamtrep", author: "pj", component: true,
@@ -28,6 +28,7 @@ metadata {
 
 void installed() { logCfg "installed ${CODE_VERSION}" }
 void updated() { logCfg "updated" }
+void deviceTypeUpdated() { logDebug "driver change detected" }
 
 void on() { logWarn "the group sets this switch; change the group's settings instead" }
 void off() { logWarn "the group sets this switch; change the group's settings instead" }

@@ -10,7 +10,7 @@ File here = new File(getClass().protectionDomain.codeSource.location.toURI()).pa
 String src = new File(here.parentFile, 'HvacSeasonManager.groovy').text
 int a = src.indexOf('// ── Core (pure)'), b = src.indexOf('// ── End core')
 if (a < 0 || b < a) { println '[FAIL] core markers not found'; System.exit(2) }
-core = new GroovyShell().parse(src.substring(a, b))
+core = new GroovyShell().parse('import groovy.transform.CompileStatic; ' + src.substring(a, b))   // the core's @CompileStatic needs the file's import; same line keeps line numbers
 
 passed = 0; failed = 0   // binding variables: script methods can't see typed locals
 void check(String name, Object got, Object want) {

@@ -90,7 +90,7 @@ import groovy.transform.Field
 import com.hubitat.app.DeviceWrapper
 
 @Field static final String APP_NAME = "Humidity-Based Fan Controller"
-@Field static final String CODE_VERSION = "0.9.7"
+@Field static final String CODE_VERSION = "0.9.8"
 
 // Humidity state machine states
 @Field static final String HUMIDITY_NORMAL = "NORMAL"
@@ -722,7 +722,7 @@ private void servicePendingTransition() {
             Long activationDelayMs = (activationDelay as Integer) * 1000
             Long remainingMs = activationDelayMs - elapsedMs
             if (remainingMs > 0) {
-                Integer remainingSeconds = (remainingMs / 1000).toInteger() + 1  // Round up
+                Integer remainingSeconds = (remainingMs.intdiv(1000) as Integer) + 1  // Round up
                 logSched("Servicing activation timer: ${remainingSeconds}s remaining")
                 runIn(remainingSeconds, "delayedTransitionToHigh")
             } else {
@@ -735,7 +735,7 @@ private void servicePendingTransition() {
             Long deactivationDelayMs = (deactivationDelay as Integer) * 1000
             Long remainingMsDeact = deactivationDelayMs - elapsedMs
             if (remainingMsDeact > 0) {
-                Integer remainingSeconds = (remainingMsDeact / 1000).toInteger() + 1  // Round up
+                Integer remainingSeconds = (remainingMsDeact.intdiv(1000) as Integer) + 1  // Round up
                 logSched("Servicing deactivation timer: ${remainingSeconds}s remaining")
                 runIn(remainingSeconds, "delayedTransitionToNormal")
             } else {
@@ -1052,7 +1052,7 @@ private void serviceMaxFanRunTimer() {
 
     Long remainingMs = (state.maxFanRunSince as Long) + (maxFanRunTime as Integer) * 60000L - now()
     if (remainingMs > 0) {
-        Integer remainingSeconds = (remainingMs / 1000).toInteger() + 1
+        Integer remainingSeconds = (remainingMs.intdiv(1000) as Integer) + 1
         runIn(remainingSeconds, "maxFanRunTimeExpired")
         logSched("Max fan run timer serviced: ${remainingSeconds}s remaining")
     } else {
@@ -1183,7 +1183,7 @@ private void servicePhysicalRunFloor() {
         return
     }
     Long remainingMs = physicalRunFloorRemainingMs()
-    Integer remainingSeconds = remainingMs > 0 ? (remainingMs / 1000).toInteger() + 1 : 1
+    Integer remainingSeconds = remainingMs > 0 ? (remainingMs.intdiv(1000) as Integer) + 1 : 1
     runIn(remainingSeconds, "physicalRunFloorReached")
 }
 
@@ -1274,7 +1274,7 @@ private String getStatusText() {
         case HUMIDITY_PENDING_HIGH:
             status.append("<b style='color:orange'>Humidity: PENDING HIGH</b><br/>")
             if (state.pendingStateSince) {
-                Long elapsed = (now() - (state.pendingStateSince as Long)) / 1000
+                Long elapsed = (now() - (state.pendingStateSince as Long)).intdiv(1000L) as Long
                 Long remaining = (activationDelay as Integer) - elapsed
                 if (remaining > 0) {
                     status.append("Activation in: ${remaining}s<br/>")
@@ -1287,7 +1287,7 @@ private String getStatusText() {
         case HUMIDITY_PENDING_NORMAL:
             status.append("<b style='color:orange'>Humidity: PENDING NORMAL</b><br/>")
             if (state.pendingStateSince) {
-                Long elapsed = (now() - (state.pendingStateSince as Long)) / 1000
+                Long elapsed = (now() - (state.pendingStateSince as Long)).intdiv(1000L) as Long
                 Long remaining = (deactivationDelay as Integer) - elapsed
                 if (remaining > 0) {
                     status.append("Deactivation in: ${remaining}s<br/>")
@@ -1344,7 +1344,7 @@ private String getStatusText() {
         status.append(" (controlled by app)")
         // Show max run timer status
         if (isMaxFanRunTimeEnabled() && state.maxFanRunSince) {
-            Long elapsedMin = (now() - (state.maxFanRunSince as Long)) / 60000
+            Long elapsedMin = (now() - (state.maxFanRunSince as Long)).intdiv(60000L) as Long
             Long remainingMin = (maxFanRunTime as Integer) - elapsedMin
             if (remainingMin > 0) {
                 status.append(" <small>[auto-off in ${remainingMin}min]</small>")
@@ -1420,9 +1420,9 @@ private BigDecimal computeMedianHumidity(List sensors, DeviceWrapper reportingDe
 
     Integer n = values.size()
     if (n % 2 == 0) {
-        return (values[(n / 2 - 1) as int] + values[(n / 2) as int]) / 2.0
+        return (values[n.intdiv(2) - 1] + values[n.intdiv(2)]) / 2.0
     } else {
-        return values[(n / 2) as int]
+        return values[n.intdiv(2)]
     }
 }
 
@@ -1459,9 +1459,9 @@ private BigDecimal computeMedianDewPoint(List sensors, DeviceWrapper reportingDe
     dewPoints.sort()
     int n = dewPoints.size()
     if (n % 2 == 0) {
-        return (dewPoints[(n / 2 - 1) as int] + dewPoints[(n / 2) as int]) / 2.0G
+        return (dewPoints[n.intdiv(2) - 1] + dewPoints[n.intdiv(2)]) / 2.0G
     }
-    return dewPoints[(n / 2) as int]
+    return dewPoints[n.intdiv(2)]
 }
 
 private Boolean useDewPointMode() { return settings.useDewPoint as Boolean }
