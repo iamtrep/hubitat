@@ -100,7 +100,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.1.4"
+@Field static final String CODE_VERSION = "0.1.5"
 
 // OAuth and API endpoints
 @Field static final String ECOBEE_API_BASE= "https://api.ecobee.com"
@@ -152,16 +152,27 @@ metadata {
 // ========================================
 
 void installed() {
-    checkVersion(false)
     sendEvent(name: "connectionStatus", value: "disconnected", descriptionText: "${device.displayName} is disconnected")
-    configure()
+    initialize()
 }
 
 void updated() {
-    checkVersion(false)
     unschedule()
+    initialize()
+}
+
+// Convergence point for install and save. The poll is a cron schedule, which survives a
+// reboot, so hub start needs nothing here.
+void initialize() {
+    checkVersion(false)
+    configure()
     if (debugEnable || traceEnable) runIn(DEBUG_LOG_TIMEOUT_SECONDS, "logsOff")
-    schedulePolling()
+    // Without a thermostat every poll would only log an error.
+    if (thermostatId) {
+        schedulePolling()
+    } else {
+        logSched "Polling not scheduled: no thermostat selected"
+    }
 }
 
 void deviceTypeUpdated() {

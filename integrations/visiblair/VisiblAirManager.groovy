@@ -28,7 +28,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "2.1.6"
+@Field static final String CODE_VERSION = "2.1.7"
 @Field static final String VISIBLAIR_API = "https://api.visiblair.com/api/v1"
 @Field static final int HTTP_TIMEOUT = 15
 @Field static final String DNI_PREFIX = "visiblair-"
@@ -93,14 +93,19 @@ Map mainPage() {
 
 void installed() {
     logDebug "installed"
-    updated()
+    initialize()
 }
 
-// No initialize(): updated() is the convergence point, so it records the version.
 void updated() {
-    checkVersion(false)
     logDebug "updated"
+    unsubscribe()
     unschedule()
+    initialize()
+}
+
+// The poll is a cron schedule, which survives a reboot, so no systemStart handler is needed.
+void initialize() {
+    checkVersion(false)
     if (debugEnable || traceEnable) runIn(1800, turnOffDebugLogging)
     encryptPassword()
 

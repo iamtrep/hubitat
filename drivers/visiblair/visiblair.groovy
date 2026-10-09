@@ -44,7 +44,7 @@ metadata {
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.7"
+@Field static final String CODE_VERSION = "0.1.8"
 @Field static final String constCO2ClickURL = 'https://environment-monitor-01.co2.click:11000/api/v1'
 @Field static final String constVisiblairURL = 'https://api.visiblair.com:11000/api/v1'
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
@@ -89,6 +89,7 @@ private void updateDeviceAttribute(String aKey, aValue, String aUnit = "", Strin
 void installed() {
     logDebug "installed..."
     state.version = CODE_VERSION
+    updateDeviceAttribute("battery", 100, "%")
     initialize()
 }
 
@@ -96,13 +97,13 @@ void uninstalled() {
     unschedule()
 }
 
-void initialize() {
-    checkVersion()
-    updateDeviceAttribute("battery", 100, "%")
-    updated()
+void updated() {
+    initialize()
 }
 
-void updated() {
+// Convergence point: install, preference save and hub start all land here.
+void initialize() {
+    checkVersion()
     logWarn "this driver is deprecated and no longer maintained; use the VisiblAir Manager integration"
     if (debugEnable || traceEnable) runIn(DEBUG_LOG_TIMEOUT, "turnOffDebugLogging")
 

@@ -13,7 +13,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 
 metadata {
     definition(
@@ -44,10 +44,17 @@ metadata {
 
 void installed() {
     sendEvent(name: "switch", value: "off")
+    initialize()
 }
 
 void updated() {
     logCfg "updated"
+    initialize()
+}
+
+// Shared install/save path. The parent owns the device, so there is nothing to configure here.
+void initialize() {
+    checkVersion()
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
 }
 

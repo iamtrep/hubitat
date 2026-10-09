@@ -21,7 +21,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import hubitat.helper.HexUtils
 
-@Field static final String CODE_VERSION = "0.1.1"
+@Field static final String CODE_VERSION = "0.1.2"
 
 @Field static final String CLUSTER_MGMT_LQI_REQ = "0031"
 @Field static final String CLUSTER_MGMT_RTG_REQ = "0032"
@@ -55,7 +55,9 @@ metadata {
     }
 }
 
-void installed() { }
+void installed() {
+    updated()
+}
 void updated() {
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
 }

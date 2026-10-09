@@ -26,7 +26,7 @@ import groovy.transform.Field
 import hubitat.zigbee.zcl.DataType
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.0.5"
+@Field static final String CODE_VERSION = "0.0.6"
 
 metadata {
     definition(
@@ -117,6 +117,11 @@ void refresh() {
     cmds += zigbee.readAttribute(WINDOW_COVERING_CLUSTER, LIFT_POSITION_ATTR) // window covering lift position
 
     sendZigbeeCommands(cmds)
+}
+
+void installed() {
+    logCfg "installed"
+    runInMillis(1000, "configure")
 }
 
 void updated() {

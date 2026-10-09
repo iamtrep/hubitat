@@ -61,7 +61,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.3.3"
+@Field static final String CODE_VERSION = "0.3.4"
 // Failed polls log at warn until this many in a row, then once at error, then at
 // warn every OUTAGE_REMINDER_MS until a poll succeeds.
 @Field static final int FAILURE_ERROR_THRESHOLD = 3
@@ -74,7 +74,7 @@ void installed() {
     logDebug "installed..."
     resetAttributes()
     state.version = CODE_VERSION
-    runIn(2, "poll")
+    initialize()
 }
 
 // Runs when the driver preferences are saved/updated
@@ -83,20 +83,19 @@ void updated() {
         logWarn "pollingInterval too low, using 10 seconds"
         device.updateSetting("pollingInterval", [type: "number", value: 10])
     }
-    configure()
-    runIn(2, "poll")
+    initialize()
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
 }
 
 void deviceTypeUpdated() {
     logDebug "driver change detected"
-    configure()
-    runIn(2, "poll")
+    initialize()
 }
 
-// Runs when the hub starts up
+// Convergence point: install, preference save, driver change and hub start all land here.
 void initialize() {
     initState()
+    configure()
     runIn(2, "poll")
 }
 
@@ -142,7 +141,6 @@ private void resetAttributes() {
 }
 
 void configure() {
-    unschedule("poll")
     try {
         Map<String, String> httpParams = [
                 uri        : "http://${ip}",
@@ -156,8 +154,6 @@ void configure() {
     } catch (Exception e) {
         logError "configure(): ${e}"
     }
-
-    runIn((pollingInterval ?: 300) as int, "poll")
 }
 
 // Runs on its own after a code push, so the version check lives here too; the runIn below re-arms the poll.

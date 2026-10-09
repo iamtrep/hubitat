@@ -3,7 +3,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 @Field static final long RSSI_MIN_INTERVAL_MS = 10000
 
 metadata {
@@ -42,11 +42,11 @@ void parse(Map data) {
 }
 
 void installed() {
-    if (logEnable || traceEnable) runIn(1800, "logsOff")
+    initialize()
 }
 
 void updated() {
-    if (logEnable || traceEnable) runIn(1800, "logsOff")
+    initialize()
 }
 
 void deviceTypeUpdated() {
@@ -57,8 +57,11 @@ void uninstalled() {
     // nothing for now
 }
 
+// Fed by BLE advertisements, so there is nothing to connect or configure: the shared
+// install/save path only records the version and arms the logging timeout.
 void initialize() {
     checkVersion()
+    if (logEnable || traceEnable) runIn(1800, "logsOff")
 }
 
 // BLE advertisements need no device-side configuration, so a push is only recorded.

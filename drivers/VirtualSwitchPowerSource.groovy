@@ -17,7 +17,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 
 metadata {
     definition(name: 'Virtual Switch + PowerSource', namespace: 'iamtrep', author: 'pj',
@@ -41,9 +41,16 @@ metadata {
 void installed() {
     sendEvent(name: 'switch', value: 'off', descriptionText: 'Initialized to off')
     sendEvent(name: 'powerSource', value: 'mains', descriptionText: 'Initialized to mains')
+    initialize()
 }
 
 void updated() {
+    initialize()
+}
+
+// Shared install/save path. A virtual device has nothing to connect or configure.
+void initialize() {
+    checkVersion()
     if (debugEnable || traceEnable) runIn(1800, 'logsOff')
 }
 
