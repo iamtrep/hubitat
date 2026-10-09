@@ -15,7 +15,7 @@ import com.hubitat.app.DeviceWrapper
 import groovy.json.JsonOutput
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 
 definition(
     name: "Switched Heater Thermostat",
@@ -211,8 +211,7 @@ void initialize() {
         Map m = (state[key] ?: [:]) as Map
         state[key] = m.findAll { Object k, Object v -> heaterIds.contains(k.toString()) }
     }
-    List<String> noRetry = heatersWithoutRetry()
-    if (noRetry) logWarn retryAdviceText(noRetry)
+    retryCheck()
     subscribe(location, "systemStart", "startHandler")
     subscribe(sensors, "temperature", "sensorHandler")
     subscribe(t, "thermostatOperatingState", "opStateHandler")
@@ -223,6 +222,43 @@ void initialize() {
     schedule("${new Random().nextInt(60)} */5 * ? * *", "checkAll")
     scheduleKeepAlive()
     checkAll()
+}
+
+// Async, so the singleThreaded app doesn't hold every handler behind one loopback call per heater.
+void retryCheck() {
+    List<DeviceWrapper> hs = (heaters ?: []) as List<DeviceWrapper>
+    if (!hs) return
+    state.retryScan = [pending: hs.size(), infos: []]
+    hs.each { DeviceWrapper d ->
+        asynchttpGet("retryCheckCb", [uri: "http://127.0.0.1:8080", path: "/device/fullJson/${d.id}", contentType: "application/json", timeout: 5],
+                     [label: d.displayName as String])
+    }
+}
+
+void retryCheckCb(resp, Map data) {
+    checkVersion()
+    Map scan = (state.retryScan ?: [:]) as Map
+    if (!scan) return
+    Map info = null
+    if (resp.hasError()) {
+        logDebug "command retry check for ${data.label}: ${resp.getErrorMessage()}"
+    } else if (resp.getStatus() == 200) {
+        try {
+            Map dev = (resp.getJson() as Map)?.device as Map
+            if (dev?.containsKey("retryAvailable")) info = [label: data.label, available: dev.retryAvailable == true, enabled: dev.retryEnabled == true]
+        } catch (Exception e) {
+            logDebug "command retry check for ${data.label}: ${e.message}"
+        }
+    }
+    int pending = ((scan.pending ?: 1) as int) - 1
+    List infos = ((scan.infos ?: []) as List) + (info ? [info] : [])
+    if (pending > 0) {
+        state.retryScan = [pending: pending, infos: infos]
+        return
+    }
+    state.remove("retryScan")
+    List<String> noRetry = retryAdvice(infos)
+    if (noRetry) logWarn retryAdviceText(noRetry)
 }
 
 void checkVersion(boolean reinit = true) {
