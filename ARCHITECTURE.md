@@ -49,13 +49,16 @@ Inside a singleThreaded file, plain `state` is enough for anything written from 
 - **In-place mutation of `state` collections** (`state.myMap[k] = v`, `state.myList << item`) is a change-detection concern, not a concurrency one, so the read-mutate-reassign convention above still applies.
 - **`@Field static` is shared by every instance of the type**, and those instances run in parallel, so a static read across instances still needs `volatile` or a concurrent structure.
 
-**Choosing between `singleThreaded` and concurrent `@Field` structures.**
+**Choosing between `singleThreaded`, `atomicState` and concurrent `@Field` structures.**
 
-- **Use `singleThreaded: true`** when durable state in `state` is updated from several handlers (events, schedules, callbacks, commands) and each handler is short. Plain `state` is then safe without extra structure. This suits automation apps and stateful drivers (HumidityFanController, SwitchMonitor, MirrorSwitch, IPReachabilitySensor).
-- **Its cost** is that every handler waits for the one before it. A handler that blocks (sync HTTP, `pauseExecution`, a long loop) delays every event, schedule and callback queued behind it, and child devices that call into the parent wait too.
-- **Leave `singleThreaded` off and use `@Field static` concurrent structures** when the app must keep handling work while slow calls are in flight: an app serving a polled UI or API, or one fanning out async calls whose callbacks should not queue behind each other. Keep the shared data in `ConcurrentHashMap`/`AtomicInteger`, change it only through their atomic methods, and write durable results to `state` at one point (see *Gathering results from concurrent async callbacks* above). HubInspector works this way.
-- **Concurrent structures hold only in-memory data.** It is lost on a push or reboot and shared across instances. Durable state that several handlers update still needs `singleThreaded`, or one top-level `state` key per writer.
-- **Default:** start an automation app or a stateful driver with `singleThreaded: true`. Drop it only when serialization measurably delays something (an endpoint or callback waiting behind slow work), and move the contended data into concurrent structures.
+- **Start from the race, not the flag.** Name the key and the two entry points that can run at the same time and both read, change and write it back. A handler that overwrites a whole key (a flag, a timestamp, a status) is not a lost update; the last write wins, which is often what you want. Then pick the narrowest fix below.
+- **Replace whole keys, or give each writer its own top-level `state` key,** when the contention is one map or list. Separate keys kept 20 of 20 concurrent writes where one shared map kept 5 to 6 *(verified 2.5.2.129)*.
+- **Use `atomicState` when the app's total state is small** (under about 10 KB, where a write costs a few ms; the cost grows about 0.35 ms per KB of total state, verified 2.5.2.134 in an app) **and concurrent writers replace whole keys** rather than read, change and write back a shared map or counter. It keeps handlers concurrent and makes each write visible at once. It does not make a read-modify-write safe: one shared map kept 14 to 16 of 20 writes in `atomicState` *(verified 2.5.2.129)*. For that, use one key per writer, a `@Field static` concurrent structure, or `singleThreaded`.
+- **Use `@Field static` concurrent structures** for in-memory data, and when the app must keep handling work while slow calls are in flight: an app serving a polled UI or API, or one fanning out async calls whose callbacks should not queue behind each other. Keep the shared data in `ConcurrentHashMap`/`AtomicInteger`, change it only through their atomic methods, and write durable results to `state` at one point (see *Gathering results from concurrent async callbacks* above). HubInspector works this way. This data is lost on a push or reboot and shared across instances.
+- **Use `singleThreaded: true`** when many `state` keys are updated from several handlers (events, schedules, callbacks, commands) and each handler is short. Plain `state` is then safe without extra structure. This suits automation apps (HumidityFanController, SwitchMonitor, MirrorSwitch).
+- **Its cost** is that every handler waits for the one before it. A handler that blocks (sync HTTP, `pauseExecution`, a long loop) delays every event, schedule and callback queued behind it, and child devices that call into the parent wait too. An in-app test runner that waits for the app's own event handlers can't work at all: in SensorAggregatorDiscreteChild, 21 of 43 tests failed because sensor events queued behind the test button *(observed 2.5.2.134)*. Before adding the flag to existing code, check for all of these.
+- **Radio drivers:** whether `singleThreaded` serializes Zigbee and Z-Wave `parse()` is not measured. Don't add it to fix a race on the radio path until it is.
+- **Default for new code:** start an automation app with `singleThreaded: true`, and drop it when serialization measurably delays something. For existing code, fix the specific race with the narrowest option above.
 
 ### Hubitat libraries are not real modularity
 
@@ -283,7 +286,10 @@ lost to a crash mid-handler, a missed schedule, or a code push then self-heals o
 the next event instead of stranding the app. Reference: HFC
 `servicePendingTransition()`. Contrast with SensorAggregatorDiscreteChild's
 stale-sequence approach (let orphan timers no-op and re-derive), which suits apps
-where the transition is cheap to recompute from scratch.
+where the transition is cheap to recompute from scratch. The sequence must only
+count up: a reinit that restarts it at 1 lets a new event reuse a pending orphan's
+number, and the orphan then commits early *(observed 2.5.2.134 before
+SensorAggregatorDiscreteChild 0.3.6)*.
 
 ### OAuth-served HTTP endpoints
 
@@ -400,7 +406,7 @@ Avoid these unless there is a deliberate, documented exception:
 - logging an error on every failed background poll of a cloud API
 - calling a platform method signature that older firmware lacks without checking `location.hub.firmwareVersionString`
 - per-device async fan-out that assumes more than 8 calls (or 5 to one host) run in parallel
-- skipping `unschedule()` in `updated()` (produces orphan timers)
+- skipping `unschedule()` in `updated()` when a handler name changes across configs, a handler is scheduled from events the new config no longer fires, or a call passes `[overwrite: false]` (produces orphan timers; see *Lifecycle skeleton*)
 - a transient state whose only exit is an unrescheduled `runIn` callback
 - concurrent callbacks doing a read-modify-write of one map in `state` or `atomicState` (use a `@Field static` concurrent map)
 - storing transient per-scan or per-request data in `state` instead of `@Field static`
