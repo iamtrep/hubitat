@@ -607,7 +607,7 @@ private void parseBasic(Map map) {
                     logRx("ModelIdentifier : ${model}")
                 }
             }
-            if (map.additionalAttrs?.any { it.attrId == "FF01" }) {
+            if (map.additionalAttrs?.any { Map extra -> extra.attrId == "FF01" }) {
                 logInfo("Trigger : Button pressed (0x0005 + FF01)")
                 sendEvent(name: "pushed", value: 1, isStateChange: true)
             } else {
