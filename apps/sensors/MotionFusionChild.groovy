@@ -15,6 +15,9 @@ definition(
     description: "Combine PIR and mmWave inputs into a single motion output using configurable fusion algorithms",
     menu: "Automations", // new in platform 2.5.0
     category: "Convenience",
+    // PIR and mmWave events arrive together and race the window timers on
+    // currentOutput and the pending* keys; serialize so each sees the other's write.
+    singleThreaded: true,
     iconUrl: "",
     iconX2Url: "",
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/sensors/MotionFusionChild.groovy"
@@ -23,7 +26,7 @@ definition(
 import groovy.transform.Field
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.1.3"
+@Field static final String CODE_VERSION = "0.1.4"
 
 @Field static final Map<String, String> FUSION_MODES = [
     "pirOnly"              : "PIR Only",

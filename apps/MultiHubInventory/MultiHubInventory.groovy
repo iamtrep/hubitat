@@ -3,13 +3,18 @@
  * Copyright (c) 2026 PJ. SPDX-License-Identifier: MIT
  */
 import groovy.transform.Field
+import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.8.7"
+@Field static final String CODE_VERSION = "0.8.8"
 @Field static final String UI_FILE = "multi_hub_inventory_ui.html"
 @Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/MultiHubInventory.groovy"
 @Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/multi_hub_inventory_ui.html"
 @Field static volatile String uiVersionCache = null
 @Field static volatile boolean githubVersionRefreshPending = false
+// Peer probe results, keyed "${app.id}:${pid}" -> [baseUrl, reachable]. Kept out of state.peerList so
+// probe callbacks never rewrite the list initialize() owns. In memory only: the result is transient
+// and re-probed by initialize(); after a reboot the config page triggers a fresh probe.
+@Field static final ConcurrentHashMap<String, Map> peerReachability = new ConcurrentHashMap<>()
 // Green badge appended to the app label (visible in the Apps list) when a newer release is
 // published on GitHub. UPDATE_BADGE_RE strips any prior badge so re-applying is idempotent and
 // survives the label being saved verbatim through the "Assign a name" input on Done.
@@ -43,6 +48,7 @@ mappings {
 // ===== CONFIG PAGE =====
 Map mainPage() {
     if (state.peerIds == null) state.peerIds = [1]
+    reprobeIfNoResults()
     dynamicPage(name: "mainPage", title: "Multi-Hub Inventory v${CODE_VERSION}", install: true, uninstall: true) {
         section("Hubs") {
             paragraph "For each hub running Hub Inspector, paste its API base URL with the access token, e.g.<br><code>http://192.168.0.10/apps/api/247/api/?access_token=abcd…</code><br>(the <code>/api/</code> path, not the <code>ui.html</code> link). Include this hub as a peer too, pointing at its own Hub Inspector. On save, the token moves into encrypted storage and leaves the field; paste a full URL again to change it."
@@ -51,7 +57,7 @@ Map mainPage() {
                 input "peer_${p}_url",   "text", title: "Hub ${p} API URL", required: false, width: 6, submitOnChange: true
                 input "btnRemoveHub_${p}", "button", title: "Remove ${p}", width: 2
                 Map pinfo = (state.peerList ?: []).find { (it as Map).pid == p } as Map
-                String st = pinfo?.reachable
+                String st = pinfo ? peerReachable(pinfo) : null
                 if (st) {
                     String icon = (st == 'ok') ? '✅' : (st == 'auth') ? '🔒 auth failed' : (st == 'unreachable') ? '⚠️ unreachable' : "⚠️ ${st}"
                     paragraph "&nbsp;&nbsp;↳ ${icon}${pinfo?.self ? ' · this hub (loopback)' : ''}", width: 12
@@ -166,10 +172,12 @@ void initialize() {
         boolean isSelf = (hubIp && webBase.contains(hubIp))
         String callBase = isSelf ? parsed.baseUrl.replaceFirst(/^https?:\/\/[^\/]+/, 'http://127.0.0.1:8080') : parsed.baseUrl
         if (isSelf) logCfg "peer ${p} is this hub — routing API calls via loopback"
-        peerList << [pid: p, label: label, baseUrl: callBase, reachable: null, webBase: webBase, self: isSelf]
+        peerList << [pid: p, label: label, baseUrl: callBase, webBase: webBase, self: isSelf]
     }
     state.peerTokens = tokens.findAll { k, v -> (state.peerIds ?: []).any { "${it}" == k } }
     state.peerList = peerList
+    String keyPrefix = "${app.id}:"
+    peerReachability.keySet().removeIf { String k -> k.startsWith(keyPrefix) }
     logCfg "Multi-Hub Inventory initialized with ${peerList.size()} peer(s)"
     // Keep the Apps-list "update available" badge current even when the config page is never opened:
     // poll GitHub daily for a newer release, and reconcile the label now so the badge clears
@@ -400,10 +408,10 @@ private void probePeer(int i) {
     if (i >= peers.size()) return
     Map peer = peers[i] as Map
     try {
-        asynchttpGet('probePeerCallback', [uri: "${peer.baseUrl}/audit/status", headers: bearer(peerToken(peer)), contentType: 'application/json', timeout: 8], [i: i, baseUrl: peer.baseUrl])
+        asynchttpGet('probePeerCallback', [uri: "${peer.baseUrl}/audit/status", headers: bearer(peerToken(peer)), contentType: 'application/json', timeout: 8], [i: i, pid: peer.pid, baseUrl: peer.baseUrl])
     } catch (Exception e) {
         logNet "Peer probe ${peer.label} failed: ${e.message}"
-        setPeerReachable(i, peer.baseUrl as String, 'unreachable')
+        setPeerReachable(peer, 'unreachable')
         probePeer(i + 1)
     }
 }
@@ -418,15 +426,25 @@ void probePeerCallback(resp, data) {
     } else {
         reachable = (status == 200) ? 'ok' : "http ${status}"
     }
-    setPeerReachable(i, data.baseUrl as String, reachable)
+    setPeerReachable([pid: data.pid, baseUrl: data.baseUrl], reachable)
     probePeer(i + 1)
 }
 
-private void setPeerReachable(int i, String baseUrl, String reachable) {
+private String reachabilityKey(Map peer) { "${app.id}:${peer.pid}".toString() }
+
+private void setPeerReachable(Map peer, String reachable) {
+    peerReachability.put(reachabilityKey(peer), [baseUrl: peer.baseUrl as String, reachable: reachable])
+}
+
+// The stored baseUrl guards against a result from a probe started before initialize() changed the peer's URL.
+private String peerReachable(Map peer) {
+    Map r = peerReachability.get(reachabilityKey(peer))
+    return (r && r.baseUrl == peer.baseUrl) ? r.reachable as String : null
+}
+
+private void reprobeIfNoResults() {
     List peers = (state.peerList ?: []) as List
-    if (i >= peers.size() || (peers[i] as Map).baseUrl != baseUrl) return
-    (peers[i] as Map).reachable = reachable
-    state.peerList = peers
+    if (peers && !peers.any { peerReachable(it as Map) }) runIn(2, 'probePeers')
 }
 
 // ===== API =====
@@ -469,7 +487,7 @@ Map apiPeers() {
     checkVersion()
     if (!checkOAuth()) return render(status: 403, contentType: 'text/plain', data: 'OAuth not enabled')
     List out = []
-    (state.peerList ?: []).eachWithIndex { Map p, int i -> out << [index: i, label: p.label, reachable: p.reachable, webBase: p.webBase ?: ''] }
+    (state.peerList ?: []).eachWithIndex { Map p, int i -> out << [index: i, label: p.label, reachable: peerReachable(p), webBase: p.webBase ?: ''] }
     return jsonResponse([peers: out])
 }
 

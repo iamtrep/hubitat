@@ -18,6 +18,9 @@ definition(
     description: "Aggregate sensor values and save to a single virtual device",
     menu: "Automations", // new in platform 2.5.0
     category: "Convenience",
+    // One call per sensor event across many sensors, plus the button: each
+    // rewrites the aggregate and stats, so a slower handler could publish a stale value.
+    singleThreaded: true,
     iconUrl: "",
     iconX2Url: "",
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/sensors/SensorAggregatorChild.groovy"
@@ -31,7 +34,7 @@ import com.hubitat.app.ChildDeviceWrapper
 //import com.hubitat.hub.domain.Capability // only available from 2.4.3.148 onward
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.3.4"
+@Field static final String CODE_VERSION = "0.3.5"
 
 @Field static final Map<String, String> CAPABILITY_ATTRIBUTES = [
     "capability.carbonDioxideMeasurement"   : [ attribute: "carbonDioxide", driver: "Virtual Omni Sensor" ],

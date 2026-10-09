@@ -8,7 +8,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import com.hubitat.app.DeviceWrapper
 
-@Field static final String CODE_VERSION = "0.0.3"
+@Field static final String CODE_VERSION = "0.0.4"
 
 definition(
     name: "Sensor Filter Child",
@@ -17,6 +17,8 @@ definition(
     description: "Apply moving average or median filter to sensor data",
     menu: "Automations", // new in platform 2.5.0
     category: "Utility",
+    // handleNewValue and decayWindow both read-modify-write state.valueWindow.
+    singleThreaded: true,
     iconUrl: "",
     iconX2Url: "",
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/sensors/SensorFilterChild.groovy",
@@ -132,10 +134,7 @@ void updated() {
 }
 
 void initialize() {
-    if (state.version != CODE_VERSION) {
-        logVer "New version: ${CODE_VERSION} (was: ${state.version})"
-        state.version = CODE_VERSION
-    }
+    checkVersion(false)
 
     if (state.valueWindow == null) state.valueWindow = []
     logDebug "Initializing with settings: ${settings} and window ${state.valueWindow}"
@@ -146,7 +145,15 @@ void initialize() {
     }
 }
 
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
+}
+
 void handleNewValue(evt) {
+    checkVersion()
     def value = evt.value  // polymorphic: String, Integer, or BigDecimal after coercion below
 
     if (isInteger(value)) {
@@ -198,6 +205,7 @@ Number updateFilteredValue() {
 }
 
 void decayWindow() {
+    checkVersion()
     List window = state.valueWindow ?: []
     if (window.size() > 1) {
         logTrace "Removing oldest value ${window[0]} from window"
