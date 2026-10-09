@@ -116,6 +116,18 @@ Practical note: a multi-model driver lifted from the TH1123/TH1124 lineage may c
 that is dead code (the fingerprints can never produce a `-G2` model string); on TH1123/TH1124 it
 is load-bearing.
 
+## Stelpro Allia (HT402)
+
+The Allia (model `HT402`, manufacturer string `Stello`) keeps its outdoor temperature, power and
+energy on the standard Thermostat cluster 0x0201 at attribute ids 0x4001 (int16, hundredths of
+°C), 0x4008 (uint32, W) and 0x4009 (uint32, Wh). They are not manufacturer-specific: read without
+`mfgCode`, each answers in a plain Read Attributes Response (frame control 0x08, no manufacturer
+bit) with status 0x00 and the types above, and a 0x4001 value the hub wrote reads back unchanged,
+so the driver's reads, writes and reporting setup need no manufacturer code *(verified 2026-10-09,
+firmware 2.5.2.134, one HT402, frames from `/zigbeeLogsocket` during `refresh()`)*. Whether
+`configureReporting` on 0x4008/0x4009 is accepted was not checked; the device reported 0 W at the
+time, so no report was expected.
+
 ## Fujitsu / Ayla (FGLair)
 
 Fujitsu HVAC units on the Ayla cloud use two different temperature representations, and the
