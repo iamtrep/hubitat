@@ -390,6 +390,8 @@ Renders only when the Z-Wave JS stack is detected (via `/hub/zwave2/status`). So
 - **Statistics chips:** TX, RX, dropped TX/RX, CAN, NAK, timeout ACK/Callback/Response — non-zero error counters are colored warn
 - **Background RSSI** per channel (channel0–3): current dBm with average in parentheses, colored by quietness (lower RSSI = quieter, better)
 
+Some Z-Wave JS hubs return no controller state at all (the endpoint answers `null`, through reboots, with Z-Wave working normally). The card then shows an info note that the hub doesn't report these statistics; there is nothing for the user to fix.
+
 #### Z-Wave Topology
 
 Pairwise neighbor adjacency matrix as reported by the Z-Wave controller (`/hub/zwaveTopology`), showing connectivity between each node pair. The card is hidden when no Z-Wave nodes are paired.
