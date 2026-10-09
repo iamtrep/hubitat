@@ -81,6 +81,14 @@ Silabs.)
 
 ## Sinopé
 
+**A DM2500ZB dimmer turned on reports level 0 first, then the real level.** After `on` from off
+(at a stored 30 %), the frames were: an on/off attribute report (on), a level attribute report of
+0x00, then about 1.5 s later a level report of the real value (0x4C), plus the responses to the
+driver's confirming reads. `off` sent one on/off report (off) and level reads that returned the
+unchanged level. So the first level report after `on` is a transient 0, and logic that treats the
+first report after a command as the command's result (the driver's digital mark) picks the 0
+*(captured 2026-10-09, firmware 2.5.2.134, one DM2500ZB, `/zigbeeLogsocket`)*.
+
 **Device-temperature cluster differs by product line — mutually exclusive, each line lacks the
 other's cluster.** Verified against claudegel/sinope-zha `switch.py` input-cluster lists and Z2M
 `sinope.ts`:
