@@ -15,7 +15,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.26"
+@Field static final String CODE_VERSION = "0.0.27"
 // device.id -> deadline (ms) until which a state report counts as digital. Static rather than
 // state: a driver's state is written back whole at method exit, so a command and a parse() on
 // another thread can undo each other's flag, and a deadline expires on its own when the device
@@ -454,7 +454,9 @@ private void parseAttributeReport(Map descMap) {
                 boolean changed = (curVal != newVal)
                 map.name = "switch"
                 map.value = newVal
-                map.type = consumeSwitchDigital() ? "digital" : "physical"
+                // Only a change carries a type: a confirming read with the same value is not a
+                // physical action, and must not use up the mark the real change needs.
+                if (changed) map.type = consumeSwitchDigital() ? "digital" : "physical"
                 // "was turned" only when this report represents a real state change vs the
                 // platform's current value; otherwise it's a status/scheduled report and the
                 // digital-vs-physical label doesn't apply (no source action triggered it).

@@ -15,7 +15,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.26"
+@Field static final String CODE_VERSION = "0.0.27"
 // device.id -> deadline (ms) until which a state report counts as digital. Static rather than
 // state: a driver's state is written back whole at method exit, so a command and a parse() on
 // another thread can undo each other's flag, and a deadline expires on its own when the device
@@ -324,6 +324,11 @@ private boolean consumeSwitchDigital() {
 
 private void clearLevelTypeDigital() { }
 
+private boolean levelDigitalPending() {
+    Long until = LEVEL_DIGITAL_UNTIL.get(device.id as String)
+    return until != null && now() < until
+}
+
 private boolean consumeLevelDigital() {
     Long until = LEVEL_DIGITAL_UNTIL.remove(device.id as String)
     return until != null && now() < until
@@ -500,7 +505,9 @@ private void parseAttributeReport(Map descMap) {
                 boolean changed = (curVal != newVal)
                 map.name = "switch"
                 map.value = newVal
-                map.type = consumeSwitchDigital() ? "digital" : "physical"
+                // Only a change carries a type: a confirming read with the same value is not a
+                // physical action, and must not use up the mark the real change needs.
+                if (changed) map.type = consumeSwitchDigital() ? "digital" : "physical"
                 // "was turned" only when this report represents a real state change vs the
                 // platform's current value; otherwise it's a status/scheduled report and the
                 // digital-vs-physical label doesn't apply (no source action triggered it).
@@ -520,7 +527,9 @@ private void parseAttributeReport(Map descMap) {
                     map.name = "level"
                     map.value = dimmerLevel
                     map.unit = "%"
-                    map.type = consumeLevelDigital() ? "digital" : "physical"
+                    // Turning on from off reports level 0 before the real level, so a 0 only checks the
+                    // mark and leaves it for the report that follows (device reference doc, Sinope).
+                    if (changed) map.type = (dimmerLevel == 0 ? levelDigitalPending() : consumeLevelDigital()) ? "digital" : "physical"
                     map.descriptionText = changed
                         ? "Dimmer level was set to ${dimmerLevel}% [${map.type}]"
                         : "Dimmer level is ${dimmerLevel}%"
