@@ -1,20 +1,25 @@
 # Copyright (c) 2026 PJ
 # SPDX-License-Identifier: MIT
-# Switched Heater Thermostat: Mode 1 behavior spec. One adopted Virtual Thermostat
-# (heat, setpoint 20, default hysteresis 0.5), two sensors, two metered heater plugs
-# (1000 W while on), the three fault switches and a notification capture.
+# Switched Heater Thermostat: Mode 1 behavior spec, control part. One adopted Virtual
+# Thermostat (heat, setpoint 20, default hysteresis 0.5), two sensors, two metered heater
+# plugs (1000 W while on), the four fault switches and a notification capture.
+# The fault part is spec-switched-heater-thermostat-faults.yaml (test-sht-faults.sh) on the
+# same rig; each script resets the rig in its first case, so they run in either order.
 # testSecondsPerMinute is 1, so every minute-based setting runs in seconds: the power
-# grace is 2 s, quietAfter 10 is 10 s. verifyTimeout is 5 s, so a stuck heater raises
-# the load fault after about 10 s. Settings that appear only after another one is
-# saved (restMinutes, the cycle settings) get their own settings step.
-# The quiet cases press btnForgetGaps so the sensors' learned gaps from earlier cases
-# don't apply, then use 6 s spacing: a sensor last heard 2 steps back is quiet.
-# Every settings step restates the baseline (no minimum times, frost far below, no
-# keep-alive, no warming check) unless the case sets one. frostTemp is in the hub's
+# grace is 2 s, maxHeatMinutes 10 is 10 s. Settings that appear only after another one is
+# saved (restMinutes) get their own settings step.
+# The first case sets every setting. After it, each settings step restates the settings
+# this part changes (average, no minimum times, frost far below, no keep-alive, no warming
+# check) unless the case sets one. Each save re-arms the 30-minute debug timeout, so
+# debugEnable (which testSecondsPerMinute needs) stays on. frostTemp is in the hub's
 # scale; the frost messages assume °C.
-# The app logs its alerts at warn level, so cases that raise one set allow_warnings.
-# Cases run in order; limit-resumes, min-on-releases, frost-stops, warming-clears,
-# sensor-back-clears-fault and cycle-off-phase start from the previous case's end state.
+# The log guard stays on: a case that expects one of the app's warn lines lists it in
+# allow_log_patterns. The Virtual Thermostat can report idle after a heat command while
+# already in heat mode, so cases that need heating set readings that change after it.
+# Cases run in order; manual-on-reverted, fault-switches-reasserted, limit-resumes,
+# limit-fault-clears, min-on-releases, min-off-releases, warming-clears,
+# warming-check-off-clears, frost-stops and frost-overrides-rest start from the previous
+# case's end state.
 app:
   source: apps/SwitchedHeaterThermostat/SwitchedHeaterThermostat.groovy
   type_name: "Switched Heater Thermostat"
@@ -27,9 +32,11 @@ app:
     onSensorFault: "off"
     maxHeatMinutes: "none"
     minOnMinutes: "none"
+    minOffMinutes: "none"
     frostTemp: -50
     keepAliveMinutes: "none"
     noRiseMinutes: "none"
+    usePower: true
     notifyPartial: true
     testSecondsPerMinute: 1
 inputs:
@@ -45,25 +52,33 @@ inputs:
   - { name: test-sht-notify, driver: Notification Capture (Test), role: notifyDevices }
 maker_api:
   label: test-sht-maker
+runtime_budget_seconds: 400
 cases:
+  # Resets the rig. The thermostat's supported modes are set to something else first, so
+  # the assert shows that Done writes them.
   - name: heats-when-cold
     setup:
-      - settings: { debugEnable: true, quietAfter: 1440, onSensorFault: "off", maxHeatMinutes: "none", minOnMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
+      - { device: test-sht-th, command: setSupportedThermostatModes, args: ['["cool"]'] }
+      - settings: { debugEnable: true, quietAfter: 1440, onSensorFault: "off", aggregate: "average", maxHeatMinutes: "none", minOnMinutes: "none", minOffMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none", usePower: true, notifyPartial: true }
       - { device: test-sht-heater1, command: setStuck, args: ["false"] }
       - { device: test-sht-heater2, command: setStuck, args: ["false"] }
       - { device: test-sht-heater1, command: setUnplugged, args: ["false"] }
       - { device: test-sht-heater2, command: setUnplugged, args: ["false"] }
+      - { device: test-sht-notify, command: setFailing, args: ["false"] }
       - { device: test-sht-th, command: setHeatingSetpoint, args: [20] }
       - { device: test-sht-th, command: heat }
       - { device: test-sht-temp1, command: setTemperature, args: [21] }
       - { device: test-sht-temp2, command: setTemperature, args: [21] }
       - { button: btnCheck }
+      - { device: test-sht-heater1, command: setPower, args: [0] }
+      - { device: test-sht-heater2, command: setPower, args: [0] }
     command_spacing_seconds: 0.5
     actions:
       - { device: test-sht-temp1, command: setTemperature, args: [18] }
       - { device: test-sht-temp2, command: setTemperature, args: [18] }
     wait_seconds: 4
     assert:
+      - { device: test-sht-th, attribute: supportedThermostatModes, value: '["off","heat"]' }
       - { device: test-sht-th, attribute: thermostatOperatingState, value: heating }
       - { device: test-sht-heater1, attribute: switch, value: "on" }
       - { device: test-sht-heater2, attribute: switch, value: "on" }
@@ -71,7 +86,7 @@ cases:
 
   - name: stops-when-warm
     setup:
-      - settings: { debugEnable: true, quietAfter: 1440, onSensorFault: "off", maxHeatMinutes: "none", minOnMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
+      - settings: { aggregate: "average", maxHeatMinutes: "none", minOnMinutes: "none", minOffMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
       - { device: test-sht-temp1, command: setTemperature, args: [18] }
       - { device: test-sht-temp2, command: setTemperature, args: [18] }
     command_spacing_seconds: 0.5
@@ -86,7 +101,7 @@ cases:
 
   - name: average-reaches-thermostat
     setup:
-      - settings: { debugEnable: true, quietAfter: 1440, onSensorFault: "off", maxHeatMinutes: "none", minOnMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
+      - settings: { aggregate: "average", maxHeatMinutes: "none", minOnMinutes: "none", minOffMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
     command_spacing_seconds: 0.5
     actions:
       - { device: test-sht-temp1, command: setTemperature, args: [19] }
@@ -95,22 +110,34 @@ cases:
     assert:
       - { device: test-sht-th, attribute: temperature, value: 20.0, tolerance: 0.05 }
 
+  # The average of these readings would be 20.3.
+  - name: minimum-reaches-thermostat
+    setup:
+      - settings: { aggregate: "minimum", maxHeatMinutes: "none", minOnMinutes: "none", minOffMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
+    command_spacing_seconds: 0.5
+    actions:
+      - { device: test-sht-temp1, command: setTemperature, args: [19.4] }
+      - { device: test-sht-temp2, command: setTemperature, args: [21.2] }
+    wait_seconds: 3
+    assert:
+      - { device: test-sht-th, attribute: temperature, value: 19.4, tolerance: 0.05 }
+
   - name: manual-toggle-reverted
     setup:
-      - settings: { debugEnable: true, quietAfter: 1440, onSensorFault: "off", maxHeatMinutes: "none", minOnMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
+      - settings: { aggregate: "average", maxHeatMinutes: "none", minOnMinutes: "none", minOffMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
       - { device: test-sht-temp1, command: setTemperature, args: [18] }
       - { device: test-sht-temp2, command: setTemperature, args: [18] }
     command_spacing_seconds: 1
     actions:
       - { device: test-sht-heater1, command: "off" }
     wait_seconds: 3
-    allow_warnings: true
+    allow_log_patterns: ["turned off without the app"]
     assert:
       - { device: test-sht-heater1, attribute: switch, value: "on" }
 
   - name: mode-off-turns-heaters-off
     setup:
-      - settings: { debugEnable: true, quietAfter: 1440, onSensorFault: "off", maxHeatMinutes: "none", minOnMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
+      - settings: { aggregate: "average", maxHeatMinutes: "none", minOnMinutes: "none", minOffMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
       - { device: test-sht-temp1, command: setTemperature, args: [18] }
       - { device: test-sht-temp2, command: setTemperature, args: [18] }
     command_spacing_seconds: 1
@@ -126,135 +153,31 @@ cases:
     actions:
       - { device: test-sht-heater1, command: "on" }
     wait_seconds: 3
-    allow_warnings: true
+    allow_log_patterns: ["turned on without the app"]
     assert:
       - { device: test-sht-heater1, attribute: switch, value: "off" }
 
-  - name: stuck-heater-load-fault
-    setup:
-      - settings: { debugEnable: true, quietAfter: 1440, onSensorFault: "off", maxHeatMinutes: "none", minOnMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
-      - { device: test-sht-th, command: heat }
-      - { device: test-sht-temp1, command: setTemperature, args: [21] }
-      - { device: test-sht-temp2, command: setTemperature, args: [21] }
-      - { device: test-sht-temp2, command: setTemperature, args: [21] }
-      - { device: test-sht-heater2, command: setStuck, args: ["true"] }
+  # Starts from the previous case, with no fault raised: the check turns the fault switches
+  # back off. The events show they were on in between.
+  - name: fault-switches-reasserted
     command_spacing_seconds: 1
     actions:
-      - { device: test-sht-temp1, command: setTemperature, args: [18] }
-      - { device: test-sht-temp2, command: setTemperature, args: [18] }
-    wait_seconds: 14
-    allow_warnings: true
-    assert:
-      - { device: test-sht-heater1, attribute: switch, value: "on" }
-      - { device: test-sht-heater2, attribute: switch, value: "off" }
-      - { device: test-sht-loadfault, attribute: switch, value: "on" }
-      - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: lost control of test-sht-heater2 (commanded on, reads off)." }
-
-  # 4 s spacing over 5 setup steps gives the load fault time to rise before the actions.
-  - name: load-fault-clears
-    setup:
-      - settings: { debugEnable: true, quietAfter: 1440, onSensorFault: "off", maxHeatMinutes: "none", minOnMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
-      - { device: test-sht-heater2, command: setStuck, args: ["true"] }
-      - { device: test-sht-temp1, command: setTemperature, args: [18] }
-      - { device: test-sht-temp2, command: setTemperature, args: [18] }
-      - { device: test-sht-temp1, command: setTemperature, args: [18.1] }
-    command_spacing_seconds: 4
-    actions:
-      - { device: test-sht-heater2, command: setStuck, args: ["false"] }
+      - { device: test-sht-limitfault, command: "on" }
+      - { device: test-sht-risefault, command: "on" }
       - { button: btnCheck }
-    wait_seconds: 4
-    allow_warnings: true
-    assert:
-      - { device: test-sht-heater2, attribute: switch, value: "on" }
-      - { device: test-sht-loadfault, attribute: switch, value: "off" }
-      - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: heaters under control again." }
-
-  # A heater that won't turn off: the other one does, and the load fault rises after two attempts.
-  - name: stuck-on-heater-load-fault
-    setup:
-      - settings: { debugEnable: true, quietAfter: 1440, onSensorFault: "off", maxHeatMinutes: "none", minOnMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
-      - { device: test-sht-th, command: heat }
-      - { device: test-sht-temp1, command: setTemperature, args: [18] }
-      - { device: test-sht-temp2, command: setTemperature, args: [18] }
-      - { device: test-sht-heater2, command: setStuck, args: ["true"] }
-    command_spacing_seconds: 1
-    actions:
-      - { device: test-sht-temp1, command: setTemperature, args: [21] }
-      - { device: test-sht-temp2, command: setTemperature, args: [21] }
-    wait_seconds: 14
-    allow_warnings: true
-    assert:
-      - { device: test-sht-heater1, attribute: switch, value: "off" }
-      - { device: test-sht-heater2, attribute: switch, value: "on" }
-      - { device: test-sht-loadfault, attribute: switch, value: "on" }
-      - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: lost control of test-sht-heater2 (commanded off, reads on)." }
-
-  # The notifier throws while the fault clears: the fault switch still turns off.
-  - name: stuck-on-clears-with-failing-notifier
-    setup:
-      - { device: test-sht-notify, command: setFailing, args: ["true"] }
-    command_spacing_seconds: 2
-    actions:
-      - { device: test-sht-heater2, command: setStuck, args: ["false"] }
-      - { button: btnCheck }
-      - { device: test-sht-notify, command: setFailing, args: ["false"] }
     wait_seconds: 2
-    allow_warnings: true
     assert:
-      - { device: test-sht-heater2, attribute: switch, value: "off" }
-      - { device: test-sht-loadfault, attribute: switch, value: "off" }
-      - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: lost control of test-sht-heater2 (commanded off, reads on)." }
-
-  - name: unplugged-heater-load-fault
-    setup:
-      - settings: { debugEnable: true, quietAfter: 1440, onSensorFault: "off", maxHeatMinutes: "none", minOnMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
-      - { device: test-sht-temp1, command: setTemperature, args: [21] }
-      - { device: test-sht-temp2, command: setTemperature, args: [21] }
-      - { button: btnCheck }
-      - { device: test-sht-heater1, command: setUnplugged, args: ["true"] }
-    command_spacing_seconds: 1
-    actions:
-      - { device: test-sht-temp1, command: setTemperature, args: [18] }
-      - { device: test-sht-temp2, command: setTemperature, args: [18] }
-    wait_seconds: 6
-    allow_warnings: true
-    assert:
-      - { device: test-sht-heater1, attribute: switch, value: "on" }
-      - { device: test-sht-loadfault, attribute: switch, value: "on" }
-      - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: lost control of test-sht-heater1 (on, draws 0 W)." }
-
-  - name: power-while-off-load-fault
-    setup:
-      - settings: { debugEnable: true, quietAfter: 1440, onSensorFault: "off", maxHeatMinutes: "none", minOnMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
-      - { device: test-sht-heater1, command: setUnplugged, args: ["false"] }
-      - { device: test-sht-temp1, command: setTemperature, args: [21] }
-      - { device: test-sht-temp2, command: setTemperature, args: [21] }
-      - { button: btnCheck }
-    command_spacing_seconds: 1
-    actions:
-      - { device: test-sht-heater1, command: setPower, args: [1500] }
-    wait_seconds: 5
-    allow_warnings: true
-    assert:
-      - { device: test-sht-heater1, attribute: switch, value: "off" }
-      - { device: test-sht-loadfault, attribute: switch, value: "on" }
-      - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: lost control of test-sht-heater1 (off, draws 1500 W)." }
-
-  # Starts from power-while-off-load-fault: the draw stops and the load fault clears.
-  - name: power-fault-clears
-    actions:
-      - { device: test-sht-heater1, command: setPower, args: [0] }
-    wait_seconds: 4
-    allow_warnings: true
-    assert:
-      - { device: test-sht-loadfault, attribute: switch, value: "off" }
-      - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: heaters under control again." }
+      - { device: test-sht-limitfault, attribute: switch, value: "off" }
+      - { device: test-sht-risefault, attribute: switch, value: "off" }
+    assert_events:
+      - { attribute: "^switch$", value: "on", source: "test-sht-limitfault" }
+      - { attribute: "^switch$", value: "on", source: "test-sht-risefault" }
 
   - name: limit-rests
     setup:
-      - settings: { debugEnable: true, quietAfter: 1440, onSensorFault: "off", maxHeatMinutes: 10, minOnMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
+      - settings: { aggregate: "average", maxHeatMinutes: 10, minOnMinutes: "none", minOffMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
       - settings: { restMinutes: 5 }
-      - { device: test-sht-heater1, command: setPower, args: [0] }
+      - { device: test-sht-th, command: heat }
       - { device: test-sht-temp1, command: setTemperature, args: [21] }
       - { device: test-sht-temp2, command: setTemperature, args: [21] }
       - { button: btnCheck }
@@ -263,7 +186,7 @@ cases:
       - { device: test-sht-temp1, command: setTemperature, args: [18] }
       - { device: test-sht-temp2, command: setTemperature, args: [18] }
     wait_seconds: 12
-    allow_warnings: true
+    allow_log_patterns: ["the limit\\. Off for"]
     assert:
       - { device: test-sht-heater1, attribute: switch, value: "off" }
       - { device: test-sht-heater2, attribute: switch, value: "off" }
@@ -272,19 +195,14 @@ cases:
 
   # Starts during limit-rests' 5 s rest; the heaters follow the thermostat again after it.
   - name: limit-resumes
-    setup:
-      - { device: test-sht-notify, command: setFailing, args: ["false"] }
     actions:
       - { device: test-sht-notify, command: setFailing, args: ["false"] }
     wait_seconds: 6
-    allow_warnings: true
     assert:
       - { device: test-sht-heater1, attribute: switch, value: "on" }
       - { device: test-sht-heater2, attribute: switch, value: "on" }
       - { device: test-sht-limitfault, attribute: switch, value: "on" }
 
-  # The heaters turn off before the minimum is set, then on again at the last setup step;
-  # the room warms right after, and minOnMinutes 8 (8 s) holds them on.
   # Starts from limit-resumes: the room warms, the heaters turn off and the limit fault clears.
   - name: limit-fault-clears
     actions:
@@ -292,15 +210,16 @@ cases:
       - { device: test-sht-temp2, command: setTemperature, args: [21] }
     command_spacing_seconds: 0.5
     wait_seconds: 3
-    allow_warnings: true
     assert:
       - { device: test-sht-heater1, attribute: switch, value: "off" }
       - { device: test-sht-limitfault, attribute: switch, value: "off" }
       - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: heating time back to normal." }
 
+  # The heaters turn off before the minimum is set, then on again at the last setup step;
+  # the room warms right after, and minOnMinutes 8 (8 s) holds them on.
   - name: min-on-holds
     setup:
-      - settings: { debugEnable: true, quietAfter: 1440, onSensorFault: "off", maxHeatMinutes: "none", minOnMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
+      - settings: { aggregate: "average", maxHeatMinutes: "none", minOnMinutes: "none", minOffMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
       - { device: test-sht-th, command: heat }
       - { device: test-sht-temp1, command: setTemperature, args: [21] }
       - { device: test-sht-temp2, command: setTemperature, args: [21] }
@@ -312,27 +231,22 @@ cases:
       - { device: test-sht-temp1, command: setTemperature, args: [21] }
       - { device: test-sht-temp2, command: setTemperature, args: [21] }
     wait_seconds: 2
-    allow_warnings: true
     assert:
       - { device: test-sht-th, attribute: thermostatOperatingState, value: idle }
       - { device: test-sht-heater1, attribute: switch, value: "on" }
 
   - name: min-on-releases
-    setup:
-      - { device: test-sht-notify, command: setFailing, args: ["false"] }
     actions:
       - { device: test-sht-notify, command: setFailing, args: ["false"] }
     wait_seconds: 6
-    allow_warnings: true
     assert:
       - { device: test-sht-heater1, attribute: switch, value: "off" }
       - { device: test-sht-heater2, attribute: switch, value: "off" }
 
-  # Frost at 15: the second sensor's reading brings the average to 14.0 with the thermostat off.
-  # Review focus 2: mode off during a minimum-on hold turns the heaters off at once.
+  # Mode off during a minimum-on hold turns the heaters off at once.
   - name: mode-off-overrides-min-on
     setup:
-      - settings: { debugEnable: true, quietAfter: 1440, onSensorFault: "off", maxHeatMinutes: "none", minOnMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
+      - settings: { aggregate: "average", maxHeatMinutes: "none", minOnMinutes: "none", minOffMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
       - { device: test-sht-th, command: heat }
       - { device: test-sht-temp1, command: setTemperature, args: [21] }
       - { device: test-sht-temp2, command: setTemperature, args: [21] }
@@ -343,48 +257,42 @@ cases:
     actions:
       - { device: test-sht-th, command: "off" }
     wait_seconds: 3
-    allow_warnings: true
     assert:
       - { device: test-sht-heater1, attribute: switch, value: "off" }
       - { device: test-sht-heater2, attribute: switch, value: "off" }
 
-  - name: frost-overrides-mode-off
+  # Mirror of min-on-holds: the heaters turn on, then off at the last setup step; the room
+  # cools right after, and minOffMinutes 8 (8 s) holds them off.
+  - name: min-off-holds
     setup:
-      - settings: { debugEnable: true, quietAfter: 1440, onSensorFault: "off", maxHeatMinutes: "none", minOnMinutes: "none", frostTemp: 15, keepAliveMinutes: "none", noRiseMinutes: "none" }
-      - { device: test-sht-temp1, command: setTemperature, args: [16] }
-      - { device: test-sht-temp2, command: setTemperature, args: [16] }
-      - { device: test-sht-th, command: "off" }
+      - settings: { aggregate: "average", maxHeatMinutes: "none", minOnMinutes: "none", minOffMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
+      - { device: test-sht-th, command: heat }
+      - { device: test-sht-temp1, command: setTemperature, args: [18] }
+      - { device: test-sht-temp2, command: setTemperature, args: [18] }
+      - settings: { minOffMinutes: 8 }
+      - { device: test-sht-temp1, command: setTemperature, args: [21] }
+      - { device: test-sht-temp2, command: setTemperature, args: [21] }
     command_spacing_seconds: 1
     actions:
-      - { device: test-sht-temp1, command: setTemperature, args: [14] }
-      - { device: test-sht-temp2, command: setTemperature, args: [14] }
-    wait_seconds: 3
-    allow_warnings: true
+      - { device: test-sht-temp1, command: setTemperature, args: [18] }
+      - { device: test-sht-temp2, command: setTemperature, args: [18] }
+    wait_seconds: 2
     assert:
-      - { device: test-sht-th, attribute: thermostatMode, value: "off" }
+      - { device: test-sht-th, attribute: thermostatOperatingState, value: heating }
+      - { device: test-sht-heater1, attribute: switch, value: "off" }
+
+  - name: min-off-releases
+    actions:
+      - { device: test-sht-notify, command: setFailing, args: ["false"] }
+    wait_seconds: 6
+    assert:
       - { device: test-sht-heater1, attribute: switch, value: "on" }
       - { device: test-sht-heater2, attribute: switch, value: "on" }
-      - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: frost protection on (14.0 °C)." }
-
-  # Frost stops a degree above the setting: 15.0 keeps it running, 16.0 stops it.
-  - name: frost-stops
-    setup:
-      - { device: test-sht-notify, command: setFailing, args: ["false"] }
-    command_spacing_seconds: 1
-    actions:
-      - { device: test-sht-temp1, command: setTemperature, args: [16] }
-      - { device: test-sht-temp2, command: setTemperature, args: [16] }
-    wait_seconds: 3
-    allow_warnings: true
-    assert:
-      - { device: test-sht-heater1, attribute: switch, value: "off" }
-      - { device: test-sht-heater2, attribute: switch, value: "off" }
-      - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: frost protection off (16.0 °C)." }
 
   # keepAliveMinutes 3 (3 s): about two re-sends land between the counter reset and the assert.
   - name: keep-alive-resends
     setup:
-      - settings: { debugEnable: true, quietAfter: 1440, onSensorFault: "off", maxHeatMinutes: "none", minOnMinutes: "none", frostTemp: -50, keepAliveMinutes: 3, noRiseMinutes: "none" }
+      - settings: { aggregate: "average", maxHeatMinutes: "none", minOnMinutes: "none", minOffMinutes: "none", frostTemp: -50, keepAliveMinutes: 3, noRiseMinutes: "none" }
       - { device: test-sht-th, command: heat }
       - { device: test-sht-temp1, command: setTemperature, args: [18] }
       - { device: test-sht-temp2, command: setTemperature, args: [18] }
@@ -393,7 +301,6 @@ cases:
     actions:
       - { device: test-sht-notify, command: setFailing, args: ["false"] }
     wait_seconds: 7
-    allow_warnings: true
     assert:
       - { device: test-sht-heater1, attribute: switch, value: "on" }
       - { device: test-sht-heater1, attribute: commandCount, value: 2, tolerance: 1 }
@@ -401,7 +308,7 @@ cases:
   # The first reading keeps the average at 20.0 (idle); the second starts heating at 18.0.
   - name: no-warming-fault
     setup:
-      - settings: { debugEnable: true, quietAfter: 1440, onSensorFault: "off", maxHeatMinutes: "none", minOnMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: 10 }
+      - settings: { aggregate: "average", maxHeatMinutes: "none", minOnMinutes: "none", minOffMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: 10 }
       - { device: test-sht-temp1, command: setTemperature, args: [21] }
       - { device: test-sht-temp2, command: setTemperature, args: [21] }
     command_spacing_seconds: 1
@@ -409,30 +316,42 @@ cases:
       - { device: test-sht-temp1, command: setTemperature, args: [19] }
       - { device: test-sht-temp2, command: setTemperature, args: [17] }
     wait_seconds: 13
-    allow_warnings: true
+    allow_log_patterns: ["temperature rose"]
     assert:
       - { device: test-sht-heater1, attribute: switch, value: "on" }
       - { device: test-sht-risefault, attribute: switch, value: "on" }
       - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: heaters on for 10 minutes and the temperature rose 0.0 °C (expected 0.3 °C)." }
 
   - name: warming-clears
-    setup:
-      - { device: test-sht-notify, command: setFailing, args: ["false"] }
     actions:
       - { device: test-sht-temp1, command: setTemperature, args: [20] }
     wait_seconds: 3
-    allow_warnings: true
     assert:
       - { device: test-sht-heater1, attribute: switch, value: "on" }
       - { device: test-sht-risefault, attribute: switch, value: "off" }
       - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: warming check back to normal." }
 
-  # Setup warms the room so the heaters turn off and the limit fault clears first.
+  # Starts from warming-clears, heaters still on since 18.0. Setup drops the average back to
+  # 18.0, which raises the warming fault again at once; blanking noRiseMinutes clears it.
+  - name: warming-check-off-clears
+    setup:
+      - { device: test-sht-temp1, command: setTemperature, args: [19] }
+    actions:
+      - settings: { noRiseMinutes: "none" }
+    wait_seconds: 2
+    assert:
+      - { device: test-sht-heater1, attribute: switch, value: "on" }
+      - { device: test-sht-risefault, attribute: switch, value: "off" }
+      - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: warming check back to normal." }
+    assert_events:
+      - { attribute: "^switch$", value: "off", source: "test-sht-risefault" }
+
+  # Setup warms the room so the heaters turn off first.
   # 7 s spacing: mode off comes 14 s after the heaters turn on, past the 10 s warming check, so the
   # warming fault rises first. The clear message is sent only for a raised fault, so it shows both steps.
   - name: warming-clears-when-heaters-off
     setup:
-      - settings: { debugEnable: true, quietAfter: 1440, onSensorFault: "off", maxHeatMinutes: "none", minOnMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: 10 }
+      - settings: { aggregate: "average", maxHeatMinutes: "none", minOnMinutes: "none", minOffMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: 10 }
       - { device: test-sht-th, command: heat }
       - { device: test-sht-temp1, command: setTemperature, args: [21] }
       - { device: test-sht-temp2, command: setTemperature, args: [21] }
@@ -443,121 +362,84 @@ cases:
       - { device: test-sht-notify, command: setFailing, args: ["false"] }
       - { device: test-sht-th, command: "off" }
     wait_seconds: 3
-    allow_warnings: true
+    allow_log_patterns: ["temperature rose"]
     assert:
       - { device: test-sht-heater1, attribute: switch, value: "off" }
       - { device: test-sht-risefault, attribute: switch, value: "off" }
       - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: warming check back to normal." }
 
-  - name: all-sensors-quiet-fault
+  # Frost at 15: the second sensor's reading brings the average to 14.0 with the thermostat off.
+  - name: frost-overrides-mode-off
     setup:
-      - settings: { debugEnable: true, quietAfter: 10, onSensorFault: "off", maxHeatMinutes: "none", minOnMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
-      - { button: btnForgetGaps }
-      - { device: test-sht-temp1, command: setTemperature, args: [21] }
-      - { device: test-sht-temp2, command: setTemperature, args: [21] }
-    command_spacing_seconds: 6
+      - settings: { aggregate: "average", maxHeatMinutes: "none", minOnMinutes: "none", minOffMinutes: "none", frostTemp: 15, keepAliveMinutes: "none", noRiseMinutes: "none" }
+      - { device: test-sht-temp1, command: setTemperature, args: [16] }
+      - { device: test-sht-temp2, command: setTemperature, args: [16] }
+      - { device: test-sht-th, command: "off" }
+    command_spacing_seconds: 1
     actions:
-      - { device: test-sht-th, command: heat }
-      - { device: test-sht-temp1, command: setTemperature, args: [18] }
-      - { device: test-sht-temp2, command: setTemperature, args: [18] }
-      - { device: test-sht-notify, command: setFailing, args: ["false"] }
-      - { button: btnCheck }
+      - { device: test-sht-temp1, command: setTemperature, args: [14] }
+      - { device: test-sht-temp2, command: setTemperature, args: [14] }
     wait_seconds: 3
-    allow_warnings: true
+    allow_log_patterns: ["frost protection on"]
     assert:
-      - { device: test-sht-sensorfault, attribute: switch, value: "on" }
-      - { device: test-sht-limitfault, attribute: switch, value: "off" }
-      - { device: test-sht-th, attribute: thermostatOperatingState, value: idle }
-      - { device: test-sht-heater1, attribute: switch, value: "off" }
-      - { device: test-sht-heater2, attribute: switch, value: "off" }
-      - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: no temperature, all sensors quiet (test-sht-temp1, test-sht-temp2). Heat is off." }
-
-  - name: sensor-back-clears-fault
-    setup:
-      - { device: test-sht-th, command: heat }
-    actions:
-      - { device: test-sht-temp1, command: setTemperature, args: [18] }
-      - { button: btnCheck }
-    wait_seconds: 4
-    allow_warnings: true
-    assert:
-      - { device: test-sht-sensorfault, attribute: switch, value: "off" }
-      - { device: test-sht-heater1, attribute: switch, value: "on" }
-      - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: temperature back (test-sht-temp1)." }
-
-  - name: sensor-fault-keep-on
-    setup:
-      - settings: { debugEnable: true, quietAfter: 10, onSensorFault: "on", maxHeatMinutes: "none", minOnMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
-      - { button: btnForgetGaps }
-    command_spacing_seconds: 6
-    actions:
-      - { device: test-sht-temp1, command: setTemperature, args: [21] }
-      - { device: test-sht-temp2, command: setTemperature, args: [21] }
-      - { device: test-sht-notify, command: setFailing, args: ["false"] }
-      - { button: btnCheck }
-    wait_seconds: 3
-    allow_warnings: true
-    assert:
-      - { device: test-sht-sensorfault, attribute: switch, value: "on" }
-      - { device: test-sht-th, attribute: thermostatOperatingState, value: heating }
+      - { device: test-sht-th, attribute: thermostatMode, value: "off" }
       - { device: test-sht-heater1, attribute: switch, value: "on" }
       - { device: test-sht-heater2, attribute: switch, value: "on" }
-      - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: no temperature, all sensors quiet (test-sht-temp1, test-sht-temp2). Heaters kept on." }
+      - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: frost protection on (14.0 °C)." }
 
-  # Duty 50 % of 20 "minutes" (20 s): on for 10 s from the fault, then off for 10 s.
-  - name: sensor-fault-cycle
-    setup:
-      - settings: { debugEnable: true, quietAfter: 10, onSensorFault: "cycle", maxHeatMinutes: "none", minOnMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
-      - settings: { cycleDutyPercent: 50, cyclePeriodMinutes: 20 }
-      - { button: btnForgetGaps }
-    command_spacing_seconds: 6
+  # Frost stops a degree above the setting: 15.0 keeps it running, 16.0 stops it.
+  - name: frost-stops
+    command_spacing_seconds: 1
     actions:
-      - { device: test-sht-temp1, command: setTemperature, args: [22] }
-      - { device: test-sht-temp2, command: setTemperature, args: [22] }
-      - { device: test-sht-notify, command: setFailing, args: ["false"] }
-      - { button: btnCheck }
-    wait_seconds: 2
-    allow_warnings: true
+      - { device: test-sht-temp1, command: setTemperature, args: [16] }
+      - { device: test-sht-temp2, command: setTemperature, args: [16] }
+    wait_seconds: 3
     assert:
-      - { device: test-sht-sensorfault, attribute: switch, value: "on" }
-      - { device: test-sht-heater1, attribute: switch, value: "on" }
-      - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: no temperature, all sensors quiet (test-sht-temp1, test-sht-temp2). Heaters on 50% of every 20 minutes." }
-
-  - name: cycle-off-phase
-    setup:
-      - { device: test-sht-notify, command: setFailing, args: ["false"] }
-    actions:
-      - { device: test-sht-notify, command: setFailing, args: ["false"] }
-    wait_seconds: 9
-    allow_warnings: true
-    assert:
-      - { device: test-sht-sensorfault, attribute: switch, value: "on" }
-      - { device: test-sht-th, attribute: thermostatOperatingState, value: idle }
       - { device: test-sht-heater1, attribute: switch, value: "off" }
       - { device: test-sht-heater2, attribute: switch, value: "off" }
+      - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: frost protection off (16.0 °C)." }
 
-  - name: one-sensor-quiet-partial
+  # Frost runs past the 10 s heating time limit without raising the limit fault.
+  - name: frost-not-counted
     setup:
-      - settings: { debugEnable: true, quietAfter: 10, onSensorFault: "off", maxHeatMinutes: "none", minOnMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
-      - { button: btnForgetGaps }
-    command_spacing_seconds: 6
+      - settings: { aggregate: "average", maxHeatMinutes: 10, minOnMinutes: "none", minOffMinutes: "none", frostTemp: 15, keepAliveMinutes: "none", noRiseMinutes: "none" }
+      - settings: { restMinutes: 10 }
+      - { device: test-sht-th, command: "off" }
+      - { device: test-sht-temp1, command: setTemperature, args: [16.5] }
+      - { device: test-sht-temp2, command: setTemperature, args: [16.5] }
+    command_spacing_seconds: 1
     actions:
-      - { device: test-sht-temp1, command: setTemperature, args: [21] }
-      - { device: test-sht-temp2, command: setTemperature, args: [21] }
-      - { device: test-sht-notify, command: setFailing, args: ["false"] }
-      - { device: test-sht-temp1, command: setTemperature, args: [21.2] }
-    wait_seconds: 3
-    allow_warnings: true
+      - { device: test-sht-temp1, command: setTemperature, args: [14] }
+      - { device: test-sht-temp2, command: setTemperature, args: [14] }
+    wait_seconds: 13
+    allow_log_patterns: ["frost protection on"]
     assert:
-      - { device: test-sht-sensorfault, attribute: switch, value: "off" }
-      - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: test-sht-temp2 quiet, left out of the temperature." }
+      - { device: test-sht-heater1, attribute: switch, value: "on" }
+      - { device: test-sht-heater2, attribute: switch, value: "on" }
+      - { device: test-sht-limitfault, attribute: switch, value: "off" }
+      - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: frost protection on (14.0 °C)." }
+    assert_events:
+      - { attribute: "^switch$", value: "on", source: "test-sht-limitfault", negate: true }
 
-  # Starts from the previous case: the quiet sensor reports and is counted again.
-  - name: one-sensor-reporting-again
+  # Starts from frost-not-counted. Heat mode, then 18 on one sensor: the average of 16.0 stops
+  # frost and the thermostat heats, so the limit counts from there. The limit rests the
+  # heaters 10 s later; frost (14.0) during the rest turns them on again.
+  - name: frost-overrides-rest
+    command_spacing_seconds: 3.5
     actions:
-      - { device: test-sht-temp2, command: setTemperature, args: [21.1] }
-    wait_seconds: 3
-    allow_warnings: true
+      - { device: test-sht-th, command: heat }
+      - { device: test-sht-temp1, command: setTemperature, args: [18] }
+      - { device: test-sht-notify, command: setFailing, args: ["false"] }
+      - { device: test-sht-notify, command: setFailing, args: ["false"] }
+      - { device: test-sht-notify, command: setFailing, args: ["false"] }
+      - { device: test-sht-temp1, command: setTemperature, args: [14] }
+    wait_seconds: 2
+    allow_log_patterns: ["the limit\\. Off for", "frost protection on"]
     assert:
-      - { device: test-sht-sensorfault, attribute: switch, value: "off" }
-      - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: test-sht-temp2 reporting again." }
+      - { device: test-sht-heater1, attribute: switch, value: "on" }
+      - { device: test-sht-heater2, attribute: switch, value: "on" }
+      - { device: test-sht-limitfault, attribute: switch, value: "on" }
+      - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: frost protection on (14.0 °C)." }
+    assert_events:
+      - { attribute: "^switch$", value: "off", source: "test-sht-heater1" }
+      - { attribute: "^lastMessage$", value: "test-sht: heaters on for 10 minutes, the limit. Off for 10 minutes.", source: "test-sht-notify" }
