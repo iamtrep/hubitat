@@ -55,7 +55,7 @@ import hubitat.helper.NetworkUtils
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.1.1"
+@Field static final String CODE_VERSION = "0.1.2"
 @Field static final int RESPONSE_HISTORY_SIZE = 21
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int INITIAL_PING_DELAY = 2
@@ -342,7 +342,7 @@ void resetRetryCount() {
     logDebug "Reset retry count to 0"
 }
 
-void setRetryThreshold(threshold) {
+void setRetryThreshold(Number threshold) {
     state.retryThreshold = threshold
     logDebug "Set retry threshold to ${threshold}"
 }

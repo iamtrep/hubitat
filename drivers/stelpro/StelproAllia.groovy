@@ -33,7 +33,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import groovy.json.JsonOutput
 
-@Field static final String CODE_VERSION = "0.0.9"
+@Field static final String CODE_VERSION = "0.0.10"
 
 metadata {
     definition (name: "Stelpro Allia Zigbee Thermostat",
@@ -234,7 +234,7 @@ void fanOn() {
     logWarn('fanOn(): mode is not available for this device')
 }
 
-void setCoolingSetpoint(degrees) {
+void setCoolingSetpoint(Number degrees) {
     logWarn("setCoolingSetpoint(${degrees}): is not available for this device")
 }
 

@@ -1,9 +1,10 @@
 // Copyright (c) 2025-2026 PJ
 // SPDX-License-Identifier: MIT
 
+import com.hubitat.app.DeviceWrapper
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.5.4"
+@Field static final String CODE_VERSION = "0.5.5"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
 // File Manager file with one line per input each swap or undo changed.
 @Field static final String AUDIT_FILE = "device_swap_audit.txt"
@@ -413,7 +414,7 @@ private String describeReference(Map statusData, int sourceId, String appType) {
     return byType ?: "The scan doesn't see where this app holds it"
 }
 
-private List<String> capabilityNames(def device) {
+private List<String> capabilityNames(DeviceWrapper device) {
     return device.getCapabilities().collect { it.name as String }.unique().sort()
 }
 
@@ -437,7 +438,7 @@ private String capabilityRefusal(String capType) {
     return "${targetDevice.displayName} doesn't have ${capType.split(',').join(' or ')}, which this input needs"
 }
 
-private String deviceSummary(String role, def device) {
+private String deviceSummary(String role, DeviceWrapper device) {
     return "<b>${role}:</b> <a href='/device/edit/${device.id}' target='_blank'>${device.displayName}</a> (ID ${device.id}), " +
         "driver ${device.getTypeName()}<br/><span class='text-color-secondary'>${capabilityNames(device).join(', ')}</span>"
 }
@@ -1256,9 +1257,9 @@ private Integer openSwapInstance() {
         httpGet([uri: BASE_URL, path: path, followRedirects: false, textParser: true, timeout: 15]) { resp ->
             loc = resp.headers?."Location"?.toString() ?: resp.getFirstHeader("Location")?.value
         }
-        def m = (loc =~ /\/installedapp\/configure\/(\d+)/)
+        java.util.regex.Matcher m = (loc =~ /\/installedapp\/configure\/(\d+)/)
         if (m.find()) return m.group(1) as Integer
-        def c = (loc =~ /\/installedapp\/create\/(\d+)/)
+        java.util.regex.Matcher c = (loc =~ /\/installedapp\/create\/(\d+)/)
         if (hop == 1 && c.find()) {
             path = "/installedapp/create/${c.group(1)}"
         } else {

@@ -279,7 +279,7 @@ void setHeatingSetpoint(BigDecimal preciseDegrees) {
     sendZigbeeCommands(cmds)
 }
 
-void setCoolingSetpoint(degrees) {
+void setCoolingSetpoint(Number degrees) {
     logWarn "setCoolingSetpoint is not available for this device"
 }
 

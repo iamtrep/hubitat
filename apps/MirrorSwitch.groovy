@@ -12,10 +12,11 @@
  matching and issue no further commands — the cascade stops on its own.
 */
 import com.hubitat.app.DeviceWrapper
+import com.hubitat.hub.domain.State
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Mirror Switch"
-@Field static final String CODE_VERSION = "1.0.1"
+@Field static final String CODE_VERSION = "1.0.2"
 @Field static final Integer DEBUG_AUTO_OFF_MINUTES = 30
 
 definition(
@@ -121,8 +122,8 @@ private void reconcile() {
     if (!members || members.size() < 2) return
     DeviceWrapper mostRecent = null
     Long bestTime = -1L
-    members.each { dev ->
-        def st = dev.currentState("switch")
+    members.each { DeviceWrapper dev ->
+        State st = dev.currentState("switch")
         Long t = (st?.date?.time ?: 0L) as Long
         if (t > bestTime) {
             bestTime = t

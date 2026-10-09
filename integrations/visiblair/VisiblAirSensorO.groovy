@@ -11,7 +11,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.2.0"
+@Field static final String CODE_VERSION = "0.2.1"
 
 metadata {
     definition(
@@ -308,7 +308,7 @@ void updateSensorData(Map data) {
 // --- AQI ---
 
 private void updateAqi(Number pm25Value) {
-    List readings = (state.pm25readings ?: []) as List
+    List<Number> readings = (state.pm25readings ?: []) as List<Number>
     readings << pm25Value
     while (readings.size() > MAX_PM25_READINGS) {
         readings.removeAt(0)
@@ -318,7 +318,7 @@ private void updateAqi(Number pm25Value) {
     if (readings.isEmpty()) return
 
     double totalPM25 = 0.0d
-    for (def reading : readings) {
+    for (Number reading : readings) {
         totalPM25 += (reading as double)
     }
     double avgPM25 = totalPM25 / readings.size()

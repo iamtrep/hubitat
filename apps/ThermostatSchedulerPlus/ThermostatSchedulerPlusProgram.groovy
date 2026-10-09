@@ -13,7 +13,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.app.DeviceWrapper
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.3.0"
+@Field static final String CODE_VERSION = "0.3.1"
 
 definition(
     name: "Thermostat Scheduler+ Program",
@@ -1378,7 +1378,7 @@ void checkVersion(boolean reinit = true) {
 
 // Before 0.3.0 a program had one pause switch and a state; it joins the matching list.
 void migratePauseSwitch() {
-    def sw = settings.pauseSwitch
+    DeviceWrapper sw = settings.pauseSwitch
     if (sw) {
         String key = settings.pauseWhenSwitch == 'on' ? "pauseWhenOn" : "pauseWhenOff"
         List<String> ids = (((settings[key] ?: []) as List)*.id + [sw.id]).collect { it.toString() }.unique()
@@ -1905,7 +1905,7 @@ Map builtinCell(Map src, String suffix) {
 String builtinHhmm(Object v) {
     String s = builtinText(v)
     if (!s) return null
-    def m = s =~ /^(\d{1,2}):(\d{2})$/
+    java.util.regex.Matcher m = s =~ /^(\d{1,2}):(\d{2})$/
     if (m.find()) return "${m.group(1).padLeft(2, '0')}:${m.group(2)}".toString()
     m = s =~ /T(\d{2}):(\d{2})/
     return m.find() ? "${m.group(1)}:${m.group(2)}".toString() : null

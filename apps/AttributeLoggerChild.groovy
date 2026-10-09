@@ -12,7 +12,7 @@ import com.hubitat.app.DeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.nio.file.NoSuchFileException
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 @Field static final long WEEK_SECONDS = 604800L
 @Field static final long ROTATION_RETRY_MS = 3600000L
 
@@ -220,7 +220,7 @@ String writeArchive(String content, int firstRow, int end, String header) {
     String name = archiveName(logFileName, dayStamp(first, tz), dayStamp(last ?: first, tz), getHubFiles()*.name)
     byte[] bytes = (header + content.substring(firstRow, end)).bytes
     if (!uploadArchive(name, bytes)) return null
-    def entry = getHubFiles().find { it.name == name }
+    Map entry = getHubFiles().find { it.name == name }
     if (entry == null || (entry.size as long) != bytes.length) return null
     return name
 }

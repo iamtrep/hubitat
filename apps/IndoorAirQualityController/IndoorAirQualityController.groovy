@@ -10,9 +10,10 @@
 
 import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.app.DeviceWrapper
+import com.hubitat.hub.domain.State
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.1"
+@Field static final String CODE_VERSION = "0.1.2"
 
 definition(
     name: "Indoor Air Quality Controller",
@@ -250,7 +251,7 @@ int stageOf(String id) {
 List<Map> readings(List devs, String attr) {
     List<Map> out = []
     (devs ?: []).each { DeviceWrapper d ->
-        def s = d.currentState(attr)
+        State s = d.currentState(attr)
         Date seen = d.getLastActivity() ?: s?.date
         if (s?.value != null && seen != null) out << [v: s.value, t: seen.time]
     }

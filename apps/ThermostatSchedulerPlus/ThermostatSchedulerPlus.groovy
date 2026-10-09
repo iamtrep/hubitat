@@ -9,9 +9,10 @@
  local by default).
 */
 
+import com.hubitat.app.InstalledAppWrapper
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.3.0"
+@Field static final String CODE_VERSION = "0.3.1"
 @Field static final String CHILD_NAME = "Thermostat Scheduler+ Program"
 @Field static final String BUILTIN_TYPE = "Thermostat Scheduler 2.0"
 
@@ -130,7 +131,7 @@ private Map denied() {
     return null
 }
 
-private Object findProgram() {
+private InstalledAppWrapper findProgram() {
     Long id = null
     try { id = params.id?.toString()?.toLong() } catch (Throwable t) { id = null }
     return id == null ? null : getChildAppById(id)
@@ -155,7 +156,7 @@ def apiList() {
 def apiGet() {
     checkVersion()
     Map d = denied(); if (d) { return reply(d.status as int, [error: d.error]) }
-    def child = findProgram()
+    InstalledAppWrapper child = findProgram()
     if (!child) { return reply(404, [error: "no program ${params.id}"]) }
     Map doc = child.apiDocument() as Map
     if (doc == null) return reply(409, [error: "program ${params.id} is disabled"])
@@ -165,7 +166,7 @@ def apiGet() {
 def apiPut() {
     checkVersion()
     Map d = denied(); if (d) { return reply(d.status as int, [error: d.error]) }
-    def child = findProgram()
+    InstalledAppWrapper child = findProgram()
     if (!child) { return reply(404, [error: "no program ${params.id}"]) }
     Map req
     req = parseBody()
@@ -178,7 +179,7 @@ def apiPut() {
 def apiCommand() {
     checkVersion()
     Map d = denied(); if (d) { return reply(d.status as int, [error: d.error]) }
-    def child = findProgram()
+    InstalledAppWrapper child = findProgram()
     if (!child) { return reply(404, [error: "no program ${params.id}"]) }
     Map req
     req = parseBody()
@@ -235,7 +236,7 @@ Map importScheduler(Long from, String label) {
         raw = [settings: s, appState: st, fromId: from, fromLabel: b.name]
     } catch (Exception e) { return [httpStatus: 502, error: "could not read scheduler ${from}: ${e.message}".toString()] }
     String name = importLabel(label?.trim() ?: ((raw.settings as Map).origLabel as String ?: b.name as String), from)
-    def child = addChildApp("iamtrep", CHILD_NAME, name)
+    InstalledAppWrapper child = addChildApp("iamtrep", CHILD_NAME, name)
     Map r = child.importBuiltin(raw) as Map
     // A program that throws hands back null; the half-made program is removed either way.
     if (!r?.ok) { deleteChildApp(child.id); return [httpStatus: 400, error: "import failed", errors: r?.errors ?: ["the program raised an error; see the logs"]] }
@@ -265,9 +266,9 @@ def apiCreate() {
     if (req == null) return reply(400, [error: "body is not JSON"])
     String label = req.label?.toString()?.trim()
     if (!label) { return reply(400, [error: "label is required"]) }
-    def existing = getChildApps().find { it.label == label }
+    InstalledAppWrapper existing = getChildApps().find { it.label == label }
     if (existing) { return reply(200, [id: existing.id, created: false]) }
-    def child = addChildApp("iamtrep", CHILD_NAME, label)
+    InstalledAppWrapper child = addChildApp("iamtrep", CHILD_NAME, label)
     logCfg "created program ${label} (debug)"
     return reply(201, [id: child.id, created: true])
 }
