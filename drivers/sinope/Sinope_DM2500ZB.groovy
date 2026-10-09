@@ -8,13 +8,21 @@
  */
 
 import groovy.transform.Field
+import java.util.concurrent.ConcurrentHashMap
 import groovy.transform.CompileStatic
 import com.hubitat.app.DeviceWrapper
 import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.25"
+@Field static final String CODE_VERSION = "0.0.26"
+// device.id -> deadline (ms) until which a state report counts as digital. Static rather than
+// state: a driver's state is written back whole at method exit, so a command and a parse() on
+// another thread can undo each other's flag, and a deadline expires on its own when the device
+// was already in the target state and sends no report.
+@Field static final ConcurrentHashMap<String, Long> SWITCH_DIGITAL_UNTIL = new ConcurrentHashMap<>()
+@Field static final ConcurrentHashMap<String, Long> LEVEL_DIGITAL_UNTIL = new ConcurrentHashMap<>()
+@Field static final long DIGITAL_WINDOW_MS = 5000L
 
 metadata {
     definition(
@@ -218,8 +226,8 @@ void initialize() {
     // startup wastes radio bandwidth (ARCHITECTURE.md "Driver lifecycle").
     logTrace("initialize()")
 
-    state.switchTypeDigital = false
-    state.levelTypeDigital = false
+    SWITCH_DIGITAL_UNTIL.remove(device.id as String)
+    LEVEL_DIGITAL_UNTIL.remove(device.id as String)
     sendEvent(name:"numberOfButtons", value: 2, isStateChange: true)
     // One-shot runIn chain: a run that fell due while the hub was down is dropped, ending the chain
     runIn(1800, "refreshEnergyReport")
@@ -258,7 +266,7 @@ void refreshEnergyReport() {
 // readAttribute for both 0006 and 0008: the 0006 read also satisfies the platform's
 // command-retry watchdog (a no-op command emits only a Default Response, no on-change
 // report, and the watchdog gives up after 5 retries), and both reads force a report
-// that consumes the armed flag promptly instead of leaving it for the 5s safety clear.
+// that consumes the digital mark promptly instead of leaving it to expire.
 // A read that reflects an unchanged value is filtered by the changed-gate in
 // parseAttributeReport, so the confirming reads add no spurious events.
 void on() {
@@ -296,30 +304,29 @@ void setLevel(BigDecimal level, BigDecimal duration = 0) {
     sendZigbeeCommands(cmds)
 }
 
-// Arm the digital-state flags with a safety-net clear. Normally the flag is
-// cleared by parseAttributeReport on the next 0006/0000 (switch) or 0008/0000
-// (level) state report — but a digital command issued when the device is
-// already in the target state is a no-op at the device, so no state report
-// follows and the flag would otherwise sit true until the next real state
-// change (which then gets mislabeled as digital). The 5s runIn covers any
-// normal Zigbee round-trip; the clear is idempotent so the fast path (state
-// report arrives before the timer fires) keeps working unchanged.
+// A digital command marks the next state report as digital for DIGITAL_WINDOW_MS. A command the
+// device ignores (already in the target state) sends no report, so the mark expires on its own.
 private void markPendingDigitalSwitchChange() {
-    state.switchTypeDigital = true
-    runInMillis 5000, 'clearSwitchTypeDigital'
+    SWITCH_DIGITAL_UNTIL.put(device.id as String, now() + DIGITAL_WINDOW_MS)
 }
 
 private void markPendingDigitalLevelChange() {
-    state.levelTypeDigital = true
-    runInMillis 5000, 'clearLevelTypeDigital'
+    LEVEL_DIGITAL_UNTIL.put(device.id as String, now() + DIGITAL_WINDOW_MS)
 }
 
-private void clearSwitchTypeDigital() {
-    state.switchTypeDigital = false
+// Kept for clear jobs scheduled by 0.0.25 and earlier.
+private void clearSwitchTypeDigital() { }
+
+private boolean consumeSwitchDigital() {
+    Long until = SWITCH_DIGITAL_UNTIL.remove(device.id as String)
+    return until != null && now() < until
 }
 
-private void clearLevelTypeDigital() {
-    state.levelTypeDigital = false
+private void clearLevelTypeDigital() { }
+
+private boolean consumeLevelDigital() {
+    Long until = LEVEL_DIGITAL_UNTIL.remove(device.id as String)
+    return until != null && now() < until
 }
 
 void push(Integer buttonNumber) {
@@ -406,6 +413,8 @@ void setOffLedIntensity(Integer intensity) {
 void parse(String description) {
     if (state.codeVersion != CODE_VERSION) {
         state.codeVersion = CODE_VERSION
+        state.remove('switchTypeDigital')
+        state.remove('levelTypeDigital')
         runInMillis 1500, 'autoConfigure'
     }
 
@@ -491,8 +500,7 @@ private void parseAttributeReport(Map descMap) {
                 boolean changed = (curVal != newVal)
                 map.name = "switch"
                 map.value = newVal
-                map.type = state.switchTypeDigital ? "digital" : "physical"
-                state.switchTypeDigital = false
+                map.type = consumeSwitchDigital() ? "digital" : "physical"
                 // "was turned" only when this report represents a real state change vs the
                 // platform's current value; otherwise it's a status/scheduled report and the
                 // digital-vs-physical label doesn't apply (no source action triggered it).
@@ -512,8 +520,7 @@ private void parseAttributeReport(Map descMap) {
                     map.name = "level"
                     map.value = dimmerLevel
                     map.unit = "%"
-                    map.type = state.levelTypeDigital ? "digital" : "physical"
-                    state.levelTypeDigital = false
+                    map.type = consumeLevelDigital() ? "digital" : "physical"
                     map.descriptionText = changed
                         ? "Dimmer level was set to ${dimmerLevel}% [${map.type}]"
                         : "Dimmer level is ${dimmerLevel}%"

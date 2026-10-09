@@ -8,13 +8,20 @@
  */
 
 import groovy.transform.Field
+import java.util.concurrent.ConcurrentHashMap
 import groovy.transform.CompileStatic
 import com.hubitat.app.DeviceWrapper
 import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.25"
+@Field static final String CODE_VERSION = "0.0.26"
+// device.id -> deadline (ms) until which a state report counts as digital. Static rather than
+// state: a driver's state is written back whole at method exit, so a command and a parse() on
+// another thread can undo each other's flag, and a deadline expires on its own when the device
+// was already in the target state and sends no report.
+@Field static final ConcurrentHashMap<String, Long> SWITCH_DIGITAL_UNTIL = new ConcurrentHashMap<>()
+@Field static final long DIGITAL_WINDOW_MS = 5000L
 
 metadata {
     definition(
@@ -214,7 +221,7 @@ void initialize() {
     // startup wastes radio bandwidth (ARCHITECTURE.md "Driver lifecycle").
     logTrace("initialize()")
 
-    state.switchTypeDigital = false
+    SWITCH_DIGITAL_UNTIL.remove(device.id as String)
     sendEvent(name:"numberOfButtons", value: 2, isStateChange: true)
     // One-shot runIn chain: a run that fell due while the hub was down is dropped, ending the chain
     runIn(1800, "refreshEnergyReport")
@@ -267,21 +274,18 @@ void off() {
     markPendingDigitalSwitchChange()
 }
 
-// Set switchTypeDigital and arm a safety-net clear. The flag is normally
-// cleared by parseAttributeReport on the next 0006/0000 state report — but a
-// digital command issued when the device is already in the target state is a
-// no-op at the device, so no state report follows and the flag would otherwise
-// sit true until the next real state change (which then gets mislabeled as
-// digital). The 5s runIn covers any normal Zigbee round-trip; the clear is
-// idempotent so the fast path (state report arrives before the timer fires)
-// keeps working unchanged.
+// A digital command marks the next state report as digital for DIGITAL_WINDOW_MS. A command the
+// device ignores (already in the target state) sends no report, so the mark expires on its own.
 private void markPendingDigitalSwitchChange() {
-    state.switchTypeDigital = true
-    runInMillis 5000, 'clearSwitchTypeDigital'
+    SWITCH_DIGITAL_UNTIL.put(device.id as String, now() + DIGITAL_WINDOW_MS)
 }
 
-private void clearSwitchTypeDigital() {
-    state.switchTypeDigital = false
+// Kept for clear jobs scheduled by 0.0.25 and earlier.
+private void clearSwitchTypeDigital() { }
+
+private boolean consumeSwitchDigital() {
+    Long until = SWITCH_DIGITAL_UNTIL.remove(device.id as String)
+    return until != null && now() < until
 }
 
 void push(Integer buttonNumber) {
@@ -364,6 +368,7 @@ void setOffLedIntensity(Integer intensity) {
 void parse(String description) {
     if (state.codeVersion != CODE_VERSION) {
         state.codeVersion = CODE_VERSION
+        state.remove('switchTypeDigital')
         runInMillis 1500, 'autoConfigure'
     }
 
@@ -449,8 +454,7 @@ private void parseAttributeReport(Map descMap) {
                 boolean changed = (curVal != newVal)
                 map.name = "switch"
                 map.value = newVal
-                map.type = state.switchTypeDigital ? "digital" : "physical"
-                state.switchTypeDigital = false
+                map.type = consumeSwitchDigital() ? "digital" : "physical"
                 // "was turned" only when this report represents a real state change vs the
                 // platform's current value; otherwise it's a status/scheduled report and the
                 // digital-vs-physical label doesn't apply (no source action triggered it).
