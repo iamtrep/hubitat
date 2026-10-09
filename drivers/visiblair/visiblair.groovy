@@ -29,6 +29,7 @@ metadata {
 
         attribute "timestamp", "date" // lastSampleTimeStamp
         attribute "calibration", "date" // lastCalibration
+        attribute "healthStatus", "enum", ["online", "offline"]
 
         command "reboot"
         command "calibrate"
@@ -43,11 +44,15 @@ metadata {
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.4"
+@Field static final String CODE_VERSION = "0.1.5"
 @Field static final String constCO2ClickURL = 'https://environment-monitor-01.co2.click:11000/api/v1'
 @Field static final String constVisiblairURL = 'https://api.visiblair.com:11000/api/v1'
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int HTTP_TIMEOUT = 15
+// Cloud outage handling: warn per failed poll below the threshold, one error at it,
+// then a warn every OUTAGE_REMINDER_MS until a poll succeeds.
+@Field static final int FAILURE_ERROR_THRESHOLD = 3
+@Field static final long OUTAGE_REMINDER_MS = 3_600_000L
 
 preferences {
     section("API parameters") {
@@ -229,7 +234,9 @@ void getDeviceValuesFromAPI(String command) {
 void getDeviceValuesFromAPI_async(resp, data) {
     try {
         if (resp.hasError()) {
-            logError "HTTP error: ${resp.getErrorMessage()}"
+            // hasError() is true for any non-2xx status, so a 401 lands here.
+            if (resp.getStatus() == 401) pollFailed("HTTP 401 Unauthorized for '${data.cmd}' - check access token")
+            else pollFailed("HTTP error: ${resp.getErrorMessage()}")
             return
         }
 
@@ -257,14 +264,58 @@ void getDeviceValuesFromAPI_async(resp, data) {
                     logWarn "Unhandled Command: '${data.cmd}'"
                 }
             }
-        } else if (resp.getStatus() == 401) {
-            logError "HTTP 401 Unauthorized for '${data.cmd}' - check access token"
         } else {
-            logWarn "HTTP ${resp.getStatus()} for '${data.cmd}'"
+            pollFailed("HTTP ${resp.getStatus()} for '${data.cmd}'")
+            return
         }
     } catch (Exception e) {
-        logError "getDeviceValuesFromAPI_async - ${e.message}"
+        pollFailed("cannot process response: ${e.message}")
+        return
     }
+    pollSucceeded()
+}
+
+// --- Outage handling ---
+
+private void pollFailed(String msg) {
+    long t = now()
+    int n = ((state.pollFailures ?: 0) as int) + 1
+    state.pollFailures = n
+    if (n == 1) state.pollFailingSince = t
+    long since = state.pollFailingSince as long
+    if (n < FAILURE_ERROR_THRESHOLD) {
+        logWarn "poll failed (${n}/${FAILURE_ERROR_THRESHOLD}): ${msg}"
+    } else if (n == FAILURE_ERROR_THRESHOLD) {
+        logError "VisiblAir unreachable since ${new Date(since).format('yyyy-MM-dd HH:mm', location.timeZone)}: ${msg}"
+        state.lastOutageReminder = t
+        sendEvent(name: "healthStatus", value: "offline", descriptionText: "${device.displayName} is offline: VisiblAir unreachable")
+    } else if (t - ((state.lastOutageReminder ?: 0L) as long) >= OUTAGE_REMINDER_MS) {
+        logWarn "VisiblAir still unreachable after ${formatDuration(t - since)} (${n} polls failed): ${msg}"
+        state.lastOutageReminder = t
+    } else {
+        logDebug "poll failed (${n}): ${msg}"
+    }
+}
+
+private void pollSucceeded() {
+    int n = (state.pollFailures ?: 0) as int
+    String recovery = null
+    if (n >= FAILURE_ERROR_THRESHOLD) {
+        recovery = "VisiblAir back after ${formatDuration(now() - (state.pollFailingSince as long))} (${n} polls failed)"
+        logInfo recovery
+    } else if (n > 0) {
+        logDebug "poll recovered after ${n} failed"
+    }
+    state.remove("pollFailures")
+    state.remove("pollFailingSince")
+    state.remove("lastOutageReminder")
+    sendEvent(name: "healthStatus", value: "online", descriptionText: "${device.displayName} is online: ${recovery ?: 'reporting'}")
+}
+
+private static String formatDuration(long ms) {
+    long minutes = ms.intdiv(60000L)
+    if (minutes < 60) return "${minutes} min"
+    return "${minutes.intdiv(60L)} h ${minutes % 60} min"
 }
 
 

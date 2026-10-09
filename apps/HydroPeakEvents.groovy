@@ -12,7 +12,7 @@ import groovy.json.JsonOutput
 import java.text.SimpleDateFormat
 
 @Field static final String APP_NAME = "Hydro-Québec Peak Period Manager"
-@Field static final String CODE_VERSION = "0.3.1"
+@Field static final String CODE_VERSION = "0.3.2"
 
 definition(
     name: APP_NAME,
@@ -189,19 +189,19 @@ void handlePeakPeriodsResponse(hubitat.scheduling.AsyncResponse response, Map da
             fetchFailed("HTTP error: ${response.getErrorMessage()}")
             return
         }
-
-        if (response.status == 200) {
-            logNet("Successfully fetched data")
-            String jsonText = response.data
-            Map responseData = parseJson(jsonText)
-            fetchSucceeded()
-            processPeakPeriods(responseData)
-        } else {
+        if (response.status != 200) {
             fetchFailed("HTTP ${response.status}")
+            return
         }
+        logNet("Successfully fetched data")
+        Map responseData = parseJson(response.data as String) as Map
+        processPeakPeriods(responseData)
     } catch (Exception e) {
-        logError("Error handling peak periods response: ${e.message}")
+        // A payload that can't be parsed or processed is a failed poll like any other.
+        fetchFailed("cannot process response: ${e.message}")
+        return
     }
+    fetchSucceeded()
 }
 
 // --- Outage handling ---
@@ -255,6 +255,8 @@ private void processPeakPeriods(Map data) {
     Date now = new Date()
     Date nextEventStart = null
     Date nextEventEnd = null
+    int datedRecords = 0
+    int badRecords = 0
 
     // Find the next relevant event (active or upcoming)
     records.each { Map record ->
@@ -264,6 +266,7 @@ private void processPeakPeriods(Map data) {
         if (!dateDebut || !dateFin) {
             return
         }
+        datedRecords++
 
         try {
             Date startTime = parseIsoDate(dateDebut)
@@ -280,9 +283,18 @@ private void processPeakPeriods(Map data) {
                 nextEventEnd = endTime
             }
         } catch (Exception e) {
-            logError("Error parsing dates: ${e.message}")
+            badRecords++
+            logDebug("Skipping record with unparseable dates (${dateDebut} to ${dateFin}): ${e.message}")
         }
     }
+
+    // No parseable record means the feed's date format changed: fail the poll (counted in the
+    // outage streak) rather than clear the stored event. A few bad records are skipped instead,
+    // since one stale bad record would otherwise fail every poll for the season.
+    if (datedRecords > 0 && badRecords == datedRecords) {
+        throw new Exception("no record has parseable dates (${badRecords} records)")
+    }
+    noteBadRecords(badRecords)
 
     // Update hub variables with next event times
     updateHubVariables(nextEventStart, nextEventEnd)
@@ -317,6 +329,14 @@ private void processPeakPeriods(Map data) {
     updateSwitchStates()
 
     updateAppLabel()
+}
+
+// Warn when the number of skipped records changes, not on every poll.
+private void noteBadRecords(int bad) {
+    int prev = (state.badRecordCount ?: 0) as int
+    if (bad > 0 && bad != prev) logWarn("Skipping ${bad} peak period record(s) with unparseable dates")
+    if (bad > 0) state.badRecordCount = bad
+    else state.remove("badRecordCount")
 }
 
 private void updateHubVariables(Date eventStart, Date eventEnd) {
