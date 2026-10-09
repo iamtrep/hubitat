@@ -152,7 +152,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "6.1.4";
+const CODE_VERSION = "6.1.5";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -1617,7 +1617,14 @@ function renderZigbeeWifiChart(zbCh,containerId,scan){
     const stroke=ol?'rgba(220,60,60,0.6)':std?'rgba(60,180,80,0.4)':'rgba(130,130,130,0.25)';
     svg+=`<rect x="${x1}" y="20" width="${x2-x1}" height="${H-PB-20}" rx="3" fill="${fill}" stroke="${stroke}" stroke-width="0.7"/>`;
     svg+=`<text x="${(x1+x2)/2}" y="14" text-anchor="middle" fill="${ol?'#dc3c3c':std?'#3cb44c':'#888'}" font-size="10" font-weight="${ol||std?'600':'400'}">W${ch}</text>`});
-  // Scan overlay (v5.12.0): per-channel detected PAN bars stacked side-by-side, height = RSSI strength
+  // All Zigbee channel markers
+  for(let ch=11;ch<=26;ch++){const c=2405+5*(ch-11);const cx=x(c);const isCur=ch===zbCh;
+    const rec=[15,20,25].includes(ch);
+    const fill=isCur?'#2196f3':rec?'rgba(60,180,80,0.7)':'rgba(100,100,100,0.5)';
+    const w=isCur?6:3;const ht=isCur?(H-PB-24):rec?(H-PB-34):(H-PB-42);
+    svg+=`<rect x="${cx-w/2}" y="${H-PB-ht}" width="${w}" height="${ht}" rx="1" fill="${fill}" opacity="${isCur?1:0.8}"/>`;
+    if(isCur||rec||ch===11||ch===26)svg+=`<text x="${cx}" y="${H-PB+12}" text-anchor="middle" fill="${isCur?'#2196f3':rec?'#3cb44c':'#888'}" font-size="${isCur?'11':'9'}" font-weight="${isCur?'700':'400'}">${ch}</text>`}
+  // Scan overlay (v5.12.0): per-channel detected PAN bars stacked side-by-side, height = RSSI strength; drawn after the channel markers so a bar centred on one stays visible
   const scanByChannel={};
   if(scan&&scan.results)scan.results.forEach(r=>{
     if(!r.panId||r.lastHopRssi===0)return; // skip empty/noise rows
@@ -1638,13 +1645,6 @@ function renderZigbeeWifiChart(zbCh,containerId,scan){
       svg+=`<rect x="${xb-barW/2}" y="${H-PB-ht}" width="${barW}" height="${ht}" rx="1" fill="${sev}" opacity="0.75"><title>${h(tip)}</title></rect>`;
     });
   });
-  // All Zigbee channel markers
-  for(let ch=11;ch<=26;ch++){const c=2405+5*(ch-11);const cx=x(c);const isCur=ch===zbCh;
-    const rec=[15,20,25].includes(ch);
-    const fill=isCur?'#2196f3':rec?'rgba(60,180,80,0.7)':'rgba(100,100,100,0.5)';
-    const w=isCur?6:3;const ht=isCur?(H-PB-24):rec?(H-PB-34):(H-PB-42);
-    svg+=`<rect x="${cx-w/2}" y="${H-PB-ht}" width="${w}" height="${ht}" rx="1" fill="${fill}" opacity="${isCur?1:0.8}"/>`;
-    if(isCur||rec||ch===11||ch===26)svg+=`<text x="${cx}" y="${H-PB+12}" text-anchor="middle" fill="${isCur?'#2196f3':rec?'#3cb44c':'#888'}" font-size="${isCur?'11':'9'}" font-weight="${isCur?'700':'400'}">${ch}</text>`}
   // Frequency axis
   svg+=`<line x1="${PAD}" y1="${H-PB}" x2="${PAD+GW}" y2="${H-PB}" stroke="#666" stroke-width="0.5"/>`;
   for(let f=2400;f<=2480;f+=10){svg+=`<text x="${x(f)}" y="${H-PB+26}" text-anchor="middle" fill="#888" font-size="9">${f}</text>`}
