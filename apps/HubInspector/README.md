@@ -18,20 +18,21 @@ A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-t
 1. [Installation](#installation)
 2. [Opening the Dashboard](#opening-the-dashboard)
 3. [Updating](#updating)
-4. [Dashboard Tab](#dashboard-tab)
-5. [Devices Tab](#devices-tab)
-6. [Apps Tab](#apps-tab)
-7. [Code Tab](#code-tab)
-8. [Network Tab](#network-tab)
-9. [Health Tab](#health-tab)
-10. [Performance Tab](#performance-tab)
-11. [Snapshots Tab](#snapshots-tab)
-12. [Radio Capture Tab](#radio-capture-tab)
-13. [Device Usage Audit](#device-usage-audit)
-14. [Settings Tab](#settings-tab)
-15. [Forum Export](#forum-export)
-16. [Alerts & Warnings Reference](#alerts--warnings-reference)
-17. [REST API](#rest-api)
+4. [Testing Status and Known Issues](#testing-status-and-known-issues)
+5. [Dashboard Tab](#dashboard-tab)
+6. [Devices Tab](#devices-tab)
+7. [Apps Tab](#apps-tab)
+8. [Code Tab](#code-tab)
+9. [Network Tab](#network-tab)
+10. [Health Tab](#health-tab)
+11. [Performance Tab](#performance-tab)
+12. [Snapshots Tab](#snapshots-tab)
+13. [Radio Capture Tab](#radio-capture-tab)
+14. [Device Usage Audit](#device-usage-audit)
+15. [Settings Tab](#settings-tab)
+16. [Forum Export](#forum-export)
+17. [Alerts & Warnings Reference](#alerts--warnings-reference)
+18. [REST API](#rest-api)
 
 ---
 
@@ -81,7 +82,7 @@ The Dashboard tab shows the current App Version and UI Version, plus a banner wh
 When a newer release is published on GitHub, the app appends a green **update available** badge to its label on the Apps list, so you can spot an available update without opening the app. The badge is reconciled daily (and whenever the app re-initializes) and clears itself once the installed code catches up.
 
 ### Updating the Groovy app
-Use **Apps Code → Hub Inspector → Import** (same import URL as above). After saving, re-open the app preferences page once to re-initialize.
+Use **Apps Code → Hub Inspector → Import** (same import URL as above). After saving, open the app and click **Done**, or open the dashboard.
 
 > **Upgrade floor:** v5.77.0 removed the one-shot storage migrations for pre-v5.33.0 storage
 > formats. Upgrading from a version older than 5.33.0? Install any 5.7x release ≤ 5.76.x first —
@@ -94,15 +95,62 @@ The app keeps the UI in sync with the app version automatically: a nightly job d
 
 ---
 
+## Testing Status and Known Issues
+
+Hub Inspector has run on a handful of hubs, so many setups have never been tested. If yours is one of them, your reports help the most.
+
+### Tested on
+
+* Hubs: C-7 and C-8 Pro, firmware 2.5.2.
+* Z-Wave: the classic stack, on meshes of 3 to 10 devices.
+* Zigbee: 8 to 110 devices per hub.
+* Matter: 2 to 6 devices per hub.
+* Hub Mesh: one pair of hubs.
+* Temperature: all test hubs use °C.
+
+### Needs testing
+
+* **Z-Wave Long Range.** No test hub has LR devices. Version 6.1.1 fixes LR devices being listed as ghost nodes, reported by a user.
+* **Z-Wave JS.** The Z-Wave JS cards on the Network tab and the Z-Wave JS section of the device audit have only run on a hub with no Z-Wave devices. On the Radio Capture tab, Z-Wave JS capture has only seen a mesh with no devices. It shows each message's direction and type, and the message text as-is.
+* **Larger Z-Wave meshes.** Ghost-node detection and the problem-node list (failed nodes, and nodes with a packet error rate above 1%) have only run on small meshes. The 1% threshold has not been compared against real meshes.
+* **Hub Mesh** with more than two hubs.
+* **C-5 and C-8 hubs**, older firmware, and hubs set to °F.
+
+### Known issues
+
+* The device audit and performance checkpoints put a heavy load on the hub. Run the audit when the hub is quiet. On a busy hub a scheduled checkpoint can time out; the app retries once.
+* The dashboard doesn't open through the Hubitat cloud link. The page is about 414 KB, and the cloud link carries at most 128 KB. Open the dashboard from your home network.
+
+### How to help
+
+If you have Z-Wave Long Range or Z-Wave JS devices, a short capture helps finish that support. On the Radio Capture tab, open Z-Wave, click **Start capture**, operate a few Z-Wave devices, then click **Stop capture** and **Download**. Send the file by private message on the forum.
+
+### Reporting a problem
+
+Post in the [Hub Inspector forum thread](https://community.hubitat.com/t/beta-hub-inspector-a-diagnostics-dashboard-that-runs-on-your-hub/166689) with:
+
+1. The app version, shown on the Dashboard tab.
+2. Your hub model and firmware version.
+3. What you did, what you expected, and what happened. A screenshot helps.
+4. Any Hub Inspector errors from **Logs**.
+
+The **Copy for Forum** button on the Dashboard copies a summary of your hub that you can paste into your post. To hide device and app names, turn on **Obfuscate device/app names** in the Settings tab first.
+
+For Z-Wave problems, also open `http://<hub-ip>/hub/zwaveDetails/json` in a browser, save the page, and send it by private message. It lists your devices, so don't post it publicly.
+
+You can also open an issue on [GitHub](https://github.com/hubitrep/hubitat/issues).
+
+---
+
 ## Dashboard Tab
 
 A summary of hub health at a glance.
 
-The header bar contains a **Docs ↗** link (this document), a **Diagnostic Tool ↗** link to the hub's recovery tool on port 8081 (hidden when the dashboard is opened through the Hubitat cloud URL, since the tool is LAN-only), and a **↻ Refresh** button that forces a full re-fetch and re-render of whichever tab is currently open.
+The header bar contains a **Docs ↗** link (this document), a **Diagnostic Tool ↗** link to the hub's recovery tool on port 8081, an **App Page ↗** link to this app's page in the hub, and a **↻ Refresh** button that forces a full re-fetch and re-render of whichever tab is currently open.
 
 **Hub Information** — Hardware model, firmware version, hub ID, IP address, Zigbee ID, location, current mode, time zone.
 
-**Overview** — Device counts: total, active, inactive, disabled. Installed apps: total, built-in, community. All counts are linked to the relevant filtered list.
+**Overview** — Device counts: total, active, inactive, disabled. Installed apps: total, built-in, community. Device counts and the installed-app total are linked to the filtered list.
 
 **Resources** — Free OS memory, CPU load (5-minute average), hub temperature, and database size. Values are color-coded against configurable thresholds (see [Settings](#settings-tab)). This card **auto-refreshes** in the background on a configurable interval (default 30 s); the last refresh time is shown in the card header.
 
@@ -110,9 +158,9 @@ The header bar contains a **Docs ↗** link (this document), a **Diagnostic Tool
 
 **Platform Alerts** — A roll-up of hub health: alerts reported by the Hubitat hub itself (load warnings, radio crashes, backup failures, etc.), threshold-based alerts derived in the browser from the configured thresholds (memory, CPU, temperature), Z-Wave radio health (ghost / failed / problem nodes and radio-firmware-update), hub-firmware and app-update status, and messages from `/hub/messages` (info-severity). This same roll-up drives the **alert-aware favicon** (a colored dot on the browser tab showing the highest active severity) and the Health tab's *Alerts* list. Device-inventory conditions — low battery, stale devices, and chatty devices — are shown on their own tabs (Devices / Performance), **not** in this roll-up or the favicon. See [Alerts & Warnings Reference](#alerts--warnings-reference) for the full list.
 
-**Hub Firmware** — When `/hub/cloud/checkForUpdate` reports an upgrade is available, an orange badge appears with the current version, the available version, and a link to the release notes. A beta release is tagged **(beta)** and raised as an info alert, not a warning. The card also lists the platform versions stored on the hub that the Diagnostic Tool can restore, and the stable fallback version, read from the Diagnostic Tool on port 8081. On the LAN, a **Download stable** button fetches the latest stable release of a version line (for example 2.5.1) so it becomes restorable; the download takes 1–2 minutes and temporarily uses several hundred MB of the hub's free memory. A link opens the Diagnostic Tool, which asks for the hub's MAC address (shown under Settings → Hub Details). The update check and the version list are cached for 1 hour; a download refreshes the list.
+**Hub Firmware** — When `/hub/cloud/checkForUpdate` reports an upgrade is available, an orange badge appears with the current version, the available version, and a link to the release notes. A beta release is tagged **(beta)** and raised as an info alert, not a warning. The card also lists the platform versions stored on the hub that the Diagnostic Tool can restore, and the stable fallback version, read from the Diagnostic Tool on port 8081. A **Download stable** button fetches the latest stable release of a version line (for example 2.5.1) so it becomes restorable; the download takes 1–2 minutes and temporarily uses several hundred MB of the hub's free memory. A link opens the Diagnostic Tool, which asks for the hub's MAC address (shown under Settings → Hub Details). The update check and the version list are cached for 1 hour; a download refreshes the list.
 
-**Reports** — Buttons to generate a full HTML report or copy a forum-ready Markdown export to the clipboard.
+**Reports** — Buttons to generate a full HTML report or open a forum-ready Markdown export to copy (see [Forum Export](#forum-export)).
 
 ---
 
@@ -121,6 +169,8 @@ The header bar contains a **Docs ↗** link (this document), a **Diagnostic Tool
 A full inventory of every device on the hub.
 
 **Summary cards** — Total devices with active/inactive/disabled counts (the inactivity threshold is shown). Parent/child/Hub Mesh/battery device counts. Connection type and integration breakdown tables.
+
+**Device Types** — Device count per driver type.
 
 **Device Audit card** — Sits below the Device Summary card. Contains the **Generate Device Audit** button that triggers the per-device cross-reference scan; on completion a **View report** link opens the result. See [Device Usage Audit](#device-usage-audit) for details on what the audit produces.
 
@@ -364,9 +414,11 @@ Lists devices visible to the hub via mDNS / Bonjour / Avahi (`/hub/mdnsDevices/j
 
 **Resource History** — Time-series chart of free OS memory, CPU load and hub temperature since the last hub restart, each on its own axis. Horizontal reference lines mark the warning and critical memory thresholds. Hover for the values at any point; drag to zoom. The app samples temperature every 5 minutes and keeps hourly min/average/max summaries, along with the database size, for 30 days in File Manager (`hub_diagnostics_hourly.json`), so the temperature line fills in with hourly averages after a code update. Re-renders on browser resize.
 
-**Database & Storage** — Database size, state compression status, max events per device, max event age (days), max state age (days). A separate **File Manager** sub-section shows the total number of files stored in the hub's File Manager, total bytes used, and free storage space.
+**Database & Storage** — State compression status, max events per device, max event age (days), max state age (days). A separate **File Manager** sub-section shows the total number of files stored in the hub's File Manager, total bytes used, and free storage space.
 
 **Backups** (`/hub2/localBackups` + `/hub2/cloudBackups`) — Local backup count + latest backup timestamp + age in days (orange-warn when > 2 days, red-crit when 0 backups). Cloud backups for this hub plus an expandable list of cloud backups for other hubs on the same Hubitat account. Cloud backup and restore entitlement flags.
+
+**Hub Events** — The hub's most recent events (up to 25), with date, event and description, such as restarts, firmware updates and device joins.
 
 ---
 
@@ -438,7 +490,7 @@ Changes are color-coded: green for additions/improvements, red for removals/degr
 
 Live capture of radio traffic from the hub's internal log sockets, intended for mesh troubleshooting. **Zigbee** capture (via `ws://${hub_ip}/zigbeeLogsocket`) is fully featured. A **Z-Wave** sub-tab (via `ws://${hub_ip}/zwaveLogsocket`) provides capture, live tail, and download; it auto-detects the active Z-Wave stack and picks a per-stack renderer. On the **Z/IP (legacy)** stack the tail shows the per-message IME radio telemetry — **Time · Node · Device · Dir · RSSI · Seq** (node with hex id, RX/TX direction, and colour-coded per-hop RSSI in dBm). On the **Z-Wave JS** stack the tail parses each frame's envelope — **Time · Source · Direction · Kind · Node/Device · Summary** — from the zwave-js log line, leaving the message text as-is (command-level decoding and node radio telemetry deferred). Below the tail, a **Kind breakdown** card charts the frame-type mix (REQ / RES / ACK / bytes / state) over the last 5 minutes. Aggregates are not yet built for Z-Wave; the recording is full-fidelity raw lines on both stacks. The capture controls, recording cap, pause/stop/clear/download semantics, the single free-text tail filter, and the click-to-expand raw JSON behaviour match the Zigbee sub-tab described below.
 
-A **Matter** sub-tab captures the hub's Matter (CHIP) SDK log. Unlike the Zigbee and Z-Wave sub-tabs — which stream from a WebSocket log socket — Matter has no log socket, so this sub-tab **polls `/hub/matterLogs/json` every 2 s** and dedup-appends new lines to the buffer; it is **LAN-only and won't work over the Hubitat cloud URL**. Two views: **Structured** parses each CHIP entry into a row grouped by exchange ID, with the Interaction Model op (Report / Read / Write / Subscribe / Invoke / Status / TimedReq), endpoint / cluster / attribute / command, multi-attribute Reports split into one row per attribute, and rows linked back to the matching Hubitat device; **Raw** shows the colored log tail. Filter by **Component**, by **Op**, or by free-text substring. The capture controls (Start / Pause / Stop / Download / Clear buffer), the recording cap (10 / 50 / 200 MB), and the buffered/dropped counters mirror the Zigbee sub-tab; an added **Rotations** counter tracks polls where the dedup anchor wasn't found (≥ 2 h between polls). Below the tail, breakdown cards summarise the last 5 minutes: **Op breakdown**, **Cluster breakdown**, and **Top talkers** by device (frames with no extractable peer node are reported as an unattributed count). The Aggregates header shows an **error / warning count** for the window, and when any are present an **Errors & Warnings** card lists the distinct messages (severity, CHIP component, text, count) — the log doesn't name the device, so cross-reference the node against the Matter device list. CHIP logs carry no radio metrics, so there is no signal-quality card.
+A **Matter** sub-tab captures the hub's Matter (CHIP) SDK log. Unlike the Zigbee and Z-Wave sub-tabs — which stream from a WebSocket log socket — Matter has no log socket, so this sub-tab **polls `/hub/matterLogs/json` every 2 s** and dedup-appends new lines to the buffer. Two views: **Structured** parses each CHIP entry into a row grouped by exchange ID, with the Interaction Model op (Report / Read / Write / Subscribe / Invoke / Status / TimedReq), endpoint / cluster / attribute / command, multi-attribute Reports split into one row per attribute, and rows linked back to the matching Hubitat device; **Raw** shows the colored log tail. Filter by **Component**, by **Op**, or by free-text substring. The capture controls (Start / Pause / Stop / Download / Clear buffer), the recording cap (10 / 50 / 200 MB), and the buffered/dropped counters mirror the Zigbee sub-tab; an added **Rotations** counter tracks polls where the dedup anchor wasn't found (≥ 2 h between polls). Below the tail, breakdown cards summarise the last 5 minutes: **Op breakdown**, **Cluster breakdown**, and **Top talkers** by device (frames with no extractable peer node are reported as an unattributed count). The Aggregates header shows an **error / warning count** for the window, and when any are present an **Errors & Warnings** card lists the distinct messages (severity, CHIP component, text, count) — the log doesn't name the device, so cross-reference the node against the Matter device list. CHIP logs carry no radio metrics, so there is no signal-quality card.
 
 **Capture controls** — in order: Start capture, Pause capture, Stop capture, Download, Clear buffer.
 
@@ -470,14 +522,13 @@ Generates a one-time, per-device cross-reference report covering:
 
 - **Unreferenced devices** — no apps subscribe to them, no dashboards display them, no parent integration manages them; cleanup candidates.
 - **Mesh orphans** — Hubitat reports `orphan: true` (radio/network state).
-- **Stuck scheduled jobs** — `nextRunTime` in the past, with a "Last run" (`prevRunTime`) column to disambiguate "never ran" vs "ran once and lingered".
 - **Manually-tuned devices** — devices with non-default `spammyThreshold`, `maxStates`, or `maxEvents` values. The audit detects the fleet's mode value for each setting and highlights divergent devices in bold.
 - **Critical devices** — top 20 by combined apps + dashboards reference count.
 - **Devices by Room** — devices grouped by their assigned room, child devices included. Surfaces empty rooms (cleanup targets) and high-density rooms (split candidates). Devices not assigned anywhere are listed under "Unassigned".
 - **Z-Wave JS Mesh Health** (Z-Wave JS hubs only) — per-Z-Wave-device row from `/hub/zwave2/getNodeState?node=N`: state, status, interview stage, RTT, RSSI, PER %, TX/RX command counts, last-seen timestamp.
 - **Hub Mesh Linked Devices** — for each device this hub consumes from another hub via Hub Mesh, source hub + source device ID + status from `/hubMesh/localLinkedDevice/<id>`.
 - **Apps → devices** and **Dashboards → devices reverse indices** — disabled app subscribers are rendered with strikethrough so "ghost references" stand out.
-- **Device inventory** — every device's hardware identity: protocol, manufacturer, model, and firmware revision, parsed from each device's pairing-time data values (no extra hub calls — it rides on the scan the audit already runs). Sortable and filterable, with **Download CSV** / **Copy CSV** export for documentation or firmware tracking. Z-Wave manufacturer/model appear as hex IDs (shown verbatim); virtual and cloud devices have blank cells.
+- **Device hardware and firmware** — every device's hardware identity: protocol, manufacturer, model, and firmware revision, parsed from each device's pairing-time data values (no extra hub calls — it rides on the scan the audit already runs). Sortable and filterable, with **Download CSV** / **Copy CSV** export for documentation or firmware tracking. Z-Wave manufacturer/model appear as hex IDs (shown verbatim); virtual and cloud devices have blank cells.
 - **Per-device detail table** with all subscribers as clickable links. The **Label (Name)** column shows each device's display name — its label, or the device name when unlabeled. Type cells link to `/driver/editor/<id>` for community drivers.
 
 ### How it works
@@ -501,7 +552,7 @@ Most settings are accessible from the Hubitat admin UI under **Apps → Hub Insp
 
 ### Config Snapshot Scheduling
 - Enable automatic snapshots: on/off
-- Interval: 1–30 days (default 1)
+- Interval: 1–30 days in the app settings (default 1); the dashboard offers 1, 2, 7 or 14 days
 - Max snapshots to retain: 1–50 (default 10; oldest are pruned when the limit is reached)
 - On-demand trigger switch (optional): pick a switch; turning it ON captures a snapshot immediately
 
@@ -528,8 +579,8 @@ These thresholds control when resource metrics turn orange (warning) or red (cri
 | Free memory critical (MB) | 75 | 10–2000 |
 | CPU load average warning | 4.0 | 0.1–32 |
 | CPU load average critical | 8.0 | 0.1–32 |
-| Hub temperature warning (°C) | 65 | 20–100 |
-| Hub temperature critical (°C) | 80 | 20–100 |
+| Hub temperature warning (°C) | 65 | 20–100 (68–212 on °F hubs) |
+| Hub temperature critical (°C) | 80 | 20–100 (68–212 on °F hubs) |
 
 Changes take effect immediately in the dashboard without a page reload.
 
@@ -537,7 +588,11 @@ Changes take effect immediately in the dashboard without a page reload.
 - **Auto-refresh interval** — How frequently the Resources cards on the Dashboard and Health tabs update in the background (10–300 seconds, default 30). Changes take effect immediately on save without a page reload.
 
 ### Logging
+- **Info logging** — On by default.
 - **Debug logging** — Enables verbose logging in the Hubitat Logs page. Useful for troubleshooting; leave off during normal use.
+- **Trace logging** — Shown in the app settings when debug logging is on.
+
+Debug and trace logging switch off after 30 minutes.
 
 ### Privacy
 - **Obfuscate device/app names** — Replaces every device, app and file name, throughout the dashboard and in the forum export, with a stable adjective-noun alias (for example `amber-otter`). The same name always gets the same alias, so a screenshot and a forum post still line up. The CSV export keeps real names, since it is for local use.
@@ -557,11 +612,12 @@ The forum export generates a concise Markdown-formatted summary suitable for pas
 
 - System basics: model, firmware, uptime, network config, CPU, memory, temperature, database size
 - Active alerts (all severities)
-- Device inventory: counts by status, connection type, and integration; low battery devices
-- App inventory: counts by source; list of user-installed app types
-- Z-Wave: health, ghost nodes, problem nodes, S0 flag, mesh quality stats, top talkers
-- Zigbee: health, channel, LQI stats, weak/stale neighbors, top talkers
+- Device inventory: counts by status, connection type, and integration; low battery and inactive devices
+- App inventory: counts by source; installed user and built-in app types
+- Z-Wave: health, ghost nodes, problem nodes, S0 flag, mesh quality stats
+- Zigbee: health, channel, LQI stats, weak/stale neighbors
 - Hub Mesh and Matter status
+- Performance: device and app runtime, top device and app types by CPU, top talkers
 
 **Obfuscation:** Enable "Obfuscate device/app names" in Settings to replace names with stable aliases in the forum export and across the dashboard, so you can share diagnostics or screenshots publicly without revealing device names or room labels.
 
