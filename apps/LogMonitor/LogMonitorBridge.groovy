@@ -14,8 +14,12 @@ import groovy.transform.Field
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "1.0.3"
+@Field static final String CODE_VERSION = "1.0.4"
 @Field static final int STARTUP_DELAY_SECS = 60
+// Set by disconnect() so the socket-closed callback doesn't reconnect. Not atomicState: in a
+// driver, a state write-back at method exit overwrites atomicState keys written after the
+// method's first state access. False (the default) after a reboot is correct.
+@Field static final ConcurrentHashMap<String, Boolean> INTENTIONAL_DISCONNECT = new ConcurrentHashMap<>()
 // Keyed by device id: @Field static is shared by every bridge device of this type.
 @Field static final ConcurrentHashMap<String, AtomicInteger> LOGS_RECEIVED = new ConcurrentHashMap<>()
 
@@ -91,7 +95,7 @@ void initialize() {
     checkVersion(false)
     logDebug "initialize()"
 
-    atomicState.intentionalDisconnect = false
+    INTENTIONAL_DISCONNECT.put(device.id.toString(), false)
     state.reconnectAttempts = 0
     logsReceived().set(0)
 
@@ -107,6 +111,7 @@ private void checkVersion(boolean reinit = true) {
     if (state.version == CODE_VERSION) return
     logVer "New version: ${CODE_VERSION} (was: ${state.version})"
     state.version = CODE_VERSION
+    state.remove("intentionalDisconnect")
     state.remove('codeVersion')
     if (reinit) runIn(1, "updated")
 }
@@ -120,7 +125,7 @@ void connect() {
     unschedule("connect")
 
     try {
-        atomicState.intentionalDisconnect = false
+        INTENTIONAL_DISCONNECT.put(device.id.toString(), false)
         sendEvent(name: "connectionStatus", value: "connecting")
 
         String host = hubAddress ? "${hubAddress}" : "127.0.0.1:8080"
@@ -143,7 +148,7 @@ void connect() {
 
 void disconnect() {
     logNet "Disconnecting WebSocket..."
-    atomicState.intentionalDisconnect = true
+    INTENTIONAL_DISCONNECT.put(device.id.toString(), true)
     unschedule("connect")
 
     try {
@@ -185,7 +190,7 @@ void webSocketStatus(String message) {
         sendEvent(name: "connectionStatus", value: "error")
         logWarn "WebSocket error: ${message}"
 
-        if (autoReconnect && !atomicState.intentionalDisconnect) {
+        if (autoReconnect && !INTENTIONAL_DISCONNECT.get(device.id.toString())) {
             scheduleReconnect()
         }
     } else if (message.contains("status: open")) {
@@ -198,7 +203,7 @@ void webSocketStatus(String message) {
         state.wsConnected = false
         sendEvent(name: "connectionStatus", value: "disconnected")
 
-        if (autoReconnect && !atomicState.intentionalDisconnect) {
+        if (autoReconnect && !INTENTIONAL_DISCONNECT.get(device.id.toString())) {
             scheduleReconnect()
         }
     }

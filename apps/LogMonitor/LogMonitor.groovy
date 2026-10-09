@@ -12,12 +12,21 @@
 import com.hubitat.app.ChildDeviceWrapper
 import groovy.transform.CompileStatic
 import groovy.transform.Field
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "1.1.5"
+@Field static final String CODE_VERSION = "1.1.6"
 @Field static final int MAX_BRIDGES = 5
 @Field static final int MAX_FILTERS = 10
+@Field static final int MAX_DEDUPE_HISTORY = 100
 @Field static final int HTTP_MAX_BACKOFF_MIN = 60
 @Field static final List<Integer> HTTP_STOP_STATUSES = [401, 403, 404, 410]
+
+// Per-filter dedupe window and per-minute count, keyed by filterKey() (app id + filter id).
+// They only matter within a dedupe window or a minute, so losing them on a push or reboot
+// costs nothing, and keeping them in state.filters rewrote it on every matching log line.
+@Field static final ConcurrentHashMap<String, ConcurrentHashMap<String, Long>> RECENT_EVENTS = new ConcurrentHashMap<>()
+@Field static final ConcurrentHashMap<String, AtomicInteger> EVENTS_THIS_MINUTE = new ConcurrentHashMap<>()
 
 definition(
     name: "Log Monitor",
@@ -301,6 +310,7 @@ Map deleteFilterPage(Map params) {
 
     if (idx >= 0 && idx < filters.size()) {
         label = filters[idx]?.label ?: "Filter ${idx + 1}"
+        clearFilterRuntime(filters[idx])
         app.removeSetting("notifyDevices_${idx}")
         filters.remove(idx)
         // Re-key notify settings for filters that shifted down
@@ -356,6 +366,7 @@ private void initialize() {
     checkVersion(false)
     state.bridges = state.bridges ?: []
     state.filters = state.filters ?: []
+    migrateFilters()
 
     // Create a default local bridge if none exist
     if ((state.bridges as List).size() == 0) {
@@ -375,7 +386,38 @@ private void checkVersion(boolean reinit = true) {
     if (state.version == CODE_VERSION) return
     logVer "New version: ${CODE_VERSION} (was: ${state.version})"
     state.version = CODE_VERSION
+    migrateFilters()
     if (reinit) runIn(1, "updated")
+}
+
+// Filters get a stable id because their in-memory dedupe and rate data must not follow a
+// list index that shifts when a filter is deleted. processedEvents and eventsThisMinute
+// moved out of state.filters in 1.1.6.
+private void migrateFilters() {
+    List<Map> filters = state.filters ?: []
+    filters.each { Map f ->
+        if (f.id == null) f.id = nextFilterId(filters)
+        f.remove("processedEvents")
+        f.remove("eventsThisMinute")
+    }
+    state.filters = filters
+}
+
+private int nextFilterId(List<Map> filters) {
+    int maxUsed = (filters.collect { it.id != null ? it.id as int : 0 }.max() ?: 0) as int
+    int next = Math.max((state.nextFilterId ?: 0) as int, maxUsed) + 1
+    state.nextFilterId = next
+    return next
+}
+
+private String filterKey(Map filter) {
+    return "${app.id}:${filter.id}"
+}
+
+private void clearFilterRuntime(Map filter) {
+    String key = filterKey(filter)
+    RECENT_EVENTS.remove(key)
+    EVENTS_THIS_MINUTE.remove(key)
 }
 
 // IDs of every device used as a notification target, for the loop guard in
@@ -504,14 +546,12 @@ private void savePendingFilter() {
     Map filter = buildFilterFromSettings(actualIdx)
 
     if (idx >= 0 && idx < filters.size()) {
+        filter.id = filters[idx].id != null ? filters[idx].id : nextFilterId(filters)
         filter.eventsMatched = filters[idx].eventsMatched ?: 0
-        filter.eventsThisMinute = filters[idx].eventsThisMinute ?: 0
-        filter.processedEvents = filters[idx].processedEvents ?: []
         filters[idx] = filter
     } else {
+        filter.id = nextFilterId(filters)
         filter.eventsMatched = 0
-        filter.eventsThisMinute = 0
-        filter.processedEvents = []
         filters.add(filter)
     }
 
@@ -578,9 +618,11 @@ void processLogEntry(String bridgeDni, Map logEntry) {
         if (filterBridge && filterBridge != bridgeDni) continue
 
         if (matchesFilter(logEntry, filter)) {
+            def matchedBefore = filter.eventsMatched
             filter = executeOutputs(logEntry, filter, bridgeDni)
             filters[i] = filter
-            filtersModified = true
+            // Duplicates and rate-limited lines leave the filter unchanged: skip the write
+            if (filter.eventsMatched != matchedBefore) filtersModified = true
         }
     }
 
@@ -642,25 +684,32 @@ private boolean isDuplicate(Map logEntry, Map filter) {
     long windowMs = window * 1000L
     String signature = "${logEntry.type}:${logEntry.level}:${logEntry.name}:${logEntry.msg}"
 
-    List events = (filter.processedEvents as List) ?: []
-    events = events.findAll { (ts - (it.timestamp as long)) < windowMs }
-    boolean found = events.any { it.signature == signature }
+    ConcurrentHashMap<String, Long> seen = RECENT_EVENTS.computeIfAbsent(filterKey(filter),
+        { String k -> new ConcurrentHashMap<String, Long>() } as java.util.function.Function)
 
-    if (!found) {
-        events = events + [[signature: signature, timestamp: ts]]
-        if (events.size() > 100) {
-            events = events.drop(events.size() - 100)
-        }
+    // Atomic check-and-insert, so the map stays correct without relying on singleThreaded.
+    Long prev = seen.putIfAbsent(signature, ts)
+    if (prev != null) {
+        if ((ts - prev) < windowMs) return true
+        if (!seen.replace(signature, prev, ts)) return true
     }
 
-    filter.processedEvents = events
-    return found
+    // Drop expired entries, then the oldest beyond the cap. remove(key, value) leaves an
+    // entry alone if it was refreshed meanwhile.
+    seen.each { String sig, Long seenAt ->
+        if ((ts - seenAt) >= windowMs) seen.remove(sig, seenAt)
+    }
+    int excess = seen.size() - MAX_DEDUPE_HISTORY
+    if (excess > 0) {
+        (seen.entrySet() as List).sort { it.value }.take(excess).each { seen.remove(it.key, it.value) }
+    }
+    return false
 }
 
 private boolean isRateLimited(Map filter) {
     int limit = (filter.maxPerMinute as int) ?: 30
-    int thisMinute = ((filter.eventsThisMinute as int) ?: 0) + 1
-    filter.eventsThisMinute = thisMinute
+    int thisMinute = EVENTS_THIS_MINUTE.computeIfAbsent(filterKey(filter),
+        { String k -> new AtomicInteger() } as java.util.function.Function).incrementAndGet()
 
     if (thisMinute > limit) {
         logDebug "Rate limit exceeded for ${filter.label} (${limit}/min)"
@@ -815,18 +864,8 @@ private void appendToFile(String fileName, String data) {
 
 void resetRateLimitCounters() {
     checkVersion()
-    List<Map> filters = state.filters
-    if (!filters) return
-
-    boolean modified = false
-    filters.eachWithIndex { Map filter, int i ->
-        if ((filter.eventsThisMinute as int) > 0) {
-            filter.eventsThisMinute = 0
-            modified = true
-        }
-    }
-    if (modified) {
-        state.filters = filters
+    (state.filters ?: []).each { Map filter ->
+        EVENTS_THIS_MINUTE.get(filterKey(filter))?.set(0)
     }
 }
 

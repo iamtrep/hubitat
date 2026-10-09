@@ -8,11 +8,25 @@
 
 import groovy.json.JsonSlurper
 import groovy.transform.Field
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "1.9.1"
+@Field static final String CODE_VERSION = "1.9.2"
 @Field static final int STARTUP_DELAY_SECS = 60
 @Field static final JsonSlurper JSON_SLURPER = new JsonSlurper()
-@Field static final Map<String, Long> totalLogsReceived = [:].asSynchronized()
+// Set by disconnect() so the socket-closed callback doesn't reconnect. Not atomicState: in a
+// driver, a state write-back at method exit overwrites atomicState keys written after the
+// method's first state access. False (the default) after a reboot is correct.
+@Field static final ConcurrentHashMap<String, Boolean> INTENTIONAL_DISCONNECT = new ConcurrentHashMap<>()
+
+// Per-message dedupe window and counters, keyed by device id. parse() runs concurrently,
+// so these are updated only through atomic methods. They are in memory because they are
+// per-minute or per-dedupe-window data: losing them on a push or reboot costs nothing, and
+// keeping them in state would write the database on every log line.
+@Field static final ConcurrentHashMap<String, ConcurrentHashMap<String, Long>> RECENT_EVENTS = new ConcurrentHashMap<>()
+@Field static final ConcurrentHashMap<String, AtomicInteger> EVENTS_THIS_MINUTE = new ConcurrentHashMap<>()
+@Field static final ConcurrentHashMap<String, AtomicInteger> EVENTS_MATCHED = new ConcurrentHashMap<>()
+@Field static final ConcurrentHashMap<String, AtomicInteger> LOGS_RECEIVED = new ConcurrentHashMap<>()
 
 metadata {
     definition(
@@ -121,11 +135,11 @@ void initialize() {
     logDebug "initialize()"
 
     // Initialize state
-    atomicState.intentionalDisconnect = false
-    state.processedEvents = state.processedEvents ?: []
+    INTENTIONAL_DISCONNECT.put(device.id.toString(), false)
     state.reconnectAttempts = 0
+    devCounter(EVENTS_MATCHED).set(0)
+    devCounter(EVENTS_THIS_MINUTE).set(0)
     state.eventsMatched = 0
-    state.eventsThisMinute = 0
     state.lastMinuteReset = now()
     state.rateLimitWarningShown = false
 
@@ -147,7 +161,11 @@ private void checkVersion(boolean reinit = true) {
     if (state.version == CODE_VERSION) return
     logVer "New version: ${CODE_VERSION} (was: ${state.version})"
     state.version = CODE_VERSION
+    state.remove("intentionalDisconnect")
     state.remove('codeVersion')
+    // Moved to @Field static in 1.9.2
+    state.remove('processedEvents')
+    state.remove('eventsThisMinute')
     if (reinit) runIn(1, "updated")
 }
 
@@ -162,7 +180,7 @@ void connect() {
     unschedule("connect")
 
     try {
-        atomicState.intentionalDisconnect = false
+        INTENTIONAL_DISCONNECT.put(device.id.toString(), false)
         sendEvent(name: "connectionStatus", value: "connecting")
 
         String host = hubAddress ? "${hubAddress}" : "127.0.0.1:8080"
@@ -188,7 +206,7 @@ void connect() {
 void disconnect() {
     logNet "Disconnecting WebSocket..."
 
-    atomicState.intentionalDisconnect = true
+    INTENTIONAL_DISCONNECT.put(device.id.toString(), true)
     unschedule("connect")
 
     try {
@@ -221,15 +239,14 @@ void scheduleReconnect() {
 }
 
 void healthCheck() {
-    if (!state.wsConnected && autoReconnect && !atomicState.intentionalDisconnect) {
+    if (!state.wsConnected && autoReconnect && !INTENTIONAL_DISCONNECT.get(device.id.toString())) {
         logWarn "WebSocket disconnected, attempting reconnect"
         scheduleReconnect()
     }
 }
 
 void resetRateLimitCounter() {
-    int oldCount = state.eventsThisMinute ?: 0
-    state.eventsThisMinute = 0
+    int oldCount = devCounter(EVENTS_THIS_MINUTE).getAndSet(0)
     state.lastMinuteReset = now()
     state.rateLimitWarningShown = false
 
@@ -237,8 +254,9 @@ void resetRateLimitCounter() {
         logDebug "Rate limit counter reset. Previous minute: ${oldCount} events"
     }
 
-    // Snapshot in-memory counter to state for visibility in device UI
-    state.totalLogsReceived = totalLogsReceived[device.id.toString()] ?: 0L
+    // Snapshot in-memory counters to state for visibility in device UI
+    state.totalLogsReceived = devCounter(LOGS_RECEIVED).get()
+    state.eventsMatched = devCounter(EVENTS_MATCHED).get()
 }
 
 // ============================================================================
@@ -254,7 +272,7 @@ void webSocketStatus(String message) {
         sendEvent(name: "connectionStatus", value: "error")
         logWarn "WebSocket error: ${message}"
 
-        if (autoReconnect && !atomicState.intentionalDisconnect) {
+        if (autoReconnect && !INTENTIONAL_DISCONNECT.get(device.id.toString())) {
             scheduleReconnect()
         }
     } else if (message.contains("status: open")) {
@@ -267,7 +285,7 @@ void webSocketStatus(String message) {
         state.wsConnected = false
         sendEvent(name: "connectionStatus", value: "disconnected")
 
-        if (autoReconnect && !atomicState.intentionalDisconnect) {
+        if (autoReconnect && !INTENTIONAL_DISCONNECT.get(device.id.toString())) {
             scheduleReconnect()
         }
     }
@@ -276,7 +294,7 @@ void webSocketStatus(String message) {
 void parse(String message) {
     checkVersion()
     String devId = device.id.toString()
-    totalLogsReceived[devId] = (totalLogsReceived[devId] ?: 0L) + 1
+    devCounter(LOGS_RECEIVED).incrementAndGet()
 
     try {
         Map logEntry = JSON_SLURPER.parseText(message)
@@ -425,53 +443,58 @@ boolean isDuplicate(Map logEntry) {
     long windowMs = (dedupeWindow ?: 5) * 1000
     String signature = "${logEntry.type}:${logEntry.level}:${logEntry.name}:${logEntry.msg}"
 
-    // Clean old entries
-    state.processedEvents = state.processedEvents?.findAll {
-        (ts - it.timestamp) < windowMs
-    } ?: []
+    ConcurrentHashMap<String, Long> seen = RECENT_EVENTS.computeIfAbsent(device.id.toString(),
+        { String k -> new ConcurrentHashMap<String, Long>() } as java.util.function.Function)
 
-    // Check if we've seen this recently
-    Map duplicate = state.processedEvents?.find { it.signature == signature }
-
-    if (!duplicate) {
-        // Add to processed list
-        state.processedEvents = state.processedEvents + [[
-            signature: signature,
-            timestamp: ts
-        ]]
-
-        // Trim to max size
-        int maxHistory = maxEventHistory ?: 100
-        if (state.processedEvents.size() > maxHistory) {
-            state.processedEvents = state.processedEvents.drop(
-                state.processedEvents.size() - maxHistory
-            )
-        }
+    // Atomic check-and-insert: of two concurrent identical messages, exactly one wins
+    // the putIfAbsent (or the replace of an expired entry) and the other is a duplicate.
+    Long prev = seen.putIfAbsent(signature, ts)
+    if (prev != null) {
+        if ((ts - prev) < windowMs) return true
+        if (!seen.replace(signature, prev, ts)) return true
     }
 
-    return duplicate != null
+    pruneRecentEvents(seen, ts, windowMs)
+    return false
+}
+
+// Drops expired entries, then the oldest ones beyond maxEventHistory. remove(key, value)
+// leaves an entry alone if another thread has refreshed it meanwhile.
+private void pruneRecentEvents(ConcurrentHashMap<String, Long> seen, long ts, long windowMs) {
+    seen.each { String sig, Long seenAt ->
+        if ((ts - seenAt) >= windowMs) seen.remove(sig, seenAt)
+    }
+    int maxHistory = maxEventHistory ?: 100
+    int excess = seen.size() - maxHistory
+    if (excess <= 0) return
+    (seen.entrySet() as List).sort { it.value }.take(excess).each { seen.remove(it.key, it.value) }
+}
+
+private AtomicInteger devCounter(ConcurrentHashMap<String, AtomicInteger> counters) {
+    return counters.computeIfAbsent(device.id.toString(),
+        { String k -> new AtomicInteger() } as java.util.function.Function)
 }
 
 void triggerLogEvent(Map logEntry) {
     // Check rate limiting
-    state.eventsThisMinute = (state.eventsThisMinute ?: 0) + 1
+    int eventsThisMinute = devCounter(EVENTS_THIS_MINUTE).incrementAndGet()
 
     // Warn at 80% of limit
     int warningThreshold = (maxEventsPerMinute * 0.8).toInteger()
-    if (state.eventsThisMinute == warningThreshold && !state.rateLimitWarningShown) {
-        logWarn "Approaching event rate limit: ${state.eventsThisMinute}/${maxEventsPerMinute} events this minute. Consider refining filters."
+    if (eventsThisMinute == warningThreshold && !state.rateLimitWarningShown) {
+        logWarn "Approaching event rate limit: ${eventsThisMinute}/${maxEventsPerMinute} events this minute. Consider refining filters."
         state.rateLimitWarningShown = true
     }
 
     // Enforce limit
-    if (state.eventsThisMinute > maxEventsPerMinute) {
+    if (eventsThisMinute > maxEventsPerMinute) {
         logWarn "Event rate limit exceeded (${maxEventsPerMinute}/min). Event suppressed: [${logEntry.type}/${logEntry.level}] ${logEntry.name}"
         return
     }
 
-    state.eventsMatched = (state.eventsMatched ?: 0) + 1
+    int eventsMatched = devCounter(EVENTS_MATCHED).incrementAndGet()
 
-    if (txtEnable) logInfo "Log event matched [${state.eventsMatched}]: [${logEntry.type}/${logEntry.level}] ${logEntry.name}: ${logEntry.msg}"
+    if (txtEnable) logInfo "Log event matched [${eventsMatched}]: [${logEntry.type}/${logEntry.level}] ${logEntry.name}: ${logEntry.msg}"
 
     // Send the main event
     sendEvent(
@@ -488,11 +511,14 @@ void triggerLogEvent(Map logEntry) {
 // ============================================================================
 
 void clearStats() {
+    String devId = device.id.toString()
+    devCounter(EVENTS_MATCHED).set(0)
+    devCounter(EVENTS_THIS_MINUTE).set(0)
+    devCounter(LOGS_RECEIVED).set(0)
+    RECENT_EVENTS.remove(devId)
     state.eventsMatched = 0
-    state.processedEvents = []
-    state.eventsThisMinute = 0
+    state.totalLogsReceived = 0
     state.rateLimitWarningShown = false
-    totalLogsReceived[device.id.toString()] = 0L
     logCmd "Statistics cleared"
 }
 
