@@ -21,6 +21,7 @@
  */
 
 import groovy.transform.Field
+import java.util.concurrent.ConcurrentHashMap
 
 metadata {
     definition(
@@ -70,12 +71,17 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.3.0"
+@Field static final String CODE_VERSION = "0.3.1"
 // A held low setpoint is dropped if the unit hasn't reported heat by then.
 @Field static final long HELD_SETPOINT_MS = 600_000L
 // A poll can land before a write reaches the cloud and still report the old value.
 // For this long after a write, a polled value that disagrees with it is ignored.
 @Field static final long WRITE_SETTLE_MS = 30_000L
+// Writes awaiting the poll that confirms them, per device: property -> [value, at]. Commands,
+// the parent's poll and write results touch it at the same time, and a driver's state is written
+// back whole, so it lives here and changes only through atomic map methods. A reboot or push
+// loses it, which is harmless once WRITE_SETTLE_MS has passed.
+@Field static final ConcurrentHashMap<String, ConcurrentHashMap<String, Map>> RECENT_WRITES = new ConcurrentHashMap<>()
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 
 @Field static final List<String> SUPPORTED_STD_MODES = ["\"off\"", "\"heat\"", "\"cool\"", "\"auto\""]
@@ -98,6 +104,7 @@ void initialize() {
     if (state.version != CODE_VERSION) {
         logVer "new version: ${CODE_VERSION} (was: ${state.version})"
         state.version = CODE_VERSION
+        state.remove("recentWrites")
     }
     sendEvent(name: "supportedThermostatModes",    value: SUPPORTED_STD_MODES)
     sendEvent(name: "supportedThermostatFanModes", value: SUPPORTED_STD_FAN_MODES)
@@ -281,24 +288,25 @@ private void pushSetpointToUnit(BigDecimal clamped) {
     // site, regardless of the optimisticUpdates preference.
 }
 
+private ConcurrentHashMap<String, Map> recentWrites() {
+    return RECENT_WRITES.computeIfAbsent(device.id.toString(), { String k -> new ConcurrentHashMap<String, Map>() } as java.util.function.Function)
+}
+
 private void writeToUnit(String property, Integer value) {
-    Map recent = (state.recentWrites ?: [:]) as Map
-    recent[property] = [value: value, at: now()]
-    state.recentWrites = recent
+    recentWrites().put(property, [value: value, at: now()])
     parent?.sendCommand(device.deviceNetworkId, property, value)
 }
 
 // The polled value, or null while it still disagrees with a recent write.
 private def settled(String property, Object polled) {
-    Map recent = (state.recentWrites ?: [:]) as Map
-    Map w = recent[property] as Map
+    Map w = recentWrites().get(property)
     if (w == null || polled == null) return polled
     if (now() - (w.at as long) < WRITE_SETTLE_MS && (polled as BigDecimal) != (w.value as BigDecimal)) {
         logRx "${property}: poll still reports ${polled}, ${w.value} was just written — ignored"
         return null
     }
-    recent.remove(property)
-    state.recentWrites = recent
+    // Only this entry: a newer write that landed meanwhile stays pending.
+    recentWrites().remove(property, w)
     return polled
 }
 
@@ -439,8 +447,7 @@ void updateHealth(String status, String reason = null) {
 void commandResult(String property, boolean ok) {
     if (!ok) {
         // The next poll reports the unit's real value.
-        Map recent = (state.recentWrites ?: [:]) as Map
-        if (recent.remove(property) != null) state.recentWrites = recent
+        recentWrites().remove(property)
     }
     String status = ok ? "ok" : "failed"
     sendEvent(name: "commandStatus", value: status,

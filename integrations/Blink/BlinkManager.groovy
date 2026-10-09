@@ -28,6 +28,9 @@ definition(
     menu: "Integrations",
     category: "Safety & Security",
     singleInstance: true,
+    // Poll and token callbacks rewrite cloudStreak and notificationFlags. Only the user-driven
+    // sign-in makes sync HTTP calls, so children wait on the parent only then.
+    singleThreaded: true,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/integrations/Blink/BlinkManager.groovy",
     iconUrl: "",
     iconX2Url: ""
@@ -35,7 +38,7 @@ definition(
 
 // --- Constants ---
 
-@Field static final String CODE_VERSION = "1.1.2"
+@Field static final String CODE_VERSION = "1.1.3"
 
 @Field static final String OAUTH_BASE_URL = "https://api.oauth.blink.com"
 @Field static final String CLIENT_ID = "ios"
@@ -894,9 +897,7 @@ private void syncChildren(List<Map> networks, List<Map> cameras, List<Map> syncM
     }
 
     // Orphan tracking (no auto-delete).
-    // atomicState because syncChildren runs inside the asynchttpGet callback chain
-    // (handleHomescreenResponse → processHomescreen → syncChildren) — plain state
-    // writes from async paths can silently vanish per ARCHITECTURE.md §"State tiers".
+    // One whole-value write; the app is singleThreaded, so plain state would also do.
     List<Map> orphans = []
     getChildDevices().each { ChildDeviceWrapper c ->
         if (!activeDnis.contains(c.deviceNetworkId)) {

@@ -21,12 +21,14 @@ definition(
     menu: "Integrations", // new in platform 2.5.0
     category: "Convenience",
     singleInstance: true,
+    // Polls, config fetches and child config saves all rewrite state.sensorConfigs; no handler blocks.
+    singleThreaded: true,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/integrations/visiblair/VisiblAirManager.groovy",
     iconUrl: "",
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "2.1.3"
+@Field static final String CODE_VERSION = "2.1.4"
 @Field static final String VISIBLAIR_API = "https://api.visiblair.com/api/v1"
 @Field static final int HTTP_TIMEOUT = 15
 @Field static final String DNI_PREFIX = "visiblair-"
