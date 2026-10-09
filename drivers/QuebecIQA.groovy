@@ -13,7 +13,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.2.1"
+@Field static final String CODE_VERSION = "0.2.2"
 @Field static final String RSQAQ_URL = "https://services3.arcgis.com/0lL78GhXbg1Po7WO/arcgis/rest/services/IQA_resultat_REST/FeatureServer/0/query"
 // CKAN datastore; GET ignores filters, so queries are POSTed
 @Field static final String MTL_DATASTORE_URL = "https://donnees.montreal.ca/api/3/action/datastore_search"
@@ -413,43 +413,70 @@ void findNearestStation() {
     }
     logInfo "Finding nearest IQA station to hub location (${hubLat}, ${hubLon})..."
 
-    // [id, name, lat, lon]
+    // Async because initialize() calls this on hub start and save, which must not block.
+    // The two lookups are chained so the second callback sees the first one's stations.
+    asynchttpGet("rsqaqStationsResponse",
+        [uri: RSQAQ_URL, query: [where: "1=1", outFields: "NO_STATION,NOM_STATION,LATITUDE,LONGITUDE,IQA", returnGeometry: "false", f: "json"],
+         timeout: HTTP_TIMEOUT],
+        [lat: hubLat.toString(), lon: hubLon.toString()])
+}
+
+// Station lists ride in the callback data as [id, name, lat, lon]
+void rsqaqStationsResponse(resp, Map data) {
     List<List> stations = []
-    try {
-        httpGet([uri: RSQAQ_URL, query: [where: "1=1", outFields: "NO_STATION,NOM_STATION,LATITUDE,LONGITUDE,IQA", returnGeometry: "false", f: "json"],
-                 textParser: true, timeout: HTTP_TIMEOUT]) { resp ->
-            Map json = parseJson(resp.data.text as String) as Map
+    if (resp.hasError()) {
+        logWarn "Error fetching RSQAQ stations: ${resp.getErrorMessage()}"
+    } else if (resp.getStatus() != 200) {
+        logWarn "Error fetching RSQAQ stations: HTTP ${resp.getStatus()}"
+    } else {
+        try {
+            Map json = parseJson(resp.getData() as String) as Map
             for (Map f : (json?.features as List ?: [])) {
                 Map a = f.attributes as Map
                 // Stations with no current IQA (all pollutants -99) are skipped
                 if (a?.LATITUDE == null || ((a.IQA ?: 0) as int) <= 0) continue
                 stations << [a.NO_STATION as String, a.NOM_STATION as String, a.LATITUDE as double, a.LONGITUDE as double]
             }
+        } catch (Exception e) {
+            logWarn "Error parsing RSQAQ stations: ${e.message}"
         }
-    } catch (Exception e) {
-        logWarn "Error fetching RSQAQ stations: ${e.message}"
     }
-    try {
-        httpPost([uri: MTL_DATASTORE_URL, requestContentType: "application/json", contentType: "application/json",
-                  body: [resource_id: MTL_STATIONS_RESOURCE, fields: ["stationId", "address", "latitude", "longitude"], distinct: true, limit: 100],
-                  timeout: HTTP_TIMEOUT]) { resp ->
+    asynchttpPost("montrealStationsResponse",
+        [uri: MTL_DATASTORE_URL, requestContentType: "application/json", contentType: "application/json",
+         body: [resource_id: MTL_STATIONS_RESOURCE, fields: ["stationId", "address", "latitude", "longitude"], distinct: true, limit: 100],
+         timeout: HTTP_TIMEOUT],
+        [lat: data.lat, lon: data.lon, stations: stations])
+}
+
+void montrealStationsResponse(resp, Map data) {
+    List<List> stations = ((data.stations ?: []) as List<List>).collect()
+    if (resp.hasError()) {
+        logWarn "Error fetching Montréal stations: ${resp.getErrorMessage()}"
+    } else if (resp.getStatus() != 200) {
+        logWarn "Error fetching Montréal stations: HTTP ${resp.getStatus()}"
+    } else {
+        try {
+            Map json = parseJson(resp.getData() as String) as Map
             Set<String> seen = [] as Set
-            for (Map r : ((resp.data?.result as Map)?.records as List<Map> ?: [])) {
+            for (Map r : ((json?.result as Map)?.records as List<Map> ?: [])) {
                 String id = normalizeMtlId((r.stationId ?: "") as String)
                 if (!r.latitude || !r.longitude || !seen.add(id)) continue
                 stations << ["${MTL_PREFIX}${id}" as String, "Montréal – ${r.address}" as String, r.latitude as double, r.longitude as double]
             }
+        } catch (Exception e) {
+            logWarn "Error parsing Montréal stations: ${e.message}"
         }
-    } catch (Exception e) {
-        logWarn "Error fetching Montréal stations: ${e.message}"
     }
+    selectNearestStation(stations, (data.lat as String) as double, (data.lon as String) as double)
+}
 
+private void selectNearestStation(List<List> stations, double hubLat, double hubLon) {
     if (stations.isEmpty()) {
         logWarn "No IQA stations found"
         return
     }
-    List nearest = stations.min { List s -> haversine(hubLat as double, hubLon as double, s[2] as double, s[3] as double) }
-    int km = Math.round(haversine(hubLat as double, hubLon as double, nearest[2] as double, nearest[3] as double)) as int
+    List nearest = stations.min { List s -> haversine(hubLat, hubLon, s[2] as double, s[3] as double) }
+    int km = Math.round(haversine(hubLat, hubLon, nearest[2] as double, nearest[3] as double)) as int
 
     state.autoStationId = nearest[0]
     state.autoStationName = nearest[1]

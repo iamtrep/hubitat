@@ -33,7 +33,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "0.3.2"
+@Field static final String CODE_VERSION = "0.3.3"
 
 // Region-specific Ayla endpoints + app credentials, lifted from
 // ayla-iot-unofficial/src/ayla_iot_unofficial/const.py and fujitsu_consts.py.
@@ -211,10 +211,7 @@ void updated() {
 void uninstalled() { logDebug "uninstalled" }
 void initialize()  {
     logDebug "initialize"
-    if (state.version != CODE_VERSION) {
-        logVer "new version: ${CODE_VERSION} (was: ${state.version})"
-        state.version = CODE_VERSION
-    }
+    checkVersion(false)
     migrateSensedSetting()
     encryptStoredSecrets()
     // 0.3.0 keeps failure streaks with their start and reminder times.
@@ -227,6 +224,15 @@ void initialize()  {
         schedulePolling()
     }
     subscribe(location, "systemStart", "systemStartHandler")
+}
+
+// A code push doesn't run updated(); entry points call this so the first one after a
+// push converges as if Done were pressed.
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "new version: ${CODE_VERSION} (was: ${state.version})"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
 }
 
 // v0.2.0 replaced "wake every N polls" with a wake interval in minutes.
@@ -250,6 +256,7 @@ private String sensedMinutes() {
 }
 
 void systemStartHandler(evt) {
+    checkVersion()
     logInfo "systemStart — re-asserting schedules"
     if (isAuthenticated()) {
         scheduleTokenRefresh()
@@ -270,6 +277,7 @@ private void scheduleTokenRefresh() {
 
 void appButtonHandler(String btn) {
     logDebug "appButtonHandler(${btn})"
+    checkVersion()
     switch (btn) {
         case "btnLogin":            signIn(); break
         case "btnRefreshNow":       fetchDevices(); break
@@ -428,9 +436,9 @@ void pollTick() {
         int jitter = -7 + new Random().nextInt(15)
         runIn(Math.max(15, rate + jitter), "pollTick")
     }
-    // A code push doesn't run updated(); converge here on the first poll after one.
+    // Skip this poll after a push; updated() re-arms polling.
     if (state.version != CODE_VERSION) {
-        updated()
+        checkVersion()
         return
     }
     if (now() < ((state.cloudPausedUntil ?: 0L) as long)) {
@@ -554,27 +562,24 @@ void signInCallback(resp, data) {
     requestDone()
     atomicState.remove("authStartedAt")
     boolean manual = data?.manual as Boolean
-    int status = resp.getStatus()
-    if (isTransientStatus(status)) {
-        // Network failure or cloud outage: keep the tokens; the next poll tries again.
-        noteRetryAfter(resp)
-        if (manual) {
-            logError "signIn ${httpError(resp)}"
-            state.authError = "Sign-in failed: ${httpError(resp)}"
+    if (resp.hasError()) {
+        int status = resp.getStatus()
+        if (isTransientStatus(status)) {
+            // Network failure or cloud outage: keep the tokens; the next poll tries again.
+            noteRetryAfter(resp)
+            if (manual) {
+                logError "signIn ${httpError(resp)}"
+                state.authError = "Sign-in failed: ${httpError(resp)}"
+            } else {
+                noteTransientFailure "re-sign-in ${httpError(resp)}"
+            }
         } else {
-            noteTransientFailure "re-sign-in ${httpError(resp)}"
+            signInRejected(resp, status, manual)
         }
         return
     }
-    if (status != 200) {
-        String msg = "Sign-in failed (HTTP ${status}). Check email/password and region."
-        if (status in [400, 401, 403]) state.remove("passwordEnc")
-        if (manual) {
-            logError "signIn ${httpError(resp)}"
-            state.authError = msg
-        } else {
-            haltAuth(msg)
-        }
+    if (resp.getStatus() != 200) {
+        signInRejected(resp, resp.getStatus(), manual)
         return
     }
     Map parsed = parseTokens(resp, "signIn")
@@ -587,6 +592,17 @@ void signInCallback(resp, data) {
     logInfo "FGLair sign-in successful"
     if (manual) schedulePolling()
     afterAuth()
+}
+
+private void signInRejected(resp, int status, boolean manual) {
+    String msg = "Sign-in failed (HTTP ${status}). Check email/password and region."
+    if (status in [400, 401, 403]) state.remove("passwordEnc")
+    if (manual) {
+        logError "signIn ${httpError(resp)}"
+        state.authError = msg
+    } else {
+        haltAuth(msg)
+    }
 }
 
 // Null when the body isn't JSON or has no access token.
@@ -640,14 +656,14 @@ void refreshToken() {
 
 void refreshTokenCallback(resp, data) {
     requestDone()
-    int status = resp.getStatus()
-    if (isTransientStatus(status)) {
+    if (resp.hasError() && isTransientStatus(resp.getStatus())) {
         atomicState.remove("authStartedAt")
         noteRetryAfter(resp)
         noteTransientFailure "refreshToken ${httpError(resp)}"
         return
     }
-    if (status != 200) {
+    // A rejected refresh token, or an unexpected 2xx.
+    if (resp.hasError() || resp.getStatus() != 200) {
         logWarn "refreshToken ${httpError(resp)} — falling back to re-sign-in"
         atomicState.authStartedAt = now()
         postSignIn(false)
@@ -730,6 +746,7 @@ private Map authHeader() { return ["Authorization": "auth_token ${accessToken()}
 
 void fetchDevices() {
     logNet "fetchDevices"
+    checkVersion()
     if (!isAuthenticated()) { logNet "fetchDevices: not signed in"; return }
     // Wait for the running poll instead of stacking a second one on top of it.
     if (pollInFlight() || !hasRequestRoom(1)) {
@@ -792,15 +809,20 @@ void fetchDevicesCallback(resp, data) {
 }
 
 private void handleDevicesResponse(resp) {
-    int status = resp.getStatus()
-    if (status == 401) {
-        noteAuthReject("fetchDevices")
-        return
-    }
-    if (status != 200) {
+    if (resp.hasError()) {
+        int status = resp.getStatus()
+        if (status == 401) {
+            noteAuthReject("fetchDevices")
+            return
+        }
         noteRetryAfter(resp)
         noteTransientFailure "fetchDevices ${httpError(resp)}"
         if (!isTransientStatus(status)) logNet "fetchDevices response: ${bodyExcerpt(resp)}"
+        return
+    }
+    if (resp.getStatus() != 200) {
+        noteTransientFailure "fetchDevices ${httpError(resp)}"
+        logNet "fetchDevices response: ${bodyExcerpt(resp)}"
         return
     }
     List parsed
@@ -938,13 +960,12 @@ void fetchPropertiesCallback(resp, data) {
 }
 
 private void handlePropertiesResponse(resp, String dsn) {
-    int status = resp.getStatus()
-    if (status == 401) {
+    if (resp.hasError() && resp.getStatus() == 401) {
         POLL.remove("queue")  // the rest would fail on the same token
         noteAuthReject("fetchProperties(${dsn})")
         return
     }
-    if (status != 200) {
+    if (resp.hasError() || resp.getStatus() != 200) {
         noteRetryAfter(resp)
         noteUnitFailure(dsn, "fetchProperties(${dsn}) ${httpError(resp)}")
         return
@@ -994,6 +1015,7 @@ private void handlePropertiesResponse(resp, String dsn) {
 // then read once they have reported. Wakes are rate-limited per unit; within
 // the limit this is a plain read.
 void refreshUnit(String dni) {
+    checkVersion()
     String dsn = dsnFromDni(dni)
     if (!dsn) return
     if (sinceLastWake(dni) >= MANUAL_WAKE_MIN_MS && wakeUnit(dni)) {
@@ -1009,6 +1031,7 @@ void fetchPropertiesDeferred(Map data) { fetchProperties((String) data.dsn) }
 // --- Write commands ---
 
 void sendCommand(String dni, String propertyName, def value) {
+    checkVersion()
     sendWrite(dni, propertyName, value, true)
 }
 
@@ -1095,8 +1118,7 @@ void writeDatapointCallback(resp, data) {
     requestDone()
     Map w = (data ?: [:]) as Map
     String name = w.name
-    int status = resp.getStatus()
-    if (status == 401) {
+    if (resp.hasError() && resp.getStatus() == 401) {
         if (w.retried) {
             logError "writeDatapoint(${name}) HTTP 401 after token refresh — dropped"
             reportWrite(w, false)
@@ -1106,7 +1128,8 @@ void writeDatapointCallback(resp, data) {
         noteAuthReject("writeDatapoint(${name})")
         return
     }
-    if (status != 200 && status != 201) {
+    int status = resp.getStatus()
+    if (resp.hasError() || (status != 200 && status != 201)) {
         if (isTransientStatus(status)) {
             logWarn "writeDatapoint(${name}) ${httpError(resp)}"
         } else {
@@ -1182,8 +1205,9 @@ void disconnect() {
     markUnitsOffline("disconnected from FGLair")
 }
 
-// hasError() is true for every non-2xx status, so callbacks branch on getStatus().
-// Timeouts and connection failures carry no real HTTP status (408, or below 100).
+// hasError() is true for every non-2xx status, so callbacks check it first and then read
+// getStatus() to tell an outage from a rejection. Timeouts and connection failures carry
+// no real HTTP status (408, or below 100).
 private boolean isTransientStatus(int status) {
     return status < 100 || status == 408 || status == 429 || status >= 500
 }

@@ -11,7 +11,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.2.0"
+@Field static final String CODE_VERSION = "0.2.1"
 
 metadata {
     definition(
@@ -147,21 +147,21 @@ void updateSensorData(Map data) {
                     String temp = convertTemperatureIfNeeded(rawTemp, "c", 1)
                     String unit = "\u00B0${location.temperatureScale}"
                     sendEvent(name: "temperature", value: temp, unit: unit, descriptionText: "Temperature is ${temp}${unit}")
-                    if (txtEnable) logInfo "Temperature is ${temp}${unit}"
+                    logInfo "Temperature is ${temp}${unit}"
                 }
                 break
             case "lastSampleHumidity":
                 Number humidity = unwrapNumeric(value)
                 if (humidity != null) {
                     sendEvent(name: "humidity", value: humidity, unit: "%", descriptionText: "Humidity is ${humidity}%")
-                    if (txtEnable) logInfo "Humidity is ${humidity}%"
+                    logInfo "Humidity is ${humidity}%"
                 }
                 break
             case "lastSamplePressure":
                 Number pressure = unwrapNumeric(value)
                 if (pressure != null) {
                     sendEvent(name: "pressure", value: pressure, unit: "mBar", descriptionText: "Pressure is ${pressure} mBar")
-                    if (txtEnable) logInfo "Pressure is ${pressure} mBar"
+                    logInfo "Pressure is ${pressure} mBar"
                 }
                 break
             case "lastSamplePm10":

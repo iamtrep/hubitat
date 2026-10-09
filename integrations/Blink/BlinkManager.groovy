@@ -38,7 +38,7 @@ definition(
 
 // --- Constants ---
 
-@Field static final String CODE_VERSION = "1.1.3"
+@Field static final String CODE_VERSION = "1.1.4"
 
 @Field static final String OAUTH_BASE_URL = "https://api.oauth.blink.com"
 @Field static final String CLIENT_ID = "ios"
@@ -268,10 +268,7 @@ void uninstalled() {
 
 void initialize() {
     logDebug "initialize"
-    if (state.version != CODE_VERSION) {
-        logVer "version change: ${state.version} -> ${CODE_VERSION}"
-        state.version = CODE_VERSION
-    }
+    checkVersion(false)
     // 1.1.1 and earlier stored the tokens in plain text.
     if (state.accessToken) storeToken("accessToken", state.accessToken as String)
     if (state.refreshToken) storeToken("refreshToken", state.refreshToken as String)
@@ -290,7 +287,17 @@ void initialize() {
     runIn(2, "pollHomescreen")
 }
 
+// A code push doesn't run updated(); entry points call this so the first one after a
+// push converges as if Done were pressed.
+private void checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return
+    logVer "version change: ${state.version} -> ${CODE_VERSION}"
+    state.version = CODE_VERSION
+    if (reinit) runIn(1, "updated")
+}
+
 void systemStartHandler(evt) {
+    checkVersion()
     logInfo "systemStart: re-evaluating tokens + polling"
     if (!isAuthenticated()) return
     if (state.tokenExpiry && now() >= ((long) state.tokenExpiry)) {
@@ -329,6 +336,7 @@ void turnOffDebugLogging() {
 // --- Button Handler ---
 
 void appButtonHandler(String btn) {
+    checkVersion()
     logDebug "appButtonHandler: ${btn}"
     switch (btn) {
         case "btnLogin":          startOAuthFlow(); break
@@ -611,6 +619,7 @@ void exchangeCodeForTokens(String code) {
 }
 
 void refreshAccessToken() {
+    checkVersion()
     logNet "refreshing access token"
     if (!hasToken("refreshToken")) {
         logError "no refresh token available"
@@ -646,6 +655,7 @@ void refreshAccessToken() {
 }
 
 void refreshTokenResponse(resp, data) {
+    checkVersion()
     atomicState.remove("tokenRefreshSentAt")
     if (resp.hasError()) {
         int status = resp.getStatus()
@@ -712,6 +722,7 @@ void fetchTierInfo(boolean thenPoll = false, boolean thenFlags = false) {
 }
 
 void tierInfoResponse(resp, data) {
+    checkVersion()
     if (resp.hasError()) {
         logWarn "tier_info failed: HTTP ${resp.getStatus()} ${resp.getErrorMessage()}"
     } else if (resp.getStatus() != 200) {
@@ -734,6 +745,7 @@ void tierInfoResponse(resp, data) {
 // --- Polling & Discovery ---
 
 void pollHomescreen() {
+    checkVersion()
     if (!isAuthenticated()) {
         logSched "pollHomescreen: not authenticated"
         return
@@ -760,6 +772,7 @@ void pollHomescreen() {
 
 // hasError() is true for every non-2xx status, so the 401 check comes first.
 void handleHomescreenResponse(resp, data) {
+    checkVersion()
     try {
         int status = resp.getStatus()
         if (status == 401) {
@@ -1086,18 +1099,21 @@ private void updateHomescreenSummary(List<Map> networks, List<Map> cameras, List
 @Field static final int CMD_RETRY_CAMERA  = 30  // 30 × 2s = 60s
 
 void arm(String networkId) {
+    checkVersion()
     logCmd "arming network ${networkId}"
     String path = "/api/v1/accounts/${state.accountId}/networks/${networkId}/state/arm"
     blinkPostAsync(path, "commandPostResponse", [label: "arm ${networkId}", maxAttempts: CMD_RETRY_NETWORK])
 }
 
 void disarm(String networkId) {
+    checkVersion()
     logCmd "disarming network ${networkId}"
     String path = "/api/v1/accounts/${state.accountId}/networks/${networkId}/state/disarm"
     blinkPostAsync(path, "commandPostResponse", [label: "disarm ${networkId}", maxAttempts: CMD_RETRY_NETWORK])
 }
 
 void enableMotion(String cameraId) {
+    checkVersion()
     Map cc = cameraContext(cameraId)
     if (!cc) { logWarn "enableMotion: unknown camera ${cameraId}"; return }
     if (cc.type != "camera") {
@@ -1109,6 +1125,7 @@ void enableMotion(String cameraId) {
 }
 
 void disableMotion(String cameraId) {
+    checkVersion()
     Map cc = cameraContext(cameraId)
     if (!cc) { logWarn "disableMotion: unknown camera ${cameraId}"; return }
     if (cc.type != "camera") {
@@ -1120,6 +1137,7 @@ void disableMotion(String cameraId) {
 }
 
 void snapThumbnail(String cameraId) {
+    checkVersion()
     Map cc = cameraContext(cameraId)
     if (!cc) { logWarn "snapThumbnail: unknown camera ${cameraId}"; return }
     if (cc.type != "camera") {
@@ -1131,6 +1149,7 @@ void snapThumbnail(String cameraId) {
 }
 
 void recordClip(String cameraId) {
+    checkVersion()
     Map cc = cameraContext(cameraId)
     if (!cc) { logWarn "recordClip: unknown camera ${cameraId}"; return }
     if (cc.type != "camera") {
@@ -1144,6 +1163,7 @@ void recordClip(String cameraId) {
 // --- Command verification (blinkpy wait_for_command pattern) ---
 
 void commandPostResponse(resp, data) {
+    checkVersion()
     String label = data?.label ?: "command"
     try {
         if (resp.hasError()) {
@@ -1184,6 +1204,7 @@ private void pollCommandStatus(Map ctx) {
 }
 
 void commandStatusResponse(resp, data) {
+    checkVersion()
     Map ctx = data as Map
     int attempt = ((ctx.attempt ?: 0) as Number).intValue() + 1
     String label = (ctx.label ?: "command") as String
@@ -1228,15 +1249,18 @@ void commandStatusResponse(resp, data) {
 }
 
 void pollCommandStatusDeferred(Map data) {
+    checkVersion()
     pollCommandStatus(data)
 }
 
 void refreshNetwork(String networkId) {
+    checkVersion()
     logDebug "refresh requested by network ${networkId}, triggering poll"
     pollHomescreen()
 }
 
 void refreshCamera(String cameraId) {
+    checkVersion()
     Map cc = cameraContext(cameraId)
     if (!cc) { pollHomescreen(); return }
     logDebug "refresh requested by camera ${cameraId}, fetching /signals + homescreen"
@@ -1256,6 +1280,7 @@ private void fetchCameraSignals(String cameraId, String networkId) {
 }
 
 void cameraSignalsResponse(resp, data) {
+    checkVersion()
     try {
         if (resp.hasError()) {
             logWarn "signals ${data?.cameraId}: ${resp.getErrorMessage()}${describeHttpBody(resp)}"
@@ -1309,6 +1334,7 @@ private void fetchRecentClips() {
 }
 
 void recentClipsResponse(resp, data) {
+    checkVersion()
     long fetchedAt = (now() / 1000L) as long
     List<Map> media = []
     Map<String, Map> latestByName = [:]
@@ -1405,6 +1431,7 @@ void recentClipsResponse(resp, data) {
 // diff settings against atomicState and POST changed flags.
 
 void fetchNotificationFlags() {
+    checkVersion()
     if (!isAuthenticated() || !state.accountId || !state.tier) return
     String url = "https://rest-${state.tier}.immedia-semi.com/api/v1/accounts/${state.accountId}/notifications/configuration"
     logNet "fetching notification flags"
@@ -1417,6 +1444,7 @@ void fetchNotificationFlags() {
 }
 
 void notificationFlagsResponse(resp, data) {
+    checkVersion()
     try {
         if (resp.hasError()) {
             logWarn "notification flags: ${resp.getErrorMessage()}${describeHttpBody(resp)}"
@@ -1486,6 +1514,7 @@ private void setNotificationFlags(Map changes) {
 }
 
 void notificationUpdateResponse(resp, data) {
+    checkVersion()
     try {
         if (resp.hasError()) {
             logError "notification update: ${resp.getErrorMessage()}${describeHttpBody(resp)}"

@@ -11,7 +11,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.2.0"
+@Field static final String CODE_VERSION = "0.2.1"
 
 metadata {
     definition(
@@ -139,7 +139,7 @@ void updateSensorData(Map data) {
                 Number speed = unwrapNumeric(value)
                 if (speed != null) {
                     sendEvent(name: "windSpeed", value: speed, unit: "km/h", descriptionText: "Wind speed is ${speed} km/h")
-                    if (txtEnable) logInfo "Wind speed is ${speed} km/h"
+                    logInfo "Wind speed is ${speed} km/h"
                 }
                 break
             case "lastSampleWindDirection":
@@ -148,7 +148,7 @@ void updateSensorData(Map data) {
                     String compass = degreesToCompass(degrees as double)
                     sendEvent(name: "windDirection", value: degrees, unit: "\u00B0", descriptionText: "Wind direction is ${degrees}\u00B0 (${compass})")
                     sendEvent(name: "windDirectionName", value: compass)
-                    if (txtEnable) logInfo "Wind direction is ${degrees}\u00B0 (${compass})"
+                    logInfo "Wind direction is ${degrees}\u00B0 (${compass})"
                 }
                 break
             // --- Timestamps ---

@@ -25,6 +25,9 @@ metadata {
         namespace: "iamtrep",
         author: "pj",
         description: "Advanced Ecobee thermostat control via OAuth API",
+        // A command and the scheduled poll can both refresh the OAuth token with the same
+        // refresh token; Ecobee rotates it, so the loser's write would store a dead token.
+        singleThreaded: true,
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/EcobeeCompanion.groovy"
     ) {
         capability "Actuator"
@@ -97,7 +100,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.1.2"
+@Field static final String CODE_VERSION = "0.1.3"
 
 // OAuth and API endpoints
 @Field static final String ECOBEE_API_BASE= "https://api.ecobee.com"
@@ -149,13 +152,13 @@ metadata {
 // ========================================
 
 void installed() {
-    checkVersion()
+    checkVersion(false)
     sendEvent(name: "connectionStatus", value: "disconnected", descriptionText: "${device.displayName} is disconnected")
     configure()
 }
 
 void updated() {
-    checkVersion()
+    checkVersion(false)
     unschedule()
     if (debugEnable || traceEnable) runIn(DEBUG_LOG_TIMEOUT_SECONDS, "logsOff")
     schedulePolling()
@@ -176,10 +179,12 @@ void refresh() {
     pollState()
 }
 
-private void checkVersion() {
+// A push doesn't run updated(); re-run it so the poll schedule matches the new code.
+private void checkVersion(boolean reinit = true) {
     if (state.version != CODE_VERSION) {
         logVer "New version: ${CODE_VERSION} (was: ${state.version})"
         state.version = CODE_VERSION
+        if (reinit) runIn(1, "updated")
     }
     // 0.1.1 and earlier stored the tokens in plain text.
     if (state.accessToken || state.refreshToken) storeTokens(state.accessToken as String, state.refreshToken as String)
@@ -244,7 +249,7 @@ void connect() {
             state.ecobeeAuthToken = data.code
             state.pinExpires = now() + (data.expires_in * 1000)
 
-            if (txtEnable) logInfo "PIN: ${data.ecobeePin} (expires in ${data.expires_in / 60} min)"
+            logInfo "PIN: ${data.ecobeePin} (expires in ${data.expires_in / 60} min)"
             logInfo "Authorize at ecobee.com, then run authorize() to complete setup"
 
             sendEvent(name: "connectionStatus", value: "pending", descriptionText: "${device.displayName} Waiting for PIN authorization: ${data.ecobeePin}")
@@ -332,6 +337,7 @@ void authorize() {
 
 // quiet: the scheduled poll counts a transient failure itself, so it is not logged here.
 Boolean refreshToken(boolean quiet = false) {
+    checkVersion()
     String refresh = token("refreshToken")
     if (!refresh) {
         state.lastTokenError = "not authorized"
@@ -415,20 +421,20 @@ List<Map> listThermostats() {
     }
 
     List<Map> thermostats = data.thermostatList
-    if (txtEnable) logInfo "Found ${thermostats.size()} thermostat(s)"
+    logInfo "Found ${thermostats.size()} thermostat(s)"
 
     Map<String, Map> discovered = [:]
     thermostats.each { Map t ->
         String id = t.identifier?.toString()
         discovered[id] = [name: t.name?.toString(), model: t.modelNumber?.toString()]
-        if (txtEnable) logInfo "  ${t.name} (${t.modelNumber}) — ID: ${id}"
+        logInfo "  ${t.name} (${t.modelNumber}) — ID: ${id}"
     }
     state.thermostats = discovered
 
     if (thermostats.size() == 1) {
         String onlyId = thermostats[0].identifier?.toString()
         device.updateSetting("thermostatId", [type: "enum", value: onlyId])
-        if (txtEnable) logInfo "Auto-selected the only thermostat: ${discovered[onlyId].name}"
+        logInfo "Auto-selected the only thermostat: ${discovered[onlyId].name}"
     }
 
     return thermostats
@@ -439,11 +445,11 @@ List<Map> listComfortSettings() {
     if (!thermostat) return []
 
     List<Map> climates = thermostat.program.climates
-    if (txtEnable) logInfo "Found ${climates.size()} comfort setting(s)"
+    logInfo "Found ${climates.size()} comfort setting(s)"
     climates.each { Map c ->
         BigDecimal heatC = ecobeeToCelsius(c.heatTemp)
         BigDecimal coolC = ecobeeToCelsius(c.coolTemp)
-        if (txtEnable) logInfo "  ${c.name}: Heat ${heatC}°C, Cool ${coolC}°C (${c.climateRef})"
+        logInfo "  ${c.name}: Heat ${heatC}°C, Cool ${coolC}°C (${c.climateRef})"
     }
 
     return climates
@@ -456,6 +462,7 @@ List<Map> listComfortSettings() {
 // err: when given (the scheduled poll), failures are recorded in err.msg for the
 // caller's failure count. Otherwise (user commands) they are logged here.
 private Map callEcobeeApi(String method, String path, Map queryParams = null, Map bodyData = null, int attempt = 0, Map err = null) {
+    checkVersion()
     boolean quiet = err != null
     if (!checkAndRefreshToken(quiet)) {
         if (quiet) err.msg = "token refresh failed: ${state.lastTokenError}"
@@ -596,11 +603,11 @@ List<Map> listVacations() {
         return []
     }
 
-    if (txtEnable) logInfo "Found ${vacations.size()} vacation(s)"
+    logInfo "Found ${vacations.size()} vacation(s)"
     vacations.each { Map v ->
         BigDecimal heatC = ecobeeToCelsius(v.heatHoldTemp)
         BigDecimal coolC = ecobeeToCelsius(v.coolHoldTemp)
-        if (txtEnable) logInfo "  ${v.name}: ${v.startDate} ${v.startTime} to ${v.endDate} ${v.endTime}, Heat ${heatC}°C, Cool ${coolC}°C, Fan ${v.fan}"
+        logInfo "  ${v.name}: ${v.startDate} ${v.startTime} to ${v.endDate} ${v.endTime}, Heat ${heatC}°C, Cool ${coolC}°C, Fan ${v.fan}"
     }
 
     return vacations
@@ -707,7 +714,7 @@ List<Map> listThermostatSchedule(String day) {
 
     Map<String, String> climates = thermostat.program.climates.collectEntries { [(it.climateRef): it.name] }
 
-    if (txtEnable) logInfo "Schedule for ${day}"
+    logInfo "Schedule for ${day}"
     List<Map> transitions = []
     String lastClimate = null
     for (int i = 0; i < scheduleBlocks.size(); i++) {
@@ -717,7 +724,7 @@ List<Map> listThermostatSchedule(String day) {
             Integer minutes = (i % 2) * 30
             String timeStr = String.format("%02d:%02d", hours, minutes)
             String climateName = climates[climate] ?: climate
-            if (txtEnable) logInfo "  ${timeStr}: ${climateName}"
+            logInfo "  ${timeStr}: ${climateName}"
 
             transitions << [
                 time: timeStr,
@@ -754,7 +761,7 @@ void setThermostatScheduleTime(String day, String comfortName, String currentTim
     }
 
     if (currentBlock == newBlock) {
-        if (txtEnable) logInfo "Time is already ${currentTime}, no change needed"
+        logInfo "Time is already ${currentTime}, no change needed"
         return
     }
 
@@ -892,7 +899,7 @@ private void pollState() {
     }
 
     // Concise log summary
-    if (txtEnable) logInfo "State: ${tempC}°C, ${runtime.actualHumidity}%, Heat ${heatC}°C, Cool ${coolC}°C, ${operatingState}, ${activeHold ? 'Hold active' : 'No hold'}"
+    logInfo "State: ${tempC}°C, ${runtime.actualHumidity}%, Heat ${heatC}°C, Cool ${coolC}°C, ${operatingState}, ${activeHold ? 'Hold active' : 'No hold'}"
 
     state.lastUpdate = new Date().format("yyyy-MM-dd HH:mm:ss")
 }
@@ -1040,13 +1047,13 @@ void getWeatherForecast() {
         return
     }
 
-    if (txtEnable) logInfo "Weather: ${weather.weatherStation}"
+    logInfo "Weather: ${weather.weatherStation}"
     weather.forecasts.take(5).eachWithIndex { forecast, index ->
         String day = index == 0 ? "Today" : "Day ${index}"
         BigDecimal high = ecobeeToCelsius(forecast.tempHigh)
         BigDecimal low = ecobeeToCelsius(forecast.tempLow)
         String precip = forecast.pop > 0 ? ", ${forecast.pop}% precip" : ""
-        if (txtEnable) logInfo "  ${day}: ${forecast.condition}, ${high}°C/${low}°C, ${forecast.relativeHumidity}%${precip}"
+        logInfo "  ${day}: ${forecast.condition}, ${high}°C/${low}°C, ${forecast.relativeHumidity}%${precip}"
     }
 }
 
@@ -1061,7 +1068,7 @@ List<Map> listSensors() {
         return []
     }
 
-    if (txtEnable) logInfo "Found ${sensors.size()} sensor(s)"
+    logInfo "Found ${sensors.size()} sensor(s)"
     sensors.each { Map sensor ->
         List<String> readings = []
         sensor.capability.each { Map cap ->
@@ -1078,7 +1085,7 @@ List<Map> listSensors() {
                 readings << "${cap.value}% RH"
             }
         }
-        if (txtEnable) logInfo "  ${sensor.name} (${sensor.type}): ${readings.join(', ')}"
+        logInfo "  ${sensor.name} (${sensor.type}): ${readings.join(', ')}"
     }
 
     return sensors

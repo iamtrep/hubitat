@@ -44,7 +44,7 @@ metadata {
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.5"
+@Field static final String CODE_VERSION = "0.1.6"
 @Field static final String constCO2ClickURL = 'https://environment-monitor-01.co2.click:11000/api/v1'
 @Field static final String constVisiblairURL = 'https://api.visiblair.com:11000/api/v1'
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
@@ -81,7 +81,7 @@ void turnOffDebugLogging() {
 
 private void updateDeviceAttribute(String aKey, aValue, String aUnit = "", String aDescription = "") {
     sendEvent(name: aKey, value: aValue, unit: aUnit, descriptionText: aDescription)
-    if (txtEnable && aDescription != "") logInfo(aDescription)
+    if (aDescription != "") logInfo(aDescription)
 }
 
 // driver methods
@@ -97,10 +97,7 @@ void uninstalled() {
 }
 
 void initialize() {
-    if (state.version != CODE_VERSION) {
-        logVer "New driver version detected: ${CODE_VERSION} (previous: ${state.version})"
-        state.version = CODE_VERSION
-    }
+    checkVersion()
     updateDeviceAttribute("battery", 100, "%")
     updated()
 }
@@ -127,7 +124,15 @@ void poll() {
     refresh()
 }
 
+// Records only: refresh() re-arms its own schedule, so a push leaves nothing to reconfigure.
+private void checkVersion() {
+    if (state.version == CODE_VERSION) return
+    logVer "New driver version detected: ${CODE_VERSION} (previous: ${state.version})"
+    state.version = CODE_VERSION
+}
+
 void refresh() {
+    checkVersion()
     if (!uuid || !token) {
         logWarn "Sensor UUID and Access Token must be configured before polling"
         return

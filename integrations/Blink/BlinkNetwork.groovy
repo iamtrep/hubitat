@@ -10,7 +10,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.2.0"
+@Field static final String CODE_VERSION = "0.2.1"
 
 metadata {
     definition(
@@ -107,7 +107,7 @@ void handleNetworkUpdate(Map data) {
         boolean armed = data.armed as boolean
         String value = armed ? "on" : "off"
         sendEvent(name: "switch", value: value, descriptionText: "Network is ${armed ? 'armed' : 'disarmed'}")
-        if (txtEnable) logInfo "${armed ? 'armed' : 'disarmed'}"
+        logInfo "${armed ? 'armed' : 'disarmed'}"
     }
     if (data.containsKey("online")) {
         sendEvent(name: "online", value: data.online?.toString() ?: "unknown")

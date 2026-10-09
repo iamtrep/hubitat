@@ -28,7 +28,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "2.1.4"
+@Field static final String CODE_VERSION = "2.1.5"
 @Field static final String VISIBLAIR_API = "https://api.visiblair.com/api/v1"
 @Field static final int HTTP_TIMEOUT = 15
 @Field static final String DNI_PREFIX = "visiblair-"
@@ -245,20 +245,23 @@ void handlePollResponse(resp, data) {
         pollFailed("sensors: ${resp.getErrorMessage()}")
         return
     }
+    int status = resp.getStatus()
+    if (status != 200 && status != 207) {
+        pollFailed("sensors: HTTP ${status}")
+        return
+    }
+    def json
     try {
-        handlePollData(resp.getStatus(), resp.json)
+        json = resp.json
     } catch (Exception e) {
         pollFailed("sensors: ${e.message}")
+        return
     }
+    handlePollData(json)
 }
 
-private void handlePollData(int status, data) {
+private void handlePollData(data) {
     try {
-        if (status != 200 && status != 207) {
-            pollFailed("sensors: HTTP ${status}")
-            return
-        }
-
         if (!data) {
             pollFailed("sensors: empty response")
             return

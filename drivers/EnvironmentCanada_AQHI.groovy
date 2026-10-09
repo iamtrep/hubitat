@@ -14,7 +14,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.5.2"
+@Field static final String CODE_VERSION = "0.5.3"
 @Field static final String API_BASE = "https://api.weather.gc.ca/collections"
 @Field static final String ALERT_API_BASE = "https://weather.gc.ca/api/app/v3"
 @Field static final int HTTP_TIMEOUT = 15
@@ -765,22 +765,27 @@ void findNearestStation() {
         timeout: HTTP_TIMEOUT
     ]
 
+    // Async: initialize() calls this on hub start and save, which must not block.
+    asynchttpGet("stationsResponse", params, [lat: hubLat.toString(), lon: hubLon.toString()])
+}
+
+void stationsResponse(resp, Map data) {
+    if (resp.hasError()) {
+        logWarn "Error fetching stations: ${resp.getErrorMessage()}"
+        return
+    }
+    if (resp.getStatus() != 200) {
+        logWarn "Stations API returned status ${resp.getStatus()}"
+        return
+    }
     try {
-        httpGet(params) { resp ->
-            parseStationsResponse(resp, hubLat, hubLon)
-        }
+        parseStationsResponse(resp.json as Map, new BigDecimal(data.lat as String), new BigDecimal(data.lon as String))
     } catch (Exception e) {
-        logWarn "Error fetching stations: ${e.message}"
+        logWarn "Error parsing stations: ${e.message}"
     }
 }
 
-void parseStationsResponse(resp, BigDecimal hubLat, BigDecimal hubLon) {
-    if (resp.status != 200) {
-        logWarn "Stations API returned status ${resp.status}"
-        return
-    }
-
-    Map data = resp.data as Map
+private void parseStationsResponse(Map data, BigDecimal hubLat, BigDecimal hubLon) {
     List features = data?.features as List
     if (!features || features.isEmpty()) {
         logWarn "No AQHI stations found"

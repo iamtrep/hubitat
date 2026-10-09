@@ -55,7 +55,7 @@ import hubitat.helper.NetworkUtils
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.1.2"
+@Field static final String CODE_VERSION = "0.1.3"
 @Field static final int RESPONSE_HISTORY_SIZE = 21
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int INITIAL_PING_DELAY = 2
@@ -86,6 +86,8 @@ void initialize() {
     state.remove('isPinging')
     state.remove('httpStopped')
     state.remove('httpRetryAfter')
+    // Drops the callback of a check still in flight, which may be for the old URL.
+    state.checkSeq = ((state.checkSeq ?: 0) as int) + 1
 
     // Checks if firmware version supports 3-parameter ping (adjust version as needed)
     state.supportsPingTimeout = supportsPingTimeout(location.hub.firmwareVersionString)
@@ -140,25 +142,36 @@ void ping() {
         return
     }
 
-    try {
-        long pingRT = -1
+    // A newer check (manual refresh, initialize) makes an in-flight HTTP callback stale.
+    int seq = ((state.checkSeq ?: 0) as int) + 1
+    state.checkSeq = seq
 
+    long pingRT = -1
+    try {
         if (deviceIP) {
             pingRT = sendPingRequest()
             sendEvent(name: "pingStatus", value: pingRT >= 0 ? "success" : "failed", descriptionText: "Ping ${deviceIP} ${pingRT >= 0}")
         }
-
-        long httpRT = -1
-
         if (httpURL) {
             if (state.httpStopped) {
                 logDebug "HTTP check stopped after HTTP ${state.httpStopped}; save preferences or run Initialize to resume"
-            } else {
-                httpRT = sendHttpRequest()
+            } else if (sendHttpRequest(seq, pingRT)) {
+                return  // httpResponse() finishes the check
             }
+        }
+    } catch (Exception e) {
+        noteCheckError("check", "Error during check: ${e}")
+        scheduleNextPing()
+        return
+    }
+    finishCheck(pingRT, -1)
+}
+
+private void finishCheck(long pingRT, long httpRT) {
+    try {
+        if (httpURL) {
             sendEvent(name: "httpStatus", value: httpRT >= 0 ? "success" : "failed", descriptionText: "HTTP GET ${redactUrl(httpURL)} ${httpRT >= 0}")
         }
-
         updateDeviceStatus((deviceIP ? pingRT >= 0 : true) && (httpURL ? httpRT >= 0 : true))
         updateLastResponseTime(pingRT, httpRT)
         clearCheckError("check")
@@ -205,46 +218,62 @@ private void clearCheckError(String key) {
     state.checkErrors = errs
 }
 
-long sendHttpRequest() {
-    long result = -1
+// Async so a slow host doesn't hold this singleThreaded driver for up to httpTimeout.
+// Returns false when the request could not be sent; the check then counts it as failed.
+private boolean sendHttpRequest(int seq, long pingRT) {
     try {
+        int timeout = (httpTimeout ?: DEFAULT_HTTP_TIMEOUT) as int
         Map params = [
-            timeout: httpTimeout ?: DEFAULT_HTTP_TIMEOUT,
+            timeout: timeout,
             ignoreSSLIssues: true
         ] + splitQuery(httpURL)
-        long timeBefore = now()
-        httpGet(params) { response ->
-            if (response.status >= 200 && response.status < 300) {
-                long elapsed = now() - timeBefore
-                logNet "HTTP GET ${redactUrl(httpURL)} successful in ${elapsed} ms"
-                recordResponseTime("http", elapsed)
-                result = elapsed
-            } else {
-                logWarn "HTTP GET ${redactUrl(httpURL)} failed with status ${response.status}"
-            }
-        }
-        return result
-    } catch (groovyx.net.http.HttpResponseException e) {
-        // httpGet throws on any non-2xx status, so status handling lives here.
-        int status = e.statusCode
-        if (status in HTTP_STOP_STATUSES) {
-            state.httpStopped = status
-            logError "HTTP GET ${redactUrl(httpURL)} returned HTTP ${status}; HTTP checks stopped until preferences are saved or Initialize runs"
-        } else {
-            Long retryAfter = retryAfterSeconds(e)
-            if (retryAfter) state.httpRetryAfter = retryAfter
-            logWarn "HTTP GET ${redactUrl(httpURL)} failed with HTTP ${status}${retryAfter ? " (Retry-After ${retryAfter} s)" : ''}"
-        }
-        return -1
+        // A lost callback would end the ping chain; scheduleNextPing() replaces this runIn.
+        runIn(timeout + 30, "ping")
+        asynchttpGet("httpResponse", params, [seq: seq, pingRT: pingRT, start: now()])
+        return true
     } catch (Exception e) {
         logWarn "Error sending HTTP request: ${e}"
-        return -1
+        return false
     }
 }
 
-private Long retryAfterSeconds(groovyx.net.http.HttpResponseException e) {
+void httpResponse(resp, Map data) {
+    if ((data.seq as int) != (state.checkSeq as int)) {
+        logDebug "ignoring HTTP result of a superseded check"
+        return
+    }
+    // Includes any wait behind other executions of this driver before the callback ran.
+    long elapsed = now() - (data.start as long)
+    long httpRT = -1
     try {
-        String v = e.response?.headers?.'Retry-After'?.value as String
+        if (resp.hasError()) {
+            // hasError() covers every non-2xx status; timeouts and connection failures
+            // report 408 or a status below 100.
+            int status = resp.getStatus()
+            if (status in HTTP_STOP_STATUSES) {
+                state.httpStopped = status
+                logError "HTTP GET ${redactUrl(httpURL)} returned HTTP ${status}; HTTP checks stopped until preferences are saved or Initialize runs"
+            } else {
+                Long retryAfter = retryAfterSeconds(resp)
+                if (retryAfter) state.httpRetryAfter = retryAfter
+                logWarn "HTTP GET ${redactUrl(httpURL)} failed with HTTP ${status}: ${resp.getErrorMessage()}${retryAfter ? " (Retry-After ${retryAfter} s)" : ''}"
+            }
+        } else if (resp.getStatus() >= 200 && resp.getStatus() < 300) {
+            logNet "HTTP GET ${redactUrl(httpURL)} successful in ${elapsed} ms"
+            recordResponseTime("http", elapsed)
+            httpRT = elapsed
+        } else {
+            logWarn "HTTP GET ${redactUrl(httpURL)} failed with status ${resp.getStatus()}"
+        }
+    } catch (Exception e) {
+        logWarn "Error handling HTTP response: ${e}"
+    }
+    finishCheck(data.pingRT as long, httpRT)
+}
+
+private Long retryAfterSeconds(resp) {
+    try {
+        String v = resp.getHeaders()?.find { k, val -> (k as String)?.equalsIgnoreCase("Retry-After") }?.value as String
         return v?.trim()?.isLong() ? v.trim().toLong() : null
     } catch (Exception ignored) {
         return null
@@ -284,14 +313,14 @@ void updateDeviceStatus(boolean online) {
     state.lastCheckin = new Date().format("yyyy-MM-dd HH:mm:ss")
 
     if (currentStatus != newStatus) {
-        if (txtEnable) logInfo "tracking state change to ${newStatus}"
+        logInfo "tracking state change to ${newStatus}"
 
         // A stopped HTTP check never recovers on its own, so report offline without waiting for retries.
         if (online || state.currentRetryCount >= state.retryThreshold || state.httpStopped) {
             String newStatusDescription = "${device.getLabel()} status is ${newStatus}"
             sendEvent(name: "status", value: newStatus, descriptionText: newStatusDescription)
             sendEvent(name: "contact", value: contactValue, descriptionText: newStatusDescription)
-            if (txtEnable) logInfo "status changed from ${currentStatus} to ${newStatus}"
+            logInfo "status changed from ${currentStatus} to ${newStatus}"
         }
     }
 
