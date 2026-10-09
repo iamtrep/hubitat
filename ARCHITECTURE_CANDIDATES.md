@@ -19,5 +19,5 @@ Items that are pure platform mechanics — capability/attribute/command syntax, 
 
 ## Drivers
 
-- **WebSocket driver pattern.** Two implementations (LogMonitorBridge, LogEventMonitor) share: `interfaces.webSocket.connect(uri, pingInterval:N)`, `webSocketStatus(msg)` for state strings, `parse(msg)` for frames, `atomicState.intentionalDisconnect` to suppress reconnects on intentional close, exponential backoff capped at 60s, `location.hub.uptime`-based startup delay. Worth a short subsection if a third implementation appears.
+- **WebSocket driver pattern.** Two implementations (LogMonitorBridge, LogEventMonitor) share: `interfaces.webSocket.connect(uri, pingInterval:N)`, `webSocketStatus(msg)` for state strings, `parse(msg)` for frames, a `@Field static` per-device intentional-disconnect flag to suppress reconnects on intentional close (not `atomicState`, which a driver's state write-back can overwrite), exponential backoff capped at 60s, `location.hub.uptime`-based startup delay. Worth a short subsection if a third implementation appears.
 - **Bidirectional constants Map.** `@Field static final Map x = ["A":0, 0:"A", ...]` — same map used for encode and decode. Sinope drivers use 5+ of these. Idiomatic; could be canonicalized.
