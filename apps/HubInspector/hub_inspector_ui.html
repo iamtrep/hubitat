@@ -152,7 +152,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "6.1.5";
+const CODE_VERSION = "6.1.6";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -1294,8 +1294,10 @@ function buildForumMarkdown(d){
   if(networkConfig.hasEthernet)connType+=(networkConfig.usingStaticIP?' (Static)':' (DHCP)');
   L(`| Connection | ${connType} |`);
   if(networkConfig.lanAddr)          L(`| IP Address | ${networkConfig.lanAddr} |`);
-  if(networkConfig.staticGateway)    L(`| Gateway    | ${networkConfig.staticGateway} |`);
-  if(networkConfig.staticSubnetMask) L(`| Subnet     | ${networkConfig.staticSubnetMask} |`);
+  // static* fields are the saved static-IP settings, not the DHCP lease; meaningless on DHCP
+  if(networkConfig.usingStaticIP&&networkConfig.staticGateway)    L(`| Gateway    | ${networkConfig.staticGateway} |`);
+  if(networkConfig.usingStaticIP){if(networkConfig.staticSubnetMask) L(`| Subnet     | ${networkConfig.staticSubnetMask} |`);}
+  else                               L(`| Subnet     | via DHCP |`);
   const dnsList=networkConfig.dnsServers||[];
   if(dnsList.length)                 L(`| DNS        | ${dnsList.join(', ')} |`);
   if(networkConfig.hasWiFi&&networkConfig.wifiNetwork) L(`| WiFi SSID  | ${networkConfig.wifiNetwork} |`);
@@ -2617,7 +2619,9 @@ async function rNetwork(){const P='p-network';loading(P);try{
   if(d.network){const n=d.network;
     o+='<div class="card"><div class="card-h">Network Configuration'+hp('/hub/edit')+'</div><div class="card-b"><div class="ng">';
     o+=ni('IP Address',n.lanAddr);o+=ni('Connection',n.usingStaticIP?'Static IP':'DHCP');
-    o+=ni('Gateway',n.staticGateway);o+=ni('Subnet',n.staticSubnetMask);
+    // static* fields are the saved static-IP settings, not the DHCP lease; meaningless on DHCP
+    if(n.usingStaticIP){o+=ni('Gateway',n.staticGateway);o+=ni('Subnet',n.staticSubnetMask);}
+    else o+=ni('Subnet','via DHCP','var(--muted)');
     if(n.usingStaticIP&&n.staticIP)o+=ni('Static IP',n.staticIP);
     if(n.dnsServers&&n.dnsServers.length)o+=ni('DNS',n.dnsServers.join(', '));
     o+=ni('Ethernet',n.hasEthernet?'Connected':'Not Connected');o+=ni('WiFi',n.hasWiFi?'Available':'No');
