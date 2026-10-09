@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "6.1.3"
+@Field static final String CODE_VERSION = "6.1.4"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -2220,7 +2220,8 @@ Map fetchZwaveNodeState(Integer nodeId) {
         rssi: resp.rssi, rtt: resp.rtt, per: resp.per,
         route: resp.route, lastSeenLocal: resp.lastSeenLocal,
         keepAwake: resp.keepAwake == true, securityClass: resp.securityClass,
-        isFrequentListening: resp.isFrequentListening == true,
+        // false, or the wake-up interval ("250ms"/"1000ms") for a FLiRS node
+        isFrequentListening: resp.isFrequentListening == true || (resp.isFrequentListening instanceof String && resp.isFrequentListening.endsWith("ms")),
         isControllerNode: resp.isControllerNode == true,
         statistics: [
             commandsTX: stats.commandsTX, commandsRX: stats.commandsRX,
@@ -2555,9 +2556,9 @@ Map extractZwaveMeshQuality(Map zwaveData) {
             if (m.find()) rssiVal = m.group(1).toInteger()
         }
 
-        // averageRtt: integer ms or empty string when unavailable
+        // averageRtt: ms, an integer on Z/IP and a decimal string ("41.7") on Z-Wave JS; empty when unavailable
         String rttRaw = (node.averageRtt != null) ? node.averageRtt.toString() : ""
-        Integer rtt = (rttRaw && rttRaw.isInteger()) ? rttRaw.toInteger() : null
+        BigDecimal rtt = (rttRaw && rttRaw.isNumber()) ? new BigDecimal(rttRaw) : null
 
         // driverType from zwDevices (keyed by node ID string)
         String driverType = ""
