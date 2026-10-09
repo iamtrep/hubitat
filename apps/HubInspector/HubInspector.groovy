@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "6.1.8"
+@Field static final String CODE_VERSION = "6.1.9"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -2142,9 +2142,9 @@ Map fetchZwaveJsState() {
     if (detectZwaveStack() != "js") return null
     Map wrap = hubMapRequest(ZWAVE_JS_CONTROLLER_PATH, "zwave JS controller", 10)
     // Z-Wave JS is enabled but getControllerState returned no usable data (a bare `null` body).
-    // Some hubs answer null on every request, through reboots, while the radio and nodes are
-    // healthy — a hub-side quirk with no user fix. Flag it so the SPA shows a neutral note;
-    // node/mesh data (from zwaveDetails) is unaffected.
+    // Seen after a switch from legacy Z-Wave: the hub's controller info stays empty until the
+    // next reboot, while the radio and nodes are healthy. Flag it so the SPA shows a note
+    // suggesting a reboot; node/mesh data (from zwaveDetails) is unaffected.
     if (!wrap.ok) return [unavailable: true]
     Map ctrl = wrap.data
     Map stats = (ctrl.statistics as Map) ?: [:]

@@ -152,7 +152,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "6.1.8";
+const CODE_VERSION = "6.1.9";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -2734,7 +2734,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
     o+='</div></div>'}
   // Z-Wave JS Controller (v5.9.0) \u2014 only when Z-Wave JS stack is active
   if(d.zwaveJs&&d.zwaveJs.unavailable){
-    o+='<div class="card"><div class="card-h">Z-Wave JS Controller</div><div class="card-b"><div class="alert a-info">This hub doesn\u2019t report Z-Wave JS controller statistics. Some hubs never do; Z-Wave itself is not affected and there is nothing to fix. Node and mesh data are shown as usual.</div></div></div>';
+    o+='<div class="card"><div class="card-h">Z-Wave JS Controller</div><div class="card-b"><div class="alert a-info">This hub isn\u2019t reporting Z-Wave JS controller statistics. A hub reboot usually restores them. Z-Wave itself is not affected, and node and mesh data are shown as usual.</div></div></div>';
   }
   else if(d.zwaveJs){const j=d.zwaveJs,s=j.statistics||{};
     o+='<div class="card"><div class="card-h">Z-Wave JS Controller</div><div class="card-b"><div class="ng">';
