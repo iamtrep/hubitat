@@ -16,6 +16,8 @@
 # The log guard stays on: a case that expects one of the app's warn lines lists it in
 # allow_log_patterns. The Virtual Thermostat can report idle after a heat command while
 # already in heat mode, so cases that need heating set readings that change after it.
+# The thermostat changes its operating state about 1 s after a reading changes, sometimes up
+# to 3 s; waits that depend on it leave at least that.
 # Cases run in order; manual-on-reverted, fault-switches-reasserted, limit-resumes,
 # limit-fault-clears, min-on-releases, min-off-releases, warming-clears,
 # warming-check-off-clears, frost-stops and frost-overrides-rest start from the previous
@@ -52,7 +54,7 @@ inputs:
   - { name: test-sht-notify, driver: Notification Capture (Test), role: notifyDevices }
 maker_api:
   label: test-sht-maker
-runtime_budget_seconds: 400
+runtime_budget_seconds: 450
 cases:
   # Resets the rig. The thermostat's supported modes are set to something else first, so
   # the assert shows that Done writes them.
@@ -93,7 +95,7 @@ cases:
     actions:
       - { device: test-sht-temp1, command: setTemperature, args: [21] }
       - { device: test-sht-temp2, command: setTemperature, args: [21] }
-    wait_seconds: 4
+    wait_seconds: 5
     assert:
       - { device: test-sht-th, attribute: thermostatOperatingState, value: idle }
       - { device: test-sht-heater1, attribute: switch, value: "off" }
@@ -185,7 +187,7 @@ cases:
     actions:
       - { device: test-sht-temp1, command: setTemperature, args: [18] }
       - { device: test-sht-temp2, command: setTemperature, args: [18] }
-    wait_seconds: 12
+    wait_seconds: 14
     allow_log_patterns: ["the limit\\. Off for"]
     assert:
       - { device: test-sht-heater1, attribute: switch, value: "off" }
@@ -194,10 +196,12 @@ cases:
       - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: heaters on for 10 minutes, the limit. Off for 5 minutes." }
 
   # Starts during limit-rests' 5 s rest; the heaters follow the thermostat again after it.
+  # The heaters' next 10 s run ends a limit again, so the wait leaves limit-fault-clears time to
+  # stop them first.
   - name: limit-resumes
     actions:
       - { device: test-sht-notify, command: setFailing, args: ["false"] }
-    wait_seconds: 6
+    wait_seconds: 5
     assert:
       - { device: test-sht-heater1, attribute: switch, value: "on" }
       - { device: test-sht-heater2, attribute: switch, value: "on" }
@@ -209,7 +213,7 @@ cases:
       - { device: test-sht-temp1, command: setTemperature, args: [21] }
       - { device: test-sht-temp2, command: setTemperature, args: [21] }
     command_spacing_seconds: 0.5
-    wait_seconds: 3
+    wait_seconds: 5
     assert:
       - { device: test-sht-heater1, attribute: switch, value: "off" }
       - { device: test-sht-limitfault, attribute: switch, value: "off" }
@@ -230,7 +234,7 @@ cases:
     actions:
       - { device: test-sht-temp1, command: setTemperature, args: [21] }
       - { device: test-sht-temp2, command: setTemperature, args: [21] }
-    wait_seconds: 2
+    wait_seconds: 4
     assert:
       - { device: test-sht-th, attribute: thermostatOperatingState, value: idle }
       - { device: test-sht-heater1, attribute: switch, value: "on" }
@@ -276,7 +280,7 @@ cases:
     actions:
       - { device: test-sht-temp1, command: setTemperature, args: [18] }
       - { device: test-sht-temp2, command: setTemperature, args: [18] }
-    wait_seconds: 2
+    wait_seconds: 4
     assert:
       - { device: test-sht-th, attribute: thermostatOperatingState, value: heating }
       - { device: test-sht-heater1, attribute: switch, value: "off" }
@@ -289,11 +293,16 @@ cases:
       - { device: test-sht-heater1, attribute: switch, value: "on" }
       - { device: test-sht-heater2, attribute: switch, value: "on" }
 
-  # keepAliveMinutes 3 (3 s): about two re-sends land between the counter reset and the assert.
+  # keepAliveMinutes 3 (3 s). The previous case ends at 18.0, and heat while already in heat can
+  # leave the thermostat idle until the reading changes, so setup goes to 21 and back to 18.
+  # About 8.5 s pass between the counter reset and the assert, so 2 to 4 re-sends land
+  # depending on the keep-alive's phase and hub latency.
   - name: keep-alive-resends
     setup:
       - settings: { aggregate: "average", maxHeatMinutes: "none", minOnMinutes: "none", minOffMinutes: "none", frostTemp: -50, keepAliveMinutes: 3, noRiseMinutes: "none" }
       - { device: test-sht-th, command: heat }
+      - { device: test-sht-temp1, command: setTemperature, args: [21] }
+      - { device: test-sht-temp2, command: setTemperature, args: [21] }
       - { device: test-sht-temp1, command: setTemperature, args: [18] }
       - { device: test-sht-temp2, command: setTemperature, args: [18] }
       - { device: test-sht-heater1, command: resetCommandCount }
@@ -303,7 +312,7 @@ cases:
     wait_seconds: 7
     assert:
       - { device: test-sht-heater1, attribute: switch, value: "on" }
-      - { device: test-sht-heater1, attribute: commandCount, value: 2, tolerance: 1 }
+      - { device: test-sht-heater1, attribute: commandCount, value: 3, tolerance: 1 }
 
   # The first reading keeps the average at 20.0 (idle); the second starts heating at 18.0.
   - name: no-warming-fault
@@ -315,7 +324,7 @@ cases:
     actions:
       - { device: test-sht-temp1, command: setTemperature, args: [19] }
       - { device: test-sht-temp2, command: setTemperature, args: [17] }
-    wait_seconds: 13
+    wait_seconds: 15
     allow_log_patterns: ["temperature rose"]
     assert:
       - { device: test-sht-heater1, attribute: switch, value: "on" }
@@ -347,15 +356,16 @@ cases:
       - { attribute: "^switch$", value: "off", source: "test-sht-risefault" }
 
   # Setup warms the room so the heaters turn off first.
-  # 7 s spacing: mode off comes 14 s after the heaters turn on, past the 10 s warming check, so the
-  # warming fault rises first. The clear message is sent only for a raised fault, so it shows both steps.
+  # 8 s spacing: mode off comes 16 s after the heaters turn on, past the 10 s warming check even when
+  # the thermostat is slow to start heating, so the warming fault rises first. The clear message is
+  # sent only for a raised fault, so it shows both steps.
   - name: warming-clears-when-heaters-off
     setup:
       - settings: { aggregate: "average", maxHeatMinutes: "none", minOnMinutes: "none", minOffMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: 10 }
       - { device: test-sht-th, command: heat }
       - { device: test-sht-temp1, command: setTemperature, args: [21] }
       - { device: test-sht-temp2, command: setTemperature, args: [21] }
-    command_spacing_seconds: 7
+    command_spacing_seconds: 8
     actions:
       - { device: test-sht-temp1, command: setTemperature, args: [19] }
       - { device: test-sht-temp2, command: setTemperature, args: [17] }
