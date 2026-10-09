@@ -14,7 +14,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.5.1"
+@Field static final String CODE_VERSION = "0.5.2"
 @Field static final String API_BASE = "https://api.weather.gc.ca/collections"
 @Field static final String ALERT_API_BASE = "https://weather.gc.ca/api/app/v3"
 @Field static final int HTTP_TIMEOUT = 15
@@ -178,6 +178,9 @@ void initialize() {
     if (state.version != CODE_VERSION) {
         logVer "New driver version: ${CODE_VERSION} (was: ${state.version})"
         state.version = CODE_VERSION
+        // Per-poll scratch now travels in the async callback data
+        state.remove("pollErrors")
+        state.remove("pollObservationOk")
     }
 
     if (debugEnable || traceEnable) {
@@ -235,16 +238,16 @@ void refresh() {
         return
     }
     logDebug "Refreshing AQHI data for station ${sid}"
-    state.pollErrors = []
-    state.pollObservationOk = false
+    // Per-poll results ride in each callback's data map, so a poll never sees another's.
+    Map poll = [sid: sid, errors: [], observationOk: false]
     if (state.noObservationFeed) {
         state.observationStale = true
         sendEvent(name: "observationAge", value: "unavailable")
-        fetchForecast(sid)
+        fetchForecast(poll)
         return
     }
     // Chained, not parallel: the forecast's trend and fallback read the observation's result.
-    fetchObservation(sid)
+    fetchObservation(poll)
 }
 
 // ---------- Station info ----------
@@ -299,7 +302,8 @@ private void fetchAlertsIfZoned() {
 
 // ---------- Observation ----------
 
-void fetchObservation(String sid) {
+void fetchObservation(Map poll) {
+    String sid = poll.sid as String
     logNet "Fetching observation for ${sid}"
 
     // Query goes in the query: map, not inline in the uri: firmware 2.5.1.x drops an
@@ -311,26 +315,28 @@ void fetchObservation(String sid) {
         timeout: HTTP_TIMEOUT
     ]
 
-    asynchttpGet("observationResponse", params, [sid: sid])
+    asynchttpGet("observationResponse", params, poll)
 }
 
 void observationResponse(resp, Map data) {
+    List errors = ((data?.errors ?: []) as List).collect()
+    boolean observationOk = false
     try {
         if (resp.hasError()) {
-            notePollError("observation: ${resp.getErrorMessage()}")
+            errors << "observation: ${resp.getErrorMessage()}".toString()
         } else {
-            state.pollObservationOk = parseObservationResponse(resp)
+            observationOk = parseObservationResponse(resp, errors)
         }
     } catch (Exception e) {
-        notePollError("observation: ${e.message}")
+        errors << "observation: ${e.message}".toString()
     }
-    fetchForecast(data.sid as String)
+    fetchForecast([sid: data.sid, errors: errors, observationOk: observationOk])
 }
 
-// True when the API answered, with or without a new observation.
-boolean parseObservationResponse(resp) {
+// True when the API answered, with or without a new observation. Adds failures to errors.
+boolean parseObservationResponse(resp, List errors) {
     if (resp.status != 200) {
-        notePollError("observation: HTTP ${resp.status}")
+        errors << "observation: HTTP ${resp.status}".toString()
         return false
     }
 
@@ -411,7 +417,8 @@ private void checkObservationStaleness() {
 
 // ---------- Forecast ----------
 
-void fetchForecast(String sid) {
+void fetchForecast(Map poll) {
+    String sid = poll.sid as String
     logNet "Fetching forecast for ${sid}"
 
     Map params = [
@@ -421,28 +428,29 @@ void fetchForecast(String sid) {
         timeout: HTTP_TIMEOUT
     ]
 
-    asynchttpGet("forecastResponse", params)
+    asynchttpGet("forecastResponse", params, poll)
 }
 
 void forecastResponse(resp, Map data) {
+    List errors = ((data?.errors ?: []) as List).collect()
     boolean forecastOk = false
     try {
         if (resp.hasError()) {
-            notePollError("forecast: ${resp.getErrorMessage()}")
+            errors << "forecast: ${resp.getErrorMessage()}".toString()
         } else {
-            forecastOk = parseForecastResponse(resp)
+            forecastOk = parseForecastResponse(resp, errors)
         }
     } catch (Exception e) {
-        notePollError("forecast: ${e.message}")
+        errors << "forecast: ${e.message}".toString()
     }
-    finishPoll(forecastOk || (state.pollObservationOk as boolean))
+    finishPoll(forecastOk || (data?.observationOk as boolean), errors)
     fetchAlertsIfZoned()
 }
 
-// True when the API answered, with or without forecasts.
-boolean parseForecastResponse(resp) {
+// True when the API answered, with or without forecasts. Adds failures to errors.
+boolean parseForecastResponse(resp, List errors) {
     if (resp.status != 200) {
-        notePollError("forecast: HTTP ${resp.status}")
+        errors << "forecast: HTTP ${resp.status}".toString()
         return false
     }
 
@@ -572,16 +580,10 @@ boolean parseForecastResponse(resp) {
 
 // --- Outage handling ---
 
-private void notePollError(String msg) {
-    List errs = (state.pollErrors ?: []) as List
-    errs << msg
-    state.pollErrors = errs
-}
-
 // A poll fails when neither the observation nor the forecast came back. One that
 // got either is a success; the other's failure is logged at warn.
-private void finishPoll(boolean gotData) {
-    String errs = ((state.pollErrors ?: []) as List).join("; ")
+private void finishPoll(boolean gotData, List errors) {
+    String errs = errors.join("; ")
     if (gotData) {
         pollSucceeded()
         if (errs) logWarn "partial refresh: ${errs}"
