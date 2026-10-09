@@ -54,7 +54,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Switch Monitor"
-@Field static final String CODE_VERSION = "3.0.5"
+@Field static final String CODE_VERSION = "3.0.6"
 
 @Field static final Integer DEFAULT_GRACE_MINUTES = 5
 @Field static final Integer DEFAULT_GRACE_SECONDS = 0
@@ -872,7 +872,7 @@ private void migrateFromV2IfNeeded() {
         return
     }
 
-    logCfg "Migrating from v2 to v3 multi-group format"
+    logWarn "Migrating from v2 to v3 multi-group format"
     List<Integer> groups = []
     int nextGroup = 1
 
@@ -919,7 +919,7 @@ private void migrateFromV2IfNeeded() {
     state.remove("retryCountOff")
     state.remove("lowLoadDevices")
 
-    logCfg "Migration complete: created ${groups.size()} group(s)"
+    logWarn "Migration complete: created ${groups.size()} group(s)"
 }
 
 private void migrateTimingSettings(int g) {

@@ -14,7 +14,7 @@ import com.hubitat.hub.domain.State
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.3.2"
+@Field static final String CODE_VERSION = "0.3.3"
 
 definition(
     name: "HVAC Season Manager",
@@ -128,6 +128,7 @@ Map mainPage() {
         section(sectionTitle("Logging", "info ${txtEnable != false ? 'on' : 'off'}, debug ${debugEnable ? 'on' : 'off'}"), hideable: true, hidden: fold && !edited.logging) {
             input "txtEnable", "bool", title: "Enable info logging", defaultValue: true
             input "debugEnable", "bool", title: "Enable debug logging (turns off after 30 minutes)", defaultValue: false, submitOnChange: true
+            if (debugEnable) input "traceEnable", "bool", title: "Enable trace logging (turns off with debug)", defaultValue: false
         }
         if (debugEnable) {
             section("Testing") {
@@ -351,7 +352,7 @@ void initialize() {
     // Daily Open-Meteo fetch: random time in 05:00–05:29 so installs don't hit the service together
     Random rng = new Random()
     schedule("${rng.nextInt(60)} ${rng.nextInt(30)} 5 * * ?", "evaluateHandler")
-    if (debugEnable) runIn(1800, "logsOff")
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
     startEvaluation("refresh")
     publish()
 }
@@ -382,7 +383,12 @@ void installSeasonJob() {
     publish()
 }
 
-void logsOff() { checkVersion(); app.updateSetting("debugEnable", false); logWarn "debug logging disabled" }
+void logsOff() {
+    checkVersion()
+    app.updateSetting("debugEnable", false)
+    app.updateSetting("traceEnable", false)
+    logWarn "debug and trace logging disabled"
+}
 
 void checkVersion(boolean reinit = true) {
     if (state.version == CODE_VERSION) return

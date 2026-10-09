@@ -14,7 +14,7 @@ import com.hubitat.hub.domain.State
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.3"
+@Field static final String CODE_VERSION = "0.1.4"
 
 definition(
     name: "HVAC Interlock Group",
@@ -69,6 +69,7 @@ Map mainPage() {
         section("Logging") {
             input "txtEnable", "bool", title: "Enable info logging", defaultValue: true
             input "debugEnable", "bool", title: "Enable debug logging (turns off after 30 minutes)", defaultValue: false, submitOnChange: true
+            if (debugEnable) input "traceEnable", "bool", title: "Enable trace logging (turns off with debug)", defaultValue: false
         }
         if (debugEnable) {
             section("Testing") {
@@ -111,13 +112,18 @@ void initialize() {
     rebuildOpenings()
     if (openings) subscribe(openings, "contact", "contactHandler")
     subscribe(location, "systemStart", "startHandler")
-    if (debugEnable) runIn(1800, "logsOff")
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
     String s = parent?.currentSeason()
     if (s) state.season = s
     evaluateGroup("initialize")
 }
 
-void logsOff() { checkVersion(); app.updateSetting("debugEnable", false); logWarn "debug logging disabled" }
+void logsOff() {
+    checkVersion()
+    app.updateSetting("debugEnable", false)
+    app.updateSetting("traceEnable", false)
+    logWarn "debug and trace logging disabled"
+}
 
 void checkVersion(boolean reinit = true) {
     if (state.version == CODE_VERSION) return

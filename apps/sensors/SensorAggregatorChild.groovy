@@ -34,7 +34,7 @@ import com.hubitat.app.ChildDeviceWrapper
 //import com.hubitat.hub.domain.Capability // only available from 2.4.3.148 onward
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.3.6"
+@Field static final String CODE_VERSION = "0.3.7"
 
 @Field static final Map<String, String> CAPABILITY_ATTRIBUTES = [
     "capability.carbonDioxideMeasurement"   : [ attribute: "carbonDioxide", driver: "Virtual Omni Sensor" ],
@@ -76,9 +76,8 @@ Map mainPage() {
                 paragraph "Current aggregate value: <b>${state.aggregateValue}</b>"
                 paragraph "Included sensors: ${state.includedSensors?.size() ?: 0} of ${inputSensors.size()}"
                 if (state.excludedSensors?.size() > 0) {
-                    Map<String, Long> sensorMap = inputSensors.collectEntries { [(it.getLabel()): it.id] }
-                    List<String> excludedLinks = state.excludedSensors.collect { label ->
-                        "<a href='/device/edit/${sensorMap[label]}' target='_blank'>${label}</a>"
+                    List<String> excludedLinks = inputSensors.findAll { it.id.toString() in state.excludedSensors }.collect {
+                        "<a href='/device/edit/${it.id}' target='_blank'>${it.getLabel()}</a>"
                     }
                     paragraph "<span style='color:orange'><b>Excluded sensors:</b> ${excludedLinks.join(', ')}</span>"
                 }
@@ -119,6 +118,7 @@ void logsOff() {
 void initialize() {
     checkVersion(false)
     app.removeSetting("logLevel")
+    migrateSensorListsToIds()
     logDebug "initialize()"
 
     if (state.includedSensors == null) { state.includedSensors = [] }
@@ -150,7 +150,31 @@ private void checkVersion(boolean reinit = true) {
     if (state.version == CODE_VERSION) return
     logVer "New version: ${CODE_VERSION} (was: ${state.version})"
     state.version = CODE_VERSION
+    // Event handlers evaluate right after this, before updated() runs
+    migrateSensorListsToIds()
     if (reinit) runIn(1, "updated")
+}
+
+// Before 0.3.7 the sensor lists held labels. Convert them in place rather than clearing:
+// the next evaluation diffs against the stored excluded list, and an empty one would
+// re-notify about every sensor that was already excluded.
+private void migrateSensorListsToIds() {
+    Map<String, String> idByLabel = (inputSensors ?: []).collectEntries { [(it.getLabel()): it.id.toString()] }
+    Set<String> ids = idByLabel.values() as Set
+    boolean converted = false
+    ["includedSensors", "excludedSensors"].each { String key ->
+        List stored = state[key] as List
+        if (!stored || stored.every { it?.toString() in ids }) return
+        state[key] = stored.collect { String v = it?.toString(); v in ids ? v : idByLabel[v] }.findAll { it != null }
+        converted = true
+    }
+    if (converted) logWarn "Migrated stored sensor lists from labels to device ids"
+}
+
+// Stored sensor lists hold device ids; resolve labels at display time so renames show.
+private List<String> sensorLabels(List ids) {
+    Map<String, String> labelById = (inputSensors ?: []).collectEntries { [(it.id.toString()): it.getLabel()] }
+    return (ids ?: []).collect { labelById[it?.toString()] ?: it?.toString() }
 }
 
 void uninstalled() {
@@ -252,13 +276,13 @@ private List<DeviceWrapper> refreshIncludedSensors() {
     }
 
     // Store previous values for comparison
-    List<String> previouslyExcludedLabels = state.excludedSensors ?: []
-    List<String> currentlyExcludedLabels = excludedSensors.collect { it.getLabel() }
+    List<String> previouslyExcludedIds = state.excludedSensors ?: []
+    List<String> currentlyExcludedIds = excludedSensors.collect { it.id.toString() }
 
     // Check for newly excluded sensors
-    List<String> newlyExcluded = currentlyExcludedLabels - previouslyExcludedLabels
+    List<String> newlyExcluded = currentlyExcludedIds - previouslyExcludedIds
     if (newlyExcluded.size() > 0) {
-        String message = "Sensor Aggregator '${app.label}': Sensors excluded due to inactivity: ${newlyExcluded.join(', ')}"
+        String message = "Sensor Aggregator '${app.label}': Sensors excluded due to inactivity: ${sensorLabels(newlyExcluded).join(', ')}"
         if (notificationDevice && notifyOnFirstExcluded) {
             notificationDevice.deviceNotification(message)
         }
@@ -268,15 +292,15 @@ private List<DeviceWrapper> refreshIncludedSensors() {
     // Notify if all sensors excluded
     if (includedSensors.size() < 1) {
         String message = "Sensor Aggregator '${app.label}': All sensors excluded due to inactivity"
-        if (notificationDevice && notifyOnAllExcluded && previouslyExcludedLabels.size() < currentlyExcludedLabels.size()) {
+        if (notificationDevice && notifyOnAllExcluded && previouslyExcludedIds.size() < currentlyExcludedIds.size()) {
             notificationDevice.deviceNotification(message)
         }
         logWarn(message)
     }
 
     // Update state
-    state.includedSensors = includedSensors.collect { it.getLabel() }
-    state.excludedSensors = currentlyExcludedLabels
+    state.includedSensors = includedSensors.collect { it.id.toString() }
+    state.excludedSensors = currentlyExcludedIds
 
     return includedSensors
 }
@@ -340,11 +364,11 @@ private void logStatistics() {
     logInfo("${CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute} ${aggregationMethod} (${state.includedSensors.size()}/${inputSensors.size()}): ${state.aggregateValue} ${getAttributeUnits(selectedSensorCapability)}")
     logInfo("Avg: ${state.avgSensorValue} Stdev: ${state.standardDeviation} Min: ${state.minSensorValue} Max: ${state.maxSensorValue} Median: ${state.medianSensorValue}")
     if (state.includedSensors.size() > 0) {
-        logDebug("Aggregated sensors (${state.includedSensors})")
+        logDebug("Aggregated sensors (${sensorLabels(state.includedSensors).join(', ')})")
     } else {
         logDebug("No aggregated sensors!")
     }
-    if (state.excludedSensors.size() > 0) logDebug("Rejected sensors with last update older than $excludeAfter minutes: ${state.excludedSensors} }")
+    if (state.excludedSensors.size() > 0) logDebug("Rejected sensors with last update older than $excludeAfter minutes: ${sensorLabels(state.excludedSensors).join(', ')}")
 }
 
 

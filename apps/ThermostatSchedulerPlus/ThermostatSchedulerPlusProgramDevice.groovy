@@ -10,7 +10,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.3.1"
+@Field static final String CODE_VERSION = "0.3.2"
 
 metadata {
     definition(name: "Thermostat Scheduler+ Program Device", namespace: "iamtrep", author: "pj", component: true,
@@ -40,11 +40,24 @@ metadata {
     }
     preferences {
         input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
+        input name: "debugEnable", type: "bool", title: "Enable debug logging (turns off after 30 minutes)", defaultValue: false
+        if (debugEnable) {
+            input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
+        }
     }
 }
 
 void installed() { logCfg "installed ${CODE_VERSION}" }
-void updated() { logCfg "updated" }
+void updated() {
+    logCfg "updated"
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
+}
+
+void logsOff() {
+    device.updateSetting("debugEnable", [value: "false", type: "bool"])
+    device.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "debug and trace logging disabled"
+}
 void deviceTypeUpdated() { logDebug "driver change detected" }
 
 void on()                      { forward([command: 'on']) }

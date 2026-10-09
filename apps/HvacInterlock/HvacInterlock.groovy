@@ -11,7 +11,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.2"
+@Field static final String CODE_VERSION = "0.1.3"
 
 definition(
     name: "HVAC Interlock",
@@ -50,6 +50,7 @@ Map mainPage() {
         section("Logging") {
             input "txtEnable", "bool", title: "Enable info logging", defaultValue: true
             input "debugEnable", "bool", title: "Enable debug logging (turns off after 30 minutes)", defaultValue: false, submitOnChange: true
+            if (debugEnable) input "traceEnable", "bool", title: "Enable trace logging (turns off with debug)", defaultValue: false
         }
         section { label title: "App name", required: false }
     }
@@ -61,12 +62,17 @@ void updated() { checkVersion(false); unsubscribe(); unschedule(); initialize() 
 
 void initialize() {
     if (seasonDevice) subscribe(seasonDevice, "season", "seasonHandler")
-    if (debugEnable) runIn(1800, "logsOff")
+    if (debugEnable || traceEnable) runIn(1800, "logsOff")
     String s = currentSeason()
     if (s) getChildApps().each { it.seasonChanged(s) }
 }
 
-void logsOff() { checkVersion(); app.updateSetting("debugEnable", false); logWarn "debug logging disabled" }
+void logsOff() {
+    checkVersion()
+    app.updateSetting("debugEnable", false)
+    app.updateSetting("traceEnable", false)
+    logWarn "debug and trace logging disabled"
+}
 
 void checkVersion(boolean reinit = true) {
     if (state.version == CODE_VERSION) return
