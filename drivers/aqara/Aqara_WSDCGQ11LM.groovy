@@ -88,7 +88,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "2.15.3"
+@Field static final String CODE_VERSION = "2.15.4"
 
 // A pending version reconfigure older than this is treated as lost and re-armed.
 @Field static final long RECONFIGURE_RETRY_MS = 60000L
@@ -114,6 +114,13 @@ import java.math.RoundingMode
 // for the device to re-announce before declaring it offline.
 @Field static final int HEALTH_TIMEOUT_SLACK_MINUTES = 20
 @Field static final int HUB_REBOOT_ALLOWANCE_MINUTES = 20
+
+// Plausibility bounds on raw readings, checked before unit conversion and offsets.
+// Out-of-range values (including the ZCL "invalid" sentinels) are dropped.
+@Field static final BigDecimal TEMPERATURE_MIN_C = -50
+@Field static final BigDecimal TEMPERATURE_MAX_C = 100
+@Field static final int PRESSURE_MIN_HPA = 500
+@Field static final int PRESSURE_MAX_HPA = 1100
 
 @Field static final Random RANDOM = new Random()
 
@@ -421,6 +428,13 @@ private void runVersionCheck() {
  *               width in bytes (null for variable-length, which we abort on).
  *   • value   — little-endian; reverseHexString() flips to big-endian for parse.
  *
+ * Two delivery paths, which disagree on the length-prefix byte:
+ *   - Hourly check-in: FF01 is the primary attribute and arrives via parse()'s
+ *     string branch with the length prefix intact -> parseCheckin().
+ *   - Button press: FF01 rides as an additionalAttr of a 0x0005 report; the
+ *     platform has stripped the prefix, so parseCheckinFromMap() re-adds a
+ *     placeholder byte before delegating to parseCheckin().
+ *
  * Tag table for lumi.weather (WSDCGQ11LM). Tags 0x64+ are reused across the
  * lumi.* family for different sensors — do not copy this table verbatim into
  * a sibling driver; cross-check Z2M's lumi.ts numericAttributes2Payload first.
@@ -522,6 +536,16 @@ private void parseCheckin(Map map) {
     }
 }
 
+private void parseCheckinFromMap(Map map) {
+    // FF01 bundled with a button-press 0x0005 frame. See the parseCheckin
+    // header: this path arrives without the length prefix, so prepend a
+    // placeholder byte for parseCheckin()'s strPosition = 2 skip.
+    String hex = map.value
+    if (!hex) { logRx("FF01(map): empty value"); return }
+    logRx("FF01 via additionalAttr (button frame): ${hex}")
+    parseCheckin([value: "00" + hex])
+}
+
 private void parseAttributeReport(Map map) {
     logTrace("parseAttributeReport() : ${map}")
 
@@ -556,9 +580,9 @@ private void parseAttributeReport(Map map) {
 private void parseBasic(Map map) {
     // ZCL Basic cluster (0x0000) attribute reports. attrId 0x0005 is overloaded:
     // it is the standard ZCL ModelIdentifier, but pressing the physical reset
-    // button on the WSDCGQ11LM also surfaces as a frame on this attribute. Every
-    // such frame fires a `pushed` event; model capture is additive when the
-    // value is string-typed (encoding 0x42).
+    // button also surfaces on this attribute, bundled with an FF01 check-in
+    // (attrId 0xFF01, routed to parseCheckinFromMap). The join announce bundles
+    // 0x0005 + 0x0001 instead, so only the FF01-bundled frame is a press.
 
     String value = map.value
     String encoding = map.encoding
@@ -576,14 +600,18 @@ private void parseBasic(Map map) {
             }
             break
         case "0005":  // ModelIdentifier + Xiaomi button-press quirk — see comment above.
-            if (txtEnable) logInfo("Trigger : Button Pressed (basic 0x0005, encoding=${encoding}, value=${value})")
-            sendEvent(name: "pushed", value: 1, isStateChange: true)
             if (encoding == "42") {
                 String model = hexToText(value)
                 if (model) {
                     updateDataValue("model", model)
                     logRx("ModelIdentifier : ${model}")
                 }
+            }
+            if (map.additionalAttrs?.any { it.attrId == "FF01" }) {
+                logInfo("Trigger : Button pressed (0x0005 + FF01)")
+                sendEvent(name: "pushed", value: 1, isStateChange: true)
+            } else {
+                logRx("Basic 0x0005 announce (no FF01 bundled) — no button event")
             }
             break
         case "4000":  // SWBuildID (Character String)
@@ -592,6 +620,9 @@ private void parseBasic(Map map) {
                 updateDataValue("softwareBuildId", sw)
                 logRx("SWBuildID : ${sw}")
             }
+            break
+        case "FF01":  // Bundled check-in TLV (see the parseCheckin header)
+            parseCheckinFromMap(map)
             break
         default:
             logRx("Basic cluster : unhandled attrId=${map.attrId} encoding=${encoding} value=${value}")
@@ -638,6 +669,13 @@ private void parseTemperature(String temperatureFlippedHex) {
 
     logTrace("temperature : ${temperature} from hex value ${temperatureFlippedHex}")
 
+    // Raw °C check, before conversion and offset. Also drops the ZCL invalid
+    // marker 0x8000 (-327.68 °C).
+    if (temperature < TEMPERATURE_MIN_C || temperature > TEMPERATURE_MAX_C) {
+        logWarn("Temperature : Raw value of ${temperature}°C is out of range. Watch out for batteries failing on this device.")
+        return
+    }
+
     String temperatureScale = location.temperatureScale
     if (temperatureScale == "F") {
         temperature = (temperature * 1.8) + 32
@@ -647,25 +685,27 @@ private void parseTemperature(String temperatureFlippedHex) {
         temperature = temperature + tempOffset
     }
 
-    if (temperature > 200 || temperature < -200) {
-        logWarn("Temperature : Value of ${temperature}°${temperatureScale} is unusual. Watch out for batteries failing on this device.")
-    } else {
-        BigDecimal rounded = temperature.setScale(1, RoundingMode.HALF_UP)
-        if (txtEnable) logInfo("Temperature : ${rounded} °${temperatureScale}")
-        sendEvent(name: "temperature", value: rounded, unit: "${temperatureScale}")
-    }
+    BigDecimal rounded = temperature.setScale(1, RoundingMode.HALF_UP)
+    if (txtEnable) logInfo("Temperature : ${rounded} °${temperatureScale}")
+    sendEvent(name: "temperature", value: rounded, unit: "${temperatureScale}")
 }
 
 private void parseHumidity(String humidityFlippedHex) {
     BigDecimal humidity = BigDecimal.valueOf(hexStrToSignedInt(humidityFlippedHex)) / 100
 
-    if (humidityOffset) humidity = humidity + humidityOffset
-
     logTrace("humidity : ${humidity} from hex value ${humidityFlippedHex}")
 
+    // Check the raw reading (also drops the 0xFFFF invalid marker), then apply
+    // the offset and clamp so an offset can't discard a valid reading.
     if (humidity > 100 || humidity < 0) {
-        logWarn("Humidity : Value of ${humidity} is out of bounds. Watch out for batteries failing on this device.")
+        logWarn("Humidity : Raw value of ${humidity} is out of bounds. Watch out for batteries failing on this device.")
         return
+    }
+
+    if (humidityOffset) {
+        humidity = humidity + humidityOffset
+        if (humidity > 100) humidity = 100
+        if (humidity < 0) humidity = 0
     }
 
     BigDecimal humidityRounded = humidity.setScale(1, RoundingMode.HALF_UP)
@@ -697,11 +737,19 @@ private void parseHumidity(String humidityFlippedHex) {
 }
 
 private void parsePressure(String pressureFlippedHex, boolean checkin = false) {
-    BigDecimal pressurePa = hexStrToSignedInt(pressureFlippedHex)
-    if (!checkin) {
-        // Cluster 0x0403 value is in tenths of hPa → convert to Pa.
-        // Check-in blob value is already in Pa.
-        pressurePa = pressurePa * 10
+    int rawPressure = hexStrToSignedInt(pressureFlippedHex)
+    if (!checkin && rawPressure == -32768) {
+        logWarn("Pressure : Device reported the ZCL invalid value (0x8000), skipping.")
+        return
+    }
+    // Cluster 0x0403 MeasuredValue is in units of 0.1 kPa (= hPa) per ZCL.
+    // Check-in blob value is already in Pa.
+    BigDecimal pressurePa = checkin ? rawPressure : rawPressure * 100
+
+    BigDecimal pressureHpa = pressurePa / 100
+    if (pressureHpa < PRESSURE_MIN_HPA || pressureHpa > PRESSURE_MAX_HPA) {
+        logWarn("Pressure : Raw value of ${pressureHpa} hPa is out of range, skipping. Watch out for batteries failing on this device.")
+        return
     }
 
     // Convert Pa to display unit
