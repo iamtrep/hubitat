@@ -366,7 +366,7 @@ The platform defines what `configure()`, `initialize()`, `refresh()`, and `devic
 
 1. Outer dispatch on five paths: attribute report (`descMap.attrId != null`), ZDO command (`profileId == "0000"`), ZHA global command (`profileId == "0104"` with no `attrId`), enroll request, and zone status/report. Log unhandled cases at trace level — silent dropping makes new device behavior invisible.
 2. Inside the attribute-report path, **always iterate `descMap.additionalAttrs`** alongside the primary report. Zigbee batches related reports, and dropping them produces silent partial updates.
-3. Delegate per-cluster work to a `parseAttributeReport(descMap)` helper that outer-switches on `cluster`/`clusterInt`, inner-switches on `attrId`/`attrInt`, builds a `[name, value, unit, descriptionText, type]` map, and returns `createEvent(map)`.
+3. Delegate per-cluster work to a `parseAttributeReport(descMap)` helper that outer-switches on `cluster`/`clusterInt`, inner-switches on `attrId`/`attrInt`, builds a `[name, value, unit, descriptionText, type]` map and calls `sendEvent(map)`, directly or through one helper. Don't return event maps from `parse()` for the platform to send: it leaves the event's "Produced by" column empty (see the [platform notes](docs/hubitat-platform-notes.md#platform-behavior)).
 
 ### Zigbee command building
 
