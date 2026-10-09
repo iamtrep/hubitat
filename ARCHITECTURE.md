@@ -22,7 +22,7 @@ The guide is organized in three parts: **Common** principles that apply to anyth
 Several standard Groovy and Java patterns are blocked or behave differently in the Hubitat sandbox. A *verified* mark names the firmware a platform fact was last measured on; the evidence is in `docs/hubitat-platform-notes.md`, and `apps/tests/test-architecture-claims.sh` re-checks it. Re-run that test after each major firmware update. Statements without a mark are project conventions.
 
 - **`value.getClass()` is sandbox-blocked.** The hub rejects the code when it is saved, so a `try`/`catch` can't guard it. Use the global `getObjectClassName(value)` to get a runtime class name string. *([verified 2.5.2.129](docs/hubitat-platform-notes.md#platform-behavior))*
-- **Reassign `state` collections after mutating them.** Use `state.myList = modifiedList` rather than `state.myList << item`. On firmware 2.5.2.124 a probe found in-place deep writes, key puts, and list appends on plain `state` persisting in both an app and a driver, so this is a convention that doesn't depend on the platform's change detection, not a known failure.
+- **Change an `atomicState` collection by writing the whole value back** (or `atomicState.updateMapValue(key, mapKey, value)` in an app; drivers don't have it). In-place changes to an `atomicState` collection (`atomicState.m.k = v`, `atomicState.l << v`, or through a local alias) are lost, because `atomicState` hands back a copy. In-place changes to plain `state` collections persist, in apps and drivers, from every entry point *([verified 2.5.2.134](docs/hubitat-platform-notes.md#platform-behavior))*. Key `state` maps by `id.toString()`: numeric keys come back as Strings, so `state.m[device.id]` misses after a reload.
 - **Pushing source code does not trigger `updated()`.** Updated Groovy takes effect immediately, but `updated()` and `initialize()` are not called. Subscriptions and `state` from the previous version persist until the user re-saves the app's preferences in the hub UI, and `@Field static` values are reset. *([verified 2.5.2.129](docs/hubitat-platform-notes.md#platform-behavior))* See *Version constants and code-push detection* below for the workaround.
 - **`sendEvent()` deduplicates unless someone asks for repeats.** An unchanged value without `isStateChange: true` is not stored and not delivered to default subscribers. A subscriber that passes `[filterEvents: false]` receives every repeat, and the repeats are then stored too. *([verified 2.5.2.129](docs/hubitat-platform-notes.md#platform-behavior))* A consumer that needs every sample subscribes with `filterEvents: false`. Drivers call `sendEvent` on every report and set `isStateChange: true` only for events that are new by nature, such as button presses.
 - **Concurrent async HTTP calls are capped at 8 per app, and at 5 per destination host.** Calls beyond either limit queue and complete later; none are lost. *([verified 2.5.2.129](docs/hubitat-platform-notes.md#platform-behavior))* Code that fans out one request per device serializes behind the pool at scale. Prefer batched or aggregated endpoints.
@@ -46,7 +46,7 @@ Choosing the wrong tier is a real bug source: transient per-scan data in `state`
 Inside a singleThreaded file, plain `state` is enough for anything written from callbacks, schedules and events, and `atomicState` only adds per-write DB cost. Three things still need care there:
 
 - **Endpoint latency.** A slow scheduled handler or callback delays every endpoint call behind it, which a polled UI feels directly.
-- **In-place mutation of `state` collections** (`state.myMap[k] = v`, `state.myList << item`) is a change-detection concern, not a concurrency one, so the read-mutate-reassign convention above still applies.
+- **`atomicState` collections** still have to be written back whole; see *Platform constraints*.
 - **`@Field static` is shared by every instance of the type**, and those instances run in parallel, so a static read across instances still needs `volatile` or a concurrent structure.
 
 **Choosing between `singleThreaded`, `atomicState` and concurrent `@Field` structures.**
@@ -397,7 +397,8 @@ This is distinct from `state` (scoped to the current driver, cleared when the dr
 Avoid these unless there is a deliberate, documented exception:
 
 - relying on `value.getClass()` instead of `getObjectClassName(value)`
-- in-place mutation of `state` collections without reassignment
+- in-place mutation of an `atomicState` collection (the change is lost)
+- `state` maps keyed by numeric ids (keys come back as Strings)
 - using `def` where a concrete type would do
 - passing raw ISO offset date strings through to UIs
 - caches in `state` with no invalidation story
