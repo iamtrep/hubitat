@@ -152,7 +152,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "6.1.1";
+const CODE_VERSION = "6.1.2";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -2181,7 +2181,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   const upToDate = (d.appVersion === CODE_VERSION && CODE_VERSION !== 'Unknown');
   const appUpdateNeeded = isNewer(CODE_VERSION, d.appVersion);
   
-  o+='<div class="card"><div class="card-h">Hub Diagnostic App</div><div class="card-b">';
+  o+='<div class="card"><div class="card-h">Hub Inspector App</div><div class="card-b">';
   o+='<div id="updateBanner"></div>';
   if(appUpdateNeeded) {
     o+='<div class="alert a-crit">\u26D4 <b>App Update Required:</b> A newer UI version ('+CODE_VERSION+') is installed than this App code ('+d.appVersion+'). Please update the Groovy App code in Hubitat.</div>';

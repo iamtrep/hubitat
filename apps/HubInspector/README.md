@@ -198,7 +198,7 @@ Two independent axes are inferred from Hubitat's device metadata:
 
 #### Customizing classification with the override file
 
-When the automatic rules above get one of your integrations wrong, correct it with an optional File Manager config file, `hub_diagnostics_integration_overrides.json`. Most integrations need no entry — add one only when the derived connection type or integration name is wrong for yours.
+When the automatic rules above get one of your integrations wrong, correct it with an optional File Manager config file, `hub_inspector_integration_overrides.json`. Most integrations need no entry — add one only when the derived connection type or integration name is wrong for yours.
 
 Each entry's key is a substring matched (**case-insensitively** — the app lowercases keys for you) against a device's parent-app name, or — for a standalone device with no parent app — its driver type name. An entry may set either or both of:
 
@@ -212,16 +212,18 @@ Each entry's key is a substring matched (**case-insensitively** — the app lowe
 
 ```json
 {
-  "awair":     { "conn": "lan_direct" },                  // standalone — connection type only
-  "pushover":  { "conn": "cloud" },                       // standalone — connection type only
-  "blinkapi":  { "conn": "cloud", "name": "Blink API" }   // an integration — grouped + labeled
+  "awair":    { "conn": "lan_direct" },
+  "pushover": { "conn": "cloud" },
+  "blinkapi": { "conn": "cloud", "name": "Blink API" }
 }
 ```
 
+Here `awair` and `pushover` set only the connection type, so those devices stay standalone. `blinkapi` also sets a name, so its devices are grouped as the "Blink API" integration. The file must be plain JSON, with no comments.
+
 To apply:
 
-1. Start from the sample file at `apps/HubInspector/tests/hub_diagnostics_integration_overrides.json` (or build your own). Keys beginning with `_` are treated as comments/disabled — strip the leading underscore to enable an entry.
-2. Upload the file to the hub's **File Manager**, keeping the name `hub_diagnostics_integration_overrides.json`.
+1. Create the file with your entries. To turn an entry off without deleting it, put `_` in front of its key.
+2. Upload the file to the hub's **File Manager** as `hub_inspector_integration_overrides.json`. Versions before 6.1.2 used the name `hub_diagnostics_integration_overrides.json`; the app still reads a file with that name when the new one is absent.
 3. Open Hub Inspector and **Save** the Settings page to reload it.
 
 Your entries overlay the built-in table; on a key collision, yours wins.

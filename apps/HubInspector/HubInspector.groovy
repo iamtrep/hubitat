@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "6.1.1"
+@Field static final String CODE_VERSION = "6.1.2"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -261,7 +261,9 @@ private void cachePut(String key, Object data) {
 
 
 // User-customizable integration-overrides config file (optional, File Manager)
-@Field static final String INTEGRATION_OVERRIDES_FILE = "hub_diagnostics_integration_overrides.json"
+@Field static final String INTEGRATION_OVERRIDES_FILE = "hub_inspector_integration_overrides.json"
+// Pre-6.1.2 name, still read when the new file is absent
+@Field static final String LEGACY_INTEGRATION_OVERRIDES_FILE = "hub_diagnostics_integration_overrides.json"
 
 // Valid conn values; used to reject unknown strings from the user config file
 @Field static final Set<String> VALID_CONN = [
@@ -548,7 +550,8 @@ Map settingsPage() {
                 "omitted from the integration breakdown); add a <code>name</code> too only when the device belongs " +
                 "to an integration you want grouped and labeled. " +
                 "Save this page after uploading the file to apply the changes. " +
-                "A documented template (<i>integration_overrides.json</i>) ships with the app to start from."
+                "The file format and examples are in the " +
+                "<a href='https://github.com/hubitrep/hubitat/blob/main/HubInspector/README.md#customizing-classification-with-the-override-file' target='_blank'>README</a>."
         }
 
         section("Logging") {
@@ -3155,10 +3158,15 @@ private Map getIntegrationOverrides() {
         // case on most hubs — so log that at debug. A WARN is reserved for a file that IS
         // present but can't be parsed (a real misconfiguration).
         byte[] fileData = null
-        try {
-            fileData = downloadHubFile(INTEGRATION_OVERRIDES_FILE)
-        } catch (Exception e) {
-            logDebug "No ${INTEGRATION_OVERRIDES_FILE} in File Manager — using built-in defaults"
+        String fileName = null
+        for (String name in [INTEGRATION_OVERRIDES_FILE, LEGACY_INTEGRATION_OVERRIDES_FILE]) {
+            try {
+                fileData = downloadHubFile(name)
+                fileName = name
+                break
+            } catch (Exception e) {
+                logDebug "No ${name} in File Manager"
+            }
         }
         if (fileData) {
             try {
@@ -3178,10 +3186,10 @@ private Map getIntegrationOverrides() {
                     if (!entry.isEmpty()) merged[key] = entry
                 }
                 INTEGRATION_OVERRIDES.each { k, v -> if (!merged.containsKey(k)) merged[k] = v }
-                logDebug "Loaded integration overrides: ${merged.size()} entries"
+                logDebug "Loaded integration overrides from ${fileName}: ${merged.size()} entries"
                 return merged
             } catch (Exception e) {
-                logWarn "Found ${INTEGRATION_OVERRIDES_FILE} but could not parse it (${e.message}) — using built-in defaults"
+                logWarn "Found ${fileName} but could not parse it (${e.message}) — using built-in defaults"
             }
         }
         return INTEGRATION_OVERRIDES
