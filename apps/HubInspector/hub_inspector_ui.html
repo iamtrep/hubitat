@@ -152,7 +152,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "6.1.6";
+const CODE_VERSION = "6.1.7";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -216,6 +216,9 @@ function parseRuntimeMs(v){
 }
 // One timestamp format everywhere, matching the hub-side yyyy-MM-dd HH:mm:ss (local time).
 function fdt(ms){if(ms==null||isNaN(ms))return'';const d=new Date(Number(ms)),p=n=>String(n).padStart(2,'0');return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds())}
+// Epoch ms from a *Ms field, else from the ISO string an older payload or saved snapshot carries.
+function pms(ms,iso){if(ms!=null&&!isNaN(ms))return Number(ms);const t=iso?Date.parse(iso):NaN;return isNaN(t)?null:t}
+function fdate(ms){return ms==null?'':fdt(ms).slice(0,10)}
 function fago(ms){const s=(Date.now()-ms)/1000;return s<3600?Math.max(1,Math.round(s/60))+'m ago':s<172800?Math.round(s/3600)+'h ago':Math.round(s/86400)+'d ago'}
 function fmsDuration(ms){
   if(ms==null)return'N/A';
@@ -2537,7 +2540,7 @@ async function rCode(){const P='p-code';loading(P);try{
       {l:'Namespace',f:'namespace',r:r=>h(r.namespace||'-')},
       {l:'OAuth',f:'oauthEnabled',r:r=>r.oauthEnabled?'<span class="badge b-ok">Enabled</span>':'<span class="muted" style="font-size:11px">—</span>'},
       {l:'Instances',f:'usedByCount',t:'n',r:r=>r.usedByCount===1&&r.usedBy&&r.usedBy[0]?'<a href="/installedapp/configure/'+r.usedBy[0].id+'" target="_blank">1</a>':r.usedByCount>0?'<a href="/installedapp/list" target="_blank" title="'+h((r.usedBy||[]).map(u=>Obf.nm(u.name)).join(', '))+'">'+r.usedByCount+'</a>':'<span class="muted">0</span>'},
-      {l:'Last Modified',f:'lastModified',r:r=>h((r.lastModified||'').slice(0,10))}
+      {l:'Last Modified',f:'lastModifiedMs',r:r=>h(fdate(pms(r.lastModifiedMs,r.lastModified)))}
     ],d.appTypes,{sc:0,sd:'asc',filter:true,collapse:1,collapseLabel:'Show all'});
   }
   if(d.driverTypes&&d.driverTypes.length){
@@ -2546,7 +2549,7 @@ async function rCode(){const P='p-code';loading(P);try{
       {l:'Namespace',f:'namespace',r:r=>h(r.namespace||'-')},
       {l:'Capabilities',f:'capabilityCount',t:'n',r:r=>r.capabilityCount>0?'<span title="'+h((r.capabilities||[]).join(', '))+'">'+r.capabilityCount+'</span>':'0'},
       {l:'Devices',f:'usedByCount',t:'n',r:r=>r.usedByCount>0?dlistlink(r.usedByCount,(r.usedBy||[]).map(u=>u.id)):'<span class="muted">0</span>'},
-      {l:'Last Modified',f:'lastModified',r:r=>h((r.lastModified||'').slice(0,10))}
+      {l:'Last Modified',f:'lastModifiedMs',r:r=>h(fdate(pms(r.lastModifiedMs,r.lastModified)))}
     ],d.driverTypes,{sc:0,sd:'asc',filter:true,collapse:1,collapseLabel:'Show all'});
   }
   if(d.bundles&&d.bundles.length){
@@ -2566,7 +2569,7 @@ async function rCode(){const P='p-code';loading(P);try{
       {l:'Description',f:'description',r:r=>'<div style="font-size:12px;color:var(--muted);max-width:400px">'+h(r.description||'')+'</div>'},
       {l:'Used by Drivers',f:'usedByDeviceCount',t:'n',r:r=>r.usedByDeviceCount>0?'<span title="'+h((r.usedByDeviceTypes||[]).join(', '))+'">'+r.usedByDeviceCount+'</span>':'0'},
       {l:'Used by Apps',f:'usedByAppCount',t:'n',r:r=>r.usedByAppCount>0?'<span title="'+h((r.usedByAppTypes||[]).join(', '))+'">'+r.usedByAppCount+'</span>':'0'},
-      {l:'Updated',f:'updateTime',r:r=>h((r.updateTime||'').slice(0,10))}
+      {l:'Updated',f:'updateTimeMs',r:r=>h(fdate(pms(r.updateTimeMs,r.updateTime)))}
     ],d.libraries,{sc:0,sd:'asc',filter:true,collapse:1,collapseLabel:'Show all'});
   }
   if(d.hubVariables&&d.hubVariables.variables&&d.hubVariables.variables.length){
@@ -3024,23 +3027,24 @@ async function rHealth(){const P='p-health';loading(P);try{
   o+='</div></div>';
   // Backups (v5.9.0)
   if(d.backups){const bk=d.backups,lo=bk.local||{},co=bk.cloud||{};
-    const localMs=lo.latestCreateTimeOrig?Date.parse(lo.latestCreateTimeOrig):NaN;
-    const stale=isNaN(localMs)?null:(Date.now()-localMs)/86400000;
+    const localMs=pms(lo.latestCreateTimeMs,lo.latestCreateTimeOrig),cloudMs=pms(co.latestThisHubCreateTimeMs,co.latestThisHubCreateTimeOrig);
+    const ago=ms=>' <span style="font-size:12px;font-weight:normal;color:var(--muted)">('+fago(ms)+')</span>';
+    const stale=localMs==null?null:(Date.now()-localMs)/86400000;
     const localSev=lo.count===0?'var(--crit)':(stale!=null&&stale>2?'var(--warn)':'var(--ok)');
     const cloudThis=co.thisHubCount||0;
     o+='<div class="card"><div class="card-h">Backups'+hp('/hub/backup')+'</div><div class="card-b"><div class="metrics">';
     o+=mc('Local Backups',lo.count||0,localSev);
-    if(lo.latestCreateTime)o+=mc('Latest Local',isNaN(localMs)?h(lo.latestCreateTime):fdt(localMs)+' <span style="font-size:12px;font-weight:normal;color:var(--muted)">('+fago(localMs)+')</span>');
+    if(lo.latestCreateTime||localMs!=null)o+=mc('Latest Local',localMs==null?h(lo.latestCreateTime):fdt(localMs)+ago(localMs));
     if(lo.latestPlatformVersion)o+=mc('Latest Local FW',lo.latestPlatformVersion);
     o+=mc('Cloud (this hub)',cloudThis,cloudThis===0?(co.hasCloudBackupEntitlements?'var(--warn)':'var(--muted)'):'var(--ok)');
-    if(co.latestThisHubCreateTime)o+=mc('Latest Cloud',co.latestThisHubCreateTime);
+    if(co.latestThisHubCreateTime||cloudMs!=null)o+=mc('Latest Cloud',cloudMs==null?h(co.latestThisHubCreateTime):fdt(cloudMs)+ago(cloudMs));
     if(co.otherHubCount>0)o+=mc('Cloud (other hubs)',co.otherHubCount);
     o+=mc('Cloud Backup Entitlement',co.hasCloudBackupEntitlements?'Yes':'No',co.hasCloudBackupEntitlements?'var(--ok)':'');
     o+=mc('Cloud Restore Entitlement',co.hasCloudRestoreEntitlements?'Yes':'No',co.hasCloudRestoreEntitlements?'var(--ok)':'');
     o+='</div>';
     if(co.otherHubs&&co.otherHubs.length){
       o+='<details style="margin-top:10px"><summary style="cursor:pointer;color:var(--muted)">Cloud backups for other hubs ('+co.otherHubs.length+')</summary><div class="tbl-wrap" style="margin-top:6px"><table><thead><tr><th>Hub</th><th>Hardware</th><th>Firmware</th><th>Size</th><th>Created</th></tr></thead><tbody>';
-      co.otherHubs.forEach(b=>{o+='<tr><td>'+h(b.hubName||'')+'</td><td>'+h(b.hubVersion||'')+'</td><td>'+h(b.platformVersion||'')+'</td><td>'+h(b.fileSize||'')+'</td><td>'+h(b.createTime||'')+'</td></tr>'});
+      co.otherHubs.forEach(b=>{o+='<tr><td>'+h(b.hubName||'')+'</td><td>'+h(b.hubVersion||'')+'</td><td>'+h(b.platformVersion||'')+'</td><td>'+h(b.fileSize||'')+'</td><td>'+h(b.createTimeMs!=null?fdt(b.createTimeMs):(b.createTime||''))+'</td></tr>'});
       o+='</tbody></table></div></details>';
     }
     o+='</div></div>';

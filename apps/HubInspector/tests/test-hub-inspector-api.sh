@@ -740,11 +740,11 @@ else:
         bk = health["backups"] or {}
         if "local" in bk and isinstance(bk["local"], dict):
             ok(f"backups.local: count={bk['local'].get('count')} latest={bk['local'].get('latestCreateTime')}")
-            # v5.11.2+ ISO timestamp for client-side date math
-            if "latestCreateTimeOrig" in bk["local"]:
-                ok("backups.local has 'latestCreateTimeOrig' (ISO format for diff math)")
+            # 6.1.7+ epoch ms for client-side date math (replaced the ISO latestCreateTimeOrig)
+            if "latestCreateTimeMs" in bk["local"]:
+                ok("backups.local has 'latestCreateTimeMs' (epoch ms for diff math)")
             else:
-                fail("backups.local missing 'latestCreateTimeOrig' (v5.11.2+)")
+                fail("backups.local missing 'latestCreateTimeMs' (6.1.7+)")
         else:
             fail("backups missing 'local' object")
         if "cloud" in bk and isinstance(bk["cloud"], dict):
@@ -991,7 +991,7 @@ else:
     ats = code_resp.get("appTypes") or []
     if ats:
         a = ats[0]
-        for field in ["id", "name", "namespace", "oauthEnabled", "lastModified", "usedByCount"]:
+        for field in ["id", "name", "namespace", "oauthEnabled", "lastModifiedMs", "usedByCount"]:
             if field in a:
                 ok(f"appType has '{field}'")
             else:
@@ -1001,7 +1001,7 @@ else:
     dts = code_resp.get("driverTypes") or []
     if dts:
         d = dts[0]
-        for field in ["id", "name", "namespace", "lastModified", "capabilityCount", "usedByCount"]:
+        for field in ["id", "name", "namespace", "lastModifiedMs", "capabilityCount", "usedByCount"]:
             if field in d:
                 ok(f"driverType has '{field}'")
             else:

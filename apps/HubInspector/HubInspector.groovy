@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "6.1.6"
+@Field static final String CODE_VERSION = "6.1.7"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -155,8 +155,10 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final int    DEFAULT_WARN_TEMP_C   = 65
 @Field static final int    DEFAULT_CRIT_TEMP_C   = 80
 
-// In-memory API response time tracking (reset on hub reboot)
-@Field static Map apiTimings = [:]
+// In-memory API response time tracking (reset on hub reboot). Concurrent endpoints read and
+// write it, so the reference is final and every access, including the clear in updated(), holds
+// its monitor: each entry's sample list is mutated in place, which the map alone can't protect.
+@Field static final ConcurrentHashMap<String, Map> apiTimings = new ConcurrentHashMap<>()
 
 // In-memory caches (survive within a JVM session; cleared on hub reboot/app reload)
 @Field static volatile String  uiVersionCache
@@ -186,6 +188,10 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final long       CPU_INFO_CACHE_TTL_MS      = 60_000L
 @Field static final long       CLOUD_CALLS_CACHE_TTL_MS   = 60_000L
 @Field static final long       LOAD_THRESHOLD_CACHE_TTL_MS = 300_000L
+// /hub2/networkConfiguration as read by getAlertSignals(): the alert fields (hasEthernet, hasWiFi,
+// restartBonjourOnSchedule) change only when the user edits Network Setup. A Network tab load
+// refreshes the slot with its own uncached read.
+@Field static final long       NETWORK_CONFIG_CACHE_TTL_MS = 300_000L
 // Optional integration-overrides file: re-read at most this often so an uploaded/edited file is
 // picked up without a full Done. updated()/apiClearCache() reset it for an immediate reload.
 @Field static final long       INTEGRATION_OVERRIDES_CACHE_TTL_MS = 300_000L
@@ -212,7 +218,12 @@ private void cachePut(String key, Object data) {
     if (data != null) TTL_CACHE[key] = [data: data, at: now()]
 }
 
-@Field static volatile boolean githubVersionRefreshPending = false
+// Start time (epoch ms) of the in-flight GitHub version request, 0 when none. The request counts
+// as pending only for GITHUB_VERSION_PENDING_MS (2x its timeout), so a callback that never arrives
+// can't block version checks until the next push or reboot.
+@Field static volatile long githubVersionRefreshStartedMs = 0L
+@Field static final int    GITHUB_VERSION_TIMEOUT_S = 10
+@Field static final long   GITHUB_VERSION_PENDING_MS = 20_000L   // 2x GITHUB_VERSION_TIMEOUT_S
 // Green badge appended to the app label (visible in the Apps list) when a newer release is
 // published on GitHub. UPDATE_BADGE_RE strips any prior badge so re-applying is idempotent. The
 // span tags are optional and the match repeats so it also clears remnants when the "Assign a name"
@@ -288,6 +299,16 @@ private void cachePut(String key, Object data) {
 // code push; the SPA falls back to HOURLY_FILE averages for hours before the first sample.
 // Copy-on-write: the sampler replaces the list.
 @Field static final ConcurrentHashMap<Long, List> TEMP_SAMPLES = new ConcurrentHashMap<>()
+
+// Device enrichment cache (see enrichDevices()), working copy: app.id -> deviceId -> entry.
+// /api/dashboard, /api/devices, snapshots and audit finalize can run enrichDevices() at the same
+// time (the app is not singleThreaded), and a read-modify-write of state.controllerTypeCache lost
+// the other pass's entries. Each pass now puts its entries into this concurrent map, then writes
+// state.controllerTypeCache as one whole-value snapshot of it. state stays the durable copy: the
+// map is loaded from it on first use after a reboot or push. If two passes' state commits land in
+// the wrong order, the persisted copy can miss a few entries; the working copy keeps them, and
+// after a reboot they cost one fullJson fetch each. apiClearCache() and updated() clear both.
+@Field static final ConcurrentHashMap<Long, ConcurrentHashMap<String, Object>> CONTROLLER_TYPE_CACHE = new ConcurrentHashMap<>()
 @Field static final String CHECKPOINT_DETAIL_PREFIX = "hub_diagnostics_checkpoint_"
 @Field static final String PERFORMANCE_COMPARISON_FILE = "hub_diagnostics_performance_comparison.json"
 // Scheduled snapshots and checkpoints: cron fires JITTER_BASE_MIN past the slot, then a
@@ -611,15 +632,16 @@ Map serveUI() {
 // State-backed so the cached value survives reboots; asynchttpGet handles the refresh.
 String checkGithubVersion() {
     long lastCheck = state.lastGithubVersionCheck ?: 0
-    if (now() - lastCheck >= 3600000 && !githubVersionRefreshPending) {
-        githubVersionRefreshPending = true
-        asynchttpGet('githubVersionCallback', [uri: IMPORT_URL_APP, contentType: "text/plain", timeout: 10])
+    long t = now()
+    if (t - lastCheck >= 3600000 && t - githubVersionRefreshStartedMs >= GITHUB_VERSION_PENDING_MS) {
+        githubVersionRefreshStartedMs = t
+        asynchttpGet('githubVersionCallback', [uri: IMPORT_URL_APP, contentType: "text/plain", timeout: GITHUB_VERSION_TIMEOUT_S])
     }
     return state.lastGithubVersion
 }
 
 void githubVersionCallback(resp, data) {
-    githubVersionRefreshPending = false
+    githubVersionRefreshStartedMs = 0L
     if (resp.hasError() || resp.status != 200) {
         logNet "GitHub version check failed: HTTP ${resp.status}"
         return
@@ -1136,7 +1158,7 @@ Map apiGetSettings() {
         debugLogging:            settings.debugLogging ?: false,
         obfuscateForumExport:    settings.obfuscateForumExport ?: false,
         liveRefreshSec:          (settings.liveRefreshSec ?: 30) as int,
-        cacheSize:               (state.controllerTypeCache ?: [:]).size()
+        cacheSize:               controllerTypeCache().size()
     ])
 }
 
@@ -1188,8 +1210,8 @@ Map apiUpdateSettings() {
 
 Map apiClearCache() {
     checkVersion()
-    int cleared = (state.controllerTypeCache ?: [:]).size()
-    state.controllerTypeCache = [:]
+    int cleared = controllerTypeCache().size()
+    clearControllerTypeCache()
     // Also drop the integration-overrides cache so this re-reads the File Manager config on next
     // use — the intuitive "apply my override edits" action, no full Done required.
     TTL_CACHE.remove('integrationOverrides')
@@ -1507,8 +1529,9 @@ Map getAlertSignals(Map shared = [:]) {
         (msg.text ?: msg.message ?: msg.toString()) as String
     }.findAll { it } as List
 
-    Map netWrap = hubMapRequest(NETWORK_CONFIG_PATH, "network configuration", 15)
-    Map networkConfig = netWrap.ok ? netWrap.data : null
+    Map networkConfig = (Map) cachedFetch('networkConfig', NETWORK_CONFIG_CACHE_TTL_MS) {
+        (Map) reqData(NETWORK_CONFIG_PATH, "network configuration", 15) ?: null
+    }
     boolean ethernetAndWifi = (networkConfig && networkConfig.hasEthernet && networkConfig.hasWiFi) as boolean
     // Periodic Bonjour restarts (Network Setup → Bonjour options) cause LAN multicast spikes;
     // the platform recommends leaving it off. containsKey guard: legacy hubs omit the field —
@@ -2028,6 +2051,18 @@ Map fetchHubAlerts(Map prefetchedHubData = null) {
     ]
 }
 
+// Newest backup entry by createTimeOrig; the last entry when none parse.
+private Map latestBackup(List backups) {
+    if (!backups) return null
+    Map best = null
+    long bestMs = Long.MIN_VALUE
+    backups.each { Object b ->
+        Long ms = (b instanceof Map) ? parseDate(((Map) b).createTimeOrig) : null
+        if (ms != null && ms > bestMs) { bestMs = ms; best = (Map) b }
+    }
+    return best ?: (Map) backups[-1]
+}
+
 List fetchHubEvents() {
     try {
         Object raw = hubRequest(HUB_EVENTS_PATH, "hub events", "json", 10)
@@ -2051,26 +2086,28 @@ Map fetchBackups() {
     Map cloudResp = cloudWrap.ok ? cloudWrap.data : [:]
     List localList = (localResp instanceof List) ? (List) localResp : []
     List cloudList = ((cloudResp?.backups as List) ?: [])
-    Map latestLocal = localList ? (Map) localList[-1] : null
+    // Newest by creation time: the cloud list is not in date order. Lists without parseable
+    // times fall back to the last entry, the previous behavior.
+    Map latestLocal = latestBackup(localList)
     List cloudThisHub = cloudList.findAll { Map b -> b.thisHub == true } as List
-    Map latestCloud = cloudThisHub ? (Map) cloudThisHub[-1] : null
+    Map latestCloud = latestBackup(cloudThisHub)
     return [
         local: [
             count: localList.size(),
             latestName: latestLocal?.name,
             latestCreateTime: latestLocal?.createTime,
-            latestCreateTimeOrig: latestLocal?.createTimeOrig,
+            latestCreateTimeMs: parseDate(latestLocal?.createTimeOrig),
             latestPlatformVersion: latestLocal?.platformVersion
         ],
         cloud: [
             thisHubCount: cloudThisHub.size(),
             otherHubCount: cloudList.size() - cloudThisHub.size(),
             latestThisHubCreateTime: latestCloud?.createTime,
-            latestThisHubCreateTimeOrig: latestCloud?.createTimeOrig,
+            latestThisHubCreateTimeMs: parseDate(latestCloud?.createTimeOrig),
             latestThisHubVersion: latestCloud?.platformVersion,
             otherHubs: cloudList.findAll { Map b -> b.thisHub != true }.collect { Map b ->
                 [hubName: b.hubName, hubVersion: b.hubVersion, platformVersion: b.platformVersion,
-                 createTime: b.createTime, fileSize: b.fileSize]
+                 createTime: b.createTime, createTimeMs: parseDate(b.createTimeOrig), fileSize: b.fileSize]
             },
             hasCloudBackupEntitlements: cloudResp?.hasCloudBackupEntitlements ?: false,
             hasCloudRestoreEntitlements: cloudResp?.hasCloudRestoreEntitlements ?: false
@@ -2246,7 +2283,7 @@ List fetchUserAppTypes() {
         List used = (a.usedBy as List) ?: []
         [id: a.id, name: a.name, namespace: a.namespace,
          oauthEnabled: a.oauth == "enabled",
-         lastModified: a.lastModified,
+         lastModifiedMs: parseDate(a.lastModified),
          usedByCount: used.size(),
          usedBy: used.collect { Map u -> [id: u.id, name: u.name] }]
     }
@@ -2259,7 +2296,7 @@ List fetchUserDriverTypes() {
         List used = (d.usedBy as List) ?: []
         List caps = (d.capabilities as String)?.split(',\\s*')?.findAll { it } ?: []
         [id: d.id, name: d.name, namespace: d.namespace,
-         lastModified: d.lastModified,
+         lastModifiedMs: parseDate(d.lastModified),
          capabilityCount: caps.size(),
          capabilities: caps,
          usedByCount: used.size(),
@@ -2283,7 +2320,7 @@ List fetchUserLibraries() {
         List usedByApps = (l.usedByAppTypes as String)?.split(',\\s*')?.findAll { it } ?: []
         [id: l.id, name: l.name, namespace: l.namespace, version: l.version,
          author: l.author, category: l.category, description: l.description,
-         updateTime: l.updateTime, isPrivate: l.private == true,
+         updateTimeMs: parseDate(l.updateTime), isPrivate: l.private == true,
          usedByDeviceCount: usedByDevices.size(), usedByAppCount: usedByApps.size(),
          usedByDeviceTypes: usedByDevices, usedByAppTypes: usedByApps]
     }
@@ -2961,8 +2998,10 @@ private Object reqData(String path, String name, int timeout = 10) {
 // Radio details go through the shared radio TTL cache, like getPerformanceData. fresh=true (config
 // snapshot) reads past it for a point-in-time record, and refreshes it.
 Map analyzeNetwork(boolean fresh = false) {
+    Map network = (Map) reqData(NETWORK_CONFIG_PATH, "network configuration", 15)
+    cachePut('networkConfig', network)   // keeps getAlertSignals()' copy as fresh as this read
     return [
-        network: reqData(NETWORK_CONFIG_PATH, "network configuration", 15),
+        network: network,
         zwave:   radioDetails('zwaveDetails', ZWAVE_DETAILS_PATH, "Z-Wave details", fresh),
         zigbee:  radioDetails('zigbeeDetails', ZIGBEE_DETAILS_PATH, "Zigbee details", fresh),
         matter:  reqData(MATTER_DETAILS_PATH, "Matter details", 15),
@@ -3324,13 +3363,14 @@ Map classifyDevice(Map device, Map appLookup, Set communityDrivers) {
 //   classifyDevice: integration = cleanIntegrationName(appType.name), connectionType derived from
 //   the controllerType signal (NET/LAN ⇒ lan_direct, else cloud); INTEGRATION_OVERRIDES supplies a conn exception.
 // Fallback signal: controllerType from fullJson.device (actual values: ZGB, MAT, LNK, etc.).
-// Results cached in state.controllerTypeCache — keyed by device ID string, value is compact
-// JSON of [parentAppTypeName, controllerType] since parentApp is also stable for a device's lifetime.
+// Results cached in CONTROLLER_TYPE_CACHE, persisted to state.controllerTypeCache — keyed by device
+// ID string, value is [parentAppTypeName, controllerType, ...] since parentApp is also stable for a
+// device's lifetime.
 // Returns Map<String deviceId, Map [connectionType, integration]> for devices that improve.
 Map enrichDevices(Map uncertainDevices, Set communityAppTypeNames = [] as Set) {
     if (!uncertainDevices) return [:]
 
-    Map cache = (state.controllerTypeCache ?: [:]) as Map
+    ConcurrentHashMap<String, Object> cache = controllerTypeCache()
     Map cacheUpdates = [:]
     Map result = [:]
 
@@ -3421,12 +3461,29 @@ Map enrichDevices(Map uncertainDevices, Set communityAppTypeNames = [] as Set) {
     }
 
     if (cacheUpdates) {
-        Map updatedCache = new LinkedHashMap(cache)
-        updatedCache.putAll(cacheUpdates)
-        state.controllerTypeCache = updatedCache
+        cache.putAll(cacheUpdates)   // atomic per entry; never replaces the shared map
+        state.controllerTypeCache = new LinkedHashMap(cache)   // whole-value write of a snapshot
     }
 
     return result
+}
+
+// This instance's enrichment working copy, loaded from state.controllerTypeCache on first use.
+private ConcurrentHashMap<String, Object> controllerTypeCache() {
+    Long key = app.id as Long
+    ConcurrentHashMap<String, Object> m = CONTROLLER_TYPE_CACHE.get(key)
+    if (m != null) return m
+    ConcurrentHashMap<String, Object> loaded = new ConcurrentHashMap<>()
+    Map persisted = state.controllerTypeCache instanceof Map ? (Map) state.controllerTypeCache : [:]
+    persisted.each { k, v -> if (k != null && v != null) loaded.put(k.toString(), v) }
+    ConcurrentHashMap<String, Object> prior = CONTROLLER_TYPE_CACHE.putIfAbsent(key, loaded)
+    return prior != null ? prior : loaded
+}
+
+// Clears in place, so a pass still holding the map can't write the evicted entries back to state.
+private void clearControllerTypeCache() {
+    CONTROLLER_TYPE_CACHE.get(app.id as Long)?.clear()
+    state.remove('controllerTypeCache')
 }
 
 // ===== PERFORMANCE CHECKPOINT SYSTEM =====
@@ -3710,7 +3767,7 @@ void createSnapshot() {
             thisHubCount: backupsRaw.cloud.thisHubCount,
             otherHubCount: backupsRaw.cloud.otherHubCount,
             latestThisHubCreateTime: backupsRaw.cloud.latestThisHubCreateTime,
-            latestThisHubCreateTimeOrig: backupsRaw.cloud.latestThisHubCreateTimeOrig,
+            latestThisHubCreateTimeMs: backupsRaw.cloud.latestThisHubCreateTimeMs,
             latestThisHubVersion: backupsRaw.cloud.latestThisHubVersion,
             hasCloudBackupEntitlements: backupsRaw.cloud.hasCloudBackupEntitlements,
             hasCloudRestoreEntitlements: backupsRaw.cloud.hasCloudRestoreEntitlements
@@ -4891,8 +4948,8 @@ void updated() {
     unschedule()
     // clear session-scoped caches so config/hardware changes take effect immediately
     zwaveStackCache  = null   // re-detect Z-Wave stack on next use (handles user switching legacy ↔ JS)
-    state.remove('controllerTypeCache') // evict per-device classification cache; rebuilds on next analysis pass
-    apiTimings.clear()                  // drop stats for renamed/removed endpoints; fresh measurements from now
+    clearControllerTypeCache()   // evict per-device classification cache; rebuilds on next analysis pass
+    synchronized (apiTimings) { apiTimings.clear() } // drop stats for renamed/removed endpoints
     // N1: clear the TTL'd radio/list/resource/fwUpdate/integrationOverrides caches too, so a
     // settings change isn't masked by stale data for up to the cache TTL.
     TTL_CACHE.clear()   // N1: one wholesale clear — a new cache can never be missed here again
@@ -4904,6 +4961,7 @@ void updated() {
 }
 
 void logsOff() {
+    checkVersion()
     app.updateSetting("debugLogging", [type: "bool", value: false])
     app.updateSetting("traceEnable", [type: "bool", value: false])
     logWarn "Debug/trace logging auto-disabled after 30 minutes"
