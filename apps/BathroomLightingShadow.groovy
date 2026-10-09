@@ -4,7 +4,7 @@
 import groovy.transform.Field
 import com.hubitat.app.ChildDeviceWrapper
 
-@Field static final String CODE_VERSION = "0.2.4"
+@Field static final String CODE_VERSION = "0.2.5"
 @Field static final Integer SCORING_SCHEMA_VERSION = 1
 @Field static final Integer RESOLVER_MAX_PER_TICK = 10
 
@@ -105,19 +105,16 @@ void initialize() {
     if (state.tQuietSince == null)    state.tQuietSince = null
     if (state.userForgotOff == null)  state.userForgotOff = [count: 0, lapseSecSum: 0L]
 
+    Map scores = new LinkedHashMap(state.scores as Map)
+    Map policyStates = new LinkedHashMap(state.policyState as Map)
     POLICIES.each { Map p ->
-        if (state.scores[p.key] == null) {
-            state.scores[p.key] = [
-                correctOn: 0, missedOn: 0, falseOn: 0,
-                prematureOff: 0, correctOff_quietConfirmed: 0, correctOff_anticipatedUser: 0,
-                overHold: 0,
-                latencyMsSum: 0L, latencySamples: 0
-            ]
-        }
-        if (state.policyState[p.key] == null) {
-            state.policyState[p.key] = [decision: "off", lastTransitionTs: null, lastOnClass: null, transitions: []]
+        if (scores[p.key] == null) scores[p.key] = emptyScores()
+        if (policyStates[p.key] == null) {
+            policyStates[p.key] = [decision: "off", lastTransitionTs: null, lastOnClass: null, transitions: []]
         }
     }
+    state.scores = scores
+    state.policyState = policyStates
 
     if (hueMotion)     subscribe(hueMotion, "motion", "sensorHandler")
     if (fp300Motion)   subscribe(fp300Motion, "motion", "sensorHandler")
@@ -143,6 +140,44 @@ private void ensurePolicyChildren() {
     }
 }
 
+private Map emptyScores() {
+    return [
+        correctOn: 0, missedOn: 0, falseOn: 0,
+        prematureOff: 0, correctOff_quietConfirmed: 0, correctOff_anticipatedUser: 0,
+        overHold: 0,
+        latencyMsSum: 0L, latencySamples: 0
+    ]
+}
+
+// state.policyState and state.scores hold one nested map per policy. Callers mutate a
+// copy and write it back here, so the top-level key is always reassigned (see
+// ARCHITECTURE.md, Platform constraints). Transitions are copied too: the resolver
+// marks them resolved in place.
+private Map policyStateOf(String key) {
+    Map ps = ((state.policyState ?: [:]) as Map)[key] as Map
+    if (ps == null) return null
+    Map copy = new LinkedHashMap(ps)
+    if (ps.transitions != null) copy.transitions = (ps.transitions as List).collect { new LinkedHashMap(it as Map) }
+    return copy
+}
+
+private void putPolicyState(String key, Map ps) {
+    Map all = new LinkedHashMap((state.policyState ?: [:]) as Map)
+    all[key] = ps
+    state.policyState = all
+}
+
+private Map scoresOf(String key) {
+    Map s = ((state.scores ?: [:]) as Map)[key] as Map
+    return s == null ? null : new LinkedHashMap(s)
+}
+
+private void putScores(String key, Map s) {
+    Map all = new LinkedHashMap((state.scores ?: [:]) as Map)
+    all[key] = s
+    state.scores = all
+}
+
 private void checkVersion() {
     if (state.version != CODE_VERSION) {
         logVer "version ${state.version} -> ${CODE_VERSION}"
@@ -156,7 +191,9 @@ private void checkVersion() {
 }
 
 void sensorHandler(evt) {
-    state.sensorState[evt.device.id as String] = [name: evt.name, value: evt.value, ts: now()]
+    Map sensorState = new LinkedHashMap((state.sensorState ?: [:]) as Map)
+    sensorState[evt.device.id as String] = [name: evt.name, value: evt.value, ts: now()]
+    state.sensorState = sensorState
     recordEvent("sensor", evt.device.displayName, "${evt.name}=${evt.value}")
     refreshDerivedTimestamps()
     evaluatePolicies()
@@ -178,11 +215,12 @@ void wallSwitchHandler(evt) {
         Long tQuietSince = state.tQuietSince as Long
         Long tForgotMs = ((settings.tForgot ?: 600) as Long) * 1000L
         if (tQuietSince != null && (now() - tQuietSince) >= tForgotMs) {
-            if (state.userForgotOff == null) state.userForgotOff = [count: 0, lapseSecSum: 0L]
+            Map forgot = new LinkedHashMap((state.userForgotOff ?: [count: 0, lapseSecSum: 0L]) as Map)
             Long lapseSec = ((now() - tQuietSince) / 1000L) as Long
-            state.userForgotOff.count = (state.userForgotOff.count ?: 0) + 1
-            state.userForgotOff.lapseSecSum = (state.userForgotOff.lapseSecSum ?: 0L) + lapseSec
-            logInfo "userForgotOff: count=${state.userForgotOff.count} lapseSec=${lapseSec}"
+            forgot.count = (forgot.count ?: 0) + 1
+            forgot.lapseSecSum = (forgot.lapseSecSum ?: 0L) + lapseSec
+            state.userForgotOff = forgot
+            logInfo "userForgotOff: count=${forgot.count} lapseSec=${lapseSec}"
         }
     }
 }
@@ -190,8 +228,7 @@ void wallSwitchHandler(evt) {
 private void scoreOn(Long wallOnTs) {
     Long windowMs = (settings.wOn ?: 60) * 1000L
     POLICIES.each { Map p ->
-        Map ps = state.policyState[p.key]
-        syncDecision(p.key)
+        Map ps = syncDecision(p.key)
         // "Caught the user" = lights would have been on when they arrived.
         // Two ways that's true: (a) policy already ON at wall-on time;
         // (b) policy transitioned ON within wOn seconds before OR after
@@ -201,7 +238,7 @@ private void scoreOn(Long wallOnTs) {
             it.edge == "on" && Math.abs((it.ts as Long) - wallOnTs) <= windowMs
         }
         Map lastOn = ps.transitions?.reverse()?.find { it.edge == "on" }
-        Map s = state.scores[p.key]
+        Map s = scoresOf(p.key)
         if (isOn || matchOn != null) {
             s.correctOn = (s.correctOn ?: 0) + 1
             // If the resolver already classified this ON cycle as falseOn,
@@ -218,20 +255,25 @@ private void scoreOn(Long wallOnTs) {
                 s.latencySamples = (s.latencySamples ?: 0) + 1
             }
             ps.lastOnClass = "correctOn"
+            putPolicyState(p.key, ps)
         } else {
             s.missedOn = (s.missedOn ?: 0) + 1
         }
+        putScores(p.key, s)
     }
     logInfo "scoreOn: tallies updated; per-policy: ${state.scores.collectEntries { k, v -> [k, [correctOn: v.correctOn, missedOn: v.missedOn]] }}"
 }
 
-private void syncDecision(String key) {
-    Map ps = state.policyState[key]
+// Returns the policy's state after syncing it to its child switch.
+private Map syncDecision(String key) {
+    Map ps = policyStateOf(key)
     ChildDeviceWrapper child = getChildDevice(childDni(key))
     String swState = child?.currentValue("switch")
     if (swState != null && swState != ps.decision) {
         ps.decision = swState
+        putPolicyState(key, ps)
     }
+    return ps
 }
 
 void doorHandler(evt) {
@@ -239,7 +281,9 @@ void doorHandler(evt) {
 }
 
 void hfcHandler(evt) {
-    state.sensorState["hfc"] = [value: evt.value, ts: now()]
+    Map sensorState = new LinkedHashMap((state.sensorState ?: [:]) as Map)
+    sensorState["hfc"] = [value: evt.value, ts: now()]
+    state.sensorState = sensorState
     recordEvent("hfc", evt.device.displayName, evt.value)
     evaluatePolicies()
 }
@@ -287,8 +331,7 @@ private void evaluatePolicies() {
     POLICIES.each { Map p ->
         // Don't use `as Boolean` — it coerces null to false and breaks the abstain contract.
         Boolean wantOn = (Boolean) this."${p.onMethod}"(snap)
-        Map ps = state.policyState[p.key]
-        syncDecision(p.key)
+        Map ps = syncDecision(p.key)
         String current = ps.decision
         if (wantOn == null) return  // abstain
         if (wantOn && current == "off") {
@@ -305,16 +348,18 @@ private void drivePolicy(String key, String edge) {
     ChildDeviceWrapper child = getChildDevice(childDni(key))
     if (child == null) return
     if (edge == "on") child.on() else child.off()
-    Map ps = state.policyState[key]
+    Map ps = policyStateOf(key)
     String prev = ps.decision
     ps.decision = edge
     ps.lastTransitionTs = now()
     ps.transitions = ((ps.transitions ?: []) + [[ts: now(), edge: edge]]).takeRight(50)
+    if (edge == "on") ps.lastOnClass = null  // pending — resolver or scoreOn will set it
+    // Written before classifyOff, which reads and updates this policy's state itself.
+    putPolicyState(key, ps)
     logCmd "policy ${key} -> ${edge}"
     if (edge == "off" && prev == "on") {
         classifyOff(key, now() as Long)
     } else if (edge == "on") {
-        ps.lastOnClass = null  // pending — resolver or scoreOn will set it
         // Resolve this ON when its window closes, even if the resolver's self-rescheduling
         // chain was lost (nothing restarts it short of updated()).
         runIn(((settings.wOn ?: 60) as Integer) + 1, "resolveUnresolvedOns")
@@ -326,14 +371,14 @@ private void drivePolicy(String key, String edge) {
 // The counter exists to catch future policies (e.g., time-of-day) that might decide OFF
 // without consulting presence.
 private void classifyOff(String key, Long tOff) {
-    Map ps = state.policyState[key]
+    Map ps = policyStateOf(key)
     if (ps.lastOnClass == "falseOn") return  // bookkeeping-only — don't score
 
     Long tQuietMs = (settings.tQuiet ?: 60) * 1000L
     Long lastAct = state.tLastActivity as Long
     boolean prematureCondition = lastAct != null && (tOff - lastAct) < tQuietMs
 
-    Map s = state.scores[key]
+    Map s = scoresOf(key)
     String offClass
     if (prematureCondition) {
         s.prematureOff = (s.prematureOff ?: 0) + 1
@@ -349,6 +394,8 @@ private void classifyOff(String key, Long tOff) {
         }
     }
     ps.lastOffClass = offClass
+    putScores(key, s)
+    putPolicyState(key, ps)
     logInfo "classifyOff ${key} class=${offClass}"
 }
 
@@ -363,7 +410,7 @@ private void reevaluateOff(String key) {
     Map snap = snapshot()
     Boolean wantOn = (Boolean) this."${p.onMethod}"(snap)
     if (wantOn == null) return
-    Map ps = state.policyState[key]
+    Map ps = policyStateOf(key)
     if (!wantOn && ps.decision == "on") {
         drivePolicy(key, "off")
     } else if (wantOn && ps.decision == "on") {
@@ -392,7 +439,8 @@ void resolveUnresolvedOns() {
     int processed = 0
     POLICIES.each { Map p ->
         if (processed >= RESOLVER_MAX_PER_TICK) return
-        Map ps = state.policyState[p.key]
+        Map ps = policyStateOf(p.key)
+        Map s = scoresOf(p.key)
         boolean falseOnChanged = false
         ps.transitions?.each { Map t ->
             if (processed >= RESOLVER_MAX_PER_TICK) return
@@ -400,7 +448,6 @@ void resolveUnresolvedOns() {
             if ((t.ts as Long) > cutoff) return  // window not yet closed
             if (t.resolved == true) return
             if (ps.lastOnClass != "correctOn" || ps.lastTransitionTs != t.ts) {
-                Map s = state.scores[p.key]
                 s.falseOn = (s.falseOn ?: 0) + 1
                 if (ps.decision == "on" && ps.lastTransitionTs == t.ts) {
                     ps.lastOnClass = "falseOn"
@@ -411,7 +458,7 @@ void resolveUnresolvedOns() {
             processed++
         }
         if (falseOnChanged) {
-            logInfo "falseOn classified for policy ${p.key} (count=${state.scores[p.key].falseOn})"
+            logInfo "falseOn classified for policy ${p.key} (count=${s.falseOn})"
         }
 
         // overHold: policy is ON, wall switch is OFF, room has been quiet > holdSec.
@@ -423,7 +470,6 @@ void resolveUnresolvedOns() {
                 Integer holdSec = (settings."policy_${p.key}_holdSec" ?: p.defaultHoldSec) as Integer
                 if ((now() - tQuietSince) > (holdSec * 1000L)) {
                     if (ps.overHoldFlagged != true) {
-                        Map s = state.scores[p.key]
                         s.overHold = (s.overHold ?: 0) + 1
                         ps.overHoldFlagged = true
                         logInfo "overHold classified for policy ${p.key} (count=${s.overHold})"
@@ -433,6 +479,8 @@ void resolveUnresolvedOns() {
         } else {
             ps.overHoldFlagged = false
         }
+        if (s != null) putScores(p.key, s)
+        putPolicyState(p.key, ps)
     }
     runIn((settings.wOn ?: 60) as Integer, "resolveUnresolvedOns")
 }
@@ -478,14 +526,9 @@ private String buildRecentTable() {
 void appButtonHandler(String btn) {
     if (btn == "btnReset") {
         logInfo "reset counters"
-        POLICIES.each { Map p ->
-            state.scores[p.key] = [
-                correctOn: 0, missedOn: 0, falseOn: 0,
-                prematureOff: 0, correctOff_quietConfirmed: 0, correctOff_anticipatedUser: 0,
-                overHold: 0,
-                latencyMsSum: 0L, latencySamples: 0
-            ]
-        }
+        Map scores = new LinkedHashMap((state.scores ?: [:]) as Map)
+        POLICIES.each { Map p -> scores[p.key] = emptyScores() }
+        state.scores = scores
         state.userForgotOff = [count: 0, lapseSecSum: 0L]
         state.observingSince = now()
     }

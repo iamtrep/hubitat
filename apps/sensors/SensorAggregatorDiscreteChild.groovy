@@ -907,11 +907,13 @@ boolean assertAggregateValue(String expected, String testName, boolean countAsTe
             logDebug "  Aggregation method: ${aggregationMethod}"
         }
 
-        state.testResults[testName] = [
+        Map results = new LinkedHashMap((state.testResults ?: [:]) as Map)
+        results[testName] = [
             passed: passed,
             expected: expected,
             actual: actual
         ]
+        state.testResults = results
     } else {
         // Pre-condition check
         if (passed) {
