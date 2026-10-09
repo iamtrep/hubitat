@@ -34,7 +34,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.5"
+@Field static final String CODE_VERSION = "0.1.6"
 
 metadata {
     definition (
@@ -454,7 +454,9 @@ private void parseAttributeReport(Map descMap) {
 
                 case "001C": // system mode
                     if (descMap.value == "00") {
-                        // Off is unambiguous — emit immediately
+                        // Off is unambiguous — emit immediately. Store it so a 401C that
+                        // follows (refresh, or a reported setpoint mode) can't flip it to heat.
+                        state.storedSystemMode = "off"
                         map.name = "thermostatMode"
                         map.value = "off"
                         map.descriptionText = "Thermostat mode is set to ${map.value}"
