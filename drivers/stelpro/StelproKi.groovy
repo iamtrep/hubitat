@@ -34,7 +34,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.8"
+@Field static final String CODE_VERSION = "0.1.9"
 
 metadata {
     definition (
@@ -133,6 +133,9 @@ void configure() {
     state.clear()
     state.lastOperatingStateRequest = 0
     state.codeVersion = CODE_VERSION
+    // Left behind by the getNeighbors/getRoutes commands removed in June 2026.
+    state.remove("neighborTable")
+    state.remove("routeTable")
 
     if (logEnable || traceEnable) runIn(1800, "logsOff")
 

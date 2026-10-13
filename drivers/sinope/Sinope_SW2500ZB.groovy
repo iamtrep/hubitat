@@ -15,7 +15,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.27"
+@Field static final String CODE_VERSION = "0.0.28"
 // device.id -> deadline (ms) until which a state report counts as digital. Static rather than
 // state: a driver's state is written back whole at method exit, so a command and a parse() on
 // another thread can undo each other's flag, and a deadline expires on its own when the device
@@ -182,6 +182,9 @@ void configure() {
     logTrace("configure()")
 
     state.codeVersion = CODE_VERSION
+    // Left behind by the getNeighbors/getRoutes commands removed in June 2026.
+    state.remove('neighborTable')
+    state.remove('routeTable')
     state.remove('energyDelivered')
 
     try

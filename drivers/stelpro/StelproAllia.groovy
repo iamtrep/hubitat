@@ -33,7 +33,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import groovy.json.JsonOutput
 
-@Field static final String CODE_VERSION = "0.0.11"
+@Field static final String CODE_VERSION = "0.0.12"
 
 metadata {
     definition (name: "Stelpro Allia Zigbee Thermostat",
@@ -141,6 +141,9 @@ void deviceTypeUpdated() {
 void configure(){
     logCfg "configure..."
     state.driverVersion = CODE_VERSION
+    // Left behind by the getNeighbors/getRoutes commands removed in June 2026.
+    state.remove('neighborTable')
+    state.remove('routeTable')
 
     unschedule()
     if (debugEnable || traceEnable) runIn(1800, "logsOff")

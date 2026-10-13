@@ -37,7 +37,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.0.12"
+@Field static final String CODE_VERSION = "0.0.13"
 
 // device.id -> deadline (ms) until which a valve report counts as digital. Static rather than state:
 // a driver's state is written back at method exit, so parse() on another thread would not see it,
@@ -148,6 +148,9 @@ void configure() {
     logTrace("configure()")
 
     state.codeVersion = CODE_VERSION
+    // Left behind by the getNeighbors/getRoutes commands removed in June 2026.
+    state.remove("neighborTable")
+    state.remove("routeTable")
 
     try {
         unschedule()

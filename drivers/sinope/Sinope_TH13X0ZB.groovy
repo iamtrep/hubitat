@@ -25,7 +25,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.22"
+@Field static final String CODE_VERSION = "0.0.23"
 
 @Field static final List<String> SUPPORTED_THERMOSTAT_MODES     = ['"off"', '"heat"']
 @Field static final List<String> SUPPORTED_THERMOSTAT_FAN_MODES = ['"auto"']
@@ -132,6 +132,9 @@ metadata
 void configure() {
     logCfg('configure()')
     state.version = CODE_VERSION  // installed()/updated() route here; keep parse() from re-firing configure()
+    // Left behind by the getNeighbors/getRoutes commands removed in June 2026.
+    state.remove('neighborTable')
+    state.remove('routeTable')
 
     // Set unused default values
     sendEvent(name: 'coolingSetpoint', value:getTemperature('0BB8')) // 0x0BB8 =  30 Celsius
