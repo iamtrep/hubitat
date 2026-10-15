@@ -13,7 +13,6 @@ definition(
     description: "Tests the Android TV Remote driver against your box and writes a report to paste in the forum",
     category: "Utility",
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/androidtv/tests/AndroidTVRemoteTester.groovy",
-    oauth: true,
     iconUrl: "",
     iconX2Url: "",
     // One execution at a time: Abort or Done must not interleave with a step that is reading the log.
@@ -26,7 +25,7 @@ import java.security.MessageDigest
 import java.security.cert.CertificateFactory
 import java.text.SimpleDateFormat
 
-@Field static final String CODE_VERSION = "0.2.0"
+@Field static final String CODE_VERSION = "0.3.0"
 
 @Field static final String DROP_RE = '^(remote connect returned|Socket \\(|No message from the TV|Connect failed)'
 
@@ -39,22 +38,27 @@ import java.text.SimpleDateFormat
 // The device's attributes the run watches, to check what the driver made of the box's messages.
 @Field static final List TV_ATTRIBUTES = ["switch", "currentApp", "networkStatus", "pairing", "volume", "mute"]
 
-// What the driver assumes about a box. A field outside its rule is a difference.
+// What the driver assumes about a box, and what it must do in answer. A field outside its rule is a
+// difference. Fields marked driver: true judge the driver (its events, its reconnects); the others
+// judge the box, where a difference describes the model and is often harmless.
 @Field static final Map EXPECT = [
     0: [connected: [eq: true]],
     1: [setupFirst: [eq: true], powerReported: [eq: true], appReported: [eq: true], startMs: [max: 5000],
-        onlineEvent: [eq: true], switchEvent: [eq: true], appEvent: [eq: true]],
+        onlineEvent: [eq: true, driver: true], switchEvent: [eq: true, driver: true], appEvent: [eq: true, driver: true]],
     2: [firstPingMs: [between: [0, 7000]]],
-    3: [offReportMs: [max: 3000], onReportMs: [max: 3000], sessionKept: [eq: true], offEvent: [eq: true], onEvent: [eq: true]],
-    4: [volumeReported: [eq: true], volumeEventMatches: [eq: true]],
-    5: [accepted: [eq: true], app: [eq: "com.google.android.youtube.tv"], appEventMatches: [eq: true]],
-    6: [accepted: [eq: true], app: [eq: "com.google.android.youtube.tv"], appEventMatches: [eq: true]],
-    7: [reconnectMs: [max: 5000], nextCommandOk: [eq: true], onlineEvent: [eq: true]],
-    8: [appChanged: [eq: true], appEventMatches: [eq: true]],
-    9: [drops: [eq: 0], onWorked: [eq: true], onEvent: [eq: true]],
-    10: [noticeMs: [max: 50000], backMs: [max: 180000], stillPaired: [eq: true], offlineEvent: [eq: true], onlineEvent: [eq: true]],
-    11: [status: [eq: 402], oldPairingWorks: [eq: true], resumedOnOwn: [eq: true], pairingAfter: [eq: "paired"]],
-    12: [certRead: [eq: true], pairingReply: [eq: true], codeShown: [eq: true], wrongCodeStatus: [eq: 402], pairingAfter: [eq: "unpaired"]]
+    3: [offReportMs: [max: 3000], onReportMs: [max: 3000], sessionKept: [eq: true],
+        offEvent: [eq: true, driver: true], onEvent: [eq: true, driver: true]],
+    4: [volumeReported: [eq: true], volumeEventMatches: [eq: true, driver: true]],
+    5: [accepted: [eq: true], app: [eq: "com.google.android.youtube.tv"], appEventMatches: [eq: true, driver: true]],
+    6: [accepted: [eq: true], app: [eq: "com.google.android.youtube.tv"], appEventMatches: [eq: true, driver: true]],
+    7: [reconnectMs: [max: 5000, driver: true], nextCommandOk: [eq: true, driver: true], onlineEvent: [eq: true, driver: true]],
+    8: [appChanged: [eq: true], appEventMatches: [eq: true, driver: true]],
+    9: [drops: [eq: 0], onWorked: [eq: true], onEvent: [eq: true, driver: true]],
+    10: [noticeMs: [max: 50000, driver: true], backMs: [max: 180000], stillPaired: [eq: true],
+         offlineEvent: [eq: true, driver: true], onlineEvent: [eq: true, driver: true]],
+    11: [status: [eq: 402], oldPairingWorks: [eq: true], resumedOnOwn: [eq: true, driver: true], pairingAfter: [eq: "paired", driver: true]],
+    12: [certRead: [eq: true], pairingReply: [eq: true], codeShown: [eq: true], wrongCodeStatus: [eq: 402],
+         pairingAfter: [eq: "unpaired", driver: true]]
 ]
 
 
@@ -70,7 +74,11 @@ mappings {
 }
 
 Map mainPage() {
-    dynamicPage(name: "mainPage", title: "Android TV Remote Tester", install: true, uninstall: true) {
+    if (scriptAccess) checkOAuth() else dropAccessToken()
+    Map run = state.run as Map
+    // The page reloads itself while a run is in progress, so the table follows it.
+    dynamicPage(name: "mainPage", title: "Android TV Remote Tester", install: true, uninstall: true,
+                refreshInterval: run?.status == "running" ? 5 : 0) {
         section("Devices") {
             input "tv", "device.AndroidTVRemote", title: "Android TV Remote device", required: true
             input "plug", "capability.switch", title: "Smart plug feeding the box (optional, for the power-cut test)", required: false
@@ -78,7 +86,7 @@ Map mainPage() {
         section("Optional tests") {
             input "optStandby", "bool", title: "Long standby", defaultValue: false, submitOnChange: true
             if (optStandby) input "standbyMinutes", "number", title: "Standby minutes", defaultValue: 2, range: "1..240"
-            input "optPowerCut", "bool", title: "Power cut: turns the plug off for 2 minutes", defaultValue: false
+            input "optPowerCut", "bool", title: "Power cut: turns the plug off for 30 seconds, then waits for the box to come back", defaultValue: false
             input "optWrongCode", "bool", title: "Wrong pairing code: shows a pairing dialog on the TV", defaultValue: false
         }
         section("Run") {
@@ -86,13 +94,15 @@ Map mainPage() {
             if (tv && tv.currentValue("pairing") != "paired") {
                 paragraph "The device isn't paired, so Run only checks how far pairing gets: it opens a pairing dialog on the TV and answers it with a wrong code. Takes about 1 minute."
             }
-            if (state.startError) paragraph "<span style='color:#c00'>Cannot start: ${escapeHtml(state.startError as String)}</span>"
-            Map run = state.run as Map
+            if (state.startError) paragraph rawHtml: true, message("error", "Cannot start: ${escapeHtml(state.startError as String)}")
             if (run?.status == "running") {
-                paragraph "Running ${TEST_NAMES[run.tests[run.idx]] ?: 'precheck'} (${(run.idx as int) + 1} of ${(run.tests as List).size()}), step ${(run.step as int) + 1}"
-                input "btnAbort", "button", title: "Abort"
+                input "btnAbort", "button", title: "Abort", inputClass: "p-button p-button-outlined"
             } else {
-                input "btnRun", "button", title: "Run"
+                input "btnRun", "button", title: "Run", inputClass: "p-button bg-hubitat-primary-green text-white"
+            }
+            if (run?.tests) {
+                paragraph rawHtml: true, summaryHtml(run)
+                paragraph rawHtml: true, statusHtml(run)
             }
         }
         if (state.report) {
@@ -101,7 +111,9 @@ Map mainPage() {
             }
         }
         section("Script access") {
-            if (state.accessToken) paragraph "<a href='${getFullLocalApiServerUrl()}/report?access_token=${state.accessToken}' target='_blank'>Report as JSON</a>"
+            input "scriptAccess", "bool", title: "Let a script run the tests (turns on OAuth for this app and makes an access token)",
+                  defaultValue: false, submitOnChange: true
+            if (scriptAccess && state.accessToken) paragraph "<a href='${getFullLocalApiServerUrl()}/report?access_token=${state.accessToken}' target='_blank'>Report as JSON</a>"
         }
         section("Logging") {
             input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
@@ -124,7 +136,7 @@ void updated() {
 
 void initialize() {
     checkVersion(false)
-    checkOAuth()
+    if (scriptAccess) checkOAuth() else dropAccessToken()
     subscribe(location, "systemStart", "onSystemStart")
     if (debugEnable) runIn(1800, "logsOff")
 }
@@ -163,6 +175,57 @@ private String escapeHtml(String s) {
     s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("'", "&#39;")
 }
 
+private String message(String severity, String html) {
+    "<div class='p-message p-message-${severity}' style='margin:0'><div class='p-message-wrapper' style='padding:.6rem 1rem'>" +
+        "<span class='p-message-text'>${html}</span></div></div>"
+}
+
+private String summaryHtml(Map run) {
+    List<Map> rows = testRows(run, TEST_NAMES)
+    int box = rows.count { it.state == "box" } as int
+    int drv = rows.count { it.state == "driver" } as int
+    String when = run.startedAt ? new Date(run.startedAt as Long).format("MMM d HH:mm", location.timeZone) : ""
+    switch (run.status) {
+        case "running":
+            return message("info", "Running since ${when}: test ${(run.idx as int)} of ${(run.tests as List).size() - 1}. This page updates every 5 s.")
+        case "done":
+            if (drv) return message("error", "<b>Run of ${when}: the driver did not do what it should in ${drv} test${drv > 1 ? 's' : ''}.</b> " +
+                                    "Please post the report in the forum thread.")
+            if (box) return message("warn", "<b>Run of ${when}: your TV differs from what the driver assumes in ${box} test${box > 1 ? 's' : ''}.</b> " +
+                                    "That is often harmless; the report tells us about your model.")
+            return message("success", "<b>Run of ${when}: every test as expected.</b>")
+        default:
+            return message("error", "<b>Run of ${when} ${run.status}</b>: ${escapeHtml((run.reason ?: '') as String)}")
+    }
+}
+
+@Field static final Map ROW_STYLE = [
+    ok: ["✓", "text-green-600"], box: ["⚠", "text-orange-500"], driver: ["✗", "text-red-600"], skipped: ["–", "text-color-secondary"],
+    running: ["▶", "text-blue-500"], waiting: ["·", "text-color-secondary"], "not run": ["·", "text-color-secondary"]
+]
+
+private String statusHtml(Map run) {
+    StringBuilder sb = new StringBuilder("<table style='width:100%;border-collapse:collapse'>")
+    for (Map r : testRows(run, TEST_NAMES)) {
+        List st = ROW_STYLE[r.state] as List
+        sb << "<tr style='border-bottom:1px solid var(--surface-border,#ddd)'>"
+        sb << "<td class='${st[1]}' style='width:1.6em;padding:.35rem 0;font-weight:bold;text-align:center'>${st[0]}</td>"
+        sb << "<td style='width:1.8em;padding:.35rem 0' class='text-color-secondary'>${r.test}</td>"
+        sb << "<td style='padding:.35rem .5rem'>${escapeHtml(r.name as String)}</td>"
+        sb << "<td class='${st[1]}' style='padding:.35rem 0'>${escapeHtml(r.detail as String)}</td></tr>"
+    }
+    sb << "</table><div class='text-color-secondary' style='font-size:.85em;margin-top:.4rem'>" +
+          "⚠ box differs: your TV does something the driver doesn't assume, often harmless. " +
+          "✗ driver differs: the driver didn't act on what the TV sent.</div>"
+    return sb.toString()
+}
+
+private void dropAccessToken() {
+    if (!state.accessToken) return
+    try { revokeAccessToken() } catch (e) { state.remove("accessToken") }     // throws while OAuth is off
+    logCfg "Script access turned off; the access token is revoked"
+}
+
 
 // ── Run control ───────────────────────────────────────────────────────
 
@@ -188,7 +251,7 @@ String startRun(Map opts) {
     state.plugWarning = null
     state.report = null
     state.startError = null
-    state.run = [status: "running", reason: null, tests: [0] + tests, idx: 0, step: 0, results: [], events: [],
+    state.run = [status: "running", reason: null, tests: [0] + tests, idx: 0, step: 0, results: [], events: [], startedAt: now(),
                  standbyMin: (opts.standbyMin ?: 2) as Integer, pairingOnly: pairingOnly,
                  needConnect: !pairingOnly && tv.currentValue("networkStatus") != "online",
                  ctx: [startSwitch: tv.currentValue("switch"), startTrace: tv.getSetting("traceEnable") == true,
@@ -436,7 +499,8 @@ void finishTest() {
             List<Map> lines = readTvLines(run.testSince as String) ?: []
             run = state.run as Map
             Map f = evalConnect(lines)
-            (run.results as List) << [test: 0, name: TEST_NAMES[0], observed: f, diffs: differences(f, EXPECT[0] as Map), trace: traceLines(lines)]
+            List d = differences(f, EXPECT[0] as Map)
+            (run.results as List) << ([test: 0, name: TEST_NAMES[0], observed: f, diffs: d, trace: traceLines(lines)] + splitDiffs(d, EXPECT[0] as Map))
             state.run = run
             finishRun("aborted", "the device did not connect")
             return
@@ -483,6 +547,7 @@ Map evaluateTest(int test, List<Map> lines, Map steps, Map run, List<Map> events
     if (test == 5 && f.app == "com.android.vending") { r.skipped = "YouTube not installed"; return r }
     if (test == 7 && f.boxError == null) { r.skipped = "the box accepted the invalid link"; return r }
     r.diffs = differences(f, EXPECT[test] as Map)
+    r.putAll(splitDiffs(r.diffs as List, EXPECT[test] as Map))
     if (r.diffs) r.trace = traceLines(lines)
     return r
 }
@@ -881,6 +946,49 @@ Map evalEvents(int test, List<Map> events, Map f) {
     }
 }
 
+Map splitDiffs(List diffs, Map expect) {
+    List drv = diffs.findAll { (expect[it] as Map)?.driver == true }
+    return [driverDiffs: drv, boxDiffs: diffs - drv]
+}
+
+String verdictOf(Map r) {
+    if (r.skipped) return "skipped"
+    if (r.driverDiffs) return "driver"
+    if (r.boxDiffs || r.diffs) return "box"
+    return "ok"
+}
+
+String verdictText(Map r) {
+    if (r.skipped) return "skipped: ${r.skipped}".toString()
+    List<String> parts = []
+    if (r.driverDiffs) parts << "driver differs (${(r.driverDiffs as List).join(', ')})".toString()
+    List box = (r.boxDiffs != null ? r.boxDiffs : (r.driverDiffs ? [] : r.diffs)) as List
+    if (box) parts << "box differs (${box.join(', ')})".toString()
+    return parts ? parts.join("; ") : "as expected"
+}
+
+// One row per test of a run: done with its verdict, running, waiting, or not run. The precheck shows only when it failed.
+List<Map> testRows(Map run, Map names) {
+    Map byTest = [:]
+    for (Map r : ((run.results ?: []) as List<Map>)) byTest[r.test as Integer] = r
+    List tests = (run.tests ?: []) as List
+    int idx = (run.idx ?: 0) as int
+    List<Map> rows = []
+    for (int i = 0; i < tests.size(); i++) {
+        Integer t = tests[i] as Integer
+        Map r = byTest[t] as Map
+        if (t == 0 && r == null) continue
+        String st
+        String detail = ""
+        if (r != null) { st = verdictOf(r); detail = verdictText(r) }
+        else if (run.status == "running" && i == idx) { st = "running"; detail = "step ${((run.step ?: 0) as int) + 1}".toString() }
+        else if (run.status == "running" && i > idx) st = "waiting"
+        else st = "not run"
+        rows << [test: t, name: names[t] ?: "Test ${t}".toString(), state: st, detail: detail]
+    }
+    return rows
+}
+
 List<String> differences(Map fields, Map expect) {
     List<String> out = []
     expect?.each { k, rule ->
@@ -900,11 +1008,11 @@ String formatReport(Map header, List<Map> results) {
     out << "app ${header.appVersion} · driver ${header.driverVersion ?: 'unknown'} · hub firmware ${header.firmware}".toString()
     out << "box: ${header.vendor ?: '?'} ${header.model ?: '?'} · Android ${header.androidVersion ?: '?'} · remote service ${header.remoteServiceVersion ?: '?'} · features ${header.features ?: '?'}".toString()
     out << "run: ${header.status} · slowest log read ${header.slowestReadMs ?: 0} ms".toString()
+    out << "box differs: the TV does something the driver doesn't assume · driver differs: the driver didn't act on what the TV sent"
     for (Map r : results) {
         out << ""
         List diffs = (r.diffs ?: []) as List
-        String verdict = r.skipped ? "skipped: ${r.skipped}" : (diffs ? "differs (${diffs.join(', ')})" : "as expected")
-        out << "${r.test}. ${r.name} — ${verdict}".toString()
+        out << "${r.test}. ${r.name} — ${verdictText(r)}".toString()
         if (r.observed) out << ("   " + (r.observed as Map).collect { k, v -> "${k}=${v}" }.join(" "))
         if (r.note) out << "   note: ${r.note}".toString()
         if (diffs && r.trace) {

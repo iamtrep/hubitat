@@ -35,5 +35,6 @@ pairing gets; a paired device that doesn't connect gets a Connection result with
 
 - `test-tester-helpers.groovy`: unit tests for its pure helpers, no hub needed
   (`groovy drivers/androidtv/tests/test-tester-helpers.groovy`).
-- `test-live-tv.sh [@hub]`: runs it through its endpoints and prints `[PASS]`/`[FAIL]` per test;
+- `test-live-tv.sh [@hub]`: runs it through its endpoints (turn on Script access in the app first) and
+  prints `[PASS]` per test, `[FAIL]` where the driver differs and `[WARN]` where only the box does;
   `RUN_SLOW_TESTS=1` runs tests 1–8, `ATV_OPTS="standby=5&cut=true&wrongcode=true"` adds the opt-in ones.

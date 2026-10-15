@@ -45,6 +45,10 @@ List<String> SIGNATURES = [
     'boolean hasEvent(List<Map> events, String name, String value) {',
     'String lastEvent(List<Map> events, String name) {',
     'Map evalEvents(int test, List<Map> events, Map f) {',
+    'Map splitDiffs(List diffs, Map expect) {',
+    'String verdictOf(Map r) {',
+    'String verdictText(Map r) {',
+    'List<Map> testRows(Map run, Map names) {',
     'List<String> differences(Map fields, Map expect) {',
     'private String lastApp(List<Map> lines) {',
     'String formatReport(Map header, List<Map> results) {',
@@ -223,15 +227,37 @@ check 'eq, max, between', h.differences([a: true, b: 4000L, c: 7000L, d: null],
         [a: [eq: true], b: [max: 5000], c: [between: [4000, 6000]], d: [max: 10]]) == ['c', 'd']
 check 'Integer vs Long equal', h.differences([status: 402], [status: [eq: 402L]]) == []
 
+println 'splitDiffs, verdicts'
+Map ex = [a: [eq: true], b: [eq: true, driver: true], c: [max: 5]]
+check 'split by driver mark', h.splitDiffs(['a', 'b', 'c'], ex) == [driverDiffs: ['b'], boxDiffs: ['a', 'c']]
+check 'verdict ok', h.verdictOf([diffs: [], driverDiffs: [], boxDiffs: []]) == 'ok' && h.verdictText([diffs: []]) == 'as expected'
+check 'verdict box', h.verdictOf([diffs: ['a'], driverDiffs: [], boxDiffs: ['a']]) == 'box'
+check 'driver wins', h.verdictOf([diffs: ['a', 'b'], driverDiffs: ['b'], boxDiffs: ['a']]) == 'driver'
+check 'both in text', h.verdictText([diffs: ['a', 'b'], driverDiffs: ['b'], boxDiffs: ['a']]) == 'driver differs (b); box differs (a)'
+check 'skipped', h.verdictOf([skipped: 'no plug']) == 'skipped' && h.verdictText([skipped: 'no plug']) == 'skipped: no plug'
+check 'older result without split reads as box', h.verdictText([diffs: ['a']]) == 'box differs (a)'
+
+println 'testRows'
+Map names = [0: 'Connection', 1: 'Session start', 2: 'Pings', 3: 'Power']
+Map running = [status: 'running', tests: [0, 1, 2, 3], idx: 2, step: 1,
+               results: [[test: 1, diffs: [], driverDiffs: [], boxDiffs: []]]]
+List<Map> tr = h.testRows(running, names)
+check 'precheck hidden when it passed', tr*.test == [1, 2, 3]
+check 'done, running with step, waiting', tr*.state == ['ok', 'running', 'waiting'] && tr[1].detail == 'step 2'
+Map aborted = [status: 'aborted', tests: [0, 1, 2], idx: 0, results: [[test: 0, diffs: ['connected'], driverDiffs: [], boxDiffs: ['connected']]]]
+List<Map> ta = h.testRows(aborted, names)
+check 'failed precheck shown, rest not run', ta*.test == [0, 1, 2] && ta*.state == ['box', 'not run', 'not run']
+
 println 'formatReport'
 String rep = h.formatReport([appVersion: '0.1.0', driverVersion: '0.0.2', firmware: '2.5.2.138', vendor: 'Technicolor', model: 'EBOX TV',
                              androidVersion: '11', remoteServiceVersion: '7.00.956317615', features: 639L, slowestReadMs: 2140L, status: 'done'],
     [[test: 1, name: 'Session start', observed: [model: 'EBOX TV', startMs: 1300L], diffs: []],
-     [test: 6, name: 'Launch by package', observed: [accepted: false, errorCode: '7'], diffs: ['accepted', 'app'], trace: ['11:44:55.588 rx 3:{1:7}']],
+     [test: 6, name: 'Launch by package', observed: [accepted: false, errorCode: '7'], diffs: ['accepted', 'app'], boxDiffs: ['accepted', 'app'], driverDiffs: [], trace: ['11:44:55.588 rx 3:{1:7}']],
      [test: 10, name: 'Power cut', skipped: 'no plug selected']])
 check 'title and versions', rep.startsWith('Android TV Remote Tester report\napp 0.1.0 · driver 0.0.2 · hub firmware 2.5.2.138')
 check 'as expected line', rep.contains('1. Session start — as expected\n   model=EBOX TV startMs=1300')
-check 'differs line with trace', rep.contains('6. Launch by package — differs (accepted, app)') && rep.contains('     11:44:55.588 rx 3:{1:7}')
+check 'box differs line with trace', rep.contains('6. Launch by package — box differs (accepted, app)') && rep.contains('     11:44:55.588 rx 3:{1:7}')
+check 'legend line', rep.contains('box differs: the TV does something')
 check 'skipped line', rep.contains('10. Power cut — skipped: no plug selected')
 check 'note line', h.formatReport([status: 'done'], [[test: 9, name: 'Long standby', observed: [drops: 0], diffs: [], note: 'trace off']]).contains('   drops=0\n   note: trace off')
 check 'warning on top', h.formatReport([status: 'aborted', warning: 'plug did not turn back on'], []).split('\n')[1] == 'WARNING: plug did not turn back on'

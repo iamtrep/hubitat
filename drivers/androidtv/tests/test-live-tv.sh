@@ -4,7 +4,9 @@
 # TEST-LIVE: needs a reachable hub with the Android TV Remote Tester installed and its TV selected
 #
 # Runs the Android TV Remote Tester through its endpoints and prints one line per test.
-# A test that differs from what the driver expects is [FAIL]; a skipped test is [WARN].
+# A test where the driver didn't act on what the box sent is [FAIL]; one where only the box differs
+# from what the driver assumes (a model quirk) is [WARN], as is a skipped test. Exit 1 only on [FAIL].
+# Needs Script access turned on in the app.
 #
 # Usage:
 #   bash drivers/androidtv/tests/test-live-tv.sh [@hub] [<instance-id>]            # test 1 only, about 15 s
@@ -58,7 +60,7 @@ try:
     if not inst: print("Android TV Remote Tester is not installed"); sys.exit(2)
     page = json.dumps(get(f"/installedapp/configure/json/{inst}"))
     m = re.search(r"access_token=([a-f0-9-]+)", page)
-    if not m: print("no access token on the app page"); sys.exit(2)
+    if not m: print("no access token: turn on Script access in the app"); sys.exit(2)
 except SystemExit:
     raise
 except Exception as e:
@@ -98,8 +100,11 @@ except Exception as e:
 info(f"run {rep.get('status')}" + (f": {rep.get('reason')}" if rep.get("reason") else ""))
 for t in rep.get("results") or []:
     name = f"{t['test']}. {t['name']}"
+    obs = " ".join(f"{k}={v}" for k, v in (t.get("observed") or {}).items())
+    drv, box = t.get("driverDiffs") or [], t.get("boxDiffs") or []
     if t.get("skipped"): warn(f"{name}: skipped: {t['skipped']}")
-    elif t.get("diffs"): fail(f"{name}: differs ({', '.join(t['diffs'])}) " + " ".join(f"{k}={v}" for k, v in (t.get("observed") or {}).items()))
+    elif drv: fail(f"{name}: driver differs ({', '.join(drv)})" + (f"; box differs ({', '.join(box)})" if box else "") + f" {obs}")
+    elif box: warn(f"{name}: box differs ({', '.join(box)}) {obs}")
     else: ok(name)
 if rep.get("status") != "done":
     print(f"\nrun {rep.get('status')}: {rep.get('reason')}"); sys.exit(2)
