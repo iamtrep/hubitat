@@ -40,6 +40,11 @@ List<String> SIGNATURES = [
     'Map evalStandby(List<Map> lines, Map steps) {',
     'Map evalPowerCut(List<Map> lines, Map steps, Map attrs, TimeZone tz) {',
     'Map evalWrongCode(List<Map> lines, Map steps) {',
+    'Map evalPairing(List<Map> lines) {',
+    'Map evalConnect(List<Map> lines) {',
+    'boolean hasEvent(List<Map> events, String name, String value) {',
+    'String lastEvent(List<Map> events, String name) {',
+    'Map evalEvents(int test, List<Map> events, Map f) {',
     'List<String> differences(Map fields, Map expect) {',
     'private String lastApp(List<Map> lines) {',
     'String formatReport(Map header, List<Map> results) {',
@@ -186,6 +191,33 @@ println 'evalWrongCode'
 Map s11 = h.evalWrongCode([ln('11:46:44.098', 'Pairing failed with status 402')], [resume: [ok: false], reconnect: [ok: true]])
 check 'status, old pairing, no resume', s11.status == 402L && s11.oldPairingWorks && s11.resumedOnOwn == false
 
+println 'evalPairing'
+def lv = { String t, String lvl, String m -> [ts: "2026-10-15 ${t}".toString(), level: lvl, msg: m] }
+Map pr = h.evalPairing([lv('11:46:00.000', 'trace', 'TV certificate: <pem>'), lv('11:46:01.000', 'trace', 'pair rx 1:2 2:200 11:""'),
+                        lv('11:46:02.000', 'info', 'Enter the code shown on the TV with Submit Pairing Code'),
+                        lv('11:46:10.000', 'error', 'Pairing failed with status 402')])
+check 'all stages, 402, no other error', pr.certRead && pr.pairingReply && pr.codeShown && pr.wrongCodeStatus == 402L && pr.firstError == null
+Map pr2 = h.evalPairing([lv('11:46:00.000', 'error', 'java.net.ConnectException: Connection refused to 192.0.2.10 on line 144 (method startPairing)')])
+check 'stopped at the certificate, error masked', !pr2.certRead && !pr2.codeShown && pr2.wrongCodeStatus == null && pr2.firstError.contains('<ip>')
+
+println 'evalConnect'
+Map cn = h.evalConnect([lv('11:00:00.000', 'warn', 'Connect failed after 30448 ms: SocketTimeoutException: connect timed out')])
+check 'not connected, first error', !cn.connected && !cn.connectReturned && cn.firstError.startsWith('Connect failed')
+check 'connected', h.evalConnect([lv('11:00:00.000', 'trace', 'remote connect returned after 80 ms'), lv('11:00:01.000', 'trace', 'rx 40:{1:1}')]).with { it.connected && it.connectReturned && it.firstError == null }
+
+println 'evalEvents'
+def ev = { String n, String v -> [name: n, value: v, at: 1L] }
+check 'session start events', h.evalEvents(1, [ev('networkStatus', 'online'), ev('switch', 'on'), ev('currentApp', 'a')], [:]) == [onlineEvent: true, switchEvent: true, appEvent: true]
+check 'missing app event', h.evalEvents(1, [ev('networkStatus', 'online'), ev('switch', 'on')], [:]).appEvent == false
+check 'power events', h.evalEvents(3, [ev('switch', 'off'), ev('switch', 'on')], [:]) == [offEvent: true, onEvent: true]
+check 'volume reported but no event', h.evalEvents(4, [], [volumeReported: true]).volumeEventMatches == false
+check 'no volume, no event', h.evalEvents(4, [], [volumeReported: false]).volumeEventMatches == true
+check 'app event matches the box', h.evalEvents(5, [ev('currentApp', 'x'), ev('currentApp', 'yt')], [app: 'yt']) == [appEvent: 'yt', appEventMatches: true]
+check 'app event missing', h.evalEvents(6, [], [app: 'yt']).appEventMatches == false
+check 'home app event', h.evalEvents(8, [ev('currentApp', 'home')], [homeApp: 'home']).appEventMatches == true
+check 'offline then online', h.evalEvents(10, [ev('networkStatus', 'offline'), ev('networkStatus', 'online')], [:]) == [offlineEvent: true, onlineEvent: true]
+check 'pairing after', h.evalEvents(12, [ev('pairing', 'pairing'), ev('pairing', 'unpaired')], [:]).pairingAfter == 'unpaired'
+
 println 'differences'
 check 'eq, max, between', h.differences([a: true, b: 4000L, c: 7000L, d: null],
         [a: [eq: true], b: [max: 5000], c: [between: [4000, 6000]], d: [max: 10]]) == ['c', 'd']
@@ -201,6 +233,7 @@ check 'title and versions', rep.startsWith('Android TV Remote Tester report\napp
 check 'as expected line', rep.contains('1. Session start — as expected\n   model=EBOX TV startMs=1300')
 check 'differs line with trace', rep.contains('6. Launch by package — differs (accepted, app)') && rep.contains('     11:44:55.588 rx 3:{1:7}')
 check 'skipped line', rep.contains('10. Power cut — skipped: no plug selected')
+check 'note line', h.formatReport([status: 'done'], [[test: 9, name: 'Long standby', observed: [drops: 0], diffs: [], note: 'trace off']]).contains('   drops=0\n   note: trace off')
 check 'warning on top', h.formatReport([status: 'aborted', warning: 'plug did not turn back on'], []).split('\n')[1] == 'WARNING: plug did not turn back on'
 
 println 'wrongPairingCode'

@@ -29,6 +29,10 @@ real box and writes a report to paste in a forum post: each test's observations,
 what the driver expects, and the decoded protocol lines for any test that differs. Install it, select
 the Android TV Remote device (and optionally the smart plug feeding the box), and press Run.
 
+Each test checks both what the box sent (the driver's trace lines) and what the driver made of it (the
+device's events). On a device that isn't paired the run is a single Pairing test that records how far
+pairing gets; a paired device that doesn't connect gets a Connection result with the driver's error.
+
 - `test-tester-helpers.groovy`: unit tests for its pure helpers, no hub needed
   (`groovy drivers/androidtv/tests/test-tester-helpers.groovy`).
 - `test-live-tv.sh [@hub]`: runs it through its endpoints and prints `[PASS]`/`[FAIL]` per test;

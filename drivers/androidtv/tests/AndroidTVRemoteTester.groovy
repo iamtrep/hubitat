@@ -26,29 +26,35 @@ import java.security.MessageDigest
 import java.security.cert.CertificateFactory
 import java.text.SimpleDateFormat
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.2.0"
 
 @Field static final String DROP_RE = '^(remote connect returned|Socket \\(|No message from the TV|Connect failed)'
 
 @Field static final Map TEST_NAMES = [
-    1: "Session start", 2: "Pings", 3: "Power off/on", 4: "Volume", 5: "Launch by URL",
+    0: "Connection", 1: "Session start", 2: "Pings", 3: "Power off/on", 4: "Volume", 5: "Launch by URL",
     6: "Launch by package", 7: "Recovery after a box error", 8: "HOME", 9: "Long standby",
-    10: "Power cut", 11: "Wrong pairing code"
+    10: "Power cut", 11: "Wrong pairing code", 12: "Pairing"
 ]
+
+// The device's attributes the run watches, to check what the driver made of the box's messages.
+@Field static final List TV_ATTRIBUTES = ["switch", "currentApp", "networkStatus", "pairing", "volume", "mute"]
 
 // What the driver assumes about a box. A field outside its rule is a difference.
 @Field static final Map EXPECT = [
-    1: [setupFirst: [eq: true], powerReported: [eq: true], appReported: [eq: true], startMs: [max: 5000]],
+    0: [connected: [eq: true]],
+    1: [setupFirst: [eq: true], powerReported: [eq: true], appReported: [eq: true], startMs: [max: 5000],
+        onlineEvent: [eq: true], switchEvent: [eq: true], appEvent: [eq: true]],
     2: [firstPingMs: [between: [0, 7000]]],
-    3: [offReportMs: [max: 3000], onReportMs: [max: 3000], sessionKept: [eq: true]],
-    4: [volumeReported: [eq: true]],
-    5: [accepted: [eq: true], app: [eq: "com.google.android.youtube.tv"]],
-    6: [accepted: [eq: true], app: [eq: "com.google.android.youtube.tv"]],
-    7: [reconnectMs: [max: 5000], nextCommandOk: [eq: true]],
-    8: [appChanged: [eq: true]],
-    9: [drops: [eq: 0], onWorked: [eq: true]],
-    10: [noticeMs: [max: 50000], backMs: [max: 180000], stillPaired: [eq: true]],
-    11: [status: [eq: 402], oldPairingWorks: [eq: true], resumedOnOwn: [eq: true]]
+    3: [offReportMs: [max: 3000], onReportMs: [max: 3000], sessionKept: [eq: true], offEvent: [eq: true], onEvent: [eq: true]],
+    4: [volumeReported: [eq: true], volumeEventMatches: [eq: true]],
+    5: [accepted: [eq: true], app: [eq: "com.google.android.youtube.tv"], appEventMatches: [eq: true]],
+    6: [accepted: [eq: true], app: [eq: "com.google.android.youtube.tv"], appEventMatches: [eq: true]],
+    7: [reconnectMs: [max: 5000], nextCommandOk: [eq: true], onlineEvent: [eq: true]],
+    8: [appChanged: [eq: true], appEventMatches: [eq: true]],
+    9: [drops: [eq: 0], onWorked: [eq: true], onEvent: [eq: true]],
+    10: [noticeMs: [max: 50000], backMs: [max: 180000], stillPaired: [eq: true], offlineEvent: [eq: true], onlineEvent: [eq: true]],
+    11: [status: [eq: 402], oldPairingWorks: [eq: true], resumedOnOwn: [eq: true], pairingAfter: [eq: "paired"]],
+    12: [certRead: [eq: true], pairingReply: [eq: true], codeShown: [eq: true], wrongCodeStatus: [eq: 402], pairingAfter: [eq: "unpaired"]]
 ]
 
 
@@ -77,6 +83,10 @@ Map mainPage() {
         }
         section("Run") {
             paragraph "Tests 3 to 10 change what is on the TV. Tests 1 to 8 take about 2 minutes; the power cut adds about 3, the wrong code about 1, and the standby its minutes."
+            if (tv && tv.currentValue("pairing") != "paired") {
+                paragraph "The device isn't paired, so Run only checks how far pairing gets: it opens a pairing dialog on the TV and answers it with a wrong code. Takes about 1 minute."
+            }
+            if (state.startError) paragraph "<span style='color:#c00'>Cannot start: ${escapeHtml(state.startError as String)}</span>"
             Map run = state.run as Map
             if (run?.status == "running") {
                 paragraph "Running ${TEST_NAMES[run.tests[run.idx]] ?: 'precheck'} (${(run.idx as int) + 1} of ${(run.tests as List).size()}), step ${(run.step as int) + 1}"
@@ -124,11 +134,12 @@ void logsOff() {
     app.updateSetting("debugEnable", [value: "false", type: "bool"])
 }
 
-void checkVersion(boolean reinit = true) {
-    if (state.version == CODE_VERSION) return
+boolean checkVersion(boolean reinit = true) {
+    if (state.version == CODE_VERSION) return false
     logVer "Version ${CODE_VERSION} (was ${state.version})"
     state.version = CODE_VERSION
     if (reinit) runIn(1, "updated")
+    return true
 }
 
 void onSystemStart(evt) {
@@ -136,10 +147,12 @@ void onSystemStart(evt) {
 }
 
 void appButtonHandler(String btn) {
-    checkVersion()
+    // Re-initialize now rather than in 1 s: the scheduled updated() would abort the run this press starts.
+    if (checkVersion(false)) updated()
     if (btn == "btnRun") {
         String err = startRun([tests: null, standby: optStandby == true, standbyMin: (standbyMinutes ?: 2) as Integer,
                                powerCut: optPowerCut == true, wrongCode: optWrongCode == true])
+        state.startError = err
         if (err) logWarn "Cannot start: ${err}"
     } else if (btn == "btnAbort") {
         finishRun("aborted", "aborted by the user")
@@ -159,9 +172,13 @@ String startRun(Map opts) {
     // driverVersion is set when the driver initializes and at every session start, so a current driver
     // that was updated without saving its preferences still passes once it has connected.
     if (tv.getDataValue("driverVersion") == null) return "the driver is too old, or has not connected since it was updated"
-    if (tv.currentValue("pairing") != "paired") return "the device is not paired"
-    List<Integer> tests = opts.tests ? (opts.tests as List<Integer>) : [1, 2, 3, 4, 5, 6, 7, 8]
-    if (!opts.tests) {
+    if (!tv.getSetting("tvIP")) return "set the TV IP address on the device first"
+    String pairing = tv.currentValue("pairing") as String
+    if (pairing == "awaiting code") return "the TV is waiting for a pairing code; enter it, or wait 5 minutes for it to time out"
+    // An unpaired device can't run the session tests; the run then checks how far pairing gets.
+    boolean pairingOnly = pairing != "paired"
+    List<Integer> tests = pairingOnly ? [12] : (opts.tests ? (opts.tests as List<Integer>) : [1, 2, 3, 4, 5, 6, 7, 8])
+    if (!opts.tests && !pairingOnly) {
         if (opts.standby) tests << 9
         if (opts.powerCut) tests << 10
         if (opts.wrongCode) tests << 11
@@ -170,13 +187,16 @@ String startRun(Map opts) {
     state.readFailures = 0
     state.plugWarning = null
     state.report = null
-    state.run = [status: "running", reason: null, tests: [0] + tests, idx: 0, step: 0, results: [],
-                 standbyMin: (opts.standbyMin ?: 2) as Integer,
-                 needConnect: tv.currentValue("networkStatus") != "online",
+    state.startError = null
+    state.run = [status: "running", reason: null, tests: [0] + tests, idx: 0, step: 0, results: [], events: [],
+                 standbyMin: (opts.standbyMin ?: 2) as Integer, pairingOnly: pairingOnly,
+                 needConnect: !pairingOnly && tv.currentValue("networkStatus") != "online",
                  ctx: [startSwitch: tv.currentValue("switch"), startTrace: tv.getSetting("traceEnable") == true,
                        startTxt: tv.getSetting("txtEnable") != false, plugCut: false, youtubeMissing: false]]
     tv.updateSetting("traceEnable", [value: "true", type: "bool"])
     tv.updateSetting("txtEnable", [value: "true", type: "bool"])
+    // filterEvents: false delivers repeats too, such as the same app or power state after a reconnect.
+    TV_ATTRIBUTES.each { subscribe(tv, it as String, "onTvEvent", [filterEvents: false]) }
     logCmd "Run started: tests ${tests.join(', ')}"
     runIn(1, "runStep")
     return null
@@ -203,6 +223,8 @@ void finishRun(String status, String reason) {
     } catch (e) {
         logError "Cleanup failed: ${e.message}"
     }
+    unsubscribe()
+    subscribe(location, "systemStart", "onSystemStart")
     // An exception here would roll back this execution's state writes and leave the run "running".
     try {
         state.report = buildReport(state.run as Map)
@@ -211,6 +233,28 @@ void finishRun(String status, String reason) {
         state.report = "Android TV Remote Tester report\nrun ${status}; the report could not be built: ${e.message}"
     }
     logCmd "Run ${status}${reason ? ': ' + reason : ''}"
+}
+
+void onTvEvent(evt) {
+    Map run = state.run as Map
+    if (run?.status != "running") return
+    List ev = (run.events ?: []) as List
+    if (ev.size() < 300) ev << [name: evt.name, value: evt.value, at: evt.date.time]
+    run.events = ev
+    state.run = run
+}
+
+// The driver's logsOff can turn trace off part-way through a run. Turn it back on and remember the
+// test, whose differences may then come from missing lines.
+private void keepTrace(Map run) {
+    if (tv.getSetting("traceEnable") == true) return
+    tv.updateSetting("traceEnable", [value: "true", type: "bool"])
+    int test = run.tests[run.idx] as int
+    List off = (run.traceOff ?: []) as List
+    if (!(test in off)) off << test
+    run.traceOff = off
+    state.run = run
+    logWarn "Trace logging was off during test ${test}; turned it back on"
 }
 
 void checkPlug(Map data) {
@@ -248,10 +292,12 @@ void runStep() {
     try {
         Map run = state.run as Map
         if (run?.status != "running") return
+        keepTrace(run)
         int test = run.tests[run.idx] as int
         List<Map> steps = stepsFor(test, run)
         if ((run.step as int) == 0) {
             run.testSince = nowTs()
+            run.testStartMs = now()
             run.stepResults = [:]
             if (test == 10 && !plug) {
                 (run.results as List) << [test: test, name: TEST_NAMES[test], skipped: "no plug selected"]
@@ -260,7 +306,7 @@ void runStep() {
                 if ((run.idx as int) >= (run.tests as List).size()) finishRun("done", null) else runIn(1, "runStep")
                 return
             }
-            if (test != 0 && test != 10 && tv.currentValue("networkStatus") != "online") {
+            if (!(test in [0, 10, 12]) && tv.currentValue("networkStatus") != "online") {
                 if (run.offlineSince == null) run.offlineSince = now()
                 if (now() - (run.offlineSince as Long) > 60000L) {
                     (run.results as List) << [test: test, name: TEST_NAMES[test], skipped: "no session"]
@@ -282,6 +328,7 @@ void runStep() {
         run.stepStartMs = now()
         state.run = run
         if (s.skipIfOk && ((run.stepResults as Map)[s.skipIfOk] as Map)?.ok) { recordStep(s, true, 0L, "not needed"); return }
+        if (s.needOk && !((run.stepResults as Map)[s.needOk] as Map)?.ok) { recordStep(s, false, 0L, "not run"); return }
         if (s.sleep) { runIn(s.sleep as int, "sleepDone"); return }
         sendStep(s, run)
         if (!s.wait) { recordStep(s, true, null, null); return }
@@ -328,6 +375,7 @@ void pollWait() {
     try {
         Map run = state.run as Map
         if (run?.status != "running") return
+        keepTrace(run)
         Map s = stepsFor(run.tests[run.idx] as int, run)[run.step as int]
         List<Map> lines = readTvLines(run.stepSince as String)
         if (lines == null) {
@@ -337,6 +385,8 @@ void pollWait() {
         }
         Map hit = lines.find { (it.msg as String) =~ (s.wait as String) }
         if (hit) { recordStep(s, true, tsMs(hit.ts as String, location.timeZone) - (run.stepStartMs as Long), null); return }
+        Map bad = s.fail ? lines.find { (it.msg as String) =~ (s.fail as String) } : null
+        if (bad) { recordStep(s, false, tsMs(bad.ts as String, location.timeZone) - (run.stepStartMs as Long), "failed"); return }
         if (now() - (run.stepStartMs as Long) > ((s.timeout as Long) * 1000L)) { recordStep(s, false, null, "timed out"); return }
         runIn(pollSeconds(s), "pollWait")
     } catch (e) {
@@ -382,11 +432,21 @@ void finishTest() {
     int test = run.tests[run.idx] as int
     Map steps = run.stepResults as Map
     if (test == 0) {
-        if (steps.connect != null && !steps.connect.ok) { finishRun("aborted", "the device did not connect"); return }
+        if (steps.connect != null && !steps.connect.ok) {
+            List<Map> lines = readTvLines(run.testSince as String) ?: []
+            run = state.run as Map
+            Map f = evalConnect(lines)
+            (run.results as List) << [test: 0, name: TEST_NAMES[0], observed: f, diffs: differences(f, EXPECT[0] as Map), trace: traceLines(lines)]
+            state.run = run
+            finishRun("aborted", "the device did not connect")
+            return
+        }
     } else {
         List<Map> lines = readTvLines(run.testSince as String) ?: []
         run = state.run as Map
-        Map r = evaluateTest(test, lines, steps, run)
+        List<Map> events = ((run.events ?: []) as List<Map>).findAll { (it.at as Long) >= (run.testStartMs as Long) }
+        Map r = evaluateTest(test, lines, steps, run, events)
+        if (test in ((run.traceOff ?: []) as List)) r.note = "trace logging was off for part of this test, so lines may be missing"
         (run.results as List) << r
         if (test == 5 && r.skipped == "YouTube not installed") run.ctx.youtubeMissing = true
     }
@@ -397,7 +457,7 @@ void finishTest() {
     else runIn(2, "runStep")
 }
 
-Map evaluateTest(int test, List<Map> lines, Map steps, Map run) {
+Map evaluateTest(int test, List<Map> lines, Map steps, Map run, List<Map> events) {
     Map r = [test: test, name: TEST_NAMES[test]]
     if (run.ctx.youtubeMissing && test in [6, 7, 8]) { r.skipped = "YouTube not installed"; return r }
     TimeZone tz = location.timeZone
@@ -414,8 +474,10 @@ Map evaluateTest(int test, List<Map> lines, Map steps, Map run) {
         case 9: f = evalStandby(lines, steps); break
         case 10: f = evalPowerCut(lines, steps, [pairing: tv.currentValue("pairing"), switch: tv.currentValue("switch")], tz); break
         case 11: f = evalWrongCode(lines, steps); break
+        case 12: f = evalPairing(lines); break
         default: f = [:]
     }
+    f.putAll(evalEvents(test, events, f))
     r.observed = f
     // Assumption (untested: no box without YouTube was available): the URL then opens the Play Store.
     if (test == 5 && f.app == "com.android.vending") { r.skipped = "YouTube not installed"; return r }
@@ -429,7 +491,9 @@ List<Map> stepsFor(int test, Map run) {
     switch (test) {
         case 0:
             List<Map> pre = []
-            if (run.needConnect) pre << [name: "connect", cmd: "connect", wait: '^rx 40:', timeout: 20]
+            if (run.pairingOnly) return pre
+            // 40 s: a connect to an address that doesn't answer blocks about 31 s before the driver logs why.
+            if (run.needConnect) pre << [name: "connect", cmd: "connect", wait: '^rx 40:', timeout: 40]
             if (run.ctx.startSwitch == "off") pre << [name: "powerOn", cmd: "on", wait: '^rx 40:\\{1:1\\}', timeout: 15, after: 3]
             return pre
         case 1: return [[name: "disconnect", cmd: "disconnect", after: 3],
@@ -462,6 +526,11 @@ List<Map> stepsFor(int test, Map run) {
                          [name: "submit", cmd: "wrongCode", wait: '^Pairing failed with status|^Paired', timeout: 20],
                          [name: "resume", wait: '^rx 40:', timeout: 30, sinceTest: true],
                          [name: "reconnect", cmd: "connectIfIdle", wait: '^rx 40:', timeout: 20, skipIfOk: "resume", after: 2]]
+        // A wrong code ends the pairing attempt without leaving the TV waiting; the settle covers the driver's 10 s pairing timeout.
+        case 12: return [[name: "pair", cmd: "startPairing", wait: '^Enter the code shown',
+                          fail: '^(Pairing failed|No pairing response|Socket \\(|Connect failed|The client key)|Exception', timeout: 45, after: 2],
+                         [name: "submit", cmd: "wrongCode", needOk: "pair", wait: '^Pairing failed with status|^Paired', timeout: 20],
+                         [name: "settle", sleep: 12]]
         default:
             return []
     }
@@ -471,7 +540,7 @@ List<Map> stepsFor(int test, Map run) {
 // ── Script endpoints ──────────────────────────────────────────────────
 
 def apiRun() {
-    checkVersion()
+    if (checkVersion(false)) updated()     // as in appButtonHandler
     List<Integer> tests = params.tests ? (params.tests as String).tokenize(",").collect { it.trim() as Integer } : null
     String err = startRun([tests: tests, standby: params.standby != null,
                            standbyMin: params.standby ? (params.standby as Integer) : 2,
@@ -754,6 +823,64 @@ Map evalWrongCode(List<Map> lines, Map steps) {
     return [status: status, oldPairingWorks: resumed || steps.reconnect?.ok == true, resumedOnOwn: resumed]
 }
 
+// How far pairing got: the TV's certificate read, the pairing session answered, the code shown, a wrong code refused.
+Map evalPairing(List<Map> lines) {
+    Long status = null
+    String failure = null
+    for (Map l : lines) {
+        String msg = l.msg as String
+        def m = msg =~ /^Pairing failed with status (\d+)/
+        if (m.find()) { if (status == null) status = m.group(1) as Long; continue }
+        if (failure == null && l.level in ["warn", "error"]) failure = maskLine(msg).take(200)
+    }
+    return [certRead: lines.any { (it.msg as String).startsWith("TV certificate:") },
+            pairingReply: lines.any { (it.msg as String).startsWith("pair rx") },
+            codeShown: lines.any { (it.msg as String).startsWith("Enter the code shown") },
+            wrongCodeStatus: status, firstError: failure]
+}
+
+// Why a paired device did not connect: the driver's first warning or error, masked.
+Map evalConnect(List<Map> lines) {
+    Map bad = lines.find { it.level in ["warn", "error"] }
+    return [connected: lines.any { (it.msg as String).startsWith("rx 40:") },
+            connectReturned: lines.any { (it.msg as String).startsWith("remote connect returned") },
+            firstError: bad ? maskLine(bad.msg as String).take(200) : null]
+}
+
+boolean hasEvent(List<Map> events, String name, String value) {
+    events.any { it.name == name && (value == null || it.value == value) }
+}
+
+String lastEvent(List<Map> events, String name) {
+    List<Map> e = events.findAll { it.name == name }
+    return e ? e[-1].value as String : null
+}
+
+// What the driver made of the box's messages: the events it sent during the test.
+Map evalEvents(int test, List<Map> events, Map f) {
+    switch (test) {
+        case 1: return [onlineEvent: hasEvent(events, "networkStatus", "online"), switchEvent: hasEvent(events, "switch", null),
+                        appEvent: hasEvent(events, "currentApp", null)]
+        case 3: return [offEvent: hasEvent(events, "switch", "off"), onEvent: hasEvent(events, "switch", "on")]
+        case 4:
+            boolean vol = hasEvent(events, "volume", null)
+            return [volumeEvent: vol, volumeEventMatches: vol == (f.volumeReported == true)]
+        case 5:
+        case 6:
+            String app = lastEvent(events, "currentApp")
+            return [appEvent: app, appEventMatches: f.app == null || app == f.app]
+        case 8:
+            String app = lastEvent(events, "currentApp")
+            return [appEvent: app, appEventMatches: f.homeApp == null || app == f.homeApp]
+        case 7: return [onlineEvent: hasEvent(events, "networkStatus", "online")]
+        case 9: return [onEvent: hasEvent(events, "switch", "on")]
+        case 10: return [offlineEvent: hasEvent(events, "networkStatus", "offline"), onlineEvent: hasEvent(events, "networkStatus", "online")]
+        case 11:
+        case 12: return [pairingAfter: lastEvent(events, "pairing")]
+        default: return [:]
+    }
+}
+
 List<String> differences(Map fields, Map expect) {
     List<String> out = []
     expect?.each { k, rule ->
@@ -779,6 +906,7 @@ String formatReport(Map header, List<Map> results) {
         String verdict = r.skipped ? "skipped: ${r.skipped}" : (diffs ? "differs (${diffs.join(', ')})" : "as expected")
         out << "${r.test}. ${r.name} — ${verdict}".toString()
         if (r.observed) out << ("   " + (r.observed as Map).collect { k, v -> "${k}=${v}" }.join(" "))
+        if (r.note) out << "   note: ${r.note}".toString()
         if (diffs && r.trace) {
             out << "   trace:"
             (r.trace as List).each { out << "     ${it}".toString() }

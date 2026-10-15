@@ -50,4 +50,5 @@ in answer to a volume key; until it has seen one, it logs that it can't set the 
 against your TV and writes a report of where your TV differs from what the driver expects. Select
 the Android TV Remote device (and, for the power-cut test, the smart plug feeding the TV), press
 Run, and paste the report in the forum thread. Tests 1 to 8 take about 2 minutes and change what is
-on the screen.
+on the screen. If the device isn't paired, Run instead checks how far pairing gets: it opens a pairing
+dialog on the TV and answers it with a wrong code.
