@@ -141,9 +141,23 @@ void startPairing() {
     r.buf = ""
     r.closing = false
     logNet "Reading the TV certificate from ${tvIP}:${PAIRING_PORT}"
-    interfaces.rawSocket.connect([byteInterface: true], tvIP, PAIRING_PORT)
+    if (!pairingConnect([byteInterface: true])) return
     interfaces.rawSocket.sendMessage(clientHelloHex())
     runIn(10, "pairingTimeout")
+}
+
+// Opens the pairing port. A TV that doesn't answer makes connect throw (after about 30 s when
+// nothing answers); end the attempt then, or `pairing` would stay at "pairing".
+private boolean pairingConnect(Map opts) {
+    long t0 = now()
+    try {
+        interfaces.rawSocket.connect(opts, tvIP, PAIRING_PORT)
+        return true
+    } catch (e) {
+        logError "Pairing failed: no connection to the TV on port ${PAIRING_PORT} after ${now() - t0} ms (${e.class.simpleName}: ${e.message})"
+        endPairing()
+        return false
+    }
 }
 
 void pairingTimeout() {
@@ -178,7 +192,7 @@ void openPairingSession() {
     logNet "Opening the pairing session"
     Map opts = tlsOptions()
     if (opts == null) { endPairing(); return }
-    interfaces.rawSocket.connect(opts, tvIP, PAIRING_PORT)
+    if (!pairingConnect(opts)) return
     sendFrame(outer(pMsg(10, pStr(1, "atvremote") + pStr(2, "Hubitat"))))
     runIn(10, "pairingTimeout")
 }
