@@ -400,6 +400,8 @@ cases:
       - { device: test-sht-heater1, attribute: switch, value: "off" }
       - { device: test-sht-heater2, attribute: switch, value: "off" }
 
+  # temp1 reports every 6 s and temp2 once, so only temp2 goes quiet: a filler step in place of temp1's 12 s reading
+  # left temp1 quiet longer than temp2, and a check in the 2 s before its last reading saw both quiet.
   - name: one-sensor-quiet-partial
     setup:
       - settings: { quietAfter: 10, onSensorFault: "off", maxHeatMinutes: "none", frostTemp: -50, noRiseMinutes: "none", usePower: true, notifyPartial: true }
@@ -408,7 +410,7 @@ cases:
     actions:
       - { device: test-sht-temp1, command: setTemperature, args: [21] }
       - { device: test-sht-temp2, command: setTemperature, args: [21] }
-      - { device: test-sht-notify, command: setFailing, args: ["false"] }
+      - { device: test-sht-temp1, command: setTemperature, args: [21.1] }
       - { device: test-sht-temp1, command: setTemperature, args: [21.2] }
     wait_seconds: 3
     assert:
@@ -433,7 +435,7 @@ cases:
     actions:
       - { device: test-sht-temp1, command: setTemperature, args: [20.8] }
       - { device: test-sht-temp2, command: setTemperature, args: [20.9] }
-      - { device: test-sht-notify, command: setFailing, args: ["false"] }
+      - { device: test-sht-temp1, command: setTemperature, args: [20.9] }
       - { device: test-sht-temp1, command: setTemperature, args: [21.0] }
     wait_seconds: 3
     assert:
