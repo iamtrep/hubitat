@@ -459,7 +459,7 @@ List<Map> stepsFor(int test, Map run) {
                          [name: "back", wait: '^rx 40:', timeout: 600, after: 5]]
         case 11: return [[name: "pair", cmd: "startPairing", wait: '^Enter the code shown', timeout: 30, after: 2],
                          [name: "submit", cmd: "wrongCode", wait: '^Pairing failed with status|^Paired', timeout: 20],
-                         [name: "resume", wait: '^rx 40:', timeout: 30],
+                         [name: "resume", wait: '^rx 40:', timeout: 30, sinceTest: true],
                          [name: "reconnect", cmd: "connectIfIdle", wait: '^rx 40:', timeout: 20, skipIfOk: "resume", after: 2]]
         default:
             return []

@@ -60,6 +60,7 @@ import java.util.concurrent.ConcurrentHashMap
 @Field static final int WATCHDOG_SECONDS = 30
 @Field static final long IDLE_LIMIT_MS = 20000      // the TV pings every 5 s
 @Field static final int MAX_BACKOFF_SECONDS = 300
+@Field static final int CODE_TIMEOUT_SECONDS = 300
 
 // Feature bits exchanged in remote_configure / remote_set_active
 @Field static final int FEATURE_PING = 1
@@ -144,9 +145,25 @@ void startPairing() {
 void pairingTimeout() {
     if (rt().mode in ["hello", "pair"] && device.currentValue("pairing") == "pairing") {
         logError "No pairing response from the TV"
-        closeSocket()
-        sendEvent(name: "pairing", value: state.paired ? "paired" : "unpaired")
+        endPairing()
     }
+}
+
+void codeTimeout() {
+    if (rt().mode == "pair" && device.currentValue("pairing") == "awaiting code") {
+        logWarn "No pairing code entered in ${CODE_TIMEOUT_SECONDS.intdiv(60)} minutes; pairing cancelled"
+        endPairing()
+    }
+}
+
+// A pairing attempt that ends without success: back to the earlier pairing's session, if there is one.
+private void endPairing() {
+    unschedule("pairingTimeout")
+    unschedule("codeTimeout")
+    closeSocket()
+    rt().mode = null
+    sendEvent(name: "pairing", value: state.paired ? "paired" : "unpaired")
+    if (state.paired) runIn(2, "connect")
 }
 
 void openPairingSession() {
@@ -201,8 +218,7 @@ private void handlePairingMessage(String hex) {
     Long status = pFirst(m, 2) as Long
     if (status != 200L) {
         logError "Pairing failed with status ${status}"
-        closeSocket()
-        sendEvent(name: "pairing", value: state.paired ? "paired" : "unpaired")
+        endPairing()
         return
     }
     if (m.containsKey(11)) {
@@ -216,9 +232,11 @@ private void handlePairingMessage(String hex) {
         logRx "configuration_ack"
         unschedule("pairingTimeout")
         sendEvent(name: "pairing", value: "awaiting code")
+        runIn(CODE_TIMEOUT_SECONDS, "codeTimeout")
         logInfo "Enter the code shown on the TV with Submit Pairing Code"
     } else if (m.containsKey(41)) {
         logInfo "Paired"
+        unschedule("codeTimeout")
         state.paired = true
         sendEvent(name: "pairing", value: "paired")
         closeSocket()
@@ -467,7 +485,7 @@ void socketDropped() {
     Map r = rt()
     try { interfaces.rawSocket.close() } catch (ignored) { }
     if (r.droppedMode == "remote") scheduleReconnect()
-    else if (r.droppedMode == "pair") sendEvent(name: "pairing", value: state.paired ? "paired" : "unpaired")
+    else if (r.droppedMode == "pair") endPairing()
     r.droppedMode = null
 }
 
