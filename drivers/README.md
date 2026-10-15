@@ -31,6 +31,7 @@ Vendor and utility driver groups. Each subfolder's own README lists its drivers.
 <!-- AUTO:drivers-subfolders -->
 | Folder | Description |
 |---|---|
+| [androidtv/](./androidtv/) | Google TV / Android TV remote control over the LAN (Android TV Remote protocol v2) |
 | [aqara/](./aqara/) |  |
 | [sinope/](./sinope/) |  |
 | [stelpro/](./stelpro/) |  |
