@@ -15,6 +15,7 @@ metadata {
         namespace: "iamtrep",
         author: "pj",
         description: "Google TV / Android TV remote control over the LAN (Android TV Remote protocol v2)",
+        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/androidtv/AndroidTVRemote.groovy",
         singleThreaded: true
     )
     {
@@ -39,9 +40,10 @@ metadata {
     preferences {
         input "tvIP", "string", title: "TV IP address", required: true
         input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
-        input name: "debugEnable", type: "bool", title: "Enable debug logging info", defaultValue: false, required: true
-        // Prototype: trace stays on until turned off, for protocol analysis over long sessions.
-        input name: "traceEnable", type: "bool", title: "Enable trace logging (decoded protocol messages; stays on until turned off)", defaultValue: false
+        input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false
+        if (debugEnable) {
+            input name: "traceEnable", type: "bool", title: "Enable trace logging (decoded protocol messages)", defaultValue: false
+        }
     }
 }
 
@@ -53,7 +55,7 @@ import java.security.Signature
 import java.security.cert.CertificateFactory
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.0.1"
+@Field static final String CODE_VERSION = "0.1.0"
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int PAIRING_PORT = 6467
 @Field static final int REMOTE_PORT = 6466
@@ -107,7 +109,7 @@ void installed() {
 
 void updated() {
     logCfg "Preferences saved (version ${CODE_VERSION})"
-    if (debugEnable) runIn(DEBUG_LOG_TIMEOUT, "logsOff")
+    if (debugEnable || traceEnable) runIn(DEBUG_LOG_TIMEOUT, "logsOff")
     disconnect()
     initialize()
 }
@@ -119,8 +121,9 @@ void initialize() {
 }
 
 void logsOff() {
-    logWarn "Debug logging turned off"
+    logWarn "Debug and trace logging turned off"
     device.updateSetting("debugEnable", [value: "false", type: "bool"])
+    device.updateSetting("traceEnable", [value: "false", type: "bool"])
 }
 
 
@@ -129,7 +132,7 @@ void logsOff() {
 void startPairing() {
     if (!tvIP) { logWarn "Set the TV IP address first"; return }
     disconnect()
-    if (!state.cert || !state.key) generateIdentity()
+    if (!state.cert || !(state.keyEnc || state.key)) generateIdentity()
     sendEvent(name: "pairing", value: "pairing")
     // The pairing hash needs the TV's public key. The TLS socket doesn't expose the server
     // certificate, so read it from a TLS 1.2 handshake on a plain socket, where it is sent in the clear.
@@ -161,7 +164,7 @@ void codeTimeout() {
 private void endPairing() {
     unschedule("pairingTimeout")
     unschedule("codeTimeout")
-    closeSocket()
+    closeSocketLater()
     rt().mode = null
     sendEvent(name: "pairing", value: state.paired ? "paired" : "unpaired")
     if (state.paired) runIn(2, "connect")
@@ -173,7 +176,9 @@ void openPairingSession() {
     r.buf = ""
     r.closing = false
     logNet "Opening the pairing session"
-    interfaces.rawSocket.connect(tlsOptions(), tvIP, PAIRING_PORT)
+    Map opts = tlsOptions()
+    if (opts == null) { endPairing(); return }
+    interfaces.rawSocket.connect(opts, tvIP, PAIRING_PORT)
     sendFrame(outer(pMsg(10, pStr(1, "atvremote") + pStr(2, "Hubitat"))))
     runIn(10, "pairingTimeout")
 }
@@ -240,7 +245,7 @@ private void handlePairingMessage(String hex) {
         unschedule("codeTimeout")
         state.paired = true
         sendEvent(name: "pairing", value: "paired")
-        closeSocket()
+        closeSocketLater()
         runIn(2, "connect")
     } else {
         logDebug "Unhandled pairing message ${hex}"
@@ -265,7 +270,9 @@ void connect() {
     logNet "Connecting to ${tvIP}:${REMOTE_PORT}"
     long t0 = now()
     try {
-        interfaces.rawSocket.connect(tlsOptions(), tvIP, REMOTE_PORT)
+        Map opts = tlsOptions()
+        if (opts == null) { r.mode = null; return }
+        interfaces.rawSocket.connect(opts, tvIP, REMOTE_PORT)
         logTrace "remote connect returned after ${now() - t0} ms"
     } catch (java.net.SocketException e) {
         logWarn "The TV refused the connection after ${now() - t0} ms (${e.message}); it may need pairing again"
@@ -352,7 +359,7 @@ private void handleRemoteMessage(String hex) {
             logWarn "This TV can't launch apps by package name; use the app's deep link instead, such as https://www.youtube.com"
         }
         // The session went quiet or closed within 45 s of every error seen, so start a fresh one now.
-        closeSocket()
+        closeSocketLater()
         r.mode = null
         runIn(1, "connect")
     } else if (m.containsKey(20)) {                             // remote_ime_key_inject
@@ -467,7 +474,7 @@ void parse(String hex) {
             state.tvCert = pem("CERTIFICATE", HexUtils.hexStringToByteArray(certHex))
             logNet "Got the TV certificate (${certHex.length() / 2 as int} bytes DER)"
             logTrace "TV certificate: ${state.tvCert.replace('\n', '|')}"
-            closeSocket()
+            closeSocketLater()
             runInMillis(500, "openPairingSession")
         }
         return
@@ -510,15 +517,48 @@ private void closeSocket() {
     try { interfaces.rawSocket.close() } catch (ignored) { }
 }
 
+// For closes decided inside parse() (or code it calls): closing the remote socket from there makes the
+// platform throw InterruptedException around socketStatus, outside the driver's code; a scheduled close
+// doesn't. Closing the pairing socket after a rejected code still logs it, whatever the delay.
+private void closeSocketLater() {
+    rt().closing = true
+    runInMillis(20, "closeSocketNow")
+}
+
+void closeSocketNow() {
+    try { interfaces.rawSocket.close() } catch (ignored) { }
+}
+
 private void sendFrame(String msgHex, boolean trace = true) {
     if (trace) logTrace "tx ${rt().mode == 'pair' ? 'pair ' : ''}${pDump(msgHex)}"
     interfaces.rawSocket.sendMessage(pvarint(msgHex.length() / 2 as long) + msgHex)
 }
 
+// Null when the client key can't be read; the caller stops.
 private Map tlsOptions() {
+    String key = clientKey()
+    if (key == null) return null
     // caCertificate is required alongside certificate/privateKey; any certificate works with ignoreSSLIssues.
-    [secureSocket: true, ignoreSSLIssues: true, byteInterface: true,
-     certificate: state.cert, privateKey: state.key, caCertificate: state.cert]
+    return [secureSocket: true, ignoreSSLIssues: true, byteInterface: true,
+            certificate: state.cert, privateKey: key, caCertificate: state.cert]
+}
+
+// The private key is kept encrypted with the hub's key, so the device page's state doesn't show it.
+// A plain key from an earlier version is converted on first use.
+private String clientKey() {
+    if (state.key) {
+        state.keyEnc = encrypt(state.key as String)
+        state.remove("key")
+    }
+    if (!state.keyEnc) return null
+    try {
+        return decrypt(state.keyEnc as String)
+    } catch (e) {
+        logError "The client key can't be read (${e.message}), as after a hub restore or migration; pair again with Start Pairing"
+        ["keyEnc", "cert", "tvCert", "paired"].each { state.remove(it) }
+        sendEvent(name: "pairing", value: "unpaired")
+        return null
+    }
 }
 
 
@@ -579,7 +619,7 @@ private void generateIdentity() {
     signer.update(toBytes(tbs))
     byte[] certDer = toBytes(derSeq(tbs, sigAlg, derTlv(0x03, [0] + bytesOf(signer.sign()))))
     state.cert = pem("CERTIFICATE", certDer)
-    state.key = pem("PRIVATE KEY", kp.private.encoded)
+    state.keyEnc = encrypt(pem("PRIVATE KEY", kp.private.encoded))
     logCfg "Generated the client certificate in ${now() - t0} ms"
 }
 

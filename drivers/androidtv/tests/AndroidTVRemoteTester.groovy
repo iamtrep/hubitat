@@ -12,6 +12,7 @@ definition(
     author: "pj",
     description: "Tests the Android TV Remote driver against your box and writes a report to paste in the forum",
     category: "Utility",
+    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/androidtv/tests/AndroidTVRemoteTester.groovy",
     oauth: true,
     iconUrl: "",
     iconX2Url: "",
