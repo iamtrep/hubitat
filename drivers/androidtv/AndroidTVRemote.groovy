@@ -61,6 +61,7 @@ import java.util.concurrent.ConcurrentHashMap
 @Field static final long IDLE_LIMIT_MS = 20000      // the TV pings every 5 s
 @Field static final int MAX_BACKOFF_SECONDS = 300
 @Field static final int CODE_TIMEOUT_SECONDS = 300
+@Field static final long VOLUME_ANSWER_MS = 3000      // a volume message this soon after a volume key answers it
 
 // Feature bits exchanged in remote_configure / remote_set_active
 @Field static final int FEATURE_PING = 1
@@ -369,6 +370,16 @@ private void handleRemoteMessage(String hex) {
         if (max <= 0) return                                    // no level: a box that sends volume to the TV over CEC
         long level = (pFirst(v, 7) ?: 0L) as Long
         boolean muted = ((pFirst(v, 8) ?: 0L) as Long) != 0L
+        // Trust volume only from a TV that answers volume keys. A box that passes volume to the TV
+        // over HDMI-CEC reports its own volume around power changes, which says nothing about the TV's.
+        if (!state.volumeTrusted) {
+            if (now() - ((r.lastVolumeKeyAt ?: 0L) as long) > VOLUME_ANSWER_MS) {
+                logTrace "volume ${level}/${max} not in answer to a volume key; ignored"
+                return
+            }
+            state.volumeTrusted = true
+            logCfg "The TV reports its volume; setVolume enabled"
+        }
         state.volumeMax = max
         state.volumeLevel = level
         sendEvent(name: "volume", value: Math.round(level * 100.0 / max) as int, unit: "%")
@@ -403,6 +414,10 @@ void unmute() {
 
 // The protocol has no absolute volume command: step with volume keys from the last reported level.
 void setVolume(volumelevel) {
+    if (!state.volumeTrusted) {
+        logWarn "This TV doesn't report its volume, so setVolume can't set it; use volume up or down"
+        return
+    }
     long max = (state.volumeMax ?: 0L) as long
     if (max <= 0) { logWarn "Volume range not known yet"; return }
     long target = Math.round((volumelevel as BigDecimal) * max / 100.0)
@@ -432,6 +447,7 @@ void launchApp(String appLink) {
 private void sendKeyCode(int code) {
     if (rt().mode != "remote") { logWarn "Not connected"; return }
     logCmd "Key ${code}"
+    if (code in [KEYCODES.VOLUME_UP, KEYCODES.VOLUME_DOWN, KEYCODES.VOLUME_MUTE]) rt().lastVolumeKeyAt = now()
     sendFrame(pMsg(10, pInt(1, code) + pInt(2, DIRECTION_SHORT)))
 }
 
