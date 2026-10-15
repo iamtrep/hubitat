@@ -21,7 +21,6 @@ Virtual drivers, sandbox introspection tools, and companion test apps that exerc
 ## Diagnostic / introspection drivers
 
 - `DeviceInspector.groovy` — dumps `DeviceWrapper` properties to the logs (one-shot diagnostic)
-- `ZigbeeIntrospect.groovy` — reflective dump of the platform's `zigbee` helper class; output feeds `docs/hubitat-zigbee-helper.md`
 - `GenericWebsocket.groovy` — development scaffold for testing arbitrary WebSocket connections
 - `LogEventMonitorTest.groovy` — companion test device for the Log Event Monitor driver
 
