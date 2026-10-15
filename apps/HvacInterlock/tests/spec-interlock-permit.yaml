@@ -114,6 +114,7 @@ cases:
       - { device: test-ilk-permit status, attribute: blockReason, value: season }
 
   - name: open-before-save-raises
+    command_spacing_seconds: 0.5   # close then open back to back: a busy hub can drop the open as no change
     setup:
       - settings: { debugEnable: true }
       - settings: { testCloseDelay: 3, openDelay: 60 }
