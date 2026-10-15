@@ -19,7 +19,7 @@ The guide is organized in three parts: **Common** principles that apply to anyth
 
 ### Platform constraints
 
-Several standard Groovy and Java patterns are blocked or behave differently in the Hubitat sandbox. A *verified* mark names the firmware a platform fact was last measured on; the evidence is in `docs/hubitat-platform-notes.md`, and `apps/tests/test-architecture-claims.sh` re-checks it. Re-run that test after each major firmware update. Statements without a mark are project conventions.
+Several standard Groovy and Java patterns are blocked or behave differently in the Hubitat sandbox. A *verified* mark names the firmware a platform fact was last measured on; the evidence is in `docs/hubitat-platform-notes.md`, marked as [`docs/EVIDENCE.md`](docs/EVIDENCE.md) describes, and `apps/tests/test-architecture-claims.sh` re-checks it. Re-run that test after each major firmware update. Statements without a mark are project conventions.
 
 - **`value.getClass()` is sandbox-blocked.** The hub rejects the code when it is saved, so a `try`/`catch` can't guard it. Use the global `getObjectClassName(value)` to get a runtime class name string. *([verified 2.5.2.129](docs/hubitat-platform-notes.md#platform-behavior))*
 - **Change an `atomicState` collection by writing the whole value back** (or `atomicState.updateMapValue(key, mapKey, value)` in an app; drivers don't have it). In-place changes to an `atomicState` collection (`atomicState.m.k = v`, `atomicState.l << v`, or through a local alias) are lost, because `atomicState` hands back a copy. In-place changes to plain `state` collections persist, in apps and drivers, from every entry point *([verified 2.5.2.134](docs/hubitat-platform-notes.md#platform-behavior))*. Key `state` maps by `id.toString()`: numeric keys come back as Strings, so `state.m[device.id]` misses after a reload.
@@ -299,7 +299,7 @@ An app can enable OAuth for itself on install, so nobody has to toggle it in the
 
 ### Cross-origin (CORS) and multi-hub browser clients
 
-The local OAuth API sends no CORS headers *([verified 2.5.2.129](docs/hubitat-platform-notes.md#platform-behavior))*, so a browser page served by one hub cannot read another hub's API response directly. Browser-based multi-hub tools therefore cannot fan out to peer hubs from the client: the cross-hub calls must run server-side on the hub that serves the page, which forwards them and returns the result same-origin.
+The local OAuth API sends no CORS headers *([verified 2.5.2.129](docs/hubitat-internal-apis.md#app-oauth-endpoint-authentication-bearer-header))*, so a browser page served by one hub cannot read another hub's API response directly. Browser-based multi-hub tools therefore cannot fan out to peer hubs from the client: the cross-hub calls must run server-side on the hub that serves the page, which forwards them and returns the result same-origin.
 
 Such a forwarding route is **not** the "pure passthrough" forbidden under API endpoint design below — that rule assumes the consumer can fetch the target directly under an admin session, which the CORS boundary makes impossible. Keep the forwarder hardened: whitelist the forwarded operations and address peers by index, never by a caller-supplied URL or token.
 

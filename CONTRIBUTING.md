@@ -70,6 +70,10 @@ Some apps in this repo aren't automations — they're **dashboards**: a Groovy a
 - **Reuse the UI primitives:** the sortable/filterable table helper (`tbl()`), the badge classes, and the card helpers — over one-off implementations.
 - **Header links:** the SPA header should include a **⚙ Settings** link to the app's Hubitat config page (`/installedapp/configure/{id}`, derived from `api_base` by matching `^(https?://[^/]+)/apps/api/(\d+)`) and a **Docs ↗** link to the app's README on GitHub — matching HubInspector. Omit the Settings link when `api_base` is the literal placeholder (WORKBENCH mode — no match).
 
+## Platform reference docs
+
+`docs/hubitat-*.md` record what the hub does where Hubitat's documentation is silent or wrong. [`docs/EVIDENCE.md`](docs/EVIDENCE.md) says which file a fact belongs in and how to mark its evidence: every fact says whether it was probed on a hub (with the firmware), read from the hub's own code, stated by Hubitat staff or the docs, reported by another user, or inferred. `scripts/check-doc-evidence.py` checks the marks.
+
 ## Submitting changes
 
 - New source files must carry an `SPDX-License-Identifier: MIT` header.
