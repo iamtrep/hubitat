@@ -30,7 +30,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-CONFIG_FILE="$PROJECT_ROOT/.hubitat.json"
+# HUBITAT_CONFIG (absolute path) points the test at a different hub config file.
+CONFIG_FILE="${HUBITAT_CONFIG:-$PROJECT_ROOT/.hubitat.json}"
 # Unique per run/hub/test so concurrent runs (e.g. parallel agents, pytest -n)
 # don't clobber each other's session state. Cleaned up on exit.
 COOKIE_JAR="$(mktemp -u "${TMPDIR:-/tmp}/hubitat-test-cookies.XXXXXX")"

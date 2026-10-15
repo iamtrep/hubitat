@@ -16,8 +16,9 @@
 # and as "... B" so a device can switch drivers).
 #
 # Phases: provision, sandbox, push, threading and async callbacks, the
-# singleThreaded lock matrix, state commit, scheduling, sendEvent dedup,
-# device state and driver switch, driver limits, CORS.
+# singleThreaded lock matrix, state commit, scheduling, an instance never
+# saved with Done, sendEvent dedup and lastActivity, device state and driver
+# switch, driver limits, the zigbee helper, the HTTP subsystem, CORS.
 # With --reboot it also arms scheduled jobs, REBOOTS THE HUB, and checks
 # which jobs survived and when they fired (adds ~5 minutes).
 #
@@ -26,7 +27,7 @@
 #     --reboot  include the reboot phase (reboots the hub)
 #     --keep    leave the probe apps, drivers and device on the hub
 #
-# Runtime budget: ~310s without --reboot.
+# Runtime budget: ~340s without --reboot.
 #
 # Per TESTING.md §1.1: single invocation, exit 0/1/2, [PASS]/[FAIL]/[WARN]
 # labels, idempotent (re-provisions what it finds), no production mutation
@@ -44,10 +45,12 @@ if [[ ! -e "$PROJECT_ROOT/.hubitat.json" ]]; then
     echo "Could not find .hubitat.json walking up from $SCRIPT_DIR" >&2
     exit 2
 fi
+# HUBITAT_CONFIG (absolute path) points the test at a different hub config file.
+CONFIG_FILE="${HUBITAT_CONFIG:-$PROJECT_ROOT/.hubitat.json}"
 APP_SOURCE="$SCRIPT_DIR/ArchitectureClaimsProbe.groovy"
 DRIVER_SOURCE="$(cd "$SCRIPT_DIR/../../drivers/tests" && pwd)/ArchitectureClaimsProbeDriver.groovy"
 
-python3 - "$PROJECT_ROOT/.hubitat.json" "$APP_SOURCE" "$DRIVER_SOURCE" "$@" <<'PYTHON_SCRIPT'
+python3 - "$CONFIG_FILE" "$APP_SOURCE" "$DRIVER_SOURCE" "$@" <<'PYTHON_SCRIPT'
 import http.cookiejar, json, re, sys, threading, time, urllib.error, urllib.parse, urllib.request
 
 config_file, app_source, driver_source = sys.argv[1:4]
@@ -65,7 +68,7 @@ LABEL_ST, LABEL_ST2 = "test-arch-claims-st", "test-arch-claims-st2"
 DEVICE_DNI, DEVICE_NAME = "TEST_ARCH_CLAIMS_PROBE", "test-arch-claims-device"
 DATE_SAMPLE_EPOCH = 1778036863088   # 2026-05-05T23:07:43.088-0400
 DOCUMENTED_ASYNC_POOL = 8            # concurrent async HTTP calls per app, docs/hubitat-platform-notes.md
-RUNTIME_BUDGET = 310
+RUNTIME_BUDGET = 340
 
 GREEN, RED, YELLOW, CYAN, DIM, RESET = "\033[32m", "\033[31m", "\033[33m", "\033[36m", "\033[2m", "\033[0m"
 passed = failed = warnings = 0
@@ -190,9 +193,19 @@ def job_names(iid):
 def app_state(iid):
     return {s["name"]: s.get("value") for s in status_json(iid).get("appState", [])}
 
-def run_command(device_id, command, value):
-    request("POST", "/device/runmethod", json_body={"id": int(device_id), "method": command,
-            "args": [{"type": "STRING", "value": value}]}, expect="text")
+def run_command(device_id, command, value=None):
+    args = [] if value is None else [{"type": "STRING", "value": value}]
+    request("POST", "/device/runmethod", json_body={"id": int(device_id), "method": command, "args": args}, expect="text")
+
+def compile_rejected(kind, source, expect_text, msg_ok):
+    """Save a throwaway type that must not compile; remove it if it does."""
+    resp = request("POST", f"/{kind}/saveOrUpdateJson", json_body={"source": source, "version": 1}, timeout=90)
+    if resp.get("success") or resp.get("id"):
+        fail(f"{msg_ok}: it compiled")
+        try: request("GET", f"/{'app/edit' if kind == 'app' else 'driver/editor'}/deleteJson/{resp['id']}")
+        except Exception: pass
+    else:
+        check(expect_text in str(resp), msg_ok, f"unexpected save response: {resp}")
 
 # ── Provision ─────────────────────────────────────────────────────────
 section("Provision")
@@ -259,7 +272,7 @@ def api(iid, path, timeout=90, **params):
     except urllib.error.HTTPError as e:
         return e.code, None
 
-def run_cmd(cmd, value):
+def run_cmd(cmd, value=None):
     run_command(device_id, cmd, value)
     time.sleep(1.2)   # events <1s apart coalesce; see platform notes
 
@@ -280,6 +293,13 @@ if resp.get("success") or resp.get("id"):
     except Exception: pass
 else:
     check("MethodCallExpression" in str(resp), "getClass() is rejected when the code is saved", f"unexpected save response: {resp}")
+
+fqn_src = 'definition(name: "Arch Claims FQN Probe", namespace: "tests", author: "PJ", description: "", category: "", iconUrl: "", iconX2Url: "")\npreferences { page(name: "p") { section { } } }\nvoid installed() { }\ndef m() { new java.io.File("/tmp") }\n'
+compile_rejected("app", fqn_src, "Importing [java.io.File] is not allowed", "a fully qualified class name is checked like an import")
+fw_src = 'metadata { definition(name: "Arch Claims FirmwareUpdate Probe", namespace: "tests", author: "PJ") { capability "FirmwareUpdate" } }\n'
+compile_rejected("driver", fw_src, "Capability 'FirmwareUpdate' not found", "capability \"FirmwareUpdate\" does not exist")
+_, mk = api(iid_mt, "mkp")
+check("NullPointerException" in str(mk.get("nested")), "MarkupBuilder: mkp is null inside a nested tag closure", f"nested mkp: {mk}")
 
 api(iid_mt, "shared", write="from-mt")
 _, peek = api(iid_mt2, "shared")
@@ -447,6 +467,25 @@ check(jobs.count("noopDefault") == 1 and jobs.count("noopNoOverwrite") == 2,
       "runIn overwrites a same-name job by default; [overwrite:false] keeps both",
       f"scheduled jobs: {jobs}")
 
+# ── Instance never saved with Done ────────────────────────────────────
+section("An instance never saved with Done")
+
+m = re.search(r"/installedapp/configure/(\d+)", redirect_location(f"/installedapp/create/{type_mt}"))
+if not m:
+    fail("could not create an unsaved instance")
+else:
+    iid_new = m.group(1)
+    try:
+        request("POST", "/installedapp/btn", form={"id": iid_new, "name": "probeButton",
+                "settings[probeButton]": "clicked", "probeButton.type": "button"})
+        time.sleep(8)
+        ns = app_state(iid_new).get("neverSaved")
+        check(ns == "armed", "a never-saved instance runs its button handler but drops the runIn it sets",
+              f"never-saved instance state after 8 s: {ns!r} (expected 'armed'; 'ran' means runIn now runs)")
+    finally:
+        try: request("GET", f"/installedapp/delete/{iid_new}", expect="text", timeout=60)
+        except Exception as e: warn(f"could not delete the unsaved instance {iid_new}: {e}")
+
 # ── sendEvent dedup ───────────────────────────────────────────────────
 section("sendEvent dedup and subscriber filtering")
 
@@ -472,6 +511,20 @@ check(s == 4 and u == 4 and d == 2,
       "with a filterEvents:false subscriber: all 4 stored and delivered to it; default subscriber still gets 2",
       f"with unfiltered subscriber: stored {s}, unfiltered {u}, default {d}")
 
+def activity():
+    d = device_full()["device"]
+    cs = d.get("currentStates") or {}
+    probe_state = cs.get("probe") if isinstance(cs, dict) else next((s for s in cs if s.get("name") == "probe"), None)
+    return d.get("lastActivityTime"), (probe_state or {}).get("date")
+tag = f"la{int(time.time())}"
+run_cmd("emit", tag); time.sleep(1.5)
+a1, d1 = activity()
+time.sleep(1)
+run_cmd("emit", tag); time.sleep(1.5)
+a2, d2 = activity()
+check(a1 and a2 and a2 > a1 and d1 == d2, "an unchanged sendEvent advances lastActivityTime but not the attribute's date",
+      f"lastActivityTime {a1} -> {a2}, state date {d1} -> {d2}")
+
 # ── Device state and driver switch ────────────────────────────────────
 section("Device state, data values and driver switch")
 
@@ -488,10 +541,13 @@ full = device_full()
 check(full.get("deviceState", {}).get("probeState") == marker,
       "driver state is in /device/fullJson deviceState (what the device page's State Variables card shows)",
       f"deviceState: {full.get('deviceState')}")
+run_cmd("clearLifecycle")
 set_device_driver(drv_b)
 time.sleep(2)
 full = device_full()
 data = full["device"].get("data") or {}
+ran = [k for k in ("probeInstalled", "probeUpdated", "probeConfigured") if k in data]
+check(not ran, "a driver switch calls none of installed(), updated() or configure()", f"lifecycle methods run by the switch: {ran}")
 check(str(full["device"]["deviceTypeId"]) == str(drv_b), "POST /device/update switched the driver", f"driver still {full['device']['deviceTypeId']}")
 check(data.get("probeData") == marker, "data values survive a driver switch", f"data after switch: {data}")
 check(not full.get("deviceState"), "a driver switch clears device state", f"state after switch: {full.get('deviceState')}")
@@ -528,6 +584,36 @@ if resp.get("success") or resp.get("id"):
     except Exception: pass
 else:
     check("mappings" in str(resp), "mappings fails to compile in a driver", f"unexpected save response: {resp}")
+
+# ── zigbee helper ─────────────────────────────────────────────────────
+section("What the zigbee helper builds")
+
+tag = f"z{int(time.time())}"
+run_cmd("probeZigbee", tag)
+zb = json.loads((device_full()["device"].get("data") or {}).get("probeZigbee") or "{}")
+if zb.get("tag") != tag:
+    fail(f"probeZigbee did not report: {zb}")
+else:
+    check("he cmd" in zb["on"] and "rattr" not in zb["on"], "zigbee.on() builds only the On/Off command, no attribute read", f"zigbee.on(): {zb['on']}")
+    check("he raw" in zb["readAttribute"] and "{10 00 00 00 00}" in zb["readAttribute"],
+          "zigbee.readAttribute() builds an `he raw` ZCL Read Attributes frame", f"readAttribute: {zb['readAttribute']}")
+    check(zb["swapOctets8"] == "3412", "swapOctets swaps the first two bytes and drops the rest", f"swapOctets(\"12345678\"): {zb['swapOctets8']}")
+    check(zb["clusterByHex"] == "ON_OFF_CLUSTER" and zb["clusterByName"].startswith("EXC"),
+          "clusterLookup takes a hex string, not a cluster name", f"clusterLookup: hex {zb['clusterByHex']}, name {zb['clusterByName']}")
+    check(zb["bindConstant"].startswith("EXC"), "zigbee has no BIND_MANAGEMENT_CLUSTER constant", f"BIND_MANAGEMENT_CLUSTER: {zb['bindConstant']}")
+    check(zb["propertyCount"] == "6", "zigbee.properties has 6 entries", f"zigbee.properties: {zb['propertyCount']}")
+    check("commandInt" not in zb["descKeys"] and "isValidForDataType" not in zb["descKeys"] and "attrInt" in zb["descKeys"],
+          "parseDescriptionAsMap on a read attr has no commandInt or isValidForDataType", f"parseDescriptionAsMap keys: {zb['descKeys']}")
+
+# ── HTTP subsystem ────────────────────────────────────────────────────
+section("HTTP subsystem")
+
+_, hp = api(iid_mt, "httpProbes")
+check("refused" in str(hp.get("ownLanIp")).lower(), "an app can't reach its own hub's LAN IP on port 80", f"own LAN IP: {hp.get('ownLanIp')}")
+check(hp.get("formClass") == "java.util.LinkedHashMap" and hp.get("formKeyCount") == 1 and hp.get("formModel") is None,
+      "a form-encoded contentType parses a JSON reply into a one-key map whose fields read null",
+      f"form contentType on JSON: {hp}")
+check(str(hp.get("textClass")).endswith("TextResponseReader"), "contentType text/plain leaves the reply unparsed", f"text/plain: {hp.get('textClass')}")
 
 # ── CORS ──────────────────────────────────────────────────────────────
 section("CORS on the local OAuth API")

@@ -35,7 +35,8 @@ if [[ ! -f "$PROJECT_ROOT/.hubitat.json" ]]; then
     echo "Could not find .hubitat.json walking up from $SCRIPT_DIR" >&2
     exit 2
 fi
-CONFIG_FILE="$PROJECT_ROOT/.hubitat.json"
+# HUBITAT_CONFIG (absolute path) points the test at a different hub config file.
+CONFIG_FILE="${HUBITAT_CONFIG:-$PROJECT_ROOT/.hubitat.json}"
 COOKIE_JAR="$(mktemp -u "${TMPDIR:-/tmp}/hubitat-driver-cookies.XXXXXX")"
 trap 'rm -f "$COOKIE_JAR"' EXIT
 

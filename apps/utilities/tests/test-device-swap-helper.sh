@@ -31,6 +31,8 @@ if [[ ! -f "$PROJECT_ROOT/.hubitat.json" ]]; then
     echo "Could not find .hubitat.json walking up from $SCRIPT_DIR" >&2
     exit 2
 fi
+# HUBITAT_CONFIG (absolute path) points the test at a different hub config file.
+CONFIG_FILE="${HUBITAT_CONFIG:-$PROJECT_ROOT/.hubitat.json}"
 SOURCE="$SCRIPT_DIR/../DeviceSwapHelper.groovy"
 
 HUB_NAME=""
@@ -38,7 +40,7 @@ for arg in "$@"; do
     if [[ "$arg" == @* ]]; then HUB_NAME="${arg#@}"; fi
 done
 
-python3 - "$HUB_NAME" "$PROJECT_ROOT/.hubitat.json" "$SOURCE" <<'PYTHON_SCRIPT'
+python3 - "$HUB_NAME" "$CONFIG_FILE" "$SOURCE" <<'PYTHON_SCRIPT'
 import json, re, sys, time, urllib.request, urllib.error, urllib.parse, http.cookiejar
 
 hub_name_arg, config_file, source_file = sys.argv[1:4]

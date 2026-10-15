@@ -33,6 +33,11 @@ cases:
     assert:
       - { device: mirror-test-b, attribute: switch, value: "on" }
       - { device: mirror-test-c, attribute: switch, value: "on" }
+    # The followers report the change, and the source never flips back (no ping-pong).
+    assert_events:
+      - { attribute: switch, value: "on", source: mirror-test-b }
+      - { attribute: switch, value: "on", source: mirror-test-c }
+      - { attribute: switch, value: "off", source: mirror-test-a, negate: true }
 
   # A member turning OFF drives the rest OFF.
   - name: propagate-off
@@ -46,6 +51,10 @@ cases:
     assert:
       - { device: mirror-test-a, attribute: switch, value: "off" }
       - { device: mirror-test-c, attribute: switch, value: "off" }
+    assert_events:
+      - { attribute: switch, value: "off", source: mirror-test-a }
+      - { attribute: switch, value: "off", source: mirror-test-c }
+      - { attribute: switch, value: "on", source: mirror-test-b, negate: true }
 
   # Commanding a member to a value the group already holds keeps the group
   # stable (no flip). The idempotent compare means the others are never churned.
@@ -60,5 +69,11 @@ cases:
     assert:
       - { device: mirror-test-b, attribute: switch, value: "on" }
       - { device: mirror-test-c, attribute: switch, value: "on" }
+    # The hub's event socket sends the repeated "on" from the commanded switch, but
+    # the app is not called for a repeat, so the others send no event at all.
+    assert_events:
+      - { attribute: switch, value: "on", source: mirror-test-a }
+      - { attribute: switch, source: mirror-test-b, negate: true }
+      - { attribute: switch, source: mirror-test-c, negate: true }
 
 runtime_budget_seconds: 60

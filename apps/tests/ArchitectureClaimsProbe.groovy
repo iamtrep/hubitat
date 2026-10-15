@@ -10,6 +10,7 @@
 import groovy.transform.Field
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import groovy.xml.MarkupBuilder
 
 definition(
     name: "Architecture Claims Probe",
@@ -28,12 +29,13 @@ preferences {
     page(name: "mainPage", title: "Architecture Claims Probe", install: true, uninstall: true) {
         section {
             input "probeDevice", "capability.actuator", title: "Probe device", required: false
+            input "probeButton", "button", title: "Arm a runIn (never-saved instance check)"
             label title: "Instance label", required: false
         }
     }
 }
 
-@Field static final String CODE_VERSION = "1.0.0"
+@Field static final String CODE_VERSION = "1.1.0"
 @Field static final String PUSH_MARK = "base"
 @Field static final AtomicInteger FIELD_COUNTER = new AtomicInteger(0)
 @Field static final ConcurrentHashMap<String, Object> SHARED = new ConcurrentHashMap<String, Object>()
@@ -61,6 +63,8 @@ mappings {
     path("/lockRead")      { action: [GET: "apiLockRead"] }
     path("/rebootArm")     { action: [GET: "apiRebootArm"] }
     path("/rebootRead")    { action: [GET: "apiRebootRead"] }
+    path("/httpProbes")    { action: [GET: "apiHttpProbes"] }
+    path("/mkp")           { action: [GET: "apiMkp"] }
 }
 
 void installed() {
@@ -324,6 +328,48 @@ Map apiRebootRead() {
     return renderJson([armedAt: atomicState.rebootArmedAt, armUptime: atomicState.rebootArmUptime,
                        lastBeatBeforeReboot: atomicState.rebootLastBeat,
                        fired: atomicState.rebootFired ?: [], uptime: location.hub.uptime, now: now()])
+}
+
+// ── instance never saved with Done: buttons run, runIn does not ──────
+
+void appButtonHandler(String name) {
+    if (name != "probeButton") return
+    state.neverSaved = "armed"
+    runIn(2, "neverSavedTick")
+}
+
+void neverSavedTick() { state.neverSaved = "ran" }
+
+// ── HTTP subsystem ───────────────────────────────────────────────────
+
+Map apiHttpProbes() {
+    Map r = [:]
+    try {
+        httpGet([uri: "http://${location.hub.localIP}/hub2/hubData", timeout: 10]) { resp -> r.ownLanIp = "status " + resp.status }
+    } catch (e) { r.ownLanIp = getObjectClassName(e) + ": " + e.message }
+    try {
+        httpGet([uri: "http://127.0.0.1:8080/hub2/hubData", contentType: "application/x-www-form-urlencoded", timeout: 10]) { resp ->
+            r.formClass = getObjectClassName(resp.data)
+            r.formKeyCount = (resp.data instanceof Map) ? resp.data.size() : -1
+            r.formModel = (resp.data instanceof Map) ? resp.data.model : "not a map"
+        }
+    } catch (e) { r.formClass = "exception: " + getObjectClassName(e) }
+    try {
+        httpGet([uri: "http://127.0.0.1:8080/hub2/hubData", contentType: "text/plain", timeout: 10]) { resp -> r.textClass = getObjectClassName(resp.data) }
+    } catch (e) { r.textClass = "exception: " + getObjectClassName(e) }
+    return renderJson(r)
+}
+
+// ── MarkupBuilder: mkp inside a nested tag closure ───────────────────
+
+Map apiMkp() {
+    String nested
+    try {
+        StringWriter w = new StringWriter()
+        new MarkupBuilder(w).div { span { mkp.yieldUnescaped("<b>x</b>") } }
+        nested = w.toString()
+    } catch (e) { nested = "exception: " + getObjectClassName(e) }
+    return renderJson([nested: nested])
 }
 
 // ── self-enabling OAuth ──────────────────────────────────────────────

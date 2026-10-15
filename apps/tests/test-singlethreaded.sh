@@ -80,7 +80,8 @@ if [[ ! -e "$PROJECT_ROOT/.hubitat.json" ]]; then
 fi
 DRIVER_DIR="$(cd "$SCRIPT_DIR/../../drivers/tests" && pwd)"
 
-python3 -u - "$PROJECT_ROOT/.hubitat.json" "$SCRIPT_DIR" "$DRIVER_DIR" "$@" <<'PYTHON_SCRIPT'
+# HUBITAT_CONFIG (absolute path) points the test at a different hub config file.
+python3 -u - "${HUBITAT_CONFIG:-$PROJECT_ROOT/.hubitat.json}" "$SCRIPT_DIR" "$DRIVER_DIR" "$@" <<'PYTHON_SCRIPT'
 import http.cookiejar, json, os, re, sys, threading, time, urllib.error, urllib.parse, urllib.request
 
 config_file, app_dir, driver_dir = sys.argv[1:4]
