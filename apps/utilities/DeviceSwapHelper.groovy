@@ -4,7 +4,7 @@
 import com.hubitat.app.DeviceWrapper
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.5.7"
+@Field static final String CODE_VERSION = "0.5.8"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
 // File Manager file with one line per input each swap or undo changed.
 @Field static final String AUDIT_FILE = "device_swap_audit.txt"
@@ -1324,9 +1324,15 @@ private String refusalReason(int deviceId, Integer oldId) {
         return "${name} is a component of ${p.label ?: p.name ?: "device ${d.parentDeviceId}"}, and the hub doesn't swap component devices"
     }
     if (oldId != null) {
-        List<String> missing = (((((fetchDeviceJson(oldId)?.device ?: [:]) as Map).capabilities ?: []) as List) -
-            ((d.capabilities ?: []) as List)).collect { it as String }.sort()
-        if (missing) return "${name} lacks ${missing.join(', ')}, so the hub doesn't offer it as the replacement"
+        // The hub offers a replacement that shares at least one capability with the old device, these aside.
+        List<String> ignored = ["Actuator", "Sensor", "Refresh", "Configuration", "Initialize", "Polling", "Battery"]
+        Map old = ((fetchDeviceJson(oldId)?.device ?: [:]) as Map)
+        List<String> shared = (((old.capabilities ?: []) as List).collect { it as String }
+            .intersect(((d.capabilities ?: []) as List).collect { it as String }) - ignored)
+        if (!shared) {
+            String oldName = (old.label ?: old.name ?: "device ${oldId}") as String
+            return "${name} shares no capability with ${oldName} (${ignored.join(', ')} don't count), so the hub doesn't offer it as the replacement"
+        }
     }
     return "the hub doesn't offer ${name} ${oldId != null ? 'as the replacement' : 'for swapping'}"
 }
