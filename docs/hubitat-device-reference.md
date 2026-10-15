@@ -201,6 +201,50 @@ suggest "tune the reporting interval" or "configure Reportable Change" — there
 
 **Untested:** the herdsman schema lists a writable `coolDownTime` (`0xFFF1/0x0004`, UINT16, up to 7200 s in Zigbee2MQTT). It is unconfirmed whether it throttles the stream; we have not written it *(community: [zigbee-herdsman-converters `third_reality.ts`](https://github.com/Koenkk/zigbee-herdsman-converters/blob/master/src/devices/third_reality.ts))*.
 
+## Android TV / Google TV (Remote protocol v2)
+
+The protocol Google's TV remote app and Home Assistant's `androidtv_remote` integration use: TLS on
+TCP 6467 for pairing and 6466 for the remote session, a self-signed client certificate, and
+protobuf messages each prefixed by a varint length *(community: [androidtvremote2](https://github.com/tronikos/androidtvremote2))*.
+The pairing secret is SHA-256 over the client's and then the TV's RSA modulus and exponent and the
+last four hex digits of the code shown on screen, so the client needs the TV's public key before
+it pairs. Leading zero bytes of each number are dropped before hashing *(spec: [AOSP google-tv-pairing-protocol](https://android.googlesource.com/platform/external/google-tv-pairing-protocol/+/refs/heads/main), `PoloChallengeResponse.java`; community: [androidtvremote2 `pairing.py`](https://github.com/tronikos/androidtvremote2/blob/main/src/androidtvremote2/pairing.py))*. The pairing side is Google's open-source "Polo" protocol; the remote-session messages on 6466 have no public source and were reverse-engineered *(community: [androidtvremote2 credits](https://github.com/tronikos/androidtvremote2#credits))*.
+
+- One Android TV box (model `uiw4020ebx`) serves the same self-signed certificate on 6466 and
+  6467: 2048-bit RSA, exponent 65537, CN `atvremote/<MAC>`. It negotiates TLS 1.3 by default and
+  also accepts a client that offers only TLS 1.2. The TV's own firmware build was not read *(probed firmware not recorded, openssl s_client from the LAN)*.
+- A hand-built TLS 1.2 ClientHello, sent from a Hubitat driver over a plain `rawSocket` with
+  `byteInterface: true`, got back ServerHello, Certificate, ServerKeyExchange, CertificateRequest
+  and ServerHelloDone in the clear. The certificate parsed with `CertificateFactory`, and its
+  modulus matched the one openssl saw. A driver can therefore read the TV's public key
+  without the user pasting a certificate *(probed 2.5.2.138, C-7, throwaway driver)*.
+- Over TLS on 6467 with a client certificate the hub generated, `pairing_request`
+  (`08 02 10 C8 01 52 ...`: protocol version 2, status 200, service `atvremote`) was answered with
+  `08 02 10 C8 01 5A 00`, a `pairing_request_ack` with status 200 *(probed 2.5.2.138, C-7, throwaway driver)*.
+- An unpaired client certificate on 6466 is refused during the handshake (see the `rawSocket`
+  notes in `hubitat-platform-notes.md`) *(probed 2.5.2.138, C-7, throwaway driver)*.
+- On the `uiw4020ebx` box (Technicolor "EBOX TV", Android 11, remote service `7.00.956317615`), a
+  session opens with `remote_configure` (features 639), `remote_set_active`, then volume, power
+  (`remote_start`) and current app (`remote_ime_key_inject`, package name in field 12) within about
+  1.4 s of connecting. Pings arrive every 5 s, and kept arriving through 83 minutes of standby
+  without the session dropping. POWER is reported back within 0.6 s *(probed 2.5.2.138, C-7,
+  Android TV Remote Tester and prototype driver)*.
+- The same box never reports the TV's volume: volume and mute keys bring no
+  `remote_set_volume_level`, as it passes them to the TV over HDMI-CEC. It sends one only around a
+  power change, with range 15 and level 0 (muted) or 15 *(probed 2.5.2.138, C-7, Android TV Remote Tester)*.
+- An app-link launch with an `https://` URL opens the app (`https://www.youtube.com` opens
+  `com.google.android.youtube.tv`). A bare package name and `market://launch?id=<package>` (the form
+  androidtvremote2 sends for a package) are both answered with `remote_error` 7 echoing the request,
+  and after every one of 6 such errors the box went quiet or closed the session within 45 s *(probed 2.5.2.138, C-7, Android TV Remote Tester and prototype driver)*.
+- Launching by package name is unreliable beyond that box: since a Google Play Store change, many
+  apps no longer open from a `market://launch?id=` link, and the app's deep link is the form to use *(community: [Android TV Remote integration docs](https://www.home-assistant.io/integrations/androidtv_remote/))*.
+- A wrong pairing secret is answered with status 402; the client's earlier pairing still works
+  afterwards *(probed 2.5.2.138, C-7, Android TV Remote Tester)*.
+- Cutting the box's power ended the session in two ways on different runs: no message at all
+  (noticed only by the driver's 20 s idle timer) and a `receive error: Connection reset` about 29 s
+  after the cut. The box powers on by itself when power returns, is back on 6466 about 70–75 s
+  later, and keeps the pairing *(probed 2.5.2.138, C-7, Android TV Remote Tester and prototype driver)*.
+
 ## Hubitat hubs
 
 Per Hubitat staff ([forum, 2024-01-27](https://community.hubitat.com/t/what-is-c8-pro-soc/132597/6)) *(staff: [bravenel](https://community.hubitat.com/t/what-is-c8-pro-soc/132597/6))*:
