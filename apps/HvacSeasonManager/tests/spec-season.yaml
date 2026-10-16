@@ -10,6 +10,15 @@ app:
     debugEnable: true
     initialSeason: "winter"
     omEnable: false
+    # The cases expect the default dates. Pinned, since an install that reaches Open-Meteo first replaces the
+    # defaults with dates computed from local climate.
+    w2sFrom: "03-11"
+    w2sUntil: "04-08"
+    f2wFrom: "10-26"
+    f2wUntil: "11-11"
+    summerFrom: "05-10"
+    summerUntil: "09-14"
+    fallFrom: "08-15"
 inputs:
   - { name: test-season-outdoor, driver: Virtual Temperature Sensor, role: tempSensor }
 outputs:
