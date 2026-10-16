@@ -55,7 +55,7 @@ import java.security.Signature
 import java.security.cert.CertificateFactory
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.1.2"
+@Field static final String CODE_VERSION = "0.1.3"
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int PAIRING_PORT = 6467
 @Field static final int REMOTE_PORT = 6466
@@ -747,11 +747,13 @@ private String pDump(String hex, int depth = 0) {
         vals.each { v ->
             if (v instanceof String) {
                 String s = (v as String)
-                // Printable first: nested messages carry tag and length bytes below 0x20
-                String text = printable(s)
-                Map<Integer, List> inner = (text == null && depth < 6) ? pDecodeStrict(s) : null
-                if (text != null) parts << "${f}:\"${text}\""
-                else if (inner != null) parts << "${f}:{${pDump(s, depth + 1)}}"
+                // A nested message's tag and length bytes can both be printable, such as "b$" before a
+                // 36-character package name, so a message made only of text and messages wins over text.
+                boolean nested = depth < 6 && looksNested(s, depth)
+                String text = nested ? null : printable(s)
+                Map<Integer, List> inner = (text == null && !nested && depth < 6) ? pDecodeStrict(s) : null
+                if (nested || inner != null) parts << "${f}:{${pDump(s, depth + 1)}}"
+                else if (text != null) parts << "${f}:\"${text}\""
                 else parts << "${f}:0x${s.length() > 64 ? s.take(64) + '…(' + (s.length() / 2 as int) + ' bytes)' : s}"
             } else {
                 parts << "${f}:${v}"
@@ -759,6 +761,27 @@ private String pDump(String hex, int depth = 0) {
         }
     }
     return parts.join(" ")
+}
+
+// True when the bytes parse whole as length-delimited fields only, each non-empty printable text or itself nested
+private boolean looksNested(String hex, int depth) {
+    if (!hex || hex.length() % 2) return false
+    int i = 0
+    while (i < hex.length()) {
+        List kp = readVarint(hex, i)
+        if (kp == null) return false
+        long key = kp[0] as Long
+        if ((key & 7) != 2 || (key >>> 3) == 0) return false
+        List lp = readVarint(hex, kp[1] as int)
+        if (lp == null) return false
+        int start = lp[1] as int
+        int end = start + (lp[0] as Long).intValue() * 2
+        if (end > hex.length() || end <= start) return false
+        String s = hex.substring(start, end)
+        if (printable(s) == null && !(depth < 5 && looksNested(s, depth + 1))) return false
+        i = end
+    }
+    return true
 }
 
 // pDecode that returns null unless the whole buffer parses as well-formed fields
