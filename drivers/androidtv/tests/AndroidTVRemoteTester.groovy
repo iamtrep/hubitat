@@ -12,6 +12,8 @@ definition(
     author: "pj",
     description: "Tests the Android TV Remote driver against your box and writes a report to paste in the forum",
     category: "Utility",
+    // Installed when first opened: an instance never saved with Done drops its runIn calls, and a run would hang.
+    installOnOpen: true,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/androidtv/tests/AndroidTVRemoteTester.groovy",
     iconUrl: "",
     iconX2Url: "",
@@ -25,7 +27,7 @@ import java.security.MessageDigest
 import java.security.cert.CertificateFactory
 import java.text.SimpleDateFormat
 
-@Field static final String CODE_VERSION = "0.3.0"
+@Field static final String CODE_VERSION = "0.3.1"
 
 @Field static final String DROP_RE = '^(remote connect returned|Socket \\(|No message from the TV|Connect failed)'
 
@@ -80,7 +82,7 @@ Map mainPage() {
     dynamicPage(name: "mainPage", title: "Android TV Remote Tester", install: true, uninstall: true,
                 refreshInterval: run?.status == "running" ? 5 : 0) {
         section("Devices") {
-            input "tv", "device.AndroidTVRemote", title: "Android TV Remote device", required: true
+            input "tv", "device.AndroidTVRemote", title: "Android TV Remote device", required: true, submitOnChange: true
             input "plug", "capability.switch", title: "Smart plug feeding the box (optional, for the power-cut test)", required: false
         }
         section("Optional tests") {
@@ -187,7 +189,8 @@ private String summaryHtml(Map run) {
     String when = run.startedAt ? new Date(run.startedAt as Long).format("MMM d HH:mm", location.timeZone) : ""
     switch (run.status) {
         case "running":
-            return message("info", "Running since ${when}: test ${(run.idx as int)} of ${(run.tests as List).size() - 1}. This page updates every 5 s.")
+            String where = (run.idx as int) == 0 ? "checking the connection" : "test ${run.idx} of ${(run.tests as List).size() - 1}"
+            return message("info", "Running since ${when}: ${where}. This page updates every 5 s.")
         case "done":
             if (drv) return message("error", "<b>Run of ${when}: the driver did not do what it should in ${drv} test${drv > 1 ? 's' : ''}.</b> " +
                                     "Please post the report in the forum thread.")
