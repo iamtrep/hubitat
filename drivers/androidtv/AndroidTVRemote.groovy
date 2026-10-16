@@ -55,7 +55,7 @@ import java.security.Signature
 import java.security.cert.CertificateFactory
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.1.1"
+@Field static final String CODE_VERSION = "0.1.2"
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int PAIRING_PORT = 6467
 @Field static final int REMOTE_PORT = 6466
@@ -342,7 +342,8 @@ private void handleRemoteMessage(String hex) {
         long gap = r.lastPingAt ? t - (r.lastPingAt as long) : 0L
         r.lastPingAt = t
         r.pingCount = ((r.pingCount ?: 0) as int) + 1
-        if (r.pingCount == 1 || (r.pingCount as int) % 12 == 0 || gap > 7000 || (gap > 0 && gap < 3000)) {
+        // The first ping and any unusual gap only: a steady once-a-minute line would fill the log while nothing happens.
+        if (r.pingCount == 1 || gap > 7000 || (gap > 0 && gap < 3000)) {
             logTrace "ping #${r.pingCount} val1=${val1} gap=${gap} ms ${pDump(hex)}"
         }
         sendFrame(pMsg(9, pInt(1, val1 ?: 0L)), false)
