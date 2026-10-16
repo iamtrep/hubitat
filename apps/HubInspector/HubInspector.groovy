@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "6.1.10"
+@Field static final String CODE_VERSION = "6.1.11"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -2647,6 +2647,20 @@ List extractZigbeeMessageCounts(Map zigbeeData) {
 
 // ===== ANALYSIS MODULES =====
 
+// Device ids of Z-Wave nodes that don't listen: sleeping nodes (no `listening` key on the legacy
+// stack, false on Z-Wave JS) and, on Z-Wave JS, FLiRS locks. All of them run on batteries.
+// Skips the fetch when the hub has no Z-Wave devices.
+Set<String> zwaveBatteryDeviceIds(List devicesList) {
+    if (!devicesList.any { (it.data instanceof Map) && ((Map) it.data).isZwave == true }) return [] as Set<String>
+    Map zwaveData = (Map) cachedFetch('zwaveDetails', RADIO_CACHE_TTL_MS) {
+        Map r = hubMapRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", 20)
+        return (r.ok && r.data) ? r.data : null
+    }
+    return ((zwaveData?.nodes ?: []) as List)
+        .findAll { Map n -> n.deviceId != null && n.listening != true }
+        .collect { Map n -> n.deviceId.toString() } as Set<String>
+}
+
 Map analyzeDevices(boolean deep = true, Map prefetchedDevices = null) {
     Map respWrap = (prefetchedDevices != null) ? [ok: true, data: prefetchedDevices, error: null]
                                                : hubMapRequest(DEVICES_LIST_PATH, "devices list")
@@ -2732,6 +2746,7 @@ Map analyzeDevices(boolean deep = true, Map prefetchedDevices = null) {
 
     // ---- Pass 3: single aggregation over the final classifications.
     Map stats = getEmptyDeviceStats()
+    Set<String> zwaveBatteryIds = deep ? zwaveBatteryDeviceIds(devicesList) : ([] as Set<String>)
     devicesList.each { deviceEntry ->
         try {
             Map device = deviceEntry.data instanceof Map ? (Map) deviceEntry.data : null
@@ -2804,6 +2819,14 @@ Map analyzeDevices(boolean deep = true, Map prefetchedDevices = null) {
                             }
                         } catch (Exception e) { /* defensive guard for unexpected parse errors */ }
                     }
+                }
+                // A battery device that has never reported a level still counts when its driver
+                // reports powerSource=battery, or when it is a non-listening Z-Wave node (some
+                // built-in drivers lack the Battery capability); its level stays null.
+                if (batteryLevel == null && (currentStates.find { it.key == "powerSource" }?.value?.toString() == "battery"
+                        || zwaveBatteryIds.contains(device.id?.toString()))) {
+                    stats.batteryDevices++
+                    stats.batteryIds << device.id
                 }
 
                 String normalizedParentAppId = normalizeAppLookupId(extractParentAppId(device))

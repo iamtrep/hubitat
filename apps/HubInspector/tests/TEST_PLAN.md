@@ -183,6 +183,7 @@ node tests/test-zwave-render.js         # routeChangesCell (Route Changes null -
 # Extraction-based Groovy tests (TESTING.md Mode 4 variant — bound to shipped Groovy)
 groovy tests/test-zwave-mesh-quality.groovy  # route-change normalization: no-data -> null, excluded from total
 groovy tests/test-zwave-ghost-nodes.groovy   # ghost vs failed vs Long Range (LR devices absent from nodes[])
+groovy tests/test-zwave-battery.groovy       # non-listening Z-Wave nodes count as battery devices (both stacks)
 groovy tests/test-audit-dispatch.groovy      # audit fan-out: throw rollback, missing-callback reaper, claim ownership
 ```
 

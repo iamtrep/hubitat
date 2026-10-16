@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
 <!-- AUTO:hubinspector-version -->
-**Current version:** 6.1.10
+**Current version:** 6.1.11
 <!-- /AUTO -->
 
 ---
@@ -168,7 +168,7 @@ The header bar contains a **Docs ↗** link (this document), a **Diagnostic Tool
 
 A full inventory of every device on the hub.
 
-**Summary cards** — Total devices with active/inactive/disabled counts (the inactivity threshold is shown). Parent/child/Hub Mesh/battery device counts. Connection type and integration breakdown tables.
+**Summary cards** — Total devices with active/inactive/disabled counts (the inactivity threshold is shown). Parent/child/Hub Mesh/battery device counts. A device counts as battery-powered when it reports a `battery` level, when its `powerSource` is `battery`, or when it is a Z-Wave node that sleeps (for drivers without the Battery capability, such as Aeon Minimote). Connection type and integration breakdown tables.
 
 **Device Types** — Device count per driver type.
 
@@ -186,7 +186,7 @@ A full inventory of every device on the hub.
 | Room | Assigned room |
 | Status | Active / Inactive / Disabled badge |
 | Last Activity | Timestamp or "Never" |
-| Battery | Percentage, color-coded; blank for non-battery devices |
+| Battery | Percentage, color-coded; blank for non-battery devices and for battery devices that have not reported a level |
 | Parent | Parent app or device, if any |
 
 ### Device Classification
