@@ -26,13 +26,41 @@ logs it when the pairing connection closes; it is harmless, and the remote sessi
 ## Commands and attributes
 
 - `on`, `off`: the TV's power key. `switch` follows the power state the TV reports.
-- `sendKey`: a key name (`HOME`, `BACK`, `DPAD_UP`, `MEDIA_PLAY_PAUSE`, ...) or an Android key code.
+- `sendKey`: a key name or an Android key code. See below.
 - `launchApp`: opens an app. See below.
 - `volumeUp`, `volumeDown`, `mute`, `unmute`, `setVolume`. See below.
 - `connect`, `disconnect`, `forgetPairing`.
 - `currentApp`: the package name of the app in the foreground, updated on every change.
 - `networkStatus`: `online` while the session is up. The driver reconnects on its own after the
   TV drops the connection, goes quiet for 20 s, or rejects a command.
+
+## Keys
+
+`sendKey` takes one of these names (any case; a `KEYCODE_` prefix is ignored), or any key code number
+from Android's [`KeyEvent` list](https://developer.android.com/reference/android/view/KeyEvent), such as
+`7`–`16` for the digits 0–9 or `183`–`186` for the color keys:
+
+| Name | Code | Name | Code |
+|---|---|---|---|
+| `HOME` | 3 | `MEDIA_PLAY_PAUSE` | 85 |
+| `BACK` | 4 | `MEDIA_STOP` | 86 |
+| `DPAD_UP` | 19 | `MEDIA_NEXT` | 87 |
+| `DPAD_DOWN` | 20 | `MEDIA_PREVIOUS` | 88 |
+| `DPAD_LEFT` | 21 | `MEDIA_REWIND` | 89 |
+| `DPAD_RIGHT` | 22 | `MEDIA_FAST_FORWARD` | 90 |
+| `DPAD_CENTER` | 23 | `MEDIA_PLAY` | 126 |
+| `VOLUME_UP` | 24 | `MEDIA_PAUSE` | 127 |
+| `VOLUME_DOWN` | 25 | `VOLUME_MUTE` | 164 |
+| `POWER` | 26 | `INFO` | 165 |
+| `ENTER` | 66 | `CHANNEL_UP` | 166 |
+| `MENU` | 82 | `CHANNEL_DOWN` | 167 |
+| `SEARCH` | 84 | `GUIDE` | 172 |
+| `SLEEP` | 223 | `CAPTIONS` | 175 |
+| `WAKEUP` | 224 | `SETTINGS` | 176 |
+| | | `TV_INPUT` | 178 |
+
+Whether a key does anything depends on the box and the app in front: a set-top box may pass volume keys
+to the TV over HDMI-CEC, for example.
 
 ## Launching apps
 
