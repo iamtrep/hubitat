@@ -13,7 +13,8 @@
   "volumeLevel": 15,
   "linkSchemes": [
     "http",
-    "https"
+    "https",
+    "vnd.youtube"
   ],
   "errorCode": 7,
   "closeAfterErrorS": 45,

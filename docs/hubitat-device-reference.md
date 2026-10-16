@@ -234,10 +234,17 @@ it pairs. Leading zero bytes of each number are dropped before hashing *(spec: [
   power change, with range 15 and level 0 (muted) or 15 *(probed 2.5.2.138, C-7, Android TV Remote Tester)*.
 - An app-link launch with an `https://` URL opens the app (`https://www.youtube.com` opens
   `com.google.android.youtube.tv`). A bare package name and `market://launch?id=<package>` (the form
-  androidtvremote2 sends for a package) are both answered with `remote_error` 7 echoing the request,
-  and after every one of 6 such errors the box went quiet or closed the session within 45 s *(probed 2.5.2.138, C-7, Android TV Remote Tester and prototype driver)*.
-- Launching by package name is unreliable beyond that box: since a Google Play Store change, many
-  apps no longer open from a `market://launch?id=` link, and the app's deep link is the form to use *(community: [Android TV Remote integration docs](https://www.home-assistant.io/integrations/androidtv_remote/))*.
+  androidtvremote2 sends for a package) are both answered with `remote_error` 7 echoing the request *(probed 2.5.2.138–2.5.2.139, C-7, Android TV Remote Tester and driver)*.
+  After every one of 6 such errors the box went quiet or closed the session within 45 s *(probed 2.5.2.138, C-7, Android TV Remote Tester and prototype driver)*.
+- On the same box a link in a scheme an installed app registers opens that app (`vnd.youtube://www.youtube.com`
+  opens YouTube), while `intent:#Intent;package=<package>;end`, the same with the `MAIN` action and
+  `LAUNCHER` category, and `android-app://<package>` are answered with `remote_error` 7 within 40 ms. No
+  link form that names only a package opened an app *(probed 2.5.2.139, C-7, Android TV Remote driver 0.1.2)*.
+  The box seems to open a link only when an app handles it, so error 7 would mean no app does *(inferred: from the accepted and refused schemes above)*.
+- A Google TV Streamer (Android 14, remote service 7.00.956317615) also answers
+  `market://launch?id=<package>` with `remote_error` 7 *(reported: [forum report](https://community.hubitat.com/t/beta-android-tv-remote-google-tv-and-android-tv-local-control/166822/12), firmware 2.5.2.139)*.
+- Launching by package name is unreliable beyond these boxes: since a Google Play Store change, many
+  apps no longer open from a `market://launch?id=` link, and the app's deep link is the form to use *(community: [Android TV Remote integration docs](https://www.home-assistant.io/integrations/androidtv_remote/); community: [androidtvremote2 #46](https://github.com/tronikos/androidtvremote2/issues/46))*.
 - A wrong pairing secret is answered with status 402; the client's earlier pairing still works
   afterwards *(probed 2.5.2.138, C-7, Android TV Remote Tester)*.
 - Cutting the box's power ended the session in two ways on different runs: no message at all
