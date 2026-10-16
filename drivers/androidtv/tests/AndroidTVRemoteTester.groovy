@@ -27,7 +27,7 @@ import java.security.MessageDigest
 import java.security.cert.CertificateFactory
 import java.text.SimpleDateFormat
 
-@Field static final String CODE_VERSION = "0.3.2"
+@Field static final String CODE_VERSION = "0.3.3"
 
 @Field static final String BUSY = "a run is in progress"
 
@@ -64,6 +64,9 @@ import java.text.SimpleDateFormat
     12: [certRead: [eq: true], pairingReply: [eq: true], codeShown: [eq: true], wrongCodeStatus: [eq: 402],
          pairingAfter: [eq: "unpaired", driver: true]]
 ]
+
+// Applies to every test: the box sent a message type the driver doesn't act on.
+@Field static final Map EXPECT_ALL = [otherMessages: [none: true]]
 
 
 preferences {
@@ -391,6 +394,7 @@ void runStep() {
         keepTrace(run)
         int test = run.tests[run.idx] as int
         List<Map> steps = stepsFor(test, run)
+        run.stepCount = steps.size()
         if ((run.step as int) == 0) {
             run.testSince = nowTs()
             run.testStartMs = now()
@@ -574,13 +578,17 @@ Map evaluateTest(int test, List<Map> lines, Map steps, Map run, List<Map> events
         default: f = [:]
     }
     f.putAll(evalEvents(test, events, f))
+    String other = otherMessages(lines)
+    if (other) f.otherMessages = other
     r.observed = f
     // Assumption (untested: no box without YouTube was available): the URL then opens the Play Store.
     if (test == 5 && f.app == "com.android.vending") { r.skipped = "YouTube not installed"; return r }
     if (test == 7 && f.boxError == null) { r.skipped = "the box accepted the invalid link"; return r }
-    r.diffs = differences(f, EXPECT[test] as Map)
-    r.putAll(splitDiffs(r.diffs as List, EXPECT[test] as Map))
-    if (r.diffs) r.trace = traceLines(lines)
+    Map expect = (EXPECT[test] as Map) + EXPECT_ALL
+    r.diffs = differences(f, expect)
+    r.putAll(splitDiffs(r.diffs as List, expect))
+    // Session start always: its messages are what a mock of the box replays.
+    if (r.diffs || test == 1) r.trace = traceLines(lines)
     return r
 }
 
@@ -731,6 +739,19 @@ private boolean checkOAuth() {
 
 // ── Pure helpers (extracted and tested by test-tester-helpers.groovy) ─
 
+// Message types the driver doesn't act on, such as 21 (ime_batch_edit) or 51 (adjust_volume_level).
+// The driver traces every message but pings as "rx N:"; 1, 2, 3, 20, 40 and 50 are the ones it handles.
+String otherMessages(List<Map> lines) {
+    Set<Integer> seen = new TreeSet<Integer>()
+    for (Map l : lines) {
+        def m = (l.msg as String) =~ /^rx (\d+):/
+        if (!m.find()) continue
+        Integer t = m.group(1) as Integer
+        if (!(t in [1, 2, 3, 20, 40, 50])) seen << t
+    }
+    return seen ? seen.join(",") : null
+}
+
 // One /logs/past/json line: "{ts}\t{LEVEL} \tdev|{id}|{name}|{message}". Null unless it is the given device's.
 Map parseLogLine(String raw, Long devId, String label) {
     if (raw == null) return null
@@ -773,7 +794,7 @@ List<String> traceLines(List<Map> lines) {
     List<String> out = []
     for (Map l : lines) {
         String msg = l.msg as String
-        if (msg.startsWith("ping #") || msg.startsWith("chunk ")) continue
+        if (msg.startsWith("chunk ")) continue
         out << "${(l.ts as String).substring(11)} ${maskLine(msg)}".toString()
         if (out.size() >= 40) break
     }
@@ -1020,7 +1041,13 @@ List<Map> testRows(Map run, Map names) {
         String st
         String detail = ""
         if (r != null) { st = verdictOf(r); detail = verdictText(r) }
-        else if (run.status == "running" && i == idx) { st = "running"; detail = "step ${((run.step ?: 0) as int) + 1}".toString() }
+        else if (run.status == "running" && i == idx) {
+            // The step count moves on when a step ends, before the pause that lets the TV settle; cap it at the last step.
+            st = "running"
+            int count = (run.stepCount ?: 0) as int
+            int n = ((run.step ?: 0) as int) + 1
+            detail = (count > 0 ? "step ${Math.min(n, count)} of ${count}" : "step ${n}").toString()
+        }
         else if (run.status == "running" && i > idx) st = "waiting"
         else st = "not run"
         rows << [test: t, name: names[t] ?: "Test ${t}".toString(), state: st, detail: detail]
@@ -1035,6 +1062,7 @@ List<String> differences(Map fields, Map expect) {
         boolean ok = true
         if (rule.containsKey("eq")) ok = (v == rule.eq)
         else if (rule.containsKey("max")) ok = v != null && (v as Long) <= (rule.max as Long)
+        else if (rule.containsKey("none")) ok = v == null
         else if (rule.containsKey("between")) ok = v != null && (v as Long) >= (rule.between[0] as Long) && (v as Long) <= (rule.between[1] as Long)
         if (!ok) out << (k as String)
     }
@@ -1050,11 +1078,10 @@ String formatReport(Map header, List<Map> results) {
     out << "box differs: the TV does something the driver doesn't assume · driver differs: the driver didn't act on what the TV sent"
     for (Map r : results) {
         out << ""
-        List diffs = (r.diffs ?: []) as List
         out << "${r.test}. ${r.name} — ${verdictText(r)}".toString()
         if (r.observed) out << ("   " + (r.observed as Map).collect { k, v -> "${k}=${v}" }.join(" "))
         if (r.note) out << "   note: ${r.note}".toString()
-        if (diffs && r.trace) {
+        if (r.trace) {
             out << "   trace:"
             (r.trace as List).each { out << "     ${it}".toString() }
         }

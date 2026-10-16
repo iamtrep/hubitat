@@ -30,6 +30,7 @@ List<String> SIGNATURES = [
     'Long tsMs(String ts, TimeZone tz) {',
     'String maskLine(String s) {',
     'List<String> traceLines(List<Map> lines) {',
+    'String otherMessages(List<Map> lines) {',
     'Map evalSessionStart(List<Map> lines, Map steps) {',
     'Map evalPings(List<Map> lines, TimeZone tz) {',
     'Map evalPower(List<Map> lines, Map steps) {',
@@ -111,11 +112,20 @@ List<Map> tl = [[ts: '2026-10-15 11:41:26.093', msg: 'ping #1 val1=1 gap=0 ms 8:
                 [ts: '2026-10-15 11:41:07.293', msg: 'chunk 996 bytes, mode hello, buffered 0 bytes'],
                 [ts: '2026-10-15 11:44:55.588', msg: 'Connecting to 192.0.2.10:6466']]
 List<String> out = h.traceLines(tl)
-check 'pings and chunks left out', out.size() == 1
-check 'time and masked text', out[0] == '11:44:55.588 Connecting to <ip>:6466'
+check 'chunks left out, pings kept', out.size() == 2 && out[0].startsWith('11:41:26.093 ping #1 ')
+check 'time and masked text', out[1] == '11:44:55.588 Connecting to <ip>:6466'
 check 'capped at 40', h.traceLines((1..60).collect { [ts: '2026-10-15 11:44:55.588', msg: "rx 20:${it}"] }).size() == 40
 
 def ln = { String t, String m -> [ts: "2026-10-15 ${t}".toString(), level: 'trace', msg: m] }
+
+println 'otherMessages'
+check 'handled types only: none', h.otherMessages([ln('11:00:00.000', 'rx 1:{1:639}'), ln('11:00:00.100', 'rx 2:{1:622}'),
+    ln('11:00:00.200', 'rx 50:{6:15}'), ln('11:00:00.300', 'rx 40:{1:1}'), ln('11:00:00.400', 'rx 20:{1:{12:"x"}}'), ln('11:00:00.500', 'rx 3:{1:7}')]) == null
+check 'unhandled types listed once, in order', h.otherMessages([ln('11:00:00.000', 'rx 51:{1:1}'), ln('11:00:00.100', 'rx 22:{}'),
+    ln('11:00:00.200', 'rx 51:{1:2}')]) == '22,51'
+check 'pairing and sent messages ignored', h.otherMessages([ln('11:00:00.000', 'pair rx 1:2 2:200 11:{}'), ln('11:00:00.100', 'tx 10:{1:3 2:3}')]) == null
+check 'none rule: absent passes', h.differences([:], [otherMessages: [none: true]]) == []
+check 'none rule: present differs', h.differences([otherMessages: '22'], [otherMessages: [none: true]]) == ['otherMessages']
 
 println 'evalSessionStart'
 List<Map> start = [
@@ -252,6 +262,8 @@ Map running = [status: 'running', tests: [0, 1, 2, 3], idx: 2, step: 1,
 List<Map> tr = h.testRows(running, names)
 check 'precheck hidden when it passed', tr*.test == [1, 2, 3]
 check 'done, running with step, waiting', tr*.state == ['ok', 'running', 'waiting'] && tr[1].detail == 'step 2'
+check 'step of count', h.testRows(running + [stepCount: 3], names)[1].detail == 'step 2 of 3'
+check 'settling after the last step', h.testRows(running + [stepCount: 1], names)[1].detail == 'step 1 of 1'
 Map aborted = [status: 'aborted', tests: [0, 1, 2], idx: 0, results: [[test: 0, diffs: ['connected'], driverDiffs: [], boxDiffs: ['connected']]]]
 List<Map> ta = h.testRows(aborted, names)
 check 'failed precheck shown, rest not run', ta*.test == [0, 1, 2] && ta*.state == ['box', 'not run', 'not run']
@@ -268,6 +280,8 @@ check 'box differs line with trace', rep.contains('6. Launch by package — box 
 check 'legend line', rep.contains('box differs: the TV does something')
 check 'skipped line', rep.contains('10. Power cut — skipped: no plug selected')
 check 'note line', h.formatReport([status: 'done'], [[test: 9, name: 'Long standby', observed: [drops: 0], diffs: [], note: 'trace off']]).contains('   drops=0\n   note: trace off')
+check 'trace printed without a difference', h.formatReport([status: 'done'], [[test: 1, name: 'Session start', observed: [model: 'X'], diffs: [], trace: ['11:00:00.000 rx 1:{1:639}']]])
+    .contains('1. Session start — as expected\n   model=X\n   trace:\n     11:00:00.000 rx 1:{1:639}')
 check 'warning on top', h.formatReport([status: 'aborted', warning: 'plug did not turn back on'], []).split('\n')[1] == 'WARNING: plug did not turn back on'
 
 println 'wrongPairingCode'

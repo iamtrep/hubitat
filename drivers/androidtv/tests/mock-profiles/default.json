@@ -1,0 +1,19 @@
+{
+  "vendor": "Mock",
+  "model": "MockTV",
+  "androidVersion": "12",
+  "remoteService": "com.google.android.tv.remote.service",
+  "remoteServiceVersion": "1.0",
+  "features": 622,
+  "firstMessages": "1,2,40,50,20",
+  "startApp": "com.google.android.youtube.tv",
+  "homeApp": "com.google.android.tvlauncher",
+  "volumeReported": true,
+  "volumeDuringChange": true,
+  "volumeRange": 100,
+  "volumeLevel": 20,
+  "linkSchemes": null,
+  "errorCode": 7,
+  "closeAfterErrorS": 45,
+  "pingIntervalS": 5
+}

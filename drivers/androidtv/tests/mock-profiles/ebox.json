@@ -1,0 +1,17 @@
+{
+  "vendor": "Technicolor",
+  "model": "EBOX TV",
+  "androidVersion": "11",
+  "remoteService": "com.google.android.tv.remote.service",
+  "remoteServiceVersion": "7.00.956317615",
+  "deviceInfo3": 1,
+  "features": 639,
+  "firstMessages": "1,2,50,40,20",
+  "volumeReported": false,
+  "volumeDuringChange": true,
+  "volumeRange": 15,
+  "volumeLevel": 15,
+  "linkSchemes": ["http", "https"],
+  "errorCode": 7,
+  "closeAfterErrorS": 45
+}

@@ -1,7 +1,8 @@
 # Mock Android TV (Remote protocol v2) for rehearsing the Hubitat driver.
 # Encodes/decodes with androidtvremote2's compiled protobuf modules. Ports: pairing 6467, remote 6466.
-# usage: mocktv.py <cert.pem> <key.pem> <workdir>
-import hashlib, os, random, socket, sys, threading, time
+# usage: [MOCKTV_PROFILE=<profile.json>] mocktv.py <cert.pem> <key.pem> <workdir>
+# A profile describes a box with the tester report's field names; mock-profiles/default.json fills what it leaves out.
+import hashlib, json, os, random, socket, sys, threading, time
 from OpenSSL import SSL, crypto
 from google.protobuf.internal.decoder import _DecodeVarint
 from google.protobuf.internal.encoder import _VarintBytes
@@ -16,8 +17,12 @@ PAIRED_FILE = os.path.join(WORK, "paired.txt")
 if os.path.exists(PAIRED_FILE):
     paired.update(l.strip().encode() for l in open(PAIRED_FILE) if l.strip())
 lock = threading.Lock()
-QUIRKS = os.environ.get("MOCKTV_QUIRKS", "")
-EBOX = "ebox" in QUIRKS.split(",")
+PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mock-profiles")
+P = json.load(open(os.path.join(PROFILE_DIR, "default.json")))
+if os.environ.get("MOCKTV_PROFILE"):
+    P.update(json.load(open(os.environ["MOCKTV_PROFILE"])))
+ORDER = [int(t) for t in P["firstMessages"].split(",")]
+assert ORDER[:2] == [1, 2] and set(ORDER[2:]) <= {20, 40, 50}, "firstMessages must start 1,2 then use 20, 40, 50"
 
 def log(*a):
     print(time.strftime("%H:%M:%S"), *a, flush=True)
@@ -58,6 +63,9 @@ def frames(conn):
 
 def send(conn, msg):
     data = msg.SerializeToString()
+    conn.sendall(_VarintBytes(len(data)) + data)
+
+def send_raw(conn, data):
     conn.sendall(_VarintBytes(len(data)) + data)
 
 def outer(**kw):
@@ -110,18 +118,22 @@ def handle_remote(conn):
     if not ok:
         log("remote: unpaired client, closing")
         return
-    log("remote: TLS", conn.get_protocol_version_name())
-    st = {"on": True, "level": 20, "max": 100, "muted": False, "ping": 0, "pong": 0, "alive": True}
+    log("remote: TLS", conn.get_protocol_version_name(), "profile", P["vendor"], P["model"])
+    st = {"on": True, "level": P["volumeLevel"], "max": P["volumeRange"], "muted": False, "ping": 0, "pong": 0, "alive": True}
 
-    def push_state(volume=True):
+    def power():
         m = RemoteMessage(); m.remote_start.started = st["on"]; send(conn, m)
-        if volume:
-            v = RemoteMessage(); v.remote_set_volume_level.volume_max = st["max"]; v.remote_set_volume_level.volume_level = st["level"]
-            v.remote_set_volume_level.volume_muted = st["muted"]; send(conn, v)
+
+    def volume():
+        v = RemoteMessage(); v.remote_set_volume_level.volume_max = st["max"]; v.remote_set_volume_level.volume_level = st["level"]
+        v.remote_set_volume_level.volume_muted = st["muted"]; send(conn, v)
+
+    def app(package):
+        a = RemoteMessage(); a.remote_ime_key_inject.app_info.app_package = package; send(conn, a)
 
     def pinger():
         while st["alive"]:
-            time.sleep(5)
+            time.sleep(P["pingIntervalS"])
             if not st["alive"]:
                 return
             st["ping"] += 1
@@ -131,9 +143,12 @@ def handle_remote(conn):
             except Exception:
                 return
 
-    m = RemoteMessage(); m.remote_configure.code1 = 622
-    m.remote_configure.device_info.model = "MockTV"; m.remote_configure.device_info.vendor = "Mock"
-    m.remote_configure.device_info.app_version = "1.0"; send(conn, m)
+    m = RemoteMessage(); m.remote_configure.code1 = P["features"]
+    di = m.remote_configure.device_info
+    di.model = P["model"]; di.vendor = P["vendor"]; di.unknown2 = P["androidVersion"]
+    di.package_name = P["remoteService"]; di.app_version = P["remoteServiceVersion"]
+    if P.get("deviceInfo3") is not None: di.unknown1 = P["deviceInfo3"]
+    send(conn, m)
     threading.Thread(target=pinger, daemon=True).start()
     for raw in frames(conn):
         msg = RemoteMessage(); msg.ParseFromString(raw)
@@ -143,30 +158,37 @@ def handle_remote(conn):
             continue
         log("remote rx:", text_format.MessageToString(msg, as_one_line=True)[:200])
         if msg.HasField("remote_configure"):
-            s = RemoteMessage(); s.remote_set_active.active = 622; send(conn, s)
+            s = RemoteMessage(); s.remote_set_active.active = P["features"]; send(conn, s)
         elif msg.HasField("remote_set_active"):
-            push_state(volume=not EBOX)
-            a = RemoteMessage(); a.remote_ime_key_inject.app_info.app_package = "com.google.android.youtube.tv"; send(conn, a)
+            for t in ORDER[2:]:
+                if t == 40: power()
+                elif t == 50: volume()
+                elif t == 20: app(P["startApp"])
         elif msg.HasField("remote_key_inject"):
             k = msg.remote_key_inject.key_code
-            if k == 26: st["on"] = not st["on"]
-            elif k == 24: st["level"] = min(st["max"], st["level"] + 1)
-            elif k == 25: st["level"] = max(0, st["level"] - 1)
-            elif k == 164: st["muted"] = not st["muted"]
+            if k == 26:
+                st["on"] = not st["on"]
+                power()
+                if P["volumeDuringChange"]: volume()
+            elif k in (24, 25, 164):
+                if k == 24: st["level"] = min(st["max"], st["level"] + 1)
+                elif k == 25: st["level"] = max(0, st["level"] - 1)
+                else: st["muted"] = not st["muted"]
+                if P["volumeReported"]: volume()
             elif k == 3:
-                a = RemoteMessage(); a.remote_ime_key_inject.app_info.app_package = "com.google.android.tvlauncher"; send(conn, a)
-                continue
-            push_state(volume=(not EBOX) or k == 26)
+                app(P["homeApp"])
         elif msg.HasField("remote_app_link_launch_request"):
             link = msg.remote_app_link_launch_request.app_link
-            if EBOX and not link.startswith(("http://", "https://")):
-                e = RemoteMessage(); e.remote_error.value = True; e.remote_error.message.CopyFrom(msg); send(conn, e)
-                log("remote: rejected", link, "; closing in 10 s")
-                threading.Timer(10, lambda: conn.shutdown()).start()
+            schemes = P["linkSchemes"]
+            if schemes is not None and link.split(":", 1)[0].lower() not in schemes:
+                # remote_error: field 1 is a code on real boxes (7 on the EBOX), declared bool in the reference proto.
+                echo = msg.SerializeToString()
+                body = b"\x08" + _VarintBytes(P["errorCode"]) + b"\x12" + _VarintBytes(len(echo)) + echo
+                send_raw(conn, b"\x1a" + _VarintBytes(len(body)) + body)
+                log("remote: rejected", link, f"with error {P['errorCode']}; closing in {P['closeAfterErrorS']} s")
+                threading.Timer(P["closeAfterErrorS"], lambda: conn.shutdown()).start()
                 continue
-            a = RemoteMessage(); a.remote_ime_key_inject.app_info.app_package = (
-                "com.google.android.youtube.tv" if "youtube" in link else "launched:" + link)
-            send(conn, a)
+            app("com.google.android.youtube.tv" if "youtube" in link else "launched:" + link)
     st["alive"] = False
     log("remote: connection closed")
 
