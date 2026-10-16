@@ -27,7 +27,7 @@ import java.security.MessageDigest
 import java.security.cert.CertificateFactory
 import java.text.SimpleDateFormat
 
-@Field static final String CODE_VERSION = "0.3.3"
+@Field static final String CODE_VERSION = "0.3.4"
 
 @Field static final String BUSY = "a run is in progress"
 
@@ -54,7 +54,8 @@ import java.text.SimpleDateFormat
         offEvent: [eq: true, driver: true], onEvent: [eq: true, driver: true], volumeEventOk: [eq: true, driver: true]],
     4: [volumeReported: [eq: true], volumeEventMatches: [eq: true, driver: true]],
     5: [accepted: [eq: true], app: [eq: "com.google.android.youtube.tv"], appEventMatches: [eq: true, driver: true]],
-    6: [accepted: [eq: true], app: [eq: "com.google.android.youtube.tv"], appEventMatches: [eq: true, driver: true]],
+    // Since a Google Play update in August 2026, boxes refuse the market:// link a package name is sent as.
+    6: [accepted: [eq: false], appEventMatches: [eq: true, driver: true]],
     7: [reconnectMs: [max: 5000, driver: true], nextCommandOk: [eq: true, driver: true], onlineEvent: [eq: true, driver: true]],
     8: [appChanged: [eq: true], appEventMatches: [eq: true, driver: true]],
     9: [drops: [eq: 0], pingGaps: [eq: 0], onWorked: [eq: true], onEvent: [eq: true, driver: true]],
