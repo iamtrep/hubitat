@@ -11,7 +11,11 @@
   "volumeDuringChange": true,
   "volumeRange": 15,
   "volumeLevel": 15,
-  "linkSchemes": ["http", "https"],
+  "linkSchemes": [
+    "http",
+    "https"
+  ],
   "errorCode": 7,
-  "closeAfterErrorS": 45
+  "closeAfterErrorS": 45,
+  "playerModel": "EBOX TV"
 }

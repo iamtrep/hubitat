@@ -50,18 +50,18 @@ import java.text.SimpleDateFormat
     1: [setupFirst: [eq: true], powerReported: [eq: true], appReported: [eq: true], startMs: [max: 5000],
         onlineEvent: [eq: true, driver: true], switchEvent: [eq: true, driver: true], appEvent: [eq: true, driver: true]],
     2: [firstPingMs: [between: [0, 7000]]],
-    3: [offReportMs: [max: 3000], onReportMs: [max: 3000], sessionKept: [eq: true],
-        offEvent: [eq: true, driver: true], onEvent: [eq: true, driver: true]],
+    3: [offReportMs: [max: 3000], onReportMs: [max: 3000], sessionKept: [eq: true], pingGaps: [eq: 0],
+        offEvent: [eq: true, driver: true], onEvent: [eq: true, driver: true], volumeEventOk: [eq: true, driver: true]],
     4: [volumeReported: [eq: true], volumeEventMatches: [eq: true, driver: true]],
     5: [accepted: [eq: true], app: [eq: "com.google.android.youtube.tv"], appEventMatches: [eq: true, driver: true]],
     6: [accepted: [eq: true], app: [eq: "com.google.android.youtube.tv"], appEventMatches: [eq: true, driver: true]],
     7: [reconnectMs: [max: 5000, driver: true], nextCommandOk: [eq: true, driver: true], onlineEvent: [eq: true, driver: true]],
     8: [appChanged: [eq: true], appEventMatches: [eq: true, driver: true]],
-    9: [drops: [eq: 0], onWorked: [eq: true], onEvent: [eq: true, driver: true]],
+    9: [drops: [eq: 0], pingGaps: [eq: 0], onWorked: [eq: true], onEvent: [eq: true, driver: true]],
     10: [noticeMs: [max: 50000, driver: true], backMs: [max: 180000], stillPaired: [eq: true],
          offlineEvent: [eq: true, driver: true], onlineEvent: [eq: true, driver: true]],
-    11: [status: [eq: 402], oldPairingWorks: [eq: true], resumedOnOwn: [eq: true, driver: true], pairingAfter: [eq: "paired", driver: true]],
-    12: [certRead: [eq: true], pairingReply: [eq: true], codeShown: [eq: true], wrongCodeStatus: [eq: 402],
+    11: [hexCodeOffered: [ne: false], status: [eq: 402], oldPairingWorks: [eq: true], resumedOnOwn: [eq: true, driver: true], pairingAfter: [eq: "paired", driver: true]],
+    12: [certRead: [eq: true], pairingReply: [eq: true], hexCodeOffered: [ne: false], codeShown: [eq: true], wrongCodeStatus: [eq: 402],
          pairingAfter: [eq: "unpaired", driver: true]]
 ]
 
@@ -463,11 +463,16 @@ void sendStep(Map s, Map run) {
     }
 }
 
-// Reads only the two certificate fields of the device's state.
-private String wrongCodeForTv() {
+// Reads only the named fields of the device's state; the private key is never copied.
+private Map tvStateFields(List<String> names) {
     Map st = null
     httpGet([uri: "http://127.0.0.1:8080", path: "/device/fullJson/${tv.id}", timeout: 20]) { resp -> st = resp.data?.deviceState as Map }
-    return wrongPairingCode(st?.cert as String, st?.tvCert as String)
+    return names.collectEntries { [(it): st?.get(it)] }
+}
+
+private String wrongCodeForTv() {
+    Map st = tvStateFields(["cert", "tvCert"])
+    return wrongPairingCode(st.cert as String, st.tvCert as String)
 }
 
 void pollWait() {
@@ -565,7 +570,11 @@ Map evaluateTest(int test, List<Map> lines, Map steps, Map run, List<Map> events
     switch (test) {
         case 1: f = evalSessionStart(lines, steps); break
         case 2: f = evalPings(lines, tz); break
-        case 3: f = evalPower(lines, steps); break
+        case 3:
+            f = evalPower(lines, steps)
+            // The driver acts on volume it wasn't asked for only once the box has answered a volume key.
+            f.volumeTrusted = tvStateFields(["volumeTrusted"]).volumeTrusted == true
+            break
         case 4: f = evalVolume(lines); break
         case 5: f = evalLaunch(lines, steps); break
         case 6: f = evalLaunch(lines, steps); break
@@ -573,8 +582,8 @@ Map evaluateTest(int test, List<Map> lines, Map steps, Map run, List<Map> events
         case 8: f = evalHome(lines, steps); break
         case 9: f = evalStandby(lines, steps); break
         case 10: f = evalPowerCut(lines, steps, [pairing: tv.currentValue("pairing"), switch: tv.currentValue("switch")], tz); break
-        case 11: f = evalWrongCode(lines, steps); break
-        case 12: f = evalPairing(lines); break
+        case 11: f = evalWrongCode(lines, steps) + evalPairingOptions(lines); break
+        case 12: f = evalPairing(lines) + evalPairingOptions(lines); break
         default: f = [:]
     }
     f.putAll(evalEvents(test, events, f))
@@ -606,7 +615,8 @@ List<Map> stepsFor(int test, Map run) {
         case 2: return [[name: "disconnect", cmd: "disconnect", after: 3],
                         [name: "connect", cmd: "connect", wait: '^rx 40:', timeout: 15],
                         [name: "ping1", wait: '^ping #1 ', timeout: 15, sinceTest: true]]
-        case 3: return [[name: "off", cmd: "off", wait: '^rx 40:(\\{1:0\\}|"")', timeout: 15, after: 3],
+        // Off for 12 s, two ping intervals: a box that stops pinging while off shows as a long gap.
+        case 3: return [[name: "off", cmd: "off", wait: '^rx 40:(\\{1:0\\}|"")', timeout: 15, after: 12],
                         [name: "on", cmd: "on", wait: '^rx 40:\\{1:1\\}', timeout: 15, after: 3]]
         case 4: return [[name: "up", cmd: "volumeUp", after: 2],
                         [name: "down", cmd: "volumeDown", after: 2],
@@ -861,22 +871,39 @@ Map evalPings(List<Map> lines, TimeZone tz) {
 }
 
 Map evalPower(List<Map> lines, Map steps) {
+    Map vol = lines.findResult { volumeOf(it.msg as String) } as Map
+    List<Long> gaps = unusualPingGaps(lines)
     return [offReportMs: steps.off?.ok ? steps.off.ms : null, onReportMs: steps.on?.ok ? steps.on.ms : null,
-            sessionKept: !lines.any { (it.msg as String) =~ DROP_RE },
-            volumeDuringChange: lines.any { (it.msg as String) =~ /^rx 50:.*[\x7B ]6:\d+/ }]
+            sessionKept: !lines.any { (it.msg as String) =~ DROP_RE }, pingGaps: gaps.size(), longestPingGapMs: gaps ? gaps.max() : null,
+            volumeDuringChange: vol != null, changeVolumeRange: vol?.range, changeVolumeLevel: vol?.level, playerModel: vol?.player]
 }
 
-// Protobuf leaves out fields at their default, so a level of 0 has no 7: and 6: may follow the brace.
 Map evalVolume(List<Map> lines) {
+    Map vol = lines.findResult { volumeOf(it.msg as String) } as Map
+    return [volumeReported: vol != null, volumeRange: vol?.range, volumeLevel: vol?.level, playerModel: vol?.player]
+}
+
+// A volume message with a range, as the driver acts on it; null for anything else. Protobuf leaves out
+// fields at their default, so a level of 0 has no 7: and 6: may follow the brace.
+Map volumeOf(String msg) {
+    if (!msg.startsWith("rx 50:")) return null
+    def r = msg =~ /[\x7B ]6:(\d+)/
+    if (!r.find() || (r.group(1) as Long) == 0L) return null
+    def v = msg =~ /[\x7B ]7:(\d+)/
+    def m = msg =~ /[\x7B ]8:(\d+)/
+    def p = msg =~ /[\x7B ]3:"([^"]*)"/
+    return [range: r.group(1) as Long, level: v.find() ? (v.group(1) as Long) : 0L, muted: m.find() && m.group(1) != "0",
+            player: p.find() ? p.group(1) : null]
+}
+
+// Gaps the driver logged between pings: it logs only those over 7 s or under 3 s, after the first ping of a session.
+List<Long> unusualPingGaps(List<Map> lines) {
+    List<Long> out = []
     for (Map l : lines) {
-        String msg = l.msg as String
-        if (!msg.startsWith("rx 50:")) continue
-        def r = msg =~ /[\x7B ]6:(\d+)/
-        if (!r.find()) continue
-        def v = msg =~ /[\x7B ]7:(\d+)/
-        return [volumeReported: true, volumeRange: r.group(1) as Long, volumeLevel: v.find() ? (v.group(1) as Long) : 0L]
+        def m = (l.msg as String) =~ /^ping #(\d+) val1=\d+ gap=(\d+) ms/
+        if (m.find() && (m.group(1) as Integer) > 1) out << (m.group(2) as Long)
     }
-    return [volumeReported: false, volumeRange: null, volumeLevel: null]
+    return out
 }
 
 Map evalLaunch(List<Map> lines, Map steps) {
@@ -913,7 +940,9 @@ Map evalHome(List<Map> lines, Map steps) {
 }
 
 Map evalStandby(List<Map> lines, Map steps) {
-    return [drops: lines.count { (it.msg as String) =~ DROP_RE } as Integer, onWorked: steps.on?.ok == true]
+    List<Long> gaps = unusualPingGaps(lines)
+    return [drops: lines.count { (it.msg as String) =~ DROP_RE } as Integer, pingGaps: gaps.size(), longestPingGapMs: gaps ? gaps.max() : null,
+            onWorked: steps.on?.ok == true]
 }
 
 Map evalPowerCut(List<Map> lines, Map steps, Map attrs, TimeZone tz) {
@@ -927,7 +956,22 @@ Map evalPowerCut(List<Map> lines, Map steps, Map attrs, TimeZone tz) {
         if (steps.cut?.at != null) notice = tsMs(l.ts as String, tz) - (steps.cut.at as Long)
         break
     }
+    // The box came up between the last refused connect and the first that went through, both timed from the power's return;
+    // backMs adds the driver's reconnect back-off.
+    Long lastFailed = null
+    Long firstOk = null
+    Long restoredAt = steps.restore?.at as Long
+    if (restoredAt != null) {
+        for (Map l : lines) {
+            String msg = l.msg as String
+            long t = tsMs(l.ts as String, tz) - restoredAt
+            if (t < 0) continue
+            if (msg.startsWith("remote connect returned")) { firstOk = t; break }
+            if (msg.startsWith("The TV refused the connection") || msg.startsWith("Connect failed")) lastFailed = t
+        }
+    }
     return [noticedBy: by, noticeMs: notice, backMs: steps.back?.ok ? steps.back.ms : null,
+            lastFailedConnectMs: lastFailed, firstConnectMs: firstOk,
             stillPaired: attrs.pairing == "paired", switchAfterBoot: attrs.switch]
 }
 
@@ -958,6 +1002,25 @@ Map evalPairing(List<Map> lines) {
             wrongCodeStatus: status, firstError: failure]
 }
 
+// The code encodings the TV offers in its options reply. The driver always answers hexadecimal, 6 symbols.
+Map evalPairingOptions(List<Map> lines) {
+    Map names = [1: "alphanumeric", 2: "numeric", 3: "hexadecimal", 4: "qrcode"]
+    String body = null
+    for (Map l : lines) {
+        String msg = l.msg as String
+        int i = msg.indexOf(" 20:\u007B")
+        if (msg.startsWith("pair rx ") && i >= 0) { body = msg.substring(i + 5); break }
+    }
+    if (body == null) return [inputEncodings: null, outputEncodings: null, preferredRole: null, hexCodeOffered: null]
+    Map<String, List<String>> enc = ["1": [], "2": []]
+    def m = body =~ /(?:^| )([12]):\x7B(?:1:(\d+) )?2:(\d+)\x7D/
+    while (m.find()) enc[m.group(1)] << "${names[(m.group(2) ?: '0') as Integer] ?: 'unknown'}/${m.group(3)}".toString()
+    def r = body =~ /(?:^| )3:(\d+)\x7D?\z/
+    return [inputEncodings: enc["1"].join(","), outputEncodings: enc["2"].join(","),
+            preferredRole: r.find() ? ([1: "input", 2: "output"][r.group(1) as Integer] ?: r.group(1)) : null,
+            hexCodeOffered: (enc["1"] + enc["2"]).contains("hexadecimal/6")]
+}
+
 // Why a paired device did not connect: the driver's first warning or error, masked.
 Map evalConnect(List<Map> lines) {
     Map bad = lines.find { it.level in ["warn", "error"] }
@@ -980,7 +1043,10 @@ Map evalEvents(int test, List<Map> events, Map f) {
     switch (test) {
         case 1: return [onlineEvent: hasEvent(events, "networkStatus", "online"), switchEvent: hasEvent(events, "switch", null),
                         appEvent: hasEvent(events, "currentApp", null)]
-        case 3: return [offEvent: hasEvent(events, "switch", "off"), onEvent: hasEvent(events, "switch", "on")]
+        case 3:
+            boolean vol = hasEvent(events, "volume", null)
+            return [offEvent: hasEvent(events, "switch", "off"), onEvent: hasEvent(events, "switch", "on"), volumeEvent: vol,
+                    volumeEventOk: vol == (f.volumeDuringChange == true && f.volumeTrusted == true)]
         case 4:
             boolean vol = hasEvent(events, "volume", null)
             return [volumeEvent: vol, volumeEventMatches: vol == (f.volumeReported == true)]
@@ -1063,6 +1129,7 @@ List<String> differences(Map fields, Map expect) {
         if (rule.containsKey("eq")) ok = (v == rule.eq)
         else if (rule.containsKey("max")) ok = v != null && (v as Long) <= (rule.max as Long)
         else if (rule.containsKey("none")) ok = v == null
+        else if (rule.containsKey("ne")) ok = v != rule.ne
         else if (rule.containsKey("between")) ok = v != null && (v as Long) >= (rule.between[0] as Long) && (v as Long) <= (rule.between[1] as Long)
         if (!ok) out << (k as String)
     }

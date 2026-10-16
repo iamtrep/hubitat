@@ -35,6 +35,9 @@ List<String> SIGNATURES = [
     'Map evalPings(List<Map> lines, TimeZone tz) {',
     'Map evalPower(List<Map> lines, Map steps) {',
     'Map evalVolume(List<Map> lines) {',
+    'Map volumeOf(String msg) {',
+    'List<Long> unusualPingGaps(List<Map> lines) {',
+    'Map evalPairingOptions(List<Map> lines) {',
     'Map evalLaunch(List<Map> lines, Map steps) {',
     'Map evalRecovery(List<Map> lines, Map steps, TimeZone tz) {',
     'Map evalHome(List<Map> lines, Map steps) {',
@@ -160,13 +163,20 @@ List<Map> pw = [ln('11:46:00.000', 'tx 10:{1:26 2:3}'), ln('11:46:00.600', 'rx 4
 Map s3 = h.evalPower(pw, [off: [ok: true, ms: 600L], on: [ok: true, ms: 500L]])
 check 'report times', s3.offReportMs == 600L && s3.onReportMs == 500L
 check 'session kept', s3.sessionKept == true
-check 'volume during change', s3.volumeDuringChange == true
+check 'volume during change, its values and player', s3.volumeDuringChange == true && s3.changeVolumeRange == 15L && s3.changeVolumeLevel == 0L && s3.playerModel == 'EBOX TV'
+check 'no ping gaps', s3.pingGaps == 0 && s3.longestPingGapMs == null
+Map s3g = h.evalPower(pw + [ln('11:46:13.000', 'ping #1 val1=9 gap=0 ms 8:{1:9 2:1}'), ln('11:46:25.000', 'ping #4 val1=12 gap=11900 ms 8:{1:12 2:1}')],
+                      [off: [ok: true, ms: 1L], on: [ok: true, ms: 1L]])
+check 'gap while off counted, first ping of a session ignored', s3g.pingGaps == 1 && s3g.longestPingGapMs == 11900L
+check 'volume without a range is not a volume report', h.evalPower([ln('11:00:00.000', 'rx 50:{1:2252 2:9 3:"EBOX TV" 4:1}')], [:]).volumeDuringChange == false
 check 'drop detected', h.evalPower(pw + [ln('11:46:05.000', 'remote connect returned after 1073 ms')], [off: [ok: true, ms: 1L], on: [ok: true, ms: 1L]]).sessionKept == false
 
 println 'evalVolume'
 check 'not reported', h.evalVolume([ln('11:00:00.000', 'tx 10:{1:24 2:3}')]).volumeReported == false
 Map s4 = h.evalVolume([ln('11:00:00.000', 'rx 50:{1:2 2:2 3:"X" 4:2 5:0 6:100 7:21 8:0}')])
-check 'reported with range', s4.volumeReported && s4.volumeRange == 100L && s4.volumeLevel == 21L
+check 'reported with range', s4.volumeReported && s4.volumeRange == 100L && s4.volumeLevel == 21L && s4.playerModel == 'X'
+check 'muted flag', h.volumeOf('rx 50:{6:15 8:1}').muted == true && h.volumeOf('rx 50:{6:15 7:3}').muted == false
+check 'range 0 ignored', h.volumeOf('rx 50:{6:0 7:3}') == null
 
 check 'volume first field after brace', h.evalVolume([ln('11:00:00.000', 'rx 50:{6:100 7:20}')]).volumeRange == 100L
 check 'level omitted when zero', h.evalVolume([ln('11:00:00.000', 'rx 50:{6:15 8:1}')]).volumeLevel == 0L
@@ -192,7 +202,9 @@ check 'home app and changed', s8.homeApp == 'com.google.android.tvlauncher' && s
 
 println 'evalStandby'
 Map s9 = h.evalStandby([ln('12:00:00.000', 'rx 40:{1:0}'), ln('12:30:00.000', 'rx 40:{1:1}')], [on: [ok: true, ms: 300L]])
-check 'no drops, on worked', s9.drops == 0 && s9.onWorked == true
+check 'no drops, on worked', s9.drops == 0 && s9.onWorked == true && s9.pingGaps == 0
+check 'standby gaps', h.evalStandby([ln('12:00:00.000', 'ping #7 val1=7 gap=30010 ms 8:{1:7 2:1}'), ln('12:01:00.000', 'ping #9 val1=9 gap=2100 ms 8:{1:9 2:1}')], [:])
+    .with { it.pingGaps == 2 && it.longestPingGapMs == 30010L }
 
 println 'evalPowerCut'
 long cutAt = h.tsMs('2026-10-15 11:47:24.000', utc)
@@ -200,6 +212,14 @@ List<Map> cut = [ln('11:47:49.267', 'No message from the TV in 20 s; reconnectin
 Map s10 = h.evalPowerCut(cut, [cut: [ok: true, at: cutAt], back: [ok: true, ms: 73000L]], [pairing: 'paired', switch: 'on'], utc)
 check 'watchdog noticed it', s10.noticedBy == 'watchdog' && s10.noticeMs == 25267L
 check 'back, paired, switch', s10.backMs == 73000L && s10.stillPaired && s10.switchAfterBoot == 'on'
+long restoreAt = h.tsMs('2026-10-15 11:47:54.000', utc)
+List<Map> boot = [ln('11:47:50.000', 'Connect failed after 30000 ms: SocketTimeoutException: connect timed out'),
+                  ln('11:48:30.000', 'Connect failed after 3 ms: ConnectException: Connection refused'),
+                  ln('11:48:54.000', 'The TV refused the connection after 40 ms (Connection reset); it may need pairing again'),
+                  ln('11:49:34.500', 'remote connect returned after 900 ms'), ln('11:49:40.000', 'remote connect returned after 80 ms')]
+Map sb = h.evalPowerCut(boot, [cut: [ok: true, at: cutAt], restore: [ok: true, at: restoreAt], back: [ok: true, ms: 100000L]], [pairing: 'paired', switch: 'on'], utc)
+check 'box up between the last refused and the first connect after power returned', sb.lastFailedConnectMs == 60000L && sb.firstConnectMs == 100500L
+check 'no restore time, no boot window', s10.lastFailedConnectMs == null && s10.firstConnectMs == null
 check 'socket error wins', h.evalPowerCut([ln('11:47:30.000', 'Socket (remote): receive error: Connection reset')], [cut: [ok: true, at: cutAt], back: [ok: false]], [pairing: 'paired', switch: 'off'], utc).noticedBy == 'socket error'
 
 println 'evalWrongCode'
@@ -215,6 +235,15 @@ check 'all stages, 402, no other error', pr.certRead && pr.pairingReply && pr.co
 Map pr2 = h.evalPairing([lv('11:46:00.000', 'error', 'java.net.ConnectException: Connection refused to 192.0.2.10 on line 144 (method startPairing)')])
 check 'stopped at the certificate, error masked', !pr2.certRead && !pr2.codeShown && pr2.wrongCodeStatus == null && pr2.firstError.contains('<ip>')
 
+println 'evalPairingOptions'
+Map po = h.evalPairingOptions([ln('11:46:00.000', 'tx pair 1:2 2:200 20:{1:{1:3 2:6} 3:1}'), ln('11:46:00.100', 'pair rx 1:2 2:200 20:{1:{1:3 2:6} 3:1}')])
+check 'mock reply: hexadecimal input, role input', po == [inputEncodings: 'hexadecimal/6', outputEncodings: '', preferredRole: 'input', hexCodeOffered: true]
+Map po2 = h.evalPairingOptions([ln('11:46:00.100', 'pair rx 1:2 2:200 20:{1:{1:2 2:4} 2:{1:3 2:6} 2:{2:8} 3:2}')])
+check 'several lists, unknown type', po2.inputEncodings == 'numeric/4' && po2.outputEncodings == 'hexadecimal/6,unknown/8' && po2.preferredRole == 'output' && po2.hexCodeOffered
+check 'no hexadecimal/6 offered', h.evalPairingOptions([ln('11:46:00.100', 'pair rx 1:2 2:200 20:{1:{1:2 2:4}}')]).with { it.hexCodeOffered == false && it.preferredRole == null }
+check 'no reply: all null', h.evalPairingOptions([ln('11:46:00.100', 'pair rx 1:2 2:200 11:{}')]).hexCodeOffered == null
+check 'ne rule', h.differences([a: null, b: true, c: false], [a: [ne: false], b: [ne: false], c: [ne: false]]) == ['c']
+
 println 'evalConnect'
 Map cn = h.evalConnect([lv('11:00:00.000', 'warn', 'Connect failed after 30448 ms: SocketTimeoutException: connect timed out')])
 check 'not connected, first error', !cn.connected && !cn.connectReturned && cn.firstError.startsWith('Connect failed')
@@ -224,7 +253,11 @@ println 'evalEvents'
 def ev = { String n, String v -> [name: n, value: v, at: 1L] }
 check 'session start events', h.evalEvents(1, [ev('networkStatus', 'online'), ev('switch', 'on'), ev('currentApp', 'a')], [:]) == [onlineEvent: true, switchEvent: true, appEvent: true]
 check 'missing app event', h.evalEvents(1, [ev('networkStatus', 'online'), ev('switch', 'on')], [:]).appEvent == false
-check 'power events', h.evalEvents(3, [ev('switch', 'off'), ev('switch', 'on')], [:]) == [offEvent: true, onEvent: true]
+check 'power events', h.evalEvents(3, [ev('switch', 'off'), ev('switch', 'on')], [:]).with { it.offEvent && it.onEvent && it.volumeEventOk }
+check 'CEC volume around power ignored', h.evalEvents(3, [], [volumeDuringChange: true, volumeTrusted: false]).volumeEventOk == true
+check 'CEC volume around power acted on', h.evalEvents(3, [ev('volume', '100')], [volumeDuringChange: true, volumeTrusted: false]).volumeEventOk == false
+check 'trusted volume around power', h.evalEvents(3, [ev('volume', '20')], [volumeDuringChange: true, volumeTrusted: true]).volumeEventOk == true
+check 'trusted volume dropped', h.evalEvents(3, [], [volumeDuringChange: true, volumeTrusted: true]).volumeEventOk == false
 check 'volume reported but no event', h.evalEvents(4, [], [volumeReported: true]).volumeEventMatches == false
 check 'no volume, no event', h.evalEvents(4, [], [volumeReported: false]).volumeEventMatches == true
 check 'app event matches the box', h.evalEvents(5, [ev('currentApp', 'x'), ev('currentApp', 'yt')], [app: 'yt']) == [appEvent: 'yt', appEventMatches: true]

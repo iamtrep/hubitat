@@ -34,11 +34,14 @@ report.
 | `homeApp` | test 8 `homeApp` |
 | `volumeReported` | test 4: volume keys bring a volume message |
 | `volumeDuringChange` | test 3: POWER brings a volume message |
-| `volumeRange`, `volumeLevel` | test 4, or the volume message in test 1's trace |
+| `volumeRange`, `volumeLevel` | test 4, or test 3 `changeVolumeRange` and `changeVolumeLevel` |
+| `playerModel` | test 3 and 4 `playerModel` |
 | `linkSchemes` | link schemes the box opens (`null`: all); test 5 and 6 `accepted` |
 | `errorCode` | test 6 and 7 `errorCode` for a refused link |
 | `closeAfterErrorS` | seconds before the box closes the session after a refused link |
 | `pingIntervalS` | seconds between pings |
+| `pingsWhileOff` | test 3 `pingGaps`: a box that stops pinging while off shows a long gap |
+| `inputEncodings`, `outputEncodings`, `preferredRole` | test 11 and 12: the code encodings the TV offers when pairing |
 
 `mock-profiles/ebox.json` is the EBOX set-top box.
 

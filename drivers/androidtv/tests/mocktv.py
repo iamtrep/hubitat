@@ -22,6 +22,8 @@ P = json.load(open(os.path.join(PROFILE_DIR, "default.json")))
 if os.environ.get("MOCKTV_PROFILE"):
     P.update(json.load(open(os.environ["MOCKTV_PROFILE"])))
 ORDER = [int(t) for t in P["firstMessages"].split(",")]
+ENCODINGS = {"unknown": 0, "alphanumeric": 1, "numeric": 2, "hexadecimal": 3, "qrcode": 4}
+ROLES = {"input": 1, "output": 2}
 assert ORDER[:2] == [1, 2] and set(ORDER[2:]) <= {20, 40, 50}, "firstMessages must start 1,2 then use 20, 40, 50"
 
 def log(*a):
@@ -83,8 +85,12 @@ def handle_pairing(conn):
         if msg.HasField("pairing_request"):
             r.pairing_request_ack.server_name = "mocktv"
         elif msg.HasField("options"):
-            enc = r.options.input_encodings.add(); enc.type = Options.Encoding.ENCODING_TYPE_HEXADECIMAL; enc.symbol_length = 6
-            r.options.preferred_role = Options.RoleType.ROLE_TYPE_INPUT
+            for key, field in (("inputEncodings", r.options.input_encodings), ("outputEncodings", r.options.output_encodings)):
+                for e in filter(None, P[key].split(",")):
+                    name, length = e.split("/")
+                    enc = field.add(); enc.type = ENCODINGS[name]; enc.symbol_length = int(length)
+            if P["preferredRole"]:
+                r.options.preferred_role = ROLES[P["preferredRole"]]
         elif msg.HasField("configuration"):
             cm, ce = mod_exp(peer)
             sm, se = mod_exp(crypto.load_certificate(crypto.FILETYPE_PEM, open(CERT, "rb").read()))
@@ -126,7 +132,9 @@ def handle_remote(conn):
 
     def volume():
         v = RemoteMessage(); v.remote_set_volume_level.volume_max = st["max"]; v.remote_set_volume_level.volume_level = st["level"]
-        v.remote_set_volume_level.volume_muted = st["muted"]; send(conn, v)
+        v.remote_set_volume_level.volume_muted = st["muted"]
+        if P.get("playerModel"): v.remote_set_volume_level.player_model = P["playerModel"]
+        send(conn, v)
 
     def app(package):
         a = RemoteMessage(); a.remote_ime_key_inject.app_info.app_package = package; send(conn, a)
@@ -136,6 +144,8 @@ def handle_remote(conn):
             time.sleep(P["pingIntervalS"])
             if not st["alive"]:
                 return
+            if not st["on"] and not P["pingsWhileOff"]:
+                continue
             st["ping"] += 1
             m = RemoteMessage(); m.remote_ping_request.val1 = st["ping"]; m.remote_ping_request.val2 = 1
             try:

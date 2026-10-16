@@ -15,5 +15,10 @@
   "linkSchemes": null,
   "errorCode": 7,
   "closeAfterErrorS": 45,
-  "pingIntervalS": 5
+  "pingIntervalS": 5,
+  "playerModel": null,
+  "pingsWhileOff": true,
+  "inputEncodings": "hexadecimal/6",
+  "outputEncodings": "",
+  "preferredRole": "input"
 }
