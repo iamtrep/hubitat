@@ -20,5 +20,6 @@
   "pingsWhileOff": true,
   "inputEncodings": "hexadecimal/6",
   "outputEncodings": "",
-  "preferredRole": "input"
+  "preferredRole": "input",
+  "extraMessages": []
 }

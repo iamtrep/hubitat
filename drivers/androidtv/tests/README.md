@@ -41,6 +41,7 @@ report.
 | `closeAfterErrorS` | seconds before the box closes the session after a refused link |
 | `pingIntervalS` | seconds between pings |
 | `pingsWhileOff` | test 3 `pingGaps`: a box that stops pinging while off shows a long gap |
+| `extraMessages` | message types sent, empty, after the session start; any test's `otherMessages` |
 | `inputEncodings`, `outputEncodings`, `preferredRole` | test 11 and 12: the code encodings the TV offers when pairing |
 
 `mock-profiles/ebox.json` is the EBOX set-top box.

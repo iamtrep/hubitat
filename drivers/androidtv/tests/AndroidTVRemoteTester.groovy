@@ -994,7 +994,7 @@ Map evalPairing(List<Map> lines) {
         String msg = l.msg as String
         def m = msg =~ /^Pairing failed with status (\d+)/
         if (m.find()) { if (status == null) status = m.group(1) as Long; continue }
-        if (failure == null && l.level in ["warn", "error"]) failure = maskLine(msg).take(200)
+        if (failure == null && l.level in ["warn", "error"] && !socketCloseNoise(msg)) failure = maskLine(msg).take(200)
     }
     return [certRead: lines.any { (it.msg as String).startsWith("TV certificate:") },
             pairingReply: lines.any { (it.msg as String).startsWith("pair rx") },
@@ -1021,9 +1021,14 @@ Map evalPairingOptions(List<Map> lines) {
             hexCodeOffered: (enc["1"] + enc["2"]).contains("hexadecimal/6")]
 }
 
+// The hub logs this against the device whenever a TLS socket closes, as after a refused pairing code; it says nothing about the box.
+boolean socketCloseNoise(String msg) {
+    return msg.contains("InterruptedException (method socketStatus)")
+}
+
 // Why a paired device did not connect: the driver's first warning or error, masked.
 Map evalConnect(List<Map> lines) {
-    Map bad = lines.find { it.level in ["warn", "error"] }
+    Map bad = lines.find { it.level in ["warn", "error"] && !socketCloseNoise(it.msg as String) }
     return [connected: lines.any { (it.msg as String).startsWith("rx 40:") },
             connectReturned: lines.any { (it.msg as String).startsWith("remote connect returned") },
             firstError: bad ? maskLine(bad.msg as String).take(200) : null]

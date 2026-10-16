@@ -174,6 +174,8 @@ def handle_remote(conn):
                 if t == 40: power()
                 elif t == 50: volume()
                 elif t == 20: app(P["startApp"])
+            for t in P["extraMessages"]:
+                x = RemoteMessage(); getattr(x, RemoteMessage.DESCRIPTOR.fields_by_number[t].name).SetInParent(); send(conn, x)
         elif msg.HasField("remote_key_inject"):
             k = msg.remote_key_inject.key_code
             if k == 26:

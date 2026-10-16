@@ -46,6 +46,7 @@ List<String> SIGNATURES = [
     'Map evalWrongCode(List<Map> lines, Map steps) {',
     'Map evalPairing(List<Map> lines) {',
     'Map evalConnect(List<Map> lines) {',
+    'boolean socketCloseNoise(String msg) {',
     'boolean hasEvent(List<Map> events, String name, String value) {',
     'String lastEvent(List<Map> events, String name) {',
     'Map evalEvents(int test, List<Map> events, Map f) {',
@@ -231,6 +232,11 @@ def lv = { String t, String lvl, String m -> [ts: "2026-10-15 ${t}".toString(), 
 Map pr = h.evalPairing([lv('11:46:00.000', 'trace', 'TV certificate: <pem>'), lv('11:46:01.000', 'trace', 'pair rx 1:2 2:200 11:""'),
                         lv('11:46:02.000', 'info', 'Enter the code shown on the TV with Submit Pairing Code'),
                         lv('11:46:10.000', 'error', 'Pairing failed with status 402')])
+String noise = 'java.lang.RuntimeException: java.lang.InterruptedException (method socketStatus)'
+Map pr3 = h.evalPairing([lv('11:46:00.000', 'trace', 'TV certificate: <pem>'), lv('11:46:10.000', 'error', 'Pairing failed with status 402'),
+                         lv('11:46:10.100', 'error', noise)])
+check 'socket-close error after a refused code is not the first error', pr3.wrongCodeStatus == 402L && pr3.firstError == null
+check 'connect: socket-close error skipped', h.evalConnect([lv('11:00:00.000', 'error', noise), lv('11:00:31.000', 'warn', 'Connect failed after 30448 ms')]).firstError.startsWith('Connect failed')
 check 'all stages, 402, no other error', pr.certRead && pr.pairingReply && pr.codeShown && pr.wrongCodeStatus == 402L && pr.firstError == null
 Map pr2 = h.evalPairing([lv('11:46:00.000', 'error', 'java.net.ConnectException: Connection refused to 192.0.2.10 on line 144 (method startPairing)')])
 check 'stopped at the certificate, error masked', !pr2.certRead && !pr2.codeShown && pr2.wrongCodeStatus == null && pr2.firstError.contains('<ip>')
