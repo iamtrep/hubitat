@@ -1,0 +1,14 @@
+{
+  "vendor": "Xiaomi",
+  "model": "MiTV-AFKR0",
+  "androidVersion": "11",
+  "remoteServiceVersion": "6.0.648630202",
+  "features": 639,
+  "deviceInfo3": 1,
+  "firstMessages": "1,2,50,40,20",
+  "startApp": "com.google.android.youtube.tv",
+  "volumeRange": 15,
+  "volumeLevel": 12,
+  "playerModel": "MiTV-AFKR0",
+  "source": "https://community.home-assistant.io/t/android-tv-remote-mibox-4/764357 (another connection sent 20 before 40)"
+}

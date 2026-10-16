@@ -1,0 +1,15 @@
+{
+  "vendor": "SEI Robotics",
+  "model": "TiVo Stream 4K",
+  "androidVersion": "10",
+  "remoteServiceVersion": "6.1.683155326",
+  "features": 623,
+  "deviceInfo3": 1,
+  "firstMessages": "1,2,40,50",
+  "volumeReported": false,
+  "volumeDuringChange": false,
+  "volumeRange": 0,
+  "volumeLevel": 0,
+  "playerModel": "TiVo Stream 4K",
+  "source": "https://github.com/home-assistant/core/issues/134867 (no current app at session start; another connection sent 50 before 40); pairing hex/6, role input: https://github.com/home-assistant/core/issues/92795"
+}

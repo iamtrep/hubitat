@@ -1,0 +1,17 @@
+{
+  "vendor": "Freebox",
+  "model": "Freebox Player POP",
+  "androidVersion": "10",
+  "remoteServiceVersion": "5.2.473254133",
+  "features": 623,
+  "deviceInfo3": 1,
+  "firstMessages": "1,2,40,50,20",
+  "startApp": "net.oqee.launcher",
+  "homeApp": "net.oqee.launcher",
+  "volumeReported": false,
+  "volumeDuringChange": false,
+  "volumeRange": 0,
+  "volumeLevel": 0,
+  "playerModel": "Freebox Player POP",
+  "source": "https://github.com/home-assistant/core/issues/117722 (logged in standby; homeApp assumed to be the launcher seen)"
+}

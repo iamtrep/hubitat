@@ -1,0 +1,15 @@
+{
+  "vendor": "Google",
+  "model": "Chromecast",
+  "androidVersion": "12",
+  "remoteServiceVersion": "5.2.473254133",
+  "features": 639,
+  "deviceInfo3": 1,
+  "firstMessages": "1,2,40,50,20",
+  "startApp": "com.google.android.apps.tv.launcherx",
+  "homeApp": "com.google.android.apps.tv.launcherx",
+  "volumeRange": 25,
+  "volumeLevel": 5,
+  "playerModel": "Chromecast",
+  "source": "https://github.com/home-assistant/core/issues/97978 (one of two units; the other sent volume without a range and 20 before 40)"
+}

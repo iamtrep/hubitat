@@ -1,0 +1,16 @@
+{
+  "vendor": "Sony",
+  "model": "BRAVIA 4K VH2",
+  "androidVersion": "10",
+  "remoteServiceVersion": "6.1.683155326",
+  "features": 639,
+  "deviceInfo3": 1,
+  "firstMessages": "1,2,20,40,50",
+  "startApp": "com.google.android.apps.tv.launcherx",
+  "volumeReported": false,
+  "volumeDuringChange": false,
+  "volumeRange": 0,
+  "volumeLevel": 0,
+  "playerModel": "BRAVIA 4K VH2",
+  "source": "https://github.com/home-assistant/core/issues/137554 (volume message without a range)"
+}

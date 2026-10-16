@@ -1,0 +1,15 @@
+{
+  "vendor": "NVIDIA",
+  "model": "SHIELD Android TV",
+  "androidVersion": "11",
+  "remoteServiceVersion": "6.9.906821247",
+  "features": 639,
+  "deviceInfo3": 1,
+  "firstMessages": "1,2,40,50",
+  "volumeReported": false,
+  "volumeDuringChange": false,
+  "volumeRange": 0,
+  "volumeLevel": 0,
+  "playerModel": "SHIELD Android TV",
+  "source": "https://github.com/unfoldedcircle/integration-appletv/issues/90 (40 and 50 logged with the same timestamp, order uncertain; no current app at start); https://github.com/home-assistant/core/issues/179902 (once sent a volume range of 15 on a power key, not modelled)"
+}
