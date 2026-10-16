@@ -27,7 +27,9 @@ import java.security.MessageDigest
 import java.security.cert.CertificateFactory
 import java.text.SimpleDateFormat
 
-@Field static final String CODE_VERSION = "0.3.1"
+@Field static final String CODE_VERSION = "0.3.2"
+
+@Field static final String BUSY = "a run is in progress"
 
 @Field static final String DROP_RE = '^(remote connect returned|Socket \\(|No message from the TV|Connect failed)'
 
@@ -77,15 +79,23 @@ mappings {
 
 Map mainPage() {
     if (scriptAccess) checkOAuth() else dropAccessToken()
+    checkStall()
     Map run = state.run as Map
+    boolean running = run?.status == "running"
     // The page reloads itself while a run is in progress, so the table follows it.
     dynamicPage(name: "mainPage", title: "Android TV Remote Tester", install: true, uninstall: true,
                 refreshInterval: run?.status == "running" ? 5 : 0) {
+        // Locked while a run is in progress: the run and its cleanup act on the devices it started with.
         section("Devices") {
-            input "tv", "device.AndroidTVRemote", title: "Android TV Remote device", required: true, submitOnChange: true
-            input "plug", "capability.switch", title: "Smart plug feeding the box (optional, for the power-cut test)", required: false
+            if (running) {
+                paragraph "Testing <b>${escapeHtml(tv?.displayName ?: '?')}</b>" + (plug ? ", plug <b>${escapeHtml(plug.displayName)}</b>" : "") +
+                          ". The devices can be changed once the run ends."
+            } else {
+                input "tv", "device.AndroidTVRemote", title: "Android TV Remote device", required: true, submitOnChange: true
+                input "plug", "capability.switch", title: "Smart plug feeding the box (optional, for the power-cut test)", required: false
+            }
         }
-        section("Optional tests") {
+        if (!running) section("Optional tests") {
             input "optStandby", "bool", title: "Long standby", defaultValue: false, submitOnChange: true
             if (optStandby) input "standbyMinutes", "number", title: "Standby minutes", defaultValue: 2, range: "1..240"
             input "optPowerCut", "bool", title: "Power cut: turns the plug off for 30 seconds, then waits for the box to come back", defaultValue: false
@@ -97,11 +107,9 @@ Map mainPage() {
                 paragraph "The device isn't paired, so Run only checks how far pairing gets: it opens a pairing dialog on the TV and answers it with a wrong code. Takes about 1 minute."
             }
             if (state.startError) paragraph rawHtml: true, message("error", "Cannot start: ${escapeHtml(state.startError as String)}")
-            if (run?.status == "running") {
-                input "btnAbort", "button", title: "Abort", inputClass: "p-button p-button-outlined"
-            } else {
-                input "btnRun", "button", title: "Run", inputClass: "p-button bg-hubitat-primary-green text-white"
-            }
+            input "btnRun", "button", title: "Run", disabled: running, width: 2,
+                  inputClass: "p-button bg-hubitat-primary-green text-white"
+            if (running) input "btnAbort", "button", title: "Abort", width: 2, inputClass: "p-button p-button-outlined"
             if (run?.tests) {
                 paragraph rawHtml: true, summaryHtml(run)
                 paragraph rawHtml: true, statusHtml(run)
@@ -125,6 +133,10 @@ Map mainPage() {
 }
 
 void installed() { initialize() }
+
+void uninstalled() {
+    if ((state.run as Map)?.status == "running") finishRun("aborted", "the app was removed")
+}
 
 void updated() {
     boolean wasRunning = (state.run as Map)?.status == "running"
@@ -166,6 +178,7 @@ void appButtonHandler(String btn) {
     if (btn == "btnRun") {
         String err = startRun([tests: null, standby: optStandby == true, standbyMin: (standbyMinutes ?: 2) as Integer,
                                powerCut: optPowerCut == true, wrongCode: optWrongCode == true])
+        if (err == BUSY) return              // a second press, or one from a stale page: the run goes on
         state.startError = err
         if (err) logWarn "Cannot start: ${err}"
     } else if (btn == "btnAbort") {
@@ -233,7 +246,8 @@ private void dropAccessToken() {
 // ── Run control ───────────────────────────────────────────────────────
 
 String startRun(Map opts) {
-    if ((state.run as Map)?.status == "running") return "a run is in progress"
+    checkStall()
+    if ((state.run as Map)?.status == "running") return BUSY
     if (!tv) return "select the Android TV Remote device"
     // driverVersion is set when the driver initializes and at every session start, so a current driver
     // that was updated without saving its preferences still passes once it has connected.
@@ -264,8 +278,24 @@ String startRun(Map opts) {
     // filterEvents: false delivers repeats too, such as the same app or power state after a reconnect.
     TV_ATTRIBUTES.each { subscribe(tv, it as String, "onTvEvent", [filterEvents: false]) }
     logCmd "Run started: tests ${tests.join(', ')}"
-    runIn(1, "runStep")
+    next("runStep", 1, state.run as Map)
     return null
+}
+
+// Every run callback is scheduled here, so the run knows when its next step is due and a stall can be told from a wait.
+private void next(String handler, int seconds, Map run) {
+    run.nextDueMs = now() + seconds * 1000L
+    state.run = run
+    runIn(seconds, handler)
+}
+
+// Ends a run whose next step never came (the hub dropped the callback), so its cleanup still runs.
+private void checkStall() {
+    Map run = state.run as Map
+    if (runStalled(run, now())) {
+        logWarn "The run stopped making progress; ending it"
+        finishRun("stalled", "its next step never ran")
+    }
 }
 
 void finishRun(String status, String reason) {
@@ -369,7 +399,7 @@ void runStep() {
                 (run.results as List) << [test: test, name: TEST_NAMES[test], skipped: "no plug selected"]
                 run.idx = (run.idx as int) + 1
                 state.run = run
-                if ((run.idx as int) >= (run.tests as List).size()) finishRun("done", null) else runIn(1, "runStep")
+                if ((run.idx as int) >= (run.tests as List).size()) finishRun("done", null) else next("runStep", 1, run)
                 return
             }
             if (!(test in [0, 10, 12]) && tv.currentValue("networkStatus") != "online") {
@@ -379,11 +409,10 @@ void runStep() {
                     run.offlineSince = null
                     run.idx = (run.idx as int) + 1
                     state.run = run
-                    if ((run.idx as int) >= (run.tests as List).size()) finishRun("done", null) else runIn(1, "runStep")
+                    if ((run.idx as int) >= (run.tests as List).size()) finishRun("done", null) else next("runStep", 1, run)
                     return
                 }
-                state.run = run
-                runIn(10, "runStep")
+                next("runStep", 10, run)
                 return
             }
             run.offlineSince = null
@@ -395,10 +424,10 @@ void runStep() {
         state.run = run
         if (s.skipIfOk && ((run.stepResults as Map)[s.skipIfOk] as Map)?.ok) { recordStep(s, true, 0L, "not needed"); return }
         if (s.needOk && !((run.stepResults as Map)[s.needOk] as Map)?.ok) { recordStep(s, false, 0L, "not run"); return }
-        if (s.sleep) { runIn(s.sleep as int, "sleepDone"); return }
+        if (s.sleep) { next("sleepDone", s.sleep as int, run); return }
         sendStep(s, run)
         if (!s.wait) { recordStep(s, true, null, null); return }
-        runIn(pollSeconds(s), "pollWait")
+        next("pollWait", pollSeconds(s), run)
     } catch (e) {
         logError "Step failed: ${e}"
         finishRun("aborted", "error: ${e.message}")
@@ -446,7 +475,7 @@ void pollWait() {
         List<Map> lines = readTvLines(run.stepSince as String)
         if (lines == null) {
             if (((state.readFailures ?: 0) as int) >= 3) { finishRun("aborted", "could not read the hub logs"); return }
-            runIn(pollSeconds(s), "pollWait")
+            next("pollWait", pollSeconds(s), run)
             return
         }
         Map hit = lines.find { (it.msg as String) =~ (s.wait as String) }
@@ -454,7 +483,7 @@ void pollWait() {
         Map bad = s.fail ? lines.find { (it.msg as String) =~ (s.fail as String) } : null
         if (bad) { recordStep(s, false, tsMs(bad.ts as String, location.timeZone) - (run.stepStartMs as Long), "failed"); return }
         if (now() - (run.stepStartMs as Long) > ((s.timeout as Long) * 1000L)) { recordStep(s, false, null, "timed out"); return }
-        runIn(pollSeconds(s), "pollWait")
+        next("pollWait", pollSeconds(s), run)
     } catch (e) {
         logError "Wait failed: ${e}"
         finishRun("aborted", "error: ${e.message}")
@@ -473,7 +502,7 @@ void recordStep(Map s, boolean ok, Long ms, String note) {
     (run.stepResults as Map)[s.name] = [ok: ok, ms: ms, at: run.stepStartMs, note: note]
     run.step = (run.step as int) + 1
     state.run = run
-    runIn(Math.max(1, (s.after ?: 1) as int), "runStep")
+    next("runStep", Math.max(1, (s.after ?: 1) as int), run)
 }
 
 List<Map> readTvLines(String since) {
@@ -521,7 +550,7 @@ void finishTest() {
     run.step = 0
     state.run = run
     if ((run.idx as int) >= (run.tests as List).size()) finishRun("done", null)
-    else runIn(2, "runStep")
+    else next("runStep", 2, run)
 }
 
 Map evaluateTest(int test, List<Map> lines, Map steps, Map run, List<Map> events) {
@@ -619,6 +648,7 @@ def apiRun() {
 
 def apiStatus() {
     checkVersion()
+    checkStall()
     Map run = (state.run ?: [:]) as Map
     Integer test = run.tests ? (run.tests[run.idx as int] as Integer) : null
     return render(status: 200, contentType: "application/json",
@@ -947,6 +977,12 @@ Map evalEvents(int test, List<Map> events, Map f) {
         case 12: return [pairingAfter: lastEvent(events, "pairing")]
         default: return [:]
     }
+}
+
+// Stalled: running, and the next callback is over a minute late. The minute covers a slow step (a log read,
+// a connect that blocks 30 s) and a busy hub.
+boolean runStalled(Map run, long nowMs) {
+    return run?.status == "running" && run.nextDueMs != null && nowMs > (run.nextDueMs as Long) + 60000L
 }
 
 Map splitDiffs(List diffs, Map expect) {

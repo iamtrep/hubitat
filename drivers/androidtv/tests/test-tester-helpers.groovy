@@ -45,6 +45,7 @@ List<String> SIGNATURES = [
     'boolean hasEvent(List<Map> events, String name, String value) {',
     'String lastEvent(List<Map> events, String name) {',
     'Map evalEvents(int test, List<Map> events, Map f) {',
+    'boolean runStalled(Map run, long nowMs) {',
     'Map splitDiffs(List diffs, Map expect) {',
     'String verdictOf(Map r) {',
     'String verdictText(Map r) {',
@@ -226,6 +227,13 @@ println 'differences'
 check 'eq, max, between', h.differences([a: true, b: 4000L, c: 7000L, d: null],
         [a: [eq: true], b: [max: 5000], c: [between: [4000, 6000]], d: [max: 10]]) == ['c', 'd']
 check 'Integer vs Long equal', h.differences([status: 402], [status: [eq: 402L]]) == []
+
+println 'runStalled'
+check 'on time', !h.runStalled([status: 'running', nextDueMs: 100000L], 150000L)
+check 'a minute late', h.runStalled([status: 'running', nextDueMs: 100000L], 160001L)
+check 'finished runs never stall', !h.runStalled([status: 'done', nextDueMs: 1L], 999999L)
+check 'no due time yet', !h.runStalled([status: 'running'], 999999L)
+check 'no run', !h.runStalled(null, 1L)
 
 println 'splitDiffs, verdicts'
 Map ex = [a: [eq: true], b: [eq: true, driver: true], c: [max: 5]]
