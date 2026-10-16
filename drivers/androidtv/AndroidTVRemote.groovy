@@ -30,7 +30,7 @@ metadata {
         command "connect"
         command "disconnect"
         command "sendKey", [[name: "key", type: "STRING", description: "Key name (HOME, BACK, DPAD_UP, MEDIA_PLAY_PAUSE...) or Android key code number"]]
-        command "launchApp", [[name: "appLink", type: "STRING", description: "The app's deep link, such as https://www.youtube.com (most reliable), or its package name, which some TVs refuse"]]
+        command "launchApp", [[name: "appLink", type: "STRING", description: "A link the app handles, such as https://www.youtube.com. Package names no longer launch apps on most TVs"]]
 
         attribute "networkStatus", "enum", ["online", "offline"]
         attribute "pairing", "enum", ["unpaired", "pairing", "awaiting code", "paired"]
@@ -55,7 +55,7 @@ import java.security.Signature
 import java.security.cert.CertificateFactory
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.1.3"
+@Field static final String CODE_VERSION = "0.1.4"
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int PAIRING_PORT = 6467
 @Field static final int REMOTE_PORT = 6466
@@ -92,7 +92,9 @@ import java.util.concurrent.ConcurrentHashMap
 Map rt() {
     Map r = RUNTIME.get(device.idAsLong)
     if (r == null) {
-        r = [mode: null, buf: "", lastRx: 0L, closing: false, gotMessage: false]
+        // fresh: no connect or pairing since this entry was made. New driver code empties RUNTIME,
+        // so a fresh entry seen by a running watchdog means an update dropped the session.
+        r = [mode: null, buf: "", lastRx: 0L, closing: false, gotMessage: false, fresh: true]
         RUNTIME.put(device.idAsLong, r)
     }
     return r
@@ -137,6 +139,7 @@ void startPairing() {
     // The pairing hash needs the TV's public key. The TLS socket doesn't expose the server
     // certificate, so read it from a TLS 1.2 handshake on a plain socket, where it is sent in the clear.
     Map r = rt()
+    r.fresh = false
     r.mode = "hello"
     r.buf = ""
     r.closing = false
@@ -274,6 +277,7 @@ private String outer(String body) { pInt(1, 2) + pInt(2, 200) + body }
 void connect() {
     if (!state.paired || !tvIP) { logWarn "Not paired"; return }
     Map r = rt()
+    r.fresh = false
     r.mode = "remote"
     r.buf = ""
     r.closing = false
@@ -309,6 +313,14 @@ void disconnect() {
 
 void watchdog() {
     Map r = rt()
+    if (r.mode == null && r.fresh && state.paired && tvIP) {
+        // Only connect() schedules the watchdog and disconnect() cancels it, so the session was meant to be open.
+        // runIn replaces a connect already scheduled, such as initialize()'s after a reboot.
+        logNet "The driver code changed; reconnecting"
+        sendEvent(name: "networkStatus", value: "offline")
+        runIn(1, "connect")
+        return
+    }
     if (r.mode != "remote") return
     if (now() - (r.lastRx as long) > IDLE_LIMIT_MS) {
         logWarn "No message from the TV in ${IDLE_LIMIT_MS / 1000 as int} s; reconnecting"
@@ -370,8 +382,9 @@ private void handleRemoteMessage(String hex) {
         Map<Integer, List> err = pDecode(pFirst(m, 3) as String)
         String rejected = err.containsKey(2) ? pDump(pFirst(err, 2) as String) : ""
         logWarn "TV rejected ${rejected} (error ${pFirst(err, 1)}); reconnecting"
-        if (rejected.contains("market://launch?id=")) {
-            logWarn "This TV can't launch apps by package name; use the app's deep link instead, such as https://www.youtube.com"
+        if (rejected.startsWith("90:")) {
+            logWarn "No app on the TV opens this link. Package names stopped launching apps after a Google Play update " +
+                    "in August 2026; use a link the app handles, such as https://www.youtube.com"
         }
         // The session went quiet or closed within 45 s of every error seen, so start a fresh one now.
         closeSocketLater()
@@ -459,8 +472,8 @@ void launchApp(String appLink) {
     appLink = appLink?.trim()
     if (!appLink) return
     if (rt().mode != "remote") { logWarn "Not connected"; return }
-    // A bare package name is never accepted as a link. As a market:// launch link it opens the app on
-    // some TVs; others reject it. A deep link (the app's URL) worked on the TV tested.
+    // The TV opens a link only when an installed app handles it. A bare package name is sent as a
+    // market:// launch link, the form that worked before a Google Play update in August 2026.
     if (!(appLink ==~ /^[A-Za-z][A-Za-z0-9+.-]*:.*/)) appLink = "market://launch?id=${appLink}"
     logCmd "Launch ${appLink}"
     sendFrame(pMsg(90, pStr(1, appLink)))

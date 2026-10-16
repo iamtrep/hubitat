@@ -36,9 +36,35 @@ logs it when the pairing connection closes; it is harmless, and the remote sessi
 
 ## Launching apps
 
-Use the app's deep link, such as `https://www.youtube.com`. A package name
-(`com.google.android.youtube.tv`) is sent as a `market://launch?id=` link, which some TVs and apps
-accept and others reject. When the TV rejects one, the log says so and suggests the deep link.
+Use a link the app handles, such as `https://www.youtube.com` or `vnd.youtube://www.youtube.com`. The TV
+opens a link only when an installed app handles it. A package name (`com.google.android.youtube.tv`) is
+sent as a `market://launch?id=` link; since a Google Play update in August 2026 no app handles that, so
+TVs refuse it. `intent:` and `android-app://` links were refused too. When the TV refuses a link, the
+log says so.
+
+Links for common apps, from Home Assistant's [Android TV Remote docs](https://www.home-assistant.io/integrations/androidtv_remote/)
+(only the YouTube ones tested here):
+
+| App | Link |
+|---|---|
+| YouTube | `https://www.youtube.com`, `vnd.youtube://www.youtube.com` |
+| Netflix | `netflix://`, or `https://www.netflix.com/title/<id>?source=30` for a title |
+| Prime Video | `https://app.primevideo.com` |
+| Disney+ | `https://www.disneyplus.com` |
+| Plex | `plex://` |
+| Twitch | `twitch://home` |
+
+### Finding an app's link
+
+- Try it: send `launchApp` with a guess, such as the service's website (`https://www.<service>.com`) or
+  `<appname>://`. If the app opens, `currentApp` changes to it; if not, the log shows the TV refused the link.
+- With ADB (developer mode on the TV): `adb shell dumpsys package <package>` lists the schemes and hosts
+  the app declares, and `adb shell am start -a android.intent.action.VIEW -d '<link>'` opens a link the
+  standard Android way.
+- From the app's APK: `aapt dump xmltree <app>.apk AndroidManifest.xml`, and look for an intent filter
+  with the `VIEW` action, the `BROWSABLE` category and a `data` scheme.
+
+Some apps declare no link, and can't be launched this way.
 
 ## Volume
 
