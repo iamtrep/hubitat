@@ -241,6 +241,9 @@ it pairs. Leading zero bytes of each number are dropped before hashing *(spec: [
   `LAUNCHER` category, and `android-app://<package>` are answered with `remote_error` 7 within 40 ms. No
   link form that names only a package opened an app *(probed 2.5.2.139, C-7, Android TV Remote driver 0.1.2)*.
   The box seems to open a link only when an app handles it, so error 7 would mean no app does *(inferred: from the accepted and refused schemes above)*.
+- The same box's remote has a button that opens its operator app (`ca.ebox.tv.platform`). Sent from the home
+  screen as `remote_key_inject`, none of key codes 131–142, 170, 172, 183–186, 188–203, 229 and 284 opened
+  that app or drew any message back *(absent: probed 2.5.2.139, C-7, Android TV Remote driver 0.1.4)*.
 - A Google TV Streamer (Android 14, remote service 7.00.956317615) also answers
   `market://launch?id=<package>` with `remote_error` 7 *(reported: [forum report](https://community.hubitat.com/t/beta-android-tv-remote-google-tv-and-android-tv-local-control/166822/12), firmware 2.5.2.139)*.
 - Launching by package name is unreliable beyond these boxes: since a Google Play Store change, many
