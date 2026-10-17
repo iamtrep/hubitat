@@ -1,0 +1,23 @@
+{
+  "vendor": "Sony",
+  "model": "BRAVIA 4K AE3",
+  "androidVersion": "14",
+  "remoteServiceVersion": "7.00.956317615",
+  "features": 639,
+  "deviceInfo3": 1,
+  "firstMessages": "1,2,40,50,20",
+  "startApp": "com.sony.dtv.tvlin",
+  "homeApp": "com.google.android.apps.tv.launcherx",
+  "searchApp": "com.google.android.katniss",
+  "volumeReported": true,
+  "volumeDuringChange": true,
+  "volumeRange": 100,
+  "volumeLevel": 18,
+  "playerModel": "BRAVIA 4K AE3",
+  "linkSchemes": [
+    "http",
+    "https"
+  ],
+  "errorCode": 7,
+  "source": "https://community.hubitat.com/t/beta-android-tv-remote-google-tv-and-android-tv-local-control/166822/30 (tester report; only https links and package names were tried, https://tv.apple.com also opened per post 29). Not modelled: volume level 0 and muted while off, the launcher then the TV input reported at power on, com.android.systemui after the search app, an empty 24 after BACK in test 14, pings pausing about 8 s at POWER"
+}

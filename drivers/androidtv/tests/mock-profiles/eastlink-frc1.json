@@ -1,0 +1,23 @@
+{
+  "vendor": "SEI Robotics",
+  "model": "FRC1-Eastlink",
+  "androidVersion": "12",
+  "remoteServiceVersion": "7.00.999235495",
+  "features": 639,
+  "deviceInfo3": 1,
+  "firstMessages": "1,2,50,40,20",
+  "startApp": "com.tivo.hydra.app",
+  "homeApp": "com.tivo.hydra.app",
+  "searchApp": "com.google.android.katniss",
+  "volumeReported": false,
+  "volumeDuringChange": true,
+  "volumeRange": 0,
+  "volumeLevel": 0,
+  "playerModel": "FRC1-Eastlink",
+  "linkSchemes": [
+    "http",
+    "https"
+  ],
+  "errorCode": 7,
+  "source": "https://community.hubitat.com/t/beta-android-tv-remote-google-tv-and-android-tv-local-control/166822/30 (tester report on an Eastlink operator box; only https links and package names were tried). Volume messages carry no range or level, at session start and around POWER. Not modelled: a second volume message a few seconds after power on, an empty 24 after the text in test 14, pings pausing about 8 s at POWER"
+}
