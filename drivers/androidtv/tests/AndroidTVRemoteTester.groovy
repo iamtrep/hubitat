@@ -27,7 +27,7 @@ import java.security.MessageDigest
 import java.security.cert.CertificateFactory
 import java.text.SimpleDateFormat
 
-@Field static final String CODE_VERSION = "0.4.0"
+@Field static final String CODE_VERSION = "0.5.0"
 
 @Field static final String BUSY = "a run is in progress"
 
@@ -36,7 +36,7 @@ import java.text.SimpleDateFormat
 @Field static final Map TEST_NAMES = [
     0: "Connection", 1: "Session start", 2: "Pings", 3: "Power off/on", 4: "Volume", 5: "Launch by URL",
     6: "Launch by package", 7: "Recovery after a box error", 8: "HOME", 9: "Long standby",
-    10: "Power cut", 11: "Wrong pairing code", 12: "Pairing", 13: "Discovery"
+    10: "Power cut", 11: "Wrong pairing code", 12: "Pairing", 13: "Discovery", 14: "Text input"
 ]
 
 // The device's attributes the run watches, to check what the driver made of the box's messages.
@@ -65,7 +65,9 @@ import java.text.SimpleDateFormat
     12: [certRead: [eq: true], pairingReply: [eq: true], hexCodeOffered: [ne: false], codeShown: [eq: true], wrongCodeStatus: [eq: 402],
          pairingAfter: [eq: "unpaired", driver: true]],
     // The driver finds the box by its mDNS announcement; a box that stops announcing while off delays the driver's IP repair until it wakes.
-    13: [announced: [eq: true], deviceTvFound: [ne: false], announcedOff: [eq: true]]
+    13: [announced: [eq: true], deviceTvFound: [ne: false], announcedOff: [eq: true]],
+    // The driver echoes the counters of the box's last message 21, so it assumes the box sends one for a focused field.
+    14: [textSent: [eq: true, driver: true], accepted: [eq: true], editReported: [eq: true]]
 ]
 
 // Applies to every test: the box sent a message type the driver doesn't act on.
@@ -108,7 +110,8 @@ Map mainPage() {
             input "optWrongCode", "bool", title: "Wrong pairing code: shows a pairing dialog on the TV", defaultValue: false
         }
         section("Run") {
-            paragraph "Tests 3 to 10 and 13 change what is on the TV. Tests 1 to 8 and 13 take about 3 minutes; the power cut adds about 3, the wrong code about 1, and the standby its minutes."
+            paragraph "Tests 3 to 10, 13 and 14 change what is on the TV. Tests 1 to 8, 13 and 14 take about 3 minutes; the power cut adds about 3, the wrong code about 1, and the standby its minutes. " +
+                      "Watch the TV during test 14: it opens the search screen and types \"hubitat\"."
             if (tv && tv.currentValue("pairing") != "paired") {
                 paragraph "The device isn't paired, so Run only checks how far pairing gets: it opens a pairing dialog on the TV and answers it with a wrong code. Takes about 1 minute."
             }
@@ -263,7 +266,7 @@ String startRun(Map opts) {
     if (pairing == "awaiting code") return "the TV is waiting for a pairing code; enter it, or wait 5 minutes for it to time out"
     // An unpaired device can't run the session tests; the run then checks how far pairing gets.
     boolean pairingOnly = pairing != "paired"
-    List<Integer> tests = pairingOnly ? [12] : (opts.tests ? (opts.tests as List<Integer>) : [1, 2, 3, 4, 5, 6, 7, 8, 13])
+    List<Integer> tests = pairingOnly ? [12] : (opts.tests ? (opts.tests as List<Integer>) : [1, 2, 3, 4, 5, 6, 7, 8, 13, 14])
     if (!opts.tests && !pairingOnly) {
         if (opts.standby) tests << 9
         if (opts.powerCut) tests << 10
@@ -403,7 +406,8 @@ void runStep() {
             run.testStartMs = now()
             run.stepResults = [:]
             String skip = test == 10 && !plug ? "no plug selected" :
-                          test == 13 && !tv.hasCommand("findTvs") ? "the driver has no Find TVs command; update it" : null
+                          test == 13 && !tv.hasCommand("findTvs") ? "the driver has no Find TVs command; update it" :
+                          test == 14 && !tv.hasCommand("sendText") ? "the driver has no Send Text command; update it" : null
             if (skip) {
                 (run.results as List) << [test: test, name: TEST_NAMES[test], skipped: skip]
                 run.idx = (run.idx as int) + 1
@@ -461,6 +465,7 @@ void sendStep(Map s, Map run) {
         case "volumeDown": tv.volumeDown(); break
         case "sendKey": tv.sendKey(args[0] as String); break
         case "launchApp": tv.launchApp(args[0] as String); break
+        case "sendText": tv.sendText(args[0] as String); break
         case "startPairing": tv.startPairing(); break
         case "connectIfIdle": tv.connect(); break
         case "wrongCode": tv.submitPairingCode(wrongCodeForTv()); break
@@ -594,6 +599,10 @@ Map evaluateTest(int test, List<Map> lines, Map steps, Map run, List<Map> events
             Map st = tvStateFields(["tvId", "foundTvs"])
             f = evalDiscovery(lines, st.tvId as String, st.foundTvs as Map)
             break
+        case 14:
+            f = evalText(lines)
+            r.note = "say in your post whether \"hubitat\" appeared in the search box"
+            break
         default: f = [:]
     }
     f.putAll(evalEvents(test, events, f))
@@ -606,8 +615,9 @@ Map evaluateTest(int test, List<Map> lines, Map steps, Map run, List<Map> events
     Map expect = (EXPECT[test] as Map) + EXPECT_ALL
     r.diffs = differences(f, expect)
     r.putAll(splitDiffs(r.diffs as List, expect))
-    // Session start always: its messages are what a mock of the box replays.
-    if (r.diffs || test == 1) r.trace = traceLines(lines)
+    // Session start always: its messages are what a mock of the box replays. Text input always: what the
+    // box sends around a text field is still being learned.
+    if (r.diffs || test in [1, 14]) r.trace = traceLines(lines)
     return r
 }
 
@@ -662,6 +672,13 @@ List<Map> stepsFor(int test, Map run) {
                          [name: "standby", sleep: 30],
                          [name: "findOff", cmd: "findTvs", wait: '^Found |^No Android TV', timeout: 20, after: 2],
                          [name: "on", cmd: "on", wait: '^rx 40:\\{1:1\\}', timeout: 20, after: 3]]
+        // The text follows SEARCH by 2 s with no log read between: the EBOX's search screen closes itself
+        // about 11 s after it opens. The text stays on screen 8 s, for whoever watches the TV.
+        case 14: return [[name: "home", cmd: "sendKey", args: ["HOME"], after: 3],
+                         [name: "search", cmd: "sendKey", args: ["SEARCH"], after: 2],
+                         [name: "text", cmd: "sendText", args: ["hubitat"], after: 8],
+                         [name: "back", cmd: "sendKey", args: ["BACK"], after: 2],
+                         [name: "home2", cmd: "sendKey", args: ["HOME"], after: 2]]
         default:
             return []
     }
@@ -765,15 +782,15 @@ private boolean checkOAuth() {
 
 // ── Pure helpers (extracted and tested by test-tester-helpers.groovy) ─
 
-// Message types the driver doesn't act on, such as 21 (ime_batch_edit) or 51 (adjust_volume_level).
-// The driver traces every message but pings as "rx N:"; 1, 2, 3, 20, 40 and 50 are the ones it handles.
+// Message types the driver doesn't act on, such as 22 (ime_show_request) or 51 (adjust_volume_level).
+// The driver traces every message but pings as "rx N:"; 1, 2, 3, 20, 21, 40 and 50 are the ones it handles.
 String otherMessages(List<Map> lines) {
     Set<Integer> seen = new TreeSet<Integer>()
     for (Map l : lines) {
         def m = (l.msg as String) =~ /^rx (\d+):/
         if (!m.find()) continue
         Integer t = m.group(1) as Integer
-        if (!(t in [1, 2, 3, 20, 40, 50])) seen << t
+        if (!(t in [1, 2, 3, 20, 21, 40, 50])) seen << t
     }
     return seen ? seen.join(",") : null
 }
@@ -930,6 +947,30 @@ Map evalLaunch(List<Map> lines, Map steps) {
         if (m.find()) { rejected = true; code = m.group(1); break }
     }
     return [accepted: !rejected, errorCode: code, app: lastApp(lines), launchMs: steps.launch?.ok ? steps.launch.ms : null]
+}
+
+// Test 14: the app the search key opened, whether the box reported a focused text field (message 20 with
+// field 2, or message 21), and whether it refused the text.
+Map evalText(List<Map> lines) {
+    String searchApp = null, code = null
+    boolean searched = false, sent = false, rejected = false, field = false, edit = false, editAfterText = false
+    for (Map l : lines) {
+        String msg = l.msg as String
+        if (msg == "Key 84") searched = true
+        else if (msg.startsWith("Text ")) sent = true
+        if (searched && !sent && searchApp == null) {
+            def m = msg =~ /^rx 20:\x7B1:\x7B12:"([^"]+)"/
+            if (m.find()) searchApp = m.group(1)
+        }
+        if (msg =~ /^rx 20:.*\x7D 2:\x7B/) field = true
+        if (msg.startsWith("rx 21:")) { edit = true; if (sent) editAfterText = true }
+        if (sent && !rejected) {
+            def m = msg =~ /^TV rejected .*\(error (\S+)\)/
+            if (m.find()) { rejected = true; code = m.group(1) }
+        }
+    }
+    return [searchApp: searchApp, fieldReported: field, editReported: edit, editAfterText: editAfterText,
+            textSent: sent, accepted: !rejected, errorCode: code]
 }
 
 Map evalRecovery(List<Map> lines, Map steps, TimeZone tz) {

@@ -40,6 +40,7 @@ List<String> SIGNATURES = [
     'Map evalPairingOptions(List<Map> lines) {',
     'Map evalLaunch(List<Map> lines, Map steps) {',
     'Map evalRecovery(List<Map> lines, Map steps, TimeZone tz) {',
+    'Map evalText(List<Map> lines) {',
     'Map evalHome(List<Map> lines, Map steps) {',
     'Map evalStandby(List<Map> lines, Map steps) {',
     'Map evalPowerCut(List<Map> lines, Map steps, Map attrs, TimeZone tz) {',
@@ -202,6 +203,22 @@ check 'no rejection', h.evalRecovery([ln('11:00:00.000', 'rx 20:{1:{12:"com.andr
 println 'evalHome'
 Map s8 = h.evalHome([ln('11:00:00.000', 'rx 20:{1:{12:"com.google.android.youtube.tv"}}'), ln('11:00:03.000', 'rx 20:{1:{12:"com.google.android.tvlauncher"}}')], [home: [ok: true, ms: 800L]])
 check 'home app and changed', s8.homeApp == 'com.google.android.tvlauncher' && s8.appChanged == true
+
+println 'evalText'
+// From a box that reported no text field: the search key opened the Assistant, the text drew nothing.
+Map t1 = h.evalText([ln('11:00:00.000', 'Key 3'), ln('11:00:00.400', 'rx 20:{1:{12:"com.google.android.tvlauncher"}}'),
+                     ln('11:00:03.000', 'Key 84'), ln('11:00:03.300', 'rx 20:{1:{12:"com.google.android.katniss"}}'),
+                     ln('11:00:07.000', 'Text hubitat'), ln('11:00:07.010', 'tx 21:{1:0 2:0 3:{1:1 2:{1:6 2:6 3:"hubitat"}}}'),
+                     ln('11:00:15.000', 'Key 4'), ln('11:00:15.200', 'rx 20:{1:{12:"com.google.android.tvlauncher"}}')])
+check 'search app, nothing reported', t1 == [searchApp: 'com.google.android.katniss', fieldReported: false, editReported: false,
+                                             editAfterText: false, textSent: true, accepted: true, errorCode: null]
+Map t2 = h.evalText([ln('11:00:03.000', 'Key 84'), ln('11:00:03.300', 'rx 20:{1:{12:"com.example.search"} 2:{1:2 2:"" 6:"Search"}}'),
+                     ln('11:00:03.400', 'rx 21:{1:5 2:2}'), ln('11:00:07.000', 'Text hubitat'), ln('11:00:07.200', 'rx 21:{1:6 2:2}')])
+check 'field and edits reported', t2.fieldReported && t2.editReported && t2.editAfterText && t2.searchApp == 'com.example.search'
+Map t3 = h.evalText([ln('11:00:07.000', 'Text hubitat'), ln('11:00:07.050', 'TV rejected 21:{1:0} (error 2); reconnecting')])
+check 'text refused', t3.accepted == false && t3.errorCode == '2' && t3.searchApp == null
+check 'driver without sendText', h.evalText([ln('11:00:03.000', 'Key 84')]).textSent == false
+check 'message 21 is handled, not other', h.otherMessages([ln('11:00:00.000', 'rx 21:{1:5 2:2}')]) == null
 
 println 'evalStandby'
 Map s9 = h.evalStandby([ln('12:00:00.000', 'rx 40:{1:0}'), ln('12:30:00.000', 'rx 40:{1:1}')], [on: [ok: true, ms: 300L]])

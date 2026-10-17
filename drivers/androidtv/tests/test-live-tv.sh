@@ -10,8 +10,9 @@
 #
 # Usage:
 #   bash drivers/androidtv/tests/test-live-tv.sh [@hub] [<instance-id>]            # test 1 only, about 15 s
-#   RUN_SLOW_TESTS=1 bash drivers/androidtv/tests/test-live-tv.sh [@hub]           # tests 1-8 and 13, about 3 min
+#   RUN_SLOW_TESTS=1 bash drivers/androidtv/tests/test-live-tv.sh [@hub]           # tests 1-8, 13 and 14, about 3 min
 #   RUN_SLOW_TESTS=1 ATV_OPTS="standby=5&cut=true&wrongcode=true" bash ...          # opt-in tests too
+#   ATV_TESTS=14 bash drivers/androidtv/tests/test-live-tv.sh [@hub]                # the listed tests only
 # Upper bound: 20 min plus the standby minutes (a full run with every option takes about 7 min plus the standby).
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,9 +22,9 @@ HUB_NAME=""; INSTANCE_ID=""
 for arg in "$@"; do
     if [[ "$arg" == @* ]]; then HUB_NAME="${arg#@}"; elif [[ "$arg" =~ ^[0-9]+$ ]]; then INSTANCE_ID="$arg"; fi
 done
-python3 - "$HUB_NAME" "$INSTANCE_ID" "$CONFIG_FILE" "${RUN_SLOW_TESTS:-}" "${ATV_OPTS:-}" <<'PYTHON_SCRIPT'
+python3 - "$HUB_NAME" "$INSTANCE_ID" "$CONFIG_FILE" "${RUN_SLOW_TESTS:-}" "${ATV_OPTS:-}" "${ATV_TESTS:-}" <<'PYTHON_SCRIPT'
 import json, re, sys, time, urllib.parse, urllib.request, http.cookiejar
-hub_arg, inst_arg, config_file, slow, opts = sys.argv[1:6]
+hub_arg, inst_arg, config_file, slow, opts, only = sys.argv[1:7]
 passed = failed = warnings = 0
 def ok(m):
     global passed; passed += 1; print(f"  [PASS] {m}")
@@ -77,8 +78,10 @@ def api(path, timeout=30):
 
 tests = ["1"]
 if slow:
-    tests = ["1", "2", "3", "4", "5", "6", "7", "8", "13"]
+    tests = ["1", "2", "3", "4", "5", "6", "7", "8", "13", "14"]
     tests += [n for flag, n in (("standby=", "9"), ("cut=true", "10"), ("wrongcode=true", "11")) if flag in opts]
+if only:
+    tests = [t.strip() for t in only.split(",") if t.strip()]
 q = f"/run?tests={','.join(tests)}" + (f"&{opts}" if slow and opts else "")
 try:
     r = api(q)

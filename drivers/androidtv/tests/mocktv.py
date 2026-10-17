@@ -190,6 +190,8 @@ def handle_remote(conn):
                 if P["volumeReported"]: volume()
             elif k == 3:
                 app(P["homeApp"])
+            elif k == 84:
+                app(P["searchApp"])
         elif msg.HasField("remote_app_link_launch_request"):
             link = msg.remote_app_link_launch_request.app_link
             schemes = P["linkSchemes"]

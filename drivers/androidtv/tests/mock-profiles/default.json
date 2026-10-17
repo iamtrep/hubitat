@@ -8,6 +8,7 @@
   "firstMessages": "1,2,40,50,20",
   "startApp": "com.google.android.youtube.tv",
   "homeApp": "com.google.android.tvlauncher",
+  "searchApp": "com.google.android.katniss",
   "volumeReported": true,
   "volumeDuringChange": true,
   "volumeRange": 100,

@@ -131,7 +131,8 @@ a search box. Select the text field with the remote first, then close the on-scr
 apps receive the text only while their keyboard is hidden. Some fields add the text to what they hold,
 others replace it.
 
-Not yet confirmed on a TV: report what shows on screen in the forum thread.
+Not yet confirmed on a TV. The Android TV Remote Tester's test 14 tries it on the search screen and
+records what the box sends: post its report in the forum thread, with whether the text appeared.
 
 ## Android TV Remote Tester (optional)
 

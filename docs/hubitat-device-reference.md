@@ -279,7 +279,9 @@ it pairs. Leading zero bytes of each number are dropped before hashing *(spec: [
 - On the `uiw4020ebx` box (remote service `7.00.999235495`), neither the Assistant search screen
   (`com.google.android.katniss`) nor YouTube's search page brought a message 21, and every
   `remote_ime_key_inject` carried only the app (field 1), no text field status (field 2) *(absent: probed 2.5.2.139, C-7, Android TV Remote driver 0.2.0 with sendText)*.
-  A message 21 with both counters 0 sent to the search screen drew neither a reply nor `remote_error`; whether the text reached the screen was not seen *(probed 2.5.2.139, C-7, Android TV Remote driver 0.2.0 with sendText)*.
+  A message 21 with both counters 0 sent to the search screen drew neither a reply nor `remote_error`; whether the text reached the screen was not seen *(probed 2.5.2.139, C-7, Android TV Remote driver 0.2.0 with sendText and Tester 0.5.0)*.
+  The search screen closed by itself 9–11 s after it opened, whether or not text was sent, and BACK on the
+  home screen after it closed once brought an empty message 24, a type the reference proto doesn't list *(probed 2.5.2.139, C-7, Android TV Remote Tester 0.5.0)*.
 
 ## Samsung Tizen TVs
 

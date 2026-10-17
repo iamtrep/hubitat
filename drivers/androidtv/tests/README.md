@@ -39,6 +39,7 @@ report.
 | `firstMessages` | test 1: message types in the order the box sends them; starts `1,2`, then 20, 40 and 50 |
 | `startApp` | the current app reported at session start |
 | `homeApp` | test 8 `homeApp` |
+| `searchApp` | test 14 `searchApp`: the app the search key opens |
 | `volumeReported` | test 4: volume keys bring a volume message |
 | `volumeDuringChange` | test 3: POWER brings a volume message |
 | `volumeRange`, `volumeLevel` | test 4, or test 3 `changeVolumeRange` and `changeVolumeLevel` |
@@ -76,9 +77,16 @@ Test 13, Discovery, runs **Find TVs** with the box on and again after 30 s off, 
 box announces itself and whether it still does while off: the driver finds the box and follows it to a
 new IP through that announcement. With several TVs on the network it leaves the TV list on the device.
 
+Test 14, Text input, presses SEARCH, sends `sendText "hubitat"` and leaves it on screen 8 s. It reports
+the app the search key opened, whether the box reported a focused text field (`fieldReported`: message
+20 with field 2; `editReported`: message 21) and whether it refused the text, with its decoded lines in
+every run. Whether the word showed on screen only the person watching can say. The mock never reports a
+text field, as no box has been seen to yet.
+
 - `test-tester-helpers.groovy`: unit tests for its pure helpers, no hub needed
   (`groovy drivers/androidtv/tests/test-tester-helpers.groovy`).
 - `test-driver-helpers.groovy`: the same for the driver's TV-matching helpers.
 - `test-live-tv.sh [@hub]`: runs it through its endpoints (turn on Script access in the app first) and
   prints `[PASS]` per test, `[FAIL]` where the driver differs and `[WARN]` where only the box does;
-  `RUN_SLOW_TESTS=1` runs tests 1–8 and 13, `ATV_OPTS="standby=5&cut=true&wrongcode=true"` adds the opt-in ones.
+  `RUN_SLOW_TESTS=1` runs tests 1–8, 13 and 14, `ATV_OPTS="standby=5&cut=true&wrongcode=true"` adds the opt-in ones,
+  and `ATV_TESTS=14` runs only the listed tests.
