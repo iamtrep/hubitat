@@ -272,6 +272,25 @@ it pairs. Leading zero bytes of each number are dropped before hashing *(spec: [
   after the cut. The box powers on by itself when power returns, is back on 6466 about 70–75 s
   later, and keeps the pairing *(probed 2.5.2.138, C-7, Android TV Remote Tester and prototype driver)*.
 
+## Samsung Tizen TVs
+
+- A 2020 TU7000 (UN50TU7000FXZC, firmware `T-KTSU2AKUC-2743.0`) announces itself over mDNS only as
+  an AirPlay receiver, `_airplay._tcp` on port 47941, with the TV's name as the service name (`Andraye`
+  for a TV whose REST name is `[TV] Andraye`) and host `Samsung.local`. Its TXT record has
+  `manufacturer=Samsung`, `model=UTU7000`, `fv` (the firmware), `serialNumber`, `deviceid` and `pi`
+  (both MAC-shaped), and `pk`, `gid`, `psi`, `features`, `flags`, `srcvers`, `protovers`, `rsf`,
+  `gcgl` and `acl` *(probed 2.5.2.139, C-7, throwaway driver and avahi-browse from the LAN)*.
+- Neither `deviceid` nor `pi` is the TV's MAC: both differ from the `wifiMac` that
+  `GET :8001/api/v2/` reports and from the MAC the TV answers ARP with, and no TXT value matches the
+  REST `id` (`uuid:...`). `deviceid` equals the device network ID the hub's built-in AirPlay
+  integration gave the TV *(probed 2.5.2.139, C-7, avahi-browse and REST from the LAN, the hub's AirPlay device)*.
+  Home Assistant's `samsungtv` integration discovers TVs on `_airplay._tcp` with
+  `manufacturer=samsung*`, skips names containing `Soundbar`, and stores `deviceid` as the TV's MAC *(community: [HA core `samsungtv` manifest and `config_flow.py`](https://github.com/home-assistant/core/tree/dev/homeassistant/components/samsungtv))*,
+  which on this TV is not the address Wake-on-LAN needs *(inferred: from the MAC comparison above)*.
+- In standby the same TV leaves the network: no AirPlay record, no reply to ping, SSDP or port
+  8001, and its ARP entry goes stale. The AirPlay record was back within about 10 s of a
+  Wake-on-LAN power-on and gone within about 15 s of power-off *(probed 2.5.2.139, C-7, power by the Samsung TV Remote driver, avahi-browse, ping and SSDP from the LAN)*.
+
 ## Hubitat hubs
 
 Per Hubitat staff ([forum, 2024-01-27](https://community.hubitat.com/t/what-is-c8-pro-soc/132597/6)) *(staff: [bravenel](https://community.hubitat.com/t/what-is-c8-pro-soc/132597/6))*:
