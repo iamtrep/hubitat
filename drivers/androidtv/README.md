@@ -11,7 +11,9 @@ remote session.
 
 ## Setup
 
-1. Give the TV a fixed IP address (a DHCP reservation in your router).
+1. Give the TV a fixed IP address (a DHCP reservation in your router). Here "the TV" is the device
+   running Android TV or Google TV: with a box such as an NVIDIA Shield or a Chromecast, the box, not the
+   screen it plugs into.
 2. Add a virtual device with the **Android TV Remote** driver, enter the TV's IP address and save.
 3. Press **Start Pairing**. A 6-character code appears on the TV.
 4. Enter it with **Submit Pairing Code**. The device shows `pairing: paired` and connects.
