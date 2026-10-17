@@ -253,6 +253,11 @@ if os.environ.get("MOCKTV_MDNS_NAME"):
     import atexit
     MDNS = announce(os.environ["MOCKTV_MDNS_NAME"], os.environ.get("MOCKTV_BT", "02:00:00:00:00:01"))
     atexit.register(lambda: (MDNS[0].unregister_service(MDNS[1]), MDNS[0].close()))
+    # Exit through atexit on a kill, so the goodbye goes out: a hub that saw the name expire without one
+    # doesn't find it again when it comes back.
+    import signal
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda *a: os._exit(0) if MDNS is None else (MDNS[0].unregister_service(MDNS[1]), MDNS[0].close(), os._exit(0)))
 
 threading.Thread(target=serve, args=(PAIR_PORT, handle_pairing), daemon=True).start()
 log("mock TV listening on", PAIR_PORT, REMOTE_PORT)
