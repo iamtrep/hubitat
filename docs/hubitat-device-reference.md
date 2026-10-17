@@ -109,7 +109,12 @@ CurrentSummationDelivered (uint48), `0x0200` Status, `0x0300` UnitOfMeasure, `0x
 (a read answers status `0x86`). UnitOfMeasure is 0 (kWh), Multiplier 1 and Divisor 1000, so the counter is in Wh.
 It read 45 with ConnectedLoad at 100 W, and the device sends it in an unsolicited Report Attributes
 *(probed 2.5.2.139, one DM2500ZB, ZCL reads from another device and `/zigbeeLogsocket`)*.
-Whether it follows ConnectedLoad while on is not yet known.
+With ConnectedLoad at 100 W it rose 6 in 300 s on at 60 %, and three devices with no ConnectedLoad reported 0
+*(probed 2.5.2.139, one DM2500ZB at 100 W and three devices at 0, `/zigbeeLogsocket`)*.
+Whether it scales with the dim level needs more than that one cycle.
+**Configure Reporting on `0x0702`/`0x0000` needs a reportable change.** Without one, the DM2500ZB and SW2500ZB answer
+status `0x85` (INVALID_FIELD); with min 60 s, max 1800 s and change 10 they answer `0x00`
+*(probed 2.5.2.139, one DM2500ZB and one SW2500ZB, `/zigbeeLogsocket`)*.
 Sinopé's own app shows a light switch or dimmer in its energy graphs only when it has a load reader or a
 connected load entered in its settings, and its DM2500ZB page offers a usage graph in minutes *(docs: Sinopé support,
 [device not in consumption graphs](https://support.sinopetech.com/en/neviweb/2.2.1.1/),
