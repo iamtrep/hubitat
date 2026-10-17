@@ -65,6 +65,8 @@ import java.util.concurrent.ConcurrentHashMap
 @Field static final int PAIRING_PORT = 6467
 @Field static final String MDNS_SERVICE = "_androidtvremote2._tcp"
 @Field static final int SEARCH_TIMEOUT_MS = 5000
+@Field static final long REPAIR_SEARCH_MS = 300000L     // at most one search per 5 minutes while the TV is unreachable
+@Field static final long ID_SEARCH_MS = 86400000L       // at most one search a day to learn the TV of a typed address
 @Field static final int REMOTE_PORT = 6466
 @Field static final int WATCHDOG_SECONDS = 30
 @Field static final long IDLE_LIMIT_MS = 20000      // the TV pings every 5 s
@@ -484,6 +486,29 @@ private void scheduleReconnect() {
     state.retry = n + 1
     logSched "Reconnecting in ${delay} s"
     runIn(delay, "connect")
+    if (state.paired && state.tvId && searchDue(state.lastSearch as Long, now(), REPAIR_SEARCH_MS)) runIn(1, "repairSearch")
+}
+
+// The TV may have a new address: find it by its id and connect there.
+void repairSearch() {
+    List<Map> found = searchTvs()
+    String ip = repairAddress(found, state.tvId as String, tvIP as String)
+    if (!ip) return
+    logInfo "${state.tvName ?: 'The TV'} moved from ${tvIP} to ${ip}"
+    applyTv(entryWithId(found, state.tvId as String), ip)
+    state.retry = 0
+    runIn(1, "connect")
+}
+
+// A device set up with a typed address: find which TV answers there.
+void learnTvId() {
+    state.lastIdSearch = now()
+    Map e = entryWithAddress(searchTvs(), tvIP as String)
+    if (!e) return
+    state.tvId = e.id
+    state.tvName = e.name
+    state.lastTvIP = tvIP
+    logDebug "The TV at ${tvIP} is ${e.name} (${e.id})"
 }
 
 private void handleRemoteMessage(String hex) {
@@ -493,6 +518,7 @@ private void handleRemoteMessage(String hex) {
         r.gotMessage = true
         state.retry = 0
         sendEvent(name: "networkStatus", value: "online")
+        if (!state.tvId && searchDue(state.lastIdSearch as Long, now(), ID_SEARCH_MS)) runIn(5, "learnTvId")
     }
     if (m.containsKey(8)) {                                     // remote_ping_request
         Long val1 = pFirst(pDecode(pFirst(m, 8) as String), 1) as Long
