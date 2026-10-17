@@ -15,7 +15,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.29"
+@Field static final String CODE_VERSION = "0.0.30"
 // device.id -> deadline (ms) until which a state report counts as digital. Static rather than
 // state: a driver's state is written back whole at method exit, so a command and a parse() on
 // another thread can undo each other's flag, and a deadline expires on its own when the device
@@ -435,13 +435,14 @@ void parse(String description) {
 
 
 // Button numbers are 1-based per Hubitat convention (button 1 = Up paddle, 2 = Down).
+// Every gesture starts with a press-down code (01 Up, 11 Down) that carries no gesture, so it
+// raises no event; the code after it says whether the press was a tap, a hold or a double tap.
+@Field static final List<String> buttonPressDownCodes = ["01", "11"]
 @Field static final Map<String, Map<String, Object>> buttonActionMap = [
-    "01": [buttonEvent: "pushed", buttonIndex: 1, description: "Up was pushed"],
-    "02": [buttonEvent: "released", buttonIndex: 1, description: "Up was released"],
+    "02": [buttonEvent: "pushed", buttonIndex: 1, description: "Up was pushed"],
     "03": [buttonEvent: "held", buttonIndex: 1, description: "Up was held"],
     "04": [buttonEvent: "doubleTapped", buttonIndex: 1, description: "Up was double-tapped"],
-    "11": [buttonEvent: "pushed", buttonIndex: 2, description: "Down was pushed"],
-    "12": [buttonEvent: "released", buttonIndex: 2, description: "Down was released"],
+    "12": [buttonEvent: "pushed", buttonIndex: 2, description: "Down was pushed"],
     "13": [buttonEvent: "held", buttonIndex: 2, description: "Down was held"],
     "14": [buttonEvent: "doubleTapped", buttonIndex: 2, description: "Down was double-tapped"]
 ]
@@ -545,7 +546,11 @@ private void parseAttributeReport(Map descMap) {
                     logRx("Off LED intensity was set to $ledIntensity% (0x${descMap.value})")
                     return
 
-                case "0054": // action report (pushed/released/double tapped)
+                case "0054": // action report (press-down, then pushed/held/double tapped)
+                    if (descMap.value in buttonPressDownCodes) {
+                        logRx("Paddle press-down (${descMap.value})")
+                        return
+                    }
                     Map<String, Object> action = buttonActionMap[descMap.value]
                     if (action) {
                         map.name = action.buttonEvent
