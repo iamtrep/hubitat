@@ -111,7 +111,9 @@ It read 45 with ConnectedLoad at 100 W, and the device sends it in an unsolicite
 *(probed 2.5.2.139, one DM2500ZB, ZCL reads from another device and `/zigbeeLogsocket`)*.
 With ConnectedLoad at 100 W it rose 6 in 300 s on at 60 %, and three devices with no ConnectedLoad reported 0
 *(probed 2.5.2.139, one DM2500ZB at 100 W and three devices at 0, `/zigbeeLogsocket`)*.
-Whether it scales with the dim level needs more than that one cycle.
+**The estimate scales with the dim level: Wh = ConnectedLoad × time on × level.** At 100 W, 630 s at 100 % added 18 Wh
+(17.5 expected) and 635 s at 30 % added 5 Wh (5.3 expected; full load would give 17.6), within the counter's 1 Wh step
+*(probed 2.5.2.139, one DM2500ZB, device events)*.
 **Configure Reporting on `0x0702`/`0x0000` needs a reportable change.** Without one, the DM2500ZB and SW2500ZB answer
 status `0x85` (INVALID_FIELD); with min 60 s, max 1800 s and change 10 they answer `0x00`
 *(probed 2.5.2.139, one DM2500ZB and one SW2500ZB, `/zigbeeLogsocket`)*.
@@ -121,6 +123,13 @@ connected load entered in its settings, and its DM2500ZB page offers a usage gra
 [configure your DM2500ZB](https://support.sinopetech.com/en/neviweb/2.1.2.1.1/))*.
 The Neviweb integration for Home Assistant reads a user-set wattage (`loadWattOutput1`) for the DM2500ZB (model 2131)
 and a measured `wattageInstant` only for the DM2550ZB (model 2132) *(community: [claudegel/sinope-130](https://github.com/claudegel/sinope-130) at `0d0d67c`, `light.py`)*.
+
+**The SW2500ZB and DM2500ZB paddle report (`0xFF01`/`0x0054`) sends a press-down code before the gesture code.**
+Up: 1 press-down, 2 single tap, 3 hold, 4 double tap; Down: 17, 18, 19, 20 (hex `11`–`14`)
+*(community: [zigbee-herdsman-converters `sinope.ts`](https://github.com/Koenkk/zigbee-herdsman-converters/blob/cbc26f0/src/devices/sinope.ts), `actionReport` lookup)*.
+One short Down press on a SW2500ZB sent `11` then `12`, 120 ms apart, so a driver that maps the press-down
+code to `pushed` also fires it ahead of every hold and double tap *(probed 2.5.2.139, one SW2500ZB, device event history)*.
+Whether a hold ends with a further code is untested.
 
 **Device-temperature cluster differs by product line — mutually exclusive, each line lacks the
 other's cluster.** Verified against claudegel/sinope-zha `switch.py` input-cluster lists and Z2M
