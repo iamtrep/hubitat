@@ -131,6 +131,17 @@ so the driver's reads, writes and reporting setup need no manufacturer code. Whe
 `configureReporting` on 0x4008/0x4009 is accepted was not checked; the device reported 0 W at the
 time, so no report was expected *(probed 2.5.2.134, one HT402, frames from `/zigbeeLogsocket` during `refresh()`)*.
 
+## IKEA window blinds
+
+A PRAKTLYSING cellular blind (firmware `24040013`) lists only 0x0000, 0x0007, 0x0008, 0x0010–0x0013,
+0x0017 and 0xFFFD on the Window Covering cluster 0x0102 in a Discover Attributes response, with no
+manufacturer-specific ones. It reads WindowCoveringType 0x00 (roller shade), ConfigStatus 0x03,
+InstalledOpenLimitLift 0x0000, InstalledClosedLimitLift 0xFFFF, the tilt limits the same, and Mode
+0x00. A write to either installed lift limit answers 0x88 READ_ONLY, so the travel range cannot be
+narrowed over Zigbee in normal mode; Mode accepts a write (0x00 written back, status 0x00). Whether
+the limits become writable with Mode's calibration bit set was not tested
+*(probed 2.5.2.139, C-7, one blind, temporary driver commands)*.
+
 ## Fujitsu / Ayla (FGLair)
 
 Fujitsu HVAC units on the Ayla cloud use two different temperature representations, and the

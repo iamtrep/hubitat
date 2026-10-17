@@ -65,6 +65,8 @@ metadata {
             description: "Threshold beyond which shade is considered open (%)"
         input name: "closedThreshold", type: "number", defaultValue: 3, range: "0..5", title: "Shade Closed Threshold",
             description: "Threshold beyond which shade is considered closed (%)"
+        input name: "openMargin", type: "number", defaultValue: 0, range: "0..10", title: "Open Margin",
+            description: "Stop this far short of fully retracted to spare the mechanism; still reported as 100% (%)"
 
         input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
         input name: "debugEnable", type: "bool", title: "Enable debug logging info", defaultValue: false, required: true, submitOnChange: true
@@ -137,7 +139,12 @@ void deviceTypeUpdated() {
 
 void open() {
     logTrace "open()"
-    sendZigbeeCommands(zigbee.command(WINDOW_COVERING_CLUSTER, WC_OPEN_COMMAND))
+    if (openMarginPct() > 0) {
+        // the Up/Open command runs to the end stop, so open to the margin instead
+        setLevel(100)
+    } else {
+        sendZigbeeCommands(zigbee.command(WINDOW_COVERING_CLUSTER, WC_OPEN_COMMAND))
+    }
 }
 
 void on() {
@@ -159,7 +166,8 @@ void setLevel(BigDecimal level, Integer rate = 0xFFFF) {
 
 void setLevel(Integer level, Integer rate = 0xFFFF) {
     logTrace "setLevel(${level})"
-    sendZigbeeCommands(zigbee.command(WINDOW_COVERING_CLUSTER, WC_SET_POSITION_COMMAND, zigbee.convertToHexString(100 - (level), 2)))
+    Integer lift = Math.max(100 - Math.min(Math.max(level, 0), 100), openMarginPct())
+    sendZigbeeCommands(zigbee.command(WINDOW_COVERING_CLUSTER, WC_SET_POSITION_COMMAND, zigbee.convertToHexString(lift, 2)))
 }
 
 void setPosition(BigDecimal value){
@@ -294,7 +302,9 @@ private void parseAttributeReport(Map descMap){
 }
 
 private void handleLiftPositionEvent(Map descMap) {
-    int currentLevel = 100 - zigbee.convertHexToInt(descMap.value)
+    // lift percentage 0 is fully retracted; anything within the open margin reads as fully open
+    int lift = zigbee.convertHexToInt(descMap.value)
+    int currentLevel = (lift <= openMarginPct()) ? 100 : 100 - lift
     Integer lastLevel = device.currentValue("level") as Integer
     boolean moved = (lastLevel != null && lastLevel != currentLevel)
 
@@ -348,6 +358,10 @@ private void updateFinalState() {
 
 
 // private methods
+
+private int openMarginPct() {
+    return (openMargin != null) ? Math.min(Math.max(openMargin as int, 0), 10) : 0
+}
 
 private void autoConfigure() {
     logVer "Detected driver version change"
