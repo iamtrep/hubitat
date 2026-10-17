@@ -98,9 +98,18 @@ from off reported on, 12 %, then 60 % about 5 s later. The button report arrives
 30 minutes on three dimmers driving different lights, and it stayed flat while off
 *(probed 2.5.2.139, three DM2500ZB, logged energy events over two days)*.
 The lights and dimmers have no power-measurement cluster: their attribute table lists `0x0090` as
-currentSummationDelivered in Wh and a writable ConnectedLoad (`0xFF01`/`0x0119`, uint16, watts, 0 = none),
-so the energy counter is an estimate from that setting *(community: [claudegel/sinope-zha README](https://github.com/claudegel/sinope-zha) at `7902729`, lights and dimmer table)*.
-What the counter does while ConnectedLoad is 0 is unverified.
+currentSummationDelivered in Wh and a writable ConnectedLoad (`0xFF01`/`0x0119`, uint16, watts, 0 = none)
+*(community: [claudegel/sinope-zha README](https://github.com/claudegel/sinope-zha) at `7902729`, lights and dimmer table)*.
+**`0x0090` counts seconds on, not Wh, and ConnectedLoad does not change it.** After ConnectedLoad was written to
+100 W (Write Attributes status 0, read back as `0x0064`), the counter still rose one unit per second while on:
+517 s on gave +519, the same rate as before the write, when the driver had never set ConnectedLoad *(probed 2.5.2.139, one DM2500ZB, trace logs)*.
+**The standard Metering cluster (`0x0702`) holds a separate energy counter.** Discover Attributes lists `0x0000`
+CurrentSummationDelivered (uint48), `0x0200` Status, `0x0300` UnitOfMeasure, `0x0301` Multiplier, `0x0302` Divisor,
+`0x0303` SummationFormatting, `0x0306` MeteringDeviceType and `0xFFFD`; there is no `0x0400` InstantaneousDemand
+(a read answers status `0x86`). UnitOfMeasure is 0 (kWh), Multiplier 1 and Divisor 1000, so the counter is in Wh.
+It read 45 with ConnectedLoad at 100 W, and the device sends it in an unsolicited Report Attributes
+*(probed 2.5.2.139, one DM2500ZB, ZCL reads from another device and `/zigbeeLogsocket`)*.
+Whether it follows ConnectedLoad while on is not yet known.
 Sinopé's own app shows a light switch or dimmer in its energy graphs only when it has a load reader or a
 connected load entered in its settings, and its DM2500ZB page offers a usage graph in minutes *(docs: Sinopé support,
 [device not in consumption graphs](https://support.sinopetech.com/en/neviweb/2.2.1.1/),
