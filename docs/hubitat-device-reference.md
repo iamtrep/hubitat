@@ -306,6 +306,12 @@ it pairs. Leading zero bytes of each number are dropped before hashing *(spec: [
 - In standby the same TV leaves the network: no AirPlay record, no reply to ping, SSDP or port
   8001, and its ARP entry goes stale. The AirPlay record was back within about 10 s of a
   Wake-on-LAN power-on and gone within about 15 s of power-off *(probed 2.5.2.139, C-7, power by the Samsung TV Remote driver, avahi-browse, ping and SSDP from the LAN)*.
+- Going to standby, the same TV withdraws its AirPlay record with an mDNS goodbye: a running
+  `avahi-browse` reported the removal 19 s after the POWER key, far sooner than a record would
+  expire. After 4 minutes in standby, `getMDNSServiceResults` listed the TV again under the same
+  name 18 s after a Wake-on-LAN power-on, so standby doesn't trigger the hub's same-name issue
+  (see `getMDNSServiceResults` in `hubitat-platform-notes.md`) *(probed 2.5.2.139, C-7, Samsung TV Remote driver and avahi-browse from the LAN)*.
+  A power cut sends no goodbye, so it would *(inferred: from the platform note, not tested with this TV)*.
 
 ## Hubitat hubs
 
