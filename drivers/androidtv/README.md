@@ -11,12 +11,27 @@ remote session.
 
 ## Setup
 
-1. Give the TV a fixed IP address (a DHCP reservation in your router). Here "the TV" is the device
-   running Android TV or Google TV: with a box such as an NVIDIA Shield or a Chromecast, the box, not the
-   screen it plugs into.
-2. Add a virtual device with the **Android TV Remote** driver, enter the TV's IP address and save.
-3. Press **Start Pairing**. A 6-character code appears on the TV.
-4. Enter it with **Submit Pairing Code**. The device shows `pairing: paired` and connects.
+Here "the TV" is the device running Android TV or Google TV: with a box such as an NVIDIA Shield or a
+Chromecast, the box, not the screen it plugs into.
+
+1. Add a virtual device with the **Android TV Remote** driver and click **Save Preferences**, leaving the
+   IP address blank. The driver finds the TV on the network and fills in its address. With several TVs,
+   a **TV** list appears: pick one and save again.
+2. Press **Start Pairing**. A 6-character code appears on the TV.
+3. Enter it with **Submit Pairing Code**. The device shows `pairing: paired` and connects.
+
+The driver remembers which TV it is paired with. If the TV gets a new IP address, the driver finds it
+again and reconnects, so the TV doesn't need a fixed address.
+
+### If the TV isn't found
+
+The log says so when the search finds nothing. The TV must be on and on the same network as the hub:
+the search uses mDNS, which doesn't cross VLANs or subnets unless the router repeats it. Enter the TV's
+IP address instead, and give the TV a fixed address (a DHCP reservation in your router), since the
+driver can't follow it to a new one without the search.
+
+**Find TVs** searches again: use it to switch the device to another TV, or after turning the TV on.
+Discovery is tested on firmware 2.5.2 and 2.5.3.
 
 The hub makes its own client certificate on the first pairing, which takes a few seconds. Its
 private key is stored encrypted with the hub's key. After a hub restore or migration the key can't
@@ -32,6 +47,7 @@ logs it when the pairing connection closes; it is harmless, and the remote sessi
 - `launchApp`: opens an app. See below.
 - `volumeUp`, `volumeDown`, `mute`, `unmute`, `setVolume`. See below.
 - `connect`, `disconnect`, `forgetPairing`.
+- `findTvs`: searches the network for TVs. See Setup.
 - `currentApp`: the package name of the app in the foreground, updated on every change.
 - `networkStatus`: `online` while the session is up. The driver reconnects on its own after the
   TV drops the connection, goes quiet for 20 s, or rejects a command.
