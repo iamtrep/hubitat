@@ -15,7 +15,7 @@ import groovy.transform.Field
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "1.1.7"
+@Field static final String CODE_VERSION = "1.1.8"
 @Field static final int MAX_BRIDGES = 5
 @Field static final int MAX_FILTERS = 10
 @Field static final int MAX_DEDUPE_HISTORY = 100
