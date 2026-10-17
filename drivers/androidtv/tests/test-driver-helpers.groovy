@@ -31,6 +31,8 @@ List<String> SIGNATURES = [
     'String addressFor(Map entry, String current) {',
     'String repairAddress(List<Map> entries, String id, String current) {',
     'boolean searchDue(Long last, long nowMs, long minMs) {',
+    'boolean sessionUp(String mode, long lastRx, long nowMs, long limitMs) {',
+    'String commandRoute(String mode, boolean ready, int held) {',
     'boolean differentTv(Map entry, String tvId, String current) {',
 ]
 def h = new GroovyShell().parse(SIGNATURES.collect { extract(text, it) }.join("\n") + "\nreturn this\n").run()
@@ -89,6 +91,19 @@ println 'searchDue'
 check 'never searched', h.searchDue(null, 1000L, 300000L)
 check 'too soon', !h.searchDue(1000L, 2000L, 300000L)
 check 'due', h.searchDue(1000L, 301000L, 300000L)
+
+println 'sessionUp'
+check 'open and recent: up', h.sessionUp('remote', 1000L, 20000L, 20000L)
+check 'quiet past the limit: not up', !h.sessionUp('remote', 1000L, 21001L, 20000L)
+check 'closed: not up', !h.sessionUp(null, 1000L, 1500L, 20000L)
+check 'pairing: not up', !h.sessionUp('pair', 1000L, 1500L, 20000L)
+
+println 'commandRoute'
+check 'ready: send', h.commandRoute('remote', true, 0) == 'send'
+check 'starting: hold', h.commandRoute('remote', false, 19) == 'hold'
+check 'starting, 20 held: full', h.commandRoute('remote', false, 20) == 'full'
+check 'closed: drop', h.commandRoute(null, true, 0) == 'drop'
+check 'pairing: drop', h.commandRoute('pair', false, 0) == 'drop'
 
 println "\n${pass} passed, ${fail} failed"
 System.exit(fail ? 1 : 0)

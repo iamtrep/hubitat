@@ -225,6 +225,18 @@ String repairAddress(List<Map> entries, String id, String current) {
     return addressFor(e, current)
 }
 
+// A session is up, or starting, while the remote socket is open and the TV spoke within the idle limit.
+boolean sessionUp(String mode, long lastRx, long nowMs, long limitMs) {
+    return mode == "remote" && nowMs - lastRx <= limitMs
+}
+
+// send: the session is ready. hold: it is starting. full: it is starting and 20 commands already wait.
+String commandRoute(String mode, boolean ready, int held) {
+    if (mode != "remote") return "drop"
+    if (ready) return "send"
+    return held < 20 ? "hold" : "full"
+}
+
 boolean searchDue(Long last, long nowMs, long minMs) {
     last == null || nowMs - last >= minMs
 }
@@ -438,8 +450,13 @@ private String outer(String body) { pInt(1, 2) + pInt(2, 200) + body }
 void connect() {
     if (!state.paired || !tvIP) { logWarn "Not paired"; return }
     Map r = rt()
+    // A second session replaces the first, and the box closes it during setup.
+    if (sessionUp(r.mode as String, (r.lastRx ?: 0L) as long, now(), IDLE_LIMIT_MS)) { logInfo "Already connected"; return }
+    if (r.pending) logWarn "Dropped ${(r.pending as List).size()} command(s) sent before the last session was ready"
     r.fresh = false
     r.mode = "remote"
+    r.ready = false
+    r.pending = []
     r.buf = ""
     r.closing = false
     r.gotMessage = false
@@ -471,6 +488,7 @@ void disconnect() {
     unschedule("repairSearch")
     closeSocket()
     rt().mode = null
+    if (device.currentValue("networkStatus") != "offline") sendEvent(name: "networkStatus", value: "offline")
 }
 
 void watchdog() {
@@ -487,6 +505,7 @@ void watchdog() {
     if (now() - (r.lastRx as long) > IDLE_LIMIT_MS) {
         logWarn "No message from the TV in ${IDLE_LIMIT_MS / 1000 as int} s; reconnecting"
         closeSocket()
+        r.mode = null
         scheduleReconnect()
         return
     }
@@ -596,6 +615,13 @@ private void handleRemoteMessage(String hex) {
     } else if (m.containsKey(40)) {                             // remote_start
         boolean on = ((pFirst(pDecode(pFirst(m, 40) as String), 1) ?: 0L) as Long) != 0L
         sendEvent(name: "switch", value: on ? "on" : "off")
+        // The session is ready at the first remote_start, as androidtvremote2 has it: send what was held.
+        if (!r.ready) {
+            r.ready = true
+            List held = (r.pending ?: []) as List
+            r.pending = []
+            held.each { Map c -> sendRemote(c.hex as String, c.volume == true) }
+        }
     } else if (m.containsKey(50)) {                             // remote_set_volume_level
         Map<Integer, List> v = pDecode(pFirst(m, 50) as String)
         long max = (pFirst(v, 6) ?: 0L) as Long
@@ -668,30 +694,47 @@ void sendKey(String key) {
 void launchApp(String appLink) {
     appLink = appLink?.trim()
     if (!appLink) return
-    if (rt().mode != "remote") { logWarn "Not connected"; return }
     // The TV opens a link only when an installed app handles it. A bare package name is sent as a
     // market:// launch link, the form that worked before a Google Play update in August 2026.
     if (!(appLink ==~ /^[A-Za-z][A-Za-z0-9+.-]*:.*/)) appLink = "market://launch?id=${appLink}"
     logCmd "Launch ${appLink}"
-    sendFrame(pMsg(90, pStr(1, appLink)))
+    sendRemote(pMsg(90, pStr(1, appLink)))
 }
 
 // The edit carries the counters of the TV's last text-field message, or 0 before any, as androidtvremote2 does.
 void sendText(String text) {
     if (!text) return
     Map r = rt()
-    if (r.mode != "remote") { logWarn "Not connected"; return }
     logCmd "Text ${text}"
     long end = text.length() - 1
     String field = pInt(1, end) + pInt(2, end) + pStr(3, text)
-    sendFrame(pMsg(21, pInt(1, (r.imeCounter ?: 0L) as long) + pInt(2, (r.imeField ?: 0L) as long) + pMsg(3, pInt(1, 1) + pMsg(2, field))))
+    sendRemote(pMsg(21, pInt(1, (r.imeCounter ?: 0L) as long) + pInt(2, (r.imeField ?: 0L) as long) + pMsg(3, pInt(1, 1) + pMsg(2, field))))
 }
 
 private void sendKeyCode(int code) {
-    if (rt().mode != "remote") { logWarn "Not connected"; return }
     logCmd "Key ${code}"
-    if (code in [KEYCODES.VOLUME_UP, KEYCODES.VOLUME_DOWN, KEYCODES.VOLUME_MUTE]) rt().lastVolumeKeyAt = now()
-    sendFrame(pMsg(10, pInt(1, code) + pInt(2, DIRECTION_SHORT)))
+    sendRemote(pMsg(10, pInt(1, code) + pInt(2, DIRECTION_SHORT)), code in [KEYCODES.VOLUME_UP, KEYCODES.VOLUME_DOWN, KEYCODES.VOLUME_MUTE])
+}
+
+// A command sent before the session is ready waits for it: the box closes the session, or refuses the
+// command with remote_error 2, when one arrives before its setup messages are answered.
+private void sendRemote(String msgHex, boolean volumeKey = false) {
+    Map r = rt()
+    switch (commandRoute(r.mode as String, r.ready == true, ((r.pending ?: []) as List).size())) {
+        case "send":
+            if (volumeKey) r.lastVolumeKeyAt = now()
+            sendFrame(msgHex)
+            break
+        case "hold":
+            r.pending = ((r.pending ?: []) as List) + [[hex: msgHex, volume: volumeKey]]
+            logDebug "The session isn't ready yet; the command waits for it"
+            break
+        case "full":
+            logWarn "Too many commands while the session starts; dropped one"
+            break
+        default:
+            logWarn "Not connected"
+    }
 }
 
 

@@ -273,6 +273,11 @@ it pairs. Leading zero bytes of each number are dropped before hashing *(spec: [
   later, and keeps the pairing *(probed 2.5.2.138, C-7, Android TV Remote Tester and prototype driver)*.
 - An app link sent in the first 100 ms of a session, before the box's `remote_configure`, is answered with
   `remote_error` 2 echoing the request, where the same link sent later opens the app *(probed 2.5.2.139, C-7, Android TV Remote driver 0.2.0)*.
+  A key sent at the same point, 40 ms after the connection opened, made the box close the session: the client's
+  `remote_configure` answer then failed with `send error: Connection or outbound has closed` *(probed 2.5.2.139, C-7, Android TV Remote driver 0.2.0)*.
+  The same key and link held until the box's first `remote_start` (message 40), then sent, both worked *(probed 2.5.2.139, C-7, Android TV Remote driver 0.3.0 with held commands)*.
+- A second connection from the same client while a session was open got the box's `remote_configure`, and the
+  client's answer failed with `send error: Connection or outbound has closed` *(probed 2.5.2.139, C-7, Android TV Remote driver 0.3.0)*.
 - Text is typed with `remote_ime_batch_edit` (message 21): the client echoes the IME and field counters of
   the box's last message 21 and sends the text as an insert edit. Apps take it only while their on-screen
   keyboard is hidden, and some fields add it to their text while others replace it *(community: [androidtvremote2 #25](https://github.com/tronikos/androidtvremote2/pull/25); community: [androidtvremote2 #32](https://github.com/tronikos/androidtvremote2/issues/32))*.

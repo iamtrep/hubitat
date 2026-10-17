@@ -56,6 +56,8 @@ logs it when the pairing connection closes; it is harmless, and the remote sessi
 - `currentApp`: the package name of the app in the foreground, updated on every change.
 - `networkStatus`: `online` while the session is up. The driver reconnects on its own after the
   TV drops the connection, goes quiet for 20 s, or rejects a command.
+  A command sent while the session starts waits until the TV is ready for it, so a rule can send one right
+  after a reconnect.
 
 ## Keys
 
