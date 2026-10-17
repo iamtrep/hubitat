@@ -18,6 +18,7 @@
   "pingIntervalS": 5,
   "playerModel": null,
   "pingsWhileOff": true,
+  "announcedOff": true,
   "inputEncodings": "hexadecimal/6",
   "outputEncodings": "",
   "preferredRole": "input",

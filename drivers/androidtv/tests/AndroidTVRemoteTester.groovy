@@ -36,7 +36,7 @@ import java.text.SimpleDateFormat
 @Field static final Map TEST_NAMES = [
     0: "Connection", 1: "Session start", 2: "Pings", 3: "Power off/on", 4: "Volume", 5: "Launch by URL",
     6: "Launch by package", 7: "Recovery after a box error", 8: "HOME", 9: "Long standby",
-    10: "Power cut", 11: "Wrong pairing code", 12: "Pairing"
+    10: "Power cut", 11: "Wrong pairing code", 12: "Pairing", 13: "Discovery"
 ]
 
 // The device's attributes the run watches, to check what the driver made of the box's messages.
@@ -63,7 +63,9 @@ import java.text.SimpleDateFormat
          offlineEvent: [eq: true, driver: true], onlineEvent: [eq: true, driver: true]],
     11: [hexCodeOffered: [ne: false], status: [eq: 402], oldPairingWorks: [eq: true], resumedOnOwn: [eq: true, driver: true], pairingAfter: [eq: "paired", driver: true]],
     12: [certRead: [eq: true], pairingReply: [eq: true], hexCodeOffered: [ne: false], codeShown: [eq: true], wrongCodeStatus: [eq: 402],
-         pairingAfter: [eq: "unpaired", driver: true]]
+         pairingAfter: [eq: "unpaired", driver: true]],
+    // The driver finds the box by its mDNS announcement; a box that stops announcing while off delays the driver's IP repair until it wakes.
+    13: [announced: [eq: true], deviceTvFound: [ne: false], announcedOff: [eq: true]]
 ]
 
 // Applies to every test: the box sent a message type the driver doesn't act on.
@@ -106,7 +108,7 @@ Map mainPage() {
             input "optWrongCode", "bool", title: "Wrong pairing code: shows a pairing dialog on the TV", defaultValue: false
         }
         section("Run") {
-            paragraph "Tests 3 to 10 change what is on the TV. Tests 1 to 8 take about 2 minutes; the power cut adds about 3, the wrong code about 1, and the standby its minutes."
+            paragraph "Tests 3 to 10 and 13 change what is on the TV. Tests 1 to 8 and 13 take about 3 minutes; the power cut adds about 3, the wrong code about 1, and the standby its minutes."
             if (tv && tv.currentValue("pairing") != "paired") {
                 paragraph "The device isn't paired, so Run only checks how far pairing gets: it opens a pairing dialog on the TV and answers it with a wrong code. Takes about 1 minute."
             }
@@ -256,12 +258,12 @@ String startRun(Map opts) {
     // driverVersion is set when the driver initializes and at every session start, so a current driver
     // that was updated without saving its preferences still passes once it has connected.
     if (tv.getDataValue("driverVersion") == null) return "the driver is too old, or has not connected since it was updated"
-    if (!tv.getSetting("tvIP")) return "set the TV IP address on the device first"
+    if (!tv.getSetting("tvIP")) return "set up the device first: save its preferences so it finds the TV, or enter the TV's IP address"
     String pairing = tv.currentValue("pairing") as String
     if (pairing == "awaiting code") return "the TV is waiting for a pairing code; enter it, or wait 5 minutes for it to time out"
     // An unpaired device can't run the session tests; the run then checks how far pairing gets.
     boolean pairingOnly = pairing != "paired"
-    List<Integer> tests = pairingOnly ? [12] : (opts.tests ? (opts.tests as List<Integer>) : [1, 2, 3, 4, 5, 6, 7, 8])
+    List<Integer> tests = pairingOnly ? [12] : (opts.tests ? (opts.tests as List<Integer>) : [1, 2, 3, 4, 5, 6, 7, 8, 13])
     if (!opts.tests && !pairingOnly) {
         if (opts.standby) tests << 9
         if (opts.powerCut) tests << 10
@@ -400,8 +402,10 @@ void runStep() {
             run.testSince = nowTs()
             run.testStartMs = now()
             run.stepResults = [:]
-            if (test == 10 && !plug) {
-                (run.results as List) << [test: test, name: TEST_NAMES[test], skipped: "no plug selected"]
+            String skip = test == 10 && !plug ? "no plug selected" :
+                          test == 13 && !tv.hasCommand("findTvs") ? "the driver has no Find TVs command; update it" : null
+            if (skip) {
+                (run.results as List) << [test: test, name: TEST_NAMES[test], skipped: skip]
                 run.idx = (run.idx as int) + 1
                 state.run = run
                 if ((run.idx as int) >= (run.tests as List).size()) finishRun("done", null) else next("runStep", 1, run)
@@ -460,6 +464,7 @@ void sendStep(Map s, Map run) {
         case "startPairing": tv.startPairing(); break
         case "connectIfIdle": tv.connect(); break
         case "wrongCode": tv.submitPairingCode(wrongCodeForTv()); break
+        case "findTvs": tv.findTvs(); break
         default: throw new IllegalArgumentException("unknown step command ${s.cmd}")
     }
 }
@@ -585,6 +590,10 @@ Map evaluateTest(int test, List<Map> lines, Map steps, Map run, List<Map> events
         case 10: f = evalPowerCut(lines, steps, [pairing: tv.currentValue("pairing"), switch: tv.currentValue("switch")], tz); break
         case 11: f = evalWrongCode(lines, steps) + evalPairingOptions(lines); break
         case 12: f = evalPairing(lines) + evalPairingOptions(lines); break
+        case 13:
+            Map st = tvStateFields(["tvId", "foundTvs"])
+            f = evalDiscovery(lines, st.tvId as String, st.foundTvs as Map)
+            break
         default: f = [:]
     }
     f.putAll(evalEvents(test, events, f))
@@ -647,6 +656,12 @@ List<Map> stepsFor(int test, Map run) {
                           fail: '^(Pairing failed|No pairing response|Socket \\(|Connect failed|The client key)|Exception', timeout: 45, after: 2],
                          [name: "submit", cmd: "wrongCode", needOk: "pair", wait: '^Pairing failed with status|^Paired', timeout: 20],
                          [name: "settle", sleep: 12]]
+        // A search takes up to 5 s when nothing answers. Off for 30 s before the second search, as a box may stop announcing once asleep.
+        case 13: return [[name: "find", cmd: "findTvs", wait: '^Found |^No Android TV', timeout: 20, after: 2],
+                         [name: "off", cmd: "off", wait: '^rx 40:(\\{1:0\\}|"")', timeout: 15],
+                         [name: "standby", sleep: 30],
+                         [name: "findOff", cmd: "findTvs", wait: '^Found |^No Android TV', timeout: 20, after: 2],
+                         [name: "on", cmd: "on", wait: '^rx 40:\\{1:1\\}', timeout: 20, after: 3]]
         default:
             return []
     }
@@ -1033,6 +1048,26 @@ Map evalConnect(List<Map> lines) {
     return [connected: lines.any { (it.msg as String).startsWith("rx 40:") },
             connectReturned: lines.any { (it.msg as String).startsWith("remote connect returned") },
             firstError: bad ? maskLine(bad.msg as String).take(200) : null]
+}
+
+// A Find TVs result from the driver's info line, or null for any other line.
+Map searchResult(String msg) {
+    if (msg?.startsWith("No Android TV")) return [count: 0, many: false, other: false]
+    def many = msg =~ /^Found (\d+) TVs/
+    if (many) return [count: many[0][1] as Integer, many: true, other: false]
+    if (msg ==~ /^Found .+ at \S+.*/) return [count: 1, many: false, other: msg.contains("to use it")]
+    return null
+}
+
+// Test 13: the first search runs with the box on, the second while it is off.
+Map evalDiscovery(List<Map> lines, String tvId, Map foundTvs) {
+    List<Map> rs = lines.collect { searchResult(it.msg as String) }.findAll { it != null }
+    Map on = rs ? rs[0] : null
+    Map off = rs.size() > 1 ? rs[1] : null
+    Boolean mine = null
+    if (on?.count) mine = on.many ? (foundTvs != null && tvId ? foundTvs.containsKey(tvId) : null) : !on.other
+    return [announced: on == null ? null : on.count > 0, tvCount: on?.count, deviceTvFound: mine,
+            announcedOff: off == null ? null : off.count > 0, idKnown: tvId != null]
 }
 
 boolean hasEvent(List<Map> events, String name, String value) {

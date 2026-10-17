@@ -56,6 +56,8 @@ List<String> SIGNATURES = [
     'String verdictText(Map r) {',
     'List<Map> testRows(Map run, Map names) {',
     'List<String> differences(Map fields, Map expect) {',
+    'Map searchResult(String msg) {',
+    'Map evalDiscovery(List<Map> lines, String tvId, Map foundTvs) {',
     'private String lastApp(List<Map> lines) {',
     'String formatReport(Map header, List<Map> results) {',
     'String wrongPairingCode(String clientPem, String tvPem) {',
@@ -345,6 +347,27 @@ check 'fast hub, short wait: 1 s', h.pollGap(15, 400L) == 1
 check 'slow read sets the gap', h.pollGap(15, 3200L) == 4
 check 'long wait: at least 10 s', h.pollGap(600, 3200L) == 10
 check 'no read yet', h.pollGap(15, null) == 1
+
+println 'evalDiscovery'
+def dl = { String m -> [ts: '2026-10-17 10:00:00.000', level: 'info', msg: m] }
+String id7 = '02:00:00:00:00:07'
+check 'search line: one TV', h.searchResult('Found Living room at 192.0.2.10') == [count: 1, many: false, other: false]
+check 'search line: one TV, not the device\'s', h.searchResult('Found Den at 192.0.2.11; to use it, clear the IP address and save').other == true
+check 'search line: several', h.searchResult('Found 3 TVs: choose one under TV and save') == [count: 3, many: true, other: false]
+check 'search line: none', h.searchResult('No Android TV or Google TV found. Check that the TV is on').count == 0
+check 'search line: other lines ignored', h.searchResult('rx 40:{1:1}') == null
+Map dOn = h.evalDiscovery([dl('Found Mock TV at 192.0.2.10'), dl('rx 40:{1:0}'), dl('Found Mock TV at 192.0.2.10')], id7, null)
+check 'announced on and off', dOn == [announced: true, tvCount: 1, deviceTvFound: true, announcedOff: true, idKnown: true]
+Map dOff = h.evalDiscovery([dl('Found Mock TV at 192.0.2.10'), dl('No Android TV or Google TV found. Check that the TV is on')], null, null)
+check 'silent while off', dOff.announcedOff == false && dOff.announced == true
+check 'id not learned', dOff.idKnown == false
+Map dOther = h.evalDiscovery([dl('Found Den at 192.0.2.11; to use it, clear the IP address and save')], id7, null)
+check 'another TV found, not the device\'s', dOther.deviceTvFound == false && dOther.announcedOff == null
+check 'several TVs: device\'s among them', h.evalDiscovery([dl('Found 2 TVs: choose one under TV and save')], id7, [(id7): 'Mock TV (192.0.2.10)']).deviceTvFound == true
+check 'several TVs: list gone, unknown', h.evalDiscovery([dl('Found 2 TVs: choose one under TV and save')], id7, null).deviceTvFound == null
+Map dNone = h.evalDiscovery([dl('No Android TV or Google TV found. Check that the TV is on')], id7, null)
+check 'nothing announced', dNone.announced == false && dNone.tvCount == 0 && dNone.deviceTvFound == null
+check 'no search line at all', h.evalDiscovery([], id7, null).announced == null
 
 println "\n${pass} passed, ${fail} failed"
 System.exit(fail ? 1 : 0)

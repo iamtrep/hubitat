@@ -48,6 +48,7 @@ report.
 | `closeAfterErrorS` | seconds before the box closes the session after a refused link |
 | `pingIntervalS` | seconds between pings |
 | `pingsWhileOff` | test 3 `pingGaps`: a box that stops pinging while off shows a long gap |
+| `announcedOff` | test 13: the box keeps its mDNS announcement while off (needs `MOCKTV_MDNS_NAME`) |
 | `extraMessages` | message types sent, empty, after the session start; any test's `otherMessages` |
 | `inputEncodings`, `outputEncodings`, `preferredRole` | test 11 and 12: the code encodings the TV offers when pairing |
 | `source` | where the values come from, and what the profile leaves out; the mock ignores it |
@@ -71,8 +72,13 @@ device's events). A message type the driver doesn't act on shows as `otherMessag
 differ. The report carries the decoded lines of the session start in every run, for building a profile. On a device that isn't paired the run is a single Pairing test that records how far
 pairing gets; a paired device that doesn't connect gets a Connection result with the driver's error.
 
+Test 13, Discovery, runs **Find TVs** with the box on and again after 30 s off, and reports whether the
+box announces itself and whether it still does while off: the driver finds the box and follows it to a
+new IP through that announcement. With several TVs on the network it leaves the TV list on the device.
+
 - `test-tester-helpers.groovy`: unit tests for its pure helpers, no hub needed
   (`groovy drivers/androidtv/tests/test-tester-helpers.groovy`).
+- `test-driver-helpers.groovy`: the same for the driver's TV-matching helpers.
 - `test-live-tv.sh [@hub]`: runs it through its endpoints (turn on Script access in the app first) and
   prints `[PASS]` per test, `[FAIL]` where the driver differs and `[WARN]` where only the box does;
-  `RUN_SLOW_TESTS=1` runs tests 1–8, `ATV_OPTS="standby=5&cut=true&wrongcode=true"` adds the opt-in ones.
+  `RUN_SLOW_TESTS=1` runs tests 1–8 and 13, `ATV_OPTS="standby=5&cut=true&wrongcode=true"` adds the opt-in ones.

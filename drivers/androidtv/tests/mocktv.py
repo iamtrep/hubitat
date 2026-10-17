@@ -181,6 +181,7 @@ def handle_remote(conn):
             if k == 26:
                 st["on"] = not st["on"]
                 power()
+                mdns_power(st["on"])
                 if P["volumeDuringChange"]: volume()
             elif k in (24, 25, 164):
                 if k == 24: st["level"] = min(st["max"], st["level"] + 1)
@@ -224,6 +225,17 @@ def serve(port, handler):
                 s.close()
         threading.Thread(target=run, daemon=True).start()
 
+MDNS = None     # (zeroconf, service info) while announcing
+
+def mdns_power(on):
+    """A box whose profile has announcedOff false stops announcing while off (test 13 announcedOff)."""
+    if MDNS is None or P["announcedOff"]:
+        return
+    zc, info = MDNS
+    if on: zc.register_service(info, strict=False)
+    else: zc.unregister_service(info)
+    log("mDNS announcement", "resumed" if on else "withdrawn")
+
 def announce(name, bt):
     """Advertise the mock as a real TV does: _androidtvremote2._tcp on the remote port, TXT bt."""
     from zeroconf import ServiceInfo, Zeroconf
@@ -239,8 +251,8 @@ def announce(name, bt):
 
 if os.environ.get("MOCKTV_MDNS_NAME"):
     import atexit
-    zc, info = announce(os.environ["MOCKTV_MDNS_NAME"], os.environ.get("MOCKTV_BT", "02:00:00:00:00:01"))
-    atexit.register(lambda: (zc.unregister_service(info), zc.close()))
+    MDNS = announce(os.environ["MOCKTV_MDNS_NAME"], os.environ.get("MOCKTV_BT", "02:00:00:00:00:01"))
+    atexit.register(lambda: (MDNS[0].unregister_service(MDNS[1]), MDNS[0].close()))
 
 threading.Thread(target=serve, args=(PAIR_PORT, handle_pairing), daemon=True).start()
 log("mock TV listening on", PAIR_PORT, REMOTE_PORT)
