@@ -101,6 +101,12 @@ The lights and dimmers have no power-measurement cluster: their attribute table 
 currentSummationDelivered in Wh and a writable ConnectedLoad (`0xFF01`/`0x0119`, uint16, watts, 0 = none),
 so the energy counter is an estimate from that setting *(community: [claudegel/sinope-zha README](https://github.com/claudegel/sinope-zha) at `7902729`, lights and dimmer table)*.
 What the counter does while ConnectedLoad is 0 is unverified.
+Sinopé's own app shows a light switch or dimmer in its energy graphs only when it has a load reader or a
+connected load entered in its settings, and its DM2500ZB page offers a usage graph in minutes *(docs: Sinopé support,
+[device not in consumption graphs](https://support.sinopetech.com/en/neviweb/2.2.1.1/),
+[configure your DM2500ZB](https://support.sinopetech.com/en/neviweb/2.1.2.1.1/))*.
+The Neviweb integration for Home Assistant reads a user-set wattage (`loadWattOutput1`) for the DM2500ZB (model 2131)
+and a measured `wattageInstant` only for the DM2550ZB (model 2132) *(community: [claudegel/sinope-130](https://github.com/claudegel/sinope-130) at `0d0d67c`, `light.py`)*.
 
 **Device-temperature cluster differs by product line — mutually exclusive, each line lacks the
 other's cluster.** Verified against claudegel/sinope-zha `switch.py` input-cluster lists and Z2M
