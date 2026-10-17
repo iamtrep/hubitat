@@ -53,9 +53,9 @@ report.
 | `inputEncodings`, `outputEncodings`, `preferredRole` | test 11 and 12: the code encodings the TV offers when pairing |
 | `source` | where the values come from, and what the profile leaves out; the mock ignores it |
 
-`mock-profiles/ebox.json` is the EBOX set-top box, from tester runs on it. `google-tv-streamer.json` comes
-from a tester report in the forum thread. The others come from the debug logs of other projects' issues,
-named in each `source`: `chromecast-google-tv`, `freebox-player-pop`, `nvidia-shield`, `sony-bravia-4k-vh2`,
+`mock-profiles/ebox.json` is the EBOX set-top box, from tester runs on it. `google-tv-streamer.json` and
+`nvidia-shield.json` come from tester reports in the forum thread. The others come from the debug logs of other
+projects' issues, named in each `source`: `chromecast-google-tv`, `freebox-player-pop`, `sony-bravia-4k-vh2`,
 `tivo-stream-4k` and `xiaomi-mi-tv-stick`. Those logs give the identity, features, message order, current
 app and volume message; pings, link handling, errors and pairing keep `default.json`'s values. A volume
 message without a range is `volumeRange: 0`. The mock starts every box switched on.

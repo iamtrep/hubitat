@@ -2,14 +2,21 @@
   "vendor": "NVIDIA",
   "model": "SHIELD Android TV",
   "androidVersion": "11",
-  "remoteServiceVersion": "6.9.906821247",
+  "remoteServiceVersion": "7.00.956317615",
   "features": 639,
   "deviceInfo3": 1,
-  "firstMessages": "1,2,40,50",
+  "firstMessages": "1,2,40,50,20",
+  "startApp": "com.google.android.tvlauncher",
+  "homeApp": "com.google.android.tvlauncher",
   "volumeReported": false,
-  "volumeDuringChange": false,
-  "volumeRange": 0,
-  "volumeLevel": 0,
+  "volumeDuringChange": true,
+  "volumeRange": 15,
+  "volumeLevel": 12,
   "playerModel": "SHIELD Android TV",
-  "source": "https://github.com/unfoldedcircle/integration-appletv/issues/90 (40 and 50 logged with the same timestamp, order uncertain; no current app at start); https://github.com/home-assistant/core/issues/179902 (once sent a volume range of 15 on a power key, not modelled)"
+  "linkSchemes": [
+    "http",
+    "https"
+  ],
+  "errorCode": 7,
+  "source": "https://community.hubitat.com/t/beta-android-tv-remote-google-tv-and-android-tv-local-control/166822/20 (tester report, tests 1-9; only https links and market:// were tried; pings once paused about 7 s at a POWER key, not modelled); remote service 6.9.906821247 on another unit: https://github.com/unfoldedcircle/integration-appletv/issues/90"
 }
