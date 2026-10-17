@@ -850,8 +850,9 @@ private static String redactUrl(String url) {
 private void appendToFile(String fileName, String data) {
     String existing = ""
     try {
+        // A missing file throws up to 2.5.2 and returns null from 2.5.3.
         byte[] bytes = downloadHubFile(fileName)
-        existing = new String(bytes)
+        if (bytes != null) existing = new String(bytes)
     } catch (Exception e) {
         // File doesn't exist yet
     }

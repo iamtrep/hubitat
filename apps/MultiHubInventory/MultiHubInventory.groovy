@@ -4,6 +4,7 @@
  */
 import groovy.transform.Field
 import java.util.concurrent.ConcurrentHashMap
+import java.nio.file.NoSuchFileException
 
 @Field static final String CODE_VERSION = "0.8.8"
 @Field static final String UI_FILE = "multi_hub_inventory_ui.html"
@@ -535,14 +536,23 @@ Map apiPeer() {
 }
 
 // ===== UI SERVING =====
+// Null when the file is missing: downloadHubFile throws up to 2.5.2 and returns null from 2.5.3.
+private byte[] readUIFile() {
+    try {
+        return downloadHubFile(UI_FILE)
+    } catch (NoSuchFileException ignored) {
+        return null
+    }
+}
+
 Map serveUI() {
     checkVersion()
     if (!checkOAuth()) return render(status: 403, contentType: 'text/plain', data: 'OAuth is not enabled for this app.')
     try {
-        byte[] bytes = downloadHubFile(UI_FILE)
+        byte[] bytes = readUIFile()
         if (!bytes) {
             logError "${UI_FILE} missing from File Manager — attempting emergency sync from GitHub..."
-            if (syncUIBlocking()) bytes = downloadHubFile(UI_FILE)
+            if (syncUIBlocking()) bytes = readUIFile()
         }
         if (!bytes) return render(status: 404, contentType: 'text/plain', data: "${UI_FILE} not found in File Manager. Re-open the app to auto-sync, or upload it manually.")
         String html = new String(bytes, 'UTF-8')

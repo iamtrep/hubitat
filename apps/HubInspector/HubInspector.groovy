@@ -3222,19 +3222,22 @@ Object extractParentAppId(Map device) {
  */
 private Map getIntegrationOverrides() {
     return (Map) cachedFetch('integrationOverrides', INTEGRATION_OVERRIDES_CACHE_TTL_MS) {
-        // The override file is OPTIONAL. downloadHubFile throws when it's absent — the normal
-        // case on most hubs — so log that at debug. A WARN is reserved for a file that IS
-        // present but can't be parsed (a real misconfiguration).
+        // The override file is OPTIONAL. When it's absent (the normal case on most hubs)
+        // downloadHubFile throws up to 2.5.2 and returns null from 2.5.3; log either at debug.
+        // A WARN is reserved for a file that IS present but can't be parsed (a real misconfiguration).
         byte[] fileData = null
         String fileName = null
         for (String name in [INTEGRATION_OVERRIDES_FILE, LEGACY_INTEGRATION_OVERRIDES_FILE]) {
             try {
                 fileData = downloadHubFile(name)
+            } catch (Exception e) {
+                fileData = null
+            }
+            if (fileData != null) {
                 fileName = name
                 break
-            } catch (Exception e) {
-                logDebug "No ${name} in File Manager"
             }
+            logDebug "No ${name} in File Manager"
         }
         if (fileData) {
             try {

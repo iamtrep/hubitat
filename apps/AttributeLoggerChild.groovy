@@ -344,7 +344,10 @@ String appendRow(String content, String row) {
 byte[] safeDownloadHubFile(String fileName) {
     for (int i = 1; i <= 3; i++) {
         try {
-            return downloadHubFile(fileName)
+            byte[] bytes = downloadHubFile(fileName)
+            // A missing file throws up to 2.5.2 and returns null from 2.5.3; callers expect the throw.
+            if (bytes == null) throw new NoSuchFileException(fileName)
+            return bytes
         } catch (NoSuchFileException ex) {
             throw ex
         } catch (Exception ex) {

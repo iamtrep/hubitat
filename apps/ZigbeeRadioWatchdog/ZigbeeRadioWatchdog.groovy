@@ -15,6 +15,7 @@
 
 import groovy.transform.Field
 import groovy.json.JsonOutput
+import java.nio.file.NoSuchFileException
 
 @Field static final String CODE_VERSION = "0.2.0"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
@@ -358,7 +359,10 @@ void captureCallback(resp, data) {
     String section = "\n===== ${data.name}  GET ${data.path}  ${status}  ${timestamp()} =====\n${body}\n"
     String existing = ""
     try {
-        existing = new String(downloadHubFile(data.file as String), "UTF-8")
+        // A missing file throws up to 2.5.2 and returns null from 2.5.3: either way, start it.
+        byte[] bytes = downloadHubFile(data.file as String)
+        if (bytes != null) existing = new String(bytes, "UTF-8")
+    } catch (NoSuchFileException ignored) {
     } catch (Exception e) {
         logWarn "could not read ${data.file} back (${e.message}); starting it again"
     }
