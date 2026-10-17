@@ -8,6 +8,10 @@
  * arbitrary nodes on the mesh on demand. Companion tooling reads the matching
  * 0x8031 / 0x8032 responses off the hub's /zigbeeLogsocket and decodes them.
  *
+ * Also sends ZCL Read Attributes and Discover Attributes to any node, so a device's
+ * attributes can be probed without changing its driver. The replies go to the
+ * device's own driver and show on /zigbeeLogsocket.
+ *
  * No parse() — the platform does not route ZDO responses addressed to the
  * coordinator into user drivers, so capturing them here is impossible. The
  * websocket path is the only working egress.
@@ -21,7 +25,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import hubitat.helper.HexUtils
 
-@Field static final String CODE_VERSION = "0.1.2"
+@Field static final String CODE_VERSION = "0.2.0"
 
 @Field static final String CLUSTER_MGMT_LQI_REQ = "0031"
 @Field static final String CLUSTER_MGMT_RTG_REQ = "0032"
@@ -31,7 +35,7 @@ metadata {
         name: "Zigbee Mesh Probe",
         namespace: "iamtrep",
         author: "pj",
-        description: "Issues ZDO neighbor-table and routing-table queries for external mesh-mapping tools",
+        description: "Issues ZDO neighbor-table and routing-table queries, and ZCL attribute reads and discovery, for external tools",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/zigbee_helpers/ZigbeeMeshProbe.groovy"
     ) {
         capability "Actuator"
@@ -43,6 +47,20 @@ metadata {
         command "requestRoutingTable", [
             [name: "addr",       type: "STRING", description: "Target 16-bit network address as 4 hex chars"],
             [name: "startIndex", type: "NUMBER", description: "Paging start index (default 0)"]
+        ]
+        command "readAttributes", [
+            [name: "addr",     type: "STRING", description: "Target 16-bit network address as 4 hex chars"],
+            [name: "endpoint", type: "STRING", description: "Target endpoint, 2 hex chars (default 01)"],
+            [name: "cluster",  type: "STRING", description: "Cluster id, 4 hex chars"],
+            [name: "attrs",    type: "STRING", description: "Attribute ids, 4 hex chars each, comma-separated"],
+            [name: "mfgCode",  type: "STRING", description: "Manufacturer code, 4 hex chars, for manufacturer-specific attributes (optional)"]
+        ]
+        command "discoverAttributes", [
+            [name: "addr",      type: "STRING", description: "Target 16-bit network address as 4 hex chars"],
+            [name: "endpoint",  type: "STRING", description: "Target endpoint, 2 hex chars (default 01)"],
+            [name: "cluster",   type: "STRING", description: "Cluster id, 4 hex chars"],
+            [name: "startAttr", type: "STRING", description: "First attribute id to list, 4 hex chars (default 0000)"],
+            [name: "mfgCode",   type: "STRING", description: "Manufacturer code, 4 hex chars, for manufacturer-specific attributes (optional)"]
         ]
     }
 
@@ -81,6 +99,32 @@ void requestRoutingTable(String addr, BigDecimal startIndex = 0) {
 @CompileStatic
 private String buildZdoFrame(String addr, String clusterHex, int startIndex) {
     return "he raw 0x${addr} 0 0 0x${clusterHex} {00 ${HexUtils.integerToHexString(startIndex, 1)}} {0x0000}"
+}
+
+void readAttributes(String addr, String endpoint, String cluster, String attrs, String mfgCode = null) {
+    String ids = attrs.split(",").collect { String a -> littleEndian(a.trim()) }.join(" ")
+    sendZclGlobal(addr, endpoint, cluster, "00", ids, mfgCode)
+}
+
+void discoverAttributes(String addr, String endpoint, String cluster, String startAttr = "0000", String mfgCode = null) {
+    sendZclGlobal(addr, endpoint, cluster, "0C", "${littleEndian(startAttr ?: '0000')} FF", mfgCode)
+}
+
+// ZCL global command frame: frame control (0x04 adds the manufacturer code), sequence 00,
+// command id, payload. `he raw <addr> <srcEp> <dstEp> <cluster> {frame}`.
+private void sendZclGlobal(String addr, String endpoint, String cluster, String cmdId, String payload, String mfgCode) {
+    checkVersion()
+    String ep = endpoint ?: "01"
+    String header = mfgCode ? "04 ${littleEndian(mfgCode)} 00" : "00 00"
+    String frame = "he raw 0x${addr} 1 0x${ep} 0x${cluster} {${header} ${cmdId} ${payload}}"
+    sendHubCommand new hubitat.device.HubMultiAction([frame], hubitat.device.Protocol.ZIGBEE)
+    logCmd "ZCL 0x${cmdId} cluster 0x${cluster} → ${addr}/${ep}: ${frame}"
+}
+
+@CompileStatic
+private static String littleEndian(String hex4) {
+    String h = hex4.padLeft(4, "0")
+    return "${h.substring(2, 4)} ${h.substring(0, 2)}"
 }
 
 // No parse() traffic and no device configuration: commands are the only entry
