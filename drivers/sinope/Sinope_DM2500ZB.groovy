@@ -15,7 +15,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.28"
+@Field static final String CODE_VERSION = "0.0.29"
 // device.id -> deadline (ms) until which a state report counts as digital. Static rather than
 // state: a driver's state is written back whole at method exit, so a command and a parse() on
 // another thread can undo each other's flag, and a deadline expires on its own when the device
@@ -23,6 +23,11 @@ import java.math.RoundingMode
 @Field static final ConcurrentHashMap<String, Long> SWITCH_DIGITAL_UNTIL = new ConcurrentHashMap<>()
 @Field static final ConcurrentHashMap<String, Long> LEVEL_DIGITAL_UNTIL = new ConcurrentHashMap<>()
 @Field static final long DIGITAL_WINDOW_MS = 5000L
+// device.id -> deadline (ms) of an off fade. Turning off, by command or a short Down press, makes the
+// device report falling levels and then its stored level (or 0) about 5 s later; none of these is a
+// level change, so level reports are ignored until the deadline.
+@Field static final ConcurrentHashMap<String, Long> OFF_FADE_UNTIL = new ConcurrentHashMap<>()
+@Field static final long OFF_FADE_WINDOW_MS = 8000L
 
 metadata {
     definition(
@@ -65,6 +70,9 @@ metadata {
 
             input(name: "prefAutoOffTimer", title: "Auto-off timer", type: "enum", defaultValue: 0, options: constTimerPrefMap,
                   description: "Set the dimmer to turn off automatically after specified amount of time")
+
+            input(name: "prefConnectedLoad", title: "Connected load (W)", type: "number", range: "0..65535",
+                  description: "Total wattage of the lights on this dimmer. The dimmer can't measure its load; it estimates the energy report from this value. 0 means not set")
 
             input(name: "prefOnLedColor", title: "On LED Color", type: "enum", defaultValue: 4, options: constLedColorPrefMap)
             input(name: "prefOnLedIntensity", title: "LED intensity when ON", type: "number", defaultValue: 48, range: "0..100")
@@ -149,6 +157,10 @@ void updated() {
             setAutoOffTimer(constTimerValueMap[settings.prefAutoOffTimer as int])
         }
 
+        if (settings.prefConnectedLoad != null) {
+            setConnectedLoad(settings.prefConnectedLoad as Integer)
+        }
+
         if (settings.prefOnLedColor != null) {
             setOnLedColor(constLedColorPrefMap[settings.prefOnLedColor as int])
         }
@@ -231,6 +243,7 @@ void initialize() {
 
     SWITCH_DIGITAL_UNTIL.remove(device.id as String)
     LEVEL_DIGITAL_UNTIL.remove(device.id as String)
+    OFF_FADE_UNTIL.remove(device.id as String)
     sendEvent(name:"numberOfButtons", value: 2, isStateChange: true)
     // One-shot runIn chain: a run that fell due while the hub was down is dropped, ending the chain
     runIn(1800, "refreshEnergyReport")
@@ -250,6 +263,7 @@ void refresh() {
     cmds += zigbee.readAttribute(0xFF01, 0x0053, [mfgCode: "0x119C"]) // LED off intensity
     cmds += zigbee.readAttribute(0xFF01, 0x0002, [mfgCode: "0x119C"]) // keypad lock
     cmds += zigbee.readAttribute(0xFF01, 0x00A0, [mfgCode: "0x119C"]) // auto-off timer
+    cmds += zigbee.readAttribute(0xFF01, 0x0119, [mfgCode: "0x119C"]) // connected load
 
     cmds += zigbee.readAttribute(0xFF01, 0x0090, [mfgCode: "0x119C"]) // energy delivered
 
@@ -265,14 +279,15 @@ void refreshEnergyReport() {
 
 // on/off/setLevel each affect BOTH the on/off (0006) and level (0008) state on a
 // dimmer — turning on restores the level, and setLevel from off turns the load on —
-// so all three arm the digital flag for both attributes. Each chains a directed
-// readAttribute for both 0006 and 0008: the 0006 read also satisfies the platform's
-// command-retry watchdog (a no-op command emits only a Default Response, no on-change
-// report, and the watchdog gives up after 5 retries), and both reads force a report
-// that consumes the digital mark promptly instead of leaving it to expire.
+// so on and setLevel arm the digital flag for both attributes. Each chains a directed
+// readAttribute of 0006, which also satisfies the platform's command-retry watchdog (a
+// no-op command emits only a Default Response, no on-change report, and the watchdog
+// gives up after 5 retries). off arms only the switch flag and starts an off fade: its
+// level reports are fade values, not changes, so it reads no level either.
 // A read that reflects an unchanged value is filtered by the changed-gate in
 // parseAttributeReport, so the confirming reads add no spurious events.
 void on() {
+    OFF_FADE_UNTIL.remove(device.id as String)
     List<String> cmds = []
     cmds += zigbee.on()
     cmds += zigbee.readAttribute(0x0006, 0x0000)
@@ -286,10 +301,9 @@ void off() {
     List<String> cmds = []
     cmds += zigbee.off()
     cmds += zigbee.readAttribute(0x0006, 0x0000)
-    cmds += zigbee.readAttribute(0x0008, 0x0000)
+    markOffFade()
     sendZigbeeCommands(cmds)
     markPendingDigitalSwitchChange()
-    markPendingDigitalLevelChange()
 }
 
 void setLevel(String level, String duration = '0') {
@@ -298,7 +312,12 @@ void setLevel(String level, String duration = '0') {
 
 void setLevel(BigDecimal level, BigDecimal duration = 0) {
     markPendingDigitalSwitchChange()
-    markPendingDigitalLevelChange()
+    if (level > 0) {
+        OFF_FADE_UNTIL.remove(device.id as String)
+        markPendingDigitalLevelChange()
+    } else {
+        markOffFade()
+    }
     List<String> cmds = []
     cmds += zigbee.setLevel(level, duration)
     //logTrace("zigbee.setLevel($level,$duration) = $cmds")
@@ -332,8 +351,12 @@ private boolean levelDigitalPending() {
     return until != null && now() < until
 }
 
-private boolean consumeLevelDigital() {
-    Long until = LEVEL_DIGITAL_UNTIL.remove(device.id as String)
+private void markOffFade() {
+    OFF_FADE_UNTIL.put(device.id as String, now() + OFF_FADE_WINDOW_MS)
+}
+
+private boolean offFading() {
+    Long until = OFF_FADE_UNTIL.get(device.id as String)
     return until != null && now() < until
 }
 
@@ -379,6 +402,14 @@ void setAutoOffTimer(Integer duration) {
     List<String> cmds = []
     cmds += zigbee.writeAttribute(0xFF01, 0x00A0, DataType.UINT32, duration, [mfgCode: "0x119C"])
     logTrace("setAutoOffTimer($duration) => $cmds")
+    sendZigbeeCommands(cmds)
+}
+
+private void setConnectedLoad(Integer watts) {
+    List<String> cmds = []
+    cmds += zigbee.writeAttribute(0xFF01, 0x0119, DataType.UINT16, watts, [mfgCode: "0x119C"])
+    cmds += zigbee.readAttribute(0xFF01, 0x0119, [mfgCode: "0x119C"])
+    logTrace("setConnectedLoad($watts) => $cmds")
     sendZigbeeCommands(cmds)
 }
 
@@ -525,14 +556,24 @@ private void parseAttributeReport(Map descMap) {
                 case "0000":
                     // Current level (0-255)
                     Integer dimmerLevel = scaleHexValue(descMap.value)
+                    // Turning on from off reports level 0 before the real level, and a paddle off ends
+                    // on 0; level stays at the last on level while off, so a 0 is never published.
+                    if (dimmerLevel == 0) {
+                        logRx("Level 0 report ignored")
+                        return
+                    }
+                    if (offFading()) {
+                        logRx("Level ${dimmerLevel}% during an off fade ignored")
+                        return
+                    }
                     Integer curLevel = device.currentValue("level") as Integer
                     boolean changed = (curLevel != dimmerLevel)
                     map.name = "level"
                     map.value = dimmerLevel
                     map.unit = "%"
-                    // Turning on from off reports level 0 before the real level, so a 0 only checks the
-                    // mark and leaves it for the report that follows (device reference doc, Sinope).
-                    if (changed) map.type = (dimmerLevel == 0 ? levelDigitalPending() : consumeLevelDigital()) ? "digital" : "physical"
+                    // The mark stays for its whole window: a ramp sends several level reports and
+                    // all of them belong to the command.
+                    if (changed) map.type = levelDigitalPending() ? "digital" : "physical"
                     map.descriptionText = changed
                         ? "Dimmer level was set to ${dimmerLevel}% [${map.type}]"
                         : "Dimmer level is ${dimmerLevel}%"
@@ -602,6 +643,9 @@ private void parseAttributeReport(Map descMap) {
                 case "0054": // action report (pushed/released/double tapped)
                     Map<String, Object> action = buttonActionMap[descMap.value]
                     if (action) {
+                        // A short Down press turns the load off
+                        if (descMap.value == "11") markOffFade()
+                        else if (descMap.value == "01") OFF_FADE_UNTIL.remove(device.id as String)
                         map.name = action.buttonEvent
                         map.value = action.buttonIndex
                         map.descriptionText = action.description
@@ -628,12 +672,19 @@ private void parseAttributeReport(Map descMap) {
                     }
                     return
 
+                case "0119": // connected load (W); the energy report is estimated from it
+                    Integer watts = Integer.parseInt(descMap.value, 16)
+                    if (prefConnectedLoad == null || (prefConnectedLoad as Integer) != watts) {
+                        device.updateSetting('prefConnectedLoad', [value: watts, type: 'number'])
+                    }
+                    logRx("Connected load is ${watts} W")
+                    return
+
                     // TODO
                 case "0010": // on intensity
                 case "0055": // minimum intensity (0 - 3000)
                 case "0058": // double-up = full (0=off, 1=on)
                 case "00A1": // current remaining timer seconds
-                case "0119": // connected load (in watts, always zero)
                 case "0200": // status (always zero)
                     logRx("Unhandled manufacturer-specific attribute report: ${descMap}")
                     break
