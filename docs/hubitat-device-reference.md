@@ -271,6 +271,15 @@ it pairs. Leading zero bytes of each number are dropped before hashing *(spec: [
   (noticed only by the driver's 20 s idle timer) and a `receive error: Connection reset` about 29 s
   after the cut. The box powers on by itself when power returns, is back on 6466 about 70–75 s
   later, and keeps the pairing *(probed 2.5.2.138, C-7, Android TV Remote Tester and prototype driver)*.
+- An app link sent in the first 100 ms of a session, before the box's `remote_configure`, is answered with
+  `remote_error` 2 echoing the request, where the same link sent later opens the app *(probed 2.5.2.139, C-7, Android TV Remote driver 0.2.0)*.
+- Text is typed with `remote_ime_batch_edit` (message 21): the client echoes the IME and field counters of
+  the box's last message 21 and sends the text as an insert edit. Apps take it only while their on-screen
+  keyboard is hidden, and some fields add it to their text while others replace it *(community: [androidtvremote2 #25](https://github.com/tronikos/androidtvremote2/pull/25); community: [androidtvremote2 #32](https://github.com/tronikos/androidtvremote2/issues/32))*.
+- On the `uiw4020ebx` box (remote service `7.00.999235495`), neither the Assistant search screen
+  (`com.google.android.katniss`) nor YouTube's search page brought a message 21, and every
+  `remote_ime_key_inject` carried only the app (field 1), no text field status (field 2) *(absent: probed 2.5.2.139, C-7, Android TV Remote driver 0.2.0 with sendText)*.
+  A message 21 with both counters 0 sent to the search screen drew neither a reply nor `remote_error`; whether the text reached the screen was not seen *(probed 2.5.2.139, C-7, Android TV Remote driver 0.2.0 with sendText)*.
 
 ## Samsung Tizen TVs
 

@@ -49,6 +49,7 @@ logs it when the pairing connection closes; it is harmless, and the remote sessi
 - `on`, `off`: the TV's power key. `switch` follows the power state the TV reports.
 - `sendKey`: a key name or an Android key code. See below.
 - `launchApp`: opens an app. See below.
+- `sendText`: types text into the text field that has focus on the TV. Experimental; see below.
 - `volumeUp`, `volumeDown`, `mute`, `unmute`, `setVolume`. See below.
 - `connect`, `disconnect`, `forgetPairing`.
 - `findTvs`: searches the network for TVs. See Setup.
@@ -122,6 +123,15 @@ Many set-top boxes pass volume keys to the TV over HDMI-CEC and never report a v
 `volumeUp`, `volumeDown` and `mute` still work there. `setVolume` needs a TV that reports its level
 in answer to a volume key; until it has seen one, it logs that it can't set the volume. `mute` and
 `unmute` each send the mute key when the TV doesn't report whether it is muted.
+
+## Typing text (experimental)
+
+`sendText` sends text the way the phone remote app types it, so a dashboard text tile or a rule can fill
+a search box. Select the text field with the remote first, then close the on-screen keyboard (BACK):
+apps receive the text only while their keyboard is hidden. Some fields add the text to what they hold,
+others replace it.
+
+Not yet confirmed on a TV: report what shows on screen in the forum thread.
 
 ## Android TV Remote Tester (optional)
 

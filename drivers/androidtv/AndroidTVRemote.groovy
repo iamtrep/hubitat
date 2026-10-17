@@ -32,6 +32,7 @@ metadata {
         command "disconnect"
         command "sendKey", [[name: "key", type: "STRING", description: "Key name (HOME, BACK, DPAD_UP, MEDIA_PLAY_PAUSE...) or Android key code number"]]
         command "launchApp", [[name: "appLink", type: "STRING", description: "A link the app handles, such as https://www.youtube.com. Package names no longer launch apps on most TVs"]]
+        command "sendText", [[name: "text", type: "STRING", description: "Text for the text field that has focus on the TV, such as a search box. Close the on-screen keyboard first"]]
 
         attribute "networkStatus", "enum", ["online", "offline"]
         attribute "pairing", "enum", ["unpaired", "pairing", "awaiting code", "paired"]
@@ -60,7 +61,7 @@ import java.security.Signature
 import java.security.cert.CertificateFactory
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.2.0"
+@Field static final String CODE_VERSION = "0.3.0"
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int PAIRING_PORT = 6467
 @Field static final String MDNS_SERVICE = "_androidtvremote2._tcp"
@@ -588,6 +589,10 @@ private void handleRemoteMessage(String hex) {
             String app = utf8(pFirst(pDecode(pFirst(ime, 1) as String), 12) as String)
             if (app) sendEvent(name: "currentApp", value: app)
         }
+    } else if (m.containsKey(21)) {                             // remote_ime_batch_edit: a text field has focus
+        Map<Integer, List> edit = pDecode(pFirst(m, 21) as String)
+        r.imeCounter = (pFirst(edit, 1) ?: 0L) as Long
+        r.imeField = (pFirst(edit, 2) ?: 0L) as Long
     } else if (m.containsKey(40)) {                             // remote_start
         boolean on = ((pFirst(pDecode(pFirst(m, 40) as String), 1) ?: 0L) as Long) != 0L
         sendEvent(name: "switch", value: on ? "on" : "off")
@@ -669,6 +674,17 @@ void launchApp(String appLink) {
     if (!(appLink ==~ /^[A-Za-z][A-Za-z0-9+.-]*:.*/)) appLink = "market://launch?id=${appLink}"
     logCmd "Launch ${appLink}"
     sendFrame(pMsg(90, pStr(1, appLink)))
+}
+
+// The edit carries the counters of the TV's last text-field message, or 0 before any, as androidtvremote2 does.
+void sendText(String text) {
+    if (!text) return
+    Map r = rt()
+    if (r.mode != "remote") { logWarn "Not connected"; return }
+    logCmd "Text ${text}"
+    long end = text.length() - 1
+    String field = pInt(1, end) + pInt(2, end) + pStr(3, text)
+    sendFrame(pMsg(21, pInt(1, (r.imeCounter ?: 0L) as long) + pInt(2, (r.imeField ?: 0L) as long) + pMsg(3, pInt(1, 1) + pMsg(2, field))))
 }
 
 private void sendKeyCode(int code) {
