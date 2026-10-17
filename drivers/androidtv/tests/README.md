@@ -11,12 +11,19 @@ reference implementation, not against its own encoder.
   and current app, and reacts to POWER, volume, mute, HOME and app-link messages, as its box profile says.
 
 ```sh
-python3 -m venv .venv && .venv/bin/pip install androidtvremote2 pyOpenSSL
+python3 -m venv .venv && .venv/bin/pip install androidtvremote2 pyOpenSSL zeroconf
 openssl req -x509 -newkey rsa:2048 -nodes -keyout tv.key -out tv.pem -days 365 -subj "/CN=mocktv"
 .venv/bin/python drivers/androidtv/tests/mocktv.py tv.pem tv.key <workdir>
 ```
 
 Point the driver's TV IP preference at the machine running the mock.
+
+### Discovery
+
+With `MOCKTV_MDNS_NAME=<name>` the mock announces itself as a TV does, `_androidtvremote2._tcp` on port
+6466 with the TXT record `bt` (`MOCKTV_BT`, default `02:00:00:00:00:01`), so a device with no IP set
+finds it. The hub must be on the same LAN as the machine running the mock. Two mocks on two machines,
+with different `MOCKTV_BT`, show up as two TVs.
 
 ### Box profiles
 

@@ -1,6 +1,6 @@
 # Mock Android TV (Remote protocol v2) for rehearsing the Hubitat driver.
 # Encodes/decodes with androidtvremote2's compiled protobuf modules. Ports: pairing 6467, remote 6466.
-# usage: [MOCKTV_PROFILE=<profile.json>] mocktv.py <cert.pem> <key.pem> <workdir>
+# usage: [MOCKTV_PROFILE=<profile.json>] [MOCKTV_MDNS_NAME=<name> [MOCKTV_BT=<mac>]] mocktv.py <cert.pem> <key.pem> <workdir>
 # A profile describes a box with the tester report's field names; mock-profiles/default.json fills what it leaves out.
 import hashlib, json, os, random, socket, sys, threading, time
 from OpenSSL import SSL, crypto
@@ -223,6 +223,24 @@ def serve(port, handler):
                 except Exception: pass
                 s.close()
         threading.Thread(target=run, daemon=True).start()
+
+def announce(name, bt):
+    """Advertise the mock as a real TV does: _androidtvremote2._tcp on the remote port, TXT bt."""
+    from zeroconf import ServiceInfo, Zeroconf
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    probe.connect(("192.0.2.1", 9))         # picks the LAN interface; nothing is sent
+    ip = probe.getsockname()[0]; probe.close()
+    info = ServiceInfo("_androidtvremote2._tcp.local.", f"{name}._androidtvremote2._tcp.local.",
+                       addresses=[socket.inet_aton(ip)], port=REMOTE_PORT, properties={"bt": bt},
+                       server=f"mocktv-{bt.replace(':', '').lower()}.local.")
+    zc = Zeroconf(); zc.register_service(info, strict=False)    # the 16-byte type exceeds DNS-SD's 15-byte limit
+    log(f"announcing '{name}' (bt {bt}) at {ip}:{REMOTE_PORT}")
+    return zc, info
+
+if os.environ.get("MOCKTV_MDNS_NAME"):
+    import atexit
+    zc, info = announce(os.environ["MOCKTV_MDNS_NAME"], os.environ.get("MOCKTV_BT", "02:00:00:00:00:01"))
+    atexit.register(lambda: (zc.unregister_service(info), zc.close()))
 
 threading.Thread(target=serve, args=(PAIR_PORT, handle_pairing), daemon=True).start()
 log("mock TV listening on", PAIR_PORT, REMOTE_PORT)
