@@ -15,7 +15,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.30"
+@Field static final String CODE_VERSION = "0.0.31"
 // device.id -> deadline (ms) until which a state report counts as digital. Static rather than
 // state: a driver's state is written back whole at method exit, so a command and a parse() on
 // another thread can undo each other's flag, and a deadline expires on its own when the device
@@ -220,7 +220,8 @@ void configure() {
     cmds += zigbee.configureReporting(0x0002, 0x0000, DataType.INT16, 0, 43200)   // device temperature
     cmds += zigbee.configureReporting(0x0006, 0x0000, DataType.BOOLEAN, 0, 43200) // switch state
     cmds += zigbee.configureReporting(0x0008, 0x0000, DataType.UINT8, 0, 43200)   // switch level
-    cmds += zigbee.configureReporting(0x0702, 0x0000, DataType.UINT48, 0, 1800)   // energy
+    // The device answers INVALID_FIELD (0x85) to this config without a reportable change
+    cmds += zigbee.configureReporting(0x0702, 0x0000, DataType.UINT48, 60, 1800, 10)  // energy (Wh)
     cmds += zigbee.configureReporting(0xFF01, 0x0054, DataType.ENUM8, 0, 0, null, [mfgCode: "0x119C"])  // button action report
     // device rejects this report config with UNSUPPORTED_ATTRIBUTE (status 0x85 in the Configure
     // Reporting Response); kept so the request is on record and so a future firmware that lifts
