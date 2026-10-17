@@ -16,6 +16,9 @@ import java.nio.file.NoSuchFileException
 // probe callbacks never rewrite the list initialize() owns. In memory only: the result is transient
 // and re-probed by initialize(); after a reboot the config page triggers a fresh probe.
 @Field static final ConcurrentHashMap<String, Map> peerReachability = new ConcurrentHashMap<>()
+// Decrypted peer tokens, kept in memory only: decrypt() costs ~350 ms on a C-8 Pro, ~830 ms on a C-7.
+// Keyed "${app.id}:${pid}"; the stored ciphertext rides along so a changed token misses.
+@Field static final ConcurrentHashMap<String, List<String>> TOKEN_CACHE = new ConcurrentHashMap<>()
 // Green badge appended to the app label (visible in the Apps list) when a newer release is
 // published on GitHub. UPDATE_BADGE_RE strips any prior badge so re-applying is idempotent and
 // survives the label being saved verbatim through the "Assign a name" input on Done.
@@ -117,10 +120,16 @@ private Map parsePeerUrl(String raw) {
 // don't show them. A hub migration loses the key: paste each peer's full URL again after one.
 private String peerToken(Map peer) {
     String enc = ((state.peerTokens ?: [:]) as Map)["${peer.pid}".toString()] as String
-    if (!enc) return null
+    String key = "${app.id}:${peer.pid}".toString()
+    if (!enc) { TOKEN_CACHE.remove(key); return null }
+    List<String> hit = TOKEN_CACHE.get(key)
+    if (hit != null && hit[0] == enc) return hit[1]
     try {
-        return decrypt(enc)
+        String plain = decrypt(enc)
+        TOKEN_CACHE.put(key, [enc, plain])
+        return plain
     } catch (Exception e) {
+        TOKEN_CACHE.remove(key)
         logWarn "peer ${peer.pid}: could not decrypt its token (${e.message}); paste its full URL again"
         return null
     }
@@ -138,11 +147,16 @@ void appButtonHandler(String btn) {
         app.removeSetting("peer_${p}_label"); app.removeSetting("peer_${p}_url")
         Map tokens = (state.peerTokens ?: [:]) as Map
         tokens.remove("${p}".toString()); state.peerTokens = tokens
+        TOKEN_CACHE.remove("${app.id}:${p}".toString())
     }
 }
 
 // ===== LIFECYCLE =====
 void installed() { state.peerIds = [1]; checkOAuth(); runIn(1, 'syncUIForced'); initialize() }
+void uninstalled() {
+    String keyPrefix = "${app.id}:"
+    TOKEN_CACHE.keySet().removeIf { String k -> k.startsWith(keyPrefix) }
+}
 void updated()   { uiVersionCache = null; runIn(1, 'syncUIForced'); initialize() }
 void initialize() {
     checkVersion(false)
@@ -179,6 +193,7 @@ void initialize() {
     state.peerList = peerList
     String keyPrefix = "${app.id}:"
     peerReachability.keySet().removeIf { String k -> k.startsWith(keyPrefix) }
+    TOKEN_CACHE.keySet().removeIf { String k -> k.startsWith(keyPrefix) }
     logCfg "Multi-Hub Inventory initialized with ${peerList.size()} peer(s)"
     // Keep the Apps-list "update available" badge current even when the config page is never opened:
     // poll GitHub daily for a newer release, and reconcile the label now so the badge clears

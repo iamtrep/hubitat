@@ -19,6 +19,7 @@ import groovy.json.JsonOutput
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 
 definition(
     name: "Blink Manager",
@@ -38,7 +39,7 @@ definition(
 
 // --- Constants ---
 
-@Field static final String CODE_VERSION = "1.1.5"
+@Field static final String CODE_VERSION = "1.1.6"
 
 @Field static final String OAUTH_BASE_URL = "https://api.oauth.blink.com"
 @Field static final String CLIENT_ID = "ios"
@@ -67,6 +68,10 @@ definition(
 // Longest Retry-After honored, so a bad header can't stop polling for good.
 @Field static final long RETRY_AFTER_MAX_MS = 3_600_000L
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
+
+// Decrypted tokens, kept in memory only: decrypt() costs ~350 ms on a C-8 Pro, ~830 ms on a C-7.
+// Keyed by app id + token name; the stored ciphertext rides along so a refreshed token misses.
+@Field static final ConcurrentHashMap<String, List<String>> TOKEN_CACHE = new ConcurrentHashMap<>()
 
 // /media/changed initial-window lookback on first fetch — picks up clips that
 // happened in the hour before the integration started, so a new install with
@@ -261,6 +266,7 @@ void updated() {
 void uninstalled() {
     logCfg "uninstalled"
     unschedule()
+    clearTokenCache()
     getChildDevices()?.each { ChildDeviceWrapper c ->
         try { deleteChildDevice(c.deviceNetworkId) } catch (Exception ignored) {}
     }
@@ -1701,19 +1707,30 @@ private void storeToken(String name, String value) {
     if (value) state["${name}Enc"] = encrypt(value)
     else state.remove("${name}Enc")
     state.remove(name)
+    TOKEN_CACHE.remove("${app.id}:${name}".toString())
 }
 
 private String token(String name) {
     if (state[name]) return state[name] as String
     String enc = state["${name}Enc"] as String
     if (!enc) return null
+    String key = "${app.id}:${name}"
+    List<String> hit = TOKEN_CACHE.get(key)
+    if (hit && hit[0] == enc) return hit[1]
     try {
-        return decrypt(enc)
+        String plain = decrypt(enc)
+        TOKEN_CACHE.put(key, [enc, plain])
+        return plain
     } catch (Exception e) {
         logWarn "could not decrypt ${name} (${e.message}); log in again"
         state.remove("${name}Enc")
+        TOKEN_CACHE.remove(key)
         return null
     }
+}
+
+private void clearTokenCache() {
+    ["accessToken", "refreshToken"].each { TOKEN_CACHE.remove("${app.id}:${it}".toString()) }
 }
 
 private void clearAuthState() {
@@ -1725,6 +1742,7 @@ private void clearAuthState() {
 
 private void clearTokensOnly() {
     ["accessToken", "refreshToken", "accessTokenEnc", "refreshTokenEnc", "tokenExpiry"].each { state.remove(it) }
+    clearTokenCache()
 }
 
 private void cleanupEphemeralState() {

@@ -15,6 +15,7 @@
  */
 
 import java.math.RoundingMode
+import java.util.concurrent.ConcurrentHashMap
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 import groovy.json.JsonOutput
@@ -102,6 +103,10 @@ metadata {
 
 @Field static final String CODE_VERSION = "0.1.5"
 
+// Decrypted tokens, kept in memory only: decrypt() costs ~350 ms on a C-8 Pro, ~830 ms on a C-7.
+// Keyed by device id + token name; the stored ciphertext rides along so a refreshed token misses.
+@Field static final ConcurrentHashMap<String, List<String>> TOKEN_CACHE = new ConcurrentHashMap<>()
+
 // OAuth and API endpoints
 @Field static final String ECOBEE_API_BASE= "https://api.ecobee.com"
 
@@ -161,6 +166,10 @@ void updated() {
     initialize()
 }
 
+void uninstalled() {
+    dropCachedTokens()
+}
+
 // Convergence point for install and save. The poll is a cron schedule, which survives a
 // reboot, so hub start needs nothing here.
 void initialize() {
@@ -207,20 +216,34 @@ private void checkVersion(boolean reinit = true) {
 // The tokens are kept encrypted with the hub's key, so the device's state doesn't show them.
 // A hub migration loses the key: run connect() again after one.
 private void storeTokens(String access, String refresh) {
+    dropCachedTokens()
     state.accessTokenEnc = access ? encrypt(access) : null
     state.refreshTokenEnc = refresh ? encrypt(refresh) : null
     state.remove("accessToken")
     state.remove("refreshToken")
 }
 
+private void dropCachedTokens() {
+    ['accessToken', 'refreshToken'].each { TOKEN_CACHE.remove("${device.id}:${it}".toString()) }
+}
+
 private String token(String name) {
     if (state[name]) return state[name] as String
     String enc = state["${name}Enc"] as String
-    if (!enc) return null
+    String key = "${device.id}:${name}".toString()
+    if (!enc) {
+        TOKEN_CACHE.remove(key)
+        return null
+    }
+    List<String> hit = TOKEN_CACHE.get(key)
+    if (hit && hit[0] == enc) return hit[1]
     try {
-        return decrypt(enc)
+        String plain = decrypt(enc)
+        TOKEN_CACHE.put(key, [enc, plain])
+        return plain
     } catch (Exception e) {
         logWarn "could not decrypt ${name} (${e.message}); run connect() again"
+        TOKEN_CACHE.remove(key)
         state.remove("${name}Enc")
         return null
     }
@@ -239,6 +262,7 @@ void connect() {
 
     // Wipe any prior OAuth state so a fresh PIN flow doesn't collide with stale tokens/selection.
     ['accessToken', 'refreshToken', 'accessTokenEnc', 'refreshTokenEnc', 'tokenExpiry'].each { state.remove(it) }
+    dropCachedTokens()
     state.remove('thermostats')
 
     Map params = [

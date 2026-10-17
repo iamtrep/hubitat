@@ -12,6 +12,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import groovy.json.JsonOutput
 import groovy.transform.CompileStatic
 import groovy.transform.Field
+import java.util.concurrent.ConcurrentHashMap
 
 definition(
     name: "VisiblAir Manager",
@@ -31,6 +32,9 @@ definition(
 @Field static final String CODE_VERSION = "2.1.7"
 @Field static final String VISIBLAIR_API = "https://api.visiblair.com/api/v1"
 @Field static final int HTTP_TIMEOUT = 15
+// Decrypted password, kept in memory only: decrypt() costs ~350 ms on a C-8 Pro, ~830 ms on a C-7.
+// Keyed by app id; the stored ciphertext rides along so a changed password misses.
+@Field static final ConcurrentHashMap<String, List<String>> SECRET_CACHE = new ConcurrentHashMap<>()
 @Field static final String DNI_PREFIX = "visiblair-"
 // Consecutive failed polls before the outage is logged as an error and children go offline.
 @Field static final int POLL_FAILURES_BEFORE_ALARM = 3
@@ -109,7 +113,7 @@ void initialize() {
     if (debugEnable || traceEnable) runIn(1800, turnOffDebugLogging)
     encryptPassword()
 
-    if (!apiEmail || !apiPasswordValue()) {
+    if (!apiEmail || !hasApiPassword()) {
         logWarn "Email/password not configured"
         return
     }
@@ -131,6 +135,7 @@ private void checkVersion(boolean reinit = true) {
 
 void uninstalled() {
     unschedule()
+    SECRET_CACHE.remove(app.id.toString())
 }
 
 void appButtonHandler(String buttonName) {
@@ -164,17 +169,30 @@ void appButtonHandler(String buttonName) {
 private void encryptPassword() {
     if (!settings.apiPassword) return
     state.passwordEnc = encrypt(settings.apiPassword as String)
+    SECRET_CACHE.remove(app.id.toString())
     app.removeSetting("apiPassword")
+}
+
+// Presence check that mirrors apiPasswordValue() without decrypting.
+private boolean hasApiPassword() {
+    return settings.apiPassword || state.passwordEnc
 }
 
 private String apiPasswordValue() {
     if (settings.apiPassword) return settings.apiPassword
-    if (!state.passwordEnc) return null
+    String enc = state.passwordEnc as String
+    if (!enc) return null
+    String key = app.id.toString()
+    List<String> hit = SECRET_CACHE.get(key)
+    if (hit != null && hit[0] == enc) return hit[1]
     try {
-        return decrypt(state.passwordEnc as String)
+        String plain = decrypt(enc)
+        SECRET_CACHE.put(key, [enc, plain])
+        return plain
     } catch (Exception e) {
         logWarn "could not decrypt the stored password (${e.message}); enter it again"
         state.remove("passwordEnc")
+        SECRET_CACHE.remove(key)
         return null
     }
 }
@@ -227,7 +245,7 @@ void handleLoginResponse(resp, data) {
 
 void pollSensors() {
     checkVersion()
-    if (!apiEmail || !apiPasswordValue()) return
+    if (!apiEmail || !hasApiPassword()) return
 
     loginThen("poll", "cannot poll sensors")
 }

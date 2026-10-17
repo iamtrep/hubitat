@@ -102,6 +102,9 @@ definition(
 // token calls always go, writes keep 1 free, wakes and single-unit reads keep 2.
 @Field static final int ASYNC_CAP = 8
 @Field static final Map<String, Object> REQ = new ConcurrentHashMap<String, Object>()
+// Decrypted secrets, kept in memory only: decrypt() costs ~350 ms on a C-8 Pro, ~830 ms on a C-7.
+// Keyed by app id + state key; the stored ciphertext rides along so a refreshed value misses.
+@Field static final ConcurrentHashMap<String, List<String>> SECRET_CACHE = new ConcurrentHashMap<>()
 
 preferences {
     page(name: "mainPage")
@@ -208,7 +211,10 @@ void updated() {
     initialize()
     if (settings.debugEnable || settings.traceEnable) runIn(DEBUG_LOG_TIMEOUT, "logsOff")
 }
-void uninstalled() { logDebug "uninstalled" }
+void uninstalled() {
+    logDebug "uninstalled"
+    ["accessTokenEnc", "refreshTokenEnc", "passwordEnc"].each { dropSecret(it) }
+}
 void initialize()  {
     logDebug "initialize"
     checkVersion(false)
@@ -493,15 +499,23 @@ private String accessToken()   { return state.accessToken  ?: decryptState("acce
 private String refreshTokenValue() { return state.refreshToken ?: decryptState("refreshTokenEnc") }
 
 private String decryptState(String key) {
-    if (!state[key]) return null
+    String enc = state[key] as String
+    if (!enc) return null
+    List<String> hit = SECRET_CACHE.get("${app.id}:${key}".toString())
+    if (hit != null && hit[0] == enc) return hit[1]
     try {
-        return decrypt(state[key] as String)
+        String plain = decrypt(enc)
+        SECRET_CACHE.put("${app.id}:${key}".toString(), [enc, plain])
+        return plain
     } catch (Exception e) {
         logWarn "could not decrypt ${key} (${e.message}); log in again"
         state.remove(key)
+        dropSecret(key)
         return null
     }
 }
+
+private void dropSecret(String key) { SECRET_CACHE.remove("${app.id}:${key}".toString()) }
 
 // Converts what 0.3.1 and earlier stored in plain text.
 private void encryptStoredSecrets() {
@@ -509,6 +523,7 @@ private void encryptStoredSecrets() {
     if (state.refreshToken) { state.refreshTokenEnc = encrypt(state.refreshToken as String); state.remove("refreshToken") }
     if (settings.fglairPassword) {
         state.passwordEnc = encrypt(settings.fglairPassword as String)
+        dropSecret("passwordEnc")
         app.removeSetting("fglairPassword")
     }
 }
@@ -525,6 +540,7 @@ void signIn() {
     atomicState.authStartedAt = now()
     if (settings.fglairPassword) {
         state.passwordEnc = encrypt(settings.fglairPassword as String)
+        dropSecret("passwordEnc")
         app.removeSetting("fglairPassword")
     }
     postSignIn(true)
@@ -596,7 +612,10 @@ void signInCallback(resp, data) {
 
 private void signInRejected(resp, int status, boolean manual) {
     String msg = "Sign-in failed (HTTP ${status}). Check email/password and region."
-    if (status in [400, 401, 403]) state.remove("passwordEnc")
+    if (status in [400, 401, 403]) {
+        state.remove("passwordEnc")
+        dropSecret("passwordEnc")
+    }
     if (manual) {
         logError "signIn ${httpError(resp)}"
         state.authError = msg
@@ -622,6 +641,8 @@ private void storeTokens(Map parsed) {
     state.refreshTokenEnc = parsed.refresh_token ? encrypt(parsed.refresh_token as String) : null
     state.remove("accessToken")
     state.remove("refreshToken")
+    dropSecret("accessTokenEnc")
+    dropSecret("refreshTokenEnc")
     long expiresInMs = ((parsed.expires_in ?: 3600L) as long) * 1000L
     state.tokenExpiry = now() + expiresInMs
     state.sessionRegion = currentRegion()
@@ -725,6 +746,8 @@ private void haltAuth(String reason) {
 
 private void clearSession() {
     ["accessToken", "refreshToken", "accessTokenEnc", "refreshTokenEnc"].each { state.remove(it) }
+    dropSecret("accessTokenEnc")
+    dropSecret("refreshTokenEnc")
     state.remove("tokenExpiry")
     atomicState.remove("authStartedAt")
     atomicState.remove("authRejects")
@@ -1202,6 +1225,7 @@ void disconnect() {
     logInfo "disconnecting"
     clearSession()
     state.remove("passwordEnc")
+    dropSecret("passwordEnc")
     markUnitsOffline("disconnected from FGLair")
 }
 
