@@ -15,7 +15,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.29"
+@Field static final String CODE_VERSION = "0.0.30"
 // device.id -> deadline (ms) until which a state report counts as digital. Static rather than
 // state: a driver's state is written back whole at method exit, so a command and a parse() on
 // another thread can undo each other's flag, and a deadline expires on its own when the device
@@ -52,6 +52,7 @@ metadata {
         capability "SwitchLevel"
 
         attribute "deviceTemperature", "number"
+        attribute "onTime", "number"
 
         command "keypadLock", [[name: "Disconnect paddle from relay so it no longer operates the load (a.k.a. smart bulb mode - button events are still sent when the paddle is operated)"]]
         command "keypadUnlock", [[name: "Connect paddle to relay so that the paddle will operate the load."]]
@@ -224,7 +225,7 @@ void configure() {
     // device rejects this report config with UNSUPPORTED_ATTRIBUTE (status 0x85 in the Configure
     // Reporting Response); kept so the request is on record and so a future firmware that lifts
     // the restriction starts honoring it without a driver change
-    cmds += zigbee.configureReporting(0xFF01, 0x0090, DataType.UINT32, 0, 1800, null, [mfgCode: "0x119C"])  // energy
+    cmds += zigbee.configureReporting(0xFF01, 0x0090, DataType.UINT32, 0, 1800, null, [mfgCode: "0x119C"])  // on-time
 
     sendZigbeeCommands(cmds)
 
@@ -255,7 +256,7 @@ void refresh() {
     cmds += zigbee.readAttribute(0x0002, 0x0000) // device temperature
     cmds += zigbee.readAttribute(0x0006, 0x0000) // switch state
     cmds += zigbee.readAttribute(0x0008, 0x0000) // switch level
-    cmds += zigbee.readAttribute(0x0702, 0x0000) // energy
+    cmds += zigbee.readAttribute(0x0702, 0x0000) // energy (Wh)
 
     cmds += zigbee.readAttribute(0xFF01, 0x0050, [mfgCode: "0x119C"]) // LED on colour
     cmds += zigbee.readAttribute(0xFF01, 0x0051, [mfgCode: "0x119C"]) // LED off colour
@@ -265,14 +266,15 @@ void refresh() {
     cmds += zigbee.readAttribute(0xFF01, 0x00A0, [mfgCode: "0x119C"]) // auto-off timer
     cmds += zigbee.readAttribute(0xFF01, 0x0119, [mfgCode: "0x119C"]) // connected load
 
-    cmds += zigbee.readAttribute(0xFF01, 0x0090, [mfgCode: "0x119C"]) // energy delivered
+    cmds += zigbee.readAttribute(0xFF01, 0x0090, [mfgCode: "0x119C"]) // on-time (s)
 
     sendZigbeeCommands(cmds)
 }
 
 void refreshEnergyReport() {
     List<String> cmds = []
-    cmds += zigbee.readAttribute(0xFF01, 0x0090, [mfgCode: "0x119C"]) // energy delivered
+    cmds += zigbee.readAttribute(0x0702, 0x0000) // energy (Wh)
+    cmds += zigbee.readAttribute(0xFF01, 0x0090, [mfgCode: "0x119C"]) // on-time (s)
     sendZigbeeCommands(cmds)
     runIn(1800, "refreshEnergyReport")
 }
@@ -301,6 +303,8 @@ void off() {
     List<String> cmds = []
     cmds += zigbee.off()
     cmds += zigbee.readAttribute(0x0006, 0x0000)
+    // The device doesn't report its energy at once; read it after the off
+    cmds += zigbee.readAttribute(0x0702, 0x0000)
     markOffFade()
     sendZigbeeCommands(cmds)
     markPendingDigitalSwitchChange()
@@ -593,8 +597,13 @@ private void parseAttributeReport(Map descMap) {
         case "0702": // Metering cluster
             switch (descMap.attrId) {
                 case "0000":
-                    // Energy report is in manufacturer-specific cluster/attr (0xFF01/0x0090), ignore standard metering
-                    return
+                    // Wh (UnitOfMeasure kWh, Multiplier 1, Divisor 1000). The dimmer can't measure its
+                    // load: this is its estimate from the Connected load setting.
+                    map.name = "energy"
+                    map.value = getEnergy(descMap.value)
+                    map.unit = "kWh"
+                    map.descriptionText = "Cumulative energy delivered is ${map.value} ${map.unit}"
+                    break
 
                 default:
                     break
@@ -656,11 +665,11 @@ private void parseAttributeReport(Map descMap) {
                     }
                     break
 
-                case "0090": // watt-hours delivered
-                    map.name = "energy"
-                    map.value = getEnergy(descMap.value)
-                    map.unit = "kWh"
-                    map.descriptionText = "Cumulative energy delivered is ${map.value} ${map.unit}"
+                case "0090": // seconds the load has been on; not energy, whatever ConnectedLoad says
+                    map.name = "onTime"
+                    map.value = Long.parseLong(descMap.value, 16)
+                    map.unit = "s"
+                    map.descriptionText = "Load on-time is ${map.value} s"
                     break
 
                 case "00A0": // auto-off timer setting
@@ -721,7 +730,7 @@ private void sendZigbeeCommands(List cmds) {
 
 private double getEnergy(String value) {
     if (value != null) {
-        Integer energy = Integer.parseInt(value, 16)
+        Long energy = Long.parseLong(value, 16)
         BigDecimal kWh = new BigDecimal(energy.toDouble() / 1000.0 as double)
         kWh = kWh.setScale(3, RoundingMode.HALF_UP)
         logTrace("getEnergy($value) = $energy => $kWh")
