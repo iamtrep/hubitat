@@ -129,6 +129,56 @@ void logsOff() {
 }
 
 
+// ── TV discovery ──────────────────────────────────────────────────────
+
+// One TV from an mDNS result: its id is the `bt` TXT record, which stays the same when the IP changes.
+// Addresses come as a List (getMDNSServiceResults) or a comma-separated String (getMDNSEntries).
+Map tvEntry(Map r) {
+    String id = (r?.textRecords instanceof Map ? r.textRecords.bt : null)?.toString()?.trim()?.toUpperCase()
+    def v4 = r?.ip4Addresses
+    List<String> ips = (v4 instanceof Collection ? v4 : v4?.toString()?.split(",") as List)
+        ?.collect { it?.toString()?.trim() }?.findAll { it } ?: []
+    if (!id || !ips) return null
+    String name = r.name?.toString() ?: id
+    return [id: id, name: name, ips: ips, label: "${name} (${ips[0]})".toString()]
+}
+
+List<Map> tvEntries(List results) {
+    Map<String, Map> byId = [:]
+    (results ?: []).each { r ->
+        Map e = tvEntry(r as Map)
+        if (!e) return
+        Map seen = byId[e.id]
+        if (seen) seen.ips = (seen.ips + e.ips).unique()
+        else byId[e.id] = e
+    }
+    return byId.values() as List
+}
+
+Map entryWithId(List<Map> entries, String id) {
+    entries?.find { it.id == id?.toUpperCase() }
+}
+
+Map entryWithAddress(List<Map> entries, String ip) {
+    entries?.find { ip in it.ips }
+}
+
+String addressFor(Map entry, String current) {
+    current in entry.ips ? current : entry.ips[0]
+}
+
+// The TV's new address, or null when it isn't found or still advertises the current one.
+String repairAddress(List<Map> entries, String id, String current) {
+    Map e = entryWithId(entries, id)
+    if (!e || current in e.ips) return null
+    return addressFor(e, current)
+}
+
+boolean searchDue(Long last, long nowMs, long minMs) {
+    last == null || nowMs - last >= minMs
+}
+
+
 // ── Pairing ───────────────────────────────────────────────────────────
 
 void startPairing() {
