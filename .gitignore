@@ -1,11 +1,9 @@
 *.pyc
-*.groovy~
-*.groovy#
-.#*.groovy
-#*.groovy
+*~
+# Emacs auto-save and lock files
+\#*#
+.#*
 .DS_Store
-*.py~
-*.json~
 .hubitat.json
 *.har
 *.log
