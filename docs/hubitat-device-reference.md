@@ -88,6 +88,20 @@ report of the real value (0x4C). `off` sent one on/off report and no level chang
 after `on` is a transient 0, and logic that treats the first report after a command as the command's result
 picks the 0 *(probed 2.5.2.134, one DM2500ZB, `/zigbeeLogsocket`)*.
 
+**A DM2500ZB dimmer reports levels while it fades, and its last level after an off depends on how it was turned off.**
+At a stored 60 %, an `off` command was followed within about 1 s by a level of 56–59 % and about 4.5 s later
+by the stored 60 %. A short Down press reported 59 %, then off, then 0 % about 4 s later. A short Up press
+from off reported on, 12 %, then 60 % about 5 s later. The button report arrives before the first level report
+*(probed 2.5.2.139, three DM2500ZB, device event history over two days)*.
+
+**On a DM2500ZB, `0xFF01`/`0x0090` does not follow the load.** While on at 60 %, it rose by exactly 1800 every
+30 minutes on three dimmers driving different lights, and it stayed flat while off
+*(probed 2.5.2.139, three DM2500ZB, logged energy events over two days)*.
+The lights and dimmers have no power-measurement cluster: their attribute table lists `0x0090` as
+currentSummationDelivered in Wh and a writable ConnectedLoad (`0xFF01`/`0x0119`, uint16, watts, 0 = none),
+so the energy counter is an estimate from that setting *(community: [claudegel/sinope-zha README](https://github.com/claudegel/sinope-zha) at `7902729`, lights and dimmer table)*.
+What the counter does while ConnectedLoad is 0 is unverified.
+
 **Device-temperature cluster differs by product line — mutually exclusive, each line lacks the
 other's cluster.** Verified against claudegel/sinope-zha `switch.py` input-cluster lists and Z2M
 `sinope.ts` *(community: [claudegel/sinope-zha](https://github.com/claudegel/sinope-zha), [zigbee-herdsman-converters `sinope.ts`](https://github.com/Koenkk/zigbee-herdsman-converters/blob/master/src/devices/sinope.ts))*:
