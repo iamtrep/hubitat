@@ -61,7 +61,7 @@ import java.security.Signature
 import java.security.cert.CertificateFactory
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.3.0"
+@Field static final String CODE_VERSION = "0.3.1"
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int PAIRING_PORT = 6467
 @Field static final String MDNS_SERVICE = "_androidtvremote2._tcp"
@@ -136,7 +136,7 @@ private void applyTvSettings() {
         clearFoundTvs()
         if (!e) { logWarn "That TV is no longer in the list; run Find TVs"; return }
         String address = addressFor(e, tvIP as String)
-        logInfo "Using ${e.name} at ${address}"
+        logInfo "Using the TV at ${address}"
         takeTv(e, address, false)
         return
     }
@@ -158,7 +158,7 @@ private void applyTvSettings() {
 private void takeTv(Map e, String address, boolean pair) {
     if (state.paired && differentTv(e, state.tvId as String, tvIP as String)) {
         forgetPairing()
-        logInfo "${e.name} is a different TV; pair it with Start Pairing"
+        logInfo "This is a different TV; pair it with Start Pairing"
     }
     applyTv(e, address)
     if (state.paired) runIn(2, "connect")
@@ -259,7 +259,7 @@ List<Map> searchTvs() {
         return []
     }
     List<Map> found = tvEntries(results)
-    logDebug "mDNS search took ${now() - t0} ms: ${found*.label}"
+    logDebug "mDNS search took ${now() - t0} ms: ${found.size()} TVs"
     return found
 }
 
@@ -291,7 +291,7 @@ void runSetupSearch(Map data) {
     if (found.size() == 1) {
         Map e = found[0]
         clearFoundTvs()
-        logInfo "Found ${e.name} at ${e.ips[0]}" +
+        logInfo "Found a TV at ${e.ips[0]}" +
                 (tvIP && differentTv(e, state.tvId as String, tvIP as String) ? "; to use it, clear the IP address and save" : "")
         if (!tvIP) takeTv(e, e.ips[0], pair)
         return
@@ -548,7 +548,7 @@ void learnTvId() {
     state.tvId = e.id
     state.tvName = e.name
     state.lastTvIP = tvIP
-    logDebug "The TV at ${tvIP} is ${e.name} (${e.id})"
+    logDebug "Identified the TV at ${tvIP}"
 }
 
 private void handleRemoteMessage(String hex) {
