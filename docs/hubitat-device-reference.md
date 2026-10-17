@@ -304,6 +304,14 @@ it pairs. Leading zero bytes of each number are dropped before hashing *(spec: [
 - The same box's remote has a button that opens its operator app (`ca.ebox.tv.platform`). Sent from the home
   screen as `remote_key_inject`, none of key codes 131–142, 170, 172, 183–186, 188–203, 229 and 284 opened
   that app or drew any message back *(absent: probed 2.5.2.139, C-7, Android TV Remote driver 0.1.4)*.
+- On the same box, the link `ca.ebox.tv.platform://` (the package name used as a scheme) opens the
+  operator app; `ebox://`, `eboxtv://`, `ebox-tv://` and `ca.ebox.tv://` are refused with `remote_error` 7.
+  `content://android.media.tv/channel` links open the stock `com.android.tv` app, and `https://tv.ebox.ca`
+  is accepted but changes no foreground app *(probed 2.5.2.139, C-7, Android TV Remote driver 0.3.0)*.
+- The package-name scheme is particular to that app, not a general launch form: on the same box
+  `com.google.android.youtube.tv://`, `com.android.tv://` and `com.google.android.tvlauncher://` are refused
+  with `remote_error` 7 although each app is installed, while `ca.ebox.tv.platform:` with any number of
+  slashes opens the EBOX app *(probed 2.5.2.139, C-7, Android TV Remote driver 0.3.0)*.
 - A Google TV Streamer (Android 14, remote service 7.00.956317615) also answers
   `market://launch?id=<package>` with `remote_error` 7 *(reported: [forum report](https://community.hubitat.com/t/beta-android-tv-remote-google-tv-and-android-tv-local-control/166822/12), firmware 2.5.2.139)*.
 - Launching by package name is unreliable beyond these boxes: since a Google Play Store change, many

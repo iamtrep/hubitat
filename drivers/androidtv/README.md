@@ -92,11 +92,12 @@ to the TV over HDMI-CEC, for example.
 Use a link the app handles, such as `https://www.youtube.com` or `vnd.youtube://www.youtube.com`. The TV
 opens a link only when an installed app handles it. A package name (`com.google.android.youtube.tv`) is
 sent as a `market://launch?id=` link; since a Google Play update in August 2026 no app handles that, so
-TVs refuse it. `intent:` and `android-app://` links were refused too. When the TV refuses a link, the
+TVs refuse it. `intent:` and `android-app://` links were refused too. A package name used as a scheme (`<package>://`) opens only an app that
+registers it, as the EBOX app does; YouTube, Live TV and the home screen refuse it. When the TV refuses a link, the
 log says so.
 
 Links for common apps, from Home Assistant's [Android TV Remote docs](https://www.home-assistant.io/integrations/androidtv_remote/)
-(only the YouTube ones tested here):
+(only the YouTube ones tested here), plus one tested on an EBOX set-top box:
 
 | App | Link |
 |---|---|
@@ -106,6 +107,7 @@ Links for common apps, from Home Assistant's [Android TV Remote docs](https://ww
 | Disney+ | `https://www.disneyplus.com` |
 | Plex | `plex://` |
 | Twitch | `twitch://home` |
+| EBOX TV | `ca.ebox.tv.platform://` |
 
 ### Finding an app's link
 
