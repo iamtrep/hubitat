@@ -344,6 +344,12 @@ Undocumented by Hubitat — nothing promises this across firmware versions. Code
 
 The relay carries responses over AWS IoT Core MQTT, whose publish payload limit is 128 KB and not adjustable *(spec: [AWS IoT Core quotas](https://docs.aws.amazon.com/general/latest/gr/iot-core.html), "MQTT payload size"; staff: [gopher.ny](https://community.hubitat.com/t/119869/15))*. Measured with a throwaway app returning a `text/plain` body: bodies up to 127,831 bytes returned 200 and from 127,845 bytes `504` with body `No response from hub` after about 10 s. About 3.2 KB of the 131,072-byte payload goes to the relay's own envelope. The relay does not compress, and an `Accept-Encoding: gzip` request header made no difference *(probed 2.5.2.134, throwaway app)*. Cloud clients that read large lists (Maker API `/devices/*`) must page or slim the response.
 
+### Cloud relay connection lost
+
+- **The hub reports a lost relay connection in `/hub2/hubData`.** `alerts.alertItems[]` holds `{key: "CLOUD_UNAVAILABLE", message: "Cloud connection is unavailable.", dismissible: false, detailed: false, version: null}`, the same text is in `alerts.headerMessages[]` and `alerts.alertMessages.CLOUD_UNAVAILABLE`, and the item is gone once the connection is back *(probed 2.5.3.102, C-8 Pro)*.
+- **The relay answers `504` with body `No response from hub` after about 10 s**, the same reply as an oversized response, so a 504 alone does not say which. A request to an app id that does not exist (`/api/{hubUID}/apps/999999/…`) tells them apart without a token: a connected hub answers `404` `{"error":true,"type":"AppException","message":"Not Found"}` in under a second *(probed 2.5.3.102, C-8 Pro, disconnected; probed 2.5.2.135–2.5.2.139, C-8 Pro and C-7, connected)*.
+- **Only inbound requests fail.** While the relay was down, `GET /hub/cloud/checkForUpdate` still answered. The connection dropped about 5 h after boot with no hub event and nothing in `/logs/past/json`, stayed down until a reboot, and worked again as soon as the hub was back up, so watch for it by polling `hubData` or the relay; no event announces it *(probed 2.5.3.102, C-8 Pro, one occurrence)*.
+
 ## Maker API specifics
 
 - Device notes are read-only: `GET /devices/{id}` carries a `notes` key (added in 2.5.0), and nothing writes them. The documented device writers are `setLabel`, `setDriver` and `deleteDevice`. `/devices/{id}/setNotes?notes=…` is treated as a device command and returns 404 *(probed 2.5.2.129)*.
