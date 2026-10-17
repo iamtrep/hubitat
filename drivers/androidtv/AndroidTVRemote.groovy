@@ -27,6 +27,7 @@ metadata {
         command "startPairing"
         command "submitPairingCode", [[name: "code", type: "STRING", description: "6 characters shown on the TV"]]
         command "forgetPairing"
+        command "findTvs"
         command "connect"
         command "disconnect"
         command "sendKey", [[name: "key", type: "STRING", description: "Key name (HOME, BACK, DPAD_UP, MEDIA_PLAY_PAUSE...) or Android key code number"]]
@@ -38,7 +39,10 @@ metadata {
     }
 
     preferences {
-        input "tvIP", "string", title: "TV IP address", required: true
+        input "tvIP", "string", title: "TV IP address (leave blank to find the TV on the network)", required: false
+        if ((state?.foundTvs as Map)?.size() > 1) {
+            input name: "tvChoice", type: "enum", title: "TV", options: state.foundTvs
+        }
         input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
         input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false
         if (debugEnable) {
@@ -49,6 +53,7 @@ metadata {
 
 import groovy.transform.Field
 import hubitat.helper.HexUtils
+import hubitat.helper.NetworkUtils
 import java.security.KeyPairGenerator
 import java.security.MessageDigest
 import java.security.Signature
@@ -58,6 +63,8 @@ import java.util.concurrent.ConcurrentHashMap
 @Field static final String CODE_VERSION = "0.1.4"
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int PAIRING_PORT = 6467
+@Field static final String MDNS_SERVICE = "_androidtvremote2._tcp"
+@Field static final int SEARCH_TIMEOUT_MS = 5000
 @Field static final int REMOTE_PORT = 6466
 @Field static final int WATCHDOG_SECONDS = 30
 @Field static final long IDLE_LIMIT_MS = 20000      // the TV pings every 5 s
@@ -112,8 +119,39 @@ void installed() {
 void updated() {
     logCfg "Preferences saved (version ${CODE_VERSION})"
     if (debugEnable || traceEnable) runIn(DEBUG_LOG_TIMEOUT, "logsOff")
+    boolean picked = applyTvSettings()
     disconnect()
     initialize()
+    // initialize() reads tvIP, which a pick sets for the next execution only
+    if (picked && state.paired) runIn(2, "connect")
+}
+
+// A TV picked from the list, a typed IP, or a blank IP (search). True when a pick set the address.
+private boolean applyTvSettings() {
+    if (tvChoice) {
+        Map e = (state.foundTvEntries as List)?.find { it.id == tvChoice }
+        device.removeSetting("tvChoice")
+        clearFoundTvs()
+        if (!e) { logWarn "That TV is no longer in the list; run Find TVs"; return false }
+        if (state.paired && state.tvId && e.id != state.tvId) {
+            forgetPairing()
+            logInfo "${e.name} is a different TV; pair it with Start Pairing"
+        }
+        applyTv(e, e.ips[0])
+        logInfo "Using ${e.name} at ${e.ips[0]}"
+        return true
+    }
+    if (tvIP) {
+        // A typed address may be another TV: learn which one again on the next connection
+        if (tvIP != state.lastTvIP) {
+            state.remove("tvId")
+            state.remove("tvName")
+            state.lastTvIP = tvIP
+        }
+    } else {
+        runIn(1, "runSetupSearch", [data: [pair: false]])
+    }
+    return false
 }
 
 void initialize() {
@@ -178,11 +216,69 @@ boolean searchDue(Long last, long nowMs, long minMs) {
     last == null || nowMs - last >= minMs
 }
 
+// Blocks for SEARCH_TIMEOUT_MS: call it from a scheduled method, never from a command or updated().
+List<Map> searchTvs() {
+    state.lastSearch = now()
+    long t0 = now()
+    List results
+    try {
+        results = NetworkUtils.getMDNSServiceResults(MDNS_SERVICE, SEARCH_TIMEOUT_MS)
+    } catch (e) {
+        logDebug "mDNS search failed: ${e.class.simpleName}: ${e.message}"
+        return []
+    }
+    List<Map> found = tvEntries(results)
+    logDebug "mDNS search took ${now() - t0} ms: ${found*.label}"
+    return found
+}
+
+private void applyTv(Map e, String address) {
+    device.updateSetting("tvIP", [type: "string", value: address])
+    state.lastTvIP = address
+    state.tvId = e.id
+    state.tvName = e.name
+}
+
+private void clearFoundTvs() {
+    state.remove("foundTvs")
+    state.remove("foundTvEntries")
+}
+
+void findTvs() {
+    runIn(1, "runSetupSearch", [data: [pair: false]])
+}
+
+// Takes the only TV found when no address is set, or lists several under TV.
+void runSetupSearch(Map data) {
+    boolean pair = data?.pair as boolean
+    List<Map> found = searchTvs()
+    if (!found) {
+        logWarn "No Android TV or Google TV found. Check that the TV is on and on the hub's network " +
+                "(mDNS doesn't cross VLANs or subnets), or enter its IP address"
+        return
+    }
+    if (found.size() == 1) {
+        Map e = found[0]
+        if (!tvIP) {
+            applyTv(e, e.ips[0])
+            logInfo "Found ${e.name} at ${e.ips[0]}"
+            if (pair) runIn(1, "startPairing")
+        } else {
+            boolean other = state.tvId ? e.id != state.tvId : !(tvIP in e.ips)
+            logInfo "Found ${e.name} at ${e.ips[0]}" + (other ? "; to use it, clear the IP address and save" : "")
+        }
+        return
+    }
+    state.foundTvs = found.collectEntries { [(it.id): it.label] }
+    state.foundTvEntries = found
+    logInfo "Found ${found.size()} TVs: choose one under TV and save" + (pair ? ", then Start Pairing" : "")
+}
+
 
 // ── Pairing ───────────────────────────────────────────────────────────
 
 void startPairing() {
-    if (!tvIP) { logWarn "Set the TV IP address first"; return }
+    if (!tvIP) { runIn(1, "runSetupSearch", [data: [pair: true]]); return }
     disconnect()
     if (!state.cert || !(state.keyEnc || state.key)) generateIdentity()
     sendEvent(name: "pairing", value: "pairing")
