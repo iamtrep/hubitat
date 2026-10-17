@@ -214,6 +214,7 @@ The Logs page (`/logs`, tabs `?tab=past` etc.) is a Vue chunk (`/ui2/js/vue-hub2
 
 ### Device state variables (driver `state`)
 
+- `GET /device/fullJson/{id}` `device.homeKitCompatible` is true for a device whose user driver sets `homekitCompatible: true` in `definition()` *(probed 2.5.2.135–2.5.3.102, C-8 Pro, throwaway driver)*.
 - `GET /device/fullJson/{id}` exposes a driver's Groovy `state.*` map as the **top-level `deviceState`** object — NOT under `device.state` (that key is empty/absent), and there is no `/device/state/{id}` endpoint *(regression 2.5.2.129–2.5.3.102, apps/tests/test-architecture-claims.sh; probed 2.5.2.135)*. Keys are entirely driver-author-defined (no platform contract), so use `deviceState` for per-device display/backup only — never for cross-device aggregation or assuming a key exists across drivers *(inferred: the keys come from driver code)*.
 
 ## Create new app/driver types
