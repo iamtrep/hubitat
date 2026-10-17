@@ -30,6 +30,10 @@ the search uses mDNS, which doesn't cross VLANs or subnets unless the router rep
 IP address instead, and give the TV a fixed address (a DHCP reservation in your router), since the
 driver can't follow it to a new one without the search.
 
+After a power cut the hub may not find the TV again until the hub restarts: a TV that drops off the
+network without signing off, then comes back under the same name, is missing from the hub's search
+results. A DHCP reservation keeps the TV reachable either way.
+
 **Find TVs** searches again: use it to switch the device to another TV, or after turning the TV on.
 The search needs firmware 2.5.2 or later, as far as tested; on older firmware, enter the IP address.
 
