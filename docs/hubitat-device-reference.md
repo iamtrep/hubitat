@@ -142,6 +142,12 @@ narrowed over Zigbee in normal mode; Mode accepts a write (0x00 written back, st
 the limits become writable with Mode's calibration bit set was not tested
 *(probed 2.5.2.139, C-7, one blind, temporary driver commands)*.
 
+With lift reporting configured at a 2 s minimum interval and a change of 1, the blind reports about
+every 2 s while it moves, in steps of about 6%, so it travels about 3% a second. A Go To Lift
+Percentage sent while the blind runs on an Up/Open command from a bound remote replaces that move's
+target: sent on reports at lift 17 and 20 it stopped two blinds at lift 2, while sent on reports at
+lift 8 and 9 one blind stopped at 2 and the other reached 0 first *(probed 2.5.2.139, C-7, two PRAKTLYSING blinds)*.
+
 ## Fujitsu / Ayla (FGLair)
 
 Fujitsu HVAC units on the Ayla cloud use two different temperature representations, and the
