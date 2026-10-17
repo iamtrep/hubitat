@@ -31,6 +31,7 @@ List<String> SIGNATURES = [
     'String addressFor(Map entry, String current) {',
     'String repairAddress(List<Map> entries, String id, String current) {',
     'boolean searchDue(Long last, long nowMs, long minMs) {',
+    'boolean differentTv(Map entry, String tvId, String current) {',
 ]
 def h = new GroovyShell().parse(SIGNATURES.collect { extract(text, it) }.join("\n") + "\nreturn this\n").run()
 
@@ -66,6 +67,8 @@ check 'by id, any case', h.entryWithId(e, "aa:bb:cc:00:00:02")?.ips == ["192.0.2
 check 'by id, unknown', h.entryWithId(e, "AA:BB:CC:00:00:09") == null
 check 'by address, not the first', h.entryWithAddress(e, "192.0.2.99")?.id == "AA:BB:CC:00:00:01"
 check 'by address, unknown', h.entryWithAddress(e, "192.0.2.50") == null
+Map shared = [id: "AA:BB:CC:00:00:05", name: "Other", ips: ["192.0.2.99"], label: "Other (192.0.2.99)"]
+check 'by address, advertised by two TVs: no answer', h.entryWithAddress(e + [shared], "192.0.2.99") == null
 
 println 'addresses'
 check 'current kept when advertised', h.addressFor(e[0], "192.0.2.99") == "192.0.2.99"
@@ -74,6 +77,13 @@ check 'no repair while current is advertised', h.repairAddress(e, "AA:BB:CC:00:0
 check 'repair to the advertised address', h.repairAddress(e, "AA:BB:CC:00:00:01", "192.0.2.50") == "192.0.2.10"
 check 'no repair for a TV not found', h.repairAddress(e, "AA:BB:CC:00:00:09", "192.0.2.50") == null
 check 'repair never takes another TV', h.repairAddress([e[1]], "AA:BB:CC:00:00:01", "192.0.2.50") == null
+
+println 'differentTv'
+check 'known id, same TV', !h.differentTv(e[0], "aa:bb:cc:00:00:01", "192.0.2.50")
+check 'known id, other TV', h.differentTv(e[1], "AA:BB:CC:00:00:01", "192.0.2.10")
+check 'no id, address advertised by it', !h.differentTv(e[0], null, "192.0.2.99")
+check 'no id, address not advertised by it', h.differentTv(e[1], null, "192.0.2.10")
+check 'no id, no address: unknown, not different', !h.differentTv(e[0], null, null)
 
 println 'searchDue'
 check 'never searched', h.searchDue(null, 1000L, 300000L)

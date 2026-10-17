@@ -121,29 +121,26 @@ void installed() {
 void updated() {
     logCfg "Preferences saved (version ${CODE_VERSION})"
     if (debugEnable || traceEnable) runIn(DEBUG_LOG_TIMEOUT, "logsOff")
-    boolean picked = applyTvSettings()
+    // Before the TV settings: a pick schedules its own connect, which disconnect() would cancel
     disconnect()
+    applyTvSettings()
     initialize()
-    // initialize() reads tvIP, which a pick sets for the next execution only
-    if (picked && state.paired) runIn(2, "connect")
 }
 
-// A TV picked from the list, a typed IP, or a blank IP (search). True when a pick set the address.
-private boolean applyTvSettings() {
+// A TV picked from the list, a typed IP, or a blank IP (search).
+private void applyTvSettings() {
     if (tvChoice) {
         Map e = (state.foundTvEntries as List)?.find { it.id == tvChoice }
         device.removeSetting("tvChoice")
         clearFoundTvs()
-        if (!e) { logWarn "That TV is no longer in the list; run Find TVs"; return false }
-        if (state.paired && state.tvId && e.id != state.tvId) {
-            forgetPairing()
-            logInfo "${e.name} is a different TV; pair it with Start Pairing"
-        }
-        applyTv(e, e.ips[0])
-        logInfo "Using ${e.name} at ${e.ips[0]}"
-        return true
+        if (!e) { logWarn "That TV is no longer in the list; run Find TVs"; return }
+        String address = addressFor(e, tvIP as String)
+        logInfo "Using ${e.name} at ${address}"
+        takeTv(e, address, false)
+        return
     }
     if (tvIP) {
+        clearFoundTvs()
         // A typed address may be another TV: learn which one again on the next connection
         if (tvIP != state.lastTvIP) {
             state.remove("tvId")
@@ -153,7 +150,18 @@ private boolean applyTvSettings() {
     } else {
         runIn(1, "runSetupSearch", [data: [pair: false]])
     }
-    return false
+}
+
+// Points the device at this TV. A paired device that switches to another TV forgets the pairing.
+// connect reads tvIP in its own execution, after the setting written here is saved.
+private void takeTv(Map e, String address, boolean pair) {
+    if (state.paired && differentTv(e, state.tvId as String, tvIP as String)) {
+        forgetPairing()
+        logInfo "${e.name} is a different TV; pair it with Start Pairing"
+    }
+    applyTv(e, address)
+    if (state.paired) runIn(2, "connect")
+    else if (pair) runIn(1, "startPairing")
 }
 
 void initialize() {
@@ -199,8 +207,10 @@ Map entryWithId(List<Map> entries, String id) {
     entries?.find { it.id == id?.toUpperCase() }
 }
 
+// The one TV advertising this address; null when none does, or several do (some TVs advertise others' addresses).
 Map entryWithAddress(List<Map> entries, String ip) {
-    entries?.find { ip in it.ips }
+    List<Map> m = entries?.findAll { ip in it.ips } ?: []
+    m.size() == 1 ? m[0] : null
 }
 
 String addressFor(Map entry, String current) {
@@ -216,6 +226,12 @@ String repairAddress(List<Map> entries, String id, String current) {
 
 boolean searchDue(Long last, long nowMs, long minMs) {
     last == null || nowMs - last >= minMs
+}
+
+// Whether this entry is another TV than the device's: by id when known, else by the current address.
+boolean differentTv(Map entry, String tvId, String current) {
+    if (tvId) return entry.id != tvId.toUpperCase()
+    return current ? !(current in entry.ips) : false
 }
 
 // Blocks for SEARCH_TIMEOUT_MS: call it from a scheduled method, never from a command or updated().
@@ -261,14 +277,10 @@ void runSetupSearch(Map data) {
     }
     if (found.size() == 1) {
         Map e = found[0]
-        if (!tvIP) {
-            applyTv(e, e.ips[0])
-            logInfo "Found ${e.name} at ${e.ips[0]}"
-            if (pair) runIn(1, "startPairing")
-        } else {
-            boolean other = state.tvId ? e.id != state.tvId : !(tvIP in e.ips)
-            logInfo "Found ${e.name} at ${e.ips[0]}" + (other ? "; to use it, clear the IP address and save" : "")
-        }
+        clearFoundTvs()
+        logInfo "Found ${e.name} at ${e.ips[0]}" +
+                (tvIP && differentTv(e, state.tvId as String, tvIP as String) ? "; to use it, clear the IP address and save" : "")
+        if (!tvIP) takeTv(e, e.ips[0], pair)
         return
     }
     state.foundTvs = found.collectEntries { [(it.id): it.label] }
@@ -455,6 +467,7 @@ void connect() {
 void disconnect() {
     unschedule("watchdog")
     unschedule("connect")
+    unschedule("repairSearch")
     closeSocket()
     rt().mode = null
 }
@@ -485,15 +498,22 @@ private void scheduleReconnect() {
     int delay = Math.min(MAX_BACKOFF_SECONDS, 5 * (1 << Math.min(n, 6)))
     state.retry = n + 1
     logSched "Reconnecting in ${delay} s"
-    runIn(delay, "connect")
-    if (state.paired && state.tvId && searchDue(state.lastSearch as Long, now(), REPAIR_SEARCH_MS)) runIn(1, "repairSearch")
+    if (state.paired && state.tvId && searchDue(state.lastSearch as Long, now(), REPAIR_SEARCH_MS)) {
+        // The search schedules the connect: a connect queued behind a running search would run twice
+        runIn(1, "repairSearch", [data: [delay: delay]])
+    } else {
+        runIn(delay, "connect")
+    }
 }
 
-// The TV may have a new address: find it by its id and connect there.
-void repairSearch() {
+// The TV may have a new address: find it by its id and connect there, else retry after the backoff.
+void repairSearch(Map data) {
     List<Map> found = searchTvs()
     String ip = repairAddress(found, state.tvId as String, tvIP as String)
-    if (!ip) return
+    if (!ip) {
+        runIn((data?.delay ?: 5) as int, "connect")
+        return
+    }
     logInfo "${state.tvName ?: 'The TV'} moved from ${tvIP} to ${ip}"
     applyTv(entryWithId(found, state.tvId as String), ip)
     state.retry = 0
