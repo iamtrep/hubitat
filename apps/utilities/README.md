@@ -14,6 +14,7 @@ Hubitat Elevation apps for hub administration and maintenance. These are not aut
 |---|---|---|
 | `DeviceInUseEnumerator.groovy` | **Device "in use by" Enumerator** | For each device, enumerates the apps referencing them |
 | `DeviceSwapHelper.groovy` | **Device Swap Helper** | Swap a device in every app that uses it |
+| `StuckSensorReset.groovy` | **Stuck Sensor Reset** | Resets motion and contact sensors stuck active or open after going silent, e.g. on a dead battery. |
 <!-- /AUTO -->
 
 ### Device "in use by" Enumerator (`DeviceInUseEnumerator.groovy`)
@@ -56,11 +57,27 @@ Additional features:
 
 **Why some apps still need a manual edit.** The hub's form-save endpoint (`/installedapp/update/json`) addresses one page at a time, and the wire format for sub-page saves (`pageBreadcrumbs`, `_action_previous`, conditionally-rendered dynamic input names) is per-app-family — generalizing the write path across every built-in (Basic Rule, Notifier, Rule Machine, …) would mean re-validating undocumented form shapes on every firmware release. The deeplinked punch list trades clicks for stability: zero firmware-coupling, and the user stays in the loop for ambiguous cases.
 
+### Stuck Sensor Reset (`StuckSensorReset.groovy`)
+
+Returns motion and contact sensors stuck `active` or `open` to `inactive` or `closed`, so they stop blocking automations.
+
+A battery sensor that dies mid-event keeps its last state forever. Typical cases:
+
+- A door contact died while the door was open: the heating stays off, or the alarm won't arm, until the door "closes".
+- A motion sensor missed its "inactive" report: the lights it controls never turn off.
+- After a battery change, the sensor reports again but its stale state is still showing, and you want it cleared without opening and closing the door.
+
+**What counts as stuck.** A selected sensor that is active or open and has been silent longer than a set number of hours (default 6), or whose driver reports `healthStatus` `offline`. A sensor that is active or open but still reporting is left alone: the door may really be open. The app page lists the two groups separately, with the time since each sensor's last activity. Pick a threshold longer than the sensor's normal quiet periods; a door left open over a weekend sends nothing for days.
+
+**Resetting.** Press **Reset stuck sensors now**, or turn on a trigger switch (a virtual switch on a dashboard or voice assistant), which the app turns back off. Only stuck sensors are reset. The reset is an event written to the device with type `digital`; nothing is sent to the device itself, and apps that care can tell it from a real report. An optional notification lists what was reset.
+
+**Daily check.** With a notification device selected, the app can check once a day at a set time and send the list of stuck sensors. It never resets on its own, so a dead battery stays visible until someone deals with it.
+
 ## Installation
 
 1. Install the app code on your hub.
 2. Add the app from **Apps > Add User App**.
-3. Configure and use as needed — these apps have no ongoing automation side-effects.
+3. Configure and use as needed. These apps act only when you use them, except Stuck Sensor Reset's trigger switch and daily check, when set.
 
 ## License
 

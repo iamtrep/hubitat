@@ -1,0 +1,131 @@
+# Behavior test spec for Stuck Sensor Reset.
+# staleHours 0 makes any active/open sensor count as stale at once; 1 makes a
+# sensor that just reported count as live. The daily check is not covered:
+# it needs a check time set a minute ahead, which a spec cannot express.
+
+app:
+  source: apps/utilities/StuckSensorReset.groovy
+  type_name: Stuck Sensor Reset
+  instance_label: test-stuck-sensor-reset
+  config:
+    staleHours: 1
+    debugLogging: true
+
+inputs:
+  - { name: test-ssr-motion,  driver: "Virtual Health Sensor (Test)", role: motionSensors }
+  - { name: test-ssr-contact, driver: "Virtual Health Sensor (Test)", role: contactSensors }
+  - { name: test-ssr-offline, driver: "Virtual Health Sensor (Test)", role: contactSensors }
+  - { name: test-ssr-trigger, driver: Virtual Switch, role: triggerSwitch }
+
+outputs:
+  - { name: test-ssr-notify, driver: "Notification Capture (Test)", role: notificationDevice }
+
+maker_api:
+  label: test-ssr-maker
+
+cases:
+  - name: sensors still reporting are left alone
+    setup:
+      - { settings: { staleHours: 1 } }
+      - { device: test-ssr-offline, command: setHealthStatus, args: [online] }
+      - { device: test-ssr-motion, command: active }
+      - { device: test-ssr-contact, command: open }
+      - { device: test-ssr-offline, command: open }
+    actions:
+      - { button: btnReset }
+    wait_seconds: 2
+    assert:
+      - { device: test-ssr-motion, attribute: motion, value: active }
+      - { device: test-ssr-contact, attribute: contact, value: open }
+      - { device: test-ssr-offline, attribute: contact, value: open }
+    assert_logs:
+      - { pattern: "reset 0 sensor\\(s\\)", level: info }
+    assert_events:
+      - { attribute: lastMessage, source: test-ssr-notify, negate: true }
+
+  - name: trigger switch resets stuck sensors and turns itself off
+    setup:
+      - { settings: { staleHours: 0 } }
+      - { device: test-ssr-trigger, command: "off" }
+      - { device: test-ssr-motion, command: active }
+      - { device: test-ssr-contact, command: open }
+      - { device: test-ssr-offline, command: close }
+    actions:
+      - { device: test-ssr-trigger, command: "on" }
+    wait_seconds: 4
+    assert:
+      - { device: test-ssr-motion, attribute: motion, value: inactive }
+      - { device: test-ssr-contact, attribute: contact, value: closed }
+      - { device: test-ssr-trigger, attribute: switch, value: "off" }
+    assert_logs:
+      - { pattern: "reset 2 sensor\\(s\\)", level: info }
+    assert_events:
+      - { attribute: motion, value: inactive, source: test-ssr-motion, pattern: "reset to inactive by" }
+      - { attribute: contact, value: closed, source: test-ssr-contact, pattern: "reset to closed by" }
+      - { attribute: lastMessage, source: test-ssr-notify }
+
+  - name: button resets stuck sensors
+    setup:
+      - { settings: { staleHours: 0 } }
+      - { device: test-ssr-motion, command: active }
+      - { device: test-ssr-contact, command: open }
+      - { device: test-ssr-offline, command: close }
+    actions:
+      - { button: btnReset }
+    wait_seconds: 2
+    assert:
+      - { device: test-ssr-motion, attribute: motion, value: inactive }
+      - { device: test-ssr-contact, attribute: contact, value: closed }
+    assert_logs:
+      - { pattern: "reset 2 sensor\\(s\\)", level: info }
+    assert_events:
+      - { attribute: lastMessage, source: test-ssr-notify }
+
+  - name: nothing stuck sends no notification
+    setup:
+      - { settings: { staleHours: 0 } }
+      - { device: test-ssr-motion, command: inactive }
+      - { device: test-ssr-contact, command: close }
+      - { device: test-ssr-offline, command: close }
+    actions:
+      - { button: btnReset }
+    wait_seconds: 2
+    assert_logs:
+      - { pattern: "reset 0 sensor\\(s\\)", level: info }
+    assert_events:
+      - { attribute: lastMessage, source: test-ssr-notify, negate: true }
+
+  - name: second reset right after the first finds nothing
+    setup:
+      - { settings: { staleHours: 0 } }
+      - { device: test-ssr-motion, command: active }
+      - { device: test-ssr-contact, command: open }
+      - { device: test-ssr-offline, command: close }
+      - { button: btnReset }
+    actions:
+      - { button: btnReset }
+    wait_seconds: 2
+    assert_logs:
+      - { pattern: "reset 0 sensor\\(s\\)", level: info }
+    assert_events:
+      - { attribute: lastMessage, source: test-ssr-notify, negate: true }
+
+  - name: offline sensor is reset even when recently heard from
+    setup:
+      - { settings: { staleHours: 1 } }
+      - { device: test-ssr-motion, command: inactive }
+      - { device: test-ssr-contact, command: close }
+      - { device: test-ssr-offline, command: open }
+      - { device: test-ssr-offline, command: setHealthStatus, args: [offline] }
+    actions:
+      - { button: btnReset }
+    wait_seconds: 2
+    assert:
+      - { device: test-ssr-offline, attribute: contact, value: closed }
+    assert_logs:
+      - { pattern: "reset 1 sensor\\(s\\)", level: info }
+    assert_events:
+      - { attribute: contact, value: closed, source: test-ssr-offline, pattern: "reset to closed by" }
+      - { attribute: lastMessage, source: test-ssr-notify }
+
+runtime_budget_seconds: 60

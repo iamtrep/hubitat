@@ -17,6 +17,7 @@ Virtual drivers, sandbox introspection tools, and companion test apps that exerc
 - `VirtualCO2Sensor.groovy` — virtual CarbonDioxideMeasurement device reporting ppm, for the Indoor Air Quality Controller behavior test
 - `VirtualSwitchPhysical.groovy` — virtual switch with physicalOn/physicalOff commands that send physical events
 - `VirtualHeaterPlug.groovy` — virtual switch with a simulated power meter that can be stuck or unplugged, for the Switched Heater Thermostat behavior test
+- `VirtualHealthSensor.groovy` — virtual motion and contact sensor with a settable `healthStatus`, for the Stuck Sensor Reset behavior test
 
 ## Diagnostic / introspection drivers
 
