@@ -30,14 +30,16 @@
  * v0.0.10 rateFromVolume drops to 0 when the device reports zero flow
  * v0.0.11 Re-arm poll chains on hub start; digital-command marker expires on its own
  * v0.0.12 Trace-log unhandled ZDO and ZHA global frames
+ * v0.0.14 Zone status notifications in the short form no longer throw
  *
  */
 
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.util.concurrent.ConcurrentHashMap
+import hubitat.zigbee.clusters.iaszone.ZoneStatus
 
-@Field static final String CODE_VERSION = "0.0.13"
+@Field static final String CODE_VERSION = "0.0.14"
 
 // device.id -> deadline (ms) until which a valve report counts as digital. Static rather than state:
 // a driver's state is written back at method exit, so parse() on another thread would not see it,
@@ -270,15 +272,17 @@ void parse(String description) {
 
 
 private void parseIASMessage(String description) {
-    Map zs = zigbee.parseZoneStatusChange(description)
+    // parseZoneStatus reads the short form 'zone status 0x0031' too; parseZoneStatusChange throws on it
+    ZoneStatus zs = zigbee.parseZoneStatus(description)
     logRx("parseIASMessage zs = $zs")
+    if (zs == null) return
     // Firmware variants signal a leak on either alarm bit (some report 0x31 / bit 0, others 0x32 / bit 1), so react to both.
-    if (zs.alarm1Set || zs.alarm2Set) {
+    if (zs.isAlarm1Set() || zs.isAlarm2Set()) {
         sendEvent(name: "water", value: 'wet', descriptionText: "Flow sensor leak detection: detected")
     } else {
         sendEvent(name: "water", value: 'dry', descriptionText: "Flow sensor leak detection: clear")
     }
-    if (zs.batterySet) {
+    if (zs.isBatterySet()) {
         sendEvent(name: "batteryAlarm", value : 'detected', descriptionText: "Battery alarm state: detected")
     } else {
         sendEvent(name: "batteryAlarm", value : 'clear', descriptionText: "Battery alarm state: clear")

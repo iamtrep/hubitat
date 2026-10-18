@@ -15,7 +15,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.30"
+@Field static final String CODE_VERSION = "0.0.31"
 // device.id -> deadline (ms) until which a state report counts as digital. Static rather than
 // state: a driver's state is written back whole at method exit, so a command and a parse() on
 // another thread can undo each other's flag, and a deadline expires on its own when the device
@@ -208,7 +208,7 @@ void configure() {
     List<String> cmds = []
 
     // Configure device attribute self-reporting
-    cmds += zigbee.configureReporting(0x0002, 0x0000, DataType.INT16, 0, 43200)    // device temperature
+    // Device temperature (0x0002) is not configured: the device answers UNREPORTABLE_ATTRIBUTE (0x8C); refreshEnergyReport() reads it
     cmds += zigbee.configureReporting(0x0006, 0x0000, DataType.BOOLEAN, 0, 43200)  // switch state
     // The device answers INVALID_FIELD (0x85) to this config without a reportable change
     cmds += zigbee.configureReporting(0x0702, 0x0000, DataType.UINT48, 60, 1800, 10)  // energy (Wh)
@@ -261,6 +261,7 @@ void refresh() {
 
 void refreshEnergyReport() {
     List<String> cmds = []
+    cmds += zigbee.readAttribute(0x0002, 0x0000) // device temperature
     cmds += zigbee.readAttribute(0x0702, 0x0000) // energy (Wh)
     cmds += zigbee.readAttribute(0xFF01, 0x0090, [mfgCode: "0x119C"]) // on-time (s)
     sendZigbeeCommands(cmds)

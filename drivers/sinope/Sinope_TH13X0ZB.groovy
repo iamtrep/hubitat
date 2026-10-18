@@ -25,7 +25,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.23"
+@Field static final String CODE_VERSION = "0.0.24"
 
 @Field static final List<String> SUPPORTED_THERMOSTAT_MODES     = ['"off"', '"heat"']
 @Field static final List<String> SUPPORTED_THERMOSTAT_FAN_MODES = ['"auto"']
@@ -538,6 +538,11 @@ private void parseAttributeReport(Map descMap) {
                     break
 
                 case 0x0012:
+                    int raw0012 = hexToSignedInt16(descMap.value)
+                    if (raw0012 == 0x7FFD || raw0012 == 0x7FFF || raw0012 == -32768) {
+                        logWarn("Invalid heating setpoint: ${descMap.value}")
+                        break
+                    }
                     map.name = 'heatingSetpoint'
                     map.value = getTemperature(descMap.value)
                     map.unit = getTemperatureScale()
