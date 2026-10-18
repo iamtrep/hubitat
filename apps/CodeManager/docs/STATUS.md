@@ -31,7 +31,7 @@ Mode 2 API test (`tests/test-code-manager-api.sh`, `RUN_SLOW_TESTS=1` for the sw
 - The check that a parent could create a type runs when the user asks to remove it, not as a scan of every source.
 - Measured hub cost in the README.
 
-`lastModified` is confirmed to move on every successful `ajax/update` and `saveOrUpdateJson` save of an app, driver or library, and never on a rejected one. Still to probe: bundle import and the editor Save button.
+`lastModified` is confirmed to move on every successful `ajax/update` and `saveOrUpdateJson` save of an app, driver or library, and never on a rejected one. Bundle re-import moves every member's `lastModified`, and the editor's Save uses `saveOrUpdateJson`, so every write path is covered.
 
 ## Later: 0.3, apply for `url` and `local` origins
 
