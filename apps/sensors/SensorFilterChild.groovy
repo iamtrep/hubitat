@@ -22,6 +22,7 @@ definition(
     iconUrl: "",
     iconX2Url: "",
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/sensors/SensorFilterChild.groovy",
+    documentationLink: "https://github.com/iamtrep/hubitat/tree/main/apps/sensors",
     parent: "iamtrep:Sensor Filters"
 )
 

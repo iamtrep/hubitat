@@ -21,6 +21,7 @@ definition(
     menu: "Apps", // new in platform 2.5.0
     category: "Utility",
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/utilities/DeviceInUseEnumerator.groovy",
+    documentationLink: "https://github.com/iamtrep/hubitat/tree/main/apps/utilities",
     iconUrl: "",
     iconX2Url: ""
 )

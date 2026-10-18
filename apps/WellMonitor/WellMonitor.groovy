@@ -49,6 +49,7 @@ definition(
     iconUrl: "",
     iconX2Url: "",
     importUrl: IMPORT_URL_APP,
+    documentationLink: "https://github.com/iamtrep/hubitat/tree/main/apps/WellMonitor",
     oauth: true,
     singleThreaded: true
 )

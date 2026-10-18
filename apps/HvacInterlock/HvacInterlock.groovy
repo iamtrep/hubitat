@@ -22,6 +22,7 @@ definition(
     category: "Convenience",
     singleInstance: true,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/apps/HvacInterlock/HvacInterlock.groovy",
+    documentationLink: "https://github.com/iamtrep/hubitat/tree/main/apps/HvacInterlock",
     iconUrl: "", iconX2Url: ""
 )
 

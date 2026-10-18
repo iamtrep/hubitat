@@ -321,6 +321,7 @@ definition(
     category: "Utility",
     singleInstance: true,
     importUrl: IMPORT_URL_APP,
+    documentationLink: "https://github.com/iamtrep/hubitat/tree/main/apps/HubDiagnostics",
     oauth: true,
     iconUrl: "",
     iconX2Url: "",

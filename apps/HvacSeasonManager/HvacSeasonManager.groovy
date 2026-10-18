@@ -25,6 +25,7 @@ definition(
     category: "Convenience",
     singleThreaded: true,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/apps/HvacSeasonManager/HvacSeasonManager.groovy",
+    documentationLink: "https://github.com/iamtrep/hubitat/tree/main/apps/HvacSeasonManager",
     iconUrl: "", iconX2Url: ""
 )
 

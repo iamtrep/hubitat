@@ -25,6 +25,7 @@ definition(
     category: "Convenience",
     singleThreaded: true,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/apps/SwitchedHeaterThermostat/SwitchedHeaterThermostat.groovy",
+    documentationLink: "https://github.com/iamtrep/hubitat/tree/main/apps/SwitchedHeaterThermostat",
     iconUrl: "", iconX2Url: ""
 )
 

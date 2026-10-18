@@ -38,6 +38,7 @@ definition(
     singleInstance: true,
     singleThreaded: true,   // bridges call processLogEntry concurrently; each call rewrites state.filters
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/apps/LogMonitor/LogMonitor.groovy",
+    documentationLink: "https://github.com/iamtrep/hubitat/tree/main/apps/LogMonitor",
     iconUrl: "",
     iconX2Url: ""
 )

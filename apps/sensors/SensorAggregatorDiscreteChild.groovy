@@ -17,7 +17,8 @@ definition(
     singleThreaded: true,
     iconUrl: "",
     iconX2Url: "",
-    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/sensors/SensorAggregatorDiscreteChild.groovy"
+    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/sensors/SensorAggregatorDiscreteChild.groovy",
+    documentationLink: "https://github.com/iamtrep/hubitat/tree/main/apps/sensors"
 )
 
 import groovy.transform.Field

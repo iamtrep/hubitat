@@ -27,6 +27,7 @@ definition(
     installOnOpen: true,
     oauth: true,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/apps/ThermostatSchedulerPlus/ThermostatSchedulerPlus.groovy",
+    documentationLink: "https://github.com/iamtrep/hubitat/tree/main/apps/ThermostatSchedulerPlus",
     iconUrl: "", iconX2Url: ""
 )
 

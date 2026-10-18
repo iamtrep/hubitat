@@ -15,6 +15,7 @@ definition(
     menu: "Automations", // new in platform 2.5.0
     category: "Convenience",
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/sensors/SensorAggregator.groovy",
+    documentationLink: "https://github.com/iamtrep/hubitat/tree/main/apps/sensors",
     iconUrl: "",
     iconX2Url: ""
 )

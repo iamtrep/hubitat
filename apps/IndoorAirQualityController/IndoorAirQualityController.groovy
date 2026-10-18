@@ -25,6 +25,7 @@ definition(
     category: "Convenience",
     singleThreaded: true,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/apps/IndoorAirQualityController/IndoorAirQualityController.groovy",
+    documentationLink: "https://github.com/iamtrep/hubitat/tree/main/apps/IndoorAirQualityController",
     iconUrl: "", iconX2Url: ""
 )
 

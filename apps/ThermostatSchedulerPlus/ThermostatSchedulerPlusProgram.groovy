@@ -26,6 +26,7 @@ definition(
     parent: "iamtrep:Thermostat Scheduler+",
     singleThreaded: true,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/apps/ThermostatSchedulerPlus/ThermostatSchedulerPlusProgram.groovy",
+    documentationLink: "https://github.com/iamtrep/hubitat/tree/main/apps/ThermostatSchedulerPlus",
     iconUrl: "", iconX2Url: ""
 )
 

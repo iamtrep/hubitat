@@ -15,6 +15,7 @@ definition(
     menu: "Automations", // new in platform 2.5.0
     category: "Convenience",
     importUrl: "",
+    documentationLink: "https://github.com/iamtrep/hubitat/tree/main/apps/LocationEventMapper",
     iconUrl: "",
     iconX2Url: ""
 )

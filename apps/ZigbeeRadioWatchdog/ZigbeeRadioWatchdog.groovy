@@ -56,6 +56,7 @@ definition(
     iconUrl: "",
     iconX2Url: "",
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/ZigbeeRadioWatchdog/ZigbeeRadioWatchdog.groovy",
+    documentationLink: "https://github.com/iamtrep/hubitat/tree/main/apps/ZigbeeRadioWatchdog",
     singleInstance: true,
     singleThreaded: true
 )
