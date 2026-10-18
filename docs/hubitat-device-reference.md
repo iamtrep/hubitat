@@ -163,6 +163,18 @@ switch/dimmer = `0x0002` *(community: [claudegel/sinope-zha](https://github.com/
 
 Practical note: G2-specific backlight logic is dead code on TH1300/TH1320/TH1400 (no `-G2` model string exists there) and needed on TH1123/TH1124 *(inferred: no `-G2` model exists for those lines in the references above)*.
 
+**The G2 backlight values are 0 on demand, 1 always on, 2 adaptive.** sacua's driver used 2 for off and 0 for adaptive until its fix of 2026-09-20; claudegel's `Backlight` enum and the fixed sacua map agree, and Z2M's `backlight_auto_dim` names the same values `on_demand`, `off` (no dimming) and `sensing` *(community: [sacua/SinopeDriverHubitat `2589409`](https://github.com/sacua/SinopeDriverHubitat/commit/2589409ecd5c78140fb2196239ff03529cd1ff83), [claudegel/sinope-zha](https://github.com/claudegel/sinope-zha) at `7902729`, [zigbee-herdsman-converters `sinope.ts`](https://github.com/Koenkk/zigbee-herdsman-converters/blob/72398c3/src/devices/sinope.ts))*.
+
+**Read the electrical scale from the device; it differs by model.** Electrical Measurement `0x0600`–`0x0605` (voltage, current and power multiplier and divisor) read 1/1 for voltage on an RM3250ZB and an RM3500ZB, and 1/10 on a TH1123ZB-G2 and a TH1124ZB; current is 1/1000 (mA) and power 1/1 (W) on all four *(probed 2.5.2.139, C-7: RM3250ZB `119C-000C-01030202`, RM3500ZB `119C-002F-00020300`, TH1123ZB-G2 `119C-0034-00010400`, TH1124ZB application `40`)*. A fixed divisor of 10 shows these load controllers at a tenth of their voltage *(inferred: from the divisor read)*.
+
+**What each device accepts in Configure Reporting** (the devices above and one SW2500ZB):
+
+- Device Temperature `0x0002`/`0x0000`: an RM3250ZB and an SW2500ZB answer `0x8C` (UNREPORTABLE_ATTRIBUTE), so the value changes only when read. An RM3500ZB accepts it, and with minimum interval 0 and no reportable change it then reported every 0.5 s, the same value each time; minimum 60 s with change 1 stopped it. *(probed 2.5.2.139, C-7, `/zigbeeLogsocket`)*
+- Thermostat UI `0x0204` (display mode, keypad lockout): a TH1124ZB answers `0x8C`; a TH1123ZB-G2 accepts both. *(probed 2.5.2.139, C-7, `/zigbeeLogsocket`)*
+- RMS voltage `0x0B04`/`0x0505`: a TH1123ZB-G2 answers `0x8D` (INVALID_DATA_TYPE) to type `0x29` (int16); the attribute is uint16 (`0x21`). *(probed 2.5.2.139, C-7, `/zigbeeLogsocket`)*
+- A TH1123ZB-G2 with seven entries configured answered `0x89` (INSUFFICIENT_SPACE) to an eighth *(probed 2.5.2.139, C-7, `/zigbeeLogsocket`)*. Z2M notes the G2 holds at most 8 reporting entries *(community: [zigbee-herdsman-converters `sinope.ts`](https://github.com/Koenkk/zigbee-herdsman-converters/blob/72398c3/src/devices/sinope.ts), TH1123ZB-G2 `configure`)*. That device also sent active-power reports that none of the drivers it ran configure, so entries set earlier stay on the device and count against the limit *(inferred: from the unsolicited `0x050B` reports)*.
+- A TH1123ZB-G2 answers `0x86` (UNSUPPORTED_ATTRIBUTE) to a read of ConnectedLoad `0xFF01`/`0x0119`; a TH1124ZB returns it. *(probed 2.5.2.139, C-7, `/zigbeeLogsocket`)*
+
 ## Stelpro Allia (HT402)
 
 The Allia (model `HT402`, manufacturer string `Stello`) keeps its outdoor temperature, power and
