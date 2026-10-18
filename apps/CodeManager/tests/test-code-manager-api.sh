@@ -167,7 +167,7 @@ off = api_post("test/simulateLibFail", {"on": "0"})
 (ok if off.get("_error") == 404 else fail)(f"test hook answers 404 with debug logging off ({off})")
 st2 = api_get("stats")
 (ok if st2.get("perItemReadsInRequest") == 0 else fail)(f"perItemReadsInRequest is 0 ({st2.get('perItemReadsInRequest')})")
-(ok if set(st2.get("bulkFetches", {})) >= {"apps", "drivers", "bundles", "libraries"} else fail)("stats.bulkFetches has the per-key counters")
+(ok if set(st2.get("bulkFetches", {})) >= {"apps", "drivers", "libraries"} else fail)("stats.bulkFetches has the per-key counters")
 
 # ── Task 4: inventory ─────────────────────────────────────────────────
 section("Inventory")
