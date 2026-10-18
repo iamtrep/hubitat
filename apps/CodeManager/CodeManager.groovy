@@ -16,6 +16,8 @@ import groovy.json.JsonSlurper
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 @Field static final String CODE_VERSION = "0.1.1"
@@ -28,6 +30,8 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final String BUNDLE_LIST_PATH       = "/bundle/list/json"
 @Field static final String FILE_LIST_PATH         = "/hub/fileManager/json"
 @Field static final String HUB_DATA_PATH          = "/hub2/hubData"
+@Field static final String APPS_LIST_PATH         = "/hub2/appsList"
+@Field static final String DEVICES_LIST_PATH      = "/hub2/devicesList"
 @Field static final String UI_FILE        = "code_manager_ui.html"
 @Field static final String SWEEP_FILE     = "cm_sweep.json"
 @Field static final String HPM_IMPORT_FILE = "cm_hpm_import.json"
@@ -42,6 +46,19 @@ import java.util.concurrent.atomic.AtomicInteger
 // Live jobs: jobId -> ConcurrentHashMap [kind, total, startedAt, processed(AtomicInteger), inFlight(AtomicInteger), pending(ConcurrentLinkedQueue), status, result, error]
 @Field static final ConcurrentHashMap<String, ConcurrentHashMap> JOBS = new ConcurrentHashMap<>()
 @Field static final ConcurrentHashMap<String, Long> API_TIMINGS = new ConcurrentHashMap<>()
+// Shared bulk reads (DESIGN 3.2, 5.1): one read per key in flight, the result shared for BULK_TTL_MS; the slow library list is read at a time.
+@Field static final long BULK_TTL_MS   = 30_000L
+@Field static final long BULK_WAIT_MS  = 20_000L
+@Field static final long LIB_TTL_MS    = 600_000L
+@Field static final long LIB_RETRY_MS  = 60_000L          // minimum gap between automatic library refresh attempts after a failed one
+@Field static final int  LIB_TIMEOUT_SEC = 30
+@Field static final ConcurrentHashMap<String, Map> BULK_CACHE = new ConcurrentHashMap<>()          // key -> [data, at]
+@Field static final ConcurrentHashMap<String, Semaphore> BULK_GATES = new ConcurrentHashMap<>()    // key -> single permit
+@Field static final ConcurrentHashMap<String, AtomicInteger> BULK_FETCHES = new ConcurrentHashMap<>()
+@Field static final AtomicInteger PER_ITEM_READS_IN_REQUEST = new AtomicInteger(0)
+@Field static volatile Map LIB_SNAPSHOT = [list: null, asOf: null, error: null, attemptedAt: 0L]   // last good list is kept on failure
+@Field static volatile String LIB_JOB_ID = null
+@Field static volatile boolean simulateLibFail = false
 @Field static volatile String uiVersionCache = null
 @Field static volatile boolean githubVersionRefreshPending = false
 
@@ -73,6 +90,8 @@ mappings {
     path('/api/version/check')     { action: [GET: 'apiVersionCheck'] }
     path('/api/settings')          { action: [GET: 'apiGetSettings', POST: 'apiUpdateSettings'] }
     // ===== App-owned mutations (0.1: no hub-code writes) =====
+    path('/api/libraries/refresh') { action: [POST: 'apiLibrariesRefresh'] }
+    path('/api/test/simulateLibFail') { action: [POST: 'apiSimulateLibFail'] }   // answers 404 unless debug logging is on
     path('/api/sweep/start')       { action: [POST: 'apiSweepStart'] }         // Task 6
     path('/api/hpm/import')        { action: [POST: 'apiHpmImport'] }          // Task 5
     path('/api/ui/sync')           { action: [POST: 'apiSyncUI'] }
@@ -324,9 +343,66 @@ private Object hubRequestInternal(String path, String name, String type, int tim
 
 // ===== Inventory (DESIGN.md §3) =====
 
-List fetchUserAppTypes() {
+List fetchUserAppTypes()    { return (List) bulkPart("apps") ?: [] }
+List fetchUserDriverTypes() { return (List) bulkPart("drivers") ?: [] }
+List fetchUserLibraries()   { return (List) libraries().list ?: [] }
+List fetchBundles()         { return (List) bulkPart("bundles") ?: [] }
+
+// ===== Shared bulk reads =====
+
+private Semaphore gateFor(String key) {
+    Semaphore g = BULK_GATES[key]
+    if (g == null) { BULK_GATES.putIfAbsent(key, new Semaphore(1)); g = BULK_GATES[key] }
+    return g
+}
+private void countFetch(String key) {
+    AtomicInteger c = BULK_FETCHES[key]
+    if (c == null) { BULK_FETCHES.putIfAbsent(key, new AtomicInteger(0)); c = BULK_FETCHES[key] }
+    c.incrementAndGet()
+}
+// Single-flight read of one key. A caller that finds the permit taken waits up to BULK_WAIT_MS, then takes the cache entry.
+// The fetch closure returns null on failure; the last good data is then kept and returned, and the failure is not cached.
+private Object sharedRead(String key, long ttlMs, Closure fetch) {
+    Map slot = BULK_CACHE[key]
+    if (slot != null && (now() - (slot.at as long)) < ttlMs) return slot.data
+    Semaphore gate = gateFor(key)
+    if (!gate.tryAcquire(BULK_WAIT_MS, TimeUnit.MILLISECONDS)) return BULK_CACHE[key]?.data
+    try {
+        Map again = BULK_CACHE[key]
+        if (again != null && (now() - (again.at as long)) < ttlMs) return again.data
+        countFetch(key)
+        Object data = fetch()
+        if (data != null) { BULK_CACHE[key] = [data: data, at: now()]; return data }
+        return BULK_CACHE[key]?.data
+    } finally { gate.release() }
+}
+private Object bulkPart(String key) {
+    return sharedRead(key, BULK_TTL_MS) {
+        switch (key) {
+            case "apps":    return readAppTypes()
+            case "drivers": return readDriverTypes()
+            case "bundles": return readBundles()
+            case "appsTree": return readAppsTree()
+            case "devices": return readDevices()
+            case "files":   return readFiles()
+        }
+        return null
+    }
+}
+// asOf is the age of the oldest of the six entries, so it never claims fresher data than any part holds.
+Map bulk() {
+    Map out = [:]
+    ["apps", "drivers", "bundles", "appsTree", "devices", "files"].each { String k -> out[k] = (List) bulkPart(k) ?: [] }
+    long oldest = now()
+    ["apps", "drivers", "bundles", "appsTree", "devices", "files"].each { String k -> Map sl = BULK_CACHE[k]; if (sl != null && (sl.at as long) < oldest) oldest = sl.at as long }
+    out.asOf = oldest
+    return out
+}
+private void bulkInvalidate(String key) { Map sl = BULK_CACHE[key]; if (sl != null) BULK_CACHE[key] = [data: sl.data, at: 0L] }
+
+private List readAppTypes() {
     Object resp = hubRequest(USER_APP_TYPES_PATH, "user app types", "json", 15)
-    if (!(resp instanceof List)) return []
+    if (!(resp instanceof List)) return null
     return (resp as List).collect { Map a ->
         List used = (a.usedBy as List) ?: []
         // ids only (I10): the SPA's usedBy consumer (dlistlink) reads .id; names were dead weight in every payload.
@@ -334,18 +410,62 @@ List fetchUserAppTypes() {
          usedByCount: used.size(), usedBy: used.collect { Map u -> [id: u.id] }]
     }
 }
-List fetchUserDriverTypes() {
+private List readDriverTypes() {
     Object resp = hubRequest(USER_DEVICE_TYPES_PATH, "user driver types", "json", 15)
-    if (!(resp instanceof List)) return []
+    if (!(resp instanceof List)) return null
     return (resp as List).collect { Map d ->
         List used = (d.usedBy as List) ?: []
         [id: d.id.toString(), name: d.name, namespace: d.namespace, lastModified: d.lastModified,
          usedByCount: used.size(), usedBy: used.collect { Map u -> [id: u.id] }]
     }
 }
-List fetchUserLibraries() {
-    Object resp = hubRequest(USER_LIBRARIES_PATH, "user libraries", "json", 15)
-    if (!(resp instanceof List)) return []
+private List readBundles() {
+    Object resp = hubRequest(BUNDLE_LIST_PATH, "bundles", "json", 15)
+    if (!(resp instanceof List)) return null
+    return (resp as List).collect { Map b ->
+        [id: b.id.toString(), name: b.name, namespace: b.namespace, isPrivate: b.private == true, sourceUrl: b.sourceUrl,
+         appTypeIds: (b.appTypeIds ?: []).collect { it.toString() }, deviceTypeIds: (b.deviceTypeIds ?: []).collect { it.toString() },
+         libraryIds: (b.libraryIds ?: []).collect { it.toString() }]
+    }
+}
+// Parent/child app instance tree, as the hub returns it (nodes carry data, children).
+private List readAppsTree() {
+    Map w = hubMapRequest(APPS_LIST_PATH, "apps list", 20)
+    return (w.ok && w.data.apps instanceof List) ? (List) w.data.apps : null
+}
+// The device list is a tree; flatten it, keeping the ids that tie a device to its type and parent. Zigbee model strings can carry NUL padding.
+private List readDevices() {
+    Map w = hubMapRequest(DEVICES_LIST_PATH, "devices list", 20)
+    if (!w.ok || !(w.data.devices instanceof List)) return null
+    List out = []
+    flattenDevices((List) w.data.devices, null, out)
+    return out
+}
+private void flattenDevices(List nodes, Object parentId, List out) {
+    for (Object n in nodes) {
+        Map node = (Map) n
+        Map d = (Map) (node.data ?: [:])
+        out << [id: d.id, deviceTypeId: d.deviceTypeId, parentDeviceId: parentId, parentAppId: d.parentAppId, model: stripNul(d.model as String)]
+        if (node.children instanceof List) flattenDevices((List) node.children, d.id, out)
+    }
+}
+@CompileStatic
+static String stripNul(String s) { return s == null ? null : s.replace("\u0000", "").trim() }
+private List readFiles() {
+    Map wrap = hubMapRequest(FILE_LIST_PATH, "file list", 15)
+    return wrap.ok ? ((wrap.data.files ?: []) as List) : null
+}
+
+// ===== Library list: read at a time, never in a request handler (the list costs 10-20 s on a hub with many libraries) =====
+
+Map libraries() {
+    Map snap = LIB_SNAPSHOT
+    return [list: snap.list, asOf: snap.asOf, error: snap.error]
+}
+private List readLibrariesFromHub() {
+    if (simulateLibFail) return null
+    Object resp = hubRequestInternal(USER_LIBRARIES_PATH, "user libraries", "json", LIB_TIMEOUT_SEC, false)
+    if (!(resp instanceof List)) return null
     return (resp as List).collect { Map l ->
         List usedDrv = ((l.usedByDeviceTypes as String) ?: "").split(',\\s*').findAll { it }
         List usedApp = ((l.usedByAppTypes as String) ?: "").split(',\\s*').findAll { it }
@@ -353,14 +473,62 @@ List fetchUserLibraries() {
          isPrivate: l.private == true, usedByCount: usedDrv.size() + usedApp.size(), usedBy: (usedApp + usedDrv).collect { [name: it] }]
     }
 }
-List fetchBundles() {
-    Object resp = hubRequest(BUNDLE_LIST_PATH, "bundles", "json", 15)
-    if (!(resp instanceof List)) return []
-    return (resp as List).collect { Map b ->
-        [id: b.id.toString(), name: b.name, namespace: b.namespace, isPrivate: b.private == true, sourceUrl: b.sourceUrl,
-         appTypeIds: (b.appTypeIds ?: []).collect { it.toString() }, deviceTypeIds: (b.deviceTypeIds ?: []).collect { it.toString() },
-         libraryIds: (b.libraryIds ?: []).collect { it.toString() }]
-    }
+// One read, single-flight. On failure the last good list stays and only the error is recorded. Returns the error text or null.
+private String readLibrariesNow() {
+    Semaphore gate = gateFor("libraries")
+    if (!gate.tryAcquire(BULK_WAIT_MS, TimeUnit.MILLISECONDS)) return "library read already in progress"
+    try {
+        Map snap = LIB_SNAPSHOT
+        if (snap.asOf != null && (now() - (snap.asOf as long)) < BULK_TTL_MS && snap.error == null && !simulateLibFail) return null
+        countFetch("libraries")
+        long t0 = now()
+        List list = readLibrariesFromHub()
+        if (list == null) {
+            LIB_SNAPSHOT = [list: snap.list, asOf: snap.asOf, error: "library list could not be read", attemptedAt: now()]
+            return "library list could not be read"
+        }
+        LIB_SNAPSHOT = [list: list, asOf: now(), error: null, attemptedAt: now()]
+        logDebug "libraries read in ${now() - t0}ms (${list.size()})"
+        return null
+    } finally { gate.release() }
+}
+// Starts the background read (or joins the one running) and returns its job id.
+String startLibraryRefresh() {
+    String running = LIB_JOB_ID
+    if (running && JOBS[running]?.status == 'running') return running
+    String jobId = newJob('libraries', 1)
+    LIB_JOB_ID = jobId
+    runIn(1, 'libRefreshRun', [data: [jobId: jobId], overwrite: false])
+    return jobId
+}
+void refreshLibraries() { startLibraryRefresh() }
+void libRefreshRun(Map data) {
+    String jobId = data.jobId as String
+    try {
+        String err = readLibrariesNow()
+        Map snap = LIB_SNAPSHOT
+        jobDone(jobId, [asOf: snap.asOf, count: ((List) snap.list)?.size(), error: err])
+    } catch (Exception e) {
+        jobFail(jobId, "library read failed: ${e.message}")
+    } finally { if (LIB_JOB_ID == jobId) LIB_JOB_ID = null }
+}
+Map apiLibrariesRefresh() { return jsonResponse([jobId: startLibraryRefresh()]) }
+// Test hook: makes the next library reads fail. Registered always (mappings are static), answers only while debug logging is on.
+Map apiSimulateLibFail() {
+    if (settings.debugEnable != true) return render(status: 404, contentType: 'application/json', data: JsonOutput.toJson([error: "not found"]))
+    simulateLibFail = (params.on == "1")
+    return jsonResponse([simulateLibFail: simulateLibFail])
+}
+private void scheduleLibraryRefreshIfStale() {
+    Map snap = LIB_SNAPSHOT
+    boolean stale = snap.asOf == null || (now() - (snap.asOf as long)) > LIB_TTL_MS
+    if (stale && (now() - (snap.attemptedAt as long)) > LIB_RETRY_MS) startLibraryRefresh()
+}
+// Oldest timestamp among the cached bulk entries the inventory reads (now() when none is cached).
+long bulkAsOf() {
+    long oldest = now()
+    ["apps", "drivers", "bundles", "files"].each { String k -> Map sl = BULK_CACHE[k]; if (sl != null && (sl.at as long) < oldest) oldest = sl.at as long }
+    return oldest
 }
 // Per-item: importUrl + source + private flag. One call per item, only for new/changed items.
 Map fetchItemDetail(String kind, String id) {
@@ -400,12 +568,10 @@ static String ckey(String kind, Object id) { return kind + ":" + id }
 String pkgFileName(String key) { return PKG_FILE_PREFIX + digest16(key) + ".json" }
 
 // null (not []) when the listing itself failed, so callers can tell "no files" from "don't know".
-List listHubFiles() {
-    Map wrap = hubMapRequest(FILE_LIST_PATH, "file list", 15)
-    return wrap.ok ? ((wrap.data.files ?: []) as List) : null
-}
+List listHubFiles() { return (List) bulkPart("files") }
 List listCmFiles() { return (listHubFiles() ?: []).findAll { Map f -> (f.name as String)?.startsWith("cm_") } }
 void writeCmFile(String name, String text) {
+    bulkInvalidate("files")
     try { uploadHubFile(name, text.getBytes("UTF-8")) } catch (Exception e) { logError "write ${name}: ${e.message}" }
 }
 String readCmFile(String name) {
@@ -437,6 +603,8 @@ static Map degenerateManifest(String origin, String name, List<Map> comps, Strin
 // One inventory pass: bulk lists, per-item detail for new/changed items, registry + documents update.
 Map runInventoryPass() {
     long t0 = now()
+    // Libraries come from the last good library read; only the very first pass (nothing read yet) reads them inline.
+    if (libraries().list == null) readLibrariesNow()
     List apps = fetchUserAppTypes(), drvs = fetchUserDriverTypes(), libs = fetchUserLibraries(), bundles = fetchBundles()
     // One File Manager listing serves both the file-component existence check below and the stale
     // document prune at the end of the pass; null means the listing failed and neither should act.
@@ -486,7 +654,7 @@ Map runInventoryPass() {
             Map comp = [k: kind, id: t.id, ns: t.namespace, nm: t.name, u: t.usedByCount, lm: lm, bm: memberOf[ck],
                         loc: old?.loc, ih: hashPrefix(old?.ih as String), iv: old?.iv, ivs: old?.ivs, pv: old?.pv ?: (t.isPrivate == true), ah: hashPrefix(old?.ah as String)]
             if (old == null || (old.lm as Long ?: 0L) != lm || old.ih == null) {
-                Map d = fetchItemDetail(kind, t.id as String); fetched++
+                PER_ITEM_READS_IN_REQUEST.incrementAndGet(); Map d = fetchItemDetail(kind, t.id as String); fetched++
                 if (d != null) {
                     Map pv = parseVersionLiteral(d.source as String)
                     comp.loc = d.importUrl; comp.ih = hashPrefix(sourceHash(d.source as String)); comp.iv = (kind == 'library' && t.version) ? t.version : pv.ver; comp.ivs = pv.src; comp.pv = d.isPrivate
@@ -805,13 +973,14 @@ Map buildInventoryPayload() {
     Map summary = [packages: packages.size(), components: comps.size(),
                    byOrigin: comps.countBy { it.origin }, byStatus: comps.countBy { it.status }, byKind: comps.countBy { it.kind },
                    unused: comps.count { (it.usedByCount ?: 0) == 0 && it.kind != 'bundle' }]
-    return [generatedAt: now(), appVersion: CODE_VERSION, hub: hub, packages: packages, components: comps, summary: summary,
+    return [generatedAt: now(), asOf: bulkAsOf(), libraries: [asOf: libraries().asOf, error: libraries().error], appVersion: CODE_VERSION, hub: hub, packages: packages, components: comps, summary: summary,
             hpm: (state.hpm ?: [mode: 'absent']), sweep: (state.sweep ?: [:]), lastInventory: (state.lastInventory ?: [:])]
 }
 Map apiInventory() {
     return timed("inventory") {
         boolean force = params.force == "1"
         if (force || !state.pkgs || now() - ((state.lastInventory?.at ?: 0) as long) > 3600_000L) runInventoryPass()
+        scheduleLibraryRefreshIfStale()
         buildInventoryPayload()
     }
 }
@@ -1099,7 +1268,12 @@ private Map timed(String name, Closure<Map> body) {
     logDebug "api ${name} completed in ${elapsed}ms"
     return jsonResponse(data)
 }
-Map apiStats() { return jsonResponse([version: CODE_VERSION, timingsMs: new HashMap(API_TIMINGS), jobs: JOBS.keySet().toList()]) }
+Map apiStats() {
+    Map fetches = [:]
+    BULK_FETCHES.each { String k, AtomicInteger v -> fetches[k] = v.get() }
+    return jsonResponse([version: CODE_VERSION, timingsMs: new HashMap(API_TIMINGS), jobs: JOBS.keySet().toList(),
+                         bulkFetches: fetches, perItemReadsInRequest: PER_ITEM_READS_IN_REQUEST.get()])
+}
 
 // ===== Jobs (§10): start/status with terminal status 'done' =====
 String newJob(String kind, int total) {

@@ -120,6 +120,55 @@ try:
     urllib.request.urlopen(urllib.request.Request(f"{api_base}/api/settings", headers={"Authorization": "Bearer bad"}), timeout=15); fail("bad Bearer token accepted")
 except urllib.error.HTTPError as e: (ok if e.code in (401, 403, 500) else fail)(f"bad Bearer token rejected ({e.code})")
 except Exception as e: warn(f"bad Bearer token check: {e}")
+# ── Task 2: shared bulk reads ─────────────────────────────────────────
+section("Bulk reads")
+import threading
+def bulk_fetches(): return (api_get("stats").get("bulkFetches") or {})
+b0 = bulk_fetches()
+res = [None, None]
+def _inv(i): res[i] = api_get("inventory", timeout=300)
+ths = [threading.Thread(target=_inv, args=(i,)) for i in (0, 1)]
+[t.start() for t in ths]; [t.join() for t in ths]
+b1 = bulk_fetches()
+delta = b1.get("apps", 0) - b0.get("apps", 0)
+(ok if delta <= 1 else fail)(f"two concurrent inventory calls cost at most one apps read (delta {delta})")
+inv2 = res[0] if "_error" not in (res[0] or {"_error": 1}) else res[1]
+if not inv2 or "_error" in inv2: fail(f"inventory under concurrency: {inv2}")
+else:
+    (ok if isinstance(inv2.get("asOf"), int) else fail)("inventory has asOf (int ms)")
+    libs_meta = inv2.get("libraries")
+    (ok if isinstance(libs_meta, dict) and (libs_meta.get("asOf") is None or isinstance(libs_meta.get("asOf"), int)) else fail)("inventory has libraries.asOf (int or null)")
+lib_asof0 = (api_get("inventory").get("libraries") or {}).get("asOf")
+r = api_post("libraries/refresh")
+(ok if r.get("jobId") else fail)(f"POST libraries/refresh returns a jobId ({r})")
+jr = poll_job(r.get("jobId", ""), timeout_s=180)
+(ok if jr.get("status") == "done" else fail)(f"library refresh job ends done ({jr.get('status')})")
+lib_asof1 = (api_get("inventory").get("libraries") or {}).get("asOf")
+(ok if lib_asof1 is not None and (lib_asof0 is None or lib_asof1 > lib_asof0) else fail)(f"libraries.asOf increased ({lib_asof0} -> {lib_asof1})")
+# failure path: the last good list stays. The hook answers only while debug logging is on.
+dbg_before = api_get("settings").get("debugEnable") is True
+def set_debug(on): api_post("settings", {"data": json.dumps({"debugEnable": on})})
+try:
+    set_debug(True)
+    before = {c["id"] for c in api_get("inventory").get("components", []) if c.get("kind") == "library"}
+    sim = api_post("test/simulateLibFail", {"on": "1"})
+    (ok if sim.get("simulateLibFail") is True else fail)(f"test/simulateLibFail on ({sim})")
+    r2 = api_post("libraries/refresh")
+    j2 = poll_job(r2.get("jobId", ""), timeout_s=120)
+    (ok if j2.get("status") == "done" and (j2.get("result") or {}).get("error") else fail)(f"failed refresh ends done with result.error ({j2.get('status')}, {(j2.get('result') or {}).get('error')})")
+    inv3 = api_get("inventory")
+    after = {c["id"] for c in inv3.get("components", []) if c.get("kind") == "library"}
+    (ok if before and before == after else fail)(f"inventory still lists every library after a failed read ({len(before)} -> {len(after)})")
+    (ok if (inv3.get("libraries") or {}).get("asOf") == lib_asof1 else fail)("libraries.asOf unchanged by the failed read")
+finally:
+    api_post("test/simulateLibFail", {"on": "0"})
+    set_debug(dbg_before)
+off = api_post("test/simulateLibFail", {"on": "0"})
+(ok if off.get("_error") == 404 else fail)(f"test hook answers 404 with debug logging off ({off})")
+st2 = api_get("stats")
+(ok if st2.get("perItemReadsInRequest") == 0 else fail)(f"perItemReadsInRequest is 0 ({st2.get('perItemReadsInRequest')})")
+(ok if set(st2.get("bulkFetches", {})) >= {"apps", "drivers", "bundles", "libraries"} else fail)("stats.bulkFetches has the per-key counters")
+
 # ── Task 4: inventory ─────────────────────────────────────────────────
 section("Inventory")
 gt_libs = fetch("/hub2/userLibraries") or []
