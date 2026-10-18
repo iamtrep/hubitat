@@ -54,7 +54,7 @@ A location that answers `404` or `410`, or fails DNS/TLS, on **three consecutive
 
 ### Safe to remove <a id="safe-to-remove"></a>
 
-A component is listed as removable when it has zero usage (no instances, devices or consumer types) and it is not a member of a bundle that has any used member. The list is advisory: the hub refuses to delete in-use types regardless, and 0.1 has no delete action.
+A component is listed as removable when it is installed, has zero usage (no instances, devices or consumer types) and it is not a member of a bundle that has any used member. The list is advisory: the hub refuses to delete in-use types regardless, and 0.1 has no delete action.
 
 ### HPM observe mode <a id="hpm-observe"></a>
 

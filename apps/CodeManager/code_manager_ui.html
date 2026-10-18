@@ -85,7 +85,7 @@ function classifyComponent(c){const s=c.status||'unknown';const map={'current':[
 const STATUS_HELP={'current':'installed source matches upstream','update-available':'upstream version is higher','changed-upstream':'upstream file differs but the versions do not order','modified-locally':'edited on the hub since Code Manager first saw it','broken-source':'the upstream URL answered 404/410 three sweeps running','incomplete':'a required component of this package is not on the hub','missing':'required by the package, not installed','not-installed':'optional component the package never installed','private':'private code — the source is never read','unmanaged':'no import URL, so there is nothing to compare against','unknown':'not checked yet'};
 function legend(keys){return '<div class="legend">'+keys.map(k=>{const c=classifyComponent({status:k});return '<div>'+badge(c.label,c.color)+' '+h(STATUS_HELP[k]||'')+'</div>'}).join('')+'</div>'}
 // Removability is per package (DESIGN.md §3): zero usage, no used bundle sibling, not referenced as a child type by an installed parent.
-function safeToRemove(c,comps){if((c.usedByCount||0)>0)return false;if(c.bundleOf){if(comps.some(o=>o.bundleOf===c.bundleOf&&(o.usedByCount||0)>0))return false}return true}
+function safeToRemove(c,comps){if(!c.hubId)return false;if((c.usedByCount||0)>0)return false;if(c.bundleOf){if(comps.some(o=>o.bundleOf===c.bundleOf&&(o.usedByCount||0)>0))return false}return true}
 
 // ===== UI primitives =====
 // File Manager entries are served at /local/<name>; every other kind opens in its code editor.

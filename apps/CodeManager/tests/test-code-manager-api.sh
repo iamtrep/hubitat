@@ -11,7 +11,7 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-CONFIG_FILE="$PROJECT_ROOT/.hubitat.json"
+CONFIG_FILE="${HUBITAT_CONFIG:-$PROJECT_ROOT/.hubitat.json}"
 COOKIE_JAR="$(mktemp -u "${TMPDIR:-/tmp}/cm-test-cookies.XXXXXX")"
 trap 'rm -f "$COOKIE_JAR"' EXIT
 HUB_NAME=""; INSTANCE_ID=""

@@ -42,6 +42,7 @@ const comps = [
 t('unused, unbundled, unreferenced -> removable', () => assert.strictEqual(safeToRemove(comps[0], comps), true));
 t('in use -> not removable', () => assert.strictEqual(safeToRemove(comps[1], comps), false));
 t('bundle member with a used sibling -> not removable', () => assert.strictEqual(safeToRemove(comps[2], comps), false));
+t('a declared but not-installed component is not removable', () => assert.strictEqual(safeToRemove(Object.assign({}, comps[0], {hubId:null}), comps), false));
 
 t('file components link into File Manager at /local/<name>', () => assert.strictEqual(clink('file', 'watchtower.js', 'watchtower.js'), '<a href="/local/watchtower.js" target="_blank">watchtower.js</a>'));
 t('file names are URL-encoded in the link', () => assert(clink('file', 'a b&c.html', 'a b&c.html').includes('href="/local/a%20b%26c.html"')));
