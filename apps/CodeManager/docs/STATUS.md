@@ -2,7 +2,7 @@
 
 Where the app stands against the release plan in [DESIGN.md](DESIGN.md) §14. Update this file at the end of every release, not during one.
 
-## Now: 0.1.1, read-only inventory
+## Now: 0.1.1, read-only inventory (superseded by 0.2)
 
 0.1 shipped the whole inventory release: the four bulk passes and per-item detail fetch, package classification over all four origins, the usage index and safe-to-remove list, HPM import in `observe` mode, the bounded sweep with hash and version freshness, broken-source strikes, the label badge and notifications, the SPA over `/api/*`, and the export. Nothing outside the app's own catalog is written. Everything in DESIGN §14's 0.1 line is present except the child-type source scan in `safeToRemove`, which is parked below.
 
@@ -15,11 +15,24 @@ Mode 2 API test (`tests/test-code-manager-api.sh`, `RUN_SLOW_TESTS=1` for the sw
 ## Parked
 
 - **Registry size.** `state.pkgs` sits near 80 KB on a large hub against the 60 KB DESIGN §2.4 first estimated. It fits, but the registry moves to a File Manager document in 0.2 rather than growing further in `state`.
-- **Child-type scan.** `safeToRemove` does not yet scan installed sources for `addChildDevice`/`addChildApp` references to a component, so a driver used only as a child type can be listed as removable. The list is advisory and the hub refuses in-use deletes regardless.
+- **Child-type check.** `safeToRemove` does not check whether a parent's source could create a component as a child; 0.2 does this at remove time (DESIGN 3.3).
 - **HPM panel error shape.** A transient failure to read HPM's status renders as a bare mode line rather than an explicit "could not read HPM" state.
 - **Housekeeping.** A `cm_pkg_` document whose delete fails is never retried, and the sweep and job caches are never pruned.
 - **Mock data.** The workbench mock still carries `usedBy` names, where the live payload carries ids only.
 
-## Next: 0.2, apply for `url` and `local` origins
+## Next: 0.2, reliable inventory under a hub budget
 
-Preview, diff, snapshot, write, verify, rollback; install from URL; per-package unattended opt-in for these origins, under the write lease and operation journal in DESIGN §6.6. HPM packages stay read-only until 0.3. The parked items above land in 0.2 unless noted.
+0.1's inventory pass reads each new or changed item's source inside the `/api/inventory` request, with no limit per pass and no back-off for an item that keeps failing. A first pass on a large hub reads every source in turn, and one such pass on a 212-item hub took about 11 minutes and tied up the hub's code endpoints. Its daily sweep also reports freshness that can be a day old as if it were current. 0.2 replaces both (DESIGN 3, 5, 14):
+
+- Inventory and dependency graph from bulk reads only, rebuilt per request, nothing cached in `state`.
+- Every shown fact states its basis: live, read at a `lastModified`, or checked at a time. A cached per-item fact is shown only while the item's `lastModified` is unchanged.
+- Per-item facts (`importUrl`, version, hash) filled by a background reader under the hub budget, with progress shown; unread items say so and are never guessed as `local`.
+- Drift checks only on request (one item, one package, or all). The daily sweep, the update badge and notifications are removed until scheduled checks are designed.
+- The check that a parent could create a type runs when the user asks to remove it, not as a scan of every source.
+- Measured hub cost in the README.
+
+Prerequisite probe: every write path changes the item's `lastModified`.
+
+## Later: 0.3, apply for `url` and `local` origins
+
+Preview, diff, snapshot, write, verify, rollback; install from URL. HPM packages stay read-only until 0.4. Prerequisite platform probes before any write code: (1) the real cap on an app's `httpPost`/`asynchttpPost` wait versus the requested `timeout`; (2) for a multi-hundred-KB source, whether `saveOrUpdateJson` and `ajax/update` answer at all, their compile and response times, and whether they differ; (3) whether a small save during an outstanding large compile stalls, times out or lands. The write semantics they feed are in DESIGN 6.2, 6.3 and 6.6 (three outcomes, resolve by read-back, never retry).
