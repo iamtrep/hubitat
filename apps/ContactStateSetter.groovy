@@ -101,7 +101,7 @@ void appButtonHandler(String btn) {
 
 private void setContact(String value) {
     settings.contacts?.each { dev ->
-        dev.sendEvent(name: "contact", value: value,
+        dev.sendEvent(name: "contact", value: value, type: "digital",
                       descriptionText: "${dev.displayName} contact set to ${value} by ${APP_NAME}")
         logDebug "${dev.displayName} contact -> ${value}"
     }
