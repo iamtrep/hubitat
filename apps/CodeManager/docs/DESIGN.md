@@ -86,7 +86,7 @@ Invalidation: manifest documents change only by install/import/adoption or a use
 
 Every value the SPA shows has one of three bases, and the SPA states which:
 
-- **Live**: derived from the bulk reads of this request (3.2), with the payload's `asOf`. The inventory, package grouping by HPM and bundle, and every dependency are live.
+- **Live**: derived from the bulk reads of this request (3.2), with the payload's `asOf`. The inventory, package grouping by HPM and bundle, and every dependency are live, except libraries and their consumer lists, which are read at a time (3.2) and shown with their own `asOf`.
 - **Read at a version**: a per-item fact (`importUrl`, declared version, `ihash`) stored with the `lastModified` it was read at. It is shown only while the item's current `lastModified`, which every bulk read returns, still equals that value; otherwise the item reads "not read since its last change". An item never read reads "not read yet". A cached fact is therefore never presented as current when the code has changed.
 - **Checked at a time**: a drift result (5.3). It is void when the installed `lastModified` moves, and otherwise shows its age, because the upstream side can change at any time without the hub knowing.
 
@@ -102,7 +102,7 @@ A component a package declares but the hub does not have is `missing` when the m
 
 ### 3.3 Dependencies and safe-to-remove
 
-Usage index, from the same bulk reads: app type → instances (`usedBy`), driver type → devices (`usedBy`), library → consumer types (`usedByAppTypes`/`usedByDeviceTypes`, names resolved to ids against the type lists), bundle → members, parent instance or device → children. The device-level drill-down (device → apps, `appsUsing[]` from `fullJson`) is fetched on demand for one device.
+Usage index, from the same bulk reads: app type → instances (`usedBy`), driver type → devices (`usedBy`), library → consumer types (`usedByAppTypes`/`usedByDeviceTypes`, names resolved to ids against the type lists), read at a time with the library list (3.2) and shown with its `asOf`, bundle → members, parent instance or device → children. The device-level drill-down (device → apps, `appsUsing[]` from `fullJson`) is fetched on demand for one device.
 
 A component is listed as removable when it is installed, has zero usage, and is not a member of a bundle with any member in use. That list is live and needs no source. What it cannot see is code that would create the type later (`addChildDevice`/`addChildApp` naming it), so the list says "no current use", and the check that a parent could create it runs when the user asks to remove one item: one source read per installed app or driver that calls `addChildDevice` or `addChildApp`, found from the per-item facts where they are valid and read under the budget otherwise. The uninstall path re-checks `usedBy` live and `deleteJsonSafe` refuses in-use types regardless.
 
