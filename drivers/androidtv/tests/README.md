@@ -77,7 +77,8 @@ Test 13, Discovery, runs **Find TVs** with the box on and again after 30 s off, 
 box announces itself and whether it still does while off: the driver finds the box and follows it to a
 new IP through that announcement. With several TVs on the network it leaves the TV list on the device.
 
-Test 14, Text input, presses SEARCH, sends `sendText "hubitat"` and leaves it on screen 8 s. It reports
+Test 14, Text input, presses SEARCH, then BACK to close the on-screen keyboard (apps take text only while
+it is hidden), sends `sendText "hubitat"` and leaves it on screen 6 s. It reports
 the app the search key opened, whether the box reported a focused text field (`fieldReported`: message
 20 with field 2; `editReported`: message 21) and whether it refused the text, with its decoded lines in
 every run. Whether the word showed on screen only the person watching can say. The mock never reports a

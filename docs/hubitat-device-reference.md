@@ -338,6 +338,10 @@ it pairs. Leading zero bytes of each number are dropped before hashing *(spec: [
   A message 21 with both counters 0 sent to the search screen drew neither a reply nor `remote_error`; whether the text reached the screen was not seen *(probed 2.5.2.139, C-7, Android TV Remote driver 0.2.0 with sendText and Tester 0.5.0)*.
   The search screen closed by itself 9–11 s after it opened, whether or not text was sent, and BACK on the
   home screen after it closed once brought an empty message 24, a type the reference proto doesn't list *(probed 2.5.2.139, C-7, Android TV Remote Tester 0.5.0)*.
+- On an NVIDIA SHIELD (Android 11, remote service `7.00.999235495`), text sent while the search box's
+  on-screen keyboard was up did not appear. After one BACK closed the keyboard and left the search box on
+  screen, the text appeared in the box and the search could be run. The box sent no message 21, and the
+  search screen (`com.google.android.katniss`) closed by itself 9 s after it opened *(reported: [forum topic 166822](https://community.hubitat.com/t/166822/37), posts 37–38, driver 0.3.1, hub 2.5.3.103)*.
 
 ## Samsung Tizen TVs
 

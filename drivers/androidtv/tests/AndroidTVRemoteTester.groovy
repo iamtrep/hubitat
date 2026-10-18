@@ -601,7 +601,7 @@ Map evaluateTest(int test, List<Map> lines, Map steps, Map run, List<Map> events
             break
         case 14:
             f = evalText(lines)
-            r.note = "say in your post whether \"hubitat\" appeared in the search box"
+            r.note = "say in your post whether \"hubitat\" appeared in the search box, and whether BACK closed only the keyboard or the whole search screen"
             break
         default: f = [:]
     }
@@ -672,11 +672,13 @@ List<Map> stepsFor(int test, Map run) {
                          [name: "standby", sleep: 30],
                          [name: "findOff", cmd: "findTvs", wait: '^Found |^No Android TV', timeout: 20, after: 2],
                          [name: "on", cmd: "on", wait: '^rx 40:\\{1:1\\}', timeout: 20, after: 3]]
-        // The text follows SEARCH by 2 s with no log read between: the EBOX's search screen closes itself
-        // about 11 s after it opens. The text stays on screen 8 s, for whoever watches the TV.
+        // Apps take text only while their on-screen keyboard is hidden, so one BACK closes it first. The text
+        // follows SEARCH by 3 s with no log read between: the search screen closes itself 9-11 s after it
+        // opens. The text stays on screen 6 s, for whoever watches the TV.
         case 14: return [[name: "home", cmd: "sendKey", args: ["HOME"], after: 3],
                          [name: "search", cmd: "sendKey", args: ["SEARCH"], after: 2],
-                         [name: "text", cmd: "sendText", args: ["hubitat"], after: 8],
+                         [name: "hideKeyboard", cmd: "sendKey", args: ["BACK"], after: 1],
+                         [name: "text", cmd: "sendText", args: ["hubitat"], after: 6],
                          [name: "back", cmd: "sendKey", args: ["BACK"], after: 2],
                          [name: "home2", cmd: "sendKey", args: ["HOME"], after: 2]]
         default:

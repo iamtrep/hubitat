@@ -135,8 +135,14 @@ a search box. Select the text field with the remote first, then close the on-scr
 apps receive the text only while their keyboard is hidden. Some fields add the text to what they hold,
 others replace it.
 
-Not yet confirmed on a TV. The Android TV Remote Tester's test 14 tries it on the search screen and
-records what the box sends: post its report in the forum thread, with whether the text appeared.
+In a rule or flow, send `sendKey BACK` and wait a moment before `sendText` (the shortest wait that works is not known yet). Do this only when the
+keyboard is sure to be up, such as right after opening the search box: with no keyboard showing, BACK
+leaves the screen and the text goes nowhere. No box seen reports whether its keyboard is up, so the driver
+leaves this to the caller.
+
+Confirmed on an NVIDIA SHIELD: text sent with the keyboard up didn't appear; after one BACK it did. The
+Android TV Remote Tester's test 14 tries it on the search screen and records what the box sends: post its
+report in the forum thread, with whether the text appeared.
 
 ## Android TV Remote Tester (optional)
 
