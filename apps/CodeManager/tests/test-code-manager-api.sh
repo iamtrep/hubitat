@@ -17,9 +17,9 @@ HUB_NAME=""; INSTANCE_ID=""
 for arg in "$@"; do
   if [[ "$arg" == @* ]]; then HUB_NAME="${arg#@}"; elif [[ "$arg" =~ ^[0-9]+$ ]]; then INSTANCE_ID="$arg"; fi
 done
-python3 - "$HUB_NAME" "$INSTANCE_ID" "$CONFIG_FILE" "$COOKIE_JAR" "${RUN_SLOW_TESTS:-}" <<'PYTHON_SCRIPT'
-import json, sys, re, time, urllib.request, urllib.parse, http.cookiejar
-hub_name_arg, instance_id_arg, config_file, cookie_jar_path, run_slow = sys.argv[1:6]
+python3 - "$HUB_NAME" "$INSTANCE_ID" "$CONFIG_FILE" "$COOKIE_JAR" "${RUN_SLOW_TESTS:-}" "$SCRIPT_DIR" <<'PYTHON_SCRIPT'
+import json, sys, re, time, os, hashlib, urllib.request, urllib.parse, http.cookiejar
+hub_name_arg, instance_id_arg, config_file, cookie_jar_path, run_slow, script_dir = sys.argv[1:7]
 passed = failed = warnings = 0
 def ok(m):   global passed;   passed += 1;   print(f"  [PASS] {m}")
 def fail(m): global failed;   failed += 1;   print(f"  [FAIL] {m}")
@@ -111,6 +111,13 @@ if html:
     (ok if f'const CODE_VERSION = "{s.get("uiVersion")}"' in html else fail)("ui.html CODE_VERSION matches settings.uiVersion")
     (ok if "function tbl(" in html else fail)("ui.html serves the real SPA (has function tbl()")
     (ok if "function makeLimiter(" in html else fail)("ui.html serves the real SPA (has function makeLimiter()")
+# Lockstep by content (DESIGN.md §10): the UI file the hub holds is byte-identical to this checkout's, not only the same CODE_VERSION.
+try:
+    served = opener.open(f"http://{hub_ip}/local/code_manager_ui.html", timeout=30).read()
+    with open(os.path.join(script_dir, "..", "code_manager_ui.html"), "rb") as f: local = f.read()
+    hs, hl = hashlib.sha256(served).hexdigest(), hashlib.sha256(local).hexdigest()
+    (ok if hs == hl else fail)(f"the hub's code_manager_ui.html matches this checkout (sha256 {hs[:12]} vs {hl[:12]})")
+except Exception as e: fail(f"read /local/code_manager_ui.html: {e}")
 try:
     urllib.request.urlopen(f"{api_base}/api/settings?access_token=bad", timeout=15); fail("bad query-param token accepted")
 except urllib.error.HTTPError as e: (ok if e.code in (401, 403, 500) else fail)(f"bad query-param token rejected ({e.code})")
