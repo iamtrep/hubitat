@@ -88,7 +88,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "2.15.6"
+@Field static final String CODE_VERSION = "2.15.7"
 
 // A pending version reconfigure older than this is treated as lost and re-armed.
 @Field static final long RECONFIGURE_RETRY_MS = 60000L
@@ -389,6 +389,14 @@ void parse(String description) {
         return
     }
 
+    // Pressure frames carry MeasuredValue, Scale and ScaledValue together;
+    // read them as one reading so the frame yields a single pressure event.
+    if (descMap.cluster == "0403" && descMap.attrId != null) {
+        parsePressureReport(descMap)
+        state.lastUpdate = new Date().toLocaleString()
+        return
+    }
+
     // Attribute report — primary + every entry in additionalAttrs.
     if (descMap.attrId != null) {
         parseAttributeReport(descMap)
@@ -549,10 +557,8 @@ private void parseCheckinFromMap(Map map) {
 private void parseAttributeReport(Map map) {
     logTrace("parseAttributeReport() : ${map}")
 
-    // For the temp/pressure/humidity clusters only attr 0x0000 (MeasuredValue)
-    // carries the sensor reading. WSDCGQ11LM also emits the pressure-cluster
-    // metadata attrs 0x0010 (ScaledValue, INT16) and 0x0014 (Scale, INT8 = "FE"),
-    // and the INT8 width would crash the 4-hex byte-flip with IndexOutOfBounds.
+    // For the temp/humidity clusters only attr 0x0000 (MeasuredValue) carries
+    // the sensor reading. Pressure (0x0403) frames go to parsePressureReport().
     if ((map.cluster == "0402" || map.cluster == "0403" || map.cluster == "0405") && map.attrId != "0000") {
         logRx("parseAttributeReport() : ignoring cluster ${map.cluster} metadata attrId=${map.attrId} value=${map.value}")
         return
@@ -736,6 +742,36 @@ private void parseHumidity(String humidityFlippedHex) {
     sendEvent(name: "absoluteHumidity", value: absoluteHumidity, unit: "g/m${cubedChar}")
 }
 
+private void parsePressureReport(Map descMap) {
+    // lumi.weather sends MeasuredValue (0x0000, INT16) truncated to whole hPa,
+    // plus ScaledValue (0x0010, INT16) and Scale (0x0014, INT8, "FF" = -1)
+    // carrying 0.1 hPa. Prefer ScaledValue: the whole-hPa value disagrees with
+    // the Pa value in the hourly check-in and flips pressureDirection.
+    // Scale is two hex chars, so it must not go through hexStrToSignedInt's
+    // 4-hex path. Conversion follows zigbee2mqtt's fz.pressure:
+    // Pa = ScaledValue / 10^Scale.
+    Map<String, String> attrs = [:]
+    ([descMap] + (descMap.additionalAttrs ?: [])).each { Map a -> attrs[a.attrId as String] = a.value as String }
+    logTrace("parsePressureReport() : ${attrs}")
+
+    String scaledHex = attrs["0010"]
+    String scaleHex = attrs["0014"]
+    if (scaledHex && scaleHex) {
+        int scaledValue = hexStrToSignedInt(scaledHex)
+        if (scaledValue != -32768) {
+            int scale = (byte) Integer.parseInt(scaleHex, 16)
+            emitPressure(BigDecimal.valueOf(scaledValue).scaleByPowerOfTen(-scale), "ScaledValue ${scaledHex} Scale ${scaleHex}")
+            return
+        }
+        logWarn("Pressure : Device reported the ZCL invalid ScaledValue (0x8000), using MeasuredValue.")
+    }
+    if (attrs["0000"]) {
+        parsePressure(attrs["0000"])
+    } else {
+        logRx("parsePressureReport() : no usable pressure attribute in ${attrs}")
+    }
+}
+
 private void parsePressure(String pressureFlippedHex, boolean checkin = false) {
     int rawPressure = hexStrToSignedInt(pressureFlippedHex)
     if (!checkin && rawPressure == -32768) {
@@ -744,8 +780,10 @@ private void parsePressure(String pressureFlippedHex, boolean checkin = false) {
     }
     // Cluster 0x0403 MeasuredValue is in units of 0.1 kPa (= hPa) per ZCL.
     // Check-in blob value is already in Pa.
-    BigDecimal pressurePa = checkin ? rawPressure : rawPressure * 100
+    emitPressure(BigDecimal.valueOf(checkin ? rawPressure : rawPressure * 100), "hex value ${pressureFlippedHex}")
+}
 
+private void emitPressure(BigDecimal pressurePa, String source) {
     BigDecimal pressureHpa = pressurePa / 100
     if (pressureHpa < PRESSURE_MIN_HPA || pressureHpa > PRESSURE_MAX_HPA) {
         logWarn("Pressure : Raw value of ${pressureHpa} hPa is out of range, skipping. Watch out for batteries failing on this device.")
@@ -780,7 +818,7 @@ private void parsePressure(String pressureFlippedHex, boolean checkin = false) {
         ? "steady"
         : ["falling", "steady", "rising"][(pressure <=> lastPressure) + 1]
 
-    logTrace("pressure : ${pressure} from hex value ${pressureFlippedHex}")
+    logTrace("pressure : ${pressure} from ${source}")
     logInfo("Pressure : ${pressure} ${unit} (${pressureDirection})")
     sendEvent(name: "pressure", value: pressure, unit: unit)
     sendEvent(name: "pressureDirection", value: pressureDirection)

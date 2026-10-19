@@ -80,6 +80,16 @@ strongest at that moment, or go **offline**. Retention is network-layer child-ag
 tolerance; there is no driver lever for parenting *(inferred: research summary of the Aqara manual and FAQ, deCONZ REST docs, zigbee-herdsman-converters and Silicon Labs material, no capture)*.
 A short press of the reset button was seen to move one MCCGQ11LM to another parent without a re-pair, by a mechanism not identified *(probed firmware not recorded, C-7, `/zigbeeLogsocket` capture, July 2026)*.
 
+**`lumi.weather` truncates pressure MeasuredValue to whole hPa; ScaledValue carries 0.1 hPa.** One cluster
+`0x0403` report carries MeasuredValue (`0x0000`, INT16), Scale (`0x0014`, INT8) and ScaledValue (`0x0010`, INT16).
+Raw `…0403 1C 0000 29 D103 1400 28 FF 1000 29 3326` gives MeasuredValue 977 (hPa), Scale `FF` (−1) and ScaledValue
+9779, which is 977.9 hPa as hPa = ScaledValue × 10^Scale; the FF01 check-in tag `0x66` sent 97811 Pa just before.
+A driver that reads MeasuredValue alone reports 97.8 kPa from the check-in, then 97.7 kPa from the cluster report
+*(probed 2.5.2.139, C-7, one WSDCGQ11LM, driver logs and device events)*. zigbee2mqtt computes
+hPa = ScaledValue / 10^Scale / 100 for this model, which gives the same value at Scale −1
+*(community: [zigbee-herdsman-converters `fz.pressure`](https://github.com/Koenkk/zigbee-herdsman-converters/blob/master/src/converters/fromZigbee.ts))*.
+Scale is two hex characters, not four, so it can't go through a 4-character byte flip *(inferred: from the INT8 encoding above)*.
+
 ## Sinopé
 
 **A DM2500ZB dimmer turned on reports level 0 first, then the real level.** After `on` from off
