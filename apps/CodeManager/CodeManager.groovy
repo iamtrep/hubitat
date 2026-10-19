@@ -463,7 +463,7 @@ Map libraries() {
     return [list: snap.list, asOf: snap.asOf, error: snap.error]
 }
 private List readLibrariesFromHub() {
-    if (simulateLibFail) return null
+    if (libFailActive()) return null
     Object resp = hubRequestInternal(USER_LIBRARIES_PATH, "user libraries", "json", LIB_TIMEOUT_SEC, false)
     if (!(resp instanceof List)) return null
     return (resp as List).collect { Map l ->
@@ -474,12 +474,15 @@ private List readLibrariesFromHub() {
     }
 }
 // One read, single-flight. On failure the last good list stays and only the error is recorded. Returns the error text or null.
-private String readLibrariesNow() {
+// The test flag counts only while debug logging is on, so switching debug off always restores normal reads.
+private boolean libFailActive() { return simulateLibFail && settings.debugEnable == true }
+// force: an explicit user refresh always reads; without it a snapshot under BULK_TTL_MS old is reused.
+private String readLibrariesNow(boolean force = false) {
     Semaphore gate = gateFor("libraries")
     if (!gate.tryAcquire(BULK_WAIT_MS, TimeUnit.MILLISECONDS)) return "library read already in progress"
     try {
         Map snap = LIB_SNAPSHOT
-        if (snap.asOf != null && (now() - (snap.asOf as long)) < BULK_TTL_MS && snap.error == null && !simulateLibFail) return null
+        if (snap.asOf != null && (now() - (snap.asOf as long)) < BULK_TTL_MS && snap.error == null && !libFailActive() && !force) return null
         countFetch("libraries")
         long t0 = now()
         List list = readLibrariesFromHub()
@@ -493,26 +496,26 @@ private String readLibrariesNow() {
     } finally { gate.release() }
 }
 // Starts the background read (or joins the one running) and returns its job id.
-String startLibraryRefresh() {
+String startLibraryRefresh(boolean force = false) {
     String running = LIB_JOB_ID
     if (running && JOBS[running]?.status == 'running') return running
     String jobId = newJob('libraries', 1)
     LIB_JOB_ID = jobId
-    runIn(1, 'libRefreshRun', [data: [jobId: jobId], overwrite: false])
+    runIn(1, 'libRefreshRun', [data: [jobId: jobId, force: force], overwrite: false])
     return jobId
 }
 void refreshLibraries() { startLibraryRefresh() }
 void libRefreshRun(Map data) {
     String jobId = data.jobId as String
     try {
-        String err = readLibrariesNow()
+        String err = readLibrariesNow(data.force == true)
         Map snap = LIB_SNAPSHOT
         jobDone(jobId, [asOf: snap.asOf, count: ((List) snap.list)?.size(), error: err])
     } catch (Exception e) {
         jobFail(jobId, "library read failed: ${e.message}")
     } finally { if (LIB_JOB_ID == jobId) LIB_JOB_ID = null }
 }
-Map apiLibrariesRefresh() { return jsonResponse([jobId: startLibraryRefresh()]) }
+Map apiLibrariesRefresh() { return jsonResponse([jobId: startLibraryRefresh(true)]) }
 // Test hook: makes the next library reads fail. Registered always (mappings are static), answers only while debug logging is on.
 Map apiSimulateLibFail() {
     if (settings.debugEnable != true) return render(status: 404, contentType: 'application/json', data: JsonOutput.toJson([error: "not found"]))

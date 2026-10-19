@@ -156,15 +156,16 @@ try:
     r2 = api_post("libraries/refresh")
     j2 = poll_job(r2.get("jobId", ""), timeout_s=120)
     (ok if j2.get("status") == "done" and (j2.get("result") or {}).get("error") else fail)(f"failed refresh ends done with result.error ({j2.get('status')}, {(j2.get('result') or {}).get('error')})")
-    inv3 = api_get("inventory")
+    inv3 = api_get("inventory?force=1", timeout=300)
     after = {c["id"] for c in inv3.get("components", []) if c.get("kind") == "library"}
     (ok if before and before == after else fail)(f"inventory still lists every library after a failed read ({len(before)} -> {len(after)})")
     (ok if (inv3.get("libraries") or {}).get("asOf") == lib_asof1 else fail)("libraries.asOf unchanged by the failed read")
 finally:
     api_post("test/simulateLibFail", {"on": "0"})
-    set_debug(dbg_before)
+    set_debug(False)
 off = api_post("test/simulateLibFail", {"on": "0"})
 (ok if off.get("_error") == 404 else fail)(f"test hook answers 404 with debug logging off ({off})")
+set_debug(dbg_before)
 st2 = api_get("stats")
 (ok if st2.get("perItemReadsInRequest") == 0 else fail)(f"perItemReadsInRequest is 0 ({st2.get('perItemReadsInRequest')})")
 (ok if set(st2.get("bulkFetches", {})) >= {"apps", "drivers", "libraries"} else fail)("stats.bulkFetches has the per-key counters")
