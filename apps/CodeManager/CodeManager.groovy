@@ -67,6 +67,8 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final int  FACT_WRITE_WAIT_STEPS = 300      // reader gives up after this many steps (about 10 min) spent waiting for a write
 // The single writer lease (DESIGN 6.6). Every code write takes the permit; the fact reader reads nothing while it is taken.
 @Field static final Semaphore WRITE = new Semaphore(1)
+// One background source read in flight across the fact reader, drift's fact phase and the remove check (5.1).
+@Field static final Semaphore READ = new Semaphore(1)
 @Field static volatile Map LIB_SNAPSHOT = [list: null, asOf: null, error: null, attemptedAt: 0L]   // last good list is kept on failure
 @Field static volatile String LIB_JOB_ID = null
 @Field static volatile boolean simulateLibFail = false
@@ -107,6 +109,7 @@ mappings {
     path('/api/drift/start')       { action: [POST: 'apiDriftStart'] }
     path('/api/facts/status')      { action: [GET: 'apiFactsStatus'] }
     path('/api/facts/read')        { action: [POST: 'apiFactsRead'] }
+    path('/api/remove-check/start') { action: [POST: 'apiRemoveCheckStart'] }
     path('/api/hpm/import')        { action: [POST: 'apiHpmImport'] }          // Task 5
     path('/api/ui/sync')           { action: [POST: 'apiSyncUI'] }
     path('/api/reinit')            { action: [POST: 'apiReinit'] }
@@ -1269,11 +1272,13 @@ private boolean flushFacts() {
 }
 
 // Facts from one read. The source lives only in this frame: it is hashed, measured and dropped.
-private Map readFacts(String kind, String id, String origin, boolean background) {
+// `inspect`, when given, sees the source in the same frame; its answer is returned as `inspected`.
+private Map readFacts(String kind, String id, String origin, boolean background, Closure inspect = null) {
     Map d = fetchItemDetail(kind, id, background)
     if (d == null) return [error: "read failed"]
     String src = d.source as String
     if (!src) return [error: "empty source"]
+    Object inspected = inspect != null ? inspect.call(src) : null
     Map v = parseVersionLiteral(src)
     boolean child = src.contains("addChildDevice") || src.contains("addChildApp")
     Map facts = [ih: hashPrefix(sourceHash(src)), sz: src.length(), ch: child ?: null, pv: d.isPrivate == true ? true : null]
@@ -1282,7 +1287,7 @@ private Map readFacts(String kind, String id, String origin, boolean background)
         facts.loc = d.importUrl ?: ((origin == 'url' && kind != 'library') ? '' : null)   // '' stops a url package re-deriving the location from its key
         facts.iv = v.ver; facts.ivs = v.src
     }
-    return [facts: facts]
+    return [facts: facts, inspected: inspected]
 }
 
 // Starts the reader unless one is running. Schedules the first read and returns; it never reads inside the caller.
@@ -1360,23 +1365,11 @@ void factStep(Map data) {
             logInfo "fact reader done: ${counts}"
             return
         }
-        waits.set(0)
-        String ck = pending.poll()
-        Map c = findItem(ck)
-        if (c != null && !factQueue([c], now()).isEmpty()) {          // an earlier read, a back-off or a size may have settled it
-            long lm = (c.lm ?: 0L) as long
-            Map outcome
-            try { outcome = readFacts(c.k as String, c.id as String, c._o as String, true) }
-            catch (Exception e) { outcome = [error: "${getObjectClassName(e)}: ${e.message}" as String] }
-            storeFact(ck, c, lm, outcome)
-            ((j.counts as Map)[outcome.facts != null ? 'read' : 'failed'] as AtomicInteger).incrementAndGet()
-            if (outcome.facts != null && factNeedsRetry(lm, now(), (j.retried as Map).putIfAbsent(ck, true) != null)) {
-                pending.add(ck); (j.total as AtomicInteger).incrementAndGet()
-            }
-            if ((j.unflushed as AtomicInteger).incrementAndGet() >= FACT_FLUSH_EVERY && flushFacts()) (j.unflushed as AtomicInteger).set(0)
-        } else {
-            ((j.counts as Map).skipped as AtomicInteger).incrementAndGet()
+        if (!READ.tryAcquire()) {                                  // the remove check is reading: try again after the gap
+            runInMillis(FACT_GAP_MS, 'factStep', [data: [jobId: jobId], overwrite: false])
+            return
         }
+        try { factReadOne(j, pending) } finally { READ.release() }
         (j.processed as AtomicInteger).incrementAndGet()
         j.lastStep = now()
         runInMillis(FACT_GAP_MS, 'factStep', [data: [jobId: jobId], overwrite: false])
@@ -1384,6 +1377,27 @@ void factStep(Map data) {
         logError "fact reader ${jobId}: ${e.message}"
         try { flushFacts() } catch (Throwable ignored) {}
         jobFail(jobId, "fact reader failed: ${e.message}")
+    }
+}
+
+// The read part of one fact step: the next queued item, unless an earlier read, a back-off or a size has settled it.
+private void factReadOne(ConcurrentHashMap j, ConcurrentLinkedQueue<String> pending) {
+    (j.waits as AtomicInteger).set(0)
+    String ck = pending.poll()
+    Map c = findItem(ck)
+    if (c != null && !factQueue([c], now()).isEmpty()) {          // an earlier read, a back-off or a size may have settled it
+        long lm = (c.lm ?: 0L) as long
+        Map outcome
+        try { outcome = readFacts(c.k as String, c.id as String, c._o as String, true) }
+        catch (Exception e) { outcome = [error: "${getObjectClassName(e)}: ${e.message}" as String] }
+        storeFact(ck, c, lm, outcome)
+        ((j.counts as Map)[outcome.facts != null ? 'read' : 'failed'] as AtomicInteger).incrementAndGet()
+        if (outcome.facts != null && factNeedsRetry(lm, now(), (j.retried as Map).putIfAbsent(ck, true) != null)) {
+            pending.add(ck); (j.total as AtomicInteger).incrementAndGet()
+        }
+        if ((j.unflushed as AtomicInteger).incrementAndGet() >= FACT_FLUSH_EVERY && flushFacts()) (j.unflushed as AtomicInteger).set(0)
+    } else {
+        ((j.counts as Map).skipped as AtomicInteger).incrementAndGet()
     }
 }
 
@@ -1834,6 +1848,123 @@ private void finalizeDrift(String jobId) {
     logInfo "drift done: ${result}"
 }
 
+// ===== Remove check (DESIGN.md §3.3) =====
+// "No current use" cannot see code that would create the type later. When the user asks to remove one app or driver type,
+// this job reads every app, driver and library that calls addChildDevice/addChildApp (from valid facts) or whose facts are
+// not valid, one read at a time under the budget, large sources included (it is a user request).
+
+// Could this source create a type of `kind` named `name`? It must make the child call for that kind and hold the name as a
+// quoted string (a literal argument or a constant). A prefix of a longer name does not count.
+@CompileStatic
+static boolean sourceMayCreate(String source, String kind, String name) {
+    if (!source || !name) return false
+    String call = kind == 'app' ? 'addChildApp' : 'addChildDevice'
+    if (!source.contains(call)) return false
+    return source.contains('"' + name + '"') || source.contains("'" + name + "'")
+}
+
+// Must the check read this item? Apps, drivers and libraries can call addChildDevice; only apps and libraries addChildApp.
+// With usable facts only a recorded child call needs a read; without them every item does.
+@CompileStatic
+static boolean removeCheckCandidate(Map c, String basis, String targetKind) {
+    if (c.id == null) return false
+    List kinds = targetKind == 'app' ? ['app', 'library'] : ['app', 'driver', 'library']
+    if (!(c.k in kinds)) return false
+    return (basis == 'valid' || basis == 'provisional') ? c.ch == true : true
+}
+
+@CompileStatic
+static String removeCheckVerdict(int creators, int unread) {
+    return creators > 0 ? 'may-be-created' : unread > 0 ? 'incomplete' : 'no-creator'
+}
+
+// POST /api/remove-check/start?kind=app|driver&id=N — a job; its result is {verdict, creators, unread}.
+Map apiRemoveCheckStart() {
+    String kind = params.kind as String, id = params.id as String
+    if (!(kind in ['app', 'driver']) || !id?.isInteger()) return jsonResponse([error: "kind must be app|driver and id numeric"])
+    return jsonResponse(startRemoveCheck(kind, id))
+}
+
+Map startRemoveCheck(String kind, String id) {
+    Semaphore gate = gateFor("removeCheckStart")
+    if (!gate.tryAcquire(2000L, TimeUnit.MILLISECONDS)) return [error: "busy, try again"]
+    try {
+        for (Map.Entry e in JOBS.entrySet()) {
+            ConcurrentHashMap r = e.value as ConcurrentHashMap
+            if (r.kind != 'removecheck' || r.status != 'running') continue
+            if (!factJobStale((r.lastStep ?: r.startedAt) as long, now())) return [jobId: e.key, alreadyRunning: true, target: r.target]
+            jobFail(e.key as String, "Job lost: the remove check stopped taking steps")
+        }
+        String tk = ckey(kind, id)
+        Map target = findItem(tk)
+        if (target == null) return [error: "not in the registry: ${tk}" as String]
+        List<String> queue = itemComponents().findAll { Map c ->
+            ckey(c.k as String, c.id) != tk && removeCheckCandidate(c, factBasis(c, (c.lm ?: 0L) as long), kind)
+        }.collect { Map c -> ckey(c.k as String, c.id) }
+        String jobId = newJob('removecheck', queue.size())
+        ConcurrentHashMap j = JOBS[jobId]
+        (j.pending as ConcurrentLinkedQueue).addAll(queue)
+        j.target = [kind: kind, id: id, name: target.nm]
+        j.creators = new ConcurrentLinkedQueue<Map>()
+        j.unread = new ConcurrentLinkedQueue<Map>()
+        j.waits = new AtomicInteger(0)
+        j.lastStep = now()
+        runInMillis(500L, 'removeCheckStep', [data: [jobId: jobId], overwrite: false])
+        logInfo "remove check ${jobId}: ${kind} '${target.nm}', ${queue.size()} sources to read"
+        return [jobId: jobId, total: queue.size(), target: j.target]
+    } finally { gate.release() }
+}
+
+// One read, then the next step FACT_GAP_MS later. Waits out a write, and the other background readers through READ.
+void removeCheckStep(Map data) {
+    String jobId = data.jobId as String
+    ConcurrentHashMap j = JOBS[jobId]
+    if (j == null || j.status != 'running') return
+    j.lastStep = now()
+    try {
+        ConcurrentLinkedQueue<String> pending = j.pending as ConcurrentLinkedQueue<String>
+        AtomicInteger waits = j.waits as AtomicInteger
+        String action = factNextAction([writeOutstanding: writeOutstanding(), waits: waits.get(), queueEmpty: pending.isEmpty()])
+        if (action == 'defer') { waits.incrementAndGet(); runInMillis(FACT_GAP_MS, 'removeCheckStep', [data: [jobId: jobId], overwrite: false]); return }
+        if (action == 'giveup') { flushFacts(); jobFail(jobId, "gave up waiting for a write to finish"); return }
+        if (action == 'finish') { finishRemoveCheck(jobId); return }
+        if (!READ.tryAcquire()) { runInMillis(FACT_GAP_MS, 'removeCheckStep', [data: [jobId: jobId], overwrite: false]); return }
+        try { removeCheckReadOne(j, pending.poll()) } finally { READ.release() }
+        waits.set(0)
+        (j.processed as AtomicInteger).incrementAndGet()
+        j.lastStep = now()
+        runInMillis(FACT_GAP_MS, 'removeCheckStep', [data: [jobId: jobId], overwrite: false])
+    } catch (Throwable e) {
+        logError "remove check ${jobId}: ${e.message}"
+        try { flushFacts() } catch (Throwable ignored) {}
+        jobFail(jobId, "remove check failed: ${e.message}")
+    }
+}
+
+// Reads one candidate: the source is scanned for the target and dropped; the read also refreshes the item's facts.
+private void removeCheckReadOne(ConcurrentHashMap j, String ck) {
+    Map c = findItem(ck)
+    if (c == null) return                                          // removed since the job started
+    Map t = j.target as Map
+    Map who = [kind: c.k, id: c.id, name: c.nm]
+    long lm = (c.lm ?: 0L) as long
+    Map outcome
+    try { outcome = readFacts(c.k as String, c.id as String, c._o as String, true, { String src -> sourceMayCreate(src, t.kind as String, t.name as String) }) }
+    catch (Exception e) { outcome = [error: "${getObjectClassName(e)}: ${e.message}" as String] }
+    storeFact(ck, c, lm, outcome)
+    if (outcome.facts == null) (j.unread as ConcurrentLinkedQueue) << (who + [reason: outcome.error ?: 'read failed'])
+    else if (outcome.inspected == true) (j.creators as ConcurrentLinkedQueue) << who
+}
+
+private void finishRemoveCheck(String jobId) {
+    ConcurrentHashMap j = JOBS[jobId]
+    flushFacts()
+    List creators = new ArrayList(j.creators as ConcurrentLinkedQueue), unread = new ArrayList(j.unread as ConcurrentLinkedQueue)
+    Map result = [target: j.target, verdict: removeCheckVerdict(creators.size(), unread.size()), creators: creators, unread: unread]
+    jobDone(jobId, result)
+    logInfo "remove check ${jobId}: ${result.verdict} (${creators.size()} creators, ${unread.size()} unread)"
+}
+
 // ===== Item source and export (DESIGN.md §9) =====
 Map apiItemSource() {
     String kind = params.kind as String, id = params.id as String
@@ -1960,7 +2091,7 @@ void updated() {
     if (settings.debugEnable) runIn(1800, 'logsOff')
     runIn(1, 'syncUIForced')
     // unschedule() above stopped any running reader's chain of steps; its job can never finish.
-    JOBS.each { String id, ConcurrentHashMap j -> if ((j.kind == 'facts' || j.kind == 'drift') && j.status == 'running') jobFail(id, 'Job lost: the app was re-initialized') }
+    JOBS.each { String id, ConcurrentHashMap j -> if ((j.kind in ['facts', 'drift', 'removecheck']) && j.status == 'running') jobFail(id, 'Job lost: the app was re-initialized') }
     flushFacts()
     runIn(60, 'startFactReader')
     initialize()

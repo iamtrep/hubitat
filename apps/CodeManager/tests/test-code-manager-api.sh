@@ -490,6 +490,29 @@ files = [f["name"] for f in (fetch("/hub/fileManager/json") or {}).get("files", 
 (ok if "cm_drift.json" in files else fail)("cm_drift.json persisted")
 reads_after = api_get("stats").get("perItemReadsInRequest")
 (ok if reads_after - reads_before <= 1 else fail)(f"perItemReadsInRequest rose by at most 1 for the whole section ({reads_before} -> {reads_after})")
+
+section("Remove check")
+bad = api_post("remove-check/start", {"kind": "library", "id": "1"})
+(ok if bad.get("error") else fail)("remove-check/start refuses a library")
+bad = api_post("remove-check/start", {"kind": "driver", "id": "999999999"})
+(ok if bad.get("error") else fail)("remove-check/start of an unknown driver -> error payload")
+reads_before = api_get("stats").get("perItemReadsInRequest")
+unused = next((c for c in api_get("inventory", timeout=180).get("components", [])
+               if c.get("kind") == "driver" and c.get("hubId") is not None and (c.get("usedByCount") or 0) == 0), None)
+if unused:
+    r = api_post("remove-check/start", {"kind": "driver", "id": str(unused["hubId"])}, timeout=60)
+    (ok if r.get("jobId") else fail)(f"POST remove-check/start on an unused driver -> {({k: r.get(k) for k in ('jobId', 'total', 'error')})}")
+    j = poll_job(r.get("jobId", ""), timeout_s=600)
+    (ok if j.get("status") == "done" else fail)(f"remove-check job terminal status: {j.get('status')} {j.get('error') or ''}")
+    res = j.get("result") or {}
+    (ok if res.get("verdict") in ("no-creator", "may-be-created", "incomplete") else fail)(f"verdict in the closed set ({res.get('verdict')})")
+    (ok if isinstance(res.get("creators"), list) and isinstance(res.get("unread"), list) else fail)("result lists creators and unread items")
+    (ok if (res.get("verdict") == "may-be-created") == bool(res.get("creators")) else fail)("may-be-created exactly when a creator was found")
+    info(f"remove check of '{unused.get('name')}': {res.get('verdict')}, {len(res.get('creators') or [])} creators, {len(res.get('unread') or [])} unread")
+else:
+    warn("no unused driver type; remove-check job skipped")
+reads_after = api_get("stats").get("perItemReadsInRequest")
+(ok if reads_after == reads_before else fail)(f"the remove check reads nothing inside a request ({reads_before} -> {reads_after})")
 # TASK-SECTIONS-BELOW
 
 print(f"\n{passed} passed, {failed} failed, {warnings} warnings")
