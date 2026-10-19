@@ -410,6 +410,56 @@ for k in ("exportedAt", "registry", "documents", "sweep", "hpm"):
 (ok if all(d["doc"] is not None for d in ex.get("documents", [])) else fail)("every registered package has a readable document")
 files = [f["name"] for f in (fetch("/hub/fileManager/json") or {}).get("files", [])]
 (ok if "cm_registry_export.json" in files else fail)("cm_registry_export.json written")
+# ── Task 4: background fact reader ────────────────────────────────────
+section("Fact reader")
+def facts_wait(timeout_s=600):
+    t0 = time.time(); st = api_get("facts/status")
+    while time.time() - t0 < timeout_s and st.get("status") == "running":
+        time.sleep(5); st = api_get("facts/status")
+    return st
+inv = api_get("inventory", timeout=300)               # starts the reader when facts are missing; schedules only
+fc0 = inv.get("facts", {})
+pending0 = fc0.get("unread", 0) + fc0.get("stale", 0)
+info(f"facts at start: {fc0}")
+time.sleep(3)
+st = api_get("facts/status")
+if pending0 > 0:
+    (ok if st.get("jobId") and st.get("status") in ("running", "done") else fail)(f"facts/status shows a reader job ({st.get('status')})")
+    ts = api_get("stats")
+    # interrupt and resume: re-initialising while the reader runs strands its job; the next start must not re-read valid items
+    if st.get("status") == "running":
+        api_post("reinit")
+        lost = api_get(f"jobs/{st.get('jobId')}")
+        (ok if lost.get("status") == "error" and "lost" in (lost.get("error") or "") else fail)(f"reinit while the reader runs leaves its job error/lost ({lost.get('status')}: {lost.get('error')})")
+        inv = api_get("inventory", timeout=300)       # unread items remain, so this restarts the reader
+        time.sleep(3)
+        st = api_get("facts/status")
+        mid = inv.get("facts", {})
+        pend_mid = mid.get("unread", 0) + mid.get("stale", 0)
+        (ok if st.get("jobId") != lost.get("id") and (st.get("total") or 0) <= max(pend_mid, 1) + 1 else fail)(f"restarted reader queues only unread items (total {st.get('total')} vs {pend_mid} unread)")
+    st = facts_wait(600)
+    (ok if st.get("status") == "done" else fail)(f"reader finished within 600 s ({st.get('status')}, processed {st.get('processed')}/{st.get('total')})")
+else:
+    info("every fact is already valid; the first-run and interrupt/resume checks need a fresh registry")
+time.sleep(5)                                         # a provisional fact is re-read once by a following job
+st = facts_wait(300)
+inv = api_get("inventory", timeout=300)
+fc = inv.get("facts", {})
+(ok if fc.get("unread", 0) + fc.get("stale", 0) <= fc.get("failing", 0) + fc.get("large", 0) else fail)(f"nothing is left unread except failing or large items ({fc})")
+read_comps = [c for c in inv.get("components", []) if c.get("basis") in ("valid", "provisional") and c.get("kind") in ("app", "driver", "library")]
+(ok if read_comps and all(c.get("ihash") for c in read_comps) else fail)(f"every read component has ihash ({len(read_comps)} read)")
+unread_c = [c for c in inv.get("components", []) if c.get("basis") in ("unread", "stale")]
+(ok if all(c.get("origin") == "unread" or c.get("origin") in ("hpm", "bundle") for c in unread_c) else fail)("an unread or stale component is never classified url or local")
+ts = api_get("stats")
+(ok if ts.get("perItemReadsInRequest") == 0 else fail)(f"no per-item read happened inside an endpoint handler ({ts.get('perItemReadsInRequest')})")
+one = next((c for c in inv.get("components", []) if c.get("kind") == "app" and c.get("hubId") and not c.get("isPrivate")), None)
+if one:
+    reads0 = ts.get("perItemReadsInRequest")
+    r = api_post("facts/read", {"kind": "app", "id": one["hubId"]}, timeout=120)
+    (ok if r.get("read") is True and r.get("basis") in ("valid", "provisional") and r.get("hash") else fail)(f"POST facts/read reads one item ({ {k: r.get(k) for k in ('read', 'basis', 'error')} })")
+    (ok if api_get("stats").get("perItemReadsInRequest") == reads0 + 1 else fail)("the user-requested read counts as the one request read")
+bad = api_post("facts/read", {"kind": "app", "id": "999999999"})
+(ok if bad.get("error") else fail)("facts/read of an unknown item -> error payload")
 # TASK-SECTIONS-BELOW
 
 print(f"\n{passed} passed, {failed} failed, {warnings} warnings")

@@ -15,10 +15,12 @@ String extract(String name) {
     for (; i < src.length(); i++) { char c = src.charAt(i); if (c == '{') depth++; else if (c == '}') { depth--; if (depth == 0) { i++; break } } }
     return src.substring(start, i)
 }
-java.util.regex.Matcher cm = src =~ /(?m)^@Field (static final long PROVISIONAL_MS = [\d_]+L)/
-assert cm.find() : 'PROVISIONAL_MS not found'
-String constant = cm.group(1)
-String code = ['factBasis', 'classifyOrigin', 'ckey', 'childOfIndex', 'walkAppTree', 'docPruneDecision', 'factVisible'].collect { extract(it) }.join('\n')
+String constant = ['PROVISIONAL_MS', 'LARGE_SOURCE_BYTES', 'FACT_FAIL_LIMIT', 'FACT_BACKOFF_MS'].collect { String n ->
+    java.util.regex.Matcher cm = src =~ /(?m)^@Field (static final [^\n=]*\b${n} = [^\n]*?)\s*(?:\/\/[^\n]*)?$/
+    assert cm.find() : "${n} not found"
+    cm.group(1)
+}.join('\n')
+String code = ['factBasis', 'factQueue', 'recordFailure', 'recordSuccess', 'classifyOrigin', 'ckey', 'childOfIndex', 'walkAppTree', 'docPruneDecision', 'factVisible'].collect { extract(it) }.join('\n')
 def H = new GroovyShell().parse("import groovy.transform.CompileStatic\nclass H {\n${constant}\n${code}\n}\nreturn H").run()
 
 void t(String name, Closure c) { try { c(); pass++; println "  ok   ${name}" } catch (Throwable e) { fail++; println "  FAIL ${name}\n         ${e.message}" } }
@@ -75,6 +77,39 @@ t('item facts need a usable basis', { assert !H.factVisible('url', 'stale', 'loc
 t('hpm manifest metadata is shown whatever the basis', { assert H.factVisible('hpm', 'unread', 'loc') && H.factVisible('hpm', 'stale', 'iv') && H.factVisible('hpm', 'stale', 'ivs') })
 t('an hpm item hash still needs a usable basis', { assert !H.factVisible('hpm', 'unread', 'ih') })
 t('components without a basis (bundles, files) are always shown', { assert H.factVisible('bundle', null, 'loc') })
+
+// --- factQueue ---
+long NOW = 1_000_000L
+def qc = { Map over -> [k: 'app', id: 1, lm: 1L] + over }
+t('factQueue orders newest-changed first', { assert H.factQueue([qc(id: 1, lm: 3L), qc(id: 2, lm: 1L), qc(id: 3, lm: 2L)], NOW) == ['app:1', 'app:3', 'app:2'] })
+t('factQueue skips an item backed off into the future', { assert H.factQueue([qc(fnext: NOW + 1)], NOW) == [] })
+t('factQueue includes an item whose back-off has passed', { assert H.factQueue([qc(fnext: NOW)], NOW) == ['app:1'] })
+t('factQueue skips a large source', { assert H.factQueue([qc(sz: 600_000)], NOW) == [] })
+t('factQueue keeps a source at the size limit', { assert H.factQueue([qc(sz: 524_288)], NOW) == ['app:1'] })
+t('factQueue skips a component with no hub id', { assert H.factQueue([qc(id: null)], NOW) == [] })
+t('factQueue skips bundles and files', { assert H.factQueue([qc(k: 'file'), qc(k: 'bundle')], NOW) == [] })
+t('factQueue includes provisional and stale, not valid', {
+    assert H.factQueue([qc(id: 1, lm: 1000L, flm: 1000L, frd: 1500L), qc(id: 2, lm: 2000L, flm: 1000L, frd: 9000L), qc(id: 3, lm: 1000L, flm: 1000L, frd: 9000L)], NOW) == ['app:2', 'app:1'] })
+t('factQueue keys libraries and drivers the same way', { assert H.factQueue([qc(k: 'library', id: 7), qc(k: 'driver', id: 8, lm: 0L)], NOW) == ['library:7', 'driver:8'] })
+
+// --- recordFailure / recordSuccess ---
+Map f1 = H.recordFailure([k: 'app', id: 1], 'timeout', NOW)
+t('first failure counts, no back-off yet', { assert f1.ff == 1 && f1.fnext == null && f1.fe == 'timeout' })
+Map f2 = H.recordFailure(f1, 'timeout', NOW)
+t('second failure backs off one hour', { assert f2.ff == 2 && f2.fnext == NOW + 3_600_000L })
+Map f3 = H.recordFailure(f2, 'timeout', NOW)
+t('third failure backs off 24 hours', { assert f3.ff == 3 && f3.fnext == NOW + 86_400_000L })
+t('fourth failure stays at 24 hours', { assert H.recordFailure(f3, 'x', NOW).fnext == NOW + 86_400_000L })
+t('recordFailure leaves the input map alone', { assert f1.ff == 1 && f2.ff == 2 })
+Map ok1 = H.recordSuccess(f3, [loc: 'https://x/a.groovy', ih: 'abc', iv: '1.0', ivs: 'field', sz: 120, ch: true, pv: false], 5000L, 9000L)
+t('success clears the failure fields', { assert !ok1.containsKey('ff') && !ok1.containsKey('fnext') && !ok1.containsKey('fe') })
+t('success stamps the read version and time', { assert ok1.flm == 5000L && ok1.frd == 9000L })
+t('success stores the facts', { assert ok1.loc == 'https://x/a.groovy' && ok1.ih == 'abc' && ok1.iv == '1.0' && ok1.sz == 120 && ok1.ch == true })
+t('success adopts ih as ah when none is set', { assert ok1.ah == 'abc' })
+t('success keeps an existing ah', { assert H.recordSuccess([ah: 'old'], [ih: 'new'], 1L, 2L).ah == 'old' })
+t('success drops facts that came back empty and leaves unlisted ones', { Map r = H.recordSuccess([loc: 'u', iv: '1', ivs: 'field'], [ih: 'h', iv: null], 1L, 2L); assert !r.containsKey('iv') && r.loc == 'u' && r.ivs == 'field' })
+t('a successful read is valid for its version', { assert H.factBasis(ok1, 5000L) == 'valid' })
+t('a read within 2 s of the version is provisional', { assert H.factBasis(H.recordSuccess([:], [ih: 'h'], 5000L, 5500L), 5000L) == 'provisional' })
 
 println "\n${pass} passed, ${fail} failed, 0 warnings"
 System.exit(fail ? 1 : 0)

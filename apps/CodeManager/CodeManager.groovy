@@ -59,6 +59,12 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final AtomicInteger REQUESTS_ACTIVE = new AtomicInteger(0)   // endpoint handlers running now (set by timed())
 @Field static final long PROVISIONAL_MS = 2_000L          // a fact read this soon after its item's lastModified is provisional
 @Field static final long LARGE_SOURCE_BYTES = 524_288L    // a larger source is never read in the background
+@Field static final long FACT_GAP_MS = 2_000L             // fact reader: pause between two reads
+@Field static final int  FACT_FAIL_LIMIT = 2              // consecutive failed reads before an item is backed off
+@Field static final List<Long> FACT_BACKOFF_MS = [3_600_000L, 86_400_000L]   // first back-off 1 h, then 24 h
+@Field static final int  FACT_WRITE_WAIT_STEPS = 300      // reader gives up after this many steps (about 10 min) spent waiting for a write
+// The single writer lease (DESIGN 6.6). Every code write takes the permit; the fact reader reads nothing while it is taken.
+@Field static final Semaphore WRITE = new Semaphore(1)
 @Field static volatile Map LIB_SNAPSHOT = [list: null, asOf: null, error: null, attemptedAt: 0L]   // last good list is kept on failure
 @Field static volatile String LIB_JOB_ID = null
 @Field static volatile boolean simulateLibFail = false
@@ -96,6 +102,8 @@ mappings {
     path('/api/libraries/refresh') { action: [POST: 'apiLibrariesRefresh'] }
     path('/api/test/simulateLibFail') { action: [POST: 'apiSimulateLibFail'] }   // answers 404 unless debug logging is on
     path('/api/sweep/start')       { action: [POST: 'apiSweepStart'] }         // Task 6
+    path('/api/facts/status')      { action: [GET: 'apiFactsStatus'] }
+    path('/api/facts/read')        { action: [POST: 'apiFactsRead'] }
     path('/api/hpm/import')        { action: [POST: 'apiHpmImport'] }          // Task 5
     path('/api/ui/sync')           { action: [POST: 'apiSyncUI'] }
     path('/api/reinit')            { action: [POST: 'apiReinit'] }
@@ -1091,7 +1099,214 @@ Map apiInventory() {
         Map b = bulk()
         reconcileNow(b)
         scheduleLibraryRefreshIfStale()
-        buildInventoryPayload(b)
+        Map payload = buildInventoryPayload(b)
+        Map fc = payload.facts as Map
+        if (((fc.unread ?: 0) as int) + ((fc.stale ?: 0) as int) > 0) startFactReader()   // only schedules the first read
+        payload
+    }
+}
+
+// ===== Fact reader (DESIGN.md §5.2) =====
+// Reads per-item facts (importUrl, version, hash, size, child calls) in the background under the hub budget (5.1): one read
+// in flight, FACT_GAP_MS between reads, none while a write is outstanding, large sources never, back-off after repeated
+// failures. The source is hashed and dropped inside readFacts(); nothing of it is kept.
+
+// Components worth a read now, newest-changed first, as registry keys. Excludes items backed off into the future, items
+// whose recorded size is above the background limit, kinds that have no source and components not bound to a hub id.
+@CompileStatic
+static List<String> factQueue(List<Map> comps, long now) {
+    List<Map> picked = comps.findAll { Map c ->
+        c.id != null && (c.k == 'app' || c.k == 'driver' || c.k == 'library') &&
+            ((c.sz ?: 0L) as long) <= LARGE_SOURCE_BYTES && ((c.fnext ?: 0L) as long) <= now &&
+            factBasis(c, (c.lm ?: 0L) as long) != 'valid'
+    }
+    picked.sort { Map a, Map b -> ((b.lm ?: 0L) as long) <=> ((a.lm ?: 0L) as long) }
+    return picked.collect { Map c -> ckey(c.k as String, c.id) }
+}
+
+// A failed read: counts, keeps the message, and from the FACT_FAIL_LIMIT-th failure in a row sets when to try again.
+@CompileStatic
+static Map recordFailure(Map c, String error, long now) {
+    Map m = new LinkedHashMap(c)
+    int ff = ((c.ff ?: 0) as int) + 1
+    m.ff = ff
+    m.fe = error?.take(160)
+    if (ff >= FACT_FAIL_LIMIT) m.fnext = now + FACT_BACKOFF_MS[Math.min(ff - FACT_FAIL_LIMIT, FACT_BACKOFF_MS.size() - 1)]
+    return m
+}
+
+// A good read: the facts replace the stored ones (a null fact is removed, an unlisted one is kept), the failure fields clear,
+// and the read is stamped with the item's lastModified it was taken at and the time it was taken.
+@CompileStatic
+static Map recordSuccess(Map c, Map facts, long lm, long now) {
+    Map m = new LinkedHashMap(c)
+    m.remove('ff'); m.remove('fnext'); m.remove('fe')
+    for (Object o in facts.entrySet()) {
+        Map.Entry e = (Map.Entry) o
+        if (e.value == null) m.remove(e.key) else m.put(e.key, e.value)
+    }
+    m.flm = lm
+    m.frd = now
+    if (m.ah == null && m.ih != null) m.ah = m.ih
+    return m
+}
+
+private boolean writeOutstanding() { return WRITE.availablePermits() == 0 }
+
+// Every bound app, driver and library in the registry, with its package origin.
+private List<Map> itemComponents() {
+    List<Map> out = []
+    ((state.pkgs ?: [:]) as Map).each { String key, Map p ->
+        (p.c as List).each { Map c -> if (c.id != null && c.k in ['app', 'driver', 'library']) out << (c + [_pkg: key, _o: p.o])  }
+    }
+    return out
+}
+
+// Facts from one read. The source lives only in this frame: it is hashed, measured and dropped.
+private Map readFacts(String kind, String id, String origin, boolean background) {
+    Map d = fetchItemDetail(kind, id, background)
+    if (d == null) return [error: "read failed"]
+    String src = d.source as String
+    if (!src) return [error: "empty source"]
+    Map v = parseVersionLiteral(src)
+    boolean child = src.contains("addChildDevice") || src.contains("addChildApp")
+    Map facts = [ih: hashPrefix(sourceHash(src)), sz: src.length(), ch: child ?: null, pv: d.isPrivate == true ? true : null]
+    // An HPM item keeps the location and version its manifest declares; every other origin takes them from the source.
+    if (origin != 'hpm') {
+        facts.loc = d.importUrl ?: ((origin == 'url' && kind != 'library') ? '' : null)   // '' stops a url package re-deriving the location from its key
+        facts.iv = v.ver; facts.ivs = v.src
+    }
+    return [facts: facts]
+}
+
+// Stores one read's outcome on the registry component. False when the registry could not be taken in time or the item left it.
+private boolean applyFactResult(String ck, long lm, Map outcome) {
+    Semaphore gate = gateFor("reconcile")
+    if (!gate.tryAcquire(BULK_WAIT_MS, TimeUnit.MILLISECONDS)) return false
+    try {
+        Map pkgs = (state.pkgs ?: [:]) as Map
+        for (Map.Entry e in pkgs.entrySet()) {
+            Map p = e.value as Map
+            List comps = p.c as List
+            int idx = comps.findIndexOf { Map c -> c.id != null && ckey(c.k as String, c.id) == ck }
+            if (idx < 0) continue
+            Map c = comps[idx] as Map
+            Map next = outcome.facts != null ? recordSuccess(c, outcome.facts as Map, lm, now()) : recordFailure(c, outcome.error as String, now())
+            List newComps = new ArrayList(comps)
+            newComps[idx] = compact(next)
+            Map newPkgs = new LinkedHashMap(pkgs)
+            newPkgs[e.key] = p + [c: newComps]
+            state.pkgs = newPkgs
+            return true
+        }
+        return false
+    } finally { gate.release() }
+}
+
+// Starts the reader unless one is running. Schedules the first read and returns; it never reads inside the caller.
+void startFactReader() {
+    Semaphore gate = gateFor("factStart")
+    if (!gate.tryAcquire()) return
+    try {
+        if (JOBS.values().any { ConcurrentHashMap j -> j.kind == 'facts' && j.status == 'running' }) return
+        List<String> queue = factQueue(itemComponents(), now())
+        if (queue.isEmpty()) return
+        String jobId = newJob('facts', queue.size())
+        ConcurrentHashMap j = JOBS[jobId]
+        (j.pending as ConcurrentLinkedQueue).addAll(queue)
+        j.counts = new ConcurrentHashMap([read: new AtomicInteger(0), failed: new AtomicInteger(0), skipped: new AtomicInteger(0)])
+        j.retried = new ConcurrentHashMap()
+        j.waits = new AtomicInteger(0)
+        runInMillis(1000L, 'factStep', [data: [jobId: jobId], overwrite: false])
+        logSched "fact reader ${jobId}: ${queue.size()} queued"
+    } finally { gate.release() }
+}
+
+// One read, then the next step FACT_GAP_MS later.
+void factStep(Map data) {
+    String jobId = data.jobId as String
+    ConcurrentHashMap j = JOBS[jobId]
+    if (j == null || j.status != 'running') return                 // lost to a push or a restart; the next start resumes
+    try {
+        ConcurrentLinkedQueue<String> pending = j.pending as ConcurrentLinkedQueue<String>
+        if (writeOutstanding()) {
+            if ((j.waits as AtomicInteger).incrementAndGet() > FACT_WRITE_WAIT_STEPS) { jobFail(jobId, "gave up waiting for a write to finish"); return }
+            runInMillis(FACT_GAP_MS, 'factStep', [data: [jobId: jobId], overwrite: false])
+            return
+        }
+        String ck = pending.poll()
+        if (ck == null) {
+            Map counts = (j.counts as Map).collectEntries { k, v -> [(k): (v as AtomicInteger).get()] }
+            jobDone(jobId, counts)
+            logInfo "fact reader done: ${counts}"
+            return
+        }
+        Map c = itemComponents().find { Map x -> ckey(x.k as String, x.id) == ck }
+        boolean due = c != null && !factQueue([c], now()).isEmpty()      // an earlier read, a back-off or a size may have settled it
+        if (due) {
+            long lm = (c.lm ?: 0L) as long
+            Map outcome
+            try { outcome = readFacts(c.k as String, c.id as String, c._o as String, true) }
+            catch (Exception e) { outcome = [error: "${getObjectClassName(e)}: ${e.message}" as String] }
+            if (applyFactResult(ck, lm, outcome)) {
+                ((j.counts as Map)[outcome.facts != null ? 'read' : 'failed'] as AtomicInteger).incrementAndGet()
+                // read this soon after the item's lastModified: read again once, so a second save in the same second is not missed
+                if (outcome.facts != null && (now() - lm) < PROVISIONAL_MS && (j.retried as Map).putIfAbsent(ck, true) == null) {
+                    pending.add(ck); (j.total as AtomicInteger).incrementAndGet()
+                }
+            } else {
+                pending.add(ck)                                           // registry busy: try this one again
+                runInMillis(FACT_GAP_MS, 'factStep', [data: [jobId: jobId], overwrite: false])
+                return
+            }
+        } else {
+            ((j.counts as Map).skipped as AtomicInteger).incrementAndGet()
+        }
+        (j.processed as AtomicInteger).incrementAndGet()
+        runInMillis(FACT_GAP_MS, 'factStep', [data: [jobId: jobId], overwrite: false])
+    } catch (Exception e) {
+        logError "fact reader ${jobId}: ${e.message}"
+        jobFail(jobId, "fact reader failed: ${e.message}")
+    }
+}
+
+// Fact counts as the inventory payload reports them (a provisional fact counts as valid: it is shown).
+private Map factSummary() {
+    Map counts = [total: 0, valid: 0, stale: 0, unread: 0, failing: 0, large: 0]
+    itemComponents().each { Map c ->
+        String basis = factBasis(c, (c.lm ?: 0L) as long)
+        counts.total++
+        if (basis == 'valid' || basis == 'provisional') counts.valid++ else counts[basis]++
+        if ((c.ff ?: 0) > 0) counts.failing++
+        if ((c.sz ?: 0) > LARGE_SOURCE_BYTES) counts.large++
+    }
+    return counts
+}
+
+Map apiFactsStatus() {
+    String id = jobSlot('facts')?.id as String
+    Map job = id ? jobStatus(id) : [status: 'none']
+    return jsonResponse([jobId: id, status: job.status, processed: job.processed, total: job.total, startedAt: job.startedAt, finishedAt: job.finishedAt,
+                         error: job.error, result: job.result, facts: factSummary(), gapMs: FACT_GAP_MS, largeSourceBytes: LARGE_SOURCE_BYTES])
+}
+
+// POST /api/facts/read?kind=&id= — the one per-item read an endpoint handler may make: the item the user acted on. Synchronous; ignores the size limit.
+Map apiFactsRead() {
+    String kind = params.kind as String, id = params.id as String
+    if (!(kind in ['app', 'driver', 'library']) || !id?.isInteger()) return jsonResponse([error: "kind must be app|driver|library and id numeric"])
+    return timed("factsRead") {
+        String ck = ckey(kind, id)
+        Map c = itemComponents().find { Map x -> ckey(x.k as String, x.id) == ck }
+        if (c == null) return [error: "not in the registry: ${ck}" as String]
+        long lm = (c.lm ?: 0L) as long
+        Map outcome
+        try {
+            outcome = readFacts(kind, id, c._o as String, false)         // counts as the request's one allowed read
+        } catch (Exception e) { outcome = [error: "${getObjectClassName(e)}: ${e.message}" as String] }
+        boolean stored = applyFactResult(ck, lm, outcome)
+        Map now1 = itemComponents().find { Map x -> ckey(x.k as String, x.id) == ck } ?: c
+        [kind: kind, hubId: id, read: outcome.facts != null, stored: stored, error: outcome.error, basis: factBasis(now1, lm), importUrl: now1.loc ?: null,
+         version: now1.iv, hash: now1.ih, size: now1.sz, createsChildren: now1.ch == true]
     }
 }
 // ===== Sweep (DESIGN.md §5.2, §7): bounded async freshness check over every upstream location =====
@@ -1112,12 +1327,6 @@ Map readSweepCache() {
     return new HashMap(SWEEP)
 }
 private void persistSweepCache() { writeCmFile(SWEEP_FILE, JsonOutput.toJson(SWEEP)) }
-
-void scheduledSweep() { startSweep() }
-// Distinct handler name from the daily cron target (I5): runIn() and schedule() overwrite by handler
-// name, so a runIn(…, 'scheduledSweep') warm-up cancels the cron job it shares a name with, and a
-// systemStart warm-up cancels the cron after every reboot. warmSweep is that separate one-off target.
-void warmSweep() { startSweep() }
 
 // force=1 ignores the TTL and queues every eligible item (manual "check now" / verification use;
 // documented in the README by Task 9).
@@ -1395,23 +1604,30 @@ String newJob(String kind, int total) {
     j.processed = new AtomicInteger(0); j.inFlight = new AtomicInteger(0)
     j.pending = new ConcurrentLinkedQueue<String>()
     JOBS[id] = j
-    state.lastJob = [id: id, kind: kind, status: 'running', total: total, startedAt: j.startedAt]   // scalar snapshot survives a push
+    saveJobSnapshot(kind, [id: id, kind: kind, status: 'running', total: total, startedAt: j.startedAt])   // scalar snapshot survives a push
     return id
 }
 void jobDone(String jobId, Map result) {
     ConcurrentHashMap j = JOBS[jobId]; if (j == null) return
     j.status = 'done'; j.result = result ?: [:]; j.finishedAt = now()
-    state.lastJob = [id: jobId, kind: j.kind, status: 'done', total: (j.total as AtomicInteger).get(), startedAt: j.startedAt, finishedAt: j.finishedAt]
+    saveJobSnapshot(j.kind as String, [id: jobId, kind: j.kind, status: 'done', total: (j.total as AtomicInteger).get(), startedAt: j.startedAt, finishedAt: j.finishedAt])
 }
 void jobFail(String jobId, String error) {
     ConcurrentHashMap j = JOBS[jobId]; if (j == null) return
     j.status = 'error'; j.error = error; j.finishedAt = now()
-    state.lastJob = [id: jobId, kind: j.kind, status: 'error', error: error, total: (j.total as AtomicInteger).get(), startedAt: j.startedAt, finishedAt: j.finishedAt]
+    saveJobSnapshot(j.kind as String, [id: jobId, kind: j.kind, status: 'error', error: error, total: (j.total as AtomicInteger).get(), startedAt: j.startedAt, finishedAt: j.finishedAt])
 }
+// Each job kind has its own snapshot slot, so a library refresh, a fact read and a sweep never overwrite one another's status.
+private void saveJobSnapshot(String kind, Map snap) {
+    Map slots = new LinkedHashMap((state.jobSlots ?: [:]) as Map)
+    slots[kind] = snap
+    state.jobSlots = slots
+}
+private Map jobSlot(String kind) { return ((state.jobSlots ?: [:]) as Map)[kind] as Map }
 Map jobStatus(String jobId) {
     ConcurrentHashMap j = JOBS[jobId]
     if (j == null) {
-        Map snap = (state.lastJob ?: [:]) as Map
+        Map snap = jobSlot(jobId.contains('-') ? jobId.substring(0, jobId.indexOf('-')) : jobId) ?: [:]
         if (snap.id == jobId) return (snap.status == 'running') ? snap + [status: 'error', error: 'Job lost to hub restart or code push'] : snap
         return [id: jobId, status: 'unknown']
     }
@@ -1439,7 +1655,7 @@ Map apiUpdateSettings() {
 }
 
 // ===== Lifecycle =====
-void installed() { logCfg "installed"; state.installed = true; if (!state.accessToken) checkOAuth(); runIn(1, 'syncUIForced'); runIn(60, 'warmSweep'); initialize() }
+void installed() { logCfg "installed"; state.installed = true; if (!state.accessToken) checkOAuth(); runIn(1, 'syncUIForced'); runIn(60, 'startFactReader'); initialize() }
 void updated() {
     logCfg "updated"
     state.installed = true
@@ -1448,11 +1664,9 @@ void updated() {
     uiVersionCache = null
     if (settings.debugEnable) runIn(1800, 'logsOff')
     runIn(1, 'syncUIForced')
-    // warms the registry before the first SPA open on a cold hub; the sweep runs the inventory pass
-    // first (I5). runIn a handler distinct from the daily cron's target so this one-off doesn't
-    // overwrite (and get overwritten by) the schedule() call below. The GET /api/inventory lazy
-    // pass stays as the fallback.
-    runIn(60, 'warmSweep')
+    // unschedule() above stopped any running reader's chain of steps; its job can never finish.
+    JOBS.each { String id, ConcurrentHashMap j -> if (j.kind == 'facts' && j.status == 'running') jobFail(id, 'Job lost: the app was re-initialized') }
+    runIn(60, 'startFactReader')
     initialize()
 }
 void uninstalled() { unschedule(); unsubscribe(); logCfg "uninstalled" }
@@ -1461,20 +1675,20 @@ void logsOff() { app.updateSetting("debugEnable", [type: "bool", value: false]);
 void initialize() {
     if (state.version != CODE_VERSION) { logVer "New version: ${CODE_VERSION} (was: ${state.version})"; state.version = CODE_VERSION }
     // A job that was running when the class was replaced can never finish: mark it.
-    Map lj = (state.lastJob ?: [:]) as Map
-    if (lj.status == 'running' && !JOBS[lj.id as String]) state.lastJob = lj + [status: 'error', error: 'Job lost to hub restart or code push']
+    state.remove('lastJob')                                   // single slot of 0.1, replaced by per-kind slots
+    ((state.jobSlots ?: [:]) as Map).each { k, Map snap ->
+        if (snap.status == 'running' && !JOBS[snap.id as String]) saveJobSnapshot(k as String, snap + [status: 'error', error: 'Job lost to hub restart or code push'])
+    }
     Map sw = (state.sweep ?: [:]) as Map
     if (sw.status == 'running' && JOBS[sw.jobId as String]?.status != 'running') state.sweep = sw + [status: 'stale']
-    Random rng = new Random()
-    schedule("${rng.nextInt(60)} ${rng.nextInt(60)} 3 * * ?", "scheduledSweep")       // Task 6 defines scheduledSweep
     schedule("0 17 3 * * ?", "scheduledUISync")
     schedule("0 41 3 * * ?", "scheduledVersionCheck")
     subscribe(location, "systemStart", "systemStartHandler")
     refreshUpdateLabel()
     if (!state.hpm) runIn(30, 'initialHpmImport')
-    logSched "daily sweep, UI sync and version check scheduled"
+    logSched "daily UI sync and version check scheduled"
 }
-void systemStartHandler(evt) { runIn(300, 'warmSweep') }       // distinct handler name — see warmSweep (I5)
+void systemStartHandler(evt) { runIn(300, 'startFactReader') }
 
 // ===== Version heuristics (DESIGN.md §4) — self-contained, extracted by tests/test-version-compare.groovy =====
 
