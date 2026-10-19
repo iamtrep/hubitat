@@ -11,39 +11,54 @@ SPDX-License-Identifier: MIT
 <link rel="icon" type="image/png" sizes="32x32" href="/ui2/images/favicon-32x32.png">
 <link rel="icon" type="image/png" sizes="16x16" href="/ui2/images/favicon-16x16.png">
 <style>
-:root { --primary:#1A77C9; --ok:#388e3c; --warn:#ff9800; --crit:#d32f2f; --bg:#f5f5f5; --card:#fff; --border:#ddd; --text:#333; --muted:#777; --alt:#f9f9f9; --hover:#e3f2fd; }
+/* Colour tokens: every text/background pair below is at least 4.5:1, in both themes. */
+:root { --primary:#1565c0; --link:#1565c0; --ok:#2e7d32; --warn:#a14a00; --crit:#c62828; --bg:#f5f5f5; --card:#fff; --border:#ddd; --text:#333; --muted:#5f6368; --alt:#f9f9f9; --hover:#e3f2fd;
+  --b-ok-bg:#e8f5e9; --b-ok:#1b5e20; --b-warn-bg:#fff3e0; --b-warn:#8a3d00; --b-crit-bg:#ffebee; --b-crit:#b71c1c; --b-muted-bg:#eee; --b-muted:#4f4f4f;
+  --a-warn-bg:#fff3e0; --a-warn-bd:#ffb74d; --a-info-bg:#e3f2fd; --a-info-bd:#90caf9; --err-bg:#ffebee; --err-bd:#ef9a9a; --focus:#1565c0; --hdr-h:44px; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --primary:#0d47a1; --link:#90caf9; --ok:#81c784; --warn:#ffb74d; --crit:#ef9a9a; --bg:#121212; --card:#1e1e1e; --border:#333; --text:#e3e3e3; --muted:#a8a8a8; --alt:#262626; --hover:#1e3a5f;
+  --b-ok-bg:#1b3a1f; --b-ok:#a5d6a7; --b-warn-bg:#3e2a12; --b-warn:#ffcc80; --b-crit-bg:#4a1a1d; --b-crit:#ffcdd2; --b-muted-bg:#333; --b-muted:#c4c4c4;
+  --a-warn-bg:#3e2a12; --a-warn-bd:#8a5a1a; --a-info-bg:#14273d; --a-info-bd:#2f5d8a; --err-bg:#4a1a1d; --err-bd:#8a3a3f; --focus:#90caf9; } }
+:root[data-theme="dark"] {
+  --primary:#0d47a1; --link:#90caf9; --ok:#81c784; --warn:#ffb74d; --crit:#ef9a9a; --bg:#121212; --card:#1e1e1e; --border:#333; --text:#e3e3e3; --muted:#a8a8a8; --alt:#262626; --hover:#1e3a5f;
+  --b-ok-bg:#1b3a1f; --b-ok:#a5d6a7; --b-warn-bg:#3e2a12; --b-warn:#ffcc80; --b-crit-bg:#4a1a1d; --b-crit:#ffcdd2; --b-muted-bg:#333; --b-muted:#c4c4c4;
+  --a-warn-bg:#3e2a12; --a-warn-bd:#8a5a1a; --a-info-bg:#14273d; --a-info-bd:#2f5d8a; --err-bg:#4a1a1d; --err-bd:#8a3a3f; --focus:#90caf9; }
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:14px}
-a{color:var(--primary);text-decoration:none} a:hover{text-decoration:underline}
+a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .hdr{background:var(--primary);color:#fff;padding:10px 20px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:100;box-shadow:0 2px 4px rgba(0,0,0,.15)}
-.hdr h1{font-size:17px;font-weight:600} .hdr .info{margin-left:auto;font-size:12px;opacity:.85} .hdr a{color:#fff}
-.tabs{display:flex;background:#fff;border-bottom:2px solid var(--border);overflow-x:auto;position:sticky;top:42px;z-index:99}
+.hdr h1{font-size:17px;font-weight:600;white-space:nowrap} .hdr .info{margin-left:auto;font-size:12px;opacity:.9} .hdr a{color:#fff;white-space:nowrap}
+.tabs{display:flex;background:var(--card);border-bottom:2px solid var(--border);overflow-x:auto;position:sticky;top:var(--hdr-h);z-index:99}
 .tab{padding:9px 16px;cursor:pointer;font-size:13px;font-weight:500;border-bottom:3px solid transparent;white-space:nowrap;color:var(--muted)}
-.tab:hover{color:var(--text);background:var(--alt)} .tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+.tab:hover{color:var(--text);background:var(--alt)} .tab.active{color:var(--link);border-bottom-color:var(--link)}
 .legend{display:flex;flex-wrap:wrap;gap:4px 18px;margin-top:10px;color:var(--muted);font-size:12px}
 .content{max-width:1400px;margin:0 auto;padding:16px} .panel{display:none} .panel.active{display:block}
-.card{background:var(--card);border:1px solid var(--border);border-radius:6px;margin-bottom:14px} .card-h{padding:9px 14px;font-weight:600;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px} .card-b{padding:12px 14px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:6px;margin-bottom:14px} .card-h{padding:9px 14px;font-weight:600;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap} .card-b{padding:12px 14px}
 .metrics{display:flex;flex-wrap:wrap;gap:10px} .m{background:var(--alt);border:1px solid var(--border);border-radius:6px;padding:8px 12px;min-width:120px} .m .l{font-size:11px;color:var(--muted)} .m .v{font-size:18px;font-weight:600}
-.tbl-wrap{overflow-x:auto} table{border-collapse:collapse;width:100%;font-size:13px} th{position:sticky;top:0;background:var(--alt);text-align:left;padding:6px 8px;cursor:pointer;border-bottom:2px solid var(--border);white-space:nowrap} td{padding:5px 8px;border-bottom:1px solid var(--border);vertical-align:top} tr:hover td{background:var(--hover)}
-.filter input{width:100%;max-width:360px;padding:6px 8px;border:1px solid var(--border);border-radius:4px;margin-bottom:8px}
-.badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600} .b-ok{background:#e8f5e9;color:var(--ok)} .b-warn{background:#fff3e0;color:#e65100} .b-crit{background:#ffebee;color:var(--crit)} .b-muted{background:#eee;color:var(--muted)}
-.btn{padding:6px 12px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;font-size:13px} .btn-p{background:var(--primary);color:#fff;border-color:var(--primary)} .btn:disabled{opacity:.5;cursor:default} .actions{display:flex;gap:8px;align-items:center;margin:8px 0}
-.msg{font-size:12px;color:var(--muted)} .alert{padding:8px 12px;border-radius:4px;margin-bottom:10px} .a-warn{background:#fff3e0;border:1px solid #ffb74d} .a-info{background:#e3f2fd;border:1px solid #90caf9}
-.loading{padding:30px;text-align:center;color:var(--muted)} .err{padding:16px;background:#ffebee;border:1px solid #ef9a9a;border-radius:6px}
-pre.src{background:#1e1e1e;color:#ddd;padding:10px;border-radius:6px;overflow:auto;max-height:60vh;font-size:12px;white-space:pre}
+.tbl-wrap{overflow-x:auto} table{border-collapse:collapse;width:100%;font-size:13px} th{position:sticky;top:0;background:var(--alt);text-align:left;padding:6px 8px;cursor:pointer;border-bottom:2px solid var(--border);white-space:nowrap} td{padding:5px 8px;border-bottom:1px solid var(--border);vertical-align:top;background:var(--card)} tr:hover td{background:var(--hover)}
+th:first-child,td:first-child{position:sticky;left:0;z-index:1} th:first-child{z-index:2}
+.filter input{width:100%;max-width:360px;padding:6px 8px;border:1px solid var(--border);border-radius:4px;margin-bottom:8px;background:var(--card);color:var(--text)}
+.badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600;white-space:nowrap} .b-ok{background:var(--b-ok-bg);color:var(--b-ok)} .b-warn{background:var(--b-warn-bg);color:var(--b-warn)} .b-crit{background:var(--b-crit-bg);color:var(--b-crit)} .b-muted{background:var(--b-muted-bg);color:var(--b-muted)}
+.btn{padding:6px 12px;border:1px solid var(--border);background:var(--card);color:var(--text);border-radius:4px;cursor:pointer;font-size:13px} .btn-p{background:var(--primary);color:#fff;border-color:var(--primary)} .btn:disabled{opacity:.5;cursor:default} .actions{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}
+.msg{font-size:12px;color:var(--muted);font-weight:400} .alert{padding:8px 12px;border-radius:4px;margin-bottom:10px} .a-warn{background:var(--a-warn-bg);border:1px solid var(--a-warn-bd)} .a-info{background:var(--a-info-bg);border:1px solid var(--a-info-bd)}
+.loading{padding:30px;text-align:center;color:var(--muted)} .err{padding:16px;background:var(--err-bg);border:1px solid var(--err-bd);border-radius:6px}
+.src{display:inline-block;max-width:28ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
+.empty{color:var(--muted);padding:16px}
+@media(max-width:600px){.hdr{padding:8px 12px;gap:8px}.hdr .info{display:none}.hdr h1{font-size:15px}.tab{padding:7px 10px;font-size:12px}.content{padding:10px}.filter input{max-width:none}}
 </style>
 </head>
 <body>
 <div class="hdr"><h1>Code Manager</h1><span class="info" id="hubInfo"></span>
-  <a href="https://github.com/iamtrep/hubitat/tree/main/apps/CodeManager#readme" target="_blank">Docs ↗</a>
-  <a id="cfgLink" href="#" target="_blank">⚙ Settings</a>
-  <button class="btn" onclick="refreshPage()">↻ Refresh</button></div>
-<div class="tabs" id="tabs">
-  <div class="tab" data-tab="inventory">Inventory</div><div class="tab" data-tab="packages">Packages</div>
-  <div class="tab" data-tab="hpm">HPM</div><div class="tab" data-tab="settings">Settings</div></div>
+  <a id="docsLink" href="#" target="_blank">Docs ↗</a>
+  <a id="cfgLink" href="#" target="_blank">App page</a>
+  <button class="btn" data-action="refresh">↻ Refresh</button></div>
+<div class="tabs" id="tabs" role="tablist">
+  <div class="tab" role="tab" tabindex="0" aria-selected="false" data-tab="inventory">Inventory</div><div class="tab" role="tab" tabindex="0" aria-selected="false" data-tab="packages">Packages</div>
+  <div class="tab" role="tab" tabindex="0" aria-selected="false" data-tab="hpm">HPM</div><div class="tab" role="tab" tabindex="0" aria-selected="false" data-tab="settings">Settings</div></div>
 <div class="content">
-  <div class="panel" id="p-inventory"></div><div class="panel" id="p-packages"></div>
-  <div class="panel" id="p-hpm"></div><div class="panel" id="p-settings"></div></div>
+  <div class="panel" id="p-inventory" role="tabpanel"></div><div class="panel" id="p-packages" role="tabpanel"></div>
+  <div class="panel" id="p-hpm" role="tabpanel"></div><div class="panel" id="p-settings" role="tabpanel"></div></div>
 <script>
 const CODE_VERSION = "0.1.1";
 const WORKBENCH = false;   // true: render from MOCK_DATA without a hub
@@ -57,8 +72,12 @@ const T='${access_token}', B='${api_base}', APP_VERSION='${app_version}', cache=
 const AUTH=(x)=>Object.assign({'Authorization':'Bearer '+T},x||{});
 const HUB_ORIGIN=(B.match(/^(https?:\/\/[^\/]+)\/apps\/api\//)||[])[1]||'';
 (function(){ const m=B.match(/^(https?:\/\/[^\/]+)\/apps\/api\/(\d+)/); const el=document.getElementById('cfgLink'); if(m&&el)el.href=m[1]+'/installedapp/configure/'+m[2]; else if(el)el.style.display='none'; })();
-let curTab = localStorage.getItem('cm_tab') || 'inventory';
-const README = 'https://github.com/iamtrep/hubitat/tree/main/apps/CodeManager#';
+let curTab='inventory';try{curTab=localStorage.getItem('cm_tab')||'inventory'}catch(e){}
+// Documentation base: the one value to change when the branch merges to main.
+const DOCS_BASE = 'https://github.com/iamtrep/hubitat/tree/main/apps/CodeManager';
+const README = DOCS_BASE + '#';
+document.getElementById('docsLink').href=DOCS_BASE+'#readme';
+const ROW_CAP = 200;   // rows rendered before "show all"
 
 // ===== API: 2-minute cache, mutation-driven drop, in-flight dedup, 3-wide semaphore =====
 const CACHE_TTL_MS=120000, inFlight={};
@@ -80,138 +99,137 @@ function escText(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt
 function h(s){return escText(s)}
 function safeHref(u){if(typeof u!=='string')return '';if(!/^https:\/\/[A-Za-z0-9.\-]+(?::\d+)?\/[^\s"'<>\\]*$/.test(u))return '';return u}
 function csvCell(v){let s=String(v??'');if(/^[=+\-@]/.test(s))s="'"+s;return /[",\n\r]/.test(s)||s.startsWith("'")?'"'+s.replace(/"/g,'""')+'"':s}
-function fmtDays(ms,now){if(!ms)return{text:'Never',color:'var(--muted)'};const d=Math.floor(((now||Date.now())-ms)/86400000);return{text:d+'d',color:d>=14?'var(--crit)':d>=7?'var(--warn)':'var(--ok)'}}
+function pad2(n){return String(n).padStart(2,'0')}
+// One date form everywhere: local YYYY-MM-DD HH:MM.
+function fmtDate(ms){if(!ms)return'never';const d=new Date(ms);return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate())+' '+pad2(d.getHours())+':'+pad2(d.getMinutes())}
+// How long ago, for the Checked column: today, N d ago, never; coloured by age.
+function fmtAgo(ms,now){if(!ms)return{text:'never',color:'var(--muted)'};const d=Math.floor(((now||Date.now())-ms)/86400000);return{text:d<=0?'today':d+' d ago',color:d>=14?'var(--crit)':d>=7?'var(--warn)':'var(--ok)'}}
+// Version order of the app's compareVersions (DESIGN.md §4): numeric segments, a leading v and a trailing tag ignored; null when unparsable.
+function versionParts(v){if(!v)return null;let s=String(v).trim().replace(/^[vV]/,'');s=s.split(' ')[0].split('(')[0];if(!s)return null;const out=[];for(const seg of s.split(/[.\-]/)){const dg=seg.replace(/[A-Za-z]+$/,'');if(!/^\d+$/.test(dg))return null;out.push(+dg)}return out}
+function versionCompare(a,b){const pa=versionParts(a),pb=versionParts(b);if(!pa||!pb)return null;for(let i=0;i<Math.max(pa.length,pb.length);i++){const x=pa[i]||0,y=pb[i]||0;if(x!==y)return x<y?-1:1}return 0}
+// Sort key for a version column: parsable versions in version order, then the rest as text.
+function versionSort(a,b){const c=versionCompare(a,b);if(c!==null)return c;const pa=versionParts(a),pb=versionParts(b);if(pa&&!pb)return -1;if(!pa&&pb)return 1;return String(a??'').localeCompare(String(b??''))}
+// Source link text: host and path, no scheme; the full URL goes in the title.
+function srcText(u){return String(u||'').replace(/^https?:\/\//,'').replace(/^raw\.githubusercontent\.com\//,'github/')}
 function classifyComponent(c){const s=c.status||'not-checked';const map={'current':['Current','var(--ok)'],'update-available':['Update available','var(--warn)'],'changed-upstream':['Changed upstream','var(--warn)'],'modified-locally':['Modified locally','var(--warn)'],'broken-source':['Broken source','var(--crit)'],'incomplete':['Incomplete','var(--crit)'],'missing':['Missing on hub','var(--crit)'],'not-installed':['Not installed','var(--muted)'],'private':['Private bundle','var(--muted)'],'unmanaged':['No upstream','var(--muted)'],'not-checked':['Not checked','var(--muted)']};const m=map[s]||[s,'var(--muted)'];return{origin:c.origin,status:s,label:m[0],color:m[1]}}
-const STATUS_HELP={'current':'installed source matches upstream','update-available':'upstream version is higher','changed-upstream':'upstream file differs but the versions do not order','modified-locally':'edited on the hub since Code Manager first saw it','broken-source':'the upstream URL answered 404/410 on three checks running','incomplete':'a required component of this package is not on the hub','missing':'required by the package, not installed','not-installed':'optional component the package never installed','private':'private code — the source is never read','unmanaged':'no import URL, so there is nothing to compare against','not-checked':'no drift check has compared this code with its upstream yet, or the code changed since'};
+const STATUS_HELP={'current':'installed source matches upstream','update-available':'upstream version is higher','changed-upstream':'upstream file differs but the versions do not order','modified-locally':'edited on the hub since Code Manager first saw it','broken-source':'the upstream URL answered 404/410 on 3 or more checks in a row; the row shows how many','incomplete':'a required component of this package is not on the hub','missing':'required by the package, not installed','not-installed':'optional component the package never installed','private':'private code — the source is never read','unmanaged':'no import URL, so there is nothing to compare against','not-checked':'no drift check has compared this code with its upstream yet, or the code changed since'};
 function legend(keys){return '<div class="legend">'+[...keys].sort((a,b)=>severity(a)-severity(b)).map(k=>{const c=classifyComponent({status:k});return '<div>'+badge(c.label,c.color)+' '+h(STATUS_HELP[k]||'')+'</div>'}).join('')+'</div>'}
-// Removability is per package (DESIGN.md §3): zero usage, no used bundle sibling, not referenced as a child type by an installed parent.
 // Remove state from the live usage lists: absent (nothing on the hub), in use (or a bundle sibling is), or no current use. Code that could
 // create the type later is not visible here; "Check removable" asks the hub (remove-check job).
 function removeState(c,comps){if(c.hubId==null)return'absent';if((c.usedByCount||0)>0)return'in-use';if(c.bundleOf&&comps.some(o=>o.bundleOf===c.bundleOf&&(o.usedByCount||0)>0))return'in-use';return'no-current-use'}
 // What the row's per-item facts (version, hash, import URL) are based on (DESIGN.md 3.1).
 function basisLabel(c,now,largeBytes){if(!['app','driver','library'].includes(c.kind))return'live';if(c.hubId==null)return'not read yet';
-  const b=c.basis;if(b==='valid'||b==='provisional')return'read '+new Date(c.factsReadAtMs||now).toLocaleDateString();
+  const b=c.basis;if(b==='valid'||b==='provisional')return'read '+fmtDate(c.factsReadAtMs||now).slice(0,10);
   if(largeBytes&&(c.sizeBytes||0)>largeBytes)return'large: read on request';if(c.factError)return'could not read';return b==='stale'?'not read since change':'not read yet'}
 const SEVERITY=['broken-source','missing','incomplete','modified-locally','update-available','changed-upstream','not-checked','current','unmanaged','private','not-installed'];
 function severity(status){const i=SEVERITY.indexOf(status);return i<0?SEVERITY.length:i}
 function presentStatuses(rows){return [...new Set(rows.map(r=>r.status||'not-checked'))].filter(k=>STATUS_HELP[k])}
-
-// ===== UI primitives =====
-// File Manager entries are served at /local/<name>; every other kind opens in its code editor.
+// Every item on the hub belongs to exactly one package; the Packages tab lists the ones installed and updated as a set.
+function isMultiPackage(p){return p.origin==='hpm'||p.origin==='bundle'||(p.componentCount||0)>1}
 function clink(kind,id,n){const p={app:'/app/editor/',driver:'/driver/editor/',library:'/library/editor/',bundle:'/bundle/editor/',file:'/local/'}[kind];return p&&id?'<a href="'+p+encodeURIComponent(id)+'" target="_blank">'+h(n)+'</a>':h(n)}
 function dlistlink(count,ids){if(!ids||!ids.length)return String(count??0);return'<a href="/device/list?ids='+ids.map(Number).join(',')+'" target="_blank">'+count+'</a>'}
-function alistlink(count){return'<a href="/installedapp/list" target="_blank">'+(count??0)+'</a>'}
+// An app's "Used by": 0 is plain, one instance links to it, several to the app list.
+function alistlink(count,ids){if(!count)return'0';if(ids&&ids.length===1&&ids[0]!=null)return'<a href="/installedapp/configure/'+encodeURIComponent(ids[0])+'" target="_blank">1</a>';return'<a href="/installedapp/list" target="_blank">'+count+'</a>'}
 function badge(label,color){const cls=color==='var(--ok)'?'b-ok':color==='var(--warn)'?'b-warn':color==='var(--crit)'?'b-crit':'b-muted';return'<span class="badge '+cls+'">'+h(label)+'</span>'}
 function mc(l,v,c){return'<div class="m"><div class="l">'+h(l)+'</div><div class="v"'+(c?' style="color:'+c+'"':'')+'>'+v+'</div></div>'}
 function loading(id){document.getElementById(id).innerHTML='<div class="loading">Loading...</div>'}
-function err(id,e,fn){document.getElementById(id).innerHTML='<div class="err"><div>'+h(e.message||String(e))+'</div><button class="btn" onclick="('+fn.name+')()">Retry</button></div>'}
+function err(id,e,tab){document.getElementById(id).innerHTML='<div class="err"><div>'+h(e.message||String(e))+'</div><button class="btn" data-action="retry" data-tab="'+h(tab)+'">Retry</button></div>'}
 function flash(id,msg){const el=document.getElementById(id);if(el){el.textContent=msg;setTimeout(()=>{if(el.textContent===msg)el.textContent=''},4000)}}
-function dlink2(u){const s=safeHref(u);return s?'<a href="'+h(s)+'" target="_blank">'+h(s.replace(/^https:\/\/raw\.githubusercontent\.com\//,''))+'</a>':(u?h(u):'')}
+function dlink2(u){const s=safeHref(u);return s?'<a class="src" href="'+h(s)+'" title="'+h(s)+'" target="_blank">'+h(srcText(s))+'</a>':(u?'<span class="src" title="'+h(u)+'">'+h(u)+'</span>':'')}
 
-// ===== SORTABLE TABLE ENGINE (copied verbatim from apps/HubDiagnostics/hub_diagnostics_ui.html) =====
+// ===== SORTABLE TABLE ENGINE (from apps/HubDiagnostics/hub_diagnostics_ui.html; keyboard sort, empty states and a row cap added) =====
+// cols: {l,f, r: render, ff: filter/sort text, t:'n' with optional sf numeric field, cmp: row comparator}. opts: sc, sd, filter, collapse,
+// collapseLabel, empty (message when there are no rows), label (aria-label for the filter).
 function tbl(cid,cols,rows,opts={}){
   const el=document.getElementById(cid);if(!el)return;
-  if(!rows||!rows.length){el.innerHTML='<p style="color:var(--muted);padding:16px">No data</p>';return}
-  let filt=[...rows],sc=opts.sc??0,sd=opts.sd??'asc';
+  if(!rows||!rows.length){el.innerHTML='<p class="empty">'+h(opts.empty||'Nothing to show.')+'</p>';return}
+  let filt=[...rows],sc=opts.sc??0,sd=opts.sd??'asc',all=false;
   const ct=opts.collapse??0,cl=opts.collapseLabel;
-  // Filter/sort compare against each cell's *visible* text so they match what the user sees —
-  // the alias when name obfuscation is on (renderers already apply Obf.nm), the real name when
-  // off. Memoized once per build (toggling obfuscation clears panels and rebuilds the table), so
-  // the debounced filter and the sort comparator never re-parse HTML per keystroke.
+  // Filter/sort compare against each cell's visible text, memoized once per build.
   const _ctCache=new Map();
   function cellText(c,ci,r){
     let arr=_ctCache.get(r);if(!arr){arr=[];_ctCache.set(r,arr)}
     if(arr[ci]!==undefined)return arr[ci];
     let t;
-    if(c.ff)t=String(c.ff(r)??'');                                                                    // explicit override wins
-    else if(c.r){const tmp=document.createElement('div');tmp.innerHTML=c.r(r);t=tmp.textContent||''}  // rendered text: tags stripped, entities decoded
-    else t=String(r[c.f]??'');                                                                        // plain field
+    if(c.ff)t=String(c.ff(r)??'');
+    else if(c.r){const tmp=document.createElement('div');tmp.innerHTML=c.r(r);t=tmp.textContent||''}
+    else t=String(r[c.f]??'');
     return arr[ci]=t;
   }
-  function sf(r,ci,d){const c=cols[ci],num=c.t==='n';
+  function sf(r,ci,d){const c=cols[ci],num=c.t==='n',dir=d==='asc'?1:-1;
+    if(c.cmp)return [...r].sort((a,b)=>dir*c.cmp(a,b));
     return r.map(row=>({row,k:num?(parseFloat(row[c.sf]??row[c.f])||0):cellText(c,ci,row).toLowerCase()}))
-      .sort((a,b)=>{if(a.k<b.k)return d==='asc'?-1:1;if(a.k>b.k)return d==='asc'?1:-1;return 0})
+      .sort((a,b)=>{if(a.k<b.k)return -dir;if(a.k>b.k)return dir;return 0})
       .map(o=>o.row)}
+  function ariaSort(i){return i===sc?(sd==='asc'?'ascending':'descending'):'none'}
   function bld(rs){
     let o='';
-    if(opts.filter)o+='<div class="filter"><input type="text" placeholder="Filter..." id="flt_'+cid+'"></div>';
-    if(ct>0&&cl){const open=rows.length<=ct?' open':'';o+='<details'+open+'><summary style="cursor:pointer;font-weight:600;margin:4px 0">'+cl+' ('+rows.length+')</summary>'}
+    if(opts.filter)o+='<div class="filter"><input type="text" placeholder="Filter..." aria-label="'+h(opts.label||'Filter rows')+'" id="flt_'+cid+'"></div>';
+    if(ct>0&&cl){const open=rows.length<=ct?' open':'';o+='<details'+open+'><summary style="cursor:pointer;font-weight:600;margin:4px 0">'+h(cl)+' ('+rows.length+')</summary>'}
     o+='<div class="tbl-wrap"><table id="t_'+cid+'"><thead><tr>';
-    cols.forEach((c,i)=>{const ar=i===sc?(sd==='asc'?' ▲':' ▼'):' ⇅';o+='<th data-c="'+i+'">'+h(c.l)+'<span class="arr">'+ar+'</span></th>'});
-    o+='</tr></thead><tbody>'+bldRows(rs)+'</tbody></table></div>';
+    cols.forEach((c,i)=>{const ar=i===sc?(sd==='asc'?' ▲':' ▼'):' ⇅';o+='<th data-c="'+i+'" tabindex="0" aria-sort="'+ariaSort(i)+'">'+h(c.l)+'<span class="arr" aria-hidden="true">'+ar+'</span></th>'});
+    o+='</tr></thead><tbody>'+bldRows(rs)+'</tbody></table></div><div id="more_'+cid+'">'+moreHtml(rs)+'</div>';
     if(ct>0&&cl)o+='</details>';return o
   }
+  function moreHtml(rs){return!all&&rs.length>ROW_CAP?'<p class="msg" style="margin-top:6px">Showing '+ROW_CAP+' of '+rs.length+' rows. <button class="btn" id="all_'+cid+'">Show all</button></p>':''}
   function bldRows(rs){
+    if(!rs.length)return'<tr><td colspan="'+cols.length+'" class="empty">No row matches the filter.</td></tr>';
     let o='';
-    rs.forEach(r=>{
+    (all?rs:rs.slice(0,ROW_CAP)).forEach(r=>{
       o+='<tr>';
       cols.forEach((c,ci)=>{
         const v=c.r?c.r(r):h(r[c.f]??'');
-        const sv=cellText(c,ci,r);   // data-v mirrors visible text → no real-name leak into copied/exported HTML
-        const color = r['_' + c.f + 'Color'] || '';
-        const style = color ? ' style="color:' + color + ';font-weight:600"' : '';
-        o+='<td data-v="'+h(String(sv))+'"'+style+'>'+v+'</td>'
+        const sv=cellText(c,ci,r);
+        o+='<td data-v="'+h(String(sv))+'">'+v+'</td>'
       });
       o+='</tr>'
     });
     return o;
   }
   filt=sf(filt,sc,sd);el.innerHTML=bld(filt);
+  function redraw(t){const tb=t.querySelector('tbody');if(tb)tb.innerHTML=bldRows(filt);const m=document.getElementById('more_'+cid);if(m){m.innerHTML=moreHtml(filt);bindMore(t)}}
+  function bindMore(t){const b=document.getElementById('all_'+cid);if(b)b.onclick=()=>{all=true;redraw(t)}}
   function bind(){
     const t=document.getElementById('t_'+cid);if(!t)return;
-    // v5.18.0 (R-5 A10): on header click, only re-render <tbody> rows + update sort arrows in
-    // the existing <th> cells. Pre-fix the entire table was rebuilt via el.innerHTML and bind()
-    // was re-run, throwing away the click handlers, the filter input (and its focus), and any
-    // <details> open state. New path is faster on large tables (350-row per-device audit table)
-    // and preserves filter focus / details state automatically.
-    t.querySelectorAll('th').forEach(th=>{th.onclick=()=>{
+    const sortBy=th=>{
       const ci=+th.dataset.c;
       if(ci===sc)sd=sd==='asc'?'desc':'asc';else{sc=ci;sd='desc'};
-      filt=sf(filt,sc,sd);
-      const tb=t.querySelector('tbody');
-      if(tb){
-        tb.innerHTML=bldRows(filt);
-        // Refresh sort-arrow indicators across all th cells
-        t.querySelectorAll('th').forEach((thh,i)=>{
-          const arr=thh.querySelector('.arr');
-          if(arr)arr.textContent=i===sc?(sd==='asc'?' ▲':' ▼'):' ⇅';
-        });
-      } else {
-        // Fallback: full rebuild if tbody is somehow missing
-        const det=el.querySelector('details');const wasOpen=det?det.open:false;
-        el.innerHTML=bld(filt);
-        const det2=el.querySelector('details');if(det2)det2.open=wasOpen;
-        bind();
-      }
-    }});
+      filt=sf(filt,sc,sd);redraw(t);
+      t.querySelectorAll('th').forEach((thh,i)=>{const arr=thh.querySelector('.arr');if(arr)arr.textContent=i===sc?(sd==='asc'?' ▲':' ▼'):' ⇅';thh.setAttribute('aria-sort',ariaSort(i))});
+    };
+    t.querySelectorAll('th').forEach(th=>{th.onclick=()=>sortBy(th);th.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sortBy(th)}}});
+    bindMore(t);
     const fi=document.getElementById('flt_'+cid);
     if(fi){
-      // v5.19.0 (R-6 B4): 150ms debounce — pre-fix every keystroke triggered full filter+sort+innerHTML
-      // rewrite, painful on 200+ row tables. Debounce coalesces typing bursts into one render.
       let _fltTimer=null;
       fi.addEventListener('input',()=>{
         clearTimeout(_fltTimer);
         _fltTimer=setTimeout(()=>{
           const q=fi.value.toLowerCase();
-          // Full-text match across each column's visible text (see cellText): the displayed
-          // alias when name obfuscation is on, the real name when off.
           filt=rows.filter(r=>cols.some((c,ci)=>cellText(c,ci,r).toLowerCase().includes(q)));
-          filt=sf(filt,sc,sd);
-          const tb=t.querySelector('tbody');
-          if(tb) tb.innerHTML=bldRows(filt);
-          else { el.innerHTML=bld(filt);bind() }
+          filt=sf(filt,sc,sd);redraw(t);
         },150);
       });
     }
   }bind()
 }
 
-// ===== Jobs: pollTimers registry, 2 s tick, 30 min cap, terminal 'done' =====
+// ===== Jobs: pollTimers registry, 2 s tick, 30 min cap, terminal 'done'; 3 failed polls in a row end the wait =====
 const pollTimers={};
-function pollJob(jobId,onTick,onEnd){if(pollTimers[jobId])return;const t0=Date.now();pollTimers[jobId]=setInterval(async()=>{try{const j=await fetch(B+'/api/jobs/'+jobId,{headers:AUTH()}).then(r=>r.json());onTick(j);if(j.status!=='running'){clearInterval(pollTimers[jobId]);delete pollTimers[jobId];onEnd(j)}}catch(e){}if(Date.now()-t0>1800000){clearInterval(pollTimers[jobId]);delete pollTimers[jobId];onEnd({status:'timeout'})}},2000)}
+function pollJob(jobId,onTick,onEnd){if(pollTimers[jobId])return;const t0=Date.now();let fails=0;
+  const stop=j=>{clearInterval(pollTimers[jobId]);delete pollTimers[jobId];onEnd(j)};
+  pollTimers[jobId]=setInterval(async()=>{
+    try{const r=await fetch(B+'/api/jobs/'+jobId,{headers:AUTH()});if(!r.ok)throw new Error('API '+r.status);const j=await r.json();fails=0;onTick(j);if(j.status!=='running'){stop(j);return}}
+    catch(e){if(++fails>=3){stop({status:'error',error:'lost contact with the hub ('+e.message+')'});return}}
+    if(Date.now()-t0>1800000)stop({status:'timeout'})},2000)}
 
-// ===== Tabs =====
-function setHeader(d){if(d&&d.hub)document.getElementById('hubInfo').textContent=(d.hub.name?d.hub.name+' · '+d.hub.firmware+' · ':'')+'App v'+d.appVersion+' / UI v'+CODE_VERSION}
+// ===== Header =====
+function setHeader(d){if(d&&d.hub&&d.hub.name)document.getElementById('hubInfo').textContent=d.hub.name+' · '+d.hub.firmware}
+// The tab bar sticks under the header whatever height the header wraps to.
+function fitHeader(){const hd=document.querySelector('.hdr');if(hd)document.documentElement.style.setProperty('--hdr-h',hd.offsetHeight+'px')}
+window.addEventListener('resize',fitHeader);
+
+// ===== Inventory =====
 async function rInventory(){
   const P='p-inventory';loading(P);
   try{
@@ -219,47 +237,47 @@ async function rInventory(){
     const inst=comps.filter(c=>c.hubId!=null);const st={};inst.forEach(c=>st[c.status]=(st[c.status]||0)+1);
     const unused=inst.filter(c=>removeState(c,comps)==='no-current-use').length;
     const f=d.facts||{},lib=d.libraries||{};
-    const libTxt=lib.asOf?'Libraries as of '+new Date(lib.asOf).toLocaleString():'Libraries not read yet';
+    const libTxt=lib.asOf?'Libraries as of '+fmtDate(lib.asOf):'Libraries not read yet';
     let html='<div class="card"><div class="card-h">Summary <span class="msg"><a href="'+README+'freshness" target="_blank">how freshness is decided</a></span></div><div class="card-b"><div class="metrics">'
       +mc('Installed components',inst.length)+mc('Packages',(d.packages||[]).filter(isMultiPackage).length)+mc('Updates available',st['update-available']||0,st['update-available']?'var(--warn)':'')
       +mc('Changed upstream',st['changed-upstream']||0)+mc('Broken sources',st['broken-source']||0,st['broken-source']?'var(--crit)':'')+mc('No current use',unused)+'</div>'
       +'<p class="msg" style="margin-top:8px">Facts read for '+(f.valid||0)+' of '+(f.total||0)+' apps, drivers and libraries'+(f.failing?' · '+f.failing+' could not be read':'')+(f.large?' · '+f.large+' large, read on request':'')+'</p>'
-      +'<div class="actions"><button class="btn btn-p" id="driftBtn" onclick="startDrift()">Check for drift now</button><span class="msg" id="driftMsg">'+(d.drift&&d.drift.finishedAt?'Last drift check '+new Date(d.drift.finishedAt).toLocaleString():'No drift check yet')+'</span></div>'
-      +'<div class="actions"><button class="btn" id="libBtn" onclick="refreshLibraries()">Refresh libraries</button><span class="msg" id="libMsg">'+h(libTxt)+(lib.error?' (last refresh failed: '+h(lib.error)+')':'')+'</span></div></div></div>';
-    html+='<div class="card"><div class="card-h">Components <span class="msg" id="invPkgNote"></span><span class="msg"><label><input type="checkbox" id="onlyRemovable" onchange="rInventoryTable()"> no current use only (<a href="'+README+'safe-to-remove" target="_blank">rule</a>)</label></span></div><div class="card-b"><div id="invTbl"></div><div id="invLegend"></div></div></div>';
+      +'<div class="actions"><button class="btn btn-p" id="driftBtn" data-action="drift">Check for drift now</button><span class="msg" id="driftMsg">'+(d.drift&&d.drift.finishedAt?'Last drift check '+fmtDate(d.drift.finishedAt):'No drift check yet')+'</span></div>'
+      +'<div class="actions"><button class="btn" id="libBtn" data-action="libraries">Refresh libraries</button><span class="msg" id="libMsg">'+h(libTxt)+(lib.error?' (last refresh failed: '+h(lib.error)+')':'')+'</span></div></div></div>';
+    html+='<div class="card"><div class="card-h">Components <span class="msg" id="invPkgNote"></span><span class="msg"><label><input type="checkbox" id="onlyRemovable" data-change="invTable"> no current use only (<a href="'+README+'safe-to-remove" target="_blank">rule</a>)</label></span></div><div class="card-b"><div id="invTbl"></div><div id="invLegend"></div></div></div>';
     html+='<div class="card" id="unreadCard"><div class="card-h">Not read yet <span class="msg">their import URL is not known, so their package is not known yet</span></div><div class="card-b"><div id="unreadTbl"></div></div></div>';
     document.getElementById(P).innerHTML=html;window._inv=comps;window._largeBytes=f.largeSourceBytes;rInventoryTable();
-  }catch(e){err(P,e,rInventory)}
+  }catch(e){err(P,e,'inventory')}
 }
 function rInventoryTable(){
   const comps=window._inv||[];const only=document.getElementById('onlyRemovable')?.checked;const now=Date.now();const pk=window._invPkg;
   let sel=pk?comps.filter(c=>c.key===pk.key):comps;
   if(only)sel=sel.filter(c=>removeState(c,comps)==='no-current-use');
   const rows=sel.map(c=>Object.assign({},c,{_cls:classifyComponent(c),_rem:removeState(c,comps),_sev:severity(c.status||'not-checked'),_basis:basisLabel(c,now,window._largeBytes)}));
-  const note=document.getElementById('invPkgNote');if(note)note.innerHTML=pk?'package '+h(pk.name)+' · <a href="#" onclick="window._invPkg=null;rInventoryTable();return false">show all</a>':'';
+  const note=document.getElementById('invPkgNote');if(note)note.innerHTML=pk?'package '+h(pk.name)+' · <a href="#" data-action="clearPkg">show all</a>':'';
   const cols=[
     {l:'Name',f:'name',r:r=>clink(r.kind,r.hubId,r.name)+(r.isPrivate?' '+badge('private','var(--muted)'):'')},
     {l:'Kind',f:'kind'},{l:'Namespace',f:'namespace'},{l:'Origin',f:'origin'},
-    {l:'Status',f:'status',t:'n',sf:'_sev',r:r=>badge(r._cls.label,r._cls.color),ff:r=>r._cls.label},
-    {l:'Installed',f:'iver',r:r=>h(r.iver||'')+(r.iverSrc&&r.iverSrc!=='field'&&r.iverSrc!=='manifest'?' <span class="msg">('+h(r.iverSrc)+')</span>':'')},
-    {l:'Upstream',f:'rver'},
+    {l:'Status',f:'status',t:'n',sf:'_sev',r:r=>badge(r._cls.label,r._cls.color)+(r.status==='broken-source'&&r.failCount?' <span class="msg">'+r.failCount+' failed checks</span>':''),ff:r=>r._cls.label},
+    {l:'Installed',f:'iver',cmp:(a,b)=>versionSort(a.iver,b.iver),r:r=>h(r.iver||'')+(r.iverSrc&&r.iverSrc!=='field'&&r.iverSrc!=='manifest'?' <span class="msg">('+h(r.iverSrc)+')</span>':'')},
+    {l:'Upstream',f:'rver',cmp:(a,b)=>versionSort(a.rver,b.rver)},
     {l:'Facts',f:'_basis',r:r=>'<span class="msg"'+(r.factError?' title="'+h(r.factError)+'"':'')+'>'+h(r._basis)+'</span>'},
-    {l:'Used by',f:'usedByCount',t:'n',r:r=>r.kind==='driver'?dlistlink(r.usedByCount,(r.usedBy||[]).map(u=>u.id)):r.kind==='app'?alistlink(r.usedByCount):String(r.usedByCount)},
-    {l:'Checked',f:'checkedAtMs',t:'n',r:r=>{const f=fmtDays(r.checkedAtMs,now);return'<span style="color:'+f.color+'"'+(r.error?' title="last check failed: '+h(r.error)+'"':'')+'>'+f.text+'</span>'}},
+    {l:'Used by',f:'usedByCount',t:'n',r:r=>r.kind==='driver'?dlistlink(r.usedByCount,(r.usedBy||[]).map(u=>u.id)):r.kind==='app'?alistlink(r.usedByCount,(r.usedBy||[]).map(u=>u.id)):String(r.usedByCount??0)},
+    {l:'Checked',f:'checkedAtMs',t:'n',r:r=>{const a=fmtAgo(r.checkedAtMs,now);return'<span style="color:'+a.color+'" title="'+h(r.checkedAtMs?fmtDate(r.checkedAtMs):'')+(r.error?' · last check failed: '+h(r.error):'')+'">'+a.text+'</span>'}},
     {l:'Source',f:'location',r:r=>dlink2(r.location)},
-    {l:'',f:'_act',ff:()=>'',r:r=>rowActions(r)},
+    {l:'Actions',f:'_act',ff:()=>'',r:r=>rowActions(r)},
   ];
   const main=rows.filter(r=>r.origin!=='unread'),unread=rows.filter(r=>r.origin==='unread');
-  tbl('invTbl',cols,main,{sc:4,sd:'asc',filter:true});
-  document.getElementById('invLegend').innerHTML=legend(presentStatuses(main));
+  tbl('invTbl',cols,main,{sc:4,sd:'asc',filter:true,label:'Filter components',empty:only?'No installed component is without a current use.':pk?'This package has no components on the hub.':'No components on the hub.'});
+  document.getElementById('invLegend').innerHTML=main.length?legend(presentStatuses(main)):'';
   const uc=document.getElementById('unreadCard');if(uc)uc.style.display=unread.length?'':'none';
-  if(unread.length)tbl('unreadTbl',cols,unread,{sc:0,filter:true,collapse:20,collapseLabel:'Not read yet'});
+  if(unread.length)tbl('unreadTbl',cols,unread,{sc:0,filter:true,label:'Filter components not read yet',collapse:20,collapseLabel:'Not read yet'});
 }
 function rowActions(r){
   if(r.hubId==null||!['app','driver','library'].includes(r.kind))return'';
   const id=h(r.kind+'_'+r.hubId);
-  let o=r.origin==='local'||r.isPrivate?'':'<button class="btn" onclick="checkOne(\''+h(r.kind)+':'+h(r.hubId)+'\',this)">Check</button>';
-  if(r._rem==='no-current-use'&&r.kind!=='library')o+=' <button class="btn" onclick="checkRemovable(\''+h(r.kind)+'\',\''+h(r.hubId)+'\',this)">Check removable</button>';
+  let o=r.origin==='local'||r.isPrivate?'':'<button class="btn" data-action="checkOne" data-key="'+h(r.kind+':'+r.hubId)+'">Check</button>';
+  if(r._rem==='no-current-use'&&r.kind!=='library')o+=' <button class="btn" data-action="checkRemovable" data-kind="'+h(r.kind)+'" data-id="'+h(r.hubId)+'">Check removable</button>';
   return o+' <span class="msg" id="act_'+id+'"></span>';
 }
 async function checkOne(key,btn){const m=document.getElementById('act_'+key.replace(':','_'));btn.disabled=true;if(m)m.textContent='Checking…';
@@ -279,8 +297,11 @@ async function refreshLibraries(){const b=document.getElementById('libBtn');b.di
     pollJob(r.jobId,()=>{document.getElementById('libMsg').textContent='Reading libraries…'},j=>{b.disabled=false;drop('inventory');const q=j.result||{};
       if(j.status==='done'&&!q.error)rInventory();else flash('libMsg','Library refresh '+(q.error?'failed: '+q.error:j.status+(j.error?': '+j.error:'')))})}
   catch(e){b.disabled=false;flash('libMsg','Failed: '+e.message)}}
-// The Packages tab lists code installed and updated as a set; single-file code is listed only on Inventory.
-function isMultiPackage(p){return p.origin==='hpm'||p.origin==='bundle'||(p.componentCount||0)>1}
+async function startDrift(){const b=document.getElementById('driftBtn');b.disabled=true;b.textContent='Checking…';
+  try{const r=await post('drift/start',{scope:'all'});if(r.error)throw new Error(r.error);pollJob(r.jobId,j=>{document.getElementById('driftMsg').textContent=(j.processed||0)+' / '+(j.total||0)},j=>{drop('inventory');b.disabled=false;b.textContent='Check for drift now';const q=j.result||{};flash('driftMsg',j.status==='done'?'Done: '+(q.checked||0)+' checked, '+(q.failed||0)+' could not be checked, '+(q.skippedLarge||0)+' too large to read':'Drift check '+j.status+(j.error?': '+j.error:''));rInventory()})}
+  catch(e){b.disabled=false;b.textContent='Check for drift now';flash('driftMsg','Failed: '+e.message)}}
+
+// ===== Packages =====
 function showPkg(i){const p=(window._pkgs||[])[i];if(!p)return;window._invPkg={key:p.key,name:p.name};document.getElementById('p-inventory').innerHTML='';go('inventory')}
 async function rPackages(){
   const P='p-packages';loading(P);
@@ -288,56 +309,84 @@ async function rPackages(){
     const multi=(d.packages||[]).filter(isMultiPackage).map((p,i)=>Object.assign({},p,{_i:i,_sev:severity(p.status||'not-checked')}));
     window._pkgs=multi;const rows=of?multi.filter(p=>p.origin===of):multi;
     const stat=r=>{const c=classifyComponent(r);return badge(c.label,c.color)};
-    const doc=r=>r.doc?'<a href="/hub/fileManager" target="_blank">'+h(r.doc)+'</a>':'';
+    const doc=r=>r.doc?'<a href="/local/'+encodeURIComponent(r.doc)+'" target="_blank">'+h(r.doc)+'</a>':'';
     document.getElementById(P).innerHTML=
       '<div class="card"><div class="card-h">Packages <span class="msg">HPM packages, bundles and multi-file imports: code installed and updated as a set (<a href="'+README+'packages" target="_blank">how ownership is decided</a>). Single-file code is on the Inventory tab.</span>'
-      +(of?'<span class="msg">origin '+h(of)+' · <a href="#" onclick="window._pkgOrigin=null;rPackages();return false">show all</a></span>':'')+'</div>'
-      +'<div class="card-b"><div id="pkgTbl"></div>'+legend(presentStatuses(rows))+'</div></div>';
-    tbl('pkgTbl',[{l:'Package',f:'name'},{l:'Origin',f:'origin'},{l:'Version',f:'version'},
-      {l:'Components',f:'componentCount',t:'n',r:r=>'<a href="#" onclick="showPkg('+r._i+');return false">'+(r.componentCount||0)+'</a>'},
+      +(of?'<span class="msg">origin '+h(of)+' · <a href="#" data-action="clearOrigin">show all</a></span>':'')+'</div>'
+      +'<div class="card-b"><div id="pkgTbl"></div>'+(rows.length?legend(presentStatuses(rows)):'')+'</div></div>';
+    tbl('pkgTbl',[{l:'Package',f:'name',r:r=>'<a href="#" data-action="showPkg" data-i="'+r._i+'">'+h(r.name)+'</a>'},{l:'Origin',f:'origin'},{l:'Version',f:'version',cmp:(a,b)=>versionSort(a.version,b.version)},
+      {l:'Components',f:'componentCount',t:'n'},
       {l:'Status',f:'status',t:'n',sf:'_sev',r:stat,ff:r=>classifyComponent(r).label},{l:'Document',f:'doc',r:doc},
-      {l:'Source',f:'url',r:r=>dlink2(r.url||(r.origin==='hpm'?r.key:''))}],rows,{sc:4,sd:'asc',filter:true});
-  }catch(e){err(P,e,rPackages)}
+      {l:'Source',f:'url',r:r=>dlink2(r.url||(r.origin==='hpm'?r.key:''))}],rows,{sc:4,sd:'asc',filter:true,label:'Filter packages',empty:of?'No '+of+' package on this hub.':'No package of more than one file on this hub; single-file code is on the Inventory tab.'});
+  }catch(e){err(P,e,'packages')}
 }
+
+// ===== HPM =====
 async function rHpm(){
   const P='p-hpm';loading(P);
   try{const s=await api('hpm/status');let html='<div class="card"><div class="card-h">Hubitat Package Manager transition <span class="msg"><a href="'+README+'hpm-observe" target="_blank">how the phases work</a></span></div><div class="card-b">';
     if(s.mode==='absent')html+='<div class="alert a-info">HPM is not installed. Code Manager is the only package manager on this hub.</div>';
     else if(s.mode==='unavailable')html+='<div class="alert a-warn">HPM\'s state could not be read'+(s.error?': '+h(s.error):'')+'.</div>';
-    else{html+='<div class="alert a-warn"><b>Mode: '+h(s.mode)+'</b> — HPM instance '+h(String(s.instanceId))+' is '+(s.disabled?'disabled':'enabled')+'; autoUpdateMode='+h(String(s.autoUpdateMode))+'. In observe mode HPM remains the writer for its packages; Code Manager only reports.</div>'
-      +'<div class="metrics">'+mc('Imported packages',s.packages?'<a href="#" onclick="showHpmPackages();return false">'+s.packages+'</a>':0)+mc('Dangling heIDs',s.dangling||0,s.dangling?'var(--warn)':'')+mc('Last import',s.importedAt?new Date(s.importedAt).toLocaleString():'never')+'</div>'
-      +'<div class="actions"><button class="btn" id="hpmBtn" onclick="hpmImport()">Re-import HPM registry</button><span class="msg" id="hpmMsg"></span></div>'}
+    else{const inst=s.instanceId!=null?'<a href="/installedapp/configure/'+encodeURIComponent(s.instanceId)+'" target="_blank">HPM</a>':'HPM';
+      html+='<div class="alert a-info"><b>Mode: '+h(s.mode)+'.</b> '+inst+' is '+(s.disabled?'disabled':'enabled')+' and stays the writer for its packages; Code Manager only reports on them.'
+        +' HPM\'s own automatic updates: '+h(String(s.autoUpdateMode??'unknown'))+'.</div>'
+        +'<div class="metrics">'+mc('Imported packages',s.packages?'<a href="#" data-action="showHpm">'+s.packages+'</a>':0)+mc('Dangling records',s.dangling||0,s.dangling?'var(--warn)':'')+mc('Last import',fmtDate(s.importedAt))+'</div>'
+        +'<p class="msg" style="margin-top:8px">Dangling records are HPM entries that point at code no longer on the hub.</p>'
+        +'<div class="actions"><button class="btn" id="hpmBtn" data-action="hpmImport">Re-import HPM registry</button><span class="msg" id="hpmMsg"></span></div>'}
     document.getElementById(P).innerHTML=html+'</div></div>';
-  }catch(e){err(P,e,rHpm)}
+  }catch(e){err(P,e,'hpm')}
 }
 function showHpmPackages(){window._pkgOrigin='hpm';document.getElementById('p-packages').innerHTML='';go('packages')}
 async function hpmImport(){const b=document.getElementById('hpmBtn');b.disabled=true;b.textContent='Importing…';try{const r=await post('hpm/import');flash('hpmMsg',r.success?'Imported '+r.packages+' packages ('+r.dangling+' dangling)':'Failed: '+(r.error||''));drop('inventory');drop('hpm/status')}catch(e){flash('hpmMsg','Failed: '+e.message)}finally{b.disabled=false;b.textContent='Re-import HPM registry';rHpm()}}
-async function startDrift(){const b=document.getElementById('driftBtn');b.disabled=true;b.textContent='Checking…';
-  try{const r=await post('drift/start',{scope:'all'});if(r.error)throw new Error(r.error);pollJob(r.jobId,j=>{document.getElementById('driftMsg').textContent=(j.processed||0)+' / '+(j.total||0)},j=>{drop('inventory');b.disabled=false;b.textContent='Check for drift now';const q=j.result||{};flash('driftMsg',j.status==='done'?'Done: '+(q.checked||0)+' checked, '+(q.failed||0)+' failed, '+(q.skippedLarge||0)+' too large':'Drift check '+j.status+(j.error?': '+j.error:''));rInventory()})}
-  catch(e){b.disabled=false;b.textContent='Check for drift now';flash('driftMsg','Failed: '+e.message)}}
+
+// ===== Settings =====
+const SETTING_LABELS={labelBadge:"Show an 'update available' badge on this app's label when a newer Code Manager is published",txtEnable:'Enable descriptionText logging',debugEnable:'Enable debug logging',traceEnable:'Enable trace logging'};
 async function rSettings(){
   const P='p-settings';loading(P);
-  try{const [s,v]=await Promise.all([api('settings'),api('version/check').catch(()=>({}))]);
+  try{const [s,v]=await Promise.all([api('settings'),api('version/check').catch(e=>({error:e.message}))]);
     const mismatch=APP_VERSION[0]!=='$'&&APP_VERSION!==CODE_VERSION;
-    let html='<div class="card"><div class="card-h">Versions</div><div class="card-b">'+(mismatch?'<div class="alert a-warn">App v'+h(APP_VERSION)+' and UI v'+CODE_VERSION+' differ — <button class="btn" onclick="syncUI()">Sync UI from GitHub</button></div>':'')
-      +'<div class="metrics">'+mc('App',h(s.appVersion||APP_VERSION))+mc('UI',CODE_VERSION)+mc('Latest on GitHub',h(v.latestVersion||'?'),v.updateAvailable?'var(--warn)':'')+'</div>'
+    const latest=v.error?'<span class="msg">'+h(v.error)+'</span>':h(v.latestVersion||'?');
+    let html='<div class="card"><div class="card-h">Versions</div><div class="card-b">'+(mismatch?'<div class="alert a-warn">App v'+h(APP_VERSION)+' and UI v'+CODE_VERSION+' differ — <button class="btn" data-action="syncUI">Sync UI from GitHub</button></div>':'')
+      +'<div class="metrics">'+mc('App',h(s.appVersion||APP_VERSION))+mc('UI',CODE_VERSION)+mc('Latest on GitHub',latest,v.updateAvailable?'var(--warn)':'')+'</div>'
       +(v.updateAvailable?'<p class="msg">A newer Code Manager is published'+(v.editorPath?': <a href="'+h(v.editorPath)+'" target="_blank">open Apps Code</a> and use Import.':'.')+'</p>':'')+'</div></div>';
-    html+='<div class="card"><div class="card-h">Behaviour (fixed values, <a href="'+README+'fixed-values" target="_blank">documented</a>)</div><div class="card-b"><div class="metrics">'+mc('Upstream fetches in flight',s.driftMaxInflight)+mc('Broken after',s.brokenAfter+' failures')+'</div></div></div>';
-    html+='<div class="card"><div class="card-h">Settings</div><div class="card-b">'+['txtEnable','debugEnable','traceEnable','labelBadge'].map(k=>'<label style="display:block;margin:4px 0"><input type="checkbox" id="set_'+k+'"'+(s[k]?' checked':'')+'> '+k+'</label>').join('')
-      +'<div class="actions"><button class="btn btn-p" onclick="saveSettings()">Save</button><span class="msg" id="setMsg"></span></div></div></div>';
-    html+='<div class="card"><div class="card-h">Export</div><div class="card-b"><div class="actions"><button class="btn" onclick="exportRegistry()">Write cm_registry_export.json</button><span class="msg" id="expMsg"></span></div></div></div>';
+    html+='<div class="card"><div class="card-h">Behaviour <span class="msg">fixed values, <a href="'+README+'fixed-values" target="_blank">documented</a></span></div><div class="card-b"><div class="metrics">'+mc('Upstream fetches in flight',s.driftMaxInflight)+mc('Broken after',s.brokenAfter+' failed checks in a row')+'</div></div></div>';
+    html+='<div class="card"><div class="card-h">Settings</div><div class="card-b">'+Object.keys(SETTING_LABELS).map(k=>'<label style="display:block;margin:4px 0"><input type="checkbox" id="set_'+k+'"'+(s[k]?' checked':'')+'> '+h(SETTING_LABELS[k])+'</label>').join('')
+      +'<div class="actions"><button class="btn btn-p" data-action="saveSettings">Save</button><span class="msg" id="setMsg"></span></div></div></div>';
+    html+='<div class="card"><div class="card-h">Export</div><div class="card-b"><div class="actions"><button class="btn" data-action="exportRegistry">Write cm_registry_export.json</button><span class="msg" id="expMsg"></span></div></div></div>';
     document.getElementById(P).innerHTML=html;
-  }catch(e){err(P,e,rSettings)}
+  }catch(e){err(P,e,'settings')}
 }
-async function saveSettings(){const body={};['txtEnable','debugEnable','traceEnable','labelBadge'].forEach(k=>body[k]=document.getElementById('set_'+k).checked);try{const r=await post('settings',{data:JSON.stringify(body)});flash('setMsg',r.success?'Saved':'Failed');drop('settings')}catch(e){flash('setMsg','Failed: '+e.message)}}
+async function saveSettings(){const body={};Object.keys(SETTING_LABELS).forEach(k=>body[k]=document.getElementById('set_'+k).checked);try{const r=await post('settings',{data:JSON.stringify(body)});flash('setMsg',r.success?'Saved':'Failed');drop('settings')}catch(e){flash('setMsg','Failed: '+e.message)}}
 async function syncUI(){try{const r=await post('ui/sync');if(r.success)location.reload();else flash('setMsg','Sync refused (version mismatch on GitHub?)')}catch(e){flash('setMsg','Failed: '+e.message)}}
-async function exportRegistry(){try{await api('export?'+Date.now());flash('expMsg','Written to File Manager')}catch(e){flash('expMsg','Failed: '+e.message)}}
+async function exportRegistry(){const m=document.getElementById('expMsg');try{const r=await post('export');if(r.error)throw new Error(r.error);m.innerHTML='Written: <a href="/local/cm_registry_export.json" target="_blank">cm_registry_export.json</a>'}catch(e){flash('expMsg','Failed: '+e.message)}}
+
+// ===== Events: one delegated listener per event type (DESIGN.md §10) =====
+const ACTIONS={
+  retry:el=>{document.getElementById('p-'+el.dataset.tab).innerHTML='';R[el.dataset.tab]()},
+  refresh:()=>refreshPage(), drift:()=>startDrift(), libraries:()=>refreshLibraries(),
+  checkOne:el=>checkOne(el.dataset.key,el), checkRemovable:el=>checkRemovable(el.dataset.kind,el.dataset.id,el),
+  showPkg:el=>showPkg(+el.dataset.i), clearPkg:()=>{window._invPkg=null;rInventoryTable()},
+  showHpm:()=>showHpmPackages(), clearOrigin:()=>{window._pkgOrigin=null;rPackages()},
+  hpmImport:()=>hpmImport(), saveSettings:()=>saveSettings(), syncUI:()=>syncUI(), exportRegistry:()=>exportRegistry(),
+};
+document.addEventListener('click',e=>{const el=e.target.closest('[data-action]');if(!el||!ACTIONS[el.dataset.action])return;if(el.tagName==='A')e.preventDefault();ACTIONS[el.dataset.action](el)});
+document.addEventListener('change',e=>{if(e.target.dataset&&e.target.dataset.change==='invTable')rInventoryTable()});
 
 // ===== Router =====
 const R={inventory:rInventory,packages:rPackages,hpm:rHpm,settings:rSettings};
-function go(t){curTab=t;localStorage.setItem('cm_tab',t);document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active',e.dataset.tab===t));document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active',p.id==='p-'+t));const p=document.getElementById('p-'+t);if(!p.children.length||p.querySelector('.loading')||p.querySelector('.err'))R[t]();if(!document.getElementById('hubInfo').textContent)api('inventory').then(setHeader).catch(()=>{})}
-document.getElementById('tabs').addEventListener('click',e=>{if(e.target.dataset.tab)go(e.target.dataset.tab)});
+function go(t){curTab=t;try{localStorage.setItem('cm_tab',t)}catch(e){}
+  document.querySelectorAll('.tab').forEach(e=>{const on=e.dataset.tab===t;e.classList.toggle('active',on);e.setAttribute('aria-selected',on?'true':'false')});
+  document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active',p.id==='p-'+t));
+  const p=document.getElementById('p-'+t);if(!p.children.length||p.querySelector('.loading')||p.querySelector('.err'))R[t]();
+  if(!document.getElementById('hubInfo').textContent)api('inventory').then(setHeader).catch(()=>{})}
+const tabs=document.getElementById('tabs');
+tabs.addEventListener('click',e=>{if(e.target.dataset.tab)go(e.target.dataset.tab)});
+tabs.addEventListener('keydown',e=>{const t=e.target.dataset&&e.target.dataset.tab;if(!t)return;
+  if(e.key==='Enter'||e.key===' '){e.preventDefault();go(t)}
+  else if(e.key==='ArrowRight'||e.key==='ArrowLeft'){const all=[...tabs.querySelectorAll('.tab')];const i=all.indexOf(e.target);const n=all[(i+(e.key==='ArrowRight'?1:all.length-1))%all.length];n.focus();go(n.dataset.tab)}});
 function refreshPage(){const keys={inventory:['inventory'],packages:['inventory'],hpm:['hpm/status','inventory'],settings:['settings','version/check']};(keys[curTab]||[]).forEach(k=>drop(k));document.getElementById('p-'+curTab).innerHTML='';R[curTab]()}
+fitHeader();
+if(!R[curTab])curTab='inventory';
 go(curTab);
 </script>
 </body>

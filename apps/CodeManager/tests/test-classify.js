@@ -13,11 +13,11 @@ function extractFn(name) {
   return src.slice(start, i);
 }
 const tmp = path.join(os.tmpdir(), 'cm_classify_' + process.pid + '.js');
-fs.writeFileSync(tmp, ['classifyComponent', 'removeState', 'basisLabel', 'severity', 'fmtDays', 'isMultiPackage', 'clink', 'escText', 'h', 'badge', 'legend'].map(extractFn).join('\n')
+fs.writeFileSync(tmp, ['classifyComponent', 'removeState', 'basisLabel', 'severity', 'pad2', 'fmtDate', 'fmtAgo', 'versionParts', 'versionCompare', 'versionSort', 'srcText', 'alistlink', 'isMultiPackage', 'clink', 'escText', 'h', 'badge', 'legend'].map(extractFn).join('\n')
   + '\nconst STATUS_HELP = ' + /const STATUS_HELP=(\{.*?\});/s.exec(src)[1] + ';'
   + '\nconst SEVERITY = ' + /const SEVERITY=(\[.*?\]);/s.exec(src)[1] + ';'
-  + '\nmodule.exports = { classifyComponent, removeState, basisLabel, severity, fmtDays, isMultiPackage, clink, legend, STATUS_HELP };');
-const { classifyComponent, removeState, basisLabel, severity, fmtDays, isMultiPackage, clink, legend, STATUS_HELP } = require(tmp);
+  + '\nmodule.exports = { classifyComponent, removeState, basisLabel, severity, fmtDate, fmtAgo, versionCompare, versionSort, srcText, alistlink, isMultiPackage, clink, legend, STATUS_HELP };');
+const { classifyComponent, removeState, basisLabel, severity, fmtDate, fmtAgo, versionCompare, versionSort, srcText, alistlink, isMultiPackage, clink, legend, STATUS_HELP } = require(tmp);
 process.on('exit', () => { try { fs.unlinkSync(tmp); } catch (e) {} });
 let pass = 0, fail = 0;
 function t(n, fn) { try { fn(); pass++; console.log('  ok   ' + n); } catch (e) { fail++; console.log('  FAIL ' + n + '\n         ' + e.message); } }
@@ -74,8 +74,18 @@ t('single url import is standalone', () => assert.strictEqual(isMultiPackage({or
 t('local orphan is standalone', () => assert.strictEqual(isMultiPackage({origin:'local', componentCount:1}), false));
 
 const NOW = 1700000000000, DAY = 86400000;
-t('fmtDays: never', () => assert.deepStrictEqual(fmtDays(0, NOW), {text:'Never', color:'var(--muted)'}));
-t('fmtDays: 2 days ok', () => assert.deepStrictEqual(fmtDays(NOW - 2*DAY, NOW), {text:'2d', color:'var(--ok)'}));
-t('fmtDays: 8 days warn', () => assert.strictEqual(fmtDays(NOW - 8*DAY, NOW).color, 'var(--warn)'));
-t('fmtDays: 15 days crit', () => assert.strictEqual(fmtDays(NOW - 15*DAY, NOW).color, 'var(--crit)'));
+t('fmtAgo: never', () => assert.deepStrictEqual(fmtAgo(0, NOW), {text:'never', color:'var(--muted)'}));
+t('fmtAgo: today', () => assert.strictEqual(fmtAgo(NOW - 3600000, NOW).text, 'today'));
+t('fmtAgo: 2 days ok', () => assert.deepStrictEqual(fmtAgo(NOW - 2*DAY, NOW), {text:'2 d ago', color:'var(--ok)'}));
+t('fmtAgo: 8 days warn', () => assert.strictEqual(fmtAgo(NOW - 8*DAY, NOW).color, 'var(--warn)'));
+t('fmtAgo: 15 days crit', () => assert.strictEqual(fmtAgo(NOW - 15*DAY, NOW).color, 'var(--crit)'));
+t('fmtDate: local YYYY-MM-DD HH:MM', () => { const d = new Date(2026, 9, 18, 7, 5); assert.strictEqual(fmtDate(d.getTime()), '2026-10-18 07:05'); });
+t('fmtDate: none', () => assert.strictEqual(fmtDate(0), 'never'));
+t('versionCompare orders numerically', () => { assert.strictEqual(versionCompare('1.10.0', '1.9.0'), 1); assert.strictEqual(versionCompare('v1.2', '1.2.0'), 0); assert.strictEqual(versionCompare('1.2.0', '1.3'), -1); assert.strictEqual(versionCompare('1.2-beta', '1.3'), null); });
+t('versionCompare: unparsable is null', () => { assert.strictEqual(versionCompare('abc', '1.0'), null); assert.strictEqual(versionCompare(null, '1.0'), null); });
+t('versionSort puts parsable versions before text and orders them', () => { const v = ['1.10.0', 'beta', '1.9.0', null]; v.sort(versionSort); assert.deepStrictEqual(v.slice(0, 2), ['1.9.0', '1.10.0']); });
+t('srcText drops the scheme, shortens raw GitHub', () => { assert.strictEqual(srcText('https://raw.githubusercontent.com/a/b/main/x.groovy'), 'github/a/b/main/x.groovy'); assert.strictEqual(srcText('https://codeberg.org/a/x.groovy'), 'codeberg.org/a/x.groovy'); });
+t('alistlink: 0 is plain', () => assert.strictEqual(alistlink(0, []), '0'));
+t('alistlink: one instance links to it', () => assert(alistlink(1, [69]).includes('href="/installedapp/configure/69"')));
+t('alistlink: several link to the app list', () => assert(alistlink(3, [1, 2, 3]).includes('href="/installedapp/list"')));
 console.log(`\n${pass} passed, ${fail} failed, 0 warnings`); process.exit(fail ? 1 : 0);

@@ -264,7 +264,7 @@ Every route is classified per ARCHITECTURE.md "API endpoint design"; there are n
 | `GET /api/hpm/status`, `POST /api/hpm/import`, `POST /api/hpm/mode` | app-owned | 8 |
 | `GET /api/snapshots/{kind}/{id}` | app-owned | list/download snapshots by file name |
 | `GET /api/manifest/{key}`, `POST /api/manifest/{key}` | app-owned | read/validate/write a package's manifest document (2.2, 12) |
-| `GET /api/export` | app-owned | registry export |
+| `POST /api/export` | app-owned | registry export, written to File Manager |
 | `GET/POST /api/settings`, `GET /api/version/check`, `POST /api/ui/sync`, `POST /api/reinit`, `GET /api/stats` | app-owned | as HubDiagnostics/MultiHubInventory |
 
 The SPA owns: all tables, sorting, filtering, and classification display; the diff view; catalog browse and search with the settings.json category/tag enum; the install wizard (optional components, beta, license, release notes); the apply wizard and per-component outcome display; the HPM transition panel; the fingerprint lookup (11). It never computes anything the hub must trust.

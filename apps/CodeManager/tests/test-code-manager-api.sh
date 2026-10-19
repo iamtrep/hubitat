@@ -369,7 +369,7 @@ lib = next((c for c in comps if c["kind"] == "library"), None)
 if lib:
     ls = api_get(f"item/library/{lib['hubId']}/source", timeout=60)
     (ok if ls.get("source", "").lstrip().startswith("library") else fail)("library source served from /library/ajax/code")
-ex = api_get("export", timeout=120)
+ex = api_post("export", timeout=120)
 for k in ("exportedAt", "registry", "documents", "drift", "hpm"):
     (ok if k in ex else fail)(f"export has {k}")
 (ok if all(d["doc"] is not None for d in ex.get("documents", [])) else fail)("every registered package has a readable document")

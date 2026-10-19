@@ -98,7 +98,7 @@ mappings {
     path('/api/item/:kind/:id/source') { action: [GET: 'apiItemSource'] }     // Task 7
     path('/api/jobs/:id')          { action: [GET: 'apiJob'] }
     path('/api/hpm/status')        { action: [GET: 'apiHpmStatus'] }           // Task 5
-    path('/api/export')            { action: [GET: 'apiExport'] }              // Task 7
+    path('/api/export')            { action: [POST: 'apiExport'] }             // writes cm_registry_export.json
     path('/api/stats')             { action: [GET: 'apiStats'] }
     path('/api/version/check')     { action: [GET: 'apiVersionCheck'] }
     path('/api/settings')          { action: [GET: 'apiGetSettings', POST: 'apiUpdateSettings'] }

@@ -73,7 +73,7 @@ These are not settings; they are documented here and linked from the UI.
 
 ## Endpoints (OAuth)
 
-`GET /ui.html` · `GET /api/inventory` · `GET /api/item/{app|driver|library}/{id}/source` · `POST /api/drift/check` · `POST /api/drift/start` · `GET /api/facts/status` · `POST /api/facts/read` · `POST /api/libraries/refresh` · `POST /api/remove-check/start` · `GET /api/jobs/{id}` · `GET /api/hpm/status` · `POST /api/hpm/import` · `GET /api/export` · `GET|POST /api/settings` · `GET /api/version/check` · `POST /api/ui/sync` · `POST /api/reinit` · `GET /api/stats`
+`GET /ui.html` · `GET /api/inventory` · `GET /api/item/{app|driver|library}/{id}/source` · `POST /api/drift/check` · `POST /api/drift/start` · `GET /api/facts/status` · `POST /api/facts/read` · `POST /api/libraries/refresh` · `POST /api/remove-check/start` · `GET /api/jobs/{id}` · `GET /api/hpm/status` · `POST /api/hpm/import` · `POST /api/export` · `GET|POST /api/settings` · `GET /api/version/check` · `POST /api/ui/sync` · `POST /api/reinit` · `GET /api/stats`
 
 `POST /api/drift/check?key=app:12` checks one item and answers in the request. `POST /api/drift/start?scope=all` or `?scope=package&key=<package key>` starts a job: it brings the facts of the items in scope up to date under the fact reader's rules, then fetches upstream (unchanged items answer `304`). Items above the background size limit are not read by the job and are counted as `skippedLarge`.
 
