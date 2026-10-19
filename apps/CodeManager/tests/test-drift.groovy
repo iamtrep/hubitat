@@ -52,10 +52,36 @@ t('a 304 keeps the stored comparison and moves the stamp to the installed code',
 t('a 304 with nothing stored is not a comparison', {
     Map res = apply(null, [status: 304]); assert res.outcome == 'unreachable' && res.entry.rhash == null
 })
-t('a failed fetch keeps no hash from an earlier one', {
+t('a failed fetch keeps the last good comparison and records the failure beside it', {
     Map e1 = apply(null, ok200).entry
-    Map e = apply(e1, [status: 503]).entry
-    assert e.rhash == null && e.rver == null && e.etag == null && e.unreachable == true && e.httpStatus == 503
+    Map res = apply(e1, [status: 503], LOC, 5L); Map e = res.entry
+    assert e.rhash == e1.rhash && e.rver == '1.2' && e.etag == 'W/"x"' && e.checkedAt == e1.checkedAt
+    assert e.unreachable == true && e.httpStatus == 503 && e.lastError == 'HTTP 503' && e.failedAt == N && res.outcome == 'unreachable'
+})
+t('a timeout after a good check keeps the comparison too', {
+    Map e1 = apply(null, ok200).entry
+    Map e = H.driftApply(e1, [status: 0, transport: true, error: 'java.net.SocketTimeoutException: x'], LOC, 'ilm', 5L, false, N + 50).entry
+    assert e.rhash == e1.rhash && e.checkedAt == e1.checkedAt && e.failedAt == N + 50
+})
+t('a 304 after a failure still matches the kept comparison', {
+    Map e1 = apply(null, ok200).entry
+    Map e2 = apply(e1, [status: 503]).entry
+    Map res = apply(e2, [status: 304]); Map e = res.entry
+    assert res.outcome == 'notModified' && e.rhash == e1.rhash && e.etag == 'W/"x"' && e.lastError == null && e.failedAt == null
+})
+t('a failure with no earlier comparison records no check time', {
+    Map e = apply(null, [status: 503]).entry
+    assert e.rhash == null && e.checkedAt == null && e.failedAt == N
+})
+t('a 404 also keeps the comparison while it strikes', {
+    Map e1 = apply(null, ok200).entry
+    Map e = apply(e1, [status: 404]).entry
+    assert e.rhash == e1.rhash && e.failCount == 1 && e.broken == false
+})
+t('a failure for another location keeps nothing from the old one', {
+    Map e1 = apply(null, ok200).entry
+    Map e = apply(e1, [status: 503], 'https://example.org/b.groovy').entry
+    assert e.rhash == null && e.etag == null
 })
 t('three 404s on the same code and location mark it broken', {
     Map e = apply(null, [status: 404]).entry; assert e.failCount == 1 && e.broken == false

@@ -116,6 +116,9 @@ t('a step reads when nothing blocks it', { assert H.factNextAction([writeOutstan
 t('a step finishes on an empty queue', { assert H.factNextAction([writeOutstanding: false, waits: 0, queueEmpty: true]) == 'finish' })
 t('a step defers while a write is outstanding, even with work queued', { assert H.factNextAction([writeOutstanding: true, waits: 0, queueEmpty: false]) == 'defer' && H.factNextAction([writeOutstanding: true, waits: 5, queueEmpty: true]) == 'defer' })
 t('a step defers up to the wait limit, then gives up', { assert H.factNextAction([writeOutstanding: true, waits: 299]) == 'defer' && H.factNextAction([writeOutstanding: true, waits: 300]) == 'giveup' })
+t('a step yields to a live reader without counting toward the wait limit', { assert H.factNextAction([writeOutstanding: false, readerFresh: true, waits: 5000, queueEmpty: false]) == 'yield' })
+t('a write outstanding still counts when a live reader is also running', { assert H.factNextAction([writeOutstanding: true, readerFresh: true, waits: 300]) == 'giveup' })
+t('with no live reader and no write the step reads', { assert H.factNextAction([writeOutstanding: false, readerFresh: false, waits: 0, queueEmpty: false]) == 'read' })
 // provisional: read 500 ms after the save, re-read once, then valid
 Map prov = H.recordSuccess([k: 'app', id: 1, lm: 10_000L], [ih: 'a'], 10_000L, 10_500L)
 t('a read right after a save is provisional and wanted again', { assert H.factBasis(prov, 10_000L) == 'provisional' && H.factNeedsRetry(10_000L, 10_500L, false) && H.factQueue([prov], 10_600L) == ['app:1'] })

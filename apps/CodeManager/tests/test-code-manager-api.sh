@@ -447,6 +447,8 @@ if one:
     (ok if r.get("checked") is True and r.get("status") not in (None, "not-checked") else fail)(f"drift/check on a url-origin component -> {({k: r.get(k) for k in ('status', 'checked', 'outcome', 'error', 'httpStatus')})}")
     after = next((c for c in api_get("inventory", timeout=180).get("components", []) if ck(c) == ck(one)), {})
     (ok if after.get("status") == r.get("status") and after.get("checkedAtMs") else fail)(f"the inventory reports the checked status ({after.get('status')})")
+    r2 = api_post("drift/check", {"key": ck(one)}, timeout=120)       # second check: sends If-None-Match, a 304 when upstream sent an ETag
+    (ok if r2.get("checked") is True and not r2.get("error") and r2.get("status") == r.get("status") else fail)(f"a second drift/check answers without error and keeps its status ({({k: r2.get(k) for k in ('status', 'outcome', 'httpStatus', 'error')})})")
 else:
     warn("no url-origin component with valid facts and an https location; single-item drift check skipped")
 # a package-scoped job

@@ -1086,7 +1086,7 @@ Map buildInventoryPayload(Map bulk) {
             String location = factVisible(p.o as String, basis, 'loc') ? (c.loc ?: (p.o == 'url' ? key.substring(4) : null)) : null
             Map row = [key: key, kind: c.k, hubId: c.id, namespace: c.ns, name: c.nm, origin: p.o, location: location, managedBy: p.o == 'hpm' ? (state.hpm?.mode == 'manage' ? 'cm' : 'hpm') : 'cm',
                        status: status, ihash: factVisible(p.o as String, basis, 'ih') ? c.ih : null, ahash: c.ah, iver: factVisible(p.o as String, basis, 'iv') ? c.iv : null, iverSrc: factVisible(p.o as String, basis, 'ivs') ? c.ivs : null, rhash: s.rhash, rver: s.rver, checkedAtMs: s.checkedAt, changedAtMs: s.changedAt,
-                       httpStatus: s.httpStatus, failCount: s.failCount ?: 0, error: s.error, lastModifiedMs: c.lm, usedByCount: c.u ?: 0, required: c.req != false,
+                       httpStatus: s.httpStatus, failCount: s.failCount ?: 0, error: s.lastError, failedAtMs: s.failedAt, lastModifiedMs: c.lm, usedByCount: c.u ?: 0, required: c.req != false,
                        usedBy: usedBy[ckey(c.k as String, c.id)] ?: [], bundleOf: c.bm, isPrivate: c.pv == true,
                        basis: basis, factsReadAtMs: c.frd, factError: c.fe, childOf: (c.id != null ? childOf[ckey(c.k as String, c.id)] : null) ?: [], asOf: invAsOf]
             comps << row
@@ -1177,6 +1177,7 @@ static Map recordSuccess(Map c, Map facts, long lm, long now) {
 @CompileStatic
 static String factNextAction(Map s) {
     if (s.writeOutstanding == true) return ((s.waits ?: 0) as int) + 1 > FACT_WRITE_WAIT_STEPS ? 'giveup' : 'defer'
+    if (s.readerFresh == true) return 'yield'          // another reader is working: wait for it without using up the wait limit
     return s.queueEmpty == true ? 'finish' : 'read'
 }
 
@@ -1312,9 +1313,16 @@ void startFactReader() {
     } finally { gate.release() }
 }
 
-private boolean factsJobRunning() {
-    for (Map.Entry e in JOBS.entrySet()) { ConcurrentHashMap r = e.value as ConcurrentHashMap; if (r.kind == 'facts' && r.status == 'running') return true }
-    return false
+// A separate fact reader job: 'fresh' while it keeps taking steps, 'stale' once it has stopped (its chain is lost), else null.
+private String factsReaderState() {
+    String out = null
+    for (Map.Entry e in JOBS.entrySet()) {
+        ConcurrentHashMap r = e.value as ConcurrentHashMap
+        if (r.kind != 'facts' || r.status != 'running') continue
+        if (!factJobStale((r.lastStep ?: r.startedAt) as long, now())) return 'fresh'
+        out = 'stale'
+    }
+    return out
 }
 private boolean driftFactsPhaseRunning() {
     for (Map.Entry e in JOBS.entrySet()) { ConcurrentHashMap r = e.value as ConcurrentHashMap; if (r.kind == 'drift' && r.status == 'running' && r.phase == 'facts') return true }
@@ -1331,8 +1339,13 @@ void factStep(Map data) {
         ConcurrentLinkedQueue<String> pending = j.pending as ConcurrentLinkedQueue<String>
         AtomicInteger waits = j.waits as AtomicInteger
         // A drift job's first phase is this same step. It also yields to a separate reader job, so only one read is ever in flight.
-        boolean blocked = writeOutstanding() || (j.kind == 'drift' && factsJobRunning())
-        String action = factNextAction([writeOutstanding: blocked, waits: waits.get(), queueEmpty: pending.isEmpty()])
+        String reader = j.kind == 'drift' ? factsReaderState() : null
+        boolean blocked = writeOutstanding() || reader == 'stale'          // only a write or a lost reader counts toward the wait limit
+        String action = factNextAction([writeOutstanding: blocked, readerFresh: reader == 'fresh', waits: waits.get(), queueEmpty: pending.isEmpty()])
+        if (action == 'yield') {
+            runInMillis(FACT_GAP_MS, 'factStep', [data: [jobId: jobId], overwrite: false])
+            return
+        }
         if (action == 'defer') {
             waits.incrementAndGet()
             runInMillis(FACT_GAP_MS, 'factStep', [data: [jobId: jobId], overwrite: false])
@@ -1455,7 +1468,7 @@ static Map driftApply(Map prev, Map r, String loc, String stampKey, Object stamp
     Map base = sameLoc ? new LinkedHashMap(prev) : new LinkedHashMap()
     int failBase = (sameLoc && sameStampValue(prev.get(stampKey), stamp)) ? ((base.get('failCount') ?: 0) as int) : 0
     Map e = new LinkedHashMap()
-    e.put('loc', loc); e.put(stampKey, stamp); e.put('checkedAt', now)
+    e.put('loc', loc); e.put(stampKey, stamp)
     int status = ((r.get('status') ?: 0) as int)
     String outcome = 'checked'
     int fails = failBase
@@ -1463,7 +1476,7 @@ static Map driftApply(Map prev, Map r, String loc, String stampKey, Object stamp
     String error = null
     if (status == 304 && base.get('rhash') != null) {
         for (String k in ['etag', 'rhash', 'rver', 'rverSrc', 'rbeta', 'changedAt']) { if (base.get(k) != null) e.put(k, base.get(k)) }
-        e.put('httpStatus', 304); fails = 0; outcome = 'notModified'
+        e.put('httpStatus', 304); e.put('checkedAt', now); fails = 0; outcome = 'notModified'
     } else if (status == 200) {
         String body = (r.get('body') ?: '') as String
         if (!body) { e.put('httpStatus', 200); error = 'empty response body'; outcome = 'unreachable' }      // never hash ''
@@ -1476,14 +1489,14 @@ static Map driftApply(Map prev, Map r, String loc, String stampKey, Object stamp
             else {
                 String rh = hashPrefix(sha256Hex(body))
                 e.put('httpStatus', 200); e.put('etag', r.get('etag')); e.put('rhash', rh); e.put('rver', ver); e.put('rverSrc', 'manifest'); e.put('rbeta', beta)
-                e.put('changedAt', base.get('rhash') != rh ? now : base.get('changedAt'))
+                e.put('changedAt', base.get('rhash') != rh ? now : base.get('changedAt')); e.put('checkedAt', now)
                 fails = 0; outcome = base.get('rhash') != rh ? 'changed' : 'checked'
             }
         } else {
             String rh = hashPrefix(sourceHash(body))
             Map pv = parseVersionLiteral(body)
             e.put('httpStatus', 200); e.put('etag', r.get('etag')); e.put('rhash', rh); e.put('rver', pv.get('ver')); e.put('rverSrc', pv.get('src'))
-            e.put('changedAt', base.get('rhash') != rh ? now : base.get('changedAt'))
+            e.put('changedAt', base.get('rhash') != rh ? now : base.get('changedAt')); e.put('checkedAt', now)
             fails = 0; outcome = base.get('rhash') != rh ? 'changed' : 'checked'
         }
     } else if (status == 404 || status == 410) {                         // definite "gone": strikes toward broken-source
@@ -1500,7 +1513,13 @@ static Map driftApply(Map prev, Map r, String loc, String stampKey, Object stamp
     e.put('failCount', fails)
     e.put('broken', fails >= BROKEN_AFTER)
     e.put('unreachable', outcome == 'unreachable')
-    if (error != null) e.put('error', error)
+    if (error != null) {
+        // A failed fetch keeps the last good comparison (hash, etag, version and when it was made) and records the failure beside it.
+        if (e.get('rhash') == null && base.get('rhash') != null) {
+            for (String k in ['etag', 'rhash', 'rver', 'rverSrc', 'rbeta', 'changedAt', 'checkedAt']) { if (base.get(k) != null) e.put(k, base.get(k)) }
+        }
+        e.put('lastError', error); e.put('failedAt', now)
+    }
     return [entry: e, outcome: outcome]
 }
 
@@ -1580,7 +1599,7 @@ Map apiDriftCheck() {
         DRIFT[key] = res.entry as Map
         persistDriftCache()
         Map e = res.entry as Map
-        return out + [checked: true, status: statusOf(pkey, p, c), outcome: res.outcome, httpStatus: e.httpStatus, error: e.error, rhash: e.rhash, rver: e.rver, checkedAtMs: e.checkedAt]
+        return out + [checked: true, status: statusOf(pkey, p, c), outcome: res.outcome, httpStatus: e.httpStatus, error: e.lastError, rhash: e.rhash, rver: e.rver, checkedAtMs: e.checkedAt]
     }
 }
 
@@ -1591,7 +1610,8 @@ private String statusOf(String pkey, Map p, Map c) {
     return componentStatus(p, c + [basis: basis], dr[ckey(c.k as String, c.id)] as Map, (dr["pkg:" + pkey] ?: [:]) as Map)
 }
 
-// One synchronous upstream GET; the answer as driftApply wants it. httpGet throws on a non-2xx answer, including 304.
+// One synchronous upstream GET; the answer as driftApply wants it. httpGet throws on a status of 400 or more (the exception carries the
+// status); below 400, including a 304 answer to If-None-Match, it reaches the closure.
 private Map fetchUpstreamNow(String uri, String etag) {
     Map r = [status: 0, transport: false]
     Map req = [uri: uri, contentType: 'text/plain', timeout: DRIFT_TIMEOUT_SEC]
