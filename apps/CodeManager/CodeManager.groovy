@@ -62,6 +62,8 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final long FACT_GAP_MS = 2_000L             // fact reader: pause between two reads
 @Field static final int  FACT_FAIL_LIMIT = 2              // consecutive failed reads before an item is backed off
 @Field static final List<Long> FACT_BACKOFF_MS = [3_600_000L, 86_400_000L]   // first back-off 1 h, then 24 h
+@Field static final long FACT_READ_TIMEOUT_MS = 30_000L    // fetchItemDetail's request timeout
+@Field static final int  FACT_FLUSH_EVERY = 10            // reads between writes of the pending facts to state.pkgs
 @Field static final int  FACT_WRITE_WAIT_STEPS = 300      // reader gives up after this many steps (about 10 min) spent waiting for a write
 // The single writer lease (DESIGN 6.6). Every code write takes the permit; the fact reader reads nothing while it is taken.
 @Field static final Semaphore WRITE = new Semaphore(1)
@@ -1092,7 +1094,7 @@ Map buildInventoryPayload(Map bulk) {
 Map reconcileNow(Map b = null) {
     Semaphore gate = gateFor("reconcile")
     if (!gate.tryAcquire(BULK_WAIT_MS, TimeUnit.MILLISECONDS)) return [skipped: true]
-    try { return reconcileRegistry(b ?: bulk()) } finally { gate.release() }
+    try { flushFactsLocked(); return reconcileRegistry(b ?: bulk()) } finally { gate.release() }
 }
 Map apiInventory() {
     return timed("inventory") {
@@ -1151,15 +1153,99 @@ static Map recordSuccess(Map c, Map facts, long lm, long now) {
     return m
 }
 
+// What a step does next. s = [writeOutstanding, waits, queueEmpty]. A step waits out a write (up to FACT_WRITE_WAIT_STEPS in a row),
+// finishes when nothing is queued, and otherwise reads.
+@CompileStatic
+static String factNextAction(Map s) {
+    if (s.writeOutstanding == true) return ((s.waits ?: 0) as int) + 1 > FACT_WRITE_WAIT_STEPS ? 'giveup' : 'defer'
+    return s.queueEmpty == true ? 'finish' : 'read'
+}
+
+// A fact read within PROVISIONAL_MS of its item's lastModified is read once more, so a second save in the same second is not missed.
+@CompileStatic
+static boolean factNeedsRetry(long lm, long readAt, boolean alreadyRetried) {
+    return !alreadyRetried && (readAt - lm) < PROVISIONAL_MS
+}
+
+// A running reader job whose last step is older than this has lost its chain of steps (an error ended it, or the hub restarted under it).
+@CompileStatic
+static boolean factJobStale(long lastStep, long now) {
+    return (now - lastStep) > 5 * FACT_GAP_MS + FACT_READ_TIMEOUT_MS
+}
+
 private boolean writeOutstanding() { return WRITE.availablePermits() == 0 }
 
-// Every bound app, driver and library in the registry, with its package origin.
+// Read results wait here (facts and counters only, never a source) and are written to state.pkgs in batches:
+// every FACT_FLUSH_EVERY reads, at job end and on job failure. reconcileNow() and the status/read endpoints flush first.
+@Field static final ConcurrentHashMap<String, Map> PENDING_FACTS = new ConcurrentHashMap<>()
+@Field static final List<String> FACT_KEYS = ['loc', 'ih', 'ah', 'iv', 'ivs', 'sz', 'ch', 'pv', 'flm', 'frd', 'ff', 'fnext', 'fe']
+
+private Map withPending(Map c) {
+    Map pend = PENDING_FACTS[ckey(c.k as String, c.id)]
+    return pend == null ? c : (pend + [lm: c.lm, u: c.u])
+}
+
+// Every bound app, driver and library in the registry, with its package origin (as `_o`) and any unflushed facts.
 private List<Map> itemComponents() {
     List<Map> out = []
     ((state.pkgs ?: [:]) as Map).each { String key, Map p ->
-        (p.c as List).each { Map c -> if (c.id != null && c.k in ['app', 'driver', 'library']) out << (c + [_pkg: key, _o: p.o])  }
+        (p.c as List).each { Map c -> if (c.id != null && c.k in ['app', 'driver', 'library']) out << (withPending(c) + [_o: p.o]) }
     }
     return out
+}
+
+// One component by registry key, without copying the registry.
+private Map findItem(String ck) {
+    for (Map.Entry e in ((state.pkgs ?: [:]) as Map).entrySet()) {
+        Map p = e.value as Map
+        for (Object o in (p.c as List)) {
+            Map c = o as Map
+            if (c.id != null && c.k in ['app', 'driver', 'library'] && ckey(c.k as String, c.id) == ck) return withPending(c) + [_o: p.o]
+        }
+    }
+    return null
+}
+
+// Queues one read's outcome. The component it is based on already carries any earlier unflushed outcome.
+private void storeFact(String ck, Map base, long lm, Map outcome) {
+    Map clean = base.findAll { k, v -> k != '_o' } as Map
+    PENDING_FACTS[ck] = (outcome.facts != null ? recordSuccess(clean, outcome.facts as Map, lm, now()) : recordFailure(clean, outcome.error as String, now()))
+}
+
+// Writes the pending facts into state.pkgs. The caller holds the registry gate. Only the fact fields are copied, so a reconcile
+// that changed anything else in the meantime is kept.
+private void flushFactsLocked() {
+    if (PENDING_FACTS.isEmpty()) return
+    Map snap = new HashMap(PENDING_FACTS)
+    Map pkgs = (state.pkgs ?: [:]) as Map
+    Map newPkgs = null
+    for (Map.Entry e in pkgs.entrySet()) {
+        List comps = (e.value as Map).c as List
+        List newComps = null
+        for (int i = 0; i < comps.size(); i++) {
+            Map c = comps[i] as Map
+            if (c.id == null) continue
+            Map pend = snap[ckey(c.k as String, c.id)] as Map
+            if (pend == null) continue
+            Map m = new LinkedHashMap(c)
+            for (String k in FACT_KEYS) { if (pend[k] != null) m[k] = pend[k] else m.remove(k) }
+            if (newComps == null) newComps = new ArrayList(comps)
+            newComps[i] = m
+        }
+        if (newComps != null) {
+            if (newPkgs == null) newPkgs = new LinkedHashMap(pkgs)
+            newPkgs[e.key] = (e.value as Map) + [c: newComps]
+        }
+    }
+    if (newPkgs != null) state.pkgs = newPkgs
+    snap.each { k, v -> PENDING_FACTS.remove(k, v) }
+}
+// False when the registry is busy; the facts stay pending and go out with the next flush.
+private boolean flushFacts() {
+    if (PENDING_FACTS.isEmpty()) return true
+    Semaphore gate = gateFor("reconcile")
+    if (!gate.tryAcquire(2000L, TimeUnit.MILLISECONDS)) return false
+    try { flushFactsLocked(); return true } finally { gate.release() }
 }
 
 // Facts from one read. The source lives only in this frame: it is hashed, measured and dropped.
@@ -1179,36 +1265,18 @@ private Map readFacts(String kind, String id, String origin, boolean background)
     return [facts: facts]
 }
 
-// Stores one read's outcome on the registry component. False when the registry could not be taken in time or the item left it.
-private boolean applyFactResult(String ck, long lm, Map outcome) {
-    Semaphore gate = gateFor("reconcile")
-    if (!gate.tryAcquire(BULK_WAIT_MS, TimeUnit.MILLISECONDS)) return false
-    try {
-        Map pkgs = (state.pkgs ?: [:]) as Map
-        for (Map.Entry e in pkgs.entrySet()) {
-            Map p = e.value as Map
-            List comps = p.c as List
-            int idx = comps.findIndexOf { Map c -> c.id != null && ckey(c.k as String, c.id) == ck }
-            if (idx < 0) continue
-            Map c = comps[idx] as Map
-            Map next = outcome.facts != null ? recordSuccess(c, outcome.facts as Map, lm, now()) : recordFailure(c, outcome.error as String, now())
-            List newComps = new ArrayList(comps)
-            newComps[idx] = compact(next)
-            Map newPkgs = new LinkedHashMap(pkgs)
-            newPkgs[e.key] = p + [c: newComps]
-            state.pkgs = newPkgs
-            return true
-        }
-        return false
-    } finally { gate.release() }
-}
-
 // Starts the reader unless one is running. Schedules the first read and returns; it never reads inside the caller.
 void startFactReader() {
     Semaphore gate = gateFor("factStart")
     if (!gate.tryAcquire()) return
     try {
-        if (JOBS.values().any { ConcurrentHashMap j -> j.kind == 'facts' && j.status == 'running' }) return
+        for (Map.Entry e in JOBS.entrySet()) {
+            ConcurrentHashMap r = e.value as ConcurrentHashMap
+            if (r.kind != 'facts' || r.status != 'running') continue
+            if (!factJobStale((r.lastStep ?: r.startedAt) as long, now())) return
+            jobFail(e.key as String, "Job lost: the reader stopped taking steps")      // an error ended its chain; carry on with a new job
+            flushFacts()
+        }
         List<String> queue = factQueue(itemComponents(), now())
         if (queue.isEmpty()) return
         String jobId = newJob('facts', queue.size())
@@ -1217,6 +1285,8 @@ void startFactReader() {
         j.counts = new ConcurrentHashMap([read: new AtomicInteger(0), failed: new AtomicInteger(0), skipped: new AtomicInteger(0)])
         j.retried = new ConcurrentHashMap()
         j.waits = new AtomicInteger(0)
+        j.unflushed = new AtomicInteger(0)
+        j.lastStep = now()
         runInMillis(1000L, 'factStep', [data: [jobId: jobId], overwrite: false])
         logSched "fact reader ${jobId}: ${queue.size()} queued"
     } finally { gate.release() }
@@ -1227,45 +1297,47 @@ void factStep(Map data) {
     String jobId = data.jobId as String
     ConcurrentHashMap j = JOBS[jobId]
     if (j == null || j.status != 'running') return                 // lost to a push or a restart; the next start resumes
+    j.lastStep = now()
     try {
         ConcurrentLinkedQueue<String> pending = j.pending as ConcurrentLinkedQueue<String>
-        if (writeOutstanding()) {
-            if ((j.waits as AtomicInteger).incrementAndGet() > FACT_WRITE_WAIT_STEPS) { jobFail(jobId, "gave up waiting for a write to finish"); return }
+        AtomicInteger waits = j.waits as AtomicInteger
+        String action = factNextAction([writeOutstanding: writeOutstanding(), waits: waits.get(), queueEmpty: pending.isEmpty()])
+        if (action == 'defer') {
+            waits.incrementAndGet()
             runInMillis(FACT_GAP_MS, 'factStep', [data: [jobId: jobId], overwrite: false])
             return
         }
-        String ck = pending.poll()
-        if (ck == null) {
+        if (action == 'giveup') { flushFacts(); jobFail(jobId, "gave up waiting for a write to finish"); return }
+        if (action == 'finish') {
+            flushFacts()
             Map counts = (j.counts as Map).collectEntries { k, v -> [(k): (v as AtomicInteger).get()] }
             jobDone(jobId, counts)
             logInfo "fact reader done: ${counts}"
             return
         }
-        Map c = itemComponents().find { Map x -> ckey(x.k as String, x.id) == ck }
-        boolean due = c != null && !factQueue([c], now()).isEmpty()      // an earlier read, a back-off or a size may have settled it
-        if (due) {
+        waits.set(0)
+        String ck = pending.poll()
+        Map c = findItem(ck)
+        if (c != null && !factQueue([c], now()).isEmpty()) {          // an earlier read, a back-off or a size may have settled it
             long lm = (c.lm ?: 0L) as long
             Map outcome
             try { outcome = readFacts(c.k as String, c.id as String, c._o as String, true) }
             catch (Exception e) { outcome = [error: "${getObjectClassName(e)}: ${e.message}" as String] }
-            if (applyFactResult(ck, lm, outcome)) {
-                ((j.counts as Map)[outcome.facts != null ? 'read' : 'failed'] as AtomicInteger).incrementAndGet()
-                // read this soon after the item's lastModified: read again once, so a second save in the same second is not missed
-                if (outcome.facts != null && (now() - lm) < PROVISIONAL_MS && (j.retried as Map).putIfAbsent(ck, true) == null) {
-                    pending.add(ck); (j.total as AtomicInteger).incrementAndGet()
-                }
-            } else {
-                pending.add(ck)                                           // registry busy: try this one again
-                runInMillis(FACT_GAP_MS, 'factStep', [data: [jobId: jobId], overwrite: false])
-                return
+            storeFact(ck, c, lm, outcome)
+            ((j.counts as Map)[outcome.facts != null ? 'read' : 'failed'] as AtomicInteger).incrementAndGet()
+            if (outcome.facts != null && factNeedsRetry(lm, now(), (j.retried as Map).putIfAbsent(ck, true) != null)) {
+                pending.add(ck); (j.total as AtomicInteger).incrementAndGet()
             }
+            if ((j.unflushed as AtomicInteger).incrementAndGet() >= FACT_FLUSH_EVERY && flushFacts()) (j.unflushed as AtomicInteger).set(0)
         } else {
             ((j.counts as Map).skipped as AtomicInteger).incrementAndGet()
         }
         (j.processed as AtomicInteger).incrementAndGet()
+        j.lastStep = now()
         runInMillis(FACT_GAP_MS, 'factStep', [data: [jobId: jobId], overwrite: false])
-    } catch (Exception e) {
+    } catch (Throwable e) {
         logError "fact reader ${jobId}: ${e.message}"
+        try { flushFacts() } catch (Throwable ignored) {}
         jobFail(jobId, "fact reader failed: ${e.message}")
     }
 }
@@ -1296,19 +1368,20 @@ Map apiFactsRead() {
     if (!(kind in ['app', 'driver', 'library']) || !id?.isInteger()) return jsonResponse([error: "kind must be app|driver|library and id numeric"])
     return timed("factsRead") {
         String ck = ckey(kind, id)
-        Map c = itemComponents().find { Map x -> ckey(x.k as String, x.id) == ck }
+        Map c = findItem(ck)
         if (c == null) return [error: "not in the registry: ${ck}" as String]
         long lm = (c.lm ?: 0L) as long
         Map outcome
-        try {
-            outcome = readFacts(kind, id, c._o as String, false)         // counts as the request's one allowed read
-        } catch (Exception e) { outcome = [error: "${getObjectClassName(e)}: ${e.message}" as String] }
-        boolean stored = applyFactResult(ck, lm, outcome)
-        Map now1 = itemComponents().find { Map x -> ckey(x.k as String, x.id) == ck } ?: c
-        [kind: kind, hubId: id, read: outcome.facts != null, stored: stored, error: outcome.error, basis: factBasis(now1, lm), importUrl: now1.loc ?: null,
-         version: now1.iv, hash: now1.ih, size: now1.sz, createsChildren: now1.ch == true]
+        try { outcome = readFacts(kind, id, c._o as String, false) }         // counts as the request's one allowed read
+        catch (Exception e) { outcome = [error: "${getObjectClassName(e)}: ${e.message}" as String] }
+        storeFact(ck, c, lm, outcome)
+        boolean stored = flushFacts()
+        Map after = findItem(ck) ?: c
+        [kind: kind, hubId: id, read: outcome.facts != null, stored: stored, error: outcome.error, basis: factBasis(after, lm), importUrl: after.loc ?: null,
+         version: after.iv, hash: after.ih, size: after.sz, createsChildren: after.ch == true]
     }
 }
+
 // ===== Sweep (DESIGN.md §5.2, §7): bounded async freshness check over every upstream location =====
 @Field static final int  SWEEP_MAX_INFLIGHT = 6          // two of the eight async slots stay free for endpoint handlers
 @Field static final long SWEEP_TTL_MS = 86_400_000L
@@ -1666,6 +1739,7 @@ void updated() {
     runIn(1, 'syncUIForced')
     // unschedule() above stopped any running reader's chain of steps; its job can never finish.
     JOBS.each { String id, ConcurrentHashMap j -> if (j.kind == 'facts' && j.status == 'running') jobFail(id, 'Job lost: the app was re-initialized') }
+    flushFacts()
     runIn(60, 'startFactReader')
     initialize()
 }

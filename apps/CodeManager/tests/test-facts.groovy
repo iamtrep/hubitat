@@ -15,12 +15,12 @@ String extract(String name) {
     for (; i < src.length(); i++) { char c = src.charAt(i); if (c == '{') depth++; else if (c == '}') { depth--; if (depth == 0) { i++; break } } }
     return src.substring(start, i)
 }
-String constant = ['PROVISIONAL_MS', 'LARGE_SOURCE_BYTES', 'FACT_FAIL_LIMIT', 'FACT_BACKOFF_MS'].collect { String n ->
+String constant = ['PROVISIONAL_MS', 'LARGE_SOURCE_BYTES', 'FACT_FAIL_LIMIT', 'FACT_BACKOFF_MS', 'FACT_GAP_MS', 'FACT_READ_TIMEOUT_MS', 'FACT_WRITE_WAIT_STEPS'].collect { String n ->
     java.util.regex.Matcher cm = src =~ /(?m)^@Field (static final [^\n=]*\b${n} = [^\n]*?)\s*(?:\/\/[^\n]*)?$/
     assert cm.find() : "${n} not found"
     cm.group(1)
 }.join('\n')
-String code = ['factBasis', 'factQueue', 'recordFailure', 'recordSuccess', 'classifyOrigin', 'ckey', 'childOfIndex', 'walkAppTree', 'docPruneDecision', 'factVisible'].collect { extract(it) }.join('\n')
+String code = ['factBasis', 'factQueue', 'recordFailure', 'recordSuccess', 'factNextAction', 'factNeedsRetry', 'factJobStale', 'classifyOrigin', 'ckey', 'childOfIndex', 'walkAppTree', 'docPruneDecision', 'factVisible'].collect { extract(it) }.join('\n')
 def H = new GroovyShell().parse("import groovy.transform.CompileStatic\nclass H {\n${constant}\n${code}\n}\nreturn H").run()
 
 void t(String name, Closure c) { try { c(); pass++; println "  ok   ${name}" } catch (Throwable e) { fail++; println "  FAIL ${name}\n         ${e.message}" } }
@@ -110,6 +110,27 @@ t('success keeps an existing ah', { assert H.recordSuccess([ah: 'old'], [ih: 'ne
 t('success drops facts that came back empty and leaves unlisted ones', { Map r = H.recordSuccess([loc: 'u', iv: '1', ivs: 'field'], [ih: 'h', iv: null], 1L, 2L); assert !r.containsKey('iv') && r.loc == 'u' && r.ivs == 'field' })
 t('a successful read is valid for its version', { assert H.factBasis(ok1, 5000L) == 'valid' })
 t('a read within 2 s of the version is provisional', { assert H.factBasis(H.recordSuccess([:], [ih: 'h'], 5000L, 5500L), 5000L) == 'provisional' })
+
+// --- step decisions ---
+t('a step reads when nothing blocks it', { assert H.factNextAction([writeOutstanding: false, waits: 0, queueEmpty: false]) == 'read' })
+t('a step finishes on an empty queue', { assert H.factNextAction([writeOutstanding: false, waits: 0, queueEmpty: true]) == 'finish' })
+t('a step defers while a write is outstanding, even with work queued', { assert H.factNextAction([writeOutstanding: true, waits: 0, queueEmpty: false]) == 'defer' && H.factNextAction([writeOutstanding: true, waits: 5, queueEmpty: true]) == 'defer' })
+t('a step defers up to the wait limit, then gives up', { assert H.factNextAction([writeOutstanding: true, waits: 299]) == 'defer' && H.factNextAction([writeOutstanding: true, waits: 300]) == 'giveup' })
+// provisional: read 500 ms after the save, re-read once, then valid
+Map prov = H.recordSuccess([k: 'app', id: 1, lm: 10_000L], [ih: 'a'], 10_000L, 10_500L)
+t('a read right after a save is provisional and wanted again', { assert H.factBasis(prov, 10_000L) == 'provisional' && H.factNeedsRetry(10_000L, 10_500L, false) && H.factQueue([prov], 10_600L) == ['app:1'] })
+t('the second read is not retried again and leaves a valid fact', {
+    Map again = H.recordSuccess(prov, [ih: 'b'], 10_000L, 13_000L)
+    assert !H.factNeedsRetry(10_000L, 13_000L, true) && !H.factNeedsRetry(10_000L, 13_000L, false) && H.factBasis(again, 10_000L) == 'valid' && H.factQueue([again], 13_100L) == [] })
+t('a provisional item already retried once is not retried', { assert !H.factNeedsRetry(10_000L, 10_500L, true) })
+// two timeouts back an item off, and it stays out of the queue until fnext
+Map fl = [k: 'app', id: 4, lm: 5L]
+fl = H.recordFailure(fl, 'timeout', NOW); t('after one failure the item is still queued', { assert H.factQueue([fl], NOW + 10) == ['app:4'] })
+fl = H.recordFailure(fl, 'timeout', NOW)
+t('after two failures the item is out of the queue until fnext', { assert H.factQueue([fl], NOW + 10) == [] && H.factQueue([fl], NOW + 3_599_999L) == [] && H.factQueue([fl], NOW + 3_600_000L) == ['app:4'] })
+t('the backed-off item reads as unread with its error and a failing count', { assert H.factBasis(fl, 5L) == 'unread' && fl.fe == 'timeout' && fl.ff == 2 })
+// a reader that stopped taking steps
+t('a reader is stale after 5 gaps plus the read timeout', { assert !H.factJobStale(1000L, 1000L + 40_000L) && H.factJobStale(1000L, 1000L + 40_001L) })
 
 println "\n${pass} passed, ${fail} failed, 0 warnings"
 System.exit(fail ? 1 : 0)
