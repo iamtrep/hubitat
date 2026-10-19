@@ -47,7 +47,7 @@ pre.src{background:#1e1e1e;color:#ddd;padding:10px;border-radius:6px;overflow:au
 <script>
 const CODE_VERSION = "0.1.1";
 const WORKBENCH = false;   // true: render from MOCK_DATA without a hub
-const MOCK_DATA = { 'inventory': {"generatedAt":1787300000000,"appVersion":"0.1.1","hub":{"name":"Workbench","firmware":"2.5.1.147","model":"C-8 Pro"},"packages":[{"key":"https://raw.githubusercontent.com/example/repo/main/packageManifest.json","origin":"hpm","name":"Package One","version":"1.0.9","gen":22,"doc":"cm_pkg_f3149d63a4252f4b.json","isPrivate":false,"url":null,"componentCount":2,"checkedAtMs":1787299990000,"rver":"1.0.9","status":"current"},{"key":"url:https://example.org/example-repo/AppC.groovy","origin":"url","name":"Package Two","version":null,"gen":2,"doc":"cm_pkg_f500d68c94dc931b.json","isPrivate":false,"url":null,"kind":"app","componentCount":1,"checkedAtMs":null,"rver":null,"status":"changed-upstream"},{"key":"local:library/example/Lib D","origin":"local","name":"Package Three","version":null,"gen":2,"doc":"cm_pkg_7b740b3e304bd0fd.json","isPrivate":false,"url":null,"kind":"library","componentCount":1,"checkedAtMs":null,"rver":null,"status":"unmanaged"},{"key":"bundle:1","origin":"bundle","name":"Package Four","version":null,"gen":3,"doc":"cm_pkg_cf2fcbac483062c3.json","isPrivate":false,"url":"https://example.org/example-repo/bundle.zip","componentCount":5,"checkedAtMs":null,"rver":null,"status":"update-available"}],"components":[{"key":"https://raw.githubusercontent.com/example/repo/main/packageManifest.json","kind":"driver","hubId":"101","namespace":"example","name":"Driver A","origin":"hpm","location":null,"managedBy":"hpm","status":"current","ihash":"a1b2c3d4e5f6a1b2","ahash":"a1b2c3d4e5f6a1b2","iver":null,"iverSrc":null,"rhash":"a1b2c3d4e5f6a1b2","rver":null,"checkedAtMs":1787299990000,"changedAtMs":1787299989900,"httpStatus":200,"failCount":0,"error":null,"lastModifiedMs":1783300000000,"usedByCount":1,"usedBy":[{"id":101,"name":"Device 1"}],"bundleOf":null,"isPrivate":false,"required":true},{"key":"https://raw.githubusercontent.com/example/repo/main/packageManifest.json","kind":"app","hubId":"102","namespace":"example","name":"App B","origin":"hpm","location":null,"managedBy":"hpm","status":"current","ihash":"b2c3d4e5f6a1b2c3","ahash":"b2c3d4e5f6a1b2c3","iver":null,"iverSrc":null,"rhash":"b2c3d4e5f6a1b2c3","rver":null,"checkedAtMs":1787299990000,"changedAtMs":1787299989900,"httpStatus":200,"failCount":0,"error":null,"lastModifiedMs":1783300000000,"usedByCount":1,"usedBy":[{"id":102,"name":"Instance 2"}],"bundleOf":null,"isPrivate":false,"required":true},{"key":"url:https://example.org/example-repo/AppC.groovy","kind":"app","hubId":"203","namespace":"example","name":"App C","origin":"url","location":"https://example.org/example-repo/AppC.groovy","managedBy":"cm","status":"changed-upstream","ihash":"c3d4e5f6a1b2c3d4","ahash":"c3d4e5f6a1b2c3d4","iver":"0.0.1","iverSrc":"field","rhash":"d4e5f6a1b2c3d4e5","rver":"0.0.1","checkedAtMs":1787299991000,"changedAtMs":1787299980000,"httpStatus":304,"failCount":0,"error":null,"lastModifiedMs":1779300000000,"usedByCount":1,"usedBy":[{"id":203,"name":"Instance 3"}],"bundleOf":null,"isPrivate":false,"required":true},{"key":"local:library/example/Lib D","kind":"library","hubId":"304","namespace":"example","name":"Lib D","origin":"local","location":null,"managedBy":"cm","status":"unmanaged","ihash":"e5f6a1b2c3d4e5f6","ahash":"e5f6a1b2c3d4e5f6","iver":"0.0.2","iverSrc":"field","rhash":null,"rver":null,"checkedAtMs":null,"changedAtMs":null,"httpStatus":null,"failCount":0,"error":null,"lastModifiedMs":1781300000000,"usedByCount":2,"usedBy":[{"id":304,"name":"Device 4"},{"id":305,"name":"Device 5"}],"bundleOf":null,"isPrivate":false,"required":true},{"key":"bundle:1","kind":"driver","hubId":"1","namespace":"example","name":"Driver E","origin":"bundle","location":null,"managedBy":"cm","status":"current","ihash":"f6a1b2c3d4e5f6a1","ahash":"f6a1b2c3d4e5f6a1","iver":"6","iverSrc":"field","rhash":"f6a1b2c3d4e5f6a1","rver":"1.4.3","checkedAtMs":1787299990500,"changedAtMs":1787299979500,"httpStatus":304,"failCount":0,"error":null,"lastModifiedMs":1781800000000,"usedByCount":1,"usedBy":[{"name":"Instance 6"}],"bundleOf":"1","isPrivate":false,"required":true}],"summary":{"packages":4,"components":5,"byOrigin":{"hpm":2,"url":1,"local":1,"bundle":1},"byStatus":{"current":3,"changed-upstream":1,"unmanaged":1},"byKind":{"driver":2,"app":2,"library":1},"unused":0},"hpm":{"mode":"observe","instanceId":"1","importedAt":1787299910000,"autoUpdateMode":"Never","dangling":0,"typeId":"100","disabled":false,"packages":1},"drift":{"id":"drift-1787300000000-0001","kind":"drift","status":"done","total":0,"startedAt":1787299700000,"finishedAt":1787299700100},"lastInventory":{"at":1787299990000,"items":5,"fetched":0,"changed":0}},
+const MOCK_DATA = { 'inventory': {"generatedAt":1787300000000,"appVersion":"0.1.1","hub":{"name":"Workbench","firmware":"2.5.1.147","model":"C-8 Pro"},"packages":[{"key":"https://raw.githubusercontent.com/example/repo/main/packageManifest.json","origin":"hpm","name":"Package One","version":"1.0.9","gen":22,"doc":"cm_pkg_f3149d63a4252f4b.json","isPrivate":false,"url":null,"componentCount":2,"checkedAtMs":1787299990000,"rver":"1.0.9","status":"current"},{"key":"url:https://example.org/example-repo/AppC.groovy","origin":"url","name":"Package Two","version":null,"gen":2,"doc":"cm_pkg_f500d68c94dc931b.json","isPrivate":false,"url":null,"kind":"app","componentCount":1,"checkedAtMs":null,"rver":null,"status":"changed-upstream"},{"key":"local:library/example/Lib D","origin":"local","name":"Package Three","version":null,"gen":2,"doc":"cm_pkg_7b740b3e304bd0fd.json","isPrivate":false,"url":null,"kind":"library","componentCount":1,"checkedAtMs":null,"rver":null,"status":"unmanaged"},{"key":"bundle:1","origin":"bundle","name":"Package Four","version":null,"gen":3,"doc":"cm_pkg_cf2fcbac483062c3.json","isPrivate":false,"url":"https://example.org/example-repo/bundle.zip","componentCount":5,"checkedAtMs":null,"rver":null,"status":"update-available"},{"key":"unread:app:405","origin":"unread","name":"App F","version":null,"gen":1,"doc":null,"isPrivate":false,"url":null,"kind":"app","componentCount":1,"checkedAtMs":null,"rver":null,"status":"not-checked"}],"components":[{"key":"https://raw.githubusercontent.com/example/repo/main/packageManifest.json","kind":"driver","hubId":"101","namespace":"example","name":"Driver A","origin":"hpm","location":null,"managedBy":"hpm","status":"current","ihash":"a1b2c3d4e5f6a1b2","ahash":"a1b2c3d4e5f6a1b2","iver":null,"iverSrc":null,"rhash":"a1b2c3d4e5f6a1b2","rver":null,"checkedAtMs":1787299990000,"changedAtMs":1787299989900,"httpStatus":200,"failCount":0,"error":null,"lastModifiedMs":1783300000000,"usedByCount":1,"usedBy":[{"id":101,"name":"Device 1"}],"bundleOf":null,"isPrivate":false,"required":true,"basis":"valid","factsReadAtMs":1787299940000,"factError":null,"sizeBytes":12000,"childOf":[],"failedAtMs":null,"asOf":1787299995000},{"key":"https://raw.githubusercontent.com/example/repo/main/packageManifest.json","kind":"app","hubId":"102","namespace":"example","name":"App B","origin":"hpm","location":null,"managedBy":"hpm","status":"current","ihash":"b2c3d4e5f6a1b2c3","ahash":"b2c3d4e5f6a1b2c3","iver":null,"iverSrc":null,"rhash":"b2c3d4e5f6a1b2c3","rver":null,"checkedAtMs":1787299990000,"changedAtMs":1787299989900,"httpStatus":200,"failCount":0,"error":null,"lastModifiedMs":1783300000000,"usedByCount":1,"usedBy":[{"id":102,"name":"Instance 2"}],"bundleOf":null,"isPrivate":false,"required":true,"basis":"valid","factsReadAtMs":1787299940000,"factError":null,"sizeBytes":12000,"childOf":[],"failedAtMs":null,"asOf":1787299995000},{"key":"url:https://example.org/example-repo/AppC.groovy","kind":"app","hubId":"203","namespace":"example","name":"App C","origin":"url","location":"https://example.org/example-repo/AppC.groovy","managedBy":"cm","status":"changed-upstream","ihash":"c3d4e5f6a1b2c3d4","ahash":"c3d4e5f6a1b2c3d4","iver":"0.0.1","iverSrc":"field","rhash":"d4e5f6a1b2c3d4e5","rver":"0.0.1","checkedAtMs":1787299991000,"changedAtMs":1787299980000,"httpStatus":304,"failCount":0,"error":null,"lastModifiedMs":1779300000000,"usedByCount":1,"usedBy":[{"id":203,"name":"Instance 3"}],"bundleOf":null,"isPrivate":false,"required":true,"basis":"valid","factsReadAtMs":1787299940000,"factError":null,"sizeBytes":12000,"childOf":[],"failedAtMs":null,"asOf":1787299995000},{"key":"local:library/example/Lib D","kind":"library","hubId":"304","namespace":"example","name":"Lib D","origin":"local","location":null,"managedBy":"cm","status":"unmanaged","ihash":"e5f6a1b2c3d4e5f6","ahash":"e5f6a1b2c3d4e5f6","iver":"0.0.2","iverSrc":"field","rhash":null,"rver":null,"checkedAtMs":null,"changedAtMs":null,"httpStatus":null,"failCount":0,"error":null,"lastModifiedMs":1781300000000,"usedByCount":2,"usedBy":[{"id":304,"name":"Device 4"},{"id":305,"name":"Device 5"}],"bundleOf":null,"isPrivate":false,"required":true,"basis":"valid","factsReadAtMs":1787299940000,"factError":null,"sizeBytes":12000,"childOf":[],"failedAtMs":null,"asOf":1787299995000},{"key":"bundle:1","kind":"driver","hubId":"1","namespace":"example","name":"Driver E","origin":"bundle","location":null,"managedBy":"cm","status":"current","ihash":"f6a1b2c3d4e5f6a1","ahash":"f6a1b2c3d4e5f6a1","iver":"6","iverSrc":"field","rhash":"f6a1b2c3d4e5f6a1","rver":"1.4.3","checkedAtMs":1787299990500,"changedAtMs":1787299979500,"httpStatus":304,"failCount":0,"error":null,"lastModifiedMs":1781800000000,"usedByCount":1,"usedBy":[{"name":"Instance 6"}],"bundleOf":"1","isPrivate":false,"required":true,"basis":"valid","factsReadAtMs":1787299940000,"factError":null,"sizeBytes":12000,"childOf":[],"failedAtMs":null,"asOf":1787299995000},{"key":"unread:app:405","kind":"app","hubId":"405","namespace":"example","name":"App F","origin":"unread","location":null,"managedBy":"cm","status":"not-checked","ihash":null,"ahash":null,"iver":null,"iverSrc":null,"rhash":null,"rver":null,"checkedAtMs":null,"changedAtMs":null,"httpStatus":null,"failCount":0,"error":null,"failedAtMs":null,"lastModifiedMs":1786300000000,"usedByCount":0,"usedBy":[],"bundleOf":null,"isPrivate":false,"required":true,"basis":"unread","factsReadAtMs":null,"factError":null,"sizeBytes":null,"childOf":[],"asOf":1787299995000}],"summary":{"packages":5,"components":6,"byOrigin":{"hpm":2,"url":1,"local":1,"bundle":1},"byStatus":{"current":3,"changed-upstream":1,"unmanaged":1},"byKind":{"driver":2,"app":2,"library":1},"unused":0},"hpm":{"mode":"observe","instanceId":"1","importedAt":1787299910000,"autoUpdateMode":"Never","dangling":0,"typeId":"100","disabled":false,"packages":1},"drift":{"id":"drift-1787300000000-0001","kind":"drift","status":"done","total":0,"startedAt":1787299700000,"finishedAt":1787299700100},"lastInventory":{"at":1787299990000,"items":5,"fetched":0,"changed":0},"asOf":1787299995000,"libraries":{"asOf":1787299880000,"error":null},"facts":{"total":5,"valid":4,"stale":0,"unread":1,"failing":0,"large":0,"largeSourceBytes":524288}},
   'hpm/status': {"mode":"observe","instanceId":"1","importedAt":1787299910000,"autoUpdateMode":"Never","dangling":0,"typeId":"100","disabled":false,"packages":1},
   'settings': {"txtEnable":true,"debugEnable":false,"traceEnable":false,"labelBadge":true,"driftMaxInflight":6,"brokenAfter":3,"appVersion":"0.1.1","uiVersion":"0.1.1"},
   'version/check': {"currentVersion":"0.1.1","latestVersion":"0.1.1","updateAvailable":false} };
@@ -83,9 +83,18 @@ function csvCell(v){let s=String(v??'');if(/^[=+\-@]/.test(s))s="'"+s;return /["
 function fmtDays(ms,now){if(!ms)return{text:'Never',color:'var(--muted)'};const d=Math.floor(((now||Date.now())-ms)/86400000);return{text:d+'d',color:d>=14?'var(--crit)':d>=7?'var(--warn)':'var(--ok)'}}
 function classifyComponent(c){const s=c.status||'not-checked';const map={'current':['Current','var(--ok)'],'update-available':['Update available','var(--warn)'],'changed-upstream':['Changed upstream','var(--warn)'],'modified-locally':['Modified locally','var(--warn)'],'broken-source':['Broken source','var(--crit)'],'incomplete':['Incomplete','var(--crit)'],'missing':['Missing on hub','var(--crit)'],'not-installed':['Not installed','var(--muted)'],'private':['Private bundle','var(--muted)'],'unmanaged':['No upstream','var(--muted)'],'not-checked':['Not checked','var(--muted)']};const m=map[s]||[s,'var(--muted)'];return{origin:c.origin,status:s,label:m[0],color:m[1]}}
 const STATUS_HELP={'current':'installed source matches upstream','update-available':'upstream version is higher','changed-upstream':'upstream file differs but the versions do not order','modified-locally':'edited on the hub since Code Manager first saw it','broken-source':'the upstream URL answered 404/410 on three checks running','incomplete':'a required component of this package is not on the hub','missing':'required by the package, not installed','not-installed':'optional component the package never installed','private':'private code — the source is never read','unmanaged':'no import URL, so there is nothing to compare against','not-checked':'no drift check has compared this code with its upstream yet, or the code changed since'};
-function legend(keys){return '<div class="legend">'+keys.map(k=>{const c=classifyComponent({status:k});return '<div>'+badge(c.label,c.color)+' '+h(STATUS_HELP[k]||'')+'</div>'}).join('')+'</div>'}
+function legend(keys){return '<div class="legend">'+[...keys].sort((a,b)=>severity(a)-severity(b)).map(k=>{const c=classifyComponent({status:k});return '<div>'+badge(c.label,c.color)+' '+h(STATUS_HELP[k]||'')+'</div>'}).join('')+'</div>'}
 // Removability is per package (DESIGN.md §3): zero usage, no used bundle sibling, not referenced as a child type by an installed parent.
-function safeToRemove(c,comps){if(!c.hubId)return false;if((c.usedByCount||0)>0)return false;if(c.bundleOf){if(comps.some(o=>o.bundleOf===c.bundleOf&&(o.usedByCount||0)>0))return false}return true}
+// Remove state from the live usage lists: absent (nothing on the hub), in use (or a bundle sibling is), or no current use. Code that could
+// create the type later is not visible here; "Check removable" asks the hub (remove-check job).
+function removeState(c,comps){if(c.hubId==null)return'absent';if((c.usedByCount||0)>0)return'in-use';if(c.bundleOf&&comps.some(o=>o.bundleOf===c.bundleOf&&(o.usedByCount||0)>0))return'in-use';return'no-current-use'}
+// What the row's per-item facts (version, hash, import URL) are based on (DESIGN.md 3.1).
+function basisLabel(c,now,largeBytes){if(!['app','driver','library'].includes(c.kind))return'live';if(c.hubId==null)return'not read yet';
+  const b=c.basis;if(b==='valid'||b==='provisional')return'read '+new Date(c.factsReadAtMs||now).toLocaleDateString();
+  if(largeBytes&&(c.sizeBytes||0)>largeBytes)return'large: read on request';if(c.factError)return'could not read';return b==='stale'?'not read since change':'not read yet'}
+const SEVERITY=['broken-source','missing','incomplete','modified-locally','update-available','changed-upstream','not-checked','current','unmanaged','private','not-installed'];
+function severity(status){const i=SEVERITY.indexOf(status);return i<0?SEVERITY.length:i}
+function presentStatuses(rows){return [...new Set(rows.map(r=>r.status||'not-checked'))].filter(k=>STATUS_HELP[k])}
 
 // ===== UI primitives =====
 // File Manager entries are served at /local/<name>; every other kind opens in its code editor.
@@ -197,73 +206,111 @@ function tbl(cid,cols,rows,opts={}){
   }bind()
 }
 
-// ===== Jobs: pollTimers registry, 2 s tick, 5 min cap, terminal 'done' =====
+// ===== Jobs: pollTimers registry, 2 s tick, 30 min cap, terminal 'done' =====
 const pollTimers={};
-function pollJob(jobId,onTick,onEnd){if(pollTimers[jobId])return;const t0=Date.now();pollTimers[jobId]=setInterval(async()=>{try{const j=await fetch(B+'/api/jobs/'+jobId,{headers:AUTH()}).then(r=>r.json());onTick(j);if(j.status!=='running'){clearInterval(pollTimers[jobId]);delete pollTimers[jobId];onEnd(j)}}catch(e){}if(Date.now()-t0>300000){clearInterval(pollTimers[jobId]);delete pollTimers[jobId];onEnd({status:'timeout'})}},2000)}
+function pollJob(jobId,onTick,onEnd){if(pollTimers[jobId])return;const t0=Date.now();pollTimers[jobId]=setInterval(async()=>{try{const j=await fetch(B+'/api/jobs/'+jobId,{headers:AUTH()}).then(r=>r.json());onTick(j);if(j.status!=='running'){clearInterval(pollTimers[jobId]);delete pollTimers[jobId];onEnd(j)}}catch(e){}if(Date.now()-t0>1800000){clearInterval(pollTimers[jobId]);delete pollTimers[jobId];onEnd({status:'timeout'})}},2000)}
 
 // ===== Tabs =====
+function setHeader(d){if(d&&d.hub)document.getElementById('hubInfo').textContent=(d.hub.name?d.hub.name+' · '+d.hub.firmware+' · ':'')+'App v'+d.appVersion+' / UI v'+CODE_VERSION}
 async function rInventory(){
   const P='p-inventory';loading(P);
   try{
-    const d=await api('inventory');const comps=d.components||[];const now=Date.now();
-    document.getElementById('hubInfo').textContent=(d.hub&&d.hub.name?d.hub.name+' · '+d.hub.firmware+' · ':'')+'App v'+d.appVersion+' / UI v'+CODE_VERSION;
-    const s=d.summary||{};const st=s.byStatus||{};
+    const d=await api('inventory');setHeader(d);const comps=d.components||[];
+    const inst=comps.filter(c=>c.hubId!=null);const st={};inst.forEach(c=>st[c.status]=(st[c.status]||0)+1);
+    const unused=inst.filter(c=>removeState(c,comps)==='no-current-use').length;
+    const f=d.facts||{},lib=d.libraries||{};
+    const libTxt=lib.asOf?'Libraries as of '+new Date(lib.asOf).toLocaleString():'Libraries not read yet';
     let html='<div class="card"><div class="card-h">Summary <span class="msg"><a href="'+README+'freshness" target="_blank">how freshness is decided</a></span></div><div class="card-b"><div class="metrics">'
-      +mc('Components',s.components||0)+mc('Packages',s.packages||0)+mc('Updates available',st['update-available']||0,st['update-available']?'var(--warn)':'')
-      +mc('Changed upstream',st['changed-upstream']||0)+mc('Broken sources',st['broken-source']||0,st['broken-source']?'var(--crit)':'')+mc('Unused',s.unused||0)+'</div>'
-      +'<div class="actions"><button class="btn btn-p" id="driftBtn" onclick="startDrift()">Check for drift now</button><span class="msg" id="driftMsg">'+(d.drift&&d.drift.finishedAt?'Last drift check '+new Date(d.drift.finishedAt).toLocaleString():'No drift check yet')+'</span></div></div></div>';
-    html+='<div class="card"><div class="card-h">Components <span class="msg"><label><input type="checkbox" id="onlyRemovable" onchange="rInventoryTable()"> safe to remove only (<a href="'+README+'safe-to-remove" target="_blank">rule</a>)</label></span></div><div class="card-b"><div id="invTbl"></div>'
-      +legend(['current','update-available','changed-upstream','modified-locally','broken-source','missing','not-installed','unmanaged','private','not-checked'])+'</div></div>';
-    document.getElementById(P).innerHTML=html;window._inv=comps;rInventoryTable();
+      +mc('Installed components',inst.length)+mc('Packages',(d.packages||[]).filter(isMultiPackage).length)+mc('Updates available',st['update-available']||0,st['update-available']?'var(--warn)':'')
+      +mc('Changed upstream',st['changed-upstream']||0)+mc('Broken sources',st['broken-source']||0,st['broken-source']?'var(--crit)':'')+mc('No current use',unused)+'</div>'
+      +'<p class="msg" style="margin-top:8px">Facts read for '+(f.valid||0)+' of '+(f.total||0)+' apps, drivers and libraries'+(f.failing?' · '+f.failing+' could not be read':'')+(f.large?' · '+f.large+' large, read on request':'')+'</p>'
+      +'<div class="actions"><button class="btn btn-p" id="driftBtn" onclick="startDrift()">Check for drift now</button><span class="msg" id="driftMsg">'+(d.drift&&d.drift.finishedAt?'Last drift check '+new Date(d.drift.finishedAt).toLocaleString():'No drift check yet')+'</span></div>'
+      +'<div class="actions"><button class="btn" id="libBtn" onclick="refreshLibraries()">Refresh libraries</button><span class="msg" id="libMsg">'+h(libTxt)+(lib.error?' (last refresh failed: '+h(lib.error)+')':'')+'</span></div></div></div>';
+    html+='<div class="card"><div class="card-h">Components <span class="msg" id="invPkgNote"></span><span class="msg"><label><input type="checkbox" id="onlyRemovable" onchange="rInventoryTable()"> no current use only (<a href="'+README+'safe-to-remove" target="_blank">rule</a>)</label></span></div><div class="card-b"><div id="invTbl"></div><div id="invLegend"></div></div></div>';
+    html+='<div class="card" id="unreadCard"><div class="card-h">Not read yet <span class="msg">their import URL is not known, so their package is not known yet</span></div><div class="card-b"><div id="unreadTbl"></div></div></div>';
+    document.getElementById(P).innerHTML=html;window._inv=comps;window._largeBytes=f.largeSourceBytes;rInventoryTable();
   }catch(e){err(P,e,rInventory)}
 }
 function rInventoryTable(){
-  const comps=window._inv||[];const only=document.getElementById('onlyRemovable')?.checked;const now=Date.now();
-  const rows=(only?comps.filter(c=>safeToRemove(c,comps)):comps).map(c=>Object.assign({},c,{_cls:classifyComponent(c),_rem:safeToRemove(c,comps)}));
-  tbl('invTbl',[
+  const comps=window._inv||[];const only=document.getElementById('onlyRemovable')?.checked;const now=Date.now();const pk=window._invPkg;
+  let sel=pk?comps.filter(c=>c.key===pk.key):comps;
+  if(only)sel=sel.filter(c=>removeState(c,comps)==='no-current-use');
+  const rows=sel.map(c=>Object.assign({},c,{_cls:classifyComponent(c),_rem:removeState(c,comps),_sev:severity(c.status||'not-checked'),_basis:basisLabel(c,now,window._largeBytes)}));
+  const note=document.getElementById('invPkgNote');if(note)note.innerHTML=pk?'package '+h(pk.name)+' · <a href="#" onclick="window._invPkg=null;rInventoryTable();return false">show all</a>':'';
+  const cols=[
     {l:'Name',f:'name',r:r=>clink(r.kind,r.hubId,r.name)+(r.isPrivate?' '+badge('private','var(--muted)'):'')},
     {l:'Kind',f:'kind'},{l:'Namespace',f:'namespace'},{l:'Origin',f:'origin'},
-    {l:'Status',f:'status',r:r=>badge(r._cls.label,r._cls.color),ff:r=>r._cls.label},
+    {l:'Status',f:'status',t:'n',sf:'_sev',r:r=>badge(r._cls.label,r._cls.color),ff:r=>r._cls.label},
     {l:'Installed',f:'iver',r:r=>h(r.iver||'')+(r.iverSrc&&r.iverSrc!=='field'&&r.iverSrc!=='manifest'?' <span class="msg">('+h(r.iverSrc)+')</span>':'')},
     {l:'Upstream',f:'rver'},
+    {l:'Facts',f:'_basis',r:r=>'<span class="msg"'+(r.factError?' title="'+h(r.factError)+'"':'')+'>'+h(r._basis)+'</span>'},
     {l:'Used by',f:'usedByCount',t:'n',r:r=>r.kind==='driver'?dlistlink(r.usedByCount,(r.usedBy||[]).map(u=>u.id)):r.kind==='app'?alistlink(r.usedByCount):String(r.usedByCount)},
-    {l:'Checked',f:'checkedAtMs',t:'n',r:r=>{const f=fmtDays(r.checkedAtMs,now);return'<span style="color:'+f.color+'">'+f.text+'</span>'}},
+    {l:'Checked',f:'checkedAtMs',t:'n',r:r=>{const f=fmtDays(r.checkedAtMs,now);return'<span style="color:'+f.color+'"'+(r.error?' title="last check failed: '+h(r.error)+'"':'')+'>'+f.text+'</span>'}},
     {l:'Source',f:'location',r:r=>dlink2(r.location)},
-    {l:'Removable',f:'_rem',r:r=>r._rem?badge('yes','var(--ok)'):''},
-  ],rows,{sc:4,sd:'desc',filter:true});
+    {l:'',f:'_act',ff:()=>'',r:r=>rowActions(r)},
+  ];
+  const main=rows.filter(r=>r.origin!=='unread'),unread=rows.filter(r=>r.origin==='unread');
+  tbl('invTbl',cols,main,{sc:4,sd:'asc',filter:true});
+  document.getElementById('invLegend').innerHTML=legend(presentStatuses(main));
+  const uc=document.getElementById('unreadCard');if(uc)uc.style.display=unread.length?'':'none';
+  if(unread.length)tbl('unreadTbl',cols,unread,{sc:0,filter:true,collapse:20,collapseLabel:'Not read yet'});
 }
-// Every item on the hub belongs to exactly one package, but most hand-installed code is a package of
-// one — listing those beside real multi-file packages buries them, so they get their own collapsed table.
+function rowActions(r){
+  if(r.hubId==null||!['app','driver','library'].includes(r.kind))return'';
+  const id=h(r.kind+'_'+r.hubId);
+  let o=r.origin==='local'||r.isPrivate?'':'<button class="btn" onclick="checkOne(\''+h(r.kind)+':'+h(r.hubId)+'\',this)">Check</button>';
+  if(r._rem==='no-current-use'&&r.kind!=='library')o+=' <button class="btn" onclick="checkRemovable(\''+h(r.kind)+'\',\''+h(r.hubId)+'\',this)">Check removable</button>';
+  return o+' <span class="msg" id="act_'+id+'"></span>';
+}
+async function checkOne(key,btn){const m=document.getElementById('act_'+key.replace(':','_'));btn.disabled=true;if(m)m.textContent='Checking…';
+  try{const r=await post('drift/check',{key});drop('inventory');if(m)m.textContent=r.error?'Failed: '+r.error:classifyComponent({status:r.status}).label}
+  catch(e){if(m)m.textContent='Failed: '+e.message}finally{btn.disabled=false}}
+const REMOVE_VERDICT={'no-creator':'no code on the hub creates it','may-be-created':'may be created by','incomplete':'not decided: some code could not be read'};
+async function checkRemovable(kind,id,btn){const m=document.getElementById('act_'+kind+'_'+id);btn.disabled=true;
+  try{const r=await post('remove-check/start',{kind,id});if(r.error)throw new Error(r.error);
+    pollJob(r.jobId,j=>{if(m)m.textContent='Reading '+(j.processed||0)+' / '+(j.total||0)},j=>{btn.disabled=false;const q=j.result||{};
+      if(!m)return;if(j.status!=='done'){m.textContent='Check '+j.status+(j.error?': '+j.error:'');return}
+      m.textContent=REMOVE_VERDICT[q.verdict]||q.verdict;
+      if(q.verdict==='may-be-created')m.textContent+=' '+(q.creators||[]).map(c=>c.name).join(', ');
+      if(q.verdict==='incomplete')m.title=(q.unread||[]).map(c=>c.name+': '+c.reason).join('\n')})}
+  catch(e){btn.disabled=false;if(m)m.textContent='Failed: '+e.message}}
+async function refreshLibraries(){const b=document.getElementById('libBtn');b.disabled=true;
+  try{const r=await post('libraries/refresh');if(r.error)throw new Error(r.error);
+    pollJob(r.jobId,()=>{document.getElementById('libMsg').textContent='Reading libraries…'},j=>{b.disabled=false;drop('inventory');const q=j.result||{};
+      if(j.status==='done'&&!q.error)rInventory();else flash('libMsg','Library refresh '+(q.error?'failed: '+q.error:j.status+(j.error?': '+j.error:'')))})}
+  catch(e){b.disabled=false;flash('libMsg','Failed: '+e.message)}}
+// The Packages tab lists code installed and updated as a set; single-file code is listed only on Inventory.
 function isMultiPackage(p){return p.origin==='hpm'||p.origin==='bundle'||(p.componentCount||0)>1}
+function showPkg(i){const p=(window._pkgs||[])[i];if(!p)return;window._invPkg={key:p.key,name:p.name};document.getElementById('p-inventory').innerHTML='';go('inventory')}
 async function rPackages(){
   const P='p-packages';loading(P);
-  try{const d=await api('inventory');const pk=d.packages||[];
-    const multi=pk.filter(isMultiPackage), solo=pk.filter(p=>!isMultiPackage(p));
+  try{const d=await api('inventory');setHeader(d);const of=window._pkgOrigin;
+    const multi=(d.packages||[]).filter(isMultiPackage).map((p,i)=>Object.assign({},p,{_i:i,_sev:severity(p.status||'not-checked')}));
+    window._pkgs=multi;const rows=of?multi.filter(p=>p.origin===of):multi;
     const stat=r=>{const c=classifyComponent(r);return badge(c.label,c.color)};
     const doc=r=>r.doc?'<a href="/hub/fileManager" target="_blank">'+h(r.doc)+'</a>':'';
     document.getElementById(P).innerHTML=
-      '<div class="card"><div class="card-h">Packages <span class="msg">HPM packages and bundles — code installed and updated as a set (<a href="'+README+'packages" target="_blank">how ownership is decided</a>)</span></div>'
-      +'<div class="card-b"><div id="pkgTbl"></div>'+legend(['current','update-available','changed-upstream','incomplete','broken-source','not-checked'])+'</div></div>'
-      +'<div class="card"><div class="card-h">Standalone code <span class="msg">one file each: imported from a URL, or written on the hub. Listed here so every item has exactly one owner.</span></div>'
-      +'<div class="card-b"><div id="soloTbl"></div>'+legend(['current','update-available','changed-upstream','modified-locally','broken-source','unmanaged','not-checked'])+'</div></div>';
-    tbl('pkgTbl',[{l:'Package',f:'name'},{l:'Origin',f:'origin'},{l:'Version',f:'version'},{l:'Components',f:'componentCount',t:'n'},
-      {l:'Status',f:'status',r:stat},{l:'Document',f:'doc',r:doc},
-      {l:'Source',f:'url',r:r=>dlink2(r.url||(r.origin==='hpm'?r.key:''))}],multi,{sc:0,filter:true});
-    tbl('soloTbl',[{l:'Name',f:'name'},{l:'Kind',f:'kind'},{l:'Status',f:'status',r:stat},
-      {l:'Source',f:'url',r:r=>dlink2(r.origin==='url'?r.key.slice(4):'')},{l:'Document',f:'doc',r:doc}],
-      solo,{sc:0,filter:true,collapse:1,collapseLabel:'Standalone code'});
+      '<div class="card"><div class="card-h">Packages <span class="msg">HPM packages, bundles and multi-file imports: code installed and updated as a set (<a href="'+README+'packages" target="_blank">how ownership is decided</a>). Single-file code is on the Inventory tab.</span>'
+      +(of?'<span class="msg">origin '+h(of)+' · <a href="#" onclick="window._pkgOrigin=null;rPackages();return false">show all</a></span>':'')+'</div>'
+      +'<div class="card-b"><div id="pkgTbl"></div>'+legend(presentStatuses(rows))+'</div></div>';
+    tbl('pkgTbl',[{l:'Package',f:'name'},{l:'Origin',f:'origin'},{l:'Version',f:'version'},
+      {l:'Components',f:'componentCount',t:'n',r:r=>'<a href="#" onclick="showPkg('+r._i+');return false">'+(r.componentCount||0)+'</a>'},
+      {l:'Status',f:'status',t:'n',sf:'_sev',r:stat,ff:r=>classifyComponent(r).label},{l:'Document',f:'doc',r:doc},
+      {l:'Source',f:'url',r:r=>dlink2(r.url||(r.origin==='hpm'?r.key:''))}],rows,{sc:4,sd:'asc',filter:true});
   }catch(e){err(P,e,rPackages)}
 }
 async function rHpm(){
   const P='p-hpm';loading(P);
   try{const s=await api('hpm/status');let html='<div class="card"><div class="card-h">Hubitat Package Manager transition <span class="msg"><a href="'+README+'hpm-observe" target="_blank">how the phases work</a></span></div><div class="card-b">';
     if(s.mode==='absent')html+='<div class="alert a-info">HPM is not installed. Code Manager is the only package manager on this hub.</div>';
+    else if(s.mode==='unavailable')html+='<div class="alert a-warn">HPM\'s state could not be read'+(s.error?': '+h(s.error):'')+'.</div>';
     else{html+='<div class="alert a-warn"><b>Mode: '+h(s.mode)+'</b> — HPM instance '+h(String(s.instanceId))+' is '+(s.disabled?'disabled':'enabled')+'; autoUpdateMode='+h(String(s.autoUpdateMode))+'. In observe mode HPM remains the writer for its packages; Code Manager only reports.</div>'
-      +'<div class="metrics">'+mc('Imported packages',s.packages||0)+mc('Dangling heIDs',s.dangling||0,s.dangling?'var(--warn)':'')+mc('Last import',s.importedAt?new Date(s.importedAt).toLocaleString():'never')+'</div>'
+      +'<div class="metrics">'+mc('Imported packages',s.packages?'<a href="#" onclick="showHpmPackages();return false">'+s.packages+'</a>':0)+mc('Dangling heIDs',s.dangling||0,s.dangling?'var(--warn)':'')+mc('Last import',s.importedAt?new Date(s.importedAt).toLocaleString():'never')+'</div>'
       +'<div class="actions"><button class="btn" id="hpmBtn" onclick="hpmImport()">Re-import HPM registry</button><span class="msg" id="hpmMsg"></span></div>'}
     document.getElementById(P).innerHTML=html+'</div></div>';
   }catch(e){err(P,e,rHpm)}
 }
+function showHpmPackages(){window._pkgOrigin='hpm';document.getElementById('p-packages').innerHTML='';go('packages')}
 async function hpmImport(){const b=document.getElementById('hpmBtn');b.disabled=true;b.textContent='Importing…';try{const r=await post('hpm/import');flash('hpmMsg',r.success?'Imported '+r.packages+' packages ('+r.dangling+' dangling)':'Failed: '+(r.error||''));drop('inventory');drop('hpm/status')}catch(e){flash('hpmMsg','Failed: '+e.message)}finally{b.disabled=false;b.textContent='Re-import HPM registry';rHpm()}}
 async function startDrift(){const b=document.getElementById('driftBtn');b.disabled=true;b.textContent='Checking…';
   try{const r=await post('drift/start',{scope:'all'});if(r.error)throw new Error(r.error);pollJob(r.jobId,j=>{document.getElementById('driftMsg').textContent=(j.processed||0)+' / '+(j.total||0)},j=>{drop('inventory');b.disabled=false;b.textContent='Check for drift now';const q=j.result||{};flash('driftMsg',j.status==='done'?'Done: '+(q.checked||0)+' checked, '+(q.failed||0)+' failed, '+(q.skippedLarge||0)+' too large':'Drift check '+j.status+(j.error?': '+j.error:''));rInventory()})}
@@ -288,7 +335,7 @@ async function exportRegistry(){try{await api('export?'+Date.now());flash('expMs
 
 // ===== Router =====
 const R={inventory:rInventory,packages:rPackages,hpm:rHpm,settings:rSettings};
-function go(t){curTab=t;localStorage.setItem('cm_tab',t);document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active',e.dataset.tab===t));document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active',p.id==='p-'+t));const p=document.getElementById('p-'+t);if(!p.children.length||p.querySelector('.loading')||p.querySelector('.err'))R[t]()}
+function go(t){curTab=t;localStorage.setItem('cm_tab',t);document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active',e.dataset.tab===t));document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active',p.id==='p-'+t));const p=document.getElementById('p-'+t);if(!p.children.length||p.querySelector('.loading')||p.querySelector('.err'))R[t]();if(!document.getElementById('hubInfo').textContent)api('inventory').then(setHeader).catch(()=>{})}
 document.getElementById('tabs').addEventListener('click',e=>{if(e.target.dataset.tab)go(e.target.dataset.tab)});
 function refreshPage(){const keys={inventory:['inventory'],packages:['inventory'],hpm:['hpm/status','inventory'],settings:['settings','version/check']};(keys[curTab]||[]).forEach(k=>drop(k));document.getElementById('p-'+curTab).innerHTML='';R[curTab]()}
 go(curTab);

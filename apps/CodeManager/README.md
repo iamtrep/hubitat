@@ -17,7 +17,7 @@ Inventory, update detection and (from 0.2) safe updates for every app, driver, l
 ## What 0.1 shows
 
 - **Inventory** — every user app, driver, library and bundle, with origin (`hpm`, `bundle`, `url`, `local`), installed version (declared by the HPM manifest or parsed from source; the parse idiom is shown when it is not the standard `CODE_VERSION` field), upstream version, freshness status, usage counts (instances for apps, devices for drivers, consumer types for libraries), and the upstream location.
-- **Packages** — the package view, split in two: real packages (HPM packages and bundles — code installed and updated as a set) and standalone code (one file each, imported from a URL or written on the hub). See [Packages](#packages).
+- **Packages** — HPM packages, bundles and multi-file imports: code installed and updated as a set. Each links to its rows on Inventory; single-file code is listed only on Inventory. See [Packages](#packages).
 - **HPM** — the transition panel: whether HPM is installed, its instance and `autoUpdateMode`, how many packages were imported from its registry, and how many of its records point at code that no longer exists.
 - **Settings** — versions, the fixed behaviour values, logging toggles, export.
 
@@ -54,7 +54,7 @@ A location that answers `404` or `410`, or fails DNS/TLS, on **three consecutive
 
 ### Safe to remove <a id="safe-to-remove"></a>
 
-A component is listed as removable when it is installed, has zero usage (no instances, devices or consumer types) and it is not a member of a bundle that has any used member. The list is advisory: the hub refuses to delete in-use types regardless, and 0.1 has no delete action.
+A component reads **no current use** when it is installed, has zero usage (no instances, devices or consumer types) and it is not a member of a bundle that has any used member. That list cannot see code that would create the type later, so an app or driver row in it has a **Check removable** button: it reads every app, driver and library that could create the type and answers *no code on the hub creates it*, *may be created by* (with the names), or *not decided* when a source could not be read. The answer is advisory: the hub refuses to delete in-use types regardless, and Code Manager has no delete action yet.
 
 ### HPM observe mode <a id="hpm-observe"></a>
 

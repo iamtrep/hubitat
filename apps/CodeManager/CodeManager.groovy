@@ -1091,7 +1091,7 @@ Map buildInventoryPayload(Map bulk) {
                        status: status, ihash: factVisible(p.o as String, basis, 'ih') ? c.ih : null, ahash: c.ah, iver: factVisible(p.o as String, basis, 'iv') ? c.iv : null, iverSrc: factVisible(p.o as String, basis, 'ivs') ? c.ivs : null, rhash: s.rhash, rver: s.rver, checkedAtMs: s.checkedAt, changedAtMs: s.changedAt,
                        httpStatus: s.httpStatus, failCount: s.failCount ?: 0, error: s.lastError, failedAtMs: s.failedAt, lastModifiedMs: c.lm, usedByCount: c.u ?: 0, required: c.req != false,
                        usedBy: usedBy[ckey(c.k as String, c.id)] ?: [], bundleOf: c.bm, isPrivate: c.pv == true,
-                       basis: basis, factsReadAtMs: c.frd, factError: c.fe, childOf: (c.id != null ? childOf[ckey(c.k as String, c.id)] : null) ?: [], asOf: invAsOf]
+                       basis: basis, factsReadAtMs: c.frd, factError: c.fe, sizeBytes: c.sz, childOf: (c.id != null ? childOf[ckey(c.k as String, c.id)] : null) ?: [], asOf: invAsOf]
             comps << row
             return row
         }
@@ -1109,7 +1109,7 @@ Map buildInventoryPayload(Map bulk) {
     Map summary = [packages: packages.size(), components: comps.size(),
                    byOrigin: comps.countBy { it.origin }, byStatus: comps.countBy { it.status }, byKind: comps.countBy { it.kind },
                    unused: comps.count { (it.usedByCount ?: 0) == 0 && it.kind != 'bundle' }]
-    return [generatedAt: now(), asOf: invAsOf, libraries: [asOf: libraries().asOf, error: libraries().error], facts: factCounts, appVersion: CODE_VERSION, hub: hub, packages: packages, components: comps, summary: summary,
+    return [generatedAt: now(), asOf: invAsOf, libraries: [asOf: libraries().asOf, error: libraries().error], facts: factCounts + [largeSourceBytes: LARGE_SOURCE_BYTES], appVersion: CODE_VERSION, hub: hub, packages: packages, components: comps, summary: summary,
             hpm: (state.hpm ?: [mode: 'absent']), drift: (jobSlot('drift') ?: [:]), lastInventory: (state.lastInventory ?: [:])]
 }
 // Reconciliation is idempotent but writes documents and bumps generations, so concurrent callers take turns.
