@@ -25,11 +25,12 @@ t('update-available -> warn color, label', () => { const r = classifyComponent({
 t('broken-source -> crit', () => assert.strictEqual(classifyComponent({origin:'hpm', status:'broken-source'}).color, 'var(--crit)'));
 t('current -> ok', () => assert.strictEqual(classifyComponent({origin:'hpm', status:'current'}).color, 'var(--ok)'));
 t('unmanaged -> muted, No upstream', () => { const r = classifyComponent({origin:'local', status:'unmanaged'}); assert.strictEqual(r.color, 'var(--muted)'); assert.strictEqual(r.label, 'No upstream'); });
-t('unknown means not checked, not "no upstream"', () => assert.strictEqual(classifyComponent({origin:'url', status:'unknown'}).label, 'Not checked'));
+t('not-checked means not checked, not "no upstream"', () => assert.strictEqual(classifyComponent({origin:'url', status:'not-checked'}).label, 'Not checked'));
+t('a missing status reads as not checked', () => assert.strictEqual(classifyComponent({origin:'url'}).label, 'Not checked'));
 t('not-installed is muted, not an error', () => { const r = classifyComponent({origin:'hpm', status:'not-installed'}); assert.strictEqual(r.label, 'Not installed'); assert.strictEqual(r.color, 'var(--muted)'); });
 t('missing stays critical', () => assert.strictEqual(classifyComponent({origin:'hpm', status:'missing'}).color, 'var(--crit)'));
 t('incomplete -> crit', () => assert.strictEqual(classifyComponent({origin:'hpm', status:'incomplete'}).label, 'Incomplete'));
-t('every status has a legend line', () => Object.keys({current:1,'update-available':1,'changed-upstream':1,'modified-locally':1,'broken-source':1,incomplete:1,missing:1,'not-installed':1,private:1,unmanaged:1,unknown:1}).forEach(k => assert(STATUS_HELP[k], 'no help text for ' + k)));
+t('every status has a legend line', () => Object.keys({current:1,'update-available':1,'changed-upstream':1,'modified-locally':1,'broken-source':1,incomplete:1,missing:1,'not-installed':1,private:1,unmanaged:1,'not-checked':1}).forEach(k => assert(STATUS_HELP[k], 'no help text for ' + k)));
 t('legend renders a badge and its explanation', () => { const out = legend(['current']); assert(out.includes('Current')); assert(out.includes(STATUS_HELP['current'])); });
 t('modified-locally label', () => assert.strictEqual(classifyComponent({origin:'url', status:'modified-locally'}).label, 'Modified locally'));
 

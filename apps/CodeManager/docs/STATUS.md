@@ -10,7 +10,7 @@ Where the app stands against the release plan in [DESIGN.md](DESIGN.md) §14. Up
 
 ## Verified
 
-Mode 2 API test (`tests/test-code-manager-api.sh`, `RUN_SLOW_TESTS=1` for the sweep) covers every endpoint against `/hub2/*` ground truth, and asserts the model's invariants: one component never belongs to two packages, an installed bundle is bound wherever it is declared, a file component is bound exactly when the file exists, absent components report by their `required` flag, and both status vocabularies stay closed. Mode 4 extraction tests cover the version heuristics (`test-version-compare.groovy`), source normalization and hashing (`test-source-hash.groovy`), and the status rules (`test-status.groovy`). Mode 3 extraction tests cover the SPA's pure helpers — classification, legends, links, removability, escaping, the limiter, and app/UI version lockstep.
+Mode 2 API test (`tests/test-code-manager-api.sh`) covers every endpoint against `/hub2/*` ground truth, and asserts the model's invariants: one component never belongs to two packages, an installed bundle is bound wherever it is declared, a file component is bound exactly when the file exists, absent components report by their `required` flag, and both status vocabularies stay closed. Mode 4 extraction tests cover the version heuristics (`test-version-compare.groovy`), source normalization and hashing (`test-source-hash.groovy`), and the status rules (`test-status.groovy`). Mode 3 extraction tests cover the SPA's pure helpers — classification, legends, links, removability, escaping, the limiter, and app/UI version lockstep.
 
 ## Parked
 

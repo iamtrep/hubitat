@@ -5,7 +5,7 @@
  * Code Manager
  *
  * Inventory, freshness and (later) safe updates for every app, driver, library and bundle on the hub.
- * 0.1: inventory, classification, usage index, HPM import (observe), freshness sweep. No code writes.
+ * 0.2: inventory from bulk reads, background fact reader, drift checks on request. No code writes.
  * Design: apps/CodeManager/docs/DESIGN.md
  */
 
@@ -33,7 +33,7 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final String APPS_LIST_PATH         = "/hub2/appsList"
 @Field static final String DEVICES_LIST_PATH      = "/hub2/devicesList"
 @Field static final String UI_FILE        = "code_manager_ui.html"
-@Field static final String SWEEP_FILE     = "cm_sweep.json"
+@Field static final String DRIFT_FILE     = "cm_drift.json"
 @Field static final String HPM_IMPORT_FILE = "cm_hpm_import.json"
 @Field static final String PKG_FILE_PREFIX = "cm_pkg_"
 @Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/CodeManager/CodeManager.groovy"
@@ -103,7 +103,8 @@ mappings {
     // ===== App-owned mutations (0.1: no hub-code writes) =====
     path('/api/libraries/refresh') { action: [POST: 'apiLibrariesRefresh'] }
     path('/api/test/simulateLibFail') { action: [POST: 'apiSimulateLibFail'] }   // answers 404 unless debug logging is on
-    path('/api/sweep/start')       { action: [POST: 'apiSweepStart'] }         // Task 6
+    path('/api/drift/check')       { action: [POST: 'apiDriftCheck'] }
+    path('/api/drift/start')       { action: [POST: 'apiDriftStart'] }
     path('/api/facts/status')      { action: [GET: 'apiFactsStatus'] }
     path('/api/facts/read')        { action: [POST: 'apiFactsRead'] }
     path('/api/hpm/import')        { action: [POST: 'apiHpmImport'] }          // Task 5
@@ -125,7 +126,7 @@ Map mainPage() {
     if (state.installed != true) {
         return dynamicPage(name: "mainPage", title: "Welcome to Code Manager", install: true, uninstall: true) {
             section("Finalize Installation") {
-                paragraph "Click <b>Done</b> to initialize, download the UI, and schedule the daily sweep. Then re-open Code Manager from the Apps list."
+                paragraph "Click <b>Done</b> to initialize, and download the UI. Then re-open Code Manager from the Apps list."
                 paragraph "<b>UI Component:</b> ${getUIVersion() == 'Unknown' ? 'Pending download...' : 'Ready'}"
             }
         }
@@ -145,9 +146,8 @@ Map mainPage() {
         section("Dashboard") {
             href url: "${fullLocalApiServerUrl}/ui.html?access_token=${state.accessToken}", title: "Open Code Manager", style: "external", description: "Inventory, freshness, HPM transition (opens in new tab)"
         }
-        section("Notifications") {
-            input name: "notifyDevices", type: "capability.notification", title: "Notify these devices when updates are found", multiple: true, required: false
-            input name: "labelBadge", type: "bool", title: "Show an 'update available' badge on this app's label", defaultValue: true
+        section("Label") {
+            input name: "labelBadge", type: "bool", title: "Show an 'update available' badge on this app's label when a newer Code Manager is published", defaultValue: true
         }
         section("Logging") {
             input name: "txtEnable",   type: "bool", title: "Enable descriptionText logging", defaultValue: true
@@ -268,14 +268,14 @@ Map apiVersionCheck() {
     return jsonResponse([currentVersion: CODE_VERSION, latestVersion: latest, updateAvailable: isNewer(latest, CODE_VERSION), editorPath: getAppEditorPath()])
 }
 
-// Badge reflects BOTH a newer Code Manager release AND pending updates found by the sweep (Task 6
-// sets state.updatesAvailable). Strip by text with optional tags — Done strips label HTML.
+// The badge reflects only a newer Code Manager release (its own version check). Strip by text with
+// optional tags — Done strips label HTML.
 void refreshUpdateLabel() {
     try {
         String current = (app.getLabel() ?: "") as String
         String base = current ? UPDATE_BADGE_RE.matcher(current).replaceAll('') : current
         boolean selfOutdated = state.lastGithubVersion && isNewer(state.lastGithubVersion as String, CODE_VERSION)
-        boolean show = (settings.labelBadge != false) && (selfOutdated || state.updatesAvailable == true)
+        boolean show = (settings.labelBadge != false) && selfOutdated
         String desired = show ? (base + UPDATE_AVAILABLE_BADGE) : base
         if (current != desired) app.updateLabel(desired)
     } catch (Exception e) { logDebug "refreshUpdateLabel: ${e.message}" }
@@ -890,7 +890,7 @@ Map findHpm() {
 Map apiHpmStatus() {
     Map h = findHpm()
     Map st = (state.hpm ?: [:]) as Map
-    if (h == null) return jsonResponse([mode: st.mode ?: 'unknown', error: "HPM status unavailable"])
+    if (h == null) return jsonResponse([mode: st.mode ?: 'unavailable', error: "HPM status unavailable"])
     if (h.absent == true) { state.hpm = [mode: 'absent']; return jsonResponse([mode: 'absent']) }
     return jsonResponse([mode: st.mode ?: 'observe', typeId: h.typeId, instanceId: h.instanceId, disabled: h.disabled, autoUpdateMode: h.autoUpdateMode,
                          importedAt: st.importedAt, packages: st.packages ?: 0, dangling: st.dangling ?: 0])
@@ -970,7 +970,7 @@ Map importHpm(Map h = null) {
 
 void initialHpmImport() {
     Map h = findHpm()
-    if (h == null) return                       // fetch failed; the daily sweep retries
+    if (h == null) return                       // fetch failed; an import from the SPA retries
     if (h.absent == true) { state.hpm = [mode: 'absent'] } else { importHpm(h); reconcileNow() }
 }
 
@@ -985,38 +985,55 @@ static List parseHpmListSetting(Map setting) {
     return s ? s.split(',\\s*').toList() : []
 }
 
-// Single source of truth for a component's status; shared by buildInventoryPayload and finalizeSweep (I6).
-// p = package map, c = component map, s = the component's own sweep entry (null or [:] if none — both
-// tolerated), pe = the package row's sweep entry ([:] if none — HPM manifest fetch result, or empty
-// for non-hpm origins).
+// A drift entry describes the installed code it was computed against (ilm = the component's lastModified then). Once the code
+// changes the entry says nothing about it. When both sides know the location, an entry for another location is void too.
+@CompileStatic
+static boolean driftEntryValid(Map c, Map s) {
+    if (s == null || s.isEmpty() || s.ilm == null || c.lm == null) return false
+    if ((s.ilm as Long) != (c.lm as Long)) return false
+    String sl = s.loc as String, cl = c.loc as String
+    return !(sl && cl && sl != cl)
+}
+
+// An HPM package-row entry (the manifest fetch) is valid while the package is at the installed version it was computed against.
+@CompileStatic
+static boolean pkgDriftValid(Map p, Map pe) {
+    return pe != null && pe.checkedAt != null && pe.iv == p.v
+}
+
+// Single source of truth for a component's status (DESIGN.md 3.4). No status claims a comparison that did not happen:
+// anything but the structural ones needs a drift result valid for the installed code, else it is `not-checked`.
+// p = package map, c = component map (with `basis` when it is an item), s = the component's own drift entry (null or [:]
+// if none), pe = the package row's drift entry ([:] if none).
 static String componentStatus(Map p, Map c, Map s, Map pe) {
     // Declared by the package but absent from the hub. An HPM manifest declares every component the
     // package *can* install and most are optional, so an optional one that was never installed is a
-    // normal state, not a defect — only a required one missing is.
+    // normal state, not a defect: only a required one missing is.
     if (c.id == null) return (c.req == false) ? 'not-installed' : 'missing'
     if (c.pv) return 'private'
-    // A component whose facts are not usable (never read, or changed since the read) is not judged against an upstream.
-    // HPM components are judged by the package manifest, which needs no per-item fact.
-    if (p.o != 'hpm' && (p.o == 'unread' || c.basis == 'unread' || c.basis == 'stale')) return 'unknown'
+    if (p.o == 'local') return 'unmanaged'                    // nothing upstream to compare against; a leftover entry means nothing
+    if (p.o == 'unread') return 'not-checked'
     Map ss = s ?: [:]
-    String status
-    if (p.o == 'local') status = 'unmanaged'                  // no import URL: there is nothing upstream to compare against
-    else if (p.o == 'hpm' && ss.isEmpty()) {
-        // HPM component with no own sweep entry (manifest unchanged, body never fetched): derive
-        // from the package manifest's declared version instead of a per-component hash compare.
-        // A manifest that answered 404/410 or has struck out never reads as current (I4).
-        boolean deadManifest = pe.broken == true || (pe.httpStatus in [404, 410])
-        Integer cmp = compareVersions(p.v as String, pe.rver as String)
-        status = deadManifest ? 'unknown' : ((cmp != null && cmp < 0) ? 'update-available' : ((pe.checkedAt && (!pe.rver || (cmp != null && cmp >= 0))) ? 'current' : 'unknown'))
+    Map pk = pe ?: [:]
+    boolean peOk = p.o == 'hpm' && pkgDriftValid(p, pk)
+    String status = 'not-checked'
+    if (driftEntryValid(c, ss)) {
+        if (ss.broken == true) return 'broken-source'
+        boolean factsOk = c.basis != 'unread' && c.basis != 'stale'    // the installed hash must describe the installed code
+        if (factsOk) {
+            boolean localMod = isLocallyModified(c.ih as String, c.ah as String, ss.rhash as String)
+            status = freshnessStatus(c.ih as String, ss.rhash as String, c.iv as String, ss.rver as String, localMod)
+        }
+    } else if (p.o == 'hpm' && c.k != 'file' && !c.bm && peOk && pk.broken != true) {
+        // An HPM component with no valid entry of its own is judged by its package's manifest version, which needs no
+        // per-item fact. A manifest that answered 404/410 once is not a comparison. Files and bundle members never
+        // inherit: the manifest says nothing about their content (B2).
+        boolean deadManifest = pk.httpStatus in [404, 410]
+        Integer cmp = compareVersions(p.v as String, pk.rver as String)
+        if (!deadManifest) status = (cmp != null && cmp < 0) ? 'update-available' : ((!pk.rver || (cmp != null && cmp >= 0)) ? 'current' : 'not-checked')
     }
-    else {
-        boolean localMod = isLocallyModified(c.ih as String, c.ah as String, ss.rhash as String)
-        status = freshnessStatus(c.ih as String, ss.rhash as String, c.iv as String, ss.rver as String, localMod)
-    }
-    if (ss.broken == true) status = 'broken-source'
-    // the package's own manifest location has struck out (3 consecutive 404/410) — every component
-    // under it is broken-source regardless of its own location's health (I4).
-    if (p.o == 'hpm' && pe.broken == true) status = 'broken-source'
+    // The package's own manifest location has struck out (consecutive 404/410): every component under it is broken-source.
+    if (peOk && pk.broken == true) status = 'broken-source'
     return status
 }
 
@@ -1031,14 +1048,14 @@ static String packageStatus(String origin, List statuses, Map pe) {
     if (statuses.contains('changed-upstream')) return 'changed-upstream'
     if (statuses.contains('broken-source')) return 'broken-source'
     if (statuses && statuses.every { it == 'not-installed' }) return 'not-installed'
-    if (!statuses || statuses.every { it in ['unknown', 'unmanaged', 'private', 'not-installed'] }) return origin == 'local' ? 'unmanaged' : 'unknown'
+    if (!statuses || statuses.every { it in ['not-checked', 'unmanaged', 'private', 'not-installed'] }) return origin == 'local' ? 'unmanaged' : 'not-checked'
     return 'current'
 }
 
-// GET /api/inventory — aggregator: registry + sweep cache (Task 6) + HPM mode (Task 5). No sources, no secrets.
+// GET /api/inventory — aggregator: registry + drift cache + HPM mode. No sources, no secrets.
 Map buildInventoryPayload(Map bulk) {
     Map pkgs = (state.pkgs ?: [:]) as Map
-    Map sweep = readSweepCache()                                  // Task 6; returns [:] until then
+    Map drift = readDriftCache()
     // Usage and parent links come from the same bulk reads the registry was reconciled from; nothing here reads the hub.
     Map usedBy = [:]
     (bulk.apps as List ?: []).each { Map a -> usedBy[ckey('app', a.id)] = a.usedBy }
@@ -1049,9 +1066,11 @@ Map buildInventoryPayload(Map bulk) {
     Map factCounts = [total: 0, valid: 0, stale: 0, unread: 0, failing: 0, large: 0]
     List comps = []
     List packages = pkgs.collect { String key, Map p ->
-        Map pe = (sweep["pkg:" + key] ?: [:]) as Map                       // package-row sweep entry (Task 6)
+        Map peRaw = (drift["pkg:" + key] ?: [:]) as Map                    // package-row drift entry (an HPM manifest fetch)
+        Map pe = (p.o == 'hpm' && pkgDriftValid(p, peRaw)) ? peRaw : [:]    // valid only for the installed version it was computed against
         List pc = (p.c as List).collect { Map c ->
-            Map s = (sweep[ckey(c.k as String, c.id)] ?: [:]) as Map
+            Map sRaw = (drift[ckey(c.k as String, c.id)] ?: [:]) as Map
+            Map s = driftEntryValid(c, sRaw) ? sRaw : [:]                    // valid only for the installed code it was computed against
             // A per-item fact is shown only while it still describes the item (DESIGN.md 3.1). Bundles and files carry none.
             boolean isItem = c.k in ['app', 'driver', 'library']
             String basis = (c.id != null && isItem) ? factBasis(c, (c.lm ?: 0L) as long) : null
@@ -1088,7 +1107,7 @@ Map buildInventoryPayload(Map bulk) {
                    byOrigin: comps.countBy { it.origin }, byStatus: comps.countBy { it.status }, byKind: comps.countBy { it.kind },
                    unused: comps.count { (it.usedByCount ?: 0) == 0 && it.kind != 'bundle' }]
     return [generatedAt: now(), asOf: invAsOf, libraries: [asOf: libraries().asOf, error: libraries().error], facts: factCounts, appVersion: CODE_VERSION, hub: hub, packages: packages, components: comps, summary: summary,
-            hpm: (state.hpm ?: [mode: 'absent']), sweep: (state.sweep ?: [:]), lastInventory: (state.lastInventory ?: [:])]
+            hpm: (state.hpm ?: [mode: 'absent']), drift: (jobSlot('drift') ?: [:]), lastInventory: (state.lastInventory ?: [:])]
 }
 // Reconciliation is idempotent but writes documents and bumps generations, so concurrent callers take turns.
 Map reconcileNow(Map b = null) {
@@ -1277,6 +1296,7 @@ void startFactReader() {
             jobFail(e.key as String, "Job lost: the reader stopped taking steps")      // an error ended its chain; carry on with a new job
             flushFacts()
         }
+        if (driftFactsPhaseRunning()) return                        // a drift check is reading facts; it is the one reader
         List<String> queue = factQueue(itemComponents(), now())
         if (queue.isEmpty()) return
         String jobId = newJob('facts', queue.size())
@@ -1292,7 +1312,16 @@ void startFactReader() {
     } finally { gate.release() }
 }
 
-// One read, then the next step FACT_GAP_MS later.
+private boolean factsJobRunning() {
+    for (Map.Entry e in JOBS.entrySet()) { ConcurrentHashMap r = e.value as ConcurrentHashMap; if (r.kind == 'facts' && r.status == 'running') return true }
+    return false
+}
+private boolean driftFactsPhaseRunning() {
+    for (Map.Entry e in JOBS.entrySet()) { ConcurrentHashMap r = e.value as ConcurrentHashMap; if (r.kind == 'drift' && r.status == 'running' && r.phase == 'facts') return true }
+    return false
+}
+
+// One read, then the next step FACT_GAP_MS later. Drift jobs take their fact phase through this same step.
 void factStep(Map data) {
     String jobId = data.jobId as String
     ConcurrentHashMap j = JOBS[jobId]
@@ -1301,13 +1330,16 @@ void factStep(Map data) {
     try {
         ConcurrentLinkedQueue<String> pending = j.pending as ConcurrentLinkedQueue<String>
         AtomicInteger waits = j.waits as AtomicInteger
-        String action = factNextAction([writeOutstanding: writeOutstanding(), waits: waits.get(), queueEmpty: pending.isEmpty()])
+        // A drift job's first phase is this same step. It also yields to a separate reader job, so only one read is ever in flight.
+        boolean blocked = writeOutstanding() || (j.kind == 'drift' && factsJobRunning())
+        String action = factNextAction([writeOutstanding: blocked, waits: waits.get(), queueEmpty: pending.isEmpty()])
         if (action == 'defer') {
             waits.incrementAndGet()
             runInMillis(FACT_GAP_MS, 'factStep', [data: [jobId: jobId], overwrite: false])
             return
         }
-        if (action == 'giveup') { flushFacts(); jobFail(jobId, "gave up waiting for a write to finish"); return }
+        if (action == 'giveup') { flushFacts(); jobFail(jobId, "gave up waiting for a write or another reader to finish"); return }
+        if (action == 'finish' && j.kind == 'drift') { driftFactsDone(jobId); return }
         if (action == 'finish') {
             flushFacts()
             Map counts = (j.counts as Map).collectEntries { k, v -> [(k): (v as AtomicInteger).get()] }
@@ -1366,46 +1398,119 @@ Map apiFactsStatus() {
 Map apiFactsRead() {
     String kind = params.kind as String, id = params.id as String
     if (!(kind in ['app', 'driver', 'library']) || !id?.isInteger()) return jsonResponse([error: "kind must be app|driver|library and id numeric"])
-    return timed("factsRead") {
-        String ck = ckey(kind, id)
-        Map c = findItem(ck)
-        if (c == null) return [error: "not in the registry: ${ck}" as String]
-        long lm = (c.lm ?: 0L) as long
-        Map outcome
-        try { outcome = readFacts(kind, id, c._o as String, false) }         // counts as the request's one allowed read
-        catch (Exception e) { outcome = [error: "${getObjectClassName(e)}: ${e.message}" as String] }
-        storeFact(ck, c, lm, outcome)
-        boolean stored = flushFacts()
-        Map after = findItem(ck) ?: c
-        [kind: kind, hubId: id, read: outcome.facts != null, stored: stored, error: outcome.error, basis: factBasis(after, lm), importUrl: after.loc ?: null,
-         version: after.iv, hash: after.ih, size: after.sz, createsChildren: after.ch == true]
-    }
+    return timed("factsRead") { factsReadNow(kind, id) }
 }
 
-// ===== Sweep (DESIGN.md §5.2, §7): bounded async freshness check over every upstream location =====
-@Field static final int  SWEEP_MAX_INFLIGHT = 6          // two of the eight async slots stay free for endpoint handlers
-@Field static final long SWEEP_TTL_MS = 86_400_000L
-@Field static final int  SWEEP_WATCHDOG_SEC = 180
+// Reads one item's facts now (the caller is a request and this is its one allowed per-item read) and stores them.
+private Map factsReadNow(String kind, String id) {
+    String ck = ckey(kind, id)
+    Map c = findItem(ck)
+    if (c == null) return [error: "not in the registry: ${ck}" as String]
+    long lm = (c.lm ?: 0L) as long
+    Map outcome
+    try { outcome = readFacts(kind, id, c._o as String, false) }         // counts as the request's one allowed read
+    catch (Exception e) { outcome = [error: "${getObjectClassName(e)}: ${e.message}" as String] }
+    storeFact(ck, c, lm, outcome)
+    boolean stored = flushFacts()
+    Map after = findItem(ck) ?: c
+    return [kind: kind, hubId: id, read: outcome.facts != null, stored: stored, error: outcome.error, basis: factBasis(after, lm), importUrl: after.loc ?: null,
+            version: after.iv, hash: after.ih, size: after.sz, createsChildren: after.ch == true]
+}
+
+// ===== Drift checks (DESIGN.md §5.3, §7): on request, never scheduled =====
+// One item runs in the request (the caller needs the answer); a package or everything is a job. The job first brings the
+// facts of the items in scope up to date through the fact reader's own step (5.2), then fetches upstream, 6 in flight.
+@Field static final int  DRIFT_MAX_INFLIGHT = 6          // two of the eight async slots stay free for endpoint handlers
+@Field static final int  DRIFT_WATCHDOG_SEC = 180
+@Field static final int  DRIFT_TIMEOUT_SEC = 20
 @Field static final int  BROKEN_AFTER = 3
-@Field static final java.util.regex.Pattern SWEEP_STRIKE_ERROR_RE = ~/(?s).*(UnknownHostException|SSLHandshakeException|SSLException|Name or service not known).*/
-@Field static final ConcurrentHashMap<String, Map> SWEEP = new ConcurrentHashMap<>()   // live mirror of cm_sweep.json
-@Field static volatile boolean sweepLoaded = false
+@Field static final java.util.regex.Pattern DRIFT_STRIKE_ERROR_RE = ~/(?s).*(UnknownHostException|SSLHandshakeException|SSLException|Name or service not known).*/
+@Field static final ConcurrentHashMap<String, Map> DRIFT = new ConcurrentHashMap<>()   // live mirror of cm_drift.json
+@Field static volatile boolean driftLoaded = false
 
-Map readSweepCache() {
-    if (!sweepLoaded) {
-        String t = readCmFile(SWEEP_FILE)
-        if (t) { try { ((Map) new JsonSlurper().parseText(t)).each { k, v -> SWEEP[(String) k] = (Map) v } } catch (Exception ignored) {} }
-        sweepLoaded = true
+Map readDriftCache() {
+    if (!driftLoaded) {
+        String t = readCmFile(DRIFT_FILE)
+        if (t) { try { ((Map) new JsonSlurper().parseText(t)).each { k, v -> DRIFT[(String) k] = (Map) v } } catch (Exception ignored) {} }
+        driftLoaded = true
     }
-    return new HashMap(SWEEP)
+    return new HashMap(DRIFT)
 }
-private void persistSweepCache() { writeCmFile(SWEEP_FILE, JsonOutput.toJson(SWEEP)) }
+private void persistDriftCache() { writeCmFile(DRIFT_FILE, JsonOutput.toJson(DRIFT)) }
 
-// force=1 ignores the TTL and queues every eligible item (manual "check now" / verification use;
-// documented in the README by Task 9).
-Map apiSweepStart() {
-    Map r = startSweep(params.force == "1")
-    return jsonResponse(r)
+@CompileStatic
+static boolean sameStampValue(Object a, Object b) {
+    if (a instanceof Number && b instanceof Number) return ((Number) a).longValue() == ((Number) b).longValue()
+    return a == b
+}
+
+// One upstream answer applied to the stored entry; returns [entry, outcome]. r = [status, body, etag, error, transport].
+// The entry is stamped with what it was computed against (stampKey/stamp: `ilm` = the item's lastModified, or `iv` = the HPM
+// package's installed version) and with the location it was fetched from. Strikes toward broken-source count only results
+// computed against the same stamp and location; an entry for another location starts over (audit B3). A failed fetch keeps no
+// hash, so it never leaves a comparison behind.
+@CompileStatic
+static Map driftApply(Map prev, Map r, String loc, String stampKey, Object stamp, boolean manifest, long now) {
+    boolean sameLoc = prev != null && prev.get('loc') == loc
+    Map base = sameLoc ? new LinkedHashMap(prev) : new LinkedHashMap()
+    int failBase = (sameLoc && sameStampValue(prev.get(stampKey), stamp)) ? ((base.get('failCount') ?: 0) as int) : 0
+    Map e = new LinkedHashMap()
+    e.put('loc', loc); e.put(stampKey, stamp); e.put('checkedAt', now)
+    int status = ((r.get('status') ?: 0) as int)
+    String outcome = 'checked'
+    int fails = failBase
+    boolean strike = false
+    String error = null
+    if (status == 304 && base.get('rhash') != null) {
+        for (String k in ['etag', 'rhash', 'rver', 'rverSrc', 'rbeta', 'changedAt']) { if (base.get(k) != null) e.put(k, base.get(k)) }
+        e.put('httpStatus', 304); fails = 0; outcome = 'notModified'
+    } else if (status == 200) {
+        String body = (r.get('body') ?: '') as String
+        if (!body) { e.put('httpStatus', 200); error = 'empty response body'; outcome = 'unreachable' }      // never hash ''
+        else if (manifest) {
+            String ver = null, beta = null
+            boolean ok = true
+            try { Map m = (Map) new JsonSlurper().parseText(body); ver = m.get('version')?.toString(); beta = m.get('betaVersion')?.toString() }
+            catch (Exception ex) { ok = false; error = "manifest parse: ${ex.message}".toString() }
+            if (!ok) { e.put('httpStatus', 200); outcome = 'unreachable' }
+            else {
+                String rh = hashPrefix(sha256Hex(body))
+                e.put('httpStatus', 200); e.put('etag', r.get('etag')); e.put('rhash', rh); e.put('rver', ver); e.put('rverSrc', 'manifest'); e.put('rbeta', beta)
+                e.put('changedAt', base.get('rhash') != rh ? now : base.get('changedAt'))
+                fails = 0; outcome = base.get('rhash') != rh ? 'changed' : 'checked'
+            }
+        } else {
+            String rh = hashPrefix(sourceHash(body))
+            Map pv = parseVersionLiteral(body)
+            e.put('httpStatus', 200); e.put('etag', r.get('etag')); e.put('rhash', rh); e.put('rver', pv.get('ver')); e.put('rverSrc', pv.get('src'))
+            e.put('changedAt', base.get('rhash') != rh ? now : base.get('changedAt'))
+            fails = 0; outcome = base.get('rhash') != rh ? 'changed' : 'checked'
+        }
+    } else if (status == 404 || status == 410) {                         // definite "gone": strikes toward broken-source
+        e.put('httpStatus', status); error = (r.get('error') ?: "HTTP ${status}").toString(); strike = true
+    } else if (status == 0 && r.get('transport') == true) {
+        // DNS/TLS failures mean the host itself is gone or misconfigured: strike. Timeouts and resets are transient noise: no strike (DESIGN.md §7).
+        error = (r.get('error') ?: 'transport error').toString()
+        if (DRIFT_STRIKE_ERROR_RE.matcher(error).matches()) strike = true else outcome = 'unreachable'
+    } else {                                                             // 5xx, 429, anything else: transient, no strike
+        if (status != 0) e.put('httpStatus', status)
+        error = status != 0 ? "HTTP ${status}".toString() : 'no answer'; outcome = 'unreachable'
+    }
+    if (strike) { fails = failBase + 1; outcome = fails >= BROKEN_AFTER ? 'broken' : 'struck' }
+    e.put('failCount', fails)
+    e.put('broken', fails >= BROKEN_AFTER)
+    e.put('unreachable', outcome == 'unreachable')
+    if (error != null) e.put('error', error)
+    return [entry: e, outcome: outcome]
+}
+
+private String etagOf(Object headers) {
+    String out = null
+    headers?.each { h ->
+        String n = (h instanceof Map.Entry) ? h.key?.toString() : h.name?.toString()
+        if (n != null && n.equalsIgnoreCase('ETag')) out = ((h instanceof Map.Entry) ? h.value : h.value)?.toString()
+    }
+    return out
 }
 
 // Effective source location for a component: url-origin app/driver components don't store loc
@@ -1413,44 +1518,6 @@ Map apiSweepStart() {
 // reconstruct it the same way buildInventoryPayload does. Library/HPM/bundle components always
 // carry loc directly on the stored component.
 private String componentLoc(String key, Map p, Map c) { return (c.loc as String) ?: (p.o == 'url' ? key.substring(4) : null) }
-
-// Builds the queue and fans out. Idempotent under concurrent triggers.
-Map startSweep(boolean force = false) {
-    Map prev = (state.sweep ?: [:]) as Map
-    if (prev.status == 'running' && JOBS[prev.jobId as String]?.status == 'running') return [jobId: prev.jobId, total: prev.total, alreadyRunning: true]
-    readSweepCache()
-    // Import first, then inventory: importHpm() rebuilds HPM packages from HPM's own records, and the
-    // inventory pass is what binds their bundle/file components to the hub and folds bundle members in.
-    Map hpmProbe = findHpm()
-    if (hpmProbe != null && hpmProbe.absent != true) importHpm(hpmProbe)
-    reconcileNow()
-    Map pkgs = (state.pkgs ?: [:]) as Map
-    List<String> queue = []
-    long cutoff = force ? Long.MAX_VALUE : now() - SWEEP_TTL_MS
-    pkgs.each { String key, Map p ->
-        if (p.o == 'hpm') { Map e = SWEEP["pkg:" + key]; if (!e || ((e.checkedAt ?: 0) as long) < cutoff) queue << ("pkg:" + key) }
-        (p.c as List).each { Map c ->
-            if (!c.id || c.pv || c.k == 'bundle' || c.k == 'file' || p.o == 'local' || p.o == 'unread') return
-            // HPM component hashes refresh only when the manifest changed (see applyManifestResult) —
-            // except members of a bundle folded into an HPM package, which carry their own upstream
-            // file location and were swept as bundle components before the fold.
-            if (p.o == 'hpm' && !c.bm) return
-            String loc = componentLoc(key, p, c); if (!loc) return
-            Map e = SWEEP[ckey(c.k as String, c.id)]
-            if (!e || ((e.checkedAt ?: 0) as long) < cutoff) queue << ckey(c.k as String, c.id)
-        }
-    }
-    String jobId = newJob('sweep', queue.size())
-    ConcurrentHashMap j = JOBS[jobId]
-    (j.pending as ConcurrentLinkedQueue).addAll(queue)
-    j.counts = new ConcurrentHashMap([checked: new AtomicInteger(0), notModified: new AtomicInteger(0), changed: new AtomicInteger(0), broken: new AtomicInteger(0), unreachable: new AtomicInteger(0)])
-    state.sweep = [jobId: jobId, status: 'running', total: queue.size(), processed: 0, startedAt: j.startedAt]
-    runIn(SWEEP_WATCHDOG_SEC, 'sweepWatchdog', [data: [jobId: jobId]])
-    if (queue.isEmpty()) { finalizeSweep(jobId); return [jobId: jobId, total: 0, alreadyRunning: false] }
-    SWEEP_MAX_INFLIGHT.times { dispatchSweep(jobId) }
-    logSched "sweep ${jobId}: ${queue.size()} queued"
-    return [jobId: jobId, total: queue.size(), alreadyRunning: false]
-}
 
 // Locate a component or package by queue key.
 private Map resolveTarget(String qk) {
@@ -1464,152 +1531,287 @@ private Map resolveTarget(String qk) {
     return null
 }
 
+// The stamp a drift result for this queue key is computed against.
+private Map driftStamp(Map t) {
+    return t.kind == 'pkg' ? [key: 'iv', val: (t.pkg as Map).v] : [key: 'ilm', val: ((t.comp as Map).lm ?: 0L)]
+}
+
+private boolean isUsableBasis(String basis) { return basis == 'valid' || basis == 'provisional' }
+
+// Does this component take part in a body-to-body comparison? Not private code, not local or unread origin, no bundle or file;
+// a directly-installed HPM component is judged by its package manifest unless the manifest changed (applyDriftManifest).
+private boolean driftBodyEligible(Map p, Map c) {
+    return c.id != null && !c.pv && c.k in ['app', 'driver', 'library'] && !(p.o in ['local', 'unread'])
+}
+
+// POST /api/drift/check?key=<ckey> — one item, synchronous. Refreshes the item's facts first when they are not valid (the
+// request's one allowed per-item read), then makes one upstream fetch.
+Map apiDriftCheck() {
+    String key = params.key as String
+    return timed("driftCheck") {
+        if (!key || key.startsWith("pkg:")) return [error: "key must be an app, driver or library key such as app:12" as String]
+        readDriftCache()
+        Map t = resolveTarget(key)
+        if (t == null || t.comp == null) return [error: "not in the registry: ${key}" as String]
+        Map c0 = t.comp as Map
+        if (!(c0.k in ['app', 'driver', 'library']) || c0.id == null) return [error: "only apps, drivers and libraries on the hub have an upstream to check" as String]
+        boolean factsRead = false
+        Map c = findItem(key) ?: c0
+        if (!isUsableBasis(factBasis(c, (c.lm ?: 0L) as long)) || (t.pkg as Map).o == 'unread') {
+            Map r = factsReadNow(c0.k as String, c0.id as String)
+            if (r.read != true) return [key: key, status: 'not-checked', checked: false, factsRead: false, error: ("could not read the item: " + (r.error ?: '')) as String]
+            factsRead = true
+            reconcileNow()                                         // the read may have moved the item into its real package
+            t = resolveTarget(key)
+            if (t == null || t.comp == null) return [error: "not in the registry: ${key}" as String]
+            c = findItem(key) ?: (t.comp as Map)
+        }
+        Map p = t.pkg as Map
+        String pkey = t.key as String
+        Map out = [key: key, factsRead: factsRead, checked: false]
+        if (p.o == 'local') return out + [status: 'unmanaged']
+        if (c.pv) return out + [status: 'private']
+        if (!driftBodyEligible(p, c)) return out + [status: statusOf(pkey, p, c)]
+        String loc = componentLoc(pkey, p, c)
+        if (!loc) return out + [status: statusOf(pkey, p, c), error: "no upstream location"]
+        Map stamp = [key: 'ilm', val: (c.lm ?: 0L)]
+        Map fr = !loc.startsWith("https://") ? [status: 0, error: "non-https location", transport: false] : fetchUpstreamNow(loc, (DRIFT[key]?.loc == loc ? DRIFT[key]?.etag : null) as String)
+        Map res = driftApply(DRIFT[key], fr, loc, 'ilm', stamp.val, false, now())
+        DRIFT[key] = res.entry as Map
+        persistDriftCache()
+        Map e = res.entry as Map
+        return out + [checked: true, status: statusOf(pkey, p, c), outcome: res.outcome, httpStatus: e.httpStatus, error: e.error, rhash: e.rhash, rver: e.rver, checkedAtMs: e.checkedAt]
+    }
+}
+
+// The status the inventory would report for one component now.
+private String statusOf(String pkey, Map p, Map c) {
+    String basis = factBasis(c, (c.lm ?: 0L) as long)
+    Map dr = readDriftCache()
+    return componentStatus(p, c + [basis: basis], dr[ckey(c.k as String, c.id)] as Map, (dr["pkg:" + pkey] ?: [:]) as Map)
+}
+
+// One synchronous upstream GET; the answer as driftApply wants it. httpGet throws on a non-2xx answer, including 304.
+private Map fetchUpstreamNow(String uri, String etag) {
+    Map r = [status: 0, transport: false]
+    Map req = [uri: uri, contentType: 'text/plain', timeout: DRIFT_TIMEOUT_SEC]
+    if (etag) req.headers = ['If-None-Match': etag]
+    try {
+        httpGet(req) { resp ->
+            r.status = resp.status as int
+            Object d = resp.data
+            r.body = (d == null) ? '' : ((d instanceof String) ? d : d.text)
+            r.etag = etagOf(resp.headers)
+        }
+    } catch (Exception e) {
+        Integer st = null
+        try { st = e.response?.status as Integer } catch (Throwable ignored) {}
+        if (st != null && st > 0) { r.status = st; r.error = "HTTP ${st}".toString() }
+        else { r.status = 0; r.transport = true; r.error = "${getObjectClassName(e)}: ${e.message}".toString() }
+    }
+    return r
+}
+
+// POST /api/drift/start?scope=package&key=<package key> | ?scope=all — a job (kind `drift`).
+Map apiDriftStart() {
+    String scope = params.scope as String
+    if (!(scope in ['package', 'all'])) return jsonResponse([error: "scope must be package or all"])
+    String key = params.key as String
+    if (scope == 'package' && (!key || ((state.pkgs ?: [:]) as Map)[key] == null)) return jsonResponse([error: "unknown package: ${key}" as String])
+    return jsonResponse(startDrift(scope, scope == 'package' ? key : null))
+}
+
+// Items (app, driver, library bound to a hub id) in the scope, with their unflushed facts.
+private List<Map> driftScopeItems(String scope, String pkgKey) {
+    List<Map> out = []
+    ((state.pkgs ?: [:]) as Map).each { String key, Map p ->
+        if (scope == 'package' && key != pkgKey) return
+        (p.c as List).each { Map c -> if (c.id != null && c.k in ['app', 'driver', 'library']) out << (withPending(c) + [_o: p.o]) }
+    }
+    return out
+}
+
+Map startDrift(String scope, String pkgKey) {
+    Semaphore gate = gateFor("factStart")                    // the same gate that starts the fact reader: one reader at a time
+    if (!gate.tryAcquire(2000L, TimeUnit.MILLISECONDS)) return [error: "busy, try again"]
+    String jobId = null
+    boolean immediate = false
+    try {
+        for (Map.Entry e in JOBS.entrySet()) {
+            ConcurrentHashMap r = e.value as ConcurrentHashMap
+            if (r.kind != 'drift' || r.status != 'running') continue
+            boolean lost = r.phase == 'facts' && factJobStale((r.lastStep ?: r.startedAt) as long, now())
+            if (!lost) return [jobId: e.key, total: (r.total as AtomicInteger).get(), alreadyRunning: true]
+            jobFail(e.key as String, "Job lost: the drift check stopped taking steps")
+            flushFacts()
+        }
+        readDriftCache()
+        List<Map> items = driftScopeItems(scope, pkgKey)
+        List<String> queue = factQueue(items, now())
+        jobId = newJob('drift', queue.size())
+        ConcurrentHashMap j = JOBS[jobId]
+        (j.pending as ConcurrentLinkedQueue).addAll(queue)
+        j.phase = 'facts'; j.scope = scope
+        if (scope == 'package') { j.pkgKey = pkgKey; j.scopeKeys = items.collect { Map c -> ckey(c.k as String, c.id) } as Set }   // a job map holds no nulls
+        j.counts = new ConcurrentHashMap([read: new AtomicInteger(0), failed: new AtomicInteger(0), skipped: new AtomicInteger(0)])
+        j.dcounts = new ConcurrentHashMap([checked: new AtomicInteger(0), notModified: new AtomicInteger(0), changed: new AtomicInteger(0), failed: new AtomicInteger(0), broken: new AtomicInteger(0), unreachable: new AtomicInteger(0), struck: new AtomicInteger(0)])
+        j.skippedLarge = new AtomicInteger(0); j.unreadable = new AtomicInteger(0)
+        j.retried = new ConcurrentHashMap()
+        j.waits = new AtomicInteger(0)
+        j.unflushed = new AtomicInteger(0)
+        j.lastStep = now()
+        immediate = queue.isEmpty()
+        if (!immediate) runInMillis(1000L, 'factStep', [data: [jobId: jobId], overwrite: false])
+        logSched "drift ${jobId}: ${scope}, ${queue.size()} facts to bring up to date"
+    } finally { gate.release() }
+    if (immediate) runInMillis(500L, 'driftFactsDoneStep', [data: [jobId: jobId], overwrite: false])      // the HPM read and regrouping do not run in the request
+    return [jobId: jobId, total: (JOBS[jobId]?.total as AtomicInteger)?.get() ?: 0, alreadyRunning: false]
+}
+
+void driftFactsDoneStep(Map data) { driftFactsDone(data.jobId as String) }
+
+// Facts are up to date (or as up to date as the budget allows): refresh HPM's record, regroup, and fan out the upstream fetches.
+void driftFactsDone(String jobId) {
+    ConcurrentHashMap j = JOBS[jobId]; if (j == null || j.status != 'running') return
+    try {
+        flushFacts()
+        j.phase = 'fetch'
+        // Import first, then regroup: importHpm() rebuilds HPM packages from HPM's own records (the installed versions the
+        // manifest is compared with), and the reconcile binds their bundles and files and folds bundle members in.
+        Map hpmProbe = findHpm()
+        if (hpmProbe != null && hpmProbe.absent != true) importHpm(hpmProbe)
+        reconcileNow()
+        Set scopeKeys = j.scopeKeys as Set
+        Map pkgs = (state.pkgs ?: [:]) as Map
+        List<String> queue = []
+        pkgs.each { String key, Map p ->
+            if (p.o == 'hpm' && (j.scope == 'all' || key == j.pkgKey)) queue << ("pkg:" + key)
+            (p.c as List).each { Map c ->
+                if (!driftBodyEligible(p, c)) return
+                String ck = ckey(c.k as String, c.id)
+                if (scopeKeys != null && !scopeKeys.contains(ck)) return
+                // A directly installed HPM component is judged by its manifest; its body is fetched only when the manifest changed.
+                if (p.o == 'hpm' && !c.bm) return
+                if (!componentLoc(key, p, c)) return
+                driftQueueBody(j, queue, c)
+            }
+        }
+        (j.pending as ConcurrentLinkedQueue).clear()
+        (j.pending as ConcurrentLinkedQueue).addAll(queue)
+        j.processed = new AtomicInteger(0); j.total = new AtomicInteger(queue.size())
+        runIn(DRIFT_WATCHDOG_SEC, 'driftWatchdog', [data: [jobId: jobId]])
+        if (queue.isEmpty()) { finalizeDrift(jobId); return }
+        DRIFT_MAX_INFLIGHT.times { dispatchDrift(jobId) }
+        logSched "drift ${jobId}: ${queue.size()} upstream fetches queued"
+    } catch (Throwable e) {
+        logError "drift ${jobId}: ${e.message}"
+        jobFail(jobId, "drift check failed: ${e.message}")
+    }
+}
+
+// Queues a component body fetch when its facts allow a comparison; otherwise counts why it cannot be checked.
+private void driftQueueBody(ConcurrentHashMap j, List<String> queue, Map c) {
+    Map cc = withPending(c)
+    if (isUsableBasis(factBasis(cc, (cc.lm ?: 0L) as long))) queue << ckey(c.k as String, c.id)
+    else if (((cc.sz ?: 0L) as long) > LARGE_SOURCE_BYTES) (j.skippedLarge as AtomicInteger).incrementAndGet()
+    else (j.unreadable as AtomicInteger).incrementAndGet()
+}
+
 // CAS-bounded dispatch (HubDiagnostics audit pattern). Conditional GET via If-None-Match when an ETag is known.
-private boolean dispatchSweep(String jobId) {
+private boolean dispatchDrift(String jobId) {
     ConcurrentHashMap j = JOBS[jobId]; if (j == null || j.status != 'running') return false
     AtomicInteger inFlight = j.inFlight as AtomicInteger
-    while (true) { int n = inFlight.get(); if (n >= SWEEP_MAX_INFLIGHT) return false; if (inFlight.compareAndSet(n, n + 1)) break }
+    while (true) { int n = inFlight.get(); if (n >= DRIFT_MAX_INFLIGHT) return false; if (inFlight.compareAndSet(n, n + 1)) break }
     String qk = (j.pending as ConcurrentLinkedQueue<String>).poll()
     if (qk == null) { inFlight.decrementAndGet(); return false }
     Map t = resolveTarget(qk)
     if (t == null || !(t.loc as String)?.startsWith("https://")) {       // http:// locations are not fetched (DESIGN.md §6.3)
-        SWEEP[qk] = (SWEEP[qk] ?: [:]) + [checkedAt: now(), error: t == null ? 'not in registry' : 'non-https location', httpStatus: null]
-        sweepStep(jobId, null); return true
+        if (t != null) {
+            Map st = driftStamp(t)
+            DRIFT[qk] = driftApply(DRIFT[qk], [status: 0, error: 'non-https location', transport: false], t.loc as String, st.key as String, st.val, qk.startsWith("pkg:"), now()).entry as Map
+        }
+        driftStep(jobId, 'failed'); return true
     }
-    Map entry = SWEEP[qk] ?: [:]
-    Map headers = entry.etag ? ['If-None-Match': entry.etag] : [:]
-    asynchttpGet('sweepCallback', [uri: t.loc, contentType: 'text/plain', headers: headers, timeout: 20], [jobId: jobId, qk: qk])
+    Map entry = DRIFT[qk] ?: [:]
+    Map headers = (entry.etag && entry.loc == t.loc) ? ['If-None-Match': entry.etag] : [:]
+    asynchttpGet('driftCallback', [uri: t.loc, contentType: 'text/plain', headers: headers, timeout: DRIFT_TIMEOUT_SEC], [jobId: jobId, qk: qk])
     return true
 }
 
-void sweepCallback(resp, data) {
+void driftCallback(resp, data) {
     String jobId = data.jobId as String, qk = data.qk as String
     ConcurrentHashMap j = JOBS[jobId]; if (j == null) return
-    Map entry = new HashMap(SWEEP[qk] ?: [:])
-    int status = resp?.status ?: 0
-    String outcome = 'checked'
+    String outcome = 'failed'
     try {
-        if (status == 304) { entry.checkedAt = now(); entry.httpStatus = 304; entry.failCount = 0; entry.unreachable = false; entry.error = null; outcome = 'notModified' }
-        else if (status == 200) {
-            String body = (resp.data ?: '') as String
-            if (!body) {                                                  // an empty 200 body is not a valid source snapshot — never hash ''
-                entry.httpStatus = 200; entry.checkedAt = now(); entry.unreachable = true; entry.error = 'empty response body'; outcome = 'unreachable'
-            } else {
-                // resp.headers may be a Map or a List of key/value entries depending on firmware; either
-                // iterates as Map.Entry-shaped items under Groovy's find{}, and the name is matched
-                // case-insensitively since some servers/CDNs send it lowercased.
-                String etag = resp.headers?.find { it.key?.toString()?.equalsIgnoreCase('ETag') }?.value?.toString()
-                entry.etag = etag; entry.httpStatus = 200; entry.checkedAt = now(); entry.failCount = 0; entry.unreachable = false; entry.broken = false; entry.error = null
-                if (qk.startsWith("pkg:")) outcome = applyManifestResult(jobId, qk, entry, body)
-                else {
-                    // rhash stored as the same 16-hex prefix as ih/ah (DESIGN.md §2.4 state-size budget) so freshnessStatus compares like with like
-                    String rh = hashPrefix(sourceHash(body))
-                    if (entry.rhash != rh) { entry.changedAt = now(); outcome = 'changed' }
-                    entry.rhash = rh
-                    Map pv = parseVersionLiteral(body); entry.rver = pv.ver; entry.rverSrc = pv.src
-                }
-            }
-        } else if (status in [404, 410]) {                                 // definite "gone": strikes toward broken-source
-            entry.httpStatus = status; entry.checkedAt = now(); entry.error = resp?.errorMessage ?: "HTTP ${status}"
-            entry.failCount = ((entry.failCount ?: 0) as int) + 1
-            if ((entry.failCount as int) >= BROKEN_AFTER) { entry.broken = true; outcome = 'broken' }
-        } else if (status == 0 && resp?.hasError()) {
-            // DNS/TLS failures mean the host itself is gone or misconfigured: strike. Everything else at
-            // this branch (timeouts, connect resets) is transient network noise: no strike (DESIGN.md §7).
-            String errMsg = (resp?.errorMessage ?: resp?.errorData?.toString() ?: '') as String
-            entry.httpStatus = null; entry.checkedAt = now(); entry.error = errMsg ?: 'transport error'
-            if (SWEEP_STRIKE_ERROR_RE.matcher(errMsg).matches()) {
-                entry.failCount = ((entry.failCount ?: 0) as int) + 1
-                if ((entry.failCount as int) >= BROKEN_AFTER) { entry.broken = true; outcome = 'broken' }
-            } else {
-                entry.unreachable = true; outcome = 'unreachable'
-            }
-        } else {                                                            // 5xx, 429: transient, no strike
-            entry.httpStatus = status ?: null; entry.checkedAt = now(); entry.unreachable = true; entry.error = "HTTP ${status}"; outcome = 'unreachable'
+        Map t = resolveTarget(qk)
+        if (t == null) { driftStep(jobId, 'failed'); return }
+        int status = resp?.status ?: 0
+        Map r = [status: status, transport: status == 0 && resp?.hasError() == true]
+        if (status == 200) { r.body = (resp.data ?: '') as String; r.etag = etagOf(resp.headers) }
+        else if (status == 0) r.error = (resp?.errorMessage ?: resp?.errorData?.toString() ?: 'transport error') as String
+        else r.error = (resp?.errorMessage ?: "HTTP ${status}") as String
+        Map st = driftStamp(t)
+        boolean manifest = qk.startsWith("pkg:")
+        Map res = driftApply(DRIFT[qk], r, t.loc as String, st.key as String, st.val, manifest, now())
+        DRIFT[qk] = res.entry as Map
+        outcome = res.outcome as String
+        // A changed package manifest: the package's components are compared body to body this run.
+        if (manifest && outcome == 'changed') {
+            List<String> extra = []
+            ((t.pkg as Map).c as List).each { Map c -> if (driftBodyEligible(t.pkg as Map, c) && c.loc) driftQueueBody(j, extra, c) }
+            (j.pending as ConcurrentLinkedQueue<String>).addAll(extra); (j.total as AtomicInteger).addAndGet(extra.size())
         }
-    } catch (Exception e) { entry.error = "${getObjectClassName(e)}: ${e.message}"; entry.checkedAt = now(); outcome = 'unreachable' }
-    SWEEP[qk] = entry
-    sweepStep(jobId, outcome)
-}
-
-// HPM package manifest result: compare declared versions; refresh component hashes only when the manifest changed.
-private String applyManifestResult(String jobId, String qk, Map entry, String body) {
-    String key = qk.substring(4)
-    Map m = null
-    try { m = (Map) new JsonSlurper().parseText(body) } catch (Exception e) { entry.error = "manifest parse: ${e.message}"; entry.broken = false; return 'unreachable' }
-    Map p = ((state.pkgs ?: [:]) as Map)[key] as Map
-    // manifest rhash stored as the same 16-hex prefix as component rhash (ruling: hash prefixes)
-    String rh = hashPrefix(sha256Hex(body))
-    boolean changed = entry.rhash != rh
-    entry.rhash = rh; entry.rver = m.version?.toString(); entry.rverSrc = 'manifest'; entry.rbeta = m.betaVersion?.toString()
-    if (changed) {
-        entry.changedAt = now()
-        // queue this package's components for a body fetch (their own entries decide update/changed by hash)
-        ConcurrentHashMap j = JOBS[jobId]
-        if (j != null && p) (p.c as List).each { Map c -> if (c.id && c.loc && !c.pv && c.k in ['app', 'driver', 'library']) { (j.pending as ConcurrentLinkedQueue).add(ckey(c.k as String, c.id)); (j.total as AtomicInteger).addAndGet(1) } }
-    }
-    return changed ? 'changed' : 'checked'
+    } catch (Exception e) { logWarn "drift ${qk}: ${e.message}" }
+    driftStep(jobId, outcome)
 }
 
 // Per-callback bookkeeping; dispatches the next item or finalizes. processed is incremented before inFlight is released.
-private void sweepStep(String jobId, String outcome) {
+private void driftStep(String jobId, String outcome) {
     ConcurrentHashMap j = JOBS[jobId]; if (j == null) return
-    if (outcome) ((j.counts as Map)[outcome] as AtomicInteger)?.incrementAndGet()
-    int processed = (j.processed as AtomicInteger).incrementAndGet()
+    Map dc = j.dcounts as Map
+    if (outcome == 'checked' || outcome == 'notModified' || outcome == 'changed') {
+        (dc.checked as AtomicInteger).incrementAndGet()
+        if (outcome != 'checked') (dc[outcome] as AtomicInteger).incrementAndGet()
+    } else {
+        (dc.failed as AtomicInteger).incrementAndGet()
+        if (outcome != 'failed') (dc[outcome] as AtomicInteger)?.incrementAndGet()
+    }
+    (j.processed as AtomicInteger).incrementAndGet()
     int inFlight = (j.inFlight as AtomicInteger).decrementAndGet()
-    if (!(j.pending as ConcurrentLinkedQueue).isEmpty()) dispatchSweep(jobId)
-    else if (inFlight == 0 && (j.processed as AtomicInteger).get() >= (j.total as AtomicInteger).get()) finalizeSweep(jobId)
+    if (!(j.pending as ConcurrentLinkedQueue).isEmpty()) dispatchDrift(jobId)
+    else if (inFlight == 0 && (j.processed as AtomicInteger).get() >= (j.total as AtomicInteger).get()) finalizeDrift(jobId)
 }
 
-void sweepWatchdog(Map data) {
+void driftWatchdog(Map data) {
     String jobId = data.jobId as String
     ConcurrentHashMap j = JOBS[jobId]
     if (j != null && j.status == 'running') {
-        logWarn "sweep ${jobId} watchdog: ${(j.processed as AtomicInteger).get()}/${(j.total as AtomicInteger).get()} after ${SWEEP_WATCHDOG_SEC}s; finalizing with what completed"
+        logWarn "drift ${jobId} watchdog: ${(j.processed as AtomicInteger).get()}/${(j.total as AtomicInteger).get()} after ${DRIFT_WATCHDOG_SEC}s; finalizing with what completed"
         (j.pending as ConcurrentLinkedQueue).clear()          // stop the fan-out before finalizing so no late dispatch races the finalize
-        finalizeSweep(jobId)
+        finalizeDrift(jobId)
     }
 }
 
-// Detect local modifications (installed hash moved since adoption), compute package statuses, persist, badge, notify.
-private void finalizeSweep(String jobId) {
+// Drops the entries nothing can use any more (component gone from the registry, private, or of local origin), saves the cache and ends the job.
+private void finalizeDrift(String jobId) {
     ConcurrentHashMap j = JOBS[jobId]; if (j == null || j.status != 'running') return
-    unschedule('sweepWatchdog')
-    Map pkgs = (state.pkgs ?: [:]) as Map
-    int updates = 0, broken = 0
-    pkgs.each { String key, Map p ->
-        Map pe = (SWEEP["pkg:" + key] ?: [:]) as Map
-        boolean pkgHasUpdate = false
-        (p.c as List).each { Map c ->
-            if (!c.id || c.k in ['bundle', 'file']) return
-            String ck = ckey(c.k as String, c.id)
-            Map e = SWEEP[ck]                                   // may be null — an HPM component with no own entry; componentStatus tolerates it (I6)
-            String st = componentStatus(p, c, e, pe)
-            if (st == 'update-available') pkgHasUpdate = true
-            if (e?.broken == true) broken++
-        }
-        if (pkgHasUpdate) updates++                            // updates counts packages with >=1 update-available component, not components
+    unschedule('driftWatchdog')
+    Set live = [] as Set
+    ((state.pkgs ?: [:]) as Map).each { String key, Map p ->
+        if (p.o == 'hpm') live << ("pkg:" + key)
+        if (p.o == 'local') return
+        (p.c as List).each { Map c -> if (c.id != null && !c.pv && c.k in ['app', 'driver', 'library']) live << ckey(c.k as String, c.id) }
     }
-    persistSweepCache()
-    Map counts = (j.counts as Map).collectEntries { k, v -> [(k): (v as AtomicInteger).get()] }
-    int total = (j.total as AtomicInteger).get()
-    // counts also has an outcome key literally named 'broken' (how many callbacks flipped an item to
-    // broken-source this run) — merge it first so the registry-wide updates/broken totals below win
-    Map result = counts + [queued: total, updates: updates, broken: broken]
+    DRIFT.keySet().toList().each { String k -> if (!live.contains(k)) DRIFT.remove(k) }
+    persistDriftCache()
+    Map dc = (j.dcounts as Map).collectEntries { k, v -> [(k): (v as AtomicInteger).get()] }
+    Map fc = (j.counts as Map).collectEntries { k, v -> [(k): (v as AtomicInteger).get()] }
+    int unreadable = (j.unreadable as AtomicInteger).get()
+    // failed: an upstream that could not be compared with (unreachable, gone, struck) plus an item whose facts could not be read.
+    Map result = [queued: (j.total as AtomicInteger).get(), checked: dc.checked, changed: dc.changed, notModified: dc.notModified, failed: (dc.failed as int) + unreadable,
+                  unreachable: dc.unreachable, broken: dc.broken, unreadable: unreadable, skippedLarge: (j.skippedLarge as AtomicInteger).get(), factsRead: fc.read, factsFailed: fc.failed]
     jobDone(jobId, result)
-    state.sweep = [jobId: jobId, status: 'done', total: total, processed: (j.processed as AtomicInteger).get(), startedAt: j.startedAt, finishedAt: now(), updates: updates, broken: broken]
-    boolean had = state.updatesAvailable == true
-    state.updatesAvailable = updates > 0
-    refreshUpdateLabel()
-    if (updates > 0 && !had && settings.notifyDevices && state.updatesNotified != true) {
-        settings.notifyDevices.each { d ->
-            try { d.deviceNotification("Code Manager: ${updates} package update${updates == 1 ? '' : 's'} available${broken ? ", ${broken} broken source${broken == 1 ? '' : 's'}" : ''}") }
-            catch (Exception e) { logWarn "notify ${d}: ${e.message}" }
-        }
-        state.updatesNotified = true
-    }
-    if (updates == 0) state.updatesNotified = false
-    logInfo "sweep done: ${result}"
+    logInfo "drift done: ${result}"
 }
 
 // ===== Item source and export (DESIGN.md §9) =====
@@ -1627,8 +1829,8 @@ Map apiItemSource() {
     Map pv = parseVersionLiteral(source)
     // same rule as the inventory status (C1): a re-import that lands back on the upstream hash is
     // Current again, not modified-locally forever.
-    Map sw = readSweepCache()
-    boolean modifiedLocally = isLocallyModified(cur, c?.ah as String, (sw[ckey(kind, id)] as Map)?.rhash as String)
+    Map dr = (c != null && driftEntryValid(c, readDriftCache()[ckey(kind, id)] as Map)) ? (readDriftCache()[ckey(kind, id)] as Map) : [:]
+    boolean modifiedLocally = isLocallyModified(cur, c?.ah as String, dr.rhash as String)
     return jsonResponse([kind: kind, hubId: id, lock: d.version, ihash: c?.ih, ahash: c?.ah, currentHash: cur, modifiedLocally: modifiedLocally,
                          version: pv.ver, versionSrc: pv.src, location: c?.loc, packageKey: t?.key, source: source])
 }
@@ -1636,7 +1838,7 @@ Map apiItemSource() {
 Map apiExport() {
     Map pkgs = (state.pkgs ?: [:]) as Map
     List docs = pkgs.keySet().collect { String key -> [name: pkgFileName(key), key: key, doc: readPkgDoc(key)] }
-    Map out = [exportedAt: now(), appVersion: CODE_VERSION, registry: pkgs, documents: docs, sweep: readSweepCache(), hpm: state.hpm ?: [mode: 'absent'],
+    Map out = [exportedAt: now(), appVersion: CODE_VERSION, registry: pkgs, documents: docs, drift: readDriftCache(), hpm: state.hpm ?: [mode: 'absent'],
                repos: state.repos ?: [:], betaOn: state.betaOn ?: []]
     writeCmFile("cm_registry_export.json", JsonOutput.toJson(out))
     return jsonResponse(out)
@@ -1690,7 +1892,7 @@ void jobFail(String jobId, String error) {
     j.status = 'error'; j.error = error; j.finishedAt = now()
     saveJobSnapshot(j.kind as String, [id: jobId, kind: j.kind, status: 'error', error: error, total: (j.total as AtomicInteger).get(), startedAt: j.startedAt, finishedAt: j.finishedAt])
 }
-// Each job kind has its own snapshot slot, so a library refresh, a fact read and a sweep never overwrite one another's status.
+// Each job kind has its own snapshot slot, so a library refresh, a fact read and a drift check never overwrite one another's status.
 private void saveJobSnapshot(String kind, Map snap) {
     Map slots = new LinkedHashMap((state.jobSlots ?: [:]) as Map)
     slots[kind] = snap
@@ -1702,7 +1904,7 @@ Map jobStatus(String jobId) {
     if (j == null) {
         Map snap = jobSlot(jobId.contains('-') ? jobId.substring(0, jobId.indexOf('-')) : jobId) ?: [:]
         if (snap.id == jobId) return (snap.status == 'running') ? snap + [status: 'error', error: 'Job lost to hub restart or code push'] : snap
-        return [id: jobId, status: 'unknown']
+        return [id: jobId, status: 'not-found']
     }
     return [id: jobId, kind: j.kind, status: j.status, processed: (j.processed as AtomicInteger).get(), total: (j.total as AtomicInteger).get(),
             startedAt: j.startedAt, finishedAt: j.finishedAt, error: j.error, result: j.status == 'done' ? j.result : null]
@@ -1712,8 +1914,8 @@ Map apiJob() { return jsonResponse(jobStatus(params.id as String)) }
 // ===== Settings =====
 Map apiGetSettings() {
     return jsonResponse([txtEnable: settings.txtEnable != false, debugEnable: settings.debugEnable == true, traceEnable: settings.traceEnable == true,
-                         labelBadge: settings.labelBadge != false, notifyDeviceCount: (settings.notifyDevices ?: []).size(),
-                         sweepTtlHours: 24, sweepMaxInflight: 6, brokenAfter: 3, appVersion: CODE_VERSION, uiVersion: getUIVersion()])
+                         labelBadge: settings.labelBadge != false,
+                         driftMaxInflight: DRIFT_MAX_INFLIGHT, brokenAfter: BROKEN_AFTER, appVersion: CODE_VERSION, uiVersion: getUIVersion()])
 }
 Map apiUpdateSettings() {
     Map body = [:]
@@ -1738,7 +1940,7 @@ void updated() {
     if (settings.debugEnable) runIn(1800, 'logsOff')
     runIn(1, 'syncUIForced')
     // unschedule() above stopped any running reader's chain of steps; its job can never finish.
-    JOBS.each { String id, ConcurrentHashMap j -> if (j.kind == 'facts' && j.status == 'running') jobFail(id, 'Job lost: the app was re-initialized') }
+    JOBS.each { String id, ConcurrentHashMap j -> if ((j.kind == 'facts' || j.kind == 'drift') && j.status == 'running') jobFail(id, 'Job lost: the app was re-initialized') }
     flushFacts()
     runIn(60, 'startFactReader')
     initialize()
@@ -1753,8 +1955,7 @@ void initialize() {
     ((state.jobSlots ?: [:]) as Map).each { k, Map snap ->
         if (snap.status == 'running' && !JOBS[snap.id as String]) saveJobSnapshot(k as String, snap + [status: 'error', error: 'Job lost to hub restart or code push'])
     }
-    Map sw = (state.sweep ?: [:]) as Map
-    if (sw.status == 'running' && JOBS[sw.jobId as String]?.status != 'running') state.sweep = sw + [status: 'stale']
+    ['sweep', 'updatesAvailable', 'updatesNotified'].each { String k -> state.remove(k) }       // 0.1's sweep, badge and notification state
     schedule("0 17 3 * * ?", "scheduledUISync")
     schedule("0 41 3 * * ?", "scheduledVersionCheck")
     subscribe(location, "systemStart", "systemStartHandler")
@@ -1822,7 +2023,7 @@ static Integer compareVersions(String a, String b) {
 @CompileStatic
 static String freshnessStatus(String ihash, String rhash, String iver, String rver, boolean localModified) {
     if (localModified) return 'modified-locally'
-    if (!rhash) return 'unknown'
+    if (!rhash) return 'not-checked'
     if (ihash == rhash) return 'current'
     Integer cmp = compareVersions(iver, rver)
     return (cmp != null && cmp < 0) ? 'update-available' : 'changed-upstream'

@@ -51,7 +51,7 @@ t('status update-available', { assert H.freshnessStatus('aa', 'bb', '1.0', '1.1'
 t('status changed-upstream (no compare)', { assert H.freshnessStatus('aa', 'bb', null, null, false) == 'changed-upstream' })
 t('status changed-upstream (remote older)', { assert H.freshnessStatus('aa', 'bb', '2.0', '1.9', false) == 'changed-upstream' })
 t('status modified-locally wins', { assert H.freshnessStatus('aa', 'bb', '1.0', '1.1', true) == 'modified-locally' })
-t('status unknown when no remote hash', { assert H.freshnessStatus('aa', null, '1.0', null, false) == 'unknown' })
+t('not-checked when there is no remote hash', { assert H.freshnessStatus('aa', null, '1.0', null, false) == 'not-checked' })
 
 t('isLocallyModified: equal to adoption -> false', { assert H.isLocallyModified('aa', 'aa', 'bb') == false })
 t('isLocallyModified: differs from adoption but equals upstream -> false', { assert H.isLocallyModified('aa', 'bb', 'aa') == false })

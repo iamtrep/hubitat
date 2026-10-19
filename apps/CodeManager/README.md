@@ -42,15 +42,15 @@ The content hash of the installed source (normalized: BOM stripped, CRLF→LF, t
 | `Not installed` | the package declares this component as optional and it is not installed. HPM packages typically declare every driver a repository ships; this is the normal state for the ones you never chose |
 | `Private bundle` | private code, whose source is never read |
 | `No upstream` | no import URL, so there is nothing to compare against |
-| `Not checked` | no upstream fetch has happened yet |
+| `Not checked` | no drift check has compared this code with its upstream, or the code changed since the last one. Run a drift check |
 
 A package rolls up its components: `Incomplete` if a required one is missing, then `Update available`, then `Changed upstream`, then `Current`. A package whose components are all uninstalled reads `Not installed`; one with nothing comparable reads `Not checked` (`No upstream` for hub-local code) — never `Current`, which is a claim about a comparison that did happen.
 
-HPM packages are judged by the manifest `version`, as HPM does, and component hashes are refreshed only when the manifest changes. The files inside a bundle an HPM package installed are checked individually and can read `Changed upstream` on their own, but they do not drive the package's status: no HPM update would fetch them without a manifest version bump.
+HPM packages are judged by the manifest `version`, as HPM does, and component bodies are fetched only when the manifest changes. A file an HPM package declares is `Not checked`: the manifest says nothing about its content. The files inside a bundle an HPM package installed are checked individually and can read `Changed upstream` on their own, but they do not drive the package's status: no HPM update would fetch them without a manifest version bump.
 
 ### Broken sources <a id="broken-source"></a>
 
-A location that answers `404` or `410`, or fails DNS/TLS, on **three consecutive sweeps** is marked `Broken source`. `5xx`, timeouts and `429` count as unreachable and do not add a strike. This is about whether the code on *this* hub still resolves upstream, never about package quality.
+A location that answers `404` or `410`, or fails DNS/TLS, on **three consecutive drift checks of the same code** is marked `Broken source`. `5xx`, timeouts and `429` count as unreachable and do not add a strike. This is about whether the code on *this* hub still resolves upstream, never about package quality.
 
 ### Safe to remove <a id="safe-to-remove"></a>
 
@@ -58,7 +58,7 @@ A component is listed as removable when it is installed, has zero usage (no inst
 
 ### HPM observe mode <a id="hpm-observe"></a>
 
-When HPM is installed, Code Manager imports HPM's own registry (the exact package → installed-code mapping HPM keeps in its state) and shows those packages as *managed by HPM*. HPM stays the only writer for them; Code Manager reports freshness and never changes HPM's state or settings. The import is re-run on every sweep. Removing Code Manager leaves HPM untouched.
+When HPM is installed, Code Manager imports HPM's own registry (the exact package → installed-code mapping HPM keeps in its state) and shows those packages as *managed by HPM*. HPM stays the only writer for them; Code Manager reports freshness and never changes HPM's state or settings. The import is re-run at the start of a package or full drift check. Removing Code Manager leaves HPM untouched.
 
 ### Fixed values <a id="fixed-values"></a>
 
@@ -66,18 +66,17 @@ These are not settings; they are documented here and linked from the UI.
 
 | value | why |
 |---|---|
-| Freshness TTL 24 h | one upstream fetch per item per day is enough; conditional requests make unchanged items cost nothing |
-| Daily sweep at a random minute of 03:xx | off-peak, spread across hubs |
+| Drift checks only on request | there is no scheduled check, update badge or notification; a result is shown with its age and is void once the code changes |
 | 6 upstream fetches in flight | the platform allows 8 async calls per app; two stay free for the UI |
 | Broken after 3 consecutive failures | one bad day is not a dead repository |
 | 3-wide API limiter in the UI | each API call fans out to several hub calls; the hub's HTTP pool is ~20 |
 
 ## Endpoints (OAuth)
 
-`GET /ui.html` · `GET /api/inventory` · `GET /api/item/{app|driver|library}/{id}/source` · `POST /api/sweep/start` · `GET /api/jobs/{id}` · `GET /api/hpm/status` · `POST /api/hpm/import` · `GET /api/export` · `GET|POST /api/settings` · `GET /api/version/check` · `POST /api/ui/sync` · `POST /api/reinit` · `GET /api/stats`
+`GET /ui.html` · `GET /api/inventory` · `GET /api/item/{app|driver|library}/{id}/source` · `POST /api/drift/check` · `POST /api/drift/start` · `GET /api/jobs/{id}` · `GET /api/hpm/status` · `POST /api/hpm/import` · `GET /api/export` · `GET|POST /api/settings` · `GET /api/version/check` · `POST /api/ui/sync` · `POST /api/reinit` · `GET /api/stats`
 
-`GET /api/inventory` and `POST /api/sweep/start` both accept `?force=1`. On inventory it re-runs the pass regardless of the 1-hour freshness of the cached pass; on sweep it ignores the 24-hour TTL and re-checks every item — unchanged items still answer `304`.
+`POST /api/drift/check?key=app:12` checks one item and answers in the request. `POST /api/drift/start?scope=all` or `?scope=package&key=<package key>` starts a job: it brings the facts of the items in scope up to date under the fact reader's rules, then fetches upstream (unchanged items answer `304`). Items above the background size limit are not read by the job and are counted as `skippedLarge`.
 
 ## Tests
 
-`bash apps/CodeManager/tests/test-code-manager-api.sh [@hub]` (add `RUN_SLOW_TESTS=1` to run a sweep), `node apps/CodeManager/tests/test-*.js`, `groovy apps/CodeManager/tests/test-*.groovy`.
+`bash apps/CodeManager/tests/test-code-manager-api.sh [@hub]`, `node apps/CodeManager/tests/test-*.js`, `groovy apps/CodeManager/tests/test-*.groovy`.

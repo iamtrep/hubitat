@@ -3,11 +3,10 @@
 # SPDX-License-Identifier: MIT
 #
 # Code Manager API test (Mode 2). Every /api/* endpoint, structure + ground truth against /hub2/*.
-# Idempotent; no production mutation (sweep start is gated by RUN_SLOW_TESTS=1). Upper bound ~60 s.
+# Idempotent; no code is written to the hub. The Drift section runs last: it brings facts up to date and fetches upstream.
 #
 # Usage:
 #   bash apps/CodeManager/tests/test-code-manager-api.sh [@hubname] [instance-id]
-#   RUN_SLOW_TESTS=1 bash apps/CodeManager/tests/test-code-manager-api.sh   # also runs a sweep
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
@@ -84,7 +83,7 @@ def poll_job(job_id, timeout_s=120):
     t0 = time.time()
     while time.time() - t0 < timeout_s:
         j = api_get(f"jobs/{job_id}")
-        if j.get("status") in ("done", "error", "unknown"): return j
+        if j.get("status") in ("done", "error", "not-found"): return j
         time.sleep(2)
     return {"status": "timeout"}
 
@@ -94,7 +93,7 @@ s = api_get("settings")
 if "_error" in s: fail(f"settings: {s}")
 else:
     ok("GET /api/settings responds")
-    for k in ("txtEnable", "debugEnable", "labelBadge", "appVersion", "uiVersion", "sweepTtlHours"):
+    for k in ("txtEnable", "debugEnable", "labelBadge", "appVersion", "uiVersion", "driftMaxInflight"):
         (ok if k in s else fail)(f"settings has {k}")
     if s.get("appVersion") == s.get("uiVersion"): ok(f"app and UI versions in lockstep ({s.get('appVersion')})")
     else: warn(f"app v{s.get('appVersion')} vs UI v{s.get('uiVersion')}")
@@ -103,7 +102,7 @@ v = api_get("version/check")
 st = api_get("stats")
 (ok if st.get("version") else fail)("GET /api/stats has version")
 j = api_get("jobs/does-not-exist")
-(ok if j.get("status") == "unknown" else fail)("GET /api/jobs/{unknown} -> status unknown")
+(ok if j.get("status") == "not-found" else fail)("GET /api/jobs/{unknown id} -> status not-found")
 html = None
 try: html = urllib.request.urlopen(f"{api_base}/ui.html?access_token={access_token}", timeout=30).read().decode()
 except Exception as e: fail(f"GET /ui.html: {e}")
@@ -183,7 +182,7 @@ gt_drvs = fetch("/hub2/userDeviceTypes") or []
 if "_error" in inv: fail(f"inventory: {inv}")
 else:
     ok("GET /api/inventory responds")
-    for k in ("generatedAt", "hub", "packages", "components", "summary", "hpm", "sweep"):
+    for k in ("generatedAt", "hub", "packages", "components", "summary", "hpm", "drift"):
         (ok if k in inv else fail)(f"inventory has {k}")
     comps = inv.get("components", [])
     by_kind = {}
@@ -273,7 +272,7 @@ else:
     (ok if not badf else fail)(f"file components are bound exactly when the file exists ({len(badf)} wrong)")
     # status vocabulary is closed: the SPA has a label and a legend line for each of these
     VOCAB = {"current", "update-available", "changed-upstream", "modified-locally", "broken-source",
-             "missing", "not-installed", "private", "unmanaged", "unknown"}
+             "missing", "not-installed", "private", "unmanaged", "not-checked"}
     stray = sorted({c["status"] for c in comps} - VOCAB)
     (ok if not stray else fail)(f"component statuses stay in the documented vocabulary (stray: {stray})")
     PKG_VOCAB = VOCAB | {"incomplete"}
@@ -354,40 +353,6 @@ else:
         (ok if all(c.get("hubId") for c in hpm_files) else fail)("HPM file components keep hubId after a forced inventory pass")
     files = [f["name"] for f in (fetch("/hub/fileManager/json") or {}).get("files", [])]
     (ok if "cm_hpm_import.json" in files else fail)("cm_hpm_import.json written")
-# ── Task 6: sweep ─────────────────────────────────────────────────────
-section("Sweep")
-sw = inv.get("sweep", {}) if isinstance(inv, dict) else {}
-(ok if isinstance(sw, dict) else fail)("inventory.sweep is a map")
-if run_slow:
-    r = api_post("sweep/start", timeout=60)
-    (ok if r.get("jobId") else fail)(f"POST /api/sweep/start -> {r}")
-    j = poll_job(r.get("jobId", ""), timeout_s=600)
-    (ok if j.get("status") == "done" else fail)(f"sweep job terminal status: {j.get('status')} {j.get('error') or ''}")
-    res = j.get("result") or {}
-    for k in ("queued", "checked", "notModified", "changed", "broken", "unreachable", "updates"):
-        (ok if k in res else fail)(f"sweep result has {k}")
-    inv = api_get("inventory", timeout=180)
-    comps = inv.get("components", [])
-    allowed = {"current", "update-available", "changed-upstream", "modified-locally", "broken-source", "unknown", "unmanaged", "private", "missing", "not-installed"}
-    badst = [c for c in comps if c["status"] not in allowed]
-    (ok if not badst else fail)(f"every status in the allowed set ({len(badst)} bad)")
-    url_comps = [c for c in comps if c["origin"] == "url" and c.get("hubId") is not None and c.get("location") and not c.get("isPrivate")]
-    unchecked = [c for c in url_comps if not c.get("checkedAtMs") and not c.get("error")]
-    (ok if not unchecked else fail)(f"every url component was checked ({len(unchecked)} unchecked of {len(url_comps)})")
-    hpm_pkgs = [p for p in inv.get("packages", []) if p.get("origin") == "hpm"]
-    unchecked_pkgs = [p for p in hpm_pkgs if p.get("checkedAtMs") is None]
-    (ok if not unchecked_pkgs else fail)(f"every hpm package was checked at the package row ({len(unchecked_pkgs)} unchecked of {len(hpm_pkgs)})")
-    local = [c for c in comps if c["origin"] == "local"]
-    (ok if all(c["status"] in ("unmanaged", "private") for c in local) else fail)("hub-local code is never swept, so it stays unmanaged")
-    r2 = api_post("sweep/start", timeout=60)
-    j2 = poll_job(r2.get("jobId", ""), timeout_s=300)
-    (ok if (j2.get("result") or {}).get("queued", 1) == 0 else fail)("second sweep inside the TTL queues nothing")
-    st = api_get("inventory", timeout=60).get("sweep", {})
-    (ok if st.get("status") == "done" else fail)("state.sweep status done after the job")
-    files = [f["name"] for f in (fetch("/hub/fileManager/json") or {}).get("files", [])]
-    (ok if "cm_sweep.json" in files else fail)("cm_sweep.json persisted")
-else:
-    warn("RUN_SLOW_TESTS not set; sweep execution skipped")
 # ── Task 7: item source + export ──────────────────────────────────────
 section("Item source and export")
 comps = (api_get("inventory", timeout=180)).get("components", [])
@@ -405,7 +370,7 @@ if lib:
     ls = api_get(f"item/library/{lib['hubId']}/source", timeout=60)
     (ok if ls.get("source", "").lstrip().startswith("library") else fail)("library source served from /library/ajax/code")
 ex = api_get("export", timeout=120)
-for k in ("exportedAt", "registry", "documents", "sweep", "hpm"):
+for k in ("exportedAt", "registry", "documents", "drift", "hpm"):
     (ok if k in ex else fail)(f"export has {k}")
 (ok if all(d["doc"] is not None for d in ex.get("documents", [])) else fail)("every registered package has a readable document")
 files = [f["name"] for f in (fetch("/hub/fileManager/json") or {}).get("files", [])]
@@ -460,6 +425,69 @@ if one:
     (ok if api_get("stats").get("perItemReadsInRequest") == reads0 + 1 else fail)("the user-requested read counts as the one request read")
 bad = api_post("facts/read", {"kind": "app", "id": "999999999"})
 (ok if bad.get("error") else fail)("facts/read of an unknown item -> error payload")
+# ── Task 5: drift checks on request ───────────────────────────────────
+section("Drift")
+def ck(c): return f"{c['kind']}:{c['hubId']}"
+inv = api_get("inventory", timeout=300)
+(ok if isinstance(inv.get("drift", {}), dict) else fail)("inventory.drift is a map")
+reads_before = api_get("stats").get("perItemReadsInRequest")
+bad = api_post("drift/check", {"key": "app:999999999"})
+(ok if bad.get("error") else fail)("drift/check of an unknown item -> error payload")
+bad = api_post("drift/check", {"key": "pkg:whatever"})
+(ok if bad.get("error") else fail)("drift/check refuses a package key")
+bad = api_post("drift/start", {"scope": "nonsense"})
+(ok if bad.get("error") else fail)("drift/start with an unknown scope -> error payload")
+bad = api_post("drift/start", {"scope": "package", "key": "no-such-package"})
+(ok if bad.get("error") else fail)("drift/start of an unknown package -> error payload")
+comps = inv.get("components", [])
+one = next((c for c in comps if c.get("origin") == "url" and c.get("hubId") and c.get("location", "") and c["location"].startswith("https://")
+            and c.get("kind") in ("app", "driver", "library") and not c.get("isPrivate") and c.get("basis") in ("valid", "provisional")), None)
+if one:
+    r = api_post("drift/check", {"key": ck(one)}, timeout=120)
+    (ok if r.get("checked") is True and r.get("status") not in (None, "not-checked") else fail)(f"drift/check on a url-origin component -> {({k: r.get(k) for k in ('status', 'checked', 'outcome', 'error', 'httpStatus')})}")
+    after = next((c for c in api_get("inventory", timeout=180).get("components", []) if ck(c) == ck(one)), {})
+    (ok if after.get("status") == r.get("status") and after.get("checkedAtMs") else fail)(f"the inventory reports the checked status ({after.get('status')})")
+else:
+    warn("no url-origin component with valid facts and an https location; single-item drift check skipped")
+# a package-scoped job
+pk = next((p for p in inv.get("packages", []) if p.get("origin") == "url"), None)
+if pk:
+    r = api_post("drift/start", {"scope": "package", "key": pk["key"]}, timeout=60)
+    (ok if r.get("jobId") else fail)(f"POST drift/start package -> {r}")
+    j = poll_job(r.get("jobId", ""), timeout_s=600)
+    (ok if j.get("status") == "done" else fail)(f"package drift job terminal status: {j.get('status')} {j.get('error') or ''}")
+else:
+    warn("no url-origin package; package-scoped drift job skipped")
+# everything
+r = api_post("drift/start", {"scope": "all"}, timeout=60)
+(ok if r.get("jobId") else fail)(f"POST drift/start all -> {r}")
+j = poll_job(r.get("jobId", ""), timeout_s=900)
+(ok if j.get("status") == "done" else fail)(f"drift job terminal status: {j.get('status')} {j.get('error') or ''}")
+res = j.get("result") or {}
+for k in ("checked", "skippedLarge", "failed"):
+    (ok if isinstance(res.get(k), int) else fail)(f"drift result has an integer {k} ({res.get(k)})")
+info(f"drift result: {res}")
+inv = api_get("inventory", timeout=180)
+comps = inv.get("components", [])
+allowed = {"current", "update-available", "changed-upstream", "modified-locally", "broken-source", "not-checked", "unmanaged", "private", "missing", "not-installed"}
+badst = [c for c in comps if c["status"] not in allowed]
+(ok if not badst else fail)(f"every status in the allowed set, none unknown ({len(badst)} bad)")
+(ok if not any(p["status"] == "unknown" for p in inv.get("packages", [])) else fail)("no package reads unknown")
+url_comps = [c for c in comps if c["origin"] == "url" and c.get("hubId") is not None and c.get("location") and not c.get("isPrivate") and c.get("basis") in ("valid", "provisional")]
+unchecked = [c for c in url_comps if not c.get("checkedAtMs") and not c.get("error")]
+(ok if not unchecked else fail)(f"every url component with valid facts was checked ({len(unchecked)} unchecked of {len(url_comps)})")
+hpm_pkgs = [p for p in inv.get("packages", []) if p.get("origin") == "hpm"]
+unchecked_pkgs = [p for p in hpm_pkgs if p.get("checkedAtMs") is None]
+(ok if not unchecked_pkgs else fail)(f"every hpm package was checked at the package row ({len(unchecked_pkgs)} unchecked of {len(hpm_pkgs)})")
+local = [c for c in comps if c["origin"] == "local"]
+(ok if all(c["status"] in ("unmanaged", "private") for c in local) else fail)("hub-local code is never drift-checked, so it stays unmanaged")
+hpm_files = [c for c in comps if c["origin"] == "hpm" and c["kind"] == "file" and c.get("hubId")]
+(ok if all(c["status"] == "not-checked" for c in hpm_files) else fail)("an HPM file never inherits its package's status")
+(ok if (inv.get("drift") or {}).get("status") == "done" else fail)("inventory.drift status done after the job")
+files = [f["name"] for f in (fetch("/hub/fileManager/json") or {}).get("files", [])]
+(ok if "cm_drift.json" in files else fail)("cm_drift.json persisted")
+reads_after = api_get("stats").get("perItemReadsInRequest")
+(ok if reads_after - reads_before <= 1 else fail)(f"perItemReadsInRequest rose by at most 1 for the whole section ({reads_before} -> {reads_after})")
 # TASK-SECTIONS-BELOW
 
 print(f"\n{passed} passed, {failed} failed, {warnings} warnings")
