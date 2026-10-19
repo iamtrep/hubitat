@@ -56,6 +56,9 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final ConcurrentHashMap<String, Semaphore> BULK_GATES = new ConcurrentHashMap<>()    // key -> single permit
 @Field static final ConcurrentHashMap<String, AtomicInteger> BULK_FETCHES = new ConcurrentHashMap<>()
 @Field static final AtomicInteger PER_ITEM_READS_IN_REQUEST = new AtomicInteger(0)
+@Field static final AtomicInteger REQUESTS_ACTIVE = new AtomicInteger(0)   // endpoint handlers running now (set by timed())
+@Field static final long PROVISIONAL_MS = 2_000L          // a fact read this soon after its item's lastModified is provisional
+@Field static final long LARGE_SOURCE_BYTES = 524_288L    // a larger source is never read in the background
 @Field static volatile Map LIB_SNAPSHOT = [list: null, asOf: null, error: null, attemptedAt: 0L]   // last good list is kept on failure
 @Field static volatile String LIB_JOB_ID = null
 @Field static volatile boolean simulateLibFail = false
@@ -389,13 +392,23 @@ private Object bulkPart(String key) {
         return null
     }
 }
-// asOf is the age of the oldest of the six entries, so it never claims fresher data than any part holds.
+// asOf is the age of the oldest cached entry, so it never claims fresher data than any part holds; null when nothing is cached.
+// freshKeys names the entries read within one BULK_TTL_MS: a failed read leaves the last good data in place but not fresh.
 Map bulk() {
     Map out = [:]
-    ["apps", "drivers", "bundles", "appsTree", "devices", "files"].each { String k -> out[k] = (List) bulkPart(k) ?: [] }
-    long oldest = now()
-    ["apps", "drivers", "bundles", "appsTree", "devices", "files"].each { String k -> Map sl = BULK_CACHE[k]; if (sl != null && (sl.at as long) < oldest) oldest = sl.at as long }
+    List<String> keys = ["apps", "drivers", "bundles", "appsTree", "devices", "files"]
+    keys.each { String k -> out[k] = (List) bulkPart(k) ?: [] }
+    Long oldest = null
+    List fresh = []
+    long n = now()
+    keys.each { String k ->
+        Map sl = BULK_CACHE[k]
+        if (sl == null) return
+        if (oldest == null || (sl.at as long) < oldest) oldest = sl.at as long
+        if (n - (sl.at as long) < BULK_TTL_MS) fresh << k
+    }
     out.asOf = oldest
+    out.freshKeys = fresh
     return out
 }
 private void bulkInvalidate(String key) { Map sl = BULK_CACHE[key]; if (sl != null) BULK_CACHE[key] = [data: sl.data, at: 0L] }
@@ -445,7 +458,7 @@ private void flattenDevices(List nodes, Object parentId, List out) {
     for (Object n in nodes) {
         Map node = (Map) n
         Map d = (Map) (node.data ?: [:])
-        out << [id: d.id, deviceTypeId: d.deviceTypeId, parentDeviceId: parentId, parentAppId: d.parentAppId, model: stripNul(d.model as String)]
+        out << [id: d.id, name: d.name, deviceTypeId: d.deviceTypeId, parentDeviceId: parentId, parentAppId: d.parentAppId, model: stripNul(d.model as String)]
         if (node.children instanceof List) flattenDevices((List) node.children, d.id, out)
     }
 }
@@ -527,14 +540,11 @@ private void scheduleLibraryRefreshIfStale() {
     boolean stale = snap.asOf == null || (now() - (snap.asOf as long)) > LIB_TTL_MS
     if (stale && (now() - (snap.attemptedAt as long)) > LIB_RETRY_MS) startLibraryRefresh()
 }
-// Oldest timestamp among the cached bulk entries the inventory reads (now() when none is cached).
-long bulkAsOf() {
-    long oldest = now()
-    ["apps", "drivers", "bundles", "files"].each { String k -> Map sl = BULK_CACHE[k]; if (sl != null && (sl.at as long) < oldest) oldest = sl.at as long }
-    return oldest
-}
-// Per-item: importUrl + source + private flag. One call per item, only for new/changed items.
-Map fetchItemDetail(String kind, String id) {
+// Per-item: importUrl + source + private flag. One call per item. A call made while an endpoint handler runs counts in
+// perItemReadsInRequest, which stays 0 except for the one item the user acted on (DESIGN.md 5.1). The background fact
+// reader passes background = true so a request running beside it is not blamed for its reads.
+Map fetchItemDetail(String kind, String id, boolean background = false) {
+    if (!background && REQUESTS_ACTIVE.get() > 0) PER_ITEM_READS_IN_REQUEST.incrementAndGet()
     String path = kind == "library" ? "/library/ajax/code" : "/${kind}/list/single/data/${id}"
     Object resp = kind == "library" ? hubRequest(path, "library ${id}", "json", 30, [id: id]) : hubRequest(path, "${kind} ${id}", "json", 30)
     Map d = (resp instanceof List) ? ((resp as List) ? (Map) (resp as List)[0] : null) : (resp instanceof Map && !((Map) resp).error ? (Map) resp : null)
@@ -570,8 +580,12 @@ static String ckey(String kind, Object id) { return kind + ":" + id }
 
 String pkgFileName(String key) { return PKG_FILE_PREFIX + digest16(key) + ".json" }
 
-// null (not []) when the listing itself failed, so callers can tell "no files" from "don't know".
-List listHubFiles() { return (List) bulkPart("files") }
+// null (not []) when there is no usable listing: the read failed, or the last good one is older than one bulk window.
+List listHubFiles() {
+    List l = (List) bulkPart("files")
+    Map sl = BULK_CACHE["files"]
+    return (l != null && sl != null && (now() - (sl.at as long)) < BULK_TTL_MS) ? l : null
+}
 List listCmFiles() { return (listHubFiles() ?: []).findAll { Map f -> (f.name as String)?.startsWith("cm_") } }
 void writeCmFile(String name, String text) {
     bulkInvalidate("files")
@@ -603,27 +617,88 @@ static Map degenerateManifest(String origin, String name, List<Map> comps, Strin
     return m
 }
 
-// One inventory pass: bulk lists, per-item detail for new/changed items, registry + documents update.
-Map runInventoryPass() {
+// ===== Per-item facts (DESIGN.md 3.1): what a stored fact is based on =====
+
+// 'unread' (never read), 'stale' (the item changed since the read), 'provisional' (read within PROVISIONAL_MS of
+// the item's lastModified, so a second save in the same second could hide behind it; re-read once), else 'valid'.
+@CompileStatic
+static String factBasis(Map c, long lmNow) {
+    if (c == null || c.flm == null) return 'unread'
+    long flm = (c.flm as Long).longValue()
+    if (flm != lmNow) return 'stale'
+    if (c.frd != null && ((c.frd as Long).longValue() - flm) < PROVISIONAL_MS) return 'provisional'
+    return 'valid'
+}
+
+// Origin of a component outside its package's own claim. url versus local needs the item's importUrl, a per-item fact,
+// so an item whose facts are not usable is 'unread' and never guessed as local.
+@CompileStatic
+static String classifyOrigin(Map c, boolean inHpm, boolean inBundle, String basis) {
+    if (inHpm) return 'hpm'
+    if (inBundle) return 'bundle'
+    if (basis == 'unread' || basis == 'stale') return 'unread'
+    return c?.loc ? 'url' : 'local'
+}
+
+// Parents of each type's instances, from the bulk app tree and device list. An app type maps to the app instances
+// that parent one of its instances; a driver type maps to the parent devices of its devices. A device created by an
+// app has no recorded parent app in the device list, so it has no entry.
+@CompileStatic
+static Map<String, List<Map>> childOfIndex(List appsTree, List devices) {
+    Map<String, List<Map>> out = [:]
+    Set<String> seenKeys = new HashSet<String>()
+    walkAppTree(appsTree, null, out, seenKeys)
+    Map<String, Object> nameById = [:]
+    for (Object o in (devices ?: [])) { Map d = (Map) o; nameById[d.id.toString()] = d.name }
+    for (Object o in (devices ?: [])) {
+        Map d = (Map) o
+        if (d.parentDeviceId == null || d.deviceTypeId == null) continue
+        String ck = ckey('driver', d.deviceTypeId)
+        String dedupe = ck + '<' + d.parentDeviceId
+        if (!seenKeys.add(dedupe)) continue
+        List<Map> l = out[ck]; if (l == null) { l = []; out[ck] = l }
+        l << ([kind: 'device', id: d.parentDeviceId, name: nameById[d.parentDeviceId.toString()]] as Map)
+    }
+    return out
+}
+@CompileStatic
+static void walkAppTree(List nodes, Map parent, Map<String, List<Map>> out, Set<String> seenKeys) {
+    for (Object o in (nodes ?: [])) {
+        Map node = (Map) o
+        Map d = (Map) (node.data ?: [:])
+        if (parent != null && d.appTypeId != null) {
+            String ck = ckey('app', d.appTypeId)
+            if (seenKeys.add(ck + '<' + parent.id)) {
+                List<Map> l = out[ck]; if (l == null) { l = []; out[ck] = l }
+                l << ([kind: 'app', id: parent.id, name: parent.name] as Map)
+            }
+        }
+        if (node.children instanceof List) walkAppTree((List) node.children, [id: d.id, name: d.name] as Map, out, seenKeys)
+    }
+}
+
+// Registry reconciliation from bulk reads only (DESIGN.md 3.2): binds and prunes components and packages and writes
+// the cm_pkg_ documents. It never reads an item's source; per-item facts (importUrl, hashes, version) are kept as the
+// fact reader left them and are shown only while factBasis() says they still describe the item.
+Map reconcileRegistry(Map bulk) {
     long t0 = now()
-    // Libraries come from the last good library read; only the very first pass (nothing read yet) reads them inline.
-    if (libraries().list == null) readLibrariesNow()
-    List apps = fetchUserAppTypes(), drvs = fetchUserDriverTypes(), libs = fetchUserLibraries(), bundles = fetchBundles()
-    // One File Manager listing serves both the file-component existence check below and the stale
-    // document prune at the end of the pass; null means the listing failed and neither should act.
-    List hubFiles = listHubFiles()
+    List apps = (bulk.apps ?: []) as List, drvs = (bulk.drivers ?: []) as List, bundles = (bulk.bundles ?: []) as List
+    List fresh = (bulk.freshKeys ?: []) as List
+    // The library list is read at a time. Null means not read yet: libraries are neither bound nor pruned.
+    List libs = (List) libraries().list
+    // Null means the listing is missing or older than one bulk window: neither the file-existence check nor the stale-document prune acts on it.
+    List hubFiles = fresh.contains('files') ? ((bulk.files ?: []) as List) : null
     Set<String> fmNames = hubFiles == null ? null : (hubFiles.collect { Map f -> f.name as String } as Set)
     Map pkgs = (state.pkgs ?: [:]) as Map
-    // Fail closed: hubRequest's bulk fetchers fail-soft to [] on a fetch error, indistinguishable
-    // from a genuinely empty list. If the registry already holds a component of some kind and this
-    // pass's bulk list for that kind came back empty, treat it as a suspected transient failure and
-    // abort before touching the registry or any document — never let one bad fetch prune everything.
+    // Fail closed: a failed bulk read is indistinguishable from an empty list. If the registry already holds a
+    // component of some kind and this pass's list for that kind came back empty, abort before touching the registry.
     Set<String> kindsPresent = pkgs.values().collectMany { Map p -> (p.c as List).collect { Map c -> c.k as String } } as Set
-    Map<String, List> bulkByKind = [app: apps, driver: drvs, library: libs, bundle: bundles]
+    Map<String, List> bulkByKind = [app: apps, driver: drvs, bundle: bundles]
+    if (libs != null) bulkByKind.library = libs
     for (String kind in ['app', 'driver', 'library', 'bundle']) {
-        if (kindsPresent.contains(kind) && (bulkByKind[kind] as List).isEmpty()) {
+        if (bulkByKind.containsKey(kind) && kindsPresent.contains(kind) && (bulkByKind[kind] as List).isEmpty()) {
             logWarn "inventory: aborting pass — ${kind} list came back empty but the registry has ${kind} components (suspected transient fetch failure)"
-            return [items: 0, fetched: 0, changed: 0, ms: now() - t0, aborted: "empty ${kind} list" as String]
+            return [items: 0, ms: now() - t0, aborted: "empty ${kind} list" as String]
         }
     }
     Map<String, String> memberOf = [:]
@@ -632,9 +707,8 @@ Map runInventoryPass() {
         b.deviceTypeIds.each { memberOf[ckey('driver', it)] = b.id }
         b.libraryIds.each { memberOf[ckey('library', it)] = b.id }
     }
-    // index existing components by kind:id so bindings (ihash, iver, loc, ah) survive a pass. Origin-url
-    // app/driver components don't store loc (derivable from the package key, dropped at storage below),
-    // so reconstruct it here from the key before it's carried into this pass's comp map.
+    // Index existing components by kind:id so bindings and facts survive a pass. Origin-url app/driver components
+    // don't store loc (derivable from the package key), so reconstruct it from the key.
     Map<String, Map> prev = [:]
     pkgs.each { String key, Map p ->
         (p.c as List).each { Map c ->
@@ -643,40 +717,30 @@ Map runInventoryPass() {
         }
     }
     Map<String, Map> seen = [:]
-    int fetched = 0, changed = 0
-    List<List> all = [['app', apps], ['driver', drvs], ['library', libs]]
+    List<List> all = [['app', apps], ['driver', drvs]]
+    if (libs != null) all << ['library', libs]
     for (List pair in all) {
         String kind = pair[0] as String
         for (Map t in (pair[1] as List)) {
             String ck = ckey(kind, t.id)
             Map old = prev[ck]
             long lm = isoToMs(t.lastModified as String)
-            // ih/ah are stored as 16-hex-char sha256 prefixes (state-size budget, DESIGN.md §2.4); a
-            // pre-existing full-length value is truncated here too, so the sweep (Task 6) and the
-            // item-source endpoint (Task 7) can rely on always comparing 16-char prefixes.
+            // A registry written before facts carried their own read version holds ih for an item read at its stored lm.
+            Long flm = old?.flm != null ? (old.flm as Long) : (old?.ih != null ? (old.lm as Long) : null)
             Map comp = [k: kind, id: t.id, ns: t.namespace, nm: t.name, u: t.usedByCount, lm: lm, bm: memberOf[ck],
-                        loc: old?.loc, ih: hashPrefix(old?.ih as String), iv: old?.iv, ivs: old?.ivs, pv: old?.pv ?: (t.isPrivate == true), ah: hashPrefix(old?.ah as String)]
-            if (old == null || (old.lm as Long ?: 0L) != lm || old.ih == null) {
-                PER_ITEM_READS_IN_REQUEST.incrementAndGet(); Map d = fetchItemDetail(kind, t.id as String); fetched++
-                if (d != null) {
-                    Map pv = parseVersionLiteral(d.source as String)
-                    comp.loc = d.importUrl; comp.ih = hashPrefix(sourceHash(d.source as String)); comp.iv = (kind == 'library' && t.version) ? t.version : pv.ver; comp.ivs = pv.src; comp.pv = d.isPrivate
-                    if (old != null && hashPrefix(old.ih as String) != comp.ih) changed++
-                }
-            }
-            if (comp.ah == null) comp.ah = comp.ih   // adoption hash: set once (new component, or migrating from a registry with none), never touched again
+                        loc: old?.loc, ih: hashPrefix(old?.ih as String), iv: old?.iv, ivs: old?.ivs, pv: old?.pv ?: (t.isPrivate == true), ah: hashPrefix(old?.ah as String),
+                        flm: flm, frd: old?.frd, sz: old?.sz, ch: old?.ch, ff: old?.ff, fnext: old?.fnext, fe: old?.fe]
+            if (comp.ah == null) comp.ah = comp.ih   // adoption hash: set once, never touched again
             seen[ck] = compact(comp)
         }
     }
-    // Rebuild packages: keep HPM-origin packages (Task 5 owns them), regroup everything else.
+    // No library list yet: keep the registry's library components exactly as they are.
+    if (libs == null) prev.each { String ck, Map c -> if (c.k == 'library') seen[ck] = compact(c.findAll { k, v -> k != '_key' } as Map) }
+    // Rebuild packages: keep HPM-origin packages, regroup everything else.
     Map next = [:]
-    // file/bundle components of an HPM package have no counterpart in `seen` (it holds only
-    // app/driver/library, DESIGN.md 2.1) — rebind only kinds this pass enumerates, or a forced
-    // pass wipes every file's hubId to null even though nothing about it changed.
+    // file/bundle components of an HPM package have no counterpart in `seen` — rebind only kinds this pass enumerates.
     Set rebindableKinds = ['app', 'driver', 'library'] as Set
-    // An HPM manifest names a bundle by its download location, not by the hub's bundle name (the two
-    // differ in practice), so bundles bind on sourceUrl and files on their File Manager name. Without
-    // this both read as missing forever and the installed bundle also stands as its own package.
+    // An HPM manifest names a bundle by its download location, not by the hub's bundle name, so bundles bind on sourceUrl and files on their File Manager name.
     Map<String, Map> bundleByUrl = [:]
     bundles.each { Map b -> if (b.sourceUrl) bundleByUrl[b.sourceUrl as String] = b }
     pkgs.each { String key, Map p ->
@@ -689,17 +753,14 @@ Map runInventoryPass() {
         }])
     }
     Set bound = next.values().collectMany { Map p -> (p.c as List).findAll { Map c -> c.id }.collect { Map c -> ckey(c.k as String, c.id) } } as Set
-    // A bundle an HPM package installed belongs to that package: its members are folded in and no
-    // separate bundle: package is built for it, so one installed bundle is never two packages at once.
+    // A bundle an HPM package installed belongs to that package: its members are folded in.
     Map<String, String> bundleOwner = [:]
     next.each { String k, Map p -> if (p.o == 'hpm') (p.c as List).each { Map c -> if (c.k == 'bundle' && c.id) bundleOwner[c.id as String] = k } }
     bundles.each { Map b ->
         String key = "bundle:${b.id}"
-        // The bundle itself is a component too (DESIGN.md §2.1 kind: bundle), distinct from its members.
         Map bundleComp = compact([k: 'bundle', id: b.id, ns: b.namespace, nm: b.name, u: (b.appTypeIds.size() + b.deviceTypeIds.size() + b.libraryIds.size()),
                                    lm: 0L, bm: null, loc: b.sourceUrl, ih: null, iv: null, ivs: null, pv: b.isPrivate == true, ah: null])
-        // classification priority is hpm > bundle (DESIGN.md §3): a member id already claimed by an
-        // HPM package (already in `bound`, added above) is not also added under its bundle's package.
+        // classification priority is hpm > bundle: a member id already claimed by an HPM package is not also added under its bundle.
         List members = (b.appTypeIds.findAll { !bound.contains(ckey('app', it)) }.collect { seen[ckey('app', it)] } +
                         b.deviceTypeIds.findAll { !bound.contains(ckey('driver', it)) }.collect { seen[ckey('driver', it)] } +
                         b.libraryIds.findAll { !bound.contains(ckey('library', it)) }.collect { seen[ckey('library', it)] }).findAll { it }
@@ -711,40 +772,35 @@ Map runInventoryPass() {
         Map p = pkgs[key] as Map
         next[key] = compact([o: 'bundle', n: b.name, v: null, g: p?.g ?: 1, url: b.sourceUrl, pv: b.isPrivate, c: comps])
     }
-    // Regroup every non-bound component fresh from `seen` each pass — never carry an old package's
-    // component list forward, so an item deleted from the hub (and so absent from `seen`) doesn't
-    // linger as a ghost member; only `g` (and, via `prev` above, each component's `ah`) survives.
+    // Regroup every non-bound component fresh from `seen` each pass, so an item deleted from the hub doesn't linger.
+    // loc groups a component under url: only while its facts are valid; without usable facts it stands as 'unread'.
     Map grouped = [:]
     seen.each { String ck, Map c ->
         if (bound.contains(ck)) return
-        String key = c.loc ? "url:${c.loc}" : "local:${c.k}/${c.ns}/${c.nm}"
-        // origin url + app/driver: loc equals the key minus its "url:" prefix, so don't store it twice;
-        // libraries keep loc stored (their key isn't guaranteed to carry it verbatim — see ruling).
-        Map storedC = (c.loc && c.k != 'library') ? c.findAll { String k, v -> k != 'loc' } : c
+        String origin = classifyOrigin(c, false, false, factBasis(c, c.lm as long))
+        String key = origin == 'url' ? "url:${c.loc}" : (origin == 'local' ? "local:${c.k}/${c.ns}/${c.nm}" : "unread:${c.k}/${c.ns}/${c.nm}")
+        // origin url + app/driver: loc equals the key minus its "url:" prefix, so don't store it twice.
+        Map storedC = (origin == 'url' && c.k != 'library') ? c.findAll { String k, v -> k != 'loc' } : c
         ((grouped[key] ?: (grouped[key] = [])) as List) << storedC
     }
     grouped.each { String key, List comps ->
         Map oldP = pkgs[key] as Map
-        next[key] = compact([o: key.startsWith('url:') ? 'url' : 'local', n: (comps[0] as Map).nm, v: null, g: oldP?.g ?: 1, c: comps])
+        next[key] = compact([o: key.substring(0, key.indexOf(':')), n: (comps[0] as Map).nm, v: null, g: oldP?.g ?: 1, c: comps])
     }
-    // Documents: write for new packages or when the component set changed (compare by kind:id set)
+    // Documents: write for new packages or when the component set changed (compare by kind:id set). An unread package has no manifest yet.
     Map docsBefore = (hubFiles ?: []).findAll { Map f -> (f.name as String)?.startsWith("cm_") }.collectEntries { Map f -> [(f.name as String): f] }
     next.each { String key, Map p ->
-        if (p.o == 'hpm') return                               // Task 5 writes HPM documents
+        if (p.o == 'hpm' || p.o == 'unread') return
         Set ids = (p.c as List).collect { Map c -> ckey(c.k as String, c.id) } as Set
         Set oldIds = ((pkgs[key] as Map)?.c as List ?: []).collect { Map c -> ckey(c.k as String, c.id) } as Set
-        // hubFiles null = the listing failed: don't read "document absent" from a listing we don't have,
-        // or every package's document gets rewritten (and its generation bumped) on one bad fetch.
+        // hubFiles null = no usable listing: don't read "document absent" from it.
         if (ids != oldIds || (hubFiles != null && !docsBefore.containsKey(pkgFileName(key)))) {
             p.g = ((p.g ?: 0) as int) + 1
             writePkgDoc(key, p, degenerateManifest(p.o as String, p.n as String, p.c as List, p.url as String))
         }
     }
-    // A url:/local: package with no components left this pass (its item(s) were deleted from the hub)
-    // is simply absent from `next` — its manifest document is now orphaned; remove it from File Manager.
-    // Own files only (cm_pkg_ prefix), guarded and logged — never touches a document this pass didn't write.
-    // Delete only when the key was in the previous registry: an unregistered cm_pkg_ document is
-    // foreign (DESIGN.md §2.2) and left alone, never assumed to be this app's own orphan (C2).
+    // A package with no components left this pass has an orphaned manifest document; remove it. Own files only
+    // (cm_pkg_ prefix), and only for a key that was in the previous registry (an unregistered document is foreign).
     docsBefore.keySet().findAll { String name -> name.startsWith(PKG_FILE_PREFIX) }.each { String name ->
         try {
             String text = readCmFile(name); if (!text) return
@@ -757,9 +813,9 @@ Map runInventoryPass() {
         } catch (Exception e) { logError "prune stale manifest ${name}: ${e.message}" }
     }
     if (next != pkgs) state.pkgs = next
-    state.lastInventory = [at: now(), items: seen.size(), fetched: fetched, changed: changed]
-    logInfo "inventory: ${seen.size()} items, ${fetched} fetched, ${changed} changed, ${bundles.size()} bundles, ${next.size()} packages in ${now() - t0}ms"
-    return [items: seen.size(), fetched: fetched, changed: changed, ms: now() - t0]
+    state.lastInventory = [at: now(), asOf: bulk.asOf, items: seen.size()]
+    logInfo "inventory: ${seen.size()} items, ${bundles.size()} bundles, ${next.size()} packages in ${now() - t0}ms"
+    return [items: seen.size(), ms: now() - t0]
 }
 
 // ===== HPM import (DESIGN.md §8.1–8.2, HPM-PARITY.md §2) =====
@@ -799,7 +855,7 @@ Map apiHpmImport() {
     Map h = findHpm()
     if (h == null) return jsonResponse([success: false, error: "HPM status unavailable"])
     Map r = importHpm(h)
-    if (r) runInventoryPass()                       // re-binds the imported packages' bundles/files to the hub
+    if (r) reconcileNow()                                  // re-binds the imported packages' bundles/files to the hub
     return jsonResponse(r ? [success: true] + r : [success: false, error: "HPM not installed"])
 }
 
@@ -836,7 +892,8 @@ Map importHpm(Map h = null) {
                 if (heId && !live) dangling++
                 Map prev = live ? (prevByCk[ckey(kind, heId)] as Map) : null
                 Map c = compact([k: kind, id: live ? heId : null, ns: item.namespace, nm: item.name, loc: item.location, mid: item.id, req: item.required != false && item.required != "false",
-                         beta: item.beta == true, ih: prev?.ih, ah: prev?.ah, iv: prev?.iv ?: item.version, ivs: prev?.ivs, lm: prev?.lm, u: prev?.u ?: 0, pv: prev?.pv == true, bm: prev?.bm])
+                         beta: item.beta == true, ih: prev?.ih, ah: prev?.ah, iv: prev?.iv ?: item.version, ivs: prev?.ivs, lm: prev?.lm, u: prev?.u ?: 0, pv: prev?.pv == true, bm: prev?.bm,
+                         flm: prev?.flm, frd: prev?.frd, sz: prev?.sz, ch: prev?.ch, ff: prev?.ff, fnext: prev?.fnext, fe: prev?.fe])
                 if (live) { hpmBound << ckey(kind, heId); components++ }
                 comps << c
             }
@@ -869,7 +926,7 @@ Map importHpm(Map h = null) {
 void initialHpmImport() {
     Map h = findHpm()
     if (h == null) return                       // fetch failed; the daily sweep retries
-    if (h.absent == true) { state.hpm = [mode: 'absent'] } else { importHpm(h); runInventoryPass() }
+    if (h.absent == true) { state.hpm = [mode: 'absent'] } else { importHpm(h); reconcileNow() }
 }
 
 // HPM enum-multiple settings are stored as a JSON array string or a comma list, depending on firmware.
@@ -883,18 +940,6 @@ static List parseHpmListSetting(Map setting) {
     return s ? s.split(',\\s*').toList() : []
 }
 
-// usedBy names are too costly to keep in state.pkgs (2.4's ~60 KB budget) — re-read from the bulk
-// lists on demand, cached for the SPA's rapid-fire drill-down calls (short TTL, not the item's own registry binding).
-Map usedByIndex() {
-    return cachedFetch("usedByIndex", 60_000L) {
-        Map idx = [:]
-        fetchUserAppTypes().each { Map a -> idx[ckey('app', a.id)] = a.usedBy }
-        fetchUserDriverTypes().each { Map d -> idx[ckey('driver', d.id)] = d.usedBy }
-        fetchUserLibraries().each { Map l -> idx[ckey('library', l.id)] = l.usedBy }
-        idx
-    } as Map
-}
-
 // Single source of truth for a component's status; shared by buildInventoryPayload and finalizeSweep (I6).
 // p = package map, c = component map, s = the component's own sweep entry (null or [:] if none — both
 // tolerated), pe = the package row's sweep entry ([:] if none — HPM manifest fetch result, or empty
@@ -905,6 +950,9 @@ static String componentStatus(Map p, Map c, Map s, Map pe) {
     // normal state, not a defect — only a required one missing is.
     if (c.id == null) return (c.req == false) ? 'not-installed' : 'missing'
     if (c.pv) return 'private'
+    // A component whose facts are not usable (never read, or changed since the read) is not judged against an upstream.
+    // HPM components are judged by the package manifest, which needs no per-item fact.
+    if (p.o != 'hpm' && (p.o == 'unread' || c.basis == 'unread' || c.basis == 'stale')) return 'unknown'
     Map ss = s ?: [:]
     String status
     if (p.o == 'local') status = 'unmanaged'                  // no import URL: there is nothing upstream to compare against
@@ -943,22 +991,40 @@ static String packageStatus(String origin, List statuses, Map pe) {
 }
 
 // GET /api/inventory — aggregator: registry + sweep cache (Task 6) + HPM mode (Task 5). No sources, no secrets.
-Map buildInventoryPayload() {
+Map buildInventoryPayload(Map bulk) {
     Map pkgs = (state.pkgs ?: [:]) as Map
     Map sweep = readSweepCache()                                  // Task 6; returns [:] until then
-    Map usedBy = usedByIndex()
+    // Usage and parent links come from the same bulk reads the registry was reconciled from; nothing here reads the hub.
+    Map usedBy = [:]
+    (bulk.apps as List ?: []).each { Map a -> usedBy[ckey('app', a.id)] = a.usedBy }
+    (bulk.drivers as List ?: []).each { Map d -> usedBy[ckey('driver', d.id)] = d.usedBy }
+    (libraries().list as List ?: []).each { Map l -> usedBy[ckey('library', l.id)] = l.usedBy }
+    Map<String, List<Map>> childOf = childOfIndex(bulk.appsTree as List, bulk.devices as List)
+    Long invAsOf = (bulk.asOf ?: (state.lastInventory?.asOf ?: (state.lastInventory?.at ?: 0L))) as Long   // never newer than the data behind the payload
+    Map factCounts = [total: 0, valid: 0, stale: 0, unread: 0, failing: 0, large: 0]
     List comps = []
     List packages = pkgs.collect { String key, Map p ->
         Map pe = (sweep["pkg:" + key] ?: [:]) as Map                       // package-row sweep entry (Task 6)
         List pc = (p.c as List).collect { Map c ->
             Map s = (sweep[ckey(c.k as String, c.id)] ?: [:]) as Map
-            String status = componentStatus(p, c, s, pe)
-            // origin-url app/driver components don't store loc — reconstruct it from the key (see runInventoryPass)
-            String location = c.loc ?: (p.o == 'url' ? key.substring(4) : null)
+            // A per-item fact is shown only while it still describes the item (DESIGN.md 3.1). Bundles and files carry none.
+            boolean isItem = c.k in ['app', 'driver', 'library']
+            String basis = (c.id != null && isItem) ? factBasis(c, (c.lm ?: 0L) as long) : null
+            boolean usable = basis == null || basis == 'valid' || basis == 'provisional'
+            if (basis != null) {
+                factCounts.total++
+                if (usable) factCounts.valid++ else factCounts[basis]++
+                if ((c.ff ?: 0) > 0) factCounts.failing++
+                if ((c.sz ?: 0) > LARGE_SOURCE_BYTES) factCounts.large++
+            }
+            String status = componentStatus(p, basis ? c + [basis: basis] : c, s, pe)
+            // origin-url app/driver components don't store loc — reconstruct it from the key (see reconcileRegistry)
+            String location = usable ? (c.loc ?: (p.o == 'url' ? key.substring(4) : null)) : null
             Map row = [key: key, kind: c.k, hubId: c.id, namespace: c.ns, name: c.nm, origin: p.o, location: location, managedBy: p.o == 'hpm' ? (state.hpm?.mode == 'manage' ? 'cm' : 'hpm') : 'cm',
-                       status: status, ihash: c.ih, ahash: c.ah, iver: c.iv, iverSrc: c.ivs, rhash: s.rhash, rver: s.rver, checkedAtMs: s.checkedAt, changedAtMs: s.changedAt,
+                       status: status, ihash: usable ? c.ih : null, ahash: c.ah, iver: usable ? c.iv : null, iverSrc: usable ? c.ivs : null, rhash: s.rhash, rver: s.rver, checkedAtMs: s.checkedAt, changedAtMs: s.changedAt,
                        httpStatus: s.httpStatus, failCount: s.failCount ?: 0, error: s.error, lastModifiedMs: c.lm, usedByCount: c.u ?: 0, required: c.req != false,
-                       usedBy: usedBy[ckey(c.k as String, c.id)] ?: [], bundleOf: c.bm, isPrivate: c.pv == true]
+                       usedBy: usedBy[ckey(c.k as String, c.id)] ?: [], bundleOf: c.bm, isPrivate: c.pv == true,
+                       basis: basis, factsReadAtMs: c.frd, factError: c.fe, childOf: (c.id != null ? childOf[ckey(c.k as String, c.id)] : null) ?: [], asOf: invAsOf]
             comps << row
             return row
         }
@@ -967,7 +1033,7 @@ Map buildInventoryPayload() {
         // bump is real (the component says changed-upstream) but no HPM update would fetch it.
         List rollup = (p.o == 'hpm' ? pc.findAll { !it.bundleOf } : pc).collect { it.status }
         String pkgStatus = packageStatus(p.o as String, rollup, pe)
-        [key: key, origin: p.o, name: p.n, version: p.v, gen: p.g, doc: pkgFileName(key), isPrivate: p.pv == true, url: p.url, componentCount: pc.size(),
+        [key: key, origin: p.o, name: p.n, version: p.v, gen: p.g, doc: p.o == 'unread' ? null : pkgFileName(key), isPrivate: p.pv == true, url: p.url, componentCount: pc.size(),
          kind: pc.size() == 1 ? (pc[0] as Map).kind : null,
          checkedAtMs: pe.checkedAt, rver: pe.rver, broken: pe.broken == true, error: pe.error, httpStatus: pe.httpStatus,
          status: pkgStatus]
@@ -976,15 +1042,21 @@ Map buildInventoryPayload() {
     Map summary = [packages: packages.size(), components: comps.size(),
                    byOrigin: comps.countBy { it.origin }, byStatus: comps.countBy { it.status }, byKind: comps.countBy { it.kind },
                    unused: comps.count { (it.usedByCount ?: 0) == 0 && it.kind != 'bundle' }]
-    return [generatedAt: now(), asOf: bulkAsOf(), libraries: [asOf: libraries().asOf, error: libraries().error], appVersion: CODE_VERSION, hub: hub, packages: packages, components: comps, summary: summary,
+    return [generatedAt: now(), asOf: invAsOf, libraries: [asOf: libraries().asOf, error: libraries().error], facts: factCounts, appVersion: CODE_VERSION, hub: hub, packages: packages, components: comps, summary: summary,
             hpm: (state.hpm ?: [mode: 'absent']), sweep: (state.sweep ?: [:]), lastInventory: (state.lastInventory ?: [:])]
+}
+// Reconciliation is idempotent but writes documents and bumps generations, so concurrent callers take turns.
+Map reconcileNow(Map b = null) {
+    Semaphore gate = gateFor("reconcile")
+    if (!gate.tryAcquire(BULK_WAIT_MS, TimeUnit.MILLISECONDS)) return [skipped: true]
+    try { return reconcileRegistry(b ?: bulk()) } finally { gate.release() }
 }
 Map apiInventory() {
     return timed("inventory") {
-        boolean force = params.force == "1"
-        if (force || !state.pkgs || now() - ((state.lastInventory?.at ?: 0) as long) > 3600_000L) runInventoryPass()
+        Map b = bulk()
+        reconcileNow(b)
         scheduleLibraryRefreshIfStale()
-        buildInventoryPayload()
+        buildInventoryPayload(b)
     }
 }
 // ===== Sweep (DESIGN.md §5.2, §7): bounded async freshness check over every upstream location =====
@@ -1020,7 +1092,7 @@ Map apiSweepStart() {
 }
 
 // Effective source location for a component: url-origin app/driver components don't store loc
-// redundantly in state.pkgs (runInventoryPass strips it to derive from the package key on read);
+// redundantly in state.pkgs (reconcileRegistry strips it to derive from the package key on read);
 // reconstruct it the same way buildInventoryPayload does. Library/HPM/bundle components always
 // carry loc directly on the stored component.
 private String componentLoc(String key, Map p, Map c) { return (c.loc as String) ?: (p.o == 'url' ? key.substring(4) : null) }
@@ -1034,14 +1106,14 @@ Map startSweep(boolean force = false) {
     // inventory pass is what binds their bundle/file components to the hub and folds bundle members in.
     Map hpmProbe = findHpm()
     if (hpmProbe != null && hpmProbe.absent != true) importHpm(hpmProbe)
-    runInventoryPass()
+    reconcileNow()
     Map pkgs = (state.pkgs ?: [:]) as Map
     List<String> queue = []
     long cutoff = force ? Long.MAX_VALUE : now() - SWEEP_TTL_MS
     pkgs.each { String key, Map p ->
         if (p.o == 'hpm') { Map e = SWEEP["pkg:" + key]; if (!e || ((e.checkedAt ?: 0) as long) < cutoff) queue << ("pkg:" + key) }
         (p.c as List).each { Map c ->
-            if (!c.id || c.pv || c.k == 'bundle' || c.k == 'file' || p.o == 'local') return
+            if (!c.id || c.pv || c.k == 'bundle' || c.k == 'file' || p.o == 'local' || p.o == 'unread') return
             // HPM component hashes refresh only when the manifest changed (see applyManifestResult) —
             // except members of a bundle folded into an HPM package, which carry their own upstream
             // file location and were swept as bundle components before the fold.
@@ -1265,7 +1337,9 @@ void cacheClear() { TTL_CACHE.clear() }
 
 private Map timed(String name, Closure<Map> body) {
     long start = now()
-    Map data = body.call()
+    REQUESTS_ACTIVE.incrementAndGet()
+    Map data
+    try { data = body.call() } finally { REQUESTS_ACTIVE.decrementAndGet() }
     long elapsed = now() - start
     API_TIMINGS[name] = elapsed
     logDebug "api ${name} completed in ${elapsed}ms"

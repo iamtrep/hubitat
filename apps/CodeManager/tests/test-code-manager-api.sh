@@ -197,13 +197,44 @@ else:
         if c.get("hubId"): bound_by_kind[c.get("kind")] = bound_by_kind.get(c.get("kind"), 0) + 1
     for kind, n in {"app": len(gt_apps), "driver": len(gt_drvs), "bundle": len(gt_bundles)}.items():
         (ok if bound_by_kind.get(kind, 0) == n else fail)(f"{kind} bound count {bound_by_kind.get(kind,0)} == hub {n}")
-    (ok if by_kind.get("library", 0) == len(gt_libs) else fail)(f"library count {by_kind.get('library',0)} == hub {len(gt_libs)}")
-    required = {"key", "kind", "hubId", "namespace", "name", "origin", "status", "usedByCount", "lastModifiedMs", "ihash", "required"}
+    if (inv.get("libraries") or {}).get("asOf") is not None:
+        (ok if by_kind.get("library", 0) == len(gt_libs) else fail)(f"library count {by_kind.get('library',0)} == hub {len(gt_libs)}")
+    else:
+        warn("library list not read yet; library count not compared")
+    required = {"key", "kind", "hubId", "namespace", "name", "origin", "status", "usedByCount", "lastModifiedMs", "ihash", "required", "basis", "factsReadAtMs", "childOf", "asOf"}
     bad = [c for c in comps if not required.issubset(c.keys())]
     (ok if not bad else fail)(f"every component carries {sorted(required)} ({len(bad)} missing)")
-    # importUrl presence must match the hub for apps and drivers (single/data is the only source of importUrl)
-    sample_apps = [a for a in gt_apps][:5]
-    sample_drvs = [d for d in gt_drvs][:5]
+    # facts carry their basis: only valid or provisional facts are shown; an unusable fact never reads as a location or a hash
+    BASES = {"valid", "provisional", "stale", "unread"}
+    items = [c for c in comps if c["kind"] in ("app", "driver", "library") and c.get("hubId") is not None]
+    badb = [c for c in items if c.get("basis") not in BASES]
+    (ok if not badb else fail)(f"every installed app/driver/library has a basis ({len(badb)} without)")
+    leakf = [c for c in items if c.get("basis") in ("stale", "unread") and (c.get("location") or c.get("ihash") or c.get("iver"))]
+    (ok if not leakf else fail)(f"stale or unread facts are not shown ({len(leakf)} shown)")
+    unread_o = [c for c in comps if c.get("origin") == "unread"]
+    (ok if all(c.get("basis") in ("stale", "unread") for c in unread_o) else fail)("origin unread only where the basis is stale or unread")
+    wrongcur = [c for c in items if c.get("basis") in ("stale", "unread") and c.get("origin") != "hpm" and c["status"] == "current"]
+    (ok if not wrongcur else fail)(f"an unread component never reads current ({len(wrongcur)} wrong)")
+    fc = inv.get("facts") or {}
+    (ok if fc.get("total") == len(items) and fc.get("valid", 0) + fc.get("stale", 0) + fc.get("unread", 0) == fc.get("total") else fail)(f"facts counts add up to the installed items ({fc})")
+    for k in ("valid", "stale", "unread", "failing", "large"): (ok if k in fc else fail)(f"facts has {k}")
+    (ok if isinstance(inv.get("asOf"), int) else fail)("inventory asOf is an int (ms)")
+    (ok if all(c.get("asOf") == inv.get("asOf") for c in comps) else fail)("each component asOf equals the payload asOf")
+    # childOf points at instances that exist (app instances in /hub2/appsList, parent devices in /hub2/devicesList)
+    def _walk_ids(nodes, out):
+        for n in nodes or []:
+            out.add(str((n.get("data") or {}).get("id"))); _walk_ids(n.get("children"), out)
+        return out
+    gt_app_ids = _walk_ids((fetch("/hub2/appsList") or {}).get("apps"), set())
+    gt_dev_ids = _walk_ids((fetch("/hub2/devicesList") or {}).get("devices"), set())
+    links = [(c, l) for c in comps for l in (c.get("childOf") or [])]
+    badl = [l for c, l in links if str(l.get("id")) not in (gt_app_ids if l.get("kind") == "app" else gt_dev_ids) or l.get("kind") not in ("app", "device")]
+    (ok if not badl else fail)(f"every childOf link names an existing instance ({len(badl)} of {len(links)} wrong)")
+    if not links: warn("no child instances on this hub to exercise childOf")
+    # importUrl presence must match the hub for apps and drivers whose facts are usable (single/data is the only source of importUrl)
+    usable_ids = {(c["kind"], str(c["hubId"])) for c in items if c.get("basis") in ("valid", "provisional")}
+    sample_apps = [a for a in gt_apps if ("app", str(a["id"])) in usable_ids][:5]
+    sample_drvs = [d for d in gt_drvs if ("driver", str(d["id"])) in usable_ids][:5]
     mism = 0
     for a in sample_apps:
         sd = (fetch(f"/app/list/single/data/{a['id']}") or [{}])[0]
@@ -214,7 +245,8 @@ else:
         c = next((x for x in comps if x["kind"] == "driver" and str(x["hubId"]) == str(d["id"])), None)
         if not c or (bool(sd.get("importUrl")) != bool(c.get("location"))): mism += 1
     sample_n = len(sample_apps) + len(sample_drvs)
-    (ok if mism == 0 else fail)(f"importUrl presence matches hub for {sample_n} sampled apps/drivers")
+    (ok if mism == 0 else fail)(f"importUrl presence matches hub for {sample_n} sampled apps/drivers with usable facts")
+    if sample_n == 0: warn("no component has usable facts yet (the fact reader has not run); importUrl presence not compared")
     # usage index equals usedBy from the bulk lists
     gt_used = {("app", str(a["id"])): len(a.get("usedBy") or []) for a in gt_apps}
     gt_used.update({("driver", str(d["id"])): len(d.get("usedBy") or []) for d in gt_drvs})
@@ -260,14 +292,14 @@ else:
     leak = [c for c in comps if "source" in c or "oauthClientSecret" in json.dumps(c)]
     (ok if not leak else fail)("inventory payload carries no source text and no OAuth secrets")
     # idempotent: a forced second pass (force=1 bypasses the freshness cache, so this actually
-    # re-runs runInventoryPass rather than re-serving the cached registry) does not change counts
+    # re-reconciles the registry rather than re-serving a cached payload) does not change counts
     inv2 = api_get("inventory?force=1", timeout=300)
     (ok if len(inv2.get("components", [])) == len(comps) else fail)("second inventory call is stable")
     # reclassification regression guard: a url-origin app survives a forced second pass with its
     # classification and location intact (ghost/regroup logic must not misclassify it as local)
     url_apps = [c for c in comps if c.get("kind") == "app" and c.get("origin") == "url"]
     if not url_apps:
-        warn("no url-origin app on this hub to exercise the reclassification regression guard")
+        warn("no url-origin app on this hub (facts unread) to exercise the reclassification regression guard")
     else:
         samp = url_apps[0]
         c2 = next((x for x in inv2.get("components", []) if x.get("kind") == "app" and str(x.get("hubId")) == str(samp.get("hubId"))), None)
@@ -275,8 +307,11 @@ else:
     # manifest documents exist for every package
     files = [f["name"] for f in (fetch("/hub/fileManager/json") or {}).get("files", [])]
     pkgs = inv.get("packages", [])
-    missing_docs = [p for p in pkgs if p.get("doc") not in files]
-    (ok if not missing_docs else fail)(f"manifest document present for every package ({len(missing_docs)} missing of {len(pkgs)})")
+    # a package of unread items has no manifest yet (doc is null)
+    docd = [p for p in pkgs if p.get("origin") != "unread"]
+    missing_docs = [p for p in docd if p.get("doc") not in files]
+    (ok if not missing_docs else fail)(f"manifest document present for every package with a manifest ({len(missing_docs)} missing of {len(docd)})")
+    (ok if all(p.get("doc") is None for p in pkgs if p.get("origin") == "unread") else fail)("unread packages carry no document")
 # ── Task 5: HPM import ────────────────────────────────────────────────
 section("HPM import (observe)")
 hpm_type = next((a for a in gt_apps if a.get("namespace") == "dcm.hpm"), None)
@@ -309,7 +344,7 @@ else:
     (ok if all(c.get("managedBy") == "hpm" for c in comps) else fail)("HPM-origin components are managedBy=hpm in observe mode")
     r2 = api_post("hpm/import", timeout=180)
     (ok if r2.get("packages") == r.get("packages") else fail)("re-import is idempotent")
-    # a forced inventory pass must not wipe file-kind HPM components' hubId (runInventoryPass only
+    # a forced inventory pass must not wipe file-kind HPM components' hubId (the registry reconcile only
     # rebinds app/driver/library from `seen`; file/bundle components must survive untouched)
     inv3 = api_get("inventory?force=1", timeout=300)
     hpm_files = [c for c in inv3.get("components", []) if c["origin"] == "hpm" and c["kind"] == "file"]
@@ -360,7 +395,8 @@ a = next((c for c in comps if c["kind"] == "app" and c.get("hubId")), None)
 if a:
     srcr = api_get(f"item/app/{a['hubId']}/source", timeout=60)
     (ok if srcr.get("source") and srcr.get("lock") is not None else fail)(f"item source for app {a['hubId']}: keys {sorted(srcr.keys())[:6]}")
-    (ok if srcr.get("ihash") == a.get("ihash") else fail)("item source ihash equals inventory ihash")
+    if a.get("ihash"): (ok if srcr.get("ihash") == a.get("ihash") else fail)("item source ihash equals inventory ihash")
+    else: warn("inventory ihash not read yet; item source ihash not compared")
     (ok if srcr.get("modifiedLocally") is False else warn)(f"modifiedLocally={srcr.get('modifiedLocally')} (expected False on an untouched hub)")
 bad = api_get("item/app/999999999/source")
 (ok if "error" in bad else fail)("unknown item -> error payload")

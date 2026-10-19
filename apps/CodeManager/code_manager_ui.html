@@ -240,7 +240,7 @@ async function rPackages(){
   try{const d=await api('inventory');const pk=d.packages||[];
     const multi=pk.filter(isMultiPackage), solo=pk.filter(p=>!isMultiPackage(p));
     const stat=r=>{const c=classifyComponent(r);return badge(c.label,c.color)};
-    const doc=r=>'<a href="/hub/fileManager" target="_blank">'+h(r.doc)+'</a>';
+    const doc=r=>r.doc?'<a href="/hub/fileManager" target="_blank">'+h(r.doc)+'</a>':'';
     document.getElementById(P).innerHTML=
       '<div class="card"><div class="card-h">Packages <span class="msg">HPM packages and bundles — code installed and updated as a set (<a href="'+README+'packages" target="_blank">how ownership is decided</a>)</span></div>'
       +'<div class="card-b"><div id="pkgTbl"></div>'+legend(['current','update-available','changed-upstream','incomplete','broken-source','unknown'])+'</div></div>'

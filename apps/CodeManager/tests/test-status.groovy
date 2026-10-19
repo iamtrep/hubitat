@@ -37,6 +37,12 @@ t('differing hash with no version order is changed-upstream', { assert H.compone
 t('edited on the hub is modified-locally', { assert H.componentStatus([o: 'url'], [k: 'driver', id: '1', ih: 'cc', ah: 'aa'], [rhash: 'bb'], [:]) == 'modified-locally' })
 t('a strike-out on the component is broken-source', { assert H.componentStatus([o: 'url'], [k: 'driver', id: '1', ih: 'aa', ah: 'aa'], [rhash: 'aa', broken: true], [:]) == 'broken-source' })
 
+t('a component whose facts are unread is never judged against upstream', { assert H.componentStatus([o: 'url'], [k: 'driver', id: '1', basis: 'unread'], [rhash: 'aa'], [:]) == 'unknown' })
+t('a component whose facts are stale is never current', { assert H.componentStatus([o: 'bundle'], [k: 'driver', id: '1', ih: 'aa', ah: 'aa', basis: 'stale'], [rhash: 'aa'], [:]) == 'unknown' })
+t('an unread-origin package never reads current', { assert H.componentStatus([o: 'unread'], [k: 'app', id: '1'], [rhash: 'aa'], [:]) == 'unknown' })
+t('provisional facts are judged normally', { assert H.componentStatus([o: 'url'], [k: 'driver', id: '1', ih: 'aa', ah: 'aa', basis: 'provisional'], [rhash: 'aa'], [:]) == 'current' })
+t('hpm components do not need a per-item fact', { assert H.componentStatus([o: 'hpm', v: '1.2'], [k: 'driver', id: '1', basis: 'unread'], [:], [checkedAt: 1L, rver: '1.2']) == 'current' })
+
 // --- componentStatus: HPM components are judged by their package's manifest version ---
 t('hpm component follows the package version', { assert H.componentStatus([o: 'hpm', v: '1.0'], [k: 'driver', id: '1'], [:], [checkedAt: 1L, rver: '1.2']) == 'update-available' })
 t('hpm component at the manifest version is current', { assert H.componentStatus([o: 'hpm', v: '1.2'], [k: 'driver', id: '1'], [:], [checkedAt: 1L, rver: '1.2']) == 'current' })
