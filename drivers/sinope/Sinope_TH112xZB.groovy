@@ -136,7 +136,7 @@ void configure() {
 
 
     runIn(10, 'refreshClockTime')
-    runIn(12, 'refreshElectrical')
+    runIn(120, 'refreshElectrical')  // after the scale read below, which waits behind the reporting setup
 
     // A G2 holds at most 8 reporting entries (Z2M) and answers INSUFFICIENT_SPACE past that; this list has 7.
     // Voltage and current are not reported: refreshElectrical() reads them every hour.
