@@ -209,7 +209,7 @@ else:
     items = [c for c in comps if c["kind"] in ("app", "driver", "library") and c.get("hubId") is not None]
     badb = [c for c in items if c.get("basis") not in BASES]
     (ok if not badb else fail)(f"every installed app/driver/library has a basis ({len(badb)} without)")
-    leakf = [c for c in items if c.get("basis") in ("stale", "unread") and (c.get("location") or c.get("ihash") or c.get("iver"))]
+    leakf = [c for c in items if c.get("basis") in ("stale", "unread") and (c.get("ihash") or (c.get("origin") != "hpm" and (c.get("location") or c.get("iver"))))]
     (ok if not leakf else fail)(f"stale or unread facts are not shown ({len(leakf)} shown)")
     unread_o = [c for c in comps if c.get("origin") == "unread"]
     (ok if all(c.get("basis") in ("stale", "unread") for c in unread_o) else fail)("origin unread only where the basis is stale or unread")

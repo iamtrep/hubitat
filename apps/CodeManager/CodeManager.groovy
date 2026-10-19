@@ -677,6 +677,30 @@ static void walkAppTree(List nodes, Map parent, Map<String, List<Map>> out, Set<
     }
 }
 
+// Which package documents to delete and which to hold after a reconcile. oldMembers: package key -> member kind:id list (previous
+// registry plus held documents); newKeys: keys of the new registry; unreadCks: members now in the unread group. A key still in the
+// registry is neither deleted nor held. A key that left but whose former member is unread is held (its item is expected back).
+@CompileStatic
+static Map docPruneDecision(Map<String, List> oldMembers, Set<String> newKeys, Set<String> unreadCks) {
+    List<String> prune = []
+    Map<String, List> hold = [:]
+    for (Map.Entry<String, List> e in oldMembers.entrySet()) {
+        if (newKeys.contains(e.key)) continue
+        boolean expectedBack = false
+        for (Object ck in e.value) { if (unreadCks.contains(ck.toString())) expectedBack = true }
+        if (expectedBack) hold[e.key] = e.value else prune << e.key
+    }
+    return [prune: prune, hold: hold]
+}
+
+// Whether a component's stored field may be shown (DESIGN.md 3.1). Fields read from an item's source (ih, and loc/iv/ivs for
+// non-HPM origins) need a usable basis; an HPM component's loc/iv/ivs come from the package manifest and are always shown.
+@CompileStatic
+static boolean factVisible(String origin, String basis, String field) {
+    if (basis == null || basis == 'valid' || basis == 'provisional') return true
+    return origin == 'hpm' && (field == 'loc' || field == 'iv' || field == 'ivs')
+}
+
 // Registry reconciliation from bulk reads only (DESIGN.md 3.2): binds and prunes components and packages and writes
 // the cm_pkg_ documents. It never reads an item's source; per-item facts (importUrl, hashes, version) are kept as the
 // fact reader left them and are shown only while factBasis() says they still describe the item.
@@ -795,23 +819,34 @@ Map reconcileRegistry(Map bulk) {
         Set oldIds = ((pkgs[key] as Map)?.c as List ?: []).collect { Map c -> ckey(c.k as String, c.id) } as Set
         // hubFiles null = no usable listing: don't read "document absent" from it.
         if (ids != oldIds || (hubFiles != null && !docsBefore.containsKey(pkgFileName(key)))) {
+            // A package back from the unread group (or re-created) continues the generation of the document it left behind.
+            if (pkgs[key] == null && docsBefore.containsKey(pkgFileName(key))) {
+                Object stored = readPkgDoc(key)?._cm?.gen
+                if (stored != null) p.g = stored as int
+            }
             p.g = ((p.g ?: 0) as int) + 1
             writePkgDoc(key, p, degenerateManifest(p.o as String, p.n as String, p.c as List, p.url as String))
         }
     }
-    // A package with no components left this pass has an orphaned manifest document; remove it. Own files only
-    // (cm_pkg_ prefix), and only for a key that was in the previous registry (an unregistered document is foreign).
-    docsBefore.keySet().findAll { String name -> name.startsWith(PKG_FILE_PREFIX) }.each { String name ->
+    // A manifest document is removed only for a package key that left the registry in this pass, and only when none of its
+    // former members stands in the unread group (they are expected back). Such held documents are remembered in state.
+    // Own files only (cm_pkg_ prefix), read to confirm the key before deleting (an unregistered document is foreign).
+    Map<String, List> oldMembers = [:]
+    pkgs.each { String k, Map p -> oldMembers[k] = (p.c as List).findAll { Map c -> c.id != null }.collect { Map c -> ckey(c.k as String, c.id) } }
+    ((state.heldDocs ?: [:]) as Map).each { k, v -> if (!oldMembers.containsKey(k as String)) oldMembers[k as String] = (v as List) }
+    Set<String> unreadCks = next.values().findAll { Map p -> p.o == 'unread' }.collectMany { Map p -> (p.c as List).collect { Map c -> ckey(c.k as String, c.id) } } as Set
+    Map decision = docPruneDecision(oldMembers, next.keySet() as Set, unreadCks)
+    Map<String, List> hold = (decision.hold as Map).collectEntries { k, v -> [(k): v] } as Map
+    (decision.prune as List).each { String k ->
+        String name = pkgFileName(k)
+        if (hubFiles == null) { hold[k] = oldMembers[k]; return }          // no usable listing: try again next pass
+        if (!docsBefore.containsKey(name)) return
         try {
-            String text = readCmFile(name); if (!text) return
-            Map doc = (Map) new JsonSlurper().parseText(text)
-            String k = doc?._cm?.key as String
-            if (k && pkgs.containsKey(k) && !next.containsKey(k)) {
-                deleteHubFile(name)
-                logInfo "inventory: removed stale manifest document ${name} (package ${k} no longer exists)"
-            }
+            Map doc = readPkgDoc(k)
+            if (doc != null) { deleteHubFile(name); logInfo "inventory: removed stale manifest document ${name} (package ${k} no longer exists)" }
         } catch (Exception e) { logError "prune stale manifest ${name}: ${e.message}" }
     }
+    if (hold != ((state.heldDocs ?: [:]) as Map)) state.heldDocs = hold
     if (next != pkgs) state.pkgs = next
     state.lastInventory = [at: now(), asOf: bulk.asOf, items: seen.size()]
     logInfo "inventory: ${seen.size()} items, ${bundles.size()} bundles, ${next.size()} packages in ${now() - t0}ms"
@@ -1019,9 +1054,9 @@ Map buildInventoryPayload(Map bulk) {
             }
             String status = componentStatus(p, basis ? c + [basis: basis] : c, s, pe)
             // origin-url app/driver components don't store loc — reconstruct it from the key (see reconcileRegistry)
-            String location = usable ? (c.loc ?: (p.o == 'url' ? key.substring(4) : null)) : null
+            String location = factVisible(p.o as String, basis, 'loc') ? (c.loc ?: (p.o == 'url' ? key.substring(4) : null)) : null
             Map row = [key: key, kind: c.k, hubId: c.id, namespace: c.ns, name: c.nm, origin: p.o, location: location, managedBy: p.o == 'hpm' ? (state.hpm?.mode == 'manage' ? 'cm' : 'hpm') : 'cm',
-                       status: status, ihash: usable ? c.ih : null, ahash: c.ah, iver: usable ? c.iv : null, iverSrc: usable ? c.ivs : null, rhash: s.rhash, rver: s.rver, checkedAtMs: s.checkedAt, changedAtMs: s.changedAt,
+                       status: status, ihash: factVisible(p.o as String, basis, 'ih') ? c.ih : null, ahash: c.ah, iver: factVisible(p.o as String, basis, 'iv') ? c.iv : null, iverSrc: factVisible(p.o as String, basis, 'ivs') ? c.ivs : null, rhash: s.rhash, rver: s.rver, checkedAtMs: s.checkedAt, changedAtMs: s.changedAt,
                        httpStatus: s.httpStatus, failCount: s.failCount ?: 0, error: s.error, lastModifiedMs: c.lm, usedByCount: c.u ?: 0, required: c.req != false,
                        usedBy: usedBy[ckey(c.k as String, c.id)] ?: [], bundleOf: c.bm, isPrivate: c.pv == true,
                        basis: basis, factsReadAtMs: c.frd, factError: c.fe, childOf: (c.id != null ? childOf[ckey(c.k as String, c.id)] : null) ?: [], asOf: invAsOf]

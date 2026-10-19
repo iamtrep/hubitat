@@ -18,7 +18,7 @@ String extract(String name) {
 java.util.regex.Matcher cm = src =~ /(?m)^@Field (static final long PROVISIONAL_MS = [\d_]+L)/
 assert cm.find() : 'PROVISIONAL_MS not found'
 String constant = cm.group(1)
-String code = ['factBasis', 'classifyOrigin', 'ckey', 'childOfIndex', 'walkAppTree'].collect { extract(it) }.join('\n')
+String code = ['factBasis', 'classifyOrigin', 'ckey', 'childOfIndex', 'walkAppTree', 'docPruneDecision', 'factVisible'].collect { extract(it) }.join('\n')
 def H = new GroovyShell().parse("import groovy.transform.CompileStatic\nclass H {\n${constant}\n${code}\n}\nreturn H").run()
 
 void t(String name, Closure c) { try { c(); pass++; println "  ok   ${name}" } catch (Throwable e) { fail++; println "  FAIL ${name}\n         ${e.message}" } }
@@ -60,6 +60,21 @@ t('top-level app types have no parent', { assert idx['app:500'] == null && idx['
 t('a child driver type lists its parent device once', { assert idx['driver:71'] == [[kind: 'device', id: 1, name: 'Hub device']] })
 t('a device with no parent in the list has no entry', { assert idx['driver:72'] == null && idx['driver:70'] == null })
 t('empty inputs are fine', { assert H.childOfIndex(null, null) == [:] })
+
+// --- docPruneDecision (a document goes only when its package left the registry and no former member is unread) ---
+Map oldM = ['url:a': ['app:1'], 'url:b': ['app:2'], 'local:c': ['app:3', 'app:4'], 'url:keep': ['app:5']]
+Map dec = H.docPruneDecision(oldM, ['url:keep'] as Set, ['app:1', 'app:4'] as Set)
+t('a package that left with an unread member is held, not pruned', { assert dec.hold.keySet() == ['url:a', 'local:c'] as Set && !dec.prune.contains('url:a') })
+t('a package that left with no unread member is pruned', { assert dec.prune == ['url:b'] })
+t('a package still in the registry is neither pruned nor held', { assert !dec.prune.contains('url:keep') && !dec.hold.containsKey('url:keep') })
+t('an unchanged package set prunes nothing', { assert H.docPruneDecision(oldM, oldM.keySet() as Set, [] as Set) == [prune: [], hold: [:]] })
+t('a held package whose item was deleted is pruned', { assert H.docPruneDecision(['url:a': ['app:1']], [] as Set, [] as Set).prune == ['url:a'] })
+
+// --- factVisible ---
+t('item facts need a usable basis', { assert !H.factVisible('url', 'stale', 'loc') && !H.factVisible('url', 'unread', 'ih') && H.factVisible('url', 'valid', 'ih') && H.factVisible('url', 'provisional', 'loc') })
+t('hpm manifest metadata is shown whatever the basis', { assert H.factVisible('hpm', 'unread', 'loc') && H.factVisible('hpm', 'stale', 'iv') && H.factVisible('hpm', 'stale', 'ivs') })
+t('an hpm item hash still needs a usable basis', { assert !H.factVisible('hpm', 'unread', 'ih') })
+t('components without a basis (bundles, files) are always shown', { assert H.factVisible('bundle', null, 'loc') })
 
 println "\n${pass} passed, ${fail} failed, 0 warnings"
 System.exit(fail ? 1 : 0)
