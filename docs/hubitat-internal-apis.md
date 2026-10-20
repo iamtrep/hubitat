@@ -285,6 +285,12 @@ The App Status page's Export/Import/Clone button opens a hidden built-in app, "E
 - **Clone:** press `cloneRuleButton`, then open `importRule` and continue as for an import. One press in the `settings[cloneRuleButton]=clicked` form did nothing; a repeat with `cloneRuleButton=clicked` worked. The cause was not isolated *(probed 2.5.2.129)*.
 - Not tested: import onto another hub, an import whose app type is missing, and single-instance apps *(inferred: what the 2.5.2.129 tests left out)*.
 
+## Hub UI over HTTPS
+
+- `/hub/advanced/certificate` is the page that takes a custom certificate and private key for the hub UI's HTTPS *(community: [tessus](https://community.hubitat.com/t/166827/1))*.
+- **An EC certificate can leave HTTPS dead.** On a C-7 running 2.5.2.139, a certificate with an EC (prime256v1) key saved without error, and after a reboot the HTTPS port answered nothing, with no certificate error; an RSA certificate then worked *(community: [tessus](https://community.hubitat.com/t/166827/1), posts 1, 3, 6 and 8)*. Staff call it a bug: 2.5.3 is to reject an unusable certificate with an error and name the supported types on the page *(staff: [gopher.ny](https://community.hubitat.com/t/166827/4))*. Staff expect EC keys to work, since the JVM supports them, and are trying to reproduce the failure *(staff: [gopher.ny](https://community.hubitat.com/t/166827/7))*. Until that is settled, an RSA certificate is the safe choice *(inferred: from the report above)*.
+- **Recovering from SSL-only mode.** The SSL-only flag is stored in the hub database; Hubitat support can clear it remotely on a cloud-connected hub, and `GET /hub/advanced/disablessl` turns it off locally *(staff: [gopher.ny](https://community.hubitat.com/t/166827/4))*.
+
 ## Hub details and location settings
 
 - `GET /hub/details/json` is the Hub Details page's data: `hubName`, `platformVersion`, `hardwareVersion`, `hubUID`, `macAddress`, `ipAddress`, `zipCode`, `latitude` and `longitude` (numbers), `currentTime`, `sunrise` and `sunset` (`2026-10-14T11:09:00+0000`, on the minute), `timeZone`, `timeZones`, `timeFormat`, `dateFormat`, `tempScale`, `ttsCurrent`, `ttsVoices`, `mdnsName`, `hubRegistered`, `users` *(probed 2.5.2.135)*.
