@@ -59,6 +59,12 @@ metadata {
     }
 
     preferences {
+        input name: "heatOffset", type: "enum", title: "Heating: unit sensor offset (°C)",
+              description: "How much warmer the unit's sensor reads than the room in heat mode. Readings and setpoints are corrected by it, so the device works in room temperature.",
+              options: OFFSET_OPTIONS, defaultValue: "0.0"
+        input name: "coolOffset", type: "enum", title: "Cooling: unit sensor offset (°C)",
+              description: "The same correction for cool and dry modes.",
+              options: OFFSET_OPTIONS, defaultValue: "0.0"
         input name: "optimisticUpdates", type: "bool",
               title: "Optimistic attribute updates on write",
               description: "When on, attributes reflect the requested value immediately on command. When off, attributes only update on the next poll cycle (truthful cloud state).",
@@ -89,12 +95,18 @@ metadata {
 // Setpoint range in °C, per role.
 @Field static final Map<String, BigDecimal> SETPOINT_MIN_C = ["heat": 16, "cool": 18]
 @Field static final BigDecimal SETPOINT_MAX_C = 30
+// Sensor offsets in 0.5 °C steps, the unit's setpoint grid, so a corrected setpoint stays writable.
+@Field static final List<Map> OFFSET_OPTIONS = (-8..8).collect { int i ->
+    String v = (i / 2).toBigDecimal().setScale(1).toPlainString()
+    [(v): i == 0 ? "0.0 (no correction)" : (i > 0 ? "+${v}" : v)]
+}
 
 void installed() { logDebug "installed"; state.version = CODE_VERSION; initialize() }
 void updated() {
     logDebug "updated"
     unschedule()
     initialize()
+    applyOffsetChange()
     if (settings.debugEnable || settings.traceEnable) runIn(DEBUG_LOG_TIMEOUT, "logsOff")
 }
 // Re-seeds the supported-mode lists and setpoint bounds, which a driver swap leaves unset.
@@ -116,12 +128,52 @@ void refresh() {
     parent?.refreshUnit(device.deviceNetworkId)
 }
 
+// Bounds are the unit's range shifted into room terms by each role's offset.
 private void emitBounds() {
     String scale = getTemperatureScale()
-    sendEvent(name: 'minHeatingSetpoint', value: convertFromC(SETPOINT_MIN_C.heat), unit: scale)
-    sendEvent(name: 'maxHeatingSetpoint', value: convertFromC(SETPOINT_MAX_C), unit: scale)
-    sendEvent(name: 'minCoolingSetpoint', value: convertFromC(SETPOINT_MIN_C.cool), unit: scale)
-    sendEvent(name: 'maxCoolingSetpoint', value: convertFromC(SETPOINT_MAX_C), unit: scale)
+    sendEvent(name: 'minHeatingSetpoint', value: convertFromC(SETPOINT_MIN_C.heat - offsetC("heat")), unit: scale)
+    sendEvent(name: 'maxHeatingSetpoint', value: convertFromC(SETPOINT_MAX_C - offsetC("heat")), unit: scale)
+    sendEvent(name: 'minCoolingSetpoint', value: convertFromC(SETPOINT_MIN_C.cool - offsetC("cool")), unit: scale)
+    sendEvent(name: 'maxCoolingSetpoint', value: convertFromC(SETPOINT_MAX_C - offsetC("cool")), unit: scale)
+}
+
+// --- Sensor offsets ---
+// The unit regulates on its own sensor, which can read warmer or cooler than the room. With an
+// offset, temperature and setpoints are in room terms: reading = unit - offset, unit setpoint =
+// setpoint + offset. Heat uses heatOffset; cool and dry use coolOffset; auto, off and fan_only keep
+// the last heat or cool role.
+
+private BigDecimal offsetC(String role) {
+    BigDecimal c = toDecimal(settings["${role}Offset"]) ?: 0
+    return (c * 2).setScale(0, java.math.RoundingMode.HALF_UP) / 2
+}
+
+private BigDecimal offsetInScale(String role) {
+    BigDecimal c = offsetC(role)
+    return getTemperatureScale() == 'F' ? c * 9 / 5 : c
+}
+
+private static String roleOf(String fujMode) {
+    if (fujMode == "heat") return "heat"
+    if (fujMode in ["cool", "dry"]) return "cool"
+    return null
+}
+
+private String activeRole() {
+    return roleOf(state.unitMode as String) ?: (state.lastRole as String) ?: "heat"
+}
+
+// A changed offset moves the unit's setpoint so the room setpoint stays where it was.
+private void applyOffsetChange() {
+    Map applied = [heat: offsetC("heat"), cool: offsetC("cool")]
+    Map prev = (state.appliedOffsets as Map) ?: [heat: 0, cool: 0]
+    state.appliedOffsets = applied
+    String role = roleOf(state.unitMode as String)
+    if (role == null || (prev[role] as BigDecimal) == applied[role]) return
+    BigDecimal sp = device.currentValue("${role}ingSetpoint") as BigDecimal
+    if (sp == null) return
+    logCfg "${role} offset ${prev[role]} -> ${applied[role]}°C: resending ${role}ingSetpoint ${sp}${getTemperatureScale()}"
+    pushSetpointToUnit(role, clampSetpoint(role, sp))
 }
 
 private BigDecimal convertFromC(BigDecimal celsius) {
@@ -175,7 +227,7 @@ private void writeMode(String mode) {
     }
     if (preset != null) {
         logInfo "mode change ${prevMode} -> ${mode}: stored ${mode}ingSetpoint is ${preset}${getTemperatureScale()}"
-        pushSetpointToUnit(preset)
+        pushSetpointToUnit(mode, preset)
     }
 
     if (!isOptimistic()) return
@@ -252,7 +304,7 @@ private void handleSetSetpoint(String role, def raw) {
         logInfo "${attrName} stored as preset; unit currently in ${mode} mode, not pushing to unit"
         return
     }
-    pushSetpointToUnit(clamped)
+    pushSetpointToUnit(role, clamped)
 }
 
 private BigDecimal toDecimal(def raw) {
@@ -261,26 +313,29 @@ private BigDecimal toDecimal(def raw) {
 }
 
 private BigDecimal clampSetpoint(String role, BigDecimal t) {
-    BigDecimal lo = convertFromC(SETPOINT_MIN_C[role])
-    BigDecimal hi = convertFromC(SETPOINT_MAX_C)
+    BigDecimal lo = convertFromC(SETPOINT_MIN_C[role] - offsetC(role))
+    BigDecimal hi = convertFromC(SETPOINT_MAX_C - offsetC(role))
     BigDecimal clamped = t
     if (clamped < lo) { logWarn "setpoint ${t} below min ${lo} — clamped"; clamped = lo }
     if (clamped > hi) { logWarn "setpoint ${t} above max ${hi} — clamped"; clamped = hi }
     return clamped
 }
 
-private void pushSetpointToUnit(BigDecimal clamped) {
+// clamped is in room terms; role picks the offset that turns it into the unit's setpoint.
+private void pushSetpointToUnit(String role, BigDecimal clamped) {
+    BigDecimal unitValue = clamped + offsetInScale(role)
     // Below the cool minimum a setpoint is valid only in heat. Written while the
     // unit is in any other mode, it is a value the unit can't honor, the kind that
     // jams the cloud write queue. Hold it until a poll confirms heat.
-    if (clamped < convertFromC(SETPOINT_MIN_C.cool) && state.unitMode != "heat") {
+    if (unitValue < convertFromC(SETPOINT_MIN_C.cool) && state.unitMode != "heat") {
         state.heldSetpoint = [value: clamped, at: now()]
         logInfo "holding setpoint ${clamped}${getTemperatureScale()} until the unit reports heat mode"
         return
     }
     state.remove("heldSetpoint")
-    BigDecimal aylaValue = scaleToAylaSetpoint(clamped)
-    logCmd "setting adjust_temperature -> ${clamped}${getTemperatureScale()} (raw ${aylaValue})"
+    BigDecimal aylaValue = scaleToAylaSetpoint(unitValue)
+    String onUnit = unitValue != clamped ? ", unit ${unitValue}${getTemperatureScale()}" : ""
+    logCmd "setting adjust_temperature -> ${clamped}${getTemperatureScale()} (raw ${aylaValue}${onUnit})"
     writeToUnit("adjust_temperature", aylaValue.toInteger())
     // thermostatSetpoint is the device-confirmed value — updated only by the next
     // poll, mirroring the built-in Ecobee integration model. heatingSetpoint /
@@ -342,13 +397,18 @@ void updateState(Map data) {
     def adjustTemp = settled("adjust_temperature", data.adjustTemp)
     def fanSpeed = settled("fan_speed", data.fanSpeed)
     String fujMode = opMode != null ? OP_MODE[(int) opMode] : null
-    BigDecimal temp = data.displayTemp != null ? aylaSensorToScale(data.displayTemp) : null
-    BigDecimal sp = adjustTemp != null ? aylaSetpointToScale(adjustTemp) : null
+    if (roleOf(fujMode)) state.lastRole = roleOf(fujMode)
+    String role = roleOf(fujMode) ?: activeRole()
+    BigDecimal off = offsetInScale(role)
+    BigDecimal unitTemp = data.displayTemp != null ? aylaSensorToScale(data.displayTemp) : null
+    BigDecimal temp = unitTemp != null ? (unitTemp - off).setScale(1, java.math.RoundingMode.HALF_UP) : null
+    BigDecimal sp = adjustTemp != null ? (aylaSetpointToScale(adjustTemp) - off).setScale(1, java.math.RoundingMode.HALF_UP) : null
     // Temperature and setpoint go out before the mode and operating state, so a
     // subscriber to thermostatOperatingState reads the values it was derived from.
     if (temp != null) {
+        String onUnit = off != 0 ? " (unit sensor ${unitTemp}${getTemperatureScale()})" : ""
         sendEvent(name: "temperature", value: temp, unit: getTemperatureScale(),
-                  descriptionText: "${device} temperature is ${temp}${getTemperatureScale()}")
+                  descriptionText: "${device} temperature is ${temp}${getTemperatureScale()}${onUnit}")
     }
     if (sp != null) {
         sendEvent(name: "thermostatSetpoint", value: sp, unit: getTemperatureScale(),
@@ -426,7 +486,7 @@ private void sendHeldSetpoint() {
 
 void pushHeldSetpoint() {
     Map held = state.heldSetpoint as Map
-    if (held && state.unitMode == "heat") pushSetpointToUnit(held.value as BigDecimal)
+    if (held && state.unitMode == "heat") pushSetpointToUnit("heat", held.value as BigDecimal)
 }
 
 // Called by the parent with the unit's cloud link state, or "offline" when the

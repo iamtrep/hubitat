@@ -34,7 +34,7 @@ Region (US / EU) is configurable on the manager page; the region setting drives 
 **Standard capability surface (canonical values only):**
 - `thermostatMode` — `off`, `heat`, `cool`, `auto`. The unit's `dry` mode reports as `cool` (the compressor runs its cooling cycle) and `fan_only` as `off` (no compressor).
 - `thermostatFanMode` — `auto`, or `on` when the unit runs a fixed fan speed
-- `temperature` — room temperature from `display_temperature`
+- `temperature` — room temperature from `display_temperature`, corrected by the sensor offset if one is set
 - `heatingSetpoint` / `coolingSetpoint` / `thermostatSetpoint`
 - `thermostatOperatingState` — `idle` / `heating` / `cooling` / `fan only`. The cloud doesn't report whether the compressor is running, so this is estimated from room temperature and setpoint: heating starts once the room is 0.5°C below the setpoint and continues until it reaches it; cooling mirrors that above the setpoint. `dry` reports `idle`.
 
@@ -51,7 +51,7 @@ Region (US / EU) is configurable on the manager page; the region setting drives 
 
 The standard surface keeps dashboards, Rule Machine triggers, and Alexa/Google integrations working for the canonical 80% case. The custom surface gives full access to `dry`/`fan_only` modes and `quiet`/`low`/`medium`/`high` fan speeds for automations that need them.
 
-Setpoint range: 16–30°C (heat), 18–30°C (cool). Values outside the range are clamped with a warning logged. Setpoints are also **snapped to the nearest 0.5°C** before being sent to the unit — Fujitsu only accepts half-degree-Celsius increments, and a finer value will jam the Ayla cloud's datapoint queue.
+Setpoint range: 16–30°C (heat), 18–30°C (cool), shifted by the sensor offset if one is set. Values outside the range are clamped with a warning logged. Setpoints are also **snapped to the nearest 0.5°C** before being sent to the unit — Fujitsu only accepts half-degree-Celsius increments, and a finer value will jam the Ayla cloud's datapoint queue.
 
 **Device metadata** (visible on the device edit page's **Data** section, written via `device.updateDataValue`):
 - `modelName` — e.g. `ASUG15LZTD : AP-WF1E`
@@ -68,6 +68,18 @@ Fujitsu units have one physical setpoint (`adjust_temperature`), but the driver 
 - When mode transitions to `heat`, the stored `heatingSetpoint` is auto-pushed to the unit. Same for `cool`.
 - A heating setpoint below 18°C is only valid in heat mode. If the unit isn't confirmed in heat yet (for example right after a switch from cool), the driver holds it and sends it once a poll shows the unit in heat. Switching to another mode cancels it; it is dropped after 10 minutes.
 - `thermostatSetpoint` is the device-confirmed value — updated only on the next poll, mirroring the built-in Ecobee integration. `heatingSetpoint` / `coolingSetpoint` are user-intent presets and update immediately on the command.
+
+### Sensor offsets
+
+The unit regulates on a sensor inside the indoor unit, which can read several degrees warmer or cooler than the room. The **Heating: unit sensor offset** and **Cooling: unit sensor offset** preferences (−4.0 to +4.0°C in 0.5°C steps, default 0) say how much warmer the unit's sensor reads than the room. With an offset set, the device works in room temperature:
+
+- `temperature` is the unit's reading minus the offset. The event description gives the unit's own reading.
+- A setpoint is written to the unit plus the offset, and the unit's setpoint is reported minus it. With a +2.0°C heating offset, `setHeatingSetpoint(21)` sets the unit to 23.0°C.
+- The setpoint bounds shift with it: a +2.0°C heating offset makes the heating range 14–28°C.
+- Heat uses the heating offset, cool and dry the cooling offset. Auto, off and fan only keep the offset of the last heat or cool mode.
+- Changing an offset while the unit is in that mode resends the setpoint, so the room setpoint stays where it was.
+
+Offsets are in 0.5°C steps because the unit only accepts setpoints on that grid. The IR remote and the FGLair app still show the unit's own values.
 
 ### Standard command policy
 
