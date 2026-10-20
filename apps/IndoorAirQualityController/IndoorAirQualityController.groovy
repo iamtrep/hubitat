@@ -315,8 +315,13 @@ void evaluateAir(String why) {
         st = resized([], n)
     } else {
         if (state.lastStop == "safety") {
-            state.claims = [:]
-            logInfo "detectors clear: claims dropped"
+            Map<String, String> values = [:]
+            stageDevices().each { DeviceWrapper d -> values[d.id.toString()] = d.currentValue("switch") as String }
+            Map r = resumeAfterSafety((cfg.stages as List<Map>).collect { (it.switches ?: []) as List<String> },
+                                      (state.claims ?: [:]) as Map, values)
+            state.claims = r.claims
+            st = r.stages as List<Map>
+            logInfo "detectors clear: ${(r.claims as Map).size()} switch(es) still on kept, other claims dropped"
         }
         if (reason) {
             releaseAll()
@@ -666,6 +671,25 @@ String switchEventAction(String value, boolean physical, String pending, String 
     if (physical) return 'hold'
     if (lastReassert != null && now - lastReassert < gapMs) return 'throttled'
     return 'reassert'
+}
+
+// After a safety stop clears. A claimed switch that is still on keeps its claim, so nothing is left
+// on with no owner; any other claim is dropped. A stage that keeps a claim resumes engaged and
+// releases through its off dwell. stageIds: switch ids per stage; values: switch value by id.
+@CompileStatic
+Map resumeAfterSafety(List<List<String>> stageIds, Map claims, Map<String, String> values) {
+    Map kept = [:]
+    List<Map> st = stageIds.collect { List<String> ids ->
+        boolean any = false
+        ids.each { String id ->
+            if (claims[id] && values[id] == 'on') {
+                kept[id] = true
+                any = true
+            }
+        }
+        return [s: any ? 'engaged' : 'off', since: null, heldUntil: null] as Map
+    }
+    return [stages: st, claims: kept]
 }
 
 // w: [active, since, lastSent]. mode: 'run', 'pause' (no stage may run, CO2 alone decides) or 'stop'.

@@ -192,6 +192,21 @@ check('clear message', core.windowMessage('Home', 'clear', 1100G), 'Home: CO2 ba
 check('no message', core.windowMessage('Home', null, 1100G), null)
 check('humidity message', core.humidityMessage('Home', 27.6G, 12), 'Home: indoor humidity at 28% for 12 h.')
 
+// ── resume after a safety stop ──
+Map ras = core.resumeAfterSafety([['1'], ['2', '4'], ['3']], ['1': true, '2': true, '3': true],
+                                 ['1': 'on', '2': 'off', '4': 'on', '3': 'on'])
+check('safety: claimed and on keeps claim', ras.claims, ['1': true, '3': true])
+check('safety: stage with a kept claim engaged', ras.stages*.s, ['engaged', 'off', 'engaged'])
+check('safety: unclaimed on switch does not engage', core.resumeAfterSafety([['4']], [:], ['4': 'on']).stages[0].s, 'off')
+Map rasOff = core.resumeAfterSafety([['1']], ['1': true], ['1': 'off'])
+check('safety: switch turned off loses claim', rasOff.claims, [:])
+check('safety: resumed stage has no timers', ras.stages[0], [s: 'engaged', since: null, heldUntil: null])
+// a resumed stage releases through its off dwell when CO2 is low
+Map relA = core.stepStages(ras.stages, 500G, 0L, cfg(), false)
+check('safety: resumed stage not released at once', relA.actions, [])
+Map relB = core.stepStages(relA.stages, 500G, 6 * M, cfg(), false)
+check('safety: resumed stages released after the dwell', relB.actions, [[stage: 2, cmd: 'off'], [stage: 0, cmd: 'off']])
+
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)

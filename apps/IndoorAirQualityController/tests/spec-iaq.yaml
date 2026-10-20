@@ -204,6 +204,23 @@ cases:
       - { device: test-iaq-s1, attribute: switch, value: "off" }
       - { device: test-iaq Air, attribute: ventilationStage, value: "0" }
 
+  # A switch the app turned on and that is still on when the detectors clear stays claimed,
+  # so the app turns it off once CO2 is low instead of leaving it on with no owner.
+  - name: smoke-clear-keeps-claim
+    setup: *reset
+    command_spacing_seconds: 3
+    actions:
+      - { device: test-iaq-co2, command: setCarbonDioxide, args: [700] }
+      - { device: test-iaq-smoke, command: detected }
+      - { device: test-iaq-smoke, command: clear }
+      - { device: test-iaq-co2, command: setCarbonDioxide, args: [400] }
+    wait_seconds: 4
+    assert:
+      - { device: test-iaq-s1, attribute: switch, value: "off" }
+      - { device: test-iaq Air, attribute: ventilationStage, value: "0" }
+    assert_logs:
+      - { pattern: "detectors clear: 1 switch\\(es\\) still on kept", level: info }
+
   - name: enable-off-releases
     setup: *reset
     command_spacing_seconds: 3
