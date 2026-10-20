@@ -104,6 +104,7 @@ Hub Inspector has run on a handful of hubs, so many setups have never been teste
 ### Tested on
 
 * Hubs: C-7 and C-8 Pro, firmware 2.5.2.
+* Reliability Center card: one C-8 Pro on firmware 2.5.3.104 (beta) only.
 * Z-Wave: the classic stack, on meshes of 3 to 10 devices.
 * Zigbee: 8 to 110 devices per hub.
 * Matter: 2 to 6 devices per hub.
@@ -417,6 +418,8 @@ Lists devices visible to the hub via mDNS / Bonjour / Avahi (`/hub/mdnsDevices/j
 ## Health Tab
 
 **Alerts** — All active platform and calculated alerts plus messages from `/hub/messages` (info-severity, blue). Shows a green checkmark when there are none.
+
+**Reliability Center** (firmware 2.5.3 and later) — The findings from the hub's own Reliability Center page (`/hub/reliability`): devices that went silent, low batteries, offline devices, weak Zigbee links, and rules with no trigger. The card shows the number of critical and warning findings, how many devices the hub monitors, a count for each kind of finding, and up to 10 findings, critical first, with links to the device or app page. Each finding also links to the part of Hub Inspector that shows more about it, such as the Devices list, Radio Capture, the Network tab or Performance, with the filter filled in; a Radio Capture link never starts a capture. It also links to the hub's page, where you can snooze a finding or exclude a device. Hub Inspector reads the findings and changes nothing. The hub runs a scan for each read, so Hub Inspector reuses a result for 5 minutes. These findings are not counted in Alerts or the browser tab icon. The Copy for Forum text adds one line with the counts, and no names. The hub rates batteries below 20% as a warning and below 10% as critical, so its battery findings can differ from the Devices tab, which flags 20% and below. On earlier firmware the card does not appear and Hub Inspector sends no request.
 
 **System Resources** — Free OS memory, CPU load (5-min avg), **Processors** (count, from `/hub/cpuInfo`), **Load Avg (1m)** (from `/hub/cpuInfo`), **Hub Load Threshold** (% from `/hub/advanced/getExcessiveLoadThreshold` — the level Hubitat itself considers "excessive"), Java heap usage (total/free/direct), temperature (°C and °F), and database size. Free memory, CPU load and temperature each get a bar showing the current reading against the range since the last restart and the warning and critical thresholds; temperature also lists its 30-day range. The other readings share one line, with the database size's 30-day range. Values are color-coded against configured thresholds. This card **auto-refreshes** in the background on a configurable interval (default 30 s); the last refresh time is shown in the card header.
 
